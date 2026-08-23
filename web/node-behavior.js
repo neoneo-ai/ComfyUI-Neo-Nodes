@@ -31,6 +31,29 @@ function stripSkillMarkers(text) {
     return (text || "").replace(/@(图片|反推|image|img|图)/g, "").trim();
 }
 
+// 追踪节点 image 输入插槽的上游节点（如 LoadImage），取其图片文件名
+// 返回 {kind:"input", value:"<filename>"} 或 null
+function resolveConnectedImageSource(node) {
+    try {
+        const slot = node.inputs?.find(i => i.name === "image");
+        if (!slot || slot.link == null) return null;
+        const links = node.graph?.links;
+        const link = typeof links?.get === "function" ? links.get(slot.link) : links?.[slot.link];
+        if (!link) return null;
+        const srcNode = node.graph.getNodeById(link.origin_id);
+        if (!srcNode) return null;
+        for (const v of (srcNode.widgets_values || [])) {
+            if (typeof v === "string" && /\.(png|jpe?g|webp|bmp|gif)$/i.test(v.trim())) {
+                return { kind: "input", value: v.trim() };
+            }
+        }
+        console.warn("image input connected but no image filename found on upstream node:", srcNode.type);
+    } catch (e) {
+        console.warn("resolveConnectedImageSource failed:", e);
+    }
+    return null;
+}
+
 /**
  * 获取实例 UID
  */
@@ -128,8 +151,13 @@ function createGenerateHandler(promptUI) {
         // If quickInput is empty, use customTextarea content as the message
         const messageToLLM = quickText || currentPrompt;
 
-        // @ 标记与附加图片 -> skill 路由（反推等 vision skill）
-        const hasImages = attachedImages.length > 0;
+        // @ 标记、附加图片、节点 image 输入连接 -> skill 路由（反推等 vision skill）
+        const slotImage = resolveConnectedImageSource(node);
+        const imagesPayload = [
+            ...(slotImage ? [slotImage] : []),
+            ...attachedImages.map(img => ({ kind: "data", data: img.data })),
+        ];
+        const hasImages = imagesPayload.length > 0;
         const markerSkillId = matchSkillMarker(messageToLLM);
 
         if (!messageToLLM && !hasImages) {
@@ -154,7 +182,7 @@ function createGenerateHandler(promptUI) {
             if (hasImages || markerSkillId) {
                 // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
                 if (markerSkillId && !hasImages) {
-                    alert("该 skill 需要图片：请通过 📎 按钮或 Ctrl+V 粘贴图片后再生成。");
+                    alert("该 skill 需要图片：请连接 image 输入、通过 + 按钮选择或 Ctrl+V 粘贴图片后再生成。");
                     return;
                 }
 
@@ -168,7 +196,7 @@ function createGenerateHandler(promptUI) {
                     text: stripSkillMarkers(messageToLLM),
                     skillId,
                     templateId: markerSkillId ? "" : selectedTemplateId,
-                    images: attachedImages.map(img => ({ kind: "data", data: img.data })),
+                    images: imagesPayload,
                     description: quickText || currentPrompt
                 };
                 console.log("Skill invoke request:", { ...payload, images: payload.images.length + " image(s)" });

@@ -80,7 +80,12 @@ class TestScanSkills(unittest.TestCase):
 
     def test_builtin_task_skills_exist(self):
         ids = {s["id"] for s in prompts_mod._scan_skills()}
-        self.assertTrue({"smart_prompt", "template_prompt"} <= ids)
+        self.assertTrue({"smart_prompt", "translate_prompt"} <= ids)
+
+    def test_internal_tasks_hidden(self):
+        """内部任务不作为可选 skill 暴露"""
+        ids = {s["id"] for s in prompts_mod._scan_skills()}
+        self.assertFalse({"template_prompt", "extract_title", "extract_classify"} & ids)
 
     def test_template_skills_are_text_only(self):
         styles = [s for s in prompts_mod._scan_skills()
@@ -120,12 +125,44 @@ class TestResolveImageBytes(unittest.TestCase):
     def test_invalid_sources(self):
         self.assertIsNone(prompts_mod.resolve_image_bytes(None))
         self.assertIsNone(prompts_mod.resolve_image_bytes("not-a-dict"))
-        # kind 不是 data
+        # kind 不是 data / input
         self.assertIsNone(prompts_mod.resolve_image_bytes(
             {"kind": "file", "path": "/tmp/x.png"}))
         # 缺少逗号分隔的 data URI
         self.assertIsNone(prompts_mod.resolve_image_bytes(
             {"kind": "data", "data": "garbage"}))
+
+    def test_input_kind_from_load_image(self):
+        """节点 image 输入的文件名源（LoadImage 场景）"""
+        import tempfile
+        import shutil
+        import folder_paths
+        from PIL import Image
+
+        tmp = tempfile.mkdtemp()
+        try:
+            Image.new("RGB", (2048, 1024), (10, 200, 30)).save(os.path.join(tmp, "test_img.png"))
+            orig = folder_paths.get_input_directory
+            folder_paths.get_input_directory = lambda: tmp
+            try:
+                out = prompts_mod.resolve_image_bytes({"kind": "input", "value": "test_img.png"})
+                self.assertIsNotNone(out)
+                from PIL import Image as PILImage
+                img = PILImage.open(io.BytesIO(out))
+                self.assertLessEqual(max(img.size), 1024)
+
+                # 带标注形式
+                out2 = prompts_mod.resolve_image_bytes({"kind": "input", "value": "test_img.png[input]"})
+                self.assertIsNotNone(out2)
+
+                # 越界路径必须被拒绝
+                self.assertIsNone(prompts_mod.resolve_image_bytes({"kind": "input", "value": "../escape.png"}))
+                # 不存在的文件
+                self.assertIsNone(prompts_mod.resolve_image_bytes({"kind": "input", "value": "missing.png"}))
+            finally:
+                folder_paths.get_input_directory = orig
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)

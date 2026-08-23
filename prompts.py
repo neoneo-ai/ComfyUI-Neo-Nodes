@@ -285,6 +285,13 @@ _SKILL_MARKERS = {
     "reverse_prompt": ["@图", "@反推", "@图片"],
 }
 
+# 仅内部使用的任务（实现细节），不对外展示为可选 skill
+_SKILL_INTERNAL = {
+    "template_prompt",
+    "extract_title",
+    "extract_classify",
+}
+
 
 def _skill_category(skill_id: str, data: dict) -> str:
     """推断 skill 分类：vision（含图像输入）/ task（任务）/ style（模板）。"""
@@ -312,6 +319,8 @@ def _scan_skills() -> list:
             if not data:
                 continue
             skill_id = data.get("id") or Path(entry).stem
+            if skill_id in _SKILL_INTERNAL:
+                continue
             inputs = data.get("inputs") or _SKILL_DEFAULT_INPUTS.get(skill_id, ["text"])
             skills.append({
                 "id": skill_id,
@@ -356,27 +365,70 @@ def _scan_skills() -> list:
 
 MAX_IMAGE_SIDE = 1024
 
+# 节点 image 输入允许解析的图片扩展名
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
-def resolve_image_bytes(src: dict, max_side: int = MAX_IMAGE_SIDE) -> bytes | None:
-    """将前端传入的图片源解析为字节数据（超过最长边时等比缩放）。
 
-    src: {"kind": "data", "data": "data:image/png;base64,...."}  (唯一支持的 P1 格式)
+def _read_image_raw(src: dict) -> bytes | None:
+    """解析图片源为原始字节。
+
+    kind="data":  {"data": "data:image/png;base64,..."}  前端粘贴/选择/拖拽
+    kind="input": {"value": "sub/dir/img.png[output]"}   节点 image 输入上游（如 LoadImage）
     """
     import base64
+    import folder_paths
+
+    kind = src.get("kind", "data")
+    if kind == "data":
+        data_uri = src.get("data", "")
+        if "," not in data_uri:
+            return None
+        try:
+            return base64.b64decode(data_uri.split(",", 1)[1])
+        except Exception as e:
+            logger.warning(f"resolve_image_bytes: failed to decode base64 image: {e}")
+            return None
+
+    if kind == "input":
+        name = str(src.get("value", "")).strip()
+        if not name:
+            return None
+        # 解析 [input]/[output] 标注（LoadImage 的 widget 值可能带），默认 input 目录
+        stem, tag = name, ""
+        if name.endswith("]") and "[" in name:
+            stem, _, tag = name[:-1].rpartition("[")
+        base_dir = folder_paths.get_output_directory() if tag == "output" \
+            else folder_paths.get_input_directory()
+        real = os.path.realpath(os.path.join(base_dir, stem))
+        base_real = os.path.realpath(base_dir)
+        if not os.path.normcase(real).startswith(os.path.normcase(base_real) + os.sep):
+            logger.warning(f"resolve_image_bytes: path escapes directory: {name}")
+            return None
+        if not os.path.isfile(real):
+            logger.warning(f"resolve_image_bytes: image not found: {name}")
+            return None
+        if os.path.splitext(real)[1].lower() not in _IMAGE_EXTENSIONS:
+            logger.warning(f"resolve_image_bytes: unsupported image type: {name}")
+            return None
+        try:
+            with open(real, "rb") as f:
+                return f.read()
+        except Exception as e:
+            logger.warning(f"resolve_image_bytes: failed to read {name}: {e}")
+            return None
+
+    return None
+
+
+def resolve_image_bytes(src: dict, max_side: int = MAX_IMAGE_SIDE) -> bytes | None:
+    """将前端传入的图片源解析为字节数据（超过最长边时等比缩放为 PNG）。"""
     import io
     from PIL import Image
 
     if not isinstance(src, dict):
         return None
-    if src.get("kind", "data") != "data":
-        return None
-    data_uri = src.get("data", "")
-    if "," not in data_uri:
-        return None
-    try:
-        raw = base64.b64decode(data_uri.split(",", 1)[1])
-    except Exception as e:
-        logger.warning(f"resolve_image_bytes: failed to decode base64 image: {e}")
+    raw = _read_image_raw(src)
+    if raw is None:
         return None
     try:
         with Image.open(io.BytesIO(raw)) as img:
@@ -504,6 +556,7 @@ class NeoPrompts:
             },
             "optional": {
                 "text_input": ("STRING", {"forceInput": True}),
+                "image": ("IMAGE",),
                 "instance_uid": ("STRING", {"default": "", "hidden": True}),
             },
             "hidden": {
@@ -518,7 +571,7 @@ class NeoPrompts:
     DESCRIPTION = "AI-powered text encoder supports save/select prompt, LLM-based prompt enhancement, translation, classification, title extraction, intelligent caching, and auto-generate."
 
     def encode_prompts(self, clip, disable_text_input=False, auto_generate=False, quick_input="",
-                       text="", text_input=None, unique_id=None, instance_uid="", template_id=""):
+                       text="", text_input=None, unique_id=None, instance_uid="", template_id="", image=None):
         """Encode prompts with optional auto-generate support.
         
         Logic:
@@ -526,10 +579,12 @@ class NeoPrompts:
         2. If image is provided, use the reverse_prompt skill (image-to-prompt)
         3. Otherwise, combine text and quick_input (same as frontend logic)
         """
-        logger.info(f"encode_prompts called: auto_generate={auto_generate}, text='{text[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}")
+        logger.info(f"encode_prompts called: auto_generate={auto_generate}, text='{text[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
         
         # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
-        if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
+        # Image input connected -> always use the image (reverse_prompt) flow;
+        # text-only generation still requires auto_generate.
+        if ((auto_generate and quick_input.strip()) or image is not None) and text_input is None:
             logger.info(f"Auto-generate condition met, checking LLM mode...")
             current_mode = get_current_mode()
             logger.info(f"Current LLM mode: {current_mode}")
@@ -627,7 +682,7 @@ class NeoPrompts:
     @classmethod
     def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, **kwargs):
         # If auto_generate is enabled and (quick_input or image) has content, always re-execute
-        if auto_generate and (quick_input.strip() or image is not None):
+        if image is not None or (auto_generate and quick_input.strip()):
             import time
             return time.time()  # Return unique value to force re-execution
         # Otherwise, never change (use cached result)
@@ -1368,6 +1423,7 @@ class NeoPromptGenerator:
             },
             "optional": {
                 "text_input": ("STRING", {"forceInput": True}),
+                "image": ("IMAGE",),
                 "instance_uid": ("STRING", {"default": "", "hidden": True}),
             },
             "hidden": {
@@ -1382,17 +1438,19 @@ class NeoPromptGenerator:
     OUTPUT_NODE = True
     DESCRIPTION = "Simple prompt generator node with settings button. Supports external/internal input toggle and auto-generate. No clip encoder binding."
 
-    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id=""):
+    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id="", image=None):
         """Returns the prompt text as output.
 
         Logic:
         1. If auto_generate is enabled and quick_input has content, call LLM synchronously (ignore existing prompt)
         2. Otherwise, combine prompt and quick_input (same as frontend logic)
         """
-        logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}")
+        logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
         
         # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
-        if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
+        # Image input connected -> always use the image (reverse_prompt) flow;
+        # text-only generation still requires auto_generate.
+        if ((auto_generate and quick_input.strip()) or image is not None) and text_input is None:
             logger.info(f"Auto-generate condition met, checking LLM mode...")
             current_mode = get_current_mode()
             logger.info(f"Current LLM mode: {current_mode}")
@@ -1471,7 +1529,7 @@ class NeoPromptGenerator:
     @classmethod
     def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, **kwargs):
         # If auto_generate is enabled and (quick_input or image) has content, always re-execute
-        if auto_generate and (quick_input.strip() or image is not None):
+        if image is not None or (auto_generate and quick_input.strip()):
             import time
             return time.time()  # Return unique value to force re-execution
         # Otherwise, never change (use cached result)
