@@ -665,6 +665,10 @@ class NeoPrompts:
             effective_text_input = None
         else:
             effective_text_input = text_input
+
+        if effective_text_input is not None:
+            # EXTERNAL: use the connected text_input as the content to encode/output
+            current_text = effective_text_input
         
         if effective_text_input is not None and instance_uid:
             PromptServer.instance.send_sync("rs.prompt.update", {
@@ -1537,6 +1541,10 @@ class NeoPromptGenerator:
             effective_text_input = None
         else:
             effective_text_input = text_input
+
+        if effective_text_input is not None:
+            # EXTERNAL: use the connected text_input as the content to encode/output
+            current_text = effective_text_input
 
         if effective_text_input is not None and instance_uid:
             PromptServer.instance.send_sync("rs.prompt.update", {
