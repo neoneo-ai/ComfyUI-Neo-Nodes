@@ -1246,6 +1246,36 @@ function createStatusBars() {
         }).catch(e => console.error("Failed to read image:", e));
     }
 
+    // 悬停放大预览：单例元素挂在 body 上（fixed 定位），避免被节点 overflow 裁剪
+    let imageHoverPreview = null;
+
+    function showImageHoverPreview(src, anchorEl) {
+        if (!imageHoverPreview) {
+            imageHoverPreview = mkEl("img", "rs-image-hover-preview");
+            document.body.appendChild(imageHoverPreview);
+        }
+        imageHoverPreview.src = src;
+        imageHoverPreview.style.display = "block";
+        // 预览最大尺寸跟随画布缩放比率，保持与节点内容的视觉大小一致
+        const canvasScale = app?.canvas?.ds?.scale || 1;
+        const scale = Math.max(0.4, Math.min(canvasScale, 2.5));
+        const maxW = 320 * scale;
+        const maxH = 320 * scale;
+        imageHoverPreview.style.maxWidth = maxW + "px";
+        imageHoverPreview.style.maxHeight = maxH + "px";
+        const r = anchorEl.getBoundingClientRect();
+        let left = r.left + r.width / 2 - maxW / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - maxW - 8));
+        let top = r.top - maxH - 10; // 默认显示在缩略图上方
+        if (top < 8) top = r.bottom + 10; // 放不下则翻到下方
+        imageHoverPreview.style.left = left + "px";
+        imageHoverPreview.style.top = top + "px";
+    }
+
+    function hideImageHoverPreview() {
+        if (imageHoverPreview) imageHoverPreview.style.display = "none";
+    }
+
     function renderImageChips() {
         imageChipsRow.innerHTML = "";
         attachedImages.forEach((img, idx) => {
@@ -1255,6 +1285,9 @@ function createStatusBars() {
             thumb.src = img.input ? inputViewUrl(img.input) : img.data;
             thumb.alt = `Image ${idx + 1}`;
             thumb.className = "rs-image-chip-thumb";
+            // 悬停放大预览
+            thumb.addEventListener("mouseenter", () => showImageHoverPreview(thumb.src, chip));
+            thumb.addEventListener("mouseleave", hideImageHoverPreview);
 
             // 右侧控制区域：编号 + 删除按钮
             const controls = mkEl("span", "rs-image-controls");

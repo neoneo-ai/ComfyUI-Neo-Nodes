@@ -2035,6 +2035,21 @@
     color: #fff;
 }
 
+/* 悬停缩略图时的放大预览 */
+.rs-image-hover-preview {
+    position: fixed;
+    z-index: 999999;
+    max-width: 320px;
+    max-height: 320px;
+    object-fit: contain;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: #111;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+    display: none;
+}
+
 /* Attach button in toolbar */
 .rs-input-toolbar .rs-attach-btn {
     padding: 4px 8px;
