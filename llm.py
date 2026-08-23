@@ -1545,16 +1545,36 @@ async def handle_llm_api_stream(task_name, request):
         data = await request.json()
         text = data.get("text", "")
         template_id = data.get("templateId", data.get("template_id", ""))
+        skill_id = data.get("skillId", data.get("skill_id", ""))
+        raw_images = data.get("images") or []
         auto_unload = data.get("autoUnload", data.get("auto_unload", False))
 
-        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', templateId='{template_id}', autoUnload={auto_unload}")
+        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', templateId='{template_id}', skillId='{skill_id}', images={len(raw_images)}, autoUnload={auto_unload}")
 
-        if not text or not text.strip():
+        # 允许空文本：有图片输入（如反推）时合法
+        images = []
+        if raw_images:
+            from .prompts import resolve_image_bytes
+            images = [b for b in (resolve_image_bytes(src) for src in raw_images) if b]
+            if not images:
+                return web.Response(text="data: [ERROR] invalid image data\n\n", content_type="text/event-stream")
+
+        if not text.strip() and not images:
             return web.Response(text="data: [ERROR] text content is empty\n\n", content_type="text/event-stream")
 
-        # 加载模板内容作为 system_prompt（完全替换默认系统提示词）
+        # skill 路由：skillId 优先于 endpoint 的 task_name
+        # （任务类 skill 如 reverse_prompt 直接用其默认系统提示词）
+        if skill_id and skill_id in LLM_TASKS:
+            task_name = skill_id
+            logger.info(f"Skill route: task_name='{skill_id}'")
+        elif skill_id:
+            # 非任务类 skill：当作模板尝试加载
+            template_id = skill_id
+
         system_prompt = None
-        if template_id:
+        if task_name == "reverse_prompt":
+            logger.info("reverse_prompt skill: using default task system prompt")
+        elif template_id:
             logger.info(f"Attempting to load template: {template_id}")
             system_prompt = await _load_template_content(template_id)
             logger.info(f"Template content loaded: {system_prompt is not None}, length: {len(system_prompt) if system_prompt else 0}")
@@ -1565,14 +1585,18 @@ async def handle_llm_api_stream(task_name, request):
                 logger.info(f"Switched task from initial endpoint to: {task_name}")
             else:
                 logger.warning(f"Template '{template_id}' not found or has no content")
+        elif images:
+            # 有图但未指定 skill：默认走反推
+            task_name = "reverse_prompt"
+            logger.info("Image input without explicit skill, using reverse_prompt")
         else:
             logger.info("No template_id provided, using default task")
 
         async def event_stream():
             try:
                 import asyncio
-                # 将模板内容作为 system_prompt 传递给流式任务
-                gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt)
+                # 将模板内容作为 system_prompt 传递；图片 byte 列表传给流式任务
+                gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt, images=images if images else None)
                 for chunk in gen:
                     yield (f"data: {chunk}\n\n").encode()
                     await asyncio.sleep(0.01)  # 10ms 延迟，让浏览器逐字显示

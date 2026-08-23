@@ -1947,3 +1947,79 @@
 /* ==========================================
    Theme - LOCAL PROMPT (Green)
    ========================================== */
+
+/* ==========================================
+   Image chips (attach for vision skills / reverse prompt)
+   ========================================== */
+
+.rs-image-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.rs-image-chips:empty {
+    display: none;
+}
+
+.rs-image-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px 2px 2px;
+    background: #2a2a2a;
+    border: 1px solid #555;
+    border-radius: 6px;
+    max-width: 160px;
+}
+
+.rs-image-chip-thumb {
+    width: 24px;
+    height: 24px;
+    object-fit: cover;
+    border-radius: 4px;
+}
+
+.rs-image-chip-name {
+    font-size: 11px;
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100px;
+}
+
+.rs-image-chip-del {
+    background: transparent;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.rs-image-chip-del:hover {
+    color: #f87171;
+}
+
+/* Attach button in toolbar */
+.rs-input-toolbar .rs-attach-btn {
+    padding: 4px 8px;
+    font-size: 15px;
+    font-weight: 600;
+    background: #2a2a2a;
+    color: #999;
+    border: none !important;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+    height: 24px;
+    line-height: 1;
+}
+
+.rs-input-toolbar .rs-attach-btn:hover {
+    color: #7ab8f5;
+    background: #333;
+}

@@ -25,7 +25,11 @@ import {
     listTemplates,
     loadTemplate,
     saveTemplate,
-    deleteTemplate
+    deleteTemplate,
+    // Skills
+    listSkills,
+    fileToBase64,
+    imagesFromClipboard
 } from "./prompt-service.js";
 
 // ==========================================
@@ -1219,32 +1223,109 @@ function createStatusBars() {
     toggleSwitch.appendChild(externalTab);
     toggleWrapper.appendChild(toggleSwitch);
     
-    // Template selector dropdown
+    // Template selector dropdown (now skill-aware: templates + tasks + image skills)
     const tplSelector = mkEl("select", "rs-tpl-selector");
-    tplSelector.title = "Select system prompt template";
-    
+    tplSelector.title = "Select skill (template / task / image)";
+
+    // 附加图片 chips 容器 + 图片选择按钮（用于反推等 vision skill）
+    const imageChipsRow = mkEl("div", "rs-image-chips");
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    fileInput.multiple = true;
+    fileInput.style.display = "none";
+    const attachedImages = []; // [{data: dataURI, name: string}]
+
+    function addImageFile(file) {
+        return fileToBase64(file).then(img => {
+            attachedImages.push(img);
+            renderImageChips();
+            return img;
+        }).catch(e => console.error("Failed to read image:", e));
+    }
+
+    function renderImageChips() {
+        imageChipsRow.innerHTML = "";
+        attachedImages.forEach((img, idx) => {
+            const chip = mkEl("span", "rs-image-chip");
+            const thumb = document.createElement("img");
+            thumb.src = img.data;
+            thumb.alt = img.name || "image";
+            thumb.className = "rs-image-chip-thumb";
+            const label = mkEl("span", "rs-image-chip-name");
+            label.textContent = (img.name || "img" + (idx + 1)).slice(0, 18);
+            const del = document.createElement("button");
+            del.type = "button";
+            del.textContent = "✕";
+            del.className = "rs-image-chip-del";
+            del.addEventListener("click", () => {
+                attachedImages.splice(idx, 1);
+                renderImageChips();
+            });
+            chip.appendChild(thumb);
+            chip.appendChild(label);
+            chip.appendChild(del);
+            imageChipsRow.appendChild(chip);
+        });
+    }
+
+    function clearImages() {
+        attachedImages.length = 0;
+        renderImageChips();
+    }
+
+    // 图片选择按钮（+）
+    const attachBtn = mkEl("button", "rs-attach-btn");
+    attachBtn.textContent = "+";
+    attachBtn.title = "附加图片（反推/多模态 skill）";
+    attachBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+        Array.from(fileInput.files || []).forEach(addImageFile);
+        fileInput.value = "";
+    });
+
+    const CATEGORY_LABELS = {
+        "vision": { label: "🖼️ 图像 / 反推", order: 0 },
+        "task": { label: "⚙️ 任务", order: 1 },
+        "style": { label: "🎨 风格模板", order: 2 },
+        "custom": { label: "📝 自定义", order: 3 }
+    };
+
     async function populateTemplateSelector() {
-        const templates = await listTemplates();
+        const skills = await listSkills();
         const currentVal = tplSelector.value;
         tplSelector.innerHTML = "";
-        
+
         const defaultOpt = document.createElement("option");
         defaultOpt.value = "";
         defaultOpt.textContent = "默认";
         tplSelector.appendChild(defaultOpt);
-        
-        if (templates) {
-            templates.forEach(tpl => {
-                const opt = document.createElement("option");
-                opt.value = tpl.id;
-                opt.textContent = tpl.name || tpl.id;
-                if (tpl.source === "presets") {
-                    opt.textContent += " 📌";
-                }
-                tplSelector.appendChild(opt);
+
+        if (skills) {
+            // 按 category 分组
+            const groups = {};
+            skills.forEach(s => {
+                const cat = CATEGORY_LABELS[s.category] ? s.category : "style";
+                if (!groups[cat]) groups[cat] = [];
+                groups[cat].push(s);
+            });
+            Object.keys(groups).sort((a, b) =>
+                (CATEGORY_LABELS[a]?.order ?? 99) - (CATEGORY_LABELS[b]?.order ?? 99)
+            ).forEach(cat => {
+                const optgroup = document.createElement("optgroup");
+                optgroup.label = CATEGORY_LABELS[cat].label;
+                groups[cat].forEach(s => {
+                    const opt = document.createElement("option");
+                    opt.value = s.id;
+                    const imgBadge = s.needs_image ? "📷 " : "";
+                    const pin = s.source === "presets" ? " 📌" : "";
+                    opt.textContent = `${imgBadge}${s.name || s.id}${pin}`;
+                    optgroup.appendChild(opt);
+                });
+                tplSelector.appendChild(optgroup);
             });
         }
-        
+
         if (currentVal && [...tplSelector.options].some(o => o.value === currentVal)) {
             tplSelector.value = currentVal;
         }
@@ -1326,6 +1407,7 @@ function createStatusBars() {
     autoGenerateWrapper.appendChild(autoGenerateLabel);
 
     // Add elements to toolbar
+    inputToolbar.appendChild(attachBtn);
     inputToolbar.appendChild(tplSelector);
     inputToolbar.appendChild(settingsBtn);
     const spacer = mkEl("div", "rs-spacer");
@@ -1334,8 +1416,27 @@ function createStatusBars() {
     inputToolbar.appendChild(generateBtn);
 
     // Add input and toolbar to wrapper
+    quickInputWrapper.appendChild(imageChipsRow);
     quickInputWrapper.appendChild(quickInput);
     quickInputWrapper.appendChild(inputToolbar);
+    quickInputWrapper.appendChild(fileInput);
+
+    // 粘贴图片直接附加（反推）
+    quickInput.addEventListener("paste", (e) => {
+        const files = imagesFromClipboard(e);
+        if (files.length) {
+            e.preventDefault();
+            files.forEach(addImageFile);
+        }
+    });
+
+    // 拖拽图片到输入框附加
+    quickInputWrapper.addEventListener("dragover", (e) => e.preventDefault());
+    quickInputWrapper.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith("image/"));
+        files.forEach(addImageFile);
+    });
 
     const customTextarea = document.createElement("textarea");
     customTextarea.className = "comfy-multiline-input";
@@ -1353,7 +1454,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox };
+    return { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow };
 }
 
 // ==========================================
@@ -1361,7 +1462,7 @@ function createStatusBars() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, field: inputField, tagsContainer, selectedTags, okBtn: inputOk, cancelBtn: inputCancel } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
@@ -2000,7 +2101,12 @@ function createPromptManagerUI() {
             loadModelsIntoSettings,
             tplSelector,
             populateTemplateSelector,
-            autoGenerateCheckbox
+            autoGenerateCheckbox,
+            attachedImages,
+            addImageFile,
+            clearImages,
+            attachBtn,
+            imageChipsRow
         };
     }
 

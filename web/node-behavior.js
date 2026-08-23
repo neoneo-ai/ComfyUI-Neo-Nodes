@@ -3,11 +3,33 @@
  * 共享的节点行为逻辑 - 消除 NeoPromptSimple 和 NeoPrompts 之间的代码重复
  */
 
-import { checkModelAndPrompt, enhancePromptStream, translatePromptStream, smartPromptStream, randomPrompt, sseStream } from "./prompt-service.js";
+import { checkModelAndPrompt, enhancePromptStream, translatePromptStream, smartPromptStream, randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
 
 // ==========================================
 // 工具函数
 // ==========================================
+
+// @ 标记 -> skill id 路由（与后端 _SKILL_MARKERS 保持一致）
+const AT_SKILL_MARKERS = {
+    "图": "reverse_prompt",
+    "图片": "reverse_prompt",
+    "反推": "reverse_prompt",
+    "image": "reverse_prompt",
+    "img": "reverse_prompt",
+};
+
+// 匹配文本中的 @ 标记，返回 skill id 或空串
+// 注意：不能用 \b（JS 中中文字符不属于 \w，中文之间永远不存在词边界）
+function matchSkillMarker(text) {
+    if (!text) return "";
+    const m = text.match(/@(图片|反推|image|img|图)/);
+    return m ? (AT_SKILL_MARKERS[m[1]] || "") : "";
+}
+
+// 去除文本中的 @ 标记（标记只用于路由，不进入提示词）
+function stripSkillMarkers(text) {
+    return (text || "").replace(/@(图片|反推|image|img|图)/g, "").trim();
+}
 
 /**
  * 获取实例 UID
@@ -98,15 +120,20 @@ function createBasicNodeInitializer(node) {
 function createGenerateHandler(promptUI) {
     return async () => {
         console.log("createGenerateHandler called with promptUI keys:", Object.keys(promptUI));
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, downloadModal, statusBar, tplSelector } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, downloadModal, statusBar, tplSelector, attachedImages = [], clearImages } = promptUI;
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
 
         // If quickInput is empty, use customTextarea content as the message
         const messageToLLM = quickText || currentPrompt;
-        if (!messageToLLM) {
-            alert("Please enter a quick description or content in the text area first.");
+
+        // @ 标记与附加图片 -> skill 路由（反推等 vision skill）
+        const hasImages = attachedImages.length > 0;
+        const markerSkillId = matchSkillMarker(messageToLLM);
+
+        if (!messageToLLM && !hasImages) {
+            alert("Please enter a quick description or attach an image first.");
             return;
         }
 
@@ -124,7 +151,53 @@ function createGenerateHandler(promptUI) {
         try {
             let accumulated = "";
 
-            if (selectedTemplateId) {
+            if (hasImages || markerSkillId) {
+                // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
+                if (markerSkillId && !hasImages) {
+                    alert("该 skill 需要图片：请通过 📎 按钮或 Ctrl+V 粘贴图片后再生成。");
+                    return;
+                }
+
+                generateBtn.textContent = "🖼️ Processing image...";
+
+                const skillId = markerSkillId
+                    || (selectedTemplateId && selectedTemplateId !== "reverse_prompt" ? selectedTemplateId : "")
+                    || "reverse_prompt";
+
+                const payload = {
+                    text: stripSkillMarkers(messageToLLM),
+                    skillId,
+                    templateId: markerSkillId ? "" : selectedTemplateId,
+                    images: attachedImages.map(img => ({ kind: "data", data: img.data })),
+                    description: quickText || currentPrompt
+                };
+                console.log("Skill invoke request:", { ...payload, images: payload.images.length + " image(s)" });
+
+                await invokePromptStream(payload, {
+                    onChunk: (chunk) => {
+                        if (chunk.text) {
+                            accumulated += chunk.text;
+                            if (!rafId) {
+                                rafId = requestAnimationFrame(() => {
+                                    customTextarea.value = accumulated;
+                                    customTextarea.scrollTop = customTextarea.scrollHeight;
+                                    rafId = null;
+                                });
+                            }
+                        }
+                    },
+                    onDone: () => {
+                        if (rafId) cancelAnimationFrame(rafId);
+                        if (textWidget) textWidget.value = accumulated;
+                        saveTextToStorage(node, textWidget, customTextarea);
+                        clearImages?.();
+                    },
+                    onError: (err) => {
+                        console.error("Skill invoke error:", err);
+                        alert("Failed to process prompt: " + err);
+                    }
+                });
+            } else if (selectedTemplateId) {
                 // 使用选中的模板进行生成（流式）
                 generateBtn.textContent = "🤖 Processing with template...";
 

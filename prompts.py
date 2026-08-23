@@ -264,6 +264,151 @@ from .llm import (
 )
 
 
+# ==========================================
+# Skills - 统一 模板 / 任务 / 图片输入 的元数据视图
+# skill 是"系统提示词 + 输入契约(text/image) + 触发方式(标记/下拉)"
+# ==========================================
+TASKS_DIR = os.path.join(TEMPLATES_DIR, "tasks")
+
+# 内置使命级别的默认输入契约（任务 YAML 未声明 inputs 时使用）
+_SKILL_DEFAULT_INPUTS = {
+    "reverse_prompt": ["image", "text"],
+    "smart_prompt": ["text"],
+    "template_prompt": ["text"],
+    "translate_prompt": ["text"],
+    "extract_title": ["text"],
+    "extract_classify": ["text"],
+}
+
+# 输入框 @ 标记 -> skill id 路由表
+_SKILL_MARKERS = {
+    "reverse_prompt": ["@图", "@反推", "@图片"],
+}
+
+
+def _skill_category(skill_id: str, data: dict) -> str:
+    """推断 skill 分类：vision（含图像输入）/ task（任务）/ style（模板）。"""
+    if data.get("category"):
+        return data["category"]
+    if "image" in data.get("inputs", []):
+        return "vision"
+    return "task"
+
+
+def _scan_skills() -> list:
+    """合并 tasks + templates(presets/custom) 为统一 skill 元数据列表。
+
+    每个 skill 返回: {id, name, category, source, inputs, needs_image, markers, tags, description}
+    保持与 list_templates 兼容：id/source/tags/description 字段不变。
+    """
+    skills = []
+
+    # 1) 任务 (tasks/*.yaml) -> category=task/vision
+    if os.path.isdir(TASKS_DIR):
+        for entry in sorted(os.listdir(TASKS_DIR)):
+            if not (entry.endswith('.yaml') or entry.endswith('.yml')) or entry.startswith('_'):
+                continue
+            data = _load_template_file(os.path.join(TASKS_DIR, entry))
+            if not data:
+                continue
+            skill_id = data.get("id") or Path(entry).stem
+            inputs = data.get("inputs") or _SKILL_DEFAULT_INPUTS.get(skill_id, ["text"])
+            skills.append({
+                "id": skill_id,
+                "name": data.get("name", skill_id),
+                "category": _skill_category(skill_id, {**data, "inputs": inputs}),
+                "source": "tasks",
+                "tags": data.get("tags", []),
+                "inputs": inputs,
+                "needs_image": "image" in inputs,
+                "markers": data.get("markers") or _SKILL_MARKERS.get(skill_id, []),
+                "description": data.get("description", ""),
+            })
+
+    # 2) 模板 (presets + custom) -> category=style/custom
+    with _templates_lock:
+        preset_templates = _scan_templates_recursive(TEMPLATE_PRESETS_DIR, source="presets")
+        custom_templates = _scan_templates_recursive(TEMPLATE_CUSTOM_DIR, source="custom")
+
+    for tpl in preset_templates + custom_templates:
+        tpl_id = tpl.get("id", "")
+        if not tpl_id:
+            continue
+        inputs = tpl.get("inputs") or ["text"]
+        skills.append({
+            "id": tpl_id,
+            "name": tpl.get("name", tpl_id),
+            "category": tpl.get("category", "style"),
+            "source": tpl.get("source", "custom"),
+            "tags": tpl.get("tags", []),
+            "inputs": inputs,
+            "needs_image": "image" in inputs,
+            "markers": [],
+            "description": tpl.get("description", ""),
+        })
+
+    return skills
+
+
+# ==========================================
+# Image Helpers (前端传图 / 节点 IMAGE 输入)
+# ==========================================
+
+MAX_IMAGE_SIDE = 1024
+
+
+def resolve_image_bytes(src: dict, max_side: int = MAX_IMAGE_SIDE) -> bytes | None:
+    """将前端传入的图片源解析为字节数据（超过最长边时等比缩放）。
+
+    src: {"kind": "data", "data": "data:image/png;base64,...."}  (唯一支持的 P1 格式)
+    """
+    import base64
+    import io
+    from PIL import Image
+
+    if not isinstance(src, dict):
+        return None
+    if src.get("kind", "data") != "data":
+        return None
+    data_uri = src.get("data", "")
+    if "," not in data_uri:
+        return None
+    try:
+        raw = base64.b64decode(data_uri.split(",", 1)[1])
+    except Exception as e:
+        logger.warning(f"resolve_image_bytes: failed to decode base64 image: {e}")
+        return None
+    try:
+        with Image.open(io.BytesIO(raw)) as img:
+            w, h = img.size
+            if max(w, h) > max_side:
+                ratio = max_side / max(w, h)
+                img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"resolve_image_bytes: failed to process image: {e}")
+        return None
+
+
+def image_tensor_to_png(image: torch.Tensor) -> bytes | None:
+    """将 ComfyUI IMAGE tensor ((1,H,W,3) float 0~1) 转为 PNG bytes（第一帧）。"""
+    import io
+    import numpy as np
+    from PIL import Image
+
+    try:
+        arr = image[0].detach().cpu().numpy()
+        arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+        buf = io.BytesIO()
+        Image.fromarray(arr).save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"image_tensor_to_png: failed: {e}")
+        return None
+
+
 def _load_tags_index(tags_file: str = TAGS_FILE) -> dict:
     """Load tags index from the dedicated tags file."""
     if not os.path.exists(tags_file):
@@ -377,33 +522,39 @@ class NeoPrompts:
         """Encode prompts with optional auto-generate support.
         
         Logic:
-        1. If auto_generate is enabled and quick_input has content, call LLM synchronously (ignore existing text)
-        2. Otherwise, combine text and quick_input (same as frontend logic)
+        1. If auto_generate is enabled and (quick_input or image) has content, call LLM synchronously (ignore existing text)
+        2. If image is provided, use the reverse_prompt skill (image-to-prompt)
+        3. Otherwise, combine text and quick_input (same as frontend logic)
         """
         logger.info(f"encode_prompts called: auto_generate={auto_generate}, text='{text[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}")
         
-        # If auto_generate is enabled and quick_input has content, generate synchronously
-        if auto_generate and quick_input.strip() and text_input is None:
+        # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
+        if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
             logger.info(f"Auto-generate condition met, checking LLM mode...")
             current_mode = get_current_mode()
             logger.info(f"Current LLM mode: {current_mode}")
-            if current_mode == LLM_MODE_REMOTE:
-                try:
+            try:
+                image_bytes = image_tensor_to_png(image) if image is not None else None
+                image_mode = image_bytes is not None
+                if image_mode or current_mode == LLM_MODE_REMOTE:
                     # Use selected template as system prompt when available
-                    task_name = "smart_prompt"
+                    task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
-                    if template_id.strip():
+                    if not image_mode and template_id.strip():
                         system_prompt = _load_template_content(template_id)
                         if system_prompt:
                             task_name = "template_prompt"
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
                         else:
                             logger.warning(f"Template '{template_id}' not found, falling back to smart_prompt")
-                    logger.info(f"Calling LLM with {task_name} task and quick_input: {quick_input[:100]}...")
+                    logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
                     accumulated = ""
-                    for chunk in run_llm_task_stream(task_name, quick_input, system_prompt=system_prompt):
+                    stream_kwargs = {"system_prompt": system_prompt}
+                    if image_mode:
+                        stream_kwargs["images"] = [image_bytes]
+                    for chunk in run_llm_task_stream(task_name, quick_input, **stream_kwargs):
                         accumulated += chunk
                         # Send real-time update to frontend
                         if instance_uid:
@@ -423,11 +574,11 @@ class NeoPrompts:
                                 "prompt": accumulated,
                                 "is_complete": True
                             })
-                except Exception as e:
-                    logger.error(f"Auto-generate failed: {e}")
-                    logger.exception(e)
-            else:
-                logger.warning(f"Auto-generate only works in remote LLM mode, current mode: {current_mode}")
+                else:
+                    logger.warning(f"Auto-generate only works in remote LLM mode, current mode: {current_mode}")
+            except Exception as e:
+                logger.error(f"Auto-generate failed: {e}")
+                logger.exception(e)
         else:
             logger.info(f"Auto-generate condition not met: auto_generate={auto_generate}, quick_input_has_content={quick_input.strip()}, text_input_none={text_input is None}")
             # Combine text and quick_input (same logic as frontend)
@@ -474,9 +625,9 @@ class NeoPrompts:
         }
 
     @classmethod
-    def IS_CHANGED(cls, auto_generate=False, quick_input="", **kwargs):
-        # If auto_generate is enabled and quick_input has content, always re-execute
-        if auto_generate and quick_input.strip():
+    def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, **kwargs):
+        # If auto_generate is enabled and (quick_input or image) has content, always re-execute
+        if auto_generate and (quick_input.strip() or image is not None):
             import time
             return time.time()  # Return unique value to force re-execution
         # Otherwise, never change (use cached result)
@@ -1073,6 +1224,14 @@ async def rs_prompts_list_templates(request):
         return web.Response(status=500, text=str(e))
 
 
+@server.PromptServer.instance.routes.get("/rs_prompts/skills")
+async def rs_prompts_list_skills(request):
+    """列出所有 skill（任务 + 模板统一元数据，含图片输入契约与 @ 标记）。"""
+    try:
+        return web.json_response(_scan_skills())
+    except Exception as e:
+        logger.error(f"Error listing skills: {e}")
+        return web.Response(status=500, text=str(e))
 @server.PromptServer.instance.routes.post("/rs_prompts/load_template")
 async def rs_prompts_load_template(request):
     """加载单个模版内容（支持 YAML 格式）"""
@@ -1232,29 +1391,33 @@ class NeoPromptGenerator:
         """
         logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}")
         
-        # If auto_generate is enabled and quick_input has content, generate synchronously
-        if auto_generate and quick_input.strip() and text_input is None:
+        # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
+        if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
             logger.info(f"Auto-generate condition met, checking LLM mode...")
-            # Check if we're in remote mode
             current_mode = get_current_mode()
             logger.info(f"Current LLM mode: {current_mode}")
-            if current_mode == LLM_MODE_REMOTE:
-                try:
+            try:
+                image_bytes = image_tensor_to_png(image) if image is not None else None
+                image_mode = image_bytes is not None
+                if image_mode or current_mode == LLM_MODE_REMOTE:
                     # Use selected template as system prompt when available
-                    task_name = "smart_prompt"
+                    task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
-                    if template_id.strip():
+                    if not image_mode and template_id.strip():
                         system_prompt = _load_template_content(template_id)
                         if system_prompt:
                             task_name = "template_prompt"
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
                         else:
                             logger.warning(f"Template '{template_id}' not found, falling back to smart_prompt")
-                    logger.info(f"Calling LLM with {task_name} task and quick_input: {quick_input[:100]}...")
+                    logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
                     accumulated = ""
-                    for chunk in run_llm_task_stream(task_name, quick_input, system_prompt=system_prompt):
+                    stream_kwargs = {"system_prompt": system_prompt}
+                    if image_mode:
+                        stream_kwargs["images"] = [image_bytes]
+                    for chunk in run_llm_task_stream(task_name, quick_input, **stream_kwargs):
                         accumulated += chunk
                         # Send real-time update to frontend
                         if instance_uid:
@@ -1274,11 +1437,11 @@ class NeoPromptGenerator:
                                 "prompt": accumulated,
                                 "is_complete": True
                             })
-                except Exception as e:
-                    logger.error(f"Auto-generate failed: {e}")
-                    logger.exception(e)
-            else:
-                logger.warning(f"Auto-generate only works in remote LLM mode, current mode: {current_mode}")
+                else:
+                    logger.warning(f"Auto-generate only works in remote LLM mode, current mode: {current_mode}")
+            except Exception as e:
+                logger.error(f"Auto-generate failed: {e}")
+                logger.exception(e)
         else:
             logger.info(f"Auto-generate condition not met: auto_generate={auto_generate}, quick_input_has_content={quick_input.strip()}, text_input_none={text_input is None}")
             # Combine prompt and quick_input (same logic as frontend)
@@ -1306,9 +1469,9 @@ class NeoPromptGenerator:
         }
 
     @classmethod
-    def IS_CHANGED(cls, auto_generate=False, quick_input="", **kwargs):
-        # If auto_generate is enabled and quick_input has content, always re-execute
-        if auto_generate and quick_input.strip():
+    def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, **kwargs):
+        # If auto_generate is enabled and (quick_input or image) has content, always re-execute
+        if auto_generate and (quick_input.strip() or image is not None):
             import time
             return time.time()  # Return unique value to force re-execution
         # Otherwise, never change (use cached result)

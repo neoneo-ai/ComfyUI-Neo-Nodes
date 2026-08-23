@@ -230,7 +230,8 @@ app.registerExtension({
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay, downloadModal,
                 settingsModal, loadModelsIntoSettings,
-                quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox
+                quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
+                attachedImages, clearImages
             } = promptUI.init({ node, graph: node.graph, textWidget });
 
             // Populate template selector, restore last selection and sync to hidden widget
@@ -467,7 +468,8 @@ app.registerExtension({
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, textWidget, node, graph: node.graph, downloadModal, statusBar: null
+                customTextarea, textWidget, node, graph: node.graph, downloadModal, statusBar: null,
+                attachedImages, clearImages
             };
 
             const handleGeneratePrompt = NodeBehaviors.createGenerateHandler(
@@ -762,7 +764,8 @@ app.registerExtension({
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay, downloadModal,
                 settingsModal, loadModelsIntoSettings,
-                quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox
+                quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
+                attachedImages, clearImages
             } = promptUI.init({ node, graph: node.graph, textWidget });
 
             // Populate template selector, restore last selection and sync to hidden widget
@@ -1026,7 +1029,8 @@ app.registerExtension({
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, textWidget, node, graph: node.graph, downloadModal, statusBar
+                customTextarea, textWidget, node, graph: node.graph, downloadModal, statusBar,
+                attachedImages, clearImages
             };
 
             const handleGeneratePrompt = NodeBehaviors.createGenerateHandler(

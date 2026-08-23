@@ -766,6 +766,79 @@ async function deleteTemplate(id) {
 }
 
 // ==========================================
+// Skills (统一任务/模板/图片输入元数据)
+// ==========================================
+
+/**
+ * 列出所有 skill（任务 + 模板统一元数据）
+ * @returns {Promise<Array<{id, name, category, source, inputs, needs_image, markers, tags, description}>>}
+ */
+async function listSkills() {
+    try {
+        const res = await fetch("/rs_prompts/skills");
+        return await res.json();
+    } catch (e) {
+        console.error("Failed to list skills:", e);
+        return [];
+    }
+}
+
+/**
+ * 将图片文件缩放并转为 base64 data URI
+ * @param {File} file - 图片文件
+ * @param {number} maxSide - 最长边限制
+ * @returns {Promise<{data: string, name: string}>}
+ */
+function fileToBase64(file, maxSide = 1024) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.max(img.width, img.height) > maxSide
+                    ? maxSide / Math.max(img.width, img.height)
+                    : 1;
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.round(img.width * scale);
+                canvas.height = Math.round(img.height * scale);
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                resolve({ data: canvas.toDataURL("image/png"), name: file.name });
+            };
+            img.onerror = reject;
+            img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+/**
+ * 从剪贴板事件提取图片文件列表
+ * @param {ClipboardEvent} e
+ * @returns {File[]}
+ */
+function imagesFromClipboard(e) {
+    const items = e.clipboardData?.items || [];
+    const files = [];
+    for (const item of items) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+            const f = item.getAsFile();
+            if (f) files.push(f);
+        }
+    }
+    return files;
+}
+
+/**
+ * 以 skill 形式调用流式生成接口（支持 text + images + skillId）
+ * `payload = { text, skillId（或 templateId）, images: [{kind:"data", data: base64Uri}] }`。
+ */
+async function invokePromptStream(payload, options = {}) {
+    return sseStream("/rs_prompts/stream_generate_prompt", options, payload);
+}
+
+// ==========================================
 // 提示词服务包装器 - 为节点行为模块提供统一的 API 调用接口
 // ==========================================
 
@@ -866,7 +939,12 @@ export {
     listTemplates,
     loadTemplate,
     saveTemplate,
-    deleteTemplate
+    deleteTemplate,
+    // Skills 统一元数据
+    listSkills,
+    fileToBase64,
+    imagesFromClipboard,
+    invokePromptStream
 };
 
 export default promptService;
