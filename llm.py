@@ -1265,7 +1265,8 @@ def _build_llm_tasks() -> Dict[str, Any]:
                 "system": template.get("content", ""),
                 "max_tokens": template.get("max_tokens", 500),
                 "result_key": template.get("result_key", "prompt"),
-                "description": template.get("description", "")
+                "description": template.get("description", ""),
+                "multi_result": template.get("multi_result"),
             }
         else:
             logger.warning(f"Failed to load task template: {task_name}")
@@ -1275,6 +1276,46 @@ def _build_llm_tasks() -> Dict[str, Any]:
 
 # LLM_TASKS is now dynamically loaded from template files
 LLM_TASKS = _build_llm_tasks()
+
+
+DEFAULT_MULTI_SEPARATOR = "\n---\n"
+
+
+def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> List[str]:
+    """按 skill 的 multi_result 输出契约把 LLM 文本拆分为提示词列表。
+
+    rule 为 None 表示该 skill 未声明多结果，返回空列表（调用方回退为整段文本）。
+
+    rule 格式（来自任务/模板 YAML 的 multi_result 字段）：
+      {"format": "separator", "separator": "\n---\n"}   按分隔符拆分（默认分隔符）
+      {"format": "json_array"}                            按 JSON 数组解析，失败回退分隔符
+    """
+    if not text or not text.strip():
+        return []
+    if not rule:
+        return []
+
+    fmt = str(rule.get("format", "separator"))
+    candidates: List[str] = []
+
+    if fmt == "json_array":
+        try:
+            data = json.loads(text)
+        except Exception:
+            data = None
+        if isinstance(data, list):
+            candidates = [str(x) for x in data]
+        elif isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, list):
+                    candidates = [str(x) for x in value]
+                    break
+
+    if not candidates:
+        sep = str(rule.get("separator") or DEFAULT_MULTI_SEPARATOR)
+        candidates = re.split(re.escape(sep), text)
+
+    return [c.strip() for c in candidates if c and c.strip()]
 
 
 # ==========================================

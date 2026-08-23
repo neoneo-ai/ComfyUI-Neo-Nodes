@@ -242,6 +242,18 @@ def _load_template_content(template_id: str) -> str | None:
     return None
 
 
+def load_template_multi_result(template_id: str):
+    """加载模板的 multi_result 输出契约（未声明则 None）。"""
+    if not template_id:
+        return None
+    for base_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
+        for ext in ('.yaml', '.yml'):
+            data = _load_template_file(os.path.join(base_dir, f"{template_id}{ext}"))
+            if data and data.get("multi_result"):
+                return data["multi_result"]
+    return None
+
+
 _tags_lock = threading.Lock()
 _tags_lock = threading.Lock()
 
@@ -261,6 +273,8 @@ from .llm import (
     LLM_MODE_LOCAL,
     LLM_MODE_REMOTE,
     run_llm_task,
+    LLM_TASKS,
+    resolve_multi_result,
 )
 
 
@@ -553,6 +567,7 @@ class NeoPrompts:
                 "auto_generate": ("BOOLEAN", {"default": False, "hidden": True}),
                 "quick_input": ("STRING", {"default": "", "hidden": True}),
                 "template_id": ("STRING", {"default": "", "hidden": True}),
+                "quick_input_used": ("BOOLEAN", {"default": False, "hidden": True}),
             },
             "optional": {
                 "text_input": ("STRING", {"forceInput": True}),
@@ -571,7 +586,8 @@ class NeoPrompts:
     DESCRIPTION = "AI-powered text encoder supports save/select prompt, LLM-based prompt enhancement, translation, classification, title extraction, intelligent caching, and auto-generate."
 
     def encode_prompts(self, clip, disable_text_input=False, auto_generate=False, quick_input="",
-                       text="", text_input=None, unique_id=None, instance_uid="", template_id="", image=None):
+                       text="", text_input=None, unique_id=None, instance_uid="", template_id="", image=None,
+                       quick_input_used=False):
         """Encode prompts with optional auto-generate support.
         
         Logic:
@@ -637,7 +653,8 @@ class NeoPrompts:
         else:
             logger.info(f"Auto-generate condition not met: auto_generate={auto_generate}, quick_input_has_content={quick_input.strip()}, text_input_none={text_input is None}")
             # Combine text and quick_input (same logic as frontend)
-            if quick_input.strip():
+            # quick_input 已作为生成指令被消费时不再拼入提示词
+            if quick_input.strip() and not quick_input_used:
                 if text.strip():
                     text = f"{text}\n\n---\n\n{quick_input}"
                 else:
@@ -1420,6 +1437,7 @@ class NeoPromptGenerator:
                 "auto_generate": ("BOOLEAN", {"default": False, "hidden": True}),
                 "quick_input": ("STRING", {"default": "", "hidden": True}),
                 "template_id": ("STRING", {"default": "", "hidden": True}),
+                "quick_input_used": ("BOOLEAN", {"default": False, "hidden": True}),
             },
             "optional": {
                 "text_input": ("STRING", {"forceInput": True}),
@@ -1433,12 +1451,14 @@ class NeoPromptGenerator:
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("PROMPT",)
+    # 多结果 skill：输出按条目循环消费（OUTPUT_IS_LIST），单结果等价于原行为
+    OUTPUT_IS_LIST = (True,)
     FUNCTION = "get_prompt"
     CATEGORY = "Neo-Nodes"
     OUTPUT_NODE = True
     DESCRIPTION = "Simple prompt generator node with settings button. Supports external/internal input toggle and auto-generate. No clip encoder binding."
 
-    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id="", image=None):
+    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id="", image=None, quick_input_used=False):
         """Returns the prompt text as output.
 
         Logic:
@@ -1446,6 +1466,7 @@ class NeoPromptGenerator:
         2. Otherwise, combine prompt and quick_input (same as frontend logic)
         """
         logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
+        gen_meta = {"task": None, "template_id": ""}
         
         # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
         # Image input connected -> always use the image (reverse_prompt) flow;
@@ -1468,6 +1489,7 @@ class NeoPromptGenerator:
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
                         else:
                             logger.warning(f"Template '{template_id}' not found, falling back to smart_prompt")
+                    gen_meta.update(task=task_name, template_id=template_id)
                     logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
@@ -1503,7 +1525,8 @@ class NeoPromptGenerator:
         else:
             logger.info(f"Auto-generate condition not met: auto_generate={auto_generate}, quick_input_has_content={quick_input.strip()}, text_input_none={text_input is None}")
             # Combine prompt and quick_input (same logic as frontend)
-            if quick_input.strip():
+            # quick_input 已作为生成指令被消费时不再拼入提示词
+            if quick_input.strip() and not quick_input_used:
                 if prompt.strip():
                     prompt = f"{prompt}\n\n---\n\n{quick_input}"
                 else:
@@ -1521,9 +1544,22 @@ class NeoPromptGenerator:
                 "prompt": current_text
             })
 
+        # 多结果 skill：按 multi_result 契约拆分；未声明或仅一段时为 [current_text]
+        multi_rule = None
+        if gen_meta["task"] == "template_prompt":
+            multi_rule = load_template_multi_result(gen_meta["template_id"])
+        elif gen_meta["task"]:
+            multi_rule = LLM_TASKS.get(gen_meta["task"], {}).get("multi_result")
+        elif template_id:
+            # 节点未参与生成（如前端✨生成后直接出队）：按所选模板/任务契约拆分
+            multi_rule = load_template_multi_result(template_id)
+            if multi_rule is None and template_id in LLM_TASKS:
+                multi_rule = LLM_TASKS[template_id].get("multi_result")
+        prompts_list = resolve_multi_result(current_text, multi_rule) or [current_text]
+
         return {
             "ui": {"text": [current_text]},
-            "result": (current_text,)
+            "result": (prompts_list,)
         }
 
     @classmethod

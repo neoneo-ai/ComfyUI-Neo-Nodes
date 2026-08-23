@@ -136,6 +136,10 @@ app.registerExtension({
                 if (quickInputWidget && this.properties?.rs_quick_input !== undefined) {
                     quickInputWidget.value = this.properties.rs_quick_input;
                 }
+                const usedWidget = this.widgets.find(w => w.name === "quick_input_used");
+                if (usedWidget && this.properties?.rs_quick_input_used !== undefined) {
+                    usedWidget.value = this.properties.rs_quick_input_used;
+                }
                 const autoGenWidget = this.widgets.find(w => w.name === "auto_generate");
                 if (autoGenWidget && this.properties?.rs_auto_generate !== undefined) {
                     autoGenWidget.value = this.properties.rs_auto_generate;
@@ -157,6 +161,8 @@ app.registerExtension({
                 // Save quick_input and auto_generate state
                 const quickInputWidget = node.widgets.find(w => w.name === "quick_input");
                 if (quickInputWidget && node.properties) node.properties.rs_quick_input = quickInputWidget.value;
+                const usedWidget = node.widgets.find(w => w.name === "quick_input_used");
+                if (usedWidget && node.properties) node.properties.rs_quick_input_used = !!usedWidget.value;
                 const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
                 if (autoGenWidget && node.properties) node.properties.rs_auto_generate = autoGenWidget.value;
             }
@@ -459,6 +465,7 @@ app.registerExtension({
             quickInput.addEventListener("input", () => {
                 if (quickInputWidget) {
                     quickInputWidget.value = quickInput.value;
+                    NodeBehaviors.resetQuickInputConsumed(node);
                     if (node.graph) node.graph.setDirtyCanvas(true, true);
                 }
             });
@@ -658,6 +665,10 @@ app.registerExtension({
                 if (quickInputWidget && this.properties?.rs_quick_input !== undefined) {
                     quickInputWidget.value = this.properties.rs_quick_input;
                 }
+                const usedWidget = this.widgets.find(w => w.name === "quick_input_used");
+                if (usedWidget && this.properties?.rs_quick_input_used !== undefined) {
+                    usedWidget.value = this.properties.rs_quick_input_used;
+                }
                 const autoGenWidget = this.widgets.find(w => w.name === "auto_generate");
                 if (autoGenWidget && this.properties?.rs_auto_generate !== undefined) {
                     autoGenWidget.value = this.properties.rs_auto_generate;
@@ -680,6 +691,8 @@ app.registerExtension({
                 // Save quick_input and auto_generate state
                 const quickInputWidget = node.widgets.find(w => w.name === "quick_input");
                 if (quickInputWidget && node.properties) node.properties.rs_quick_input = quickInputWidget.value;
+                const usedWidget = node.widgets.find(w => w.name === "quick_input_used");
+                if (usedWidget && node.properties) node.properties.rs_quick_input_used = !!usedWidget.value;
                 const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
                 if (autoGenWidget && node.properties) node.properties.rs_auto_generate = autoGenWidget.value;
             }
@@ -1020,6 +1033,7 @@ app.registerExtension({
             quickInput.addEventListener("input", () => {
                 if (quickInputWidget) {
                     quickInputWidget.value = quickInput.value;
+                    NodeBehaviors.resetQuickInputConsumed(node);
                     if (node.graph) node.graph.setDirtyCanvas(true, true);
                 }
             });

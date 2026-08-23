@@ -54,6 +54,19 @@ function resolveConnectedImageSource(node) {
     return null;
 }
 
+// 标记快捷输入已被生成消费：出队时后端跳过拼接；重新编辑输入即自动复位
+function markQuickInputConsumed(node) {
+    const widget = node?.widgets?.find(w => w.name === "quick_input_used");
+    if (widget) widget.value = true;
+    if (node?.properties) node.properties.rs_quick_input_used = true;
+}
+
+function resetQuickInputConsumed(node) {
+    const widget = node?.widgets?.find(w => w.name === "quick_input_used");
+    if (widget) widget.value = false;
+    if (node?.properties) node.properties.rs_quick_input_used = false;
+}
+
 /**
  * 获取实例 UID
  */
@@ -219,6 +232,7 @@ function createGenerateHandler(promptUI) {
                         if (textWidget) textWidget.value = accumulated;
                         saveTextToStorage(node, textWidget, customTextarea);
                         clearImages?.();
+                        markQuickInputConsumed(node);
                     },
                     onError: (err) => {
                         console.error("Skill invoke error:", err);
@@ -256,6 +270,7 @@ function createGenerateHandler(promptUI) {
                         if (rafId) cancelAnimationFrame(rafId);
                         if (textWidget) textWidget.value = accumulated;
                         saveTextToStorage(node, textWidget, customTextarea);
+                        markQuickInputConsumed(node);
                     },
                     onError: (err) => {
                         console.error("Template stream error:", err);
@@ -288,6 +303,7 @@ function createGenerateHandler(promptUI) {
                         if (rafId) cancelAnimationFrame(rafId);
                         if (textWidget) textWidget.value = accumulated;
                         saveTextToStorage(node, textWidget, customTextarea);
+                        markQuickInputConsumed(node);
                     },
                     onError: (err) => {
                         console.error("Smart prompt stream error:", err);
@@ -535,6 +551,10 @@ export const NodeBehaviors = {
     // 按钮处理器工厂
     createGenerateHandler,
     createRandomHandler,
+
+    // 快捷输入消费标记
+    markQuickInputConsumed,
+    resetQuickInputConsumed,
 
     // 文本变更回调
     createOnTextChangeCallback,

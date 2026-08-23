@@ -185,5 +185,56 @@ class TestImageTensorToPng(unittest.TestCase):
         self.assertIsNone(prompts_mod.image_tensor_to_png(None))
 
 
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestResolveMultiResult(unittest.TestCase):
+    """测试 multi_result 输出契约解析（llm.resolve_multi_result）"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.llm = _il.import_module(f"{_PKG_NAME}.llm")
+
+    def test_no_rule_returns_empty(self):
+        # 未声明契约 → 空列表，调用方回退整段文本
+        self.assertEqual(self.llm.resolve_multi_result("a\n---\nb", None), [])
+        self.assertEqual(self.llm.resolve_multi_result("hello", {}), [])
+
+    def test_empty_text(self):
+        rule = {"format": "separator"}
+        self.assertEqual(self.llm.resolve_multi_result("", rule), [])
+        self.assertEqual(self.llm.resolve_multi_result("   \n  ", rule), [])
+
+    def test_separator_split(self):
+        rule = {"format": "separator", "separator": "\n---\n"}
+        text = "prompt one\n---\nprompt two\n---\nprompt three"
+        self.assertEqual(
+            self.llm.resolve_multi_result(text, rule),
+            ["prompt one", "prompt two", "prompt three"])
+
+    def test_separator_default(self):
+        rule = {"format": "separator"}
+        self.assertEqual(
+            self.llm.resolve_multi_result("a\n---\nb", rule), ["a", "b"])
+
+    def test_json_array(self):
+        rule = {"format": "json_array"}
+        self.assertEqual(
+            self.llm.resolve_multi_result('["p1", " p2 ", "p3"]', rule),
+            ["p1", "p2", "p3"])
+
+    def test_json_array_dict_wrapper(self):
+        rule = {"format": "json_array"}
+        self.assertEqual(
+            self.llm.resolve_multi_result('{"prompts": ["x", "y"]}', rule),
+            ["x", "y"])
+
+    def test_json_invalid_falls_back_to_separator(self):
+        rule = {"format": "json_array", "separator": "\n---\n"}
+        text = "not json\n---\nstill not json"
+        self.assertEqual(
+            self.llm.resolve_multi_result(text, rule),
+            ["not json", "still not json"])
+
+
 if __name__ == '__main__':
     unittest.main()
