@@ -242,6 +242,18 @@ def _load_template_content(template_id: str) -> str | None:
     return None
 
 
+def load_template_max_tokens(template_id: str):
+    """加载模板声明的 max_tokens 覆盖（未声明则 None）。"""
+    if not template_id:
+        return None
+    for base_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
+        for ext in ('.yaml', '.yml'):
+            data = _load_template_file(os.path.join(base_dir, f"{template_id}{ext}"))
+            if data and data.get("max_tokens"):
+                return int(data["max_tokens"])
+    return None
+
+
 def load_template_multi_result(template_id: str):
     """加载模板的 multi_result 输出契约（未声明则 None）。"""
     if not template_id:
@@ -366,7 +378,7 @@ def _scan_skills() -> list:
             "tags": tpl.get("tags", []),
             "inputs": inputs,
             "needs_image": "image" in inputs,
-            "markers": [],
+            "markers": tpl.get("markers") or [],
             "description": tpl.get("description", ""),
         })
 
@@ -613,6 +625,7 @@ class NeoPrompts:
                     system_prompt = None
                     if not image_mode and template_id.strip():
                         system_prompt = _load_template_content(template_id)
+                        template_max = load_template_max_tokens(template_id)
                         if system_prompt:
                             task_name = "template_prompt"
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
@@ -622,7 +635,7 @@ class NeoPrompts:
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
                     accumulated = ""
-                    stream_kwargs = {"system_prompt": system_prompt}
+                    stream_kwargs = {"system_prompt": system_prompt, "max_tokens_override": template_max}
                     if image_mode:
                         stream_kwargs["images"] = [image_bytes]
                     for chunk in run_llm_task_stream(task_name, quick_input, **stream_kwargs):
@@ -1488,6 +1501,7 @@ class NeoPromptGenerator:
                     system_prompt = None
                     if not image_mode and template_id.strip():
                         system_prompt = _load_template_content(template_id)
+                        template_max = load_template_max_tokens(template_id)
                         if system_prompt:
                             task_name = "template_prompt"
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
@@ -1498,7 +1512,7 @@ class NeoPromptGenerator:
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
                     accumulated = ""
-                    stream_kwargs = {"system_prompt": system_prompt}
+                    stream_kwargs = {"system_prompt": system_prompt, "max_tokens_override": template_max}
                     if image_mode:
                         stream_kwargs["images"] = [image_bytes]
                     for chunk in run_llm_task_stream(task_name, quick_input, **stream_kwargs):

@@ -88,12 +88,21 @@ class TestScanSkills(unittest.TestCase):
         self.assertFalse({"template_prompt", "extract_title", "extract_classify"} & ids)
 
     def test_template_skills_are_text_only(self):
-        styles = [s for s in prompts_mod._scan_skills()
-                  if s["source"] in ("presets", "custom")]
+        """未声明 image 输入的模板默认为纯文本 skill"""
+        styles = {s["id"]: s for s in prompts_mod._scan_skills()
+                  if s["source"] in ("presets", "custom") and s["id"] != "minimax_h3_ref"}
         self.assertTrue(len(styles) > 0, "至少应扫描到一个模板 skill")
-        for s in styles:
-            self.assertFalse(s["needs_image"], f"模板 skill 不应需要图片: {s['id']}")
-            self.assertEqual(s["category"], "style")
+        for sid, s in styles.items():
+            self.assertFalse(s["needs_image"], f"普通模板不应需要图片: {sid}")
+
+    def test_minimax_ref_skill(self):
+        """内置全能参考模板：图像输入 + 触发标记"""
+        by_id = {s["id"]: s for s in prompts_mod._scan_skills()}
+        s = by_id.get("minimax_h3_ref")
+        self.assertIsNotNone(s, "minimax_h3_ref 模板未被扫描到")
+        self.assertTrue(s["needs_image"])
+        self.assertEqual(s["category"], "vision")
+        self.assertIn("@全参考", s["markers"])
 
     def test_skill_fields_complete(self):
         for s in prompts_mod._scan_skills():

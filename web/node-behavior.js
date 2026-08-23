@@ -16,19 +16,22 @@ const AT_SKILL_MARKERS = {
     "反推": "reverse_prompt",
     "image": "reverse_prompt",
     "img": "reverse_prompt",
+    "全参考": "minimax_h3_ref",
+    "参考": "minimax_h3_ref",
+    "minimax": "minimax_h3_ref",
 };
 
 // 匹配文本中的 @ 标记，返回 skill id 或空串
 // 注意：不能用 \b（JS 中中文字符不属于 \w，中文之间永远不存在词边界）
 function matchSkillMarker(text) {
     if (!text) return "";
-    const m = text.match(/@(图片|反推|image|img|图)/);
+    const m = text.match(/@(图片|全参考|参考|反推|minimax|image|img|图)/);
     return m ? (AT_SKILL_MARKERS[m[1]] || "") : "";
 }
 
 // 去除文本中的 @ 标记（标记只用于路由，不进入提示词）
 function stripSkillMarkers(text) {
-    return (text || "").replace(/@(图片|反推|image|img|图)/g, "").trim();
+    return (text || "").replace(/@(图片|全参考|参考|反推|minimax|image|img|图)/g, "").trim();
 }
 
 // 追踪节点 image 输入插槽的上游节点（如 LoadImage），取其图片文件名
@@ -168,7 +171,9 @@ function createGenerateHandler(promptUI) {
         const slotImage = resolveConnectedImageSource(node);
         const imagesPayload = [
             ...(slotImage ? [slotImage] : []),
-            ...attachedImages.map(img => ({ kind: "data", data: img.data })),
+            ...attachedImages.map(img => img.input
+                ? { kind: "input", value: img.input }
+                : { kind: "data", data: img.data }),
         ];
         const hasImages = imagesPayload.length > 0;
         const markerSkillId = matchSkillMarker(messageToLLM);
@@ -195,7 +200,7 @@ function createGenerateHandler(promptUI) {
             if (hasImages || markerSkillId) {
                 // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
                 if (markerSkillId && !hasImages) {
-                    alert("该 skill 需要图片：请连接 image 输入、通过 + 按钮选择或 Ctrl+V 粘贴图片后再生成。");
+                    alert("该 skill 需要图片：输入 @ 从工作流图片中选择、连接 image 输入或粘贴图片后再生成。");
                     return;
                 }
 

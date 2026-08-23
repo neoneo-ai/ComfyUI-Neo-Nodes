@@ -1323,7 +1323,8 @@ def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> Li
 # ==========================================
 
 def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] = None,
-                 images: Optional[Any] = None, system_prompt: Optional[str] = None) -> Dict[str, Any]:
+                 images: Optional[Any] = None, system_prompt: Optional[str] = None,
+                 max_tokens_override: Optional[int] = None) -> Dict[str, Any]:
     """
     执行 LLM 任务
 
@@ -1364,6 +1365,8 @@ def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] =
         logger.info(f"Using default system_prompt (fallback, length: {len(system_prompt)})")
 
     max_tokens = task_config["max_tokens"]
+    if max_tokens_override:
+        max_tokens = int(max_tokens_override)
     result_key = task_config["result_key"]
 
     use_remote = get_current_mode() == LLM_MODE_REMOTE
@@ -1407,7 +1410,8 @@ def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] =
 
 
 def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional[str] = None,
-                        images: Optional[Any] = None, system_prompt: Optional[str] = None) -> Generator[str, None, None]:
+                        images: Optional[Any] = None, system_prompt: Optional[str] = None,
+                        max_tokens_override: Optional[int] = None) -> Generator[str, None, None]:
     """
     流式执行 LLM 任务，返回生成器
 
@@ -1446,6 +1450,8 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
         logger.info(f"run_llm_task_stream: Using default system_prompt (fallback, length: {len(system_prompt)})")
 
     max_tokens = task_config["max_tokens"]
+    if max_tokens_override:
+        max_tokens = int(max_tokens_override)
 
     use_remote = get_current_mode() == LLM_MODE_REMOTE
 
@@ -1595,7 +1601,7 @@ async def handle_llm_api_stream(task_name, request):
         # 允许空文本：有图片输入（如反推）时合法
         images = []
         if raw_images:
-            from .prompts import resolve_image_bytes
+            from .prompts import load_template_max_tokens, resolve_image_bytes
             images = [b for b in (resolve_image_bytes(src) for src in raw_images) if b]
             if not images:
                 return web.Response(text="data: [ERROR] invalid image data\n\n", content_type="text/event-stream")
@@ -1613,6 +1619,7 @@ async def handle_llm_api_stream(task_name, request):
             template_id = skill_id
 
         system_prompt = None
+        template_max_tokens = None
         if task_name == "reverse_prompt":
             logger.info("reverse_prompt skill: using default task system prompt")
         elif template_id:
@@ -1623,7 +1630,8 @@ async def handle_llm_api_stream(task_name, request):
                 logger.info(f"Loaded template '{template_id}' (length: {len(system_prompt)})")
                 # 如果提供了模板，使用 template_prompt 任务
                 task_name = "template_prompt"
-                logger.info(f"Switched task from initial endpoint to: {task_name}")
+                template_max_tokens = load_template_max_tokens(template_id)
+                logger.info(f"Switched task from initial endpoint to: {task_name}, max_tokens={template_max_tokens}")
             else:
                 logger.warning(f"Template '{template_id}' not found or has no content")
         elif images:
@@ -1637,7 +1645,9 @@ async def handle_llm_api_stream(task_name, request):
             try:
                 import asyncio
                 # 将模板内容作为 system_prompt 传递；图片 byte 列表传给流式任务
-                gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt, images=images if images else None)
+                gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
+                                          images=images if images else None,
+                                          max_tokens_override=template_max_tokens)
                 for chunk in gen:
                     yield (f"data: {chunk}\n\n").encode()
                     await asyncio.sleep(0.01)  # 10ms 延迟，让浏览器逐字显示

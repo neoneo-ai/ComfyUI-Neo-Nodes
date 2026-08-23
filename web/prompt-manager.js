@@ -3,6 +3,8 @@
  * 提示词管理模块 - UI 组件创建 + 保存、列表、加载、删除
  */
 
+import { app } from "../../scripts/app.js";
+
 // Remember last opened settings tab
 let _lastSettingsTab = "llm"; // "llm" or "templates"
 
@@ -1248,23 +1250,74 @@ function createStatusBars() {
         imageChipsRow.innerHTML = "";
         attachedImages.forEach((img, idx) => {
             const chip = mkEl("span", "rs-image-chip");
+            chip.style.position = "relative";
+            chip.style.display = "inline-flex";
+            chip.style.alignItems = "center";
+            chip.style.gap = "3px";
+            chip.style.padding = "2px";
+            chip.style.background = "rgba(255, 255, 255, 0.05)";
+            chip.style.borderRadius = "4px";
+            chip.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+
             const thumb = document.createElement("img");
-            thumb.src = img.data;
-            thumb.alt = img.name || "image";
+            thumb.src = img.input ? inputViewUrl(img.input) : img.data;
+            thumb.alt = `Image ${idx + 1}`;
             thumb.className = "rs-image-chip-thumb";
-            const label = mkEl("span", "rs-image-chip-name");
-            label.textContent = (img.name || "img" + (idx + 1)).slice(0, 18);
+            thumb.style.display = "block";
+            thumb.style.borderRadius = "2px";
+
+            // 右侧控制区域：编号 + 删除按钮
+            const controls = mkEl("span", "rs-image-controls");
+            controls.style.display = "flex";
+            controls.style.flexDirection = "column";
+            controls.style.alignItems = "center";
+            controls.style.gap = "1px";
+            controls.style.minWidth = "14px";
+
+            // 顺序编号 badge
+            const orderBadge = mkEl("span", "rs-image-order-badge");
+            orderBadge.textContent = `${idx + 1}`;
+            orderBadge.style.background = "rgba(80, 144, 204, 0.9)";
+            orderBadge.style.color = "#fff";
+            orderBadge.style.fontSize = "8px";
+            orderBadge.style.fontWeight = "bold";
+            orderBadge.style.padding = "0px 3px";
+            orderBadge.style.borderRadius = "6px";
+            orderBadge.style.textAlign = "center";
+            orderBadge.style.minWidth = "12px";
+            orderBadge.style.lineHeight = "14px";
+
+            // 删除按钮
             const del = document.createElement("button");
             del.type = "button";
             del.textContent = "✕";
             del.className = "rs-image-chip-del";
+            del.style.background = "rgba(220, 38, 38, 0.85)";
+            del.style.color = "#fff";
+            del.style.border = "none";
+            del.style.borderRadius = "50%";
+            del.style.width = "12px";
+            del.style.height = "12px";
+            del.style.fontSize = "8px";
+            del.style.lineHeight = "12px";
+            del.style.padding = "0";
+            del.style.cursor = "pointer";
+            del.style.transition = "background 0.2s";
+            del.addEventListener("mouseenter", () => {
+                del.style.background = "rgba(220, 38, 38, 1)";
+            });
+            del.addEventListener("mouseleave", () => {
+                del.style.background = "rgba(220, 38, 38, 0.85)";
+            });
             del.addEventListener("click", () => {
                 attachedImages.splice(idx, 1);
                 renderImageChips();
             });
+
+            controls.appendChild(orderBadge);
+            controls.appendChild(del);
             chip.appendChild(thumb);
-            chip.appendChild(label);
-            chip.appendChild(del);
+            chip.appendChild(controls);
             imageChipsRow.appendChild(chip);
         });
     }
@@ -1272,6 +1325,193 @@ function createStatusBars() {
     function clearImages() {
         attachedImages.length = 0;
         renderImageChips();
+    }
+
+    // input 目录图片的缩略图地址（ComfyUI /view 端点）
+    function inputViewUrl(value) {
+        const v = String(value).trim().replace(/\[[^\]]*\]$/, "");
+        const i = v.lastIndexOf("/");
+        const fname = i >= 0 ? v.slice(i + 1) : v;
+        const sub = i >= 0 ? v.slice(0, i) : "";
+        return `/view?filename=${encodeURIComponent(fname)}&subfolder=${encodeURIComponent(sub)}&type=input`;
+    }
+
+    // 以文件名形式附加图片（出队时由后端从 input/output 目录解析，无需连线）
+    function addImageInput(value, name) {
+        attachedImages.push({ name: name || String(value).split("/").pop(), input: value });
+        renderImageChips();
+    }
+
+    // 收集工作流上未禁用的 Load Image 节点图片（与 gallery 发送按钮同款过滤：跳过 BYPASS/禁用）
+    function collectWorkflowLoadImages() {
+        try {
+            const items = [];
+            const skipped = [];
+            for (const n of (app.graph?._nodes || [])) {
+                // 核心 LoadImage / LoadImageOutput 及各类加载器变体
+                const cls = String(n.comfyClass || n.type || "");
+                if (!/load.*image/i.test(cls)) continue;
+                if (n.mode === 2 || n.mode === 4) continue; // NEVER / BYPASS
+                let v = String(n.widgets_values?.[0] ?? "").trim();
+                if (!v) {
+                    skipped.push(`${cls}#${n.id}: empty`);
+                    continue;
+                }
+                // [input]/[output] 标注不参与扩展名判断
+                const base = v.replace(/\[[^\]]*\]\s*$/, "").trim();
+                if (!/\.(png|jpe?g|webp|bmp|gif)$/i.test(base)) {
+                    skipped.push(`${cls}#${n.id}: ${v}`);
+                    continue;
+                }
+                items.push({ value: v, nodeId: n.id });
+            }
+            if (skipped.length) console.info("[Neo] @ 图片选择器跳过的加载节点:", skipped);
+            return items;
+        } catch (e) {
+            console.warn("collectWorkflowLoadImages:", e);
+            return [];
+        }
+    }
+
+    function openAtImagePicker() {
+        if (quickInputWrapper.querySelector(".rs-at-picker")) return;
+        const images = collectWorkflowLoadImages();
+        const selected = []; // 保持勾选顺序 → Picture 编号顺序
+
+        const picker = mkEl("div", "rs-at-picker");
+        const header = mkEl("div", "rs-at-picker-header");
+        header.textContent = images.length
+            ? `选择工作流图片（${images.length}）`
+            : "工作流中没有可用的 Load Image 图片";
+        const list = mkEl("div", "rs-at-picker-list");
+
+        // 更新编号显示
+        function updateOrderNumbers() {
+            const rows = list.querySelectorAll(".rs-at-picker-row");
+            rows.forEach((row, index) => {
+                const img = images[index];
+                const selectedIndex = selected.indexOf(img.value);
+                const badge = row.querySelector(".rs-picker-order-badge");
+                if (selectedIndex >= 0) {
+                    badge.textContent = `${selectedIndex + 1}`;
+                    badge.style.display = "flex";
+                } else {
+                    badge.style.display = "none";
+                }
+            });
+        }
+
+        images.forEach(img => {
+            const row = mkEl("label", "rs-at-picker-row");
+            row.style.position = "relative";
+
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.addEventListener("change", () => {
+                if (cb.checked) {
+                    if (!selected.includes(img.value)) selected.push(img.value);
+                } else {
+                    const k = selected.indexOf(img.value);
+                    if (k > -1) selected.splice(k, 1);
+                }
+                updateOrderNumbers();
+            });
+
+            const thumb = mkEl("img", "rs-at-picker-thumb");
+            thumb.src = inputViewUrl(img.value);
+
+            // 顺序编号 badge（选择时显示）
+            const orderBadge = mkEl("span", "rs-picker-order-badge");
+            orderBadge.textContent = "";
+            orderBadge.style.position = "absolute";
+            orderBadge.style.top = "4px";
+            orderBadge.style.right = "4px";
+            orderBadge.style.background = "rgba(80, 144, 204, 0.9)";
+            orderBadge.style.color = "#fff";
+            orderBadge.style.fontSize = "10px";
+            orderBadge.style.fontWeight = "bold";
+            orderBadge.style.padding = "2px 6px";
+            orderBadge.style.borderRadius = "8px";
+            orderBadge.style.display = "none";
+            orderBadge.style.zIndex = "2";
+            orderBadge.style.pointerEvents = "none";
+
+            row.append(cb, thumb, orderBadge);
+            list.appendChild(row);
+        });
+
+        const footer = mkEl("div", "rs-at-picker-footer");
+        const allBtn = mkEl("button", "rs-at-picker-btn");
+        allBtn.textContent = "全选";
+        const okBtn = mkEl("button", "rs-at-picker-btn rs-at-picker-ok");
+        okBtn.textContent = "添加";
+        const cancelBtn = mkEl("button", "rs-at-picker-btn");
+        cancelBtn.textContent = "取消";
+        footer.append(allBtn, okBtn, cancelBtn);
+
+        picker.append(header, list, footer);
+        // 挂到 body 并用 fixed 定位：quickInputWrapper 的 overflow 会裁剪内部弹层
+        document.body.appendChild(picker);
+
+        const closePicker = () => {
+            document.removeEventListener("mousedown", onOutside);
+            picker.remove();
+        };
+        const onOutside = (e) => {
+            if (!picker.contains(e.target)) closePicker();
+        };
+        setTimeout(() => document.addEventListener("mousedown", onOutside), 0);
+
+        // 锚定到输入框上方
+        const r = quickInput.getBoundingClientRect();
+        picker.style.visibility = "hidden";
+        requestAnimationFrame(() => {
+            const pw = Math.min(Math.max(r.width, 100), 160); // 限制宽度在 100-160px 之间
+            let left = r.left;
+            if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
+            picker.style.left = Math.max(8, left) + "px";
+            picker.style.width = pw + "px";
+            picker.style.bottom = (window.innerHeight - r.top + 6) + "px";
+            picker.style.visibility = "";
+        });
+
+        const stripAt = () => {
+            if (quickInput.value.endsWith("@")) {
+                quickInput.value = quickInput.value.slice(0, -1);
+                quickInput.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+        };
+
+        // ESC 键关闭选择器
+        const handleEsc = (e) => {
+            if (e.key === "Escape") {
+                closePicker();
+                document.removeEventListener("keydown", handleEsc);
+            }
+        };
+        document.addEventListener("keydown", handleEsc);
+
+        // 监听输入框变化，如果 @ 被删除则关闭选择器
+        const handleInputChange = () => {
+            if (!quickInput.value.endsWith("@")) {
+                closePicker();
+                document.removeEventListener("keydown", handleEsc);
+                quickInput.removeEventListener("input", handleInputChange);
+            }
+        };
+        quickInput.addEventListener("input", handleInputChange);
+
+        allBtn.addEventListener("click", () => {
+            list.querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = true; });
+            selected.length = 0;
+            images.forEach(img => selected.push(img.value));
+        });
+        cancelBtn.addEventListener("click", closePicker);
+        okBtn.addEventListener("click", () => {
+            selected.forEach(v => addImageInput(v));
+            closePicker();
+            stripAt();
+        });
     }
 
     // 图片选择按钮（+）
@@ -1438,6 +1678,11 @@ function createStatusBars() {
         files.forEach(addImageFile);
     });
 
+    // 输入 @ 唤起工作流图片选择器
+    quickInput.addEventListener("input", () => {
+        if (quickInput.value.endsWith("@")) openAtImagePicker();
+    });
+
     const customTextarea = document.createElement("textarea");
     customTextarea.className = "comfy-multiline-input";
     customTextarea.placeholder = "Enter your prompt here...";
@@ -1454,7 +1699,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow };
+    return { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
 // ==========================================
@@ -1462,7 +1707,7 @@ function createStatusBars() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, field: inputField, tagsContainer, selectedTags, okBtn: inputOk, cancelBtn: inputCancel } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
@@ -2106,7 +2351,8 @@ function createPromptManagerUI() {
             addImageFile,
             clearImages,
             attachBtn,
-            imageChipsRow
+            imageChipsRow,
+            openAtImagePicker
         };
     }
 
