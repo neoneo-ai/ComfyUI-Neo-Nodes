@@ -1250,65 +1250,25 @@ function createStatusBars() {
         imageChipsRow.innerHTML = "";
         attachedImages.forEach((img, idx) => {
             const chip = mkEl("span", "rs-image-chip");
-            chip.style.position = "relative";
-            chip.style.display = "inline-flex";
-            chip.style.alignItems = "center";
-            chip.style.gap = "3px";
-            chip.style.padding = "2px";
-            chip.style.background = "rgba(255, 255, 255, 0.05)";
-            chip.style.borderRadius = "4px";
-            chip.style.border = "1px solid rgba(255, 255, 255, 0.1)";
 
             const thumb = document.createElement("img");
             thumb.src = img.input ? inputViewUrl(img.input) : img.data;
             thumb.alt = `Image ${idx + 1}`;
             thumb.className = "rs-image-chip-thumb";
-            thumb.style.display = "block";
-            thumb.style.borderRadius = "2px";
 
             // 右侧控制区域：编号 + 删除按钮
             const controls = mkEl("span", "rs-image-controls");
-            controls.style.display = "flex";
-            controls.style.flexDirection = "column";
-            controls.style.alignItems = "center";
-            controls.style.gap = "1px";
-            controls.style.minWidth = "14px";
 
             // 顺序编号 badge
             const orderBadge = mkEl("span", "rs-image-order-badge");
             orderBadge.textContent = `${idx + 1}`;
-            orderBadge.style.background = "rgba(80, 144, 204, 0.9)";
-            orderBadge.style.color = "#fff";
-            orderBadge.style.fontSize = "8px";
-            orderBadge.style.fontWeight = "bold";
-            orderBadge.style.padding = "0px 3px";
-            orderBadge.style.borderRadius = "6px";
-            orderBadge.style.textAlign = "center";
-            orderBadge.style.minWidth = "12px";
-            orderBadge.style.lineHeight = "14px";
 
             // 删除按钮
             const del = document.createElement("button");
             del.type = "button";
             del.textContent = "✕";
             del.className = "rs-image-chip-del";
-            del.style.background = "rgba(220, 38, 38, 0.85)";
-            del.style.color = "#fff";
-            del.style.border = "none";
-            del.style.borderRadius = "50%";
-            del.style.width = "12px";
-            del.style.height = "12px";
-            del.style.fontSize = "8px";
-            del.style.lineHeight = "12px";
-            del.style.padding = "0";
-            del.style.cursor = "pointer";
-            del.style.transition = "background 0.2s";
-            del.addEventListener("mouseenter", () => {
-                del.style.background = "rgba(220, 38, 38, 1)";
-            });
-            del.addEventListener("mouseleave", () => {
-                del.style.background = "rgba(220, 38, 38, 0.85)";
-            });
+            del.title = "移除图片";
             del.addEventListener("click", () => {
                 attachedImages.splice(idx, 1);
                 renderImageChips();
@@ -1336,31 +1296,67 @@ function createStatusBars() {
         return `/view?filename=${encodeURIComponent(fname)}&subfolder=${encodeURIComponent(sub)}&type=input`;
     }
 
-    // 以文件名形式附加图片（出队时由后端从 input/output 目录解析，无需连线）
+    // 以文件名形式附加图片（出队时由后端从 input/output 目录解析，无需连线）。
+    // 判重：同一图片已附加则忽略，避免重复 chip / 编号错乱。
     function addImageInput(value, name) {
-        attachedImages.push({ name: name || String(value).split("/").pop(), input: value });
+        const key = String(value || "").replace(/\[[^\]]*\]\s*$/, "").trim();
+        if (!key) return;
+        const dup = attachedImages.some(img => {
+            const k = String(img.input || "").replace(/\[[^\]]*\]\s*$/, "").trim();
+            return k === key;
+        });
+        if (dup) return;
+        attachedImages.push({ name: name || key.split("/").pop(), input: value });
         renderImageChips();
     }
 
     // 收集工作流上未禁用的 Load Image 节点图片（与 gallery 发送按钮同款过滤：跳过 BYPASS/禁用）
     function collectWorkflowLoadImages() {
-        try {
-            const items = [];
-            const skipped = [];
-            for (const n of (app.graph?._nodes || [])) {
+        return (async () => {
+            try {
+                let nodes = null;
+                if (typeof app?.graphToPrompt === "function") {
+                    try {
+                        const prompt = await app.graphToPrompt();
+                        nodes = prompt?.workflow?.nodes || null;
+                    } catch (e) {
+                        console.warn("[Neo] graphToPrompt:", e);
+                    }
+                }
+                if (!Array.isArray(nodes)) nodes = app.graph?._nodes || [];
+                const items = [];
+                const skipped = [];
+                for (const n of nodes) {
                 // 核心 LoadImage / LoadImageOutput 及各类加载器变体
                 const cls = String(n.comfyClass || n.type || "");
                 if (!/load.*image/i.test(cls)) continue;
                 if (n.mode === 2 || n.mode === 4) continue; // NEVER / BYPASS
-                let v = String(n.widgets_values?.[0] ?? "").trim();
+                // 新增/切换/粘贴加载的节点，其 widgets_values 可能滞后于当前 widget 值。
+                // 与前端序列化一致：先把自己节点的 widget 当前值回填，避免 @ 读到旧图片。
+                if (Array.isArray(n.widgets) && Array.isArray(n.widgets_values)) {
+                    for (let i = 0; i < n.widgets.length; i++) {
+                        const w = n.widgets[i];
+                        if (w && w.value !== undefined) n.widgets_values[i] = w.value;
+                    }
+                }
+                // widgets_values 里图片项可能是字符串、数组(["name","sub","type"])或对象{name,...}
+                let raw;
+                for (const entry of (n.widgets_values || [])) {
+                    if (typeof entry === "string" || Array.isArray(entry)) { raw = entry; break; }
+                    if (entry && typeof entry === "object" && (entry.name || entry.filename)) { raw = entry; break; }
+                }
+                let v = "";
+                if (typeof raw === "string") v = raw.trim();
+                else if (Array.isArray(raw)) v = String(raw[0] ?? "").trim();
+                else if (raw && typeof raw === "object") v = String(raw.name ?? raw.filename ?? "").trim();
                 if (!v) {
-                    skipped.push(`${cls}#${n.id}: empty`);
+                    skipped.push(`节点#${n.id}: empty`);
                     continue;
                 }
                 // [input]/[output] 标注不参与扩展名判断
                 const base = v.replace(/\[[^\]]*\]\s*$/, "").trim();
                 if (!/\.(png|jpe?g|webp|bmp|gif)$/i.test(base)) {
-                    skipped.push(`${cls}#${n.id}: ${v}`);
+                    skipped.push(`节点#${n.id}: ${v}`);
                     continue;
                 }
                 items.push({ value: v, nodeId: n.id });
@@ -1371,11 +1367,49 @@ function createStatusBars() {
             console.warn("collectWorkflowLoadImages:", e);
             return [];
         }
+        })();
     }
 
-    function openAtImagePicker() {
+    // 估算 textarea 光标距内容区左上角的像素坐标（用于把 @ 弹层定位到光标附近）
+    function getCaretPixel(el) {
+        const mirror = mkEl("div");
+        const cs = window.getComputedStyle(el);
+        for (const p of ["fontFamily", "fontSize", "fontWeight", "fontStyle",
+                         "letterSpacing", "lineHeight", "textTransform", "wordSpacing",
+                         "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+                         "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+                         "boxSizing", "width"]) {
+            mirror.style[p] = cs[p];
+        }
+        mirror.style.position = "absolute";
+        mirror.style.left = "-99999px";
+        mirror.style.top = "0";
+        mirror.style.whiteSpace = "pre-wrap";
+        mirror.style.wordWrap = "break-word";
+        mirror.style.overflowWrap = "break-word";
+        mirror.style.visibility = "hidden";
+        const before = mkEl("span");
+        before.textContent = el.value.slice(0, el.selectionStart);
+        const marker = mkEl("span");
+        marker.textContent = "\u200b"; // 零宽空格占位，测光标位置
+        mirror.appendChild(before);
+        mirror.appendChild(marker);
+        document.body.appendChild(mirror);
+        const mRect = marker.getBoundingClientRect();
+        const m0 = mirror.getBoundingClientRect();
+        document.body.removeChild(mirror);
+        return { x: mRect.left - m0.left, y: mRect.top - m0.top };
+    }
+
+    async function openAtImagePicker() {
         if (quickInputWrapper.querySelector(".rs-at-picker")) return;
-        const images = collectWorkflowLoadImages();
+        // @ 不一定要在末尾：按光标前一个字符判断，支持在文本中间插入图片标记
+        const sel = quickInput.selectionStart || 0;
+        const atIndex = sel - 1;
+        if (atIndex < 0 || quickInput.value[atIndex] !== "@") return;
+        const images = await collectWorkflowLoadImages();
+        // await 期间用户可能改动了输入：@ 不在原位置则放弃
+        if (quickInput.value[atIndex] !== "@") return;
         const selected = []; // 保持勾选顺序 → Picture 编号顺序
 
         const picker = mkEl("div", "rs-at-picker");
@@ -1384,22 +1418,6 @@ function createStatusBars() {
             ? `选择工作流图片（${images.length}）`
             : "工作流中没有可用的 Load Image 图片";
         const list = mkEl("div", "rs-at-picker-list");
-
-        // 更新编号显示
-        function updateOrderNumbers() {
-            const rows = list.querySelectorAll(".rs-at-picker-row");
-            rows.forEach((row, index) => {
-                const img = images[index];
-                const selectedIndex = selected.indexOf(img.value);
-                const badge = row.querySelector(".rs-picker-order-badge");
-                if (selectedIndex >= 0) {
-                    badge.textContent = `${selectedIndex + 1}`;
-                    badge.style.display = "flex";
-                } else {
-                    badge.style.display = "none";
-                }
-            });
-        }
 
         images.forEach(img => {
             const row = mkEl("label", "rs-at-picker-row");
@@ -1414,29 +1432,12 @@ function createStatusBars() {
                     const k = selected.indexOf(img.value);
                     if (k > -1) selected.splice(k, 1);
                 }
-                updateOrderNumbers();
             });
 
             const thumb = mkEl("img", "rs-at-picker-thumb");
             thumb.src = inputViewUrl(img.value);
 
-            // 顺序编号 badge（选择时显示）
-            const orderBadge = mkEl("span", "rs-picker-order-badge");
-            orderBadge.textContent = "";
-            orderBadge.style.position = "absolute";
-            orderBadge.style.top = "4px";
-            orderBadge.style.right = "4px";
-            orderBadge.style.background = "rgba(80, 144, 204, 0.9)";
-            orderBadge.style.color = "#fff";
-            orderBadge.style.fontSize = "10px";
-            orderBadge.style.fontWeight = "bold";
-            orderBadge.style.padding = "2px 6px";
-            orderBadge.style.borderRadius = "8px";
-            orderBadge.style.display = "none";
-            orderBadge.style.zIndex = "2";
-            orderBadge.style.pointerEvents = "none";
-
-            row.append(cb, thumb, orderBadge);
+            row.append(cb, thumb);
             list.appendChild(row);
         });
 
@@ -1453,8 +1454,81 @@ function createStatusBars() {
         // 挂到 body 并用 fixed 定位：quickInputWrapper 的 overflow 会裁剪内部弹层
         document.body.appendChild(picker);
 
+        // ==========================================
+        // 键盘导航：↑/↓ 移动高亮，Space 切换选中，Enter 添加，Esc 关闭
+        // ==========================================
+        picker.tabIndex = 0;
+        let activeIndex = 0;
+        const rowEls = Array.from(list.querySelectorAll(".rs-at-picker-row"));
+        const setActiveRow = (idx) => {
+            activeIndex = Math.max(0, Math.min(rowEls.length - 1, idx));
+            rowEls.forEach((r, i) => {
+                r.classList.toggle("rs-picker-row-active", i === activeIndex);
+            });
+            const activeEl = rowEls[activeIndex];
+            // 只滚动列表内部，避免 scrollIntoView 连带滚动祖先/页面导致弹层整体偏离
+            if (activeEl) {
+                const rowTop = activeEl.offsetTop;
+                const rowBottom = rowTop + activeEl.offsetHeight;
+                const listTop = list.scrollTop;
+                const listBottom = listTop + list.clientHeight;
+                if (rowTop < listTop) {
+                    list.scrollTop = rowTop;
+                } else if (rowBottom > listBottom) {
+                    list.scrollTop = rowBottom - list.clientHeight;
+                }
+            }
+        };
+        rowEls.forEach((row, idx) => {
+            row.classList.add("rs-picker-row");
+            row.addEventListener("mousemove", () => setActiveRow(idx));
+        });
+        const toggleRowSelected = (idx) => {
+            const img = images[idx];
+            if (!img) return;
+            const cb = rowEls[idx]?.querySelector("input[type=checkbox]");
+            if (cb) {
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+        };
+        picker.addEventListener("keydown", (e) => {
+            // 阻断冒泡，避免 ComfyUI 全局键盘处理器（画布平移等）响应这些按键导致弹层偏离输入框
+            if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", " ", "Enter"].includes(e.key)) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            switch (e.key) {
+                case "ArrowDown":
+                    setActiveRow(activeIndex + 1);
+                    break;
+                case "ArrowUp":
+                    setActiveRow(activeIndex - 1);
+                    break;
+                case "Home":
+                    setActiveRow(0);
+                    break;
+                case "End":
+                    setActiveRow(rowEls.length - 1);
+                    break;
+                case " ":
+                    toggleRowSelected(activeIndex);
+                    break;
+                case "Enter":
+                    okBtn.click();
+                    break;
+            }
+        });
+        // 打开后聚焦到 picker，让键盘立即可用，同时保留 Esc 全局处理
+        picker.focus({ preventScroll: true });
+        setTimeout(() => setActiveRow(0), 0);
+
+        let handleEsc = null;
+        let handleInputChange = null;
         const closePicker = () => {
             document.removeEventListener("mousedown", onOutside);
+            if (handleEsc) document.removeEventListener("keydown", handleEsc);
+            if (handleInputChange) quickInput.removeEventListener("input", handleInputChange);
             picker.remove();
         };
         const onOutside = (e) => {
@@ -1462,42 +1536,43 @@ function createStatusBars() {
         };
         setTimeout(() => document.addEventListener("mousedown", onOutside), 0);
 
-        // 锚定到输入框上方
+        // 锚定到 @ 所在光标位置附近（支持在文本中间插入时跟随 @）。
+        // 同步读取坐标并在同一次布局内计算定位，避免 rAF 延迟到下一帧导致缩放/布局变化偏移。
         const r = quickInput.getBoundingClientRect();
-        picker.style.visibility = "hidden";
-        requestAnimationFrame(() => {
-            const pw = Math.min(Math.max(r.width, 100), 160); // 限制宽度在 100-160px 之间
-            let left = r.left;
-            if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
-            picker.style.left = Math.max(8, left) + "px";
-            picker.style.width = pw + "px";
-            picker.style.bottom = (window.innerHeight - r.top + 6) + "px";
-            picker.style.visibility = "";
-        });
-
-        const stripAt = () => {
-            if (quickInput.value.endsWith("@")) {
-                quickInput.value = quickInput.value.slice(0, -1);
-                quickInput.dispatchEvent(new Event("input", { bubbles: true }));
-            }
-        };
+        const caret0 = getCaretPixel(quickInput);
+        // 计算元素所在缩放容器的实际缩放比例：getBoundingClientRect 返回层叠后的屏幕坐标，
+        // 而 getCaretPixel 的镜像测量返回 CSS 内容坐标。两者不一致时按比例校正，抵消画布缩放偏移。
+        const elW = quickInput.offsetWidth || r.width;
+        const elH = quickInput.offsetHeight || r.height;
+        const scaleX = elW ? r.width / elW : 1;
+        const scaleY = elH ? r.height / elH : scaleX;
+        const caret = { x: caret0.x * scaleX, y: caret0.y * scaleY };
+        const cs = window.getComputedStyle(quickInput);
+        const bLeft = parseFloat(cs.borderLeftWidth) || 0;
+        const bTop = parseFloat(cs.borderTopWidth) || 0;
+        const pw = Math.min(Math.max(r.width, 100), 160); // 限制宽度在 100-160px 之间
+        const estHeight = 260;
+        let left = r.left + bLeft + caret.x - quickInput.scrollLeft;
+        let top = r.top + bTop + caret.y + 20 - quickInput.scrollTop; // 默认在其下方
+        // 水平：优先让弹层显示在 @ 右侧，超视口则靠右对齐
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
+        // 垂直：下方放不下则翻到上方
+        if (top + estHeight > window.innerHeight - 8) {
+            top = r.top + bTop + caret.y - 14 - estHeight;
+        }
+        picker.style.left = Math.max(8, left) + "px";
+        picker.style.top = Math.max(8, top) + "px";
+        picker.style.width = pw + "px";
 
         // ESC 键关闭选择器
-        const handleEsc = (e) => {
-            if (e.key === "Escape") {
-                closePicker();
-                document.removeEventListener("keydown", handleEsc);
-            }
+        handleEsc = (e) => {
+            if (e.key === "Escape") closePicker();
         };
         document.addEventListener("keydown", handleEsc);
 
-        // 监听输入框变化，如果 @ 被删除则关闭选择器
-        const handleInputChange = () => {
-            if (!quickInput.value.endsWith("@")) {
-                closePicker();
-                document.removeEventListener("keydown", handleEsc);
-                quickInput.removeEventListener("input", handleInputChange);
-            }
+        // 监听输入框变化，如果 @ 被删除（选择器将失去对应锚点）则关闭
+        handleInputChange = () => {
+            if (quickInput.value[atIndex] !== "@") closePicker();
         };
         quickInput.addEventListener("input", handleInputChange);
 
@@ -1508,9 +1583,28 @@ function createStatusBars() {
         });
         cancelBtn.addEventListener("click", closePicker);
         okBtn.addEventListener("click", () => {
-            selected.forEach(v => addImageInput(v));
+            if (!selected.length) { closePicker(); return; }
+            // 编号顺序由工作流 Load Image 节点参数顺序决定（images 顺序），而非点击顺序。
+            // 逐个添加：addImageInput 内部判重，只统计真正加入的图片，编号与 chips 保持连续一致
+            const addedKeys = [];
+            images.forEach(img => {
+                if (!selected.includes(img.value)) return;
+                const before = attachedImages.length;
+                addImageInput(img.value);
+                if (attachedImages.length > before) addedKeys.push(img.value);
+            });
+            // 在 @ 所在位置替换成内联 <Picture N> 标记（编号与 chips 一致），用于描述图片间交互
+            if (quickInput.value[atIndex] === "@" && addedKeys.length) {
+                const startIdx = attachedImages.length - addedKeys.length;
+                const markers = addedKeys.map((_, i) =>
+                    "<Picture " + (startIdx + i + 1) + ">"
+                ).join(" ");
+                quickInput.value = quickInput.value.slice(0, atIndex) + markers + quickInput.value.slice(atIndex + 1);
+                // 光标放到插入标记之后
+                quickInput.setSelectionRange(atIndex + markers.length, atIndex + markers.length);
+                quickInput.dispatchEvent(new Event("input", { bubbles: true }));
+            }
             closePicker();
-            stripAt();
         });
     }
 
@@ -1678,9 +1772,10 @@ function createStatusBars() {
         files.forEach(addImageFile);
     });
 
-    // 输入 @ 唤起工作流图片选择器
+    // 输入 @ 唤起工作流图片选择器（支持在文本中间插入：看光标前一个字符）
     quickInput.addEventListener("input", () => {
-        if (quickInput.value.endsWith("@")) openAtImagePicker();
+        const caret = quickInput.selectionStart;
+        if (caret > 0 && quickInput.value[caret - 1] === "@") openAtImagePicker();
     });
 
     const customTextarea = document.createElement("textarea");

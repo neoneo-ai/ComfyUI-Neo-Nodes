@@ -45,9 +45,14 @@ function resolveConnectedImageSource(node) {
         if (!link) return null;
         const srcNode = node.graph.getNodeById(link.origin_id);
         if (!srcNode) return null;
-        for (const v of (srcNode.widgets_values || [])) {
-            if (typeof v === "string" && /\.(png|jpe?g|webp|bmp|gif)$/i.test(v.trim())) {
-                return { kind: "input", value: v.trim() };
+        // widgets_values 里的图片项可能是字符串、数组(["name","sub","type"])或对象{name,...}
+        for (const w of (srcNode.widgets_values || [])) {
+            let v = "";
+            if (typeof w === "string") v = w.trim();
+            else if (Array.isArray(w)) v = String(w[0] ?? "").trim();
+            else if (w && typeof w === "object") v = String(w.name ?? w.filename ?? "").trim();
+            if (v && /\.(png|jpe?g|webp|bmp|gif)$/i.test(v)) {
+                return { kind: "input", value: v };
             }
         }
         console.warn("image input connected but no image filename found on upstream node:", srcNode.type);
