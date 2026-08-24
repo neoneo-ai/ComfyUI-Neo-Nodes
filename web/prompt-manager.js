@@ -1254,8 +1254,6 @@ function createStatusBars() {
             imageHoverPreview = mkEl("img", "rs-image-hover-preview");
             document.body.appendChild(imageHoverPreview);
         }
-        imageHoverPreview.src = src;
-        imageHoverPreview.style.display = "block";
         // 预览最大尺寸跟随画布缩放比率，保持与节点内容的视觉大小一致
         const canvasScale = app?.canvas?.ds?.scale || 1;
         const scale = Math.max(0.4, Math.min(canvasScale, 2.5));
@@ -1263,13 +1261,30 @@ function createStatusBars() {
         const maxH = 320 * scale;
         imageHoverPreview.style.maxWidth = maxW + "px";
         imageHoverPreview.style.maxHeight = maxH + "px";
+
         const r = anchorEl.getBoundingClientRect();
-        let left = r.left + r.width / 2 - maxW / 2;
-        left = Math.max(8, Math.min(left, window.innerWidth - maxW - 8));
-        let top = r.top - maxH - 10; // 默认显示在缩略图上方
-        if (top < 8) top = r.bottom + 10; // 放不下则翻到下方
-        imageHoverPreview.style.left = left + "px";
-        imageHoverPreview.style.top = top + "px";
+        // 按图片实际显示尺寸（保持宽高比）定位，避免横向/纵向图片偏离缩略图太远
+        const positionPreview = () => {
+            if (imageHoverPreview.style.display !== "block") return;
+            const nw = imageHoverPreview.naturalWidth || maxW;
+            const nh = imageHoverPreview.naturalHeight || maxH;
+            const k = Math.min(1, maxW / nw, maxH / nh); // 不放大，仅按需缩小
+            const dispW = nw * k;
+            const dispH = nh * k;
+            let left = r.left + r.width / 2 - dispW / 2;
+            left = Math.max(8, Math.min(left, window.innerWidth - dispW - 8));
+            let top = r.top - dispH - 10; // 默认显示在缩略图上方
+            if (top < 8) top = r.bottom + 10; // 放不下则翻到下方
+            imageHoverPreview.style.left = left + "px";
+            imageHoverPreview.style.top = top + "px";
+        };
+        imageHoverPreview.onload = positionPreview;
+        imageHoverPreview.src = src;
+        imageHoverPreview.style.display = "block";
+        // 缓存命中时 onload 不触发，complete 时立即定位
+        if (imageHoverPreview.complete && imageHoverPreview.naturalWidth) {
+            positionPreview();
+        }
     }
 
     function hideImageHoverPreview() {
@@ -1289,12 +1304,14 @@ function createStatusBars() {
             thumb.addEventListener("mouseenter", () => showImageHoverPreview(thumb.src, chip));
             thumb.addEventListener("mouseleave", hideImageHoverPreview);
 
-            // 右侧控制区域：编号 + 删除按钮
+            // 顺序编号 badge：显示该图的参数位 <Picture N>；无参数位（反推附件）不显示编号
             const controls = mkEl("span", "rs-image-controls");
 
-            // 顺序编号 badge
-            const orderBadge = mkEl("span", "rs-image-order-badge");
-            orderBadge.textContent = `${idx + 1}`;
+            if (img.pictureNo != null) {
+                const orderBadge = mkEl("span", "rs-image-order-badge");
+                orderBadge.textContent = `${img.pictureNo}`;
+                controls.appendChild(orderBadge);
+            }
 
             // 删除按钮
             const del = document.createElement("button");
@@ -1307,7 +1324,6 @@ function createStatusBars() {
                 renderImageChips();
             });
 
-            controls.appendChild(orderBadge);
             controls.appendChild(del);
             chip.appendChild(thumb);
             chip.appendChild(controls);
@@ -1329,35 +1345,81 @@ function createStatusBars() {
         return `/view?filename=${encodeURIComponent(fname)}&subfolder=${encodeURIComponent(sub)}&type=input`;
     }
 
+    // 图片判重键：去掉 [input]/[output] 标注并归一化
+    function imageKey(value) {
+        return String(value || "").replace(/\[[^\]]*\]\s*$/, "").trim();
+    }
+
     // 以文件名形式附加图片（出队时由后端从 input/output 目录解析，无需连线）。
     // 判重：同一图片已附加则忽略，避免重复 chip / 编号错乱。
-    function addImageInput(value, name) {
-        const key = String(value || "").replace(/\[[^\]]*\]\s*$/, "").trim();
+    // pictureNo：目标节点 IMAGE 输入参数序号；未连接的图片为 undefined（仅作反推附件）。
+    function addImageInput(value, name, pictureNo) {
+        const key = imageKey(value);
         if (!key) return;
-        const dup = attachedImages.some(img => {
-            const k = String(img.input || "").replace(/\[[^\]]*\]\s*$/, "").trim();
-            return k === key;
-        });
+        const dup = attachedImages.some(img => imageKey(img.input) === key);
         if (dup) return;
-        attachedImages.push({ name: name || key.split("/").pop(), input: value });
+        attachedImages.push({ name: name || key.split("/").pop(), input: value, pictureNo });
         renderImageChips();
     }
 
-    // 收集工作流上未禁用的 Load Image 节点图片（与 gallery 发送按钮同款过滤：跳过 BYPASS/禁用）
+    // 收集工作流上未禁用的 Load Image 节点图片（与 gallery 发送按钮同款过滤：跳过 BYPASS/禁用）。
+    // pictureNo：图片输出连接到目标节点 IMAGE 输入槽的参数序号（1-based）；无连线为 null，仅能用于反推。
     function collectWorkflowLoadImages() {
         return (async () => {
             try {
                 let nodes = null;
+                let serializedLinks = null; // graphToPrompt 序列化格式的 links 数组
                 if (typeof app?.graphToPrompt === "function") {
                     try {
                         const prompt = await app.graphToPrompt();
                         nodes = prompt?.workflow?.nodes || null;
+                        serializedLinks = prompt?.workflow?.links || null;
                     } catch (e) {
                         console.warn("[Neo] graphToPrompt:", e);
                     }
                 }
                 if (!Array.isArray(nodes)) nodes = app.graph?._nodes || [];
-                const items = [];
+
+                // linkId -> {origin_id, target_id, target_slot}
+                const linkMap = new Map();
+                if (Array.isArray(serializedLinks)) {
+                    for (const l of serializedLinks) {
+                        // [id, origin_id, origin_slot, target_id, target_slot, type]
+                        if (Array.isArray(l)) linkMap.set(String(l[0]), { origin_id: l[1], target_id: l[3], target_slot: l[4] });
+                    }
+                } else {
+                    const gl = app.graph?.links;
+                    const iter = gl && typeof gl.forEach === "function" ? gl : Object.values(gl || {});
+                    iter.forEach(l => {
+                        if (l && l.target_id != null) linkMap.set(String(l.id), l);
+                    });
+                }
+                const nodeById = new Map(nodes.map(n => [String(n.id), n]));
+
+                // 该 load image 输出连到目标节点 IMAGE 输入槽的参数序号；无连线返回 null
+                const computePictureNo = (n) => {
+                    for (const o of (n.outputs || [])) {
+                        const lids = Array.isArray(o.links) ? o.links : (o.link != null ? [o.link] : []);
+                        for (const lid of lids) {
+                            const link = linkMap.get(String(lid));
+                            if (!link) continue;
+                            const target = nodeById.get(String(link.target_id));
+                            if (!target) continue;
+                            let count = 0;
+                            const slotIdx = Number(link.target_slot) || 0;
+                            for (let i = 0; i < (target.inputs || []).length; i++) {
+                                if (String(target.inputs[i].type).toUpperCase() !== "IMAGE") continue;
+                                count++;
+                                if (i === slotIdx) return count;
+                            }
+                        }
+                    }
+                    return null;
+                };
+
+                // 有参数位（pictureNo）的优先排在前面；两组内部保持工作流原有顺序
+                const connected = [];
+                const unconnected = [];
                 const skipped = [];
                 for (const n of nodes) {
                 // 核心 LoadImage / LoadImageOutput 及各类加载器变体
@@ -1392,10 +1454,11 @@ function createStatusBars() {
                     skipped.push(`节点#${n.id}: ${v}`);
                     continue;
                 }
-                items.push({ value: v, nodeId: n.id });
+                const pictureNo = computePictureNo(n);
+                (pictureNo != null ? connected : unconnected).push({ value: v, nodeId: n.id, pictureNo });
             }
             if (skipped.length) console.info("[Neo] @ 图片选择器跳过的加载节点:", skipped);
-            return items;
+            return [...connected, ...unconnected];
         } catch (e) {
             console.warn("collectWorkflowLoadImages:", e);
             return [];
@@ -1443,52 +1506,71 @@ function createStatusBars() {
         const images = await collectWorkflowLoadImages();
         // await 期间用户可能改动了输入：@ 不在原位置则放弃
         if (quickInput.value[atIndex] !== "@") return;
-        const selected = []; // 保持勾选顺序 → Picture 编号顺序
+
+        // 点击行即插入：已附加的图片引用现有 <Picture N>，未附加的先添加再插入，然后关闭弹层
+        const insertImageAtCaret = (img) => {
+            if (!img || quickInput.value[atIndex] !== "@") { closePicker(); return; }
+            // 无参数位（输出未连接）：仅作为反推附件附加，不占用 <Picture N> 编号
+            if (img.pictureNo == null) {
+                addImageInput(img.value); // 内部判重，已附加则忽略
+                closePicker();
+                return;
+            }
+            // 有参数位：确保已附加（chips 用于发送 payload），插入其参数序号标记
+            const existIdx = attachedImages.findIndex(im => imageKey(im.input) === imageKey(img.value));
+            if (existIdx < 0) addImageInput(img.value, null, img.pictureNo);
+            const marker = "<Picture " + img.pictureNo + ">";
+            quickInput.value = quickInput.value.slice(0, atIndex) + marker + quickInput.value.slice(atIndex + 1);
+            // 焦点回到输入框并停在插入标记之后，方便继续输入
+            quickInput.focus({ preventScroll: true });
+            quickInput.setSelectionRange(atIndex + marker.length, atIndex + marker.length);
+            quickInput.dispatchEvent(new Event("input", { bubbles: true }));
+            closePicker();
+        };
 
         const picker = mkEl("div", "rs-at-picker");
-        const header = mkEl("div", "rs-at-picker-header");
-        header.textContent = images.length
-            ? `选择工作流图片（${images.length}）`
-            : "工作流中没有可用的 Load Image 图片";
         const list = mkEl("div", "rs-at-picker-list");
 
-        images.forEach(img => {
-            const row = mkEl("label", "rs-at-picker-row");
-            row.style.position = "relative";
+        // 弹层无标题栏：无可用图片时在列表内给占位提示
+        if (!images.length) {
+            const empty = mkEl("div", "rs-at-picker-empty");
+            empty.textContent = "工作流中没有可用的 Load Image 图片";
+            list.appendChild(empty);
+        }
 
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.addEventListener("change", () => {
-                if (cb.checked) {
-                    if (!selected.includes(img.value)) selected.push(img.value);
-                } else {
-                    const k = selected.indexOf(img.value);
-                    if (k > -1) selected.splice(k, 1);
-                }
-            });
+        images.forEach(img => {
+            const row = mkEl("div", "rs-at-picker-row");
+            row.style.position = "relative";
 
             const thumb = mkEl("img", "rs-at-picker-thumb");
             thumb.src = inputViewUrl(img.value);
 
-            row.append(cb, thumb);
+            row.addEventListener("click", () => insertImageAtCaret(img));
+
+            // 徽章语义：
+            // - 有参数位（pictureNo）：蓝色 #N，点击插入/引用 <Picture N>
+            // - 无参数位但已附加：灰色 ✓，点击无操作（仅作反推附件）
+            const existIdx = attachedImages.findIndex(im => imageKey(im.input) === imageKey(img.value));
+            if (img.pictureNo != null) {
+                const picBadge = mkEl("span", "rs-picker-pic-badge");
+                picBadge.textContent = `#${img.pictureNo}`;
+                row.append(thumb, picBadge);
+            } else if (existIdx >= 0) {
+                const refBadge = mkEl("span", "rs-picker-ref-badge");
+                refBadge.textContent = "✓";
+                row.append(thumb, refBadge);
+            } else {
+                row.append(thumb);
+            }
             list.appendChild(row);
         });
 
-        const footer = mkEl("div", "rs-at-picker-footer");
-        const allBtn = mkEl("button", "rs-at-picker-btn");
-        allBtn.textContent = "全选";
-        const okBtn = mkEl("button", "rs-at-picker-btn rs-at-picker-ok");
-        okBtn.textContent = "添加";
-        const cancelBtn = mkEl("button", "rs-at-picker-btn");
-        cancelBtn.textContent = "取消";
-        footer.append(allBtn, okBtn, cancelBtn);
-
-        picker.append(header, list, footer);
+        picker.append(list);
         // 挂到 body 并用 fixed 定位：quickInputWrapper 的 overflow 会裁剪内部弹层
         document.body.appendChild(picker);
 
         // ==========================================
-        // 键盘导航：↑/↓ 移动高亮，Space 切换选中，Enter 添加，Esc 关闭
+        // 键盘导航：↑/↓ 移动高亮，Enter 插入当前项，Esc 关闭
         // ==========================================
         picker.tabIndex = 0;
         let activeIndex = 0;
@@ -1516,15 +1598,6 @@ function createStatusBars() {
             row.classList.add("rs-picker-row");
             row.addEventListener("mousemove", () => setActiveRow(idx));
         });
-        const toggleRowSelected = (idx) => {
-            const img = images[idx];
-            if (!img) return;
-            const cb = rowEls[idx]?.querySelector("input[type=checkbox]");
-            if (cb) {
-                cb.checked = !cb.checked;
-                cb.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-        };
         picker.addEventListener("keydown", (e) => {
             // 阻断冒泡，避免 ComfyUI 全局键盘处理器（画布平移等）响应这些按键导致弹层偏离输入框
             if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", " ", "Enter"].includes(e.key)) {
@@ -1544,11 +1617,8 @@ function createStatusBars() {
                 case "End":
                     setActiveRow(rowEls.length - 1);
                     break;
-                case " ":
-                    toggleRowSelected(activeIndex);
-                    break;
                 case "Enter":
-                    okBtn.click();
+                    insertImageAtCaret(images[activeIndex]);
                     break;
             }
         });
@@ -1583,7 +1653,7 @@ function createStatusBars() {
         const cs = window.getComputedStyle(quickInput);
         const bLeft = parseFloat(cs.borderLeftWidth) || 0;
         const bTop = parseFloat(cs.borderTopWidth) || 0;
-        const pw = Math.min(Math.max(r.width, 100), 160); // 限制宽度在 100-160px 之间
+        const pw = Math.min(Math.max(r.width, 50), 80); // 限制宽度在 50-80px 之间
         const estHeight = 260;
         let left = r.left + bLeft + caret.x - quickInput.scrollLeft;
         let top = r.top + bTop + caret.y + 20 - quickInput.scrollTop; // 默认在其下方
@@ -1609,32 +1679,28 @@ function createStatusBars() {
         };
         quickInput.addEventListener("input", handleInputChange);
 
-        allBtn.addEventListener("click", () => {
-            list.querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = true; });
-            selected.length = 0;
-            images.forEach(img => selected.push(img.value));
-        });
         cancelBtn.addEventListener("click", closePicker);
         okBtn.addEventListener("click", () => {
             if (!selected.length) { closePicker(); return; }
             // 编号顺序由工作流 Load Image 节点参数顺序决定（images 顺序），而非点击顺序。
-            // 逐个添加：addImageInput 内部判重，只统计真正加入的图片，编号与 chips 保持连续一致
-            const addedKeys = [];
+            // 已附加的图片只做引用（插入现有编号），未附加的才真正添加。
+            const markers = [];
             images.forEach(img => {
                 if (!selected.includes(img.value)) return;
-                const before = attachedImages.length;
+                const existIdx = attachedImages.findIndex(im => imageKey(im.input) === imageKey(img.value));
+                if (existIdx >= 0) {
+                    markers.push("<Picture " + (existIdx + 1) + ">");
+                    return;
+                }
                 addImageInput(img.value);
-                if (attachedImages.length > before) addedKeys.push(img.value);
+                markers.push("<Picture " + attachedImages.length + ">");
             });
             // 在 @ 所在位置替换成内联 <Picture N> 标记（编号与 chips 一致），用于描述图片间交互
-            if (quickInput.value[atIndex] === "@" && addedKeys.length) {
-                const startIdx = attachedImages.length - addedKeys.length;
-                const markers = addedKeys.map((_, i) =>
-                    "<Picture " + (startIdx + i + 1) + ">"
-                ).join(" ");
-                quickInput.value = quickInput.value.slice(0, atIndex) + markers + quickInput.value.slice(atIndex + 1);
+            if (quickInput.value[atIndex] === "@" && markers.length) {
+                const joined = markers.join(" ");
+                quickInput.value = quickInput.value.slice(0, atIndex) + joined + quickInput.value.slice(atIndex + 1);
                 // 光标放到插入标记之后
-                quickInput.setSelectionRange(atIndex + markers.length, atIndex + markers.length);
+                quickInput.setSelectionRange(atIndex + joined.length, atIndex + joined.length);
                 quickInput.dispatchEvent(new Event("input", { bubbles: true }));
             }
             closePicker();

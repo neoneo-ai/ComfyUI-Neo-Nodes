@@ -1944,9 +1944,6 @@
     color: #7ab8f5;
 }
 
-/* ==========================================
-   Theme - LOCAL PROMPT (Green)
-   ========================================== */
 
 /* ==========================================
    Image chips (attach for vision skills / reverse prompt)
@@ -1980,8 +1977,7 @@
 
 .rs-image-chip:hover {
     border-color: rgba(80, 144, 204, 0.7);
-    transform: translateY(-1px);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 0 0 1px rgba(80, 144, 204, 0.5), 0 3px 8px rgba(0, 0, 0, 0.45);
 }
 
 .rs-image-chip-thumb {
@@ -2078,12 +2074,18 @@
 .rs-at-picker {
     position: fixed;
     background: #222;
-    border: 1px solid #555;
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     z-index: 20000;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
+}
+
+/* 弹层接收键盘焦点，去掉浏览器默认的白色焦点轮廓 */
+.rs-at-picker:focus,
+.rs-at-picker:focus-visible {
+    outline: none;
 }
 
 .rs-at-picker-header {
@@ -2099,22 +2101,28 @@
     scrollbar-width: thin;
 }
 
+.rs-at-picker-empty {
+    padding: 10px 12px;
+    font-size: 11px;
+    color: #888;
+}
+
 .rs-at-picker-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 10px;
+    gap: 6px;
+    padding: 3px 6px;
+    margin: 2px 4px;
     cursor: pointer;
+    border-radius: 6px;
 }
 
 .rs-at-picker-row:hover {
     background: #2a2a2a;
 }
 
-.rs-picker-row-active {
-    background: #3d4d63 !important;
-    outline: 1px solid #5090cc;
-    outline-offset: -1px;
+.rs-at-picker-row.rs-picker-row-active {
+    background: #3d4d63;
 }
 
 .rs-at-picker-thumb {
@@ -2153,6 +2161,29 @@
 
 .rs-at-picker-btn:hover {
     background: #3d3d3d;
+}
+
+/* 已附加图片的引用徽章：无参数位，仅作反推附件 */
+.rs-picker-ref-badge {
+    background: rgba(255, 255, 255, 0.12);
+    color: #bbb;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    padding: 0 5px;
+    border-radius: 7px;
+}
+
+/* 参数位徽章：图片连接到目标节点 IMAGE 输入槽的序号 <Picture N> */
+.rs-picker-pic-badge {
+    background: linear-gradient(180deg, #5aa2e0, #4079b8);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    padding: 0 5px;
+    border-radius: 7px;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
 }
 
 .rs-at-picker-ok {
