@@ -1724,9 +1724,121 @@ function createStatusBars() {
         "custom": { label: "📝 自定义", order: 3 }
     };
 
-    async function populateTemplateSelector() {
+    /** 从起始节点出发做 BFS，返回同一连通分量的所有节点 */
+    function getConnectedNodes(startNode) {
+        if (!startNode || !app.graph?._nodes) return null;
+        const allNodes = app.graph._nodes;
+        const visited = new Set();
+        const queue = [startNode.id];
+        visited.add(startNode.id);
+        while (queue.length > 0) {
+            const curId = queue.shift();
+            const cur = allNodes.find(n => n.id === curId);
+            if (!cur) continue;
+            // 遍历输出 → 下游节点
+            for (let si = 0; si < (cur.outputs || []).length; si++) {
+                const links = cur.outputs[si].links || [];
+                for (const linkId of links) {
+                    const link = app.graph.links?.[linkId];
+                    if (link && !visited.has(link.target_id)) {
+                        visited.add(link.target_id);
+                        queue.push(link.target_id);
+                    }
+                }
+            }
+            // 遍历输入 ← 上游节点
+            for (let si = 0; si < (cur.inputs || []).length; si++) {
+                const linkId = cur.inputs[si]?.link;
+                if (linkId && app.graph.links?.[linkId]) {
+                    const lnk = app.graph.links[linkId];
+                    if (!visited.has(lnk.origin_id)) {
+                        visited.add(lnk.origin_id);
+                        queue.push(lnk.origin_id);
+                    }
+                }
+            }
+        }
+        return allNodes.filter(n => visited.has(n.id));
+    }
+
+    /** 自动检测当前工作流的上下文（CLIP类型、模型类型），返回 context tags 集合 */
+    function detectWorkflowContext(startNode) {
+        const ctx = new Set();
+        let nodes;
+        if (startNode) {
+            const connected = getConnectedNodes(startNode);
+            nodes = connected || [startNode];
+        } else {
+            nodes = app.graph?._nodes;
+        }
+        nodes.forEach(node => {
+            // CLIPLoader: widget "type" is the CLIP type (e.g. "krea2", "minimax")
+            if (node.type === "CLIPLoader" || node.comfyClass === "CLIPLoader") {
+                const typeWidget = node.widgets?.find(w => w.name === "type");
+                if (typeWidget) ctx.add(String(typeWidget.value || "").toLowerCase());
+            }
+            // UNETLoader / VAELoader: collect model name widget value
+            const modelNameWidget = node.widgets?.find(w => w.name === "model_name" || w.name === "vae_name" || w.name === "ckpt_name");
+            if (modelNameWidget) {
+                ctx.add(String(modelNameWidget.value || "").toLowerCase());
+            }
+            // Add the full node title for broader tag matching
+            const title = String(node.title || "").trim();
+            if (title && title !== node.type) {
+                ctx.add(title.toLowerCase());
+            }
+        });
+        return ctx;
+    }
+
+    // debounce: per-node timer to avoid duplicate calls from multiple init paths
+    const _populateTimer = new Map();
+
+    async function populateTemplateSelector(startNode = null) {
+        const node = startNode;
+        if (node && _populateTimer.has(node.id)) {
+            clearTimeout(_populateTimer.get(node.id));
+        }
+        _populateTimer.set(node.id, setTimeout(() => {
+            _populateTimer.delete(node.id);
+            doPopulate(startNode);
+        }, 50));
+    }
+
+    async function doPopulate(startNode = null) {
         const skills = await listSkills();
         const currentVal = tplSelector.value;
+        // 自动检测工作流上下文并预筛选/预选择最佳 skill
+        const detectedCtx = detectWorkflowContext(startNode);
+        let bestMatchId = null;
+        if (detectedCtx.size > 0) {
+            let bestScore = -1;
+            skills.forEach(s => {
+                const skillTags = (s.tags || []).map(t => String(t).toLowerCase());
+                // 子串 + 分词双向匹配
+                const matched = [];
+                [...detectedCtx].forEach(tag => {
+                    skillTags.forEach(st => {
+                        if (tag.includes(st) || st.includes(tag)) {
+                            if (!matched.includes(st)) matched.push(st);
+                        } else {
+                            const words = tag.split(/[\s\-_/\\]+/).filter(w => w.length > 0);
+                            if (words.some(w => st.includes(w) || w.includes(st))) {
+                                if (!matched.includes(st)) matched.push(st);
+                            }
+                        }
+                    });
+                });
+                const score = matched.length;
+                if (score > 0) {
+                    console.log(`[PromptManager] skill=${s.id} matchTags=[${matched.join(",")}]`);
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatchId = s.id;
+                }
+            });
+        }
         tplSelector.innerHTML = "";
 
         const defaultOpt = document.createElement("option");
@@ -1761,6 +1873,9 @@ function createStatusBars() {
 
         if (currentVal && [...tplSelector.options].some(o => o.value === currentVal)) {
             tplSelector.value = currentVal;
+        } else if (bestMatchId && [...tplSelector.options].some(o => o.value === bestMatchId)) {
+            // 工作流上下文匹配到 skill，自动选中
+            tplSelector.value = bestMatchId;
         }
     }
     
@@ -1956,7 +2071,7 @@ function createPromptManagerUI() {
         context = ctx;
         const { node, graph, textWidget } = ctx;
 
-        setTimeout(() => populateTemplateSelector(), 50);
+        // 不再在这里触发，由 prompts.js 统一管理时序
 
         function handleSaveClick() {
             presetListOverlay.style.display = "none";

@@ -2,7 +2,7 @@ id: minimax_h3_ref
 name: 全能参考 H3（图像）
 category: vision
 source: presets
-tags: [MiniMax, H3, 视频, 参考]
+tags: [MiniMax, H3, Reference,video,视频,参考]
 inputs: [image, text]
 markers: ["@全参考", "@参考", "@minimax"]
 max_tokens: 2600

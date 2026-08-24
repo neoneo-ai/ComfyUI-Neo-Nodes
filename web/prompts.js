@@ -243,7 +243,7 @@ app.registerExtension({
             // Populate template selector, restore last selection and sync to hidden widget
             if (populateTemplateSelector) {
                 setTimeout(async () => {
-                    await populateTemplateSelector();
+                    await populateTemplateSelector(node);
                     if (node.properties?.rs_selected_template) {
                         tplSelector.value = node.properties.rs_selected_template;
                     }
@@ -613,7 +613,7 @@ document.addEventListener("gallery.send.prompt", (event) => {
 document.addEventListener("rs.templates.updated", () => {
     app.graph?._nodes?.forEach(node => {
         if (typeof node._populateTemplateSelector === "function") {
-            node._populateTemplateSelector();
+            node._populateTemplateSelector(node);
         }
     });
 });
@@ -784,7 +784,7 @@ app.registerExtension({
             // Populate template selector, restore last selection and sync to hidden widget
             if (populateTemplateSelector) {
                 setTimeout(async () => {
-                    await populateTemplateSelector();
+                    await populateTemplateSelector(node);
                     if (node.properties?.rs_selected_template) {
                         tplSelector.value = node.properties.rs_selected_template;
                     }
