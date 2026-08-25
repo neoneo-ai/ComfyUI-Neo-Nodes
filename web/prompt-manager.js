@@ -522,31 +522,24 @@ function createSettingsModal() {
             }
         } catch (e) {
             console.warn('Failed to fetch models:', e);
-            targetSelect.innerHTML = '<option value="">❌ Failed to load</option>';
+            targetSelect.innerHTML = '<option value="">❌ 未加载</option>';
         } finally {
             targetSelect.disabled = false;
         }
     };
 
-    const setSelectedModelValue = (modelSelect, modelValue) => {
-        if (!modelValue || !modelSelect) return;
-        
-        let found = false;
-        for (let i = 0; i < modelSelect.options.length; i++) {
-            if (modelSelect.options[i].value === modelValue) {
-                modelSelect.value = modelValue;
-                found = true;
-                break;
-            }
+    // LM Studio / Ollama：根据远端模型列表回填/占位。未加载或加载失败时显示「未加载」，
+    // 不回填可能来自其它 provider 的旧值（如 gpt-4o-mini）。
+    const realRemoteOptions = () => Array.from(modelSelectEl.options).filter(o => o.value && o.value !== '__loading__');
+    const applyRemoteSavedModel = (savedModel) => {
+        const real = realRemoteOptions();
+        if (!real.length) {
+            modelSelectEl.innerHTML = '<option value="">❌ 未加载</option>';
+            modelSelectEl.value = '';
+            return;
         }
-        
-        if (!found) {
-            const opt = document.createElement('option');
-            opt.value = modelValue;
-            opt.textContent = modelValue;
-            modelSelect.appendChild(opt);
-            modelSelect.value = modelValue;
-        }
+        const match = real.find(o => o.value === savedModel);
+        modelSelectEl.value = match ? match.value : real[0].value;
     };
 
     const getModelValue = () => {
@@ -556,11 +549,8 @@ function createSettingsModal() {
         } else if (provider === 'openai') {
             return modelInput.value;
         } else {
-            // LM Studio / Ollama
-            if (modelSelectEl && modelSelectEl.style.display !== 'none' && modelSelectEl.value) {
-                return modelSelectEl.value;
-            }
-            return modelInput.value;
+            // LM Studio / Ollama：下拉框为准，未加载时为空（不回填其它 provider 的 model）
+            return modelSelectEl ? modelSelectEl.value : '';
         }
     };
 
@@ -664,12 +654,7 @@ function createSettingsModal() {
             const defaultBaseUrl = REMOTE_PROVIDER_DEFAULTS[provider].baseUrl;
             baseUrlInput.value = saved.base_url || defaultBaseUrl;
             await fetchModelsFromUrl(baseUrlInput.value.trim(), modelSelectEl);
-            if (saved.model && saved.model !== '__loading__') {
-                setSelectedModelValue(modelSelectEl, saved.model);
-            } else if (modelSelectEl.options.length > 1 && modelSelectEl.value === '__loading__') {
-                // 无有效保存模型时，自动选中第一个可用模型
-                modelSelectEl.value = modelSelectEl.options[1]?.value || '';
-            }
+            applyRemoteSavedModel(saved.model);
         }
     };
 
@@ -736,12 +721,7 @@ function createSettingsModal() {
             const url = baseUrlInput.value.trim();
             if (!url) return;
             await fetchModelsFromUrl(url, modelSelectEl);
-            const savedModel = savedRemoteConfig?.providers?.[providerSelect.value]?.model;
-            if (savedModel && savedModel !== '__loading__') {
-                setSelectedModelValue(modelSelectEl, savedModel);
-            } else if (modelSelectEl.options.length > 1 && modelSelectEl.value === '__loading__') {
-                modelSelectEl.value = modelSelectEl.options[1]?.value || '';
-            }
+            applyRemoteSavedModel(savedRemoteConfig?.providers?.[providerSelect.value]?.model);
         }
     };
     baseUrlInput.addEventListener("change", fetchModelsForBaseUrl);
@@ -1147,7 +1127,7 @@ function createSettingsModal() {
         stopLocalModelStatusPoller,
         refreshLocalDownloadState,
         fetchModelsFromUrl,
-        setSelectedModelValue,
+        applyRemoteSavedModel,
         fetchLocalModels,
         handleProviderChange,
         _llmMode: "local",

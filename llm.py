@@ -239,10 +239,13 @@ def _migrate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
         else:
             provider = "openai"
         new["enabled"] = False
-    new["active_provider"] = provider
-    for key in ("api_key", "base_url", "model", "max_tokens", "temperature", "timeout"):
+        new["active_provider"] = provider
+    # LM Studio / Ollama 的 model 只能来自服务端模型列表，不能迁移旧的 OpenAI 默认值
+    for key in ("api_key", "base_url", "max_tokens", "temperature", "timeout"):
         if key in config:
             new["providers"][provider][key] = config[key]
+    if provider == "openai" and "model" in config:
+        new["providers"][provider]["model"] = config["model"]
     return new
 
 
