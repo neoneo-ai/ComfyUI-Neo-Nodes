@@ -2,9 +2,20 @@ id: minimax_h3_ref
 name: 全能参考 H3（图像）
 category: vision
 source: presets
-tags: [MiniMax, H3, Reference,video,视频,参考]
-inputs: [image, text]
-markers: ["@全参考", "@参考", "@minimax"]
+tags:
+- MiniMax
+- H3
+- Reference
+- video
+- 视频
+- 参考
+inputs:
+- image
+- text
+markers:
+- '@全参考'
+- '@参考'
+- '@minimax'
 max_tokens: 2600
 result_key: prompt
 description: 基于多张参考图生成 MiniMax H3 全参考模式视频提示词（图像参考，六段结构）

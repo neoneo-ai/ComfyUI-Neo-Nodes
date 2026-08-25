@@ -174,8 +174,20 @@ def _save_template_file(template: dict, filepath: str) -> bool:
         
         try:
             import yaml
+
+            class _TemplateDumper(yaml.SafeDumper):
+                pass
+
+            def _represent_multiline_str(dumper, data):
+                # Multiline values as literal blocks so saved files keep real line breaks
+                style = '|' if '\n' in data else None
+                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
+
+            _TemplateDumper.add_representer(str, _represent_multiline_str)
+
             with open(filepath, 'w', encoding='utf-8') as f:
-                yaml.dump(template, f, indent=2, allow_unicode=True, default_flow_style=False)
+                yaml.dump(template, f, Dumper=_TemplateDumper, indent=2, allow_unicode=True,
+                          default_flow_style=False, sort_keys=False, width=4096)
         except ImportError:
             logger.error(f"PyYAML not installed, cannot save template: {filepath}")
             return False

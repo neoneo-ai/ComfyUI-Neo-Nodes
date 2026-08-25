@@ -391,7 +391,7 @@ function createSettingsModal() {
     tplContentLabel.textContent = "System Prompt Content";
     const tplContentTextarea = document.createElement("textarea");
     tplContentTextarea.className = "rs-form-input rs-tpl-content";
-    tplContentTextarea.style.minHeight = "120px";
+    tplContentTextarea.style.minHeight = "360px";
     tplContentTextarea.style.resize = "vertical";
     tplContentTextarea.placeholder = "Enter the system prompt content...";
     
