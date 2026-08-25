@@ -1,3 +1,11 @@
+id: image_to_video
+name: 图生视频
+source: presets
+inputs: [image, text]
+max_tokens: 2600
+category: vision
+tags: [MiniMax, H3, image,video,视频,图生,Image to Video]
+created_at: '2026-08-09T05:58:39.954367+00:00'
 content: "
     根据以下规则，生成提示词：
   首先，根据上传图片精准描述图片，结合描述的图片内容，你要根据动作和运镜提示，「女孩微笑，抬起双手比心的动作」，提示词要包含：运动描述+运镜描述，
@@ -23,10 +31,3 @@ content: "
   根据以上规则，请你根据输入的一段情景，合理的运用各类规则，要合理结合情景选择合适的规则进行提示词创作，以确保生成的视频符合预期，具备相应的影视级美学、流畅动态及风格化表现。
   请注意，不要生成标题和解释，仅仅是输出一段合理的描述150个字。
   "
-created_at: '2026-08-09T05:58:39.954367+00:00'
-id: image_to_video
-name: 图生视频
-source: presets
-tags:
-- 图生
-- 视频

@@ -664,8 +664,11 @@ function createSettingsModal() {
             const defaultBaseUrl = REMOTE_PROVIDER_DEFAULTS[provider].baseUrl;
             baseUrlInput.value = saved.base_url || defaultBaseUrl;
             await fetchModelsFromUrl(baseUrlInput.value.trim(), modelSelectEl);
-            if (saved.model) {
+            if (saved.model && saved.model !== '__loading__') {
                 setSelectedModelValue(modelSelectEl, saved.model);
+            } else if (modelSelectEl.options.length > 1 && modelSelectEl.value === '__loading__') {
+                // 无有效保存模型时，自动选中第一个可用模型
+                modelSelectEl.value = modelSelectEl.options[1]?.value || '';
             }
         }
     };
@@ -734,7 +737,11 @@ function createSettingsModal() {
             if (!url) return;
             await fetchModelsFromUrl(url, modelSelectEl);
             const savedModel = savedRemoteConfig?.providers?.[providerSelect.value]?.model;
-            if (savedModel) setSelectedModelValue(modelSelectEl, savedModel);
+            if (savedModel && savedModel !== '__loading__') {
+                setSelectedModelValue(modelSelectEl, savedModel);
+            } else if (modelSelectEl.options.length > 1 && modelSelectEl.value === '__loading__') {
+                modelSelectEl.value = modelSelectEl.options[1]?.value || '';
+            }
         }
     };
     baseUrlInput.addEventListener("change", fetchModelsForBaseUrl);
@@ -1799,10 +1806,12 @@ function createStatusBars() {
         if (node && _populateTimer.has(node.id)) {
             clearTimeout(_populateTimer.get(node.id));
         }
-        _populateTimer.set(node.id, setTimeout(() => {
-            _populateTimer.delete(node.id);
-            doPopulate(startNode);
-        }, 50));
+        return new Promise(resolve => {
+            _populateTimer.set(node.id, setTimeout(() => {
+                _populateTimer.delete(node.id);
+                Promise.resolve(doPopulate(startNode)).then(resolve, resolve);
+            }, 50));
+        });
     }
 
     async function doPopulate(startNode = null) {
@@ -1877,6 +1886,10 @@ function createStatusBars() {
             // 工作流上下文匹配到 skill，自动选中
             tplSelector.value = bestMatchId;
         }
+
+        // Programmatic value assignment does not fire change events;
+        // dispatch one so node listeners sync the template_id hidden input used by queue runs.
+        tplSelector.dispatchEvent(new Event("change"));
     }
     
     const settingsBtn = mkEl("button", "rs-settings-btn");

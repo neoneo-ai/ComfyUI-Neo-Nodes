@@ -609,10 +609,9 @@ class NeoPrompts:
         """
         logger.info(f"encode_prompts called: auto_generate={auto_generate}, text='{text[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
         
-        # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
-        # Image input connected -> always use the image (reverse_prompt) flow;
-        # text-only generation still requires auto_generate.
-        if ((auto_generate and quick_input.strip()) or image is not None) and text_input is None:
+        # Generate synchronously only when auto_generate is enabled;
+        # an image input then selects the image (reverse_prompt/template) flow.
+        if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
             logger.info(f"Auto-generate condition met, checking LLM mode...")
             current_mode = get_current_mode()
             logger.info(f"Current LLM mode: {current_mode}")
@@ -623,14 +622,15 @@ class NeoPrompts:
                     # Use selected template as system prompt when available
                     task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
-                    if not image_mode and template_id.strip():
+                    template_max = None
+                    if template_id.strip():
                         system_prompt = _load_template_content(template_id)
                         template_max = load_template_max_tokens(template_id)
                         if system_prompt:
                             task_name = "template_prompt"
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
                         else:
-                            logger.warning(f"Template '{template_id}' not found, falling back to smart_prompt")
+                            logger.warning(f"Template '{template_id}' not found, falling back to {task_name}")
                     logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
@@ -1479,16 +1479,15 @@ class NeoPromptGenerator:
         """Returns the prompt text as output.
 
         Logic:
-        1. If auto_generate is enabled and quick_input has content, call LLM synchronously (ignore existing prompt)
+        1. If auto_generate is enabled and (quick_input or image) has content, call LLM synchronously (ignore existing prompt)
         2. Otherwise, combine prompt and quick_input (same as frontend logic)
         """
         logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
         gen_meta = {"task": None, "template_id": ""}
         
-        # If auto_generate is enabled and (quick_input or image) has content, generate synchronously
-        # Image input connected -> always use the image (reverse_prompt) flow;
-        # text-only generation still requires auto_generate.
-        if ((auto_generate and quick_input.strip()) or image is not None) and text_input is None:
+        # Generate synchronously only when auto_generate is enabled;
+        # an image input then selects the image (reverse_prompt/template) flow.
+        if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
             logger.info(f"Auto-generate condition met, checking LLM mode...")
             current_mode = get_current_mode()
             logger.info(f"Current LLM mode: {current_mode}")
@@ -1499,14 +1498,15 @@ class NeoPromptGenerator:
                     # Use selected template as system prompt when available
                     task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
-                    if not image_mode and template_id.strip():
+                    template_max = None
+                    if template_id.strip():
                         system_prompt = _load_template_content(template_id)
                         template_max = load_template_max_tokens(template_id)
                         if system_prompt:
                             task_name = "template_prompt"
                             logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
                         else:
-                            logger.warning(f"Template '{template_id}' not found, falling back to smart_prompt")
+                            logger.warning(f"Template '{template_id}' not found, falling back to {task_name}")
                     gen_meta.update(task=task_name, template_id=template_id)
                     logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
