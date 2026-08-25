@@ -52,85 +52,6 @@ _tags_lock = threading.Lock()
 _templates_lock = threading.Lock()
 
 
-# 内置预设模版数据
-DEFAULT_TEMPLATES = [
-    {
-        "id": "general_enhance",
-        "name": "\u901a\u7528\u589e\u5f3a",
-        "source": "presets",
-        "tags": ["\u589e\u5f3a", "\u666e\u901a"],
-        "content": (
-            "You are an expert AI image prompt engineer. Your task is to enhance and expand the user's prompt.\n\n"
-            "Rules:\n"
-            "- Expand brief descriptions into detailed, vivid prompts\n"
-            "- Include details about: subject appearance, clothing, pose, expression, lighting, background, atmosphere, style, quality tags\n"
-            "- Use comma-separated descriptive phrases in English\n"
-            "- Maintain the user's original intent and style preference\n"
-            "- Output ONLY the enhanced prompt text, nothing else\n"
-        ),
-    },
-    {
-        "id": "cyberpunk_style",
-        "name": "\u8d5b\u535a\u6717\u98ce\u683c",
-        "source": "presets",
-        "tags": ["\u98ce\u683c", "\u79d1\u5e7b"],
-        "content": (
-            "You are a cyberpunk-style AI image prompt specialist. Transform the user's input into vivid cyberpunk-themed prompts.\n\n"
-            "Rules:\n"
-            "- Emphasize neon lights, rain-slicked streets, holographic displays, futuristic architecture\n"
-            "- Include: dark alleyways, glowing signs, chrome implants, synthwave color palette (cyan, magenta, purple)\n"
-            "- Add atmosphere: dystopian, high-tech low-life, foggy, dramatic shadows\n"
-            "- Use comma-separated descriptive phrases in English\n"
-            "- Output ONLY the enhanced prompt text, nothing else\n"
-        ),
-    },
-    {
-        "id": "chinese_classical",
-        "name": "\u4e2d\u56fd\u53e4\u98ce",
-        "source": "presets",
-        "tags": ["\u98ce\u683c", "\u56fd\u98ce"],
-        "content": (
-            "You are a Chinese classical art AI image prompt specialist. Transform the user's input into beautiful Chinese-style prompts.\n\n"
-            "Rules:\n"
-            "- Emphasize traditional Chinese aesthetics: ink wash painting, watercolor, silk painting style\n"
-            "- Include: mountains, rivers, bamboo, plum blossoms, cranes, pagodas, misty landscapes\n"
-            "- Add atmosphere: ethereal, poetic, serene, ancient elegance\n"
-            "- Use comma-separated descriptive phrases in English\n"
-            "- Output ONLY the enhanced prompt text, nothing else\n"
-        ),
-    },
-    {
-        "id": "realistic_photo",
-        "name": "\u5199\u5b9e\u6444\u5f71",
-        "source": "presets",
-        "tags": ["\u98ce\u683c", "\u73b0\u5b9e"],
-        "content": (
-            "You are a realistic photography AI image prompt specialist. Transform the user's input into photorealistic prompts.\n\n"
-            "Rules:\n"
-            "- Emphasize camera settings, lighting conditions, photographic style\n"
-            "- Include: lens type (35mm, 85mm, macro), aperture (f/1.4, f/2.8), ISO, film grain\n"
-            "- Add photography terms: bokeh, depth of field, golden hour, natural lighting, HDR\n"
-            "- Use comma-separated descriptive phrases in English\n"
-            "- Output ONLY the enhanced prompt text, nothing else\n"
-        ),
-    },
-    {
-        "id": "translate",
-        "name": "\u7ffb\u8bd1",
-        "source": "presets",
-        "tags": ["\u7ffb\u8bd1", "\u5de5\u5177"],
-        "content": (
-            "You are an expert translator for AI image prompts. Your task is to translate the user's prompt to English.\n\n"
-            "Rules:\n"
-            "- Translate the input text to natural, fluent English suitable for AI image generation\n"
-            "- Preserve the original meaning and artistic intent\n"
-            "- Use appropriate terminology for AI image prompts\n"
-            "- Output ONLY the translated text, nothing else\n"
-        ),
-    },
-]
-
-
 def _load_template_file(filepath: str) -> dict | None:
     """Load a single template file (YAML format only)."""
     if not os.path.exists(filepath):
@@ -218,29 +139,6 @@ def _scan_templates_recursive(base_dir: str, source: str = "custom") -> list:
     return templates
 
 
-def _ensure_builtin_templates():
-    """Ensure all built-in preset templates exist on disk."""
-    import datetime
-    for tpl in DEFAULT_TEMPLATES:
-        target_dir = TEMPLATE_PRESETS_DIR if tpl['source'] == 'presets' else TEMPLATE_CUSTOM_DIR
-        filename = f"{tpl['id']}.yaml"  # Use YAML format
-        filepath = os.path.join(target_dir, filename)
-        if not os.path.exists(filepath):
-            template_data = {
-                "id": tpl["id"],
-                "name": tpl["name"],
-                "source": tpl["source"],
-                "tags": tpl.get("tags", []),
-                "content": tpl["content"],
-                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-            _save_template_file(template_data, filepath)
-
-
-# Initialize built-in templates on module load
-_ensure_builtin_templates()
-
-
 def _load_template_content(template_id: str) -> str | None:
     """Load template content by id (custom first, then presets)."""
     if not template_id:
@@ -285,9 +183,6 @@ _tags_lock = threading.Lock()
 from .llm import (
     handle_llm_api_request,
     handle_llm_api_stream,
-    check_model_status,
-    check_all_models_status,
-    start_download,
     get_available_models,
     set_current_model,
     unload_local_model,
@@ -1208,34 +1103,6 @@ async def rs_prompts_random_prompt(request):
     except Exception as e:
         logger.error(f"Error in random prompt: {e}")
         return web.json_response({"status": "error", "prompt": "", "error": str(e)})
-
-@server.PromptServer.instance.routes.get("/rs_prompts/check_model")
-async def rs_prompts_check_model(request):
-    """检查当前 LLM 模型是否已下载，不触发下载"""
-    try:
-        status = check_model_status()
-        return web.json_response(status)
-    except Exception as e:
-        logger.error(f"Error checking model status: {e}")
-        return web.json_response({
-            "model_available": False,
-            "mmproj_available": False,
-            "error": str(e)
-        }, status=500)
-
-@server.PromptServer.instance.routes.get("/rs_prompts/check_all_models")
-async def rs_prompts_check_all_models(request):
-    """检查所有 LLM 模型的下载状态"""
-    try:
-        status = check_all_models_status()
-        return web.json_response(status)
-    except Exception as e:
-        logger.error(f"Error checking all models status: {e}")
-        return web.json_response({
-            "models": [],
-            "current_model": "",
-            "error": str(e)
-        }, status=500)
 
 # ==========================================
 # Proxy API for fetching remote models (CORS workaround)

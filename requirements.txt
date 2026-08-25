@@ -1,6 +1,4 @@
 llama_cpp_python
-huggingface_hub
-modelscope
 requests
 Pillow
 PyYAML

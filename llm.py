@@ -13,17 +13,11 @@ import base64
 import io
 import hashlib
 import socket
+import threading
 from typing import Any, Dict, List, Optional, Generator
 from pathlib import Path
 import folder_paths
 from collections import OrderedDict
-
-# ==========================================
-# HuggingFace Endpoint Configuration
-# ==========================================
-# Allow override via environment variable, default to official HuggingFace endpoint
-hf_endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
-os.environ["HF_ENDPOINT"] = hf_endpoint
 
 # ==========================================
 # LiteLLM Configuration
@@ -77,21 +71,6 @@ _CONFIGS_DIR: str = os.path.join(os.path.dirname(__file__), "configs")
 
 _MODEL_CONFIG: Dict[str, Any] = _load_model_config(_CONFIGS_DIR)
 _MODEL_PRESETS: Dict[str, Any] = _load_presets(_CONFIGS_DIR)
-
-def get_model_config():
-    """获取模型配置"""
-    if not _MODEL_CONFIG:
-        return {
-            "model": {
-                "ms_repo_id": "unsloth/Qwen3.5-0.8B-GGUF",
-                "hf_repo_id": "unsloth/Qwen3.5-0.8B-GGUF",
-                "filename": "Qwen3.5-0.8B-UD-Q4_K_XL.gguf"
-            },
-            "mmproj": {
-                "filename": "mmproj-BF16.gguf"
-            }
-        }
-    return _MODEL_CONFIG
 
 
 # ==========================================
@@ -357,16 +336,6 @@ def _get_all_models() -> Dict[str, Any]:
     return {**_MODEL_PRESETS, **_MODEL_CONFIG.get("models", {})}
 
 
-def _get_current_model_cfg() -> Dict[str, Any]:
-    """获取当前模型的配置"""
-    all_models = _get_all_models()
-    current_key = _MODEL_CONFIG.get("current_model", "") or "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"
-    if current_key in all_models:
-        return all_models[current_key]
-    first_key = list(all_models.keys())[0] if all_models else ""
-    return all_models.get(first_key, {})
-
-
 def scan_llm_directory() -> List[Dict[str, str]]:
     """扫描 models/LLM/ 目录，发现所有 .gguf 文件，并自动补充到 model_config.json"""
     base_dir = folder_paths.base_path
@@ -511,266 +480,9 @@ def get_available_models() -> Dict[str, Any]:
             seen_keys.add(item["key"])
 
     return {
-        "current_model": _MODEL_CONFIG.get("current_model", "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"),
+        "current_model": _MODEL_CONFIG.get("current_model", ""),
         "models": model_list,
     }
-
-
-# ==========================================
-# Download Status Management (for local mode)
-# ==========================================
-
-import threading
-
-_download_status = {
-    "model": {"downloading": False, "progress": 0, "error": None},
-    "mmproj": {"downloading": False, "progress": 0, "error": None}
-}
-_download_lock = threading.Lock()
-
-def get_model_paths():
-    """获取模型文件路径 - 每次都从文件读取最新配置"""
-    config = _read_model_config_from_file()
-    if not config:
-        config = _MODEL_CONFIG
-
-    all_models = _get_all_models()
-    current_model_key: str = config.get("current_model", "") or "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"
-
-    model_cfg = all_models.get(current_model_key, {})
-
-    MODEL_FILENAME = model_cfg.get("filename", "")
-    MODEL_DIR = model_cfg.get("model_dir", "Qwen-0.8B")
-
-    base_dir = folder_paths.base_path
-    model_dir = os.path.join(base_dir, "models", "LLM", MODEL_DIR)
-    target_path = os.path.join(model_dir, MODEL_FILENAME)
-
-    MMPROJ_FILENAME = config.get("mmproj", {}).get("filename", "mmproj-BF16.gguf")
-    mmproj_path = os.path.join(model_dir, MMPROJ_FILENAME)
-    return target_path, mmproj_path
-
-def check_model_status():
-    """检查模型文件是否存在，返回状态信息"""
-    target_path, mmproj_path = get_model_paths()
-
-    model_exists = os.path.exists(target_path)
-    mmproj_exists = os.path.exists(mmproj_path)
-
-    config = _read_model_config_from_file()
-    if not config:
-        config = _MODEL_CONFIG
-
-    all_models = _get_all_models()
-    current_model_key: str = config.get("current_model", "") or "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"
-    model_cfg = all_models.get(current_model_key, {})
-
-    MS_REPO_ID = model_cfg.get("ms_repo_id", "")
-    HF_REPO_ID = model_cfg.get("hf_repo_id", "")
-    MODEL_FILENAME = model_cfg.get("filename", "")
-    MMPROJ_FILENAME = config.get("mmproj", {}).get("filename", "mmproj-BF16.gguf")
-
-    if _download_status["model"]["downloading"]:
-        logger.info(f"Download status check: downloading={_download_status['model']['downloading']}, "
-                    f"progress={_download_status['model']['progress']}%, "
-                    f"model_exists={model_exists}, target_path={target_path}")
-
-    return {
-        "model_available": model_exists,
-        "mmproj_available": mmproj_exists,
-        "model_filename": MODEL_FILENAME,
-        "mmproj_filename": MMPROJ_FILENAME,
-        "model_repo_id": MS_REPO_ID,
-        "hf_repo_id": HF_REPO_ID,
-        "model_path": target_path if model_exists else None,
-        "mmproj_path": mmproj_path if mmproj_exists else None,
-        "download_status": _download_status
-    }
-
-def check_all_models_status():
-    """检查所有模型文件的状态（合并预设 + 用户自定义 + 目录扫描）"""
-    base_dir = folder_paths.base_path
-    all_models = _get_all_models()
-
-    models_status: List[Dict[str, Any]] = []
-    seen_keys: set = set()
-
-    for key, config in all_models.items():
-        config_dict: Dict[str, Any] = config  # type: ignore[assignment]
-        model_dir: str = config_dict.get("model_dir", "")
-        filename: str = config_dict.get("filename", "")
-
-        model_path = os.path.join(base_dir, "models", "LLM", model_dir, filename)
-        exists = os.path.exists(model_path)
-
-        models_status.append({
-            "key": key,
-            "name": key,
-            "filename": filename,
-            "model_dir": model_dir,
-            "available": exists
-        })
-        seen_keys.add(key)
-
-    # 补充扫描目录中发现但尚未在配置中的模型
-    scanned = scan_llm_directory()
-    for item in scanned:
-        if item["key"] not in seen_keys:
-            model_path = os.path.join(base_dir, "models", "LLM", item["model_dir"], item["filename"])
-            models_status.append({
-                "key": item["key"],
-                "name": item["name"],
-                "filename": item["filename"],
-                "model_dir": item["model_dir"],
-                "available": os.path.exists(model_path)
-            })
-            seen_keys.add(item["key"])
-
-    return {
-        "models": models_status,
-        "current_model": _MODEL_CONFIG.get("current_model", "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL")
-    }
-
-def start_download(file_type):
-    """启动后台下载任务（非阻塞）"""
-    if file_type not in ["model", "mmproj"]:
-        return {"error": "Invalid file type"}
-
-    target_path, _ = get_model_paths()
-    if file_type == "model" and os.path.exists(target_path):
-        return {"status": "already_exists"}
-
-    _, mmproj_path = get_model_paths()
-    if file_type == "mmproj" and os.path.exists(mmproj_path):
-        return {"status": "already_exists"}
-
-    thread = threading.Thread(target=_download_file_background, args=(file_type,), daemon=True)
-    thread.start()
-
-    return {"status": "started", "file_type": file_type}
-
-def _download_file_background(file_type):
-    """后台下载文件（在独立线程中运行）"""
-    global _download_status
-
-    with _download_lock:
-        if _download_status[file_type]["downloading"]:
-            logger.warning(f"Download already in progress for {file_type}")
-            return False
-
-        _download_status[file_type]["downloading"] = True
-        _download_status[file_type]["progress"] = 0
-        _download_status[file_type]["error"] = None
-
-    try:
-        base_dir = folder_paths.base_path
-
-        if file_type == "model":
-            all_models = _get_all_models()
-            config = _read_model_config_from_file()
-            if not config:
-                config = _MODEL_CONFIG
-            current_model_key: str = config.get("current_model", "") or "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"
-            model_cfg = all_models.get(current_model_key, {})
-            filename = model_cfg.get("filename", "")
-            MODEL_DIR = model_cfg.get("model_dir", "Qwen-0.8B")
-            MS_REPO_ID = model_cfg.get("ms_repo_id", "")
-            HF_REPO_ID = model_cfg.get("hf_repo_id", "")
-        else:
-            filename = _MODEL_CONFIG.get("mmproj", {}).get("filename", "")
-            all_models = _get_all_models()
-            current_model_key = _MODEL_CONFIG.get("current_model", "") or "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"
-            model_cfg = all_models.get(current_model_key, {})
-            MODEL_DIR = model_cfg.get("model_dir", "Qwen-0.8B")
-            MS_REPO_ID = ""
-            HF_REPO_ID = ""
-
-        model_dir = os.path.join(base_dir, "models", "LLM", MODEL_DIR)
-        os.makedirs(model_dir, exist_ok=True)
-
-        target_path = os.path.join(model_dir, filename)
-
-        if os.path.exists(target_path):
-            _download_status[file_type]["downloading"] = False
-            _download_status[file_type]["progress"] = 100
-            logger.info(f"File already exists: {target_path}")
-            return True
-
-        success = _download_from_modelscope(model_dir, filename, file_type, MS_REPO_ID)
-        if not success:
-            logger.info("ModelScope download failed, trying HuggingFace...")
-            success = _download_from_huggingface(model_dir, filename, file_type, HF_REPO_ID)
-
-        if success:
-            _download_status[file_type]["progress"] = 100
-            _download_status[file_type]["downloading"] = False
-            logger.info(f"Download complete: {target_path}")
-            return True
-        else:
-            _download_status[file_type]["error"] = "Both ModelScope and HuggingFace downloads failed"
-            _download_status[file_type]["downloading"] = False
-            logger.error("All download attempts failed")
-            return False
-    except Exception as e:
-        _download_status[file_type]["error"] = str(e)
-        _download_status[file_type]["downloading"] = False
-        logger.error(f"Download failed: {e}")
-        return False
-
-def _download_from_modelscope(model_dir, filename, file_type, ms_repo_id):
-    """从 ModelScope 下载模型"""
-    try:
-        if not ms_repo_id:
-            return False
-        logger.info(f"Attempting download from ModelScope...")
-        from modelscope import snapshot_download
-
-        target_path = os.path.join(model_dir, filename)
-
-        download_path = snapshot_download(
-            ms_repo_id,
-            allow_patterns=[filename],
-            local_dir=model_dir,
-            revision='master',
-        )
-
-        if os.path.exists(target_path):
-            _download_status[file_type]["progress"] = 100
-            logger.info(f"Downloaded from ModelScope: {target_path}")
-            return True
-        else:
-            logger.warning("ModelScope download did not create expected file")
-            return False
-    except ImportError:
-        logger.warning("modelscope not installed, trying HuggingFace...")
-        return False
-    except Exception as e:
-        logger.error(f"ModelScope download failed: {e}")
-        return False
-
-def _download_from_huggingface(model_dir, filename, file_type, hf_repo_id):
-    """从 HuggingFace 下载模型"""
-    try:
-        if not hf_repo_id:
-            return False
-        logger.info(f"Attempting download from HuggingFace...")
-        from huggingface_hub import hf_hub_download
-
-        target_path = os.path.join(model_dir, filename)
-
-        downloaded_path = hf_hub_download(
-            repo_id=hf_repo_id,
-            filename=filename,
-            local_dir=model_dir,
-            force_download=False,
-        )
-
-        _download_status[file_type]["progress"] = 100
-        logger.info(f"Downloaded from HuggingFace: {downloaded_path}")
-        return True
-    except Exception as e:
-        logger.error(f"HuggingFace download failed: {e}")
-        return False
 
 
 # ==========================================
@@ -959,28 +671,29 @@ class LLMSingleton:
 
     def _load_model(self):
         """加载 LLM 模型，如果不存在则报错"""
-        target_path, mmproj_path = get_model_paths()
+        config = _read_model_config_from_file()
+        if not config:
+            config = _MODEL_CONFIG
 
-        model_dir = os.path.dirname(target_path)
-        os.makedirs(model_dir, exist_ok=True)
+        all_models = _get_all_models()
+        current_model_key: str = config.get("current_model", "")
+        model_cfg = all_models.get(current_model_key, {})
+
+        MODEL_FILENAME = model_cfg.get("filename", "")
+        MODEL_DIR = model_cfg.get("model_dir", "")
+        model_dir = os.path.join(folder_paths.base_path, "models", "LLM", MODEL_DIR)
+        target_path = os.path.join(model_dir, MODEL_FILENAME)
+        mmproj_path = os.path.join(model_dir, config.get("mmproj", {}).get("filename", "mmproj-BF16.gguf"))
 
         logger.info(f"Loading LLM model: {target_path}")
         logger.info(f"mmproj path: {mmproj_path}")
 
         if not os.path.exists(target_path):
-            config = _read_model_config_from_file()
-            if not config:
-                config = _MODEL_CONFIG
-
-            all_models = _get_all_models()
-            current_model_key: str = config.get("current_model", "") or "Qwen-0.8B/Qwen3.5-0.8B-UD-Q4_K_XL"
-            model_cfg = all_models.get(current_model_key, {})
-
-            MODEL_FILENAME = model_cfg.get("filename", "unknown.gguf")
+            filename = MODEL_FILENAME or "unknown.gguf"
             raise RuntimeError(
-                f"LLM model not found: {MODEL_FILENAME}\n"
+                f"LLM model not found: {filename}\n"
                 f"Expected path: {target_path}\n"
-                f"Please download the model and place it in: {model_dir}/\n"
+                f"Please place the model file in: {model_dir}/\n"
                 f"Or switch to remote API mode in the node settings."
             )
 
@@ -1701,9 +1414,6 @@ __all__ = [
     "LLM_MODE_LOCAL",
     "LLM_MODE_REMOTE",
     "RemoteLLMClient",
-    "check_model_status",
-    "check_all_models_status",
-    "start_download",
     "get_available_models",
     "set_current_model",
     "scan_llm_directory",

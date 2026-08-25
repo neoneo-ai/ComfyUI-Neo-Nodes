@@ -8,8 +8,6 @@ import { api } from "../../scripts/api.js";
 import { mkEl, createPromptManagerUI, createSettingsModal, loadRemoteLLMConfig } from "./prompt-manager.js";
 import { 
     enhancePrompt, translatePrompt, randomPrompt as randomPromptAPI, 
-    checkModelAndPrompt, downloadModel, showDownloadModal, monitorDownloadProgress,
-    getAvailableModels, checkAllModels, checkModel, setCurrentModel,
     listTemplates
 } from "./prompt-service.js";
 
@@ -234,7 +232,7 @@ app.registerExtension({
             const {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
-                presetListOverlay, presetNameInput, deleteConfirmOverlay, downloadModal,
+                presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 settingsModal, loadModelsIntoSettings,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages
@@ -475,7 +473,7 @@ app.registerExtension({
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, textWidget, node, graph: node.graph, downloadModal, statusBar: null,
+                customTextarea, textWidget, node, graph: node.graph, statusBar: null,
                 attachedImages, clearImages
             };
 
@@ -775,7 +773,7 @@ app.registerExtension({
             const {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
-                presetListOverlay, presetNameInput, deleteConfirmOverlay, downloadModal,
+                presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 settingsModal, loadModelsIntoSettings,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages
@@ -1043,7 +1041,7 @@ app.registerExtension({
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, textWidget, node, graph: node.graph, downloadModal, statusBar,
+                customTextarea, textWidget, node, graph: node.graph, statusBar,
                 attachedImages, clearImages
             };
 

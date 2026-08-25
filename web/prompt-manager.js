@@ -16,13 +16,8 @@ import {
     extractTitle,
     extractClassify,
     randomPrompt as randomPromptAPI,
-    downloadModel,
-    clearModelStatusCache,
-    monitorDownloadProgress,
     getAvailableModels,
     setCurrentModel,
-    checkModel,
-    checkAllModels,
     // Template management
     listTemplates,
     loadTemplate,
@@ -122,69 +117,6 @@ function createDeleteModal() {
     btnsDiv.append(okBtn, cancelBtn);
     modal.append(textDiv, btnsDiv);
     return { modal, textDiv, okBtn, cancelBtn };
-}
-
-function createDownloadModal() {
-    const modal = mkEl("div", "rs-download-modal");
-    
-    const header = mkEl("div", "rs-download-header");
-    header.innerHTML = "📦 Model Download";
-    
-    const content = mkEl("div", "rs-download-content");
-    
-    const infoText = mkEl("div", "rs-download-info");
-    infoText.innerHTML = `
-        <div class="rs-download-title">LLM Model Required</div>
-        <div class="rs-download-desc">Download the model to enable AI features</div>
-    `;
-    
-    const modelInfo = mkEl("div", "rs-download-model-info");
-    modelInfo.innerHTML = `
-        <div class="rs-download-model-name">Qwen3.5-0.8B-Q4_K_M.gguf</div>
-        <div class="rs-download-repo">lmstudio-community/Qwen3.5-0.8B-GGUF</div>
-    `;
-    
-    const progressContainer = mkEl("div", "rs-download-progress-container");
-    progressContainer.style.display = "none";
-    
-    const progressBar = mkEl("div", "rs-download-progress-bar");
-    const progressFill = mkEl("div", "rs-download-progress-fill");
-    const progressText = mkEl("div", "rs-download-progress-text");
-    progressText.textContent = "0%";
-    
-    progressBar.appendChild(progressFill);
-    progressContainer.appendChild(progressBar);
-    progressContainer.appendChild(progressText);
-    
-    const statusText = mkEl("div", "rs-download-status");
-    statusText.textContent = "Ready to download";
-    
-    const btnsDiv = mkEl("div", "rs-download-buttons");
-    const downloadBtn = mkEl("button", "rs-download-btn");
-    downloadBtn.textContent = "🚀 Start Download";
-    const cancelBtn = mkEl("button", "rs-download-cancel-btn");
-    cancelBtn.textContent = "Cancel";
-    const closeBtn = mkEl("button", "rs-download-close-btn");
-    closeBtn.textContent = "✕";
-    closeBtn.style.display = "none";
-    
-    btnsDiv.append(downloadBtn, cancelBtn, closeBtn);
-    
-    content.append(infoText, modelInfo, progressContainer, statusText, btnsDiv);
-    modal.append(header, content);
-    
-    return { 
-        modal, 
-        infoText, 
-        modelInfo, 
-        progressContainer, 
-        progressFill, 
-        progressText, 
-        statusText, 
-        downloadBtn, 
-        cancelBtn, 
-        closeBtn 
-    };
 }
 
 // ==========================================
@@ -316,48 +248,7 @@ function createSettingsModal() {
     providerSaveStatusText.style.fontSize = "11px";
     providerSaveStatusText.style.color = "#999";
 
-    // 本地模型下载区：未下载时显示下载按钮，点击后显示进度
-    const localDownloadArea = mkEl("div", "rs-local-download-area");
-    localDownloadArea.style.display = "none";
-    localDownloadArea.style.marginTop = "10px";
-
-    const localDownloadBtn = mkEl("button", "rs-btn rs-btn-local rs-local-download-btn");
-    localDownloadBtn.textContent = "⬇️ Download Model";
-    localDownloadBtn.type = "button";
-    localDownloadBtn.style.cursor = "pointer";
-
-    const localDownloadProgressWrap = mkEl("div", "rs-local-download-progress-wrap");
-    localDownloadProgressWrap.style.display = "none";
-    localDownloadProgressWrap.style.position = "relative";
-    localDownloadProgressWrap.style.width = "100%";
-    localDownloadProgressWrap.style.height = "24px";
-    localDownloadProgressWrap.style.background = "#2a2a2a";
-    localDownloadProgressWrap.style.border = "1px solid #444";
-    localDownloadProgressWrap.style.borderRadius = "4px";
-    localDownloadProgressWrap.style.overflow = "hidden";
-
-    const localDownloadProgressFill = mkEl("div", "rs-local-download-progress-fill");
-    localDownloadProgressFill.style.width = "0%";
-    localDownloadProgressFill.style.height = "100%";
-    localDownloadProgressFill.style.background = "#5090cc";
-    localDownloadProgressFill.style.transition = "width 0.3s ease";
-
-    const localDownloadProgressText = mkEl("span", "rs-local-download-progress-text");
-    localDownloadProgressText.textContent = "0%";
-    localDownloadProgressText.style.position = "absolute";
-    localDownloadProgressText.style.top = "0";
-    localDownloadProgressText.style.left = "0";
-    localDownloadProgressText.style.right = "0";
-    localDownloadProgressText.style.lineHeight = "24px";
-    localDownloadProgressText.style.textAlign = "center";
-    localDownloadProgressText.style.color = "#fff";
-    localDownloadProgressText.style.fontSize = "11px";
-
-    localDownloadProgressWrap.appendChild(localDownloadProgressFill);
-    localDownloadProgressWrap.appendChild(localDownloadProgressText);
-    localDownloadArea.append(localDownloadBtn, localDownloadProgressWrap);
-
-    remoteForm.append(remoteInfoText, providerRow, modelRowWrapper, apiKeyRow, baseUrlRow, providerSaveStatusText, localDownloadArea);
+    remoteForm.append(remoteInfoText, providerRow, modelRowWrapper, apiKeyRow, baseUrlRow, providerSaveStatusText);
 
     // ==========================================
     // Template Management Tab (Tab 2)
@@ -619,18 +510,7 @@ function createSettingsModal() {
             
             // Fetch available local models
             fetchLocalModels();
-
-            // 刷新当前选中本地模型的下载状态（显示下载按钮/进度），等下拉填充后执行
-            setTimeout(() => {
-                if (typeof refreshLocalDownloadState === 'function') {
-                    refreshLocalDownloadState();
-                }
-            }, 500);
         } else if (provider === 'openai') {
-            if (typeof stopLocalModelStatusPoller === 'function') {
-                stopLocalModelStatusPoller();
-            }
-            localDownloadArea.style.display = "none";
             apiKeyRow.style.display = "flex";
             baseUrlRow.style.display = "flex";
             apiKeyInput.placeholder = "sk-... (optional for cloud)";
@@ -643,10 +523,6 @@ function createSettingsModal() {
             baseUrlInput.value = saved.base_url || "";
             modelInput.value = saved.model || "";
         } else if (provider === 'lmstudio' || provider === 'ollama') {
-            if (typeof stopLocalModelStatusPoller === 'function') {
-                stopLocalModelStatusPoller();
-            }
-            localDownloadArea.style.display = "none";
             apiKeyRow.style.display = "none";
             modelInput.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'none', 'important');
@@ -729,44 +605,6 @@ function createSettingsModal() {
     modelInput.addEventListener("blur", autoSaveConfig);
     modelSelectEl.addEventListener("change", autoSaveConfig);
 
-    // ==========================================
-    // 本地模型下载：未下载时显示下载按钮，点击后显示进度
-    // ==========================================
-    let localModelStatusTimer = null;
-
-    function stopLocalModelStatusPoller() {
-        if (localModelStatusTimer) {
-            clearInterval(localModelStatusTimer);
-            localModelStatusTimer = null;
-        }
-    }
-
-    function setLocalDownloadArea(state) {
-        // state: 'hidden' | 'ready' | 'missing' | 'downloading' | 'error'
-        if (state === "ready" || state === "hidden") {
-            localDownloadArea.style.display = "none";
-            return;
-        }
-        localDownloadArea.style.display = "block";
-        if (state === "missing") {
-            localDownloadBtn.style.display = "inline-block";
-            localDownloadBtn.disabled = false;
-            localDownloadProgressWrap.style.display = "none";
-        } else if (state === "downloading") {
-            localDownloadBtn.style.display = "none";
-            localDownloadProgressWrap.style.display = "block";
-        } else { // error -> 保留按钮重试
-            localDownloadBtn.style.display = "inline-block";
-            localDownloadBtn.disabled = false;
-            localDownloadProgressWrap.style.display = "none";
-        }
-    }
-
-    function setLocalDownloadProgress(percent) {
-        localDownloadProgressFill.style.width = `${percent}%`;
-        localDownloadProgressText.textContent = `${percent}%`;
-    }
-
     function setLocalStatusMsg(msg, color, autoHide = true) {
         providerSaveStatusText.textContent = msg;
         providerSaveStatusText.style.display = "block";
@@ -776,79 +614,9 @@ function createSettingsModal() {
         }
     }
 
-    function pollDownloadProgress() {
-        stopLocalModelStatusPoller();
-        setLocalDownloadArea("downloading");
-        setLocalDownloadProgress(0);
-        localModelStatusTimer = setInterval(async () => {
-            let latest;
-            try {
-                clearModelStatusCache();
-                latest = await checkModel();
-            } catch (e) {
-                latest = null;
-            }
-            const dl = latest?.download_status?.model;
-            if (latest?.model_available) {
-                stopLocalModelStatusPoller();
-                setLocalDownloadArea("ready");
-                setLocalStatusMsg("✅ Model ready", "#16a34a");
-                return;
-            }
-            if (dl?.downloading) {
-                setLocalDownloadProgress(dl.progress || 0);
-                return;
-            }
-            if (dl?.error) {
-                stopLocalModelStatusPoller();
-                setLocalDownloadArea("error");
-                setLocalStatusMsg("❌ Download failed: " + dl.error, "#dc2626", false);
-            }
-        }, 2000);
-    }
-
-    async function refreshLocalDownloadState() {
-        stopLocalModelStatusPoller();
-        let status;
-        try {
-            clearModelStatusCache();
-            status = await checkModel();
-        } catch (e) {
-            setLocalDownloadArea("hidden");
-            return;
-        }
-
-        if (status.model_available) {
-            setLocalDownloadArea("ready");
-            setLocalStatusMsg("✅ Model ready", "#16a34a");
-            return;
-        }
-
-        const dlStatus = status.download_status?.model;
-        if (dlStatus?.downloading) {
-            setLocalDownloadProgress(dlStatus.progress || 0);
-            pollDownloadProgress();
-            return;
-        }
-        if (dlStatus?.error) {
-            setLocalDownloadArea("error");
-            setLocalStatusMsg("❌ Download failed: " + dlStatus.error, "#dc2626", false);
-            return;
-        }
-
-        // 未下载：显示下载按钮
-        setLocalDownloadArea("missing");
-        setLocalStatusMsg("⚠️ Model not downloaded", "#f59e0b");
-    }
-
     localModelSelectEl.addEventListener("change", async () => {
         autoSaveConfig();
-        stopLocalModelStatusPoller();
         const modelKey = localModelSelectEl.value;
-        if (!modelKey) {
-            setLocalDownloadArea("hidden");
-            return;
-        }
 
         try {
             const setResult = await setCurrentModel(modelKey);
@@ -856,35 +624,9 @@ function createSettingsModal() {
                 setLocalStatusMsg("❌ Model switch failed: " + (setResult?.error || modelKey), "#dc2626");
                 return;
             }
-            await refreshLocalDownloadState();
         } catch (e) {
             console.error("Failed to switch local model:", e);
             setLocalStatusMsg("❌ " + (e.message || "Model switch failed"), "#dc2626");
-        }
-    });
-
-    localDownloadBtn.addEventListener("click", async () => {
-        localDownloadBtn.disabled = true;
-        localDownloadBtn.textContent = "⏳ Starting...";
-        try {
-            const result = await downloadModel("model");
-            if (result.error) {
-                setLocalDownloadArea("error");
-                localDownloadBtn.textContent = "⬇️ Download Model";
-                setLocalStatusMsg("❌ Download start failed: " + result.error, "#dc2626", false);
-                return;
-            }
-            if (result.status === "already_exists") {
-                await refreshLocalDownloadState();
-                return;
-            }
-            // 下载已启动：显示进度
-            pollDownloadProgress();
-        } catch (e) {
-            console.error("Failed to start download:", e);
-            localDownloadBtn.disabled = false;
-            localDownloadBtn.textContent = "⬇️ Download Model";
-            setLocalStatusMsg("❌ " + (e.message || "Download failed to start"), "#dc2626");
         }
     });
 
@@ -1124,8 +866,6 @@ function createSettingsModal() {
         enableStatusText: null,  // removed
         providerSaveStatusText,
         autoSaveConfig,
-        stopLocalModelStatusPoller,
-        refreshLocalDownloadState,
         fetchModelsFromUrl,
         applyRemoteSavedModel,
         fetchLocalModels,
@@ -2013,7 +1753,6 @@ function createPromptManagerUI() {
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, field: inputField, tagsContainer, selectedTags, okBtn: inputOk, cancelBtn: inputCancel } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
-    const downloadModal = createDownloadModal();
     const settingsModal = createSettingsModal();
 
     const root = mkEl("div", "rs-root");
@@ -2041,7 +1780,6 @@ function createPromptManagerUI() {
 
     root.appendChild(presetNameInput);
     root.appendChild(deleteConfirmOverlay);
-    root.appendChild(downloadModal.modal);
     root.appendChild(settingsModal.overlay);
     root.appendChild(settingsModal.modal);
 
@@ -2487,56 +2225,10 @@ function createPromptManagerUI() {
             pendingDeleteName = null;
         });
 
-        downloadModal.downloadBtn.addEventListener("click", async () => {
-            downloadModal.downloadBtn.disabled = true;
-            downloadModal.downloadBtn.textContent = "⏳ Starting...";
-            
-            const result = await downloadModel("model");
-            if (result.error) {
-                downloadModal.statusText.textContent = "Failed to start download: " + result.error;
-                downloadModal.statusText.style.color = "#f87171";
-                downloadModal.downloadBtn.disabled = false;
-                downloadModal.downloadBtn.textContent = "🔄 Retry Download";
-                return;
-            }
-            
-            downloadModal.progressContainer.style.display = "block";
-            downloadModal.downloadBtn.style.display = "none";
-            downloadModal.cancelBtn.style.display = "none";
-            downloadModal.closeBtn.style.display = "none";
-            downloadModal.statusText.textContent = "Download started...";
-            downloadModal.statusText.style.color = "#999";
-            
-            monitorDownloadProgress(downloadModal, statusBar);
-        });
-
-        downloadModal.cancelBtn.addEventListener("click", () => {
-            downloadModal.modal.style.display = "none";
-        });
-
-        downloadModal.closeBtn.addEventListener("click", () => {
-            downloadModal.modal.style.display = "none";
-        });
-
-        let downloadPollInterval = null;
-        
-        function stopDownloadPolling() {
-            if (downloadPollInterval) {
-                clearInterval(downloadPollInterval);
-                downloadPollInterval = null;
-            }
-        }
-        
         async function loadModelsIntoSettings() {
             try {
-                stopDownloadPolling();
-                if (settingsModal.stopLocalModelStatusPoller) {
-                    settingsModal.stopLocalModelStatusPoller();
-                }
                 const modelsData = await getAvailableModels();
-                const allModelsStatus = await checkAllModels();
-                const currentModelStatus = await checkModel();
-                
+
                 // Update settings modal status text if it exists
                 if (settingsModal && settingsModal.statusText) {
                     settingsModal.modelList = settingsModal.modelList || document.createElement('div');
@@ -2600,9 +2292,6 @@ function createPromptManagerUI() {
         }, true);
         
         const closeSettingsModal = async () => {
-            if (settingsModal.stopLocalModelStatusPoller) {
-                settingsModal.stopLocalModelStatusPoller();
-            }
             if (settingsModal.autoSaveConfig) {
                 settingsModal.autoSaveConfig();
             }
@@ -2643,7 +2332,6 @@ function createPromptManagerUI() {
             presetListOverlay,
             presetNameInput,
             deleteConfirmOverlay,
-            downloadModal,
             settingsModal,
             loadModelsIntoSettings,
             tplSelector,

@@ -3,7 +3,7 @@
  * 共享的节点行为逻辑 - 消除 NeoPromptSimple 和 NeoPrompts 之间的代码重复
  */
 
-import { checkModelAndPrompt, enhancePromptStream, translatePromptStream, smartPromptStream, randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
+import { enhancePromptStream, translatePromptStream, smartPromptStream, randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
 
 // ==========================================
 // 工具函数
@@ -164,7 +164,7 @@ function createBasicNodeInitializer(node) {
 function createGenerateHandler(promptUI) {
     return async () => {
         console.log("createGenerateHandler called with promptUI keys:", Object.keys(promptUI));
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, downloadModal, statusBar, tplSelector, attachedImages = [], clearImages } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [], clearImages } = promptUI;
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -191,9 +191,6 @@ function createGenerateHandler(promptUI) {
         // 检查是否选择了模板
         const selectedTemplateId = tplSelector?.value || "";
         console.log("Template selector value:", selectedTemplateId, "tplSelector:", tplSelector, "tplSelector.value:", tplSelector?.value, "tplSelector.options:", tplSelector?.options?.length);
-
-        const modelOk = await checkModelAndPrompt(downloadModal, statusBar);
-        if (!modelOk) return;
 
         generateBtn.disabled = true;
         generateBtn.textContent = "⏳";
