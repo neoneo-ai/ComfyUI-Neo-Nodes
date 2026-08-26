@@ -164,7 +164,7 @@ function createBasicNodeInitializer(node) {
 function createGenerateHandler(promptUI) {
     return async () => {
         console.log("createGenerateHandler called with promptUI keys:", Object.keys(promptUI));
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [], clearImages } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [] } = promptUI;
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -238,7 +238,6 @@ function createGenerateHandler(promptUI) {
                         if (rafId) cancelAnimationFrame(rafId);
                         if (textWidget) textWidget.value = accumulated;
                         saveTextToStorage(node, textWidget, customTextarea);
-                        clearImages?.();
                         markQuickInputConsumed(node);
                     },
                     onError: (err) => {

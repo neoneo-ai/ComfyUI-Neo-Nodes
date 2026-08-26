@@ -105,6 +105,7 @@ def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
             "type": media_type or "image",
             "style": "",
             "content": "",
+            "mtime": media_file.stat().st_mtime,
         }
 
         # Extract style and content from first 2 lines only
@@ -225,6 +226,7 @@ def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
             "type": media_type,
             "category": category,
             "subfolder": subfolder,
+            "mtime": media_file.stat().st_mtime,
         }
         if raw_txt:
             cleaned_lines = [""] * 8
@@ -289,6 +291,7 @@ def _scan_gallery_entries_with_subdirs(directory: Path, subfolder: str = "") -> 
             "type": media_type,
             "category": "",
             "subfolder": "",
+            "mtime": media_file.stat().st_mtime,
         })
 
     # Only scan FIRST-LEVEL subdirectories (no recursion)

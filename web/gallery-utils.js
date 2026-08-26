@@ -215,8 +215,10 @@ export function createSpacer() {
  */
 export function sortByMtime(items) {
     return [...items].sort((a, b) => {
-        if ((b._mtime || 0) !== (a._mtime || 0)) return (b._mtime || 0) - (a._mtime || 0);
-        return a.name.localeCompare(b.name);
+        const at = a.mtime ?? a._mtime ?? 0;
+        const bt = b.mtime ?? b._mtime ?? 0;
+        if (bt !== at) return bt - at;
+        return b.name.localeCompare(a.name);
     });
 }
 
