@@ -15,52 +15,11 @@ import {
 import NodeBehaviors from "./node-behavior.js";
 
 // ==========================================
-// 本地模型自动卸载（工作流运行期间）
-// 仅当 workflow 在运行时、本节点（Neo Prompt Encoder / Generator）执行完成后可用；
-// 手动点 ✨ 生成（未运行）不触发该事件，因此不会卸载。
+// 本地模型自动卸载由后端在生成完成时处理：
+// - 工作流自动生成：prompts.py 两条 auto-generate 路径
+// - 手动 ✨ 生成：llm.py handle_llm_api_stream
+// 均按 local 模式 + auto_unload_local 配置判断，无需前端监听执行事件。
 // ==========================================
-const LOCAL_LLM_NODE_TYPES = {
-    "comfy-Neo-Nodes.NeoPromptEncoder": true,
-    "comfy-Neo-Nodes.NeoPromptGenerator": true,
-};
-
-function isLocalLlmNode(node) {
-    const t = node?.type || "";
-    return t.endsWith(".NeoPromptEncoder") || t.endsWith(".NeoPromptGenerator");
-}
-
-/**
- * 本节点执行完成即自动卸载本地模型。
- * provider=local 且开启 auto_unload_local 时，本节点执行完成即可用。
- */
-function registerLocalUnloadOnExecution() {
-    if (typeof api === "undefined" || !api.addEventListener) return;
-
-    api.addEventListener("comfy:node-execution-complete", async (arg) => {
-        // 兼容两种 payload：{ nodeId, extraInfo } 与 CustomEvent({ detail })
-        let nodeId = arg && typeof arg === "object" && "nodeId" in arg ? arg.nodeId : arg?.detail?.nodeId;
-        if (nodeId == null) return;
-
-        try {
-            const node = app.graph?.getNodeById(nodeId);
-            if (!node || !isLocalLlmNode(node)) return;
-
-            let cfg = {};
-            try { cfg = await window.NeoNodes?.getRemoteLLMConfig?.() || {}; } catch (e) {}
-
-            // 仅当 provider 为 local 且开启 auto_unload_local 时卸载
-            if ((cfg.active_provider || "local") !== "local") return;
-            const enabled = cfg.auto_unload_local ?? false;
-            if (!enabled) return;
-
-            await window.NeoNodes?.unloadLocalModel?.();
-        } catch (e) {
-            console.warn("auto-unload local model failed:", e);
-        }
-    });
-}
-
-registerLocalUnloadOnExecution();
 
 // ==========================================
 // 共享的节点生命周期处理器工厂

@@ -265,7 +265,10 @@ def set_remote_llm_config(config: Dict[str, Any]):
         # 完整结构：合并保存
         merged = _load_remote_config()
         merged.update(config)
-        _save_remote_config(_migrate_remote_config(merged))
+        saved = _migrate_remote_config(merged)
+        _save_remote_config(saved)
+        if saved.get("active_provider") != "local":
+            _unload_local_if_inactive()
         return
 
     # 扁平结构：只更新对应 provider 的槽位，不影响其它 provider
@@ -287,6 +290,8 @@ def set_remote_llm_config(config: Dict[str, Any]):
             current["auto_unload_local"] = bool(config["auto_unload_local"])
         _save_remote_config(current)
         logger.info(f"Remote LLM provider '{provider}' config updated")
+        if provider != "local":
+            _unload_local_if_inactive()
         return
 
     # 未知 provider：只更新启用状态
@@ -407,13 +412,25 @@ def unload_local_model():
             if hasattr(LLMSingleton._instance, 'model') and LLMSingleton._instance.model is not None:
                 del LLMSingleton._instance.model
             LLMSingleton._instance = None
-            logger.info("Local LLM model unloaded successfully")
+            msg = "Local LLM model unloaded successfully"
+            logger.info(msg)
+            print(f"[NeoNodes] {msg}")
             return {"success": True, "message": "Model unloaded"}
         except Exception as e:
-            logger.error(f"Failed to unload local model: {e}")
+            msg = f"Failed to unload local model: {e}"
+            logger.error(msg)
+            print(f"[NeoNodes] {msg}")
             return {"success": False, "error": str(e)}
-    logger.info("No local model loaded, nothing to unload")
+    msg = "No local model loaded, nothing to unload"
+    logger.info(msg)
+    print(f"[NeoNodes] {msg}")
     return {"success": True, "message": "No model was loaded"}
+
+
+def _unload_local_if_inactive():
+    """激活 provider 已不是 local 时，驻留的本地模型不会再被使用，直接释放显存"""
+    if LLMSingleton._instance is not None:
+        unload_local_model()
 
 
 def __reload_llm_singleton():
@@ -750,6 +767,7 @@ class LLMSingleton:
         self.model = Llama(**llama_kwargs)
         self.has_mmproj = mmproj_path is not None
         logger.info(f"LLM model loaded successfully, has_mmproj={self.has_mmproj}")
+        print(f"[NeoNodes] LLM model loaded: {os.path.basename(target_path)} | has_mmproj={self.has_mmproj}")
 
     def create_chat_completion(self, messages, max_tokens, image_bytes_list=None, stream=False):
         """创建聊天补全请求，支持图像输入和流式输出"""
@@ -1334,18 +1352,19 @@ async def handle_llm_api_stream(task_name, request):
         template_id = data.get("templateId", data.get("template_id", ""))
         skill_id = data.get("skillId", data.get("skill_id", ""))
         raw_images = data.get("images") or []
-        auto_unload = data.get("autoUnload", data.get("auto_unload", False))
 
-        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', templateId='{template_id}', skillId='{skill_id}', images={len(raw_images)}, autoUnload={auto_unload}")
+        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', templateId='{template_id}', skillId='{skill_id}', images={len(raw_images)}")
 
         # 允许空文本：有图片输入（如反推）时合法
         images = []
         if raw_images:
-            from .prompts import load_template_max_tokens, resolve_image_bytes
+            from .prompts import resolve_image_bytes
             images = [b for b in (resolve_image_bytes(src) for src in raw_images) if b]
             if not images:
                 return web.Response(text="data: [ERROR] invalid image data\n\n", content_type="text/event-stream")
 
+        # 始终导入（此前随 raw_images 条件 import，无图时调用会 UnboundLocalError）
+        from .prompts import load_template_max_tokens
         if not text.strip() and not images:
             return web.Response(text="data: [ERROR] text content is empty\n\n", content_type="text/event-stream")
 
@@ -1391,18 +1410,7 @@ async def handle_llm_api_stream(task_name, request):
                 for chunk in gen:
                     yield (f"data: {chunk}\n\n").encode()
                     await asyncio.sleep(0.01)  # 10ms 延迟，让浏览器逐字显示
-                
-                # 流式输出完成后，如果需要自动卸载则执行
-                if get_current_mode() == LLM_MODE_LOCAL:
-                    config = _load_remote_config()
-                    enable_auto_unload = config.get("auto_unload_local", False)
-                    if auto_unload or enable_auto_unload:
-                        try:
-                            unload_local_model()
-                            logger.info("Auto-unloaded local model after stream completion")
-                        except Exception as e:
-                            logger.warning(f"Failed to auto-unload local model: {e}")
-                
+
                 yield b"data: [DONE]\n\n"
             except Exception as e:
                 logger.error(f"Stream error for task {task_name}: {e}")

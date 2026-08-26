@@ -197,6 +197,22 @@ from .llm import (
 )
 
 
+def _auto_unload_local_after_generate():
+    """local 模式且开启 auto_unload_local 时，自动生成完成后卸载本地模型"""
+    if get_current_mode() != LLM_MODE_LOCAL:
+        return
+    if not get_remote_llm_config().get("auto_unload_local", False):
+        return
+    try:
+        result = unload_local_model()
+        logger.info(f"Auto-unloaded local model after auto-generate: {result}")
+        print(f"[NeoNodes] Auto-unloaded local model: {result}")
+    except Exception as e:
+        msg = f"Failed to auto-unload local model: {e}"
+        logger.warning(msg)
+        print(f"[NeoNodes] {msg}")
+
+
 # ==========================================
 # Skills - 统一 模板 / 任务 / 图片输入 的元数据视图
 # skill 是"系统提示词 + 输入契约(text/image) + 触发方式(标记/下拉)"
@@ -614,7 +630,9 @@ class NeoPrompts:
             if len(NeoPrompts._encode_cache) >= NeoPrompts._CACHE_MAX_SIZE:
                 NeoPrompts._encode_cache.clear()
             NeoPrompts._encode_cache[cache_key] = (pos_cond, neg_cond)
-        
+
+        # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
+        _auto_unload_local_after_generate()
         return {
             "ui": {"text": [current_text]},
             "result": (pos_cond, neg_cond, current_text)
@@ -846,20 +864,6 @@ async def rs_prompts_get_llm_mode(request):
     except Exception as e:
         logger.error(f"Error getting LLM mode: {e}")
         return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.post("/rs_prompts/unload_local_model")
-async def rs_prompts_unload_local_model(request):
-    """卸载本地 LLM 模型（释放显存）"""
-    try:
-        result = unload_local_model()
-        if result.get("success"):
-            return web.json_response(result)
-        else:
-            return web.json_response(result, status=400)
-    except Exception as e:
-        logger.error(f"Error unloading local model: {e}")
-        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 # ==========================================
@@ -1458,6 +1462,8 @@ class NeoPromptGenerator:
                 multi_rule = LLM_TASKS[template_id].get("multi_result")
         prompts_list = resolve_multi_result(current_text, multi_rule) or [current_text]
 
+        # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
+        _auto_unload_local_after_generate()
         return {
             "ui": {"text": [current_text]},
             "result": (prompts_list,)
