@@ -70,7 +70,7 @@
     background: #2a2a2a;
     border: 1px solid #5090cc;
     border-radius: 8px;
-    z-index: 9999;
+    z-index: 100000;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
     width: 400px;
     max-width: 500px;
@@ -499,6 +499,32 @@
 }
 
 /* Template selector in toolbar */
+/* 原生 select 已被 combo-box 移到屏外作数据源；以下两条让可见的 combobox 输入框继承原样式 */
+.rs-input-toolbar .rs-model-select-box {
+    flex-shrink: 0;
+}
+.rs-input-toolbar .rs-combo-input {
+    width: 120px;
+    padding: 4px 26px 4px 8px;
+    font-size: 11px;
+    background: #2a2a2a;
+    color: #60a5fa;
+    border: none !important;
+    border-radius: 4px;
+    cursor: pointer;
+    outline: none;
+}
+.rs-input-toolbar .rs-combo-input::placeholder {
+    color: #60a5fa;
+    opacity: .75;
+}
+.rs-input-toolbar .rs-combo-clear {
+    color: #4a7ab0;
+}
+.rs-input-toolbar .rs-combo-clear:hover {
+    color: #9ec5e8;
+}
+
 .rs-input-toolbar .rs-tpl-selector {
     width: 120px;
     flex-shrink: 0;
