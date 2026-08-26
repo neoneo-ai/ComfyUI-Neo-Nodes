@@ -776,7 +776,15 @@ class LLMSingleton:
             )
             mmproj_path = None
 
-        from llama_cpp import Llama
+        try:
+            from llama_cpp import Llama
+        except ImportError as e:
+            # 延迟导入：未安装时插件与远程模式照常工作，仅本地推理给出明确指引
+            raise RuntimeError(
+                "本地推理需要 llama-cpp-python 但未安装。"
+                "请按 README「本地 LLM 推理安装（可选）」章节安装预编译 wheel，"
+                "或在 Settings 中切换到远程 API（OpenAI Compatible / OpenRouter / LM Studio / Ollama）。"
+            ) from e
 
         logger.info(f"Initializing Llama with n_ctx=2048, n_threads=4, n_gpu_layers=-1")
         llama_kwargs = {

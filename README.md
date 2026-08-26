@@ -27,6 +27,7 @@
   - [画廊设置](#画廊设置)
 - [配置](#配置)
   - [LLM 模式](#llm-模式)
+- [本地 LLM 推理安装（可选）](#本地-llm-推理安装可选)
 - [项目结构](#项目结构)
 - [许可证](#许可证)
 
@@ -37,8 +38,53 @@
 
 ## 依赖
 
-- `llama_cpp_python`（用于本地 LLM 推理）
-- `requests`, `Pillow`, `PyYAML`
+- `requests`, `Pillow`, `PyYAML`（随 `requirements.txt` 自动安装）
+- `llama_cpp_python`（**可选**，仅本地 LLM 推理需要，见下方安装说明；只用远程 API 可跳过）
+
+---
+
+## 本地 LLM 推理安装（可选）
+
+本地 GGUF 模式依赖 `llama-cpp-python`。它默认从源码编译（需要 C 编译器 / CUDA 工具链），Windows 上很容易失败，**推荐直接安装预编译 wheel**。
+
+### 方式一：预编译 wheel（推荐）
+
+到 [JamePeng/llama-cpp-python releases](https://github.com/JamePeng/llama-cpp-python/releases) 下载与你的 **Python 版本 + 系统 + CUDA 版本** 匹配的 wheel 并安装（参考 `llama-cpp_vllm` 等同类插件的推荐做法）：
+
+```bash
+# 示例：Python 3.12 + Windows + CUDA 12.4（文件名以 releases 页实际资产为准）
+python -m pip install llama_cpp_python-<版本>+cu124-cp312-cp312-win_amd64.whl
+```
+
+纯 CPU 也可用官方预编译索引：
+
+```bash
+python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+```
+
+### 方式二：源码编译
+
+```bash
+# CPU
+python -m pip install llama-cpp-python
+
+# NVIDIA GPU（需要先装好 CUDA Toolkit 与 C/C++ 编译器）
+# Windows PowerShell:
+$env:CMAKE_ARGS = "-DGGML_CUDA=ON"
+python -m pip install llama-cpp-python --no-cache-dir
+```
+
+### Windows 运行时注意
+
+启动报 `Could not find module '...\ggml.dll'` 时，是缺少 VC++ 运行库：安装 [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) 后重启 ComfyUI。
+
+### 验证与模型
+
+```bash
+python -c "from llama_cpp import Llama; print('ok')"
+```
+
+通过后把 GGUF 模型放入模型目录（规范见下文[本地模型目录规范](#本地模型目录规范)），在 Settings → Provider 选「Local GGUF」选择模型即可。
 
 ---
 

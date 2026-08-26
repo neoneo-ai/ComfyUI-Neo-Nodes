@@ -45,12 +45,17 @@ function resolveConnectedImageSource(node) {
         if (!link) return null;
         const srcNode = node.graph.getNodeById(link.origin_id);
         if (!srcNode) return null;
-        // widgets_values 里的图片项可能是字符串、数组(["name","sub","type"])或对象{name,...}
-        for (const w of (srcNode.widgets_values || [])) {
+        // 优先读实时 widget 值（换图立即生效）；widgets_values 仅在序列化时刷新，作为回退快照
+        const candidates = [
+            ...(srcNode.widgets || []).map(w => w?.value),
+            ...(srcNode.widgets_values || []),
+        ];
+        // 图片项可能是字符串、数组(["name","sub","type"])或对象{name,...}
+        for (const c of candidates) {
             let v = "";
-            if (typeof w === "string") v = w.trim();
-            else if (Array.isArray(w)) v = String(w[0] ?? "").trim();
-            else if (w && typeof w === "object") v = String(w.name ?? w.filename ?? "").trim();
+            if (typeof c === "string") v = c.trim();
+            else if (Array.isArray(c)) v = String(c[0] ?? "").trim();
+            else if (c && typeof c === "object") v = String(c.name ?? c.filename ?? "").trim();
             if (v && /\.(png|jpe?g|webp|bmp|gif)$/i.test(v)) {
                 return { kind: "input", value: v };
             }
