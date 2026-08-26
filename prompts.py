@@ -918,10 +918,14 @@ async def rs_prompts_smart_prompt(request):
                 logger.warning(f"Template '{template_id}' not found or has no content")
 
         # 如果提供了模板，使用模板作为系统提示词
+        # run_in_executor：LLM 调用是同步阻塞的，直接跑会卡死事件循环
+        loop = asyncio.get_running_loop()
         if system_prompt and system_prompt.strip():
-            result_data = run_llm_task("template_prompt", text, system_prompt=system_prompt)
+            result_data = await loop.run_in_executor(
+                None, lambda: run_llm_task("template_prompt", text, system_prompt=system_prompt))
         else:
-            result_data = run_llm_task("smart_prompt", text)
+            result_data = await loop.run_in_executor(
+                None, lambda: run_llm_task("smart_prompt", text))
         
         if "error" in result_data:
             error_msg = result_data["error"]
@@ -1030,8 +1034,9 @@ async def rs_prompts_reverse_prompt(request):
             with open(image_path, "rb") as f:
                 image_bytes = f.read()
         
-        # 调用 LLM 反推
-        result_data = run_llm_task("reverse_prompt", "", images=[image_bytes])
+        # 调用 LLM 反推（同步阻塞，丢线程池避免卡事件循环）
+        result_data = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: run_llm_task("reverse_prompt", "", images=[image_bytes]))
         
         if "error" in result_data:
             error_msg = result_data["error"]

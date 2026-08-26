@@ -1284,6 +1284,13 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
 # API Handler Functions
 # ==========================================
 
+# 把同步阻塞调用（requests / llama.cpp 推理）丢进线程池执行。
+# 直接在 async 路由里跑会卡死 aiohttp 事件循环：LLM 未返回期间 presets 列表等
+# 所有其他请求都无法响应。
+async def _run_blocking(fn):
+    return await asyncio.get_running_loop().run_in_executor(None, fn)
+
+
 async def handle_llm_api_request(task_name, request):
     """
     处理 LLM API 请求
@@ -1309,7 +1316,7 @@ async def handle_llm_api_request(task_name, request):
         if not text or not text.strip():
             return web.json_response({"error": "text content is empty"}, status=400)
 
-        result_data = run_llm_task(task_name, text)
+        result_data = await _run_blocking(lambda: run_llm_task(task_name, text))
 
         if "error" in result_data:
             error_msg = result_data["error"]
@@ -1432,14 +1439,25 @@ async def handle_llm_api_stream(task_name, request):
 
         async def event_stream():
             try:
-                import asyncio
-                # 将模板内容作为 system_prompt 传递；图片 byte 列表传给流式任务
+                # 将模板内容作为 system_prompt 传递；图片 byte 列表传给流式任务。
+                # 同步生成器在事件循环上直接迭代会阻塞整个 aiohttp loop（LLM 未出首包
+                # 时其他请求全部卡住），因此每次 next() 都丢进线程池执行。
                 gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
                                           images=images if images else None,
                                           max_tokens_override=template_max_tokens)
-                for chunk in gen:
+                loop = asyncio.get_running_loop()
+
+                def next_chunk():
+                    try:
+                        return next(gen)
+                    except StopIteration:
+                        return None
+
+                while True:
+                    chunk = await loop.run_in_executor(None, next_chunk)
+                    if chunk is None:
+                        break
                     yield (f"data: {chunk}\n\n").encode()
-                    await asyncio.sleep(0.01)  # 10ms 延迟，让浏览器逐字显示
 
                 yield b"data: [DONE]\n\n"
             except Exception as e:
