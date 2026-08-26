@@ -193,6 +193,7 @@ function createSettingsModal() {
         <option value="openai">OpenAI Compatible</option>
         <option value="lmstudio">LM Studio</option>
         <option value="ollama">Ollama</option>
+        <option value="openrouter">OpenRouter</option>
     `;
     
     providerRow.appendChild(providerLabel);
@@ -218,7 +219,198 @@ function createSettingsModal() {
     localModelSelectEl.style.cssText = 'width: 100%; padding: 6px 8px; background: #2a2a2a; border: 1px solid #444; color: #ccc; font-size: 12px; border-radius: 4px; outline: none; box-sizing: border-box; height: 32px;';
     localModelSelectEl.style.display = 'none';
 
+    // 自定义可搜索下拉（combobox）：输入即过滤、上下键+回车选择、点击列表项选择。
+    // 原生 <select> 移到屏幕外保留为数据源与取值真相——现有代码对 select 的选项填充、
+    // style 显隐切换、.value 读写全部照旧生效；combobox 盒子跟随 select 的显隐状态。
+    const makeSearchableModelBox = (selectEl) => {
+        const box = document.createElement("div");
+        box.className = "rs-model-select-box";
+        box.style.display = "none";
+
+        // 原生 select 移出可视区（外部代码仍会切换它的 display，我们只读不写，避免循环）
+        selectEl.style.setProperty("position", "absolute", "");
+        selectEl.style.setProperty("left", "-9999px", "");
+        selectEl.style.setProperty("top", "0", "");
+        selectEl.style.setProperty("width", "10px", "");
+        selectEl.style.setProperty("opacity", "0", "");
+
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "position:relative;";
+
+        const inputEl = mkEl("input", "rs-form-input rs-model-filter");
+        inputEl.type = "text";
+        inputEl.autocomplete = "off";
+        inputEl.placeholder = "🔍 输入过滤或点击选择...";
+        inputEl.style.paddingRight = "30px";
+
+        // 列表挂在 body 上用 fixed 定位：不被设置弹窗的 overflow 裁剪，超出窗口时自动向上翻
+        const listEl = document.createElement("div");
+        listEl.style.cssText = "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);";
+        document.body.appendChild(listEl);
+
+        const clearBtn = mkEl("button", "rs-combo-clear");
+        clearBtn.type = "button";
+        clearBtn.textContent = "✕";
+        clearBtn.title = "清除输入，显示全部模型";
+        clearBtn.style.cssText = "position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;line-height:20px;text-align:center;background:none;border:none;color:#888;font-size:13px;cursor:pointer;padding:0;display:none;z-index:1;";
+        clearBtn.addEventListener("mouseenter", () => { clearBtn.style.color = "#fff"; });
+        clearBtn.addEventListener("mouseleave", () => { clearBtn.style.color = "#888"; });
+
+        // 输入框为空时显示 ✕（点击即清空并弹出全量列表），有文字时隐藏
+        const syncClear = () => {
+            clearBtn.style.display = inputEl.value ? "block" : "none";
+        };
+
+        const placeList = () => {
+            const r = inputEl.getBoundingClientRect();
+            const vh = window.innerHeight;
+            listEl.style.left = r.left + "px";
+            listEl.style.width = r.width + "px";
+            const need = Math.min(220, listEl.scrollHeight || 220);
+            if (vh - r.bottom < Math.max(need, 80) && r.top > vh - r.bottom) {
+                listEl.style.top = "";
+                listEl.style.bottom = (vh - r.top + 2) + "px";
+            } else {
+                listEl.style.bottom = "";
+                listEl.style.top = (r.bottom + 2) + "px";
+            }
+        };
+
+        const items = () => Array.from(listEl.querySelectorAll("[data-value]"));
+        let highlight = -1;
+        const closeList = () => { listEl.style.display = "none"; highlight = -1; };
+
+        const syncInputFromSelect = () => {
+            const sel = selectEl.selectedOptions && selectEl.selectedOptions[0];
+            inputEl.value = sel ? sel.textContent : "";
+            syncClear();
+        };
+        const setHighlight = (idx) => {
+            const els = items();
+            if (!els.length) return;
+            highlight = ((idx % els.length) + els.length) % els.length;
+            els.forEach((el, i) => { el.style.background = i === highlight ? "#3a5a8c" : ""; });
+            els[highlight].scrollIntoView({ block: "nearest" });
+        };
+
+        const renderList = (query) => {
+            const q = (query || "").trim().toLowerCase();
+            listEl.innerHTML = "";
+            highlight = -1;
+            Array.from(selectEl.options).forEach((o) => {
+                if (q && !o.textContent.toLowerCase().includes(q)) return;
+                const item = document.createElement("div");
+                item.textContent = o.textContent;
+                item.dataset.value = o.value;
+                item.style.cssText = "padding:6px 8px;font-size:12px;color:#ccc;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
+                    (o.value === selectEl.value ? "background:#3a5a8c;" : "");
+                if (o.value === selectEl.value) highlight = items().length;
+                item.addEventListener("mousedown", (e) => {
+                    e.preventDefault(); // 避免 input 先失焦把列表关掉
+                    pickValue(o.value);
+                });
+                item.addEventListener("mouseenter", () => setHighlight(items().indexOf(item)));
+                listEl.appendChild(item);
+            });
+            if (!listEl.children.length) {
+                const empty = document.createElement("div");
+                empty.textContent = "无匹配模型";
+                empty.style.cssText = "padding:6px 8px;font-size:12px;color:#777;cursor:default;";
+                listEl.appendChild(empty);
+            }
+        };
+
     // API Key input row
+        const openList = () => {
+            if (selectEl.disabled) return;
+            renderList(inputEl.value);
+            listEl.style.display = "block";
+            placeList();
+        };
+
+        const pickValue = (value) => {
+            if (selectEl.value !== value) {
+                selectEl.value = value;
+                selectEl.dispatchEvent(new Event("change", { bubbles: true })); // 触发既有 autoSaveConfig
+            }
+            syncInputFromSelect();
+            closeList();
+            inputEl.blur();
+        };
+
+        inputEl.addEventListener("focus", () => {
+            // 空输入聚焦 → 直接弹出全量列表；有文字时不打扰（等用户输入过滤）
+            if (!inputEl.value.trim()) openList();
+        });
+        inputEl.addEventListener("input", () => {
+            syncClear();
+            renderList(inputEl.value);
+            if (!selectEl.disabled) { listEl.style.display = "block"; placeList(); }
+            highlight = -1;
+        });
+        // ✕ 清空输入并弹出完整未过滤列表。
+        // 该设置弹窗内存在冒泡阶段的事件拦截（模版页签同样因此改用捕获注册），
+        // 故挂 window 捕获阶段处理，保证点击必定生效。
+        const activateClear = () => {
+            inputEl.value = "";
+            syncClear();
+            renderList("");
+            listEl.style.display = "block";
+            placeList();
+            inputEl.focus();
+        };
+        window.addEventListener("mousedown", (e) => {
+            if (e.target === clearBtn) { e.preventDefault(); activateClear(); }
+        }, true);
+        window.addEventListener("click", (e) => {
+            // 已在 mousedown 完成动作；拦下后续冒泡，避免被弹窗“点外关闭”逻辑误关
+            if (e.target === clearBtn) e.stopPropagation();
+        }, true);
+        inputEl.addEventListener("keydown", (e) => {
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                if (listEl.style.display === "none") openList();
+                setHighlight(highlight + 1);
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setHighlight(highlight - 1);
+            } else if (e.key === "Enter") {
+                e.preventDefault();
+                const els = items();
+                const target = els[highlight >= 0 ? highlight : 0];
+                if (target) pickValue(target.dataset.value);
+            } else if (e.key === "Escape") {
+                closeList();
+                syncInputFromSelect();
+            }
+        });
+        inputEl.addEventListener("blur", () => setTimeout(closeList, 120));
+        document.addEventListener("mousedown", (e) => {
+            if (!wrap.contains(e.target) && !listEl.contains(e.target)) closeList();
+        });
+        window.addEventListener("resize", placeList);
+        window.addEventListener("scroll", placeList, true);
+
+        // select 的显隐/disabled/选项变化 → 同步盒子可见性、输入框文本和列表内容
+        const syncFromSelect = () => {
+            box.style.display = selectEl.style.display === "none" ? "none" : "";
+            inputEl.disabled = !!selectEl.disabled;
+            syncInputFromSelect();
+            renderList(inputEl.value);
+            if (selectEl.disabled || box.style.display === "none") closeList();
+        };
+        new MutationObserver(syncFromSelect).observe(selectEl, {
+            attributes: true, attributeFilter: ["style", "disabled"], childList: true,
+        });
+
+        wrap.appendChild(inputEl);
+        wrap.appendChild(clearBtn);
+        box.appendChild(wrap);
+        box.appendChild(selectEl);
+        return box;
+    };
+    const remoteModelBox = makeSearchableModelBox(modelSelectEl);
+    const localModelBox = makeSearchableModelBox(localModelSelectEl);
     const apiKeyRow = mkEl("div", "rs-config-row");
     const apiKeyLabel = mkEl("label", "rs-form-label");
     apiKeyLabel.textContent = "API Key";
@@ -247,7 +439,7 @@ function createSettingsModal() {
     // Local models directory row (for Local GGUF - hidden by default)
     const localDirRow = mkEl("div", "rs-config-row");
     const localDirLabel = mkEl("label", "rs-form-label");
-    localDirLabel.textContent = "Models Dir";
+    localDirLabel.textContent = "LLM Models Dir";
 
     const localDirInput = mkEl("input", "rs-form-input rs-local-models-dir");
     localDirInput.type = "text";
@@ -293,9 +485,9 @@ function createSettingsModal() {
     modelLabel.textContent = "Model";
     modelRowWrapper.appendChild(modelLabel);
     modelRowWrapper.appendChild(modelInput);
-    modelRowWrapper.appendChild(modelSelectEl);
+    modelRowWrapper.appendChild(remoteModelBox);
     // Append localModelSelectEl to DOM (hidden by default, shown for Local GGUF)
-    modelRowWrapper.appendChild(localModelSelectEl);
+    modelRowWrapper.appendChild(localModelBox);
 
     // Provider save status indicator
     const providerSaveStatusText = mkEl("div", "rs-provider-save-status");
@@ -441,10 +633,16 @@ function createSettingsModal() {
         
         try {
             const proxyUrl = `/rs_prompts/fetch_remote_models`;
+            const body = { base_url: baseUrl };
+            // OpenAI Compatible / OpenRouter 的列表接口可能需要鉴权
+            if (providerSelect.value === 'openai' || providerSelect.value === 'openrouter') {
+                const key = apiKeyInput.value.trim();
+                if (key) body.api_key = key;
+            }
             const resp = await fetch(proxyUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ base_url: baseUrl })
+                body: JSON.stringify(body)
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const result = await resp.json();
@@ -496,10 +694,32 @@ function createSettingsModal() {
         if (provider === 'local') {
             return localModelSelectEl.value || '';
         } else if (provider === 'openai') {
-            return modelInput.value;
+            // 在线列表拉取成功时以下拉为准，否则以手动输入框为准
+            const dropdownVisible = modelSelectEl.style.display !== 'none';
+            return dropdownVisible ? (modelSelectEl.value || '') : modelInput.value;
         } else {
             // LM Studio / Ollama：下拉框为准，未加载时为空（不回填其它 provider 的 model）
             return modelSelectEl ? modelSelectEl.value : '';
+        }
+    };
+
+    // OpenAI Compatible：尝试从 /v1/models 在线拉取列表；成功用下拉选择，失败回退手动输入
+    const refreshOpenAIModelUI = async () => {
+        const savedModel = savedRemoteConfig?.providers?.openai?.model || '';
+        // base_url 为空时按官方 API 处理
+        const baseUrl = baseUrlInput.value.trim() || 'https://api.openai.com/v1';
+        await fetchModelsFromUrl(baseUrl, modelSelectEl);
+        const real = realRemoteOptions();
+        if (real.length) {
+            const match = savedModel && real.find(o => o.value === savedModel);
+            modelSelectEl.value = match ? match.value : real[0].value;
+            modelSelectEl.style.setProperty('display', 'block', 'important');
+            modelInput.style.setProperty('display', 'none', 'important');
+        } else {
+            // 拉取失败（网络/鉴权/非标准端点）：保留手动输入及已保存值
+            modelSelectEl.style.setProperty('display', 'none', 'important');
+            modelInput.style.setProperty('display', '', '');
+            modelInput.value = savedModel;
         }
     };
 
@@ -545,7 +765,8 @@ function createSettingsModal() {
 
     const REMOTE_PROVIDER_DEFAULTS = {
         lmstudio: { baseUrl: "http://localhost:1234/v1" },
-        ollama: { baseUrl: "http://localhost:11430/v1" }
+        ollama: { baseUrl: "http://localhost:11430/v1" },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1" }
     };
 
     let savedRemoteConfig = null;
@@ -579,18 +800,23 @@ function createSettingsModal() {
             apiKeyRow.style.display = "flex";
             baseUrlRow.style.display = "flex";
             apiKeyInput.placeholder = "sk-... (optional for cloud)";
-            modelInput.style.setProperty('display', '', '');
-            modelInput.type = "text";
             modelInput.placeholder = "e.g., gpt-4o-mini";
             localModelSelectEl.style.setProperty('display', 'none', 'important');
-            modelSelectEl.style.setProperty('display', 'none', 'important');
             localDirRow.style.display = "none";
             localUnloadRow.style.display = "none";
             apiKeyInput.value = mask(saved.api_key);
             baseUrlInput.value = saved.base_url || "";
+            // 先恢复手动输入值（作为拉取失败的回退内容），再尝试在线拉取模型列表
             modelInput.value = saved.model || "";
-        } else if (provider === 'lmstudio' || provider === 'ollama') {
-            apiKeyRow.style.display = "none";
+            await refreshOpenAIModelUI();
+        } else if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
+            // OpenRouter 为云端服务需要 API Key；LM Studio / Ollama 本地服务不需要
+            apiKeyRow.style.display = provider === 'openrouter' ? "flex" : "none";
+            if (provider === 'openrouter') {
+                apiKeyInput.placeholder = "sk-or-...";
+                apiKeyInput.value = mask(saved.api_key);
+                baseUrlRow.style.display = "flex";
+            }
             modelInput.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'block', 'important');
@@ -632,8 +858,11 @@ function createSettingsModal() {
                 config.models_dir = localDirInput.value.trim();
                 config.auto_unload_local = localUnloadCheckbox.checked;
             }
-            // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model
-            if (provider === 'lmstudio' || provider === 'ollama') {
+            // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model；
+            // OpenAI Compatible 仅在在线列表模式下走同样的保护，手动输入模式始终保存
+            if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
+                if (modelValue) config.model = modelValue;
+            } else if (provider === 'openai' && modelSelectEl.style.display !== 'none') {
                 if (modelValue) config.model = modelValue;
             } else {
                 config.model = modelValue;
@@ -664,13 +893,16 @@ function createSettingsModal() {
     // Auto-save on field changes (blur/change) - provider select already has its handler above
     apiKeyInput.addEventListener("blur", autoSaveConfig);
     baseUrlInput.addEventListener("blur", autoSaveConfig);
-    // Auto-fetch models when the base URL field changes (LM Studio / Ollama)
+    // Auto-fetch models when the base URL field changes (LM Studio / Ollama / OpenRouter / OpenAI)
     const fetchModelsForBaseUrl = async () => {
-        if (providerSelect.value === 'lmstudio' || providerSelect.value === 'ollama') {
+        const provider = providerSelect.value;
+        if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
             const url = baseUrlInput.value.trim();
             if (!url) return;
             await fetchModelsFromUrl(url, modelSelectEl);
-            applyRemoteSavedModel(savedRemoteConfig?.providers?.[providerSelect.value]?.model);
+            applyRemoteSavedModel(savedRemoteConfig?.providers?.[provider]?.model);
+        } else if (provider === 'openai' && baseUrlInput.value.trim()) {
+            await refreshOpenAIModelUI();
         }
     };
     baseUrlInput.addEventListener("change", fetchModelsForBaseUrl);
@@ -979,7 +1211,7 @@ async function loadRemoteLLMConfig(settingsModal) {
 
     // Determine provider value - default to 'local' if no valid provider or no config
     let providerValue = config.active_provider || 'local';
-    if (!['local', 'openai', 'lmstudio', 'ollama'].includes(providerValue)) {
+    if (!['local', 'openai', 'lmstudio', 'ollama', 'openrouter'].includes(providerValue)) {
         providerValue = 'openai';
     }
 

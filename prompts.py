@@ -1114,16 +1114,17 @@ async def rs_prompts_random_prompt(request):
 
 @server.PromptServer.instance.routes.post("/rs_prompts/fetch_remote_models")
 async def rs_prompts_fetch_remote_models(request):
-    """Proxy request to fetch model list from LM Studio / Ollama"""
+    """Proxy request to fetch model list from LM Studio / Ollama / OpenAI-compatible APIs"""
     try:
         import aiohttp
         data = await request.json()
         base_url = (data.get("base_url", "") or "").strip().rstrip("/")
+        api_key = (data.get("api_key", "") or "").strip()
         
         if not base_url:
             return web.Response(status=400, text="base_url required")
         
-        # 兼容 LM Studio / Ollama 的各种 base URL 写法
+        # 兼容 LM Studio / Ollama / OpenRouter / OpenAI 的各种 base URL 写法
         if base_url.endswith("/models"):
             url = base_url
         elif base_url.endswith("/api"):
@@ -1132,9 +1133,12 @@ async def rs_prompts_fetch_remote_models(request):
             url = f"{base_url}/models"
         else:
             url = f"{base_url}/v1/models"  # OpenAI 兼容接口
+
+        # 部分 OpenAI 兼容云端点（如官方 API）拉取列表也需要鉴权
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return web.json_response({"success": False, "error": f"HTTP {resp.status}"}, status=502)
                 payload = await resp.json()

@@ -147,6 +147,15 @@ _REMOTE_PROVIDER_DEFAULTS = {
         "temperature": 0.0,
         "timeout": 60,
     },
+    # OpenRouter：OpenAI 兼容云聚合，模型列表来自其公开 /v1/models
+    "openrouter": {
+        "api_key": "",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "",
+        "max_tokens": 500,
+        "temperature": 0.0,
+        "timeout": 120,
+    },
     # 本地 GGUF（llama.cpp 进程内推理）：models_dir 为空时使用默认 <ComfyUI>/models/LLM
     "local": {
         "model": "",
@@ -155,7 +164,7 @@ _REMOTE_PROVIDER_DEFAULTS = {
 }
 
 # 走 OpenAI 兼容 HTTP 的 provider；local 为进程内 llama.cpp，不属于远程
-_REMOTE_PROVIDERS = {"openai", "lmstudio", "ollama"}
+_REMOTE_PROVIDERS = {"openai", "lmstudio", "ollama", "openrouter"}
 
 
 def _default_remote_config() -> Dict[str, Any]:
@@ -602,7 +611,13 @@ class RemoteLLMClient:
             "stream": stream,
         }
 
-        logger.info(f"Sending request to remote LLM: url={url}, stream={stream}")
+        if not self.model:
+            raise RuntimeError(
+                f"No model selected for provider '{self.provider}'. "
+                "Open Settings and pick a model first."
+            )
+
+        logger.info(f"Sending request to remote LLM: url={url}, model={self.model}, stream={stream}")
 
         try:
             if stream:
@@ -618,8 +633,16 @@ class RemoteLLMClient:
             logger.warning(f"Remote LLM timeout: {e}")
             raise RuntimeError(f"Remote LLM timeout: {e}")
         except requests.exceptions.HTTPError as e:
-            logger.error(f"Remote LLM HTTP error: {e}")
-            raise RuntimeError(f"Remote LLM HTTP error: {e}")
+            # 带上服务端错误体（OpenRouter/OpenAI 的 4xx 会说明具体原因，如模型不存在）
+            detail = ""
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                try:
+                    detail = resp.text[:500]
+                except Exception:
+                    detail = ""
+            logger.error(f"Remote LLM HTTP error: {e} | body={detail}")
+            raise RuntimeError(f"Remote LLM HTTP {resp.status_code if resp is not None else '?'}: {detail or e}")
         except Exception as e:
             logger.error(f"Remote LLM completion failed: {e}")
             raise
@@ -643,7 +666,14 @@ class RemoteLLMClient:
         import requests
 
         with requests.post(url, headers=headers, json=payload, stream=True, timeout=self.timeout) as response:
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # 带上服务端错误体（OpenRouter/OpenAI 的 4xx 会说明具体原因，如模型不存在）
+                try:
+                    detail = response.text[:500]
+                except Exception:
+                    detail = ""
+                logger.error(f"Remote LLM HTTP {response.status_code}: url={url} | body={detail}")
+                raise RuntimeError(f"Remote LLM HTTP {response.status_code}: {detail or response.reason}")
             full_content = []
             for line in response.iter_lines():
                 if line:
