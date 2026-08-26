@@ -1510,6 +1510,13 @@
     flex: 1;
 }
 
+/* Local auto-unload row: checkbox and label on one horizontal line */
+.rs-local-unload-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .rs-form-label {
     font-size: 12px;
     color: #ccc;

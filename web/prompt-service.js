@@ -66,6 +66,20 @@ async function saveRemoteLLMConfig(config) {
 }
 
 /**
+ * 卸载本地 LLM 模型（供工作流运行时节点执行完成后调用）
+ * @returns {Promise<{success:boolean, message?:string}>}
+ */
+async function unloadLocalModel() {
+    try {
+        const res = await fetch("/rs_prompts/unload_local_model", { method: "POST" });
+        return await res.json();
+    } catch (e) {
+        console.error("Failed to unload local model:", e);
+        return { success: false, error: e.message };
+    }
+}
+
+/**
  * 获取当前 LLM 模式
  * @returns {Promise<string>} - "local" 或 "remote"
  */
@@ -594,6 +608,7 @@ export {
     // 远程 LLM 配置相关
     getRemoteLLMConfig,
     saveRemoteLLMConfig,
+    unloadLocalModel,
     getLLMMode,
     // 提示词模版管理
     listTemplates,
@@ -619,6 +634,7 @@ if (typeof window !== 'undefined') {
     }
     window.NeoNodes.getRemoteLLMConfig = getRemoteLLMConfig;
     window.NeoNodes.saveRemoteLLMConfig = saveRemoteLLMConfig;
+    window.NeoNodes.unloadLocalModel = unloadLocalModel;
     window.NeoNodes.getLLMMode = getLLMMode;
     // 提示词模版管理
     window.NeoNodes.listTemplates = listTemplates;

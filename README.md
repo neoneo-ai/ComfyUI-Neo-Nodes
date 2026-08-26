@@ -240,7 +240,28 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 | 模式 | 说明 | 要求 |
 |------|------|------|
 | Remote (远程) | 通过 API 调用云端大模型 | 在节点 Settings 中配置 API Key 和端点 |
-| Local (本地) | 使用 llama.cpp 在本地推理 | 手动放置 GGUF 模型到 models/LLM/ 目录并在 Settings 中选择 |
+| Local (本地) | 使用 llama.cpp 在本地推理 | 放置 GGUF 模型到目录并在 Settings → Provider 选「Local GGUF」后选择模型 |
+
+### 本地模型目录规范
+
+路径按 `供应商(可选)/模型名称/模型文件(.gguf)` 组织，例如：
+
+```
+models/LLM/
+├── mradermacher/Qwen3-4B-AWQ-I4_K_M/GGUF-Q4_0-int4-v2-scratch.gguf   # 单文件直接放根目录即可
+├── stablelm/stablelm2-1.6B.gguf                                      # 平铺布局同样支持
+└── mradermacher/Huihui-gemma-4-E4B-it-abliterated-GGUF/
+    ├── Huihui-gemma-4-E4B-it-abliterated-Q4_K_M.gguf                 # 主模型文件（任意量化）
+    └── Huihui-gemma-...mmproj-f16.gguf                               # 投影文件（自动匹配，见下）
+```
+
+设置说明：
+
+| 项目 | 说明 |
+|------|------|
+| 目录位置 | Settings → Provider 选 `Local GGUF` 后出现的 **Models Dir**；留空默认扫描 `models/LLM/`，也可填任意本地路径（如 LM Studio 的 `<用户>/.lmstudio/models`） |
+| 模型列表 | 递归扫描该目录下所有 `.gguf`，下拉框只显示**模型名称**（文件名去掉 `.gguf`），不同供应商同名文件各自成项 |
+| 多模态标识 | 某模型同目录中存在 `mmproj-*.gguf`（或 `<模型名>.mmproj-f16.gguf`）时，该模型名称前会出现 🖼️ 徽标，表示可用于图片反推；多个候选时不猜测、留空待匹配 |
 
 ---
 

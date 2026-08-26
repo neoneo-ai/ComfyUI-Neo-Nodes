@@ -42,35 +42,7 @@ except Exception as e:
 # LLM Configuration & Management
 # ==========================================
 
-def _load_model_config(config_dir: str | None = None):
-    """从 model_config.json 加载用户模型配置"""
-    if config_dir is None:
-        config_dir = _CONFIGS_DIR
-    config_path = os.path.join(config_dir, "model_config.json")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        return config
-    except Exception as e:
-        logger.error(f"Failed to load model config: {e}")
-        return {}
-
-def _load_presets(config_dir: str | None = None):
-    """从 model_presets.json 加载预设模型"""
-    if config_dir is None:
-        config_dir = _CONFIGS_DIR
-    presets_path = os.path.join(config_dir, "model_presets.json")
-    try:
-        with open(presets_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load model presets: {e}")
-        return {}
-
 _CONFIGS_DIR: str = os.path.join(os.path.dirname(__file__), "configs")
-
-_MODEL_CONFIG: Dict[str, Any] = _load_model_config(_CONFIGS_DIR)
-_MODEL_PRESETS: Dict[str, Any] = _load_presets(_CONFIGS_DIR)
 
 
 # ==========================================
@@ -175,7 +147,15 @@ _REMOTE_PROVIDER_DEFAULTS = {
         "temperature": 0.0,
         "timeout": 60,
     },
+    # 本地 GGUF（llama.cpp 进程内推理）：models_dir 为空时使用默认 <ComfyUI>/models/LLM
+    "local": {
+        "model": "",
+        "models_dir": "",
+    },
 }
+
+# 走 OpenAI 兼容 HTTP 的 provider；local 为进程内 llama.cpp，不属于远程
+_REMOTE_PROVIDERS = {"openai", "lmstudio", "ollama"}
 
 
 def _default_remote_config() -> Dict[str, Any]:
@@ -218,7 +198,7 @@ def _migrate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
         else:
             provider = "openai"
         new["enabled"] = False
-        new["active_provider"] = provider
+    new["active_provider"] = provider
     # LM Studio / Ollama 的 model 只能来自服务端模型列表，不能迁移旧的 OpenAI 默认值
     for key in ("api_key", "base_url", "max_tokens", "temperature", "timeout"):
         if key in config:
@@ -247,7 +227,21 @@ def _load_remote_config() -> Dict[str, Any]:
     try:
         if os.path.exists(_REMOTE_CONFIG_PATH):
             with open(_REMOTE_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return _migrate_remote_config(json.load(f))
+                config = _migrate_remote_config(json.load(f))
+            # 一次性：把旧 model_config.json 的 current_model 接手到 local provider
+            local_slot = config.get("providers", {}).get("local")
+            if local_slot is not None and not local_slot.get("model"):
+                legacy = os.path.join(_CONFIGS_DIR, "model_config.json")
+                if os.path.exists(legacy):
+                    try:
+                        with open(legacy, "r", encoding="utf-8") as f:
+                            cur = json.load(f).get("current_model", "")
+                        if cur and cur.strip():
+                            local_slot["model"] = cur
+                            _save_remote_config(config)
+                    except Exception:
+                        pass
+            return config
     except Exception as e:
         logger.error(f"Failed to load remote LLM config: {e}")
     return _default_remote_config()
@@ -279,23 +273,23 @@ def set_remote_llm_config(config: Dict[str, Any]):
     provider = config.get("provider")
     if provider in current.get("providers", {}):
         slot = current["providers"][provider]
-        for key in ("base_url", "model", "max_tokens", "temperature", "timeout"):
+        for key in ("base_url", "model", "models_dir", "max_tokens", "temperature", "timeout"):
             if key in config:
                 slot[key] = config[key]
         if config.get("api_key"):
             slot["api_key"] = config["api_key"]
         if config.get("enabled"):
             current["enabled"] = True
-            current["active_provider"] = provider
         else:
             current["enabled"] = False
+        current["active_provider"] = provider
         if "auto_unload_local" in config:
             current["auto_unload_local"] = bool(config["auto_unload_local"])
         _save_remote_config(current)
         logger.info(f"Remote LLM provider '{provider}' config updated")
         return
 
-    # provider 为 local 或未知：只更新启用状态
+    # 未知 provider：只更新启用状态
     current["enabled"] = bool(config.get("enabled", current.get("enabled", False)))
     _save_remote_config(current)
 
@@ -306,7 +300,7 @@ LLM_MODE_REMOTE = "remote"
 def get_current_mode() -> str:
     """获取当前 LLM 模式：local 或 remote（基于 provider 值判断）"""
     config = _load_remote_config()
-    if config.get("enabled") and config.get("active_provider") in _REMOTE_PROVIDER_DEFAULTS:
+    if config.get("enabled") and config.get("active_provider") in _REMOTE_PROVIDERS:
         return LLM_MODE_REMOTE
     return LLM_MODE_LOCAL
 
@@ -328,57 +322,81 @@ def get_task_config(task_name: str) -> Dict[str, Any]:
 
 
 # ==========================================
-# Model Config Helpers (presets + user config)
+# Local Model Helpers (realtime scan)
 # ==========================================
 
-def _get_all_models() -> Dict[str, Any]:
-    """合并预设模型和用户自定义模型（用户模型覆盖预设）"""
-    return {**_MODEL_PRESETS, **_MODEL_CONFIG.get("models", {})}
+def _resolve_llm_dir(models_dir: str = "") -> str:
+    """解析本地模型目录：自定义路径优先，空值回退默认 <ComfyUI>/models/LLM"""
+    custom = str(models_dir or "").strip()
+    if custom:
+        return os.path.abspath(custom)
+    return os.path.join(folder_paths.base_path, "models", "LLM")
 
 
-def scan_llm_directory() -> List[Dict[str, str]]:
-    """扫描 models/LLM/ 目录，发现所有 .gguf 文件，并自动补充到 model_config.json"""
-    base_dir = folder_paths.base_path
-    llm_dir = os.path.join(base_dir, "models", "LLM")
+def _is_mmproj_file(fname: str) -> bool:
+    """判断是否为多模态投影文件：兼容 mmproj-f16.gguf 与 <模型名>.mmproj-f16.gguf 两种命名"""
+    name = fname.lower()
+    return name.endswith(".gguf") and "mmproj" in name
+
+
+def scan_llm_directory(models_dir: str = "") -> List[Dict[str, str]]:
+    """递归扫描本地模型目录下的 .gguf 文件（平铺 / 单层子目录 / LM Studio 多层嵌套均支持）。
+    同目录恰好只有一个 mmproj 投影文件时绑定给该目录下的所有模型（用于图片反推）；投影文件本身不列为可选模型。"""
+    llm_dir = _resolve_llm_dir(models_dir)
     discovered: List[Dict[str, str]] = []
     seen: set = set()
 
     if not os.path.isdir(llm_dir):
         return discovered
 
-    for entry in sorted(os.listdir(llm_dir)):
-        subdir = os.path.join(llm_dir, entry)
-        if not os.path.isdir(subdir):
-            continue
-        for fname in sorted(os.listdir(subdir)):
-            if fname.lower().endswith(".gguf"):
-                key = f"{entry}/{fname.replace('.gguf', '')}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                discovered.append({
-                    "key": key,
-                    "name": key,
-                    "filename": fname,
-                    "model_dir": entry,
-                })
-                _ensure_model_in_config(key, entry, fname)
-    return discovered
-
-
-def _ensure_model_in_config(model_key: str, model_dir: str, filename: str) -> None:
-    """将扫描发现的模型自动写入 model_config.json（如果尚未存在）"""
-    global _MODEL_CONFIG
-    models: Dict[str, Any] = _MODEL_CONFIG.get("models", {})
-    if model_key not in models:
-        models[model_key] = {
-            "ms_repo_id": "",
-            "hf_repo_id": "",
-            "filename": filename,
+    def _register(key: str, model_dir: str, fname: str, mmproj: str = "", full: str = "", proj_size: int = 0) -> None:
+        if key in seen:
+            return
+        seen.add(key)
+        stem = fname[:-5] if fname.lower().endswith(".gguf") else fname
+        file_size = 0
+        try:
+            if full and os.path.isfile(full):
+                file_size = os.path.getsize(full)
+        except OSError:
+            file_size = 0
+        # 多模态模型：所属目录的单张 mmproj 投影文件计入总体积
+        if proj_size:
+            file_size += proj_size
+        discovered.append({
+            "key": key,
+            "name": stem,
+            "filename": fname,
             "model_dir": model_dir,
-        }
-        _save_model_config()
-        logger.info(f"Auto-added model to config: {model_key}")
+            "mmproj": mmproj,
+            "multimodal": bool(mmproj),
+            "file_size": file_size,
+        })
+
+    for root, _dirs, files in os.walk(llm_dir):
+        # 同目录恰好只有一个名字含 mmproj 的 gguf 时才绑定（多个候选时不猜测）
+        ggufs = sorted(f for f in files if f.lower().endswith(".gguf"))
+        projectors = [f for f in ggufs if _is_mmproj_file(f)]
+        bind = projectors[0] if len(projectors) == 1 else ""
+        # 单张 mmproj 投影文件服务该目录下所有模型，其体积计入每个模型的总体积
+        proj_size = 0
+        if bind:
+            proj_full = os.path.join(root, bind)
+            try:
+                if os.path.isfile(proj_full):
+                    proj_size = os.path.getsize(proj_full)
+            except OSError:
+                proj_size = 0
+        for fname in ggufs:
+            if _is_mmproj_file(fname):
+                continue
+            full = os.path.join(root, fname)
+            # key 取相对路径去扩展名：根目录为 "stem"，深层为 "pub/model/stem"
+            rel = os.path.relpath(full, llm_dir).replace("\\", "/")
+            _register(rel[:-5], root, fname, bind, full=full, proj_size=proj_size)
+
+        discovered.sort(key=lambda item: item["key"])
+    return discovered
 
 
 def unload_local_model():
@@ -404,83 +422,77 @@ def __reload_llm_singleton():
     LLMSingleton._instance = None
 
 
+def _bind_sibling_mmproj(model_key: str) -> str:
+    """主模型选定后，若其所在目录恰好只有一个名字含 mmproj 的 gguf，
+    自动绑定为该模型的投影文件（下载命名不规范时的兜底自愈）。返回 mmproj 文件名。"""
+    scanned = scan_llm_directory(_get_local_models_dir())
+    for entry in scanned:
+        if entry["key"] != model_key:
+            continue
+        target = _resolve_model_path(entry["model_dir"], entry["filename"])
+        model_dir = os.path.dirname(target)
+        base = os.path.basename(target).lower()
+        try:
+            siblings = [f for f in os.listdir(model_dir)
+                        if f.lower().endswith(".gguf") and f.lower() != base and _is_mmproj_file(f)]
+        except OSError:
+            return ""
+        if len(siblings) == 1:
+            logger.info(f"Auto-bound mmproj '{siblings[0]}' to {model_key}")
+            return siblings[0]
+        return entry.get("mmproj", "")
+    return ""
+
+
 def set_current_model(model_key: str) -> bool:
-    """设置当前模型（支持预设模型和用户自定义模型）"""
-    global _MODEL_CONFIG
-    all_models = _get_all_models()
-
-    if model_key not in all_models:
-        parts = model_key.split("/", 1)
-        if len(parts) == 2:
-            model_dir, filename = parts
-            _ensure_model_in_config(model_key, model_dir, filename)
-            _MODEL_CONFIG = _read_model_config_from_file() or _MODEL_CONFIG
-            all_models = _get_all_models()
-
-    if model_key in all_models:
-        _MODEL_CONFIG["current_model"] = model_key
-        _save_model_config()
-        __reload_llm_singleton()
-        return True
-    return False
+    """设置当前本地模型；key 必须是扫描结果中的 key。"""
+    scanned = scan_llm_directory(_get_local_models_dir())
+    keys = {item["key"] for item in scanned}
+    if model_key not in keys:
+        logger.warning(f"Unknown model key: {model_key}")
+        return False
+    _set_local_model(model_key)
+    __reload_llm_singleton()
+    return True
 
 
-def _save_model_config():
-    """保存用户模型配置到文件"""
-    config_path = os.path.join(_CONFIGS_DIR, "model_config.json")
-    try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(_MODEL_CONFIG, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"Failed to save model config: {e}")
+def _get_local_models_dir() -> str:
+    """当前 local provider 配置的模型目录。"""
+    cfg = _load_remote_config()
+    return cfg.get("providers", {}).get("local", {}).get("models_dir", "")
 
 
-def _read_model_config_from_file():
-    """从文件重新读取用户模型配置（用于运行时动态获取最新配置）"""
-    config_path = os.path.join(_CONFIGS_DIR, "model_config.json")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to read model config from file: {e}")
-        return {}
+def _set_local_model(model_key: str) -> None:
+    """持久化当前选中的本地模型到 remote_llm_config.json。"""
+    cfg = _load_remote_config()
+    cfg.setdefault("providers", {}).setdefault("local", {})["model"] = model_key
+    _save_remote_config(cfg)
+
+
+def _resolve_model_path(model_dir: str, filename: str) -> str:
+    """定位 gguf 文件绝对路径；model_dir 兼容相对子目录与扫描写入的绝对目录"""
+    if model_dir and os.path.isabs(model_dir):
+        return os.path.join(model_dir, filename)
+    return os.path.join(folder_paths.base_path, "models", "LLM", model_dir, filename)
 
 
 def get_available_models() -> Dict[str, Any]:
-    """获取所有可用模型列表（合并预设 + 用户自定义 + 目录扫描）"""
-    global _MODEL_CONFIG
-    config = _read_model_config_from_file()
-    if config:
-        _MODEL_CONFIG.clear()
-        _MODEL_CONFIG.update(config)
-
-    all_models = _get_all_models()
-    model_list: List[Dict[str, str]] = []
-    seen_keys: set = set()
-
-    for key, cfg in all_models.items():
-        cfg_dict: Dict[str, Any] = cfg  # type: ignore[assignment]
-        model_list.append({
-            "key": key,
-            "name": key,
-            "filename": cfg_dict.get("filename", ""),
-            "model_dir": cfg_dict.get("model_dir", ""),
-        })
-        seen_keys.add(key)
-
-    scanned = scan_llm_directory()
+    """获取当前配置目录下的所有可用本地模型（实时扫描磁盘，不落盘）。"""
+    scanned = scan_llm_directory(_get_local_models_dir())
+    model_list: List[Dict[str, Any]] = []
     for item in scanned:
-        if item["key"] not in seen_keys:
-            model_list.append({
-                "key": item["key"],
-                "name": item["name"],
-                "filename": item["filename"],
-                "model_dir": item["model_dir"],
-            })
-            seen_keys.add(item["key"])
-
+        model_list.append({
+            "key": item["key"],
+            "name": item["name"],
+            "filename": item["filename"],
+            "model_dir": item["model_dir"],
+            "multimodal": item.get("multimodal", False),
+            "file_size": item.get("file_size", 0),
+        })
+    cfg = _load_remote_config()
+    cur = cfg.get("providers", {}).get("local", {}).get("model", "")
     return {
-        "current_model": _MODEL_CONFIG.get("current_model", ""),
+        "current_model": cur,
         "models": model_list,
     }
 
@@ -671,25 +683,38 @@ class LLMSingleton:
 
     def _load_model(self):
         """加载 LLM 模型，如果不存在则报错"""
-        config = _read_model_config_from_file()
-        if not config:
-            config = _MODEL_CONFIG
+        remote_cfg = _load_remote_config()
+        local_slot = remote_cfg.get("providers", {}).get("local", {})
+        current_model_key: str = local_slot.get("model", "")
+        models_dir = local_slot.get("models_dir", "")
 
-        all_models = _get_all_models()
-        current_model_key: str = config.get("current_model", "")
-        model_cfg = all_models.get(current_model_key, {})
+        scanned = scan_llm_directory(models_dir)
+        model_cfg: Dict[str, Any] = {}
+        for item in scanned:
+            if item["key"] == current_model_key:
+                model_cfg = item
+                break
 
-        MODEL_FILENAME = model_cfg.get("filename", "")
-        MODEL_DIR = model_cfg.get("model_dir", "")
-        model_dir = os.path.join(folder_paths.base_path, "models", "LLM", MODEL_DIR)
-        target_path = os.path.join(model_dir, MODEL_FILENAME)
-        mmproj_path = os.path.join(model_dir, config.get("mmproj", {}).get("filename", "mmproj-BF16.gguf"))
+        if not model_cfg:
+            filename = current_model_key or "no model"
+            raise RuntimeError(
+                f"LLM model not found: {filename}\n"
+                f"Please select a model in the node settings (Settings → Neo LLM → Local).\n"
+                f"Or switch to remote API mode."
+            )
+
+        target_path = _resolve_model_path(model_cfg["model_dir"], model_cfg["filename"])
+        model_dir = os.path.dirname(target_path)
+        mmproj_name = str(model_cfg.get("mmproj", "") or "")
+        if not mmproj_name:
+            mmproj_name = _bind_sibling_mmproj(current_model_key)
+        mmproj_path = os.path.join(model_dir, mmproj_name) if mmproj_name else None
 
         logger.info(f"Loading LLM model: {target_path}")
         logger.info(f"mmproj path: {mmproj_path}")
 
         if not os.path.exists(target_path):
-            filename = MODEL_FILENAME or "unknown.gguf"
+            filename = os.path.basename(target_path) or "unknown.gguf"
             raise RuntimeError(
                 f"LLM model not found: {filename}\n"
                 f"Expected path: {target_path}\n"
@@ -697,8 +722,7 @@ class LLMSingleton:
                 f"Or switch to remote API mode in the node settings."
             )
 
-        if not os.path.exists(mmproj_path):
-            MMPROJ_FILENAME = _MODEL_CONFIG.get("mmproj", {}).get("filename", "")
+        if not mmproj_path or not os.path.exists(mmproj_path):
             logger.warning(
                 f"mmproj file not found: {mmproj_path}. "
                 f"Image understanding will not work."

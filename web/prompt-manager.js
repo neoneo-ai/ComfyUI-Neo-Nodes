@@ -29,6 +29,20 @@ import {
     imagesFromClipboard
 } from "./prompt-service.js";
 
+// 字节数转人类可读大小（后端 /rs_prompts/get_models 返回的 file_size，多模态已含 mmproj）
+function formatFileSize(bytes) {
+    if (!bytes || bytes <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = Number(bytes);
+    let i = 0;
+    while (size >= 1024 && i < units.length - 1) {
+        size /= 1024;
+        i++;
+    }
+    const rounded = i === 0 ? String(Math.round(size)) : Math.round(size * 10) / 10;
+    return rounded + ' ' + units[i];
+}
+
 // ==========================================
 // DOM 元素工厂
 // ==========================================
@@ -174,8 +188,8 @@ function createSettingsModal() {
     
     const providerSelect = mkEl("select", "rs-form-input rs-remote-provider");
     providerSelect.id = "rs-remote-provider";
-    // <option value="local">Local (GGUF)</option>
     providerSelect.innerHTML = `
+        <option value="local">Local GGUF (llama.cpp)</option>
         <option value="openai">OpenAI Compatible</option>
         <option value="lmstudio">LM Studio</option>
         <option value="ollama">Ollama</option>
@@ -230,6 +244,48 @@ function createSettingsModal() {
     baseUrlRow.appendChild(baseUrlLabel);
     baseUrlRow.appendChild(baseUrlInput);
 
+    // Local models directory row (for Local GGUF - hidden by default)
+    const localDirRow = mkEl("div", "rs-config-row");
+    const localDirLabel = mkEl("label", "rs-form-label");
+    localDirLabel.textContent = "Models Dir";
+
+    const localDirInput = mkEl("input", "rs-form-input rs-local-models-dir");
+    localDirInput.type = "text";
+    localDirInput.id = "rs-local-models-dir";
+    localDirInput.placeholder = "Default: ComfyUI/models/LLM";
+
+        localDirRow.appendChild(localDirLabel);
+    localDirRow.appendChild(localDirInput);
+
+    // Path convention hint
+    const localDirHint = mkEl("div", "rs-form-hint");
+    localDirHint.innerHTML = "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配";
+    localDirHint.style.cssText = 'font-size:10px;color:#888;margin-top:2px;line-height:1.3;';
+    localDirRow.appendChild(localDirHint);
+
+    // 本地自动卸载复选框（工作流运行时本节点执行完成后可用）
+    const localUnloadCheckbox = mkEl("input", "rs-form-checkbox");
+    localUnloadCheckbox.type = "checkbox";
+    localUnloadCheckbox.id = "rs-local-auto-unload";
+    const localUnloadLabel = mkEl("label", "rs-form-label");
+    localUnloadLabel.htmlFor = "rs-local-auto-unload";
+    localUnloadLabel.textContent = "本节点执行完自动卸载本地模型";
+
+    // 复选框与标签在同一行（rs-config-row 默认纵向布局，用内层 flex 行对齐）
+    const localUnloadRow = mkEl("div", "rs-config-row rs-local-unload");
+    const localUnloadLine = mkEl("div", "rs-local-unload-line");
+    localUnloadLine.appendChild(localUnloadCheckbox);
+    localUnloadLine.appendChild(localUnloadLabel);
+    localUnloadRow.appendChild(localUnloadLine);
+
+    const localUnloadHint = mkEl("div", "rs-form-hint");
+    localUnloadHint.style.cssText = 'font-size:10px;color:#888;margin-top:2px;line-height:1.3;';
+    localUnloadRow.appendChild(localUnloadHint);
+
+    localDirRow.style.display = 'none';
+
+    localUnloadRow.style.display = 'none';
+
     // Model row - contains text input, remote select, and local select
     const modelRowWrapper = mkEl("div", "rs-config-row");
     modelRowWrapper.id = "rs-model-input-wrapper";
@@ -248,7 +304,9 @@ function createSettingsModal() {
     providerSaveStatusText.style.fontSize = "11px";
     providerSaveStatusText.style.color = "#999";
 
-    remoteForm.append(remoteInfoText, providerRow, modelRowWrapper, apiKeyRow, baseUrlRow, providerSaveStatusText);
+    remoteForm.append(remoteInfoText, providerRow, localDirRow, modelRowWrapper, apiKeyRow, baseUrlRow, providerSaveStatusText);
+    // 自动卸载本地模型设置放在设置页最底部
+    remoteForm.appendChild(localUnloadRow);
 
     // ==========================================
     // Template Management Tab (Tab 2)
@@ -464,7 +522,8 @@ function createSettingsModal() {
                 result.models.forEach(m => {
                     const opt = document.createElement('option');
                     opt.value = m.key;
-                    opt.textContent = m.name || m.key;
+                    const sz = m.file_size > 0 ? formatFileSize(m.file_size) : '';
+                    opt.textContent = (m.name || m.key) + (sz ? `  (${sz})` : '') + (m.multimodal ? ' 🖼️' : '');
                     if (m.key === result.current_model) {
                         opt.selected = true;
                     }
@@ -501,13 +560,19 @@ function createSettingsModal() {
         const mask = (v) => (v === '***' ? '' : (v || ''));
         
         if (provider === 'local') {
-            // Local GGUF: show local model select, hide everything else
+            // Local GGUF: show dir input + local model select, hide everything else
             apiKeyRow.style.display = "none";
             baseUrlRow.style.display = "none";
             modelInput.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'block', 'important');
-            
+            localDirRow.style.display = "flex";
+            localDirInput.value = saved.models_dir || "";
+
+            // 恢复/显示自动卸载复选框（配置顶层字段）
+            localUnloadCheckbox.checked = !!fullConfig.auto_unload_local;
+            localUnloadRow.style.display = "flex";
+
             // Fetch available local models
             fetchLocalModels();
         } else if (provider === 'openai') {
@@ -519,6 +584,8 @@ function createSettingsModal() {
             modelInput.placeholder = "e.g., gpt-4o-mini";
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'none', 'important');
+            localDirRow.style.display = "none";
+            localUnloadRow.style.display = "none";
             apiKeyInput.value = mask(saved.api_key);
             baseUrlInput.value = saved.base_url || "";
             modelInput.value = saved.model || "";
@@ -527,6 +594,8 @@ function createSettingsModal() {
             modelInput.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'block', 'important');
+            localDirRow.style.display = "none";
+            localUnloadRow.style.display = "none";
             const defaultBaseUrl = REMOTE_PROVIDER_DEFAULTS[provider].baseUrl;
             baseUrlInput.value = saved.base_url || defaultBaseUrl;
             await fetchModelsFromUrl(baseUrlInput.value.trim(), modelSelectEl);
@@ -559,6 +628,10 @@ function createSettingsModal() {
                 api_key: apiKeyInput.value,
                 base_url: baseUrlInput.value
             };
+            if (provider === 'local') {
+                config.models_dir = localDirInput.value.trim();
+                config.auto_unload_local = localUnloadCheckbox.checked;
+            }
             // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model
             if (provider === 'lmstudio' || provider === 'ollama') {
                 if (modelValue) config.model = modelValue;
@@ -628,6 +701,26 @@ function createSettingsModal() {
             console.error("Failed to switch local model:", e);
             setLocalStatusMsg("❌ " + (e.message || "Model switch failed"), "#dc2626");
         }
+    });
+
+    localDirInput.addEventListener("change", async () => {
+        // 先落盘再刷新，确保服务端按新目录扫描
+        await window.NeoNodes?.saveRemoteLLMConfig?.({
+            enabled: false,
+            provider: "local",
+            models_dir: localDirInput.value.trim()
+        });
+        await fetchLocalModels();
+    });
+
+    // 自动卸载复选框：切换即落盘（仅对 Local GGUF 有意义）
+    localUnloadCheckbox.addEventListener("change", async () => {
+        await window.NeoNodes?.saveRemoteLLMConfig?.({
+            enabled: false,
+            provider: "local",
+            models_dir: localDirInput.value.trim(),
+            auto_unload_local: localUnloadCheckbox.checked
+        });
     });
 
     // ==========================================
