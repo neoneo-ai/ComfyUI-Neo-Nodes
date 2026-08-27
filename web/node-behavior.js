@@ -360,6 +360,74 @@ function createRandomHandler(promptUI) {
     };
 }
 
+/**
+ * 运行时随机选词（🎲 ▾ 菜单）状态接线：恢复 UI、持久化到 properties 与同名隐藏控件。
+ * 编码器（NeoPromptEncoder）单输出固定每次抽 1 条并隐藏数量行；
+ * 生成器（NeoPromptGenerator）按列表输出，支持一次抽取多条循环消费。
+ */
+function wireRuntimeRandom(node, randomBtn) {
+    const ui = randomBtn._rsRuntime;
+    if (!ui || !node) return;
+    const isEncoder = node.type === "NeoPromptEncoder";
+    if (isEncoder) ui.countRow.style.display = "none";
+
+    const currentState = () => {
+        const prop = node.properties?.rs_runtime_random;
+        if (prop && typeof prop === "object") return prop;
+        const en = node.widgets?.find(w => w.name === "random_enabled");
+        const cn = node.widgets?.find(w => w.name === "random_count");
+        return { enabled: !!en?.value, count: cn ? (parseInt(cn.value, 10) || 1) : 1 };
+    };
+
+    const applyState = () => {
+        const st = currentState();
+        const count = Math.max(1, Math.min(st.count || 1, 16));
+        ui.checkbox.checked = !!st.enabled;
+        ui.valueSpan.textContent = String(isEncoder ? 1 : count);
+        // 启用时给按钮组内的骰子容器打标：折叠状态下也保持可见（见 .rs-random-on 样式）。
+        // 菜单本身挂在 body 上，不能从 checkbox 往上找容器，必须用显式引用。
+        if (ui.wrap) ui.wrap.classList.toggle("rs-random-on", !!st.enabled);
+        const en = node.widgets?.find(w => w.name === "random_enabled");
+        const cn = node.widgets?.find(w => w.name === "random_count");
+        if (en) en.value = !!st.enabled;
+        if (cn) cn.value = isEncoder ? 1 : count;
+    };
+
+    const persistState = () => {
+        if (!node.properties) node.properties = {};
+        node.properties.rs_runtime_random = {
+            enabled: ui.checkbox.checked,
+            count: isEncoder ? 1 : Math.max(1, Math.min(parseInt(ui.valueSpan.textContent, 10) || 1, 16)),
+        };
+        applyState();
+        if (node.graph) node.graph.setDirtyCanvas(true, true);
+    };
+
+    ui.checkbox.addEventListener("change", persistState);
+    ui.minusBtn.addEventListener("click", () => {
+        if (isEncoder) return;
+        ui.valueSpan.textContent = String(Math.max(1, (parseInt(ui.valueSpan.textContent, 10) || 1) - 1));
+        ui.checkbox.dispatchEvent(new Event("change"));
+    });
+    ui.plusBtn.addEventListener("click", () => {
+        if (isEncoder) return;
+        ui.valueSpan.textContent = String(Math.min(16, (parseInt(ui.valueSpan.textContent, 10) || 1) + 1));
+        ui.checkbox.dispatchEvent(new Event("change"));
+    });
+
+    // 接线即同步一次：新节点按隐藏控件/属性恢复折叠态下的骰子可见性
+    applyState();
+
+    // 工作流加载（configure）后从隐藏控件刷新菜单状态
+    if (typeof node.restoreFromProperties === "function") {
+        const origRestore = node.restoreFromProperties;
+        node.restoreFromProperties = () => {
+            origRestore();
+            applyState();
+        };
+    }
+}
+
 // ==========================================
 // 事件监听器管理
 // ==========================================
@@ -404,6 +472,28 @@ function createPopupCloser(promptUIElements) {
 }
 
 /**
+ * 运行时随机抽取的即时反馈：在触发按钮上方短暂浮现提示气泡。
+ */
+function showRandomPickToast(anchorEl, count) {
+    document.querySelectorAll(".rs-random-pick-toast").forEach((t) => t.remove());
+    if (!anchorEl || !anchorEl.getBoundingClientRect) return;
+    const toast = document.createElement("div");
+    toast.className = "rs-random-pick-toast";
+    toast.textContent = count > 1 ? `🎲 已随机抽取 ${count} 条提示词` : "🎲 已随机抽取一条新提示词";
+    const r = anchorEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    toast.style.left = Math.max(8, Math.min(r.right - 190, vw - 198)) + "px";
+    toast.style.top = Math.max(8, r.top - 36) + "px";
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => { toast.style.opacity = "1"; });
+    setTimeout(() => {
+        toast.style.opacity = "0";
+        setTimeout(() => toast.remove(), 400);
+    }, 2200);
+}
+
+
+/**
  * 创建处理 rs.prompt.update 事件的处理函数
  */
 function createPromptUpdateHandler(promptUI) {
@@ -419,6 +509,8 @@ function createPromptUpdateHandler(promptUI) {
                     // In-memory cache only - no localStorage
                 }
                 if (graph) graph.setDirtyCanvas(true, true);
+                // 随机路径附带 random_count：给出可视化反馈（外部输入同步无此字段）
+                if (event.detail.random_count) showRandomPickToast(promptUI.randomBtn, event.detail.random_count);
             }, 10);
         }
     };
@@ -562,6 +654,7 @@ export const NodeBehaviors = {
     // 按钮处理器工厂
     createGenerateHandler,
     createRandomHandler,
+    wireRuntimeRandom,
 
     // 快捷输入消费标记
     markQuickInputConsumed,

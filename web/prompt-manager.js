@@ -1767,6 +1767,71 @@ function createStatusBars() {
     randomBtn.textContent = "🎲";
     randomBtn.setAttribute("data-rs-tooltip", "Random prompt");
 
+    // 🎲 主点击=立即随机填入；▾ 展开运行时随机的运行期配置菜单
+    // （勾选状态由 NodeBehaviors.wireRuntimeRandom 接线持久化到 properties 与隐藏控件）
+    const randomWrap = mkEl("div", "rs-random-wrap");
+    const randomCaret = mkEl("button", "rs-random-caret");
+    randomCaret.type = "button";
+    randomCaret.textContent = "▾";
+    randomCaret.setAttribute("data-rs-tooltip", "Runtime random options");
+    const runtimeMenu = mkEl("div", "rs-runtime-menu");
+    // 挂到 body 用 fixed 定位：留在节点 DOM widget 内会被节点边界裁剪（同 combo-box 列表与预设列表浮层策略）
+    document.body.appendChild(runtimeMenu);
+    const runtimeToggleRow = mkEl("label", "rs-runtime-row rs-runtime-toggle");
+    const runtimeCheckbox = mkEl("input", "rs-auto-generate-checkbox");
+    runtimeCheckbox.type = "checkbox";
+    const runtimeToggleText = mkEl("span", "rs-runtime-row-text");
+    runtimeToggleText.textContent = "运行时随机抽取提示词";
+    runtimeToggleRow.appendChild(runtimeCheckbox);
+    runtimeToggleRow.appendChild(runtimeToggleText);
+    const runtimeCountRow = mkEl("div", "rs-runtime-row");
+    const runtimeCountText = mkEl("span", "rs-runtime-row-text");
+    runtimeCountText.textContent = "每次抽取";
+    const runtimeCountMinus = mkEl("button", "rs-runtime-count-btn");
+    runtimeCountMinus.type = "button";
+    runtimeCountMinus.textContent = "−";
+    const runtimeCountVal = mkEl("span", "rs-runtime-count-val");
+    runtimeCountVal.textContent = "1";
+    const runtimeCountPlus = mkEl("button", "rs-runtime-count-btn");
+    runtimeCountPlus.type = "button";
+    runtimeCountPlus.textContent = "+";
+    runtimeCountRow.appendChild(runtimeCountText);
+    runtimeCountRow.appendChild(runtimeCountMinus);
+    runtimeCountRow.appendChild(runtimeCountVal);
+    runtimeCountRow.appendChild(runtimeCountPlus);
+    runtimeMenu.appendChild(runtimeToggleRow);
+    runtimeMenu.appendChild(runtimeCountRow);
+    randomWrap.appendChild(randomBtn);
+    randomWrap.appendChild(randomCaret);
+    let runtimeMenuOpen = false;
+    const closeRuntimeMenu = () => {
+        runtimeMenuOpen = false;
+        runtimeMenu.style.display = "none";
+    };
+    const openRuntimeMenu = () => {
+        runtimeMenu.style.display = "block";
+        const r = randomCaret.getBoundingClientRect();
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const w = runtimeMenu.offsetWidth || 220, h = runtimeMenu.offsetHeight || 110;
+        let left = Math.min(Math.max(8, r.right - w), vw - 8 - w);
+        let top = r.bottom + 4;
+        if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
+        runtimeMenu.style.left = left + "px";
+        runtimeMenu.style.top = top + "px";
+        runtimeMenuOpen = true;
+    };
+    randomCaret.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        runtimeMenuOpen ? closeRuntimeMenu() : openRuntimeMenu();
+    });
+    document.addEventListener("mousedown", (e) => {
+        if (runtimeMenuOpen && !randomWrap.contains(e.target) && !runtimeMenu.contains(e.target)) {
+            closeRuntimeMenu();
+        }
+    });
+    randomBtn._rsRuntime = { checkbox: runtimeCheckbox, countRow: runtimeCountRow, minusBtn: runtimeCountMinus, plusBtn: runtimeCountPlus, valueSpan: runtimeCountVal, wrap: randomWrap, destroy: () => runtimeMenu.remove() };
+
     const listBtn = mkEl("button", "rs-list-btn");
     listBtn.textContent = "☰";
     listBtn.setAttribute("data-rs-tooltip", "Preset list");
@@ -1824,11 +1889,11 @@ function createStatusBars() {
     autoGenerateCheckbox.type = "checkbox";
     autoGenerateCheckbox.className = "rs-auto-generate-checkbox";
     autoGenerateCheckbox.id = "rs-auto-generate";
-    autoGenerateCheckbox.setAttribute("data-rs-tooltip", "Auto-generate prompt when workflow runs");
+    autoGenerateCheckbox.setAttribute("data-rs-tooltip", "Auto-enhance prompt with LLM when workflow runs");
     const autoGenerateLabel = document.createElement("label");
     autoGenerateLabel.htmlFor = "rs-auto-generate";
     autoGenerateLabel.className = "rs-auto-generate-label";
-    autoGenerateLabel.textContent = "自动生成";
+    autoGenerateLabel.textContent = "自动增强";
     autoGenerateWrapper.appendChild(autoGenerateCheckbox);
     autoGenerateWrapper.appendChild(autoGenerateLabel);
 
@@ -1886,7 +1951,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
+    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
 // ==========================================
@@ -1894,7 +1959,7 @@ function createStatusBars() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, field: inputField, tagsContainer, selectedTags, okBtn: inputOk, cancelBtn: inputCancel } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
@@ -1945,7 +2010,7 @@ function createPromptManagerUI() {
     // Create button group wrapper
     const buttonGroup = mkEl("div", "rs-button-group");
     buttonGroup.appendChild(saveBtn);
-    buttonGroup.appendChild(randomBtn);
+    buttonGroup.appendChild(randomWrap);
     buttonGroup.appendChild(listBtn);
     customTextareaWrapper.appendChild(buttonGroup);
     

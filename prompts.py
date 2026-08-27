@@ -13,6 +13,7 @@ from aiohttp import web
 import threading
 import copy
 import logging
+import random
 from pathlib import Path
 from server import PromptServer
 
@@ -528,6 +529,43 @@ def _iter_collection_files() -> list[tuple[str, str, str]]:
     return found
 
 
+def _iter_random_candidates() -> list[str]:
+    """运行时随机候选池：collections 文件按行拆成多条（复用解析缓存），普通预设文件整篇一条。"""
+    pool: list[str] = []
+    for source, base_dir in (("custom", CUSTOM_DIR), ("presets", PRESETS_DIR)):
+        for dirpath, dirnames, filenames in os.walk(base_dir):
+            # collections 子树交给下方按行展开，这里跳过避免整篇重复入池
+            if os.path.relpath(dirpath, base_dir).split(os.sep)[0] == "collections":
+                dirnames[:] = []
+                continue
+            for fn in sorted(filenames):
+                if fn.endswith(".txt") and not fn.startswith("_"):
+                    try:
+                        with open(os.path.join(dirpath, fn), "r", encoding="utf-8", errors="ignore") as f:
+                            content = f.read().strip()
+                    except OSError:
+                        continue
+                    if content:
+                        pool.append(content)
+    for _, _, filepath in _iter_collection_files():
+        try:
+            pool.extend(text for _, text in prompt_lines.load_entries(filepath))
+        except OSError:
+            pass
+    return [p for p in pool if p.strip()]
+
+
+def _sample_runtime_prompts(count: int) -> list[str]:
+    """从混合池中不重复抽取 count 条；池子不足时全量乱序返回。"""
+    pool = _iter_random_candidates()
+    if not pool:
+        return []
+    if len(pool) <= count:
+        random.shuffle(pool)
+        return pool
+    return random.sample(pool, count)
+
+
 # ==========================================
 # Prompt Node Class
 # ==========================================
@@ -548,6 +586,8 @@ class NeoPrompts:
                 "quick_input": ("STRING", {"default": "", "hidden": True}),
                 "template_id": ("STRING", {"default": "", "hidden": True}),
                 "quick_input_used": ("BOOLEAN", {"default": False, "hidden": True}),
+                "random_enabled": ("BOOLEAN", {"default": False, "hidden": True}),
+                "random_count": ("INT", {"default": 1, "min": 1, "max": 16, "step": 1, "hidden": True}),
             },
             "optional": {
                 "text_input": ("STRING", {"forceInput": True}),
@@ -567,7 +607,7 @@ class NeoPrompts:
 
     def encode_prompts(self, clip, disable_text_input=False, auto_generate=False, quick_input="",
                        text="", text_input=None, unique_id=None, instance_uid="", template_id="", image=None,
-                       quick_input_used=False):
+                       quick_input_used=False, random_enabled=False, random_count=1):
         """Encode prompts with optional auto-generate support.
         
         Logic:
@@ -576,6 +616,23 @@ class NeoPrompts:
         3. Otherwise, combine text and quick_input (same as frontend logic)
         """
         logger.info(f"encode_prompts called: auto_generate={auto_generate}, text='{text[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
+        
+        # 运行时随机：每次执行从混合池抽 1 条替换当前文本（编码器单输出，数量固定 1）。
+        # 清空 quick_input 使后续自动增强/指令拼装不会覆盖随机结果。
+        if random_enabled and text_input is None:
+            picked = _sample_runtime_prompts(1)
+            if picked:
+                text = picked[0]
+                quick_input = ""
+                logger.info(f"Runtime random selected: {text[:60]}...")
+                if instance_uid:
+                    PromptServer.instance.send_sync("rs.prompt.update", {
+                        "instance_uid": instance_uid,
+                        "prompt": text,
+                        "random_count": 1,
+                    })
+            else:
+                logger.warning("Runtime random enabled but prompt pool is empty, keeping current text")
         
         # Generate synchronously only when auto_generate is enabled;
         # an image input then selects the image (reverse_prompt/template) flow.
@@ -684,9 +741,9 @@ class NeoPrompts:
         }
 
     @classmethod
-    def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, **kwargs):
+    def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, random_enabled=False, **kwargs):
         # If auto_generate is enabled and (quick_input or image) has content, always re-execute
-        if image is not None or (auto_generate and quick_input.strip()):
+        if image is not None or (auto_generate and quick_input.strip()) or random_enabled:
             import time
             return time.time()  # Return unique value to force re-execution
         # Otherwise, never change (use cached result)
@@ -1177,7 +1234,6 @@ async def rs_prompts_stream_generate_prompt(request):
 async def rs_prompts_random_prompt(request):
     """Random prompt - pick a random preset from the list."""
     try:
-        import random
         # 获取 preset list
         presets_prompts = _scan_prompts_recursive(PRESETS_DIR, source="presets")
         custom_prompts = _scan_prompts_recursive(CUSTOM_DIR, source="custom")
@@ -1442,6 +1498,8 @@ class NeoPromptGenerator:
                 "quick_input": ("STRING", {"default": "", "hidden": True}),
                 "template_id": ("STRING", {"default": "", "hidden": True}),
                 "quick_input_used": ("BOOLEAN", {"default": False, "hidden": True}),
+                "random_enabled": ("BOOLEAN", {"default": False, "hidden": True}),
+                "random_count": ("INT", {"default": 1, "min": 1, "max": 16, "step": 1, "hidden": True}),
             },
             "optional": {
                 "text_input": ("STRING", {"forceInput": True}),
@@ -1462,7 +1520,7 @@ class NeoPromptGenerator:
     OUTPUT_NODE = True
     DESCRIPTION = "Simple prompt generator node with settings button. Supports external/internal input toggle and auto-generate. No clip encoder binding."
 
-    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id="", image=None, quick_input_used=False):
+    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id="", image=None, quick_input_used=False, random_enabled=False, random_count=1):
         """Returns the prompt text as output.
 
         Logic:
@@ -1471,7 +1529,27 @@ class NeoPromptGenerator:
         """
         logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
         gen_meta = {"task": None, "template_id": ""}
-        
+
+        # 运行时随机：从混合池不重复抽取 count 条，结果列表直接作为输出。
+        # 清空 quick_input 使后续自动增强/指令拼装不会覆盖随机结果。
+        random_picked = []
+        if random_enabled and text_input is None:
+            count = max(1, min(int(random_count or 1), 16))
+            random_picked = _sample_runtime_prompts(count)
+            if random_picked:
+                prompt = random_picked[0]
+                quick_input = ""
+                logger.info(f"Runtime random selected {len(random_picked)} prompts, first: {prompt[:60]}...")
+                if instance_uid:
+                    # 编辑框按多结果约定（\n---\n 分隔）展示全部抽中条目，输出仍为逐条列表
+                    PromptServer.instance.send_sync("rs.prompt.update", {
+                        "instance_uid": instance_uid,
+                        "prompt": "\n---\n".join(random_picked),
+                        "random_count": len(random_picked),
+                    })
+            else:
+                logger.warning("Runtime random enabled but prompt pool is empty, keeping current prompt")
+
         # Generate synchronously only when auto_generate is enabled;
         # an image input then selects the image (reverse_prompt/template) flow.
         if auto_generate and (quick_input.strip() or image is not None) and text_input is None:
@@ -1565,6 +1643,10 @@ class NeoPromptGenerator:
             if multi_rule is None and template_id in LLM_TASKS:
                 multi_rule = LLM_TASKS[template_id].get("multi_result")
         prompts_list = resolve_multi_result(current_text, multi_rule) or [current_text]
+        if random_picked:
+            # 运行时随机批量：直接输出抽到的条目列表（OUTPUT_IS_LIST 按条循环消费）
+            prompts_list = list(random_picked)
+            current_text = prompts_list[0]
 
         # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
         _auto_unload_local_after_generate()
@@ -1574,9 +1656,9 @@ class NeoPromptGenerator:
         }
 
     @classmethod
-    def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, **kwargs):
+    def IS_CHANGED(cls, auto_generate=False, quick_input="", image=None, random_enabled=False, **kwargs):
         # If auto_generate is enabled and (quick_input or image) has content, always re-execute
-        if image is not None or (auto_generate and quick_input.strip()):
+        if image is not None or (auto_generate and quick_input.strip()) or random_enabled:
             import time
             return time.time()  # Return unique value to force re-execution
         # Otherwise, never change (use cached result)

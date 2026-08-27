@@ -2222,3 +2222,141 @@
 .rs-at-picker-ok {
     color: #7ab8f5;
 }
+
+/* ==========================================
+   Runtime random options (dice caret menu)
+   ========================================== */
+.rs-random-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.rs-random-caret {
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 10px;
+    padding: 0 5px;
+    min-width: 15px;
+    height: 22px;
+    cursor: pointer;
+}
+
+.rs-random-caret:hover {
+    color: #fff;
+}
+
+.rs-runtime-menu {
+    display: none;
+    position: fixed;
+    z-index: 110000;
+    background: #2a2a2a;
+    border: 1px solid #5090cc;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    padding: 8px 10px;
+    min-width: 210px;
+}
+
+.rs-runtime-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    color: #ddd;
+    font-size: 12px;
+}
+
+.rs-runtime-toggle {
+    cursor: pointer;
+    user-select: none;
+}
+
+.rs-runtime-count-btn {
+    background: #333;
+    border: 1px solid #555;
+    color: #ccc;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+    margin-left: 4px;
+}
+
+.rs-runtime-count-btn:hover {
+    background: #3d5a80;
+}
+
+.rs-runtime-count-val {
+    min-width: 18px;
+    text-align: center;
+    color: #fff;
+    font-weight: 600;
+}
+
+.rs-runtime-hint {
+    margin-top: 6px;
+    color: #888;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+/* dice lives inside .rs-random-wrap - re-apply the collapsed floating-group
+   gray styling that used to target .rs-button-group > .rs-random-btn directly,
+   so the base blue button style no longer leaks through */
+.rs-button-group > .rs-random-wrap {
+    display: none !important;
+}
+
+.rs-button-group:hover > .rs-random-wrap {
+    display: inline-flex !important;
+}
+
+.rs-button-group .rs-random-wrap .rs-random-btn {
+    padding: 4px 8px !important;
+    font-size: 12px !important;
+    background: #2a2a2a !important;
+    color: #999 !important;
+    border: none !important;
+    outline: none !important;
+    border-radius: 0 !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+    height: 24px !important;
+    line-height: 1 !important;
+    min-width: 24px !important;
+    box-shadow: none !important;
+}
+
+.rs-button-group .rs-random-wrap .rs-random-btn:hover {
+    background: #3a3a3a !important;
+    color: #ccc !important;
+}
+
+.rs-button-group .rs-random-caret {
+    height: 24px;
+}
+
+/* runtime-random pick feedback bubble (transient) */
+.rs-random-pick-toast {
+    position: fixed;
+    z-index: 120000;
+    background: #2a2a2a;
+    border: 1px solid #5090cc;
+    color: #ddd;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+}
+
+/* runtime random enabled: keep the dice (+caret) visible even in the
+   collapsed floating group so the node advertises its active auto-random */
+.rs-button-group > .rs-random-wrap.rs-random-on {
+    display: inline-flex !important;
+}

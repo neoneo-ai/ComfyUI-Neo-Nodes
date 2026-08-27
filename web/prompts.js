@@ -149,6 +149,13 @@ app.registerExtension({
                 if (autoGenWidget && this.properties?.rs_auto_generate !== undefined) {
                     autoGenWidget.value = this.properties.rs_auto_generate;
                 }
+                const randEnWidget = this.widgets.find(w => w.name === "random_enabled");
+                const randCnWidget = this.widgets.find(w => w.name === "random_count");
+                const rndProp = this.properties?.rs_runtime_random;
+                if (randEnWidget && rndProp && typeof rndProp === "object") {
+                    randEnWidget.value = !!rndProp.enabled;
+                    if (randCnWidget) randCnWidget.value = Math.max(1, Math.min(rndProp.count || 1, 16));
+                }
             }
             setTimeout(() => {
                 if (this.restoreFromProperties) this.restoreFromProperties();
@@ -170,6 +177,11 @@ app.registerExtension({
                 if (usedWidget && node.properties) node.properties.rs_quick_input_used = !!usedWidget.value;
                 const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
                 if (autoGenWidget && node.properties) node.properties.rs_auto_generate = autoGenWidget.value;
+                const randEnWidget = node.widgets.find(w => w.name === "random_enabled");
+                if (randEnWidget && node.properties) node.properties.rs_runtime_random = {
+                    enabled: !!randEnWidget.value,
+                    count: Math.max(1, Math.min(node.widgets.find(w => w.name === "random_count")?.value || 1, 16)),
+                };
             }
             return _origSerialize.apply(this, arguments);
         };
@@ -388,6 +400,7 @@ app.registerExtension({
             // Node removal cleanup
             node.onRemoved = function() {
                 stopEnforcement();
+                randomBtn._rsRuntime?.destroy?.();
                 presetListOverlay.remove();
                 presetNameInput.remove();
                 deleteConfirmOverlay.remove();
@@ -497,6 +510,9 @@ app.registerExtension({
 
             randomBtn.addEventListener("click", NodeBehaviors.createRandomHandler(promptUIRef));
 
+            // 运行时随机（🎲 ▾ 菜单）：状态持久化到 properties 与隐藏控件
+            NodeBehaviors.wireRuntimeRandom(node, randomBtn);
+
             // ==========================================
             // Auto-generate checkbox handler
             // ==========================================
@@ -547,7 +563,7 @@ app.registerExtension({
             }));
 
             api.addEventListener("rs.prompt.update", NodeBehaviors.createPromptUpdateHandler(
-                { customTextarea, textWidget, node, graph: node.graph }
+                { customTextarea, textWidget, node, graph: node.graph, randomBtn }
             ));
 
             window.addEventListener("beforeunload", NodeBehaviors.createBeforeUnloadHandler(node, textWidget));
@@ -678,6 +694,13 @@ app.registerExtension({
                 if (autoGenWidget && this.properties?.rs_auto_generate !== undefined) {
                     autoGenWidget.value = this.properties.rs_auto_generate;
                 }
+                const randEnWidget = this.widgets.find(w => w.name === "random_enabled");
+                const randCnWidget = this.widgets.find(w => w.name === "random_count");
+                const rndProp = this.properties?.rs_runtime_random;
+                if (randEnWidget && rndProp && typeof rndProp === "object") {
+                    randEnWidget.value = !!rndProp.enabled;
+                    if (randCnWidget) randCnWidget.value = Math.max(1, Math.min(rndProp.count || 1, 16));
+                }
             }
             setTimeout(() => {
                 if (this.restoreFromProperties) this.restoreFromProperties();
@@ -700,6 +723,11 @@ app.registerExtension({
                 if (usedWidget && node.properties) node.properties.rs_quick_input_used = !!usedWidget.value;
                 const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
                 if (autoGenWidget && node.properties) node.properties.rs_auto_generate = autoGenWidget.value;
+                const randEnWidget = node.widgets.find(w => w.name === "random_enabled");
+                if (randEnWidget && node.properties) node.properties.rs_runtime_random = {
+                    enabled: !!randEnWidget.value,
+                    count: Math.max(1, Math.min(node.widgets.find(w => w.name === "random_count")?.value || 1, 16)),
+                };
             }
             return _origSerialize.apply(this, arguments);
         };
@@ -978,6 +1006,7 @@ app.registerExtension({
             // Node removal cleanup
             node.onRemoved = function() {
                 stopEnforcement();
+                randomBtn._rsRuntime?.destroy?.();
                 presetListOverlay.remove();
                 presetNameInput.remove();
                 deleteConfirmOverlay.remove();
@@ -1065,6 +1094,9 @@ app.registerExtension({
 
             randomBtn.addEventListener("click", NodeBehaviors.createRandomHandler(promptUIRef));
 
+            // 运行时随机（🎲 ▾ 菜单）：状态持久化到 properties 与隐藏控件
+            NodeBehaviors.wireRuntimeRandom(node, randomBtn);
+
             // ==========================================
             // Auto-generate checkbox handler
             // ==========================================
@@ -1115,7 +1147,7 @@ app.registerExtension({
             }));
 
             api.addEventListener("rs.prompt.update", NodeBehaviors.createPromptUpdateHandler(
-                { customTextarea, textWidget, node, graph: node.graph }
+                { customTextarea, textWidget, node, graph: node.graph, randomBtn }
             ));
 
             window.addEventListener("beforeunload", NodeBehaviors.createBeforeUnloadHandler(node, textWidget));
