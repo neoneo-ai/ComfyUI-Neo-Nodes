@@ -221,9 +221,26 @@ async function listPrompts() {
 }
 
 /**
+ * 列出多行集合文件的提示词条目（分页，服务端按标题过滤）
+ * @param {string} name - 集合显示名（collections/ 前缀）
+ * @param {number} offset - 起始条目索引
+ * @param {number} limit - 本页条数上限
+ * @param {string} query - 标题过滤关键字
+ * @param {string} source - "custom" 或 "presets"
+ * @returns {Promise<{total: number, titles: string[], texts: string[]}>}
+ */
+async function listPromptLines(name, offset = 0, limit = 200, query = "", source = "custom") {
+    const res = await fetch("/rs_prompts/list_prompt_lines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, offset, limit, query, source })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+}
+
+/**
  * 删除提示词
- * @param {string} name - 提示词名称
- * @returns {Promise<Response>}
  */
 async function deletePrompt(name) {
     return await fetch("/rs_prompts/delete_prompt", {
@@ -581,6 +598,7 @@ export {
     savePrompt,
     loadPrompt,
     listPrompts,
+    listPromptLines,
     deletePrompt,
     extractTitle,
     extractClassify,

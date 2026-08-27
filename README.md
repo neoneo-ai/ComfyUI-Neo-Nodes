@@ -339,6 +339,10 @@ ComfyUI-Neo-Nodes/
     └── prompt-service.js   # 提示词 API 服务
 ```
 
+### 引用参考
+collections portrait 10000+精美提示词来源
+https://civitai.com/models/2231696/sfw15000-and-qwen-and-z-image-or-15000-portrait-and-selfie-wildcards-for-qwen-and-z-image
+
 ---
 
 ## 许可证

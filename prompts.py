@@ -18,6 +18,8 @@ from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
+from . import prompt_lines
+
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(CURRENT_DIR, "prompts")
 TAGS_FILE = os.path.join(PROMPTS_DIR, "_tags_index.json")
@@ -483,6 +485,49 @@ def _scan_prompts_recursive(base_dir: str, prefix: str = "", source: str = "cust
     return prompts
 
 
+def _resolve_collection_file(name: str, source: str = "custom") -> str | None:
+    """把 collections/<路径> 名称解析到对应来源目录下的真实文件，拒绝目录穿越。"""
+    if name.startswith("collections/"):
+        name = name[len("collections/"):]
+    rel = os.path.normpath(name)
+    if not rel or rel.startswith(".") or os.path.isabs(rel) or ".." in rel.split(os.sep):
+        return None
+
+    search_dirs = [PRESETS_DIR, CUSTOM_DIR] if source == "presets" else [CUSTOM_DIR, PRESETS_DIR]
+    for base_dir in search_dirs:
+        root = os.path.realpath(os.path.join(base_dir, "collections"))
+        candidate = os.path.realpath(os.path.join(root, f"{rel}.txt"))
+        try:
+            inside = os.path.commonpath([candidate, root]) == root
+        except ValueError:  # 跨盘符等异常情形，跳过该目录
+            continue
+        if inside and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _iter_collection_files() -> list[tuple[str, str, str]]:
+    """列出全部多行集合：返回 [(显示名, source, 文件路径)]，custom 同名优先于 presets。"""
+    found = []
+    seen = set()
+    for source, base_dir in (("custom", CUSTOM_DIR), ("presets", PRESETS_DIR)):
+        root = os.path.realpath(os.path.join(base_dir, "collections"))
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for fn in sorted(filenames):
+                if not fn.endswith('.txt') or fn.startswith('_'):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
+                display = f"collections/{rel[:-4]}"
+                if display in seen:
+                    continue
+                seen.add(display)
+                found.append((display, source, os.path.join(dirpath, fn)))
+    return found
+
+
 # ==========================================
 # Prompt Node Class
 # ==========================================
@@ -747,6 +792,56 @@ async def rs_prompts_load_prompt(request):
         return web.Response(status=404, text="Prompt not found")
     except Exception as e:
         logger.error(f"Error loading prompt: {e}")
+        return web.Response(status=500, text=str(e))
+
+@server.PromptServer.instance.routes.post("/rs_prompts/list_prompt_lines")
+async def rs_prompts_list_prompt_lines(request):
+    """按页列出多行集合（collections/ 目录约定）里的提示词：一行一条。"""
+    try:
+        data = await request.json()
+        name = str(data.get("name", "")).strip()
+        if not name:
+            return web.Response(status=400, text="Name required")
+        offset = max(int(data.get("offset", 0)), 0)
+        limit = min(max(int(data.get("limit", 200)), 1), 1000)
+        query = str(data.get("query", "")).strip().lower()
+
+        # name="*"：跨全部集合聚合搜索，行附带来源集合供前端路由点击
+        if name == "*":
+            hits = []
+            for display, source, filepath in _iter_collection_files():
+                try:
+                    entries = prompt_lines.load_entries(filepath)
+                except OSError:
+                    continue
+                hits.extend(
+                    (display, source, t, s) for t, s in entries
+                    if not query or query in t.lower()
+                )
+            page = hits[offset:offset + limit]
+            return web.json_response({
+                "total": len(hits),
+                "titles": [t for _, _, t, _ in page],
+                "texts": [s for _, _, _, s in page],
+                "names": [n for n, _, _, _ in page],
+                "sources": [src for _, src, _, _ in page],
+            })
+
+        filepath = _resolve_collection_file(name, str(data.get("source", "custom")))
+        if filepath is None:
+            return web.Response(status=404, text="Collection not found")
+
+        entries = prompt_lines.load_entries(filepath)
+        if query:
+            entries = [(t, s) for t, s in entries if query in t.lower()]
+        page = entries[offset:offset + limit]
+        return web.json_response({
+            "total": len(entries),
+            "titles": [t for t, _ in page],
+            "texts": [s for _, s in page],
+        })
+    except Exception as e:
+        logger.error(f"Error listing prompt lines: {e}")
         return web.Response(status=500, text=str(e))
 
 @server.PromptServer.instance.routes.post("/rs_prompts/delete_prompt")

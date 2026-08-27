@@ -13,6 +13,7 @@ import {
     savePrompt,
     loadPrompt,
     listPrompts,
+    listPromptLines,
     deletePrompt,
     extractTitle,
     extractClassify,
@@ -1911,7 +1912,7 @@ function createPromptManagerUI() {
         presetListOverlay.addEventListener(t, (e) => e.stopPropagation());
     });
     // 弹出位置贴着节点上的 list 按钮（不再屏幕居中）：与按钮右缘对齐、默认弹到下方，
-    // 视口放不下时上翻，水平夹在视口内。调用前需已将 display 设为 flex 以便测量。
+    // 下方放不下且上方空间更大时上翻，水平夹在视口内。调用前需已将 display 设为 flex 以便测量。
     const placePresetOverlay = () => {
         const r = listBtn.getBoundingClientRect();
         const vw = window.innerWidth, vh = window.innerHeight;
@@ -1920,12 +1921,22 @@ function createPromptManagerUI() {
         let left = r.right - w;
         if (left < 8) left = 8;
         if (left + w > vw - 8) left = Math.max(8, vw - 8 - w);
+        const spaceBelow = vh - 8 - (r.bottom + 6);
+        const spaceAbove = r.top - 14;
         let top = r.bottom + 6;
-        if (top + h > vh - 8) top = Math.max(8, r.top - h - 6);
+        if (h > spaceBelow && spaceAbove > spaceBelow) {
+            top = Math.max(8, r.top - h - 6);
+        }
+        if (top + h > vh - 8) top = Math.max(8, vh - 8 - h);
         presetListOverlay.style.left = left + "px";
         presetListOverlay.style.top = top + "px";
         presetListOverlay.style.transform = "none";
     };
+    // 列表内容异步加载、集合翻页、聚合搜索结果都会让浮层变高，跟踪尺寸变化随时重定位，
+    // 否则刚打开时按空列表测量的位置会在内容渲染后底部越出视口。
+    new ResizeObserver(() => {
+        if (presetListOverlay.style.display === "flex") placePresetOverlay();
+    }).observe(presetListOverlay);
 
     // Create wrapper for custom textarea and buttons
     const customTextareaWrapper = mkEl("div", "rs-custom-textarea-wrapper");
@@ -2052,10 +2063,17 @@ function createPromptManagerUI() {
                     return;
                 }
 
-                list.forEach(item => {
+                // 集合（collections/）条目置顶展示，避免混在普通预设里被淹没
+                const ordered = [
+                    ...list.filter(item => isCollectionName(typeof item === 'string' ? item : item.name)),
+                    ...list.filter(item => !isCollectionName(typeof item === 'string' ? item : item.name)),
+                ];
+
+                ordered.forEach(item => {
                     const name = typeof item === 'string' ? item : item.name;
                     const tags = typeof item === 'string' ? [] : (item.tags || []);
                     const source = typeof item === 'object' ? item.source : "custom";
+                    const shown = isCollectionName(name) ? `\ud83d\udcda ${name}` : name;
 
                     const row = document.createElement("div");
                     row.className = "rs-preset-item";
@@ -2063,17 +2081,17 @@ function createPromptManagerUI() {
 
                     const leftDiv = mkEl("div", "rs-preset-left");
                     const contentSpan = mkEl("span", "rs-preset-content");
-                    const displayText = tags && tags.length > 0 ? `${name} [${tags.join(", ")}]` : name;
+                    const displayText = shown;
 
                     if (tags && tags.length > 0) {
-                        contentSpan.textContent = name;
+                        contentSpan.textContent = shown;
                         const tagsSpan = document.createElement("span");
                         tagsSpan.className = "rs-tags-part";
                         tagsSpan.textContent = ` [${tags.join(", ")}]`;
                         contentSpan.appendChild(document.createTextNode(" "));
                         contentSpan.appendChild(tagsSpan);
                     } else {
-                        contentSpan.textContent = name;
+                        contentSpan.textContent = shown;
                     }
 
                     const sourceBadge = mkEl("span", "rs-source-badge");
@@ -2088,6 +2106,11 @@ function createPromptManagerUI() {
 
                     row.onclick = async (e) => {
                         if (e.target.closest(".rs-delete-icon")) return;
+
+                        if (isCollectionName(name)) {
+                            openCollection(name, source);
+                            return;
+                        }
 
                         const data = await loadPrompt(name);
 
@@ -2125,205 +2148,156 @@ function createPromptManagerUI() {
                 presetListBody.textContent = "Error loading";
             } finally {
                 isLoading = false;
+                clearCollectionViewState();
             }
         }
 
-        function filterDropdownByInput(query) {
-            presetListBody.innerHTML = "";
+        // 多行集合（collections/ 目录约定）浏览：分页加载，避免一次渲染上万条目
+        const COLLECTION_PAGE_LIMIT = 200;
+        let collectionView = null; // { name, source, total, shown, query }；null 表示文件级列表
+        let collectionSearchTimer = null;
+        let collectionSearchSeq = 0; // 聚合搜索过期结果丢弃用
 
-            const loadingDiv = mkEl("div", "rs-loading");
-            loadingDiv.textContent = "Searching...";
-            presetListBody.appendChild(loadingDiv);
-
-            setTimeout(async () => {
-                if (loadingDiv.parentNode) loadingDiv.remove();
-
-                const list = await listPrompts();
-                const queryLower = query.toLowerCase();
-                const matched = list.filter(item => {
-                    const name = typeof item === 'string' ? item : item.name;
-                    const tags = typeof item === 'string' ? [] : (item.tags || []);
-                    return name.toLowerCase().includes(queryLower) || 
-                           tags.some(t => t.toLowerCase().includes(queryLower));
-                });
-
-                if (!matched.length) {
-                    presetListBody.innerHTML = "";
-                    return;
-                }
-
-                matched.forEach(item => {
-                    const name = typeof item === 'string' ? item : item.name;
-                    const tags = typeof item === 'string' ? [] : (item.tags || []);
-                    const source = typeof item === 'object' ? item.source : "custom";
-
-                    const row = document.createElement("div");
-                    row.className = "rs-preset-item";
-                    row.dataset.name = name;
-
-                    const leftDiv = mkEl("div", "rs-preset-left");
-                    const contentSpan = mkEl("span", "rs-preset-content");
-                    const displayText = tags && tags.length > 0 ? `${name} [${tags.join(", ")}]` : name;
-
-                    if (tags && tags.length > 0) {
-                        contentSpan.textContent = name;
-                        const tagsSpan = document.createElement("span");
-                        tagsSpan.className = "rs-tags-part";
-                        tagsSpan.textContent = ` [${tags.join(", ")}]`;
-                        contentSpan.appendChild(document.createTextNode(" "));
-                        contentSpan.appendChild(tagsSpan);
-                    } else {
-                        contentSpan.textContent = name;
-                    }
-
-                    const regex = new RegExp(`(${query})`, "gi");
-                    const highlightedName = name.replace(regex, '<span class="rs-match-highlight">$1</span>');
-                    contentSpan.innerHTML = highlightedName;
-
-                    if (tags && tags.length > 0) {
-                        const tagsSpan = document.createElement("span");
-                        tagsSpan.className = "rs-tags-part";
-                        tagsSpan.textContent = ` [${tags.join(", ")}]`;
-                        contentSpan.appendChild(document.createTextNode(" "));
-                        contentSpan.appendChild(tagsSpan);
-                    }
-
-                    contentSpan.dataset.original = displayText;
-                    row.dataset.original = displayText;
-                    leftDiv.appendChild(contentSpan);
-                    row.appendChild(leftDiv);
-
-                    row.onclick = async (e) => {
-                        if (e.target.closest(".rs-delete-icon")) return;
-
-                        const data = await loadPrompt(name);
-
-                        if (textWidget) {
-                            textWidget.value = data.text || "";
-                        }
-                        if (customTextarea) {
-                            customTextarea.value = data.text || "";
-                            triggerTextChange();
-                        }
-
-                        const currentUid = node.properties.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
-                        // In-memory cache only - no localStorage
-
-                        presetListOverlay.style.display = "none";
-                        if (graph) graph.setDirtyCanvas(true, true);
-                    };
-
-                    if (source === "custom") {
-                        const deleteBtn = mkEl("span", "rs-delete-icon");
-                        deleteBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
-                        deleteBtn.setAttribute("aria-label", "Delete preset");
-                        deleteBtn.onclick = async (e) => {
-                            e.stopPropagation();
-                            pendingDeleteName = name;
-                            deleteText.textContent = `Delete "${name}"?`;
-                            deleteConfirmOverlay.style.display = "block";
-                        };
-                        row.appendChild(deleteBtn);
-                    }
-
-                    presetListBody.appendChild(row);
-                });
-            }, 100);
+        function isCollectionName(name) {
+            return typeof name === "string" && name.startsWith("collections/");
         }
 
-        async function loadPromptList() {
-            presetNameInput.style.display = "none";
-            deleteConfirmOverlay.style.display = "none";
-            presetListBody.innerHTML = "";
-            presetListOverlay.style.display = "flex";
-            placePresetOverlay();
+        function clearCollectionViewState() {
+            collectionView = null;
+            clearTimeout(collectionSearchTimer);
+            collectionSearchSeq++;
+            const matches = presetListBody.querySelector(".rs-collection-matches");
+            if (matches) matches.remove();
+        }
 
+        function buildCollectionBackRow() {
+            const row = mkEl("div", "rs-preset-item rs-collection-back");
+            row.textContent = "← 返回预设列表";
+            row.onclick = () => {
+                clearCollectionViewState();
+                presetSearchBar.value = "";
+                loadPresetDropdown();
+            };
+            return row;
+        }
+
+        function applyCollectionRows(entries) {
+            const frag = document.createDocumentFragment();
+            entries.forEach(({ title, text }) => {
+                const row = mkEl("div", "rs-preset-item");
+                const leftDiv = mkEl("div", "rs-preset-left");
+                const contentSpan = mkEl("span", "rs-preset-content");
+                contentSpan.textContent = title;
+                contentSpan.title = title;
+                leftDiv.appendChild(contentSpan);
+                row.appendChild(leftDiv);
+                row.onclick = async (e) => {
+                    if (e.target.closest(".rs-delete-icon")) return;
+
+                    fillFromEntry({ text });
+                };
+                frag.appendChild(row);
+            });
+            presetListBody.appendChild(frag);
+        }
+
+        function fillFromEntry(entry) {
+            if (textWidget) {
+                textWidget.value = entry.text || "";
+            }
+            if (customTextarea) {
+                customTextarea.value = entry.text || "";
+                triggerTextChange();
+            }
+
+            presetListOverlay.style.display = "none";
+            isListOpen = false;
+            clearCollectionViewState();
+            if (graph) graph.setDirtyCanvas(true, true);
+        }
+
+        function renderCollectionMatches(total, entries) {
+            presetListBody.querySelector(".rs-collection-matches")?.remove();
+            if (!entries.length) return;
+
+            const box = mkEl("div", "rs-collection-matches");
+            const head = mkEl("div", "rs-loading");
+            head.textContent = `📚 集合内匹配 ${entries.length} / ${total} 条`;
+            box.appendChild(head);
+
+            entries.forEach(({ title, text, name, source }) => {
+                const row = mkEl("div", "rs-preset-item");
+                const leftDiv = mkEl("div", "rs-preset-left");
+                const contentSpan = mkEl("span", "rs-preset-content");
+                contentSpan.textContent = title;
+                contentSpan.title = `${name}（${source}）`;
+                leftDiv.appendChild(contentSpan);
+
+                const originBadge = mkEl("span", "rs-tags-part");
+                originBadge.textContent = ` @${String(name || "").replace("collections/", "")}`;
+                contentSpan.appendChild(originBadge);
+
+                row.appendChild(leftDiv);
+                row.onclick = async (e) => {
+                    if (e.target.closest(".rs-delete-icon")) return;
+                    fillFromEntry({ text });
+                };
+                box.appendChild(row);
+            });
+
+            presetListBody.appendChild(box);
+        }
+
+        function updateCollectionTail() {
+            const old = presetListBody.querySelector(".rs-load-more-item, .rs-list-end-item, .rs-match-note");
+            if (old) old.remove();
+            if (!collectionView) return;
+            if (collectionView.shown < collectionView.total) {
+                const more = mkEl("div", "rs-preset-item rs-load-more-item");
+                more.textContent = `加载更多（已显示 ${collectionView.shown} / ${collectionView.total}）`;
+                more.onclick = () => appendCollectionPage();
+                presetListBody.appendChild(more);
+            } else if (collectionView.total) {
+                const end = mkEl("div", "rs-loading rs-list-end-item");
+                end.textContent = `共 ${collectionView.total} 条`;
+                presetListBody.appendChild(end);
+            }
+        }
+
+        async function appendCollectionPage() {
+            if (!collectionView) return;
+            const view = collectionView;
             const loadingDiv = mkEl("div", "rs-loading");
             loadingDiv.textContent = "Loading...";
             presetListBody.appendChild(loadingDiv);
-
             try {
-                const list = await listPrompts();
-
+                const data = await listPromptLines(view.name, view.shown, COLLECTION_PAGE_LIMIT, view.query, view.source);
+                if (collectionView !== view) return; // 视图已切换，丢弃过期页
                 if (loadingDiv.parentNode) loadingDiv.remove();
-
-                if (!list.length) {
-                    presetListBody.textContent = "No presets found";
-                    return;
-                }
-
-                list.forEach(item => {
-                    const name = typeof item === 'string' ? item : item.name;
-                    const tags = typeof item === 'string' ? [] : (item.tags || []);
-                    const source = typeof item === 'object' ? item.source : "custom";
-
-                    const row = document.createElement("div");
-                    row.className = "rs-preset-item";
-                    row.dataset.name = name;
-
-                    const leftDiv = mkEl("div", "rs-preset-left");
-                    const contentSpan = mkEl("span", "rs-preset-content");
-                    const displayText = tags && tags.length > 0 ? `${name} [${tags.join(", ")}]` : name;
-
-                    if (tags && tags.length > 0) {
-                        contentSpan.textContent = name;
-                        const tagsSpan = document.createElement("span");
-                        tagsSpan.className = "rs-tags-part";
-                        tagsSpan.textContent = ` [${tags.join(", ")}]`;
-                        contentSpan.appendChild(document.createTextNode(" "));
-                        contentSpan.appendChild(tagsSpan);
-                    } else {
-                        contentSpan.textContent = name;
-                    }
-
-                    const sourceBadge = mkEl("span", "rs-source-badge");
-                    sourceBadge.textContent = source === "presets" ? "SYS" : "USR";
-                    sourceBadge.title = source === "presets" ? "System preset (cannot delete)" : "User preset";
-                    contentSpan.appendChild(sourceBadge);
-
-                    contentSpan.dataset.original = displayText;
-                    row.dataset.original = displayText;
-                    leftDiv.appendChild(contentSpan);
-                    row.appendChild(leftDiv);
-
-                    row.onclick = async (e) => {
-                        if (e.target.closest(".rs-delete-icon")) return;
-
-                        const data = await loadPrompt(name);
-
-                        if (textWidget) {
-                            textWidget.value = data.text || "";
-                        }
-                        if (customTextarea) {
-                            customTextarea.value = data.text || "";
-                            triggerTextChange();
-                        }
-
-                        const currentUid = node.properties.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
-                        // In-memory cache only - no localStorage
-
-                        presetListOverlay.style.display = "none";
-                        if (graph) graph.setDirtyCanvas(true, true);
-                    };
-
-                    if (source === "custom") {
-                        const deleteBtn = mkEl("span", "rs-delete-icon");
-                        deleteBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
-                        deleteBtn.setAttribute("aria-label", "Delete preset");
-                        deleteBtn.onclick = async (e) => {
-                            e.stopPropagation();
-                            pendingDeleteName = name;
-                            deleteText.textContent = `Delete "${name}"?`;
-                            deleteConfirmOverlay.style.display = "block";
-                        };
-                        row.appendChild(deleteBtn);
-                    }
-
-                    presetListBody.appendChild(row);
-                });
+                view.total = data.total;
+                view.shown += data.titles.length;
+                applyCollectionRows(data.titles.map((t, i) => ({ title: t, text: data.texts[i] || "" })));
+                updateCollectionTail();
             } catch (e) {
+                if (loadingDiv.parentNode) loadingDiv.remove();
                 presetListBody.textContent = "Error loading";
             }
+        }
+
+        async function openCollection(name, source) {
+            presetNameInput.style.display = "none";
+            deleteConfirmOverlay.style.display = "none";
+
+            collectionView = { name, source, total: 0, shown: 0, query: "" };
+            presetSearchBar.value = "";
+            presetListOverlay.style.display = "flex";
+            placePresetOverlay();
+            presetSearchBar.focus();
+            isListOpen = true;
+
+            presetListBody.innerHTML = "";
+            presetListBody.appendChild(buildCollectionBackRow());
+            await appendCollectionPage();
         }
 
         saveBtn.addEventListener("click", (e) => {
@@ -2331,20 +2305,67 @@ function createPromptManagerUI() {
             handleSaveClick();
         }, true);
 
-        // Preset list search bar - filter items in real-time
+        // Preset list search bar - 文件级列表本地过滤；集合视图改为服务端标题检索（防抖）
         presetSearchBar.addEventListener("input", () => {
-            const query = presetSearchBar.value.trim().toLowerCase();
-            if (!query) {
-                // Show all items
-                const items = presetListBody.querySelectorAll(".rs-preset-item");
-                items.forEach(item => item.style.display = "");
+            if (!collectionView) {
+                const query = presetSearchBar.value.trim();
+                const qLower = query.toLowerCase();
+                const items = presetListBody.querySelectorAll(":scope > .rs-preset-item");
+                items.forEach(item => {
+                    const name = (item.querySelector(".rs-preset-content")?.textContent || "").toLowerCase();
+                    item.style.display = !qLower || name.includes(qLower) ? "" : "none";
+                });
+                clearTimeout(collectionSearchTimer);
+                if (!qLower) {
+                    const oldMatches = presetListBody.querySelector(".rs-collection-matches");
+                    if (oldMatches) oldMatches.remove();
+                    return;
+                }
+                // 文件名过滤的同时，跨全部集合做标题聚合检索
+                collectionSearchTimer = setTimeout(async () => {
+                    const seq = ++collectionSearchSeq;
+                    let data;
+                    try {
+                        data = await listPromptLines("*", 0, COLLECTION_PAGE_LIMIT, query, "custom");
+                    } catch (e) {
+                        return;
+                    }
+                    if (seq !== collectionSearchSeq || collectionView) return; // 输入已更新或已进入集合视图，丢弃过期结果
+                    renderCollectionMatches(data.total,
+                        data.titles.map((t, i) => ({ title: t, text: data.texts[i] || "", name: data.names[i], source: data.sources[i] })));
+                }, 200);
                 return;
             }
-            const items = presetListBody.querySelectorAll(".rs-preset-item");
-            items.forEach(item => {
-                const name = (item.querySelector(".rs-preset-content")?.textContent || "").toLowerCase();
-                item.style.display = name.includes(query) ? "" : "none";
-            });
+
+            clearTimeout(collectionSearchTimer);
+            collectionSearchTimer = setTimeout(async () => {
+                const view = collectionView;
+                if (!view) return;
+                const query = presetSearchBar.value.trim();
+                view.query = query;
+                view.total = 0;
+                view.shown = 0;
+
+                presetListBody.innerHTML = "";
+                presetListBody.appendChild(buildCollectionBackRow());
+                try {
+                    const data = await listPromptLines(view.name, 0, COLLECTION_PAGE_LIMIT, query, view.source);
+                    if (collectionView !== view) return; // 视图已切换，丢弃过期结果
+                    view.total = data.total;
+                    view.shown = data.titles.length;
+                    applyCollectionRows(data.titles.map((t, i) => ({ title: t, text: data.texts[i] || "" })));
+                    updateCollectionTail();
+                    if (query && view.shown < view.total) {
+                        const note = mkEl("div", "rs-loading rs-match-note");
+                        note.textContent = `仅显示前 ${COLLECTION_PAGE_LIMIT} 条匹配，可继续输入缩小范围`;
+                        const more = presetListBody.querySelector(".rs-load-more-item");
+                        if (more) presetListBody.insertBefore(note, more);
+                        else presetListBody.appendChild(note);
+                    }
+                } catch (e) {
+                    presetListBody.textContent = "Error loading";
+                }
+            }, 200);
         });
 
         listBtn.addEventListener("click", (e) => {
@@ -2354,9 +2375,11 @@ function createPromptManagerUI() {
                 presetListOverlay.style.display = "none";
                 isListOpen = false;
             } else {
+                clearCollectionViewState();
                 loadPresetDropdown();
                 presetListOverlay.style.display = "flex";
                 placePresetOverlay();
+                presetSearchBar.focus();
                 isListOpen = true;
             }
         });
@@ -2365,6 +2388,7 @@ function createPromptManagerUI() {
             if (!buttonGroup.contains(e.target) && !presetListOverlay.contains(e.target)) {
                 presetListOverlay.style.display = "none";
                 isListOpen = false;
+                clearCollectionViewState();
             }
         });
 
