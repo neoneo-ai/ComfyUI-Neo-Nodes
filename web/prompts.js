@@ -103,14 +103,14 @@ function createBasicNodeInitializer(node, instanceUid) {
 
 
 // ==========================================
-// NeoPromptGenerator Node Extension
+// NeoPromptAgent Node Extension
 // A simple prompt generator node - same as NeoPromptEncoder but without statusbar/toggle
 // Only outputs STRING (the prompt text)
 // ==========================================
 app.registerExtension({
-    name: "NeoPromptGenerator",
+    name: "NeoPromptAgent",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== "NeoPromptGenerator") return;
+        if (nodeData.name !== "NeoPromptAgent" && nodeData.name !== "NeoPromptGenerator") return;
 
         const origOnNodeCreated = nodeType.prototype.onNodeCreated;
         const origOnConfigure = nodeType.prototype.onConfigure;
@@ -301,7 +301,7 @@ app.registerExtension({
                 statusBar.style.display = "none";
             }
 
-            // NeoPromptGenerator UI update function (with toggle support)
+            // NeoPromptAgent UI update function (with toggle support)
             const updateStatusAndUI = (() => {
                 const applyTheme = (isExternal) => {
                     if (isExternal) {
@@ -610,7 +610,7 @@ document.addEventListener("gallery.send.prompt", (event) => {
         return;
     }
 
-    // Otherwise, find the first available NeoPromptEncoder or NeoPromptGenerator node
+    // Otherwise, find the first available NeoPromptEncoder or NeoPromptAgent node
     let sent = false;
     app.graph._nodes.forEach(node => {
         if (sent) return;
@@ -1079,7 +1079,7 @@ app.registerExtension({
             });
 
             // ==========================================
-            // 使用共享的按钮处理器（与 NeoPromptGenerator 相同）
+            // 使用共享的按钮处理器（与 NeoPromptAgent 相同）
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,

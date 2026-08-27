@@ -5,7 +5,7 @@
 | 模块 | 类型 | 说明 |
 |------|------|------|
 | 📝 Neo Prompt Encoder | 节点 | AI 提示词增强 + CLIP 编码 |
-| ⚡ Neo Prompt Generator | 节点 | 纯文本输出的轻量提示词生成 |
+| ⚡ Neo Prompt Agent | 节点 | 纯文本输出的轻量提示词生成 |
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频画廊浏览与管理 |
 
 ## 目录
@@ -14,7 +14,7 @@
 - [依赖](#依赖)
 - [节点](#节点)
   - [Neo Prompt Encoder](#-neo-prompt-encoder---ai-驱动的提示词编码器)
-  - [Neo Prompt Generator](#-neo-prompt-generator---简洁版提示词生成器)
+  - [Neo Prompt Agent](#-neo-prompt-agent---简洁版提示词代理)
   - [节点界面与按钮](#节点界面与按钮)
   - [模板与技能管理](#模板与技能管理)
   - [图片反推与图片输入](#图片反推与图片输入)
@@ -115,7 +115,7 @@ python -c "from llama_cpp import Llama; print('ok')"
 | POSITIVE | CONDITIONING | 正向编码条件 |
 | PROMPT | STRING | 最终提示词文本 |
 
-### ⚡ Neo Prompt Generator - 简洁版提示词生成器
+### ⚡ Neo Prompt Agent - 简洁版提示词代理
 
 轻量级提示词生成节点，专为仅使用生成的提示词文本、不需要替换 CLIP 编码的场景设计：
 
@@ -137,7 +137,7 @@ python -c "from llama_cpp import Llama; print('ok')"
 
 ### 节点界面与按钮
 
-两个节点共享同一套界面布局（Generator 不显示状态栏）：
+两个节点共享同一套界面布局（Agent 不显示状态栏）：
 
 ```
 ┌──────────────────────────────────────┐
@@ -219,7 +219,7 @@ python -c "from llama_cpp import Llama; print('ok')"
 
 ### 节点对比
 
-| 特性 | Neo Prompt Encoder | Neo Prompt Generator |
+| 特性 | Neo Prompt Encoder | Neo Prompt Agent |
 |------|-------------------|---------------------|
 | CLIP 输入 | ✅ 需要 | ❌ 不需要 |
 | 状态栏 (status bar) | ✅ 显示 | ❌ 隐藏 |

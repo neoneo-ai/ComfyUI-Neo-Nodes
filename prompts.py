@@ -1471,11 +1471,11 @@ async def rs_prompts_delete_template(request):
 
 
 # ==========================================
-# NeoPromptGenerator Node Class
+# NeoPromptAgent Node Class
 # A simple prompt generator node with settings button only
 # ==========================================
 
-class NeoPromptGenerator:
+class NeoPromptAgent:
     """
     A simple prompt generator node that outputs text only.
     - No clip input required
@@ -1670,10 +1670,10 @@ class NeoPromptGenerator:
 # ==========================================
 NODE_CLASS_MAPPINGS = {
     "NeoPromptEncoder": NeoPrompts,
-    "NeoPromptGenerator": NeoPromptGenerator,
+    "NeoPromptAgent": NeoPromptAgent,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "NeoPromptEncoder": "Neo Prompt Encoder",
-    "NeoPromptGenerator": "Neo Prompt Generator",
+    "NeoPromptAgent": "Neo Prompt Agent",
 }

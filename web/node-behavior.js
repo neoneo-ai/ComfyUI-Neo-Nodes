@@ -363,7 +363,7 @@ function createRandomHandler(promptUI) {
 /**
  * 运行时随机选词（🎲 ▾ 菜单）状态接线：恢复 UI、持久化到 properties 与同名隐藏控件。
  * 编码器（NeoPromptEncoder）单输出固定每次抽 1 条并隐藏数量行；
- * 生成器（NeoPromptGenerator）按列表输出，支持一次抽取多条循环消费。
+ * 生成器（NeoPromptAgent）按列表输出，支持一次抽取多条循环消费。
  */
 function wireRuntimeRandom(node, randomBtn) {
     const ui = randomBtn._rsRuntime;
