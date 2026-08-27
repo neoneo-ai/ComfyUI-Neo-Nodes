@@ -2360,3 +2360,54 @@
 .rs-button-group > .rs-random-wrap.rs-random-on {
     display: inline-flex !important;
 }
+
+/* auto-enhance options group (sparkle + caret) in the input toolbar */
+.rs-auto-wrap {
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+}
+
+/* auto-enhance caret: larger bare icon, no background */
+.rs-auto-wrap .rs-random-caret {
+    color: #9ec5e8;
+    background: none;
+    border: none;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0 2px 0 4px;
+    height: 24px;
+    cursor: pointer;
+}
+
+.rs-auto-wrap .rs-random-caret:hover {
+    color: #fff;
+}
+
+/* auto-enhance enabled: a perfect circular glowing ring behind the sparkle.
+   Drawn on a ::before box (position absolute) so it stays circular regardless
+   of the button's own width/height. */
+.rs-input-toolbar .rs-generate-btn.rs-auto-enhance-active {
+    position: relative;
+    color: #9ec5e8;
+}
+.rs-input-toolbar .rs-generate-btn.rs-auto-enhance-active::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 22px;
+    height: 22px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 1.5px solid #7ab8f5;
+    box-shadow: 0 0 6px rgba(122, 184, 245, 0.45);
+    animation: rs-auto-enhance-pulse 2.4s ease-in-out infinite;
+    box-sizing: border-box;
+    pointer-events: none;
+}
+@keyframes rs-auto-enhance-pulse {
+    0%, 100% { box-shadow: 0 0 5px rgba(122,184,245,.35), 0 0 0 0 rgba(122,184,245,.25); }
+    50%      { box-shadow: 0 0 5px rgba(122,184,245,.35), 0 0 0 3px rgba(122,184,245,0); }
+}

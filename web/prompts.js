@@ -419,7 +419,10 @@ app.registerExtension({
                 if (autoGenerateCheckbox) {
                     const autoGenWidget = node.widgets?.find(w => w.name === "auto_generate");
                     const v = autoGenWidget ? autoGenWidget.value : node.properties?.rs_auto_generate;
-                    if (v !== undefined) autoGenerateCheckbox.checked = !!v;
+                    if (v !== undefined) {
+                    autoGenerateCheckbox.checked = !!v;
+                    autoGenerateCheckbox.dispatchEvent(new Event("change"));
+                }
                 }
                 updateStatusAndUI();
             };
@@ -1025,7 +1028,10 @@ app.registerExtension({
                 if (autoGenerateCheckbox) {
                     const autoGenWidget = node.widgets?.find(w => w.name === "auto_generate");
                     const v = autoGenWidget ? autoGenWidget.value : node.properties?.rs_auto_generate;
-                    if (v !== undefined) autoGenerateCheckbox.checked = !!v;
+                    if (v !== undefined) {
+                    autoGenerateCheckbox.checked = !!v;
+                    autoGenerateCheckbox.dispatchEvent(new Event("change"));
+                }
                 }
                 updateStatusAndUI();
             };

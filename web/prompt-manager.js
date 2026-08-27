@@ -1772,7 +1772,7 @@ function createStatusBars() {
     const randomWrap = mkEl("div", "rs-random-wrap");
     const randomCaret = mkEl("button", "rs-random-caret");
     randomCaret.type = "button";
-    randomCaret.textContent = "▾";
+    randomCaret.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
     randomCaret.setAttribute("data-rs-tooltip", "Runtime random options");
     const runtimeMenu = mkEl("div", "rs-runtime-menu");
     // 挂到 body 用 fixed 定位：留在节点 DOM widget 内会被节点边界裁剪（同 combo-box 列表与预设列表浮层策略）
@@ -1891,8 +1891,9 @@ function createStatusBars() {
     generateBtn.textContent = "✨";
     generateBtn.setAttribute("data-rs-tooltip", "Generate from description");
 
-    // Auto-generate checkbox (left of generate button)
-    const autoGenerateWrapper = mkEl("div", "rs-auto-generate-wrapper");
+    // Auto-generate 复选框并入 ✨ 的 ▾ 菜单（参照骰子菜单交互）：
+    // ✨ 主点击=立即生成；▾ 展开"运行时自动增强"开关。保留原 checkbox 元素身份，
+    // 使 prompts.js 既有接线（恢复/持久化/rs_auto_generate 事件）零改动。
     const autoGenerateCheckbox = document.createElement("input");
     autoGenerateCheckbox.type = "checkbox";
     autoGenerateCheckbox.className = "rs-auto-generate-checkbox";
@@ -1902,8 +1903,71 @@ function createStatusBars() {
     autoGenerateLabel.htmlFor = "rs-auto-generate";
     autoGenerateLabel.className = "rs-auto-generate-label";
     autoGenerateLabel.textContent = "自动增强";
-    autoGenerateWrapper.appendChild(autoGenerateCheckbox);
-    autoGenerateWrapper.appendChild(autoGenerateLabel);
+
+    const genCaret = mkEl("button", "rs-random-caret");
+    genCaret.type = "button";
+    genCaret.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+    genCaret.setAttribute("data-rs-tooltip", "Auto-enhance options");
+    const autoMenu = mkEl("div", "rs-runtime-menu");
+    document.body.appendChild(autoMenu); // 挂 body 防节点边界裁剪
+    const autoToggleRow = mkEl("label", "rs-runtime-row rs-runtime-toggle");
+    autoToggleRow.appendChild(autoGenerateCheckbox);
+    autoToggleRow.appendChild(autoGenerateLabel);
+    const autoHint = mkEl("div", "rs-runtime-hint");
+    autoHint.textContent = "每次运行时用 LLM 基于描述自动增强提示词";
+    autoMenu.appendChild(autoToggleRow);
+    autoMenu.appendChild(autoHint);
+    const autoWrap = mkEl("div", "rs-auto-wrap");
+    autoWrap.appendChild(generateBtn);
+    autoWrap.appendChild(genCaret);
+
+    let autoMenuOpen = false;
+    const closeAutoMenu = () => { autoMenuOpen = false; autoMenu.style.display = "none"; };
+    const openAutoMenu = () => {
+        autoMenu.style.display = "block";
+        const r = genCaret.getBoundingClientRect();
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const w = autoMenu.offsetWidth || 220, h = autoMenu.offsetHeight || 110;
+        let left = Math.min(Math.max(8, r.right - w), vw - 8 - w);
+        let top = r.bottom + 4;
+        if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
+        autoMenu.style.left = left + "px";
+        autoMenu.style.top = top + "px";
+        autoMenuOpen = true;
+    };
+    genCaret.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        autoMenuOpen ? closeAutoMenu() : openAutoMenu();
+    });
+    // 捕获阶段外关，规避上游全局处理器 stopPropagation（同骰子菜单）
+    const onAutoDocPointerDown = (e) => {
+        if (!autoMenuOpen) return;
+        if (autoWrap.contains(e.target) || autoMenu.contains(e.target)) return;
+        closeAutoMenu();
+    };
+    document.addEventListener("pointerdown", onAutoDocPointerDown, true);
+    document.addEventListener("mousedown", onAutoDocPointerDown, true);
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && autoMenuOpen) closeAutoMenu();
+    });
+
+    // 勾选自动增强 ⇄ 主按钮高亮：不做图标替换，仅切 class，由 CSS 画圆形边框/光晕（见 .rs-auto-enhance-active）
+    const syncGenerateIcon = () => {
+        generateBtn.classList.toggle("rs-auto-enhance-active", autoGenerateCheckbox.checked);
+    };
+    autoGenerateCheckbox.addEventListener("change", (e) => {
+        e.stopPropagation(); // 防冒泡进全局关浮层/事件处理器
+        syncGenerateIcon();
+    });
+    // 整行点击切换：外层与内层都是 <label>（label 不能嵌套，内层 htmlFor 激活不可靠），
+    // 故直接监听行点击手动反转勾选；点到复选框本身时交给原生机
+    autoToggleRow.addEventListener("click", (e) => {
+        if (e.target === autoGenerateCheckbox) return;
+        e.preventDefault();
+        autoGenerateCheckbox.checked = !autoGenerateCheckbox.checked;
+        autoGenerateCheckbox.dispatchEvent(new Event("change"));
+    });
 
     // Add elements to toolbar
     inputToolbar.appendChild(attachBtn);
@@ -1911,8 +1975,7 @@ function createStatusBars() {
     inputToolbar.appendChild(settingsBtn);
     const spacer = mkEl("div", "rs-spacer");
     inputToolbar.appendChild(spacer);
-    inputToolbar.appendChild(autoGenerateWrapper);
-    inputToolbar.appendChild(generateBtn);
+    inputToolbar.appendChild(autoWrap);
 
     // Add input and toolbar to wrapper
     quickInputWrapper.appendChild(imageChipsRow);

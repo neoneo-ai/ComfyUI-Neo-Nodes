@@ -211,7 +211,7 @@ function createGenerateHandler(promptUI) {
                     return;
                 }
 
-                generateBtn.textContent = "🖼️ Processing image...";
+                generateBtn.textContent = "⏳"; // 统一短反馈，而非长串处理文案
 
                 const skillId = markerSkillId
                     || (selectedTemplateId && selectedTemplateId !== "reverse_prompt" ? selectedTemplateId : "")
@@ -252,7 +252,7 @@ function createGenerateHandler(promptUI) {
                 });
             } else if (selectedTemplateId) {
                 // 使用选中的模板进行生成（流式）
-                generateBtn.textContent = "🤖 Processing with template...";
+                generateBtn.textContent = "⏳"; // 统一短反馈
 
                 // If quickInput has content, combine with currentPrompt; otherwise use currentPrompt alone
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
@@ -294,7 +294,7 @@ function createGenerateHandler(promptUI) {
                 });
             } else {
                 // 使用 LLM 智能判断（流式）：LLM 直接判断用户意图并生成/改写
-                generateBtn.textContent = "🤖 Processing...";
+                generateBtn.textContent = "⏳"; // 统一短反馈
                 // 拼接 currentPrompt 和 quickText（与选择了模版时保持一致）
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
                 await smartPromptStream(userPrompt, "", {
