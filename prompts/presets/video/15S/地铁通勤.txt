@@ -1,0 +1,17 @@
+2.35:1 widescreen photorealistic cinematic medium close-up, modern subway car interior during golden hour, warm sunlight streaming through side windows, soft motion blur of passing tunnels visible through glass, digital route map glowing softly in background. 
+
+[女性角色] young East Asian woman early 20s, wearing a light cream linen dress, shoulder-length dark hair softly wind-swept by subway airflow, fresh minimal makeup, glowing hyper-realistic skin, holding a small canvas tote with daisy charm, standing and holding overhead strap. 
+
+[男性角色] young East Asian man mid 20s, wearing a casual white cotton shirt with rolled sleeves, light khaki pants, clean short black hair naturally unstyled, sketchbook tucked under arm, also holding overhead strap, standing beside her. 
+
+Soft background bokeh of blurred commuters in business attire, warm window key light + cool LED interior fill, atmospheric dust motes floating in sunbeams. 
+
+【0-3秒】女孩微微侧身凑近男孩，眼神俏皮带笑，嘴唇微张压低声音说：你猜刚才上车那个穿蓝衬衫的，是不是我们高中隔壁班的？镜头缓慢前推至女孩面部特写，焦点锁定她灵动的眼神，发丝被地铁微风轻轻吹动。
+
+【3-7秒】焦点快速切至男孩脸部，他眼神闪躲后清嗓说：咳......地铁每天几万人，别乱认亲。浅景深虚化背景通勤人群，特写他耳尖微红的窘迫表情，喉结微动，手指无意识轻捏素描本边缘。
+
+【7-11秒】焦点切回女孩，她假装委屈轻轻戳他手臂：那去年校庆你偷拍我领奖的照片，怎么解释？镜头保持特写，捕捉她从狡黠到"委屈"的反差感，手指轻晃帆布包上的雏菊挂饰，眼神直勾勾盯住对方。
+
+【11-15秒】镜头缓缓后拉至双人半身中景，男孩耳根通红低头看窗外：那......那是拍舞台灯光效果，你刚好在C位。女孩噗嗤笑出声肩膀轻颤，眼神仍带着笑意看他。全程金色阳光逆光勾勒发丝金边与校服轮廓，地铁轻微晃动感通过背景运动模糊体现，氛围轻松搞笑。
+
+8K resolution, film grain, shallow depth of field, stable motion with subtle handheld sway (0.2), cinematic motion blur, avoid flicker, precise lip sync to Mandarin dialogue, authentic eye-line matching: characters look at each other during dialogue not at camera.

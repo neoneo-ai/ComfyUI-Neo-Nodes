@@ -127,30 +127,43 @@ def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
     return entries
 
 
+def _has_media_recursive(directory: Path) -> bool:
+    """Return True if any media file exists anywhere under directory.
+
+    Stops as soon as the first media file is found, so deeply nested trees
+    are not scanned in full just to derive a count that callers only use
+    as a has-content flag.
+    """
+    for p in directory.rglob("*"):
+        if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+            return True
+    return False
+
+
 def _scan_directory_structure_only(directory: Path) -> dict:
     """Scan directory and return only first-level subdirectory structure with image counts.
-    
-    This is the fastest possible scan - only one os.listdir() call per level, no recursion.
+
+    Each subdirectory's image_count is a simple 0/1 flag indicating whether any media
+    file exists within its subtree (including nested subdirectories), so deeply nested
+    trees stay navigable without a full recursive file enumeration.
+
+    This is the fastest possible scan - one os.listdir() call per level, no full txt parsing.
     Returns:
         {
-            "subdirs": [{name: str, image_count: int, path: str}]
+            "subdirs": [{name: str, image_count: int(0|1), path: str}]
         }
     """
     result = {"subdirs": []}
     if not directory.exists():
         return result
 
-    # Scan only first-level subdirectories - one os.listdir() call per dir
+    # Scan only first-level subdirectories (recursive presence check per subdir for nesting)
     for p in sorted(directory.iterdir()):
         if not p.is_dir():
             continue
-        subdir_count = 0
-        for sub_p in p.iterdir():
-            if sub_p.is_file() and sub_p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-                subdir_count += 1
         result["subdirs"].append({
             "name": p.name,
-            "image_count": subdir_count,
+            "image_count": 1 if _has_media_recursive(p) else 0,
             "path": p.name
         })
 
@@ -319,7 +332,9 @@ def _build_dir_response(dir_info: dict, scan_result: dict, include_dirs: bool, i
     
     if include_dirs:
         resp["subdirs"] = scan_result.get("subdirs", {})
-        resp["root_count"] = len(scan_result.get("root", []))
+        # Prefer an explicit count (needed when items are lazy-loaded and not scanned),
+        # otherwise derive it from the loaded root items.
+        resp["root_count"] = scan_result.get("root_count", len(scan_result.get("root", [])))
     
     if include_items:
         resp["items"] = scan_result.get("root", [])
@@ -361,6 +376,10 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
             structure = _scan_directory_structure_only(target_dir)
             scan_result["subdirs"] = {s["name"]: {"image_count": s["image_count"]} for s in structure.get("subdirs", [])}
             scan_result["root"] = []
+            scan_result["root_count"] = sum(
+                1 for p in target_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS
+            )
     
     # Build directory info
     dir_info = {
@@ -1539,6 +1558,18 @@ async def view_image(request):
             d_name = dir_path.name if dir_path.name else str(dir_path)
             if subfolder_lower == d_name.lower():
                 base = dir_path
+                break
+
+    # Fallback: the subfolder may be a relative path rooted at a custom directory.
+    # Deep nested navigation drops the base dir prefix from the image URL, so try
+    # resolving the whole subfolder as a relative path under each custom dir root.
+    if base is None:
+        for dir_path in user_custom_dirs:
+            candidate = dir_path
+            for part in dir_parts:
+                candidate = candidate / part
+            if candidate.exists():
+                base = candidate
                 break
 
     if base is None or not base.exists():

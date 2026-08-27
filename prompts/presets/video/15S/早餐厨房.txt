@@ -1,0 +1,17 @@
+2.35:1 widescreen photorealistic cinematic medium close-up, bright modern kitchen during early morning, warm sunlight streaming through a clean glass window, illuminating a cozy breakfast counter with neatly arranged ingredients and a steaming coffee maker. 
+
+[女性角色] young East Asian woman early 20s, wearing a light cream linen dress with a soft pastel apron tied at the waist, shoulder-length dark hair loosely half-tied, fresh minimal makeup, glowing hyper-realistic skin, holding a ceramic coffee mug, leaning casually against the kitchen island. 
+
+[男性角色] young East Asian man mid 20s, wearing a casual white cotton shirt with rolled sleeves, light khaki pants, clean short black hair naturally unstyled, holding a wooden spatula in one hand and a plate of slightly uneven golden toast in the other, standing beside her at the stove. 
+
+Background: softly blurred kitchen cabinets, hanging utensils, and morning light reflections on marble tiles. Warm natural key light from window + soft cool fill from range hood LED. Atmospheric subtle steam rising from coffee, shallow depth of field. 
+
+【0-3秒】女孩微微侧身靠近男孩，眼神俏皮带笑，嘴唇微张压低声音说：说好的周末做早餐，怎么又变成你指挥我动手啦？镜头缓慢前推至女孩面部特写，焦点锁定她灵动的眼神与微扬的嘴角，发丝随晨光微风轻轻飘动。
+
+【3-7秒】焦点快速切至男孩脸部，他眼神微闪后清嗓故作专业：咳......主厨负责把控火候和摆盘，助手的执行力很关键。浅景深虚化背景橱柜，特写他耳尖微红、喉结微动的窘迫，手指无意识轻敲锅铲边缘。
+
+【7-11秒】焦点切回女孩，她假装委屈轻轻戳他手臂：那上周是谁煎个荷包蛋能糊成黑炭，还硬说是"焦糖风味"？镜头保持特写，捕捉她从试探到"狡黠控诉"的反差感，指尖轻晃马克杯，眼神直勾勾盯住他。
+
+【11-15秒】镜头缓缓后拉至双人半身中景，男孩耳根彻底通红低头翻食谱：那......那是美拉德反应过度，美食需要大胆尝试。女孩噗嗤笑出声肩膀轻颤，赶紧端起咖啡杯掩饰笑意。全程暖色晨光逆光勾勒发丝金边与厨房烟火气，氛围轻松温馨又带点搞笑。
+
+8K resolution, film grain, shallow depth of field, stable motion with subtle ambient stillness, cinematic motion blur, avoid flicker, precise lip sync to Mandarin dialogue, authentic eye-line matching: characters look at each other during dialogue not at camera.
