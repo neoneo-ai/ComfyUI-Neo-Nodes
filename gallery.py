@@ -514,8 +514,12 @@ async def get_gallery_list(request):
                 for subdir_name, subdir_info in resp_dir.get("subdirs", {}).items():
                     subdir_path = target_dir / subdir_name
                     child_key = f"{full_key}/{subdir_name}"
-                    # Pass the subdir name as base_subfolder so thumbnails resolve correctly
-                    _collect_all_dir_covers(covers, subdir_path, child_key, 2, base_subfolder=subdir_name)
+                    # Anchor base_subfolder to the custom-dir root so returned subfolders
+                    # are full relative paths the thumbnail endpoint can resolve.
+                    child_base_subfolder = (
+                        f"{rel_path_param}/{subdir_name}" if rel_path_param else subdir_name
+                    )
+                    _collect_all_dir_covers(covers, subdir_path, child_key, 2, base_subfolder=child_base_subfolder)
             
             return web.json_response({
                 "directories": [resp_dir],
@@ -901,9 +905,12 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
         if found_direct:
             result.extend(found_direct)
         else:
-            # No direct media - recurse into nested subdirectory (pass base_subfolder through)
-            _collect_covers_recursive(subdir, max(needed - 1, 0), result, sample_count, base_subfolder)
-        
+            # No direct media - recurse into nested subdirectory. Keep base_subfolder
+            # (so returned subfolder paths stay anchored to the custom-dir root that
+            # /neo_gallery/image can resolve) and keep `needed` so the search is
+            # bounded only by sample_count, not by recursion depth.
+            _collect_covers_recursive(subdir, needed, result, sample_count, new_subfolder)
+
         # Check if we've collected enough after processing this subdir
         if len(result) >= sample_count:
             break
