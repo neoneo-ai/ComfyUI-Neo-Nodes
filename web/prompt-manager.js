@@ -1825,10 +1825,18 @@ function createStatusBars() {
         e.preventDefault();
         runtimeMenuOpen ? closeRuntimeMenu() : openRuntimeMenu();
     });
-    document.addEventListener("mousedown", (e) => {
-        if (runtimeMenuOpen && !randomWrap.contains(e.target) && !runtimeMenu.contains(e.target)) {
-            closeRuntimeMenu();
-        }
+    // 捕获阶段监听外部按下：画布等区域的指针事件会被上游全局处理器 stopPropagation，
+    // 冒泡阶段根本到不了 document；捕获阶段在最前面执行不受影响。
+    // （同一处理挂 pointerdown 与 mousedown 双保险，第二次触发时已关闭会直接返回）
+    const onDocPointerDown = (e) => {
+        if (!runtimeMenuOpen) return;
+        if (randomWrap.contains(e.target) || runtimeMenu.contains(e.target)) return;
+        closeRuntimeMenu();
+    };
+    document.addEventListener("pointerdown", onDocPointerDown, true);
+    document.addEventListener("mousedown", onDocPointerDown, true);
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && runtimeMenuOpen) closeRuntimeMenu();
     });
     randomBtn._rsRuntime = { checkbox: runtimeCheckbox, countRow: runtimeCountRow, minusBtn: runtimeCountMinus, plusBtn: runtimeCountPlus, valueSpan: runtimeCountVal, wrap: randomWrap, destroy: () => runtimeMenu.remove() };
 
