@@ -3,6 +3,9 @@
 # Import gallery module to register routes (must be imported for route registration)
 from . import gallery
 
+# Import recipes module (depends on gallery helpers; registers recipe routes)
+from . import recipes
+
 # Import from prompts module
 from .prompts import (
     NODE_CLASS_MAPPINGS as PROMPT_CLASS_MAPPINGS,

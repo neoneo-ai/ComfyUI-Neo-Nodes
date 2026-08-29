@@ -11,6 +11,7 @@ import {
     listTemplates
 } from "./prompt-service.js";
 
+
 // 导入 NodeBehaviors
 import NodeBehaviors from "./node-behavior.js";
 
@@ -248,6 +249,7 @@ app.registerExtension({
 
             // Initialize prompt manager - get UI elements and settings button
             // Pass textWidget so save handler can read current prompt text for AI extraction
+            // allowRecipe: 在 💾 保存弹窗中启用「🍱 配方」模式
             const {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
@@ -255,7 +257,7 @@ app.registerExtension({
                 settingsModal, loadModelsIntoSettings,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages
-            } = promptUI.init({ node, graph: node.graph, textWidget });
+            } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
             // Populate template selector, restore last selection and sync to hidden widget
             if (populateTemplateSelector) {
@@ -573,6 +575,9 @@ app.registerExtension({
 
             // Expose node reference for external apps (like gallery)
             node._rsPromptUIElements = { customTextarea, textWidget };
+
+
+
 
             return result;
         };

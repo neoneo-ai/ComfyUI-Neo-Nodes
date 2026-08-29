@@ -2,6 +2,7 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 import { GalleryComponents } from './gallery-components.js';
+import { createRecipesPanel } from './recipes.js';
 import {
     PAGE_SIZE,
     getReservedSpace,
@@ -18,6 +19,12 @@ const galleryCssLink = document.createElement('link');
 galleryCssLink.rel = 'stylesheet';
 galleryCssLink.href = "/extensions/ComfyUI-Neo-Nodes/gallery.css";
 document.head.appendChild(galleryCssLink);
+
+// Load recipes CSS
+const recipesCssLink = document.createElement('link');
+recipesCssLink.rel = 'stylesheet';
+recipesCssLink.href = "/extensions/ComfyUI-Neo-Nodes/recipes.css";
+document.head.appendChild(recipesCssLink);
 
 /**
  * NeoGallery — preset-based gallery (no YAML).
@@ -1537,6 +1544,21 @@ app.registerExtension({
 
             },
             });
+
+            // 视频配方侧边栏
+            app.extensionManager.registerSidebarTab({
+                id: "neo.recipes",
+                icon: "pi pi-box",
+                title: "配方",
+                tooltip: "Neo Recipes (视频配方)",
+                type: "custom",
+                render: async (el) => {
+                    el.innerHTML = "";
+                    const panel = await createRecipesPanel();
+                    el.appendChild(panel);
+                },
+            });
+
         }
     },
 });

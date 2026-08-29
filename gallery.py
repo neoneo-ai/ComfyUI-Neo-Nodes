@@ -622,12 +622,64 @@ async def serve_placeholder(request):
     return web.Response(body=_PLACEHOLDER_PNG, content_type="image/png")
 
 
+def _copy_media_to_input(source_path: Path, filename: str) -> tuple[str, bool]:
+    """Copy a media file into Comfy's input directory, deduplicating by content and
+    renaming on collision. Returns (resolved_input_filename, skipped).
+
+    `skipped` is True when the exact file already lives in the input directory,
+    so callers can reuse the existing Comfy filename without another copy.
+    """
+    import folder_paths as _folder_paths
+    import shutil
+    import hashlib
+
+    input_dir = Path(_folder_paths.input_directory).resolve()
+    resolved_source = source_path.resolve()
+    if resolved_source.parent == input_dir:
+        return filename, True
+
+    source_size = source_path.stat().st_size
+    source_hash = hashlib.md5()
+    with source_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            source_hash.update(chunk)
+    source_md5 = source_hash.hexdigest()
+
+    found_existing = None
+    for f in input_dir.iterdir():
+        if not f.is_file():
+            continue
+        if f.suffix.lower() not in IMG_EXTENSIONS and f.suffix.lower() not in VIDEO_EXTENSIONS:
+            continue
+        if f.stat().st_size != source_size:
+            continue
+        h = hashlib.md5()
+        with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                h.update(chunk)
+        if h.hexdigest() == source_md5:
+            found_existing = f
+            break
+
+    if found_existing:
+        return found_existing.name, True
+
+    dest_path = input_dir / filename
+    if dest_path.exists():
+        stem = Path(filename).stem
+        ext = Path(filename).suffix
+        counter = 1
+        while (input_dir / f"{stem}_{counter}{ext}").exists():
+            counter += 1
+        dest_path = input_dir / f"{stem}_{counter}{ext}"
+
+    shutil.copy2(source_path, dest_path)
+    return dest_path.name, False
+
+
 @PromptServer.instance.routes.get("/neo_gallery/copy_to_input")
 async def copy_to_input(request):
     try:
-        import folder_paths as _folder_paths
-        import shutil
-
         filename = request.rel_url.query.get("filename", "")
         subfolder = request.rel_url.query.get("subfolder", "")
 
@@ -686,50 +738,8 @@ async def copy_to_input(request):
         if not source_path:
             return web.json_response({"success": False, "error": "Image not found"}, status=404)
 
-        input_dir = Path(_folder_paths.input_directory).resolve()
-        resolved_source = source_path.resolve()
-        if resolved_source.parent == input_dir:
-            return web.json_response({"success": True, "filename": filename, "skipped": True})
-
-        # Content dedup: check if input dir already has same content
-        import hashlib
-        source_size = source_path.stat().st_size
-        source_hash = hashlib.md5()
-        with source_path.open("rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                source_hash.update(chunk)
-        source_md5 = source_hash.hexdigest()
-
-        found_existing = None
-        for f in input_dir.iterdir():
-            if not f.is_file():
-                continue
-            if f.suffix.lower() not in IMG_EXTENSIONS and f.suffix.lower() not in VIDEO_EXTENSIONS:
-                continue
-            if f.stat().st_size != source_size:
-                continue
-            h = hashlib.md5()
-            with open(f, "rb") as fh:
-                for chunk in iter(lambda: fh.read(8192), b""):
-                    h.update(chunk)
-            if h.hexdigest() == source_md5:
-                found_existing = f
-                break
-
-        if found_existing:
-            return web.json_response({"success": True, "filename": found_existing.name, "skipped": True})
-
-        dest_path = input_dir / filename
-        if dest_path.exists():
-            stem = Path(filename).stem
-            ext = Path(filename).suffix
-            counter = 1
-            while (input_dir / f"{stem}_{counter}{ext}").exists():
-                counter += 1
-            dest_path = input_dir / f"{stem}_{counter}{ext}"
-
-        shutil.copy2(source_path, dest_path)
-        return web.json_response({"success": True, "filename": dest_path.name})
+        resolved_filename, _ = _copy_media_to_input(source_path, filename)
+        return web.json_response({"success": True, "filename": resolved_filename})
     except Exception as e:
         print(f"[Neo Gallery] Error copying to input: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)

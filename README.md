@@ -7,6 +7,7 @@
 | 📝 Neo Prompt Encoder | 节点 | AI 提示词增强 + CLIP 编码 |
 | ⚡ Neo Prompt Agent | 节点 | 纯文本输出的轻量提示词生成 |
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频画廊浏览与管理 |
+| 🍱 Neo Recipes | 侧边栏面板 | 视频配方（提示词 + 多资源）管理与一键发送 |
 
 ## 目录
 
@@ -25,6 +26,7 @@
   - [灯箱查看器](#灯箱查看器)
   - [文件管理与目录](#文件管理与目录)
   - [画廊设置](#画廊设置)
+- [视频配方](#-视频配方-video-recipes)
 - [配置](#配置)
   - [LLM 模式](#llm-模式)
 - [本地 LLM 推理安装（可选）](#本地-llm-推理安装可选)
@@ -230,6 +232,36 @@ python -c "from llama_cpp import Llama; print('ok')"
 
 ---
 
+## 🍱 视频配方 (Video Recipes)
+
+提示词 + 多输入资源（一个或多个图片/视频）的组合配方，供视频多参考工作流复用。配方按独立预设目录存储，每个配方是一个文件夹 + `assets/` 资源夹：
+
+```
+recipes/
+└── <配方名>/                    # 独立预设目录
+    ├── recipe.json              # 元数据：name / prompt / created_at / assets
+    └── assets/                  # 多输入资源（图片/视频，文生图配方可空）
+        ├── 01.png
+        ├── 02.jpg
+        └── ref.mp4
+```
+
+### 保存为配方
+
+在 **Neo Prompt Agent** 节点上点击 💾 保存按钮，弹窗顶部选择「🍱 配方」模式（默认「📝 提示词」为普通预设保存），命名确认后会收集当前工作流里的所有 `LoadImage` / `LoadVideo` 资源与节点上的提示词，保存为一个配方。配方模式下跳过 AI 标题/标签分析，弹窗内会实时显示收集到的资源数量。
+
+资源顺序按 **@ chips 编码逻辑**记录：有参数位的资源（输出连到目标节点 `IMAGE` / `VIDEO` 输入槽）按参数序号排列在前，未连线资源按图序在后，图片组在前、视频组在后；禁用（BYPASS / NEVER）状态的节点不参与收集。
+
+### 一键发送到工作流
+
+在右侧边栏 **配方** 标签页中点击配方的 ✈️，将：
+
+- 依序把各资源复制进 Comfy `input/`（去重 + 重名后缀处理）
+- 按**保存时的参数位**反解还原：连线节点按参数序号与配方资产逐一配对，资产精确落回原参数位置；未连线节点作为备用槽承接剩余资产
+- 跳过禁用（BYPASS / NEVER）状态的节点，不改动其控件
+- 把配方提示词写入可用的 Neo Prompt 节点
+
+---
 ## 🖼️ Neo Gallery - 侧边栏画廊系统
 
 ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 + 多个用户自定义目录。
@@ -316,10 +348,12 @@ models/LLM/
 ```
 ComfyUI-Neo-Nodes/
 ├── gallery.py              # 画廊后端 API + 路由
+├── recipes.py              # 视频配方后端 API（提示词 + 多资源组合）
 ├── prompts.py              # 提示词节点核心逻辑
 ├── llm.py                  # LLM 推理（远程/本地）
 ├── requirements.txt        # Python 依赖
 ├── gallery_settings.json   # 画廊自定义目录配置
+├── recipes/                # 配方预设目录（每配方一个文件夹 + assets/）
 ├── prompts/                # 提示词预设和模板目录
 │   ├── presets/            # 预设提示词
 │   ├── custom/             # 用户自定义提示词
@@ -333,6 +367,8 @@ ComfyUI-Neo-Nodes/
     ├── gallery-components.js  # 画廊 UI 组件
     ├── gallery-utils.js    # 画廊工具函数
     ├── gallery.css         # 画廊样式
+    ├── recipes.js          # 视频配方逻辑（保存/面板/一键发送）
+    ├── recipes.css         # 视频配方样式
     ├── prompts.js          # 提示词节点前端交互
     ├── prompts.css         # 提示词节点样式
     ├── prompt-manager.js   # 提示词管理器

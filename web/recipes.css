@@ -1,0 +1,135 @@
+/* recipes.css — Neo-Nodes 视频配方面板样式 */
+
+.neo-recipes-panel {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 100%;
+    overflow-y: auto;
+}
+
+.neo-recipes-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.neo-recipes-title {
+    margin: 0;
+    font-size: 14px;
+}
+
+.neo-recipes-refresh {
+    cursor: pointer;
+}
+
+.neo-recipes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.neo-recipes-empty {
+    color: #888;
+    font-size: 12px;
+    padding: 16px;
+    text-align: center;
+    border: 1px dashed #444;
+    border-radius: 8px;
+}
+
+.neo-recipes-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 8px;
+}
+
+.neo-recipes-card-cover {
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.neo-recipes-card-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.neo-recipes-card-no-cover {
+    font-size: 22px;
+    color: #888;
+}
+
+.neo-recipes-card-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.neo-recipes-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.neo-recipes-card-meta {
+    font-size: 11px;
+    color: #999;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.neo-recipes-send {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+/* 💾 保存弹窗内的「📝 提示词 / 🍱 配方」模式切换 */
+.rs-save-mode-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.rs-save-mode-btn {
+    flex: 1;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    color: #ccc;
+    padding: 5px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.rs-save-mode-btn.active {
+    background: #5090cc;
+    border-color: #5090cc;
+    color: #fff;
+}
+
+.rs-recipe-hint {
+    font-size: 11px;
+    color: #9aa4b0;
+    margin: 6px 0 2px;
+    line-height: 1.4;
+}
+
