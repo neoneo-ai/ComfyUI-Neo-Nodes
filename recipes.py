@@ -20,19 +20,42 @@ from .gallery import (
 
 CURRENT_DIR = Path(__file__).parent.resolve()
 RECIPES_DIR = CURRENT_DIR / "recipes"
+CUSTOM_DIR = RECIPES_DIR / "custom"      # 用户保存的配方
+PRESETS_DIR = RECIPES_DIR / "presets"    # 内置预设（只读）
 
 _sanitize_name_re = re.compile(r"[^\w\- ]+")  # keep letters/digits/_/- and spaces
 
 
 def _ensure_dirs() -> None:
-    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
+    for d in (RECIPES_DIR, CUSTOM_DIR, PRESETS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+    # 旧版直接放在 recipes/ 下的配方目录迁移到 custom/
+    for p in RECIPES_DIR.iterdir():
+        if p.is_dir() and p.name not in ("custom", "presets") and (p / "recipe.json").exists():
+            target = CUSTOM_DIR / p.name
+            if not target.exists():
+                shutil.move(str(p), str(target))
+
+
+def _valid_name(name: str) -> bool:
+    return bool(name) and ".." not in name and "/" not in name and "\\" not in name
+
+
+def _find_recipe_dir(name: str) -> Path | None:
+    """Locate a recipe folder; user recipes (custom) take precedence over presets."""
+    if not _valid_name(name):
+        return None
+    for base in (CUSTOM_DIR, PRESETS_DIR):
+        if (base / name / "recipe.json").is_file():
+            return base / name
+    return None
 
 
 def _kind_of(asset_file: Path) -> str:
     return "video" if asset_file.suffix.lower() in VIDEO_EXTENSIONS else "image"
 
 
-def _scan_recipe_dir(recipe_dir: Path) -> dict | None:
+def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
     """Return recipe metadata (name, prompt, asset list + cover) for one folder."""
     meta_path = recipe_dir / "recipe.json"
     if not meta_path.exists():
@@ -78,9 +101,10 @@ def _scan_recipe_dir(recipe_dir: Path) -> dict | None:
 
     return {
         "name": recipe_dir.name,
-        "source": "custom",
+        "source": source,
         "prompt": meta.get("prompt", ""),
         "created_at": meta.get("created_at", ""),
+        "mtime": meta_path.stat().st_mtime,
         "asset_count": len(assets),
         "cover": cover,
         "assets": assets,
@@ -136,12 +160,13 @@ def _copy_ref_into_assets(ref: dict, assets_dir: Path) -> str | None:
 async def rs_recipes_list(request):
     _ensure_dirs()
     recipes = []
-    for p in sorted(RECIPES_DIR.iterdir()):
-        if not p.is_dir():
-            continue
-        meta = _scan_recipe_dir(p)
-        if meta:
-            recipes.append(meta)
+    for source, base in (("preset", PRESETS_DIR), ("custom", CUSTOM_DIR)):
+        for p in sorted(base.iterdir()):
+            if not p.is_dir():
+                continue
+            meta = _scan_recipe_dir(p, source)
+            if meta:
+                recipes.append(meta)
     return web.json_response(recipes)
 
 
@@ -150,10 +175,11 @@ async def rs_recipes_load(request):
     try:
         data = await request.json()
         name = data.get("name", "")
-        recipe_dir = RECIPES_DIR / name
-        meta = _scan_recipe_dir(recipe_dir)
-        if meta is None:
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
             return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        source = "custom" if recipe_dir.parent == CUSTOM_DIR else "preset"
+        meta = _scan_recipe_dir(recipe_dir, source)
         return web.json_response({"success": True, "recipe": meta})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
@@ -170,7 +196,9 @@ async def rs_recipes_save(request):
             return web.json_response({"success": False, "error": "Invalid name"}, status=400)
 
         _ensure_dirs()
-        recipe_dir = RECIPES_DIR / name
+        if (PRESETS_DIR / name / "recipe.json").is_file():
+            return web.json_response({"success": False, "error": "Name already used by a preset recipe"}, status=409)
+        recipe_dir = CUSTOM_DIR / name
         assets_dir = recipe_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -202,9 +230,11 @@ async def rs_recipes_delete(request):
     try:
         data = await request.json()
         name = data.get("name", "")
-        recipe_dir = RECIPES_DIR / name
-        if not recipe_dir.exists() or not recipe_dir.is_dir():
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
             return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        if recipe_dir.parent == PRESETS_DIR:
+            return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
         shutil.rmtree(recipe_dir, ignore_errors=True)
         return web.json_response({"success": True})
     except Exception as e:
@@ -218,8 +248,9 @@ async def rs_recipes_asset(request):
     if not recipe or not file or ".." in recipe or ".." in file or "/" in file or "\\" in file:
         return web.Response(status=400)
 
-    asset_path = RECIPES_DIR / recipe / "assets" / file
-    if not asset_path.is_file():
+    recipe_dir = _find_recipe_dir(recipe)
+    asset_path = recipe_dir / "assets" / file if recipe_dir else None
+    if asset_path is None or not asset_path.is_file():
         return web.Response(status=404)
 
     suffix = asset_path.suffix.lower()
@@ -240,11 +271,13 @@ async def rs_recipes_send_to_workflow(request):
     try:
         data = await request.json()
         name = data.get("name", "")
-        meta = _scan_recipe_dir(RECIPES_DIR / name)
-        if meta is None:
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
             return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        source = "custom" if recipe_dir.parent == CUSTOM_DIR else "preset"
+        meta = _scan_recipe_dir(recipe_dir, source)
 
-        assets_dir = RECIPES_DIR / name / "assets"
+        assets_dir = recipe_dir / "assets"
         out_assets = []
         for asset in meta["assets"]:
             asset_path = assets_dir / asset["file"]

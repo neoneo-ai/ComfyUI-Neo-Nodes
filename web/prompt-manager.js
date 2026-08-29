@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
-import { collectWorkflowAssets, saveRecipe } from "./recipes.js";
+import { collectWorkflowAssets, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow } from "./recipes.js";
 
 // Remember last opened settings tab
 let _lastSettingsTab = "llm"; // "llm" or "templates"
@@ -2132,6 +2132,7 @@ function createPromptManagerUI() {
     presetListBody.style.scrollbarColor = "#5090cc #1a1a1a";
 
     let pendingDeleteName = null;
+    let pendingDeleteIsRecipe = false;
     let context = null;
     let isLoading = false;
     let isListOpen = false;
@@ -2256,20 +2257,36 @@ function createPromptManagerUI() {
             presetListBody.appendChild(loadingDiv);
 
             try {
-                const list = await listPrompts();
+                const [list, recipes] = await Promise.all([listPrompts(), listRecipes()]);
 
                 if (loadingDiv.parentNode) loadingDiv.remove();
 
-                if (!list.length) {
+                // 配方并入预设列表统一展示（立方体图标区分）；source 归一化为 presets/custom
+                const recipeItems = (Array.isArray(recipes) ? recipes : []).map(r => ({
+                    name: r.name,
+                    tags: [],
+                    source: r.source === "preset" ? "presets" : "custom",
+                    _mtime: r.mtime || 0,
+                    isRecipe: true,
+                    prompt: r.prompt || "",
+                    assetCount: r.asset_count || 0,
+                }));
+                const merged = [...list, ...recipeItems];
+
+                if (!merged.length) {
                     presetListBody.textContent = "No presets found";
                     isLoading = false;
                     return;
                 }
 
-                // 集合（collections/）条目置顶展示，避免混在普通预设里被淹没
+                // 集合（collections/）条目置顶展示，避免混在普通预设里被淹没；
+                // 其余条目（提示词+配方）按来源分组、组内 mtime 降序统一排序
+                const isCollection = item => isCollectionName(typeof item === 'string' ? item : item.name);
+                const byMtime = (a, b) => (b._mtime || 0) - (a._mtime || 0);
                 const ordered = [
-                    ...list.filter(item => isCollectionName(typeof item === 'string' ? item : item.name)),
-                    ...list.filter(item => !isCollectionName(typeof item === 'string' ? item : item.name)),
+                    ...merged.filter(isCollection),
+                    ...merged.filter(item => !isCollection(item) && item.source !== "presets").sort(byMtime),
+                    ...merged.filter(item => !isCollection(item) && item.source === "presets").sort(byMtime),
                 ];
 
                 ordered.forEach(item => {
@@ -2297,6 +2314,13 @@ function createPromptManagerUI() {
                         contentSpan.textContent = shown;
                     }
 
+                    if (item.isRecipe) {
+                        const icon = mkEl("span", "rs-recipe-icon");
+                        icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
+                        contentSpan.prepend(icon);
+                        contentSpan.title = `${name}（${source === "presets" ? "内置" : "自定义"}配方 · ${item.assetCount} 个资源）`;
+                    }
+
                     const sourceBadge = mkEl("span", "rs-source-badge");
                     sourceBadge.textContent = source === "presets" ? "SYS" : "USR";
                     sourceBadge.title = source === "presets" ? "System preset (cannot delete)" : "User preset";
@@ -2312,6 +2336,13 @@ function createPromptManagerUI() {
 
                         if (isCollectionName(name)) {
                             openCollection(name, source);
+                            return;
+                        }
+
+                        if (item.isRecipe) {
+                            fillFromEntry({ text: item.prompt || "" });
+                            // 与侧边栏一键发送一致：同时按参数位还原资源；提示词已由 fillFromEntry 写入当前节点
+                            applyRecipeToWorkflow({ name: item.name }, { fillPrompt: false });
                             return;
                         }
 
@@ -2339,7 +2370,8 @@ function createPromptManagerUI() {
                         deleteBtn.onclick = async (e) => {
                             e.stopPropagation();
                             pendingDeleteName = name;
-                            deleteText.textContent = `Delete "${name}"?`;
+                            pendingDeleteIsRecipe = !!item.isRecipe;
+                            deleteText.textContent = item.isRecipe ? `Delete recipe "${name}"?` : `Delete "${name}"?`;
                             deleteConfirmOverlay.style.display = "block";
                         };
                         row.appendChild(deleteBtn);
@@ -2606,18 +2638,21 @@ function createPromptManagerUI() {
 
         deleteOk.addEventListener("click", async () => {
             if (pendingDeleteName) {
-                await deletePrompt(pendingDeleteName);
+                if (pendingDeleteIsRecipe) await deleteRecipe(pendingDeleteName);
+                else await deletePrompt(pendingDeleteName);
                 deleteConfirmOverlay.style.display = "none";
                 if (!quickInput.value.trim()) {
                     loadPresetDropdown();
                 }
                 pendingDeleteName = null;
+                pendingDeleteIsRecipe = false;
             }
         });
 
         deleteCancel.addEventListener("click", () => {
             deleteConfirmOverlay.style.display = "none";
             pendingDeleteName = null;
+            pendingDeleteIsRecipe = false;
         });
 
         async function loadModelsIntoSettings() {

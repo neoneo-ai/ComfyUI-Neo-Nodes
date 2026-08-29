@@ -239,8 +239,9 @@ function setWidgetValue(target, filename) {
     target.node.graph?.setDirtyCanvas(true, true);
 }
 
-/** 一键发送：与保存时的编码规则互逆，把资产还原到原参数位置，禁用节点不参与；提示词写入 Neo Prompt 节点。 */
-export async function applyRecipeToWorkflow(recipe) {
+/** 一键发送：与保存时的编码规则互逆，把资产还原到原参数位置，禁用节点不参与；
+ *  fillPrompt=false 时跳过 applyPromptToNeo（预设列表入口已把提示词写入当前节点）。 */
+export async function applyRecipeToWorkflow(recipe, { fillPrompt = true } = {}) {
     const result = await sendRecipeToWorkflow(recipe.name);
     if (!result.success) {
         app.extensionManager.toast.add({ severity: 'error', summary: '发送失败', detail: result.error, life: 4000 });
@@ -267,7 +268,7 @@ export async function applyRecipeToWorkflow(recipe) {
         }
     }
 
-    const promptApplied = applyPromptToNeo(recipe.prompt);
+    const promptApplied = fillPrompt ? applyPromptToNeo(recipe.prompt) : false;
     const detail = [`${recipe.name}：按参数位还原 ${applied} 个资源`];
     if (missing) detail.push(`${missing} 个无可用节点`);
     if (promptApplied) detail.push('提示词已写入');
@@ -300,6 +301,103 @@ export async function createRecipesPanel() {
     const listEl = $el('div', { className: 'neo-recipes-list' });
     root.appendChild(listEl);
 
+    /** 详情浮层：完整标题 + 完整提示词 + 资源网格（视频可预览）+ 发送入口。 */
+    function openDetail(r) {
+        document.querySelector('.neo-recipes-detail')?.remove();
+
+        const grid = $el('div', { className: 'neo-recipes-detail-grid' });
+        for (const a of r.assets || []) {
+            const media = a.kind === 'video'
+                ? $el('video', { src: assetUrl(r.name, a.file), controls: true, preload: 'metadata' })
+                : $el('img', { src: assetUrl(r.name, a.file), alt: a.file, loading: 'lazy' });
+            grid.appendChild($el('div', { className: 'neo-recipes-detail-asset' }, [
+                media,
+                $el('div', { className: 'neo-recipes-detail-file', textContent: a.file, title: a.file })
+            ]));
+        }
+        if (!grid.children.length) {
+            grid.appendChild($el('div', { className: 'neo-recipes-detail-file', textContent: '（无资产）' }));
+        }
+
+        const sendBtn = $el('button', {
+            className: 'rs-btn neo-recipes-detail-send',
+            textContent: '✈️ 发送到工作流',
+            onclick: async () => {
+                sendBtn.disabled = true;
+                const ok = await applyRecipeToWorkflow(r);
+                sendBtn.disabled = false;
+                if (ok) { overlay.remove(); await renderList(); }
+            }
+        });
+        const closeBtn = $el('button', { className: 'rs-btn neo-recipes-detail-close', textContent: '关闭', onclick: () => overlay.remove() });
+
+        const body = $el('div', { className: 'neo-recipes-detail-body' }, [
+            $el('div', { className: 'neo-recipes-detail-head' }, [
+                $el('div', { className: 'neo-recipes-detail-name', textContent: r.name }),
+                $el('div', { className: 'neo-recipes-detail-source', textContent: r.source === 'preset' ? '内置预设' : '我的配方' })
+            ]),
+            $el('div', { className: 'neo-recipes-detail-prompt', textContent: r.prompt || '（无提示词）' }),
+            grid,
+            $el('div', { className: 'neo-recipes-detail-foot' }, [closeBtn, sendBtn])
+        ]);
+        const overlay = $el('div', { className: 'neo-recipes-detail' }, [body]);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    }
+
+    function buildCard(r) {
+        const card = $el('div', { className: 'neo-recipes-card' });
+
+        const cover = $el('div', { className: 'neo-recipes-card-cover', title: '查看资源', onclick: () => openDetail(r) });
+        const coverFile = r.cover || (r.assets?.[0]?.kind === 'image' ? r.assets[0].file : null);
+        if (coverFile) {
+            const img = $el('img', { src: assetUrl(r.name, coverFile), alt: r.name });
+            cover.appendChild(img);
+        } else {
+            cover.appendChild($el('div', { className: 'neo-recipes-card-no-cover', textContent: r.assets?.length ? '🎬' : '📝' }));
+        }
+
+        const body = $el('div', { className: 'neo-recipes-card-body' }, [
+            $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: '查看资源', onclick: () => openDetail(r) }),
+            $el('div', { className: 'neo-recipes-card-meta', textContent: `${r.asset_count ?? 0} 个资源 · ${(r.prompt || '').slice(0, 120) || '无提示词'}` })
+        ]);
+
+        const sendBtn = $el('button', {
+            className: 'rs-btn rs-action-btn neo-recipes-send',
+            title: '一键发送到工作流',
+            textContent: '✈️',
+            onclick: async (e) => {
+                e.stopPropagation();
+                sendBtn.disabled = true;
+                const ok = await applyRecipeToWorkflow(r);
+                sendBtn.disabled = false;
+                if (ok) await renderList();
+            }
+        });
+
+        const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
+        const actions = $el('div', { className: 'neo-recipes-card-actions' }, [sendBtn]);
+        if (r.source !== 'preset') {
+            const delBtn = $el('button', {
+                className: 'rs-btn rs-action-btn neo-recipes-delete',
+                title: '删除配方',
+                textContent: '🗑',
+                onclick: async (e) => {
+                    e.stopPropagation();
+                    if (!confirm(`删除配方「${r.name}」？`)) return;
+                    delBtn.disabled = true;
+                    const res = await deleteRecipe(r.name);
+                    delBtn.disabled = false;
+                    if (res?.success) await renderList();
+                    else app.extensionManager.toast.add({ severity: 'error', summary: '删除失败', detail: res?.error || 'Unknown error', life: 4000 });
+                }
+            });
+            actions.append(delBtn);
+        }
+        card.append(top, actions);
+        return card;
+    }
+
     async function renderList() {
         listEl.innerHTML = '';
         let recipes = [];
@@ -310,38 +408,14 @@ export async function createRecipesPanel() {
             return;
         }
 
-        for (const r of recipes) {
-            const card = $el('div', { className: 'neo-recipes-card' });
-
-            const cover = $el('div', { className: 'neo-recipes-card-cover' });
-            const coverFile = r.cover || (r.assets?.[0]?.kind === 'image' ? r.assets[0].file : null);
-            if (coverFile) {
-                const img = $el('img', { src: assetUrl(r.name, coverFile), alt: r.name });
-                cover.appendChild(img);
-            } else {
-                cover.appendChild($el('div', { className: 'neo-recipes-card-no-cover', textContent: r.assets?.length ? '🎬' : '📝' }));
-            }
-
-            const body = $el('div', { className: 'neo-recipes-card-body' }, [
-                $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: r.name }),
-                $el('div', { className: 'neo-recipes-card-meta', textContent: `${r.asset_count ?? 0} 个资源 · ${(r.prompt || '').slice(0, 40) || '无提示词'}` })
-            ]);
-
-            const sendBtn = $el('button', {
-                className: 'rs-btn rs-action-btn neo-recipes-send',
-                title: '一键发送到工作流',
-                textContent: '✈️',
-                onclick: async (e) => {
-                    e.stopPropagation();
-                    sendBtn.disabled = true;
-                    const ok = await applyRecipeToWorkflow(r);
-                    sendBtn.disabled = false;
-                    if (ok) await renderList();
-                }
-            });
-
-            card.append(cover, body, sendBtn);
-            listEl.appendChild(card);
+        const groups = [
+            { label: '我的配方', items: recipes.filter(r => r.source !== 'preset') },
+            { label: '内置预设', items: recipes.filter(r => r.source === 'preset') },
+        ];
+        for (const g of groups) {
+            if (!g.items.length) continue;
+            listEl.appendChild($el('div', { className: 'neo-recipes-group-title', textContent: g.label }));
+            for (const r of g.items) listEl.appendChild(buildCard(r));
         }
     }
 
