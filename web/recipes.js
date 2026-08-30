@@ -84,6 +84,7 @@ function buildComponents(nodes, linkMap) {
 }
 
 // 节点的媒体输出连到目标节点指定类型输入槽的参数序号（1-based）；无连线返回 null
+// 同时返回 targetId（连到的下游目标节点 id），供还原端「同目标节点的分组/计数」
 function computeSlotNo(n, slotType, linkMap, nodeById) {
     for (const o of n.outputs || []) {
         const lids = Array.isArray(o.links) ? o.links : (o.link != null ? [o.link] : []);
@@ -97,7 +98,7 @@ function computeSlotNo(n, slotType, linkMap, nodeById) {
             for (let i = 0; i < (target.inputs || []).length; i++) {
                 if (String(target.inputs[i].type).toUpperCase() !== slotType) continue;
                 count++;
-                if (i === slotIdx) return count;
+                if (i === slotIdx) return { slot: count, targetId: String(link.target_id) };
             }
         }
     }
@@ -134,10 +135,12 @@ function findMediaValueFromWidgetsValues(widgetsValues) {
  * 扫描工作流中的 LoadImage / LoadVideo 节点，保存与还原共用同一编码规则：
  *   - 跳过禁用（BYPASS/NEVER）状态的节点；
  *   - 用 graphToPrompt 序列化连线，计算输出连到目标节点 IMAGE/VIDEO 输入槽的
- *     参数序号（1-based），未连线为 null；
- *   - 返回 { media, comps, sizes }：media 元素为 { node, live, widget, value, kind, slot }，
- *     widget 是活动节点上可写的媒体 widget；comps 为 nodeId -> 连通子图根 nodeId，
- *     sizes 为子图根 -> 节点数（含禁用节点）。
+ *     参数序号（1-based）与目标节点 id，未连线为 null；
+ *   - 返回 { media, comps, sizes, disabledConn }：media 元素为
+ *     { node, live, widget, value, kind, slot, targetId }，widget 是活动节点上
+ *     可写的媒体 widget；comps 为 nodeId -> 连通子图根 nodeId，sizes 为子图根 ->
+ *     节点数（含禁用节点）；disabledConn 为「已连线但被禁用的 Load 节点」，
+ *     用于还原端同目标节点的自动 enable/disable 对齐。
  */
 async function scanMediaNodes() {
     let nodes = null;
@@ -163,8 +166,8 @@ async function scanMediaNodes() {
     const liveById = new Map((app.graph?._nodes || []).map(n => [String(n.id), n]));
 
     const media = [];
+    const disabledConn = [];
     for (const n of nodes) {
-        if (isNodeDisabled(n)) continue;
         const cls = String(n.comfyClass || n.type || '');
         const isLoadImage = /load.?image/i.test(cls);
         const isLoadVideo = /load.?video/i.test(cls);
@@ -173,10 +176,16 @@ async function scanMediaNodes() {
         const live = liveById.get(String(n.id)) || null;
         const widget = live ? findMediaWidget(live, isLoadImage, isLoadVideo) : null;
         const value = widget ? widget.value : findMediaValueFromWidgetsValues(n.widgets_values);
-        const slot = computeSlotNo(n, kind.toUpperCase(), linkMap, nodeById);
-        media.push({ node: n, live, widget, value, kind, slot });
+        const slotInfo = computeSlotNo(n, kind.toUpperCase(), linkMap, nodeById);
+        const slot = slotInfo?.slot ?? null;
+        const targetId = slotInfo?.targetId ?? null;
+        if (isNodeDisabled(n)) {
+            if (slot != null && live) disabledConn.push({ node: n, live, widget, kind, slot, targetId });
+        } else {
+            media.push({ node: n, live, widget, value, kind, slot, targetId });
+        }
     }
-    return { media, comps, sizes };
+    return { media, comps, sizes, disabledConn };
 }
 
 /**
@@ -281,11 +290,58 @@ function setWidgetValue(target, filename) {
     target.node.graph?.setDirtyCanvas(true, true);
 }
 
+/**
+ * 还原前的自动对齐：当配方资产数与目标子图内已启用的 conn Load 节点数不一致，
+ * 且该子图内同类节点（启用+禁用）全部连到同一个下游目标节点（同一个参数槽组）、
+ * 总数恰为配方资产数，则按参数位升序启用组内 BYPASS/Never 的节点补齐差额。
+ * 约束：仅影响目标子图内同一 targetId 的同类 Load 节点；只启用、不自动禁用已启用节点。
+ * @returns {Promise<boolean>} 是否启用过节点（调用方据此重扫刷新统计）
+ */
+async function autoToggleByTarget(targetRoot, want, disabledConn, scanned, comps) {
+    let toggled = false;
+    for (const kind of ['image', 'video']) {
+        if (!want[kind]) continue;
+        const need = want[kind];
+        const enabled = scanned.filter(s => s.slot != null && s.widget && !isNodeDisabled(s.node) && comps.get(String(s.node.id)) === targetRoot && s.kind === kind);
+        const currentEnabled = enabled.length;
+        if (currentEnabled === need) continue;
+
+        // 按 targetId 分组 disabledConn，找唯一一个目标节点 T
+        const byTarget = new Map();
+        for (const d of disabledConn) {
+            if (comps.get(String(d.node.id)) !== targetRoot || d.kind !== kind || d.targetId == null) continue;
+            let arr = byTarget.get(d.targetId);
+            if (!arr) byTarget.set(d.targetId, arr = []);
+            arr.push(d);
+        }
+
+        if (byTarget.size !== 1) continue; // 多个目标节点或没有禁用节点 → 该类不对齐
+
+        const [targetId, disabledNodes] = [...byTarget][0];
+        const enabledForTarget = enabled.filter(s => s.targetId === targetId);
+        const needToEnable = need - enabledForTarget.length;
+        // 仅当「同一目标节点的启用+禁用总数」恰好等于 want 时对齐；启用数已超出则不自动禁用
+        if (needToEnable <= 0 || enabledForTarget.length + disabledNodes.length !== need) continue;
+
+        // 按 slot 升序启用禁用节点
+        disabledNodes.sort((a, b) => a.slot - b.slot);
+        for (let i = 0; i < needToEnable; i++) {
+            const d = disabledNodes[i];
+            if (!d.live || !isNodeDisabled(d.live)) continue;
+            d.live.mode = 0; // 启用
+            d.live.graph?.setDirtyCanvas(true, true);
+            toggled = true;
+        }
+    }
+    return toggled;
+}
+
 /** 一键发送：与保存时的编码规则互逆，把资产还原到原参数位置，禁用节点不参与。
  *  资产与提示词只写进同一个连通子图：节点内预设入口（fillPrompt=false）以 anchorNode
- *  所在子图为准；侧边栏入口找「资源数与连线 Load 节点数一致（且含 Neo Prompt）」的子图，
- *  唯一匹配直接还原，无匹配或多个并列时弹下拉由用户指定；整体禁用的子图不参与，
- *  容纳不下的部分提示只还原了部分。 */
+ *  所在子图为准（同样先做自动对齐，全程不弹窗）；侧边栏入口找「资源数与连线 Load
+ *  节点数一致（且含 Neo Prompt）」的子图，
+ *  唯一匹配或画布仅一张子图时直接还原（数量差异由自动对齐补齐），多张子图无匹配或
+ *  并列时弹下拉由用户指定；整体禁用的子图不参与，容纳不下的部分提示只还原了部分。 */
 export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorNode = null } = {}) {
     const result = await sendRecipeToWorkflow(recipe.name);
     if (!result.success) {
@@ -293,7 +349,7 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         return false;
     }
 
-    const { media: scanned, comps, sizes } = await scanMediaNodes();
+    let { media: scanned, comps, sizes, disabledConn } = await scanMediaNodes();
     // 按子图统计可用还原目标：已连线的 Load 节点（图片/视频分开）与可写的 Neo Prompt；未连线节点不参与
     const statByRoot = new Map();
     const statOf = (root) => {
@@ -316,12 +372,13 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
 
     // 选定目标子图：anchorNode 直接指定；否则按数量一致性精确匹配
     let target = null;
+    const want = { image: 0, video: 0 };
+    for (const a of result.assets) if (want[a.kind] != null) want[a.kind]++;
+
     if (anchorNode) {
         const root = comps.get(String(anchorNode.id));
         if (root != null) target = { root, stat: statOf(root) };
     } else {
-        const want = { image: 0, video: 0 };
-        for (const a of result.assets) if (want[a.kind] != null) want[a.kind]++;
         const needPrompt = fillPrompt && !!recipe.prompt;
         const candidates = [...statByRoot.keys()]
             .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
@@ -331,8 +388,11 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         if (matched.length === 1) {
             target = matched[0];
         } else if (!candidates.length) {
-            app.extensionManager.toast.add({ severity: 'info', summary: '配方已发送', detail: `${recipe.name}：工作流中无可匹配的子图，未还原`, life: 4000 });
+            app.extensionManager.toast.add({ severity: 'info', summary: '配方已发送', detail: `${recipe.name}：工作流程中无可匹配的子图，未还原`, life: 4000 });
             return true;
+        } else if (candidates.length === 1) {
+            // 画布上只有一张工作流图：无需确认，数量差异交给下面的自动对齐
+            target = candidates[0];
         } else {
             // 数量对不上或多个子图并列：由用户在下拉中指定目标子图，取消则不动工作流
             const options = (matched.length ? matched : candidates).map(({ root, stat, size }, i) => ({
@@ -342,6 +402,33 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
             const picked = await chooseSubgraphDialog(options);
             if (picked == null) return false;
             target = { root: picked, stat: statByRoot.get(picked) };
+        }
+    }
+
+    // 自动对齐：当资产数与已启用 conn Load 节点数不一致时，启用同目标节点的禁用节点补齐
+    // （节点内入口与侧边栏入口均适用，全程不弹窗）
+    if (target) {
+        const toggled = await autoToggleByTarget(target.root, want, disabledConn, scanned, comps);
+        if (toggled) {
+            // 重新扫描以获取更新后的节点状态
+            const { media: rescanned, comps: recomp } = await scanMediaNodes();
+            const rescanStatByRoot = new Map();
+            const rescanStatOf = (root) => {
+                let stat = rescanStatByRoot.get(root);
+                if (!stat) rescanStatByRoot.set(root, stat = { image: [], video: [], prompt: false });
+                return stat;
+            };
+            for (const s of rescanned) {
+                if (s.slot == null || !s.widget) continue;
+                const root = recomp.get(String(s.node.id));
+                if (root != null) rescanStatOf(root)[s.kind].push(s);
+            }
+            for (const n of promptNodes) {
+                const root = recomp.get(String(n.id));
+                if (root != null) rescanStatOf(root).prompt = true;
+            }
+            target.stat = rescanStatOf(target.root);
+            comps = recomp; // 更新 comps 用于后续 Neo Prompt 查找
         }
     }
 

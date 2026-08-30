@@ -285,7 +285,7 @@
 
 /* Preset name input */
 .rs-preset-name-input {
-    position: absolute;
+    position: fixed;
     display: none;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
@@ -357,7 +357,7 @@
 
 /* Delete confirm */
 .rs-delete-confirm-overlay {
-    position: absolute;
+    position: fixed;
     display: none;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);

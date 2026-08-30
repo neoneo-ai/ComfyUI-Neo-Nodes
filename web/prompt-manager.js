@@ -2300,8 +2300,9 @@ function createPromptManagerUI() {
     // quickInputWrapper at the bottom of the node
     root.appendChild(quickInputWrapper);
 
-    root.appendChild(presetNameInput);
-    root.appendChild(deleteConfirmOverlay);
+    // 挂 body 防节点边界裁剪（fixed 定位居中于视口）
+    document.body.appendChild(presetNameInput);
+    document.body.appendChild(deleteConfirmOverlay);
     root.appendChild(settingsModal.overlay);
     root.appendChild(settingsModal.modal);
 
