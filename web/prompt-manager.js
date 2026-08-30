@@ -2347,9 +2347,9 @@ function createPromptManagerUI() {
 
             if (saveMode === "recipe") {
                 recipeHint.textContent = "⏳ 正在收集工作流资源...";
-                collectWorkflowAssets().then(assets => {
+                collectWorkflowAssets(node).then(assets => {
                     const p = (customTextarea?.value || currentText).trim();
-                    recipeHint.textContent = `将收集 ${assets.length} 个资源（LoadImage/LoadVideo）${p ? " + 当前提示词" : ""}。`;
+                    recipeHint.textContent = `将收集 ${assets.length} 个资源（当前子图中已连线的 LoadImage/LoadVideo）${p ? " + 当前提示词" : ""}。`;
                 }).catch(e => {
                     console.error("[Neo Recipes] Collect failed:", e);
                     recipeHint.textContent = "⚠️ 工作流资源收集失败";
@@ -2409,7 +2409,7 @@ function createPromptManagerUI() {
 
         async function saveRecipeFromModal(name) {
             try {
-                const assets = await collectWorkflowAssets();
+                const assets = await collectWorkflowAssets(node);
                 const promptText = customTextarea?.value || textWidget?.value || "";
                 const result = await saveRecipe(name, promptText, assets);
                 if (result.success) {
@@ -2533,8 +2533,9 @@ function createPromptManagerUI() {
 
                         if (item.isRecipe) {
                             fillFromEntry({ text: item.prompt || "" });
-                            // 与侧边栏一键发送一致：同时按参数位还原资源；提示词已由 fillFromEntry 写入当前节点
-                            applyRecipeToWorkflow({ name: item.name }, { fillPrompt: false });
+                            // 与侧边栏一键发送一致：同时按参数位还原资源；提示词已由 fillFromEntry 写入当前节点，
+                            // 资产只还原到当前节点所在子图，与其他子图无关
+                            applyRecipeToWorkflow({ name: item.name }, { fillPrompt: false, anchorNode: node });
                             return;
                         }
 

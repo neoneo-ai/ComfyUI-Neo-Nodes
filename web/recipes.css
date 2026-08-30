@@ -283,3 +283,19 @@
 .neo-recipes-detail-close {
     cursor: pointer;
 }
+
+/* 子图选择下拉：多个子图并列匹配或数量不匹配时由用户指定还原目标 */
+.neo-recipes-subgraph-body {
+    width: min(460px, 92vw);
+}
+
+.neo-recipes-subgraph-select {
+    width: 100%;
+    background: #262626;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}

@@ -51,14 +51,36 @@ function buildLinkMap(serializedLinks) {
     if (Array.isArray(serializedLinks)) {
         for (const l of serializedLinks) {
             // [id, origin_id, origin_slot, target_id, target_slot, type]
-            if (Array.isArray(l)) linkMap.set(String(l[0]), { target_id: l[3], target_slot: l[4] });
+            if (Array.isArray(l)) linkMap.set(String(l[0]), { origin_id: l[1], target_id: l[3], target_slot: l[4] });
         }
     } else {
         const gl = app.graph?.links;
         const iter = gl && typeof gl.forEach === 'function' ? gl : Object.values(gl || {});
-        iter.forEach(l => { if (l && l.target_id != null) linkMap.set(String(l.id), l); });
+        iter.forEach(l => {
+            if (l && l.target_id != null) linkMap.set(String(l.id), { origin_id: l.origin_id, target_id: l.target_id, target_slot: l.target_slot });
+        });
     }
     return linkMap;
+}
+
+/** 连通子图：把画布连线当无向边做并查集，返回 nodeId -> 子图根 nodeId。
+ * 同一画布上互不相连的多张工作流图各自成一个子图；disable 节点仍作桥接参与划分。 */
+function buildComponents(nodes, linkMap) {
+    const parent = new Map(nodes.map(n => [String(n.id), String(n.id)]));
+    const find = (x) => {
+        let root = x;
+        while (parent.get(root) !== root) root = parent.get(root);
+        while (parent.get(x) !== root) { const next = parent.get(x); parent.set(x, root); x = next; }
+        return root;
+    };
+    for (const link of linkMap.values()) {
+        const a = String(link.origin_id), b = String(link.target_id);
+        if (!parent.has(a) || !parent.has(b)) continue;
+        const ra = find(a), rb = find(b);
+        if (ra !== rb) parent.set(ra, rb);
+    }
+    for (const id of parent.keys()) find(id);
+    return parent;
 }
 
 // 节点的媒体输出连到目标节点指定类型输入槽的参数序号（1-based）；无连线返回 null
@@ -113,7 +135,9 @@ function findMediaValueFromWidgetsValues(widgetsValues) {
  *   - 跳过禁用（BYPASS/NEVER）状态的节点；
  *   - 用 graphToPrompt 序列化连线，计算输出连到目标节点 IMAGE/VIDEO 输入槽的
  *     参数序号（1-based），未连线为 null；
- *   - 返回 { node, live, widget, value, kind, slot }，widget 是活动节点上可写的媒体 widget。
+ *   - 返回 { media, comps, sizes }：media 元素为 { node, live, widget, value, kind, slot }，
+ *     widget 是活动节点上可写的媒体 widget；comps 为 nodeId -> 连通子图根 nodeId，
+ *     sizes 为子图根 -> 节点数（含禁用节点）。
  */
 async function scanMediaNodes() {
     let nodes = null;
@@ -129,10 +153,16 @@ async function scanMediaNodes() {
     }
     if (!Array.isArray(nodes)) nodes = app.graph?._nodes || [];
     const linkMap = buildLinkMap(serializedLinks);
+    const comps = buildComponents(nodes, linkMap);
+    const sizes = new Map();
+    for (const n of nodes) {
+        const root = comps.get(String(n.id));
+        sizes.set(root, (sizes.get(root) || 0) + 1);
+    }
     const nodeById = new Map(nodes.map(n => [String(n.id), n]));
     const liveById = new Map((app.graph?._nodes || []).map(n => [String(n.id), n]));
 
-    const out = [];
+    const media = [];
     for (const n of nodes) {
         if (isNodeDisabled(n)) continue;
         const cls = String(n.comfyClass || n.type || '');
@@ -144,28 +174,26 @@ async function scanMediaNodes() {
         const widget = live ? findMediaWidget(live, isLoadImage, isLoadVideo) : null;
         const value = widget ? widget.value : findMediaValueFromWidgetsValues(n.widgets_values);
         const slot = computeSlotNo(n, kind.toUpperCase(), linkMap, nodeById);
-        out.push({ node: n, live, widget, value, kind, slot });
+        media.push({ node: n, live, widget, value, kind, slot });
     }
-    return out;
+    return { media, comps, sizes };
 }
 
 /**
  * 扫描工作流，收集媒体文件引用（保存用）。与还原共用 scanMediaNodes 的编码规则：
- * 有参数位的资源（连到目标节点 IMAGE/VIDEO 输入槽）按参数序号在前，
- * 未连线资源按图序在后，图片组在前、视频组在后。
+ * 只收集 anchorNode（当前 Neo Prompt 节点）所在连通子图内、输出已连线的资源，
+ * 图片组按参数序号在前、视频组在后；其他子图与未连线节点一律不保存。
  */
-export async function collectWorkflowAssets() {
-    const scanned = await scanMediaNodes();
-    const pick = (kind, conn) => {
-        const arr = scanned.filter(s => s.kind === kind && (conn ? s.slot != null : s.slot == null));
-        if (conn) arr.sort((a, b) => a.slot - b.slot);
-        return arr.map(s => widgetValueToRef(s.value)).filter(Boolean);
-    };
+export async function collectWorkflowAssets(anchorNode) {
+    const { media: scanned, comps } = await scanMediaNodes();
+    const root = anchorNode ? comps.get(String(anchorNode.id)) : null;
+    const pick = (kind) => scanned
+        .filter(s => s.kind === kind && s.slot != null && comps.get(String(s.node.id)) === root)
+        .sort((a, b) => a.slot - b.slot)
+        .map(s => widgetValueToRef(s.value))
+        .filter(Boolean);
     // 保存时后端按此顺序写入配方 assets，还原时按同规则反解即可落回原参数位置
-    return [
-        ...pick('image', true), ...pick('image', false),
-        ...pick('video', true), ...pick('video', false),
-    ];
+    return [...pick('image'), ...pick('video')];
 }
 
 // ==========================================
@@ -208,23 +236,37 @@ export async function sendRecipeToWorkflow(name) {
 // 一键发送到工作流
 // ==========================================
 
-/** 把当前提示词写入第一个可用的 Neo Prompt 节点。 */
-function applyPromptToNeo(prompt) {
-    if (!prompt) return false;
-    let sent = false;
-    const nodes = app.graph?._nodes || [];
-    for (const n of nodes) {
-        if (sent || !n._rsPromptUIElements || isNodeDisabled(n)) continue;
-        const { customTextarea, textWidget } = n._rsPromptUIElements;
-        if (customTextarea) {
-            customTextarea.value = prompt;
-            if (textWidget) textWidget.value = prompt;
-            customTextarea.dispatchEvent(new Event('input', { bubbles: true }));
-            sent = true;
-        }
-    }
-    return sent;
+/** 子图在下拉选项里的说明文案。 */
+function describeSubgraph(index, stat, size) {
+    const parts = [];
+    if (stat.image.length) parts.push(`图片×${stat.image.length}`);
+    if (stat.video.length) parts.push(`视频×${stat.video.length}`);
+    parts.push(stat.prompt ? '含 Neo Prompt' : '无 Neo Prompt');
+    return `子图 ${index}（${parts.join(' · ')} · ${size} 节点）`;
 }
+
+/** 多个子图并列匹配或数量不匹配时，弹下拉让用户指定还原到哪个子图；取消返回 null。 */
+function chooseSubgraphDialog(options) {
+    return new Promise(resolve => {
+        const select = $el('select', { className: 'neo-recipes-subgraph-select' });
+        for (const o of options) select.appendChild($el('option', { value: o.value, textContent: o.label }));
+        const close = (value) => { overlay.remove(); resolve(value); };
+        const body = $el('div', { className: 'neo-recipes-detail-body neo-recipes-subgraph-body' }, [
+            $el('div', { className: 'neo-recipes-detail-name', textContent: '请选择还原到的子图' }),
+            $el('div', { className: 'neo-recipes-detail-prompt', textContent: '配方只还原到同一个子图。当前画布存在多个互不相连的子图，请指定目标：' }),
+            select,
+            $el('div', { className: 'neo-recipes-detail-foot' }, [
+                $el('button', { className: 'rs-btn neo-recipes-detail-close', textContent: '取消', onclick: () => close(null) }),
+                $el('button', { className: 'rs-btn neo-recipes-detail-send', textContent: '✈️ 还原到该子图', onclick: () => close(select.value) }),
+            ]),
+        ]);
+        const overlay = $el('div', { className: 'neo-recipes-detail' }, [body]);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+        document.body.appendChild(overlay);
+    });
+}
+
+
 function setWidgetValue(target, filename) {
     const { widget } = target;
     if (widget.type === 'combo') {
@@ -239,43 +281,106 @@ function setWidgetValue(target, filename) {
     target.node.graph?.setDirtyCanvas(true, true);
 }
 
-/** 一键发送：与保存时的编码规则互逆，把资产还原到原参数位置，禁用节点不参与；
- *  fillPrompt=false 时跳过 applyPromptToNeo（预设列表入口已把提示词写入当前节点）。 */
-export async function applyRecipeToWorkflow(recipe, { fillPrompt = true } = {}) {
+/** 一键发送：与保存时的编码规则互逆，把资产还原到原参数位置，禁用节点不参与。
+ *  资产与提示词只写进同一个连通子图：节点内预设入口（fillPrompt=false）以 anchorNode
+ *  所在子图为准；侧边栏入口找「资源数与连线 Load 节点数一致（且含 Neo Prompt）」的子图，
+ *  唯一匹配直接还原，无匹配或多个并列时弹下拉由用户指定；整体禁用的子图不参与，
+ *  容纳不下的部分提示只还原了部分。 */
+export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorNode = null } = {}) {
     const result = await sendRecipeToWorkflow(recipe.name);
     if (!result.success) {
         app.extensionManager.toast.add({ severity: 'error', summary: '发送失败', detail: result.error, life: 4000 });
         return false;
     }
 
-    const scanned = await scanMediaNodes();
+    const { media: scanned, comps, sizes } = await scanMediaNodes();
+    // 按子图统计可用还原目标：已连线的 Load 节点（图片/视频分开）与可写的 Neo Prompt；未连线节点不参与
+    const statByRoot = new Map();
+    const statOf = (root) => {
+        let stat = statByRoot.get(root);
+        if (!stat) statByRoot.set(root, stat = { image: [], video: [], prompt: false });
+        return stat;
+    };
+    for (const s of scanned) {
+        if (s.slot == null || !s.widget) continue;
+        const root = comps.get(String(s.node.id));
+        if (root != null) statOf(root)[s.kind].push(s);
+    }
+    const promptNodes = (app.graph?._nodes || [])
+        .filter(n => n._rsPromptUIElements?.customTextarea && !isNodeDisabled(n))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+    for (const n of promptNodes) {
+        const root = comps.get(String(n.id));
+        if (root != null) statOf(root).prompt = true;
+    }
+
+    // 选定目标子图：anchorNode 直接指定；否则按数量一致性精确匹配
+    let target = null;
+    if (anchorNode) {
+        const root = comps.get(String(anchorNode.id));
+        if (root != null) target = { root, stat: statOf(root) };
+    } else {
+        const want = { image: 0, video: 0 };
+        for (const a of result.assets) if (want[a.kind] != null) want[a.kind]++;
+        const needPrompt = fillPrompt && !!recipe.prompt;
+        const candidates = [...statByRoot.keys()]
+            .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+            .map(root => ({ root, stat: statByRoot.get(root), size: sizes.get(root) || 0 }));
+        const matched = candidates.filter(({ stat }) =>
+            stat.image.length === want.image && stat.video.length === want.video && (!needPrompt || stat.prompt));
+        if (matched.length === 1) {
+            target = matched[0];
+        } else if (!candidates.length) {
+            app.extensionManager.toast.add({ severity: 'info', summary: '配方已发送', detail: `${recipe.name}：工作流中无可匹配的子图，未还原`, life: 4000 });
+            return true;
+        } else {
+            // 数量对不上或多个子图并列：由用户在下拉中指定目标子图，取消则不动工作流
+            const options = (matched.length ? matched : candidates).map(({ root, stat, size }, i) => ({
+                value: root,
+                label: describeSubgraph(i + 1, stat, size),
+            }));
+            const picked = await chooseSubgraphDialog(options);
+            if (picked == null) return false;
+            target = { root: picked, stat: statByRoot.get(picked) };
+        }
+    }
+
+    // 只还原到选定子图：连线节点按参数位升序与配方资产逐一配对
     let applied = 0, missing = 0;
     for (const kind of ['image', 'video']) {
-        // 连线槽按参数序号升序，与配方中该类资产（保存时即按参数位序编码）逐一配对还原；
-        // 未连线节点作为备用槽承接剩余资产；禁用节点不在 scanned 中，不会被改写
-        const conn = scanned.filter(s => s.kind === kind && s.widget && s.slot != null)
-            .sort((a, b) => a.slot - b.slot);
-        const spare = scanned.filter(s => s.kind === kind && s.widget && s.slot == null);
-        let ci = 0;
+        const slots = target ? target.stat[kind] : [];
+        slots.sort((a, b) => a.slot - b.slot);
+        let si = 0;
         for (const asset of result.assets) {
             if (asset.kind !== kind) continue;
-            let t = null;
-            if (ci < conn.length) t = conn[ci++];
-            else if (spare.length) t = spare.shift();
+            const t = si < slots.length ? slots[si++] : null;
             if (!t) { missing++; continue; }
             setWidgetValue({ node: t.live, widget: t.widget }, asset.file);
             applied++;
         }
     }
 
-    const promptApplied = fillPrompt ? applyPromptToNeo(recipe.prompt) : false;
-    const detail = [`${recipe.name}：按参数位还原 ${applied} 个资源`];
-    if (missing) detail.push(`${missing} 个无可用节点`);
-    if (promptApplied) detail.push('提示词已写入');
+    const wantPrompt = fillPrompt && !!recipe.prompt;
+    let promptApplied = false;
+    if (wantPrompt && target?.stat.prompt) {
+        const promptNode = promptNodes.find(n => comps.get(String(n.id)) === target.root);
+        const { customTextarea, textWidget } = promptNode._rsPromptUIElements;
+        customTextarea.value = recipe.prompt;
+        if (textWidget) textWidget.value = recipe.prompt;
+        customTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+        promptApplied = true;
+    }
+
+    const total = result.assets.length;
+    const partial = missing > 0 || (wantPrompt && !promptApplied);
+    const parts = [`按参数位还原 ${applied}/${total} 个资源`];
+    if (missing) parts.push(`${missing} 个资源该子图无可用节点`);
+    if (promptApplied) parts.push('提示词已写入');
+    else if (wantPrompt) parts.push('提示词未写入：该子图无 Neo Prompt');
     app.extensionManager.toast.add({
-        severity: applied || promptApplied ? 'success' : 'info',
+        severity: partial ? 'warn' : (applied || promptApplied ? 'success' : 'info'),
         summary: '配方已发送',
-        detail: detail.join('，'),
+        detail: `${recipe.name}：${partial ? '仅还原了部分，' : ''}${parts.join('，')}`,
         life: 4000
     });
     return true;
