@@ -249,7 +249,7 @@ app.registerExtension({
 
             // Initialize prompt manager - get UI elements and settings button
             // Pass textWidget so save handler can read current prompt text for AI extraction
-            // allowRecipe: 在 💾 保存弹窗中启用「🍱 配方」模式
+            // allowRecipe: 在 💾 保存弹窗中启用「保存配方」按钮
             const {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,

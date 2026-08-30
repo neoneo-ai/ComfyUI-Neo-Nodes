@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
-import { collectWorkflowAssets, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow } from "./recipes.js";
+import { collectWorkflowAssets, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
 
 // Remember last opened settings tab
 let _lastSettingsTab = "llm"; // "llm" or "templates"
@@ -83,7 +83,7 @@ function createInputModal() {
     aiStatus.innerHTML = "⏳ AI 正在分析提示词...";
 
     const label = mkEl("div", "rs-input-label");
-    label.textContent = "Prompt name:";
+    label.textContent = "名称:";
 
     const inputWrapper = mkEl("div", "rs-input-wrapper");
     const field = mkEl("input", "rs-input-field");
@@ -112,31 +112,21 @@ function createInputModal() {
         tagsContainer.appendChild(tagBtn);
     });
 
-    // 保存类型切换：📝 提示词预设 / 🍱 工作流配方（配方入口按节点启用）
-    const modeRow = mkEl("div", "rs-save-mode-row");
-    modeRow.style.display = "none";
-    const promptModeBtn = mkEl("button", "rs-save-mode-btn active");
-    promptModeBtn.textContent = "📝 提示词";
-    const recipeModeBtn = mkEl("button", "rs-save-mode-btn");
-    recipeModeBtn.textContent = "🍱 配方";
-    modeRow.append(promptModeBtn, recipeModeBtn);
-
-    const recipeDesc = mkEl("div", "rs-recipe-hint");
-    recipeDesc.textContent = "同时保存当前提示词与工作流中的输入图片、输入视频等资产。";
-    recipeDesc.style.display = "none";
-
     const recipeHint = mkEl("div", "rs-recipe-hint");
     recipeHint.style.display = "none";
 
     const btnsDiv = mkEl("div", "rs-input-buttons");
     const okBtn = mkEl("button", "rs-input-ok-btn");
-    okBtn.textContent = "OK";
+    okBtn.textContent = "保存提示词";
+    const recipeOkBtn = mkEl("button", "rs-input-ok-btn rs-input-recipe-btn");
+    recipeOkBtn.innerHTML = `${RECIPE_ICON_SVG}<span>保存配方</span>`;
+    recipeOkBtn.style.display = "none";
     const cancelBtn = mkEl("button", "rs-input-cancel-btn");
     cancelBtn.textContent = "Cancel";
-    btnsDiv.append(okBtn, cancelBtn);
-    modal.append(modeRow, aiStatus, label, inputWrapper, tagsLabel, tagsContainer, recipeDesc, recipeHint, btnsDiv);
+    btnsDiv.append(okBtn, recipeOkBtn, cancelBtn);
+    modal.append(aiStatus, label, inputWrapper, tagsLabel, tagsContainer, recipeHint, btnsDiv);
 
-    return { modal, aiStatus, label, field, inputWrapper, tagsLabel, tagsContainer, okBtn, cancelBtn, selectedTags, modeRow, promptModeBtn, recipeModeBtn, recipeDesc, recipeHint };
+    return { modal, aiStatus, label, field, inputWrapper, tagsLabel, tagsContainer, okBtn, recipeOkBtn, cancelBtn, selectedTags, recipeHint };
 }
 
 function createDeleteModal() {
@@ -2049,24 +2039,9 @@ function createStatusBars() {
 function createPromptManagerUI() {
     const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
-    const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, cancelBtn: inputCancel, modeRow, promptModeBtn, recipeModeBtn, recipeDesc, recipeHint } = createInputModal();
+    const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
     const settingsModal = createSettingsModal();
-
-    let saveMode = "prompt"; // "prompt" = 提示词预设, "recipe" = 工作流配方
-    function applySaveMode() {
-        const isRecipe = saveMode === "recipe";
-        promptModeBtn.classList.toggle("active", !isRecipe);
-        recipeModeBtn.classList.toggle("active", isRecipe);
-        aiStatus.style.display = isRecipe ? "none" : "";
-        tagsLabel.style.display = isRecipe ? "none" : "";
-        tagsContainer.style.display = isRecipe ? "none" : "";
-        label.textContent = isRecipe ? "Recipe name:" : "Prompt name:";
-        recipeDesc.style.display = isRecipe ? "block" : "none";
-        recipeHint.style.display = isRecipe ? "block" : "none";
-    }
-    promptModeBtn.addEventListener("click", () => { saveMode = "prompt"; applySaveMode(); });
-    recipeModeBtn.addEventListener("click", () => { saveMode = "recipe"; applySaveMode(); });
 
     const root = mkEl("div", "rs-root");
 
@@ -2335,8 +2310,7 @@ function createPromptManagerUI() {
             inputField.value = "";
             setTimeout(() => inputField.focus(), 50);
 
-            modeRow.style.display = allowRecipe ? "flex" : "none";
-            applySaveMode();
+            inputRecipeOk.style.display = allowRecipe ? "" : "none";
 
             selectedTags.clear();
             const tagButtons = tagsContainer.querySelectorAll(".rs-tag-btn");
@@ -2346,16 +2320,16 @@ function createPromptManagerUI() {
 
             const currentText = textWidget?.value || "";
 
-            if (saveMode === "recipe") {
+            recipeHint.style.display = allowRecipe ? "block" : "none";
+            if (allowRecipe) {
                 recipeHint.textContent = "⏳ 正在收集工作流资源...";
                 collectWorkflowAssets(node).then(assets => {
                     const p = (customTextarea?.value || currentText).trim();
-                    recipeHint.textContent = `将收集 ${assets.length} 个资源（当前子图中已连线的 LoadImage/LoadVideo/LoadAudio）${p ? " + 当前提示词" : ""}。`;
+                    recipeHint.textContent = `配方将包含 ${assets.length} 个资源（当前子图中已连线的 LoadImage/LoadVideo/LoadAudio）${p ? " + 当前提示词" : ""}。`;
                 }).catch(e => {
                     console.error("[Neo Recipes] Collect failed:", e);
                     recipeHint.textContent = "⚠️ 工作流资源收集失败";
                 });
-                return;
             }
 
             if (currentText.trim()) {
@@ -2400,12 +2374,15 @@ function createPromptManagerUI() {
             const name = inputField.value.trim();
             if (!name) return;
             presetNameInput.style.display = "none";
-            if (saveMode === "recipe") {
-                saveRecipeFromModal(name);
-                return;
-            }
             const tags = Array.from(selectedTags);
             savePrompt(name, textWidget ? textWidget.value : "", tags);
+        }
+
+        function performRecipeSave() {
+            const name = inputField.value.trim();
+            if (!name) return;
+            presetNameInput.style.display = "none";
+            saveRecipeFromModal(name);
         }
 
         async function saveRecipeFromModal(name) {
@@ -2498,7 +2475,7 @@ function createPromptManagerUI() {
 
                     if (item.isRecipe) {
                         const icon = mkEl("span", "rs-recipe-icon");
-                        icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
+                        icon.innerHTML = RECIPE_ICON_SVG;
                         contentSpan.prepend(icon);
                         contentSpan.title = `${name}（${source === "presets" ? "内置" : "自定义"}配方 · ${item.assetCount} 个资源）`;
 
@@ -2826,6 +2803,7 @@ function createPromptManagerUI() {
         });
 
         inputOk.addEventListener("click", performSave);
+        inputRecipeOk.addEventListener("click", performRecipeSave);
         inputCancel.addEventListener("click", () => {
             presetNameInput.style.display = "none";
         });

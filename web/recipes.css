@@ -141,28 +141,11 @@
     letter-spacing: .5px;
 }
 
-/* 💾 保存弹窗内的「📝 提示词 / 🍱 配方」模式切换 */
-.rs-save-mode-row {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 10px;
-}
-
-.rs-save-mode-btn {
-    flex: 1;
-    background: #2a2a2a;
-    border: 1px solid #3a3a3a;
-    color: #ccc;
-    padding: 5px 0;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 12px;
-}
-
-.rs-save-mode-btn.active {
-    background: #5090cc;
-    border-color: #5090cc;
-    color: #fff;
+/* 侧边栏标题的配方立方体图标 */
+.neo-recipes-title svg {
+    margin-right: 4px;
+    vertical-align: -2px;
+    color: #e6a23c;
 }
 
 .rs-recipe-hint {

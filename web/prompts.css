@@ -294,7 +294,7 @@
     border: 1px solid #5090cc;
     border-radius: 6px;
     z-index: 9999;
-    width: 220px;
+    width: 330px;
     text-align: center;
 }
 
@@ -347,6 +347,9 @@
 
 .rs-input-ok-btn { background: #10b981; color: #fff; }
 .rs-input-ok-btn:hover { background: #34d399; }
+.rs-input-recipe-btn { background: #d97706; }
+.rs-input-recipe-btn:hover { background: #f59e0b; }
+.rs-input-recipe-btn svg { margin-right: 3px; vertical-align: -2px; }
 .rs-input-cancel-btn { background: #4b5563; color: #e5e5e5; }
 .rs-input-cancel-btn:hover { background: #6b7280; }
 .rs-input-ok-btn:disabled, .rs-input-cancel-btn:disabled {

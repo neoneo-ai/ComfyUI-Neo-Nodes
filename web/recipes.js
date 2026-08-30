@@ -1,7 +1,7 @@
 /**
- * recipes.js — Neo-Nodes 视频配方模块
- * 配方 = 提示词 + 有序多资产(图/视频)。负责：
- *   - 从当前工作流收集资源 (LoadImage / LoadVideo / LoadAudio) 供「保存为配方」
+ * recipes.js — Neo-Nodes 配方模块
+ * 配方 = 提示词 + 有序多资产(图/视频/音频)。负责：
+ *   - 从当前工作流收集资源 (LoadImage / LoadVideo / LoadAudio) 供「保存配方」
  *   - 调用后端 /rs_recipes/* API
  *   - 侧边栏「配方」面板：列表 + 一键发送到工作流
  */
@@ -11,6 +11,9 @@ import { $el } from "../../../../scripts/ui.js";
 
 const assetUrl = (recipe, file) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}`;
+
+// 配方统一立方体图标：侧边栏标题、保存弹窗按钮、预设列表条目共用
+export const RECIPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
 
 // ==========================================
 // 从工作流收集资源
@@ -500,7 +503,7 @@ export async function createRecipesPanel() {
     const root = $el('div', { className: 'neo-recipes-panel' });
 
     const header = $el('div', { className: 'neo-recipes-header' }, [
-        $el('h3', { className: 'neo-recipes-title', textContent: '🍱 视频配方' }),
+        $el('h3', { className: 'neo-recipes-title', innerHTML: `${RECIPE_ICON_SVG}<span>配方</span>` }),
         $el('button', {
             className: 'rs-btn rs-action-btn neo-recipes-refresh',
             textContent: '↻', title: '刷新',
@@ -617,7 +620,7 @@ export async function createRecipesPanel() {
         try { recipes = await listRecipes(); } catch (e) { /* 忽略 */ }
 
         if (recipes.length === 0) {
-            listEl.appendChild($el('div', { className: 'neo-recipes-empty', textContent: '暂无配方。在 Neo Prompt Agent 节点点 💾 保存，选择「🍱 配方」模式。' }));
+            listEl.appendChild($el('div', { className: 'neo-recipes-empty', textContent: '暂无配方。在 Neo Prompt 节点点 💾 保存，点「保存配方」。' }));
             return;
         }
 
