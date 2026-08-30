@@ -41,7 +41,7 @@ function widgetValueToRef(v) {
     return null;
 }
 
-/** 是否禁用节点：参照 @ chips 过滤，跳过 BYPASS(mode 2) 与 NEVER(mode 4)。 */
+/** 是否禁用节点：跳过 Mute/Never(mode 2) 与 Bypass(mode 4)。 */
 function isNodeDisabled(n) {
     return n.mode === 2 || n.mode === 4;
 }
@@ -291,11 +291,12 @@ function setWidgetValue(target, filename) {
 }
 
 /**
- * 还原前的自动对齐：当配方资产数与目标子图内已启用的 conn Load 节点数不一致，
- * 且该子图内同类节点（启用+禁用）全部连到同一个下游目标节点（同一个参数槽组）、
- * 总数恰为配方资产数，则按参数位升序启用组内 BYPASS/Never 的节点补齐差额。
- * 约束：仅影响目标子图内同一 targetId 的同类 Load 节点；只启用、不自动禁用已启用节点。
- * @returns {Promise<boolean>} 是否启用过节点（调用方据此重扫刷新统计）
+ * 还原前的自动对齐：当配方资产数与目标子图内已启用的 conn Load 节点数不一致，且该
+ * 子图内同类 conn 节点（启用+禁用）全部连到同一个下游目标节点（同一个参数槽组）时：
+ *   - 资产偏多且「启用+禁用总数」恰为资产数：按参数位升序启用组内 BYPASS/Never 节点补齐；
+ *   - 资产偏少：按参数位降序把多余的启用节点设为 BYPASS（保留参数位靠前的参与还原）。
+ * 约束：仅影响目标子图内同一 targetId 的同类 Load 节点。
+ * @returns {Promise<boolean>} 是否改动过节点 mode（调用方据此重扫刷新统计）
  */
 async function autoToggleByTarget(targetRoot, want, disabledConn, scanned, comps) {
     let toggled = false;
@@ -303,34 +304,44 @@ async function autoToggleByTarget(targetRoot, want, disabledConn, scanned, comps
         if (!want[kind]) continue;
         const need = want[kind];
         const enabled = scanned.filter(s => s.slot != null && s.widget && !isNodeDisabled(s.node) && comps.get(String(s.node.id)) === targetRoot && s.kind === kind);
-        const currentEnabled = enabled.length;
-        if (currentEnabled === need) continue;
+        if (enabled.length === need) continue;
 
-        // 按 targetId 分组 disabledConn，找唯一一个目标节点 T
-        const byTarget = new Map();
+        // 该子图内同类 conn 节点（启用+禁用）按 targetId 分组，要求全部连到同一个下游目标节点
+        const groups = new Map();
+        const groupOf = (targetId) => {
+            let g = groups.get(targetId);
+            if (!g) groups.set(targetId, g = { enabled: [], disabled: [] });
+            return g;
+        };
+        for (const s of enabled) groupOf(s.targetId).enabled.push(s);
         for (const d of disabledConn) {
             if (comps.get(String(d.node.id)) !== targetRoot || d.kind !== kind || d.targetId == null) continue;
-            let arr = byTarget.get(d.targetId);
-            if (!arr) byTarget.set(d.targetId, arr = []);
-            arr.push(d);
+            groupOf(d.targetId).disabled.push(d);
         }
+        if (groups.size !== 1) continue; // 多个目标节点 → 该类不对齐
 
-        if (byTarget.size !== 1) continue; // 多个目标节点或没有禁用节点 → 该类不对齐
-
-        const [targetId, disabledNodes] = [...byTarget][0];
-        const enabledForTarget = enabled.filter(s => s.targetId === targetId);
-        const needToEnable = need - enabledForTarget.length;
-        // 仅当「同一目标节点的启用+禁用总数」恰好等于 want 时对齐；启用数已超出则不自动禁用
-        if (needToEnable <= 0 || enabledForTarget.length + disabledNodes.length !== need) continue;
-
-        // 按 slot 升序启用禁用节点
-        disabledNodes.sort((a, b) => a.slot - b.slot);
-        for (let i = 0; i < needToEnable; i++) {
-            const d = disabledNodes[i];
-            if (!d.live || !isNodeDisabled(d.live)) continue;
-            d.live.mode = 0; // 启用
-            d.live.graph?.setDirtyCanvas(true, true);
-            toggled = true;
+        const [{ enabled: enabledNodes, disabled: disabledNodes }] = groups.values();
+        if (enabledNodes.length < need) {
+            // 缺：仅当「同一目标节点的启用+禁用总数」恰为 want 时，按 slot 升序启用禁用节点补齐
+            if (enabledNodes.length + disabledNodes.length !== need) continue;
+            disabledNodes.sort((a, b) => a.slot - b.slot);
+            for (let i = 0; i < need - enabledNodes.length; i++) {
+                const d = disabledNodes[i];
+                if (!d.live || !isNodeDisabled(d.live)) continue;
+                d.live.mode = 0; // 启用
+                d.live.graph?.setDirtyCanvas(true, true);
+                toggled = true;
+            }
+        } else {
+            // 多：按 slot 降序把多余的启用节点设为 Bypass，保留参数位靠前的参与还原
+            enabledNodes.sort((a, b) => a.slot - b.slot);
+            for (let i = enabledNodes.length - 1; i >= need; i--) {
+                const s = enabledNodes[i];
+                if (!s.live || isNodeDisabled(s.live)) continue;
+                s.live.mode = 4; // Bypass（Ctrl+B，半透明）；mode 2 是 Mute/Never（深色）
+                s.live.graph?.setDirtyCanvas(true, true);
+                toggled = true;
+            }
         }
     }
     return toggled;
@@ -405,7 +416,7 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         }
     }
 
-    // 自动对齐：当资产数与已启用 conn Load 节点数不一致时，启用同目标节点的禁用节点补齐
+    // 自动对齐：资产数与该子图 conn Load 节点数不一致时，按同目标节点启/禁用补齐或裁剪
     // （节点内入口与侧边栏入口均适用，全程不弹窗）
     if (target) {
         const toggled = await autoToggleByTarget(target.root, want, disabledConn, scanned, comps);
