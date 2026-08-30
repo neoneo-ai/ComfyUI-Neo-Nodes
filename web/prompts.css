@@ -198,6 +198,47 @@
 .rs-preset-item:last-child { border-bottom: none; }
 .rs-preset-item.hidden { display: none !important; }
 
+/* 键盘导航活动行：左侧加高亮描边，颜色与 hover 区分 */
+.rs-preset-item.rs-preset-active,
+.rs-preset-item.rs-preset-active:hover {
+    background: #2a4a6a;
+    box-shadow: inset 3px 0 0 #5090cc;
+}
+.rs-preset-item.rs-preset-active .rs-preset-content { color: #fff; }
+
+/* 配方行悬停浮出预览图 */
+.rs-preset-preview-pop {
+    position: fixed;
+    z-index: 10000;
+    max-width: 240px;
+    max-height: 240px;
+    padding: 4px;
+    background: #1a1a1a;
+    border: 1px solid #5090cc;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+    pointer-events: none;
+}
+
+.rs-preset-preview-pop.visible {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.15s ease, visibility 0s linear 0s;
+}
+
+.rs-preset-preview-pop img {
+    display: block;
+    max-width: 232px;
+    max-height: 232px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 4px;
+}
+
 /* Tags part in preset items */
 .rs-tags-part {
     color: #666;

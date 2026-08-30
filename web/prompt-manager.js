@@ -2106,6 +2106,183 @@ function createPromptManagerUI() {
         if (presetListOverlay.style.display === "flex") placePresetOverlay();
     }).observe(presetListOverlay);
 
+    // 配方行悬停浮出预览图：单一共享节点，避免每个 row 都创建/销毁 <img>
+    let presetPreviewPop = null;
+    const recipeAssetUrl = (recipe, file) =>
+        `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}`;
+    function showPresetPreview(anchor, recipe, coverFile) {
+        if (!coverFile) return;
+        if (!presetPreviewPop) {
+            presetPreviewPop = document.createElement("div");
+            presetPreviewPop.className = "rs-preset-preview-pop";
+            const img = document.createElement("img");
+            img.alt = "";
+            img.loading = "lazy";
+            presetPreviewPop.appendChild(img);
+            document.body.appendChild(presetPreviewPop);
+        }
+        const img = presetPreviewPop.querySelector("img");
+        const key = `${recipe}::${coverFile}`;
+        if (img.dataset.src !== key) {
+            img.dataset.src = key;
+            img.src = recipeAssetUrl(recipe, coverFile);
+        }
+        const rect = anchor.getBoundingClientRect();
+        const popWidth = 240;
+        const margin = 8;
+        let left = rect.right + margin;
+        if (left + popWidth > window.innerWidth - margin) {
+            left = rect.left - popWidth - margin;
+        }
+        if (left < margin) left = margin;
+        let top = rect.top;
+        presetPreviewPop.style.left = `${left}px`;
+        presetPreviewPop.style.top = `${top}px`;
+        presetPreviewPop.classList.add("visible");
+    }
+    function hidePresetPreview() {
+        if (presetPreviewPop) presetPreviewPop.classList.remove("visible");
+    }
+
+    // 预设列表键盘导航：↑↓/Home/End/PageUp/PageDown 切换活动行，Enter 激活，
+    // Delete 触发自定义行的删除确认，Esc 关闭浮层，← 在集合视图里走「返回」行。
+    // 活动行复用 .rs-preset-active 类，避免与 :hover 视觉冲突。
+    let presetActiveIndex = -1;
+    const getVisiblePresetItems = () => {
+        const all = presetListBody.querySelectorAll(".rs-preset-item");
+        return Array.from(all).filter(el => el.offsetParent !== null || getComputedStyle(el).display !== "none");
+    };
+    const setActivePresetItem = (index) => {
+        const items = getVisiblePresetItems();
+        if (!items.length) {
+            presetActiveIndex = -1;
+            return;
+        }
+        let next = index;
+        if (next < 0) next = items.length - 1;
+        if (next >= items.length) next = 0;
+        items.forEach((el, i) => el.classList.toggle("rs-preset-active", i === next));
+        presetActiveIndex = next;
+        const target = items[next];
+        if (target && typeof target.scrollIntoView === "function") {
+            target.scrollIntoView({ block: "nearest" });
+        }
+    };
+    const activatePresetItem = (row) => {
+        if (!row) return;
+        row.click();
+    };
+    const findActivePresetIndex = () => {
+        const items = getVisiblePresetItems();
+        return items.findIndex(el => el.classList.contains("rs-preset-active"));
+    };
+    const handlePresetListKeydown = (e) => {
+        if (presetListOverlay.style.display !== "flex") return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const target = e.target;
+        // 浮层内的输入控件（搜索框）允许普通字符编辑；
+        // 只在方向键/Home/End/PageUp/PageDown/Enter/Esc/← 时才切换列表焦点
+        const inSearch = target === presetSearchBar;
+        if (inSearch && e.key !== "ArrowDown" && e.key !== "ArrowUp"
+            && e.key !== "Enter" && e.key !== "Escape"
+            && e.key !== "Home" && e.key !== "End"
+            && e.key !== "PageUp" && e.key !== "PageDown"
+            && e.key !== "ArrowLeft") return;
+
+        if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            presetListOverlay.style.display = "none";
+            isListOpen = false;
+            clearCollectionViewState();
+            hidePresetPreview();
+            presetActiveIndex = -1;
+            return;
+        }
+
+        const items = getVisiblePresetItems();
+        if (!items.length) return;
+
+        let current = findActivePresetIndex();
+        if (current < 0 && (e.key === "ArrowDown" || e.key === "Enter")) {
+            current = 0;
+            setActivePresetItem(0);
+        }
+        if (current < 0) return;
+
+        switch (e.key) {
+            case "ArrowDown":
+                e.preventDefault();
+                setActivePresetItem(current + 1);
+                break;
+            case "ArrowUp":
+                e.preventDefault();
+                setActivePresetItem(current - 1);
+                break;
+            case "Home":
+                e.preventDefault();
+                setActivePresetItem(0);
+                break;
+            case "End":
+                e.preventDefault();
+                setActivePresetItem(items.length - 1);
+                break;
+            case "PageDown":
+                e.preventDefault();
+                setActivePresetItem(current + 10);
+                break;
+            case "PageUp":
+                e.preventDefault();
+                setActivePresetItem(current - 10);
+                break;
+            case "Enter":
+                e.preventDefault();
+                activatePresetItem(items[current]);
+                break;
+            case "ArrowLeft":
+                if (collectionView) {
+                    const back = presetListBody.querySelector(".rs-collection-back");
+                    if (back) {
+                        e.preventDefault();
+                        activatePresetItem(back);
+                    }
+                }
+                break;
+            case "Delete":
+            case "Backspace": {
+                // 仅在「非 Backspace」或「自定义行」时触发，避免与文本编辑混淆
+                const row = items[current];
+                const isCustom = row && row.classList.contains("rs-preset-item")
+                    && !row.classList.contains("rs-collection-back")
+                    && !row.classList.contains("rs-load-more-item")
+                    && row.querySelector(".rs-delete-icon") !== null;
+                if (e.key === "Backspace" && !isCustom) break;
+                if (isCustom) {
+                    e.preventDefault();
+                    const delBtn = row.querySelector(".rs-delete-icon");
+                    if (delBtn) delBtn.click();
+                }
+                break;
+            }
+        }
+    };
+    presetListOverlay.addEventListener("keydown", handlePresetListKeydown);
+
+    // 鼠标悬停时同步键盘活动行：用户用鼠标选中后，↑↓ 接着当前行走
+    presetListBody.addEventListener("mousemove", (e) => {
+        const row = e.target.closest(".rs-preset-item");
+        if (!row) return;
+        const items = getVisiblePresetItems();
+        const idx = items.indexOf(row);
+        if (idx >= 0 && idx !== presetActiveIndex) {
+            items.forEach((el, i) => el.classList.toggle("rs-preset-active", i === idx));
+            presetActiveIndex = idx;
+        }
+    });
+    presetListBody.addEventListener("mouseleave", () => {
+        // 鼠标移出列表不主动清空活动行，方便用户接着用键盘
+    });
+
     // Create wrapper for custom textarea and buttons
     const customTextareaWrapper = mkEl("div", "rs-custom-textarea-wrapper");
     customTextareaWrapper.appendChild(customTextarea);
@@ -2249,7 +2426,8 @@ function createPromptManagerUI() {
         async function loadPresetDropdown() {
             if (isLoading) return;
             isLoading = true;
-            
+            presetActiveIndex = -1;
+
             presetListBody.innerHTML = "";
 
             const loadingDiv = mkEl("div", "rs-loading");
@@ -2270,6 +2448,8 @@ function createPromptManagerUI() {
                     isRecipe: true,
                     prompt: r.prompt || "",
                     assetCount: r.asset_count || 0,
+                    cover: r.cover || null,
+                    assets: Array.isArray(r.assets) ? r.assets : [],
                 }));
                 const merged = [...list, ...recipeItems];
 
@@ -2289,6 +2469,7 @@ function createPromptManagerUI() {
                     ...merged.filter(item => !isCollection(item) && item.source === "presets").sort(byMtime),
                 ];
 
+                // 配方行悬停浮出预览图：showPresetPreview / hidePresetPreview 由外层 createPromptManagerUI 提供。
                 ordered.forEach(item => {
                     const name = typeof item === 'string' ? item : item.name;
                     const tags = typeof item === 'string' ? [] : (item.tags || []);
@@ -2319,6 +2500,15 @@ function createPromptManagerUI() {
                         icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
                         contentSpan.prepend(icon);
                         contentSpan.title = `${name}（${source === "presets" ? "内置" : "自定义"}配方 · ${item.assetCount} 个资源）`;
+
+                        // 悬停浮出预览图：与侧边栏配方卡片用同一封面解析（_preview/_cover/首图）
+                        const coverFile = item.cover || (Array.isArray(item.assets)
+                            ? (item.assets.find(a => a && a.kind === "image") || {}).file
+                            : null);
+                        if (coverFile) {
+                            row.addEventListener("mouseenter", () => showPresetPreview(row, item.name, coverFile));
+                            row.addEventListener("mouseleave", hidePresetPreview);
+                        }
                     }
 
                     const sourceBadge = mkEl("span", "rs-source-badge");
@@ -2333,6 +2523,8 @@ function createPromptManagerUI() {
 
                     row.onclick = async (e) => {
                         if (e.target.closest(".rs-delete-icon")) return;
+                        hidePresetPreview();
+                        presetActiveIndex = -1;
 
                         if (isCollectionName(name)) {
                             openCollection(name, source);
@@ -2609,6 +2801,8 @@ function createPromptManagerUI() {
             if (presetListOverlay.style.display === "flex") {
                 presetListOverlay.style.display = "none";
                 isListOpen = false;
+                hidePresetPreview();
+                presetActiveIndex = -1;
             } else {
                 clearCollectionViewState();
                 loadPresetDropdown();
@@ -2624,6 +2818,8 @@ function createPromptManagerUI() {
                 presetListOverlay.style.display = "none";
                 isListOpen = false;
                 clearCollectionViewState();
+                hidePresetPreview();
+                presetActiveIndex = -1;
             }
         });
 
