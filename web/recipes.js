@@ -9,8 +9,8 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 
-const assetUrl = (recipe, file) =>
-    `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}`;
+const assetUrl = (recipe, file, dir) =>
+    `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
 
 // 配方统一立方体图标：侧边栏标题、保存弹窗按钮、预设列表条目共用
 export const RECIPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
@@ -214,15 +214,123 @@ export async function collectWorkflowAssets(anchorNode) {
     return [...pick('image'), ...pick('video'), ...pick('audio')];
 }
 
+/** 是否为“结果输出”节点：只有这类节点产生的结果才应存入 samples。
+ *  排除 load 类与输入类（LoadImage 的输出是输入资产而非执行结果）。
+ *  按 comfyClass 特征匹配：save / preview / output / combine / vhs / audio 等。 */
+function isOutputNode(n) {
+    const cls = String(n.comfyClass || n.type || '');
+    // 明确的输入/加载类或中间节点（不产生“结果”）
+    if (/^(load_|load[A-Z0-9])/i.test(cls) || /load.?image|load.?video|load.?audio|load.?latent/im.test(cls)) return false;
+    if (/\b(input|load)\b/i.test(cls)) return false;
+    // 只认可明确的结果输出节点
+    return /(save|preview|output|combine|vhs|videohelper|audio|result|export|download|upload|animate)/i.test(cls);
+}
+
+/** 计算每个节点的最长路径深度（拓扑执行序的深度）。输出节点结果将只保留深度最大者 =
+ *  最终结果；中间结果节点（被后续节点继续消费/继续输出的）会被忽略。
+ *  以节点 id 为键返回 Map。 */
+function computeNodeDepths(nodes, linkMap) {
+    const byId = new Map(nodes.map(n => [String(n.id), n]));
+    const memo = new Map();
+    const visiting = new Set();
+    const depthOf = (id) => {
+        if (memo.has(id)) return memo.get(id);
+        if (visiting.has(id)) return 0; // 环保护：不计入深度
+        visiting.add(id);
+        let d = 0;
+        for (const link of linkMap.values()) {
+            if (String(link.target_id) !== id) continue;
+            const oid = String(link.origin_id);
+            if (byId.has(oid)) d = Math.max(d, depthOf(oid) + 1);
+        }
+        visiting.delete(id);
+        memo.set(id, d);
+        return d;
+    };
+    const depths = new Map();
+    for (const n of nodes) depths.set(String(n.id), depthOf(String(n.id)));
+    return depths;
+}
+
+/** 收集当前画布最近一次执行的输出（app.nodeOutputs），kind 按输出节点类型判定。
+ *  只收确实落在 Comfy output 目录的结果（img.type === 'output'）：LoadImage 等输入
+ *  节点的缓存 type 为 input（读入的图片是输入资产而非执行结果），天然被排除。
+ *  只保留拓扑执行序最末端的输出节点结果（最终结果）；中间结果（被后续继续处理的）忽略。 */
+export function collectWorkflowResults() {
+    const outputs = app.nodeOutputs || {};
+    const nodes = app.graph?._nodes || [];
+    const linkMap = buildLinkMap();
+    const depths = computeNodeDepths(nodes, linkMap);
+
+    let maxDepth = -1;
+    const outNodes = [];
+    for (const n of nodes) {
+        if (!isOutputNode(n)) continue;
+        const images = outputs[String(n.id)]?.images;
+        if (!Array.isArray(images) || !images.length) continue;
+        const d = depths.get(String(n.id)) ?? 0;
+        outNodes.push({ n, d });
+        if (d > maxDepth) maxDepth = d;
+    }
+    // 只保留深度最大（最终）的输出节点集合
+    const finals = outNodes.filter(x => x.d === maxDepth);
+
+    const results = [];
+    for (const { n } of finals) {
+        const images = outputs[String(n.id)]?.images;
+        if (!Array.isArray(images) || !images.length) continue;
+        const cls = String(n.comfyClass || n.type || '');
+        // kind 按输出节点类型判定：audio 类独有 → 音频；其余含 video/combine 特征 → 视频；否则图片
+        const kind = /(saveaudio|audio)/i.test(cls) ? 'audio'
+            : /video|combine|animate/i.test(cls) ? 'video'
+                : 'image';
+        for (const img of images) {
+            if (!img || !img.filename || img.type !== 'output') continue; // 只收 output 目录产物
+            results.push({ filename: img.filename, subfolder: img.subfolder || '', type: 'output', kind });
+        }
+    }
+    return results;
+}
+
 // ==========================================
 // 后端 API
 // ==========================================
 
-export async function saveRecipe(name, prompt, assets) {
+/** 收集当前画布完整工作流（与「导出工作流」同格式），供备份到配方 workflows/。 */
+export async function collectWorkflowSnapshot() {
+    if (typeof app?.graphToPrompt !== 'function') return null;
+    try {
+        const p = await app.graphToPrompt();
+        return p?.workflow ?? null;
+    } catch (e) {
+        console.warn('[Neo Recipes] collectWorkflowSnapshot:', e);
+        return null;
+    }
+}
+
+export async function saveRecipe(name, prompt, assets, results = [], workflow = null) {
     const resp = await api.fetchApi('/rs_recipes/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, prompt, assets })
+        body: JSON.stringify({ name, prompt, assets, results, workflow })
+    });
+    return resp.json();
+}
+
+export async function appendResultsToRecipe(name, results, workflow = null) {
+    const resp = await api.fetchApi('/rs_recipes/append_results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, results, workflow })
+    });
+    return resp.json();
+}
+
+export async function deleteRecipeSample(name, file) {
+    const resp = await api.fetchApi('/rs_recipes/delete_sample', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, file })
     });
     return resp.json();
 }
@@ -515,24 +623,100 @@ export async function createRecipesPanel() {
     const listEl = $el('div', { className: 'neo-recipes-list' });
     root.appendChild(listEl);
 
-    /** 详情浮层：完整标题 + 完整提示词 + 资源网格（视频可预览）+ 发送入口。 */
+    /** 详情浮层：完整标题 + 完整提示词 + 资源网格（视频可预览）+ 示例结果 + 发送入口。 */
     function openDetail(r) {
         document.querySelector('.neo-recipes-detail')?.remove();
 
+        const makeMedia = (a, dir) => a.kind === 'video'
+            ? $el('video', { src: assetUrl(r.name, a.file, dir), controls: true, preload: 'metadata' })
+            : a.kind === 'audio'
+                ? $el('audio', { src: assetUrl(r.name, a.file, dir), controls: true, preload: 'metadata' })
+                : $el('img', { src: assetUrl(r.name, a.file, dir), alt: a.file, loading: 'lazy' });
+
         const grid = $el('div', { className: 'neo-recipes-detail-grid' });
         for (const a of r.assets || []) {
-            const media = a.kind === 'video'
-                ? $el('video', { src: assetUrl(r.name, a.file), controls: true, preload: 'metadata' })
-                : a.kind === 'audio'
-                    ? $el('audio', { src: assetUrl(r.name, a.file), controls: true, preload: 'metadata' })
-                    : $el('img', { src: assetUrl(r.name, a.file), alt: a.file, loading: 'lazy' });
             grid.appendChild($el('div', { className: 'neo-recipes-detail-asset' }, [
-                media,
+                makeMedia(a),
                 $el('div', { className: 'neo-recipes-detail-file', textContent: a.file, title: a.file })
             ]));
         }
         if (!grid.children.length) {
             grid.appendChild($el('div', { className: 'neo-recipes-detail-file', textContent: '（无资产）' }));
+        }
+
+        const bodyChildren = [
+            $el('div', { className: 'neo-recipes-detail-head' }, [
+                $el('div', { className: 'neo-recipes-detail-name', textContent: r.name }),
+                $el('div', { className: 'neo-recipes-detail-source', textContent: r.source === 'preset' ? '内置预设' : '我的配方' })
+            ]),
+            $el('div', { className: 'neo-recipes-detail-prompt', textContent: r.prompt || '（无提示词）' }),
+            grid,
+        ];
+
+        const samples = r.samples || [];
+        if (samples.length) {
+            const sampleWorkflows = r.sample_workflows || {};
+            const sampleGrid = $el('div', { className: 'neo-recipes-detail-grid' });
+            for (const s of samples) {
+                const item = $el('div', { className: 'neo-recipes-detail-asset' }, [
+                    makeMedia(s, 'samples'),
+                    $el('div', { className: 'neo-recipes-detail-file', textContent: s.file, title: s.file })
+                ]);
+                // 复制工作流：preset/custom 均可读回快照；无备份则提示
+                const copyBtn = $el('button', {
+                    className: 'neo-recipes-sample-copy',
+                    textContent: '📋',
+                    title: '复制该示例对应的工作流到画布',
+                    onclick: async (e) => {
+                        e.stopPropagation();
+                        copyBtn.disabled = true;
+                        try {
+                            const wfFile = sampleWorkflows[s.file];
+                            if (!wfFile) {
+                                app.extensionManager.toast.add({ severity: 'info', summary: '无工作流备份', detail: '该示例未备份工作流', life: 4000 });
+                                return;
+                            }
+                            const resp = await api.fetchApi(`/rs_recipes/workflow?recipe=${encodeURIComponent(r.name)}&file=${encodeURIComponent(wfFile)}`);
+                            if (!resp.ok) throw new Error(`workflow fetch ${resp.status}`);
+                            const workflow = await resp.json();
+                            await app.loadGraphData(workflow, true, true, `${r.name} · 工作流备份`);
+                            app.extensionManager.toast.add({ severity: 'success', summary: '工作流已复制', detail: `已加载 ${r.name} 的快照工作流`, life: 4000 });
+                        } catch (err) {
+                            console.error('[Neo Recipes] Copy workflow failed:', err);
+                            app.extensionManager.toast.add({ severity: 'error', summary: '复制工作流失败', detail: err.message, life: 4000 });
+                        } finally {
+                            copyBtn.disabled = false;
+                        }
+                    }
+                });
+                item.appendChild(copyBtn);
+                if (r.source !== 'preset') {
+                    const delBtn = $el('button', {
+                        className: 'neo-recipes-sample-del',
+                        textContent: '🗑',
+                        title: '删除该示例结果',
+                        onclick: async (e) => {
+                            e.stopPropagation();
+                            if (!confirm(`删除示例「${s.file}」？`)) return;
+                            delBtn.disabled = true;
+                            const res = await deleteRecipeSample(r.name, s.file);
+                            delBtn.disabled = false;
+                            if (res?.success) {
+                                overlay.remove();
+                                const list = await listRecipes();
+                                const fresh = list.find(x => x.name === r.name);
+                                if (fresh) openDetail(fresh);
+                            } else {
+                                app.extensionManager.toast.add({ severity: 'error', summary: '删除失败', detail: res?.error || 'Unknown error', life: 4000 });
+                            }
+                        }
+                    });
+                    item.appendChild(delBtn);
+                }
+                sampleGrid.appendChild(item);
+            }
+            bodyChildren.push($el('div', { className: 'neo-recipes-detail-section', textContent: `示例结果（${samples.length}）` }));
+            bodyChildren.push(sampleGrid);
         }
 
         const sendBtn = $el('button', {
@@ -546,16 +730,9 @@ export async function createRecipesPanel() {
             }
         });
         const closeBtn = $el('button', { className: 'rs-btn neo-recipes-detail-close', textContent: '关闭', onclick: () => overlay.remove() });
+        bodyChildren.push($el('div', { className: 'neo-recipes-detail-foot' }, [closeBtn, sendBtn]));
 
-        const body = $el('div', { className: 'neo-recipes-detail-body' }, [
-            $el('div', { className: 'neo-recipes-detail-head' }, [
-                $el('div', { className: 'neo-recipes-detail-name', textContent: r.name }),
-                $el('div', { className: 'neo-recipes-detail-source', textContent: r.source === 'preset' ? '内置预设' : '我的配方' })
-            ]),
-            $el('div', { className: 'neo-recipes-detail-prompt', textContent: r.prompt || '（无提示词）' }),
-            grid,
-            $el('div', { className: 'neo-recipes-detail-foot' }, [closeBtn, sendBtn])
-        ]);
+        const body = $el('div', { className: 'neo-recipes-detail-body' }, bodyChildren);
         const overlay = $el('div', { className: 'neo-recipes-detail' }, [body]);
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
         document.body.appendChild(overlay);
@@ -565,7 +742,10 @@ export async function createRecipesPanel() {
         const card = $el('div', { className: 'neo-recipes-card' });
 
         const cover = $el('div', { className: 'neo-recipes-card-cover', title: '查看资源', onclick: () => openDetail(r) });
-        const coverFile = r.cover || (r.assets?.[0]?.kind === 'image' ? r.assets[0].file : null);
+        const coverFile = r.cover
+            || (r.samples || []).find(s => s.kind === 'image')?.file
+            || (r.assets || []).find(a => a.kind === 'image')?.file
+            || null;
         if (coverFile) {
             const img = $el('img', { src: assetUrl(r.name, coverFile), alt: r.name });
             cover.appendChild(img);
@@ -575,8 +755,33 @@ export async function createRecipesPanel() {
 
         const body = $el('div', { className: 'neo-recipes-card-body' }, [
             $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: '查看资源', onclick: () => openDetail(r) }),
-            $el('div', { className: 'neo-recipes-card-meta', textContent: `${r.asset_count ?? 0} 个资源 · ${(r.prompt || '').slice(0, 120) || '无提示词'}` })
+            $el('div', { className: 'neo-recipes-card-meta', textContent: `${r.asset_count ?? 0} 个资源${r.sample_count ? ` · ${r.sample_count} 个示例` : ''} · ${(r.prompt || '').slice(0, 120) || '无提示词'}` })
         ]);
+
+        const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
+        const actions = $el('div', { className: 'neo-recipes-card-actions' });
+        if (r.source !== 'preset') {
+            const appendBtn = $el('button', {
+                className: 'rs-btn rs-action-btn neo-recipes-append',
+                title: '把当前工作流最近一次执行的输出追加为示例结果',
+                textContent: '📥',
+                onclick: async (e) => {
+                    e.stopPropagation();
+                    appendBtn.disabled = true;
+                    const results = collectWorkflowResults();
+                    const workflow = await collectWorkflowSnapshot();
+                    const res = await appendResultsToRecipe(r.name, results, workflow);
+                    appendBtn.disabled = false;
+                    if (res?.success) {
+                        app.extensionManager.toast.add({ severity: res.added ? 'success' : 'info', summary: '示例结果追加', detail: `${r.name}：新增 ${res.added}，跳过重复 ${res.skipped}`, life: 4000 });
+                        await renderList();
+                    } else {
+                        app.extensionManager.toast.add({ severity: 'error', summary: '追加失败', detail: res?.error || 'Unknown error', life: 4000 });
+                    }
+                }
+            });
+            actions.append(appendBtn);
+        }
 
         const sendBtn = $el('button', {
             className: 'rs-btn rs-action-btn neo-recipes-send',
@@ -590,9 +795,8 @@ export async function createRecipesPanel() {
                 if (ok) await renderList();
             }
         });
+        actions.append(sendBtn);
 
-        const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
-        const actions = $el('div', { className: 'neo-recipes-card-actions' }, [sendBtn]);
         if (r.source !== 'preset') {
             const delBtn = $el('button', {
                 className: 'rs-btn rs-action-btn neo-recipes-delete',

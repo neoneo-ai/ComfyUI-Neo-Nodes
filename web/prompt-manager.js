@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
-import { collectWorkflowAssets, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
+import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowSnapshot, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
 
 // Remember last opened settings tab
 let _lastSettingsTab = "llm"; // "llm" or "templates"
@@ -115,6 +115,18 @@ function createInputModal() {
     const recipeHint = mkEl("div", "rs-recipe-hint");
     recipeHint.style.display = "none";
 
+    // 同时保存结果：把当前工作流最近一次执行的输出存入配方 samples/（用于封面与预览），
+    // 并同步备份一份工作流快照到 workflows/，与示例结果一一对应，可一键复制回画布。
+    const saveResultsRow = mkEl("label", "rs-save-results-row");
+    saveResultsRow.title = "把当前工作流最近一次执行的输出存入配方，用于封面与预览展示；并备份一份工作流快照，可在详情浮层一键复制回画布";
+    const saveResultsCheck = mkEl("input", "rs-save-results-check");
+    saveResultsCheck.type = "checkbox";
+    saveResultsCheck.checked = true; // 默认选中当前运行结果与工作流备份
+    const saveResultsText = mkEl("span", "");
+    saveResultsText.textContent = "同时保存结果";
+    saveResultsRow.append(saveResultsCheck, saveResultsText);
+    saveResultsRow.style.display = "none";
+
     const btnsDiv = mkEl("div", "rs-input-buttons");
     const okBtn = mkEl("button", "rs-input-ok-btn");
     okBtn.textContent = "保存提示词";
@@ -124,9 +136,9 @@ function createInputModal() {
     const cancelBtn = mkEl("button", "rs-input-cancel-btn");
     cancelBtn.textContent = "Cancel";
     btnsDiv.append(okBtn, recipeOkBtn, cancelBtn);
-    modal.append(aiStatus, label, inputWrapper, tagsLabel, tagsContainer, recipeHint, btnsDiv);
+    modal.append(aiStatus, label, inputWrapper, tagsLabel, tagsContainer, recipeHint, saveResultsRow, btnsDiv);
 
-    return { modal, aiStatus, label, field, inputWrapper, tagsLabel, tagsContainer, okBtn, recipeOkBtn, cancelBtn, selectedTags, recipeHint };
+    return { modal, aiStatus, label, field, inputWrapper, tagsLabel, tagsContainer, okBtn, recipeOkBtn, cancelBtn, selectedTags, recipeHint, saveResultsRow, saveResultsCheck };
 }
 
 function createDeleteModal() {
@@ -2039,7 +2051,7 @@ function createStatusBars() {
 function createPromptManagerUI() {
     const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
-    const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint } = createInputModal();
+    const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint, saveResultsRow: recipeResultsRow, saveResultsCheck: recipeResultsCheck } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
     const settingsModal = createSettingsModal();
 
@@ -2311,6 +2323,7 @@ function createPromptManagerUI() {
             setTimeout(() => inputField.focus(), 50);
 
             inputRecipeOk.style.display = allowRecipe ? "" : "none";
+            recipeResultsRow.style.display = allowRecipe ? "" : "none";
 
             selectedTags.clear();
             const tagButtons = tagsContainer.querySelectorAll(".rs-tag-btn");
@@ -2388,10 +2401,13 @@ function createPromptManagerUI() {
         async function saveRecipeFromModal(name) {
             try {
                 const assets = await collectWorkflowAssets(node);
+                const results = recipeResultsCheck.checked ? collectWorkflowResults() : [];
+                const workflow = recipeResultsCheck.checked ? await collectWorkflowSnapshot() : null;
                 const promptText = customTextarea?.value || textWidget?.value || "";
-                const result = await saveRecipe(name, promptText, assets);
+                const result = await saveRecipe(name, promptText, assets, results, workflow);
                 if (result.success) {
-                    app.extensionManager.toast.add({ severity: "success", summary: "配方已保存", detail: `${name}（${result.asset_count} 资源）`, life: 4000 });
+                    const extra = result.sample_added ? ` + ${result.sample_added} 结果` : "";
+                    app.extensionManager.toast.add({ severity: "success", summary: "配方已保存", detail: `${name}（${result.asset_count} 资源${extra}）`, life: 4000 });
                 } else {
                     app.extensionManager.toast.add({ severity: "error", summary: "保存失败", detail: result.error || "Unknown error", life: 5000 });
                 }

@@ -100,11 +100,27 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
     # 目录里存在但未在 recipe.json 记录的（用户手动放入）按目录顺序补尾
     assets.extend(existing.values())
 
+    # 示例结果（samples/，随保存与侧边栏追加累积，用于封面与预览展示）
+    samples_dir = recipe_dir / "samples"
+    sample_kinds = meta.get("sample_kinds") or {}
+    sample_workflows = meta.get("sample_workflows") or {}
+    samples = []
+    if samples_dir.exists():
+        for f in sorted(samples_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in (IMG_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS):
+                if f.stem.startswith("_cover") or f.stem.startswith("_preview"):
+                    continue
+                samples.append({"file": f.name, "kind": sample_kinds.get(f.name) or _kind_of(f)})
+
     cover = None
     for name in ("_preview.jpg", "_preview.png", "_cover.jpg", "_cover.png"):
         if (assets_dir / name).exists():
             cover = name
             break
+    if cover is None:
+        cover = next((s["file"] for s in samples if s["kind"] == "image"), None)
+    if cover is None:
+        cover = next((a["file"] for a in assets if a["kind"] == "image"), None)
 
     return {
         "name": recipe_dir.name,
@@ -113,19 +129,24 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         "created_at": meta.get("created_at", ""),
         "mtime": meta_path.stat().st_mtime,
         "asset_count": len(assets),
+        "sample_count": len(samples),
         "cover": cover,
         "assets": assets,
+        "samples": samples,
+        "sample_workflows": sample_workflows,
     }
 
 
-def _copy_ref_into_assets(ref: dict, assets_dir: Path) -> str | None:
+def _copy_ref_into_dir(ref: dict, dest_dir: Path) -> str | None:
     """Resolve a Comfy file ref {filename, subfolder, type} to its physical path and
-    copy it into the recipe's assets dir. Returns the destination filename or None."""
+    copy it into dest_dir. Deduplicates by content (size + md5) against files already
+    in dest_dir; renames on filename collision. Returns the destination filename or None."""
     filename = str(ref.get("filename", "")).strip()
     if not filename or ".." in filename:
         return None
 
     import folder_paths as _folder_paths
+    import hashlib
 
     base_dir = _folder_paths.get_input_directory()
     ftype = ref.get("type", "input")
@@ -146,17 +167,103 @@ def _copy_ref_into_assets(ref: dict, assets_dir: Path) -> str | None:
     if not source_path.is_file():
         return None
 
-    dest = assets_dir / Path(filename).name
+    source_size = source_path.stat().st_size
+    source_md5 = hashlib.md5()
+    with source_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            source_md5.update(chunk)
+    source_md5 = source_md5.hexdigest()
+
+    if dest_dir.exists():
+        for f in dest_dir.iterdir():
+            if not f.is_file() or f.stat().st_size != source_size:
+                continue
+            h = hashlib.md5()
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(8192), b""):
+                    h.update(chunk)
+            if h.hexdigest() == source_md5:
+                return f.name
+
+    dest = dest_dir / Path(filename).name
     if dest.exists():
         stem = Path(filename).stem
         ext = Path(filename).suffix
         counter = 1
-        while (assets_dir / f"{stem}_{counter}{ext}").exists():
+        while (dest_dir / f"{stem}_{counter}{ext}").exists():
             counter += 1
-        dest = assets_dir / f"{stem}_{counter}{ext}"
+        dest = dest_dir / f"{stem}_{counter}{ext}"
 
     shutil.copy2(source_path, dest)
     return dest.name
+
+
+def _write_workflow_snapshot(recipe_dir: Path, workflow: object) -> str:
+    """写入一份工作流快照 JSON 到 workflows/，返回文件名。"""
+    workflows_dir = recipe_dir / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+    counter = 0
+    while True:
+        name = f"wf_{timestamp}{f'_{counter}' if counter else ''}.json"
+        if not (workflows_dir / name).exists():
+            break
+        counter += 1
+    dest = workflows_dir / name
+    encoded = json.dumps(workflow, ensure_ascii=False) if not isinstance(workflow, str) else workflow
+    dest.write_text(encoded, encoding="utf-8")
+    return name
+
+
+def _append_samples(recipe_dir: Path, refs: list, workflow: object = None) -> tuple[int, int]:
+    """Append executed-output refs into the recipe's samples dir (content-deduped),
+    merging into recipe.json. When new samples were added and workflow is given, write a
+    workflow snapshot and map each new sample to it. Returns (added, skipped)."""
+    meta_path = recipe_dir / "recipe.json"
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        meta = {}
+
+    samples = meta.get("samples", []) or []
+    if isinstance(samples, str):
+        samples = [samples]
+    sample_kinds = meta.get("sample_kinds", {}) or {}
+    sample_workflows = meta.get("sample_workflows", {}) or {}
+
+    samples_dir = recipe_dir / "samples"
+    samples_dir.mkdir(parents=True, exist_ok=True)
+
+    added = 0
+    skipped = 0
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        copied_name = _copy_ref_into_dir(ref, samples_dir)
+        if not copied_name:
+            continue
+        if copied_name in samples:
+            skipped += 1
+            continue
+        samples.append(copied_name)
+        kind = str(ref.get("kind", "") or "")
+        if kind in ("image", "video", "audio"):
+            sample_kinds[copied_name] = kind
+        added += 1
+
+    # 仅当实际新增了新示例且提供了工作流时，写工作流快照并映射到每个新示例
+    if added and workflow is not None:
+        wf_name = _write_workflow_snapshot(recipe_dir, workflow)
+        for name in samples[-added:]:
+            sample_workflows[name] = wf_name
+
+    meta["samples"] = samples
+    meta["sample_kinds"] = sample_kinds
+    meta["sample_workflows"] = sample_workflows
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    return added, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -217,12 +324,25 @@ async def rs_recipes_save(request):
         for ref in data.get("assets", []) or []:
             if not isinstance(ref, dict):
                 continue
-            copied_name = _copy_ref_into_assets(ref, assets_dir)
+            copied_name = _copy_ref_into_dir(ref, assets_dir)
             if copied_name:
                 copied.append(copied_name)
                 kind = str(ref.get("kind", "") or "")
                 if kind in ("image", "video", "audio"):
                     kinds[copied_name] = kind
+
+        # 重复保存同一配方时保留既有示例结果（samples 随保存/追加累积）
+        old_samples = []
+        old_sample_kinds = {}
+        meta_path = recipe_dir / "recipe.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    old_meta = json.load(f)
+                old_samples = old_meta.get("samples", []) or []
+                old_sample_kinds = old_meta.get("sample_kinds", {}) or {}
+            except Exception:
+                pass
 
         recipe = {
             "name": name,
@@ -230,11 +350,77 @@ async def rs_recipes_save(request):
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "assets": copied,
             "kinds": kinds,
+            "samples": old_samples,
+            "sample_kinds": old_sample_kinds,
         }
         with open(recipe_dir / "recipe.json", "w", encoding="utf-8") as f:
             json.dump(recipe, f, ensure_ascii=False, indent=2)
 
-        return web.json_response({"success": True, "name": name, "asset_count": len(copied)})
+        # 勾选「同时保存结果」时，本次执行的输出追加进 samples/（内容去重）
+        sample_added = 0
+        results_refs = [r for r in (data.get("results") or []) if isinstance(r, dict)]
+        if results_refs:
+            sample_added, _ = _append_samples(recipe_dir, results_refs, data.get("workflow"))
+
+        return web.json_response({"success": True, "name": name, "asset_count": len(copied), "sample_added": sample_added})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/rs_recipes/append_results")
+async def rs_recipes_append_results(request):
+    """把当前工作流最近一次执行的输出追加为配方示例结果（内容去重）。"""
+    try:
+        data = await request.json()
+        name = data.get("name", "")
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
+            return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        if recipe_dir.parent == PRESETS_DIR:
+            return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
+        refs = [r for r in (data.get("results") or []) if isinstance(r, dict)]
+        added, skipped = _append_samples(recipe_dir, refs, data.get("workflow"))
+        return web.json_response({"success": True, "added": added, "skipped": skipped})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/rs_recipes/delete_sample")
+async def rs_recipes_delete_sample(request):
+    try:
+        data = await request.json()
+        name = data.get("name", "")
+        file = str(data.get("file", ""))
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
+            return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        if recipe_dir.parent == PRESETS_DIR:
+            return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
+        if not file or ".." in file or "/" in file or "\\" in file:
+            return web.json_response({"success": False, "error": "Invalid file"}, status=400)
+
+        meta_path = recipe_dir / "recipe.json"
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            return web.json_response({"success": False, "error": "Recipe meta unreadable"}, status=500)
+
+        meta["samples"] = [s for s in (meta.get("samples", []) or []) if s != file]
+        meta["sample_kinds"] = {k: v for k, v in (meta.get("sample_kinds", {}) or {}).items() if k != file}
+        sample_workflows = meta.get("sample_workflows", {}) or {}
+        removed_wf = sample_workflows.pop(file, None)
+        meta["sample_workflows"] = sample_workflows
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        target = recipe_dir / "samples" / file
+        if target.is_file():
+            target.unlink()
+        # 若该示例对应的工作流快照不再被任何示例引用，删除孤儿归档
+        if removed_wf and removed_wf not in sample_workflows.values():
+            (recipe_dir / "workflows" / removed_wf).unlink(missing_ok=True)
+        return web.json_response({"success": True})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -262,9 +448,18 @@ async def rs_recipes_asset(request):
     if not recipe or not file or ".." in recipe or ".." in file or "/" in file or "\\" in file:
         return web.Response(status=400)
 
+    dir_param = request.rel_url.query.get("dir", "")
     recipe_dir = _find_recipe_dir(recipe)
-    asset_path = recipe_dir / "assets" / file if recipe_dir else None
-    if asset_path is None or not asset_path.is_file():
+    asset_path = None
+    if recipe_dir is not None:
+        # dir=samples 读示例结果；未指定时先 assets 后 samples 兜底
+        search_dirs = [recipe_dir / "samples"] if dir_param == "samples" else [recipe_dir / "assets", recipe_dir / "samples"]
+        for base in search_dirs:
+            candidate = base / file
+            if candidate.is_file():
+                asset_path = candidate
+                break
+    if asset_path is None:
         return web.Response(status=404)
 
     suffix = asset_path.suffix.lower()
@@ -278,6 +473,19 @@ async def rs_recipes_asset(request):
 
     with open(asset_path, "rb") as f:
         return web.Response(body=f.read(), content_type=content_type)
+
+
+@PromptServer.instance.routes.get("/rs_recipes/workflow")
+async def rs_recipes_workflow(request):
+    recipe = request.rel_url.query.get("recipe", "")
+    file = request.rel_url.query.get("file", "")
+    if not recipe or not file or ".." in recipe or ".." in file or "/" in file or "\\" in file:
+        return web.Response(status=400)
+    recipe_dir = _find_recipe_dir(recipe)
+    wf_path = recipe_dir / "workflows" / file if recipe_dir else None
+    if wf_path is None or not wf_path.is_file():
+        return web.Response(status=404)
+    return web.json_response(json.loads(wf_path.read_text(encoding="utf-8")))
 
 
 @PromptServer.instance.routes.post("/rs_recipes/send_to_workflow")
