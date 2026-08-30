@@ -1,7 +1,7 @@
 /**
  * recipes.js — Neo-Nodes 视频配方模块
  * 配方 = 提示词 + 有序多资产(图/视频)。负责：
- *   - 从当前工作流收集资源 (LoadImage / LoadVideo) 供「保存为配方」
+ *   - 从当前工作流收集资源 (LoadImage / LoadVideo / LoadAudio) 供「保存为配方」
  *   - 调用后端 /rs_recipes/* API
  *   - 侧边栏「配方」面板：列表 + 一键发送到工作流
  */
@@ -106,8 +106,8 @@ function computeSlotNo(n, slotType, linkMap, nodeById) {
 }
 
 /** 找到 Load 节点上承载媒体文件引用的 widget（优先按名称匹配，退化为第一个像媒体引用的值）。 */
-function findMediaWidget(n, isLoadImage, isLoadVideo) {
-    const namePat = isLoadImage ? /image|upload/i : /video/i;
+function findMediaWidget(n, kind) {
+    const namePat = kind === 'video' ? /video/i : kind === 'audio' ? /audio|upload/i : /image|upload/i;
     let found = null;
     for (const w of n.widgets || []) {
         const v = w.value;
@@ -132,9 +132,9 @@ function findMediaValueFromWidgetsValues(widgetsValues) {
 }
 
 /**
- * 扫描工作流中的 LoadImage / LoadVideo 节点，保存与还原共用同一编码规则：
+ * 扫描工作流中的 LoadImage / LoadVideo / LoadAudio 节点，保存与还原共用同一编码规则：
  *   - 跳过禁用（BYPASS/NEVER）状态的节点；
- *   - 用 graphToPrompt 序列化连线，计算输出连到目标节点 IMAGE/VIDEO 输入槽的
+ *   - 用 graphToPrompt 序列化连线，计算输出连到目标节点 IMAGE/VIDEO/AUDIO 输入槽的
  *     参数序号（1-based）与目标节点 id，未连线为 null；
  *   - 返回 { media, comps, sizes, disabledConn }：media 元素为
  *     { node, live, widget, value, kind, slot, targetId }，widget 是活动节点上
@@ -171,10 +171,11 @@ async function scanMediaNodes() {
         const cls = String(n.comfyClass || n.type || '');
         const isLoadImage = /load.?image/i.test(cls);
         const isLoadVideo = /load.?video/i.test(cls);
-        if (!isLoadImage && !isLoadVideo) continue;
-        const kind = isLoadVideo ? 'video' : 'image';
+        const isLoadAudio = /load.?audio/i.test(cls);
+        if (!isLoadImage && !isLoadVideo && !isLoadAudio) continue;
+        const kind = isLoadVideo ? 'video' : isLoadAudio ? 'audio' : 'image';
         const live = liveById.get(String(n.id)) || null;
-        const widget = live ? findMediaWidget(live, isLoadImage, isLoadVideo) : null;
+        const widget = live ? findMediaWidget(live, kind) : null;
         const value = widget ? widget.value : findMediaValueFromWidgetsValues(n.widgets_values);
         const slotInfo = computeSlotNo(n, kind.toUpperCase(), linkMap, nodeById);
         const slot = slotInfo?.slot ?? null;
@@ -191,7 +192,7 @@ async function scanMediaNodes() {
 /**
  * 扫描工作流，收集媒体文件引用（保存用）。与还原共用 scanMediaNodes 的编码规则：
  * 只收集 anchorNode（当前 Neo Prompt 节点）所在连通子图内、输出已连线的资源，
- * 图片组按参数序号在前、视频组在后；其他子图与未连线节点一律不保存。
+ * 图片组按参数序号在前、视频、音频组在后；其他子图与未连线节点一律不保存。
  */
 export async function collectWorkflowAssets(anchorNode) {
     const { media: scanned, comps } = await scanMediaNodes();
@@ -199,10 +200,15 @@ export async function collectWorkflowAssets(anchorNode) {
     const pick = (kind) => scanned
         .filter(s => s.kind === kind && s.slot != null && comps.get(String(s.node.id)) === root)
         .sort((a, b) => a.slot - b.slot)
-        .map(s => widgetValueToRef(s.value))
+        .map(s => {
+            // kind 来自加载节点类型（LoadImage/LoadVideo/LoadAudio）：mp4 等文件可能
+            // 作为音频使用，后端不能用后缀反推，故随 ref 一并传给配方记录
+            const ref = widgetValueToRef(s.value);
+            return ref ? { ...ref, kind: s.kind } : null;
+        })
         .filter(Boolean);
     // 保存时后端按此顺序写入配方 assets，还原时按同规则反解即可落回原参数位置
-    return [...pick('image'), ...pick('video')];
+    return [...pick('image'), ...pick('video'), ...pick('audio')];
 }
 
 // ==========================================
@@ -250,6 +256,7 @@ function describeSubgraph(index, stat, size) {
     const parts = [];
     if (stat.image.length) parts.push(`图片×${stat.image.length}`);
     if (stat.video.length) parts.push(`视频×${stat.video.length}`);
+    if (stat.audio.length) parts.push(`音频×${stat.audio.length}`);
     parts.push(stat.prompt ? '含 Neo Prompt' : '无 Neo Prompt');
     return `子图 ${index}（${parts.join(' · ')} · ${size} 节点）`;
 }
@@ -300,7 +307,7 @@ function setWidgetValue(target, filename) {
  */
 async function autoToggleByTarget(targetRoot, want, disabledConn, scanned, comps) {
     let toggled = false;
-    for (const kind of ['image', 'video']) {
+    for (const kind of ['image', 'video', 'audio']) {
         if (!want[kind]) continue;
         const need = want[kind];
         const enabled = scanned.filter(s => s.slot != null && s.widget && !isNodeDisabled(s.node) && comps.get(String(s.node.id)) === targetRoot && s.kind === kind);
@@ -361,11 +368,11 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
     }
 
     let { media: scanned, comps, sizes, disabledConn } = await scanMediaNodes();
-    // 按子图统计可用还原目标：已连线的 Load 节点（图片/视频分开）与可写的 Neo Prompt；未连线节点不参与
+    // 按子图统计可用还原目标：已连线的 Load 节点（按类型分开）与可写的 Neo Prompt；未连线节点不参与
     const statByRoot = new Map();
     const statOf = (root) => {
         let stat = statByRoot.get(root);
-        if (!stat) statByRoot.set(root, stat = { image: [], video: [], prompt: false });
+        if (!stat) statByRoot.set(root, stat = { image: [], video: [], audio: [], prompt: false });
         return stat;
     };
     for (const s of scanned) {
@@ -383,7 +390,7 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
 
     // 选定目标子图：anchorNode 直接指定；否则按数量一致性精确匹配
     let target = null;
-    const want = { image: 0, video: 0 };
+    const want = { image: 0, video: 0, audio: 0 };
     for (const a of result.assets) if (want[a.kind] != null) want[a.kind]++;
 
     if (anchorNode) {
@@ -395,7 +402,8 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
             .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
             .map(root => ({ root, stat: statByRoot.get(root), size: sizes.get(root) || 0 }));
         const matched = candidates.filter(({ stat }) =>
-            stat.image.length === want.image && stat.video.length === want.video && (!needPrompt || stat.prompt));
+            stat.image.length === want.image && stat.video.length === want.video
+            && stat.audio.length === want.audio && (!needPrompt || stat.prompt));
         if (matched.length === 1) {
             target = matched[0];
         } else if (!candidates.length) {
@@ -426,7 +434,7 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
             const rescanStatByRoot = new Map();
             const rescanStatOf = (root) => {
                 let stat = rescanStatByRoot.get(root);
-                if (!stat) rescanStatByRoot.set(root, stat = { image: [], video: [], prompt: false });
+                if (!stat) rescanStatByRoot.set(root, stat = { image: [], video: [], audio: [], prompt: false });
                 return stat;
             };
             for (const s of rescanned) {
@@ -445,7 +453,7 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
 
     // 只还原到选定子图：连线节点按参数位升序与配方资产逐一配对
     let applied = 0, missing = 0;
-    for (const kind of ['image', 'video']) {
+    for (const kind of ['image', 'video', 'audio']) {
         const slots = target ? target.stat[kind] : [];
         slots.sort((a, b) => a.slot - b.slot);
         let si = 0;
@@ -512,7 +520,9 @@ export async function createRecipesPanel() {
         for (const a of r.assets || []) {
             const media = a.kind === 'video'
                 ? $el('video', { src: assetUrl(r.name, a.file), controls: true, preload: 'metadata' })
-                : $el('img', { src: assetUrl(r.name, a.file), alt: a.file, loading: 'lazy' });
+                : a.kind === 'audio'
+                    ? $el('audio', { src: assetUrl(r.name, a.file), controls: true, preload: 'metadata' })
+                    : $el('img', { src: assetUrl(r.name, a.file), alt: a.file, loading: 'lazy' });
             grid.appendChild($el('div', { className: 'neo-recipes-detail-asset' }, [
                 media,
                 $el('div', { className: 'neo-recipes-detail-file', textContent: a.file, title: a.file })

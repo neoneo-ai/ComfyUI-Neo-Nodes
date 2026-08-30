@@ -13,6 +13,7 @@ from aiohttp import web
 from server import PromptServer
 
 from .gallery import (
+    AUDIO_EXTENSIONS,
     IMG_EXTENSIONS,
     VIDEO_EXTENSIONS,
     _copy_media_to_input,
@@ -52,7 +53,11 @@ def _find_recipe_dir(name: str) -> Path | None:
 
 
 def _kind_of(asset_file: Path) -> str:
-    return "video" if asset_file.suffix.lower() in VIDEO_EXTENSIONS else "image"
+    if asset_file.suffix.lower() in VIDEO_EXTENSIONS:
+        return "video"
+    if asset_file.suffix.lower() in AUDIO_EXTENSIONS:
+        return "audio"
+    return "image"
 
 
 def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
@@ -79,12 +84,14 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         ordered = [ordered]
 
     existing = {}
+    # 保存时按加载节点类型记录的 kind 优先；后缀判定仅兜底手动放入的文件
+    kinds = meta.get("kinds") or {}
     if not empty_dir:
         for f in assets_dir.iterdir():
-            if f.is_file() and f.suffix.lower() in (IMG_EXTENSIONS | VIDEO_EXTENSIONS):
+            if f.is_file() and f.suffix.lower() in (IMG_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS):
                 if f.stem.startswith("_cover") or f.stem.startswith("_preview"):
                     continue  # 元数据封面，不视为资源资产
-                existing[f.name] = {"file": f.name, "kind": _kind_of(f)}
+                existing[f.name] = {"file": f.name, "kind": kinds.get(f.name) or _kind_of(f)}
 
     assets = []
     for name in ordered:
@@ -202,20 +209,27 @@ async def rs_recipes_save(request):
         assets_dir = recipe_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
 
-        # Assets passed as Comfy file refs {filename, subfolder, type}; copy each in.
+        # Assets passed as Comfy file refs {filename, subfolder, type, kind}; copy each in.
+        # kind 由前端按加载节点类型判定（同一 mp4 既可作视频也可作音频），记录进
+        # kinds 映射，扫描时优先使用；后缀判定仅作手动放文件时的兜底。
         copied = []
+        kinds = {}
         for ref in data.get("assets", []) or []:
             if not isinstance(ref, dict):
                 continue
             copied_name = _copy_ref_into_assets(ref, assets_dir)
             if copied_name:
                 copied.append(copied_name)
+                kind = str(ref.get("kind", "") or "")
+                if kind in ("image", "video", "audio"):
+                    kinds[copied_name] = kind
 
         recipe = {
             "name": name,
             "prompt": data.get("prompt", ""),
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "assets": copied,
+            "kinds": kinds,
         }
         with open(recipe_dir / "recipe.json", "w", encoding="utf-8") as f:
             json.dump(recipe, f, ensure_ascii=False, indent=2)
@@ -257,6 +271,8 @@ async def rs_recipes_asset(request):
     content_type = "image/png"
     if suffix in VIDEO_EXTENSIONS:
         content_type = "video/mp4"
+    elif suffix in AUDIO_EXTENSIONS:
+        content_type = mimetypes.guess_type(asset_path.name)[0] or "audio/mpeg"
     elif suffix in IMG_EXTENSIONS:
         content_type = mimetypes.guess_type(asset_path.name)[0] or "image/png"
 

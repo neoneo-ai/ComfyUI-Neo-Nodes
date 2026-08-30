@@ -22,6 +22,7 @@ THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
 ALL_MEDIA_EXTENSIONS = IMG_EXTENSIONS | VIDEO_EXTENSIONS
 
 
@@ -649,7 +650,8 @@ def _copy_media_to_input(source_path: Path, filename: str) -> tuple[str, bool]:
     for f in input_dir.iterdir():
         if not f.is_file():
             continue
-        if f.suffix.lower() not in IMG_EXTENSIONS and f.suffix.lower() not in VIDEO_EXTENSIONS:
+        ext = f.suffix.lower()
+        if ext not in IMG_EXTENSIONS and ext not in VIDEO_EXTENSIONS and ext not in AUDIO_EXTENSIONS:
             continue
         if f.stat().st_size != source_size:
             continue

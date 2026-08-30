@@ -2350,7 +2350,7 @@ function createPromptManagerUI() {
                 recipeHint.textContent = "⏳ 正在收集工作流资源...";
                 collectWorkflowAssets(node).then(assets => {
                     const p = (customTextarea?.value || currentText).trim();
-                    recipeHint.textContent = `将收集 ${assets.length} 个资源（当前子图中已连线的 LoadImage/LoadVideo）${p ? " + 当前提示词" : ""}。`;
+                    recipeHint.textContent = `将收集 ${assets.length} 个资源（当前子图中已连线的 LoadImage/LoadVideo/LoadAudio）${p ? " + 当前提示词" : ""}。`;
                 }).catch(e => {
                     console.error("[Neo Recipes] Collect failed:", e);
                     recipeHint.textContent = "⚠️ 工作流资源收集失败";
