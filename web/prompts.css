@@ -368,7 +368,7 @@
     padding: 10px;
     border: 1px solid #5090cc;
     border-radius: 6px;
-    z-index: 9999;
+    z-index: 100001; /* 高于 presets list (100000)，确认框需盖在列表上 */
     width: 220px;
     text-align: center;
 }
