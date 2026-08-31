@@ -8,6 +8,7 @@
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
+import { Lightbox } from "./lightbox.js";
 
 const assetUrl = (recipe, file, dir) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
@@ -305,6 +306,31 @@ export async function collectWorkflowSnapshot() {
     } catch (e) {
         console.warn('[Neo Recipes] collectWorkflowSnapshot:', e);
         return null;
+    }
+}
+
+/** 读回配方中某示例对应的工作流快照；请求失败抛出。 */
+async function fetchSampleWorkflow(recipeName, wfFile) {
+    const resp = await api.fetchApi(`/rs_recipes/workflow?recipe=${encodeURIComponent(recipeName)}&file=${encodeURIComponent(wfFile)}`);
+    if (!resp.ok) throw new Error(`workflow fetch ${resp.status}`);
+    return resp.json();
+}
+
+/** 把某示例对应的工作流快照加载到画布；无备份时报提示。返回是否成功。 */
+async function copySampleWorkflowToCanvas(recipeName, wfFile) {
+    if (!wfFile) {
+        app.extensionManager.toast.add({ severity: 'info', summary: '无工作流备份', detail: '该示例未备份工作流', life: 4000 });
+        return false;
+    }
+    try {
+        const workflow = await fetchSampleWorkflow(recipeName, wfFile);
+        await app.loadGraphData(workflow, true, true, `${recipeName} · 工作流备份`);
+        app.extensionManager.toast.add({ severity: 'success', summary: '工作流已复制', detail: `已加载 ${recipeName} 的快照工作流`, life: 4000 });
+        return true;
+    } catch (err) {
+        console.error('[Neo Recipes] Copy workflow failed:', err);
+        app.extensionManager.toast.add({ severity: 'error', summary: '复制工作流失败', detail: err.message, life: 4000 });
+        return false;
     }
 }
 
@@ -627,19 +653,27 @@ export async function createRecipesPanel() {
     function openDetail(r) {
         document.querySelector('.neo-recipes-detail')?.remove();
 
-        const makeMedia = (a, dir) => a.kind === 'video'
-            ? $el('video', { src: assetUrl(r.name, a.file, dir), controls: true, preload: 'metadata' })
-            : a.kind === 'audio'
-                ? $el('audio', { src: assetUrl(r.name, a.file, dir), controls: true, preload: 'metadata' })
-                : $el('img', { src: assetUrl(r.name, a.file, dir), alt: a.file, loading: 'lazy' });
+        // 缩略图为静态预览：video/audio 不拦截点击，统一由外层容器打开 Lightbox（播放交给 Lightbox 内的 controls+autoplay）
+        const makeMedia = (a, dir) => {
+            const src = assetUrl(r.name, a.file, dir);
+            if (a.kind === 'video') return $el('video', { src, preload: 'metadata' });
+            if (a.kind === 'audio') return $el('div', { className: 'neo-recipes-detail-asset-audio', textContent: `🎵 ${a.file}` });
+            return $el('img', { src, alt: a.file, loading: 'lazy' });
+        };
 
+        // 资产缩略图：点击用 Lightbox 查看大图（图片可缩放/拖拽，音视频可播放）
+        const assetItems = (r.assets || []).map(a => ({ kind: a.kind, url: assetUrl(r.name, a.file), title: a.file }));
         const grid = $el('div', { className: 'neo-recipes-detail-grid' });
-        for (const a of r.assets || []) {
-            grid.appendChild($el('div', { className: 'neo-recipes-detail-asset' }, [
+        (r.assets || []).forEach((a, i) => {
+            grid.appendChild($el('div', {
+                className: 'neo-recipes-detail-asset',
+                title: '点击放大查看',
+                onclick: () => Lightbox.open({ items: assetItems, index: i })
+            }, [
                 makeMedia(a),
                 $el('div', { className: 'neo-recipes-detail-file', textContent: a.file, title: a.file })
             ]));
-        }
+        });
         if (!grid.children.length) {
             grid.appendChild($el('div', { className: 'neo-recipes-detail-file', textContent: '（无资产）' }));
         }
@@ -657,8 +691,24 @@ export async function createRecipesPanel() {
         if (samples.length) {
             const sampleWorkflows = r.sample_workflows || {};
             const sampleGrid = $el('div', { className: 'neo-recipes-detail-grid' });
-            for (const s of samples) {
-                const item = $el('div', { className: 'neo-recipes-detail-asset' }, [
+            const sampleItems = samples.map(s => ({ kind: s.kind, url: assetUrl(r.name, s.file, 'samples'), title: s.file }));
+            samples.forEach((s, i) => {
+                const item = $el('div', {
+                    className: 'neo-recipes-detail-asset',
+                    title: '点击放大查看',
+                    onclick: () => Lightbox.open({
+                        items: sampleItems,
+                        index: i,
+                        // 有工作流备份的示例在 Lightbox 内提供「复制工作流」动作
+                        actions: (cur) => (sampleWorkflows[cur.file]
+                            ? [{
+                                label: '📋 复制工作流',
+                                title: '把该示例对应的工作流快照加载到画布',
+                                onClick: (it) => copySampleWorkflowToCanvas(r.name, sampleWorkflows[it.file]),
+                            }]
+                            : []),
+                    })
+                }, [
                     makeMedia(s, 'samples'),
                     $el('div', { className: 'neo-recipes-detail-file', textContent: s.file, title: s.file })
                 ]);
@@ -670,23 +720,8 @@ export async function createRecipesPanel() {
                     onclick: async (e) => {
                         e.stopPropagation();
                         copyBtn.disabled = true;
-                        try {
-                            const wfFile = sampleWorkflows[s.file];
-                            if (!wfFile) {
-                                app.extensionManager.toast.add({ severity: 'info', summary: '无工作流备份', detail: '该示例未备份工作流', life: 4000 });
-                                return;
-                            }
-                            const resp = await api.fetchApi(`/rs_recipes/workflow?recipe=${encodeURIComponent(r.name)}&file=${encodeURIComponent(wfFile)}`);
-                            if (!resp.ok) throw new Error(`workflow fetch ${resp.status}`);
-                            const workflow = await resp.json();
-                            await app.loadGraphData(workflow, true, true, `${r.name} · 工作流备份`);
-                            app.extensionManager.toast.add({ severity: 'success', summary: '工作流已复制', detail: `已加载 ${r.name} 的快照工作流`, life: 4000 });
-                        } catch (err) {
-                            console.error('[Neo Recipes] Copy workflow failed:', err);
-                            app.extensionManager.toast.add({ severity: 'error', summary: '复制工作流失败', detail: err.message, life: 4000 });
-                        } finally {
-                            copyBtn.disabled = false;
-                        }
+                        await copySampleWorkflowToCanvas(r.name, sampleWorkflows[s.file]);
+                        copyBtn.disabled = false;
                     }
                 });
                 item.appendChild(copyBtn);
@@ -714,7 +749,7 @@ export async function createRecipesPanel() {
                     item.appendChild(delBtn);
                 }
                 sampleGrid.appendChild(item);
-            }
+            });
             bodyChildren.push($el('div', { className: 'neo-recipes-detail-section', textContent: `示例结果（${samples.length}）` }));
             bodyChildren.push(sampleGrid);
         }
