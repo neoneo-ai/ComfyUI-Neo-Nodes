@@ -1524,7 +1524,7 @@ app.registerExtension({
                 app.extensionManager.registerSidebarTab({
             id: "neo.gallery",
             icon: "pi pi-images",
-            title: "画廊",
+            title: "素材",
             tooltip: "Neo Gallery",
             type: "custom",
             render: async (el) => {

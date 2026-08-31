@@ -1,12 +1,12 @@
 # ComfyUI-Neo-Nodes
 
-一个 ComfyUI 自定义节点插件：AI 驱动的提示词管理 + 画廊浏览系统。
+一个 ComfyUI 自定义节点插件：提示词管理与AI增强，素材浏览与图片或提示词一键发送，配方保存和一键还原。
 
 | 模块 | 类型 | 说明 |
 |------|------|------|
 | 📝 Neo Prompt Encoder | 节点 | AI 提示词增强 + CLIP 编码 |
 | ⚡ Neo Prompt Agent | 节点 | 纯文本输出的轻量提示词生成 |
-| 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频画廊浏览与管理 |
+| 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频素材浏览与管理 |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 |
 
 ## 目录
@@ -20,12 +20,12 @@
   - [模板与技能管理](#模板与技能管理)
   - [图片反推与图片输入](#图片反推与图片输入)
   - [节点对比](#节点对比)
-- [Neo Gallery](#-neo-gallery---侧边栏画廊系统)
+- [Neo Gallery](#-neo-gallery---侧边栏素材管理)
   - [浏览与导航](#浏览与导航)
   - [媒体与搜索](#媒体与搜索)
   - [灯箱查看器](#灯箱查看器)
   - [文件管理与目录](#文件管理与目录)
-  - [画廊设置](#画廊设置)
+  - [素材设置](#素材设置)
 - [配方](#-配方-recipes)
 - [配置](#配置)
   - [LLM 模式](#llm-模式)
@@ -35,8 +35,14 @@
 
 ## 安装
 
-1. 将此目录克隆或复制到 `ComfyUI/custom_nodes/` 目录
-2. 重启 ComfyUI
+- **ComfyUI Manager（推荐）**：在 Manager 中搜索 `Neo Nodes` 一键安装（已发布至 ComfyUI Registry）
+- **手动**：将本仓库克隆到 `ComfyUI/custom_nodes/` 目录：
+
+```bash
+git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_nodes/ComfyUI-Neo-Nodes
+```
+
+然后重启 ComfyUI
 
 ## 依赖
 
@@ -97,12 +103,11 @@ python -c "from llama_cpp import Llama; print('ok')"
 完整的提示词管理 + CLIP 编码节点：
 
 - **提示词保存/选择** - 保存和加载预设提示词，支持 presets 和自定义目录
-- **LLM 提示词增强** - 使用远程 API 或本地 LLM 模型增强提示词质量
+- **LLM 提示词增强** - 使用远程 API 或本地 LLM 模型增强提示词质量，Skill模板管理和快速切换
 - **快捷生成 / 随机生成** - 输入简短描述快速生成，或一键随机生成创意提示词
 - **图片转提示词** - 附加参考图（支持粘贴、拖拽、@ 引用工作流图片），AI 反推生成描述性提示词
-- **分类/标题提取** - 保存预设时 AI 自动分类内容并提取标题
-- **智能缓存** - CLIP 编码结果本地缓存（最多 50 条），加速重复使用
-- **技能系统** - 通过技能选择器调用不同能力，按组分类：图像/反推、任务（含中英互译等指令）、风格模板、自定义
+- **分类/标题提取** - 保存预设时 AI 自动分类内容并提取标题，快速一键保存提示词或配方
+- **Skill系统** - 通过技能选择器调用不同能力，按组分类：图像/反推、任务（含中英互译等指令）、风格模板、自定义
 
 #### 输入/输出
 
@@ -124,7 +129,6 @@ python -c "from llama_cpp import Llama; print('ok')"
 - **无需 CLIP 输入** - 不绑定文本编码器
 - **无状态栏/切换开关** - 界面更简洁
 - **仅输出 STRING** - 直接输出提示词文本
-- **内置模型设置** - 可在节点内切换 LLM 模型
 
 #### 输入/输出
 
@@ -159,7 +163,7 @@ python -c "from llama_cpp import Llama; print('ok')"
 | LOCAL / EXTERNAL | 顶部状态栏 | 切换本地提示词 / 外部 text_input 输入（连接后自动显示） |
 | 🎲 | 文本区右上角 | 随机生成创意提示词 |
 | ☰ | 文本区右上角 | 打开预设列表（支持搜索、删除） |
-| 💾 | 文本区右上角 | 保存当前提示词为预设，AI 自动提取标题与分类标签 |
+| 💾 | 文本区右上角 | 保存当前提示词或配方为预设，AI 自动提取标题与分类标签 |
 | ＋ | 底部输入栏 | 附加参考图片（反推/多模态技能），支持粘贴、拖拽与 @ 引用 |
 | 技能选择器 | 底部输入栏 | 选择本次生成使用的技能：图像/反推、任务、风格模板、自定义 |
 | ⚙️ | 底部输入栏 | 打开模型设置：切换 LLM 模型、配置远程 API |
@@ -197,7 +201,7 @@ python -c "from llama_cpp import Llama; print('ok')"
 | 拖拽导入 | 将本地图片拖入快捷输入框 | 自动读取并生成缩略 chip |
 | `@` 引用 | 在输入框中键入 `@` | 唤起选择器，列出当前工作流所有可用 Load Image 节点图片 |
 
-与 Neo 画廊的联动：画廊中「复制到 Input」会把图片放入 ComfyUI 的 input 目录，之后即可在工作流 Load Image 节点中选用，并通过 `@` 选择器引用到反推输入；画廊灯箱的发送按钮也可直接把图片附带的信息回填到 Neo Prompt 节点。
+与 Neo 素材的联动：素材中「复制到 Input」会把图片放入 ComfyUI 的 input 目录，之后即可在工作流 Load Image 节点中选用，并通过 `@` 选择器引用到反推输入；素材灯箱的发送按钮也可直接把图片附带的信息回填到 Neo Prompt 节点。
 
 #### `@` 图片引用
 
@@ -219,16 +223,7 @@ python -c "from llama_cpp import Llama; print('ok')"
 - 无编号 chip 仅作为反推附件随请求发送
 - 点击 chip 上的 ✕ 可移除对应图片
 
-### 节点对比
 
-| 特性 | Neo Prompt Encoder | Neo Prompt Agent |
-|------|-------------------|---------------------|
-| CLIP 输入 | ✅ 需要 | ❌ 不需要 |
-| 状态栏 (status bar) | ✅ 显示 | ❌ 隐藏 |
-| Toggle Switch | ✅ 支持 | ❌ 无 |
-| 外部文本输入 | ✅ 支持 | ❌ 不支持 |
-| 输出类型 | CONDITIONING + STRING | STRING |
-| 适用场景 | 标准文生图工作流 | 仅需提示词文本的场景 |
 
 ---
 
@@ -278,7 +273,7 @@ recipes/
 在 **Neo Prompt** 节点上直接选择配方发送时，以该节点所在子图为目标，同样执行自动对齐，全程不弹窗。
 
 ---
-## 🖼️ Neo Gallery - 侧边栏画廊系统
+## 🖼️ Neo Gallery - 侧边栏素材系统
 
 ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 + 多个用户自定义目录。
 
@@ -310,11 +305,11 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 
 ### 文件管理与目录
 
-- **删除** - 直接删除画廊中的媒体文件；presets 内置库只读保护，防止误删
+- **删除** - 直接删除素材中的媒体文件；presets 内置库只读保护，防止误删
 - **自定义目录** - 在设置中添加本地或网络路径，支持逐条添加，也支持批量粘贴（每行一个路径）
 - **多源汇总** - 所有目录统一入口浏览，互不干扰
 
-### 画廊设置
+### 素材设置
 
 在侧边栏顶部点击"设置"按钮可管理自定义目录；以下显示设置位于 ComfyUI 设置面板：
 
@@ -363,26 +358,29 @@ models/LLM/
 
 ```
 ComfyUI-Neo-Nodes/
-├── gallery.py              # 画廊后端 API + 路由
+├── __init__.py             # 节点注册入口（NODE_CLASS_MAPPINGS / WEB_DIRECTORY）
+├── gallery.py              # 素材后端 API + 路由
 ├── recipes.py              # 配方后端 API（提示词 + 图片/视频/音频资源组合）
 ├── prompts.py              # 提示词节点核心逻辑
 ├── llm.py                  # LLM 推理（远程/本地）
 ├── requirements.txt        # Python 依赖
-├── gallery_settings.json   # 画廊自定义目录配置
+├── pyproject.toml          # ComfyUI Registry 发布元数据
+├── LICENSE                 # Apache-2.0 许可证
+├── gallery_settings.json   # 素材自定义目录配置
 ├── recipes/                # 配方预设目录（每配方一个文件夹 + assets/）
 ├── prompts/                # 提示词预设和模板目录
 │   ├── presets/            # 预设提示词
 │   ├── custom/             # 用户自定义提示词
 │   └── templates/          # 系统提示词模板
-├── gallery/                # 画廊媒体文件目录
+├── gallery/                # 素材媒体文件目录
 │   ├── presets/            # 内置预设图片
 │   ├── custom/             # 用户自定义图片
 │   └── thumbnails/         # 缩略图缓存
 └── web/                    # 前端资源
-    ├── gallery.js          # 画廊主逻辑
-    ├── gallery-components.js  # 画廊 UI 组件
-    ├── gallery-utils.js    # 画廊工具函数
-    ├── gallery.css         # 画廊样式
+    ├── gallery.js          # 素材主逻辑
+    ├── gallery-components.js  # 素材 UI 组件
+    ├── gallery-utils.js    # 素材工具函数
+    ├── gallery.css         # 素材样式
     ├── recipes.js          # 配方逻辑（保存/面板/一键发送）
     ├── recipes.css         # 配方样式
     ├── prompts.js          # 提示词节点前端交互

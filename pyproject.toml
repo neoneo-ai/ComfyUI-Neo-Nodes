@@ -1,0 +1,22 @@
+[project]
+name = "comfyui-neo-nodes"
+version = "0.1.0"
+description = "AI 提示词工作台：在线/本地大模型一键增强、生成与反推提示词，媒体素材与配方库一键直达节点。AI prompt studio for ComfyUI — enhance, generate and reverse-engineer prompts with online or local LLMs, plus a built-in media asset and recipe library."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests",
+    "Pillow",
+    "PyYAML",
+]
+
+[project.urls]
+Repository = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes"
+
+[tool.comfy]
+PublisherId = "neoneo-ai"
+DisplayName = "Neo Nodes"
+Icon = ""
