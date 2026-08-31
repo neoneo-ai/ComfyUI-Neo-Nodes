@@ -137,9 +137,9 @@ async def _fetch_oss_index(force: bool = False) -> dict | None:
 
     except Exception as e:
         print(f"[Neo Gallery] OSS index fetch error: {e}")
-        if _OSS_INDEX_CACHE_FILE.exists():
+        if OSS_INDEX_CACHE_FILE.exists():
             try:
-                with open(_OSS_INDEX_CACHE_FILE, "r", encoding="utf-8") as f:
+                with open(OSS_INDEX_CACHE_FILE, "r", encoding="utf-8") as f:
                     _oss_index_cache = json.load(f)
                 return _oss_index_cache
             except Exception:

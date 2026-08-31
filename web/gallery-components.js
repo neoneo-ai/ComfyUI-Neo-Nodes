@@ -1484,7 +1484,7 @@ export class GalleryComponents {
                 }
             }
         } else if (source && mode !== 'categories') {
-            const dir = gallery.allDirectories.find(d => d.name === source);
+            const dir = gallery.allDirectories.find(d => d.name === source || d.path === source);
             if (dir) {
                 // Directly use _currentDirImages when dir.items is undefined (lazy mode)
                 let dirItems = [];
@@ -1754,6 +1754,10 @@ export class GalleryComponents {
             existingMedia.remove();
         }
 
+        // Remove any leftover spinner from previous image
+        const oldSpinner = imgWrapper.querySelector('.neo-gallery-lightbox-spinner');
+        if (oldSpinner) oldSpinner.remove();
+
         // Create new media element
         let newMediaEl;
         if (isVideo) {
@@ -1767,17 +1771,60 @@ export class GalleryComponents {
             newMediaEl.style.maxHeight = '80vh';
         } else {
             newMediaEl = document.createElement('img');
-            newMediaEl.className = "neo-gallery-lightbox-image";
-            newMediaEl.src = newMediaUrl + (newMediaUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
+            newMediaEl.className = "neo-gallery-lightbox-image loading";
             newMediaEl.draggable = false;
             newMediaEl.style.userSelect = 'none';
             newMediaEl.style.webkitUserSelect = 'none';
             newMediaEl.style.mozUserSelect = 'none';
             newMediaEl.style.msUserSelect = 'none';
+
+            // Show spinner while loading
+            const spinner = document.createElement('div');
+            spinner.className = 'neo-gallery-lightbox-spinner';
+            imgWrapper.appendChild(spinner);
+
+            const onLoaded = () => {
+                const sp = imgWrapper.querySelector('.neo-gallery-lightbox-spinner');
+                if (sp) sp.remove();
+                newMediaEl.classList.remove('loading');
+            };
+
+            // Use fetch + blob for reliable load detection
+            imgWrapper.appendChild(newMediaEl);
+            fetch(newMediaUrl).then(resp => {
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return resp.blob();
+            }).then(blob => {
+                const blobUrl = URL.createObjectURL(blob);
+                newMediaEl.onload = () => { URL.revokeObjectURL(blobUrl); onLoaded(); };
+                newMediaEl.onerror = onLoaded;
+                newMediaEl.src = blobUrl;
+            }).catch(() => {
+                onLoaded();
+            });
         }
 
-        // Append new media element
-        imgWrapper.appendChild(newMediaEl);
+        // Append new media element (video path)
+        if (isVideo) {
+            imgWrapper.appendChild(newMediaEl);
+        }
+
+        // Preload adjacent images for instant navigation
+        if (allImages && !isVideo) {
+            const preloadIndices = [currentIndex - 1, currentIndex + 1];
+            for (const idx of preloadIndices) {
+                if (idx >= 0 && idx < allImages.length) {
+                    const adj = allImages[idx];
+                    if (!isVideoFile(adj.filename)) {
+                        const adjSubfolder = adj.subfolder || subfolder;
+                        const adjCategoryParam = adj.category ? `&category=${encodeURIComponent(adj.category)}` : '';
+                        const adjUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/image?filename=${encodeURIComponent(adj.filename)}&subfolder=${encodeURIComponent(adjSubfolder)}${adjCategoryParam}`;
+                        const preImg = new Image();
+                        preImg.src = adjUrl;
+                    }
+                }
+            }
+        }
         
         // 在 imgWrapper 上添加事件监听器（而不是在图片上），确保事件能被捕获
         if (!isVideo) {
