@@ -8,6 +8,7 @@ prompts/custom
 prompts/templates/custom
 gallery/thumbnails/
 gallery/oss_cache/
+gallery/presets/
 .tiktoken_cache/
 _tags_index.json
 **/_tags_index.json

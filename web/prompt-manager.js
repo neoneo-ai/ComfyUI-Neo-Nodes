@@ -2493,7 +2493,7 @@ function createPromptManagerUI() {
                         const icon = mkEl("span", "rs-recipe-icon");
                         icon.innerHTML = RECIPE_ICON_SVG;
                         contentSpan.prepend(icon);
-                        contentSpan.title = `${name}（${source === "presets" ? "内置" : "自定义"}配方 · ${item.assetCount} 个资源）`;
+                        contentSpan.title = `${name}（${source === "presets" ? "内置" : "自定义"}配方${item.assetCount ? ` · ${item.assetCount} 个资源` : ''}）`;
 
                         // 悬停浮出预览图：与侧边栏配方卡片用同一封面解析（_preview/_cover/首图）
                         const coverFile = item.cover || (Array.isArray(item.assets)

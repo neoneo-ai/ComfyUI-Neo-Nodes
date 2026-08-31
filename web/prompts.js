@@ -820,7 +820,7 @@ app.registerExtension({
                 settingsModal, loadModelsIntoSettings,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages
-            } = promptUI.init({ node, graph: node.graph, textWidget });
+            } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
             // Populate template selector, restore last selection and sync to hidden widget
             if (populateTemplateSelector) {

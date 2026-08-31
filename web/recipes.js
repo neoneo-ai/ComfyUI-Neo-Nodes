@@ -144,7 +144,7 @@ function findMediaValueFromWidgetsValues(widgetsValues) {
  *     { node, live, widget, value, kind, slot, targetId }，widget 是活动节点上
  *     可写的媒体 widget；comps 为 nodeId -> 连通子图根 nodeId，sizes 为子图根 ->
  *     节点数（含禁用节点）；disabledConn 为「已连线但被禁用的 Load 节点」，
- *     用于还原端同目标节点的自动 enable/disable 对齐。
+ *     用于还原端补齐资产时的自动 enable 对齐。
  */
 async function scanMediaNodes() {
     let nodes = null;
@@ -435,11 +435,12 @@ function setWidgetValue(target, filename) {
 }
 
 /**
- * 还原前的自动对齐：当配方资产数与目标子图内已启用的 conn Load 节点数不一致，且该
- * 子图内同类 conn 节点（启用+禁用）全部连到同一个下游目标节点（同一个参数槽组）时：
- *   - 资产偏多且「启用+禁用总数」恰为资产数：按参数位升序启用组内 BYPASS/Never 节点补齐；
- *   - 资产偏少：按参数位降序把多余的启用节点设为 BYPASS（保留参数位靠前的参与还原）。
- * 约束：仅影响目标子图内同一 targetId 的同类 Load 节点。
+ * 还原前的自动对齐：当配方资产数与目标子图内已启用的 conn Load 节点数不一致时：
+ *   - 资产偏多：按参数位升序启用子图内已连线但被禁用（BYPASS/Never）的同类节点补齐，
+ *     能补多少补多少，仍不足的部分由还原流程按缺额提示；
+ *   - 资产偏少：若该类启用节点全部连到同一个下游目标节点（参数位可比），按参数位降序
+ *     把多余的启用节点设为 BYPASS（保留参数位靠前的参与还原）。
+ * 约束：仅影响目标子图内的同类 conn Load 节点。
  * @returns {Promise<boolean>} 是否改动过节点 mode（调用方据此重扫刷新统计）
  */
 async function autoToggleByTarget(targetRoot, want, disabledConn, scanned, comps) {
@@ -450,42 +451,39 @@ async function autoToggleByTarget(targetRoot, want, disabledConn, scanned, comps
         const enabled = scanned.filter(s => s.slot != null && s.widget && !isNodeDisabled(s.node) && comps.get(String(s.node.id)) === targetRoot && s.kind === kind);
         if (enabled.length === need) continue;
 
-        // 该子图内同类 conn 节点（启用+禁用）按 targetId 分组，要求全部连到同一个下游目标节点
-        const groups = new Map();
-        const groupOf = (targetId) => {
-            let g = groups.get(targetId);
-            if (!g) groups.set(targetId, g = { enabled: [], disabled: [] });
-            return g;
-        };
-        for (const s of enabled) groupOf(s.targetId).enabled.push(s);
-        for (const d of disabledConn) {
-            if (comps.get(String(d.node.id)) !== targetRoot || d.kind !== kind || d.targetId == null) continue;
-            groupOf(d.targetId).disabled.push(d);
-        }
-        if (groups.size !== 1) continue; // 多个目标节点 → 该类不对齐
-
-        const [{ enabled: enabledNodes, disabled: disabledNodes }] = groups.values();
-        if (enabledNodes.length < need) {
-            // 缺：仅当「同一目标节点的启用+禁用总数」恰为 want 时，按 slot 升序启用禁用节点补齐
-            if (enabledNodes.length + disabledNodes.length !== need) continue;
-            disabledNodes.sort((a, b) => a.slot - b.slot);
-            for (let i = 0; i < need - enabledNodes.length; i++) {
-                const d = disabledNodes[i];
+        if (enabled.length < need) {
+            // 缺：按参数位升序启用已连线但被禁用的同类节点补齐，能补多少补多少
+            let short = need - enabled.length;
+            const disabled = disabledConn
+                .filter(d => comps.get(String(d.node.id)) === targetRoot && d.kind === kind && d.widget)
+                .sort((a, b) => a.slot - b.slot);
+            for (const d of disabled) {
+                if (short <= 0) break;
                 if (!d.live || !isNodeDisabled(d.live)) continue;
                 d.live.mode = 0; // 启用
                 d.live.graph?.setDirtyCanvas(true, true);
+                short--;
                 toggled = true;
             }
-        } else {
-            // 多：按 slot 降序把多余的启用节点设为 Bypass，保留参数位靠前的参与还原
-            enabledNodes.sort((a, b) => a.slot - b.slot);
-            for (let i = enabledNodes.length - 1; i >= need; i--) {
-                const s = enabledNodes[i];
-                if (!s.live || isNodeDisabled(s.live)) continue;
-                s.live.mode = 4; // Bypass（Ctrl+B，半透明）；mode 2 是 Mute/Never（深色）
-                s.live.graph?.setDirtyCanvas(true, true);
-                toggled = true;
-            }
+            continue;
+        }
+
+        // 多：启用节点按 targetId 分组，要求全部连到同一个下游目标节点（参数位可比），
+        // 按 slot 降序把多余的启用节点设为 Bypass，保留参数位靠前的参与还原
+        const byTarget = new Map();
+        for (const s of enabled) {
+            const list = byTarget.get(s.targetId);
+            if (list) list.push(s); else byTarget.set(s.targetId, [s]);
+        }
+        if (byTarget.size !== 1) continue; // 多个目标节点 → 该类不裁剪
+        const [enabledNodes] = byTarget.values();
+        enabledNodes.sort((a, b) => a.slot - b.slot);
+        for (let i = enabledNodes.length - 1; i >= need; i--) {
+            const s = enabledNodes[i];
+            if (!s.live || isNodeDisabled(s.live)) continue;
+            s.live.mode = 4; // Bypass（Ctrl+B，半透明）；mode 2 是 Mute/Never（深色）
+            s.live.graph?.setDirtyCanvas(true, true);
+            toggled = true;
         }
     }
     return toggled;
@@ -674,17 +672,13 @@ export async function createRecipesPanel() {
                 $el('div', { className: 'neo-recipes-detail-file', textContent: a.file, title: a.file })
             ]));
         });
-        if (!grid.children.length) {
-            grid.appendChild($el('div', { className: 'neo-recipes-detail-file', textContent: '（无资产）' }));
-        }
-
         const bodyChildren = [
             $el('div', { className: 'neo-recipes-detail-head' }, [
                 $el('div', { className: 'neo-recipes-detail-name', textContent: r.name }),
                 $el('div', { className: 'neo-recipes-detail-source', textContent: r.source === 'preset' ? '内置预设' : '我的配方' })
             ]),
             $el('div', { className: 'neo-recipes-detail-prompt', textContent: r.prompt || '（无提示词）' }),
-            grid,
+            ...((r.assets || []).length ? [grid] : []),
         ];
 
         const samples = r.samples || [];
@@ -790,7 +784,7 @@ export async function createRecipesPanel() {
 
         const body = $el('div', { className: 'neo-recipes-card-body' }, [
             $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: '查看资源', onclick: () => openDetail(r) }),
-            $el('div', { className: 'neo-recipes-card-meta', textContent: `${r.asset_count ?? 0} 个资源${r.sample_count ? ` · ${r.sample_count} 个示例` : ''} · ${(r.prompt || '').slice(0, 120) || '无提示词'}` })
+            $el('div', { className: 'neo-recipes-card-meta', textContent: [r.asset_count ? `${r.asset_count} 个资源` : '', r.sample_count ? `${r.sample_count} 个示例` : '', (r.prompt || '').slice(0, 120) || '无提示词'].filter(Boolean).join(' · ') })
         ]);
 
         const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
