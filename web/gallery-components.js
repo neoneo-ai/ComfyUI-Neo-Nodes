@@ -692,29 +692,40 @@ export class GalleryComponents {
         });
     }
 
-    async createDirCard(gallery, name, path, items, subdirs = {}, readOnly = false) {
+    async createDirCard(gallery, name, path, items, subdirs = {}, readOnly = false, source = "local") {
+        const isRemote = source === "oss";
+        const navTarget = isRemote ? path : name;
         const card = $el("div", {
-            className: "neo-gallery-category-card",
-            onclick: () => gallery.showDirectoryStructure(name, [])
+            className: "neo-gallery-category-card" + (isRemote ? " neo-gallery-card-remote" : ""),
+            onclick: () => gallery.showDirectoryStructure(navTarget, [])
         });
 
         const coverWrapper = $el("div", {
             className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(gallery.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${gallery.maxThumbnailSize}px` }
+            style: { minHeight: `${Math.max(gallery.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(gallery.maxThumbnailSize, 80)}px` }
         });
 
         // Mark card as lazy-load target with data attributes
         card.dataset.lazyCovers = name;
-        
+        card.dataset.lazyCoversPath = path;
+
+        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: name });
         const info = $el("div", { className: "neo-gallery-card-info" }, [
-            $el("span", { className: "neo-gallery-card-name", textContent: name }),
+            nameEl,
             $el("span", { className: "neo-gallery-card-count", textContent: `${(items || []).length} items` })
         ]);
 
+        if (isRemote) {
+            nameEl.parentElement.appendChild($el("span", {
+                className: "neo-gallery-remote-badge",
+                textContent: "\u2601"
+            }));
+        }
+
         const typeBadge = $el("div", {
-            className: "neo-gallery-card-type-badge type-directory",
-            title: "Directory"
-        }, ["\uD83D\uDCC1"]);
+            className: "neo-gallery-card-type-badge " + (isRemote ? "type-remote" : "type-directory"),
+            title: isRemote ? "Remote (OSS)" : "Directory"
+        }, [isRemote ? "\u2601\uFE0F" : "\uD83D\uDCC1"]);
 
         if (!readOnly) {
             const deleteBtn = $el("div", {
@@ -748,8 +759,13 @@ export class GalleryComponents {
         // Use cached cover images from batch fetch
         // Case-insensitive lookup: backend uses lowercase keys (e.g. "presets")
         // but frontend passes the directory name as displayed (e.g. "Presets")
-        const covers = (gallery._dirCovers && gallery._dirCovers[dirName]) || 
-                       (gallery._dirCovers && Object.entries(gallery._dirCovers).find(([k]) => k.toLowerCase() === dirName.toLowerCase())?.[1]) || [];
+        // Also try the card's full path (e.g. "Cloud Presets/26-06-25") for OSS subdirs
+        const coverPath = card.dataset && card.dataset.lazyCoversPath;
+        const covers = (gallery._dirCovers && gallery._dirCovers[dirName]) ||
+                       (gallery._dirCovers && Object.entries(gallery._dirCovers).find(([k]) => k.toLowerCase() === dirName.toLowerCase())?.[1]) ||
+                       (gallery._dirCovers && coverPath && gallery._dirCovers[coverPath]) ||
+                       (gallery._dirCovers && coverPath && Object.entries(gallery._dirCovers).find(([k]) => k.toLowerCase() === coverPath.toLowerCase())?.[1]) ||
+                       [];
 
         if (covers.length > 0) {
             this._renderCoverGrid(coverWrapper, covers, dirName, displayLabel, gallery);

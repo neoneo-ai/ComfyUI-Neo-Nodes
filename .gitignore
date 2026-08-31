@@ -7,7 +7,9 @@ model_config.json
 prompts/custom
 prompts/templates/custom
 gallery/thumbnails/
+gallery/oss_cache/
 .tiktoken_cache/
 _tags_index.json
 **/_tags_index.json
 recipes/custom/
+tools/output/

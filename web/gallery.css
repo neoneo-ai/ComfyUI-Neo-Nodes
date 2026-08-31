@@ -244,6 +244,26 @@
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
+.neo-gallery-card-type-badge.type-remote {
+    background-color: rgba(0, 150, 255, 0.3);
+    color: #66ccff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    border: 1px solid rgba(100, 200, 255, 0.3);
+}
+
+.neo-gallery-remote-badge {
+    display: inline-block;
+    font-size: 10px;
+    color: #66ccff;
+    margin-left: 4px;
+    vertical-align: middle;
+    opacity: 0.8;
+}
+
+.neo-gallery-card-remote {
+    border: 1px solid rgba(100, 200, 255, 0.15);
+}
+
 .neo-gallery-card-type-badge.type-image {
     background-color: transparent;
     color: #FF9944;

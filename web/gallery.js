@@ -248,7 +248,8 @@ class NeoGallery {
                 subdirs: dir.subdirs || {},
                 read_only: dir.read_only || false,
                 root_count: dir.root_count || 0,
-                items: dir.items || [] // Include items for presets (no lazy mode anymore)
+                items: dir.items || [],
+                source: dir.source || "local"
             }));
             this.filteredDirectories = this.allDirectories;
 
@@ -343,8 +344,8 @@ class NeoGallery {
             // This prevents mixing root-level files with subdirectory cards on the home page
             const isPresets = dir.name.toLowerCase() === 'presets';
             const displayItems = isPresets ? [] : (dir.items || []);
-            
-            const card = await this.components.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only);
+
+            const card = await this.components.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source);
             container.appendChild(card);
         }
 
@@ -384,7 +385,7 @@ class NeoGallery {
             this.renderDirectoryStructure(structure, dirName, pathSegments);
             
             // Push state to history for back button support (use query param to avoid conflict with workflow hash)
-            const stateKey = `gallery_${dirName}_${pathSegments.join('/')}`;
+            const stateKey = `gallery_v2:${encodeURIComponent(dirName)}:${pathSegments.join('/')}`;
             const currentUrl = new URL(window.location.href);
             currentUrl.searchParams.set('gallery', stateKey);
             history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
@@ -457,7 +458,7 @@ class NeoGallery {
     async renderSubdirCards(structure, dirName, pathSegments, filteredSubdirs = null) {
         // New structure: { subdirs: object, items: array, root_count: number }
         const { subdirs, items, root_count } = structure;
-        const dir = this.allDirectories.find(d => d.name === dirName);
+        const dir = this.allDirectories.find(d => d.name === dirName || d.path === dirName);
         
         // Use filtered subdirs if provided (non-empty only), otherwise use all
         const displaySubdirs = filteredSubdirs || Object.keys(subdirs || {});
@@ -532,8 +533,8 @@ class NeoGallery {
         } else {
             subfolder = dirName;
         }
-        const dir = this.allDirectories.find(d => d.name === dirName);
-        
+        const dir = this.allDirectories.find(d => d.name === dirName || d.path === dirName);
+
         if (images.length === 0) {
             showNoFilesMessage(this.accordion, "No images found in this folder");
             return;
@@ -611,7 +612,7 @@ class NeoGallery {
         let items = [];
         let subfolder = source;
 
-        const dir = this.allDirectories.find(d => d.name === source);
+        const dir = this.allDirectories.find(d => d.name === source || d.path === source);
         // In lazy mode, dir.items is undefined - use _currentDirImages as fallback
         const dirItems = (dir && Array.isArray(dir.items)) ? dir.items : [];
         if (dir) {
@@ -668,7 +669,7 @@ class NeoGallery {
 
     _getScrollKey() {
         if (this.currentView.mode === 'directory' && this.currentView.source) {
-            return `gallery_${this.currentView.source}_${this.currentView.categoryPath.join('/')}`;
+            return `gallery_v2:${encodeURIComponent(this.currentView.source)}:${this.currentView.categoryPath.join('/')}`;
         }
         return 'gallery_categories';
     }
@@ -1321,11 +1322,21 @@ class NeoGallery {
         const params = new URLSearchParams(window.location.search);
         const galleryParam = params.get('gallery');
         if (galleryParam) {
-            const match = galleryParam.match(/^gallery_(.+?)_(.*)$/);
-            if (match) {
-                const dirName = match[1];
-                const pathStr = match[2];
-                const pathSegments = pathStr ? pathStr.split('/') : [];
+            let dirName, pathSegments;
+            const v2Match = galleryParam.match(/^gallery_v2:(.+):(.*)$/);
+            if (v2Match) {
+                dirName = decodeURIComponent(v2Match[1]);
+                const pathStr = v2Match[2];
+                pathSegments = pathStr ? pathStr.split('/') : [];
+            } else {
+                const match = galleryParam.match(/^gallery_(.+?)_(.*)$/);
+                if (match) {
+                    dirName = match[1];
+                    const pathStr = match[2];
+                    pathSegments = pathStr ? pathStr.split('/') : [];
+                }
+            }
+            if (dirName) {
                 this.currentView.mode = 'directory';
                 this.currentView.source = dirName;
                 this.currentView.categoryPath = pathSegments;
