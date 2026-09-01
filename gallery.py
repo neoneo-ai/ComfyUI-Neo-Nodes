@@ -4,6 +4,7 @@
 import os
 import re
 import json
+import math
 import base64
 import asyncio
 import hashlib
@@ -1759,6 +1760,18 @@ async def view_video(request):
     )
 
 
+def _json_safe(value):
+    """Return a copy with non-finite floats (NaN/Infinity) replaced by None so the
+    response is always valid strict JSON that browsers can parse."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 @PromptServer.instance.routes.get("/neo_gallery/media_meta")
 async def media_meta(request):
     """Return embedded ComfyUI workflow/prompt metadata for a gallery media file."""
@@ -1806,7 +1819,7 @@ async def media_meta(request):
     }
     if isinstance(prompt, dict):
         result["texts"] = _collect_prompt_texts(prompt)
-    return web.json_response(result)
+    return web.json_response(_json_safe(result))
 
 
 @PromptServer.instance.routes.get("/neo_gallery/image")

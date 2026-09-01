@@ -1940,14 +1940,19 @@ export class GalleryComponents {
             promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
         } else {
-            // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
+            // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
             promptSection = $el("div", {
                 id: "neo-gallery-lightbox-prompt-section",
                 className: "neo-gallery-lightbox-prompt-section"
             });
+            const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
+            promptContainer.style.display = "none";
+            promptSection.appendChild(promptContainer);
             const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            metaBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
             promptSection.appendChild(metaBtnsContainer);
+            this._renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer);
+
+            // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
 
             const reverseBtn = $el("div", {
                 id: "neo-gallery-lightbox-reverse-btn",
@@ -2066,71 +2071,119 @@ export class GalleryComponents {
     _createMetaButtons(gallery, image, subfolder) {
         const wrap = document.createElement('span');
         wrap.style.display = 'none';
-        const params = `filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
-        fetch(`/neo_gallery/media_meta?${params}`)
-            .then(r => (r.ok ? r.json() : null))
-            .then(meta => {
-                if (!meta || !meta.has) return;
-                wrap.style.display = 'inline-flex';
-                if (meta.workflow || meta.prompt) {
-                    const loadBtn = document.createElement('div');
-                    loadBtn.className = "neo-gallery-lightbox-btn";
-                    loadBtn.textContent = "\u2937 工作流";
-                    loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
-                    loadBtn.onclick = async (e) => {
-                        e.stopPropagation();
-                        const wf = meta.workflow;
-                        const fitToContent = () => {
-                            requestAnimationFrame(() => {
-                                const canvas = app.canvas;
-                                const nodes = canvas?.graph?.nodes;
-                                if (!nodes?.length || !canvas.ds?.fitToBounds) return;
-                                const b = [Infinity, Infinity, -Infinity, -Infinity];
-                                for (const n of nodes) {
-                                    const r = n.boundingRect || [n.pos[0], n.pos[1], n.size?.[0] || 0, n.size?.[1] || 0];
-                                    b[0] = Math.min(b[0], r[0]);
-                                    b[1] = Math.min(b[1], r[1]);
-                                    b[2] = Math.max(b[2], r[0] + r[2]);
-                                    b[3] = Math.max(b[3], r[1] + r[3]);
-                                }
-                                if (!b.every(isFinite)) return;
-                                canvas.ds.fitToBounds([b[0] - 10, b[1] - 10, b[2] - b[0] + 20, b[3] - b[1] + 20]);
-                                canvas.setDirty?.(true, true);
-                            });
-                        };
-                        try {
-                            if (wf && Array.isArray(wf.nodes)) {
-                                await app.loadGraphData(wf);
-                            } else if (meta.prompt && typeof app.loadApiJson === "function") {
-                                await app.loadApiJson(meta.prompt, "gallery-example");
-                            } else if (wf) {
-                                throw new Error("工作流缺少 nodes 数据，无法载入");
-                            } else {
-                                throw new Error("此文件只有 API 格式工作流且当前前端不支持");
-                            }
-                            gallery.closeLightbox();
-                            requestAnimationFrame(fitToContent);
-                            showToast(gallery.app, "success", "工作流已载入画布", "");
-                        } catch (err) {
-                            showToast(gallery.app, "error", "载入失败", String(err.message || err));
-                        }
-                    };
-                    wrap.appendChild(loadBtn);
-                }
-                if (meta.texts && (meta.texts.positive?.length || meta.texts.negative?.length)) {
-                    const promptBtn = document.createElement('div');
-                    promptBtn.className = "neo-gallery-lightbox-btn";
-                    promptBtn.textContent = "\uD83D\uDCDD 提示词";
-                    promptBtn.title = "查看此示例内嵌的正向/负向提示词";
-                    promptBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        this._showPromptDialog(meta.texts);
-                    };
-                    wrap.appendChild(promptBtn);
-                }
-            })
-            .catch(() => {});
+        this._fetchMediaMeta(image, subfolder).then(meta => {
+            if (!meta || !meta.has) return;
+            wrap.style.display = 'inline-flex';
+            wrap.appendChild(this._buildMetaButtons(meta, gallery, image, subfolder));
+        }).catch(() => {});
         return wrap;
+    }
+
+    _fetchMediaMeta(image, subfolder) {
+        const params = `filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+        return fetch(`/neo_gallery/media_meta?${params}`).then(r => (r.ok ? r.text() : null)).then(txt => {
+            if (!txt) return null;
+            try {
+                return JSON.parse(txt);
+            } catch (e) {
+                // ComfyUI 内嵌元数据可能含非标准 NaN/Infinity 字面量，替换后重试
+                return JSON.parse(txt.replace(/\bNaN\b/g, "null").replace(/\bInfinity\b/g, "null"));
+            }
+        });
+    }
+
+    _buildMetaButtons(meta, gallery, image, subfolder) {
+        const frag = document.createDocumentFragment();
+        if (meta.workflow || meta.prompt) {
+            const loadBtn = document.createElement('div');
+            loadBtn.className = "neo-gallery-lightbox-btn";
+            loadBtn.textContent = "\u2937 工作流";
+            loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
+            loadBtn.onclick = async (e) => {
+                e.stopPropagation();
+                const wf = meta.workflow;
+                const fitToContent = () => {
+                    requestAnimationFrame(() => {
+                        const canvas = app.canvas;
+                        const nodes = canvas?.graph?.nodes;
+                        if (!nodes?.length || !canvas.ds?.fitToBounds) return;
+                        const b = [Infinity, Infinity, -Infinity, -Infinity];
+                        for (const n of nodes) {
+                            const r = n.boundingRect || [n.pos[0], n.pos[1], n.size?.[0] || 0, n.size?.[1] || 0];
+                            b[0] = Math.min(b[0], r[0]);
+                            b[1] = Math.min(b[1], r[1]);
+                            b[2] = Math.max(b[2], r[0] + r[2]);
+                            b[3] = Math.max(b[3], r[1] + r[3]);
+                        }
+                        if (!b.every(isFinite)) return;
+                        canvas.ds.fitToBounds([b[0] - 10, b[1] - 10, b[2] - b[0] + 20, b[3] - b[1] + 20]);
+                        canvas.setDirty?.(true, true);
+                    });
+                };
+                try {
+                    if (wf && Array.isArray(wf.nodes)) {
+                        await app.loadGraphData(wf);
+                    } else if (meta.prompt && typeof app.loadApiJson === "function") {
+                        await app.loadApiJson(meta.prompt, "gallery-example");
+                    } else if (wf) {
+                        throw new Error("工作流缺少 nodes 数据，无法载入");
+                    } else {
+                        throw new Error("此文件只有 API 格式工作流且当前前端不支持");
+                    }
+                    gallery.closeLightbox();
+                    requestAnimationFrame(fitToContent);
+                    showToast(gallery.app, "success", "工作流已载入画布", "");
+                } catch (err) {
+                    showToast(gallery.app, "error", "载入失败", String(err.message || err));
+                }
+            };
+            frag.appendChild(loadBtn);
+        }
+        if (meta.texts && (meta.texts.positive?.length || meta.texts.negative?.length)) {
+            const promptBtn = document.createElement('div');
+            promptBtn.className = "neo-gallery-lightbox-btn";
+            promptBtn.textContent = "\uD83D\uDCDD 提示词";
+            promptBtn.title = "查看此示例内嵌的正向/负向提示词";
+            promptBtn.onclick = (e) => {
+                e.stopPropagation();
+                this._showPromptDialog(meta.texts);
+            };
+            frag.appendChild(promptBtn);
+        }
+        return frag;
+    }
+
+    _renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer) {
+        this._fetchMediaMeta(image, subfolder).then(meta => {
+            if (!meta || !meta.has) {
+                promptContainer.appendChild($el("div", {
+                    textContent: "此图片未内嵌工作流/提示词",
+                    style: { color: "#999", fontSize: "12px" }
+                }));
+                promptContainer.style.display = "";
+                return;
+            }
+            const texts = meta.texts;
+            if (texts && (texts.positive?.length || texts.negative?.length)) {
+                const addSection = (label, arr) => {
+                    if (!arr || !arr.length) return;
+                    promptContainer.appendChild($el("div", { className: "neo-gallery-lightbox-prompt-section-item" }, [
+                        $el("span", { className: "neo-gallery-lightbox-prompt-label", textContent: label + "\uff1a" }),
+                        $el("span", { className: "neo-gallery-lightbox-prompt-value", textContent: arr.join("\n"), style: { whiteSpace: "pre-wrap" } })
+                    ]));
+                };
+                addSection("正向", texts.positive);
+                addSection("负向", texts.negative);
+                promptContainer.style.display = "";
+            }
+            metaBtnsContainer.appendChild(this._buildMetaButtons(meta, gallery, image, subfolder));
+        }).catch(() => {
+            promptContainer.appendChild($el("div", {
+                textContent: "元数据加载失败",
+                style: { color: "#999", fontSize: "12px" }
+            }));
+            promptContainer.style.display = "";
+        });
     }
 
     _showPromptDialog(texts) {
@@ -2454,7 +2507,7 @@ export class GalleryComponents {
                 }, ["\uD83D\uDCE5 Video"]);
                 promptBtnsContainer.appendChild(vSendBtn);
             }
-            promptBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
+            promptBtnsContainer.appendChild(this._createMetaButtons(this.gallery, image, subfolder));
             promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
 
@@ -2471,14 +2524,24 @@ export class GalleryComponents {
                 container.appendChild(promptSection);
             }
         } else {
-            // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
+            // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
+            if (promptSection && promptSection.parentNode) {
+                promptSection.remove();
+            }
+            const oldReverseBtn = container.querySelector('#neo-gallery-lightbox-reverse-btn');
+            if (oldReverseBtn) oldReverseBtn.remove();
             promptSection = $el("div", {
                 id: "neo-gallery-lightbox-prompt-section",
                 className: "neo-gallery-lightbox-prompt-section"
             });
+            const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
+            promptContainer.style.display = "none";
+            promptSection.appendChild(promptContainer);
             const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            metaBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
             promptSection.appendChild(metaBtnsContainer);
+            this._renderEmbeddedMeta(this.gallery, image, subfolder, promptContainer, metaBtnsContainer);
+
+            // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
 
             const reverseBtn = $el("div", {
                 id: "neo-gallery-lightbox-reverse-btn",
@@ -2500,7 +2563,7 @@ export class GalleryComponents {
                                 image.txt_content = result.prompt || "";
                                 showToast(this.gallery.app, "success", "\u2705 \u53CD\u63A8\u6210\u529F", "");
                             } else {
-                                showToast(gallery.app, "error", "\u274C \u53CD\u63A8\u5931\u8D25", result.error || "");
+                                showToast(this.gallery.app, "error", "\u274C \u53CD\u63A8\u5931\u8D25", result.error || "");
                                 reverseBtn.textContent = "\uD83D\uDD0D 反推";
                                 reverseBtn.style.pointerEvents = "auto";
                             }
