@@ -2409,6 +2409,129 @@ async def view_video(request):
     )
 
 
+def _extract_media_metadata(path: Path) -> dict:
+    """Read ComfyUI metadata embedded by Civitai example media: PNG tEXt chunks
+    and MP4 udta/ilst ©cmt (written by VHS_VideoCombine save_metadata)."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return {}
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        texts = {}
+        off = 8
+        while off + 12 <= len(data):
+            size = int.from_bytes(data[off:off + 4], "big")
+            if size <= 0 or off + 12 + size > len(data):
+                break
+            ctype = data[off + 4:off + 8]
+            if ctype == b"tEXt":
+                key, _, val = data[off + 8:off + 8 + size].partition(b"\x00")
+                texts[key.decode("latin1", "replace")] = val.decode("utf-8", "replace")
+            elif ctype == b"IDAT":
+                break
+            off += 12 + size
+        return texts
+    if data[4:8] == b"ftyp":
+        i = data.find(b"ilst")
+        if i > 0:
+            seg = data[i + 4:i + 4_000_000]
+            pos = 0
+            result = {}
+            while pos < len(seg) - 8:
+                size = int.from_bytes(seg[pos:pos + 4], "big")
+                if size < 8 or pos + size > len(seg):
+                    break
+                body = seg[pos + 8:pos + size]
+                d = body.find(b"data")
+                if d >= 0:
+                    brace = body.find(b"{", d + 8)
+                    if brace >= 0:
+                        raw = body[brace:]
+                        try:
+                            parsed = json.loads(raw.decode("utf-8", "replace"))
+                        except ValueError:
+                            end = raw.rfind(b"}")
+                            try:
+                                parsed = json.loads(raw[:end + 1].decode("utf-8", "replace"))
+                            except ValueError:
+                                parsed = None
+                        if isinstance(parsed, dict):
+                            if "prompt" in parsed or "workflow" in parsed:
+                                return parsed
+                            if "nodes" in parsed and "links" in parsed:
+                                result.setdefault("workflow", parsed)
+                            elif parsed and all(
+                                isinstance(v, dict) and "class_type" in v for v in parsed.values()
+                            ):
+                                result.setdefault("prompt", parsed)
+                pos += size
+            return result
+    return {}
+
+
+def _collect_prompt_texts(prompt: dict) -> dict:
+    positive, negative, params = [], [], {}
+    for node in (prompt or {}).values():
+        if not isinstance(node, dict):
+            continue
+        for k, v in node.get("inputs", {}).items():
+            if isinstance(v, str) and k in (
+                "text", "positive_prompt", "negative_prompt", "text_g", "text_l", "caption",
+            ):
+                (negative if "negative" in k else positive).append(v)
+            elif k in ("steps", "cfg", "seed", "width", "height", "length", "num_frames", "frame_rate") \
+                    and isinstance(v, (int, float)) and k not in params:
+                params[k] = v
+    return {"positive": positive, "negative": negative, "params": params}
+
+
+@PromptServer.instance.routes.get("/neo_gallery/media_meta")
+async def media_meta(request):
+    """Return embedded ComfyUI workflow/prompt metadata for a gallery media file."""
+    filename = request.rel_url.query.get("filename", "")
+    subfolder = request.rel_url.query.get("subfolder", "")
+    if ".." in filename or ".." in subfolder:
+        return web.json_response({"has": False})
+
+    sub_lower = subfolder.lower()
+    if sub_lower == "lora" or sub_lower.startswith("lora/"):
+        path = _find_source_media(filename, subfolder)
+    elif sub_lower == "presets" or sub_lower == "custom":
+        path = (PRESETS_DIR if sub_lower == "presets" else CUSTOM_DIR) / filename
+        if not path.is_file():
+            path = None
+    else:
+        path = None
+    if not path:
+        return web.json_response({"has": False})
+
+    raw = _extract_media_metadata(path)
+    if not raw:
+        return web.json_response({"has": False})
+
+    prompt = raw.get("prompt")
+    workflow = raw.get("workflow")
+    if isinstance(prompt, str):
+        try:
+            prompt = json.loads(prompt)
+        except ValueError:
+            prompt = None
+    if isinstance(workflow, str):
+        try:
+            workflow = json.loads(workflow)
+        except ValueError:
+            workflow = None
+
+    result = {
+        "has": bool(prompt or workflow),
+        "workflow": workflow if isinstance(workflow, dict) else None,
+        "prompt": prompt if isinstance(prompt, dict) else None,
+    }
+    if isinstance(prompt, dict):
+        result["texts"] = _collect_prompt_texts(prompt)
+    return web.json_response(result)
+
+
 @PromptServer.instance.routes.get("/neo_gallery/image")
 async def view_image(request):
     """Serve gallery images by filename."""

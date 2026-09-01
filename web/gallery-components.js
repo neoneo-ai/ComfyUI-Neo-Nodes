@@ -3,6 +3,7 @@
  */
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
+import { app } from "../../../../scripts/app.js";
 import {
     PAGE_SIZE,
     getReservedSpace,
@@ -2006,10 +2007,19 @@ export class GalleryComponents {
             if (sendBtn) promptBtnsContainer.appendChild(sendBtn);
             if (videoSendBtn) promptBtnsContainer.appendChild(videoSendBtn);
             if (loraSendBtn) promptBtnsContainer.appendChild(loraSendBtn);
+            promptBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
             promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
         } else {
             // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
+            promptSection = $el("div", {
+                id: "neo-gallery-lightbox-prompt-section",
+                className: "neo-gallery-lightbox-prompt-section"
+            });
+            const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
+            metaBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
+            promptSection.appendChild(metaBtnsContainer);
+
             const reverseBtn = $el("div", {
                 id: "neo-gallery-lightbox-reverse-btn",
                 className: "neo-gallery-lightbox-btn neo-gallery-lightbox-reverse-btn",
@@ -2051,7 +2061,7 @@ export class GalleryComponents {
         }
 
         // Add no-prompt class when there's no txt_content to remove border/background
-        container.classList.toggle('no-prompt', !image.txt_content);
+        container.classList.toggle('no-prompt', !promptSection);
 
         container.appendChild(imgWrapper);
         if (promptSection) container.appendChild(promptSection);
@@ -2122,6 +2132,108 @@ export class GalleryComponents {
 
         const nextItem = gallery.currentLightboxImages[newIndex];
         gallery.updateLightboxContent(gallery.currentLightbox, nextItem, nextItem.subfolder, gallery.currentLightboxImages, newIndex);
+    }
+
+    _createMetaButtons(gallery, image, subfolder) {
+        const wrap = document.createElement('span');
+        wrap.style.display = 'none';
+        const params = `filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+        fetch(`/neo_gallery/media_meta?${params}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(meta => {
+                if (!meta || !meta.has) return;
+                wrap.style.display = 'inline-flex';
+                if (meta.workflow || meta.prompt) {
+                    const loadBtn = document.createElement('div');
+                    loadBtn.className = "neo-gallery-lightbox-btn";
+                    loadBtn.textContent = "\u2937 工作流";
+                    loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
+                    loadBtn.onclick = async (e) => {
+                        e.stopPropagation();
+                        const wf = meta.workflow;
+                        const fitToContent = () => {
+                            requestAnimationFrame(() => {
+                                const canvas = app.canvas;
+                                const nodes = canvas?.graph?.nodes;
+                                if (!nodes?.length || !canvas.ds?.fitToBounds) return;
+                                const b = [Infinity, Infinity, -Infinity, -Infinity];
+                                for (const n of nodes) {
+                                    const r = n.boundingRect || [n.pos[0], n.pos[1], n.size?.[0] || 0, n.size?.[1] || 0];
+                                    b[0] = Math.min(b[0], r[0]);
+                                    b[1] = Math.min(b[1], r[1]);
+                                    b[2] = Math.max(b[2], r[0] + r[2]);
+                                    b[3] = Math.max(b[3], r[1] + r[3]);
+                                }
+                                if (!b.every(isFinite)) return;
+                                canvas.ds.fitToBounds([b[0] - 10, b[1] - 10, b[2] - b[0] + 20, b[3] - b[1] + 20]);
+                                canvas.setDirty?.(true, true);
+                            });
+                        };
+                        try {
+                            if (wf && Array.isArray(wf.nodes)) {
+                                await app.loadGraphData(wf);
+                            } else if (meta.prompt && typeof app.loadApiJson === "function") {
+                                await app.loadApiJson(meta.prompt, "gallery-example");
+                            } else if (wf) {
+                                throw new Error("工作流缺少 nodes 数据，无法载入");
+                            } else {
+                                throw new Error("此文件只有 API 格式工作流且当前前端不支持");
+                            }
+                            gallery.closeLightbox();
+                            requestAnimationFrame(fitToContent);
+                            showToast(gallery.app, "success", "工作流已载入画布", "");
+                        } catch (err) {
+                            showToast(gallery.app, "error", "载入失败", String(err.message || err));
+                        }
+                    };
+                    wrap.appendChild(loadBtn);
+                }
+                if (meta.texts && (meta.texts.positive?.length || meta.texts.negative?.length)) {
+                    const promptBtn = document.createElement('div');
+                    promptBtn.className = "neo-gallery-lightbox-btn";
+                    promptBtn.textContent = "\uD83D\uDCDD 提示词";
+                    promptBtn.title = "查看此示例内嵌的正向/负向提示词";
+                    promptBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        this._showPromptDialog(meta.texts);
+                    };
+                    wrap.appendChild(promptBtn);
+                }
+            })
+            .catch(() => {});
+        return wrap;
+    }
+
+    _showPromptDialog(texts) {
+        const existing = document.querySelector('.neo-gallery-prompt-dialog');
+        if (existing) existing.remove();
+        const overlay = document.createElement('div');
+        overlay.className = 'neo-gallery-prompt-dialog';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#1e1e1e;color:#ddd;border-radius:8px;padding:16px 20px;max-width:640px;max-height:70vh;overflow:auto;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;';
+        const section = (title, arr) => {
+            if (!arr || !arr.length) return;
+            const h = document.createElement('div');
+            h.style.cssText = 'font-weight:bold;color:#8cf;margin:6px 0 2px;';
+            h.textContent = title;
+            box.appendChild(h);
+            arr.forEach(t => {
+                const p = document.createElement('div');
+                p.textContent = t;
+                box.appendChild(p);
+            });
+        };
+        section("正向提示词", texts.positive);
+        section("负向提示词", texts.negative);
+        if (texts.params && Object.keys(texts.params).length) {
+            section("参数", [Object.entries(texts.params).map(([k, v]) => `${k}: ${v}`).join(", ")]);
+        }
+        overlay.appendChild(box);
+        overlay.onclick = (e) => {
+            if (e.target === overlay) overlay.remove();
+        };
+        document.body.appendChild(overlay);
     }
 
     updateLightboxContent(lightbox, image, subfolder, allImages, currentIndex) {
@@ -2413,6 +2525,7 @@ export class GalleryComponents {
                 }, ["\uD83D\uDCE5 Video"]);
                 promptBtnsContainer.appendChild(vSendBtn);
             }
+            promptBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
             promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
 
@@ -2430,6 +2543,14 @@ export class GalleryComponents {
             }
         } else {
             // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
+            promptSection = $el("div", {
+                id: "neo-gallery-lightbox-prompt-section",
+                className: "neo-gallery-lightbox-prompt-section"
+            });
+            const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
+            metaBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
+            promptSection.appendChild(metaBtnsContainer);
+
             const reverseBtn = $el("div", {
                 id: "neo-gallery-lightbox-reverse-btn",
                 className: "neo-gallery-lightbox-btn neo-gallery-lightbox-reverse-btn",
@@ -2468,6 +2589,14 @@ export class GalleryComponents {
                 }
             }, ["\uD83D\uDD0D 反推"]);
             container.appendChild(reverseBtn);
+            if (promptSection) {
+                const closeBtnEl = container.querySelector('.neo-gallery-lightbox-close-btn');
+                if (closeBtnEl) {
+                    container.insertBefore(promptSection, closeBtnEl);
+                } else {
+                    container.appendChild(promptSection);
+                }
+            }
         }
 
         const prevBtn = imgWrapper.querySelector('#neo-gallery-lightbox-prev-btn');
@@ -2501,7 +2630,7 @@ export class GalleryComponents {
         }
 
         // Toggle no-prompt class for border/background removal
-        container.classList.toggle('no-prompt', !image.txt_content);
+        container.classList.toggle('no-prompt', !promptSection);
 
         this.gallery.currentLightboxIndex = currentIndex;
     }
