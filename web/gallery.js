@@ -674,7 +674,7 @@ class NeoGallery {
                     const item = this._renderQueue.shift();
                     const itemSubfolder = item.subfolder || currentSubfolder;
                     const itemWithSubfolder = {...item, subfolder: itemSubfolder};
-                    const imgEl = this.components.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.read_only) || false);
+                    const imgEl = this.components.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
                     imageGrid.appendChild(imgEl);
                 }
                 this._renderedCount += count;
@@ -722,7 +722,7 @@ class NeoGallery {
                 const itemSubfolder = item.subfolder || subfolder;
                 // Add subfolder to item so it's available when sending
                 const itemWithSubfolder = {...item, subfolder: itemSubfolder};
-                const el = this.components.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.read_only) || false);
+                const el = this.components.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
                 if (!isImageFile(item.filename)) {
                     el.style.width = `${this.maxThumbnailSize}px`;
                 }
@@ -816,7 +816,7 @@ class NeoGallery {
                 const item = this._renderQueue.shift();
                 // Add subfolder to item so it's available when sending
                 const itemWithSubfolder = {...item, subfolder: subfolder};
-                const el = this.components.createImageElement(this, itemWithSubfolder, subfolder, dir.read_only);
+                const el = this.components.createImageElement(this, itemWithSubfolder, subfolder, dir.source || "");
                 if (!isImageFile(item.filename)) {
                     el.style.width = `${this.maxThumbnailSize}px`;
                 }

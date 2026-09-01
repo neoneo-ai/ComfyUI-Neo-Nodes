@@ -225,78 +225,6 @@ export class GalleryComponents {
             })
         ]);
 
-        // Quick add buttons
-        const quickAddArea = $el("div", { className: "neo-gallery-dir-quick-add" }, [
-            $el("span", { className: "neo-gallery-dir-quick-label", textContent: "Quick add:" }),
-            $el("button", {
-                className: "neo-gallery-dir-quick-btn neo-gallery-dir-quick-input",
-                onclick: async () => {
-                    try {
-                        const resp = await api.fetchApi('/neo_gallery/resolve_path?path_type=input');
-                        if (resp.ok) {
-                            const result = await resp.json();
-                            if (result.success && result.path) {
-                                const saveResp = await api.fetchApi('/neo_gallery/save_settings', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: "add", path: result.path })
-                                });
-                                const saveResult = await saveResp.json();
-
-                                if (saveResp.ok && saveResult.success) {
-                                    setTimeout(() => gallery.promptAndSetCustomDir(), 300);
-                                    try { await gallery.loadGallery(); gallery.sortAndDisplayImages(); } catch (e) { }
-                                } else {
-                                    alert('Failed: ' + (result.error || 'Unknown error'));
-                                }
-                            } else {
-                                alert(result.error || 'Could not resolve input directory');
-                            }
-                        } else {
-                            alert('Failed to get ComfyUI input path');
-                        }
-                    } catch (e) {
-                        console.error('[Gallery] Error resolving input path:', e);
-                        alert('Error getting ComfyUI input path');
-                    }
-                },
-                textContent: "\uD83D\uDCE5 Input"
-            }),
-            $el("button", {
-                className: "neo-gallery-dir-quick-btn neo-gallery-dir-quick-output",
-                onclick: async () => {
-                    try {
-                        const resp = await api.fetchApi('/neo_gallery/resolve_path?path_type=output');
-                        if (resp.ok) {
-                            const result = await resp.json();
-                            if (result.success && result.path) {
-                                const saveResp = await api.fetchApi('/neo_gallery/save_settings', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: "add", path: result.path })
-                                });
-                                const saveResult = await saveResp.json();
-
-                                if (saveResp.ok && saveResult.success) {
-                                    setTimeout(() => gallery.promptAndSetCustomDir(), 300);
-                                    try { await gallery.loadGallery(); gallery.sortAndDisplayImages(); } catch (e) { }
-                                } else {
-                                    alert('Failed: ' + (saveResult.error || 'Unknown error'));
-                                }
-                            } else {
-                                alert(result.error || 'Could not resolve output directory');
-                            }
-                        } else {
-                            alert('Failed to get ComfyUI output path');
-                        }
-                    } catch (e) {
-                        console.error('[Gallery] Error resolving output path:', e);
-                        alert('Error getting ComfyUI output path');
-                    }
-                },
-                textContent: "\uD83D\uDCE4 Output"
-            })
-        ]);
 
         // Bulk add area
         const bulkArea = $el("div", { className: "neo-gallery-dir-bulk-area" }, [
@@ -564,7 +492,6 @@ export class GalleryComponents {
         ]);
 
         modal.appendChild(addArea);
-        modal.appendChild(quickAddArea);
         modal.appendChild(bulkArea);
         modal.appendChild(civitaiArea);
         modalOverlay.appendChild(modal);
@@ -1339,7 +1266,7 @@ export class GalleryComponents {
 
     // ====== Image Element ======
 
-    createImageElement(gallery, image, subfolder, readOnly = false) {
+    createImageElement(gallery, image, subfolder, source = "") {
         const isImageFileResult = isImageFile(image.filename);
         const isVideoFileResult = isVideoFile(image.filename);
         const reservedSpace = getReservedSpace(gallery.displayLabels);
@@ -1358,7 +1285,9 @@ export class GalleryComponents {
         let deleteBtn = null;
         const subLower = (subfolder || '').toLowerCase();
         const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/');
-        if (!isReadOnlySource && !readOnly) {
+        // System input/output files are deletable; only presets, lora, and remote
+        // (oss) sources are read-only.
+        if (!isReadOnlySource && source !== "oss") {
             deleteBtn = $el("div", {
                 className: "neo-gallery-delete-btn",
                 onclick: (e) => {

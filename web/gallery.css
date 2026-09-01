@@ -1606,38 +1606,6 @@ Accordion Section Buttons (Clear)
     background-color: rgba(255, 106, 0, 0.25);
 }
 
-/* Quick add buttons area */
-.neo-gallery-dir-quick-add {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    border-bottom: 1px solid #333;
-}
-
-.neo-gallery-dir-quick-label {
-    color: #888;
-    font-size: 12px;
-    white-space: nowrap;
-}
-
-.neo-gallery-dir-quick-btn {
-    padding: 5px 10px;
-    background-color: rgba(255, 106, 0, 0.1);
-    color: #FF9944;
-    border: 1px solid rgba(255, 106, 0, 0.3);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    transition: all 0.2s ease;
-}
-
-.neo-gallery-dir-quick-btn:hover {
-    background-color: rgba(255, 106, 0, 0.2);
-    border-color: #FF6A00;
-    color: #FFB84D;
-}
-
 /* Send menu dropdown */
 .neo-gallery-send-menu {
     min-width: 200px;

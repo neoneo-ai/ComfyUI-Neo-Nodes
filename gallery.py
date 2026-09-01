@@ -35,8 +35,52 @@ ALL_MEDIA_EXTENSIONS = IMG_EXTENSIONS | VIDEO_EXTENSIONS
 LORA_FILE_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin", ".sft"}
 
 
+def _get_system_dirs():
+    """Return system directories (input/output) that are auto-provided by ComfyUI.
+
+    Returns a list of dicts: [{\"path\": Path, \"name\": str, \"read_only\": True}, ...]
+    Only includes dirs that actually exist on disk.
+    """
+    import folder_paths as _folder_paths
+    result = []
+    for label in ("input", "output"):
+        try:
+            base_dir = getattr(_folder_paths, f"{label}_directory")
+            p = Path(base_dir).resolve()
+            if p.exists():
+                result.append({"path": p, "name": label.capitalize(), "read_only": True})
+        except Exception:
+            pass
+    return result
+
+
+def _resolve_system_dir(dir_name: str):
+    """Resolve a dir_name/subfolder against the auto-provided Input/Output dirs.
+
+    Returns (base_dir, relative_path) for names like "input" or "input/sub1",
+    or None when dir_name does not reference a system dir.
+    Bare relative paths (e.g. "sub1") are NOT resolved here; callers that need
+    them must probe every system dir explicitly after custom dirs fail.
+    """
+    name = (dir_name or "").strip()
+    if not name:
+        return None
+    name_lower = name.lower()
+    for info in _get_system_dirs():
+        sys_name = info["name"]
+        if name_lower == sys_name.lower():
+            return info["path"], ""
+        if name_lower.startswith(sys_name.lower() + "/"):
+            return info["path"], name[len(sys_name):].strip("/")
+    return None
+
+
 def _get_user_custom_dirs():
-    """Get all user-configured custom directory paths from settings."""
+    """Get all user-configured custom directory paths from settings.
+
+    Input/Output dirs are auto-provided by ComfyUI, so configured duplicates
+    of them are skipped to avoid double-listing.
+    """
     dirs = []
     try:
         settings_path = CURRENT_DIR / "gallery_settings.json"
@@ -54,6 +98,9 @@ def _get_user_custom_dirs():
                         dirs.append(p)
     except Exception:
         pass
+    system_paths = {str(info["path"]).lower() for info in _get_system_dirs()}
+    if system_paths:
+        dirs = [d for d in dirs if str(d.resolve()).lower() not in system_paths]
     return dirs
 
 
@@ -1272,11 +1319,17 @@ async def get_gallery_list(request):
                 rel_path_param = dir_name_param[len("lora/"):]
             await _ensure_auto_cache()
         else:
-            for dir_path in user_custom_dirs:
-                d_name = dir_path.name if dir_path.name else str(dir_path)
-                if d_name.lower() == dir_name_lower:
-                    base = dir_path
-                    break
+            system = _resolve_system_dir(dir_name_param)
+            if system:
+                base = system[0]
+                if not rel_path_param:
+                    rel_path_param = system[1]
+            else:
+                for dir_path in user_custom_dirs:
+                    d_name = dir_path.name if dir_path.name else str(dir_path)
+                    if d_name.lower() == dir_name_lower:
+                        base = dir_path
+                        break
         
         # Handle Cloud Presets (OSS remote)
         if dir_name_lower == "cloud presets" or dir_name_lower.startswith("cloud presets/"):
@@ -1288,6 +1341,7 @@ async def get_gallery_list(request):
 
         is_presets = dir_name_lower == "presets" or dir_name_lower.startswith("presets/")
         is_lora = dir_name_lower == "lora" or dir_name_lower.startswith("lora/")
+        is_system = _resolve_system_dir(dir_name_param) is not None
         
         # For presets subdirectories (e.g., Presets/10秒), only show images without nested subdir cards
         # This prevents showing two levels of subdirectory structure on the home page
@@ -1302,7 +1356,7 @@ async def get_gallery_list(request):
             if "subdirs" not in resp_dir:
                 resp_dir["subdirs"] = {}
         else:
-            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets or is_lora, 
+            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets or is_lora or is_system, 
                                                   include_dirs, include_items, search_mode)
         
         if is_lora and include_items:
@@ -1368,7 +1422,13 @@ async def get_gallery_list(request):
         })
     
     # Original behavior: full listing (no dir_name) - process all directories using unified function
-    
+
+    # System dirs (input/output) — auto-provided by ComfyUI, read-only
+    for info in _get_system_dirs():
+        resp_dir = _process_single_directory(info["path"], info["name"], "", True,
+                                              include_dirs, include_items, search_mode)
+        directories.append(resp_dir)
+
     # Custom dirs (writable)
     for dir_path in user_custom_dirs:
         dir_name = dir_path.name if dir_path.name else str(dir_path)
@@ -1491,6 +1551,9 @@ async def get_gallery_list(request):
         for dir_path in user_custom_dirs:
             dir_name = dir_path.name if dir_path.name else str(dir_path)
             _collect_all_dir_covers(covers, dir_path, dir_name, 2)
+        # System dirs (input/output) covers
+        for info in _get_system_dirs():
+            _collect_all_dir_covers(covers, info["path"], info["name"], 2)
         # Collect covers from OSS directories
         if _is_oss_enabled():
             if oss_index is None:
@@ -1599,7 +1662,15 @@ async def copy_to_input(request):
 
         if subfolder:
             dir_parts = [p for p in subfolder.split("/") if p]
-            if dir_parts[0].lower() == "lora" and ".." not in dir_parts:
+            system = _resolve_system_dir(subfolder)
+            if system and ".." not in dir_parts:
+                candidate = system[0]
+                for part in [p for p in system[1].split("/") if p]:
+                    candidate = candidate / part
+                candidate = candidate / filename
+                if candidate.exists():
+                    source_path = candidate
+            elif dir_parts[0].lower() == "lora" and ".." not in dir_parts:
                 candidate = LORA_CACHE_DIR
                 for part in dir_parts[1:]:
                     candidate = candidate / part
@@ -1628,6 +1699,25 @@ async def copy_to_input(request):
         if not source_path:
             for dir_path in user_custom_dirs:
                 candidate = dir_path / filename
+                if candidate.exists():
+                    source_path = candidate
+                    break
+
+        # System dirs (input/output): source already lives in input, or copy from output
+        if not source_path:
+            for info in _get_system_dirs():
+                candidate = info["path"] / filename
+                if candidate.exists():
+                    source_path = candidate
+                    break
+
+        # System dirs with relative subfolder (deep navigation drops the dir prefix)
+        if not source_path and subfolder and ".." not in subfolder:
+            for info in _get_system_dirs():
+                candidate = info["path"]
+                for part in dir_parts:
+                    candidate = candidate / part
+                candidate = candidate / filename
                 if candidate.exists():
                     source_path = candidate
                     break
@@ -1672,49 +1762,6 @@ async def copy_to_input(request):
     except Exception as e:
         print(f"[Neo Gallery] Error copying to input: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
-
-
-@PromptServer.instance.routes.get("/neo_gallery/resolve_path")
-async def resolve_comfyui_path(request):
-    """Resolve ComfyUI's built-in input/output directory paths."""
-    path_type = request.rel_url.query.get("path_type", "").lower()
-
-    if path_type not in ("input", "output"):
-        return web.json_response({"success": False, "error": "Invalid path_type"}, status=400)
-
-    try:
-        import folder_paths as _folder_paths
-
-        if path_type == "input":
-            base_dir = _folder_paths.input_directory
-        else:
-            base_dir = _folder_paths.output_directory
-
-        resolved_path = Path(base_dir).resolve()
-        if not resolved_path.exists():
-            return web.json_response({
-                "success": False,
-                "error": f"Directory does not exist: {resolved_path}"
-            }, status=404)
-
-        comfy_root = Path(__file__).parent.parent.parent.resolve()
-        if not str(resolved_path).startswith(str(comfy_root)):
-            return web.json_response({
-                "success": False,
-                "error": f"Path outside ComfyUI directory: {resolved_path}"
-            }, status=400)
-
-        return web.json_response({
-            "success": True,
-            "path": str(resolved_path),
-            "display_name": resolved_path.name
-        })
-    except Exception as e:
-        print(f"[Neo Gallery] Error resolving {path_type} path: {e}")
-        return web.json_response({
-            "success": False,
-            "error": f"Failed to resolve {path_type} directory: {str(e)}"
-        }, status=500)
 
 
 def _has_media_in_dir_any(dir_path: Path) -> bool:
@@ -1943,7 +1990,7 @@ async def get_directory_cover_images(request):
     Response: { "covers": { "dir_name/key": [{...}], ... } }
     """
     try:
-        data = await request.json() if await request.content_type == "application/json" else {}
+        data = await request.json() if request.content_type == "application/json" else {}
         sample_count = int(data.get("samples", 2))
         
         covers: dict[str, list[dict]] = {}
@@ -1960,6 +2007,10 @@ async def get_directory_cover_images(request):
         for dir_path in _get_user_custom_dirs():
             dir_name = dir_path.name if dir_path.name else str(dir_path)
             _collect_all_dir_covers(covers, dir_path, dir_name, sample_count)
+        
+        # Collect from system directories (input/output), matching the home listing
+        for info in _get_system_dirs():
+            _collect_all_dir_covers(covers, info["path"], info["name"], sample_count)
         
         return web.json_response({"covers": covers})
     except Exception as e:
@@ -2004,12 +2055,18 @@ async def get_subdirs(request):
         if not rel_path:
             rel_path = dir_name_lower[len("presets/"):]
     else:
-        user_custom_dirs = _get_user_custom_dirs()
-        for dir_path in user_custom_dirs:
-            d_name = dir_path.name if dir_path.name else str(dir_path)
-            if d_name.lower() == dir_name_lower:
-                base = dir_path
-                break
+        system = _resolve_system_dir(dir_name)
+        if system:
+            base = system[0]
+            if not rel_path:
+                rel_path = system[1]
+        else:
+            user_custom_dirs = _get_user_custom_dirs()
+            for dir_path in user_custom_dirs:
+                d_name = dir_path.name if dir_path.name else str(dir_path)
+                if d_name.lower() == dir_name_lower:
+                    base = dir_path
+                    break
 
     if base is None or not base.exists():
         return web.json_response({"error": "Directory not found"}, status=404)
@@ -2249,6 +2306,29 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
                 if source_path:
                     break
     
+    # System dirs (input/output): items are scanned with only a relative subfolder,
+    # so accept both the prefixed form ("input", "input/sub1") and bare relative
+    # paths ("sub1") that deep navigation sends.
+    if not source_path and ".." not in filename and ".." not in subfolder:
+        sys_sub_lower = (subfolder or "").lower()
+        for info in _get_system_dirs():
+            sys_name_lower = info["name"].lower()
+            if sys_sub_lower == sys_name_lower:
+                rel_parts = []
+            elif sys_sub_lower.startswith(sys_name_lower + "/"):
+                rel_parts = [p for p in subfolder[len(info["name"]):].split("/") if p]
+            elif subfolder:
+                rel_parts = [p for p in subfolder.split("/") if p]
+            else:
+                rel_parts = []
+            candidate = info["path"]
+            for part in rel_parts:
+                candidate = candidate / part
+            candidate = candidate / filename
+            if candidate.exists():
+                source_path = candidate
+                break
+
     # Search in presets (including subfolders)
     if not source_path:
         subfolder_lower = (subfolder or "").lower()
@@ -2281,6 +2361,20 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
             if candidate.exists():
                 source_path = candidate
                 break
+    
+    # Last resort: an unprefixed subfolder that no custom/system/presets dir
+    # owns (e.g. "MMH3/model" from deep LoRA navigation) is treated as a path
+    # relative to the lora cache, mirroring the prefixed "Lora/MMH3/model" form.
+    # The lora cache is read-only, so this cannot shadow a writable location.
+    if not source_path and subfolder and ".." not in filename and ".." not in subfolder:
+        lora_sub_parts = [p for p in subfolder.split("/") if p]
+        if lora_sub_parts and all(p not in ("..", ".") for p in lora_sub_parts):
+            candidate = LORA_CACHE_DIR
+            for part in lora_sub_parts:
+                candidate = candidate / part
+            candidate = candidate / filename
+            if candidate.exists():
+                source_path = candidate
     
     return source_path
 
@@ -2501,7 +2595,10 @@ async def media_meta(request):
         if not path.is_file():
             path = None
     else:
-        path = None
+        # Custom dirs and system input/output dirs all resolve through the shared finder
+        path = _find_source_media(filename, subfolder)
+        if path and not path.is_file():
+            path = None
     if not path:
         return web.json_response({"has": False})
 
@@ -2623,6 +2720,25 @@ async def view_image(request):
                 base = candidate
                 break
 
+    # System dirs (input/output): same fallback as custom dirs, plus the
+    # prefixed name form ("Input", "Input/sub1") that root items carry.
+    if base is None and subfolder and ".." not in subfolder:
+        system = _resolve_system_dir(subfolder)
+        if system:
+            candidate = system[0]
+            for part in [p for p in system[1].split("/") if p]:
+                candidate = candidate / part
+            if candidate.exists():
+                base = candidate
+        else:
+            for info in _get_system_dirs():
+                candidate = info["path"]
+                for part in dir_parts:
+                    candidate = candidate / part
+                if candidate.exists():
+                    base = candidate
+                    break
+
     # OSS fallback: serve from cache or download on demand
     if subfolder_lower.startswith("cloud presets/") and _is_oss_enabled():
         oss_subdir = subfolder_lower[len("cloud presets/"):]
@@ -2648,7 +2764,23 @@ async def view_image(request):
                 )
         return web.Response(status=404)
 
-    if base is None or not base.exists():
+    if base is None:
+        # Final fallback: let the shared media resolver handle subfolders the
+        # base-dir logic above doesn't cover (unprefixed lora cache paths,
+        # deep system-dir paths, ...). Mirrors the thumbnail route.
+        source_path = _find_source_media(filename, subfolder)
+        if source_path:
+            with open(source_path, "rb") as f:
+                content = f.read()
+            content_type = mimetypes.guess_type(str(source_path))[0] or "application/octet-stream"
+            return web.Response(
+                body=content,
+                content_type=content_type,
+                headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
+            )
+        return web.Response(status=404)
+
+    if not base.exists():
         return web.Response(status=404)
 
     fullpath = None
@@ -2842,6 +2974,8 @@ async def delete_gallery_item(request):
             return web.json_response({"success": False, "error": "Invalid filename"}, status=400)
 
         # --- Read-only check for presets and lora cache ---
+        # System input/output dirs are NOT blocked here: individual files inside
+        # them can be deleted (the folder itself is protected by the listing UI).
         subfolder_lower = (subfolder or "").lower()
         if subfolder_lower == "presets" or subfolder_lower.startswith("presets/") \
                 or subfolder_lower == "lora" or subfolder_lower.startswith("lora/"):
@@ -2895,6 +3029,38 @@ async def delete_gallery_item(request):
                         print(f"[Neo Gallery] Fallback found: {candidate}")
                         break
                 if base:
+                    break
+
+        # System input/output dirs: allow deleting individual files inside them.
+        # The folder itself stays protected (no folder-delete path); only files
+        # are removed. Handles the prefixed ("Input/sub1") and bare relative
+        # ("sub1") subfolder forms used by the listing and deep navigation.
+        if not found_path and ".." not in filename and ".." not in subfolder:
+            sys_sub_lower = (subfolder or "").lower()
+            for info in _get_system_dirs():
+                sys_name_lower = info["name"].lower()
+                if sys_sub_lower == sys_name_lower:
+                    rel_parts = []
+                elif sys_sub_lower.startswith(sys_name_lower + "/"):
+                    rel_parts = [p for p in subfolder[len(info["name"]):].split("/") if p]
+                elif subfolder:
+                    rel_parts = [p for p in subfolder.split("/") if p]
+                else:
+                    rel_parts = []
+                if any(p in ("..", ".") for p in rel_parts):
+                    continue
+                sys_base = info["path"]
+                for part in rel_parts:
+                    sys_base = sys_base / part
+                if (sys_base / filename).is_file():
+                    base, found_path = sys_base, sys_base / filename
+                    break
+                for ext in ALL_MEDIA_EXTENSIONS:
+                    candidate = sys_base / f"{filename}{ext}"
+                    if candidate.exists():
+                        base, found_path = sys_base, candidate
+                        break
+                if found_path:
                     break
 
         if not base or not found_path:
