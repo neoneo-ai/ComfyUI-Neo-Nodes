@@ -343,13 +343,13 @@ export class GalleryComponents {
             type: "password",
             className: "neo-gallery-dir-input",
             placeholder: civitaiKeySet ? `Civitai API KEY configured (${civitaiKeyHint}) \u2014 leave empty to keep` : "Civitai API KEY...",
+            onkeydown: (e) => { if (e.key === "Enter") saveCivitaiKey(); },
         });
 
         const saveCivitaiKey = async () => {
             const value = civitaiKeyInput.value.trim();
             if (!value) {
-                showToast(gallery.app, civitaiKeySet ? 'info' : 'warning', 'Civitai API KEY',
-                    civitaiKeySet ? 'Already configured \u2014 nothing to save.' : 'Paste your Civitai API KEY first.');
+                showToast(gallery.app, 'warning', 'Civitai API KEY', '请输入 API KEY');
                 return;
             }
             try {
@@ -359,15 +359,18 @@ export class GalleryComponents {
                     body: JSON.stringify({ action: "save_civitai", api_key: value })
                 });
                 const result = await resp.json();
-                if (resp.ok && result.success) {
+                if (resp.ok && result.success && result.civitai_api_key_set) {
                     civitaiKeyInput.value = '';
                     civitaiKeySet = true;
-                    showToast(gallery.app, 'success', 'Saved', 'Civitai API KEY updated.');
+                    civitaiKeyHint = result.civitai_api_key_hint || "";
+                    civitaiKeyInput.placeholder = `Civitai API KEY configured (${civitaiKeyHint}) \u2014 leave empty to keep`;
+                    showToast(gallery.app, 'success', '已保存', 'API KEY 已保存');
+                    pollLoraSync();
                 } else {
-                    alert('Failed: ' + (result.error || 'Unknown error'));
+                    showToast(gallery.app, 'error', '保存失败', result.error || '后端未确认写入');
                 }
             } catch (e) {
-                alert('Error saving Civitai API KEY');
+                showToast(gallery.app, 'error', '保存失败', String(e));
             }
         };
 
@@ -436,12 +439,20 @@ export class GalleryComponents {
                             loraSyncDirs = loraSyncDirs.filter(p => p !== d.path);
                         }
                         try {
-                            await api.fetchApi('/neo_gallery/save_settings', {
+                            const resp = await api.fetchApi('/neo_gallery/save_settings', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ action: "save_civitai", dirs: loraSyncDirs })
                             });
-                        } catch (e) { }
+                            const result = await resp.json();
+                            if (!resp.ok || !result.success) {
+                                showToast(gallery.app, 'error', '保存失败', result.error || 'LORA 目录选择未保存');
+                            } else {
+                                pollLoraSync();
+                            }
+                        } catch (e) {
+                            showToast(gallery.app, 'error', '保存失败', String(e));
+                        }
                     };
                     loraDirsList.appendChild($el("label", { className: "neo-gallery-lora-dir-item" }, [cb, `${label} (${d.count})`]));
                 }
@@ -534,11 +545,15 @@ export class GalleryComponents {
                 }),
                 $el("span", { textContent: "启用 C 站 LORA（访问时自动获取示例图）" })
             ]),
-            civitaiKeyInput,
-            $el("div", { className: "neo-gallery-civitai-actions" }, [
-                $el("button", { className: "neo-gallery-dir-bulk-btn", textContent: "Save API KEY", onclick: saveCivitaiKey }),
-                testNetBtn,
+            $el("div", { className: "neo-gallery-civitai-key-row" }, [
+                civitaiKeyInput,
+                $el("button", {
+                    className: "neo-gallery-dir-bulk-btn neo-gallery-civitai-save-btn",
+                    textContent: "保存",
+                    onclick: saveCivitaiKey,
+                }),
             ]),
+            $el("div", { className: "neo-gallery-civitai-actions" }, [testNetBtn]),
             netResult,
             $el("div", { className: "neo-gallery-lora-progress", textContent: "Examples are cached automatically when the Lora section is accessed." }),
             loraDirsToggle,

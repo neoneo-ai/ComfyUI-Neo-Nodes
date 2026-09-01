@@ -1777,6 +1777,20 @@ Accordion Section Buttons (Clear)
     cursor: pointer;
 }
 
+.neo-gallery-civitai-key-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.neo-gallery-civitai-key-row .neo-gallery-dir-input {
+    min-width: 0;
+}
+
+.neo-gallery-civitai-save-btn {
+    flex: 0 0 auto;
+}
+
 .neo-gallery-civitai-actions {
     display: flex;
     gap: 6px;
