@@ -1046,8 +1046,7 @@ export class GalleryComponents {
 
         const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: name });
         const info = $el("div", { className: "neo-gallery-card-info" }, [
-            nameEl,
-            $el("span", { className: "neo-gallery-card-count", textContent: `${(items || []).length} items` })
+            nameEl
         ]);
 
         if (isRemote) {
@@ -1119,7 +1118,7 @@ export class GalleryComponents {
     /**
      * Apply cover images to a directory card from the global cache.
      */
-    _applyCoverImages(card, coverWrapper, gallery, dirName, displayLabel, onCountUpdate) {
+    _applyCoverImages(card, coverWrapper, gallery, dirName, displayLabel) {
         // Use cached cover images from batch fetch
         // Case-insensitive lookup: backend uses lowercase keys (e.g. "presets")
         // but frontend passes the directory name as displayed (e.g. "Presets")
@@ -1133,7 +1132,6 @@ export class GalleryComponents {
 
         if (covers.length > 0) {
             this._renderCoverGrid(coverWrapper, covers, dirName, displayLabel, gallery);
-            if (onCountUpdate) onCountUpdate(covers.length);
             // Remove skeleton loading state
             coverWrapper.classList.remove('skeleton-loading');
             coverWrapper.classList.add('skeleton-loaded');
@@ -1215,8 +1213,7 @@ export class GalleryComponents {
         });
 
         const info = $el("div", { className: "neo-gallery-card-info" }, [
-            $el("span", { className: "neo-gallery-card-name", textContent: subdirName }),
-            $el("span", { className: "neo-gallery-card-count", textContent: "Loading..." })
+            $el("span", { className: "neo-gallery-card-name", textContent: subdirName })
         ]);
 
         if (isPending) {
@@ -1262,9 +1259,6 @@ export class GalleryComponents {
 
         if (covers.length > 0) {
             this._renderCoverGrid(coverWrapper, covers, subdirKey, subdirName, gallery);
-            // Update card state from cache
-            const countEl = card.querySelector('.neo-gallery-card-count');
-            if (countEl) countEl.textContent = `${covers.length} items`;
             // Remove skeleton loading state
             coverWrapper.classList.remove('skeleton-loading');
             coverWrapper.classList.add('skeleton-loaded');

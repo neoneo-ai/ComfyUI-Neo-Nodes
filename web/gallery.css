@@ -404,12 +404,6 @@
     margin-bottom: 2px;
 }
 
-.neo-gallery-card-count {
-    display: block;
-    font-size: 11px;
-    color: #888;
-}
-
 /* Card delete button (hover to show) */
 .neo-gallery-card-delete-btn {
     position: absolute;
@@ -1957,5 +1951,16 @@ Accordion Section Buttons (Clear)
     color: #ffc77d;
 }
 
+.neo-gallery-card-jump-highlight {
+    outline: 2px solid #4c9aff;
+    outline-offset: -2px;
+    border-radius: 8px;
+    animation: neo-gallery-jump-fade 2.5s ease-out forwards;
+}
 
+@keyframes neo-gallery-jump-fade {
+    0% { outline-width: 3px; box-shadow: 0 0 12px rgba(76, 154, 255, 0.6); }
+    70% { outline-width: 2px; box-shadow: 0 0 6px rgba(76, 154, 255, 0.25); }
+    100% { outline-width: 0; box-shadow: none; }
+}
 

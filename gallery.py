@@ -10,6 +10,7 @@ import hashlib
 import shutil
 import time
 from pathlib import Path
+import aiohttp
 from aiohttp import web
 from server import PromptServer
 import folder_paths
@@ -149,7 +150,6 @@ async def _fetch_oss_index(force: bool = False) -> dict | None:
     index_url = cfg["index_url"]
 
     try:
-        import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get(index_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
@@ -215,7 +215,6 @@ async def _download_oss_file(remote_rel_path: str) -> Path | None:
     url = f"{base_url}/{remote_rel_path}"
 
     try:
-        import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
                 if resp.status != 200:
@@ -980,6 +979,31 @@ def _pending_lora_dirs() -> list:
     return pending
 
 
+def _lora_pending_subdirs() -> dict:
+    """Map first-level lora cache dirs that are configured in settings but still
+    have no cached example media to pending-card metadata.
+
+    The gallery UI shows these as "Fetching from Civitai..." cards even before the
+    auto-cache worker writes the first example, so a configured dir is never
+    silently missing from the Lora section.
+    """
+    settings = _load_settings()
+    if not settings.get("civitai_lora_enabled"):
+        return {}
+    selected = _normalize_lora_dir(settings)
+    needs_key = not bool(str(settings.get("civitai_api_key") or "").strip())
+    pending: dict[str, dict] = {}
+    for d in selected:
+        if not d:
+            continue
+        first = d.split("/")[0]
+        target = LORA_CACHE_DIR / first
+        if not target.exists() or not _has_media_recursive(target):
+            pending[first] = {"pending": True,
+                              "civitai": {"needs_api_key": needs_key}}
+    return pending
+
+
 async def _cache_one_lora(session, sem, index, rel, full, api_key, state) -> bool:
     """Fetch Civitai examples for one lora and write them into its cache dir.
 
@@ -1093,6 +1117,30 @@ def _attach_lora_meta(resp_dir: dict, rel_path: str) -> None:
         entry["subfolder"] = prefix
         if lora_rel:
             entry["lora_path"] = lora_rel
+
+
+def _attach_lora_subdir_paths(resp_dir: dict, rel_path: str) -> None:
+    """Attach lora_path to leaf lora subdir cards in a Lora view response.
+
+    The Lora section shows one directory card per lora cache subdir. Non-leaf
+    directories (containers holding many loras) have no single lora_path and stay
+    visible; leaf lora cards get their exact models/loras relative path so the
+    frontend "used in workflow" filter can match them.
+    """
+    index = _load_lora_index()
+    # Exact cache_dir -> lora relative path (cache mirrors the models/loras tree).
+    by_cache_dir = {}
+    for lora_rel, info in index.items():
+        cache_dir = info.get("cache_dir")
+        if cache_dir:
+            by_cache_dir[cache_dir] = lora_rel
+    base = f"{rel_path}/" if rel_path else ""
+    for sub_name, meta in (resp_dir.get("subdirs") or {}).items():
+        if not isinstance(meta, dict) or meta.get("lora_path"):
+            continue
+        lora_rel = by_cache_dir.get(f"{base}{sub_name}")
+        if lora_rel:
+            meta["lora_path"] = lora_rel
 
 
 async def _ensure_auto_cache() -> None:
@@ -1259,6 +1307,19 @@ async def get_gallery_list(request):
         
         if is_lora and include_items:
             _attach_lora_meta(resp_dir, rel_path_param)
+
+        # Give leaf lora subdir cards their exact lora_path so the workflow filter
+        # ("工作流已用") can match them against loras on the canvas.
+        if is_lora:
+            _attach_lora_subdir_paths(resp_dir, rel_path_param)
+
+        # Show configured lora dirs with no cached examples yet as pending cards
+        # (empty subdirs are otherwise filtered out by the UI).
+        if is_lora and not rel_path_param:
+            for sub_name, meta in _lora_pending_subdirs().items():
+                subdirs = resp_dir.setdefault("subdirs", {})
+                entry = subdirs.setdefault(sub_name, {"image_count": 0, "path": sub_name})
+                entry.update(meta)
         
         # Add covers if requested
         if include_covers:
@@ -1379,6 +1440,22 @@ async def get_gallery_list(request):
                 if include_items:
                     _attach_lora_meta(resp_dir, subdir_name)
                 directories.append(resp_dir)
+
+        # Configured lora dirs with no cached examples yet show up as pending cards,
+        # so the full listing matches the sync selection instead of hiding empty dirs.
+        for sub_name, meta in sorted(_lora_pending_subdirs().items()):
+            if sub_name in lora_structure.get("subdirs", {}):
+                continue
+            resp_dir = {
+                "name": f"Lora/{sub_name}",
+                "path": f"Lora/{sub_name}",
+                "read_only": True,
+                "subdirs": {},
+                "root_count": 0,
+                "pending": True,
+                "civitai": meta.get("civitai"),
+            }
+            directories.append(resp_dir)
 
     # OSS remote directories
     if _is_oss_enabled():

@@ -395,6 +395,20 @@ class NeoGallery {
         this.sortAndDisplayImages();
     }
 
+    /**
+     * Jump straight to the directory of a lora used by the current workflow.
+     * The target card is briefly highlighted after render, but the rest of the
+     * directory stays fully visible (no persistent filter).
+     */
+    async _jumpToUsedLora() {
+        const used = [...this.collectUsedLoras()];
+        if (used.length === 0) return;
+        used.sort();
+        this._jumpTargetPath = used[0];
+        const segs = used[0].replace(/\.(safetensors|pt|ckpt|bin|sft)$/i, "").split("/");
+        await this.showDirectoryStructure("Lora", segs.slice(0, -1));
+    }
+
     // ====== Lora Section Auto-Refresh ======
 
     _isLoraView() {
@@ -578,15 +592,25 @@ class NeoGallery {
             ? displaySubdirs
             : Object.keys(subdirs || {}).map(name => ({ name, path: subdirs[name].path || name, image_count: subdirs[name].image_count || 0 }));
 
-        // Smart workflow filter for the Lora section.
+        // Smart workflow filter for the Lora section: only active when the user
+        // manually enables it. Jumping to a used lora highlights the card instead.
         const isLoraView = String(dirName).toLowerCase().startsWith('lora');
+        const jumpTarget = this._jumpTargetPath || null;
+        this._jumpTargetPath = null;
         if (isLoraView && this.workflowMatchActive) {
             const usedLoras = this.collectUsedLoras();
             if (usedLoras.size > 0) {
+                const beforeFilter = subdirArray;
                 subdirArray = subdirArray.filter(s => {
                     const loraPath = (s.lora_path || '').replace(/\\/g, '/');
                     return !loraPath || usedLoras.has(loraPath);
                 });
+                // The used lora may not have cached examples yet (not_found / pending),
+                // so nothing matches here. Show the whole directory instead of an
+                // empty page so the jump is never a dead end.
+                if (subdirArray.length === 0) {
+                    subdirArray = beforeFilter;
+                }
             }
         }
 
@@ -605,7 +629,7 @@ class NeoGallery {
                 }, ["全部"]),
                 $el("button", {
                     className: "neo-gallery-workflow-chip" + (this.workflowMatchActive ? " active" : ""),
-                    onclick: () => { if (!this.workflowMatchActive) this.toggleWorkflowMatch(); }
+                    onclick: () => this._jumpToUsedLora()
                 }, [`工作流已用 (${usedCount})`])
             ]);
             this.accordion.appendChild(filterBar);
@@ -616,6 +640,12 @@ class NeoGallery {
             const fullPath = [...pathSegments, subdirName];
             
             const card = await this.components.createSubdirCard(this, subdirName, dirName, fullPath, subdir);
+            if (jumpTarget) {
+                const cardLora = ((subdir && subdir.lora_path) || '').replace(/\\/g, '/');
+                if (cardLora === jumpTarget) {
+                    card.classList.add('neo-gallery-card-jump-highlight');
+                }
+            }
             container.appendChild(card);
         }
         
