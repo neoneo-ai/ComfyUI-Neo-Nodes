@@ -318,6 +318,40 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 | Neo Gallery Max Thumbnail Size | 滑块 (150-500) | 320 | 缩略图最大尺寸（像素） |
 | Neo Gallery Display Image Labels | 开关 | true | 是否显示图片名称标签 |
 
+### Civitai LORA 示例缓存（访问时自动抓取）
+
+「Manage Directories」弹窗底部的 **Civitai LORA Examples** 区可把 C 站（civitai.com）的 LORA
+示例图与提示词抓取为画廊素材。无需手动同步——打开画廊的「Lora」目录时，未缓存的 LORA 会自动进入
+后台抓取队列：
+
+- **启用 C 站 LORA**（总开关，默认关闭）- 关闭时不会注册、展示或抓取任何 C 站 LORA 示例；勾选后
+  才会按所选目录自动获取。开关状态保存在 `gallery_settings.json`
+- **Civitai API KEY** - 粘贴你在 civitai.com 的 API KEY 后点「Save API KEY」；KEY 仅保存在本机
+  `gallery_settings.json`（不入库），保存后以脱敏形式显示。未配置 KEY 时，已选 LORA 目录仍会以
+  「需要配置 API KEY」角标展示在画廊中，但不会联网抓取
+- **测试 C 站连通性** - C 站对网络有要求（多数环境需要代理）。点击后会请求 `GET /models?limit=1`
+  （最长 20 秒），返回：延迟、是否可达、以及已保存的 KEY 是否被接受。区分「无法连接 Civitai
+  （需要代理）」与「API KEY 被拒绝 HTTP 401/403」两类问题。抓取队列遇到无法连接时会提前中止本批，
+  并在状态栏显示网络错误提示
+- **🔌 测试 C 站连通性** - 向 `civitai.com/api/v1/models` 发一次探测请求（最长 20 秒），区分三类
+  结果：无法连接（网络/代理问题）、KEY 被拒绝（HTTP 401/403）、连接正常并显示耗时。C 站对网络环境
+  有要求，抓取失败时可先用它确认是否可直连
+- **Select LORA Directories** - 列出 `models/loras` 下的第一级子目录（含数量，可多选），
+  选择即保存；首页 Lora 区域**只展示**所选目录下的 LORA 示例，未勾选的 lora 不会出现在画廊中
+- **访问时自动缓存** - 打开「Lora」目录或其子目录时，按文件 SHA256 查询 Civitai
+  （`model-versions/by-hash`），后台下载该版本的全部示例图并写入提示词 sidecar；
+  每次访问最多处理 20 个 LORA，已缓存（size/mtime 未变）的 LORA 自动跳过，
+  被删除/更换的 LORA 缓存自动清理。失败项显示红色角标，可用「Retry Failed」重新入队
+
+缓存结果落在 `gallery/lora_cache/`（只读素材源，与 presets 同机制）：**一个 LORA = 一个目录**，
+目录内是多张 `example_NN` 示例图 + 同名 `.txt`（示例提示词）。画廊中会出现「Lora」目录，
+浏览、搜索、灯箱、发送提示词等全部能力可用；在 Lora 缩略图、灯箱或目录卡片上点 📤 会把该 LORA 的
+相对路径（如 `detail/tweak.safetensors`）发送到画布上标准 `LoraLoader` 的 `lora_name` 参数
+（目标菜单与图片发送一致：选中节点优先，多目标弹下拉）。
+
+「Lora」区域内提供**智能感知**筛选：勾选「工作流已用」后，只展示当前画布上 `LoraLoader` 节点
+已使用的 LORA 目录（按 `lora_name` 匹配）。
+
 ---
 
 ## 配置

@@ -1703,3 +1703,245 @@ Accordion Section Buttons (Clear)
 .neo-gallery-lightbox-btn.neo-gallery-lightbox-video-send-btn:hover {
     background-color: rgba(33, 150, 243, 1);
 }
+
+/* Lora 发送按钮（灯箱） */
+.neo-gallery-lightbox-btn.neo-gallery-lightbox-lora-send-btn {
+    background-color: rgba(255, 193, 7, 0.85);
+}
+
+.neo-gallery-lightbox-btn.neo-gallery-lightbox-lora-send-btn:hover {
+    background-color: rgba(255, 193, 7, 1);
+}
+
+/* Manage Directories 弹窗内的 Civitai LORA 同步分区 */
+.neo-gallery-civitai-area {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.neo-gallery-civitai-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ccc;
+    letter-spacing: 0.3px;
+}
+
+.neo-gallery-lora-dirs {
+    max-height: 180px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #1e1e1e;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+.neo-gallery-lora-dir-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #bbb;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-gallery-lora-progress {
+    font-size: 11px;
+    color: #9aa4b0;
+    min-height: 14px;
+    word-break: break-all;
+}
+
+.neo-gallery-civitai-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #ddd;
+    cursor: pointer;
+    user-select: none;
+}
+
+.neo-gallery-civitai-toggle input[type="checkbox"] {
+    accent-color: #FF6A00;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.neo-gallery-civitai-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-civitai-actions button {
+    flex: 1 1 auto;
+}
+
+.neo-gallery-net-result {
+    display: none;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border-left: 3px solid #555;
+    word-break: break-all;
+}
+
+.neo-gallery-net-result.ok {
+    display: block;
+    color: #7ee787;
+    background: rgba(46, 160, 67, 0.12);
+    border-left-color: #2ea043;
+}
+
+.neo-gallery-net-result.warn {
+    display: block;
+    color: #e3b341;
+    background: rgba(227, 179, 65, 0.12);
+    border-left-color: #d29922;
+}
+
+.neo-gallery-net-result.err {
+    display: block;
+    color: #ff8a8a;
+    background: rgba(218, 54, 51, 0.12);
+    border-left-color: #da3633;
+}
+
+/* Lora dir card pending / failed status badge */
+.neo-gallery-card-status {
+    position: absolute;
+    top: 34px;
+    left: 6px;
+    right: 6px;
+    font-size: 10px;
+    line-height: 1.3;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #fff;
+    text-align: center;
+    z-index: 3;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-gallery-card-status.status-loading {
+    background: rgba(33, 150, 243, 0.85);
+    animation: neo-gallery-pulse 1.4s ease-in-out infinite;
+}
+
+.neo-gallery-card-status.status-failed {
+    background: rgba(244, 67, 54, 0.9);
+}
+
+.neo-gallery-card-status.status-pending {
+    background: rgba(255, 152, 0, 0.85);
+}
+
+@keyframes neo-gallery-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Lora send button on dir cards */
+.neo-gallery-card-lora-send-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 4;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(255, 193, 7, 0.85);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.neo-gallery-category-card:hover .neo-gallery-card-lora-send-btn {
+    opacity: 1;
+}
+
+.neo-gallery-card-lora-send-btn:hover {
+    background: rgba(255, 193, 7, 1);
+}
+
+/* Smart workflow match filter bar (Lora section) */
+.neo-gallery-workflow-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-workflow-filter-label {
+    font-size: 11px;
+    color: #9aa4b0;
+}
+
+.neo-gallery-workflow-chip {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    color: #ccc;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.neo-gallery-workflow-chip:hover {
+    border-color: #FF6A00;
+    color: #fff;
+}
+
+.neo-gallery-workflow-chip.active {
+    background: #FF6A00;
+    border-color: #FF6A00;
+    color: #fff;
+}
+
+/* Pending lora directory message (opening a lora whose examples are still fetching) */
+.neo-gallery-pending-message {
+    padding: 14px 16px;
+    margin: 10px 0;
+    border-radius: 8px;
+    background: rgba(33, 150, 243, 0.12);
+    border: 1px solid rgba(33, 150, 243, 0.35);
+    color: #9ad1ff;
+    font-size: 12px;
+    text-align: center;
+}
+
+.neo-gallery-pending-message.pending-failed {
+    background: rgba(244, 67, 54, 0.12);
+    border-color: rgba(244, 67, 54, 0.4);
+    color: #ff9d94;
+}
+
+.neo-gallery-pending-message.pending-warn {
+    background: rgba(255, 152, 0, 0.12);
+    border-color: rgba(255, 152, 0, 0.4);
+    color: #ffc77d;
+}
+
+
+

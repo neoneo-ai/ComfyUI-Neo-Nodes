@@ -25,6 +25,25 @@ import {
     showInlineFeedback
 } from './gallery-utils.js';
 
+// Civitai fetch badge for pending lora directory cards. Network failures and rejected
+// keys need different wording: Civitai is unreachable without a proxy on many networks,
+// and that is not a key problem.
+export function civitaiBadge(civitai) {
+    if (civitai && civitai.needs_api_key) {
+        return { text: "需要配置 C 站 API KEY", cls: "status-pending", title: "" };
+    }
+    if (civitai && (civitai.status === 'failed' || civitai.status === 'not_found')) {
+        const err = civitai.error || "";
+        const offline = err.includes("无法连接") || err.includes("Civitai HTTP 0");
+        const text = civitai.status === 'not_found'
+            ? "Not on Civitai"
+            : (offline ? "C 站无法连接" : (err.includes("KEY") ? "API KEY 被拒绝" : "Fetch failed"));
+        const hint = offline ? "（可在设置中点「测试 C 站连通性」排查）" : "";
+        return { text, cls: "status-failed", title: err + hint };
+    }
+    return { text: "Fetching from Civitai...", cls: "status-loading", title: "" };
+}
+
 export class GalleryComponents {
     constructor(gallery) {
         this.gallery = gallery;
@@ -91,6 +110,10 @@ export class GalleryComponents {
         if (existingOverlay) existingOverlay.remove();
 
         let currentDirs = [];
+        let civitaiKeySet = false;
+        let civitaiKeyHint = "";
+        let loraSyncDirs = [];
+        let civitaiEnabled = false;
         try {
             const resp = await api.fetchApi('/neo_gallery/get_settings');
             if (resp.ok) {
@@ -101,6 +124,10 @@ export class GalleryComponents {
                 } else if (settings.custom_directory) {
                     currentDirs = [settings.custom_directory];
                 }
+                civitaiKeySet = !!settings.civitai_api_key_set;
+                civitaiKeyHint = settings.civitai_api_key_hint || "";
+                civitaiEnabled = !!settings.civitai_lora_enabled;
+                if (Array.isArray(settings.lora_sync_dirs)) loraSyncDirs = [...settings.lora_sync_dirs];
             }
         } catch (e) { }
 
@@ -311,11 +338,219 @@ export class GalleryComponents {
             })
         ]);
 
+        // ====== Civitai LORA example sync ======
+        const civitaiKeyInput = $el("input", {
+            type: "password",
+            className: "neo-gallery-dir-input",
+            placeholder: civitaiKeySet ? `Civitai API KEY configured (${civitaiKeyHint}) \u2014 leave empty to keep` : "Civitai API KEY...",
+        });
+
+        const saveCivitaiKey = async () => {
+            const value = civitaiKeyInput.value.trim();
+            if (!value) {
+                showToast(gallery.app, civitaiKeySet ? 'info' : 'warning', 'Civitai API KEY',
+                    civitaiKeySet ? 'Already configured \u2014 nothing to save.' : 'Paste your Civitai API KEY first.');
+                return;
+            }
+            try {
+                const resp = await api.fetchApi('/neo_gallery/save_settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "save_civitai", api_key: value })
+                });
+                const result = await resp.json();
+                if (resp.ok && result.success) {
+                    civitaiKeyInput.value = '';
+                    civitaiKeySet = true;
+                    showToast(gallery.app, 'success', 'Saved', 'Civitai API KEY updated.');
+                } else {
+                    alert('Failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error saving Civitai API KEY');
+            }
+        };
+
         modal.appendChild(titleBar);
         modal.appendChild(dirListContainer);
+
+        // Civitai connectivity probe: the API is often unreachable without a proxy,
+        // so let the user test it explicitly instead of guessing from failed fetches.
+        const netResult = $el("div", { className: "neo-gallery-net-result", textContent: "" });
+        const testNetBtn = $el("button", {
+            className: "neo-gallery-dir-bulk-btn",
+            textContent: "\uD83D\uDD0C 测试 C 站连通性",
+            onclick: async () => {
+                const label = testNetBtn.textContent;
+                testNetBtn.disabled = true;
+                testNetBtn.textContent = "\uD83D\uDD04 测试中...";
+                netResult.className = "neo-gallery-net-result warn";
+                netResult.textContent = "正在连接 civitai.com（最长 20 秒）...";
+                try {
+                    const resp = await api.fetchApi('/neo_gallery/civitai_test', { method: 'POST' });
+                    const r = await resp.json();
+                    if (!resp.ok || !r.success) {
+                        netResult.className = "neo-gallery-net-result err";
+                        netResult.textContent = "测试失败: " + (r.error || resp.status);
+                        showToast(gallery.app, 'error', 'C 站连通性', '连通性测试请求失败。');
+                        return;
+                    }
+                    const rejected = r.http_status === 401 || r.http_status === 403;
+                    const cls = (!r.reachable || rejected) ? "err" : (r.key_ok ? "ok" : "warn");
+                    netResult.className = `neo-gallery-net-result ${cls}`;
+                    netResult.textContent = r.message;
+                    showToast(gallery.app, cls === "ok" ? 'success' : cls === "warn" ? 'warning' : 'error',
+                        'C 站连通性', r.message);
+                } catch (e) {
+                    netResult.className = "neo-gallery-net-result err";
+                    netResult.textContent = "测试失败: " + e;
+                    showToast(gallery.app, 'error', 'C 站连通性', '连通性测试请求失败。');
+                } finally {
+                    testNetBtn.disabled = false;
+                    testNetBtn.textContent = label;
+                }
+            }
+        });
+        const loraDirsList = $el("div", { className: "neo-gallery-lora-dirs", style: { display: "none" } });
+        let loraDirsLoaded = false;
+        const loadLoraDirs = async () => {
+            loraDirsList.innerHTML = '';
+            loraDirsList.appendChild($el("div", { className: "neo-gallery-lora-progress", textContent: "Loading lora directories..." }));
+            try {
+                const resp = await api.fetchApi('/neo_gallery/lora_dirs');
+                const data = await resp.json();
+                const dirs = data.dirs || [];
+                loraDirsList.innerHTML = '';
+                if (!dirs.length) {
+                    loraDirsList.appendChild($el("div", { className: "neo-gallery-lora-progress", textContent: "No lora files found in models/loras." }));
+                    return;
+                }
+                for (const d of dirs) {
+                    const label = d.path === "" ? "(loras root)" : d.path;
+                    const cb = $el("input", { type: "checkbox" });
+                    cb.checked = loraSyncDirs.includes(d.path);
+                    cb.onchange = async () => {
+                        if (cb.checked) {
+                            if (!loraSyncDirs.includes(d.path)) loraSyncDirs.push(d.path);
+                        } else {
+                            loraSyncDirs = loraSyncDirs.filter(p => p !== d.path);
+                        }
+                        try {
+                            await api.fetchApi('/neo_gallery/save_settings', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: "save_civitai", dirs: loraSyncDirs })
+                            });
+                        } catch (e) { }
+                    };
+                    loraDirsList.appendChild($el("label", { className: "neo-gallery-lora-dir-item" }, [cb, `${label} (${d.count})`]));
+                }
+            } catch (e) {
+                loraDirsList.innerHTML = '';
+                loraDirsList.appendChild($el("div", { className: "neo-gallery-lora-progress", textContent: "Failed to load lora directories." }));
+            }
+        };
+        const loraDirsToggle = $el("button", {
+            className: "neo-gallery-dir-bulk-btn",
+            textContent: "\uD83D\uDCC2 Select LORA Directories",
+            onclick: () => {
+                const hidden = loraDirsList.style.display === "none";
+                loraDirsList.style.display = hidden ? "" : "none";
+                if (hidden && !loraDirsLoaded) { loraDirsLoaded = true; loadLoraDirs(); }
+            }
+        });
+
+        const loraProgress = $el("div", { className: "neo-gallery-lora-progress", textContent: "" });
+        const retryBtn = $el("button", {
+            className: "neo-gallery-dir-bulk-btn",
+            textContent: "\uD83D\uDD04 Retry Failed",
+            style: { display: "none" },
+            onclick: async () => {
+                try {
+                    const resp = await api.fetchApi('/neo_gallery/lora_retry_failed', { method: 'POST' });
+                    const result = await resp.json();
+                    if (resp.ok && result.count > 0) {
+                        showToast(gallery.app, 'success', 'Retry Queued', `Re-queued ${result.count} failed loras.`);
+                        pollLoraSync();
+                    }
+                } catch (e) { }
+            }
+        });
+        let loraPollTimer = null;
+        const pollLoraSync = async () => {
+            if (loraPollTimer) { clearInterval(loraPollTimer); loraPollTimer = null; }
+            const tick = async () => {
+                if (!document.querySelector('.neo-gallery-dir-modal')) {
+                    clearInterval(loraPollTimer); loraPollTimer = null;
+                    return;
+                }
+                try {
+                    const resp = await api.fetchApi('/neo_gallery/lora_cache_status');
+                    const st = await resp.json();
+                    const failHint = st.failed ? ` \u00B7 ${st.failed} failed（可点「测试 C 站连通性」排查网络）` : '';
+                    if (st.running) {
+                        loraProgress.textContent = `Auto-caching ${st.done}/${st.total} \u00B7 ${st.current || ''}${st.failed ? ` \u00B7 failed ${st.failed}` : ''}`;
+                        retryBtn.style.display = st.failed > 0 ? '' : 'none';
+                    } else {
+                        clearInterval(loraPollTimer); loraPollTimer = null;
+                        retryBtn.style.display = st.failed > 0 ? '' : 'none';
+                        if (st.error) {
+                            loraProgress.textContent = st.error;
+                        } else if (st.pending_count) {
+                            let reason;
+                            if (!st.master_enabled) reason = '总开关已关闭';
+                            else if (!st.enabled) reason = '需配置 C 站 API KEY';
+                            else reason = `fetches on access${failHint}`;
+                            loraProgress.textContent = `${st.pending_count} lora(s) queued \u00B7 ${reason}`;
+                        } else {
+                            loraProgress.textContent = st.failed ? `${st.failed} failed（可点「测试 C 站连通性」排查网络）` : '';
+                        }
+                    }
+                } catch (e) { }
+            };
+            loraPollTimer = setInterval(tick, 1500);
+            tick();
+        };
+
+        const civitaiArea = $el("div", { className: "neo-gallery-civitai-area" }, [
+            $el("div", { className: "neo-gallery-civitai-title", textContent: "Civitai LORA Examples" }),
+            $el("label", { className: "neo-gallery-civitai-toggle" }, [
+                $el("input", {
+                    type: "checkbox",
+                    checked: civitaiEnabled,
+                    onchange: async (e) => {
+                        civitaiEnabled = !!e.target.checked;
+                        try {
+                            await api.fetchApi('/neo_gallery/save_settings', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: "save_civitai", enabled: civitaiEnabled })
+                            });
+                            showToast(gallery.app, 'success', civitaiEnabled ? '已启用' : '已停用', civitaiEnabled ? 'C 站 LORA 示例获取已开启。' : 'C 站 LORA 示例获取已关闭。');
+                        } catch (err) {
+                            showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the Civitai LORA switch.');
+                        }
+                    }
+                }),
+                $el("span", { textContent: "启用 C 站 LORA（访问时自动获取示例图）" })
+            ]),
+            civitaiKeyInput,
+            $el("div", { className: "neo-gallery-civitai-actions" }, [
+                $el("button", { className: "neo-gallery-dir-bulk-btn", textContent: "Save API KEY", onclick: saveCivitaiKey }),
+                testNetBtn,
+            ]),
+            netResult,
+            $el("div", { className: "neo-gallery-lora-progress", textContent: "Examples are cached automatically when the Lora section is accessed." }),
+            loraDirsToggle,
+            loraDirsList,
+            retryBtn,
+            loraProgress,
+        ]);
+
         modal.appendChild(addArea);
         modal.appendChild(quickAddArea);
         modal.appendChild(bulkArea);
+        modal.appendChild(civitaiArea);
         modalOverlay.appendChild(modal);
         document.body.appendChild(modalOverlay);
 
@@ -497,6 +732,85 @@ export class GalleryComponents {
         const closeHandler = (e) => {
             if (!dropdown.contains(e.target) && e.target !== button) {
                 gallery._removeImgSendMenu();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 10);
+    }
+
+    _removeLoraSendMenu() {
+        const existing = document.getElementById('neo-gallery-lora-send-menu');
+        if (existing) existing.remove();
+    }
+
+    async _showLoraSendMenu(gallery, loraPath, button) {
+        this._removeLoraSendMenu();
+        if (!loraPath) {
+            showToast(gallery.app, 'warning', 'No Lora', 'This item is not linked to a lora file.');
+            return;
+        }
+        const menuItems = [];
+        gallery.app.graph._nodes.forEach(node => {
+            // Skip nodes that are in bypass state (mode === 4, set by Ctrl+B or RS_Bypass)
+            if (node.mode === 4) return;
+            // Standard lora loaders only (LoraLoader / LoraLoaderModelOnly / variants)
+            if (!/^LoraLoader/i.test(node.comfyClass || '') || !node.widgets) return;
+            node.widgets.forEach((widget, index) => {
+                if (widget.name === 'lora_name' && widget.type === 'combo') {
+                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}` });
+                }
+            });
+        });
+
+        const selKeys = Object.keys(gallery.app.canvas.selected_nodes);
+        let selectedNodeId = null;
+        if (selKeys.length > 0) {
+            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
+            if (/^LoraLoader/i.test(sn.comfyClass || '') && sn.widgets?.some(w => w.name === 'lora_name' && w.type === 'combo')) {
+                selectedNodeId = sn.id;
+            }
+        }
+        if (menuItems.length === 0 && !selectedNodeId) {
+            showToast(gallery.app, 'warning', 'No Target', 'No LoraLoader nodes found.');
+            return;
+        }
+
+        menuItems.forEach(item => { item.isSelected = item.nodeId === selectedNodeId; });
+        menuItems.sort((a, b) => (a.isSelected !== b.isSelected) ? (a.isSelected ? -1 : 1) : 0);
+
+        if (menuItems.length === 1 && !selectedNodeId) {
+            const item = menuItems[0];
+            gallery.sendLoraToNode(loraPath, `${item.nodeId}:widget:${item.widgetIndex}`, button);
+            return;
+        }
+        if (menuItems.length === 0 && selectedNodeId) {
+            // Only the selected (possibly bypassed) loader matched \u2014 send straight to it
+            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
+            const idx = sn.widgets.findIndex(w => w.name === 'lora_name' && w.type === 'combo');
+            gallery.sendLoraToNode(loraPath, `${sn.id}:widget:${idx}`, button);
+            return;
+        }
+
+        const dropdown = $el("div", { id: "neo-gallery-lora-send-menu", className: "neo-gallery-send-menu" });
+        for (const item of menuItems) {
+            const label = item.isSelected ? `${item.label} \u2713` : item.label;
+            const el = $el("div", {
+                className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
+                onclick: (e) => { e.stopPropagation(); gallery._removeLoraSendMenu(); gallery.sendLoraToNode(loraPath, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
+            }, [label]);
+            dropdown.appendChild(el);
+        }
+        const rect = button.getBoundingClientRect();
+        dropdown.style.position = 'fixed';
+        dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
+        dropdown.style.zIndex = '10001';
+        document.body.appendChild(dropdown);
+        requestAnimationFrame(() => {
+            dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';
+        });
+        const closeHandler = (e) => {
+            if (!dropdown.contains(e.target) && e.target !== button) {
+                gallery._removeLoraSendMenu();
                 document.removeEventListener('click', closeHandler);
             }
         };
@@ -692,13 +1006,19 @@ export class GalleryComponents {
         });
     }
 
-    async createDirCard(gallery, name, path, items, subdirs = {}, readOnly = false, source = "local") {
+    async createDirCard(gallery, name, path, items, subdirs = {}, readOnly = false, source = "local", dirInfo = null) {
         const isRemote = source === "oss";
-        const navTarget = isRemote ? path : name;
+        // Lora dirs are addressed by their "Lora/..." path; name may be just the lora stem.
+        const isLoraDir = String(path || "").toLowerCase().startsWith("lora/");
+        const navTarget = isRemote ? path : (isLoraDir ? path : name);
         const card = $el("div", {
             className: "neo-gallery-category-card" + (isRemote ? " neo-gallery-card-remote" : ""),
             onclick: () => gallery.showDirectoryStructure(navTarget, [])
         });
+
+        const isPending = !!(dirInfo && dirInfo.pending);
+        const loraPath = (dirInfo && dirInfo.lora_path) || null;
+        const civitai = (dirInfo && dirInfo.civitai) || null;
 
         const coverWrapper = $el("div", {
             className: "neo-gallery-card-cover-wrapper skeleton-loading",
@@ -737,6 +1057,35 @@ export class GalleryComponents {
                 }
             }, ["\u00D7"]);
             card.appendChild(deleteBtn);
+        }
+
+        // Pending lora fetch (queued/running/failed) status badge.
+        if (isPending) {
+            const badge = civitaiBadge(civitai);
+            card.appendChild($el("div", {
+                className: "neo-gallery-card-status " + badge.cls,
+                textContent: badge.text,
+                title: badge.title
+            }));
+        } else if (dirInfo && dirInfo.has_pending) {
+            card.appendChild($el("div", {
+                className: "neo-gallery-card-status status-pending",
+                textContent: "Pending loras",
+                title: "Some loras are still queued for Civitai example fetching"
+            }));
+        }
+
+        // Send the lora path to a standard LoraLoader from the lora directory card.
+        if (loraPath) {
+            const loraBtn = $el("div", {
+                className: "neo-gallery-card-lora-send-btn",
+                title: "Send the lora path to a standard LoraLoader",
+                onclick: (e) => {
+                    e.stopPropagation();
+                    gallery._showLoraSendMenu(loraPath, loraBtn);
+                }
+            }, ["\uD83D\uDCE4"]);
+            card.appendChild(loraBtn);
         }
 
         card.appendChild(typeBadge);
@@ -827,7 +1176,7 @@ export class GalleryComponents {
         coverWrapper.appendChild(coverGrid);
     }
 
-    async createSubdirCard(gallery, subdirName, parentDir, fullPath) {
+    async createSubdirCard(gallery, subdirName, parentDir, fullPath, subdirData = null) {
         const cardHeight = getCardHeight(gallery);
 
         const card = $el("div", {
@@ -835,6 +1184,10 @@ export class GalleryComponents {
             onclick: () => gallery.showDirectoryStructure(parentDir, fullPath),
             style: { width: `${gallery.maxThumbnailSize}px`, minHeight: `${cardHeight}px` }
         });
+
+        const isPending = !!(subdirData && subdirData.pending);
+        const civitai = (subdirData && subdirData.civitai) || null;
+        const loraPath = (subdirData && subdirData.lora_path) || null;
 
         const typeBadge = $el("div", {
             className: "neo-gallery-card-type-badge type-directory",
@@ -850,6 +1203,28 @@ export class GalleryComponents {
             $el("span", { className: "neo-gallery-card-name", textContent: subdirName }),
             $el("span", { className: "neo-gallery-card-count", textContent: "Loading..." })
         ]);
+
+        if (isPending) {
+            const badge = civitaiBadge(civitai);
+            card.appendChild($el("div", {
+                className: "neo-gallery-card-status " + badge.cls,
+                textContent: badge.text,
+                title: badge.title
+            }));
+        }
+
+        // Send the lora path to a standard LoraLoader from the directory card itself.
+        if (loraPath) {
+            const loraBtn = $el("div", {
+                className: "neo-gallery-card-lora-send-btn",
+                title: "Send the lora path to a standard LoraLoader",
+                onclick: (e) => {
+                    e.stopPropagation();
+                    gallery._showLoraSendMenu(loraPath, loraBtn);
+                }
+            }, ["\uD83D\uDCE4"]);
+            card.appendChild(loraBtn);
+        }
 
         card.appendChild(typeBadge);
         card.appendChild(coverWrapper);
@@ -971,8 +1346,9 @@ export class GalleryComponents {
         });
 
         let deleteBtn = null;
-        const isPresets = subfolder.toLowerCase() === 'presets' || subfolder.toLowerCase().startsWith('presets/');
-        if (!isPresets && !readOnly) {
+        const subLower = (subfolder || '').toLowerCase();
+        const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/');
+        if (!isReadOnlySource && !readOnly) {
             deleteBtn = $el("div", {
                 className: "neo-gallery-delete-btn",
                 onclick: (e) => {
@@ -988,7 +1364,11 @@ export class GalleryComponents {
                 className: "neo-gallery-thumb-img-send-btn",
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._showImgSendMenu(image, imgSendBtn);
+                    if (image.lora_path) {
+                        gallery._showLoraSendMenu(image.lora_path, imgSendBtn);
+                    } else {
+                        gallery._showImgSendMenu(image, imgSendBtn);
+                    }
                 }
             }, ["\uD83D\uDCE4"]);
         }
@@ -1362,6 +1742,18 @@ export class GalleryComponents {
             };
         }
 
+        let loraSendBtn = null;
+        if (image.lora_path) {
+            loraSendBtn = document.createElement('div');
+            loraSendBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-lora-send-btn";
+            loraSendBtn.textContent = "\uD83D\uDCE4 Lora";
+            loraSendBtn.title = "Send the lora path to a standard LoraLoader";
+            loraSendBtn.onclick = (e) => {
+                e.stopPropagation();
+                gallery._showLoraSendMenu(image.lora_path, loraSendBtn);
+            };
+        }
+
         const copyBtn = document.createElement('div');
         copyBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn";
         copyBtn.textContent = "\u29C9 Copy";
@@ -1604,6 +1996,7 @@ export class GalleryComponents {
             const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
             if (sendBtn) promptBtnsContainer.appendChild(sendBtn);
             if (videoSendBtn) promptBtnsContainer.appendChild(videoSendBtn);
+            if (loraSendBtn) promptBtnsContainer.appendChild(loraSendBtn);
             promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
         } else {

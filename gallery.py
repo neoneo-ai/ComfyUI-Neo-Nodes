@@ -5,9 +5,15 @@ import os
 import re
 import json
 import base64
+import asyncio
+import hashlib
+import shutil
+import time
 from pathlib import Path
+import aiohttp
 from aiohttp import web
 from server import PromptServer
+import folder_paths
 import mimetypes
 
 # ---------------------------------------------------------------------------
@@ -19,12 +25,14 @@ GALLERY_DIR = CURRENT_DIR / "gallery"
 PRESETS_DIR = GALLERY_DIR / "presets"
 CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
+LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
 ALL_MEDIA_EXTENSIONS = IMG_EXTENSIONS | VIDEO_EXTENSIONS
+LORA_FILE_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin", ".sft"}
 
 
 def _get_user_custom_dirs():
@@ -50,7 +58,7 @@ def _get_user_custom_dirs():
 
 
 def _ensure_dirs() -> None:
-    for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR):
+    for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -695,10 +703,13 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
             structure = _scan_directory_structure_only(target_dir)
             scan_result["subdirs"] = {s["name"]: {"image_count": s["image_count"]} for s in structure.get("subdirs", [])}
             scan_result["root"] = []
-            scan_result["root_count"] = sum(
-                1 for p in target_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS
-            )
+            root_count = 0
+            if target_dir.exists():
+                root_count = sum(
+                    1 for p in target_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS
+                )
+            scan_result["root_count"] = root_count
     
     # Build directory info
     dir_info = {
@@ -716,6 +727,478 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
             entry["custom_source"] = dir_name
     
     return resp_dir
+
+
+# ---------------------------------------------------------------------------
+# Civitai LORA Example Sync
+# ---------------------------------------------------------------------------
+
+CIVITAI_API_BASE = "https://civitai.com/api/v1"
+LORA_SYNC_BATCH = 20  # max loras processed per sync run
+LORA_INDEX_FILE = LORA_CACHE_DIR / "_index.json"
+
+_lora_index_cache: dict | None = None
+
+# Access-time auto-cache queue: selected loras are fetched from Civitai when the
+# gallery listing is accessed, no manual sync run required.
+_auto_state: dict = {
+    "running": False, "total": 0, "done": 0, "ok": 0, "failed": 0,
+    "current": "", "remaining": 0, "error": "", "cancel": False,
+}
+_auto_queue: list[str] = []  # lora relative paths (models/loras, posix) awaiting fetch
+_auto_task: "asyncio.Task | None" = None
+
+
+def _load_lora_index() -> dict:
+    global _lora_index_cache
+    if _lora_index_cache is not None:
+        return _lora_index_cache
+    try:
+        if LORA_INDEX_FILE.exists():
+            with open(LORA_INDEX_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    _lora_index_cache = data
+                    return data
+    except Exception as e:
+        print(f"[Neo Gallery] Failed to load lora index: {e}")
+    _lora_index_cache = {}
+    return _lora_index_cache
+
+
+def _save_lora_index(index: dict) -> None:
+    global _lora_index_cache
+    _lora_index_cache = index
+    try:
+        LORA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LORA_INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Neo Gallery] Failed to save lora index: {e}")
+
+
+def _sanitize_lora_dir_part(name: str) -> str:
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .") or "_"
+
+
+def _cache_dir_for_lora(lora_rel: str, index: dict) -> Path:
+    """Map a lora relative path (models/loras, posix) to its cache directory.
+
+    The cache mirrors the lora tree as <lora_cache>/<subdirs>/<stem>/; parts are
+    sanitized and a short hash suffix resolves collisions after sanitizing.
+    """
+    entry = index.get(lora_rel) or {}
+    cached = entry.get("cache_dir")
+    if cached:
+        return LORA_CACHE_DIR.joinpath(*cached.split("/"))
+    parts = [_sanitize_lora_dir_part(p) for p in Path(lora_rel).parts[:-1]]
+    parts.append(_sanitize_lora_dir_part(Path(lora_rel).stem))
+    rel = "/".join(parts)
+    taken = {info["cache_dir"]: other for other, info in index.items() if info.get("cache_dir")}
+    if rel in taken and taken[rel] != lora_rel:
+        rel = f"{rel}_{hashlib.sha256(lora_rel.encode('utf-8')).hexdigest()[:8]}"
+    return LORA_CACHE_DIR.joinpath(*rel.split("/"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _collect_selected_loras(selected_dirs: list) -> list:
+    """Return registered lora relative paths (posix) under the selected directories.
+
+    Selecting a directory covers all of its descendants; "" selects loras root files.
+    """
+    try:
+        all_loras = folder_paths.get_filename_list("loras") or []
+    except Exception:
+        return []
+    # Empty string in the selection means "the loras root", i.e. all files not in a subdir.
+    # Keep the empty entry so select_all (below) can detect it.
+    selected = {str(d).replace("\\", "/").strip("/") for d in selected_dirs if str(d).strip() or str(d) == ""}
+    # Empty string in the selection means "the loras root", i.e. all not-in-subdir files
+    select_all = "" in selected
+    result = []
+    for rel in all_loras:
+        rel_posix = rel.replace("\\", "/")
+        parts = rel_posix.split("/")
+        parent = "/".join(parts[:-1]) if len(parts) > 1 else ""
+        if select_all or any(parent == d or parent.startswith(d + "/") for d in selected):
+            result.append(rel_posix)
+    return sorted(result)
+
+
+async def _civitai_by_hash(session, sha256: str, api_key: str):
+    """Fetch the Civitai model version for a file hash. Returns (http_status, json)."""
+    url = f"{CIVITAI_API_BASE}/model-versions/by-hash/{sha256}"
+    headers = {"Authorization": f"Bearer {api_key}", "User-Agent": "ComfyUI-Neo-Nodes"}
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status != 200:
+                return resp.status, None
+            return 200, await resp.json()
+    except Exception as e:
+        print(f"[Neo Gallery] Civitai request failed: {e}")
+        return 0, None
+
+
+async def _download_example_image(session, sem: asyncio.Semaphore, url: str, dest: Path) -> bool:
+    try:
+        async with sem:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.read()
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+        if "jpeg" in ctype or "jpg" in ctype:
+            ext = ".jpg"
+        elif "webp" in ctype:
+            ext = ".webp"
+        elif "gif" in ctype:
+            ext = ".gif"
+        else:
+            ext = ".png"
+        dest.with_suffix(ext).write_bytes(data)
+        return True
+    except Exception as e:
+        print(f"[Neo Gallery] Example image download failed: {e}")
+        return False
+
+
+def _lora_entry_up_to_date(index: dict, lora_rel: str, full: Path) -> bool:
+    """True when the index entry matches the file (size+mtime) and its cache is intact.
+
+    Avoids re-hashing multi-GB lora files on every sync run.
+    """
+    entry = index.get(lora_rel) or {}
+    if entry.get("status") not in ("ok", "not_found"):
+        return False
+    try:
+        st = full.stat()
+    except OSError:
+        return False
+    if entry.get("size") != st.st_size or int(entry.get("mtime", 0)) != int(st.st_mtime):
+        return False
+    if entry.get("status") != "ok":
+        return True
+    if entry.get("images", 0) == 0:
+        return True
+    cache_dir = _cache_dir_for_lora(lora_rel, index)
+    return cache_dir.is_dir() and any(p.is_file() for p in cache_dir.iterdir())
+
+
+def _normalize_lora_dir(selected: str) -> str:
+    """Map a saved selection to its first-level subdir under models/loras (relative)."""
+    parts = [p for p in str(selected).replace("\\", "/").strip("/").split("/") if p]
+    return parts[0] if parts else ""
+
+
+def _prune_lora_caches(index: dict) -> None:
+    """Drop index entries and cache dirs for loras no longer registered under models/loras."""
+    try:
+        registered = {p.replace("\\", "/") for p in (folder_paths.get_filename_list("loras") or [])}
+    except Exception:
+        return
+    if not registered:
+        return
+    pruned = 0
+    for rel in list(index.keys()):
+        if rel not in registered:
+            info = index.pop(rel)
+            cache_dir = info.get("cache_dir")
+            if cache_dir:
+                shutil.rmtree(LORA_CACHE_DIR.joinpath(*cache_dir.split("/")), ignore_errors=True)
+            pruned += 1
+    if pruned:
+        _save_lora_index(index)
+    if LORA_CACHE_DIR.is_dir():
+        for p in sorted(LORA_CACHE_DIR.rglob("*"), reverse=True):
+            if p.is_dir() and not any(p.iterdir()):
+                p.rmdir()
+
+
+async def _fetch_lora_entry(session, sem, rel: str, api_key: str, index: dict, full: Path) -> dict:
+    """Fetch and cache Civitai example images + prompts for one lora.
+
+    Returns the updated index entry. Raises for transient failures so callers can
+    mark the entry failed and retry on the next access.
+    """
+    sha = _sha256_file(full)
+    status, version = await _civitai_by_hash(session, sha, api_key)
+    if status in (401, 403):
+        raise RuntimeError("Civitai API KEY rejected")
+    if status == 404:
+        # Not on Civitai (or hash unknown): record so future accesses skip it.
+        return {"status": "not_found", "sha256": sha,
+                "size": full.stat().st_size, "mtime": int(full.stat().st_mtime),
+                "synced_at": int(time.time()), "error": "not_found"}
+    if status == 0:
+        raise RuntimeError("无法连接 Civitai（网络/代理）")
+    if status != 200 or not isinstance(version, dict):
+        raise RuntimeError(f"Civitai HTTP {status}")
+
+    cache_dir = _cache_dir_for_lora(rel, index)
+    old = index.get(rel) or {}
+    if old.get("cache_dir") and old.get("sha256") != sha:
+        shutil.rmtree(cache_dir, ignore_errors=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for stale in cache_dir.iterdir():
+        if stale.is_file():
+            stale.unlink()
+
+    downloaded = 0
+    for i, img in enumerate(version.get("images") or []):
+        if _auto_state["cancel"]:
+            break
+        url = img.get("url")
+        if not url:
+            continue
+        meta = img.get("meta")
+        prompt = str(meta.get("prompt") or "").strip() if isinstance(meta, dict) else ""
+        stem = f"example_{i:02d}"
+        if not await _download_example_image(session, sem, url, cache_dir / stem):
+            continue
+        written = next((p for p in cache_dir.iterdir()
+                        if p.is_file() and p.stem == stem and p.suffix.lower() != ".txt"), None)
+        if written and prompt:
+            written.with_suffix(".txt").write_text(prompt, encoding="utf-8")
+        downloaded += 1
+
+    model_info = version.get("model") or {}
+    return {
+        "status": "ok", "sha256": sha,
+        "size": full.stat().st_size, "mtime": int(full.stat().st_mtime),
+        "cache_dir": cache_dir.relative_to(LORA_CACHE_DIR).as_posix(),
+        "model_name": model_info.get("name") or "",
+        "version_name": version.get("name") or "",
+        "base_model": version.get("baseModel") or "",
+        "images": downloaded, "synced_at": int(time.time()), "error": "",
+    }
+
+
+async def _auto_worker(api_key: str) -> None:
+    """Drain _auto_queue (up to LORA_SYNC_BATCH per run) fetching lora examples."""
+    global _auto_task
+    state = _auto_state
+    index = _load_lora_index()
+    try:
+        batch = _auto_queue[:LORA_SYNC_BATCH]
+        del _auto_queue[:len(batch)]
+        state.update({"running": True, "total": len(batch), "done": 0, "ok": 0,
+                      "failed": 0, "remaining": len(_auto_queue), "error": ""})
+        sem = asyncio.Semaphore(3)
+        async with aiohttp.ClientSession() as session:
+            for rel in batch:
+                if state["cancel"]:
+                    break
+                state["current"] = rel
+                network_down = False
+                try:
+                    full = folder_paths.get_full_path("loras", rel)
+                    if not full or not Path(full).is_file():
+                        raise RuntimeError("file not found")
+                    index[rel] = await _fetch_lora_entry(session, sem, rel, api_key, index, Path(full))
+                except Exception as e:
+                    info = index.setdefault(rel, {})
+                    info["status"] = "failed"
+                    info["error"] = str(e)
+                    info["failed_at"] = int(time.time())
+                    if "API KEY rejected" in str(e):
+                        state["error"] = str(e)
+                    # A dead network fails every remaining item the same way and each
+                    # attempt costs a full timeout, so stop the batch early.
+                    network_down = "无法连接" in str(e)
+                    if network_down:
+                        state["error"] = "无法连接 Civitai（需要代理或可直连的网络）"
+                state["done"] += 1
+                if index.get(rel, {}).get("status") == "ok":
+                    state["ok"] += 1
+                else:
+                    state["failed"] += 1
+                _save_lora_index(index)
+                if network_down:
+                    break
+        state["current"] = ""
+        _prune_lora_caches(index)
+    finally:
+        state["running"] = False
+        _auto_task = None
+
+
+async def _ensure_auto_cache(force_rels: list | None = None, selected_dirs: list | None = None) -> None:
+    """Enqueue selected loras that lack cached examples and start the worker.
+
+    Called on gallery access; only does a filesystem scan + index update in the
+    request (network fetching happens in the background task), so it never blocks
+    the gallery listing. Selected loras are always registered in the index so the
+    home page can show them as pending; the worker only starts when an API key exists.
+    """
+    global _auto_task
+    settings = _load_settings()
+    if not settings.get("civitai_lora_enabled"):
+        return  # master switch off: no Civitai lora registration or fetching
+    _auto_state["error"] = ""  # a fresh access gets a fresh connectivity verdict
+    api_key = str(settings.get("civitai_api_key") or "").strip()
+    selected = selected_dirs if selected_dirs is not None else settings.get("lora_sync_dirs") or []
+    if not isinstance(selected, list) or not [str(d) for d in selected if str(d).strip() or str(d) == ""]:
+        return
+    selected_levels = {_normalize_lora_dir(d) for d in selected if str(d).strip() or str(d) == ""}
+    index = _load_lora_index()
+    changed = False
+    for rel in _collect_selected_loras(sorted(selected_levels)):
+        try:
+            full = folder_paths.get_full_path("loras", rel)
+        except Exception:
+            full = None
+        if not full or not Path(full).is_file():
+            continue
+        full = Path(full)
+        info = index.get(rel) or {}
+        if _lora_entry_up_to_date(index, rel, full):
+            continue
+        # Skip only when the lora is already queued/running AND still in the queue;
+        # entries queued earlier without an API key must be re-enqueued once a key exists.
+        if info.get("status") in ("queued", "running") and rel in _auto_queue:
+            continue
+        if info.get("status") == "failed" and time.time() - int(info.get("failed_at") or 0) < 300:
+            continue  # cooldown: don't hammer Civitai for failures on every access
+        cache_dir = _cache_dir_for_lora(rel, index)
+        index[rel] = {
+            "status": "queued", "cache_dir": cache_dir.relative_to(LORA_CACHE_DIR).as_posix(),
+            "size": full.stat().st_size, "mtime": int(full.stat().st_mtime),
+            "model_name": info.get("model_name") or "",
+            "base_model": info.get("base_model") or "",
+            "images": info.get("images") or 0, "error": "",
+        }
+        changed = True
+        if rel not in _auto_queue:
+            _auto_queue.append(rel)
+    if force_rels:
+        for rel in force_rels:
+            if not rel or rel in _auto_queue:
+                continue
+            info = index.setdefault(rel, {})
+            if info.get("status") == "ok":
+                info["status"] = "queued"
+                info["error"] = ""
+                changed = True
+            if rel not in _auto_queue:
+                _auto_queue.insert(0, rel)
+            changed = True
+    if changed:
+        _save_lora_index(index)
+    # Only fetch from Civitai when a key is configured; otherwise the entries stay
+    # "queued" so the UI can still show them as pending with a "needs API key" hint.
+    if api_key and _auto_queue and (_auto_task is None or _auto_task.done()):
+        _auto_state.update({"cancel": False, "remaining": len(_auto_queue)})
+        _auto_task = asyncio.create_task(_auto_worker(api_key))
+
+
+def _selected_lora_levels() -> set:
+    """Normalized first-level loras subdirs from settings ("" = loras root, selects all)."""
+    settings = _load_settings()
+    selected = settings.get("lora_sync_dirs") or []
+    if not isinstance(selected, list):
+        return set()
+    return {_normalize_lora_dir(d) for d in selected if str(d).strip() or str(d) == ""}
+
+
+def _lora_rel_in_selection(rel: str, levels: set) -> bool:
+    """True when a lora rel path belongs to the selected first-level dirs (or nothing selected)."""
+    if not levels:
+        return True
+    rel_posix = rel.replace("\\", "/")
+    parts = rel_posix.split("/")
+    parent = "/".join(parts[:-1]) if len(parts) > 1 else ""
+    return "" in levels or any(parent == d or parent.startswith(d + "/") for d in levels)
+
+
+def _lora_cache_subdir_in_selection(cache_subdir: str, levels: set) -> bool:
+    """True when a first-level lora cache subdir belongs to the selected display dirs.
+
+    Root selection ("") keeps everything (matches _collect_selected_loras semantics).
+    """
+    if not levels or "" in levels:
+        return True
+    first = cache_subdir.split("/", 1)[0]
+    return first in levels
+
+
+def _pending_lora_dirs() -> list[dict]:
+    """Directory cards for loras whose examples are queued/running/failed (nothing cached yet)."""
+    settings = _load_settings()
+    if not settings.get("civitai_lora_enabled"):
+        return []  # master switch off: do not show Civitai pending cards
+    index = _load_lora_index()
+    levels = _selected_lora_levels()
+    api_key = str((settings.get("civitai_api_key") or "")).strip()
+    dirs: list[dict] = []
+    for rel, info in index.items():
+        status = info.get("status")
+        if status not in ("queued", "running", "failed", "not_found"):
+            continue
+        if not _lora_rel_in_selection(rel, levels):
+            continue
+        cached = info.get("cache_dir")
+        if cached and LORA_CACHE_DIR.joinpath(*cached.split("/")).exists():
+            continue  # partial cache already on disk, scanned normally
+        name = _sanitize_lora_dir_part(Path(rel).stem)
+        rel_path = cached if cached else name
+        dirs.append({
+            "name": name,
+            "path": f"Lora/{rel_path}",
+            "read_only": True,
+            "items": [],
+            "subdirs": {},
+            "root_count": 0,
+            "lora_path": rel,
+            "model_name": info.get("model_name") or "",
+            "base_model": info.get("base_model") or "",
+            "civitai": {
+                "status": status, "error": info.get("error") or "", "images": info.get("images") or 0,
+                "needs_api_key": status == "queued" and not api_key,
+            },
+            "pending": True,
+        })
+    return dirs
+
+
+def _attach_lora_meta(resp_dir: dict, rel_path: str) -> None:
+    """Attach lora cache metadata to scanned items: rewrite subfolder to the
+    unambiguous "Lora/..." prefix (resolved by image/thumbnail/copy_to_input)
+    and add lora_path (relative to models/loras) for send-to-LoraLoader."""
+    index = _load_lora_index()
+    by_dir = {info.get("cache_dir"): lora_rel for lora_rel, info in index.items() if info.get("cache_dir")}
+    prefix = f"Lora/{rel_path}" if rel_path else "Lora"
+    lora_rel = by_dir.get(rel_path)
+    entry_info = index.get(lora_rel) or {}
+    for entry in resp_dir.get("items", []):
+        entry["subfolder"] = prefix
+        if lora_rel:
+            entry["lora_path"] = lora_rel
+        if entry_info.get("base_model"):
+            entry["base_model"] = entry_info["base_model"]
+    # Enrich leaf lora subdir cards with their lora rel and base model. Subdir
+    # names may be nested cache segments (e.g. rel_path="SDXL" + sub "mylora").
+    for sub_name, sub_info in resp_dir.get("subdirs", {}).items():
+        rel = by_dir.get(sub_name)
+        if not rel and rel_path:
+            rel = by_dir.get(f"{rel_path}/{sub_name}")
+        if not rel:
+            # Fall back to a unique leaf match (e.g. subdir "mylora" -> "SDXL/mylora").
+            leaf_matches = [r for cd, r in by_dir.items() if cd.split("/")[-1] == sub_name]
+            if len(leaf_matches) == 1:
+                rel = leaf_matches[0]
+        if rel:
+            sub_info["lora_path"] = rel
+            sub_info["base_model"] = index.get(rel, {}).get("base_model") or ""
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +1266,10 @@ async def get_gallery_list(request):
             base = PRESETS_DIR
             if not rel_path_param:
                 rel_path_param = dir_name_lower[len("presets/"):]
+        elif dir_name_lower == "lora" or dir_name_lower.startswith("lora/"):
+            base = LORA_CACHE_DIR
+            if not rel_path_param:
+                rel_path_param = dir_name_param[len("lora/"):]
         else:
             for dir_path in user_custom_dirs:
                 d_name = dir_path.name if dir_path.name else str(dir_path)
@@ -799,6 +1286,7 @@ async def get_gallery_list(request):
             return web.json_response({"error": "Directory not found"}, status=404)
 
         is_presets = dir_name_lower == "presets" or dir_name_lower.startswith("presets/")
+        is_lora = dir_name_lower == "lora" or dir_name_lower.startswith("lora/")
         
         # For presets subdirectories (e.g., Presets/10秒), only show images without nested subdir cards
         # This prevents showing two levels of subdirectory structure on the home page
@@ -813,9 +1301,56 @@ async def get_gallery_list(request):
             if "subdirs" not in resp_dir:
                 resp_dir["subdirs"] = {}
         else:
-            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets, 
+            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets or is_lora, 
                                                   include_dirs, include_items, search_mode)
         
+        if is_lora and include_items:
+            _attach_lora_meta(resp_dir, rel_path_param)
+        
+        if is_lora:
+            # Access-time caching: enqueue loras missing examples (Lora root) or the
+            # specific lora being opened. Only an fs scan happens here; fetching is async.
+            try:
+                if rel_path_param:
+                    index = _load_lora_index()
+                    by_dir = {info.get("cache_dir"): rel for rel, info in index.items() if info.get("cache_dir")}
+                    rel = by_dir.get(rel_path_param)
+                    await _ensure_auto_cache(force_rels=[rel] if rel else None)
+                else:
+                    await _ensure_auto_cache()
+            except Exception as e:
+                print(f"[Neo Gallery] Auto cache trigger error: {e}")
+            if not rel_path_param:
+                # Lora root: add pending loras as subdir cards so they appear immediately.
+                pending = _pending_lora_dirs()
+                if pending:
+                    resp_dir.setdefault("subdirs", {})
+                    resp_dir["has_pending"] = True
+                    for p in pending:
+                        sub = p["path"].split("/", 1)[-1]
+                        resp_dir["subdirs"][sub] = {
+                            "image_count": 0, "path": sub, "pending": True,
+                            "lora_path": p["lora_path"], "model_name": p["model_name"],
+                            "base_model": p["base_model"], "civitai": p["civitai"],
+                        }
+            elif not resp_dir.get("items"):
+                # Opening a specific pending lora dir (no cache on disk yet).
+                if _load_settings().get("civitai_lora_enabled"):
+                    index = _load_lora_index()
+                    api_key = str((_load_settings().get("civitai_api_key") or "")).strip()
+                    for rel, info in index.items():
+                        if info.get("cache_dir") == rel_path_param and info.get("status") != "ok":
+                            resp_dir["read_only"] = True
+                            resp_dir["lora_path"] = rel
+                            resp_dir["model_name"] = info.get("model_name") or ""
+                            resp_dir["base_model"] = info.get("base_model") or ""
+                            resp_dir["civitai"] = {
+                                "status": info.get("status"), "error": info.get("error") or "",
+                                "images": info.get("images") or 0,
+                                "needs_api_key": info.get("status") == "queued" and not api_key,
+                            }
+                            resp_dir["pending"] = True
+                            break
         # Add covers if requested
         if include_covers:
             covers: dict[str, list[dict]] = {}
@@ -901,6 +1436,75 @@ async def get_gallery_list(request):
                     resp_dir["subdirs"] = {}
                 directories.append(resp_dir)
 
+    # Access-time auto-cache first so pending/queued loras are reflected in this listing.
+    try:
+        await _ensure_auto_cache()
+    except Exception as e:
+        print(f"[Neo Gallery] Auto cache trigger error: {e}")
+
+    # Lora example cache (read-only; one directory per lora, mirrors the presets model)
+    if LORA_CACHE_DIR.exists():
+        if include_items:
+            lora_structure = _scan_gallery_entries_with_subdirs(LORA_CACHE_DIR)
+        else:
+            lora_lightweight = _scan_directory_structure_only(LORA_CACHE_DIR)
+            lora_structure = {"root": [], "subdirs": {}}
+            for sd in lora_lightweight.get("subdirs", []):
+                lora_structure["subdirs"][sd["name"]] = []
+
+        resp_dir = _process_single_directory(LORA_CACHE_DIR, "Lora", "", True,
+                                               include_dirs, include_items, search_mode)
+        if include_items:
+            _attach_lora_meta(resp_dir, "")
+        # Filter root Lora directory items and subdirs by selection
+        selected_levels = _selected_lora_levels()
+        if selected_levels and selected_levels != {""}:
+            # Filter items: only keep those whose lora_path starts with a selected level
+            filtered_items = []
+            for item in resp_dir.get("items", []):
+                lora_path = item.get("lora_path", "")
+                if _lora_rel_in_selection(lora_path, selected_levels):
+                    filtered_items.append(item)
+            resp_dir["items"] = filtered_items
+            # Filter subdirs: only keep those whose lora_path starts with a selected level
+            filtered_subdirs = {}
+            for sub_name, sub_info in resp_dir.get("subdirs", {}).items():
+                lora_path = sub_info.get("lora_path", "")
+                if _lora_rel_in_selection(lora_path, selected_levels):
+                    filtered_subdirs[sub_name] = sub_info
+            resp_dir["subdirs"] = filtered_subdirs
+        directories.append(resp_dir)
+        pending = _pending_lora_dirs() if include_dirs else []
+        if pending:
+            resp_dir["has_pending"] = True
+            resp_dir.setdefault("subdirs", {})
+            for p in pending:
+                sub = p["path"].split("/", 1)[-1]
+                if sub not in resp_dir["subdirs"]:
+                    resp_dir["subdirs"][sub] = {
+                        "image_count": 0, "path": sub, "pending": True,
+                        "lora_path": p["lora_path"], "model_name": p["model_name"],
+                        "base_model": p["base_model"], "civitai": p["civitai"],
+                    }
+            # Also surface each pending lora as its own read-only dir so it appears
+            # on the home page before examples have been cached.
+            directories.extend(pending)
+
+        for subdir_name in sorted(lora_structure.get("subdirs", {}).keys()):
+            if not _lora_cache_subdir_in_selection(subdir_name, _selected_lora_levels()):
+                continue
+            subdir_items = lora_structure["subdirs"][subdir_name]
+            if subdir_items or include_items:
+                resp_dir = _process_single_directory(LORA_CACHE_DIR,
+                                                      f"Lora/{subdir_name}", subdir_name, True,
+                                                      include_dirs=False, include_items=include_items, search_mode=search_mode)
+                # Ensure no subdirs are shown for lora children (navigation goes through dir_name=lora&path=...)
+                if "subdirs" not in resp_dir:
+                    resp_dir["subdirs"] = {}
+                if include_items:
+                    _attach_lora_meta(resp_dir, subdir_name)
+                directories.append(resp_dir)
+
     # OSS remote directories
     if _is_oss_enabled():
         oss_index = _load_oss_index_from_disk()
@@ -920,6 +1524,8 @@ async def get_gallery_list(request):
         # Collect cover images for all directories (max 2 per directory).
         # _collect_all_dir_covers scans root level first, then first subdir with media.
         _collect_all_dir_covers(covers, PRESETS_DIR, "presets", 2)
+        if LORA_CACHE_DIR.exists():
+            _collect_all_dir_covers(covers, LORA_CACHE_DIR, "Lora", 2)
         for dir_path in user_custom_dirs:
             dir_name = dir_path.name if dir_path.name else str(dir_path)
             _collect_all_dir_covers(covers, dir_path, dir_name, 2)
@@ -1031,7 +1637,14 @@ async def copy_to_input(request):
 
         if subfolder:
             dir_parts = [p for p in subfolder.split("/") if p]
-            if dir_parts[0] == "presets":
+            if dir_parts[0].lower() == "lora" and ".." not in dir_parts:
+                candidate = LORA_CACHE_DIR
+                for part in dir_parts[1:]:
+                    candidate = candidate / part
+                candidate = candidate / filename
+                if candidate.exists():
+                    source_path = candidate
+            elif dir_parts[0] == "presets":
                 candidate = PRESETS_DIR
                 for part in dir_parts[1:]:
                     candidate = candidate / part
@@ -1660,6 +2273,20 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
     user_custom_dirs = _get_user_custom_dirs()
     source_path = None
     
+    # Lora cache (items carry a subfolder prefixed with "Lora/", e.g. "Lora/detail/tweak")
+    subfolder_lower = (subfolder or "").lower()
+    if subfolder_lower.startswith("lora/"):
+        sub_parts = [p for p in subfolder[len("lora/"):].split("/") if p]
+        if sub_parts and ".." not in sub_parts and ".." not in filename:
+            candidate = LORA_CACHE_DIR.joinpath(*sub_parts, filename)
+            if candidate.exists():
+                return candidate
+    elif subfolder_lower == "lora":
+        if ".." not in filename:
+            candidate = LORA_CACHE_DIR / filename
+            if candidate.exists():
+                return candidate
+    
     # Search in custom dirs - try every dir directly first (most reliable)
     for dir_path in user_custom_dirs:
         candidate = dir_path / filename
@@ -2101,6 +2728,14 @@ async def save_gallery_settings(request):
         elif action == "list":
             pass
 
+        elif action == "save_civitai":
+            if "enabled" in data:
+                current_settings["civitai_lora_enabled"] = bool(data.get("enabled"))
+            if "api_key" in data:
+                current_settings["civitai_api_key"] = str(data.get("api_key") or "").strip()
+            if isinstance(data.get("dirs"), list):
+                current_settings["lora_sync_dirs"] = [str(d) for d in data["dirs"] if str(d).strip()]
+
         else:
             custom_dir = None
             if "presets_directory" in data:
@@ -2125,8 +2760,14 @@ async def save_gallery_settings(request):
 
 @PromptServer.instance.routes.get("/neo_gallery/get_settings")
 async def get_gallery_settings(request):
-    """Get gallery settings."""
-    return web.json_response(_load_settings())
+    """Get gallery settings (civitai api key is masked)."""
+    settings = dict(_load_settings())
+    key = str(settings.get("civitai_api_key") or "")
+    settings["civitai_api_key"] = ""
+    settings["civitai_api_key_set"] = bool(key)
+    settings["civitai_api_key_hint"] = f"****{key[-4:]}" if len(key) >= 4 else ("****" if key else "")
+    settings["civitai_lora_enabled"] = bool(settings.get("civitai_lora_enabled"))
+    return web.json_response(settings)
 
 
 @PromptServer.instance.routes.post("/neo_gallery/upload_txt")
@@ -2162,10 +2803,11 @@ async def delete_gallery_item(request):
         if not filename or ".." in filename:
             return web.json_response({"success": False, "error": "Invalid filename"}, status=400)
 
-        # --- Read-only check for presets ---
+        # --- Read-only check for presets and lora cache ---
         subfolder_lower = (subfolder or "").lower()
-        if subfolder_lower == "presets" or subfolder_lower.startswith("presets/"):
-            return web.json_response({"success": False, "error": "Cannot delete from read-only presets directory"}, status=403)
+        if subfolder_lower == "presets" or subfolder_lower.startswith("presets/") \
+                or subfolder_lower == "lora" or subfolder_lower.startswith("lora/"):
+            return web.json_response({"success": False, "error": "Cannot delete from read-only directory"}, status=403)
 
         # --- Resolve base directory and target path ---
         user_custom_dirs = _get_user_custom_dirs()
@@ -2391,6 +3033,162 @@ async def oss_status(request):
         result["generated_at"] = index.get("generated_at", "")
 
     return web.json_response(result)
+
+
+@PromptServer.instance.routes.get("/neo_gallery/lora_dirs")
+async def lora_dirs(request):
+    """List loras first-level subdirectories (relative, posix) with aggregated counts.
+
+    Each option is a display root under models/loras ("" is the loras root itself);
+    counts include lora files nested below the directory.
+    """
+    result: dict = {}
+    for root in (folder_paths.get_folder_paths("loras") or []):
+        root = Path(root)
+        if not root.exists():
+            continue
+        try:
+            root_count = sum(1 for p in root.iterdir()
+                             if p.is_file() and p.suffix.lower() in LORA_FILE_EXTENSIONS)
+        except OSError:
+            root_count = 0
+        if root_count:
+            result[""] = result.get("", 0) + root_count
+        try:
+            children = sorted(root.iterdir())
+        except OSError:
+            continue
+        for p in children:
+            if not p.is_dir():
+                continue
+            try:
+                count = sum(1 for f in p.rglob("*")
+                            if f.is_file() and f.suffix.lower() in LORA_FILE_EXTENSIONS)
+            except OSError:
+                count = 0
+            if count:
+                result[p.name] = result.get(p.name, 0) + count
+    dirs = [{"path": k, "count": v} for k, v in sorted(result.items())]
+    return web.json_response({"dirs": dirs})
+
+
+@PromptServer.instance.routes.post("/neo_gallery/civitai_test")
+async def civitai_test(request):
+    """Probe Civitai reachability and, when configured, whether the saved API KEY is accepted.
+
+    Civitai is often unreachable from the user's network without a proxy, so this gives a
+    short actionable result instead of leaving failures hidden inside the auto-cache queue.
+    """
+    api_key = str(_load_settings().get("civitai_api_key") or "").strip()
+    headers = {"User-Agent": "ComfyUI-Neo-Nodes"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    status = 0
+    error = ""
+    started = time.monotonic()
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{CIVITAI_API_BASE}/models?limit=1", headers=headers) as resp:
+                status = resp.status
+    except asyncio.TimeoutError:
+        error = "连接超时（20 秒）"
+    except aiohttp.ClientError as e:
+        error = f"{type(e).__name__}"
+    latency = int((time.monotonic() - started) * 1000)
+
+    if error:
+        return web.json_response({
+            "success": True, "reachable": False, "key_ok": False,
+            "http_status": 0, "latency_ms": 0,
+            "message": f"无法连接 Civitai（{error}）· 需要代理或可直连的网络环境",
+        })
+    if status in (401, 403):
+        return web.json_response({
+            "success": True, "reachable": True, "key_ok": False,
+            "http_status": status, "latency_ms": latency,
+            "message": f"Civitai 可访问（{latency} ms）· 但 API KEY 被拒绝 HTTP {status}",
+        })
+    if status >= 400:
+        return web.json_response({
+            "success": True, "reachable": True, "key_ok": bool(api_key),
+            "http_status": status, "latency_ms": latency,
+            "message": f"Civitai 已响应但返回 HTTP {status}（{latency} ms）",
+        })
+    return web.json_response({
+        "success": True, "reachable": True, "key_ok": bool(api_key),
+        "http_status": status, "latency_ms": latency,
+        "message": f"连接正常（{latency} ms）" + ("" if api_key else "· 尚未配置 API KEY"),
+    })
+
+
+@PromptServer.instance.routes.get("/neo_gallery/lora_cache_status")
+async def lora_cache_status(request):
+    """Status of the access-time Civitai lora example cache."""
+    state = {k: v for k, v in _auto_state.items() if k != "cancel"}
+    index = _load_lora_index()
+    settings = _load_settings()
+    master_enabled = bool(settings.get("civitai_lora_enabled"))
+    selected = settings.get("lora_sync_dirs") or []
+    if isinstance(selected, list):
+        sel = {_normalize_lora_dir(d) for d in selected if str(d).strip() or str(d) == ""}
+    else:
+        sel = set()
+    state["master_enabled"] = master_enabled
+    state["enabled"] = master_enabled and bool(settings.get("civitai_api_key")) and bool(sel)
+    state["queue"] = len(_auto_queue)
+    pending = {}
+    for rel, info in index.items():
+        if info.get("status") in ("queued", "running", "failed"):
+            pending[rel] = {
+                "status": info.get("status"), "error": info.get("error") or "",
+                "model_name": info.get("model_name") or "",
+                "images": info.get("images") or 0,
+            }
+    state["pending"] = pending
+    state["pending_count"] = len(pending)
+    return web.json_response(state)
+
+
+@PromptServer.instance.routes.post("/neo_gallery/lora_retry_failed")
+async def lora_retry_failed(request):
+    """Re-enqueue every failed lora at the front of the auto-cache queue."""
+    index = _load_lora_index()
+    failed = [rel for rel, info in index.items() if info.get("status") == "failed"]
+    if failed:
+        await _ensure_auto_cache(force_rels=failed)
+    return web.json_response({"success": True, "count": len(failed)})
+
+
+@PromptServer.instance.routes.post("/neo_gallery/lora_sync")
+async def lora_sync(request):
+    """Legacy manual sync entry point: enqueue the requested dirs like an access."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid body"}, status=400)
+    selected = data.get("dirs")
+    if not isinstance(selected, list) or not [str(d) for d in selected if str(d).strip()]:
+        return web.json_response({"success": False, "error": "No lora directories selected"}, status=400)
+    try:
+        await _ensure_auto_cache(selected_dirs=[str(d) for d in selected if str(d).strip()])
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+    return web.json_response({"success": True})
+
+
+@PromptServer.instance.routes.get("/neo_gallery/lora_sync_status")
+async def lora_sync_status(request):
+    state = {k: v for k, v in _auto_state.items() if k != "cancel"}
+    return web.json_response(state)
+
+
+@PromptServer.instance.routes.post("/neo_gallery/lora_sync_cancel")
+async def lora_sync_cancel(request):
+    if _auto_state.get("running"):
+        _auto_state["cancel"] = True
+    return web.json_response({"success": True})
 
 
 # Ensure gallery directories exist on module load

@@ -54,6 +54,8 @@ class NeoGallery {
             source: null,
             categoryPath: [],
         };
+        this.workflowMatchActive = false;   // smart filter: show only loras used in the workflow
+        this._loraRefreshTimer = null;       // auto-refresh polling for the Lora section
         this.placeholderImageUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/placeholder.png`;
         this.sectionStates = {};
         this.isSearchActive = false;
@@ -249,7 +251,13 @@ class NeoGallery {
                 read_only: dir.read_only || false,
                 root_count: dir.root_count || 0,
                 items: dir.items || [],
-                source: dir.source || "local"
+                source: dir.source || "local",
+                lora_path: dir.lora_path || null,
+                pending: dir.pending || false,
+                civitai: dir.civitai || null,
+                model_name: dir.model_name || "",
+                base_model: dir.base_model || "",
+                has_pending: dir.has_pending || false
             }));
             this.filteredDirectories = this.allDirectories;
 
@@ -297,9 +305,9 @@ class NeoGallery {
             return;
         }
 
-        // In lazy mode, count dirs with subdirs or root_count
+        // In lazy mode, count dirs with subdirs, root_count, or pending lora fetches
         const totalDirs = dirsToDisplay.filter(d => 
-            (d.subdirs && Object.keys(d.subdirs).length > 0) || (d.root_count && d.root_count > 0)
+            (d.subdirs && Object.keys(d.subdirs).length > 0) || (d.root_count && d.root_count > 0) || d.pending
         ).length;
 
         if (totalDirs === 0 && !this.isSearchActive) {
@@ -334,22 +342,90 @@ class NeoGallery {
             style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)` }
         });
 
+        // Collect workflow-used loras once for the smart filter (only lora dirs are filtered).
+        const usedLoras = this.workflowMatchActive ? this.collectUsedLoras() : null;
+
         for (const dir of dirGroups) {
-            // Show cards if there are subdirs or root_count
+            // Show cards if there are subdirs, root_count, or a pending lora fetch
             const hasContent = (dir.subdirs && Object.keys(dir.subdirs).length > 0) ||
-                               (dir.root_count && dir.root_count > 0);
+                               (dir.root_count && dir.root_count > 0) ||
+                               dir.pending;
             if (!hasContent) continue;
-            
+
+            // Smart filter: hide lora dirs not used in the current workflow
+            if (usedLoras && dir.path && String(dir.path).toLowerCase().startsWith('lora/') && dir.lora_path) {
+                if (!usedLoras.has(dir.lora_path.replace(/\\/g, '/'))) continue;
+            }
+
             // FIX: For presets, only show the card as a directory entry (no root items displayed directly)
             // This prevents mixing root-level files with subdirectory cards on the home page
             const isPresets = dir.name.toLowerCase() === 'presets';
             const displayItems = isPresets ? [] : (dir.items || []);
 
-            const card = await this.components.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source);
+            const card = await this.components.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source, dir);
             container.appendChild(card);
         }
 
         return container;
+    }
+
+    // ====== Smart Workflow Matching (智能感知) ======
+
+    /**
+     * Collect the lora paths currently loaded by LoraLoader nodes on the canvas.
+     * Returns a Set of normalized (posix, forward-slash) lora relative paths.
+     */
+    collectUsedLoras() {
+        const used = new Set();
+        if (!this.app || !this.app.graph || !this.app.graph._nodes) return used;
+        for (const node of this.app.graph._nodes) {
+            if (node.mode === 4) continue; // bypassed nodes don't contribute
+            if (!/^LoraLoader/i.test(node.comfyClass || '') || !node.widgets) continue;
+            for (const w of node.widgets) {
+                if (w.name === 'lora_name' && w.type === 'combo' && typeof w.value === 'string' && w.value) {
+                    used.add(w.value.replace(/\\/g, '/'));
+                }
+            }
+        }
+        return used;
+    }
+
+    toggleWorkflowMatch() {
+        this.workflowMatchActive = !this.workflowMatchActive;
+        this.sortAndDisplayImages();
+    }
+
+    // ====== Lora Section Auto-Refresh ======
+
+    _isLoraView() {
+        return this.currentView.mode === 'directory' && (this.currentView.source || '').toLowerCase().startsWith('lora');
+    }
+
+    startLoraRefresh() {
+        if (this._loraRefreshTimer) return;
+        this._loraRefreshTimer = setInterval(async () => {
+            try {
+                const resp = await api.fetchApi('/neo_gallery/lora_cache_status');
+                if (!resp.ok) return;
+                const st = await resp.json();
+                // Keep refreshing while the auto-cache worker is active or loras are
+                // queued with a configured API key; without a key there is nothing to fetch.
+                if (this._isLoraView() && st.enabled && (st.running || st.pending_count > 0)) {
+                    const src = this.currentView.source;
+                    const segs = this.currentView.categoryPath || [];
+                    await this.showDirectoryStructure(src, segs);
+                } else {
+                    this.stopLoraRefresh();
+                }
+            } catch (e) { /* keep polling */ }
+        }, 2000);
+    }
+
+    stopLoraRefresh() {
+        if (this._loraRefreshTimer) {
+            clearInterval(this._loraRefreshTimer);
+            this._loraRefreshTimer = null;
+        }
     }
 
     async showDirectoryStructure(source, pathSegments = []) {
@@ -379,10 +455,17 @@ class NeoGallery {
             this.currentView.source = dirName;
             this.currentView.categoryPath = pathSegments;
             this._currentDirStructure = structure;
-            
+
             this.components.updateBreadcrumb(this, pathSegments, '');
-            
+
             this.renderDirectoryStructure(structure, dirName, pathSegments);
+
+            // Auto-refresh while browsing the Lora section so newly cached examples appear.
+            if (String(dirName).toLowerCase().startsWith('lora')) {
+                this.startLoraRefresh();
+            } else {
+                this.stopLoraRefresh();
+            }
             
             // Push state to history for back button support (use query param to avoid conflict with workflow hash)
             const stateKey = `gallery_v2:${encodeURIComponent(dirName)}:${pathSegments.join('/')}`;
@@ -431,15 +514,20 @@ class NeoGallery {
         
         // Convert items to images for compatibility
         const imageArray = items || [];
-        // Convert subdirs object to array for compatibility
+        // Convert subdirs object to array for compatibility (keep pending/lora metadata)
         const subdirArray = Object.keys(subdirs || {}).map(name => ({
             name,
             path: subdirs[name].path || name,
-            image_count: subdirs[name].image_count || 0
+            image_count: subdirs[name].image_count || 0,
+            pending: subdirs[name].pending || false,
+            lora_path: subdirs[name].lora_path || null,
+            model_name: subdirs[name].model_name || "",
+            base_model: subdirs[name].base_model || "",
+            civitai: subdirs[name].civitai || null
         }));
-        
-        // Filter out empty subdirectories (no media files)
-        const nonEmptySubdirs = subdirArray.filter(s => s.image_count > 0);
+
+        // Include pending lora subdirs (queued/running/failed) even with no cached images yet.
+        const nonEmptySubdirs = subdirArray.filter(s => s.image_count > 0 || s.pending);
         const hasSubdirs = nonEmptySubdirs.length > 0;
         
         if (hasSubdirs) {
@@ -450,6 +538,29 @@ class NeoGallery {
             // Lazy-loaded: has images but no image data yet — fetch them now
             await this._fetchLazyImages(structure, dirName, pathSegments);
             return; // Don't show anything yet, _fetchLazyImages will render
+        } else if (structure.pending) {
+            const st = structure.civitai || {};
+            let message, cls;
+            if (st.needs_api_key) {
+                message = "需要在「Manage Directories」中配置 C 站 API KEY 才能获取示例图。";
+                cls = "pending-warn";
+            } else if (st.status === 'not_found') {
+                message = "This lora was not found on Civitai.";
+                cls = "pending-failed";
+            } else if (st.status === 'failed') {
+                message = `抓取失败：${st.error || 'unknown error'}`;
+                if (st.error && st.error.includes("无法连接")) {
+                    message += " · 可在「Manage Directories」中点「测试 C 站连通性」排查（C 站需要代理或可直连的网络）";
+                }
+                cls = "pending-failed";
+            } else {
+                message = "Fetching examples from Civitai... this directory will refresh automatically.";
+                cls = "";
+            }
+            this.accordion.appendChild($el("div", {
+                className: "neo-gallery-pending-message" + (cls ? " " + cls : ""),
+                textContent: message
+            }));
         } else {
             showNoFilesMessage(this.accordion, "No images found in this folder");
         }
@@ -459,24 +570,52 @@ class NeoGallery {
         // New structure: { subdirs: object, items: array, root_count: number }
         const { subdirs, items, root_count } = structure;
         const dir = this.allDirectories.find(d => d.name === dirName || d.path === dirName);
-        
+
         // Use filtered subdirs if provided (non-empty only), otherwise use all
         const displaySubdirs = filteredSubdirs || Object.keys(subdirs || {});
-        
-        const subdirArray = Array.isArray(displaySubdirs) 
-            ? displaySubdirs 
+
+        let subdirArray = Array.isArray(displaySubdirs)
+            ? displaySubdirs
             : Object.keys(subdirs || {}).map(name => ({ name, path: subdirs[name].path || name, image_count: subdirs[name].image_count || 0 }));
-        
+
+        // Smart workflow filter for the Lora section.
+        const isLoraView = String(dirName).toLowerCase().startsWith('lora');
+        if (isLoraView && this.workflowMatchActive) {
+            const usedLoras = this.collectUsedLoras();
+            if (usedLoras.size > 0) {
+                subdirArray = subdirArray.filter(s => {
+                    const loraPath = (s.lora_path || '').replace(/\\/g, '/');
+                    return !loraPath || usedLoras.has(loraPath);
+                });
+            }
+        }
+
         const container = $el("div", {
             className: "neo-gallery-category-grid",
             style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)` }
         });
-        
+
+        if (isLoraView) {
+            const usedCount = this.collectUsedLoras().size;
+            const filterBar = $el("div", { className: "neo-gallery-workflow-filter" }, [
+                $el("span", { className: "neo-gallery-workflow-filter-label", textContent: "智能感知:" }),
+                $el("button", {
+                    className: "neo-gallery-workflow-chip" + (!this.workflowMatchActive ? " active" : ""),
+                    onclick: () => { if (this.workflowMatchActive) this.toggleWorkflowMatch(); }
+                }, ["全部"]),
+                $el("button", {
+                    className: "neo-gallery-workflow-chip" + (this.workflowMatchActive ? " active" : ""),
+                    onclick: () => { if (!this.workflowMatchActive) this.toggleWorkflowMatch(); }
+                }, [`工作流已用 (${usedCount})`])
+            ]);
+            this.accordion.appendChild(filterBar);
+        }
+
         for (const subdir of subdirArray) {
             const subdirName = typeof subdir === 'string' ? subdir : subdir.name;
             const fullPath = [...pathSegments, subdirName];
             
-            const card = await this.components.createSubdirCard(this, subdirName, dirName, fullPath);
+            const card = await this.components.createSubdirCard(this, subdirName, dirName, fullPath, subdir);
             container.appendChild(card);
         }
         
@@ -592,6 +731,7 @@ class NeoGallery {
         this.currentView.mode = 'categories';
         this.currentView.source = null;
         this.currentView.categoryPath = [];
+        this.stopLoraRefresh();
 
         const breadcrumb = document.getElementById("neo-gallery-breadcrumb");
         if (breadcrumb) {
@@ -1303,6 +1443,47 @@ class NeoGallery {
 
     _showImgSendMenu(image, button) {
         this.components._showImgSendMenu(this, image, button);
+    }
+
+    _showLoraSendMenu(loraPath, button) {
+        this.components._showLoraSendMenu(this, loraPath, button);
+    }
+
+    _removeLoraSendMenu() {
+        this.components._removeLoraSendMenu();
+    }
+
+    async sendLoraToNode(loraPath, target, button) {
+        let targetNode = null;
+        let targetWidget = null;
+        if (target === 'selected') {
+            const selKeys = Object.keys(app.canvas.selected_nodes);
+            if (selKeys.length > 0) {
+                targetNode = app.canvas.selected_nodes[selKeys[0]];
+                targetWidget = targetNode?.widgets?.find(w => w.name === 'lora_name');
+            }
+        } else {
+            const [nodeId, , index] = target.split(':');
+            targetNode = app.graph.getNodeById(parseInt(nodeId));
+            targetWidget = targetNode?.widgets?.[parseInt(index)];
+        }
+        if (!targetNode || !targetWidget) {
+            showToast(this.app, 'error', 'Send Failed', 'Could not find target node/widget.');
+            return;
+        }
+        // LoraLoader combo values use OS separators; lora_path from the gallery is posix.
+        const normalized = loraPath.replace(/\//g, '\\');
+        const options = targetWidget.options || (targetWidget.options_values || []);
+        const matched = Array.isArray(options) ? options.find(o => (o || '').replace(/\\/g, '/') === loraPath.replace(/\\/g, '/')) : null;
+        targetWidget.value = matched !== undefined && matched !== null ? matched : normalized;
+        if (targetWidget.callback) {
+            targetWidget.callback(targetWidget.value);
+        } else if (targetNode.onWidgetChanged) {
+            targetNode.onWidgetChanged(targetWidget.name, targetWidget.value);
+        }
+        app.graph.setDirtyCanvas(true, true);
+        showInlineFeedback(button, '\u2705 Lora Sent!', 'success');
+        showToast(this.app, 'success', 'Lora Sent!', `${targetWidget.value} \u2192 ${targetNode.title || 'Node'}`);
     }
 
     _showSendMenu(image, button) {
