@@ -25,7 +25,6 @@ import {
     showToast,
     showInlineFeedback
 } from './gallery-utils.js';
-import { confirmWorkflowRepair } from './workflow.js';
 
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
 // keys need different wording: Civitai is unreachable without a proxy on many networks,
@@ -2134,19 +2133,14 @@ export class GalleryComponents {
                     if (!source) {
                         throw new Error(wf ? "工作流缺少 nodes 数据，无法载入" : "此文件只有 API 格式工作流且当前前端不支持");
                     }
-                    const r = await confirmWorkflowRepair(source, 'gallery');
-                    if (r.cancelled) return;
                     if (isUiFormat) {
-                        await app.loadGraphData(r.workflow);
+                        await app.loadGraphData(source);
                     } else {
-                        await app.loadApiJson(r.workflow, "gallery-example");
+                        await app.loadApiJson(source, "gallery-example");
                     }
                     gallery.closeLightbox();
                     requestAnimationFrame(fitToContent);
-                    showToast(gallery.app, r.repairUnavailable ? "warning" : "success",
-                        r.repairedCount ? `工作流已载入（已修复 ${r.repairedCount} 处模型路径）`
-                            : (r.repairUnavailable ? "工作流已按原样载入" : "工作流已载入画布"),
-                        r.repairUnavailable ? "修复检测不可用，保留了原始模型路径" : "");
+                    showToast(gallery.app, "success", "工作流已载入画布", "");
                 } catch (err) {
                     showToast(gallery.app, "error", "载入失败", String(err.message || err));
                 } finally {

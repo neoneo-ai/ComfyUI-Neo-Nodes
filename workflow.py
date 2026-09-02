@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes — 工作流后端：工作流模型路径修复与修复 API
 # 工作流相关的后端功能集中在此文件，便于后续扩展。
-# 前端把工作流载入画布前先调用 POST /neo_nodes/repair 拿到修复建议（changes），
-# 由用户二次确认后再载入返回的 repaired workflow；服务端不保存任何状态。
+# 前端在修复检查时调用 POST /neo_nodes/repair 拿到修复建议（changes），
+# 由用户二次确认后载入返回的 repaired workflow；自动匹配失败的项可在弹窗中手动
+# 选择替换文件，确认时服务端把选择保存为修复映射（用户目录 neo_repair_mappings.json），
+# 之后的相同失效路径按映射自动替换。
 
 from aiohttp import web
 from server import PromptServer
 
 import copy
+import json
 import os
 import re
 import difflib
@@ -17,7 +20,7 @@ import difflib
 # 导出/换机后的工作流里，模型文件名（ckpt_name 等）经常指向本机不存在的文件。
 # 这里在载入前做一次性修复：
 #   - COMBO 输入：直接对照节点自身 INPUT_TYPES 里的选项列表模糊匹配
-#     （列表就是 loader 自己的文件列表，命中即可加载，允许换扩展名）。
+#     （列表就是 loader 自己的文件列表，命中即可加载，允许换扩展名与量化变体）。
 #   - 自由路径（STRING / 无法解析 class_type 的 API 输入）：回落到
 #     folder_paths 文件列表，且只接受同扩展名的匹配（不做跨格式替换）。
 # 只有得分足够高且明显领先第二名时才改写；否则保留原值并上报候选项。
@@ -111,12 +114,26 @@ def _file_ext(name: str):
     return ext.lower()
 
 
+# 量化标记 token：模型名仅在这些标记上不同时视为同一模型的另一量化（只是精度差异），
+# 允许高置信度互换；GGUF 的 Q4_K_M 之类含 k/m 等通用 token 的多级标记不在此列，
+# 仍走通用模糊匹配。
+_QUANT_TOKENS = {
+    "fp32", "fp16", "bf16", "fp8", "int8", "int4",
+    "e4m3fn", "e5m2", "scaled", "nf4", "nvfp4",
+    "q2", "q3", "q4", "q5", "q6", "q8",
+}
+
+
 def _score_pair(wanted: str, cand: str) -> float:
     """Similarity between two normalized model names, 0..1."""
     if wanted == cand:
         return 1.0
     best = 0.0
     tw, tc = set(re.findall(r"[a-z0-9]+", wanted)), set(re.findall(r"[a-z0-9]+", cand))
+    stripped_w = {t for t in tw if t not in _QUANT_TOKENS}
+    stripped_c = {t for t in tc if t not in _QUANT_TOKENS}
+    if stripped_w and stripped_c and stripped_w == stripped_c:
+        return 0.9  # 仅量化标记不同：同一模型的另一量化（bf16 ↔ fp8_scaled）
     if tw and tc:
         overlap = len(tw & tc) / min(len(tw), len(tc))
         # 长度差异大的（如 "flux1" vs "flux1_dev"）按长度比打折，避免短名虚高
@@ -335,18 +352,28 @@ def _change(node_type, node_id, input_name, old, new, score, candidates, reason,
     return entry
 
 
-def _repair_one_ref(input_name: str, value, combo_options):
+def _repair_one_ref(input_name: str, value, combo_options, ctx=None, node_id=None):
     """Repair a single model reference. combo_options: list (empty list = the
     loader's list is known and empty) for combo inputs, None for free paths.
+    ctx carries the user's manual decisions {(str(node_id), input, old): {...}}
+    and the stored repair mappings ({} when disabled).
     Returns (new_value, (score, candidates, reason, folder)); reason None = no change."""
     if not isinstance(value, str) or not value.strip():
         return value, (0.0, [], None, None)
+    ctx = ctx or {}
+    decision = ctx.get("decisions", {}).get((str(node_id), input_name, value))
     if combo_options is not None:
         if value in combo_options:
             return value, (1.0, [], None, None)
         if _file_ext(value) is None and not any(
                 _file_ext(o) for o in combo_options if isinstance(o, str)):
             return value, (0.0, [], None, None)  # 非文件 combo（采样器/调度器等）：不是模型引用
+        folder = guess_model_folder(input_name)
+        if decision and decision["value"] in combo_options:
+            return decision["value"], (0.0, [], "chosen", folder or decision["folder"])
+        mapped = _mapped_replacement(ctx.get("mappings"), folder, value)
+        if mapped and mapped in combo_options:
+            return mapped, (0.0, [], "mapped", folder)
         matched, score, cands = match_model_ref(value, combo_options, strict_ext=False)
         if matched:
             return matched, (score, cands, "matched", None)
@@ -355,13 +382,20 @@ def _repair_one_ref(input_name: str, value, combo_options):
         return value, (0.0, [], None, None)  # free text without a file extension: not a model ref
     if _resolvable_anywhere(value):
         return value, (1.0, [], None, None)
+    if decision and _resolvable_anywhere(decision["value"]):
+        return decision["value"], (0.0, [], "chosen",
+                                   guess_model_folder(input_name) or decision["folder"])
     matched, score, cands, folder = _resolve_in_folders(input_name, value, strict_ext=True)
     if matched is not None and matched != value:
         return matched, (score, cands, "matched", folder)
+    mfolder = folder or guess_model_folder(input_name)
+    mapped = _mapped_replacement(ctx.get("mappings"), mfolder, value)
+    if mapped:
+        return mapped, (0.0, [], "mapped", mfolder)
     return value, (score, cands, "missing", folder)
 
 
-def _repair_value(input_name: str, value, combo_options):
+def _repair_value(input_name: str, value, combo_options, ctx=None, node_id=None):
     """Repair a str or list[str] value. Returns (new_value, changes) where each
     change is (old, new_or_None, score, candidates, reason)."""
     if isinstance(value, list):
@@ -370,24 +404,24 @@ def _repair_value(input_name: str, value, combo_options):
         for i, v in enumerate(out):
             if not isinstance(v, str):
                 continue
-            nv, (score, cands, reason, folder) = _repair_one_ref(input_name, v, combo_options)
-            if reason == "matched" and nv != v:
+            nv, (score, cands, reason, folder) = _repair_one_ref(input_name, v, combo_options, ctx, node_id)
+            if reason in ("matched", "chosen", "mapped") and nv != v:
                 out[i] = nv
-                changes.append((v, nv, score, cands, "matched", folder))
+                changes.append((v, nv, score, cands, reason, folder))
             elif reason == "missing":
                 changes.append((v, None, score, cands, "missing", folder))
         if out == value:
             return value, changes
         return out, changes
-    nv, (score, cands, reason, folder) = _repair_one_ref(input_name, value, combo_options)
-    if reason == "matched" and nv != value:
-        return nv, [(value, nv, score, cands, "matched", folder)]
+    nv, (score, cands, reason, folder) = _repair_one_ref(input_name, value, combo_options, ctx, node_id)
+    if reason in ("matched", "chosen", "mapped") and nv != value:
+        return nv, [(value, nv, score, cands, reason, folder)]
     if reason == "missing":
         return value, [(value, None, score, cands, "missing", folder)]
     return value, []
 
 
-def _repair_ui_format(workflow: dict, mappings) -> tuple:
+def _repair_ui_format(workflow: dict, mappings, ctx=None) -> tuple:
     wf = copy.deepcopy(workflow)
     changes = []
     for node in wf.get("nodes", []):
@@ -411,7 +445,7 @@ def _repair_ui_format(workflow: dict, mappings) -> tuple:
             if not isinstance(widgets[i], (str, list)):
                 continue
             combo = options if wtype == "COMBO" else None
-            new_value, node_changes = _repair_value(name, widgets[i], combo)
+            new_value, node_changes = _repair_value(name, widgets[i], combo, ctx, node.get("id"))
             if new_value is not widgets[i]:
                 widgets[i] = new_value
             for old, new, score, cands, reason, folder in node_changes:
@@ -420,7 +454,7 @@ def _repair_ui_format(workflow: dict, mappings) -> tuple:
     return wf, changes
 
 
-def _repair_api_format(workflow: dict, mappings) -> tuple:
+def _repair_api_format(workflow: dict, mappings, ctx=None) -> tuple:
     wf = copy.deepcopy(workflow)
     changes = []
     nodes = wf.get("nodes")
@@ -453,7 +487,7 @@ def _repair_api_format(workflow: dict, mappings) -> tuple:
                 continue  # free text on an unresolvable node: only model filenames
             else:
                 combo = None
-            new_value, node_changes = _repair_value(name, value, combo)
+            new_value, node_changes = _repair_value(name, value, combo, ctx, node_id)
             if new_value is not value:
                 inputs[name] = new_value
             for old, new, score, cands, reason, folder in node_changes:
@@ -462,32 +496,149 @@ def _repair_api_format(workflow: dict, mappings) -> tuple:
     return wf, changes
 
 
-def repair_workflow(workflow, node_class_mappings=None) -> tuple:
+def repair_workflow(workflow, node_class_mappings=None, decisions=None, use_mappings=True) -> tuple:
     """Repair broken model references in a UI- or API-format workflow.
 
     Only touches references it can confidently match; resolvable values are
     never modified. Returns (repaired_workflow, changes) where each change is
     a JSON-safe dict ({node, type, input, old, new, reason, ...}); new is None
     for unfixable references (candidates reported for the user to pick).
+    decisions: 修复弹窗中的手动选择 [{node, input, old, value, folder}]，命中时按
+    reason="chosen" 改写；use_mappings=False 跳过已保存的手动修复映射（命中的
+    记为 reason="mapped"）。
     """
     if not isinstance(workflow, dict):
         return workflow, []
+    ctx = {
+        "decisions": _normalize_decisions(decisions),
+        "mappings": load_repair_mappings() if use_mappings else {},
+    }
     nodes = workflow.get("nodes")
     if isinstance(nodes, list):
-        return _repair_ui_format(workflow, node_class_mappings)
+        return _repair_ui_format(workflow, node_class_mappings, ctx)
     if isinstance(nodes, dict):
-        return _repair_api_format(workflow, node_class_mappings)
+        return _repair_api_format(workflow, node_class_mappings, ctx)
     for v in workflow.values():
         if isinstance(v, dict) and "class_type" in v:
-            return _repair_api_format(workflow, node_class_mappings)
+            return _repair_api_format(workflow, node_class_mappings, ctx)
     return workflow, []
+
+
+# ---------------------------------------------------------------------------
+# 手动修复映射：用户在修复弹窗中手动选择替换文件并勾选「记住」后持久化到这里，
+# 键为 (模型文件夹, 归一化失效路径)，大小写/扩展名/分隔符差异视为相同路径；
+# 替换目标文件被删除时映射自动失效。
+# ---------------------------------------------------------------------------
+
+def _mapping_key(folder: str, value: str) -> str:
+    return f"{folder}|{normalize_model_ref(value)}"
+
+
+def _mappings_file() -> str:
+    try:
+        import folder_paths
+        return os.path.join(folder_paths.get_user_directory(), "neo_repair_mappings.json")
+    except Exception:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "neo_repair_mappings.json")
+
+
+def load_repair_mappings() -> dict:
+    try:
+        with open(_mappings_file(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_repair_mappings(mappings: dict) -> None:
+    try:
+        path = _mappings_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(mappings, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"[Neo-Nodes] 修复映射保存失败: {e}")
+
+
+def add_repair_mappings(entries) -> list:
+    """Persist {folder, wanted, replacement} entries. Returns the stored keys."""
+    mappings = load_repair_mappings()
+    keys = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        folder, wanted, replacement = entry.get("folder"), entry.get("wanted"), entry.get("replacement")
+        if not folder or not wanted or not replacement:
+            continue
+        key = _mapping_key(folder, wanted)
+        mappings[key] = {"folder": folder, "wanted": wanted, "replacement": replacement}
+        keys.append(key)
+    if keys:
+        save_repair_mappings(mappings)
+    return keys
+
+
+def delete_repair_mapping(key: str) -> bool:
+    mappings = load_repair_mappings()
+    if key not in mappings:
+        return False
+    del mappings[key]
+    save_repair_mappings(mappings)
+    return True
+
+
+def clear_repair_mappings() -> None:
+    save_repair_mappings({})
+
+
+def _resolvable_in_folder(folder: str, name: str) -> bool:
+    try:
+        import folder_paths
+        return bool(folder_paths.get_full_path(folder, name))
+    except Exception:
+        return False
+
+
+def _mapped_replacement(mappings, folder, value):
+    """Stored mapping replacement for `value` under `folder`, or None when the
+    mapping is absent or its replacement file no longer resolves."""
+    if not mappings or not folder:
+        return None
+    entry = mappings.get(_mapping_key(folder, value))
+    if not isinstance(entry, dict):
+        return None
+    replacement = entry.get("replacement")
+    if not replacement or not _resolvable_in_folder(folder, replacement):
+        return None
+    return replacement
+
+
+def _normalize_decisions(decisions) -> dict:
+    """[{node, input, old, value, folder?}] -> {(str(node), input, old): {...}}."""
+    out = {}
+    for d in decisions if isinstance(decisions, list) else []:
+        if not isinstance(d, dict):
+            continue
+        node, input_name, old, value = d.get("node"), d.get("input"), d.get("old"), d.get("value")
+        if not isinstance(input_name, str) or not isinstance(old, str) or not isinstance(value, str):
+            continue
+        if not value.strip():
+            continue
+        out[(str(node), input_name, old)] = {
+            "value": value,
+            "folder": d.get("folder") if isinstance(d.get("folder"), str) else None,
+        }
+    return out
 
 
 @PromptServer.instance.routes.post("/neo_nodes/repair")
 async def rs_repair_workflow(request):
     """Repair broken model references in a workflow (UI or API format).
 
-    Body: {"workflow": {...}}
+    Body: {"workflow": {...}, "decisions": [...], "remember": bool}
+    decisions 是修复弹窗中的手动选择 [{node, input, old, value, folder}]；
+    remember=true 时把这些选择保存为修复映射，之后相同失效路径自动替换。
     Response: {"success": true, "workflow": <repaired>, "changes": [...],
                "applied": <int>, "missing": <int>}
     """
@@ -498,8 +649,14 @@ async def rs_repair_workflow(request):
     workflow = data.get("workflow") if isinstance(data, dict) else None
     if not isinstance(workflow, dict):
         return web.json_response({"success": False, "error": "Missing workflow object"}, status=400)
+    decisions = data.get("decisions") if isinstance(data, dict) else None
     import nodes
-    repaired, changes = repair_workflow(workflow, nodes.NODE_CLASS_MAPPINGS)
+    repaired, changes = repair_workflow(workflow, nodes.NODE_CLASS_MAPPINGS, decisions=decisions)
+    if decisions and data.get("remember"):
+        add_repair_mappings([
+            {"folder": c.get("folder"), "wanted": c.get("old"), "replacement": c.get("new")}
+            for c in changes if c.get("reason") == "chosen"
+        ])
     return web.json_response({
         "success": True,
         "workflow": repaired,
@@ -507,3 +664,22 @@ async def rs_repair_workflow(request):
         "applied": sum(1 for c in changes if c.get("new")),
         "missing": sum(1 for c in changes if c.get("reason") == "missing"),
     })
+
+
+@PromptServer.instance.routes.get("/neo_nodes/repair_mappings")
+async def rs_get_repair_mappings(request):
+    mappings = load_repair_mappings()
+    items = [dict(entry, key=key) for key, entry in sorted(mappings.items()) if isinstance(entry, dict)]
+    return web.json_response({"success": True, "mappings": items})
+
+
+@PromptServer.instance.routes.delete("/neo_nodes/repair_mappings")
+async def rs_delete_repair_mappings(request):
+    key = request.query.get("key")
+    if not key:
+        return web.json_response({"success": False, "error": "Missing key"}, status=400)
+    if key == "all":
+        clear_repair_mappings()
+    elif not delete_repair_mapping(key):
+        return web.json_response({"success": False, "error": "Unknown mapping"}, status=404)
+    return web.json_response({"success": True})
