@@ -9,6 +9,7 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 import { Lightbox } from "./lightbox.js";
+import { confirmWorkflowRepair } from "./workflow.js";
 
 const assetUrl = (recipe, file, dir) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
@@ -324,8 +325,14 @@ async function copySampleWorkflowToCanvas(recipeName, wfFile) {
     }
     try {
         const workflow = await fetchSampleWorkflow(recipeName, wfFile);
-        await app.loadGraphData(workflow, true, true, `${recipeName} · 工作流备份`);
-        app.extensionManager.toast.add({ severity: 'success', summary: '工作流已复制', detail: `已加载 ${recipeName} 的快照工作流`, life: 4000 });
+        const r = await confirmWorkflowRepair(workflow, 'recipes');
+        if (r.cancelled) return false;
+        await app.loadGraphData(r.workflow, true, true, `${recipeName} · 工作流备份`);
+        if (r.repairUnavailable) {
+            app.extensionManager.toast.add({ severity: 'warning', summary: '工作流已按原样复制', detail: '修复检测不可用，保留了原始模型路径', life: 4000 });
+        } else {
+            app.extensionManager.toast.add({ severity: 'success', summary: r.repairedCount ? `工作流已复制（已修复 ${r.repairedCount} 处模型路径）` : '工作流已复制', detail: `已加载 ${recipeName} 的快照工作流`, life: 4000 });
+        }
         return true;
     } catch (err) {
         console.error('[Neo Recipes] Copy workflow failed:', err);
@@ -698,7 +705,11 @@ export async function createRecipesPanel() {
                             ? [{
                                 label: '📋 复制工作流',
                                 title: '把该示例对应的工作流快照加载到画布',
-                                onClick: (it) => copySampleWorkflowToCanvas(r.name, sampleWorkflows[it.file]),
+                                onClick: (it, lb, btn) => {
+                                    btn.disabled = true;
+                                    copySampleWorkflowToCanvas(r.name, sampleWorkflows[it.file])
+                                        .finally(() => { btn.disabled = false; });
+                                },
                             }]
                             : []),
                     })

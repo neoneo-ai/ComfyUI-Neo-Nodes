@@ -6,6 +6,9 @@ from . import gallery
 # Import recipes module (depends on gallery helpers; registers recipe routes)
 from . import recipes
 
+# Import workflow module (workflow repair API; registers /neo_nodes/repair route)
+from . import workflow
+
 # Import from prompts module
 from .prompts import (
     NODE_CLASS_MAPPINGS as PROMPT_CLASS_MAPPINGS,

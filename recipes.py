@@ -485,7 +485,9 @@ async def rs_recipes_workflow(request):
     wf_path = recipe_dir / "workflows" / file if recipe_dir else None
     if wf_path is None or not wf_path.is_file():
         return web.Response(status=404)
-    return web.json_response(json.loads(wf_path.read_text(encoding="utf-8")))
+    data = json.loads(wf_path.read_text(encoding="utf-8"))
+    return web.json_response(data)
+
 
 
 @PromptServer.instance.routes.post("/rs_recipes/send_to_workflow")

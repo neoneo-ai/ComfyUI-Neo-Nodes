@@ -25,6 +25,7 @@ import {
     showToast,
     showInlineFeedback
 } from './gallery-utils.js';
+import { confirmWorkflowRepair } from './workflow.js';
 
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
 // keys need different wording: Civitai is unreachable without a proxy on many networks,
@@ -2101,6 +2102,11 @@ export class GalleryComponents {
             loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
             loadBtn.onclick = async (e) => {
                 e.stopPropagation();
+                if (loadBtn.disabled) return;
+                loadBtn.disabled = true;
+                const origLabel = loadBtn.textContent;
+                loadBtn.textContent = "⏳ 检测中…";
+                loadBtn.style.opacity = "0.6";
                 const wf = meta.workflow;
                 const fitToContent = () => {
                     requestAnimationFrame(() => {
@@ -2121,20 +2127,32 @@ export class GalleryComponents {
                     });
                 };
                 try {
-                    if (wf && Array.isArray(wf.nodes)) {
-                        await app.loadGraphData(wf);
-                    } else if (meta.prompt && typeof app.loadApiJson === "function") {
-                        await app.loadApiJson(meta.prompt, "gallery-example");
-                    } else if (wf) {
-                        throw new Error("工作流缺少 nodes 数据，无法载入");
+                    const isUiFormat = !!(wf && Array.isArray(wf.nodes));
+                    const source = isUiFormat ? wf
+                        : (meta.prompt && typeof app.loadApiJson === "function") ? meta.prompt
+                        : null;
+                    if (!source) {
+                        throw new Error(wf ? "工作流缺少 nodes 数据，无法载入" : "此文件只有 API 格式工作流且当前前端不支持");
+                    }
+                    const r = await confirmWorkflowRepair(source, 'gallery');
+                    if (r.cancelled) return;
+                    if (isUiFormat) {
+                        await app.loadGraphData(r.workflow);
                     } else {
-                        throw new Error("此文件只有 API 格式工作流且当前前端不支持");
+                        await app.loadApiJson(r.workflow, "gallery-example");
                     }
                     gallery.closeLightbox();
                     requestAnimationFrame(fitToContent);
-                    showToast(gallery.app, "success", "工作流已载入画布", "");
+                    showToast(gallery.app, r.repairUnavailable ? "warning" : "success",
+                        r.repairedCount ? `工作流已载入（已修复 ${r.repairedCount} 处模型路径）`
+                            : (r.repairUnavailable ? "工作流已按原样载入" : "工作流已载入画布"),
+                        r.repairUnavailable ? "修复检测不可用，保留了原始模型路径" : "");
                 } catch (err) {
                     showToast(gallery.app, "error", "载入失败", String(err.message || err));
+                } finally {
+                    loadBtn.disabled = false;
+                    loadBtn.textContent = origLabel;
+                    loadBtn.style.opacity = "";
                 }
             };
             frag.appendChild(loadBtn);

@@ -9,7 +9,7 @@
  *   Lightbox.open({
  *     items: [{ kind: 'image'|'video'|'audio', url, title }],
  *     index: 0,   // 可选：起始项
- *     actions: (item, index) => [{ label, title, onClick(item, li) }], // 函数按项定额外按钮；也接受普通数组
+ *     actions: (item, index) => [{ label, title, onClick(item, lightbox, button) }], // 函数按项定额外按钮；也接受普通数组
  *   });
  */
 import { $el } from "../../../../scripts/ui.js";
@@ -176,12 +176,13 @@ _render() {
             ? (this.actionsProvider(item, this.index) || [])
             : (this.actionsProvider || []);
         for (const a of actions) {
-            this._toolbar.appendChild($el('button', {
+            const btn = $el('button', {
                 className: 'neo-lightbox-action',
                 textContent: a.label,
                 title: a.title || a.label,
-                onclick: (e) => { e.stopPropagation(); a.onClick?.(item, this); }
-            }));
+                onclick: (e) => { e.stopPropagation(); a.onClick?.(item, this, btn); }
+            });
+            this._toolbar.appendChild(btn);
         }
         this._root.classList.toggle('neo-lightbox-single', this.items.length <= 1);
     }
