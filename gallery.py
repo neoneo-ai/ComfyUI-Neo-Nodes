@@ -32,6 +32,8 @@ PRESETS_DIR = GALLERY_DIR / "presets"
 CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
+CIVITAI_BOOKMARK_DIR = GALLERY_DIR / "civitai_bookmarks"  # cached example images for bookmarked C-site models
+CIVITAI_DIR_NAME = "Civitai 收藏"  # first-level gallery dir for bookmarked C-site models (mirrors the Lora section)
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -105,7 +107,7 @@ def _get_user_custom_dirs():
 
 
 def _ensure_dirs() -> None:
-    for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR):
+    for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR, CIVITAI_BOOKMARK_DIR):
         d.mkdir(parents=True, exist_ok=True)
     _repair_mislabeled_media()
 
@@ -583,6 +585,10 @@ async def get_gallery_list(request):
             if not rel_path_param:
                 rel_path_param = dir_name_param[len("lora/"):]
             await _ensure_auto_cache()
+        elif dir_name_lower == CIVITAI_DIR_NAME.lower() or dir_name_lower.startswith(CIVITAI_DIR_NAME.lower() + "/"):
+            base = CIVITAI_BOOKMARK_DIR
+            if not rel_path_param and dir_name_lower != CIVITAI_DIR_NAME.lower():
+                rel_path_param = dir_name_param[len(CIVITAI_DIR_NAME) + 1:]
         else:
             system = _resolve_system_dir(dir_name_param)
             if system:
@@ -607,6 +613,7 @@ async def get_gallery_list(request):
         is_presets = dir_name_lower == "presets" or dir_name_lower.startswith("presets/")
         is_lora = dir_name_lower == "lora" or dir_name_lower.startswith("lora/")
         is_system = _resolve_system_dir(dir_name_param) is not None
+        is_civitai = dir_name_lower == CIVITAI_DIR_NAME.lower() or dir_name_lower.startswith(CIVITAI_DIR_NAME.lower() + "/")
         
         # For presets subdirectories (e.g., Presets/10秒), only show images without nested subdir cards
         # This prevents showing two levels of subdirectory structure on the home page
@@ -621,9 +628,15 @@ async def get_gallery_list(request):
             if "subdirs" not in resp_dir:
                 resp_dir["subdirs"] = {}
         else:
-            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets or is_lora or is_system, 
+            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets or is_lora or is_system or is_civitai, 
                                                   include_dirs, include_items, search_mode)
         
+        # Civitai bookmark example cache: anchor item subfolders to the stable
+        # "civitai_bookmarks/<key>" prefix so the image/thumbnail routes resolve them.
+        if is_civitai and include_items and resp_dir.get("items"):
+            for it in resp_dir["items"]:
+                it["subfolder"] = f"civitai_bookmarks/{rel_path_param}"
+
         if is_lora and include_items:
             _attach_lora_meta(resp_dir, rel_path_param)
 
@@ -937,6 +950,13 @@ async def copy_to_input(request):
                     source_path = candidate
             elif dir_parts[0].lower() == "lora" and ".." not in dir_parts:
                 candidate = LORA_CACHE_DIR
+                for part in dir_parts[1:]:
+                    candidate = candidate / part
+                candidate = candidate / filename
+                if candidate.exists():
+                    source_path = candidate
+            elif dir_parts[0].lower() == "civitai_bookmarks" and ".." not in dir_parts:
+                candidate = CIVITAI_BOOKMARK_DIR
                 for part in dir_parts[1:]:
                     candidate = candidate / part
                 candidate = candidate / filename
@@ -1495,6 +1515,12 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
             candidate = LORA_CACHE_DIR / filename
             if candidate.exists():
                 return candidate
+    elif subfolder_lower.startswith("civitai_bookmarks/"):
+        bm_parts = [p for p in subfolder[len("civitai_bookmarks/"):].split("/") if p]
+        if bm_parts and ".." not in bm_parts and ".." not in filename:
+            candidate = CIVITAI_BOOKMARK_DIR.joinpath(*bm_parts, filename)
+            if candidate.exists():
+                return candidate
     
     # Search in custom dirs - try every dir directly first (most reliable)
     for dir_path in user_custom_dirs:
@@ -1844,6 +1870,25 @@ async def view_image(request):
     if subfolder_lower == "lora" or subfolder_lower.startswith("lora/"):
         source_path = _find_source_media(filename, subfolder)
         if not source_path:
+            return web.Response(status=404)
+        with open(source_path, "rb") as f:
+            content = f.read()
+        content_type, _ = mimetypes.guess_type(str(source_path))
+        if not content_type:
+            content_type = "application/octet-stream"
+        return web.Response(
+            body=content,
+            content_type=content_type,
+            headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
+        )
+
+    # Civitai bookmark example cache: "civitai_bookmarks/<model_id>" -> CIVITAI_BOOKMARK_DIR.
+    if subfolder_lower.startswith("civitai_bookmarks/"):
+        bm_parts = [p for p in subfolder[len("civitai_bookmarks/"):].split("/") if p]
+        if not bm_parts or ".." in bm_parts or ".." in filename:
+            return web.Response(status=404)
+        source_path = CIVITAI_BOOKMARK_DIR.joinpath(*bm_parts, filename)
+        if not source_path.exists():
             return web.Response(status=404)
         with open(source_path, "rb") as f:
             content = f.read()

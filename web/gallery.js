@@ -26,6 +26,10 @@ recipesCssLink.rel = 'stylesheet';
 recipesCssLink.href = "/extensions/ComfyUI-Neo-Nodes/recipes.css";
 document.head.appendChild(recipesCssLink);
 
+// Civitai 收藏 view: bookmarked C-site models, shown like the Lora section.
+const CIVITAI_DIR_NAME = "Civitai 收藏";
+const CIVITAI_VIEW_SOURCE = "civitai_bookmarks";
+
 /**
  * NeoGallery — preset-based gallery (no YAML).
  */
@@ -283,6 +287,16 @@ class NeoGallery {
 
         const dirsToDisplay = this.isSearchActive ? this.filteredDirectories : this.allDirectories;
 
+        if (this.currentView.mode === 'civitai_bookmarks') {
+            await this._renderCivitaiBookmarks();
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    this._restoreScrollPosition();
+                });
+            });
+            return;
+        }
+
         if (this.currentView.mode === 'directory' && this._currentDirStructure) {
             this.renderDirectoryStructure(this._currentDirStructure, this.currentView.source, this.currentView.categoryPath);
             // Restore scroll position after directory rendering
@@ -310,11 +324,8 @@ class NeoGallery {
             (d.subdirs && Object.keys(d.subdirs).length > 0) || (d.root_count && d.root_count > 0) || d.pending
         ).length;
 
-        if (totalDirs === 0 && !this.isSearchActive) {
-            this.displayNoFilesMessage();
-            return;
-        }
-
+        // The "Civitai 收藏" home card is always present (like Lora), so a non-search
+        // view never renders empty — only a search with no matches does.
         if (totalDirs === 0 && this.isSearchActive) {
             showNoFilesMessage(this.accordion, "No matching images found");
             return;
@@ -364,6 +375,11 @@ class NeoGallery {
 
             const card = await this.components.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source, dir);
             container.appendChild(card);
+        }
+
+        // Civitai 收藏 entry — a home-page card like Lora that opens the bookmarked-models list.
+        if (!this.isSearchActive) {
+            container.appendChild(this._createCivitaiHomeCard());
         }
 
         return container;
@@ -442,10 +458,274 @@ class NeoGallery {
         }
     }
 
+    // ====== Civitai 收藏 (bookmarked C-site models, shown like the Lora section) ======
+
+    _createCivitaiHomeCard() {
+        const card = $el("div", {
+            className: "neo-gallery-category-card neo-gallery-civitai-home",
+            onclick: () => this.showCivitaiBookmarks()
+        });
+        const coverWrapper = $el("div", {
+            className: "neo-gallery-card-cover-wrapper",
+            style: { minHeight: `${Math.max(this.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(this.maxThumbnailSize, 80)}px` }
+        });
+        coverWrapper.appendChild($el("div", {
+            className: "neo-gallery-card-cover neo-gallery-card-placeholder",
+            textContent: "\uD83D\uDCDA"
+        }));
+        const typeBadge = $el("div", {
+            className: "neo-gallery-card-type-badge type-directory",
+            title: "Civitai 收藏（可保存为配方）"
+        }, ["\uD83D\uDCC1"]);
+        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: CIVITAI_DIR_NAME });
+        const info = $el("div", { className: "neo-gallery-card-info" }, [nameEl]);
+
+        card.appendChild(typeBadge);
+        card.appendChild(coverWrapper);
+        card.appendChild(info);
+        return card;
+    }
+
+    async showCivitaiBookmarks() {
+        await this._saveCurrentScrollPosition();
+        this.currentView.mode = 'civitai_bookmarks';
+        this.currentView.source = CIVITAI_DIR_NAME;
+        this.currentView.categoryPath = [];
+        this.stopLoraRefresh();
+        this.components.updateBreadcrumb(this, [], '');
+
+        const stateKey = `gallery_v2:${encodeURIComponent(CIVITAI_VIEW_SOURCE)}:`;
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('gallery', stateKey);
+        history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+
+        await this._renderCivitaiBookmarks();
+    }
+
+    async _renderCivitaiBookmarks() {
+        this.accordion.innerHTML = "";
+        let data;
+        try {
+            const resp = await api.fetchApi('/rs_recipes/civitai_bookmarks', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+            });
+            data = await resp.json();
+        } catch (e) {
+            console.error('[Neo Gallery] Failed to load Civitai bookmarks:', e);
+            showNoFilesMessage(this.accordion, "加载收藏失败");
+            return;
+        }
+
+        if (!data.success) {
+            const msg = data.needs_api_key ? "需在「Manage Directories」配置 C 站 API KEY" : (data.error || "加载收藏失败");
+            showNoFilesMessage(this.accordion, msg);
+            return;
+        }
+
+        const items = data.items || [];
+        if (items.length === 0) {
+            showNoFilesMessage(this.accordion, "暂无收藏的 C 站模型");
+            return;
+        }
+
+        const container = $el("div", {
+            className: "neo-gallery-category-grid",
+            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)` }
+        });
+        for (const item of items) {
+            container.appendChild(this._createCivitaiBookmarkCard(item));
+        }
+        this.accordion.appendChild(container);
+
+        this._setupCivitaiCoverLazyLoad();
+    }
+
+    _createCivitaiBookmarkCard(item) {
+        const card = $el("div", {
+            className: "neo-gallery-category-card neo-gallery-civitai-card",
+            onclick: (e) => this._openCivitaiBookmarkDir(item, e.currentTarget)
+        });
+        card.dataset.civitaiId = item.id;
+
+        const coverWrapper = $el("div", {
+            className: "neo-gallery-card-cover-wrapper skeleton-loading",
+            style: { minHeight: `${Math.max(this.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(this.maxThumbnailSize, 80)}px` }
+        });
+
+        const typeLabel = [item.type, item.baseModel].filter(Boolean).join(" · ");
+        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: item.name || ("Civitai #" + item.id) });
+        const info = $el("div", { className: "neo-gallery-card-info" }, [nameEl]);
+
+        const typeBadge = $el("div", {
+            className: "neo-gallery-card-type-badge type-directory",
+            title: typeLabel || "Civitai 模型"
+        }, ["\uD83D\uDCC1"]);
+
+        const saveBtn = $el("div", {
+            className: "neo-gallery-card-civitai-save-btn",
+            title: "保存为配方",
+            onclick: (e) => { e.stopPropagation(); this._saveCivitaiBookmarkAsRecipe(item, saveBtn); }
+        }, ["\uD83D\uDCBE"]);
+
+        card.appendChild(typeBadge);
+        card.appendChild(coverWrapper);
+        card.appendChild(info);
+        card.appendChild(saveBtn);
+        card._coverWrapper = coverWrapper;
+
+        if (item.cover) {
+            this._applyCivitaiCover(coverWrapper, item.cover);
+        }
+        return card;
+    }
+
+    async _openCivitaiBookmarkDir(item, card) {
+        if (card && card.dataset.opening === "1") return;
+        if (card) card.dataset.opening = "1";
+        const progressEl = card ? $el("div", { className: "neo-gallery-civitai-progress", textContent: "正在连接 Civitai…" }) : null;
+        if (progressEl) card.appendChild(progressEl);
+        let pollTimer = null;
+        const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+        if (progressEl) {
+            pollTimer = setInterval(async () => {
+                try {
+                    const resp = await api.fetchApi('/rs_recipes/civitai_bookmark_status');
+                    const st = await resp.json();
+                    if (st.running) {
+                        progressEl.textContent = `正在缓存示例图 ${st.done}/${st.total} · ${st.current || ''}`;
+                    } else if (st.error) {
+                        progressEl.textContent = st.error;
+                    }
+                } catch (_) { /* keep the initial hint */ }
+            }, 1000);
+        }
+        try {
+            const resp = await api.fetchApi('/rs_recipes/civitai_bookmark_media', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, name: item.name })
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                showToast(this.app, 'error', '加载示例图失败', data.error || '');
+                return;
+            }
+            if (!(data.images || []).length) {
+                showToast(this.app, 'info', '无示例图', '该模型暂无可预览的示例图');
+                return;
+            }
+            // Navigate into the model's cached example images as a standard directory,
+            // exactly like the Lora section (grid + lightbox with send image / prompt).
+            await this.showDirectoryStructure(CIVITAI_DIR_NAME, [data.model_key || String(item.id)]);
+        } catch (e) {
+            console.error('[Neo Gallery] Failed to open Civitai bookmark examples:', e);
+            showToast(this.app, 'error', '打开失败', String(e));
+        } finally {
+            stopPolling();
+            if (progressEl) progressEl.remove();
+            if (card) delete card.dataset.opening;
+        }
+    }
+
+    _applyCivitaiCover(coverWrapper, url) {
+        coverWrapper.classList.remove('skeleton-loading');
+        coverWrapper.classList.add('skeleton-loaded');
+        coverWrapper.innerHTML = '';
+        const img = $el("img", { src: url, alt: "", loading: "lazy" });
+        img.onerror = () => this._setCivitaiCoverPlaceholder(coverWrapper);
+        coverWrapper.appendChild(img);
+    }
+
+    _setCivitaiCoverPlaceholder(coverWrapper) {
+        coverWrapper.classList.remove('skeleton-loading');
+        coverWrapper.innerHTML = '';
+        coverWrapper.appendChild($el("div", {
+            className: "neo-gallery-card-cover neo-gallery-card-placeholder",
+            textContent: "\uD83D\uDCDA"
+        }));
+    }
+
+    _setupCivitaiCoverLazyLoad() {
+        // Fetch covers for cards that didn't get one from the list response (like Lora lazy covers).
+        const pending = Array.from(this.accordion.querySelectorAll('.neo-gallery-civitai-card[data-civitai-id]'))
+            .filter(c => c._coverWrapper && c._coverWrapper.classList.contains('skeleton-loading'));
+        if (pending.length === 0) return;
+
+        const observer = new IntersectionObserver(async (entries, obs) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const card = entry.target;
+                obs.unobserve(card);
+                try {
+                    const resp = await api.fetchApi('/rs_recipes/civitai_model_cover', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: card.dataset.civitaiId })
+                    });
+                    const data = await resp.json();
+                    if (data.success && data.cover) {
+                        this._applyCivitaiCover(card._coverWrapper, data.cover);
+                    } else {
+                        this._setCivitaiCoverPlaceholder(card._coverWrapper);
+                    }
+                } catch (e) {
+                    this._setCivitaiCoverPlaceholder(card._coverWrapper);
+                }
+            }
+        }, { rootMargin: '200px' });
+
+        for (const card of pending) observer.observe(card);
+    }
+
+    async _saveCivitaiBookmarkAsRecipe(item, button) {
+        if (button.dataset.saving === "1") return;
+        const url = `https://civitai.com/models/${item.id}`;
+        button.dataset.saving = "1";
+        button.textContent = "\u23F3";
+        try {
+            const resolveResp = await api.fetchApi('/rs_recipes/civitai_resolve', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url })
+            });
+            const resolved = await resolveResp.json();
+            if (!resolved.success) {
+                showInlineFeedback(button, resolved.error || "解析失败", "error");
+                button.textContent = "\uD83D\uDCBE";
+                return;
+            }
+            const saveResp = await api.fetchApi('/rs_recipes/save_from_civitai', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+                    name: resolved.name || item.name,
+                    model_id: resolved.model_id,
+                    prompt: resolved.prompt || "",
+                    images: resolved.images || [],
+                    loras: resolved.loras || []
+                })
+            });
+            const saved = await saveResp.json();
+            if (!saved.success) {
+                showInlineFeedback(button, saved.error || "保存失败", "error");
+                button.textContent = "\uD83D\uDCBE";
+                return;
+            }
+            showInlineFeedback(button, "已保存为配方", "success");
+            button.textContent = "\u2705";
+        } catch (e) {
+            console.error('[Neo Gallery] Failed to save Civitai recipe:', e);
+            showInlineFeedback(button, String(e), "error");
+            button.textContent = "\uD83D\uDCBE";
+        } finally {
+            button.dataset.saving = "";
+        }
+    }
+
     async showDirectoryStructure(source, pathSegments = []) {
         const dirName = source;
         const relPath = pathSegments.join("/");
-        
+
+        // The "Civitai 收藏" top level is a custom bookmark list, not a real directory.
+        // With no path segments we show that list; with path segments we render the
+        // selected model's cached example images as a standard directory (like Lora).
+        if (dirName === CIVITAI_DIR_NAME && pathSegments.length === 0) {
+            this.showCivitaiBookmarks();
+            return;
+        }
+
         // 修复：在进入新视图之前，先保存当前视图的滚动位置
         if (this.currentView.mode !== 'directory' || this.currentView.source !== dirName) {
             await this._saveCurrentScrollPosition();

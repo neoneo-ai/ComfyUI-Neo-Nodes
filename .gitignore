@@ -9,6 +9,7 @@ prompts/templates/custom
 gallery/thumbnails/
 gallery/oss_cache/
 gallery/lora_cache/
+gallery/civitai_bookmarks/
 gallery/presets/
 .tiktoken_cache/
 _tags_index.json

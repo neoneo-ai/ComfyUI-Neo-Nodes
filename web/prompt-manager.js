@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
-import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowSnapshot, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
+import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowLoras, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
 
 // Remember last opened settings tab
 let _lastSettingsTab = "llm"; // "llm" or "templates"
@@ -116,9 +116,9 @@ function createInputModal() {
     recipeHint.style.display = "none";
 
     // 同时保存结果：把当前工作流最近一次执行的输出存入配方 samples/（用于封面与预览），
-    // 并同步备份一份工作流快照到 workflows/，与示例结果一一对应，可一键复制回画布。
+    // 示例文件内嵌了 ComfyUI 工作流，可在详情浮层一键复制回画布。
     const saveResultsRow = mkEl("label", "rs-save-results-row");
-    saveResultsRow.title = "把当前工作流最近一次执行的输出存入配方，用于封面与预览展示；并备份一份工作流快照，可在详情浮层一键复制回画布";
+    saveResultsRow.title = "把当前工作流最近一次执行的输出存入配方，用于封面与预览展示；示例内嵌工作流，可在详情浮层一键复制回画布";
     const saveResultsCheck = mkEl("input", "rs-save-results-check");
     saveResultsCheck.type = "checkbox";
     saveResultsCheck.checked = true; // 默认选中当前运行结果与工作流备份
@@ -2402,9 +2402,9 @@ function createPromptManagerUI() {
             try {
                 const assets = await collectWorkflowAssets(node);
                 const results = recipeResultsCheck.checked ? collectWorkflowResults() : [];
-                const workflow = recipeResultsCheck.checked ? await collectWorkflowSnapshot() : null;
+                const loras = await collectWorkflowLoras(node);
                 const promptText = customTextarea?.value || textWidget?.value || "";
-                const result = await saveRecipe(name, promptText, assets, results, workflow);
+                const result = await saveRecipe(name, promptText, assets, results, loras);
                 if (result.success) {
                     const extra = result.sample_added ? ` + ${result.sample_added} 结果` : "";
                     app.extensionManager.toast.add({ severity: "success", summary: "配方已保存", detail: `${name}（${result.asset_count} 资源${extra}）`, life: 4000 });

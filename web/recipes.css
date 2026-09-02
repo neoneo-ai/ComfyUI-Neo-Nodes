@@ -241,6 +241,34 @@
     overflow-y: auto;
 }
 
+.neo-recipes-detail-loras {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    background: #262626;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+.neo-recipes-detail-loras-title {
+    font-size: 11px;
+    color: #9a9a9a;
+    margin-right: 2px;
+}
+
+.neo-recipes-detail-lora {
+    font-size: 11px;
+    color: #ddd;
+    background: #333;
+    border-radius: 10px;
+    padding: 2px 8px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .neo-recipes-detail-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
