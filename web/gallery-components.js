@@ -1396,11 +1396,29 @@ export class GalleryComponents {
             || subLower === 'civitai_bookmarks' || subLower.startsWith('civitai_bookmarks/');
         const canDelete = !isReadOnlySource && source !== "oss";
 
+        // 导入工作流：仅当素材内嵌了 ComfyUI 工作流时显示（异步探测后放开）。
+        const wfItem = $el("div", {
+            className: "neo-gallery-collect-item",
+            style: { display: "none" },
+            title: "将此素材内嵌的 ComfyUI 工作流载入画布",
+            onclick: async () => {
+                this._removeCollectMenu();
+                try {
+                    await this._importWorkflowFromMedia(gallery, image, subfolder);
+                } catch (err) {
+                    showToast(gallery.app, "error", "导入失败", String(err.message || err));
+                }
+            }
+        }, ["\u2937 导入工作流"]);
+        this._fetchMediaMeta(image, subfolder).then(meta => {
+            if (meta && meta.has && (meta.workflow || meta.prompt)) wfItem.style.display = "";
+        }).catch(() => {});
+
         const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
             $el("div", { className: "neo-gallery-collect-title" }, [
                 $el("span", { className: "neo-gallery-collect-name", textContent: displayName }),
                 isOss ? $el("span", { className: "neo-gallery-card-source-badge", textContent: "OSS 预设" }) : null
-            ]),
+            ].filter(Boolean)),
             $el("div", {
                 className: "neo-gallery-collect-path",
                 title: pathLabel,
@@ -1410,11 +1428,34 @@ export class GalleryComponents {
                 className: "neo-gallery-collect-item",
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
             }, ["\u2B50 收藏本图"]),
+            ...(image.lora_path ? [
+                $el("div", {
+                    className: "neo-gallery-collect-item",
+                    title: "发送到画布上的 LoraLoader",
+                    onclick: () => { this._removeCollectMenu(); gallery._showLoraSendMenu(image.lora_path, anchor); }
+                }, ["\uD83D\uDCE4 发送 Lora"]),
+                $el("div", {
+                    className: "neo-gallery-collect-path neo-gallery-collect-lora-path",
+                    title: image.lora_path,
+                    textContent: image.lora_path
+                })
+            ] : []),
+            image.txt_content ? $el("div", {
+                className: "neo-gallery-collect-prompt-preview",
+                title: "提示词（可全选复制）"
+            }, [
+                $el("span", { className: "neo-gallery-collect-prompt-text", textContent: gallery.cleanText(image.txt_content) })
+            ]) : null,
+            image.txt_content ? $el("div", {
+                className: "neo-gallery-collect-item",
+                onclick: () => { this.copyToClipboard(image.name, image.txt_content); this._removeCollectMenu(); }
+            }, ["\u29C9 复制提示词"]) : null,
+            wfItem,
             canDelete ? $el("div", {
                 className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
                 onclick: () => { this._removeCollectMenu(); gallery.deleteItem(image.name, subfolder); }
             }, ["\uD83D\uDDD1\uFE0F 删除"]) : null
-        ]);
+        ].filter(Boolean));
 
         document.body.appendChild(menu);
         const rect = (anchor && anchor.getBoundingClientRect()) || { right: 0, bottom: 0 };
@@ -1463,6 +1504,7 @@ export class GalleryComponents {
         if (!isVideoFileResult) {
             imgSendBtn = $el("div", {
                 className: "neo-gallery-thumb-img-send-btn",
+                title: image.lora_path ? "发送 Lora 到画布上的 LoraLoader" : "发送图片到画布上的 Load Image 节点",
                 onclick: (e) => {
                     e.stopPropagation();
                     if (image.lora_path) {
@@ -1478,6 +1520,7 @@ export class GalleryComponents {
         if (image.txt_content) {
             sendBtn = $el("div", {
                 className: "neo-gallery-thumb-send-btn",
+                title: "发送提示词到画布节点",
                 onclick: (e) => {
                     e.stopPropagation();
                     gallery._showSendMenu(image, sendBtn);
@@ -1489,6 +1532,7 @@ export class GalleryComponents {
         if (isVideoFileResult) {
             videoSendBtn = $el("div", {
                 className: "neo-gallery-thumb-video-send-btn",
+                title: "发送视频到画布节点",
                 onclick: (e) => {
                     e.stopPropagation();
                     gallery._showVideoSendMenu(image, videoSendBtn);
@@ -1496,21 +1540,10 @@ export class GalleryComponents {
             }, ["\uD83D\uDCE5"]);
         }
 
-        let copyBtn = null;
-        if (image.txt_content) {
-            copyBtn = $el("div", {
-                className: "neo-gallery-thumb-copy-btn",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this.copyToClipboard(image.name, image.txt_content, copyBtn);
-                }
-            }, ["\u29C9"]);
-        }
-
-        // 右下角信息扩展按钮：点击弹出收藏菜单（收藏本图 / 删除）。
+        // 右下角信息扩展按钮：点击弹出扩展菜单（收藏 / Lora 发送 / 提示词预览 / 导入工作流 / 删除）。
         const bookmarkBtn = $el("div", {
             className: "neo-gallery-thumb-bookmark-btn",
-            title: "收藏本素材",
+            title: "更多操作",
             onclick: (e) => {
                 e.stopPropagation();
                 this._showCollectMenu(gallery, image, subfolder, source, bookmarkBtn);
@@ -1554,7 +1587,7 @@ export class GalleryComponents {
             className: "neo-gallery-thumb-video-badge"
         }, ["\u25B6"]) : null;
 
-        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, sendBtn, imgSendBtn, copyBtn, bookmarkBtn].filter(Boolean));
+        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, sendBtn, imgSendBtn, bookmarkBtn].filter(Boolean));
 
         const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar].filter(Boolean));
 
@@ -1566,7 +1599,9 @@ export class GalleryComponents {
         container.appendChild(imgWrapper);
         if (labelEl) container.appendChild(labelEl);
 
-        container.title = image.name.replace(/\.\w+$/, '');
+        const loc = this._bookmarkLocator(image, subfolder, source, gallery);
+        const fullPath = [loc.dir, loc.subfolder, image.filename || image.name].filter(Boolean).join("/");
+        container.title = `${fullPath}\n点击打开大图，右下角 ⋯ 更多操作`;
 
         return container;
     }
@@ -1860,18 +1895,6 @@ export class GalleryComponents {
             };
         }
 
-        let loraSendBtn = null;
-        if (image.lora_path) {
-            loraSendBtn = document.createElement('div');
-            loraSendBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-lora-send-btn";
-            loraSendBtn.textContent = "\uD83D\uDCE4 Lora";
-            loraSendBtn.title = "Send the lora path to a standard LoraLoader";
-            loraSendBtn.onclick = (e) => {
-                e.stopPropagation();
-                gallery._showLoraSendMenu(image.lora_path, loraSendBtn);
-            };
-        }
-
         imgWrapper.appendChild(mediaEl);
 
         // 为图片添加缩放和平移事件监听器
@@ -2116,19 +2139,26 @@ export class GalleryComponents {
                 }));
             }
 
+            // 复制提示词按钮放在提示词文本上方（标题行右侧），贴近提示词
+            if (promptCopyBtn) {
+                const promptHeader = $el("div", { className: "neo-gallery-lightbox-prompt-header" }, [
+                    $el("span", { className: "neo-gallery-lightbox-prompt-title", textContent: "\u63D0\u793A\u8BCD" }),
+                    promptCopyBtn
+                ]);
+                promptSection.appendChild(promptHeader);
+            }
             promptSection.appendChild(promptContainer);
 
             const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            if (promptCopyBtn) promptBtnsContainer.appendChild(promptCopyBtn);
             if (videoSendBtn) promptBtnsContainer.appendChild(videoSendBtn);
-            if (loraSendBtn) promptBtnsContainer.appendChild(loraSendBtn);
             promptBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
             promptSection.appendChild(promptBtnsContainer);
         } else {
             // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
             promptSection = $el("div", {
                 id: "neo-gallery-lightbox-prompt-section",
-                className: "neo-gallery-lightbox-prompt-section"
+                className: "neo-gallery-lightbox-prompt-section",
+                dataset: { metaKey: `${subfolder}/${image.filename}` }
             });
             const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
             promptContainer.style.display = "none";
@@ -2184,7 +2214,8 @@ export class GalleryComponents {
 
         container.appendChild(imgWrapper);
         if (promptSection) container.appendChild(promptSection);
-        container.appendChild(closeBtn);
+        // 关闭按钮挂在图片区右上角，避免与右侧提示词面板的标题行重叠
+        imgWrapper.appendChild(closeBtn);
         lightbox.appendChild(container);
         document.body.appendChild(lightbox);
 
@@ -2265,16 +2296,61 @@ export class GalleryComponents {
     }
 
     _fetchMediaMeta(image, subfolder) {
-        const params = `filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
-        return fetch(`/neo_gallery/media_meta?${params}`).then(r => (r.ok ? r.text() : null)).then(txt => {
-            if (!txt) return null;
-            try {
-                return JSON.parse(txt);
-            } catch (e) {
-                // ComfyUI 内嵌元数据可能含非标准 NaN/Infinity 字面量，替换后重试
-                return JSON.parse(txt.replace(/\bNaN\b/g, "null").replace(/\bInfinity\b/g, "null"));
+        // 按文件缓存元数据 Promise：翻页来回切换时不再重复请求，避免右侧面板文字闪烁。
+        const key = `${subfolder}/${image.filename}`;
+        if (!this._mediaMetaCache) this._mediaMetaCache = new Map();
+        let p = this._mediaMetaCache.get(key);
+        if (!p) {
+            const params = `filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+            p = fetch(`/neo_gallery/media_meta?${params}`).then(r => (r.ok ? r.text() : null)).then(txt => {
+                if (!txt) return null;
+                try {
+                    return JSON.parse(txt);
+                } catch (e) {
+                    // ComfyUI 内嵌元数据可能含非标准 NaN/Infinity 字面量，替换后重试
+                    return JSON.parse(txt.replace(/\bNaN\b/g, "null").replace(/\bInfinity\b/g, "null"));
+                }
+            }).catch(() => null);
+            this._mediaMetaCache.set(key, p);
+        }
+        return p;
+    }
+
+    // 导入素材内嵌的 ComfyUI 工作流到画布（lightbox「导入工作流」按钮与卡片扩展菜单共用）。
+    async _importWorkflowFromMedia(gallery, image, subfolder) {
+        const meta = await this._fetchMediaMeta(image, subfolder);
+        if (!meta || !meta.has) throw new Error("此素材没有内嵌工作流");
+        const wf = meta.workflow;
+        const isUiFormat = !!(wf && Array.isArray(wf.nodes));
+        const source = isUiFormat ? wf
+            : (meta.prompt && typeof app.loadApiJson === "function") ? meta.prompt
+            : null;
+        if (!source) {
+            throw new Error(wf ? "工作流缺少 nodes 数据，无法载入" : "此文件只有 API 格式工作流且当前前端不支持");
+        }
+        if (isUiFormat) {
+            await app.loadGraphData(source);
+        } else {
+            await app.loadApiJson(source, "gallery-example");
+        }
+        gallery.closeLightbox();
+        requestAnimationFrame(() => {
+            const canvas = app.canvas;
+            const nodes = canvas?.graph?.nodes;
+            if (!nodes?.length || !canvas.ds?.fitToBounds) return;
+            const b = [Infinity, Infinity, -Infinity, -Infinity];
+            for (const n of nodes) {
+                const r = n.boundingRect || [n.pos[0], n.pos[1], n.size?.[0] || 0, n.size?.[1] || 0];
+                b[0] = Math.min(b[0], r[0]);
+                b[1] = Math.min(b[1], r[1]);
+                b[2] = Math.max(b[2], r[0] + r[2]);
+                b[3] = Math.max(b[3], r[1] + r[3]);
             }
+            if (!b.every(isFinite)) return;
+            canvas.ds.fitToBounds([b[0] - 10, b[1] - 10, b[2] - b[0] + 20, b[3] - b[1] + 20]);
+            canvas.setDirty?.(true, true);
         });
+        showToast(gallery.app, "success", "工作流已载入画布", "");
     }
 
     _buildMetaButtons(meta, gallery, image, subfolder) {
@@ -2282,7 +2358,7 @@ export class GalleryComponents {
         if (meta.workflow || meta.prompt) {
             const loadBtn = document.createElement('div');
             loadBtn.className = "neo-gallery-lightbox-btn";
-            loadBtn.textContent = "\u2937 工作流";
+            loadBtn.textContent = "\u2937 \u5BFC\u5165\u5DE5\u4F5C\u6D41";
             loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
             loadBtn.onclick = async (e) => {
                 e.stopPropagation();
@@ -2291,43 +2367,10 @@ export class GalleryComponents {
                 const origLabel = loadBtn.textContent;
                 loadBtn.textContent = "⏳ 检测中…";
                 loadBtn.style.opacity = "0.6";
-                const wf = meta.workflow;
-                const fitToContent = () => {
-                    requestAnimationFrame(() => {
-                        const canvas = app.canvas;
-                        const nodes = canvas?.graph?.nodes;
-                        if (!nodes?.length || !canvas.ds?.fitToBounds) return;
-                        const b = [Infinity, Infinity, -Infinity, -Infinity];
-                        for (const n of nodes) {
-                            const r = n.boundingRect || [n.pos[0], n.pos[1], n.size?.[0] || 0, n.size?.[1] || 0];
-                            b[0] = Math.min(b[0], r[0]);
-                            b[1] = Math.min(b[1], r[1]);
-                            b[2] = Math.max(b[2], r[0] + r[2]);
-                            b[3] = Math.max(b[3], r[1] + r[3]);
-                        }
-                        if (!b.every(isFinite)) return;
-                        canvas.ds.fitToBounds([b[0] - 10, b[1] - 10, b[2] - b[0] + 20, b[3] - b[1] + 20]);
-                        canvas.setDirty?.(true, true);
-                    });
-                };
                 try {
-                    const isUiFormat = !!(wf && Array.isArray(wf.nodes));
-                    const source = isUiFormat ? wf
-                        : (meta.prompt && typeof app.loadApiJson === "function") ? meta.prompt
-                        : null;
-                    if (!source) {
-                        throw new Error(wf ? "工作流缺少 nodes 数据，无法载入" : "此文件只有 API 格式工作流且当前前端不支持");
-                    }
-                    if (isUiFormat) {
-                        await app.loadGraphData(source);
-                    } else {
-                        await app.loadApiJson(source, "gallery-example");
-                    }
-                    gallery.closeLightbox();
-                    requestAnimationFrame(fitToContent);
-                    showToast(gallery.app, "success", "工作流已载入画布", "");
+                    await this._importWorkflowFromMedia(gallery, image, subfolder);
                 } catch (err) {
-                    showToast(gallery.app, "error", "载入失败", String(err.message || err));
+                    showToast(gallery.app, "error", "导入失败", String(err.message || err));
                 } finally {
                     loadBtn.disabled = false;
                     loadBtn.textContent = origLabel;
@@ -2336,24 +2379,17 @@ export class GalleryComponents {
             };
             frag.appendChild(loadBtn);
         }
-        if (meta.texts && (meta.texts.positive?.length || meta.texts.negative?.length)) {
-            const promptBtn = document.createElement('div');
-            promptBtn.className = "neo-gallery-lightbox-btn";
-            promptBtn.textContent = "\uD83D\uDCDD 提示词";
-            promptBtn.title = "查看此示例内嵌的正向/负向提示词";
-            promptBtn.onclick = (e) => {
-                e.stopPropagation();
-                this._showPromptDialog(meta.texts);
-            };
-            frag.appendChild(promptBtn);
-        }
+        // 内嵌提示词已由右侧面板展示（.txt 或内联渲染），不再提供重复的弹窗按钮
         return frag;
     }
 
     _renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection) {
+        const key = `${subfolder}/${image.filename}`;
         this._fetchMediaMeta(image, subfolder).then(meta => {
+            // 已翻页或面板重建：丢弃过期结果，避免覆盖新页内容造成闪烁。
+            if (!promptSection.isConnected || promptSection.dataset.metaKey !== key) return;
             if (!meta || !meta.has) {  // 未内嵌工作流/提示词：整个区域不显示、不占位
-                if (promptSection) promptSection.style.display = "none";
+                promptSection.style.display = "none";
                 return;
             }
             const texts = meta.texts;
@@ -2370,45 +2406,7 @@ export class GalleryComponents {
                 promptContainer.style.display = "";
             }
             metaBtnsContainer.appendChild(this._buildMetaButtons(meta, gallery, image, subfolder));
-        }).catch(() => {
-            promptContainer.appendChild($el("div", {
-                textContent: "元数据加载失败",
-                style: { color: "#999", fontSize: "12px" }
-            }));
-            promptContainer.style.display = "";
         });
-    }
-
-    _showPromptDialog(texts) {
-        const existing = document.querySelector('.neo-gallery-prompt-dialog');
-        if (existing) existing.remove();
-        const overlay = document.createElement('div');
-        overlay.className = 'neo-gallery-prompt-dialog';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;display:flex;align-items:center;justify-content:center;';
-        const box = document.createElement('div');
-        box.style.cssText = 'background:#1e1e1e;color:#ddd;border-radius:8px;padding:16px 20px;max-width:640px;max-height:70vh;overflow:auto;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;';
-        const section = (title, arr) => {
-            if (!arr || !arr.length) return;
-            const h = document.createElement('div');
-            h.style.cssText = 'font-weight:bold;color:#8cf;margin:6px 0 2px;';
-            h.textContent = title;
-            box.appendChild(h);
-            arr.forEach(t => {
-                const p = document.createElement('div');
-                p.textContent = t;
-                box.appendChild(p);
-            });
-        };
-        section("正向提示词", texts.positive);
-        section("负向提示词", texts.negative);
-        if (texts.params && Object.keys(texts.params).length) {
-            section("参数", [Object.entries(texts.params).map(([k, v]) => `${k}: ${v}`).join(", ")]);
-        }
-        overlay.appendChild(box);
-        overlay.onclick = (e) => {
-            if (e.target === overlay) overlay.remove();
-        };
-        document.body.appendChild(overlay);
     }
 
     updateLightboxContent(lightbox, image, subfolder, allImages, currentIndex) {
@@ -2434,7 +2432,11 @@ export class GalleryComponents {
 
         const existingMedia = imgWrapper.querySelector('video, img');
 
+        // 记录旧媒体渲染尺寸：翻页时新图未加载前撑住布局，避免右侧面板先居中再跳回（闪动）。
+        let keepW = 0, keepH = 0;
         if (existingMedia) {
+            keepW = existingMedia.clientWidth;
+            keepH = existingMedia.clientHeight;
             // Stop any playing video and remove old media element first
             if (existingMedia.tagName === 'VIDEO') {
                 existingMedia.pause();
@@ -2442,6 +2444,12 @@ export class GalleryComponents {
             }
             existingMedia.remove();
         }
+
+        const releaseKeepSize = () => {
+            if (!keepW) return;
+            newMediaEl.style.width = '';
+            newMediaEl.style.height = '';
+        };
 
         // Remove any leftover spinner from previous image
         const oldSpinner = imgWrapper.querySelector('.neo-gallery-lightbox-spinner');
@@ -2458,6 +2466,12 @@ export class GalleryComponents {
             newMediaEl.loop = true;
             newMediaEl.style.maxWidth = '100%';
             newMediaEl.style.maxHeight = '80vh';
+            if (keepW && keepH) {
+                newMediaEl.style.width = `${keepW}px`;
+                newMediaEl.style.height = `${keepH}px`;
+            }
+            newMediaEl.addEventListener('loadedmetadata', releaseKeepSize, { once: true });
+            newMediaEl.addEventListener('error', releaseKeepSize, { once: true });
         } else {
             newMediaEl = document.createElement('img');
             newMediaEl.className = "neo-gallery-lightbox-image loading";
@@ -2466,6 +2480,10 @@ export class GalleryComponents {
             newMediaEl.style.webkitUserSelect = 'none';
             newMediaEl.style.mozUserSelect = 'none';
             newMediaEl.style.msUserSelect = 'none';
+            if (keepW && keepH) {
+                newMediaEl.style.width = `${keepW}px`;
+                newMediaEl.style.height = `${keepH}px`;
+            }
 
             // Show spinner while loading
             const spinner = document.createElement('div');
@@ -2476,6 +2494,7 @@ export class GalleryComponents {
                 const sp = imgWrapper.querySelector('.neo-gallery-lightbox-spinner');
                 if (sp) sp.remove();
                 newMediaEl.classList.remove('loading');
+                releaseKeepSize();
             };
 
             // Use fetch + blob for reliable load detection
@@ -2669,9 +2688,7 @@ export class GalleryComponents {
                 }));
             }
 
-            promptSection.appendChild(promptContainer);
-
-            // 始终创建按钮容器（复制图片按钮在图片右下角，这里只放复制提示词）
+            // 复制提示词按钮放在提示词文本上方（标题行右侧），贴近提示词
             const sendBtn = $el("div", {
                 className: "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn",
                 onclick: (e) => {
@@ -2680,8 +2697,15 @@ export class GalleryComponents {
                 }
             }, ["\u29C9 \u590D\u5236\u63D0\u793A\u8BCD"]);
 
+            const promptHeader = $el("div", { className: "neo-gallery-lightbox-prompt-header" }, [
+                $el("span", { className: "neo-gallery-lightbox-prompt-title", textContent: "\u63D0\u793A\u8BCD" }),
+                sendBtn
+            ]);
+            promptSection.appendChild(promptHeader);
+            promptSection.appendChild(promptContainer);
+
+            // 底部按钮容器（复制图片按钮在图片右下角，这里只放 Video / 元数据按钮）
             const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            if (sendBtn) promptBtnsContainer.appendChild(sendBtn);
             if (isVideo) {
                 const vSendBtn = $el("div", {
                     className: "neo-gallery-lightbox-btn neo-gallery-lightbox-video-send-btn",
@@ -2695,18 +2719,8 @@ export class GalleryComponents {
             promptBtnsContainer.appendChild(this._createMetaButtons(this.gallery, image, subfolder));
             promptSection.appendChild(promptBtnsContainer);
 
-            // 将新的 promptSection 追加到 container（在 imgWrapper 之后，closeBtn 之前）
-            const imgWrapper = container.querySelector('#neo-gallery-lightbox-img-wrapper');
-            if (imgWrapper) {
-                const closeBtn = container.querySelector('.neo-gallery-lightbox-close-btn');
-                if (closeBtn && closeBtn !== imgWrapper.nextSibling) {
-                    container.insertBefore(promptSection, closeBtn);
-                } else {
-                    container.appendChild(promptSection);
-                }
-            } else {
-                container.appendChild(promptSection);
-            }
+            // 将新的 promptSection 追加到 container（imgWrapper 之后；closeBtn 已挂在 imgWrapper 内）
+            container.appendChild(promptSection);
         } else {
             // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
             if (promptSection && promptSection.parentNode) {
@@ -2716,7 +2730,8 @@ export class GalleryComponents {
             if (oldReverseBtn) oldReverseBtn.remove();
             promptSection = $el("div", {
                 id: "neo-gallery-lightbox-prompt-section",
-                className: "neo-gallery-lightbox-prompt-section"
+                className: "neo-gallery-lightbox-prompt-section",
+                dataset: { metaKey: `${subfolder}/${image.filename}` }
             });
             const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
             promptContainer.style.display = "none";
@@ -2766,12 +2781,7 @@ export class GalleryComponents {
             }, ["\uD83D\uDD0D 反推"]);
             container.appendChild(reverseBtn);
             if (promptSection) {
-                const closeBtnEl = container.querySelector('.neo-gallery-lightbox-close-btn');
-                if (closeBtnEl) {
-                    container.insertBefore(promptSection, closeBtnEl);
-                } else {
-                    container.appendChild(promptSection);
-                }
+                container.appendChild(promptSection);
             }
         }
 

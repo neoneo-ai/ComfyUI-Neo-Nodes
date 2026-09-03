@@ -830,6 +830,20 @@
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+/* Prompt header row (title + copy button), sits directly above the prompt text */
+.neo-gallery-lightbox-prompt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.neo-gallery-lightbox-prompt-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #FF9944;
+}
+
 /* Section label styling */
 .neo-gallery-prompt-section,
 .neo-gallery-prompt-section-item {
@@ -1262,10 +1276,9 @@ Accordion Section Buttons (Clear)
     opacity: 1 !important;
 }
 
-/* Thumbnail action buttons (Send, Copy, Image Send, Video Send, Bookmark) */
+/* Thumbnail action buttons (Send, Image Send, Video Send, Bookmark) */
 .neo-gallery-thumb-send-btn,
 .neo-gallery-thumb-img-send-btn,
-.neo-gallery-thumb-copy-btn,
 .neo-gallery-thumb-video-send-btn,
 .neo-gallery-thumb-bookmark-btn {
     display: flex;
@@ -1286,7 +1299,6 @@ Accordion Section Buttons (Clear)
 
 .neo-gallery-thumb-send-btn:hover,
 .neo-gallery-thumb-img-send-btn:hover,
-.neo-gallery-thumb-copy-btn:hover,
 .neo-gallery-thumb-video-send-btn:hover,
 .neo-gallery-thumb-bookmark-btn:hover {
     background-color: rgba(0, 0, 0, 0.8);
@@ -1296,7 +1308,6 @@ Accordion Section Buttons (Clear)
 /* Feedback positioning - fixed to viewport, will be set dynamically by JS */
 .neo-gallery-thumb-send-btn .neo-gallery-feedback,
 .neo-gallery-thumb-img-send-btn .neo-gallery-feedback,
-.neo-gallery-thumb-copy-btn .neo-gallery-feedback,
 .neo-gallery-thumb-video-send-btn .neo-gallery-feedback {
     position: fixed;
     transform: translate(-50%, -100%);
@@ -2065,6 +2076,36 @@ Accordion Section Buttons (Clear)
 .neo-gallery-collect-item-danger:hover {
     background: rgba(244, 67, 54, 0.18);
     color: #fff;
+}
+
+/* Prompt preview in the collect menu — selectable so the user can copy part of it */
+.neo-gallery-collect-prompt-preview {
+    margin: 4px 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    line-height: 1.5;
+    color: #b9c2ce;
+    display: flex;
+    gap: 6px;
+    user-select: text;
+}
+
+.neo-gallery-collect-prompt-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Lora path line under the "发送 Lora" menu item */
+.neo-gallery-collect-lora-path {
+    padding: 0 10px 6px;
+    margin-bottom: 2px;
+    border-bottom: none;
 }
 
 /* Source badge on a bookmark card (本地 / C 站 / OSS 预设) */
