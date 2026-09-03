@@ -4,7 +4,7 @@
  *
  * 1. 工作流模型路径修复（与素材/配方模块解耦）：任何工作流（UI 或 API 格式）
  *    载入画布前可调用后端 /neo_nodes/repair 检测失效的模型路径，并以二次确认弹窗
- *    让用户选择「修复并载入 / 取消」；自动匹配失败的项可在弹窗中手动选择替换文件，
+ *    让用户选择「修复 / 取消」；自动匹配失败的项可在弹窗中手动选择替换文件，
  *    勾选「记住手动选择」后保存为服务端修复映射，之后相同失效路径自动替换；
  *    确认的每次修复按工作流关联写入本地修复日志（localStorage），供后续复查修改点。
  * 2. 顶栏操作按钮（actionBarButtons）：「修复工作流」一键按钮 + 「修复记录」表格，
@@ -210,7 +210,7 @@ export function buildChangesTable(changes, onPick) {
 }
 
 /**
- * 修复确认弹窗：只有「修复并载入 / 取消」两个按钮（按原样载入与取消等价，已移除）。
+ * 修复确认弹窗：只有「修复 / 取消」两个按钮（按原样载入与取消等价，已移除）。
  * 未匹配且存在候选的行在「修复为」列渲染下拉框，可手动选择替换文件；
  * 勾选「记住手动选择」后，本次选择由后端保存为修复映射，之后相同失效路径自动替换。
  * 返回 Promise<{ action: 'repair' | 'cancel', decisions: [...], remember: bool }>。
@@ -268,7 +268,7 @@ export function showRepairConfirmDialog(changes) {
         btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:4px;';
         const base = 'padding:6px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
         const repairBtn = document.createElement('button');
-        repairBtn.textContent = '修复并载入';
+        repairBtn.textContent = '修复';
         repairBtn.style.cssText = base + 'background:#3a7a3a;color:#fff;';
         repairBtn.onclick = () => close({
             action: 'repair',
@@ -327,7 +327,86 @@ export async function confirmWorkflowRepair(workflow, source) {
         cancelled: false,
         repairedCount: result.applied || 0,
         missingCount: result.missing || 0,
+        changes: Array.isArray(result.changes) ? result.changes : [],
     };
+}
+
+// 清除节点加载时标红的错误状态。has_errors 不是 litegraph 自动跟踪的属性，
+// 必须手动触发 node:property:changed 事件 Vue 渲染器才会重绘（同 Lora-Manager 做法）。
+function clearNodeHasErrors(node) {
+    const oldValue = node.has_errors === true;
+    if (!oldValue) return;
+    node.has_errors = false;
+    if (node.graph) {
+        node.graph.trigger('node:property:changed', {
+            type: 'node:property:changed',
+            nodeId: node.id,
+            property: 'has_errors',
+            oldValue,
+            newValue: false
+        });
+        node.graph.setDirtyCanvas(true, true);
+    }
+}
+
+// 原位修复：把修复值直接写回当前画布对应节点的 widget，不重新载入整个图（保留
+// 画布上的位置、分组、实时状态等）。参考导入类插件的就地应用方式。
+// 返回实际写回的条数；任一改动无法在画布上定位时返回 -1，调用方回退全量载入。
+function applyRepairInPlace(changes) {
+    const graph = app.graph;
+    if (!graph?.nodes?.length) return -1;
+    const repairedNodes = new Set();
+    let applied = 0;
+    for (const ch of changes || []) {
+        if (!ch || typeof ch.new !== 'string' || !ch.new) continue; // missing 项无可写值
+        let node = graph.getNodeById(typeof ch.node === 'string' ? parseInt(ch.node, 10) : ch.node);
+        if (!node) {
+            // id 定位失败（如画布节点已重建）：按类型 + 当前值匹配
+            node = graph.nodes.find(n => n.type === ch.type
+                && n.widgets?.some(w => String(w.value) === String(ch.old)));
+        }
+        const w = node?.widgets?.find(w => w.name === ch.input && String(w.value) === String(ch.old));
+        if (!w) return -1;
+        const oldValue = w.value;
+        w.value = ch.new;
+        // Vue 前端的 combo 组件从 DOM input/change 事件同步值；只改 value 不派发事件的话，
+        // 总览错误计数等响应式状态不会更新
+        try {
+            const domTargets = [w.element, w.inputEl, w.domElement, w.el, w.input].filter(Boolean);
+            for (const target of domTargets) {
+                if (!(target instanceof HTMLElement)) continue;
+                const fields = target.matches?.("input, select, textarea")
+                    ? [target]
+                    : Array.from(target.querySelectorAll("input, select, textarea"));
+                for (const field of fields) {
+                    try {
+                        field.value = ch.new;
+                        field.dispatchEvent(new Event("input", { bubbles: true }));
+                        field.dispatchEvent(new Event("change", { bubbles: true }));
+                    } catch (e) { /* 单个字段同步失败不阻断 */ }
+                }
+            }
+        } catch (e) { /* DOM 同步失败不影响数据修复 */ }
+        if (typeof w.callback === 'function') {
+            try { w.callback(ch.new); } catch (e) { /* 单个 widget 回调失败不阻断其余修复 */ }
+        }
+        if (typeof node.onWidgetChanged === 'function') {
+            try { node.onWidgetChanged(w.name, w.value, oldValue, w); } catch (e) { /* 忽略 */ }
+        }
+        repairedNodes.add(node);
+        applied++;
+    }
+    // 修复后所有 widget 值均命中选项列表的节点，清除加载时标红的错误状态
+    for (const node of repairedNodes) {
+        const stillMissing = node.widgets?.some(w =>
+            Array.isArray(w.options?.values) && w.options.values.length > 0
+            && !w.options.values.includes(w.value));
+        if (!stillMissing) clearNodeHasErrors(node);
+    }
+    // 通知 Vue 渲染层图已变化，刷新总览/错误计数等派生状态
+    graph.change?.();
+    app.canvas?.setDirty?.(true, true);
+    return applied;
 }
 
 // ===== 导入工作流后自动检测失效模型路径并提示修复 =====
@@ -458,8 +537,13 @@ async function runRepair() {
             return;
         }
         if (r.repairedCount > 0) {
-            await app.loadGraphData(r.workflow);
-            fitToContent();
+            // 优先原位写回（不重载画布，保留节点位置与实时状态）；定位失败才回退全量载入
+            const inPlace = applyRepairInPlace(r.changes);
+            if (inPlace < 0) {
+                await app.loadGraphData(r.workflow);
+                fitToContent();
+            }
+            await afterLoadDetect(); // 原位修复后重跑静默检测，同步扳手按钮提示
             showToast(app, 'success', r.missingCount
                 ? `已修复 ${r.repairedCount} 处模型路径，${r.missingCount} 处未能匹配`
                 : `已修复 ${r.repairedCount} 处模型路径`);
