@@ -25,7 +25,7 @@ from .util import (
 # bookmark 不反向导入本模块，避免循环导入。
 from .bookmark import (
     CIVITAI_BOOKMARK_DIR,
-    CIVITAI_DIR_NAME,
+    CIVITAI_DIR_KEY,
     _is_civitai_bookmark_enabled,
 )
 
@@ -569,12 +569,12 @@ async def get_gallery_list(request):
             if not rel_path_param:
                 rel_path_param = dir_name_param[len("lora/"):]
             await _ensure_auto_cache()
-        elif dir_name_lower == CIVITAI_DIR_NAME.lower() or dir_name_lower.startswith(CIVITAI_DIR_NAME.lower() + "/"):
+        elif dir_name_lower == CIVITAI_DIR_KEY.lower() or dir_name_lower.startswith(CIVITAI_DIR_KEY.lower() + "/"):
             if not _is_civitai_bookmark_enabled():
                 return web.json_response({"directories": [], "total": 0})
             base = CIVITAI_BOOKMARK_DIR
-            if not rel_path_param and dir_name_lower != CIVITAI_DIR_NAME.lower():
-                rel_path_param = dir_name_param[len(CIVITAI_DIR_NAME) + 1:]
+            if not rel_path_param and dir_name_lower != CIVITAI_DIR_KEY.lower():
+                rel_path_param = dir_name_param[len(CIVITAI_DIR_KEY) + 1:]
         else:
             system = _resolve_system_dir(dir_name_param)
             if system:
@@ -599,7 +599,7 @@ async def get_gallery_list(request):
         is_presets = dir_name_lower == "presets" or dir_name_lower.startswith("presets/")
         is_lora = dir_name_lower == "lora" or dir_name_lower.startswith("lora/")
         is_system = _resolve_system_dir(dir_name_param) is not None
-        is_civitai = dir_name_lower == CIVITAI_DIR_NAME.lower() or dir_name_lower.startswith(CIVITAI_DIR_NAME.lower() + "/")
+        is_civitai = dir_name_lower == CIVITAI_DIR_KEY.lower() or dir_name_lower.startswith(CIVITAI_DIR_KEY.lower() + "/")
         
         # For presets subdirectories (e.g., Presets/10秒), only show images without nested subdir cards
         # This prevents showing two levels of subdirectory structure on the home page

@@ -26,6 +26,10 @@ import {
     showInlineFeedback
 } from './gallery-utils.js';
 
+// Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
+const CIVITAI_DIR_KEY = "civitai_bookmarks";
+const CIVITAI_DIR_NAME = "C站收藏";
+
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
 // keys need different wording: Civitai is unreachable without a proxy on many networks,
 // and that is not a key problem.
@@ -1301,7 +1305,7 @@ export class GalleryComponents {
             return { source: "oss", dir: full, subfolder: "" };
         }
         // 顶层目录名必须是列表接口可解析的卡片名（自定义目录名 / Input / Output）。
-        // item.subfolder 只是卡片内相对路径（如 "佟丽娅"），单独无法定位，
+        // item.subfolder 只是卡片内相对路径（如 "美女"），单独无法定位，
         // 因此用当前视图的 source + categoryPath 还原「可打开、可取封面」的路径。
         const view = gallery && gallery.currentView;
         if (view && view.source) {
@@ -1552,6 +1556,8 @@ export class GalleryComponents {
         gallery._removeSiblingDropdown();
 
         const rootDirName = gallery.currentView.source || '';
+        // The civitai bookmarks virtual dir is identified by a stable key; show its display name.
+        const rootLabel = (rootDirName === CIVITAI_DIR_KEY) ? CIVITAI_DIR_NAME : rootDirName;
 
         if (pathSegments.length === 0 && !sourceName && !rootDirName) {
             breadcrumb.style.display = 'flex';
@@ -1569,9 +1575,9 @@ export class GalleryComponents {
             breadcrumb.appendChild(createBreadcrumbSeparator());
 
             if (pathSegments.length > 0) {
-                breadcrumb.appendChild(createBreadcrumbItem(rootDirName, () => gallery.showDirectoryStructure(rootDirName, [])));
+                breadcrumb.appendChild(createBreadcrumbItem(rootLabel, () => gallery.showDirectoryStructure(rootDirName, [])));
             } else {
-                breadcrumb.appendChild(createBreadcrumbItem(rootDirName, null, { isCurrent: true }));
+                breadcrumb.appendChild(createBreadcrumbItem(rootLabel, null, { isCurrent: true }));
             }
 
             for (let i = 0; i < pathSegments.length; i++) {

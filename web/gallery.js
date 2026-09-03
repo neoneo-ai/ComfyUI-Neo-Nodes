@@ -29,8 +29,9 @@ recipesCssLink.href = "/extensions/ComfyUI-Neo-Nodes/recipes.css";
 document.head.appendChild(recipesCssLink);
 
 // Civitai 收藏 view: bookmarked C-site models, shown like the Lora section.
-const CIVITAI_DIR_NAME = "C站收藏";
-const CIVITAI_VIEW_SOURCE = "civitai_bookmarks";
+const CIVITAI_DIR_NAME = "C站收藏";  // display label only (card name, breadcrumb) — never used for backend matching
+const CIVITAI_DIR_KEY = "civitai_bookmarks";  // stable dir_name key sent to the backend (must match bookmark.CIVITAI_DIR_KEY)
+const CIVITAI_VIEW_SOURCE = CIVITAI_DIR_KEY;  // same stable identifier reused in the URL state
 
 /**
  * NeoGallery — preset-based gallery (no YAML).
@@ -587,10 +588,13 @@ class NeoGallery {
     async _openLocalBookmark(item) {
         try {
             if (item.source === "civitai") {
-                await this.showDirectoryStructure(CIVITAI_DIR_NAME, [item.dir || item.filename]);
+                await this.showDirectoryStructure(CIVITAI_DIR_KEY, [item.dir || item.filename]);
             } else if (item.filename) {
                 // 单图收藏：仅显示本图，直接以灯箱打开该媒体（不进入目录）
-                const lbSub = item.source === "oss" ? (item.dir || "") : (item.subfolder || "");
+                // 本地 subfolder 只是卡片内相对路径，需拼上顶层 dir 才能定位（与后端封面解析一致）
+                const lbSub = item.source === "oss"
+                    ? (item.dir || "")
+                    : ((item.subfolder) ? `${item.dir}/${item.subfolder}` : (item.dir || ""));
                 this.showLightbox({ filename: item.filename }, lbSub);
             } else {
                 const segs = (item.subfolder || "").split("/").filter(Boolean);
@@ -641,7 +645,7 @@ class NeoGallery {
         }).catch(() => {});
         const typeBadge = $el("div", {
             className: "neo-gallery-card-type-badge type-directory",
-            title: "Civitai 收藏（可保存为配方）"
+            title: "C站收藏（可保存为配方）"
         }, ["\uD83D\uDCC1"]);
         const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: CIVITAI_DIR_NAME });
         const info = $el("div", { className: "neo-gallery-card-info" }, [nameEl]);
@@ -655,7 +659,7 @@ class NeoGallery {
     async showCivitaiBookmarks() {
         await this._saveCurrentScrollPosition();
         this.currentView.mode = 'civitai_bookmarks';
-        this.currentView.source = CIVITAI_DIR_NAME;
+        this.currentView.source = CIVITAI_DIR_KEY;
         this.currentView.categoryPath = [];
         this.stopLoraRefresh();
         this.components.updateBreadcrumb(this, [], '');
@@ -823,7 +827,7 @@ class NeoGallery {
             // 边下边开：下载到第一张即进入目录；剩余由后台任务续下，
             // 完成后自动刷新当前目录补齐（进度见卡片下方轮询提示）。
             const modelKey = data.model_key || String(item.id);
-            await this.showDirectoryStructure(CIVITAI_DIR_NAME, [modelKey]);
+            await this.showDirectoryStructure(CIVITAI_DIR_KEY, [modelKey]);
             if (!data.complete) this._pollBookmarkMediaUntilDone(modelKey);
         } catch (e) {
             console.error('[Neo Gallery] Failed to open Civitai bookmark examples:', e);
@@ -842,12 +846,12 @@ class NeoGallery {
                 const resp = await api.fetchApi('/neo_bookmark/civitai/status');
                 const st = await resp.json();
                 const sameDir = this.currentView.mode === 'directory' &&
-                    (this.currentView.source || '') === CIVITAI_DIR_NAME &&
+                    (this.currentView.source || '') === CIVITAI_DIR_KEY &&
                     (this.currentView.categoryPath || []).join('/') === modelKey;
                 if (!st.running) {
                     clearInterval(timer);
                     if (sameDir && !st.error) {
-                        await this.showDirectoryStructure(CIVITAI_DIR_NAME, [modelKey]);
+                        await this.showDirectoryStructure(CIVITAI_DIR_KEY, [modelKey]);
                     }
                 } else if (!sameDir || Date.now() - started > 15 * 60 * 1000) {
                     clearInterval(timer);
@@ -981,10 +985,10 @@ class NeoGallery {
         const dirName = source;
         const relPath = pathSegments.join("/");
 
-        // The "Civitai 收藏" top level is a custom bookmark list, not a real directory.
+        // The civitai_bookmarks top level is a custom bookmark list, not a real directory.
         // With no path segments we show that list; with path segments we render the
         // selected model's cached example images as a standard directory (like Lora).
-        if (dirName === CIVITAI_DIR_NAME && pathSegments.length === 0) {
+        if (dirName === CIVITAI_DIR_KEY && pathSegments.length === 0) {
             this.showCivitaiBookmarks();
             return;
         }
