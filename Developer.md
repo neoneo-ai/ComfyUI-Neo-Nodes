@@ -55,7 +55,7 @@ ComfyUI-Neo-Nodes/
 │   ├── custom/             # 用户配方（.gitignore 不入库）
 │   └── presets/            # 内置预设配方
 ├── tools/                  # 离线工具脚本
-│   ├── gallery_preprocess.py   # 预设预处理：生成缩略图 + index.json
+│   ├── gallery_preprocess.py   # 预设预处理：生成缩略图 + index.json（--dirs 增量模式自动从 OSS 拉取最新 index 合并）
 │   └── gallery_deploy_oss.py   # 部署预处理产物到 OSS
 ├── tests/                  # pytest 单元测试
 │   ├── test_llm.py         # LLM 配置/下载/缓存/语言检测/文本规范化
@@ -281,6 +281,13 @@ python -m pytest tests -v
 ```bash
 # 1. 预处理：扫描预设目录，生成缩略图与 index.json（需要 ffmpeg 生成视频缩略图）
 python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir> [--size 320]
+
+# 增量模式：只新增/更新指定子目录（源目录中已删除的文件会同步清理），
+# 自动从 OSS 拉取最新 index.json（configs/oss_presets.json -> index_url）作为合并基准，
+# 其余目录保持不变；--no-fetch-index 改为与本地 index.json 合并，
+# --fetch-index <url> 可显式指定其它来源。
+# --presets 可省略：默认使用当前工作目录（把新增/更新的目录放在该目录下即可）
+cd <dir_with_new_dirs> && python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
 
 # 2. 部署：上传预处理产物到阿里云 OSS（需要 pip install oss2，
 #    凭证从环境变量 OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET / OSS_ENDPOINT 读取）

@@ -1638,7 +1638,7 @@ export class GalleryComponents {
             breadcrumb.appendChild(createBreadcrumbSeparator());
 
             if (pathSegments.length > 0) {
-                breadcrumb.appendChild(createBreadcrumbItem(rootLabel, () => gallery.showDirectoryStructure(rootDirName, [])));
+                breadcrumb.appendChild(createBreadcrumbItem(rootLabel, () => gallery.showDirectoryStructure(rootDirName, []), { title: rootLabel }));
             } else {
                 breadcrumb.appendChild(createBreadcrumbItem(rootLabel, null, { isCurrent: true }));
             }
@@ -1647,7 +1647,7 @@ export class GalleryComponents {
                 breadcrumb.appendChild(createBreadcrumbSeparator());
 
                 if (i === pathSegments.length - 1) {
-                    const currentSegmentEl = createBreadcrumbItem(pathSegments[i], null, { isCurrent: true, title: "点击显示同级目录" });
+                    const currentSegmentEl = createBreadcrumbItem(pathSegments[i], null, { isCurrent: true, title: `${pathSegments[i]}\n点击显示同级目录` });
                     currentSegmentEl.classList.add('neo-gallery-breadcrumb-sibling-trigger');
                     currentSegmentEl.onclick = (e) => {
                         e.stopPropagation();
@@ -1655,7 +1655,7 @@ export class GalleryComponents {
                     };
                     breadcrumb.appendChild(currentSegmentEl);
                 } else {
-                    breadcrumb.appendChild(createBreadcrumbItem(pathSegments[i], () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, i + 1))));
+                    breadcrumb.appendChild(createBreadcrumbItem(pathSegments[i], () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, i + 1)), { title: pathSegments[i] }));
                 }
             }
 

@@ -451,6 +451,7 @@
     top: 0;
     z-index: 10;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
 }
 
 /* Up button in breadcrumb */
@@ -461,6 +462,7 @@
     user-select: none;
     padding: 2px 6px;
     border-radius: 3px;
+    flex-shrink: 0; /* 长路径时返回按钮始终可见，不被压缩 */
 }
 
 .neo-gallery-breadcrumb-up:hover {
@@ -507,6 +509,11 @@
     cursor: pointer;
     transition: color 0.2s ease;
     user-select: none;
+    /* 限制单段宽度：长路径时中段省略号截断，保证右侧返回按钮可见 */
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .neo-gallery-breadcrumb-item:hover {
