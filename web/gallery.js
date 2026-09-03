@@ -886,7 +886,14 @@ class NeoGallery {
                 : $el("img", { src: getThumbnailSrc(c, c.subfolder), alt: item.name || "", loading: "lazy" });
             img.onload = () => {
                 loadedCount++;
-                if (loadedCount === list.length) {
+                // 单图封面按真实宽高比撑高，contain 显示，避免裁切变形
+                if (list.length === 1 && img.naturalWidth > 0) {
+                    const cardWidth = coverWrapper.clientWidth || 160;
+                    const maxCoverHeight = this.maxThumbnailSize - getReservedSpace(this.displayLabels);
+                    const h = Math.round(Math.min(Math.max(cardWidth * img.naturalHeight / img.naturalWidth, 60), maxCoverHeight));
+                    coverGrid.style.height = `${h}px`;
+                    coverGrid.classList.add('aspect-fit');
+                } else if (loadedCount === list.length) {
                     const h = getCoverHeight(coverWrapper, this);
                     coverGrid.style.height = `${h * list.length}px`;
                 }

@@ -949,6 +949,46 @@ export class GalleryComponents {
     }
 
     /**
+     * Fetch an image, re-encode it as PNG (clipboard only reliably accepts PNG),
+     * and write it to the system clipboard. Requires a secure context.
+     */
+    _copyImageToClipboard(imageUrl, feedbackBtn = null) {
+        const fail = (err) => {
+            console.error('[Neo Gallery] Copy image failed:', err);
+            const msg = String(err && err.message || err);
+            if (feedbackBtn) showInlineFeedback(feedbackBtn, '\u274C ' + msg.slice(0, 20), 'error');
+            else showToast(this.gallery.app, 'error', 'Copy Failed', msg);
+        };
+        if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+            fail(new Error('\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u526A\u8D34\u677F\u56FE\u7247'));
+            return;
+        }
+        fetch(imageUrl).then(resp => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.blob();
+        }).then(blob => new Promise((resolve, reject) => {
+            const img = new Image();
+            const objUrl = URL.createObjectURL(blob);
+            img.onload = () => { URL.revokeObjectURL(objUrl); resolve(img); };
+            img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('\u56FE\u7247\u52A0\u8F7D\u5931\u8D25')); };
+            img.src = objUrl;
+        })).then(img => new Promise((resolve, reject) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG \u7F16\u7801\u5931\u8D25')), 'image/png');
+        })).then(pngBlob => {
+            // Promise form of ClipboardItem: required by some browsers to keep the write permission alive
+            const item = new ClipboardItem({ 'image/png': new Promise(resolve => resolve(pngBlob)) });
+            return navigator.clipboard.write([item]).then(() => {
+                if (feedbackBtn) showInlineFeedback(feedbackBtn, '\u2705 Copied!', 'success');
+                else showToast(this.gallery.app, 'success', 'Image Copied!', 'Copied image to clipboard');
+            });
+        }).catch(fail);
+    }
+
+    /**
      * Copy text to system clipboard only.
      */
     copyToClipboard(imageName, txtContent, feedbackBtn = null) {
@@ -1342,7 +1382,6 @@ export class GalleryComponents {
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
         const displayName = (image.name || image.filename || '').replace(/\.\w+$/, '') || "素材";
         const isOss = loc.source === "oss";
-        const folderName = loc.subfolder ? loc.subfolder.split("/").pop() : (loc.dir || "目录");
         const fileSub = loc.subfolder ? `/${loc.subfolder}` : "";
         const pathLabel = `${loc.dir}${fileSub}${image.filename ? '/' + image.filename : ''}`;
 
@@ -1351,10 +1390,11 @@ export class GalleryComponents {
             dir: loc.dir, subfolder: loc.subfolder, filename: image.filename || image.name || ""
         }, displayName);
 
-        const collectDir = () => this._collectMedia(gallery, {
-            source: loc.source, name: folderName,
-            dir: loc.dir, subfolder: loc.subfolder, filename: ""
-        }, folderName + (isOss ? '（OSS 预设）' : ''));
+        // 系统输入/输出文件可删除；presets、lora 与远程 oss 来源只读。
+        const subLower = (subfolder || '').toLowerCase();
+        const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/')
+            || subLower === 'civitai_bookmarks' || subLower.startsWith('civitai_bookmarks/');
+        const canDelete = !isReadOnlySource && source !== "oss";
 
         const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
             $el("div", { className: "neo-gallery-collect-title" }, [
@@ -1370,10 +1410,10 @@ export class GalleryComponents {
                 className: "neo-gallery-collect-item",
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
             }, ["\u2B50 收藏本图"]),
-            $el("div", {
-                className: "neo-gallery-collect-item",
-                onclick: () => { collectDir(); this._removeCollectMenu(); }
-            }, ["\uD83D\uDCC1 收藏所属目录"])
+            canDelete ? $el("div", {
+                className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
+                onclick: () => { this._removeCollectMenu(); gallery.deleteItem(image.name, subfolder); }
+            }, ["\uD83D\uDDD1\uFE0F 删除"]) : null
         ]);
 
         document.body.appendChild(menu);
@@ -1418,22 +1458,6 @@ export class GalleryComponents {
             onclick: () => gallery.showLightbox(image, subfolder),
             dataset: { filename: image.filename, subfolder: subfolder }
         });
-
-        let deleteBtn = null;
-        const subLower = (subfolder || '').toLowerCase();
-        const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/')
-            || subLower === 'civitai_bookmarks' || subLower.startsWith('civitai_bookmarks/');
-        // System input/output files are deletable; only presets, lora, and remote
-        // (oss) sources are read-only.
-        if (!isReadOnlySource && source !== "oss") {
-            deleteBtn = $el("div", {
-                className: "neo-gallery-delete-btn",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    gallery.deleteItem(image.name, subfolder);
-                }
-            }, ["\u00D7"]);
-        }
 
         let imgSendBtn = null;
         if (!isVideoFileResult) {
@@ -1483,7 +1507,7 @@ export class GalleryComponents {
             }, ["\u29C9"]);
         }
 
-        // 右下角信息扩展按钮：点击弹出收藏菜单（收藏本图 / 收藏所属自定义目录 / OSS 预设）。
+        // 右下角信息扩展按钮：点击弹出收藏菜单（收藏本图 / 删除）。
         const bookmarkBtn = $el("div", {
             className: "neo-gallery-thumb-bookmark-btn",
             title: "收藏本素材",
@@ -1525,16 +1549,20 @@ export class GalleryComponents {
             });
         }
 
+        // 视频卡片左上角播放图标，一眼区分视频与图片。
+        const videoBadge = isVideoFileResult ? $el("div", {
+            className: "neo-gallery-thumb-video-badge"
+        }, ["\u25B6"]) : null;
+
         const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, sendBtn, imgSendBtn, copyBtn, bookmarkBtn].filter(Boolean));
 
-        const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [mediaEl, btnBar]);
+        const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar].filter(Boolean));
 
         const labelEl = gallery.displayLabels ? $el("span", {
             className: "neo-gallery-image-label",
             textContent: image.name.replace(/\.\w+$/, '')
         }) : null;
 
-        if (deleteBtn) container.appendChild(deleteBtn);
         container.appendChild(imgWrapper);
         if (labelEl) container.appendChild(labelEl);
 
@@ -1598,11 +1626,11 @@ export class GalleryComponents {
 
             if (pathSegments.length > 0) {
                 breadcrumb.appendChild(createSpacer());
-                breadcrumb.appendChild(createBreadcrumbItem("\u2B06", () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, -1)), { isUp: true, title: "上一级" }));
+                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, -1)), { isUp: true, title: "上一级" }));
             } else {
                 // Show back button for root directory of custom dir
                 breadcrumb.appendChild(createSpacer());
-                breadcrumb.appendChild(createBreadcrumbItem("\u2B06", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
+                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
             }
         } else if (sourceName) {
             breadcrumb.appendChild(createBreadcrumbSeparator());
@@ -1610,7 +1638,7 @@ export class GalleryComponents {
 
             if (pathSegments.length > 0 || sourceName) {
                 breadcrumb.appendChild(createSpacer());
-                breadcrumb.appendChild(createBreadcrumbItem("\u2B06", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
+                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
             }
         }
     }
@@ -1809,14 +1837,15 @@ export class GalleryComponents {
             gallery.closeLightbox();
         };
 
-        let sendBtn = null;
+        // 复制提示词按钮（仅有提示词时出现，放在提示词按钮栏）
+        let promptCopyBtn = null;
         if (image.txt_content) {
-            sendBtn = document.createElement('div');
-            sendBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-send-btn";
-            sendBtn.textContent = "\u2708\uFE0F Send";
-            sendBtn.onclick = (e) => {
+            promptCopyBtn = document.createElement('div');
+            promptCopyBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn";
+            promptCopyBtn.textContent = "\u29C9 \u590D\u5236\u63D0\u793A\u8BCD";
+            promptCopyBtn.onclick = (e) => {
                 e.stopPropagation();
-                gallery._showSendMenu(image, sendBtn);
+                this.copyToClipboard(image.name, image.txt_content, promptCopyBtn);
             };
         }
 
@@ -1842,14 +1871,6 @@ export class GalleryComponents {
                 gallery._showLoraSendMenu(image.lora_path, loraSendBtn);
             };
         }
-
-        const copyBtn = document.createElement('div');
-        copyBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn";
-        copyBtn.textContent = "\u29C9 Copy";
-        copyBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.copyToClipboard(image.name, image.txt_content, copyBtn);
-        };
 
         imgWrapper.appendChild(mediaEl);
 
@@ -2029,7 +2050,7 @@ export class GalleryComponents {
         }, ["\u203A"]);
         imgWrapper.appendChild(nextBtn);
 
-        // Fullscreen toggle button (bottom center of image)
+        // Fullscreen toggle button (top left of image)
         const fullscreenBtn = $el("div", {
             id: "neo-gallery-lightbox-fullscreen-btn",
             className: "neo-gallery-lightbox-nav-arrow neo-gallery-lightbox-fullscreen-btn",
@@ -2045,6 +2066,23 @@ export class GalleryComponents {
             }
         }, ["⛶"]);
         imgWrapper.appendChild(fullscreenBtn);
+
+        // 复制图片按钮（纯图标，图片右下角）
+        const copyImgBtn = $el("div", {
+            id: "neo-gallery-lightbox-copy-img-btn",
+            className: "neo-gallery-lightbox-nav-arrow neo-gallery-lightbox-copy-img-btn",
+            style: {
+                cursor: "pointer",
+                opacity: "0.8",
+                fontSize: "14px"
+            },
+            title: "复制图片",
+            onclick: (e) => {
+                e.stopPropagation();
+                this._copyImageToClipboard(mediaUrl, copyImgBtn);
+            }
+        }, ["\u29C9"]);
+        imgWrapper.appendChild(copyImgBtn);
 
         let promptSection = null;
         if (image.txt_content) {
@@ -2081,11 +2119,10 @@ export class GalleryComponents {
             promptSection.appendChild(promptContainer);
 
             const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            if (sendBtn) promptBtnsContainer.appendChild(sendBtn);
+            if (promptCopyBtn) promptBtnsContainer.appendChild(promptCopyBtn);
             if (videoSendBtn) promptBtnsContainer.appendChild(videoSendBtn);
             if (loraSendBtn) promptBtnsContainer.appendChild(loraSendBtn);
             promptBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
-            promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
         } else {
             // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
@@ -2634,22 +2671,14 @@ export class GalleryComponents {
 
             promptSection.appendChild(promptContainer);
 
-            // 始终创建按钮容器
-            const sendBtn = image.txt_content ? $el("div", {
-                className: "neo-gallery-lightbox-btn neo-gallery-lightbox-send-btn",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this.gallery._showSendMenu(image, sendBtn);
-                }
-            }, ["\u2708\uFE0F Send"]) : null;
-
-            const copyBtn = $el("div", {
+            // 始终创建按钮容器（复制图片按钮在图片右下角，这里只放复制提示词）
+            const sendBtn = $el("div", {
                 className: "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn",
                 onclick: (e) => {
                     e.stopPropagation();
-                    this.copyToClipboard(image.name, image.txt_content, copyBtn);
+                    this.copyToClipboard(image.name, image.txt_content, sendBtn);
                 }
-            }, ["\u29C9 Copy"]);
+            }, ["\u29C9 \u590D\u5236\u63D0\u793A\u8BCD"]);
 
             const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
             if (sendBtn) promptBtnsContainer.appendChild(sendBtn);
@@ -2664,7 +2693,6 @@ export class GalleryComponents {
                 promptBtnsContainer.appendChild(vSendBtn);
             }
             promptBtnsContainer.appendChild(this._createMetaButtons(this.gallery, image, subfolder));
-            promptBtnsContainer.appendChild(copyBtn);
             promptSection.appendChild(promptBtnsContainer);
 
             // 将新的 promptSection 追加到 container（在 imgWrapper 之后，closeBtn 之前）

@@ -314,6 +314,11 @@
     display: block;
 }
 
+/* Single-cover bookmark card: keep image aspect ratio */
+.neo-gallery-card-cover-grid.aspect-fit .neo-gallery-card-cover-grid-item img {
+    object-fit: contain;
+}
+
 /* Placeholder when no cover image */
 .neo-gallery-card-placeholder {
     display: flex;
@@ -898,8 +903,20 @@
     right: 0px;
 }
 
-/* Fullscreen toggle button - bottom right of image */
+/* Fullscreen toggle button - top left of image */
 #neo-gallery-lightbox-fullscreen-btn.neo-gallery-lightbox-nav-arrow {
+    left: 8px;
+    right: auto;
+    top: 10px;
+    transform: none;
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+    opacity: 0.6;
+}
+
+/* Copy image button - bottom right of image */
+#neo-gallery-lightbox-copy-img-btn.neo-gallery-lightbox-nav-arrow {
     left: auto;
     right: 8px;
     top: auto;
@@ -909,6 +926,12 @@
     height: 32px;
     font-size: 14px;
     opacity: 0.6;
+}
+
+#neo-gallery-lightbox-copy-img-btn.neo-gallery-lightbox-nav-arrow:hover {
+    opacity: 1;
+    background-color: rgba(255, 106, 0, 0.7);
+    border-color: #FF6A00;
 }
 
 #neo-gallery-lightbox-fullscreen-btn.neo-gallery-lightbox-nav-arrow:hover {
@@ -1307,28 +1330,24 @@ Accordion Section Buttons (Clear)
     color: #888;
 }
 
-/* Delete button on thumbnails */
-.neo-gallery-delete-btn {
+/* Video indicator badge — top-left corner of the thumbnail */
+.neo-gallery-thumb-video-badge {
     position: absolute;
-    top: 2px;
-    right: 2px;
-    background: rgba(244, 67, 54, 0.9);
+    top: 4px;
+    left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background-color: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
     color: white;
-    border: none;
-    border-radius: 50%;
-    width: 24px;
-    height: 24px;
-    font-size: 14px;
-    line-height: 24px;
-    text-align: center;
-    cursor: pointer;
-    z-index: 10;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-}
-
-.neo-gallery-thumb-container:hover .neo-gallery-delete-btn {
-    opacity: 1 !important;
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 1;
+    pointer-events: none;
+    z-index: 5;
 }
 
 /* Image label */
@@ -2032,6 +2051,19 @@ Accordion Section Buttons (Clear)
 
 .neo-gallery-collect-item:hover {
     background: rgba(76, 154, 255, 0.18);
+    color: #fff;
+}
+
+/* Destructive menu item (delete) — separated from the collect actions */
+.neo-gallery-collect-item-danger {
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    color: #ff6b6b;
+}
+
+.neo-gallery-collect-item-danger:hover {
+    background: rgba(244, 67, 54, 0.18);
     color: #fff;
 }
 

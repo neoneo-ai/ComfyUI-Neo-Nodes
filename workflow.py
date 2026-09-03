@@ -76,8 +76,9 @@ _MODEL_FOLDER_SWEEP = (
     "latent_upscale_models", "embeddings", "hypernetworks", "model_patches",
 )
 
-# 非模型加载节点（采样器 / 文本编码 / VAE 编解码等）：不含模型文件引用，
-# 修复检查整体跳过（如提示词文本含 "xxx.png" 之类字样不应被当成失效模型路径）
+# 非模型加载节点（采样器 / 文本编码 / VAE 编解码 / 图片加载等）：不含模型文件引用，
+# 修复检查整体跳过（如提示词文本含 "xxx.png" 之类字样、或 LoadImage 的输入图路径，
+# 都不应被当成失效模型路径去替换）
 _NON_MODEL_NODE_TYPES = {
     "KSampler", "KSamplerAdvanced", "KSamplerLegacy", "KSamplerConditioning",
     "KSampler (Custom SIGMAS)", "KSamplerSelective", "KSampler (Continuous)",
@@ -85,6 +86,7 @@ _NON_MODEL_NODE_TYPES = {
     "CLIPTextEncode", "CLIPTextEncode(advanced)",
     "Conditioning", "ConditioningZeroOut", "ConditioningSetArea",
     "VAEDecode", "VAEEncode", "VAEDecodeTiled", "VAEEncodeTiled",
+    "LoadImage", "LoadImageMask", "LoadImageOutput",
 }
 
 _WIDGET_TYPES = {"COMBO", "STRING", "MULTILINE"}
@@ -112,6 +114,16 @@ def _file_ext(name: str):
     if not ext or not root:
         return None
     return ext.lower()
+
+
+# 受支持的模型文件后缀：ComfyUI folder_paths.supported_pt_extensions，外加常见量化/
+# 视觉推理格式 .gguf（ComfyUI-GGUF）与 .onnx（人脸分析/检测/换脸等）。命中才视为模型引用；
+# 提示词文本、输入图路径、媒体及 .json/.txt 元信息等不参与修复。
+_MODEL_FILE_EXTS = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft", ".gguf", ".onnx"}
+
+
+def _is_model_file_ext(ext):
+    return ext in _MODEL_FILE_EXTS if ext else False
 
 
 # 量化标记 token：模型名仅在这些标记上不同时视为同一模型的另一量化（只是精度差异），
@@ -365,9 +377,11 @@ def _repair_one_ref(input_name: str, value, combo_options, ctx=None, node_id=Non
     if combo_options is not None:
         if value in combo_options:
             return value, (1.0, [], None, None)
-        if _file_ext(value) is None and not any(
-                _file_ext(o) for o in combo_options if isinstance(o, str)):
+        if not any(_file_ext(o) for o in combo_options if isinstance(o, str)):
             return value, (0.0, [], None, None)  # 非文件 combo（采样器/调度器等）：不是模型引用
+        vext = _file_ext(value)
+        if vext is not None and not _is_model_file_ext(vext):
+            return value, (0.0, [], None, None)  # 有扩展名但非模型后缀（如输入图 .png）：不是模型引用
         folder = guess_model_folder(input_name)
         if decision and decision["value"] in combo_options:
             return decision["value"], (0.0, [], "chosen", folder or decision["folder"])
@@ -378,8 +392,8 @@ def _repair_one_ref(input_name: str, value, combo_options, ctx=None, node_id=Non
         if matched:
             return matched, (score, cands, "matched", None)
         return value, (score, cands, "missing", None)
-    if _file_ext(value) is None:
-        return value, (0.0, [], None, None)  # free text without a file extension: not a model ref
+    if not _is_model_file_ext(_file_ext(value)):
+        return value, (0.0, [], None, None)  # 无受支持模型后缀：不是模型引用（提示词/图片路径等）
     if _resolvable_anywhere(value):
         return value, (1.0, [], None, None)
     if decision and _resolvable_anywhere(decision["value"]):
@@ -483,8 +497,8 @@ def _repair_api_format(workflow: dict, mappings, ctx=None) -> tuple:
                 if wtype not in _WIDGET_TYPES:
                     continue
                 combo = options if wtype == "COMBO" else None
-            elif isinstance(value, str) and _file_ext(value) is None:
-                continue  # free text on an unresolvable node: only model filenames
+            elif isinstance(value, str) and not _is_model_file_ext(_file_ext(value)):
+                continue  # 非模型后缀的自由文本：不视为模型引用
             else:
                 combo = None
             new_value, node_changes = _repair_value(name, value, combo, ctx, node_id)
