@@ -30,6 +30,10 @@ REPAIR_ACCEPT_SCORE = 0.85
 REPAIR_LEAD_MARGIN = 0.05
 MAX_CANDIDATES = 5
 
+# 匹配置信档位（前端确认弹窗三档可选）：strict 提高接受分（宁缺毋滥），loose 降低
+# 换更大覆盖率——低于标准档的改动由前端默认不勾选，用户确认后才应用。
+REPAIR_THRESHOLD_SCORES = {"strict": 0.92, "standard": REPAIR_ACCEPT_SCORE, "loose": 0.72}
+
 # 常见输入名 -> 模型文件夹（核心 loader 的稳定命名）
 _MODEL_FOLDER_BY_INPUT = {
     "ckpt_name": "checkpoints",
@@ -116,6 +120,36 @@ def _file_ext(name: str):
     return ext.lower()
 
 
+def _norm_path_key(value: str) -> str:
+    """Path normalization key for "already present" checks only: unify separators,
+    strip a leading ./, case-fold. Deliberately NOT applied to scoring."""
+    v = str(value).strip().replace("\\", "/")
+    while v.startswith("./"):
+        v = v[2:]
+    return v.lower()
+
+
+def _path_lookup_variants(value: str) -> list:
+    """Lookup variants for folder_paths resolution: original plus separator/./-fixed."""
+    v = str(value)
+    variants = [v]
+    alt = v.replace("\\", "/").lstrip("./")
+    if alt != v and alt:
+        variants.append(alt)
+    return variants
+
+
+def _variant_in(value, options) -> bool:
+    """True if one of `options` is the same file as `value` up to separator,
+    ./ prefix and case differences (avoids false "missing" reports)."""
+    if not isinstance(options, list):
+        return False
+    key = _norm_path_key(value)
+    if not key:
+        return False
+    return any(isinstance(o, str) and _norm_path_key(o) == key for o in options)
+
+
 # 受支持的模型文件后缀：ComfyUI folder_paths.supported_pt_extensions，外加常见量化/
 # 视觉推理格式 .gguf（ComfyUI-GGUF）与 .onnx（人脸分析/检测/换脸等）。命中才视为模型引用；
 # 提示词文本、输入图路径、媒体及 .json/.txt 元信息等不参与修复。
@@ -165,7 +199,7 @@ def _score_pair(wanted: str, cand: str) -> float:
     return best
 
 
-def match_model_ref(wanted: str, candidates: list, strict_ext: bool = True):
+def match_model_ref(wanted: str, candidates: list, strict_ext: bool = True, min_score: float = REPAIR_ACCEPT_SCORE):
     """Fuzzy-match `wanted` against a list of file names (relative to one folder).
 
     Returns (matched_name_or_None, best_score, top_candidates). A match is only
@@ -173,6 +207,7 @@ def match_model_ref(wanted: str, candidates: list, strict_ext: bool = True):
     are left for the user to decide. `strict_ext` restricts matches to the
     same file extension as `wanted` (folder fallback only; combo matching
     passes False because the option list IS the loader's file list).
+    `min_score` overrides the acceptance threshold (threshold presets).
     """
     if not wanted or not candidates:
         return None, 0.0, []
@@ -197,12 +232,12 @@ def match_model_ref(wanted: str, candidates: list, strict_ext: bool = True):
         return None, scored[0][0] if scored else 0.0, [c for _, c in scored[:MAX_CANDIDATES]]
     best_score, best_name = pool[0]
     second_score = pool[1][0] if len(pool) > 1 else 0.0
-    if best_score >= REPAIR_ACCEPT_SCORE and best_score - second_score >= REPAIR_LEAD_MARGIN:
+    if best_score >= min_score and best_score - second_score >= REPAIR_LEAD_MARGIN:
         return best_name, best_score, [c for _, c in pool[:MAX_CANDIDATES]]
     return None, best_score, [c for _, c in pool[:MAX_CANDIDATES]]
 
 
-def match_model_file(folder_name: str, wanted: str, strict_ext: bool = True):
+def match_model_file(folder_name: str, wanted: str, strict_ext: bool = True, min_score: float = REPAIR_ACCEPT_SCORE):
     """Resolve `wanted` inside one ComfyUI model folder: exact first, then fuzzy.
 
     Returns (name_in_folder_or_None, score, candidates).
@@ -211,12 +246,20 @@ def match_model_file(folder_name: str, wanted: str, strict_ext: bool = True):
         return None, 0.0, []
     try:
         import folder_paths
-        if folder_paths.get_full_path(folder_name, wanted):
+        resolved = False
+        for v in _path_lookup_variants(wanted):
+            try:
+                if folder_paths.get_full_path(folder_name, v):
+                    resolved = True
+                    break
+            except Exception:
+                continue
+        if resolved:
             return wanted, 1.0, []
         candidates = folder_paths.get_filename_list(folder_name) or []
     except Exception:
         return None, 0.0, []
-    return match_model_ref(wanted, candidates, strict_ext=strict_ext)
+    return match_model_ref(wanted, candidates, strict_ext=strict_ext, min_score=min_score)
 
 
 def guess_model_folder(input_name: str):
@@ -261,21 +304,23 @@ def _resolvable_anywhere(value: str) -> bool:
         import folder_paths
     except Exception:
         return False
+    variants = _path_lookup_variants(value)
     for folder in list(folder_paths.folder_names_and_paths.keys()):
-        try:
-            if folder_paths.get_full_path(folder, value):
-                return True
-        except Exception:
-            continue
+        for v in variants:
+            try:
+                if folder_paths.get_full_path(folder, v):
+                    return True
+            except Exception:
+                continue
     return False
 
 
-def _resolve_in_folders(input_name: str, value: str, strict_ext: bool = True):
+def _resolve_in_folders(input_name: str, value: str, strict_ext: bool = True, min_score: float = REPAIR_ACCEPT_SCORE):
     """Search folders in priority order. Returns
     (name_or_None, score, candidates, folder_or_None)."""
     best = (None, 0.0, [], None)
     for folder in model_folders_to_try(input_name):
-        name, score, cands = match_model_file(folder, value, strict_ext=strict_ext)
+        name, score, cands = match_model_file(folder, value, strict_ext=strict_ext, min_score=min_score)
         if name is not None:
             return name, score, cands, folder
         if score > best[1]:
@@ -357,6 +402,9 @@ def _change(node_type, node_id, input_name, old, new, score, candidates, reason,
     }
     if score:
         entry["score"] = round(float(score), 3)
+        # 宽松档接受的低分改动：前端默认不勾选，用户确认后才应用
+        if new and reason in ("matched", "chosen", "mapped") and float(score) < REPAIR_ACCEPT_SCORE:
+            entry["low_confidence"] = True
     if candidates:
         entry["candidates"] = list(candidates)[:MAX_CANDIDATES]
     if folder:
@@ -368,15 +416,21 @@ def _repair_one_ref(input_name: str, value, combo_options, ctx=None, node_id=Non
     """Repair a single model reference. combo_options: list (empty list = the
     loader's list is known and empty) for combo inputs, None for free paths.
     ctx carries the user's manual decisions {(str(node_id), input, old): {...}}
-    and the stored repair mappings ({} when disabled).
+    (a decision with skip=True keeps the current value), the stored repair
+    mappings ({} when disabled) and the acceptance threshold min_score.
     Returns (new_value, (score, candidates, reason, folder)); reason None = no change."""
     if not isinstance(value, str) or not value.strip():
         return value, (0.0, [], None, None)
     ctx = ctx or {}
+    min_score = ctx.get("min_score") or REPAIR_ACCEPT_SCORE
     decision = ctx.get("decisions", {}).get((str(node_id), input_name, value))
+    if decision and decision.get("skip"):
+        return value, (0.0, [], None, None)
     if combo_options is not None:
         if value in combo_options:
             return value, (1.0, [], None, None)
+        if _variant_in(value, combo_options):
+            return value, (1.0, [], None, None)  # 同一文件的分隔符/./前缀变体：已存在
         if not any(_file_ext(o) for o in combo_options if isinstance(o, str)):
             return value, (0.0, [], None, None)  # 非文件 combo（采样器/调度器等）：不是模型引用
         vext = _file_ext(value)
@@ -388,7 +442,7 @@ def _repair_one_ref(input_name: str, value, combo_options, ctx=None, node_id=Non
         mapped = _mapped_replacement(ctx.get("mappings"), folder, value)
         if mapped and mapped in combo_options:
             return mapped, (0.0, [], "mapped", folder)
-        matched, score, cands = match_model_ref(value, combo_options, strict_ext=False)
+        matched, score, cands = match_model_ref(value, combo_options, strict_ext=False, min_score=min_score)
         if matched:
             return matched, (score, cands, "matched", None)
         return value, (score, cands, "missing", None)
@@ -399,7 +453,7 @@ def _repair_one_ref(input_name: str, value, combo_options, ctx=None, node_id=Non
     if decision and _resolvable_anywhere(decision["value"]):
         return decision["value"], (0.0, [], "chosen",
                                    guess_model_folder(input_name) or decision["folder"])
-    matched, score, cands, folder = _resolve_in_folders(input_name, value, strict_ext=True)
+    matched, score, cands, folder = _resolve_in_folders(input_name, value, strict_ext=True, min_score=min_score)
     if matched is not None and matched != value:
         return matched, (score, cands, "matched", folder)
     mfolder = folder or guess_model_folder(input_name)
@@ -510,26 +564,93 @@ def _repair_api_format(workflow: dict, mappings, ctx=None) -> tuple:
     return wf, changes
 
 
-def repair_workflow(workflow, node_class_mappings=None, decisions=None, use_mappings=True) -> tuple:
+def _repair_widget_refs(workflow, refs, ctx, skip_keys=()) -> list:
+    """Repair live-widget references sent by the frontend (UI format only).
+
+    refs: [{node, input, index, value, options?}] — name/index/value come from
+    the actual on-canvas widgets, options is the widget's own options.values
+    (the loader's real file list). This covers dynamic widgets that INPUT_TYPES
+    cannot express. A ref is processed only when widgets_values[index] still
+    equals ref.value (the specs pass may have fixed it already) and its
+    (node, input, old) key was not reported by the specs pass.
+    """
+    changes = []
+    nodes = workflow.get("nodes")
+    if not isinstance(nodes, list) or not isinstance(refs, list):
+        return changes
+    by_id = {}
+    for n in nodes:
+        if isinstance(n, dict) and n.get("id") is not None:
+            by_id[str(n.get("id"))] = n
+    seen = set()
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        node = by_id.get(str(ref.get("node")))
+        if not node or node.get("mode") in (2, 4):  # 跳过 Mute / Bypass
+            continue
+        widgets = node.get("widgets_values")
+        if not isinstance(widgets, list):
+            continue
+        try:
+            idx = int(ref.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if idx < 0 or idx >= len(widgets):
+            continue
+        old = ref.get("value")
+        if not isinstance(old, str) or not old.strip() or widgets[idx] != old:
+            continue  # 位置对不上或已被 specs 流程修复
+        input_name = ref.get("input")
+        if not isinstance(input_name, str) or not input_name:
+            continue
+        key = (str(node.get("id")), input_name, old)
+        if key in seen or key in skip_keys:
+            continue
+        seen.add(key)
+        options = ref.get("options")
+        combo = options if isinstance(options, list) and all(isinstance(o, str) for o in options) else None
+        new_value, node_changes = _repair_value(input_name, old, combo, ctx, node.get("id"))
+        if new_value is not old:
+            widgets[idx] = new_value
+        for vold, vnew, score, cands, reason, folder in node_changes:
+            changes.append(_change(node.get("type"), node.get("id"), input_name,
+                                   vold, vnew, score, cands, reason, folder=folder))
+    return changes
+
+
+def repair_workflow(workflow, node_class_mappings=None, decisions=None, use_mappings=True,
+                    widget_refs=None, min_score=None) -> tuple:
     """Repair broken model references in a UI- or API-format workflow.
 
     Only touches references it can confidently match; resolvable values are
     never modified. Returns (repaired_workflow, changes) where each change is
     a JSON-safe dict ({node, type, input, old, new, reason, ...}); new is None
     for unfixable references (candidates reported for the user to pick).
-    decisions: 修复弹窗中的手动选择 [{node, input, old, value, folder}]，命中时按
-    reason="chosen" 改写；use_mappings=False 跳过已保存的手动修复映射（命中的
-    记为 reason="mapped"）。
+    decisions: 修复弹窗中的手动选择 [{node, input, old, value, folder, skip?}]，
+    命中时按 reason="chosen" 改写；skip=True 的改动保持原值；use_mappings=False
+    跳过已保存的手动修复映射（命中的记为 reason="mapped"）。
+    widget_refs: 前端传来的实时 widget 引用 [{node, input, index, value, options?}]，
+    覆盖 INPUT_TYPES 表达不了的动态 widget（自定义 loader 运行时添加的模型项等）；
+    options 是前端 widget.options.values（loader 真实文件列表）。仅 UI 格式生效。
+    min_score: 接受分覆盖（阈值档位），None 用 REPAIR_ACCEPT_SCORE。
     """
     if not isinstance(workflow, dict):
         return workflow, []
     ctx = {
         "decisions": _normalize_decisions(decisions),
         "mappings": load_repair_mappings() if use_mappings else {},
+        "min_score": float(min_score) if isinstance(min_score, (int, float)) and 0 < float(min_score) <= 1 else REPAIR_ACCEPT_SCORE,
+        "widget_refs": widget_refs if isinstance(widget_refs, list) else None,
     }
     nodes = workflow.get("nodes")
     if isinstance(nodes, list):
-        return _repair_ui_format(workflow, node_class_mappings, ctx)
+        wf, changes = _repair_ui_format(workflow, node_class_mappings, ctx)
+        if ctx["widget_refs"]:
+            # specs 流程已处理的 (node, input, old) 不再由 refs 重复处理
+            done = {(str(c.get("node")), c.get("input"), c.get("old")) for c in changes}
+            changes.extend(_repair_widget_refs(wf, ctx["widget_refs"], ctx, skip_keys=done))
+        return wf, changes
     if isinstance(nodes, dict):
         return _repair_api_format(workflow, node_class_mappings, ctx)
     for v in workflow.values():
@@ -629,7 +750,7 @@ def _mapped_replacement(mappings, folder, value):
 
 
 def _normalize_decisions(decisions) -> dict:
-    """[{node, input, old, value, folder?}] -> {(str(node), input, old): {...}}."""
+    """[{node, input, old, value, folder?, skip?}] -> {(str(node), input, old): {...}}."""
     out = {}
     for d in decisions if isinstance(decisions, list) else []:
         if not isinstance(d, dict):
@@ -639,10 +760,13 @@ def _normalize_decisions(decisions) -> dict:
             continue
         if not value.strip():
             continue
-        out[(str(node), input_name, old)] = {
+        entry = {
             "value": value,
             "folder": d.get("folder") if isinstance(d.get("folder"), str) else None,
         }
+        if d.get("skip"):
+            entry["skip"] = True  # 低置信改动用户未勾选：保持原值
+        out[(str(node), input_name, old)] = entry
     return out
 
 
@@ -664,8 +788,12 @@ async def rs_repair_workflow(request):
     if not isinstance(workflow, dict):
         return web.json_response({"success": False, "error": "Missing workflow object"}, status=400)
     decisions = data.get("decisions") if isinstance(data, dict) else None
+    threshold = data.get("threshold") if isinstance(data, dict) else None
+    min_score = REPAIR_THRESHOLD_SCORES.get(str(threshold).lower()) if isinstance(threshold, str) else None
+    widget_refs = data.get("widget_refs") if isinstance(data, dict) else None
     import nodes
-    repaired, changes = repair_workflow(workflow, nodes.NODE_CLASS_MAPPINGS, decisions=decisions)
+    repaired, changes = repair_workflow(workflow, nodes.NODE_CLASS_MAPPINGS, decisions=decisions,
+                                        widget_refs=widget_refs, min_score=min_score)
     if decisions and data.get("remember"):
         add_repair_mappings([
             {"folder": c.get("folder"), "wanted": c.get("old"), "replacement": c.get("new")}

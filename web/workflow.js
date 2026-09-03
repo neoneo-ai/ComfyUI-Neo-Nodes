@@ -20,13 +20,17 @@ import { showToast } from './gallery-utils.js';
  *   ok=false — 请求失败（网络/HTTP/后端错误），调用方应退回原工作流并提示用户
  * decisions/remember：修复弹窗中的手动选择与「记住」勾选，提交后端套用并保存映射。
  */
-export async function repairWorkflow(workflow, decisions, remember) {
+export async function repairWorkflow(workflow, decisions, remember, opts = {}) {
     if (!workflow || typeof workflow !== 'object') return { ok: true, data: null };
     try {
         const resp = await api.fetchApi('/neo_nodes/repair', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workflow, decisions, remember })
+            body: JSON.stringify({
+                workflow, decisions, remember,
+                threshold: opts.threshold || undefined,
+                widget_refs: opts.widgetRefs || undefined,
+            })
         });
         if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
         const data = await resp.json();
@@ -35,6 +39,50 @@ export async function repairWorkflow(workflow, decisions, remember) {
         console.warn('[Neo Repair] repairWorkflow:', e);
         return { ok: false, error: e };
     }
+}
+
+// ===== 匹配置信档位与实时 widget 引用 =====
+const REPAIR_THRESHOLD_KEY = 'neo.repairThreshold';
+const REPAIR_THRESHOLDS = ['strict', 'standard', 'loose'];
+
+export function getRepairThreshold() {
+    const v = localStorage.getItem(REPAIR_THRESHOLD_KEY);
+    return REPAIR_THRESHOLDS.includes(v) ? v : 'standard';
+}
+
+function setRepairThreshold(t) {
+    if (REPAIR_THRESHOLDS.includes(t)) localStorage.setItem(REPAIR_THRESHOLD_KEY, t);
+}
+
+// 动态模型 widget 识别：INPUT_TYPES 表达不了的 widget（自定义 loader 运行时添加的
+// 模型项等）由前端提供真实名字/位置/选项列表，后端据此匹配（参考小秘书模型匹配的
+// 覆盖思路）。只在值确实失效（不在自身选项列表）或名字+扩展名都像模型路径时收集。
+const MODEL_INPUT_HINT_RE = /(ckpt|checkpoint|unet|diffusion|vae|lora|clip|gguf|controlnet|control_net|upscale|upscaler|model)/i;
+const MODEL_FILE_RE = /\.(safetensors|ckpt|pt|pth|bin|gguf|onnx)$/i;
+const MAX_WIDGET_REFS = 200;
+const MAX_REF_OPTIONS = 4000;
+
+function collectWidgetRefs() {
+    const refs = [];
+    for (const node of (app.graph?._nodes || [])) {
+        if (node.mode === 2 || node.mode === 4 || !Array.isArray(node.widgets)) continue;
+        for (let i = 0; i < node.widgets.length; i++) {
+            const w = node.widgets[i];
+            const value = typeof w.value === 'string' ? w.value : null;
+            if (!value || !value.trim()) continue;
+            const name = String(w.name || '');
+            const options = Array.isArray(w.options?.values)
+                ? w.options.values.filter((v) => typeof v === 'string')
+                : null;
+            const comboMiss = !!options && options.length > 0 && !options.includes(value);
+            if (!comboMiss && !(MODEL_INPUT_HINT_RE.test(name) && MODEL_FILE_RE.test(value))) continue;
+            const ref = { node: String(node.id), input: name, index: i, value };
+            if (options && options.length && options.length <= MAX_REF_OPTIONS) ref.options = options;
+            refs.push(ref);
+            if (refs.length >= MAX_WIDGET_REFS) return refs;
+        }
+    }
+    return refs;
 }
 
 // ===== 修复日志（localStorage，按工作流关联，新→旧，每工作流上限 LOG_LIMIT 条） =====
@@ -164,7 +212,7 @@ function buildPickSelect(c, onPick) {
     return select;
 }
 
-export function buildChangesTable(changes, onPick) {
+export function buildChangesTable(changes, onPick, onSkip) {
     const table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px;';
     const col = (w) => {
@@ -202,7 +250,34 @@ export function buildChangesTable(changes, onPick) {
         if (onPick && !c.new && Array.isArray(c.candidates) && c.candidates.length) {
             tr.appendChild(cell(buildPickSelect(c, onPick)));
         } else {
-            tr.appendChild(cell(newPathEl(c)));
+            const wrap = document.createElement('span');
+            wrap.style.cssText = 'display:flex;align-items:center;gap:6px;overflow:hidden;';
+            wrap.appendChild(newPathEl(c));
+            if (c.new && typeof c.score === 'number') {
+                const chip = document.createElement('span');
+                chip.textContent = Math.round(c.score * 100) + '%';
+                chip.title = '匹配置信度';
+                chip.style.cssText = 'flex:none;color:#7aa;font-size:11px;border:1px solid #445;border-radius:8px;padding:0 6px;';
+                wrap.appendChild(chip);
+            }
+            if (c.low_confidence) {
+                const badge = document.createElement('span');
+                badge.textContent = '低置信';
+                badge.style.cssText = 'flex:none;color:#da6;font-size:11px;';
+                wrap.appendChild(badge);
+                if (onSkip) {
+                    // 宽松档接受的低分改动：默认不勾选 = 不应用（skip 决策保持原值）
+                    const label = document.createElement('label');
+                    label.style.cssText = 'flex:none;display:flex;align-items:center;gap:3px;color:#9ab;font-size:11px;cursor:pointer;';
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.checked = false;
+                    cb.onchange = () => onSkip(c, cb.checked);
+                    label.append(cb, '应用');
+                    wrap.appendChild(label);
+                }
+            }
+            tr.appendChild(cell(wrap));
         }
         table.appendChild(tr);
     }
@@ -213,9 +288,12 @@ export function buildChangesTable(changes, onPick) {
  * 修复确认弹窗：只有「修复 / 取消」两个按钮（按原样载入与取消等价，已移除）。
  * 未匹配且存在候选的行在「修复为」列渲染下拉框，可手动选择替换文件；
  * 勾选「记住手动选择」后，本次选择由后端保存为修复映射，之后相同失效路径自动替换。
+ * opts.threshold / opts.onThresholdChange：匹配阈值三档（严格/标准/宽松），
+ * 切换时经 onThresholdChange 重新匹配并重建表格；宽松档低置信改动默认不勾选，
+ * 未勾选的以 skip 决策提交（后端保持原值）。
  * 返回 Promise<{ action: 'repair' | 'cancel', decisions: [...], remember: bool }>。
  */
-export function showRepairConfirmDialog(changes) {
+export function showRepairConfirmDialog(changes, opts = {}) {
     return new Promise((resolve) => {
         const existing = document.querySelector('.neo-repair-dialog');
         if (existing) existing.remove();
@@ -232,27 +310,73 @@ export function showRepairConfirmDialog(changes) {
         const onKey = (e) => { if (e.key === 'Escape') close({ action: 'cancel', decisions: [], remember: false }); };
         document.addEventListener('keydown', onKey);
 
-        const applied = changes.filter((c) => c.new).length;
-        const missing = changes.length - applied;
-        const pickable = changes.filter((c) => !c.new && c.candidates && c.candidates.length);
+        const pickable = (list) => list.filter((c) => !c.new && c.candidates && c.candidates.length);
+        const lowConf = (list) => list.filter((c) => c.low_confidence && c.new);
         const title = document.createElement('div');
         title.style.cssText = 'font-weight:bold;font-size:14px;color:#8cf;';
-        title.textContent = missing
-            ? `检测到 ${changes.length} 处失效的模型路径，${applied} 处已自动匹配${pickable.length ? '，其余可手动选择替换文件' : ''}`
-            : `检测到 ${applied} 处模型路径已失效，已匹配到可用文件`;
-        box.appendChild(title);
+        const updateTitle = (list) => {
+            const applied = list.filter((c) => c.new).length;
+            const missing = list.length - applied;
+            const lowCount = lowConf(list).length;
+            const picks = list.length && missing
+                ? (pickable(list).length ? '，其余可手动选择替换文件' : '')
+                : '';
+            title.textContent = missing
+                ? `检测到 ${list.length} 处失效的模型路径，${applied} 处已自动匹配${lowCount ? `（${lowCount} 处低置信，默认不应用）` : ''}${picks}`
+                : `检测到 ${applied} 处模型路径已失效，已匹配到可用文件`;
+        };
 
-        // 手动选择：change -> 选中的替换文件（选回空值 = 保持缺失）
+        // 手动选择：change -> 选中的替换文件（选回空值 = 保持缺失）；
+        // 低置信改动默认不应用：勾选「应用」才生效，否则以 skip 决策提交
         const picks = new Map();
+        const skips = new Set();
         const body = document.createElement('div');
         body.style.cssText = 'overflow:auto;max-height:50vh;';
-        body.appendChild(buildChangesTable(changes, (c, value) => {
-            if (value) picks.set(c, value); else picks.delete(c);
-        }));
+        let currentList = changes;
+        const renderTable = (list) => {
+            currentList = list;
+            picks.clear();
+            skips.clear();
+            body.replaceChildren(buildChangesTable(list, (c, value) => {
+                if (value) picks.set(c, value); else picks.delete(c);
+            }, (c, apply) => {
+                if (apply) skips.delete(c); else skips.add(c);
+            }));
+            updateTitle(list);
+        };
+        renderTable(changes);
+        box.appendChild(title);
+
+        // 匹配阈值三档：切换后重新匹配并重建表格（阈值记忆到 localStorage）
+        if (typeof opts.onThresholdChange === 'function') {
+            const thresholdRow = document.createElement('label');
+            thresholdRow.style.cssText = 'display:flex;align-items:center;gap:6px;color:#9ab;font-size:12.5px;';
+            const thresholdSel = document.createElement('select');
+            thresholdSel.style.cssText = 'background:#2a2a2a;color:#ddd;border:1px solid #555;border-radius:4px;padding:2px 6px;font-size:12.5px;';
+            for (const [v, label] of [['strict', '严格'], ['standard', '标准'], ['loose', '宽松']]) {
+                const opt = document.createElement('option');
+                opt.value = v;
+                opt.textContent = label;
+                thresholdSel.appendChild(opt);
+            }
+            thresholdSel.value = opts.threshold || 'standard';
+            thresholdSel.onchange = async () => {
+                setRepairThreshold(thresholdSel.value);
+                thresholdSel.disabled = true;
+                try {
+                    const next = await opts.onThresholdChange(thresholdSel.value);
+                    if (Array.isArray(next)) renderTable(next);
+                } finally {
+                    thresholdSel.disabled = false;
+                }
+            };
+            thresholdRow.append('匹配阈值：', thresholdSel);
+            box.appendChild(thresholdRow);
+        }
         box.appendChild(body);
 
         let rememberBox = null;
-        if (pickable.length) {
+        if (pickable(currentList).length) {
             const rememberRow = document.createElement('label');
             rememberRow.style.cssText = 'display:flex;align-items:center;gap:6px;color:#9ab;font-size:12.5px;cursor:pointer;';
             rememberBox = document.createElement('input');
@@ -272,9 +396,16 @@ export function showRepairConfirmDialog(changes) {
         repairBtn.style.cssText = base + 'background:#3a7a3a;color:#fff;';
         repairBtn.onclick = () => close({
             action: 'repair',
-            decisions: [...picks.entries()].map(([c, value]) => ({
-                node: c.node, input: c.input, old: c.old, value, folder: c.folder || null,
-            })),
+            decisions: [
+                // 手动选择的替换文件
+                ...[...picks.entries()].map(([c, value]) => ({
+                    node: c.node, input: c.input, old: c.old, value, folder: c.folder || null,
+                })),
+                // 未勾选「应用」的低置信改动：skip 决策让后端保持原值
+                ...[...skips].map((c) => ({
+                    node: c.node, input: c.input, old: c.old, value: c.new || c.old, skip: true,
+                })),
+            ],
             remember: rememberBox ? rememberBox.checked : false,
         });
         const cancelBtn = document.createElement('button');
@@ -300,7 +431,11 @@ export function showRepairConfirmDialog(changes) {
  *   repairUnavailable — 修复接口不可用，已按原样处理，调用方应给出警告提示
  */
 export async function confirmWorkflowRepair(workflow, source) {
-    const { ok, data, error } = await repairWorkflow(workflow);
+    const threshold = getRepairThreshold();
+    const { ok, data, error } = await repairWorkflow(workflow, undefined, false, {
+        threshold,
+        widgetRefs: collectWidgetRefs(),
+    });
     if (!ok) {
         console.warn('[Neo Repair] repair API unavailable, loading as-is:', error);
         return { workflow, cancelled: false, repairedCount: 0, missingCount: 0, repairUnavailable: true };
@@ -308,7 +443,16 @@ export async function confirmWorkflowRepair(workflow, source) {
     if (!data || !data.changes || !data.changes.length) {
         return { workflow, cancelled: false, repairedCount: 0, missingCount: 0 };
     }
-    const { action, decisions, remember } = await showRepairConfirmDialog(data.changes);
+    const { action, decisions, remember } = await showRepairConfirmDialog(data.changes, {
+        threshold,
+        onThresholdChange: async (next) => {
+            const retry = await repairWorkflow(workflow, undefined, false, {
+                threshold: next,
+                widgetRefs: collectWidgetRefs(),
+            });
+            return retry.ok && retry.data ? retry.data.changes : null;
+        },
+    });
     if (action !== 'repair') return { workflow, cancelled: true, repairedCount: 0, missingCount: 0 };
     let result = data;
     if (decisions.length) {
@@ -424,7 +568,7 @@ async function afterLoadDetect() {
     _detectingImport = true;
     try {
         const wf = app.graph.serialize();
-        const { ok, data } = await repairWorkflow(wf);
+        const { ok, data } = await repairWorkflow(wf, undefined, false, { widgetRefs: collectWidgetRefs() });
         if (app.graph && workflowKey(app.graph.serialize()) !== key) return; // 画布已切换，忽略
         setRepairHint(ok && data && data.changes ? data.changes.length : 0);
     } catch (e) {

@@ -170,7 +170,7 @@ ComfyUI-Neo-Nodes/
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/neo_nodes/repair` | 工作流模型路径修复（高置信度匹配 + 手动决策 + 映射） |
+| POST | `/neo_nodes/repair` | 工作流模型路径修复（高置信度匹配 + 阈值档位 `threshold` + 动态 widget 引用 `widget_refs` + 手动决策（含 `skip`）+ 映射） |
 | GET | `/neo_nodes/repair_mappings` | 读取已保存的修复映射 |
 | DELETE | `/neo_nodes/repair_mappings` | 删除修复映射 |
 

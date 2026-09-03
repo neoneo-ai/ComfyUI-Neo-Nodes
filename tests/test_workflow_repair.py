@@ -610,6 +610,75 @@ class TestEntryPoint(_RepairTestBase):
         self.assertEqual(changes[0]["reason"], "matched")
 
 
+class TestThresholdVariantsAndRefs(_RepairTestBase):
+    """阈值档位 / 归一化变体 / skip 决策 / 前端 widget_refs。"""
+
+    def test_combo_variant_separator_present(self):
+        # 选项为反斜杠变体、值为正斜杠：同一文件，不修复也不报缺失
+        nv, (score, cands, reason, folder) = workflow._repair_one_ref(
+            "ckpt_name", "sub/real_v60.safetensors", ["sub\\real_v60.safetensors"], {})
+        self.assertIsNone(reason)
+        self.assertEqual(nv, "sub/real_v60.safetensors")
+
+    def test_combo_variant_missing_still_reported(self):
+        nv, (score, cands, reason, folder) = workflow._repair_one_ref(
+            "ckpt_name", "sub/other.safetensors", ["sub\\real_v60.safetensors"], {})
+        self.assertEqual(reason, "missing")
+
+    def test_skip_decision_keeps_value(self):
+        wf = {"nodes": [{"id": "3", "type": "FakeLoraLoader",
+                         "widgets_values": ["missing_lora.safetensors"]}]}
+        decisions = [{"node": "3", "input": "lora_name", "old": "missing_lora.safetensors",
+                      "value": "my_lora_v2.safetensors", "skip": True}]
+        repaired, changes = workflow.repair_workflow(wf, MAPPINGS, decisions=decisions)
+        self.assertEqual(repaired["nodes"][0]["widgets_values"], ["missing_lora.safetensors"])
+        self.assertEqual(changes, [])
+
+    def test_low_confidence_flag(self):
+        self.assertNotIn("low_confidence",
+                         workflow._change("T", 1, "x", "a", "b", 0.9, [], "matched"))
+        self.assertIn("low_confidence",
+                      workflow._change("T", 1, "x", "a", "b", 0.8, [], "matched"))
+        self.assertNotIn("low_confidence",
+                         workflow._change("T", 1, "x", "a", None, 0.8, [], "missing"))
+
+    def test_loose_threshold_applies_low_score(self):
+        # model_x vs model_y_v2 = 0.782 分，落在 [loose=0.72, standard=0.85)：
+        # 标准档拒绝，宽松档接受
+        wanted, cands = "model_x.safetensors", ["model_y_v2.safetensors"]
+        std_name, std_score, _ = workflow.match_model_ref(wanted, cands, strict_ext=False)
+        self.assertIsNone(std_name)
+        self.assertGreaterEqual(std_score, 0.72)
+        self.assertLess(std_score, 0.85)
+        loose_name, loose_score, _ = workflow.match_model_ref(wanted, cands, strict_ext=False, min_score=0.72)
+        self.assertEqual(loose_name, "model_y_v2.safetensors")
+        self.assertGreaterEqual(loose_score, 0.72)
+        self.assertLess(loose_score, 0.85)
+
+    def test_widget_refs_repair(self):
+        # specs 覆盖不到的动态 widget：按前端提供的名字/位置/选项修复
+        wf = {"nodes": [{"id": "7", "type": "SomeCustomLoader",
+                         "widgets_values": ["my_lora_v1.safetensors", 1.0]}]}
+        refs = [{"node": "7", "input": "lora_widget", "index": 0,
+                 "value": "my_lora_v1.safetensors", "options": ["my_lora_v2.safetensors"]}]
+        repaired, changes = workflow.repair_workflow(wf, {}, widget_refs=refs)
+        self.assertEqual(repaired["nodes"][0]["widgets_values"], ["my_lora_v2.safetensors", 1.0])
+        self.assertEqual(changes[0]["reason"], "matched")
+        self.assertEqual(changes[0]["input"], "lora_widget")
+        # 修复后同一 refs 再跑：值已变，不再产生改动
+        _, changes2 = workflow.repair_workflow(repaired, {}, widget_refs=refs)
+        self.assertEqual(changes2, [])
+
+    def test_widget_refs_deduped_with_specs_pass(self):
+        # specs 流程已报告的 (node, input, old) 不被 refs 重复报告
+        wf = {"nodes": [{"id": "8", "type": "FakeLoraLoader",
+                         "widgets_values": ["missing_lora.safetensors"]}]}
+        refs = [{"node": "8", "input": "lora_name", "index": 0,
+                 "value": "missing_lora.safetensors", "options": list(LORA_FILES)}]
+        _, changes = workflow.repair_workflow(wf, MAPPINGS, widget_refs=refs)
+        self.assertEqual(len([c for c in changes if c["input"] == "lora_name"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 
