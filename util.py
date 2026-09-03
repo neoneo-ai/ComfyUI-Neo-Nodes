@@ -7,10 +7,48 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import re
 import difflib
 from pathlib import Path
+
+CURRENT_DIR = Path(__file__).parent.resolve()
+CONFIGS_DIR = CURRENT_DIR / "configs"
+SETTINGS_FILE = CONFIGS_DIR / "gallery_settings.json"
+
+
+def _load_settings() -> dict:
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[Neo Gallery] Failed to load settings ({e}); treating as empty. "
+              f"Fix or delete {SETTINGS_FILE}")
+    return {}
+
+
+def _save_settings(settings: dict) -> None:
+    """Atomically persist settings. Raises so callers can report a real failure."""
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    tmp.replace(SETTINGS_FILE)
+
+
+def _json_safe(value):
+    """Return a copy with non-finite floats (NaN/Infinity) replaced by None so the
+    response is always valid strict JSON that browsers can parse."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
 
 # ---------------------------------------------------------------------------
 # Media extensions

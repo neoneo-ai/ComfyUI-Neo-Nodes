@@ -1239,11 +1239,12 @@ Accordion Section Buttons (Clear)
     opacity: 1 !important;
 }
 
-/* Thumbnail action buttons (Send, Copy, Image Send, Video Send) */
+/* Thumbnail action buttons (Send, Copy, Image Send, Video Send, Bookmark) */
 .neo-gallery-thumb-send-btn,
 .neo-gallery-thumb-img-send-btn,
 .neo-gallery-thumb-copy-btn,
-.neo-gallery-thumb-video-send-btn {
+.neo-gallery-thumb-video-send-btn,
+.neo-gallery-thumb-bookmark-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1263,7 +1264,8 @@ Accordion Section Buttons (Clear)
 .neo-gallery-thumb-send-btn:hover,
 .neo-gallery-thumb-img-send-btn:hover,
 .neo-gallery-thumb-copy-btn:hover,
-.neo-gallery-thumb-video-send-btn:hover {
+.neo-gallery-thumb-video-send-btn:hover,
+.neo-gallery-thumb-bookmark-btn:hover {
     background-color: rgba(0, 0, 0, 0.8);
     transform: scale(1.1);
 }
@@ -1974,5 +1976,102 @@ Accordion Section Buttons (Clear)
     0% { outline-width: 3px; box-shadow: 0 0 12px rgba(76, 154, 255, 0.6); }
     70% { outline-width: 2px; box-shadow: 0 0 6px rgba(76, 154, 255, 0.25); }
     100% { outline-width: 0; box-shadow: none; }
+}
+
+/* ====== Bookmark / Collect menu ====== */
+
+.neo-gallery-collect-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 200px;
+    max-width: 320px;
+    background: rgba(24, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 6px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(6px);
+}
+
+.neo-gallery-collect-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #eee;
+}
+
+.neo-gallery-collect-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    font-weight: 600;
+}
+
+.neo-gallery-collect-path {
+    padding: 2px 8px 6px;
+    font-size: 11px;
+    color: #8a93a0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 4px;
+}
+
+.neo-gallery-collect-item {
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #ddd;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+.neo-gallery-collect-item:hover {
+    background: rgba(76, 154, 255, 0.18);
+    color: #fff;
+}
+
+/* Source badge on a bookmark card (本地 / C 站 / OSS 预设) */
+.neo-gallery-card-source-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 14px;
+    color: #bcd;
+    background: rgba(255, 255, 255, 0.12);
+    vertical-align: middle;
+}
+
+/* Pagination bar for bookmark lists (prev / next page) */
+.neo-gallery-pagination-btn {
+    padding: 5px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    background: rgba(42, 42, 46, 0.95);
+    color: #ccc;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.neo-gallery-pagination-btn:hover:not(:disabled) {
+    background: rgba(76, 154, 255, 0.22);
+    color: #fff;
+}
+
+.neo-gallery-pagination-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.neo-gallery-pagination-info {
+    font-size: 12px;
+    color: #9aa4b0;
 }
 

@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 remote_llm_config.json
 gallery_settings.json
+bookmarks.json
 model_config.json
 prompts/custom
 prompts/templates/custom

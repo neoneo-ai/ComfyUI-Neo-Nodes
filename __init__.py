@@ -3,7 +3,10 @@
 # Import gallery module to register routes (must be imported for route registration)
 from . import gallery
 
-# Import recipes module (depends on gallery helpers; registers recipe routes)
+# Import bookmark module (local / Civitai bookmark routes; depends on gallery helpers)
+from . import bookmark
+
+# Import recipes module (depends on gallery helpers and bookmark download helpers)
 from . import recipes
 
 # Import workflow module (workflow repair API; registers /neo_nodes/repair route)

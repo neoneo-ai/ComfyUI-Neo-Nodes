@@ -4,7 +4,6 @@
 import os
 import re
 import json
-import math
 import base64
 import asyncio
 import hashlib
@@ -20,6 +19,14 @@ import mimetypes
 from .util import (
     IMG_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, ALL_MEDIA_EXTENSIONS,
     _has_media_recursive, _has_media_in_dir_any, _extract_media_metadata, _collect_prompt_texts,
+    _load_settings, _save_settings, _json_safe,
+)
+# 收藏相关常量统一由 bookmark 模块提供（收藏后端逻辑收敛到 bookmark.py）。
+# bookmark 不反向导入本模块，避免循环导入。
+from .bookmark import (
+    CIVITAI_BOOKMARK_DIR,
+    CIVITAI_DIR_NAME,
+    _is_civitai_bookmark_enabled,
 )
 
 # ---------------------------------------------------------------------------
@@ -32,8 +39,6 @@ PRESETS_DIR = GALLERY_DIR / "presets"
 CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
-CIVITAI_BOOKMARK_DIR = GALLERY_DIR / "civitai_bookmarks"  # cached example images for bookmarked C-site models
-CIVITAI_DIR_NAME = "Civitai 收藏"  # first-level gallery dir for bookmarked C-site models (mirrors the Lora section)
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -85,7 +90,7 @@ def _get_user_custom_dirs():
     """
     dirs = []
     try:
-        settings_path = CURRENT_DIR / "gallery_settings.json"
+        settings_path = CONFIGS_DIR / "gallery_settings.json"
         if settings_path.exists():
             with open(settings_path, "r") as f:
                 settings = json.load(f)
@@ -138,27 +143,6 @@ def _repair_mislabeled_media() -> None:
                     pass
 
 
-
-SETTINGS_FILE = CURRENT_DIR / "gallery_settings.json"
-
-
-def _save_settings(settings: dict):
-    """Atomically persist settings. Raises so the route can report a real failure."""
-    tmp = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-    tmp.replace(SETTINGS_FILE)
-
-
-def _load_settings() -> dict:
-    try:
-        if SETTINGS_FILE.exists():
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"[Neo Gallery] Failed to load settings ({e}); treating as empty. "
-              f"Fix or delete {SETTINGS_FILE}")
-    return {}
 
 # ---------------------------------------------------------------------------
 # OSS / Lora modules (split out of this file)
@@ -586,6 +570,8 @@ async def get_gallery_list(request):
                 rel_path_param = dir_name_param[len("lora/"):]
             await _ensure_auto_cache()
         elif dir_name_lower == CIVITAI_DIR_NAME.lower() or dir_name_lower.startswith(CIVITAI_DIR_NAME.lower() + "/"):
+            if not _is_civitai_bookmark_enabled():
+                return web.json_response({"directories": [], "total": 0})
             base = CIVITAI_BOOKMARK_DIR
             if not rel_path_param and dir_name_lower != CIVITAI_DIR_NAME.lower():
                 rel_path_param = dir_name_param[len(CIVITAI_DIR_NAME) + 1:]
@@ -1786,18 +1772,6 @@ async def view_video(request):
     )
 
 
-def _json_safe(value):
-    """Return a copy with non-finite floats (NaN/Infinity) replaced by None so the
-    response is always valid strict JSON that browsers can parse."""
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, dict):
-        return {k: _json_safe(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(v) for v in value]
-    return value
-
-
 @PromptServer.instance.routes.get("/neo_gallery/media_meta")
 async def media_meta(request):
     """Return embedded ComfyUI workflow/prompt metadata for a gallery media file."""
@@ -2118,6 +2092,8 @@ async def save_gallery_settings(request):
         elif action == "save_civitai":
             if "enabled" in data:
                 current_settings["civitai_lora_enabled"] = bool(data.get("enabled"))
+            if "bookmark_enabled" in data:
+                current_settings["civitai_bookmark_enabled"] = bool(data.get("bookmark_enabled"))
             if "api_key" in data:
                 current_settings["civitai_api_key"] = str(data.get("api_key") or "").strip()
             if isinstance(data.get("dirs"), list):
@@ -2196,7 +2172,8 @@ async def delete_gallery_item(request):
         # them can be deleted (the folder itself is protected by the listing UI).
         subfolder_lower = (subfolder or "").lower()
         if subfolder_lower == "presets" or subfolder_lower.startswith("presets/") \
-                or subfolder_lower == "lora" or subfolder_lower.startswith("lora/"):
+                or subfolder_lower == "lora" or subfolder_lower.startswith("lora/") \
+                or subfolder_lower == "civitai_bookmarks" or subfolder_lower.startswith("civitai_bookmarks/"):
             return web.json_response({"success": False, "error": "Cannot delete from read-only directory"}, status=403)
 
         # --- Resolve base directory and target path ---

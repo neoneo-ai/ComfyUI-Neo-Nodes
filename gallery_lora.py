@@ -17,8 +17,7 @@ from aiohttp import web
 from server import PromptServer
 import folder_paths
 
-from .gallery import _load_settings
-from .util import _has_media_recursive
+from .util import _load_settings, _has_media_recursive
 
 # ---------------------------------------------------------------------------
 # Paths (self-contained: this file lives next to gallery.py)

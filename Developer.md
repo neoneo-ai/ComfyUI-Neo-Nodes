@@ -34,7 +34,9 @@ ComfyUI-Neo-Nodes/
 ├── pytest.ini              # 测试配置（testpaths = tests）
 ├── configs/                # 运行时配置
 │   ├── remote_llm_config.json  # 远程 LLM 配置（按 provider 分槽；.gitignore 不入库）
-│   └── oss_presets.json        # OSS 预设素材源配置
+│   ├── oss_presets.json        # OSS 预设素材源配置
+│   ├── gallery_settings.json   # 画廊自定义目录与 Civitai 设置（API KEY 脱敏显示；.gitignore 不入库）
+│   └── bookmarks.json          # 本地收藏：仅存路径信息，不复制文件（.gitignore 不入库）
 ├── locals/                 # 本地化资源（zh_CN.json）
 ├── prompts/                # 提示词与模板目录
 │   ├── presets/            # 内置提示词预设（.txt，含 collections/、video/ 子集）
@@ -236,7 +238,8 @@ NODE_CLASS_MAPPINGS = {
 | `recipes/presets/` | 内置预设配方（只读） |
 | `configs/remote_llm_config.json` | 远程 LLM 配置：`active_provider` + 按 provider 分槽的 `providers`（openai / lmstudio / ollama / openrouter / local），API Key 仅存本机 |
 | `configs/oss_presets.json` | OSS 预设素材源配置 |
-| `gallery_settings.json` | 素材自定义目录与 Civitai 设置（API KEY 脱敏显示） |
+| `configs/gallery_settings.json` | 素材自定义目录与 Civitai 设置（API KEY 脱敏显示；.gitignore 不入库） |
+| `configs/bookmarks.json` | 本地收藏：仅记录路径信息，不复制文件（.gitignore 不入库） |
 | `user/neo_repair_mappings.json` | 工作流修复的手动映射（ComfyUI 用户目录） |
 | `locals/zh_CN.json` | 本地化资源 |
 

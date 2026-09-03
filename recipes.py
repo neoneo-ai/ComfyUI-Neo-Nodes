@@ -2,6 +2,7 @@
 # ComfyUI-Neo-Nodes — Video Recipe Module
 # A recipe = a named combination: prompt text + ordered assets (images/videos),
 # stored in its own preset directory with an assets/ folder.
+# 收藏（本地/C 站）后端逻辑已统一收敛到 bookmark.py，本模块只保留配方职责。
 
 import re
 import json
@@ -9,22 +10,22 @@ import shutil
 import datetime
 import mimetypes
 from pathlib import Path
-from urllib.parse import quote, urlparse
 import aiohttp
 from aiohttp import web
 from server import PromptServer
 
 from .gallery import (
     AUDIO_EXTENSIONS,
-    CIVITAI_BOOKMARK_DIR,
     IMG_EXTENSIONS,
     VIDEO_EXTENSIONS,
     _copy_media_to_input,
-    _json_safe,
-    _load_settings,
 )
-from .gallery_lora import CIVITAI_API_BASE, LORA_CACHE_DIR, _load_lora_index
-from .util import _extract_media_metadata
+from .bookmark import (
+    _download_bytes,
+    _media_ext_from_url_or_bytes,
+)
+from .gallery_lora import LORA_CACHE_DIR, _load_lora_index
+from .util import _extract_media_metadata, _json_safe
 
 CURRENT_DIR = Path(__file__).parent.resolve()
 RECIPES_DIR = CURRENT_DIR / "recipes"
@@ -32,9 +33,6 @@ CUSTOM_DIR = RECIPES_DIR / "custom"      # 用户保存的配方
 PRESETS_DIR = RECIPES_DIR / "presets"    # 内置预设（只读）
 
 _sanitize_name_re = re.compile(r"[^\w\- ]+")  # keep letters/digits/_/- and spaces
-
-# Progress of the current bookmark example-image cache run (polled by the UI, like the Lora auto-cache).
-_bookmark_cache_state: dict = {"running": False, "total": 0, "done": 0, "current": "", "error": ""}
 
 
 def _ensure_dirs() -> None:
@@ -68,178 +66,6 @@ def _kind_of(asset_file: Path) -> str:
     if asset_file.suffix.lower() in AUDIO_EXTENSIONS:
         return "audio"
     return "image"
-
-
-# ---------------------------------------------------------------------------
-# Civitai sources — list bookmarked models, resolve pasted URLs, and build
-# recipes from resolved metadata or locally-cached LORAs (gallery lora cache).
-# ---------------------------------------------------------------------------
-
-def _civitai_headers(api_key: str) -> dict:
-    headers = {"User-Agent": "ComfyUI-Neo-Nodes"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
-async def _civitai_get(session, path: str, params: dict, api_key: str):
-    """GET a Civitai API path. Returns (http_status, parsed_json)."""
-    url = f"{CIVITAI_API_BASE}{path}"
-    try:
-        async with session.get(url, params=params, headers=_civitai_headers(api_key),
-                               timeout=aiohttp.ClientTimeout(total=25)) as resp:
-            if resp.status != 200:
-                return resp.status, None
-            return resp.status, await resp.json()
-    except Exception:
-        return 0, None
-
-
-def _parse_civitai_model_id(url: str) -> int | None:
-    """Extract a Civitai model id from a pasted model page or image URL."""
-    if not isinstance(url, str):
-        return None
-    m = re.search(r"/models/(\d+)", url)
-    if m:
-        return int(m.group(1))
-    # Image page URLs carry the owning model in the query string (?model=<id>)
-    m = re.search(r"[?&]model=(\d+)", url)
-    if m:
-        return int(m.group(1))
-    return None
-
-
-def _civitai_loras_from_version(version: dict) -> list:
-    """Collect LORA names + strengths from example-image meta.civitaiResources[].weight."""
-    seen = {}
-    order = []
-    for img in version.get("images") or []:
-        meta = img.get("meta")
-        if not isinstance(meta, dict):
-            continue
-        for res in meta.get("civitaiResources") or []:
-            if not isinstance(res, dict):
-                continue
-            name = str(res.get("name") or "").strip()
-            if not name:
-                continue
-            try:
-                weight = float(res.get("weight", 1.0))
-            except (TypeError, ValueError):
-                weight = 1.0
-            if name not in seen:
-                seen[name] = weight
-                order.append(name)
-    return [{"name": n, "strength": seen[n]} for n in order]
-
-
-def _civitai_prompt_from_version(version: dict) -> str:
-    for img in version.get("images") or []:
-        meta = img.get("meta")
-        if isinstance(meta, dict):
-            p = str(meta.get("prompt") or "").strip()
-            if p:
-                return p
-    return ""
-
-
-def _civitai_example_urls(version: dict) -> list:
-    urls = []
-    for img in version.get("images") or []:
-        u = img.get("url")
-        if isinstance(u, str) and u.startswith("http"):
-            urls.append(u)
-    return urls
-
-
-def _civitai_example_images(version: dict) -> list:
-    """Return [{url, prompt}] for a version's example images, in order (per-image prompt)."""
-    out = []
-    for img in version.get("images") or []:
-        if not isinstance(img, dict):
-            continue
-        u = img.get("url")
-        if not (isinstance(u, str) and u.startswith("http")):
-            continue
-        meta = img.get("meta")
-        prompt = ""
-        if isinstance(meta, dict):
-            prompt = str(meta.get("prompt") or "").strip()
-        out.append({"url": u, "prompt": prompt})
-    return out
-
-
-_civitai_key_re = re.compile(r"[^\w\-]+")
-
-
-def _civitai_bookmark_key(model_id, name: str) -> str:
-    """Filesystem-safe subdir key for a bookmarked model (name-based, id fallback)."""
-    n = _civitai_key_re.sub("_", str(name or "").strip()).strip("._ ")[:60]
-    return n or f"model_{model_id}"
-
-
-def _civitai_local_cover(model_id, name: str) -> str:
-    """Local cover URL for a model whose examples are already cached (fast path)."""
-    key = _civitai_bookmark_key(model_id, name)
-    cdir = CIVITAI_BOOKMARK_DIR / key
-    if not cdir.is_dir():
-        return ""
-    for p in sorted(cdir.iterdir()):
-        if p.is_file() and p.suffix.lower() in IMG_EXTENSIONS:
-            return f"/neo_gallery/image?filename={quote(p.name)}&subfolder=civitai_bookmarks/{quote(key)}"
-    return ""
-
-
-def _civitai_cover_from_model(model: dict) -> str:
-    """Best-effort preview image URL from a Civitai model object (list item or detail)."""
-    if not isinstance(model, dict):
-        return ""
-    imgs = model.get("images")
-    if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
-        u = imgs[0].get("url")
-        if isinstance(u, str) and u.startswith("http"):
-            return u
-    for ver in model.get("modelVersions") or []:
-        if not isinstance(ver, dict):
-            continue
-        for img in ver.get("images") or []:
-            u = img.get("url") if isinstance(img, dict) else None
-            if isinstance(u, str) and u.startswith("http"):
-                return u
-    return ""
-
-
-# 内存缓存：模型 id -> 预览图 URL（仅存字符串，重启后按需重新拉取）
-_civitai_cover_cache: dict = {}
-
-
-def _media_ext_from_url_or_bytes(url: str, data: bytes) -> str:
-    """Pick a media extension for downloaded bytes: trust the URL suffix when it is a
-    known media type, otherwise sniff the magic header."""
-    path = urlparse(url).path.lower()
-    for ext in (".png", ".jpg", ".jpeg", ".webp", ".mp4", ".gif"):
-        if path.endswith(ext):
-            return ext
-    head = data[:16]
-    if head.startswith(b"\x89PNG"):
-        return ".png"
-    if head[:3] == b"\xff\xd8\xff":
-        return ".jpg"
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return ".webp"
-    if head[4:8] == b"ftyp":
-        return ".mp4"
-    return ".bin"
-
-
-async def _download_bytes(session, url: str) -> bytes | None:
-    try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            if resp.status != 200:
-                return None
-            return await resp.read()
-    except Exception:
-        return None
 
 
 def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
@@ -711,227 +537,6 @@ def _normalize_loras(raw) -> list:
             st = 1.0
         out.append({"name": nm, "strength": st})
     return out
-
-
-@PromptServer.instance.routes.post("/rs_recipes/civitai_bookmarks")
-async def rs_recipes_civitai_bookmarks(request):
-    """List the user's bookmarked Civitai models (requires a configured API key)."""
-    api_key = str(_load_settings().get("civitai_api_key") or "").strip()
-    if not api_key:
-        return web.json_response({"success": False, "needs_api_key": True,
-                                  "error": "未配置 Civitai API KEY"}, status=400)
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    page = int(data.get("page", 0) or 0)
-    limit = 24
-    async with aiohttp.ClientSession() as session:
-        status, body = await _civitai_get(session, "/models", {
-            "favorites": "true", "type": "Model", "limit": str(limit), "skip": str(page * limit),
-        }, api_key)
-    if status in (401, 403):
-        return web.json_response({"success": False, "error": "Civitai API KEY 无效"}, status=401)
-    if status != 200 or not isinstance(body, dict):
-        return web.json_response({"success": False, "error": f"Civitai HTTP {status or 'error'}"}, status=502)
-    items = []
-    for it in body.get("items") or []:
-        if not isinstance(it, dict):
-            continue
-        mid = it.get("id")
-        mname = it.get("name") or ""
-        items.append({
-            "id": mid,
-            "name": mname,
-            "type": it.get("type") or "",
-            "baseModel": it.get("baseModel") or "",
-            "nsfw": bool(it.get("nsfw")),
-            "cover": _civitai_local_cover(mid, mname) or _civitai_cover_from_model(it),
-        })
-    return web.json_response({"success": True, "items": items, "page": page,
-                              "has_more": len(items) >= limit})
-
-
-@PromptServer.instance.routes.post("/rs_recipes/civitai_model_cover")
-async def rs_recipes_civitai_model_cover(request):
-    """Return a preview image URL for one Civitai model (cached in memory), used as the
-    lazy-loaded gallery cover for a bookmarked model card."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    model_id = data.get("id")
-    if not model_id:
-        return web.json_response({"success": False, "error": "缺少模型 id"}, status=400)
-    api_key = str(_load_settings().get("civitai_api_key") or "").strip()
-    if not api_key:
-        return web.json_response({"success": False, "needs_api_key": True}, status=400)
-
-    key = str(model_id)
-    if key in _civitai_cover_cache:
-        return web.json_response({"success": True, "cover": _civitai_cover_cache[key]})
-
-    async with aiohttp.ClientSession() as session:
-        status, body = await _civitai_get(session, f"/models/{model_id}", {}, api_key)
-    if status in (401, 403):
-        return web.json_response({"success": False, "error": "Civitai API KEY 无效"}, status=401)
-    if status != 200 or not isinstance(body, dict):
-        return web.json_response({"success": False, "cover": "",
-                                  "error": f"Civitai HTTP {status or 'error'}"})
-
-    cover = _civitai_cover_from_model(body.get("model") or {})
-    _civitai_cover_cache[key] = cover
-    return web.json_response({"success": True, "cover": cover})
-
-
-@PromptServer.instance.routes.post("/rs_recipes/civitai_resolve")
-async def rs_recipes_civitai_resolve(request):
-    """Resolve a pasted Civitai model/image URL into recipe-ready metadata."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    url = str(data.get("url") or "").strip()
-    if not url:
-        return web.json_response({"success": False, "error": "缺少链接"}, status=400)
-    model_id = _parse_civitai_model_id(url)
-    if model_id is None:
-        return web.json_response({"success": False,
-                                  "error": "无法从该链接解析 Civitai 模型（支持 civitai.com/models/<id> 或含 ?model=<id> 的图片链接）"}, status=400)
-    api_key = str(_load_settings().get("civitai_api_key") or "").strip()
-    async with aiohttp.ClientSession() as session:
-        status, body = await _civitai_get(session, f"/models/{model_id}", {"withVersionFiles": "true"}, api_key)
-    if status in (401, 403):
-        return web.json_response({"success": False, "error": "Civitai API KEY 无效（付费/私有模型需有效 KEY）"}, status=401)
-    if status == 404:
-        return web.json_response({"success": False, "error": "未找到该 Civitai 模型"}, status=404)
-    if status != 200 or not isinstance(body, dict):
-        return web.json_response({"success": False, "error": f"Civitai HTTP {status or 'error'}"}, status=502)
-
-    model = body.get("model") or {}
-    versions = body.get("modelVersions") or []
-    version = versions[0] if versions and isinstance(versions[0], dict) else {}
-    return web.json_response(_json_safe({
-        "success": True,
-        "model_id": model_id,
-        "name": model.get("name") or "",
-        "type": model.get("type") or "",
-        "base_model": model.get("baseModel") or "",
-        "nsfw": bool(model.get("nsfw")),
-        "version_name": version.get("name") or "",
-        "prompt": _civitai_prompt_from_version(version),
-        "images": _civitai_example_urls(version)[:8],
-        "loras": _civitai_loras_from_version(version),
-    }))
-
-
-@PromptServer.instance.routes.post("/rs_recipes/civitai_bookmark_media")
-async def rs_recipes_civitai_bookmark_media(request):
-    """Cache a bookmarked model's example images (+ per-image prompt .txt) locally,
-    mirroring the Lora cache, so the standard gallery grid + lightbox can browse them
-    and send-image / send-prompt work on real files."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    model_id = data.get("id")
-    if not model_id:
-        return web.json_response({"success": False, "error": "缺少模型 id"}, status=400)
-    api_key = str(_load_settings().get("civitai_api_key") or "").strip()
-    if not api_key:
-        return web.json_response({"success": False, "needs_api_key": True,
-                                  "error": "未配置 Civitai API KEY"}, status=400)
-
-    try:
-        model_id = int(model_id)
-    except (TypeError, ValueError):
-        return web.json_response({"success": False, "error": "无效的模型 id"}, status=400)
-
-    name = str(data.get("name") or "").strip()
-    key = _civitai_bookmark_key(model_id, name)
-    cache_dir = CIVITAI_BOOKMARK_DIR / key
-    subfolder = f"civitai_bookmarks/{key}"
-    meta_path = cache_dir / "meta.json"
-
-    # Fast path: example images already cached locally (prefer the local copy).
-    if meta_path.is_file() and any(p.is_file() and p.suffix.lower() in IMG_EXTENSIONS for p in cache_dir.iterdir()):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            meta = {}
-        files = sorted(p.name for p in cache_dir.iterdir() if p.is_file() and p.suffix.lower() in IMG_EXTENSIONS)
-        return web.json_response({
-            "success": True,
-            "model_key": key,
-            "subfolder": subfolder,
-            "prompt": str(meta.get("prompt") or ""),
-            "images": [{"filename": fn, "subfolder": subfolder} for fn in files],
-        })
-
-    # Slow path: fetch version detail and download example images (+ prompt .txt).
-    async with aiohttp.ClientSession() as session:
-        status, body = await _civitai_get(session, f"/models/{model_id}", {"withVersionFiles": "true"}, api_key)
-    if status in (401, 403):
-        return web.json_response({"success": False, "error": "Civitai API KEY 无效"}, status=401)
-    if status == 404:
-        return web.json_response({"success": False, "error": "未找到该 Civitai 模型"}, status=404)
-    if status != 200 or not isinstance(body, dict):
-        return web.json_response({"success": False, "error": f"Civitai HTTP {status or 'error'}"}, status=502)
-
-    versions = body.get("modelVersions") or []
-    version = versions[0] if versions and isinstance(versions[0], dict) else {}
-    examples = _civitai_example_images(version)[:12]
-    prompt = next((ex["prompt"] for ex in examples if ex["prompt"]), "")
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    # Clear stale samples from a previous partial run (keep meta.json).
-    for stale in cache_dir.iterdir():
-        if stale.is_file() and stale.name.startswith("sample_"):
-            stale.unlink()
-
-    images = []
-    _bookmark_cache_state.update({"running": True, "total": len(examples), "done": 0, "current": "", "error": ""})
-    try:
-        async with aiohttp.ClientSession() as session:
-            for ex in examples:
-                if len(images) >= 8:
-                    break
-                _bookmark_cache_state["current"] = (ex["url"].rsplit("/", 1)[-1] or "")[:60]
-                blob = await _download_bytes(session, ex["url"])
-                _bookmark_cache_state["done"] += 1
-                if not blob:
-                    continue
-                ext = _media_ext_from_url_or_bytes(ex["url"], blob)
-                if ext not in IMG_EXTENSIONS:
-                    continue
-                stem = f"sample_{len(images):02d}"
-                (cache_dir / f"{stem}{ext}").write_bytes(blob)
-                if ex["prompt"]:
-                    (cache_dir / f"{stem}.txt").write_text(ex["prompt"], encoding="utf-8")
-                images.append({"filename": f"{stem}{ext}", "subfolder": subfolder})
-    finally:
-        _bookmark_cache_state.update({"running": False, "current": ""})
-
-    if not images:
-        _bookmark_cache_state["error"] = "No downloadable sample images"
-
-    if images:
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump({"prompt": prompt}, f, ensure_ascii=False)
-
-    return web.json_response({
-        "success": True,
-        "model_key": key,
-        "subfolder": subfolder,
-        "prompt": prompt,
-        "images": images,
-    })
-
-
-@PromptServer.instance.routes.get("/rs_recipes/civitai_bookmark_status")
-async def rs_recipes_civitai_bookmark_status(request):
-    return web.json_response(dict(_bookmark_cache_state))
 
 
 @PromptServer.instance.routes.post("/rs_recipes/save_from_civitai")

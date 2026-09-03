@@ -115,6 +115,7 @@ export class GalleryComponents {
         let civitaiKeyHint = "";
         let loraSyncDirs = [];
         let civitaiEnabled = false;
+        let civitaiBookmarkEnabled = true;
         try {
             const resp = await api.fetchApi('/neo_gallery/get_settings');
             if (resp.ok) {
@@ -128,6 +129,7 @@ export class GalleryComponents {
                 civitaiKeySet = !!settings.civitai_api_key_set;
                 civitaiKeyHint = settings.civitai_api_key_hint || "";
                 civitaiEnabled = !!settings.civitai_lora_enabled;
+                civitaiBookmarkEnabled = settings.civitai_bookmark_enabled !== false;
                 if (Array.isArray(settings.lora_sync_dirs)) loraSyncDirs = [...settings.lora_sync_dirs];
             }
         } catch (e) { }
@@ -453,7 +455,7 @@ export class GalleryComponents {
         };
 
         const civitaiArea = $el("div", { className: "neo-gallery-civitai-area" }, [
-            $el("div", { className: "neo-gallery-civitai-title", textContent: "Civitai LORA Examples" }),
+            $el("div", { className: "neo-gallery-civitai-title", textContent: "Civitai（C 站同步）" }),
             $el("label", { className: "neo-gallery-civitai-toggle" }, [
                 $el("input", {
                     type: "checkbox",
@@ -473,6 +475,27 @@ export class GalleryComponents {
                     }
                 }),
                 $el("span", { textContent: "启用 C 站 LORA（访问时自动获取示例图）" })
+            ]),
+            $el("label", { className: "neo-gallery-civitai-toggle" }, [
+                $el("input", {
+                    type: "checkbox",
+                    checked: civitaiBookmarkEnabled,
+                    onchange: async (e) => {
+                        civitaiBookmarkEnabled = !!e.target.checked;
+                        try {
+                            await api.fetchApi('/neo_gallery/save_settings', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: "save_civitai", bookmark_enabled: civitaiBookmarkEnabled })
+                            });
+                            showToast(gallery.app, 'success', civitaiBookmarkEnabled ? '已启用' : '已停用',
+                                civitaiBookmarkEnabled ? 'C 站收藏已开启。' : 'C 站收藏已关闭。');
+                        } catch (err) {
+                            showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the C 站收藏 switch.');
+                        }
+                    }
+                }),
+                $el("span", { textContent: "启用 C 站收藏（默认开启）" })
             ]),
             $el("div", { className: "neo-gallery-civitai-key-row" }, [
                 civitaiKeyInput,
@@ -1264,6 +1287,116 @@ export class GalleryComponents {
         }
     }
 
+    // ====== 收藏菜单（缩略图卡右下角「⋯」信息扩展按钮） ======
+
+    _removeCollectMenu() {
+        const existing = document.querySelector('.neo-gallery-collect-menu');
+        if (existing) existing.remove();
+    }
+
+    /** 根据素材来源拆分 gallery 目录名与子路径，用于本地收藏路径记录。 */
+    _bookmarkLocator(image, subfolder, source, gallery) {
+        const full = String(subfolder || "");
+        if (String(source || "").toLowerCase() === "oss") {
+            return { source: "oss", dir: full, subfolder: "" };
+        }
+        // 顶层目录名必须是列表接口可解析的卡片名（自定义目录名 / Input / Output）。
+        // item.subfolder 只是卡片内相对路径（如 "佟丽娅"），单独无法定位，
+        // 因此用当前视图的 source + categoryPath 还原「可打开、可取封面」的路径。
+        const view = gallery && gallery.currentView;
+        if (view && view.source) {
+            const dir = view.source;
+            const sub = Array.isArray(view.categoryPath) ? view.categoryPath.join("/") : "";
+            return { source: "local", dir, subfolder: sub };
+        }
+        const segs = full.split("/").filter(Boolean);
+        const dir = segs[0] || "Input";
+        return { source: "local", dir, subfolder: segs.slice(1).join("/") };
+    }
+
+    async _collectMedia(gallery, payload, label) {
+        try {
+            const resp = await api.fetchApi('/neo_bookmark/local/add', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (data.success) {
+                showToast(gallery.app, 'success', '已加入收藏', label);
+            } else if (resp.status === 409) {
+                showToast(gallery.app, 'info', '已在收藏中', label);
+            } else {
+                showToast(gallery.app, 'error', '收藏失败', data.error || '');
+            }
+        } catch (e) {
+            showToast(gallery.app, 'error', '收藏失败', String(e));
+        }
+    }
+
+    _showCollectMenu(gallery, image, subfolder, source, anchor) {
+        this._removeCollectMenu();
+        const loc = this._bookmarkLocator(image, subfolder, source, gallery);
+        const displayName = (image.name || image.filename || '').replace(/\.\w+$/, '') || "素材";
+        const isOss = loc.source === "oss";
+        const folderName = loc.subfolder ? loc.subfolder.split("/").pop() : (loc.dir || "目录");
+        const fileSub = loc.subfolder ? `/${loc.subfolder}` : "";
+        const pathLabel = `${loc.dir}${fileSub}${image.filename ? '/' + image.filename : ''}`;
+
+        const collectFile = () => this._collectMedia(gallery, {
+            source: loc.source, name: displayName,
+            dir: loc.dir, subfolder: loc.subfolder, filename: image.filename || image.name || ""
+        }, displayName);
+
+        const collectDir = () => this._collectMedia(gallery, {
+            source: loc.source, name: folderName,
+            dir: loc.dir, subfolder: loc.subfolder, filename: ""
+        }, folderName + (isOss ? '（OSS 预设）' : ''));
+
+        const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
+            $el("div", { className: "neo-gallery-collect-title" }, [
+                $el("span", { className: "neo-gallery-collect-name", textContent: displayName }),
+                isOss ? $el("span", { className: "neo-gallery-card-source-badge", textContent: "OSS 预设" }) : null
+            ]),
+            $el("div", {
+                className: "neo-gallery-collect-path",
+                title: pathLabel,
+                textContent: pathLabel
+            }),
+            $el("div", {
+                className: "neo-gallery-collect-item",
+                onclick: () => { collectFile(); this._removeCollectMenu(); }
+            }, ["\u2B50 收藏本图"]),
+            $el("div", {
+                className: "neo-gallery-collect-item",
+                onclick: () => { collectDir(); this._removeCollectMenu(); }
+            }, ["\uD83D\uDCC1 收藏所属目录"])
+        ]);
+
+        document.body.appendChild(menu);
+        const rect = (anchor && anchor.getBoundingClientRect()) || { right: 0, bottom: 0 };
+        const mRect = menu.getBoundingClientRect();
+        menu.style.left = Math.max(8, Math.min(rect.right - mRect.width, window.innerWidth - mRect.width - 8)) + 'px';
+        menu.style.top = (rect.bottom + 4) + 'px';
+        if (rect.bottom + mRect.height > window.innerHeight) {
+            menu.style.top = Math.max(8, rect.top - mRect.height - 4) + 'px';
+        }
+
+        const closeOnOutside = (e) => {
+            if (!menu.contains(e.target)) this._removeCollectMenu();
+        };
+        const closeOnEsc = (e) => { if (e.key === 'Escape') this._removeCollectMenu(); };
+        setTimeout(() => {
+            document.addEventListener('mousedown', closeOnOutside);
+            document.addEventListener('keydown', closeOnEsc);
+        }, 0);
+        menu._cleanup = () => {
+            document.removeEventListener('mousedown', closeOnOutside);
+            document.removeEventListener('keydown', closeOnEsc);
+        };
+        const origRemove = menu.remove.bind(menu);
+        menu.remove = () => { if (menu._cleanup) menu._cleanup(); origRemove(); };
+    }
+
     // ====== Image Element ======
 
     createImageElement(gallery, image, subfolder, source = "") {
@@ -1284,7 +1417,8 @@ export class GalleryComponents {
 
         let deleteBtn = null;
         const subLower = (subfolder || '').toLowerCase();
-        const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/');
+        const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/')
+            || subLower === 'civitai_bookmarks' || subLower.startsWith('civitai_bookmarks/');
         // System input/output files are deletable; only presets, lora, and remote
         // (oss) sources are read-only.
         if (!isReadOnlySource && source !== "oss") {
@@ -1345,6 +1479,16 @@ export class GalleryComponents {
             }, ["\u29C9"]);
         }
 
+        // 右下角信息扩展按钮：点击弹出收藏菜单（收藏本图 / 收藏所属自定义目录 / OSS 预设）。
+        const bookmarkBtn = $el("div", {
+            className: "neo-gallery-thumb-bookmark-btn",
+            title: "收藏本素材",
+            onclick: (e) => {
+                e.stopPropagation();
+                this._showCollectMenu(gallery, image, subfolder, source, bookmarkBtn);
+            }
+        }, ["\u22EF"]);
+
         let mediaEl;
         const thumbnailSrc = isVideoFileResult || isImageFileResult ? getThumbnailSrc(image, subfolder) : null;
         
@@ -1377,7 +1521,7 @@ export class GalleryComponents {
             });
         }
 
-        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, sendBtn, imgSendBtn, copyBtn].filter(Boolean));
+        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, sendBtn, imgSendBtn, copyBtn, bookmarkBtn].filter(Boolean));
 
         const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [mediaEl, btnBar]);
 
@@ -1800,7 +1944,7 @@ export class GalleryComponents {
         imgWrapper.appendChild(imageInfo);
 
         // Build all images list for navigation
-        const allImages = [];
+        let allImages = [];
         const { source, categoryPath, mode } = gallery.currentView;
 
         // In lazy mode, dir.items may be empty - use saved _currentDirImages if available
@@ -1816,24 +1960,22 @@ export class GalleryComponents {
             }
         } else if (source && mode !== 'categories') {
             const dir = gallery.allDirectories.find(d => d.name === source || d.path === source);
-            if (dir) {
-                // Directly use _currentDirImages when dir.items is undefined (lazy mode)
-                let dirItems = [];
-                if (dir.items && dir.items.length > 0) {
-                    dirItems = [...dir.items];
-                } else if (gallery._currentDirImages && gallery._currentDirImages.length > 0) {
-                    dirItems = [...gallery._currentDirImages];
-                }
-                if (categoryPath && categoryPath.length > 0) {
-                    const catKey = categoryPath[0];
-                    dirItems = dirItems.filter(i => {
-                        const match = i.category === catKey || !i.category;
-                        return match;
-                    });
-                }
-                for (const item of dirItems) {
-                    allImages.push({ ...item, subfolder: item.subfolder || source });
-                }
+            // Use the directory's items when present, otherwise fall back to the images
+            // currently rendered in the grid. The fallback also covers directories that are not
+            // top-level entries (e.g. "Civitai 收藏" bookmark dirs), which have no entry in
+            // allDirectories but whose items carry a resolvable subfolder.
+            let dirItems = [];
+            if (dir && dir.items && dir.items.length > 0) {
+                dirItems = [...dir.items];
+            } else if (gallery._currentDirImages && gallery._currentDirImages.length > 0) {
+                dirItems = [...gallery._currentDirImages];
+            }
+            if (categoryPath && categoryPath.length > 0) {
+                const catKey = categoryPath[0];
+                dirItems = dirItems.filter(i => i.category === catKey || !i.category);
+            }
+            for (const item of dirItems) {
+                allImages.push({ ...item, subfolder: item.subfolder || source });
             }
         } else {
             for (const dir of gallery.allDirectories) {
@@ -1846,7 +1988,7 @@ export class GalleryComponents {
             }
         }
 
-        allImages.sort((a, b) => a.name.localeCompare(b.name));
+        allImages = sortByMtime(allImages);
         const currentIndex = allImages.findIndex(img => img.filename === image.filename && img.subfolder === subfolder);
 
         const prevBtn = $el("div", {
@@ -1950,7 +2092,7 @@ export class GalleryComponents {
             promptSection.appendChild(promptContainer);
             const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
             promptSection.appendChild(metaBtnsContainer);
-            this._renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer);
+            this._renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection);
 
             // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
 
@@ -2165,14 +2307,10 @@ export class GalleryComponents {
         return frag;
     }
 
-    _renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer) {
+    _renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection) {
         this._fetchMediaMeta(image, subfolder).then(meta => {
-            if (!meta || !meta.has) {
-                promptContainer.appendChild($el("div", {
-                    textContent: "此图片未内嵌工作流/提示词",
-                    style: { color: "#999", fontSize: "12px" }
-                }));
-                promptContainer.style.display = "";
+            if (!meta || !meta.has) {  // 未内嵌工作流/提示词：整个区域不显示、不占位
+                if (promptSection) promptSection.style.display = "none";
                 return;
             }
             const texts = meta.texts;
@@ -2551,7 +2689,7 @@ export class GalleryComponents {
             promptSection.appendChild(promptContainer);
             const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
             promptSection.appendChild(metaBtnsContainer);
-            this._renderEmbeddedMeta(this.gallery, image, subfolder, promptContainer, metaBtnsContainer);
+            this._renderEmbeddedMeta(this.gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection);
 
             // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
 
