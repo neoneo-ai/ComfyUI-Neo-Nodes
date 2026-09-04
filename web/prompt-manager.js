@@ -1431,6 +1431,16 @@ function createPromptManagerUI() {
         else refreshMarkdownPreview();
     }
     mdPreviewBtn.addEventListener("click", () => setMdPreview(!mdPreviewOn));
+    // 一键清除按钮：定位在 custom area 右上角，清空提示词并同步 widget/storage（无确认，直接清）
+    const clearBtn = mkEl("button", "rs-clear-btn");
+    clearBtn.textContent = "✕";
+    clearBtn.setAttribute("data-rs-tooltip", "Clear prompt / 清空");
+    clearBtn.addEventListener("click", () => {
+        customTextarea.value = "";
+        triggerTextChange();
+        if (mdPreviewOn) paintMdPreview();
+    });
+    customTextareaWrapper.appendChild(clearBtn);
     // 预览中的任务列表复选框可点击：回写 [ ]/[x] 到 textarea（经 input 事件同步 widget/storage），
     // 便于多轮技能把用户选择带入下一次生成；不重渲染，避免长列表滚动位置跳动
     mdPreview.addEventListener("click", (e) => {
