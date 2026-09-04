@@ -169,7 +169,7 @@ function createBasicNodeInitializer(node) {
 function createGenerateHandler(promptUI) {
     return async () => {
         console.log("createGenerateHandler called with promptUI keys:", Object.keys(promptUI));
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [] } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [], refreshMarkdownPreviewAuto } = promptUI;
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -201,9 +201,8 @@ function createGenerateHandler(promptUI) {
         generateBtn.textContent = "⏳";
 
         let rafId = null;
+        let accumulated = "";
         try {
-            let accumulated = "";
-
             if (hasImages || markerSkillId) {
                 // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
                 if (markerSkillId && !hasImages) {
@@ -231,6 +230,7 @@ function createGenerateHandler(promptUI) {
                                 rafId = requestAnimationFrame(() => {
                                     customTextarea.value = accumulated;
                                     customTextarea.scrollTop = customTextarea.scrollHeight;
+                                    refreshMarkdownPreviewAuto?.();
                                     rafId = null;
                                 });
                             }
@@ -269,6 +269,7 @@ function createGenerateHandler(promptUI) {
                                 rafId = requestAnimationFrame(() => {
                                     customTextarea.value = accumulated;
                                     customTextarea.scrollTop = customTextarea.scrollHeight;
+                                    refreshMarkdownPreviewAuto?.();
                                     rafId = null;
                                 });
                             }
@@ -302,6 +303,7 @@ function createGenerateHandler(promptUI) {
                                 rafId = requestAnimationFrame(() => {
                                     customTextarea.value = accumulated;
                                     customTextarea.scrollTop = customTextarea.scrollHeight;
+                                    refreshMarkdownPreviewAuto?.();
                                     rafId = null;
                                 });
                             }
@@ -325,6 +327,10 @@ function createGenerateHandler(promptUI) {
         } finally {
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
+            if (accumulated) {
+                customTextarea.value = accumulated;
+                refreshMarkdownPreviewAuto?.();
+            }
         }
     };
 }

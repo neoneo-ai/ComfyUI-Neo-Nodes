@@ -1386,10 +1386,33 @@ function createPromptManagerUI() {
 
     // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
     let mdPreviewOn = false;
+    // 渲染预览并把 GFM 任务列表复选框设为可交互（marked 默认输出 disabled，这里放开）
+    function paintMdPreview() {
+        mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
+        for (const box of mdPreview.querySelectorAll('input[type="checkbox"]')) {
+            box.disabled = false;
+            box.style.cursor = "pointer";
+        }
+    }
+    // 切换源码中第 boxIndex 个任务项的勾选（[ ]/[x]），未命中则原样返回
+    function setTaskItemChecked(text, boxIndex, checked) {
+        const lines = text.split("\n");
+        let seen = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const m = lines[i].match(/^(\s*(?:[-*+]|\d+[.)])\s+\[)( |x|X)(\])/);
+            if (!m) continue;
+            seen++;
+            if (seen === boxIndex) {
+                lines[i] = m[1] + (checked ? "x" : " ") + m[3] + lines[i].slice(m[0].length);
+                return lines.join("\n");
+            }
+        }
+        return text;
+    }
     function setMdPreview(on) {
         mdPreviewOn = on;
         if (on) {
-            mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
+            paintMdPreview();
             customTextarea.style.display = "none";
             mdPreview.style.display = "block";
             mdPreviewBtn.classList.add("rs-md-preview-active");
@@ -1400,9 +1423,26 @@ function createPromptManagerUI() {
         }
     }
     function refreshMarkdownPreview() {
-        if (mdPreviewOn) mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
+        if (mdPreviewOn) paintMdPreview();
+    }
+    // 生成/流式结束后调用：内容识别为 Markdown 则自动切到预览，否则同步刷新已开启的预览
+    function refreshMarkdownPreviewAuto() {
+        if (looksLikeMarkdown(customTextarea.value || "")) setMdPreview(true);
+        else refreshMarkdownPreview();
     }
     mdPreviewBtn.addEventListener("click", () => setMdPreview(!mdPreviewOn));
+    // 预览中的任务列表复选框可点击：回写 [ ]/[x] 到 textarea（经 input 事件同步 widget/storage），
+    // 便于多轮技能把用户选择带入下一次生成；不重渲染，避免长列表滚动位置跳动
+    mdPreview.addEventListener("click", (e) => {
+        const box = e.target && e.target.closest ? e.target.closest('input[type="checkbox"]') : null;
+        if (!box || !mdPreview.contains(box)) return;
+        const boxes = Array.from(mdPreview.querySelectorAll('input[type="checkbox"]'));
+        const next = setTaskItemChecked(customTextarea.value || "", boxes.indexOf(box), box.checked);
+        if (next !== customTextarea.value) {
+            customTextarea.value = next;
+            triggerTextChange();
+        }
+    });
 
     // 轻量 Markdown 识别：仅当出现标题 / 代码块 / 列表 / 加粗等强信号才判定为 Markdown，避免普通提示词误判
     function looksLikeMarkdown(text) {
@@ -1454,8 +1494,7 @@ function createPromptManagerUI() {
         api.addEventListener("rs.prompt.auto_generate_update", (event) => {
             const uid = node.properties?.rs_instance_uid;
             if (uid && event.detail.instance_uid !== uid) return;
-            if (looksLikeMarkdown(customTextarea.value || "")) setMdPreview(true);
-            else refreshMarkdownPreview();
+            refreshMarkdownPreviewAuto();
         });
 
         // 不再在这里触发，由 prompts.js 统一管理时序
@@ -2010,6 +2049,7 @@ function createPromptManagerUI() {
             listBtn,
             quickInput,
             customTextarea,
+            refreshMarkdownPreviewAuto,
             settingsBtn,
             toggleSwitch,
             localTab,

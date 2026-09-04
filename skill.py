@@ -444,16 +444,59 @@ def run_skill_agent(skill_id: str, text: str, images=None) -> str:
     return _skill_agent_core(skill_id, text, images)
 
 
+def _skill_agent_core_stream(skill_id: str, text: str, images=None) -> Generator[str, None, None]:
+    """流式执行 skill 生成：单轮路径逐 token 透传 LLM 输出（与 llm.run_llm_task_stream 一致），
+    工具循环路径复用非流式核心再逐字输出。失败抛出异常，由调用方捕获。"""
+    from .llm import get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
+
+    skill_id = (skill_id or "").strip()
+    if not skill_id:
+        raise ValueError("No skill specified")
+
+    language = _resolve_skill_language(text)
+    system_prompt = load_skill_content(skill_id, language=language)
+    if not system_prompt:
+        raise ValueError(f"Skill '{skill_id}' not found or has no content")
+
+    refs = list_skill_references(skill_id)
+    max_tokens = load_skill_max_tokens(skill_id) or 500
+    remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
+
+    if not (remote_mode and refs):
+        # 本地模式或无引用：单轮生成，直接流式透传 LLM token（打字效果由模型出 token 速率驱动）
+        if refs:
+            logger.warning(f"Skill '{skill_id}' has references but tool calling is unavailable; using main file only")
+        result = _run_llm_inference(system_prompt, text, max_tokens, images=images or None,
+                                    use_remote=remote_mode, stream=True)
+        if hasattr(result, '__iter__') and not isinstance(result, str):
+            for chunk in result:
+                if isinstance(chunk, dict):
+                    choices = chunk.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                elif isinstance(chunk, str) and chunk:
+                    yield chunk
+        else:
+            # 本地路径未返回生成器（不支持流式）：回退为整段输出
+            yield result or ""
+        return
+
+    # 远程 + 引用：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出
+    for ch in _skill_agent_core(skill_id, text, images):
+        yield ch
+
+
 def run_skill_agent_stream(skill_id: str, text: str, images=None) -> Generator[str, None, None]:
-    """流式契约：逐字 yield 最终答案；失败 yield '[ERROR] ...'（与 llm.run_llm_task_stream 一致）。"""
+    """流式契约：逐 token yield 最终答案；失败 yield '[ERROR] ...'（与 llm.run_llm_task_stream 一致）。"""
     try:
-        result = _skill_agent_core(skill_id, text, images)
+        for chunk in _skill_agent_core_stream(skill_id, text, images):
+            yield chunk
     except Exception as e:
         logger.error(f"Skill agent error for '{skill_id}': {e}")
         yield f"[ERROR] {str(e)}"
-        return
-    for ch in (result or ""):
-        yield ch
 
 
 def load_task_template(task_name: str) -> dict:

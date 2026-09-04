@@ -339,6 +339,41 @@ class TestSkillAgent(unittest.TestCase):
         out = self.skill._skill_agent_core("myskill", "hello")
         self.assertEqual(out, "[single]")
 
+    def test_stream_single_turn_yields_tokens_incrementally(self):
+        # 本地模式 + 单轮：应逐 token 透传，且向 LLM 请求 stream=True
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+        captured = {}
+
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+            captured["stream"] = stream
+            return iter(["Hello ", "world", "!"])
+
+        self.llm._run_llm_inference = fake_inference
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hello"))
+        self.assertEqual(captured.get("stream"), True)
+        self.assertEqual(chunks, ["Hello ", "world", "!"])
+
+    def test_stream_single_turn_parses_dict_chunks(self):
+        # 本地模型可能返回 dict chunk：只取 delta.content，跳过空/无 choices
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+        self.llm._run_llm_inference = lambda *a, **k: iter([
+            {"choices": [{"delta": {"content": "ab"}}]},
+            {"choices": [{"delta": {}}]},
+            {"choices": []},
+        ])
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
+        self.assertEqual(chunks, ["ab"])
+
+    def test_stream_yields_error_on_failure(self):
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+
+        def boom(*a, **k):
+            raise RuntimeError("nope")
+
+        self.llm._run_llm_inference = boom
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
+        self.assertEqual(chunks, ["[ERROR] nope"])
+
     def test_resolve_skill_language(self):
         self.llm._load_remote_config = lambda: {"skill_language": "cn"}
         self.assertEqual(self.skill._resolve_skill_language("any english text"), "cn")

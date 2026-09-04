@@ -254,7 +254,7 @@ app.registerExtension({
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
-                attachedImages, clearImages
+                attachedImages, clearImages, refreshMarkdownPreviewAuto
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
             // Populate template selector, restore last selection and sync to hidden widget
@@ -497,7 +497,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, graph: node.graph, statusBar: null,
-                attachedImages, clearImages
+                attachedImages, clearImages, refreshMarkdownPreviewAuto
             };
 
             const handleGeneratePrompt = NodeBehaviors.createGenerateHandler(
@@ -816,7 +816,7 @@ app.registerExtension({
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
-                attachedImages, clearImages
+                attachedImages, clearImages, refreshMarkdownPreviewAuto
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
             // Populate template selector, restore last selection and sync to hidden widget
@@ -1086,7 +1086,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, graph: node.graph, statusBar,
-                attachedImages, clearImages
+                attachedImages, clearImages, refreshMarkdownPreviewAuto
             };
 
             const handleGeneratePrompt = NodeBehaviors.createGenerateHandler(
