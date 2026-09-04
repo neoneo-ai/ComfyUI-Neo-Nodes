@@ -63,7 +63,7 @@ export function attachComboBox(selectEl, opts = {}) {
     inputEl.style.paddingRight = "30px";
 
     // 列表挂在 body 上用 fixed 定位：不被弹窗 overflow 裁剪，下方空间不足时自动向上翻
-    const listEl = el("div", "", "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
+    const listEl = el("div", "rs-combo-list", "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
     document.body.appendChild(listEl);
 
     const clearBtn = el("button", "rs-combo-clear", "position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;line-height:20px;text-align:center;background:none;border:none;color:#888;font-size:13px;cursor:pointer;padding:0;display:none;z-index:1;");

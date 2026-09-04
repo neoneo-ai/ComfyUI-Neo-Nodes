@@ -165,12 +165,12 @@ async function deleteSkillFile(id, file) {
 
 // ==========================================
 // UI：createSkillManagerTab()
-// 返回 { el, refresh } —— el 作为设置弹窗的 "Prompt Templates" 标签内容，
+// 返回 { el, refresh } —— el 为技能管理内容容器（由 createSkillManagerModal 挂入居中弹窗），
 // refresh() 重新拉取列表（首次打开时由调用方触发）。
 // ==========================================
 
 function createSkillManagerTab() {
-    const el = mkEl("div", "rs-tab-content");
+    const el = mkEl("div", "rs-skill-tab");
 
     // ---- Toolbar：搜索 + New + 上传(ZIP/目录) ----
     const toolbar = mkEl("div", "rs-tpl-toolbar");
@@ -401,15 +401,15 @@ function createSkillManagerTab() {
             const row = document.createElement("div");
             row.className = "rs-tpl-item";
             row.dataset.id = tpl.id;
+            // 整行可点击打开编辑器；右侧图标各自 stopPropagation，不会误触发
+            row.addEventListener("mousedown", (e) => {
+                e.preventDefault();
+                loadEditor(tpl);
+            });
 
             const leftDiv = mkEl("div", "rs-preset-left");
             const contentSpan = mkEl("span", "rs-preset-content");
             contentSpan.textContent = tpl.name || tpl.id;
-            contentSpan.style.cursor = "pointer";
-            contentSpan.addEventListener("mousedown", (e) => {
-                e.stopPropagation(); e.preventDefault(); e.stopImmediatePropagation();
-                loadEditor(tpl);
-            }, true);
 
             const sourceBadge = mkEl("span", "rs-source-badge");
             if (tpl.source === "presets") { sourceBadge.textContent = "SYS"; sourceBadge.title = "System preset (read-only)"; }
@@ -587,6 +587,56 @@ function createSkillManagerTab() {
 }
 
 // ==========================================
+// UI：createSkillManagerModal() —— 文档居中的技能管理弹窗（比原设置浮层更大，便于编辑 skill）
+// 内部复用 createSkillManagerTab() 的内容；open()/close() 控制显隐，首次 open 时拉取列表。
+// overlay 自动挂到 document.body（fixed 全屏遮罩 + 居中面板），避免被节点边界裁剪。
+// 返回 { overlay, open, close }。
+// ==========================================
+
+function createSkillManagerModal() {
+    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    const modal = mkEl("div", "rs-skill-modal");
+
+    const header = mkEl("div", "rs-skill-modal-header");
+    const titleSpan = mkEl("span", "rs-skill-modal-title");
+    titleSpan.textContent = "📝 Skills & Prompt Templates";
+    header.appendChild(titleSpan);
+    const closeBtn = mkEl("button", "rs-skill-modal-close");
+    closeBtn.textContent = "✕";
+    closeBtn.setAttribute("aria-label", "Close");
+    header.appendChild(closeBtn);
+
+    const content = mkEl("div", "rs-skill-modal-content");
+    const tab = createSkillManagerTab();
+    content.appendChild(tab.el);
+
+    modal.append(header, content);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    let loaded = false;
+    const open = () => {
+        overlay.style.display = "flex";
+        if (!loaded) {
+            tab.refresh().then(() => { loaded = true; });
+        }
+    };
+    const close = () => { overlay.style.display = "none"; };
+
+    // 拦截弹窗内部指针事件向外冒泡，避免触发画布选节点等副作用（同预设列表浮层）
+    ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => {
+        modal.addEventListener(t, (e) => e.stopPropagation());
+    });
+    // 点遮罩空白处关闭；✕ 关闭
+    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
+    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); close(); });
+    const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") close(); };
+    document.addEventListener("keydown", onKey);
+
+    return { overlay, open, close };
+}
+
+// ==========================================
 // 导出（纯 ES 模块，无副作用）
 // ==========================================
 export {
@@ -599,5 +649,6 @@ export {
     loadSkillFile,
     saveSkillFile,
     deleteSkillFile,
-    createSkillManagerTab
+    createSkillManagerTab,
+    createSkillManagerModal
 };

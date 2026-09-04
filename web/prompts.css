@@ -1077,72 +1077,6 @@
     pointer-events: auto !important;
 }
 
-/* Settings modal - 阻止点击冒泡到 document */
-.rs-settings-modal {
-    position: fixed;
-    display: none;
-    justify-content: flex-start;
-    align-items: flex-start;
-    z-index: 99999;
-    min-width: 500px;
-    max-width: 800px;
-    /* 默认居中显示 */
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: auto !important;
-}
-
-/* 当通过 JS 设置为右侧定位时，移除 transform */
-.rs-settings-modal.rs-positioned-right {
-    transform: none;
-    top: 0;
-    left: 0;
-}
-
-.rs-settings-modal-wrapper {
-    display: flex;
-    flex-direction: column;
-   min-width: 500px;
-    max-width: 800px;
-    border-radius: 8px;
-    overflow: hidden;
-    pointer-events: auto !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    border: 1px solid #444;
-    background: #1a1a2a;
-}
-
-.rs-settings-modal.show { display: flex !important; }
-
-.rs-settings-header {
-    background: #1a2a3a;
-    color: #fff;
-    padding: 8px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    border-bottom: 1px solid #3a4a5a;
-    border-radius: 8px 8px 0 0;
-    position: relative;
-    display: flex;
-    align-items: center;
-    min-height: 32px;
-}
-
-.rs-settings-header .rs-settings-title-bar { flex: 1; }
-
-.rs-settings-content {
-    background: #1a1a2a;
-    border-radius: 0 0 8px 8px;
-    padding: 8px 10px;
-    min-width: 500px;
-    max-width: 800px;
-    border: 1px solid #3a4a5a;
-    border-top: none;
-    display: flex;
-    flex-direction: column;
-}
-
 .rs-settings-info { margin-bottom: 8px; }
 
 .rs-settings-title {
@@ -1518,46 +1452,6 @@
    Remote LLM Config Styles
    ========================================== */
 
-/* Tab navigation */
-.rs-tabs-nav {
-    display: flex;
-    border-bottom: 1px solid #444;
-    margin-bottom: 6px;
-}
-
-.rs-tab-btn {
-    flex: 1;
-    padding: 5px 8px;
-    background: transparent;
-    border: none;
-    color: #999;
-    font-size: 12px;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition: all 0.2s;
-    font-weight: 500;
-}
-
-.rs-tab-btn:hover {
-    color: #60a5fa;
-    background: rgba(80, 144, 204, 0.1);
-}
-
-.rs-tab-btn.active {
-    color: #60a5fa !important;
-    border-bottom-color: #60a5fa !important;
-}
-
-/* Tab content - only Templates tab uses .rs-tab-content class now */
-.rs-tab-content {
-    display: none;
-}
-
-/* LLM Settings tab content - visible by default (no .rs-tab-content class) */
-.rs-llm-settings-content {
-    display: block;
-}
-
 /* Remote form styles */
 .rs-remote-form {
     display: flex;
@@ -1823,6 +1717,7 @@
     gap: 8px;
     margin-bottom: 8px;
     align-items: center;
+    flex-shrink: 0;
 }
 
 .rs-tpl-search {
@@ -1840,6 +1735,7 @@
     max-height: 250px;
     overflow-y: auto;
     margin-bottom: 8px;
+    flex-shrink: 0;
 }
 
 .rs-tpl-item {
@@ -1862,6 +1758,9 @@
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid #3a4a5a;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .rs-tpl-name,
@@ -2345,6 +2244,98 @@
     color: #888;
     font-size: 11px;
     line-height: 1.4;
+}
+
+/* 自动增强菜单内嵌 LLM 配置表单：加宽 + 限高滚动（普通运行时菜单不受影响） */
+.rs-runtime-menu.rs-auto-config {
+    min-width: 320px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+}
+
+.rs-runtime-divider {
+    height: 1px;
+    background: #444;
+    margin: 8px 0;
+}
+
+.rs-runtime-section-title {
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+/* ==========================================
+   Skill Manager Modal - 文档居中弹窗（比原设置浮层更大，便于编辑 skill）
+   ========================================== */
+.rs-skill-modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 99999;
+}
+
+.rs-skill-modal {
+    display: flex;
+    flex-direction: column;
+    width: min(860px, calc(100vw - 48px));
+    max-height: calc(100vh - 48px);
+    background: #1a1a2a;
+    border: 1px solid #444;
+    border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+}
+
+.rs-skill-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #1a2a3a;
+    border-bottom: 1px solid #3a4a5a;
+}
+
+.rs-skill-modal-title {
+    flex: 1;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.rs-skill-modal-close {
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 15px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+}
+
+.rs-skill-modal-close:hover {
+    color: #fff;
+}
+
+.rs-skill-modal-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px 14px;
+}
+
+/* 技能管理标签：填满内容区，内部各区域自行滚动（工具栏/列表固定，编辑区填充剩余空间并内部滚动） */
+.rs-skill-modal-content .rs-skill-tab {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
 }
 
 /* dice lives inside .rs-random-wrap - re-apply the collapsed floating-group

@@ -75,9 +75,10 @@ ComfyUI-Neo-Nodes/
 │   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 顶栏按钮）
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
-│   ├── prompt-manager.js   # 提示词管理器（预设/模板/设置窗口）
+│   ├── prompt-manager.js   # 提示词管理器（预设列表 / 自动增强菜单内嵌 LLM 配置 / ⚙️ 居中技能弹窗入口）
 │   ├── prompt-service.js   # 提示词 API 服务封装
-│   └── skill.js            # 技能模块：skill API + createSkillManagerTab()（列表/编辑器/多文件/上传）
+│   ├── llm-setting.js      # LLM 配置表单（provider/模型/API key/本地目录），挂入自动增强菜单
+│   └── skill.js            # 技能模块：skill API + createSkillManagerTab()/createSkillManagerModal()（列表/编辑器/多文件/上传）
 └── .github/workflows/
     └── publish.yaml        # 发布 ComfyUI Registry 的 GitHub Action
 ```
@@ -111,9 +112,10 @@ ComfyUI-Neo-Nodes/
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip |
-| `prompt-manager.js` | 提示词管理器：预设列表、模型设置（远程 API / 本地模型）窗口；技能管理标签委托给 `skill.js` |
+| `prompt-manager.js` | 提示词管理器：预设列表、自动增强菜单（内嵌 LLM 配置表单）、⚙️ 打开居中技能弹窗；LLM 表单逻辑在 `llm-setting.js`，技能管理委托给 `skill.js` |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
-| `skill.js` | 技能模块（纯 ES 模块，仅 export）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillManagerTab()`（列表、编辑器含多文件面板、上传 zip/目录） |
+| `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，由 prompt-manager 挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |
+| `skill.js` | 技能模块（纯 ES 模块，仅 export）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillManagerTab()`（列表、编辑器含多文件面板、上传 zip/目录）+ `createSkillManagerModal()`（文档居中弹窗，open/close） |
 
 ## 后端 API 路由
 

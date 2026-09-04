@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { mkEl, createPromptManagerUI, createSettingsModal, loadRemoteLLMConfig } from "./prompt-manager.js";
+import { mkEl, createPromptManagerUI } from "./prompt-manager.js";
 import { 
     enhancePrompt, translatePrompt, randomPrompt as randomPromptAPI
 } from "./prompt-service.js";
@@ -253,7 +253,6 @@ app.registerExtension({
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
-                settingsModal, loadModelsIntoSettings,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
@@ -816,7 +815,6 @@ app.registerExtension({
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
-                settingsModal, loadModelsIntoSettings,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
