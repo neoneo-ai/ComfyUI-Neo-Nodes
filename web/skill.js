@@ -1,10 +1,14 @@
 /**
  * skill.js
- * Skill 模块（纯 ES 模块：仅 export，不 registerExtension，无副作用）
+ * Skill 模块（ES 模块：export API + UI；导入 marked/purify 用于 Markdown 渲染）
  * - API：listSkills / loadSkill / saveSkill / deleteSkill / uploadSkill
  *        listSkillFiles / loadSkillFile / saveSkillFile / deleteSkillFile
  * - UI ：createSkillManagerTab() —— 列表 + 编辑器（含多文件面板）+ 上传 zip/目录
  */
+
+// Markdown 渲染复用 ComfyUI 内置同款库（marked + DOMPurify），breaks:true 保留单行换行
+import "./marked.min.js";
+import "./purify.min.js";
 
 // ==========================================
 // DOM 元素工厂（本地实现，避免与 prompt-manager.js 循环依赖）
@@ -170,94 +174,26 @@ async function deleteSkillFile(id, file) {
 // ==========================================
 
 // ==========================================
-// 轻量级 Markdown 渲染（无第三方依赖）
-// 先对原文逐段转义再套用格式，避免注入任意 HTML；链接 URL 仅放行 http(s)/mailto/#/相对路径。
+// Markdown 渲染：marked（GFM + breaks:true 保留换行）+ DOMPurify 消毒，防 LLM/用户内容注入
 // ==========================================
 function escapeHtml(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function formatInline(text) {
-    let out = "";
-    let i = 0;
-    const n = text.length;
-    while (i < n) {
-        const ch = text[i];
-        if (ch === "`") {
-            const end = text.indexOf("`", i + 1);
-            if (end !== -1) { out += "<code>" + escapeHtml(text.slice(i + 1, end)) + "</code>"; i = end + 1; continue; }
-        }
-        if (ch === "[") {
-            const m = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(text.slice(i));
-            if (m) {
-                let url = m[2];
-                if (!/^(https?:|mailto:|#|\/)/i.test(url)) url = "#";
-                out += '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + formatInline(m[1]) + "</a>";
-                i += m[0].length; continue;
-            }
-        }
-        if (text.startsWith("**", i)) {
-            const end = text.indexOf("**", i + 2);
-            if (end !== -1) { out += "<strong>" + formatInline(text.slice(i + 2, end)) + "</strong>"; i = end + 2; continue; }
-        }
-        if (ch === "*" || ch === "_") {
-            const end = text.indexOf(ch, i + 1);
-            if (end !== -1) { out += "<em>" + formatInline(text.slice(i + 1, end)) + "</em>"; i = end + 1; continue; }
-        }
-        let j = i;
-        while (j < n && text[j] !== "`" && text[j] !== "[" && text[j] !== "*" && text[j] !== "_") j++;
-        if (j === i) { out += escapeHtml(text[i]); i++; }   // 未匹配的特殊字符按字面输出，保证前进
-        else { out += escapeHtml(text.slice(i, j)); i = j; }
-    }
-    return out;
-}
-
 function renderMarkdown(src) {
-    const lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
-    let html = "";
-    let i = 0;
-    const n = lines.length;
-    while (i < n) {
-        const line = lines[i];
-        if (/^```/.test(line)) {
-            const buf = [];
-            i++;
-            while (i < n && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
-            i++;
-            html += '<pre class="rs-md-pre"><code>' + escapeHtml(buf.join("\n")) + "</code></pre>";
-            continue;
-        }
-        if (/^\s*$/.test(line)) { i++; continue; }
-        const h = /^(#{1,6})\s+(.*)$/.exec(line);
-        if (h) { html += "<h" + h[1].length + ">" + formatInline(h[2].trim()) + "</h" + h[1].length + ">"; i++; continue; }
-        if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { html += "<hr>"; i++; continue; }
-        if (/^\s*>/.test(line)) {
-            const buf = [];
-            while (i < n && /^\s*>/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
-            html += "<blockquote>" + renderMarkdown(buf.join("\n")) + "</blockquote>";
-            continue;
-        }
-        if (/^\s*[-*+]\s+/.test(line)) {
-            const items = [];
-            while (i < n && /^\s*[-*+]\s+/.test(lines[i])) { items.push("<li>" + formatInline(lines[i].replace(/^\s*[-*+]\s+/, "")) + "</li>"); i++; }
-            html += "<ul>" + items.join("") + "</ul>";
-            continue;
-        }
-        if (/^\s*\d+\.\s+/.test(line)) {
-            const items = [];
-            while (i < n && /^\s*\d+\.\s+/.test(lines[i])) { items.push("<li>" + formatInline(lines[i].replace(/^\s*\d+\.\s+/, "")) + "</li>"); i++; }
-            html += "<ol>" + items.join("") + "</ol>";
-            continue;
-        }
-        const buf = [];
-        while (i < n && !/^\s*$/.test(lines[i]) && !/^```/.test(lines[i]) &&
-               !/^(#{1,6})\s+/.test(lines[i]) && !/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i]) &&
-               !/^\s*>/.test(lines[i]) && !/^\s*[-*+]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i])) {
-            buf.push(lines[i]); i++;
-        }
-        if (buf.length) html += "<p>" + formatInline(buf.join(" ")) + "</p>";
+    const text = String(src == null ? "" : src);
+    if (!text) return "";
+    // 首选：marked（GFM + breaks:true 保留单行换行）+ DOMPurify 消毒，防止 LLM/用户内容注入 HTML
+    if (window.marked && window.DOMPurify) {
+        return window.DOMPurify.sanitize(window.marked.parse(text, { gfm: true, breaks: true }));
     }
-    return html;
+    // 回退：ComfyUI 内置渲染器（已消毒，但不保留单行换行）
+    const app = window.comfyAPI?.app;
+    if (app?.extensionManager?.renderMarkdownToHtml) {
+        return app.extensionManager.renderMarkdownToHtml(text);
+    }
+    // 最后兜底：转义纯文本 + 手动换行
+    return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
 function createSkillManagerTab() {
@@ -764,6 +700,7 @@ export {
     loadSkillFile,
     saveSkillFile,
     deleteSkillFile,
+    renderMarkdown,
     createSkillManagerTab,
     createSkillManagerModal
 };

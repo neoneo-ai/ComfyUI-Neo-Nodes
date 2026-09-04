@@ -5,13 +5,58 @@
 import os
 import sys
 import json
+import types
+import asyncio
+import importlib
 import unittest
 from unittest.mock import patch, mock_open, MagicMock
 import tempfile
 import shutil
 
 # 添加父目录到路径以导入模块
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+_NODE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, _NODE_DIR)
+# ComfyUI 根目录（提供 folder_paths / server 等模块）
+_COMFY_ROOT = os.path.abspath(os.path.join(_NODE_DIR, '..', '..'))
+sys.path.insert(0, _COMFY_ROOT)
+
+# llm.py 使用相对导入（from . import skill），需作为包的子模块加载
+_PKG_NAME = "_neo_nodes_test_pkg"
+if _PKG_NAME not in sys.modules:
+    _pkg = types.ModuleType(_PKG_NAME)
+    _pkg.__path__ = [_NODE_DIR]
+    sys.modules[_PKG_NAME] = _pkg
+
+
+class _FakeRoutes:
+    def _deco(self, *a, **k):
+        def wrapper(fn):
+            return fn
+        return wrapper
+    def get(self, *a, **k):
+        return self._deco()
+    def post(self, *a, **k):
+        return self._deco()
+
+
+class _FakePromptServer:
+    class instance:
+        routes = _FakeRoutes()
+
+
+_fake_server = types.ModuleType("server")
+_fake_server.PromptServer = _FakePromptServer
+sys.modules["server"] = _fake_server
+
+try:
+    llm_mod = importlib.import_module(f"{_PKG_NAME}.llm")
+    LLM_AVAILABLE = True
+except Exception as _e:  # 缺少 server/aiohttp 等依赖时跳过
+    llm_mod = None
+    LLM_AVAILABLE = False
+    _LLM_IMPORT_ERROR = _e
+
+_llm_reason = "" if LLM_AVAILABLE else f"llm module unavailable: {_LLM_IMPORT_ERROR}"
 
 
 class TestModelConfig(unittest.TestCase):
@@ -430,6 +475,72 @@ class TestTextNormalization(unittest.TestCase):
         """测试制表符和换行符"""
         result = self._normalize_text("hello\t\tworld\n\nnew")
         self.assertEqual(result, "hello world new")
+
+
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestSSEFraming(unittest.TestCase):
+    """测试 SSE 流式分帧：换行等特殊字符必须经 JSON 编码穿过 data:\\n\\n 分帧，否则前端会丢字（预览变一行）"""
+
+    def _roundtrip(self, content):
+        orig = llm_mod.run_llm_task_stream
+
+        def fake_run_llm_task_stream(task_name, text, **kw):
+            # 与生产一致：同步生成器逐字 yield（含换行），模拟 run_skill_agent_stream / run_llm_task_stream
+            for ch in content:
+                yield ch
+
+        class _Req:
+            async def json(self):
+                return {"text": "x", "skillId": ""}
+
+        async def _drive():
+            resp = await llm_mod.handle_llm_api_stream("smart_prompt", _Req())
+            raw = b""
+            payload = resp.body
+            aiter = getattr(payload, "_iter", None) or payload
+            async for piece in aiter:
+                raw += bytes(piece) if isinstance(piece, (bytes, bytearray)) else str(piece).encode()
+            return raw.decode("utf-8")
+
+        llm_mod.run_llm_task_stream = fake_run_llm_task_stream
+        try:
+            buf = asyncio.run(_drive())
+        finally:
+            llm_mod.run_llm_task_stream = orig
+
+        # 模拟前端 prompt-service.js sseStream：按 \n 分帧，取 data: 行，JSON.parse（失败则当纯文本）
+        acc = ""
+        lines = buf.split("\n")
+        buffer = lines.pop() or ""
+        for line in lines:
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                obj = json.loads(data)
+                t = obj.get("text") if isinstance(obj, dict) else None
+                if t:
+                    acc += t
+            except Exception:
+                acc += data
+        return acc
+
+    def test_newlines_preserved(self):
+        self.assertEqual(self._roundtrip("第一行\n第二行"), "第一行\n第二行")
+
+    def test_numbered_list_preserved(self):
+        self.assertEqual(self._roundtrip("1. a\n2. b\n3. c"), "1. a\n2. b\n3. c")
+
+    def test_blank_line_paragraphs_preserved(self):
+        self.assertEqual(self._roundtrip("para one\n\npara two"), "para one\n\npara two")
+
+    def test_quotes_and_digits_preserved(self):
+        self.assertEqual(self._roundtrip('has "quotes" and 123 digits'), 'has "quotes" and 123 digits')
+
+    def test_crlf_preserved(self):
+        self.assertEqual(self._roundtrip("a\r\nb"), "a\r\nb")
 
 
 if __name__ == '__main__':

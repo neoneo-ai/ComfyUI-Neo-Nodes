@@ -1440,7 +1440,9 @@ async def handle_llm_api_stream(task_name, request):
                     chunk = await loop.run_in_executor(None, next_chunk)
                     if chunk is None:
                         break
-                    yield (f"data: {chunk}\n\n").encode()
+                    # JSON 编码每个 chunk：换行/引号等特殊字符转义后才能安全穿过 SSE 的 data:\n\n 分帧，
+                    # 否则单个 "\n" 会拆成空 data: 行被前端丢弃（导致预览变成一行）。
+                    yield ("data: " + json.dumps({"text": chunk}) + "\n\n").encode()
 
                 yield b"data: [DONE]\n\n"
             except Exception as e:

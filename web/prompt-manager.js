@@ -4,6 +4,7 @@
  */
 
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 import { attachComboBox } from "./combo-box.js";
 import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowLoras, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
 
@@ -19,7 +20,7 @@ import {
     fileToBase64,
     imagesFromClipboard
 } from "./prompt-service.js";
-import { listSkills, createSkillManagerModal } from "./skill.js";
+import { listSkills, createSkillManagerModal, renderMarkdown } from "./skill.js";
 import { createModelConfigForm } from "./llm-setting.js";
 
 // 字节数转人类可读大小（后端 /rs_prompts/get_models 返回的 file_size，多模态已含 mmproj）
@@ -1363,16 +1364,64 @@ function createPromptManagerUI() {
     // Create wrapper for custom textarea and buttons
     const customTextareaWrapper = mkEl("div", "rs-custom-textarea-wrapper");
     customTextareaWrapper.appendChild(customTextarea);
+
+    // Markdown 预览层：覆盖在 textarea 区域，点 👁 切换显示（复用 skill.js 的 renderMarkdown）
+    const mdPreview = mkEl("div", "rs-md-preview rs-prompt-md-preview");
+    mdPreview.style.display = "none";
+    customTextareaWrapper.appendChild(mdPreview);
     
     // Create button group wrapper
     const buttonGroup = mkEl("div", "rs-button-group");
     buttonGroup.appendChild(saveBtn);
     buttonGroup.appendChild(randomWrap);
     buttonGroup.appendChild(listBtn);
+
+    // Markdown 预览切换按钮（👁）：默认随按钮组折叠，hover 展开，激活时常亮高亮
+    const mdPreviewBtn = mkEl("button", "rs-action-btn rs-md-preview-btn");
+    mdPreviewBtn.textContent = "👁";
+    mdPreviewBtn.setAttribute("data-rs-tooltip", "Markdown 预览 / 编辑");
+    buttonGroup.appendChild(mdPreviewBtn);
+
     customTextareaWrapper.appendChild(buttonGroup);
+
+    // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
+    let mdPreviewOn = false;
+    function setMdPreview(on) {
+        mdPreviewOn = on;
+        if (on) {
+            mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
+            customTextarea.style.display = "none";
+            mdPreview.style.display = "block";
+            mdPreviewBtn.classList.add("rs-md-preview-active");
+        } else {
+            mdPreview.style.display = "none";
+            customTextarea.style.display = "";
+            mdPreviewBtn.classList.remove("rs-md-preview-active");
+        }
+    }
+    function refreshMarkdownPreview() {
+        if (mdPreviewOn) mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
+    }
+    mdPreviewBtn.addEventListener("click", () => setMdPreview(!mdPreviewOn));
+
+    // 轻量 Markdown 识别：仅当出现标题 / 代码块 / 列表 / 加粗等强信号才判定为 Markdown，避免普通提示词误判
+    function looksLikeMarkdown(text) {
+        if (!text) return false;
+        let heading = 0, list = 0;
+        for (const line of text.split("\n")) {
+            if (/^#{1,6}\s/.test(line)) heading++;
+            else if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) list++;
+        }
+        return /```/.test(text) || heading >= 1 || list >= 2 || /\*\*[^*\n]+\*\*/.test(text);
+    }
+
+    // 多轮交互提示：每次生成只推进一个阶段，需补充返回的问询后再次运行
+    const skillHint = mkEl("div", "rs-skill-hint");
+    skillHint.textContent = "多轮交互技能：每次生成仅推进一个阶段，请补充返回的问询后再次点击 ✨ 继续。";
     
     root.appendChild(customTextareaWrapper);
 
+    root.appendChild(skillHint);
     root.appendChild(buttonsWrapper);
     // quickInputWrapper at the bottom of the node
     root.appendChild(quickInputWrapper);
@@ -1400,6 +1449,14 @@ function createPromptManagerUI() {
     function init(ctx) {
         context = ctx;
         const { node, graph, textWidget, allowRecipe } = ctx;
+
+        // 流式生成时：内容识别为 Markdown 则自动切换为预览，否则保持同步刷新
+        api.addEventListener("rs.prompt.auto_generate_update", (event) => {
+            const uid = node.properties?.rs_instance_uid;
+            if (uid && event.detail.instance_uid !== uid) return;
+            if (looksLikeMarkdown(customTextarea.value || "")) setMdPreview(true);
+            else refreshMarkdownPreview();
+        });
 
         // 不再在这里触发，由 prompts.js 统一管理时序
 
