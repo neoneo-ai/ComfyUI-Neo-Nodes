@@ -192,6 +192,8 @@ python -c "from llama_cpp import Llama; print('ok')"
 | TASK（任务） | `skills/tasks/<id>/skill.md` | 内置任务技能（反推、中英互译等），只读 |
 | USR（自定义） | `skills/custom/<id>/skill.md` | 用户创建，可编辑、删除 |
 
+生成提示词时，插件按语言只加载一版主文件（`skill.md` 英文 / `skill.cn.md` 中文，二者互斥，避免中英混入同一提示词；默认依据输入语言自动判断，也可在 `remote_llm_config.json` 的 `skill_language` 字段固定为 `en`/`cn`）。子目录中的引用文件（如 `references/*.md`、`*.txt`）不会预先并入提示词，而是在远程模式下由模型通过 `read_skill_file` 工具按需读取（工具调用循环），以匹配 MiniMax-H3 等技能的渐进式披露设计并降低 token 消耗；本地模式或无引用时回退为单轮生成。
+
 节点底部的技能选择器将模板与任务技能统一展示，按用途分组：🖼️ 图像/反推、⚙️ 任务、🎨 风格模板、📝 自定义。选项前缀 📷 表示该技能需要图片输入，📌 表示内置预设。
 
 ### 图片反推与图片输入

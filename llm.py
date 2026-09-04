@@ -567,7 +567,8 @@ class RemoteLLMClient:
     def chat_completion(self, messages: List[Dict[str, Any]],
                         max_tokens: Optional[int] = None,
                         image_bytes_list: Optional[List[bytes]] = None,
-                        stream: bool = False) -> Any:
+                        stream: bool = False,
+                        tools: Optional[List[Dict[str, Any]]] = None) -> Any:
         """
         发送聊天补全请求
 
@@ -612,6 +613,9 @@ class RemoteLLMClient:
             "temperature": self.temperature,
             "stream": stream,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
 
         if not self.model:
             raise RuntimeError(
@@ -657,9 +661,13 @@ class RemoteLLMClient:
         
         message = choices[0].get("message", {})
         content = message.get("content", "")
+        out_message = {"role": message.get("role", "assistant"), "content": content}
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            out_message["tool_calls"] = tool_calls
         return {
             "choices": [{
-                "message": {"role": message.get("role", "assistant"), "content": content}
+                "message": out_message
             }]
         }
 
@@ -1095,6 +1103,26 @@ def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> Li
 # Public LLM Task Runner
 # ==========================================
 
+def remote_chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
+                     tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """对当前激活的远程 provider 执行一次（非流式）对话，返回 assistant message dict。
+
+    供 skill 代理循环按需调用：传入带 tools 的 messages，返回含 content / tool_calls 的消息。
+    远程未启用或不可用时抛出 RuntimeError。
+    """
+    config = _get_active_remote_config()
+    if not config.get("enabled", False):
+        raise RuntimeError("Remote LLM is disabled")
+    client = RemoteLLMClient(config)
+    if not client.is_available():
+        raise RuntimeError(f"Remote provider '{client.provider}' is not available")
+    response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools)
+    choices = response.get("choices", [])
+    if not choices:
+        return {}
+    return choices[0].get("message", {}) or {}
+
+
 def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] = None,
                  images: Optional[Any] = None, system_prompt: Optional[str] = None,
                  max_tokens_override: Optional[int] = None) -> Dict[str, Any]:
@@ -1371,18 +1399,15 @@ async def handle_llm_api_stream(task_name, request):
 
         system_prompt = None
         template_max_tokens = None
+        skill_agent = False
         if task_name == "reverse_prompt":
             logger.info("reverse_prompt skill: using default task system prompt")
         elif skill_id:
-            # 非任务类 skill：加载其系统提示词内容
+            # 非任务类 skill：走代理循环（按需读取引用 + 中英主文件互斥）
             logger.info(f"Attempting to load skill: {skill_id}")
-            system_prompt = skill.load_skill_content(skill_id)
-            if system_prompt:
-                logger.info(f"Loaded skill '{skill_id}' (length: {len(system_prompt)})")
-                # 如果提供了 skill，使用 template_prompt 任务
-                task_name = "template_prompt"
-                template_max_tokens = skill.load_skill_max_tokens(skill_id)
-                logger.info(f"Switched task from initial endpoint to: {task_name}, max_tokens={template_max_tokens}")
+            if skill.load_skill_content(skill_id):
+                skill_agent = True
+                logger.info(f"Routing skill '{skill_id}' through agent runner")
             else:
                 logger.warning(f"Skill '{skill_id}' not found or has no content")
         elif images:
@@ -1397,9 +1422,12 @@ async def handle_llm_api_stream(task_name, request):
                 # 将模板内容作为 system_prompt 传递；图片 byte 列表传给流式任务。
                 # 同步生成器在事件循环上直接迭代会阻塞整个 aiohttp loop（LLM 未出首包
                 # 时其他请求全部卡住），因此每次 next() 都丢进线程池执行。
-                gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
-                                          images=images if images else None,
-                                          max_tokens_override=template_max_tokens)
+                if skill_agent:
+                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None)
+                else:
+                    gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
+                                              images=images if images else None,
+                                              max_tokens_override=template_max_tokens)
                 loop = asyncio.get_running_loop()
 
                 def next_chunk():

@@ -413,22 +413,25 @@ class NeoPrompts:
                     task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
                     template_max = None
+                    skill_agent = False
                     if skill_id.strip():
-                        system_prompt = skill.load_skill_content(skill_id)
-                        template_max = skill.load_skill_max_tokens(skill_id)
-                        if system_prompt:
-                            task_name = "template_prompt"
-                            logger.info(f"Auto-generate using skill '{skill_id}' (length: {len(system_prompt)})")
+                        if skill.load_skill_content(skill_id):
+                            skill_agent = True
+                            logger.info(f"Auto-generate using skill '{skill_id}' (agent)")
                         else:
                             logger.warning(f"Skill '{skill_id}' not found, falling back to {task_name}")
                     logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
                     accumulated = ""
-                    stream_kwargs = {"system_prompt": system_prompt, "max_tokens_override": template_max}
-                    if image_mode:
-                        stream_kwargs["images"] = [image_bytes]
-                    for chunk in run_llm_task_stream(task_name, quick_input, **stream_kwargs):
+                    if skill_agent:
+                        gen = skill.run_skill_agent_stream(skill_id, quick_input, images=[image_bytes] if image_mode else None)
+                    else:
+                        stream_kwargs = {"system_prompt": system_prompt, "max_tokens_override": template_max}
+                        if image_mode:
+                            stream_kwargs["images"] = [image_bytes]
+                        gen = run_llm_task_stream(task_name, quick_input, **stream_kwargs)
+                    for chunk in gen:
                         accumulated += chunk
                         # Send real-time update to frontend
                         if instance_uid:
@@ -820,24 +823,32 @@ async def rs_prompts_smart_prompt(request):
 
         from .llm import run_llm_task, get_current_mode, LLM_MODE_REMOTE
 
-        # 确定系统提示词：优先使用 template 内容，其次按 skill_id 加载 skill
+        # 确定系统提示词：优先使用 template 内容，其次按 skill_id 走代理循环
         system_prompt = None
+        skill_agent = False
         if template and template.strip():
             # 直接提供了系统提示词内容
             system_prompt = template
             logger.info(f"Using direct template content (length: {len(system_prompt)})")
         elif skill_id:
-            # 使用 skill id 加载 skill 内容
-            system_prompt = skill.load_skill_content(skill_id)
-            if system_prompt:
-                logger.info(f"Loaded skill '{skill_id}' content (length: {len(system_prompt)})")
+            # 使用 skill id 走代理循环（按需读取引用 + 中英主文件互斥）
+            if skill.load_skill_content(skill_id):
+                skill_agent = True
+                logger.info(f"Routing skill '{skill_id}' through agent runner")
             else:
                 logger.warning(f"Skill '{skill_id}' not found or has no content")
 
-        # 如果提供了模板，使用模板作为系统提示词
         # run_in_executor：LLM 调用是同步阻塞的，直接跑会卡死事件循环
         loop = asyncio.get_running_loop()
-        if system_prompt and system_prompt.strip():
+        if skill_agent:
+            try:
+                answer = await loop.run_in_executor(
+                    None, lambda: skill.run_skill_agent(skill_id, text))
+                result_data = {"status": "success", "prompt": answer}
+            except Exception as e:
+                logger.error(f"Skill agent error for '{skill_id}': {e}")
+                result_data = {"error": str(e)}
+        elif system_prompt and system_prompt.strip():
             result_data = await loop.run_in_executor(
                 None, lambda: run_llm_task("template_prompt", text, system_prompt=system_prompt))
         else:
@@ -1183,12 +1194,11 @@ class NeoPromptAgent:
                     task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
                     template_max = None
+                    skill_agent = False
                     if skill_id.strip():
-                        system_prompt = skill.load_skill_content(skill_id)
-                        template_max = skill.load_skill_max_tokens(skill_id)
-                        if system_prompt:
-                            task_name = "template_prompt"
-                            logger.info(f"Auto-generate using skill '{skill_id}' (length: {len(system_prompt)})")
+                        if skill.load_skill_content(skill_id):
+                            skill_agent = True
+                            logger.info(f"Auto-generate using skill '{skill_id}' (agent)")
                         else:
                             logger.warning(f"Skill '{skill_id}' not found, falling back to {task_name}")
                     gen_meta.update(task=task_name, skill_id=skill_id)
@@ -1196,10 +1206,14 @@ class NeoPromptAgent:
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
                     accumulated = ""
-                    stream_kwargs = {"system_prompt": system_prompt, "max_tokens_override": template_max}
-                    if image_mode:
-                        stream_kwargs["images"] = [image_bytes]
-                    for chunk in run_llm_task_stream(task_name, quick_input, **stream_kwargs):
+                    if skill_agent:
+                        gen = skill.run_skill_agent_stream(skill_id, quick_input, images=[image_bytes] if image_mode else None)
+                    else:
+                        stream_kwargs = {"system_prompt": system_prompt, "max_tokens_override": template_max}
+                        if image_mode:
+                            stream_kwargs["images"] = [image_bytes]
+                        gen = run_llm_task_stream(task_name, quick_input, **stream_kwargs)
+                    for chunk in gen:
                         accumulated += chunk
                         # Send real-time update to frontend
                         if instance_uid:

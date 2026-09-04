@@ -245,5 +245,107 @@ class TestResolveMultiResult(unittest.TestCase):
             ["not json", "still not json"])
 
 
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestSkillAgent(unittest.TestCase):
+    """测试 skill 代理：语言互斥主文件选择、引用列表、安全读取与工具调用循环。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.skill = _il.import_module(f"{_PKG_NAME}.skill")
+        cls.llm = _il.import_module(f"{_PKG_NAME}.llm")
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.skdir = os.path.join(self.tmp, "myskill")
+        os.makedirs(os.path.join(self.skdir, "references"))
+        self._write("SKILL.md", "---\nname: myskill\n---\nEN MAIN BODY")
+        self._write("SKILL.cn.md", "CN MAIN BODY")
+        self._write(os.path.join("references", "ref.txt"), "REFERENCE CONTENT")
+
+        self._orig_skill_dir = self.skill._skill_dir
+        self.skill._skill_dir = lambda sid: self.skdir if sid == "myskill" else None
+
+        # 记录并替换 llm 依赖（skill 在函数运行时惰性 from .llm import ...）
+        self._llm_attrs = {}
+        for a in ("get_current_mode", "_load_remote_config", "_detect_language",
+                  "remote_chat_turn", "_run_llm_inference"):
+            self._llm_attrs[a] = getattr(self.llm, a)
+        self.llm._load_remote_config = lambda: {"skill_language": "auto"}
+        self.llm._detect_language = (lambda t: ("Chinese" if any('\u4e00' <= c <= '\u9fff'
+                                                                 for c in (t or "")) else "English"))
+
+    def tearDown(self):
+        import shutil
+        self.skill._skill_dir = self._orig_skill_dir
+        for a, v in self._llm_attrs.items():
+            setattr(self.llm, a, v)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, content):
+        with open(os.path.join(self.skdir, rel), "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def test_main_files_language_exclusive(self):
+        self.assertEqual(self.skill._main_md_files_for_language(self.skdir, "en"), ["SKILL.md"])
+        self.assertEqual(self.skill._main_md_files_for_language(self.skdir, "cn"), ["SKILL.cn.md"])
+
+    def test_load_content_en_excludes_cn(self):
+        c = self.skill.load_skill_content("myskill", language="en")
+        self.assertIn("EN MAIN BODY", c)
+        self.assertNotIn("CN MAIN BODY", c)
+
+    def test_load_content_cn_excludes_en(self):
+        c = self.skill.load_skill_content("myskill", language="cn")
+        self.assertIn("CN MAIN BODY", c)
+        self.assertNotIn("EN MAIN BODY", c)
+
+    def test_list_references(self):
+        self.assertEqual(self.skill.list_skill_references("myskill"), ["references/ref.txt"])
+
+    def test_read_reference_ok_and_safe(self):
+        self.assertEqual(self.skill.read_skill_file("myskill", "references/ref.txt"), "REFERENCE CONTENT")
+        self.assertIsNone(self.skill.read_skill_file("myskill", "../x.txt"))
+        self.assertIsNone(self.skill.read_skill_file("myskill", "/etc/passwd"))
+        self.assertIsNone(self.skill.read_skill_file("myskill", "references/../SKILL.md"))
+
+    def test_agent_reads_reference_then_finalizes(self):
+        calls = []
+
+        def fake_turn(messages, max_tokens=None, tools=None):
+            calls.append([dict(m) for m in messages])
+            if len(calls) == 1:
+                return {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "read_skill_file",
+                                  "arguments": '{"path": "references/ref.txt"}'}}]}
+            return {"role": "assistant", "content": "DONE"}
+
+        self.llm.remote_chat_turn = fake_turn
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        out = self.skill._skill_agent_core("myskill", "hello")
+        self.assertEqual(out, "DONE")
+        self.assertEqual(len(calls), 2)
+        tool_msgs = [m for m in calls[1] if m.get("role") == "tool"]
+        self.assertEqual(len(tool_msgs), 1)
+        self.assertEqual(tool_msgs[0]["content"], "REFERENCE CONTENT")
+        self.assertTrue(any(m.get("role") == "system" and "Available reference files" in m["content"]
+                            for m in calls[0]))
+
+    def test_agent_local_mode_falls_back_to_single_shot(self):
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+        self.llm._run_llm_inference = lambda *a, **k: "[single]"
+        out = self.skill._skill_agent_core("myskill", "hello")
+        self.assertEqual(out, "[single]")
+
+    def test_resolve_skill_language(self):
+        self.llm._load_remote_config = lambda: {"skill_language": "cn"}
+        self.assertEqual(self.skill._resolve_skill_language("any english text"), "cn")
+        self.llm._load_remote_config = lambda: {"skill_language": "auto"}
+        self.assertEqual(self.skill._resolve_skill_language("你好，世界"), "cn")
+        self.assertEqual(self.skill._resolve_skill_language("hello world"), "en")
+
+
 if __name__ == '__main__':
     unittest.main()

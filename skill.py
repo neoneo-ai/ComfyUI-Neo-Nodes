@@ -17,8 +17,8 @@ Skill = 一个目录，内含主文件 skill.md（大小写不敏感：SKILL.md 
   由代理按需读取）；带 YAML frontmatter 的 .md（含主文件 skill.md，忽略大小写）
   去掉 frontmatter，其余正文原样保留。
 
-本模块是叶子模块：不依赖 prompts / llm，仅依赖标准库 + PyYAML + aiohttp。
-prompts.py 与 llm.py 作为消费者从这里导入。
+本模块承载 skill 的目录管理与"按需读取引用文件"的代理循环；仅在函数运行时惰性导入 llm 原语，
+避免与 llm.py（顶层 from . import skill）形成循环导入。prompts.py / llm.py 作为消费者从这里导入。
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import os
 import re
 import io
 import json
+import base64
 import shutil
 import logging
 import tempfile
@@ -191,15 +192,6 @@ def _read_skill_md(skill_dir: str) -> tuple[dict, str]:
     return split_frontmatter(text)
 
 
-def _list_skill_files(skill_dir: str) -> list[str]:
-    """顶层所有 .md 文件名（升序）。仅用于系统提示词拼接（load_skill_content）。"""
-    files = []
-    for fn in sorted(os.listdir(skill_dir)):
-        if fn.lower().endswith(".md") and os.path.isfile(os.path.join(skill_dir, fn)):
-            files.append(fn)
-    return files
-
-
 def _list_all_skill_files(skill_dir: str) -> list[str]:
     """递归列出 skill 目录内所有受支持文件（.md/.txt）的相对路径（/ 分隔）。
 
@@ -215,15 +207,42 @@ def _list_all_skill_files(skill_dir: str) -> list[str]:
     return found
 
 
-def load_skill_content(skill_id: str) -> str | None:
-    """拼接 skill 目录顶层所有 .md（升序）为系统提示词；带 YAML frontmatter 的
-    .md（含主文件 skill.md，忽略大小写）去掉 frontmatter，其余正文原样保留。
+def _main_md_files_for_language(skill_dir: str, language: str) -> list:
+    """返回指定语言下应并入系统提示词的顶层 .md 文件（升序）。
+
+    同一 skill 的中英主文件互斥：language='cn' 优先 skill.cn.md，缺省时回退 skill.md；
+    language='en'（默认）优先 skill.md，缺省时回退 skill.cn.md。其余顶层 .md 一律保留。
+    """
+    try:
+        names = sorted(fn for fn in os.listdir(skill_dir)
+                       if fn.lower().endswith(".md") and os.path.isfile(os.path.join(skill_dir, fn)))
+    except OSError:
+        return []
+    has_cn = any(n.lower() == "skill.cn.md" for n in names)
+    has_en = any(n.lower() == "skill.md" for n in names)
+
+    def keep(fn):
+        lfn = fn.lower()
+        if lfn == "skill.cn.md":
+            # EN 语言下，若存在英文主文件则丢弃中文孪生文件
+            return not (language != "cn" and has_en)
+        if lfn == "skill.md":
+            # CN 语言下，若存在中文主文件则丢弃英文孪生文件
+            return not (language == "cn" and has_cn)
+        return True
+
+    return [fn for fn in names if keep(fn)]
+
+
+def load_skill_content(skill_id: str, language: str = "en") -> str | None:
+    """拼接 skill 目录顶层主 .md（按语言选择，中英互斥）为系统提示词；带 YAML frontmatter 的
+    .md（含主文件 skill.md / skill.cn.md，忽略大小写）去掉 frontmatter，其余正文原样保留。
     （子目录与 .txt 引用文件不并入提示词，由代理按需读取。）"""
     d = _skill_dir(skill_id)
     if not d:
         return None
     parts = []
-    for fn in _list_skill_files(d):
+    for fn in _main_md_files_for_language(d, language):
         fp = os.path.join(d, fn)
         try:
             with open(fp, 'r', encoding='utf-8') as f:
@@ -231,11 +250,8 @@ def load_skill_content(skill_id: str) -> str | None:
         except Exception as e:
             logger.warning(f"Error reading {fp}: {e}")
             continue
-        if fn.lower() == "skill.md":
-            _, body = split_frontmatter(text)
-        else:
-            meta, stripped = split_frontmatter(text)
-            body = stripped if isinstance(meta, dict) and meta else text
+        meta, stripped = split_frontmatter(text)
+        body = stripped if isinstance(meta, dict) and meta else text
         if body.strip():
             parts.append(body.rstrip("\n"))
     content = "\n\n".join(parts)
@@ -263,6 +279,181 @@ def load_skill_multi_result(skill_id: str):
     """加载 skill 的 multi_result 输出契约（未声明则 None）。"""
     meta = _skill_meta(skill_id)
     return meta.get("multi_result") if meta else None
+
+
+# ==========================================
+# On-demand reference loading (tool-calling agent)
+# ==========================================
+
+def list_skill_references(skill_id: str) -> list:
+    """返回 skill 内可被代理按需读取的引用文件（相对路径，升序、去重）。
+
+    即除顶层主 .md（skill.md / skill.cn.md）外的所有受支持文件（.md/.txt，含 references/ 子目录）。
+    """
+    d = _skill_dir(skill_id)
+    if not d:
+        return []
+    refs = []
+    for rel in _list_all_skill_files(d):
+        base = rel.split("/")[-1].lower()
+        is_top = "/" not in rel
+        if is_top and (base == "skill.md" or base == "skill.cn.md"):
+            continue
+        refs.append(rel)
+    return refs
+
+
+def build_reference_index(skill_id: str, language: str = "en") -> str:
+    """生成注入系统提示词的引用文件索引；无引用时返回空串。"""
+    refs = list_skill_references(skill_id)
+    if not refs:
+        return ""
+    lines = [
+        "",
+        "## Available reference files",
+        "",
+        "The skill instructions above refer to on-demand reference files. When you reach a step that says to read one, call the `read_skill_file` tool with its exact relative path from the list below. Load it before using it; do not guess its contents.",
+        "",
+    ]
+    lines.extend(f"- {rel}" for rel in refs)
+    return "\n".join(lines)
+
+
+def read_skill_file(skill_id: str, rel_path: str):
+    """代理工具：按相对路径读取 skill 引用文件；越界/不存在/不可读返回 None。"""
+    d = _skill_dir(skill_id)
+    if not d or not rel_path:
+        return None
+    target = _safe_skill_file_path(d, rel_path)
+    if not target or not os.path.isfile(target):
+        return None
+    try:
+        with open(target, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        logger.warning(f"Error reading skill reference {rel_path}: {e}")
+        return None
+
+
+_SKILL_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_skill_file",
+        "description": ("Read one reference file of the current skill by its exact relative path "
+                        "(e.g. 'references/model-selection.md'). Call it only for files listed in the "
+                        "'Available reference files' section, when the skill instructions tell you to read them."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Relative path of the reference file within the skill directory."},
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+_MAX_SKILL_AGENT_TURNS = 8
+
+
+def _resolve_skill_language(text: str) -> str:
+    """确定加载哪一版主文件：全局偏好 en/cn 优先，否则按输入语言自动判断。"""
+    from .llm import _load_remote_config, _detect_language
+    try:
+        pref = str(_load_remote_config().get("skill_language", "auto")).lower()
+    except Exception:
+        pref = "auto"
+    if pref in ("en", "cn"):
+        return pref
+    return "cn" if _detect_language(text or "") == "Chinese" else "en"
+
+
+def _initial_user_message(text: str, images) -> Dict[str, Any]:
+    """构造首个 user 消息；有图时组装多模态内容，否则纯文本。"""
+    if not images:
+        return {"role": "user", "content": text}
+    parts = []
+    for img_bytes in images:
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+    parts.append({"type": "text", "text": text})
+    return {"role": "user", "content": parts}
+
+
+def _skill_agent_core(skill_id: str, text: str, images=None) -> str:
+    """执行 skill 生成：远程模式且有引用时启用 read_skill_file 工具循环按需读取，
+    否则回退单轮推理（仅主文件）。返回最终答案字符串；失败抛出异常。"""
+    from .llm import remote_chat_turn, get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
+
+    skill_id = (skill_id or "").strip()
+    if not skill_id:
+        raise ValueError("No skill specified")
+
+    language = _resolve_skill_language(text)
+    system_prompt = load_skill_content(skill_id, language=language)
+    if not system_prompt:
+        raise ValueError(f"Skill '{skill_id}' not found or has no content")
+
+    refs = list_skill_references(skill_id)
+    max_tokens = load_skill_max_tokens(skill_id) or 500
+    remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
+
+    if not (remote_mode and refs):
+        # 本地模式或无引用：单轮生成（仅主文件）。本地模式下引用无法按需读取。
+        if refs:
+            logger.warning(f"Skill '{skill_id}' has references but tool calling is unavailable; using main file only")
+        result = _run_llm_inference(system_prompt, text, max_tokens, images=images or None, use_remote=remote_mode)
+        return result or ""
+
+    # 远程 + 引用：工具调用代理循环
+    messages = [
+        {"role": "system", "content": system_prompt + "\n" + build_reference_index(skill_id, language)},
+        _initial_user_message(text, images),
+    ]
+    content = ""
+    for _ in range(_MAX_SKILL_AGENT_TURNS):
+        msg = remote_chat_turn(messages, max_tokens=max_tokens, tools=[_SKILL_FILE_TOOL])
+        content = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls") or []
+        assistant_msg = {"role": "assistant", "content": content}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+        if not tool_calls:
+            break
+        for tc in tool_calls:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except (ValueError, TypeError):
+                args = {}
+            if name == "read_skill_file":
+                file_content = read_skill_file(skill_id, str(args.get("path", "")))
+                tool_result = file_content if file_content is not None else f"[error] reference file not found: {args.get('path')}"
+            else:
+                tool_result = f"[error] unknown tool: {name}"
+            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": tool_result})
+
+    if not content.strip():
+        raise RuntimeError(f"Skill '{skill_id}' produced no output")
+    return content
+
+
+def run_skill_agent(skill_id: str, text: str, images=None) -> str:
+    """非流式执行 skill，返回最终答案字符串；失败抛出异常。"""
+    return _skill_agent_core(skill_id, text, images)
+
+
+def run_skill_agent_stream(skill_id: str, text: str, images=None) -> Generator[str, None, None]:
+    """流式契约：逐字 yield 最终答案；失败 yield '[ERROR] ...'（与 llm.run_llm_task_stream 一致）。"""
+    try:
+        result = _skill_agent_core(skill_id, text, images)
+    except Exception as e:
+        logger.error(f"Skill agent error for '{skill_id}': {e}")
+        yield f"[ERROR] {str(e)}"
+        return
+    for ch in (result or ""):
+        yield ch
 
 
 def load_task_template(task_name: str) -> dict:
