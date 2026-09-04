@@ -19,6 +19,8 @@ from pathlib import Path
 import folder_paths
 from collections import OrderedDict
 
+from . import skill
+
 # ==========================================
 # LiteLLM Configuration
 # ==========================================
@@ -1014,36 +1016,12 @@ def _detect_language(text):
 
 
 # ==========================================
-# LLM Task Definitions - Load from template files
+# LLM Task Definitions - Load from task skills (skills/tasks/<task>/skill.md)
 # ==========================================
-
-_TASKS_DIR = os.path.join(os.path.dirname(__file__), "prompts", "templates", "tasks")
-
-def _load_task_template(task_name: str) -> Dict[str, Any]:
-    """Load task template from YAML file."""
-    filepath = os.path.join(_TASKS_DIR, f"{task_name}.yaml")
-    if not os.path.exists(filepath):
-        # Fallback to .yml extension
-        filepath = os.path.join(_TASKS_DIR, f"{task_name}.yml")
-        if not os.path.exists(filepath):
-            logger.warning(f"Task template not found: {task_name}")
-            return {}
-    
-    try:
-        import yaml
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-            return data or {}
-    except ImportError:
-        logger.warning(f"PyYAML not installed, cannot load task template: {task_name}")
-        return {}
-    except Exception as e:
-        logger.warning(f"Error loading task template {task_name}: {e}")
-        return {}
 
 
 def _build_llm_tasks() -> Dict[str, Any]:
-    """Build LLM_TASKS from template files."""
+    """Build LLM_TASKS from task skills."""
     tasks = {}
     task_names = [
         "extract_title",
@@ -1053,10 +1031,10 @@ def _build_llm_tasks() -> Dict[str, Any]:
         "template_prompt",
         "reverse_prompt"
     ]
-    
+
     for task_name in task_names:
-        template = _load_task_template(task_name)
-        if template:
+        template = skill.load_task_template(task_name)
+        if template is not None:
             tasks[task_name] = {
                 "system": template.get("content", ""),
                 "max_tokens": template.get("max_tokens", 500),
@@ -1065,14 +1043,13 @@ def _build_llm_tasks() -> Dict[str, Any]:
                 "multi_result": template.get("multi_result"),
             }
         else:
-            logger.warning(f"Failed to load task template: {task_name}")
-    
+            logger.warning(f"Failed to load task skill: {task_name}")
+
     return tasks
 
 
-# LLM_TASKS is now dynamically loaded from template files
+# LLM_TASKS is now dynamically loaded from task skills
 LLM_TASKS = _build_llm_tasks()
-
 
 DEFAULT_MULTI_SEPARATOR = "\n---\n"
 
@@ -1082,7 +1059,7 @@ def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> Li
 
     rule 为 None 表示该 skill 未声明多结果，返回空列表（调用方回退为整段文本）。
 
-    rule 格式（来自任务/模板 YAML 的 multi_result 字段）：
+    rule 格式（来自任务/模板 skill.md frontmatter 的 multi_result 字段）：
       {"format": "separator", "separator": "\n---\n"}   按分隔符拆分（默认分隔符）
       {"format": "json_array"}                            按 JSON 数组解析，失败回退分隔符
     """
@@ -1351,30 +1328,6 @@ async def handle_llm_api_request(task_name, request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-async def _load_template_content(template_id):
-    """加载模板内容（仅支持 YAML 格式）"""
-    if not template_id:
-        return None
-
-    from .prompts import (
-        TEMPLATES_DIR, TEMPLATE_PRESETS_DIR, TEMPLATE_CUSTOM_DIR,
-        _load_template_file
-    )
-
-    # 按优先级搜索模板文件（仅支持 YAML 格式）
-    search_dirs = [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]
-    for base_dir in search_dirs:
-        # 尝试 YAML 格式
-        for ext in ['.yaml', '.yml']:
-            filepath = os.path.join(base_dir, f"{template_id}{ext}")
-            data = _load_template_file(filepath)
-            if data and data.get("content"):
-                return data["content"]
-
-    logger.warning(f"Template not found or has no content: {template_id}")
-    return None
-
-
 async def handle_llm_api_stream(task_name, request):
     """
     处理流式 LLM API 请求（SSE）
@@ -1394,11 +1347,10 @@ async def handle_llm_api_stream(task_name, request):
     try:
         data = await request.json()
         text = data.get("text", "")
-        template_id = data.get("templateId", data.get("template_id", ""))
         skill_id = data.get("skillId", data.get("skill_id", ""))
         raw_images = data.get("images") or []
 
-        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', templateId='{template_id}', skillId='{skill_id}', images={len(raw_images)}")
+        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}")
 
         # 允许空文本：有图片输入（如反推）时合法
         images = []
@@ -1408,8 +1360,6 @@ async def handle_llm_api_stream(task_name, request):
             if not images:
                 return web.Response(text="data: [ERROR] invalid image data\n\n", content_type="text/event-stream")
 
-        # 始终导入（此前随 raw_images 条件 import，无图时调用会 UnboundLocalError）
-        from .prompts import load_template_max_tokens
         if not text.strip() and not images:
             return web.Response(text="data: [ERROR] text content is empty\n\n", content_type="text/event-stream")
 
@@ -1418,32 +1368,29 @@ async def handle_llm_api_stream(task_name, request):
         if skill_id and skill_id in LLM_TASKS:
             task_name = skill_id
             logger.info(f"Skill route: task_name='{skill_id}'")
-        elif skill_id:
-            # 非任务类 skill：当作模板尝试加载
-            template_id = skill_id
 
         system_prompt = None
         template_max_tokens = None
         if task_name == "reverse_prompt":
             logger.info("reverse_prompt skill: using default task system prompt")
-        elif template_id:
-            logger.info(f"Attempting to load template: {template_id}")
-            system_prompt = await _load_template_content(template_id)
-            logger.info(f"Template content loaded: {system_prompt is not None}, length: {len(system_prompt) if system_prompt else 0}")
+        elif skill_id:
+            # 非任务类 skill：加载其系统提示词内容
+            logger.info(f"Attempting to load skill: {skill_id}")
+            system_prompt = skill.load_skill_content(skill_id)
             if system_prompt:
-                logger.info(f"Loaded template '{template_id}' (length: {len(system_prompt)})")
-                # 如果提供了模板，使用 template_prompt 任务
+                logger.info(f"Loaded skill '{skill_id}' (length: {len(system_prompt)})")
+                # 如果提供了 skill，使用 template_prompt 任务
                 task_name = "template_prompt"
-                template_max_tokens = load_template_max_tokens(template_id)
+                template_max_tokens = skill.load_skill_max_tokens(skill_id)
                 logger.info(f"Switched task from initial endpoint to: {task_name}, max_tokens={template_max_tokens}")
             else:
-                logger.warning(f"Template '{template_id}' not found or has no content")
+                logger.warning(f"Skill '{skill_id}' not found or has no content")
         elif images:
             # 有图但未指定 skill：默认走反推
             task_name = "reverse_prompt"
             logger.info("Image input without explicit skill, using reverse_prompt")
         else:
-            logger.info("No template_id provided, using default task")
+            logger.info("No skillId provided, using default task")
 
         async def event_stream():
             try:

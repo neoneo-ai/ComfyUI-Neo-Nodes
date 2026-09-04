@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import json
 import asyncio
-import datetime
 import server
 import torch
 from aiohttp import web
@@ -14,12 +13,12 @@ import threading
 import copy
 import logging
 import random
-from pathlib import Path
 from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
 from . import prompt_lines
+from . import skill
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(CURRENT_DIR, "prompts")
@@ -29,157 +28,18 @@ CUSTOM_DIR = os.path.join(PROMPTS_DIR, "custom")
 PRESETS_TAGS_FILE = os.path.join(PRESETS_DIR, "_tags_index.json")
 CUSTOM_TAGS_FILE = os.path.join(CUSTOM_DIR, "_tags_index.json")
 
-# ==========================================
-# Template Management (System Prompt Templates)
-# ==========================================
-TEMPLATES_DIR = os.path.join(CURRENT_DIR, "prompts", "templates")
-TEMPLATE_PRESETS_DIR = os.path.join(TEMPLATES_DIR, "presets")
-TEMPLATE_CUSTOM_DIR = os.path.join(TEMPLATES_DIR, "custom")
-
 if not os.path.exists(PROMPTS_DIR):
     os.makedirs(PROMPTS_DIR)
 if not os.path.exists(PRESETS_DIR):
     os.makedirs(PRESETS_DIR)
 if not os.path.exists(CUSTOM_DIR):
     os.makedirs(CUSTOM_DIR)
-if not os.path.exists(TEMPLATES_DIR):
-    os.makedirs(TEMPLATES_DIR)
-if not os.path.exists(TEMPLATE_PRESETS_DIR):
-    os.makedirs(TEMPLATE_PRESETS_DIR)
-if not os.path.exists(TEMPLATE_CUSTOM_DIR):
-    os.makedirs(TEMPLATE_CUSTOM_DIR)
 
 PENDING_PROMPTS = {}
 
 _tags_lock = threading.Lock()
-_templates_lock = threading.Lock()
 
 
-def _load_template_file(filepath: str) -> dict | None:
-    """Load a single template file (YAML format only)."""
-    if not os.path.exists(filepath):
-        return None
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            # Support YAML format only
-            if filepath.endswith('.yaml') or filepath.endswith('.yml'):
-                try:
-                    import yaml
-                    data = yaml.safe_load(f)
-                except ImportError:
-                    logger.warning(f"PyYAML not installed, cannot load YAML template: {filepath}")
-                    return None
-            else:
-                logger.warning(f"Unsupported template file format (only YAML supported): {filepath}")
-                return None
-            
-            # Ensure required fields
-            data.setdefault('id', Path(filepath).stem)
-            data.setdefault('name', data.get('id'))
-            data.setdefault('source', 'custom')
-            data.setdefault('tags', [])
-            data.setdefault('content', '')
-            if 'created_at' not in data:
-                import datetime
-                data['created_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            return data
-    except Exception as e:
-        logger.warning(f"Error loading template from {filepath}: {e}")
-        return None
-
-
-def _save_template_file(template: dict, filepath: str) -> bool:
-    """Save a template to file (YAML format only)."""
-    try:
-        # Use YAML format for saving
-        if filepath.endswith('.json'):
-            # Convert to YAML format
-            filepath = filepath.replace('.json', '.yaml')
-        
-        try:
-            import yaml
-
-            class _TemplateDumper(yaml.SafeDumper):
-                pass
-
-            def _represent_multiline_str(dumper, data):
-                # Multiline values as literal blocks so saved files keep real line breaks
-                style = '|' if '\n' in data else None
-                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style=style)
-
-            _TemplateDumper.add_representer(str, _represent_multiline_str)
-
-            with open(filepath, 'w', encoding='utf-8') as f:
-                yaml.dump(template, f, Dumper=_TemplateDumper, indent=2, allow_unicode=True,
-                          default_flow_style=False, sort_keys=False, width=4096)
-        except ImportError:
-            logger.error(f"PyYAML not installed, cannot save template: {filepath}")
-            return False
-        return True
-    except Exception as e:
-        logger.error(f"Error saving template to {filepath}: {e}")
-        return False
-
-
-def _scan_templates_recursive(base_dir: str, source: str = "custom") -> list:
-    """Recursively scan template directory (YAML format only)."""
-    templates = []
-    if not os.path.exists(base_dir):
-        return templates
-
-    for entry in sorted(os.listdir(base_dir)):
-        full_path = os.path.join(base_dir, entry)
-        if os.path.isdir(full_path):
-            sub_prefix = f"{entry}/"
-            templates.extend(_scan_templates_recursive(full_path, source))
-        elif (entry.endswith('.yaml') or entry.endswith('.yml')) and not entry.startswith('_'):
-            data = _load_template_file(full_path)
-            if data:
-                # Override source based on actual directory location
-                data['source'] = source
-                data['_mtime'] = os.path.getmtime(full_path)
-                templates.append(data)
-    return templates
-
-
-def _load_template_content(template_id: str) -> str | None:
-    """Load template content by id (custom first, then presets)."""
-    if not template_id:
-        return None
-    for base_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
-        for ext in ['.yaml', '.yml']:
-            data = _load_template_file(os.path.join(base_dir, f"{template_id}{ext}"))
-            if data and data.get("content"):
-                return data["content"]
-    logger.warning(f"Template not found or has no content: {template_id}")
-    return None
-
-
-def load_template_max_tokens(template_id: str):
-    """加载模板声明的 max_tokens 覆盖（未声明则 None）。"""
-    if not template_id:
-        return None
-    for base_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
-        for ext in ('.yaml', '.yml'):
-            data = _load_template_file(os.path.join(base_dir, f"{template_id}{ext}"))
-            if data and data.get("max_tokens"):
-                return int(data["max_tokens"])
-    return None
-
-
-def load_template_multi_result(template_id: str):
-    """加载模板的 multi_result 输出契约（未声明则 None）。"""
-    if not template_id:
-        return None
-    for base_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
-        for ext in ('.yaml', '.yml'):
-            data = _load_template_file(os.path.join(base_dir, f"{template_id}{ext}"))
-            if data and data.get("multi_result"):
-                return data["multi_result"]
-    return None
-
-
-_tags_lock = threading.Lock()
 _tags_lock = threading.Lock()
 
 # 从 llm 模块导入 LLM 相关功能
@@ -214,101 +74,6 @@ def _auto_unload_local_after_generate():
         msg = f"Failed to auto-unload local model: {e}"
         logger.warning(msg)
         print(f"[NeoNodes] {msg}")
-
-
-# ==========================================
-# Skills - 统一 模板 / 任务 / 图片输入 的元数据视图
-# skill 是"系统提示词 + 输入契约(text/image) + 触发方式(标记/下拉)"
-# ==========================================
-TASKS_DIR = os.path.join(TEMPLATES_DIR, "tasks")
-
-# 内置使命级别的默认输入契约（任务 YAML 未声明 inputs 时使用）
-_SKILL_DEFAULT_INPUTS = {
-    "reverse_prompt": ["image", "text"],
-    "smart_prompt": ["text"],
-    "template_prompt": ["text"],
-    "translate_prompt": ["text"],
-    "extract_title": ["text"],
-    "extract_classify": ["text"],
-}
-
-# 输入框 @ 标记 -> skill id 路由表
-_SKILL_MARKERS = {
-    "reverse_prompt": ["@图", "@反推", "@图片"],
-}
-
-# 仅内部使用的任务（实现细节），不对外展示为可选 skill
-_SKILL_INTERNAL = {
-    "template_prompt",
-    "extract_title",
-    "extract_classify",
-}
-
-
-def _skill_category(skill_id: str, data: dict) -> str:
-    """推断 skill 分类：vision（含图像输入）/ task（任务）/ style（模板）。"""
-    if data.get("category"):
-        return data["category"]
-    if "image" in data.get("inputs", []):
-        return "vision"
-    return "task"
-
-
-def _scan_skills() -> list:
-    """合并 tasks + templates(presets/custom) 为统一 skill 元数据列表。
-
-    每个 skill 返回: {id, name, category, source, inputs, needs_image, markers, tags, description}
-    保持与 list_templates 兼容：id/source/tags/description 字段不变。
-    """
-    skills = []
-
-    # 1) 任务 (tasks/*.yaml) -> category=task/vision
-    if os.path.isdir(TASKS_DIR):
-        for entry in sorted(os.listdir(TASKS_DIR)):
-            if not (entry.endswith('.yaml') or entry.endswith('.yml')) or entry.startswith('_'):
-                continue
-            data = _load_template_file(os.path.join(TASKS_DIR, entry))
-            if not data:
-                continue
-            skill_id = data.get("id") or Path(entry).stem
-            if skill_id in _SKILL_INTERNAL:
-                continue
-            inputs = data.get("inputs") or _SKILL_DEFAULT_INPUTS.get(skill_id, ["text"])
-            skills.append({
-                "id": skill_id,
-                "name": data.get("name", skill_id),
-                "category": _skill_category(skill_id, {**data, "inputs": inputs}),
-                "source": "tasks",
-                "tags": data.get("tags", []),
-                "inputs": inputs,
-                "needs_image": "image" in inputs,
-                "markers": data.get("markers") or _SKILL_MARKERS.get(skill_id, []),
-                "description": data.get("description", ""),
-            })
-
-    # 2) 模板 (presets + custom) -> category=style/custom
-    with _templates_lock:
-        preset_templates = _scan_templates_recursive(TEMPLATE_PRESETS_DIR, source="presets")
-        custom_templates = _scan_templates_recursive(TEMPLATE_CUSTOM_DIR, source="custom")
-
-    for tpl in preset_templates + custom_templates:
-        tpl_id = tpl.get("id", "")
-        if not tpl_id:
-            continue
-        inputs = tpl.get("inputs") or ["text"]
-        skills.append({
-            "id": tpl_id,
-            "name": tpl.get("name", tpl_id),
-            "category": tpl.get("category", "style"),
-            "source": tpl.get("source", "custom"),
-            "tags": tpl.get("tags", []),
-            "inputs": inputs,
-            "needs_image": "image" in inputs,
-            "markers": tpl.get("markers") or [],
-            "description": tpl.get("description", ""),
-        })
-
-    return skills
 
 
 # ==========================================
@@ -584,7 +349,7 @@ class NeoPrompts:
                 "disable_text_input": ("BOOLEAN", {"default": False, "hidden": True}),
                 "auto_generate": ("BOOLEAN", {"default": False, "hidden": True}),
                 "quick_input": ("STRING", {"default": "", "hidden": True}),
-                "template_id": ("STRING", {"default": "", "hidden": True}),
+                "skill_id": ("STRING", {"default": "", "hidden": True}),
                 "quick_input_used": ("BOOLEAN", {"default": False, "hidden": True}),
                 "random_enabled": ("BOOLEAN", {"default": False, "hidden": True}),
                 "random_count": ("INT", {"default": 1, "min": 1, "max": 16, "step": 1, "hidden": True}),
@@ -606,7 +371,7 @@ class NeoPrompts:
     DESCRIPTION = "AI-powered text encoder supports save/select prompt, LLM-based prompt enhancement, translation, classification, title extraction, intelligent caching, and auto-generate."
 
     def encode_prompts(self, clip, disable_text_input=False, auto_generate=False, quick_input="",
-                       text="", text_input=None, unique_id=None, instance_uid="", template_id="", image=None,
+                       text="", text_input=None, unique_id=None, instance_uid="", skill_id="", image=None,
                        quick_input_used=False, random_enabled=False, random_count=1):
         """Encode prompts with optional auto-generate support.
         
@@ -648,14 +413,14 @@ class NeoPrompts:
                     task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
                     template_max = None
-                    if template_id.strip():
-                        system_prompt = _load_template_content(template_id)
-                        template_max = load_template_max_tokens(template_id)
+                    if skill_id.strip():
+                        system_prompt = skill.load_skill_content(skill_id)
+                        template_max = skill.load_skill_max_tokens(skill_id)
                         if system_prompt:
                             task_name = "template_prompt"
-                            logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
+                            logger.info(f"Auto-generate using skill '{skill_id}' (length: {len(system_prompt)})")
                         else:
-                            logger.warning(f"Template '{template_id}' not found, falling back to {task_name}")
+                            logger.warning(f"Skill '{skill_id}' not found, falling back to {task_name}")
                     logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
@@ -1045,29 +810,29 @@ async def rs_prompts_smart_prompt(request):
     try:
         data = await request.json()
         text = data.get("text", "")  # 已拼接的提示词（前端拼接）
-        template_id = data.get("templateId", data.get("template_id", ""))  # 模版 ID
+        skill_id = data.get("skillId", "")  # skill ID
         template = data.get("template", "")  # 可选的系统提示词内容（直接传递内容）
 
-        logger.info(f"Smart prompt request: text='{text[:100]}...', template_id='{template_id}', template='{template[:100] if template else 'None'}...'")
+        logger.info(f"Smart prompt request: text='{text[:100]}...', skill_id='{skill_id}', template='{template[:100] if template else 'None'}...'")
 
         if not text or not text.strip():
             return web.json_response({"error": "text is required"}, status=400)
 
-        from .llm import run_llm_task, get_current_mode, LLM_MODE_REMOTE, _load_template_content
+        from .llm import run_llm_task, get_current_mode, LLM_MODE_REMOTE
 
-        # 确定系统提示词：优先使用 template 内容，其次使用 template_id 加载模版
+        # 确定系统提示词：优先使用 template 内容，其次按 skill_id 加载 skill
         system_prompt = None
         if template and template.strip():
             # 直接提供了系统提示词内容
             system_prompt = template
             logger.info(f"Using direct template content (length: {len(system_prompt)})")
-        elif template_id:
-            # 使用模版 ID 加载模版内容
-            system_prompt = await _load_template_content(template_id)
+        elif skill_id:
+            # 使用 skill id 加载 skill 内容
+            system_prompt = skill.load_skill_content(skill_id)
             if system_prompt:
-                logger.info(f"Loaded template '{template_id}' content (length: {len(system_prompt)})")
+                logger.info(f"Loaded skill '{skill_id}' content (length: {len(system_prompt)})")
             else:
-                logger.warning(f"Template '{template_id}' not found or has no content")
+                logger.warning(f"Skill '{skill_id}' not found or has no content")
 
         # 如果提供了模板，使用模板作为系统提示词
         # run_in_executor：LLM 调用是同步阻塞的，直接跑会卡死事件循环
@@ -1325,152 +1090,6 @@ async def rs_prompts_fetch_remote_models(request):
 
 
 # ==========================================
-# Template Management API Routes
-# ==========================================
-
-@server.PromptServer.instance.routes.get("/rs_prompts/list_templates")
-async def rs_prompts_list_templates(request):
-    """列出所有提示词模版"""
-    try:
-        with _templates_lock:
-            preset_templates = _scan_templates_recursive(TEMPLATE_PRESETS_DIR, source="presets")
-            custom_templates = _scan_templates_recursive(TEMPLATE_CUSTOM_DIR, source="custom")
-        
-        # 按 mtime 倒序排序（每组内最新的在前）
-        def sort_key(x):
-            return -x.get("_mtime", 0)
-        
-        custom_templates.sort(key=sort_key)
-        preset_templates.sort(key=sort_key)
-        
-        # custom 在前，presets 在后
-        templates = custom_templates + preset_templates
-        
-        # 移除内部字段 _mtime
-        for tpl in templates:
-            tpl.pop("_mtime", None)
-        
-        return web.json_response(templates)
-    except Exception as e:
-        logger.error(f"Error listing templates: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.get("/rs_prompts/skills")
-async def rs_prompts_list_skills(request):
-    """列出所有 skill（任务 + 模板统一元数据，含图片输入契约与 @ 标记）。"""
-    try:
-        return web.json_response(_scan_skills())
-    except Exception as e:
-        logger.error(f"Error listing skills: {e}")
-        return web.Response(status=500, text=str(e))
-@server.PromptServer.instance.routes.post("/rs_prompts/load_template")
-async def rs_prompts_load_template(request):
-    """加载单个模版内容（支持 YAML 格式）"""
-    try:
-        data = await request.json()
-        template_id = data.get("id")
-        if not template_id:
-            return web.Response(status=400, text="Template id required")
-
-        with _templates_lock:
-            # 先在 custom 目录查找，支持 YAML 格式
-            for search_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
-                # 尝试多种 YAML 扩展
-                for ext in ['.yaml', '.yml']:
-                    filepath = os.path.join(search_dir, f"{template_id}{ext}")
-                    if os.path.exists(filepath):
-                        tpl_data = _load_template_file(filepath)
-                        if tpl_data:
-                            result = {k: v for k, v in tpl_data.items() if k != "_mtime"}
-                            return web.json_response(result)
-
-        return web.Response(status=404, text="Template not found")
-    except Exception as e:
-        logger.error(f"Error loading template: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.post("/rs_prompts/save_template")
-async def rs_prompts_save_template(request):
-    """保存/更新模版"""
-    try:
-        data = await request.json()
-        template_id = data.get("id", "").strip()
-        if not template_id:
-            return web.Response(status=400, text="Template id required")
-        
-        # 验证 ID（允许 Unicode 字母、数字、下划线、连字符；不含路径分隔符等危险字符）
-        import re
-        template_id = re.sub(r'[^\w-]', '', template_id)
-        if not template_id:
-            return web.Response(status=400, text="Invalid template id")
-        
-        name = data.get("name", "").strip() or template_id
-        content = data.get("content", "")
-        tags = data.get("tags", [])
-        source = data.get("source", "custom")
-        
-        # 确定保存目录
-        target_dir = TEMPLATE_PRESETS_DIR if source == "presets" else TEMPLATE_CUSTOM_DIR
-        
-        filepath = os.path.join(target_dir, f"{template_id}.yaml")
-        
-        # 加载现有数据以保留 created_at
-        existing_data = _load_template_file(filepath) or {}
-        template_data = {
-            "id": template_id,
-            "name": name,
-            "source": source,
-            "tags": tags,
-            "content": content,
-            "created_at": existing_data.get("created_at", datetime.datetime.now(datetime.timezone.utc).isoformat()),
-        }
-        
-        with _templates_lock:
-            if not _save_template_file(template_data, filepath):
-                return web.Response(status=500, text="Failed to save template")
-        
-        return web.json_response({"success": True})
-    except Exception as e:
-        logger.error(f"Error saving template: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.post("/rs_prompts/delete_template")
-async def rs_prompts_delete_template(request):
-    """删除模版（预设不可删，仅支持 YAML 格式）"""
-    try:
-        data = await request.json()
-        template_id = data.get("id")
-        if not template_id:
-            return web.Response(status=400, text="Template id required")
-
-        with _templates_lock:
-            # 尝试在两个目录中查找并删除（支持 YAML 格式）
-            for search_dir in [TEMPLATE_CUSTOM_DIR, TEMPLATE_PRESETS_DIR]:
-                # 尝试多种 YAML 扩展
-                for ext in ['.yaml', '.yml']:
-                    filepath = os.path.join(search_dir, f"{template_id}{ext}")
-
-                    if os.path.exists(filepath):
-                        # 根据文件所在目录确定来源
-                        source = "custom" if search_dir == TEMPLATE_CUSTOM_DIR else "presets"
-
-                        # 预设模版不允许删除
-                        if source == "presets":
-                            return web.Response(status=403, text="Cannot delete preset template")
-
-                        os.remove(filepath)
-                        return web.json_response({"success": True})
-
-        return web.Response(status=404, text="Template not found")
-    except Exception as e:
-        logger.error(f"Error deleting template: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-# ==========================================
 # NeoPromptAgent Node Class
 # A simple prompt generator node with settings button only
 # ==========================================
@@ -1496,7 +1115,7 @@ class NeoPromptAgent:
                 "disable_text_input": ("BOOLEAN", {"default": False, "hidden": True}),
                 "auto_generate": ("BOOLEAN", {"default": False, "hidden": True}),
                 "quick_input": ("STRING", {"default": "", "hidden": True}),
-                "template_id": ("STRING", {"default": "", "hidden": True}),
+                "skill_id": ("STRING", {"default": "", "hidden": True}),
                 "quick_input_used": ("BOOLEAN", {"default": False, "hidden": True}),
                 "random_enabled": ("BOOLEAN", {"default": False, "hidden": True}),
                 "random_count": ("INT", {"default": 1, "min": 1, "max": 16, "step": 1, "hidden": True}),
@@ -1520,7 +1139,7 @@ class NeoPromptAgent:
     OUTPUT_NODE = True
     DESCRIPTION = "Simple prompt generator node with settings button. Supports external/internal input toggle and auto-generate. No clip encoder binding."
 
-    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, template_id="", image=None, quick_input_used=False, random_enabled=False, random_count=1):
+    def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, skill_id="", image=None, quick_input_used=False, random_enabled=False, random_count=1):
         """Returns the prompt text as output.
 
         Logic:
@@ -1528,7 +1147,7 @@ class NeoPromptAgent:
         2. Otherwise, combine prompt and quick_input (same as frontend logic)
         """
         logger.info(f"get_prompt called: auto_generate={auto_generate}, prompt='{prompt[:50]}...', quick_input='{quick_input[:50]}...', text_input={text_input is not None}, image={image is not None}")
-        gen_meta = {"task": None, "template_id": ""}
+        gen_meta = {"task": None, "skill_id": ""}
 
         # 运行时随机：从混合池不重复抽取 count 条，结果列表直接作为输出。
         # 清空 quick_input 使后续自动增强/指令拼装不会覆盖随机结果。
@@ -1564,15 +1183,15 @@ class NeoPromptAgent:
                     task_name = "reverse_prompt" if image_mode else "smart_prompt"
                     system_prompt = None
                     template_max = None
-                    if template_id.strip():
-                        system_prompt = _load_template_content(template_id)
-                        template_max = load_template_max_tokens(template_id)
+                    if skill_id.strip():
+                        system_prompt = skill.load_skill_content(skill_id)
+                        template_max = skill.load_skill_max_tokens(skill_id)
                         if system_prompt:
                             task_name = "template_prompt"
-                            logger.info(f"Auto-generate using template '{template_id}' (length: {len(system_prompt)})")
+                            logger.info(f"Auto-generate using skill '{skill_id}' (length: {len(system_prompt)})")
                         else:
-                            logger.warning(f"Template '{template_id}' not found, falling back to {task_name}")
-                    gen_meta.update(task=task_name, template_id=template_id)
+                            logger.warning(f"Skill '{skill_id}' not found, falling back to {task_name}")
+                    gen_meta.update(task=task_name, skill_id=skill_id)
                     logger.info(f"Calling LLM with {task_name} task, quick_input: {quick_input[:100]}..., image: {image_mode}")
                     # Use stream generation for real-time update
                     from .llm import run_llm_task_stream
@@ -1634,14 +1253,14 @@ class NeoPromptAgent:
         # 多结果 skill：按 multi_result 契约拆分；未声明或仅一段时为 [current_text]
         multi_rule = None
         if gen_meta["task"] == "template_prompt":
-            multi_rule = load_template_multi_result(gen_meta["template_id"])
+            multi_rule = skill.load_skill_multi_result(gen_meta["skill_id"])
         elif gen_meta["task"]:
             multi_rule = LLM_TASKS.get(gen_meta["task"], {}).get("multi_result")
-        elif template_id:
+        elif skill_id:
             # 节点未参与生成（如前端✨生成后直接出队）：按所选模板/任务契约拆分
-            multi_rule = load_template_multi_result(template_id)
-            if multi_rule is None and template_id in LLM_TASKS:
-                multi_rule = LLM_TASKS[template_id].get("multi_result")
+            multi_rule = skill.load_skill_multi_result(skill_id)
+            if multi_rule is None and skill_id in LLM_TASKS:
+                multi_rule = LLM_TASKS[skill_id].get("multi_result")
         prompts_list = resolve_multi_result(current_text, multi_rule) or [current_text]
         if random_picked:
             # 运行时随机批量：直接输出抽到的条目列表（OUTPUT_IS_LIST 按条循环消费）

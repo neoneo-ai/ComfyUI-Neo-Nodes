@@ -38,13 +38,13 @@ ComfyUI-Neo-Nodes/
 │   ├── gallery_settings.json   # 画廊自定义目录与 Civitai 设置（API KEY 脱敏显示；.gitignore 不入库）
 │   └── bookmarks.json          # 本地收藏：仅存路径信息，不复制文件（.gitignore 不入库）
 ├── locals/                 # 本地化资源（zh_CN.json）
-├── prompts/                # 提示词与模板目录
+├── prompts/                # 提示词目录
 │   ├── presets/            # 内置提示词预设（.txt，含 collections/、video/ 子集）
-│   ├── custom/             # 用户自定义提示词（.gitignore 不入库）
-│   └── templates/          # 模板/技能 YAML
-│       ├── presets/        # 内置风格模板（SYS）
-│       ├── tasks/          # 内置任务技能（extract_title / reverse_prompt 等）
-│       └── custom/         # 用户自定义模板（USR，.gitignore 不入库）
+│   └── custom/             # 用户自定义提示词（.gitignore 不入库）
+├── skills/                 # 技能（Markdown skill.md + YAML frontmatter）
+│   ├── presets/            # 内置风格模板（SYS，<id>/skill.md）
+│   ├── tasks/              # 内置任务技能（extract_title / reverse_prompt 等，<id>/skill.md）
+│   └── custom/             # 用户自定义技能（USR，<id>/skill.md，.gitignore 不入库）
 ├── gallery/                # 素材媒体文件目录
 │   ├── presets/            # 内置预设素材
 │   ├── custom/             # 用户上传素材
@@ -76,7 +76,8 @@ ComfyUI-Neo-Nodes/
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
 │   ├── prompt-manager.js   # 提示词管理器（预设/模板/设置窗口）
-│   └── prompt-service.js   # 提示词 API 服务封装
+│   ├── prompt-service.js   # 提示词 API 服务封装
+│   └── skill.js            # 技能模块：skill API + createSkillManagerTab()（列表/编辑器/多文件/上传）
 └── .github/workflows/
     └── publish.yaml        # 发布 ComfyUI Registry 的 GitHub Action
 ```
@@ -86,8 +87,9 @@ ComfyUI-Neo-Nodes/
 | 模块 | 职责 |
 |------|------|
 | `__init__.py` | 插件入口。导入 `gallery` / `recipes` / `workflow` 模块以注册各自的 API 路由，从 `prompts.py` 合并 `NODE_CLASS_MAPPINGS` / `NODE_DISPLAY_NAME_MAPPINGS`，声明 `WEB_DIRECTORY = "./web"` |
-| `prompts.py` | 两个提示词节点（`NeoPrompts` → Neo Prompt Encoder，`NeoPromptAgent` → Neo Prompt Agent）与 `/rs_prompts/*` 全部路由：预设提示词 CRUD、LLM 模型切换、模板/技能扫描（`_scan_skills`）、图片解析（`resolve_image_bytes`）、标签索引 |
-| `llm.py` | LLM 推理层：`RemoteLLMClient`（OpenAI 兼容 HTTP）、`LLMSingleton`（进程内 llama.cpp GGUF，含 mmproj 多模态绑定与自动卸载）、远程配置存取（`configs/remote_llm_config.json`，按 provider 分槽）、模型目录扫描（`scan_llm_directory`）、任务模板加载（`prompts/templates/` YAML）与流式/非流式执行 |
+| `prompts.py` | 两个提示词节点（`NeoPrompts` → Neo Prompt Encoder，`NeoPromptAgent` → Neo Prompt Agent）与 `/rs_prompts/*` 路由：预设提示词 CRUD、LLM 模型切换、图片解析（`resolve_image_bytes`）、标签索引 |
+| `skill.py` | 技能系统：Markdown + YAML frontmatter 解析（PyYAML 事件流）、`skills/{presets,tasks,custom}/<id>/skill.md` 扫描与加载（`scan_skills` / `load_skill_content` / `load_task_template`）、多结果契约读取、`/rs_prompts/skill*` 路由（列表/读取/保存/删除/上传） |
+| `llm.py` | LLM 推理层：`RemoteLLMClient`（OpenAI 兼容 HTTP）、`LLMSingleton`（进程内 llama.cpp GGUF，含 mmproj 多模态绑定与自动卸载）、远程配置存取（`configs/remote_llm_config.json`，按 provider 分槽）、模型目录扫描（`scan_llm_directory`）、任务模板加载（`skills/` 目录，Markdown + frontmatter）与流式/非流式执行 |
 | `gallery.py` | Neo Gallery 素材后端：预设/自定义/系统（input、output）目录聚合浏览、缩略图生成与缓存、媒体文件服务、上传/删除、目录设置（`gallery_settings.json`）。导入时加载 `gallery_lora` / `gallery_oss` 以注册其路由 |
 | `gallery_lora.py` | Civitai LORA 示例后台抓取队列：打开 Lora 目录时按文件 SHA256 查询并下载示例图 + 提示词 sidecar，缓存于 `gallery/lora_cache/` |
 | `gallery_oss.py` | 云端预设（OSS）素材：按 `configs/oss_presets.json` 拉取索引与文件到 `gallery/oss_cache/`，提供缩略图/媒体回退服务 |
@@ -109,8 +111,9 @@ ComfyUI-Neo-Nodes/
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip |
-| `prompt-manager.js` | 提示词管理器：预设列表、模板管理、模型设置（远程 API / 本地模型）窗口 |
-| `prompt-service.js` | `/rs_prompts/*` API 的前端封装 |
+| `prompt-manager.js` | 提示词管理器：预设列表、模型设置（远程 API / 本地模型）窗口；技能管理标签委托给 `skill.js` |
+| `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
+| `skill.js` | 技能模块（纯 ES 模块，仅 export）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillManagerTab()`（列表、编辑器含多文件面板、上传 zip/目录） |
 
 ## 后端 API 路由
 
@@ -197,11 +200,10 @@ ComfyUI-Neo-Nodes/
 | POST | `/rs_prompts/stream_generate_prompt` | 流式生成 |
 | POST | `/rs_prompts/random_prompt` | 随机提示词 |
 | POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表 |
-| GET | `/rs_prompts/list_templates` | 模板列表 |
-| GET | `/rs_prompts/skills` | 技能列表（模板 + 任务分组） |
-| POST | `/rs_prompts/load_template` | 读取模板 |
-| POST | `/rs_prompts/save_template` | 新建/更新模板 |
-| POST | `/rs_prompts/delete_template` | 删除模板（仅 USR） |
+| GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组） |
+| POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens） |
+| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读） |
+| POST | `/rs_prompts/delete_skill` | 删除整个技能目录（仅 USR） |
 
 ## 节点注册
 
@@ -226,9 +228,9 @@ NODE_CLASS_MAPPINGS = {
 |------|------|
 | `prompts/presets/` | 内置提示词预设（`.txt`，`collections/` 为合集、`video/` 为视频提示词子集） |
 | `prompts/custom/` | 用户保存的提示词，`_tags_index.json` 为 AI 分类标签索引 |
-| `prompts/templates/presets/` | 内置风格模板（SYS，YAML：id / name / tags / content） |
-| `prompts/templates/tasks/` | 内置任务技能 YAML（extract_title / extract_classify / reverse_prompt / smart_prompt / template_prompt / translate_prompt） |
-| `prompts/templates/custom/` | 用户自定义模板（USR，可编辑删除） |
+| `skills/presets/<id>/skill.md` | 内置风格技能（SYS，Markdown + YAML frontmatter：name / tags / max_tokens） |
+| `skills/tasks/<id>/skill.md` | 内置任务技能（extract_title / extract_classify / reverse_prompt / smart_prompt / template_prompt / translate_prompt） |
+| `skills/custom/<id>/skill.md` | 用户自定义技能（USR，可编辑删除） |
 | `gallery/presets/` | 内置预设素材（只读） |
 | `gallery/custom/` | 用户上传素材 |
 | `gallery/thumbnails/` | 缩略图缓存（可安全删除重建） |

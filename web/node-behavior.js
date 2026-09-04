@@ -193,9 +193,9 @@ function createGenerateHandler(promptUI) {
             return;
         }
 
-        // 检查是否选择了模板
-        const selectedTemplateId = tplSelector?.value || "";
-        console.log("Template selector value:", selectedTemplateId, "tplSelector:", tplSelector, "tplSelector.value:", tplSelector?.value, "tplSelector.options:", tplSelector?.options?.length);
+        // 检查是否选择了 skill（模板/任务统一选择器，值为 skill id）
+        const selectedSkillId = tplSelector?.value || "";
+        console.log("Skill selector value:", selectedSkillId, "tplSelector:", tplSelector, "tplSelector.value:", tplSelector?.value, "tplSelector.options:", tplSelector?.options?.length);
 
         generateBtn.disabled = true;
         generateBtn.textContent = "⏳";
@@ -213,14 +213,11 @@ function createGenerateHandler(promptUI) {
 
                 generateBtn.textContent = "⏳"; // 统一短反馈，而非长串处理文案
 
-                const skillId = markerSkillId
-                    || (selectedTemplateId && selectedTemplateId !== "reverse_prompt" ? selectedTemplateId : "")
-                    || "reverse_prompt";
+                const skillId = markerSkillId || selectedSkillId || "reverse_prompt";
 
                 const payload = {
                     text: stripSkillMarkers(messageToLLM),
                     skillId,
-                    templateId: markerSkillId ? "" : selectedTemplateId,
                     images: imagesPayload,
                     description: quickText || currentPrompt
                 };
@@ -250,20 +247,20 @@ function createGenerateHandler(promptUI) {
                         alert("Failed to process prompt: " + err);
                     }
                 });
-            } else if (selectedTemplateId) {
+            } else if (selectedSkillId) {
                 // 使用选中的模板进行生成（流式）
                 generateBtn.textContent = "⏳"; // 统一短反馈
 
                 // If quickInput has content, combine with currentPrompt; otherwise use currentPrompt alone
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
 
-                console.log("Template stream request:", {
+                console.log("Skill stream request:", {
                     text: userPrompt,
-                    templateId: selectedTemplateId,
+                    skillId: selectedSkillId,
                     description: quickText || currentPrompt
                 });
 
-                // 使用流式API，传入templateId
+                // 使用流式API，传入skillId
                 await sseStream("/rs_prompts/stream_generate_prompt", {
                     onChunk: (chunk) => {
                         if (chunk.text) {
@@ -284,12 +281,12 @@ function createGenerateHandler(promptUI) {
                         markQuickInputConsumed(node);
                     },
                     onError: (err) => {
-                        console.error("Template stream error:", err);
+                        console.error("Skill stream error:", err);
                         alert("Failed to process prompt: " + err);
                     }
                 }, { 
                     text: userPrompt, 
-                    templateId: selectedTemplateId,
+                    skillId: selectedSkillId,
                     description: quickText || currentPrompt 
                 });
             } else {

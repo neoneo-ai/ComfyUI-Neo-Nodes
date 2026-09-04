@@ -7,8 +7,7 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { mkEl, createPromptManagerUI, createSettingsModal, loadRemoteLLMConfig } from "./prompt-manager.js";
 import { 
-    enhancePrompt, translatePrompt, randomPrompt as randomPromptAPI, 
-    listTemplates
+    enhancePrompt, translatePrompt, randomPrompt as randomPromptAPI
 } from "./prompt-service.js";
 
 

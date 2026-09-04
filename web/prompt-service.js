@@ -370,103 +370,6 @@ async function setCurrentModel(modelKey) {
     }
 }
 
-// ==========================================
-// 提示词模版（System Prompt Template）API
-// ==========================================
-
-/**
- * 列出所有提示词模版
- * @returns {Promise<Array<{id: string, name: string, source: string, tags: string[], content: string}>>}
- */
-async function listTemplates() {
-    try {
-        const res = await fetch("/rs_prompts/list_templates");
-        return await res.json();
-    } catch (e) {
-        console.error("Failed to list templates:", e);
-        return [];
-    }
-}
-
-/**
- * 加载单个模版内容
- * @param {string} id - 模版 ID
- * @returns {Promise<{id: string, name: string, source: string, tags: string[], content: string}>}
- */
-async function loadTemplate(id) {
-    try {
-        const res = await fetch("/rs_prompts/load_template", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id })
-        });
-        if (!res.ok) {
-            const text = await res.text();
-            return { error: text };
-        }
-        return await res.json();
-    } catch (e) {
-        console.error("Failed to load template:", e);
-        return { error: e.message };
-    }
-}
-
-/**
- * 保存/更新模版
- * @param {Object} template - 模版对象 {id, name, content, tags?, source?}
- * @returns {Promise<{success: boolean}>}
- */
-async function saveTemplate(template) {
-    try {
-        const res = await fetch("/rs_prompts/save_template", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(template)
-        });
-        return await res.json();
-    } catch (e) {
-        console.error("Failed to save template:", e);
-        return { success: false, error: e.message };
-    }
-}
-
-/**
- * 删除模版（预设不可删）
- * @param {string} id - 模版 ID
- * @returns {Promise<{success: boolean}>}
- */
-async function deleteTemplate(id) {
-    try {
-        const res = await fetch("/rs_prompts/delete_template", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id })
-        });
-        return await res.json();
-    } catch (e) {
-        console.error("Failed to delete template:", e);
-        return { success: false, error: e.message };
-    }
-}
-
-// ==========================================
-// Skills (统一任务/模板/图片输入元数据)
-// ==========================================
-
-/**
- * 列出所有 skill（任务 + 模板统一元数据）
- * @returns {Promise<Array<{id, name, category, source, inputs, needs_image, markers, tags, description}>>}
- */
-async function listSkills() {
-    try {
-        const res = await fetch("/rs_prompts/skills");
-        return await res.json();
-    } catch (e) {
-        console.error("Failed to list skills:", e);
-        return [];
-    }
-}
-
 /**
  * 将图片文件缩放并转为 base64 data URI
  * @param {File} file - 图片文件
@@ -516,7 +419,7 @@ function imagesFromClipboard(e) {
 
 /**
  * 以 skill 形式调用流式生成接口（支持 text + images + skillId）
- * `payload = { text, skillId（或 templateId）, images: [{kind:"data", data: base64Uri}] }`。
+ * `payload = { text, skillId, images: [{kind:"data", data: base64Uri}] }`。
  */
 async function invokePromptStream(payload, options = {}) {
     return sseStream("/rs_prompts/stream_generate_prompt", options, payload);
@@ -613,13 +516,6 @@ export {
     getRemoteLLMConfig,
     saveRemoteLLMConfig,
     getLLMMode,
-    // 提示词模版管理
-    listTemplates,
-    loadTemplate,
-    saveTemplate,
-    deleteTemplate,
-    // Skills 统一元数据
-    listSkills,
     fileToBase64,
     imagesFromClipboard,
     invokePromptStream
@@ -638,9 +534,4 @@ if (typeof window !== 'undefined') {
     window.NeoNodes.getRemoteLLMConfig = getRemoteLLMConfig;
     window.NeoNodes.saveRemoteLLMConfig = saveRemoteLLMConfig;
     window.NeoNodes.getLLMMode = getLLMMode;
-    // 提示词模版管理
-    window.NeoNodes.listTemplates = listTemplates;
-    window.NeoNodes.loadTemplate = loadTemplate;
-    window.NeoNodes.saveTemplate = saveTemplate;
-    window.NeoNodes.deleteTemplate = deleteTemplate;
 }

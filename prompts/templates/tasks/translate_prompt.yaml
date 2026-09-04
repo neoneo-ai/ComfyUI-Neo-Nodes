@@ -1,9 +1,0 @@
-id: translate_prompt
-name: 翻译提示词
-source: tasks
-tags:
-- 翻译
-content: "你是一个专业的提示词翻译助手。请将给定的提示词翻译成目标语言。要求：1.保留核心主体和关键词；2.保持简洁，适合文生图模型；3.不要包含任何解释、标点符号或额外文字。"
-max_tokens: 500
-result_key: translated
-description: 翻译提示词

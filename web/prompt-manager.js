@@ -21,16 +21,10 @@ import {
     randomPrompt as randomPromptAPI,
     getAvailableModels,
     setCurrentModel,
-    // Template management
-    listTemplates,
-    loadTemplate,
-    saveTemplate,
-    deleteTemplate,
-    // Skills
-    listSkills,
     fileToBase64,
     imagesFromClipboard
 } from "./prompt-service.js";
+import { listSkills, createSkillManagerTab } from "./skill.js";
 
 // 字节数转人类可读大小（后端 /rs_prompts/get_models 返回的 file_size，多模态已含 mmproj）
 function formatFileSize(bytes) {
@@ -336,53 +330,10 @@ function createSettingsModal() {
     remoteForm.appendChild(localUnloadRow);
 
     // ==========================================
-    // Template Management Tab (Tab 2)
+    // Skill Management Tab (Tab 2) —— 由 skill.js 提供（列表 + 编辑器 + 多文件 + 上传）
     // ==========================================
-    const templateTabContent = mkEl("div", "rs-tab-content");
-    
-    const tplToolbar = mkEl("div", "rs-tpl-toolbar");
-    const tplSearchInput = mkEl("input", "rs-form-input rs-tpl-search");
-    tplSearchInput.placeholder = "🔍 Search templates...";
-    const newTplBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-new-btn");
-    newTplBtn.textContent = "+ New Template";
-    
-    const tplListBody = mkEl("div", "rs-tpl-list-body");
-    tplListBody.style.maxHeight = "200px";
-    tplListBody.style.overflowY = "auto";
-    
-    const tplEditorArea = mkEl("div", "rs-tpl-editor-area");
-    
-    const tplNameRow = mkEl("div", "rs-config-row");
-    const tplNameLabel = mkEl("label", "rs-form-label");
-    tplNameLabel.textContent = "Template Name";
-    const tplNameInput = mkEl("input", "rs-form-input rs-tpl-name");
-    tplNameInput.placeholder = "Enter template name...";
-    tplNameRow.appendChild(tplNameLabel);
-    tplNameRow.appendChild(tplNameInput);
-    
-    // Tags input removed - simplified template editor
-    
-    const tplContentRow = mkEl("div", "rs-config-row");
-    const tplContentLabel = mkEl("label", "rs-form-label");
-    tplContentLabel.textContent = "System Prompt Content";
-    const tplContentTextarea = document.createElement("textarea");
-    tplContentTextarea.className = "rs-form-input rs-tpl-content";
-    tplContentTextarea.style.minHeight = "360px";
-    tplContentTextarea.style.resize = "vertical";
-    tplContentTextarea.placeholder = "Enter the system prompt content...";
-    
-    const tplEditorBtns = mkEl("div", "rs-modal-btns");
-    const tplSaveBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-save-btn");
-    tplSaveBtn.textContent = "💾 Save";
-    const tplCancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-tpl-cancel-btn");
-    tplCancelBtn.textContent = "✕ Cancel";
-    
-    tplEditorBtns.append(tplSaveBtn, tplCancelBtn);
-    tplEditorArea.append(tplNameRow, tplContentRow, tplEditorBtns);
-    tplContentRow.appendChild(tplContentTextarea);
-    
-    templateTabContent.append(tplToolbar, tplListBody, tplEditorArea);
-    tplToolbar.append(tplSearchInput, newTplBtn);
+    const skillTab = createSkillManagerTab();
+    const templateTabContent = skillTab.el;
 
     // ==========================================
     // Assemble content
@@ -417,7 +368,7 @@ function createSettingsModal() {
         _lastSettingsTab = tabName;
     };
 
-    let _templatesLoaded = false;
+    let _skillsLoaded = false;
 
     // Initial state: restore from memory or default to LLM tab
     if (_lastSettingsTab === "templates") {
@@ -425,9 +376,9 @@ function createSettingsModal() {
         templateTabContent.style.cssText = "display: block !important";
         llmTabBtn.classList.remove("active");
         templateTabBtn.classList.add("active");
-        // Load templates if restoring to templates tab
-        if (!_templatesLoaded) {
-            loadTemplatesList().then(() => { _templatesLoaded = true; });
+        // Load skills if restoring to templates tab
+        if (!_skillsLoaded) {
+            skillTab.refresh().then(() => { _skillsLoaded = true; });
         }
     } else {
         llmTabContent.style.cssText = "display: block !important";
@@ -444,9 +395,9 @@ function createSettingsModal() {
     const handleTemplateClick = async (e) => { 
         e.stopImmediatePropagation(); 
         switchToTab(templateTabBtn, templateTabContent, "templates"); 
-        if (!_templatesLoaded) {
-            await loadTemplatesList();
-            _templatesLoaded = true;
+        if (!_skillsLoaded) {
+            await skillTab.refresh();
+            _skillsLoaded = true;
         }
     };
 
@@ -789,224 +740,6 @@ function createSettingsModal() {
             auto_unload_local: localUnloadCheckbox.checked
         });
     });
-
-    // ==========================================
-    // Template management state and functions
-    // ==========================================
-    let currentTemplateId = null;
-    let currentTemplateSource = "custom";
-    
-    async function loadTemplatesList() {
-        tplListBody.innerHTML = "";
-        
-        const templates = await listTemplates();
-        if (!templates || !templates.length) {
-            tplListBody.textContent = "No templates found";
-            return;
-        }
-        
-        templates.forEach(tpl => {
-            const row = document.createElement("div");
-            row.className = "rs-tpl-item";
-            row.dataset.id = tpl.id;
-            row.style.cursor = "default";
-            
-            const leftDiv = mkEl("div", "rs-preset-left");
-            const contentSpan = mkEl("span", "rs-preset-content");
-            contentSpan.textContent = tpl.name || tpl.id;
-            contentSpan.style.cursor = "pointer";
-            contentSpan.addEventListener("mousedown", (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                loadTemplateEditor(tpl);
-            }, true);
-            
-            const sourceBadge = mkEl("span", "rs-source-badge");
-            sourceBadge.textContent = tpl.source === "presets" ? "SYS" : "USR";
-            sourceBadge.title = tpl.source === "presets" ? "System preset (cannot delete)" : "User custom";
-            contentSpan.appendChild(sourceBadge);
-            
-            leftDiv.appendChild(contentSpan);
-            row.appendChild(leftDiv);
-            
-            if (tpl.tags && tpl.tags.length > 0) {
-                const tagsSpan = document.createElement("span");
-                tagsSpan.className = "rs-tags-part";
-                tagsSpan.textContent = ` [${tpl.tags.join(", ")}]`;
-                contentSpan.appendChild(document.createTextNode(" "));
-                contentSpan.appendChild(tagsSpan);
-            }
-            
-            // Add view/edit button for all templates
-            const viewBtn = mkEl("span", "rs-delete-icon");
-            viewBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
-            viewBtn.title = "View/Edit template";
-            viewBtn.style.cursor = "pointer";
-            viewBtn.style.display = "inline-block";
-            viewBtn.style.pointerEvents = "auto";
-            viewBtn.style.marginRight = "8px";
-            
-            viewBtn.addEventListener("mousedown", (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                loadTemplateEditor(tpl);
-            }, true);
-            row.appendChild(viewBtn);
-            
-            if (tpl.source === "custom") {
-                const deleteBtn = mkEl("span", "rs-delete-icon");
-                deleteBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-                deleteBtn.style.cursor = "pointer";
-                deleteBtn.style.display = "inline-block";
-                deleteBtn.style.pointerEvents = "auto";
-                deleteBtn.style.zIndex = "1000";
-                
-                deleteBtn.addEventListener("mousedown", async (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    
-                    if (!confirm(`Delete template "${tpl.name}"?`)) {
-                        return;
-                    }
-                    
-                    const result = await deleteTemplate(tpl.id);
-                    if (result.success) {
-                        loadTemplatesList();
-                        document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-                    } else {
-                        alert(`Delete failed: ${result.error || "Unknown error"}`);
-                    }
-                }, true);
-                row.appendChild(deleteBtn);
-            } else {
-                const copyBtn = mkEl("span", "rs-delete-icon");
-                copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-                copyBtn.title = "Copy as custom template";
-                copyBtn.style.cursor = "pointer";
-                copyBtn.style.display = "inline-block";
-                copyBtn.style.pointerEvents = "auto";
-                copyBtn.addEventListener("mousedown", (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    tplCopyAsCustom(tpl);
-                }, true);
-                row.appendChild(copyBtn);
-            }
-            
-            tplListBody.appendChild(row);
-        });
-    }
-    
-    async function loadTemplateEditor(tpl) {
-        currentTemplateId = tpl.id;
-        currentTemplateSource = tpl.source || "custom";
-        tplNameInput.value = tpl.name || tpl.id;
-        tplContentTextarea.value = tpl.content || "";
-        
-        // Disable editing for preset templates
-        const isPreset = currentTemplateSource === "presets";
-        tplNameInput.disabled = isPreset;
-        tplContentTextarea.disabled = isPreset;
-        
-        // Update save button visibility/behavior based on template type
-        if (isPreset) {
-            tplSaveBtn.style.display = "none";
-        } else {
-            tplSaveBtn.style.display = "inline-block";
-        }
-        
-        tplEditorArea.style.display = "block";
-    }
-    
-    async function tplCopyAsCustom(tpl) {
-        const newId = tpl.id + "_copy_" + Date.now();
-        await saveTemplate({
-            id: newId,
-            name: (tpl.name || tpl.id) + " (Copy)",
-            content: tpl.content || "",
-            tags: [...(tpl.tags || [])],
-            source: "custom"
-        });
-        loadTemplatesList();
-        document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-    }
-    
-    // Template search handler
-    tplSearchInput.addEventListener("input", () => {
-        const query = tplSearchInput.value.trim().toLowerCase();
-        const items = tplListBody.querySelectorAll(".rs-tpl-item");
-        items.forEach(item => {
-            const name = (item.querySelector(".rs-preset-content")?.textContent || "").toLowerCase();
-            item.style.display = (!query || name.includes(query)) ? "flex" : "none";
-        });
-    });
-    
-    // New template button - use capture phase to prevent ComfyUI interception
-    const handleNewTplClick = (e) => {
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        currentTemplateId = null;
-        currentTemplateSource = "custom";
-        tplNameInput.value = "";
-        tplContentTextarea.value = "";
-        tplNameInput.disabled = false;
-        tplContentTextarea.disabled = false;
-        tplSaveBtn.style.display = "inline-block";
-        tplEditorArea.style.display = "block";
-        tplNameInput.focus();
-    };
-    newTplBtn.addEventListener("mousedown", handleNewTplClick, true);
-    newTplBtn.addEventListener("click", handleNewTplClick, true);
-    
-    // Save template button - use capture phase
-    const handleSaveTplClick = async (e) => {
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        const name = tplNameInput.value.trim();
-        if (!name) { alert("Template name is required"); return; }
-        
-        const content = tplContentTextarea.value;
-        
-        // Generate id from name, keeping unicode letters/digits (e.g. Chinese names)
-        let id = currentTemplateId || name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
-        if (!id) return;
-        
-        const result = await saveTemplate({
-            id,
-            name,
-            content,
-            tags: [],
-            source: "custom"
-        });
-        
-        if (result.success) {
-            tplNameInput.value = "";
-            tplContentTextarea.value = "";
-            currentTemplateId = null;
-            loadTemplatesList();
-            document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-        } else {
-            alert("Save failed: " + (result.error || "Unknown error"));
-        }
-    };
-    tplSaveBtn.addEventListener("mousedown", handleSaveTplClick, true);
-    tplSaveBtn.addEventListener("click", handleSaveTplClick, true);
-    
-    // Cancel button - use capture phase
-    const handleCancelTplClick = (e) => {
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        tplNameInput.value = "";
-        tplContentTextarea.value = "";
-        currentTemplateId = null;
-        tplEditorArea.style.display = "none";
-    };
-    tplCancelBtn.addEventListener("mousedown", handleCancelTplClick, true);
-    tplCancelBtn.addEventListener("click", handleCancelTplClick, true);
     
     return { 
         modal, 
