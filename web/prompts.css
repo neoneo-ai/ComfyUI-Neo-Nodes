@@ -1775,6 +1775,144 @@
     resize: vertical;
 }
 
+/* Skill content header: label + view/edit mode toggle */
+.rs-content-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rs-content-header .rs-form-label {
+    margin-bottom: 0;
+}
+
+/* Skill content header: left group (label + file dropdown + file tools) */
+.rs-content-header .rs-content-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.rs-content-header .rs-file-select {
+    max-width: 240px;
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: #2a2a2a;
+    color: #ccc;
+    border: 1px solid #444;
+}
+
+.rs-content-mode {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.rs-content-mode-btn {
+    padding: 2px 9px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #999;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.rs-content-mode-btn:hover {
+    color: #ccc;
+    border-color: #5090cc;
+}
+
+.rs-content-mode-active {
+    background: #3a4a5a;
+    border-color: #5090cc;
+    color: #fff;
+}
+
+/* Lightweight markdown preview */
+.rs-md-preview {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 360px;
+    max-height: 520px;
+    overflow-y: auto;
+    padding: 10px 14px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ccc;
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-wrap: break-word;
+}
+
+.rs-md-preview > :first-child { margin-top: 0; }
+.rs-md-preview > :last-child { margin-bottom: 0; }
+
+.rs-md-preview h1, .rs-md-preview h2, .rs-md-preview h3,
+.rs-md-preview h4, .rs-md-preview h5, .rs-md-preview h6 {
+    color: #fff;
+    margin: 14px 0 8px;
+    line-height: 1.3;
+}
+
+.rs-md-preview h1 { font-size: 20px; border-bottom: 1px solid #3a4a5a; padding-bottom: 6px; }
+.rs-md-preview h2 { font-size: 17px; border-bottom: 1px solid #3a4a5a; padding-bottom: 4px; }
+.rs-md-preview h3 { font-size: 15px; }
+
+.rs-md-preview p { margin: 8px 0; }
+.rs-md-preview ul, .rs-md-preview ol { margin: 8px 0; padding-left: 22px; }
+.rs-md-preview li { margin: 2px 0; }
+
+.rs-md-preview a { color: #5090cc; text-decoration: none; }
+.rs-md-preview a:hover { text-decoration: underline; }
+
+.rs-md-preview code {
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+    font-size: 12px;
+    color: #e0b48c;
+}
+
+.rs-md-preview pre.rs-md-pre {
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 5px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    margin: 8px 0;
+}
+
+.rs-md-preview pre.rs-md-pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #ccc;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.rs-md-preview blockquote {
+    margin: 8px 0;
+    padding: 4px 12px;
+    border-left: 3px solid #5090cc;
+    background: #26313d;
+    color: #b8c4d0;
+}
+
+.rs-md-preview hr {
+    border: none;
+    border-top: 1px solid #3a4a5a;
+    margin: 12px 0;
+}
+
 /* ==========================================
    Mode Switch (Local/Remote toggle in merged LLM tab)
    ========================================== */

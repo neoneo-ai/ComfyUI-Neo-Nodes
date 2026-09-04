@@ -115,7 +115,7 @@ ComfyUI-Neo-Nodes/
 | `prompt-manager.js` | 提示词管理器：预设列表、自动增强菜单（内嵌 LLM 配置表单）、⚙️ 打开居中技能弹窗；LLM 表单逻辑在 `llm-setting.js`，技能管理委托给 `skill.js` |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
 | `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，由 prompt-manager 挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |
-| `skill.js` | 技能模块（纯 ES 模块，仅 export）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillManagerTab()`（列表、编辑器含多文件面板、上传 zip/目录）+ `createSkillManagerModal()`（文档居中弹窗，open/close） |
+| `skill.js` | 技能模块（纯 ES 模块，仅 export）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillManagerTab()`（列表、编辑器含正文区多文件下拉切换、上传 zip/目录）+ `createSkillManagerModal()`（文档居中弹窗，open/close） |
 
 ## 后端 API 路由
 

@@ -161,7 +161,7 @@ const QUICK_INPUT_TIPS = [
     "🌅 输入时间场景，如：'清晨的森林，阳光穿透树叶'",
     "🏙️ 输入城市描述，如：'未来科幻城市，高楼林立'",
     "💾 点击保存按钮将提示词存为预设",
-    "▾ 自动增强菜单内配置 LLM，⚙️ 管理技能/模板"
+    "▾ 自动增强菜单内配置 LLM，🎛️ 管理技能/模板"
 ];
 
 function getRandomTip() {
@@ -858,7 +858,7 @@ function createStatusBars() {
     }
     
     const settingsBtn = mkEl("button", "rs-settings-btn");
-    settingsBtn.textContent = "⚙️";
+    settingsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg>';
     settingsBtn.setAttribute("data-rs-tooltip", "Manage skills / templates");
     
     statusBar.appendChild(toggleWrapper);
@@ -998,7 +998,6 @@ function createStatusBars() {
     autoGenerateCheckbox.type = "checkbox";
     autoGenerateCheckbox.className = "rs-auto-generate-checkbox";
     autoGenerateCheckbox.id = "rs-auto-generate";
-    autoGenerateCheckbox.setAttribute("data-rs-tooltip", "Auto-enhance prompt with LLM when workflow runs");
     const autoGenerateLabel = document.createElement("label");
     autoGenerateLabel.htmlFor = "rs-auto-generate";
     autoGenerateLabel.className = "rs-auto-generate-label";

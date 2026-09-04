@@ -169,6 +169,97 @@ async function deleteSkillFile(id, file) {
 // refresh() 重新拉取列表（首次打开时由调用方触发）。
 // ==========================================
 
+// ==========================================
+// 轻量级 Markdown 渲染（无第三方依赖）
+// 先对原文逐段转义再套用格式，避免注入任意 HTML；链接 URL 仅放行 http(s)/mailto/#/相对路径。
+// ==========================================
+function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function formatInline(text) {
+    let out = "";
+    let i = 0;
+    const n = text.length;
+    while (i < n) {
+        const ch = text[i];
+        if (ch === "`") {
+            const end = text.indexOf("`", i + 1);
+            if (end !== -1) { out += "<code>" + escapeHtml(text.slice(i + 1, end)) + "</code>"; i = end + 1; continue; }
+        }
+        if (ch === "[") {
+            const m = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(text.slice(i));
+            if (m) {
+                let url = m[2];
+                if (!/^(https?:|mailto:|#|\/)/i.test(url)) url = "#";
+                out += '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + formatInline(m[1]) + "</a>";
+                i += m[0].length; continue;
+            }
+        }
+        if (text.startsWith("**", i)) {
+            const end = text.indexOf("**", i + 2);
+            if (end !== -1) { out += "<strong>" + formatInline(text.slice(i + 2, end)) + "</strong>"; i = end + 2; continue; }
+        }
+        if (ch === "*" || ch === "_") {
+            const end = text.indexOf(ch, i + 1);
+            if (end !== -1) { out += "<em>" + formatInline(text.slice(i + 1, end)) + "</em>"; i = end + 1; continue; }
+        }
+        let j = i;
+        while (j < n && text[j] !== "`" && text[j] !== "[" && text[j] !== "*" && text[j] !== "_") j++;
+        if (j === i) { out += escapeHtml(text[i]); i++; }   // 未匹配的特殊字符按字面输出，保证前进
+        else { out += escapeHtml(text.slice(i, j)); i = j; }
+    }
+    return out;
+}
+
+function renderMarkdown(src) {
+    const lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
+    let html = "";
+    let i = 0;
+    const n = lines.length;
+    while (i < n) {
+        const line = lines[i];
+        if (/^```/.test(line)) {
+            const buf = [];
+            i++;
+            while (i < n && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+            i++;
+            html += '<pre class="rs-md-pre"><code>' + escapeHtml(buf.join("\n")) + "</code></pre>";
+            continue;
+        }
+        if (/^\s*$/.test(line)) { i++; continue; }
+        const h = /^(#{1,6})\s+(.*)$/.exec(line);
+        if (h) { html += "<h" + h[1].length + ">" + formatInline(h[2].trim()) + "</h" + h[1].length + ">"; i++; continue; }
+        if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { html += "<hr>"; i++; continue; }
+        if (/^\s*>/.test(line)) {
+            const buf = [];
+            while (i < n && /^\s*>/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+            html += "<blockquote>" + renderMarkdown(buf.join("\n")) + "</blockquote>";
+            continue;
+        }
+        if (/^\s*[-*+]\s+/.test(line)) {
+            const items = [];
+            while (i < n && /^\s*[-*+]\s+/.test(lines[i])) { items.push("<li>" + formatInline(lines[i].replace(/^\s*[-*+]\s+/, "")) + "</li>"); i++; }
+            html += "<ul>" + items.join("") + "</ul>";
+            continue;
+        }
+        if (/^\s*\d+\.\s+/.test(line)) {
+            const items = [];
+            while (i < n && /^\s*\d+\.\s+/.test(lines[i])) { items.push("<li>" + formatInline(lines[i].replace(/^\s*\d+\.\s+/, "")) + "</li>"); i++; }
+            html += "<ol>" + items.join("") + "</ol>";
+            continue;
+        }
+        const buf = [];
+        while (i < n && !/^\s*$/.test(lines[i]) && !/^```/.test(lines[i]) &&
+               !/^(#{1,6})\s+/.test(lines[i]) && !/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i]) &&
+               !/^\s*>/.test(lines[i]) && !/^\s*[-*+]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i])) {
+            buf.push(lines[i]); i++;
+        }
+        if (buf.length) html += "<p>" + formatInline(buf.join(" ")) + "</p>";
+    }
+    return html;
+}
+
 function createSkillManagerTab() {
     const el = mkEl("div", "rs-skill-tab");
 
@@ -214,50 +305,46 @@ function createSkillManagerTab() {
     nameRow.append(nameLabel, nameInput);
 
     const contentRow = mkEl("div", "rs-config-row");
+    const contentHeader = mkEl("div", "rs-content-header");
+    const contentLeft = mkEl("div", "rs-content-left");
     const contentLabel = mkEl("label", "rs-form-label");
-    contentLabel.textContent = "System Prompt Content (skill.md)";
+    contentLabel.textContent = "System Prompt Content";
+    contentLeft.appendChild(contentLabel);
+    // 多文件切换下拉（skill 含多个 .md 时显示，用于在正文区切换查看/编辑的文件）
+    const fileSelect = document.createElement("select");
+    fileSelect.className = "rs-file-select";
+    fileSelect.style.display = "none";
+    contentLeft.appendChild(fileSelect);
+    // 文件工具：新增 / 删除当前选中的附属 .md（替代原先底部展开编辑面板）
+    const fileTools = mkEl("div", "rs-content-mode");
+    const addFileBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
+    addFileBtn.type = "button";
+    addFileBtn.textContent = "+ File";
+    addFileBtn.title = "Add a .md file to this skill";
+    const delFileBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-content-mode-btn");
+    delFileBtn.type = "button";
+    delFileBtn.textContent = "🗑";
+    delFileBtn.title = "Delete the selected file";
+    fileTools.append(addFileBtn, delFileBtn);
+    contentLeft.appendChild(fileTools);
+    contentHeader.appendChild(contentLeft);
+    const modeBtns = mkEl("div", "rs-content-mode");
+    const previewBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
+    previewBtn.type = "button";
+    previewBtn.textContent = "👁 Preview";
+    const editBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
+    editBtn.type = "button";
+    editBtn.textContent = "✎ Edit";
+    modeBtns.append(previewBtn, editBtn);
+    contentHeader.appendChild(modeBtns);
     const contentTextarea = document.createElement("textarea");
     contentTextarea.className = "rs-form-input rs-tpl-content";
     contentTextarea.style.minHeight = "360px";
     contentTextarea.style.resize = "vertical";
     contentTextarea.placeholder = "Enter the system prompt content...";
-    contentRow.append(contentLabel, contentTextarea);
-
-    // ---- 多文件面板（仅当 skill 含额外 .md 时显示）----
-    const filePanel = mkEl("div", "");
-    filePanel.style.cssText = "display:none; margin-top:10px; padding:8px 10px; border:1px solid #444; border-radius:6px;";
-    const fileHeaderRow = mkEl("div", "");
-    fileHeaderRow.style.cssText = "display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;";
-    const fileHeaderLabel = mkEl("label", "rs-form-label");
-    fileHeaderLabel.textContent = "Files (.md)";
-    fileHeaderRow.appendChild(fileHeaderLabel);
-    const addFileBtn = mkEl("button", "rs-btn rs-btn-local");
-    addFileBtn.textContent = "+ Add File";
-    fileHeaderRow.appendChild(addFileBtn);
-    const fileListBody = mkEl("div", "");
-    fileListBody.style.cssText = "display:flex; flex-direction:column; gap:4px;";
-
-    // 子文件编辑器（编辑某个 .md 时显示）
-    const fileEditorArea = mkEl("div", "");
-    fileEditorArea.style.cssText = "display:none; margin-top:8px; padding:8px; border:1px dashed #555; border-radius:6px;";
-    const fileNameInput = mkEl("input", "rs-form-input");
-    fileNameInput.placeholder = "file.md (flat name, no subfolders)";
-    const fileContentTextarea = document.createElement("textarea");
-    fileContentTextarea.className = "rs-form-input";
-    fileContentTextarea.style.minHeight = "160px";
-    fileContentTextarea.style.resize = "vertical";
-    fileContentTextarea.placeholder = "File content...";
-    const fileEditorBtns = mkEl("div", "rs-modal-btns");
-    const fileSaveBtn = mkEl("button", "rs-btn rs-btn-local");
-    fileSaveBtn.textContent = "💾 Save File";
-    const fileDeleteBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
-    fileDeleteBtn.textContent = "🗑 Delete File";
-    const fileCancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
-    fileCancelBtn.textContent = "✕ Cancel";
-    fileEditorBtns.append(fileSaveBtn, fileDeleteBtn, fileCancelBtn);
-    fileEditorArea.append(fileNameInput, fileContentTextarea, fileEditorBtns);
-
-    filePanel.append(fileHeaderRow, fileListBody, fileEditorArea);
+    const contentPreview = mkEl("div", "rs-md-preview");
+    contentPreview.style.display = "none";
+    contentRow.append(contentHeader, contentTextarea, contentPreview);
 
     // ---- 编辑区按钮 ----
     const editorBtns = mkEl("div", "rs-modal-btns");
@@ -267,80 +354,89 @@ function createSkillManagerTab() {
     cancelBtn.textContent = "✕ Cancel";
     editorBtns.append(saveBtn, cancelBtn);
 
-    editorArea.append(nameRow, contentRow, filePanel, editorBtns);
+    editorArea.append(nameRow, contentRow, editorBtns);
     el.append(toolbar, listBody, editorArea);
 
     // ---- 状态 ----
     let currentSkillId = null;
     let currentSkillSource = "custom";
-    let currentFiles = [];   // [{ name, size }]（含 skill.md）
+    let currentFiles = [];   // [{ name, size }]（递归的 .md/.txt 相对路径，含主文件 skill.md）
+    let selectedFile = null;     // 当前在正文区查看/编辑的文件名
+    let editorMode = "preview";  // preview / edit
     const isCustom = () => currentSkillSource === "custom";
+    const isMainFile = (name) => String(name || "").toLowerCase() === "skill.md";
 
-    function hideFileEditor() {
-        fileEditorArea.style.display = "none";
-        fileNameInput.value = "";
-        fileContentTextarea.value = "";
+    // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）：
+    // 仅当文件以 --- 开头且能定位到下一行独立的 --- 时剥离，否则原样返回。
+    function stripFrontmatter(text) {
+        let t = String(text || "");
+        if (t.charCodeAt(0) === 0xfeff) t = t.slice(1);
+        const lines = t.split("\n");
+        if ((lines[0] || "").replace(/\r$/, "") !== "---") return text;
+        for (let i = 1; i < lines.length; i++) {
+            if (lines[i].replace(/\r$/, "") === "---") {
+                return lines.slice(i + 1).join("\n").replace(/^\n+/, "");
+            }
+        }
+        return text;
     }
 
-    // ---- 多文件面板渲染（扁平文件可编辑；子目录文件只读）----
-    async function renderFileList() {
-        fileListBody.innerHTML = "";
-        if (!currentFiles.length) {
-            const empty = mkEl("div", "");
-            empty.textContent = "(no extra files)";
-            empty.style.cssText = "color:#888; font-size:12px;";
-            fileListBody.appendChild(empty);
+    // 内容区两种模式：preview（渲染 Markdown，默认查看态）/ edit（原始 textarea）
+    function setEditorMode(mode) {
+        editorMode = mode;
+        const previewing = mode === "preview";
+        contentTextarea.style.display = previewing ? "none" : "block";
+        contentPreview.style.display = previewing ? "block" : "none";
+        if (previewing) contentPreview.innerHTML = renderMarkdown(contentTextarea.value);
+        previewBtn.classList.toggle("rs-content-mode-active", previewing);
+        editBtn.classList.toggle("rs-content-mode-active", !previewing);
+    }
+    previewBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("preview"); });
+    editBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("edit"); });
+
+    // ---- 多文件：下拉切换 + 工具按钮（替代底部展开面板）----
+    function populateFileSelect(defaultName) {
+        fileSelect.innerHTML = "";
+        if (currentFiles.length <= 1) {
+            fileSelect.style.display = "none";
             return;
         }
         currentFiles.forEach(f => {
-            const flat = !String(f.name).includes("/");
-            const row = mkEl("div", "");
-            row.style.cssText = "display:flex; align-items:center; gap:6px;";
-
-            const nameSpan = mkEl("span", "");
-            nameSpan.textContent = f.name;
-            nameSpan.style.cssText = "flex:1; font-size:12px; color:#ccc;" + (flat && isCustom() ? " cursor:pointer;" : "");
-            if (!flat) nameSpan.title = "Subfolder file (read-only via this UI)";
-
-            const sizeSpan = mkEl("span", "");
-            sizeSpan.textContent = f.size ? `${f.size} B` : "";
-            sizeSpan.style.cssText = "font-size:11px; color:#777;";
-
-            row.appendChild(nameSpan);
-            if (flat && isCustom()) {
-                const editBtn = mkEl("button", "rs-btn rs-btn-local");
-                editBtn.textContent = "✎";
-                editBtn.title = "Edit file";
-                editBtn.style.cssText = "padding:1px 6px; font-size:12px;";
-                editBtn.addEventListener("click", (e) => { e.stopPropagation(); openFileEditor(f.name); });
-                const delBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
-                delBtn.textContent = "🗑";
-                delBtn.title = "Delete file";
-                delBtn.style.cssText = "padding:1px 6px; font-size:12px;";
-                delBtn.addEventListener("click", async (e) => {
-                    e.stopPropagation();
-                    if (!confirm(`Delete file "${f.name}"?`)) return;
-                    const r = await deleteSkillFile(currentSkillId, f.name);
-                    if (r.success) await reloadEditor();
-                    else alert("Delete failed: " + (r.error || ""));
-                });
-                row.append(editBtn, delBtn);
-            }
-            row.appendChild(sizeSpan);
-            if (flat && isCustom()) {
-                nameSpan.addEventListener("click", () => openFileEditor(f.name));
-            }
-            fileListBody.appendChild(row);
+            const opt = document.createElement("option");
+            opt.value = f.name;
+            opt.textContent = f.name;
+            fileSelect.appendChild(opt);
         });
+        if (defaultName) fileSelect.value = defaultName;
+        fileSelect.style.display = "inline-block";
     }
 
-    async function openFileEditor(fileName) {
-        const data = await loadSkillFile(currentSkillId, fileName);
-        if (data && data.error) { alert("Failed to load file: " + data.error); return; }
-        fileNameInput.value = fileName;
-        fileContentTextarea.value = (data && data.content) || "";
-        fileEditorArea.style.display = "block";
+    // 依据当前选中文件 + 只读状态，更新名称/正文/保存/删除的可用性与显隐
+    function updateEditorControls() {
+        const readOnly = !isCustom();
+        const mainSel = isMainFile(selectedFile);
+        nameInput.disabled = readOnly || (currentFiles.length > 0 && !mainSel);
+        contentTextarea.disabled = readOnly;
+        saveBtn.style.display = readOnly ? "none" : "inline-block";
+        addFileBtn.style.display = isCustom() ? "inline-block" : "none";
+        const canDelete = isCustom() && currentFiles.length > 1 && !!selectedFile && !mainSel;
+        delFileBtn.style.display = canDelete ? "inline-block" : "none";
     }
+
+    // 在正文区加载某个文件：主文件显示正文（剥离 frontmatter），其余文件显示原始内容
+    async function selectFile(name) {
+        if (!currentSkillId || !name) return;
+        selectedFile = name;
+        const data = await loadSkillFile(currentSkillId, name);
+        if (data && data.error) { alert("Failed to load file: " + data.error); return; }
+        let text = (data && data.content) || "";
+        if (isMainFile(name)) text = stripFrontmatter(text);
+        contentTextarea.value = text;
+        // 非 Markdown（如 .txt 引用文件）默认用原始编辑态展示，避免被当成 Markdown 渲染
+        setEditorMode(/\.md$/i.test(name) ? editorMode : "edit");
+        updateEditorControls();
+    }
+    fileSelect.addEventListener("change", () => selectFile(fileSelect.value));
 
     // ---- 打开/重载编辑器（按当前 id）----
     async function reloadEditor() {
@@ -356,21 +452,22 @@ function createSkillManagerTab() {
         const full = await loadSkill(tpl.id);
         if (full && full.error) { alert("Failed to load skill: " + full.error); return; }
         nameInput.value = (full && full.name) || tpl.name || tpl.id;
-        contentTextarea.value = (full && full.content) || "";
         currentFiles = (full && full.files) || [];
 
-        const readOnly = !isCustom();
-        const multiFile = currentFiles.length > 1;
-        // 多文件 skill 的正文是拼接结果，主编辑框只读；单文件才可直接编辑并保存到 skill.md
-        nameInput.disabled = readOnly;
-        contentTextarea.disabled = readOnly || multiFile;
-        saveBtn.style.display = (readOnly || multiFile) ? "none" : "inline-block";
+        // 默认选中主文件（skill.md，忽略大小写）；无则第一个文件
+        let mainName = null;
+        for (const f of currentFiles) { if (isMainFile(f.name)) { mainName = f.name; break; } }
+        if (!mainName && currentFiles.length) mainName = currentFiles[0].name;
 
-        filePanel.style.display = (readOnly || !multiFile) ? "none" : "block";
-        addFileBtn.style.display = (readOnly || !multiFile) ? "none" : "inline-block";
-        hideFileEditor();
-        await renderFileList();
-
+        populateFileSelect(mainName);
+        setEditorMode("preview");
+        if (mainName) {
+            await selectFile(mainName);
+        } else {
+            selectedFile = null;
+            contentTextarea.value = "";
+            updateEditorControls();
+        }
         editorArea.style.display = "block";
     }
 
@@ -481,13 +578,17 @@ function createSkillManagerTab() {
         currentSkillId = null;
         currentSkillSource = "custom";
         currentFiles = [];
+        selectedFile = null;
         nameInput.value = "";
         contentTextarea.value = "";
+        fileSelect.innerHTML = "";
+        fileSelect.style.display = "none";
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         saveBtn.style.display = "inline-block";
-        filePanel.style.display = "none";
-        hideFileEditor();
+        addFileBtn.style.display = "none";
+        delFileBtn.style.display = "none";
+        setEditorMode("edit");
         editorArea.style.display = "block";
         nameInput.focus();
     };
@@ -496,20 +597,42 @@ function createSkillManagerTab() {
 
     const handleSaveClick = async (e) => {
         e.stopPropagation(); e.stopImmediatePropagation();
+        const savingMain = !currentSkillId || isMainFile(selectedFile);
         const name = nameInput.value.trim();
-        if (!name) { alert("Skill name is required"); return; }
-        const content = contentTextarea.value;
-        let id = currentSkillId || name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
-        if (!id) return;
-        const result = await saveSkill({ id, name, content, tags: [], source: "custom" });
-        if (result.success) {
-            nameInput.value = "";
-            contentTextarea.value = "";
-            currentSkillId = null;
-            refresh();
-            document.dispatchEvent(new CustomEvent("rs.templates.updated"));
+        if (savingMain && !name) { alert("Skill name is required"); return; }
+
+        // 新建 skill：创建主文件（正文）
+        if (!currentSkillId) {
+            const id = name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+            if (!id) return;
+            const result = await saveSkill({ id, name, content: contentTextarea.value, tags: [], source: "custom" });
+            if (result.success) {
+                handleNewClick(e);   // 复位到“新建”态
+                refresh();
+                document.dispatchEvent(new CustomEvent("rs.templates.updated"));
+            } else {
+                alert("Save failed: " + (result.error || "Unknown error"));
+            }
+            return;
+        }
+
+        // 已有 skill：保存当前选中文件（主文件走 saveSkill 保留元数据，附属文件走 saveSkillFile）
+        if (savingMain) {
+            const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom" });
+            if (result.success) {
+                refresh();
+                document.dispatchEvent(new CustomEvent("rs.templates.updated"));
+            } else {
+                alert("Save failed: " + (result.error || "Unknown error"));
+            }
         } else {
-            alert("Save failed: " + (result.error || "Unknown error"));
+            const r = await saveSkillFile(currentSkillId, selectedFile, contentTextarea.value);
+            if (r.success) {
+                refresh();
+                document.dispatchEvent(new CustomEvent("rs.templates.updated"));
+            } else {
+                alert("Save failed: " + (r.error || "Unknown error"));
+            }
         }
     };
     saveBtn.addEventListener("mousedown", handleSaveClick, true);
@@ -520,41 +643,33 @@ function createSkillManagerTab() {
         nameInput.value = "";
         contentTextarea.value = "";
         currentSkillId = null;
+        selectedFile = null;
+        fileSelect.innerHTML = "";
+        fileSelect.style.display = "none";
         editorArea.style.display = "none";
     };
     cancelBtn.addEventListener("mousedown", handleCancelClick, true);
     cancelBtn.addEventListener("click", handleCancelClick, true);
 
-    // ---- 多文件：新增 / 保存 / 删除子文件 ----
+    // ---- 多文件：新增 / 删除（正文区下拉切换的文件）----
     addFileBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        if (!currentSkillId) { alert("Open or create a skill first"); return; }
-        const fname = prompt("New file name (flat, .md):", "notes.md");
+        if (!currentSkillId) { alert("Save the skill first, then add files"); return; }
+        const fname = prompt("New file name (.md or .txt; use / for subfolders):", "notes.md");
         if (!fname || !fname.trim()) return;
         const r = await saveSkillFile(currentSkillId, fname.trim(), "");
-        if (r.success) await reloadEditor();
+        if (r.success) { await reloadEditor(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
         else alert("Add failed: " + (r.error || ""));
     });
 
-    fileSaveBtn.addEventListener("click", async (e) => {
+    delFileBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const fname = fileNameInput.value.trim();
-        if (!fname) { alert("File name required"); return; }
-        const r = await saveSkillFile(currentSkillId, fname, fileContentTextarea.value);
-        if (r.success) { hideFileEditor(); await reloadEditor(); }
-        else alert("Save failed: " + (r.error || ""));
-    });
-
-    fileDeleteBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const fname = fileNameInput.value.trim();
-        if (!fname || !confirm(`Delete file "${fname}"?`)) return;
-        const r = await deleteSkillFile(currentSkillId, fname);
-        if (r.success) { hideFileEditor(); await reloadEditor(); }
+        if (!currentSkillId || !selectedFile || isMainFile(selectedFile)) return;
+        if (!confirm(`Delete file "${selectedFile}"?`)) return;
+        const r = await deleteSkillFile(currentSkillId, selectedFile);
+        if (r.success) { await reloadEditor(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
         else alert("Delete failed: " + (r.error || ""));
     });
-
-    fileCancelBtn.addEventListener("click", (e) => { e.stopPropagation(); hideFileEditor(); });
 
     // ---- 上传：ZIP / 目录 ----
     zipInput.addEventListener("change", async () => {
@@ -569,11 +684,11 @@ function createSkillManagerTab() {
     dirInput.addEventListener("change", async () => {
         const all = Array.from(dirInput.files || []);
         dirInput.value = "";
-        const mdFiles = all.filter(f => f.name.toLowerCase().endsWith(".md"));
-        if (!mdFiles.length) { alert("No .md files in the selected folder"); return; }
+        const textFiles = all.filter(f => /\.(md|txt)$/i.test(f.name));
+        if (!textFiles.length) { alert("No .md/.txt files in the selected folder"); return; }
         // 若所有文件共享同一顶层目录，用它作为 skill_id
-        const tops = [...new Set(mdFiles.map(f => (f.webkitRelativePath || f.name).split("/")[0]))];
-        const payload = { files: mdFiles.map(f => ({ path: f.webkitRelativePath || f.name, blob: f })) };
+        const tops = [...new Set(textFiles.map(f => (f.webkitRelativePath || f.name).split("/")[0]))];
+        const payload = { files: textFiles.map(f => ({ path: f.webkitRelativePath || f.name, blob: f })) };
         if (tops.length === 1) payload.skillId = tops[0];
         const r = await uploadSkill(payload);
         if (r.success) { alert(`Uploaded skill "${r.id}"`); refresh(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }

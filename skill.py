@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes - Skills (目录式多文件 Markdown 技能)
 """
-Skill = 一个目录，内含 skill.md（YAML frontmatter + 系统提示词正文）+ 可选的其它 *.md。
+Skill = 一个目录，内含主文件 skill.md（大小写不敏感：SKILL.md / Skill.md 亦可；YAML frontmatter + 系统提示词正文）+ 可选的其它 *.md 与子目录中的 *.txt 引用文件。
 
 存储布局：
     skills/
@@ -13,8 +13,9 @@ Skill = 一个目录，内含 skill.md（YAML frontmatter + 系统提示词正�
 - skill id = 目录名。
 - 元数据只从 skill.md 的 YAML frontmatter 读取（name/tags/inputs/description/
   max_tokens/result_key/multi_result/category/markers/created_at）。
-- 系统提示词 = 目录下所有 .md 按文件名升序拼接；skill.md 去掉 frontmatter，
-  其余 .md 原样保留。
+- 系统提示词 = 顶层所有 .md 按文件名升序拼接（子目录与 *.txt 引用文件不并入，
+  由代理按需读取）；带 YAML frontmatter 的 .md（含主文件 skill.md，忽略大小写）
+  去掉 frontmatter，其余正文原样保留。
 
 本模块是叶子模块：不依赖 prompts / llm，仅依赖标准库 + PyYAML + aiohttp。
 prompts.py 与 llm.py 作为消费者从这里导入。
@@ -32,7 +33,6 @@ import tempfile
 import datetime
 import threading
 import zipfile
-from pathlib import Path
 
 import yaml
 from aiohttp import web
@@ -80,6 +80,10 @@ _META_KEY_ORDER = (
     "name", "tags", "inputs", "description", "max_tokens",
     "result_key", "multi_result", "category", "markers", "created_at",
 )
+
+# 技能文件管理器支持的文件扩展名（.md 主/子文档 + .txt 引用文本）。
+# 注意：系统提示词拼接仍只取顶层 .md（见 load_skill_content），此集合仅用于文件管理。
+_SKILL_FILE_EXTS = (".md", ".txt")
 
 
 def _skill_category(skill_id: str, data: dict) -> str:
@@ -159,21 +163,36 @@ def _skill_source(skill_dir: str) -> str:
     return os.path.basename(os.path.dirname(skill_dir))
 
 
+def _main_md_name(skill_dir: str) -> str | None:
+    """主文件（skill.md，忽略大小写）在目录内的实际文件名；无则 None。
+
+    兼容 SKILL.md / Skill.md 等写法（Agent Skills 常用大写），并在大小写敏感
+    的文件系统上也能正确定位到真实文件名。
+    """
+    try:
+        names = [fn for fn in os.listdir(skill_dir)
+                 if fn.lower() == "skill.md" and os.path.isfile(os.path.join(skill_dir, fn))]
+    except OSError:
+        return None
+    return sorted(names)[0] if names else None
+
+
 def _read_skill_md(skill_dir: str) -> tuple[dict, str]:
-    path = os.path.join(skill_dir, "skill.md")
-    if not os.path.exists(path):
+    main = _main_md_name(skill_dir)
+    if not main:
         return {}, ""
+    path = os.path.join(skill_dir, main)
     try:
         with open(path, 'r', encoding='utf-8') as f:
             text = f.read()
     except Exception as e:
-        logger.warning(f"Error reading skill.md in {skill_dir}: {e}")
+        logger.warning(f"Error reading {main} in {skill_dir}: {e}")
         return {}, ""
     return split_frontmatter(text)
 
 
 def _list_skill_files(skill_dir: str) -> list[str]:
-    """目录下所有 .md 文件名（升序）。"""
+    """顶层所有 .md 文件名（升序）。仅用于系统提示词拼接（load_skill_content）。"""
     files = []
     for fn in sorted(os.listdir(skill_dir)):
         if fn.lower().endswith(".md") and os.path.isfile(os.path.join(skill_dir, fn)):
@@ -181,8 +200,25 @@ def _list_skill_files(skill_dir: str) -> list[str]:
     return files
 
 
+def _list_all_skill_files(skill_dir: str) -> list[str]:
+    """递归列出 skill 目录内所有受支持文件（.md/.txt）的相对路径（/ 分隔）。
+
+    顶层文件在前、其余按路径升序，供前端技能文件管理器展示与编辑。"""
+    found = []
+    for dirpath, _dirnames, filenames in os.walk(skill_dir):
+        for fn in filenames:
+            if not fn.lower().endswith(_SKILL_FILE_EXTS):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), skill_dir).replace(os.sep, "/")
+            found.append(rel)
+    found.sort(key=lambda r: (0 if "/" not in r else 1, r.lower()))
+    return found
+
+
 def load_skill_content(skill_id: str) -> str | None:
-    """拼接 skill 目录下所有 .md（升序）为系统提示词；skill.md 去掉 frontmatter。"""
+    """拼接 skill 目录顶层所有 .md（升序）为系统提示词；带 YAML frontmatter 的
+    .md（含主文件 skill.md，忽略大小写）去掉 frontmatter，其余正文原样保留。
+    （子目录与 .txt 引用文件不并入提示词，由代理按需读取。）"""
     d = _skill_dir(skill_id)
     if not d:
         return None
@@ -195,10 +231,11 @@ def load_skill_content(skill_id: str) -> str | None:
         except Exception as e:
             logger.warning(f"Error reading {fp}: {e}")
             continue
-        if fn == "skill.md":
+        if fn.lower() == "skill.md":
             _, body = split_frontmatter(text)
         else:
-            body = text
+            meta, stripped = split_frontmatter(text)
+            body = stripped if isinstance(meta, dict) and meta else text
         if body.strip():
             parts.append(body.rstrip("\n"))
     content = "\n\n".join(parts)
@@ -312,13 +349,17 @@ def _normalize_skill_id(raw: str) -> str:
 
 
 def _safe_skill_file_path(skill_dir: str, filename: str) -> str | None:
-    """校验并返回 skill 目录内 .md 文件的绝对路径；非法/越界/非 md 返回 None。"""
-    fn = (filename or "").replace("\\", "/")
-    if not fn or "/" in fn or ".." in Path(fn).parts:
+    """校验并返回 skill 目录内受支持文件（.md/.txt，可含子目录）的绝对路径；
+    非法/越界/非受支持类型返回 None。"""
+    fn = (filename or "").replace("\\", "/").strip()
+    if not fn or fn.startswith("/"):
         return None
-    if not fn.lower().endswith(".md"):
+    parts = [p for p in fn.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
         return None
-    target = os.path.realpath(os.path.join(skill_dir, fn))
+    if not parts[-1].lower().endswith(_SKILL_FILE_EXTS):
+        return None
+    target = os.path.realpath(os.path.join(skill_dir, *parts))
     base = os.path.realpath(skill_dir)
     if os.path.commonpath([target, base]) != base:
         return None
@@ -349,7 +390,8 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
         }
         new_meta = {k: v for k, v in new_meta.items() if v is not None}
         text = serialize_frontmatter(new_meta, content or "")
-        with open(os.path.join(d, "skill.md"), 'w', encoding='utf-8', newline='\n') as f:
+        main = _main_md_name(d) or "skill.md"
+        with open(os.path.join(d, main), 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)
     return True
 
@@ -379,7 +421,7 @@ def delete_skill_file(skill_id: str, filename: str) -> bool:
     if not d:
         return False
     fn = (filename or "").replace("\\", "/")
-    if fn == "skill.md":
+    if fn.lower() == "skill.md":
         return False
     target = _safe_skill_file_path(d, fn)
     if not target or not os.path.isfile(target):
@@ -410,7 +452,7 @@ def delete_skill(skill_id: str) -> tuple[bool, str]:
 # ==========================================
 
 def _write_skill_files(target_dir: str, rel_paths: list[str], blobs: list[bytes]) -> bool:
-    """把 (相对路径, 内容) 写入 target_dir，仅保留 .md 并校验安全；缺 skill.md 时自动创建。"""
+    """把 (相对路径, 内容) 写入 target_dir，仅保留受支持文件（.md/.txt）并校验安全；缺 skill.md 时自动创建。"""
     os.makedirs(target_dir, exist_ok=True)
     base = os.path.realpath(target_dir)
     wrote_skill_md = False
@@ -419,7 +461,7 @@ def _write_skill_files(target_dir: str, rel_paths: list[str], blobs: list[bytes]
         if not parts or any(p == ".." for p in parts):
             logger.warning(f"Reject unsafe skill file path: {rel}")
             continue
-        if not parts[-1].lower().endswith(".md"):
+        if not parts[-1].lower().endswith(_SKILL_FILE_EXTS):
             continue
         target = os.path.realpath(os.path.join(base, *parts))
         if os.path.commonpath([target, base]) != base:
@@ -428,7 +470,7 @@ def _write_skill_files(target_dir: str, rel_paths: list[str], blobs: list[bytes]
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, 'wb') as f:
             f.write(blob or b"")
-        if parts[-1] == "skill.md":
+        if parts[-1].lower() == "skill.md":
             wrote_skill_md = True
     if not wrote_skill_md:
         # 自动创建 skill.md（带最小 frontmatter），保证目录是合法 skill
@@ -437,13 +479,13 @@ def _write_skill_files(target_dir: str, rel_paths: list[str], blobs: list[bytes]
     return True
 
 
-def _collect_md(root: str) -> tuple[list[str], list[bytes]]:
-    """收集 root 下所有 .md 的 (相对路径, 字节)。"""
+def _collect_skill_files(root: str) -> tuple[list[str], list[bytes]]:
+    """收集 root 下所有受支持文件（.md/.txt）的 (相对路径, 字节)。"""
     rel_paths = []
     blobs = []
     for dirpath, _dirnames, filenames in os.walk(root):
         for fn in sorted(filenames):
-            if not fn.lower().endswith(".md"):
+            if not fn.lower().endswith(_SKILL_FILE_EXTS):
                 continue
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root).replace("\\", "/")
@@ -475,7 +517,7 @@ def _upload_from_zip(zip_bytes: bytes, skill_id_field: str) -> dict:
         if not sid:
             return {"success": False, "status": 400, "message": "skill_id required (no wrapper folder in zip)"}
 
-        rel_paths, blobs = _collect_md(root)
+        rel_paths, blobs = _collect_skill_files(root)
         _write_skill_files(os.path.join(SKILL_CUSTOM_DIR, sid), rel_paths, blobs)
         return {"success": True, "id": sid}
     except Exception as e:
@@ -500,7 +542,7 @@ def _upload_from_manifest(rel_paths: list[str], file_parts: list[tuple[str, byte
     paths = []
     blobs = []
     for rel, (_fname, blob) in zip(inner, file_parts):
-        if rel.lower().endswith(".md"):
+        if rel.lower().endswith(_SKILL_FILE_EXTS):
             paths.append(rel)
             blobs.append(blob)
     _write_skill_files(os.path.join(SKILL_CUSTOM_DIR, sid), paths, blobs)
@@ -532,7 +574,7 @@ async def rs_prompts_load_skill(request):
             return web.Response(status=404, text="Skill not found")
         meta, _ = _read_skill_md(d)
         files = []
-        for fn in _list_skill_files(d):
+        for fn in _list_all_skill_files(d):
             fp = os.path.join(d, fn)
             files.append({"name": fn, "size": os.path.getsize(fp)})
         return web.json_response({
