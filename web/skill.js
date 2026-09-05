@@ -201,7 +201,7 @@ const CATEGORY_LABELS = {
     "custom": { label: "📝 自定义", order: 3 }
 };
 
-/** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图)/📌(预设) 徽标与 multiTurn 标记 */
+/** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记 */
 function populateSkillOptions(selectEl, skills) {
     if (!skills || !skills.length) return;
     const groups = {};
