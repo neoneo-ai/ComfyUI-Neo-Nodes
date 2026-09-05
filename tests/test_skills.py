@@ -680,6 +680,49 @@ class TestWorkflowContextFormat(unittest.TestCase):
         # 有真实 w/h 时仍显示归一后的比例
         self.assertIn("Aspect Ratio: 11:14", block)
 
+    def test_h3_reference_tags(self):
+        # ReferenceToVideo：每个参考单独成 tag，<Picture N>/<Video N>/<Audio N> = 第 N 个（1-based），并附对应文件
+        ctx = {
+            "h3": [
+                {"type": "MiniMaxH3ReferenceToVideo", "width": 1344, "height": 768,
+                 "refs": {"pictures": ["a.jpg", "b.jpg"], "videos": ["c.mp4"],
+                          "audios": ["d.wav", "e.wav", "f.wav"]}},
+            ],
+        }
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("References: <Picture 1> a.jpg, <Picture 2> b.jpg, <Video 1> c.mp4, "
+                      "<Audio 1> d.wav, <Audio 2> e.wav, <Audio 3> f.wav", block)
+
+    def test_h3_single_reference_tag(self):
+        ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["x.jpg"]}}]}
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("References: <Picture 1> x.jpg", block)
+
+    def test_h3_reference_tag_without_file(self):
+        # 槽位已连但回溯不到叶子文件：仍按序号出 tag，只是不带文件名
+        ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": [None, "b.jpg"]}}]}
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("<Picture 1>, <Picture 2> b.jpg", block)
+
+    def test_h3_keyframes_are_picture_tags(self):
+        # ImageToVideo：first/last frame 本身就是 <Picture N>（tokenizer 按 [first, last] 顺序编号）
+        ctx = {"h3": [{"type": "MiniMaxH3ImageToVideo",
+                       "refs": {"keyframes": {"first": "ff.jpg", "last": "lf.jpg"}}}]}
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("References: <Picture 1> ff.jpg (first frame), <Picture 2> lf.jpg (last frame)", block)
+
+    def test_h3_keyframe_only_last_is_picture_1(self):
+        # 只有 last_frame：它是唯一的图，编号仍为 <Picture 1>
+        ctx = {"h3": [{"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"last": "lf.jpg"}}}]}
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("References: <Picture 1> lf.jpg (last frame)", block)
+
+    def test_h3_no_refs_omits_reference_line(self):
+        ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "width": 1344, "height": 768}]}
+        block = self.skill._format_workflow_context(ctx)
+        self.assertNotIn("References:", block)
+        self.assertNotIn("<Picture", block)
+
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestFetchReferenceImage(unittest.TestCase):

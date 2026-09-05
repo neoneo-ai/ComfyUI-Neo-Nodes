@@ -406,6 +406,34 @@ def _format_workflow_context(context) -> str:
         r = round(f)
         return f"{int(r)}s" if abs(f - r) < 0.05 else f"{f:.1f}s"
 
+    def _tag_list(label, files):
+        # <Tag N> = 第 N 个该类型参考（1-based，与 tokenizer 计数一致）；files 为按序号排列的文件名（可含 None）
+        if not isinstance(files, (list, tuple)) or not files:
+            return ""
+        parts = []
+        for i, f in enumerate(files, 1):
+            t = f"<{label} {i}>"
+            if f:
+                t += " " + str(f)
+            parts.append(t)
+        return ", ".join(parts)
+
+    def _keyframe_tags(kf):
+        # ImageToVideo 的 first/last frame 本身就是 <Picture N>（tokenizer 按 [first, last] 顺序编号）
+        entries = []
+        if isinstance(kf, dict):
+            if "first" in kf:
+                entries.append((kf.get("first"), "first frame"))
+            if "last" in kf:
+                entries.append((kf.get("last"), "last frame"))
+        parts = []
+        for i, (f, role) in enumerate(entries, 1):
+            t = f"<Picture {i}>"
+            if f:
+                t += " " + str(f)
+            parts.append(t + f" ({role})")
+        return ", ".join(parts)
+
     lines = ["<workflow_context>"]
     if h3:
         lines.append("MiniMax H3 nodes in the current workflow:")
@@ -435,6 +463,14 @@ def _format_workflow_context(context) -> str:
             size = n.get("ref_image_size")
             if size:
                 parts.append(f"ref_image_size={size}")
+            nrefs = n.get("refs") or {}
+            if isinstance(nrefs, dict):
+                tag_parts = [t for t in (_keyframe_tags(nrefs.get("keyframes")),
+                                         _tag_list("Picture", nrefs.get("pictures")),
+                                         _tag_list("Video", nrefs.get("videos")),
+                                         _tag_list("Audio", nrefs.get("audios"))) if t]
+                if tag_parts:
+                    parts.append("References: " + ", ".join(tag_parts))
             lines.append(f"  {i}. " + ", ".join(parts))
     if refs:
         lines.append("Reference media (leaf inputs of the workflow):")

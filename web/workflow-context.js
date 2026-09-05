@@ -174,9 +174,18 @@ function probeImageSize(value) {
     });
 }
 
+// 节点是否活动：mode 为 0/未设才正常执行；bypass/mute/inactive（非零）一律忽略
+function isNodeActive(node) {
+    return !!node && (node.mode == null || node.mode === 0);
+}
+
 /**
  * 采集当前图的工作流上下文。
  * @returns {Promise<{nodes:string[], h3:Object[], references:Array}|null>}
+ *   h3: [{type, width?, height?, length?, aspect?, duration_seconds?, ref_image_size?, refs?}]
+ *     refs: 该 H3 每个参考槽对应的叶子媒体文件（按 tokenizer 序号）：
+ *           {pictures?: [file...], videos?: [file...], audios?: [file...], keyframes?: {first?, last?}}
+ *           <Picture N>/<Video N>/<Audio N> = 第 N 个该类型参考；I2V 的 first/last frame 即 <Picture 1>/<Picture 2>
  *   references: [{kind:"image"|"video", source:{kind:"input",value}, width?, height?}]
  */
 export async function collectWorkflowContext(graph) {
@@ -194,6 +203,7 @@ export async function collectWorkflowContext(graph) {
 
     for (const n of graph._nodes || []) {
         if (!H3_NODE_TYPES.includes(n?.type)) continue;
+        if (!isNodeActive(n)) continue;   // 忽略 passby/mute/inactive 的 H3 节点
         const params = {};
         for (const name of H3_WIDGETS) {
             const v = widgetValue(n, name);
@@ -207,17 +217,48 @@ export async function collectWorkflowContext(graph) {
         if (inputSource(graph, n, "width")) { delete params.width; delete params.height; }
         h3Nodes.push({ type: n.type, ...params });
 
-        // 回溯 image / video 输入到叶子媒体节点（LoadImage/LoadVideo）
+        // Tier 2：按 tokenizer 序号记录该 H3 每个参考槽对应的叶子媒体文件。
+        // <Picture N>/<Video N>/<Audio N> = 第 N 个该类型参考（1-based），N 即下方列表的 1-based 位置；
+        // ImageToVideo 的 first/last frame 本身就是 <Picture 1>/<Picture 2>。
+        const picSlots = [], vidSlots = [], audSlots = [];   // {idx, file}，按槽位序号排序后编号
+        let hasFirst = false, firstFile = null;
+        let hasLast = false, lastFile = null;
+
         for (const inp of n.inputs || []) {
-            const isMediaSlot = /^ref_(image|video)_\d+$/.test(inp.name) ||
-                ["first_frame", "last_frame", "image", "video"].includes(inp.name);
-            if (!isMediaSlot || inp.link == null) continue;
+            if (inp.link == null) continue;
             const links = graph.links;
             const link = typeof links?.get === "function" ? links.get(inp.link) : links?.[inp.link];
             if (!link) continue;
             const srcNode = graph.getNodeById(link.origin_id);
-            if (!srcNode) continue;
-            const leaf = backtraceLeaf(graph, srcNode);
+            if (!isNodeActive(srcNode)) continue;   // 忽略 passby/mute/inactive 的上游源
+
+            // Autogrow 参考槽在真实图里带组前缀（如 ref_images.ref_image_0），正则兼容裸名与前缀名并取序号
+            const sname = inp.name || "";
+            let m, leaf = null;
+            if ((m = /^(?:.*\.)?ref_image_(\d+)$/.exec(sname))) {
+                leaf = backtraceLeaf(graph, srcNode);
+                picSlots.push({ idx: +m[1], file: leaf ? leaf.value : null });
+            } else if ((m = /^(?:.*\.)?(?:ref_video_audio|ref_audio)_(\d+)$/.exec(sname))) {
+                leaf = backtraceLeaf(graph, srcNode);
+                audSlots.push({ idx: +m[1], file: leaf ? leaf.value : null });
+            } else if ((m = /^(?:.*\.)?ref_video_(\d+)$/.exec(sname))) {
+                leaf = backtraceLeaf(graph, srcNode);
+                vidSlots.push({ idx: +m[1], file: leaf ? leaf.value : null });
+            } else if (sname === "first_frame") {
+                hasFirst = true;
+                leaf = backtraceLeaf(graph, srcNode);
+                firstFile = leaf ? leaf.value : null;
+            } else if (sname === "last_frame") {
+                hasLast = true;
+                leaf = backtraceLeaf(graph, srcNode);
+                lastFile = leaf ? leaf.value : null;
+            }
+
+            // 全局参考清单（供 get_reference_image 取像素），按文件去重；音频不进此表
+            const isImageVideoSlot = /^(?:.*\.)?(?:ref_image|ref_video)_\d+$/.test(sname) ||
+                ["first_frame", "last_frame", "image", "video"].includes(sname);
+            if (!isImageVideoSlot) continue;
+            if (leaf == null) leaf = backtraceLeaf(graph, srcNode);   // 裸 image/video 槽补算
             if (!leaf || refSeen.has(leaf.value)) continue;
             refSeen.add(leaf.value);
             const ref = { kind: leaf.kind, source: { kind: "input", value: leaf.value } };
@@ -228,6 +269,19 @@ export async function collectWorkflowContext(graph) {
                 }).catch(() => {}));
             }
         }
+
+        const byIdx = arr => arr.sort((a, b) => a.idx - b.idx).map(s => s.file);
+        const refs = {};
+        if (picSlots.length) refs.pictures = byIdx(picSlots);
+        if (vidSlots.length) refs.videos = byIdx(vidSlots);
+        if (audSlots.length) refs.audios = byIdx(audSlots);
+        if ((hasFirst || hasLast) && n.type === "MiniMaxH3ImageToVideo") {
+            const kf = {};
+            if (hasFirst) kf.first = firstFile;   // 允许 null：槽位已连但回溯不到叶子文件
+            if (hasLast) kf.last = lastFile;
+            refs.keyframes = kf;
+        }
+        if (Object.keys(refs).length) h3Nodes[h3Nodes.length - 1].refs = refs;
     }
 
     await Promise.all(probeJobs);
@@ -241,4 +295,4 @@ export async function collectWorkflowContext(graph) {
 }
 
 /** 供测试/调试：导出纯函数 */
-export const _internals = { gcd, aspectRatio, H3_NODE_TYPES, leafMediaSource, resolveDurationSeconds, resolveCanvasAspect };
+export const _internals = { gcd, aspectRatio, H3_NODE_TYPES, isNodeActive, leafMediaSource, resolveDurationSeconds, resolveCanvasAspect };
