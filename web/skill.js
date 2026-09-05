@@ -312,6 +312,7 @@ function createSkillDetailPopup() {
     deleteBtn.textContent = "🗑 Delete";
     const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-tpl-cancel-btn");
     cancelBtn.textContent = "✕ Close";
+    footerBtns.append(saveBtn, copyBtn, deleteBtn, cancelBtn);
 
     content.append(nameRow, contentRow, footerBtns);
     modal.append(header, content);
@@ -435,6 +436,7 @@ function createSkillDetailPopup() {
         titleSpan.textContent = "✨ New Skill";
         titleSpan.removeAttribute("title");
         currentSkillId = null;
+        currentFiles = [];
         currentSource = "custom";
         setBadge();
         nameInput.value = "";

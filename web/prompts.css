@@ -548,7 +548,7 @@
     flex-shrink: 0;
 }
 .rs-input-toolbar .rs-combo-input {
-    width: 120px;
+    width: 200px;
     padding: 4px 26px 4px 8px;
     font-size: 11px;
     background: #2a2a2a;

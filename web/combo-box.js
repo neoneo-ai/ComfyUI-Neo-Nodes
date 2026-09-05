@@ -42,6 +42,22 @@ function el(tag, className, cssText = "") {
     return n;
 }
 
+// 共享镜像 span 测量文本宽度：canvas measureText 对 emoji/CJK 的宽度估算与
+// 输入框实际渲染不一致（会偏小导致 ✕ 压字），同排版引擎的 span 才是精确值
+let _mirrorSpan = null;
+function measureTextWidth(text, refEl) {
+    if (!_mirrorSpan) {
+        _mirrorSpan = document.createElement("span");
+        _mirrorSpan.style.cssText = "position:absolute;top:-9999px;left:-9999px;visibility:hidden;white-space:pre;";
+        document.body.appendChild(_mirrorSpan);
+    }
+    const cs = getComputedStyle(refEl);
+    _mirrorSpan.style.font = cs.font;
+    _mirrorSpan.style.letterSpacing = cs.letterSpacing;
+    _mirrorSpan.textContent = text;
+    return _mirrorSpan.offsetWidth;
+}
+
 export function attachComboBox(selectEl, opts = {}) {
     const placeholder = opts.placeholder || "🔍 输入过滤或点击选择...";
     const emptyText = opts.emptyText || "无匹配模型";
@@ -68,8 +84,8 @@ export function attachComboBox(selectEl, opts = {}) {
     const hasFooter = !!opts.footerEl;
     const listOpenDisplay = hasFooter ? "flex" : "block";
     const listEl = el("div", "rs-combo-list", hasFooter
-        ? "position:fixed;display:none;max-height:260px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
-        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
+        ? "position:fixed;display:none;max-height:260px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
+        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
     document.body.appendChild(listEl);
 
     // 行容器：有 footer 时为内部滚动区，无 footer 时即 listEl 自身（保持既有行为）
@@ -81,7 +97,7 @@ export function attachComboBox(selectEl, opts = {}) {
         itemsHost = itemsWrap;
     }
 
-    const clearBtn = el("button", "rs-combo-clear", "position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;line-height:20px;text-align:center;background:none;border:none;color:#888;font-size:13px;cursor:pointer;padding:0;display:none;z-index:1;");
+    const clearBtn = el("button", "rs-combo-clear", "position:absolute;width:16px;height:16px;line-height:16px;text-align:center;background:none;border:none;color:#888;font-size:10px;cursor:pointer;padding:0;display:none;z-index:1;");
     clearBtn.type = "button";
     clearBtn.textContent = "✕";
     clearBtn.title = "清除输入，显示全部";
@@ -93,11 +109,22 @@ export function attachComboBox(selectEl, opts = {}) {
     const closeList = () => { listEl.style.display = "none"; highlight = -1; };
 
     const syncClear = () => {
-        clearBtn.style.display = inputEl.value ? "block" : "none";
+        if (!inputEl.value) { clearBtn.style.display = "none"; return; }
+        clearBtn.style.display = "block";
+        // ✕ 紧跟文字末尾；文本超出可见区时钳回右缘（与旧行为一致）
+        const cs = getComputedStyle(inputEl);
+        const tw = measureTextWidth(inputEl.value, inputEl);
+        const left = (parseFloat(cs.paddingLeft) || 0) + tw + 2;
+        clearBtn.style.right = "auto";
+        clearBtn.style.left = Math.min(left, Math.max(2, inputEl.clientWidth - clearBtn.offsetWidth - 2)) + "px";
+        // 底部对齐输入框内容区下缘（用户反馈居中仍偏上）
+        clearBtn.style.top = (inputEl.offsetTop + (parseFloat(cs.borderTopWidth) || 0) + inputEl.clientHeight - clearBtn.offsetHeight) + "px";
     };
     const syncInputFromSelect = () => {
         const sel = selectEl.selectedOptions && selectEl.selectedOptions[0];
         inputEl.value = sel ? sel.textContent : "";
+        // 输入框较窄时长名会被截断，悬停用 title 显示完整选中名
+        inputEl.title = sel ? sel.textContent : "";
         syncClear();
     };
 
@@ -260,6 +287,11 @@ export function attachComboBox(selectEl, opts = {}) {
     box.appendChild(wrap);
     box.appendChild(selectEl);
 
+    // 初始化时输入框可能尚未布局（节点未渲染/display:none），首次 syncClear 的
+    // left/top 会基于全 0 度量算错；尺寸真正就绪/变化时重排 ✕
+    const clearRO = new ResizeObserver(() => { if (inputEl.value) syncClear(); });
+    clearRO.observe(inputEl);
+
     const inst = { wrap, listEl, closeList, placeList };
     instances.add(inst);
     bindShared();
@@ -270,6 +302,7 @@ export function attachComboBox(selectEl, opts = {}) {
         close: () => closeList(),
         destroy() {
             observer.disconnect();
+            clearRO.disconnect();
             window.removeEventListener("mousedown", winMouseDown, true);
             window.removeEventListener("click", winClick, true);
             listEl.remove();
