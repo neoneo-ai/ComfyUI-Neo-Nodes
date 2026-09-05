@@ -692,6 +692,8 @@ class TestWorkflowContextFormat(unittest.TestCase):
         block = self.skill._format_workflow_context(ctx)
         self.assertIn("References: <Picture 1> a.jpg, <Picture 2> b.jpg, <Video 1> c.mp4, "
                       "<Audio 1> d.wav, <Audio 2> e.wav, <Audio 3> f.wav", block)
+        # 有 ref tag 时附带一句：提示 LLM 用这些 tag 在提示词里指代参考媒体
+        self.assertIn("refer to each node's reference media using the <Picture N>", block)
 
     def test_h3_single_reference_tag(self):
         ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["x.jpg"]}}]}
@@ -722,6 +724,7 @@ class TestWorkflowContextFormat(unittest.TestCase):
         block = self.skill._format_workflow_context(ctx)
         self.assertNotIn("References:", block)
         self.assertNotIn("<Picture", block)
+        self.assertNotIn("refer to each node's reference media", block)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)

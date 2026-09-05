@@ -437,6 +437,7 @@ def _format_workflow_context(context) -> str:
     lines = ["<workflow_context>"]
     if h3:
         lines.append("MiniMax H3 nodes in the current workflow:")
+        has_ref_tags = False
         for i, n in enumerate(h3[:8], 1):
             parts = [str(n.get("type", "H3"))]
             w, h = n.get("width"), n.get("height")
@@ -471,7 +472,10 @@ def _format_workflow_context(context) -> str:
                                          _tag_list("Audio", nrefs.get("audios"))) if t]
                 if tag_parts:
                     parts.append("References: " + ", ".join(tag_parts))
+                    has_ref_tags = True
             lines.append(f"  {i}. " + ", ".join(parts))
+        if has_ref_tags:
+            lines.append("In your prompt, refer to each node's reference media using the <Picture N>/<Video N>/<Audio N> tags listed above.")
     if refs:
         lines.append("Reference media (leaf inputs of the workflow):")
         for i, r in enumerate(refs[:32], 1):
