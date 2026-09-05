@@ -338,7 +338,7 @@ class TestSkillAgent(unittest.TestCase):
         # 记录并替换 llm 依赖（skill 在函数运行时惰性 from .llm import ...）
         self._llm_attrs = {}
         for a in ("get_current_mode", "_load_remote_config", "_detect_language",
-                  "remote_chat_turn", "_run_llm_inference"):
+                  "chat_turn", "_run_llm_inference"):
             self._llm_attrs[a] = getattr(self.llm, a)
         self.llm._load_remote_config = lambda: {"skill_language": "auto"}
         self.llm._detect_language = (lambda t: ("Chinese" if any('\u4e00' <= c <= '\u9fff'
@@ -354,6 +354,11 @@ class TestSkillAgent(unittest.TestCase):
     def _write(self, rel, content):
         with open(os.path.join(self.skdir, rel), "w", encoding="utf-8") as f:
             f.write(content)
+
+    def _clear_refs(self):
+        ref = os.path.join(self.skdir, "references", "ref.txt")
+        if os.path.exists(ref):
+            os.remove(ref)
 
     def test_main_files_language_exclusive(self):
         self.assertEqual(self.skill._main_md_files_for_language(self.skdir, "en"), ["SKILL.md"])
@@ -390,7 +395,7 @@ class TestSkillAgent(unittest.TestCase):
                                   "arguments": '{"path": "references/ref.txt"}'}}]}
             return {"role": "assistant", "content": "DONE"}
 
-        self.llm.remote_chat_turn = fake_turn
+        self.llm.chat_turn = fake_turn
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
         out = self.skill._skill_agent_core("myskill", "hello")
         self.assertEqual(out, "DONE")
@@ -401,14 +406,36 @@ class TestSkillAgent(unittest.TestCase):
         self.assertTrue(any(m.get("role") == "system" and "Available reference files" in m["content"]
                             for m in calls[0]))
 
-    def test_agent_local_mode_falls_back_to_single_shot(self):
+    def test_agent_no_refs_falls_back_to_single_shot(self):
+        # 无引用/上下文：本地或远程都回退单轮推理（_run_llm_inference）
+        self._clear_refs()
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
         self.llm._run_llm_inference = lambda *a, **k: "[single]"
         out = self.skill._skill_agent_core("myskill", "hello")
         self.assertEqual(out, "[single]")
 
+    def test_agent_local_mode_uses_tool_loop_with_refs(self):
+        # 本地模式 + 引用：与远程一致，走工具调用循环（chat_turn）而非单轮回退
+        calls = []
+
+        def fake_turn(messages, max_tokens=None, tools=None):
+            calls.append([dict(m) for m in messages])
+            if len(calls) == 1:
+                return {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "read_skill_file",
+                                  "arguments": '{"path": "references/ref.txt"}'}}]}
+            return {"role": "assistant", "content": "DONE"}
+
+        self.llm.chat_turn = fake_turn
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+        out = self.skill._skill_agent_core("myskill", "hello")
+        self.assertEqual(out, "DONE")
+        self.assertEqual(len(calls), 2)
+
     def test_stream_single_turn_yields_tokens_incrementally(self):
         # 本地模式 + 单轮：应逐 token 透传，且向 LLM 请求 stream=True
+        self._clear_refs()
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
         captured = {}
 
@@ -423,6 +450,7 @@ class TestSkillAgent(unittest.TestCase):
 
     def test_stream_single_turn_parses_dict_chunks(self):
         # 本地模型可能返回 dict chunk：只取 delta.content，跳过空/无 choices
+        self._clear_refs()
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
         self.llm._run_llm_inference = lambda *a, **k: iter([
             {"choices": [{"delta": {"content": "ab"}}]},
@@ -433,6 +461,7 @@ class TestSkillAgent(unittest.TestCase):
         self.assertEqual(chunks, ["ab"])
 
     def test_stream_yields_error_on_failure(self):
+        self._clear_refs()
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
 
         def boom(*a, **k):
@@ -450,19 +479,20 @@ class TestSkillAgent(unittest.TestCase):
         self.assertEqual(self.skill._resolve_skill_language("hello world"), "en")
 
     def test_skill_stream_injects_context(self):
-        # 本地模式单轮：workflow_context 应注入传给 LLM 的系统提示词
+        # 有上下文但无引用文件/参考图：走单轮路径，workflow_context 仍注入传给 LLM 的系统提示词
+        self._clear_refs()
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
         captured = {}
 
         def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
-            captured["system_prompt"] = system_prompt
+            captured["system"] = system_prompt
             return iter(["ok"])
 
         self.llm._run_llm_inference = fake_inference
         ctx = {"h3": [{"type": "EmptyMiniMaxH3LatentAV", "width": 1280, "height": 720}],
                "references": []}
         list(self.skill.run_skill_agent_stream("myskill", "hello", context=ctx))
-        self.assertIn("<workflow_context>", captured.get("system_prompt", ""))
+        self.assertIn("<workflow_context>", captured.get("system", ""))
 
     def test_remote_agent_fetches_reference_image(self):
         # 远程模式 + 图片参考：代理应声明 get_reference_image 工具，取回像素后作为 user 消息回灌
@@ -486,7 +516,7 @@ class TestSkillAgent(unittest.TestCase):
                                       "arguments": '{"index": 1}'}}]}
                 return {"role": "assistant", "content": "DONE"}
 
-            self.llm.remote_chat_turn = fake_turn
+            self.llm.chat_turn = fake_turn
             self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
             ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "ref.png"},
                                    "width": 64, "height": 48}]}
@@ -501,6 +531,80 @@ class TestSkillAgent(unittest.TestCase):
         finally:
             folder_paths.get_input_directory = orig_in
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_local_agent_exposes_and_refetches_reference_image(self):
+        # 本地模式 + 图片参考：声明 get_reference_image，取回像素后作为 user 消息回灌
+        import folder_paths
+        import shutil
+        import tempfile
+        from PIL import Image
+        tmp = tempfile.mkdtemp()
+        try:
+            Image.new("RGB", (64, 48), (9, 8, 7)).save(os.path.join(tmp, "ref.png"))
+            orig_in = folder_paths.get_input_directory
+            folder_paths.get_input_directory = lambda: tmp
+            calls = []
+            seen_tools = []
+
+            def fake_turn(messages, max_tokens=None, tools=None):
+                calls.append([dict(m) for m in messages])
+                if not seen_tools:
+                    seen_tools.append([t["function"]["name"] for t in (tools or [])])
+                if len(calls) == 1:
+                    return {"role": "assistant", "content": "", "tool_calls": [
+                        {"id": "c1", "type": "function",
+                         "function": {"name": "get_reference_image",
+                                      "arguments": '{"index": 1}'}}]}
+                return {"role": "assistant", "content": "DONE"}
+
+            self.llm.chat_turn = fake_turn
+            self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+            ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "ref.png"},
+                                   "width": 64, "height": 48}]}
+            out = self.skill._skill_agent_core("myskill", "hello", context=ctx)
+            self.assertEqual(out, "DONE")
+            self.assertIn("get_reference_image", seen_tools[0])
+            user_imgs = [m for m in calls[1] if m.get("role") == "user"
+                         and isinstance(m.get("content"), list)]
+            self.assertTrue(any("image_url" in str(p) for m in user_imgs for p in m["content"]),
+                            "取回的参考图像素应作为独立 user 消息回灌")
+        finally:
+            folder_paths.get_input_directory = orig_in
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_video_only_context_is_single_shot_with_ctx(self):
+        # 上下文仅含视频参考（无引用文件、无可取回图像）：走单轮路径，workflow_context 仍注入系统提示词
+        self._clear_refs()
+        captured = {}
+
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+            captured["system"] = system_prompt
+            return "[single]"
+
+        self.llm._run_llm_inference = fake_inference
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        ctx = {"references": [{"kind": "video", "source": {"kind": "input", "value": "v.mp4"}}]}
+        out = self.skill._skill_agent_core("myskill", "hello", context=ctx)
+        self.assertEqual(out, "[single]")
+        self.assertIn("<workflow_context>", captured.get("system", ""))
+
+    def test_context_only_single_shot_includes_duration(self):
+        # 仅工作流上下文（无引用文件/参考图）：单轮生成，系统提示词含 H3 真实时长
+        self._clear_refs()
+        captured = {}
+
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+            captured["system"] = system_prompt
+            return "[single]"
+
+        self.llm._run_llm_inference = fake_inference
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "width": 1344, "height": 768,
+                       "length": 124, "duration_seconds": 5}], "references": []}
+        out = self.skill._skill_agent_core("myskill", "hello", context=ctx)
+        self.assertEqual(out, "[single]")
+        self.assertIn("<workflow_context>", captured.get("system", ""))
+        self.assertIn("Duration: 5s", captured.get("system", ""))
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
@@ -533,8 +637,8 @@ class TestWorkflowContextFormat(unittest.TestCase):
         self.assertTrue(block.startswith("<workflow_context>"))
         self.assertTrue(block.rstrip().endswith("</workflow_context>"))
         self.assertIn("MiniMax H3 nodes in the current workflow", block)
-        self.assertIn("canvas 1280x720 (16:9)", block)
-        self.assertIn("~2.0s (48 frames @24fps)", block)
+        self.assertIn("Aspect Ratio: 16:9", block)
+        self.assertIn("Duration: 2s (48 frames @24fps)", block)
         self.assertIn("ref_image_size=large", block)
         self.assertIn("Reference media (leaf inputs of the workflow):", block)
         self.assertIn("[1] image cat.png (16:9) (1024x576) - fetchable via get_reference_image(1)", block)
@@ -547,6 +651,34 @@ class TestWorkflowContextFormat(unittest.TestCase):
         block = self.skill._format_workflow_context(ctx)
         self.assertIn("[1] video a.mp4", block)
         self.assertNotIn("get_reference_image tool only when you need", block)
+
+    def test_h3_prefers_duration_seconds_over_stale_length(self):
+        ctx = {
+            "h3": [
+                # 前端回溯出真实秒数：优先使用，忽略过期的 widget 帧数
+                {"type": "MiniMaxH3ReferenceToVideo", "width": 1344, "height": 768,
+                 "length": 124, "duration_seconds": 5},
+                # 无 duration_seconds：回退 length/24
+                {"type": "MiniMaxH3ImageToVideo", "width": 1280, "height": 720, "length": 192},
+            ],
+        }
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("Duration: 5s", block)
+        self.assertNotIn("124 frames", block)
+        self.assertIn("Duration: 8s (192 frames @24fps)", block)
+
+    def test_h3_aspect_only_without_stale_dims(self):
+        # 前端回溯到 ResolutionSelector：只上报比例，丢弃被连线覆盖的 stale width/height
+        ctx = {
+            "h3": [
+                {"type": "MiniMaxH3ReferenceToVideo", "aspect": "9:16"},
+                {"type": "MiniMaxH3ImageToVideo", "width": 704, "height": 896},
+            ],
+        }
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("Aspect Ratio: 9:16", block)
+        # 有真实 w/h 时仍显示归一后的比例
+        self.assertIn("Aspect Ratio: 11:14", block)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)

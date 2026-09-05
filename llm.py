@@ -817,8 +817,9 @@ class LLMSingleton:
         logger.info(f"LLM model loaded successfully, has_mmproj={self.has_mmproj}")
         print(f"[NeoNodes] LLM model loaded: {os.path.basename(target_path)} | has_mmproj={self.has_mmproj}")
 
-    def create_chat_completion(self, messages, max_tokens, image_bytes_list=None, stream=False):
-        """创建聊天补全请求，支持图像输入和流式输出"""
+    def create_chat_completion(self, messages, max_tokens, image_bytes_list=None, stream=False,
+                               tools=None, tool_choice=None):
+        """创建聊天补全请求，支持图像输入、工具调用和流式输出"""
         if self.model is None:
             raise RuntimeError("LLM Model not loaded")
 
@@ -846,6 +847,8 @@ class LLMSingleton:
             messages=messages,
             max_tokens=max_tokens,
             stream=stream,
+            tools=tools,
+            tool_choice=tool_choice,
         )
 
 
@@ -1103,20 +1106,29 @@ def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> Li
 # Public LLM Task Runner
 # ==========================================
 
-def remote_chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
-                     tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    """对当前激活的远程 provider 执行一次（非流式）对话，返回 assistant message dict。
+def chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
+              tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """对当前激活的 provider（本地 llama.cpp 或远程 API）执行一次（非流式）对话，返回 assistant message dict。
 
     供 skill 代理循环按需调用：传入带 tools 的 messages，返回含 content / tool_calls 的消息。
-    远程未启用或不可用时抛出 RuntimeError。
+    按 get_current_mode() 分发到本地或远程；对应后端不可用时抛出 RuntimeError。
     """
-    config = _get_active_remote_config()
-    if not config.get("enabled", False):
-        raise RuntimeError("Remote LLM is disabled")
-    client = RemoteLLMClient(config)
-    if not client.is_available():
-        raise RuntimeError(f"Remote provider '{client.provider}' is not available")
-    response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools)
+    if get_current_mode() == LLM_MODE_REMOTE:
+        config = _get_active_remote_config()
+        if not config.get("enabled", False):
+            raise RuntimeError("Remote LLM is disabled")
+        client = RemoteLLMClient(config)
+        if not client.is_available():
+            raise RuntimeError(f"Remote provider '{client.provider}' is not available")
+        response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools)
+    else:
+        llm = get_llm_instance()
+        response = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=max_tokens or 500,
+            tools=tools,
+            tool_choice="auto" if tools else None,
+        )
     choices = response.get("choices", [])
     if not choices:
         return {}

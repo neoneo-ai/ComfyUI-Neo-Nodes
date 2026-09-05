@@ -74,6 +74,85 @@ function backtraceLeaf(graph, node) {
     return null;
 }
 
+// 取节点指定输入的上游节点（无连线返回 undefined）；兼容 links 为 Map 或数组
+function inputSource(graph, node, inputName) {
+    const inp = (node?.inputs || []).find(i => i.name === inputName);
+    if (!inp?.link) return undefined;
+    const links = graph.links;
+    const link = typeof links?.get === "function" ? links.get(inp.link) : links?.[inp.link];
+    return link ? graph.getNodeById(link.origin_id) : undefined;
+}
+
+// 取节点第一个有连线输入的上游（用于穿透 GetNode 等代理节点）
+function firstLinkedSource(graph, node) {
+    for (const inp of node?.inputs || []) {
+        if (inp.link == null) continue;
+        const links = graph.links;
+        const link = typeof links?.get === "function" ? links.get(inp.link) : links?.[inp.link];
+        if (link) return graph.getNodeById(link.origin_id);
+    }
+    return undefined;
+}
+
+// 读数值型 widget（PrimitiveFloat/Int 等）
+function numericWidget(node) {
+    for (const w of node?.widgets || []) {
+        const n = Number(w.value);
+        if (isFinite(n)) return n;
+    }
+    for (const v of node?.widgets_values || []) {
+        if (typeof v === "number" && isFinite(v)) return v;
+    }
+    return undefined;
+}
+
+// 回溯 H3 节点 length(帧数) 输入，解析出真实时长（秒）。
+// 常见链路：length ← ComfyMathExpression(公式 a*24→帧) ← PrimitiveFloat(a=秒)。
+// 只识别能确定"秒"的结构；无法确定时返回 undefined，后端回退 length/24。
+function resolveDurationSeconds(graph, node) {
+    let cur = inputSource(graph, node, "length");
+    const seen = new Set();
+    for (let d = 0; d < 6 && cur; d++) {
+        if (seen.has(cur.id)) return undefined;
+        seen.add(cur.id);
+        if ((cur.type || "") === "ComfyMathExpression") {
+            // 秒数喂给变量 a（公式里 a*24 → 帧）
+            const a = inputSource(graph, cur, "values.a");
+            if (a) {
+                const v = numericWidget(a);
+                if (isFinite(v)) return v;
+            }
+            return undefined;
+        }
+        // 穿透单输入代理（GetNode 等）；其余结构不猜，直接放弃
+        cur = firstLinkedSource(graph, cur);
+    }
+    return undefined;
+}
+
+// 解析 H3 节点有效画布比例 "W:H"：优先回溯 width 输入上游——ResolutionSelector 的
+// aspect_ratio combo 直接是比例预设（如 "16:9 (Widescreen)"），数值型上游取前两个数字当 w/h；
+// 否则退回 H3 自身 width/height widget。无法判定返回 ""。参考图不决定画布，故不参与。
+function resolveCanvasAspect(graph, node) {
+    const wsrc = inputSource(graph, node, "width");
+    if (wsrc) {
+        const ar = widgetValue(wsrc, "aspect_ratio");
+        if (typeof ar === "string") {
+            const m = ar.match(/^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)/);
+            if (m) return `${m[1]}:${m[2]}`;
+        }
+        const nums = [];
+        for (const v of [...(wsrc.widgets || []).map(w => w?.value), ...(wsrc.widgets_values || [])]) {
+            if (typeof v === "number" && isFinite(v) && v > 0) nums.push(v);
+        }
+        if (nums.length >= 2) return aspectRatio(nums[0], nums[1]);
+    }
+    const w = Number(widgetValue(node, "width"));
+    const h = Number(widgetValue(node, "height"));
+    if (isFinite(w) && isFinite(h)) return aspectRatio(w, h);
+    return "";
+}
+
 // 用 <img> 探测图片尺寸（仅取 naturalWidth/Height，失败返回 null）；目录判定与后端 _read_image_raw 一致
 function probeImageSize(value) {
     let stem = value;
@@ -120,6 +199,12 @@ export async function collectWorkflowContext(graph) {
             const v = widgetValue(n, name);
             if (v != null && v !== "") params[name] = v;
         }
+        const durSec = resolveDurationSeconds(graph, n);
+        if (isFinite(durSec)) params.duration_seconds = durSec;
+        // 画布比例：回溯上游解析真实值；width/height widget 被连线覆盖时是 stale，丢弃只留比例
+        const aspect = resolveCanvasAspect(graph, n);
+        if (aspect) params.aspect = aspect;
+        if (inputSource(graph, n, "width")) { delete params.width; delete params.height; }
         h3Nodes.push({ type: n.type, ...params });
 
         // 回溯 image / video 输入到叶子媒体节点（LoadImage/LoadVideo）
@@ -156,4 +241,4 @@ export async function collectWorkflowContext(graph) {
 }
 
 /** 供测试/调试：导出纯函数 */
-export const _internals = { gcd, aspectRatio, H3_NODE_TYPES, leafMediaSource };
+export const _internals = { gcd, aspectRatio, H3_NODE_TYPES, leafMediaSource, resolveDurationSeconds, resolveCanvasAspect };

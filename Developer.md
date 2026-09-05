@@ -90,7 +90,7 @@ ComfyUI-Neo-Nodes/
 | `__init__.py` | 插件入口。导入 `gallery` / `recipes` / `workflow` 模块以注册各自的 API 路由，从 `prompts.py` 合并 `NODE_CLASS_MAPPINGS` / `NODE_DISPLAY_NAME_MAPPINGS`，声明 `WEB_DIRECTORY = "./web"` |
 | `prompts.py` | 两个提示词节点（`NeoPrompts` → Neo Prompt Encoder，`NeoPromptAgent` → Neo Prompt Agent）与 `/rs_prompts/*` 路由：预设提示词 CRUD、LLM 模型切换、图片解析（`resolve_image_bytes`）、标签索引 |
 | `skill.py` | 技能系统：Markdown + YAML frontmatter 解析（PyYAML 事件流）、`skills/{presets,tasks,custom}/<id>/skill.md` 扫描与加载（`scan_skills` / `load_skill_content` / `load_task_template`）、多结果契约读取、语言互斥主文件选择（`SKILL.md`/`SKILL.cn.md`）与按需引用加载的工具调用代理循环（`run_skill_agent[_stream]` / `read_skill_file`，仅运行时惰性导入 llm 原语以避免与 llm.py 的顶层依赖形成循环）、`/rs_prompts/skill*` 路由（列表/读取/保存/删除/上传） |
-| `llm.py` | LLM 推理层：`RemoteLLMClient`（OpenAI 兼容 HTTP，支持 `tools=` 工具调用）、`LLMSingleton`（进程内 llama.cpp GGUF，含 mmproj 多模态绑定与自动卸载）、远程配置存取（`configs/remote_llm_config.json`，按 provider 分槽）、模型目录扫描（`scan_llm_directory`）、任务模板加载（`skills/` 目录，Markdown + frontmatter）与流式/非流式执行、单轮工具调用原语 `remote_chat_turn`（供 skill 代理循环按需调用） |
+| `llm.py` | LLM 推理层：`RemoteLLMClient`（OpenAI 兼容 HTTP，支持 `tools=` 工具调用）、`LLMSingleton`（进程内 llama.cpp GGUF，含 mmproj 多模态绑定与自动卸载）、远程配置存取（`configs/remote_llm_config.json`，按 provider 分槽）、模型目录扫描（`scan_llm_directory`）、任务模板加载（`skills/` 目录，Markdown + frontmatter）与流式/非流式执行、模式无关的单轮对话原语 `chat_turn`（按当前模式分发本地 llama.cpp / 远程 API，供 skill 代理循环按需调用） |
 | `gallery.py` | Neo Gallery 素材后端：预设/自定义/系统（input、output）目录聚合浏览、缩略图生成与缓存、媒体文件服务、上传/删除、目录设置（`gallery_settings.json`）。导入时加载 `gallery_lora` / `gallery_oss` 以注册其路由 |
 | `gallery_lora.py` | Civitai LORA 示例后台抓取队列：打开 Lora 目录时按文件 SHA256 查询并下载示例图 + 提示词 sidecar，缓存于 `gallery/lora_cache/` |
 | `gallery_oss.py` | 云端预设（OSS）素材：按 `configs/oss_presets.json` 拉取索引与文件到 `gallery/oss_cache/`，提供缩略图/媒体回退服务 |

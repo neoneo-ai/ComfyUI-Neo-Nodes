@@ -398,20 +398,40 @@ def _format_workflow_context(context) -> str:
         except (TypeError, ValueError):
             return ""
 
+    def _dur(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return ""
+        r = round(f)
+        return f"{int(r)}s" if abs(f - r) < 0.05 else f"{f:.1f}s"
+
     lines = ["<workflow_context>"]
     if h3:
         lines.append("MiniMax H3 nodes in the current workflow:")
         for i, n in enumerate(h3[:8], 1):
             parts = [str(n.get("type", "H3"))]
             w, h = n.get("width"), n.get("height")
-            if w and h:
-                parts.append(f"canvas {w}x{h}{_ratio(w, h)}")
-            length = n.get("length")
-            if length is not None:
-                try:
-                    parts.append(f"~{int(length) / 24:.1f}s ({int(length)} frames @24fps)")
-                except (TypeError, ValueError):
-                    pass
+            aspect = n.get("aspect") or ""
+            if not aspect and w and h:
+                r = _ratio(w, h)
+                aspect = r.strip(" ()") if r else ""
+            if aspect:
+                parts.append(f"Aspect Ratio: {aspect}")
+            dur = n.get("duration_seconds")
+            if dur is not None:
+                d = _dur(dur)
+                if d:
+                    parts.append(f"Duration: {d}")
+            else:
+                length = n.get("length")
+                if length is not None:
+                    try:
+                        sec, frames = _dur(int(length) / 24), int(length)
+                    except (TypeError, ValueError):
+                        sec = ""
+                    if sec:
+                        parts.append(f"Duration: {sec} ({frames} frames @24fps)")
             size = n.get("ref_image_size")
             if size:
                 parts.append(f"ref_image_size={size}")
@@ -482,11 +502,11 @@ def _initial_user_message(text: str, images) -> Dict[str, Any]:
 
 
 def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> str:
-    """执行 skill 生成：远程模式且有引用时启用 read_skill_file 工具循环按需读取，
-    否则回退单轮推理（仅主文件）。context 为前端采集的工作流上下文（MiniMax H3 参数 +
-    参考媒体清单），注入系统提示词；参考图像素通过 get_reference_image 工具按需取回。
+    """执行 skill 生成：工作流上下文始终注入系统提示词；仅当存在引用文件或参考图像时启用工具调用
+    代理循环（本地/远程一致），否则单轮推理。read_skill_file 按需读取引用文件，get_reference_image
+    按需取回参考图像素。context 为前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单）。
     返回最终答案字符串；失败抛出异常。"""
-    from .llm import remote_chat_turn, get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
+    from .llm import chat_turn, get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
 
     skill_id = (skill_id or "").strip()
     if not skill_id:
@@ -499,25 +519,24 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> st
 
     ctx_block = _format_workflow_context(context)
     refs = list_skill_references(skill_id)
+    ref_images = [r for r in (context or {}).get("references", []) if r.get("kind") == "image"] if isinstance(context, dict) else []
     max_tokens = load_skill_max_tokens(skill_id) or 500
     remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
 
-    if not (remote_mode and (refs or ctx_block)):
-        # 本地模式或无引用/上下文：单轮生成（仅主文件）。本地模式下引用无法按需读取。
-        if refs:
-            logger.warning(f"Skill '{skill_id}' has references but tool calling is unavailable; using main file only")
-        system = system_prompt + ("\n\n" + ctx_block if ctx_block else "")
-        result = _run_llm_inference(system, text, max_tokens, images=images or None, use_remote=remote_mode)
-        return result or ""
-
-    # 远程 + 引用/上下文：工具调用代理循环（参考图像素按需取回）
+    # 系统提示词：主文件 + 引用索引（若有）+ 工作流上下文（若有），单轮与工具循环两条路径共用
     system = system_prompt
     if refs:
         system += "\n" + build_reference_index(skill_id, language)
     if ctx_block:
         system += ("\n\n" if refs else "\n") + ctx_block
+
+    # 无引用文件且无可取回参考图像：单轮生成（系统提示词已含工作流上下文）
+    if not (refs or ref_images):
+        result = _run_llm_inference(system, text, max_tokens, images=images or None, use_remote=remote_mode)
+        return result or ""
+
+    # 有引用文件/参考图像：工具调用代理循环（按需取回）
     tools = [_SKILL_FILE_TOOL] if refs else []
-    ref_images = [r for r in (context or {}).get("references", []) if r.get("kind") == "image"] if isinstance(context, dict) else []
     if ref_images:
         tools.append(_REFERENCE_IMAGE_TOOL)
     messages = [
@@ -526,7 +545,7 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> st
     ]
     content = ""
     for _ in range(_MAX_SKILL_AGENT_TURNS):
-        msg = remote_chat_turn(messages, max_tokens=max_tokens, tools=tools or None)
+        msg = chat_turn(messages, max_tokens=max_tokens, tools=tools or None)
         content = msg.get("content") or ""
         tool_calls = msg.get("tool_calls") or []
         assistant_msg = {"role": "assistant", "content": content}
@@ -574,8 +593,9 @@ def run_skill_agent(skill_id: str, text: str, images=None, context=None) -> str:
 
 
 def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None) -> Generator[str, None, None]:
-    """流式执行 skill 生成：单轮路径逐 token 透传 LLM 输出（与 llm.run_llm_task_stream 一致），
-    工具循环路径复用非流式核心再逐字输出。失败抛出异常，由调用方捕获。"""
+    """流式执行 skill 生成：工作流上下文始终注入系统提示词；单轮路径逐 token 透传 LLM 输出（与
+    llm.run_llm_task_stream 一致），仅当存在引用文件或参考图像时走工具循环（复用非流式核心再逐字
+    输出）。失败抛出异常，由调用方捕获。"""
     from .llm import get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
 
     skill_id = (skill_id or "").strip()
@@ -587,16 +607,20 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
     if not system_prompt:
         raise ValueError(f"Skill '{skill_id}' not found or has no content")
 
-    refs = list_skill_references(skill_id)
     ctx_block = _format_workflow_context(context)
+    refs = list_skill_references(skill_id)
+    ref_images = [r for r in (context or {}).get("references", []) if r.get("kind") == "image"] if isinstance(context, dict) else []
     max_tokens = load_skill_max_tokens(skill_id) or 500
     remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
 
-    if not (remote_mode and (refs or ctx_block)):
-        # 本地模式或无引用/上下文：单轮生成，直接流式透传 LLM token（打字效果由模型出 token 速率驱动）
-        if refs:
-            logger.warning(f"Skill '{skill_id}' has references but tool calling is unavailable; using main file only")
-        system = system_prompt + ("\n\n" + ctx_block if ctx_block else "")
+    system = system_prompt
+    if refs:
+        system += "\n" + build_reference_index(skill_id, language)
+    if ctx_block:
+        system += ("\n\n" if refs else "\n") + ctx_block
+
+    # 无引用文件/参考图像：单轮生成，直接流式透传 LLM token（系统提示词已含工作流上下文）
+    if not (refs or ref_images):
         result = _run_llm_inference(system, text, max_tokens, images=images or None,
                                     use_remote=remote_mode, stream=True)
         if hasattr(result, '__iter__') and not isinstance(result, str):
@@ -615,7 +639,7 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
             yield result or ""
         return
 
-    # 远程 + 引用/上下文：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出
+    # 有引用文件/参考图像：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出
     for ch in _skill_agent_core(skill_id, text, images, context):
         yield ch
 
