@@ -7,6 +7,7 @@ import io
 import os
 import sys
 import types
+import tempfile
 import importlib
 import unittest
 
@@ -120,6 +121,53 @@ class TestScanSkills(unittest.TestCase):
         ref = by_id.get("minimax_h3_ref")
         if ref is not None:
             self.assertFalse(ref["multi_turn"])
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestSaveSkillMultiTurn(unittest.TestCase):
+    """save_skill_main 的 multi_turn 设置：显式写入 / 缺省沿用 / False 移除"""
+
+    def setUp(self):
+        self.skill_mod = getattr(prompts_mod, "skill", None)
+        if self.skill_mod is None:
+            self.skipTest("prompts 未暴露 skill 模块")
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_dir = self.skill_mod.SKILL_CUSTOM_DIR
+        self.skill_mod.SKILL_CUSTOM_DIR = self._tmp.name
+
+    def tearDown(self):
+        self.skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
+        self._tmp.cleanup()
+
+    def _read_meta(self, sid):
+        main = os.path.join(self._tmp.name, sid, "skill.md")
+        with open(main, encoding="utf-8") as f:
+            meta, body = self.skill_mod.split_frontmatter(f.read())
+        return meta, body
+
+    def test_explicit_true_writes_field(self):
+        self.assertTrue(self.skill_mod.save_skill_main("mt-a", "MT A", "body", None, "custom", True))
+        meta, body = self._read_meta("mt-a")
+        self.assertIs(meta.get("multi_turn"), True)
+        self.assertEqual(body, "body")
+
+    def test_omitted_preserves_existing(self):
+        self.skill_mod.save_skill_main("mt-b", "MT B", "body", None, "custom", True)
+        self.assertTrue(self.skill_mod.save_skill_main("mt-b", "MT B", "body2", None, "custom"))
+        meta, body = self._read_meta("mt-b")
+        self.assertIs(meta.get("multi_turn"), True)
+        self.assertEqual(body, "body2")
+
+    def test_explicit_false_removes_field(self):
+        self.skill_mod.save_skill_main("mt-c", "MT C", "body", None, "custom", True)
+        self.assertTrue(self.skill_mod.save_skill_main("mt-c", "MT C", "body", None, "custom", False))
+        meta, _ = self._read_meta("mt-c")
+        self.assertNotIn("multi_turn", meta)
+
+    def test_new_skill_defaults_absent(self):
+        self.assertTrue(self.skill_mod.save_skill_main("mt-d", "MT D", "body", None, "custom"))
+        meta, _ = self._read_meta("mt-d")
+        self.assertNotIn("multi_turn", meta)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)

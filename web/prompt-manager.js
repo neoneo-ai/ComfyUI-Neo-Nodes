@@ -1394,7 +1394,7 @@ function createPromptManagerUI() {
 
     // 多轮交互提示：每次生成只推进一个阶段，需补充返回的问询后再次运行
     const skillHint = mkEl("div", "rs-skill-hint");
-    skillHint.textContent = "多轮交互技能：每次生成仅推进一个阶段，请补充返回的问询后再次点击 ✨ 继续。";
+    skillHint.textContent = "多轮技能：每次仅推进一阶段，补充问询后再点 ✨";
     // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
     skillHint.style.display = "none";
     function updateSkillHint() {
@@ -1405,10 +1405,11 @@ function createPromptManagerUI() {
     
     root.appendChild(customTextareaWrapper);
 
-    root.appendChild(skillHint);
     root.appendChild(buttonsWrapper);
     // quickInputWrapper at the bottom of the node
     root.appendChild(quickInputWrapper);
+    // 多轮提示贴节点最底部（跟在快捷输入栏下），避免落在文本区下方的空白中段
+    root.appendChild(skillHint);
 
     // 挂 body 防节点边界裁剪（fixed 定位居中于视口）
     document.body.appendChild(presetNameInput);

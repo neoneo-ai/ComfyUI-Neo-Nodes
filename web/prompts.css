@@ -552,14 +552,14 @@
     padding: 4px 26px 4px 8px;
     font-size: 11px;
     background: #2a2a2a;
-    color: #60a5fa;
+    color: #ccc;
     border: none !important;
     border-radius: 4px;
     cursor: pointer;
     outline: none;
 }
 .rs-input-toolbar .rs-combo-input::placeholder {
-    color: #60a5fa;
+    color: #888;
     opacity: .75;
 }
 .rs-input-toolbar .rs-combo-clear {
@@ -808,11 +808,11 @@
     background: rgba(60, 60, 60, 0.9);
 }
 
-/* 多轮交互提示：textarea 下方的一行小字 */
+/* 多轮交互提示：节点最底部的一行小字（快捷输入栏下方） */
 .rs-skill-hint {
-    padding: 2px 10px 4px;
-    font-size: 11px;
-    line-height: 1.4;
+    padding: 0 10px 2px;
+    font-size: 9px;
+    line-height: 1.0;
     color: #8a97a5;
     text-align: left;
 }
@@ -2497,6 +2497,28 @@
 /* 详情弹窗：内容区滚动，头部来源徽标与底部操作行 */
 .rs-skill-modal-content {
     overflow-y: auto;
+}
+
+/* multi_turn 勾选行（名称行下方） */
+.rs-skill-multiturn-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.rs-skill-multiturn-chk {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: #5090cc;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.rs-skill-multiturn-label {
+    font-size: 12px;
+    color: #ccc;
+    cursor: pointer;
+    user-select: none;
 }
 
 .rs-skill-modal-header .rs-skill-detail-badge {

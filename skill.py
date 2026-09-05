@@ -602,8 +602,11 @@ def _safe_skill_file_path(skill_dir: str, filename: str) -> str | None:
     return target
 
 
-def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom") -> bool:
-    """保存 skill 的主文件 skill.md（frontmatter + 正文），保留未编辑的既有字段。"""
+def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom", multi_turn=None) -> bool:
+    """保存 skill 的主文件 skill.md（frontmatter + 正文），保留未编辑的既有字段。
+
+    multi_turn 为 None 时沿用 frontmatter 既有值；显式传入则按布尔值写入（False 时移除该字段）。
+    """
     sid = _normalize_skill_id(skill_id)
     if not sid:
         return False
@@ -612,6 +615,7 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
     with _skills_lock:
         os.makedirs(d, exist_ok=True)
         meta, _body = _read_skill_md(d)
+        mt = meta.get("multi_turn") if multi_turn is None else bool(multi_turn)
         new_meta = {
             "name": (name or "").strip() or sid,
             "tags": list(tags or []),
@@ -620,6 +624,7 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
             "max_tokens": meta.get("max_tokens"),
             "result_key": meta.get("result_key"),
             "multi_result": meta.get("multi_result"),
+            "multi_turn": mt or None,
             "category": meta.get("category"),
             "markers": meta.get("markers"),
             "created_at": meta.get("created_at") or datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -825,6 +830,7 @@ async def rs_prompts_load_skill(request):
             "files": files,
             "max_tokens": meta.get("max_tokens"),
             "multi_result": meta.get("multi_result"),
+            "multi_turn": bool(meta.get("multi_turn", False)),
             "result_key": meta.get("result_key"),
         })
     except Exception as e:
@@ -850,6 +856,7 @@ async def rs_prompts_save_skill(request):
             data.get("content", ""),
             data.get("tags", []),
             source,
+            data.get("multi_turn"),
         )
         if not ok:
             return web.Response(status=500, text="Failed to save skill")

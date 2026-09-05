@@ -259,6 +259,16 @@ function createSkillDetailPopup() {
     nameInput.placeholder = "Enter skill name...";
     nameRow.append(nameLabel, nameInput);
 
+    // multi_turn 勾选：每次生成仅推进一个阶段（节点底部会显示多轮提示）
+    const multiTurnRow = mkEl("div", "rs-skill-multiturn-row");
+    const multiTurnChk = document.createElement("input");
+    multiTurnChk.type = "checkbox";
+    multiTurnChk.className = "rs-skill-multiturn-chk";
+    const multiTurnLabel = mkEl("label", "rs-skill-multiturn-label");
+    multiTurnLabel.textContent = "Multi-turn (multi_turn)";
+    multiTurnLabel.title = "每次生成仅推进一个阶段，需补充返回的问询后再次点击 ✨ 继续";
+    multiTurnRow.append(multiTurnChk, multiTurnLabel);
+
     const contentRow = mkEl("div", "rs-config-row");
     const contentHeader = mkEl("div", "rs-content-header");
     const contentLeft = mkEl("div", "rs-content-left");
@@ -314,7 +324,7 @@ function createSkillDetailPopup() {
     cancelBtn.textContent = "✕ Close";
     footerBtns.append(saveBtn, copyBtn, deleteBtn, cancelBtn);
 
-    content.append(nameRow, contentRow, footerBtns);
+    content.append(nameRow, multiTurnRow, contentRow, footerBtns);
     modal.append(header, content);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -373,6 +383,7 @@ function createSkillDetailPopup() {
         const mainSel = isMainFile(selectedFile);
         nameInput.disabled = readOnly || (currentFiles.length > 0 && !mainSel);
         contentTextarea.disabled = readOnly;
+        multiTurnChk.disabled = readOnly;
         saveBtn.style.display = readOnly ? "none" : "inline-block";
         copyBtn.style.display = readOnly ? "inline-block" : "none";
         deleteBtn.style.display = isCustom() ? "inline-block" : "none";
@@ -419,6 +430,7 @@ function createSkillDetailPopup() {
         nameInput.value = nm;
         titleSpan.textContent = "📝 " + nm;
         titleSpan.title = nm;
+        multiTurnChk.checked = !!(full && full.multi_turn);
         currentFiles = (full && full.files) || [];
         let mainName = null;
         for (const f of currentFiles) { if (isMainFile(f.name)) { mainName = f.name; break; } }
@@ -445,6 +457,7 @@ function createSkillDetailPopup() {
         fileSelect.innerHTML = "";
         fileSelect.style.display = "none";
         selectedFile = null;
+        multiTurnChk.checked = false;
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         setEditorMode("edit");
@@ -461,13 +474,13 @@ function createSkillDetailPopup() {
         if (!currentSkillId) {
             const id = name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
             if (!id) return;
-            const result = await saveSkill({ id, name, content: contentTextarea.value, tags: [], source: "custom" });
+            const result = await saveSkill({ id, name, content: contentTextarea.value, tags: [], source: "custom", multi_turn: multiTurnChk.checked });
             if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
             else alert("Save failed: " + (result.error || "Unknown error"));
             return;
         }
         if (isMainFile(selectedFile)) {
-            const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom" });
+            const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom", multi_turn: multiTurnChk.checked });
             if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
             else alert("Save failed: " + (result.error || "Unknown error"));
         } else {
@@ -501,7 +514,8 @@ function createSkillDetailPopup() {
             name: ((full && full.name) || nameInput.value.trim() || currentSkillId) + " (Copy)",
             content: (full && full.content) || "",
             tags: [...((full && full.tags) || [])],
-            source: "custom"
+            source: "custom",
+            multi_turn: !!(full && full.multi_turn)
         });
         document.dispatchEvent(new CustomEvent("rs.templates.updated"));
         close();

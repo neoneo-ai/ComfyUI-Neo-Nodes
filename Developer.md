@@ -204,7 +204,7 @@ ComfyUI-Neo-Nodes/
 | POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表 |
 | GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组） |
 | POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens） |
-| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读） |
+| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` 布尔字段，缺省沿用 frontmatter 既有值，显式 false 移除该字段 |
 | POST | `/rs_prompts/delete_skill` | 删除整个技能目录（仅 USR） |
 
 ## 节点注册
