@@ -1,0 +1,265 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.4.2, pluggy-1.6.0
+rootdir: F:\comfy\Comfyui-WF-2026.8.8\ComfyUI\custom_nodes\ComfyUI-Neo-Nodes
+configfile: pytest.ini
+plugins: anyio-4.9.0, hydra-core-1.3.2, typeguard-4.5.1
+collected 1 item
+
+test_skills.py E                                                         [100%]
+
+=================================== ERRORS ====================================
+__________ ERROR at setup of TestResolveMultiResult.test_empty_text ___________
+
+name = '__init__', package = None
+
+    def import_module(name, package=None):
+        """Import a module.
+    
+        The 'package' argument is required when performing a relative import. It
+        specifies the package to use as the anchor point from which to resolve the
+        relative import to an absolute import.
+    
+        """
+        level = 0
+        if name.startswith('.'):
+            if not package:
+                raise TypeError("the 'package' argument is required to perform a "
+                                f"relative import for {name!r}")
+            for character in name:
+                if character != '.':
+                    break
+                level += 1
+>       return _bootstrap._gcd_import(name[level:], package, level)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+..\..\..\..\python\Lib\importlib\__init__.py:90: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    # ComfyUI-Neo-Nodes
+    
+    # Import gallery module to register routes (must be imported for route registration)
+>   from . import gallery
+E   ImportError: attempted relative import with no known parent package
+
+..\__init__.py:4: ImportError
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x000002C462724E00>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+..\..\..\..\python\Lib\site-packages\_pytest\runner.py:344: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+>       lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+
+..\..\..\..\python\Lib\site-packages\_pytest\runner.py:246: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <HookCaller 'pytest_runtest_setup'>
+kwargs = {'item': <TestCaseFunction test_empty_text>}, firstresult = False
+
+    def __call__(self, **kwargs: object) -> Any:
+        """Call the hook.
+    
+        Only accepts keyword arguments, which should match the hook
+        specification.
+    
+        Returns the result(s) of calling all registered plugins, see
+        :ref:`calling`.
+        """
+        assert not self.is_historic(), (
+            "Cannot directly call a historic hook - use call_historic instead."
+        )
+        self._verify_all_args_are_provided(kwargs)
+        firstresult = self.spec.opts.get("firstresult", False) if self.spec else False
+        # Copy because plugins may register other plugins during iteration (#438).
+>       return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+..\..\..\..\python\Lib\site-packages\pluggy\_hooks.py:512: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <_pytest.config.PytestPluginManager object at 0x000002C45F984290>
+hook_name = 'pytest_runtest_setup'
+methods = [<HookImpl plugin_name='threadexception', plugin=<module '_pytest.threadexception' from 'F:\\comfy\\ComfyUI-WF-2026.8....e=None>>, <HookImpl plugin_name='logging-plugin', plugin=<_pytest.logging.LoggingPlugin object at 0x000002C46261C6B0>>]
+kwargs = {'item': <TestCaseFunction test_empty_text>}, firstresult = False
+
+    def _hookexec(
+        self,
+        hook_name: str,
+        methods: Sequence[HookImpl],
+        kwargs: Mapping[str, object],
+        firstresult: bool,
+    ) -> object | list[object]:
+        # called from all hookcaller instances.
+        # enable_tracing will set its own wrapping function at self._inner_hookexec
+>       return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+..\..\..\..\python\Lib\site-packages\pluggy\_manager.py:120: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <_pytest.logging.LoggingPlugin object at 0x000002C46261C6B0>
+item = <TestCaseFunction test_empty_text>
+
+    @hookimpl(wrapper=True)
+    def pytest_runtest_setup(self, item: nodes.Item) -> Generator[None]:
+        self.log_cli_handler.set_when("setup")
+    
+        empty: dict[str, list[logging.LogRecord]] = {}
+        item.stash[caplog_records_key] = empty
+        with self._runtest_for(item, "setup"):
+>           yield
+
+..\..\..\..\python\Lib\site-packages\_pytest\logging.py:843: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <CaptureManager _method='fd' _global_capturing=<MultiCapture out=<FDCapture 1 oldfd=5 _state='suspended' tmpfile=<_io...._io.TextIOWrapper name='nul' mode='r' encoding='utf-8'>> _state='suspended' _in_suspended=False> _capture_fixture=None>
+item = <TestCaseFunction test_empty_text>
+
+    @hookimpl(wrapper=True)
+    def pytest_runtest_setup(self, item: Item) -> Generator[None]:
+        with self.item_capture("setup", item):
+>           return (yield)
+                    ^^^^^
+
+..\..\..\..\python\Lib\site-packages\_pytest\capture.py:895: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+item = <TestCaseFunction test_empty_text>
+
+    def pytest_runtest_setup(item: Item) -> None:
+        _update_current_test_var(item, "setup")
+>       item.session._setupstate.setup(item)
+
+..\..\..\..\python\Lib\site-packages\_pytest\runner.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <_pytest.runner.SetupState object at 0x000002C4624E2E40>
+item = <TestCaseFunction test_empty_text>
+
+    def setup(self, item: Item) -> None:
+        """Setup objects along the collector chain to the item."""
+        needed_collectors = item.listchain()
+    
+        # If a collector fails its setup, fail its entire subtree of items.
+        # The setup is not retried for each item - the same exception is used.
+        for col, (finalizers, exc) in self.stack.items():
+            assert col in needed_collectors, "previous item was not torn down properly"
+            if exc:
+                raise exc[0].with_traceback(exc[1])
+    
+        for col in needed_collectors[len(self.stack) :]:
+            assert col not in self.stack
+            # Push onto the stack.
+            self.stack[col] = ([col.teardown], None)
+            try:
+>               col.setup()
+
+..\..\..\..\python\Lib\site-packages\_pytest\runner.py:514: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Package ComfyUI-Neo-Nodes>
+
+    def setup(self) -> None:
+>       init_mod = importtestmodule(self.path / "__init__.py", self.config)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+..\..\..\..\python\Lib\site-packages\_pytest\python.py:668: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('F:/comfy/Comfyui-WF-2026.8.8/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes/__init__.py')
+config = <_pytest.config.Config object at 0x000002C45F2330B0>
+
+    def importtestmodule(
+        path: Path,
+        config: Config,
+    ):
+        # We assume we are only called once per module.
+        importmode = config.getoption("--import-mode")
+        try:
+            mod = import_path(
+                path,
+                mode=importmode,
+                root=config.rootpath,
+                consider_namespace_packages=config.getini("consider_namespace_packages"),
+            )
+        except SyntaxError as e:
+            raise nodes.Collector.CollectError(
+                ExceptionInfo.from_current().getrepr(style="short")
+            ) from e
+        except ImportPathMismatchError as e:
+            raise nodes.Collector.CollectError(
+                "import file mismatch:\n"
+                "imported module {!r} has this __file__ attribute:\n"
+                "  {}\n"
+                "which is not the same as the test file we want to collect:\n"
+                "  {}\n"
+                "HINT: remove __pycache__ / .pyc files and/or use a "
+                "unique basename for your test file modules".format(*e.args)
+            ) from e
+        except ImportError as e:
+            exc_info = ExceptionInfo.from_current()
+            if config.get_verbosity() < 2:
+                exc_info.traceback = exc_info.traceback.filter(filter_traceback)
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
+            formatted_tb = str(exc_repr)
+>           raise nodes.Collector.CollectError(
+                f"ImportError while importing test module '{path}'.\n"
+                "Hint: make sure your test modules/packages have valid Python names.\n"
+                "Traceback:\n"
+                f"{formatted_tb}"
+            ) from e
+E           _pytest.nodes.Collector.CollectError: ImportError while importing test module 'F:\comfy\Comfyui-WF-2026.8.8\ComfyUI\custom_nodes\ComfyUI-Neo-Nodes\__init__.py'.
+E           Hint: make sure your test modules/packages have valid Python names.
+E           Traceback:
+E           ..\..\..\..\python\Lib\importlib\__init__.py:90: in import_module
+E               return _bootstrap._gcd_import(name[level:], package, level)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           ..\__init__.py:4: in <module>
+E               from . import gallery
+E           E   ImportError: attempted relative import with no known parent package
+
+..\..\..\..\python\Lib\site-packages\_pytest\python.py:528: CollectError
+============================== warnings summary ===============================
+..\..\..\..\python\Lib\site-packages\torch\cuda\__init__.py:65
+  F:\comfy\ComfyUI-WF-2026.8.8\python\Lib\site-packages\torch\cuda\__init__.py:65: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+    import pynvml  # type: ignore[import]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR test_skills.py::TestResolveMultiResult::test_empty_text - _pytest.nodes...
+========================= 1 warning, 1 error in 1.16s =========================

@@ -27,6 +27,7 @@ import os
 import re
 import io
 import json
+import math
 import base64
 import shutil
 import logging
@@ -352,7 +353,108 @@ _SKILL_FILE_TOOL = {
     },
 }
 
+_REFERENCE_IMAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_reference_image",
+        "description": ("Fetch the actual pixels of one workflow reference image by its 1-based index in the "
+                        "'Reference media' list of <workflow_context>. Call it only when you need to inspect a "
+                        "specific reference image's content; do not fetch images you will not use."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer", "description": "1-based index of the reference image in <workflow_context>."},
+            },
+            "required": ["index"],
+        },
+    },
+}
+
 _MAX_SKILL_AGENT_TURNS = 8
+
+
+def _format_workflow_context(context) -> str:
+    """把前端采集的工作流上下文（MiniMax H3 参数 + 叶子媒体清单）格式化为系统提示词文本块。
+
+    参考图只列元数据不内联；带尺寸的图片可通过 get_reference_image 工具按需取回像素。
+    """
+    if not isinstance(context, dict):
+        return ""
+    h3 = context.get("h3") or []
+    refs = context.get("references") or []
+    nodes = context.get("nodes") or []
+    if not (h3 or refs):
+        return ""
+
+    def _ratio(w, h):
+        try:
+            w, h = int(w), int(h)
+            if w <= 0 or h <= 0:
+                return ""
+            g = math.gcd(w, h)
+            rw, rh = w / g, h / g
+            fmt = "{:.2f}".format(rw).rstrip("0").rstrip(".") + ":" + "{:.2f}".format(rh).rstrip("0").rstrip(".")
+            return f" ({fmt})"
+        except (TypeError, ValueError):
+            return ""
+
+    lines = ["<workflow_context>"]
+    if h3:
+        lines.append("MiniMax H3 nodes in the current workflow:")
+        for i, n in enumerate(h3[:8], 1):
+            parts = [str(n.get("type", "H3"))]
+            w, h = n.get("width"), n.get("height")
+            if w and h:
+                parts.append(f"canvas {w}x{h}{_ratio(w, h)}")
+            length = n.get("length")
+            if length is not None:
+                try:
+                    parts.append(f"~{int(length) / 24:.1f}s ({int(length)} frames @24fps)")
+                except (TypeError, ValueError):
+                    pass
+            size = n.get("ref_image_size")
+            if size:
+                parts.append(f"ref_image_size={size}")
+            lines.append(f"  {i}. " + ", ".join(parts))
+    if refs:
+        lines.append("Reference media (leaf inputs of the workflow):")
+        for i, r in enumerate(refs[:32], 1):
+            kind = r.get("kind", "?")
+            src = r.get("source") or {}
+            name = src.get("value", "") if isinstance(src, dict) else str(src)
+            w, h = r.get("width"), r.get("height")
+            if w and h:
+                lines.append(f"  [{i}] image {name}{_ratio(w, h)} ({w}x{h}) - fetchable via get_reference_image({i})")
+            else:
+                lines.append(f"  [{i}] {kind} {name}")
+        if any(r.get("kind") == "image" for r in refs[:32]):
+            lines.append("Fetch a reference image's actual pixels with the get_reference_image tool only when you need to inspect it; do not assume unseen details.")
+    others = [t for t in nodes if "MiniMax" not in str(t)][:40]
+    if others:
+        lines.append("Other node types: " + ", ".join(str(t) for t in others))
+    lines.append("</workflow_context>")
+    return "\n".join(lines)
+
+
+def _fetch_reference_image(context, index) -> tuple[bytes | None, str]:
+    """按 1-based 序号取回参考图字节（复用 prompts._read_image_raw 的目录校验）。"""
+    refs = (context or {}).get("references") or []
+    try:
+        i = int(index)
+    except (TypeError, ValueError):
+        return None, f"[error] invalid reference index: {index}"
+    if not (1 <= i <= len(refs)):
+        return None, f"[error] reference index out of range: {i} (1-{len(refs)})"
+    ref = refs[i - 1]
+    src = ref.get("source") or {}
+    name = src.get("value", "") if isinstance(src, dict) else str(src)
+    if ref.get("kind") != "image":
+        return None, f"[error] reference {i} ({name}) is a video; only images can be fetched"
+    from .prompts import _read_image_raw
+    data = _read_image_raw(src) if isinstance(src, dict) else None
+    if data is None:
+        return None, f"[error] failed to read reference image {i} ({name})"
+    return data, f"Reference image {i}: {name}"
 
 
 def _resolve_skill_language(text: str) -> str:
@@ -379,9 +481,11 @@ def _initial_user_message(text: str, images) -> Dict[str, Any]:
     return {"role": "user", "content": parts}
 
 
-def _skill_agent_core(skill_id: str, text: str, images=None) -> str:
+def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> str:
     """执行 skill 生成：远程模式且有引用时启用 read_skill_file 工具循环按需读取，
-    否则回退单轮推理（仅主文件）。返回最终答案字符串；失败抛出异常。"""
+    否则回退单轮推理（仅主文件）。context 为前端采集的工作流上下文（MiniMax H3 参数 +
+    参考媒体清单），注入系统提示词；参考图像素通过 get_reference_image 工具按需取回。
+    返回最终答案字符串；失败抛出异常。"""
     from .llm import remote_chat_turn, get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
 
     skill_id = (skill_id or "").strip()
@@ -393,25 +497,36 @@ def _skill_agent_core(skill_id: str, text: str, images=None) -> str:
     if not system_prompt:
         raise ValueError(f"Skill '{skill_id}' not found or has no content")
 
+    ctx_block = _format_workflow_context(context)
     refs = list_skill_references(skill_id)
     max_tokens = load_skill_max_tokens(skill_id) or 500
     remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
 
-    if not (remote_mode and refs):
-        # 本地模式或无引用：单轮生成（仅主文件）。本地模式下引用无法按需读取。
+    if not (remote_mode and (refs or ctx_block)):
+        # 本地模式或无引用/上下文：单轮生成（仅主文件）。本地模式下引用无法按需读取。
         if refs:
             logger.warning(f"Skill '{skill_id}' has references but tool calling is unavailable; using main file only")
-        result = _run_llm_inference(system_prompt, text, max_tokens, images=images or None, use_remote=remote_mode)
+        system = system_prompt + ("\n\n" + ctx_block if ctx_block else "")
+        result = _run_llm_inference(system, text, max_tokens, images=images or None, use_remote=remote_mode)
         return result or ""
 
-    # 远程 + 引用：工具调用代理循环
+    # 远程 + 引用/上下文：工具调用代理循环（参考图像素按需取回）
+    system = system_prompt
+    if refs:
+        system += "\n" + build_reference_index(skill_id, language)
+    if ctx_block:
+        system += ("\n\n" if refs else "\n") + ctx_block
+    tools = [_SKILL_FILE_TOOL] if refs else []
+    ref_images = [r for r in (context or {}).get("references", []) if r.get("kind") == "image"] if isinstance(context, dict) else []
+    if ref_images:
+        tools.append(_REFERENCE_IMAGE_TOOL)
     messages = [
-        {"role": "system", "content": system_prompt + "\n" + build_reference_index(skill_id, language)},
+        {"role": "system", "content": system},
         _initial_user_message(text, images),
     ]
     content = ""
     for _ in range(_MAX_SKILL_AGENT_TURNS):
-        msg = remote_chat_turn(messages, max_tokens=max_tokens, tools=[_SKILL_FILE_TOOL])
+        msg = remote_chat_turn(messages, max_tokens=max_tokens, tools=tools or None)
         content = msg.get("content") or ""
         tool_calls = msg.get("tool_calls") or []
         assistant_msg = {"role": "assistant", "content": content}
@@ -420,6 +535,7 @@ def _skill_agent_core(skill_id: str, text: str, images=None) -> str:
         messages.append(assistant_msg)
         if not tool_calls:
             break
+        fetched_images = []
         for tc in tool_calls:
             fn = tc.get("function") or {}
             name = fn.get("name")
@@ -430,21 +546,34 @@ def _skill_agent_core(skill_id: str, text: str, images=None) -> str:
             if name == "read_skill_file":
                 file_content = read_skill_file(skill_id, str(args.get("path", "")))
                 tool_result = file_content if file_content is not None else f"[error] reference file not found: {args.get('path')}"
+            elif name == "get_reference_image":
+                img_bytes, caption = _fetch_reference_image(context, args.get("index"))
+                tool_result = caption
+                if img_bytes is not None:
+                    fetched_images.append((caption, img_bytes))
             else:
                 tool_result = f"[error] unknown tool: {name}"
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": tool_result})
+        # 取回的参考图作为独立 user 消息回灌（部分 provider 的 tool 消息不支持图片；
+        # 且须在本轮全部 tool 结果之后，保持 assistant->tool*->user 的消息顺序）
+        for caption, img_bytes in fetched_images:
+            b64 = base64.b64encode(img_bytes).decode("utf-8")
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": f"Fetched {caption}."},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+            ]})
 
     if not content.strip():
         raise RuntimeError(f"Skill '{skill_id}' produced no output")
     return content
 
 
-def run_skill_agent(skill_id: str, text: str, images=None) -> str:
+def run_skill_agent(skill_id: str, text: str, images=None, context=None) -> str:
     """非流式执行 skill，返回最终答案字符串；失败抛出异常。"""
-    return _skill_agent_core(skill_id, text, images)
+    return _skill_agent_core(skill_id, text, images, context)
 
 
-def _skill_agent_core_stream(skill_id: str, text: str, images=None) -> Generator[str, None, None]:
+def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None) -> Generator[str, None, None]:
     """流式执行 skill 生成：单轮路径逐 token 透传 LLM 输出（与 llm.run_llm_task_stream 一致），
     工具循环路径复用非流式核心再逐字输出。失败抛出异常，由调用方捕获。"""
     from .llm import get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
@@ -459,14 +588,16 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None) -> Generator
         raise ValueError(f"Skill '{skill_id}' not found or has no content")
 
     refs = list_skill_references(skill_id)
+    ctx_block = _format_workflow_context(context)
     max_tokens = load_skill_max_tokens(skill_id) or 500
     remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
 
-    if not (remote_mode and refs):
-        # 本地模式或无引用：单轮生成，直接流式透传 LLM token（打字效果由模型出 token 速率驱动）
+    if not (remote_mode and (refs or ctx_block)):
+        # 本地模式或无引用/上下文：单轮生成，直接流式透传 LLM token（打字效果由模型出 token 速率驱动）
         if refs:
             logger.warning(f"Skill '{skill_id}' has references but tool calling is unavailable; using main file only")
-        result = _run_llm_inference(system_prompt, text, max_tokens, images=images or None,
+        system = system_prompt + ("\n\n" + ctx_block if ctx_block else "")
+        result = _run_llm_inference(system, text, max_tokens, images=images or None,
                                     use_remote=remote_mode, stream=True)
         if hasattr(result, '__iter__') and not isinstance(result, str):
             for chunk in result:
@@ -484,15 +615,15 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None) -> Generator
             yield result or ""
         return
 
-    # 远程 + 引用：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出
-    for ch in _skill_agent_core(skill_id, text, images):
+    # 远程 + 引用/上下文：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出
+    for ch in _skill_agent_core(skill_id, text, images, context):
         yield ch
 
 
-def run_skill_agent_stream(skill_id: str, text: str, images=None) -> Generator[str, None, None]:
+def run_skill_agent_stream(skill_id: str, text: str, images=None, context=None) -> Generator[str, None, None]:
     """流式契约：逐 token yield 最终答案；失败 yield '[ERROR] ...'（与 llm.run_llm_task_stream 一致）。"""
     try:
-        for chunk in _skill_agent_core_stream(skill_id, text, images):
+        for chunk in _skill_agent_core_stream(skill_id, text, images, context):
             yield chunk
     except Exception as e:
         logger.error(f"Skill agent error for '{skill_id}': {e}")

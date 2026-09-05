@@ -13,12 +13,9 @@ import unittest
 _NODE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, _NODE_DIR)
 
-# stub aiohttp / server 模块（脱离 ComfyUI 服务器运行时，PromptServer.instance 不存在）
+# stub server 模块（脱离 ComfyUI 服务器运行时，PromptServer.instance 不存在）；
+# aiohttp 真实可用，不 stub sys.modules，避免污染同进程内其他测试模块
 import types  # noqa: E402
-_fake_aiohttp = types.ModuleType("aiohttp")
-_fake_aiohttp.web = types.ModuleType("aiohttp.web")
-sys.modules["aiohttp"] = _fake_aiohttp
-sys.modules["aiohttp.web"] = _fake_aiohttp.web
 
 
 class _FakeRoutes:

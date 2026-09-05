@@ -67,10 +67,18 @@ def _png_data_uri(size=(2048, 1024)):
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestScanSkills(unittest.TestCase):
-    """测试 _scan_skills 统一元数据"""
+    """测试 skill.scan_skills 统一元数据"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.skill_mod = _il.import_module(f"{_PKG_NAME}.skill")
+
+    def _scan(self):
+        return self.skill_mod.scan_skills()
 
     def test_reverse_prompt_is_vision_skill(self):
-        skills = prompts_mod._scan_skills()
+        skills = self._scan()
         by_id = {s["id"]: s for s in skills}
         self.assertIn("reverse_prompt", by_id)
         rp = by_id["reverse_prompt"]
@@ -80,25 +88,26 @@ class TestScanSkills(unittest.TestCase):
         self.assertEqual(rp["category"], "vision")
 
     def test_builtin_task_skills_exist(self):
-        ids = {s["id"] for s in prompts_mod._scan_skills()}
+        ids = {s["id"] for s in self._scan()}
         self.assertTrue({"smart_prompt", "translate_prompt"} <= ids)
 
     def test_internal_tasks_hidden(self):
         """内部任务不作为可选 skill 暴露"""
-        ids = {s["id"] for s in prompts_mod._scan_skills()}
+        ids = {s["id"] for s in self._scan()}
         self.assertFalse({"template_prompt", "extract_title", "extract_classify"} & ids)
 
     def test_template_skills_are_text_only(self):
         """未声明 image 输入的模板默认为纯文本 skill"""
-        styles = {s["id"]: s for s in prompts_mod._scan_skills()
-                  if s["source"] in ("presets", "custom") and s["id"] != "minimax_h3_ref"}
+        styles = {s["id"]: s for s in self._scan()
+                  if s["source"] in ("presets", "custom")
+                  and s["id"] not in ("minimax_h3_ref", "image_to_video")}
         self.assertTrue(len(styles) > 0, "至少应扫描到一个模板 skill")
         for sid, s in styles.items():
             self.assertFalse(s["needs_image"], f"普通模板不应需要图片: {sid}")
 
     def test_minimax_ref_skill(self):
         """内置全能参考模板：图像输入 + 触发标记"""
-        by_id = {s["id"]: s for s in prompts_mod._scan_skills()}
+        by_id = {s["id"]: s for s in self._scan()}
         s = by_id.get("minimax_h3_ref")
         self.assertIsNotNone(s, "minimax_h3_ref 模板未被扫描到")
         self.assertTrue(s["needs_image"])
@@ -106,14 +115,14 @@ class TestScanSkills(unittest.TestCase):
         self.assertIn("@全参考", s["markers"])
 
     def test_skill_fields_complete(self):
-        for s in prompts_mod._scan_skills():
+        for s in self._scan():
             for field in ("id", "name", "category", "source", "inputs",
                           "needs_image", "markers", "multi_turn"):
                 self.assertIn(field, s)
 
     def test_multi_turn_flag(self):
         """multi_turn 标志：声明的技能为 True，未声明默认 False"""
-        by_id = {s["id"]: s for s in prompts_mod._scan_skills()}
+        by_id = {s["id"]: s for s in self._scan()}
         for sid in ("co-op-game-intro-generator", "3d-animation-short-generator"):
             s = by_id.get(sid)
             self.assertIsNotNone(s, f"未扫描到技能: {sid}")
@@ -439,6 +448,176 @@ class TestSkillAgent(unittest.TestCase):
         self.llm._load_remote_config = lambda: {"skill_language": "auto"}
         self.assertEqual(self.skill._resolve_skill_language("你好，世界"), "cn")
         self.assertEqual(self.skill._resolve_skill_language("hello world"), "en")
+
+    def test_skill_stream_injects_context(self):
+        # 本地模式单轮：workflow_context 应注入传给 LLM 的系统提示词
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
+        captured = {}
+
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+            captured["system_prompt"] = system_prompt
+            return iter(["ok"])
+
+        self.llm._run_llm_inference = fake_inference
+        ctx = {"h3": [{"type": "EmptyMiniMaxH3LatentAV", "width": 1280, "height": 720}],
+               "references": []}
+        list(self.skill.run_skill_agent_stream("myskill", "hello", context=ctx))
+        self.assertIn("<workflow_context>", captured.get("system_prompt", ""))
+
+    def test_remote_agent_fetches_reference_image(self):
+        # 远程模式 + 图片参考：代理应声明 get_reference_image 工具，取回像素后作为 user 消息回灌
+        import folder_paths
+        import shutil
+        import tempfile
+        from PIL import Image
+        tmp = tempfile.mkdtemp()
+        try:
+            Image.new("RGB", (64, 48), (9, 8, 7)).save(os.path.join(tmp, "ref.png"))
+            orig_in = folder_paths.get_input_directory
+            folder_paths.get_input_directory = lambda: tmp
+            calls = []
+
+            def fake_turn(messages, max_tokens=None, tools=None):
+                calls.append([dict(m) for m in messages])
+                if len(calls) == 1:
+                    return {"role": "assistant", "content": "", "tool_calls": [
+                        {"id": "c1", "type": "function",
+                         "function": {"name": "get_reference_image",
+                                      "arguments": '{"index": 1}'}}]}
+                return {"role": "assistant", "content": "DONE"}
+
+            self.llm.remote_chat_turn = fake_turn
+            self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+            ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "ref.png"},
+                                   "width": 64, "height": 48}]}
+            out = self.skill._skill_agent_core("myskill", "hello", context=ctx)
+            self.assertEqual(out, "DONE")
+            sys0 = [m for m in calls[0] if m.get("role") == "system"][0]["content"]
+            self.assertIn("<workflow_context>", sys0)
+            user_imgs = [m for m in calls[1] if m.get("role") == "user"
+                         and isinstance(m.get("content"), list)]
+            self.assertTrue(any("image_url" in str(p) for m in user_imgs for p in m["content"]),
+                            "取回的参考图像素应作为独立 user 消息回灌")
+        finally:
+            folder_paths.get_input_directory = orig_in
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestWorkflowContextFormat(unittest.TestCase):
+    """_format_workflow_context：系统提示词文本块格式化。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.skill = _il.import_module(f"{_PKG_NAME}.skill")
+
+    def test_empty_or_invalid(self):
+        self.assertEqual(self.skill._format_workflow_context(None), "")
+        self.assertEqual(self.skill._format_workflow_context("x"), "")
+        self.assertEqual(self.skill._format_workflow_context({}), "")
+        self.assertEqual(self.skill._format_workflow_context({"h3": [], "references": []}), "")
+
+    def test_h3_and_references(self):
+        ctx = {
+            "nodes": ["EmptyMiniMaxH3LatentAV", "KSampler", "CLIPTextEncode"],
+            "h3": [{"type": "EmptyMiniMaxH3LatentAV", "width": 1280, "height": 720,
+                    "length": 48, "ref_image_size": "large"}],
+            "references": [
+                {"kind": "image", "source": {"kind": "input", "value": "cat.png"},
+                 "width": 1024, "height": 576},
+                {"kind": "video", "source": {"kind": "input", "value": "clip.mp4"}},
+            ],
+        }
+        block = self.skill._format_workflow_context(ctx)
+        self.assertTrue(block.startswith("<workflow_context>"))
+        self.assertTrue(block.rstrip().endswith("</workflow_context>"))
+        self.assertIn("MiniMax H3 nodes in the current workflow", block)
+        self.assertIn("canvas 1280x720 (16:9)", block)
+        self.assertIn("~2.0s (48 frames @24fps)", block)
+        self.assertIn("ref_image_size=large", block)
+        self.assertIn("Reference media (leaf inputs of the workflow):", block)
+        self.assertIn("[1] image cat.png (16:9) (1024x576) - fetchable via get_reference_image(1)", block)
+        self.assertIn("[2] video clip.mp4", block)
+        # MiniMax 节点类型不重复出现在 Other node types
+        self.assertIn("Other node types: KSampler, CLIPTextEncode", block)
+
+    def test_video_only_ref_omits_fetch_hint(self):
+        ctx = {"references": [{"kind": "video", "source": {"kind": "input", "value": "a.mp4"}}]}
+        block = self.skill._format_workflow_context(ctx)
+        self.assertIn("[1] video a.mp4", block)
+        self.assertNotIn("get_reference_image tool only when you need", block)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestFetchReferenceImage(unittest.TestCase):
+    """_fetch_reference_image：按序号取回参考图像素 + 各类错误分支。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.skill = _il.import_module(f"{_PKG_NAME}.skill")
+
+    def test_valid_image(self):
+        import folder_paths
+        import shutil
+        import tempfile
+        from PIL import Image
+        tmp = tempfile.mkdtemp()
+        try:
+            Image.new("RGB", (64, 48), (1, 2, 3)).save(os.path.join(tmp, "ref.png"))
+            orig = folder_paths.get_input_directory
+            folder_paths.get_input_directory = lambda: tmp
+            try:
+                ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "ref.png"}}]}
+                data, caption = self.skill._fetch_reference_image(ctx, 1)
+                self.assertIsInstance(data, (bytes, bytearray))
+                self.assertIn("ref.png", caption)
+            finally:
+                folder_paths.get_input_directory = orig
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_out_of_range(self):
+        ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "a.png"}}]}
+        data, caption = self.skill._fetch_reference_image(ctx, 2)
+        self.assertIsNone(data)
+        self.assertIn("out of range", caption)
+
+    def test_invalid_index(self):
+        ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "a.png"}}]}
+        data, caption = self.skill._fetch_reference_image(ctx, "abc")
+        self.assertIsNone(data)
+        self.assertIn("invalid reference index", caption)
+
+    def test_video_rejected(self):
+        ctx = {"references": [{"kind": "video", "source": {"kind": "input", "value": "clip.mp4"}}]}
+        data, caption = self.skill._fetch_reference_image(ctx, 1)
+        self.assertIsNone(data)
+        self.assertIn("is a video", caption)
+
+    def test_read_failure(self):
+        import folder_paths
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        try:
+            orig = folder_paths.get_input_directory
+            folder_paths.get_input_directory = lambda: tmp
+            try:
+                ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "missing.png"}}]}
+                data, caption = self.skill._fetch_reference_image(ctx, 1)
+                self.assertIsNone(data)
+                self.assertIn("failed to read", caption)
+            finally:
+                folder_paths.get_input_directory = orig
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_none_context(self):
+        data, caption = self.skill._fetch_reference_image(None, 1)
+        self.assertIsNone(data)
+        self.assertIn("out of range", caption)
 
 
 if __name__ == '__main__':

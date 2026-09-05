@@ -3,7 +3,8 @@
  * 共享的节点行为逻辑 - 消除 NeoPromptSimple 和 NeoPrompts 之间的代码重复
  */
 
-import { enhancePromptStream, translatePromptStream, smartPromptStream, randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
+import { enhancePromptStream, translatePromptStream, randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
+import { collectWorkflowContext } from "./workflow-context.js";
 
 // ==========================================
 // 工具函数
@@ -193,6 +194,14 @@ function createGenerateHandler(promptUI) {
             return;
         }
 
+        // 工作流上下文（MiniMax H3 参数 + 叶子媒体清单）：探测图片尺寸有超时上限，失败静默降级
+        let workflowContext = null;
+        try {
+            workflowContext = await collectWorkflowContext(graph);
+        } catch (e) {
+            console.warn("collectWorkflowContext failed:", e);
+        }
+
         // 检查是否选择了 skill（模板/任务统一选择器，值为 skill id）
         const selectedSkillId = tplSelector?.value || "";
         console.log("Skill selector value:", selectedSkillId, "tplSelector:", tplSelector, "tplSelector.value:", tplSelector?.value, "tplSelector.options:", tplSelector?.options?.length);
@@ -218,7 +227,8 @@ function createGenerateHandler(promptUI) {
                     text: stripSkillMarkers(messageToLLM),
                     skillId,
                     images: imagesPayload,
-                    description: quickText || currentPrompt
+                    description: quickText || currentPrompt,
+                    context: workflowContext
                 };
                 console.log("Skill invoke request:", { ...payload, images: payload.images.length + " image(s)" });
 
@@ -288,14 +298,15 @@ function createGenerateHandler(promptUI) {
                 }, { 
                     text: userPrompt, 
                     skillId: selectedSkillId,
-                    description: quickText || currentPrompt 
+                    description: quickText || currentPrompt,
+                    context: workflowContext 
                 });
             } else {
                 // 使用 LLM 智能判断（流式）：LLM 直接判断用户意图并生成/改写
                 generateBtn.textContent = "⏳"; // 统一短反馈
                 // 拼接 currentPrompt 和 quickText（与选择了模版时保持一致）
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
-                await smartPromptStream(userPrompt, "", {
+                await sseStream("/rs_prompts/stream_generate_prompt", {
                     onChunk: (chunk) => {
                         if (chunk.text) {
                             accumulated += chunk.text;
@@ -319,6 +330,10 @@ function createGenerateHandler(promptUI) {
                         console.error("Smart prompt stream error:", err);
                         alert("Failed to process prompt: " + err);
                     }
+                }, {
+                    text: userPrompt,
+                    description: quickText || currentPrompt,
+                    context: workflowContext
                 });
             }
         } catch (e) {

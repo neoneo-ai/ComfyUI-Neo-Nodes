@@ -1212,7 +1212,7 @@ def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] =
 
 def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional[str] = None,
                         images: Optional[Any] = None, system_prompt: Optional[str] = None,
-                        max_tokens_override: Optional[int] = None) -> Generator[str, None, None]:
+                        max_tokens_override: Optional[int] = None, context: Optional[Dict[str, Any]] = None) -> Generator[str, None, None]:
     """
     流式执行 LLM 任务，返回生成器
 
@@ -1222,6 +1222,7 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
         extra_system_prompt: 额外的系统提示词（可选，已废弃，请使用 system_prompt）
         images: 图像数据列表（可选，用于多模态任务）
         system_prompt: 完全自定义的系统提示词（可选，会覆盖默认系统提示词）
+        context: 前端采集的工作流上下文（可选，MiniMax H3 参数 + 参考媒体清单，注入系统提示词）
 
     Yields:
         str: 生成的文本块
@@ -1268,6 +1269,11 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
     # 注意：如果已经提供了 system_prompt，这个逻辑不会执行
     if extra_system_prompt and (system_prompt == task_config["system"]):
         system_prompt = system_prompt + extra_system_prompt
+
+    # 工作流上下文（MiniMax H3 参数 + 参考媒体清单）：仅元数据注入，参考图像素由 skill 工具按需取回
+    ctx_block = skill._format_workflow_context(context)
+    if ctx_block:
+        system_prompt += "\n\n" + ctx_block
 
     try:
         result_gen = _run_llm_inference(system_prompt, text, max_tokens, images=images,
@@ -1377,8 +1383,10 @@ async def handle_llm_api_stream(task_name, request):
         text = data.get("text", "")
         skill_id = data.get("skillId", data.get("skill_id", ""))
         raw_images = data.get("images") or []
+        # 前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单），仅元数据，无图像素
+        context = data.get("context")
 
-        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}")
+        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}, context={'yes' if context else 'no'}")
 
         # 允许空文本：有图片输入（如反推）时合法
         images = []
@@ -1423,11 +1431,12 @@ async def handle_llm_api_stream(task_name, request):
                 # 同步生成器在事件循环上直接迭代会阻塞整个 aiohttp loop（LLM 未出首包
                 # 时其他请求全部卡住），因此每次 next() 都丢进线程池执行。
                 if skill_agent:
-                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None)
+                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None, context=context)
                 else:
                     gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
                                               images=images if images else None,
-                                              max_tokens_override=template_max_tokens)
+                                              max_tokens_override=template_max_tokens,
+                                              context=context)
                 loop = asyncio.get_running_loop()
 
                 def next_chunk():
