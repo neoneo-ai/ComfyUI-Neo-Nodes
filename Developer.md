@@ -75,10 +75,10 @@ ComfyUI-Neo-Nodes/
 │   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 顶栏按钮）
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
-│   ├── prompt-manager.js   # 提示词管理器（预设列表 / 自动增强菜单内嵌 LLM 配置 / ⚙️ 居中技能弹窗入口）
+│   ├── prompt-manager.js   # 提示词管理器（预设列表 / 自动增强菜单内嵌 LLM 配置 / 技能下拉由 skill.js 组装提供）
 │   ├── prompt-service.js   # 提示词 API 服务封装
 │   ├── llm-setting.js      # LLM 配置表单（provider/模型/API key/本地目录），挂入自动增强菜单
-│   └── skill.js            # 技能模块：skill API + createSkillManagerTab()/createSkillManagerModal()（列表/编辑器/多文件/上传）
+│   └── skill.js            # 技能模块：skill API + createSkillDetailPopup()（单技能详情弹窗）+ createSkillDropdown()（技能下拉组装：底部管理工具栏 / 行内操作 / zip·目录上传）
 └── .github/workflows/
     └── publish.yaml        # 发布 ComfyUI Registry 的 GitHub Action
 ```
@@ -112,10 +112,10 @@ ComfyUI-Neo-Nodes/
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip |
-| `prompt-manager.js` | 提示词管理器：预设列表、自动增强菜单（内嵌 LLM 配置表单）、⚙️ 打开居中技能弹窗；LLM 表单逻辑在 `llm-setting.js`，技能管理委托给 `skill.js` |
+| `prompt-manager.js` | 提示词管理器：预设列表、自动增强菜单（内嵌 LLM 配置表单）；技能下拉整体由 `skill.js` 的 `createSkillDropdown()` 提供（管理入口内嵌在下拉中） |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
 | `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，由 prompt-manager 挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |
-| `skill.js` | 技能模块（纯 ES 模块，仅 export）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillManagerTab()`（列表、编辑器含正文区多文件下拉切换、上传 zip/目录）+ `createSkillManagerModal()`（文档居中弹窗，open/close） |
+| `skill.js` | 技能模块（纯 ES 模块）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillDetailPopup()`（单技能详情弹窗：查看/编辑/删除/复制为自定义/新建，跨节点单例）+ `createSkillDropdown()`（原生 select + 可搜索下拉组装：底部 + New Skill/⬆ ZIP/⬆ Folder 工具栏、行内 Edit/查看操作、共享 zip·目录上传隐藏 input） |
 
 ## 后端 API 路由
 

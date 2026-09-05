@@ -62,9 +62,24 @@ export function attachComboBox(selectEl, opts = {}) {
     inputEl.placeholder = placeholder;
     inputEl.style.paddingRight = "30px";
 
-    // 列表挂在 body 上用 fixed 定位：不被弹窗 overflow 裁剪，下方空间不足时自动向上翻
-    const listEl = el("div", "rs-combo-list", "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
+    // 列表挂在 body 上用 fixed 定位：不被弹窗 overflow 裁剪，下方空间不足时自动向上翻。
+    // opts.footerEl 存在时改为 flex 列布局（滚动区 itemsHost + 固定底部工具栏），否则保持原样
+    // （整个 listEl 自身滚动）——模型下拉等未传 footer 的既有行为完全不变。
+    const hasFooter = !!opts.footerEl;
+    const listOpenDisplay = hasFooter ? "flex" : "block";
+    const listEl = el("div", "rs-combo-list", hasFooter
+        ? "position:fixed;display:none;max-height:260px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
+        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
     document.body.appendChild(listEl);
+
+    // 行容器：有 footer 时为内部滚动区，无 footer 时即 listEl 自身（保持既有行为）
+    let itemsHost = listEl;
+    if (hasFooter) {
+        const itemsWrap = el("div", "rs-combo-items", "flex:1 1 auto;overflow-y:auto;min-height:0;padding:2px;");
+        listEl.appendChild(itemsWrap);
+        listEl.appendChild(opts.footerEl);
+        itemsHost = itemsWrap;
+    }
 
     const clearBtn = el("button", "rs-combo-clear", "position:absolute;right:2px;top:50%;transform:translateY(-50%);width:22px;height:22px;line-height:20px;text-align:center;background:none;border:none;color:#888;font-size:13px;cursor:pointer;padding:0;display:none;z-index:1;");
     clearBtn.type = "button";
@@ -86,11 +101,25 @@ export function attachComboBox(selectEl, opts = {}) {
         syncClear();
     };
 
+    // 原生 select 的 .value 是取值真相，但程序化赋值（如回填已保存模型）不会触发
+    // MutationObserver，输入框文本会停在自动选中的首项。包一层 setter：任何 .value
+    // 写入都同步输入框，兑现「外部对 select 的 .value 读写组件自动跟随」的约定。
+    const nativeValueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+    Object.defineProperty(selectEl, "value", {
+        get: () => nativeValueDesc.get.call(selectEl),
+        set: (v) => {
+            nativeValueDesc.set.call(selectEl, v);
+            syncInputFromSelect();
+        },
+        configurable: true,
+    });
+
     const placeList = () => {
         const r = inputEl.getBoundingClientRect();
         const vh = window.innerHeight;
         listEl.style.left = r.left + "px";
-        listEl.style.width = r.width + "px";
+        // opts.listMinWidth：管理型下拉可大幅宽于输入框（右向钳制在视口内）；不传则维持与输入框同宽
+        listEl.style.width = Math.max(r.width, Math.min(opts.listMinWidth || 0, window.innerWidth - r.left - 6)) + "px";
         const need = Math.min(220, listEl.scrollHeight || 220);
         if (vh - r.bottom < Math.max(need, 80) && r.top > vh - r.bottom) {
             listEl.style.top = "";
@@ -111,34 +140,45 @@ export function attachComboBox(selectEl, opts = {}) {
 
     const renderList = (query) => {
         const q = (query || "").trim().toLowerCase();
-        listEl.innerHTML = "";
+        itemsHost.innerHTML = "";
         highlight = -1;
         Array.from(selectEl.options).forEach((o) => {
             if (q && !o.textContent.toLowerCase().includes(q)) return;
             const item = document.createElement("div");
-            item.textContent = o.textContent;
             item.dataset.value = o.value;
-            item.style.cssText = "padding:6px 8px;font-size:12px;color:#ccc;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
-                (o.value === selectEl.value ? "background:#3a5a8c;" : "");
+            if (opts.renderItemExtra) {
+                // 管理型下拉：行内右侧留白给操作按钮，标签占满剩余宽度并省略
+                item.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:12px;color:#ccc;cursor:pointer;" +
+                    (o.value === selectEl.value ? "background:#3a5a8c;" : "");
+                const label = document.createElement("span");
+                label.textContent = o.textContent;
+                label.style.cssText = "flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+                item.appendChild(label);
+            } else {
+                item.textContent = o.textContent;
+                item.style.cssText = "padding:6px 8px;font-size:12px;color:#ccc;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
+                    (o.value === selectEl.value ? "background:#3a5a8c;" : "");
+            }
             if (o.value === selectEl.value) highlight = items().length;
             item.addEventListener("mousedown", (e) => {
                 e.preventDefault(); // 避免 input 先失焦把列表关掉
                 pickValue(o.value);
             });
             item.addEventListener("mouseenter", () => setHighlight(items().indexOf(item)));
-            listEl.appendChild(item);
+            if (opts.renderItemExtra) opts.renderItemExtra(item, o.value, o);
+            itemsHost.appendChild(item);
         });
-        if (!listEl.children.length) {
+        if (!itemsHost.children.length) {
             const empty = el("div", "", "padding:6px 8px;font-size:12px;color:#777;cursor:default;");
             empty.textContent = emptyText;
-            listEl.appendChild(empty);
+            itemsHost.appendChild(empty);
         }
     };
 
     const openList = () => {
         if (selectEl.disabled) return;
         renderList(inputEl.value);
-        listEl.style.display = "block";
+        listEl.style.display = listOpenDisplay;
         placeList();
     };
 
@@ -160,7 +200,7 @@ export function attachComboBox(selectEl, opts = {}) {
     inputEl.addEventListener("input", () => {
         syncClear();
         renderList(inputEl.value);
-        if (!selectEl.disabled) { listEl.style.display = "block"; placeList(); }
+        if (!selectEl.disabled) { listEl.style.display = listOpenDisplay; placeList(); }
         highlight = -1;
     });
     inputEl.addEventListener("keydown", (e) => {
@@ -189,7 +229,7 @@ export function attachComboBox(selectEl, opts = {}) {
         inputEl.value = "";
         syncClear();
         renderList("");
-        listEl.style.display = "block";
+        listEl.style.display = listOpenDisplay;
         placeList();
         inputEl.focus();
     };
@@ -226,6 +266,8 @@ export function attachComboBox(selectEl, opts = {}) {
 
     return {
         box,
+        // 供行内操作按钮在打开详情弹窗前关闭下拉（避免与弹窗叠加）
+        close: () => closeList(),
         destroy() {
             observer.disconnect();
             window.removeEventListener("mousedown", winMouseDown, true);

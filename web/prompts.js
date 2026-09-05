@@ -246,12 +246,12 @@ app.registerExtension({
             node.minWidth = 370;
             node.minHeight = 260;
 
-            // Initialize prompt manager - get UI elements and settings button
+            // Initialize prompt manager - get UI elements
             // Pass textWidget so save handler can read current prompt text for AI extraction
             // allowRecipe: 在 💾 保存弹窗中启用「保存配方」按钮
             const {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
+                customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto
@@ -813,7 +813,7 @@ app.registerExtension({
             // 初始化提示词管理器
             const {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, statusBar, settingsBtn, toggleSwitch, localTab, externalTab,
+                customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto

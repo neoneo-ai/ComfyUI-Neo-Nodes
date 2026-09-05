@@ -617,27 +617,7 @@
     background: #2a5a8a;
 }
 
-/* Settings button in toolbar */
-.rs-input-toolbar .rs-settings-btn {
-    padding: 4px 8px;
-    font-size: 12px;
-    background: #2a2a2a;
-    color: #999;
-    border: none !important;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-    height: 24px;
-    line-height: 1;
-}
-
-.rs-input-toolbar .rs-settings-btn:hover {
-    background: #3a3a3a;
-    color: #ccc;
-    border-color: #666;
-}
-
-/* Generate / Random / Settings / List buttons - unified top row */
+/* Generate / Random / List buttons - unified top row */
 /* Only apply these if NOT in input toolbar */
 .rs-random-btn,
 .rs-list-btn {
@@ -662,11 +642,6 @@
 .rs-list-btn:hover {
     background: #2a4a6a;
     color: #fff;
-}
-
-.rs-quick-input-wrapper .rs-settings-btn:hover {
-    background: #2a4a6a !important;
-    color: #fff !important;
 }
 
 .rs-generate-btn:disabled {
@@ -1435,11 +1410,6 @@
     box-shadow: none !important;
 }
 
-.rs-root.rs-theme-local .rs-quick-input-wrapper .rs-settings-btn:hover {
-    background: #2a4a6a !important;
-    color: #fff !important;
-}
-
 /* ==========================================
    Theme - EXTERNAL INPUT (Blue)
    ========================================== */
@@ -1453,11 +1423,6 @@
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
-}
-
-.rs-root.rs-theme-external .rs-quick-input-wrapper .rs-settings-btn:hover {
-    background: #2a4a6a !important;
-    color: #fff !important;
 }
 
 /* Fix for NeoPromptSimple: hide forceInput widget DOM elements that may block clicks */
@@ -2463,7 +2428,7 @@
 }
 
 /* ==========================================
-   Skill Manager Modal - 文档居中弹窗（比原设置浮层更大，便于编辑 skill）
+   Skill Detail Popup - 单技能详情弹窗（查看/编辑/删除/复制为自定义/新建）
    ========================================== */
 .rs-skill-modal-overlay {
     position: fixed;
@@ -2501,6 +2466,9 @@
     color: #fff;
     font-size: 14px;
     font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .rs-skill-modal-close {
@@ -2526,12 +2494,68 @@
     padding: 12px 14px;
 }
 
-/* 技能管理标签：填满内容区，内部各区域自行滚动（工具栏/列表固定，编辑区填充剩余空间并内部滚动） */
-.rs-skill-modal-content .rs-skill-tab {
+/* 详情弹窗：内容区滚动，头部来源徽标与底部操作行 */
+.rs-skill-modal-content {
+    overflow-y: auto;
+}
+
+.rs-skill-modal-header .rs-skill-detail-badge {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 3px;
+}
+
+.rs-skill-detail-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+/* 技能下拉底部管理工具栏（+ New Skill / ⬆ ZIP / ⬆ Folder） */
+.rs-skill-dropdown-footer {
     display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border-top: 1px solid #444;
+    background: #26262f;
+}
+
+.rs-skill-footer-btn {
+    flex: 0 0 auto;
+    padding: 2px 9px !important;
+    font-size: 10px !important;
+    font-weight: 400 !important;
+    background: transparent !important;
+    color: #7d8fa3 !important;
+    border: 1px solid #394452 !important;
+}
+
+.rs-skill-footer-btn:hover {
+    background: #2c3e52 !important;
+    color: #d6e4f5 !important;
+    border-color: #5090cc !important;
+}
+
+/* 技能下拉行内操作按钮（✎ Edit / 👁 查看）：弱化展示、悬停增强，尽量少挤占技能名 */
+.rs-skill-row-action {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    font-size: 10px;
+    line-height: 1.5;
+    background: transparent;
+    color: #7d8fa3;
+    border: 1px solid #394452;
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: .8;
+}
+
+.rs-skill-row-action:hover {
+    background: #2c3e52;
+    color: #d6e4f5;
+    border-color: #5090cc;
+    opacity: 1;
 }
 
 /* dice lives inside .rs-random-wrap - re-apply the collapsed floating-group

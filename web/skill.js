@@ -3,12 +3,13 @@
  * Skill 模块（ES 模块：export API + UI；导入 marked/purify 用于 Markdown 渲染）
  * - API：listSkills / loadSkill / saveSkill / deleteSkill / uploadSkill
  *        listSkillFiles / loadSkillFile / saveSkillFile / deleteSkillFile
- * - UI ：createSkillManagerTab() —— 列表 + 编辑器（含多文件面板）+ 上传 zip/目录
+ * - UI ：createSkillDetailPopup()（单技能详情弹窗）+ createSkillDropdown()（技能下拉组装：管理入口）
  */
 
 // Markdown 渲染复用 ComfyUI 内置同款库（marked + DOMPurify），breaks:true 保留单行换行
 import "./marked.min.js";
 import "./purify.min.js";
+import { attachComboBox } from "./combo-box.js";
 
 // ==========================================
 // DOM 元素工厂（本地实现，避免与 prompt-manager.js 循环依赖）
@@ -168,12 +169,6 @@ async function deleteSkillFile(id, file) {
 }
 
 // ==========================================
-// UI：createSkillManagerTab()
-// 返回 { el, refresh } —— el 为技能管理内容容器（由 createSkillManagerModal 挂入居中弹窗），
-// refresh() 重新拉取列表（首次打开时由调用方触发）。
-// ==========================================
-
-// ==========================================
 // Markdown 渲染：marked（GFM + breaks:true 保留换行）+ DOMPurify 消毒，防 LLM/用户内容注入
 // ==========================================
 function escapeHtml(s) {
@@ -196,42 +191,66 @@ function renderMarkdown(src) {
     return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
-function createSkillManagerTab() {
-    const el = mkEl("div", "rs-skill-tab");
+// ==========================================
+// skill 选择列表：分类标签 + 把 skills 填充进原生 <select>（combo-box 数据源）
+// ==========================================
+const CATEGORY_LABELS = {
+    "vision": { label: "🖼️ 图像 / 反推", order: 0 },
+    "task": { label: "⚙️ 任务", order: 1 },
+    "style": { label: "🎨 风格模板", order: 2 },
+    "custom": { label: "📝 自定义", order: 3 }
+};
 
-    // ---- Toolbar：搜索 + New + 上传(ZIP/目录) ----
-    const toolbar = mkEl("div", "rs-tpl-toolbar");
-    const searchInput = mkEl("input", "rs-form-input rs-tpl-search");
-    searchInput.placeholder = "🔍 Search skills...";
+/** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图)/📌(预设) 徽标与 multiTurn 标记 */
+function populateSkillOptions(selectEl, skills) {
+    if (!skills || !skills.length) return;
+    const groups = {};
+    skills.forEach(s => {
+        const cat = CATEGORY_LABELS[s.category] ? s.category : "style";
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(s);
+    });
+    Object.keys(groups).sort((a, b) =>
+        (CATEGORY_LABELS[a]?.order ?? 99) - (CATEGORY_LABELS[b]?.order ?? 99)
+    ).forEach(cat => {
+        const optgroup = mkEl("optgroup");
+        optgroup.label = CATEGORY_LABELS[cat].label;
+        groups[cat].forEach(s => {
+            const opt = mkEl("option");
+            opt.value = s.id;
+            opt.dataset.multiTurn = s.multi_turn ? "1" : "";
+            opt.dataset.source = s.source || "";
+            const imgBadge = s.needs_image ? "📷 " : "";
+            opt.textContent = `${imgBadge}${s.name || s.id}`;
+            optgroup.appendChild(opt);
+        });
+        selectEl.appendChild(optgroup);
+    });
+}
 
-    const newBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-new-btn");
-    newBtn.textContent = "+ New Skill";
+// ==========================================
+// UI：createSkillDetailPopup() —— 单技能详情弹窗（查看 / 编辑 / 删除 / 复制为自定义 / 新建）
+// 由技能下拉的行内操作与底部工具栏打开；overlay 挂到 document.body，跨节点共享一个实例。
+// 返回 { overlay, openExisting(id, source), openNew(), close }。
+// ==========================================
 
-    const zipInput = document.createElement("input");
-    zipInput.type = "file";
-    zipInput.accept = ".zip";
-    zipInput.style.display = "none";
-    const zipBtn = mkEl("button", "rs-btn rs-btn-local");
-    zipBtn.textContent = "⬆ ZIP";
-    zipBtn.title = "Upload a .zip skill package";
+function createSkillDetailPopup() {
+    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
 
-    const dirInput = document.createElement("input");
-    dirInput.type = "file";
-    dirInput.setAttribute("webkitdirectory", "");
-    dirInput.style.display = "none";
-    const dirBtn = mkEl("button", "rs-btn rs-btn-local");
-    dirBtn.textContent = "⬆ Folder";
-    dirBtn.title = "Upload a skill folder (all .md files)";
+    // ---- 头部：标题 + 来源徽标 + 关闭 ----
+    const header = mkEl("div", "rs-skill-modal-header");
+    const titleSpan = mkEl("span", "rs-skill-modal-title");
+    titleSpan.textContent = "📝 Skill";
+    const sourceBadge = mkEl("span", "rs-source-badge rs-skill-detail-badge");
+    header.append(titleSpan, sourceBadge);
+    const closeBtn = mkEl("button", "rs-skill-modal-close");
+    closeBtn.textContent = "✕";
+    closeBtn.setAttribute("aria-label", "Close");
+    header.appendChild(closeBtn);
 
-    toolbar.append(searchInput, newBtn, zipBtn, dirBtn);
-
-    // ---- 列表区 ----
-    const listBody = mkEl("div", "rs-tpl-list-body");
-    listBody.style.maxHeight = "200px";
-    listBody.style.overflowY = "auto";
-
-    // ---- 编辑区 ----
-    const editorArea = mkEl("div", "rs-tpl-editor-area");
+    // ---- 内容：名称行 + 正文区（多文件下拉 + 预览/编辑切换）----
+    const content = mkEl("div", "rs-skill-modal-content");
 
     const nameRow = mkEl("div", "rs-config-row");
     const nameLabel = mkEl("label", "rs-form-label");
@@ -246,12 +265,12 @@ function createSkillManagerTab() {
     const contentLabel = mkEl("label", "rs-form-label");
     contentLabel.textContent = "System Prompt Content";
     contentLeft.appendChild(contentLabel);
-    // 多文件切换下拉（skill 含多个 .md 时显示，用于在正文区切换查看/编辑的文件）
+    // 多文件切换下拉（skill 含多个 .md 时显示）
     const fileSelect = document.createElement("select");
     fileSelect.className = "rs-file-select";
     fileSelect.style.display = "none";
     contentLeft.appendChild(fileSelect);
-    // 文件工具：新增 / 删除当前选中的附属 .md（替代原先底部展开编辑面板）
+    // 附属 .md 的新增 / 删除（仅自定义 skill）
     const fileTools = mkEl("div", "rs-content-mode");
     const addFileBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     addFileBtn.type = "button";
@@ -263,7 +282,6 @@ function createSkillManagerTab() {
     delFileBtn.title = "Delete the selected file";
     fileTools.append(addFileBtn, delFileBtn);
     contentLeft.appendChild(fileTools);
-    contentHeader.appendChild(contentLeft);
     const modeBtns = mkEl("div", "rs-content-mode");
     const previewBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     previewBtn.type = "button";
@@ -272,38 +290,44 @@ function createSkillManagerTab() {
     editBtn.type = "button";
     editBtn.textContent = "✎ Edit";
     modeBtns.append(previewBtn, editBtn);
+    contentHeader.appendChild(contentLeft);
     contentHeader.appendChild(modeBtns);
     const contentTextarea = document.createElement("textarea");
     contentTextarea.className = "rs-form-input rs-tpl-content";
-    contentTextarea.style.minHeight = "360px";
+    contentTextarea.style.minHeight = "320px";
     contentTextarea.style.resize = "vertical";
     contentTextarea.placeholder = "Enter the system prompt content...";
     const contentPreview = mkEl("div", "rs-md-preview");
     contentPreview.style.display = "none";
     contentRow.append(contentHeader, contentTextarea, contentPreview);
 
-    // ---- 编辑区按钮 ----
-    const editorBtns = mkEl("div", "rs-modal-btns");
+    // ---- 底部按钮：随状态显隐（Save / Copy-as-custom / Delete / Close）----
+    const footerBtns = mkEl("div", "rs-modal-btns rs-skill-detail-actions");
     const saveBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-save-btn");
     saveBtn.textContent = "💾 Save";
+    const copyBtn = mkEl("button", "rs-btn rs-btn-local");
+    copyBtn.textContent = "⧉ Copy as custom";
+    copyBtn.title = "Copy this built-in skill into a new editable custom skill";
+    const deleteBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+    deleteBtn.textContent = "🗑 Delete";
     const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-tpl-cancel-btn");
-    cancelBtn.textContent = "✕ Cancel";
-    editorBtns.append(saveBtn, cancelBtn);
+    cancelBtn.textContent = "✕ Close";
 
-    editorArea.append(nameRow, contentRow, editorBtns);
-    el.append(toolbar, listBody, editorArea);
+    content.append(nameRow, contentRow, footerBtns);
+    modal.append(header, content);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
 
     // ---- 状态 ----
     let currentSkillId = null;
-    let currentSkillSource = "custom";
-    let currentFiles = [];   // [{ name, size }]（递归的 .md/.txt 相对路径，含主文件 skill.md）
-    let selectedFile = null;     // 当前在正文区查看/编辑的文件名
-    let editorMode = "preview";  // preview / edit
-    const isCustom = () => currentSkillSource === "custom";
+    let currentSource = "custom";
+    let currentFiles = [];   // [{ name, size }]（递归 .md/.txt 相对路径，含主文件 skill.md）
+    let selectedFile = null;
+    let editorMode = "preview";
+    const isCustom = () => currentSource === "custom";
     const isMainFile = (name) => String(name || "").toLowerCase() === "skill.md";
 
-    // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）：
-    // 仅当文件以 --- 开头且能定位到下一行独立的 --- 时剥离，否则原样返回。
+    // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）
     function stripFrontmatter(text) {
         let t = String(text || "");
         if (t.charCodeAt(0) === 0xfeff) t = t.slice(1);
@@ -317,7 +341,6 @@ function createSkillManagerTab() {
         return text;
     }
 
-    // 内容区两种模式：preview（渲染 Markdown，默认查看态）/ edit（原始 textarea）
     function setEditorMode(mode) {
         editorMode = mode;
         const previewing = mode === "preview";
@@ -330,13 +353,9 @@ function createSkillManagerTab() {
     previewBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("preview"); });
     editBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("edit"); });
 
-    // ---- 多文件：下拉切换 + 工具按钮（替代底部展开面板）----
     function populateFileSelect(defaultName) {
         fileSelect.innerHTML = "";
-        if (currentFiles.length <= 1) {
-            fileSelect.style.display = "none";
-            return;
-        }
+        if (currentFiles.length <= 1) { fileSelect.style.display = "none"; return; }
         currentFiles.forEach(f => {
             const opt = document.createElement("option");
             opt.value = f.name;
@@ -347,19 +366,26 @@ function createSkillManagerTab() {
         fileSelect.style.display = "inline-block";
     }
 
-    // 依据当前选中文件 + 只读状态，更新名称/正文/保存/删除的可用性与显隐
-    function updateEditorControls() {
+    // 依据当前来源 + 选中文件，更新名称/正文/各按钮的可用性与显隐
+    function updateControls() {
         const readOnly = !isCustom();
         const mainSel = isMainFile(selectedFile);
         nameInput.disabled = readOnly || (currentFiles.length > 0 && !mainSel);
         contentTextarea.disabled = readOnly;
         saveBtn.style.display = readOnly ? "none" : "inline-block";
+        copyBtn.style.display = readOnly ? "inline-block" : "none";
+        deleteBtn.style.display = isCustom() ? "inline-block" : "none";
         addFileBtn.style.display = isCustom() ? "inline-block" : "none";
-        const canDelete = isCustom() && currentFiles.length > 1 && !!selectedFile && !mainSel;
-        delFileBtn.style.display = canDelete ? "inline-block" : "none";
+        const canDeleteFile = isCustom() && currentFiles.length > 1 && !!selectedFile && !mainSel;
+        delFileBtn.style.display = canDeleteFile ? "inline-block" : "none";
     }
 
-    // 在正文区加载某个文件：主文件显示正文（剥离 frontmatter），其余文件显示原始内容
+    function setBadge() {
+        if (currentSource === "presets") { sourceBadge.textContent = "SYS"; sourceBadge.title = "System preset (read-only)"; }
+        else if (currentSource === "tasks") { sourceBadge.textContent = "TASK"; sourceBadge.title = "Built-in task skill (read-only)"; }
+        else { sourceBadge.textContent = "USR"; sourceBadge.title = "User custom"; }
+    }
+
     async function selectFile(name) {
         if (!currentSkillId || !name) return;
         selectedFile = name;
@@ -368,233 +394,125 @@ function createSkillManagerTab() {
         let text = (data && data.content) || "";
         if (isMainFile(name)) text = stripFrontmatter(text);
         contentTextarea.value = text;
-        // 非 Markdown（如 .txt 引用文件）默认用原始编辑态展示，避免被当成 Markdown 渲染
         setEditorMode(/\.md$/i.test(name) ? editorMode : "edit");
-        updateEditorControls();
+        updateControls();
     }
     fileSelect.addEventListener("change", () => selectFile(fileSelect.value));
 
-    // ---- 打开/重载编辑器（按当前 id）----
-    async function reloadEditor() {
-        if (!currentSkillId) return;
-        const skills = await listSkills();
-        const tpl = (skills || []).find(s => s.id === currentSkillId);
-        if (tpl) await loadEditor(tpl);
-    }
-
-    async function loadEditor(tpl) {
-        currentSkillId = tpl.id;
-        currentSkillSource = tpl.source || "custom";
-        const full = await loadSkill(tpl.id);
-        if (full && full.error) { alert("Failed to load skill: " + full.error); return; }
-        nameInput.value = (full && full.name) || tpl.name || tpl.id;
+    // ---- 打开：查看/编辑已有 skill ----
+    async function openExisting(id, source) {
+        overlay.style.display = "flex";
+        titleSpan.textContent = "📝 Skill";
+        currentSkillId = id;
+        currentSource = source || "custom";
+        setBadge();
+        nameInput.value = "";
+        contentTextarea.value = "";
+        contentPreview.innerHTML = "";
+        fileSelect.innerHTML = "";
+        fileSelect.style.display = "none";
+        selectedFile = null;
+        const full = await loadSkill(id);
+        if (full && full.error) { alert("Failed to load skill: " + full.error); close(); return; }
+        const nm = (full && full.name) || id;
+        nameInput.value = nm;
+        titleSpan.textContent = "📝 " + nm;
+        titleSpan.title = nm;
         currentFiles = (full && full.files) || [];
-
-        // 默认选中主文件（skill.md，忽略大小写）；无则第一个文件
         let mainName = null;
         for (const f of currentFiles) { if (isMainFile(f.name)) { mainName = f.name; break; } }
         if (!mainName && currentFiles.length) mainName = currentFiles[0].name;
-
         populateFileSelect(mainName);
         setEditorMode("preview");
-        if (mainName) {
-            await selectFile(mainName);
-        } else {
-            selectedFile = null;
-            contentTextarea.value = "";
-            updateEditorControls();
-        }
-        editorArea.style.display = "block";
+        if (mainName) await selectFile(mainName);
+        else { selectedFile = null; contentTextarea.value = ""; }
+        updateControls();
     }
 
-    async function copyAsCustom(tpl) {
-        const full = await loadSkill(tpl.id);
-        if (full && full.error) { alert("Failed to load skill: " + full.error); return; }
-        const newId = tpl.id + "_copy_" + Date.now();
-        await saveSkill({
-            id: newId,
-            name: ((full && full.name) || tpl.name || tpl.id) + " (Copy)",
-            content: (full && full.content) || "",
-            tags: [...((full && full.tags) || tpl.tags || [])],
-            source: "custom"
-        });
-        refresh();
-        document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-    }
-
-    // ---- 列表渲染 ----
-    async function refresh() {
-        listBody.innerHTML = "";
-        const skills = await listSkills();
-        if (!skills || !skills.length) {
-            listBody.textContent = "No skills found";
-            return;
-        }
-        skills.forEach(tpl => {
-            const row = document.createElement("div");
-            row.className = "rs-tpl-item";
-            row.dataset.id = tpl.id;
-            // 整行可点击打开编辑器；右侧图标各自 stopPropagation，不会误触发
-            row.addEventListener("mousedown", (e) => {
-                e.preventDefault();
-                loadEditor(tpl);
-            });
-
-            const leftDiv = mkEl("div", "rs-preset-left");
-            const contentSpan = mkEl("span", "rs-preset-content");
-            contentSpan.textContent = tpl.name || tpl.id;
-
-            const sourceBadge = mkEl("span", "rs-source-badge");
-            if (tpl.source === "presets") { sourceBadge.textContent = "SYS"; sourceBadge.title = "System preset (read-only)"; }
-            else if (tpl.source === "tasks") { sourceBadge.textContent = "TASK"; sourceBadge.title = "Built-in task skill (read-only)"; }
-            else { sourceBadge.textContent = "USR"; sourceBadge.title = "User custom"; }
-            contentSpan.appendChild(sourceBadge);
-            leftDiv.appendChild(contentSpan);
-            row.appendChild(leftDiv);
-
-            if (tpl.tags && tpl.tags.length > 0) {
-                const tagsSpan = document.createElement("span");
-                tagsSpan.className = "rs-tags-part";
-                tagsSpan.textContent = ` [${tpl.tags.join(", ")}]`;
-                contentSpan.appendChild(document.createTextNode(" "));
-                contentSpan.appendChild(tagsSpan);
-            }
-
-            const viewBtn = mkEl("span", "rs-delete-icon");
-            viewBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
-            viewBtn.title = "View skill";
-            viewBtn.style.cssText = "cursor:pointer; display:inline-block; pointer-events:auto; margin-right:8px;";
-            viewBtn.addEventListener("mousedown", (e) => {
-                e.stopPropagation(); e.preventDefault(); e.stopImmediatePropagation();
-                loadEditor(tpl);
-            }, true);
-            row.appendChild(viewBtn);
-
-            if (tpl.source === "custom") {
-                const deleteBtn = mkEl("span", "rs-delete-icon");
-                deleteBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-                deleteBtn.title = "Delete skill";
-                deleteBtn.style.cssText = "cursor:pointer; display:inline-block; pointer-events:auto; z-index:1000;";
-                deleteBtn.addEventListener("mousedown", async (e) => {
-                    e.stopPropagation(); e.preventDefault(); e.stopImmediatePropagation();
-                    if (!confirm(`Delete skill "${tpl.name}"?`)) return;
-                    const result = await deleteSkill(tpl.id);
-                    if (result.success) { refresh(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
-                    else alert(`Delete failed: ${result.error || "Unknown error"}`);
-                }, true);
-                row.appendChild(deleteBtn);
-            } else {
-                const copyBtn = mkEl("span", "rs-delete-icon");
-                copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-                copyBtn.title = "Copy as custom skill";
-                copyBtn.style.cssText = "cursor:pointer; display:inline-block; pointer-events:auto;";
-                copyBtn.addEventListener("mousedown", (e) => {
-                    e.stopPropagation(); e.preventDefault(); e.stopImmediatePropagation();
-                    copyAsCustom(tpl);
-                }, true);
-                row.appendChild(copyBtn);
-            }
-
-            listBody.appendChild(row);
-        });
-    }
-
-    // ---- 搜索 ----
-    searchInput.addEventListener("input", () => {
-        const query = searchInput.value.trim().toLowerCase();
-        listBody.querySelectorAll(".rs-tpl-item").forEach(item => {
-            const name = (item.querySelector(".rs-preset-content")?.textContent || "").toLowerCase();
-            item.style.display = (!query || name.includes(query)) ? "flex" : "none";
-        });
-    });
-
-    // ---- New / Save / Cancel ----
-    const handleNewClick = (e) => {
-        e.stopPropagation(); e.stopImmediatePropagation();
+    // ---- 打开：新建空表单 ----
+    function openNew() {
+        overlay.style.display = "flex";
+        titleSpan.textContent = "✨ New Skill";
+        titleSpan.removeAttribute("title");
         currentSkillId = null;
-        currentSkillSource = "custom";
-        currentFiles = [];
-        selectedFile = null;
+        currentSource = "custom";
+        setBadge();
         nameInput.value = "";
         contentTextarea.value = "";
+        contentPreview.innerHTML = "";
         fileSelect.innerHTML = "";
         fileSelect.style.display = "none";
+        selectedFile = null;
         nameInput.disabled = false;
         contentTextarea.disabled = false;
-        saveBtn.style.display = "inline-block";
-        addFileBtn.style.display = "none";
-        delFileBtn.style.display = "none";
         setEditorMode("edit");
-        editorArea.style.display = "block";
+        updateControls();
         nameInput.focus();
-    };
-    newBtn.addEventListener("mousedown", handleNewClick, true);
-    newBtn.addEventListener("click", handleNewClick, true);
+    }
 
-    const handleSaveClick = async (e) => {
-        e.stopPropagation(); e.stopImmediatePropagation();
-        const savingMain = !currentSkillId || isMainFile(selectedFile);
+    function close() { overlay.style.display = "none"; }
+
+    // ---- 保存（新建主文件 / 已有 skill 的当前选中文件）----
+    async function handleSave() {
         const name = nameInput.value.trim();
-        if (savingMain && !name) { alert("Skill name is required"); return; }
-
-        // 新建 skill：创建主文件（正文）
+        if (!name) { alert("Skill name is required"); return; }
         if (!currentSkillId) {
             const id = name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
             if (!id) return;
             const result = await saveSkill({ id, name, content: contentTextarea.value, tags: [], source: "custom" });
-            if (result.success) {
-                handleNewClick(e);   // 复位到“新建”态
-                refresh();
-                document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-            } else {
-                alert("Save failed: " + (result.error || "Unknown error"));
-            }
+            if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+            else alert("Save failed: " + (result.error || "Unknown error"));
             return;
         }
-
-        // 已有 skill：保存当前选中文件（主文件走 saveSkill 保留元数据，附属文件走 saveSkillFile）
-        if (savingMain) {
+        if (isMainFile(selectedFile)) {
             const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom" });
-            if (result.success) {
-                refresh();
-                document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-            } else {
-                alert("Save failed: " + (result.error || "Unknown error"));
-            }
+            if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+            else alert("Save failed: " + (result.error || "Unknown error"));
         } else {
             const r = await saveSkillFile(currentSkillId, selectedFile, contentTextarea.value);
-            if (r.success) {
-                refresh();
-                document.dispatchEvent(new CustomEvent("rs.templates.updated"));
-            } else {
-                alert("Save failed: " + (r.error || "Unknown error"));
-            }
+            if (r.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+            else alert("Save failed: " + (r.error || ""));
         }
-    };
-    saveBtn.addEventListener("mousedown", handleSaveClick, true);
-    saveBtn.addEventListener("click", handleSaveClick, true);
+    }
+    saveBtn.addEventListener("click", (e) => { e.stopPropagation(); handleSave(); });
 
-    const handleCancelClick = (e) => {
-        e.stopPropagation(); e.stopImmediatePropagation();
-        nameInput.value = "";
-        contentTextarea.value = "";
-        currentSkillId = null;
-        selectedFile = null;
-        fileSelect.innerHTML = "";
-        fileSelect.style.display = "none";
-        editorArea.style.display = "none";
-    };
-    cancelBtn.addEventListener("mousedown", handleCancelClick, true);
-    cancelBtn.addEventListener("click", handleCancelClick, true);
+    // ---- 删除（仅自定义）----
+    deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!currentSkillId || !isCustom()) return;
+        const nm = nameInput.value.trim() || currentSkillId;
+        if (!confirm(`Delete skill "${nm}"?`)) return;
+        const result = await deleteSkill(currentSkillId);
+        if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+        else alert(`Delete failed: ${result.error || "Unknown error"}`);
+    });
 
-    // ---- 多文件：新增 / 删除（正文区下拉切换的文件）----
+    // ---- 复制为自定义（仅内置；客户端 loadSkill + saveSkill，无后端接口）----
+    copyBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!currentSkillId || isCustom()) return;
+        const full = await loadSkill(currentSkillId);
+        if (full && full.error) { alert("Failed to load skill: " + full.error); return; }
+        const newId = currentSkillId + "_copy_" + Date.now();
+        await saveSkill({
+            id: newId,
+            name: ((full && full.name) || nameInput.value.trim() || currentSkillId) + " (Copy)",
+            content: (full && full.content) || "",
+            tags: [...((full && full.tags) || [])],
+            source: "custom"
+        });
+        document.dispatchEvent(new CustomEvent("rs.templates.updated"));
+        close();
+    });
+
+    // ---- 附属 .md：新增 / 删除（仅自定义）----
     addFileBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        if (!currentSkillId) { alert("Save the skill first, then add files"); return; }
+        if (!currentSkillId || !isCustom()) return;
         const fname = prompt("New file name (.md or .txt; use / for subfolders):", "notes.md");
         if (!fname || !fname.trim()) return;
         const r = await saveSkillFile(currentSkillId, fname.trim(), "");
-        if (r.success) { await reloadEditor(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
         else alert("Add failed: " + (r.error || ""));
     });
 
@@ -603,88 +521,130 @@ function createSkillManagerTab() {
         if (!currentSkillId || !selectedFile || isMainFile(selectedFile)) return;
         if (!confirm(`Delete file "${selectedFile}"?`)) return;
         const r = await deleteSkillFile(currentSkillId, selectedFile);
-        if (r.success) { await reloadEditor(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
         else alert("Delete failed: " + (r.error || ""));
     });
 
-    // ---- 上传：ZIP / 目录 ----
-    zipInput.addEventListener("change", async () => {
-        const f = zipInput.files[0];
-        zipInput.value = "";
-        if (!f) return;
-        const r = await uploadSkill({ zipFile: f });
-        if (r.success) { alert(`Uploaded skill "${r.id}"`); refresh(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
-        else alert("Upload failed: " + (r.error || ""));
-    });
-
-    dirInput.addEventListener("change", async () => {
-        const all = Array.from(dirInput.files || []);
-        dirInput.value = "";
-        const textFiles = all.filter(f => /\.(md|txt)$/i.test(f.name));
-        if (!textFiles.length) { alert("No .md/.txt files in the selected folder"); return; }
-        // 若所有文件共享同一顶层目录，用它作为 skill_id
-        const tops = [...new Set(textFiles.map(f => (f.webkitRelativePath || f.name).split("/")[0]))];
-        const payload = { files: textFiles.map(f => ({ path: f.webkitRelativePath || f.name, blob: f })) };
-        if (tops.length === 1) payload.skillId = tops[0];
-        const r = await uploadSkill(payload);
-        if (r.success) { alert(`Uploaded skill "${r.id}"`); refresh(); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
-        else alert("Upload failed: " + (r.error || ""));
-    });
-
-    zipBtn.addEventListener("click", (e) => { e.stopPropagation(); zipInput.click(); });
-    dirBtn.addEventListener("click", (e) => { e.stopPropagation(); dirInput.click(); });
-
-    return { el, refresh };
-}
-
-// ==========================================
-// UI：createSkillManagerModal() —— 文档居中的技能管理弹窗（比原设置浮层更大，便于编辑 skill）
-// 内部复用 createSkillManagerTab() 的内容；open()/close() 控制显隐，首次 open 时拉取列表。
-// overlay 自动挂到 document.body（fixed 全屏遮罩 + 居中面板），避免被节点边界裁剪。
-// 返回 { overlay, open, close }。
-// ==========================================
-
-function createSkillManagerModal() {
-    const overlay = mkEl("div", "rs-skill-modal-overlay");
-    const modal = mkEl("div", "rs-skill-modal");
-
-    const header = mkEl("div", "rs-skill-modal-header");
-    const titleSpan = mkEl("span", "rs-skill-modal-title");
-    titleSpan.textContent = "📝 Skills & Prompt Templates";
-    header.appendChild(titleSpan);
-    const closeBtn = mkEl("button", "rs-skill-modal-close");
-    closeBtn.textContent = "✕";
-    closeBtn.setAttribute("aria-label", "Close");
-    header.appendChild(closeBtn);
-
-    const content = mkEl("div", "rs-skill-modal-content");
-    const tab = createSkillManagerTab();
-    content.appendChild(tab.el);
-
-    modal.append(header, content);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    let loaded = false;
-    const open = () => {
-        overlay.style.display = "flex";
-        if (!loaded) {
-            tab.refresh().then(() => { loaded = true; });
-        }
-    };
-    const close = () => { overlay.style.display = "none"; };
+    cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
 
     // 拦截弹窗内部指针事件向外冒泡，避免触发画布选节点等副作用（同预设列表浮层）
     ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => {
         modal.addEventListener(t, (e) => e.stopPropagation());
     });
-    // 点遮罩空白处关闭；✕ 关闭
     overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
     closeBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); close(); });
     const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") close(); };
     document.addEventListener("keydown", onKey);
 
-    return { overlay, open, close };
+    return { overlay, openExisting, openNew, close };
+}
+
+// ==========================================
+// 单例：详情弹窗 / 上传隐藏 input（跨节点共享；createSkillDropdown 的管理入口都走这里）
+// ==========================================
+
+let _skillDetailPopup = null;
+function getSkillDetailPopup() {
+    if (!_skillDetailPopup) _skillDetailPopup = createSkillDetailPopup();
+    return _skillDetailPopup;
+}
+
+// 共享的 ZIP / 目录上传隐藏 input：多个节点的技能下拉共用同一对，change 时上传并广播刷新
+let _skillUploadInputs = null;
+function getSkillUploadInputs() {
+    if (_skillUploadInputs) return _skillUploadInputs;
+    const zipInput = document.createElement("input");
+    zipInput.type = "file";
+    zipInput.accept = ".zip";
+    zipInput.style.display = "none";
+    const dirInput = document.createElement("input");
+    dirInput.type = "file";
+    dirInput.setAttribute("webkitdirectory", "");
+    dirInput.style.display = "none";
+    document.body.appendChild(zipInput);
+    document.body.appendChild(dirInput);
+
+    zipInput.addEventListener("change", async () => {
+        const f = zipInput.files[0];
+        zipInput.value = "";
+        if (!f) return;
+        const r = await uploadSkill({ zipFile: f });
+        if (r.success) { alert(`Uploaded skill "${r.id}"`); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        else alert("Upload failed: " + (r.error || ""));
+    });
+    dirInput.addEventListener("change", async () => {
+        const all = Array.from(dirInput.files || []);
+        dirInput.value = "";
+        const textFiles = all.filter(f => /\.(md|txt)$/i.test(f.name));
+        if (!textFiles.length) { alert("No .md/.txt files in the selected folder"); return; }
+        const tops = [...new Set(textFiles.map(f => (f.webkitRelativePath || f.name).split("/")[0]))];
+        const payload = { files: textFiles.map(f => ({ path: f.webkitRelativePath || f.name, blob: f })) };
+        if (tops.length === 1) payload.skillId = tops[0];
+        const r = await uploadSkill(payload);
+        if (r.success) { alert(`Uploaded skill "${r.id}"`); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        else alert("Upload failed: " + (r.error || ""));
+    });
+
+    _skillUploadInputs = { zipInput, dirInput };
+    return _skillUploadInputs;
+}
+
+// ==========================================
+// 技能下拉组装：原生 select（数据源）+ 可搜索组件 + 底部管理工具栏 + 行内操作一体创建。
+// prompt-manager 只需 const { selectEl, combo } = createSkillDropdown() 并挂载 combo.box；
+// 选项填充仍走 populateSkillOptions(selectEl, skills)，combo 自动跟随（选项带 data-source 供行内操作判断）。
+// ==========================================
+
+function createSkillDropdown() {
+    const selectEl = mkEl("select", "rs-tpl-selector");
+    selectEl.title = "Select skill (template / task / image)";
+
+    // 底部工具栏：+ New Skill / ⬆ ZIP / ⬆ Folder —— 管理入口（替代原 ⚙️ 设置弹窗）
+    const skillFooter = mkEl("div", "rs-skill-dropdown-footer");
+    const makeFooterBtn = (label, title) => {
+        const b = mkEl("button", "rs-btn rs-btn-local rs-skill-footer-btn");
+        b.type = "button";
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+        return b;
+    };
+    const footerNewBtn = makeFooterBtn("+ New Skill", "Create a new custom skill");
+    footerNewBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillDetailPopup().openNew(); });
+    const footerZipBtn = makeFooterBtn("⬆ ZIP", "Upload a .zip skill package");
+    footerZipBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().zipInput.click(); });
+    const footerDirBtn = makeFooterBtn("⬆ Folder", "Upload a skill folder (all .md files)");
+    footerDirBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().dirInput.click(); });
+    skillFooter.append(footerNewBtn, footerZipBtn, footerDirBtn);
+
+    // 行内操作：自定义 skill → ✎ Edit；内置 SYS/TASK → 👁 查看。点击先关下拉再开详情弹窗，
+    // mousedown 上 preventDefault + stopPropagation 避免触发整行的选中(pickValue)。
+    const renderItemExtra = (itemEl, value, o) => {
+        const source = (o && o.dataset && o.dataset.source) || "custom";
+        const isCustomSkill = source === "custom";
+        const btn = mkEl("button", "rs-skill-row-action");
+        btn.type = "button";
+        btn.textContent = isCustomSkill ? "✎ Edit" : "👁 查看";
+        btn.title = isCustomSkill ? "Edit this skill" : "View this skill (read-only)";
+        btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            combo.close();
+            getSkillDetailPopup().openExisting(value, source);
+        });
+        itemEl.appendChild(btn);
+    };
+
+    // combo 声明在其后：footer/行内操作闭包只在用户交互时执行，届时 combo 已赋值
+    const combo = attachComboBox(selectEl, {
+        placeholder: "🔍 输入过滤 skill...",
+        emptyText: "无匹配 skill",
+        listMinWidth: 306,
+        footerEl: skillFooter,
+        renderItemExtra,
+    });
+
+    return { selectEl, combo };
 }
 
 // ==========================================
@@ -700,7 +660,7 @@ export {
     loadSkillFile,
     saveSkillFile,
     deleteSkillFile,
+    populateSkillOptions,
     renderMarkdown,
-    createSkillManagerTab,
-    createSkillManagerModal
+    createSkillDropdown
 };

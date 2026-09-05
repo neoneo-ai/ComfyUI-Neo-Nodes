@@ -12,7 +12,7 @@ Skill = 一个目录，内含主文件 skill.md（大小写不敏感：SKILL.md 
 约定：
 - skill id = 目录名。
 - 元数据只从 skill.md 的 YAML frontmatter 读取（name/tags/inputs/description/
-  max_tokens/result_key/multi_result/category/markers/created_at）。
+  max_tokens/result_key/multi_result/multi_turn/category/markers/created_at）。
 - 系统提示词 = 顶层所有 .md 按文件名升序拼接（子目录与 *.txt 引用文件不并入，
   由代理按需读取）；带 YAML frontmatter 的 .md（含主文件 skill.md，忽略大小写）
   去掉 frontmatter，其余正文原样保留。
@@ -79,7 +79,7 @@ _SKILL_MARKERS = {
 # frontmatter 序列化时的字段顺序（未列出的额外字段追加在末尾）
 _META_KEY_ORDER = (
     "name", "tags", "inputs", "description", "max_tokens",
-    "result_key", "multi_result", "category", "markers", "created_at",
+    "result_key", "multi_result", "multi_turn", "category", "markers", "created_at",
 )
 
 # 技能文件管理器支持的文件扩展名（.md 主/子文档 + .txt 引用文本）。
@@ -517,7 +517,7 @@ def load_task_template(task_name: str) -> dict:
 def scan_skills() -> list:
     """合并 tasks + presets/custom 为统一 skill 元数据列表。
 
-    每个 skill 返回: {id, name, category, source, inputs, needs_image, markers, tags, description}
+    每个 skill 返回: {id, name, category, source, inputs, needs_image, markers, multi_turn, tags, description}
     """
     skills = []
 
@@ -541,6 +541,7 @@ def scan_skills() -> list:
                 "inputs": inputs,
                 "needs_image": "image" in inputs,
                 "markers": meta.get("markers") or _SKILL_MARKERS.get(skill_id, []),
+                "multi_turn": bool(meta.get("multi_turn", False)),
                 "description": meta.get("description", ""),
             })
 
@@ -565,6 +566,7 @@ def scan_skills() -> list:
                     "inputs": inputs,
                     "needs_image": "image" in inputs,
                     "markers": meta.get("markers") or [],
+                    "multi_turn": bool(meta.get("multi_turn", False)),
                     "description": meta.get("description", ""),
                 })
 

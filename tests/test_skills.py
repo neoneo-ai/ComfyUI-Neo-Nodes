@@ -107,8 +107,19 @@ class TestScanSkills(unittest.TestCase):
     def test_skill_fields_complete(self):
         for s in prompts_mod._scan_skills():
             for field in ("id", "name", "category", "source", "inputs",
-                          "needs_image", "markers"):
+                          "needs_image", "markers", "multi_turn"):
                 self.assertIn(field, s)
+
+    def test_multi_turn_flag(self):
+        """multi_turn 标志：声明的技能为 True，未声明默认 False"""
+        by_id = {s["id"]: s for s in prompts_mod._scan_skills()}
+        for sid in ("co-op-game-intro-generator", "3d-animation-short-generator"):
+            s = by_id.get(sid)
+            self.assertIsNotNone(s, f"未扫描到技能: {sid}")
+            self.assertTrue(s["multi_turn"], f"{sid} 应声明 multi_turn")
+        ref = by_id.get("minimax_h3_ref")
+        if ref is not None:
+            self.assertFalse(ref["multi_turn"])
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)

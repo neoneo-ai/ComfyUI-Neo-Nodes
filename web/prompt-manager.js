@@ -5,7 +5,6 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { attachComboBox } from "./combo-box.js";
 import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowLoras, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
 
 import {
@@ -20,7 +19,7 @@ import {
     fileToBase64,
     imagesFromClipboard
 } from "./prompt-service.js";
-import { listSkills, createSkillManagerModal, renderMarkdown } from "./skill.js";
+import { listSkills, renderMarkdown, populateSkillOptions, createSkillDropdown } from "./skill.js";
 import { createModelConfigForm } from "./llm-setting.js";
 
 // 字节数转人类可读大小（后端 /rs_prompts/get_models 返回的 file_size，多模态已含 mmproj）
@@ -195,12 +194,9 @@ function createStatusBars() {
     toggleWrapper.appendChild(toggleSwitch);
     
     // Template selector dropdown (now skill-aware: templates + tasks + image skills)
-    const tplSelector = mkEl("select", "rs-tpl-selector");
-    tplSelector.title = "Select skill (template / task / image)";
-    // 复用可搜索下拉组件：skill 数量多时支持输入过滤；原生 select 仍作数据源，
-    // doPopulate 的选项重建 / value 恢复 / change 派发协议不变。
-    // 注意：可见 UI 是返回的 box（select 已被移入其中），工具栏须挂载 box 而非 select。
-    const tplCombo = attachComboBox(tplSelector, { placeholder: "🔍 输入过滤 skill...", emptyText: "无匹配 skill" });
+    // 组装（原生 select 数据源 + 可搜索下拉 + 底部管理工具栏 + 行内操作）已收敛到 skill.js 的
+    // createSkillDropdown()；可见 UI 是返回的 combo.box（select 被移入其中），工具栏须挂载 box。
+    const { selectEl: tplSelector, combo: tplCombo } = createSkillDropdown();
 
     // 附加图片 chips 容器 + 图片选择按钮（用于反推等 vision skill）
     const imageChipsRow = mkEl("div", "rs-image-chips");
@@ -690,13 +686,6 @@ function createStatusBars() {
         fileInput.value = "";
     });
 
-    const CATEGORY_LABELS = {
-        "vision": { label: "🖼️ 图像 / 反推", order: 0 },
-        "task": { label: "⚙️ 任务", order: 1 },
-        "style": { label: "🎨 风格模板", order: 2 },
-        "custom": { label: "📝 自定义", order: 3 }
-    };
-
     /** 从起始节点出发做 BFS，返回同一连通分量的所有节点 */
     function getConnectedNodes(startNode) {
         if (!startNode || !app.graph?._nodes) return null;
@@ -734,7 +723,8 @@ function createStatusBars() {
         return allNodes.filter(n => visited.has(n.id));
     }
 
-    /** 自动检测当前工作流的上下文（CLIP类型、模型类型），返回 context tags 集合 */
+    // 自动检测当前工作流的上下文（CLIP类型/模型名/节点标题 tag），返回 context tags 集合。
+    // 暂时未接入 skill 选项的自动预选（原先按 tag 匹配 bestMatchId 的逻辑已移除），保留此函数待后续复用。
     function detectWorkflowContext(startNode) {
         const ctx = new Set();
         let nodes;
@@ -775,45 +765,14 @@ function createStatusBars() {
         return new Promise(resolve => {
             _populateTimer.set(node.id, setTimeout(() => {
                 _populateTimer.delete(node.id);
-                Promise.resolve(doPopulate(startNode)).then(resolve, resolve);
+                Promise.resolve(doPopulate()).then(resolve, resolve);
             }, 50));
         });
     }
 
-    async function doPopulate(startNode = null) {
+    async function doPopulate() {
         const skills = await listSkills();
         const currentVal = tplSelector.value;
-        // 自动检测工作流上下文并预筛选/预选择最佳 skill
-        const detectedCtx = detectWorkflowContext(startNode);
-        let bestMatchId = null;
-        if (detectedCtx.size > 0) {
-            let bestScore = -1;
-            skills.forEach(s => {
-                const skillTags = (s.tags || []).map(t => String(t).toLowerCase());
-                // 子串 + 分词双向匹配
-                const matched = [];
-                [...detectedCtx].forEach(tag => {
-                    skillTags.forEach(st => {
-                        if (tag.includes(st) || st.includes(tag)) {
-                            if (!matched.includes(st)) matched.push(st);
-                        } else {
-                            const words = tag.split(/[\s\-_/\\]+/).filter(w => w.length > 0);
-                            if (words.some(w => st.includes(w) || w.includes(st))) {
-                                if (!matched.includes(st)) matched.push(st);
-                            }
-                        }
-                    });
-                });
-                const score = matched.length;
-                if (score > 0) {
-                    console.log(`[PromptManager] skill=${s.id} matchTags=[${matched.join(",")}]`);
-                }
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMatchId = s.id;
-                }
-            });
-        }
         tplSelector.innerHTML = "";
 
         const defaultOpt = document.createElement("option");
@@ -821,46 +780,16 @@ function createStatusBars() {
         defaultOpt.textContent = "默认";
         tplSelector.appendChild(defaultOpt);
 
-        if (skills) {
-            // 按 category 分组
-            const groups = {};
-            skills.forEach(s => {
-                const cat = CATEGORY_LABELS[s.category] ? s.category : "style";
-                if (!groups[cat]) groups[cat] = [];
-                groups[cat].push(s);
-            });
-            Object.keys(groups).sort((a, b) =>
-                (CATEGORY_LABELS[a]?.order ?? 99) - (CATEGORY_LABELS[b]?.order ?? 99)
-            ).forEach(cat => {
-                const optgroup = document.createElement("optgroup");
-                optgroup.label = CATEGORY_LABELS[cat].label;
-                groups[cat].forEach(s => {
-                    const opt = document.createElement("option");
-                    opt.value = s.id;
-                    const imgBadge = s.needs_image ? "📷 " : "";
-                    const pin = s.source === "presets" ? " 📌" : "";
-                    opt.textContent = `${imgBadge}${s.name || s.id}${pin}`;
-                    optgroup.appendChild(opt);
-                });
-                tplSelector.appendChild(optgroup);
-            });
-        }
+        populateSkillOptions(tplSelector, skills);
 
         if (currentVal && [...tplSelector.options].some(o => o.value === currentVal)) {
             tplSelector.value = currentVal;
-        } else if (bestMatchId && [...tplSelector.options].some(o => o.value === bestMatchId)) {
-            // 工作流上下文匹配到 skill，自动选中
-            tplSelector.value = bestMatchId;
         }
 
         // Programmatic value assignment does not fire change events;
         // dispatch one so node listeners sync the template_id hidden input used by queue runs.
         tplSelector.dispatchEvent(new Event("change"));
     }
-    
-    const settingsBtn = mkEl("button", "rs-settings-btn");
-    settingsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" y1="4" x2="14" y2="4"/><line x1="10" y1="4" x2="3" y2="4"/><line x1="21" y1="12" x2="12" y2="12"/><line x1="8" y1="12" x2="3" y2="12"/><line x1="21" y1="20" x2="16" y2="20"/><line x1="12" y1="20" x2="3" y2="20"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="16" y1="18" x2="16" y2="22"/></svg>';
-    settingsBtn.setAttribute("data-rs-tooltip", "Manage skills / templates");
     
     statusBar.appendChild(toggleWrapper);
 
@@ -1082,7 +1011,6 @@ function createStatusBars() {
     // Add elements to toolbar
     inputToolbar.appendChild(attachBtn);
     inputToolbar.appendChild(tplCombo.box);
-    inputToolbar.appendChild(settingsBtn);
     const spacer = mkEl("div", "rs-spacer");
     inputToolbar.appendChild(spacer);
     inputToolbar.appendChild(autoWrap);
@@ -1132,7 +1060,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
+    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
 // ==========================================
@@ -1140,11 +1068,10 @@ function createStatusBars() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, settingsBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint, saveResultsRow: recipeResultsRow, saveResultsCheck: recipeResultsCheck } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
-    const skillModal = createSkillManagerModal();
 
     const root = mkEl("div", "rs-root");
 
@@ -1468,6 +1395,13 @@ function createPromptManagerUI() {
     // 多轮交互提示：每次生成只推进一个阶段，需补充返回的问询后再次运行
     const skillHint = mkEl("div", "rs-skill-hint");
     skillHint.textContent = "多轮交互技能：每次生成仅推进一个阶段，请补充返回的问询后再次点击 ✨ 继续。";
+    // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
+    skillHint.style.display = "none";
+    function updateSkillHint() {
+        const opt = [...tplSelector.options].find(o => o.value === tplSelector.value);
+        skillHint.style.display = (opt && opt.dataset.multiTurn === "1") ? "" : "none";
+    }
+    tplSelector.addEventListener("change", updateSkillHint);
     
     root.appendChild(customTextareaWrapper);
 
@@ -2041,16 +1975,6 @@ function createPromptManagerUI() {
             pendingDeleteIsRecipe = false;
         });
 
-        // ⚙️ 打开/关闭居中的技能管理弹窗（skill.js 提供：列表 / 编辑器 / 多文件 / 上传）
-        settingsBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            if (skillModal.overlay.style.display === "flex") {
-                skillModal.close();
-            } else {
-                skillModal.open();
-            }
-        });
-
         return {
             statusBar,
             quickInputWrapper,
@@ -2060,7 +1984,6 @@ function createPromptManagerUI() {
             quickInput,
             customTextarea,
             refreshMarkdownPreviewAuto,
-            settingsBtn,
             toggleSwitch,
             localTab,
             externalTab,
