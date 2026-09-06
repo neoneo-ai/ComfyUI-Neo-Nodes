@@ -10,16 +10,7 @@
 import "./marked.min.js";
 import "./purify.min.js";
 import { attachComboBox } from "./combo-box.js";
-
-// ==========================================
-// DOM 元素工厂（本地实现，避免与 prompt-manager.js 循环依赖）
-// ==========================================
-function mkEl(tag, className, styles = '') {
-    const el = document.createElement(tag);
-    if (className) el.className = className;
-    if (styles) el.style.cssText = styles;
-    return el;
-}
+import { mkEl } from "./dom-utils.js";
 
 // ==========================================
 // Skill API

@@ -5,7 +5,8 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { mkEl, createPromptManagerUI } from "./prompt-manager.js";
+import { createPromptManagerUI } from "./prompt-manager.js";
+import { mkEl } from "./dom-utils.js";
 
 
 // 导入 NodeBehaviors

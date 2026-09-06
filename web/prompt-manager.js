@@ -15,41 +15,12 @@ import {
     deletePrompt,
     extractTitle,
     extractClassify,
-    randomPrompt as randomPromptAPI,
     fileToBase64,
     imagesFromClipboard
 } from "./prompt-service.js";
 import { listSkills, renderMarkdown, populateSkillOptions, createSkillDropdown } from "./skill.js";
 import { createModelConfigForm } from "./llm-setting.js";
-
-// 字节数转人类可读大小（后端 /rs_prompts/get_models 返回的 file_size，多模态已含 mmproj）
-function formatFileSize(bytes) {
-    if (!bytes || bytes <= 0) return '';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = Number(bytes);
-    let i = 0;
-    while (size >= 1024 && i < units.length - 1) {
-        size /= 1024;
-        i++;
-    }
-    const rounded = i === 0 ? String(Math.round(size)) : Math.round(size * 10) / 10;
-    return rounded + ' ' + units[i];
-}
-
-// ==========================================
-// DOM 元素工厂
-// ==========================================
-
-function mkEl(tag, className, styles = '') {
-    const el = document.createElement(tag);
-    if (className) {
-        el.className = className;
-    }
-    if (styles) {
-        el.style.cssText = styles;
-    }
-    return el;
-}
+import { mkEl } from "./dom-utils.js";
 
 // ==========================================
 // UI 组件创建 (内部使用)
@@ -685,74 +656,6 @@ function createStatusBars() {
         Array.from(fileInput.files || []).forEach(addImageFile);
         fileInput.value = "";
     });
-
-    /** 从起始节点出发做 BFS，返回同一连通分量的所有节点 */
-    function getConnectedNodes(startNode) {
-        if (!startNode || !app.graph?._nodes) return null;
-        const allNodes = app.graph._nodes;
-        const visited = new Set();
-        const queue = [startNode.id];
-        visited.add(startNode.id);
-        while (queue.length > 0) {
-            const curId = queue.shift();
-            const cur = allNodes.find(n => n.id === curId);
-            if (!cur) continue;
-            // 遍历输出 → 下游节点
-            for (let si = 0; si < (cur.outputs || []).length; si++) {
-                const links = cur.outputs[si].links || [];
-                for (const linkId of links) {
-                    const link = app.graph.links?.[linkId];
-                    if (link && !visited.has(link.target_id)) {
-                        visited.add(link.target_id);
-                        queue.push(link.target_id);
-                    }
-                }
-            }
-            // 遍历输入 ← 上游节点
-            for (let si = 0; si < (cur.inputs || []).length; si++) {
-                const linkId = cur.inputs[si]?.link;
-                if (linkId && app.graph.links?.[linkId]) {
-                    const lnk = app.graph.links[linkId];
-                    if (!visited.has(lnk.origin_id)) {
-                        visited.add(lnk.origin_id);
-                        queue.push(lnk.origin_id);
-                    }
-                }
-            }
-        }
-        return allNodes.filter(n => visited.has(n.id));
-    }
-
-    // 自动检测当前工作流的上下文（CLIP类型/模型名/节点标题 tag），返回 context tags 集合。
-    // 暂时未接入 skill 选项的自动预选（原先按 tag 匹配 bestMatchId 的逻辑已移除），保留此函数待后续复用。
-    function detectWorkflowContext(startNode) {
-        const ctx = new Set();
-        let nodes;
-        if (startNode) {
-            const connected = getConnectedNodes(startNode);
-            nodes = connected || [startNode];
-        } else {
-            nodes = app.graph?._nodes;
-        }
-        nodes.forEach(node => {
-            // CLIPLoader: widget "type" is the CLIP type (e.g. "krea2", "minimax")
-            if (node.type === "CLIPLoader" || node.comfyClass === "CLIPLoader") {
-                const typeWidget = node.widgets?.find(w => w.name === "type");
-                if (typeWidget) ctx.add(String(typeWidget.value || "").toLowerCase());
-            }
-            // UNETLoader / VAELoader: collect model name widget value
-            const modelNameWidget = node.widgets?.find(w => w.name === "model_name" || w.name === "vae_name" || w.name === "ckpt_name");
-            if (modelNameWidget) {
-                ctx.add(String(modelNameWidget.value || "").toLowerCase());
-            }
-            // Add the full node title for broader tag matching
-            const title = String(node.title || "").trim();
-            if (title && title !== node.type) {
-                ctx.add(title.toLowerCase());
-            }
-        });
-        return ctx;
-    }
 
     // debounce: per-node timer to avoid duplicate calls from multiple init paths
     const _populateTimer = new Map();
@@ -1996,11 +1899,7 @@ function createPromptManagerUI() {
             populateTemplateSelector,
             autoGenerateCheckbox,
             attachedImages,
-            addImageFile,
-            clearImages,
-            attachBtn,
-            imageChipsRow,
-            openAtImagePicker
+            clearImages
         };
     }
 
@@ -2011,6 +1910,5 @@ function createPromptManagerUI() {
 }
 
 export {
-    mkEl,
     createPromptManagerUI
 };

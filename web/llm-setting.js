@@ -10,18 +10,7 @@
 
 import { attachComboBox } from "./combo-box.js";
 import { setCurrentModel } from "./prompt-service.js";
-
-// DOM 元素工厂（与 prompt-manager.js 同实现，独立一份避免循环依赖）
-function mkEl(tag, className, styles = '') {
-    const el = document.createElement(tag);
-    if (className) {
-        el.className = className;
-    }
-    if (styles) {
-        el.style.cssText = styles;
-    }
-    return el;
-}
+import { mkEl } from "./dom-utils.js";
 
 // 字节数转人类可读大小（本地模型列表显示用）
 function formatFileSize(bytes) {

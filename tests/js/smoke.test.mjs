@@ -5,7 +5,8 @@ import { assertGolden } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 const EXPECTED_EXPORTS = {
-    "prompt-manager.js": ["mkEl", "createPromptManagerUI"],
+    "prompt-manager.js": ["createPromptManagerUI"],
+    "dom-utils.js": ["mkEl"],
     "node-behavior.js": ["NodeBehaviors"],
     "skill.js": ["listSkills", "renderMarkdown", "populateSkillOptions", "createSkillDropdown"],
     "llm-setting.js": ["createModelConfigForm"],
