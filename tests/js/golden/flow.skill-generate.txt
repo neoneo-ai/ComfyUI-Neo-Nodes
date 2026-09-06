@@ -1,0 +1,2 @@
+GET /rs_prompts/skills
+POST /rs_prompts/stream_generate_prompt {"text":"more detail","skillId":"anime_style","description":"more detail","context":null}

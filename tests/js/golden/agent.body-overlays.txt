@@ -1,0 +1,106 @@
+body
+  div.rs-combo-list <display=none>
+    div.rs-combo-items
+      div <display=flex>
+        span "默认"
+        button.rs-skill-row-action <type=button title=Edit this skill> "✎ Edit"
+    div.rs-skill-dropdown-footer
+      button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Create a new custom skill> "+ New Skill"
+      button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a .zip skill package> "⬆ ZIP"
+      button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a skill folder (all .md files)> "⬆ Folder"
+  div.rs-runtime-menu
+    label.rs-runtime-row.rs-runtime-toggle
+      input.rs-auto-generate-checkbox <type=checkbox val="on">
+      span.rs-runtime-row-text "运行时随机抽取提示词"
+    div.rs-runtime-row
+      span.rs-runtime-row-text "每次抽取"
+      button.rs-runtime-count-btn <type=button> "−"
+      span.rs-runtime-count-val "1"
+      button.rs-runtime-count-btn <type=button> "+"
+  div.rs-runtime-menu.rs-auto-config
+    label.rs-runtime-row.rs-runtime-toggle
+      input#rs-auto-generate.rs-auto-generate-checkbox <type=checkbox val="on">
+      label.rs-auto-generate-label "自动增强"
+    div.rs-runtime-hint "每次运行时用 LLM 基于描述自动增强提示词"
+    div.rs-runtime-divider
+    div.rs-runtime-section-title "🤖 LLM Settings"
+    div.rs-remote-form
+      div.rs-settings-info
+        div.rs-settings-title "LLM Provider"
+        div.rs-settings-desc "Choose a provider for AI features"
+      div.rs-config-row
+        label.rs-form-label "Provider"
+        select#rs-remote-provider.rs-form-input.rs-remote-provider
+          option <value=local selected> "Local GGUF (llama.cpp)"
+          option <value=openai> "OpenAI Compatible"
+          option <value=lmstudio> "LM Studio"
+          option <value=ollama> "Ollama"
+          option <value=openrouter> "OpenRouter"
+      div.rs-config-row <display=none>
+        label.rs-form-label "LLM Models Dir"
+        input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=Default: ComfyUI/models/LLM>
+        div.rs-form-hint "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配"
+      div#rs-model-input-wrapper.rs-config-row
+        label.rs-form-label "Model"
+        input#rs-remote-model.rs-form-input.rs-remote-model <type=text placeholder=e.g., gpt-4o-mini display=none>
+        div.rs-model-select-box <display=none>
+          div
+            input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+            button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+          select#rs-remote-model-select.rs-form-input.rs-remote-model <display=none>
+        div.rs-model-select-box <display=none>
+          div
+            input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+            button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+          select#rs-local-model-select.rs-form-input.rs-local-model-select <display=none>
+      div.rs-config-row
+        label.rs-form-label "API Key"
+        input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=Optional for local services>
+      div.rs-config-row
+        label.rs-form-label "Base URL"
+        input#rs-remote-base-url.rs-form-input.rs-remote-base-url <type=text placeholder=Leave empty for default>
+      div.rs-provider-save-status <display=none>
+      div.rs-config-row.rs-local-unload <display=none>
+        div.rs-local-unload-line
+          input#rs-local-auto-unload.rs-form-checkbox <type=checkbox val="on">
+          label.rs-form-label "本节点执行完自动卸载本地模型"
+        div.rs-form-hint
+  div.rs-combo-list <display=none>
+  div.rs-combo-list <display=none>
+  div.rs-preset-list-overlay
+    input.rs-preset-search-input <type=text placeholder=🔍 Search presets...>
+    div.rs-preset-list-body
+  div.rs-preset-name-input
+    div.rs-ai-status.processing "⏳ AI 正在分析提示词..."
+    div.rs-input-label "名称:"
+    div.rs-input-wrapper
+      input.rs-input-field <placeholder=Enter preset name...>
+    div.rs-input-label "Tags (optional):"
+    div.rs-tags-container
+      button.rs-tag-btn "唯美"
+      button.rs-tag-btn "特色"
+      button.rs-tag-btn "写实"
+      button.rs-tag-btn "古风"
+      button.rs-tag-btn "动漫"
+      button.rs-tag-btn "油画"
+      button.rs-tag-btn "室内"
+      button.rs-tag-btn "户外"
+    div.rs-recipe-hint <display=none>
+    label.rs-save-results-row <title=把当前工作流最近一次执行的输出存入配方，用于封面与预览展示；示例内嵌工作流，可在详情浮层一键复制回画布 display=none>
+      input.rs-save-results-check <type=checkbox val="on" checked>
+      span "同时保存结果"
+    div.rs-input-buttons
+      button.rs-input-ok-btn "保存提示词"
+      button.rs-input-ok-btn.rs-input-recipe-btn <display=none>
+        svg
+          path
+          polyline
+          line
+        span "保存配方"
+      button.rs-input-cancel-btn "Cancel"
+  div.rs-delete-confirm-overlay
+    div.rs-delete-text
+    div.rs-delete-buttons
+      button.rs-delete-ok-btn "OK"
+      button.rs-delete-cancel-btn "Cancel"
+  span "默认"

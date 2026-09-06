@@ -1,0 +1,17 @@
+{
+  "promptArea": "a cat in the rain",
+  "quickInput": "a cat",
+  "widgets": {
+    "prompt": "",
+    "quick_input": "a cat",
+    "quick_input_used": true
+  },
+  "properties": {
+    "rs_disable_state": true,
+    "rs_waiting_prompt": "",
+    "rs_waiting_timestamp": 0,
+    "rs_instance_uid": "rs_inst_uid001",
+    "rs_selected_template": "",
+    "rs_quick_input_used": true
+  }
+}

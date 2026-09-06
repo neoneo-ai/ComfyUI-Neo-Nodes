@@ -1,0 +1,20 @@
+{
+  "properties": {
+    "rs_disable_state": true,
+    "rs_waiting_prompt": "",
+    "rs_waiting_timestamp": 0,
+    "rs_instance_uid": "rs_inst_uid001",
+    "rs_selected_template": ""
+  },
+  "widgets": {
+    "prompt": "",
+    "disable_text_input": true,
+    "auto_generate": false,
+    "quick_input": "",
+    "skill_id": "",
+    "quick_input_used": false,
+    "random_enabled": false,
+    "random_count": 1,
+    "instance_uid": "rs_inst_uid001"
+  }
+}

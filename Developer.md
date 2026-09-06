@@ -60,7 +60,8 @@ ComfyUI-Neo-Nodes/
 ├── tests/                  # pytest 单元测试
 │   ├── test_llm.py         # LLM 配置/下载/缓存/语言检测/文本规范化
 │   ├── test_skills.py      # 技能扫描、图片解码、多结果解析
-│   └── test_workflow_repair.py # 工作流修复匹配算法
+│   ├── test_workflow_repair.py # 工作流修复匹配算法
+│   └── js/                 # 前端回归测试（node:test + jsdom，golden 快照）
 ├── web/                    # 前端资源（WEB_DIRECTORY）
 │   ├── gallery.js          # 素材侧边栏主逻辑（状态/持久化/API/视图切换/收藏视图数据）
 │   ├── gallery-list.js     # 列表浏览层：工具条与面包屑、视图渲染管线、滚动分页与封面懒加载、滚动位置记忆、灯箱导航媒体聚合
@@ -274,6 +275,19 @@ python -m pytest tests -v
 - `tests/test_llm.py` — 远程配置加载/迁移、模型下载（ModelScope / HuggingFace 回退）、翻译缓存、语言检测、文本规范化
 - `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析（分隔符 / JSON 数组）、skill 代理（语言互斥主文件选择、引用列表、安全读取越界拒绝、工具调用循环按需读引用、本地模式回退）
 - `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确/归一化匹配、量化变体替换、歧义拒绝、扩展名约束
+
+### 前端回归测试（tests/js）
+
+前端模块在 jsdom + ComfyUI `api`/`app` 替身下加载，用 golden 快照锁定 UI 结构、隐藏控件状态与请求轨迹；重构 `prompt-manager.js` / `node-behavior.js` 前先跑一遍，确认行为有意变化后再重写 golden。
+
+```bash
+npm test                 # 比对 tests/js/golden/*.txt
+npm run update-goldens   # NEO_UPDATE_GOLDENS=1，写入新 golden
+```
+
+- `smoke.test.mjs` — 模块可导入、节点扩展注册项
+- `prompt-manager-dom.test.mjs` — NeoPromptAgent / NeoPrompts 创建后的 UI 结构、body 弹层、隐藏控件状态
+- `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、skill 路由请求体、@ 标记缺图提示、运行时随机菜单
 
 ## 发布
 

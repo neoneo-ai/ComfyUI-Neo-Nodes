@@ -1,0 +1,47 @@
+div.rs-root.rs-theme-local
+  div.rs-status-bar <display=none>
+    div.rs-toggle-wrapper
+      div.rs-toggle-switch
+        div.rs-toggle-tab.rs-toggle-local.active "LOCAL"
+        div.rs-toggle-tab.rs-toggle-external "EXTERNAL"
+  div.rs-custom-textarea-wrapper
+    textarea.comfy-multiline-input <placeholder=Enter your prompt here...>
+    div.rs-md-preview.rs-prompt-md-preview <display=none>
+    div.rs-button-group
+      button.rs-btn.rs-action-btn "💾"
+      div.rs-random-wrap
+        button.rs-random-btn "🎲"
+        button.rs-random-caret <type=button>
+          svg
+            path
+      button.rs-list-btn "☰"
+      button.rs-action-btn.rs-md-preview-btn "👁"
+    button.rs-clear-btn "✕"
+  div.rs-buttons-wrapper
+    div.rs-btn-row.rs-action-row
+  div.rs-quick-input-wrapper
+    div.rs-image-chips
+    textarea.rs-quick-input <placeholder=Describe what you want... (Enter to generate, Shift+Enter for newline)>
+    div.rs-input-toolbar
+      button.rs-attach-btn <title=附加图片（反推/多模态 skill）> "+"
+      div.rs-model-select-box
+        div
+          input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤 skill... title=默认 val="默认">
+          button.rs-combo-clear <type=button title=清除输入，显示全部 display=block> "✕"
+        select.rs-tpl-selector <title=Select skill (template / task / image)>
+          option <value= selected> "默认"
+          optgroup <label=🖼️ 图像 / 反推>
+            option <value=reverse_prompt> "📷 反推提示词"
+            option <value=minimax_h3_ref> "📷 全参考"
+          optgroup <label=⚙️ 任务>
+            option <value=story_expand> "故事扩写"
+          optgroup <label=🎨 风格模板>
+            option <value=anime_style> "动漫风格"
+      div.rs-spacer
+      div.rs-auto-wrap
+        button.rs-generate-btn "✨"
+        button.rs-random-caret <type=button>
+          svg
+            path
+    input <type=file accept=image/* display=none>
+  div.rs-skill-hint <display=none> "多轮技能：每次仅推进一阶段，补充问询后再点 ✨"

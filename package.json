@@ -1,0 +1,12 @@
+{
+  "name": "comfyui-neo-nodes-js-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout=30000 \"tests/js/*.test.mjs\"",
+    "update-goldens": "node --env-file=tests/js/golden-update.env --test --test-force-exit --test-timeout=30000 \"tests/js/*.test.mjs\""
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
