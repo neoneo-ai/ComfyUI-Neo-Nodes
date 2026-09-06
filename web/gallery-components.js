@@ -6,6 +6,9 @@ import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
 import {
     PAGE_SIZE,
+    THUMBNAIL_SIZE_MIN,
+    THUMBNAIL_SIZE_MAX,
+    THUMBNAIL_SIZE_STEP,
     getReservedSpace,
     getImageHeight,
     getCardHeight,
@@ -74,9 +77,9 @@ export class GalleryComponents {
 
         const slider = $el("input", {
             type: "range",
-            min: gallery.constructor.THUMBNAIL_SIZE_MIN,
-            max: gallery.constructor.THUMBNAIL_SIZE_MAX,
-            step: gallery.constructor.THUMBNAIL_SIZE_STEP,
+            min: THUMBNAIL_SIZE_MIN,
+            max: THUMBNAIL_SIZE_MAX,
+            step: THUMBNAIL_SIZE_STEP,
             value: gallery.maxThumbnailSize,
             className: "neo-gallery-thumbnail-slider",
             onchange: () => {
@@ -628,7 +631,7 @@ export class GalleryComponents {
     }
 
     async _showImgSendMenu(gallery, image, button) {
-        gallery._removeImgSendMenu();
+        this._removeImgSendMenu();
         if (!/\.(png|jpg|jpeg|gif|webp|bmp|tiff|mp4|webm|mov|avi)$/i.test(image.filename)) {
             showToast(gallery.app, 'warning', 'Not an Image', 'This file is not an image.');
             return;
@@ -686,7 +689,7 @@ export class GalleryComponents {
             const label = item.isSelected ? `${item.label} \u2713` : item.label;
             const el = $el("div", {
                 className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
-                onclick: (e) => { e.stopPropagation(); gallery._removeImgSendMenu(); gallery.sendImageToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
+                onclick: (e) => { e.stopPropagation(); this._removeImgSendMenu(); gallery.sendImageToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
                 textContent: label
             });
             dropdown.appendChild(el);
@@ -701,7 +704,7 @@ export class GalleryComponents {
         });
         const closeHandler = (e) => {
             if (!dropdown.contains(e.target) && e.target !== button) {
-                gallery._removeImgSendMenu();
+                this._removeImgSendMenu();
                 document.removeEventListener('click', closeHandler);
             }
         };
@@ -766,7 +769,7 @@ export class GalleryComponents {
             const label = item.isSelected ? `${item.label} \u2713` : item.label;
             const el = $el("div", {
                 className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
-                onclick: (e) => { e.stopPropagation(); gallery._removeLoraSendMenu(); gallery.sendLoraToNode(loraPath, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
+                onclick: (e) => { e.stopPropagation(); this._removeLoraSendMenu(); gallery.sendLoraToNode(loraPath, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
             }, [label]);
             dropdown.appendChild(el);
         }
@@ -780,7 +783,7 @@ export class GalleryComponents {
         });
         const closeHandler = (e) => {
             if (!dropdown.contains(e.target) && e.target !== button) {
-                gallery._removeLoraSendMenu();
+                this._removeLoraSendMenu();
                 document.removeEventListener('click', closeHandler);
             }
         };
@@ -788,7 +791,7 @@ export class GalleryComponents {
     }
 
     async _showSendMenu(gallery, image, button) {
-        gallery._removeSendMenu();
+        this._removeSendMenu();
         const menuItems = [];
 
         gallery.app.graph._nodes.forEach(node => {
@@ -838,7 +841,7 @@ export class GalleryComponents {
                 className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._removeSendMenu();
+                    this._removeSendMenu();
                     this.sendToTarget(image.name, image.txt_content, button, item.nodeId, item.widgetIndex);
                 },
                 textContent: label
@@ -855,7 +858,7 @@ export class GalleryComponents {
         });
         const closeHandler = (e) => {
             if (!dropdown.contains(e.target) && e.target !== button) {
-                gallery._removeSendMenu();
+                this._removeSendMenu();
                 document.removeEventListener('click', closeHandler);
             }
         };
@@ -1091,7 +1094,7 @@ export class GalleryComponents {
                 title: "Send the lora path to a standard LoraLoader",
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._showLoraSendMenu(loraPath, loraBtn);
+                    this._showLoraSendMenu(gallery, loraPath, loraBtn);
                 }
             }, ["\uD83D\uDCE4"]);
             card.appendChild(loraBtn);
@@ -1227,7 +1230,7 @@ export class GalleryComponents {
                 title: "Send the lora path to a standard LoraLoader",
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._showLoraSendMenu(loraPath, loraBtn);
+                    this._showLoraSendMenu(gallery, loraPath, loraBtn);
                 }
             }, ["\uD83D\uDCE4"]);
             card.appendChild(loraBtn);
@@ -1432,7 +1435,7 @@ export class GalleryComponents {
                 $el("div", {
                     className: "neo-gallery-collect-item",
                     title: "发送到画布上的 LoraLoader",
-                    onclick: () => { this._removeCollectMenu(); gallery._showLoraSendMenu(image.lora_path, anchor); }
+                    onclick: () => { this._removeCollectMenu(); this._showLoraSendMenu(gallery, image.lora_path, anchor); }
                 }, ["\uD83D\uDCE4 发送 Lora"]),
                 $el("div", {
                     className: "neo-gallery-collect-path neo-gallery-collect-lora-path",
@@ -1496,7 +1499,7 @@ export class GalleryComponents {
                 height: `${gallery.maxThumbnailSize}px`,
                 width: `${gallery.maxThumbnailSize}px`
             },
-            onclick: () => gallery.showLightbox(image, subfolder),
+            onclick: () => this.showLightbox(gallery, image, subfolder),
             dataset: { filename: image.filename, subfolder: subfolder }
         });
 
@@ -1508,9 +1511,9 @@ export class GalleryComponents {
                 onclick: (e) => {
                     e.stopPropagation();
                     if (image.lora_path) {
-                        gallery._showLoraSendMenu(image.lora_path, imgSendBtn);
+                        this._showLoraSendMenu(gallery, image.lora_path, imgSendBtn);
                     } else {
-                        gallery._showImgSendMenu(image, imgSendBtn);
+                        this._showImgSendMenu(gallery, image, imgSendBtn);
                     }
                 }
             }, ["\uD83D\uDCE4"]);
@@ -1523,7 +1526,7 @@ export class GalleryComponents {
                 title: "发送提示词到画布节点",
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._showSendMenu(image, sendBtn);
+                    this._showSendMenu(gallery, image, sendBtn);
                 }
             }, ["\u2708\uFE0F"]);
         }
@@ -1535,7 +1538,7 @@ export class GalleryComponents {
                 title: "发送视频到画布节点",
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._showVideoSendMenu(image, videoSendBtn);
+                    this._showVideoSendMenu(gallery, image, videoSendBtn);
                 }
             }, ["\uD83D\uDCE5"]);
         }
@@ -1616,7 +1619,7 @@ export class GalleryComponents {
         const breadcrumb = document.getElementById("neo-gallery-breadcrumb");
         if (!breadcrumb) return;
 
-        gallery._removeSiblingDropdown();
+        this._removeSiblingDropdown();
 
         const rootDirName = gallery.currentView.source || '';
         // The civitai bookmarks virtual dir is identified by a stable key; show its display name.
@@ -1625,14 +1628,14 @@ export class GalleryComponents {
         if (pathSegments.length === 0 && !sourceName && !rootDirName) {
             breadcrumb.style.display = 'flex';
             breadcrumb.innerHTML = '';
-            breadcrumb.appendChild(gallery.createBreadcrumbHome());
+            breadcrumb.appendChild(this.createBreadcrumbHome(gallery));
             return;
         }
 
         breadcrumb.style.display = 'flex';
         breadcrumb.innerHTML = '';
 
-        breadcrumb.appendChild(gallery.createBreadcrumbHome());
+        breadcrumb.appendChild(this.createBreadcrumbHome(gallery));
 
         if (rootDirName) {
             breadcrumb.appendChild(createBreadcrumbSeparator());
@@ -1651,7 +1654,7 @@ export class GalleryComponents {
                     currentSegmentEl.classList.add('neo-gallery-breadcrumb-sibling-trigger');
                     currentSegmentEl.onclick = (e) => {
                         e.stopPropagation();
-                        gallery._toggleSiblingDropdown(e, rootDirName, pathSegments);
+                        this._toggleSiblingDropdown(gallery, e, rootDirName, pathSegments);
                     };
                     breadcrumb.appendChild(currentSegmentEl);
                 } else {
@@ -1686,7 +1689,7 @@ export class GalleryComponents {
     }
 
     async _toggleSiblingDropdown(gallery, event, rootDirName, pathSegments) {
-        gallery._removeSiblingDropdown();
+        this._removeSiblingDropdown();
 
         const trigger = event.currentTarget;
         if (trigger.classList.contains('neo-gallery-breadcrumb-sibling-trigger')) {
@@ -1732,7 +1735,7 @@ export class GalleryComponents {
                 className: "neo-gallery-sibling-item",
                 onclick: (e) => {
                     e.stopPropagation();
-                    gallery._removeSiblingDropdown();
+                    this._removeSiblingDropdown();
                     gallery.showDirectoryStructure(rootDirName, sib.path);
                 },
                 textContent: sib.name
@@ -1749,7 +1752,7 @@ export class GalleryComponents {
 
         const closeHandler = (e) => {
             if (!dropdown.contains(e.target) && e.target !== trigger) {
-                gallery._removeSiblingDropdown();
+                this._removeSiblingDropdown();
                 document.removeEventListener('click', closeHandler);
             }
         };
@@ -1757,8 +1760,6 @@ export class GalleryComponents {
     }
 
     // ====== Lightbox ======
-
-    injectAnimations() { }
 
     toggleFullscreen(gallery, lightbox) {
         const container = document.querySelector('#neo-gallery-lightbox-container');
@@ -1801,13 +1802,11 @@ export class GalleryComponents {
     }
 
     showLightbox(gallery, image, subfolder) {
-        gallery.injectAnimations();
-
         const existingLightbox = document.querySelector('.neo-gallery-lightbox');
         if (existingLightbox && gallery.currentLightboxImages && gallery.currentLightboxImages.length > 0) {
             const newIndex = gallery.currentLightboxImages.findIndex(img => img.filename === image.filename && img.subfolder === subfolder);
             if (newIndex >= 0) {
-                gallery.updateLightboxContent(existingLightbox, image, subfolder, gallery.currentLightboxImages, newIndex);
+                this.updateLightboxContent(existingLightbox, image, subfolder, gallery.currentLightboxImages, newIndex);
                 return;
             }
         }
@@ -1821,7 +1820,7 @@ export class GalleryComponents {
         lightbox.className = "neo-gallery-lightbox";
         lightbox.onclick = (e) => {
             if (e.target === lightbox) {
-                gallery.closeLightbox();
+                this.closeLightbox(gallery);
             }
         };
 
@@ -1869,7 +1868,7 @@ export class GalleryComponents {
         closeBtn.textContent = "\u00D7";
         closeBtn.onclick = (e) => {
             e.stopPropagation();
-            gallery.closeLightbox();
+            this.closeLightbox(gallery);
         };
 
         // 复制提示词按钮（仅有提示词时出现，放在提示词按钮栏）
@@ -1891,7 +1890,7 @@ export class GalleryComponents {
             videoSendBtn.textContent = "\uD83D\uDCE5 Video";
             videoSendBtn.onclick = (e) => {
                 e.stopPropagation();
-                gallery._showVideoSendMenu(image, videoSendBtn);
+                this._showVideoSendMenu(gallery, image, videoSendBtn);
             };
         }
 
@@ -2052,7 +2051,7 @@ export class GalleryComponents {
                 if (currentIndex <= 0) return;
                 e.stopPropagation();
                 const prevItem = allImages[currentIndex - 1];
-                gallery.updateLightboxContent(lightbox, prevItem, prevItem.subfolder, allImages, currentIndex - 1);
+                this.updateLightboxContent(lightbox, prevItem, prevItem.subfolder, allImages, currentIndex - 1);
             }
         }, ["\u2039"]);
         imgWrapper.appendChild(prevBtn);
@@ -2068,7 +2067,7 @@ export class GalleryComponents {
                 if (currentIndex >= allImages.length - 1) return;
                 e.stopPropagation();
                 const nextItem = allImages[currentIndex + 1];
-                gallery.updateLightboxContent(lightbox, nextItem, nextItem.subfolder, allImages, currentIndex + 1);
+                this.updateLightboxContent(lightbox, nextItem, nextItem.subfolder, allImages, currentIndex + 1);
             }
         }, ["\u203A"]);
         imgWrapper.appendChild(nextBtn);
@@ -2226,16 +2225,16 @@ export class GalleryComponents {
         const handleKeyDown = (e) => {
             switch (e.key) {
                 case 'ArrowLeft':
-                    gallery.navigateLightboxImage(-1);
+                    this.navigateLightboxImage(gallery, -1);
                     break;
                 case 'ArrowRight':
-                    gallery.navigateLightboxImage(1);
+                    this.navigateLightboxImage(gallery, 1);
                     break;
                 case 'Escape':
                     if (document.fullscreenElement) {
                         document.exitFullscreen();
                     } else {
-                        gallery.closeLightbox();
+                        this.closeLightbox(gallery);
                     }
                     break;
                 case 'f':
@@ -2281,7 +2280,7 @@ export class GalleryComponents {
         if (newIndex < 0 || newIndex >= gallery.currentLightboxImages.length) return;
 
         const nextItem = gallery.currentLightboxImages[newIndex];
-        gallery.updateLightboxContent(gallery.currentLightbox, nextItem, nextItem.subfolder, gallery.currentLightboxImages, newIndex);
+        this.updateLightboxContent(gallery.currentLightbox, nextItem, nextItem.subfolder, gallery.currentLightboxImages, newIndex);
     }
 
     _createMetaButtons(gallery, image, subfolder) {
@@ -2333,7 +2332,7 @@ export class GalleryComponents {
         } else {
             await app.loadApiJson(source, "gallery-example");
         }
-        gallery.closeLightbox();
+        this.closeLightbox(gallery);
         requestAnimationFrame(() => {
             const canvas = app.canvas;
             const nodes = canvas?.graph?.nodes;
@@ -2413,15 +2412,15 @@ export class GalleryComponents {
         // 使用 document.querySelector 而不是在 wrapped element 上调用 querySelector
         const container = document.querySelector('#neo-gallery-lightbox-container');
         if (!container) {
-            this.gallery.closeLightbox();
-            setTimeout(() => this.gallery.showLightbox(image, subfolder), 100);
+            this.closeLightbox(this.gallery);
+            setTimeout(() => this.showLightbox(this.gallery, image, subfolder), 100);
             return;
         }
 
         const imgWrapper = container.querySelector('#neo-gallery-lightbox-img-wrapper');
         if (!imgWrapper) {
-            this.gallery.closeLightbox();
-            setTimeout(() => this.gallery.showLightbox(image, subfolder), 100);
+            this.closeLightbox(this.gallery);
+            setTimeout(() => this.showLightbox(this.gallery, image, subfolder), 100);
             return;
         }
 
@@ -2711,7 +2710,7 @@ export class GalleryComponents {
                     className: "neo-gallery-lightbox-btn neo-gallery-lightbox-video-send-btn",
                     onclick: (e) => {
                         e.stopPropagation();
-                        this.gallery._showVideoSendMenu(this.gallery, image, vSendBtn);
+                        this._showVideoSendMenu(this.gallery, image, vSendBtn);
                     }
                 }, ["\uD83D\uDCE5 Video"]);
                 promptBtnsContainer.appendChild(vSendBtn);
@@ -2795,7 +2794,7 @@ export class GalleryComponents {
                 prevBtn.onclick = (e) => {
                     e.stopPropagation();
                     const prevItem = allImages[currentIndex - 1];
-                    this.gallery.updateLightboxContent(lightbox, prevItem, prevItem.subfolder, allImages, currentIndex - 1);
+                    this.updateLightboxContent(lightbox, prevItem, prevItem.subfolder, allImages, currentIndex - 1);
                 };
             } else {
                 prevBtn.onclick = null;
@@ -2808,7 +2807,7 @@ export class GalleryComponents {
                 nextBtn.onclick = (e) => {
                     e.stopPropagation();
                     const nextItem = allImages[currentIndex + 1];
-                    this.gallery.updateLightboxContent(lightbox, nextItem, nextItem.subfolder, allImages, currentIndex + 1);
+                    this.updateLightboxContent(lightbox, nextItem, nextItem.subfolder, allImages, currentIndex + 1);
                 };
             } else {
                 nextBtn.onclick = null;

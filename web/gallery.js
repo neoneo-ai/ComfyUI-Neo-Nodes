@@ -5,6 +5,10 @@ import { GalleryComponents } from './gallery-components.js';
 import { createRecipesPanel } from './recipes.js';
 import {
     PAGE_SIZE,
+    THUMBNAIL_SIZE_DEFAULT,
+    THUMBNAIL_SIZE_MIN,
+    THUMBNAIL_SIZE_MAX,
+    THUMBNAIL_SIZE_STEP,
     getReservedSpace,
     getThumbnailSrc,
     getCoverHeight,
@@ -39,7 +43,7 @@ const CIVITAI_VIEW_SOURCE = CIVITAI_DIR_KEY;  // same stable identifier reused i
 class NeoGallery {
     constructor(app) {
         this.app = app;
-        this.maxThumbnailSize = 320;
+        this.maxThumbnailSize = THUMBNAIL_SIZE_DEFAULT;
         this.displayLabels = true;
         this.allDirectories = [];
         this.filteredDirectories = [];
@@ -128,12 +132,6 @@ class NeoGallery {
 
         this.loadGallerySettings();
     }
-
-    // Static constants for settings
-    static THUMBNAIL_SIZE_MIN = 150;
-    static THUMBNAIL_SIZE_MAX = 500;
-    static THUMBNAIL_SIZE_STEP = 25;
-    static THUMBNAIL_SIZE_DEFAULT = 320;
 
     // ====== Directory Management ======
 
@@ -231,7 +229,7 @@ class NeoGallery {
                 const data = await response.json();
                 this.sectionStates = data.sectionStates || {};
                 this.sortAscending = data.sortAscending !== undefined ? data.sortAscending : true;
-                this.maxThumbnailSize = data.maxThumbnailSize || 300;
+                this.maxThumbnailSize = data.maxThumbnailSize || THUMBNAIL_SIZE_DEFAULT;
                 this.displayLabels = data.displayLabels !== undefined ? data.displayLabels : true;
                 this._scrollPositions = data.scrollPositions || {};
             }
@@ -595,7 +593,7 @@ class NeoGallery {
                 const lbSub = item.source === "oss"
                     ? (item.dir || "")
                     : ((item.subfolder) ? `${item.dir}/${item.subfolder}` : (item.dir || ""));
-                this.showLightbox({ filename: item.filename }, lbSub);
+                this.components.showLightbox(this, { filename: item.filename }, lbSub);
             } else {
                 const segs = (item.subfolder || "").split("/").filter(Boolean);
                 await this.showDirectoryStructure(item.dir, segs);
@@ -1983,65 +1981,7 @@ class NeoGallery {
         showToast(this.app, 'success', 'Video Sent!', `Sent to ${targetNode.title || 'Node'} - ${targetWidget.name}`);
     }
 
-    // ====== Lightbox (delegated to components) ======
-
-    injectAnimations() {}
-
-    showLightbox(image, subfolder) {
-        this.components.showLightbox(this, image, subfolder);
-    }
-
-    closeLightbox() {
-        this.components.closeLightbox(this);
-    }
-
-    navigateLightboxImage(direction) {
-        this.components.navigateLightboxImage(this, direction);
-    }
-
-    updateLightboxContent(lightbox, image, subfolder, allImages, currentIndex) {
-        this.components.updateLightboxContent(lightbox, image, subfolder, allImages, currentIndex);
-    }
-
-    // ====== Breadcrumb (delegated to components) ======
-
-    createBreadcrumbHome() {
-        return this.components.createBreadcrumbHome(this);
-    }
-
-    updateBreadcrumb(pathSegments, sourceName) {
-        this.components.updateBreadcrumb(this, pathSegments, sourceName);
-    }
-
-    _removeSiblingDropdown() {
-        this.components._removeSiblingDropdown();
-    }
-
-    _toggleSiblingDropdown(event, rootDirName, pathSegments) {
-        this.components._toggleSiblingDropdown(this, event, rootDirName, pathSegments);
-    }
-
-    // ====== Send Menus (delegated to components) ======
-
-    _removeSendMenu() {
-        this.components._removeSendMenu();
-    }
-
-    _removeImgSendMenu() {
-        this.components._removeImgSendMenu();
-    }
-
-    _showImgSendMenu(image, button) {
-        this.components._showImgSendMenu(this, image, button);
-    }
-
-    _showLoraSendMenu(loraPath, button) {
-        this.components._showLoraSendMenu(this, loraPath, button);
-    }
-
-    _removeLoraSendMenu() {
-        this.components._removeLoraSendMenu();
-    }
+    // ====== Send Menus ======
 
     async sendLoraToNode(loraPath, target, button) {
         let targetNode = null;
@@ -2074,14 +2014,6 @@ class NeoGallery {
         app.graph.setDirtyCanvas(true, true);
         showInlineFeedback(button, '\u2705 Lora Sent!', 'success');
         showToast(this.app, 'success', 'Lora Sent!', `${targetWidget.value} \u2192 ${targetNode.title || 'Node'}`);
-    }
-
-    _showSendMenu(image, button) {
-        this.components._showSendMenu(this, image, button);
-    }
-
-    _showVideoSendMenu(image, button) {
-        this.components._showVideoSendMenu(this, image, button);
     }
 
     // ====== Main init ======
@@ -2277,7 +2209,7 @@ app.registerExtension({
         app.ui.settings.addSetting({
             id: "Neo Gallery._General.maxThumbnailSize",
             name: "Neo Gallery Max Thumbnail Size",
-            type: "slider", attrs: { min: 150, max: 500, step: 25 }, defaultValue: 320,
+            type: "slider", attrs: { min: THUMBNAIL_SIZE_MIN, max: THUMBNAIL_SIZE_MAX, step: THUMBNAIL_SIZE_STEP }, defaultValue: THUMBNAIL_SIZE_DEFAULT,
             onChange: (val) => { if (app.neoGallery) app.neoGallery.updateThumbnailSize(val); }
         });
 
