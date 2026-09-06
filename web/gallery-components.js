@@ -28,6 +28,7 @@ import {
     showToast,
     showInlineFeedback
 } from './gallery-utils.js';
+import { Lightbox } from "./lightbox.js";
 
 // Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
 const CIVITAI_DIR_KEY = "civitai_bookmarks";
@@ -1759,539 +1760,192 @@ export class GalleryComponents {
         setTimeout(() => document.addEventListener('click', closeHandler), 10);
     }
 
-    // ====== Lightbox ======
+    // ====== Lightbox（复用通用 Lightbox 组件）======
 
-    toggleFullscreen(gallery, lightbox) {
-        const container = document.querySelector('#neo-gallery-lightbox-container');
-        
-        if (!document.fullscreenElement && container) {
-            // Entering fullscreen: add fullscreen-mode class for CSS styling
-            container.classList.add('fullscreen-mode');
-            
-            // Also enter native browser fullscreen on the lightbox element
-            if (lightbox.requestFullscreen) {
-                lightbox.requestFullscreen();
-            } else if (lightbox.webkitRequestFullscreen) {
-                lightbox.webkitRequestFullscreen();
-            } else if (lightbox.msRequestFullscreen) {
-                lightbox.msRequestFullscreen();
-            }
-        } else if (document.fullscreenElement && container) {
-            // Exiting fullscreen: remove fullscreen-mode class
-            container.classList.remove('fullscreen-mode');
-            
-            // Exit native browser fullscreen
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) {
-                document.msExitFullscreen();
-            }
-        }
-    }
-
-    _applyLightboxTransform(gallery, mediaEl) {
-        if (gallery._lightboxScale === 1) {
-            mediaEl.style.transform = 'none';
-            mediaEl.style.cursor = 'default';
-        } else {
-            mediaEl.style.transform = `scale(${gallery._lightboxScale}) translate(${gallery._lightboxPanX}px, ${gallery._lightboxPanY}px)`;
-            mediaEl.style.cursor = gallery._lightboxIsDragging ? 'grabbing' : 'grab';
-        }
-    }
-
-    showLightbox(gallery, image, subfolder) {
-        const existingLightbox = document.querySelector('.neo-gallery-lightbox');
-        if (existingLightbox && gallery.currentLightboxImages && gallery.currentLightboxImages.length > 0) {
-            const newIndex = gallery.currentLightboxImages.findIndex(img => img.filename === image.filename && img.subfolder === subfolder);
-            if (newIndex >= 0) {
-                this.updateLightboxContent(existingLightbox, image, subfolder, gallery.currentLightboxImages, newIndex);
-                return;
-            }
-        }
-
-        const existing = document.querySelector('.neo-gallery-lightbox');
-        if (existing) existing.remove();
-
-        // 使用原生 DOM API 创建 lightbox，确保 querySelector 能正常工作
-        const lightbox = document.createElement('div');
-        lightbox.id = "neo-gallery-lightbox";
-        lightbox.className = "neo-gallery-lightbox";
-        lightbox.onclick = (e) => {
-            if (e.target === lightbox) {
-                this.closeLightbox(gallery);
-            }
-        };
-
-        const container = document.createElement('div');
-        container.id = "neo-gallery-lightbox-container";
-        container.className = "neo-gallery-lightbox-container";
-
-        const imgWrapper = document.createElement('div');
-        imgWrapper.id = "neo-gallery-lightbox-img-wrapper";
-        imgWrapper.className = "neo-gallery-lightbox-img-wrapper";
-        imgWrapper.style.userSelect = 'none';
-        imgWrapper.style.webkitUserSelect = 'none';
-        imgWrapper.style.mozUserSelect = 'none';
-        imgWrapper.style.msUserSelect = 'none';
-        imgWrapper.style.draggable = false;
-
+    _lightboxImageUrl(image, subfolder) {
         const categoryParam = image.category ? `&category=${encodeURIComponent(image.category)}` : '';
-        const isVideo = isVideoFile(image.filename);
-        const mediaUrl = image.preview || `${window.location.protocol}//${window.location.host}/neo_gallery/image?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}${categoryParam}`;
-        const videoUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/video?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+        return image.preview || `${window.location.protocol}//${window.location.host}/neo_gallery/image?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}${categoryParam}`;
+    }
 
-        let mediaEl;
-        if (isVideo) {
-            mediaEl = document.createElement('video');
-            mediaEl.className = "neo-gallery-lightbox-image neo-gallery-lightbox-video";
-            mediaEl.src = videoUrl;
-            mediaEl.controls = true;
-            mediaEl.autoplay = true;
-            mediaEl.loop = true;
-            mediaEl.style.maxWidth = '100%';
-            mediaEl.style.maxHeight = '80vh';
-        } else {
-            mediaEl = document.createElement('img');
-            mediaEl.className = "neo-gallery-lightbox-image";
-            mediaEl.src = mediaUrl;
-            mediaEl.draggable = false;
-            mediaEl.style.userSelect = 'none';
-            mediaEl.style.webkitUserSelect = 'none';
-            mediaEl.style.mozUserSelect = 'none';
-            mediaEl.style.msUserSelect = 'none';
-        }
+    _lightboxVideoUrl(image, subfolder) {
+        return `${window.location.protocol}//${window.location.host}/neo_gallery/video?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+    }
 
-        const closeBtn = document.createElement('div');
-        closeBtn.className = "neo-gallery-lightbox-close-btn";
-        closeBtn.textContent = "\u00D7";
-        closeBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.closeLightbox(gallery);
+    _fetchBlobUrl(url) {
+        return fetch(url)
+            .then(resp => { if (!resp.ok) throw new Error(`HTTP ${resp.status}`); return resp.blob(); })
+            .then(blob => URL.createObjectURL(blob));
+    }
+
+    _toLightboxItem(img, fallbackSubfolder) {
+        const owner = img.subfolder || fallbackSubfolder;
+        const isVideo = isVideoFile(img.filename);
+        const url = isVideo ? this._lightboxVideoUrl(img, owner) : this._lightboxImageUrl(img, owner);
+        return {
+            raw: img,
+            subfolder: owner,
+            kind: isVideo ? 'video' : 'image',
+            title: img.filename,
+            url,
+            // 图片用 fetch+blob 取源：加载完成可判定，翻页时不会出现半张图与闪烁
+            resolve: isVideo ? null : () => this._fetchBlobUrl(url)
         };
+    }
 
-        // 复制提示词按钮（仅有提示词时出现，放在提示词按钮栏）
-        let promptCopyBtn = null;
-        if (image.txt_content) {
-            promptCopyBtn = document.createElement('div');
-            promptCopyBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn";
-            promptCopyBtn.textContent = "\u29C9 \u590D\u5236\u63D0\u793A\u8BCD";
-            promptCopyBtn.onclick = (e) => {
-                e.stopPropagation();
-                this.copyToClipboard(image.name, image.txt_content, promptCopyBtn);
-            };
-        }
-
-        let videoSendBtn = null;
-        if (isVideo) {
-            videoSendBtn = document.createElement('div');
-            videoSendBtn.className = "neo-gallery-lightbox-btn neo-gallery-lightbox-video-send-btn";
-            videoSendBtn.textContent = "\uD83D\uDCE5 Video";
-            videoSendBtn.onclick = (e) => {
-                e.stopPropagation();
-                this._showVideoSendMenu(gallery, image, videoSendBtn);
-            };
-        }
-
-        imgWrapper.appendChild(mediaEl);
-
-        // 为图片添加缩放和平移事件监听器
-        if (!isVideo) {
-            // 滚轮缩放事件 - 动态获取当前图片元素
-            const wheelHandler = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (!currentMediaEl) return;
-                
-                const delta = e.deltaY > 0 ? -0.1 : 0.1;
-                const newScale = Math.max(0.5, Math.min(5, gallery._lightboxScale + delta));
-                
-                gallery._lightboxScale = newScale;
-                this._applyLightboxTransform(gallery, currentMediaEl);
-            };
-            
-            // 拖拽平移事件 - 动态获取当前图片元素
-            const mouseDownHandler = (e) => {
-                if (gallery._lightboxScale <= 1) return;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (!currentMediaEl) return;
-                if (e.target !== currentMediaEl && e.target !== imgWrapper) return;
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                gallery._lightboxIsDragging = true;
-                gallery._lightboxDragStartX = e.clientX - gallery._lightboxPanX;
-                gallery._lightboxDragStartY = e.clientY - gallery._lightboxPanY;
-                
-                currentMediaEl.style.cursor = 'grabbing';
-            };
-            
-            const mouseMoveHandler = (e) => {
-                if (!gallery._lightboxIsDragging) return;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (!currentMediaEl) return;
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                gallery._lightboxPanX = e.clientX - gallery._lightboxDragStartX;
-                gallery._lightboxPanY = e.clientY - gallery._lightboxDragStartY;
-                
-                this._applyLightboxTransform(gallery, currentMediaEl);
-            };
-            
-            const mouseUpHandler = () => {
-                gallery._lightboxIsDragging = false;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (currentMediaEl) {
-                    currentMediaEl.style.cursor = gallery._lightboxScale > 1 ? 'grab' : 'default';
-                }
-            };
-            
-            const mouseLeaveHandler = () => {
-                gallery._lightboxIsDragging = false;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (currentMediaEl) {
-                    currentMediaEl.style.cursor = gallery._lightboxScale > 1 ? 'grab' : 'default';
-                }
-            };
-            
-            imgWrapper.addEventListener('wheel', wheelHandler, { passive: false, capture: true });
-            imgWrapper.addEventListener('mousedown', mouseDownHandler, { capture: true });
-            imgWrapper.addEventListener('mousemove', mouseMoveHandler, { capture: true });
-            imgWrapper.addEventListener('mouseup', mouseUpHandler, { capture: true });
-            imgWrapper.addEventListener('mouseleave', mouseLeaveHandler, { capture: true });
-            
-            // 保存处理器引用以便后续移除
-            imgWrapper._lightboxWheelHandler = wheelHandler;
-            imgWrapper._lightboxMouseDownHandler = mouseDownHandler;
-            imgWrapper._lightboxMouseMoveHandler = mouseMoveHandler;
-            imgWrapper._lightboxMouseUpHandler = mouseUpHandler;
-            imgWrapper._lightboxMouseLeaveHandler = mouseLeaveHandler;
-        }
-
-        const imageInfo = document.createElement('div');
-        imageInfo.className = 'neo-gallery-lightbox-image-info';
-        if (!isVideo) {
-            mediaEl.onload = () => {
-                if (imageInfo) {
-                    imageInfo.textContent = `${mediaEl.naturalWidth} \u00d7 ${mediaEl.naturalHeight}`;
-                }
-            };
-        } else {
-            mediaEl.onloadedmetadata = () => {
-                if (imageInfo) {
-                    imageInfo.textContent = `${mediaEl.videoWidth} \u00d7 ${mediaEl.videoHeight}`;
-                }
-            };
-        }
-        imgWrapper.appendChild(imageInfo);
-
-        // Build all images list for navigation
-        let allImages = [];
-        const { source, categoryPath, mode } = gallery.currentView;
-
-        // In lazy mode, dir.items may be empty - use saved _currentDirImages if available
-        if (mode === 'categories') {
+    // 汇总当前视图内可翻页的媒体列表。目录模式取各目录条目；其余优先用目录已加载的条目，
+    // 否则回退到网格正在渲染的条目（也覆盖 allDirectories 里没有的书签目录，其条目自带 subfolder）。
+    _lightboxNavList(gallery, image, subfolder) {
+        const allImages = [];
+        const collectAllDirs = () => {
             for (const dir of gallery.allDirectories) {
                 if (!gallery.isSearchActive || gallery.filteredDirectories.some(d => d.name === dir.name)) {
-                    // Use saved images if dir.items is empty (lazy mode)
-                    const items = (dir.items && dir.items.length > 0) ? dir.items : [];
-                    for (const item of items) {
-                        allImages.push({ ...item, subfolder: dir.name });
-                    }
+                    for (const item of (dir.items || [])) allImages.push({ ...item, subfolder: dir.name });
                 }
             }
-        } else if (source && mode !== 'categories') {
+        };
+
+        const { source, categoryPath, mode } = gallery.currentView;
+        if (mode !== 'categories' && source) {
             const dir = gallery.allDirectories.find(d => d.name === source || d.path === source);
-            // Use the directory's items when present, otherwise fall back to the images
-            // currently rendered in the grid. The fallback also covers directories that are not
-            // top-level entries (e.g. "Civitai 收藏" bookmark dirs), which have no entry in
-            // allDirectories but whose items carry a resolvable subfolder.
             let dirItems = [];
-            if (dir && dir.items && dir.items.length > 0) {
+            if (dir?.items?.length > 0) {
                 dirItems = [...dir.items];
-            } else if (gallery._currentDirImages && gallery._currentDirImages.length > 0) {
+            } else if (gallery._currentDirImages?.length > 0) {
                 dirItems = [...gallery._currentDirImages];
             }
-            if (categoryPath && categoryPath.length > 0) {
+            if (categoryPath?.length > 0) {
                 const catKey = categoryPath[0];
                 dirItems = dirItems.filter(i => i.category === catKey || !i.category);
             }
-            for (const item of dirItems) {
-                allImages.push({ ...item, subfolder: item.subfolder || source });
+            for (const item of dirItems) allImages.push({ ...item, subfolder: item.subfolder || source });
+        } else {
+            collectAllDirs();
+        }
+
+        const sorted = sortByMtime(allImages);
+        return {
+            items: sorted.map(img => this._toLightboxItem(img, subfolder)),
+            index: sorted.findIndex(img => img.filename === image.filename && img.subfolder === subfolder)
+        };
+    }
+
+    showLightbox(gallery, image, subfolder) {
+        const { items, index } = this._lightboxNavList(gallery, image, subfolder);
+        // 点击的媒体不在当前视图（如首页单图收藏，源目录未加载）时只显示本图
+        if (index < 0) {
+            Lightbox.open({
+                items: [this._toLightboxItem(image, subfolder)],
+                index: 0,
+                actions: (item) => this._lightboxActions(gallery, item),
+                panel: (item) => this._buildLightboxPanel(gallery, item)
+            });
+            return;
+        }
+        Lightbox.open({
+            items,
+            index,
+            actions: (item) => this._lightboxActions(gallery, item),
+            panel: (item) => this._buildLightboxPanel(gallery, item)
+        });
+    }
+
+    _lightboxActions(gallery, item) {
+        const actions = [{
+            label: "\u29C9 \u590D\u5236\u56FE\u7247",
+            title: "\u590D\u5236\u56FE\u7247\u5230\u526A\u8D34\u677F",
+            onClick: (_item, _lightbox, btn) => this._copyImageToClipboard(item.url, btn)
+        }];
+        if (item.kind === 'video') {
+            actions.push({
+                label: "\uD83D\uDCE5 Video",
+                title: "\u5C06\u89C6\u9891\u53D1\u9001\u5230\u8282\u70B9",
+                onClick: (_item, _lightbox, btn) => this._showVideoSendMenu(gallery, item.raw, btn)
+            });
+        }
+        return actions;
+    }
+    // 侧栏：txt 副文件即时渲染；无 txt 时等内嵌元数据，没有内容就不占位。
+    _buildLightboxPanel(gallery, item) {
+        const image = item.raw;
+        const subfolder = item.subfolder;
+        if (image.txt_content) return this._lightboxPromptPanel(gallery, image, subfolder);
+        return this._fetchMediaMeta(image, subfolder).then(meta =>
+            (meta && meta.has) ? this._lightboxEmbeddedPanel(gallery, image, subfolder, meta) : null);
+    }
+
+    _lightboxPromptPanel(gallery, image, subfolder) {
+        const body = $el("div", { className: "neo-lightbox-panel-body" });
+        const sections = this.gallery.parsePromptSections(image.txt_content);
+        if (sections.length > 0 && sections.some(s => s.label)) {
+            for (const section of sections) {
+                if (section.label) {
+                    body.appendChild($el("div", { className: "neo-lightbox-panel-item" }, [
+                        $el("span", { className: "neo-lightbox-panel-label", textContent: section.label + "\uff1a" }),
+                        $el("span", { className: "neo-lightbox-panel-value", textContent: section.value })
+                    ]));
+                } else if (section.value) {
+                    body.appendChild($el("div", {
+                        textContent: section.value,
+                        style: { marginBottom: "3px", whiteSpace: "pre-wrap" }
+                    }));
+                }
             }
         } else {
-            for (const dir of gallery.allDirectories) {
-                if (!gallery.isSearchActive || gallery.filteredDirectories.some(d => d.name === dir.name)) {
-                    const items = (dir.items && dir.items.length > 0) ? dir.items : [];
-                    for (const item of items) {
-                        allImages.push({ ...item, subfolder: dir.name });
-                    }
-                }
-            }
+            body.appendChild($el("div", {
+                textContent: this.gallery.cleanText(image.txt_content),
+                style: { whiteSpace: "pre-wrap" }
+            }));
         }
 
-        allImages = sortByMtime(allImages);
-        const currentIndex = allImages.findIndex(img => img.filename === image.filename && img.subfolder === subfolder);
+        const copyBtn = $el("div", {
+            className: "neo-lightbox-panel-btn",
+            textContent: "\u29C9 \u590D\u5236\u63D0\u793A\u8BCD",
+            onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, image.txt_content, copyBtn); }
+        });
 
-        const prevBtn = $el("div", {
-            id: "neo-gallery-lightbox-prev-btn",
-            className: "neo-gallery-lightbox-nav-arrow",
-            style: {
-                cursor: currentIndex > 0 ? "pointer" : "not-allowed",
-                opacity: currentIndex > 0 ? "0.8" : "0.3"
-            },
-            onclick: (e) => {
-                if (currentIndex <= 0) return;
-                e.stopPropagation();
-                const prevItem = allImages[currentIndex - 1];
-                this.updateLightboxContent(lightbox, prevItem, prevItem.subfolder, allImages, currentIndex - 1);
-            }
-        }, ["\u2039"]);
-        imgWrapper.appendChild(prevBtn);
+        const inner = $el("div", { className: "neo-lightbox-panel-inner" }, [
+            $el("div", { className: "neo-lightbox-panel-header" }, [
+                $el("span", { className: "neo-lightbox-panel-title", textContent: "\u63D0\u793A\u8BCD" }),
+                copyBtn
+            ]),
+            body
+        ]);
 
-        const nextBtn = $el("div", {
-            id: "neo-gallery-lightbox-next-btn",
-            className: "neo-gallery-lightbox-nav-arrow",
-            style: {
-                cursor: currentIndex < allImages.length - 1 ? "pointer" : "not-allowed",
-                opacity: currentIndex < allImages.length - 1 ? "0.8" : "0.3"
-            },
-            onclick: (e) => {
-                if (currentIndex >= allImages.length - 1) return;
-                e.stopPropagation();
-                const nextItem = allImages[currentIndex + 1];
-                this.updateLightboxContent(lightbox, nextItem, nextItem.subfolder, allImages, currentIndex + 1);
-            }
-        }, ["\u203A"]);
-        imgWrapper.appendChild(nextBtn);
-
-        // Fullscreen toggle button (top left of image)
-        const fullscreenBtn = $el("div", {
-            id: "neo-gallery-lightbox-fullscreen-btn",
-            className: "neo-gallery-lightbox-nav-arrow neo-gallery-lightbox-fullscreen-btn",
-            style: {
-                cursor: "pointer",
-                opacity: "0.8",
-                fontSize: "14px"
-            },
-            title: "Toggle fullscreen (F)",
-            onclick: (e) => {
-                e.stopPropagation();
-                this.toggleFullscreen(gallery, lightbox);
-            }
-        }, ["⛶"]);
-        imgWrapper.appendChild(fullscreenBtn);
-
-        // 复制图片按钮（纯图标，图片右下角）
-        const copyImgBtn = $el("div", {
-            id: "neo-gallery-lightbox-copy-img-btn",
-            className: "neo-gallery-lightbox-nav-arrow neo-gallery-lightbox-copy-img-btn",
-            style: {
-                cursor: "pointer",
-                opacity: "0.8",
-                fontSize: "14px"
-            },
-            title: "复制图片",
-            onclick: (e) => {
-                e.stopPropagation();
-                this._copyImageToClipboard(mediaUrl, copyImgBtn);
-            }
-        }, ["\u29C9"]);
-        imgWrapper.appendChild(copyImgBtn);
-
-        let promptSection = null;
-        if (image.txt_content) {
-            promptSection = $el("div", {
-                id: "neo-gallery-lightbox-prompt-section",
-                className: "neo-gallery-lightbox-prompt-section"
-            });
-
-            const sections = this.gallery.parsePromptSections(image.txt_content);
-            const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
-
-            if (sections.length > 0 && sections.some(s => s.label)) {
-                for (const section of sections) {
-                    if (section.label) {
-                        const sectionEl = $el("div", { className: "neo-gallery-lightbox-prompt-section-item" }, [
-                            $el("span", { className: "neo-gallery-lightbox-prompt-label", textContent: section.label + "\uff1a" }),
-                            $el("span", { className: "neo-gallery-lightbox-prompt-value", textContent: section.value })
-                        ]);
-                        promptContainer.appendChild(sectionEl);
-                    } else if (section.value) {
-                        promptContainer.appendChild($el("div", {
-                            textContent: section.value,
-                            style: { marginBottom: "3px", whiteSpace: "pre-wrap" }
-                        }));
-                    }
-                }
-            } else {
-                promptContainer.appendChild($el("div", {
-                    textContent: gallery.cleanText(image.txt_content),
-                    style: { whiteSpace: "pre-wrap" }
-                }));
-            }
-
-            // 复制提示词按钮放在提示词文本上方（标题行右侧），贴近提示词
-            if (promptCopyBtn) {
-                const promptHeader = $el("div", { className: "neo-gallery-lightbox-prompt-header" }, [
-                    $el("span", { className: "neo-gallery-lightbox-prompt-title", textContent: "\u63D0\u793A\u8BCD" }),
-                    promptCopyBtn
-                ]);
-                promptSection.appendChild(promptHeader);
-            }
-            promptSection.appendChild(promptContainer);
-
-            const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            if (videoSendBtn) promptBtnsContainer.appendChild(videoSendBtn);
-            promptBtnsContainer.appendChild(this._createMetaButtons(gallery, image, subfolder));
-            promptSection.appendChild(promptBtnsContainer);
-        } else {
-            // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
-            promptSection = $el("div", {
-                id: "neo-gallery-lightbox-prompt-section",
-                className: "neo-gallery-lightbox-prompt-section",
-                dataset: { metaKey: `${subfolder}/${image.filename}` }
-            });
-            const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
-            promptContainer.style.display = "none";
-            promptSection.appendChild(promptContainer);
-            const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            promptSection.appendChild(metaBtnsContainer);
-            this._renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection);
-
-            // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
-
-            const reverseBtn = $el("div", {
-                id: "neo-gallery-lightbox-reverse-btn",
-                className: "neo-gallery-lightbox-btn neo-gallery-lightbox-reverse-btn",
-                style: { display: 'none' },
-                onclick: async (e) => {
-                    e.stopPropagation();
-                    try {
-                        reverseBtn.textContent = "\u231B 反推中...";
-                        reverseBtn.style.pointerEvents = "none";
-                        const resp = await api.fetchApi('/rs_prompts/reverse_prompt', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ filename: image.filename, subfolder: subfolder })
-                        });
-                        if (resp.ok) {
-                            const result = await resp.json();
-                            if (result.status === "success") {
-                                image.txt_content = result.prompt || "";
-                                showToast(gallery.app, "success", "\u2705 \u53CD\u63A8\u6210\u529F", "");
-                            } else {
-                                showToast(gallery.app, "error", "\u274C \u53CD\u63A8\u5931\u8D25", result.error || "");
-                                reverseBtn.textContent = "\uD83D\uDD0D 反推";
-                                reverseBtn.style.pointerEvents = "auto";
-                            }
-                        } else {
-                            const err = await resp.json().catch(() => ({}));
-                            showToast(gallery.app, "error", "\u274C \u53CD\u63A8\u5931\u8D25", err.error || "");
-                            reverseBtn.textContent = "\uD83D\uDD0D 反推";
-                            reverseBtn.style.pointerEvents = "auto";
-                        }
-                    } catch (err) {
-                        showToast(gallery.app, "error", "\u274C \u53CD\u63A8\u8BF7\u6C42\u5931\u8D25", err.message);
-                        reverseBtn.textContent = "\uD83D\uDD0D 反推";
-                        reverseBtn.style.pointerEvents = "auto";
-                    }
-                }
-            }, ["\uD83D\uDD0D 反推"]);
-            container.appendChild(reverseBtn);
-        }
-
-        // Add no-prompt class when there's no txt_content to remove border/background
-        container.classList.toggle('no-prompt', !promptSection);
-
-        container.appendChild(imgWrapper);
-        if (promptSection) container.appendChild(promptSection);
-        // 关闭按钮挂在图片区右上角，避免与右侧提示词面板的标题行重叠
-        imgWrapper.appendChild(closeBtn);
-        lightbox.appendChild(container);
-        document.body.appendChild(lightbox);
-
-        gallery.currentLightbox = lightbox;
-        gallery.currentLightboxImages = allImages;
-        gallery.currentLightboxIndex = currentIndex;
-
-        const handleKeyDown = (e) => {
-            switch (e.key) {
-                case 'ArrowLeft':
-                    this.navigateLightboxImage(gallery, -1);
-                    break;
-                case 'ArrowRight':
-                    this.navigateLightboxImage(gallery, 1);
-                    break;
-                case 'Escape':
-                    if (document.fullscreenElement) {
-                        document.exitFullscreen();
-                    } else {
-                        this.closeLightbox(gallery);
-                    }
-                    break;
-                case 'f':
-                case 'F':
-                    this.toggleFullscreen(gallery, lightbox);
-                    break;
-            }
-        };
-        document.addEventListener('keydown', handleKeyDown);
-        gallery.currentLightboxKeyboardHandler = handleKeyDown;
-
-        // Listen for native fullscreen change to clean up class when exiting via Escape/ESC
-        const onFullscreenChange = () => {
-            if (!document.fullscreenElement) {
-                const c = document.querySelector('#neo-gallery-lightbox-container');
-                if (c) c.classList.remove('fullscreen-mode');
-            }
-        };
-        document.addEventListener('fullscreenchange', onFullscreenChange);
-        gallery._fullscreenChangeListener = onFullscreenChange;
-    }
-
-    closeLightbox(gallery) {
-        if (gallery.currentLightbox) {
-            gallery.currentLightbox.remove();
-            gallery.currentLightbox = null;
-        }
-        if (gallery.currentLightboxKeyboardHandler) {
-            document.removeEventListener('keydown', gallery.currentLightboxKeyboardHandler);
-            gallery.currentLightboxKeyboardHandler = null;
-        }
-        // 重置缩放和平移状态
-        gallery._lightboxScale = 1;
-        gallery._lightboxPanX = 0;
-        gallery._lightboxPanY = 0;
-        gallery._lightboxIsDragging = false;
-    }
-
-    navigateLightboxImage(gallery, direction) {
-        if (!gallery.currentLightbox || !gallery.currentLightboxImages || gallery.currentLightboxImages.length === 0) return;
-
-        const newIndex = gallery.currentLightboxIndex + direction;
-        if (newIndex < 0 || newIndex >= gallery.currentLightboxImages.length) return;
-
-        const nextItem = gallery.currentLightboxImages[newIndex];
-        this.updateLightboxContent(gallery.currentLightbox, nextItem, nextItem.subfolder, gallery.currentLightboxImages, newIndex);
-    }
-
-    _createMetaButtons(gallery, image, subfolder) {
-        const wrap = document.createElement('span');
-        wrap.style.display = 'none';
+        const btns = $el("div", { className: "neo-lightbox-panel-btns", style: { display: "none" } });
+        inner.appendChild(btns);
         this._fetchMediaMeta(image, subfolder).then(meta => {
-            if (!meta || !meta.has) return;
-            wrap.style.display = 'inline-flex';
-            wrap.appendChild(this._buildMetaButtons(meta, gallery, image, subfolder));
+            // 已翻页或面板已销毁：丢弃过期结果，避免覆盖新页内容。
+            if (!inner.isConnected || !meta || !meta.has) return;
+            const frag = this._buildMetaButtons(meta, gallery, image, subfolder);
+            if (!frag.childNodes.length) return;
+            btns.style.display = "";
+            btns.appendChild(frag);
         }).catch(() => {});
-        return wrap;
+
+        return inner;
+    }
+
+    _lightboxEmbeddedPanel(gallery, image, subfolder, meta) {
+        const body = $el("div", { className: "neo-lightbox-panel-body" });
+        const texts = meta.texts;
+        const addSection = (label, arr) => {
+            if (!arr || !arr.length) return;
+            body.appendChild($el("div", { className: "neo-lightbox-panel-item" }, [
+                $el("span", { className: "neo-lightbox-panel-label", textContent: label + "\uff1a" }),
+                $el("span", { className: "neo-lightbox-panel-value", textContent: arr.join("\n"), style: { whiteSpace: "pre-wrap" } })
+            ]));
+        };
+        addSection("\u6B63\u5411", texts?.positive);
+        addSection("\u8D1F\u5411", texts?.negative);
+
+        const inner = $el("div", { className: "neo-lightbox-panel-inner" }, [body]);
+        const frag = this._buildMetaButtons(meta, gallery, image, subfolder);
+        if (frag.childNodes.length) {
+            const btns = $el("div", { className: "neo-lightbox-panel-btns" });
+            btns.appendChild(frag);
+            inner.appendChild(btns);
+        }
+        return inner;
     }
 
     _fetchMediaMeta(image, subfolder) {
@@ -2315,7 +1969,7 @@ export class GalleryComponents {
         return p;
     }
 
-    // 导入素材内嵌的 ComfyUI 工作流到画布（lightbox「导入工作流」按钮与卡片扩展菜单共用）。
+    // 导入素材内嵌的 ComfyUI 工作流到画布（灯箱「导入工作流」按钮与卡片扩展菜单共用）。
     async _importWorkflowFromMedia(gallery, image, subfolder) {
         const meta = await this._fetchMediaMeta(image, subfolder);
         if (!meta || !meta.has) throw new Error("此素材没有内嵌工作流");
@@ -2332,11 +1986,11 @@ export class GalleryComponents {
         } else {
             await app.loadApiJson(source, "gallery-example");
         }
-        this.closeLightbox(gallery);
+        Lightbox.close();
         requestAnimationFrame(() => {
             const canvas = app.canvas;
             const nodes = canvas?.graph?.nodes;
-            if (!nodes?.length || !canvas.ds?.fitToBounds) return;
+            if (!nodes?.length || !canvas.ds) return;
             const b = [Infinity, Infinity, -Infinity, -Infinity];
             for (const n of nodes) {
                 const r = n.boundingRect || [n.pos[0], n.pos[1], n.size?.[0] || 0, n.size?.[1] || 0];
@@ -2356,7 +2010,7 @@ export class GalleryComponents {
         const frag = document.createDocumentFragment();
         if (meta.workflow || meta.prompt) {
             const loadBtn = document.createElement('div');
-            loadBtn.className = "neo-gallery-lightbox-btn";
+            loadBtn.className = "neo-lightbox-panel-btn";
             loadBtn.textContent = "\u2937 \u5BFC\u5165\u5DE5\u4F5C\u6D41";
             loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
             loadBtn.onclick = async (e) => {
@@ -2378,445 +2032,6 @@ export class GalleryComponents {
             };
             frag.appendChild(loadBtn);
         }
-        // 内嵌提示词已由右侧面板展示（.txt 或内联渲染），不再提供重复的弹窗按钮
         return frag;
-    }
-
-    _renderEmbeddedMeta(gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection) {
-        const key = `${subfolder}/${image.filename}`;
-        this._fetchMediaMeta(image, subfolder).then(meta => {
-            // 已翻页或面板重建：丢弃过期结果，避免覆盖新页内容造成闪烁。
-            if (!promptSection.isConnected || promptSection.dataset.metaKey !== key) return;
-            if (!meta || !meta.has) {  // 未内嵌工作流/提示词：整个区域不显示、不占位
-                promptSection.style.display = "none";
-                return;
-            }
-            const texts = meta.texts;
-            if (texts && (texts.positive?.length || texts.negative?.length)) {
-                const addSection = (label, arr) => {
-                    if (!arr || !arr.length) return;
-                    promptContainer.appendChild($el("div", { className: "neo-gallery-lightbox-prompt-section-item" }, [
-                        $el("span", { className: "neo-gallery-lightbox-prompt-label", textContent: label + "\uff1a" }),
-                        $el("span", { className: "neo-gallery-lightbox-prompt-value", textContent: arr.join("\n"), style: { whiteSpace: "pre-wrap" } })
-                    ]));
-                };
-                addSection("正向", texts.positive);
-                addSection("负向", texts.negative);
-                promptContainer.style.display = "";
-            }
-            metaBtnsContainer.appendChild(this._buildMetaButtons(meta, gallery, image, subfolder));
-        });
-    }
-
-    updateLightboxContent(lightbox, image, subfolder, allImages, currentIndex) {
-        // 使用 document.querySelector 而不是在 wrapped element 上调用 querySelector
-        const container = document.querySelector('#neo-gallery-lightbox-container');
-        if (!container) {
-            this.closeLightbox(this.gallery);
-            setTimeout(() => this.showLightbox(this.gallery, image, subfolder), 100);
-            return;
-        }
-
-        const imgWrapper = container.querySelector('#neo-gallery-lightbox-img-wrapper');
-        if (!imgWrapper) {
-            this.closeLightbox(this.gallery);
-            setTimeout(() => this.showLightbox(this.gallery, image, subfolder), 100);
-            return;
-        }
-
-        const isVideo = isVideoFile(image.filename);
-        const categoryParam = image.category ? `&category=${encodeURIComponent(image.category)}` : '';
-        const newMediaUrl = image.preview || `${window.location.protocol}//${window.location.host}/neo_gallery/image?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}${categoryParam}`;
-        const newVideoUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/video?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
-
-        const existingMedia = imgWrapper.querySelector('video, img');
-
-        // 记录旧媒体渲染尺寸：翻页时新图未加载前撑住布局，避免右侧面板先居中再跳回（闪动）。
-        let keepW = 0, keepH = 0;
-        if (existingMedia) {
-            keepW = existingMedia.clientWidth;
-            keepH = existingMedia.clientHeight;
-            // Stop any playing video and remove old media element first
-            if (existingMedia.tagName === 'VIDEO') {
-                existingMedia.pause();
-                existingMedia.src = '';  // Clear src to release resources
-            }
-            existingMedia.remove();
-        }
-
-        const releaseKeepSize = () => {
-            if (!keepW) return;
-            newMediaEl.style.width = '';
-            newMediaEl.style.height = '';
-        };
-
-        // Remove any leftover spinner from previous image
-        const oldSpinner = imgWrapper.querySelector('.neo-gallery-lightbox-spinner');
-        if (oldSpinner) oldSpinner.remove();
-
-        // Create new media element
-        let newMediaEl;
-        if (isVideo) {
-            newMediaEl = document.createElement('video');
-            newMediaEl.className = "neo-gallery-lightbox-image neo-gallery-lightbox-video";
-            newMediaEl.src = newVideoUrl;
-            newMediaEl.controls = true;
-            newMediaEl.autoplay = true;
-            newMediaEl.loop = true;
-            newMediaEl.style.maxWidth = '100%';
-            newMediaEl.style.maxHeight = '80vh';
-            if (keepW && keepH) {
-                newMediaEl.style.width = `${keepW}px`;
-                newMediaEl.style.height = `${keepH}px`;
-            }
-            newMediaEl.addEventListener('loadedmetadata', releaseKeepSize, { once: true });
-            newMediaEl.addEventListener('error', releaseKeepSize, { once: true });
-        } else {
-            newMediaEl = document.createElement('img');
-            newMediaEl.className = "neo-gallery-lightbox-image loading";
-            newMediaEl.draggable = false;
-            newMediaEl.style.userSelect = 'none';
-            newMediaEl.style.webkitUserSelect = 'none';
-            newMediaEl.style.mozUserSelect = 'none';
-            newMediaEl.style.msUserSelect = 'none';
-            if (keepW && keepH) {
-                newMediaEl.style.width = `${keepW}px`;
-                newMediaEl.style.height = `${keepH}px`;
-            }
-
-            // Show spinner while loading
-            const spinner = document.createElement('div');
-            spinner.className = 'neo-gallery-lightbox-spinner';
-            imgWrapper.appendChild(spinner);
-
-            const onLoaded = () => {
-                const sp = imgWrapper.querySelector('.neo-gallery-lightbox-spinner');
-                if (sp) sp.remove();
-                newMediaEl.classList.remove('loading');
-                releaseKeepSize();
-            };
-
-            // Use fetch + blob for reliable load detection
-            imgWrapper.appendChild(newMediaEl);
-            fetch(newMediaUrl).then(resp => {
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                return resp.blob();
-            }).then(blob => {
-                const blobUrl = URL.createObjectURL(blob);
-                newMediaEl.onload = () => { URL.revokeObjectURL(blobUrl); onLoaded(); };
-                newMediaEl.onerror = onLoaded;
-                newMediaEl.src = blobUrl;
-            }).catch(() => {
-                onLoaded();
-            });
-        }
-
-        // Append new media element (video path)
-        if (isVideo) {
-            imgWrapper.appendChild(newMediaEl);
-        }
-
-        // Preload adjacent images for instant navigation
-        if (allImages && !isVideo) {
-            const preloadIndices = [currentIndex - 1, currentIndex + 1];
-            for (const idx of preloadIndices) {
-                if (idx >= 0 && idx < allImages.length) {
-                    const adj = allImages[idx];
-                    if (!isVideoFile(adj.filename)) {
-                        const adjSubfolder = adj.subfolder || subfolder;
-                        const adjCategoryParam = adj.category ? `&category=${encodeURIComponent(adj.category)}` : '';
-                        const adjUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/image?filename=${encodeURIComponent(adj.filename)}&subfolder=${encodeURIComponent(adjSubfolder)}${adjCategoryParam}`;
-                        const preImg = new Image();
-                        preImg.src = adjUrl;
-                    }
-                }
-            }
-        }
-        
-        // 在 imgWrapper 上添加事件监听器（而不是在图片上），确保事件能被捕获
-        if (!isVideo) {
-            // 移除旧的事件监听器
-            const oldWheelHandler = imgWrapper._lightboxWheelHandler;
-            const oldMouseDownHandler = imgWrapper._lightboxMouseDownHandler;
-            const oldMouseMoveHandler = imgWrapper._lightboxMouseMoveHandler;
-            const oldMouseUpHandler = imgWrapper._lightboxMouseUpHandler;
-            const oldMouseLeaveHandler = imgWrapper._lightboxMouseLeaveHandler;
-            
-            if (oldWheelHandler) imgWrapper.removeEventListener('wheel', oldWheelHandler, { capture: true });
-            if (oldMouseDownHandler) imgWrapper.removeEventListener('mousedown', oldMouseDownHandler, { capture: true });
-            if (oldMouseMoveHandler) imgWrapper.removeEventListener('mousemove', oldMouseMoveHandler, { capture: true });
-            if (oldMouseUpHandler) imgWrapper.removeEventListener('mouseup', oldMouseUpHandler, { capture: true });
-            if (oldMouseLeaveHandler) imgWrapper.removeEventListener('mouseleave', oldMouseLeaveHandler, { capture: true });
-            
-            // 滚轮缩放事件 - 动态获取当前图片元素
-            const wheelHandler = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (!currentMediaEl) return;
-                
-                const delta = e.deltaY > 0 ? -0.1 : 0.1;
-                const newScale = Math.max(0.5, Math.min(5, this.gallery._lightboxScale + delta));
-                
-                this.gallery._lightboxScale = newScale;
-                this._applyLightboxTransform(this.gallery, currentMediaEl);
-            };
-            
-            // 拖拽平移事件 - 动态获取当前图片元素
-            const mouseDownHandler = (e) => {
-                if (this.gallery._lightboxScale <= 1) return;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (!currentMediaEl) return;
-                if (e.target !== currentMediaEl && e.target !== imgWrapper) return;
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                this.gallery._lightboxIsDragging = true;
-                this.gallery._lightboxDragStartX = e.clientX - this.gallery._lightboxPanX;
-                this.gallery._lightboxDragStartY = e.clientY - this.gallery._lightboxPanY;
-                
-                currentMediaEl.style.cursor = 'grabbing';
-            };
-            
-            const mouseMoveHandler = (e) => {
-                if (!this.gallery._lightboxIsDragging) return;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (!currentMediaEl) return;
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                this.gallery._lightboxPanX = e.clientX - this.gallery._lightboxDragStartX;
-                this.gallery._lightboxPanY = e.clientY - this.gallery._lightboxDragStartY;
-                
-                this._applyLightboxTransform(this.gallery, currentMediaEl);
-            };
-            
-            const mouseUpHandler = () => {
-                this.gallery._lightboxIsDragging = false;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (currentMediaEl) {
-                    currentMediaEl.style.cursor = this.gallery._lightboxScale > 1 ? 'grab' : 'default';
-                }
-            };
-            
-            const mouseLeaveHandler = () => {
-                this.gallery._lightboxIsDragging = false;
-                const currentMediaEl = imgWrapper.querySelector('img');
-                if (currentMediaEl) {
-                    currentMediaEl.style.cursor = this.gallery._lightboxScale > 1 ? 'grab' : 'default';
-                }
-            };
-            
-            imgWrapper.addEventListener('wheel', wheelHandler, { passive: false, capture: true });
-            imgWrapper.addEventListener('mousedown', mouseDownHandler, { capture: true });
-            imgWrapper.addEventListener('mousemove', mouseMoveHandler, { capture: true });
-            imgWrapper.addEventListener('mouseup', mouseUpHandler, { capture: true });
-            imgWrapper.addEventListener('mouseleave', mouseLeaveHandler, { capture: true });
-            
-            // 保存处理器引用以便后续移除
-            imgWrapper._lightboxWheelHandler = wheelHandler;
-            imgWrapper._lightboxMouseDownHandler = mouseDownHandler;
-            imgWrapper._lightboxMouseMoveHandler = mouseMoveHandler;
-            imgWrapper._lightboxMouseUpHandler = mouseUpHandler;
-            imgWrapper._lightboxMouseLeaveHandler = mouseLeaveHandler;
-            
-            // 应用当前的缩放和平移状态
-            if (this.gallery._lightboxScale !== 1) {
-                this._applyLightboxTransform(this.gallery, newMediaEl);
-            }
-        }
-
-        // Update image info
-        const infoEl = container.querySelector('.neo-gallery-lightbox-image-info');
-        if (infoEl) {
-            if (isVideo) {
-                newMediaEl.onloadedmetadata = () => {
-                    infoEl.textContent = `${newMediaEl.videoWidth} \u00d7 ${newMediaEl.videoHeight}`;
-                };
-            } else {
-                newMediaEl.onload = () => {
-                    infoEl.textContent = `${newMediaEl.naturalWidth} \u00d7 ${newMediaEl.naturalHeight}`;
-                };
-            }
-        }
-
-        let promptSection = container.querySelector('#neo-gallery-lightbox-prompt-section');
-
-        if (image.txt_content) {
-            // 从"无提示词"变为"有提示词"时，移除旧的反推按钮
-            const oldReverseBtn = container.querySelector('#neo-gallery-lightbox-reverse-btn');
-            if (oldReverseBtn) oldReverseBtn.remove();
-
-            // 如果 promptSection 已存在（从反推状态切换），先将其从 DOM 中移除再重建
-            if (promptSection && promptSection.parentNode) {
-                promptSection.remove();
-            }
-
-            // 创建新的 promptSection
-            const sections = this.gallery.parsePromptSections(image.txt_content);
-            promptSection = $el("div", {
-                id: "neo-gallery-lightbox-prompt-section",
-                className: "neo-gallery-lightbox-prompt-section"
-            });
-
-            const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
-
-            if (sections.length > 0 && sections.some(s => s.label)) {
-                for (const section of sections) {
-                    if (section.label) {
-                        const sectionEl = $el("div", { className: "neo-gallery-lightbox-prompt-section-item" }, [
-                            $el("span", { className: "neo-gallery-lightbox-prompt-label", textContent: section.label + "\uff1a" }),
-                            $el("span", { className: "neo-gallery-lightbox-prompt-value", textContent: section.value })
-                        ]);
-                        promptContainer.appendChild(sectionEl);
-                    } else if (section.value) {
-                        promptContainer.appendChild($el("div", {
-                            textContent: section.value,
-                            style: { marginBottom: "3px", whiteSpace: "pre-wrap" }
-                        }));
-                    }
-                }
-            } else {
-                promptContainer.appendChild($el("div", {
-                    textContent: this.gallery.cleanText(image.txt_content),
-                    style: { whiteSpace: "pre-wrap" }
-                }));
-            }
-
-            // 复制提示词按钮放在提示词文本上方（标题行右侧），贴近提示词
-            const sendBtn = $el("div", {
-                className: "neo-gallery-lightbox-btn neo-gallery-lightbox-copy-btn",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this.copyToClipboard(image.name, image.txt_content, sendBtn);
-                }
-            }, ["\u29C9 \u590D\u5236\u63D0\u793A\u8BCD"]);
-
-            const promptHeader = $el("div", { className: "neo-gallery-lightbox-prompt-header" }, [
-                $el("span", { className: "neo-gallery-lightbox-prompt-title", textContent: "\u63D0\u793A\u8BCD" }),
-                sendBtn
-            ]);
-            promptSection.appendChild(promptHeader);
-            promptSection.appendChild(promptContainer);
-
-            // 底部按钮容器（复制图片按钮在图片右下角，这里只放 Video / 元数据按钮）
-            const promptBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            if (isVideo) {
-                const vSendBtn = $el("div", {
-                    className: "neo-gallery-lightbox-btn neo-gallery-lightbox-video-send-btn",
-                    onclick: (e) => {
-                        e.stopPropagation();
-                        this._showVideoSendMenu(this.gallery, image, vSendBtn);
-                    }
-                }, ["\uD83D\uDCE5 Video"]);
-                promptBtnsContainer.appendChild(vSendBtn);
-            }
-            promptBtnsContainer.appendChild(this._createMetaButtons(this.gallery, image, subfolder));
-            promptSection.appendChild(promptBtnsContainer);
-
-            // 将新的 promptSection 追加到 container（imgWrapper 之后；closeBtn 已挂在 imgWrapper 内）
-            container.appendChild(promptSection);
-        } else {
-            // 无 txt 副文件：从图片内嵌元数据展示提示词与按钮
-            if (promptSection && promptSection.parentNode) {
-                promptSection.remove();
-            }
-            const oldReverseBtn = container.querySelector('#neo-gallery-lightbox-reverse-btn');
-            if (oldReverseBtn) oldReverseBtn.remove();
-            promptSection = $el("div", {
-                id: "neo-gallery-lightbox-prompt-section",
-                className: "neo-gallery-lightbox-prompt-section",
-                dataset: { metaKey: `${subfolder}/${image.filename}` }
-            });
-            const promptContainer = $el("div", { className: "neo-gallery-lightbox-prompt-container" });
-            promptContainer.style.display = "none";
-            promptSection.appendChild(promptContainer);
-            const metaBtnsContainer = $el("div", { className: "neo-gallery-lightbox-prompt-btns" });
-            promptSection.appendChild(metaBtnsContainer);
-            this._renderEmbeddedMeta(this.gallery, image, subfolder, promptContainer, metaBtnsContainer, promptSection);
-
-            // 反推按钮：暂时隐藏（待修复图片消失问题后重新启用）
-
-            const reverseBtn = $el("div", {
-                id: "neo-gallery-lightbox-reverse-btn",
-                className: "neo-gallery-lightbox-btn neo-gallery-lightbox-reverse-btn",
-                style: { display: 'none' },
-                onclick: async (e) => {
-                    e.stopPropagation();
-                    try {
-                        reverseBtn.textContent = "\u231B 反推中...";
-                        reverseBtn.style.pointerEvents = "none";
-                        const resp = await api.fetchApi('/rs_prompts/reverse_prompt', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ filename: image.filename, subfolder: subfolder })
-                        });
-                        if (resp.ok) {
-                            const result = await resp.json();
-                            if (result.status === "success") {
-                                image.txt_content = result.prompt || "";
-                                showToast(this.gallery.app, "success", "\u2705 \u53CD\u63A8\u6210\u529F", "");
-                            } else {
-                                showToast(this.gallery.app, "error", "\u274C \u53CD\u63A8\u5931\u8D25", result.error || "");
-                                reverseBtn.textContent = "\uD83D\uDD0D 反推";
-                                reverseBtn.style.pointerEvents = "auto";
-                            }
-                        } else {
-                            const err = await resp.json().catch(() => ({}));
-                            showToast(this.gallery.app, "error", "\u274C \u53CD\u63A8\u5931\u8D25", err.error || "");
-                            reverseBtn.textContent = "\uD83D\uDD0D 反推";
-                            reverseBtn.style.pointerEvents = "auto";
-                        }
-                    } catch (err) {
-                        showToast(this.gallery.app, "error", "\u274C \u53CD\u63A8\u8BF7\u6C42\u5931\u8D25", err.message);
-                        reverseBtn.textContent = "\uD83D\uDD0D 反推";
-                        reverseBtn.style.pointerEvents = "auto";
-                    }
-                }
-            }, ["\uD83D\uDD0D 反推"]);
-            container.appendChild(reverseBtn);
-            if (promptSection) {
-                container.appendChild(promptSection);
-            }
-        }
-
-        const prevBtn = imgWrapper.querySelector('#neo-gallery-lightbox-prev-btn');
-        const nextBtn = imgWrapper.querySelector('#neo-gallery-lightbox-next-btn');
-
-        if (prevBtn) {
-            prevBtn.style.opacity = currentIndex > 0 ? "0.8" : "0.3";
-            prevBtn.style.cursor = currentIndex > 0 ? "pointer" : "not-allowed";
-            if (currentIndex > 0) {
-                prevBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    const prevItem = allImages[currentIndex - 1];
-                    this.updateLightboxContent(lightbox, prevItem, prevItem.subfolder, allImages, currentIndex - 1);
-                };
-            } else {
-                prevBtn.onclick = null;
-            }
-        }
-        if (nextBtn) {
-            nextBtn.style.opacity = currentIndex < allImages.length - 1 ? "0.8" : "0.3";
-            nextBtn.style.cursor = currentIndex < allImages.length - 1 ? "pointer" : "not-allowed";
-            if (currentIndex < allImages.length - 1) {
-                nextBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    const nextItem = allImages[currentIndex + 1];
-                    this.updateLightboxContent(lightbox, nextItem, nextItem.subfolder, allImages, currentIndex + 1);
-                };
-            } else {
-                nextBtn.onclick = null;
-            }
-        }
-
-        // Toggle no-prompt class for border/background removal
-        container.classList.toggle('no-prompt', !promptSection);
-
-        this.gallery.currentLightboxIndex = currentIndex;
     }
 }

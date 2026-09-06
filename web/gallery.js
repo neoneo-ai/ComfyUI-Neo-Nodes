@@ -80,13 +80,6 @@ class NeoGallery {
         this._currentScrollKey = null;
         this._scrollContainer = null; // 缓存滚动容器
         
-        // Lightbox 缩放和平移状态
-        this._lightboxScale = 1;
-        this._lightboxPanX = 0;
-        this._lightboxPanY = 0;
-        this._lightboxIsDragging = false;
-        this._lightboxDragStartX = 0;
-        this._lightboxDragStartY = 0;
         
         // Custom dir input
         this.customDirInput = $el("input", {

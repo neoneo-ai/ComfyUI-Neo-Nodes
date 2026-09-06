@@ -63,7 +63,7 @@ ComfyUI-Neo-Nodes/
 │   └── test_workflow_repair.py # 工作流修复匹配算法
 ├── web/                    # 前端资源（WEB_DIRECTORY）
 │   ├── gallery.js          # 素材侧边栏主逻辑
-│   ├── gallery-components.js  # 素材 UI 组件
+│   ├── gallery-components.js  # 素材 UI 组件（含灯箱适配：导航列表/提示词侧栏/反推/导入工作流）
 │   ├── gallery-utils.js    # 素材工具函数
 │   ├── gallery.css
 │   ├── lightbox.js         # 灯箱查看器
@@ -106,7 +106,7 @@ ComfyUI-Neo-Nodes/
 | 文件 | 职责 |
 |------|------|
 | `gallery.js` / `gallery-components.js` / `gallery-utils.js` / `gallery.css` | 素材侧边栏：目录卡片、懒加载列表、搜索、上传删除、设置弹窗 |
-| `lightbox.js` / `lightbox.css` | 灯箱全屏查看：缩放平移、发送节点、复制提示词、反推 |
+| `lightbox.js` / `lightbox.css` | 通用灯箱组件：异步 blob 加载、相邻预加载、缩放平移、尺寸显示、`panelProvider` 侧栏钩子；素材与配方通过各自适配接入 |
 | `node-behavior.js` | 节点级交互行为（拖拽图片、粘贴、`@` 引用等） |
 | `combo-box.js` | 通用下拉选择组件 |
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送 |

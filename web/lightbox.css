@@ -163,7 +163,7 @@
     left: auto;
     right: 10px;
     top: auto;
-    bottom: 46px;
+    bottom: 10px;
     transform: none;
     font-size: 15px;
 }
@@ -198,6 +198,153 @@
 .neo-lightbox-box.fullscreen-mode .neo-lightbox-media {
     max-width: 100vw;
     max-height: calc(100vh - 56px);
+}
+
+/* 媒体 + 信息条所在列（与侧栏并排） */
+.neo-lightbox-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+.neo-lightbox-dims {
+    font-size: 11px;
+    color: #9a9a9a;
+    flex-shrink: 0;
+}
+
+/* 异步取源期间的加载指示 */
+.neo-lightbox-spinner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 36px;
+    height: 36px;
+    margin: -18px 0 0 -18px;
+    border: 3px solid rgba(255, 255, 255, 0.15);
+    border-top-color: rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+    animation: neoLightboxSpin 0.8s linear infinite;
+    pointer-events: none;
+}
+
+@keyframes neoLightboxSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* 侧栏：内容由调用方按项填充 */
+.neo-lightbox-panel {
+    display: none;
+}
+
+.neo-lightbox-box.neo-lightbox-with-panel {
+    flex-direction: row;
+    max-width: min(1400px, 95vw);
+}
+
+.neo-lightbox-box.neo-lightbox-with-panel .neo-lightbox-panel {
+    display: flex;
+    flex-direction: column;
+    width: 400px;
+    min-width: 400px;
+    padding: 16px;
+    overflow-y: auto;
+    background: #1a1a1a;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 全屏时隐藏提示词侧栏，媒体占满 */
+.neo-lightbox-box.fullscreen-mode .neo-lightbox-panel {
+    display: none;
+}
+
+/* 侧栏内容样式 */
+.neo-lightbox-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.neo-lightbox-panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #FF9944;
+}
+
+.neo-lightbox-panel-inner {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.neo-lightbox-panel-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #e0e0e0;
+    padding: 12px 16px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.neo-lightbox-panel-item {
+    margin-bottom: 6px;
+    display: flex;
+    align-items: flex-start;
+}
+
+.neo-lightbox-panel-label {
+    font-weight: 600;
+    color: #FF9944;
+    white-space: nowrap;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.neo-lightbox-panel-value {
+    color: #ddd;
+    flex: 1;
+}
+
+.neo-lightbox-panel-btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.neo-lightbox-panel-btn {
+    padding: 6px 12px;
+    color: white;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    position: relative;
+    align-self: flex-start;
+    transition: all 0.2s ease;
+}
+
+.neo-lightbox-panel-btn:hover {
+    transform: scale(1.05);
+    filter: brightness(1.1);
+}
+
+.neo-lightbox-panel-btn:active {
+    transform: scale(0.98);
 }
 
 .neo-lightbox-box.fullscreen-mode .neo-lightbox-meta {
