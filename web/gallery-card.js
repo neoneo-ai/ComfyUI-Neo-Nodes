@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, getThumbnailSrc, sortByMtime, showToast, showInlineFeedback } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, getThumbnailSrc, showToast, showInlineFeedback } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
@@ -1141,43 +1141,8 @@ export class GalleryCard {
 
     // 汇总当前视图内可翻页的媒体列表。目录模式取各目录条目；其余优先用目录已加载的条目，
     // 否则回退到网格正在渲染的条目（也覆盖 allDirectories 里没有的书签目录，其条目自带 subfolder）。
-    _lightboxNavList(gallery, image, subfolder) {
-        const allImages = [];
-        const collectAllDirs = () => {
-            for (const dir of gallery.allDirectories) {
-                if (!gallery.isSearchActive || gallery.filteredDirectories.some(d => d.name === dir.name)) {
-                    for (const item of (dir.items || [])) allImages.push({ ...item, subfolder: dir.name });
-                }
-            }
-        };
-
-        const { source, categoryPath, mode } = gallery.currentView;
-        if (mode !== 'categories' && source) {
-            const dir = gallery.allDirectories.find(d => d.name === source || d.path === source);
-            let dirItems = [];
-            if (dir?.items?.length > 0) {
-                dirItems = [...dir.items];
-            } else if (gallery._currentDirImages?.length > 0) {
-                dirItems = [...gallery._currentDirImages];
-            }
-            if (categoryPath?.length > 0) {
-                const catKey = categoryPath[0];
-                dirItems = dirItems.filter(i => i.category === catKey || !i.category);
-            }
-            for (const item of dirItems) allImages.push({ ...item, subfolder: item.subfolder || source });
-        } else {
-            collectAllDirs();
-        }
-
-        const sorted = sortByMtime(allImages);
-        return {
-            items: sorted.map(img => this._toLightboxItem(img, subfolder)),
-            index: sorted.findIndex(img => img.filename === image.filename && img.subfolder === subfolder)
-        };
-    }
-
     showLightbox(gallery, image, subfolder) {
-        const { items, index } = this._lightboxNavList(gallery, image, subfolder);
+        const { entries, index } = gallery.list.collectLightboxMedia(image, subfolder);
         // 点击的媒体不在当前视图（如首页单图收藏，源目录未加载）时只显示本图
         if (index < 0) {
             Lightbox.open({
@@ -1189,7 +1154,7 @@ export class GalleryCard {
             return;
         }
         Lightbox.open({
-            items,
+            items: entries.map(img => this._toLightboxItem(img, subfolder)),
             index,
             actions: (item) => this._lightboxActions(gallery, item),
             panel: (item) => this._buildLightboxPanel(gallery, item)

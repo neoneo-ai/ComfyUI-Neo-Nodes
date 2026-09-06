@@ -124,7 +124,7 @@ export class GallerySetting {
                         if (resp.ok && result.success) {
                             input.value = '';
                             setTimeout(() => gallery.promptAndSetCustomDir(), 300);
-                            try { await gallery.loadGallery(); gallery.sortAndDisplayImages(); } catch (e) { }
+                            try { await gallery.loadGallery(); gallery.list.sortAndDisplayImages(); } catch (e) { }
                         } else {
                             alert('Failed: ' + (result.error || 'Unknown error'));
                         }
@@ -170,7 +170,7 @@ export class GallerySetting {
                     if (successCount > 0) {
                         textarea.value = '';
                         setTimeout(() => gallery.promptAndSetCustomDir(), 300);
-                        try { await gallery.loadGallery(); gallery.sortAndDisplayImages(); } catch (e) { }
+                        try { await gallery.loadGallery(); gallery.list.sortAndDisplayImages(); } catch (e) { }
                     } else if (lines.length > 0) {
                         alert('All directories failed to add. Check paths and try again.');
                     }

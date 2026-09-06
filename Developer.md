@@ -62,9 +62,9 @@ ComfyUI-Neo-Nodes/
 │   ├── test_skills.py      # 技能扫描、图片解码、多结果解析
 │   └── test_workflow_repair.py # 工作流修复匹配算法
 ├── web/                    # 前端资源（WEB_DIRECTORY）
-│   ├── gallery.js          # 素材侧边栏主逻辑
-│   ├── gallery-list.js     # 列表工具条与面包屑导航（搜索/缩略图尺寸/设置按钮）
-│   ├── gallery-card.js     # 单卡片内容与交互：目录卡封面、缩略图卡、发送/收藏菜单、灯箱适配（导航列表/提示词侧栏/反推/导入工作流）
+│   ├── gallery.js          # 素材侧边栏主逻辑（状态/持久化/API/视图切换/收藏视图数据）
+│   ├── gallery-list.js     # 列表浏览层：工具条与面包屑、视图渲染管线、滚动分页与封面懒加载、滚动位置记忆、灯箱导航媒体聚合
+│   ├── gallery-card.js     # 单卡片内容与交互：目录卡封面、缩略图卡、发送/收藏菜单、灯箱适配（提示词侧栏/反推/导入工作流）
 │   ├── gallery-setting.js  # 目录管理配置弹窗（自定义目录/OSS/Civitai 同步）
 │   ├── gallery-utils.js    # 素材工具函数
 │   ├── gallery.css
