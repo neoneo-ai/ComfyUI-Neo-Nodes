@@ -3,7 +3,7 @@
  * 共享的节点行为逻辑 - 消除 NeoPromptSimple 和 NeoPrompts 之间的代码重复
  */
 
-import { enhancePromptStream, translatePromptStream, randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
+import { randomPrompt, sseStream, invokePromptStream } from "./prompt-service.js";
 import { collectWorkflowContext } from "./workflow-context.js";
 
 // ==========================================
@@ -96,13 +96,6 @@ function getInstanceUid(node) {
 }
 
 /**
- * 获取文本键（已废弃，保留用于兼容性）
- */
-function getTextKey(instanceUid) {
-    return `rs_prompt_${instanceUid}`;
-}
-
-/**
  * Set textarea value and dispatch synthetic "input" event (triggers auto-switch from EXTERNAL to LOCAL)
  */
 function setTextAndTrigger(customTextarea, value) {
@@ -169,7 +162,6 @@ function createBasicNodeInitializer(node) {
  */
 function createGenerateHandler(promptUI) {
     return async () => {
-        console.log("createGenerateHandler called with promptUI keys:", Object.keys(promptUI));
         const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [], refreshMarkdownPreviewAuto } = promptUI;
 
         const quickText = quickInput.value.trim();
@@ -204,13 +196,38 @@ function createGenerateHandler(promptUI) {
 
         // 检查是否选择了 skill（模板/任务统一选择器，值为 skill id）
         const selectedSkillId = tplSelector?.value || "";
-        console.log("Skill selector value:", selectedSkillId, "tplSelector:", tplSelector, "tplSelector.value:", tplSelector?.value, "tplSelector.options:", tplSelector?.options?.length);
 
         generateBtn.disabled = true;
         generateBtn.textContent = "⏳";
 
         let rafId = null;
         let accumulated = "";
+        // 三条流式分支共用的 SSE 处理：chunk 先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排
+        const streamHandlers = (errorLabel) => ({
+            onChunk: (chunk) => {
+                if (!chunk.text) return;
+                accumulated += chunk.text;
+                if (rafId) return;
+                rafId = requestAnimationFrame(() => {
+                    rafId = null;
+                    customTextarea.value = accumulated;
+                    customTextarea.scrollTop = customTextarea.scrollHeight;
+                    refreshMarkdownPreviewAuto?.();
+                });
+            },
+            // onDone 取消了尚未执行的合并帧，必须先把 accumulated 落进 textarea，
+            // 否则 saveTextToStorage 读到旧的空 textarea，会把 widget 里的提示词冲掉
+            onDone: () => {
+                if (rafId) cancelAnimationFrame(rafId);
+                if (accumulated) customTextarea.value = accumulated;
+                saveTextToStorage(node, textWidget, customTextarea, true);
+                markQuickInputConsumed(node);
+            },
+            onError: (err) => {
+                console.error(errorLabel, err);
+                alert("Failed to process prompt: " + err);
+            }
+        });
         try {
             if (hasImages || markerSkillId) {
                 // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
@@ -230,33 +247,7 @@ function createGenerateHandler(promptUI) {
                     description: quickText || currentPrompt,
                     context: workflowContext
                 };
-                console.log("Skill invoke request:", { ...payload, images: payload.images.length + " image(s)" });
-
-                await invokePromptStream(payload, {
-                    onChunk: (chunk) => {
-                        if (chunk.text) {
-                            accumulated += chunk.text;
-                            if (!rafId) {
-                                rafId = requestAnimationFrame(() => {
-                                    customTextarea.value = accumulated;
-                                    customTextarea.scrollTop = customTextarea.scrollHeight;
-                                    refreshMarkdownPreviewAuto?.();
-                                    rafId = null;
-                                });
-                            }
-                        }
-                    },
-                    onDone: () => {
-                        if (rafId) cancelAnimationFrame(rafId);
-                        if (textWidget) textWidget.value = accumulated;
-                        saveTextToStorage(node, textWidget, customTextarea);
-                        markQuickInputConsumed(node);
-                    },
-                    onError: (err) => {
-                        console.error("Skill invoke error:", err);
-                        alert("Failed to process prompt: " + err);
-                    }
-                });
+                await invokePromptStream(payload, streamHandlers("Skill invoke error:"));
             } else if (selectedSkillId) {
                 // 使用选中的模板进行生成（流式）
                 generateBtn.textContent = "⏳"; // 统一短反馈
@@ -264,38 +255,8 @@ function createGenerateHandler(promptUI) {
                 // If quickInput has content, combine with currentPrompt; otherwise use currentPrompt alone
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
 
-                console.log("Skill stream request:", {
-                    text: userPrompt,
-                    skillId: selectedSkillId,
-                    description: quickText || currentPrompt
-                });
-
                 // 使用流式API，传入skillId
-                await sseStream("/rs_prompts/stream_generate_prompt", {
-                    onChunk: (chunk) => {
-                        if (chunk.text) {
-                            accumulated += chunk.text;
-                            if (!rafId) {
-                                rafId = requestAnimationFrame(() => {
-                                    customTextarea.value = accumulated;
-                                    customTextarea.scrollTop = customTextarea.scrollHeight;
-                                    refreshMarkdownPreviewAuto?.();
-                                    rafId = null;
-                                });
-                            }
-                        }
-                    },
-                    onDone: () => {
-                        if (rafId) cancelAnimationFrame(rafId);
-                        if (textWidget) textWidget.value = accumulated;
-                        saveTextToStorage(node, textWidget, customTextarea);
-                        markQuickInputConsumed(node);
-                    },
-                    onError: (err) => {
-                        console.error("Skill stream error:", err);
-                        alert("Failed to process prompt: " + err);
-                    }
-                }, { 
+                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Skill stream error:"), { 
                     text: userPrompt, 
                     skillId: selectedSkillId,
                     description: quickText || currentPrompt,
@@ -306,31 +267,7 @@ function createGenerateHandler(promptUI) {
                 generateBtn.textContent = "⏳"; // 统一短反馈
                 // 拼接 currentPrompt 和 quickText（与选择了模版时保持一致）
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
-                await sseStream("/rs_prompts/stream_generate_prompt", {
-                    onChunk: (chunk) => {
-                        if (chunk.text) {
-                            accumulated += chunk.text;
-                            if (!rafId) {
-                                rafId = requestAnimationFrame(() => {
-                                    customTextarea.value = accumulated;
-                                    customTextarea.scrollTop = customTextarea.scrollHeight;
-                                    refreshMarkdownPreviewAuto?.();
-                                    rafId = null;
-                                });
-                            }
-                        }
-                    },
-                    onDone: () => {
-                        if (rafId) cancelAnimationFrame(rafId);
-                        if (textWidget) textWidget.value = accumulated;
-                        saveTextToStorage(node, textWidget, customTextarea);
-                        markQuickInputConsumed(node);
-                    },
-                    onError: (err) => {
-                        console.error("Smart prompt stream error:", err);
-                        alert("Failed to process prompt: " + err);
-                    }
-                }, {
+                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Smart prompt stream error:"), {
                     text: userPrompt,
                     description: quickText || currentPrompt,
                     context: workflowContext
@@ -545,82 +482,6 @@ function createBeforeUnloadHandler(node, textWidget) {
     };
 }
 
-// ==========================================
-// 定时器管理
-// ==========================================
-
-/**
- * 创建节点行为管理器
- */
-function createNodeBehaviorManager() {
-    const intervals = new WeakMap();
-    const timeouts = new WeakMap();
-    
-    /**
-     * 启动强制执行定时器
-     */
-    function startEnforcement(node, updateStatusAndUI) {
-        if (!intervals.has(node)) {
-            const intervalId = setInterval(() => {
-                let needsRedraw = false;
-                const disableWidget = node.widgets?.find(w => w.name === "disable_text_input");
-                
-                if (disableWidget && disableWidget.value !== node.properties.rs_disable_state) {
-                    disableWidget.value = node.properties.rs_disable_state;
-                    needsRedraw = true;
-                }
-                
-                if (needsRedraw && node.graph) {
-                    node.graph.setDirtyCanvas(true, true);
-                }
-            }, 200);
-            intervals.set(node, intervalId);
-        }
-    }
-    
-    /**
-     * 停止强制执行定时器
-     */
-    function stopEnforcement(node) {
-        const intervalId = intervals.get(node);
-        if (intervalId) {
-            clearInterval(intervalId);
-            intervals.delete(node);
-        }
-        
-        // 清理所有待执行的 timeout
-        const timeIds = timeouts.get(node);
-        if (timeIds) {
-            timeIds.forEach(id => clearTimeout(id));
-            timeouts.delete(node);
-        }
-    }
-    
-    /**
-     * 注册定时器
-     */
-    function registerTimeout(node, fn, delay) {
-        if (!timeouts.has(node)) {
-            timeouts.set(node, []);
-        }
-        const timeId = setTimeout(() => {
-            fn();
-            const ids = timeouts.get(node);
-            if (ids) {
-                const idx = ids.indexOf(timeId);
-                if (idx > -1) ids.splice(idx, 1);
-            }
-        }, delay);
-        timeouts.get(node).push(timeId);
-    }
-    
-    return { startEnforcement, stopEnforcement, registerTimeout };
-}
-
-// ==========================================
-// 文本变更回调
-// ==========================================
-
 /**
  * 创建文本变更回调 - 当本地操作修改了 customText 时自动切换到 LOCAL PROMPT 状态
  */
@@ -661,8 +522,6 @@ function createOnTextChangeCallback(statusBar, updateStatusAndUI, node) {
 export const NodeBehaviors = {
     // 工具函数
     getInstanceUid,
-    getTextKey,
-    setTextAndTrigger,
     saveTextToStorage,
     restoreTextFromStorage,
 
@@ -675,7 +534,6 @@ export const NodeBehaviors = {
     wireRuntimeRandom,
 
     // 快捷输入消费标记
-    markQuickInputConsumed,
     resetQuickInputConsumed,
 
     // 文本变更回调
@@ -685,9 +543,6 @@ export const NodeBehaviors = {
     createPopupCloser,
     createPromptUpdateHandler,
     createBeforeUnloadHandler,
-
-    // 定时器管理
-    createNodeBehaviorManager,
 };
 
 export default NodeBehaviors;

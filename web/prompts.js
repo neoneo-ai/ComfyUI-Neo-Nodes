@@ -6,9 +6,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { mkEl, createPromptManagerUI } from "./prompt-manager.js";
-import { 
-    enhancePrompt, translatePrompt, randomPrompt as randomPromptAPI
-} from "./prompt-service.js";
 
 
 // 导入 NodeBehaviors
@@ -22,85 +19,62 @@ import NodeBehaviors from "./node-behavior.js";
 // ==========================================
 
 // ==========================================
-// 共享的节点生命周期处理器工厂
+// Agent / Encoder 共用的隐藏控件同步
 // ==========================================
 
-/**
- * 创建通用的 onConfigure 处理器
- */
-function createOnConfigureHandler(node, promptUI) {
-    return function(data) {
-        if (this.widgets) {
-            const disableWidget = this.widgets.find(w => w.name === "disable_text_input");
-            if (disableWidget && this.properties?.rs_disable_state !== undefined) {
-                disableWidget.value = this.properties.rs_disable_state;
-            }
-        }
-        if (this.widgets) {
-            const uidWidget = this.widgets.find(w => w.name === "instance_uid");
-            if (uidWidget && this.properties?.rs_instance_uid !== undefined) {
-                uidWidget.value = this.properties.rs_instance_uid;
-            }
-        }
-        setTimeout(() => {
-            if (this.restoreFromProperties) {
-                this.restoreFromProperties();
-            }
-        }, 100);
-    };
+/** configure 后把 properties 中的状态灌回隐藏控件 */
+function restoreHiddenWidgets(node) {
+    if (!node.widgets) return;
+    const uidWidget = node.widgets.find(w => w.name === "instance_uid");
+    if (uidWidget && node.properties?.rs_instance_uid !== undefined) {
+        uidWidget.value = node.properties.rs_instance_uid;
+    }
+    const disableWidget = node.widgets.find(w => w.name === "disable_text_input");
+    if (disableWidget && node.properties?.rs_disable_state !== undefined) {
+        disableWidget.value = node.properties.rs_disable_state;
+    }
+    // Restore quick_input and auto_generate state
+    const quickInputWidget = node.widgets.find(w => w.name === "quick_input");
+    if (quickInputWidget && node.properties?.rs_quick_input !== undefined) {
+        quickInputWidget.value = node.properties.rs_quick_input;
+    }
+    const usedWidget = node.widgets.find(w => w.name === "quick_input_used");
+    if (usedWidget && node.properties?.rs_quick_input_used !== undefined) {
+        usedWidget.value = node.properties.rs_quick_input_used;
+    }
+    const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
+    if (autoGenWidget && node.properties?.rs_auto_generate !== undefined) {
+        autoGenWidget.value = node.properties.rs_auto_generate;
+    }
+    const randEnWidget = node.widgets.find(w => w.name === "random_enabled");
+    const randCnWidget = node.widgets.find(w => w.name === "random_count");
+    const rndProp = node.properties?.rs_runtime_random;
+    if (randEnWidget && rndProp && typeof rndProp === "object") {
+        randEnWidget.value = !!rndProp.enabled;
+        if (randCnWidget) randCnWidget.value = Math.max(1, Math.min(rndProp.count || 1, 16));
+    }
 }
 
-/**
- * 创建通用的 serialize 处理器
- */
-function createSerializeHandler() {
-    return function() {
-        if (this.properties && this.widgets) {
-            const uidWidget = this.widgets.find(w => w.name === "instance_uid");
-            if (uidWidget && uidWidget.value) {
-                this.properties.rs_instance_uid = uidWidget.value;
-            }
-        }
-        if (this.widgets) {
-            const disableWidget = this.widgets.find(w => w.name === "disable_text_input");
-            if (disableWidget && this.properties) {
-                this.properties.rs_disable_state = disableWidget.value;
-            }
-        }
+/** serialize 前把隐藏控件的值同步进 properties */
+function syncHiddenWidgets(node) {
+    if (!node.properties || !node.widgets) return;
+    const uidWidget = node.widgets.find(w => w.name === "instance_uid");
+    if (uidWidget && uidWidget.value) node.properties.rs_instance_uid = uidWidget.value;
+    const disableWidget = node.widgets.find(w => w.name === "disable_text_input");
+    if (disableWidget) node.properties.rs_disable_state = disableWidget.value;
+    // Save quick_input and auto_generate state
+    const quickInputWidget = node.widgets.find(w => w.name === "quick_input");
+    if (quickInputWidget) node.properties.rs_quick_input = quickInputWidget.value;
+    const usedWidget = node.widgets.find(w => w.name === "quick_input_used");
+    if (usedWidget) node.properties.rs_quick_input_used = !!usedWidget.value;
+    const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
+    if (autoGenWidget) node.properties.rs_auto_generate = autoGenWidget.value;
+    const randEnWidget = node.widgets.find(w => w.name === "random_enabled");
+    if (randEnWidget) node.properties.rs_runtime_random = {
+        enabled: !!randEnWidget.value,
+        count: Math.max(1, Math.min(node.widgets.find(w => w.name === "random_count")?.value || 1, 16)),
     };
 }
-
-/**
- * 创建通用的 restoreFromProperties 处理器
- */
-function createRestoreHandler(node, textWidget, customTextarea) {
-    return function() {
-        // In-memory cache only - no localStorage
-        const instanceUid = NodeBehaviors.getInstanceUid(node);
-        if (textWidget && textWidget.value) {
-            if (customTextarea) customTextarea.value = textWidget.value;
-        }
-    };
-}
-
-/**
- * 创建通用的初始化处理器（设置基本属性）
- */
-function createBasicNodeInitializer(node, instanceUid) {
-    return function() {
-        if (!node.properties) {
-            node.properties = {};
-        }
-        // rs_disable_state 不在这里设置默认值，由调用方根据是否有 text_input 连接来决定
-        if (node.properties.rs_waiting_prompt === undefined) {
-            node.properties.rs_waiting_prompt = "";
-        }
-        if (node.properties.rs_waiting_timestamp === undefined) {
-            node.properties.rs_waiting_timestamp = 0;
-        }
-    };
-}
-
 
 // ==========================================
 // NeoPromptAgent Node Extension
@@ -123,40 +97,7 @@ app.registerExtension({
 
         nodeType.prototype.onConfigure = function(data) {
             const result = _origOnConfigure.apply(this, arguments);
-            const node = this;
-
-            if (this.widgets) {
-                const uidWidget = this.widgets.find(w => w.name === "instance_uid");
-                if (uidWidget && this.properties?.rs_instance_uid !== undefined) {
-                    uidWidget.value = this.properties.rs_instance_uid;
-                }
-            }
-            if (this.widgets) {
-                const disableWidget = this.widgets.find(w => w.name === "disable_text_input");
-                if (disableWidget && this.properties?.rs_disable_state !== undefined) {
-                    disableWidget.value = this.properties.rs_disable_state;
-                }
-                // Restore quick_input and auto_generate state
-                const quickInputWidget = this.widgets.find(w => w.name === "quick_input");
-                if (quickInputWidget && this.properties?.rs_quick_input !== undefined) {
-                    quickInputWidget.value = this.properties.rs_quick_input;
-                }
-                const usedWidget = this.widgets.find(w => w.name === "quick_input_used");
-                if (usedWidget && this.properties?.rs_quick_input_used !== undefined) {
-                    usedWidget.value = this.properties.rs_quick_input_used;
-                }
-                const autoGenWidget = this.widgets.find(w => w.name === "auto_generate");
-                if (autoGenWidget && this.properties?.rs_auto_generate !== undefined) {
-                    autoGenWidget.value = this.properties.rs_auto_generate;
-                }
-                const randEnWidget = this.widgets.find(w => w.name === "random_enabled");
-                const randCnWidget = this.widgets.find(w => w.name === "random_count");
-                const rndProp = this.properties?.rs_runtime_random;
-                if (randEnWidget && rndProp && typeof rndProp === "object") {
-                    randEnWidget.value = !!rndProp.enabled;
-                    if (randCnWidget) randCnWidget.value = Math.max(1, Math.min(rndProp.count || 1, 16));
-                }
-            }
+            restoreHiddenWidgets(this);
             setTimeout(() => {
                 if (this.restoreFromProperties) this.restoreFromProperties();
             }, 100);
@@ -164,25 +105,7 @@ app.registerExtension({
         };
 
         nodeType.prototype.serialize = function() {
-            const node = this;
-            if (node.properties && node.widgets) {
-                const uidWidget = node.widgets.find(w => w.name === "instance_uid");
-                if (uidWidget && uidWidget.value) node.properties.rs_instance_uid = uidWidget.value;
-                const disableWidget = node.widgets.find(w => w.name === "disable_text_input");
-                if (disableWidget && node.properties) node.properties.rs_disable_state = disableWidget.value;
-                // Save quick_input and auto_generate state
-                const quickInputWidget = node.widgets.find(w => w.name === "quick_input");
-                if (quickInputWidget && node.properties) node.properties.rs_quick_input = quickInputWidget.value;
-                const usedWidget = node.widgets.find(w => w.name === "quick_input_used");
-                if (usedWidget && node.properties) node.properties.rs_quick_input_used = !!usedWidget.value;
-                const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
-                if (autoGenWidget && node.properties) node.properties.rs_auto_generate = autoGenWidget.value;
-                const randEnWidget = node.widgets.find(w => w.name === "random_enabled");
-                if (randEnWidget && node.properties) node.properties.rs_runtime_random = {
-                    enabled: !!randEnWidget.value,
-                    count: Math.max(1, Math.min(node.widgets.find(w => w.name === "random_count")?.value || 1, 16)),
-                };
-            }
+            syncHiddenWidgets(this);
             return _origSerialize.apply(this, arguments);
         };
 
@@ -284,12 +207,6 @@ app.registerExtension({
             if (node.properties?.rs_quick_input !== undefined) {
                 quickInput.value = node.properties.rs_quick_input;
             }
-
-            // Node lifecycle management
-            const behaviorManager = NodeBehaviors.createNodeBehaviorManager();
-
-            // Save references for cleanup
-            node._promptUIElements = { presetListOverlay, presetNameInput, deleteConfirmOverlay };
 
             const hasTextInputConnection = () => {
                 return node.inputs?.some(i => i.name === "text_input" && i.link !== null) || false;
@@ -446,7 +363,6 @@ app.registerExtension({
                     clearInterval(enforcementInterval);
                     enforcementInterval = null;
                 }
-                behaviorManager.stopEnforcement(node);
             };
 
             // Initialize
@@ -673,68 +589,17 @@ app.registerExtension({
         const _origSerialize = origSerialize || function() { return {}; };
         const _origOnRemoved = origOnRemoved;
 
-        // 重写 onConfigure - 共享逻辑
         nodeType.prototype.onConfigure = function(data) {
             const result = _origOnConfigure.apply(this, arguments);
-            const node = this;
-
-            if (this.properties?.rs_instance_uid && this.widgets) {
-                const uidWidget = this.widgets.find(w => w.name === "instance_uid");
-                if (uidWidget) uidWidget.value = this.properties.rs_instance_uid;
-            }
-            if (this.widgets) {
-                const disableWidget = this.widgets.find(w => w.name === "disable_text_input");
-                if (disableWidget && this.properties?.rs_disable_state !== undefined) {
-                    disableWidget.value = this.properties.rs_disable_state;
-                }
-                // Restore quick_input and auto_generate state
-                const quickInputWidget = this.widgets.find(w => w.name === "quick_input");
-                if (quickInputWidget && this.properties?.rs_quick_input !== undefined) {
-                    quickInputWidget.value = this.properties.rs_quick_input;
-                }
-                const usedWidget = this.widgets.find(w => w.name === "quick_input_used");
-                if (usedWidget && this.properties?.rs_quick_input_used !== undefined) {
-                    usedWidget.value = this.properties.rs_quick_input_used;
-                }
-                const autoGenWidget = this.widgets.find(w => w.name === "auto_generate");
-                if (autoGenWidget && this.properties?.rs_auto_generate !== undefined) {
-                    autoGenWidget.value = this.properties.rs_auto_generate;
-                }
-                const randEnWidget = this.widgets.find(w => w.name === "random_enabled");
-                const randCnWidget = this.widgets.find(w => w.name === "random_count");
-                const rndProp = this.properties?.rs_runtime_random;
-                if (randEnWidget && rndProp && typeof rndProp === "object") {
-                    randEnWidget.value = !!rndProp.enabled;
-                    if (randCnWidget) randCnWidget.value = Math.max(1, Math.min(rndProp.count || 1, 16));
-                }
-            }
+            restoreHiddenWidgets(this);
             setTimeout(() => {
                 if (this.restoreFromProperties) this.restoreFromProperties();
             }, 100);
             return result;
         };
 
-        // 重写 serialize - 共享逻辑
         nodeType.prototype.serialize = function() {
-            const node = this;
-            if (node.properties && node.widgets) {
-                const uidWidget = node.widgets.find(w => w.name === "instance_uid");
-                if (uidWidget && uidWidget.value) node.properties.rs_instance_uid = uidWidget.value;
-                const disableWidget = node.widgets.find(w => w.name === "disable_text_input");
-                if (disableWidget && node.properties) node.properties.rs_disable_state = disableWidget.value;
-                // Save quick_input and auto_generate state
-                const quickInputWidget = node.widgets.find(w => w.name === "quick_input");
-                if (quickInputWidget && node.properties) node.properties.rs_quick_input = quickInputWidget.value;
-                const usedWidget = node.widgets.find(w => w.name === "quick_input_used");
-                if (usedWidget && node.properties) node.properties.rs_quick_input_used = !!usedWidget.value;
-                const autoGenWidget = node.widgets.find(w => w.name === "auto_generate");
-                if (autoGenWidget && node.properties) node.properties.rs_auto_generate = autoGenWidget.value;
-                const randEnWidget = node.widgets.find(w => w.name === "random_enabled");
-                if (randEnWidget && node.properties) node.properties.rs_runtime_random = {
-                    enabled: !!randEnWidget.value,
-                    count: Math.max(1, Math.min(node.widgets.find(w => w.name === "random_count")?.value || 1, 16)),
-                };
-            }
+            syncHiddenWidgets(this);
             return _origSerialize.apply(this, arguments);
         };
 
@@ -847,8 +712,6 @@ app.registerExtension({
                 quickInput.value = node.properties.rs_quick_input;
             }
 
-            // 节点生命周期管理 - 使用共享的 behaviorManager
-            const behaviorManager = NodeBehaviors.createNodeBehaviorManager();
             let enforcementInterval = null;
             let waitingOverlay = null;
 
@@ -884,9 +747,6 @@ app.registerExtension({
             if (!_hasTextInput) {
                 statusBar.style.display = "none";
             }
-
-            // 保存引用用于清理
-            node._promptUIElements = { presetListOverlay, presetNameInput, deleteConfirmOverlay };
 
             // NeoPromptEncoder 特有的 UI 更新函数（包含 toggle switch 逻辑）
             const updateStatusAndUI = (() => {
@@ -954,7 +814,6 @@ app.registerExtension({
                     clearInterval(enforcementInterval);
                     enforcementInterval = null;
                 }
-                behaviorManager.stopEnforcement(node);
             };
 
             // Toggle switch click handler - NeoPromptEncoder 特有功能 (tab-style)

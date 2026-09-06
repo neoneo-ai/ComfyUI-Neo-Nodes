@@ -2,7 +2,7 @@
   "promptArea": "a cat in the rain",
   "quickInput": "a cat",
   "widgets": {
-    "prompt": "",
+    "prompt": "a cat in the rain",
     "quick_input": "a cat",
     "quick_input_used": true
   },
