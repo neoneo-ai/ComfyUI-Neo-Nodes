@@ -5,10 +5,12 @@
  */
 
 import { app } from "../../scripts/app.js";
-import { fileToBase64, imagesFromClipboard } from "./prompt-service.js";
+import { fileToBase64, imagesFromClipboard, sseStream, invokePromptStream } from "./prompt-service.js";
 import { listSkills, populateSkillOptions, createSkillDropdown } from "./skill.js";
 import { createModelConfigForm } from "./llm-setting.js";
 import { mkEl } from "./dom-utils.js";
+import { collectWorkflowContext } from "./workflow-context.js";
+import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 
 // ==========================================
 // Quick input tips rotation
@@ -861,6 +863,198 @@ function createStatusBars() {
     return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
-export {
-    createStatusBars
+// ==========================================
+// LLM 生成：✨ / Enter 触发，三条流式分支共用同一 SSE 处理
+// ==========================================
+// @ 标记 -> skill id 路由（与后端 _SKILL_MARKERS 保持一致）
+const AT_SKILL_MARKERS = {
+    "图": "reverse_prompt",
+    "图片": "reverse_prompt",
+    "反推": "reverse_prompt",
+    "image": "reverse_prompt",
+    "img": "reverse_prompt",
+    "全参考": "minimax_h3_ref",
+    "参考": "minimax_h3_ref",
+    "minimax": "minimax_h3_ref",
 };
+
+// 匹配文本中的 @ 标记，返回 skill id 或空串
+// 注意：不能用 \b（JS 中中文字符不属于 \w，中文之间永远不存在词边界）
+function matchSkillMarker(text) {
+    if (!text) return "";
+    const m = text.match(/@(图片|全参考|参考|反推|minimax|image|img|图)/);
+    return m ? (AT_SKILL_MARKERS[m[1]] || "") : "";
+}
+
+// 去除文本中的 @ 标记（标记只用于路由，不进入提示词）
+function stripSkillMarkers(text) {
+    return (text || "").replace(/@(图片|全参考|参考|反推|minimax|image|img|图)/g, "").trim();
+}
+
+// 追踪节点 image 输入插槽的上游节点（如 LoadImage），取其图片文件名
+// 返回 {kind:"input", value:"<filename>"} 或 null
+function resolveConnectedImageSource(node) {
+    try {
+        const slot = node.inputs?.find(i => i.name === "image");
+        if (!slot || slot.link == null) return null;
+        const links = node.graph?.links;
+        const link = typeof links?.get === "function" ? links.get(slot.link) : links?.[slot.link];
+        if (!link) return null;
+        const srcNode = node.graph.getNodeById(link.origin_id);
+        if (!srcNode) return null;
+        // 优先读实时 widget 值（换图立即生效）；widgets_values 仅在序列化时刷新，作为回退快照
+        const candidates = [
+            ...(srcNode.widgets || []).map(w => w?.value),
+            ...(srcNode.widgets_values || []),
+        ];
+        // 图片项可能是字符串、数组(["name","sub","type"])或对象{name,...}
+        for (const c of candidates) {
+            let v = "";
+            if (typeof c === "string") v = c.trim();
+            else if (Array.isArray(c)) v = String(c[0] ?? "").trim();
+            else if (c && typeof c === "object") v = String(c.name ?? c.filename ?? "").trim();
+            if (v && /\.(png|jpe?g|webp|bmp|gif)$/i.test(v)) {
+                return { kind: "input", value: v };
+            }
+        }
+        console.warn("image input connected but no image filename found on upstream node:", srcNode.type);
+    } catch (e) {
+        console.warn("resolveConnectedImageSource failed:", e);
+    }
+    return null;
+}
+
+/**
+ * 创建生成提示词的处理函数 - 使用选中的模板或 LLM 智能判断
+ */
+function createGenerateHandler(promptUI) {
+    return async () => {
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [], refreshMarkdownPreviewAuto } = promptUI;
+
+        const quickText = quickInput.value.trim();
+        const currentPrompt = customTextarea?.value?.trim() || "";
+
+        // If quickInput is empty, use customTextarea content as the message
+        const messageToLLM = quickText || currentPrompt;
+
+        // @ 标记、附加图片、节点 image 输入连接 -> skill 路由（反推等 vision skill）
+        const slotImage = resolveConnectedImageSource(node);
+        const imagesPayload = [
+            ...(slotImage ? [slotImage] : []),
+            ...attachedImages.map(img => img.input
+                ? { kind: "input", value: img.input }
+                : { kind: "data", data: img.data }),
+        ];
+        const hasImages = imagesPayload.length > 0;
+        const markerSkillId = matchSkillMarker(messageToLLM);
+
+        if (!messageToLLM && !hasImages) {
+            alert("Please enter a quick description or attach an image first.");
+            return;
+        }
+
+        // 工作流上下文（MiniMax H3 参数 + 叶子媒体清单）：探测图片尺寸有超时上限，失败静默降级
+        let workflowContext = null;
+        try {
+            workflowContext = await collectWorkflowContext(graph);
+        } catch (e) {
+            console.warn("collectWorkflowContext failed:", e);
+        }
+
+        // 检查是否选择了 skill（模板/任务统一选择器，值为 skill id）
+        const selectedSkillId = tplSelector?.value || "";
+
+        generateBtn.disabled = true;
+        generateBtn.textContent = "⏳";
+
+        let rafId = null;
+        let accumulated = "";
+        // 三条流式分支共用的 SSE 处理：chunk 先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排
+        const streamHandlers = (errorLabel) => ({
+            onChunk: (chunk) => {
+                if (!chunk.text) return;
+                accumulated += chunk.text;
+                if (rafId) return;
+                rafId = requestAnimationFrame(() => {
+                    rafId = null;
+                    customTextarea.value = accumulated;
+                    customTextarea.scrollTop = customTextarea.scrollHeight;
+                    refreshMarkdownPreviewAuto?.();
+                });
+            },
+            // onDone 取消了尚未执行的合并帧，必须先把 accumulated 落进 textarea，
+            // 否则 saveTextToStorage 读到旧的空 textarea，会把 widget 里的提示词冲掉
+            onDone: () => {
+                if (rafId) cancelAnimationFrame(rafId);
+                if (accumulated) customTextarea.value = accumulated;
+                saveTextToStorage(node, textWidget, customTextarea, true);
+                markQuickInputConsumed(node);
+            },
+            onError: (err) => {
+                console.error(errorLabel, err);
+                alert("Failed to process prompt: " + err);
+            }
+        });
+        try {
+            if (hasImages || markerSkillId) {
+                // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
+                if (markerSkillId && !hasImages) {
+                    alert("该 skill 需要图片：输入 @ 从工作流图片中选择、连接 image 输入或粘贴图片后再生成。");
+                    return;
+                }
+
+                generateBtn.textContent = "⏳"; // 统一短反馈，而非长串处理文案
+
+                const skillId = markerSkillId || selectedSkillId || "reverse_prompt";
+
+                const payload = {
+                    text: stripSkillMarkers(messageToLLM),
+                    skillId,
+                    images: imagesPayload,
+                    description: quickText || currentPrompt,
+                    context: workflowContext
+                };
+                await invokePromptStream(payload, streamHandlers("Skill invoke error:"));
+            } else if (selectedSkillId) {
+                // 使用选中的模板进行生成（流式）
+                generateBtn.textContent = "⏳"; // 统一短反馈
+
+                // If quickInput has content, combine with currentPrompt; otherwise use currentPrompt alone
+                const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
+
+                // 使用流式API，传入skillId
+                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Skill stream error:"), { 
+                    text: userPrompt, 
+                    skillId: selectedSkillId,
+                    description: quickText || currentPrompt,
+                    context: workflowContext 
+                });
+            } else {
+                // 使用 LLM 智能判断（流式）：LLM 直接判断用户意图并生成/改写
+                generateBtn.textContent = "⏳"; // 统一短反馈
+                // 拼接 currentPrompt 和 quickText（与选择了模版时保持一致）
+                const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
+                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Smart prompt stream error:"), {
+                    text: userPrompt,
+                    description: quickText || currentPrompt,
+                    context: workflowContext
+                });
+            }
+        } catch (e) {
+            console.error("Network Error:", e);
+            alert("Network error during processing: " + e.message);
+        } finally {
+            generateBtn.disabled = false;
+            generateBtn.textContent = "✨";
+            if (accumulated) {
+                customTextarea.value = accumulated;
+                refreshMarkdownPreviewAuto?.();
+            }
+        }
+    };
+}
+
+export {
+    createStatusBars,
+    createGenerateHandler
+}

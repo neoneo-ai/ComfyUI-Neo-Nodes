@@ -11,6 +11,7 @@ import { mkEl } from "./dom-utils.js";
 
 // 导入 NodeBehaviors
 import NodeBehaviors from "./node-behavior.js";
+import { createGenerateHandler } from "./llm-chat.js";
 
 // ==========================================
 // 本地模型自动卸载由后端在生成完成时处理：
@@ -417,7 +418,7 @@ app.registerExtension({
                 attachedImages, clearImages, refreshMarkdownPreviewAuto
             };
 
-            const handleGeneratePrompt = NodeBehaviors.createGenerateHandler(
+            const handleGeneratePrompt = createGenerateHandler(
                 { ...promptUIRef, quickInput, tplSelector });
             generateBtn.addEventListener("click", handleGeneratePrompt);
             // Enter to generate, Shift+Enter for newline
@@ -949,7 +950,7 @@ app.registerExtension({
                 attachedImages, clearImages, refreshMarkdownPreviewAuto
             };
 
-            const handleGeneratePrompt = NodeBehaviors.createGenerateHandler(
+            const handleGeneratePrompt = createGenerateHandler(
                 { ...promptUIRef, quickInput, tplSelector });
             generateBtn.addEventListener("click", handleGeneratePrompt);
             // Enter to generate, Shift+Enter for newline

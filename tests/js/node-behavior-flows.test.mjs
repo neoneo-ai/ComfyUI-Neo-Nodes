@@ -96,9 +96,8 @@ test("快捷输入 Enter：无 skill 时走流式生成并回填", async () => {
     await sleep(200);
 
     assertGolden("flow.generate-stream", flowTrace());
-    // 已知缺陷：onDone 里 cancelAnimationFrame 取消了「把 accumulated 写回 textarea」的待执行帧，
-    // 紧接着 saveTextToStorage 读到空 textarea，把 prompt widget 冲成 ""（textarea 由 finally 兜底恢复）。
-    // golden 记录的是当前行为；修复后需 npm run update-goldens。
+    // onDone 取消待执行的合并帧前先把 accumulated 写回 textarea，saveTextToStorage 才能读到最新文本。
+    // golden 记录当前行为；若行为有意变化，需 npm run update-goldens。
     assertGolden("flow.generate-stream.state", state(node, el));
 });
 
