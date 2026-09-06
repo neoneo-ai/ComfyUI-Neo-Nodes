@@ -1,7 +1,9 @@
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
-import { GalleryComponents } from './gallery-components.js';
+import { GalleryList } from './gallery-list.js';
+import { GalleryCard } from './gallery-card.js';
+import { GallerySetting } from './gallery-setting.js';
 import { createRecipesPanel } from './recipes.js';
 import {
     PAGE_SIZE,
@@ -54,9 +56,11 @@ class NeoGallery {
         this.isVisible = false;
         
         // UI components
-        this.components = new GalleryComponents(this);
-        this.searchInput = this.components.createSearchInput(this);
-        this.thumbnailSizeSlider = this.components.createThumbnailSizeSlider(this);
+        this.list = new GalleryList(this);
+        this.card = new GalleryCard(this);
+        this.settings = new GallerySetting(this);
+        this.searchInput = this.list.createSearchInput(this);
+        this.thumbnailSizeSlider = this.list.createThumbnailSizeSlider(this);
         this.customDirSettingBtn = null;
         
         // Card-based layout state
@@ -90,7 +94,7 @@ class NeoGallery {
             style: { display: "none" }
         });
 
-        const customDirBtn = this.components.createCustomDirSettingBtn(this);
+        const customDirBtn = this.list.createCustomDirSettingBtn(this);
 
         // Main content area
         this.accordion = $el("div", { className: "neo-gallery-accordion" });
@@ -118,7 +122,7 @@ class NeoGallery {
                 id: "neo-gallery-breadcrumb",
                 className: "neo-gallery-breadcrumb",
                 style: { display: 'none' }
-            }, [this.components.createBreadcrumbHome(this)]),
+            }, [this.list.createBreadcrumbHome(this)]),
             this.accordion,
             this.customDirInput
         ]);
@@ -157,7 +161,7 @@ class NeoGallery {
     }
 
     async promptAndSetCustomDir() {
-        await this.components.buildDirModal(this);
+        await this.settings.buildDirModal(this);
     }
 
     closeDirModal() {
@@ -377,7 +381,7 @@ class NeoGallery {
             const isPresets = dir.name.toLowerCase() === 'presets';
             const displayItems = isPresets ? [] : (dir.items || []);
 
-            const card = await this.components.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source, dir);
+            const card = await this.card.createDirCard(this, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source, dir);
             container.appendChild(card);
         }
 
@@ -501,7 +505,7 @@ class NeoGallery {
         this.currentView.source = '本地收藏';
         this.currentView.categoryPath = [];
         this.stopLoraRefresh();
-        this.components.updateBreadcrumb(this, [], '');
+        this.list.updateBreadcrumb(this, [], '');
 
         const stateKey = 'gallery_v2:local_bookmarks:';
         const currentUrl = new URL(window.location.href);
@@ -586,7 +590,7 @@ class NeoGallery {
                 const lbSub = item.source === "oss"
                     ? (item.dir || "")
                     : ((item.subfolder) ? `${item.dir}/${item.subfolder}` : (item.dir || ""));
-                this.components.showLightbox(this, { filename: item.filename }, lbSub);
+                this.card.showLightbox(this, { filename: item.filename }, lbSub);
             } else {
                 const segs = (item.subfolder || "").split("/").filter(Boolean);
                 await this.showDirectoryStructure(item.dir, segs);
@@ -653,7 +657,7 @@ class NeoGallery {
         this.currentView.source = CIVITAI_DIR_KEY;
         this.currentView.categoryPath = [];
         this.stopLoraRefresh();
-        this.components.updateBreadcrumb(this, [], '');
+        this.list.updateBreadcrumb(this, [], '');
 
         const stateKey = `gallery_v2:${encodeURIComponent(CIVITAI_VIEW_SOURCE)}:`;
         const currentUrl = new URL(window.location.href);
@@ -1021,7 +1025,7 @@ class NeoGallery {
             this.currentView.categoryPath = pathSegments;
             this._currentDirStructure = structure;
 
-            this.components.updateBreadcrumb(this, pathSegments, '');
+            this.list.updateBreadcrumb(this, pathSegments, '');
 
             this.renderDirectoryStructure(structure, dirName, pathSegments);
 
@@ -1190,7 +1194,7 @@ class NeoGallery {
             const subdirName = typeof subdir === 'string' ? subdir : subdir.name;
             const fullPath = [...pathSegments, subdirName];
             
-            const card = await this.components.createSubdirCard(this, subdirName, dirName, fullPath, subdir);
+            const card = await this.card.createSubdirCard(this, subdirName, dirName, fullPath, subdir);
             if (jumpTarget) {
                 const cardLora = ((subdir && subdir.lora_path) || '').replace(/\\/g, '/');
                 if (cardLora === jumpTarget) {
@@ -1225,7 +1229,7 @@ class NeoGallery {
                     const item = this._renderQueue.shift();
                     const itemSubfolder = item.subfolder || currentSubfolder;
                     const itemWithSubfolder = {...item, subfolder: itemSubfolder};
-                    const imgEl = this.components.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
+                    const imgEl = this.card.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
                     imageGrid.appendChild(imgEl);
                 }
                 this._renderedCount += count;
@@ -1273,7 +1277,7 @@ class NeoGallery {
                 const itemSubfolder = item.subfolder || subfolder;
                 // Add subfolder to item so it's available when sending
                 const itemWithSubfolder = {...item, subfolder: itemSubfolder};
-                const el = this.components.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
+                const el = this.card.createImageElement(this, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
                 if (!isImageFile(item.filename)) {
                     el.style.width = `${this.maxThumbnailSize}px`;
                 }
@@ -1367,7 +1371,7 @@ class NeoGallery {
                 const item = this._renderQueue.shift();
                 // Add subfolder to item so it's available when sending
                 const itemWithSubfolder = {...item, subfolder: subfolder};
-                const el = this.components.createImageElement(this, itemWithSubfolder, subfolder, dir.source || "");
+                const el = this.card.createImageElement(this, itemWithSubfolder, subfolder, dir.source || "");
                 if (!isImageFile(item.filename)) {
                     el.style.width = `${this.maxThumbnailSize}px`;
                 }
@@ -2172,7 +2176,7 @@ class NeoGallery {
                         const coverWrapper = card._coverWrapper || card.querySelector('.neo-gallery-card-cover-wrapper');
                         if (coverWrapper) {
                             // Remove skeleton shimmer by clearing inline styles and loading covers
-                            this.components._applyCoverImages(card, coverWrapper, this, dirName, dirName);
+                            this.card._applyCoverImages(card, coverWrapper, this, dirName, dirName);
                         }
                     }
                     
@@ -2242,7 +2246,7 @@ app.registerExtension({
                 const params = new URLSearchParams(window.location.search);
                 const galleryParam = params.get('gallery');
                 if (galleryParam && gallery.currentView.mode === 'directory') {
-                    gallery.components.updateBreadcrumb(gallery, gallery.currentView.categoryPath, '');
+                    gallery.list.updateBreadcrumb(gallery, gallery.currentView.categoryPath, '');
                 }
                 gallery.isVisible = true;
                 

@@ -63,7 +63,9 @@ ComfyUI-Neo-Nodes/
 │   └── test_workflow_repair.py # 工作流修复匹配算法
 ├── web/                    # 前端资源（WEB_DIRECTORY）
 │   ├── gallery.js          # 素材侧边栏主逻辑
-│   ├── gallery-components.js  # 素材 UI 组件（含灯箱适配：导航列表/提示词侧栏/反推/导入工作流）
+│   ├── gallery-list.js     # 列表工具条与面包屑导航（搜索/缩略图尺寸/设置按钮）
+│   ├── gallery-card.js     # 单卡片内容与交互：目录卡封面、缩略图卡、发送/收藏菜单、灯箱适配（导航列表/提示词侧栏/反推/导入工作流）
+│   ├── gallery-setting.js  # 目录管理配置弹窗（自定义目录/OSS/Civitai 同步）
 │   ├── gallery-utils.js    # 素材工具函数
 │   ├── gallery.css
 │   ├── lightbox.js         # 灯箱查看器
@@ -105,7 +107,7 @@ ComfyUI-Neo-Nodes/
 
 | 文件 | 职责 |
 |------|------|
-| `gallery.js` / `gallery-components.js` / `gallery-utils.js` / `gallery.css` | 素材侧边栏：目录卡片、懒加载列表、搜索、上传删除、设置弹窗 |
+| `gallery.js` / `gallery-list.js` / `gallery-card.js` / `gallery-setting.js` / `gallery-utils.js` / `gallery.css` | 素材侧边栏：目录卡片、懒加载列表、搜索、上传删除、设置弹窗 |
 | `lightbox.js` / `lightbox.css` | 通用灯箱组件：异步 blob 加载、相邻预加载、缩放平移、尺寸显示、`panelProvider` 侧栏钩子；素材与配方通过各自适配接入 |
 | `node-behavior.js` | 节点级交互行为（拖拽图片、粘贴、`@` 引用等） |
 | `combo-box.js` | 通用下拉选择组件 |
