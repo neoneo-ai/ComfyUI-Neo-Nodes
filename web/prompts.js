@@ -179,7 +179,7 @@ app.registerExtension({
                 customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
             // Populate template selector, restore last selection and sync to hidden widget
@@ -417,7 +417,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, graph: node.graph, statusBar: null,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             };
 
             const handleGeneratePrompt = createGenerateHandler(
@@ -675,7 +675,7 @@ app.registerExtension({
                 customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
             // Populate template selector, restore last selection and sync to hidden widget
@@ -941,7 +941,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, graph: node.graph, statusBar,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             };
 
             const handleGeneratePrompt = createGenerateHandler(

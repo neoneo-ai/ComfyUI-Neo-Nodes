@@ -185,7 +185,10 @@ function renderMarkdown(src) {
 // ==========================================
 // skill 选择列表：分类标签 + 把 skills 填充进原生 <select>（combo-box 数据源）
 // ==========================================
+// image_gen 组排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
+// vision/task/style/custom 依次跟随；未知分类回落 style
 const CATEGORY_LABELS = {
+    "image_gen": { label: "⚡ 出图 (Krea2)", order: -1 },
     "vision": { label: "🖼️ 图像 / 反推", order: 0 },
     "task": { label: "⚙️ 任务", order: 1 },
     "style": { label: "🎨 风格模板", order: 2 },
@@ -211,6 +214,9 @@ function populateSkillOptions(selectEl, skills) {
             opt.value = s.id;
             opt.dataset.multiTurn = s.multi_turn ? "1" : "";
             opt.dataset.source = s.source || "";
+            // 出图 skill 元数据：genImage 走后端出图分支，ratio 为无参考图时的默认比例
+            opt.dataset.genImage = s.gen_image ? "1" : "";
+            opt.dataset.ratio = s.ratio || "";
             const imgBadge = s.needs_image ? "📷 " : "";
             opt.textContent = `${imgBadge}${s.name || s.id}`;
             optgroup.appendChild(opt);

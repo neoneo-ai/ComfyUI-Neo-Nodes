@@ -13,6 +13,8 @@ import { mkEl } from "./dom-utils.js";
 import { collectWorkflowContext } from "./workflow-context.js";
 import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 import { createAtImagePicker } from "./at-picker.js";
+import { createImageGenSettingsForm, requestGeneration, pollTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated } from "./image-gen.js";
+import { Lightbox } from "./lightbox.js";
 
 // ==========================================
 // Quick input tips rotation
@@ -412,20 +414,46 @@ function createStatusBars() {
     autoHint.textContent = "每次运行时用 LLM 基于描述自动增强提示词";
     autoMenu.appendChild(autoToggleRow);
     autoMenu.appendChild(autoHint);
-    // LLM 配置表单（原设置弹窗的 LLM Settings 标签，现整体挂进自动增强菜单）
+    // 设置区 tab 切换：LLM Settings / 出图设置（两张表单都较长，纵向堆叠菜单过深；
+    // 打开时两个表单都 load、关闭时都 save，隐藏面板的输入值照常读写，切 tab 不丢状态）
     const modelForm = createModelConfigForm();
+    const genForm = createImageGenSettingsForm();
     const autoDivider = mkEl("div", "rs-runtime-divider");
-    const autoSectionTitle = mkEl("div", "rs-runtime-section-title");
-    autoSectionTitle.textContent = "🤖 LLM Settings";
+    const autoTabs = mkEl("div", "rs-auto-tabs");
+    const llmTabBtn = mkEl("button", "rs-auto-tab rs-auto-tab-active");
+    llmTabBtn.type = "button";
+    llmTabBtn.textContent = "🤖 LLM Settings";
+    const genTabBtn = mkEl("button", "rs-auto-tab");
+    genTabBtn.type = "button";
+    genTabBtn.textContent = "🖼️ 出图设置";
+    autoTabs.append(llmTabBtn, genTabBtn);
+    const llmPanel = mkEl("div", "rs-auto-panel");
+    llmPanel.appendChild(modelForm.el);
+    const genPanel = mkEl("div", "rs-auto-panel");
+    genPanel.style.display = "none";
+    genPanel.appendChild(genForm.el);
+    const setAutoTab = (showLlm) => {
+        llmTabBtn.classList.toggle("rs-auto-tab-active", showLlm);
+        genTabBtn.classList.toggle("rs-auto-tab-active", !showLlm);
+        llmPanel.style.display = showLlm ? "" : "none";
+        genPanel.style.display = showLlm ? "none" : "";
+    };
+    llmTabBtn.addEventListener("click", () => setAutoTab(true));
+    genTabBtn.addEventListener("click", () => setAutoTab(false));
     autoMenu.appendChild(autoDivider);
-    autoMenu.appendChild(autoSectionTitle);
-    autoMenu.appendChild(modelForm.el);
+    autoMenu.appendChild(autoTabs);
+    autoMenu.appendChild(llmPanel);
+    autoMenu.appendChild(genPanel);
     const autoWrap = mkEl("div", "rs-auto-wrap");
     autoWrap.appendChild(generateBtn);
     autoWrap.appendChild(genCaret);
 
     let autoMenuOpen = false;
-    const closeAutoMenu = () => { if (autoMenuOpen) modelForm.save(); autoMenuOpen = false; autoMenu.style.display = "none"; };
+    const closeAutoMenu = () => {
+        if (autoMenuOpen) { modelForm.save(); genForm.save(); }
+        autoMenuOpen = false;
+        autoMenu.style.display = "none";
+    };
     const openAutoMenu = () => {
         autoMenu.style.display = "block";
         const r = genCaret.getBoundingClientRect();
@@ -437,6 +465,7 @@ function createStatusBars() {
         autoMenu.style.left = left + "px";
         autoMenu.style.top = top + "px";
         modelForm.load();
+        genForm.load();
         autoMenuOpen = true;
     };
     genCaret.addEventListener("click", (e) => {
@@ -569,14 +598,14 @@ function stripSkillMarkers(text) {
 }
 
 // 追踪节点 image 输入插槽的上游节点（如 LoadImage），取其图片文件名
-// 返回 {kind:"input", value:"<filename>"} 或 null
+// 返回 {kind:"input", value:"<filename>"}、{kind:"unresolved"}（图已连接但读不到文件名）或 null（未连接）
 function resolveConnectedImageSource(node) {
     try {
-        const slot = node.inputs?.find(i => i.name === "image");
+        const slot = node.inputs?.find(i => /^image/i.test(i.name || ""));
         if (!slot || slot.link == null) return null;
         const links = node.graph?.links;
         const link = typeof links?.get === "function" ? links.get(slot.link) : links?.[slot.link];
-        if (!link) return null;
+        if (!link) return { kind: "unresolved" };
         const srcNode = node.graph.getNodeById(link.origin_id);
         if (!srcNode) return null;
         // 优先读实时 widget 值（换图立即生效）；widgets_values 仅在序列化时刷新，作为回退快照
@@ -595,10 +624,84 @@ function resolveConnectedImageSource(node) {
             }
         }
         console.warn("image input connected but no image filename found on upstream node:", srcNode.type);
+        return { kind: "unresolved" };
     } catch (e) {
         console.warn("resolveConnectedImageSource failed:", e);
+        return { kind: "unresolved" };
     }
-    return null;
+}
+
+// ==========================================
+// Krea2 出图 skill：提交 → 轮询 → 结果块（进度 / 取消 / 缩略图 / 发送装配）
+// ==========================================
+
+// 预览区只加载 320px 缩略图（复用 gallery thumbnail 缓存接口），原图留给灯箱按需加载
+function genThumbSrc(image) {
+    return `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail`
+        + `?filename=${encodeURIComponent(image.filename)}`
+        + `&subfolder=${encodeURIComponent(image.subfolder || "")}&size=320`;
+}
+
+async function runChatImageGeneration({ generateBtn, controller }, text, references, opt) {
+    if (!controller) return;
+    generateBtn.disabled = true;
+    generateBtn.textContent = "⏳";
+    // 节点 image 输入已连接但解析不到文件名：直接报错，绝不静默降级成文生图
+    const unresolvedCount = references.filter(r => r && r.kind === "unresolved").length;
+    const resolvedRefs = references.filter(r => r && r.kind !== "unresolved");
+    if (unresolvedCount > 0) {
+        const state = {
+            running: false, cancelId: "", images: [], warnings: [],
+            statusText: "参考图读取失败",
+            error: "节点的图片输入已连接，但无法从上游节点解析出图片文件。请在画布上用 LoadImage 节点并提供图片，或直接粘贴/附加图片后重试。",
+        };
+        controller.open();
+        controller.set(state);
+        generateBtn.disabled = false;
+        generateBtn.textContent = "✨";
+        return;
+    }
+    const hasRefs = resolvedRefs.length > 0;
+    const state = {
+        running: true, cancelId: "", error: "", images: [], warnings: [],
+        statusText: hasRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交出图任务…",
+    };
+    controller.open();
+    controller.set(state);
+    try {
+        const promptText = await buildGenPrompt(opt.value, text, hasRefs);
+        const body = { prompt: promptText, references: resolvedRefs };
+        // 无参考图时用 skill 声明的默认比例；有参考图（四视图）由后端固定 16:9，无需声明
+        if (!hasRefs && opt.dataset.ratio) {
+            body.skill_ratio = opt.dataset.ratio;
+        }
+        const snap = await requestGeneration(body);
+        state.cancelId = snap.task_id;
+        state.warnings = snap.warnings || [];
+        state.statusText = "排队中…";
+        controller.set(state);
+        const final = await pollTask(snap.task_id, (s) => {
+            state.statusText = s.status === "running" ? "出图中…" : "排队中…";
+            controller.set(state);
+        });
+        if (final.status === "succeeded") {
+            state.images = final.images || [];
+            state.statusText = `完成：${state.images.length} 张 · ${final.width}×${final.height}`;
+        } else if (final.status === "cancelled") {
+            state.statusText = "已取消";
+        } else {
+            state.statusText = "失败";
+            state.error = final.error || "出图失败";
+        }
+    } catch (e) {
+        state.statusText = "失败";
+        state.error = e?.message || String(e);
+    } finally {
+        state.running = false;
+        controller.set(state);
+        generateBtn.disabled = false;
+        generateBtn.textContent = "✨";
+    }
 }
 
 /**
@@ -627,6 +730,15 @@ function createGenerateHandler(promptUI) {
 
         if (!messageToLLM && !hasImages) {
             alert("Please enter a quick description or attach an image first.");
+            return;
+        }
+
+        // 选中出图 skill：绕过 LLM，直连后端出图流程，结果渲染在 Markdown 预览区
+        const selectedOpt = tplSelector
+            ? [...tplSelector.options].find(o => o.value === tplSelector.value) : null;
+        if (selectedOpt?.dataset.genImage === "1") {
+            await runChatImageGeneration({ generateBtn, controller: promptUI.genResultsController },
+                messageToLLM, imagesPayload, selectedOpt);
             return;
         }
 
@@ -795,12 +907,14 @@ function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
     // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
     let mdPreviewOn = false;
     // 渲染预览并把 GFM 任务列表复选框设为可交互（marked 默认输出 disabled，这里放开）
+    // 出图结果块（若有）追加在 Markdown 内容之后
     function paintMdPreview() {
         mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
         for (const box of mdPreview.querySelectorAll('input[type="checkbox"]')) {
             box.disabled = false;
             box.style.cursor = "pointer";
         }
+        if (genState) paintGenBlock();
     }
     // 切换源码中第 boxIndex 个任务项的勾选（[ ]/[x]），未命中则原样返回
     function setTaskItemChecked(text, boxIndex, checked) {
@@ -862,6 +976,75 @@ function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
         }
     });
 
+    // 出图结果块状态（Krea2 出图 skill 专用）：runChatImageGeneration 通过 controller 更新，
+    // 随 Markdown 预览重绘附加在内容之后；预览未开启时由 open() 强制切到预览展示进度
+    let genState = null;
+    function paintGenBlock() {
+        const block = mkEl("div", "rs-gen-block");
+        const head = mkEl("div", "rs-gen-head");
+        head.textContent = `🖼️ 出图 · ${genState.statusText}`;
+        if (genState.running && genState.cancelId) {
+            const cancelBtn = mkEl("button", "rs-gen-cancel");
+            cancelBtn.type = "button";
+            cancelBtn.textContent = "取消";
+            cancelBtn.addEventListener("click", () => {
+                cancelBtn.disabled = true;
+                cancelTask(genState.cancelId);
+            });
+            head.appendChild(cancelBtn);
+        }
+        block.appendChild(head);
+        for (const warn of genState.warnings || []) {
+            const warnEl = mkEl("div", "rs-gen-warn");
+            warnEl.textContent = `⚠ ${warn}`;
+            block.appendChild(warnEl);
+        }
+        if (genState.error) {
+            const errEl = mkEl("div", "rs-gen-error");
+            errEl.textContent = `✕ ${genState.error}`;
+            block.appendChild(errEl);
+        }
+        if (genState.images?.length) {
+            const grid = mkEl("div", "rs-gen-thumbs");
+            genState.images.forEach((image, i) => {
+                const cell = mkEl("div", "rs-gen-thumb");
+                const img = mkEl("img");
+                // 缩略图走 gallery 的 thumbnail 缓存接口（320px），点击才用灯箱加载原图
+                img.src = genThumbSrc(image);
+                img.loading = "lazy";
+                img.addEventListener("click", () => Lightbox.open({
+                    items: genState.images.map(im => ({ kind: "image", url: im.url, title: im.filename })),
+                    index: i,
+                }));
+                cell.appendChild(img);
+                const sendBtn = mkEl("button", "rs-gen-send");
+                sendBtn.type = "button";
+                sendBtn.textContent = "发送到节点";
+                sendBtn.addEventListener("click", () => sendImageToLoadImage(image, sendBtn));
+                cell.appendChild(sendBtn);
+                grid.appendChild(cell);
+            });
+            block.appendChild(grid);
+            if (genState.images.length > 1) {
+                const assembleBtn = mkEl("button", "rs-gen-assemble");
+                assembleBtn.type = "button";
+                assembleBtn.textContent = "⏩ 全部装配到节点";
+                assembleBtn.addEventListener("click", () => assembleAllGenerated(genState.images));
+                block.appendChild(assembleBtn);
+            }
+        }
+        mdPreview.appendChild(block);
+    }
+    const genResultsController = {
+        set(state) {
+            genState = state;
+            if (mdPreviewOn) paintMdPreview();
+        },
+        open() {
+            if (!mdPreviewOn) setMdPreview(true);
+        },
+    };
+
     // 轻量 Markdown 识别：仅当出现标题 / 代码块 / 列表 / 加粗等强信号才判定为 Markdown，避免普通提示词误判
     function looksLikeMarkdown(text) {
         if (!text) return false;
@@ -888,7 +1071,8 @@ function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
         el: customTextareaWrapper,
         actionGroupEl: buttonGroup,
         skillHintEl: skillHint,
-        refreshMarkdownPreviewAuto
+        refreshMarkdownPreviewAuto,
+        genResultsController
     };
 }
 

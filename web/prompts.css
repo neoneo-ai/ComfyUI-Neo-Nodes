@@ -2358,6 +2358,232 @@
     background: #2a2a2a;
     border: 1px solid #5090cc;
     border-radius: 6px;
+
+/* ==========================================
+   自动增强菜单设置 tab：🤖 LLM Settings / 🖼️ 出图设置
+   ========================================== */
+.rs-auto-tabs {
+    display: flex;
+    gap: 4px;
+    margin: 8px 0;
+}
+.rs-auto-tab {
+    flex: 1;
+    padding: 4px 0;
+    font-size: 11px;
+    color: #999;
+    background: #333;
+    border: 1px solid #444;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.rs-auto-tab:hover { color: #ccc; }
+.rs-auto-tab-active {
+    color: #fff;
+    background: #35507a;
+    border-color: #5090cc;
+}
+/* 两个设置面板统一同宽（LLM Settings 偏窄 / 出图设置偏宽，取折中），
+   避免切换 tab 时菜单宽度随内容跳动 */
+.rs-auto-panel {
+    width: 410px;
+}
+
+/* ==========================================
+   Krea2 出图（聊天窗口 skill）：结果块 / 缩略图 / 发送菜单 / 设置表单
+   ========================================== */
+.rs-gen-block {
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    background: #232323;
+}
+.rs-gen-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    color: #ccc;
+}
+.rs-gen-cancel {
+    flex: none;
+    padding: 2px 10px;
+    font-size: 11px;
+    color: #f0c674;
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rs-gen-cancel:hover { background: #3d3d3d; }
+.rs-gen-cancel:disabled { opacity: 0.5; cursor: default; }
+.rs-gen-warn {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #d8b45a;
+}
+.rs-gen-error {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #e07b7b;
+    word-break: break-word;
+}
+.rs-gen-thumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+.rs-gen-thumb {
+    width: 116px;
+}
+.rs-gen-thumb img {
+    display: block;
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid #3a3a3a;
+    background: #111;
+    cursor: zoom-in; /* 点击用灯箱打开原图 */
+}
+.rs-gen-send {
+    width: 100%;
+    margin-top: 4px;
+    padding: 3px 0;
+    font-size: 11px;
+    color: #9ec5e8;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rs-gen-send:hover { background: #333; }
+.rs-gen-assemble {
+    display: block;
+    margin-top: 8px;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: #b9e08a;
+    background: #2a2a2a;
+    border: 1px solid #4a5a3a;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rs-gen-assemble:hover { background: #333; }
+.rs-gen-send-menu {
+    position: fixed;
+    z-index: 10010;
+    min-width: 170px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 4px;
+    background: #1f1f1f;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.rs-gen-send-menu-title {
+    padding: 4px 6px;
+    font-size: 11px;
+    color: #888;
+}
+.rs-gen-send-menu-item {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    text-align: left;
+    font-size: 12px;
+    color: #ddd;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rs-gen-send-menu-item:hover { background: #2f2f2f; }
+.rs-gen-settings { display: flex; flex-direction: column; gap: 6px; }
+/* 三个数值/短文本参数一行三列（张数 / 长边 / 默认比例） */
+.rs-gen-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+}
+.rs-gen-grid .rs-config-row {
+    gap: 2px;
+}
+.rs-gen-grid .rs-form-label {
+    font-size: 10px;
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+.rs-gen-grid .rs-form-input {
+    padding: 4px 5px;
+    font-size: 11px;
+}
+.rs-gen-lora-list { display: flex; flex-direction: column; gap: 4px; }
+.rs-gen-lora-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.rs-gen-lora-row .rs-combo-box { flex: 1 1 auto; min-width: 0; }
+.rs-gen-lora-strength {
+    flex: none;
+    width: 58px;
+    padding: 4px 6px;
+    font-size: 11px;
+    color: #ccc;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    outline: none;
+    box-sizing: border-box;
+}
+.rs-gen-lora-del {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+    color: #c97b7b;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.rs-gen-lora-del:hover { background: #3a2a2a; }
+.rs-gen-lora-add {
+    align-self: flex-start;
+    margin-top: 2px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: #9ec5e8;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rs-gen-lora-add:hover { background: #333; }
+.rs-gen-save {
+    width: 100%;
+    padding: 6px 0;
+    font-size: 12px;
+    color: #fff;
+    background: #3a5a8c;
+    border: 1px solid #5090cc;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rs-gen-save:hover { background: #456ba8; }
+.rs-gen-save:disabled { opacity: 0.6; cursor: default; }
+
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
     padding: 8px 10px;
     min-width: 210px;

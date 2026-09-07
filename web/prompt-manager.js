@@ -913,6 +913,7 @@ function createPromptManagerUI() {
             quickInput,
             customTextarea,
             refreshMarkdownPreviewAuto: promptOutput.refreshMarkdownPreviewAuto,
+            genResultsController: promptOutput.genResultsController,
             toggleSwitch,
             localTab,
             externalTab,

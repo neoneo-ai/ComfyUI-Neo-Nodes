@@ -23,48 +23,103 @@ body
       label.rs-auto-generate-label "自动增强"
     div.rs-runtime-hint "每次运行时用 LLM 基于描述自动增强提示词"
     div.rs-runtime-divider
-    div.rs-runtime-section-title "🤖 LLM Settings"
-    div.rs-remote-form
-      div.rs-settings-info
-        div.rs-settings-title "LLM Provider"
-        div.rs-settings-desc "Choose a provider for AI features"
-      div.rs-config-row
-        label.rs-form-label "Provider"
-        select#rs-remote-provider.rs-form-input.rs-remote-provider
-          option <value=local selected> "Local GGUF (llama.cpp)"
-          option <value=openai> "OpenAI Compatible"
-          option <value=lmstudio> "LM Studio"
-          option <value=ollama> "Ollama"
-          option <value=openrouter> "OpenRouter"
-      div.rs-config-row <display=none>
-        label.rs-form-label "LLM Models Dir"
-        input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=Default: ComfyUI/models/LLM>
-        div.rs-form-hint "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配"
-      div#rs-model-input-wrapper.rs-config-row
-        label.rs-form-label "Model"
-        input#rs-remote-model.rs-form-input.rs-remote-model <type=text placeholder=e.g., gpt-4o-mini display=none>
-        div.rs-model-select-box <display=none>
-          div
-            input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-            button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
-          select#rs-remote-model-select.rs-form-input.rs-remote-model <display=none>
-        div.rs-model-select-box <display=none>
-          div
-            input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-            button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
-          select#rs-local-model-select.rs-form-input.rs-local-model-select <display=none>
-      div.rs-config-row
-        label.rs-form-label "API Key"
-        input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=Optional for local services>
-      div.rs-config-row
-        label.rs-form-label "Base URL"
-        input#rs-remote-base-url.rs-form-input.rs-remote-base-url <type=text placeholder=Leave empty for default>
-      div.rs-provider-save-status <display=none>
-      div.rs-config-row.rs-local-unload <display=none>
-        div.rs-local-unload-line
-          input#rs-local-auto-unload.rs-form-checkbox <type=checkbox val="on">
-          label.rs-form-label "本节点执行完自动卸载本地模型"
-        div.rs-form-hint
+    div.rs-auto-tabs
+      button.rs-auto-tab.rs-auto-tab-active <type=button> "🤖 LLM Settings"
+      button.rs-auto-tab <type=button> "🖼️ 出图设置"
+    div.rs-auto-panel
+      div.rs-remote-form
+        div.rs-settings-info
+          div.rs-settings-title "LLM Provider"
+          div.rs-settings-desc "Choose a provider for AI features"
+        div.rs-config-row
+          label.rs-form-label "Provider"
+          select#rs-remote-provider.rs-form-input.rs-remote-provider
+            option <value=local selected> "Local GGUF (llama.cpp)"
+            option <value=openai> "OpenAI Compatible"
+            option <value=lmstudio> "LM Studio"
+            option <value=ollama> "Ollama"
+            option <value=openrouter> "OpenRouter"
+        div.rs-config-row <display=none>
+          label.rs-form-label "LLM Models Dir"
+          input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=Default: ComfyUI/models/LLM>
+          div.rs-form-hint "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配"
+        div#rs-model-input-wrapper.rs-config-row
+          label.rs-form-label "Model"
+          input#rs-remote-model.rs-form-input.rs-remote-model <type=text placeholder=e.g., gpt-4o-mini display=none>
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+            select#rs-remote-model-select.rs-form-input.rs-remote-model <display=none>
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+            select#rs-local-model-select.rs-form-input.rs-local-model-select <display=none>
+        div.rs-config-row
+          label.rs-form-label "API Key"
+          input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=Optional for local services>
+        div.rs-config-row
+          label.rs-form-label "Base URL"
+          input#rs-remote-base-url.rs-form-input.rs-remote-base-url <type=text placeholder=Leave empty for default>
+        div.rs-provider-save-status <display=none>
+        div.rs-config-row.rs-local-unload <display=none>
+          div.rs-local-unload-line
+            input#rs-local-auto-unload.rs-form-checkbox <type=checkbox val="on">
+            label.rs-form-label "本节点执行完自动卸载本地模型"
+          div.rs-form-hint
+    div.rs-auto-panel <display=none>
+      div.rs-gen-settings
+        div.rs-config-row
+          label.rs-form-label "出图模型"
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+            select
+        div.rs-config-row
+          label.rs-form-label "Text Encoder"
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+            select
+        div.rs-config-row
+          label.rs-form-label "VAE"
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+            select
+        div.rs-config-row
+          label.rs-form-label "LoRA"
+          div.rs-gen-lora-list
+          button.rs-gen-lora-add <type=button> "+ 添加 LoRA"
+        div.rs-gen-grid
+          div.rs-config-row
+            label.rs-form-label "出图张数"
+            input.rs-form-input <type=number val="1">
+          div.rs-config-row
+            label.rs-form-label "长边尺寸"
+            div.rs-model-select-box <display=none>
+              div
+                input.rs-form-input.rs-combo-input <type=text placeholder=选择>
+                button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              select
+          div.rs-config-row
+            label.rs-form-label "默认比例"
+            div.rs-model-select-box <display=none>
+              div
+                input.rs-form-input.rs-combo-input <type=text placeholder=选择>
+                button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              select
+        div.rs-config-row
+          button.rs-gen-save <type=button> "💾 保存设置"
+  div.rs-combo-list <display=none>
+  div.rs-combo-list <display=none>
+  div.rs-combo-list <display=none>
+  div.rs-combo-list <display=none>
+  div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>
   div.rs-preset-list-overlay

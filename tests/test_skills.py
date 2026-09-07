@@ -798,5 +798,79 @@ class TestFetchReferenceImage(unittest.TestCase):
         self.assertIn("out of range", caption)
 
 
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestGenImageSkill(unittest.TestCase):
+    """gen_image/ratio 元数据：预设扫描透传与编辑保存保留"""
+
+    def setUp(self):
+        self.skill_mod = getattr(prompts_mod, "skill", None)
+        if self.skill_mod is None:
+            self.skipTest("prompts 未暴露 skill 模块")
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_dir = self.skill_mod.SKILL_CUSTOM_DIR
+        self.skill_mod.SKILL_CUSTOM_DIR = self._tmp.name
+
+    def tearDown(self):
+        self.skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
+        self._tmp.cleanup()
+
+    def _write_skill(self, sid, meta_lines, body="body"):
+        d = os.path.join(self._tmp.name, sid)
+        os.makedirs(d, exist_ok=True)
+        text = "\n".join(["---"] + meta_lines + ["---", "", body])
+        with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def _read_meta(self, sid):
+        main = os.path.join(self._tmp.name, sid, "skill.md")
+        with open(main, encoding="utf-8") as f:
+            meta, body = self.skill_mod.split_frontmatter(f.read())
+        return meta, body
+
+    def _scanned(self):
+        return {s["id"]: s for s in self.skill_mod.scan_skills()}
+
+    def test_gen_meta_scanned(self):
+        self._write_skill("gen-a", [
+            "name: Gen A", "category: image_gen", "gen_image: true",
+            "ratio: ''",
+        ])
+        s = self._scanned().get("gen-a")
+        self.assertIsNotNone(s)
+        self.assertTrue(s["gen_image"])
+        self.assertEqual(s["category"], "image_gen")
+        self.assertEqual(s["ratio"], "")
+
+    def test_gen_meta_default_absent(self):
+        self._write_skill("gen-b", ["name: Gen B"])
+        s = self._scanned().get("gen-b")
+        self.assertFalse(s["gen_image"])
+        self.assertEqual(s["ratio"], "")
+
+    def test_preset_image_gen_skill_scanned(self):
+        s = self._scanned().get("image_gen")
+        self.assertIsNotNone(s)
+        self.assertTrue(s["gen_image"])
+        self.assertEqual(s["category"], "image_gen")
+
+    def test_save_skill_main_preserves_gen_meta(self):
+        self._write_skill("gen-c", [
+            "name: Gen C", "gen_image: true", "ratio: '3:4'",
+        ])
+        self.assertTrue(self.skill_mod.save_skill_main("gen-c", "Gen C renamed", "body2"))
+        meta, body = self._read_meta("gen-c")
+        self.assertIs(meta.get("gen_image"), True)
+        self.assertEqual(meta.get("ratio"), "3:4")
+        self.assertEqual(body, "body2")
+
+    def test_serialize_frontmatter_round_trip(self):
+        text = self.skill_mod.serialize_frontmatter(
+            {"name": "R", "gen_image": True, "ratio": ""}, "body")
+        meta, body = self.skill_mod.split_frontmatter(text)
+        self.assertIs(meta.get("gen_image"), True)
+        self.assertEqual(meta.get("ratio"), "")
+        self.assertEqual(body, "body")
+
+
 if __name__ == '__main__':
     unittest.main()

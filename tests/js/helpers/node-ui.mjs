@@ -8,6 +8,7 @@ export const SKILLS = [
     { id: "minimax_h3_ref", name: "全参考", category: "vision", source: "preset", needs_image: true, multi_turn: true },
     { id: "story_expand", name: "故事扩写", category: "task", source: "custom", needs_image: false, multi_turn: true },
     { id: "anime_style", name: "动漫风格", category: "style", source: "preset", needs_image: false, multi_turn: false },
+    { id: "image_gen", name: "出图 Krea2 三视图", category: "image_gen", source: "preset", needs_image: false, gen_image: true, ratio: "", multi_turn: false },
 ];
 
 export async function createNodeViaExtension(extensionName, widgets, nodeId) {

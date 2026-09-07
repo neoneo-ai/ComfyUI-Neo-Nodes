@@ -31,6 +31,11 @@ export function makeGraph() {
         setDirtyCanvas() {
             graph.dirtyCalls += 1;
         },
+        add(node) {
+            node.graph = graph;
+            graph._nodes.push(node);
+            return node;
+        },
         getNodeById(id) {
             return graph._nodes.find((n) => String(n.id) === String(id)) ?? null;
         },

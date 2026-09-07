@@ -1,0 +1,310 @@
+// 出图（Krea2）skill 交互流：节点 image 连接 → 参考图请求；无连接 → 文生图；
+// 上游无文件名 → 明确报错、不发请求。
+import test from "node:test";
+import assert from "node:assert/strict";
+import { beforeEach } from "node:test";
+import {
+    resetEnv,
+    mockRoute,
+    clearRoutes,
+    jsonResponse,
+    fetchLog,
+    sleep,
+} from "./setup.mjs";
+import { getExtension, appState } from "./mocks/comfy-app.mjs";
+import { makeGraph, makeNode, addNode, connect, agentWidgets, slot, outSlot } from "./helpers/fake-graph.mjs";
+
+const SKILL_WITH_IMAGE_GEN = [{ id: "image_gen", name: "出图", category: "image_gen", source: "preset", gen_image: true }];
+
+beforeEach(() => {
+    resetEnv();
+    clearRoutes();
+    mockRoute("/rs_prompts/skills", () => jsonResponse(SKILL_WITH_IMAGE_GEN));
+    // 出图表单 load/save 与状态轮询依赖的路由
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ model: "", loras: [], count: 1, base_resolution: 1280, default_ratio: "1:1" }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [], loras: [] }));
+});
+
+// 经真实注册流程把 onNodeCreated 挂到一个指定 graph 内的 NeoPromptAgent 节点
+async function attachAgent(gen) {
+    await import("../../web/prompts.js");
+    const ext = getExtension("NeoPromptAgent");
+    const def = { prototype: {} };
+    await ext.beforeRegisterNodeDef(def, { name: "NeoPromptAgent" }, null);
+    def.prototype.onNodeCreated.call(gen);
+    return gen;
+}
+
+function parts(node) {
+    const root = node.domWidgets[0].el;
+    return {
+        root,
+        generateBtn: root.querySelector(".rs-generate-btn"),
+        selector: root.querySelector("select.rs-tpl-selector"),
+        preview: root.querySelector(".rs-md-preview"),
+    };
+}
+
+function setSkill(selector, id) {
+    selector.value = id;
+    selector.dispatchEvent(new Event("change"));
+}
+
+function genCalls() {
+    return fetchLog.filter((c) => c.path === "/neo_image_gen/generate");
+}
+
+// 在 graph 内新建 agent 节点（与 src 同一 graph，便于连接）
+function makeAgentIn(def, graph, id) {
+    return makeNode({
+        id, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    });
+}
+
+test("节点 image 连接 LoadImage：出图请求携带参考图，走重绘", async () => {
+    const graph = makeGraph();
+    const src = addNode(graph, makeNode({
+        id: 1, type: "LoadImage",
+        widgets: [{ name: "image", value: "ref.png", type: "combo" }],
+        inputs: [], outputs: [outSlot("IMAGE", "IMAGE")],
+    }));
+
+    const gen = addNode(graph, makeNode({
+        id: 2, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    connect(graph, src, gen, { toSlot: 1, type: "IMAGE" });
+    await attachAgent(gen);
+
+    const el = parts(gen);
+    await sleep(400); // 等待 populateTemplateSelector 异步拉取 skills 并填充 option
+    setSkill(el.selector, "image_gen");
+
+    let body = null;
+    mockRoute("/neo_image_gen/generate", (b) => { body = b; return jsonResponse({ task_id: "t1", status: "queued", images: [], width: 0, height: 0 }); });
+    mockRoute("/neo_image_gen/status/t1", () => jsonResponse({ task_id: "t1", status: "succeeded", images: [{ filename: "a.png", subfolder: "", url: "/a.png" }], width: 2, height: 3 }));
+
+    el.root.querySelector(".rs-quick-input").value = "";
+    el.generateBtn.click();
+    await sleep(300);
+
+    assert.ok(body, "应发出 /neo_image_gen/generate 请求");
+    assert.equal(body.references.length, 1);
+    assert.equal(body.references[0].kind, "input");
+    assert.equal(body.references[0].value, "ref.png");
+});
+
+test("无节点 image 连接且无附加图：出图请求不携带参考图，走文生图", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 2, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    let body = null;
+    mockRoute("/neo_image_gen/generate", (b) => { body = b; return jsonResponse({ task_id: "t2", status: "queued", images: [], width: 0, height: 0 }); });
+    mockRoute("/neo_image_gen/status/t2", () => jsonResponse({ task_id: "t2", status: "succeeded", images: [], width: 1, height: 1 }));
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(300);
+
+    assert.ok(body, "应发出 /neo_image_gen/generate 请求");
+    assert.equal(body.references.length, 0);
+});
+
+test("image 已连接但上游无文件名：出图明确报错，不发 /neo_image_gen/generate", async () => {
+    const graph = makeGraph();
+    const src = addNode(graph, makeNode({
+        id: 3, type: "SomethingOutputImage",
+        widgets: [{ name: "x", value: "", type: "INT" }],
+        inputs: [], outputs: [outSlot("IMAGE", "IMAGE")],
+    }));
+    const gen = addNode(graph, makeNode({
+        id: 4, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    connect(graph, src, gen, { toSlot: 1, type: "IMAGE" });
+    await attachAgent(gen);
+
+    const el = parts(gen);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    el.root.querySelector(".rs-quick-input").value = "重绘";
+    el.generateBtn.click();
+    await sleep(300);
+
+    assert.equal(genCalls().length, 0, "上游无文件名时不应发出出图请求");
+    assert.ok(el.preview.textContent.includes("参考图读取失败"), "结果块应显示参考图读取失败");
+});
+
+test("出图成功：预览区渲染缩略图，点击用灯箱打开原图", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 5, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t3", status: "queued", images: [], width: 0, height: 0 }));
+    mockRoute("/neo_image_gen/status/t3", () => jsonResponse({
+        task_id: "t3", status: "succeeded",
+        images: [{ filename: "a.png", subfolder: "NeoAgent/2026-09-07/cat", url: "/view?filename=a.png&type=output" }],
+        width: 1280, height: 720,
+    }));
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(1800); // 轮询间隔 1.5s，等首次 status 返回 succeeded
+
+    const thumb = el.preview.querySelector(".rs-gen-thumb img");
+    assert.ok(thumb, "出图结果块应渲染缩略图");
+    assert.match(thumb.src, /neo_gallery\/thumbnail\?filename=a\.png/, "缩略图应走 thumbnail 缓存接口而非原图");
+    assert.doesNotMatch(thumb.src, /\/view\?/);
+
+    thumb.click();
+    await sleep(50);
+    const lb = document.querySelector(".neo-lightbox");
+    assert.ok(lb, "点击缩略图应打开灯箱");
+    const media = lb.querySelector("img");
+    assert.equal(media.getAttribute("src"), "/view?filename=a.png&type=output", "灯箱内应显示原图地址");
+});
+
+test("出图成功：单个 LoadImage 目标 → 点击发送直接写入，不弹菜单", async () => {
+    const graph = makeGraph();
+    appState.graph = graph; // collectLoadImageTargets 从 app.graph._nodes 收集目标
+    const loadImg = addNode(graph, makeNode({
+        id: 6, type: "LoadImage", title: "Load Image",
+        widgets: [{ name: "image", value: "old.png", type: "combo", callback(v) { this.value = v; } }],
+        inputs: [], outputs: [outSlot("IMAGE", "IMAGE")],
+    }));
+    const agent = await attachAgent(makeNode({
+        id: 7, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t4", status: "queued", images: [], width: 0, height: 0 }));
+    mockRoute("/neo_image_gen/status/t4", () => jsonResponse({
+        task_id: "t4", status: "succeeded",
+        images: [{ filename: "b.png", subfolder: "", url: "/view?filename=b.png&type=output" }],
+        width: 1280, height: 720,
+    }));
+    let copyQuery = null;
+    mockRoute("/neo_gallery/copy_to_input", () => { copyQuery = "hit"; return jsonResponse({ success: true, filename: "b.png", skipped: false }); });
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(1800);
+
+    const sendBtn = el.preview.querySelector(".rs-gen-send");
+    assert.ok(sendBtn, "应渲染发送到节点按钮");
+    sendBtn.click();
+    await sleep(100);
+    assert.equal(document.querySelector(".rs-gen-send-menu"), null, "单目标不应弹出菜单，直接写入");
+    assert.ok(copyQuery, "应请求 /neo_gallery/copy_to_input");
+    assert.equal(loadImg.widgets[0].value, "b.png", "LoadImage widget 值应更新为新图");
+});
+
+test("出图成功：多个 LoadImage 目标 → 弹菜单，选中写入对应节点", async () => {
+    const graph = makeGraph();
+    appState.graph = graph;
+    const a = addNode(graph, makeNode({
+        id: 6, type: "LoadImage", title: "A",
+        widgets: [{ name: "image", value: "a.png", type: "combo", callback(v) { this.value = v; } }],
+        inputs: [], outputs: [outSlot("IMAGE", "IMAGE")],
+    }));
+    const b = addNode(graph, makeNode({
+        id: 8, type: "LoadImage", title: "B",
+        widgets: [{ name: "image", value: "b.png", type: "combo", callback(v) { this.value = v; } }],
+        inputs: [], outputs: [outSlot("IMAGE", "IMAGE")],
+    }));
+    const agent = await attachAgent(makeNode({
+        id: 9, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t5", status: "queued", images: [], width: 0, height: 0 }));
+    mockRoute("/neo_image_gen/status/t5", () => jsonResponse({
+        task_id: "t5", status: "succeeded",
+        images: [{ filename: "c.png", subfolder: "", url: "/view?filename=c.png&type=output" }],
+        width: 1280, height: 720,
+    }));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "c.png", skipped: false }));
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(1800);
+
+    el.preview.querySelector(".rs-gen-send").click();
+    await sleep(50);
+    const menu = document.querySelector(".rs-gen-send-menu");
+    assert.ok(menu, "多目标应弹出菜单");
+    const items = menu.querySelectorAll(".rs-gen-send-menu-item");
+    assert.equal(items.length, 2, "菜单应列出两个 LoadImage 节点");
+    items[0].click(); // 排序后第一个（画布 y→x）
+    await sleep(100);
+    assert.ok(a.widgets[0].value === "c.png" || b.widgets[0].value === "c.png", "选中的节点应写入新图");
+});
+
+test("出图成功：无 LoadImage 目标 → 自动新建并写入", async () => {
+    const graph = makeGraph();
+    appState.graph = graph;
+    let created = null;
+    globalThis.LiteGraph = {
+        createNode(type) {
+            created = makeNode({
+                id: 99, type, title: "Load Image",
+                widgets: [{ name: "image", value: "", type: "combo", callback(v) { this.value = v; } }],
+                inputs: [], outputs: [outSlot("IMAGE", "IMAGE")],
+            });
+            return created;
+        },
+    };
+    const agent = await attachAgent(makeNode({
+        id: 10, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t6", status: "queued", images: [], width: 0, height: 0 }));
+    mockRoute("/neo_image_gen/status/t6", () => jsonResponse({
+        task_id: "t6", status: "succeeded",
+        images: [{ filename: "d.png", subfolder: "", url: "/view?filename=d.png&type=output" }],
+        width: 1280, height: 720,
+    }));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "d.png", skipped: false }));
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(1800);
+
+    el.preview.querySelector(".rs-gen-send").click();
+    await sleep(150);
+    assert.ok(created, "无目标时应新建 LoadImage 节点");
+    assert.ok(graph._nodes.includes(created), "新建节点应加入画布");
+    assert.equal(created.widgets[0].value, "d.png", "新节点的 image widget 应写入新图");
+    delete globalThis.LiteGraph;
+});

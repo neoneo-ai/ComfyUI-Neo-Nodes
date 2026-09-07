@@ -16,19 +16,40 @@ if __package__ not in (None, ""):
     # Import workflow module (workflow repair API; registers /neo_nodes/repair route)
     from . import workflow
 
+    # Import built-in image generation module (registers /neo_image_gen/* routes)
+    from . import image_gen
+
     # Import from prompts module
     from .prompts import (
         NODE_CLASS_MAPPINGS as PROMPT_CLASS_MAPPINGS,
         NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY_NAME_MAPPINGS,
     )
 
+    # Krea2 以图生图核心节点（vendor 自 comfyui-krea2edit）。若用户已单独安装该插件，
+    # 同名节点已在注册表中，跳过以避免重复注册告警。
+    KREA2_EDIT_MAPPINGS = {}
+    KREA2_EDIT_DISPLAY_MAPPINGS = {}
+    try:
+        import nodes as _nodes_registry
+        if "Krea2EditModelPatch" in _nodes_registry.NODE_CLASS_MAPPINGS:
+            print("[NeoNodes] krea2_edit: comfyui-krea2edit 已安装，跳过内置节点注册")
+        else:
+            from .krea2_edit import (
+                NODE_CLASS_MAPPINGS as KREA2_EDIT_MAPPINGS,
+                NODE_DISPLAY_NAME_MAPPINGS as KREA2_EDIT_DISPLAY_MAPPINGS,
+            )
+    except Exception as e:
+        print(f"[NeoNodes] krea2_edit 节点注册失败（以图生图不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
+        **KREA2_EDIT_MAPPINGS,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
         **PROMPT_DISPLAY_NAME_MAPPINGS,
+        **KREA2_EDIT_DISPLAY_MAPPINGS,
     }
 
 # Web directory for frontend extensions
