@@ -5,6 +5,7 @@
  */
 
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 import { fileToBase64, imagesFromClipboard, sseStream, invokePromptStream } from "./prompt-service.js";
 import { listSkills, populateSkillOptions, createSkillDropdown, renderMarkdown } from "./skill.js";
 import { createModelConfigForm } from "./llm-setting.js";
@@ -1055,6 +1056,29 @@ function createGenerateHandler(promptUI) {
 }
 
 // ==========================================
+// Backend streaming sync (auto-generate during execution)
+// ==========================================
+
+/**
+ * 后端执行期自动生成（prompts.py 两条 auto-generate 路径）按块推送
+ * rs.prompt.auto_generate_update：先写回 textarea/widget，再刷新 Markdown 预览，
+ * 保证预览与输入框内容同帧（此前两处监听分开注册，预览总落后一个事件）。
+ */
+function wireBackendStreamUpdate(promptUI) {
+    const { customTextarea, textWidget, node, graph, refreshMarkdownPreviewAuto } = promptUI;
+    api.addEventListener("rs.prompt.auto_generate_update", (event) => {
+        const currentUid = node.properties?.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
+        if (event.detail.instance_uid !== currentUid) return;
+        const promptText = event.detail.prompt || "";
+        customTextarea.value = promptText;
+        customTextarea.scrollTop = customTextarea.scrollHeight;
+        saveTextToStorage(node, textWidget, customTextarea);
+        if (graph) graph.setDirtyCanvas(true, true);
+        refreshMarkdownPreviewAuto?.();
+    });
+}
+
+// ==========================================
 // Prompt output area (textarea + Markdown preview)
 // ==========================================
 
@@ -1193,5 +1217,6 @@ export {
     createStatusBars,
     createPromptOutputArea,
     triggerTextChange,
-    createGenerateHandler
+    createGenerateHandler,
+    wireBackendStreamUpdate
 };

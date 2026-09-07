@@ -4,7 +4,6 @@
  */
 
 import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
 import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowLoras, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
 
 import {
@@ -366,15 +365,6 @@ function createPromptManagerUI() {
     function init(ctx) {
         context = ctx;
         const { node, graph, textWidget, allowRecipe } = ctx;
-
-        // 流式生成时：内容识别为 Markdown 则自动切换为预览，否则保持同步刷新
-        api.addEventListener("rs.prompt.auto_generate_update", (event) => {
-            const uid = node.properties?.rs_instance_uid;
-            if (uid && event.detail.instance_uid !== uid) return;
-            promptOutput.refreshMarkdownPreviewAuto();
-        });
-
-        // 不再在这里触发，由 prompts.js 统一管理时序
 
         function handleSaveClick() {
             presetListOverlay.style.display = "none";

@@ -150,24 +150,24 @@ test("运行时随机菜单：+/- 调整条数并写回隐藏控件", async () =
     );
 });
 
-test("流式更新事件：写回提示词，下一帧同步 Markdown 预览并支持复选框回写", async () => {
+test("流式更新事件：写回提示词并同帧切到 Markdown 预览，复选框可回写", async () => {
     const node = await makeNode(16);
     const el = parts(node);
-    const detail = { instance_uid: node.properties?.rs_instance_uid, prompt: "## 大纲\n- [ ] 开场" };
 
-    // prompts.js 的监听用 setTimeout 把 prompt 填进 textarea；prompt-manager 的预览刷新只读到上一帧内容
-    dispatchApiEvent("rs.prompt.auto_generate_update", detail);
-    await sleep(50);
-    assert.equal(el.promptArea.value, detail.prompt);
-    assert.equal(widgetValue(node, "prompt"), detail.prompt);
+    dispatchApiEvent("rs.prompt.auto_generate_update", {
+        instance_uid: node.properties?.rs_instance_uid,
+        prompt: "## 大纲\n- [ ] 开场",
+    });
 
-    // 再来的事件已能读到 Markdown 内容：自动切到预览态
-    dispatchApiEvent("rs.prompt.auto_generate_update", detail);
+    assert.equal(el.promptArea.value, "## 大纲\n- [ ] 开场");
+    assert.equal(widgetValue(node, "prompt"), "## 大纲\n- [ ] 开场");
+
     const preview = uiRoot(node).querySelector(".rs-md-preview.rs-prompt-md-preview");
     assert.equal(preview.style.display, "block");
     assert.ok(
         uiRoot(node).querySelector(".rs-md-preview-btn").classList.contains("rs-md-preview-active"),
     );
+    assert.equal(preview.querySelectorAll('input[type="checkbox"]').length, 1);
 
     // 预览里的任务复选框放开给点击：勾选状态写回 textarea 源码并经 input 事件同步 widget
     // DOM 规范对复选框是 pre-click activation，派发时 checked 已是新值，直接 click 即模拟真实勾选
@@ -177,4 +177,19 @@ test("流式更新事件：写回提示词，下一帧同步 Markdown 预览并�
     assert.equal(box.checked, true);
     assert.match(el.promptArea.value, /- \[[xX]\] 开场/);
     assert.equal(widgetValue(node, "prompt"), el.promptArea.value);
+
+test("流式更新事件按 instance_uid 隔离，不跨节点写入", async () => {
+    const a = await makeNode(17);
+    const b = await makeNode(18);
+    const beforeB = parts(b).promptArea.value;
+
+    dispatchApiEvent("rs.prompt.auto_generate_update", {
+        instance_uid: a.properties.rs_instance_uid,
+        prompt: "只给 A 的内容",
+    });
+
+    assert.equal(parts(a).promptArea.value, "只给 A 的内容");
+    assert.equal(parts(b).promptArea.value, beforeB);
+});
+
 });

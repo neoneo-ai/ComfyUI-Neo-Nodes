@@ -11,7 +11,7 @@ import { mkEl } from "./dom-utils.js";
 
 // 导入 NodeBehaviors
 import NodeBehaviors from "./node-behavior.js";
-import { createGenerateHandler } from "./llm-chat.js";
+import { createGenerateHandler, wireBackendStreamUpdate } from "./llm-chat.js";
 
 // ==========================================
 // 本地模型自动卸载由后端在生成完成时处理：
@@ -454,26 +454,8 @@ app.registerExtension({
                     if (node.graph) node.graph.setDirtyCanvas(true, true);
                 });
 
-                // Listen for auto_generate_update event from backend (streaming)
-                api.addEventListener("rs.prompt.auto_generate_update", (event) => {
-                    const currentUid = node.properties?.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
-                    if (event.detail.instance_uid === currentUid) {
-                        const promptText = event.detail.prompt || "";
-                        // Update customTextarea with streaming text
-                        if (customTextarea) {
-                            customTextarea.value = promptText;
-                            customTextarea.scrollTop = customTextarea.scrollHeight;
-                        }
-                        // Update textWidget
-                        if (textWidget) {
-                            textWidget.value = promptText;
-                        }
-                        // Update storage
-                        NodeBehaviors.saveTextToStorage(node, textWidget, customTextarea);
-                        // Redraw canvas
-                        if (node.graph) node.graph.setDirtyCanvas(true, true);
-                    }
-                });
+                // 后端流式生成：写回提示词并同步刷新 Markdown 预览（同一处完成，避免预览落后一个事件）
+                wireBackendStreamUpdate(promptUIRef);
             }
 
             // ==========================================
@@ -986,26 +968,8 @@ app.registerExtension({
                     if (node.graph) node.graph.setDirtyCanvas(true, true);
                 });
 
-                // Listen for auto_generate_update event from backend (streaming)
-                api.addEventListener("rs.prompt.auto_generate_update", (event) => {
-                    const currentUid = node.properties?.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
-                    if (event.detail.instance_uid === currentUid) {
-                        const promptText = event.detail.prompt || "";
-                        // Update customTextarea with streaming text
-                        if (customTextarea) {
-                            customTextarea.value = promptText;
-                            customTextarea.scrollTop = customTextarea.scrollHeight;
-                        }
-                        // Update textWidget
-                        if (textWidget) {
-                            textWidget.value = promptText;
-                        }
-                        // Update storage
-                        NodeBehaviors.saveTextToStorage(node, textWidget, customTextarea);
-                        // Redraw canvas
-                        if (node.graph) node.graph.setDirtyCanvas(true, true);
-                    }
-                });
+                // 后端流式生成：写回提示词并同步刷新 Markdown 预览（同一处完成，避免预览落后一个事件）
+                wireBackendStreamUpdate(promptUIRef);
             }
 
             // ==========================================
