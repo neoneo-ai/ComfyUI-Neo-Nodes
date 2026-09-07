@@ -18,6 +18,7 @@ import {
     dialogs,
 } from "./setup.mjs";
 import { SKILLS, createAgentNode, uiRoot, widgetValue } from "./helpers/node-ui.mjs";
+import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 const CHUNKS = ['data: {"text":"a cat "}', 'data: {"text":"in the rain"}', "data: [DONE]"];
 
@@ -147,4 +148,33 @@ test("运行时随机菜单：+/- 调整条数并写回隐藏控件", async () =
             2,
         ),
     );
+});
+
+test("流式更新事件：写回提示词，下一帧同步 Markdown 预览并支持复选框回写", async () => {
+    const node = await makeNode(16);
+    const el = parts(node);
+    const detail = { instance_uid: node.properties?.rs_instance_uid, prompt: "## 大纲\n- [ ] 开场" };
+
+    // prompts.js 的监听用 setTimeout 把 prompt 填进 textarea；prompt-manager 的预览刷新只读到上一帧内容
+    dispatchApiEvent("rs.prompt.auto_generate_update", detail);
+    await sleep(50);
+    assert.equal(el.promptArea.value, detail.prompt);
+    assert.equal(widgetValue(node, "prompt"), detail.prompt);
+
+    // 再来的事件已能读到 Markdown 内容：自动切到预览态
+    dispatchApiEvent("rs.prompt.auto_generate_update", detail);
+    const preview = uiRoot(node).querySelector(".rs-md-preview.rs-prompt-md-preview");
+    assert.equal(preview.style.display, "block");
+    assert.ok(
+        uiRoot(node).querySelector(".rs-md-preview-btn").classList.contains("rs-md-preview-active"),
+    );
+
+    // 预览里的任务复选框放开给点击：勾选状态写回 textarea 源码并经 input 事件同步 widget
+    // DOM 规范对复选框是 pre-click activation，派发时 checked 已是新值，直接 click 即模拟真实勾选
+    const box = preview.querySelectorAll('input[type="checkbox"]')[0];
+    assert.equal(box.disabled, false);
+    click(box);
+    assert.equal(box.checked, true);
+    assert.match(el.promptArea.value, /- \[[xX]\] 开场/);
+    assert.equal(widgetValue(node, "prompt"), el.promptArea.value);
 });

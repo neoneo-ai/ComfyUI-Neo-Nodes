@@ -1,12 +1,12 @@
 /**
  * llm-chat.js
- * LLM 聊天输入区（域 A）：快捷输入框、工具条、skill 下拉、附加图片 chips、@ 图片选择器、提示语轮播。
- * 从 prompt-manager.js 迁出；生成逻辑后续并入本文件。
+ * LLM 聊天域：快捷输入框、工具条、skill 下拉、附加图片 chips、@ 图片选择器、提示语轮播，
+ * 以及提示词输出区（textarea + Markdown 预览 + 清空 + 多轮技能提示）与 SSE 生成流程。
  */
 
 import { app } from "../../scripts/app.js";
 import { fileToBase64, imagesFromClipboard, sseStream, invokePromptStream } from "./prompt-service.js";
-import { listSkills, populateSkillOptions, createSkillDropdown } from "./skill.js";
+import { listSkills, populateSkillOptions, createSkillDropdown, renderMarkdown } from "./skill.js";
 import { createModelConfigForm } from "./llm-setting.js";
 import { mkEl } from "./dom-utils.js";
 import { collectWorkflowContext } from "./workflow-context.js";
@@ -1054,7 +1054,144 @@ function createGenerateHandler(promptUI) {
     };
 }
 
+// ==========================================
+// Prompt output area (textarea + Markdown preview)
+// ==========================================
+
+function triggerTextChange(textareaEl) {
+    textareaEl.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/**
+ * 提示词输出区：textarea + Markdown 预览层 + 清空按钮 + 多轮技能提示。
+ * actions 是宿主自己的动作按钮（保存/随机/列表），按传入顺序组合进按钮组，
+ * 👁 预览按钮始终排最后；写入 textarea 时派发原生 input 事件供外部同步 widget。
+ */
+function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
+    // Create wrapper for custom textarea and buttons
+    const customTextareaWrapper = mkEl("div", "rs-custom-textarea-wrapper");
+    customTextareaWrapper.appendChild(customTextarea);
+
+    // Markdown 预览层：覆盖在 textarea 区域，点 👁 切换显示（复用 skill.js 的 renderMarkdown）
+    const mdPreview = mkEl("div", "rs-md-preview rs-prompt-md-preview");
+    mdPreview.style.display = "none";
+    customTextareaWrapper.appendChild(mdPreview);
+    
+    // Create button group wrapper
+    const buttonGroup = mkEl("div", "rs-button-group");
+    for (const action of actions) buttonGroup.appendChild(action);
+
+    // Markdown 预览切换按钮（👁）：默认随按钮组折叠，hover 展开，激活时常亮高亮
+    const mdPreviewBtn = mkEl("button", "rs-action-btn rs-md-preview-btn");
+    mdPreviewBtn.textContent = "👁";
+    mdPreviewBtn.setAttribute("data-rs-tooltip", "Markdown 预览 / 编辑");
+    buttonGroup.appendChild(mdPreviewBtn);
+
+    customTextareaWrapper.appendChild(buttonGroup);
+
+    // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
+    let mdPreviewOn = false;
+    // 渲染预览并把 GFM 任务列表复选框设为可交互（marked 默认输出 disabled，这里放开）
+    function paintMdPreview() {
+        mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
+        for (const box of mdPreview.querySelectorAll('input[type="checkbox"]')) {
+            box.disabled = false;
+            box.style.cursor = "pointer";
+        }
+    }
+    // 切换源码中第 boxIndex 个任务项的勾选（[ ]/[x]），未命中则原样返回
+    function setTaskItemChecked(text, boxIndex, checked) {
+        const lines = text.split("\n");
+        let seen = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const m = lines[i].match(/^(\s*(?:[-*+]|\d+[.)])\s+\[)( |x|X)(\])/);
+            if (!m) continue;
+            seen++;
+            if (seen === boxIndex) {
+                lines[i] = m[1] + (checked ? "x" : " ") + m[3] + lines[i].slice(m[0].length);
+                return lines.join("\n");
+            }
+        }
+        return text;
+    }
+    function setMdPreview(on) {
+        mdPreviewOn = on;
+        if (on) {
+            paintMdPreview();
+            customTextarea.style.display = "none";
+            mdPreview.style.display = "block";
+            mdPreviewBtn.classList.add("rs-md-preview-active");
+        } else {
+            mdPreview.style.display = "none";
+            customTextarea.style.display = "";
+            mdPreviewBtn.classList.remove("rs-md-preview-active");
+        }
+    }
+    function refreshMarkdownPreview() {
+        if (mdPreviewOn) paintMdPreview();
+    }
+    // 生成/流式结束后调用：内容识别为 Markdown 则自动切到预览，否则同步刷新已开启的预览
+    function refreshMarkdownPreviewAuto() {
+        if (looksLikeMarkdown(customTextarea.value || "")) setMdPreview(true);
+        else refreshMarkdownPreview();
+    }
+    mdPreviewBtn.addEventListener("click", () => setMdPreview(!mdPreviewOn));
+    // 一键清除按钮：定位在 custom area 右上角，清空提示词并同步 widget/storage（无确认，直接清）
+    const clearBtn = mkEl("button", "rs-clear-btn");
+    clearBtn.textContent = "✕";
+    clearBtn.setAttribute("data-rs-tooltip", "Clear prompt / 清空");
+    clearBtn.addEventListener("click", () => {
+        customTextarea.value = "";
+        triggerTextChange(customTextarea);
+        if (mdPreviewOn) paintMdPreview();
+    });
+    customTextareaWrapper.appendChild(clearBtn);
+    // 预览中的任务列表复选框可点击：回写 [ ]/[x] 到 textarea（经 input 事件同步 widget/storage），
+    // 便于多轮技能把用户选择带入下一次生成；不重渲染，避免长列表滚动位置跳动
+    mdPreview.addEventListener("click", (e) => {
+        const box = e.target && e.target.closest ? e.target.closest('input[type="checkbox"]') : null;
+        if (!box || !mdPreview.contains(box)) return;
+        const boxes = Array.from(mdPreview.querySelectorAll('input[type="checkbox"]'));
+        const next = setTaskItemChecked(customTextarea.value || "", boxes.indexOf(box), box.checked);
+        if (next !== customTextarea.value) {
+            customTextarea.value = next;
+            triggerTextChange(customTextarea);
+        }
+    });
+
+    // 轻量 Markdown 识别：仅当出现标题 / 代码块 / 列表 / 加粗等强信号才判定为 Markdown，避免普通提示词误判
+    function looksLikeMarkdown(text) {
+        if (!text) return false;
+        let heading = 0, list = 0;
+        for (const line of text.split("\n")) {
+            if (/^#{1,6}\s/.test(line)) heading++;
+            else if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) list++;
+        }
+        return /```/.test(text) || heading >= 1 || list >= 2 || /\*\*[^*\n]+\*\*/.test(text);
+    }
+
+    // 多轮交互提示：每次生成只推进一个阶段，需补充返回的问询后再次运行
+    const skillHint = mkEl("div", "rs-skill-hint");
+    skillHint.textContent = "多轮技能：每次仅推进一阶段，补充问询后再点 ✨";
+    // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
+    skillHint.style.display = "none";
+    function updateSkillHint() {
+        const opt = [...tplSelector.options].find(o => o.value === tplSelector.value);
+        skillHint.style.display = (opt && opt.dataset.multiTurn === "1") ? "" : "none";
+    }
+    tplSelector.addEventListener("change", updateSkillHint);
+
+    return {
+        el: customTextareaWrapper,
+        actionGroupEl: buttonGroup,
+        skillHintEl: skillHint,
+        refreshMarkdownPreviewAuto
+    };
+}
+
 export {
     createStatusBars,
+    createPromptOutputArea,
+    triggerTextChange,
     createGenerateHandler
-}
+};

@@ -78,8 +78,8 @@ ComfyUI-Neo-Nodes/
 │   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 顶栏按钮）
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
-│   ├── prompt-manager.js   # 提示词管理器（预设列表 / 集合视图 / Markdown 预览；聊天输入区由 llm-chat.js 提供）
-│   ├── llm-chat.js         # LLM 聊天区：输入框与提示语轮播、工具条、技能下拉、附加图片 chips、@ 图片选择器、✨/Enter 生成（SSE 流式）
+│   ├── prompt-manager.js   # 提示词管理器（预设列表 / 集合视图 / 保存与删除；聊天区由 llm-chat.js 提供）
+│   ├── llm-chat.js         # LLM 聊天域：输入框与提示语轮播、输出区 Markdown 预览、工具条、技能下拉、附加图片 chips、@ 图片选择器、✨/Enter 生成（SSE 流式）
 │   ├── prompt-service.js   # 提示词 API 服务封装
 │   ├── llm-setting.js      # LLM 配置表单（provider/模型/API key/本地目录），挂入自动增强菜单
 │   ├── dom-utils.js        # 共享 DOM 工厂 mkEl()
@@ -117,8 +117,8 @@ ComfyUI-Neo-Nodes/
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip |
-| `prompt-manager.js` | 提示词管理器：预设列表、集合视图、Markdown 预览；聊天输入区 DOM 由 `llm-chat.js` 的 `createStatusBars()` 提供并经 `createPromptManagerUI()` 组装 |
-| `llm-chat.js` | LLM 聊天域：输入区 DOM（快捷输入框与提示语轮播、工具条、技能下拉、附加图片 chips、`@` 图片选择器（工作流 Load Image 扫描 + 键盘导航）、运行时随机菜单 DOM）+ `createGenerateHandler()` 生成流程（skill 路由 / 选中模板 / LLM 智能判断三条 SSE 流式分支，rAF 合帧写回 textarea） |
+| `prompt-manager.js` | 提示词管理器：预设列表、集合视图、保存与删除；聊天域 DOM 由 `llm-chat.js` 的 `createStatusBars()` / `createPromptOutputArea()` 提供并经 `createPromptManagerUI()` 组装 |
+| `llm-chat.js` | LLM 聊天域：输入区 DOM（快捷输入框与提示语轮播、工具条、技能下拉、附加图片 chips、`@` 图片选择器（工作流 Load Image 扫描 + 键盘导航）、运行时随机菜单 DOM）+ 输出区 DOM（`createPromptOutputArea()`：textarea、Markdown 预览层与任务复选框回写、清空按钮、多轮技能提示）+ `createGenerateHandler()` 生成流程（skill 路由 / 选中模板 / LLM 智能判断三条 SSE 流式分支，rAF 合帧写回 textarea） |
 | `dom-utils.js` | 共享 DOM 工厂：`mkEl(tag, className, styles)`，供 prompt-manager / llm-chat / skill / llm-setting / prompts 复用 |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
 | `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，由 prompt-manager 挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |

@@ -37,6 +37,11 @@ export function installGlobals(win) {
         });
     }
     Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
+    // marked/purify 是 UMD：在 Node ESM 里挂到 globalThis 而不是 jsdom window，
+    // 而插件按浏览器习惯读 window.marked / window.DOMPurify，用惰性取值对齐两边。
+    for (const key of ["marked", "DOMPurify"]) {
+        Object.defineProperty(win, key, { get: () => globalThis[key], configurable: true });
+    }
     const gcs = win.getComputedStyle.bind(win);
     Object.defineProperty(globalThis, "getComputedStyle", { value: gcs, configurable: true, writable: true });
 }

@@ -16,9 +16,8 @@ import {
     extractTitle,
     extractClassify
 } from "./prompt-service.js";
-import { renderMarkdown } from "./skill.js";
 import { mkEl } from "./dom-utils.js";
-import { createStatusBars } from "./llm-chat.js";
+import { createStatusBars, createPromptOutputArea, triggerTextChange } from "./llm-chat.js";
 
 // ==========================================
 // UI 组件创建 (内部使用)
@@ -339,128 +338,17 @@ function createPromptManagerUI() {
         // 鼠标移出列表不主动清空活动行，方便用户接着用键盘
     });
 
-    // Create wrapper for custom textarea and buttons
-    const customTextareaWrapper = mkEl("div", "rs-custom-textarea-wrapper");
-    customTextareaWrapper.appendChild(customTextarea);
+    // 输出区（textarea + Markdown 预览 + 清空 + 多轮提示）归 llm-chat.js 所有；
+    // 💾/🎲/📋 三个动作按钮作为不透明节点组合进它的按钮组，顺序保持不变。
+    const promptOutput = createPromptOutputArea({ customTextarea, tplSelector, actions: [saveBtn, randomWrap, listBtn] });
 
-    // Markdown 预览层：覆盖在 textarea 区域，点 👁 切换显示（复用 skill.js 的 renderMarkdown）
-    const mdPreview = mkEl("div", "rs-md-preview rs-prompt-md-preview");
-    mdPreview.style.display = "none";
-    customTextareaWrapper.appendChild(mdPreview);
-    
-    // Create button group wrapper
-    const buttonGroup = mkEl("div", "rs-button-group");
-    buttonGroup.appendChild(saveBtn);
-    buttonGroup.appendChild(randomWrap);
-    buttonGroup.appendChild(listBtn);
-
-    // Markdown 预览切换按钮（👁）：默认随按钮组折叠，hover 展开，激活时常亮高亮
-    const mdPreviewBtn = mkEl("button", "rs-action-btn rs-md-preview-btn");
-    mdPreviewBtn.textContent = "👁";
-    mdPreviewBtn.setAttribute("data-rs-tooltip", "Markdown 预览 / 编辑");
-    buttonGroup.appendChild(mdPreviewBtn);
-
-    customTextareaWrapper.appendChild(buttonGroup);
-
-    // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
-    let mdPreviewOn = false;
-    // 渲染预览并把 GFM 任务列表复选框设为可交互（marked 默认输出 disabled，这里放开）
-    function paintMdPreview() {
-        mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
-        for (const box of mdPreview.querySelectorAll('input[type="checkbox"]')) {
-            box.disabled = false;
-            box.style.cursor = "pointer";
-        }
-    }
-    // 切换源码中第 boxIndex 个任务项的勾选（[ ]/[x]），未命中则原样返回
-    function setTaskItemChecked(text, boxIndex, checked) {
-        const lines = text.split("\n");
-        let seen = -1;
-        for (let i = 0; i < lines.length; i++) {
-            const m = lines[i].match(/^(\s*(?:[-*+]|\d+[.)])\s+\[)( |x|X)(\])/);
-            if (!m) continue;
-            seen++;
-            if (seen === boxIndex) {
-                lines[i] = m[1] + (checked ? "x" : " ") + m[3] + lines[i].slice(m[0].length);
-                return lines.join("\n");
-            }
-        }
-        return text;
-    }
-    function setMdPreview(on) {
-        mdPreviewOn = on;
-        if (on) {
-            paintMdPreview();
-            customTextarea.style.display = "none";
-            mdPreview.style.display = "block";
-            mdPreviewBtn.classList.add("rs-md-preview-active");
-        } else {
-            mdPreview.style.display = "none";
-            customTextarea.style.display = "";
-            mdPreviewBtn.classList.remove("rs-md-preview-active");
-        }
-    }
-    function refreshMarkdownPreview() {
-        if (mdPreviewOn) paintMdPreview();
-    }
-    // 生成/流式结束后调用：内容识别为 Markdown 则自动切到预览，否则同步刷新已开启的预览
-    function refreshMarkdownPreviewAuto() {
-        if (looksLikeMarkdown(customTextarea.value || "")) setMdPreview(true);
-        else refreshMarkdownPreview();
-    }
-    mdPreviewBtn.addEventListener("click", () => setMdPreview(!mdPreviewOn));
-    // 一键清除按钮：定位在 custom area 右上角，清空提示词并同步 widget/storage（无确认，直接清）
-    const clearBtn = mkEl("button", "rs-clear-btn");
-    clearBtn.textContent = "✕";
-    clearBtn.setAttribute("data-rs-tooltip", "Clear prompt / 清空");
-    clearBtn.addEventListener("click", () => {
-        customTextarea.value = "";
-        triggerTextChange();
-        if (mdPreviewOn) paintMdPreview();
-    });
-    customTextareaWrapper.appendChild(clearBtn);
-    // 预览中的任务列表复选框可点击：回写 [ ]/[x] 到 textarea（经 input 事件同步 widget/storage），
-    // 便于多轮技能把用户选择带入下一次生成；不重渲染，避免长列表滚动位置跳动
-    mdPreview.addEventListener("click", (e) => {
-        const box = e.target && e.target.closest ? e.target.closest('input[type="checkbox"]') : null;
-        if (!box || !mdPreview.contains(box)) return;
-        const boxes = Array.from(mdPreview.querySelectorAll('input[type="checkbox"]'));
-        const next = setTaskItemChecked(customTextarea.value || "", boxes.indexOf(box), box.checked);
-        if (next !== customTextarea.value) {
-            customTextarea.value = next;
-            triggerTextChange();
-        }
-    });
-
-    // 轻量 Markdown 识别：仅当出现标题 / 代码块 / 列表 / 加粗等强信号才判定为 Markdown，避免普通提示词误判
-    function looksLikeMarkdown(text) {
-        if (!text) return false;
-        let heading = 0, list = 0;
-        for (const line of text.split("\n")) {
-            if (/^#{1,6}\s/.test(line)) heading++;
-            else if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) list++;
-        }
-        return /```/.test(text) || heading >= 1 || list >= 2 || /\*\*[^*\n]+\*\*/.test(text);
-    }
-
-    // 多轮交互提示：每次生成只推进一个阶段，需补充返回的问询后再次运行
-    const skillHint = mkEl("div", "rs-skill-hint");
-    skillHint.textContent = "多轮技能：每次仅推进一阶段，补充问询后再点 ✨";
-    // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
-    skillHint.style.display = "none";
-    function updateSkillHint() {
-        const opt = [...tplSelector.options].find(o => o.value === tplSelector.value);
-        skillHint.style.display = (opt && opt.dataset.multiTurn === "1") ? "" : "none";
-    }
-    tplSelector.addEventListener("change", updateSkillHint);
-    
-    root.appendChild(customTextareaWrapper);
+    root.appendChild(promptOutput.el);
 
     root.appendChild(buttonsWrapper);
     // quickInputWrapper at the bottom of the node
     root.appendChild(quickInputWrapper);
     // 多轮提示贴节点最底部（跟在快捷输入栏下），避免落在文本区下方的空白中段
-    root.appendChild(skillHint);
+    root.appendChild(promptOutput.skillHintEl);
 
     // 挂 body 防节点边界裁剪（fixed 定位居中于视口）
     document.body.appendChild(presetNameInput);
@@ -475,13 +363,6 @@ function createPromptManagerUI() {
     let isLoading = false;
     let isListOpen = false;
 
-
-        function triggerTextChange() {
-            if (customTextarea) {
-                customTextarea.dispatchEvent(new Event("input", { bubbles: true }));
-            }
-        }
-
     function init(ctx) {
         context = ctx;
         const { node, graph, textWidget, allowRecipe } = ctx;
@@ -490,7 +371,7 @@ function createPromptManagerUI() {
         api.addEventListener("rs.prompt.auto_generate_update", (event) => {
             const uid = node.properties?.rs_instance_uid;
             if (uid && event.detail.instance_uid !== uid) return;
-            refreshMarkdownPreviewAuto();
+            promptOutput.refreshMarkdownPreviewAuto();
         });
 
         // 不再在这里触发，由 prompts.js 统一管理时序
@@ -720,7 +601,7 @@ function createPromptManagerUI() {
                         }
                         if (customTextarea) {
                             customTextarea.value = data.text || "";
-                            triggerTextChange();
+                            triggerTextChange(customTextarea);
                         }
 
                         const currentUid = node.properties.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
@@ -809,7 +690,7 @@ function createPromptManagerUI() {
             }
             if (customTextarea) {
                 customTextarea.value = entry.text || "";
-                triggerTextChange();
+                triggerTextChange(customTextarea);
             }
 
             presetListOverlay.style.display = "none";
@@ -989,7 +870,7 @@ function createPromptManagerUI() {
         });
 
         document.addEventListener("mousedown", (e) => {
-            if (!buttonGroup.contains(e.target) && !presetListOverlay.contains(e.target)) {
+            if (!promptOutput.actionGroupEl.contains(e.target) && !presetListOverlay.contains(e.target)) {
                 presetListOverlay.style.display = "none";
                 isListOpen = false;
                 clearCollectionViewState();
@@ -1035,7 +916,7 @@ function createPromptManagerUI() {
             listBtn,
             quickInput,
             customTextarea,
-            refreshMarkdownPreviewAuto,
+            refreshMarkdownPreviewAuto: promptOutput.refreshMarkdownPreviewAuto,
             toggleSwitch,
             localTab,
             externalTab,
