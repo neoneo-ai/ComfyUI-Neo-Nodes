@@ -125,6 +125,31 @@ test("@图 标记但无图片：提示需要图片且不发请求", async () => 
     assertGolden("flow.marker-needs-image", flowTrace());
 });
 
+test("@ 图片选择器：无可用图片时给占位提示，不叠加弹层且可关闭后重开", async () => {
+    const node = await makeNode(20);
+    const el = parts(node);
+
+    inputText(el.quickInput, "@");
+    await sleep(100);
+    const picker = document.querySelector(".rs-at-picker");
+    assert.ok(picker);
+    assert.ok(picker.textContent.includes("没有可用的 Load Image"));
+
+    // 已有弹层时再输入 @ 不再叠加第二个
+    inputText(el.quickInput, "@@");
+    await sleep(100);
+    assert.equal(document.querySelectorAll(".rs-at-picker").length, 1);
+
+    keydown(picker, "Escape");
+    await sleep(50);
+    assert.equal(document.querySelectorAll(".rs-at-picker").length, 0);
+
+    // 关闭后同一节点仍可再次打开
+    inputText(el.quickInput, "x@");
+    await sleep(100);
+    assert.equal(document.querySelectorAll(".rs-at-picker").length, 1);
+});
+
 test("运行时随机菜单：+/- 调整条数并写回隐藏控件", async () => {
     const node = await makeNode(15);
     const rt = parts(node).randomBtn._rsRuntime;

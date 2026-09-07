@@ -79,7 +79,8 @@ ComfyUI-Neo-Nodes/
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
 │   ├── prompt-manager.js   # 提示词管理器（预设列表 / 集合视图 / 保存与删除；聊天区由 llm-chat.js 提供）
-│   ├── llm-chat.js         # LLM 聊天域：输入框与提示语轮播、输出区 Markdown 预览、工具条、技能下拉、附加图片 chips、@ 图片选择器、✨/Enter 生成（SSE 流式）
+│   ├── llm-chat.js         # LLM 聊天域：输入框与提示语轮播、输出区 Markdown 预览、工具条、技能下拉、附加图片 chips、✨/Enter 生成（SSE 流式）
+│   ├── at-picker.js        # `@` 图片选择器：扫描工作流 Load Image 节点，弹层跟随光标，点击/回车插入 <Picture N> 标记
 │   ├── prompt-service.js   # 提示词 API 服务封装
 │   ├── llm-setting.js      # LLM 配置表单（provider/模型/API key/本地目录），挂入自动增强菜单
 │   ├── dom-utils.js        # 共享 DOM 工厂 mkEl()
@@ -118,7 +119,8 @@ ComfyUI-Neo-Nodes/
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip；节点移除时统一注销 document/window/api 监听并销毁挂 body 的浮层菜单 |
 | `prompt-manager.js` | 提示词管理器：预设列表、集合视图、保存与删除；聊天域 DOM 由 `llm-chat.js` 的 `createStatusBars()` / `createPromptOutputArea()` 提供并经 `createPromptManagerUI()` 组装 |
-| `llm-chat.js` | LLM 聊天域：输入区 DOM（快捷输入框与提示语轮播、工具条、技能下拉、附加图片 chips、`@` 图片选择器（工作流 Load Image 扫描 + 键盘导航）、运行时随机菜单 DOM）+ 输出区 DOM（`createPromptOutputArea()`：textarea、Markdown 预览层与任务复选框回写、清空按钮、多轮技能提示）+ `createGenerateHandler()` 生成流程（skill 路由 / 选中模板 / LLM 智能判断三条 SSE 流式分支，rAF 合帧写回 textarea）+ `wireBackendStreamUpdate()` 后端执行期自动生成回写（按 `instance_uid` 过滤，写回 textarea/widget 后同帧刷新 Markdown 预览；返回注销函数） |
+| `llm-chat.js` | LLM 聊天域：输入区 DOM（快捷输入框与提示语轮播、工具条、技能下拉、附加图片 chips、运行时随机菜单 DOM）+ 输出区 DOM（`createPromptOutputArea()`：textarea、Markdown 预览层与任务复选框回写、清空按钮、多轮技能提示）+ `createGenerateHandler()` 生成流程（skill 路由 / 选中模板 / LLM 智能判断三条 SSE 流式分支，rAF 合帧写回 textarea）+ `wireBackendStreamUpdate()` 后端执行期自动生成回写（按 `instance_uid` 过滤，写回 textarea/widget 后同帧刷新 Markdown 预览；返回注销函数） |
+| `at-picker.js` | `@` 图片选择器（纯 ES 模块）：`createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInput, inputViewUrl })` 返回打开函数，由 `llm-chat.js` 的 `createStatusBars()` 注入依赖并在输入 `@` 时调用。扫描工作流未禁用的 Load Image 节点并按目标节点 IMAGE 输入槽算出 pictureNo；弹层挂 body 并跟随光标定位（含画布缩放校正），支持键盘导航与外部点击关闭，关闭时移除 document 与输入框监听并复位打开句柄 |
 | `dom-utils.js` | 共享 DOM 工厂：`mkEl(tag, className, styles)`，供 prompt-manager / llm-chat / skill / llm-setting / prompts 复用 |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
 | `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，由 prompt-manager 挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |
