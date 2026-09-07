@@ -423,7 +423,11 @@ export function createImageGenSettingsForm() {
 
     loraAddBtn.addEventListener("click", () => addLoraRow());
 
+    // 加载窗口标记：load() 异步回填期间（await 网络请求）不算 dirty，避免初始化误判
+    let loading = false;
+
     async function load() {
+        loading = true;
         try {
             const [settings, models] = await Promise.all([getGenSettings(), listGenModels()]);
             loraFiles = models.loras || [];
@@ -441,12 +445,16 @@ export function createImageGenSettingsForm() {
             countCtl.input.value = settings.count ?? 1;
             fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""));
             fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""));
+            snapshot = collect();
         } catch (e) {
             console.warn("Failed to load image gen settings:", e);
+        } finally {
+            loading = false;
         }
     }
 
-    async function save() {
+    // 收集当前表单值（与后端 /neo_image_gen/settings 字段对齐）；save 与脏检查共用
+    function collect() {
         const loras = [];
         for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
             const select = line.querySelector("select");
@@ -455,16 +463,24 @@ export function createImageGenSettingsForm() {
             if (!name) continue;
             loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0 });
         }
+        return {
+            model: modelCtl.select.value,
+            text_encoder: encoderCtl.select.value,
+            vae: vaeCtl.select.value,
+            loras,
+            count: parseInt(countCtl.input.value, 10) || 1,
+            base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
+            default_ratio: ratioCtl.select.value.trim(),
+        };
+    }
+
+    // load/save 后的表单快照，用于关闭菜单时判断是否有未保存修改
+    let snapshot = null;
+
+    async function save() {
         try {
-            await saveGenSettings({
-                model: modelCtl.select.value,
-                text_encoder: encoderCtl.select.value,
-                vae: vaeCtl.select.value,
-                loras,
-                count: parseInt(countCtl.input.value, 10) || 1,
-                base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
-                default_ratio: ratioCtl.select.value.trim(),
-            });
+            await saveGenSettings(collect());
+            snapshot = collect();
             return true;
         } catch (e) {
             console.warn("Failed to save image gen settings:", e);
@@ -472,6 +488,12 @@ export function createImageGenSettingsForm() {
         }
     }
 
-    return { el: form, load, save };
+    // 当前表单相对最近一次 load/save 是否有改动（供关闭菜单时确认用）；加载窗口内恒为 false
+    function isDirty() {
+        if (loading) return false;
+        return snapshot !== null && JSON.stringify(collect()) !== JSON.stringify(snapshot);
+    }
+
+    return { el: form, load, save, isDirty };
 }
 

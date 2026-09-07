@@ -2,10 +2,11 @@
  * llm-setting.js
  * LLM 配置表单：provider / model / API key / base URL / 本地模型目录 / 自动卸载。
  * 原设置弹窗的 “LLM Settings” 标签内容，现整体挂到「自动增强」菜单内。
- * createModelConfigForm() 返回 { el, load, save }：
- *   el   —— 表单 DOM（追加到宿主容器）
- *   load —— 读取已保存配置并回填（打开时调用）
- *   save —— 防抖保存当前表单值（关闭时调用）
+ * createModelConfigForm() 返回 { el, load, save, isDirty }：
+ *   el      —— 表单 DOM（追加到宿主容器）
+ *   load    —— 读取已保存配置并回填（打开时调用），resolve 时模型列表已填充完毕
+ *   save    —— 防抖保存当前表单值（关闭时调用）
+ *   isDirty —— 加载窗口内恒 false，此后表示有待落盘的改动
  */
 
 import { attachComboBox } from "./combo-box.js";
@@ -343,8 +344,9 @@ export function createModelConfigForm() {
             localUnloadCheckbox.checked = !!fullConfig.auto_unload_local;
             localUnloadRow.style.display = "flex";
 
-            // Fetch available local models
-            fetchLocalModels();
+            // 拉取并回填本地模型列表；await 让 load 在列表填充完成后再结束，
+            // 避免「列表晚到 → loading 已解除 → 程序化改动逃过加载窗口」的竞态
+            await fetchLocalModels();
         } else if (provider === 'openai') {
             apiKeyRow.style.display = "flex";
             baseUrlRow.style.display = "flex";
@@ -392,7 +394,14 @@ export function createModelConfigForm() {
     // Auto-save on field changes (blur/change)
     // ==========================================
     let saveTimeout = null;
+    // 有待落盘的改动（防抖保存未完成）；供关闭菜单时判断未保存修改
+    let pendingSave = false;
+    // 加载窗口标记：loadModelConfig 回填期间任何 change/blur 都是程序化副作用，
+    // autoSaveConfig 据此不落盘、isDirty 据此恒 false，避免初始化被误判为未保存
+    let loading = false;
     const autoSaveConfig = () => {
+        if (loading) return;
+        pendingSave = true;
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
             const provider = providerSelect.value;
@@ -420,6 +429,7 @@ export function createModelConfigForm() {
             const result = await window.NeoNodes?.saveRemoteLLMConfig?.(config);
             
             if (result && result.success) {
+                pendingSave = false;
                 providerSaveStatusText.textContent = "✅ Saved";
                 providerSaveStatusText.style.display = "block";
                 providerSaveStatusText.style.color = "#16a34a";
@@ -469,6 +479,7 @@ export function createModelConfigForm() {
     }
 
     localModelSelectEl.addEventListener("change", async () => {
+        if (loading) return; // 初始化回填期的程序化 change 不落盘、也不切换本地模型
         autoSaveConfig();
         const modelKey = localModelSelectEl.value;
 
@@ -506,17 +517,23 @@ export function createModelConfigForm() {
 
     // 读取已保存配置并回填（原 loadRemoteLLMConfig，改用本模块局部变量）
     const loadModelConfig = async () => {
-        const config = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
-        let providerValue = config.active_provider || 'local';
-        if (!['local', 'openai', 'lmstudio', 'ollama', 'openrouter'].includes(providerValue)) {
-            providerValue = 'openai';
+        loading = true;
+        try {
+            const config = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
+            let providerValue = config.active_provider || 'local';
+            if (!['local', 'openai', 'lmstudio', 'ollama', 'openrouter'].includes(providerValue)) {
+                providerValue = 'openai';
+            }
+            if (config.enabled === false) {
+                providerValue = 'local';
+            }
+            providerSelect.value = providerValue;
+            await handleProviderChange();
+        } finally {
+            loading = false;
+            pendingSave = false; // 初始化完成，清除任何残留的待保存标记
         }
-        if (config.enabled === false) {
-            providerValue = 'local';
-        }
-        providerSelect.value = providerValue;
-        await handleProviderChange();
     };
 
-    return { el: remoteForm, load: loadModelConfig, save: autoSaveConfig };
+    return { el: remoteForm, load: loadModelConfig, save: autoSaveConfig, isDirty: () => !loading && pendingSave };
 }

@@ -15,6 +15,7 @@ import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 import { createAtImagePicker } from "./at-picker.js";
 import { createImageGenSettingsForm, requestGeneration, pollTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated } from "./image-gen.js";
 import { Lightbox } from "./lightbox.js";
+import { showToast } from "./gallery-utils.js";
 
 // ==========================================
 // Quick input tips rotation
@@ -448,11 +449,46 @@ function createStatusBars() {
     autoWrap.appendChild(generateBtn);
     autoWrap.appendChild(genCaret);
 
+    // 未保存修改确认条：挂在 autoMenu 内随菜单显隐；点菜单外/按 Esc 视为"继续编辑"
+    const dirtyConfirm = mkEl("div", "rs-gen-dirty-confirm");
+    dirtyConfirm.hidden = true;
+    const dirtyText = mkEl("span", "rs-gen-dirty-text");
+    dirtyText.textContent = "⚠ 有未保存的修改";
+    const dirtyActions = mkEl("div", "rs-gen-dirty-actions");
+    const btnSaveClose = mkEl("button", "rs-btn rs-gen-dirty-save");
+    btnSaveClose.type = "button";
+    btnSaveClose.textContent = "💾 保存并关闭";
+    const btnDiscard = mkEl("button", "rs-btn rs-gen-dirty-discard");
+    btnDiscard.type = "button";
+    btnDiscard.textContent = "放弃修改";
+    const btnKeepEditing = mkEl("button", "rs-btn rs-gen-dirty-keep");
+    btnKeepEditing.type = "button";
+    btnKeepEditing.textContent = "继续编辑";
+    dirtyActions.append(btnSaveClose, btnDiscard, btnKeepEditing);
+    dirtyConfirm.append(dirtyText, dirtyActions);
+    autoMenu.appendChild(dirtyConfirm);
+
     let autoMenuOpen = false;
-    const closeAutoMenu = () => {
-        if (autoMenuOpen) { modelForm.save(); genForm.save(); }
+    let confirmShown = false;
+    // 两表单 load() 全部落定后才放行脏检查：初始化回填结束前不会有用户改动，
+    // 期间关闭直接走 performClose；seq 防止上一轮慢加载晚到误标当前轮已就绪
+    let autoMenuReady = false;
+    let autoMenuLoadSeq = 0;
+    const hideConfirm = () => { confirmShown = false; dirtyConfirm.hidden = true; };
+    const performClose = () => {
+        hideConfirm();
         autoMenuOpen = false;
         autoMenu.style.display = "none";
+    };
+    const closeAutoMenu = () => {
+        if (!autoMenuOpen) return;
+        if (!autoMenuReady) { performClose(); return; } // 初始化未完成：无用户改动可确认
+        if (modelForm.isDirty() || genForm.isDirty()) {
+            confirmShown = true;
+            dirtyConfirm.hidden = false;
+            return; // 有未保存修改：暂停关闭，等用户在确认条里选择
+        }
+        performClose();
     };
     const openAutoMenu = () => {
         autoMenu.style.display = "block";
@@ -464,10 +500,26 @@ function createStatusBars() {
         if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
         autoMenu.style.left = left + "px";
         autoMenu.style.top = top + "px";
-        modelForm.load();
-        genForm.load();
+        hideConfirm();
+        // 打开即后台回填；等两表单 load 全部落定（含模型列表拉取）后才放行脏检查，
+        // 避免初始化收尾阶段的程序化改动被误判为未保存修改
+        autoMenuReady = false;
+        const seq = ++autoMenuLoadSeq;
+        Promise.all([modelForm.load(), genForm.load()])
+            .catch(() => {}) // 单侧 load 失败不阻断就绪标记（表单内部已兜底记录）
+            .then(() => { if (seq === autoMenuLoadSeq) autoMenuReady = true; });
         autoMenuOpen = true;
     };
+    btnSaveClose.addEventListener("click", async () => {
+        btnSaveClose.disabled = true;
+        const ok = await genForm.save();
+        modelForm.save(); // LLM 侧为防抖即时保存，触发一次兜底落盘
+        if (ok) performClose();
+        else showToast(app, "error", "保存失败", "请重试后再关闭");
+        btnSaveClose.disabled = false;
+    });
+    btnDiscard.addEventListener("click", () => performClose());
+    btnKeepEditing.addEventListener("click", () => hideConfirm());
     genCaret.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -478,10 +530,13 @@ function createStatusBars() {
         if (!autoMenuOpen) return;
         if (autoWrap.contains(e.target) || autoMenu.contains(e.target)) return;
         if (e.target.closest && e.target.closest(".rs-combo-list")) return; // 模型下拉浮层挂在 body，点它不关菜单
+        if (confirmShown) { hideConfirm(); return; } // 确认条显示时点外部 = 继续编辑
         closeAutoMenu();
     };
     const onAutoMenuKey = (e) => {
-        if (e.key === "Escape" && autoMenuOpen) closeAutoMenu();
+        if (e.key !== "Escape" || !autoMenuOpen) return;
+        if (confirmShown) { hideConfirm(); return; } // Esc = 继续编辑
+        closeAutoMenu();
     };
     document.addEventListener("pointerdown", onAutoDocPointerDown, true);
     document.addEventListener("mousedown", onAutoDocPointerDown, true);

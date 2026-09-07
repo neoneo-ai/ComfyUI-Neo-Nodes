@@ -115,6 +115,12 @@ body
               select
         div.rs-config-row
           button.rs-gen-save <type=button> "💾 保存设置"
+    div.rs-gen-dirty-confirm
+      span.rs-gen-dirty-text "⚠ 有未保存的修改"
+      div.rs-gen-dirty-actions
+        button.rs-btn.rs-gen-dirty-save <type=button> "💾 保存并关闭"
+        button.rs-btn.rs-gen-dirty-discard <type=button> "放弃修改"
+        button.rs-btn.rs-gen-dirty-keep <type=button> "继续编辑"
   div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>

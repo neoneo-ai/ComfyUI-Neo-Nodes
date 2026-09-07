@@ -2653,6 +2653,58 @@
     margin-bottom: 6px;
 }
 
+/* 自动增强菜单关闭前的未保存修改确认条（LLM Settings / 出图设置共用）。
+   仅未隐藏时启用 flex 布局：直接 display:flex 会压过 hidden 属性的 UA 规则，
+   导致确认条在菜单打开时就一直可见。 */
+.rs-gen-dirty-confirm:not([hidden]) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 6px 8px;
+    border: 1px solid #b45309;
+    border-radius: 6px;
+    background: #2a2318;
+}
+.rs-gen-dirty-text {
+    color: #fbbf24;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.rs-gen-dirty-actions {
+    display: flex;
+    gap: 6px;
+}
+.rs-gen-dirty-save,
+.rs-gen-dirty-discard,
+.rs-gen-dirty-keep {
+    flex: none;
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.rs-gen-dirty-save {
+    color: #fff;
+    background: #3a5a8c;
+    border: 1px solid #5090cc;
+}
+.rs-gen-dirty-save:hover { background: #456ba8; }
+.rs-gen-dirty-discard {
+    color: #fca5a5;
+    background: #3a2a2a;
+    border: 1px solid #7f1d1d;
+}
+.rs-gen-dirty-discard:hover { background: #4a2f2f; }
+.rs-gen-dirty-keep {
+    color: #ccc;
+    background: #333;
+    border: 1px solid #555;
+}
+.rs-gen-dirty-keep:hover { background: #3d5a80; }
+
 /* ==========================================
    Skill Detail Popup - 单技能详情弹窗（查看/编辑/删除/复制为自定义/新建）
    ========================================== */
