@@ -664,12 +664,21 @@ function createStatusBars() {
         if (randomWrap.contains(e.target) || runtimeMenu.contains(e.target)) return;
         closeRuntimeMenu();
     };
+    const onRuntimeMenuKey = (e) => {
+        if (e.key === "Escape" && runtimeMenuOpen) closeRuntimeMenu();
+    };
     document.addEventListener("pointerdown", onDocPointerDown, true);
     document.addEventListener("mousedown", onDocPointerDown, true);
-    document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && runtimeMenuOpen) closeRuntimeMenu();
-    });
-    randomBtn._rsRuntime = { checkbox: runtimeCheckbox, countRow: runtimeCountRow, minusBtn: runtimeCountMinus, plusBtn: runtimeCountPlus, valueSpan: runtimeCountVal, wrap: randomWrap, destroy: () => runtimeMenu.remove() };
+    document.addEventListener("keydown", onRuntimeMenuKey);
+    randomBtn._rsRuntime = {
+        checkbox: runtimeCheckbox, countRow: runtimeCountRow, minusBtn: runtimeCountMinus, plusBtn: runtimeCountPlus, valueSpan: runtimeCountVal, wrap: randomWrap,
+        destroy: () => {
+            document.removeEventListener("pointerdown", onDocPointerDown, true);
+            document.removeEventListener("mousedown", onDocPointerDown, true);
+            document.removeEventListener("keydown", onRuntimeMenuKey);
+            runtimeMenu.remove();
+        }
+    };
 
     const listBtn = mkEl("button", "rs-list-btn");
     listBtn.textContent = "☰";
@@ -786,11 +795,20 @@ function createStatusBars() {
         if (e.target.closest && e.target.closest(".rs-combo-list")) return; // 模型下拉浮层挂在 body，点它不关菜单
         closeAutoMenu();
     };
+    const onAutoMenuKey = (e) => {
+        if (e.key === "Escape" && autoMenuOpen) closeAutoMenu();
+    };
     document.addEventListener("pointerdown", onAutoDocPointerDown, true);
     document.addEventListener("mousedown", onAutoDocPointerDown, true);
-    document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && autoMenuOpen) closeAutoMenu();
-    });
+    document.addEventListener("keydown", onAutoMenuKey);
+    autoGenerateCheckbox._rsAutoMenu = {
+        destroy: () => {
+            document.removeEventListener("pointerdown", onAutoDocPointerDown, true);
+            document.removeEventListener("mousedown", onAutoDocPointerDown, true);
+            document.removeEventListener("keydown", onAutoMenuKey);
+            autoMenu.remove();
+        }
+    };
 
     // 勾选自动增强 ⇄ 主按钮高亮：不做图标替换，仅切 class，由 CSS 画圆形边框/光晕（见 .rs-auto-enhance-active）
     const syncGenerateIcon = () => {
@@ -1063,10 +1081,11 @@ function createGenerateHandler(promptUI) {
  * 后端执行期自动生成（prompts.py 两条 auto-generate 路径）按块推送
  * rs.prompt.auto_generate_update：先写回 textarea/widget，再刷新 Markdown 预览，
  * 保证预览与输入框内容同帧（此前两处监听分开注册，预览总落后一个事件）。
+ * 返回注销函数，节点移除时调用，避免残留监听持有已销毁节点的 DOM。
  */
 function wireBackendStreamUpdate(promptUI) {
     const { customTextarea, textWidget, node, graph, refreshMarkdownPreviewAuto } = promptUI;
-    api.addEventListener("rs.prompt.auto_generate_update", (event) => {
+    const handler = (event) => {
         const currentUid = node.properties?.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
         if (event.detail.instance_uid !== currentUid) return;
         const promptText = event.detail.prompt || "";
@@ -1075,7 +1094,9 @@ function wireBackendStreamUpdate(promptUI) {
         saveTextToStorage(node, textWidget, customTextarea);
         if (graph) graph.setDirtyCanvas(true, true);
         refreshMarkdownPreviewAuto?.();
-    });
+    };
+    api.addEventListener("rs.prompt.auto_generate_update", handler);
+    return () => api.removeEventListener("rs.prompt.auto_generate_update", handler);
 }
 
 // ==========================================

@@ -859,7 +859,12 @@ function createPromptManagerUI() {
             }
         });
 
-        document.addEventListener("mousedown", (e) => {
+        const closePresetListOnOutside = (e) => {
+            // 节点被移除后浮层已脱离 DOM，顺手注销自己，避免残留监听器越积越多
+            if (!presetListOverlay.isConnected) {
+                document.removeEventListener("mousedown", closePresetListOnOutside);
+                return;
+            }
             if (!promptOutput.actionGroupEl.contains(e.target) && !presetListOverlay.contains(e.target)) {
                 presetListOverlay.style.display = "none";
                 isListOpen = false;
@@ -867,7 +872,8 @@ function createPromptManagerUI() {
                 hidePresetPreview();
                 presetActiveIndex = -1;
             }
-        });
+        };
+        document.addEventListener("mousedown", closePresetListOnOutside);
 
         inputOk.addEventListener("click", performSave);
         inputRecipeOk.addEventListener("click", performRecipeSave);

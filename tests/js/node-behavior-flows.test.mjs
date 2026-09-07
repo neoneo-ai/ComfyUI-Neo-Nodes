@@ -177,6 +177,7 @@ test("流式更新事件：写回提示词并同帧切到 Markdown 预览，复�
     assert.equal(box.checked, true);
     assert.match(el.promptArea.value, /- \[[xX]\] 开场/);
     assert.equal(widgetValue(node, "prompt"), el.promptArea.value);
+});
 
 test("流式更新事件按 instance_uid 隔离，不跨节点写入", async () => {
     const a = await makeNode(17);
@@ -192,4 +193,22 @@ test("流式更新事件按 instance_uid 隔离，不跨节点写入", async () 
     assert.equal(parts(b).promptArea.value, beforeB);
 });
 
+test("节点移除后注销全局监听并清掉挂 body 的浮层", async () => {
+    const node = await makeNode(19);
+    dispatchApiEvent("rs.prompt.auto_generate_update", {
+        instance_uid: node.properties.rs_instance_uid,
+        prompt: "移除前",
+    });
+    assert.equal(parts(node).promptArea.value, "移除前");
+    // 骰子菜单与自动增强菜单都挂在 body，各节点一份
+    assert.equal(document.querySelectorAll(".rs-runtime-menu").length, 2);
+
+    node.onRemoved();
+
+    assert.equal(document.querySelectorAll(".rs-runtime-menu").length, 0);
+    dispatchApiEvent("rs.prompt.auto_generate_update", {
+        instance_uid: node.properties.rs_instance_uid,
+        prompt: "移除后不应写入",
+    });
+    assert.equal(parts(node).promptArea.value, "移除前");
 });

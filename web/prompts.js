@@ -318,8 +318,10 @@ app.registerExtension({
 
             // Node removal cleanup
             node.onRemoved = function() {
+                disposeNodeListeners();
                 stopEnforcement();
                 randomBtn._rsRuntime?.destroy?.();
+                autoGenerateCheckbox?._rsAutoMenu?.destroy?.();
                 presetListOverlay.remove();
                 presetNameInput.remove();
                 deleteConfirmOverlay.remove();
@@ -454,22 +456,32 @@ app.registerExtension({
                     if (node.graph) node.graph.setDirtyCanvas(true, true);
                 });
 
-                // 后端流式生成：写回提示词并同步刷新 Markdown 预览（同一处完成，避免预览落后一个事件）
-                wireBackendStreamUpdate(promptUIRef);
             }
 
             // ==========================================
             // Use shared event listeners
             // ==========================================
-            document.addEventListener("click", NodeBehaviors.createPopupCloser({
+            const popupCloser = NodeBehaviors.createPopupCloser({
                 presetListOverlay, presetNameInput, deleteConfirmOverlay, saveBtn: null, listBtn: null, quickInputWrapper
-            }));
+            });
+            document.addEventListener("click", popupCloser);
 
-            api.addEventListener("rs.prompt.update", NodeBehaviors.createPromptUpdateHandler(
+            const promptUpdateHandler = NodeBehaviors.createPromptUpdateHandler(
                 { customTextarea, textWidget, node, graph: node.graph, randomBtn }
-            ));
+            );
+            api.addEventListener("rs.prompt.update", promptUpdateHandler);
 
-            window.addEventListener("beforeunload", NodeBehaviors.createBeforeUnloadHandler(node, textWidget));
+            const disposeStreamSync = wireBackendStreamUpdate(promptUIRef);
+
+            const beforeUnloadHandler = NodeBehaviors.createBeforeUnloadHandler(node, textWidget);
+            window.addEventListener("beforeunload", beforeUnloadHandler);
+
+            const disposeNodeListeners = () => {
+                document.removeEventListener("click", popupCloser);
+                api.removeEventListener("rs.prompt.update", promptUpdateHandler);
+                disposeStreamSync();
+                window.removeEventListener("beforeunload", beforeUnloadHandler);
+            };
 
             // Expose node reference for external apps (like gallery)
             node._rsPromptUIElements = { customTextarea, textWidget };
@@ -544,8 +556,6 @@ document.addEventListener("rs.templates.updated", () => {
         }
     });
 });
-
-window.addEventListener("beforeunload", NodeBehaviors.createBeforeUnloadHandler);
 
 // ==========================================
 // Reference external CSS file
@@ -853,8 +863,10 @@ app.registerExtension({
 
             // Node removal cleanup
             node.onRemoved = function() {
+                disposeNodeListeners();
                 stopEnforcement();
                 randomBtn._rsRuntime?.destroy?.();
+                autoGenerateCheckbox?._rsAutoMenu?.destroy?.();
                 presetListOverlay.remove();
                 presetNameInput.remove();
                 deleteConfirmOverlay.remove();
@@ -968,22 +980,32 @@ app.registerExtension({
                     if (node.graph) node.graph.setDirtyCanvas(true, true);
                 });
 
-                // 后端流式生成：写回提示词并同步刷新 Markdown 预览（同一处完成，避免预览落后一个事件）
-                wireBackendStreamUpdate(promptUIRef);
             }
 
             // ==========================================
             // Use shared event listeners
             // ==========================================
-            document.addEventListener("click", NodeBehaviors.createPopupCloser({
+            const popupCloser = NodeBehaviors.createPopupCloser({
                 presetListOverlay, presetNameInput, deleteConfirmOverlay, saveBtn: null, listBtn: null, quickInputWrapper
-            }));
+            });
+            document.addEventListener("click", popupCloser);
 
-            api.addEventListener("rs.prompt.update", NodeBehaviors.createPromptUpdateHandler(
+            const promptUpdateHandler = NodeBehaviors.createPromptUpdateHandler(
                 { customTextarea, textWidget, node, graph: node.graph, randomBtn }
-            ));
+            );
+            api.addEventListener("rs.prompt.update", promptUpdateHandler);
 
-            window.addEventListener("beforeunload", NodeBehaviors.createBeforeUnloadHandler(node, textWidget));
+            const disposeStreamSync = wireBackendStreamUpdate(promptUIRef);
+
+            const beforeUnloadHandler = NodeBehaviors.createBeforeUnloadHandler(node, textWidget);
+            window.addEventListener("beforeunload", beforeUnloadHandler);
+
+            const disposeNodeListeners = () => {
+                document.removeEventListener("click", popupCloser);
+                api.removeEventListener("rs.prompt.update", promptUpdateHandler);
+                disposeStreamSync();
+                window.removeEventListener("beforeunload", beforeUnloadHandler);
+            };
 
             // Expose node reference for external apps (like gallery)
             node._rsPromptUIElements = { customTextarea, textWidget };
