@@ -42,7 +42,7 @@ function getRandomTip() {
 }
 
 // ==========================================
-// Status bars with toggle, template selector, action buttons
+// Status bars with toggle, skill selector, action buttons
 // ==========================================
 
 function createStatusBars() {
@@ -66,10 +66,10 @@ function createStatusBars() {
     toggleSwitch.appendChild(externalTab);
     toggleWrapper.appendChild(toggleSwitch);
     
-    // Template selector dropdown (now skill-aware: templates + tasks + image skills)
+    // Skill selector dropdown (tasks + presets + image skills)
     // 组装（原生 select 数据源 + 可搜索下拉 + 底部管理工具栏 + 行内操作）已收敛到 skill.js 的
     // createSkillDropdown()；可见 UI 是返回的 combo.box（select 被移入其中），工具栏须挂载 box。
-    const { selectEl: tplSelector, combo: tplCombo } = createSkillDropdown();
+    const { selectEl: skillSelector, combo: skillCombo } = createSkillDropdown();
 
     // 附加图片 chips 容器 + 图片选择按钮（用于反推等 vision skill）
     const imageChipsRow = mkEl("div", "rs-image-chips");
@@ -217,7 +217,7 @@ function createStatusBars() {
     // debounce: per-node timer to avoid duplicate calls from multiple init paths
     const _populateTimer = new Map();
 
-    async function populateTemplateSelector(startNode = null) {
+    async function populateSkillSelector(startNode = null) {
         const node = startNode;
         if (node && _populateTimer.has(node.id)) {
             clearTimeout(_populateTimer.get(node.id));
@@ -232,23 +232,23 @@ function createStatusBars() {
 
     async function doPopulate() {
         const skills = await listSkills();
-        const currentVal = tplSelector.value;
-        tplSelector.innerHTML = "";
+        const currentVal = skillSelector.value;
+        skillSelector.innerHTML = "";
 
         const defaultOpt = document.createElement("option");
         defaultOpt.value = "";
         defaultOpt.textContent = "默认";
-        tplSelector.appendChild(defaultOpt);
+        skillSelector.appendChild(defaultOpt);
 
-        populateSkillOptions(tplSelector, skills);
+        populateSkillOptions(skillSelector, skills);
 
-        if (currentVal && [...tplSelector.options].some(o => o.value === currentVal)) {
-            tplSelector.value = currentVal;
+        if (currentVal && [...skillSelector.options].some(o => o.value === currentVal)) {
+            skillSelector.value = currentVal;
         }
 
-        // Programmatic value assignment does not fire change events;
-        // dispatch one so node listeners sync the template_id hidden input used by queue runs.
-        tplSelector.dispatchEvent(new Event("change"));
+        // Programmatic value assignment does not fire change events; dispatch one so
+        // node listeners persist the selected skill (rs_selected_skill) after repopulation.
+        skillSelector.dispatchEvent(new Event("change"));
     }
     
     statusBar.appendChild(toggleWrapper);
@@ -569,7 +569,7 @@ function createStatusBars() {
 
     // Add elements to toolbar
     inputToolbar.appendChild(attachBtn);
-    inputToolbar.appendChild(tplCombo.box);
+    inputToolbar.appendChild(skillCombo.box);
     const spacer = mkEl("div", "rs-spacer");
     inputToolbar.appendChild(spacer);
     inputToolbar.appendChild(autoWrap);
@@ -621,7 +621,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
+    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
 // ==========================================
@@ -765,7 +765,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
  */
 function createGenerateHandler(promptUI) {
     return async () => {
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, tplSelector, attachedImages = [], refreshMarkdownPreviewAuto } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto } = promptUI;
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -790,8 +790,8 @@ function createGenerateHandler(promptUI) {
         }
 
         // 选中出图 skill：绕过 LLM，直连后端出图流程，结果渲染在 Markdown 预览区
-        const selectedOpt = tplSelector
-            ? [...tplSelector.options].find(o => o.value === tplSelector.value) : null;
+        const selectedOpt = skillSelector
+            ? [...skillSelector.options].find(o => o.value === skillSelector.value) : null;
         if (selectedOpt?.dataset.genImage === "1") {
             await runChatImageGeneration({ generateBtn, controller: promptUI.genResultsController },
                 messageToLLM, imagesPayload, selectedOpt);
@@ -806,8 +806,8 @@ function createGenerateHandler(promptUI) {
             console.warn("collectWorkflowContext failed:", e);
         }
 
-        // 检查是否选择了 skill（模板/任务统一选择器，值为 skill id）
-        const selectedSkillId = tplSelector?.value || "";
+        // 检查是否选择了 skill（任务/预设统一选择器，值为 skill id）
+        const selectedSkillId = skillSelector?.value || "";
 
         generateBtn.disabled = true;
         generateBtn.textContent = "⏳";
@@ -938,7 +938,7 @@ function triggerTextChange(textareaEl) {
  * actions 是宿主自己的动作按钮（保存/随机/列表），按传入顺序组合进按钮组，
  * 👁 预览按钮始终排最后；写入 textarea 时派发原生 input 事件供外部同步 widget。
  */
-function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
+function createPromptOutputArea({ customTextarea, skillSelector, actions = [] }) {
     // Create wrapper for custom textarea and buttons
     const customTextareaWrapper = mkEl("div", "rs-custom-textarea-wrapper");
     customTextareaWrapper.appendChild(customTextarea);
@@ -1142,10 +1142,10 @@ function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
     // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
     skillHint.style.display = "none";
     function updateSkillHint() {
-        const opt = [...tplSelector.options].find(o => o.value === tplSelector.value);
+        const opt = [...skillSelector.options].find(o => o.value === skillSelector.value);
         skillHint.style.display = (opt && opt.dataset.multiTurn === "1") ? "" : "none";
     }
-    tplSelector.addEventListener("change", updateSkillHint);
+    skillSelector.addEventListener("change", updateSkillHint);
 
     return {
         el: customTextareaWrapper,

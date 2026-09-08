@@ -342,3 +342,34 @@ test("出图运行中：进度条按采样步数推进", async () => {
     assert.equal(el.preview.querySelector(".rs-gen-progress-label")?.textContent, "第 3 / 8 步");
     assert.equal(bar.querySelector(".rs-gen-progress-fill").style.width, "37.5%");
 });
+
+test("已保存的 skill id：延迟填充后仍保留到节点属性并显示在选择器", async () => {
+    const graph = makeGraph();
+    const gen = addNode(graph, makeNode({
+        id: 30, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+        properties: { rs_selected_skill: "image_gen" },
+    }));
+    await attachAgent(gen);
+    const el = parts(gen);
+    await sleep(400); // 等待 populateSkillSelector 异步填充 option 并恢复选择
+    assert.equal(el.selector.value, "image_gen", "选择器应显示已保存的 skill");
+    assert.equal(gen.properties.rs_selected_skill, "image_gen", "属性不应被 doPopulate 的 change 冲掉");
+});
+
+test("旧 rs_selected_template：迁移到 rs_selected_skill 并清除旧键", async () => {
+    const graph = makeGraph();
+    const gen = addNode(graph, makeNode({
+        id: 31, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+        properties: { rs_selected_template: "image_gen" },
+    }));
+    await attachAgent(gen);
+    const el = parts(gen);
+    await sleep(400);
+    assert.equal(el.selector.value, "image_gen", "选择器应显示迁移后的 skill");
+    assert.equal(gen.properties.rs_selected_skill, "image_gen", "应迁移到 rs_selected_skill");
+    assert.equal(gen.properties.rs_selected_template, undefined, "旧键应被清除");
+});

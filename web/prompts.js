@@ -178,32 +178,39 @@ app.registerExtension({
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
-                quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
+                quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
-            // Populate template selector, restore last selection and sync to hidden widget
-            if (populateTemplateSelector) {
+            // Populate skill selector and restore the last selection. The saved id is
+            // captured before async repopulation so doPopulate's programmatic change
+            // cannot clobber it (it would otherwise reset properties to the default).
+            if (populateSkillSelector) {
                 setTimeout(async () => {
-                    await populateTemplateSelector(node);
-                    if (node.properties?.rs_selected_template) {
-                        tplSelector.value = node.properties.rs_selected_template;
+                    if (node.properties) {
+                        // one-time migration from the legacy template key
+                        if (node.properties.rs_selected_skill === undefined) {
+                            node.properties.rs_selected_skill = node.properties.rs_selected_template;
+                        }
+                        delete node.properties.rs_selected_template;
                     }
-                    const tplWidget = node.widgets?.find(w => w.name === "template_id");
-                    if (tplWidget) tplWidget.value = tplSelector.value;
+                    const savedSkill = node.properties?.rs_selected_skill || "";
+                    await populateSkillSelector(node);
+                    if (savedSkill && [...skillSelector.options].some(o => o.value === savedSkill)) {
+                        skillSelector.value = savedSkill;
+                        node.properties.rs_selected_skill = savedSkill;
+                    }
                 }, 100);
             }
 
-            // Sync template selection so backend auto-generate uses the selected template
-            tplSelector.addEventListener("change", () => {
+            // Persist the selected skill so it survives reload
+            skillSelector.addEventListener("change", () => {
                 if (!node.properties) node.properties = {};
-                node.properties.rs_selected_template = tplSelector.value;
-                const tplWidget = node.widgets?.find(w => w.name === "template_id");
-                if (tplWidget) tplWidget.value = tplSelector.value;
+                node.properties.rs_selected_skill = skillSelector.value;
             });
 
-            // Expose for rs.templates.updated listener to refresh this selector
-            node._populateTemplateSelector = populateTemplateSelector;
+            // Expose for rs.skills.updated listener to refresh this selector
+            node._populateSkillSelector = populateSkillSelector;
 
             // Restore quickInput content from properties
             if (node.properties?.rs_quick_input !== undefined) {
@@ -421,7 +428,7 @@ app.registerExtension({
             };
 
             const handleGeneratePrompt = createGenerateHandler(
-                { ...promptUIRef, quickInput, tplSelector });
+                { ...promptUIRef, quickInput, skillSelector });
             generateBtn.addEventListener("click", handleGeneratePrompt);
             // Enter to generate, Shift+Enter for newline
             quickInput.addEventListener("keydown", (e) => {
@@ -549,10 +556,10 @@ document.addEventListener("gallery.send.prompt", (event) => {
 
 // Refresh template selectors on all Neo prompt nodes when templates change
 // (dispatched by the settings window after save/copy/delete)
-document.addEventListener("rs.templates.updated", () => {
+document.addEventListener("rs.skills.updated", () => {
     app.graph?._nodes?.forEach(node => {
-        if (typeof node._populateTemplateSelector === "function") {
-            node._populateTemplateSelector(node);
+        if (typeof node._populateSkillSelector === "function") {
+            node._populateSkillSelector(node);
         }
     });
 });
@@ -674,32 +681,39 @@ app.registerExtension({
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
-                quickInputWrapper, populateTemplateSelector, tplSelector, autoGenerateCheckbox,
+                quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
-            // Populate template selector, restore last selection and sync to hidden widget
-            if (populateTemplateSelector) {
+            // Populate skill selector and restore the last selection. The saved id is
+            // captured before async repopulation so doPopulate's programmatic change
+            // cannot clobber it (it would otherwise reset properties to the default).
+            if (populateSkillSelector) {
                 setTimeout(async () => {
-                    await populateTemplateSelector(node);
-                    if (node.properties?.rs_selected_template) {
-                        tplSelector.value = node.properties.rs_selected_template;
+                    if (node.properties) {
+                        // one-time migration from the legacy template key
+                        if (node.properties.rs_selected_skill === undefined) {
+                            node.properties.rs_selected_skill = node.properties.rs_selected_template;
+                        }
+                        delete node.properties.rs_selected_template;
                     }
-                    const tplWidget = node.widgets?.find(w => w.name === "template_id");
-                    if (tplWidget) tplWidget.value = tplSelector.value;
+                    const savedSkill = node.properties?.rs_selected_skill || "";
+                    await populateSkillSelector(node);
+                    if (savedSkill && [...skillSelector.options].some(o => o.value === savedSkill)) {
+                        skillSelector.value = savedSkill;
+                        node.properties.rs_selected_skill = savedSkill;
+                    }
                 }, 100);
             }
 
-            // Sync template selection so backend auto-generate uses the selected template
-            tplSelector.addEventListener("change", () => {
+            // Persist the selected skill so it survives reload
+            skillSelector.addEventListener("change", () => {
                 if (!node.properties) node.properties = {};
-                node.properties.rs_selected_template = tplSelector.value;
-                const tplWidget = node.widgets?.find(w => w.name === "template_id");
-                if (tplWidget) tplWidget.value = tplSelector.value;
+                node.properties.rs_selected_skill = skillSelector.value;
             });
 
-            // Expose for rs.templates.updated listener to refresh this selector
-            node._populateTemplateSelector = populateTemplateSelector;
+            // Expose for rs.skills.updated listener to refresh this selector
+            node._populateSkillSelector = populateSkillSelector;
 
             // Restore quickInput content from properties
             if (node.properties?.rs_quick_input !== undefined) {
@@ -945,7 +959,7 @@ app.registerExtension({
             };
 
             const handleGeneratePrompt = createGenerateHandler(
-                { ...promptUIRef, quickInput, tplSelector });
+                { ...promptUIRef, quickInput, skillSelector });
             generateBtn.addEventListener("click", handleGeneratePrompt);
             // Enter to generate, Shift+Enter for newline
             quickInput.addEventListener("keydown", (e) => {

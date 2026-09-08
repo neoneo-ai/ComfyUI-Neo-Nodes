@@ -117,7 +117,7 @@ function createDeleteModal() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, tplSelector, populateTemplateSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint, saveResultsRow: recipeResultsRow, saveResultsCheck: recipeResultsCheck } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
@@ -339,7 +339,7 @@ function createPromptManagerUI() {
 
     // 输出区（textarea + Markdown 预览 + 清空 + 多轮提示）归 llm-chat.js 所有；
     // 💾/🎲/📋 三个动作按钮作为不透明节点组合进它的按钮组，顺序保持不变。
-    const promptOutput = createPromptOutputArea({ customTextarea, tplSelector, actions: [saveBtn, randomWrap, listBtn] });
+    const promptOutput = createPromptOutputArea({ customTextarea, skillSelector, actions: [saveBtn, randomWrap, listBtn] });
 
     root.appendChild(promptOutput.el);
 
@@ -921,8 +921,8 @@ function createPromptManagerUI() {
             presetListOverlay,
             presetNameInput,
             deleteConfirmOverlay,
-            tplSelector,
-            populateTemplateSelector,
+            skillSelector,
+            populateSkillSelector,
             autoGenerateCheckbox,
             attachedImages,
             clearImages

@@ -28,7 +28,7 @@ div.rs-root.rs-theme-local
         div
           input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤 skill... title=默认 val="默认">
           button.rs-combo-clear <type=button title=清除输入，显示全部 display=block> "✕"
-        select.rs-tpl-selector <title=Select skill (template / task / image)>
+        select.rs-tpl-selector <title=Select a skill>
           option <value= selected> "默认"
           optgroup <label=⚡ 出图 (Krea2)>
             option <value=image_gen> "出图 Krea2 三视图"

@@ -472,17 +472,17 @@ function createSkillDetailPopup() {
             const id = name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
             if (!id) return;
             const result = await saveSkill({ id, name, content: contentTextarea.value, tags: [], source: "custom", multi_turn: multiTurnChk.checked });
-            if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+            if (result.success) { document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (result.error || "Unknown error"));
             return;
         }
         if (isMainFile(selectedFile)) {
             const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom", multi_turn: multiTurnChk.checked });
-            if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+            if (result.success) { document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (result.error || "Unknown error"));
         } else {
             const r = await saveSkillFile(currentSkillId, selectedFile, contentTextarea.value);
-            if (r.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+            if (r.success) { document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (r.error || ""));
         }
     }
@@ -495,7 +495,7 @@ function createSkillDetailPopup() {
         const nm = nameInput.value.trim() || currentSkillId;
         if (!confirm(`Delete skill "${nm}"?`)) return;
         const result = await deleteSkill(currentSkillId);
-        if (result.success) { document.dispatchEvent(new CustomEvent("rs.templates.updated")); close(); }
+        if (result.success) { document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
         else alert(`Delete failed: ${result.error || "Unknown error"}`);
     });
 
@@ -514,7 +514,7 @@ function createSkillDetailPopup() {
             source: "custom",
             multi_turn: !!(full && full.multi_turn)
         });
-        document.dispatchEvent(new CustomEvent("rs.templates.updated"));
+        document.dispatchEvent(new CustomEvent("rs.skills.updated"));
         close();
     });
 
@@ -525,7 +525,7 @@ function createSkillDetailPopup() {
         const fname = prompt("New file name (.md or .txt; use / for subfolders):", "notes.md");
         if (!fname || !fname.trim()) return;
         const r = await saveSkillFile(currentSkillId, fname.trim(), "");
-        if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.skills.updated")); }
         else alert("Add failed: " + (r.error || ""));
     });
 
@@ -534,7 +534,7 @@ function createSkillDetailPopup() {
         if (!currentSkillId || !selectedFile || isMainFile(selectedFile)) return;
         if (!confirm(`Delete file "${selectedFile}"?`)) return;
         const r = await deleteSkillFile(currentSkillId, selectedFile);
-        if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.skills.updated")); }
         else alert("Delete failed: " + (r.error || ""));
     });
 
@@ -582,7 +582,7 @@ function getSkillUploadInputs() {
         zipInput.value = "";
         if (!f) return;
         const r = await uploadSkill({ zipFile: f });
-        if (r.success) { alert(`Uploaded skill "${r.id}"`); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        if (r.success) { alert(`Uploaded skill "${r.id}"`); document.dispatchEvent(new CustomEvent("rs.skills.updated")); }
         else alert("Upload failed: " + (r.error || ""));
     });
     dirInput.addEventListener("change", async () => {
@@ -594,7 +594,7 @@ function getSkillUploadInputs() {
         const payload = { files: textFiles.map(f => ({ path: f.webkitRelativePath || f.name, blob: f })) };
         if (tops.length === 1) payload.skillId = tops[0];
         const r = await uploadSkill(payload);
-        if (r.success) { alert(`Uploaded skill "${r.id}"`); document.dispatchEvent(new CustomEvent("rs.templates.updated")); }
+        if (r.success) { alert(`Uploaded skill "${r.id}"`); document.dispatchEvent(new CustomEvent("rs.skills.updated")); }
         else alert("Upload failed: " + (r.error || ""));
     });
 
@@ -610,7 +610,7 @@ function getSkillUploadInputs() {
 
 function createSkillDropdown() {
     const selectEl = mkEl("select", "rs-tpl-selector");
-    selectEl.title = "Select skill (template / task / image)";
+    selectEl.title = "Select a skill";
 
     // 底部工具栏：+ New Skill / ⬆ ZIP / ⬆ Folder —— 管理入口（替代原 ⚙️ 设置弹窗）
     const skillFooter = mkEl("div", "rs-skill-dropdown-footer");
