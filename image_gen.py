@@ -26,6 +26,7 @@ import aiohttp
 from aiohttp import web
 import folder_paths
 from comfy.cli_args import args as cli_args
+from comfy_execution.progress import get_progress_state
 from server import PromptServer
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ DEFAULT_SETTINGS = {
     "text_encoder": "",       # text_encoders 相对名
     "vae": "",                # vae 相对名
     "clip_type": "krea2",
-    "loras": [],              # [{"name": "...", "strength": 0.8}]，LoraLoaderModelOnly
+    "loras": [],              # [{name, strength, ref_only}]，LoraLoaderModelOnly；ref_only=true 仅参考图模式加载（四视图 LoRA 即勾此项者）
     "steps": 8,
     "cfg": 1.0,
     "sampler": "euler",
@@ -135,6 +136,15 @@ def suggest_model(folder: str) -> str:
     return ""
 
 
+def _first_quadview(files: list) -> str:
+    """按名称线索挑第一个四视图 LoRA（与参考图模式自动挑选一致）；无命中返回空串。"""
+    for hint in _QUADVIEW_HINTS:
+        matches = [f for f in files if hint in f.lower()]
+        if matches:
+            return matches[0]
+    return ""
+
+
 def resolve_model(folder: str, wanted: str) -> tuple:
     """把设置里的模型名解析成 folder_paths 可用的相对名。
 
@@ -163,13 +173,20 @@ def resolve_model(folder: str, wanted: str) -> tuple:
     return "", f"找不到模型 {wanted}（{folder}）{hint}"
 
 
+def _display_sort(files: list) -> list:
+    """下拉展示排序：krea2 相关靠前，其余按名称（不区分大小写）。"""
+    return sorted(files, key=lambda f: ("krea2" not in f.lower(), f.lower()))
+
+
 def scan_models() -> dict:
     """列出可选模型与自动挑选结果，供前端设置面板展示。"""
     out = {}
     for folder in ("diffusion_models", "text_encoders", "vae", "loras"):
         files = _folder_files(folder)
-        out[folder] = files
-        if folder != "loras":
+        out[folder] = _display_sort(files)
+        if folder == "loras":
+            out["suggested_lora"] = _first_quadview(files)
+        else:
             out["suggested_" + folder] = suggest_model(folder)
     return out
 
@@ -352,7 +369,7 @@ def _float(value, default: float) -> float:
 
 
 def _resolve_loras(settings: dict) -> tuple:
-    """解析设置里的 LoRA 列表，返回 ([{name, strength}], warnings)。"""
+    """解析设置里的 LoRA 列表，返回 ([{name, strength, ref_only}], warnings)。"""
     entries = settings.get("loras") or []
     if not isinstance(entries, list):
         return [], ["loras 配置不是列表，已忽略"]
@@ -360,40 +377,41 @@ def _resolve_loras(settings: dict) -> tuple:
     warnings = []
     for entry in entries:
         if isinstance(entry, str):
-            name, strength = entry, 1.0
+            name, strength, ref_only = entry, 1.0, False
         elif isinstance(entry, dict):
-            name, strength = entry.get("name", ""), _float(entry.get("strength"), 1.0)
+            name = str(entry.get("name", "")).strip()
+            strength = _float(entry.get("strength"), 1.0)
+            ref_only = bool(entry.get("ref_only", False))
         else:
             continue
-        name = str(name or "").strip()
         if not name:
             continue
         hit, err = resolve_model("loras", name)
         if err:
             warnings.append(err)
             continue
-        resolved.append({"name": hit, "strength": min(10.0, max(-10.0, strength))})
+        resolved.append({"name": hit, "strength": min(10.0, max(-10.0, strength)), "ref_only": ref_only})
     return resolved, warnings
 
 
 def _quadview_lora(user_loras: list) -> tuple:
     """参考图模式必需的 Krea2 四视图 LoRA。
 
-    用户已配置则直接沿用（强度不变，返回 (entry, True)）；否则按名称线索扫描
-    loras 目录并追加到链尾（返回 (entry, False)）。找不到时抛 ValueError ——
-    没有该 LoRA 只会退化成普通重绘，不如明确报错。
+    用户在 LoRA 列表里配了名称含线索的则沿用（强度不变，返回 (entry, True)）；否则按
+    名称线索扫描 loras 目录并追加到链尾（返回 (entry, False)）。找不到时抛 ValueError ——
+    没有该 LoRA 只会退化成普通重绘，不如明确报错。勾了「依赖参考图」的 LoRA 由
+    resolve_request 直接沿用，不会走到这里。
     """
     for entry in user_loras:
         if any(hint in str(entry.get("name", "")).lower() or hint in str(entry.get("name", ""))
                for hint in _QUADVIEW_HINTS):
             return dict(entry), True
-    for hint in _QUADVIEW_HINTS:
-        files = [f for f in _folder_files("loras") if hint in f.lower()]
-        if files:
-            return {"name": files[0], "strength": 1.0}, False
+    name = _first_quadview(_folder_files("loras"))
+    if name:
+        return {"name": name, "strength": 1.0}, False
     raise ValueError(
-        "缺少 Krea2 四视图 LoRA：请把 krea2\\Edit\\Krea2-四视图QuadView_*.safetensors "
-        "放入 models/loras 后重试（参考图模式依赖它生成角色板）")
+        "缺少 Krea2 四视图 LoRA：请在出图设置的 LoRA 列表里添加它并勾选「依赖参考图」，"
+        "或在 models/loras 放一个文件名含 quadview / 四视图 的 LoRA（如 Krea2-QuadView_*.safetensors）后重试")
 
 
 def resolve_request(body: dict, settings: dict | None = None) -> dict:
@@ -436,12 +454,17 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
     if len(names) > 1:
         warnings.append("四视图只使用第一张参考图")
 
-    # 参考图模式：固定结构指令前缀 + 用户描述；四视图 LoRA 必需（缺失直接报错）
+    # 参考图模式：固定结构指令前缀 + 用户描述。四视图 LoRA 必需 —— 优先用用户在 LoRA
+    # 列表里勾了「依赖参考图」的（直接沿用，不追加）；没有则按名称线索自动挑选/追加，
+    # 仍找不到才报错。文生图模式跳过 ref_only 的 LoRA（它们只在有参考图时才有意义）。
     prompt_text = FOUR_VIEW_PREFIX + prompt_text if ref_name else prompt_text
     if ref_name:
-        quadview, already = _quadview_lora(loras)
-        if not already:
-            loras.append(quadview)
+        if not any(l.get("ref_only") for l in loras):
+            quadview, already = _quadview_lora(loras)
+            if not already:
+                loras.append(quadview)
+    else:
+        loras = [l for l in loras if not l.get("ref_only")]
 
     count = max(1, min(MAX_IMAGES, _int(body.get("count"), _int(merged.get("count"), 1))))
     if ref_name and count > 1:
@@ -642,6 +665,24 @@ def _lookup(prompt_id: str) -> tuple:
     return "unknown", None
 
 
+def _progress_for(prompt_id: str):
+    """采样节点步数进度 {value, max}；registry 不属于本 prompt 或无步数信息时返回 None。"""
+    registry = get_progress_state()
+    if getattr(registry, "prompt_id", "") != prompt_id:
+        return None
+    best_max = 0.0
+    best_value = 0.0
+    for entry in registry.nodes.values():
+        mx = float(entry.get("max") or 0)
+        if mx <= 1:
+            continue
+        if mx > best_max:
+            best_max, best_value = mx, float(entry.get("value") or 0)
+    if best_max <= 1:
+        return None
+    return {"value": int(best_value), "max": int(best_max)}
+
+
 def _error_from_history(item: dict) -> tuple:
     """返回 (错误文本, 是否被取消)。"""
     status = item.get("status") or {}
@@ -728,6 +769,7 @@ def _snapshot(task: dict) -> dict:
         "model": task["params"]["model"],
         "seed": task["params"]["seed"],
         "images": [_public_image(e) for e in task["images"]],
+        "progress": task.get("progress"),
         "error": task["error"],
         "warnings": task.get("warnings") or [],
     }
@@ -752,6 +794,7 @@ def _finish(task: dict, status: str, images: list, error: str) -> None:
     task["status"] = status
     task["images"] = images
     task["error"] = error
+    task["progress"] = None
     task["updated"] = time.time()
     _WATCHERS.pop(task["task_id"], None)
     if error:
@@ -777,6 +820,9 @@ async def _watch(task_id: str) -> None:
             return
         if state == "running":
             task["status"] = "running"
+            prog = _progress_for(prompt_id)
+            if prog is not None:
+                task["progress"] = prog
             task["updated"] = time.time()
         elif time.monotonic() > deadline:
             _finish(task, "failed", [], "等待出图超时，任务已不在队列中")
@@ -796,6 +842,7 @@ async def start_generation(body: dict) -> dict:
         "updated": now,
         "params": params,
         "images": [],
+        "progress": None,
         "error": "",
         "warnings": list(params.get("warnings") or []),
     }

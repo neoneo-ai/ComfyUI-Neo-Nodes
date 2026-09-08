@@ -308,3 +308,37 @@ test("出图成功：无 LoadImage 目标 → 自动新建并写入", async () =
     assert.equal(created.widgets[0].value, "d.png", "新节点的 image widget 应写入新图");
     delete globalThis.LiteGraph;
 });
+
+test("出图运行中：进度条按采样步数推进", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 20, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    let calls = 0;
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t7", status: "queued", images: [], width: 0, height: 0 }));
+    // 前几轮 running 且带步数进度，之后才成功——保证断言落在运行中窗口内
+    mockRoute("/neo_image_gen/status/t7", () => {
+        calls += 1;
+        if (calls < 8) return jsonResponse({ task_id: "t7", status: "running", progress: { value: 3, max: 8 } });
+        return jsonResponse({
+            task_id: "t7", status: "succeeded",
+            images: [{ filename: "e.png", subfolder: "", url: "/view?filename=e.png&type=output" }],
+            width: 1280, height: 720,
+        });
+    });
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(2200); // 首轮轮询（~1.5s）后应处于 running 且已带步数进度
+
+    const bar = el.preview.querySelector(".rs-gen-progress");
+    assert.ok(bar, "运行中应显示进度条");
+    assert.equal(el.preview.querySelector(".rs-gen-progress-label")?.textContent, "第 3 / 8 步");
+    assert.equal(bar.querySelector(".rs-gen-progress-fill").style.width, "37.5%");
+});

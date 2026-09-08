@@ -295,6 +295,11 @@ function shortModelName(name) {
     return tail.replace(/\.(safetensors|sft|pt|bin|gguf)$/i, "");
 }
 
+// 四视图 LoRA 名称线索（与后端 _QUADVIEW_HINTS 对齐，大小写不敏感）；命中则「依赖参考图」默认勾选
+function isQuadviewName(name) {
+    return /quadview|四视图/i.test(String(name || ""));
+}
+
 function fillComboSelect(select, files, suggested, current) {
     select.innerHTML = "";
     const auto = document.createElement("option");
@@ -400,11 +405,20 @@ export function createImageGenSettingsForm() {
     form.append(modelCtl.row, encoderCtl.row, vaeCtl.row, loraRow, grid, saveRow);
 
     let loraFiles = [];
+    let suggestedLora = "";
 
-    function addLoraRow(name = "", strength = 1.0) {
+    function addLoraRow(name = "", strength = 1.0, refOnly = false) {
         const line = mkEl("div", "rs-gen-lora-row");
         const select = document.createElement("select");
         const combo = attachComboBox(select).box;
+        const refOnlyWrap = mkEl("label", "rs-gen-lora-refonly-wrap");
+        const refOnlyChk = mkEl("input", "rs-gen-lora-refonly");
+        refOnlyChk.type = "checkbox";
+        refOnlyChk.checked = !!refOnly;
+        const refOnlyTxt = mkEl("span", "rs-gen-lora-refonly-txt");
+        refOnlyTxt.textContent = "依赖参考图";
+        refOnlyWrap.append(refOnlyChk, refOnlyTxt);
+        refOnlyWrap.setAttribute("data-rs-tooltip", "编辑 LoRA（依赖参考图）：勾选=仅参考图模式加载，不勾=文生图无条件加载");
         const strengthInput = mkEl("input", "rs-gen-lora-strength");
         strengthInput.type = "number";
         strengthInput.min = -10;
@@ -416,8 +430,11 @@ export function createImageGenSettingsForm() {
         delBtn.textContent = "✕";
         delBtn.setAttribute("data-rs-tooltip", "移除该 LoRA");
         delBtn.addEventListener("click", () => line.remove());
-        line.append(combo, strengthInput, delBtn);
-        fillComboSelect(select, loraFiles, "", name);
+        select.addEventListener("change", () => {
+            if (isQuadviewName(select.value)) refOnlyChk.checked = true;
+        });
+        line.append(combo, strengthInput, refOnlyWrap, delBtn);
+        fillComboSelect(select, loraFiles, suggestedLora, name);
         loraList.appendChild(line);
     }
 
@@ -431,6 +448,7 @@ export function createImageGenSettingsForm() {
         try {
             const [settings, models] = await Promise.all([getGenSettings(), listGenModels()]);
             loraFiles = models.loras || [];
+            suggestedLora = models.suggested_lora || "";
             fillComboSelect(modelCtl.select, models.diffusion_models || [],
                 models.suggested_diffusion_models || "", settings.model || "");
             fillComboSelect(encoderCtl.select, models.text_encoders || [],
@@ -439,8 +457,10 @@ export function createImageGenSettingsForm() {
                 models.suggested_vae || "", settings.vae || "");
             loraList.innerHTML = "";
             for (const entry of settings.loras || []) {
-                if (typeof entry === "string") addLoraRow(entry, 1.0);
-                else if (entry && typeof entry === "object") addLoraRow(entry.name || "", entry.strength ?? 1.0);
+                if (typeof entry === "string") addLoraRow(entry, 1.0, isQuadviewName(entry));
+                else if (entry && typeof entry === "object")
+                    addLoraRow(entry.name || "", entry.strength ?? 1.0,
+                        "ref_only" in entry ? !!entry.ref_only : isQuadviewName(entry.name || ""));
             }
             countCtl.input.value = settings.count ?? 1;
             fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""));
@@ -459,9 +479,11 @@ export function createImageGenSettingsForm() {
         for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
             const select = line.querySelector("select");
             const strength = line.querySelector(".rs-gen-lora-strength");
+            const refOnly = line.querySelector(".rs-gen-lora-refonly");
             const name = select ? select.value : "";
             if (!name) continue;
-            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0 });
+            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0,
+                         ref_only: !!(refOnly && refOnly.checked) });
         }
         return {
             model: modelCtl.select.value,

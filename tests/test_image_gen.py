@@ -61,6 +61,14 @@ for _name in ("comfy.ldm", "comfy.ldm.flux"):
     sys.modules.setdefault(_name, types.ModuleType(_name))
 sys.modules["comfy.ldm.flux.layers"] = _comfy_flux_layers
 
+# image_gen 顶部 import get_progress_state；桩掉 comfy_execution.progress，
+# 单测里直接改 image_gen.get_progress_state 控制返回值
+_comfy_exec = types.ModuleType("comfy_execution")
+_comfy_exec_prog = types.ModuleType("comfy_execution.progress")
+_comfy_exec_prog.get_progress_state = lambda: types.SimpleNamespace(prompt_id="", nodes={})
+sys.modules["comfy_execution"] = _comfy_exec
+sys.modules["comfy_execution.progress"] = _comfy_exec_prog
+
 _folder_paths = types.ModuleType("folder_paths")
 _folder_paths.get_filename_list = lambda folder: list(_MODELS.get(folder, []))
 _folder_paths.get_input_directory = lambda: _INPUT_DIR
@@ -143,6 +151,24 @@ class SuggestTests(unittest.TestCase):
         self.assertEqual(image_gen.suggest_model("vae"), "qwen_image_vae.safetensors")
 
 
+class ScanModelsTests(unittest.TestCase):
+    """下拉展示：krea2 相关靠前，且 LoRA「自动」给出后端建议的四视图 LoRA。"""
+
+    def test_scan_models_sorts_krea2_first(self):
+        out = image_gen.scan_models()
+        self.assertEqual(out["loras"][0], "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
+        self.assertEqual(out["vae"][0], "krea2/diffusion_pytorch_model.safetensors")
+
+    def test_scan_models_suggests_quadview_lora(self):
+        out = image_gen.scan_models()
+        self.assertEqual(out["suggested_lora"], "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
+
+    def test_display_sort_prefers_krea2_then_name(self):
+        files = ["zeta.safetensors", "Krea2/base.safetensors", "alpha.safetensors"]
+        self.assertEqual(image_gen._display_sort(files),
+                         ["Krea2/base.safetensors", "alpha.safetensors", "zeta.safetensors"])
+
+
 class ResolveTests(unittest.TestCase):
     def test_auto_model_selection(self):
         params = image_gen.resolve_request({"prompt": "a cat"}, base_settings())
@@ -169,8 +195,28 @@ class ResolveTests(unittest.TestCase):
         settings["loras"] = [{"name": "style_a.safetensors", "strength": 0.5},
                              {"name": "nope.safetensors", "strength": 1.0}]
         params = image_gen.resolve_request({"prompt": "a cat"}, settings)
-        self.assertEqual(params["loras"], [{"name": "style_a.safetensors", "strength": 0.5}])
+        self.assertEqual(params["loras"],
+                         [{"name": "style_a.safetensors", "strength": 0.5, "ref_only": False}])
         self.assertTrue(params["warnings"])
+
+    def test_ref_only_lora_skipped_in_text_to_image(self):
+        settings = base_settings()
+        settings["loras"] = [{"name": "style_a.safetensors", "strength": 0.5},
+                             {"name": "sub/style_b.safetensors", "strength": 1.0, "ref_only": True}]
+        params = image_gen.resolve_request({"prompt": "a cat"}, settings)
+        # 文生图：ref_only 的 LoRA 被跳过，仅保留无条件加载的 style_a
+        self.assertEqual([l["name"] for l in params["loras"]], ["style_a.safetensors"])
+
+    def test_ref_only_lora_kept_in_reference_mode(self):
+        write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
+        settings = base_settings()
+        settings["loras"] = [{"name": "style_a.safetensors", "strength": 0.5},
+                             {"name": "sub/style_b.safetensors", "strength": 1.0, "ref_only": True}]
+        params = image_gen.resolve_request(
+            {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]}, settings)
+        # 参考图模式：勾了「依赖参考图」的 style_b 即视为四视图 LoRA，直接沿用、不再追加
+        self.assertEqual([l["name"] for l in params["loras"]],
+                         ["style_a.safetensors", "sub/style_b.safetensors"])
 
     def test_count_from_settings_and_body(self):
         settings = base_settings()
@@ -226,6 +272,15 @@ class ReferenceTests(unittest.TestCase):
             settings)
         self.assertEqual(len(params["loras"]), 1)
         self.assertAlmostEqual(params["loras"][0]["strength"], 0.9)
+
+    def test_ref_only_lora_serves_as_quadview(self):
+        write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
+        settings = base_settings()
+        # 勾了「依赖参考图」的 LoRA（文件名不含线索）即视为四视图 LoRA：沿用、不追加、不报错
+        settings["loras"] = [{"name": "sub/style_b.safetensors", "strength": 0.8, "ref_only": True}]
+        params = image_gen.resolve_request(
+            {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]}, settings)
+        self.assertEqual([l["name"] for l in params["loras"]], ["sub/style_b.safetensors"])
 
     def test_missing_quadview_lora_raises(self):
         saved = _MODELS["loras"]
@@ -403,6 +458,49 @@ class SidecarTests(unittest.TestCase):
         image_gen.write_sidecar(image_path, params)
         with open(txt, encoding="utf-8") as f:
             self.assertEqual(f.read(), "kept\n")
+
+
+class ProgressTests(unittest.TestCase):
+    """采样进度读取：仅当全局 registry 属于本 prompt 且存在步数节点时返回 value/max。"""
+
+    def _with_registry(self, reg):
+        orig = image_gen.get_progress_state
+        image_gen.get_progress_state = lambda: reg
+        self.addCleanup(setattr, image_gen, "get_progress_state", orig)
+
+    def test_matching_prompt_returns_sampling_node(self):
+        reg = types.SimpleNamespace(prompt_id="p1", nodes={
+            "3": {"state": "running", "value": 3.0, "max": 8.0},   # KSampler
+            "7": {"state": "finished", "value": 1.0, "max": 1.0},  # 无步数节点
+        })
+        self._with_registry(reg)
+        self.assertEqual(image_gen._progress_for("p1"), {"value": 3, "max": 8})
+
+    def test_other_prompt_returns_none(self):
+        reg = types.SimpleNamespace(prompt_id="other", nodes={
+            "3": {"state": "running", "value": 2.0, "max": 8.0},
+        })
+        self._with_registry(reg)
+        self.assertIsNone(image_gen._progress_for("p1"))
+
+    def test_no_step_node_returns_none(self):
+        reg = types.SimpleNamespace(prompt_id="p1", nodes={
+            "7": {"state": "running", "value": 0.0, "max": 1.0},
+        })
+        self._with_registry(reg)
+        self.assertIsNone(image_gen._progress_for("p1"))
+
+    def test_snapshot_carries_progress_and_finish_clears(self):
+        task = {
+            "task_id": "t", "prompt_id": "p1", "status": "running",
+            "created": 0.0, "updated": 0.0,
+            "params": {"prompt": "x", "ref_name": "", "width": 8, "height": 8,
+                       "model": "m", "seed": 1},
+            "images": [], "progress": {"value": 2, "max": 8}, "error": "", "warnings": [],
+        }
+        self.assertEqual(image_gen._snapshot(task)["progress"], {"value": 2, "max": 8})
+        image_gen._finish(task, "succeeded", [], "")
+        self.assertIsNone(task["progress"])
 
 
 if __name__ == "__main__":

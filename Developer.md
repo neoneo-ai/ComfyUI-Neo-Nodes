@@ -106,7 +106,7 @@ ComfyUI-Neo-Nodes/
 | `gallery_oss.py` | 云端预设（OSS）素材：按 `configs/oss_presets.json` 拉取索引与文件到 `gallery/oss_cache/`，提供缩略图/媒体回退服务 |
 | `recipes.py` | 配方后端：配方 CRUD、assets 资源服务、示例结果追加/删除、工作流快照备份与 `send_to_workflow` 复制 |
 | `workflow.py` | 工作流模型路径修复：高置信度匹配算法（`repair_workflow`）、手动修复映射存储（`user/neo_repair_mappings.json`）、`/neo_nodes/repair*` 路由 |
-| `image_gen.py` | 内置出图后端：把 Krea2 文生图/参考图四视图请求构建为 API prompt，经内部 HTTP `/prompt` 压进执行队列（独立 `client_id`，不干扰前端进度），轮询 history 收集 SaveImage 输出并写同名 `.txt` sidecar；任务记录仅存内存（TTL 1h / 上限 32）。含模型扫描与自动挑选、按比例算尺寸、输出前缀消毒。参考图模式走 `krea2_edit` 路径：`LoadImage` → `ImageScale`（lanczos，长边限 1024px）→ `VAEEncode` 得源 latent 进 `Krea2EditModelPatch`（`fit_mode=fit`，像素空间 AR 适配 + VAE encode，`target_latent` 预编码避免采样中途挤占显存）；positive/negative 均用 `Krea2EditGroundedEncode` 接地到同一张参考图（negative 空指令），目标为 16:9 横版 `EmptySD3LatentImage`（同时接 `KSampler.latent_image` 与 patch 的 `target_latent`），denoise 恒 1.0；prompt = 固定结构指令前缀 + 用户描述，四视图 LoRA 自动追加到用户 LoRA 链尾（缺失时报错不降级） |
+| `image_gen.py` | 内置出图后端：把 Krea2 文生图/参考图四视图请求构建为 API prompt，经内部 HTTP `/prompt` 压进执行队列（独立 `client_id`，不干扰前端进度），轮询 history 收集 SaveImage 输出并写同名 `.txt` sidecar；任务记录仅存内存（TTL 1h / 上限 32）。含模型扫描与自动挑选、按比例算尺寸、输出前缀消毒。参考图模式走 `krea2_edit` 路径：`LoadImage` → `ImageScale`（lanczos，长边限 1024px）→ `VAEEncode` 得源 latent 进 `Krea2EditModelPatch`（`fit_mode=fit`，像素空间 AR 适配 + VAE encode，`target_latent` 预编码避免采样中途挤占显存）；positive/negative 均用 `Krea2EditGroundedEncode` 接地到同一张参考图（negative 空指令），目标为 16:9 横版 `EmptySD3LatentImage`（同时接 `KSampler.latent_image` 与 patch 的 `target_latent`），denoise 恒 1.0；prompt = 固定结构指令前缀 + 用户描述；四视图 LoRA 由用户在 LoRA 列表里勾选「依赖参考图」（`ref_only`）标记，参考图模式直接沿用（缺失时按名称线索自动挑选/追加，仍无则报错不降级），文生图跳过 `ref_only` 的 LoRA |
 | `krea2_edit.py` | Krea2 以图生图核心节点，vendor 自 comfyui-krea2edit（单文件插件）。`Krea2EditModelPatch`：包装 DIFFUSION_MODEL forward，把序列重建为 `[text \| source(frame=1) \| target(frame=0)]` 只取 target token；`fit_mode=fit` 在像素空间做 AR 适配 + VAE encode（支持 `target_latent` 预编码）。`Krea2EditGroundedEncode`：图像接地指令编码，Qwen3-VL user turn = `<vision: source>` + instruction（训练一致语义路径）。上游活跃开发，修复需整文件同步（对比 `custom_nodes/comfyui-krea2edit/__init__.py`）；用户已装外部插件时由 `__init__.py` 跳过注册 |
 | `prompt_lines.py` | 提示词文本行解析：将预设/合集 .txt 拆为（标题，内容）条目，供预设列表与随机候选使用 |
 | `util.py` | 媒体扩展名常量（IMG/VIDEO/AUDIO）与共享工具：目录媒体探测、媒体元数据提取、配方提示词文本收集。独立于路由模块以避免导入循环 |
@@ -130,7 +130,7 @@ ComfyUI-Neo-Nodes/
 | `dom-utils.js` | 共享 DOM 工厂：`mkEl(tag, className, styles)`，供 prompt-manager / llm-chat / skill / llm-setting / prompts 复用 |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
 | `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，以 tab 形式挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |
-| `image-gen.js` | 出图客户端（纯 ES 模块）：`requestGeneration` / `pollTask` / `cancelTask` 包装 `/neo_image_gen/*`；`buildGenPrompt()` 参考图模式下套用 skill 正文模板并替换 `【人物形象描述】` 占位符；`collectLoadImageTargets()` 收集画布 LoadImage（跳过 mode 4，按 y→x 排序），单图 `sendImageToLoadImage()`：唯一目标直接写入、多目标弹菜单确认、无目标自动新建 LoadImage 并写入（经 LiteGraph.createNode + canvasPosToGraph 定位），多图 `assembleAllGenerated()` 按画布顺序依次写入（复用 `/neo_gallery/copy_to_input`）；`createImageGenSettingsForm()` 返回 `{ el, load, save }`（出图模型 / Text Encoder / VAE 三个可搜索下拉 + LoRA 行 + 张数 / 长边尺寸 / 默认比例（后两者为常用值下拉，已保存的非常用值自动追加）+ 💾 保存按钮），以 tab 形式挂入自动增强菜单（与 LLM Settings 切换）；下拉空值 = 后端自动挑选，用户可显式指定覆盖 |
+| `image-gen.js` | 出图客户端（纯 ES 模块）：`requestGeneration` / `pollTask` / `cancelTask` 包装 `/neo_image_gen/*`；`buildGenPrompt()` 参考图模式下套用 skill 正文模板并替换 `【人物形象描述】` 占位符；`collectLoadImageTargets()` 收集画布 LoadImage（跳过 mode 4，按 y→x 排序），单图 `sendImageToLoadImage()`：唯一目标直接写入、多目标弹菜单确认、无目标自动新建 LoadImage 并写入（经 LiteGraph.createNode + canvasPosToGraph 定位），多图 `assembleAllGenerated()` 按画布顺序依次写入（复用 `/neo_gallery/copy_to_input`）；`createImageGenSettingsForm()` 返回 `{ el, load, save }`（出图模型 / Text Encoder / VAE 三个可搜索下拉 + LoRA 行（每行「依赖参考图」复选框：勾选=仅参考图模式加载/作为四视图 LoRA，不勾=文生图无条件加载）+ 张数 / 长边尺寸 / 默认比例（后两者为常用值下拉，已保存的非常用值自动追加）+ 💾 保存按钮），以 tab 形式挂入自动增强菜单（与 LLM Settings 切换）；模型/LoRA 下拉按 krea2 相关靠前排序，「自动」项标注后端建议名（LoRA 为四视图 LoRA），空值 = 后端自动挑选、可显式指定覆盖 |
 | `skill.js` | 技能模块（纯 ES 模块）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillDetailPopup()`（单技能详情弹窗：查看/编辑/删除/复制为自定义/新建，跨节点单例）+ `createSkillDropdown()`（原生 select + 可搜索下拉组装：底部 + New Skill/⬆ ZIP/⬆ Folder 工具栏、行内 Edit/查看操作、共享 zip·目录上传隐藏 input） |
 
 ## 后端 API 路由
@@ -201,9 +201,9 @@ ComfyUI-Neo-Nodes/
 |------|------|------|
 | GET | `/neo_image_gen/settings` | 读取内置出图默认参数（`configs/image_gen.json`，缺失时回落内置值） |
 | POST | `/neo_image_gen/settings` | 保存默认参数（仅接受 `DEFAULT_SETTINGS` 里的键） |
-| GET | `/neo_image_gen/models` | 扫描 `diffusion_models` / `text_encoders` / `vae` / `loras` 并给出自动挑选结果 |
+| GET | `/neo_image_gen/models` | 扫描 `diffusion_models` / `text_encoders` / `vae` / `loras`（各列表按 krea2 相关靠前排序供展示）并给出自动挑选结果（含 `suggested_lora` = 建议的四视图 LoRA） |
 | POST | `/neo_image_gen/generate` | 解析请求 → 构建 Krea2 API 图 → 提交执行队列，返回任务快照（含 `task_id`）；参数错误 400 |
-| GET | `/neo_image_gen/status/{task_id}` | 任务快照：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、错误、告警 |
+| GET | `/neo_image_gen/status/{task_id}` | 任务快照：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`（仅运行中且全局 registry 命中本 prompt 时非空）、错误、告警 |
 | GET | `/neo_image_gen/tasks` | 最近任务列表（按创建时间倒序，最多 32 条） |
 | POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
 
@@ -300,7 +300,7 @@ python -m pytest tests -v
 - `tests/test_llm.py` — 远程配置加载/迁移、模型下载（ModelScope / HuggingFace 回退）、翻译缓存、语言检测、文本规范化
 - `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析（分隔符 / JSON 数组）、skill 代理（语言互斥主文件选择、引用列表、安全读取越界拒绝、工具调用循环按需读引用、本地模式回退）、`gen_image` / `ratio` 元数据透传与编辑保存保留
 - `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确/归一化匹配、量化变体替换、歧义拒绝、扩展名约束
-- `tests/test_image_gen.py` — 内置出图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选（Krea2 只精确匹配 Qwen3-VL-4B，8B/32B 不参与；VAE 优先 Qwen-Image）、LoRA 缺失告警、参考图（input / data URI）落地、四视图固定 16:9（参考图长边限 1024px、`Krea2EditModelPatch` fit 接线、denoise=1.0、四视图 LoRA 自动追加/去重/缺失报错）、出图张数（设置默认 / 单次覆盖 / 四视图强制 1）、工作流图结构与 sidecar 写入、vendor `krea2_edit` 纯函数单测（RoPE 偏移 / latent fit / 5D 展平）
+- `tests/test_image_gen.py` — 内置出图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选（Krea2 只精确匹配 Qwen3-VL-4B，8B/32B 不参与；VAE 优先 Qwen-Image）、下拉展示排序（krea2 靠前）与 LoRA「自动」建议名、LoRA 缺失告警、参考图（input / data URI）落地、四视图固定 16:9（参考图长边限 1024px、`Krea2EditModelPatch` fit 接线、denoise=1.0、四视图 LoRA 自动追加/去重/缺失报错）、出图张数（设置默认 / 单次覆盖 / 四视图强制 1）、工作流图结构与 sidecar 写入、vendor `krea2_edit` 纯函数单测（RoPE 偏移 / latent fit / 5D 展平）
 
 ### 前端回归测试（tests/js）
 

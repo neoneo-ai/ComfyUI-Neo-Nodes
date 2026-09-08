@@ -2433,6 +2433,34 @@
     color: #e07b7b;
     word-break: break-word;
 }
+.rs-gen-progress { margin-top: 8px; }
+.rs-gen-progress-track {
+    height: 8px;
+    border-radius: 4px;
+    background: #333;
+    overflow: hidden;
+}
+.rs-gen-progress-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #456ba8, #6b9bd8);
+    transition: width 0.4s ease;
+}
+.rs-gen-progress--indeterminate .rs-gen-progress-fill {
+    width: 40%;
+    animation: rs-gen-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes rs-gen-progress-slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+.rs-gen-progress-label {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #9a9a9a;
+    text-align: right;
+}
 .rs-gen-thumbs {
     display: flex;
     flex-wrap: wrap;
@@ -2532,7 +2560,7 @@
     align-items: center;
     gap: 4px;
 }
-.rs-gen-lora-row .rs-combo-box { flex: 1 1 auto; min-width: 0; }
+.rs-gen-lora-row .rs-model-select-box { flex: 1 1 auto; min-width: 0; }
 .rs-gen-lora-strength {
     flex: none;
     width: 58px;
@@ -2571,6 +2599,23 @@
     cursor: pointer;
 }
 .rs-gen-lora-add:hover { background: #333; }
+.rs-gen-lora-refonly-wrap {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: #9ec5e8;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.rs-gen-lora-refonly {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    accent-color: #9ec5e8;
+    cursor: pointer;
+}
 .rs-gen-save {
     width: 100%;
     padding: 6px 0;

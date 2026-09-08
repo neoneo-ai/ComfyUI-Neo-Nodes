@@ -718,7 +718,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
     }
     const hasRefs = resolvedRefs.length > 0;
     const state = {
-        running: true, cancelId: "", error: "", images: [], warnings: [],
+        running: true, cancelId: "", error: "", images: [], warnings: [], progress: null,
         statusText: hasRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交出图任务…",
     };
     controller.open();
@@ -737,6 +737,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
         controller.set(state);
         const final = await pollTask(snap.task_id, (s) => {
             state.statusText = s.status === "running" ? "出图中…" : "排队中…";
+            state.progress = s.progress || null;
             controller.set(state);
         });
         if (final.status === "succeeded") {
@@ -1034,6 +1035,27 @@ function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
     // 出图结果块状态（Krea2 出图 skill 专用）：runChatImageGeneration 通过 controller 更新，
     // 随 Markdown 预览重绘附加在内容之后；预览未开启时由 open() 强制切到预览展示进度
     let genState = null;
+    // 出图进度条：有步数信息走确定宽度，否则（排队/尚未进入采样）用不定动画占位
+    function paintProgressBar() {
+        const wrap = mkEl("div", "rs-gen-progress");
+        const track = mkEl("div", "rs-gen-progress-track");
+        const fill = mkEl("div", "rs-gen-progress-fill");
+        const p = genState.progress;
+        if (p && p.max > 0) {
+            const pct = Math.max(0, Math.min(100, (p.value / p.max) * 100));
+            fill.style.width = pct + "%";
+        } else {
+            wrap.classList.add("rs-gen-progress--indeterminate");
+        }
+        track.appendChild(fill);
+        wrap.appendChild(track);
+        if (p && p.max > 0) {
+            const label = mkEl("div", "rs-gen-progress-label");
+            label.textContent = `第 ${p.value} / ${p.max} 步`;
+            wrap.appendChild(label);
+        }
+        return wrap;
+    }
     function paintGenBlock() {
         const block = mkEl("div", "rs-gen-block");
         const head = mkEl("div", "rs-gen-head");
@@ -1049,6 +1071,9 @@ function createPromptOutputArea({ customTextarea, tplSelector, actions = [] }) {
             head.appendChild(cancelBtn);
         }
         block.appendChild(head);
+        if (genState.running) {
+            block.appendChild(paintProgressBar());
+        }
         for (const warn of genState.warnings || []) {
             const warnEl = mkEl("div", "rs-gen-warn");
             warnEl.textContent = `⚠ ${warn}`;

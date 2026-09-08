@@ -117,8 +117,8 @@ export function attachComboBox(selectEl, opts = {}) {
         const left = (parseFloat(cs.paddingLeft) || 0) + tw + 2;
         clearBtn.style.right = "auto";
         clearBtn.style.left = Math.min(left, Math.max(2, inputEl.clientWidth - clearBtn.offsetWidth - 2)) + "px";
-        // 底部对齐输入框内容区下缘（用户反馈居中仍偏上）
-        clearBtn.style.top = (inputEl.offsetTop + (parseFloat(cs.borderTopWidth) || 0) + inputEl.clientHeight - clearBtn.offsetHeight) + "px";
+        // 垂直居中于输入框外框（上下边框对称，等价内容区居中），与文字基线对齐；此前贴底导致偏下
+        clearBtn.style.top = (inputEl.offsetTop + (inputEl.offsetHeight - clearBtn.offsetHeight) / 2) + "px";
     };
     const syncInputFromSelect = () => {
         const sel = selectEl.selectedOptions && selectEl.selectedOptions[0];
