@@ -156,10 +156,12 @@ app.registerExtension({
                 }
             };
 
-            // Update width on resize
+            // Update width on resize (LiteGraph 拖拽缩放不检查 min_width/min_height，这里钳制)
             node.onResize = node.onResize || function() {};
             const originalOnResize = node.onResize;
             node.onResize = function() {
+                if (this.minWidth && this.size[0] < this.minWidth) this.size[0] = this.minWidth;
+                if (this.minHeight && this.size[1] < this.minHeight) this.size[1] = this.minHeight;
                 updateWidgetWidth();
                 originalOnResize.apply(this, arguments);
             };
@@ -167,8 +169,8 @@ app.registerExtension({
             // Initial width update
             updateWidgetWidth();
 
-            node.setSize([370, 280]);
-            node.minWidth = 370;
+            node.setSize([270, 280]);
+            node.minWidth = 270;
             node.minHeight = 260;
 
             // Initialize prompt manager - get UI elements
@@ -662,18 +664,20 @@ app.registerExtension({
                 }
             };
 
-            // Update width on resize
+            // Update width on resize (LiteGraph 拖拽缩放不检查 min_width/min_height，这里钳制)
             node.onResize = node.onResize || function() {};
             const originalOnResize = node.onResize;
             node.onResize = function() {
+                if (this.minWidth && this.size[0] < this.minWidth) this.size[0] = this.minWidth;
+                if (this.minHeight && this.size[1] < this.minHeight) this.size[1] = this.minHeight;
                 updateWidgetWidth();
                 originalOnResize.apply(this, arguments);
             };
 
             // Initial width update
             updateWidgetWidth();
-            node.setSize([370, 280]);
-            node.minWidth = 370;
+            node.setSize([270, 280]);
+            node.minWidth = 270;
             node.minHeight = 260;
 
             // 初始化提示词管理器
