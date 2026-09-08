@@ -2440,34 +2440,6 @@
     color: #e07b7b;
     word-break: break-word;
 }
-.rs-gen-progress { margin-top: 8px; }
-.rs-gen-progress-track {
-    height: 8px;
-    border-radius: 4px;
-    background: #333;
-    overflow: hidden;
-}
-.rs-gen-progress-fill {
-    height: 100%;
-    width: 0;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #456ba8, #6b9bd8);
-    transition: width 0.4s ease;
-}
-.rs-gen-progress--indeterminate .rs-gen-progress-fill {
-    width: 40%;
-    animation: rs-gen-progress-slide 1.2s ease-in-out infinite;
-}
-@keyframes rs-gen-progress-slide {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(350%); }
-}
-.rs-gen-progress-label {
-    margin-top: 4px;
-    font-size: 11px;
-    color: #9a9a9a;
-    text-align: right;
-}
 .rs-gen-thumbs {
     display: flex;
     flex-wrap: wrap;

@@ -4,6 +4,7 @@
 不依赖 ComfyUI 运行中的服务器：server / folder_paths 用桩模块替换。
 """
 
+import asyncio
 import base64
 import hashlib
 import os
@@ -34,6 +35,7 @@ _server.PromptServer = types.SimpleNamespace(instance=types.SimpleNamespace(
         post=lambda path: (lambda func: func),
     ),
     prompt_queue=types.SimpleNamespace(),
+    send_sync=lambda event, data, sid=None: None,
 ))
 sys.modules["server"] = _server
 
@@ -189,6 +191,17 @@ class ResolveTests(unittest.TestCase):
             {"prompt": "a cat", "ratio": "2:3", "seed": 7}, settings)
         self.assertEqual((params["width"], params["height"]), (1024, 1536))
         self.assertEqual(params["seed"], 7)
+
+    def test_t2i_follows_settings_default_ratio(self):
+        settings = base_settings()
+        settings["default_ratio"] = "16:9"
+        params = image_gen.resolve_request({"prompt": "a cat"}, settings)
+        self.assertEqual((params["width"], params["height"]), (1280, 720))
+        # skill 声明比例已废弃：请求里带上也不生效，比例只看出图设置
+        # （四视图由后端固定 16:9，与该分支无关）
+        params = image_gen.resolve_request(
+            {"prompt": "a cat", "skill_ratio": "9:16"}, settings)
+        self.assertEqual((params["width"], params["height"]), (1280, 720))
 
     def test_lora_warnings_for_missing(self):
         settings = base_settings()
@@ -501,6 +514,52 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(image_gen._snapshot(task)["progress"], {"value": 2, "max": 8})
         image_gen._finish(task, "succeeded", [], "")
         self.assertIsNone(task["progress"])
+
+
+class WatchPushTests(unittest.TestCase):
+    """_watch 按变化推送 rs.image_gen.status：状态/进度变化才推，重复快照不推，终态必推。"""
+
+    def setUp(self):
+        self._orig_poll = image_gen.POLL_INTERVAL
+        self._orig_lookup = image_gen._lookup
+        self._orig_prog = image_gen._progress_for
+        self._orig_send = image_gen.PromptServer.instance.send_sync
+        image_gen.POLL_INTERVAL = 0.001
+        self.pushes = []
+        image_gen.PromptServer.instance.send_sync = \
+            lambda event, data, sid=None: self.pushes.append((event, data))
+        self.addCleanup(setattr, image_gen, "POLL_INTERVAL", self._orig_poll)
+        self.addCleanup(setattr, image_gen, "_lookup", self._orig_lookup)
+        self.addCleanup(setattr, image_gen, "_progress_for", self._orig_prog)
+        self.addCleanup(setattr, image_gen.PromptServer.instance, "send_sync", self._orig_send)
+
+    def _task(self):
+        return {
+            "task_id": "tw", "prompt_id": "p1", "status": "queued",
+            "created": 0.0, "updated": 0.0,
+            "params": {"prompt": "x", "ref_name": "", "width": 8, "height": 8,
+                       "model": "m", "seed": 1},
+            "images": [], "progress": None, "error": "", "warnings": [],
+        }
+
+    def test_pushes_on_change_only(self):
+        states = iter([("running", None)] * 3
+                      + [("done", {"status": {"completed": True}, "outputs": {}})])
+        progs = iter([{"value": 1, "max": 8}, {"value": 1, "max": 8}, {"value": 2, "max": 8}])
+        image_gen._lookup = lambda pid: next(states)
+        image_gen._progress_for = lambda pid: next(progs)
+        task = self._task()
+        image_gen.TASKS[task["task_id"]] = task
+        self.addCleanup(image_gen.TASKS.pop, task["task_id"], None)
+
+        asyncio.run(image_gen._watch(task["task_id"]))
+
+        self.assertEqual([p[0] for p in self.pushes],
+                         ["rs.image_gen.status"] * 3)
+        self.assertEqual([p[1]["status"] for p in self.pushes],
+                         ["running", "running", "succeeded"])
+        self.assertEqual([p[1]["progress"] for p in self.pushes],
+                         [{"value": 1, "max": 8}, {"value": 2, "max": 8}, None])
 
 
 if __name__ == "__main__":

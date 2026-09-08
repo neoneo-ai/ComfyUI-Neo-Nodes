@@ -1,2 +1,1 @@
 GET /rs_prompts/skills
-alert: 该 skill 需要图片：输入 @ 从工作流图片中选择、连接 image 输入或粘贴图片后再生成。

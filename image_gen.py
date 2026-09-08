@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes — 内置 Krea2 出图（文生图 / 参考图四视图）
 # API prompt 通过内部 HTTP API 压进执行队列，复用 ComfyUI 的排队、显存生命周期与
-# 取消行为；输出落在 output 目录的 <前缀>/<日期>/<slug> 下并写同名 .txt（提示词），
+# 取消行为；任务状态由 _watch 协程按变化经 rs.image_gen.status 事件推给前端。
+# 输出落在 output 目录的 <前缀>/<日期>/<slug> 下并写同名 .txt（提示词），
 # Gallery 可直接浏览、搜索并把图发送回工作流节点。
 # 参考图模式走内置 krea2_edit 路径（krea2_edit.py，vendor 自 comfyui-krea2edit）：
 # 源 latent frame=1 + 目标空 latent frame=0，denoise 恒为 1.0，四视图 LoRA 自动追加。
@@ -41,6 +42,8 @@ MAX_TASKS = 32        # 任务记录上限
 
 # 独立 client_id：出图任务的进度事件不混进前端 UI 的节点高亮
 CLIENT_ID = str(uuid.uuid4())
+# 任务快照推送事件：_watch 按变化 send_sync 给所有客户端，前端 watchTask 按 task_id 过滤
+STATUS_EVENT = "rs.image_gen.status"
 
 DEFAULT_SETTINGS = {
     "model": "",              # diffusion_models 相对名；空 = 自动挑选 Krea2 模型
@@ -228,9 +231,8 @@ def size_from_ratio(ratio_value: float, base_resolution: int) -> tuple:
     return _round_multiple(long_side * ratio_value), _round_multiple(long_side)
 
 
-def resolve_dimensions(settings: dict, *, ratio=None, width=0, height=0,
-                       skill_ratio=None) -> tuple:
-    """宽高优先级：显式宽高 > 显式比例 > skill 比例 > 设置默认比例。"""
+def resolve_dimensions(settings: dict, *, ratio=None, width=0, height=0) -> tuple:
+    """宽高优先级：显式宽高 > 显式比例 > 设置默认比例。"""
     try:
         w, h = int(width or 0), int(height or 0)
     except (TypeError, ValueError):
@@ -238,10 +240,9 @@ def resolve_dimensions(settings: dict, *, ratio=None, width=0, height=0,
     if w > 0 and h > 0:
         return _round_multiple(w), _round_multiple(h)
     base = settings.get("base_resolution") or DEFAULT_SETTINGS["base_resolution"]
-    for candidate in (ratio, skill_ratio):
-        value = parse_ratio(candidate)
-        if value:
-            return size_from_ratio(value, base)
+    value = parse_ratio(ratio)
+    if value:
+        return size_from_ratio(value, base)
     value = parse_ratio(settings.get("default_ratio")) or 1.0
     return size_from_ratio(value, base)
 
@@ -488,8 +489,7 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
             ref_scale = (1024, 1024)
     else:
         width, height = resolve_dimensions(
-            merged, ratio=body.get("ratio"), width=width, height=height,
-            skill_ratio=body.get("skill_ratio"))
+            merged, ratio=body.get("ratio"), width=width, height=height)
 
     seed = body.get("seed")
     seed = random.randint(0, 2**63 - 1) if seed is None else max(0, _int(seed, 0))
@@ -790,6 +790,11 @@ def _prune_tasks() -> None:
         TASKS.pop(oldest["task_id"], None)
 
 
+def _notify(task: dict) -> None:
+    """任务快照有变化时经 WebSocket 推给所有客户端（前端按 task_id 过滤）。"""
+    PromptServer.instance.send_sync(STATUS_EVENT, _snapshot(task))
+
+
 def _finish(task: dict, status: str, images: list, error: str) -> None:
     task["status"] = status
     task["images"] = images
@@ -799,6 +804,7 @@ def _finish(task: dict, status: str, images: list, error: str) -> None:
     _WATCHERS.pop(task["task_id"], None)
     if error:
         logger.warning(f"[NeoNodes] image_gen task {task['task_id']} failed: {error}")
+    _notify(task)
 
 
 async def _watch(task_id: str) -> None:
@@ -819,11 +825,15 @@ async def _watch(task_id: str) -> None:
             _finish(task, status, images, error)
             return
         if state == "running":
+            changed = task["status"] != "running"
             task["status"] = "running"
             prog = _progress_for(prompt_id)
-            if prog is not None:
+            if prog is not None and task.get("progress") != prog:
                 task["progress"] = prog
+                changed = True
             task["updated"] = time.time()
+            if changed:
+                _notify(task)
         elif time.monotonic() > deadline:
             _finish(task, "failed", [], "等待出图超时，任务已不在队列中")
             return
@@ -923,5 +933,6 @@ async def cancel_route(request):
     watcher = _WATCHERS.pop(task["task_id"], None)
     if watcher is not None:
         watcher.cancel()
+    _notify(task)
     return web.json_response({"dequeued": dequeued, "interrupted": interrupted})
 

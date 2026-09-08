@@ -214,9 +214,10 @@ function populateSkillOptions(selectEl, skills) {
             opt.value = s.id;
             opt.dataset.multiTurn = s.multi_turn ? "1" : "";
             opt.dataset.source = s.source || "";
-            // 出图 skill 元数据：genImage 走后端出图分支，ratio 为无参考图时的默认比例
+            // 出图 skill 元数据：genImage 走后端出图分支，
+            // requiresRef 标记四视图（必须带参考图，缺图在预览区底部报错）
             opt.dataset.genImage = s.gen_image ? "1" : "";
-            opt.dataset.ratio = s.ratio || "";
+            opt.dataset.requiresRef = s.requires_ref ? "1" : "";
             const imgBadge = s.needs_image ? "📷 " : "";
             opt.textContent = `${imgBadge}${s.name || s.id}`;
             optgroup.appendChild(opt);

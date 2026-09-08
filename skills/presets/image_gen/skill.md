@@ -8,7 +8,7 @@ inputs:
 - text
 category: image_gen
 gen_image: true
-ratio: ''
+requires_ref: true
 created_at: '2026-09-07T00:00:00+00:00'
 ---
 

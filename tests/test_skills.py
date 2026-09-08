@@ -800,7 +800,7 @@ class TestFetchReferenceImage(unittest.TestCase):
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestGenImageSkill(unittest.TestCase):
-    """gen_image/ratio 元数据：预设扫描透传与编辑保存保留"""
+    """gen_image 元数据：预设扫描透传与编辑保存保留"""
 
     def setUp(self):
         self.skill_mod = getattr(prompts_mod, "skill", None)
@@ -833,42 +833,57 @@ class TestGenImageSkill(unittest.TestCase):
     def test_gen_meta_scanned(self):
         self._write_skill("gen-a", [
             "name: Gen A", "category: image_gen", "gen_image: true",
-            "ratio: ''",
         ])
         s = self._scanned().get("gen-a")
         self.assertIsNotNone(s)
         self.assertTrue(s["gen_image"])
+        self.assertFalse(s["requires_ref"], "未声明 requires_ref 时默认 False")
         self.assertEqual(s["category"], "image_gen")
-        self.assertEqual(s["ratio"], "")
+
+    def test_requires_ref_scanned(self):
+        self._write_skill("gen-r", [
+            "name: Gen R", "category: image_gen", "gen_image: true",
+            "requires_ref: true",
+        ])
+        s = self._scanned().get("gen-r")
+        self.assertIsNotNone(s)
+        self.assertTrue(s["requires_ref"])
 
     def test_gen_meta_default_absent(self):
         self._write_skill("gen-b", ["name: Gen B"])
         s = self._scanned().get("gen-b")
         self.assertFalse(s["gen_image"])
-        self.assertEqual(s["ratio"], "")
+        self.assertNotIn("ratio", s, "skill 声明比例已废弃，扫描结果不再输出")
 
     def test_preset_image_gen_skill_scanned(self):
         s = self._scanned().get("image_gen")
         self.assertIsNotNone(s)
         self.assertTrue(s["gen_image"])
+        self.assertTrue(s["requires_ref"], "四视图 skill 必须声明 requires_ref")
         self.assertEqual(s["category"], "image_gen")
+
+    def test_preset_image_gen_text_skill_scanned(self):
+        s = self._scanned().get("image_gen_text")
+        self.assertIsNotNone(s)
+        self.assertTrue(s["gen_image"])
+        self.assertFalse(s["requires_ref"], "纯文生图 skill 不要求参考图")
 
     def test_save_skill_main_preserves_gen_meta(self):
         self._write_skill("gen-c", [
-            "name: Gen C", "gen_image: true", "ratio: '3:4'",
+            "name: Gen C", "gen_image: true", "requires_ref: true",
         ])
         self.assertTrue(self.skill_mod.save_skill_main("gen-c", "Gen C renamed", "body2"))
         meta, body = self._read_meta("gen-c")
         self.assertIs(meta.get("gen_image"), True)
-        self.assertEqual(meta.get("ratio"), "3:4")
+        self.assertIs(meta.get("requires_ref"), True)
         self.assertEqual(body, "body2")
 
     def test_serialize_frontmatter_round_trip(self):
         text = self.skill_mod.serialize_frontmatter(
-            {"name": "R", "gen_image": True, "ratio": ""}, "body")
+            {"name": "R", "gen_image": True, "requires_ref": False}, "body")
         meta, body = self.skill_mod.split_frontmatter(text)
         self.assertIs(meta.get("gen_image"), True)
-        self.assertEqual(meta.get("ratio"), "")
+        self.assertIs(meta.get("requires_ref"), False)
         self.assertEqual(body, "body")
 
 

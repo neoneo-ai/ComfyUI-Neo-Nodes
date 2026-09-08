@@ -13,7 +13,7 @@ import { mkEl } from "./dom-utils.js";
 import { collectWorkflowContext } from "./workflow-context.js";
 import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 import { createAtImagePicker } from "./at-picker.js";
-import { createImageGenSettingsForm, requestGeneration, pollTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated } from "./image-gen.js";
+import { createImageGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated } from "./image-gen.js";
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
 
@@ -687,7 +687,7 @@ function resolveConnectedImageSource(node) {
 }
 
 // ==========================================
-// Krea2 出图 skill：提交 → 轮询 → 结果块（进度 / 取消 / 缩略图 / 发送装配）
+// Krea2 出图 skill：提交 → 事件等待 → 结果块（进度 / 取消 / 缩略图 / 发送装配）
 // ==========================================
 
 // 预览区只加载 640px 缩略图（复用 gallery thumbnail 缓存接口），原图留给灯箱按需加载
@@ -699,47 +699,65 @@ function genThumbSrc(image) {
 
 async function runChatImageGeneration({ generateBtn, controller }, text, references, opt) {
     if (!controller) return;
+    // 四视图 skill（requiresRef）必须带参考图；纯文生图 skill 不使用参考图（附加的图一律忽略）
+    const useRefs = opt?.dataset?.requiresRef === "1";
+    const resolvedRefs = references.filter(r => r && r.kind !== "unresolved");
+    const unresolvedCount = references.filter(r => r && r.kind === "unresolved").length;
+    const hasRefs = resolvedRefs.length > 0;
+
     generateBtn.disabled = true;
     generateBtn.textContent = "⏳";
-    // 节点 image 输入已连接但解析不到文件名：直接报错，绝不静默降级成文生图
-    const unresolvedCount = references.filter(r => r && r.kind === "unresolved").length;
-    const resolvedRefs = references.filter(r => r && r.kind !== "unresolved");
-    if (unresolvedCount > 0) {
-        const state = {
-            running: false, cancelId: "", images: [], warnings: [],
-            statusText: "参考图读取失败",
-            error: "节点的图片输入已连接，但无法从上游节点解析出图片文件。请在画布上用 LoadImage 节点并提供图片，或直接粘贴/附加图片后重试。",
-        };
-        controller.open();
-        controller.set(state);
-        generateBtn.disabled = false;
-        generateBtn.textContent = "✨";
-        return;
+
+    if (useRefs) {
+        // image 输入已连接但解析不到文件名：直接报错，绝不静默降级（优先于「缺图」）
+        if (unresolvedCount > 0) {
+            controller.open();
+            controller.set({
+                running: false, cancelId: "", images: [], warnings: [],
+                statusText: "参考图读取失败",
+                error: "节点的图片输入已连接，但无法从上游节点解析出图片文件。请在画布上用 LoadImage 节点并提供图片，或直接粘贴/附加图片后重试。",
+            });
+            showToast(app, "error", "参考图读取失败", "图片输入已连接但无法解析出图片文件");
+            generateBtn.disabled = false;
+            generateBtn.textContent = "✨";
+            return;
+        }
+        // 四视图缺参考图：通知 + 节点底部提示区，不提交（不弹 alert）
+        if (!hasRefs) {
+            controller.open();
+            controller.set({
+                running: false, cancelId: "", images: [], warnings: [],
+                statusText: "缺少参考图",
+                error: "四视图需要参考图：请连接 image 输入、@ 引用工作流图片，或粘贴/附加一张角色图片后重试。",
+            });
+            showToast(app, "error", "缺少参考图", "四视图需要参考图才能出图");
+            generateBtn.disabled = false;
+            generateBtn.textContent = "✨";
+            return;
+        }
     }
-    const hasRefs = resolvedRefs.length > 0;
+
+    const sendRefs = useRefs ? resolvedRefs : [];
     const state = {
         running: true, cancelId: "", error: "", images: [], warnings: [], progress: null,
-        statusText: hasRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交出图任务…",
+        statusText: useRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交出图任务…",
     };
-    controller.open();
+    const myToken = controller.open();
     controller.set(state);
     try {
-        const promptText = await buildGenPrompt(opt.value, text, hasRefs);
-        const body = { prompt: promptText, references: resolvedRefs };
-        // 无参考图时用 skill 声明的默认比例；有参考图（四视图）由后端固定 16:9，无需声明
-        if (!hasRefs && opt.dataset.ratio) {
-            body.skill_ratio = opt.dataset.ratio;
-        }
+        const promptText = await buildGenPrompt(opt.value, text, useRefs);
+        // 文生图比例由出图设置的「默认比例」决定；四视图由后端固定 16:9
+        const body = { prompt: promptText, references: sendRefs };
         const snap = await requestGeneration(body);
         state.cancelId = snap.task_id;
         state.warnings = snap.warnings || [];
         state.statusText = "排队中…";
         controller.set(state);
-        const final = await pollTask(snap.task_id, (s) => {
+        const final = await watchTask(snap.task_id, (s) => {
             state.statusText = s.status === "running" ? "出图中…" : "排队中…";
             state.progress = s.progress || null;
             controller.set(state);
-        });
+        }, () => controller.isStale(myToken));
         if (final.status === "succeeded") {
             state.images = final.images || [];
             state.statusText = `完成：${state.images.length} 张 · ${final.width}×${final.height}`;
@@ -755,8 +773,11 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
     } finally {
         state.running = false;
         controller.set(state);
-        generateBtn.disabled = false;
-        generateBtn.textContent = "✨";
+        // 等待期间被清空（代际更替）时不动按钮，避免解禁新一轮正在进行的生成
+        if (!controller.isStale(myToken)) {
+            generateBtn.disabled = false;
+            generateBtn.textContent = "✨";
+        }
     }
 }
 
@@ -765,7 +786,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
  */
 function createGenerateHandler(promptUI) {
     return async () => {
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto, genResultsController } = promptUI;
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -784,14 +805,29 @@ function createGenerateHandler(promptUI) {
         const hasImages = imagesPayload.length > 0;
         const markerSkillId = matchSkillMarker(messageToLLM);
 
-        if (!messageToLLM && !hasImages) {
-            alert("Please enter a quick description or attach an image first.");
-            return;
-        }
-
         // 选中出图 skill：绕过 LLM，直连后端出图流程，结果渲染在 Markdown 预览区
         const selectedOpt = skillSelector
             ? [...skillSelector.options].find(o => o.value === skillSelector.value) : null;
+
+        if (!messageToLLM && !hasImages) {
+            // 文案随所选 skill 区分：文生图只看文字；四视图需要文字 + 参考图；其余输入可二选一
+            const missing = selectedOpt?.dataset.genImage === "1"
+                ? (selectedOpt.dataset.requiresRef === "1"
+                    ? "请先输入画面描述，并提供参考图（连接 image 输入、@ 引用或附加图片）。"
+                    : "请先输入画面描述。")
+                : "请先在快捷输入栏输入描述，或附加一张图片。";
+            showToast(app, "warning", "缺少输入", missing);
+            if (genResultsController) {
+                genResultsController.open();
+                genResultsController.set({
+                    running: false, cancelId: "", images: [], warnings: [],
+                    statusText: "缺少输入",
+                    error: missing,
+                });
+            }
+            return;
+        }
+
         if (selectedOpt?.dataset.genImage === "1") {
             await runChatImageGeneration({ generateBtn, controller: promptUI.genResultsController },
                 messageToLLM, imagesPayload, selectedOpt);
@@ -837,14 +873,22 @@ function createGenerateHandler(promptUI) {
             },
             onError: (err) => {
                 console.error(errorLabel, err);
-                alert("Failed to process prompt: " + err);
+                showToast(app, "error", "处理失败", String(err));
             }
         });
         try {
             if (hasImages || markerSkillId) {
                 // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
                 if (markerSkillId && !hasImages) {
-                    alert("该 skill 需要图片：输入 @ 从工作流图片中选择、连接 image 输入或粘贴图片后再生成。");
+                    showToast(app, "error", "需要图片", "该 skill 需要图片");
+                    if (genResultsController) {
+                        genResultsController.open();
+                        genResultsController.set({
+                            running: false, cancelId: "", images: [], warnings: [],
+                            statusText: "需要图片",
+                            error: "该 skill 需要图片：输入 @ 从工作流图片中选择、连接 image 输入或粘贴图片后再生成。",
+                        });
+                    }
                     return;
                 }
 
@@ -887,7 +931,7 @@ function createGenerateHandler(promptUI) {
             }
         } catch (e) {
             console.error("Network Error:", e);
-            alert("Network error during processing: " + e.message);
+            showToast(app, "error", "网络错误", e.message || String(e));
         } finally {
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
@@ -1048,22 +1092,34 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // 代际 token：open() 捕获当前 genSeq；clear() 递增 genSeq 后，运行中任务的后续 set（含轮询 tick / finally）不再回写 UI
     let genSeq = 0;
     let genToken = 0;
-    // 出图进度条：有步数信息走确定宽度，否则（排队/尚未进入采样）用不定动画占位
+    // 出图进度条：有步数信息走确定宽度，否则（排队/尚未进入采样）用不定动画占位。
+    // 内联样式 + WAAPI 动画（与缩略图同一自包含约定），不依赖外部 CSS 是否到达浏览器：
+    // track/fill 是空 div，外部 CSS 缺失时高度塌缩为 0，整条进度条会完全不可见
     function paintProgressBar() {
-        const wrap = mkEl("div", "rs-gen-progress");
-        const track = mkEl("div", "rs-gen-progress-track");
-        const fill = mkEl("div", "rs-gen-progress-fill");
+        const wrap = mkEl("div", "rs-gen-progress", "margin-top:8px");
+        const track = mkEl("div", "rs-gen-progress-track",
+            "height:8px;border-radius:4px;background:#333;overflow:hidden");
+        const fill = mkEl("div", "rs-gen-progress-fill",
+            "height:100%;border-radius:4px;background:linear-gradient(90deg,#456ba8,#6b9bd8)");
         const p = genState.progress;
         if (p && p.max > 0) {
             const pct = Math.max(0, Math.min(100, (p.value / p.max) * 100));
             fill.style.width = pct + "%";
+            fill.style.transition = "width 0.4s ease";
         } else {
             wrap.classList.add("rs-gen-progress--indeterminate");
+            fill.style.width = "40%";
+            // WAAPI 替代 CSS keyframes；jsdom 未实现 animate，可选调用兜底
+            fill.animate?.(
+                [{ transform: "translateX(-100%)" }, { transform: "translateX(350%)" }],
+                { duration: 1200, iterations: Infinity, easing: "ease-in-out" }
+            );
         }
         track.appendChild(fill);
         wrap.appendChild(track);
         if (p && p.max > 0) {
-            const label = mkEl("div", "rs-gen-progress-label");
+            const label = mkEl("div", "rs-gen-progress-label",
+                "margin-top:4px;font-size:11px;color:#9a9a9a;text-align:right");
             label.textContent = `第 ${p.value} / ${p.max} 步`;
             wrap.appendChild(label);
         }
@@ -1142,6 +1198,11 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
         open() {
             genToken = genSeq;
             if (!mdPreviewOn) setMdPreview(true);
+            return genToken;
+        },
+        isStale(token) {
+            // 该 token 的任务已被 clear()（或新任务 open）取代：轮询应停止，避免清空后仍空转
+            return genSeq !== token;
         },
         clear() {
             // 清空出图结果块：递增代际使运行中任务的后续 set 失效（服务端任务继续跑，仅 UI 不再回写）

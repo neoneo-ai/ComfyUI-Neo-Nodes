@@ -13,7 +13,7 @@ Skill = 一个目录，内含主文件 skill.md（大小写不敏感：SKILL.md 
 - skill id = 目录名。
 - 元数据只从 skill.md 的 YAML frontmatter 读取（name/tags/inputs/description/
   max_tokens/result_key/multi_result/multi_turn/category/markers/
-  gen_image/ratio/created_at）。
+  gen_image/created_at）。
 - 系统提示词 = 顶层所有 .md 按文件名升序拼接（子目录与 *.txt 引用文件不并入，
   由代理按需读取）；带 YAML frontmatter 的 .md（含主文件 skill.md，忽略大小写）
   去掉 frontmatter，其余正文原样保留。
@@ -82,7 +82,7 @@ _SKILL_MARKERS = {
 _META_KEY_ORDER = (
     "name", "tags", "inputs", "description", "max_tokens",
     "result_key", "multi_result", "multi_turn", "category", "markers",
-    "gen_image", "ratio", "created_at",
+    "gen_image", "requires_ref", "created_at",
 )
 
 # 技能文件管理器支持的文件扩展名（.md 主/子文档 + .txt 引用文本）。
@@ -740,7 +740,7 @@ def scan_skills() -> list:
                 "markers": meta.get("markers") or _SKILL_MARKERS.get(skill_id, []),
                 "multi_turn": bool(meta.get("multi_turn", False)),
                 "gen_image": bool(meta.get("gen_image", False)),
-                "ratio": str(meta.get("ratio") or "").strip(),
+                "requires_ref": bool(meta.get("requires_ref", False)),
                 "description": meta.get("description", ""),
             })
 
@@ -767,7 +767,7 @@ def scan_skills() -> list:
                     "markers": meta.get("markers") or [],
                     "multi_turn": bool(meta.get("multi_turn", False)),
                     "gen_image": bool(meta.get("gen_image", False)),
-                    "ratio": str(meta.get("ratio") or "").strip(),
+                    "requires_ref": bool(meta.get("requires_ref", False)),
                     "description": meta.get("description", ""),
                 })
 
@@ -829,6 +829,7 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
             "category": meta.get("category"),
             "markers": meta.get("markers"),
             "gen_image": meta.get("gen_image"),
+            "requires_ref": meta.get("requires_ref"),
             "ratio": meta.get("ratio"),
             "created_at": meta.get("created_at") or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }

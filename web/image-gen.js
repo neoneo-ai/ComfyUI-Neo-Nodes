@@ -1,6 +1,6 @@
 /**
  * image-gen.js
- * 出图（Krea2）客户端：/neo_image_gen/* API 包装、任务轮询、四视图模板拼装、
+ * 出图（Krea2）客户端：/neo_image_gen/* API 包装、任务事件等待、四视图模板拼装、
  * 结果发送到 LoadImage 节点（复用 /neo_gallery/copy_to_input）与出图设置表单。
  * 设置表单挂在「自动增强」菜单内，接口形态与 llm-setting.js 一致：{ el, load, save }。
  */
@@ -15,6 +15,8 @@ import { showToast } from "./gallery-utils.js";
 const GEN_API = "/neo_image_gen";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const GEN_PLACEHOLDER = "【人物形象描述】";
+// 后端 _watch 按变化推送的任务快照事件（广播，按 task_id 过滤）
+const STATUS_EVENT = "rs.image_gen.status";
 
 // ==========================================
 // API 包装
@@ -67,23 +69,50 @@ export async function cancelTask(taskId) {
 }
 
 /**
- * 轮询任务直到终态（succeeded/failed/cancelled），返回最终快照。
- * 瞬时网络错误继续重试；约 40 分钟无终态按失败收场，避免无限轮询。
+ * 等待任务到终态（succeeded/failed/cancelled），返回最终快照。
+ * 后端把快照按变化经 WebSocket 推送（rs.image_gen.status），这里订阅事件而非轮询
+ * HTTP；订阅后兜底首拉一次当前状态（兜住推送前已终态的任务），断线重连时再拉一次
+ * 补漏；约 40 分钟无终态按失败收场，避免无限等待。
  */
-export async function pollTask(taskId, onSnapshot, intervalMs = 1500) {
-    const maxAttempts = Math.ceil(40 * 60 * 1000 / intervalMs);
-    for (let i = 0; i < maxAttempts; i++) {
-        await new Promise(r => setTimeout(r, intervalMs));
-        let snap = null;
-        try {
-            snap = await getJson(`${GEN_API}/status/${encodeURIComponent(taskId)}`);
-        } catch (e) {
-            continue; // 404/网络抖动：任务可能仍在执行，下一轮再试
+export function watchTask(taskId, onSnapshot, isCancelled) {
+    return new Promise((resolve) => {
+        const statusUrl = `${GEN_API}/status/${encodeURIComponent(taskId)}`;
+        let timeout;
+        function finish(snap) {
+            clearTimeout(timeout);
+            api.removeEventListener(STATUS_EVENT, onStatus);
+            api.removeEventListener("reconnected", onReconnected);
+            resolve(snap);
         }
-        onSnapshot?.(snap);
-        if (TERMINAL_STATUSES.has(snap.status)) return snap;
-    }
-    return { status: "failed", error: "等待出图超时，请稍后在 Gallery 查看" };
+        function apply(snap) {
+            if (!snap || snap.task_id !== taskId) return;
+            onSnapshot?.(snap);
+            if (TERMINAL_STATUSES.has(snap.status)) finish(snap);
+        }
+        function resync() {
+            // 兜底拉取（非轮询）：订阅窗口与断线重连可能错过推送
+            getJson(statusUrl).then(apply).catch(() => {}); // 404/网络抖动：等推送或重连再拉
+        }
+        function onStatus(event) {
+            if (isCancelled?.()) return finish({ status: "cancelled" });
+            apply(event.detail);
+        }
+        function onReconnected() {
+            if (isCancelled?.()) return finish({ status: "cancelled" });
+            resync();
+        }
+        timeout = setTimeout(
+            () => finish({ status: "failed", error: "等待出图超时，请稍后在 Gallery 查看" }),
+            40 * 60 * 1000
+        );
+        api.addEventListener(STATUS_EVENT, onStatus);
+        api.addEventListener("reconnected", onReconnected);
+        if (isCancelled?.()) {
+            finish({ status: "cancelled" });
+            return;
+        }
+        resync();
+    });
 }
 
 // ==========================================

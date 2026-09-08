@@ -12,15 +12,19 @@ import {
     sleep,
 } from "./setup.mjs";
 import { getExtension, appState } from "./mocks/comfy-app.mjs";
+import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 import { makeGraph, makeNode, addNode, connect, agentWidgets, slot, outSlot } from "./helpers/fake-graph.mjs";
 
-const SKILL_WITH_IMAGE_GEN = [{ id: "image_gen", name: "出图", category: "image_gen", source: "preset", gen_image: true }];
+const SKILL_WITH_IMAGE_GEN = [
+    { id: "image_gen", name: "出图 Krea2 四视图", category: "image_gen", source: "preset", gen_image: true, requires_ref: true },
+    { id: "image_gen_text", name: "出图 Krea2 文生图", category: "image_gen", source: "preset", gen_image: true },
+];
 
 beforeEach(() => {
     resetEnv();
     clearRoutes();
     mockRoute("/rs_prompts/skills", () => jsonResponse(SKILL_WITH_IMAGE_GEN));
-    // 出图表单 load/save 与状态轮询依赖的路由
+    // 出图表单 load/save 与任务状态兜底首拉依赖的路由
     mockRoute("/neo_image_gen/settings", () => jsonResponse({ model: "", loras: [], count: 1, base_resolution: 1280, default_ratio: "1:1" }));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [], loras: [] }));
 });
@@ -97,7 +101,7 @@ test("节点 image 连接 LoadImage：出图请求携带参考图，走重绘", 
     assert.equal(body.references[0].value, "ref.png");
 });
 
-test("无节点 image 连接且无附加图：出图请求不携带参考图，走文生图", async () => {
+test("纯文生图 skill：无参考图，请求不携带参考图，比例由出图设置决定", async () => {
     const graph = makeGraph();
     const agent = await attachAgent(makeNode({
         id: 2, type: "NeoPromptAgent", widgets: agentWidgets(),
@@ -106,7 +110,7 @@ test("无节点 image 连接且无附加图：出图请求不携带参考图，�
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
     let body = null;
     mockRoute("/neo_image_gen/generate", (b) => { body = b; return jsonResponse({ task_id: "t2", status: "queued", images: [], width: 0, height: 0 }); });
@@ -118,6 +122,26 @@ test("无节点 image 连接且无附加图：出图请求不携带参考图，�
 
     assert.ok(body, "应发出 /neo_image_gen/generate 请求");
     assert.equal(body.references.length, 0);
+    assert.equal(body.skill_ratio, undefined, "文生图比例由出图设置决定，不随 skill 声明");
+});
+
+test("四视图 skill 缺参考图：预览区底部报错，不发 /neo_image_gen/generate", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 2, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    el.root.querySelector(".rs-quick-input").value = "重绘";
+    el.generateBtn.click();
+    await sleep(300);
+
+    assert.equal(genCalls().length, 0, "缺参考图时不应发出出图请求");
+    assert.ok(el.preview.textContent.includes("缺少参考图"), "结果块应显示缺少参考图提示");
 });
 
 test("image 已连接但上游无文件名：出图明确报错，不发 /neo_image_gen/generate", async () => {
@@ -156,7 +180,7 @@ test("出图成功：预览区渲染缩略图，点击用灯箱打开原图", as
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t3", status: "queued", images: [], width: 0, height: 0 }));
     mockRoute("/neo_image_gen/status/t3", () => jsonResponse({
@@ -197,7 +221,7 @@ test("出图成功：单个 LoadImage 目标 → 点击发送直接写入，不�
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t4", status: "queued", images: [], width: 0, height: 0 }));
     mockRoute("/neo_image_gen/status/t4", () => jsonResponse({
@@ -241,7 +265,7 @@ test("出图成功：多个 LoadImage 目标 → 弹菜单，选中写入对应�
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t5", status: "queued", images: [], width: 0, height: 0 }));
     mockRoute("/neo_image_gen/status/t5", () => jsonResponse({
@@ -288,7 +312,7 @@ test("出图成功：无 LoadImage 目标 → 自动新建并写入", async () =
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t6", status: "queued", images: [], width: 0, height: 0 }));
     mockRoute("/neo_image_gen/status/t6", () => jsonResponse({
@@ -319,32 +343,41 @@ test("出图运行中：进度条按采样步数推进", async () => {
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
-    let calls = 0;
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t7", status: "queued", images: [], width: 0, height: 0 }));
-    // 前几轮 running 且带步数进度，之后才成功——保证断言落在运行中窗口内
-    mockRoute("/neo_image_gen/status/t7", () => {
-        calls += 1;
-        if (calls < 8) return jsonResponse({ task_id: "t7", status: "running", progress: { value: 3, max: 8 } });
-        return jsonResponse({
-            task_id: "t7", status: "succeeded",
-            images: [{ filename: "e.png", subfolder: "", url: "/view?filename=e.png&type=output" }],
-            width: 1280, height: 720,
-        });
-    });
+    // 兜底首拉返回 running 基线；进度与终态走 rs.image_gen.status 推送
+    mockRoute("/neo_image_gen/status/t7", () => jsonResponse({ task_id: "t7", status: "running" }));
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(2200); // 首轮轮询（~1.5s）后应处于 running 且已带步数进度
+    await sleep(100); // 等兜底首拉建立 running 基线
+
+    // 无步数 → 不定动画占位（自包含内联样式：轨道 8px 高、填充宽 40%）
+    const idleBar = el.preview.querySelector(".rs-gen-progress");
+    assert.ok(idleBar, "运行中应显示进度条");
+    assert.ok(idleBar.classList.contains("rs-gen-progress--indeterminate"), "无步数时用不定动画占位");
+    assert.equal(idleBar.querySelector(".rs-gen-progress-track")?.style.height, "8px", "轨道高度应为内联样式");
+    assert.equal(idleBar.querySelector(".rs-gen-progress-fill")?.style.width, "40%");
+
+    dispatchApiEvent("rs.image_gen.status", { task_id: "t7", status: "running", progress: { value: 3, max: 8 } });
+    await sleep(50);
 
     const bar = el.preview.querySelector(".rs-gen-progress");
     assert.ok(bar, "运行中应显示进度条");
     assert.equal(el.preview.querySelector(".rs-gen-progress-label")?.textContent, "第 3 / 8 步");
     assert.equal(bar.querySelector(".rs-gen-progress-fill").style.width, "37.5%");
+
+    // 终态推送让 watchTask 收尾，清理监听与定时器
+    dispatchApiEvent("rs.image_gen.status", {
+        task_id: "t7", status: "succeeded",
+        images: [{ filename: "e.png", subfolder: "", url: "/view?filename=e.png&type=output" }],
+        width: 1280, height: 720,
+    });
+    await sleep(50);
 });
 
-test("清空输出：运行中的出图块被清除，后续轮询 tick 不再回写", async () => {
+test("清空输出：运行中的出图块被清除，后续推送不再回写", async () => {
     const graph = makeGraph();
     const agent = await attachAgent(makeNode({
         id: 21, type: "NeoPromptAgent", widgets: agentWidgets(),
@@ -353,22 +386,49 @@ test("清空输出：运行中的出图块被清除，后续轮询 tick 不再�
     }));
     const el = parts(agent);
     await sleep(400);
-    setSkill(el.selector, "image_gen");
+    setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t8", status: "queued", images: [], width: 0, height: 0 }));
-    // 一直 running：任务不会自然结束，只能靠清空移除 UI 块
+    // 兜底首拉返回 running 基线；后续状态变化走 rs.image_gen.status 推送
     mockRoute("/neo_image_gen/status/t8", () => jsonResponse({ task_id: "t8", status: "running", progress: { value: 1, max: 10 } }));
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(2200); // 首轮轮询后处于 running，出图块应可见
+    await sleep(100); // 兜底首拉后处于 running，出图块应可见
     assert.ok(el.preview.querySelector(".rs-gen-block"), "运行中应显示出图块");
 
     el.root.querySelector(".rs-clear-btn").click();
     assert.equal(el.preview.querySelector(".rs-gen-block"), null, "清空后出图块应立即消失");
 
-    await sleep(2000); // 跨过下一轮 poll tick（~1.5s）：旧任务的 set 应被代际校验拦截
-    assert.equal(el.preview.querySelector(".rs-gen-block"), null, "后续轮询 tick 不应把出图块刷回来");
+    // 旧任务的事件推送：set 应被代际校验拦截
+    dispatchApiEvent("rs.image_gen.status", { task_id: "t8", status: "running", progress: { value: 2, max: 10 } });
+    await sleep(50);
+    assert.equal(el.preview.querySelector(".rs-gen-block"), null, "后续推送不应把出图块刷回来");
+
+    // 终态推送让旧 watchTask 收尾，也不再刷回出图块
+    dispatchApiEvent("rs.image_gen.status", { task_id: "t8", status: "cancelled" });
+    await sleep(50);
+    assert.equal(el.preview.querySelector(".rs-gen-block"), null, "终态推送不应把出图块刷回来");
+});
+
+test("文生图 skill 无文字：提示只针对画面描述，不提附加图片", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 40, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen_text");
+
+    el.root.querySelector(".rs-quick-input").value = "";
+    el.generateBtn.click();
+    await sleep(100);
+
+    assert.equal(genCalls().length, 0, "无文字不应发出出图请求");
+    assert.equal(el.preview.querySelector(".rs-gen-error")?.textContent,
+        "✕ 请先输入画面描述。", "文生图的缺少输入提示不应提及图片");
 });
 
 test("已保存的 skill id：延迟填充后仍保留到节点属性并显示在选择器", async () => {

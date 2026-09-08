@@ -571,7 +571,9 @@ document.addEventListener("rs.skills.updated", () => {
 // ==========================================
 const cssLink = document.createElement('link');
 cssLink.rel = 'stylesheet';
-cssLink.href = "/extensions/ComfyUI-Neo-Nodes/prompts.css";
+// ?v= 时间戳防启发式缓存：aiohttp 静态服务不带 Cache-Control，浏览器按 Last-Modified
+// 估算新鲜度，prompts.css 更新后可能长期使用旧副本（新样式"不生效"多半是这个原因）
+cssLink.href = `/extensions/ComfyUI-Neo-Nodes/prompts.css?v=${Date.now()}`;
 document.head.appendChild(cssLink);
 
 // ==========================================
