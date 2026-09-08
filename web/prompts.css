@@ -1852,6 +1852,9 @@
     color: #fff;
 }
 
+/* combo-box 下拉分类标题（optgroup label） */
+.rs-combo-category { padding: 4px 8px; font-size: 11px; color: #7aa8c1; cursor: default; text-transform: uppercase; letter-spacing: 0.5px; }
+
 /* Lightweight markdown preview */
 .rs-md-preview {
     width: 100%;

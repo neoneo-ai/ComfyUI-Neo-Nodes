@@ -158,4 +158,10 @@ export function installRectStub(win) {
         configurable: true,
         writable: true,
     });
+    // jsdom 无滚动容器：scrollIntoView 不存在会炸 setHighlight 等键盘导航路径，桩为 no-op
+    Object.defineProperty(proto, "scrollIntoView", {
+        value: () => {},
+        configurable: true,
+        writable: true,
+    });
 }

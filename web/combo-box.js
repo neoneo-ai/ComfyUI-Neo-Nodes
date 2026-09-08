@@ -138,12 +138,14 @@ export function attachComboBox(selectEl, opts = {}) {
         const q = (query || "").trim().toLowerCase();
         itemsHost.innerHTML = "";
         highlight = -1;
-        Array.from(selectEl.options).forEach((o) => {
-            if (q && !o.textContent.toLowerCase().includes(q)) return;
+        // 遍历 select 的直接子节点，以支持 <optgroup> 分组渲染分类标题。
+        // selectEl.options 会展平整个 optgroup，丢失分组信息；改用 children 保留结构。
+        // items() 用 [data-value] 过滤，分类标题（无 data-value）自然被键盘导航跳过。
+        // indented=true 表示该 option 位于某个 optgroup 下：比分类标题多缩进，体现层级
+        const renderItem = (o, indented = false) => {
             const item = document.createElement("div");
             item.dataset.value = o.value;
             if (opts.renderItemExtra) {
-                // 管理型下拉：行内右侧留白给操作按钮，标签占满剩余宽度并省略
                 item.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:12px;color:#ccc;cursor:pointer;" +
                     (o.value === selectEl.value ? "background:#3a5a8c;" : "");
                 const label = document.createElement("span");
@@ -155,6 +157,7 @@ export function attachComboBox(selectEl, opts = {}) {
                 item.style.cssText = "padding:6px 8px;font-size:12px;color:#ccc;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
                     (o.value === selectEl.value ? "background:#3a5a8c;" : "");
             }
+            if (indented) item.style.paddingLeft = "22px";
             if (o.value === selectEl.value) highlight = items().length;
             item.addEventListener("mousedown", (e) => {
                 e.preventDefault(); // 避免 input 先失焦把列表关掉
@@ -163,8 +166,24 @@ export function attachComboBox(selectEl, opts = {}) {
             item.addEventListener("mouseenter", () => setHighlight(items().indexOf(item)));
             if (opts.renderItemExtra) opts.renderItemExtra(item, o.value, o);
             itemsHost.appendChild(item);
+        };
+        Array.from(selectEl.children).forEach((child) => {
+            if (child.tagName === "OPTGROUP") {
+                // 仅当该组有命中项时才渲染分类标题 + 选项
+                const opts2 = Array.from(child.children).filter(
+                    (o) => o.tagName === "OPTION" && (!q || o.textContent.toLowerCase().includes(q))
+                );
+                if (!opts2.length) return;
+                const header = el("div", "rs-combo-category",
+                    "padding:4px 8px;font-size:11px;color:#7aa8c1;cursor:default;text-transform:uppercase;letter-spacing:0.5px;");
+                header.textContent = child.getAttribute("label") || "";
+                itemsHost.appendChild(header);
+                opts2.forEach((o) => renderItem(o, true));
+            } else if (child.tagName === "OPTION") {
+                if (!q || child.textContent.toLowerCase().includes(q)) renderItem(child);
+            }
         });
-        if (!itemsHost.children.length) {
+        if (!items().length) {
             const empty = el("div", "", "padding:6px 8px;font-size:12px;color:#777;cursor:default;");
             empty.textContent = emptyText;
             itemsHost.appendChild(empty);
@@ -218,8 +237,12 @@ export function attachComboBox(selectEl, opts = {}) {
             const target = els[highlight >= 0 ? highlight : 0];
             if (target) pickValue(target.dataset.value);
         } else if (e.key === "Escape") {
+            const wasOpen = listEl.style.display !== "none";
             closeList();
             syncInputFromSelect();
+            // 列表开着时 Esc 只消费在「关列表」，不冒泡到外层设置菜单/浮层处理器；
+            // 列表已关则照常冒泡（第二次 Esc 交给外层）
+            if (wasOpen) e.stopPropagation();
         }
     });
     // 失焦未选中选项时把过滤文字还原为当前选中值（取值真相始终是 select）

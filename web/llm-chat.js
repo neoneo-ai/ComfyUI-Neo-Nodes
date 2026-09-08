@@ -535,8 +535,8 @@ function createStatusBars() {
     };
     const onAutoMenuKey = (e) => {
         if (e.key !== "Escape" || !autoMenuOpen) return;
-        if (confirmShown) { hideConfirm(); return; } // Esc = 继续编辑
-        closeAutoMenu();
+        // Esc 恒为关闭：有未保存修改时直接放弃（同「放弃修改」），无修改则正常关
+        performClose();
     };
     document.addEventListener("pointerdown", onAutoDocPointerDown, true);
     document.addEventListener("mousedown", onAutoDocPointerDown, true);
@@ -963,15 +963,24 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
     let mdPreviewOn = false;
     // 渲染预览并把 GFM 任务列表复选框设为可交互（marked 默认输出 disabled，这里放开）
-    // 出图结果块（若有）追加在 Markdown 内容之后
+    // 出图结果块（若有）追加在 Markdown 内容之后；重渲染会重置滚动位置，
+    // 若用户此前已贴底（或从未手动上滚）则自动滚回底部，跟随流式/进度更新
+    let mdPinnedToBottom = true;
     function paintMdPreview() {
+        const wasAtBottom = mdPreview.scrollHeight - mdPreview.scrollTop - mdPreview.clientHeight < 24;
+        if (wasAtBottom) mdPinnedToBottom = true;
         mdPreview.innerHTML = renderMarkdown(customTextarea.value || "");
         for (const box of mdPreview.querySelectorAll('input[type="checkbox"]')) {
             box.disabled = false;
             box.style.cursor = "pointer";
         }
         if (genState) paintGenBlock();
+        if (mdPinnedToBottom) mdPreview.scrollTop = mdPreview.scrollHeight;
     }
+    // 用户手动上滚查看历史内容时停止自动跟随，滚回底部后恢复
+    mdPreview.addEventListener("scroll", () => {
+        mdPinnedToBottom = mdPreview.scrollHeight - mdPreview.scrollTop - mdPreview.clientHeight < 24;
+    });
     // 切换源码中第 boxIndex 个任务项的勾选（[ ]/[x]），未命中则原样返回
     function setTaskItemChecked(text, boxIndex, checked) {
         const lines = text.split("\n");
@@ -1016,7 +1025,8 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     clearBtn.addEventListener("click", () => {
         customTextarea.value = "";
         triggerTextChange(customTextarea);
-        if (mdPreviewOn) paintMdPreview();
+        // 出图结果块一并清除（genResultsController 定义在后，闭包引用无碍）
+        genResultsController.clear();
     });
     customTextareaWrapper.appendChild(clearBtn);
     // 预览中的任务列表复选框可点击：回写 [ ]/[x] 到 textarea（经 input 事件同步 widget/storage），
@@ -1035,6 +1045,9 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // 出图结果块状态（Krea2 出图 skill 专用）：runChatImageGeneration 通过 controller 更新，
     // 随 Markdown 预览重绘附加在内容之后；预览未开启时由 open() 强制切到预览展示进度
     let genState = null;
+    // 代际 token：open() 捕获当前 genSeq；clear() 递增 genSeq 后，运行中任务的后续 set（含轮询 tick / finally）不再回写 UI
+    let genSeq = 0;
+    let genToken = 0;
     // 出图进度条：有步数信息走确定宽度，否则（排队/尚未进入采样）用不定动画占位
     function paintProgressBar() {
         const wrap = mkEl("div", "rs-gen-progress");
@@ -1117,11 +1130,20 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     }
     const genResultsController = {
         set(state) {
+            // 代际校验：clear() 之后运行中任务的后续 set（含轮询 tick / finally）不再回写 UI
+            if (genSeq !== genToken) return;
             genState = state;
             if (mdPreviewOn) paintMdPreview();
         },
         open() {
+            genToken = genSeq;
             if (!mdPreviewOn) setMdPreview(true);
+        },
+        clear() {
+            // 清空出图结果块：递增代际使运行中任务的后续 set 失效（服务端任务继续跑，仅 UI 不再回写）
+            genSeq++;
+            genState = null;
+            if (mdPreviewOn) paintMdPreview();
         },
     };
 

@@ -343,6 +343,33 @@ test("出图运行中：进度条按采样步数推进", async () => {
     assert.equal(bar.querySelector(".rs-gen-progress-fill").style.width, "37.5%");
 });
 
+test("清空输出：运行中的出图块被清除，后续轮询 tick 不再回写", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 21, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen");
+
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t8", status: "queued", images: [], width: 0, height: 0 }));
+    // 一直 running：任务不会自然结束，只能靠清空移除 UI 块
+    mockRoute("/neo_image_gen/status/t8", () => jsonResponse({ task_id: "t8", status: "running", progress: { value: 1, max: 10 } }));
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(2200); // 首轮轮询后处于 running，出图块应可见
+    assert.ok(el.preview.querySelector(".rs-gen-block"), "运行中应显示出图块");
+
+    el.root.querySelector(".rs-clear-btn").click();
+    assert.equal(el.preview.querySelector(".rs-gen-block"), null, "清空后出图块应立即消失");
+
+    await sleep(2000); // 跨过下一轮 poll tick（~1.5s）：旧任务的 set 应被代际校验拦截
+    assert.equal(el.preview.querySelector(".rs-gen-block"), null, "后续轮询 tick 不应把出图块刷回来");
+});
+
 test("已保存的 skill id：延迟填充后仍保留到节点属性并显示在选择器", async () => {
     const graph = makeGraph();
     const gen = addNode(graph, makeNode({

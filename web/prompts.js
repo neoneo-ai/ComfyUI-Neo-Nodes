@@ -169,8 +169,8 @@ app.registerExtension({
             // Initial width update
             updateWidgetWidth();
 
-            node.setSize([270, 280]);
-            node.minWidth = 270;
+            node.setSize([300, 280]);
+            node.minWidth = 300;
             node.minHeight = 260;
 
             // Initialize prompt manager - get UI elements
@@ -676,8 +676,8 @@ app.registerExtension({
 
             // Initial width update
             updateWidgetWidth();
-            node.setSize([270, 280]);
-            node.minWidth = 270;
+            node.setSize([300, 280]);
+            node.minWidth = 300;
             node.minHeight = 260;
 
             // 初始化提示词管理器
