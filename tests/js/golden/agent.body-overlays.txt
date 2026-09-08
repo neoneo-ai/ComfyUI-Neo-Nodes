@@ -49,12 +49,12 @@ body
           div.rs-model-select-box <display=none>
             div
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              span.rs-combo-caret "▾"
             select#rs-remote-model-select.rs-form-input.rs-remote-model <display=none>
           div.rs-model-select-box <display=none>
             div
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              span.rs-combo-caret "▾"
             select#rs-local-model-select.rs-form-input.rs-local-model-select <display=none>
         div.rs-config-row
           label.rs-form-label "API Key"
@@ -75,21 +75,21 @@ body
           div.rs-model-select-box <display=none>
             div
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              span.rs-combo-caret "▾"
             select
         div.rs-config-row
           label.rs-form-label "Text Encoder"
           div.rs-model-select-box <display=none>
             div
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              span.rs-combo-caret "▾"
             select
         div.rs-config-row
           label.rs-form-label "VAE"
           div.rs-model-select-box <display=none>
             div
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+              span.rs-combo-caret "▾"
             select
         div.rs-config-row
           label.rs-form-label "LoRA"
@@ -104,14 +104,14 @@ body
             div.rs-model-select-box <display=none>
               div
                 input.rs-form-input.rs-combo-input <type=text placeholder=选择>
-                button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+                span.rs-combo-caret "▾"
               select
           div.rs-config-row
             label.rs-form-label "默认比例"
             div.rs-model-select-box <display=none>
               div
                 input.rs-form-input.rs-combo-input <type=text placeholder=选择>
-                button.rs-combo-clear <type=button title=清除输入，显示全部 display=none> "✕"
+                span.rs-combo-caret "▾"
               select
         div.rs-config-row
           button.rs-gen-save <type=button> "💾 保存设置"
@@ -164,4 +164,3 @@ body
     div.rs-delete-buttons
       button.rs-delete-ok-btn "OK"
       button.rs-delete-cancel-btn "Cancel"
-  span "默认"

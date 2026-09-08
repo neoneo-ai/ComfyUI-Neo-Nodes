@@ -1,6 +1,7 @@
 /**
  * combo-box.js
- * 可搜索下拉组件（combobox）：输入即过滤、↑↓+Enter 键盘选择、✕ 清空弹出全量列表。
+ * 可搜索下拉组件（combobox）：点击框体展开全量列表、键入实时过滤并覆盖当前值、
+ * ↑↓+Enter 键盘选择；右缘常显下拉箭头作视觉指示。
  *
  * 用法：const { box, destroy } = attachComboBox(selectEl, { placeholder, emptyText });
  * 原生 <select> 被移到屏幕外保留为数据源与取值真相——外部代码对 select 的选项填充、
@@ -42,22 +43,6 @@ function el(tag, className, cssText = "") {
     return n;
 }
 
-// 共享镜像 span 测量文本宽度：canvas measureText 对 emoji/CJK 的宽度估算与
-// 输入框实际渲染不一致（会偏小导致 ✕ 压字），同排版引擎的 span 才是精确值
-let _mirrorSpan = null;
-function measureTextWidth(text, refEl) {
-    if (!_mirrorSpan) {
-        _mirrorSpan = document.createElement("span");
-        _mirrorSpan.style.cssText = "position:absolute;top:-9999px;left:-9999px;visibility:hidden;white-space:pre;";
-        document.body.appendChild(_mirrorSpan);
-    }
-    const cs = getComputedStyle(refEl);
-    _mirrorSpan.style.font = cs.font;
-    _mirrorSpan.style.letterSpacing = cs.letterSpacing;
-    _mirrorSpan.textContent = text;
-    return _mirrorSpan.offsetWidth;
-}
-
 export function attachComboBox(selectEl, opts = {}) {
     const placeholder = opts.placeholder || "🔍 输入过滤或点击选择...";
     const emptyText = opts.emptyText || "无匹配模型";
@@ -76,7 +61,7 @@ export function attachComboBox(selectEl, opts = {}) {
     inputEl.type = "text";
     inputEl.autocomplete = "off";
     inputEl.placeholder = placeholder;
-    inputEl.style.paddingRight = "30px";
+    inputEl.style.paddingRight = "24px"; // 右缘常显 caret 预留位
 
     // 列表挂在 body 上用 fixed 定位：不被弹窗 overflow 裁剪，下方空间不足时自动向上翻。
     // opts.footerEl 存在时改为 flex 列布局（滚动区 itemsHost + 固定底部工具栏），否则保持原样
@@ -97,35 +82,19 @@ export function attachComboBox(selectEl, opts = {}) {
         itemsHost = itemsWrap;
     }
 
-    const clearBtn = el("button", "rs-combo-clear", "position:absolute;width:16px;height:16px;line-height:16px;text-align:center;background:none;border:none;color:#888;font-size:10px;cursor:pointer;padding:0;display:none;z-index:1;");
-    clearBtn.type = "button";
-    clearBtn.textContent = "✕";
-    clearBtn.title = "清除输入，显示全部";
-    clearBtn.addEventListener("mouseenter", () => { clearBtn.style.color = "#fff"; });
-    clearBtn.addEventListener("mouseleave", () => { clearBtn.style.color = "#888"; });
+    // 右缘 caret 常显，指示「点击展开列表」；pointer-events:none 让点击落到输入框统一处理
+    const caret = el("span", "rs-combo-caret", "position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;line-height:1;color:#888;pointer-events:none;z-index:1;");
+    caret.textContent = "▾";
 
     const items = () => Array.from(listEl.querySelectorAll("[data-value]"));
     let highlight = -1;
     const closeList = () => { listEl.style.display = "none"; highlight = -1; };
 
-    const syncClear = () => {
-        if (!inputEl.value) { clearBtn.style.display = "none"; return; }
-        clearBtn.style.display = "block";
-        // ✕ 紧跟文字末尾；文本超出可见区时钳回右缘（与旧行为一致）
-        const cs = getComputedStyle(inputEl);
-        const tw = measureTextWidth(inputEl.value, inputEl);
-        const left = (parseFloat(cs.paddingLeft) || 0) + tw + 2;
-        clearBtn.style.right = "auto";
-        clearBtn.style.left = Math.min(left, Math.max(2, inputEl.clientWidth - clearBtn.offsetWidth - 2)) + "px";
-        // 垂直居中于输入框外框（上下边框对称，等价内容区居中），与文字基线对齐；此前贴底导致偏下
-        clearBtn.style.top = (inputEl.offsetTop + (inputEl.offsetHeight - clearBtn.offsetHeight) / 2) + "px";
-    };
     const syncInputFromSelect = () => {
         const sel = selectEl.selectedOptions && selectEl.selectedOptions[0];
         inputEl.value = sel ? sel.textContent : "";
         // 输入框较窄时长名会被截断，悬停用 title 显示完整选中名
         inputEl.title = sel ? sel.textContent : "";
-        syncClear();
     };
 
     // 原生 select 的 .value 是取值真相，但程序化赋值（如回填已保存模型）不会触发
@@ -204,7 +173,7 @@ export function attachComboBox(selectEl, opts = {}) {
 
     const openList = () => {
         if (selectEl.disabled) return;
-        renderList(inputEl.value);
+        renderList(""); // 打开即全量，过滤只发生在键入时
         listEl.style.display = listOpenDisplay;
         placeList();
     };
@@ -221,11 +190,16 @@ export function attachComboBox(selectEl, opts = {}) {
 
 
     inputEl.addEventListener("focus", () => {
-        // 空输入聚焦 → 直接弹出全量列表；有文字时不打扰（等用户输入过滤）
-        if (!inputEl.value.trim()) openList();
+        // 聚焦（键盘 Tab 或点击）→ 展开全量未过滤列表；键入即过滤覆盖
+        openList();
+    });
+    // 点击框体/caret → 展开全量列表并全选当前文字，键入即覆盖
+    inputEl.addEventListener("click", () => {
+        if (selectEl.disabled) return;
+        openList();
+        inputEl.select();
     });
     inputEl.addEventListener("input", () => {
-        syncClear();
         renderList(inputEl.value);
         if (!selectEl.disabled) { listEl.style.display = listOpenDisplay; placeList(); }
         highlight = -1;
@@ -248,26 +222,8 @@ export function attachComboBox(selectEl, opts = {}) {
             syncInputFromSelect();
         }
     });
-    inputEl.addEventListener("blur", () => setTimeout(closeList, 120));
-
-    // ✕ 清空输入并弹出完整未过滤列表。宿主弹窗可能存在冒泡阶段的事件拦截，
-    // 故挂 window 捕获阶段处理（最先于一切祖先拦截器），保证点击必定生效。
-    const activateClear = () => {
-        inputEl.value = "";
-        syncClear();
-        renderList("");
-        listEl.style.display = listOpenDisplay;
-        placeList();
-        inputEl.focus();
-    };
-    const winMouseDown = (e) => {
-        if (e.target === clearBtn) { e.preventDefault(); activateClear(); }
-    };
-    const winClick = (e) => {
-        if (e.target === clearBtn) e.stopPropagation();
-    };
-    window.addEventListener("mousedown", winMouseDown, true);
-    window.addEventListener("click", winClick, true);
+    // 失焦未选中选项时把过滤文字还原为当前选中值（取值真相始终是 select）
+    inputEl.addEventListener("blur", () => setTimeout(() => { closeList(); syncInputFromSelect(); }, 120));
 
     // select 的显隐/disabled/选项变化 → 同步盒子可见性、输入框文本和列表内容
     const syncFromSelect = () => {
@@ -283,14 +239,9 @@ export function attachComboBox(selectEl, opts = {}) {
     });
 
     wrap.appendChild(inputEl);
-    wrap.appendChild(clearBtn);
+    wrap.appendChild(caret);
     box.appendChild(wrap);
     box.appendChild(selectEl);
-
-    // 初始化时输入框可能尚未布局（节点未渲染/display:none），首次 syncClear 的
-    // left/top 会基于全 0 度量算错；尺寸真正就绪/变化时重排 ✕
-    const clearRO = new ResizeObserver(() => { if (inputEl.value) syncClear(); });
-    clearRO.observe(inputEl);
 
     const inst = { wrap, listEl, closeList, placeList };
     instances.add(inst);
@@ -302,9 +253,6 @@ export function attachComboBox(selectEl, opts = {}) {
         close: () => closeList(),
         destroy() {
             observer.disconnect();
-            clearRO.disconnect();
-            window.removeEventListener("mousedown", winMouseDown, true);
-            window.removeEventListener("click", winClick, true);
             listEl.remove();
             instances.delete(inst);
             unbindSharedIfIdle();

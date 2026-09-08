@@ -544,11 +544,14 @@
 
 /* Template selector in toolbar */
 /* 原生 select 已被 combo-box 移到屏外作数据源；以下两条让可见的 combobox 输入框继承原样式 */
+/* 节点变窄时选择器先收缩（最小 64px），保证右侧生成按钮始终可见 */
 .rs-input-toolbar .rs-model-select-box {
-    flex-shrink: 0;
+    flex: 1 1 auto;
+    min-width: 64px;
 }
 .rs-input-toolbar .rs-combo-input {
     width: 200px;
+    max-width: 100%;
     padding: 4px 26px 4px 8px;
     font-size: 11px;
     background: #2a2a2a;
@@ -561,12 +564,6 @@
 .rs-input-toolbar .rs-combo-input::placeholder {
     color: #888;
     opacity: .75;
-}
-.rs-input-toolbar .rs-combo-clear {
-    color: #4a7ab0;
-}
-.rs-input-toolbar .rs-combo-clear:hover {
-    color: #9ec5e8;
 }
 
 .rs-input-toolbar .rs-tpl-selector {
@@ -606,6 +603,7 @@
     font-weight: 500;
     height: 24px;
     line-height: 1;
+    flex-shrink: 0;
 }
 
 .rs-input-toolbar .rs-generate-btn:hover {
@@ -2202,6 +2200,12 @@
 .rs-input-toolbar .rs-attach-btn:hover {
     color: #7ab8f5;
     background: #333;
+}
+
+/* 工具栏右侧控件不压缩，空间不足时只收缩 skill 选择器 */
+.rs-input-toolbar .rs-attach-btn,
+.rs-input-toolbar .rs-random-wrap {
+    flex-shrink: 0;
 }
 
 /* ==========================================
