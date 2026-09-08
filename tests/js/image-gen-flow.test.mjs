@@ -255,6 +255,7 @@ test("出图成功：多个 LoadImage 目标 → 弹菜单，选中写入对应�
     el.generateBtn.click();
     await sleep(1800);
 
+    document.body.appendChild(el.root); // 菜单现内联插入按钮下方，anchor 需在 document 中
     el.preview.querySelector(".rs-gen-send").click();
     await sleep(50);
     const menu = document.querySelector(".rs-gen-send-menu");

@@ -163,7 +163,7 @@ async function applyImageToTarget(target, image) {
     app.graph.setDirtyCanvas(true, true);
 }
 
-// 目标选择菜单：挂在 body 用 fixed 定位，避开节点边界裁剪（同 rs-runtime-menu 策略）
+// 目标选择菜单：内联插入到按钮下方（DOM 流内布局，节点 UI 在变换容器里 fixed 定位坐标不可靠）
 let openSendMenu = null;
 
 function closeSendMenu() {
@@ -244,16 +244,8 @@ export function sendImageToLoadImage(image, anchorEl) {
         });
         menu.appendChild(item);
     }
-    document.body.appendChild(menu);
+    anchorEl.insertAdjacentElement("afterend", menu);
     openSendMenu = menu;
-    const rect = anchorEl.getBoundingClientRect();
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const w = menu.offsetWidth || 200, h = menu.offsetHeight || 120;
-    let left = Math.min(Math.max(8, rect.left), vw - 8 - w);
-    let top = rect.bottom + 4;
-    if (top + h > vh - 8) top = Math.max(8, rect.top - h - 4);
-    menu.style.left = left + "px";
-    menu.style.top = top + "px";
     document.addEventListener("pointerdown", onSendMenuOutside, true);
 }
 

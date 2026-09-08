@@ -690,11 +690,11 @@ function resolveConnectedImageSource(node) {
 // Krea2 出图 skill：提交 → 轮询 → 结果块（进度 / 取消 / 缩略图 / 发送装配）
 // ==========================================
 
-// 预览区只加载 320px 缩略图（复用 gallery thumbnail 缓存接口），原图留给灯箱按需加载
+// 预览区只加载 640px 缩略图（复用 gallery thumbnail 缓存接口），原图留给灯箱按需加载
 function genThumbSrc(image) {
     return `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail`
         + `?filename=${encodeURIComponent(image.filename)}`
-        + `&subfolder=${encodeURIComponent(image.subfolder || "")}&size=320`;
+        + `&subfolder=${encodeURIComponent(image.subfolder || "")}&size=640`;
 }
 
 async function runChatImageGeneration({ generateBtn, controller }, text, references, opt) {
@@ -1100,11 +1100,14 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
         if (genState.images?.length) {
             const grid = mkEl("div", "rs-gen-thumbs");
             genState.images.forEach((image, i) => {
+                // 自包含组件：内联样式锁定「图在上、按钮正下方」的纵向结构，不依赖外部 CSS 生效
                 const cell = mkEl("div", "rs-gen-thumb");
+                cell.style.cssText = "display:inline-flex;flex-direction:column;align-items:stretch;width:300px;flex:none";
                 const img = mkEl("img");
-                // 缩略图走 gallery 的 thumbnail 缓存接口（320px），点击才用灯箱加载原图
+                // 缩略图走 gallery 的 thumbnail 缓存接口（640px），点击才用灯箱加载原图
                 img.src = genThumbSrc(image);
                 img.loading = "lazy";
+                img.style.cssText = "display:block;width:100%";
                 img.addEventListener("click", () => Lightbox.open({
                     items: genState.images.map(im => ({ kind: "image", url: im.url, title: im.filename })),
                     index: i,
@@ -1113,7 +1116,8 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
                 const sendBtn = mkEl("button", "rs-gen-send");
                 sendBtn.type = "button";
                 sendBtn.textContent = "发送到节点";
-                sendBtn.addEventListener("click", () => sendImageToLoadImage(image, sendBtn));
+                sendBtn.style.cssText = "width:100%;max-width:100%";
+                sendBtn.addEventListener("click", (e) => sendImageToLoadImage(image, e.currentTarget));
                 cell.appendChild(sendBtn);
                 grid.appendChild(cell);
             });
