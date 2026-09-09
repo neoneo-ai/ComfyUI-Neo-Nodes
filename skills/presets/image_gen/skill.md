@@ -1,7 +1,7 @@
 ---
-name: 出图 Krea2 四视图
+name: 生图 Krea2 图生角色图
 tags:
-- 出图
+- 生图
 - Krea2
 - 四视图
 inputs:

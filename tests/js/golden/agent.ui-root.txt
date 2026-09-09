@@ -48,3 +48,4 @@ div.rs-root.rs-theme-local
             path
     input <type=file accept=image/* display=none>
   div.rs-skill-hint <display=none> "多轮技能：每次仅推进一阶段，补充问询后再点 ✨"
+  div.rs-gen-status <display=none>

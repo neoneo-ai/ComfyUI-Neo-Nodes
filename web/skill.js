@@ -12,7 +12,7 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
-// 仅事件回调内调用（复制补带 workflow/config、画布导出为出图技能、每技能出图设置）；与 image-gen.js 的循环导入均为延迟使用，安全
+// 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows } from "./image-gen.js";
 
 // ==========================================
@@ -191,7 +191,7 @@ function renderMarkdown(src) {
 // image_gen 组排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
 // 图像/视频提示词增强紧随其后，vision/task/custom 依次跟随；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
-    "image_gen": { label: "⚡ 出图 (Krea2)", order: -1 },
+    "image_gen": { label: "⚡ 生图 (Krea2)", order: -1 },
     "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
     "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
     "vision": { label: "🖼️ 图像 / 反推", order: 2 },
@@ -218,7 +218,7 @@ function populateSkillOptions(selectEl, skills) {
             opt.value = s.id;
             opt.dataset.multiTurn = s.multi_turn ? "1" : "";
             opt.dataset.source = s.source || "";
-            // 出图 skill 元数据：genImage 走后端出图分支，
+            // 生图 skill 元数据：genImage 走后端生图分支，
             // requiresRef 标记四视图（必须带参考图，缺图在预览区底部报错）
             opt.dataset.genImage = s.gen_image ? "1" : "";
             opt.dataset.requiresRef = s.requires_ref ? "1" : "";
@@ -312,20 +312,20 @@ function createSkillDetailPopup() {
     contentPreview.style.display = "none";
     contentRow.append(contentHeader, contentTextarea, contentPreview);
 
-    // ---- 出图设置（仅 gen_image 技能显示）：复用全局出图设置的共享控件区，读写该技能的 config.json 覆盖 ----
+    // ---- 生图设置（仅 gen_image 技能显示）：复用全局生图设置的共享控件区，读写该技能的 config.json 覆盖 ----
     const genSettingsWrap = mkEl("div", "rs-gen-settings rs-skill-gen-settings");
     genSettingsWrap.style.display = "none";
     const genSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const genSettingsTitle = mkEl("label", "rs-form-label");
-    genSettingsTitle.textContent = "🖼️ 出图设置（本技能覆盖）";
-    genSettingsTitle.title = "仅对本技能生效，未填项回落全局出图设置";
+    genSettingsTitle.textContent = "🖼️ 生图设置（本技能覆盖）";
+    genSettingsTitle.title = "仅对本技能生效，未填项回落全局生图设置";
     const genReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
     genReadOnlyHint.textContent = "预设/任务技能只读：点下方「⧉ Copy as custom」复制后可编辑";
     genReadOnlyHint.style.display = "none";
     genSettingsHeader.append(genSettingsTitle, genReadOnlyHint);
     const genModelSection = createModelConfigSection();
     const genSizeSection = createGenSizeRows();
-    // Text Encoder / VAE / 出图张数 / 输出前缀 很少改动：收进可折叠「高级选项」（默认收起），放到最底部
+    // Text Encoder / VAE / 生图张数 / 输出前缀 很少改动：收进可折叠「高级选项」（默认收起），放到最底部
     let advEl = null;
     {
         const advRows = [
@@ -335,7 +335,7 @@ function createSkillDetailPopup() {
         if (advRows.length) {
             const adv = mkEl("details", "rs-gen-advanced");
             const advSummary = mkEl("summary", "rs-gen-advanced-summary");
-            advSummary.textContent = "Text Encoder / VAE / 出图张数 / 输出前缀（高级）";
+            advSummary.textContent = "Text Encoder / VAE / 生图张数 / 输出前缀（高级）";
             // Chromium <details> 即使 display:flex 也会将非 summary 子元素包入匿名块，gap 不生效；用 div 包裹让 flex gap 正确应用
             const advContent = mkEl("div", "rs-gen-adv-content");
             for (const r of advRows) advContent.appendChild(r);
@@ -489,8 +489,8 @@ function createSkillDetailPopup() {
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
         else { selectedFile = null; contentTextarea.value = ""; }
-        // 出图技能显示 config.json 覆盖区（预设/任务只读）；其余技能隐藏。
-        // multi_turn 是文本多轮概念，出图技能用不到 → 一并隐藏
+        // 生图技能显示 config.json 覆盖区（预设/任务只读）；其余技能隐藏。
+        // multi_turn 是文本多轮概念，生图技能用不到 → 一并隐藏
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
             multiTurnRow.style.display = "none";
@@ -529,7 +529,7 @@ function createSkillDetailPopup() {
     function close() { overlay.style.display = "none"; }
 
     // ---- 保存（新建主文件 / 已有 skill 的当前选中文件）----
-    // 出图设置区可见且可编辑时随主 Save 一起写入该技能 config.json（弹窗内只有一个保存入口）
+    // 生图设置区可见且可编辑时随主 Save 一起写入该技能 config.json（弹窗内只有一个保存入口）
     async function persistGenSettings() {
         if (!currentSkillId || !isCustom() || genSettingsWrap.style.display === "none") return;
         try {
@@ -587,12 +587,12 @@ function createSkillDetailPopup() {
             tags: [...((full && full.tags) || [])],
             source: "custom",
             multi_turn: !!(full && full.multi_turn),
-            // 保留 frontmatter 元数据：出图技能复制后仍是 image_gen 分类且设置区可见
+            // 保留 frontmatter 元数据：生图技能复制后仍是 image_gen 分类且设置区可见
             category: (full && full.category) || "",
             gen_image: !!(full && full.gen_image),
             requires_ref: !!(full && full.requires_ref)
         });
-        await copySkillFiles(currentSkillId, newId); // 出图技能连同 workflow.json / config.json 一起复制（失败静默）
+        await copySkillFiles(currentSkillId, newId); // 生图技能连同 workflow.json / config.json 一起复制（失败静默）
         document.dispatchEvent(new CustomEvent("rs.skills.updated"));
         close();
     });
@@ -707,7 +707,7 @@ function createSkillDropdown() {
     footerZipBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().zipInput.click(); });
     const footerDirBtn = makeFooterBtn("⬆ Folder", "Upload a skill folder (all .md files)");
     footerDirBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().dirInput.click(); });
-    // 把当前画布工作流（API prompt）导出为出图技能：后端自动抽模板占位符 + LoRA 槽位
+    // 把当前画布工作流（API prompt）导出为生图技能：后端自动抽模板占位符 + LoRA 槽位
     const footerCanvasBtn = makeFooterBtn("📋 From Canvas", "Export the current canvas workflow as an image-gen skill");
     footerCanvasBtn.addEventListener("click", async (e) => {
         e.stopPropagation();

@@ -13,7 +13,7 @@ import { mkEl } from "./dom-utils.js";
 import { collectWorkflowContext } from "./workflow-context.js";
 import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 import { createAtImagePicker } from "./at-picker.js";
-import { createImageGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated } from "./image-gen.js";
+import { createImageGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated, enhancePromptStream, getGenSettings, getSkillGenConfig } from "./image-gen.js";
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
 
@@ -415,7 +415,7 @@ function createStatusBars() {
     autoHint.textContent = "每次运行时用 LLM 基于描述自动增强提示词";
     autoMenu.appendChild(autoToggleRow);
     autoMenu.appendChild(autoHint);
-    // 设置区 tab 切换：LLM Settings / 出图设置（两张表单都较长，纵向堆叠菜单过深；
+    // 设置区 tab 切换：LLM Settings / 生图设置（两张表单都较长，纵向堆叠菜单过深；
     // 打开时两个表单都 load、关闭时都 save，隐藏面板的输入值照常读写，切 tab 不丢状态）
     const modelForm = createModelConfigForm();
     const genForm = createImageGenSettingsForm();
@@ -426,7 +426,7 @@ function createStatusBars() {
     llmTabBtn.textContent = "🤖 LLM Settings";
     const genTabBtn = mkEl("button", "rs-auto-tab");
     genTabBtn.type = "button";
-    genTabBtn.textContent = "🖼️ 出图设置";
+    genTabBtn.textContent = "🖼️ 生图设置";
     autoTabs.append(llmTabBtn, genTabBtn);
     const llmPanel = mkEl("div", "rs-auto-panel");
     llmPanel.appendChild(modelForm.el);
@@ -687,7 +687,7 @@ function resolveConnectedImageSource(node) {
 }
 
 // ==========================================
-// Krea2 出图 skill：提交 → 事件等待 → 结果块（进度 / 取消 / 缩略图 / 发送装配）
+// Krea2 生图 skill：提交 → 事件等待 → 结果块（进度 / 取消 / 缩略图 / 发送装配）
 // ==========================================
 
 // 预览区只加载 640px 缩略图（复用 gallery thumbnail 缓存接口），原图留给灯箱按需加载
@@ -695,6 +695,19 @@ function genThumbSrc(image) {
     return `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail`
         + `?filename=${encodeURIComponent(image.filename)}`
         + `&subfolder=${encodeURIComponent(image.subfolder || "")}&size=640`;
+}
+
+// 该 skill 是否启用 LLM 提示词增强：skill 级生图配置显式声明 enhance_prompt 时以它为准，
+// 否则看全局生图设置。与后端 image_gen.py start_generation 的合并规则保持一致，
+// 未启用时跳过前端 LLM 增强，直接把用户/模板文本交给 Krea2。
+async function resolveImageEnhance(skillId) {
+    const [settings, cfg] = await Promise.all([
+        getGenSettings().catch(() => ({})),
+        getSkillGenConfig(skillId).catch(() => ({})),
+    ]);
+    return cfg && typeof cfg.enhance_prompt === "boolean"
+        ? cfg.enhance_prompt
+        : !!settings.enhance_prompt;
 }
 
 async function runChatImageGeneration({ generateBtn, controller }, text, references, opt) {
@@ -730,7 +743,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
                 statusText: "缺少参考图",
                 error: "四视图需要参考图：请连接 image 输入、@ 引用工作流图片，或粘贴/附加一张角色图片后重试。",
             });
-            showToast(app, "error", "缺少参考图", "四视图需要参考图才能出图");
+            showToast(app, "error", "缺少参考图", "四视图需要参考图才能生图");
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
             return;
@@ -740,21 +753,72 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
     const sendRefs = useRefs ? resolvedRefs : [];
     const state = {
         running: true, cancelId: "", error: "", images: [], warnings: [], progress: null,
-        statusText: useRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交出图任务…",
+        enhancedPrompt: "",
+        statusText: useRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交生图任务…",
+        // 生图阶段机：submit=任务构建 / enhance=LLM 流式增强提示词 / queue=排队 / sample=采样生图。
+        // 底部状态行按阶段切换进度条形态（增强文本无确定步数，用已生成字符驱动近似进度）。
+        phase: "submit",
     };
     const myToken = controller.open();
     controller.set(state);
     try {
-        const promptText = await buildGenPrompt(opt.value, text, useRefs);
-        // 比例/尺寸由所选技能的 config.json（或全局出图设置）决定，模板占位符在渲染时取值
-        const body = { skill_id: opt?.value || "", prompt: promptText, references: sendRefs };
+        const [promptText, enhanceEnabled] = await Promise.all([
+            buildGenPrompt(opt.value, text, useRefs),
+            resolveImageEnhance(opt.value || ""),
+        ]);
+
+        // Phase 1: LLM 增强提示词（流式），仅在开启增强时执行；失败静默回退原文。
+        // 未开启（skill/全局 enhance_prompt=false，如不带 LLM 增强预设的四视图 skill）
+        // 时跳过，直接提交用户/模板文本，不再自动增强。
+        let finalPrompt = promptText;
+        if (enhanceEnabled) {
+            state.statusText = "增强提示词中…";
+            state.phase = "enhance";
+            controller.set(state);
+            try {
+                const enhanced = await new Promise((resolve) => {
+                    let rafId = null;
+                    enhancePromptStream(
+                        { skill_id: opt?.value || "", prompt: promptText },
+                        {
+                            onChunk: (chunk) => {
+                                state.enhancedPrompt += chunk;
+                                if (rafId) return;
+                                rafId = requestAnimationFrame(() => {
+                                    rafId = null;
+                                    controller.set(state);
+                                });
+                            },
+                            onDone: (fullText) => {
+                                if (rafId) cancelAnimationFrame(rafId);
+                                state.enhancedPrompt = fullText || "";
+                                resolve(fullText);
+                            },
+                            onError: () => resolve(null),
+                        }
+                    );
+                });
+                if (enhanced && enhanced.trim()) {
+                    finalPrompt = enhanced.trim();
+                }
+            } catch (e) {
+                console.warn("prompt enhancement failed, using original:", e);
+            }
+        }
+
+        // Phase 2: 提交生图任务（skip_enhance 避免后端重复增强）
+        state.statusText = "排队中…";
+        state.phase = "queue";
+        controller.set(state);
+        const body = { skill_id: opt?.value || "", prompt: finalPrompt, references: sendRefs, skip_enhance: true };
         const snap = await requestGeneration(body);
         state.cancelId = snap.task_id;
         state.warnings = snap.warnings || [];
         state.statusText = "排队中…";
         controller.set(state);
         const final = await watchTask(snap.task_id, (s) => {
-            state.statusText = s.status === "running" ? "出图中…" : "排队中…";
+            state.statusText = s.status === "running" ? "生图中…" : "排队中…";
+            state.phase = s.status === "running" ? "sample" : "queue";
             state.progress = s.progress || null;
             controller.set(state);
         }, () => controller.isStale(myToken));
@@ -765,7 +829,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
             state.statusText = "已取消";
         } else {
             state.statusText = "失败";
-            state.error = final.error || "出图失败";
+            state.error = final.error || "生图失败";
         }
     } catch (e) {
         state.statusText = "失败";
@@ -805,7 +869,7 @@ function createGenerateHandler(promptUI) {
         const hasImages = imagesPayload.length > 0;
         const markerSkillId = matchSkillMarker(messageToLLM);
 
-        // 选中出图 skill：绕过 LLM，直连后端出图流程，结果渲染在 Markdown 预览区
+        // 选中生图 skill：绕过 LLM，直连后端生图流程，结果渲染在 Markdown 预览区
         const selectedOpt = skillSelector
             ? [...skillSelector.options].find(o => o.value === skillSelector.value) : null;
 
@@ -1007,7 +1071,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // 切换 Markdown 预览 / 原始编辑；refreshMarkdownPreview 供流式更新时同步刷新
     let mdPreviewOn = false;
     // 渲染预览并把 GFM 任务列表复选框设为可交互（marked 默认输出 disabled，这里放开）
-    // 出图结果块（若有）追加在 Markdown 内容之后；重渲染会重置滚动位置，
+    // 生图结果块（若有）追加在 Markdown 内容之后；重渲染会重置滚动位置，
     // 若用户此前已贴底（或从未手动上滚）则自动滚回底部，跟随流式/进度更新
     let mdPinnedToBottom = true;
     function paintMdPreview() {
@@ -1069,7 +1133,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     clearBtn.addEventListener("click", () => {
         customTextarea.value = "";
         triggerTextChange(customTextarea);
-        // 出图结果块一并清除（genResultsController 定义在后，闭包引用无碍）
+        // 生图结果块一并清除（genResultsController 定义在后，闭包引用无碍）
         genResultsController.clear();
     });
     customTextareaWrapper.appendChild(clearBtn);
@@ -1086,74 +1150,143 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
         }
     });
 
-    // 出图结果块状态（Krea2 出图 skill 专用）：runChatImageGeneration 通过 controller 更新，
+    // 生图结果块状态（Krea2 生图 skill 专用）：runChatImageGeneration 通过 controller 更新，
     // 随 Markdown 预览重绘附加在内容之后；预览未开启时由 open() 强制切到预览展示进度
     let genState = null;
     // 代际 token：open() 捕获当前 genSeq；clear() 递增 genSeq 后，运行中任务的后续 set（含轮询 tick / finally）不再回写 UI
     let genSeq = 0;
     let genToken = 0;
-    // 出图进度条：有步数信息走确定宽度，否则（排队/尚未进入采样）用不定动画占位。
-    // 内联样式 + WAAPI 动画（与缩略图同一自包含约定），不依赖外部 CSS 是否到达浏览器：
-    // track/fill 是空 div，外部 CSS 缺失时高度塌缩为 0，整条进度条会完全不可见
-    function paintProgressBar() {
-        const wrap = mkEl("div", "rs-gen-progress", "margin-top:8px");
-        const track = mkEl("div", "rs-gen-progress-track",
-            "height:8px;border-radius:4px;background:#333;overflow:hidden");
-        const fill = mkEl("div", "rs-gen-progress-fill",
-            "height:100%;border-radius:4px;background:linear-gradient(90deg,#456ba8,#6b9bd8)");
-        const p = genState.progress;
-        if (p && p.max > 0) {
-            const pct = Math.max(0, Math.min(100, (p.value / p.max) * 100));
-            fill.style.width = pct + "%";
-            fill.style.transition = "width 0.4s ease";
+    // 生图状态行：固定挂在节点最底部（rs-root 底部），运行中一行显示 状态/进度/取消，
+    // 结束（完成/取消/失败/清空）即隐藏——不随预览滚动吸顶，避免滚动容器 padding 造成的贴顶间隙
+    const genStatusEl = mkEl("div", "rs-gen-status");
+    genStatusEl.style.display = "none";
+    // 状态行 DOM 复用：同一阶段（尤其增强文本 rAF 高频 set）只刷新文本/宽度/label，
+    // 整行重建会让 transition 起点丢失、fill 每帧硬跳变，视觉上像左右抖动。
+    let genStatusPhase = "";    // 当前渲染的阶段；非 running 置空强制下次重建
+    let genStatusText = null;   // .rs-gen-status-text
+    let genStatusBar = null;    // .rs-gen-progress（进度条外层，用于切 indeterminate 类）
+    let genStatusFill = null;   // .rs-gen-progress-fill（宽度过渡目标）
+    let genStatusLabel = null;  // .rs-gen-progress-label（步数 / 已生成字数）
+    let genStatusCancel = null; // .rs-gen-cancel（cancelId 出现后追加）
+
+    // 按阶段刷新进度条填充：增强文本=字符渐近曲线；采样=真实步数；排队/提交=不定动画
+    function paintGenFill() {
+        const bar = genStatusBar, fill = genStatusFill;
+        const determinate = genState.phase === "enhance" || genState.progress?.max > 0;
+        if (determinate) {
+            if (fill._rsAnim) { fill._rsAnim.cancel(); fill._rsAnim = null; }
+            bar.classList.remove("rs-gen-progress--indeterminate");
+            if (genState.phase === "enhance") {
+                // LLM 流式增强文本没有已知总长度：用 len/(len+C) 渐近曲线逼近进度。
+                // 开头平缓、随文字持续推进且增速放缓、长文本减速但永不停滞；
+                // C=700 时 100/400/800/1500 字约对应 12%/36%/53%/68%。
+                const len = (genState.enhancedPrompt || "").length;
+                fill.style.width = ((len / (len + 700)) * 100) + "%";
+                fill.style.transition = "width 0.2s ease";
+            } else {
+                const pct = Math.max(0, Math.min(100, (genState.progress.value / genState.progress.max) * 100));
+                fill.style.width = pct + "%";
+                fill.style.transition = "width 0.4s ease";
+            }
         } else {
-            wrap.classList.add("rs-gen-progress--indeterminate");
+            bar.classList.add("rs-gen-progress--indeterminate");
             fill.style.width = "40%";
-            // WAAPI 替代 CSS keyframes；jsdom 未实现 animate，可选调用兜底
-            fill.animate?.(
-                [{ transform: "translateX(-100%)" }, { transform: "translateX(350%)" }],
-                { duration: 1200, iterations: Infinity, easing: "ease-in-out" }
-            );
+            // WAAPI 替代 CSS keyframes；jsdom 未实现 animate，可选调用兜底。
+            // 连续刷新不复启动画，避免不确定条每次从头开始造成闪烁
+            if (!fill._rsAnim) {
+                fill._rsAnim = fill.animate?.(
+                    [{ transform: "translateX(-100%)" }, { transform: "translateX(350%)" }],
+                    { duration: 1200, iterations: Infinity, easing: "ease-in-out" }
+                ) || null;
+            }
         }
-        track.appendChild(fill);
-        wrap.appendChild(track);
-        if (p && p.max > 0) {
-            const label = mkEl("div", "rs-gen-progress-label",
-                "margin-top:4px;font-size:11px;color:#9a9a9a;text-align:right");
-            label.textContent = `第 ${p.value} / ${p.max} 步`;
-            wrap.appendChild(label);
+    }
+    function paintGenLabel() {
+        let want = "";
+        if (genState.phase === "enhance") {
+            want = `已生成 ${(genState.enhancedPrompt || "").length} 字`;
+        } else if (genState.progress?.max > 0) {
+            want = `第 ${genState.progress.value} / ${genState.progress.max} 步`;
         }
-        return wrap;
+        genStatusLabel.textContent = want;
+        genStatusLabel.style.display = want ? "" : "none";
+    }
+    function paintGenStatus() {
+        if (!genState || !genState.running) {
+            genStatusEl.style.display = "none";
+            genStatusPhase = "";
+            if (genStatusFill?._rsAnim) { genStatusFill._rsAnim.cancel(); genStatusFill._rsAnim = null; }
+            genStatusEl.innerHTML = "";
+            genStatusText = genStatusBar = genStatusFill = genStatusLabel = genStatusCancel = null;
+            return;
+        }
+        const sameRow = genStatusPhase === genState.phase && genStatusBar;
+        if (!sameRow) {
+            if (genStatusFill?._rsAnim) { genStatusFill._rsAnim.cancel(); genStatusFill._rsAnim = null; }
+            genStatusPhase = genState.phase;
+            genStatusEl.style.display = "flex";
+            genStatusEl.innerHTML = "";
+            genStatusText = mkEl("span", "rs-gen-status-text");
+            genStatusEl.appendChild(genStatusText);
+            // 内联样式自包含进度条（同原约定）：track/fill 是空 div，外部 CSS 缺失时高度塌缩不可见
+            genStatusBar = mkEl("div", "rs-gen-progress");
+            const track = mkEl("div", "rs-gen-progress-track",
+                "height:8px;border-radius:4px;background:#333;overflow:hidden");
+            genStatusFill = mkEl("div", "rs-gen-progress-fill",
+                "height:100%;border-radius:4px;background:linear-gradient(90deg,#456ba8,#6b9bd8)");
+            track.appendChild(genStatusFill);
+            genStatusBar.appendChild(track);
+            genStatusEl.appendChild(genStatusBar);
+            genStatusLabel = mkEl("span", "rs-gen-progress-label");
+            genStatusLabel.style.display = "none";
+            genStatusEl.appendChild(genStatusLabel);
+            genStatusCancel = null;
+        }
+        genStatusText.textContent = `🖼️ 生图 · ${genState.statusText}`;
+        paintGenFill();
+        paintGenLabel();
+        // 取消按钮：cancelId 在提交任务后出现（phase 未变时增量补挂），点击后禁用防重复
+        if (genState.cancelId && !genStatusCancel) {
+            genStatusCancel = mkEl("button", "rs-gen-cancel");
+            genStatusCancel.type = "button";
+            genStatusCancel.textContent = "取消";
+            genStatusCancel.addEventListener("click", () => {
+                genStatusCancel.disabled = true;
+                cancelTask(genState.cancelId);
+            });
+            genStatusEl.appendChild(genStatusCancel);
+        } else if (!genState.cancelId && genStatusCancel) {
+            genStatusCancel.remove();
+            genStatusCancel = null;
+        }
     }
     function paintGenBlock() {
         const block = mkEl("div", "rs-gen-block");
-        const head = mkEl("div", "rs-gen-head");
-        head.textContent = `🖼️ 出图 · ${genState.statusText}`;
-        if (genState.running && genState.cancelId) {
-            const cancelBtn = mkEl("button", "rs-gen-cancel");
-            cancelBtn.type = "button";
-            cancelBtn.textContent = "取消";
-            cancelBtn.addEventListener("click", () => {
-                cancelBtn.disabled = true;
-                cancelTask(genState.cancelId);
-            });
-            head.appendChild(cancelBtn);
-        }
-        block.appendChild(head);
-        if (genState.running) {
-            block.appendChild(paintProgressBar());
+        // 状态/进度已移到节点底部 .rs-gen-status 一行（运行中显示、结束即隐藏），不再吸顶；
+        // 生图块只承载结果内容（增强提示 / 警告 / 错误 / 图片），无结果时不渲染空边框
+        let hasContent = false;
+        // 增强提示词（流式输出中或完成后均显示）
+        if (genState.enhancedPrompt) {
+            hasContent = true;
+            const promptEl = mkEl("div", "rs-gen-enhanced-prompt");
+            promptEl.style.cssText = "margin:6px 0;padding:8px 10px;border-radius:6px;background:rgba(128,128,255,0.08);font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#ccc";
+            promptEl.textContent = genState.enhancedPrompt;
+            block.appendChild(promptEl);
         }
         for (const warn of genState.warnings || []) {
+            hasContent = true;
             const warnEl = mkEl("div", "rs-gen-warn");
             warnEl.textContent = `⚠ ${warn}`;
             block.appendChild(warnEl);
         }
         if (genState.error) {
+            hasContent = true;
             const errEl = mkEl("div", "rs-gen-error");
             errEl.textContent = `✕ ${genState.error}`;
             block.appendChild(errEl);
         }
         if (genState.images?.length) {
+            hasContent = true;
             const grid = mkEl("div", "rs-gen-thumbs");
             genState.images.forEach((image, i) => {
                 // 自包含组件：内联样式锁定「图在上、按钮正下方」的纵向结构，不依赖外部 CSS 生效
@@ -1186,6 +1319,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
                 block.appendChild(assembleBtn);
             }
         }
+        if (!hasContent) return;
         mdPreview.appendChild(block);
     }
     const genResultsController = {
@@ -1193,10 +1327,12 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
             // 代际校验：clear() 之后运行中任务的后续 set（含轮询 tick / finally）不再回写 UI
             if (genSeq !== genToken) return;
             genState = state;
+            paintGenStatus();
             if (mdPreviewOn) paintMdPreview();
         },
         open() {
             genToken = genSeq;
+            paintGenStatus();
             if (!mdPreviewOn) setMdPreview(true);
             return genToken;
         },
@@ -1205,9 +1341,10 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
             return genSeq !== token;
         },
         clear() {
-            // 清空出图结果块：递增代际使运行中任务的后续 set 失效（服务端任务继续跑，仅 UI 不再回写）
+            // 清空生图结果块：递增代际使运行中任务的后续 set 失效（服务端任务继续跑，仅 UI 不再回写）
             genSeq++;
             genState = null;
+            paintGenStatus();
             if (mdPreviewOn) paintMdPreview();
         },
     };
@@ -1238,6 +1375,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
         el: customTextareaWrapper,
         actionGroupEl: buttonGroup,
         skillHintEl: skillHint,
+        genStatusEl,
         refreshMarkdownPreviewAuto,
         genResultsController
     };

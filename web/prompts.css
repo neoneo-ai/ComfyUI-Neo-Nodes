@@ -2404,22 +2404,51 @@
 }
 
 /* ==========================================
-   Krea2 出图（聊天窗口 skill）：结果块 / 缩略图 / 发送菜单 / 设置表单
+   Krea2 出图（聊天窗口 skill）：底部状态行 / 结果块 / 缩略图 / 发送菜单 / 设置表单
    ========================================== */
+/* 出图状态行：固定挂在节点最底部（rs-root 底），不随预览滚动，无需吸顶。
+   运行中一行显示 状态文本 + 进度条 + 步数 + 取消；结束（完成/取消/失败/清空）即隐藏。 */
+.rs-gen-status {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: #ccc;
+    background: #232323;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+}
+.rs-gen-status-text {
+    flex: 0 1 auto;
+    max-width: 55%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rs-gen-status > .rs-gen-progress {
+    flex: 1;
+    min-width: 90px;
+    width: auto;
+}
+.rs-gen-status > .rs-gen-progress-label {
+    flex: none;
+    /* 固定占位宽度：数字位数变化时不挤压 flex:1 的进度条，避免轨道总长忽长忽短 */
+    width: 8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 10px;
+    color: #9a9a9a;
+    white-space: nowrap;
+}
 .rs-gen-block {
     margin-top: 12px;
     padding: 10px;
     border: 1px solid #3a3a3a;
     border-radius: 8px;
     background: #232323;
-}
-.rs-gen-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    font-size: 12px;
-    color: #ccc;
 }
 .rs-gen-cancel {
     flex: none;
@@ -2453,7 +2482,9 @@
     margin-top: 8px;
 }
 .rs-gen-thumb {
-    width: 300px;
+    flex: 1 1 240px; /* 单图撑满整行（填满输出区空白），多图按行均分 */
+    min-width: 200px;
+    max-width: 100%;
     display: flex;
     flex-direction: column; /* 「发送到节点」按钮恒定在缩略图正下方，不随格子宽度换行到右侧 */
 }

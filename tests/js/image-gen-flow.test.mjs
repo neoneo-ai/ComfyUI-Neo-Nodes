@@ -46,6 +46,7 @@ function parts(node) {
         generateBtn: root.querySelector(".rs-generate-btn"),
         selector: root.querySelector("select.rs-tpl-selector"),
         preview: root.querySelector(".rs-md-preview"),
+        status: root.querySelector(".rs-gen-status"),
     };
 }
 
@@ -123,6 +124,9 @@ test("纯文生图 skill：无参考图，请求不携带参考图，比例由�
     assert.ok(body, "应发出 /neo_image_gen/generate 请求");
     assert.equal(body.references.length, 0);
     assert.equal(body.skill_ratio, undefined, "文生图比例由出图设置决定，不随 skill 声明");
+    assert.equal(fetchLog.filter((c) => c.path === "/neo_image_gen/enhance").length, 0,
+        "未启用 enhance_prompt 时不应调用 LLM 增强接口");
+    assert.equal(body.prompt, "一只猫", "跳过增强时应直接提交原文");
 });
 
 test("四视图 skill 缺参考图：预览区底部报错，不发 /neo_image_gen/generate", async () => {
@@ -141,7 +145,8 @@ test("四视图 skill 缺参考图：预览区底部报错，不发 /neo_image_g
     await sleep(300);
 
     assert.equal(genCalls().length, 0, "缺参考图时不应发出出图请求");
-    assert.ok(el.preview.textContent.includes("缺少参考图"), "结果块应显示缺少参考图提示");
+    assert.ok(el.preview.querySelector(".rs-gen-error"), "预览区应显示错误提示块");
+    assert.ok(el.preview.textContent.includes("需要参考图"), "结果块应显示缺少参考图提示");
 });
 
 test("image 已连接但上游无文件名：出图明确报错，不发 /neo_image_gen/generate", async () => {
@@ -168,7 +173,8 @@ test("image 已连接但上游无文件名：出图明确报错，不发 /neo_im
     await sleep(300);
 
     assert.equal(genCalls().length, 0, "上游无文件名时不应发出出图请求");
-    assert.ok(el.preview.textContent.includes("参考图读取失败"), "结果块应显示参考图读取失败");
+    assert.ok(el.preview.querySelector(".rs-gen-error"), "预览区应显示错误提示块");
+    assert.ok(el.preview.textContent.includes("无法从上游节点解析"), "结果块应显示参考图读取失败");
 });
 
 test("出图成功：预览区渲染缩略图，点击用灯箱打开原图", async () => {
@@ -353,8 +359,9 @@ test("出图运行中：进度条按采样步数推进", async () => {
     el.generateBtn.click();
     await sleep(100); // 等兜底首拉建立 running 基线
 
-    // 无步数 → 不定动画占位（自包含内联样式：轨道 8px 高、填充宽 40%）
-    const idleBar = el.preview.querySelector(".rs-gen-progress");
+    // 状态/进度/取消一行固定在节点底部（不吸顶）：display:flex 内联覆盖 .rs-gen-status 的 display:none 基类
+    assert.equal(el.status.style.display, "flex", "运行中底部状态行应显示");
+    const idleBar = el.status.querySelector(".rs-gen-progress");
     assert.ok(idleBar, "运行中应显示进度条");
     assert.ok(idleBar.classList.contains("rs-gen-progress--indeterminate"), "无步数时用不定动画占位");
     assert.equal(idleBar.querySelector(".rs-gen-progress-track")?.style.height, "8px", "轨道高度应为内联样式");
@@ -363,9 +370,9 @@ test("出图运行中：进度条按采样步数推进", async () => {
     dispatchApiEvent("rs.image_gen.status", { task_id: "t7", status: "running", progress: { value: 3, max: 8 } });
     await sleep(50);
 
-    const bar = el.preview.querySelector(".rs-gen-progress");
+    const bar = el.status.querySelector(".rs-gen-progress");
     assert.ok(bar, "运行中应显示进度条");
-    assert.equal(el.preview.querySelector(".rs-gen-progress-label")?.textContent, "第 3 / 8 步");
+    assert.equal(el.status.querySelector(".rs-gen-progress-label")?.textContent, "第 3 / 8 步");
     assert.equal(bar.querySelector(".rs-gen-progress-fill").style.width, "37.5%");
 
     // 终态推送让 watchTask 收尾，清理监听与定时器
@@ -375,6 +382,41 @@ test("出图运行中：进度条按采样步数推进", async () => {
         width: 1280, height: 720,
     });
     await sleep(50);
+    assert.equal(el.status.style.display, "none", "结束后状态行隐藏（生成完成自动取消底部显示）");
+});
+
+test("出图增强提示词阶段：底部状态行显示已生成字数进度", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 23, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(400);
+    setSkill(el.selector, "image_gen_text");
+
+    // 开启该 skill 的 LLM 增强（全局出图设置 enhance_prompt=true），进入增强阶段
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({
+        model: "", loras: [], count: 1, base_resolution: 1280, default_ratio: "1:1", enhance_prompt: true,
+    }));
+    // 增强流 mock 永不返回：让流程稳定停留在 LLM 流式增强阶段，便于断言增强进度 UI
+    mockRoute("/neo_image_gen/enhance", () => new Promise(() => {}));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t9", status: "queued", images: [], width: 0, height: 0 }));
+
+    el.root.querySelector(".rs-quick-input").value = "一只猫";
+    el.generateBtn.click();
+    await sleep(150);
+
+    assert.equal(el.status.style.display, "flex", "增强阶段底部状态行显示");
+    assert.ok(el.status.textContent.includes("增强提示词中"), "状态行显示增强阶段状态文本");
+    const label = el.status.querySelector(".rs-gen-progress-label");
+    assert.ok(label, "增强阶段显示已生成字数标签");
+    assert.match(label.textContent, /^已生成 \d+ 字$/);
+    const bar = el.status.querySelector(".rs-gen-progress");
+    assert.ok(bar, "增强阶段显示进度条");
+    assert.ok(!bar.classList.contains("rs-gen-progress--indeterminate"), "文本流式阶段用确定宽度而非不定动画");
+    assert.ok(el.status.querySelector(".rs-gen-progress-fill"), "进度条填充随已生成字符推进");
 });
 
 test("清空输出：运行中的出图块被清除，后续推送不再回写", async () => {
@@ -394,20 +436,25 @@ test("清空输出：运行中的出图块被清除，后续推送不再回写",
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(100); // 兜底首拉后处于 running，出图块应可见
-    assert.ok(el.preview.querySelector(".rs-gen-block"), "运行中应显示出图块");
+    await sleep(100); // 兜底首拉后处于 running：进度在底部状态行，出图块只承载结果内容
+    assert.equal(el.status.style.display, "flex", "运行中底部状态行显示");
+    assert.ok(el.status.querySelector(".rs-gen-progress"), "状态行内显示进度条");
+    assert.equal(el.preview.querySelector(".rs-gen-block"), null, "仅运行中（无结果内容）不渲染出图块");
 
     el.root.querySelector(".rs-clear-btn").click();
+    assert.equal(el.status.style.display, "none", "清空后状态行立即隐藏");
     assert.equal(el.preview.querySelector(".rs-gen-block"), null, "清空后出图块应立即消失");
 
     // 旧任务的事件推送：set 应被代际校验拦截
     dispatchApiEvent("rs.image_gen.status", { task_id: "t8", status: "running", progress: { value: 2, max: 10 } });
     await sleep(50);
+    assert.equal(el.status.style.display, "none", "后续推送不应把状态行刷回来");
     assert.equal(el.preview.querySelector(".rs-gen-block"), null, "后续推送不应把出图块刷回来");
 
     // 终态推送让旧 watchTask 收尾，也不再刷回出图块
     dispatchApiEvent("rs.image_gen.status", { task_id: "t8", status: "cancelled" });
     await sleep(50);
+    assert.equal(el.status.style.display, "none", "终态推送不应把状态行刷回来");
     assert.equal(el.preview.querySelector(".rs-gen-block"), null, "终态推送不应把出图块刷回来");
 });
 

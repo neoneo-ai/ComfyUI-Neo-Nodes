@@ -214,7 +214,7 @@ class ResolveTests(unittest.TestCase):
         settings["default_ratio"] = "16:9"
         params = image_gen.resolve_request({"prompt": "a cat"}, settings)
         self.assertEqual((params["width"], params["height"]), (1280, 720))
-        # skill 声明比例已废弃：请求里带上也不生效，比例只看出图设置
+        # skill 声明比例已废弃：请求里带上也不生效，比例只看生图设置
         # （四视图由后端固定 16:9，与该分支无关）
         params = image_gen.resolve_request(
             {"prompt": "a cat", "skill_ratio": "9:16"}, settings)
@@ -490,7 +490,7 @@ class SidecarTests(unittest.TestCase):
 
 
 class SkillWorkflowRouteTests(unittest.TestCase):
-    """画布导出 / 技能出图设置 / 文件复制路由（假 request + 真实 skill 模块）。"""
+    """画布导出 / 技能生图设置 / 文件复制路由（假 request + 真实 skill 模块）。"""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

@@ -348,6 +348,8 @@ function createPromptManagerUI() {
     root.appendChild(quickInputWrapper);
     // 多轮提示贴节点最底部（跟在快捷输入栏下），避免落在文本区下方的空白中段
     root.appendChild(promptOutput.skillHintEl);
+    // 生图状态行：节点最底部一行固定显示生成状态/进度/取消（运行中出现、结束即隐藏，不随预览滚动）
+    root.appendChild(promptOutput.genStatusEl);
 
     // 挂 body 防节点边界裁剪（fixed 定位居中于视口）
     document.body.appendChild(presetNameInput);

@@ -183,7 +183,7 @@ class TestSaveSkillMultiTurn(unittest.TestCase):
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestSaveSkillGenFields(unittest.TestCase):
-    """save_skill_main 出图字段（复制为自定义场景）：显式写入 / 缺省沿用 / 假值移除"""
+    """save_skill_main 生图字段（复制为自定义场景）：显式写入 / 缺省沿用 / 假值移除"""
 
     def setUp(self):
         self.skill_mod = getattr(prompts_mod, "skill", None)
@@ -204,7 +204,7 @@ class TestSaveSkillGenFields(unittest.TestCase):
         return meta, body
 
     def test_copy_like_save_writes_gen_fields(self):
-        # 前端复制预设出图技能时发送的字段：category/gen_image 写入，requires_ref 假值移除
+        # 前端复制预设生图技能时发送的字段：category/gen_image 写入，requires_ref 假值移除
         self.assertTrue(self.skill_mod.save_skill_main(
             "gen-copy", "Gen (Copy)", "body", None, "custom", False,
             category="image_gen", gen_image=True, requires_ref=False))
@@ -214,7 +214,7 @@ class TestSaveSkillGenFields(unittest.TestCase):
         self.assertNotIn("requires_ref", meta)
 
     def test_omitted_preserves_existing(self):
-        # 普通保存（handleSave 不传这三个字段）不得清掉既有出图标记
+        # 普通保存（handleSave 不传这三个字段）不得清掉既写生图标记
         self.skill_mod.save_skill_main("gen-keep", "GK", "body", None, "custom", False,
                                        category="image_gen", gen_image=True)
         self.assertTrue(self.skill_mod.save_skill_main("gen-keep", "GK2", "body2", None, "custom"))
@@ -942,7 +942,7 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertEqual(body, "body")
 
     def test_load_skill_route_returns_gen_image(self):
-        # 详情弹窗靠 load_skill 响应的 gen_image 决定是否显示出图设置区
+        # 详情弹窗靠 load_skill 响应的 gen_image 决定是否显示生图设置区
         self._write_skill("gen-d", ["name: Gen D", "category: image_gen", "gen_image: true"])
         async def _json():
             return {"id": "gen-d"}

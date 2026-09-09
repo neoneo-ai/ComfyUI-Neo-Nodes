@@ -1,7 +1,7 @@
 /**
  * image-gen.js
- * 出图（Krea2）客户端：/neo_image_gen/* API 包装、任务事件等待、四视图模板拼装、
- * 结果发送到 LoadImage 节点（复用 /neo_gallery/copy_to_input）与出图设置表单。
+ * 生图（Krea2）客户端：/neo_image_gen/* API 包装、任务事件等待、四视图模板拼装、
+ * 结果发送到 LoadImage 节点（复用 /neo_gallery/copy_to_input）与生图设置表单。
  * 设置表单挂在「自动增强」菜单内，接口形态与 llm-setting.js 一致：{ el, load, save }。
  */
 
@@ -11,6 +11,7 @@ import { loadSkill } from "./skill.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
 import { showToast } from "./gallery-utils.js";
+import { sseStream } from "./prompt-service.js";
 
 const GEN_API = "/neo_image_gen";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -48,7 +49,7 @@ export async function listGenModels() {
     return getJson(`${GEN_API}/models`);
 }
 
-/** 提交出图任务，返回任务快照（含 task_id / warnings）；失败抛 Error(后端消息) */
+/** 提交生图任务，返回任务快照（含 task_id / warnings）；失败抛 Error(后端消息) */
 export async function requestGeneration(payload) {
     const resp = await fetch(`${GEN_API}/generate`, {
         method: "POST",
@@ -60,6 +61,25 @@ export async function requestGeneration(payload) {
     return data;
 }
 
+/**
+ * SSE 流式增强提示词。
+ * @param {object} payload - { skill_id, prompt }
+ * @param {object} handlers - { onChunk(text), onDone(fullText), onError(msg) }
+ */
+export function enhancePromptStream(payload, handlers) {
+    const { onChunk, onDone, onError } = handlers;
+    let accumulated = "";
+    return sseStream(`${GEN_API}/enhance`, {
+        onChunk: (chunk) => {
+            if (!chunk.text) return;
+            accumulated += chunk.text;
+            onChunk?.(chunk.text);
+        },
+        onDone: () => onDone?.(accumulated),
+        onError: (err) => onError?.(err),
+    }, payload);
+}
+
 export async function cancelTask(taskId) {
     try {
         await fetch(`${GEN_API}/cancel/${encodeURIComponent(taskId)}`, { method: "POST" });
@@ -68,7 +88,7 @@ export async function cancelTask(taskId) {
     }
 }
 
-/** 把当前画布工作流（API prompt）保存为出图技能；返回 { id, warnings } */
+/** 把当前画布工作流（API prompt）保存为生图技能；返回 { id, warnings } */
 export async function saveWorkflowSkill({ name, description, tags, workflow }) {
     const resp = await fetch(`${GEN_API}/save_workflow_skill`, {
         method: "POST",
@@ -80,7 +100,7 @@ export async function saveWorkflowSkill({ name, description, tags, workflow }) {
     return data;
 }
 
-/** 读技能的出图设置覆盖（config.json；缺失返回 {}） */
+/** 读技能的生图设置覆盖（config.json；缺失返回 {}） */
 export async function getSkillGenConfig(skillId) {
     try {
         return await getJson(`${GEN_API}/skill_config?skill_id=${encodeURIComponent(skillId)}`);
@@ -89,7 +109,7 @@ export async function getSkillGenConfig(skillId) {
     }
 }
 
-/** 写技能的出图设置覆盖（预设只读，失败抛 Error(后端消息)） */
+/** 写技能的生图设置覆盖（预设只读，失败抛 Error(后端消息)） */
 export async function saveSkillGenConfig(skillId, config) {
     const resp = await fetch(`${GEN_API}/skill_config`, {
         method: "POST",
@@ -148,7 +168,7 @@ export function watchTask(taskId, onSnapshot, isCancelled) {
             resync();
         }
         timeout = setTimeout(
-            () => finish({ status: "failed", error: "等待出图超时，请稍后在 Gallery 查看" }),
+            () => finish({ status: "failed", error: "等待生图超时，请稍后在 Gallery 查看" }),
             40 * 60 * 1000
         );
         api.addEventListener(STATUS_EVENT, onStatus);
@@ -176,7 +196,7 @@ async function loadGenTemplate(skillId) {
 }
 
 /**
- * 拼装出图提示词：无参考图直接用用户文本；有参考图套 skill 正文模板。
+ * 拼装生图提示词：无参考图直接用用户文本；有参考图套 skill 正文模板。
  * 模板含占位符则全部替换为用户文本，否则把文本附在模板前。
  */
 export async function buildGenPrompt(skillId, text, hasRefs) {
@@ -354,7 +374,7 @@ export async function assembleAllGenerated(images) {
 }
 
 // ==========================================
-// 出图设置表单（挂「自动增强」菜单内）
+// 生图设置表单（挂「自动增强」菜单内）
 // ==========================================
 
 function shortModelName(name) {
@@ -393,7 +413,7 @@ function numberRow(labelText, attrs) {
     return { row, input };
 }
 
-/** 出图模型 / Text Encoder / VAE + LoRA 列表控件区（全局出图设置与每技能设置共用）。 */
+/** 生图模型 / Text Encoder / VAE + LoRA 列表控件区（全局生图设置与每技能设置共用）。 */
 export function createModelConfigSection() {
     const section = mkEl("div", "rs-gen-model-section");
 
@@ -407,7 +427,7 @@ export function createModelConfigSection() {
         row.append(label, combo);
         return { row, select };
     };
-    const modelCtl = makeComboRow("出图模型");
+    const modelCtl = makeComboRow("生图模型");
     // Text Encoder / VAE 很少改动：打 rs-gen-adv-row 标记，供技能弹窗收进折叠区（全局菜单不折叠）
     const encoderCtl = makeComboRow("Text Encoder", undefined, "rs-gen-adv-row");
     const vaeCtl = makeComboRow("VAE", undefined, "rs-gen-adv-row");
@@ -500,11 +520,11 @@ export function createModelConfigSection() {
     return { el: section, load, collect };
 }
 
-/** 出图张数 / 长边尺寸 / 默认比例 / 输出前缀控件区（全局出图设置与每技能设置共用）。 */
+/** 生图张数 / 长边尺寸 / 默认比例 / 输出前缀控件区（全局生图设置与每技能设置共用）。 */
 export function createGenSizeRows() {
     const section = mkEl("div", "rs-gen-size-section");
-    const countCtl = numberRow("出图张数", { min: 1, max: 8, step: 1, value: 1 });
-    // 出图张数默认隐藏 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
+    const countCtl = numberRow("生图张数", { min: 1, max: 8, step: 1, value: 1 });
+    // 生图张数默认隐藏 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
     countCtl.row.classList.add("rs-gen-adv-row");
 
     // 下拉行（长边尺寸 / 默认比例）：结构同模型选择行
@@ -563,7 +583,7 @@ export function createGenSizeRows() {
     const enhanceRow = mkEl("div", "rs-config-row");
     const enhanceLabel = mkEl("label", "rs-form-label");
     enhanceLabel.textContent = "Enhance Prompt";
-    enhanceLabel.title = "使用 LLM 自动扩写出图提示词（需已配置 LLM）";
+    enhanceLabel.title = "使用 LLM 自动扩写生图提示词（需已配置 LLM）";
     const enhanceChk = document.createElement("input");
     enhanceChk.type = "checkbox";
     enhanceChk.className = "rs-gen-enhance-chk";
@@ -604,7 +624,7 @@ export function createGenSizeRows() {
     return { el: section, load, collect };
 }
 
-/** 全局出图设置表单（「自动增强」菜单内）：模型/LoRA 区 + 尺寸/前缀区 + 保存按钮。 */
+/** 全局生图设置表单（「自动增强」菜单内）：模型/LoRA 区 + 尺寸/前缀区 + 保存按钮。 */
 export function createImageGenSettingsForm() {
     const form = mkEl("div", "rs-gen-settings");
     const modelSection = createModelConfigSection();

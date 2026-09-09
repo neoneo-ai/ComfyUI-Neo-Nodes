@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Krea2 以图生图（in-context edit）核心节点。
 #
-# vendor 自 comfyui-krea2edit（单文件插件），使 Neo-Nodes 出图 skill 的参考图模式
+# vendor 自 comfyui-krea2edit（单文件插件），使 Neo-Nodes 生图 skill 的参考图模式
 # 零外部插件依赖。上游活跃开发，修复需整文件同步：对比 custom_nodes/comfyui-krea2edit/
 # __init__.py 与本文件的同名函数/类即可定位差异。
 #

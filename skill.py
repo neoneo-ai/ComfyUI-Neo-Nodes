@@ -898,7 +898,7 @@ def delete_skill(skill_id: str) -> tuple[bool, str]:
 
 
 # ==========================================
-# 出图技能：工作流模板导出 / 每技能 config.json
+# 生图技能：工作流模板导出 / 每技能 config.json
 # ==========================================
 
 def load_skill_workflow(skill_id: str):
@@ -915,7 +915,7 @@ def load_skill_workflow(skill_id: str):
 
 
 def get_skill_gen_config(skill_id: str) -> dict:
-    """读 skill 的 config.json（出图设置覆盖）；缺失或损坏返回 {}。"""
+    """读 skill 的 config.json（生图设置覆盖）；缺失或损坏返回 {}。"""
     d = _skill_dir(str(skill_id or ""))
     if not d:
         return {}
@@ -1106,7 +1106,7 @@ def _template_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
 
 
 def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> dict:
-    """把当前画布工作流（API prompt）导出为出图技能：skill.md + workflow.json + config.json。"""
+    """把当前画布工作流（API prompt）导出为生图技能：skill.md + workflow.json + config.json。"""
     if not isinstance(workflow, dict) or not workflow:
         return {"success": False, "message": "workflow 不是合法的 API prompt"}
     for nid, node in workflow.items():
@@ -1152,7 +1152,7 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
 
 
 def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:
-    """把 from 技能的 workflow.json / config.json 复制到 to（供「复制为自定义」补全出图模板）。"""
+    """把 from 技能的 workflow.json / config.json 复制到 to（供「复制为自定义」补全生图模板）。"""
     src = _skill_dir(str(from_id or ""))
     dst = _skill_dir(str(to_id or ""))
     if not src or not dst:

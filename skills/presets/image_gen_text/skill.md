@@ -1,7 +1,7 @@
 ---
-name: 出图 Krea2 文生图
+name: 生图 Krea2 文生图
 tags:
-- 出图
+- 生图
 - Krea2
 - 文生图
 inputs:

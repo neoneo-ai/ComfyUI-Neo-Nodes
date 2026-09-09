@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 内置出图（技能工作流模板渲染）
-# 出图完全由所选技能的 workflow.json 模板驱动：占位符替换 + LoRA 槽位填充/动态注入，
+# ComfyUI-Neo-Nodes — 内置生图（技能工作流模板渲染）
+# 生图完全由所选技能的 workflow.json 模板驱动：占位符替换 + LoRA 槽位填充/动态注入，
 # 渲染后的 API prompt 通过内部 HTTP API 压进执行队列，复用 ComfyUI 的排队、显存生命周期与
 # 取消行为；任务状态由 _watch 协程按变化经 rs.image_gen.status 事件推给前端。
 # 输出落在 output 目录的 <前缀>/<日期>/<slug> 下并写同名 .txt（提示词），
@@ -21,6 +21,7 @@ import re
 import shutil
 import time
 import uuid
+from typing import Generator
 from urllib.parse import quote, unquote
 
 import aiohttp
@@ -40,7 +41,7 @@ MAX_IMAGES = 8        # 单次请求最多张数（批量共用一个 base seed�
 TASK_TTL = 3600       # 任务记录保留时长（秒）
 MAX_TASKS = 32        # 任务记录上限
 
-# 独立 client_id：出图任务的进度事件不混进前端 UI 的节点高亮
+# 独立 client_id：生图任务的进度事件不混进前端 UI 的节点高亮
 CLIENT_ID = str(uuid.uuid4())
 # 任务快照推送事件：_watch 按变化 send_sync 给所有客户端，前端 watchTask 按 task_id 过滤
 STATUS_EVENT = "rs.image_gen.status"
@@ -52,7 +53,7 @@ DEFAULT_SETTINGS = {
     "loras": [],              # [{name, strength, ref_only}]，LoraLoaderModelOnly；ref_only=true 仅参考图模式加载（四视图 LoRA 即勾此项者）
     "base_resolution": 1280,  # 按比例算尺寸时的长边
     "default_ratio": "1:1",
-    "count": 1,               # 单次出图张数（1-8，写入模板 {{COUNT}}）
+    "count": 1,               # 单次生图张数（1-8，写入模板 {{COUNT}}）
     "output_prefix": "NeoAgent",
     "enhance_prompt": False,           # 是否启用 LLM 提示词增强
     "enhance_system_prompt": "",       # 自定义增强系统提示词；空 = 使用内置默认
@@ -401,12 +402,12 @@ def _quadview_lora(user_loras: list) -> tuple:
     if name:
         return {"name": name, "strength": 1.0}, False
     raise ValueError(
-        "缺少 Krea2 四视图 LoRA：请在出图设置的 LoRA 列表里添加它并勾选「依赖参考图」，"
+        "缺少 Krea2 四视图 LoRA：请在生图设置的 LoRA 列表里添加它并勾选「依赖参考图」，"
         "或在 models/loras 放一个文件名含 quadview / 四视图 的 LoRA（如 Krea2-QuadView_*.safetensors）后重试")
 
 
 def resolve_request(body: dict, settings: dict | None = None) -> dict:
-    """把一次出图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。"""
+    """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。"""
     body = body if isinstance(body, dict) else {}
     settings = settings or get_settings()
     merged = dict(settings)
@@ -700,7 +701,7 @@ async def submit_graph(graph: dict) -> str:
                 if resp.status == 200:
                     return payload["prompt_id"]
     except (aiohttp.ClientError, KeyError, json.JSONDecodeError) as e:
-        raise ValueError(f"出图队列不可用: {e}") from e
+        raise ValueError(f"生图队列不可用: {e}") from e
     error = payload.get("error") or {}
     if isinstance(error, dict):
         message = " ".join(str(x) for x in (error.get("message"), error.get("details")) if x)
@@ -894,7 +895,7 @@ async def _watch(task_id: str) -> None:
             if changed:
                 _notify(task)
         elif time.monotonic() > deadline:
-            _finish(task, "failed", [], "等待出图超时，任务已不在队列中")
+            _finish(task, "failed", [], "等待生图超时，任务已不在队列中")
             return
 
 
@@ -908,7 +909,7 @@ _ENHANCE_DEFAULT_SYSTEM_PROMPT = (
 
 
 async def _enhance_prompt(prompt_text: str, width: int, height: int, system_prompt: str, skill_id: str = "") -> str:
-    """调用 LLM 增强出图提示词；优先使用自定义系统提示词，其次加载技能 skill.md 正文；失败时返回原文。"""
+    """调用 LLM 增强生图提示词；优先使用自定义系统提示词，其次加载技能 skill.md 正文；失败时返回原文。"""
     from . import llm as _llm
 
     sys_prompt = (system_prompt or "").strip()
@@ -939,13 +940,52 @@ async def _enhance_prompt(prompt_text: str, width: int, height: int, system_prom
         return prompt_text
 
 
+def _enhance_prompt_stream(prompt_text: str, width: int, height: int, system_prompt: str, skill_id: str = "") -> Generator[str, None, None]:
+    """流式增强生图提示词，逐 chunk yield 文本；失败时 yield '[ERROR] ...'。"""
+    from . import llm as _llm
+
+    sys_prompt = (system_prompt or "").strip()
+    if not sys_prompt and skill_id:
+        from . import skill as _skill
+        try:
+            language = _skill._resolve_skill_language(prompt_text)
+            sys_prompt = (_skill.load_skill_content(skill_id, language=language) or "").strip()
+        except Exception:
+            pass
+    if not sys_prompt:
+        sys_prompt = _ENHANCE_DEFAULT_SYSTEM_PROMPT
+
+    user_msg = f"Target resolution: {width}x{height}\nUser prompt: {prompt_text}"
+    try:
+        result = _llm._run_llm_inference(
+            sys_prompt, user_msg, 1024,
+            use_remote=(_llm.get_current_mode() == _llm.LLM_MODE_REMOTE), stream=True)
+        if hasattr(result, '__iter__') and not isinstance(result, str):
+            for chunk in result:
+                if isinstance(chunk, dict):
+                    choices = chunk.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                elif isinstance(chunk, str) and chunk:
+                    yield chunk
+        else:
+            # 本地路径未返回生成器（不支持流式）：回退为整段输出
+            yield result or prompt_text
+    except Exception as e:
+        logger.warning(f"[NeoNodes] prompt enhancement stream failed: {e}")
+        yield f"[ERROR] {str(e)}"
+
+
 async def start_generation(body: dict) -> dict:
-    """按所选技能的 workflow.json 模板渲染并提交出图任务。"""
+    """按所选技能的 workflow.json 模板渲染并提交生图任务。"""
     from . import skill as _skill
 
     skill_id = str((body or {}).get("skill_id") or "").strip()
     if not skill_id:
-        raise ValueError("请先在技能下拉里选择一个出图技能（带工作流模板）")
+        raise ValueError("请先在技能下拉里选择一个生图技能（带工作流模板）")
     template = _skill.load_skill_workflow(skill_id)
     if template is None:
         raise ValueError(f"技能 {skill_id} 没有工作流模板（workflow.json），"
@@ -958,7 +998,7 @@ async def start_generation(body: dict) -> dict:
             settings[key] = value
 
     params = resolve_request(body or {}, settings)
-    if settings.get("enhance_prompt"):
+    if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance"):
         params["prompt"] = await _enhance_prompt(
             params["prompt"], params["width"], params["height"],
             settings.get("enhance_system_prompt", ""), skill_id)
@@ -1027,6 +1067,61 @@ async def generate_route(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+@routes.post("/neo_image_gen/enhance")
+async def enhance_route(request):
+    """SSE 流式增强提示词：前端先调此端点拿到增强后的 prompt，再提交 generate。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.Response(text="data: [ERROR] bad json\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+
+    skill_id = str((body or {}).get("skill_id") or "").strip()
+    prompt_text = str((body or {}).get("prompt") or "").strip()
+    if not prompt_text:
+        return web.Response(text="data: [DONE]\n\n", content_type="text/event-stream")
+
+    settings = get_settings()
+    if skill_id:
+        from . import skill as _skill
+        cfg = _skill.get_skill_gen_config(skill_id)
+        for key, value in cfg.items():
+            if key in DEFAULT_SETTINGS and value not in (None, "", []):
+                settings[key] = value
+
+    # 用 resolve_request 拿到 width/height（与 generate 路径一致）
+    try:
+        params = resolve_request(body or {}, settings)
+        width, height = params["width"], params["height"]
+    except Exception:
+        width = int(settings.get("image_width", 1024))
+        height = int(settings.get("image_height", 1024))
+
+    sys_prompt = settings.get("enhance_system_prompt", "")
+
+    async def event_stream():
+        loop = asyncio.get_running_loop()
+        gen = _enhance_prompt_stream(prompt_text, width, height, sys_prompt, skill_id)
+
+        def next_chunk():
+            try:
+                return next(gen)
+            except StopIteration:
+                return None
+
+        while True:
+            chunk = await loop.run_in_executor(None, next_chunk)
+            if chunk is None:
+                break
+            yield ("data: " + json.dumps({"text": chunk}) + "\n\n").encode()
+        yield b"data: [DONE]\n\n"
+
+    return web.Response(
+        body=event_stream(),
+        content_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
 @routes.get("/neo_image_gen/status/{task_id}")
 async def status_route(request):
     task = TASKS.get(request.match_info["task_id"])
@@ -1062,7 +1157,7 @@ async def cancel_route(request):
 
 @routes.post("/neo_image_gen/save_workflow_skill")
 async def save_workflow_skill_route(request):
-    """把当前画布工作流（API prompt）导出为出图技能。"""
+    """把当前画布工作流（API prompt）导出为生图技能。"""
     from . import skill as _skill
 
     try:
