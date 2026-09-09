@@ -1291,14 +1291,11 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
             hasContent = true;
             const grid = mkEl("div", "rs-gen-thumbs");
             genState.images.forEach((image, i) => {
-                // 自包含组件：内联样式锁定「图在上、按钮正下方」的纵向结构，不依赖外部 CSS 生效
                 const cell = mkEl("div", "rs-gen-thumb");
-                cell.style.cssText = "display:inline-flex;flex-direction:column;align-items:center;flex:none;min-width:0";
                 const img = mkEl("img");
                 // 缩略图走 gallery 的 thumbnail 缓存接口（640px），点击才用灯箱加载原图
                 img.src = genThumbSrc(image);
                 img.loading = "lazy";
-                img.style.cssText = "display:block;width:auto;height:auto;max-width:320px;max-height:320px";
                 img.addEventListener("click", () => Lightbox.open({
                     items: genState.images.map(im => ({ kind: "image", url: im.url, title: im.filename })),
                     index: i,
@@ -1307,7 +1304,6 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
                 const sendBtn = mkEl("button", "rs-gen-send");
                 sendBtn.type = "button";
                 sendBtn.textContent = "发送到节点";
-                sendBtn.style.cssText = "width:100%;max-width:100%";
                 sendBtn.addEventListener("click", (e) => sendImageToLoadImage(image, e.currentTarget));
                 cell.appendChild(sendBtn);
                 grid.appendChild(cell);

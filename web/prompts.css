@@ -2490,15 +2490,19 @@
     margin-top: 8px;
 }
 .rs-gen-thumb {
-    flex: 1 1 240px; /* 单图撑满整行（填满输出区空白），多图按行均分 */
-    min-width: 200px;
+    flex: none; /* 按图片实际尺寸排布，多图自动换行成网格 */
+    min-width: 0;
     max-width: 100%;
     display: flex;
-    flex-direction: column; /* 「发送到节点」按钮恒定在缩略图正下方，不随格子宽度换行到右侧 */
+    flex-direction: column;
+    align-items: center; /* 「发送到节点」按钮恒定在缩略图正下方居中，不随格子宽度换行到右侧 */
 }
 .rs-gen-thumb img {
     display: block;
-    width: 100%;
+    width: auto;
+    height: auto;
+    max-width: 320px; /* 缩略图最长边 320px，保持宽高比不变形 */
+    max-height: 320px;
     border-radius: 6px;
     border: 1px solid #3a3a3a;
     background: #111;

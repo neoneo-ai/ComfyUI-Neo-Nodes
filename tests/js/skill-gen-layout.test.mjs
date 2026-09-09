@@ -20,7 +20,7 @@ const harnessDom = `
   <div class="rs-skill-modal rs-skill-detail" style="width:640px;">
     <div class="rs-skill-modal-content">
       <div class="rs-gen-settings rs-skill-gen-settings">
-        <div class="rs-config-row rs-gen-settings-header"><label class="rs-form-label">🖼️ 出图设置（本技能覆盖）</label></div>
+        <div class="rs-config-row rs-gen-settings-header"><label class="rs-form-label">🖼️ 出图设置（优先于默认设置）</label></div>
         <div class="rs-gen-model-section">
           <div class="rs-config-row"><label class="rs-form-label">Model</label><select></select></div>
           <div class="rs-config-row"><label class="rs-form-label">LoRA</label><div class="rs-gen-lora-list"></div><button type="button" class="rs-gen-lora-add">+ 添加 LoRA</button></div>
