@@ -32,13 +32,14 @@ div.rs-root.rs-theme-local
           option <value= selected> "默认"
           optgroup <label=⚡ 出图 (Krea2)>
             option <value=image_gen> "出图 Krea2 三视图"
+          optgroup <label=🎨 图像提示词增强>
+            option <value=anime_style> "动漫风格"
+          optgroup <label=🎬 视频提示词增强>
+            option <value=minimax_h3_ref> "📷 全参考"
           optgroup <label=🖼️ 图像 / 反推>
             option <value=reverse_prompt> "📷 反推提示词"
-            option <value=minimax_h3_ref> "📷 全参考"
           optgroup <label=⚙️ 任务>
             option <value=story_expand> "故事扩写"
-          optgroup <label=🎨 风格模板>
-            option <value=anime_style> "动漫风格"
       div.rs-spacer
       div.rs-auto-wrap
         button.rs-generate-btn "✨"

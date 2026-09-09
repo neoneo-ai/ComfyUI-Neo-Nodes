@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 时尚摄影
 tags:
 - 摄影

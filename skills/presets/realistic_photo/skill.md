@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 写实摄影
 tags:
 - 风格

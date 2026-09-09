@@ -1,4 +1,5 @@
 ---
+category: video_enhance
 name: 文生视频
 tags:
 - 文生

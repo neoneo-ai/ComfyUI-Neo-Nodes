@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 中国古风
 tags:
 - 风格

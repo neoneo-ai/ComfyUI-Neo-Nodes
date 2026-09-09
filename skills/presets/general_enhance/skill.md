@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 通用增强
 tags:
 - 增强

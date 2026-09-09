@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: Krea2 角色分镜设定
 tags:
 - Krea2

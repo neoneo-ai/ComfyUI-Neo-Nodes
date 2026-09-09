@@ -45,7 +45,7 @@ ComfyUI-Neo-Nodes/
 │   ├── presets/            # 内置提示词预设（.txt，含 collections/、video/ 子集）
 │   └── custom/             # 用户自定义提示词（.gitignore 不入库）
 ├── skills/                 # 技能（Markdown skill.md + YAML frontmatter）
-│   ├── presets/            # 内置风格模板（SYS，<id>/skill.md）
+│   ├── presets/            # 内置提示词技能（SYS，<id>/skill.md：图像/视频提示词增强、任务等）
 │   ├── tasks/              # 内置任务技能（extract_title / reverse_prompt 等，<id>/skill.md）
 │   └── custom/             # 用户自定义技能（USR，<id>/skill.md，.gitignore 不入库）
 ├── gallery/                # 素材媒体文件目录

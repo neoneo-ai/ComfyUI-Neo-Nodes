@@ -189,13 +189,14 @@ function renderMarkdown(src) {
 // skill 选择列表：分类标签 + 把 skills 填充进原生 <select>（combo-box 数据源）
 // ==========================================
 // image_gen 组排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
-// vision/task/style/custom 依次跟随；未知分类回落 style
+// 图像/视频提示词增强紧随其后，vision/task/custom 依次跟随；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
     "image_gen": { label: "⚡ 出图 (Krea2)", order: -1 },
-    "vision": { label: "🖼️ 图像 / 反推", order: 0 },
-    "task": { label: "⚙️ 任务", order: 1 },
-    "style": { label: "🎨 风格模板", order: 2 },
-    "custom": { label: "📝 自定义", order: 3 }
+    "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
+    "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
+    "vision": { label: "🖼️ 图像 / 反推", order: 2 },
+    "task": { label: "⚙️ 任务", order: 3 },
+    "custom": { label: "📝 自定义", order: 4 }
 };
 
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记 */
@@ -203,7 +204,7 @@ function populateSkillOptions(selectEl, skills) {
     if (!skills || !skills.length) return;
     const groups = {};
     skills.forEach(s => {
-        const cat = CATEGORY_LABELS[s.category] ? s.category : "style";
+        const cat = CATEGORY_LABELS[s.category] ? s.category : "image_enhance";
         if (!groups[cat]) groups[cat] = [];
         groups[cat].push(s);
     });

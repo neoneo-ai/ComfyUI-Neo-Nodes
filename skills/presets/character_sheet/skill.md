@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 人物角色三视图
 tags:
 - 人物

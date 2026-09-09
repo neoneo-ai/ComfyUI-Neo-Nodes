@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 纯欲美学
 tags:
 - 风格

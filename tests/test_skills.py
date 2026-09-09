@@ -113,7 +113,7 @@ class TestScanSkills(unittest.TestCase):
         s = by_id.get("minimax_h3_ref")
         self.assertIsNotNone(s, "minimax_h3_ref 模板未被扫描到")
         self.assertTrue(s["needs_image"])
-        self.assertEqual(s["category"], "vision")
+        self.assertEqual(s["category"], "video_enhance")
         self.assertIn("@全参考", s["markers"])
 
     def test_skill_fields_complete(self):

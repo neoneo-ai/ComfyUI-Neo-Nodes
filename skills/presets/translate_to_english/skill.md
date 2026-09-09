@@ -1,4 +1,5 @@
 ---
+category: task
 name: 翻译成英文
 tags:
 - 翻译

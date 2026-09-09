@@ -745,7 +745,7 @@ def scan_skills() -> list:
                 "description": meta.get("description", ""),
             })
 
-    # 2) 预设 + 自定义 (presets/<id>/, custom/<id>/) -> category=style
+    # 2) 预设 + 自定义 (presets/<id>/, custom/<id>/) -> category=frontmatter（缺省 image_enhance）
     with _skills_lock:
         for base, source in ((SKILL_PRESETS_DIR, "presets"), (SKILL_CUSTOM_DIR, "custom")):
             if not os.path.isdir(base):
@@ -760,7 +760,7 @@ def scan_skills() -> list:
                 skills.append({
                     "id": skill_id,
                     "name": meta.get("name", skill_id),
-                    "category": meta.get("category", "style"),
+                    "category": meta.get("category", "image_enhance"),
                     "source": source,
                     "tags": meta.get("tags", []),
                     "inputs": inputs,
@@ -1299,7 +1299,7 @@ async def rs_prompts_load_skill(request):
             "tags": meta.get("tags", []),
             "description": meta.get("description", ""),
             "inputs": meta.get("inputs") or ["text"],
-            "category": meta.get("category", "style"),
+            "category": meta.get("category", "image_enhance"),
             "content": load_skill_content(skill_id) or "",
             "files": files,
             "max_tokens": meta.get("max_tokens"),

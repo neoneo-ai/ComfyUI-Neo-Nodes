@@ -13,7 +13,7 @@ inputs:
 description: 基于多张参考图生成 MiniMax H3 全参考模式视频提示词（图像参考，六段结构）
 max_tokens: 2600
 result_key: prompt
-category: vision
+category: video_enhance
 markers:
 - '@全参考'
 - '@参考'

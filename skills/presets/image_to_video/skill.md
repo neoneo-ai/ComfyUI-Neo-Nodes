@@ -12,7 +12,7 @@ inputs:
 - image
 - text
 max_tokens: 2600
-category: vision
+category: video_enhance
 created_at: '2026-08-09T05:58:39.954367+00:00'
 ---
 

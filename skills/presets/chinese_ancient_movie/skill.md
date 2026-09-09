@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 中国古装影视写真
 tags:
 - 古装

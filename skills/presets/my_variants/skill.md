@@ -1,4 +1,5 @@
 ---
+category: image_enhance
 name: 三变体
 multi_result:
   format: separator
