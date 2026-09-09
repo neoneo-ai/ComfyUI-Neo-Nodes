@@ -55,8 +55,7 @@ DEFAULT_SETTINGS = {
     "default_ratio": "1:1",
     "count": 1,               # 单次生图张数（1-8，写入模板 {{COUNT}}）
     "output_prefix": "NeoAgent",
-    "enhance_prompt": False,           # 是否启用 LLM 提示词增强
-    "enhance_system_prompt": "",       # 自定义增强系统提示词；空 = 使用内置默认
+    "enhance_prompt": False,           # 是否启用 LLM 提示词增强（指令即技能 skill.md 正文）
 }
 
 # 采样参数（steps/cfg/sampler/denoise 等）不走设置，直接写死在各技能的 workflow.json 模板里。
@@ -908,12 +907,12 @@ _ENHANCE_DEFAULT_SYSTEM_PROMPT = (
 )
 
 
-async def _enhance_prompt(prompt_text: str, width: int, height: int, system_prompt: str, skill_id: str = "") -> str:
-    """调用 LLM 增强生图提示词；优先使用自定义系统提示词，其次加载技能 skill.md 正文；失败时返回原文。"""
+async def _enhance_prompt(prompt_text: str, width: int, height: int, skill_id: str = "") -> str:
+    """调用 LLM 增强生图提示词；用技能 skill.md 正文作为系统提示词，缺失时用内置默认；失败时返回原文。"""
     from . import llm as _llm
 
-    sys_prompt = (system_prompt or "").strip()
-    if not sys_prompt and skill_id:
+    sys_prompt = ""
+    if skill_id:
         from . import skill as _skill
         try:
             language = _skill._resolve_skill_language(prompt_text)
@@ -940,12 +939,12 @@ async def _enhance_prompt(prompt_text: str, width: int, height: int, system_prom
         return prompt_text
 
 
-def _enhance_prompt_stream(prompt_text: str, width: int, height: int, system_prompt: str, skill_id: str = "") -> Generator[str, None, None]:
+def _enhance_prompt_stream(prompt_text: str, width: int, height: int, skill_id: str = "") -> Generator[str, None, None]:
     """流式增强生图提示词，逐 chunk yield 文本；失败时 yield '[ERROR] ...'。"""
     from . import llm as _llm
 
-    sys_prompt = (system_prompt or "").strip()
-    if not sys_prompt and skill_id:
+    sys_prompt = ""
+    if skill_id:
         from . import skill as _skill
         try:
             language = _skill._resolve_skill_language(prompt_text)
@@ -1000,8 +999,7 @@ async def start_generation(body: dict) -> dict:
     params = resolve_request(body or {}, settings)
     if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance"):
         params["prompt"] = await _enhance_prompt(
-            params["prompt"], params["width"], params["height"],
-            settings.get("enhance_system_prompt", ""), skill_id)
+            params["prompt"], params["width"], params["height"], skill_id)
     graph, template_warns = render_template(template, params)
     params["warnings"].extend(template_warns)
     prompt_id = await submit_graph(graph)
@@ -1096,11 +1094,9 @@ async def enhance_route(request):
         width = int(settings.get("image_width", 1024))
         height = int(settings.get("image_height", 1024))
 
-    sys_prompt = settings.get("enhance_system_prompt", "")
-
     async def event_stream():
         loop = asyncio.get_running_loop()
-        gen = _enhance_prompt_stream(prompt_text, width, height, sys_prompt, skill_id)
+        gen = _enhance_prompt_stream(prompt_text, width, height, skill_id)
 
         def next_chunk():
             try:

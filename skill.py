@@ -966,9 +966,6 @@ def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
         clean["output_prefix"] = prefix[:128]
     if cfg.get("enhance_prompt"):
         clean["enhance_prompt"] = True
-    esp = str(cfg.get("enhance_system_prompt") or "").strip()
-    if esp:
-        clean["enhance_system_prompt"] = esp[:2048]
     with _skills_lock:
         tmp = os.path.join(d, "config.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:

@@ -277,6 +277,17 @@ function createSkillDetailPopup() {
     const contentLabel = mkEl("label", "rs-form-label");
     contentLabel.textContent = "System Prompt Content";
     contentLeft.appendChild(contentLabel);
+    // Enhance Prompt 开关（仅生图技能显示）：LLM 提示词增强，指令即上方正文；放在标题右侧便于就近理解
+    const enhancePromptWrap = mkEl("div", "rs-content-enhance");
+    enhancePromptWrap.style.display = "none";
+    const enhancePromptChk = document.createElement("input");
+    enhancePromptChk.type = "checkbox";
+    enhancePromptChk.className = "rs-gen-enhance-chk";
+    const enhancePromptLabel = mkEl("label", "rs-form-label");
+    enhancePromptLabel.textContent = "Enhance Prompt";
+    enhancePromptLabel.title = "使用 LLM 自动扩写生图提示词（指令即上方正文，需已配置 LLM）";
+    enhancePromptWrap.append(enhancePromptChk, enhancePromptLabel);
+    contentLeft.appendChild(enhancePromptWrap);
     // 多文件切换下拉（skill 含多个 .md 时显示）
     const fileSelect = document.createElement("select");
     fileSelect.className = "rs-file-select";
@@ -355,7 +366,9 @@ function createSkillDetailPopup() {
         try { models = await listGenModels(); } catch (e) { console.warn("Failed to load gen models:", e); }
         genModelSection.load(config || {}, models);
         genSizeSection.load(config || {});
+        enhancePromptChk.checked = !!(config && config.enhance_prompt);
         for (const el of genSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
+        enhancePromptChk.disabled = readOnly;
         genReadOnlyHint.style.display = readOnly ? "block" : "none";
     }
 
@@ -438,6 +451,8 @@ function createSkillDetailPopup() {
         copyBtn.style.display = readOnly ? "inline-block" : "none";
         deleteBtn.style.display = isCustom() ? "inline-block" : "none";
         addFileBtn.style.display = isCustom() ? "inline-block" : "none";
+        editBtn.style.display = readOnly ? "none" : "inline-block";
+        previewBtn.style.display = readOnly ? "none" : "inline-block";
         const canDeleteFile = isCustom() && currentFiles.length > 1 && !!selectedFile && !mainSel;
         delFileBtn.style.display = canDeleteFile ? "inline-block" : "none";
     }
@@ -478,7 +493,8 @@ function createSkillDetailPopup() {
         if (full && full.error) { alert("Failed to load skill: " + full.error); close(); return; }
         const nm = (full && full.name) || id;
         nameInput.value = nm;
-        titleSpan.textContent = "📝 " + nm;
+        const roSuffix = !isCustom() ? "（只读）" : "";
+        titleSpan.textContent = "📝 " + nm + roSuffix;
         titleSpan.title = nm;
         multiTurnChk.checked = !!(full && full.multi_turn);
         currentFiles = (full && full.files) || [];
@@ -494,10 +510,12 @@ function createSkillDetailPopup() {
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
             multiTurnRow.style.display = "none";
+            enhancePromptWrap.style.display = "";
             await loadGenSettings(!isCustom());
         } else {
             genSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "";
+            enhancePromptWrap.style.display = "none";
         }
         updateControls();
     }
@@ -519,6 +537,8 @@ function createSkillDetailPopup() {
         selectedFile = null;
         multiTurnChk.checked = false;
         multiTurnRow.style.display = "";
+        enhancePromptWrap.style.display = "none";
+        enhancePromptChk.checked = false;
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         setEditorMode("edit");
@@ -533,7 +553,7 @@ function createSkillDetailPopup() {
     async function persistGenSettings() {
         if (!currentSkillId || !isCustom() || genSettingsWrap.style.display === "none") return;
         try {
-            await saveSkillGenConfig(currentSkillId, { ...genModelSection.collect(), ...genSizeSection.collect() });
+            await saveSkillGenConfig(currentSkillId, { ...genModelSection.collect(), ...genSizeSection.collect(), enhance_prompt: enhancePromptChk.checked });
         } catch (err) {
             alert("Save gen settings failed: " + err.message);
         }
@@ -761,6 +781,36 @@ function createSkillDropdown() {
         listMinWidth: 306,
         footerEl: skillFooter,
         renderItemExtra,
+    });
+
+    // hover 已选 skill 时右侧出现 👁 按钮，点击打开详情弹窗（覆盖 caret 区域）
+    const wrap = combo.box.firstElementChild;
+    const viewBtn = mkEl("button", "rs-skill-view-btn");
+    viewBtn.type = "button";
+    viewBtn.textContent = "👁";
+    viewBtn.title = "查看当前技能详情";
+    viewBtn.style.cssText = "position:absolute;right:24px;top:50%;transform:translateY(-50%);opacity:0;pointer-events:none;background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px;color:#ccc;z-index:2;transition:opacity .15s;line-height:1;";
+    viewBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    viewBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const val = selectEl.value;
+        if (!val) return;
+        const selOpt = selectEl.selectedOptions[0];
+        const source = (selOpt && selOpt.dataset && selOpt.dataset.source) || "custom";
+        getSkillDetailPopup().openExisting(val, source);
+    });
+    wrap.appendChild(viewBtn);
+    combo.box.addEventListener("mouseenter", () => {
+        const val = selectEl.value;
+        if (!val) return;
+        const selOpt = selectEl.selectedOptions[0];
+        const source = (selOpt && selOpt.dataset && selOpt.dataset.source) || "custom";
+        if (source === "preset") return; // 预设只读，不显示查看按钮
+        viewBtn.style.opacity = "1";
+        viewBtn.style.pointerEvents = "auto";
+    });
+    combo.box.addEventListener("mouseleave", () => {
+        viewBtn.style.opacity = "0"; viewBtn.style.pointerEvents = "none";
     });
 
     return { selectEl, combo };

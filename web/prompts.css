@@ -1808,6 +1808,14 @@
     margin-bottom: 0;
 }
 
+/* Skill content header: Enhance Prompt toggle (right of the System Prompt Content label) */
+.rs-content-enhance {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
 /* Skill content header: left group (label + file dropdown + file tools) */
 .rs-content-header .rs-content-left {
     display: flex;

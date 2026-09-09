@@ -413,7 +413,7 @@ function numberRow(labelText, attrs) {
     return { row, input };
 }
 
-/** 生图模型 / Text Encoder / VAE + LoRA 列表控件区（全局生图设置与每技能设置共用）。 */
+/** 生图模型 / Text Encoder / VAE + LoRA 列表控件区（每技能生图设置用）。 */
 export function createModelConfigSection() {
     const section = mkEl("div", "rs-gen-model-section");
 
@@ -520,7 +520,7 @@ export function createModelConfigSection() {
     return { el: section, load, collect };
 }
 
-/** 生图张数 / 长边尺寸 / 默认比例 / 输出前缀控件区（全局生图设置与每技能设置共用）。 */
+/** 生图张数 / 长边尺寸 / 默认比例 / 输出前缀 控件区（每技能生图设置用）。 */
 export function createGenSizeRows() {
     const section = mkEl("div", "rs-gen-size-section");
     const countCtl = numberRow("生图张数", { min: 1, max: 8, step: 1, value: 1 });
@@ -579,35 +579,11 @@ export function createGenSizeRows() {
     // 张数 / 长边 / 比例 / 前缀各占一行（标签 | 控件），与模型区两栏风格统一
     section.append(countCtl.row, sizeCtl.row, ratioCtl.row, prefixRow);
 
-    // LLM 提示词增强：勾选启用 + 自定义系统提示词（空 = 内置默认）
-    const enhanceRow = mkEl("div", "rs-config-row");
-    const enhanceLabel = mkEl("label", "rs-form-label");
-    enhanceLabel.textContent = "Enhance Prompt";
-    enhanceLabel.title = "使用 LLM 自动扩写生图提示词（需已配置 LLM）";
-    const enhanceChk = document.createElement("input");
-    enhanceChk.type = "checkbox";
-    enhanceChk.className = "rs-gen-enhance-chk";
-    enhanceRow.append(enhanceLabel, enhanceChk);
-    section.appendChild(enhanceRow);
-
-    const enhancePromptRow = mkEl("div", "rs-config-row rs-gen-adv-row");
-    const enhancePromptLabel = mkEl("label", "rs-form-label");
-    enhancePromptLabel.textContent = "Enhance System Prompt";
-    enhancePromptLabel.title = "自定义 LLM 增强提示词；留空使用内置默认";
-    const enhancePromptInput = document.createElement("textarea");
-    enhancePromptInput.className = "rs-form-input rs-gen-enhance-prompt";
-    enhancePromptInput.rows = 3;
-    enhancePromptInput.placeholder = "（留空 = 使用内置默认提示词）";
-    enhancePromptRow.append(enhancePromptLabel, enhancePromptInput);
-    section.appendChild(enhancePromptRow);
-
     function load(settings) {
         countCtl.input.value = settings.count ?? 1;
         fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""), "1280");
         fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""), "1:1");
         prefixInput.value = settings.output_prefix ?? "";
-        enhanceChk.checked = !!settings.enhance_prompt;
-        enhancePromptInput.value = settings.enhance_system_prompt ?? "";
     }
 
     function collect() {
@@ -616,19 +592,40 @@ export function createGenSizeRows() {
             base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
             default_ratio: ratioCtl.select.value.trim(),
             output_prefix: prefixInput.value.trim(),
-            enhance_prompt: !!enhanceChk.checked,
-            enhance_system_prompt: enhancePromptInput.value.trim(),
         };
     }
 
     return { el: section, load, collect };
 }
 
-/** 全局生图设置表单（「自动增强」菜单内）：模型/LoRA 区 + 尺寸/前缀区 + 保存按钮。 */
+/** 全局生图默认设置表单（「自动增强」菜单内）：核心模型 / Text Encoder / VAE / 输出前缀 + 保存按钮。
+ *  独立实现，不复用每技能设置的 createModelConfigSection / createGenSizeRows；
+ *  张数 / 长边尺寸 / 默认比例 / LoRA 只在每技能设置里配置，Enhance Prompt 开关在技能正文（System Prompt Content）旁。 */
 export function createImageGenSettingsForm() {
     const form = mkEl("div", "rs-gen-settings");
-    const modelSection = createModelConfigSection();
-    const sizeSection = createGenSizeRows();
+
+    // 三个模型选择行：空值 = 按名称线索自动挑选（后端 suggest_model），用户可显式指定
+    const makeComboRow = (labelText) => {
+        const row = mkEl("div", "rs-config-row");
+        const label = mkEl("label", "rs-form-label");
+        label.textContent = labelText;
+        const select = document.createElement("select");
+        const combo = attachComboBox(select, {}).box;
+        row.append(label, combo);
+        return { row, select };
+    };
+    const modelCtl = makeComboRow("生图模型");
+    const encoderCtl = makeComboRow("Text Encoder");
+    const vaeCtl = makeComboRow("VAE");
+
+    // 输出前缀（可含子目录），写入模板 {{PREFIX}}
+    const prefixRow = mkEl("div", "rs-config-row");
+    const prefixLabel = mkEl("label", "rs-form-label");
+    prefixLabel.textContent = "输出前缀";
+    const prefixInput = mkEl("input", "rs-form-input");
+    prefixInput.type = "text";
+    prefixInput.placeholder = "NeoAgent";
+    prefixRow.append(prefixLabel, prefixInput);
 
     // 显式保存按钮：选择后立即落盘，不依赖关菜单时的静默保存
     const saveBtn = mkEl("button", "rs-gen-save");
@@ -646,7 +643,7 @@ export function createImageGenSettingsForm() {
     const saveRow = mkEl("div", "rs-config-row");
     saveRow.appendChild(saveBtn);
 
-    form.append(modelSection.el, sizeSection.el, saveRow);
+    form.append(modelCtl.row, encoderCtl.row, vaeCtl.row, prefixRow, saveRow);
 
     // 加载窗口标记：load() 异步回填期间（await 网络请求）不算 dirty，避免初始化误判
     let loading = false;
@@ -655,8 +652,13 @@ export function createImageGenSettingsForm() {
         loading = true;
         try {
             const [settings, models] = await Promise.all([getGenSettings(), listGenModels()]);
-            modelSection.load(settings, models);
-            sizeSection.load(settings);
+            fillComboSelect(modelCtl.select, models.diffusion_models || [],
+                models.suggested_diffusion_models || "", settings.model || "");
+            fillComboSelect(encoderCtl.select, models.text_encoders || [],
+                models.suggested_text_encoders || "", settings.text_encoder || "");
+            fillComboSelect(vaeCtl.select, models.vae || [],
+                models.suggested_vae || "", settings.vae || "");
+            prefixInput.value = settings.output_prefix ?? "";
             snapshot = collect();
         } catch (e) {
             console.warn("Failed to load image gen settings:", e);
@@ -667,7 +669,12 @@ export function createImageGenSettingsForm() {
 
     // 收集当前表单值（与后端 /neo_image_gen/settings 字段对齐）；save 与脏检查共用
     function collect() {
-        return { ...modelSection.collect(), ...sizeSection.collect() };
+        return {
+            model: modelCtl.select.value,
+            text_encoder: encoderCtl.select.value,
+            vae: vaeCtl.select.value,
+            output_prefix: prefixInput.value.trim(),
+        };
     }
 
     // load/save 后的表单快照，用于关闭菜单时判断是否有未保存修改

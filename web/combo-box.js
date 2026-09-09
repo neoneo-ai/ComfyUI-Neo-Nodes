@@ -69,7 +69,7 @@ export function attachComboBox(selectEl, opts = {}) {
     const hasFooter = !!opts.footerEl;
     const listOpenDisplay = hasFooter ? "flex" : "block";
     const listEl = el("div", "rs-combo-list", hasFooter
-        ? "position:fixed;display:none;max-height:260px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
+        ? "position:fixed;display:none;max-height:400px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
         : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
     document.body.appendChild(listEl);
 

@@ -1,5 +1,6 @@
-// 出图设置表单：四视图 LoRA（文件名含 quadview/四视图）「依赖参考图」默认勾选；
-// 普通 LoRA 不默认勾选；已显式保存的 ref_only 值被尊重；选中四视图 LoRA 时自动勾选。
+// 生图设置：全局「生图默认设置」表单只含 模型/Text Encoder/VAE/输出前缀（LoRA/张数/比例只在每技能设置）；
+// 每技能模型区 createModelConfigSection 的四视图 LoRA（文件名含 quadview/四视图）「依赖参考图」默认勾选、
+// 普通 LoRA 不默认勾选、已显式保存的 ref_only 值被尊重、选中四视图 LoRA 时自动勾选、「自动」项显示建议名。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
@@ -12,19 +13,13 @@ beforeEach(() => {
     clearRoutes();
 });
 
-// 构造表单并 load，返回所有 LoRA 行的「依赖参考图」复选框
+// 构造每技能模型区并 load（同步），返回所有 LoRA 行的「依赖参考图」复选框
 async function formLoras(settingsLoras, modelLoras) {
-    const { createImageGenSettingsForm } = await import("../../web/image-gen.js");
-    mockRoute("/neo_image_gen/settings", () => jsonResponse({
-        model: "", count: 1, base_resolution: 1280, default_ratio: "1:1", loras: settingsLoras,
-    }));
-    mockRoute("/neo_image_gen/models", () => jsonResponse({
-        diffusion_models: [], text_encoders: [], vae: [], loras: modelLoras,
-    }));
-    const { el, load } = createImageGenSettingsForm();
-    document.body.appendChild(el);
-    await load();
-    return { el, chks: [...el.querySelectorAll(".rs-gen-lora-refonly")] };
+    const { createModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createModelConfigSection();
+    document.body.appendChild(section.el);
+    section.load({ loras: settingsLoras }, { loras: modelLoras });
+    return { el: section.el, chks: [...section.el.querySelectorAll(".rs-gen-lora-refonly")] };
 }
 
 test("四视图 LoRA（无显式 ref_only）默认勾选「依赖参考图」", async () => {
@@ -66,19 +61,29 @@ test("新建行选中四视图 LoRA 时自动勾选「依赖参考图」", async
 });
 
 test("LoRA「自动」选项显示后端建议的四视图 LoRA", async () => {
-    const { createImageGenSettingsForm } = await import("../../web/image-gen.js");
-    mockRoute("/neo_image_gen/settings", () => jsonResponse({ loras: [{ name: QV, strength: 1.0 }] }));
-    mockRoute("/neo_image_gen/models", () => jsonResponse({
-        diffusion_models: [], text_encoders: [], vae: [],
-        loras: [QV, "style_a.safetensors"], suggested_lora: QV,
-    }));
-    const { el, load } = createImageGenSettingsForm();
-    document.body.appendChild(el);
-    await load();
-    const row = el.querySelector(".rs-gen-lora-row");
+    const { createModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createModelConfigSection();
+    document.body.appendChild(section.el);
+    section.load({ loras: [{ name: QV, strength: 1.0 }] },
+        { loras: [QV, "style_a.safetensors"], suggested_lora: QV });
+    const row = section.el.querySelector(".rs-gen-lora-row");
     assert.ok(row, "应有 LoRA 行");
     const select = row.querySelector("select");
     assert.ok(select, "应有 LoRA 下拉");
     // suggested_lora 经 shortModelName（取末段去扩展名）后作为「自动」项文案
     assert.equal(select.options[0].textContent, "自动（Krea2-QuadView_krea2_v1）", "首项应为带建议名的「自动」");
+});
+
+test("全局生图默认设置表单只含 模型/Text Encoder/VAE/输出前缀（不含 LoRA/张数/比例）", async () => {
+    const { createImageGenSettingsForm } = await import("../../web/image-gen.js");
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    const form = createImageGenSettingsForm();
+    document.body.appendChild(form.el);
+    await form.load();
+    const labels = [...form.el.querySelectorAll(".rs-form-label")].map((el) => el.textContent);
+    assert.deepEqual(labels, ["生图模型", "Text Encoder", "VAE", "输出前缀"]);
+    assert.equal(form.el.querySelector(".rs-gen-lora-list"), null, "全局表单不应有 LoRA 列表");
+    assert.equal(form.el.querySelector("input[type=number]"), null, "全局表单不应有张数/强度数字框");
+    assert.ok(form.el.querySelector(".rs-gen-save"), "应保留保存按钮");
 });

@@ -426,7 +426,7 @@ function createStatusBars() {
     llmTabBtn.textContent = "🤖 LLM Settings";
     const genTabBtn = mkEl("button", "rs-auto-tab");
     genTabBtn.type = "button";
-    genTabBtn.textContent = "🖼️ 生图设置";
+    genTabBtn.textContent = "🖼️ 生图默认设置";
     autoTabs.append(llmTabBtn, genTabBtn);
     const llmPanel = mkEl("div", "rs-auto-panel");
     llmPanel.appendChild(modelForm.el);
@@ -893,8 +893,10 @@ function createGenerateHandler(promptUI) {
         }
 
         if (selectedOpt?.dataset.genImage === "1") {
+            // 生图：output 区域已有提示词 + quick input 新输入，两者拼接
+            const genText = [currentPrompt, quickText].filter(Boolean).join("\n");
             await runChatImageGeneration({ generateBtn, controller: promptUI.genResultsController },
-                messageToLLM, imagesPayload, selectedOpt);
+                genText, imagesPayload, selectedOpt);
             return;
         }
 
@@ -1291,12 +1293,12 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
             genState.images.forEach((image, i) => {
                 // 自包含组件：内联样式锁定「图在上、按钮正下方」的纵向结构，不依赖外部 CSS 生效
                 const cell = mkEl("div", "rs-gen-thumb");
-                cell.style.cssText = "display:inline-flex;flex-direction:column;align-items:stretch;width:300px;flex:none";
+                cell.style.cssText = "display:inline-flex;flex-direction:column;align-items:center;flex:none;min-width:0";
                 const img = mkEl("img");
                 // 缩略图走 gallery 的 thumbnail 缓存接口（640px），点击才用灯箱加载原图
                 img.src = genThumbSrc(image);
                 img.loading = "lazy";
-                img.style.cssText = "display:block;width:100%";
+                img.style.cssText = "display:block;width:auto;height:auto;max-width:320px;max-height:320px";
                 img.addEventListener("click", () => Lightbox.open({
                     items: genState.images.map(im => ({ kind: "image", url: im.url, title: im.filename })),
                     index: i,

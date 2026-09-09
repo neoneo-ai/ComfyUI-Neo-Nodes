@@ -26,7 +26,7 @@ body
     div.rs-runtime-divider
     div.rs-auto-tabs
       button.rs-auto-tab.rs-auto-tab-active <type=button> "🤖 LLM Settings"
-      button.rs-auto-tab <type=button> "🖼️ 出图设置"
+      button.rs-auto-tab <type=button> "🖼️ 生图默认设置"
     div.rs-auto-panel
       div.rs-remote-form
         div.rs-settings-info
@@ -71,59 +71,30 @@ body
           div.rs-form-hint
     div.rs-auto-panel <display=none>
       div.rs-gen-settings
-        div.rs-gen-model-section
-          div.rs-config-row
-            label.rs-form-label "出图模型"
-            div.rs-model-select-box <display=none>
-              div
-                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                span.rs-combo-caret "▾"
-              select
-          div.rs-config-row.rs-gen-adv-row
-            label.rs-form-label "Text Encoder"
-            div.rs-model-select-box <display=none>
-              div
-                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                span.rs-combo-caret "▾"
-              select
-          div.rs-config-row.rs-gen-adv-row
-            label.rs-form-label "VAE"
-            div.rs-model-select-box <display=none>
-              div
-                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                span.rs-combo-caret "▾"
-              select
-          div.rs-config-row
-            label.rs-form-label "LoRA"
-            div.rs-gen-lora-list
-            button.rs-gen-lora-add <type=button> "+ 添加 LoRA"
-        div.rs-gen-size-section
-          div.rs-config-row.rs-gen-adv-row
-            label.rs-form-label "出图张数"
-            input.rs-form-input <type=number val="1">
-          div.rs-config-row
-            label.rs-form-label "长边尺寸"
-            div.rs-model-select-box <display=none>
-              div
-                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                span.rs-combo-caret "▾"
-              select
-          div.rs-config-row
-            label.rs-form-label "默认比例"
-            div.rs-model-select-box <display=none>
-              div
-                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                span.rs-combo-caret "▾"
-              select
-          div.rs-config-row.rs-gen-adv-row
-            label.rs-form-label "输出前缀"
-            input.rs-form-input <type=text placeholder=NeoAgent>
-          div.rs-config-row
-            label.rs-form-label <title=使用 LLM 自动扩写出图提示词（需已配置 LLM）> "Enhance Prompt"
-            input.rs-gen-enhance-chk <type=checkbox val="on">
-          div.rs-config-row.rs-gen-adv-row
-            label.rs-form-label <title=自定义 LLM 增强提示词；留空使用内置默认> "Enhance System Prompt"
-            textarea.rs-form-input.rs-gen-enhance-prompt <placeholder=（留空 = 使用内置默认提示词）>
+        div.rs-config-row
+          label.rs-form-label "生图模型"
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              span.rs-combo-caret "▾"
+            select
+        div.rs-config-row
+          label.rs-form-label "Text Encoder"
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              span.rs-combo-caret "▾"
+            select
+        div.rs-config-row
+          label.rs-form-label "VAE"
+          div.rs-model-select-box <display=none>
+            div
+              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+              span.rs-combo-caret "▾"
+            select
+        div.rs-config-row
+          label.rs-form-label "输出前缀"
+          input.rs-form-input <type=text placeholder=NeoAgent>
         div.rs-config-row
           button.rs-gen-save <type=button> "💾 保存设置"
     div.rs-gen-dirty-confirm
@@ -132,8 +103,6 @@ body
         button.rs-btn.rs-gen-dirty-save <type=button> "💾 保存并关闭"
         button.rs-btn.rs-gen-dirty-discard <type=button> "放弃修改"
         button.rs-btn.rs-gen-dirty-keep <type=button> "继续编辑"
-  div.rs-combo-list <display=none>
-  div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>
   div.rs-combo-list <display=none>
