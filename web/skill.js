@@ -336,8 +336,10 @@ function createSkillDetailPopup() {
             const adv = mkEl("details", "rs-gen-advanced");
             const advSummary = mkEl("summary", "rs-gen-advanced-summary");
             advSummary.textContent = "Text Encoder / VAE / 出图张数 / 输出前缀（高级）";
-            adv.appendChild(advSummary);
-            for (const r of advRows) adv.appendChild(r);
+            // Chromium <details> 即使 display:flex 也会将非 summary 子元素包入匿名块，gap 不生效；用 div 包裹让 flex gap 正确应用
+            const advContent = mkEl("div", "rs-gen-adv-content");
+            for (const r of advRows) advContent.appendChild(r);
+            adv.append(advSummary, advContent);
             advEl = adv;
         }
     }

@@ -60,7 +60,8 @@ ComfyUI-Neo-Nodes/
 ├── tools/                  # 离线工具脚本
 │   ├── gallery_preprocess.py   # 预设预处理：生成缩略图 + index.json（--dirs 增量模式自动从 OSS 拉取最新 index 合并）
 │   └── gallery_deploy_oss.py   # 部署预处理产物到 OSS
-├── tests/                  # pytest 单元测试
+├── tests/                  # pytest 单元测试 + JS 测试运行器
+│   ├── run-tests.ps1       # JS 测试运行器（带超时强制终止，pwsh tests/run-tests.ps1）
 │   ├── test_llm.py         # LLM 配置/下载/缓存/语言检测/文本规范化
 │   ├── test_skills.py      # 技能扫描、图片解码、多结果解析
 │   ├── test_workflow_repair.py # 工作流修复匹配算法
@@ -316,6 +317,24 @@ npm run update-goldens   # NEO_UPDATE_GOLDENS=1，写入新 golden
 - `smoke.test.mjs` — 模块可导入、节点扩展注册项
 - `prompt-manager-dom.test.mjs` — NeoPromptAgent / NeoPrompts 创建后的 UI 结构、body 弹层、隐藏控件状态
 - `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、skill 路由请求体、@ 标记缺图提示、运行时随机菜单
+
+### JS 测试运行器（带超时强制终止）
+
+Playwright 渲染测试偶尔因浏览器未正常关闭而挂起。`tests/run-tests.ps1` 提供超时保护，超时后自动杀掉 node 进程及其子进程树（含 Chromium），无需手动 Ctrl+C。
+
+```powershell
+# 跑全部 JS 测试（默认超时 120s）
+pwsh tests/run-tests.ps1
+
+# 按文件名模糊匹配（支持多关键词逗号分隔）
+pwsh tests/run-tests.ps1 skill-gen-layout
+pwsh tests/run-tests.ps1 skill-gen-layout,css-integrity
+
+# 自定义超时秒数
+pwsh tests/run-tests.ps1 -Timeout 60
+```
+
+退出码：`0` = 全部通过，`1` = 有测试失败 / 无匹配文件，`2` = 超时强制终止。
 
 ## 发布
 

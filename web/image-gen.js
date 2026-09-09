@@ -559,11 +559,35 @@ export function createGenSizeRows() {
     // 张数 / 长边 / 比例 / 前缀各占一行（标签 | 控件），与模型区两栏风格统一
     section.append(countCtl.row, sizeCtl.row, ratioCtl.row, prefixRow);
 
+    // LLM 提示词增强：勾选启用 + 自定义系统提示词（空 = 内置默认）
+    const enhanceRow = mkEl("div", "rs-config-row");
+    const enhanceLabel = mkEl("label", "rs-form-label");
+    enhanceLabel.textContent = "Enhance Prompt";
+    enhanceLabel.title = "使用 LLM 自动扩写出图提示词（需已配置 LLM）";
+    const enhanceChk = document.createElement("input");
+    enhanceChk.type = "checkbox";
+    enhanceChk.className = "rs-gen-enhance-chk";
+    enhanceRow.append(enhanceLabel, enhanceChk);
+    section.appendChild(enhanceRow);
+
+    const enhancePromptRow = mkEl("div", "rs-config-row rs-gen-adv-row");
+    const enhancePromptLabel = mkEl("label", "rs-form-label");
+    enhancePromptLabel.textContent = "Enhance System Prompt";
+    enhancePromptLabel.title = "自定义 LLM 增强提示词；留空使用内置默认";
+    const enhancePromptInput = document.createElement("textarea");
+    enhancePromptInput.className = "rs-form-input rs-gen-enhance-prompt";
+    enhancePromptInput.rows = 3;
+    enhancePromptInput.placeholder = "（留空 = 使用内置默认提示词）";
+    enhancePromptRow.append(enhancePromptLabel, enhancePromptInput);
+    section.appendChild(enhancePromptRow);
+
     function load(settings) {
         countCtl.input.value = settings.count ?? 1;
         fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""), "1280");
         fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""), "1:1");
         prefixInput.value = settings.output_prefix ?? "";
+        enhanceChk.checked = !!settings.enhance_prompt;
+        enhancePromptInput.value = settings.enhance_system_prompt ?? "";
     }
 
     function collect() {
@@ -572,6 +596,8 @@ export function createGenSizeRows() {
             base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
             default_ratio: ratioCtl.select.value.trim(),
             output_prefix: prefixInput.value.trim(),
+            enhance_prompt: !!enhanceChk.checked,
+            enhance_system_prompt: enhancePromptInput.value.trim(),
         };
     }
 

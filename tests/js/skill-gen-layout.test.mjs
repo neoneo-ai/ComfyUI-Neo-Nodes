@@ -31,10 +31,12 @@ const harnessDom = `
         </div>
         <details class="rs-gen-advanced" open>
           <summary class="rs-gen-advanced-summary">Text Encoder / VAE / 出图张数 / 输出前缀（高级）</summary>
-          <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">Text Encoder</label><select></select></div>
-          <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">VAE</label><select></select></div>
-          <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">出图张数</label><input class="rs-form-input" type="number"></div>
-          <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">输出前缀</label><input class="rs-form-input" type="text"></div>
+          <div class="rs-gen-adv-content">
+            <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">Text Encoder</label><select></select></div>
+            <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">VAE</label><select></select></div>
+            <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">出图张数</label><input class="rs-form-input" type="number"></div>
+            <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">输出前缀</label><input class="rs-form-input" type="text"></div>
+          </div>
         </details>
       </div>
     </div>

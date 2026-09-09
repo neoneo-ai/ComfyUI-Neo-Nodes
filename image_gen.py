@@ -54,6 +54,8 @@ DEFAULT_SETTINGS = {
     "default_ratio": "1:1",
     "count": 1,               # 单次出图张数（1-8，写入模板 {{COUNT}}）
     "output_prefix": "NeoAgent",
+    "enhance_prompt": False,           # 是否启用 LLM 提示词增强
+    "enhance_system_prompt": "",       # 自定义增强系统提示词；空 = 使用内置默认
 }
 
 # 采样参数（steps/cfg/sampler/denoise 等）不走设置，直接写死在各技能的 workflow.json 模板里。
@@ -896,6 +898,47 @@ async def _watch(task_id: str) -> None:
             return
 
 
+_ENHANCE_DEFAULT_SYSTEM_PROMPT = (
+    "You are a professional image generation prompt enhancer. "
+    "Given a user's brief description and target resolution, expand it into a rich, detailed visual description "
+    "suitable for a high-quality text-to-image model. Preserve all elements the user stated; add details about "
+    "lighting, composition, style, texture, color palette, and atmosphere. "
+    "Output ONLY the enhanced description in the same language as the input, no explanations or prefixes."
+)
+
+
+async def _enhance_prompt(prompt_text: str, width: int, height: int, system_prompt: str, skill_id: str = "") -> str:
+    """调用 LLM 增强出图提示词；优先使用自定义系统提示词，其次加载技能 skill.md 正文；失败时返回原文。"""
+    from . import llm as _llm
+
+    sys_prompt = (system_prompt or "").strip()
+    if not sys_prompt and skill_id:
+        from . import skill as _skill
+        try:
+            language = _skill._resolve_skill_language(prompt_text)
+            sys_prompt = (_skill.load_skill_content(skill_id, language=language) or "").strip()
+        except Exception:
+            pass
+    if not sys_prompt:
+        sys_prompt = _ENHANCE_DEFAULT_SYSTEM_PROMPT
+
+    user_msg = f"Target resolution: {width}x{height}\nUser prompt: {prompt_text}"
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _llm.chat_turn([
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_msg},
+            ], max_tokens=1024)
+        )
+        enhanced = str(result.get("content") or "").strip()
+        if not enhanced:
+            return prompt_text
+        return enhanced
+    except Exception as e:
+        logger.warning(f"[NeoNodes] prompt enhancement failed, using original: {e}")
+        return prompt_text
+
+
 async def start_generation(body: dict) -> dict:
     """按所选技能的 workflow.json 模板渲染并提交出图任务。"""
     from . import skill as _skill
@@ -915,6 +958,10 @@ async def start_generation(body: dict) -> dict:
             settings[key] = value
 
     params = resolve_request(body or {}, settings)
+    if settings.get("enhance_prompt"):
+        params["prompt"] = await _enhance_prompt(
+            params["prompt"], params["width"], params["height"],
+            settings.get("enhance_system_prompt", ""), skill_id)
     graph, template_warns = render_template(template, params)
     params["warnings"].extend(template_warns)
     prompt_id = await submit_graph(graph)

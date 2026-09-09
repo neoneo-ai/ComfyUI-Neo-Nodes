@@ -2612,7 +2612,7 @@
 /* 配置行：标签 | 控件 两栏布局；折叠区（高级选项）内的 Text Encoder / VAE / 出图张数 / 输出前缀 行同样两栏 */
 .rs-skill-gen-settings .rs-gen-model-section .rs-config-row,
 .rs-skill-gen-settings .rs-gen-size-section > .rs-config-row,
-.rs-skill-gen-settings details.rs-gen-advanced > .rs-config-row {
+.rs-skill-gen-settings details.rs-gen-advanced .rs-gen-adv-content > .rs-config-row {
     display: grid !important;
     grid-template-columns: 110px minmax(0, 1fr) !important;
     align-items: center !important;
@@ -2628,6 +2628,7 @@
 }
 /* Text Encoder / VAE 折叠区：默认收起，点标题展开（仅本技能设置区） */
 .rs-skill-gen-settings details.rs-gen-advanced { display: flex; flex-direction: column; gap: 12px; }
+.rs-skill-gen-settings details.rs-gen-advanced .rs-gen-adv-content { display: flex; flex-direction: column; gap: 12px; }
 .rs-skill-gen-settings details.rs-gen-advanced > summary {
     cursor: pointer;
     font-size: 12px;
