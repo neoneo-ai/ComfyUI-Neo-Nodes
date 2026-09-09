@@ -398,8 +398,8 @@ export function createModelConfigSection() {
     const section = mkEl("div", "rs-gen-model-section");
 
     // 三个模型选择行：空值 = 按名称线索自动挑选（后端 suggest_model），用户可显式指定
-    const makeComboRow = (labelText, placeholder) => {
-        const row = mkEl("div", "rs-config-row");
+    const makeComboRow = (labelText, placeholder, extraClass) => {
+        const row = mkEl("div", "rs-config-row" + (extraClass ? " " + extraClass : ""));
         const label = mkEl("label", "rs-form-label");
         label.textContent = labelText;
         const select = document.createElement("select");
@@ -408,8 +408,9 @@ export function createModelConfigSection() {
         return { row, select };
     };
     const modelCtl = makeComboRow("出图模型");
-    const encoderCtl = makeComboRow("Text Encoder");
-    const vaeCtl = makeComboRow("VAE");
+    // Text Encoder / VAE 很少改动：打 rs-gen-adv-row 标记，供技能弹窗收进折叠区（全局菜单不折叠）
+    const encoderCtl = makeComboRow("Text Encoder", undefined, "rs-gen-adv-row");
+    const vaeCtl = makeComboRow("VAE", undefined, "rs-gen-adv-row");
 
     // LoRA 行：动态增删，每行 = 模型选择 + 强度
     const loraRow = mkEl("div", "rs-config-row");
@@ -503,6 +504,8 @@ export function createModelConfigSection() {
 export function createGenSizeRows() {
     const section = mkEl("div", "rs-gen-size-section");
     const countCtl = numberRow("出图张数", { min: 1, max: 8, step: 1, value: 1 });
+    // 出图张数默认隐藏 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
+    countCtl.row.classList.add("rs-gen-adv-row");
 
     // 下拉行（长边尺寸 / 默认比例）：结构同模型选择行
     const makeChoiceRow = (labelText) => {
@@ -517,8 +520,8 @@ export function createGenSizeRows() {
     const sizeCtl = makeChoiceRow("长边尺寸");
     const ratioCtl = makeChoiceRow("默认比例");
 
-    // 输出前缀（可含子目录），写入模板 {{PREFIX}}
-    const prefixRow = mkEl("div", "rs-config-row");
+    // 输出前缀（可含子目录），写入模板 {{PREFIX}}；很少改动 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
+    const prefixRow = mkEl("div", "rs-config-row rs-gen-adv-row");
     const prefixLabel = mkEl("label", "rs-form-label");
     prefixLabel.textContent = "输出前缀";
     const prefixInput = mkEl("input", "rs-form-input");
@@ -530,11 +533,12 @@ export function createGenSizeRows() {
     // 未列出的已保存值自动追加为「…（已保存）」项保留，避免切下拉即丢数据
     const COMMON_EDGES = ["1024", "1152", "1280", "1536", "1792", "2048", "2560", "3072"];
     const COMMON_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"];
-    function fillChoiceSelect(select, options, current) {
+    function fillChoiceSelect(select, options, current, defaultValue) {
         select.innerHTML = "";
         const auto = document.createElement("option");
         auto.value = "";
-        auto.textContent = "默认";
+        // 「默认」项标注后端实际默认值（base_resolution=1280 / default_ratio=1:1），让用户知道空值会出什么尺寸
+        auto.textContent = defaultValue ? `默认 (${defaultValue})` : "默认";
         select.appendChild(auto);
         for (const v of options) {
             const opt = document.createElement("option");
@@ -552,15 +556,13 @@ export function createGenSizeRows() {
         }
     }
 
-    // 三个数值/短文本参数压成一行三列网格
-    const grid = mkEl("div", "rs-gen-grid");
-    grid.append(countCtl.row, sizeCtl.row, ratioCtl.row);
-    section.append(grid, prefixRow);
+    // 张数 / 长边 / 比例 / 前缀各占一行（标签 | 控件），与模型区两栏风格统一
+    section.append(countCtl.row, sizeCtl.row, ratioCtl.row, prefixRow);
 
     function load(settings) {
         countCtl.input.value = settings.count ?? 1;
-        fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""));
-        fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""));
+        fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""), "1280");
+        fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""), "1:1");
         prefixInput.value = settings.output_prefix ?? "";
     }
 

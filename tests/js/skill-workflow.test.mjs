@@ -104,7 +104,7 @@ test("详情弹窗：gen_image 技能显示设置区，回填 config 并可保�
     // 修改张数后点底部 Save → 先写正文（/rs_prompts/save_skill）再 POST skill_config（{ skill_id, config }）
     let savedSkill = null;
     mockRoute("/rs_prompts/save_skill", (b) => { savedSkill = b; return jsonResponse({ success: true }); });
-    const countInput = wrap.querySelector(".rs-gen-size-section input[type=number]");
+    const countInput = wrap.querySelector(".rs-gen-advanced input[type=number]");
     countInput.value = "3";
     document.querySelector(".rs-tpl-save-btn").click();
     await sleep(80);

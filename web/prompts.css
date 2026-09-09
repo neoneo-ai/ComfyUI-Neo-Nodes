@@ -1791,6 +1791,8 @@
 
 .rs-tpl-content {
     min-height: 360px;
+    max-height: 520px;
+    overflow-y: auto;
     resize: vertical;
 }
 
@@ -2522,24 +2524,6 @@
 }
 .rs-gen-send-menu-item:hover { background: #2f2f2f; }
 .rs-gen-settings { display: flex; flex-direction: column; gap: 6px; }
-/* 三个数值/短文本参数一行三列（张数 / 长边 / 默认比例） */
-.rs-gen-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 5px;
-}
-.rs-gen-grid .rs-config-row {
-    gap: 2px;
-}
-.rs-gen-grid .rs-form-label {
-    font-size: 10px;
-    margin-bottom: 0;
-    white-space: nowrap;
-}
-.rs-gen-grid .rs-form-input {
-    padding: 4px 5px;
-    font-size: 11px;
-}
 .rs-gen-lora-list { display: flex; flex-direction: column; gap: 4px; }
 .rs-gen-lora-row {
     display: flex;
@@ -2617,16 +2601,18 @@
 .rs-gen-readonly-hint { font-size: 12px; color: #999; }
 
 /* ---- 技能详情弹窗：出图设置两栏表格（仅 .rs-skill-gen-settings，全局出图设置菜单不受影响）---- */
-.rs-skill-gen-settings { gap: 8px; }
+.rs-skill-gen-settings { gap: 12px; }
+.rs-skill-gen-settings .rs-gen-settings-header { margin-top: 12px; margin-bottom: 10px; }
 .rs-skill-gen-settings .rs-gen-model-section,
 .rs-skill-gen-settings .rs-gen-size-section {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
 }
-/* 配置行：标签 | 控件 两栏布局（尺寸区的三列网格除外，保持紧凑一行三列） */
-.rs-skill-gen-settings .rs-gen-model-section > .rs-config-row,
-.rs-skill-gen-settings .rs-gen-size-section > .rs-config-row {
+/* 配置行：标签 | 控件 两栏布局；折叠区（高级选项）内的 Text Encoder / VAE / 出图张数 / 输出前缀 行同样两栏 */
+.rs-skill-gen-settings .rs-gen-model-section .rs-config-row,
+.rs-skill-gen-settings .rs-gen-size-section > .rs-config-row,
+.rs-skill-gen-settings details.rs-gen-advanced > .rs-config-row {
     display: grid !important;
     grid-template-columns: 110px minmax(0, 1fr) !important;
     align-items: center !important;
@@ -2636,10 +2622,23 @@
     margin-bottom: 0;
     white-space: nowrap;
 }
-/* LoRA 行：标签 | 动态列表 | 「+ 添加」按钮右对齐 */
+/* LoRA 行：标签 | 动态列表 | 「+ 添加」按钮右对齐（section 最后一个直接子元素） */
 .rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child {
     grid-template-columns: 110px minmax(0, 1fr) auto !important;
 }
+/* Text Encoder / VAE 折叠区：默认收起，点标题展开（仅本技能设置区） */
+.rs-skill-gen-settings details.rs-gen-advanced { display: flex; flex-direction: column; gap: 12px; }
+.rs-skill-gen-settings details.rs-gen-advanced > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: #ccc;
+    user-select: none;
+    list-style: none;
+    width: fit-content; /* 仅标题文字可点击展开，避免整行误点 */
+}
+.rs-skill-gen-settings details.rs-gen-advanced > summary::-webkit-details-marker { display: none; }
+.rs-skill-gen-settings details.rs-gen-advanced > summary::before { content: "▸ "; color: #888; }
+.rs-skill-gen-settings details.rs-gen-advanced[open] > summary::before { content: "▾ "; }
 
 .rs-runtime-row {
     display: flex;

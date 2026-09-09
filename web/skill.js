@@ -305,7 +305,6 @@ function createSkillDetailPopup() {
     contentHeader.appendChild(modeBtns);
     const contentTextarea = document.createElement("textarea");
     contentTextarea.className = "rs-form-input rs-tpl-content";
-    contentTextarea.style.minHeight = "320px";
     contentTextarea.style.resize = "vertical";
     contentTextarea.placeholder = "Enter the system prompt content...";
     const contentPreview = mkEl("div", "rs-md-preview");
@@ -315,7 +314,7 @@ function createSkillDetailPopup() {
     // ---- 出图设置（仅 gen_image 技能显示）：复用全局出图设置的共享控件区，读写该技能的 config.json 覆盖 ----
     const genSettingsWrap = mkEl("div", "rs-gen-settings rs-skill-gen-settings");
     genSettingsWrap.style.display = "none";
-    const genSettingsHeader = mkEl("div", "rs-config-row");
+    const genSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const genSettingsTitle = mkEl("label", "rs-form-label");
     genSettingsTitle.textContent = "🖼️ 出图设置（本技能覆盖）";
     genSettingsTitle.title = "仅对本技能生效，未填项回落全局出图设置";
@@ -325,7 +324,24 @@ function createSkillDetailPopup() {
     genSettingsHeader.append(genSettingsTitle, genReadOnlyHint);
     const genModelSection = createModelConfigSection();
     const genSizeSection = createGenSizeRows();
+    // Text Encoder / VAE / 出图张数 / 输出前缀 很少改动：收进可折叠「高级选项」（默认收起），放到最底部
+    let advEl = null;
+    {
+        const advRows = [
+            ...genModelSection.el.querySelectorAll(".rs-gen-adv-row"),
+            ...genSizeSection.el.querySelectorAll(".rs-gen-adv-row"),
+        ];
+        if (advRows.length) {
+            const adv = mkEl("details", "rs-gen-advanced");
+            const advSummary = mkEl("summary", "rs-gen-advanced-summary");
+            advSummary.textContent = "Text Encoder / VAE / 出图张数 / 输出前缀（高级）";
+            adv.appendChild(advSummary);
+            for (const r of advRows) adv.appendChild(r);
+            advEl = adv;
+        }
+    }
     genSettingsWrap.append(genSettingsHeader, genModelSection.el, genSizeSection.el);
+    if (advEl) genSettingsWrap.appendChild(advEl);
 
     // readOnly（预设/任务技能）时禁用全部控件；config 缺失按空对象回落默认。
     // 禁用必须在 load() 之后：load 会动态新建 LoRA 行，新建元素不会被前面的禁用循环覆盖
@@ -384,6 +400,8 @@ function createSkillDetailPopup() {
     function setEditorMode(mode) {
         editorMode = mode;
         const previewing = mode === "preview";
+        // 预览与编辑保持等高：进入预览时按当前编辑框像素高度锁定（长内容各自内部滚动）
+        contentPreview.style.height = previewing && contentTextarea.offsetHeight ? contentTextarea.offsetHeight + "px" : "";
         contentTextarea.style.display = previewing ? "none" : "block";
         contentPreview.style.display = previewing ? "block" : "none";
         if (previewing) contentPreview.innerHTML = renderMarkdown(contentTextarea.value);
@@ -468,12 +486,15 @@ function createSkillDetailPopup() {
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
         else { selectedFile = null; contentTextarea.value = ""; }
-        // 出图技能显示 config.json 覆盖区（预设/任务只读）；其余技能隐藏
+        // 出图技能显示 config.json 覆盖区（预设/任务只读）；其余技能隐藏。
+        // multi_turn 是文本多轮概念，出图技能用不到 → 一并隐藏
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
+            multiTurnRow.style.display = "none";
             await loadGenSettings(!isCustom());
         } else {
             genSettingsWrap.style.display = "none";
+            multiTurnRow.style.display = "";
         }
         updateControls();
     }
@@ -494,6 +515,7 @@ function createSkillDetailPopup() {
         fileSelect.style.display = "none";
         selectedFile = null;
         multiTurnChk.checked = false;
+        multiTurnRow.style.display = "";
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         setEditorMode("edit");

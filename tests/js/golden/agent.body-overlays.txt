@@ -79,14 +79,14 @@ body
                 input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
                 span.rs-combo-caret "▾"
               select
-          div.rs-config-row
+          div.rs-config-row.rs-gen-adv-row
             label.rs-form-label "Text Encoder"
             div.rs-model-select-box <display=none>
               div
                 input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
                 span.rs-combo-caret "▾"
               select
-          div.rs-config-row
+          div.rs-config-row.rs-gen-adv-row
             label.rs-form-label "VAE"
             div.rs-model-select-box <display=none>
               div
@@ -98,25 +98,24 @@ body
             div.rs-gen-lora-list
             button.rs-gen-lora-add <type=button> "+ 添加 LoRA"
         div.rs-gen-size-section
-          div.rs-gen-grid
-            div.rs-config-row
-              label.rs-form-label "出图张数"
-              input.rs-form-input <type=number val="1">
-            div.rs-config-row
-              label.rs-form-label "长边尺寸"
-              div.rs-model-select-box <display=none>
-                div
-                  input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                  span.rs-combo-caret "▾"
-                select
-            div.rs-config-row
-              label.rs-form-label "默认比例"
-              div.rs-model-select-box <display=none>
-                div
-                  input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-                  span.rs-combo-caret "▾"
-                select
+          div.rs-config-row.rs-gen-adv-row
+            label.rs-form-label "出图张数"
+            input.rs-form-input <type=number val="1">
           div.rs-config-row
+            label.rs-form-label "长边尺寸"
+            div.rs-model-select-box <display=none>
+              div
+                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+                span.rs-combo-caret "▾"
+              select
+          div.rs-config-row
+            label.rs-form-label "默认比例"
+            div.rs-model-select-box <display=none>
+              div
+                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+                span.rs-combo-caret "▾"
+              select
+          div.rs-config-row.rs-gen-adv-row
             label.rs-form-label "输出前缀"
             input.rs-form-input <type=text placeholder=NeoAgent>
         div.rs-config-row
