@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 内置 Krea2 出图（文生图 / 参考图四视图）
-# API prompt 通过内部 HTTP API 压进执行队列，复用 ComfyUI 的排队、显存生命周期与
+# ComfyUI-Neo-Nodes — 内置出图（技能工作流模板渲染）
+# 出图完全由所选技能的 workflow.json 模板驱动：占位符替换 + LoRA 槽位填充/动态注入，
+# 渲染后的 API prompt 通过内部 HTTP API 压进执行队列，复用 ComfyUI 的排队、显存生命周期与
 # 取消行为；任务状态由 _watch 协程按变化经 rs.image_gen.status 事件推给前端。
 # 输出落在 output 目录的 <前缀>/<日期>/<slug> 下并写同名 .txt（提示词），
 # Gallery 可直接浏览、搜索并把图发送回工作流节点。
-# 参考图模式走内置 krea2_edit 路径（krea2_edit.py，vendor 自 comfyui-krea2edit）：
-# 源 latent frame=1 + 目标空 latent frame=0，denoise 恒为 1.0，四视图 LoRA 自动追加。
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import difflib
 import hashlib
 import json
@@ -49,17 +49,17 @@ DEFAULT_SETTINGS = {
     "model": "",              # diffusion_models 相对名；空 = 自动挑选 Krea2 模型
     "text_encoder": "",       # text_encoders 相对名
     "vae": "",                # vae 相对名
-    "clip_type": "krea2",
     "loras": [],              # [{name, strength, ref_only}]，LoraLoaderModelOnly；ref_only=true 仅参考图模式加载（四视图 LoRA 即勾此项者）
-    "steps": 8,
-    "cfg": 1.0,
-    "sampler": "euler",
-    "scheduler": "simple",
     "base_resolution": 1280,  # 按比例算尺寸时的长边
     "default_ratio": "1:1",
-    "count": 1,               # 单次出图张数（1-8，参考图模式强制为 1）
+    "count": 1,               # 单次出图张数（1-8，写入模板 {{COUNT}}）
     "output_prefix": "NeoAgent",
 }
+
+# 采样参数（steps/cfg/sampler/denoise 等）不走设置，直接写死在各技能的 workflow.json 模板里。
+# 单次请求允许覆盖的设置键（其余设置一律以全局为准）
+_OVERRIDE_KEYS = ("model", "text_encoder", "vae", "loras",
+                  "base_resolution", "default_ratio", "output_prefix")
 
 # 自动挑选默认模型时的名称线索（按优先级）
 _MODEL_HINTS = {
@@ -73,13 +73,6 @@ _MODEL_HINTS = {
 
 # 四视图 LoRA 名称线索（参考图模式必需，缺失时报错不降级）
 _QUADVIEW_HINTS = ("quadview", "四视图")
-
-# 参考图模式固定结构指令（对齐 Krea2 四视图工作流的默认 prompt）：角色板布局由该指令 +
-# 四视图 LoRA 提供，人物身份来自参考图；skill 正文的人物描述若填写会追加在指令之后
-FOUR_VIEW_PREFIX = (
-    "Convert the character in the image to a Character Sheet showing a face close-up, "
-    "front full body, side full body and back full body views. "
-)
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 
@@ -350,11 +343,6 @@ def _reference_name(src: dict) -> str | None:
 # 请求参数解析（设置 + 单次覆盖 + 模型解析 + 参考图落盘）
 # ===========================================================================
 
-_OVERRIDE_KEYS = ("model", "text_encoder", "vae", "clip_type", "loras", "steps", "cfg",
-                  "sampler", "scheduler", "base_resolution",
-                  "default_ratio", "output_prefix")
-
-
 def _int(value, default: int) -> int:
     try:
         return int(value)
@@ -416,7 +404,7 @@ def _quadview_lora(user_loras: list) -> tuple:
 
 
 def resolve_request(body: dict, settings: dict | None = None) -> dict:
-    """把一次出图请求解析成出图参数；非法时抛 ValueError（消息可直接回前端）。"""
+    """把一次出图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。"""
     body = body if isinstance(body, dict) else {}
     settings = settings or get_settings()
     merged = dict(settings)
@@ -453,12 +441,10 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
         raise ValueError("参考图无法读取，请确认图片仍然存在")
     ref_name = names[0] if names else None
     if len(names) > 1:
-        warnings.append("四视图只使用第一张参考图")
+        warnings.append("只使用第一张参考图")
 
-    # 参考图模式：固定结构指令前缀 + 用户描述。四视图 LoRA 必需 —— 优先用用户在 LoRA
-    # 列表里勾了「依赖参考图」的（直接沿用，不追加）；没有则按名称线索自动挑选/追加，
-    # 仍找不到才报错。文生图模式跳过 ref_only 的 LoRA（它们只在有参考图时才有意义）。
-    prompt_text = FOUR_VIEW_PREFIX + prompt_text if ref_name else prompt_text
+    # 参考图模式：LoRA 列表里没有勾「依赖参考图」的则按名称线索自动挑选四视图 LoRA 追加到
+    # 链尾（用于填模板 LoRA 槽位）；文生图模式跳过 ref_only 的 LoRA（只在有参考图时才有意义）。
     if ref_name:
         if not any(l.get("ref_only") for l in loras):
             quadview, already = _quadview_lora(loras)
@@ -468,18 +454,12 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
         loras = [l for l in loras if not l.get("ref_only")]
 
     count = max(1, min(MAX_IMAGES, _int(body.get("count"), _int(merged.get("count"), 1))))
-    if ref_name and count > 1:
-        count = 1
-        warnings.append("四视图模式每次只出一张")
+    width, height = resolve_dimensions(merged, ratio=body.get("ratio"),
+                                       width=body.get("width"), height=body.get("height"))
 
-    width = _int(body.get("width"), 0)
-    height = _int(body.get("height"), 0)
+    ref_scale = None
     if ref_name:
-        # 四视图角色板固定 16:9 横版（出图 skill 约定），不读取参考图比例；显式宽高也被忽略
-        base = merged.get("base_resolution") or DEFAULT_SETTINGS["base_resolution"]
-        width, height = size_from_ratio(16.0 / 9.0, base)
-        # 参考图长边限到 1024px（VAE encode + Qwen3-VL 接地的输入尺度）；
-        # 剩余 AR 适配由 Krea2EditModelPatch 的 fit_mode=fit 在像素空间完成
+        # 参考图长边限到 1024px（VAE encode + Qwen3-VL 接地的输入尺度），两侧取 8 的倍数
         src_size = _reference_size(ref_name)
         if src_size and min(src_size) > 0:
             scale = 1024 / max(src_size)
@@ -487,9 +467,6 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
                          max(8, int(src_size[1] * scale + 0.5)) // 8 * 8)
         else:
             ref_scale = (1024, 1024)
-    else:
-        width, height = resolve_dimensions(
-            merged, ratio=body.get("ratio"), width=width, height=height)
 
     seed = body.get("seed")
     seed = random.randint(0, 2**63 - 1) if seed is None else max(0, _int(seed, 0))
@@ -508,17 +485,11 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
         "model": model,
         "text_encoder": encoder,
         "vae": vae,
-        "clip_type": str(merged.get("clip_type") or DEFAULT_SETTINGS["clip_type"]),
         "loras": loras,
-        "steps": max(1, min(200, _int(merged.get("steps"), DEFAULT_SETTINGS["steps"]))),
-        "cfg": max(0.0, _float(merged.get("cfg"), DEFAULT_SETTINGS["cfg"])),
-        "sampler": str(merged.get("sampler") or DEFAULT_SETTINGS["sampler"]),
-        "scheduler": str(merged.get("scheduler") or DEFAULT_SETTINGS["scheduler"]),
         "seed": seed,
         "count": count,
         "width": width,
         "height": height,
-        "denoise": 1.0,
         "ref_name": ref_name,
         "ref_scale": ref_scale if ref_name else None,
         "prefix": prefix,
@@ -527,81 +498,169 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
 
 
 # ===========================================================================
-# 工作流构建（API prompt 格式，全部核心节点）
+# 模板渲染（workflow.json 占位符替换 + LoRA 槽位 / 动态注入）
 # ===========================================================================
 
-def build_graph(params: dict) -> dict:
-    """文本生成 / 参考图四视图共用的 Krea2 图：加载 → 编码 → 采样 → 解码 → 保存。
+_PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{WIDTH}}", "{{HEIGHT}}",
+                       "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
+                       "{{REF_IMAGE}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
 
-    参考图模式（krea2_edit 路径）：源 latent 作为 frame=1 clean token、目标空 latent
-    作 frame=0，denoise 恒为 1.0；语义侧用 Krea2EditGroundedEncode 把指令与同一张
-    参考图一起过 Qwen3-VL（negative 为空指令的 grounded encode）。
-    """
-    graph = {
-        "1": {"class_type": "UNETLoader",
-              "inputs": {"unet_name": params["model"], "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader",
-              "inputs": {"clip_name": params["text_encoder"], "type": params["clip_type"],
-                         "device": "default"}},
-        "3": {"class_type": "VAELoader", "inputs": {"vae_name": params["vae"]}},
-    }
 
-    model_src = ("1", 0)
-    for offset, lora in enumerate(params.get("loras") or []):
-        node = str(20 + offset)
-        graph[node] = {"class_type": "LoraLoaderModelOnly",
-                       "inputs": {"model": model_src, "lora_name": lora["name"],
-                                  "strength_model": lora["strength"]}}
-        model_src = (node, 0)
+def _typed_value(token: str, params: dict):
+    """占位符对应的类型化取值（尺寸/种子/张数是 int，其余是 str）。"""
+    if token == "{{PROMPT}}":
+        return params["prompt"]
+    if token == "{{NEGATIVE}}":
+        return params["negative"]
+    if token == "{{SEED}}":
+        return params["seed"]
+    if token == "{{WIDTH}}":
+        return params["width"]
+    if token == "{{HEIGHT}}":
+        return params["height"]
+    if token == "{{COUNT}}":
+        return params["count"]
+    if token == "{{PREFIX}}":
+        return params["prefix"]
+    if token == "{{MODEL}}":
+        return params["model"]
+    if token == "{{TEXT_ENCODER}}":
+        return params["text_encoder"]
+    if token == "{{VAE}}":
+        return params["vae"]
+    if token == "{{REF_IMAGE}}":
+        return params["ref_name"]
+    scale = params.get("ref_scale") or (0, 0)
+    if token == "{{REF_WIDTH}}":
+        return scale[0]
+    if token == "{{REF_HEIGHT}}":
+        return scale[1]
+    raise ValueError(f"未知占位符 {token}")
 
-    if params.get("ref_name"):
-        scale_w, scale_h = params.get("ref_scale") or (1024, 1024)
-        graph["6"] = {"class_type": "LoadImage", "inputs": {"image": params["ref_name"]}}
-        graph["7"] = {"class_type": "ImageScale",
-                      "inputs": {"image": ("6", 0), "upscale_method": "lanczos",
-                                 "width": scale_w, "height": scale_h, "crop": "disabled"}}
-        graph["8"] = {"class_type": "VAEEncode",
-                      "inputs": {"pixels": ("7", 0), "vae": ("3", 0)}}
-        # positive/negative 都接地到同一张已缩放的参考图（与 VAE/patch 同源）：
-        # positive 用 native 分辨率读指令、negative 空指令限 768，对齐 Krea2 四视图工作流
-        graph["4"] = {"class_type": "Krea2EditGroundedEncode",
-                      "inputs": {"clip": ("2", 0), "prompt": params["prompt"],
-                                 "image": ("7", 0), "grounding_px": 0}}
-        graph["5"] = {"class_type": "Krea2EditGroundedEncode",
-                      "inputs": {"clip": ("2", 0), "prompt": "",
-                                 "image": ("7", 0), "grounding_px": 768}}
-        # target_latent 与 KSampler.latent_image 共用同一个空 latent：
-        # 让源图在采样开始前就完成 VAE encode，避免采样中途挤掉扩散模型
-        graph["9"] = {"class_type": "EmptySD3LatentImage",
-                      "inputs": {"width": params["width"], "height": params["height"],
-                                 "batch_size": 1}}
-        graph["14"] = {"class_type": "Krea2EditModelPatch",
-                       "inputs": {"model": model_src, "source_latent": ("8", 0),
-                                  "fit_mode": "fit", "vae": ("3", 0),
-                                  "source_image": ("7", 0), "target_latent": ("9", 0)}}
-        model_src = ("14", 0)
-        latent_src = ("9", 0)
+
+def _substitute_value(value: str, params: dict):
+    """替换字符串值里的占位符；整值恰好是单个占位符时直接取类型化值（保持 int 等原类型）。"""
+    tokens = [t for t in _PLACEHOLDER_TOKENS if t in value]
+    if not tokens:
+        return value
+    token = value.strip()
+    if token in tokens:
+        return _typed_value(token, params)
+    out = value
+    for t in tokens:
+        out = out.replace(t, str(_typed_value(t, params)))
+    return out
+
+
+def _node_sort_key(nid):
+    try:
+        return (0, int(str(nid)), "")
+    except (TypeError, ValueError):
+        return (1, 0, str(nid))
+
+
+def _model_consumer(graph: dict, src_id: str):
+    """model 输入连到 src 输出的 LoraLoaderModelOnly 节点 id；无则 None。"""
+    best = None
+    for nid, node in graph.items():
+        if not isinstance(node, dict) or node.get("class_type") != "LoraLoaderModelOnly":
+            continue
+        v = (node.get("inputs") or {}).get("model")
+        if isinstance(v, list) and len(v) == 2 and v[0] == str(src_id):
+            if best is None or _node_sort_key(nid) < _node_sort_key(best):
+                best = nid
+    return best
+
+
+def _any_model_consumer(graph: dict, src_id: str):
+    """model 输入连到 src 输出的任意节点 id（取排序最前）；无则 None。"""
+    best = None
+    for nid, node in graph.items():
+        if nid == src_id or not isinstance(node, dict):
+            continue
+        v = (node.get("inputs") or {}).get("model")
+        if isinstance(v, list) and len(v) == 2 and v[0] == str(src_id):
+            if best is None or _node_sort_key(nid) < _node_sort_key(best):
+                best = nid
+    return best
+
+
+def _apply_loras(graph: dict, loras: list, warnings: list):
+    """填模板 {{LORA_i_*}} 槽位；超出槽位的 LoRA 在主链末端动态插入 LoraLoaderModelOnly。"""
+    slot_re = re.compile(r"^\{\{LORA_(\d+)_NAME\}\}$")
+    slots = {}
+    for nid, node in graph.items():
+        if not isinstance(node, dict) or node.get("class_type") != "LoraLoaderModelOnly":
+            continue
+        m = slot_re.match(str((node.get("inputs") or {}).get("lora_name", "")))
+        if m:
+            slots[int(m.group(1))] = nid
+    ordered = [slots[i] for i in sorted(slots)]
+
+    for entry, nid in zip(loras, ordered):
+        node = graph[nid]
+        node["inputs"]["lora_name"] = entry["name"]
+        node["inputs"]["strength_model"] = entry["strength"]
+
+    # 空槽（LoRA 比槽位少）：保留槽位可加载 —— strength 0 + loras 目录兜底文件
+    for nid in ordered[len(loras):]:
+        fallbacks = _folder_files("loras")
+        if not fallbacks:
+            raise ValueError(f"模板有 {len(ordered)} 个 LoRA 槽位但只配置了 {len(loras)} 个，且 loras 目录里没有可兜底的文件")
+        node = graph[nid]
+        node["inputs"]["lora_name"] = fallbacks[0]
+        node["inputs"]["strength_model"] = 0.0
+
+    # 多余 LoRA（比槽位多）：主链末端之后动态串联插入
+    if len(loras) <= len(ordered):
+        return
+    if ordered:
+        anchor = ordered[-1]
     else:
-        graph["4"] = {"class_type": "CLIPTextEncode",
-                      "inputs": {"clip": ("2", 0), "text": params["prompt"]}}
-        graph["5"] = {"class_type": "CLIPTextEncode",
-                      "inputs": {"clip": ("2", 0), "text": params["negative"]}}
-        graph["9"] = {"class_type": "EmptyLatentImage",
-                      "inputs": {"width": params["width"], "height": params["height"],
-                                 "batch_size": params["count"]}}
-        latent_src = ("9", 0)
+        unets = [nid for nid, n in graph.items()
+                 if isinstance(n, dict) and n.get("class_type") == "UNETLoader"]
+        if not unets:
+            warnings.append(f"找不到 LoRA 注入点（模板没有 UNETLoader），跳过 {len(loras)} 个 LoRA")
+            return
+        anchor = sorted(unets, key=_node_sort_key)[0]
+        while True:  # 模板手写过非槽位 LoRA 链时，锚点推到链尾
+            nxt = _model_consumer(graph, anchor)
+            if not nxt:
+                break
+            anchor = nxt
+    consumer = _any_model_consumer(graph, anchor)
+    if consumer is None:
+        warnings.append(f"找不到 LoRA 注入点的下游节点（节点 {anchor}），跳过多余 LoRA")
+        return
+    try:
+        max_id = max(int(nid) for nid in graph if str(nid).isdigit())
+    except ValueError:
+        max_id = 0
+    prev = anchor
+    for i, entry in enumerate(loras[len(ordered):], start=1):
+        nid = str(max_id + i)
+        graph[nid] = {"class_type": "LoraLoaderModelOnly",
+                      "inputs": {"model": [str(prev), 0], "lora_name": entry["name"],
+                                 "strength_model": entry["strength"]}}
+        prev = nid
+    graph[consumer]["inputs"]["model"] = [prev, 0]
 
-    graph["10"] = {"class_type": "KSampler",
-                  "inputs": {"model": model_src, "seed": params["seed"], "steps": params["steps"],
-                             "cfg": params["cfg"], "sampler_name": params["sampler"],
-                             "scheduler": params["scheduler"], "positive": ("4", 0),
-                             "negative": ("5", 0), "latent_image": latent_src,
-                             "denoise": params["denoise"]}}
-    graph["11"] = {"class_type": "VAEDecode",
-                   "inputs": {"samples": ("10", 0), "vae": ("3", 0)}}
-    graph["12"] = {"class_type": "SaveImage",
-                   "inputs": {"images": ("11", 0), "filename_prefix": params["prefix"]}}
-    return graph
+
+def render_template(template: dict, params: dict) -> tuple[dict, list]:
+    """把 workflow.json 模板渲染成可提交队列的 API prompt。返回 (graph, warnings)。"""
+    if "{{REF_IMAGE}}" in json.dumps(template, ensure_ascii=False) and not params.get("ref_name"):
+        raise ValueError("该技能需要参考图，请添加参考图后再生成")
+    graph = copy.deepcopy(template)
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs") or {}
+        for key, value in list(inputs.items()):
+            if isinstance(value, str) and "{{" in value:
+                inputs[key] = _substitute_value(value, params)
+    warnings = []
+    _apply_loras(graph, params.get("loras") or [], warnings)
+    return graph, warnings
 
 
 # ===========================================================================
@@ -732,10 +791,8 @@ def write_sidecar(image_path: str, params: dict) -> None:
     if os.path.exists(path):
         return
     loras = ",".join(f"{l['name']}@{l['strength']}" for l in params.get("loras") or [])
-    meta = (f"steps={params['steps']} cfg={params['cfg']} {params['sampler']}/"
-            f"{params['scheduler']} seed={params['seed']} denoise={params['denoise']} "
-            f"{params['width']}x{params['height']} model={params['model']}"
-            + (f" loras={loras}" if loras else ""))
+    meta = (f"seed={params['seed']} {params['width']}x{params['height']} "
+            f"model={params['model']}" + (f" loras={loras}" if loras else ""))
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"{params['prompt']}\n{meta}\n")
@@ -840,8 +897,27 @@ async def _watch(task_id: str) -> None:
 
 
 async def start_generation(body: dict) -> dict:
-    params = resolve_request(body)
-    prompt_id = await submit_graph(build_graph(params))
+    """按所选技能的 workflow.json 模板渲染并提交出图任务。"""
+    from . import skill as _skill
+
+    skill_id = str((body or {}).get("skill_id") or "").strip()
+    if not skill_id:
+        raise ValueError("请先在技能下拉里选择一个出图技能（带工作流模板）")
+    template = _skill.load_skill_workflow(skill_id)
+    if template is None:
+        raise ValueError(f"技能 {skill_id} 没有工作流模板（workflow.json），"
+                         f"可在技能下拉的「保存当前工作流」里从画布导出一个")
+
+    settings = get_settings()
+    cfg = _skill.get_skill_gen_config(skill_id)
+    for key, value in cfg.items():
+        if key in DEFAULT_SETTINGS and value not in (None, "", []):
+            settings[key] = value
+
+    params = resolve_request(body or {}, settings)
+    graph, template_warns = render_template(template, params)
+    params["warnings"].extend(template_warns)
+    prompt_id = await submit_graph(graph)
     _prune_tasks()
     now = time.time()
     task = {
@@ -935,4 +1011,66 @@ async def cancel_route(request):
         watcher.cancel()
     _notify(task)
     return web.json_response({"dequeued": dequeued, "interrupted": interrupted})
+
+
+@routes.post("/neo_image_gen/save_workflow_skill")
+async def save_workflow_skill_route(request):
+    """把当前画布工作流（API prompt）导出为出图技能。"""
+    from . import skill as _skill
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是 JSON"}, status=400)
+    body = body if isinstance(body, dict) else {}
+    result = _skill.save_workflow_skill(
+        body.get("name", ""), body.get("description", ""),
+        body.get("tags", []), body.get("workflow"))
+    if not result.get("success"):
+        return web.json_response({"error": result.get("message")}, status=400)
+    return web.json_response(result)
+
+
+@routes.get("/neo_image_gen/skill_config")
+async def get_skill_config_route(request):
+    from . import skill as _skill
+
+    skill_id = request.query.get("skill_id", "")
+    if not skill_id:
+        return web.json_response({"error": "缺少 skill_id"}, status=400)
+    return web.json_response(_skill.get_skill_gen_config(skill_id))
+
+
+@routes.post("/neo_image_gen/skill_config")
+async def post_skill_config_route(request):
+    from . import skill as _skill
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是 JSON"}, status=400)
+    body = body if isinstance(body, dict) else {}
+    ok, message = _skill.save_skill_gen_config(
+        str(body.get("skill_id") or ""), body.get("config") or {})
+    if not ok:
+        status = 403 if "preset" in message.lower() else 400
+        return web.json_response({"error": message}, status=status)
+    return web.json_response({"success": True})
+
+
+@routes.post("/neo_image_gen/copy_skill_files")
+async def copy_skill_files_route(request):
+    """「复制为自定义」时把源技能的 workflow.json / config.json 一并带过去。"""
+    from . import skill as _skill
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是 JSON"}, status=400)
+    body = body if isinstance(body, dict) else {}
+    ok, message = _skill.copy_skill_files(
+        str(body.get("from_id") or ""), str(body.get("to_id") or ""))
+    if not ok:
+        return web.json_response({"error": message}, status=400)
+    return web.json_response({"success": True})
 

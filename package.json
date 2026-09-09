@@ -7,6 +7,8 @@
     "update-goldens": "node --env-file=tests/js/golden-update.env --test --test-force-exit --test-timeout=30000 \"tests/js/*.test.mjs\""
   },
   "devDependencies": {
-    "jsdom": "^30.0.1"
+    "jsdom": "^30.0.1",
+    "playwright": "^1.63.0",
+    "postcss": "^8.5.28"
   }
 }

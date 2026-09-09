@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import re
 import io
+import copy
 import json
 import math
 import base64
@@ -803,10 +804,11 @@ def _safe_skill_file_path(skill_dir: str, filename: str) -> str | None:
     return target
 
 
-def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom", multi_turn=None) -> bool:
+def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom", multi_turn=None,
+                    category=None, gen_image=None, requires_ref=None) -> bool:
     """保存 skill 的主文件 skill.md（frontmatter + 正文），保留未编辑的既有字段。
 
-    multi_turn 为 None 时沿用 frontmatter 既有值；显式传入则按布尔值写入（False 时移除该字段）。
+    multi_turn/category/gen_image/requires_ref 为 None 时沿用 frontmatter 既有值；显式传入则写入（假值时移除该字段）。
     """
     sid = _normalize_skill_id(skill_id)
     if not sid:
@@ -817,6 +819,9 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
         os.makedirs(d, exist_ok=True)
         meta, _body = _read_skill_md(d)
         mt = meta.get("multi_turn") if multi_turn is None else bool(multi_turn)
+        cat = meta.get("category") if category is None else (category or "").strip()
+        gi = meta.get("gen_image") if gen_image is None else bool(gen_image)
+        rr = meta.get("requires_ref") if requires_ref is None else bool(requires_ref)
         new_meta = {
             "name": (name or "").strip() or sid,
             "tags": list(tags or []),
@@ -826,10 +831,10 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
             "result_key": meta.get("result_key"),
             "multi_result": meta.get("multi_result"),
             "multi_turn": mt or None,
-            "category": meta.get("category"),
+            "category": cat or None,
             "markers": meta.get("markers"),
-            "gen_image": meta.get("gen_image"),
-            "requires_ref": meta.get("requires_ref"),
+            "gen_image": gi or None,
+            "requires_ref": rr or None,
             "ratio": meta.get("ratio"),
             "created_at": meta.get("created_at") or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
@@ -890,6 +895,271 @@ def delete_skill(skill_id: str) -> tuple[bool, str]:
                 shutil.rmtree(d)
                 return True, "deleted"
     return False, "Skill not found"
+
+
+# ==========================================
+# 出图技能：工作流模板导出 / 每技能 config.json
+# ==========================================
+
+def load_skill_workflow(skill_id: str):
+    """读 skill 的 workflow.json（API prompt 模板）；缺失或非法返回 None。"""
+    d = _skill_dir(str(skill_id or ""))
+    if not d:
+        return None
+    try:
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            wf = json.load(f)
+    except Exception:
+        return None
+    return wf if isinstance(wf, dict) and wf else None
+
+
+def get_skill_gen_config(skill_id: str) -> dict:
+    """读 skill 的 config.json（出图设置覆盖）；缺失或损坏返回 {}。"""
+    d = _skill_dir(str(skill_id or ""))
+    if not d:
+        return {}
+    try:
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
+    """写 skill 的 config.json（预设只读）。返回 (success, message)。"""
+    sid = _normalize_skill_id(str(skill_id or ""))
+    d = _skill_dir(sid) if sid else None
+    if not d:
+        return False, "Skill not found"
+    if _skill_source(d) == "presets":
+        return False, "Cannot modify preset skill"
+    cfg = cfg if isinstance(cfg, dict) else {}
+    clean = {}
+    for key in ("model", "text_encoder", "vae"):
+        value = str(cfg.get(key) or "").strip()
+        if value:
+            clean[key] = value[:256]
+    loras = []
+    for entry in cfg.get("loras") or []:
+        name = str((entry or {}).get("name") or "").strip() if isinstance(entry, dict) else str(entry or "").strip()
+        if not name:
+            continue
+        try:
+            strength = float((entry or {}).get("strength", 1.0))
+        except (TypeError, ValueError):
+            strength = 1.0
+        loras.append({"name": name[:256], "strength": max(-10.0, min(10.0, strength)),
+                      "ref_only": bool((entry or {}).get("ref_only"))})
+    clean["loras"] = loras
+    for key in ("base_resolution", "count"):
+        try:
+            clean[key] = max(1, int(cfg.get(key)))
+        except (TypeError, ValueError):
+            continue
+    ratio = str(cfg.get("default_ratio") or "").strip()
+    if ratio:
+        clean["default_ratio"] = ratio[:32]
+    prefix = str(cfg.get("output_prefix") or "").strip()
+    if prefix:
+        clean["output_prefix"] = prefix[:128]
+    with _skills_lock:
+        tmp = os.path.join(d, "config.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(clean, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, os.path.join(d, "config.json"))
+    return True, ""
+
+
+def _node_sort_key(nid):
+    try:
+        return (0, int(str(nid)), "")
+    except (TypeError, ValueError):
+        return (1, 0, str(nid))
+
+
+def _model_consumer(workflow: dict, src_id: str):
+    """model 输入连到 src 输出的 LoraLoaderModelOnly 节点 id；无则 None。"""
+    best = None
+    for nid, node in workflow.items():
+        if not isinstance(node, dict) or node.get("class_type") != "LoraLoaderModelOnly":
+            continue
+        v = (node.get("inputs") or {}).get("model")
+        if isinstance(v, list) and len(v) == 2 and v[0] == str(src_id):
+            if best is None or _node_sort_key(nid) < _node_sort_key(best):
+                best = nid
+    return best
+
+
+def _reaches_load_image(workflow: dict, node_id: str) -> bool:
+    """节点输入链路（沿所有连线回溯）是否到达 LoadImage；用于识别参考图缩放节点。"""
+    stack, seen = [str(node_id)], set()
+    while stack:
+        nid = stack.pop()
+        if nid in seen:
+            continue
+        seen.add(nid)
+        node = workflow.get(nid)
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") == "LoadImage":
+            return True
+        for v in (node.get("inputs") or {}).values():
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
+                stack.append(v[0])
+    return False
+
+
+_COMMON_RATIOS = (("1:1", 1.0), ("16:9", 16 / 9), ("9:16", 9 / 16),
+                  ("4:3", 4 / 3), ("3:4", 3 / 4), ("3:2", 3 / 2), ("2:3", 2 / 3))
+
+
+def _ratio_label(w: int, h: int) -> str:
+    if w <= 0 or h <= 0:
+        return ""
+    value = w / h
+    for label, target in _COMMON_RATIOS:
+        if abs(value - target) < 0.01:
+            return label
+    return f"{w}:{h}"
+
+
+def _template_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
+    """把 API prompt 转成模板：已知值替换为占位符、主链 LoRA 编为 {{LORA_i_*}} 槽位。
+
+    返回 (template, warnings, seed_cfg)；seed_cfg 是从加载器/LoRA/latent 尺寸/SaveImage
+    前缀提取的 config.json 初值（只含非空项）。"""
+    template = copy.deepcopy(workflow)
+    warnings = []
+    seed_cfg = {}
+
+    clip_nodes = [nid for nid, n in workflow.items()
+                  if isinstance(n, dict) and n.get("class_type") == "CLIPTextEncode"]
+    if not clip_nodes:
+        warnings.append("工作流没有 CLIPTextEncode 节点，运行时无法注入提示词")
+    for i, nid in enumerate(clip_nodes):
+        inputs = template[nid]["inputs"]
+        if isinstance(inputs.get("text"), str):
+            inputs["text"] = "{{PROMPT}}" if i == 0 else "{{NEGATIVE}}"
+
+    for nid, node in workflow.items():
+        ct = node.get("class_type")
+        inputs = template[nid]["inputs"]
+        if ct == "UNETLoader" and isinstance(inputs.get("unet_name"), str):
+            seed_cfg.setdefault("model", inputs["unet_name"])
+            inputs["unet_name"] = "{{MODEL}}"
+        elif ct == "CLIPLoader" and isinstance(inputs.get("clip_name"), str):
+            seed_cfg.setdefault("text_encoder", inputs["clip_name"])
+            inputs["clip_name"] = "{{TEXT_ENCODER}}"
+        elif ct == "VAELoader" and isinstance(inputs.get("vae_name"), str):
+            seed_cfg.setdefault("vae", inputs["vae_name"])
+            inputs["vae_name"] = "{{VAE}}"
+        elif ct in ("KSampler", "KSamplerAdvanced") and "seed" in inputs:
+            inputs["seed"] = "{{SEED}}"
+        elif ct in ("EmptyLatentImage", "EmptySD3LatentImage"):
+            if isinstance(inputs.get("width"), int) and isinstance(inputs.get("height"), int):
+                seed_cfg.setdefault("default_ratio", _ratio_label(inputs["width"], inputs["height"]))
+            for key, token in (("width", "{{WIDTH}}"), ("height", "{{HEIGHT}}"), ("batch_size", "{{COUNT}}")):
+                if isinstance(inputs.get(key), int):
+                    inputs[key] = token
+        elif ct == "SaveImage" and isinstance(inputs.get("filename_prefix"), str):
+            seed_cfg.setdefault("output_prefix", inputs["filename_prefix"])
+            inputs["filename_prefix"] = "{{PREFIX}}"
+        elif ct == "LoadImage" and isinstance(inputs.get("image"), str):
+            inputs["image"] = "{{REF_IMAGE}}"
+
+    if not any(isinstance(n, dict) and n.get("class_type") == "SaveImage" for n in workflow.values()):
+        warnings.append("工作流没有 SaveImage 节点，将无法收集输出图片")
+
+    # 主链 LoRA：UNETLoader → LoraLoaderModelOnly* 链按序编号为槽位
+    loras = []
+    slot = 0
+    unet_ids = sorted((nid for nid, n in workflow.items()
+                       if isinstance(n, dict) and n.get("class_type") == "UNETLoader"),
+                      key=_node_sort_key)
+    for unet_id in unet_ids:
+        cur = unet_id
+        while True:
+            nxt = _model_consumer(workflow, cur)
+            if not nxt:
+                break
+            slot += 1
+            orig = workflow[nxt]["inputs"]
+            try:
+                strength = float(orig.get("strength_model", 1.0))
+            except (TypeError, ValueError):
+                strength = 1.0
+            loras.append({"name": str(orig.get("lora_name") or ""), "strength": strength})
+            template[nxt]["inputs"]["lora_name"] = "{{LORA_%d_NAME}}" % slot
+            template[nxt]["inputs"]["strength_model"] = "{{LORA_%d_STRENGTH}}" % slot
+            cur = nxt
+    if loras:
+        seed_cfg["loras"] = [l for l in loras if l["name"]]
+
+    return template, warnings, seed_cfg
+
+
+def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> dict:
+    """把当前画布工作流（API prompt）导出为出图技能：skill.md + workflow.json + config.json。"""
+    if not isinstance(workflow, dict) or not workflow:
+        return {"success": False, "message": "workflow 不是合法的 API prompt"}
+    for nid, node in workflow.items():
+        if not isinstance(node, dict) or not node.get("class_type") or not isinstance(node.get("inputs"), dict):
+            return {"success": False, "message": f"节点 {nid} 缺少 class_type/inputs"}
+    template, warnings, seed_cfg = _template_from_workflow(workflow)
+    has_ref = any(isinstance(v, str) and "{{REF_IMAGE}}" in v
+                  for n in template.values() if isinstance(n, dict)
+                  for v in (n.get("inputs") or {}).values())
+
+    base_id = _normalize_skill_id(str(name or "")) or "workflow-skill"
+    sid, i = base_id, 2
+    while os.path.isdir(os.path.join(SKILL_CUSTOM_DIR, sid)):
+        sid = f"{base_id}-{i}"
+        i += 1
+    meta = {
+        "name": str(name or "").strip() or sid,
+        "tags": [str(t) for t in (tags if isinstance(tags, list) else [])],
+        "description": str(description or ""),
+        "inputs": ["text"],
+        "category": "image_gen",
+        "gen_image": True,
+    }
+    if has_ref:
+        meta["requires_ref"] = True
+    with _skills_lock:
+        d = os.path.join(SKILL_CUSTOM_DIR, sid)
+        os.makedirs(d, exist_ok=True)
+        tmp = os.path.join(d, "skill.md.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(serialize_frontmatter(meta, str(description or "")))
+        os.replace(tmp, os.path.join(d, "skill.md"))
+        tmp = os.path.join(d, "workflow.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(template, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, os.path.join(d, "workflow.json"))
+        if seed_cfg:
+            tmp = os.path.join(d, "config.json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(seed_cfg, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, os.path.join(d, "config.json"))
+    return {"success": True, "id": sid, "warnings": warnings}
+
+
+def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:
+    """把 from 技能的 workflow.json / config.json 复制到 to（供「复制为自定义」补全出图模板）。"""
+    src = _skill_dir(str(from_id or ""))
+    dst = _skill_dir(str(to_id or ""))
+    if not src or not dst:
+        return False, "Skill not found"
+    copied = 0
+    with _skills_lock:
+        for fn in ("workflow.json", "config.json"):
+            s = os.path.join(src, fn)
+            if os.path.isfile(s):
+                shutil.copy2(s, os.path.join(dst, fn))
+                copied += 1
+    return True, f"copied {copied} file(s)"
 
 
 # ==========================================
@@ -1036,6 +1306,7 @@ async def rs_prompts_load_skill(request):
             "multi_result": meta.get("multi_result"),
             "multi_turn": bool(meta.get("multi_turn", False)),
             "result_key": meta.get("result_key"),
+            "gen_image": bool(meta.get("gen_image", False)),
         })
     except Exception as e:
         logger.error(f"Error loading skill: {e}")
@@ -1061,6 +1332,9 @@ async def rs_prompts_save_skill(request):
             data.get("tags", []),
             source,
             data.get("multi_turn"),
+            category=data.get("category"),
+            gen_image=data.get("gen_image"),
+            requires_ref=data.get("requires_ref"),
         )
         if not ok:
             return web.Response(status=500, text="Failed to save skill")

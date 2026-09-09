@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""image_gen 的离线单测：比例/尺寸、输出路径消毒、请求解析、工作流图形状。
+"""image_gen 的离线单测：比例/尺寸、输出路径消毒、请求解析、工作流模板渲染与技能路由。
 
 不依赖 ComfyUI 运行中的服务器：server / folder_paths 用桩模块替换。
 """
@@ -7,6 +7,8 @@
 import asyncio
 import base64
 import hashlib
+import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -81,6 +83,22 @@ PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
 
 import image_gen  # noqa: E402
+
+# image_gen 的路由处理器内惰性 `from . import skill`；把 skill.py 注册到虚拟包下，
+# 让单测里相对导入可解析（与 test_skills 的桩策略一致）
+_pkg = types.ModuleType("_neo_imgen_pkg")
+_pkg.__path__ = [PLUGIN_DIR]
+sys.modules["_neo_imgen_pkg"] = _pkg
+_spec = importlib.util.spec_from_file_location(
+    "_neo_imgen_pkg.skill", os.path.join(PLUGIN_DIR, "skill.py"))
+_skill_mod = importlib.util.module_from_spec(_spec)
+sys.modules["_neo_imgen_pkg.skill"] = _skill_mod
+_spec.loader.exec_module(_skill_mod)
+_pkg.skill = _skill_mod
+image_gen.__package__ = "_neo_imgen_pkg"
+# __spec__.parent 与 __package__ 保持一致，避免相对导入触发 DeprecationWarning
+image_gen.__spec__ = types.SimpleNamespace(name="_neo_imgen_pkg.image_gen",
+                                           parent="_neo_imgen_pkg")
 
 
 def base_settings():
@@ -177,7 +195,6 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(params["model"], "krea2/krea2_turbo_fp16.safetensors")
         self.assertEqual(params["text_encoder"], "qwen3vl/qwen3_vl_4b_fp8_scaled.safetensors")
         self.assertEqual(params["vae"], "qwen_image/qwen_image_vae.safetensors")
-        self.assertEqual(params["denoise"], 1.0)
         self.assertEqual(params["count"], 1)
 
     def test_empty_prompt_rejected(self):
@@ -241,17 +258,6 @@ class ResolveTests(unittest.TestCase):
         params = image_gen.resolve_request({"prompt": "a cat", "count": 99}, settings)
         self.assertEqual(params["count"], 8)
 
-    def test_count_forced_single_in_redraw(self):
-        settings = base_settings()
-        settings["count"] = 4
-        raw = write_png(os.path.join(_INPUT_DIR, "ref_count.png"), 64, 64)
-        uri = "data:image/png;base64," + base64.b64encode(raw).decode()
-        params = image_gen.resolve_request(
-            {"prompt": "a cat", "count": 4, "references": [{"kind": "data", "data": uri}]},
-            settings)
-        self.assertEqual(params["count"], 1)
-        self.assertTrue(params["warnings"])
-
     def test_missing_model_folder_raises(self):
         with self.assertRaises(ValueError):
             image_gen.resolve_request({"prompt": "a cat"},
@@ -265,10 +271,9 @@ class ReferenceTests(unittest.TestCase):
             {"prompt": " redraw ", "references": [{"kind": "input", "value": "ref.png"}],
              "count": 3}, base_settings())
         self.assertEqual(params["ref_name"], "ref.png")
-        self.assertEqual(params["count"], 1)          # 四视图强制单张
-        self.assertAlmostEqual(params["denoise"], 1.0)
-        self.assertEqual((params["width"], params["height"]), (1280, 720))  # 固定 16:9 横版
-        self.assertTrue(params["prompt"].startswith(image_gen.FOUR_VIEW_PREFIX))
+        # 尺寸跟随设置比例（默认 1:1）；采样参数写死在工作流模板里
+        self.assertEqual((params["width"], params["height"]), (1280, 1280))
+        self.assertEqual(params["prompt"], "redraw")
         # 参考图长边限到 1024：768×1024 → 768×1024
         self.assertEqual(params["ref_scale"], (768, 1024))
         # 四视图 LoRA 自动追加且位于用户 LoRA 之后
@@ -325,7 +330,18 @@ class ReferenceTests(unittest.TestCase):
                 base_settings())
 
 
-class GraphTests(unittest.TestCase):
+class RenderTemplateTests(unittest.TestCase):
+    """workflow.json 模板渲染：占位符替换（类型化取值）+ LoRA 槽位填充 / 动态注入。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen_text", "workflow.json"),
+                  encoding="utf-8") as f:
+            cls.text_template = json.load(f)
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen", "workflow.json"),
+                  encoding="utf-8") as f:
+            cls.ref_template = json.load(f)
+
     def params(self, **overrides):
         settings = base_settings()
         settings["loras"] = [{"name": "style_a.safetensors", "strength": 0.5},
@@ -334,71 +350,71 @@ class GraphTests(unittest.TestCase):
                                          settings)
 
     def test_text_to_image_shape(self):
-        params = self.params(count=3)
-        graph = image_gen.build_graph(params)
-        self.assertIn("9", graph)
-        self.assertNotIn("6", graph)
-        self.assertNotIn("7", graph)
-        self.assertNotIn("8", graph)
-        self.assertEqual(graph["9"]["class_type"], "EmptyLatentImage")
-        self.assertEqual(graph["9"]["inputs"]["batch_size"], 3)
-        self.assertEqual(graph["12"]["class_type"], "SaveImage")
-        self.assertEqual(graph["10"]["inputs"]["latent_image"], ("9", 0))
+        graph, warns = image_gen.render_template(self.text_template, self.params(count=3))
+        self.assertEqual(warns, [])
+        latent = graph["9"]["inputs"]
+        self.assertEqual(latent["batch_size"], 3)          # {{COUNT}} 取 int 类型值
+        self.assertEqual((latent["width"], latent["height"]), (1280, 1280))
+        self.assertEqual(graph["4"]["inputs"]["text"], "a red fox")
+        self.assertEqual(graph["5"]["inputs"]["text"], "")
+        self.assertEqual(graph["1"]["inputs"]["unet_name"], "krea2/krea2_turbo_fp16.safetensors")
+        self.assertEqual(graph["10"]["inputs"]["seed"], 3)
+        self.assertTrue(str(graph["12"]["inputs"]["filename_prefix"]).startswith("NeoAgent/"))
 
-    def test_lora_chain(self):
-        graph = image_gen.build_graph(self.params())
-        self.assertEqual(graph["20"]["inputs"]["model"], ("1", 0))
-        self.assertEqual(graph["21"]["inputs"]["model"], ("20", 0))
-        self.assertEqual(graph["10"]["inputs"]["model"], ("21", 0))
+    def test_lora_dynamic_insertion_after_unet(self):
+        # 文生图模板没有 LoRA 槽位：两个用户 LoRA 在主链末端动态串联
+        graph, _ = image_gen.render_template(self.text_template, self.params())
+        self.assertEqual(graph["13"]["class_type"], "LoraLoaderModelOnly")
+        self.assertEqual(graph["13"]["inputs"], {"model": ["1", 0], "lora_name": "style_a.safetensors",
+                                                 "strength_model": 0.5})
+        self.assertEqual(graph["14"]["inputs"]["model"], ["13", 0])
+        self.assertEqual(graph["14"]["inputs"]["lora_name"], "sub/style_b.safetensors")
+        self.assertEqual(graph["10"]["inputs"]["model"], ["14", 0])   # KSampler 吃链尾
 
-    def test_reference_shape_uses_krea2_edit(self):
+    def test_reference_template_rendering(self):
         write_png(os.path.join(_INPUT_DIR, "ref3.png"), 768, 1024)
         params = self.params(references=[{"kind": "input", "value": "ref3.png"}])
-        graph = image_gen.build_graph(params)
-        self.assertEqual(graph["6"]["class_type"], "LoadImage")
-        scale = graph["7"]
-        self.assertEqual(scale["class_type"], "ImageScale")
-        self.assertEqual((scale["inputs"]["width"], scale["inputs"]["height"]), (768, 1024))
-        self.assertEqual(scale["inputs"]["crop"], "disabled")
-        encode = graph["8"]
-        self.assertEqual(encode["class_type"], "VAEEncode")
-        self.assertEqual(encode["inputs"]["pixels"], ("7", 0))
-        # positive/negative 都是接地编码，接同一张参考图
-        self.assertEqual(graph["4"]["class_type"], "Krea2EditGroundedEncode")
-        self.assertEqual(graph["5"]["class_type"], "Krea2EditGroundedEncode")
-        # 接地编码同源到已缩放参考图：positive native(0)、negative 限 768（对齐四视图工作流）
-        self.assertEqual(graph["4"]["inputs"]["image"], ("7", 0))
-        self.assertEqual(graph["5"]["inputs"]["image"], ("7", 0))
-        self.assertEqual(graph["4"]["inputs"]["grounding_px"], 0)
-        self.assertEqual(graph["5"]["inputs"]["grounding_px"], 768)
-        self.assertEqual(graph["5"]["inputs"]["prompt"], "")
-        # 目标 latent：横版空 latent，同时喂 KSampler 与 model patch 的 target_latent
-        target = graph["9"]
-        self.assertEqual(target["class_type"], "EmptySD3LatentImage")
-        self.assertEqual((target["inputs"]["width"], target["inputs"]["height"]), (1280, 720))
-        self.assertEqual(graph["10"]["inputs"]["latent_image"], ("9", 0))
-        patch = graph["14"]
-        self.assertEqual(patch["class_type"], "Krea2EditModelPatch")
-        self.assertEqual(patch["inputs"]["fit_mode"], "fit")
-        self.assertEqual(patch["inputs"]["source_latent"], ("8", 0))
-        self.assertEqual(patch["inputs"]["source_image"], ("7", 0))
-        self.assertEqual(patch["inputs"]["target_latent"], ("9", 0))
-        self.assertEqual(patch["inputs"]["vae"], ("3", 0))
-        # KSampler 吃 patch 后的 model，denoise 恒为 1.0
-        self.assertEqual(graph["10"]["inputs"]["model"], ("14", 0))
-        self.assertAlmostEqual(graph["10"]["inputs"]["denoise"], 1.0)
-
-    def test_reference_lora_chain_appends_quadview(self):
-        write_png(os.path.join(_INPUT_DIR, "ref3.png"), 768, 1024)
-        params = self.params(references=[{"kind": "input", "value": "ref3.png"}])
-        graph = image_gen.build_graph(params)
-        # 用户两个 LoRA + 自动四视图 LoRA：20 -> 21 -> 22 -> patch
-        self.assertEqual(graph["20"]["inputs"]["model"], ("1", 0))
-        self.assertEqual(graph["21"]["inputs"]["model"], ("20", 0))
+        graph, _ = image_gen.render_template(self.ref_template, params)
+        self.assertEqual(graph["6"]["inputs"]["image"], "ref3.png")
+        scale = graph["7"]["inputs"]
+        self.assertEqual((scale["width"], scale["height"]), (768, 1024))
+        self.assertEqual(scale["crop"], "disabled")
+        self.assertEqual(graph["4"]["inputs"]["prompt"], "a red fox")
+        # 单槽位填第一个 LoRA；其余（含自动四视图）在槽位后动态串联到 model patch
+        self.assertEqual(graph["20"]["inputs"]["lora_name"], "style_a.safetensors")
+        self.assertAlmostEqual(graph["20"]["inputs"]["strength_model"], 0.5)
+        self.assertEqual(graph["21"]["inputs"], {"model": ["20", 0], "lora_name": "sub/style_b.safetensors",
+                                                 "strength_model": 1.0})
         self.assertEqual(graph["22"]["inputs"]["lora_name"],
                          "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
-        self.assertAlmostEqual(graph["22"]["inputs"]["strength_model"], 1.0)
-        self.assertEqual(graph["14"]["inputs"]["model"], ("22", 0))
+        self.assertEqual(graph["14"]["inputs"]["model"], ["22", 0])   # model patch 吃链尾
+        self.assertAlmostEqual(graph["10"]["inputs"]["denoise"], 1.0)  # 采样参数写死在模板
+
+    def test_ref_template_requires_reference(self):
+        with self.assertRaises(ValueError):
+            image_gen.render_template(self.ref_template, self.params())
+
+    def test_lora_slot_fallback_and_missing_raises(self):
+        template = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}},
+            "2": {"class_type": "LoraLoaderModelOnly",
+                  "inputs": {"model": ["1", 0], "lora_name": "{{LORA_1_NAME}}",
+                             "strength_model": "{{LORA_1_STRENGTH}}"}},
+        }
+        params = image_gen.resolve_request({"prompt": "a cat"}, base_settings())
+        graph, _ = image_gen.render_template(template, params)
+        # 空槽：loras 目录排序第一的文件兜底 + strength 0（可加载但无效）
+        self.assertEqual(graph["2"]["inputs"]["lora_name"],
+                         "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
+        self.assertEqual(graph["2"]["inputs"]["strength_model"], 0.0)
+
+        orig = image_gen._folder_files
+        try:
+            image_gen._folder_files = lambda folder: [] if folder == "loras" else orig(folder)
+            with self.assertRaises(ValueError):
+                image_gen.render_template(template, params)
+        finally:
+            image_gen._folder_files = orig
 
     def test_reference_scale_follows_source_aspect(self):
         # 超宽参考图：长边限到 1024 → 1024×512
@@ -471,6 +487,125 @@ class SidecarTests(unittest.TestCase):
         image_gen.write_sidecar(image_path, params)
         with open(txt, encoding="utf-8") as f:
             self.assertEqual(f.read(), "kept\n")
+
+
+class SkillWorkflowRouteTests(unittest.TestCase):
+    """画布导出 / 技能出图设置 / 文件复制路由（假 request + 真实 skill 模块）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_dir = _skill_mod.SKILL_CUSTOM_DIR
+        _skill_mod.SKILL_CUSTOM_DIR = self._tmp.name
+
+    def tearDown(self):
+        _skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _req(payload=None, query=None):
+        async def _json():
+            return payload
+        return types.SimpleNamespace(json=_json, query=query or {})
+
+    @staticmethod
+    def _call(handler, request):
+        resp = asyncio.run(handler(request))
+        body = json.loads(resp.body)
+        return resp.status, body
+
+    def _make_custom_skill(self, sid):
+        d = os.path.join(self._tmp.name, sid)
+        os.makedirs(d)
+        with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: %s\n---\nbody" % sid)
+        return d
+
+    def test_save_workflow_skill_route(self):
+        workflow = {
+            "1": {"class_type": "UNETLoader",
+                  "inputs": {"unet_name": "krea2/krea2_turbo_fp16.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0], "text": "hello world"}},
+            "3": {"class_type": "EmptyLatentImage",
+                  "inputs": {"width": 1280, "height": 720, "batch_size": 2}},
+            "4": {"class_type": "SaveImage",
+                  "inputs": {"images": ["3", 0], "filename_prefix": "MyWf"}},
+        }
+        status, body = self._call(
+            image_gen.save_workflow_skill_route,
+            self._req({"name": "my wf", "description": "d", "tags": ["t"], "workflow": workflow}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        d = os.path.join(self._tmp.name, body["id"])
+        with open(os.path.join(d, "skill.md"), encoding="utf-8") as f:
+            meta, _ = _skill_mod.split_frontmatter(f.read())
+        self.assertIs(meta["gen_image"], True)
+        self.assertEqual(meta["category"], "image_gen")
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["2"]["inputs"]["text"], "{{PROMPT}}")
+        self.assertEqual(tpl["1"]["inputs"]["unet_name"], "{{MODEL}}")
+        self.assertEqual(tpl["3"]["inputs"]["width"], "{{WIDTH}}")
+        self.assertEqual(tpl["4"]["inputs"]["filename_prefix"], "{{PREFIX}}")
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["model"], "krea2/krea2_turbo_fp16.safetensors")
+        self.assertEqual(cfg["default_ratio"], "16:9")
+        self.assertEqual(cfg["output_prefix"], "MyWf")
+
+        # 同名重复导出自动加后缀
+        status, body2 = self._call(
+            image_gen.save_workflow_skill_route,
+            self._req({"name": "my wf", "workflow": workflow}))
+        self.assertEqual(status, 200)
+        self.assertEqual(body2["id"], body["id"] + "-2")
+
+    def test_save_workflow_skill_invalid(self):
+        status, _ = self._call(image_gen.save_workflow_skill_route,
+                               self._req({"name": "x", "workflow": {}}))
+        self.assertEqual(status, 400)
+
+    def test_get_skill_config(self):
+        # 预设 image_gen 的 config.json（default_ratio: 16:9）
+        status, body = self._call(image_gen.get_skill_config_route,
+                                  self._req(query={"skill_id": "image_gen"}))
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"default_ratio": "16:9"})
+        status, _ = self._call(image_gen.get_skill_config_route, self._req(query={}))
+        self.assertEqual(status, 400)
+
+    def test_post_skill_config(self):
+        d = self._make_custom_skill("mygen")
+        status, body = self._call(
+            image_gen.post_skill_config_route,
+            self._req({"skill_id": "mygen",
+                       "config": {"count": 4, "default_ratio": "2:3",
+                                  "loras": [{"name": "style_a.safetensors", "strength": 0.7}]}}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["count"], 4)
+        self.assertEqual(cfg["default_ratio"], "2:3")
+        self.assertEqual(cfg["loras"], [{"name": "style_a.safetensors", "strength": 0.7,
+                                         "ref_only": False}])
+
+        # 预设只读 → 403
+        status, _ = self._call(image_gen.post_skill_config_route,
+                               self._req({"skill_id": "image_gen", "config": {"count": 2}}))
+        self.assertEqual(status, 403)
+
+    def test_copy_skill_files(self):
+        d = self._make_custom_skill("copy_dst")
+        status, body = self._call(
+            image_gen.copy_skill_files_route,
+            self._req({"from_id": "image_gen", "to_id": "copy_dst"}))
+        self.assertEqual(status, 200)
+        self.assertTrue(os.path.isfile(os.path.join(d, "workflow.json")))
+        self.assertTrue(os.path.isfile(os.path.join(d, "config.json")))
+
+        status, _ = self._call(
+            image_gen.copy_skill_files_route,
+            self._req({"from_id": "no_such_skill", "to_id": "copy_dst"}))
+        self.assertEqual(status, 400)
 
 
 class ProgressTests(unittest.TestCase):

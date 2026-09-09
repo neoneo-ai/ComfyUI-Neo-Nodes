@@ -746,8 +746,8 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
     controller.set(state);
     try {
         const promptText = await buildGenPrompt(opt.value, text, useRefs);
-        // 文生图比例由出图设置的「默认比例」决定；四视图由后端固定 16:9
-        const body = { prompt: promptText, references: sendRefs };
+        // 比例/尺寸由所选技能的 config.json（或全局出图设置）决定，模板占位符在渲染时取值
+        const body = { skill_id: opt?.value || "", prompt: promptText, references: sendRefs };
         const snap = await requestGeneration(body);
         state.cancelId = snap.task_id;
         state.warnings = snap.warnings || [];

@@ -68,6 +68,52 @@ export async function cancelTask(taskId) {
     }
 }
 
+/** 把当前画布工作流（API prompt）保存为出图技能；返回 { id, warnings } */
+export async function saveWorkflowSkill({ name, description, tags, workflow }) {
+    const resp = await fetch(`${GEN_API}/save_workflow_skill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description, tags: tags || [], workflow })
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || data.error) throw new Error(data?.error || `HTTP ${resp.status}`);
+    return data;
+}
+
+/** 读技能的出图设置覆盖（config.json；缺失返回 {}） */
+export async function getSkillGenConfig(skillId) {
+    try {
+        return await getJson(`${GEN_API}/skill_config?skill_id=${encodeURIComponent(skillId)}`);
+    } catch (e) {
+        return {};
+    }
+}
+
+/** 写技能的出图设置覆盖（预设只读，失败抛 Error(后端消息)） */
+export async function saveSkillGenConfig(skillId, config) {
+    const resp = await fetch(`${GEN_API}/skill_config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill_id: skillId, config: config || {} })
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || data.error) throw new Error(data?.error || `HTTP ${resp.status}`);
+    return data;
+}
+
+/** 「复制为自定义」时把源技能的 workflow.json / config.json 一并带过去（失败静默） */
+export async function copySkillFiles(fromId, toId) {
+    try {
+        await fetch(`${GEN_API}/copy_skill_files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ from_id: fromId, to_id: toId })
+        });
+    } catch (e) {
+        console.warn("copy skill files failed:", e);
+    }
+}
+
 /**
  * 等待任务到终态（succeeded/failed/cancelled），返回最终快照。
  * 后端把快照按变化经 WebSocket 推送（rs.image_gen.status），这里订阅事件而非轮询
@@ -347,8 +393,9 @@ function numberRow(labelText, attrs) {
     return { row, input };
 }
 
-export function createImageGenSettingsForm() {
-    const form = mkEl("div", "rs-gen-settings");
+/** 出图模型 / Text Encoder / VAE + LoRA 列表控件区（全局出图设置与每技能设置共用）。 */
+export function createModelConfigSection() {
+    const section = mkEl("div", "rs-gen-model-section");
 
     // 三个模型选择行：空值 = 按名称线索自动挑选（后端 suggest_model），用户可显式指定
     const makeComboRow = (labelText, placeholder) => {
@@ -373,10 +420,111 @@ export function createImageGenSettingsForm() {
     loraAddBtn.type = "button";
     loraAddBtn.textContent = "+ 添加 LoRA";
     loraRow.append(loraLabel, loraList, loraAddBtn);
+    section.append(modelCtl.row, encoderCtl.row, vaeCtl.row, loraRow);
 
+    let loraFiles = [];
+    let suggestedLora = "";
+
+    function addLoraRow(name = "", strength = 1.0, refOnly = false) {
+        const line = mkEl("div", "rs-gen-lora-row");
+        const select = document.createElement("select");
+        const combo = attachComboBox(select).box;
+        // 「依赖参考图」复选框：勾选 = 仅参考图模式加载（四视图 LoRA 即勾此项者），不勾 = 文生图也加载
+        const refOnlyWrap = mkEl("label", "rs-gen-lora-refonly-wrap");
+        const refOnlyChk = mkEl("input", "rs-gen-lora-refonly");
+        refOnlyChk.type = "checkbox";
+        refOnlyChk.checked = !!refOnly;
+        const refOnlyTxt = mkEl("span", "rs-gen-lora-refonly-txt");
+        refOnlyTxt.textContent = "依赖参考图";
+        refOnlyWrap.append(refOnlyChk, refOnlyTxt);
+        refOnlyWrap.setAttribute("data-rs-tooltip", "编辑 LoRA（依赖参考图）：勾选 = 仅参考图模式加载，不勾 = 文生图也无条件加载");
+        const strengthInput = mkEl("input", "rs-gen-lora-strength");
+        strengthInput.type = "number";
+        strengthInput.min = -10;
+        strengthInput.max = 10;
+        strengthInput.step = 0.05;
+        strengthInput.value = strength;
+        const delBtn = mkEl("button", "rs-gen-lora-del");
+        delBtn.type = "button";
+        delBtn.textContent = "✕";
+        delBtn.setAttribute("data-rs-tooltip", "移除此 LoRA");
+        delBtn.addEventListener("click", () => line.remove());
+        select.addEventListener("change", () => {
+            if (isQuadviewName(select.value)) refOnlyChk.checked = true;
+        });
+        line.append(combo, strengthInput, refOnlyWrap, delBtn);
+        fillComboSelect(select, loraFiles, suggestedLora, name);
+        loraList.appendChild(line);
+    }
+
+    loraAddBtn.addEventListener("click", () => addLoraRow());
+
+    function load(settings, models) {
+        loraFiles = models.loras || [];
+        suggestedLora = models.suggested_lora || "";
+        fillComboSelect(modelCtl.select, models.diffusion_models || [],
+            models.suggested_diffusion_models || "", settings.model || "");
+        fillComboSelect(encoderCtl.select, models.text_encoders || [],
+            models.suggested_text_encoders || "", settings.text_encoder || "");
+        fillComboSelect(vaeCtl.select, models.vae || [],
+            models.suggested_vae || "", settings.vae || "");
+        loraList.innerHTML = "";
+        for (const entry of settings.loras || []) {
+            if (typeof entry === "string") addLoraRow(entry, 1.0, isQuadviewName(entry));
+            else if (entry && typeof entry === "object")
+                addLoraRow(entry.name || "", entry.strength ?? 1.0,
+                    "ref_only" in entry ? !!entry.ref_only : isQuadviewName(entry.name || ""));
+        }
+    }
+
+    function collect() {
+        const loras = [];
+        for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
+            const select = line.querySelector("select");
+            const strength = line.querySelector(".rs-gen-lora-strength");
+            const refOnly = line.querySelector(".rs-gen-lora-refonly");
+            const name = select ? select.value : "";
+            if (!name) continue;
+            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0,
+                         ref_only: !!(refOnly && refOnly.checked) });
+        }
+        return {
+            model: modelCtl.select.value,
+            text_encoder: encoderCtl.select.value,
+            vae: vaeCtl.select.value,
+            loras,
+        };
+    }
+
+    return { el: section, load, collect };
+}
+
+/** 出图张数 / 长边尺寸 / 默认比例 / 输出前缀控件区（全局出图设置与每技能设置共用）。 */
+export function createGenSizeRows() {
+    const section = mkEl("div", "rs-gen-size-section");
     const countCtl = numberRow("出图张数", { min: 1, max: 8, step: 1, value: 1 });
-    const sizeCtl = makeComboRow("长边尺寸", "选择");
-    const ratioCtl = makeComboRow("默认比例", "选择");
+
+    // 下拉行（长边尺寸 / 默认比例）：结构同模型选择行
+    const makeChoiceRow = (labelText) => {
+        const row = mkEl("div", "rs-config-row");
+        const label = mkEl("label", "rs-form-label");
+        label.textContent = labelText;
+        const select = document.createElement("select");
+        const combo = attachComboBox(select, {}).box;
+        row.append(label, combo);
+        return { row, select };
+    };
+    const sizeCtl = makeChoiceRow("长边尺寸");
+    const ratioCtl = makeChoiceRow("默认比例");
+
+    // 输出前缀（可含子目录），写入模板 {{PREFIX}}
+    const prefixRow = mkEl("div", "rs-config-row");
+    const prefixLabel = mkEl("label", "rs-form-label");
+    prefixLabel.textContent = "输出前缀";
+    const prefixInput = mkEl("input", "rs-form-input");
+    prefixInput.type = "text";
+    prefixInput.placeholder = "NeoAgent";
+    prefixRow.append(prefixLabel, prefixInput);
 
     // 常用长边（像素）与比例下拉可选；空值（「默认」）= 走后端默认；
     // 未列出的已保存值自动追加为「…（已保存）」项保留，避免切下拉即丢数据
@@ -404,6 +552,36 @@ export function createImageGenSettingsForm() {
         }
     }
 
+    // 三个数值/短文本参数压成一行三列网格
+    const grid = mkEl("div", "rs-gen-grid");
+    grid.append(countCtl.row, sizeCtl.row, ratioCtl.row);
+    section.append(grid, prefixRow);
+
+    function load(settings) {
+        countCtl.input.value = settings.count ?? 1;
+        fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""));
+        fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""));
+        prefixInput.value = settings.output_prefix ?? "";
+    }
+
+    function collect() {
+        return {
+            count: parseInt(countCtl.input.value, 10) || 1,
+            base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
+            default_ratio: ratioCtl.select.value.trim(),
+            output_prefix: prefixInput.value.trim(),
+        };
+    }
+
+    return { el: section, load, collect };
+}
+
+/** 全局出图设置表单（「自动增强」菜单内）：模型/LoRA 区 + 尺寸/前缀区 + 保存按钮。 */
+export function createImageGenSettingsForm() {
+    const form = mkEl("div", "rs-gen-settings");
+    const modelSection = createModelConfigSection();
+    const sizeSection = createGenSizeRows();
+
     // 显式保存按钮：选择后立即落盘，不依赖关菜单时的静默保存
     const saveBtn = mkEl("button", "rs-gen-save");
     saveBtn.type = "button";
@@ -420,46 +598,7 @@ export function createImageGenSettingsForm() {
     const saveRow = mkEl("div", "rs-config-row");
     saveRow.appendChild(saveBtn);
 
-    // 三个数值/短文本参数压成一行三列网格（仅剩张数/长边/比例，重绘幅度已内置不可调）
-    const grid = mkEl("div", "rs-gen-grid");
-    grid.append(countCtl.row, sizeCtl.row, ratioCtl.row);
-    form.append(modelCtl.row, encoderCtl.row, vaeCtl.row, loraRow, grid, saveRow);
-
-    let loraFiles = [];
-    let suggestedLora = "";
-
-    function addLoraRow(name = "", strength = 1.0, refOnly = false) {
-        const line = mkEl("div", "rs-gen-lora-row");
-        const select = document.createElement("select");
-        const combo = attachComboBox(select).box;
-        const refOnlyWrap = mkEl("label", "rs-gen-lora-refonly-wrap");
-        const refOnlyChk = mkEl("input", "rs-gen-lora-refonly");
-        refOnlyChk.type = "checkbox";
-        refOnlyChk.checked = !!refOnly;
-        const refOnlyTxt = mkEl("span", "rs-gen-lora-refonly-txt");
-        refOnlyTxt.textContent = "依赖参考图";
-        refOnlyWrap.append(refOnlyChk, refOnlyTxt);
-        refOnlyWrap.setAttribute("data-rs-tooltip", "编辑 LoRA（依赖参考图）：勾选=仅参考图模式加载，不勾=文生图无条件加载");
-        const strengthInput = mkEl("input", "rs-gen-lora-strength");
-        strengthInput.type = "number";
-        strengthInput.min = -10;
-        strengthInput.max = 10;
-        strengthInput.step = 0.05;
-        strengthInput.value = strength;
-        const delBtn = mkEl("button", "rs-gen-lora-del");
-        delBtn.type = "button";
-        delBtn.textContent = "✕";
-        delBtn.setAttribute("data-rs-tooltip", "移除该 LoRA");
-        delBtn.addEventListener("click", () => line.remove());
-        select.addEventListener("change", () => {
-            if (isQuadviewName(select.value)) refOnlyChk.checked = true;
-        });
-        line.append(combo, strengthInput, refOnlyWrap, delBtn);
-        fillComboSelect(select, loraFiles, suggestedLora, name);
-        loraList.appendChild(line);
-    }
-
-    loraAddBtn.addEventListener("click", () => addLoraRow());
+    form.append(modelSection.el, sizeSection.el, saveRow);
 
     // 加载窗口标记：load() 异步回填期间（await 网络请求）不算 dirty，避免初始化误判
     let loading = false;
@@ -468,24 +607,8 @@ export function createImageGenSettingsForm() {
         loading = true;
         try {
             const [settings, models] = await Promise.all([getGenSettings(), listGenModels()]);
-            loraFiles = models.loras || [];
-            suggestedLora = models.suggested_lora || "";
-            fillComboSelect(modelCtl.select, models.diffusion_models || [],
-                models.suggested_diffusion_models || "", settings.model || "");
-            fillComboSelect(encoderCtl.select, models.text_encoders || [],
-                models.suggested_text_encoders || "", settings.text_encoder || "");
-            fillComboSelect(vaeCtl.select, models.vae || [],
-                models.suggested_vae || "", settings.vae || "");
-            loraList.innerHTML = "";
-            for (const entry of settings.loras || []) {
-                if (typeof entry === "string") addLoraRow(entry, 1.0, isQuadviewName(entry));
-                else if (entry && typeof entry === "object")
-                    addLoraRow(entry.name || "", entry.strength ?? 1.0,
-                        "ref_only" in entry ? !!entry.ref_only : isQuadviewName(entry.name || ""));
-            }
-            countCtl.input.value = settings.count ?? 1;
-            fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""));
-            fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""));
+            modelSection.load(settings, models);
+            sizeSection.load(settings);
             snapshot = collect();
         } catch (e) {
             console.warn("Failed to load image gen settings:", e);
@@ -496,25 +619,7 @@ export function createImageGenSettingsForm() {
 
     // 收集当前表单值（与后端 /neo_image_gen/settings 字段对齐）；save 与脏检查共用
     function collect() {
-        const loras = [];
-        for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
-            const select = line.querySelector("select");
-            const strength = line.querySelector(".rs-gen-lora-strength");
-            const refOnly = line.querySelector(".rs-gen-lora-refonly");
-            const name = select ? select.value : "";
-            if (!name) continue;
-            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0,
-                         ref_only: !!(refOnly && refOnly.checked) });
-        }
-        return {
-            model: modelCtl.select.value,
-            text_encoder: encoderCtl.select.value,
-            vae: vaeCtl.select.value,
-            loras,
-            count: parseInt(countCtl.input.value, 10) || 1,
-            base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
-            default_ratio: ratioCtl.select.value.trim(),
-        };
+        return { ...modelSection.collect(), ...sizeSection.collect() };
     }
 
     // load/save 后的表单快照，用于关闭菜单时判断是否有未保存修改
@@ -539,4 +644,3 @@ export function createImageGenSettingsForm() {
 
     return { el: form, load, save, isDirty };
 }
-

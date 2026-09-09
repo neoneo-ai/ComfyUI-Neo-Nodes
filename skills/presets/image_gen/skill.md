@@ -12,4 +12,4 @@ requires_ref: true
 created_at: '2026-09-07T00:00:00+00:00'
 ---
 
-【人物形象描述】
+Convert the character in the image to a Character Sheet showing a face close-up, front full body, side full body and back full body views. 【人物形象描述】

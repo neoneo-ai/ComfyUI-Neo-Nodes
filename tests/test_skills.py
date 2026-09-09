@@ -6,7 +6,9 @@ import base64
 import io
 import os
 import sys
+import json
 import types
+import asyncio
 import tempfile
 import importlib
 import unittest
@@ -177,6 +179,59 @@ class TestSaveSkillMultiTurn(unittest.TestCase):
         self.assertTrue(self.skill_mod.save_skill_main("mt-d", "MT D", "body", None, "custom"))
         meta, _ = self._read_meta("mt-d")
         self.assertNotIn("multi_turn", meta)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestSaveSkillGenFields(unittest.TestCase):
+    """save_skill_main 出图字段（复制为自定义场景）：显式写入 / 缺省沿用 / 假值移除"""
+
+    def setUp(self):
+        self.skill_mod = getattr(prompts_mod, "skill", None)
+        if self.skill_mod is None:
+            self.skipTest("prompts 未暴露 skill 模块")
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_dir = self.skill_mod.SKILL_CUSTOM_DIR
+        self.skill_mod.SKILL_CUSTOM_DIR = self._tmp.name
+
+    def tearDown(self):
+        self.skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
+        self._tmp.cleanup()
+
+    def _read_meta(self, sid):
+        main = os.path.join(self._tmp.name, sid, "skill.md")
+        with open(main, encoding="utf-8") as f:
+            meta, body = self.skill_mod.split_frontmatter(f.read())
+        return meta, body
+
+    def test_copy_like_save_writes_gen_fields(self):
+        # 前端复制预设出图技能时发送的字段：category/gen_image 写入，requires_ref 假值移除
+        self.assertTrue(self.skill_mod.save_skill_main(
+            "gen-copy", "Gen (Copy)", "body", None, "custom", False,
+            category="image_gen", gen_image=True, requires_ref=False))
+        meta, _ = self._read_meta("gen-copy")
+        self.assertEqual(meta.get("category"), "image_gen")
+        self.assertIs(meta.get("gen_image"), True)
+        self.assertNotIn("requires_ref", meta)
+
+    def test_omitted_preserves_existing(self):
+        # 普通保存（handleSave 不传这三个字段）不得清掉既有出图标记
+        self.skill_mod.save_skill_main("gen-keep", "GK", "body", None, "custom", False,
+                                       category="image_gen", gen_image=True)
+        self.assertTrue(self.skill_mod.save_skill_main("gen-keep", "GK2", "body2", None, "custom"))
+        meta, _ = self._read_meta("gen-keep")
+        self.assertEqual(meta.get("category"), "image_gen")
+        self.assertIs(meta.get("gen_image"), True)
+
+    def test_explicit_false_removes_fields(self):
+        self.skill_mod.save_skill_main("gen-off", "GO", "body", None, "custom", False,
+                                       category="image_gen", gen_image=True, requires_ref=True)
+        self.assertTrue(self.skill_mod.save_skill_main(
+            "gen-off", "GO", "body", None, "custom", False,
+            category="", gen_image=False, requires_ref=False))
+        meta, _ = self._read_meta("gen-off")
+        self.assertNotIn("category", meta)
+        self.assertNotIn("gen_image", meta)
+        self.assertNotIn("requires_ref", meta)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
@@ -885,6 +940,24 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertIs(meta.get("gen_image"), True)
         self.assertIs(meta.get("requires_ref"), False)
         self.assertEqual(body, "body")
+
+    def test_load_skill_route_returns_gen_image(self):
+        # 详情弹窗靠 load_skill 响应的 gen_image 决定是否显示出图设置区
+        self._write_skill("gen-d", ["name: Gen D", "category: image_gen", "gen_image: true"])
+        async def _json():
+            return {"id": "gen-d"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json)))
+        body = json.loads(resp.body)
+        self.assertTrue(body["gen_image"])
+
+        self._write_skill("plain-e", ["name: Plain E"])
+        async def _json2():
+            return {"id": "plain-e"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json2)))
+        body = json.loads(resp.body)
+        self.assertFalse(body["gen_image"])
 
 
 if __name__ == '__main__':

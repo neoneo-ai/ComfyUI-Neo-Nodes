@@ -8,6 +8,7 @@ body
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Create a new custom skill> "+ New Skill"
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a .zip skill package> "⬆ ZIP"
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a skill folder (all .md files)> "⬆ Folder"
+      button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Export the current canvas workflow as an image-gen skill> "📋 From Canvas"
   div.rs-runtime-menu
     label.rs-runtime-row.rs-runtime-toggle
       input.rs-auto-generate-checkbox <type=checkbox val="on">
@@ -70,49 +71,54 @@ body
           div.rs-form-hint
     div.rs-auto-panel <display=none>
       div.rs-gen-settings
-        div.rs-config-row
-          label.rs-form-label "出图模型"
-          div.rs-model-select-box <display=none>
-            div
-              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              span.rs-combo-caret "▾"
-            select
-        div.rs-config-row
-          label.rs-form-label "Text Encoder"
-          div.rs-model-select-box <display=none>
-            div
-              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              span.rs-combo-caret "▾"
-            select
-        div.rs-config-row
-          label.rs-form-label "VAE"
-          div.rs-model-select-box <display=none>
-            div
-              input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
-              span.rs-combo-caret "▾"
-            select
-        div.rs-config-row
-          label.rs-form-label "LoRA"
-          div.rs-gen-lora-list
-          button.rs-gen-lora-add <type=button> "+ 添加 LoRA"
-        div.rs-gen-grid
+        div.rs-gen-model-section
           div.rs-config-row
-            label.rs-form-label "出图张数"
-            input.rs-form-input <type=number val="1">
-          div.rs-config-row
-            label.rs-form-label "长边尺寸"
+            label.rs-form-label "出图模型"
             div.rs-model-select-box <display=none>
               div
-                input.rs-form-input.rs-combo-input <type=text placeholder=选择>
+                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
                 span.rs-combo-caret "▾"
               select
           div.rs-config-row
-            label.rs-form-label "默认比例"
+            label.rs-form-label "Text Encoder"
             div.rs-model-select-box <display=none>
               div
-                input.rs-form-input.rs-combo-input <type=text placeholder=选择>
+                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
                 span.rs-combo-caret "▾"
               select
+          div.rs-config-row
+            label.rs-form-label "VAE"
+            div.rs-model-select-box <display=none>
+              div
+                input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+                span.rs-combo-caret "▾"
+              select
+          div.rs-config-row
+            label.rs-form-label "LoRA"
+            div.rs-gen-lora-list
+            button.rs-gen-lora-add <type=button> "+ 添加 LoRA"
+        div.rs-gen-size-section
+          div.rs-gen-grid
+            div.rs-config-row
+              label.rs-form-label "出图张数"
+              input.rs-form-input <type=number val="1">
+            div.rs-config-row
+              label.rs-form-label "长边尺寸"
+              div.rs-model-select-box <display=none>
+                div
+                  input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+                  span.rs-combo-caret "▾"
+                select
+            div.rs-config-row
+              label.rs-form-label "默认比例"
+              div.rs-model-select-box <display=none>
+                div
+                  input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
+                  span.rs-combo-caret "▾"
+                select
+          div.rs-config-row
+            label.rs-form-label "输出前缀"
+            input.rs-form-input <type=text placeholder=NeoAgent>
         div.rs-config-row
           button.rs-gen-save <type=button> "💾 保存设置"
     div.rs-gen-dirty-confirm

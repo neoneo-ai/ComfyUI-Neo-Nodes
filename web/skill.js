@@ -9,8 +9,11 @@
 // Markdown 渲染复用 ComfyUI 内置同款库（marked + DOMPurify），breaks:true 保留单行换行
 import "./marked.min.js";
 import "./purify.min.js";
+import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
+// 仅事件回调内调用（复制补带 workflow/config、画布导出为出图技能、每技能出图设置）；与 image-gen.js 的循环导入均为延迟使用，安全
+import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows } from "./image-gen.js";
 
 // ==========================================
 // Skill API
@@ -309,6 +312,34 @@ function createSkillDetailPopup() {
     contentPreview.style.display = "none";
     contentRow.append(contentHeader, contentTextarea, contentPreview);
 
+    // ---- 出图设置（仅 gen_image 技能显示）：复用全局出图设置的共享控件区，读写该技能的 config.json 覆盖 ----
+    const genSettingsWrap = mkEl("div", "rs-gen-settings rs-skill-gen-settings");
+    genSettingsWrap.style.display = "none";
+    const genSettingsHeader = mkEl("div", "rs-config-row");
+    const genSettingsTitle = mkEl("label", "rs-form-label");
+    genSettingsTitle.textContent = "🖼️ 出图设置（本技能覆盖）";
+    genSettingsTitle.title = "仅对本技能生效，未填项回落全局出图设置";
+    const genReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
+    genReadOnlyHint.textContent = "预设/任务技能只读：点下方「⧉ Copy as custom」复制后可编辑";
+    genReadOnlyHint.style.display = "none";
+    genSettingsHeader.append(genSettingsTitle, genReadOnlyHint);
+    const genModelSection = createModelConfigSection();
+    const genSizeSection = createGenSizeRows();
+    genSettingsWrap.append(genSettingsHeader, genModelSection.el, genSizeSection.el);
+
+    // readOnly（预设/任务技能）时禁用全部控件；config 缺失按空对象回落默认。
+    // 禁用必须在 load() 之后：load 会动态新建 LoRA 行，新建元素不会被前面的禁用循环覆盖
+    async function loadGenSettings(readOnly) {
+        if (!currentSkillId) return;
+        const config = await getSkillGenConfig(currentSkillId);
+        let models = {};
+        try { models = await listGenModels(); } catch (e) { console.warn("Failed to load gen models:", e); }
+        genModelSection.load(config || {}, models);
+        genSizeSection.load(config || {});
+        for (const el of genSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
+        genReadOnlyHint.style.display = readOnly ? "block" : "none";
+    }
+
     // ---- 底部按钮：随状态显隐（Save / Copy-as-custom / Delete / Close）----
     const footerBtns = mkEl("div", "rs-modal-btns rs-skill-detail-actions");
     const saveBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-save-btn");
@@ -322,7 +353,7 @@ function createSkillDetailPopup() {
     cancelBtn.textContent = "✕ Close";
     footerBtns.append(saveBtn, copyBtn, deleteBtn, cancelBtn);
 
-    content.append(nameRow, multiTurnRow, contentRow, footerBtns);
+    content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, footerBtns);
     modal.append(header, content);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -437,6 +468,13 @@ function createSkillDetailPopup() {
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
         else { selectedFile = null; contentTextarea.value = ""; }
+        // 出图技能显示 config.json 覆盖区（预设/任务只读）；其余技能隐藏
+        if (full && full.gen_image) {
+            genSettingsWrap.style.display = "block";
+            await loadGenSettings(!isCustom());
+        } else {
+            genSettingsWrap.style.display = "none";
+        }
         updateControls();
     }
 
@@ -466,6 +504,16 @@ function createSkillDetailPopup() {
     function close() { overlay.style.display = "none"; }
 
     // ---- 保存（新建主文件 / 已有 skill 的当前选中文件）----
+    // 出图设置区可见且可编辑时随主 Save 一起写入该技能 config.json（弹窗内只有一个保存入口）
+    async function persistGenSettings() {
+        if (!currentSkillId || !isCustom() || genSettingsWrap.style.display === "none") return;
+        try {
+            await saveSkillGenConfig(currentSkillId, { ...genModelSection.collect(), ...genSizeSection.collect() });
+        } catch (err) {
+            alert("Save gen settings failed: " + err.message);
+        }
+    }
+
     async function handleSave() {
         const name = nameInput.value.trim();
         if (!name) { alert("Skill name is required"); return; }
@@ -479,11 +527,11 @@ function createSkillDetailPopup() {
         }
         if (isMainFile(selectedFile)) {
             const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom", multi_turn: multiTurnChk.checked });
-            if (result.success) { document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
+            if (result.success) { await persistGenSettings(); document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (result.error || "Unknown error"));
         } else {
             const r = await saveSkillFile(currentSkillId, selectedFile, contentTextarea.value);
-            if (r.success) { document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
+            if (r.success) { await persistGenSettings(); document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (r.error || ""));
         }
     }
@@ -513,8 +561,13 @@ function createSkillDetailPopup() {
             content: (full && full.content) || "",
             tags: [...((full && full.tags) || [])],
             source: "custom",
-            multi_turn: !!(full && full.multi_turn)
+            multi_turn: !!(full && full.multi_turn),
+            // 保留 frontmatter 元数据：出图技能复制后仍是 image_gen 分类且设置区可见
+            category: (full && full.category) || "",
+            gen_image: !!(full && full.gen_image),
+            requires_ref: !!(full && full.requires_ref)
         });
+        await copySkillFiles(currentSkillId, newId); // 出图技能连同 workflow.json / config.json 一起复制（失败静默）
         document.dispatchEvent(new CustomEvent("rs.skills.updated"));
         close();
     });
@@ -629,7 +682,34 @@ function createSkillDropdown() {
     footerZipBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().zipInput.click(); });
     const footerDirBtn = makeFooterBtn("⬆ Folder", "Upload a skill folder (all .md files)");
     footerDirBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().dirInput.click(); });
-    skillFooter.append(footerNewBtn, footerZipBtn, footerDirBtn);
+    // 把当前画布工作流（API prompt）导出为出图技能：后端自动抽模板占位符 + LoRA 槽位
+    const footerCanvasBtn = makeFooterBtn("📋 From Canvas", "Export the current canvas workflow as an image-gen skill");
+    footerCanvasBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        combo.close();
+        try {
+            const { output, error } = (await app.graphToPrompt()) || {};
+            if (error || !output || !Object.keys(output).length) {
+                alert("Cannot export: no valid workflow on canvas" + (error?.message ? " (" + error.message + ")" : ""));
+                return;
+            }
+            const name = prompt("Skill name:", "my-workflow");
+            if (!name || !name.trim()) return;
+            const description = prompt("Description (optional):", "") ?? "";
+            const tagsRaw = prompt("Tags, comma separated (optional):", "") ?? "";
+            const r = await saveWorkflowSkill({
+                name: name.trim(),
+                description,
+                tags: String(tagsRaw).split(",").map((t) => t.trim()).filter(Boolean),
+                workflow: output,
+            });
+            alert(`Saved image-gen skill "${r.id}"` + (r.warnings?.length ? "\n" + r.warnings.join("\n") : ""));
+            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+        } catch (err) {
+            alert("Save failed: " + err.message);
+        }
+    });
+    skillFooter.append(footerNewBtn, footerZipBtn, footerDirBtn, footerCanvasBtn);
 
     // 行内操作：自定义 skill → ✎ Edit；内置 SYS/TASK → 👁 查看。点击先关下拉再开详情弹窗，
     // mousedown 上 preventDefault + stopPropagation 避免触发整行的选中(pickValue)。
@@ -676,5 +756,6 @@ export {
     deleteSkillFile,
     populateSkillOptions,
     renderMarkdown,
+    createSkillDetailPopup,
     createSkillDropdown
 };
