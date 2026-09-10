@@ -972,6 +972,22 @@ class TestGenImageSkill(unittest.TestCase):
         body = json.loads(resp.body)
         self.assertFalse(body["gen_image"])
 
+    def test_find_name_conflict(self):
+        self._write_skill("dup-a", ["name: Dup Name"])
+        self._write_skill("dup-b", ["name: Dup Name"])
+        self.assertEqual(self.skill_mod._find_name_conflict("Dup Name", "dup-a"), "dup-b")
+        self.assertEqual(self.skill_mod._find_name_conflict("Dup Name", "dup-b"), "dup-a")
+        self.assertIsNone(self.skill_mod._find_name_conflict("Unique Name", "dup-a"))
+
+    def test_save_skill_route_name_conflict_409(self):
+        self._write_skill("dup-a", ["name: Dup Name"])
+        self._write_skill("dup-b", ["name: Other Name"])
+        async def _json():
+            return {"id": "dup-b", "name": "Dup Name", "content": "body", "source": "custom"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_save_skill(
+            types.SimpleNamespace(json=_json)))
+        self.assertEqual(resp.status, 409)
+
 
 if __name__ == '__main__':
     unittest.main()

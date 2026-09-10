@@ -148,6 +148,7 @@ test("复制为自定义：出图技能保留 category/gen_image/requires_ref", 
     let savedSkill = null;
     mockRoute("/rs_prompts/save_skill", (b) => { savedSkill = b; return jsonResponse({ success: true }); });
     mockRoute("/neo_image_gen/copy_skill_files", () => jsonResponse({ success: true }));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
     await openGenPopup({ id: "image_gen", source: "presets", category: "image_gen" });
 
     const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail-actions button"))
@@ -161,4 +162,25 @@ test("复制为自定义：出图技能保留 category/gen_image/requires_ref", 
     assert.equal(savedSkill.category, "image_gen", "复制后应保留出图分类");
     assert.equal(savedSkill.gen_image, true, "复制后 gen_image 应保留");
     assert.equal(savedSkill.requires_ref, false);
+});
+
+test("复制为自定义：name 与已有 skill 冲突时递增序号", async () => {
+    let savedSkill = null;
+    mockRoute("/rs_prompts/save_skill", (b) => { savedSkill = b; return jsonResponse({ success: true }); });
+    mockRoute("/neo_image_gen/copy_skill_files", () => jsonResponse({ success: true }));
+    // 已有两个同名副本 → 第三次复制应得 "Gen Skill (Copy) 3"
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "a", name: "Gen Skill (Copy)" },
+        { id: "b", name: "Gen Skill (Copy) 2" },
+    ]));
+    await openGenPopup({ id: "image_gen", source: "presets", category: "image_gen" });
+
+    const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail-actions button"))
+        .find((b) => b.textContent.includes("Copy as custom"));
+    assert.ok(copyBtn, "预设技能应显示复制按钮");
+    copyBtn.click();
+    await sleep(60);
+
+    assert.ok(savedSkill, "应发出 /rs_prompts/save_skill");
+    assert.equal(savedSkill.name, "Gen Skill (Copy) 3", "冲突时 name 递增序号");
 });

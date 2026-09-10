@@ -832,6 +832,17 @@ def _safe_skill_file_path(skill_dir: str, filename: str) -> str | None:
     return target
 
 
+def _find_name_conflict(name: str, exclude_id: str):
+    """返回与 name 同名但 id 不同的 skill 的 id；无冲突返回 None。"""
+    target = (name or "").strip()
+    if not target:
+        return None
+    for s in scan_skills():
+        if s["id"] != exclude_id and (s.get("name") or "").strip() == target:
+            return s["id"]
+    return None
+
+
 def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom", multi_turn=None,
                     category=None, gen_image=None, requires_ref=None) -> bool:
     """保存 skill 的主文件 skill.md（frontmatter + 正文），保留未编辑的既有字段。
@@ -1355,6 +1366,10 @@ async def rs_prompts_save_skill(request):
         existing_dir = _skill_dir(skill_id)
         if existing_dir and _skill_source(existing_dir) == "presets" and source != "presets":
             return web.Response(status=403, text="Cannot modify preset skill")
+        final_name = (data.get("name") or "").strip() or skill_id
+        conflict = _find_name_conflict(final_name, skill_id)
+        if conflict:
+            return web.Response(status=409, text=f"技能名称「{final_name}」已被 {conflict} 使用，请改用其他名称")
         ok = save_skill_main(
             skill_id,
             data.get("name", ""),

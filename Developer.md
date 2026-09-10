@@ -29,6 +29,7 @@ ComfyUI-Neo-Nodes/
 ├── workflow.py             # 工作流模型路径修复逻辑 + /neo_nodes/repair* 路由
 ├── image_gen.py            # 内置生图后端：Krea2 工作流构建 + 队列提交/状态事件推送 + /neo_image_gen/* 路由
 ├── krea2_edit.py           # Krea2 以图生图核心节点（vendor 自 comfyui-krea2edit）：ModelPatch + GroundedEncode
+├── krea2_generate.py       # Krea2 生图节点 NeoKrea2Generate：mini-executor 进程内执行 skill workflow 模板，输出 IMAGE 张量
 ├── prompt_lines.py         # 提示词文本行解析（预设列表行 / 随机候选）
 ├── util.py                 # 媒体扩展名常量与共享工具（媒体探测、元数据、提示词文本收集）
 ├── requirements.txt        # Python 依赖（requests / Pillow / PyYAML）
@@ -99,7 +100,7 @@ ComfyUI-Neo-Nodes/
 
 | 模块 | 职责 |
 |------|------|
-| `__init__.py` | 插件入口。导入 `gallery` / `recipes` / `workflow` / `image_gen` 模块以注册各自的 API 路由，从 `prompts.py` 合并 `NODE_CLASS_MAPPINGS` / `NODE_DISPLAY_NAME_MAPPINGS`（含 `krea2_edit` 的两个节点；若用户已安装外部 comfyui-krea2edit 则跳过以免重复注册），声明 `WEB_DIRECTORY = "./web"` |
+| `__init__.py` | 插件入口。导入 `gallery` / `recipes` / `workflow` / `image_gen` 模块以注册各自的 API 路由，从 `prompts.py` 合并 `NODE_CLASS_MAPPINGS` / `NODE_DISPLAY_NAME_MAPPINGS`（含 `krea2_edit` 的两个节点与 `krea2_generate` 的 NeoKrea2Generate；若用户已安装外部 comfyui-krea2edit 则跳过以免重复注册），声明 `WEB_DIRECTORY = "./web"` |
 | `prompts.py` | 两个提示词节点（`NeoPrompts` → Neo Prompt Encoder，`NeoPromptAgent` → Neo Prompt Agent）与 `/rs_prompts/*` 路由：预设提示词 CRUD、LLM 模型切换、图片解析（`resolve_image_bytes`）、标签索引 |
 | `skill.py` | 技能系统：Markdown + YAML frontmatter 解析（PyYAML 事件流）、`skills/{presets,tasks,custom}/<id>/skill.md` 扫描与加载（`scan_skills` / `load_skill_content` / `load_task_template`）、多结果契约读取、语言互斥主文件选择（`SKILL.md`/`SKILL.cn.md`）与按需引用加载的工具调用代理循环（`run_skill_agent[_stream]` / `read_skill_file`，仅运行时惰性导入 llm 原语以避免与 llm.py 的顶层依赖形成循环）、`/rs_prompts/skill*` 路由（列表/读取/保存/删除/上传） |
 | `llm.py` | LLM 推理层：`RemoteLLMClient`（OpenAI 兼容 HTTP，支持 `tools=` 工具调用）、`LLMSingleton`（进程内 llama.cpp GGUF，含 mmproj 多模态绑定与自动卸载）、远程配置存取（`configs/remote_llm_config.json`，按 provider 分槽）、模型目录扫描（`scan_llm_directory`）、任务模板加载（`skills/` 目录，Markdown + frontmatter）与流式/非流式执行、模式无关的单轮对话原语 `chat_turn`（按当前模式分发本地 llama.cpp / 远程 API，供 skill 代理循环按需调用） |
@@ -110,6 +111,7 @@ ComfyUI-Neo-Nodes/
 | `workflow.py` | 工作流模型路径修复：高置信度匹配算法（`repair_workflow`）、手动修复映射存储（`user/neo_repair_mappings.json`）、`/neo_nodes/repair*` 路由 |
 | `image_gen.py` | 内置生图后端：把 Krea2 文生图/参考图四视图请求构建为 API prompt，经内部 HTTP `/prompt` 压进执行队列（独立 `client_id`，不干扰前端进度），轮询 history 收集 SaveImage 输出并写同名 `.txt` sidecar；任务记录仅存内存（TTL 1h / 上限 32）。含模型扫描与自动挑选、按比例算尺寸、输出前缀消毒。参考图模式走 `krea2_edit` 路径：`LoadImage` → `ImageScale`（lanczos，长边限 1024px）→ `VAEEncode` 得源 latent 进 `Krea2EditModelPatch`（`fit_mode=fit`，像素空间 AR 适配 + VAE encode，`target_latent` 预编码避免采样中途挤占显存）；positive/negative 均用 `Krea2EditGroundedEncode` 接地到同一张参考图（negative 空指令），目标为 16:9 横版 `EmptySD3LatentImage`（同时接 `KSampler.latent_image` 与 patch 的 `target_latent`），denoise 恒 1.0；prompt = 固定结构指令前缀 + 用户描述；四视图 LoRA 由用户在 LoRA 列表里勾选「依赖参考图」（`ref_only`）标记，参考图模式直接沿用（缺失时按名称线索自动挑选/追加，仍无则报错不降级），文生图跳过 `ref_only` 的 LoRA |
 | `krea2_edit.py` | Krea2 以图生图核心节点，vendor 自 comfyui-krea2edit（单文件插件）。`Krea2EditModelPatch`：包装 DIFFUSION_MODEL forward，把序列重建为 `[text \| source(frame=1) \| target(frame=0)]` 只取 target token；`fit_mode=fit` 在像素空间做 AR 适配 + VAE encode（支持 `target_latent` 预编码）。`Krea2EditGroundedEncode`：图像接地指令编码，Qwen3-VL user turn = `<vision: source>` + instruction（训练一致语义路径）。上游活跃开发，修复需整文件同步（对比 `custom_nodes/comfyui-krea2edit/__init__.py`）；用户已装外部插件时由 `__init__.py` 跳过注册 |
+| `krea2_generate.py` | Krea2 生图节点 `NeoKrea2Generate`：按所选 skill 的 `workflow.json` 模板同步生成并输出 IMAGE 张量。进程内 mini-executor（`execute_graph_inprocess`）拓扑执行 `image_gen.render_template` 产出的 API prompt graph——引用解析、hidden 参数注入、跳过 SaveImage/Preview 落盘节点、取末端未被消费的 IMAGE 输出；参考图经 `_image_to_data_uri` 转 base64 data URI 复用 `resolve_request` 的 data 分支落盘。不嵌套官方 PromptExecutor（避免进度重置 / 模型清理 / client 状态变更），未知或异步节点明确报错 |
 | `prompt_lines.py` | 提示词文本行解析：将预设/合集 .txt 拆为（标题，内容）条目，供预设列表与随机候选使用 |
 | `util.py` | 媒体扩展名常量（IMG/VIDEO/AUDIO）与共享工具：目录媒体探测、媒体元数据提取、配方提示词文本收集。独立于路由模块以避免导入循环 |
 
@@ -237,7 +239,7 @@ ComfyUI-Neo-Nodes/
 | POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表 |
 | GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组） |
 | POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens、gen_image 生图标记） |
-| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这三个字段保留生图分类与设置区） |
+| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这三个字段保留生图分类与设置区）；**名称唯一性校验**：name 与其它 skill 重复时返回 409 |
 | POST | `/rs_prompts/delete_skill` | 删除整个技能目录（仅 USR） |
 
 ## 节点注册
@@ -306,6 +308,7 @@ python -m pytest tests -v
 - `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析（分隔符 / JSON 数组）、skill 代理（语言互斥主文件选择、引用列表、安全读取越界拒绝、工具调用循环按需读引用、本地模式回退）、`gen_image` / `requires_ref` 元数据透传与编辑保存保留
 - `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确/归一化匹配、量化变体替换、歧义拒绝、扩展名约束
 - `tests/test_image_gen.py` — 内置生图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选（Krea2 只精确匹配 Qwen3-VL-4B，8B/32B 不参与；VAE 优先 Qwen-Image）、下拉展示排序（krea2 靠前）与 LoRA「自动」建议名、LoRA 缺失告警、参考图（input / data URI）落地、四视图固定 16:9（参考图长边限 1024px、`Krea2EditModelPatch` fit 接线、denoise=1.0、四视图 LoRA 自动追加/去重/缺失报错）、生图张数（设置默认 / 单次覆盖 / 四视图强制 1）、工作流图结构与 sidecar 写入、vendor `krea2_edit` 纯函数单测（RoPE 偏移 / latent fit / 5D 展平）
+- `tests/test_krea2_generate.py` — mini-executor 单测：拓扑排序与环检测、引用解析与输出归一化（单/多输出）、末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量→base64 PNG 编码往返、`NeoKrea2Generate` 请求组装（缺 workflow.json 报错 / happy path 返回 IMAGE）
 
 ### 前端回归测试（tests/js）
 

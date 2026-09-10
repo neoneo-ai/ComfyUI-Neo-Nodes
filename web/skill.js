@@ -602,9 +602,14 @@ function createSkillDetailPopup() {
         const full = await loadSkill(currentSkillId);
         if (full && full.error) { alert("Failed to load skill: " + full.error); return; }
         const newId = currentSkillId + "_copy_" + Date.now();
+        // 复制产生的 name 需与已有 skill 不重名（后端 save_skill 会 409），冲突时递增序号
+        const baseName = ((full && full.name) || nameInput.value.trim() || currentSkillId) + " (Copy)";
+        const takenNames = new Set((await listSkills()).map(s => (s.name || "").trim()));
+        let copyName = baseName;
+        for (let n = 2; takenNames.has(copyName); n++) copyName = `${baseName} ${n}`;
         await saveSkill({
             id: newId,
-            name: ((full && full.name) || nameInput.value.trim() || currentSkillId) + " (Copy)",
+            name: copyName,
             content: (full && full.content) || "",
             tags: [...((full && full.tags) || [])],
             source: "custom",

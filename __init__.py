@@ -41,15 +41,29 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] krea2_edit 节点注册失败（以图生图不可用）: {e}")
 
+    # Krea2 生图节点（方案 A mini-executor）：按 skill workflow.json 同步生成 IMAGE 输出。
+    # 依赖 image_gen/skill 已加载；导入失败时优雅降级，不阻断其它节点。
+    KREA2_GENERATE_MAPPINGS = {}
+    KREA2_GENERATE_DISPLAY_MAPPINGS = {}
+    try:
+        from .krea2_generate import (
+            NODE_CLASS_MAPPINGS as KREA2_GENERATE_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as KREA2_GENERATE_DISPLAY_MAPPINGS,
+        )
+    except Exception as e:
+        print(f"[NeoNodes] krea2_generate 节点注册失败（生图不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
         **KREA2_EDIT_MAPPINGS,
+        **KREA2_GENERATE_MAPPINGS,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
         **PROMPT_DISPLAY_NAME_MAPPINGS,
         **KREA2_EDIT_DISPLAY_MAPPINGS,
+        **KREA2_GENERATE_DISPLAY_MAPPINGS,
     }
 
 # Web directory for frontend extensions
