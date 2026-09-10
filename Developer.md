@@ -85,6 +85,7 @@ ComfyUI-Neo-Nodes/
 │   ├── prompt-manager.js   # 提示词管理器（预设列表 / 集合视图 / 保存与删除；聊天区由 llm-chat.js 提供）
 │   ├── llm-chat.js         # LLM 聊天域：输入框与提示语轮播、输出区 Markdown 预览、工具条、技能下拉、附加图片 chips、✨/Enter 生成（SSE 流式）
 │   ├── at-picker.js        # `@` 图片选择器：扫描工作流 Load Image 节点，弹层跟随光标，点击/回车插入 <Picture N> 标记
+│   ├── slash-picker.js     # `/` 技能快捷菜单：输入 / 唤起并实时过滤 skill（name/id），↑/↓ + Enter/Tab 提交写入技能下拉
 │   ├── prompt-service.js   # 提示词 API 服务封装
 │   ├── llm-setting.js      # LLM 配置表单（provider/模型/API key/本地目录），挂入自动增强菜单
 │   ├── image-gen.js        # 生图（Krea2）客户端：/neo_image_gen/* 包装、任务事件等待（rs.image_gen.status）、四视图模板、结果发送到 LoadImage、生图设置表单
@@ -121,13 +122,14 @@ ComfyUI-Neo-Nodes/
 | `gallery.js` / `gallery-list.js` / `gallery-card.js` / `gallery-setting.js` / `gallery-utils.js` / `gallery.css` | 素材侧边栏：目录卡片、懒加载列表、搜索、上传删除、设置弹窗 |
 | `lightbox.js` / `lightbox.css` | 通用灯箱组件：异步 blob 加载、相邻预加载、缩放平移、尺寸显示、`panelProvider` 侧栏钩子；素材与配方通过各自适配接入 |
 | `node-behavior.js` | 节点级交互行为（拖拽图片、粘贴、`@` 引用等） |
-| `combo-box.js` | 通用下拉选择组件：点击展开/键入过滤覆盖、键盘导航；`<optgroup>` 渲染为分类标题（无 `data-value`，自动被键盘导航与取值逻辑跳过），过滤时空组隐藏 |
+| `combo-box.js` | 通用下拉选择组件：点击展开/键入过滤覆盖、键盘导航；option 可带 `data-tags`（空格分隔，如中文拼音/首字母缩写）作为附加搜索文本参与过滤（无该属性的下拉不受影响）；`<optgroup>` 渲染为分类标题（无 `data-value`，自动被键盘导航与取值逻辑跳过），过滤时空组隐藏 |
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip；节点移除时统一注销 document/window/api 监听并销毁挂 body 的浮层菜单 |
 | `prompt-manager.js` | 提示词管理器：预设列表、集合视图、保存与删除；聊天域 DOM 由 `llm-chat.js` 的 `createStatusBars()` / `createPromptOutputArea()` 提供并经 `createPromptManagerUI()` 组装 |
 | `llm-chat.js` | LLM 聊天域：输入区 DOM（快捷输入框与提示语轮播、工具条、技能下拉、附加图片 chips、运行时随机菜单 DOM）+ 输出区 DOM（`createPromptOutputArea()`：textarea、Markdown 预览层与任务复选框回写、清空按钮、多轮技能提示、生图结果块控制器 + 节点最底部生图状态行 `rs-gen-status`（按 `state.phase` 切换形态：`enhance` 增强提示词流式阶段按已生成字符推进近似宽度并显示「已生成 N 字」、`sample` 采样阶段显示真实步数、`submit/queue` 排队用不定动画；运行中一行显示 状态/进度/取消，结束即隐藏，不随预览吸顶））+ `createGenerateHandler()` 生成流程（生图 skill 直连 `/neo_image_gen`（状态与进度在底部状态行更新；完成/取消/失败后状态行自动收起；缩略图走 `/neo_gallery/thumbnail` 缓存接口，点击经通用 `Lightbox` 打开原图；发送装配渲染在 Markdown 预览）/ skill 路由 / 选中模板 / LLM 智能判断，SSE 流式分支 rAF 合帧写回 textarea）+ `wireBackendStreamUpdate()` 后端执行期自动生成回写（按 `instance_uid` 过滤，写回 textarea/widget 后同帧刷新 Markdown 预览；返回注销函数） |
 | `at-picker.js` | `@` 图片选择器（纯 ES 模块）：`createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInput, inputViewUrl })` 返回打开函数，由 `llm-chat.js` 的 `createStatusBars()` 注入依赖并在输入 `@` 时调用。扫描工作流未禁用的 Load Image 节点并按目标节点 IMAGE 输入槽算出 pictureNo；弹层挂 body 并跟随光标定位（含画布缩放校正），支持键盘导航与外部点击关闭，关闭时移除 document 与输入框监听并复位打开句柄 |
+| `slash-picker.js` | `/` 技能快捷菜单（纯 ES 模块）：`createSlashSkillPicker({ quickInput, skillSelector, listSkills })` 返回打开函数，由 `llm-chat.js` 的 `createStatusBars()` 注入依赖并在输入 `/` 时调用。弹层挂 body 并锚定到输入框下方定位；随后续输入按 name/id/tags（含中文拼音，忽略大小写）实时过滤，空 query 按分类排序；每行显示技能名 + 类别名称（复用 skill.js `CATEGORY_LABELS`，未知分类回落 image_enhance）；`↑`/`↓`/`Home`/`End` 移动高亮、`Enter`/`Tab` 提交当前项（写入 skillSelector 并派发 change、清除 `/query`）、`Esc` 关闭；只过滤不自动提交，关闭时移除 document 与输入框监听并复位打开句柄 |
 | `dom-utils.js` | 共享 DOM 工厂：`mkEl(tag, className, styles)`，供 prompt-manager / llm-chat / skill / llm-setting / prompts 复用 |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
 | `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save }`，以 tab 形式挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / 本地目录 / 自动卸载） |

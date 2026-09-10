@@ -191,10 +191,10 @@ function renderMarkdown(src) {
 // image_gen 组排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
 // 图像/视频提示词增强紧随其后，vision/task/custom 依次跟随；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
-    "image_gen": { label: "⚡ 生图 (Krea2)", order: -1 },
+    "image_gen": { label: "🖼️ 生图 (Krea2)", order: -1 },
     "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
     "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
-    "vision": { label: "🖼️ 图像 / 反推", order: 2 },
+    "vision": { label: "⚡ 图像 / 反推", order: 2 },
     "task": { label: "⚙️ 任务", order: 3 },
     "custom": { label: "📝 自定义", order: 4 }
 };
@@ -222,6 +222,8 @@ function populateSkillOptions(selectEl, skills) {
             // requiresRef 标记四视图（必须带参考图，缺图在预览区底部报错）
             opt.dataset.genImage = s.gen_image ? "1" : "";
             opt.dataset.requiresRef = s.requires_ref ? "1" : "";
+            // tags（含后端追加的中文拼音/首字母缩写）供 combo box 搜索匹配
+            opt.dataset.tags = (s.tags || []).join(" ");
             const imgBadge = s.needs_image ? "📷 " : "";
             opt.textContent = `${imgBadge}${s.name || s.id}`;
             optgroup.appendChild(opt);
@@ -830,6 +832,7 @@ export {
     saveSkillFile,
     deleteSkillFile,
     populateSkillOptions,
+    CATEGORY_LABELS,
     renderMarkdown,
     createSkillDetailPopup,
     createSkillDropdown

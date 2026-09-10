@@ -150,6 +150,62 @@ test("@ 图片选择器：无可用图片时给占位提示，不叠加弹层且
     assert.equal(document.querySelectorAll(".rs-at-picker").length, 1);
 });
 
+test("输入 / 唤起 skill 快捷菜单：实时过滤 + Enter 提交写入下拉", async () => {
+    const node = await makeNode(21);
+    const el = parts(node);
+
+    // 打 / 打开弹层（全量 5 个 skill）
+    inputText(el.quickInput, "/");
+    await sleep(100);
+    let picker = document.querySelector(".rs-slash-picker");
+    assert.ok(picker, "应出现 slash 菜单");
+    assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 5, "全量 skill 5 行");
+
+    // 继续输入过滤：/ani → anime_style（id 命中）
+    inputText(el.quickInput, "/ani");
+    await sleep(100);
+    picker = document.querySelector(".rs-slash-picker");
+    assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 1, "过滤后剩 1 行");
+    // 副标题显示类别名称（image_enhance → 🎨 图像提示词增强），不再是 id
+    assert.strictEqual(picker.querySelector(".rs-slash-picker-meta").textContent, "🎨 图像提示词增强", "meta 显示类别名称");
+
+    // Enter 提交：写入下拉、清除 /query、关闭弹层
+    keydown(picker, "Enter");
+    await sleep(50);
+    assert.strictEqual(document.querySelector(".rs-slash-picker"), null, "提交后弹层应移除");
+    assert.strictEqual(el.selector.value, "anime_style", "skill 下拉应为 anime_style");
+    assert.strictEqual(el.quickInput.value, "", "/query 应被清除");
+});
+
+test("输入 / 后 Esc 关闭菜单且不改变 skill 选择", async () => {
+    const node = await makeNode(22);
+    const el = parts(node);
+
+    inputText(el.quickInput, "/");
+    await sleep(100);
+    const picker = document.querySelector(".rs-slash-picker");
+    assert.ok(picker, "应出现 slash 菜单");
+    keydown(picker, "Escape");
+    await sleep(50);
+    assert.strictEqual(document.querySelector(".rs-slash-picker"), null, "Esc 后弹层应移除");
+    assert.strictEqual(el.quickInput.value, "/", "输入内容不应被改动");
+});
+
+test("输入 / 后按中文拼音（tags）匹配 skill", async () => {
+    const node = await makeNode(23);
+    const el = parts(node);
+
+    inputText(el.quickInput, "/");
+    await sleep(100);
+    // 首字母缩写 dmfg 命中「动漫风格」的拼音标签
+    inputText(el.quickInput, "/dm");
+    await sleep(100);
+    const picker = document.querySelector(".rs-slash-picker");
+    assert.ok(picker, "应出现 slash 菜单");
+    assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 1, "拼音 dm 命中 1 行");
+    assert.ok(picker.textContent.includes("动漫风格"), "命中的应是动漫风格");
+});
+
 test("运行时随机菜单：+/- 调整条数并写回隐藏控件", async () => {
     const node = await makeNode(15);
     const rt = parts(node).randomBtn._rsRuntime;

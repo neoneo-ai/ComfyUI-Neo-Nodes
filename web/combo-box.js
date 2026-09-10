@@ -136,6 +136,13 @@ export function attachComboBox(selectEl, opts = {}) {
 
     const renderList = (query) => {
         const q = (query || "").trim().toLowerCase();
+        // option 可带 data-tags（空格分隔，如中文拼音/首字母缩写）作为附加搜索文本；无该属性的下拉不受影响
+        const matches = (o) => {
+            if (!q) return true;
+            if (o.textContent.toLowerCase().includes(q)) return true;
+            const tags = o.dataset.tags ? o.dataset.tags.split(/\s+/) : [];
+            return tags.some((t) => t && t.toLowerCase().includes(q));
+        };
         itemsHost.innerHTML = "";
         highlight = -1;
         // 遍历 select 的直接子节点，以支持 <optgroup> 分组渲染分类标题。
@@ -171,7 +178,7 @@ export function attachComboBox(selectEl, opts = {}) {
             if (child.tagName === "OPTGROUP") {
                 // 仅当该组有命中项时才渲染分类标题 + 选项
                 const opts2 = Array.from(child.children).filter(
-                    (o) => o.tagName === "OPTION" && (!q || o.textContent.toLowerCase().includes(q))
+                    (o) => o.tagName === "OPTION" && matches(o)
                 );
                 if (!opts2.length) return;
                 const header = el("div", "rs-combo-category",
@@ -180,7 +187,7 @@ export function attachComboBox(selectEl, opts = {}) {
                 itemsHost.appendChild(header);
                 opts2.forEach((o) => renderItem(o, true));
             } else if (child.tagName === "OPTION") {
-                if (!q || child.textContent.toLowerCase().includes(q)) renderItem(child);
+                if (matches(child)) renderItem(child);
             }
         });
         if (!items().length) {

@@ -13,6 +13,7 @@ import { mkEl } from "./dom-utils.js";
 import { collectWorkflowContext } from "./workflow-context.js";
 import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 import { createAtImagePicker } from "./at-picker.js";
+import { createSlashSkillPicker } from "./slash-picker.js";
 import { createImageGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated, enhancePromptStream, getGenSettings, getSkillGenConfig } from "./image-gen.js";
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
@@ -598,11 +599,16 @@ function createStatusBars() {
     });
 
     const openAtImagePicker = createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInput, inputViewUrl });
+    // 输入 / 唤起 skill 快捷菜单：随输入实时过滤，↑/↓ + Enter/Tab 提交（写入 skill 下拉），Esc 关闭
+    const openSlashSkillPicker = createSlashSkillPicker({ quickInput, skillSelector, listSkills });
 
-    // 输入 @ 唤起工作流图片选择器（支持在文本中间插入：看光标前一个字符）
+    // 输入 @ 唤起工作流图片选择器、/ 唤起 skill 快捷菜单（均支持在文本中间插入：看光标前一个字符）
     quickInput.addEventListener("input", () => {
         const caret = quickInput.selectionStart;
-        if (caret > 0 && quickInput.value[caret - 1] === "@") openAtImagePicker();
+        if (caret <= 0) return;
+        const ch = quickInput.value[caret - 1];
+        if (ch === "@") openAtImagePicker();
+        else if (ch === "/") openSlashSkillPicker();
     });
 
     const customTextarea = document.createElement("textarea");

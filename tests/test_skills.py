@@ -133,6 +133,19 @@ class TestScanSkills(unittest.TestCase):
         if ref is not None:
             self.assertFalse(ref["multi_turn"])
 
+    def test_name_pinyin_tags_ascii_noop(self):
+        """纯英文/数字名称不产生拼音标签"""
+        self.assertEqual(self.skill_mod._skill_name_pinyin_tags("Enhance HD"), [])
+
+    def test_name_pinyin_tags_chinese_full_and_initials(self):
+        """中文名称生成全拼 + 首字母缩写；无 pypinyin 时优雅降级为空"""
+        tags = self.skill_mod._skill_name_pinyin_tags("动漫风格")
+        if self.skill_mod.lazy_pinyin is None:
+            self.assertEqual(tags, [])
+        else:
+            self.assertIn("dongmanfengge", tags)
+            self.assertIn("dmfg", tags)
+
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestSaveSkillMultiTurn(unittest.TestCase):

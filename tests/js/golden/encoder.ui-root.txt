@@ -31,13 +31,13 @@ div.rs-root.rs-theme-local
           button.rs-skill-view-btn <type=button title=查看当前技能详情> "👁"
         select.rs-tpl-selector <title=Select a skill>
           option <value= selected> "默认"
-          optgroup <label=⚡ 生图 (Krea2)>
+          optgroup <label=🖼️ 生图 (Krea2)>
             option <value=image_gen> "出图 Krea2 三视图"
           optgroup <label=🎨 图像提示词增强>
             option <value=anime_style> "动漫风格"
           optgroup <label=🎬 视频提示词增强>
             option <value=minimax_h3_ref> "📷 全参考"
-          optgroup <label=🖼️ 图像 / 反推>
+          optgroup <label=⚡ 图像 / 反推>
             option <value=reverse_prompt> "📷 反推提示词"
           optgroup <label=⚙️ 任务>
             option <value=story_expand> "故事扩写"

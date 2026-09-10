@@ -83,3 +83,48 @@ test("combo：optgroup 分类标题渲染 + 过滤 + 键盘导航跳过标题", 
 
     destroy();
 });
+
+test("combo：option 的 data-tags（中文拼音/首字母缩写）参与过滤", async () => {
+    resetEnv();
+    const { attachComboBox } = await import("../../web/combo-box.js");
+
+    const select = document.createElement("select");
+    // textContent 是中文名（不含拼音），仅靠后端追加的 data-tags 才能被拼音命中
+    const opt1 = document.createElement("option");
+    opt1.value = "anime_style";
+    opt1.textContent = "动漫风格";
+    opt1.dataset.tags = "dongmanfengge dmfg"; // 全拼 + 首字母缩写（与 skill.js populateSkillOptions 的空格分隔格式一致）
+    const opt2 = document.createElement("option");
+    opt2.value = "other";
+    opt2.textContent = "其他技能";
+    select.append(opt1, opt2);
+    document.body.appendChild(select);
+
+    const { box, destroy } = attachComboBox(select);
+    document.body.appendChild(box);
+    const inputEl = box.querySelector("input");
+    inputEl.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true }));
+    const listEl = document.querySelector(".rs-combo-list");
+
+    // 首字母缩写 dmfg 命中「动漫风格」
+    inputEl.value = "dmfg";
+    inputEl.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+    let items = Array.from(listEl.querySelectorAll("[data-value]"));
+    assert.equal(items.length, 1, "拼音首字母缩写应命中 1 项");
+    assert.equal(items[0].dataset.value, "anime_style");
+
+    // 全拼片段 dongman 也命中
+    inputEl.value = "dongman";
+    inputEl.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+    items = Array.from(listEl.querySelectorAll("[data-value]"));
+    assert.equal(items.length, 1, "拼音全拼片段应命中 1 项");
+    assert.equal(items[0].dataset.value, "anime_style");
+
+    // 无关查询不命中带 tags 的项
+    inputEl.value = "zzz";
+    inputEl.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+    items = Array.from(listEl.querySelectorAll("[data-value]"));
+    assert.equal(items.length, 0, "无关查询不应命中");
+
+    destroy();
+});

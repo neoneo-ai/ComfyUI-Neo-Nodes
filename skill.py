@@ -40,6 +40,11 @@ import zipfile
 
 import yaml
 from aiohttp import web
+
+try:
+    from pypinyin import lazy_pinyin, Style as _PinyinStyle
+except ImportError:  # pypinyin 缺失时中文拼音匹配静默不可用，其余功能正常
+    lazy_pinyin = None
 import server
 from server import PromptServer
 
@@ -712,6 +717,29 @@ def load_task_template(task_name: str) -> dict:
     }
 
 
+def _skill_name_pinyin_tags(name) -> list:
+    """为中文技能名生成拼音匹配标签（全拼 + 首字母缩写），供前端 / 菜单按拼音检索。
+
+    仅当名称含 CJK 且安装了 pypinyin 时返回非空；英文/数字字符原样并入拼音串。"""
+    if not name or lazy_pinyin is None:
+        return []
+    s = str(name)
+    if not any("\u4e00" <= ch <= "\u9fff" for ch in s):
+        return []
+
+    def compact(style):
+        return re.sub(r"[^a-z0-9]", "", "".join(lazy_pinyin(s, style=style)).lower())
+
+    tags = []
+    full = compact(_PinyinStyle.NORMAL)
+    initials = compact(_PinyinStyle.FIRST_LETTER)
+    if full:
+        tags.append(full)
+    if initials and initials != full:
+        tags.append(initials)
+    return tags
+
+
 def scan_skills() -> list:
     """合并 tasks + presets/custom 为统一 skill 元数据列表。
 
@@ -735,7 +763,7 @@ def scan_skills() -> list:
                 "name": meta.get("name", skill_id),
                 "category": _skill_category(skill_id, {**meta, "inputs": inputs}),
                 "source": "tasks",
-                "tags": meta.get("tags", []),
+                "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("name", skill_id)),
                 "inputs": inputs,
                 "needs_image": "image" in inputs,
                 "markers": meta.get("markers") or _SKILL_MARKERS.get(skill_id, []),
@@ -762,7 +790,7 @@ def scan_skills() -> list:
                     "name": meta.get("name", skill_id),
                     "category": meta.get("category", "image_enhance"),
                     "source": source,
-                    "tags": meta.get("tags", []),
+                    "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("name", skill_id)),
                     "inputs": inputs,
                     "needs_image": "image" in inputs,
                     "markers": meta.get("markers") or [],
