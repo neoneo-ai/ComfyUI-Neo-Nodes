@@ -4,13 +4,14 @@
 
 | 模块 | 类型 | 说明 |
 |------|------|------|
-| 📝 Neo Prompt Encoder | 节点 | AI 提示词增强 + CLIP 编码 |
-| ⚡ Neo Prompt Agent | 节点 | 纯文本输出的轻量提示词生成 |
-| 🎨 Krea2 Generate | 节点 | 按所选生图 skill 的 workflow.json 模板同步生成，直接输出 IMAGE 张量到下游节点（进程内 mini-executor 执行，无需聊天界面；需 GPU/显存，采样期间阻塞主工作流） |
+| 📝 Neo Prompt Encoder | 节点 | 提示词管理 + AI 增强：内置大量预设、可搜索快速筛选；输出 CLIP 编码（CONDITIONING）+ 文本，接标准 txt2img 采样器 |
+| ⚡ Neo Prompt Agent | 节点 | 提示词管理 + AI 生成：内置大量预设、可搜索快速筛选；仅输出文本（STRING），无需连 CLIP / 文本编码器，适合喂给下游节点（如 🎨 Krea2） |
 | 🖌️ 聊天生图（Krea2） | 节点内置 | 选生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板，LoRA 可选（依赖参考图模式），底部状态行实时显示进度/取消，结果 Markdown 预览并一键装配回 LoadImage |
-| 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频素材浏览与管理 |
-| ⭐ 收藏（书签） | Gallery 板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） |
+| 🎨 Krea2 Generate | 节点 | 按所选生图 skill 的 workflow.json 模板同步生成，直接输出 IMAGE 张量到下游节点（进程内 mini-executor 执行，无需聊天界面；需 GPU/显存，采样期间阻塞主工作流） |
+| 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频素材浏览与管理：内置预设素材，支持自定义素材目录与 Civitai LORA 资源匹配；灯箱预览、一键发送到节点 |
+| ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 |
+| 🔧 工作流修复 | 顶栏工具 | 换机器 / 改目录后模型路径失效时，按文件名匹配磁盘真实文件一键修复；可手动改选、记住映射、载入前自动检查 |
 
 ## 目录
 
@@ -64,10 +65,14 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 2. **配置 LLM（二选一）**
    - **远程**：节点 Settings 里填 API Key + 端点（+ 采样温度）。
    - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型。
-3. **第一次提示词增强**：添加 📝 Neo Prompt Encoder 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨ → 得到 AI 增强后的提示词（可接 CLIP 编码）。
-4. **第一次生图**：添加 🎨 Krea2 Generate 节点 → 选一个带 `workflow.json` 的生图 skill → 填 prompt（四视图类再连参考图）→ 排队执行 → 直接输出 IMAGE 张量。
+3. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨ → 得到 AI 生成的提示词文本（无需连 CLIP，可直接接下游如 🎨 Krea2）。
+4. **第一次生图**：添加 🎨 Krea2 Generate 节点 → 选一个带 `workflow.json` 的生图 skill → prompt 接 ⚡ Neo Prompt Agent（常用）或手填，四视图类再连参考图 → 排队执行 → 直接输出 IMAGE 张量。
 
    > 生图需 GPU/显存，且所选 skill 必须声明 `gen_image: true` 并附 `workflow.json`。
+   > 生图模型 / Text Encoder / VAE 默认「自动」按 skill 模板匹配，无需手配；未匹配到时再到节点生图设置里手动指定。
+
+5. **素材一键入节点**：打开右侧边栏「素材」面板 → 浏览/搜索到目标图片 → 点缩略图进灯箱 → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
+6. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏「🔧 修复工作流」→ 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
 
 ---
 
@@ -150,6 +155,8 @@ python -c "from llama_cpp import Llama; print('ok')"
 ### 🎨 Krea2 Generate - 一体化生图节点（IMAGE 输出）
 
 按所选生图 skill 的 `workflow.json` 模板**同步生成图像并直接输出 IMAGE 张量**，供下游节点（SaveImage / 其它图像节点）连线使用。与「聊天生图」不同：它不经过聊天界面、不落盘到 output 目录，而是把生成的图像作为张量返回给工作流。
+
+**常用搭配 ⚡ Neo Prompt Agent**：由它生成 prompt 文本接入本节点。生图模型 / Text Encoder / VAE 默认「自动」按 skill 模板匹配，一般无需手配；未匹配到时再到生图设置里手动指定。
 
 - **进程内 mini-executor** - 在节点 forward 内拓扑执行所选 skill 的 workflow 模板（复用 `image_gen.render_template`），跳过 SaveImage/Preview 等落盘节点，取末端 IMAGE 输出
 - **skill_id 下拉** - 按生图 skill 的**名称**（frontmatter `name`，缺省回退 id）列出，仅含带 `workflow.json` 的生图 skill（`gen_image: true`）；节点内部把所选名称解析回 skill id 再取模板，旧工作流里存的 id 也能兼容；skill 增删/改名后需刷新 `/object_info`
@@ -364,27 +371,27 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 ### Civitai LORA 示例缓存（访问时自动抓取）
 
 「Manage Directories」弹窗底部的 **Civitai LORA Examples** 区可把 C 站（civitai.com）的 LORA
-示例图与提示词抓取为画廊素材。无需手动同步——打开画廊的「Lora」目录时，未缓存的 LORA 会自动进入
+示例图与提示词抓取进素材库。无需手动同步——打开素材面板的「Lora」目录时，未缓存的 LORA 会自动进入
 后台抓取队列：
 
 - **启用 C 站 LORA**（总开关，默认关闭）- 关闭时不会注册、展示或抓取任何 C 站 LORA 示例；勾选后
   才会按所选目录自动获取。开关状态保存在 `configs/gallery_settings.json`
 - **Civitai API KEY** - 粘贴你在 civitai.com 的 API KEY 后点「Save API KEY」；KEY 仅保存在本机
   `gallery_settings.json`（不入库），保存后以脱敏形式显示。未配置 KEY 时，已选 LORA 目录仍会以
-  「需要配置 API KEY」角标展示在画廊中，但不会联网抓取
+  「需要配置 API KEY」角标展示在素材面板中，但不会联网抓取
 - **测试 C 站连通性** - C 站对网络有要求（多数环境需要代理）。点击后会请求 `GET /models?limit=1`
   （最长 20 秒），返回：延迟、是否可达、以及已保存的 KEY 是否被接受。区分「无法连接 Civitai
   （需要代理）」与「API KEY 被拒绝 HTTP 401/403」两类问题。抓取队列遇到无法连接时会提前中止本批，
   并在状态栏显示网络错误提示
 - **Select LORA Directories** - 列出 `models/loras` 下的第一级子目录（含数量，可多选），
-  选择即保存；首页 Lora 区域**只展示**所选目录下的 LORA 示例，未勾选的 lora 不会出现在画廊中
+  选择即保存；首页 Lora 区域**只展示**所选目录下的 LORA 示例，未勾选的 lora 不会出现在素材面板中
 - **访问时自动缓存** - 打开「Lora」目录或其子目录时，按文件 SHA256 查询 Civitai
   （`model-versions/by-hash`），后台下载该版本的全部示例图并写入提示词 sidecar；
   每次访问最多处理 20 个 LORA，已缓存（size/mtime 未变）的 LORA 自动跳过，
   被删除/更换的 LORA 缓存自动清理。失败项显示红色角标，可用「Retry Failed」重新入队
 
 缓存结果落在 `gallery/lora_cache/`（只读素材源，与 presets 同机制）：**一个 LORA = 一个目录**，
-目录内是多张 `example_NN` 示例图 + 同名 `.txt`（示例提示词）。画廊中会出现「Lora」目录，
+目录内是多张 `example_NN` 示例图 + 同名 `.txt`（示例提示词）。素材面板中会出现「Lora」目录，
 浏览、搜索、灯箱、发送提示词等全部能力可用；在 Lora 缩略图、灯箱或目录卡片上点 📤 会把该 LORA 的
 相对路径（如 `detail/tweak.safetensors`）发送到画布上标准 `LoraLoader` 的 `lora_name` 参数
 （目标菜单与图片发送一致：选中节点优先，多目标弹下拉）。
@@ -394,7 +401,7 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 
 ### ⭐ 收藏（书签）
 
-画廊首页提供 **本地收藏** 与 **Civitai 收藏** 两个入口卡，收藏后端逻辑统一在 `bookmark.py`
+素材面板首页提供 **本地收藏** 与 **Civitai 收藏** 两个入口卡，收藏后端逻辑统一在 `bookmark.py`
 （`bookmarks.json` 记录本地收藏，仅存路径信息，不复制文件）：
 
 - **信息扩展按钮** - 任意素材缩略图右下角的「⋯」按钮弹出收藏菜单：**收藏本图**（记录素材完整路径）或
