@@ -416,6 +416,35 @@ function createStatusBars() {
     autoHint.textContent = "每次运行时用 LLM 基于描述自动增强提示词";
     autoMenu.appendChild(autoToggleRow);
     autoMenu.appendChild(autoHint);
+
+    // 「关闭思考」开关：跳过模型推理过程直接出正文（更快更稳，避免思考耗尽 max_tokens 截断正文）。
+    // 勾选后经 chat_template_kwargs 传给服务端；不支持该字段的服务端会忽略。localStorage 持久化。
+    const disableThinkingCheckbox = document.createElement("input");
+    disableThinkingCheckbox.type = "checkbox";
+    disableThinkingCheckbox.className = "rs-disable-thinking-checkbox";
+    try {
+        disableThinkingCheckbox.checked = localStorage.getItem("rs.disable_thinking") === "1";
+    } catch (e) { /* 隐私模式下 localStorage 可能不可用 */ }
+    const disableThinkingText = mkEl("span", "rs-auto-generate-label");
+    disableThinkingText.textContent = "关闭思考";
+    const disableThinkingRow = mkEl("label", "rs-runtime-row rs-runtime-toggle");
+    disableThinkingRow.appendChild(disableThinkingCheckbox);
+    disableThinkingRow.appendChild(disableThinkingText);
+    const disableThinkingHint = mkEl("div", "rs-runtime-hint");
+    disableThinkingHint.textContent = "跳过推理直接输出，更快更稳（需服务端支持）";
+    autoMenu.appendChild(disableThinkingRow);
+    autoMenu.appendChild(disableThinkingHint);
+    disableThinkingCheckbox.addEventListener("change", (e) => {
+        e.stopPropagation();
+        try { localStorage.setItem("rs.disable_thinking", disableThinkingCheckbox.checked ? "1" : "0"); } catch (err) {}
+    });
+    // 整行点击切换（同「自动增强」行交互）
+    disableThinkingRow.addEventListener("click", (e) => {
+        if (e.target === disableThinkingCheckbox) return;
+        e.preventDefault();
+        disableThinkingCheckbox.checked = !disableThinkingCheckbox.checked;
+        disableThinkingCheckbox.dispatchEvent(new Event("change"));
+    });
     // 设置区 tab 切换：LLM Settings / 生图设置（两张表单都较长，纵向堆叠菜单过深；
     // 打开时两个表单都 load、关闭时都 save，隐藏面板的输入值照常读写，切 tab 不丢状态）
     const modelForm = createModelConfigForm();
@@ -627,7 +656,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
+    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, disableThinkingCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
 // ==========================================
@@ -856,7 +885,10 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
  */
 function createGenerateHandler(promptUI) {
     return async () => {
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto, genResultsController } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto, genResultsController, disableThinkingCheckbox } = promptUI;
+
+        // 「关闭思考」勾选时给流式请求带 enable_thinking:false（跳过推理，更快更稳）；未勾选则不发送
+        const enableThinkingField = disableThinkingCheckbox?.checked ? { enable_thinking: false } : {};
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -922,10 +954,45 @@ function createGenerateHandler(promptUI) {
 
         let rafId = null;
         let accumulated = "";
-        // 三条流式分支共用的 SSE 处理：chunk 先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排
+        // 思考过程（reasoning_content）：实时显示在提示词框上方的临时面板，正文出现/结束时自动清除，不写入提示词
+        let thinkingEl = null;
+        let thinkingBuf = "";
+        let thinkingRaf = null;
+        const wrapper = customTextarea.parentElement;
+        function ensureThinkingEl() {
+            if (thinkingEl) return thinkingEl;
+            thinkingEl = mkEl("div", "rs-thinking");
+            const label = mkEl("div", "rs-thinking-label");
+            label.textContent = "💭 思考中…";
+            const body = mkEl("div", "rs-thinking-body");
+            thinkingEl.appendChild(label);
+            thinkingEl.appendChild(body);
+            wrapper.insertBefore(thinkingEl, customTextarea);
+            return thinkingEl;
+        }
+        function clearThinking() {
+            if (thinkingRaf) { cancelAnimationFrame(thinkingRaf); thinkingRaf = null; }
+            if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+        }
+        // 三条流式分支共用的 SSE 处理：正文先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排；
+        // 思考块（kind=thinking）实时显示在临时面板，正文出现时清除，最终只保留正文
         const streamHandlers = (errorLabel) => ({
             onChunk: (chunk) => {
-                if (!chunk.text) return;
+                if (!chunk || !chunk.text) return;
+                if (chunk.kind === "thinking") {
+                    thinkingBuf += chunk.text;
+                    // 内联 display 必须显式设为可见值：设成 "" 会移除内联样式、回落到 .rs-thinking{display:none}，面板就永远不可见
+                    ensureThinkingEl().style.display = "block";
+                    if (!thinkingRaf) {
+                        thinkingRaf = requestAnimationFrame(() => {
+                            thinkingRaf = null;
+                            if (thinkingEl) thinkingEl.querySelector(".rs-thinking-body").textContent = thinkingBuf;
+                        });
+                    }
+                    return;
+                }
+                // 正文开始：思考完成，清除临时面板
+                if (thinkingEl) clearThinking();
                 accumulated += chunk.text;
                 if (rafId) return;
                 rafId = requestAnimationFrame(() => {
@@ -939,12 +1006,14 @@ function createGenerateHandler(promptUI) {
             // 否则 saveTextToStorage 读到旧的空 textarea，会把 widget 里的提示词冲掉
             onDone: () => {
                 if (rafId) cancelAnimationFrame(rafId);
+                clearThinking();
                 if (accumulated) customTextarea.value = accumulated;
                 saveTextToStorage(node, textWidget, customTextarea, true);
                 markQuickInputConsumed(node);
             },
             onError: (err) => {
                 console.error(errorLabel, err);
+                clearThinking();
                 showToast(app, "error", "处理失败", String(err));
             }
         });
@@ -973,7 +1042,8 @@ function createGenerateHandler(promptUI) {
                     skillId,
                     images: imagesPayload,
                     description: quickText || currentPrompt,
-                    context: workflowContext
+                    context: workflowContext,
+                    ...enableThinkingField
                 };
                 await invokePromptStream(payload, streamHandlers("Skill invoke error:"));
             } else if (selectedSkillId) {
@@ -988,7 +1058,8 @@ function createGenerateHandler(promptUI) {
                     text: userPrompt, 
                     skillId: selectedSkillId,
                     description: quickText || currentPrompt,
-                    context: workflowContext 
+                    context: workflowContext,
+                    ...enableThinkingField
                 });
             } else {
                 // 使用 LLM 智能判断（流式）：LLM 直接判断用户意图并生成/改写
@@ -998,7 +1069,8 @@ function createGenerateHandler(promptUI) {
                 await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Smart prompt stream error:"), {
                     text: userPrompt,
                     description: quickText || currentPrompt,
-                    context: workflowContext
+                    context: workflowContext,
+                    ...enableThinkingField
                 });
             }
         } catch (e) {

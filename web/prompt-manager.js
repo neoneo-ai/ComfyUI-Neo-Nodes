@@ -117,7 +117,7 @@ function createDeleteModal() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, disableThinkingCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint, saveResultsRow: recipeResultsRow, saveResultsCheck: recipeResultsCheck } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
@@ -926,6 +926,7 @@ function createPromptManagerUI() {
             skillSelector,
             populateSkillSelector,
             autoGenerateCheckbox,
+            disableThinkingCheckbox,
             attachedImages,
             clearImages
         };

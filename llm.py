@@ -313,6 +313,11 @@ def set_remote_llm_config(config: Dict[str, Any]):
 LLM_MODE_LOCAL = "local"
 LLM_MODE_REMOTE = "remote"
 
+# 流式的最小 max_tokens（远程/本地通用）：思考模型（如 qwen3.6-35b-a3b）会先把预算花在 reasoning_content，
+# 任务模板默认值（~500）常被推理耗尽导致正文为空。给一个下限保证思考后仍有空间输出最终答案；
+# 需要更长可在此调大，或在配置里为对应 provider 设置更大的 max_tokens。
+STREAM_MIN_MAX_TOKENS = 4096
+
 def get_current_mode() -> str:
     """获取当前 LLM 模式：local 或 remote（基于 provider 值判断）"""
     config = _load_remote_config()
@@ -526,11 +531,11 @@ def get_available_models() -> Dict[str, Any]:
 
 
 # ==========================================
-# Remote API LLM Client (requests)
+# Remote API LLM Client (OpenAI SDK)
 # ==========================================
 
 class RemoteLLMClient:
-    """基于 requests 的远程 LLM 客户端，直接调用 OpenAI 兼容 API"""
+    """基于 OpenAI SDK 的远程 LLM 客户端，调用 OpenAI 兼容 API"""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -564,11 +569,22 @@ class RemoteLLMClient:
             result.append({"role": role, "content": content})
         return result
 
+    def _build_client(self):
+        """构造 OpenAI 兼容客户端（指向 base_url；本地/自建服务端 api_key 可为任意非空占位值）。"""
+        import openai
+        if self.base_url:
+            base = self.base_url.rstrip('/')
+            if not base.endswith('/v1'):
+                base = f"{base}/v1"
+            return openai.OpenAI(base_url=base, api_key=self.api_key or "lm-studio", timeout=self.timeout)
+        return openai.OpenAI(api_key=self.api_key or "lm-studio", timeout=self.timeout)
+
     def chat_completion(self, messages: List[Dict[str, Any]],
                         max_tokens: Optional[int] = None,
                         image_bytes_list: Optional[List[bytes]] = None,
                         stream: bool = False,
-                        tools: Optional[List[Dict[str, Any]]] = None) -> Any:
+                        tools: Optional[List[Dict[str, Any]]] = None,
+                        enable_thinking: Optional[bool] = None) -> Any:
         """
         发送聊天补全请求
 
@@ -577,11 +593,12 @@ class RemoteLLMClient:
             max_tokens: 最大 token 数
             image_bytes_list: 图片字节列表
             stream: 是否流式输出
+            enable_thinking: 是否启用思考（None=不发送，交由服务端/模型默认）
 
         Returns:
             非流式：返回响应字典；流式：返回生成器
         """
-        import requests
+        import openai
 
         effective_max_tokens = max_tokens or self.max_tokens
 
@@ -589,33 +606,24 @@ class RemoteLLMClient:
         if image_bytes_list:
             messages = self._add_images_to_messages(messages, image_bytes_list)
 
-        # 构建请求 URL
-        if self.base_url:
-            base = self.base_url.rstrip('/')
-            if not base.endswith('/v1'):
-                base = f"{base}/v1"
-            url = f"{base}/chat/completions"
-        else:
-            url = "https://api.openai.com/v1/chat/completions"
+        client = self._build_client()
 
-        # 构建请求头
-        headers = {
-            "Content-Type": "application/json",
-        }
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
-        # 构建请求体
-        payload = {
+        kwargs = {
             "model": self.model,
             "messages": messages,
             "max_tokens": effective_max_tokens,
-            "temperature": self.temperature,
-            "stream": stream,
         }
+        # temperature 为 0（或未设置）时不发送，交由服务端/模型默认值；仅非零时显式传递。
+        if self.temperature:
+            kwargs["temperature"] = self.temperature
         if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        # Qwen3 等思考模型：经 chat_template_kwargs 控制是否输出推理过程。
+        # None=不发送（服务端/模型默认）；False=跳过思考直接出正文（更快更稳）。
+        # OpenAI SDK 会把 extra_body 拍平到请求体顶层，等价于顶层 chat_template_kwargs。
+        if enable_thinking is not None:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": bool(enable_thinking)}}
 
         if not self.model:
             raise RuntimeError(
@@ -623,32 +631,32 @@ class RemoteLLMClient:
                 "Open Settings and pick a model first."
             )
 
-        logger.info(f"Sending request to remote LLM: url={url}, model={self.model}, stream={stream}")
+        logger.info(f"Sending request to remote LLM: model={self.model}, stream={stream}, chat_template_kwargs={(kwargs.get('extra_body') or {}).get('chat_template_kwargs')}")
 
         try:
             if stream:
-                return self._stream_response_generator(url, headers, payload)
+                kwargs["stream"] = True
+                return self._stream_response_generator(client, **kwargs)
             else:
-                response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-                response.raise_for_status()
-                return self._parse_response(response.json())
-        except requests.exceptions.ConnectionError as e:
+                response = client.chat.completions.create(**kwargs)
+                return self._parse_response(response.model_dump())
+        except openai.APIConnectionError as e:
             logger.warning(f"Remote LLM connection error: {e}")
             raise RuntimeError(f"Remote LLM network error: {e}")
-        except requests.exceptions.Timeout as e:
+        except openai.APITimeoutError as e:
             logger.warning(f"Remote LLM timeout: {e}")
             raise RuntimeError(f"Remote LLM timeout: {e}")
-        except requests.exceptions.HTTPError as e:
-            # 带上服务端错误体（OpenRouter/OpenAI 的 4xx 会说明具体原因，如模型不存在）
+        except openai.APIStatusError as e:
+            # 带上服务端错误体（OpenRouter/OpenAI/LM Studio 的 4xx 会说明具体原因，如模型不存在）
             detail = ""
-            resp = getattr(e, "response", None)
-            if resp is not None:
+            body = getattr(e, "body", None)
+            if body is not None:
                 try:
-                    detail = resp.text[:500]
+                    detail = str(body)[:500]
                 except Exception:
                     detail = ""
-            logger.error(f"Remote LLM HTTP error: {e} | body={detail}")
-            raise RuntimeError(f"Remote LLM HTTP {resp.status_code if resp is not None else '?'}: {detail or e}")
+            logger.error(f"Remote LLM HTTP error: {e.status_code} | body={detail}")
+            raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}")
         except Exception as e:
             logger.error(f"Remote LLM completion failed: {e}")
             raise
@@ -671,39 +679,46 @@ class RemoteLLMClient:
             }]
         }
 
-    def _stream_response_generator(self, url: str, headers: Dict[str, str], payload: Dict[str, Any]):  # type: ignore[misc, empty-body]
-        """流式响应生成器"""
-        import requests
+    def _stream_response_generator(self, client, **kwargs):
+        """流式响应生成器：逐块 yield {"text":..., "kind":"content"|"thinking"}。
 
-        with requests.post(url, headers=headers, json=payload, stream=True, timeout=self.timeout) as response:
-            if response.status_code >= 400:
-                # 带上服务端错误体（OpenRouter/OpenAI 的 4xx 会说明具体原因，如模型不存在）
+        思考模型（如 qwen3.6-35b-a3b）把推理过程放在 delta.reasoning_content、最终答案放在
+        delta.content；两者分开打标，前端可实时展示思考并在正文出现时自动清除，只保留最终结果。
+        """
+        import openai
+
+        try:
+            stream = client.chat.completions.create(**kwargs)
+            for chunk in stream:
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
+                delta = choices[0].delta
+                content = getattr(delta, "content", None) or ""
+                reasoning = getattr(delta, "reasoning_content", None) or (getattr(delta, "model_extra", None) or {}).get("reasoning_content") or ""
+                if content:
+                    yield {"text": content, "kind": "content"}
+                if reasoning:
+                    yield {"text": reasoning, "kind": "thinking"}
+        except openai.APIConnectionError as e:
+            logger.warning(f"Remote LLM stream connection error: {e}")
+            raise RuntimeError(f"Remote LLM network error: {e}")
+        except openai.APITimeoutError as e:
+            logger.warning(f"Remote LLM stream timeout: {e}")
+            raise RuntimeError(f"Remote LLM timeout: {e}")
+        except openai.APIStatusError as e:
+            detail = ""
+            body = getattr(e, "body", None)
+            if body is not None:
                 try:
-                    detail = response.text[:500]
+                    detail = str(body)[:500]
                 except Exception:
                     detail = ""
-                logger.error(f"Remote LLM HTTP {response.status_code}: url={url} | body={detail}")
-                raise RuntimeError(f"Remote LLM HTTP {response.status_code}: {detail or response.reason}")
-            full_content = []
-            for line in response.iter_lines():
-                if line:
-                    line = line.decode('utf-8')
-                    if line.startswith('data: '):
-                        data = line[6:]
-                        if data == '[DONE]':
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            choices = chunk.get("choices", [])
-                            if choices:
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    full_content.append(content)
-                                    yield content
-                        except json.JSONDecodeError:
-                            pass
-        return "".join(full_content)
+            logger.error(f"Remote LLM stream HTTP {e.status_code}: {detail}")
+            raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}")
+        except Exception as e:
+            logger.error(f"Remote LLM stream failed: {e}")
+            raise
 
     def is_available(self) -> bool:
         """检查客户端是否可用"""
@@ -863,7 +878,7 @@ def get_llm_instance():
 
 def _run_llm_inference(system_prompt: str, user_text: str, max_tokens: int,
                        images: Optional[Any] = None, use_remote: bool = False,
-                       stream: bool = False) -> Any:  # type: ignore[return-type]
+                       stream: bool = False, enable_thinking: Optional[bool] = None) -> Any:  # type: ignore[return-type]
     """
     执行 LLM 推理，支持本地和远程模式
 
@@ -878,8 +893,13 @@ def _run_llm_inference(system_prompt: str, user_text: str, max_tokens: int,
     Returns:
         非流式：LLM 响应文本；流式：返回生成器
     """
+    # 思考模型会先把 token 预算花在 reasoning_content，任务模板默认值常被推理耗尽导致正文为空。
+    # 远程/本地流式都给一个下限，保证思考结束后仍有空间输出最终答案（见 STREAM_MIN_MAX_TOKENS）。
+    if stream and max_tokens < STREAM_MIN_MAX_TOKENS:
+        max_tokens = STREAM_MIN_MAX_TOKENS
+
     if use_remote:
-        result = _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream)
+        result = _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream, enable_thinking=enable_thinking)
         if result is not None:
             return result
         logger.warning("Remote LLM failed, falling back to local mode")
@@ -944,7 +964,8 @@ def _run_local_inference(system_prompt: str, user_text: str, max_tokens: int,
 
 
 def _run_remote_inference(system_prompt: str, user_text: str, max_tokens: int,
-                          images: Optional[Any] = None, stream: bool = False) -> Any:  # type: ignore[return-type]
+                          images: Optional[Any] = None, stream: bool = False,
+                          enable_thinking: Optional[bool] = None) -> Any:  # type: ignore[return-type]
     """执行远程 LLM 推理"""
     config = _get_active_remote_config()
 
@@ -981,6 +1002,7 @@ def _run_remote_inference(system_prompt: str, user_text: str, max_tokens: int,
             max_tokens=max_tokens,
             image_bytes_list=image_bytes_list,
             stream=stream,
+            enable_thinking=enable_thinking,
         )
 
         if stream:
@@ -1107,7 +1129,8 @@ def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> Li
 # ==========================================
 
 def chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
-              tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+              tools: Optional[List[Dict[str, Any]]] = None,
+              enable_thinking: Optional[bool] = None) -> Dict[str, Any]:
     """对当前激活的 provider（本地 llama.cpp 或远程 API）执行一次（非流式）对话，返回 assistant message dict。
 
     供 skill 代理循环按需调用：传入带 tools 的 messages，返回含 content / tool_calls 的消息。
@@ -1120,7 +1143,7 @@ def chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
         client = RemoteLLMClient(config)
         if not client.is_available():
             raise RuntimeError(f"Remote provider '{client.provider}' is not available")
-        response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools)
+        response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools, enable_thinking=enable_thinking)
     else:
         llm = get_llm_instance()
         response = llm.create_chat_completion(
@@ -1224,7 +1247,8 @@ def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] =
 
 def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional[str] = None,
                         images: Optional[Any] = None, system_prompt: Optional[str] = None,
-                        max_tokens_override: Optional[int] = None, context: Optional[Dict[str, Any]] = None) -> Generator[str, None, None]:
+                        max_tokens_override: Optional[int] = None, context: Optional[Dict[str, Any]] = None,
+                        enable_thinking: Optional[bool] = None) -> Generator[Dict[str, Any], None, None]:
     """
     流式执行 LLM 任务，返回生成器
 
@@ -1237,10 +1261,10 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
         context: 前端采集的工作流上下文（可选，MiniMax H3 参数 + 参考媒体清单，注入系统提示词）
 
     Yields:
-        str: 生成的文本块
+        dict: {"text": 文本块, "kind": "content"|"thinking"}；正文为 content，思考过程为 thinking
     """
     if task_name not in LLM_TASKS:
-        yield f"[ERROR] Invalid task: {task_name}"
+        yield {"text": f"[ERROR] Invalid task: {task_name}", "kind": "content"}
         return
 
     task_config = LLM_TASKS[task_name]
@@ -1289,33 +1313,39 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
 
     try:
         result_gen = _run_llm_inference(system_prompt, text, max_tokens, images=images,
-                                        use_remote=use_remote, stream=True)
+                                        use_remote=use_remote, stream=True, enable_thinking=enable_thinking)
         if hasattr(result_gen, '__iter__') and not isinstance(result_gen, str):
             for chunk in result_gen:
-                # 提取 chunk 中的文本内容并逐字 yield
+                # 远程生成器已带 {"text","kind"}；本地 llama.cpp 为 {choices:[{delta:{...}}]}。
+                # 统一归一成 {"text","kind"}，思考（thinking）与正文（content）分开打标。
                 if isinstance(chunk, dict):
+                    if "text" in chunk:
+                        yield {"text": chunk["text"], "kind": chunk.get("kind", "content")}
+                        continue
                     choices = chunk.get("choices", [])
-                    if choices and len(choices) > 0:
-                        delta = choices[0].get("delta", {})
-                        content = delta.get("content", "")
-                        # 逐字 yield，实现打字效果
-                        for char in content:
-                            yield char
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    content = delta.get("content") or ""
+                    reasoning = delta.get("reasoning_content") or ""
+                    if content:
+                        yield {"text": content, "kind": "content"}
+                    if reasoning:
+                        yield {"text": reasoning, "kind": "thinking"}
                 elif isinstance(chunk, str):
-                    for char in chunk:
-                        yield char
+                    yield {"text": chunk, "kind": "content"}
         else:
-            yield result_gen or ""
+            yield {"text": result_gen or "", "kind": "content"}
     except Exception as e:
         logger.error(f"Failed to execute stream task {task_name}: {e}")
-        yield f"[ERROR] {str(e)}"
+        yield {"text": f"[ERROR] {str(e)}", "kind": "content"}
 
 
 # ==========================================
 # API Handler Functions
 # ==========================================
 
-# 把同步阻塞调用（requests / llama.cpp 推理）丢进线程池执行。
+# 把同步阻塞调用（OpenAI SDK / llama.cpp 推理）丢进线程池执行。
 # 直接在 async 路由里跑会卡死 aiohttp 事件循环：LLM 未返回期间 presets 列表等
 # 所有其他请求都无法响应。
 async def _run_blocking(fn):
@@ -1397,8 +1427,10 @@ async def handle_llm_api_stream(task_name, request):
         raw_images = data.get("images") or []
         # 前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单），仅元数据，无图像素
         context = data.get("context")
+        # "关闭思考"开关：True/False 透传到 chat_template_kwargs；未勾选为 None（不发送）
+        enable_thinking = data.get("enable_thinking")
 
-        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}, context={'yes' if context else 'no'}")
+        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}, context={'yes' if context else 'no'}, enable_thinking={enable_thinking}")
 
         # 允许空文本：有图片输入（如反推）时合法
         images = []
@@ -1443,12 +1475,13 @@ async def handle_llm_api_stream(task_name, request):
                 # 同步生成器在事件循环上直接迭代会阻塞整个 aiohttp loop（LLM 未出首包
                 # 时其他请求全部卡住），因此每次 next() 都丢进线程池执行。
                 if skill_agent:
-                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None, context=context)
+                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None, context=context, enable_thinking=enable_thinking)
                 else:
                     gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
                                               images=images if images else None,
                                               max_tokens_override=template_max_tokens,
-                                              context=context)
+                                              context=context,
+                                              enable_thinking=enable_thinking)
                 loop = asyncio.get_running_loop()
 
                 def next_chunk():
@@ -1463,7 +1496,12 @@ async def handle_llm_api_stream(task_name, request):
                         break
                     # JSON 编码每个 chunk：换行/引号等特殊字符转义后才能安全穿过 SSE 的 data:\n\n 分帧，
                     # 否则单个 "\n" 会拆成空 data: 行被前端丢弃（导致预览变成一行）。
-                    yield ("data: " + json.dumps({"text": chunk}) + "\n\n").encode()
+                    # kind 区分思考（thinking）与正文（content），前端据此展示/清除思考区。
+                    if isinstance(chunk, dict):
+                        frame = {"text": chunk.get("text", ""), "kind": chunk.get("kind", "content")}
+                    else:
+                        frame = {"text": chunk}
+                    yield ("data: " + json.dumps(frame) + "\n\n").encode()
 
                 yield b"data: [DONE]\n\n"
             except Exception as e:

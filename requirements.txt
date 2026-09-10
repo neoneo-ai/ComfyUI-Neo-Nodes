@@ -1,4 +1,4 @@
-requests
+openai
 Pillow
 PyYAML
 pypinyin

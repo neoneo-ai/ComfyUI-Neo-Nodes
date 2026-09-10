@@ -454,7 +454,7 @@ class TestSkillAgent(unittest.TestCase):
     def test_agent_reads_reference_then_finalizes(self):
         calls = []
 
-        def fake_turn(messages, max_tokens=None, tools=None):
+        def fake_turn(messages, max_tokens=None, tools=None, enable_thinking=None):
             calls.append([dict(m) for m in messages])
             if len(calls) == 1:
                 return {"role": "assistant", "content": "", "tool_calls": [
@@ -486,7 +486,7 @@ class TestSkillAgent(unittest.TestCase):
         # 本地模式 + 引用：与远程一致，走工具调用循环（chat_turn）而非单轮回退
         calls = []
 
-        def fake_turn(messages, max_tokens=None, tools=None):
+        def fake_turn(messages, max_tokens=None, tools=None, enable_thinking=None):
             calls.append([dict(m) for m in messages])
             if len(calls) == 1:
                 return {"role": "assistant", "content": "", "tool_calls": [
@@ -507,14 +507,14 @@ class TestSkillAgent(unittest.TestCase):
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
         captured = {}
 
-        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False, enable_thinking=None):
             captured["stream"] = stream
             return iter(["Hello ", "world", "!"])
 
         self.llm._run_llm_inference = fake_inference
         chunks = list(self.skill.run_skill_agent_stream("myskill", "hello"))
         self.assertEqual(captured.get("stream"), True)
-        self.assertEqual(chunks, ["Hello ", "world", "!"])
+        self.assertEqual(chunks, [{"text": "Hello ", "kind": "content"}, {"text": "world", "kind": "content"}, {"text": "!", "kind": "content"}])
 
     def test_stream_single_turn_parses_dict_chunks(self):
         # 本地模型可能返回 dict chunk：只取 delta.content，跳过空/无 choices
@@ -526,7 +526,70 @@ class TestSkillAgent(unittest.TestCase):
             {"choices": []},
         ])
         chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
-        self.assertEqual(chunks, ["ab"])
+        self.assertEqual(chunks, [{"text": "ab", "kind": "content"}])
+
+    def test_stream_single_turn_forwards_thinking_and_content(self):
+        # 远程思考模型：reasoning_content（thinking）与 content 分开打标透传，不再丢弃思考
+        self._clear_refs()
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        self.llm._run_llm_inference = lambda *a, **k: iter([
+            {"text": "推理", "kind": "thinking"},
+            {"text": "正文A", "kind": "content"},
+            {"text": "正文B", "kind": "content"},
+        ])
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
+        self.assertEqual(chunks, [
+            {"text": "推理", "kind": "thinking"},
+            {"text": "正文A", "kind": "content"},
+            {"text": "正文B", "kind": "content"},
+        ])
+
+    def test_stream_empty_content_yields_fallback(self):
+        # 思考模型把 max_tokens 全花在 reasoning：正文为空时补一条可见提示，避免前端静默无响应
+        self._clear_refs()
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        self.llm._run_llm_inference = lambda *a, **k: iter([
+            {"text": "思考1", "kind": "thinking"},
+            {"text": "思考2", "kind": "thinking"},
+        ])
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
+        self.assertEqual(chunks[:2], [
+            {"text": "思考1", "kind": "thinking"},
+            {"text": "思考2", "kind": "thinking"},
+        ])
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[-1]["kind"], "content")
+        self.assertIn("max_tokens", chunks[-1]["text"])
+
+    def test_stream_forwards_enable_thinking_to_inference(self):
+        # "关闭思考"开关：enable_thinking 应透传到单轮推理调用（Krea2 等无引用 skill 路径）
+        self._clear_refs()
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        captured = {}
+
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False, enable_thinking=None):
+            captured["enable_thinking"] = enable_thinking
+            return iter([{"text": "正文", "kind": "content"}])
+
+        self.llm._run_llm_inference = fake_inference
+        list(self.skill.run_skill_agent_stream("myskill", "hi", enable_thinking=False))
+        self.assertIs(captured.get("enable_thinking"), False)
+
+    def test_stream_tool_loop_forwards_enable_thinking_to_chat_turn(self):
+        # "关闭思考"开关：工具循环路径（工作流带参考图）也应把 enable_thinking 透传给 chat_turn
+        self._clear_refs()
+        self.llm.get_current_mode = lambda: self.llm.LLM_MODE_REMOTE
+        captured = {}
+
+        def fake_turn(messages, max_tokens=None, tools=None, enable_thinking=None):
+            captured["enable_thinking"] = enable_thinking
+            return {"role": "assistant", "content": "DONE"}
+
+        self.llm.chat_turn = fake_turn
+        ctx = {"references": [{"kind": "image", "source": {"kind": "input", "value": "ref.png"},
+                               "width": 64, "height": 48}]}
+        list(self.skill.run_skill_agent_stream("myskill", "hi", context=ctx, enable_thinking=False))
+        self.assertIs(captured.get("enable_thinking"), False)
 
     def test_stream_yields_error_on_failure(self):
         self._clear_refs()
@@ -537,7 +600,7 @@ class TestSkillAgent(unittest.TestCase):
 
         self.llm._run_llm_inference = boom
         chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
-        self.assertEqual(chunks, ["[ERROR] nope"])
+        self.assertEqual(chunks, [{"text": "[ERROR] nope", "kind": "content"}])
 
     def test_resolve_skill_language(self):
         self.llm._load_remote_config = lambda: {"skill_language": "cn"}
@@ -552,7 +615,7 @@ class TestSkillAgent(unittest.TestCase):
         self.llm.get_current_mode = lambda: self.llm.LLM_MODE_LOCAL
         captured = {}
 
-        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False, enable_thinking=None):
             captured["system"] = system_prompt
             return iter(["ok"])
 
@@ -575,7 +638,7 @@ class TestSkillAgent(unittest.TestCase):
             folder_paths.get_input_directory = lambda: tmp
             calls = []
 
-            def fake_turn(messages, max_tokens=None, tools=None):
+            def fake_turn(messages, max_tokens=None, tools=None, enable_thinking=None):
                 calls.append([dict(m) for m in messages])
                 if len(calls) == 1:
                     return {"role": "assistant", "content": "", "tool_calls": [
@@ -614,7 +677,7 @@ class TestSkillAgent(unittest.TestCase):
             calls = []
             seen_tools = []
 
-            def fake_turn(messages, max_tokens=None, tools=None):
+            def fake_turn(messages, max_tokens=None, tools=None, enable_thinking=None):
                 calls.append([dict(m) for m in messages])
                 if not seen_tools:
                     seen_tools.append([t["function"]["name"] for t in (tools or [])])
@@ -645,7 +708,7 @@ class TestSkillAgent(unittest.TestCase):
         self._clear_refs()
         captured = {}
 
-        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False, enable_thinking=None):
             captured["system"] = system_prompt
             return "[single]"
 
@@ -661,7 +724,7 @@ class TestSkillAgent(unittest.TestCase):
         self._clear_refs()
         captured = {}
 
-        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False):
+        def fake_inference(system_prompt, text, max_tokens, images=None, use_remote=False, stream=False, enable_thinking=None):
             captured["system"] = system_prompt
             return "[single]"
 

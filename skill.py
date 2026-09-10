@@ -549,7 +549,7 @@ def _initial_user_message(text: str, images) -> Dict[str, Any]:
     return {"role": "user", "content": parts}
 
 
-def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> str:
+def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enable_thinking=None) -> str:
     """执行 skill 生成：工作流上下文始终注入系统提示词；仅当存在引用文件或参考图像时启用工具调用
     代理循环（本地/远程一致），否则单轮推理。read_skill_file 按需读取引用文件，get_reference_image
     按需取回参考图像素。context 为前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单）。
@@ -580,7 +580,7 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> st
 
     # 无引用文件且无可取回参考图像：单轮生成（系统提示词已含工作流上下文）
     if not (refs or ref_images):
-        result = _run_llm_inference(system, text, max_tokens, images=images or None, use_remote=remote_mode)
+        result = _run_llm_inference(system, text, max_tokens, images=images or None, use_remote=remote_mode, enable_thinking=enable_thinking)
         return result or ""
 
     # 有引用文件/参考图像：工具调用代理循环（按需取回）
@@ -593,7 +593,7 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None) -> st
     ]
     content = ""
     for _ in range(_MAX_SKILL_AGENT_TURNS):
-        msg = chat_turn(messages, max_tokens=max_tokens, tools=tools or None)
+        msg = chat_turn(messages, max_tokens=max_tokens, tools=tools or None, enable_thinking=enable_thinking)
         content = msg.get("content") or ""
         tool_calls = msg.get("tool_calls") or []
         assistant_msg = {"role": "assistant", "content": content}
@@ -640,7 +640,7 @@ def run_skill_agent(skill_id: str, text: str, images=None, context=None) -> str:
     return _skill_agent_core(skill_id, text, images, context)
 
 
-def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None) -> Generator[str, None, None]:
+def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None, enable_thinking=None) -> Generator[dict, None, None]:
     """流式执行 skill 生成：工作流上下文始终注入系统提示词；单轮路径逐 token 透传 LLM 输出（与
     llm.run_llm_task_stream 一致），仅当存在引用文件或参考图像时走工具循环（复用非流式核心再逐字
     输出）。失败抛出异常，由调用方捕获。"""
@@ -667,39 +667,56 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
     if ctx_block:
         system += ("\n\n" if refs else "\n") + ctx_block
 
-    # 无引用文件/参考图像：单轮生成，直接流式透传 LLM token（系统提示词已含工作流上下文）
+    # 无引用文件/参考图像：单轮生成，逐 token 透传 LLM 输出（系统提示词已含工作流上下文）。
+    # 归一成 {"text","kind"}（与 llm.run_llm_task_stream 一致）：思考（thinking）与正文（content）分开打标，
+    # 前端据此展示/清除临时思考面板，消费方只累计正文。
     if not (refs or ref_images):
         result = _run_llm_inference(system, text, max_tokens, images=images or None,
-                                    use_remote=remote_mode, stream=True)
+                                    use_remote=remote_mode, stream=True, enable_thinking=enable_thinking)
         if hasattr(result, '__iter__') and not isinstance(result, str):
             for chunk in result:
+                # 远程生成器已带 {"text","kind"}；本地 llama.cpp 为 {choices:[{delta:{...}}]}。统一归一打标。
                 if isinstance(chunk, dict):
+                    if "text" in chunk:
+                        yield {"text": chunk["text"], "kind": chunk.get("kind", "content")}
+                        continue
                     choices = chunk.get("choices", [])
-                    if choices:
-                        delta = choices[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
-                elif isinstance(chunk, str) and chunk:
-                    yield chunk
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    content = delta.get("content") or ""
+                    reasoning = delta.get("reasoning_content") or ""
+                    if content:
+                        yield {"text": content, "kind": "content"}
+                    if reasoning:
+                        yield {"text": reasoning, "kind": "thinking"}
+                elif isinstance(chunk, str):
+                    yield {"text": chunk, "kind": "content"}
         else:
             # 本地路径未返回生成器（不支持流式）：回退为整段输出
-            yield result or ""
+            yield {"text": result or "", "kind": "content"}
         return
 
-    # 有引用文件/参考图像：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出
-    for ch in _skill_agent_core(skill_id, text, images, context):
-        yield ch
+    # 有引用文件/参考图像：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出（仅正文）
+    for ch in _skill_agent_core(skill_id, text, images, context, enable_thinking=enable_thinking):
+        yield {"text": ch, "kind": "content"}
 
 
-def run_skill_agent_stream(skill_id: str, text: str, images=None, context=None) -> Generator[str, None, None]:
-    """流式契约：逐 token yield 最终答案；失败 yield '[ERROR] ...'（与 llm.run_llm_task_stream 一致）。"""
+def run_skill_agent_stream(skill_id: str, text: str, images=None, context=None, enable_thinking=None) -> Generator[dict, None, None]:
+    """流式契约：逐 token yield {"text","kind"}（思考 thinking / 正文 content，与 llm.run_llm_task_stream 一致）；失败 yield [ERROR]。"""
     try:
-        for chunk in _skill_agent_core_stream(skill_id, text, images, context):
+        saw_content = False
+        for chunk in _skill_agent_core_stream(skill_id, text, images, context, enable_thinking=enable_thinking):
+            if chunk.get("kind") == "content" and (chunk.get("text") or "").strip():
+                saw_content = True
             yield chunk
+        # 思考模型可能把 max_tokens 预算全花在 reasoning 上，导致正文为空。
+        # 此时给一条可见提示，避免前端在思考结束后静默无响应（最终只保留正文）。
+        if not saw_content:
+            yield {"text": "[未生成最终提示词：模型思考占用了全部 token 预算。请在 ✨ 菜单勾选「关闭思考」，或调大该技能的 max_tokens 后重试。]", "kind": "content"}
     except Exception as e:
         logger.error(f"Skill agent error for '{skill_id}': {e}")
-        yield f"[ERROR] {str(e)}"
+        yield {"text": f"[ERROR] {str(e)}", "kind": "content"}
 
 
 def load_task_template(task_name: str) -> dict:

@@ -543,5 +543,173 @@ class TestSSEFraming(unittest.TestCase):
         self.assertEqual(self._roundtrip("a\r\nb"), "a\r\nb")
 
 
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestThinkingStreamSeparation(unittest.TestCase):
+    """思考模型：reasoning_content（thinking）与 content（正文）分离，前端展示后清除只留正文。"""
+
+    def test_run_llm_task_stream_separates_thinking_and_content(self):
+        # 本地 llama.cpp 风格 chunk：delta.reasoning_content / delta.content
+        llm_chunks = [
+            {"choices": [{"delta": {"reasoning_content": "推理步骤一"}}]},
+            {"choices": [{"delta": {"reasoning_content": "推理步骤二"}}]},
+            {"choices": [{"delta": {"content": "最终答案"}}]},
+        ]
+        orig_infer = llm_mod._run_llm_inference
+        orig_mode = llm_mod.get_current_mode
+        llm_mod._run_llm_inference = lambda *a, **k: iter(llm_chunks)
+        llm_mod.get_current_mode = lambda: llm_mod.LLM_MODE_LOCAL
+        try:
+            out = list(llm_mod.run_llm_task_stream("smart_prompt", "hello"))
+        finally:
+            llm_mod._run_llm_inference = orig_infer
+            llm_mod.get_current_mode = orig_mode
+
+        self.assertEqual(
+            [(c["kind"], c["text"]) for c in out],
+            [("thinking", "推理步骤一"), ("thinking", "推理步骤二"), ("content", "最终答案")],
+        )
+
+    def test_sse_frames_carry_kind_for_thinking_and_content(self):
+        # 远程生成器已带 {"text","kind"}；SSE 分帧应保留 kind，前端据此区分思考与正文
+        tagged = [
+            {"text": "思考A", "kind": "thinking"},
+            {"text": "正文B", "kind": "content"},
+        ]
+        orig = llm_mod.run_llm_task_stream
+        llm_mod.run_llm_task_stream = lambda *a, **k: iter(tagged)
+
+        class _Req:
+            async def json(self):
+                return {"text": "x", "skillId": ""}
+
+        async def _drive():
+            resp = await llm_mod.handle_llm_api_stream("smart_prompt", _Req())
+            raw = b""
+            payload = resp.body
+            aiter = getattr(payload, "_iter", None) or payload
+            async for piece in aiter:
+                raw += bytes(piece) if isinstance(piece, (bytes, bytearray)) else str(piece).encode()
+            return raw.decode("utf-8")
+
+        try:
+            buf = asyncio.run(_drive())
+        finally:
+            llm_mod.run_llm_task_stream = orig
+
+        frames = []
+        for line in buf.split("\n"):
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                obj = json.loads(data)
+            except Exception:
+                continue
+            if isinstance(obj, dict) and "text" in obj:
+                frames.append((obj.get("kind", "content"), obj["text"]))
+        self.assertEqual(frames, [("thinking", "思考A"), ("content", "正文B")])
+
+
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestEnableThinking(unittest.TestCase):
+    """enable_thinking（关闭思考）：经 chat_template_kwargs 透传到请求体；未设置则不发送。"""
+
+    def _capture_chat_completion_kwargs(self, enable_thinking, temperature=0.0):
+        client = llm_mod.RemoteLLMClient({
+            "provider": "lmstudio", "base_url": "http://127.0.0.1:1234",
+            "model": "test-model", "max_tokens": 500, "temperature": temperature,
+        })
+        captured = {}
+
+        class _Resp:
+            def model_dump(self):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        def fake_create(**kw):
+            captured.update(kw)
+            return _Resp()
+
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.side_effect = fake_create
+
+        orig_build = llm_mod.RemoteLLMClient._build_client
+        llm_mod.RemoteLLMClient._build_client = lambda self: fake_client
+        try:
+            client.chat_completion([{"role": "user", "content": "hi"}], enable_thinking=enable_thinking)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+        return captured
+
+    def test_payload_includes_chat_template_kwargs_when_false(self):
+        kwargs = self._capture_chat_completion_kwargs(False)
+        self.assertEqual(kwargs.get("extra_body", {}).get("chat_template_kwargs"), {"enable_thinking": False})
+
+    def test_payload_omits_chat_template_kwargs_when_none(self):
+        kwargs = self._capture_chat_completion_kwargs(None)
+        self.assertNotIn("chat_template_kwargs", kwargs.get("extra_body", {}))
+
+    def test_payload_omits_temperature_when_zero(self):
+        kwargs = self._capture_chat_completion_kwargs(None, temperature=0.0)
+        self.assertNotIn("temperature", kwargs)
+
+    def test_payload_includes_temperature_when_nonzero(self):
+        kwargs = self._capture_chat_completion_kwargs(None, temperature=0.7)
+        self.assertEqual(kwargs.get("temperature"), 0.7)
+
+    def test_run_remote_inference_threads_enable_thinking(self):
+        captured = {}
+
+        class _FakeClient:
+            provider = "lmstudio"
+            model = "test-model"
+            def __init__(self, config):
+                pass
+            def is_available(self):
+                return True
+            def chat_completion(self, **kw):
+                captured.update(kw)
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        orig_client = llm_mod.RemoteLLMClient
+        orig_cfg = llm_mod._get_active_remote_config
+        llm_mod.RemoteLLMClient = _FakeClient
+        llm_mod._get_active_remote_config = lambda: {"enabled": True, "provider": "lmstudio"}
+        try:
+            llm_mod._run_remote_inference("sys", "usr", 500, stream=False, enable_thinking=False)
+        finally:
+            llm_mod.RemoteLLMClient = orig_client
+            llm_mod._get_active_remote_config = orig_cfg
+        self.assertIs(captured.get("enable_thinking"), False)
+
+    def test_route_passes_enable_thinking_to_skill_stream(self):
+        captured = {}
+        orig_stream = llm_mod.skill.run_skill_agent_stream
+        orig_load = llm_mod.skill.load_skill_content
+
+        def fake_stream(skill_id, text, images=None, context=None, enable_thinking=None):
+            captured["enable_thinking"] = enable_thinking
+            yield {"text": "ok", "kind": "content"}
+
+        class _Req:
+            async def json(self):
+                return {"text": "x", "skillId": "some_skill", "enable_thinking": False}
+
+        llm_mod.skill.run_skill_agent_stream = fake_stream
+        llm_mod.skill.load_skill_content = lambda sid: "content"
+        try:
+            async def _drive():
+                resp = await llm_mod.handle_llm_api_stream("smart_prompt", _Req())
+                aiter = getattr(resp.body, "_iter", None) or resp.body
+                async for _piece in aiter:
+                    pass
+            asyncio.run(_drive())
+        finally:
+            llm_mod.skill.run_skill_agent_stream = orig_stream
+            llm_mod.skill.load_skill_content = orig_load
+        self.assertIs(captured.get("enable_thinking"), False)
+
+
 if __name__ == '__main__':
     unittest.main()

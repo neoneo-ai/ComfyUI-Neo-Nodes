@@ -687,6 +687,33 @@
     flex-direction: column !important;
 }
 
+/* 思考过程临时面板：流式显示模型 reasoning_content，正文出现/结束时自动清除。只用于展示，不写入提示词 */
+.rs-thinking {
+    display: none;
+    flex: none;
+    max-height: 40%;
+    overflow-y: auto;
+    margin-bottom: 6px;
+    padding: 8px 10px;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    background: rgba(30, 30, 30, 0.5);
+}
+.rs-thinking-label {
+    font-size: 11px;
+    color: #8a9aa8;
+    margin-bottom: 4px;
+    user-select: none;
+}
+.rs-thinking-body {
+    font-size: 12px;
+    line-height: 1.5;
+    color: #7d8a96;
+    font-style: italic;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* Ensure custom textarea doesn't overlap buttons */
 .rs-custom-textarea-wrapper > .comfy-multiline-input {
     flex: 1 !important;

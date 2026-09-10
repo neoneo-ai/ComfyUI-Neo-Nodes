@@ -962,6 +962,11 @@ def _enhance_prompt_stream(prompt_text: str, width: int, height: int, skill_id: 
         if hasattr(result, '__iter__') and not isinstance(result, str):
             for chunk in result:
                 if isinstance(chunk, dict):
+                    if "text" in chunk:
+                        # 远程生成器：{"text","kind"}；只取正文，跳过思考（thinking）
+                        if chunk.get("kind") != "thinking":
+                            yield chunk["text"]
+                        continue
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})

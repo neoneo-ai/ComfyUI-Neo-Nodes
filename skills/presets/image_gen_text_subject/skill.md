@@ -4,6 +4,7 @@ tags: []
 description: ''
 category: image_gen
 gen_image: true
+max_tokens: 8192
 created_at: '2026-09-09T02:30:49.158408+00:00'
 ---
 

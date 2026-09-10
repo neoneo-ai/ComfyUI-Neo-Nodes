@@ -432,7 +432,14 @@ class NeoPrompts:
                             stream_kwargs["images"] = [image_bytes]
                         gen = run_llm_task_stream(task_name, quick_input, **stream_kwargs)
                     for chunk in gen:
-                        accumulated += chunk
+                        # run_llm_task_stream / run_skill_agent_stream：dict 带 kind，只累计正文（跳过思考）
+                        if isinstance(chunk, dict):
+                            if chunk.get("kind") == "thinking":
+                                continue
+                            text_chunk = chunk.get("text", "")
+                        else:
+                            text_chunk = chunk or ""
+                        accumulated += text_chunk
                         # Send real-time update to frontend
                         if instance_uid:
                             PromptServer.instance.send_sync("rs.prompt.auto_generate_update", {
@@ -1214,7 +1221,14 @@ class NeoPromptAgent:
                             stream_kwargs["images"] = [image_bytes]
                         gen = run_llm_task_stream(task_name, quick_input, **stream_kwargs)
                     for chunk in gen:
-                        accumulated += chunk
+                        # run_llm_task_stream / run_skill_agent_stream：dict 带 kind，只累计正文（跳过思考）
+                        if isinstance(chunk, dict):
+                            if chunk.get("kind") == "thinking":
+                                continue
+                            text_chunk = chunk.get("text", "")
+                        else:
+                            text_chunk = chunk or ""
+                        accumulated += text_chunk
                         # Send real-time update to frontend
                         if instance_uid:
                             PromptServer.instance.send_sync("rs.prompt.auto_generate_update", {
