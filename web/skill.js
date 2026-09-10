@@ -328,7 +328,7 @@ function createSkillDetailPopup() {
     genSettingsWrap.style.display = "none";
     const genSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const genSettingsTitle = mkEl("label", "rs-form-label");
-    genSettingsTitle.textContent = "🖼️ 生图设置（覆盖默认设置）";
+    genSettingsTitle.textContent = "🖼️ 生图设置（优先于默认设置）";
     genSettingsTitle.title = "仅对本技能生效，未填项回落全局生图设置";
     const genReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
     genReadOnlyHint.textContent = "预设/任务技能只读：点下方「⧉ Copy as custom」复制后可编辑";

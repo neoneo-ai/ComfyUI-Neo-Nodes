@@ -320,7 +320,7 @@ npm run update-goldens   # NEO_UPDATE_GOLDENS=1，写入新 golden
 
 ### JS 测试运行器（带超时强制终止）
 
-Playwright 渲染测试偶尔因浏览器未正常关闭而挂起。`tests/run-tests.ps1` 提供超时保护，超时后自动杀掉 node 进程及其子进程树（含 Chromium），无需手动 Ctrl+C。
+**跑 JS 测试必须带 `--test-force-exit`。** 节点创建会启动未清理的 `setInterval`（如 `prompts.js` 的 enforcementInterval），若不带该参数，`node --test` 子进程因 pending timer 使 event loop 永不空闲而无法自然退出——表现为测试已全部通过却卡到超时。因此**不要裸跑 `node --test tests/js/*.test.mjs`**。两个入口都已内置该参数：`npm test`（package.json）与 `pwsh tests/run-tests.ps1`（后者额外提供超时强杀 node 进程树、文件名模糊匹配）。
 
 ```powershell
 # 跑全部 JS 测试（默认超时 120s）

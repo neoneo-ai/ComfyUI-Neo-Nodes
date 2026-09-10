@@ -38,7 +38,7 @@ $errLog = Join-Path $env:TEMP "neo-test-err.log"
 Remove-Item $outLog -ErrorAction SilentlyContinue
 Remove-Item $errLog -ErrorAction SilentlyContinue
 
-$argsList = @("--test") + $paths
+$argsList = @("--test", "--test-force-exit") + $paths
 $proc = Start-Process -FilePath "node" -ArgumentList $argsList -NoNewWindow -PassThru `
     -RedirectStandardOutput $outLog -RedirectStandardError $errLog
 
