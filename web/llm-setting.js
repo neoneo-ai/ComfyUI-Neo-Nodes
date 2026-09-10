@@ -1,6 +1,6 @@
 /**
  * llm-setting.js
- * LLM 配置表单：provider / model / API key / base URL / 本地模型目录 / 自动卸载。
+ * LLM 配置表单：provider / model / API key / base URL / temperature / 本地模型目录 / 自动卸载。
  * 原设置弹窗的 “LLM Settings” 标签内容，现整体挂到「自动增强」菜单内。
  * createModelConfigForm() 返回 { el, load, save, isDirty }：
  *   el      —— 表单 DOM（追加到宿主容器）
@@ -106,6 +106,26 @@ export function createModelConfigForm() {
     baseUrlRow.appendChild(baseUrlLabel);
     baseUrlRow.appendChild(baseUrlInput);
 
+    // Temperature input row (remote providers only - hidden by default)
+    const temperatureRow = mkEl("div", "rs-config-row");
+    const temperatureLabel = mkEl("label", "rs-form-label");
+    temperatureLabel.textContent = "Temperature";
+
+    const temperatureInput = mkEl("input", "rs-form-input rs-remote-temperature");
+    temperatureInput.type = "number";
+    temperatureInput.id = "rs-remote-temperature";
+    temperatureInput.min = "0";
+    temperatureInput.max = "2";
+    temperatureInput.step = "0.1";
+
+    const temperatureHint = mkEl("div", "rs-form-hint");
+    temperatureHint.style.cssText = 'font-size:10px;color:#888;margin-top:2px;line-height:1.3;';
+    temperatureHint.innerHTML = "采样温度；填 0 则不发送，使用服务端/模型默认值";
+
+    temperatureRow.appendChild(temperatureLabel);
+    temperatureRow.appendChild(temperatureInput);
+    temperatureRow.appendChild(temperatureHint);
+
     // Local models directory row (for Local GGUF - hidden by default)
     const localDirRow = mkEl("div", "rs-config-row");
     const localDirLabel = mkEl("label", "rs-form-label");
@@ -166,7 +186,7 @@ export function createModelConfigForm() {
     providerSaveStatusText.style.fontSize = "11px";
     providerSaveStatusText.style.color = "#999";
 
-    remoteForm.append(remoteInfoText, providerRow, localDirRow, modelRowWrapper, apiKeyRow, baseUrlRow, providerSaveStatusText);
+    remoteForm.append(remoteInfoText, providerRow, localDirRow, modelRowWrapper, apiKeyRow, baseUrlRow, temperatureRow, providerSaveStatusText);
     // 自动卸载本地模型设置放在设置页最底部
     remoteForm.appendChild(localUnloadRow);
 
@@ -338,6 +358,7 @@ export function createModelConfigForm() {
             modelSelectEl.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'block', 'important');
             localDirRow.style.display = "flex";
+            temperatureRow.style.display = "none";
             localDirInput.value = saved.models_dir || "";
 
             // 恢复/显示自动卸载复选框（配置顶层字段）
@@ -357,6 +378,8 @@ export function createModelConfigForm() {
             localUnloadRow.style.display = "none";
             apiKeyInput.value = mask(saved.api_key);
             baseUrlInput.value = saved.base_url || "";
+            temperatureRow.style.display = "flex";
+            temperatureInput.value = saved.temperature ?? 0;
             // 先恢复手动输入值（作为拉取失败的回退内容），再尝试在线拉取模型列表
             modelInput.value = saved.model || "";
             await refreshOpenAIModelUI();
@@ -375,6 +398,8 @@ export function createModelConfigForm() {
             localUnloadRow.style.display = "none";
             const defaultBaseUrl = REMOTE_PROVIDER_DEFAULTS[provider].baseUrl;
             baseUrlInput.value = saved.base_url || defaultBaseUrl;
+            temperatureRow.style.display = "flex";
+            temperatureInput.value = saved.temperature ?? 0;
             await fetchModelsFromUrl(baseUrlInput.value.trim(), modelSelectEl);
             applyRemoteSavedModel(saved.model);
         }
@@ -415,6 +440,9 @@ export function createModelConfigForm() {
             if (provider === 'local') {
                 config.models_dir = localDirInput.value.trim();
                 config.auto_unload_local = localUnloadCheckbox.checked;
+            } else {
+                const tempValue = parseFloat(temperatureInput.value);
+                config.temperature = isNaN(tempValue) ? 0 : tempValue;
             }
             // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model；
             // OpenAI Compatible 仅在在线列表模式下走同样的保护，手动输入模式始终保存
@@ -452,6 +480,7 @@ export function createModelConfigForm() {
     // Auto-save on field changes (blur/change) - provider select already has its handler above
     apiKeyInput.addEventListener("blur", autoSaveConfig);
     baseUrlInput.addEventListener("blur", autoSaveConfig);
+    temperatureInput.addEventListener("change", autoSaveConfig);
     // Auto-fetch models when the base URL field changes (LM Studio / Ollama / OpenRouter / OpenAI)
     const fetchModelsForBaseUrl = async () => {
         const provider = providerSelect.value;

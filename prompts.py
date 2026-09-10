@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 from . import prompt_lines
 from . import skill
+from .llm import strip_inline_thinking
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(CURRENT_DIR, "prompts")
@@ -557,8 +558,11 @@ async def rs_prompts_save_prompt(request):
         # 确保目录存在
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
+        # 保存前清洗：去掉思考模型可能内联泄漏的 < think>/< /think> 标签及重复正文，
+        # 避免把推理过程写进自定义提示词文件。
+        text = strip_inline_thinking(data.get("text", ""))
         with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(data.get("text", ""))
+            f.write(text)
         
         # 确定来源
         source = "presets" if base_dir == PRESETS_DIR else "custom"

@@ -613,6 +613,55 @@ class TestThinkingStreamSeparation(unittest.TestCase):
 
 
 @unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestInlineThinkStripping(unittest.TestCase):
+    """思考模型把 < think>/< /think> 内联写进正文 content 时，非流式清洗与流式拆分都要去掉标签、只留最终正文。"""
+
+    ANSWER = "中景镜头下，一位身着墨绿色丝绒高开叉长裙的女子缓缓抬手，动作轻柔而连贯地褪去肩带与裙摆。"
+
+    def _content_of(self, chunks):
+        return "".join(t for k, t in chunks if k == "content")
+
+    def test_strip_real_polluted_pattern_dedups(self):
+        # 真实污染：[答案]< /think>[答案]（孤立闭标签 + 重复正文）→ 只留一份正文
+        self.assertEqual(llm_mod.strip_inline_thinking(self.ANSWER + "< /think>" + self.ANSWER), self.ANSWER)
+
+    def test_strip_balanced_block(self):
+        self.assertEqual(llm_mod.strip_inline_thinking("< think>推理过程< /think>" + self.ANSWER), self.ANSWER)
+
+    def test_strip_lone_close_tag_drops_prefix(self):
+        # 孤立闭标签：前面是泄漏的思考（丢弃），后面正文保留
+        self.assertEqual(llm_mod.strip_inline_thinking("前言" + "< /think>" + self.ANSWER), self.ANSWER)
+
+    def test_strip_case_and_space_variants(self):
+        self.assertEqual(llm_mod.strip_inline_thinking("< THINK>推理< /THINK>" + self.ANSWER), self.ANSWER)
+
+    def test_strip_plain_text_unchanged(self):
+        self.assertEqual(llm_mod.strip_inline_thinking(self.ANSWER), self.ANSWER)
+
+    def test_strip_non_think_angle_brackets_unchanged(self):
+        self.assertEqual(llm_mod.strip_inline_thinking("a < b and c > d"), "a < b and c > d")
+
+    def test_splitter_routes_inline_close_to_thinking(self):
+        # 流式：整段喂入 [答案]< /think>[答案]，前一份答案归 thinking，正文只留后一份
+        s = llm_mod._InlineThinkSplitter()
+        chunks = list(s.feed(self.ANSWER + "< /think>" + self.ANSWER)) + s.flush()
+        self.assertEqual(self._content_of(chunks), self.ANSWER)
+        self.assertTrue(any(k == "thinking" for k, _ in chunks))
+
+    def test_splitter_routes_balanced_block_to_thinking(self):
+        s = llm_mod._InlineThinkSplitter()
+        chunks = list(s.feed("< think>推理< /think>" + self.ANSWER)) + s.flush()
+        self.assertEqual(self._content_of(chunks), self.ANSWER)
+        self.assertEqual("".join(t for k, t in chunks if k == "thinking"), "推理")
+
+    def test_splitter_plain_text_stays_content(self):
+        s = llm_mod._InlineThinkSplitter()
+        chunks = list(s.feed("a < b and c > d")) + s.flush()
+        self.assertEqual(self._content_of(chunks), "a < b and c > d")
+        self.assertFalse(any(k == "thinking" for k, _ in chunks))
+
+
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
 class TestEnableThinking(unittest.TestCase):
     """enable_thinking（关闭思考）：经 chat_template_kwargs 透传到请求体；未设置则不发送。"""
 

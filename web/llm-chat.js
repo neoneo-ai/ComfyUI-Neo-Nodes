@@ -986,7 +986,11 @@ function createGenerateHandler(promptUI) {
                     if (!thinkingRaf) {
                         thinkingRaf = requestAnimationFrame(() => {
                             thinkingRaf = null;
-                            if (thinkingEl) thinkingEl.querySelector(".rs-thinking-body").textContent = thinkingBuf;
+                            if (thinkingEl) {
+                                thinkingEl.querySelector(".rs-thinking-body").textContent = thinkingBuf;
+                                // 面板 max-height:40% + overflow-y:auto，思考增长后必须跟随滚到底部，否则停在顶部看不到打字效果
+                                thinkingEl.scrollTop = thinkingEl.scrollHeight;
+                            }
                         });
                     }
                     return;

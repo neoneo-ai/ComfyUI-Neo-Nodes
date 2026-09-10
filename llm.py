@@ -21,24 +21,7 @@ from collections import OrderedDict
 
 from . import skill
 
-# ==========================================
-# LiteLLM Configuration
-# ==========================================
-# Use local model cost map to avoid network requests
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
-# Use local tiktoken cache to avoid network requests
-tiktoken_cache_dir = os.path.join(os.path.dirname(__file__), ".tiktoken_cache")
-os.makedirs(tiktoken_cache_dir, exist_ok=True)
-os.environ.setdefault("TIKTOKEN_CACHE_DIR", tiktoken_cache_dir)
-
 logger = logging.getLogger(__name__)
-
-# Pre-load tiktoken to avoid network requests (skip if network unavailable)
-try:
-    import tiktoken
-    tiktoken.get_encoding("cl100k_base")
-except Exception as e:
-    logger.warning(f"Failed to pre-load tiktoken (network unavailable): {e}")
 
 # ==========================================
 # LLM Configuration & Management
@@ -58,6 +41,91 @@ def _normalize_text(text):
     text = text.strip()
     text = re.sub(r'\s+', ' ', text)
     return text
+
+
+# ==========================================
+# Inline Thinking Block Splitter
+# ==========================================
+# 思考模型（Qwen3 等）在部分端点上会把推理过程内联写进正文 content 字段，形如
+# < think>...
+# </think>。这类标签没走独立的 reasoning_content 字段，若不处理会直接泄漏进输出区并被保存。
+# 这里按流式逐块拆分：思考段标成 thinking（进临时面板），正文保持 content；
+# 跨 chunk 的标签边界通过保留尾部缓冲处理。
+
+_THINK_TAG_RE = re.compile(r"<\s*/?\s*think\s*>", re.IGNORECASE)
+# 覆盖 "< /think>" 等最长变体，用于判断缓冲尾部是否可能是未闭合标签的前缀
+_THINK_MAX_TAG_LEN = 16
+
+
+class _InlineThinkSplitter:
+    """把内联在正文里的 < think>...
+</think> 块拆出并标成 thinking。
+
+    feed() 接收一段文本、产出 [(kind, text), ...]（kind ∈ {"content","thinking"}）；
+    flush() 在流结束时冲刷剩余缓冲。
+    """
+
+    def __init__(self):
+        self._buf = ""
+        self._in_think = False
+
+    def feed(self, text: str):
+        if not text:
+            return []
+        self._buf += text
+        out = []
+        while True:
+            m = _THINK_TAG_RE.search(self._buf)
+            if not m:
+                safe_end = self._safe_tail_end()
+                emit = self._buf[:safe_end]
+                if emit:
+                    out.append(("thinking" if self._in_think else "content", emit))
+                    self._buf = self._buf[safe_end:]
+                break
+            prefix = self._buf[:m.start()]
+            is_close = "/" in m.group(0)
+            # 前缀归属：已在思考中，或遇到孤立闭标签（未开先闭，前面是泄漏的思考）→ thinking；否则正文。
+            out_kind = "thinking" if (self._in_think or is_close) else "content"
+            if prefix:
+                out.append((out_kind, prefix))
+            # 开标签进入思考，闭标签回到正文
+            self._in_think = not is_close
+            self._buf = self._buf[m.end():]
+        return out
+
+    def flush(self):
+        if not self._buf:
+            return []
+        kind = "thinking" if self._in_think else "content"
+        text, self._buf = self._buf, ""
+        return [(kind, text)]
+
+    def _safe_tail_end(self):
+        # 从最后一个 '<' 起的尾部若短于最长标签，可能是未闭合标签的前缀，保留等下一块确认
+        n = len(self._buf)
+        idx = self._buf.rfind("<")
+        if idx != -1 and (n - idx) < _THINK_MAX_TAG_LEN:
+            return idx
+        return n
+
+
+def strip_inline_thinking(text: str) -> str:
+    """移除正文里内联的 < think>...
+</think> 块，只保留最终回答（非流式路径用）。"""
+    if not text or "<" not in text:
+        return text
+    splitter = _InlineThinkSplitter()
+    parts = []
+    had_think = False
+    for kind, chunk in list(splitter.feed(text)) + splitter.flush():
+        if kind == "content":
+            parts.append(chunk)
+        else:
+            had_think = True
+    if not had_think:
+        return text
+    return "".join(parts).strip()
 
 
 # ==========================================
@@ -669,7 +737,7 @@ class RemoteLLMClient:
         
         message = choices[0].get("message", {})
         content = message.get("content", "")
-        out_message = {"role": message.get("role", "assistant"), "content": content}
+        out_message = {"role": message.get("role", "assistant"), "content": strip_inline_thinking(content)}
         tool_calls = message.get("tool_calls")
         if tool_calls:
             out_message["tool_calls"] = tool_calls
@@ -1315,27 +1383,35 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
         result_gen = _run_llm_inference(system_prompt, text, max_tokens, images=images,
                                         use_remote=use_remote, stream=True, enable_thinking=enable_thinking)
         if hasattr(result_gen, '__iter__') and not isinstance(result_gen, str):
+            # 内联 < think> 拆分器：把写进正文的推理块重标为 thinking，避免泄漏进输出区
+            splitter = _InlineThinkSplitter()
             for chunk in result_gen:
                 # 远程生成器已带 {"text","kind"}；本地 llama.cpp 为 {choices:[{delta:{...}}]}。
-                # 统一归一成 {"text","kind"}，思考（thinking）与正文（content）分开打标。
+                # 统一抽出正文(content)与独立推理(reasoning_content)，正文再过内联思考拆分器。
+                content = ""
+                reasoning = ""
                 if isinstance(chunk, dict):
                     if "text" in chunk:
-                        yield {"text": chunk["text"], "kind": chunk.get("kind", "content")}
-                        continue
-                    choices = chunk.get("choices", [])
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {})
-                    content = delta.get("content") or ""
-                    reasoning = delta.get("reasoning_content") or ""
-                    if content:
-                        yield {"text": content, "kind": "content"}
-                    if reasoning:
-                        yield {"text": reasoning, "kind": "thinking"}
+                        if chunk.get("kind", "content") == "thinking":
+                            reasoning = chunk["text"]
+                        else:
+                            content = chunk["text"]
+                    else:
+                        choices = chunk.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content") or ""
+                            reasoning = delta.get("reasoning_content") or ""
                 elif isinstance(chunk, str):
-                    yield {"text": chunk, "kind": "content"}
+                    content = chunk
+                for kind, part in splitter.feed(content):
+                    yield {"text": part, "kind": kind}
+                if reasoning:
+                    yield {"text": reasoning, "kind": "thinking"}
+            for kind, part in splitter.flush():
+                yield {"text": part, "kind": kind}
         else:
-            yield {"text": result_gen or "", "kind": "content"}
+            yield {"text": strip_inline_thinking(result_gen or ""), "kind": "content"}
     except Exception as e:
         logger.error(f"Failed to execute stream task {task_name}: {e}")
         yield {"text": f"[ERROR] {str(e)}", "kind": "content"}

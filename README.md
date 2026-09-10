@@ -427,7 +427,7 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 
 | 模式 | 说明 | 要求 |
 |------|------|------|
-| Remote (远程) | 通过 API 调用云端大模型 | 在节点 Settings 中配置 API Key 和端点 |
+| Remote (远程) | 通过 API 调用云端大模型 | 在节点 Settings 中配置 API Key、端点和采样温度（Temperature） |
 | Local (本地) | 使用 llama.cpp 在本地推理 | 放置 GGUF 模型到目录并在 Settings → Provider 选「Local GGUF」后选择模型 |
 
 > **思考模型**：接入会输出推理过程的模型（如 `qwen3.6-35b-a3b`，OpenAI 兼容接口把推理放在 `reasoning_content`）时，生成期间会在提示词框上方实时显示「💭 思考中…」面板，正文出现或结束时自动清除，最终只保留正文结果（思考文本不写入提示词）。流式（远程/本地）会自动为推理预留 token 预算（下限见 `llm.py` 的 `STREAM_MIN_MAX_TOKENS`），避免推理耗尽预算导致没有正文。✨ 按钮旁的 ▾ 菜单提供「关闭思考」开关：勾选后经 `chat_template_kwargs={"enable_thinking": false}` 让服务端跳过推理直接输出（更快更稳，适合 Krea2 等只需最终提示词的场景）；不支持该字段的服务端会忽略此参数，无副作用。
