@@ -96,21 +96,24 @@ krea2_generate = _load("krea2_generate", "krea2_generate.py")
 
 # 纯张量假节点：验证 mini-executor 执行逻辑，不加载真实 Krea2 模型
 class _SourceA:
-    FUNCTION = "src"; RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "src"
+    RETURN_TYPES = ("IMAGE",)
     @classmethod
     def INPUT_TYPES(cls): return {"required": {}}
     def src(self): return torch.ones(1, 2, 2, 3)
 
 
 class _SourceB:
-    FUNCTION = "src"; RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "src"
+    RETURN_TYPES = ("IMAGE",)
     @classmethod
     def INPUT_TYPES(cls): return {"required": {}}
     def src(self): return torch.full((1, 2, 2, 3), 0.5)
 
 
 class _Add:
-    FUNCTION = "add"; RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "add"
+    RETURN_TYPES = ("IMAGE",)
     @classmethod
     def INPUT_TYPES(cls): return {"required": {"a": ("IMAGE",), "b": ("IMAGE",)}}
     def add(self, a, b): return a + b

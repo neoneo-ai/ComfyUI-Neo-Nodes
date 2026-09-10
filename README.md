@@ -1,13 +1,13 @@
 # ComfyUI-Neo-Nodes
 
-一个 ComfyUI 自定义节点插件：提示词管理与AI增强，内置 Krea2 生图（文生图 / 参考图四视图），素材浏览与图片或提示词一键发送，图片反推，配方保存和一键还原。
+一个 ComfyUI 自定义节点插件：提示词管理与 AI 增强（支持推理/thinking 模型），内置 Krea2 生图（文生图 / 参考图四视图）、素材浏览与图片或提示词一键发送、图片反推、配方保存和一键还原，以及工作流路径自动修复。
 
 | 模块 | 类型 | 说明 |
 |------|------|------|
 | 📝 Neo Prompt Encoder | 节点 | AI 提示词增强 + CLIP 编码 |
 | ⚡ Neo Prompt Agent | 节点 | 纯文本输出的轻量提示词生成 |
-| | 🎨 Krea2 Generate | 节点 | 按所选生图 skill 的 workflow.json 模板同步生成，直接输出 IMAGE 张量到下游节点（进程内 mini-executor 执行，无需聊天界面；需 GPU/显存，采样期间阻塞主工作流） |
-| 🖌️ 聊天生图（Krea2） | 节点内置 | 选择生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板（内置 krea2_edit 路径；LoRA 可勾选「依赖参考图」使其仅在参考图模式加载并作为四视图 LoRA，缺失时生成报错提示；生图设置里模型/LoRA 下拉按 krea2 相关靠前排序、LoRA「自动」项显示建议的四视图 LoRA），生成中在节点最底部状态行一行显示 状态/进度/取消（仅当生图设置里勾选 Enhance Prompt 才进入 LLM 提示词增强阶段：实时显示「已生成 N 字」进度；采样阶段显示采样步数进度条；排队/未进入采样时为不定动画；生成完成、取消或失败后自动收起，不占用节点高度），结果在 Markdown 预览查看并可一键装配回 LoadImage 节点 |
+| 🎨 Krea2 Generate | 节点 | 按所选生图 skill 的 workflow.json 模板同步生成，直接输出 IMAGE 张量到下游节点（进程内 mini-executor 执行，无需聊天界面；需 GPU/显存，采样期间阻塞主工作流） |
+| 🖌️ 聊天生图（Krea2） | 节点内置 | 选生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板，LoRA 可选（依赖参考图模式），底部状态行实时显示进度/取消，结果 Markdown 预览并一键装配回 LoadImage |
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频素材浏览与管理 |
 | ⭐ 收藏（书签） | Gallery 板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 |
@@ -16,24 +16,28 @@
 
 - [安装](#安装)
 - [依赖](#依赖)
+- [快速上手](#快速上手)
+- [本地 LLM 推理安装（可选）](#本地-llm-推理安装可选)
 - [节点](#节点)
   - [Neo Prompt Encoder](#-neo-prompt-encoder---ai-驱动的提示词编码器)
   - [Neo Prompt Agent](#-neo-prompt-agent---简洁版提示词代理)
+  - [Krea2 Generate](#-krea2-generate---一体化生图节点image-输出)
   - [节点界面与按钮](#节点界面与按钮)
   - [模板与技能管理](#模板与技能管理)
   - [图片反推与图片输入](#图片反推与图片输入)
-- [Neo Gallery](#-neo-gallery---侧边栏素材管理)
+- [配方 (Recipes)](#-配方-recipes)
+- [Neo Gallery](#-neo-gallery---侧边栏素材系统)
   - [浏览与导航](#浏览与导航)
   - [媒体与搜索](#媒体与搜索)
   - [灯箱查看器](#灯箱查看器)
   - [文件管理与目录](#文件管理与目录)
   - [素材设置](#素材设置)
   - [收藏（书签）](#收藏书签)
-- [配方](#-配方-recipes)
+- [工作流修复](#-工作流修复)
 - [配置](#配置)
   - [LLM 模式](#llm-模式)
-- [本地 LLM 推理安装（可选）](#本地-llm-推理安装可选)
 - [许可证](#许可证)
+- [引用参考](#引用参考)
 - [开发者文档](#开发者文档)
 
 ## 安装
@@ -51,6 +55,19 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 - `requests`, `Pillow`, `PyYAML`（随 `requirements.txt` 自动安装）
 - `llama_cpp_python`（**可选**，仅本地 LLM 推理需要，见下方安装说明；只用远程 API 可跳过）
+
+---
+
+## 快速上手
+
+1. **安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（或见上方手动安装），重启 ComfyUI。
+2. **配置 LLM（二选一）**
+   - **远程**：节点 Settings 里填 API Key + 端点（+ 采样温度）。
+   - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型。
+3. **第一次提示词增强**：添加 📝 Neo Prompt Encoder 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨ → 得到 AI 增强后的提示词（可接 CLIP 编码）。
+4. **第一次生图**：添加 🎨 Krea2 Generate 节点 → 选一个带 `workflow.json` 的生图 skill → 填 prompt（四视图类再连参考图）→ 排队执行 → 直接输出 IMAGE 张量。
+
+   > 生图需 GPU/显存，且所选 skill 必须声明 `gen_image: true` 并附 `workflow.json`。
 
 ---
 
@@ -73,21 +90,7 @@ python -m pip install llama_cpp_python-<版本>+cu124-cp312-cp312-win_amd64.whl
 python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 ```
 
-### 方式二：源码编译
-
-```bash
-# CPU
-python -m pip install llama-cpp-python
-
-# NVIDIA GPU（需要先装好 CUDA Toolkit 与 C/C++ 编译器）
-# Windows PowerShell:
-$env:CMAKE_ARGS = "-DGGML_CUDA=ON"
-python -m pip install llama-cpp-python --no-cache-dir
-```
-
-### Windows 运行时注意
-
-启动报 `Could not find module '...\ggml.dll'` 时，是缺少 VC++ 运行库：安装 [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) 后重启 ComfyUI。
+> 需要**源码编译**（无匹配 wheel 时）或排查 **Windows `ggml.dll` / VC++ 运行库**问题，见 [Developer.md — 本地 LLM 推理](Developer.md#本地-llm-推理依赖安装与模型目录)。
 
 ### 验证与模型
 
@@ -434,24 +437,7 @@ ComfyUI 右侧边栏中的图片/视频浏览与管理面板：内置预设库 +
 
 ### 本地模型目录规范
 
-路径按 `供应商(可选)/模型名称/模型文件(.gguf)` 组织，例如：
-
-```
-models/LLM/
-├── mradermacher/Qwen3-4B-AWQ-I4_K_M/GGUF-Q4_0-int4-v2-scratch.gguf   # 单文件直接放根目录即可
-├── stablelm/stablelm2-1.6B.gguf                                      # 平铺布局同样支持
-└── mradermacher/Huihui-gemma-4-E4B-it-abliterated-GGUF/
-    ├── Huihui-gemma-4-E4B-it-abliterated-Q4_K_M.gguf                 # 主模型文件（任意量化）
-    └── Huihui-gemma-...mmproj-f16.gguf                               # 投影文件（自动匹配，见下）
-```
-
-设置说明：
-
-| 项目 | 说明 |
-|------|------|
-| 目录位置 | Settings → Provider 选 `Local GGUF` 后出现的 **Models Dir**；留空默认扫描 `models/LLM/`，也可填任意本地路径（如 LM Studio 的 `<用户>/.lmstudio/models`） |
-| 模型列表 | 递归扫描该目录下所有 `.gguf`，下拉框只显示**模型名称**（文件名去掉 `.gguf`），不同供应商同名文件各自成项 |
-| 多模态标识 | 某模型同目录中存在 `mmproj-*.gguf`（或 `<模型名>.mmproj-f16.gguf`）时，该模型名称前会出现 🖼️ 徽标，表示可用于图片反推；多个候选时不猜测、留空待匹配 |
+GGUF 模型放入 `models/LLM/`（或 Settings → Provider 的 **Models Dir** 指定的任意路径），按 `供应商(可选)/模型名称/*.gguf` 组织。完整的目录布局、平铺支持与 mmproj 多模态匹配规则见 [Developer.md — 本地 LLM 推理](Developer.md#本地-llm-推理依赖安装与模型目录)。
 
 ---
 

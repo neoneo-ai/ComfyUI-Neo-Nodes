@@ -14,6 +14,7 @@
 - [测试](#测试)
 - [发布](#发布)
 - [离线工具](#离线工具)
+- [本地 LLM 推理（依赖安装与模型目录）](#本地-llm-推理依赖安装与模型目录)
 
 ## 项目结构
 
@@ -367,3 +368,44 @@ python tools/gallery_deploy_oss.py --source <output_dir> --bucket <bucket> --pre
 ```
 
 部署后的 OSS 源通过 `configs/oss_presets.json` 配置，运行时由 `gallery_oss.py` 拉取到 `gallery/oss_cache/`。
+
+## 本地 LLM 推理（依赖安装与模型目录）
+
+本地 GGUF 模式依赖 `llama-cpp-python`。终端用户推荐直接装预编译 wheel（见 [README — 本地 LLM 推理安装](README.md#本地-llm-推理安装可选)）；以下是源码编译、Windows 运行库排障与模型目录规范等开发向细节。
+
+### 源码编译
+
+```bash
+# CPU
+python -m pip install llama-cpp-python
+
+# NVIDIA GPU（需要先装好 CUDA Toolkit 与 C/C++ 编译器）
+# Windows PowerShell:
+$env:CMAKE_ARGS = "-DGGML_CUDA=ON"
+python -m pip install llama-cpp-python --no-cache-dir
+```
+
+### Windows 运行时注意
+
+启动报 `Could not find module '...\ggml.dll'` 时，是缺少 VC++ 运行库：安装 [Microsoft Visual C++ 2015-2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) 后重启 ComfyUI。
+
+### 本地模型目录规范
+
+路径按 `供应商(可选)/模型名称/模型文件(.gguf)` 组织，例如：
+
+```
+models/LLM/
+├── mradermacher/Qwen3-4B-AWQ-I4_K_M/GGUF-Q4_0-int4-v2-scratch.gguf   # 单文件直接放根目录即可
+├── stablelm/stablelm2-1.6B.gguf                                      # 平铺布局同样支持
+└── mradermacher/Huihui-gemma-4-E4B-it-abliterated-GGUF/
+    ├── Huihui-gemma-4-E4B-it-abliterated-Q4_K_M.gguf                 # 主模型文件（任意量化）
+    └── Huihui-gemma-...mmproj-f16.gguf                               # 投影文件（自动匹配，见下）
+```
+
+设置说明：
+
+| 项目 | 说明 |
+|------|------|
+| 目录位置 | Settings → Provider 选 `Local GGUF` 后出现的 **Models Dir**；留空默认扫描 `models/LLM/`，也可填任意本地路径（如 LM Studio 的 `<用户>/.lmstudio/models`） |
+| 模型列表 | 递归扫描该目录下所有 `.gguf`，下拉框只显示**模型名称**（文件名去掉 `.gguf`），不同供应商同名文件各自成项 |
+| 多模态标识 | 某模型同目录中存在 `mmproj-*.gguf`（或 `<模型名>.mmproj-f16.gguf`）时，该模型名称前会出现 🖼️ 徽标，表示可用于图片反推；多个候选时不猜测、留空待匹配 |
