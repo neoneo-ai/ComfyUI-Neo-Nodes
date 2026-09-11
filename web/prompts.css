@@ -2793,6 +2793,17 @@
     user-select: none;
 }
 
+/* 「思考深度」下拉（✨ 菜单内） */
+.rs-thinking-depth-select {
+    margin-left: auto;
+    background: #333;
+    border: 1px solid #555;
+    color: #ddd;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
 .rs-runtime-count-btn {
     background: #333;
     border: 1px solid #555;

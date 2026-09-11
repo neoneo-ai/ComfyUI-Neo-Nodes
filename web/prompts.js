@@ -180,7 +180,7 @@ app.registerExtension({
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
-                quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox, disableThinkingCheckbox,
+                quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox, thinkingDepthSelect,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
@@ -426,7 +426,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, graph: node.graph, statusBar: null,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, disableThinkingCheckbox
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect
             };
 
             const handleGeneratePrompt = createGenerateHandler(
@@ -687,7 +687,7 @@ app.registerExtension({
                 generateBtn, randomBtn, quickInput,
                 customTextarea, statusBar, toggleSwitch, localTab, externalTab,
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
-                quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox, disableThinkingCheckbox,
+                quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox, thinkingDepthSelect,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
             } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
 
@@ -961,7 +961,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, graph: node.graph, statusBar,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, disableThinkingCheckbox
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect
             };
 
             const handleGeneratePrompt = createGenerateHandler(

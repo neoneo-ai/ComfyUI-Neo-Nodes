@@ -88,7 +88,7 @@ _SKILL_MARKERS = {
 _META_KEY_ORDER = (
     "name", "tags", "inputs", "description", "max_tokens",
     "result_key", "multi_result", "multi_turn", "category", "markers",
-    "gen_image", "requires_ref", "created_at",
+    "gen_image", "requires_ref", "audit", "created_at",
 )
 
 # 技能文件管理器支持的文件扩展名（.md 主/子文档 + .txt 引用文本）。
@@ -290,6 +290,12 @@ def load_skill_multi_result(skill_id: str):
     return meta.get("multi_result") if meta else None
 
 
+def load_skill_audit(skill_id: str):
+    """加载 skill 声明的输出审计类型（如 `audit: h3`；未声明则 None，不做生成后审计）。"""
+    val = _skill_meta(skill_id).get("audit")
+    return str(val) if val else None
+
+
 # ==========================================
 # On-demand reference loading (tool-calling agent)
 # ==========================================
@@ -380,8 +386,43 @@ _REFERENCE_IMAGE_TOOL = {
 
 _MAX_SKILL_AGENT_TURNS = 8
 
+# H3 各模式的最终 grounding 约束（仅 audit: h3 技能注入 workflow_context 末尾）
+_H3_GROUNDING = {
+    "T2VA": "Preserve any explicit continuous-camera or no-cut instruction instead of introducing an unsupported cut.",
+    "I2VA": "Separate facts visible in the first frame from newly requested space or action revealed after it.",
+    "FL2VA": "Prioritize exact endpoint geometry and a continuous state/camera path between the first and last frames.",
+    "L2VA": "Invent only the minimum compatible preceding state needed to reach the final frame; do not infer a named location or period without evidence.",
+    "Reference": ("Treat every explicitly assigned reference role as exclusive unless the user asks that reference to contribute additional traits. "
+                  "Unspecified environment, lighting, composition, camera treatment, and atmosphere may be designed as new target content, "
+                  "but never described as facts derived from a reference. "
+                  "Do not add unsupported subject actions, dialogue, props, visible text, or an invented ending."),
+}
 
-def _format_workflow_context(context) -> str:
+
+def _h3_mode(node: dict) -> str:
+    """按 H3 节点类型与 keyframe 槽位判定生成模式。"""
+    kf = (node.get("refs") or {}).get("keyframes") or {}
+    has_first, has_last = "first" in kf, "last" in kf
+    t = str(node.get("type", ""))
+    if t == "MiniMaxH3ReferenceToVideo":
+        return "Reference"
+    if t == "MiniMaxH3ImageToVideo":
+        if has_first and has_last:
+            return "FL2VA"
+        if has_first:
+            return "I2VA"
+        if has_last:
+            return "L2VA"
+    return "T2VA"
+
+
+def _h3_grounding_check(node: dict) -> str:
+    """按 H3 节点类型与 keyframe 槽位判定模式，返回该模式的最终 grounding 检查句。"""
+    mode = _h3_mode(node)
+    return f"Final grounding check ({mode}): {_H3_GROUNDING[mode]} Return only the complete final H3 prompt."
+
+
+def _format_workflow_context(context, grounding: bool = False) -> str:
     """把前端采集的工作流上下文（MiniMax H3 参数 + 叶子媒体清单）格式化为系统提示词文本块。
 
     参考图只列元数据不内联；带尺寸的图片可通过 get_reference_image 工具按需取回像素。
@@ -500,6 +541,9 @@ def _format_workflow_context(context) -> str:
     others = [t for t in nodes if "MiniMax" not in str(t)][:40]
     if others:
         lines.append("Other node types: " + ", ".join(str(t) for t in others))
+    if grounding and h3:
+        lines.append(_h3_grounding_check(h3[0]))
+        logger.info(f"H3 grounding injected: {_h3_mode(h3[0])} mode")
     lines.append("</workflow_context>")
     return "\n".join(lines)
 
@@ -549,10 +593,68 @@ def _initial_user_message(text: str, images) -> Dict[str, Any]:
     return {"role": "user", "content": parts}
 
 
-def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enable_thinking=None) -> str:
+def _h3_narrow_repair(content: str, skill_id: str, text: str, context, max_tokens, failures) -> str | None:
+    """发起一次窄修复调用；验收（复审通过 + 参考标签/对白不变）通过才返回修复文本，否则 None。"""
+    from . import prompt_audit
+    try:
+        from .llm import chat_turn
+        msg = chat_turn(prompt_audit.narrow_repair_messages(text, content, failures), max_tokens=max_tokens)
+    except Exception as e:
+        logger.warning(f"H3 narrow repair for skill '{skill_id}' failed: {e}")
+        return None
+    repaired = (msg.get("content") or "").strip()
+    if not repaired:
+        logger.info(f"H3 narrow repair for skill '{skill_id}' returned empty, keeping original output")
+        return None
+    if prompt_audit.repair_acceptable(content, repaired, context):
+        return repaired
+    logger.info(f"H3 narrow repair for skill '{skill_id}' failed acceptance (re-audit/tags/dialogue), keeping original output")
+    return None
+
+
+def _h3_audit_and_repair(content: str, skill_id: str, text: str, context, max_tokens, on_step=None) -> str:
+    """对生成的 H3 提示词跑确定性格式审计；失败时做一次窄修复（验收通过才采纳）。
+    on_step 为可选的阶段上报回调（流式路径用），参数为状态文案。"""
+    from . import prompt_audit
+    audit = prompt_audit.audit_h3_prompt(content, context)
+    if not audit["repair_required"]:
+        logger.info(f"H3 audit passed for skill '{skill_id}'")
+        return content
+    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(audit['failures'])}")
+    if on_step:
+        on_step("✏️ 检测到格式问题，自动修复中…")
+    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, audit["failures"])
+    if repaired:
+        logger.info(f"H3 narrow repair applied for skill '{skill_id}'")
+        return repaired
+    return content
+
+
+def _h3_audit_events(content: str, skill_id: str, text: str, context, max_tokens):
+    """流式路径：正文已逐 token 透传完毕，对完整输出做审计并逐阶段上报 status/replace 事件。"""
+    from . import prompt_audit
+    yield {"text": "🔍 格式自检中…", "kind": "status"}
+    audit = prompt_audit.audit_h3_prompt(content, context)
+    if not audit["repair_required"]:
+        logger.info(f"H3 audit passed for skill '{skill_id}'")
+        yield {"text": "✅ 格式自检通过", "kind": "status"}
+        return
+    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(audit['failures'])}")
+    yield {"text": "✏️ 检测到格式问题，自动修复中…", "kind": "status"}
+    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, audit["failures"])
+    if repaired:
+        logger.info(f"H3 narrow repair applied for skill '{skill_id}'")
+        yield {"text": "✏️ 已自动修复格式", "kind": "status"}
+        yield {"text": repaired, "kind": "replace"}
+    else:
+        yield {"text": "⚠️ 修复未通过校验，保留原输出", "kind": "status"}
+
+
+def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enable_thinking=None, reasoning_effort=None, on_step=None) -> str:
     """执行 skill 生成：工作流上下文始终注入系统提示词；仅当存在引用文件或参考图像时启用工具调用
     代理循环（本地/远程一致），否则单轮推理。read_skill_file 按需读取引用文件，get_reference_image
     按需取回参考图像素。context 为前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单）。
+    on_step 为可选的阶段上报回调（audit: h3 技能的审计/修复阶段）。
     返回最终答案字符串；失败抛出异常。"""
     from .llm import chat_turn, get_current_mode, LLM_MODE_REMOTE, _run_llm_inference
 
@@ -565,7 +667,8 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enabl
     if not system_prompt:
         raise ValueError(f"Skill '{skill_id}' not found or has no content")
 
-    ctx_block = _format_workflow_context(context)
+    audit_kind = load_skill_audit(skill_id)
+    ctx_block = _format_workflow_context(context, grounding=(audit_kind == "h3"))
     refs = list_skill_references(skill_id)
     ref_images = [r for r in (context or {}).get("references", []) if r.get("kind") == "image"] if isinstance(context, dict) else []
     max_tokens = load_skill_max_tokens(skill_id) or 500
@@ -581,6 +684,10 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enabl
     # 无引用文件且无可取回参考图像：单轮生成（系统提示词已含工作流上下文）
     if not (refs or ref_images):
         result = _run_llm_inference(system, text, max_tokens, images=images or None, use_remote=remote_mode, enable_thinking=enable_thinking)
+        if audit_kind == "h3" and result:
+            if on_step:
+                on_step("🔍 格式自检中…")
+            return _h3_audit_and_repair(result, skill_id, text, context, max_tokens, on_step=on_step)
         return result or ""
 
     # 有引用文件/参考图像：工具调用代理循环（按需取回）
@@ -593,7 +700,8 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enabl
     ]
     content = ""
     for _ in range(_MAX_SKILL_AGENT_TURNS):
-        msg = chat_turn(messages, max_tokens=max_tokens, tools=tools or None, enable_thinking=enable_thinking)
+        msg = chat_turn(messages, max_tokens=max_tokens, tools=tools or None,
+                        enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
         content = msg.get("content") or ""
         tool_calls = msg.get("tool_calls") or []
         assistant_msg = {"role": "assistant", "content": content}
@@ -632,6 +740,10 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enabl
 
     if not content.strip():
         raise RuntimeError(f"Skill '{skill_id}' produced no output")
+    if audit_kind == "h3":
+        if on_step:
+            on_step("🔍 格式自检中…")
+        content = _h3_audit_and_repair(content, skill_id, text, context, max_tokens, on_step=on_step)
     return content
 
 
@@ -640,7 +752,7 @@ def run_skill_agent(skill_id: str, text: str, images=None, context=None) -> str:
     return _skill_agent_core(skill_id, text, images, context)
 
 
-def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None, enable_thinking=None) -> Generator[dict, None, None]:
+def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None, enable_thinking=None, reasoning_effort=None) -> Generator[dict, None, None]:
     """流式执行 skill 生成：工作流上下文始终注入系统提示词；单轮路径逐 token 透传 LLM 输出（与
     llm.run_llm_task_stream 一致），仅当存在引用文件或参考图像时走工具循环（复用非流式核心再逐字
     输出）。失败抛出异常，由调用方捕获。"""
@@ -655,7 +767,8 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
     if not system_prompt:
         raise ValueError(f"Skill '{skill_id}' not found or has no content")
 
-    ctx_block = _format_workflow_context(context)
+    audit_kind = load_skill_audit(skill_id)
+    ctx_block = _format_workflow_context(context, grounding=(audit_kind == "h3"))
     refs = list_skill_references(skill_id)
     ref_images = [r for r in (context or {}).get("references", []) if r.get("kind") == "image"] if isinstance(context, dict) else []
     max_tokens = load_skill_max_tokens(skill_id) or 500
@@ -672,13 +785,18 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
     # 前端据此展示/清除临时思考面板，消费方只累计正文。
     if not (refs or ref_images):
         result = _run_llm_inference(system, text, max_tokens, images=images or None,
-                                    use_remote=remote_mode, stream=True, enable_thinking=enable_thinking)
+                                    use_remote=remote_mode, stream=True, enable_thinking=enable_thinking,
+                                    reasoning_effort=reasoning_effort)
+        buf = []
         if hasattr(result, '__iter__') and not isinstance(result, str):
             for chunk in result:
                 # 远程生成器已带 {"text","kind"}；本地 llama.cpp 为 {choices:[{delta:{...}}]}。统一归一打标。
                 if isinstance(chunk, dict):
                     if "text" in chunk:
-                        yield {"text": chunk["text"], "kind": chunk.get("kind", "content")}
+                        kind = chunk.get("kind", "content")
+                        yield {"text": chunk["text"], "kind": kind}
+                        if kind == "content":
+                            buf.append(chunk["text"])
                         continue
                     choices = chunk.get("choices", [])
                     if not choices:
@@ -688,32 +806,51 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
                     reasoning = delta.get("reasoning_content") or ""
                     if content:
                         yield {"text": content, "kind": "content"}
+                        buf.append(content)
                     if reasoning:
                         yield {"text": reasoning, "kind": "thinking"}
                 elif isinstance(chunk, str):
                     yield {"text": chunk, "kind": "content"}
+                    buf.append(chunk)
         else:
             # 本地路径未返回生成器（不支持流式）：回退为整段输出
-            yield {"text": result or "", "kind": "content"}
+            result = result or ""
+            if result:
+                yield {"text": result, "kind": "content"}
+            buf.append(result)
+        # audit: h3：正文已实时透传，拿到完整输出后做格式审计（必要时窄修复），进度以 status 事件上报
+        if audit_kind == "h3":
+            full = "".join(buf).strip()
+            if not full:
+                raise RuntimeError(f"Skill '{skill_id}' produced no output")
+            yield from _h3_audit_events(full, skill_id, text, context, max_tokens)
         return
 
-    # 有引用文件/参考图像：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出（仅正文）
-    for ch in _skill_agent_core(skill_id, text, images, context, enable_thinking=enable_thinking):
+    # 有引用文件/参考图像：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出（仅正文）。
+    # audit: h3：生成阶段先上报状态，审计/修复阶段经 on_step 收集、随最终内容前发出。
+    if audit_kind == "h3":
+        yield {"text": "⏳ 生成中（按需读取参考资料）…", "kind": "status"}
+    steps = []
+    content = _skill_agent_core(skill_id, text, images, context, enable_thinking=enable_thinking,
+                                reasoning_effort=reasoning_effort, on_step=steps.append)
+    for s in steps:
+        yield {"text": s, "kind": "status"}
+    for ch in content:
         yield {"text": ch, "kind": "content"}
 
 
-def run_skill_agent_stream(skill_id: str, text: str, images=None, context=None, enable_thinking=None) -> Generator[dict, None, None]:
+def run_skill_agent_stream(skill_id: str, text: str, images=None, context=None, enable_thinking=None, reasoning_effort=None) -> Generator[dict, None, None]:
     """流式契约：逐 token yield {"text","kind"}（思考 thinking / 正文 content，与 llm.run_llm_task_stream 一致）；失败 yield [ERROR]。"""
     try:
         saw_content = False
-        for chunk in _skill_agent_core_stream(skill_id, text, images, context, enable_thinking=enable_thinking):
+        for chunk in _skill_agent_core_stream(skill_id, text, images, context, enable_thinking=enable_thinking, reasoning_effort=reasoning_effort):
             if chunk.get("kind") == "content" and (chunk.get("text") or "").strip():
                 saw_content = True
             yield chunk
         # 思考模型可能把 max_tokens 预算全花在 reasoning 上，导致正文为空。
         # 此时给一条可见提示，避免前端在思考结束后静默无响应（最终只保留正文）。
         if not saw_content:
-            yield {"text": "[未生成最终提示词：模型思考占用了全部 token 预算。请在 ✨ 菜单勾选「关闭思考」，或调大该技能的 max_tokens 后重试。]", "kind": "content"}
+            yield {"text": "[未生成最终提示词：模型思考占用了全部 token 预算。请在 ✨ 菜单将「思考深度」设为「不思考」，或调大该技能的 max_tokens 后重试。]", "kind": "content"}
     except Exception as e:
         logger.error(f"Skill agent error for '{skill_id}': {e}")
         yield {"text": f"[ERROR] {str(e)}", "kind": "content"}

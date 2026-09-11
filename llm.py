@@ -602,6 +602,21 @@ def get_available_models() -> Dict[str, Any]:
 # Remote API LLM Client (OpenAI SDK)
 # ==========================================
 
+def _log_llm_usage(usage) -> None:
+    """记录单次 LLM 调用的 token 统计：prompt/completion，及思考 token reasoning_tokens（Qwen3 系思考模型返回）。"""
+    if usage is None:
+        return
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    details = getattr(usage, "completion_tokens_details", None)
+    reasoning_tokens = getattr(details, "reasoning_tokens", None) if details is not None else None
+    line = f"[NeoNodes] LLM usage: prompt={prompt_tokens} completion={completion_tokens}"
+    # 0/缺失多为服务端未报明细（如 LM Studio），打出反而误导，仅正数时记录
+    if reasoning_tokens:
+        line += f" reasoning={reasoning_tokens}"
+    logger.info(line)
+
+
 class RemoteLLMClient:
     """基于 OpenAI SDK 的远程 LLM 客户端，调用 OpenAI 兼容 API"""
 
@@ -652,7 +667,8 @@ class RemoteLLMClient:
                         image_bytes_list: Optional[List[bytes]] = None,
                         stream: bool = False,
                         tools: Optional[List[Dict[str, Any]]] = None,
-                        enable_thinking: Optional[bool] = None) -> Any:
+                        enable_thinking: Optional[bool] = None,
+                        reasoning_effort: Optional[str] = None) -> Any:
         """
         发送聊天补全请求
 
@@ -662,6 +678,7 @@ class RemoteLLMClient:
             image_bytes_list: 图片字节列表
             stream: 是否流式输出
             enable_thinking: 是否启用思考（None=不发送，交由服务端/模型默认）
+            reasoning_effort: 思考深度档位 low/medium/xhigh（Qwen3.8 chat_template 参数；仅远程思考模板生效）
 
         Returns:
             非流式：返回响应字典；流式：返回生成器
@@ -684,14 +701,23 @@ class RemoteLLMClient:
         # temperature 为 0（或未设置）时不发送，交由服务端/模型默认值；仅非零时显式传递。
         if self.temperature:
             kwargs["temperature"] = self.temperature
+        if stream:
+            # 让服务端在流末尾 chunk 附带 token 统计（vLLM/SGLang/LM Studio 均支持）
+            kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        # Qwen3 等思考模型：经 chat_template_kwargs 控制是否输出推理过程。
-        # None=不发送（服务端/模型默认）；False=跳过思考直接出正文（更快更稳）。
+        # Qwen3.8 等思考模板：经 chat_template_kwargs 控制推理过程与思考深度。
+        # enable_thinking None=不发送（服务端/模型默认）；False=跳过思考直接出正文（更快更稳）。
+        # reasoning_effort 档位由模板注入对应"思考契约"文本（low/medium/xhigh，xhigh 为模板默认）。
         # OpenAI SDK 会把 extra_body 拍平到请求体顶层，等价于顶层 chat_template_kwargs。
-        if enable_thinking is not None:
-            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": bool(enable_thinking)}}
+        if enable_thinking is not None or reasoning_effort:
+            ctk = {}
+            if enable_thinking is not None:
+                ctk["enable_thinking"] = bool(enable_thinking)
+            if reasoning_effort:
+                ctk["reasoning_effort"] = str(reasoning_effort)
+            kwargs["extra_body"] = {"chat_template_kwargs": ctk}
 
         if not self.model:
             raise RuntimeError(
@@ -707,6 +733,7 @@ class RemoteLLMClient:
                 return self._stream_response_generator(client, **kwargs)
             else:
                 response = client.chat.completions.create(**kwargs)
+                _log_llm_usage(getattr(response, "usage", None))
                 return self._parse_response(response.model_dump())
         except openai.APIConnectionError as e:
             logger.warning(f"Remote LLM connection error: {e}")
@@ -757,7 +784,10 @@ class RemoteLLMClient:
 
         try:
             stream = client.chat.completions.create(**kwargs)
+            usage = None
             for chunk in stream:
+                if getattr(chunk, "usage", None) is not None:
+                    usage = chunk.usage
                 choices = getattr(chunk, "choices", None) or []
                 if not choices:
                     continue
@@ -768,6 +798,7 @@ class RemoteLLMClient:
                     yield {"text": content, "kind": "content"}
                 if reasoning:
                     yield {"text": reasoning, "kind": "thinking"}
+            _log_llm_usage(usage)
         except openai.APIConnectionError as e:
             logger.warning(f"Remote LLM stream connection error: {e}")
             raise RuntimeError(f"Remote LLM network error: {e}")
@@ -951,7 +982,8 @@ def get_llm_instance():
 
 def _run_llm_inference(system_prompt: str, user_text: str, max_tokens: int,
                        images: Optional[Any] = None, use_remote: bool = False,
-                       stream: bool = False, enable_thinking: Optional[bool] = None) -> Any:  # type: ignore[return-type]
+                       stream: bool = False, enable_thinking: Optional[bool] = None,
+                       reasoning_effort: Optional[str] = None) -> Any:  # type: ignore[return-type]
     """
     执行 LLM 推理，支持本地和远程模式
 
@@ -972,7 +1004,8 @@ def _run_llm_inference(system_prompt: str, user_text: str, max_tokens: int,
         max_tokens = STREAM_MIN_MAX_TOKENS
 
     if use_remote:
-        result = _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream, enable_thinking=enable_thinking)
+        result = _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream,
+                                       enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
         if result is not None:
             return result
         logger.warning("Remote LLM failed, falling back to local mode")
@@ -1038,7 +1071,8 @@ def _run_local_inference(system_prompt: str, user_text: str, max_tokens: int,
 
 def _run_remote_inference(system_prompt: str, user_text: str, max_tokens: int,
                           images: Optional[Any] = None, stream: bool = False,
-                          enable_thinking: Optional[bool] = None) -> Any:  # type: ignore[return-type]
+                          enable_thinking: Optional[bool] = None,
+                          reasoning_effort: Optional[str] = None) -> Any:  # type: ignore[return-type]
     """执行远程 LLM 推理"""
     config = _get_active_remote_config()
 
@@ -1076,6 +1110,7 @@ def _run_remote_inference(system_prompt: str, user_text: str, max_tokens: int,
             image_bytes_list=image_bytes_list,
             stream=stream,
             enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
         )
 
         if stream:
@@ -1203,7 +1238,8 @@ def resolve_multi_result(text: str, rule: Optional[Dict[str, Any]] = None) -> Li
 
 def chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
               tools: Optional[List[Dict[str, Any]]] = None,
-              enable_thinking: Optional[bool] = None) -> Dict[str, Any]:
+              enable_thinking: Optional[bool] = None,
+              reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
     """对当前激活的 provider（本地 llama.cpp 或远程 API）执行一次（非流式）对话，返回 assistant message dict。
 
     供 skill 代理循环按需调用：传入带 tools 的 messages，返回含 content / tool_calls 的消息。
@@ -1216,7 +1252,8 @@ def chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
         client = RemoteLLMClient(config)
         if not client.is_available():
             raise RuntimeError(f"Remote provider '{client.provider}' is not available")
-        response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools, enable_thinking=enable_thinking)
+        response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools,
+                                          enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
     else:
         llm = get_llm_instance()
         response = llm.create_chat_completion(
@@ -1321,7 +1358,8 @@ def run_llm_task(task_name: str, text: str, extra_system_prompt: Optional[str] =
 def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional[str] = None,
                         images: Optional[Any] = None, system_prompt: Optional[str] = None,
                         max_tokens_override: Optional[int] = None, context: Optional[Dict[str, Any]] = None,
-                        enable_thinking: Optional[bool] = None) -> Generator[Dict[str, Any], None, None]:
+                        enable_thinking: Optional[bool] = None,
+                        reasoning_effort: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
     """
     流式执行 LLM 任务，返回生成器
 
@@ -1386,7 +1424,8 @@ def run_llm_task_stream(task_name: str, text: str, extra_system_prompt: Optional
 
     try:
         result_gen = _run_llm_inference(system_prompt, text, max_tokens, images=images,
-                                        use_remote=use_remote, stream=True, enable_thinking=enable_thinking)
+                                        use_remote=use_remote, stream=True, enable_thinking=enable_thinking,
+                                        reasoning_effort=reasoning_effort)
         if hasattr(result_gen, '__iter__') and not isinstance(result_gen, str):
             # 内联 < think> 拆分器：把写进正文的推理块重标为 thinking，避免泄漏进输出区
             splitter = _InlineThinkSplitter()
@@ -1508,10 +1547,13 @@ async def handle_llm_api_stream(task_name, request):
         raw_images = data.get("images") or []
         # 前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单），仅元数据，无图像素
         context = data.get("context")
-        # "关闭思考"开关：True/False 透传到 chat_template_kwargs；未勾选为 None（不发送）
+        # "思考深度"下拉：off→enable_thinking=False；low/medium/xhigh→reasoning_effort（Qwen3.8 模板档位）
         enable_thinking = data.get("enable_thinking")
+        reasoning_effort = data.get("reasoning_effort")
+        if reasoning_effort not in ("low", "medium", "xhigh"):
+            reasoning_effort = None
 
-        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}, context={'yes' if context else 'no'}, enable_thinking={enable_thinking}")
+        logger.info(f"LLM API stream request: endpoint={task_name}, text='{text[:100]}...', skillId='{skill_id}', images={len(raw_images)}, context={'yes' if context else 'no'}, enable_thinking={enable_thinking}, reasoning_effort={reasoning_effort}")
 
         # 允许空文本：有图片输入（如反推）时合法
         images = []
@@ -1556,13 +1598,15 @@ async def handle_llm_api_stream(task_name, request):
                 # 同步生成器在事件循环上直接迭代会阻塞整个 aiohttp loop（LLM 未出首包
                 # 时其他请求全部卡住），因此每次 next() 都丢进线程池执行。
                 if skill_agent:
-                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None, context=context, enable_thinking=enable_thinking)
+                    gen = skill.run_skill_agent_stream(skill_id, text, images=images if images else None, context=context,
+                                                       enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
                 else:
                     gen = run_llm_task_stream(task_name, text, system_prompt=system_prompt,
                                               images=images if images else None,
                                               max_tokens_override=template_max_tokens,
                                               context=context,
-                                              enable_thinking=enable_thinking)
+                                              enable_thinking=enable_thinking,
+                                              reasoning_effort=reasoning_effort)
                 loop = asyncio.get_running_loop()
 
                 def next_chunk():

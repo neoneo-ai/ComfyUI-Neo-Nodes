@@ -23,10 +23,14 @@ body
       input#rs-auto-generate.rs-auto-generate-checkbox <type=checkbox val="on">
       label.rs-auto-generate-label "自动增强"
     div.rs-runtime-hint "每次运行时用 LLM 基于描述自动增强提示词"
-    label.rs-runtime-row.rs-runtime-toggle
-      input.rs-disable-thinking-checkbox <type=checkbox val="on">
-      span.rs-auto-generate-label "关闭思考"
-    div.rs-runtime-hint "跳过推理直接输出，更快更稳（需服务端支持）"
+    div.rs-runtime-row
+      span.rs-auto-generate-label "思考深度"
+      select.rs-thinking-depth-select
+        option <value=off> "不思考"
+        option <value=low> "浅思考"
+        option <value=medium selected> "标准思考"
+        option <value=high> "深度思考"
+    div.rs-runtime-hint "默认标准思考；不思考直接输出，更快更稳（需服务端支持）"
     div.rs-runtime-divider
     div.rs-auto-tabs
       button.rs-auto-tab.rs-auto-tab-active <type=button> "🤖 LLM Settings"

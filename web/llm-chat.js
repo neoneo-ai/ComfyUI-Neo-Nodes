@@ -18,6 +18,10 @@ import { createImageGenSettingsForm, requestGeneration, watchTask, cancelTask, b
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
 
+// 「思考深度」下拉 → Qwen3.8 模板参数映射：off=不思考（enable_thinking:false）；
+// low/medium/high 对应 chat_template_kwargs.reasoning_effort 档位（xhigh 为模板的深度档）。
+const THINKING_EFFORTS = { low: "low", medium: "medium", high: "xhigh" };
+
 // ==========================================
 // Quick input tips rotation
 // ==========================================
@@ -417,33 +421,37 @@ function createStatusBars() {
     autoMenu.appendChild(autoToggleRow);
     autoMenu.appendChild(autoHint);
 
-    // 「关闭思考」开关：跳过模型推理过程直接出正文（更快更稳，避免思考耗尽 max_tokens 截断正文）。
-    // 勾选后经 chat_template_kwargs 传给服务端；不支持该字段的服务端会忽略。localStorage 持久化。
-    const disableThinkingCheckbox = document.createElement("input");
-    disableThinkingCheckbox.type = "checkbox";
-    disableThinkingCheckbox.className = "rs-disable-thinking-checkbox";
+    // 「思考深度」下拉：参考 Qwen3.8 的 reasoning_effort 档位。默认"标准思考"（medium）；
+    // "不思考"发 enable_thinking:false（跳过推理，更快更稳，避免思考耗尽 max_tokens 截断正文）；
+    // 浅/标准/深度经 chat_template_kwargs.reasoning_effort 传给服务端，不支持该字段的服务端会忽略。
+    // localStorage 持久化。
+    const thinkingDepthSelect = document.createElement("select");
+    thinkingDepthSelect.className = "rs-thinking-depth-select";
+    for (const [value, label] of [["off", "不思考"], ["low", "浅思考"], ["medium", "标准思考"], ["high", "深度思考"]]) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        if (value === "medium") opt.selected = true; // 默认档
+        thinkingDepthSelect.appendChild(opt);
+    }
     try {
-        disableThinkingCheckbox.checked = localStorage.getItem("rs.disable_thinking") === "1";
+        const savedDepth = localStorage.getItem("rs.thinking_depth");
+        if (savedDepth && ["off", "low", "medium", "high"].includes(savedDepth)) {
+            thinkingDepthSelect.value = savedDepth;
+        }
     } catch (e) { /* 隐私模式下 localStorage 可能不可用 */ }
-    const disableThinkingText = mkEl("span", "rs-auto-generate-label");
-    disableThinkingText.textContent = "关闭思考";
-    const disableThinkingRow = mkEl("label", "rs-runtime-row rs-runtime-toggle");
-    disableThinkingRow.appendChild(disableThinkingCheckbox);
-    disableThinkingRow.appendChild(disableThinkingText);
-    const disableThinkingHint = mkEl("div", "rs-runtime-hint");
-    disableThinkingHint.textContent = "跳过推理直接输出，更快更稳（需服务端支持）";
-    autoMenu.appendChild(disableThinkingRow);
-    autoMenu.appendChild(disableThinkingHint);
-    disableThinkingCheckbox.addEventListener("change", (e) => {
+    const thinkingDepthLabel = mkEl("span", "rs-auto-generate-label");
+    thinkingDepthLabel.textContent = "思考深度";
+    const thinkingDepthRow = mkEl("div", "rs-runtime-row");
+    thinkingDepthRow.appendChild(thinkingDepthLabel);
+    thinkingDepthRow.appendChild(thinkingDepthSelect);
+    const thinkingDepthHint = mkEl("div", "rs-runtime-hint");
+    thinkingDepthHint.textContent = "默认标准思考；不思考直接输出，更快更稳（需服务端支持）";
+    autoMenu.appendChild(thinkingDepthRow);
+    autoMenu.appendChild(thinkingDepthHint);
+    thinkingDepthSelect.addEventListener("change", (e) => {
         e.stopPropagation();
-        try { localStorage.setItem("rs.disable_thinking", disableThinkingCheckbox.checked ? "1" : "0"); } catch (err) {}
-    });
-    // 整行点击切换（同「自动增强」行交互）
-    disableThinkingRow.addEventListener("click", (e) => {
-        if (e.target === disableThinkingCheckbox) return;
-        e.preventDefault();
-        disableThinkingCheckbox.checked = !disableThinkingCheckbox.checked;
-        disableThinkingCheckbox.dispatchEvent(new Event("change"));
+        try { localStorage.setItem("rs.thinking_depth", thinkingDepthSelect.value); } catch (err) {}
     });
     // 设置区 tab 切换：LLM Settings / 生图设置（两张表单都较长，纵向堆叠菜单过深；
     // 打开时两个表单都 load、关闭时都 save，隐藏面板的输入值照常读写，切 tab 不丢状态）
@@ -655,7 +663,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, disableThinkingCheckbox, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
+    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, thinkingDepthSelect, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
 }
 
 // ==========================================
@@ -884,10 +892,11 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
  */
 function createGenerateHandler(promptUI) {
     return async () => {
-        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto, genResultsController, disableThinkingCheckbox } = promptUI;
+        const { generateBtn, quickInput, customTextarea, textWidget, node, graph, skillSelector, attachedImages = [], refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect } = promptUI;
 
-        // 「关闭思考」勾选时给流式请求带 enable_thinking:false（跳过推理，更快更稳）；未勾选则不发送
-        const enableThinkingField = disableThinkingCheckbox?.checked ? { enable_thinking: false } : {};
+        // 「思考深度」：不思考→enable_thinking:false（跳过推理，更快更稳）；浅/标准/深度→reasoning_effort 档位
+        const thinkingDepth = thinkingDepthSelect?.value || "medium";
+        const enableThinkingField = thinkingDepth === "off" ? { enable_thinking: false } : { reasoning_effort: THINKING_EFFORTS[thinkingDepth] };
 
         const quickText = quickInput.value.trim();
         const currentPrompt = customTextarea?.value?.trim() || "";
@@ -973,11 +982,43 @@ function createGenerateHandler(promptUI) {
             if (thinkingRaf) { cancelAnimationFrame(thinkingRaf); thinkingRaf = null; }
             if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
         }
+        // 流程状态（H3 格式自检/自动修复等阶段）：复用思考面板样式，正文出现/流结束时清除
+        let statusEl = null;
+        function showStatus(msg) {
+            if (!statusEl) {
+                statusEl = mkEl("div", "rs-thinking");
+                statusEl.appendChild(mkEl("div", "rs-thinking-label"));
+                wrapper.insertBefore(statusEl, customTextarea);
+            }
+            statusEl.querySelector(".rs-thinking-label").textContent = msg;
+            // 内联 display 必须显式设为可见值（同思考面板：设 "" 会回落到 .rs-thinking{display:none}）
+            statusEl.style.display = "block";
+        }
+        function clearStatus() {
+            if (statusEl) { statusEl.remove(); statusEl = null; }
+        }
         // 三条流式分支共用的 SSE 处理：正文先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排；
         // 思考块（kind=thinking）实时显示在临时面板，正文出现时清除，最终只保留正文
         const streamHandlers = (errorLabel) => ({
             onChunk: (chunk) => {
                 if (!chunk || !chunk.text) return;
+                if (chunk.kind === "status") {
+                    // 流程阶段上报（格式自检/自动修复）：只显示状态行，不写入提示词
+                    showStatus(chunk.text);
+                    return;
+                }
+                if (chunk.kind === "replace") {
+                    // H3 窄修复采纳后整段替换已透传的正文
+                    if (thinkingEl) clearThinking();
+                    accumulated = chunk.text;
+                    if (!rafId) rafId = requestAnimationFrame(() => {
+                        rafId = null;
+                        customTextarea.value = accumulated;
+                        customTextarea.scrollTop = customTextarea.scrollHeight;
+                        refreshMarkdownPreviewAuto?.();
+                    });
+                    return;
+                }
                 if (chunk.kind === "thinking") {
                     thinkingBuf += chunk.text;
                     // 内联 display 必须显式设为可见值：设成 "" 会移除内联样式、回落到 .rs-thinking{display:none}，面板就永远不可见
@@ -994,8 +1035,9 @@ function createGenerateHandler(promptUI) {
                     }
                     return;
                 }
-                // 正文开始：思考完成，清除临时面板
+                // 正文开始：思考完成，清除临时面板与状态行
                 if (thinkingEl) clearThinking();
+                clearStatus();
                 accumulated += chunk.text;
                 if (rafId) return;
                 rafId = requestAnimationFrame(() => {
@@ -1010,6 +1052,7 @@ function createGenerateHandler(promptUI) {
             onDone: () => {
                 if (rafId) cancelAnimationFrame(rafId);
                 clearThinking();
+                clearStatus();
                 if (accumulated) customTextarea.value = accumulated;
                 saveTextToStorage(node, textWidget, customTextarea, true);
                 markQuickInputConsumed(node);
@@ -1017,6 +1060,7 @@ function createGenerateHandler(promptUI) {
             onError: (err) => {
                 console.error(errorLabel, err);
                 clearThinking();
+                clearStatus();
                 showToast(app, "error", "处理失败", String(err));
             }
         });

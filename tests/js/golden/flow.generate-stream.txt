@@ -1,2 +1,2 @@
 GET /rs_prompts/skills
-POST /rs_prompts/stream_generate_prompt {"text":"a cat","description":"a cat","context":null}
+POST /rs_prompts/stream_generate_prompt {"text":"a cat","description":"a cat","context":null,"reasoning_effort":"medium"}

@@ -102,6 +102,31 @@ test("快捷输入 Enter：无 skill 时走流式生成并回填", async () => {
     assertGolden("flow.generate-stream.state", state(node, el));
 });
 
+test("H3 审计事件：status 显示阶段、replace 整段替换正文", async () => {
+    const H3_CHUNKS = [
+        'data: {"text":"draft ","kind":"content"}',
+        'data: {"text":"prompt","kind":"content"}',
+        'data: {"text":"🔍 格式自检中…","kind":"status"}',
+        'data: {"text":"✏️ 检测到格式问题，自动修复中…","kind":"status"}',
+        'data: {"text":"✏️ 已自动修复格式","kind":"status"}',
+        'data: {"text":"repaired final prompt","kind":"replace"}',
+        "data: [DONE]",
+    ];
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse(H3_CHUNKS));
+
+    const node = await makeNode(21);
+    const el = parts(node);
+    inputText(el.quickInput, "h3 video");
+    keydown(el.quickInput, "Enter");
+    await sleep(200);
+
+    // replace 事件整段替换已透传的草稿，最终落盘的是修复后文本
+    assert.equal(el.promptArea.value, "repaired final prompt");
+    assert.equal(widgetValue(node, "prompt"), "repaired final prompt");
+    // 流结束后状态行清除
+    assert.equal(document.querySelector(".rs-thinking"), null);
+});
+
 test("选中 skill：请求体带 skillId 与拼接后的 text", async () => {
     mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse(CHUNKS));
 

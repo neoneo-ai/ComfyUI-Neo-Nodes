@@ -665,7 +665,7 @@ class TestInlineThinkStripping(unittest.TestCase):
 class TestEnableThinking(unittest.TestCase):
     """enable_thinking（关闭思考）：经 chat_template_kwargs 透传到请求体；未设置则不发送。"""
 
-    def _capture_chat_completion_kwargs(self, enable_thinking, temperature=0.0):
+    def _capture_chat_completion_kwargs(self, enable_thinking, temperature=0.0, reasoning_effort=None):
         client = llm_mod.RemoteLLMClient({
             "provider": "lmstudio", "base_url": "http://127.0.0.1:1234",
             "model": "test-model", "max_tokens": 500, "temperature": temperature,
@@ -686,7 +686,8 @@ class TestEnableThinking(unittest.TestCase):
         orig_build = llm_mod.RemoteLLMClient._build_client
         llm_mod.RemoteLLMClient._build_client = lambda self: fake_client
         try:
-            client.chat_completion([{"role": "user", "content": "hi"}], enable_thinking=enable_thinking)
+            client.chat_completion([{"role": "user", "content": "hi"}], enable_thinking=enable_thinking,
+                                   reasoning_effort=reasoning_effort)
         finally:
             llm_mod.RemoteLLMClient._build_client = orig_build
         return captured
@@ -732,12 +733,46 @@ class TestEnableThinking(unittest.TestCase):
             llm_mod._get_active_remote_config = orig_cfg
         self.assertIs(captured.get("enable_thinking"), False)
 
+    def test_payload_includes_reasoning_effort(self):
+        kwargs = self._capture_chat_completion_kwargs(None, reasoning_effort="low")
+        self.assertEqual(kwargs.get("extra_body", {}).get("chat_template_kwargs"), {"reasoning_effort": "low"})
+
+    def test_payload_combines_enable_thinking_and_reasoning_effort(self):
+        kwargs = self._capture_chat_completion_kwargs(True, reasoning_effort="xhigh")
+        self.assertEqual(kwargs.get("extra_body", {}).get("chat_template_kwargs"),
+                         {"enable_thinking": True, "reasoning_effort": "xhigh"})
+
+    def test_run_remote_inference_threads_reasoning_effort(self):
+        captured = {}
+
+        class _FakeClient:
+            provider = "lmstudio"
+            model = "test-model"
+            def __init__(self, config):
+                pass
+            def is_available(self):
+                return True
+            def chat_completion(self, **kw):
+                captured.update(kw)
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        orig_client = llm_mod.RemoteLLMClient
+        orig_cfg = llm_mod._get_active_remote_config
+        llm_mod.RemoteLLMClient = _FakeClient
+        llm_mod._get_active_remote_config = lambda: {"enabled": True, "provider": "lmstudio"}
+        try:
+            llm_mod._run_remote_inference("sys", "usr", 500, stream=False, reasoning_effort="medium")
+        finally:
+            llm_mod.RemoteLLMClient = orig_client
+            llm_mod._get_active_remote_config = orig_cfg
+        self.assertEqual(captured.get("reasoning_effort"), "medium")
+
     def test_route_passes_enable_thinking_to_skill_stream(self):
         captured = {}
         orig_stream = llm_mod.skill.run_skill_agent_stream
         orig_load = llm_mod.skill.load_skill_content
 
-        def fake_stream(skill_id, text, images=None, context=None, enable_thinking=None):
+        def fake_stream(skill_id, text, images=None, context=None, enable_thinking=None, reasoning_effort=None):
             captured["enable_thinking"] = enable_thinking
             yield {"text": "ok", "kind": "content"}
 
@@ -758,6 +793,123 @@ class TestEnableThinking(unittest.TestCase):
             llm_mod.skill.run_skill_agent_stream = orig_stream
             llm_mod.skill.load_skill_content = orig_load
         self.assertIs(captured.get("enable_thinking"), False)
+
+    def test_route_passes_reasoning_effort_to_skill_stream(self):
+        captured = {}
+        orig_stream = llm_mod.skill.run_skill_agent_stream
+        orig_load = llm_mod.skill.load_skill_content
+
+        def fake_stream(skill_id, text, images=None, context=None, enable_thinking=None, reasoning_effort=None):
+            captured["reasoning_effort"] = reasoning_effort
+            yield {"text": "ok", "kind": "content"}
+
+        class _Req:
+            async def json(self):
+                return {"text": "x", "skillId": "some_skill", "reasoning_effort": "low"}
+
+        llm_mod.skill.run_skill_agent_stream = fake_stream
+        llm_mod.skill.load_skill_content = lambda sid: "content"
+        try:
+            async def _drive():
+                resp = await llm_mod.handle_llm_api_stream("smart_prompt", _Req())
+                aiter = getattr(resp.body, "_iter", None) or resp.body
+                async for _piece in aiter:
+                    pass
+            asyncio.run(_drive())
+        finally:
+            llm_mod.skill.run_skill_agent_stream = orig_stream
+            llm_mod.skill.load_skill_content = orig_load
+        self.assertEqual(captured.get("reasoning_effort"), "low")
+
+    def test_route_drops_invalid_reasoning_effort(self):
+        captured = {}
+        orig_stream = llm_mod.skill.run_skill_agent_stream
+        orig_load = llm_mod.skill.load_skill_content
+
+        def fake_stream(skill_id, text, images=None, context=None, enable_thinking=None, reasoning_effort=None):
+            captured["reasoning_effort"] = reasoning_effort
+            yield {"text": "ok", "kind": "content"}
+
+        class _Req:
+            async def json(self):
+                return {"text": "x", "skillId": "some_skill", "reasoning_effort": "bogus"}
+
+        llm_mod.skill.run_skill_agent_stream = fake_stream
+        llm_mod.skill.load_skill_content = lambda sid: "content"
+        try:
+            async def _drive():
+                resp = await llm_mod.handle_llm_api_stream("smart_prompt", _Req())
+                aiter = getattr(resp.body, "_iter", None) or resp.body
+                async for _piece in aiter:
+                    pass
+            asyncio.run(_drive())
+        finally:
+            llm_mod.skill.run_skill_agent_stream = orig_stream
+            llm_mod.skill.load_skill_content = orig_load
+        self.assertIsNone(captured.get("reasoning_effort"))
+
+
+class TestUsageLogging(unittest.TestCase):
+    """token 统计日志：prompt/completion/reasoning（思考 token）写入 INFO 日志。"""
+
+    def _client_with_fake(self, create_side_effect):
+        client = llm_mod.RemoteLLMClient({
+            "provider": "lmstudio", "base_url": "http://127.0.0.1:1234",
+            "model": "test-model", "max_tokens": 500,
+        })
+        fake_client = MagicMock()
+        fake_client.chat.completions.create.side_effect = create_side_effect
+        orig_build = llm_mod.RemoteLLMClient._build_client
+        llm_mod.RemoteLLMClient._build_client = lambda self: fake_client
+        return client, fake_client, orig_build
+
+    def test_stream_logs_usage_with_reasoning_tokens(self):
+        class _Details:
+            reasoning_tokens = 400
+        class _Usage:
+            prompt_tokens = 100
+            completion_tokens = 500
+            completion_tokens_details = _Details()
+        class _Delta:
+            content = "hi"
+            reasoning_content = None
+        class _Choice:
+            delta = _Delta()
+        class _Chunk:
+            choices = [_Choice()]
+            usage = None
+
+        final = MagicMock(choices=[], usage=_Usage())
+        client, fake_client, orig_build = self._client_with_fake(lambda **kw: iter([_Chunk(), final]))
+        try:
+            with self.assertLogs(llm_mod.__name__, level="INFO") as cm:
+                list(client.chat_completion([{"role": "user", "content": "x"}], stream=True))
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+        self.assertTrue(any("LLM usage: prompt=100 completion=500 reasoning=400" in line for line in cm.output), cm.output)
+        sent_kw = fake_client.chat.completions.create.call_args.kwargs
+        self.assertEqual(sent_kw.get("stream_options"), {"include_usage": True})
+
+    def test_non_stream_logs_usage_without_reasoning_field(self):
+        class _Details:
+            reasoning_tokens = 0  # LM Studio 报 0（未填明细），不应打出误导性的 reasoning=0
+        class _Usage:
+            prompt_tokens = 10
+            completion_tokens = 20
+            completion_tokens_details = _Details()
+        class _Resp:
+            usage = _Usage()
+            def model_dump(self):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        client, fake_client, orig_build = self._client_with_fake(lambda **kw: _Resp())
+        try:
+            with self.assertLogs(llm_mod.__name__, level="INFO") as cm:
+                client.chat_completion([{"role": "user", "content": "x"}])
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+        self.assertTrue(any("LLM usage: prompt=10 completion=20" in line and "reasoning=" not in line
+                            for line in cm.output), cm.output)
 
 
 class TestLocalSingleModelFallback(unittest.TestCase):
