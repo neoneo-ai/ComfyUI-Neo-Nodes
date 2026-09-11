@@ -2,7 +2,7 @@
 # ComfyUI-Neo-Nodes - H3 提示词确定性格式审计
 """对 MiniMax H3 视频提示词做纯规则的结构审计（不花 token），并构造"窄修复"消息。
 
-供 skill.py 在声明了 `audit: h3` 的技能生成完成后调用：
+供 minimax_h3.py 在声明了 `audit: h3` 的技能生成完成后调用：
 - audit_h3_prompt(prompt, context) -> {"repair_required": bool, "failures": [str]}
   检查六段/三字段结构、时间戳格式与时长、内部表示术语泄漏、对白说话人 ID、
   以及 <Picture N>/<Video N>/<Audio N> 标签与工作流实际连线的一致性。

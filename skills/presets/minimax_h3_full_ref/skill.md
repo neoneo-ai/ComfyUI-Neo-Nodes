@@ -1,3 +1,26 @@
+---
+name:  H3全参考生视频
+tags:
+- MiniMax
+- H3
+- Reference
+- video
+- 视频
+- 参考
+inputs:
+- image
+- text
+description: 基于多张参考图生成 MiniMax H3 全参考模式视频提示词（图像参考，六段结构）
+max_tokens: 26384
+result_key: prompt
+category: video_enhance
+audit: h3
+markers:
+- '@全参考'
+- '@参考'
+- '@minimax'
+---
+
 # Full-Reference Mode Rewrite Output Format Guide
 
 This guide explains how rewrite outputs are organized and written in full-reference mode.
@@ -57,6 +80,8 @@ When the same subject comes from multiple assets, combine the sources and state 
 <Subject 1> is the woman whose appearance comes from <Picture 1> and whose walking motion comes from <Video 1>.
 ```
 
+<!-- @if pictures -->
+
 ### 2.2 `<Picture N>`
 
 Use a standalone `<Picture N>` when the reference image itself serves as a shot's first frame, keyframe, last frame, edited keyframe, or composition anchor:
@@ -73,6 +98,10 @@ When an image acts as a storyboard or shot-planning reference, state which shots
 <Picture 3> is a storyboard reference for [Shot 1] and [Shot 2], defining their viewpoint, subject placement, and shot order.
 ```
 
+<!-- @end -->
+
+<!-- @if videos -->
+
 ### 2.3 `<Video N>`
 
 `<Video N>` is reserved for whole-video relationships, such as:
@@ -86,6 +115,10 @@ When an image acts as a storyboard or shot-planning reference, state which shots
 ```
 
 If a person, object, scene, action, or effect from a reference video is reused as visible content, it still belongs under `<Subject N>`. `<Video N>` identifies the asset or structural source and does not replace subject labels.
+
+<!-- @end -->
+
+<!-- @if audios -->
 
 ### 2.4 `<Audio N>`
 
@@ -105,6 +138,10 @@ When an `<Audio N>` explicitly corresponds to a target speaker, reuse that speak
 
 When one audio asset serves multiple roles, describe those roles in one natural sentence rather than creating additional subsections.
 
+<!-- @end -->
+
+<!-- @if videos -->
+
 ### 2.5 Visual and Audio Tracks from the Same Reference Video
 
 `<Video N>` and `<Audio N>` are numbered independently. Each index indicates only the label's order within its own category and does not encode a pairing between the two categories. The same reference video may therefore correspond to `<Video 1>` and `<Audio 2>`; different indices do not prevent them from coming from the same source asset.
@@ -117,6 +154,8 @@ An `<Audio N>` definition primarily states the audio's role and does not have to
 <Video 1> is the source video for the target video edit.
 <Audio 2> is the synchronized audio track of <Video 1> and is reused in the target video.
 ```
+
+<!-- @end -->
 
 ## 3. `summary`
 
@@ -133,24 +172,32 @@ Choose task types according to the actual role each reference asset plays in the
 | --- | --- |
 | `keyframe completion` | An image serves as the target video's first frame, keyframe, last frame, edited keyframe, or another concrete frame anchor |
 | `reference generation` | An image, video, or audio asset provides generation guidance for a character, scene, style, action, camera movement, storyboard, and so on, without serving as a concrete frame or as the source video being edited or continued |
+<!-- @if videos -->
 | `video editing` | An existing source video is directly modified; editing an image or generating between still keyframes does not belong to this type |
 | `video continuation` | New content continues, extends, resumes, or transitions from an existing source video |
+<!-- @end -->
 | `audio reuse` | The same audio signal is reused in full or in part |
 | `audio reference` | The audio signal is not copied directly; only its music style, timbre, dialogue or lyric content, sound-effect texture, beat, or continuity is referenced |
 
 When a task satisfies multiple relationships, combine the task types with ` + ` and do not repeat a type. For example, continuing from a source video while using an image as the last frame is written as `[video continuation + keyframe completion]`. Editing a source video while retaining its original audio may be written as `[video editing + audio reuse]`.
 
+<!-- @if videos,audios -->
 The mere presence of video or audio does not automatically create a corresponding task type. If a reference video provides only camera movement, cuts, or rhythm, it normally belongs to `reference generation`. Use `video editing` or `video continuation` only when that video is directly edited or continued.
+<!-- @end -->
 
+<!-- @if videos -->
 When editing a source video, use `audio reuse` as well if its original audio remains audible. When continuing a source video without directly copying the audio signal, use `audio reference` if the new audio only continues the original track's audible characteristics.
+<!-- @end -->
 
 The summary uses the previously defined `<Subject N>`, `<Picture N>`, `<Video N>`, and `<Audio N>` labels to describe the main subjects, shot flow, and roles of the reference assets. Do not introduce new reference labels in this section.
 
+<!-- @if videos -->
 For video-editing tasks, begin the summary after the task-type prefix with:
 
 ```text
 The target video is an edited version of <Video 1>.
 ```
+<!-- @end -->
 
 ## 4. `retention_analysis`
 
@@ -173,17 +220,23 @@ Subject entry:
 <Subject 1> (appears in [Shot 1], [Shot 3]): fully_preserved - ...
 ```
 
+<!-- @if pictures -->
 Picture entry:
 
 ```text
 <Picture 2> ([Shot 1] first frame): fully_preserved - ...
 ```
+<!-- @end -->
 
+<!-- @if videos -->
 Video-structure entry:
 
 ```text
 <Video 1> (cut and pacing structure): weak_reference - ...
 ```
+<!-- @end -->
+
+<!-- @if audios -->
 
 ### 4.2 Audio
 
@@ -203,6 +256,7 @@ Video-structure entry:
 ```text
 <Audio 2>: reference - the target speaker follows <Audio 2>'s voice timbre and measured delivery without copying the original signal.
 ```
+<!-- @end -->
 
 Choose each relationship marker only within the reference role already defined for that label in `subject_definitions`. Do not treat newly added actions, backgrounds, or plot events in the target video as losses of reference fidelity.
 

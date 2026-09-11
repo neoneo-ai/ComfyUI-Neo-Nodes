@@ -1,5 +1,5 @@
 ---
-name: 全能参考 H3（图像）
+name:  H3图像参考生成视频
 tags:
 - MiniMax
 - H3

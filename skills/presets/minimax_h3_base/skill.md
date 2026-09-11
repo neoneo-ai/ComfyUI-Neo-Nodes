@@ -1,3 +1,26 @@
+---
+name:  H3首尾帧或文生视频
+tags:
+- MiniMax
+- H3
+- Reference
+- video
+- 视频
+- 参考
+inputs:
+- image
+- text
+description: 基于多张参考图生成 MiniMax H3 全参考模式视频提示词（图像参考，六段结构）
+max_tokens: 16384
+result_key: prompt
+category: video_enhance
+audit: h3
+markers:
+- '@全参考'
+- '@参考'
+- '@minimax'
+---
+
 # Video Prompt Writing Guide (T2VA / I2VA / FL2VA / L2VA)
 
 ## 1. Task Overview
@@ -13,11 +36,17 @@
 
 **T2VA** has no image-alignment instruction and begins directly with the three core fields.
 
+<!-- @if I2VA -->
+
 **I2VA** always uses:
 
 ```text
 For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
 ```
+
+<!-- @end -->
+
+<!-- @if FL2VA -->
 
 **FL2VA** always uses:
 
@@ -25,11 +54,16 @@ For the target video, at 0.00 seconds into the target video, <Picture 1> (from [
 How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video.
 ```
 
+<!-- @end -->
+
+<!-- @if L2VA -->
+
 **L2VA** always uses:
 
 ```text
 How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video.
 ```
+<!-- @end -->
 
 Here, `N` is the index of the actual final shot, and `S.SS` is the effective video duration formatted to exactly two decimal places. The instruction must be the first line of the final prompt, followed by one blank line before the core fields.
 
@@ -49,11 +83,16 @@ non_diegetic_music: ...
 
 ## 3. How to Incorporate Keyframes into the Multimodal Description
 
+<!-- @if I2VA -->
+
 ### 3.1 I2VA: Begin from the Image and Develop Forward
 
 `<Picture 1>` is the actual first frame of the video at 0.00 seconds and belongs to `[Shot 1]`. The description should first establish the style, subjects, composition, and scene anchors in the image, then describe the next action. Character identity, clothing, colors, key objects, and spatial relationships should remain consistent.
 
 Recommended structure: **first-frame anchor → action onset → continuous development → result or reaction**.
+<!-- @end -->
+
+<!-- @if FL2VA -->
 
 ### 3.2 FL2VA: Describe the Path Between the First and Last Frames
 
@@ -62,12 +101,16 @@ Picture 1 is the opening, and Picture 2 is the ending. Focus on how the subject 
 FL2VA generally favors a single shot so the model can interpolate continuously from the first frame to the last frame. Use multiple shots only when they are explicitly specified. The last frame must be reached by the final `[Shot N]` at the end of the video.
 
 Recommended structure: **first-frame state → observable intermediate changes → progressively narrowing differences → last-frame state**.
+<!-- @end -->
+
+<!-- @if L2VA -->
 
 ### 3.3 L2VA: Infer the Opening and Land on the Image at the End
 
 `<Picture 1>` is the final frame of the video and belongs to the last `[Shot N]`; it does not inherently belong to Shot 1. Infer a plausible earlier state from the user's intent and the last frame, then describe how the characters, objects, camera, and scene gradually approach the reference image.
 
 Recommended structure: **plausible preceding state → explicit action and transition path → gradual convergence in the final shot → last-frame landing**.
+<!-- @end -->
 
 ## 4. How to Write the Three Shared Core Sections
 
@@ -167,6 +210,8 @@ non_diegetic_music: Sparse piano notes at a slow tempo, joined by sustained low 
 
 ## 5. Cases
 
+<!-- @if T2VA -->
+
 ### Case 1: T2VA
 
 With no reference image, construct the complete timeline directly from the text. You may add scene, character, action, and sound details that remain consistent with the user's intent.
@@ -178,6 +223,9 @@ overall_soundscape: Wooden shutters scrape open over a quiet street as trays cli
 
 non_diegetic_music: A soft acoustic-guitar pattern at a moderate tempo, joined by sparse upright-bass notes and a gentle fade at the end.
 ```
+<!-- @end -->
+
+<!-- @if I2VA -->
 
 ### Case 2: I2VA
 
@@ -192,6 +240,9 @@ overall_soundscape: The train wheels produce a steady metallic rhythm beneath a 
 
 non_diegetic_music: Sustained cello notes at a slow tempo with widely spaced piano tones, gradually decreasing in volume.
 ```
+<!-- @end -->
+
+<!-- @if FL2VA -->
 
 ### Case 3: FL2VA
 
@@ -206,6 +257,9 @@ overall_soundscape: Rain falls steadily on the pavement, followed by the metalli
 
 non_diegetic_music: N/A
 ```
+<!-- @end -->
+
+<!-- @if L2VA -->
 
 ### Case 4: L2VA
 
@@ -220,3 +274,5 @@ overall_soundscape: Fingertips tap the glass before it scrapes across the tablet
 
 non_diegetic_music: A low electronic pulse at a slow tempo, ending immediately after the glass breaks.
 ```
+<!-- @end -->
+

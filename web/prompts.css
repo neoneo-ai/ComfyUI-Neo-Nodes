@@ -2228,6 +2228,29 @@
     display: none;
 }
 
+/* @ button in toolbar (same style as attach +) */
+.rs-input-toolbar .rs-at-btn {
+    padding: 4px 8px;
+    font-size: 15px;
+    font-weight: 600;
+    background: #2a2a2a;
+    color: #999;
+    border: none !important;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+    height: 24px;
+    line-height: 1;
+    min-width: 28px;
+    text-align: center;
+}
+
+.rs-input-toolbar .rs-at-btn:hover {
+    color: #7ab8f5;
+    background: #333;
+}
+
 /* Attach button in toolbar */
 .rs-input-toolbar .rs-attach-btn {
     padding: 4px 8px;
@@ -2242,6 +2265,8 @@
     transition: all 0.2s;
     height: 24px;
     line-height: 1;
+    min-width: 28px;
+    text-align: center;
 }
 
 .rs-input-toolbar .rs-attach-btn:hover {
@@ -2250,6 +2275,7 @@
 }
 
 /* 工具栏右侧控件不压缩，空间不足时只收缩 skill 选择器 */
+.rs-input-toolbar .rs-at-btn,
 .rs-input-toolbar .rs-attach-btn,
 .rs-input-toolbar .rs-random-wrap {
     flex-shrink: 0;
@@ -2264,7 +2290,7 @@
     background: #222;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
-    z-index: 20000;
+    z-index: 120000;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
@@ -2349,6 +2375,19 @@
 
 .rs-at-picker-btn:hover {
     background: #3d3d3d;
+}
+
+/* "全部"行：一键添加所有参考图片 */
+.rs-at-picker-all-row {
+    border-bottom: 1px solid #444;
+    margin-bottom: 4px;
+    padding-bottom: 6px;
+}
+
+.rs-at-picker-all-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #7ab8f5;
 }
 
 /* 已附加图片的引用徽章：无参数位，仅作反推附件 */

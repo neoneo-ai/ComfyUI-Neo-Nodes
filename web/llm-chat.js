@@ -605,6 +605,19 @@ function createStatusBars() {
     });
 
     // Add elements to toolbar
+    const atPicker = createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInput, inputViewUrl });
+    const openAtImagePicker = atPicker.open;
+
+    // @ 按钮：点击弹出图片选择器（含"全部"选项），无需在文本中输入 @
+    const atBtn = mkEl("button", "rs-at-btn");
+    atBtn.textContent = "@";
+    atBtn.title = "插入参考图片标记";
+    atBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        atPicker.openFromButton(atBtn);
+    });
+
+    inputToolbar.appendChild(atBtn);
     inputToolbar.appendChild(attachBtn);
     inputToolbar.appendChild(skillCombo.box);
     const spacer = mkEl("div", "rs-spacer");
@@ -634,7 +647,6 @@ function createStatusBars() {
         files.forEach(addImageFile);
     });
 
-    const openAtImagePicker = createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInput, inputViewUrl });
     // 输入 / 唤起 skill 快捷菜单：随输入实时过滤，↑/↓ + Enter/Tab 提交（写入 skill 下拉），Esc 关闭
     const openSlashSkillPicker = createSlashSkillPicker({ quickInput, skillSelector, listSkills });
 

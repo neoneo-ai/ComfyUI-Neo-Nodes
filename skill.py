@@ -29,7 +29,6 @@ import re
 import io
 import copy
 import json
-import math
 import base64
 import shutil
 import logging
@@ -47,6 +46,7 @@ except ImportError:  # pypinyin 缺失时中文拼音匹配静默不可用，其
     lazy_pinyin = None
 import server
 from server import PromptServer
+from .minimax_h3 import _ratio, _filter_mode_sections, _h3_audit_and_repair, _h3_audit_events, _h3_grounding_check, _h3_mode, format_h3_context_lines
 
 logger = logging.getLogger(__name__)
 
@@ -386,46 +386,12 @@ _REFERENCE_IMAGE_TOOL = {
 
 _MAX_SKILL_AGENT_TURNS = 8
 
-# H3 各模式的最终 grounding 约束（仅 audit: h3 技能注入 workflow_context 末尾）
-_H3_GROUNDING = {
-    "T2VA": "Preserve any explicit continuous-camera or no-cut instruction instead of introducing an unsupported cut.",
-    "I2VA": "Separate facts visible in the first frame from newly requested space or action revealed after it.",
-    "FL2VA": "Prioritize exact endpoint geometry and a continuous state/camera path between the first and last frames.",
-    "L2VA": "Invent only the minimum compatible preceding state needed to reach the final frame; do not infer a named location or period without evidence.",
-    "Reference": ("Treat every explicitly assigned reference role as exclusive unless the user asks that reference to contribute additional traits. "
-                  "Unspecified environment, lighting, composition, camera treatment, and atmosphere may be designed as new target content, "
-                  "but never described as facts derived from a reference. "
-                  "Do not add unsupported subject actions, dialogue, props, visible text, or an invented ending."),
-}
-
-
-def _h3_mode(node: dict) -> str:
-    """按 H3 节点类型与 keyframe 槽位判定生成模式。"""
-    kf = (node.get("refs") or {}).get("keyframes") or {}
-    has_first, has_last = "first" in kf, "last" in kf
-    t = str(node.get("type", ""))
-    if t == "MiniMaxH3ReferenceToVideo":
-        return "Reference"
-    if t == "MiniMaxH3ImageToVideo":
-        if has_first and has_last:
-            return "FL2VA"
-        if has_first:
-            return "I2VA"
-        if has_last:
-            return "L2VA"
-    return "T2VA"
-
-
-def _h3_grounding_check(node: dict) -> str:
-    """按 H3 节点类型与 keyframe 槽位判定模式，返回该模式的最终 grounding 检查句。"""
-    mode = _h3_mode(node)
-    return f"Final grounding check ({mode}): {_H3_GROUNDING[mode]} Return only the complete final H3 prompt."
-
 
 def _format_workflow_context(context, grounding: bool = False) -> str:
     """把前端采集的工作流上下文（MiniMax H3 参数 + 叶子媒体清单）格式化为系统提示词文本块。
 
     参考图只列元数据不内联；带尺寸的图片可通过 get_reference_image 工具按需取回像素。
+    H3 节点块由 minimax_h3.format_h3_context_lines 格式化；grounding=True 时末尾追加模式约束句。
     """
     if not isinstance(context, dict):
         return ""
@@ -435,96 +401,9 @@ def _format_workflow_context(context, grounding: bool = False) -> str:
     if not (h3 or refs):
         return ""
 
-    def _ratio(w, h):
-        try:
-            w, h = int(w), int(h)
-            if w <= 0 or h <= 0:
-                return ""
-            g = math.gcd(w, h)
-            rw, rh = w / g, h / g
-            fmt = "{:.2f}".format(rw).rstrip("0").rstrip(".") + ":" + "{:.2f}".format(rh).rstrip("0").rstrip(".")
-            return f" ({fmt})"
-        except (TypeError, ValueError):
-            return ""
-
-    def _dur(v):
-        try:
-            f = float(v)
-        except (TypeError, ValueError):
-            return ""
-        r = round(f)
-        return f"{int(r)}s" if abs(f - r) < 0.05 else f"{f:.1f}s"
-
-    def _tag_list(label, files):
-        # <Tag N> = 第 N 个该类型参考（1-based，与 tokenizer 计数一致）；files 为按序号排列的文件名（可含 None）
-        if not isinstance(files, (list, tuple)) or not files:
-            return ""
-        parts = []
-        for i, f in enumerate(files, 1):
-            t = f"<{label} {i}>"
-            if f:
-                t += " " + str(f)
-            parts.append(t)
-        return ", ".join(parts)
-
-    def _keyframe_tags(kf):
-        # ImageToVideo 的 first/last frame 本身就是 <Picture N>（tokenizer 按 [first, last] 顺序编号）
-        entries = []
-        if isinstance(kf, dict):
-            if "first" in kf:
-                entries.append((kf.get("first"), "first frame"))
-            if "last" in kf:
-                entries.append((kf.get("last"), "last frame"))
-        parts = []
-        for i, (f, role) in enumerate(entries, 1):
-            t = f"<Picture {i}>"
-            if f:
-                t += " " + str(f)
-            parts.append(t + f" ({role})")
-        return ", ".join(parts)
-
     lines = ["<workflow_context>"]
     if h3:
-        lines.append("MiniMax H3 nodes in the current workflow:")
-        has_ref_tags = False
-        for i, n in enumerate(h3[:8], 1):
-            parts = [str(n.get("type", "H3"))]
-            w, h = n.get("width"), n.get("height")
-            aspect = n.get("aspect") or ""
-            if not aspect and w and h:
-                r = _ratio(w, h)
-                aspect = r.strip(" ()") if r else ""
-            if aspect:
-                parts.append(f"Aspect Ratio: {aspect}")
-            dur = n.get("duration_seconds")
-            if dur is not None:
-                d = _dur(dur)
-                if d:
-                    parts.append(f"Duration: {d}")
-            else:
-                length = n.get("length")
-                if length is not None:
-                    try:
-                        sec, frames = _dur(int(length) / 24), int(length)
-                    except (TypeError, ValueError):
-                        sec = ""
-                    if sec:
-                        parts.append(f"Duration: {sec} ({frames} frames @24fps)")
-            size = n.get("ref_image_size")
-            if size:
-                parts.append(f"ref_image_size={size}")
-            nrefs = n.get("refs") or {}
-            if isinstance(nrefs, dict):
-                tag_parts = [t for t in (_keyframe_tags(nrefs.get("keyframes")),
-                                         _tag_list("Picture", nrefs.get("pictures")),
-                                         _tag_list("Video", nrefs.get("videos")),
-                                         _tag_list("Audio", nrefs.get("audios"))) if t]
-                if tag_parts:
-                    parts.append("References: " + ", ".join(tag_parts))
-                    has_ref_tags = True
-            lines.append(f"  {i}. " + ", ".join(parts))
-        if has_ref_tags:
-            lines.append("In your prompt, refer to each node's reference media using the <Picture N>/<Video N>/<Audio N> tags listed above.")
+        lines.extend(format_h3_context_lines(h3))
     if refs:
         lines.append("Reference media (leaf inputs of the workflow):")
         for i, r in enumerate(refs[:32], 1):
@@ -593,63 +472,6 @@ def _initial_user_message(text: str, images) -> Dict[str, Any]:
     return {"role": "user", "content": parts}
 
 
-def _h3_narrow_repair(content: str, skill_id: str, text: str, context, max_tokens, failures) -> str | None:
-    """发起一次窄修复调用；验收（复审通过 + 参考标签/对白不变）通过才返回修复文本，否则 None。"""
-    from . import prompt_audit
-    try:
-        from .llm import chat_turn
-        msg = chat_turn(prompt_audit.narrow_repair_messages(text, content, failures), max_tokens=max_tokens)
-    except Exception as e:
-        logger.warning(f"H3 narrow repair for skill '{skill_id}' failed: {e}")
-        return None
-    repaired = (msg.get("content") or "").strip()
-    if not repaired:
-        logger.info(f"H3 narrow repair for skill '{skill_id}' returned empty, keeping original output")
-        return None
-    if prompt_audit.repair_acceptable(content, repaired, context):
-        return repaired
-    logger.info(f"H3 narrow repair for skill '{skill_id}' failed acceptance (re-audit/tags/dialogue), keeping original output")
-    return None
-
-
-def _h3_audit_and_repair(content: str, skill_id: str, text: str, context, max_tokens, on_step=None) -> str:
-    """对生成的 H3 提示词跑确定性格式审计；失败时做一次窄修复（验收通过才采纳）。
-    on_step 为可选的阶段上报回调（流式路径用），参数为状态文案。"""
-    from . import prompt_audit
-    audit = prompt_audit.audit_h3_prompt(content, context)
-    if not audit["repair_required"]:
-        logger.info(f"H3 audit passed for skill '{skill_id}'")
-        return content
-    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(audit['failures'])}")
-    if on_step:
-        on_step("✏️ 检测到格式问题，自动修复中…")
-    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, audit["failures"])
-    if repaired:
-        logger.info(f"H3 narrow repair applied for skill '{skill_id}'")
-        return repaired
-    return content
-
-
-def _h3_audit_events(content: str, skill_id: str, text: str, context, max_tokens):
-    """流式路径：正文已逐 token 透传完毕，对完整输出做审计并逐阶段上报 status/replace 事件。"""
-    from . import prompt_audit
-    yield {"text": "🔍 格式自检中…", "kind": "status"}
-    audit = prompt_audit.audit_h3_prompt(content, context)
-    if not audit["repair_required"]:
-        logger.info(f"H3 audit passed for skill '{skill_id}'")
-        yield {"text": "✅ 格式自检通过", "kind": "status"}
-        return
-    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(audit['failures'])}")
-    yield {"text": "✏️ 检测到格式问题，自动修复中…", "kind": "status"}
-    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, audit["failures"])
-    if repaired:
-        logger.info(f"H3 narrow repair applied for skill '{skill_id}'")
-        yield {"text": "✏️ 已自动修复格式", "kind": "status"}
-        yield {"text": repaired, "kind": "replace"}
-    else:
-        yield {"text": "⚠️ 修复未通过校验，保留原输出", "kind": "status"}
-
-
 def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enable_thinking=None, reasoning_effort=None, on_step=None) -> str:
     """执行 skill 生成：工作流上下文始终注入系统提示词；仅当存在引用文件或参考图像时启用工具调用
     代理循环（本地/远程一致），否则单轮推理。read_skill_file 按需读取引用文件，get_reference_image
@@ -674,8 +496,8 @@ def _skill_agent_core(skill_id: str, text: str, images=None, context=None, enabl
     max_tokens = load_skill_max_tokens(skill_id) or 500
     remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
 
-    # 系统提示词：主文件 + 引用索引（若有）+ 工作流上下文（若有），单轮与工具循环两条路径共用
-    system = system_prompt
+    # 系统提示词：主文件（按 H3 模式裁剪条件段落）+ 引用索引（若有）+ 工作流上下文（若有），单轮与工具循环两条路径共用
+    system = _filter_mode_sections(system_prompt, context)
     if refs:
         system += "\n" + build_reference_index(skill_id, language)
     if ctx_block:
@@ -774,7 +596,7 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
     max_tokens = load_skill_max_tokens(skill_id) or 500
     remote_mode = (get_current_mode() == LLM_MODE_REMOTE)
 
-    system = system_prompt
+    system = _filter_mode_sections(system_prompt, context)
     if refs:
         system += "\n" + build_reference_index(skill_id, language)
     if ctx_block:
@@ -827,9 +649,14 @@ def _skill_agent_core_stream(skill_id: str, text: str, images=None, context=None
         return
 
     # 有引用文件/参考图像：工具调用循环需完整消息解析 tool_calls，复用非流式核心后逐字输出（仅正文）。
-    # audit: h3：生成阶段先上报状态，审计/修复阶段经 on_step 收集、随最终内容前发出。
+    # audit: h3：生成阶段先上报状态（如实说明按需读取的来源），审计/修复阶段经 on_step 收集、随最终内容前发出。
     if audit_kind == "h3":
-        yield {"text": "⏳ 生成中（按需读取参考资料）…", "kind": "status"}
+        what = []
+        if refs:
+            what.append("读取技能引用文件")
+        if ref_images:
+            what.append(f"查看 {len(ref_images)} 张已连参考图")
+        yield {"text": f"⏳ 生成中（按需{'、'.join(what)}）…", "kind": "status"}
     steps = []
     content = _skill_agent_core(skill_id, text, images, context, enable_thinking=enable_thinking,
                                 reasoning_effort=reasoning_effort, on_step=steps.append)

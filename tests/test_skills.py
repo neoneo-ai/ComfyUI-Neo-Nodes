@@ -528,6 +528,25 @@ class TestSkillAgent(unittest.TestCase):
         chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
         self.assertEqual(chunks, [{"text": "ab", "kind": "content"}])
 
+    def test_stream_tool_loop_status_names_sources(self):
+        # audit: h3 走工具循环时，状态文案须如实说明按需读取的来源（引用文件 / 已连参考图数量）
+        self._write("SKILL.md", "---\nname: myskill\naudit: h3\n---\nEN MAIN BODY")
+        self._clear_refs()
+        self.llm.chat_turn = lambda *a, **k: {"role": "assistant", "content": "DONE"}
+        ctx = {"references": [
+            {"kind": "image", "source": {"kind": "input", "value": "a.png"}},
+            {"kind": "image", "source": {"kind": "input", "value": "b.png"}},
+            {"kind": "video", "source": {"kind": "input", "value": "v.mp4"}},
+        ]}
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hi", context=ctx))
+        self.assertEqual(chunks[0], {"text": "⏳ 生成中（按需查看 2 张已连参考图）…", "kind": "status"})
+        self.assertEqual("".join(c["text"] for c in chunks if c["kind"] == "content"), "DONE")
+
+        # 只有技能引用文件、无已连参考图
+        self._write(os.path.join("references", "ref.txt"), "REFERENCE CONTENT")
+        chunks = list(self.skill.run_skill_agent_stream("myskill", "hi"))
+        self.assertEqual(chunks[0], {"text": "⏳ 生成中（按需读取技能引用文件）…", "kind": "status"})
+
     def test_stream_single_turn_forwards_thinking_and_content(self):
         # 远程思考模型：reasoning_content（thinking）与 content 分开打标透传，不再丢弃思考
         self._clear_refs()
@@ -882,6 +901,123 @@ class TestWorkflowContextFormat(unittest.TestCase):
         self.assertNotIn("References:", block)
         self.assertNotIn("<Picture", block)
         self.assertNotIn("refer to each node's reference media", block)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestFilterModeSections(unittest.TestCase):
+    """_filter_mode_sections：按 H3 模式裁剪 skill 正文中的 <!-- @if MODE --> 条件段落。"""
+
+    BODY = (
+        "SHARED START\n"
+        "<!-- @if T2VA -->\nT2VA ONLY\n<!-- @end -->\n"
+        "<!-- @if I2VA -->\nI2VA ONLY\n<!-- @end -->\n"
+        "<!-- @if FL2VA,L2VA -->\nREF ONLY\n<!-- @end -->\n"
+        "SHARED END\n"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.skill = _il.import_module(f"{_PKG_NAME}.skill")
+        cls.h3 = _il.import_module(f"{_PKG_NAME}.minimax_h3")
+
+    def _ctx(self, node):
+        return {"h3": [node]}
+
+    def test_i2va_keeps_only_matching_blocks(self):
+        out = self.h3._filter_mode_sections(self.BODY, self._ctx(
+            {"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"first": "a.png"}}}))
+        self.assertIn("I2VA ONLY", out)
+        self.assertNotIn("T2VA ONLY", out)
+        self.assertNotIn("REF ONLY", out)
+        self.assertIn("SHARED START", out)
+        self.assertIn("SHARED END", out)
+        self.assertNotIn("@if", out)
+        self.assertNotIn("@end", out)
+
+    def test_multi_mode_list(self):
+        out = self.h3._filter_mode_sections(self.BODY, self._ctx(
+            {"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"last": "b.png"}}}))
+        self.assertIn("REF ONLY", out)  # L2VA 命中 FL2VA,L2VA 列表
+        self.assertNotIn("I2VA ONLY", out)
+
+    def test_t2va_mode(self):
+        out = self.h3._filter_mode_sections(self.BODY, self._ctx(
+            {"type": "MiniMaxH3ImageToVideo"}))
+        self.assertIn("T2VA ONLY", out)
+        self.assertNotIn("I2VA ONLY", out)
+
+    def test_no_h3_context_unchanged(self):
+        self.assertEqual(self.h3._filter_mode_sections(self.BODY, None), self.BODY)
+        self.assertEqual(self.h3._filter_mode_sections(self.BODY, {"references": []}), self.BODY)
+
+    def test_body_without_markers_unchanged(self):
+        self.assertEqual(self.h3._filter_mode_sections("plain body", self._ctx(
+            {"type": "MiniMaxH3ImageToVideo"})), "plain body")
+
+    def test_mode_without_intersection_keeps_all(self):
+        # 判定模式与所有 @if 列表无交集（如 base 技能用于 Reference 节点）：原样保留
+        out = self.h3._filter_mode_sections(self.BODY, self._ctx(
+            {"type": "MiniMaxH3ReferenceToVideo"}))
+        self.assertEqual(out, self.BODY)
+
+    def test_preset_minimax_h3_base_filters_per_mode(self):
+        body = self.skill.load_skill_content("minimax_h3_base")
+        if not body or "@if" not in body:
+            self.skipTest("preset minimax_h3_base 未包含条件段落")
+        cases = [
+            ("T2VA", {"type": "MiniMaxH3ImageToVideo"}, "### Case 1: T2VA", "### Case 2: I2VA"),
+            ("I2VA", {"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"first": "a.png"}}},
+             "### Case 2: I2VA", "### Case 4: L2VA"),
+            ("FL2VA", {"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"first": "a.png", "last": "b.png"}}},
+             "### Case 3: FL2VA", "### Case 1: T2VA"),
+            ("L2VA", {"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"last": "b.png"}}},
+             "### Case 4: L2VA", "### Case 3: FL2VA"),
+        ]
+        for mode, node, keep, drop in cases:
+            out = self.h3._filter_mode_sections(body, self._ctx(node))
+            self.assertIn(keep, out, f"{mode}: 应保留 {keep}")
+            self.assertNotIn(drop, out, f"{mode}: 应删除 {drop}")
+            self.assertNotIn("@if", out)
+            self.assertLess(len(out), len(body), f"{mode}: 裁剪后应比全文短")
+
+    def test_reference_kind_tokens(self):
+        body = ("<!-- @if pictures -->\nPIC\n<!-- @end -->\n"
+                "<!-- @if videos -->\nVID\n<!-- @end -->\n"
+                "<!-- @if audios -->\nAUD\n<!-- @end -->\n")
+        node = {"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["a.jpg"]}}
+        out = self.h3._filter_mode_sections(body, self._ctx(node))
+        self.assertIn("PIC", out)
+        self.assertNotIn("VID", out)
+        self.assertNotIn("AUD", out)
+        self.assertNotIn("@if", out)
+
+    def test_reference_no_refs_keeps_all(self):
+        # Reference 节点未连任何参考：活跃 token 只有 REFERENCE，与类型列表无交集 → 原样保留
+        body = "<!-- @if videos -->\nVID\n<!-- @end -->\n"
+        out = self.h3._filter_mode_sections(body, self._ctx({"type": "MiniMaxH3ReferenceToVideo"}))
+        self.assertEqual(out, body)
+
+    def test_preset_minimax_h3_full_ref_filters_per_kind(self):
+        body = self.skill.load_skill_content("minimax_h3_full_ref")
+        if not body or "@if" not in body:
+            self.skipTest("preset minimax_h3_full_ref 未包含条件段落")
+        pics_only = {"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["a.jpg"]}}
+        out = self.h3._filter_mode_sections(body, self._ctx(pics_only))
+        self.assertIn("### 2.2", out)
+        self.assertNotIn("### 2.3", out)
+        self.assertNotIn("### 2.4", out)
+        self.assertNotIn("### 2.5", out)
+        self.assertNotIn("### 4.2 Audio", out)
+        self.assertNotIn("Video-structure entry:", out)
+        self.assertNotIn("@if", out)
+        self.assertLess(len(out), len(body))
+        all_kinds = {"type": "MiniMaxH3ReferenceToVideo",
+                     "refs": {"pictures": ["a.jpg"], "videos": ["b.mp4"], "audios": ["c.wav"]}}
+        out2 = self.h3._filter_mode_sections(body, self._ctx(all_kinds))
+        for sec in ("### 2.2", "### 2.3", "### 2.4", "### 2.5", "### 4.2 Audio"):
+            self.assertIn(sec, out2)
+        self.assertNotIn("@if", out2)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)

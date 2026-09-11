@@ -280,7 +280,7 @@ function createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInp
         let handleEsc = null;
         let handleInputChange = null;
         const closePicker = () => {
-            document.removeEventListener("mousedown", onOutside);
+            window.removeEventListener("pointerdown", onOutside, true);
             if (handleEsc) document.removeEventListener("keydown", handleEsc);
             if (handleInputChange) quickInput.removeEventListener("input", handleInputChange);
             pickerEl = null;
@@ -289,7 +289,7 @@ function createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInp
         const onOutside = (e) => {
             if (!picker.contains(e.target)) closePicker();
         };
-        setTimeout(() => document.addEventListener("mousedown", onOutside), 0);
+        window.addEventListener("pointerdown", onOutside, true);
 
         // 锚定到 @ 所在光标位置附近（支持在文本中间插入时跟随 @）。
         // 同步读取坐标并在同一次布局内计算定位，避免 rAF 延迟到下一帧导致缩放/布局变化偏移。
@@ -332,7 +332,157 @@ function createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInp
         quickInput.addEventListener("input", handleInputChange);
     }
 
-    return openAtImagePicker;
+    // 从按钮触发的图片选择器：不需要 @ 在文本中，锚定到按钮位置，顶部有"全部"选项。
+    async function openFromButton(anchorEl) {
+        if (pickerEl) return;
+        const images = (await collectWorkflowLoadImages()).sort((a, b) => (a.pictureNo ?? 999) - (b.pictureNo ?? 999));
+
+        const insertPos = quickInput.selectionStart ?? quickInput.value.length;
+
+        const insertSingle = (img) => {
+            if (img.pictureNo == null) {
+                addImageInput(img.value);
+            } else {
+                const existIdx = attachedImages.findIndex(im => imageKey(im.input) === imageKey(img.value));
+                if (existIdx < 0) addImageInput(img.value, null, img.pictureNo);
+                const marker = "<Picture " + img.pictureNo + ">";
+                quickInput.value = quickInput.value.slice(0, insertPos) + marker + quickInput.value.slice(insertPos);
+                quickInput.focus({ preventScroll: true });
+                quickInput.setSelectionRange(insertPos + marker.length, insertPos + marker.length);
+                quickInput.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+        };
+
+        const insertAll = () => {
+            let offset = insertPos;
+            for (const img of images) {
+                if (img.pictureNo == null) {
+                    addImageInput(img.value);
+                } else {
+                    const existIdx = attachedImages.findIndex(im => imageKey(im.input) === imageKey(img.value));
+                    if (existIdx < 0) addImageInput(img.value, null, img.pictureNo);
+                    const marker = "<Picture " + img.pictureNo + ">";
+                    quickInput.value = quickInput.value.slice(0, offset) + marker + quickInput.value.slice(offset);
+                    offset += marker.length;
+                }
+            }
+            quickInput.focus({ preventScroll: true });
+            quickInput.setSelectionRange(offset, offset);
+            quickInput.dispatchEvent(new Event("input", { bubbles: true }));
+        };
+
+        const picker = mkEl("div", "rs-at-picker");
+        const list = mkEl("div", "rs-at-picker-list");
+
+        if (images.length) {
+            const allRow = mkEl("div", "rs-at-picker-row rs-at-picker-all-row");
+            const allLabel = mkEl("span", "rs-at-picker-all-label");
+            allLabel.textContent = `全部 (${images.length})`;
+            allRow.appendChild(allLabel);
+            allRow.addEventListener("click", () => { insertAll(); closePicker(); });
+            list.appendChild(allRow);
+        }
+
+        if (!images.length) {
+            const empty = mkEl("div", "rs-at-picker-empty");
+            empty.textContent = "工作流中没有可用的 Load Image 图片";
+            list.appendChild(empty);
+        }
+
+        images.forEach(img => {
+            const row = mkEl("div", "rs-at-picker-row");
+            row.style.position = "relative";
+            const thumb = mkEl("img", "rs-at-picker-thumb");
+            thumb.src = inputViewUrl(img.value);
+            row.addEventListener("click", () => { insertSingle(img); closePicker(); });
+            const existIdx = attachedImages.findIndex(im => imageKey(im.input) === imageKey(img.value));
+            if (img.pictureNo != null) {
+                const picBadge = mkEl("span", "rs-picker-pic-badge");
+                picBadge.textContent = `#${img.pictureNo}`;
+                row.append(thumb, picBadge);
+            } else if (existIdx >= 0) {
+                const refBadge = mkEl("span", "rs-picker-ref-badge");
+                refBadge.textContent = "\u2713";
+                row.append(thumb, refBadge);
+            } else {
+                row.append(thumb);
+            }
+            list.appendChild(row);
+        });
+
+        picker.append(list);
+        pickerEl = picker;
+        document.body.appendChild(picker);
+        picker.tabIndex = 0;
+        let activeIndex = 0;
+        const rowEls = Array.from(list.querySelectorAll(".rs-at-picker-row"));
+        const setActiveRow = (idx) => {
+            activeIndex = Math.max(0, Math.min(rowEls.length - 1, idx));
+            rowEls.forEach((r, i) => r.classList.toggle("rs-picker-row-active", i === activeIndex));
+            const activeEl = rowEls[activeIndex];
+            if (activeEl) {
+                const rowTop = activeEl.offsetTop;
+                const rowBottom = rowTop + activeEl.offsetHeight;
+                const listTop = list.scrollTop;
+                const listBottom = listTop + list.clientHeight;
+                if (rowTop < listTop) list.scrollTop = rowTop;
+                else if (rowBottom > listBottom) list.scrollTop = rowBottom - list.clientHeight;
+            }
+        };
+        rowEls.forEach((row, idx) => {
+            row.classList.add("rs-picker-row");
+            row.addEventListener("mousemove", () => setActiveRow(idx));
+        });
+        picker.addEventListener("keydown", (e) => {
+            if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", " ", "Enter"].includes(e.key)) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            switch (e.key) {
+                case "ArrowDown": setActiveRow(activeIndex + 1); break;
+                case "ArrowUp": setActiveRow(activeIndex - 1); break;
+                case "Home": setActiveRow(0); break;
+                case "End": setActiveRow(rowEls.length - 1); break;
+                case "Enter":
+                    if (activeIndex === 0 && images.length) { insertAll(); closePicker(); }
+                    else if (images[activeIndex - 1]) { insertSingle(images[activeIndex - 1]); closePicker(); }
+                    break;
+            }
+        });
+        picker.focus({ preventScroll: true });
+        setTimeout(() => setActiveRow(0), 0);
+
+        const closePicker = () => {
+            window.removeEventListener("pointerdown", onOutside, true);
+            if (handleEsc) document.removeEventListener("keydown", handleEsc);
+            pickerEl = null;
+            picker.remove();
+        };
+        const onOutside = (e) => {
+            if (!picker.contains(e.target) && e.target !== anchorEl) closePicker();
+        };
+        window.addEventListener("pointerdown", onOutside, true);
+
+        // 锚定到按钮下方
+        const r = anchorEl.getBoundingClientRect();
+        const pw = Math.max(100, Math.min(r.width + 60, 140));
+        const estHeight = 260;
+        let left = r.left;
+        let top = r.bottom + 4;
+        if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
+        if (top + estHeight > window.innerHeight - 8) {
+            top = r.top - 4 - estHeight;
+        }
+        picker.style.left = Math.max(8, left) + "px";
+        picker.style.top = Math.max(8, top) + "px";
+        picker.style.width = pw + "px";
+
+        let handleEsc = null;
+        handleEsc = (e) => { if (e.key === "Escape") closePicker(); };
+        document.addEventListener("keydown", handleEsc);
+    }
+
+    return { open: openAtImagePicker, openFromButton };
 }
 
 export { createAtImagePicker };

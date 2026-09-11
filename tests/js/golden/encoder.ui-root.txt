@@ -23,6 +23,7 @@ div.rs-root.rs-theme-local
     div.rs-image-chips
     textarea.rs-quick-input <placeholder=Describe what you want... (Enter to generate, Shift+Enter for newline)>
     div.rs-input-toolbar
+      button.rs-at-btn <title=插入参考图片标记> "@"
       button.rs-attach-btn <title=附加图片（反推/多模态 skill）> "+"
       div.rs-model-select-box
         div

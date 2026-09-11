@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes - H3 提示词审计单元测试
-# 覆盖 prompt_audit 的确定性检查分支与窄修复验收，以及 skill.py 的 H3 grounding 注入
+# 覆盖 h3_prompt_audit 的确定性检查分支与窄修复验收，以及 skill.py 的 H3 grounding 注入
 
 import os
 import sys
@@ -11,8 +11,8 @@ import unittest
 _NODE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, _NODE_DIR)
 
-# prompt_audit 无外部依赖，直接顶层导入
-prompt_audit = importlib.import_module("prompt_audit")
+# h3_prompt_audit 无外部依赖，直接顶层导入
+h3_prompt_audit = importlib.import_module("h3_prompt_audit")
 
 # skill.py 需要 server stub（与 test_skills.py 一致）
 _PKG_NAME = "_neo_nodes_test_pkg"
@@ -84,16 +84,16 @@ N/A"""
 class TestAuditStructure(unittest.TestCase):
     def test_valid_reference_prompt_passes(self):
         ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["a.png"]}}]}
-        result = prompt_audit.audit_h3_prompt(REF_PROMPT, ctx)
+        result = h3_prompt_audit.audit_h3_prompt(REF_PROMPT, ctx)
         self.assertFalse(result["repair_required"], result["failures"])
 
     def test_valid_base_prompt_passes(self):
-        result = prompt_audit.audit_h3_prompt(BASE_PROMPT)
+        result = h3_prompt_audit.audit_h3_prompt(BASE_PROMPT)
         self.assertFalse(result["repair_required"], result["failures"])
 
     def test_missing_sections_reported(self):
         text = REF_PROMPT.replace("retention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity and outfit retained.\n", "")
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(result["repair_required"])
         self.assertIn("retention_analysis", " ".join(result["failures"]))
 
@@ -105,92 +105,92 @@ class TestAuditStructure(unittest.TestCase):
                 "retention_analysis:\n<Subject 1>: fully_preserved - retained.\n\n"
                 "overall_soundscape:\nRoom tone.\n\n"
                 "non_diegetic_music:\nN/A")
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(any("section order" in f for f in result["failures"]))
 
     def test_summary_without_task_label_reported(self):
         text = REF_PROMPT.replace("[reference generation] The target video", "The target video")
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(any("task label" in f for f in result["failures"]))
 
     def test_missing_shot1_marker_reported(self):
         text = REF_PROMPT.replace("[Shot 1] A medium shot", "The video opens with a medium shot")
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(any("[Shot 1]" in f for f in result["failures"]))
 
     def test_base_missing_field_reported(self):
         text = BASE_PROMPT.replace("overall_soundscape:\nSoft indoor room tone.\n", "")
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(result["repair_required"])
         self.assertIn("overall_soundscape", " ".join(result["failures"]))
 
     def test_no_structure_reported(self):
-        result = prompt_audit.audit_h3_prompt("a cat sits on a mat")
+        result = h3_prompt_audit.audit_h3_prompt("a cat sits on a mat")
         self.assertTrue(result["repair_required"])
         self.assertIn("no H3 prompt structure found", " ".join(result["failures"]))
 
 
 class TestAuditTimestamps(unittest.TestCase):
     def test_invalid_format(self):
-        self.assertEqual(prompt_audit.invalid_timestamps("At 00:09.5, cut"), ["00:09.5"])
+        self.assertEqual(h3_prompt_audit.invalid_timestamps("At 00:09.5, cut"), ["00:09.5"])
 
     def test_valid_formats(self):
-        self.assertEqual(prompt_audit.invalid_timestamps("At 00:03.500 and at 01:00.000"), [])
+        self.assertEqual(h3_prompt_audit.invalid_timestamps("At 00:03.500 and at 01:00.000"), [])
 
     def test_seconds_over_60_invalid(self):
-        self.assertEqual(prompt_audit.invalid_timestamps("At 00:75.000"), ["00:75.000"])
+        self.assertEqual(h3_prompt_audit.invalid_timestamps("At 00:75.000"), ["00:75.000"])
 
     def test_duration_bound_from_context(self):
         ctx = {"h3": [{"type": "EmptyMiniMaxH3LatentAV", "length": 144}]}  # 6s @24fps
         text = BASE_PROMPT.replace("00:03.500", "00:07.000")
-        result = prompt_audit.audit_h3_prompt(text, ctx)
+        result = h3_prompt_audit.audit_h3_prompt(text, ctx)
         self.assertTrue(any("invalid timestamps" in f for f in result["failures"]))
 
     def test_duration_seconds_field_preferred(self):
-        self.assertEqual(prompt_audit.context_duration_seconds({"h3": [{"duration_seconds": 12, "length": 96}]}), 12.0)
+        self.assertEqual(h3_prompt_audit.context_duration_seconds({"h3": [{"duration_seconds": 12, "length": 96}]}), 12.0)
 
 
 class TestAuditTagsAndDialogue(unittest.TestCase):
     def test_unexpected_tag_reported(self):
         ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["a.png"]}}]}
         text = REF_PROMPT.replace("<Picture 1>", "<Picture 2>")
-        result = prompt_audit.audit_h3_prompt(text, ctx)
+        result = h3_prompt_audit.audit_h3_prompt(text, ctx)
         self.assertTrue(any("unexpected reference tags" in f for f in result["failures"]))
 
     def test_missing_connected_reference_reported(self):
         ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["a.png", "b.png"]}}]}
-        result = prompt_audit.audit_h3_prompt(REF_PROMPT, ctx)
+        result = h3_prompt_audit.audit_h3_prompt(REF_PROMPT, ctx)
         self.assertTrue(any("connected references are missing" in f for f in result["failures"]))
 
     def test_audio_not_required(self):
         ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo",
                        "refs": {"pictures": ["a.png"], "audios": ["voice.mp3"]}}]}
-        result = prompt_audit.audit_h3_prompt(REF_PROMPT, ctx)
+        result = h3_prompt_audit.audit_h3_prompt(REF_PROMPT, ctx)
         self.assertFalse(result["repair_required"], result["failures"])
 
     def test_keyframe_slots_counted_as_pictures(self):
         ctx = {"h3": [{"type": "MiniMaxH3ImageToVideo", "refs": {"keyframes": {"first": "f.png"}}}]}
-        self.assertEqual(prompt_audit.context_media_tags(ctx), {"<Picture 1>"})
+        self.assertEqual(h3_prompt_audit.context_media_tags(ctx), {"<Picture 1>"})
 
     def test_dialogue_without_speaker_id_reported(self):
         text = BASE_PROMPT.replace("a woman in a cafe.", 'a woman in a cafe. She says, <d>[English] Hi.</d>')
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(any("speaker ID" in f for f in result["failures"]))
 
     def test_dialogue_with_speaker_id_passes(self):
         text = BASE_PROMPT.replace("a woman in a cafe.", 'a woman (S1) in a cafe. She says, <d>[English] Hi.</d>')
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertFalse(result["repair_required"], result["failures"])
 
     def test_internal_terms_reported(self):
         text = BASE_PROMPT + "\n\nThe model sees a contact sheet of sampled frames."
-        result = prompt_audit.audit_h3_prompt(text)
+        result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertTrue(any("internal representation terms" in f for f in result["failures"]))
 
 
 class TestNarrowRepair(unittest.TestCase):
     def test_messages_shape(self):
-        msgs = prompt_audit.narrow_repair_messages("make a video", "DRAFT", ["bad one", "bad two"])
+        msgs = h3_prompt_audit.narrow_repair_messages("make a video", "DRAFT", ["bad one", "bad two"])
         self.assertEqual(len(msgs), 2)
         self.assertEqual(msgs[0]["role"], "system")
         self.assertIn("narrow correction pass", msgs[0]["content"])
@@ -201,18 +201,18 @@ class TestNarrowRepair(unittest.TestCase):
 
     def test_acceptable_requires_audit_pass(self):
         ctx = {"h3": [{"type": "MiniMaxH3ReferenceToVideo", "refs": {"pictures": ["a.png"]}}]}
-        self.assertTrue(prompt_audit.repair_acceptable(REF_PROMPT, REF_PROMPT + "\n", ctx))
+        self.assertTrue(h3_prompt_audit.repair_acceptable(REF_PROMPT, REF_PROMPT + "\n", ctx))
 
     def test_rejects_tag_changes(self):
         changed = REF_PROMPT.replace("<Picture 1>", "<Picture 1>, <Video 9>")
-        self.assertFalse(prompt_audit.repair_acceptable(REF_PROMPT, changed))
+        self.assertFalse(h3_prompt_audit.repair_acceptable(REF_PROMPT, changed))
 
     def test_rejects_dialogue_changes(self):
         changed = REF_PROMPT.replace("Hello there.", "Goodbye.")
-        self.assertFalse(prompt_audit.repair_acceptable(REF_PROMPT, changed))
+        self.assertFalse(h3_prompt_audit.repair_acceptable(REF_PROMPT, changed))
 
     def test_rejects_empty(self):
-        self.assertFalse(prompt_audit.repair_acceptable(REF_PROMPT, "  "))
+        self.assertFalse(h3_prompt_audit.repair_acceptable(REF_PROMPT, "  "))
 
 
 @unittest.skipUnless(SKILL_AVAILABLE, _reason)
