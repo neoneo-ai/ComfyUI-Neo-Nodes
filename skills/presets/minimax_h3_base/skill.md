@@ -15,10 +15,6 @@ max_tokens: 16384
 result_key: prompt
 category: video_enhance
 audit: h3
-markers:
-- '@全参考'
-- '@参考'
-- '@minimax'
 ---
 
 # Video Prompt Writing Guide (T2VA / I2VA / FL2VA / L2VA)

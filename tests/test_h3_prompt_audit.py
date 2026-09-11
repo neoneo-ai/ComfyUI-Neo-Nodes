@@ -241,8 +241,8 @@ class TestH3Grounding(unittest.TestCase):
         self.assertIn("Final grounding check (T2VA)", grounded)
 
     def test_preset_skills_declare_h3_audit(self):
-        self.assertEqual(skill_mod.load_skill_audit("h3-prompt-writing"), "h3")
-        self.assertEqual(skill_mod.load_skill_audit("minimax_h3_ref"), "h3")
+        for sid in ("minimax_h3_base", "minimax_h3_full_ref", "minimax_h3_image_ref"):
+            self.assertEqual(skill_mod.load_skill_audit(sid), "h3", sid)
 
 
 @unittest.skipUnless(SKILL_AVAILABLE, _reason)

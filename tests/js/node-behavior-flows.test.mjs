@@ -144,16 +144,6 @@ test("选中 skill：请求体带 skillId 与拼接后的 text", async () => {
     assertGolden("flow.skill-generate", flowTrace());
 });
 
-test("@图 标记但无图片：提示需要图片且不发请求", async () => {
-    const node = await makeNode(14);
-    const el = parts(node);
-    inputText(el.quickInput, "@图 一只猫");
-    keydown(el.quickInput, "Enter");
-    await sleep(200);
-
-    assertGolden("flow.marker-needs-image", flowTrace());
-});
-
 test("@ 图片选择器：无可用图片时给占位提示，不叠加弹层且可关闭后重开", async () => {
     const node = await makeNode(20);
     const el = parts(node);

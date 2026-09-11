@@ -86,7 +86,6 @@ class TestScanSkills(unittest.TestCase):
         rp = by_id["reverse_prompt"]
         self.assertTrue(rp["needs_image"], "reverse_prompt 必须标记为需要图片")
         self.assertIn("image", rp["inputs"])
-        self.assertIn("@图", rp["markers"])
         self.assertEqual(rp["category"], "vision")
 
     def test_builtin_task_skills_exist(self):
@@ -102,24 +101,23 @@ class TestScanSkills(unittest.TestCase):
         """未声明 image 输入的模板默认为纯文本 skill"""
         styles = {s["id"]: s for s in self._scan()
                   if s["source"] in ("presets", "custom")
-                  and s["id"] not in ("minimax_h3_ref", "image_to_video")}
+                  and s["id"] not in ("minimax_h3_base", "minimax_h3_full_ref", "minimax_h3_image_ref", "image_to_video")}
         self.assertTrue(len(styles) > 0, "至少应扫描到一个模板 skill")
         for sid, s in styles.items():
             self.assertFalse(s["needs_image"], f"普通模板不应需要图片: {sid}")
 
-    def test_minimax_ref_skill(self):
-        """内置全能参考模板：图像输入 + 触发标记"""
+    def test_minimax_h3_full_ref_skill(self):
+        """内置 H3 全参考模板：图像输入 + video_enhance 分类"""
         by_id = {s["id"]: s for s in self._scan()}
-        s = by_id.get("minimax_h3_ref")
-        self.assertIsNotNone(s, "minimax_h3_ref 模板未被扫描到")
+        s = by_id.get("minimax_h3_full_ref")
+        self.assertIsNotNone(s, "minimax_h3_full_ref 模板未被扫描到")
         self.assertTrue(s["needs_image"])
         self.assertEqual(s["category"], "video_enhance")
-        self.assertIn("@全参考", s["markers"])
 
     def test_skill_fields_complete(self):
         for s in self._scan():
             for field in ("id", "name", "category", "source", "inputs",
-                          "needs_image", "markers", "multi_turn"):
+                          "needs_image", "multi_turn"):
                 self.assertIn(field, s)
 
     def test_multi_turn_flag(self):
@@ -129,7 +127,7 @@ class TestScanSkills(unittest.TestCase):
             s = by_id.get(sid)
             self.assertIsNotNone(s, f"未扫描到技能: {sid}")
             self.assertTrue(s["multi_turn"], f"{sid} 应声明 multi_turn")
-        ref = by_id.get("minimax_h3_ref")
+        ref = by_id.get("minimax_h3_full_ref")
         if ref is not None:
             self.assertFalse(ref["multi_turn"])
 

@@ -658,7 +658,7 @@ function createStatusBars() {
     const openSlashSkillPicker = createSlashSkillPicker({ quickInput, skillSelector, listSkills });
 
     // 输入 @ 唤起工作流图片选择器、/ 唤起 skill 快捷菜单（均支持在文本中间插入：看光标前一个字符）
-    quickInput.addEventListener("input", () => {
+    quickInput.addEventListener("input", (e) => {
         const caret = quickInput.selectionStart;
         if (caret <= 0) return;
         const ch = quickInput.value[caret - 1];
@@ -688,31 +688,6 @@ function createStatusBars() {
 // ==========================================
 // LLM 生成：✨ / Enter 触发，三条流式分支共用同一 SSE 处理
 // ==========================================
-// @ 标记 -> skill id 路由（与后端 _SKILL_MARKERS 保持一致）
-const AT_SKILL_MARKERS = {
-    "图": "reverse_prompt",
-    "图片": "reverse_prompt",
-    "反推": "reverse_prompt",
-    "image": "reverse_prompt",
-    "img": "reverse_prompt",
-    "全参考": "minimax_h3_ref",
-    "参考": "minimax_h3_ref",
-    "minimax": "minimax_h3_ref",
-};
-
-// 匹配文本中的 @ 标记，返回 skill id 或空串
-// 注意：不能用 \b（JS 中中文字符不属于 \w，中文之间永远不存在词边界）
-function matchSkillMarker(text) {
-    if (!text) return "";
-    const m = text.match(/@(图片|全参考|参考|反推|minimax|image|img|图)/);
-    return m ? (AT_SKILL_MARKERS[m[1]] || "") : "";
-}
-
-// 去除文本中的 @ 标记（标记只用于路由，不进入提示词）
-function stripSkillMarkers(text) {
-    return (text || "").replace(/@(图片|全参考|参考|反推|minimax|image|img|图)/g, "").trim();
-}
-
 // 追踪节点 image 输入插槽的上游节点（如 LoadImage），取其图片文件名
 // 返回 {kind:"input", value:"<filename>"}、{kind:"unresolved"}（图已连接但读不到文件名）或 null（未连接）
 function resolveConnectedImageSource(node) {
@@ -923,7 +898,7 @@ function createGenerateHandler(promptUI) {
         // If quickInput is empty, use customTextarea content as the message
         const messageToLLM = quickText || currentPrompt;
 
-        // @ 标记、附加图片、节点 image 输入连接 -> skill 路由（反推等 vision skill）
+        // 附加图片、节点 image 输入连接 -> vision skill 路由（反推等）
         const slotImage = resolveConnectedImageSource(node);
         const imagesPayload = [
             ...(slotImage ? [slotImage] : []),
@@ -932,7 +907,6 @@ function createGenerateHandler(promptUI) {
                 : { kind: "data", data: img.data }),
         ];
         const hasImages = imagesPayload.length > 0;
-        const markerSkillId = matchSkillMarker(messageToLLM);
 
         // 选中生图 skill：绕过 LLM，直连后端生图流程，结果渲染在 Markdown 预览区
         const selectedOpt = skillSelector
@@ -1090,27 +1064,14 @@ function createGenerateHandler(promptUI) {
             }
         });
         try {
-            if (hasImages || markerSkillId) {
-                // 图片 / @ 标记 -> skill 路由（反推等 vision skill，流式）
-                if (markerSkillId && !hasImages) {
-                    showToast(app, "error", "需要图片", "该 skill 需要图片");
-                    if (genResultsController) {
-                        genResultsController.open();
-                        genResultsController.set({
-                            running: false, cancelId: "", images: [], warnings: [],
-                            statusText: "需要图片",
-                            error: "该 skill 需要图片：输入 @ 从工作流图片中选择、连接 image 输入或粘贴图片后再生成。",
-                        });
-                    }
-                    return;
-                }
-
+            if (hasImages) {
+                // 图片 -> skill 路由（反推等 vision skill，流式）
                 generateBtn.textContent = "⏳"; // 统一短反馈，而非长串处理文案
 
-                const skillId = markerSkillId || selectedSkillId || "reverse_prompt";
+                const skillId = selectedSkillId || "reverse_prompt";
 
                 const payload = {
-                    text: stripSkillMarkers(messageToLLM),
+                    text: messageToLLM,
                     skillId,
                     images: imagesPayload,
                     description: quickText || currentPrompt,

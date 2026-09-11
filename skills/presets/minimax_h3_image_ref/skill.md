@@ -15,10 +15,6 @@ max_tokens: 16384
 result_key: prompt
 category: video_enhance
 audit: h3
-markers:
-- '@全参考'
-- '@参考'
-- '@minimax'
 ---
 
 You are a professional prompt engineer for the MiniMax H3 video generation model, image-reference mode (Ref2VA, images only).

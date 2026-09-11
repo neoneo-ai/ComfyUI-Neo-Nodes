@@ -15,10 +15,6 @@ max_tokens: 26384
 result_key: prompt
 category: video_enhance
 audit: h3
-markers:
-- '@全参考'
-- '@参考'
-- '@minimax'
 ---
 
 # Full-Reference Mode Rewrite Output Format Guide

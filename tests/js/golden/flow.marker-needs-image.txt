@@ -1,1 +1,0 @@
-GET /rs_prompts/skills

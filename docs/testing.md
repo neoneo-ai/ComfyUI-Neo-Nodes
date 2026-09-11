@@ -25,7 +25,7 @@ npm run update-goldens   # NEO_UPDATE_GOLDENS=1，写入新 golden
 
 - `smoke.test.mjs` — 模块可导入、节点扩展注册项
 - `prompt-manager-dom.test.mjs` — NeoPromptAgent / NeoPrompts 创建后的 UI 结构、body 弹层、隐藏控件状态
-- `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、skill 路由请求体、@ 标记缺图提示、运行时随机菜单
+- `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、skill 路由请求体、@ 图片选择器、运行时随机菜单
 - `llm-setting-advanced.test.mjs` — 有预设 Base URL 的供应商默认收起「自定义端点」（云端/hybrid 同规则），展开后改写仍能落盘；无预设的 OpenAI Compatible 常显且无收起入口，Local GGUF 整体隐藏
 
 ## JS 测试运行器（带超时强制终止）

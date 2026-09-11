@@ -81,15 +81,10 @@ _SKILL_DEFAULT_INPUTS = {
     "extract_classify": ["text"],
 }
 
-# 输入框 @ 标记 -> skill id 路由表（skill.md 未声明 markers 时的兜底）
-_SKILL_MARKERS = {
-    "reverse_prompt": ["@图", "@反推", "@图片"],
-}
-
 # frontmatter 序列化时的字段顺序（未列出的额外字段追加在末尾）
 _META_KEY_ORDER = (
     "name", "tags", "inputs", "description", "max_tokens",
-    "result_key", "multi_result", "multi_turn", "category", "markers",
+    "result_key", "multi_result", "multi_turn", "category",
     "gen_image", "requires_ref", "audit", "created_at",
 )
 
@@ -726,7 +721,7 @@ def _skill_name_pinyin_tags(name) -> list:
 def scan_skills() -> list:
     """合并 tasks + presets/custom 为统一 skill 元数据列表。
 
-    每个 skill 返回: {id, name, category, source, inputs, needs_image, markers, multi_turn, tags, description}
+    每个 skill 返回: {id, name, category, source, inputs, needs_image, multi_turn, tags, description}
     """
     skills = []
 
@@ -749,7 +744,6 @@ def scan_skills() -> list:
                 "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("name", skill_id)),
                 "inputs": inputs,
                 "needs_image": "image" in inputs,
-                "markers": meta.get("markers") or _SKILL_MARKERS.get(skill_id, []),
                 "multi_turn": bool(meta.get("multi_turn", False)),
                 "gen_image": bool(meta.get("gen_image", False)),
                 "requires_ref": bool(meta.get("requires_ref", False)),
@@ -776,7 +770,6 @@ def scan_skills() -> list:
                     "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("name", skill_id)),
                     "inputs": inputs,
                     "needs_image": "image" in inputs,
-                    "markers": meta.get("markers") or [],
                     "multi_turn": bool(meta.get("multi_turn", False)),
                     "gen_image": bool(meta.get("gen_image", False)),
                     "requires_ref": bool(meta.get("requires_ref", False)),
@@ -854,7 +847,6 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
             "multi_result": meta.get("multi_result"),
             "multi_turn": mt or None,
             "category": cat or None,
-            "markers": meta.get("markers"),
             "gen_image": gi or None,
             "requires_ref": rr or None,
             "ratio": meta.get("ratio"),
