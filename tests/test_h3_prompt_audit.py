@@ -274,20 +274,23 @@ class TestH3AuditEvents(unittest.TestCase):
     def test_repair_yields_replace(self):
         draft = REF_PROMPT.replace(" (S1)", "")
         events = self._events(draft, repaired=REF_PROMPT)
-        self.assertEqual([e["kind"] for e in events], ["status", "status", "status", "replace"])
+        self.assertEqual([e["kind"] for e in events], ["status", "status", "status", "status", "replace"])
+        # 审计结果（违规项明细）与修复结果都以 status 上报，前端常驻展示
+        self.assertIn("处格式问题", events[1]["text"])
+        self.assertIn("已自动修复格式", events[3]["text"])
         self.assertEqual(events[-1]["text"], REF_PROMPT)
 
     def test_repair_rejected_no_replace(self):
         draft = REF_PROMPT.replace(" (S1)", "")
         bad = REF_PROMPT.replace("Hello there.", "Goodbye.")
         events = self._events(draft, repaired=bad)
-        self.assertEqual([e["kind"] for e in events], ["status", "status", "status"])
+        self.assertEqual([e["kind"] for e in events], ["status", "status", "status", "status"])
         self.assertIn("保留原输出", events[-1]["text"])
 
     def test_repair_llm_error_keeps_draft(self):
         draft = REF_PROMPT.replace(" (S1)", "")
         events = self._events(draft, raise_err=True)
-        self.assertEqual([e["kind"] for e in events], ["status", "status", "status"])
+        self.assertEqual([e["kind"] for e in events], ["status", "status", "status", "status"])
 
     def test_audit_and_repair_on_step(self):
         llm_stub = types.ModuleType(self._llm_stub_name)
@@ -298,7 +301,9 @@ class TestH3AuditEvents(unittest.TestCase):
             steps = []
             out = skill_mod._h3_audit_and_repair(draft, "test-skill", "user text", self.ctx, 500, on_step=steps.append)
             self.assertEqual(out, REF_PROMPT)
-            self.assertTrue(any("自动修复" in s for s in steps))
+            # 最终修复结果也经 on_step 上报（工具循环路径的状态在正文前发出，前端累计展示）
+            self.assertTrue(any("处格式问题" in s for s in steps))
+            self.assertTrue(any("已自动修复格式" in s for s in steps))
         finally:
             del sys.modules[self._llm_stub_name]
 

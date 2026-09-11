@@ -405,7 +405,7 @@ function createStatusBars() {
     const autoGenerateLabel = document.createElement("label");
     autoGenerateLabel.htmlFor = "rs-auto-generate";
     autoGenerateLabel.className = "rs-auto-generate-label";
-    autoGenerateLabel.textContent = "自动增强";
+    autoGenerateLabel.textContent = "工作流运行时自动增强";
 
     const genCaret = mkEl("button", "rs-random-caret");
     genCaret.type = "button";
@@ -413,13 +413,16 @@ function createStatusBars() {
     genCaret.setAttribute("data-rs-tooltip", "Auto-enhance options");
     const autoMenu = mkEl("div", "rs-runtime-menu rs-auto-config");
     document.body.appendChild(autoMenu); // 挂 body 防节点边界裁剪
+    // 右上角关闭按钮：与点外部/再点 caret 同一条关闭路径（有未保存修改时先出确认条）
+    const autoCloseBtn = mkEl("button", "rs-auto-close");
+    autoCloseBtn.type = "button";
+    autoCloseBtn.textContent = "✕";
+    autoCloseBtn.setAttribute("data-rs-tooltip", "关闭设置");
+    autoMenu.appendChild(autoCloseBtn);
     const autoToggleRow = mkEl("label", "rs-runtime-row rs-runtime-toggle");
     autoToggleRow.appendChild(autoGenerateCheckbox);
     autoToggleRow.appendChild(autoGenerateLabel);
-    const autoHint = mkEl("div", "rs-runtime-hint");
-    autoHint.textContent = "每次运行时用 LLM 基于描述自动增强提示词";
     autoMenu.appendChild(autoToggleRow);
-    autoMenu.appendChild(autoHint);
 
     // 「思考深度」下拉：参考 Qwen3.8 的 reasoning_effort 档位。默认"标准思考"（medium）；
     // "不思考"发 enable_thinking:false（跳过推理，更快更稳，避免思考耗尽 max_tokens 截断正文）；
@@ -561,6 +564,10 @@ function createStatusBars() {
         e.stopPropagation();
         e.preventDefault();
         autoMenuOpen ? closeAutoMenu() : openAutoMenu();
+    });
+    autoCloseBtn.addEventListener("click", (e) => {
+        e.stopPropagation(); // 防冒泡进全局关浮层/事件处理器
+        closeAutoMenu();
     });
     // 捕获阶段外关，规避上游全局处理器 stopPropagation（同骰子菜单）
     const onAutoDocPointerDown = (e) => {
@@ -995,17 +1002,23 @@ function createGenerateHandler(promptUI) {
             if (thinkingRaf) { cancelAnimationFrame(thinkingRaf); thinkingRaf = null; }
             if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
         }
-        // 流程状态（H3 格式自检/自动修复等阶段）：复用思考面板样式，正文出现/流结束时清除
+        // 流程状态（H3 格式自检/自动修复等阶段）：复用思考面板样式，逐条累计展示；
+        // 流结束后保留，供用户回看最终自检/修复结果（仅出错时清除）
         let statusEl = null;
         function showStatus(msg) {
             if (!statusEl) {
                 statusEl = mkEl("div", "rs-thinking");
-                statusEl.appendChild(mkEl("div", "rs-thinking-label"));
+                const label = mkEl("div", "rs-thinking-label");
+                label.textContent = "📋 H3 流程";
+                statusEl.appendChild(label);
+                statusEl.appendChild(mkEl("div", "rs-thinking-body"));
                 wrapper.insertBefore(statusEl, customTextarea);
             }
-            statusEl.querySelector(".rs-thinking-label").textContent = msg;
+            const body = statusEl.querySelector(".rs-thinking-body");
+            body.textContent += (body.textContent ? "\n" : "") + msg;
             // 内联 display 必须显式设为可见值（同思考面板：设 "" 会回落到 .rs-thinking{display:none}）
             statusEl.style.display = "block";
+            statusEl.scrollTop = statusEl.scrollHeight;
         }
         function clearStatus() {
             if (statusEl) { statusEl.remove(); statusEl = null; }
@@ -1048,9 +1061,8 @@ function createGenerateHandler(promptUI) {
                     }
                     return;
                 }
-                // 正文开始：思考完成，清除临时面板与状态行
+                // 正文开始：思考完成，清除思考面板（状态行保留到流结束，供回看自检/修复结果）
                 if (thinkingEl) clearThinking();
-                clearStatus();
                 accumulated += chunk.text;
                 if (rafId) return;
                 rafId = requestAnimationFrame(() => {
@@ -1061,11 +1073,11 @@ function createGenerateHandler(promptUI) {
                 });
             },
             // onDone 取消了尚未执行的合并帧，必须先把 accumulated 落进 textarea，
-            // 否则 saveTextToStorage 读到旧的空 textarea，会把 widget 里的提示词冲掉
+            // 否则 saveTextToStorage 读到旧的空 textarea，会把 widget 里的提示词冲掉；
+            // 状态行（H3 自检/修复结果）不清除，保留供用户回看
             onDone: () => {
                 if (rafId) cancelAnimationFrame(rafId);
                 clearThinking();
-                clearStatus();
                 if (accumulated) customTextarea.value = accumulated;
                 saveTextToStorage(node, textWidget, customTextarea, true);
                 markQuickInputConsumed(node);

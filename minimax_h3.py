@@ -214,24 +214,33 @@ def _h3_narrow_repair(content: str, skill_id: str, text: str, context, max_token
 
 def _h3_audit_and_repair(content: str, skill_id: str, text: str, context, max_tokens, on_step=None) -> str:
     """对生成的 H3 提示词跑确定性格式审计；失败时做一次窄修复（验收通过才采纳）。
-    on_step 为可选的阶段上报回调（流式路径用），参数为状态文案。"""
+    on_step 为可选的阶段上报回调（流式路径用），参数为状态文案；自检/修复的最终结果同样经 on_step 上报。"""
     from . import h3_prompt_audit
     audit = h3_prompt_audit.audit_h3_prompt(content, context)
     if not audit["repair_required"]:
         logger.info(f"H3 audit passed for skill '{skill_id}'")
+        if on_step:
+            on_step("✅ 格式自检通过")
         return content
-    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(audit['failures'])}")
+    failures = audit["failures"]
+    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(failures)}")
     if on_step:
-        on_step("✏️ 检测到格式问题，自动修复中…")
-    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, audit["failures"])
+        on_step(f"⚠️ 自检发现 {len(failures)} 处格式问题：{'；'.join(failures)}")
+        on_step("✏️ 自动修复中…")
+    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, failures)
     if repaired:
         logger.info(f"H3 narrow repair applied for skill '{skill_id}'")
+        if on_step:
+            on_step(f"✏️ 已自动修复格式（{len(failures)} 处问题）")
         return repaired
+    if on_step:
+        on_step("⚠️ 修复未通过校验，保留原输出")
     return content
 
 
 def _h3_audit_events(content: str, skill_id: str, text: str, context, max_tokens):
-    """流式路径：正文已逐 token 透传完毕，对完整输出做审计并逐阶段上报 status/replace 事件。"""
+    """流式路径：正文已逐 token 透传完毕，对完整输出做审计并逐阶段上报 status/replace 事件。
+    自检结果（含具体违规项）与修复结果都以 status 上报，前端常驻展示供用户查看。"""
     from . import h3_prompt_audit
     yield {"text": "🔍 格式自检中…", "kind": "status"}
     audit = h3_prompt_audit.audit_h3_prompt(content, context)
@@ -239,12 +248,14 @@ def _h3_audit_events(content: str, skill_id: str, text: str, context, max_tokens
         logger.info(f"H3 audit passed for skill '{skill_id}'")
         yield {"text": "✅ 格式自检通过", "kind": "status"}
         return
-    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(audit['failures'])}")
-    yield {"text": "✏️ 检测到格式问题，自动修复中…", "kind": "status"}
-    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, audit["failures"])
+    failures = audit["failures"]
+    logger.info(f"H3 audit for skill '{skill_id}' failed: {'; '.join(failures)}")
+    yield {"text": f"⚠️ 自检发现 {len(failures)} 处格式问题：{'；'.join(failures)}", "kind": "status"}
+    yield {"text": "✏️ 自动修复中…", "kind": "status"}
+    repaired = _h3_narrow_repair(content, skill_id, text, context, max_tokens, failures)
     if repaired:
         logger.info(f"H3 narrow repair applied for skill '{skill_id}'")
-        yield {"text": "✏️ 已自动修复格式", "kind": "status"}
+        yield {"text": f"✏️ 已自动修复格式（{len(failures)} 处问题）", "kind": "status"}
         yield {"text": repaired, "kind": "replace"}
     else:
         yield {"text": "⚠️ 修复未通过校验，保留原输出", "kind": "status"}

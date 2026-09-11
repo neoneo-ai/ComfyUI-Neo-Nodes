@@ -19,10 +19,10 @@ body
       span.rs-runtime-count-val "1"
       button.rs-runtime-count-btn <type=button> "+"
   div.rs-runtime-menu.rs-auto-config
+    button.rs-auto-close <type=button> "✕"
     label.rs-runtime-row.rs-runtime-toggle
       input#rs-auto-generate.rs-auto-generate-checkbox <type=checkbox val="on">
-      label.rs-auto-generate-label "自动增强"
-    div.rs-runtime-hint "每次运行时用 LLM 基于描述自动增强提示词"
+      label.rs-auto-generate-label "工作流运行时自动增强"
     div.rs-runtime-row
       span.rs-auto-generate-label "思考深度"
       select.rs-thinking-depth-select
@@ -44,13 +44,16 @@ body
           label.rs-form-label "Provider"
           select#rs-remote-provider.rs-form-input.rs-remote-provider
             option <value=local selected> "Loading..."
+        div.rs-config-row
+          label.rs-form-label "API Key"
+          input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=Optional for local services>
         div.rs-config-row <display=none>
           label.rs-form-label "LLM Models Dir"
           input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=Default: ComfyUI/models/LLM>
           div.rs-form-hint "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配"
         div#rs-model-input-wrapper.rs-config-row
           label.rs-form-label "Model"
-          input#rs-remote-model.rs-form-input.rs-remote-model <type=text placeholder=e.g., gpt-4o-mini display=none>
+          input#rs-remote-model.rs-form-input.rs-remote-model <type=text display=none>
           div.rs-model-select-box <display=none>
             div
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
@@ -61,16 +64,12 @@ body
               input.rs-form-input.rs-combo-input <type=text placeholder=🔍 输入过滤或点击选择...>
               span.rs-combo-caret "▾"
             select#rs-local-model-select.rs-form-input.rs-local-model-select <display=none>
-        div.rs-config-row
-          label.rs-form-label "API Key"
-          input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=Optional for local services>
-        div.rs-config-row
-          label.rs-form-label "Base URL"
-          input#rs-remote-base-url.rs-form-input.rs-remote-base-url <type=text placeholder=Leave empty for default>
-        div.rs-config-row
-          label.rs-form-label "Temperature"
-          input#rs-remote-temperature.rs-form-input.rs-remote-temperature <type=number>
-          div.rs-form-hint "采样温度；填 0 则不发送，使用服务端/模型默认值"
+        details.rs-remote-advanced <display=none>
+          summary.rs-remote-advanced-summary "自定义端点"
+          div.rs-remote-adv-content
+            div.rs-config-row
+              label.rs-form-label "Base URL"
+              input#rs-remote-base-url.rs-form-input.rs-remote-base-url <type=text placeholder=Leave empty for default>
         div.rs-provider-save-status <display=none>
         div.rs-config-row.rs-local-unload <display=none>
           div.rs-local-unload-line

@@ -30,9 +30,21 @@ logger = logging.getLogger(__name__)
 _CONFIGS_DIR: str = os.path.join(os.path.dirname(__file__), "configs")
 _PROVIDERS_CONFIG_PATH = os.path.join(_CONFIGS_DIR, "llm_providers.json")
 
-# 内置兜底（llm_providers.json 缺失时使用）
+# 内置兜底（llm_providers.json 缺失时使用），内容与 configs/llm_providers.json 保持一致
 _BUILTIN_PROVIDER_DEFS = [
     {"id": "local", "name": "Local GGUF (llama.cpp)", "type": "local"},
+    {"id": "deepseek", "name": "DeepSeek 深度求索", "type": "remote",
+     "default_base_url": "https://api.deepseek.com/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
+    {"id": "dashscope", "name": "阿里云百炼 (通义千问)", "type": "remote",
+     "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
+    {"id": "dashscope-plan", "name": "阿里云百炼 Token Plan", "type": "remote",
+     "default_base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
+    {"id": "moonshot", "name": "月之暗面 Kimi", "type": "remote",
+     "default_base_url": "https://api.moonshot.cn/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
+    {"id": "zhipu", "name": "智谱 GLM", "type": "remote",
+     "default_base_url": "https://open.bigmodel.cn/api/paas/v4", "append_v1": False, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
+    {"id": "siliconflow", "name": "硅基流动 SiliconFlow", "type": "remote",
+     "default_base_url": "https://api.siliconflow.cn/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
     {"id": "openai", "name": "OpenAI Compatible", "type": "remote",
      "default_base_url": "", "append_v1": True, "show_api_key": True, "model_mode": "hybrid"},
     {"id": "lmstudio", "name": "LM Studio", "type": "remote",
@@ -40,7 +52,11 @@ _BUILTIN_PROVIDER_DEFS = [
     {"id": "ollama", "name": "Ollama", "type": "remote",
      "default_base_url": "http://localhost:11430/v1", "append_v1": True, "show_api_key": False, "model_mode": "dropdown"},
     {"id": "openrouter", "name": "OpenRouter", "type": "remote",
-     "default_base_url": "https://openrouter.ai/api/v1", "append_v1": True, "show_api_key": True, "model_mode": "dropdown"},
+     "default_base_url": "https://openrouter.ai/api/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "dropdown"},
+    {"id": "unsloth", "name": "Unsloth", "type": "remote",
+     "default_base_url": "http://192.168.0.176:8888", "append_v1": False, "show_api_key": False, "model_mode": "dropdown"},
+    {"id": "vllm", "name": "vLLM Server", "type": "remote",
+     "default_base_url": "http://localhost:8000/v1", "append_v1": True, "show_api_key": False, "model_mode": "dropdown"},
 ]
 
 
@@ -60,6 +76,35 @@ def _load_provider_defs() -> List[Dict[str, Any]]:
 def get_provider_list() -> List[Dict[str, Any]]:
     """返回 provider 定义列表（供前端动态构建下拉）。"""
     return _load_provider_defs()
+
+
+# 已存 API Key 对前端的脱敏串：固定 40 个星号（前端按纯星号识别为「未改动、沿用已存密钥」）
+API_KEY_MASK = "*" * 40
+
+
+def get_stored_api_key(provider: str) -> str:
+    """读取已保存的 provider API Key（模型列表拉取等只读场景复用已存密钥，不回传明文给前端）。"""
+    slot = _load_remote_config().get("providers", {}).get(provider)
+    if isinstance(slot, dict):
+        return str(slot.get("api_key", "") or "")
+    return ""
+
+
+def build_remote_models_url(base_url: str, provider: str = "") -> str:
+    """按 base_url 兼容写法构造模型列表端点；/v1 追加规则与 _build_client 保持一致。"""
+    base = (base_url or "").strip().rstrip("/")
+    append_v1 = True
+    for p in _load_provider_defs():
+        if p.get("id") == provider:
+            append_v1 = p.get("append_v1", True)
+            break
+    if base.endswith("/models"):
+        return base
+    if base.endswith("/api"):
+        return f"{base}/tags"      # Ollama 原生接口
+    if append_v1 and not base.endswith("/v1"):
+        return f"{base}/v1/models"
+    return f"{base}/models"         # /v1 结尾或 append_v1=false（如智谱 /api/paas/v4）
 
 
 # ==========================================
@@ -239,7 +284,6 @@ def _build_provider_defaults() -> Dict[str, Dict[str, Any]]:
                 "base_url": p.get("default_base_url", ""),
                 "model": "",
                 "max_tokens": 500,
-                "temperature": 0.0,
                 "timeout": 60,
             }
     return defaults
@@ -293,7 +337,7 @@ def _migrate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
         new["enabled"] = False
     new["active_provider"] = provider
     # LM Studio / Ollama 的 model 只能来自服务端模型列表，不能迁移旧的 OpenAI 默认值
-    for key in ("api_key", "base_url", "max_tokens", "temperature", "timeout"):
+    for key in ("api_key", "base_url", "max_tokens", "timeout"):
         if key in config:
             new["providers"][provider][key] = config[key]
     if provider == "openai" and "model" in config:
@@ -369,7 +413,7 @@ def set_remote_llm_config(config: Dict[str, Any]):
     provider = config.get("provider")
     if provider in current.get("providers", {}):
         slot = current["providers"][provider]
-        for key in ("base_url", "model", "models_dir", "max_tokens", "temperature", "timeout"):
+        for key in ("base_url", "model", "models_dir", "max_tokens", "timeout"):
             if key in config:
                 slot[key] = config[key]
         if config.get("api_key"):
@@ -641,7 +685,6 @@ class RemoteLLMClient:
         self.base_url = config.get("base_url", "")
         self.model = config.get("model", "gpt-4o-mini")
         self.max_tokens = config.get("max_tokens", 500)
-        self.temperature = config.get("temperature", 0.0)
         self.timeout = config.get("timeout", 60)
 
     def _add_images_to_messages(self, messages: List[Dict[str, Any]],
@@ -718,9 +761,6 @@ class RemoteLLMClient:
             "messages": messages,
             "max_tokens": effective_max_tokens,
         }
-        # temperature 为 0（或未设置）时不发送，交由服务端/模型默认值；仅非零时显式传递。
-        if self.temperature:
-            kwargs["temperature"] = self.temperature
         if stream:
             # 让服务端在流末尾 chunk 附带 token 统计（vLLM/SGLang/LM Studio 均支持）
             kwargs["stream_options"] = {"include_usage": True}

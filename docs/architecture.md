@@ -8,7 +8,7 @@
 ComfyUI-Neo-Nodes/
 ├── __init__.py             # 插件入口：导入后端模块注册 API 路由，合并节点映射，声明 WEB_DIRECTORY
 ├── prompts.py              # 提示词节点核心逻辑（NeoPromptEncoder / NeoPromptAgent）+ /rs_prompts/* API
-├── llm.py                  # LLM 推理：远程 API（OpenAI 兼容 / LM Studio / Ollama / OpenRouter）与本地 llama.cpp GGUF
+├── llm.py                  # LLM 推理：远程 API（OpenAI 兼容 / 国产云供应商 / LM Studio / Ollama / OpenRouter）与本地 llama.cpp GGUF
 ├── gallery.py              # Neo Gallery 素材后端 + /neo_gallery/* 路由
 ├── gallery_lora.py         # Civitai LORA 示例后台抓取 + lora_cache 管理
 ├── gallery_oss.py          # 云端预设（OSS）素材同步
@@ -123,7 +123,7 @@ ComfyUI-Neo-Nodes/
 | `slash-picker.js` | `/` 技能快捷菜单（纯 ES 模块）：`createSlashSkillPicker({ quickInput, skillSelector, listSkills })` 返回打开函数，由 `llm-chat.js` 的 `createStatusBars()` 注入依赖并在输入 `/` 时调用。弹层挂 body 并锚定到输入框下方定位；随后续输入按 name/id/tags（含中文拼音，忽略大小写）实时过滤，空 query 按分类排序；每行显示技能名 + 类别名称（复用 skill.js `CATEGORY_LABELS`，未知分类回落 image_enhance）；`↑`/`↓`/`Home`/`End` 移动高亮、`Enter`/`Tab` 提交当前项（写入 skillSelector 并派发 change、清除 `/query`）、`Esc` 关闭；只过滤不自动提交，关闭时移除 document 与输入框监听并复位打开句柄 |
 | `dom-utils.js` | 共享 DOM 工厂：`mkEl(tag, className, styles)`，供 prompt-manager / llm-chat / skill / llm-setting / prompts 复用 |
 | `prompt-service.js` | `/rs_prompts/*` API 的前端封装（增强/翻译/智能/随机 + 远程 LLM 配置） |
-| `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save, isDirty }`，以 tab 形式挂入自动增强菜单（provider 切换 / 本地·远程模型 / API key / temperature / 本地目录 / 自动卸载）；无防抖自动保存，表单底部 💾 保存按钮显式落盘（复用 `.rs-gen-save` 样式），local 模式保存时若选中模型与已存 current_model 不同则额外调 `/rs_prompts/set_model` 持久化并切换常驻模型；本地目录输入 change 是唯一保留的即时写（列表刷新依赖后端已存目录）；`isDirty` 为 load/save 后快照对比，load resolve 时模型列表已填充完毕 |
+| `llm-setting.js` | LLM 配置表单（纯 ES 模块）：`createModelConfigForm()` 返回 `{ el, load, save, isDirty }`，以 tab 形式挂入自动增强菜单（provider 切换 / API key / 本地·远程模型 / base URL / 本地目录 / 自动卸载）；有预设 Base URL 的 provider 把 Base URL 收进「自定义端点」折叠区（`<details class="rs-remote-advanced">`，无预设端点的 OpenAI Compatible 常显、无收起入口；已存端点与预设不一致时自动展开），收起时回填与保存照常；API Key 行按 `requires_api_key` 提示必填 / 可选，留空保存且服务端未存过密钥时告警，已存密钥则提示「留空沿用」；温度已移除，请求不带 `temperature`；无防抖自动保存，表单底部 💾 保存按钮显式落盘（复用 `.rs-gen-save` 样式），local 模式保存时若选中模型与已存 current_model 不同则额外调 `/rs_prompts/set_model` 持久化并切换常驻模型；本地目录输入 change 是唯一保留的即时写（列表刷新依赖后端已存目录）；`isDirty` 为 load/save 后快照对比，load resolve 时模型列表已填充完毕 |
 | `image-gen.js` | 生图客户端（纯 ES 模块）：`requestGeneration` / `watchTask`（订阅 `rs.image_gen.status` 推送等待终态，订阅后兜底首拉一次状态、断线重连再拉一次补漏）/ `cancelTask` 包装 `/neo_image_gen/*`；`buildGenPrompt()` 参考图模式下套用 skill 正文模板并替换 `【人物形象描述】` 占位符；`collectLoadImageTargets()` 收集画布 LoadImage（跳过 mode 4，按 y→x 排序），单图 `sendImageToLoadImage()`：唯一目标直接写入、多目标弹菜单确认、无目标自动新建 LoadImage 并写入（经 LiteGraph.createNode + canvasPosToGraph 定位），多图 `assembleAllGenerated()` 按画布顺序依次写入（复用 `/neo_gallery/copy_to_input`）；`createImageGenSettingsForm()` 返回 `{ el, load, save, isDirty }`（全局「生图默认设置」tab，独立实现、不复用每技能控件区，只含 生图模型 / Text Encoder / VAE 三个可搜索下拉 + 输出前缀 + 💾 保存按钮），以 tab 形式挂入自动增强菜单（与 LLM Settings 切换）；模型/Encoder/VAE 下拉按 krea2 相关靠前排序，「自动」项标注后端建议名，空值 = 后端自动挑选、可显式指定覆盖。张数 / 长边尺寸 / 默认比例 / LoRA 行（每行「依赖参考图」复选框：勾选=仅参考图模式加载/作为四视图 LoRA，不勾=文生图无条件加载）只在每技能设置里配，由 `createModelConfigSection()` + `createGenSizeRows()` 组装；Enhance Prompt 开关在技能正文（System Prompt Content）标题右侧（skill.js），增强指令即技能 skill.md 正文 |
 | `skill.js` | 技能模块（纯 ES 模块）：skill API（list/load/save/delete/upload + 文件级操作）+ `createSkillDetailPopup()`（单技能详情弹窗：查看/编辑/删除/复制为自定义/新建，跨节点单例）+ `createSkillDropdown()`（原生 select + 可搜索下拉组装：底部 + New Skill/⬆ ZIP/⬆ Folder 工具栏、行内 Edit/查看操作、共享 zip·目录上传隐藏 input） |
 
@@ -160,7 +160,8 @@ NODE_CLASS_MAPPINGS = {
 | `gallery/oss_cache/` | 云端预设缓存（索引 + 文件） |
 | `recipes/custom/` | 用户配方：`<配方名>/recipe.json` + `assets/` + `samples/` + `workflows/` |
 | `recipes/presets/` | 内置预设配方（只读） |
-| `configs/remote_llm_config.json` | 远程 LLM 配置：`active_provider` + 按 provider 分槽的 `providers`（openai / lmstudio / ollama / openrouter / local），API Key 仅存本机 |
+| `configs/llm_providers.json` | Provider 定义（唯一真源）：`id` / `name` / `type`（local/remote）/ `default_base_url` / `append_v1` / `show_api_key` / `requires_api_key`（云厂商必填）/ `model_mode`（hybrid/dropdown）；本地、国产云（deepseek / dashscope / dashscope-plan / moonshot / zhipu / siliconflow）与自建服务（openai / lmstudio / ollama / openrouter / unsloth / vllm）同一份清单，前端下拉由此动态生成；丢失时回退 `llm.py` 的 `_BUILTIN_PROVIDER_DEFS`（内容须与之一致，有单测锁定） |
+| `configs/remote_llm_config.json` | 远程 LLM 配置：`active_provider` + 按 provider 分槽的 `providers`（槽位由 provider 定义自动补齐，新增供应商无需手改），API Key 仅存本机 |
 | `configs/oss_presets.json` | OSS 预设素材源配置 |
 | `configs/gallery_settings.json` | 素材自定义目录与 Civitai 设置（API KEY 脱敏显示；.gitignore 不入库） |
 | `configs/bookmarks.json` | 本地收藏：仅记录路径信息，不复制文件（.gitignore 不入库） |

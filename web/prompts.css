@@ -1518,6 +1518,41 @@
     gap: 6px;
 }
 
+/* Base URL 折叠区：有预设端点的供应商默认收起，点标题展开改写 */
+.rs-remote-advanced {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.rs-remote-adv-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.rs-remote-advanced > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: #ccc;
+    user-select: none;
+    list-style: none;
+    width: fit-content; /* 仅标题文字可点击展开，避免整行误点 */
+}
+
+.rs-remote-advanced > summary::-webkit-details-marker {
+    display: none;
+}
+
+.rs-remote-advanced > summary::before {
+    content: "▸ ";
+    color: #888;
+}
+
+.rs-remote-advanced[open] > summary::before {
+    content: "▾ ";
+}
+
 .rs-params-row {
     display: flex;
     gap: 12px;
@@ -2512,6 +2547,27 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
     padding: 8px 10px;
     min-width: 210px;
+}
+
+/* 设置菜单右上角关闭按钮：绝对定位在菜单内；有未保存修改时与点外部同走确认条 */
+.rs-auto-config .rs-auto-close {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    font-size: 12px;
+    line-height: 20px;
+    color: #999;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.rs-auto-config .rs-auto-close:hover {
+    color: #fff;
+    background: #4a4a4a;
 }
 
 /* ==========================================

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 from . import prompt_lines
 from . import skill
-from .llm import strip_inline_thinking
+from .llm import strip_inline_thinking, get_stored_api_key, build_remote_models_url, API_KEY_MASK
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(CURRENT_DIR, "prompts")
@@ -751,11 +751,11 @@ async def rs_prompts_set_model(request):
 # ==========================================
 
 def _mask_remote_config(config: dict) -> dict:
-    """复制配置并隐藏所有 provider 的 api_key"""
+    """复制配置并隐藏所有 provider 的 api_key（固定星号串，前端原样显示）"""
     safe = copy.deepcopy(config)
     for slot in safe.get("providers", {}).values():
         if isinstance(slot, dict) and slot.get("api_key"):
-            slot["api_key"] = "***"
+            slot["api_key"] = API_KEY_MASK
     return safe
 
 
@@ -1066,19 +1066,16 @@ async def rs_prompts_fetch_remote_models(request):
         data = await request.json()
         base_url = (data.get("base_url", "") or "").strip().rstrip("/")
         api_key = (data.get("api_key", "") or "").strip()
+        provider = (data.get("provider", "") or "").strip()
         
         if not base_url:
             return web.Response(status=400, text="base_url required")
         
-        # 兼容 LM Studio / Ollama / OpenRouter / OpenAI 的各种 base URL 写法
-        if base_url.endswith("/models"):
-            url = base_url
-        elif base_url.endswith("/api"):
-            url = f"{base_url}/tags"      # Ollama 原生接口
-        elif base_url.endswith("/v1"):
-            url = f"{base_url}/models"
-        else:
-            url = f"{base_url}/v1/models"  # OpenAI 兼容接口
+        # 输入框留空沿用已存密钥：前端只回传掩码，明文仅存于服务端配置
+        if not api_key and provider:
+            api_key = get_stored_api_key(provider)
+        
+        url = build_remote_models_url(base_url, provider)
 
         # 部分 OpenAI 兼容云端点（如官方 API）拉取列表也需要鉴权
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}

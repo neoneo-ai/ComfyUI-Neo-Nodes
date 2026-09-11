@@ -36,6 +36,8 @@ import tempfile
 import datetime
 import threading
 import zipfile
+from collections.abc import Generator
+from typing import Any, Dict
 
 import yaml
 from aiohttp import web

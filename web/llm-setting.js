@@ -1,6 +1,6 @@
 /**
  * llm-setting.js
- * LLM 配置表单：provider / model / API key / base URL / temperature / 本地模型目录 / 自动卸载。
+ * LLM 配置表单：provider / model / API key / base URL / 本地模型目录 / 自动卸载。
  * 原设置弹窗的 “LLM Settings” 标签内容，现整体挂到「自动增强」菜单内。
  * createModelConfigForm() 返回 { el, load, save, isDirty }：
  *   el      —— 表单 DOM（追加到宿主容器）
@@ -54,7 +54,6 @@ export function createModelConfigForm() {
     const modelInput = mkEl("input", "rs-form-input rs-remote-model");
     modelInput.type = "text";
     modelInput.id = "rs-remote-model";
-    modelInput.placeholder = "e.g., gpt-4o-mini";
     modelInput.style.display = 'none';
 
     // Model select (for LM Studio / Ollama - fetches from remote URL) - hidden by default
@@ -83,6 +82,8 @@ export function createModelConfigForm() {
     const apiKeyInput = mkEl("input", "rs-form-input rs-remote-api-key");
     apiKeyInput.type = "password";
     apiKeyInput.id = "rs-remote-api-key";
+    // 后端对已存密钥返回固定星号串（llm.API_KEY_MASK）：纯星号即视为「未改动、沿用已存密钥」
+    const isMaskedKey = (v) => /^\*+$/.test(v || '');
     apiKeyInput.placeholder = "Optional for local services";
     
     apiKeyRow.appendChild(apiKeyLabel);
@@ -100,26 +101,6 @@ export function createModelConfigForm() {
     
     baseUrlRow.appendChild(baseUrlLabel);
     baseUrlRow.appendChild(baseUrlInput);
-
-    // Temperature input row (remote providers only - hidden by default)
-    const temperatureRow = mkEl("div", "rs-config-row");
-    const temperatureLabel = mkEl("label", "rs-form-label");
-    temperatureLabel.textContent = "Temperature";
-
-    const temperatureInput = mkEl("input", "rs-form-input rs-remote-temperature");
-    temperatureInput.type = "number";
-    temperatureInput.id = "rs-remote-temperature";
-    temperatureInput.min = "0";
-    temperatureInput.max = "2";
-    temperatureInput.step = "0.1";
-
-    const temperatureHint = mkEl("div", "rs-form-hint");
-    temperatureHint.style.cssText = 'font-size:10px;color:#888;margin-top:2px;line-height:1.3;';
-    temperatureHint.innerHTML = "采样温度；填 0 则不发送，使用服务端/模型默认值";
-
-    temperatureRow.appendChild(temperatureLabel);
-    temperatureRow.appendChild(temperatureInput);
-    temperatureRow.appendChild(temperatureHint);
 
     // Local models directory row (for Local GGUF - hidden by default)
     const localDirRow = mkEl("div", "rs-config-row");
@@ -181,7 +162,18 @@ export function createModelConfigForm() {
     providerSaveStatusText.style.fontSize = "11px";
     providerSaveStatusText.style.color = "#999";
 
-    remoteForm.append(remoteInfoText, providerRow, localDirRow, modelRowWrapper, apiKeyRow, baseUrlRow, temperatureRow, providerSaveStatusText);
+    // Base URL：有预设端点的供应商默认折叠（减少配置干扰），点标题可展开改写；
+    // 无预设的（OpenAI Compatible）端点必须手填，保持常显且不给收起入口。
+    const advancedDetails = mkEl("details", "rs-remote-advanced");
+    const advancedSummary = mkEl("summary", "rs-remote-advanced-summary");
+    advancedSummary.textContent = "自定义端点";
+    // Chromium <details> 会把非 summary 子元素包进匿名块，gap 不生效；用 div 包裹让 flex gap 正确应用
+    const advancedContent = mkEl("div", "rs-remote-adv-content");
+    advancedContent.append(baseUrlRow);
+    advancedDetails.append(advancedSummary, advancedContent);
+    advancedDetails.style.display = "none";
+
+    remoteForm.append(remoteInfoText, providerRow, apiKeyRow, localDirRow, modelRowWrapper, advancedDetails, providerSaveStatusText);
     // 自动卸载本地模型设置放在设置页最底部
     remoteForm.appendChild(localUnloadRow);
 
@@ -205,6 +197,12 @@ export function createModelConfigForm() {
     // ==========================================
     // Provider change handler - show/hide fields dynamically
     // ==========================================
+    // 输入框里是星号掩码 = 已存密钥未改动，按空处理（保存/拉取都不发，服务端沿用已存明文）
+    const effectiveApiKey = () => {
+        const v = apiKeyInput.value.trim();
+        return isMaskedKey(v) ? '' : v;
+    };
+
     const fetchModelsFromUrl = async (baseUrl, targetSelect) => {
         targetSelect.innerHTML = '';
         const loadingOpt = document.createElement('option');
@@ -215,11 +213,11 @@ export function createModelConfigForm() {
         
         try {
             const proxyUrl = `/rs_prompts/fetch_remote_models`;
-            const body = { base_url: baseUrl };
-            // 需要鉴权的 provider（show_api_key=true）附带 API Key
+            const body = { base_url: baseUrl, provider: providerSelect.value };
+            // 需要鉴权的 provider（show_api_key=true）附带 API Key；留空时服务端回退已存密钥
             const def = getProviderDef(providerSelect.value);
             if (def.show_api_key) {
-                const key = apiKeyInput.value.trim();
+                const key = effectiveApiKey();
                 if (key) body.api_key = key;
             }
             const resp = await fetch(proxyUrl, {
@@ -354,6 +352,38 @@ export function createModelConfigForm() {
 
     let savedRemoteConfig = null;
 
+    // 折叠区显隐：有预设 Base URL 的供应商默认收起（可展开改写）；无预设的常显且不给收起入口；
+    // 已存端点与预设不一致（用户改过，如百炼业务空间专属域名）时自动展开，避免自定义端点被藏起来
+    const applyAdvancedSection = (def, saved) => {
+        if (def.type === 'local') {
+            advancedDetails.style.display = 'none';
+            return;
+        }
+        const preset = (def.default_base_url || '').trim();
+        const savedUrl = ((saved && saved.base_url) || '').trim();
+        const customized = !!preset && !!savedUrl
+            && savedUrl.replace(/\/+$/, '') !== preset.replace(/\/+$/, '');
+        advancedDetails.style.display = 'flex';
+        advancedDetails.open = customized || !preset;
+        advancedSummary.style.display = preset ? '' : 'none';
+    };
+
+    // API Key 行显隐与提示语：requires_api_key 的云厂商留空会 401，提示按「必填」写；
+    // 后端已存密钥时返回掩码串，直接回填显示（未改动/清空都沿用旧值）
+    const applyApiKeyHint = (def, saved) => {
+        apiKeyRow.style.display = def.show_api_key ? 'flex' : 'none';
+        if (!def.show_api_key) return;
+        const masked = isMaskedKey(saved.api_key);
+        apiKeyInput.value = saved.api_key || '';
+        if (masked) {
+            apiKeyInput.placeholder = '已保存（留空沿用）';
+        } else if (def.requires_api_key) {
+            apiKeyInput.placeholder = '必填：控制台创建的 API Key';
+        } else {
+            apiKeyInput.placeholder = '可选：本地/自建服务可留空';
+        }
+    };
+
     const handleProviderChange = async () => {
         const provider = providerSelect.value;
         const def = getProviderDef(provider);
@@ -362,17 +392,15 @@ export function createModelConfigForm() {
         const fullConfig = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
         savedRemoteConfig = fullConfig;
         const saved = (fullConfig.providers && fullConfig.providers[provider]) || {};
-        const mask = (v) => (v === '***' ? '' : (v || ''));
+        applyAdvancedSection(def, saved);
+        applyApiKeyHint(def, saved);
         
         if (def.type === 'local') {
             // Local GGUF: show dir input + local model select, hide everything else
-            apiKeyRow.style.display = "none";
-            baseUrlRow.style.display = "none";
             modelInput.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'block', 'important');
             localDirRow.style.display = "flex";
-            temperatureRow.style.display = "none";
             localDirInput.value = saved.models_dir || "";
 
             // 恢复/显示自动卸载复选框（配置顶层字段）
@@ -384,38 +412,22 @@ export function createModelConfigForm() {
             await fetchLocalModels();
         } else if (def.model_mode === 'hybrid') {
             // OpenAI Compatible：手动输入 + 可选在线下拉
-            apiKeyRow.style.display = def.show_api_key ? "flex" : "none";
-            baseUrlRow.style.display = "flex";
-            if (def.show_api_key) {
-                apiKeyInput.placeholder = saved.api_key ? "sk-..." : "API key (optional)";
-                apiKeyInput.value = mask(saved.api_key);
-            }
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             localDirRow.style.display = "none";
             localUnloadRow.style.display = "none";
             baseUrlInput.value = saved.base_url || (def.default_base_url || "");
-            temperatureRow.style.display = "flex";
-            temperatureInput.value = saved.temperature ?? 0;
             // 先恢复手动输入值（作为拉取失败的回退内容），再尝试在线拉取模型列表
             modelInput.value = saved.model || "";
             await refreshOpenAIModelUI();
         } else {
             // dropdown 模式（LM Studio / Ollama / OpenRouter / Unsloth 等）
-            apiKeyRow.style.display = def.show_api_key ? "flex" : "none";
-            if (def.show_api_key) {
-                apiKeyInput.placeholder = "API key";
-                apiKeyInput.value = mask(saved.api_key);
-            }
             modelInput.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'block', 'important');
             localDirRow.style.display = "none";
             localUnloadRow.style.display = "none";
-            baseUrlRow.style.display = "flex";
             const defaultBaseUrl = def.default_base_url || "";
             baseUrlInput.value = saved.base_url || defaultBaseUrl;
-            temperatureRow.style.display = "flex";
-            temperatureInput.value = saved.temperature ?? 0;
             await fetchModelsFromUrl(baseUrlInput.value.trim(), modelSelectEl);
             applyRemoteSavedModel(saved.model);
         }
@@ -437,7 +449,6 @@ export function createModelConfigForm() {
         model: getModelValue(),
         api_key: apiKeyInput.value,
         base_url: baseUrlInput.value,
-        temperature: parseFloat(temperatureInput.value) || 0,
         models_dir: localDirInput.value.trim(),
         auto_unload_local: localUnloadCheckbox.checked,
     });
@@ -460,11 +471,9 @@ export function createModelConfigForm() {
             const localModelValue = localModelSelectEl.value;
             if (localModelValue && localModelValue !== '__loading__') config.model = localModelValue;
         } else {
-            config.api_key = apiKeyInput.value;
+            config.api_key = effectiveApiKey();
             config.base_url = baseUrlInput.value;
             const modelValue = getModelValue();
-            const tempValue = parseFloat(temperatureInput.value);
-            config.temperature = isNaN(tempValue) ? 0 : tempValue;
             // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model；
             // hybrid 模式仅在在线列表模式下走同样的保护，手动输入模式始终保存
             if (def.model_mode === 'dropdown') {
@@ -478,6 +487,12 @@ export function createModelConfigForm() {
 
         const result = await window.NeoNodes?.saveRemoteLLMConfig?.(config);
         if (!result || !result.success) return false;
+
+        // 云厂商必填 API Key：输入框空且服务端也没存过时给一条醒目提示
+        // （留空=沿用已存密钥，所以只在两处都没有时提示，避免误报）
+        if (def.requires_api_key && !config.api_key && !isMaskedKey(cfg.providers?.[provider]?.api_key)) {
+            setLocalStatusMsg("⚠️ 云供应商必填 API Key，否则调用会 401", "#eab308");
+        }
 
         // 本地模式：额外经 set_model 持久化 + 切换常驻模型（覆盖单模型不触发 change 的场景）；
         // 与已保存的当前模型一致时跳过，避免无谓重载模型
@@ -520,6 +535,9 @@ export function createModelConfigForm() {
     };
     baseUrlInput.addEventListener("change", fetchModelsForBaseUrl);
     baseUrlInput.addEventListener("blur", fetchModelsForBaseUrl);
+    // 填入/修改 API Key 后自动重拉模型列表（云厂商鉴权接口，切换时首次拉取通常无密钥）
+    apiKeyInput.addEventListener("change", fetchModelsForBaseUrl);
+    apiKeyInput.addEventListener("blur", fetchModelsForBaseUrl);
 
     function setLocalStatusMsg(msg, color, autoHide = true) {
         providerSaveStatusText.textContent = msg;

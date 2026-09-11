@@ -102,13 +102,14 @@ test("快捷输入 Enter：无 skill 时走流式生成并回填", async () => {
     assertGolden("flow.generate-stream.state", state(node, el));
 });
 
-test("H3 审计事件：status 显示阶段、replace 整段替换正文", async () => {
+test("H3 审计事件：status 累计显示阶段、replace 整段替换正文、结束后保留结果", async () => {
     const H3_CHUNKS = [
         'data: {"text":"draft ","kind":"content"}',
         'data: {"text":"prompt","kind":"content"}',
         'data: {"text":"🔍 格式自检中…","kind":"status"}',
-        'data: {"text":"✏️ 检测到格式问题，自动修复中…","kind":"status"}',
-        'data: {"text":"✏️ 已自动修复格式","kind":"status"}',
+        'data: {"text":"⚠️ 自检发现 1 处格式问题：缺少镜头编号","kind":"status"}',
+        'data: {"text":"✏️ 自动修复中…","kind":"status"}',
+        'data: {"text":"✏️ 已自动修复格式（1 处问题）","kind":"status"}',
         'data: {"text":"repaired final prompt","kind":"replace"}',
         "data: [DONE]",
     ];
@@ -123,8 +124,11 @@ test("H3 审计事件：status 显示阶段、replace 整段替换正文", async
     // replace 事件整段替换已透传的草稿，最终落盘的是修复后文本
     assert.equal(el.promptArea.value, "repaired final prompt");
     assert.equal(widgetValue(node, "prompt"), "repaired final prompt");
-    // 流结束后状态行清除
-    assert.equal(document.querySelector(".rs-thinking"), null);
+    // 流结束后保留 H3 流程面板：自检违规项与修复结果可回看（节点 UI 挂在 domWidget 上，非 document.body）
+    const statusPanel = el.root.querySelector(".rs-thinking");
+    assert.ok(statusPanel, "流结束后应保留 H3 流程面板");
+    assert.match(statusPanel.textContent, /自检发现 1 处格式问题：缺少镜头编号/);
+    assert.match(statusPanel.textContent, /已自动修复格式（1 处问题）/);
 });
 
 test("选中 skill：请求体带 skillId 与拼接后的 text", async () => {
@@ -317,4 +321,33 @@ test("节点移除后注销全局监听并清掉挂 body 的浮层", async () =>
         prompt: "移除后不应写入",
     });
     assert.equal(parts(node).promptArea.value, "移除前");
+});
+
+test("自动增强菜单：右上角 ✕ 关闭；有未保存修改时先出确认条", async () => {
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ output_prefix: "" }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+
+    const node = await makeNode(21);
+    const caret = uiRoot(node).querySelector(".rs-auto-wrap .rs-random-caret");
+    const menu = document.querySelector(".rs-auto-config");
+    const closeBtn = menu.querySelector(".rs-auto-close");
+    assert.ok(closeBtn, "设置菜单右上角应有 ✕ 关闭按钮");
+
+    click(caret); // 打开
+    await sleep(300); // 等两表单 load 落定（放行脏检查）
+    assert.equal(menu.style.display, "block");
+
+    click(closeBtn); // 无修改：直接关
+    assert.equal(menu.style.display, "none");
+
+    click(caret); // 重开并改生图设置输出前缀 → 脏
+    await sleep(300);
+    const genPanel = menu.querySelectorAll(".rs-auto-panel")[1];
+    genPanel.querySelector("input.rs-form-input:not(.rs-combo-input)").value = "out-";
+    click(closeBtn); // 有未保存修改：不关，出确认条
+    assert.equal(menu.style.display, "block");
+    assert.equal(menu.querySelector(".rs-gen-dirty-confirm").hidden, false);
+
+    click(menu.querySelector(".rs-gen-dirty-discard")); // 放弃修改 → 关
+    assert.equal(menu.style.display, "none");
 });

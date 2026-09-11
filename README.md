@@ -45,7 +45,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 1. **安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（或见上方手动安装），重启 ComfyUI。
 2. **配置 LLM（二选一）**
-   - **远程**：节点 Settings 里填 API Key + 端点（+ 采样温度）。
+   - **远程**：节点 Settings 里选 Provider（内置 DeepSeek、阿里云百炼(通义千问 / Token Plan)、Kimi、智谱 GLM、硅基流动，以及 OpenAI 兼容 / LM Studio / Ollama / OpenRouter 等），填 API Key + 端点。各家端点与申请入口见 [docs/llm.md](docs/llm.md)。
    - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型后点 💾 保存（目录只有一个模型时可跳过，运行时自动使用）。安装与模型目录规范见 [docs/llm.md](docs/llm.md)。
 3. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨ → 得到 AI 生成的提示词文本（无需连 CLIP，可直接接下游如 🎨 Krea2）。
 4. **第一次生图**：添加 🎨 Krea2 Generate 节点 → 选一个带 `workflow.json` 的生图 skill → prompt 接 ⚡ Neo Prompt Agent（常用）或手填，四视图类再连参考图 → 排队执行 → 直接输出 IMAGE 张量。

@@ -96,7 +96,7 @@
 | POST | `/rs_prompts/stream_{task_name}` | 按任务名动态注册的流式生成端点 |
 | POST | `/rs_prompts/stream_generate_prompt` | 流式生成 |
 | POST | `/rs_prompts/random_prompt` | 随机提示词 |
-| POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表 |
+| POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表（请求带 `provider`；`api_key` 留空时回退该 provider 已存密钥，端点按 provider 的 `append_v1` 规则拼接） |
 | GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组） |
 | POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens、gen_image 生图标记） |
 | POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这三个字段保留生图分类与设置区）；**名称唯一性校验**：name 与其它 skill 重复时返回 409 |

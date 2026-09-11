@@ -32,9 +32,9 @@ async function getRemoteLLMConfig() {
             enabled: false,
             active_provider: "openai",
             providers: {
-                openai: { api_key: "", base_url: "", model: "gpt-4o-mini", max_tokens: 500, temperature: 0.0, timeout: 60 },
-                lmstudio: { api_key: "", base_url: "http://localhost:1234/v1", model: "", max_tokens: 500, temperature: 0.0, timeout: 60 },
-                ollama: { api_key: "", base_url: "http://localhost:11430/v1", model: "", max_tokens: 500, temperature: 0.0, timeout: 60 }
+                openai: { api_key: "", base_url: "", model: "gpt-4o-mini", max_tokens: 500, timeout: 60 },
+                lmstudio: { api_key: "", base_url: "http://localhost:1234/v1", model: "", max_tokens: 500, timeout: 60 },
+                ollama: { api_key: "", base_url: "http://localhost:11430/v1", model: "", max_tokens: 500, timeout: 60 }
             }
         };
     }

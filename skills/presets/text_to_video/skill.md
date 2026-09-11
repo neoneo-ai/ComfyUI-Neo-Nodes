@@ -1,6 +1,6 @@
 ---
 category: video_enhance
-name: 文生视频
+name: WAN文生视频
 tags:
 - 文生
 - 视频

@@ -6,10 +6,34 @@
 
 | 模式 | 说明 | 要求 |
 |------|------|------|
-| Remote (远程) | 通过 API 调用云端大模型 | 在节点 Settings 中配置 API Key、端点和采样温度（Temperature） |
+| Remote (远程) | 通过 API 调用云端大模型 | 在节点 Settings 中配置 API Key、端点（与本地模式共用，采样温度统一用服务端默认） |
 | Local (本地) | 使用 llama.cpp 在本地推理 | 放置 GGUF 模型到目录并在 Settings → Provider 选「Local GGUF」后选择模型 |
 
 > **思考模型**：接入会输出推理过程的模型（如 `qwen3.6-35b-a3b`，OpenAI 兼容接口把推理放在 `reasoning_content`）时，生成期间会在提示词框上方实时显示「💭 思考中…」面板，正文出现或结束时自动清除，最终只保留正文结果（思考文本不写入提示词）。流式（远程/本地）会自动为推理预留 token 预算（下限见 `llm.py` 的 `STREAM_MIN_MAX_TOKENS`），避免推理耗尽预算导致没有正文。✨ 按钮旁的 ▾ 菜单提供「关闭思考」开关：勾选后经 `chat_template_kwargs={"enable_thinking": false}` 让服务端跳过推理直接输出（更快更稳，适合 Krea2 等只需最终提示词的场景）；不支持该字段的服务端会忽略此参数，无副作用。
+
+## 国产云供应商（开箱可选）
+
+Settings → Provider 下拉里已内置以下国产云端入口，选好后填 API Key（**云厂商必填**，留空会 401）即可用（模型名能自动列出就直接选，列不出可手输）：
+
+| 下拉项 | 默认 Base URL | 申请入口 | 示例模型名 |
+|--------|---------------|----------|------------|
+| `DeepSeek 深度求索` | `https://api.deepseek.com/v1` | [platform.deepseek.com](https://platform.deepseek.com) | `deepseek-flash` |
+| `阿里云百炼 (通义千问)` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | [百炼控制台](https://bailian.console.aliyun.com) | `qwen-plus` |
+| `阿里云百炼 Token Plan` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | 百炼控制台 → Token Plan | `qwen3.8-max` |
+| `月之暗面 Kimi` | `https://api.moonshot.cn/v1` | [platform.moonshot.cn](https://platform.moonshot.cn) | `kimi-k3` |
+| `智谱 GLM` | `https://open.bigmodel.cn/api/paas/v4` | [open.bigmodel.cn](https://open.bigmodel.cn) | `glm-5.3` |
+| `硅基流动 SiliconFlow` | `https://api.siliconflow.cn/v1` | [cloud.siliconflow.cn](https://cloud.siliconflow.cn) | `deepseek-ai/DeepSeek-V3` |
+
+- 模型名以各家控制台当前列表为准（上表只是示例）：下拉会自动请求模型列表端点（鉴权厂商在 API Key 输入框留空时复用已存密钥；填入/修改密钥后自动重拉），拉不到时回退为手动输入，不会卡在「未加载」。
+- 智谱端点是 `/api/paas/v4`，所以 `llm_providers.json` 里该家 `append_v1: false`；其余以 `/v1` 结尾，保持 `true` 即可（已接入 `/v1` 时不会重复追加）。
+- 百炼可改用业务空间专属域名（`https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`）：展开「自定义端点」把 Base URL 改过去即可；其 API Key 与地域绑定，跨地域会返回 401。
+- 有预设 Base URL 的供应商（云端厂商、LM Studio / Ollama / vLLM 等）默认把 **Base URL** 收进「自定义端点」折叠区，避免干扰；改端点时点标题展开即可，空着就用预设值。无预设端点的 OpenAI Compatible 需要手填端点，因此该行保持常显。
+- 采样温度已从界面移除：请求体不再发送 `temperature`，统一使用服务端/模型默认值。
+- 已保存的端点与预设不一致时（例如改成了百炼业务空间专属域名），折叠区会**自动展开**，不会把自定义端点藏起来。
+- API Key：标记 `requires_api_key` 的云厂商为**必填**（输入框提示「必填」，留空保存会告警 401）；已经存过密钥时后端只回掩码串，输入框以星号显示（未改动/清空都沿用旧值，不会把掩码当新密钥落盘）。LM Studio / Ollama / vLLM / Unsloth 与 OpenAI Compatible 可留空。
+- 阿里云三套通道互相隔离，API Key 与 Base URL 必须配套，混用会走按量计费通道产生意外扣费或返回 401/403：按量付费（`sk-` + `dashscope.aliyuncs.com/compatible-mode/v1`）、Token Plan（`sk-sp-` + `token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，目前仅华北 2（北京）地域）、Coding Plan（`sk-sp-` + `coding.dashscope.aliyuncs.com/v1`）。
+- 下拉里**没有** Coding Plan：其条款仅允许在编程工具内交互使用，禁止以 API 形式用于自动化脚本 / 应用后端 / 非交互式批量调用，违规可能导致订阅暂停或 Key 被封。按订阅额度用请选「阿里云百炼 Token Plan」，按调用付费请选「阿里云百炼 (通义千问)」。
+- 供应商清单定义在 `configs/llm_providers.json`，增删改（含接入自建服务）直接编辑该文件，重启 ComfyUI 后下拉即生效。
 
 ## 本地 LLM 推理安装（可选）
 

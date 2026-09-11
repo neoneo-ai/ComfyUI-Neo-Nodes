@@ -665,10 +665,10 @@ class TestInlineThinkStripping(unittest.TestCase):
 class TestEnableThinking(unittest.TestCase):
     """enable_thinking（关闭思考）：经 chat_template_kwargs 透传到请求体；未设置则不发送。"""
 
-    def _capture_chat_completion_kwargs(self, enable_thinking, temperature=0.0, reasoning_effort=None):
+    def _capture_chat_completion_kwargs(self, enable_thinking, reasoning_effort=None):
         client = llm_mod.RemoteLLMClient({
             "provider": "lmstudio", "base_url": "http://127.0.0.1:1234",
-            "model": "test-model", "max_tokens": 500, "temperature": temperature,
+            "model": "test-model", "max_tokens": 500,
         })
         captured = {}
 
@@ -700,13 +700,10 @@ class TestEnableThinking(unittest.TestCase):
         kwargs = self._capture_chat_completion_kwargs(None)
         self.assertNotIn("chat_template_kwargs", kwargs.get("extra_body", {}))
 
-    def test_payload_omits_temperature_when_zero(self):
-        kwargs = self._capture_chat_completion_kwargs(None, temperature=0.0)
+    def test_payload_omits_temperature(self):
+        # 温度参数已从界面移除：请求体不再携带 temperature，统一用服务端默认
+        kwargs = self._capture_chat_completion_kwargs(None)
         self.assertNotIn("temperature", kwargs)
-
-    def test_payload_includes_temperature_when_nonzero(self):
-        kwargs = self._capture_chat_completion_kwargs(None, temperature=0.7)
-        self.assertEqual(kwargs.get("temperature"), 0.7)
 
     def test_run_remote_inference_threads_enable_thinking(self):
         captured = {}
@@ -951,6 +948,107 @@ class TestLocalSingleModelFallback(unittest.TestCase):
         cfg = {"providers": {"local": {"model": "gone.gguf", "models_dir": ""}}}
         with self.assertRaises(RuntimeError):
             self._load(cfg, self._scanned("only.gguf"))
+
+
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestProviderDefinitions(unittest.TestCase):
+    """provider 定义（configs/llm_providers.json）：结构合法性、云厂商运行时就位、内置兜底同步"""
+
+    CLOUD_IDS = ("deepseek", "dashscope", "dashscope-plan", "moonshot", "zhipu", "siliconflow")
+
+    def test_definition_shape(self):
+        ids = []
+        for p in llm_mod.get_provider_list():
+            self.assertTrue(p.get("id"), p)
+            self.assertIn(p.get("type"), ("local", "remote"), p)
+            ids.append(p["id"])
+            if p["type"] == "remote":
+                self.assertIn(p.get("model_mode"), ("hybrid", "dropdown"), p)
+        self.assertEqual(len(ids), len(set(ids)), ids)
+
+    def test_append_v1_matches_base_url(self):
+        # 非 /v1 结尾的端点（智谱 /api/paas/v4 等）必须关掉自动追加，否则拼出错误 URL
+        for p in llm_mod.get_provider_list():
+            base = (p.get("default_base_url") or "").rstrip("/")
+            if base and not base.endswith("/v1"):
+                self.assertFalse(p.get("append_v1", True), p["id"])
+
+    def test_client_base_url_per_provider(self):
+        # 实测客户端拼接：缺 /v1 的补上，本身就是 /v4 的智谱保持原样
+        captured = {}
+
+        class _FakeOpenAI:
+            def __init__(self, **kw):
+                captured.update(kw)
+
+        fake_openai = types.ModuleType("openai")
+        fake_openai.OpenAI = _FakeOpenAI
+        cases = (
+            ("deepseek", "https://api.deepseek.com", "https://api.deepseek.com/v1"),
+            ("siliconflow", "https://api.siliconflow.cn/v1", "https://api.siliconflow.cn/v1"),
+            ("zhipu", "https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4"),
+        )
+        with patch.dict(sys.modules, {"openai": fake_openai}):
+            for provider, base_url, expected in cases:
+                captured.clear()
+                llm_mod.RemoteLLMClient({"provider": provider, "base_url": base_url, "api_key": "sk-test"})._build_client()
+                self.assertEqual(captured.get("base_url"), expected, provider)
+
+    def test_api_key_requirement_flag(self):
+        # 云厂商必填 API Key（前端据此提示「必填」并在留空保存时告警）；本地/自建服务可留空
+        flags = {p["id"]: bool(p.get("requires_api_key")) for p in llm_mod.get_provider_list()}
+        for pid in self.CLOUD_IDS + ("openrouter",):
+            self.assertTrue(flags.get(pid), pid)
+        for pid in ("local", "openai", "lmstudio", "ollama", "unsloth", "vllm"):
+            self.assertFalse(flags.get(pid), pid)
+
+    def test_cloud_providers_have_runtime_slots(self):
+        for pid in self.CLOUD_IDS:
+            self.assertIn(pid, llm_mod._REMOTE_PROVIDERS, pid)
+            slot = llm_mod._REMOTE_PROVIDER_DEFAULTS.get(pid) or {}
+            self.assertTrue(slot.get("base_url"), slot)
+            self.assertEqual(set(slot), {"api_key", "base_url", "model", "max_tokens", "timeout"})
+
+    def test_builtin_fallback_matches_config(self):
+        with open(os.path.join(_NODE_DIR, "configs", "llm_providers.json"), encoding="utf-8") as f:
+            configured = json.load(f)["providers"]
+        self.assertEqual(llm_mod._BUILTIN_PROVIDER_DEFS, configured)
+
+    def test_migration_adds_missing_cloud_slots(self):
+        cfg = {"enabled": True, "active_provider": "lmstudio",
+               "providers": {"lmstudio": {"base_url": "http://host:1234/v1", "model": "local-model"}}}
+        out = llm_mod._migrate_remote_config(cfg)
+        self.assertEqual(out["active_provider"], "lmstudio")
+        self.assertEqual(out["providers"]["lmstudio"]["model"], "local-model")
+        self.assertEqual(out["providers"]["deepseek"]["base_url"], "https://api.deepseek.com/v1")
+
+    def test_build_remote_models_url(self):
+        # 模型列表端点须与聊天请求的 /v1 追加规则一致；智谱 /v4 端点不能再叠 /v1
+        cases = (
+            ("deepseek", "https://api.deepseek.com/v1", "https://api.deepseek.com/v1/models"),
+            ("deepseek", "https://api.deepseek.com", "https://api.deepseek.com/v1/models"),
+            ("zhipu", "https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/models"),
+            ("ollama", "http://localhost:11434/api", "http://localhost:11434/api/tags"),
+            ("lmstudio", "http://192.168.0.176:8888", "http://192.168.0.176:8888/v1/models"),
+            ("openai", "http://host:8000/v1/models", "http://host:8000/v1/models"),
+        )
+        for provider, base_url, expected in cases:
+            self.assertEqual(llm_mod.build_remote_models_url(base_url, provider), expected, (provider, base_url))
+
+    def test_api_key_mask_shape(self):
+        # 前端按「纯星号」识别已存掩码；固定 40 位（等长显示太长，过短不易辨认）
+        self.assertRegex(llm_mod.API_KEY_MASK, r"^\*{40}$")
+
+    def test_get_stored_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "remote_llm_config.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"enabled": True, "active_provider": "deepseek",
+                           "providers": {"deepseek": {"api_key": "sk-stored",
+                                                      "base_url": "https://api.deepseek.com/v1", "model": ""}}}, f)
+            with patch.object(llm_mod, "_REMOTE_CONFIG_PATH", path):
+                self.assertEqual(llm_mod.get_stored_api_key("deepseek"), "sk-stored")
+                self.assertEqual(llm_mod.get_stored_api_key("moonshot"), "")
 
 
 if __name__ == '__main__':
