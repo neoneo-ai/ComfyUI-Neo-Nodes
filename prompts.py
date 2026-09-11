@@ -58,6 +58,7 @@ from .llm import (
     run_llm_task,
     LLM_TASKS,
     resolve_multi_result,
+    get_provider_list,
 )
 
 
@@ -763,7 +764,9 @@ async def rs_prompts_get_remote_llm_config(request):
     """获取远程 LLM 配置（按 provider 分槽，返回时隐藏 api_key）"""
     try:
         config = get_remote_llm_config()
-        return web.json_response(_mask_remote_config(config))
+        masked = _mask_remote_config(config)
+        masked["provider_list"] = get_provider_list()
+        return web.json_response(masked)
     except Exception as e:
         logger.error(f"Error getting remote LLM config: {e}")
         return web.Response(status=500, text=str(e))

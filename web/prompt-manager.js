@@ -366,7 +366,7 @@ function createPromptManagerUI() {
 
     function init(ctx) {
         context = ctx;
-        const { node, graph, textWidget, allowRecipe } = ctx;
+        const { node, textWidget, allowRecipe } = ctx;
 
         function handleSaveClick() {
             presetListOverlay.style.display = "none";
@@ -600,7 +600,7 @@ function createPromptManagerUI() {
                         // In-memory cache only - no localStorage
 
                         presetListOverlay.style.display = "none";
-                        if (graph) graph.setDirtyCanvas(true, true);
+                        if (node.graph) node.graph.setDirtyCanvas(true, true);
                     };
 
                     if (source === "custom") {
@@ -688,7 +688,7 @@ function createPromptManagerUI() {
             presetListOverlay.style.display = "none";
             isListOpen = false;
             clearCollectionViewState();
-            if (graph) graph.setDirtyCanvas(true, true);
+            if (node.graph) node.graph.setDirtyCanvas(true, true);
         }
 
         function renderCollectionMatches(total, entries) {

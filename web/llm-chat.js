@@ -947,9 +947,10 @@ function createGenerateHandler(promptUI) {
         }
 
         // 工作流上下文（MiniMax H3 参数 + 叶子媒体清单）：探测图片尺寸有超时上限，失败静默降级
+        // 必须用 node.graph 而非闭包捕获的 graph：加载/切换工作流后旧图引用会失效，导致采集到空图
         let workflowContext = null;
         try {
-            workflowContext = await collectWorkflowContext(graph);
+            workflowContext = await collectWorkflowContext(node.graph);
         } catch (e) {
             console.warn("collectWorkflowContext failed:", e);
         }
@@ -1145,7 +1146,7 @@ function createGenerateHandler(promptUI) {
  * 返回注销函数，节点移除时调用，避免残留监听持有已销毁节点的 DOM。
  */
 function wireBackendStreamUpdate(promptUI) {
-    const { customTextarea, textWidget, node, graph, refreshMarkdownPreviewAuto } = promptUI;
+    const { customTextarea, textWidget, node, refreshMarkdownPreviewAuto } = promptUI;
     const handler = (event) => {
         const currentUid = node.properties?.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
         if (event.detail.instance_uid !== currentUid) return;
@@ -1153,7 +1154,8 @@ function wireBackendStreamUpdate(promptUI) {
         customTextarea.value = promptText;
         customTextarea.scrollTop = customTextarea.scrollHeight;
         saveTextToStorage(node, textWidget, customTextarea);
-        if (graph) graph.setDirtyCanvas(true, true);
+        // 用 node.graph 而非闭包捕获的 graph：加载/切换工作流后旧图引用会失效
+        if (node.graph) node.graph.setDirtyCanvas(true, true);
         refreshMarkdownPreviewAuto?.();
     };
     api.addEventListener("rs.prompt.auto_generate_update", handler);

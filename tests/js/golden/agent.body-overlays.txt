@@ -43,11 +43,7 @@ body
         div.rs-config-row
           label.rs-form-label "Provider"
           select#rs-remote-provider.rs-form-input.rs-remote-provider
-            option <value=local selected> "Local GGUF (llama.cpp)"
-            option <value=openai> "OpenAI Compatible"
-            option <value=lmstudio> "LM Studio"
-            option <value=ollama> "Ollama"
-            option <value=openrouter> "OpenRouter"
+            option <value=local selected> "Loading..."
         div.rs-config-row <display=none>
           label.rs-form-label "LLM Models Dir"
           input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=Default: ComfyUI/models/LLM>

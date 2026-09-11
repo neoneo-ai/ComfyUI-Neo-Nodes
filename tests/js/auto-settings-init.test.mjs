@@ -21,6 +21,13 @@ const localConfig = () => ({
     enabled: false,
     active_provider: "local",
     auto_unload_local: false,
+    provider_list: [
+        { id: "local", name: "Local GGUF (llama.cpp)", type: "local" },
+        { id: "openai", name: "OpenAI Compatible", type: "remote", default_base_url: "", append_v1: true, show_api_key: true, model_mode: "hybrid" },
+        { id: "lmstudio", name: "LM Studio", type: "remote", default_base_url: "http://localhost:1234/v1", append_v1: true, show_api_key: false, model_mode: "dropdown" },
+        { id: "ollama", name: "Ollama", type: "remote", default_base_url: "http://localhost:11430/v1", append_v1: true, show_api_key: false, model_mode: "dropdown" },
+        { id: "openrouter", name: "OpenRouter", type: "remote", default_base_url: "https://openrouter.ai/api/v1", append_v1: true, show_api_key: true, model_mode: "dropdown" },
+    ],
     providers: {
         local: { models_dir: "D:/gguf" },
         openai: { api_key: "", base_url: "", model: "gpt-4o-mini" },

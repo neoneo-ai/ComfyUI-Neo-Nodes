@@ -44,13 +44,8 @@ export function createModelConfigForm() {
     
     const providerSelect = mkEl("select", "rs-form-input rs-remote-provider");
     providerSelect.id = "rs-remote-provider";
-    providerSelect.innerHTML = `
-        <option value="local">Local GGUF (llama.cpp)</option>
-        <option value="openai">OpenAI Compatible</option>
-        <option value="lmstudio">LM Studio</option>
-        <option value="ollama">Ollama</option>
-        <option value="openrouter">OpenRouter</option>
-    `;
+    // 选项由 loadModelConfig 从后端 provider_list 动态填充
+    providerSelect.innerHTML = `<option value="local">Loading...</option>`;
     
     providerRow.appendChild(providerLabel);
     providerRow.appendChild(providerSelect);
@@ -221,8 +216,9 @@ export function createModelConfigForm() {
         try {
             const proxyUrl = `/rs_prompts/fetch_remote_models`;
             const body = { base_url: baseUrl };
-            // OpenAI Compatible / OpenRouter 的列表接口可能需要鉴权
-            if (providerSelect.value === 'openai' || providerSelect.value === 'openrouter') {
+            // 需要鉴权的 provider（show_api_key=true）附带 API Key
+            const def = getProviderDef(providerSelect.value);
+            if (def.show_api_key) {
                 const key = apiKeyInput.value.trim();
                 if (key) body.api_key = key;
             }
@@ -278,21 +274,23 @@ export function createModelConfigForm() {
 
     const getModelValue = () => {
         const provider = providerSelect.value;
-        if (provider === 'local') {
+        const def = getProviderDef(provider);
+        if (def.type === 'local') {
             return localModelSelectEl.value || '';
-        } else if (provider === 'openai') {
+        } else if (def.model_mode === 'hybrid') {
             // 在线列表拉取成功时以下拉为准，否则以手动输入框为准
             const dropdownVisible = modelSelectEl.style.display !== 'none';
             return dropdownVisible ? (modelSelectEl.value || '') : modelInput.value;
         } else {
-            // LM Studio / Ollama：下拉框为准，未加载时为空（不回填其它 provider 的 model）
+            // dropdown 模式：下拉框为准，未加载时为空（不回填其它 provider 的 model）
             return modelSelectEl ? modelSelectEl.value : '';
         }
     };
 
-    // OpenAI Compatible：尝试从 /v1/models 在线拉取列表；成功用下拉选择，失败回退手动输入
+    // hybrid 模式：尝试从 /v1/models 在线拉取列表；成功用下拉选择，失败回退手动输入
     const refreshOpenAIModelUI = async () => {
-        const savedModel = savedRemoteConfig?.providers?.openai?.model || '';
+        const provider = providerSelect.value;
+        const savedModel = savedRemoteConfig?.providers?.[provider]?.model || '';
         // base_url 为空时按官方 API 处理
         const baseUrl = baseUrlInput.value.trim() || 'https://api.openai.com/v1';
         await fetchModelsFromUrl(baseUrl, modelSelectEl);
@@ -350,16 +348,15 @@ export function createModelConfigForm() {
         }
     };
 
-    const REMOTE_PROVIDER_DEFAULTS = {
-        lmstudio: { baseUrl: "http://localhost:1234/v1" },
-        ollama: { baseUrl: "http://localhost:11430/v1" },
-        openrouter: { baseUrl: "https://openrouter.ai/api/v1" }
-    };
+    // provider 元数据从后端 /rs_prompts/remote_llm_config 的 provider_list 字段获取
+    let providerDefs = [];  // [{id, name, type, default_base_url, append_v1, show_api_key, model_mode}]
+    const getProviderDef = (id) => providerDefs.find(p => p.id === id) || {};
 
     let savedRemoteConfig = null;
 
     const handleProviderChange = async () => {
         const provider = providerSelect.value;
+        const def = getProviderDef(provider);
 
         // Load this provider's own saved config so switching providers never overwrites each other
         const fullConfig = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
@@ -367,7 +364,7 @@ export function createModelConfigForm() {
         const saved = (fullConfig.providers && fullConfig.providers[provider]) || {};
         const mask = (v) => (v === '***' ? '' : (v || ''));
         
-        if (provider === 'local') {
+        if (def.type === 'local') {
             // Local GGUF: show dir input + local model select, hide everything else
             apiKeyRow.style.display = "none";
             baseUrlRow.style.display = "none";
@@ -385,35 +382,37 @@ export function createModelConfigForm() {
             // 拉取并回填本地模型列表；await 让 load 在列表填充完成后再结束，
             // 避免「列表晚到 → loading 已解除 → 程序化改动逃过加载窗口」的竞态
             await fetchLocalModels();
-        } else if (provider === 'openai') {
-            apiKeyRow.style.display = "flex";
+        } else if (def.model_mode === 'hybrid') {
+            // OpenAI Compatible：手动输入 + 可选在线下拉
+            apiKeyRow.style.display = def.show_api_key ? "flex" : "none";
             baseUrlRow.style.display = "flex";
-            apiKeyInput.placeholder = "sk-... (optional for cloud)";
-            modelInput.placeholder = "e.g., gpt-4o-mini";
+            if (def.show_api_key) {
+                apiKeyInput.placeholder = saved.api_key ? "sk-..." : "API key (optional)";
+                apiKeyInput.value = mask(saved.api_key);
+            }
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             localDirRow.style.display = "none";
             localUnloadRow.style.display = "none";
-            apiKeyInput.value = mask(saved.api_key);
-            baseUrlInput.value = saved.base_url || "";
+            baseUrlInput.value = saved.base_url || (def.default_base_url || "");
             temperatureRow.style.display = "flex";
             temperatureInput.value = saved.temperature ?? 0;
             // 先恢复手动输入值（作为拉取失败的回退内容），再尝试在线拉取模型列表
             modelInput.value = saved.model || "";
             await refreshOpenAIModelUI();
-        } else if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
-            // OpenRouter 为云端服务需要 API Key；LM Studio / Ollama 本地服务不需要
-            apiKeyRow.style.display = provider === 'openrouter' ? "flex" : "none";
-            if (provider === 'openrouter') {
-                apiKeyInput.placeholder = "sk-or-...";
+        } else {
+            // dropdown 模式（LM Studio / Ollama / OpenRouter / Unsloth 等）
+            apiKeyRow.style.display = def.show_api_key ? "flex" : "none";
+            if (def.show_api_key) {
+                apiKeyInput.placeholder = "API key";
                 apiKeyInput.value = mask(saved.api_key);
-                baseUrlRow.style.display = "flex";
             }
             modelInput.style.setProperty('display', 'none', 'important');
             localModelSelectEl.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'block', 'important');
             localDirRow.style.display = "none";
             localUnloadRow.style.display = "none";
-            const defaultBaseUrl = REMOTE_PROVIDER_DEFAULTS[provider].baseUrl;
+            baseUrlRow.style.display = "flex";
+            const defaultBaseUrl = def.default_base_url || "";
             baseUrlInput.value = saved.base_url || defaultBaseUrl;
             temperatureRow.style.display = "flex";
             temperatureInput.value = saved.temperature ?? 0;
@@ -448,12 +447,13 @@ export function createModelConfigForm() {
         // 先读已保存的当前模型做对比（成功保存会清缓存，此处拿到的是本次保存前的值）
         const cfg = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
         const provider = providerSelect.value;
+        const def = getProviderDef(provider);
         // 只持久化当前 provider 相关字段，避免把隐藏字段的残留值（如本地模式下的 base_url）写进配置
         const config = {
-            enabled: provider !== 'local',
+            enabled: def.type !== 'local',
             provider: provider
         };
-        if (provider === 'local') {
+        if (def.type === 'local') {
             config.models_dir = localDirInput.value.trim();
             config.auto_unload_local = localUnloadCheckbox.checked;
             // 以下拉当前选中项为准；列表为空 / 加载失败时 value 为空，不覆盖已保存的模型
@@ -466,10 +466,10 @@ export function createModelConfigForm() {
             const tempValue = parseFloat(temperatureInput.value);
             config.temperature = isNaN(tempValue) ? 0 : tempValue;
             // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model；
-            // OpenAI Compatible 仅在在线列表模式下走同样的保护，手动输入模式始终保存
-            if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
+            // hybrid 模式仅在在线列表模式下走同样的保护，手动输入模式始终保存
+            if (def.model_mode === 'dropdown') {
                 if (modelValue) config.model = modelValue;
-            } else if (provider === 'openai' && modelSelectEl.style.display !== 'none') {
+            } else if (def.model_mode === 'hybrid' && modelSelectEl.style.display !== 'none') {
                 if (modelValue) config.model = modelValue;
             } else {
                 config.model = modelValue;
@@ -481,7 +481,7 @@ export function createModelConfigForm() {
 
         // 本地模式：额外经 set_model 持久化 + 切换常驻模型（覆盖单模型不触发 change 的场景）；
         // 与已保存的当前模型一致时跳过，避免无谓重载模型
-        if (provider === 'local' && config.model && cfg.providers?.local?.model !== config.model) {
+        if (def.type === 'local' && config.model && cfg.providers?.local?.model !== config.model) {
             try {
                 const setResult = await setCurrentModel(config.model);
                 if (!setResult || !setResult.success) {
@@ -504,15 +504,17 @@ export function createModelConfigForm() {
         return snapshot !== null && JSON.stringify(collectFormValues()) !== JSON.stringify(snapshot);
     };
 
-    // base URL 变化时自动拉取模型列表（LM Studio / Ollama / OpenRouter / OpenAI），只读不保存
+    // base URL 变化时自动拉取模型列表，只读不保存
     const fetchModelsForBaseUrl = async () => {
         const provider = providerSelect.value;
-        if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
+        const def = getProviderDef(provider);
+        if (def.type === 'local') return;
+        if (def.model_mode === 'dropdown') {
             const url = baseUrlInput.value.trim();
             if (!url) return;
             await fetchModelsFromUrl(url, modelSelectEl);
             applyRemoteSavedModel(savedRemoteConfig?.providers?.[provider]?.model);
-        } else if (provider === 'openai' && baseUrlInput.value.trim()) {
+        } else if (def.model_mode === 'hybrid' && baseUrlInput.value.trim()) {
             await refreshOpenAIModelUI();
         }
     };
@@ -543,9 +545,21 @@ export function createModelConfigForm() {
         loading = true;
         try {
             const config = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
+            // 从后端获取 provider 定义列表，动态构建下拉选项
+            if (config.provider_list && Array.isArray(config.provider_list)) {
+                providerDefs = config.provider_list;
+                providerSelect.innerHTML = '';
+                providerDefs.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name || p.id;
+                    providerSelect.appendChild(opt);
+                });
+            }
             let providerValue = config.active_provider || 'local';
-            if (!['local', 'openai', 'lmstudio', 'ollama', 'openrouter'].includes(providerValue)) {
-                providerValue = 'openai';
+            const validIds = providerDefs.map(p => p.id);
+            if (!validIds.includes(providerValue)) {
+                providerValue = validIds.includes('openai') ? 'openai' : (validIds[0] || 'local');
             }
             if (config.enabled === false) {
                 providerValue = 'local';

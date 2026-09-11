@@ -182,7 +182,7 @@ app.registerExtension({
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox, thinkingDepthSelect,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
-            } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
+            } = promptUI.init({ node, textWidget, allowRecipe: true });
 
             // Populate skill selector and restore the last selection. The saved id is
             // captured before async repopulation so doPopulate's programmatic change
@@ -425,7 +425,7 @@ app.registerExtension({
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, textWidget, node, graph: node.graph, statusBar: null,
+                customTextarea, textWidget, node, statusBar: null,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect
             };
 
@@ -476,7 +476,7 @@ app.registerExtension({
             document.addEventListener("click", popupCloser);
 
             const promptUpdateHandler = NodeBehaviors.createPromptUpdateHandler(
-                { customTextarea, textWidget, node, graph: node.graph, randomBtn }
+                { customTextarea, textWidget, node, randomBtn }
             );
             api.addEventListener("rs.prompt.update", promptUpdateHandler);
 
@@ -689,7 +689,7 @@ app.registerExtension({
                 presetListOverlay, presetNameInput, deleteConfirmOverlay,
                 quickInputWrapper, populateSkillSelector, skillSelector, autoGenerateCheckbox, thinkingDepthSelect,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController
-            } = promptUI.init({ node, graph: node.graph, textWidget, allowRecipe: true });
+            } = promptUI.init({ node, textWidget, allowRecipe: true });
 
             // Populate skill selector and restore the last selection. The saved id is
             // captured before async repopulation so doPopulate's programmatic change
@@ -960,7 +960,7 @@ app.registerExtension({
             // ==========================================
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
-                customTextarea, textWidget, node, graph: node.graph, statusBar,
+                customTextarea, textWidget, node, statusBar,
                 attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect
             };
 
@@ -1011,7 +1011,7 @@ app.registerExtension({
             document.addEventListener("click", popupCloser);
 
             const promptUpdateHandler = NodeBehaviors.createPromptUpdateHandler(
-                { customTextarea, textWidget, node, graph: node.graph, randomBtn }
+                { customTextarea, textWidget, node, randomBtn }
             );
             api.addEventListener("rs.prompt.update", promptUpdateHandler);
 

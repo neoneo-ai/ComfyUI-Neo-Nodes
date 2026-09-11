@@ -103,7 +103,7 @@ function createBasicNodeInitializer(node) {
  */
 function createRandomHandler(promptUI) {
     return async () => {
-        const { randomBtn, customTextarea, textWidget, node, graph } = promptUI;
+        const { randomBtn, customTextarea, textWidget, node } = promptUI;
 
         randomBtn.disabled = true;
 
@@ -112,7 +112,7 @@ function createRandomHandler(promptUI) {
             if (data.status === "success") {
                 setTextAndTrigger(customTextarea, data.prompt);
                 saveTextToStorage(node, textWidget, customTextarea);
-                if (graph) graph.setDirtyCanvas(true, true);
+                if (node.graph) node.graph.setDirtyCanvas(true, true);
             } else {
                 console.error("Random prompt failed:", data);
                 alert("Failed to generate random prompt: " + (data.error || "Unknown error"));
@@ -264,7 +264,7 @@ function showRandomPickToast(anchorEl, count) {
  */
 function createPromptUpdateHandler(promptUI) {
     return (event) => {
-        const { customTextarea, textWidget, node, graph } = promptUI;
+        const { customTextarea, textWidget, node } = promptUI;
         const currentUid = getInstanceUid(node);
         
         if (event.detail.instance_uid === currentUid) {
@@ -274,7 +274,7 @@ function createPromptUpdateHandler(promptUI) {
                     textWidget.value = event.detail.prompt;
                     // In-memory cache only - no localStorage
                 }
-                if (graph) graph.setDirtyCanvas(true, true);
+                if (node.graph) node.graph.setDirtyCanvas(true, true);
                 // 随机路径附带 random_count：给出可视化反馈（外部输入同步无此字段）
                 if (event.detail.random_count) showRandomPickToast(promptUI.randomBtn, event.detail.random_count);
             }, 10);

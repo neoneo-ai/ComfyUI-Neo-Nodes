@@ -28,6 +28,38 @@ logger = logging.getLogger(__name__)
 # ==========================================
 
 _CONFIGS_DIR: str = os.path.join(os.path.dirname(__file__), "configs")
+_PROVIDERS_CONFIG_PATH = os.path.join(_CONFIGS_DIR, "llm_providers.json")
+
+# 内置兜底（llm_providers.json 缺失时使用）
+_BUILTIN_PROVIDER_DEFS = [
+    {"id": "local", "name": "Local GGUF (llama.cpp)", "type": "local"},
+    {"id": "openai", "name": "OpenAI Compatible", "type": "remote",
+     "default_base_url": "", "append_v1": True, "show_api_key": True, "model_mode": "hybrid"},
+    {"id": "lmstudio", "name": "LM Studio", "type": "remote",
+     "default_base_url": "http://localhost:1234/v1", "append_v1": True, "show_api_key": False, "model_mode": "dropdown"},
+    {"id": "ollama", "name": "Ollama", "type": "remote",
+     "default_base_url": "http://localhost:11430/v1", "append_v1": True, "show_api_key": False, "model_mode": "dropdown"},
+    {"id": "openrouter", "name": "OpenRouter", "type": "remote",
+     "default_base_url": "https://openrouter.ai/api/v1", "append_v1": True, "show_api_key": True, "model_mode": "dropdown"},
+]
+
+
+def _load_provider_defs() -> List[Dict[str, Any]]:
+    """从 configs/llm_providers.json 加载 provider 定义；文件缺失或损坏时回退内置列表。"""
+    try:
+        with open(_PROVIDERS_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        providers = data.get("providers")
+        if isinstance(providers, list) and providers:
+            return providers
+    except Exception as e:
+        logger.warning(f"Failed to load llm_providers.json, using builtin defaults: {e}")
+    return list(_BUILTIN_PROVIDER_DEFS)
+
+
+def get_provider_list() -> List[Dict[str, Any]]:
+    """返回 provider 定义列表（供前端动态构建下拉）。"""
+    return _load_provider_defs()
 
 
 # ==========================================
@@ -191,50 +223,32 @@ TRANSLATION_CACHE = TranslationCache(max_size=200)
 
 _REMOTE_CONFIG_PATH = os.path.join(_CONFIGS_DIR, "remote_llm_config.json")
 
-# 各远程 provider 的独立默认配置，切换 provider 时互不影响
-_REMOTE_PROVIDER_DEFAULTS = {
-    "openai": {
-        "api_key": "",
-        "base_url": "",
-        "model": "gpt-4o-mini",
-        "max_tokens": 500,
-        "temperature": 0.0,
-        "timeout": 60,
-    },
-    "lmstudio": {
-        "api_key": "",
-        "base_url": "http://localhost:1234/v1",
-        "model": "",
-        "max_tokens": 500,
-        "temperature": 0.0,
-        "timeout": 60,
-    },
-    "ollama": {
-        "api_key": "",
-        "base_url": "http://localhost:11430/v1",
-        "model": "",
-        "max_tokens": 500,
-        "temperature": 0.0,
-        "timeout": 60,
-    },
-    # OpenRouter：OpenAI 兼容云聚合，模型列表来自其公开 /v1/models
-    "openrouter": {
-        "api_key": "",
-        "base_url": "https://openrouter.ai/api/v1",
-        "model": "",
-        "max_tokens": 500,
-        "temperature": 0.0,
-        "timeout": 120,
-    },
-    # 本地 GGUF（llama.cpp 进程内推理）：models_dir 为空时使用默认 <ComfyUI>/models/LLM
-    "local": {
-        "model": "",
-        "models_dir": "",
-    },
-}
+
+def _build_provider_defaults() -> Dict[str, Dict[str, Any]]:
+    """根据 llm_providers.json 生成各 provider 的默认配置槽位。"""
+    defaults: Dict[str, Dict[str, Any]] = {}
+    for p in _load_provider_defs():
+        pid = p.get("id", "")
+        if not pid:
+            continue
+        if p.get("type") == "local":
+            defaults[pid] = {"model": "", "models_dir": ""}
+        else:
+            defaults[pid] = {
+                "api_key": "",
+                "base_url": p.get("default_base_url", ""),
+                "model": "",
+                "max_tokens": 500,
+                "temperature": 0.0,
+                "timeout": 60,
+            }
+    return defaults
+
+
+_REMOTE_PROVIDER_DEFAULTS = _build_provider_defaults()
 
 # 走 OpenAI 兼容 HTTP 的 provider；local 为进程内 llama.cpp，不属于远程
-_REMOTE_PROVIDERS = {"openai", "lmstudio", "ollama", "openrouter"}
+_REMOTE_PROVIDERS = {p["id"] for p in _load_provider_defs() if p.get("type") == "remote"}
 
 
 def _default_remote_config() -> Dict[str, Any]:
@@ -657,7 +671,13 @@ class RemoteLLMClient:
         import openai
         if self.base_url:
             base = self.base_url.rstrip('/')
-            if not base.endswith('/v1'):
+            # 根据 provider 定义决定是否自动追加 /v1（Unsloth 等服务端不使用 /v1 前缀）
+            append_v1 = True
+            for p in _load_provider_defs():
+                if p.get("id") == self.provider:
+                    append_v1 = p.get("append_v1", True)
+                    break
+            if append_v1 and not base.endswith('/v1'):
                 base = f"{base}/v1"
             return openai.OpenAI(base_url=base, api_key=self.api_key or "lm-studio", timeout=self.timeout)
         return openai.OpenAI(api_key=self.api_key or "lm-studio", timeout=self.timeout)
