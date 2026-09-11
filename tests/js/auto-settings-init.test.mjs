@@ -1,5 +1,7 @@
-// 设置面板初始化回归：异步回填（含模型列表晚到、下拉默认落首项）不得触发
-// 自动保存/本地模型切换，也不得把表单判为未保存修改；load 全部落定后才放行脏检查。
+// 设置面板初始化回归：异步回填（含模型列表晚到、下拉默认落首项）不得触发任何
+// 配置写请求/本地模型切换，也不得把表单判为未保存修改；load 全部落定后才放行脏检查。
+// LLM 侧已改为显式 💾 保存：用户改动只标脏不落盘，点按钮才保存并切换本地常驻模型
+// （单模型下拉永不触发 change 的场景靠显式保存 + 后端单模型回落覆盖）。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
@@ -77,7 +79,7 @@ test("LLM 初始化：模型列表晚到时（load 未完成）的 change 不落
 
     releaseModels();
     await loading;
-    await sleep(400); // 若守卫失效会留下 300ms 防抖自动保存，这里等它现形
+    await sleep(400); // 留足窗口确认没有残留的延迟写请求
     await flush();
 
     const keys = [...localSelect().options].map((o) => o.value).filter((v) => v && v !== "__loading__");
@@ -87,24 +89,58 @@ test("LLM 初始化：模型列表晚到时（load 未完成）的 change 不落
     assert.equal(saveLlmCalls().length, 0, "整个初始化期间不触发自动保存写请求");
 });
 
-test("LLM 初始化完成后的真实用户改动仍触发自动保存与脏标记", async () => {
+test("LLM 用户改动只标脏不落盘，点 💾 才保存并切换本地模型", async () => {
     await llmForm.load();
     await flush();
     assert.equal(llmForm.isDirty(), false, "无改动不算 dirty");
 
     localSelect().value = "b.gguf";
     localSelect().dispatchEvent(new Event("change", { bubbles: true }));
-
-    assert.equal(llmForm.isDirty(), true, "真实改动在防抖保存落盘前即 dirty");
-    await sleep(400); // 等 300ms 防抖保存
+    await sleep(400); // 确认没有残留的延迟自动保存
     await flush();
 
-    assert.equal(setModelCalls().length, 1, "用户选择应切换本地模型");
+    assert.equal(llmForm.isDirty(), true, "改动未点保存即 dirty");
+    assert.equal(saveLlmCalls().length, 0, "不点 💾 不触发写请求");
+    assert.equal(setModelCalls().length, 0, "不点 💾 不切换本地模型");
+
+    llmForm.el.querySelector(".rs-gen-save").click();
+    await sleep(400);
+    await flush();
+
+    assert.equal(setModelCalls().length, 1, "点保存应切换本地常驻模型");
     assert.equal(setModelCalls()[0].body.model_key, "b.gguf");
     const saves = saveLlmCalls();
-    assert.equal(saves.length, 1, "用户改动应触发一次自动保存");
+    assert.equal(saves.length, 1, "点保存应落盘一次");
     assert.equal(saves[0].body.provider, "local");
     assert.equal(saves[0].body.model, "b.gguf");
+    assert.equal(llmForm.isDirty(), false, "保存成功后不再 dirty");
+});
+
+test("单模型目录：change 永不触发，点 💾 显式保存即落盘并设为当前模型", async () => {
+    mockRoute("/rs_prompts/get_models", () => jsonResponse({
+        current_model: "",
+        models: [{ key: "only.gguf", name: "only.gguf", file_size: 1024 }],
+    }));
+    await llmForm.load();
+    await flush();
+
+    // 只有一个选项：原生 select 默认选中首项，用户根本无法触发 change
+    assert.equal(localSelect().value, "only.gguf");
+    assert.equal(saveLlmCalls().length, 0, "初始化不落盘");
+    assert.equal(setModelCalls().length, 0, "初始化不切换模型");
+
+    llmForm.el.querySelector(".rs-gen-save").click();
+    await sleep(400);
+    await flush();
+
+    const saves = saveLlmCalls();
+    assert.equal(saves.length, 1, "显式保存应落盘一次");
+    assert.equal(saves[0].body.provider, "local");
+    assert.equal(saves[0].body.model, "only.gguf", "唯一模型应被持久化为当前模型");
+    assert.equal(saves[0].body.base_url, undefined, "本地模式保存不应写入 base_url 等隐藏字段残留值");
+    assert.equal(saves[0].body.api_key, undefined, "本地模式保存不应写入 api_key");
+    assert.equal(setModelCalls().length, 1, "显式保存应把唯一模型设为当前模型");
+    assert.equal(setModelCalls()[0].body.model_key, "only.gguf");
     assert.equal(llmForm.isDirty(), false, "保存成功后不再 dirty");
 });
 

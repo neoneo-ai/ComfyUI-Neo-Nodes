@@ -5,8 +5,8 @@
  * createModelConfigForm() 返回 { el, load, save, isDirty }：
  *   el      —— 表单 DOM（追加到宿主容器）
  *   load    —— 读取已保存配置并回填（打开时调用），resolve 时模型列表已填充完毕
- *   save    —— 防抖保存当前表单值（关闭时调用）
- *   isDirty —— 加载窗口内恒 false，此后表示有待落盘的改动
+ *   save    —— 立即落盘当前表单值（💾 按钮 / 「保存并关闭」调用），返回是否成功
+ *   isDirty —— 加载窗口内恒 false，此后表示有未保存改动（快照对比）
  */
 
 import { attachComboBox } from "./combo-box.js";
@@ -189,6 +189,23 @@ export function createModelConfigForm() {
     remoteForm.append(remoteInfoText, providerRow, localDirRow, modelRowWrapper, apiKeyRow, baseUrlRow, temperatureRow, providerSaveStatusText);
     // 自动卸载本地模型设置放在设置页最底部
     remoteForm.appendChild(localUnloadRow);
+
+    // 显式保存按钮：替代防抖自动保存（单模型下拉不触发 change、blur 时序难排查，落盘时机不可靠）
+    const saveBtn = mkEl("button", "rs-gen-save");
+    saveBtn.type = "button";
+    saveBtn.textContent = "💾 保存设置";
+    let saveResetTimer = null;
+    saveBtn.addEventListener("click", async () => {
+        saveBtn.disabled = true;
+        const ok = await saveForm();
+        saveBtn.disabled = false;
+        saveBtn.textContent = ok ? "✓ 已保存" : "✕ 保存失败";
+        clearTimeout(saveResetTimer);
+        saveResetTimer = setTimeout(() => { saveBtn.textContent = "💾 保存设置"; }, 1600);
+    });
+    const saveRow = mkEl("div", "rs-config-row");
+    saveRow.appendChild(saveBtn);
+    remoteForm.appendChild(saveRow);
 
     // ==========================================
     // Provider change handler - show/hide fields dynamically
@@ -405,45 +422,49 @@ export function createModelConfigForm() {
         }
     };
 
-    providerSelect.addEventListener("change", async () => {
-        await handleProviderChange();
-        // Small delay to allow local models to start loading before auto-saving
-        if (providerSelect.value === 'local') {
-            setTimeout(() => autoSaveConfig(), 200);
-        } else {
-            autoSaveConfig();
-        }
-    });
+    // Provider 切换只负责 UI 显隐与加载对应配置，落盘统一走 💾 按钮
+    providerSelect.addEventListener("change", () => handleProviderChange());
 
     // ==========================================
-    // Auto-save on field changes (blur/change)
+    // 显式保存：💾 按钮 / 关菜单「保存并关闭」，不再防抖自动保存
+    // （自动保存漏掉单模型下拉不触发 change 的场景，且落盘时机难排查）
     // ==========================================
-    let saveTimeout = null;
-    // 有待落盘的改动（防抖保存未完成）；供关闭菜单时判断未保存修改
-    let pendingSave = false;
-    // 加载窗口标记：loadModelConfig 回填期间任何 change/blur 都是程序化副作用，
-    // autoSaveConfig 据此不落盘、isDirty 据此恒 false，避免初始化被误判为未保存
+    // 加载窗口标记：loadModelConfig 回填期间 saveForm 不落盘、isDirty 恒 false
     let loading = false;
-    const autoSaveConfig = () => {
-        if (loading) return;
-        pendingSave = true;
-        if (saveTimeout) clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(async () => {
-            const provider = providerSelect.value;
+    // load/save 完成后的表单快照，用于脏检查（同生图设置做法）
+    let snapshot = null;
+    const collectFormValues = () => ({
+        provider: providerSelect.value,
+        model: getModelValue(),
+        api_key: apiKeyInput.value,
+        base_url: baseUrlInput.value,
+        temperature: parseFloat(temperatureInput.value) || 0,
+        models_dir: localDirInput.value.trim(),
+        auto_unload_local: localUnloadCheckbox.checked,
+    });
+
+    const saveForm = async () => {
+        if (loading) return false;
+        // 先读已保存的当前模型做对比（成功保存会清缓存，此处拿到的是本次保存前的值）
+        const cfg = await window.NeoNodes?.getRemoteLLMConfig?.() || {};
+        const provider = providerSelect.value;
+        // 只持久化当前 provider 相关字段，避免把隐藏字段的残留值（如本地模式下的 base_url）写进配置
+        const config = {
+            enabled: provider !== 'local',
+            provider: provider
+        };
+        if (provider === 'local') {
+            config.models_dir = localDirInput.value.trim();
+            config.auto_unload_local = localUnloadCheckbox.checked;
+            // 以下拉当前选中项为准；列表为空 / 加载失败时 value 为空，不覆盖已保存的模型
+            const localModelValue = localModelSelectEl.value;
+            if (localModelValue && localModelValue !== '__loading__') config.model = localModelValue;
+        } else {
+            config.api_key = apiKeyInput.value;
+            config.base_url = baseUrlInput.value;
             const modelValue = getModelValue();
-            const config = {
-                enabled: provider !== 'local',
-                provider: provider,
-                api_key: apiKeyInput.value,
-                base_url: baseUrlInput.value
-            };
-            if (provider === 'local') {
-                config.models_dir = localDirInput.value.trim();
-                config.auto_unload_local = localUnloadCheckbox.checked;
-            } else {
-                const tempValue = parseFloat(temperatureInput.value);
-                config.temperature = isNaN(tempValue) ? 0 : tempValue;
-            }
+            const tempValue = parseFloat(temperatureInput.value);
+            config.temperature = isNaN(tempValue) ? 0 : tempValue;
             // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model；
             // OpenAI Compatible 仅在在线列表模式下走同样的保护，手动输入模式始终保存
             if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
@@ -453,35 +474,37 @@ export function createModelConfigForm() {
             } else {
                 config.model = modelValue;
             }
+        }
 
-            const result = await window.NeoNodes?.saveRemoteLLMConfig?.(config);
-            
-            if (result && result.success) {
-                pendingSave = false;
-                providerSaveStatusText.textContent = "✅ Saved";
-                providerSaveStatusText.style.display = "block";
-                providerSaveStatusText.style.color = "#16a34a";
-                
-                setTimeout(() => {
-                    providerSaveStatusText.style.display = "none";
-                }, 1500);
-            } else {
-                providerSaveStatusText.textContent = "❌ Save failed";
-                providerSaveStatusText.style.display = "block";
-                providerSaveStatusText.style.color = "#dc2626";
-                
-                setTimeout(() => {
-                    providerSaveStatusText.style.display = "none";
-                }, 2000);
+        const result = await window.NeoNodes?.saveRemoteLLMConfig?.(config);
+        if (!result || !result.success) return false;
+
+        // 本地模式：额外经 set_model 持久化 + 切换常驻模型（覆盖单模型不触发 change 的场景）；
+        // 与已保存的当前模型一致时跳过，避免无谓重载模型
+        if (provider === 'local' && config.model && cfg.providers?.local?.model !== config.model) {
+            try {
+                const setResult = await setCurrentModel(config.model);
+                if (!setResult || !setResult.success) {
+                    setLocalStatusMsg("❌ Model switch failed: " + (setResult?.error || config.model), "#dc2626");
+                    return false;
+                }
+            } catch (e) {
+                console.error("Failed to switch local model:", e);
+                setLocalStatusMsg("❌ " + (e.message || "Model switch failed"), "#dc2626");
+                return false;
             }
-        }, 300);
+        }
+
+        snapshot = collectFormValues();
+        return true;
     };
 
-    // Auto-save on field changes (blur/change) - provider select already has its handler above
-    apiKeyInput.addEventListener("blur", autoSaveConfig);
-    baseUrlInput.addEventListener("blur", autoSaveConfig);
-    temperatureInput.addEventListener("change", autoSaveConfig);
-    // Auto-fetch models when the base URL field changes (LM Studio / Ollama / OpenRouter / OpenAI)
+    const isDirty = () => {
+        if (loading) return false;
+        return snapshot !== null && JSON.stringify(collectFormValues()) !== JSON.stringify(snapshot);
+    };
+
+    // base URL 变化时自动拉取模型列表（LM Studio / Ollama / OpenRouter / OpenAI），只读不保存
     const fetchModelsForBaseUrl = async () => {
         const provider = providerSelect.value;
         if (provider === 'lmstudio' || provider === 'ollama' || provider === 'openrouter') {
@@ -495,8 +518,6 @@ export function createModelConfigForm() {
     };
     baseUrlInput.addEventListener("change", fetchModelsForBaseUrl);
     baseUrlInput.addEventListener("blur", fetchModelsForBaseUrl);
-    modelInput.addEventListener("blur", autoSaveConfig);
-    modelSelectEl.addEventListener("change", autoSaveConfig);
 
     function setLocalStatusMsg(msg, color, autoHide = true) {
         providerSaveStatusText.textContent = msg;
@@ -507,41 +528,14 @@ export function createModelConfigForm() {
         }
     }
 
-    localModelSelectEl.addEventListener("change", async () => {
-        if (loading) return; // 初始化回填期的程序化 change 不落盘、也不切换本地模型
-        autoSaveConfig();
-        const modelKey = localModelSelectEl.value;
-
-        try {
-            const setResult = await setCurrentModel(modelKey);
-            if (!setResult || !setResult.success) {
-                setLocalStatusMsg("❌ Model switch failed: " + (setResult?.error || modelKey), "#dc2626");
-                return;
-            }
-        } catch (e) {
-            console.error("Failed to switch local model:", e);
-            setLocalStatusMsg("❌ " + (e.message || "Model switch failed"), "#dc2626");
-        }
-    });
-
     localDirInput.addEventListener("change", async () => {
-        // 先落盘再刷新，确保服务端按新目录扫描
+        // 先落盘再刷新，确保服务端按新目录扫描（唯一保留的即时写：列表刷新依赖后端已存目录）
         await window.NeoNodes?.saveRemoteLLMConfig?.({
             enabled: false,
             provider: "local",
             models_dir: localDirInput.value.trim()
         });
         await fetchLocalModels();
-    });
-
-    // 自动卸载复选框：切换即落盘（仅对 Local GGUF 有意义）
-    localUnloadCheckbox.addEventListener("change", async () => {
-        await window.NeoNodes?.saveRemoteLLMConfig?.({
-            enabled: false,
-            provider: "local",
-            models_dir: localDirInput.value.trim(),
-            auto_unload_local: localUnloadCheckbox.checked
-        });
     });
 
     // 读取已保存配置并回填（原 loadRemoteLLMConfig，改用本模块局部变量）
@@ -560,9 +554,9 @@ export function createModelConfigForm() {
             await handleProviderChange();
         } finally {
             loading = false;
-            pendingSave = false; // 初始化完成，清除任何残留的待保存标记
+            snapshot = collectFormValues(); // 初始化完成（含模型列表异步回填），脏检查基线
         }
     };
 
-    return { el: remoteForm, load: loadModelConfig, save: autoSaveConfig, isDirty: () => !loading && pendingSave };
+    return { el: remoteForm, load: loadModelConfig, save: saveForm, isDirty };
 }

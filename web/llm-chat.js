@@ -542,9 +542,8 @@ function createStatusBars() {
     };
     btnSaveClose.addEventListener("click", async () => {
         btnSaveClose.disabled = true;
-        const ok = await genForm.save();
-        modelForm.save(); // LLM 侧为防抖即时保存，触发一次兜底落盘
-        if (ok) performClose();
+        const [genOk, llmOk] = await Promise.all([genForm.save(), modelForm.save()]);
+        if (genOk && llmOk) performClose();
         else showToast(app, "error", "保存失败", "请重试后再关闭");
         btnSaveClose.disabled = false;
     });

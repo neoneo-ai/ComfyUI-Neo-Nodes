@@ -760,5 +760,46 @@ class TestEnableThinking(unittest.TestCase):
         self.assertIs(captured.get("enable_thinking"), False)
 
 
+class TestLocalSingleModelFallback(unittest.TestCase):
+    """_load_model：无已保存选择且目录只有一个模型时直接回落，否则仍报清晰错误"""
+
+    def _scanned(self, *keys):
+        return [{"key": k, "name": k, "filename": k + ".gguf", "model_dir": "",
+                 "mmproj": "", "multimodal": False, "file_size": 0} for k in keys]
+
+    def _load(self, cfg, scanned):
+        instance = object.__new__(llm_mod.LLMSingleton)
+        calls = {}
+        fake_llama = types.ModuleType("llama_cpp")
+
+        class FakeLlama:
+            def __init__(self, **kw):
+                calls.update(kw)
+
+        fake_llama.Llama = FakeLlama
+        with patch.object(llm_mod, "_load_remote_config", lambda: cfg), \
+                patch.object(llm_mod, "scan_llm_directory", lambda d: scanned), \
+                patch.object(llm_mod, "_resolve_model_path", lambda mdir, fn: "/fake/" + fn), \
+                patch("os.path.exists", return_value=True), \
+                patch.dict(sys.modules, {"llama_cpp": fake_llama}):
+            instance._load_model()
+        return calls
+
+    def test_no_selection_single_model_falls_back(self):
+        cfg = {"providers": {"local": {"model": "", "models_dir": ""}}}
+        calls = self._load(cfg, self._scanned("only.gguf"))
+        self.assertEqual(calls.get("model_path"), "/fake/only.gguf.gguf")
+
+    def test_no_selection_multiple_models_still_errors(self):
+        cfg = {"providers": {"local": {"model": "", "models_dir": ""}}}
+        with self.assertRaises(RuntimeError):
+            self._load(cfg, self._scanned("a.gguf", "b.gguf"))
+
+    def test_stale_key_single_model_still_errors(self):
+        cfg = {"providers": {"local": {"model": "gone.gguf", "models_dir": ""}}}
+        with self.assertRaises(RuntimeError):
+            self._load(cfg, self._scanned("only.gguf"))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -700,6 +700,13 @@
     background: rgba(30, 30, 30, 0.5);
 }
 .rs-thinking-label {
+    /* 吸顶固定：面板整体滚动跟随思考内容时，标签保持不动。
+       sticky 相对内容盒定位，top:-8px + margin-top:-8px 让标签上缘对齐容器内边框，
+       静止与吸住位置重合（无跳动），且背景盖住上方 padding 区、正文不会从标签上方露出 */
+    position: sticky;
+    top: -8px;
+    margin-top: -8px;
+    background: #1e1e1e;
     font-size: 11px;
     color: #8a9aa8;
     margin-bottom: 4px;

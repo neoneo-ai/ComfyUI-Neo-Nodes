@@ -23,6 +23,10 @@ body
       input#rs-auto-generate.rs-auto-generate-checkbox <type=checkbox val="on">
       label.rs-auto-generate-label "自动增强"
     div.rs-runtime-hint "每次运行时用 LLM 基于描述自动增强提示词"
+    label.rs-runtime-row.rs-runtime-toggle
+      input.rs-disable-thinking-checkbox <type=checkbox val="on">
+      span.rs-auto-generate-label "关闭思考"
+    div.rs-runtime-hint "跳过推理直接输出，更快更稳（需服务端支持）"
     div.rs-runtime-divider
     div.rs-auto-tabs
       button.rs-auto-tab.rs-auto-tab-active <type=button> "🤖 LLM Settings"
@@ -63,12 +67,18 @@ body
         div.rs-config-row
           label.rs-form-label "Base URL"
           input#rs-remote-base-url.rs-form-input.rs-remote-base-url <type=text placeholder=Leave empty for default>
+        div.rs-config-row
+          label.rs-form-label "Temperature"
+          input#rs-remote-temperature.rs-form-input.rs-remote-temperature <type=number>
+          div.rs-form-hint "采样温度；填 0 则不发送，使用服务端/模型默认值"
         div.rs-provider-save-status <display=none>
         div.rs-config-row.rs-local-unload <display=none>
           div.rs-local-unload-line
             input#rs-local-auto-unload.rs-form-checkbox <type=checkbox val="on">
             label.rs-form-label "本节点执行完自动卸载本地模型"
           div.rs-form-hint
+        div.rs-config-row
+          button.rs-gen-save <type=button> "💾 保存设置"
     div.rs-auto-panel <display=none>
       div.rs-gen-settings
         div.rs-config-row

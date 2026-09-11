@@ -835,6 +835,11 @@ class LLMSingleton:
                 model_cfg = item
                 break
 
+        if not model_cfg and not current_model_key and len(scanned) == 1:
+            # 从未保存过选择且目录里恰好只有一个模型：直接回落，无需手动选择
+            model_cfg = scanned[0]
+            current_model_key = model_cfg["key"]
+
         if not model_cfg:
             filename = current_model_key or "no model"
             raise RuntimeError(
