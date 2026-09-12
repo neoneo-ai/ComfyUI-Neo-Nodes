@@ -358,13 +358,206 @@ async function copySampleWorkflowToCanvas(recipeName, sampleFile) {
     }
 }
 
-export async function saveRecipe(name, prompt, assets, results = [], loras = []) {
+export async function saveRecipe(name, prompt, assets, results = [], loras = [], director = null) {
+    const body = { name, prompt, assets, results, loras };
+    if (director && director.segments) {
+        body.type = 'video_director';
+        body.shared = director.shared || {};
+        body.segments = director.segments;
+    }
     const resp = await api.fetchApi('/rs_recipes/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, prompt, assets, results, loras })
+        body: JSON.stringify(body)
     });
     return resp.json();
+}
+
+/** 列出可用于视频生成的 skill（gen_video），供多段导演每段选择模板。 */
+export async function listVideoSkills() {
+    try {
+        const res = await fetch('/rs_prompts/skills');
+        const all = await res.json();
+        return Array.isArray(all) ? all.filter(s => s && s.gen_video) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+/** 打开多段视频导演编辑器：shared(width/height/seed) + 逐段(skill/prompt/duration/首帧)。
+ *  existing 为既有 director 配方 meta（编辑时预填），null = 新建；onSaved 保存成功后回调刷新。
+ *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。 */
+export async function openDirectorEditor(existing = null, onSaved = null) {
+    let imageRefs = [];
+    try {
+        const { media } = await scanMediaNodes();
+        imageRefs = media.filter(s => s.kind === 'image' && s.slot != null)
+            .map(s => widgetValueToRef(s.value)).filter(Boolean);
+    } catch (e) { console.error('[Neo Recipes] Director: collect images failed', e); }
+
+    let skills = [];
+    try { skills = await listVideoSkills(); } catch (e) {}
+
+    const exShared = (existing && existing.shared) || {};
+    const exSegs = (existing && Array.isArray(existing.segments)) ? existing.segments : [];
+
+    function buildSeg(seg = {}) {
+        const skillSel = $el('select', { className: 'neo-director-skill' });
+        if (!skills.length) skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
+        for (const s of skills) skillSel.appendChild($el('option', { value: s.id, textContent: s.name || s.id }));
+        if (seg.skill_id) skillSel.value = seg.skill_id;
+
+        const promptTa = $el('textarea', { className: 'neo-director-prompt', placeholder: '该段画面 / 运动描述（必填）', value: seg.prompt || '' });
+        const durInp = $el('input', { className: 'neo-director-dur', type: 'number', min: 1, max: 3600, value: (seg.duration_sec != null ? seg.duration_sec : 5) });
+
+        // 首帧候选网格：「无（文生视频）」+ 已连线 LoadImage 缩略图，单选；
+        // 编辑旧配方时若 first_frame 指向当前未连线的文件，补占位项以免保存时被丢弃
+        const ffThumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
+        const candidates = imageRefs.slice();
+        if (seg.first_frame && !candidates.some(r => r.filename === seg.first_frame)) {
+            candidates.unshift({ filename: seg.first_frame, subfolder: '', type: 'input' });
+        }
+        const ffGrid = $el('div', { className: 'neo-director-ff-grid' });
+        const noneTile = $el('div', { className: 'neo-director-ff-item', title: '无（文生视频）' }, [
+            $el('div', { className: 'neo-director-ff-thumb neo-director-ff-thumb-empty', textContent: '🎬' }),
+            $el('div', { className: 'neo-director-ff-name', textContent: '无（文生视频）' })
+        ]);
+        ffGrid.appendChild(noneTile);
+        for (const r of candidates) {
+            ffGrid.appendChild($el('div', { className: 'neo-director-ff-item', title: r.filename, dataset: { file: r.filename } }, [
+                $el('img', { className: 'neo-director-ff-thumb', src: ffThumbUrl(r), alt: r.filename, loading: 'lazy' }),
+                $el('div', { className: 'neo-director-ff-name', textContent: r.filename })
+            ]));
+        }
+        const selectFf = (value) => {
+            for (const it of Array.from(ffGrid.children)) {
+                it.classList.toggle('neo-director-ff-active', (it === noneTile) ? value === '' : it.dataset.file === value);
+            }
+        };
+        for (const it of Array.from(ffGrid.children)) it.onclick = () => selectFf(it === noneTile ? '' : it.dataset.file);
+        selectFf(seg.first_frame || '');
+
+        // 从左侧 Neo Gallery 拖入图片：落地到 input/ 并设为该段首帧（同时并入 assets 供保存回写）
+        const acceptGalleryDrop = async (e) => {
+            e.preventDefault();
+            ffGrid.classList.remove('neo-director-drop');
+            const raw = e.dataTransfer.getData('application/x-neo-gallery') || e.dataTransfer.getData('text/plain');
+            let payload;
+            try { payload = JSON.parse(raw); } catch { return; }
+            if (!payload || !payload.filename) return;
+            try {
+                const qs = '/neo_gallery/copy_to_input?filename=' + encodeURIComponent(payload.filename)
+                    + (payload.subfolder ? '&subfolder=' + encodeURIComponent(payload.subfolder) : '');
+                const res = await fetch(qs);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!data || !data.success || !data.filename) return;
+                const fname = data.filename;
+                const ref = { filename: fname, subfolder: '', type: 'input', kind: 'image' };
+                if (!imageRefs.some(r => r.filename === fname)) imageRefs.push(ref);
+                let tile = Array.from(ffGrid.children).find(it => it.dataset.file === fname);
+                if (!tile) {
+                    tile = $el('div', { className: 'neo-director-ff-item', title: fname, dataset: { file: fname } }, [
+                        $el('img', { className: 'neo-director-ff-thumb', src: ffThumbUrl(ref), alt: fname, loading: 'lazy' }),
+                        $el('div', { className: 'neo-director-ff-name', textContent: fname })
+                    ]);
+                    tile.onclick = () => selectFf(fname);
+                    ffGrid.appendChild(tile);
+                }
+                selectFf(fname);
+            } catch (err) { console.error('[Neo Recipes] Director: drop image failed', err); }
+        };
+        ffGrid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; ffGrid.classList.add('neo-director-drop'); });
+        ffGrid.addEventListener('dragleave', (e) => { if (!ffGrid.contains(e.relatedTarget)) ffGrid.classList.remove('neo-director-drop'); });
+        ffGrid.addEventListener('drop', acceptGalleryDrop);
+
+        const removeBtn = $el('button', { className: 'rs-btn neo-director-seg-del', title: '删除该段', textContent: '🗑' });
+        const row = $el('div', { className: 'neo-director-seg' }, [
+            $el('div', { className: 'neo-director-seg-head' }, [$el('span', { className: 'neo-director-seg-title', textContent: '段' }), removeBtn]),
+            $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
+            $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
+            $el('div', { className: 'neo-director-dur-row' }, [$el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp]),
+            $el('label', { className: 'neo-director-field-label', textContent: '首帧图（点选或从左侧素材栏拖入；不选 = 文生视频）' }), ffGrid,
+        ]);
+        removeBtn.onclick = () => { row.remove(); renumberSegs(); };
+        return row;
+    }
+
+    const segsWrap = $el('div', { className: 'neo-director-segs' });
+    function renumberSegs() {
+        segsWrap.querySelectorAll('.neo-director-seg').forEach((row, i) => {
+            row.querySelector('.neo-director-seg-title').textContent = `段 ${i + 1}`;
+        });
+    }
+    for (const s of (exSegs.length ? exSegs : [{}])) segsWrap.appendChild(buildSeg(s));
+    renumberSegs();
+    const addBtn = $el('button', { className: 'rs-btn neo-director-add', textContent: '＋ 添加段', onclick: () => { segsWrap.appendChild(buildSeg({})); renumberSegs(); } });
+
+    const nameInp = $el('input', { className: 'neo-director-name', type: 'text', placeholder: '配方名称', value: (existing && existing.name) || '' });
+    const wInp = $el('input', { className: 'neo-director-num', type: 'number', min: 1, placeholder: '宽', value: (exShared.width != null ? exShared.width : 1344) });
+    const hInp = $el('input', { className: 'neo-director-num', type: 'number', min: 1, placeholder: '高', value: (exShared.height != null ? exShared.height : 768) });
+    const seedInp = $el('input', { className: 'neo-director-num', type: 'number', min: 0, placeholder: '种子', value: (exShared.seed != null ? exShared.seed : 0) });
+
+    let overlay;
+    const close = () => { if (overlay && overlay.parentNode) overlay.remove(); };
+    const saveBtn = $el('button', { className: 'rs-btn neo-director-save', textContent: '保存' });
+    const cancelBtn = $el('button', { className: 'rs-btn neo-director-cancel', textContent: '取消', onclick: close });
+
+    saveBtn.onclick = async () => {
+        const name = nameInp.value.trim();
+        if (!name) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '请填写配方名称', life: 4000 }); return; }
+        const segments = [];
+        for (const row of Array.from(segsWrap.querySelectorAll('.neo-director-seg'))) {
+            const skill_id = row.querySelector('.neo-director-skill').value;
+            const prompt = row.querySelector('.neo-director-prompt').value.trim();
+            if (!skill_id || !prompt) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '每段需选择技能并填写提示词', life: 4000 }); return; }
+            const seg = {
+                skill_id, prompt,
+                duration_sec: Number(row.querySelector('.neo-director-dur').value) || null,
+            };
+            const activeFf = row.querySelector('.neo-director-ff-item.neo-director-ff-active');
+            const ff = (activeFf && activeFf.dataset.file) ? activeFf.dataset.file : '';
+            if (ff) seg.first_frame = ff;
+            segments.push(seg);
+        }
+        if (!segments.length) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '至少需要一个段', life: 4000 }); return; }
+        saveBtn.disabled = true;
+        try {
+            const result = await saveRecipe(name, '', imageRefs, [], [], {
+                shared: { width: Number(wInp.value) || 1344, height: Number(hInp.value) || 768, seed: Number(seedInp.value) || 0 },
+                segments,
+            });
+            if (result.success) {
+                app.extensionManager.toast.add({ severity: 'success', summary: '多段导演已保存', detail: `${name}（${segments.length} 段）`, life: 4000 });
+                close();
+                if (typeof onSaved === 'function') onSaved();
+            } else {
+                app.extensionManager.toast.add({ severity: 'error', summary: '保存失败', detail: result.error || 'Unknown error', life: 5000 });
+            }
+        } catch (e) {
+            console.error('[Neo Recipes] Director save failed:', e);
+            app.extensionManager.toast.add({ severity: 'error', summary: '保存失败', detail: e.message, life: 5000 });
+        } finally {
+            saveBtn.disabled = false;
+        }
+    };
+
+    const body = $el('div', { className: 'neo-director-body' }, [
+        $el('div', { className: 'neo-director-field' }, [$el('label', { className: 'neo-director-field-label', textContent: '配方名称' }), nameInp]),
+        $el('div', { className: 'neo-director-row neo-director-shared' }, [
+            $el('label', { textContent: '宽' }), wInp,
+            $el('label', { textContent: '高' }), hInp,
+            $el('label', { textContent: '种子' }), seedInp,
+        ]),
+        segsWrap, addBtn,
+    ]);
+    const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
+    const panel = $el('div', { className: 'neo-director-panel' }, [
+        $el('div', { className: 'neo-director-title' }, [$el('span', { textContent: '🎬 多段视频导演' }), $el('button', { className: 'rs-btn neo-director-close', textContent: '✕', onclick: close })]),
+        body, foot,
+    ]);
+    overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
+    document.body.appendChild(overlay);
 }
 
 export async function appendResultsToRecipe(name, results) {
@@ -661,6 +854,11 @@ export async function createRecipesPanel() {
     const header = $el('div', { className: 'neo-recipes-header' }, [
         $el('h3', { className: 'neo-recipes-title', innerHTML: `${RECIPE_ICON_SVG}<span>配方</span>` }),
         $el('button', {
+            className: 'rs-btn rs-action-btn neo-recipes-director',
+            textContent: '🎬', title: '新建多段视频导演配方',
+            onclick: () => openDirectorEditor(null, renderList)
+        }),
+        $el('button', {
             className: 'rs-btn rs-action-btn neo-recipes-refresh',
             textContent: '↻', title: '刷新',
             onclick: () => renderList()
@@ -783,18 +981,30 @@ export async function createRecipesPanel() {
             bodyChildren.push(sampleGrid);
         }
 
-        const sendBtn = $el('button', {
-            className: 'rs-btn neo-recipes-detail-send',
-            textContent: '✈️ 发送到工作流',
-            onclick: async () => {
-                sendBtn.disabled = true;
-                const ok = await applyRecipeToWorkflow(r);
-                sendBtn.disabled = false;
-                if (ok) { overlay.remove(); await renderList(); }
-            }
-        });
         const closeBtn = $el('button', { className: 'rs-btn neo-recipes-detail-close', textContent: '关闭', onclick: () => overlay.remove() });
-        bodyChildren.push($el('div', { className: 'neo-recipes-detail-foot' }, [closeBtn, sendBtn]));
+        const footBtns = [closeBtn];
+        if (r.type === 'video_director') {
+            // 多段导演配方由 NeoH3VideoDirector 节点按名称消费，无法走「发送到工作流」还原
+            footBtns.push($el('button', {
+                className: 'rs-btn neo-recipes-detail-edit',
+                textContent: '✎ 编辑配方',
+                title: '编辑多段导演配方',
+                onclick: () => { overlay.remove(); openDirectorEditor(r, renderList); }
+            }));
+        } else {
+            const sendBtn = $el('button', {
+                className: 'rs-btn neo-recipes-detail-send',
+                textContent: '✈️ 发送到工作流',
+                onclick: async () => {
+                    sendBtn.disabled = true;
+                    const ok = await applyRecipeToWorkflow(r);
+                    sendBtn.disabled = false;
+                    if (ok) { overlay.remove(); await renderList(); }
+                }
+            });
+            footBtns.push(sendBtn);
+        }
+        bodyChildren.push($el('div', { className: 'neo-recipes-detail-foot' }, footBtns));
 
         const body = $el('div', { className: 'neo-recipes-detail-body' }, bodyChildren);
         const overlay = $el('div', { className: 'neo-recipes-detail' }, [body]);
@@ -815,6 +1025,9 @@ export async function createRecipesPanel() {
             cover.appendChild(img);
         } else {
             cover.appendChild($el('div', { className: 'neo-recipes-card-no-cover', textContent: r.assets?.length ? '🎬' : '📝' }));
+        }
+        if (r.type === 'video_director') {
+            cover.appendChild($el('div', { className: 'neo-recipes-card-badge', textContent: '🎬 多段' }));
         }
 
         const body = $el('div', { className: 'neo-recipes-card-body' }, [
@@ -846,19 +1059,32 @@ export async function createRecipesPanel() {
             actions.append(appendBtn);
         }
 
-        const sendBtn = $el('button', {
-            className: 'rs-btn rs-action-btn neo-recipes-send',
-            title: '一键发送到工作流',
-            textContent: '✈️',
-            onclick: async (e) => {
-                e.stopPropagation();
-                sendBtn.disabled = true;
-                const ok = await applyRecipeToWorkflow(r);
-                sendBtn.disabled = false;
-                if (ok) await renderList();
-            }
-        });
-        actions.append(sendBtn);
+        // 多段导演配方由 NeoH3VideoDirector 节点按名称消费，无法走「发送到工作流」还原
+        if (r.type !== 'video_director') {
+            const sendBtn = $el('button', {
+                className: 'rs-btn rs-action-btn neo-recipes-send',
+                title: '一键发送到工作流',
+                textContent: '✈️',
+                onclick: async (e) => {
+                    e.stopPropagation();
+                    sendBtn.disabled = true;
+                    const ok = await applyRecipeToWorkflow(r);
+                    sendBtn.disabled = false;
+                    if (ok) await renderList();
+                }
+            });
+            actions.append(sendBtn);
+        }
+
+        if (r.type === 'video_director') {
+            const editBtn = $el('button', {
+                className: 'rs-btn rs-action-btn neo-recipes-edit-director',
+                title: '编辑多段导演配方',
+                textContent: '✎',
+                onclick: (e) => { e.stopPropagation(); openDirectorEditor(r, renderList); }
+            });
+            actions.append(editBtn);
+        }
 
         if (r.source !== 'preset') {
             const delBtn = $el('button', {

@@ -35,6 +35,15 @@ recipes/
 
 在 **Neo Prompt** 节点上直接选择配方发送时，以该节点所在子图为目标，同样执行自动对齐，全程不弹窗。
 
+## 多段视频导演配方（video_director）
+
+普通配方是「一个提示词 + 一组资源」；`video_director` 配方是**多段结构化容器**：一段 = 一个 H3 视频生成任务（各自的 skill / 提示词 / 时长 / 首帧），由 `NeoH3VideoDirector` 节点按序逐段生成并拼接成单个含音频 `VIDEO`。
+
+- **入口**：侧边栏「配方」页头部 **🎬** 新建；已存在的 director 配方可在卡片或详情页点 **✎** 编辑。居中面板设共享的 宽/高/种子，再逐段填 **技能（skill_id，必填）** / 提示词 / 时长(秒) / 首帧（缩略图网格：点选当前画布已连线的 LoadImage，或直接从左侧 Neo Gallery 素材栏拖入该段；可留空走文生）。编辑面板**不遮挡左侧素材栏**（遮罩背景可穿透点击），便于边编辑边从素材库拖图到指定段落。
+- **schema**：`recipe.json` 在扁平字段之外多出 `type: "video_director"`、`shared {width,height,seed}`、`segments[]`。每段 `{skill_id, prompt, duration_sec, first_frame?}`（`first_frame` 为已落盘 `assets/` 的文件名）。**缺省 `type` 的旧扁平配方行为完全不变。**
+- **首帧引用**：前端以原始文件名引用，保存时后端把原始名映射到落盘 `assets/` 的最终名并回写（同名不同内容被重命名也不失效）；`first_frame` / `refs.*` 引用了未保存的资产会被拒绝。
+- **执行**见 [h3-video-gen.md](h3-video-gen.md) 的「NeoH3VideoDirector」。
+
 ## 实现细节（开发者）
 
 ### 资源收集与编码

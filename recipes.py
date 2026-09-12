@@ -129,7 +129,7 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
     if cover is None:
         cover = next((a["file"] for a in assets if a["kind"] == "image"), None)
 
-    return {
+    result = {
         "name": recipe_dir.name,
         "source": source,
         "prompt": meta.get("prompt", ""),
@@ -142,6 +142,12 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         "loras": meta.get("loras", []) or [],
         "samples": samples,
     }
+    # video_director 配方：透传结构化多段字段（缺省 type 的旧扁平配方不受影响）
+    if meta.get("type") == "video_director":
+        result["type"] = "video_director"
+        result["shared"] = meta.get("shared") or {}
+        result["segments"] = meta.get("segments") or []
+    return result
 
 
 def _copy_ref_into_dir(ref: dict, dest_dir: Path) -> str | None:
@@ -279,6 +285,75 @@ async def rs_recipes_load(request):
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+def _normalize_director(data: dict, orig_to_copied: dict) -> tuple[dict, list]:
+    """校验并规范化 video_director 配方的 shared/segments；非法抛 ValueError（消息可直接回前端）。
+
+    段级 skill_id 必填（每段用各自的 H3 skill 模板）。first_frame / refs.* 由前端以**原始文件名**
+    引用，orig_to_copied 把原始名映射到已落盘 assets 的最终名（同名不同内容可能被重命名），
+    规范化时回写为最终名使 recipe.json 与 assets/ 自洽。v1 执行仅用每段首帧图，其余 refs 原样保留。
+    """
+    shared_raw = data.get("shared") or {}
+    if not isinstance(shared_raw, dict):
+        raise ValueError("shared 必须是对象")
+
+    def _si(v, d):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return d
+
+    shared = {
+        "width": _si(shared_raw.get("width"), 1344),
+        "height": _si(shared_raw.get("height"), 768),
+        "seed": _si(shared_raw.get("seed"), 0),
+    }
+
+    segs_raw = data.get("segments")
+    if not isinstance(segs_raw, list) or not segs_raw:
+        raise ValueError("video_director 配方至少需要一个段")
+
+    segments = []
+    for idx, s in enumerate(segs_raw):
+        if not isinstance(s, dict):
+            raise ValueError(f"第 {idx + 1} 段不是对象")
+        prompt = str(s.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError(f"第 {idx + 1} 段提示词为空")
+        skill_id = str(s.get("skill_id") or "").strip()
+        if not skill_id:
+            raise ValueError(f"第 {idx + 1} 段缺少 skill_id")
+
+        dur = s.get("duration_sec")
+        try:
+            dur = float(dur) if dur is not None else None
+        except (TypeError, ValueError):
+            dur = None
+
+        refs = s.get("refs") or {}
+        if not isinstance(refs, dict):
+            raise ValueError(f"第 {idx + 1} 段 refs 必须是对象")
+
+        def _resolve_ref(fname, where):
+            stored = orig_to_copied.get(str(fname))
+            if not stored:
+                raise ValueError(f"第 {idx + 1} 段 {where} 引用了未保存的资产：{fname}")
+            return stored
+
+        first_frame = str(s.get("first_frame") or "").strip()
+        seg = {"skill_id": skill_id, "prompt": prompt, "duration_sec": dur}
+        if first_frame:
+            seg["first_frame"] = _resolve_ref(first_frame, "first_frame")
+        kept_refs = {}
+        for k in ("images", "videos", "audios"):
+            vals = [str(x) for x in (refs.get(k) or []) if str(x)]
+            if vals:
+                kept_refs[k] = [_resolve_ref(v, f"refs.{k}") for v in vals]
+        if kept_refs:
+            seg["refs"] = kept_refs
+        segments.append(seg)
+    return shared, segments
+
+
 @PromptServer.instance.routes.post("/rs_recipes/save")
 async def rs_recipes_save(request):
     try:
@@ -302,12 +377,14 @@ async def rs_recipes_save(request):
         # kinds 映射，扫描时优先使用；后缀判定仅作手动放文件时的兜底。
         copied = []
         kinds = {}
+        orig_to_copied = {}   # 原始文件名 → 落盘 assets 的最终名（供 director 段引用回写）
         for ref in data.get("assets", []) or []:
             if not isinstance(ref, dict):
                 continue
             copied_name = _copy_ref_into_dir(ref, assets_dir)
             if copied_name:
                 copied.append(copied_name)
+                orig_to_copied[str(ref.get("filename", ""))] = copied_name
                 kind = str(ref.get("kind", "") or "")
                 if kind in ("image", "video", "audio"):
                     kinds[copied_name] = kind
@@ -339,6 +416,14 @@ async def rs_recipes_save(request):
                 st = 1.0
             loras.append({"name": nm, "strength": st})
 
+        rtype = str(data.get("type") or "").strip()
+        director_shared, director_segments = None, None
+        if rtype == "video_director":
+            try:
+                director_shared, director_segments = _normalize_director(data, orig_to_copied)
+            except ValueError as e:
+                return web.json_response({"success": False, "error": str(e)}, status=400)
+
         recipe = {
             "name": name,
             "prompt": data.get("prompt", ""),
@@ -349,6 +434,10 @@ async def rs_recipes_save(request):
             "samples": old_samples,
             "sample_kinds": old_sample_kinds,
         }
+        if rtype == "video_director":
+            recipe["type"] = "video_director"
+            recipe["shared"] = director_shared
+            recipe["segments"] = director_segments
         with open(recipe_dir / "recipe.json", "w", encoding="utf-8") as f:
             json.dump(recipe, f, ensure_ascii=False, indent=2)
 
@@ -520,6 +609,65 @@ async def rs_recipes_send_to_workflow(request):
         return web.json_response({"success": True, "name": name, "assets": out_assets})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+def list_director_recipes() -> list:
+    """返回 type==video_director 的配方名列表（custom 与 presets 合并去重），供 director 节点下拉。"""
+    _ensure_dirs()
+    names = set()
+    for base in (CUSTOM_DIR, PRESETS_DIR):
+        if not base.exists():
+            continue
+        for d in base.iterdir():
+            meta_path = d / "recipe.json"
+            if not meta_path.is_file():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if meta.get("type") == "video_director":
+                names.add(d.name)
+    return sorted(names)
+
+
+def load_director_spec(name: str) -> dict:
+    """读取 video_director 配方，把每段有效首帧图解析成 input 相对名（复制进 input/）。
+
+    返回 {shared, segments}；segments 每项含 skill_id/prompt/duration_sec/ref_input。
+    ref_input 为该段用于 I2V 首帧的 input 文件名（first_frame 或 refs.images[0]），无则 None。
+    """
+    recipe_dir = _find_recipe_dir(name)
+    if recipe_dir is None:
+        raise ValueError(f"配方不存在：{name}")
+    meta_path = recipe_dir / "recipe.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise ValueError(f"配方读取失败：{name}（{e}）")
+    if meta.get("type") != "video_director":
+        raise ValueError(f"配方不是 video_director 类型：{name}")
+
+    assets_dir = recipe_dir / "assets"
+    segments = []
+    for seg in (meta.get("segments") or []):
+        img = str(seg.get("first_frame") or "").strip()
+        if not img:
+            imgs = (seg.get("refs") or {}).get("images") or []
+            img = str(imgs[0]).strip() if imgs else ""
+        ref_input = None
+        if img:
+            src = assets_dir / img
+            if src.is_file():
+                resolved, _skipped = _copy_media_to_input(src, img)
+                ref_input = resolved
+        segments.append({
+            "skill_id": str(seg.get("skill_id") or ""),
+            "prompt": seg.get("prompt", ""),
+            "duration_sec": seg.get("duration_sec"),
+            "ref_input": ref_input,
+        })
+    return {"shared": meta.get("shared") or {}, "segments": segments}
 
 
 def _normalize_loras(raw) -> list:

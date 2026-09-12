@@ -68,12 +68,25 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] h3_video_gen 节点注册失败（H3 视频生成不可用）: {e}")
 
+    # Neo H3 Video Director：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。
+    # 复用单段 H3 解析/执行链；导入失败时优雅降级。
+    H3_DIRECTOR_MAPPINGS = {}
+    H3_DIRECTOR_DISPLAY_MAPPINGS = {}
+    try:
+        from .h3_video_director import (
+            NODE_CLASS_MAPPINGS as H3_DIRECTOR_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as H3_DIRECTOR_DISPLAY_MAPPINGS,
+        )
+    except Exception as e:
+        print(f"[NeoNodes] h3_video_director 节点注册失败（多段视频导演不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
         **KREA2_EDIT_MAPPINGS,
         **KREA2_GENERATE_MAPPINGS,
         **H3_VIDEO_MAPPINGS,
+        **H3_DIRECTOR_MAPPINGS,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
@@ -81,6 +94,7 @@ if __package__ not in (None, ""):
         **KREA2_EDIT_DISPLAY_MAPPINGS,
         **KREA2_GENERATE_DISPLAY_MAPPINGS,
         **H3_VIDEO_DISPLAY_MAPPINGS,
+        **H3_DIRECTOR_DISPLAY_MAPPINGS,
     }
 
 # Web directory for frontend extensions

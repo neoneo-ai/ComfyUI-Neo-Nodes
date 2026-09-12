@@ -9,6 +9,7 @@
 | 🖌️ 聊天生图（Krea2） | 节点内置 | 选生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板，LoRA 可选（依赖参考图模式），底部状态行实时显示进度/取消，结果 Markdown 预览并一键装配回 LoadImage | [image-gen](docs/image-gen.md) |
 | 🎨 Krea2 Generate | 节点 | 按所选生图 skill 的 workflow.json 模板同步生成，直接输出 IMAGE 张量到下游节点（进程内 mini-executor 执行，无需聊天界面；需 GPU/显存，采样期间阻塞主工作流） | [image-gen](docs/image-gen.md) |
 | 🎬 H3 Video Generate | 节点 | MiniMax H3 文生视频 / 图生视频：按所选视频 skill 的 workflow.json 模板同步生成，输出含原生音频的 `VIDEO`（进程内 mini-executor 执行，支持 V3 API 节点；需 GPU/显存，采样期间阻塞主工作流）；LoRA 可选（同生图，无「依赖参考图」） | [h3-video](docs/h3-video-gen.md) |
+| 🎞️ H3 Video Director | 节点 | 多段视频导演：以 `video_director` 配方为参数，逐段生成（每段自带 skill/提示词/时长/首帧）并拼接成单个含音频 `VIDEO`；Tier A 连续性（上段尾帧→下段首帧、丢边界重复帧、音频按帧对齐） | [h3-video](docs/h3-video-gen.md) |
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频素材浏览与管理：内置预设素材，支持自定义素材目录与 Civitai LORA 资源匹配；灯箱预览、一键发送到节点 | [gallery](docs/gallery.md) |
 | ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） | [gallery](docs/gallery.md) |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 | [recipes](docs/recipes.md) |
@@ -68,7 +69,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 | [docs/prompts.md](docs/prompts.md) | 提示词节点：Neo Prompt Encoder / Agent、节点界面与按钮、模板与技能管理、图片反推与 `@` 引用、`/` 技能菜单 |
 | [docs/llm.md](docs/llm.md) | LLM 模式（远程/本地）、思考模型、本地 GGUF 安装（预编译 wheel / 源码编译 / Windows 排障）、模型目录规范 |
 | [docs/image-gen.md](docs/image-gen.md) | Krea2 生图：聊天生图与 Krea2 Generate 节点（IMAGE 输出） |
-| [docs/recipes.md](docs/recipes.md) | 配方：保存、一键发送到工作流、示例结果 |
+| [docs/recipes.md](docs/recipes.md) | 配方：保存、一键发送到工作流、示例结果、多段视频导演配方（video_director） |
 | [docs/gallery.md](docs/gallery.md) | Neo Gallery：浏览、灯箱、文件管理、Civitai LORA 缓存、收藏（书签） |
 | [docs/workflow-repair.md](docs/workflow-repair.md) | 工作流模型路径修复 |
 

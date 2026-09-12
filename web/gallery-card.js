@@ -998,6 +998,13 @@ export class GalleryCard {
                 width: `${gallery.maxThumbnailSize}px`
             },
             onclick: () => this.showLightbox(gallery, image, subfolder),
+            draggable: isImageFileResult && !image.lora_path,
+            ondragstart: (e) => {
+                if (!isImageFileResult || image.lora_path) { e.preventDefault(); return; }
+                e.dataTransfer.setData("application/x-neo-gallery", JSON.stringify({ filename: image.filename, subfolder }));
+                e.dataTransfer.setData("text/plain", image.filename);
+                e.dataTransfer.effectAllowed = "copy";
+            },
             dataset: { filename: image.filename, subfolder: subfolder }
         });
 
@@ -1065,6 +1072,7 @@ export class GalleryCard {
                     if (mediaEl) mediaEl.src = gallery.placeholderImageUrl;
                 }
             });
+            mediaEl.draggable = false;   // 由容器接管拖拽（携带 Neo Gallery 数据），而非浏览器原生图片拖拽
             
             // Pre-load for aspect ratio calculation AND set real src
             const preloaderImg = new Image();

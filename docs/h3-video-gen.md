@@ -9,6 +9,17 @@
 4. 可选覆盖 `seed`（默认 0，固定；要随机把「生成后控制」设为 randomize）/ `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
 5. 执行后输出 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
+## NeoH3VideoDirector（多段导演）
+
+`NeoH3VideoDirector` 节点：以 **video_director 配方**为参数，把多段 H3 视频按序逐段生成并拼接成单个含音频 `VIDEO`。每段复用上面单段节点的解析/执行链（`resolve_video_params` + `render_template` + `execute_graph_inprocess`），只是参数来自配方而非节点入参。
+
+- **输入**：`recipe`（video_director 配方名，下拉自动列出）+ 可选覆盖 `seed` / `width` / `height`（-1 = 用配方 `shared`）/ `continuity`（默认开）。
+- **逐段执行**：第 i 段用其 `skill_id` 解析模板与 config，提示词/时长/首帧取该段字段；`seed = base_seed + i`（base 优先节点覆盖、否则配方 `shared.seed`），保证可复现且各段不同。
+- **连续性（Tier A）**：`continuity` 开时，上一段的**尾帧**作为下一段的 I2V 首帧（data-URI 走单段同款参考路径），并**丢下一段第一帧**避免边界重复；关则各段独立、不丢帧。
+- **音频对齐**：各段 `AudioInput`（`{waveform:[B,C,T], sample_rate}`）按序拼接，每个接缝丢弃被丢帧对应的采样数（`round(sample_rate/fps)`），使总音频长度恰好等于拼接后帧数对应的时长（A/V 对齐）。
+- **输出**：`InputImpl.VideoFromComponents(VideoComponents(images, audio, frame_rate=24))`，单个 `VIDEO` 接 SaveVideo。
+- **v1 参考范围**：每段仅取一个首帧图（`first_frame` 或 `refs.images[0]`）；多参考/视频/音频参考待模板占位符支持后再扩展。
+
 ## 模板与配置
 - 每个视频 skill 目录含：`skill.md`（frontmatter 带 `gen_video: true`）、`workflow.json`（H3 采样链模板）、`config.json`（尺寸/时长默认值）。
 - 模型解析优先级：**skill `config.json` 的 `model` / `text_encoder` / `vae` → 「出图设置」页面的『生视频模型』区（全局 `video_model` / `video_text_encoder` / `video_vae`）→ 仍缺则报错**。音频 VAE 单独解析：skill `config.json` 的 `audio_vae` → 「生视频模型」设置的 `video_audio_vae`（VAE(音频) 下拉）→ 按文件名线索（同时含 `h3` 与 `audio`）自动挑选，找不到才报错。内置 preset 不写死模型名：请在「自动增强 → 出图设置」的生视频模型区选本地实际安装的 H3 模型；音频 VAE 一般无需手填（自动挑 `minimax_h3_audio_vae_fp32.safetensors` 之类）。`config.json` 的 `width` / `height` / `length`(帧) 为默认值（`duration`=-1 时按此帧数），可被节点入参覆盖。

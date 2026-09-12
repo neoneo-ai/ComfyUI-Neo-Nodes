@@ -8,7 +8,7 @@ body
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Create a new custom skill> "+ New Skill"
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a .zip skill package> "⬆ ZIP"
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a skill folder (all .md files)> "⬆ Folder"
-      button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Export the current canvas workflow as an image-gen skill> "📋 From Canvas"
+      button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Export the current canvas workflow as a skill (image or H3 video)> "📋 From Canvas"
   div.rs-runtime-menu
     label.rs-runtime-row.rs-runtime-toggle
       input.rs-auto-generate-checkbox <type=checkbox val="on">

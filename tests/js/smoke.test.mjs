@@ -11,7 +11,7 @@ const EXPECTED_EXPORTS = {
     "skill.js": ["listSkills", "renderMarkdown", "populateSkillOptions", "createSkillDropdown"],
     "llm-setting.js": ["createModelConfigForm"],
     "prompt-service.js": ["savePrompt", "loadPrompt", "listPrompts", "randomPrompt", "fileToBase64", "imagesFromClipboard"],
-    "recipes.js": ["collectWorkflowAssets", "saveRecipe", "listRecipes", "deleteRecipe", "applyRecipeToWorkflow", "RECIPE_ICON_SVG"],
+    "recipes.js": ["collectWorkflowAssets", "saveRecipe", "listRecipes", "deleteRecipe", "applyRecipeToWorkflow", "listVideoSkills", "openDirectorEditor", "RECIPE_ICON_SVG"],
     "combo-box.js": ["attachComboBox"],
     "workflow-context.js": ["collectWorkflowContext"],
 };
