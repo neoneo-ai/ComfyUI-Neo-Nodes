@@ -131,7 +131,7 @@ class NeoH3VideoGenerate:
             "optional": {
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
                 "image": ("IMAGE",),  # I2V 首帧；T2V 忽略
-                "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),  # -1 = 随机
+                "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
                 "duration": ("INT", {"default": 5, "min": -1, "max": 3600}),     # 秒；-1 = 用 config/默认(约5s)
                 "width": ("INT", {"default": 1344, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),   # -1 = 用 config/默认
                 "height": ("INT", {"default": 768, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),    # -1 = 用 config/默认

@@ -14,6 +14,7 @@ import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels } from "./image-gen.js";
+import { showToast } from "./gallery-utils.js";
 
 // ==========================================
 // Skill API
@@ -722,6 +723,80 @@ function getSkillDetailPopup() {
     return _skillDetailPopup;
 }
 
+// ==========================================
+// 标题对话框：从画布导出技能时只问一个名称（替代三个原生 prompt）。
+// overlay 挂到 document.body，复用 skill 弹窗样式；Enter 提交、Esc/点遮罩取消，返回 Promise<string|null>。
+// ==========================================
+let _activeTitleDialog = null;
+function promptSkillTitle(defaultValue = "") {
+    if (_activeTitleDialog) return _activeTitleDialog; // 避免重复弹层
+    let resolveFn;
+    const promise = new Promise((r) => { resolveFn = r; });
+
+    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    const modal = mkEl("div", "rs-skill-modal rs-skill-title-dialog");
+    const header = mkEl("div", "rs-skill-modal-header");
+    const titleSpan = mkEl("span", "rs-skill-modal-title");
+    titleSpan.textContent = "📋 从画布创建技能";
+    header.appendChild(titleSpan);
+
+    const body = mkEl("div", "rs-skill-modal-content");
+    const row = mkEl("div", "rs-config-row");
+    const label = mkEl("label", "rs-form-label");
+    label.textContent = "技能名称";
+    const input = document.createElement("input");
+    input.className = "rs-form-input rs-tpl-name";
+    input.value = defaultValue;
+    row.append(label, input);
+    body.appendChild(row);
+
+    const btns = mkEl("div", "rs-modal-btns");
+    const cancelBtn = mkEl("button", "rs-btn rs-btn-local");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "取消";
+    const okBtn = mkEl("button", "rs-btn rs-btn-local");
+    okBtn.type = "button";
+    okBtn.textContent = "创建";
+    btns.append(cancelBtn, okBtn);
+
+    modal.append(header, body, btns);
+    overlay.appendChild(modal);
+
+    let done = false;
+    const finish = (value) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener("keydown", onKey);
+        overlay.remove();
+        _activeTitleDialog = null;
+        resolveFn(value);
+    };
+    const submit = () => {
+        const v = input.value.trim();
+        if (!v) { input.focus(); return; } // 名称必填：空则聚焦输入框，不关闭
+        finish(v);
+    };
+    const onKey = (e) => {
+        if (e.key === "Escape") finish(null);
+        else if (e.key === "Enter") { e.preventDefault(); submit(); }
+    };
+    // 拦截弹窗内部指针事件向外冒泡，避免触发画布选节点等副作用（同详情弹窗）
+    ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => {
+        modal.addEventListener(t, (e) => e.stopPropagation());
+    });
+    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) finish(null); });
+    okBtn.addEventListener("click", (e) => { e.stopPropagation(); submit(); });
+    cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); finish(null); });
+
+    overlay.style.display = "flex";
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKey);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+
+    _activeTitleDialog = promise;
+    return promise;
+}
+
 // 共享的 ZIP / 目录上传隐藏 input：多个节点的技能下拉共用同一对，change 时上传并广播刷新
 let _skillUploadInputs = null;
 function getSkillUploadInputs() {
@@ -789,30 +864,23 @@ function createSkillDropdown() {
     const footerDirBtn = makeFooterBtn("⬆ Folder", "Upload a skill folder (all .md files)");
     footerDirBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().dirInput.click(); });
     // 把当前画布工作流（API prompt）导出为生图技能：后端自动抽模板占位符 + LoRA 槽位
-    const footerCanvasBtn = makeFooterBtn("📋 From Canvas", "Export the current canvas workflow as an image-gen skill");
+    const footerCanvasBtn = makeFooterBtn("📋 From Canvas", "Export the current canvas workflow as a skill (image or H3 video)");
     footerCanvasBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         combo.close();
         try {
             const { output, error } = (await app.graphToPrompt()) || {};
             if (error || !output || !Object.keys(output).length) {
-                alert("Cannot export: no valid workflow on canvas" + (error?.message ? " (" + error.message + ")" : ""));
+                showToast(app, "warning", "无法导出", "画布上没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
                 return;
             }
-            const name = prompt("Skill name:", "my-workflow");
-            if (!name || !name.trim()) return;
-            const description = prompt("Description (optional):", "") ?? "";
-            const tagsRaw = prompt("Tags, comma separated (optional):", "") ?? "";
-            const r = await saveWorkflowSkill({
-                name: name.trim(),
-                description,
-                tags: String(tagsRaw).split(",").map((t) => t.trim()).filter(Boolean),
-                workflow: output,
-            });
-            alert(`Saved image-gen skill "${r.id}"` + (r.warnings?.length ? "\n" + r.warnings.join("\n") : ""));
+            const name = await promptSkillTitle("my-workflow");
+            if (!name) return; // 用户在标题对话框取消
+            const r = await saveWorkflowSkill({ name, description: "", tags: [], workflow: output });
+            showToast(app, "success", `已保存${r.gen_video ? "生视频" : "生图"}技能 "${r.id}"`, (r.warnings || []).join("\n"));
             document.dispatchEvent(new CustomEvent("rs.skills.updated"));
         } catch (err) {
-            alert("Save failed: " + err.message);
+            showToast(app, "error", "保存失败", err.message);
         }
     });
     skillFooter.append(footerNewBtn, footerZipBtn, footerDirBtn, footerCanvasBtn);

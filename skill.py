@@ -1134,6 +1134,108 @@ def _template_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
     return template, warnings, seed_cfg
 
 
+def _is_h3_video_workflow(workflow: dict) -> bool:
+    """画布工作流是否为 MiniMax H3 视频（T2V/I2V/R2V）：有 H3 *ToVideo 入口，或 CreateVideo+VAEDecodeAudio。"""
+    types = set()
+    for node in workflow.values():
+        if not isinstance(node, dict):
+            continue
+        ct = str(node.get("class_type") or "")
+        if not ct:
+            continue
+        types.add(ct)
+        if ct.startswith("MiniMaxH3") and (ct.endswith("ImageToVideo") or ct.endswith("ReferenceToVideo")):
+            return True
+    return "CreateVideo" in types and "VAEDecodeAudio" in types
+
+
+def _template_video_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
+    """H3 视频工作流 → 模板：UNETLoader→{{MODEL}}、CLIPLoader→{{TEXT_ENCODER}}、
+    VAELoader（喂 VAEDecodeAudio 的→{{AUDIO_VAE}}，其余→{{VAE}}）、MiniMaxH3* 入口 prompt/width/height/length
+    →占位符、KSampler seed→{{SEED}}、LoadImage→{{REF_IMAGE}}、主链 LoRA→{{LORA_i_*}} 槽位。
+
+    返回 (template, warnings, seed_cfg)；约定与 _template_from_workflow 一致（seed_cfg 只含非空项）。"""
+    template = copy.deepcopy(workflow)
+    warnings = []
+    seed_cfg = {}
+
+    # H3 音频是独立 VAE：喂给 VAEDecodeAudio.vae 的 VAELoader 才是音频 VAE，不能复用视频 VAE
+    audio_vae_ids = set()
+    for nid, node in workflow.items():
+        if not isinstance(node, dict) or node.get("class_type") != "VAEDecodeAudio":
+            continue
+        vae = (node.get("inputs") or {}).get("vae")
+        if isinstance(vae, list) and len(vae) == 2:
+            audio_vae_ids.add(str(vae[0]))
+
+    for nid, node in workflow.items():
+        ct = node.get("class_type")
+        inputs = template[nid]["inputs"]
+        if ct == "UNETLoader" and isinstance(inputs.get("unet_name"), str):
+            seed_cfg.setdefault("model", inputs["unet_name"])
+            inputs["unet_name"] = "{{MODEL}}"
+        elif ct == "CLIPLoader" and isinstance(inputs.get("clip_name"), str):
+            seed_cfg.setdefault("text_encoder", inputs["clip_name"])
+            inputs["clip_name"] = "{{TEXT_ENCODER}}"
+        elif ct == "VAELoader" and isinstance(inputs.get("vae_name"), str):
+            if nid in audio_vae_ids:
+                seed_cfg.setdefault("audio_vae", inputs["vae_name"])
+                inputs["vae_name"] = "{{AUDIO_VAE}}"
+            else:
+                seed_cfg.setdefault("vae", inputs["vae_name"])
+                inputs["vae_name"] = "{{VAE}}"
+        elif ct.startswith("MiniMaxH3"):
+            # prompt 无论字符串还是连线都替换为运行时 {{PROMPT}}（断开原提示词来源节点，由 NeoH3VideoGenerate 注入）
+            if "prompt" in inputs:
+                inputs["prompt"] = "{{PROMPT}}"
+            for key, token in (("width", "{{WIDTH}}"), ("height", "{{HEIGHT}}"), ("length", "{{LENGTH}}")):
+                v = inputs.get(key)
+                if isinstance(v, int):
+                    seed_cfg.setdefault(key, v)
+                    inputs[key] = token
+                elif isinstance(v, str) and v.isdigit():
+                    seed_cfg.setdefault(key, int(v))
+                    inputs[key] = token
+        elif ct in ("KSampler", "KSamplerAdvanced") and "seed" in inputs:
+            inputs["seed"] = "{{SEED}}"
+        elif ct == "LoadImage" and isinstance(inputs.get("image"), str):
+            inputs["image"] = "{{REF_IMAGE}}"
+
+    if not seed_cfg.get("model"):
+        warnings.append("工作流没有 UNETLoader，运行时无法注入视频模型")
+    if not seed_cfg.get("text_encoder"):
+        warnings.append("工作流没有 CLIPLoader，运行时无法注入文本编码器")
+    if not seed_cfg.get("vae"):
+        warnings.append("工作流没有视频 VAELoader，运行时无法注入 VAE")
+
+    # 主链 LoRA：与生图一致，UNETLoader → LoraLoaderModelOnly* 按序编为 {{LORA_i_*}} 槽位
+    loras = []
+    slot = 0
+    unet_ids = sorted((nid for nid, n in workflow.items()
+                       if isinstance(n, dict) and n.get("class_type") == "UNETLoader"),
+                      key=_node_sort_key)
+    for unet_id in unet_ids:
+        cur = unet_id
+        while True:
+            nxt = _model_consumer(workflow, cur)
+            if not nxt:
+                break
+            slot += 1
+            orig = workflow[nxt]["inputs"]
+            try:
+                strength = float(orig.get("strength_model", 1.0))
+            except (TypeError, ValueError):
+                strength = 1.0
+            loras.append({"name": str(orig.get("lora_name") or ""), "strength": strength})
+            template[nxt]["inputs"]["lora_name"] = "{{LORA_%d_NAME}}" % slot
+            template[nxt]["inputs"]["strength_model"] = "{{LORA_%d_STRENGTH}}" % slot
+            cur = nxt
+    if loras:
+        seed_cfg["loras"] = [l for l in loras if l["name"]]
+
+    return template, warnings, seed_cfg
+
+
 def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> dict:
     """把当前画布工作流（API prompt）导出为生图技能：skill.md + workflow.json + config.json。"""
     if not isinstance(workflow, dict) or not workflow:
@@ -1141,7 +1243,11 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
     for nid, node in workflow.items():
         if not isinstance(node, dict) or not node.get("class_type") or not isinstance(node.get("inputs"), dict):
             return {"success": False, "message": f"节点 {nid} 缺少 class_type/inputs"}
-    template, warnings, seed_cfg = _template_from_workflow(workflow)
+    is_video = _is_h3_video_workflow(workflow)
+    if is_video:
+        template, warnings, seed_cfg = _template_video_from_workflow(workflow)
+    else:
+        template, warnings, seed_cfg = _template_from_workflow(workflow)
     has_ref = any(isinstance(v, str) and "{{REF_IMAGE}}" in v
                   for n in template.values() if isinstance(n, dict)
                   for v in (n.get("inputs") or {}).values())
@@ -1155,10 +1261,11 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
         "name": str(name or "").strip() or sid,
         "tags": [str(t) for t in (tags if isinstance(tags, list) else [])],
         "description": str(description or ""),
-        "inputs": ["text"],
-        "category": "image_gen",
-        "gen_image": True,
+        # 视频 I2V 需要首帧参考图（对齐内置 minimax_h3_i2v preset）；生图四视图沿用既有 inputs=["text"]+requires_ref 行为
+        "inputs": (["image", "text"] if has_ref else ["text"]) if is_video else ["text"],
+        "category": "video_gen" if is_video else "image_gen",
     }
+    meta["gen_video" if is_video else "gen_image"] = True
     if has_ref:
         meta["requires_ref"] = True
     with _skills_lock:
@@ -1177,7 +1284,7 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(seed_cfg, f, indent=2, ensure_ascii=False)
             os.replace(tmp, os.path.join(d, "config.json"))
-    return {"success": True, "id": sid, "warnings": warnings}
+    return {"success": True, "id": sid, "warnings": warnings, "gen_video": is_video}
 
 
 def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:

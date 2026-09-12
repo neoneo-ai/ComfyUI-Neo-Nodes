@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, dialogs, flush, sleep } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, inputText, click } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
@@ -18,29 +18,36 @@ function canvasBtn() {
         .find((b) => b.textContent === "📋 From Canvas");
 }
 
-test("From Canvas：导出画布 API prompt 为出图技能", async () => {
+test("From Canvas：单标题对话框导出画布 API prompt 为技能", async () => {
     const { createSkillDropdown } = await import("../../web/skill.js");
     appState.promptGraph = { output: { "10": { class_type: "KSampler", inputs: {} } }, workflow: null };
     mockRoute("/rs_prompts/skills", () => jsonResponse([]));
     let body = null;
     mockRoute("/neo_image_gen/save_workflow_skill", (b) => {
         body = b;
-        return jsonResponse({ success: true, id: "my-skill", warnings: [] });
+        return jsonResponse({ success: true, id: "my-skill", warnings: [], gen_video: false });
     });
 
     const { combo } = createSkillDropdown();
     document.body.appendChild(combo.box);
-    dialogs.promptAnswer = "My Skill"; // 三次 prompt（名称/描述/标签）共用同一回答
     canvasBtn().click();
+    await sleep(60);
+
+    // 单标题对话框：填入名称后点「创建」（不再问描述/标签）
+    const dlg = document.querySelector(".rs-skill-title-dialog");
+    assert.ok(dlg, "应弹出标题对话框");
+    inputText(dlg.querySelector("input.rs-tpl-name"), "My Skill");
+    click(Array.from(dlg.querySelectorAll("button")).find((b) => b.textContent === "创建"));
     await sleep(60);
 
     assert.ok(body, "应发出 /neo_image_gen/save_workflow_skill");
     assert.equal(body.name, "My Skill");
     assert.deepEqual(body.workflow, { "10": { class_type: "KSampler", inputs: {} } });
-    assert.deepEqual(body.tags, ["My Skill"]);
+    assert.deepEqual(body.tags, []);
+    assert.equal(body.description, "");
 });
 
-test("From Canvas：画布无有效工作流时不发请求并提示", async () => {
+test("From Canvas：画布无有效工作流时不发请求并 toast 提示", async () => {
     const { createSkillDropdown } = await import("../../web/skill.js");
     appState.promptGraph = null; // mock 回落 { output: {}, workflow: null }
     mockRoute("/rs_prompts/skills", () => jsonResponse([]));
@@ -56,7 +63,7 @@ test("From Canvas：画布无有效工作流时不发请求并提示", async () 
     await sleep(60);
 
     assert.equal(called, false, "output 为空不应发请求");
-    assert.ok(dialogs.alerts.some((m) => m.includes("Cannot export")), "应提示无法导出");
+    assert.ok(appState.toasts.some((t) => (t.summary || "").includes("无法导出")), "应 toast 提示无法导出");
 });
 
 // 详情弹窗出图设置区：mock 一条 load_skill + skill_config（GET/POST 分流）+ models

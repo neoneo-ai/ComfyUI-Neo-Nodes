@@ -28,7 +28,7 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 | skill_id | COMBO | 生图 skill 名称（仅含 workflow.json 的 gen_image skill；显示 name，内部解析为 id） |
 | prompt | STRING | 提示词（可手填或连 Neo Prompt 的 PROMPT） |
 | image | IMAGE (可选) | 参考图；四视图等 requires_ref skill 需要 |
-| seed | INT (可选) | 随机种子，-1 = 随机 |
+| seed | INT (可选) | 随机种子，默认 0（固定）；要随机把「生成后控制」设为 randomize |
 | count | INT (可选) | 生成张数（1–8） |
 
 | 输出 | 类型 | 说明 |

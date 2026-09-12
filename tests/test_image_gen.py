@@ -559,6 +559,94 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body2["id"], body["id"] + "-2")
 
+    def _h3_video_workflow(self, i2v=False):
+        wf = {
+            "1": {"class_type": "UNETLoader",
+                  "inputs": {"unet_name": "MiniMaxH3/minimax_h3.safetensors"}},
+            "2": {"class_type": "CLIPLoader",
+                  "inputs": {"clip_name": "qwen3vl_minimax_h3.safetensors", "type": "minimax"}},
+            "3": {"class_type": "VAELoader",
+                  "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"}},
+            "4": {"class_type": "MiniMaxH3ImageToVideo",
+                  "inputs": {"clip": ["2", 0], "vae": ["3", 0], "prompt": "a cat",
+                             "width": 1344, "height": 768, "length": 124}},
+            "5": {"class_type": "MiniMaxH3SigmaShift",
+                  "inputs": {"model": ["1", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+            "6": {"class_type": "KSampler",
+                  "inputs": {"model": ["5", 0], "seed": 42, "steps": 20, "cfg": 1.0,
+                             "sampler_name": "euler", "scheduler": "simple",
+                             "positive": ["4", 0], "negative": ["4", 0],
+                             "latent_image": ["4", 1], "denoise": 1.0}},
+            "7": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["6", 0]}},
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+            "9": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["7", 1], "vae": ["11", 0]}},
+            "10": {"class_type": "CreateVideo", "inputs": {"images": ["8", 0], "fps": 24, "audio": ["9", 0]}},
+            "11": {"class_type": "VAELoader",
+                   "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        }
+        if i2v:
+            wf["4"]["inputs"]["first_frame"] = ["12", 0]
+            wf["12"] = {"class_type": "LoadImage", "inputs": {"image": "first.png"}}
+            # 主链 LoRA：UNETLoader → LoraLoaderModelOnly → MiniMaxH3SigmaShift
+            wf["5"]["inputs"]["model"] = ["13", 0]
+            wf["13"] = {"class_type": "LoraLoaderModelOnly",
+                        "inputs": {"model": ["1", 0], "lora_name": "h3_style.safetensors", "strength_model": 0.8}}
+        return wf
+
+    def test_save_workflow_skill_video_t2v(self):
+        status, body = self._call(
+            image_gen.save_workflow_skill_route,
+            self._req({"name": "h3 t2v", "workflow": self._h3_video_workflow(i2v=False)}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        self.assertTrue(body["gen_video"])
+        d = os.path.join(self._tmp.name, body["id"])
+        with open(os.path.join(d, "skill.md"), encoding="utf-8") as f:
+            meta, _ = _skill_mod.split_frontmatter(f.read())
+        self.assertIs(meta["gen_video"], True)
+        self.assertEqual(meta["category"], "video_gen")
+        self.assertNotIn("requires_ref", meta)
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["1"]["inputs"]["unet_name"], "{{MODEL}}")
+        self.assertEqual(tpl["2"]["inputs"]["clip_name"], "{{TEXT_ENCODER}}")
+        self.assertEqual(tpl["3"]["inputs"]["vae_name"], "{{VAE}}")          # 视频 VAE（喂 VAEDecode）
+        self.assertEqual(tpl["11"]["inputs"]["vae_name"], "{{AUDIO_VAE}}")   # 音频 VAE（喂 VAEDecodeAudio）
+        self.assertEqual(tpl["4"]["inputs"]["prompt"], "{{PROMPT}}")
+        self.assertEqual(tpl["4"]["inputs"]["width"], "{{WIDTH}}")
+        self.assertEqual(tpl["4"]["inputs"]["height"], "{{HEIGHT}}")
+        self.assertEqual(tpl["4"]["inputs"]["length"], "{{LENGTH}}")
+        self.assertEqual(tpl["6"]["inputs"]["seed"], "{{SEED}}")
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["model"], "MiniMaxH3/minimax_h3.safetensors")
+        self.assertEqual(cfg["text_encoder"], "qwen3vl_minimax_h3.safetensors")
+        self.assertEqual(cfg["vae"], "minimax_h3_video_vae_fp16.safetensors")
+        self.assertEqual(cfg["audio_vae"], "minimax_h3_audio_vae_fp32.safetensors")
+        self.assertEqual((cfg["width"], cfg["height"], cfg["length"]), (1344, 768, 124))
+
+    def test_save_workflow_skill_video_i2v_with_lora(self):
+        status, body = self._call(
+            image_gen.save_workflow_skill_route,
+            self._req({"name": "h3 i2v", "workflow": self._h3_video_workflow(i2v=True)}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        self.assertTrue(body["gen_video"])
+        d = os.path.join(self._tmp.name, body["id"])
+        with open(os.path.join(d, "skill.md"), encoding="utf-8") as f:
+            meta, _ = _skill_mod.split_frontmatter(f.read())
+        self.assertIs(meta["requires_ref"], True)
+        self.assertIn("image", meta.get("inputs") or [])
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["12"]["inputs"]["image"], "{{REF_IMAGE}}")
+        self.assertEqual(tpl["4"]["inputs"]["first_frame"], ["12", 0])       # 首帧连线保留
+        self.assertEqual(tpl["13"]["inputs"]["lora_name"], "{{LORA_1_NAME}}")
+        self.assertEqual(tpl["13"]["inputs"]["strength_model"], "{{LORA_1_STRENGTH}}")
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["loras"], [{"name": "h3_style.safetensors", "strength": 0.8}])
+
     def test_save_workflow_skill_invalid(self):
         status, _ = self._call(image_gen.save_workflow_skill_route,
                                self._req({"name": "x", "workflow": {}}))

@@ -6,7 +6,7 @@
 1. 添加 🎬 H3 Video Generate 节点。
 2. `skill_id` 选一个带 `gen_video: true` + `workflow.json` 的视频 skill（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)）。
 3. 接 prompt（可来自 ⚡ Neo Prompt Agent 或手填）；i2v 再连首帧 IMAGE。
-4. 可选覆盖 `seed` / `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
+4. 可选覆盖 `seed`（默认 0，固定；要随机把「生成后控制」设为 randomize）/ `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
 5. 执行后输出 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
 ## 模板与配置
@@ -16,6 +16,7 @@
 - **LoRA（同生图，无「依赖参考图」）**：在「🎬 生视频设置」区可对该 skill 添加多个 LoRA（模型 + 强度），写入其 `config.json` 的 `loras`；生成时经 `image_gen._resolve_loras` 校验后由 `render_template` 动态串入主链——模板无 LoRA 槽位时在 `UNETLoader → MiniMaxH3SigmaShift` 之间插入 `LoraLoaderModelOnly`。视频无参考图依赖概念，故不设生图区那样的「依赖参考图」复选框，配置的 LoRA 全部无条件加载；LoRA 下拉由 `/neo_video_gen/models` 的 `loras` 提供。
 - 模板链：`UNETLoader + CLIPLoader(type=minimax) + VAELoader(视频) + VAELoader(音频) → MiniMaxH3ImageToVideo → [cond, AV latent] → MiniMaxH3SigmaShift + KSampler(cfg=1.0) → LTXVSeparateAVLatent → {VAEDecode(视频 VAE)→帧, VAEDecodeAudio(音频 VAE)→音频} → CreateVideo(fps=24) → VIDEO`。**H3 音频是独立 VAE（MiniMaxH3AudioVAE），`VAEDecodeAudio` 必须接单独的音频 `VAELoader`，不能复用视频 VAE**（否则视频 VAE 按 5D 解码 4D 音频 latent 会报 `IndexError`）。i2v 额外 `LoadImage({{REF_IMAGE}}) → first_frame`。
 - 占位符：`{{PROMPT}} {{MODEL}} {{TEXT_ENCODER}} {{VAE}} {{AUDIO_VAE}} {{WIDTH}} {{HEIGHT}} {{LENGTH}} {{SEED}}`（i2v 另含 `{{REF_IMAGE}}`）。
+- **从画布导出（📋 From Canvas）**：技能下拉底部「📋 From Canvas」把当前画布 API prompt 导出为技能。检测到 H3 视频工作流（含 `MiniMaxH3*ToVideo` 入口，或 `CreateVideo`+`VAEDecodeAudio`）时自动存为 `gen_video: true` / `category: video_gen` 的视频 skill，并按上表占位符模板化（模型/编码器/视频 VAE/音频 VAE/prompt/尺寸/时长/seed/主链 LoRA；I2V 的 `LoadImage` → `{{REF_IMAGE}}`、首帧连线保留），否则仍存为出图 skill。只弹一个标题对话框输入名称（不再问描述/标签），成功/失败用 toast 提示。
 
 ## 说明
 - 末端 `CreateVideo` 把视频帧 + 音频打包成原生 `VIDEO`（fps=24），不直接落盘；接 SaveVideo 即可导出带声音的视频。

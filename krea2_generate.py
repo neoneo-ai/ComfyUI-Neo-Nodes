@@ -190,7 +190,7 @@ class NeoKrea2Generate:
             "optional": {
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
                 "image": ("IMAGE",),  # 参考图；requires_ref skill 需要，文生图忽略
-                "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),  # -1 = 随机
+                "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
                 "count": ("INT", {"default": 1, "min": 1, "max": MAX_IMAGES}),
             },
         }

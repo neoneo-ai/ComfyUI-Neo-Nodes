@@ -3027,6 +3027,11 @@
     overflow: hidden;
 }
 
+/* “From Canvas”导出技能的单字段标题对话框：比详情弹窗窄 */
+.rs-skill-title-dialog {
+    width: min(420px, calc(100vw - 48px));
+}
+
 .rs-skill-modal-header {
     display: flex;
     align-items: center;
