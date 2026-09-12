@@ -399,5 +399,46 @@ class DirectorOrchestrationTests(unittest.TestCase):
          h3_video_director.execute_graph_inprocess) = orig
 
 
+class DirectorSpecRouteTests(unittest.TestCase):
+    """/rs_recipes/director_spec 请求解析与错误分支（load_director_spec 打桩）。"""
+
+    def _req(self, name):
+        return types.SimpleNamespace(rel_url=types.SimpleNamespace(query={"name": name}))
+
+    def test_missing_name_returns_400(self):
+        resp = _run_async(recipes.rs_recipes_director_spec(self._req("   ")))
+        self.assertEqual(resp.status, 400)
+
+    def test_returns_shared_and_segments(self):
+        orig = recipes.load_director_spec
+        recipes.load_director_spec = lambda name: {
+            "shared": {"width": 8},
+            "segments": [{"skill_id": "s", "prompt": "a", "duration_sec": 5, "ref_input": None}],
+        }
+        try:
+            resp = _run_async(recipes.rs_recipes_director_spec(self._req("myrecipe")))
+        finally:
+            recipes.load_director_spec = orig
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.body)
+        self.assertTrue(body["success"])
+        self.assertEqual(body["name"], "myrecipe")
+        self.assertEqual(len(body["segments"]), 1)
+        self.assertIn("shared", body)
+
+    def test_load_error_returns_500(self):
+        orig = recipes.load_director_spec
+
+        def _raise(name):
+            raise ValueError("配方不存在")
+
+        recipes.load_director_spec = _raise
+        try:
+            resp = _run_async(recipes.rs_recipes_director_spec(self._req("nope")))
+        finally:
+            recipes.load_director_spec = orig
+        self.assertEqual(resp.status, 500)
+
+
 if __name__ == "__main__":
     unittest.main()

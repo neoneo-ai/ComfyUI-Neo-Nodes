@@ -670,6 +670,19 @@ def load_director_spec(name: str) -> dict:
     return {"shared": meta.get("shared") or {}, "segments": segments}
 
 
+@PromptServer.instance.routes.get("/rs_recipes/director_spec")
+async def rs_recipes_director_spec(request):
+    """返回 video_director 配方的 {shared, segments}（首帧已解析为 input 名），供节点时间轴预览。"""
+    name = (request.rel_url.query.get("name") or "").strip()
+    if not name:
+        return web.json_response({"success": False, "error": "缺少配方名"}, status=400)
+    try:
+        spec = load_director_spec(name)
+        return web.json_response({"success": True, "name": name, **spec})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 def _normalize_loras(raw) -> list:
     """Coerce an untrusted loras payload into [{name, strength}] (strength default 1.0)."""
     out = []

@@ -9,6 +9,7 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 import { Lightbox } from "./lightbox.js";
+import { DirectorTimeline } from "./director-timeline.js";
 
 const assetUrl = (recipe, file, dir) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
@@ -400,6 +401,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
 
     const exShared = (existing && existing.shared) || {};
     const exSegs = (existing && Array.isArray(existing.segments)) ? existing.segments : [];
+    let segCounter = 0; // 段身份计数：时间轴颜色按段内容绑定，重排不变色
 
     function buildSeg(seg = {}) {
         const skillSel = $el('select', { className: 'neo-director-skill' });
@@ -472,7 +474,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         ffGrid.addEventListener('drop', acceptGalleryDrop);
 
         const removeBtn = $el('button', { className: 'rs-btn neo-director-seg-del', title: '删除该段', textContent: '🗑' });
-        const row = $el('div', { className: 'neo-director-seg' }, [
+        const row = $el('div', { className: 'neo-director-seg', dataset: { segId: 'seg-' + (++segCounter) } }, [
             $el('div', { className: 'neo-director-seg-head' }, [$el('span', { className: 'neo-director-seg-title', textContent: '段' }), removeBtn]),
             $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
             $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
@@ -493,13 +495,55 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     renumberSegs();
     const addBtn = $el('button', { className: 'rs-btn neo-director-add', textContent: '＋ 添加段', onclick: () => { segsWrap.appendChild(buildSeg({})); renumberSegs(); } });
 
+    // 时间轴组件（复用 web/director-timeline.js）：按时长比例绘制分段块 + 秒尺，点击定位、拖拽重排。
+    const tlWrap = $el('div', { className: 'neo-director-timeline' });
+    let timeline = null;
+    const readSegData = () => Array.from(segsWrap.querySelectorAll('.neo-director-seg')).map(row => {
+        const durInp = row.querySelector('.neo-director-dur');
+        const promptTa = row.querySelector('.neo-director-prompt');
+        const activeFf = row.querySelector('.neo-director-ff-item.neo-director-ff-active');
+        let thumbUrl = null;
+        if (activeFf && activeFf.dataset.file) {
+            const imgEl = activeFf.querySelector('img.neo-director-ff-thumb');
+            thumbUrl = imgEl ? imgEl.getAttribute('src') : null;
+        }
+        return { id: row.dataset.segId, duration: Number(durInp.value) || 0, prompt: (promptTa.value || '').trim(), thumbUrl };
+    });
+    const onSelectSeg = (i) => {
+        const row = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))[i];
+        if (!row) return;
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        const p = row.querySelector('.neo-director-prompt');
+        if (p) p.focus();
+    };
+    const onReorderSegs = (order) => {
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        for (const idx of order) { const el = rows[idx]; if (el) segsWrap.appendChild(el); }
+        renumberSegs();
+    };
+    // 拖块右缘调时长：写回该段时长输入框（组件内已吸附 0.5s、最小 1s）
+    const onResizeSeg = (i, durSec) => {
+        const row = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))[i];
+        if (!row) return;
+        const inp = row.querySelector('.neo-director-dur');
+        if (inp) inp.value = String(Math.min(3600, Math.max(1, Number(durSec) || 1)));
+    };
+    try {
+        timeline = new DirectorTimeline(tlWrap, { height: 92, getSegments: readSegData, onSelect: onSelectSeg, onReorder: onReorderSegs, onResize: onResizeSeg });
+    } catch (e) { console.error('[Neo Recipes] Director: timeline init failed', e); }
+    const tlObserver = new MutationObserver(() => { if (timeline) timeline.refresh(); });
+    tlObserver.observe(segsWrap, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    segsWrap.addEventListener('input', (e) => {
+        if (timeline && (e.target.classList.contains('neo-director-dur') || e.target.classList.contains('neo-director-prompt'))) timeline.refresh();
+    });
+
     const nameInp = $el('input', { className: 'neo-director-name', type: 'text', placeholder: '配方名称', value: (existing && existing.name) || '' });
     const wInp = $el('input', { className: 'neo-director-num', type: 'number', min: 1, placeholder: '宽', value: (exShared.width != null ? exShared.width : 1344) });
     const hInp = $el('input', { className: 'neo-director-num', type: 'number', min: 1, placeholder: '高', value: (exShared.height != null ? exShared.height : 768) });
     const seedInp = $el('input', { className: 'neo-director-num', type: 'number', min: 0, placeholder: '种子', value: (exShared.seed != null ? exShared.seed : 0) });
 
     let overlay;
-    const close = () => { if (overlay && overlay.parentNode) overlay.remove(); };
+    const close = () => { if (timeline) { try { timeline.destroy(); } catch (_) {} timeline = null; } if (overlay && overlay.parentNode) overlay.remove(); };
     const saveBtn = $el('button', { className: 'rs-btn neo-director-save', textContent: '保存' });
     const cancelBtn = $el('button', { className: 'rs-btn neo-director-cancel', textContent: '取消', onclick: close });
 
@@ -549,6 +593,8 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             $el('label', { textContent: '高' }), hInp,
             $el('label', { textContent: '种子' }), seedInp,
         ]),
+        $el('div', { className: 'neo-director-tl-label', textContent: '时间轴（拖拽重排 · 点击定位分段）' }),
+        tlWrap,
         segsWrap, addBtn,
     ]);
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
