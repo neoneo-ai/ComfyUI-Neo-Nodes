@@ -112,8 +112,32 @@ export function installMediaStub(win) {
     Object.defineProperty(globalThis, "Image", { value: FakeImage, configurable: true, writable: true });
 
     const proto = win.HTMLCanvasElement.prototype;
+    // 富桩：jsdom 无 canvas 后端，绘制方法全部 no-op；属性可写。让时间轴等组件的
+    // 完整 _draw 路径（setTransform/measureText/save/restore/…）在测试中可安全执行。
     Object.defineProperty(proto, "getContext", {
-        value: () => ({ drawImage() {}, fillRect() {}, clearRect() {} }),
+        value: () => new Proxy(
+            {
+                font: "",
+                fillStyle: "",
+                strokeStyle: "",
+                lineWidth: 1,
+                globalAlpha: 1,
+                textAlign: "left",
+                textBaseline: "top",
+                canvas: null,
+                measureText: () => ({ width: 0 }),
+            },
+            {
+                get(t, k) {
+                    if (k in t) return t[k];
+                    return () => {};
+                },
+                set(t, k, v) {
+                    t[k] = v;
+                    return true;
+                },
+            }
+        ),
         configurable: true,
         writable: true,
     });

@@ -6,20 +6,23 @@
 // getSegments() 应返回：[{ duration, prompt, thumbUrl, id? }]，顺序即宿主当前分段顺序。
 // id 为段身份（可选）：提供后颜色按身份绑定，重排时颜色跟随段内容而非位置。
 // 回调：onSelect(index)、onReorder(order)（原始索引的新排列）、
-//       onResize(index, durationSec)（拖块右缘调时长，吸附 0.5s、最小 1s；仅非 readOnly）。
+//       onResize(index, durationSec)（拖块右缘调时长，吸附 0.5s、最小 1s；仅非 readOnly）、
+//       onAdd()（点击时间轴尾部「＋」按钮添加段；仅非 readOnly 且提供时显示）。
 
 const DT_CSS_HREF = "/extensions/ComfyUI-Neo-Nodes/director-timeline.css";
 
 export class DirectorTimeline {
   constructor(container, options) {
     this.container = container;
-    this.opts = Object.assign({ height: 92, getSegments: () => [], onSelect: null, onReorder: null, readOnly: false }, options);
+    this.opts = Object.assign({ height: 92, getSegments: () => [], onSelect: null, onReorder: null, onDropImage: null, onAdd: null, readOnly: false }, options);
     this._segs = [];
     this._thumbs = new Map(); // url -> HTMLImageElement
     this._hueById = new Map(); // 段身份 -> 色相槽位（首次出现顺序分配，重排不变）
     this._selected = -1;
     this._drag = null; // { src, order, moved, startX, cursorX }
     this._hover = null; // 悬停块索引（高亮 + 时间范围提示）
+    this._dropOver = -1; // 素材拖放悬停块索引（-1=无）
+    this._addHover = false; // 是否悬停在时间轴尾部「＋」按钮上
     this._raf = 0;
 
     this._ensureCss();
@@ -33,7 +36,10 @@ export class DirectorTimeline {
     this._onUpB = (e) => this._onUp(e);
     this.canvas.addEventListener("mousedown", (e) => this._onDown(e));
     this.canvas.addEventListener("mousemove", (e) => this._hoverAt(e));
-    this.canvas.addEventListener("mouseleave", () => { if (this._hover !== null) { this._hover = null; this.refresh(); } });
+    this.canvas.addEventListener("mouseleave", () => { if (this._hover !== null || this._addHover) { this._hover = null; this._addHover = false; this.refresh(); } });
+    this.canvas.addEventListener("dragover", (e) => this._onDragOver(e));
+    this.canvas.addEventListener("dragleave", (e) => this._onDragLeave(e));
+    this.canvas.addEventListener("drop", (e) => this._onDrop(e));
     this._ro = new ResizeObserver(() => this.refresh());
     this._ro.observe(container);
     this.refresh();
@@ -97,13 +103,53 @@ export class DirectorTimeline {
     return !!b && x >= b.x + b.w - 7 && x <= b.x + b.w + 2;
   }
 
+  // 时间轴尾部「＋」按钮位置（未显示时返回 null）：块行右侧、垂直居中
+  _addChipRect() {
+    if (this.opts.readOnly || typeof this.opts.onAdd !== "function") return null;
+    const W = this._width();
+    const H = this.opts.height;
+    const top = 22, bh = H - top - 6; // 与 _draw 一致：rulerH(18)+4
+    const s = 24;
+    return { x: W - 8 - s, y: top + (bh - s) / 2, w: s, h: s };
+  }
+
   _hoverAt(e) {
     if (this._drag) return; // 拖动中不更新悬停
     const rect = this.canvas.getBoundingClientRect();
-    const i = this._blockAt(e.clientX - rect.left);
-    const zone = this._resizeZoneAt(e.clientX - rect.left, i);
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const chip = this._addChipRect();
+    const overAdd = !!chip && x >= chip.x && x <= chip.x + chip.w && y >= chip.y && y <= chip.y + chip.h;
+    const i = this._blockAt(x);
+    const zone = !overAdd && this._resizeZoneAt(x, i);
     this.canvas.style.cursor = zone ? "ew-resize" : "pointer";
     if (i !== this._hover) { this._hover = i; this.refresh(); }
+    if (overAdd !== this._addHover) { this._addHover = overAdd; this.refresh(); }
+  }
+
+  // 素材库图片直接拖到时间轴段块上（相当于拖到该段首帧候选区并选中）：
+  // dragover 显示落点高亮，drop 时把索引与 dataTransfer 交回宿主处理（仅非 readOnly 且宿主提供了 onDropImage）。
+  _onDragOver(e) {
+    if (this.opts.readOnly || typeof this.opts.onDropImage !== "function") return;
+    e.preventDefault(); // 允许 drop
+    e.dataTransfer && (e.dataTransfer.dropEffect = "copy");
+    const x = e.clientX - this.canvas.getBoundingClientRect().left;
+    const i = this._blockAt(x);
+    if (i !== this._dropOver) { this._dropOver = i; this.refresh(); }
+  }
+
+  _onDragLeave() {
+    if (this._dropOver !== -1) { this._dropOver = -1; this.refresh(); }
+  }
+
+  _onDrop(e) {
+    if (this.opts.readOnly || typeof this.opts.onDropImage !== "function") return;
+    e.preventDefault();
+    const x = e.clientX - this.canvas.getBoundingClientRect().left;
+    const i = this._blockAt(x);
+    this._dropOver = -1;
+    this.refresh();
+    if (i >= 0 && e.dataTransfer) this.opts.onDropImage(i, e.dataTransfer);
   }
   _width() {
     return this.canvas.clientWidth || this.container.clientWidth || 0;
@@ -114,7 +160,9 @@ export class DirectorTimeline {
   _layout(preview) {
     const W = this._width();
     const padX = 8;
-    const usable = Math.max(10, W - padX * 2);
+    // 宿主提供 onAdd 且非只读时，尾部预留「＋」按钮空间
+    const addW = (typeof this.opts.onAdd === "function" && !this.opts.readOnly) ? 32 : 0;
+    const usable = Math.max(10, W - padX * 2 - addW);
     const segs = this._segs;
     const n = segs.length;
     const durOf = (i) => {
@@ -150,6 +198,13 @@ export class DirectorTimeline {
     if (e.button !== 0) return;
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const chip = this._addChipRect();
+    if (chip && x >= chip.x && x <= chip.x + chip.w && y >= chip.y && y <= chip.y + chip.h) {
+        e.preventDefault();
+        this.opts.onAdd();
+        return;
+    }
     const i = this._blockAt(x);
     if (i < 0) return;
     e.preventDefault();
@@ -328,7 +383,24 @@ export class DirectorTimeline {
         ctx.globalAlpha = 1;
         continue;
       }
-      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(b.i + 1), this._identityHue(seg, b.i), false, b.i === this._selected || b.i === this._hover);
+      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(b.i + 1), this._identityHue(seg, b.i), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i);
+    }
+
+    // 时间轴尾部「＋」添加段按钮（宿主提供 onAdd 且非只读时）
+    const chip = this._addChipRect();
+    if (chip) {
+      this._rr(ctx, chip.x, chip.y, chip.w, chip.h, 5);
+      ctx.fillStyle = this._addHover ? "rgba(140,204,255,0.28)" : "rgba(255,255,255,0.07)";
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = this._addHover ? "#8cf" : "rgba(255,255,255,0.25)";
+      ctx.stroke();
+      ctx.fillStyle = this._addHover ? "#cfe8ff" : "#9aa4b0";
+      ctx.font = "bold 14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("+", chip.x + chip.w / 2, chip.y + chip.h / 2 + 1);
+      ctx.textAlign = "left";
     }
 
     // 悬停提示：块内左下角显示该段时间范围（如 "5–10s"）
@@ -354,21 +426,26 @@ export class DirectorTimeline {
       const srcB = L.blocks[drag.src];
       const seg = srcB.seg || this._segs[drag.src];
       const newIdx = drag.order.indexOf(drag.src);
-      this._paintSeg(ctx, drag.slotX, srcB.w, top, bh, seg, String(newIdx + 1), this._identityHue(seg, drag.src), true, false);
+      this._paintSeg(ctx, drag.slotX, srcB.w, top, bh, seg, String(newIdx + 1), this._identityHue(seg, drag.src), true, false, false);
     }
   }
 
   // 绘制单个分段块（普通/幽灵共用）：浅色身份底（重排不变色）；有首帧图则平铺满块宽，文字白字描边，否则浅底深字
-  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel) {
+  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop) {
     const iw = Math.max(2, w - 2);
     this._rr(ctx, x + 1, top, iw, bh, 4);
-    if (ghost) ctx.globalAlpha = 0.9;
-    ctx.fillStyle = "hsl(" + hue + ",55%," + (ghost ? 62 : sel ? 70 : 58) + "%)";
+    // 半透明块底色：选中加深、拖拽幽灵更淡
+    ctx.fillStyle = "hsla(" + hue + ",55%," + (ghost ? 62 : sel ? 70 : 58) + "%," + (ghost ? 0.45 : sel ? 0.75 : 0.45) + ")";
     ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.lineWidth = ghost || sel ? 1.5 : 1;
-    ctx.strokeStyle = ghost || sel ? "#8cf" : "rgba(255,255,255,0.16)";
+    ctx.lineWidth = ghost || sel || drop ? 1.5 : 1;
+    ctx.strokeStyle = ghost || sel ? "#8cf" : drop ? "#e6a23c" : "rgba(255,255,255,0.16)";
     ctx.stroke();
+    if (drop) {
+      // 素材拖放落点：半透明橙色覆盖提示「放到这 = 设为该段首帧」
+      ctx.fillStyle = "rgba(230,162,60,0.18)";
+      this._rr(ctx, x + 1, top, iw, bh, 4);
+      ctx.fill();
+    }
 
     // 首帧图：按原比例裁出竖条后横向重复，铺满块宽
     const img = seg.thumbUrl ? this._thumbs.get(seg.thumbUrl) : null;

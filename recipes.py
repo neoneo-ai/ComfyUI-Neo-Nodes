@@ -285,12 +285,14 @@ async def rs_recipes_load(request):
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
-def _normalize_director(data: dict, orig_to_copied: dict) -> tuple[dict, list]:
+def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> tuple[dict, list]:
     """校验并规范化 video_director 配方的 shared/segments；非法抛 ValueError（消息可直接回前端）。
 
     段级 skill_id 必填（每段用各自的 H3 skill 模板）。first_frame / refs.* 由前端以**原始文件名**
     引用，orig_to_copied 把原始名映射到已落盘 assets 的最终名（同名不同内容可能被重命名），
-    规范化时回写为最终名使 recipe.json 与 assets/ 自洽。v1 执行仅用每段首帧图，其余 refs 原样保留。
+    规范化时回写为最终名使 recipe.json 与 assets/ 自洽。existing_assets 是本次保存前已在
+    assets/ 的文件名集合：引用这些名字（上次保存回写的最终名）直接保留，重存旧配方不报错。
+    v1 执行仅用每段首帧图，其余 refs 原样保留。
     """
     shared_raw = data.get("shared") or {}
     if not isinstance(shared_raw, dict):
@@ -335,9 +337,11 @@ def _normalize_director(data: dict, orig_to_copied: dict) -> tuple[dict, list]:
 
         def _resolve_ref(fname, where):
             stored = orig_to_copied.get(str(fname))
-            if not stored:
-                raise ValueError(f"第 {idx + 1} 段 {where} 引用了未保存的资产：{fname}")
-            return stored
+            if stored:
+                return stored
+            if existing_assets and str(fname) in existing_assets:
+                return str(fname)   # 上次保存已落盘的资产（回写后的最终名），直接保留
+            raise ValueError(f"第 {idx + 1} 段 {where} 引用了未保存的资产：{fname}")
 
         first_frame = str(s.get("first_frame") or "").strip()
         seg = {"skill_id": skill_id, "prompt": prompt, "duration_sec": dur}
@@ -378,6 +382,25 @@ async def rs_recipes_save(request):
         copied = []
         kinds = {}
         orig_to_copied = {}   # 原始文件名 → 落盘 assets 的最终名（供 director 段引用回写）
+
+        # 重存同一配方：先读旧 meta，保留磁盘上仍在的既有资产与示例结果（samples 随保存/追加累积）
+        old_assets, old_kinds, old_samples, old_sample_kinds = [], {}, [], {}
+        meta_path = recipe_dir / "recipe.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    old_meta = json.load(f)
+                old_samples = old_meta.get("samples", []) or []
+                old_sample_kinds = old_meta.get("sample_kinds", {}) or {}
+                for a in old_meta.get("assets", []) or []:
+                    if isinstance(a, str) and (assets_dir / a).is_file():
+                        old_assets.append(a)
+                for k, v in (old_meta.get("kinds") or {}).items():
+                    if (assets_dir / k).is_file():
+                        old_kinds[k] = v
+            except Exception:
+                pass
+
         for ref in data.get("assets", []) or []:
             if not isinstance(ref, dict):
                 continue
@@ -389,18 +412,12 @@ async def rs_recipes_save(request):
                 if kind in ("image", "video", "audio"):
                     kinds[copied_name] = kind
 
-        # 重复保存同一配方时保留既有示例结果（samples 随保存/追加累积）
-        old_samples = []
-        old_sample_kinds = {}
-        meta_path = recipe_dir / "recipe.json"
-        if meta_path.exists():
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    old_meta = json.load(f)
-                old_samples = old_meta.get("samples", []) or []
-                old_sample_kinds = old_meta.get("sample_kinds", {}) or {}
-            except Exception:
-                pass
+        # 既有资产并入清单（本次未重传的也保留），kinds 同理
+        for a in old_assets:
+            if a not in copied:
+                copied.append(a)
+        for k, v in old_kinds.items():
+            kinds.setdefault(k, v)
 
         # 记录当前工作流加载的 LoRA（名称 + 强度），随配方保存便于还原参考
         loras = []
@@ -420,7 +437,9 @@ async def rs_recipes_save(request):
         director_shared, director_segments = None, None
         if rtype == "video_director":
             try:
-                director_shared, director_segments = _normalize_director(data, orig_to_copied)
+                # 已落盘 assets（旧清单 + 本次拷贝）：段引用其中任一名字都合法，重存旧配方不报错
+                existing_assets = set(copied)
+                director_shared, director_segments = _normalize_director(data, orig_to_copied, existing_assets)
             except ValueError as e:
                 return web.json_response({"success": False, "error": str(e)}, status=400)
 

@@ -30,10 +30,16 @@ function richCtx() {
 function makeTimeline(segs, opts = {}) {
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const calls = { select: [], reorder: [] };
-    const tl = new DirectorTimeline(container, Object.assign({ getSegments: () => segs }, opts, {
+    const calls = { select: [], reorder: [], resize: [] };
+    const extResize = opts.onResize;
+    const tl = new DirectorTimeline(container, Object.assign(opts, {
+        getSegments: () => segs,
         onSelect: (i) => calls.select.push(i),
         onReorder: (o) => calls.reorder.push(o),
+        onResize: (i, d) => {
+            calls.resize.push([i, d]);
+            if (extResize) extResize(i, d);
+        },
     }));
     // 覆盖极简 ctx 桩：组件只读 canvas.clientWidth，绘制全走 no-op
     tl.ctx = richCtx();
@@ -142,16 +148,16 @@ test("身份色相按段 id 绑定（重排不变色），无 id 回退按位置
 
 test("拖块右缘调时长：吸附 0.5s，松手提交 onResize", async () => {
     resetEnv();
-    const calls = { resize: [] };
-    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }], { onResize: (i, d) => calls.resize.push([i, d]) });
+    const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
     await sleep(40);
 
-    // W=320：块0 [8,160]，右缘热区 x>=153；pps≈5.08
+    // W=320, padX=8, usable=304, total=10 → pps=30.4；块0 [8,160]，右缘热区 x∈[153,162]
     tl.canvas.dispatchEvent(mouse("mousedown", 158)); // 按下块0 右缘 → resize 模式
-    window.dispatchEvent(mouse("mousemove", 200));    // (200-8)/5.08≈37.6 → 吸附 37.5
+    window.dispatchEvent(mouse("mousemove", 200));    // (200-8)/30.4≈6.32 → 吸附 6.5
     window.dispatchEvent(mouse("mouseup", 200));
 
-    assert.deepEqual(calls.resize, [[0, 37.5]]);
+    assert.equal(calls.reorder.length, 0);
+    assert.deepEqual(calls.resize, [[0, 6.5]]);
     tl.destroy();
 });
 
@@ -175,8 +181,7 @@ test("悬停块：高亮索引更新；右缘热区光标 ew-resize；mouseleave
 
 test("readOnly：右缘热区不进入调时长，点击只选中", async () => {
     resetEnv();
-    const calls = { select: [], resize: [] };
-    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }], { readOnly: true, onResize: (i, d) => calls.resize.push([i, d]) });
+    const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }], { readOnly: true });
     await sleep(40);
 
     tl.canvas.dispatchEvent(mouse("mousedown", 158)); // 块0 右缘位置
@@ -186,4 +191,95 @@ test("readOnly：右缘热区不进入调时长，点击只选中", async () => 
     assert.deepEqual(calls.select, [0]);
     assert.equal(calls.resize.length, 0);
     tl.destroy();
+});
+
+test("素材拖到段块上：dragover 记录落点，drop 分发 onDropImage(index, dataTransfer)", async () => {
+    resetEnv();
+    const drops = [];
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? "{\"filename\":\"a.png\",\"subfolder\":\"\"}" : "") };
+    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }], { onDropImage: (i, d) => drops.push([i, d]) });
+    await sleep(40);
+
+    const dragEvent = (type, x) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "clientX", { value: x, configurable: true });
+        if (type === "drop" || type === "dragover") Object.defineProperty(ev, "dataTransfer", { value: dt, configurable: true });
+        return ev;
+    };
+    tl.canvas.dispatchEvent(dragEvent("dragover", 100)); // 块0
+    assert.equal(tl._dropOver, 0);
+    tl.canvas.dispatchEvent(dragEvent("drop", 236)); // 块1
+    assert.equal(drops.length, 1);
+    assert.deepEqual(drops[0][0], 1);
+    assert.equal(drops[0][1].getData("application/x-neo-gallery"), "{\"filename\":\"a.png\",\"subfolder\":\"\"}");
+    assert.equal(tl._dropOver, -1, "drop 后清空落点");
+    tl.destroy();
+});
+
+test("素材拖出（dragleave）清除落点；readOnly 不响应 drop", async () => {
+    resetEnv();
+    const drops = [];
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? "{\"filename\":\"a.png\"}" : "") };
+
+    const dragEvent = (type, x) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "clientX", { value: x, configurable: true });
+        if (type === "drop" || type === "dragover") Object.defineProperty(ev, "dataTransfer", { value: dt, configurable: true });
+        return ev;
+    };
+    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }], { onDropImage: (i, d) => drops.push([i, d]) });
+    await sleep(40);
+    tl.canvas.dispatchEvent(dragEvent("dragover", 100));
+    assert.equal(tl._dropOver, 0);
+    tl.canvas.dispatchEvent(dragEvent("dragleave", 100));
+    assert.equal(tl._dropOver, -1, "dragleave 清除落点");
+    tl.destroy();
+
+    const { tl: tlRo } = makeTimeline([{ duration: 5 }, { duration: 5 }], { readOnly: true, onDropImage: (i, d) => drops.push([i, d]) });
+    await sleep(40);
+    tlRo.canvas.dispatchEvent(dragEvent("dragover", 236));
+    assert.equal(tlRo._dropOver, -1, "readOnly：dragover 不设置落点");
+    tlRo.canvas.dispatchEvent(dragEvent("drop", 236));
+    assert.equal(drops.length, 0, "readOnly：drop 不回调");
+    tlRo.destroy();
+});
+
+test("尾部 ＋ 按钮：提供 onAdd 且非只读时占位并响应点击；readOnly/未提供时不显示", async () => {
+    resetEnv();
+    const adds = [];
+    const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }], { onAdd: () => adds.push(1) });
+    await sleep(40);
+
+    // W=320，onAdd 预留 32px：usable=272 → 块 [8,144]/[144,280]；「＋」x∈[288,312]、y∈[42,66]
+    const chip = tl._addChipRect();
+    assert.ok(chip, "非只读 + onAdd：按钮位置存在");
+    const L = tl._layout();
+    const last = L.blocks[L.blocks.length - 1];
+    assert.equal(last.x + last.w, 280, "块布局为 ＋ 预留尾部空间");
+
+    const click = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+    tl.canvas.dispatchEvent(click("mousedown", 300, 50));
+    assert.equal(adds.length, 1, "点击 ＋ 触发 onAdd");
+    assert.equal(calls.select.length, 0, "点击 ＋ 不选中块");
+    tl.destroy();
+
+    // readOnly：即使提供 onAdd 也不显示按钮，点击该位置只选中块
+    const addsRo = [];
+    const { tl: tlRo, calls: callsRo } = makeTimeline([{ duration: 5 }, { duration: 5 }], { readOnly: true, onAdd: () => addsRo.push(1) });
+    await sleep(40);
+    assert.equal(tlRo._addChipRect(), null, "readOnly：不显示 ＋");
+    tlRo.canvas.dispatchEvent(click("mousedown", 300, 50)); // 块1 [160,312]（无预留）内
+    window.dispatchEvent(click("mouseup", 300, 50));
+    assert.equal(addsRo.length, 0);
+    assert.deepEqual(callsRo.select, [1], "该位置按普通块点击处理");
+    tlRo.destroy();
+
+    // 未提供 onAdd：无按钮，布局不预留
+    const { tl: tlNo } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+    assert.equal(tlNo._addChipRect(), null, "未提供 onAdd：不显示 ＋");
+    const LNo = tlNo._layout();
+    const lastNo = LNo.blocks[LNo.blocks.length - 1];
+    assert.equal(lastNo.x + lastNo.w, 312, "布局不预留尾部空间");
+    tlNo.destroy();
 });

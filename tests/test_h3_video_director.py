@@ -207,6 +207,19 @@ class NormalizeDirectorTests(unittest.TestCase):
                 {"segments": [{"prompt": "x", "skill_id": "s", "first_frame": "nope.png"}]},
                 {"other.png": "other.png"})
 
+    def test_resave_keeps_stored_asset_ref(self):
+        # 二次保存：段引用的是上次保存回写的落盘最终名（不在本次 orig_to_copied），
+        # 该名字在 existing_assets 中 → 直接保留不报错
+        shared, segs = recipes._normalize_director(
+            {"segments": [{"prompt": "x", "skill_id": "s", "first_frame": "f_copied.png"}]},
+            {}, {"f_copied.png"})
+        self.assertEqual(segs[0]["first_frame"], "f_copied.png")
+        # 不在 existing_assets 的名字仍拒绝
+        with self.assertRaises(ValueError):
+            recipes._normalize_director(
+                {"segments": [{"prompt": "x", "skill_id": "s", "first_frame": "ghost.png"}]},
+                {}, {"f_copied.png"})
+
     def test_empty_prompt_rejected(self):
         with self.assertRaises(ValueError):
             recipes._normalize_director(
@@ -293,6 +306,33 @@ class DirectorRecipeIOTests(unittest.TestCase):
 
         resp = _run_async(recipes.rs_recipes_save(_Req()))
         self.assertEqual(resp.status, 400)
+
+    def test_resave_director_with_stored_first_frame(self):
+        # 回归：首次保存后 first_frame 被回写为落盘最终名；二次保存时前端只重传
+        # 当前连线的原始素材（甚至不再重传该图），引用已落盘名字不应报「未保存的资产」，
+        # 且旧资产仍保留在 recipe.json 的 assets 清单里。
+        self._make_recipe("resave-dir", {
+            "type": "video_director",
+            "shared": {"width": 8, "height": 8, "seed": 0},
+            "assets": ["f.png"],
+            "segments": [{"skill_id": "s", "prompt": "p", "first_frame": "f.png"}],
+        }, assets=["f.png"])
+
+        payload = {"name": "resave-dir", "type": "video_director",
+                   "shared": {"width": 8, "height": 8},
+                   "assets": [],   # 二次保存未重传素材
+                   "segments": [{"skill_id": "s", "prompt": "p2", "first_frame": "f.png"}]}
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        resp = _run_async(recipes.rs_recipes_save(_Req()))
+        self.assertEqual(resp.status, 200, f"二次保存被误拒：{resp.body}")
+        with open(os.path.join(self.custom, "resave-dir", "recipe.json"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["segments"][0]["first_frame"], "f.png")
+        self.assertIn("f.png", saved["assets"], "未重传的既有资产应保留在清单")
 
 
 # ===========================================================================

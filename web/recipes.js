@@ -385,7 +385,80 @@ export async function listVideoSkills() {
     }
 }
 
-/** 打开多段视频导演编辑器：shared(width/height/seed) + 逐段(skill/prompt/duration/首帧)。
+/** 从拖放事件的 dataTransfer 提取素材标识（Neo Gallery 自定义 MIME，回退 text/plain）。 */
+function grabDataType(dt) {
+    if (!dt || typeof dt.getData !== 'function') return '';
+    try {
+        return dt.getData('application/x-neo-gallery') || dt.getData('text/plain') || '';
+    } catch {
+        return '';
+    }
+}
+
+/** 把素材落地到 input/：返回落盘后的 input 文件名（失败返回 null）。 */
+async function copyGalleryToInput(raw) {
+    let payload;
+    try { payload = JSON.parse(raw); } catch { return null; }
+    if (!payload || !payload.filename) return null;
+    try {
+        const qs = '/neo_gallery/copy_to_input?filename=' + encodeURIComponent(payload.filename)
+            + (payload.subfolder ? '&subfolder=' + encodeURIComponent(payload.subfolder) : '');
+        const res = await fetch(qs);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data && data.success ? data.filename : null;
+    } catch (err) {
+        console.error('[Neo Recipes] Director: copy gallery image failed', err);
+        return null;
+    }
+}
+
+// ==========================================
+// 多段导演分辨率选择（移植自 ComfyUI_MiniMaxH3_Director 的 ResolutionSelector 算法）：
+// 宽高比 + 百万像素 → 宽/高（按 32 对齐）；「自定义」时手输 W/H。
+// ==========================================
+
+const DIRECTOR_ASPECTS = [
+    ["1:1 (方形)", 1, 1],
+    ["2:3 (竖版照片)", 2, 3],
+    ["3:2 (横版照片)", 3, 2],
+    ["3:4 (竖版标准)", 3, 4],
+    ["4:3 (标准)", 4, 3],
+    ["9:16 (竖屏)", 9, 16],
+    ["16:9 (宽屏)", 16, 9],
+    ["21:9 (超宽)", 21, 9],
+];
+const DIRECTOR_CUSTOM = "自定义";
+const DIRECTOR_MULTIPLE = 32;   // MiniMax H3 画布对齐步长
+const MP_MIN = 0.1, MP_MAX = 2, MP_DEFAULT = 0.5;   // 百万像素，取一位小数
+
+function directorClampMp(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return MP_DEFAULT;
+    return Math.round(Math.min(MP_MAX, Math.max(MP_MIN, n)) * 10) / 10;
+}
+
+// aspect + 百万像素 → {width,height}（32 对齐）；「自定义」返回 null
+function directorResolution(label, mp) {
+    const row = DIRECTOR_ASPECTS.find(([l]) => l === label);
+    if (!row) return null;
+    const [, rw, rh] = row;
+    const total = directorClampMp(mp) * 1024 * 1024;
+    const scale = Math.sqrt(total / (rw * rh));
+    return {
+        width: Math.round((rw * scale) / DIRECTOR_MULTIPLE) * DIRECTOR_MULTIPLE,
+        height: Math.round((rh * scale) / DIRECTOR_MULTIPLE) * DIRECTOR_MULTIPLE,
+    };
+}
+
+// 编辑旧配方（只存了 W/H）时：比例命中预设（±2%）则反推 aspect + 百万像素，否则按自定义处理
+function directorInferAspect(w, h) {
+    const row = DIRECTOR_ASPECTS.find(([, rw, rh]) => Math.abs(w / h - rw / rh) / (rw / rh) < 0.02);
+    if (!row) return { label: DIRECTOR_CUSTOM, mp: MP_DEFAULT };
+    return { label: row[0], mp: directorClampMp((w * h) / (1024 * 1024)) };
+}
+
+/** 打开多段视频导演编辑器：shared(宽高比/百万像素或自定义 W/H) + 逐段(skill/prompt/首帧/时长)。
  *  existing 为既有 director 配方 meta（编辑时预填），null = 新建；onSaved 保存成功后回调刷新。
  *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。 */
 export async function openDirectorEditor(existing = null, onSaved = null) {
@@ -425,75 +498,108 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             $el('div', { className: 'neo-director-ff-name', textContent: '无（文生视频）' })
         ]);
         ffGrid.appendChild(noneTile);
-        for (const r of candidates) {
-            ffGrid.appendChild($el('div', { className: 'neo-director-ff-item', title: r.filename, dataset: { file: r.filename } }, [
-                $el('img', { className: 'neo-director-ff-thumb', src: ffThumbUrl(r), alt: r.filename, loading: 'lazy' }),
-                $el('div', { className: 'neo-director-ff-name', textContent: r.filename })
-            ]));
-        }
+
         const selectFf = (value) => {
             for (const it of Array.from(ffGrid.children)) {
                 it.classList.toggle('neo-director-ff-active', (it === noneTile) ? value === '' : it.dataset.file === value);
             }
         };
-        for (const it of Array.from(ffGrid.children)) it.onclick = () => selectFf(it === noneTile ? '' : it.dataset.file);
+        // 移除素材格（✕）：从网格删除；若为当前选中项则回落到「无」；
+        // 该文件不再被任何段引用时，同时从 imageRefs（保存资产）中清理
+        const removeFf = (tile) => {
+            const fname = tile.dataset.file;
+            const wasActive = tile.classList.contains('neo-director-ff-active');
+            tile.remove();
+            if (wasActive) selectFf('');
+            if (!fname) return;
+            const stillUsed = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))
+                .some(row => Array.from(row.querySelectorAll('.neo-director-ff-item')).some(it => it.dataset.file === fname));
+            if (!stillUsed) {
+                const idx = imageRefs.findIndex(r => r.filename === fname);
+                if (idx >= 0) imageRefs.splice(idx, 1);
+            }
+        };
+        const makeFfTile = (ref) => {
+            const delBtn = $el('button', { className: 'neo-director-ff-del', title: '移除该素材', textContent: '✕' });
+            const tile = $el('div', { className: 'neo-director-ff-item', title: ref.filename, dataset: { file: ref.filename } }, [
+                $el('img', { className: 'neo-director-ff-thumb', src: ffThumbUrl(ref), alt: ref.filename, loading: 'lazy' }),
+                $el('div', { className: 'neo-director-ff-name', textContent: ref.filename }),
+                delBtn,
+            ]);
+            delBtn.onclick = (e) => { e.stopPropagation(); removeFf(tile); };
+            tile.onclick = () => selectFf(ref.filename);
+            return tile;
+        };
+        // 把素材加入本段候选并选中（时间轴拖放 / 网格拖放 / 画布素材共用）
+        const addCandidate = (fname) => {
+            if (!imageRefs.some(r => r.filename === fname)) {
+                imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
+            }
+            let tile = Array.from(ffGrid.children).find(it => it.dataset.file === fname);
+            if (!tile) {
+                tile = makeFfTile({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
+                ffGrid.appendChild(tile);
+            }
+            selectFf(fname);
+        };
+        for (const r of candidates) ffGrid.appendChild(makeFfTile(r));
         selectFf(seg.first_frame || '');
 
-        // 从左侧 Neo Gallery 拖入图片：落地到 input/ 并设为该段首帧（同时并入 assets 供保存回写）
+        // 从左侧 Neo Gallery（或画布网格）拖入图片 → 落到 input/ 并设为该段首帧
         const acceptGalleryDrop = async (e) => {
             e.preventDefault();
             ffGrid.classList.remove('neo-director-drop');
-            const raw = e.dataTransfer.getData('application/x-neo-gallery') || e.dataTransfer.getData('text/plain');
-            let payload;
-            try { payload = JSON.parse(raw); } catch { return; }
-            if (!payload || !payload.filename) return;
-            try {
-                const qs = '/neo_gallery/copy_to_input?filename=' + encodeURIComponent(payload.filename)
-                    + (payload.subfolder ? '&subfolder=' + encodeURIComponent(payload.subfolder) : '');
-                const res = await fetch(qs);
-                if (!res.ok) return;
-                const data = await res.json();
-                if (!data || !data.success || !data.filename) return;
-                const fname = data.filename;
-                const ref = { filename: fname, subfolder: '', type: 'input', kind: 'image' };
-                if (!imageRefs.some(r => r.filename === fname)) imageRefs.push(ref);
-                let tile = Array.from(ffGrid.children).find(it => it.dataset.file === fname);
-                if (!tile) {
-                    tile = $el('div', { className: 'neo-director-ff-item', title: fname, dataset: { file: fname } }, [
-                        $el('img', { className: 'neo-director-ff-thumb', src: ffThumbUrl(ref), alt: fname, loading: 'lazy' }),
-                        $el('div', { className: 'neo-director-ff-name', textContent: fname })
-                    ]);
-                    tile.onclick = () => selectFf(fname);
-                    ffGrid.appendChild(tile);
-                }
-                selectFf(fname);
-            } catch (err) { console.error('[Neo Recipes] Director: drop image failed', err); }
+            const raw = grabDataType(e);
+            const fname = await copyGalleryToInput(raw);
+            if (fname) addCandidate(fname);
         };
         ffGrid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; ffGrid.classList.add('neo-director-drop'); });
         ffGrid.addEventListener('dragleave', (e) => { if (!ffGrid.contains(e.relatedTarget)) ffGrid.classList.remove('neo-director-drop'); });
         ffGrid.addEventListener('drop', acceptGalleryDrop);
 
-        const removeBtn = $el('button', { className: 'rs-btn neo-director-seg-del', title: '删除该段', textContent: '🗑' });
+        const removeBtn = $el('button', { className: 'neo-director-seg-del', title: '删除该段', textContent: '🗑' });
         const row = $el('div', { className: 'neo-director-seg', dataset: { segId: 'seg-' + (++segCounter) } }, [
             $el('div', { className: 'neo-director-seg-head' }, [$el('span', { className: 'neo-director-seg-title', textContent: '段' }), removeBtn]),
             $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
             $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
-            $el('div', { className: 'neo-director-dur-row' }, [$el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp]),
             $el('label', { className: 'neo-director-field-label', textContent: '首帧图（点选或从左侧素材栏拖入；不选 = 文生视频）' }), ffGrid,
+            $el('div', { className: 'neo-director-dur-row' }, [$el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp]),
         ]);
-        removeBtn.onclick = () => { row.remove(); renumberSegs(); };
+        row._addCandidate = addCandidate; // 供时间轴拖放到该段时复用
+        removeBtn.onclick = () => {
+            const idx = Array.from(segsWrap.querySelectorAll('.neo-director-seg')).indexOf(row);
+            const wasCurrent = currentSegId === row.dataset.segId;
+            row.remove();
+            renumberSegs();
+            if (wasCurrent) showSeg(Math.max(0, idx - 1));
+        };
         return row;
     }
 
     const segsWrap = $el('div', { className: 'neo-director-segs' });
+    let currentSegId = null; // 当前编辑段身份（dataset.segId，重排/删除后仍可追踪）
     function renumberSegs() {
         segsWrap.querySelectorAll('.neo-director-seg').forEach((row, i) => {
             row.querySelector('.neo-director-seg-title').textContent = `段 ${i + 1}`;
         });
     }
+    // 只显示当前段（其余段保留 DOM，readSegData/保存仍读取全部数据）
+    function showSeg(i) {
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        if (!rows.length) return;
+        i = Math.max(0, Math.min(i, rows.length - 1));
+        currentSegId = rows[i].dataset.segId;
+        rows.forEach((row, k) => row.classList.toggle('neo-director-seg-current', k === i));
+    }
+    function showSegById(id) {
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        const i = rows.findIndex(r => r.dataset.segId === id);
+        if (i < 0) showSeg(0); else showSeg(i);
+    }
     for (const s of (exSegs.length ? exSegs : [{}])) segsWrap.appendChild(buildSeg(s));
     renumberSegs();
-    const addBtn = $el('button', { className: 'rs-btn neo-director-add', textContent: '＋ 添加段', onclick: () => { segsWrap.appendChild(buildSeg({})); renumberSegs(); } });
+    showSeg(0);
+    const addBtn = $el('button', { className: 'rs-btn neo-director-add', textContent: '＋ 添加段', onclick: () => { segsWrap.appendChild(buildSeg({})); renumberSegs(); showSeg(segsWrap.children.length - 1); } });
 
     // 时间轴组件（复用 web/director-timeline.js）：按时长比例绘制分段块 + 秒尺，点击定位、拖拽重排。
     const tlWrap = $el('div', { className: 'neo-director-timeline' });
@@ -512,7 +618,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     const onSelectSeg = (i) => {
         const row = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))[i];
         if (!row) return;
-        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        showSeg(i);
         const p = row.querySelector('.neo-director-prompt');
         if (p) p.focus();
     };
@@ -529,7 +635,24 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         if (inp) inp.value = String(Math.min(3600, Math.max(1, Number(durSec) || 1)));
     };
     try {
-        timeline = new DirectorTimeline(tlWrap, { height: 92, getSegments: readSegData, onSelect: onSelectSeg, onReorder: onReorderSegs, onResize: onResizeSeg });
+        timeline = new DirectorTimeline(tlWrap, {
+            height: 92,
+            getSegments: readSegData,
+            onSelect: onSelectSeg,
+            onReorder: onReorderSegs,
+            onResize: onResizeSeg,
+            // 时间轴尾部「＋」：直接追加新段（等价于下方「＋ 添加段」按钮）
+            onAdd: () => { segsWrap.appendChild(buildSeg({})); renumberSegs(); showSeg(segsWrap.children.length - 1); },
+            // 素材库图片直接拖到某段的时间轴块：落地到 input/ 加入该段候选并选中该段
+            onDropImage: async (i, dt) => {
+                const row = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))[i];
+                if (!row || typeof row._addCandidate !== 'function') return;
+                const fname = await copyGalleryToInput(grabDataType(dt));
+                if (!fname) return;
+                showSeg(i); // 先切到该段（保证其候选网格可见），再落素材选中
+                row._addCandidate(fname);
+            },
+        });
     } catch (e) { console.error('[Neo Recipes] Director: timeline init failed', e); }
     const tlObserver = new MutationObserver(() => { if (timeline) timeline.refresh(); });
     tlObserver.observe(segsWrap, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
@@ -538,9 +661,41 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     });
 
     const nameInp = $el('input', { className: 'neo-director-name', type: 'text', placeholder: '配方名称', value: (existing && existing.name) || '' });
-    const wInp = $el('input', { className: 'neo-director-num', type: 'number', min: 1, placeholder: '宽', value: (exShared.width != null ? exShared.width : 1344) });
-    const hInp = $el('input', { className: 'neo-director-num', type: 'number', min: 1, placeholder: '高', value: (exShared.height != null ? exShared.height : 768) });
-    const seedInp = $el('input', { className: 'neo-director-num', type: 'number', min: 0, placeholder: '种子', value: (exShared.seed != null ? exShared.seed : 0) });
+    // 分辨率：宽高比 + 百万像素 → W/H（32 对齐）；「自定义」手输 W/H。不再保存 seed（后端默认 0，节点输入可覆盖）
+    const initRes = (() => {
+        const w = Number(exShared.width) || 1344, h = Number(exShared.height) || 768;
+        if (exShared.aspect_ratio && DIRECTOR_ASPECTS.some(([l]) => l === exShared.aspect_ratio)) {
+            return { label: exShared.aspect_ratio, mp: directorClampMp(exShared.megapixels != null ? exShared.megapixels : MP_DEFAULT), cw: w, ch: h };
+        }
+        if (exShared.width != null && exShared.height != null) {
+            const inf = directorInferAspect(w, h);
+            return { label: inf.label, mp: inf.mp, cw: w, ch: h };
+        }
+        return { label: '16:9 (宽屏)', mp: MP_DEFAULT, cw: 0, ch: 0 };
+    })();
+    const aspectSel = $el('select', { className: 'neo-director-aspect' });
+    for (const [label] of DIRECTOR_ASPECTS) aspectSel.appendChild($el('option', { value: label, textContent: label }));
+    aspectSel.appendChild($el('option', { value: DIRECTOR_CUSTOM, textContent: DIRECTOR_CUSTOM + '（手输 W/H）' }));
+    aspectSel.value = initRes.label;
+    const mpInp = $el('input', { className: 'neo-director-num neo-director-mp', type: 'number', min: MP_MIN, max: MP_MAX, step: 0.1, value: initRes.mp });
+    const cwInp = $el('input', { className: 'neo-director-num', type: 'number', min: 16, placeholder: '宽', value: initRes.cw || '' });
+    const chInp = $el('input', { className: 'neo-director-num', type: 'number', min: 16, placeholder: '高', value: initRes.ch || '' });
+    const resOut = $el('span', { className: 'neo-director-res' });
+    const customRow = $el('div', { className: 'neo-director-row neo-director-shared' }, [
+        $el('label', { textContent: '宽' }), cwInp,
+        $el('label', { textContent: '高' }), chInp,
+    ]);
+
+    const updateRes = () => {
+        const custom = aspectSel.value === DIRECTOR_CUSTOM;
+        customRow.style.display = custom ? '' : 'none';
+        if (custom) { resOut.textContent = ''; return; }
+        const r = directorResolution(aspectSel.value, mpInp.value);
+        if (r) resOut.textContent = `${r.width}×${r.height}`;
+    };
+    aspectSel.onchange = updateRes;
+    mpInp.addEventListener('input', updateRes);
+    updateRes();
 
     let overlay;
     const close = () => { if (timeline) { try { timeline.destroy(); } catch (_) {} timeline = null; } if (overlay && overlay.parentNode) overlay.remove(); };
@@ -565,10 +720,21 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             segments.push(seg);
         }
         if (!segments.length) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '至少需要一个段', life: 4000 }); return; }
+        const custom = aspectSel.value === DIRECTOR_CUSTOM;
+        let outW, outH;
+        if (custom) {
+            outW = Number(cwInp.value) || 1344;
+            outH = Number(chInp.value) || 768;
+        } else {
+            const r = directorResolution(aspectSel.value, mpInp.value);
+            outW = r.width; outH = r.height;
+        }
         saveBtn.disabled = true;
         try {
             const result = await saveRecipe(name, '', imageRefs, [], [], {
-                shared: { width: Number(wInp.value) || 1344, height: Number(hInp.value) || 768, seed: Number(seedInp.value) || 0 },
+                shared: custom
+                    ? { width: outW, height: outH, aspect_ratio: DIRECTOR_CUSTOM }
+                    : { width: outW, height: outH, aspect_ratio: aspectSel.value, megapixels: directorClampMp(mpInp.value) },
                 segments,
             });
             if (result.success) {
@@ -589,17 +755,18 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     const body = $el('div', { className: 'neo-director-body' }, [
         $el('div', { className: 'neo-director-field' }, [$el('label', { className: 'neo-director-field-label', textContent: '配方名称' }), nameInp]),
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
-            $el('label', { textContent: '宽' }), wInp,
-            $el('label', { textContent: '高' }), hInp,
-            $el('label', { textContent: '种子' }), seedInp,
+            $el('label', { textContent: '宽高比' }), aspectSel,
+            $el('label', { textContent: '百万像素' }), mpInp,
+            resOut,
         ]),
-        $el('div', { className: 'neo-director-tl-label', textContent: '时间轴（拖拽重排 · 点击定位分段）' }),
+        customRow,
+        $el('div', { className: 'neo-director-tl-label', textContent: '时间轴（拖拽重排 · 点击定位分段 · 尾部 ＋ 添加段）' }),
         tlWrap,
         segsWrap, addBtn,
     ]);
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
     const panel = $el('div', { className: 'neo-director-panel' }, [
-        $el('div', { className: 'neo-director-title' }, [$el('span', { textContent: '🎬 多段视频导演' }), $el('button', { className: 'rs-btn neo-director-close', textContent: '✕', onclick: close })]),
+        $el('div', { className: 'neo-director-title' }, [$el('span', { textContent: '🎬 多段视频导演' }), $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close })]),
         body, foot,
     ]);
     overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
