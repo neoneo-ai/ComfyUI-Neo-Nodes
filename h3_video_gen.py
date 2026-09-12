@@ -99,6 +99,7 @@ def resolve_video_params(body: dict, cfg: dict) -> dict:
     width = int(body.get("width") or cfg.get("width") or 1344)
     height = int(body.get("height") or cfg.get("height") or 768)
     length = int(body.get("length") or cfg.get("length") or 124)
+    steps = int(cfg.get("steps") or 20)   # 采样步数：skill config.json 可配，默认 20
 
     seed = body.get("seed")
     seed = random.randint(0, 2**63 - 1) if seed is None else max(0, int(seed))
@@ -113,6 +114,7 @@ def resolve_video_params(body: dict, cfg: dict) -> dict:
         "width": width,
         "height": height,
         "length": length,
+        "steps": steps,
         "seed": seed,
         "ref_name": ref_name,
     }

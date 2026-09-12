@@ -1,5 +1,5 @@
 // NeoH3VideoDirector 节点：在节点内嵌入只读导演时间轴（复用 web/director-timeline.js）。
-// 按当前 recipe 下拉值拉取配方 spec，按时长比例绘制分段块 + 秒尺；点击仅高亮（只读，不重排）。
+// 按当前 recipe 下拉值拉取配方 spec，按时长比例绘制分段块 + 秒尺；点击分段块直接打开编辑器（只读，不重排）。
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { DirectorTimeline } from "./director-timeline.js";
@@ -33,6 +33,7 @@ app.registerExtension({
                 tl = new DirectorTimeline(root, {
                     height: TL_H - 8,
                     readOnly: true,
+                    onSelect: () => openEditor(), // 点击分段块直接打开编辑器
                     getSegments: () => (tlData.segments || []).map(s => ({
                         // 内容派生身份：spec 重载后颜色保持稳定（只读预览不重排）
                         id: `${s.prompt || ''}|${Number(s.duration_sec) || 0}|${s.ref_input || ''}`,

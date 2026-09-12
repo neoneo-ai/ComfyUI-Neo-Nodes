@@ -246,6 +246,26 @@ class ResolveVideoParamsTests(unittest.TestCase):
         self.assertEqual(p["seed"], 42)
         self.assertIsNone(p["ref_name"])
 
+    def test_steps_defaults_20_and_reads_from_cfg(self):
+        p = h3_video_gen.resolve_video_params({"prompt": "x"}, self._cfg())
+        self.assertEqual(p["steps"], 20)   # config 未指定 → 默认 20
+        cfg = self._cfg()
+        cfg["steps"] = 35
+        self.assertEqual(h3_video_gen.resolve_video_params({"prompt": "x"}, cfg)["steps"], 35)
+
+    def test_steps_rendered_into_sampler_as_int(self):
+        import json as _json
+        cfg = self._cfg()
+        cfg["steps"] = 30
+        p = h3_video_gen.resolve_video_params({"prompt": "x"}, cfg)
+        wf_path = os.path.join(PLUGIN_DIR, "skills", "presets", "minimax_h3_t2v", "workflow.json")
+        with open(wf_path, encoding="utf-8") as f:
+            template = _json.load(f)
+        graph, _ = h3_video_gen.render_template(template, p)
+        sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+        self.assertEqual(sampler["inputs"]["steps"], 30)   # {{STEPS}} 渲染为 int
+
+
     def test_loras_resolved_from_cfg(self):
         # LoRA 复用生图解析：校验存在性 + 强度裁剪；视频无 ref_only，默认 False
         cfg = self._cfg()

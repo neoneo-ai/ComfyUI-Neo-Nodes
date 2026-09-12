@@ -503,7 +503,7 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
 # 模板渲染（workflow.json 占位符替换 + LoRA 槽位 / 动态注入）
 # ===========================================================================
 
-_PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{WIDTH}}", "{{HEIGHT}}",
+_PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{STEPS}}", "{{WIDTH}}", "{{HEIGHT}}",
                        "{{LENGTH}}", "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
                        "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
 
@@ -516,6 +516,8 @@ def _typed_value(token: str, params: dict):
         return params["negative"]
     if token == "{{SEED}}":
         return params["seed"]
+    if token == "{{STEPS}}":
+        return params["steps"]
     if token == "{{WIDTH}}":
         return params["width"]
     if token == "{{HEIGHT}}":

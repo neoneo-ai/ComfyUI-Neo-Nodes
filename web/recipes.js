@@ -636,7 +636,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     };
     try {
         timeline = new DirectorTimeline(tlWrap, {
-            height: 92,
+            height: 184,
             getSegments: readSegData,
             onSelect: onSelectSeg,
             onReorder: onReorderSegs,
@@ -765,10 +765,45 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         segsWrap, addBtn,
     ]);
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
-    const panel = $el('div', { className: 'neo-director-panel' }, [
-        $el('div', { className: 'neo-director-title' }, [$el('span', { textContent: '🎬 多段视频导演' }), $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close })]),
-        body, foot,
+    const titleBar = $el('div', { className: 'neo-director-title' }, [
+        $el('span', { textContent: '🎬 多段视频导演' }),
+        $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close })
     ]);
+    const panel = $el('div', { className: 'neo-director-panel' }, [titleBar, body, foot]);
+
+    // 标题栏拖动：首次按下从 flex 居中切到绝对定位并记录起点，之后按鼠标位移更新 left/top；
+    // 钳制保证窗口不会被拖出视口（始终留一条可点到的标题栏 / ✕）。
+    let dragging = false;
+    let startMX = 0, startMY = 0, startL = 0, startT = 0;
+    const onTitleMove = (e) => {
+        if (!dragging) return;
+        let left = startL + (e.clientX - startMX);
+        let top = startT + (e.clientY - startMY);
+        const w = panel.offsetWidth;
+        left = Math.max(-w + 80, Math.min(left, window.innerWidth - 80));
+        top = Math.max(0, Math.min(top, window.innerHeight - 44));
+        panel.style.left = left + 'px';
+        panel.style.top = top + 'px';
+    };
+    const onTitleUp = () => {
+        dragging = false;
+        window.removeEventListener('mousemove', onTitleMove);
+        window.removeEventListener('mouseup', onTitleUp);
+    };
+    titleBar.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.target.closest('button')) return; // ✕ 等标题栏按钮不触发拖动
+        const r = panel.getBoundingClientRect();
+        if (!panel.style.left) { // 首次：从居中切到绝对定位，无跳变
+            panel.style.position = 'absolute';
+            panel.style.left = r.left + 'px';
+            panel.style.top = r.top + 'px';
+        }
+        startMX = e.clientX; startMY = e.clientY;
+        startL = parseFloat(panel.style.left); startT = parseFloat(panel.style.top);
+        dragging = true;
+        window.addEventListener('mousemove', onTitleMove);
+        window.addEventListener('mouseup', onTitleUp);
+    });
     overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
     document.body.appendChild(overlay);
 }
@@ -1228,7 +1263,12 @@ export async function createRecipesPanel() {
     function buildCard(r) {
         const card = $el('div', { className: 'neo-recipes-card' });
 
-        const cover = $el('div', { className: 'neo-recipes-card-cover', title: '查看资源', onclick: () => openDetail(r) });
+        // 多段导演配方：点缩略图直接进编辑器（跳过详情）；普通配方仍打开详情
+        const cover = $el('div', {
+            className: 'neo-recipes-card-cover',
+            title: r.type === 'video_director' ? '编辑多段导演配方' : '查看资源',
+            onclick: () => { if (r.type === 'video_director') openDirectorEditor(r, renderList); else openDetail(r); }
+        });
         const coverFile = r.cover
             || (r.samples || []).find(s => s.kind === 'image')?.file
             || (r.assets || []).find(a => a.kind === 'image')?.file

@@ -279,11 +279,11 @@ test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
 
     const canvas = document.querySelector("canvas.neo-dtl-canvas");
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
-    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 184, width: 320, height: 184 };
 
-    // onAdd 预留尾部 32px：usable=272 → 块 [8,144]/[144,280]；「＋」在 x∈[288,312]、y∈[42,66]
+    // onAdd 预留尾部 32px：usable=272 → 块 [8,144]/[144,280]；「＋」在 x∈[288,312]、y∈[88,112]（时间轴高度 184）
     const click = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
-    canvas.dispatchEvent(click("mousedown", 300, 50));
+    canvas.dispatchEvent(click("mousedown", 300, 100));
 
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
     assert.equal(segs.length, 3, "点击 ＋ 后新增一段");
@@ -293,5 +293,61 @@ test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
 
     const closeBtn = document.querySelector(".neo-director-close");
     if (closeBtn) closeBtn.click();
+    await sleep(20);
+});
+
+test("标题栏拖动：mousedown 切绝对定位，mousemove 平移面板，mouseup 后停止；✕ 不触发", async () => {
+    const { openDirectorEditor } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+
+    const existing = {
+        name: "T-drag",
+        shared: { width: 864, height: 480, aspect_ratio: "16:9 (宽屏)", megapixels: 0.4 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const titleBar = document.querySelector(".neo-director-title");
+    const panel = document.querySelector(".neo-director-panel");
+    assert.ok(titleBar && panel, "标题栏与面板已创建");
+
+    // jsdom 无布局：桩一个可预测的居中矩形，供首次 mousedown 读取起点
+    panel.__rect = { x: 100, y: 100, top: 100, left: 100, right: 880, bottom: 500, width: 780, height: 400 };
+    const evt = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+
+    // 在标题栏空白处按下（非 ✕）→ 切绝对定位并记录当前居中位置为起点
+    titleBar.dispatchEvent(evt("mousedown", 300, 120));
+    assert.equal(panel.style.position, "absolute", "首次拖动切到绝对定位");
+    assert.equal(panel.style.left, "100px", "起点取当前 left");
+    assert.equal(panel.style.top, "100px", "起点取当前 top");
+
+    // 拖动：mousemove 按位移平移面板
+    window.dispatchEvent(evt("mousemove", 350, 140));
+    assert.equal(panel.style.left, "150px", "left 随位移更新");
+    assert.equal(panel.style.top, "120px", "top 随位移更新");
+
+    // 继续拖动：相对起点累计，不回跳
+    window.dispatchEvent(evt("mousemove", 380, 150));
+    assert.equal(panel.style.left, "180px", "left 相对起点累计");
+    assert.equal(panel.style.top, "130px", "top 相对起点累计");
+
+    // mouseup 结束：之后 mousemove 不再跟随
+    window.dispatchEvent(evt("mouseup", 380, 150));
+    window.dispatchEvent(evt("mousemove", 500, 200));
+    assert.equal(panel.style.left, "180px", "松开后停止跟随（left）");
+    assert.equal(panel.style.top, "130px", "松开后停止跟随（top）");
+
+    // ✕ 按钮上的 mousedown 不触发拖动
+    const closeBtn = document.querySelector(".neo-director-close");
+    const beforeLeft = panel.style.left;
+    closeBtn.dispatchEvent(evt("mousedown", 380, 150));
+    window.dispatchEvent(evt("mousemove", 420, 190));
+    assert.equal(panel.style.left, beforeLeft, "✕ 按钮不触发拖动");
+
+    closeBtn.click();
     await sleep(20);
 });
