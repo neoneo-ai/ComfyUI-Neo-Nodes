@@ -85,7 +85,7 @@ _SKILL_DEFAULT_INPUTS = {
 _META_KEY_ORDER = (
     "name", "tags", "inputs", "description", "max_tokens",
     "result_key", "multi_result", "multi_turn", "category",
-    "gen_image", "requires_ref", "audit", "created_at",
+    "gen_image", "gen_video", "requires_ref", "audit", "created_at",
 )
 
 # 技能文件管理器支持的文件扩展名（.md 主/子文档 + .txt 引用文本）。
@@ -746,6 +746,7 @@ def scan_skills() -> list:
                 "needs_image": "image" in inputs,
                 "multi_turn": bool(meta.get("multi_turn", False)),
                 "gen_image": bool(meta.get("gen_image", False)),
+                "gen_video": bool(meta.get("gen_video", False)),
                 "requires_ref": bool(meta.get("requires_ref", False)),
                 "description": meta.get("description", ""),
             })
@@ -772,6 +773,7 @@ def scan_skills() -> list:
                     "needs_image": "image" in inputs,
                     "multi_turn": bool(meta.get("multi_turn", False)),
                     "gen_image": bool(meta.get("gen_image", False)),
+                    "gen_video": bool(meta.get("gen_video", False)),
                     "requires_ref": bool(meta.get("requires_ref", False)),
                     "description": meta.get("description", ""),
                 })
@@ -820,10 +822,10 @@ def _find_name_conflict(name: str, exclude_id: str):
 
 
 def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom", multi_turn=None,
-                    category=None, gen_image=None, requires_ref=None) -> bool:
+                    category=None, gen_image=None, gen_video=None, requires_ref=None) -> bool:
     """保存 skill 的主文件 skill.md（frontmatter + 正文），保留未编辑的既有字段。
 
-    multi_turn/category/gen_image/requires_ref 为 None 时沿用 frontmatter 既有值；显式传入则写入（假值时移除该字段）。
+    multi_turn/category/gen_image/gen_video/requires_ref 为 None 时沿用 frontmatter 既有值；显式传入则写入（假值时移除该字段）。
     """
     sid = _normalize_skill_id(skill_id)
     if not sid:
@@ -836,6 +838,7 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
         mt = meta.get("multi_turn") if multi_turn is None else bool(multi_turn)
         cat = meta.get("category") if category is None else (category or "").strip()
         gi = meta.get("gen_image") if gen_image is None else bool(gen_image)
+        gv = meta.get("gen_video") if gen_video is None else bool(gen_video)
         rr = meta.get("requires_ref") if requires_ref is None else bool(requires_ref)
         new_meta = {
             "name": (name or "").strip() or sid,
@@ -848,6 +851,7 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
             "multi_turn": mt or None,
             "category": cat or None,
             "gen_image": gi or None,
+            "gen_video": gv or None,
             "requires_ref": rr or None,
             "ratio": meta.get("ratio"),
             "created_at": meta.get("created_at") or datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -951,7 +955,7 @@ def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
         return False, "Cannot modify preset skill"
     cfg = cfg if isinstance(cfg, dict) else {}
     clean = {}
-    for key in ("model", "text_encoder", "vae"):
+    for key in ("model", "text_encoder", "vae", "audio_vae"):
         value = str(cfg.get(key) or "").strip()
         if value:
             clean[key] = value[:256]
@@ -981,6 +985,20 @@ def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
     if cfg.get("enhance_prompt"):
         clean["enhance_prompt"] = True
     with _skills_lock:
+        # width/height/length 是视频 skill 的尺寸/时长默认值，非模型设置区管理；保存时保留既有 config.json 的值
+        try:
+            with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        for key in ("width", "height", "length"):
+            val = cfg.get(key, existing.get(key))
+            try:
+                clean[key] = max(1, int(val))
+            except (TypeError, ValueError):
+                continue
         tmp = os.path.join(d, "config.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(clean, f, indent=2, ensure_ascii=False)
@@ -1323,6 +1341,7 @@ async def rs_prompts_load_skill(request):
             "multi_turn": bool(meta.get("multi_turn", False)),
             "result_key": meta.get("result_key"),
             "gen_image": bool(meta.get("gen_image", False)),
+            "gen_video": bool(meta.get("gen_video", False)),
         })
     except Exception as e:
         logger.error(f"Error loading skill: {e}")
@@ -1354,6 +1373,7 @@ async def rs_prompts_save_skill(request):
             data.get("multi_turn"),
             category=data.get("category"),
             gen_image=data.get("gen_image"),
+            gen_video=data.get("gen_video"),
             requires_ref=data.get("requires_ref"),
         )
         if not ok:

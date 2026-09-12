@@ -2571,7 +2571,7 @@
 }
 
 /* ==========================================
-   自动增强菜单设置 tab：🤖 LLM Settings / 🖼️ 出图设置
+   自动增强菜单设置 tab：🤖 LLM Settings / 🖼️ 出图设置 / 🎬 生视频模型
    ========================================== */
 .rs-auto-tabs {
     display: flex;
@@ -2595,7 +2595,7 @@
     background: #35507a;
     border-color: #5090cc;
 }
-/* 两个设置面板统一同宽（LLM Settings 偏窄 / 出图设置偏宽，取折中），
+/* 三个设置面板统一同宽（LLM Settings 偏窄 / 出图设置偏宽，取折中），
    避免切换 tab 时菜单宽度随内容跳动 */
 .rs-auto-panel {
     width: 410px;
@@ -2757,6 +2757,7 @@
 }
 .rs-gen-send-menu-item:hover { background: #2f2f2f; }
 .rs-gen-settings { display: flex; flex-direction: column; gap: 6px; }
+.rs-gen-video-heading { color: #fff; font-size: 12px; font-weight: 600; margin-top: 8px; }
 .rs-gen-lora-list { display: flex; flex-direction: column; gap: 4px; }
 .rs-gen-lora-row {
     display: flex;

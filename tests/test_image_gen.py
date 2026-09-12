@@ -593,6 +593,28 @@ class SkillWorkflowRouteTests(unittest.TestCase):
                                self._req({"skill_id": "image_gen", "config": {"count": 2}}))
         self.assertEqual(status, 403)
 
+    def test_post_skill_config_persists_video_audio_vae(self):
+        # 视频技能 per-skill 覆盖：model/text_encoder/vae/audio_vae 落盘，且保留既有 width/height/length（尺寸/时长默认）
+        d = self._make_custom_skill("vidgen")
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"width": 1344, "height": 768, "length": 247}, f)
+        status, body = self._call(
+            image_gen.post_skill_config_route,
+            self._req({"skill_id": "vidgen",
+                       "config": {"model": "h3/h3.safetensors",
+                                  "text_encoder": "h3/te.safetensors",
+                                  "vae": "h3/video_vae.safetensors",
+                                  "audio_vae": "h3/audio_vae.safetensors"}}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["model"], "h3/h3.safetensors")
+        self.assertEqual(cfg["text_encoder"], "h3/te.safetensors")
+        self.assertEqual(cfg["vae"], "h3/video_vae.safetensors")
+        self.assertEqual(cfg["audio_vae"], "h3/audio_vae.safetensors")
+        # 尺寸/时长默认值不被模型设置覆盖清掉
+        self.assertEqual((cfg["width"], cfg["height"], cfg["length"]), (1344, 768, 247))
+
     def test_copy_skill_files(self):
         d = self._make_custom_skill("copy_dst")
         status, body = self._call(

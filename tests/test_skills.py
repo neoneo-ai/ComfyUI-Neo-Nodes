@@ -101,7 +101,7 @@ class TestScanSkills(unittest.TestCase):
         """未声明 image 输入的模板默认为纯文本 skill"""
         styles = {s["id"]: s for s in self._scan()
                   if s["source"] in ("presets", "custom")
-                  and s["id"] not in ("minimax_h3_base", "minimax_h3_full_ref", "minimax_h3_image_ref", "image_to_video")}
+                  and s["id"] not in ("minimax_h3_base", "minimax_h3_full_ref", "minimax_h3_image_ref", "image_to_video", "minimax_h3_i2v")}
         self.assertTrue(len(styles) > 0, "至少应扫描到一个模板 skill")
         for sid, s in styles.items():
             self.assertFalse(s["needs_image"], f"普通模板不应需要图片: {sid}")
@@ -1169,6 +1169,14 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertIs(meta.get("requires_ref"), True)
         self.assertEqual(body, "body2")
 
+    def test_save_skill_main_preserves_gen_video(self):
+        # 复制为自定义时 save_skill_main 需保留 gen_video，视频技能设置区才可见
+        self._write_skill("vid-c", ["name: Vid C", "category: video_gen", "gen_video: true"])
+        self.assertTrue(self.skill_mod.save_skill_main("vid-c", "Vid C renamed", "body2"))
+        meta, body = self._read_meta("vid-c")
+        self.assertIs(meta.get("gen_video"), True)
+        self.assertEqual(body, "body2")
+
     def test_serialize_frontmatter_round_trip(self):
         text = self.skill_mod.serialize_frontmatter(
             {"name": "R", "gen_image": True, "requires_ref": False}, "body")
@@ -1194,6 +1202,16 @@ class TestGenImageSkill(unittest.TestCase):
             types.SimpleNamespace(json=_json2)))
         body = json.loads(resp.body)
         self.assertFalse(body["gen_image"])
+
+    def test_load_skill_route_returns_gen_video(self):
+        # 详情弹窗靠 load_skill 响应的 gen_video 决定是否显示生视频设置区
+        self._write_skill("vid-d", ["name: Vid D", "category: video_gen", "gen_video: true"])
+        async def _json():
+            return {"id": "vid-d"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json)))
+        body = json.loads(resp.body)
+        self.assertTrue(body["gen_video"])
 
     def test_find_name_conflict(self):
         self._write_skill("dup-a", ["name: Dup Name"])

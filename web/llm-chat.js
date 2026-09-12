@@ -14,7 +14,7 @@ import { collectWorkflowContext } from "./workflow-context.js";
 import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
 import { createAtImagePicker } from "./at-picker.js";
 import { createSlashSkillPicker } from "./slash-picker.js";
-import { createImageGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated, enhancePromptStream, getGenSettings, getSkillGenConfig } from "./image-gen.js";
+import { createImageGenSettingsForm, createVideoGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated, enhancePromptStream, getGenSettings, getSkillGenConfig } from "./image-gen.js";
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
 
@@ -460,6 +460,7 @@ function createStatusBars() {
     // 打开时两个表单都 load、关闭时都 save，隐藏面板的输入值照常读写，切 tab 不丢状态）
     const modelForm = createModelConfigForm();
     const genForm = createImageGenSettingsForm();
+    const videoForm = createVideoGenSettingsForm();
     const autoDivider = mkEl("div", "rs-runtime-divider");
     const autoTabs = mkEl("div", "rs-auto-tabs");
     const llmTabBtn = mkEl("button", "rs-auto-tab rs-auto-tab-active");
@@ -468,24 +469,34 @@ function createStatusBars() {
     const genTabBtn = mkEl("button", "rs-auto-tab");
     genTabBtn.type = "button";
     genTabBtn.textContent = "🖼️ 生图默认设置";
-    autoTabs.append(llmTabBtn, genTabBtn);
+    const videoTabBtn = mkEl("button", "rs-auto-tab");
+    videoTabBtn.type = "button";
+    videoTabBtn.textContent = "🎬 生视频模型";
+    autoTabs.append(llmTabBtn, genTabBtn, videoTabBtn);
     const llmPanel = mkEl("div", "rs-auto-panel");
     llmPanel.appendChild(modelForm.el);
     const genPanel = mkEl("div", "rs-auto-panel");
     genPanel.style.display = "none";
     genPanel.appendChild(genForm.el);
-    const setAutoTab = (showLlm) => {
-        llmTabBtn.classList.toggle("rs-auto-tab-active", showLlm);
-        genTabBtn.classList.toggle("rs-auto-tab-active", !showLlm);
-        llmPanel.style.display = showLlm ? "" : "none";
-        genPanel.style.display = showLlm ? "none" : "";
+    const videoPanel = mkEl("div", "rs-auto-panel");
+    videoPanel.style.display = "none";
+    videoPanel.appendChild(videoForm.el);
+    const setAutoTab = (which) => {
+        llmTabBtn.classList.toggle("rs-auto-tab-active", which === "llm");
+        genTabBtn.classList.toggle("rs-auto-tab-active", which === "gen");
+        videoTabBtn.classList.toggle("rs-auto-tab-active", which === "video");
+        llmPanel.style.display = which === "llm" ? "" : "none";
+        genPanel.style.display = which === "gen" ? "" : "none";
+        videoPanel.style.display = which === "video" ? "" : "none";
     };
-    llmTabBtn.addEventListener("click", () => setAutoTab(true));
-    genTabBtn.addEventListener("click", () => setAutoTab(false));
+    llmTabBtn.addEventListener("click", () => setAutoTab("llm"));
+    genTabBtn.addEventListener("click", () => setAutoTab("gen"));
+    videoTabBtn.addEventListener("click", () => setAutoTab("video"));
     autoMenu.appendChild(autoDivider);
     autoMenu.appendChild(autoTabs);
     autoMenu.appendChild(llmPanel);
     autoMenu.appendChild(genPanel);
+    autoMenu.appendChild(videoPanel);
     const autoWrap = mkEl("div", "rs-auto-wrap");
     autoWrap.appendChild(generateBtn);
     autoWrap.appendChild(genCaret);
@@ -524,7 +535,7 @@ function createStatusBars() {
     const closeAutoMenu = () => {
         if (!autoMenuOpen) return;
         if (!autoMenuReady) { performClose(); return; } // 初始化未完成：无用户改动可确认
-        if (modelForm.isDirty() || genForm.isDirty()) {
+        if (modelForm.isDirty() || genForm.isDirty() || videoForm.isDirty()) {
             confirmShown = true;
             dirtyConfirm.hidden = false;
             return; // 有未保存修改：暂停关闭，等用户在确认条里选择
@@ -546,15 +557,15 @@ function createStatusBars() {
         // 避免初始化收尾阶段的程序化改动被误判为未保存修改
         autoMenuReady = false;
         const seq = ++autoMenuLoadSeq;
-        Promise.all([modelForm.load(), genForm.load()])
+        Promise.all([modelForm.load(), genForm.load(), videoForm.load()])
             .catch(() => {}) // 单侧 load 失败不阻断就绪标记（表单内部已兜底记录）
             .then(() => { if (seq === autoMenuLoadSeq) autoMenuReady = true; });
         autoMenuOpen = true;
     };
     btnSaveClose.addEventListener("click", async () => {
         btnSaveClose.disabled = true;
-        const [genOk, llmOk] = await Promise.all([genForm.save(), modelForm.save()]);
-        if (genOk && llmOk) performClose();
+        const [genOk, llmOk, videoOk] = await Promise.all([genForm.save(), modelForm.save(), videoForm.save()]);
+        if (genOk && llmOk && videoOk) performClose();
         else showToast(app, "error", "保存失败", "请重试后再关闭");
         btnSaveClose.disabled = false;
     });

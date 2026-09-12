@@ -504,8 +504,8 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
 # ===========================================================================
 
 _PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{WIDTH}}", "{{HEIGHT}}",
-                       "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
-                       "{{REF_IMAGE}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
+                       "{{LENGTH}}", "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
+                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
 
 
 def _typed_value(token: str, params: dict):
@@ -520,6 +520,8 @@ def _typed_value(token: str, params: dict):
         return params["width"]
     if token == "{{HEIGHT}}":
         return params["height"]
+    if token == "{{LENGTH}}":
+        return params["length"]
     if token == "{{COUNT}}":
         return params["count"]
     if token == "{{PREFIX}}":
@@ -530,6 +532,8 @@ def _typed_value(token: str, params: dict):
         return params["text_encoder"]
     if token == "{{VAE}}":
         return params["vae"]
+    if token == "{{AUDIO_VAE}}":
+        return params["audio_vae"]
     if token == "{{REF_IMAGE}}":
         return params["ref_name"]
     scale = params.get("ref_scale") or (0, 0)

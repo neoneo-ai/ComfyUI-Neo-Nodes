@@ -70,8 +70,23 @@ def _normalize_outputs(result, return_types):
     return list(result)
 
 
-def _executed_image_outputs(graph, results):
-    """收集末端 IMAGE 输出：产出 IMAGE、且未被其它执行节点引用的 (node_id, index)。"""
+def _is_api_node(class_def):
+    """V3 API 节点（io.ComfyNode）：带 define_schema，execute 为 classmethod。"""
+    return hasattr(class_def, "define_schema")
+
+
+def _api_outputs(result):
+    """V3 节点 execute() 返回 NodeOutput（值在 .args）/tuple/单值 → 输出列表。"""
+    if isinstance(result, (tuple, list)):
+        return list(result)
+    args = getattr(result, "args", None)
+    if args is not None:
+        return list(args)
+    return [result]
+
+
+def _terminal_output(graph, results, out_type):
+    """收集末端指定类型输出：产出该类型、且未被其它执行节点引用的 (node_id, index)。"""
     produced = []
     for nid, node in graph.items():
         if node.get("class_type") in _SKIP_OUTPUT_NODES:
@@ -80,23 +95,23 @@ def _executed_image_outputs(graph, results):
         if class_def is None or nid not in results:
             continue
         for idx, t in enumerate(class_def.RETURN_TYPES):
-            if t == "IMAGE" and idx < len(results[nid]):
+            if t == out_type and idx < len(results[nid]):
                 produced.append((nid, idx))
     consumed = set()
     for nid, node in graph.items():
         if node.get("class_type") in _SKIP_OUTPUT_NODES:
-            continue  # 跳过节点对 IMAGE 的引用不算消费
+            continue  # 跳过节点对该输出的引用不算消费
         for v in (node.get("inputs") or {}).values():
             if _is_ref(v, graph):
                 consumed.add((v[0], v[1]))
     terminal = [p for p in produced if p not in consumed]
     if not terminal:
-        raise RuntimeError("[NeoNodes] Krea2 生图 workflow 未产出 IMAGE 输出")
+        raise RuntimeError(f"[NeoNodes] workflow 未产出 {out_type} 输出")
     return terminal[-1]
 
 
-def execute_graph_inprocess(graph):
-    """进程内同步执行 API prompt graph，返回末端 IMAGE 张量。
+def execute_graph_inprocess(graph, output_type="IMAGE"):
+    """进程内同步执行 API prompt graph，返回末端指定类型（默认 IMAGE）的输出。
 
     graph 为 render_template() 的输出（占位符已替换、LoRA 已注入），结构同 ComfyUI API prompt。
     """
@@ -110,14 +125,18 @@ def execute_graph_inprocess(graph):
         class_def = comfy_nodes.NODE_CLASS_MAPPINGS.get(class_type)
         if class_def is None:
             raise RuntimeError(f"[NeoNodes] Krea2 生图 workflow 含未知节点类型: {class_type}")
+        inputs = {}
+        for k, v in (node.get("inputs") or {}).items():
+            inputs[k] = results[v[0]][v[1]] if _is_ref(v, graph) else v
+
+        if _is_api_node(class_def):
+            results[nid] = _api_outputs(class_def.execute(**inputs))
+            continue
+
         func_name = getattr(class_def, "FUNCTION", None)
         if not func_name or inspect.iscoroutinefunction(getattr(class_def, func_name, None)):
             raise RuntimeError(
                 f"[NeoNodes] Krea2 生图 workflow 含不支持的异步/无函数节点: {class_type}")
-
-        inputs = {}
-        for k, v in (node.get("inputs") or {}).items():
-            inputs[k] = results[v[0]][v[1]] if _is_ref(v, graph) else v
 
         inst = class_def()
         func = getattr(inst, func_name)
@@ -129,7 +148,7 @@ def execute_graph_inprocess(graph):
 
         results[nid] = _normalize_outputs(func(**inputs), class_def.RETURN_TYPES)
 
-    node_id, idx = _executed_image_outputs(graph, results)
+    node_id, idx = _terminal_output(graph, results, output_type)
     return results[node_id][idx]
 
 

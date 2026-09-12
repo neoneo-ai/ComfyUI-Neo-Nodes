@@ -45,8 +45,31 @@ export async function saveGenSettings(patch) {
     return data;
 }
 
+// 生视频（MiniMax H3）独立设置：/neo_video_gen/*，落盘 configs/video_gen.json，与生图 image_gen.json 分开
+const VIDEO_API = "/neo_video_gen";
+
+export async function getVideoGenSettings() {
+    return getJson(`${VIDEO_API}/settings`);
+}
+
+export async function saveVideoGenSettings(patch) {
+    const resp = await fetch(`${VIDEO_API}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch || {})
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || data.error) throw new Error(data?.error || `HTTP ${resp.status}`);
+    return data;
+}
+
 export async function listGenModels() {
     return getJson(`${GEN_API}/models`);
+}
+
+// 生视频模型列表：/neo_video_gen/models，H3 相关靠前（与生图 krea2-first 独立）
+export async function listVideoGenModels() {
+    return getJson(`${VIDEO_API}/models`);
 }
 
 /** 提交生图任务，返回任务快照（含 task_id / warnings）；失败抛 Error(后端消息) */
@@ -382,6 +405,21 @@ function shortModelName(name) {
     return tail.replace(/\.(safetensors|sft|pt|bin|gguf)$/i, "");
 }
 
+// H3 视频模型建议：从文件列表挑首个含 h3/minimax 的名字供「自动」项显示（无匹配返回空串）
+function videoSuggestion(files) {
+    return (files || []).find((n) => /h3|minimax/i.test(String(n))) || "";
+}
+
+// H3 音频 VAE：文件名同时含 h3 与 audio（与后端 suggest_audio_vae 对齐）
+function videoAudioVaeSuggestion(files) {
+    return (files || []).find((n) => /h3/i.test(String(n)) && /audio/i.test(String(n))) || "";
+}
+
+// H3 视频 VAE：文件名含 h3_video（与后端 _VIDEO_MODEL_HINTS.vae 对齐），避开 audio vae
+function videoVideoVaeSuggestion(files) {
+    return (files || []).find((n) => /h3_video/i.test(String(n))) || "";
+}
+
 // 四视图 LoRA 名称线索（与后端 _QUADVIEW_HINTS 对齐，大小写不敏感）；命中则「依赖参考图」默认勾选
 function isQuadviewName(name) {
     return /quadview|四视图/i.test(String(name || ""));
@@ -598,6 +636,101 @@ export function createGenSizeRows() {
     return { el: section, load, collect };
 }
 
+/** 生视频模型 / Text Encoder / VAE（视频）/ VAE（音频）控件区（每技能生视频设置用）。
+ *  空值 = 回落全局「生视频模型」设置，再按 H3 名称线索自动挑选。 */
+export function createVideoModelConfigSection() {
+    const section = mkEl("div", "rs-gen-model-section");
+
+    const makeComboRow = (labelText, extraClass) => {
+        const row = mkEl("div", "rs-config-row" + (extraClass ? " " + extraClass : ""));
+        const label = mkEl("label", "rs-form-label");
+        label.textContent = labelText;
+        const select = document.createElement("select");
+        const combo = attachComboBox(select, {}).box;
+        row.append(label, combo);
+        return { row, select };
+    };
+    const modelCtl = makeComboRow("生视频模型");
+    // Text Encoder / 视频 VAE / 音频 VAE 很少改动：打 rs-gen-adv-row 标记，供技能弹窗收进折叠区
+    const encoderCtl = makeComboRow("Text Encoder", "rs-gen-adv-row");
+    const videoVaeCtl = makeComboRow("VAE（视频）", "rs-gen-adv-row");
+    const audioVaeCtl = makeComboRow("VAE（音频）", "rs-gen-adv-row");
+
+    // LoRA 行：动态增删，每行 = 模型选择 + 强度。视频无「依赖参考图」概念，故不设复选框（与生图区不同）。
+    const loraRow = mkEl("div", "rs-config-row");
+    const loraLabel = mkEl("label", "rs-form-label");
+    loraLabel.textContent = "LoRA";
+    const loraList = mkEl("div", "rs-gen-lora-list");
+    const loraAddBtn = mkEl("button", "rs-gen-lora-add");
+    loraAddBtn.type = "button";
+    loraAddBtn.textContent = "+ 添加 LoRA";
+    loraRow.append(loraLabel, loraList, loraAddBtn);
+
+    section.append(modelCtl.row, encoderCtl.row, videoVaeCtl.row, audioVaeCtl.row, loraRow);
+
+    let loraFiles = [];
+
+    function addLoraRow(name = "", strength = 1.0) {
+        const line = mkEl("div", "rs-gen-lora-row");
+        const select = document.createElement("select");
+        const combo = attachComboBox(select).box;
+        const strengthInput = mkEl("input", "rs-gen-lora-strength");
+        strengthInput.type = "number";
+        strengthInput.min = -10;
+        strengthInput.max = 10;
+        strengthInput.step = 0.05;
+        strengthInput.value = strength;
+        const delBtn = mkEl("button", "rs-gen-lora-del");
+        delBtn.type = "button";
+        delBtn.textContent = "✕";
+        delBtn.setAttribute("data-rs-tooltip", "移除此 LoRA");
+        delBtn.addEventListener("click", () => line.remove());
+        line.append(combo, strengthInput, delBtn);
+        fillComboSelect(select, loraFiles, "", name);
+        loraList.appendChild(line);
+    }
+
+    loraAddBtn.addEventListener("click", () => addLoraRow());
+
+    function load(settings, models) {
+        loraFiles = models.loras || [];
+        fillComboSelect(modelCtl.select, models.diffusion_models || [],
+            videoSuggestion(models.diffusion_models), settings.model || "");
+        fillComboSelect(encoderCtl.select, models.text_encoders || [],
+            videoSuggestion(models.text_encoders), settings.text_encoder || "");
+        fillComboSelect(videoVaeCtl.select, models.vae || [],
+            videoVideoVaeSuggestion(models.vae), settings.vae || "");
+        fillComboSelect(audioVaeCtl.select, models.vae || [],
+            videoAudioVaeSuggestion(models.vae), settings.audio_vae || "");
+        loraList.innerHTML = "";
+        for (const entry of settings.loras || []) {
+            if (typeof entry === "string") addLoraRow(entry, 1.0);
+            else if (entry && typeof entry === "object")
+                addLoraRow(entry.name || "", entry.strength ?? 1.0);
+        }
+    }
+
+    function collect() {
+        const loras = [];
+        for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
+            const select = line.querySelector("select");
+            const strength = line.querySelector(".rs-gen-lora-strength");
+            const name = select ? select.value : "";
+            if (!name) continue;
+            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0 });
+        }
+        return {
+            model: modelCtl.select.value.trim(),
+            text_encoder: encoderCtl.select.value.trim(),
+            vae: videoVaeCtl.select.value.trim(),
+            audio_vae: audioVaeCtl.select.value.trim(),
+            loras,
+        };
+    }
+
+    return { el: section, load, collect };
+}
+
 /** 全局生图默认设置表单（「自动增强」菜单内）：核心模型 / Text Encoder / VAE / 输出前缀 + 保存按钮。
  *  独立实现，不复用每技能设置的 createModelConfigSection / createGenSizeRows；
  *  张数 / 长边尺寸 / 默认比例 / LoRA 只在每技能设置里配置，Enhance Prompt 开关在技能正文（System Prompt Content）旁。 */
@@ -687,6 +820,104 @@ export function createImageGenSettingsForm() {
             return true;
         } catch (e) {
             console.warn("Failed to save image gen settings:", e);
+            return false;
+        }
+    }
+
+    // 当前表单相对最近一次 load/save 是否有改动（供关闭菜单时确认用）；加载窗口内恒为 false
+    function isDirty() {
+        if (loading) return false;
+        return snapshot !== null && JSON.stringify(collect()) !== JSON.stringify(snapshot);
+    }
+
+    return { el: form, load, save, isDirty };
+}
+
+/** 全局生视频（MiniMax H3）默认设置表单（「自动增强」菜单内独立 tab）：视频模型 / Text Encoder (视频) / VAE (视频) / VAE (音频) + 保存按钮。
+ *  与生图共用 diffusion_models/text_encoders/vae 目录，但独立成页；save 只提交 video_* 字段（后端合并，不覆盖生图设置）。 */
+export function createVideoGenSettingsForm() {
+    const form = mkEl("div", "rs-gen-settings");
+
+    // 三个模型选择行：空值 = 按名称线索自动挑选（videoSuggestion），用户可显式指定
+    const makeComboRow = (labelText) => {
+        const row = mkEl("div", "rs-config-row");
+        const label = mkEl("label", "rs-form-label");
+        label.textContent = labelText;
+        const select = document.createElement("select");
+        const combo = attachComboBox(select, {}).box;
+        row.append(label, combo);
+        return { row, select };
+    };
+
+    // 生视频模型（MiniMax H3）：与生图共用 diffusion_models/text_encoders/vae 目录，独立设置项
+    const videoHeading = mkEl("div", "rs-gen-video-heading");
+    videoHeading.textContent = "生视频模型（MiniMax H3）";
+    const videoModelCtl = makeComboRow("视频模型");
+    const videoEncoderCtl = makeComboRow("Text Encoder (视频)");
+    const videoVaeCtl = makeComboRow("VAE (视频)");
+    const videoAudioVaeCtl = makeComboRow("VAE (音频)");
+
+    // 显式保存按钮：选择后立即落盘，不依赖关菜单时的静默保存
+    const saveBtn = mkEl("button", "rs-gen-save");
+    saveBtn.type = "button";
+    saveBtn.textContent = "💾 保存设置";
+    let saveResetTimer = null;
+    saveBtn.addEventListener("click", async () => {
+        saveBtn.disabled = true;
+        const ok = await save();
+        saveBtn.disabled = false;
+        saveBtn.textContent = ok ? "✓ 已保存" : "✕ 保存失败";
+        clearTimeout(saveResetTimer);
+        saveResetTimer = setTimeout(() => { saveBtn.textContent = "💾 保存设置"; }, 1600);
+    });
+    const saveRow = mkEl("div", "rs-config-row");
+    saveRow.appendChild(saveBtn);
+
+    form.append(videoHeading, videoModelCtl.row, videoEncoderCtl.row, videoVaeCtl.row, videoAudioVaeCtl.row, saveRow);
+
+    // 加载窗口标记：load() 异步回填期间（await 网络请求）不算 dirty，避免初始化误判
+    let loading = false;
+
+    async function load() {
+        loading = true;
+        try {
+            const [settings, models] = await Promise.all([getVideoGenSettings(), listVideoGenModels()]);
+            fillComboSelect(videoModelCtl.select, models.diffusion_models || [],
+                videoSuggestion(models.diffusion_models), settings.video_model || "");
+            fillComboSelect(videoEncoderCtl.select, models.text_encoders || [],
+                videoSuggestion(models.text_encoders), settings.video_text_encoder || "");
+            fillComboSelect(videoVaeCtl.select, models.vae || [],
+                videoVideoVaeSuggestion(models.vae), settings.video_vae || "");
+            fillComboSelect(videoAudioVaeCtl.select, models.vae || [],
+                videoAudioVaeSuggestion(models.vae), settings.video_audio_vae || "");
+            snapshot = collect();
+        } catch (e) {
+            console.warn("Failed to load video gen settings:", e);
+        } finally {
+            loading = false;
+        }
+    }
+
+    // 收集当前表单值（与后端 /neo_video_gen/settings 的 video_* 字段对齐）；save 与脏检查共用。空 = 自动挑选
+    function collect() {
+        return {
+            video_model: videoModelCtl.select.value,
+            video_text_encoder: videoEncoderCtl.select.value,
+            video_vae: videoVaeCtl.select.value,
+            video_audio_vae: videoAudioVaeCtl.select.value,
+        };
+    }
+
+    // load/save 后的表单快照，用于关闭菜单时判断是否有未保存修改
+    let snapshot = null;
+
+    async function save() {
+        try {
+            await saveVideoGenSettings(collect());
+            snapshot = collect();
+            return true;
+        } catch (e) {
+            console.warn("Failed to save video gen settings:", e);
             return false;
         }
     }

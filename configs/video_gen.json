@@ -1,0 +1,5 @@
+{
+  "video_model": "",
+  "video_text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+  "video_vae": ""
+}

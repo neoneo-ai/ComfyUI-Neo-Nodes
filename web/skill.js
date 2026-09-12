@@ -13,7 +13,7 @@ import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置）；与 image-gen.js 的循环导入均为延迟使用，安全
-import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows } from "./image-gen.js";
+import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels } from "./image-gen.js";
 
 // ==========================================
 // Skill API
@@ -188,15 +188,16 @@ function renderMarkdown(src) {
 // ==========================================
 // skill 选择列表：分类标签 + 把 skills 填充进原生 <select>（combo-box 数据源）
 // ==========================================
-// image_gen 组排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
+// image_gen / video_gen 生成类排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
 // 图像/视频提示词增强紧随其后，vision/task/custom 依次跟随；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
-    "image_gen": { label: "🖼️ 生图 (Krea2)", order: -1 },
-    "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
-    "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
-    "vision": { label: "⚡ 图像 / 反推", order: 2 },
-    "task": { label: "⚙️ 任务", order: 3 },
-    "custom": { label: "📝 自定义", order: 4 }
+    "image_gen": { label: "🖼️ 生图 (Krea2)", order: 0 },
+    "video_gen": { label: "🎬 生视频 (H3)", order: 1 },
+    "image_enhance": { label: "🎨 图像提示词增强", order: 2 },
+    "video_enhance": { label: "🎬 视频提示词增强", order: 3 },
+    "vision": { label: "⚡ 图像 / 反推", order: 4 },
+    "task": { label: "⚙️ 任务", order: 5 },
+    "custom": { label: "📝 自定义", order: 6 }
 };
 
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记 */
@@ -359,6 +360,46 @@ function createSkillDetailPopup() {
     genSettingsWrap.append(genSettingsHeader, genModelSection.el, genSizeSection.el);
     if (advEl) genSettingsWrap.appendChild(advEl);
 
+    // ---- 生视频设置（仅 gen_video 技能显示）：读写该技能 config.json 覆盖（model/text_encoder/vae/audio_vae），未填项回落全局「生视频模型」----
+    const videoGenSettingsWrap = mkEl("div", "rs-gen-settings rs-skill-video-gen-settings");
+    videoGenSettingsWrap.style.display = "none";
+    const videoGenSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
+    const videoGenSettingsTitle = mkEl("label", "rs-form-label");
+    videoGenSettingsTitle.textContent = "🎬 生视频设置（优先于默认设置）";
+    videoGenSettingsTitle.title = "仅对本技能生效，未填项回落全局「生视频模型」设置";
+    const videoReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
+    videoReadOnlyHint.textContent = "预设/任务技能只读：点下方「⧉ Copy as custom」复制后可编辑";
+    videoReadOnlyHint.style.display = "none";
+    videoGenSettingsHeader.append(videoGenSettingsTitle, videoReadOnlyHint);
+    const videoModelSection = createVideoModelConfigSection();
+    // Text Encoder / VAE（视频）/ VAE（音频）很少改动：收进可折叠「高级选项」（默认收起），放到最底部
+    let videoAdvEl = null;
+    {
+        const advRows = [...videoModelSection.el.querySelectorAll(".rs-gen-adv-row")];
+        if (advRows.length) {
+            const adv = mkEl("details", "rs-gen-advanced");
+            const advSummary = mkEl("summary", "rs-gen-advanced-summary");
+            advSummary.textContent = "Text Encoder / VAE（视频）/ VAE（音频）（高级）";
+            const advContent = mkEl("div", "rs-gen-adv-content");
+            for (const r of advRows) advContent.appendChild(r);
+            adv.append(advSummary, advContent);
+            videoAdvEl = adv;
+        }
+    }
+    videoGenSettingsWrap.append(videoGenSettingsHeader, videoModelSection.el);
+    if (videoAdvEl) videoGenSettingsWrap.appendChild(videoAdvEl);
+
+    async function loadVideoGenSettings(readOnly) {
+        if (!currentSkillId) return;
+        const [config, videoModels] = await Promise.all([
+            getSkillGenConfig(currentSkillId),
+            listVideoGenModels().catch(() => ({})),
+        ]);
+        videoModelSection.load(config || {}, videoModels);
+        for (const el of videoGenSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
+        videoReadOnlyHint.style.display = readOnly ? "block" : "none";
+    }
+
     // readOnly（预设/任务技能）时禁用全部控件；config 缺失按空对象回落默认。
     // 禁用必须在 load() 之后：load 会动态新建 LoRA 行，新建元素不会被前面的禁用循环覆盖
     async function loadGenSettings(readOnly) {
@@ -387,7 +428,7 @@ function createSkillDetailPopup() {
     cancelBtn.textContent = "✕ Close";
     footerBtns.append(saveBtn, copyBtn, deleteBtn, cancelBtn);
 
-    content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, footerBtns);
+    content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, footerBtns);
     modal.append(header, content);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -507,15 +548,23 @@ function createSkillDetailPopup() {
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
         else { selectedFile = null; contentTextarea.value = ""; }
-        // 生图技能显示 config.json 覆盖区（预设/任务只读）；其余技能隐藏。
-        // multi_turn 是文本多轮概念，生图技能用不到 → 一并隐藏
+        // 生图/生视频技能显示各自 config.json 覆盖区（预设/任务只读）；其余技能隐藏。
+        // multi_turn 是文本多轮概念，生图/生视频技能用不到 → 一并隐藏
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
+            videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "";
             await loadGenSettings(!isCustom());
+        } else if (full && full.gen_video) {
+            genSettingsWrap.style.display = "none";
+            videoGenSettingsWrap.style.display = "block";
+            multiTurnRow.style.display = "none";
+            enhancePromptWrap.style.display = "none";
+            await loadVideoGenSettings(!isCustom());
         } else {
             genSettingsWrap.style.display = "none";
+            videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "";
             enhancePromptWrap.style.display = "none";
         }
@@ -553,9 +602,13 @@ function createSkillDetailPopup() {
     // ---- 保存（新建主文件 / 已有 skill 的当前选中文件）----
     // 生图设置区可见且可编辑时随主 Save 一起写入该技能 config.json（弹窗内只有一个保存入口）
     async function persistGenSettings() {
-        if (!currentSkillId || !isCustom() || genSettingsWrap.style.display === "none") return;
+        if (!currentSkillId || !isCustom()) return;
         try {
-            await saveSkillGenConfig(currentSkillId, { ...genModelSection.collect(), ...genSizeSection.collect(), enhance_prompt: enhancePromptChk.checked });
+            if (genSettingsWrap.style.display !== "none") {
+                await saveSkillGenConfig(currentSkillId, { ...genModelSection.collect(), ...genSizeSection.collect(), enhance_prompt: enhancePromptChk.checked });
+            } else if (videoGenSettingsWrap.style.display !== "none") {
+                await saveSkillGenConfig(currentSkillId, videoModelSection.collect());
+            }
         } catch (err) {
             alert("Save gen settings failed: " + err.message);
         }
@@ -614,9 +667,10 @@ function createSkillDetailPopup() {
             tags: [...((full && full.tags) || [])],
             source: "custom",
             multi_turn: !!(full && full.multi_turn),
-            // 保留 frontmatter 元数据：生图技能复制后仍是 image_gen 分类且设置区可见
+            // 保留 frontmatter 元数据：生图/生视频技能复制后仍是原分类且设置区可见
             category: (full && full.category) || "",
             gen_image: !!(full && full.gen_image),
+            gen_video: !!(full && full.gen_video),
             requires_ref: !!(full && full.requires_ref)
         });
         await copySkillFiles(currentSkillId, newId); // 生图技能连同 workflow.json / config.json 一起复制（失败静默）

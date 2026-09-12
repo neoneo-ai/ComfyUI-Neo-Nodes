@@ -19,6 +19,9 @@ if __package__ not in (None, ""):
     # Import built-in image generation module (registers /neo_image_gen/* routes)
     from . import image_gen
 
+    # Import video generation settings module (registers /neo_video_gen/* routes; 独立于生图设置文件)
+    from . import video_gen
+
     # Import from prompts module
     from .prompts import (
         NODE_CLASS_MAPPINGS as PROMPT_CLASS_MAPPINGS,
@@ -53,17 +56,31 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] krea2_generate 节点注册失败（生图不可用）: {e}")
 
+    # MiniMax H3 视频生成节点：按 skill workflow.json 同步生成，输出解码后的 IMAGE 帧栈。
+    # 复用 krea2_generate 的 mini-executor（已支持 V3 API 节点）；导入失败时优雅降级。
+    H3_VIDEO_MAPPINGS = {}
+    H3_VIDEO_DISPLAY_MAPPINGS = {}
+    try:
+        from .h3_video_gen import (
+            NODE_CLASS_MAPPINGS as H3_VIDEO_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as H3_VIDEO_DISPLAY_MAPPINGS,
+        )
+    except Exception as e:
+        print(f"[NeoNodes] h3_video_gen 节点注册失败（H3 视频生成不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
         **KREA2_EDIT_MAPPINGS,
         **KREA2_GENERATE_MAPPINGS,
+        **H3_VIDEO_MAPPINGS,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
         **PROMPT_DISPLAY_NAME_MAPPINGS,
         **KREA2_EDIT_DISPLAY_MAPPINGS,
         **KREA2_GENERATE_DISPLAY_MAPPINGS,
+        **H3_VIDEO_DISPLAY_MAPPINGS,
     }
 
 # Web directory for frontend extensions
