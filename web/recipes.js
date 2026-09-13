@@ -385,11 +385,13 @@ export async function listVideoSkills() {
     }
 }
 
-/** 从拖放事件的 dataTransfer 提取素材标识（Neo Gallery 自定义 MIME，回退 text/plain）。 */
+/** 从拖放事件的 dataTransfer 提取素材标识（Neo Gallery 自定义 MIME，回退 text/plain）。
+ *  兼容传入 DropEvent（取 .dataTransfer）或 dataTransfer 本身。 */
 function grabDataType(dt) {
-    if (!dt || typeof dt.getData !== 'function') return '';
+    const target = (dt && typeof dt.getData === 'function') ? dt : (dt && dt.dataTransfer);
+    if (!target || typeof target.getData !== 'function') return '';
     try {
-        return dt.getData('application/x-neo-gallery') || dt.getData('text/plain') || '';
+        return target.getData('application/x-neo-gallery') || target.getData('text/plain') || '';
     } catch {
         return '';
     }
@@ -458,12 +460,28 @@ function directorInferAspect(w, h) {
     return { label: row[0], mp: directorClampMp((w * h) / (1024 * 1024)) };
 }
 
+// 当前打开的导演编辑器 { name, close, overlay }：name=配方名（新建模式为 ''）。
+// 单例且支持「已打开时点击另一配方 → 重新加载为该配方」；overlay 仍在 DOM 才视为真正打开。
+let _directorEditor = null;
+function currentDirectorEditor() {
+    if (_directorEditor && _directorEditor.overlay && _directorEditor.overlay.parentNode) return _directorEditor;
+    _directorEditor = null; // 浮层已不在（外部清除 / 测试重置 body）→ 丢弃过期状态
+    return null;
+}
+
 /** 打开多段视频导演编辑器：shared(宽高比/百万像素或自定义 W/H) + 逐段(skill/prompt/首帧/时长)。
  *  existing 为既有 director 配方 meta（编辑时预填），null = 新建；onSaved 保存成功后回调刷新。
- *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。 */
+ *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。
+ *  单例：已打开同一配方 → 忽略重复点击；已打开另一配方 → 关闭旧窗口并重新加载为该配方。 */
 export async function openDirectorEditor(existing = null, onSaved = null) {
-    // 单例：导演编辑器一次只允许一个；已打开则忽略本次请求（节点时间轴/配方列表等多入口都会调用本函数）
-    if (document.querySelector('.neo-director-overlay')) return;
+    const requestedName = (existing && existing.name) || '';
+    const cur = currentDirectorEditor();
+    if (cur) {
+        if (cur.name === requestedName) return; // 同一配方重复点击 → 忽略
+        cur.close();                            // 另一配方 → 关闭旧窗口，重载为该配方
+    } else if (document.querySelector('.neo-director-overlay')) {
+        return; // 兜底：状态缺失但浮层仍在 → 忽略，避免叠加
+    }
     let imageRefs = [];
     try {
         const { media } = await scanMediaNodes();
@@ -700,7 +718,11 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     updateRes();
 
     let overlay;
-    const close = () => { if (timeline) { try { timeline.destroy(); } catch (_) {} timeline = null; } if (overlay && overlay.parentNode) overlay.remove(); };
+    const close = () => {
+        if (timeline) { try { timeline.destroy(); } catch (_) {} timeline = null; }
+        if (overlay && overlay.parentNode) overlay.remove();
+        if (_directorEditor && _directorEditor.close === close) _directorEditor = null;
+    };
     const saveBtn = $el('button', { className: 'rs-btn neo-director-save', textContent: '保存' });
     const cancelBtn = $el('button', { className: 'rs-btn neo-director-cancel', textContent: '取消', onclick: close });
 
@@ -942,6 +964,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     });
     overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
     document.body.appendChild(overlay);
+    _directorEditor = { name: requestedName, close, overlay };
 }
 
 export async function appendResultsToRecipe(name, results) {
@@ -1239,7 +1262,7 @@ export async function createRecipesPanel() {
         $el('h3', { className: 'neo-recipes-title', innerHTML: `${RECIPE_ICON_SVG}<span>配方</span>` }),
         $el('button', {
             className: 'rs-btn rs-action-btn neo-recipes-director',
-            textContent: '🎬', title: '新建多段视频导演配方',
+            textContent: '🎬 新增导演配方', title: '新建多段视频导演配方',
             onclick: () => openDirectorEditor(null, renderList)
         }),
         $el('button', {

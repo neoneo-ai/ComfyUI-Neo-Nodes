@@ -352,7 +352,7 @@ test("标题栏拖动：mousedown 切绝对定位，mousemove 平移面板，mou
     await sleep(20);
 });
 
-test("导演编辑器单例：已打开时再次调用不重复创建浮层，关闭后可重开", async () => {
+test("导演编辑器单例：同一配方重复点击忽略，另一配方重新加载，关闭后可重开", async () => {
     const { openDirectorEditor } = await import("../../web/recipes.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
@@ -367,9 +367,16 @@ test("导演编辑器单例：已打开时再次调用不重复创建浮层，�
     await openDirectorEditor(existing);
     assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "首次打开创建浮层");
 
-    // 再次调用（不同配方）→ 忽略，不叠加第二个浮层
+    // 同一配方重复点击 → 忽略，仍只有一个浮层、内容不变
+    await openDirectorEditor(existing);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "同一配方重复点击不叠加");
+    assert.equal(document.querySelector(".neo-director-name").value, "T-single", "内容保持原配方");
+
+    // 另一配方 → 重新加载为该配方，仍只有一个浮层
     await openDirectorEditor({ name: "T-other", shared: {}, segments: [{ skill_id: "sk-a", prompt: "x", duration_sec: 5 }] });
-    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "已打开时不再创建第二个");
+    await sleep(20); // 等重载：关旧窗 + 重建新窗
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "重载后仍只有一个浮层");
+    assert.equal(document.querySelector(".neo-director-name").value, "T-other", "重载为点击的配方");
 
     // 关闭后可再次打开
     document.querySelector(".neo-director-close").click();
@@ -440,6 +447,44 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     assert.equal(segs[1].querySelector(".neo-director-prompt").value, "场景B提示词");
     assert.equal(segs[0].querySelector(".neo-director-skill").value, "sk-a", "技能取首个可用视频技能");
     assert.equal(Number(segs[1].querySelector(".neo-director-dur").value), 10);
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：素材直接拖入首帧网格 / 参考图网格（非时间轴 canvas）也能加入", async () => {
+    const { openDirectorEditor } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "dropped.png" }));
+
+    await openDirectorEditor(null); // 新建：默认时间轴页，1 个空段
+    await sleep(60);
+
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"dragged.png","subfolder":""}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+
+    // ① 时间轴页：直接拖到首帧网格（非 canvas）→ 加入该段候选并选中
+    const ffGrid = document.querySelector(".neo-director-seg .neo-director-ff-grid");
+    assert.ok(ffGrid, "首帧网格存在");
+    ffGrid.dispatchEvent(dropEv);
+    await sleep(30);
+    const ffTile = Array.from(document.querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === "dropped.png");
+    assert.ok(ffTile, "拖入的素材加入首帧网格");
+    assert.ok(ffTile.classList.contains("neo-director-ff-active"), "拖入的素材被选中");
+
+    // ② 故事板页：拖到角色参考图网格 → 加入并选中
+    const tabStory = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("自动故事板"));
+    tabStory.click();
+    await sleep(20);
+    const refGrid = document.querySelector(".neo-director-refgrid");
+    assert.ok(refGrid, "参考图网格存在");
+    refGrid.dispatchEvent(dropEv);
+    await sleep(30);
+    const refTile = Array.from(document.querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "dropped.png");
+    assert.ok(refTile, "拖入的素材加入参考图网格");
+    assert.ok(refTile.classList.contains("neo-director-ref-active"), "拖入的素材被选中");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);

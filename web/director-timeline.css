@@ -6,14 +6,29 @@
 }
 
 /* 挂在 NeoH3VideoDirector 节点内的容器（addDOMWidget 的 root）。
-   flex 行：时间轴 canvas 占主体，「✎」按钮外挂右侧、垂直居中，不覆盖绘图区。 */
+   flex 列：上行 = 时间轴显示区（canvas + ✎），下行 = 操作条（右下角「＋ 新增导演配方」）。 */
 .neo-dtl-node {
   width: 100%;
   box-sizing: border-box;
   padding: 4px 6px 2px;
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 时间轴显示区：canvas 占主体，「✎」按钮外挂右侧、垂直居中 */
+.neo-dtl-tlrow {
+  width: 100%;
+  display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* 时间轴下方操作条：右对齐放「＋ 新增导演配方」按钮 */
+.neo-dtl-actbar {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* 「✎」编辑按钮：打开当前配方的导演编辑器 */
@@ -33,9 +48,22 @@
 .neo-dtl-edit:hover { border-color: #8cf; color: #fff; }
 .neo-dtl-edit:disabled { opacity: 0.5; cursor: default; }
 
+/* 「＋ 新增导演配方」按钮：时间轴显示区外右下角 */
+.neo-dtl-new {
+  padding: 2px 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: rgba(30, 30, 30, 0.85);
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.neo-dtl-new:hover { border-color: #8cf; color: #fff; }
+
 /* canvas 是替换元素，flex 项默认 min-width:auto（=内在宽度）会拒绝收缩、把按钮挤出节点；
    这里允许它收缩到剩余空间，组件的 ResizeObserver 会按新宽度重绘。 */
-.neo-dtl-node > canvas.neo-dtl-canvas {
+.neo-dtl-tlrow > canvas.neo-dtl-canvas {
   flex: 1 1 auto;
   min-width: 0;
 }

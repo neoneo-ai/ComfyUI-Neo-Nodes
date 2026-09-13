@@ -6,7 +6,8 @@ import { DirectorTimeline } from "./director-timeline.js";
 import { openDirectorEditor, listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 
-const TL_H = 96; // 节点内时间轴容器高度（px）
+const TL_H = 96; // 节点内时间轴显示区高度（px）
+const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
 
 app.registerExtension({
     name: "NeoH3VideoDirector.Timeline",
@@ -25,13 +26,18 @@ app.registerExtension({
             const widget = node.addDOMWidget("director_timeline", "custom", root);
             root.style.width = "100%";
             root.style.maxWidth = "none";
-            root.style.height = TL_H + "px";
+            root.style.height = (TL_H + ACT_H) + "px";
+
+            // 时间轴显示区（canvas + ✎）；「＋ 新增导演配方」按钮另起一行，位于其下方右下角
+            const tlRow = document.createElement("div");
+            tlRow.className = "neo-dtl-tlrow";
+            root.appendChild(tlRow);
 
             let tlData = { segments: [] };
             let progress = { active: false, segment_index: -1, total_segments: 0 }; // 当前 director 运行进度（轮询 /neo_video_gen/director_progress）
             let tl = null;
             try {
-                tl = new DirectorTimeline(root, {
+                tl = new DirectorTimeline(tlRow, {
                     height: TL_H - 8,
                     readOnly: true,
                     onSelect: () => openEditor(), // 点击分段块直接打开编辑器
@@ -80,9 +86,9 @@ app.registerExtension({
             // 节点增高容纳时间轴，并设最小尺寸防止被压缩裁切
             const bw = (node.size && node.size[0]) || 340;
             const bh = (node.size && node.size[1]) || 220;
-            node.setSize([Math.max(bw, 340), bh + TL_H]);
+            node.setSize([Math.max(bw, 340), bh + TL_H + ACT_H]);
             node.minWidth = Math.max(bw, 340);
-            node.minHeight = bh + TL_H;
+            node.minHeight = bh + TL_H + ACT_H;
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
             const loadSpec = async () => {
@@ -133,7 +139,33 @@ app.registerExtension({
             editBtn.textContent = "✎";
             editBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
             editBtn.addEventListener("click", (e) => { e.stopPropagation(); openEditor(); });
-            root.appendChild(editBtn);
+            tlRow.appendChild(editBtn);
+
+            // 时间轴显示区外右下角「＋ 新增导演配方」：打开新建模式编辑器；保存后把新配方加入下拉并选中、重载时间轴
+            const openNewRecipe = async () => {
+                let priorNames = new Set();
+                try { priorNames = new Set((await listRecipes()).filter((r) => r.type === "video_director").map((r) => r.name)); } catch (_) {}
+                await openDirectorEditor(null, async () => {
+                    try {
+                        const directors = (await listRecipes()).filter((r) => r.type === "video_director");
+                        if (recipeWidget && Array.isArray(recipeWidget.options?.values)) recipeWidget.options.values = directors.map((r) => r.name);
+                        const fresh = directors.find((r) => !priorNames.has(r.name));
+                        if (fresh && recipeWidget) recipeWidget.value = fresh.name;
+                    } catch (_) {}
+                    await loadSpec();
+                });
+            };
+            const actBar = document.createElement("div");
+            actBar.className = "neo-dtl-actbar";
+            const newBtn = document.createElement("button");
+            newBtn.type = "button";
+            newBtn.className = "neo-dtl-new";
+            newBtn.title = "新建多段视频导演配方";
+            newBtn.textContent = "＋ 新增导演配方";
+            newBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
+            newBtn.addEventListener("click", (e) => { e.stopPropagation(); openNewRecipe(); });
+            actBar.appendChild(newBtn);
+            root.appendChild(actBar);
             return result;
         };
 

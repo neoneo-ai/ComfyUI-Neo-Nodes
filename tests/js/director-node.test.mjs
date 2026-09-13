@@ -7,6 +7,7 @@ import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep } from "./setup.m
 import { getExtension, appState } from "./mocks/comfy-app.mjs";
 
 const TL_H = 96; // 与 web/director-node.js 的 TL_H 保持一致
+const ACT_H = 28; // 与 web/director-node.js 的 ACT_H（时间轴下方操作条）保持一致
 const BASE_W = 340;
 const BASE_H = 220;
 
@@ -52,9 +53,9 @@ test("创建后节点高度与最小高度都包含时间轴", async () => {
     resetEnv();
     const node = await createDirectorNode();
     assert.equal(node.size[0], BASE_W);
-    assert.equal(node.size[1], BASE_H + TL_H);
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H);
     assert.equal(node.minWidth, BASE_W);
-    assert.equal(node.minHeight, BASE_H + TL_H);
+    assert.equal(node.minHeight, BASE_H + TL_H + ACT_H);
 });
 
 test("拖拽缩小被钳制在最小尺寸，时间轴不被裁切", async () => {
@@ -62,7 +63,7 @@ test("拖拽缩小被钳制在最小尺寸，时间轴不被裁切", async () =>
     const node = await createDirectorNode();
     node.setSize([200, 150]);
     assert.equal(node.size[0], BASE_W, "宽度应钳制到 minWidth");
-    assert.equal(node.size[1], BASE_H + TL_H, "高度应钳制到含时间轴的 minHeight");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H, "高度应钳制到含时间轴+操作条的 minHeight");
 });
 
 test("拖拽放大不受影响，且时间轴宽度随节点同步", async () => {
@@ -142,4 +143,27 @@ test("时间轴按进度状态给各段标 done/current，非活动时不显示"
 
     tl._progress = { active: false, segment_index: -1, total_segments: 3 };
     assert.equal(tl._segProgressState(0), "", "非活动时全部不显示");
+});
+
+test("时间轴显示区外右下角「＋ 新增导演配方」按钮打开新建编辑器", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] }; // 无 Load* 节点 → 编辑器无媒体候选
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({ success: true, segments: [] }));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        { name: "dir-recipe", type: "video_director" },
+    ]));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const node = await createDirectorNode("dir-recipe");
+    const root = node.domWidgets.find((w) => w.name === "director_timeline").el;
+    const newBtn = root.querySelector(".neo-dtl-new");
+    assert.ok(newBtn, "新增导演配方按钮存在");
+    // 按钮在时间轴显示区之外（下方操作条内），而非时间轴行内
+    assert.ok(root.querySelector(".neo-dtl-actbar .neo-dtl-new"), "按钮位于时间轴下方操作条");
+    assert.ok(!root.querySelector(".neo-dtl-tlrow .neo-dtl-new"), "按钮不在时间轴显示区内");
+
+    newBtn.click();
+    await sleep(120); // openNewRecipe：listRecipes → openDirectorEditor(null) 建浮层
+    assert.ok(document.querySelector(".neo-director-overlay"), "点击后打开新建编辑器");
 });
