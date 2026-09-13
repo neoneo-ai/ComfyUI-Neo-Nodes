@@ -462,6 +462,8 @@ function directorInferAspect(w, h) {
  *  existing 为既有 director 配方 meta（编辑时预填），null = 新建；onSaved 保存成功后回调刷新。
  *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。 */
 export async function openDirectorEditor(existing = null, onSaved = null) {
+    // 单例：导演编辑器一次只允许一个；已打开则忽略本次请求（节点时间轴/配方列表等多入口都会调用本函数）
+    if (document.querySelector('.neo-director-overlay')) return;
     let imageRefs = [];
     try {
         const { media } = await scanMediaNodes();

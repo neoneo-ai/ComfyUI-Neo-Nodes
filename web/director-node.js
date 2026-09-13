@@ -28,12 +28,14 @@ app.registerExtension({
             root.style.height = TL_H + "px";
 
             let tlData = { segments: [] };
+            let progress = { active: false, segment_index: -1, total_segments: 0 }; // 当前 director 运行进度（轮询 /neo_video_gen/director_progress）
             let tl = null;
             try {
                 tl = new DirectorTimeline(root, {
                     height: TL_H - 8,
                     readOnly: true,
                     onSelect: () => openEditor(), // 点击分段块直接打开编辑器
+                    getProgress: () => progress,   // 各段底部实时显示生成状态（done/current）
                     getSegments: () => (tlData.segments || []).map(s => ({
                         // 内容派生身份：spec 重载后颜色保持稳定（只读预览不重排）
                         id: `${s.prompt || ''}|${Number(s.duration_sec) || 0}|${s.ref_input || ''}`,
@@ -46,6 +48,22 @@ app.registerExtension({
                 console.error("[Neo Nodes] director timeline init failed", e);
             }
             node._neoDtTimeline = tl;
+
+            // 轮询 director 运行进度，状态变化时刷新时间轴（节点存活期间每 500ms 一次；端点为 O(1) dict 读）
+            const pollProgress = async () => {
+                try {
+                    const resp = await api.fetchApi("/neo_video_gen/director_progress");
+                    if (!resp.ok) return;
+                    const p = await resp.json();
+                    const prev = progress;
+                    progress = { active: !!p.active, segment_index: Number(p.segment_index) || -1, total_segments: Number(p.total_segments) || 0 };
+                    if (progress.active !== prev.active || progress.segment_index !== prev.segment_index || progress.total_segments !== prev.total_segments) {
+                        tl?.refresh();
+                    }
+                } catch (_) {}
+            };
+            node._neoDtProgressTick = pollProgress; // 供测试直接触发
+            node._neoDtProgressTimer = setInterval(pollProgress, 500);
 
             // 宽度随节点缩放同步（LiteGraph 拖拽缩放不检查 min，这里补钳制；最小高度含时间轴）
             const updateSize = () => {
@@ -120,6 +138,7 @@ app.registerExtension({
         };
 
         nodeType.prototype.onRemoved = function() {
+            if (this._neoDtProgressTimer) { clearInterval(this._neoDtProgressTimer); this._neoDtProgressTimer = null; }
             if (this._neoDtTimeline) { try { this._neoDtTimeline.destroy(); } catch (_) {} this._neoDtTimeline = null; }
             return origOnRemoved?.apply(this, arguments);
         };

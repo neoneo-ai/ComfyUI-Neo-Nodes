@@ -432,6 +432,28 @@ class DirectorOrchestrationTests(unittest.TestCase):
         out = h3_video_director._concat_segment_audio([None, None], self.FPS, 1)
         self.assertIsNone(out)
 
+    def test_reports_progress_per_segment_and_resets(self):
+        h3d = h3_video_director
+        orig, _ = self._patch(3, [100, 100, 100])
+        seen = []
+        real_exec = h3d.execute_graph_inprocess
+
+        def _recording_exec(graph, output_type="IMAGE"):
+            seen.append(dict(h3d._DIRECTOR_PROGRESS))
+            return real_exec(graph, output_type)
+
+        h3d.execute_graph_inprocess = _recording_exec
+        try:
+            h3d.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        # 每段执行时：active、total_segments=3，segment_index 依次 0/1/2
+        self.assertEqual([s["active"] for s in seen], [True, True, True])
+        self.assertEqual([s["total_segments"] for s in seen], [3, 3, 3])
+        self.assertEqual([s["segment_index"] for s in seen], [0, 1, 2])
+        # 结束后复位为 inactive
+        self.assertEqual(h3d.get_director_progress(), {"active": False, "segment_index": -1, "total_segments": 0})
+
     def _restore(self, orig):
         (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
          h3_video_director.load_skill_workflow, h3_video_director.get_skill_gen_config,
@@ -478,6 +500,23 @@ class DirectorSpecRouteTests(unittest.TestCase):
         finally:
             recipes.load_director_spec = orig
         self.assertEqual(resp.status, 500)
+
+
+class DirectorProgressRouteTests(unittest.TestCase):
+    """/neo_video_gen/director_progress 返回当前 director 运行进度快照。"""
+
+    def test_returns_current_state(self):
+        h3d = h3_video_director
+        orig = dict(h3d._DIRECTOR_PROGRESS)
+        try:
+            h3d._DIRECTOR_PROGRESS.update(active=True, segment_index=1, total_segments=4)
+            resp = _run_async(h3d.neo_video_gen_director_progress(None))
+        finally:
+            h3d._DIRECTOR_PROGRESS.clear()
+            h3d._DIRECTOR_PROGRESS.update(orig)
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.body)
+        self.assertEqual(body, {"active": True, "segment_index": 1, "total_segments": 4})
 
 
 if __name__ == "__main__":

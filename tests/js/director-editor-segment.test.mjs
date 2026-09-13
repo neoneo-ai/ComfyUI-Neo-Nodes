@@ -351,3 +351,30 @@ test("标题栏拖动：mousedown 切绝对定位，mousemove 平移面板，mou
     closeBtn.click();
     await sleep(20);
 });
+
+test("导演编辑器单例：已打开时再次调用不重复创建浮层，关闭后可重开", async () => {
+    const { openDirectorEditor } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+
+    const existing = {
+        name: "T-single",
+        shared: { width: 1344, height: 768, seed: 0 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "首次打开创建浮层");
+
+    // 再次调用（不同配方）→ 忽略，不叠加第二个浮层
+    await openDirectorEditor({ name: "T-other", shared: {}, segments: [{ skill_id: "sk-a", prompt: "x", duration_sec: 5 }] });
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "已打开时不再创建第二个");
+
+    // 关闭后可再次打开
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "关闭后浮层移除");
+    await openDirectorEditor(existing);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "关闭后可重新打开");
+});

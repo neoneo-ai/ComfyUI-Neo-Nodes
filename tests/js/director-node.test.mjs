@@ -101,3 +101,45 @@ test("点击节点时间轴分段块直接打开配方编辑器", async () => {
     await sleep(120); // openEditor：listRecipes → openDirectorEditor 建浮层
     assert.ok(document.querySelector(".neo-director-overlay"), "点击时间轴块打开编辑器");
 });
+
+test("轮询 /neo_video_gen/director_progress 后时间轴读到各段生成状态", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true,
+        segments: [
+            { prompt: "a", duration_sec: 5 },
+            { prompt: "b", duration_sec: 5 },
+            { prompt: "c", duration_sec: 5 },
+        ],
+    }));
+    mockRoute("/neo_video_gen/director_progress", () => jsonResponse({ active: true, segment_index: 1, total_segments: 3 }));
+
+    const node = await createDirectorNode("dir-recipe");
+    clearInterval(node._neoDtProgressTimer); // 手动驱动一次，停止自动轮询
+    await node._neoDtProgressTick();
+
+    assert.deepEqual(
+        node._neoDtTimeline.opts.getProgress(),
+        { active: true, segment_index: 1, total_segments: 3 },
+        "进度应写入时间轴 getProgress()",
+    );
+});
+
+test("时间轴按进度状态给各段标 done/current，非活动时不显示", async () => {
+    resetEnv();
+    clearRoutes();
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({ success: true, segments: [] }));
+    const node = await createDirectorNode("dir-recipe");
+    clearInterval(node._neoDtProgressTimer);
+
+    const tl = node._neoDtTimeline;
+    tl._progress = { active: true, segment_index: 1, total_segments: 3 };
+    assert.equal(tl._segProgressState(0), "done", "已完成段标 done");
+    assert.equal(tl._segProgressState(1), "current", "当前段标 current");
+    assert.equal(tl._segProgressState(2), "", "待处理段不显示");
+
+    tl._progress = { active: false, segment_index: -1, total_segments: 3 };
+    assert.equal(tl._segProgressState(0), "", "非活动时全部不显示");
+});

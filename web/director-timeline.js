@@ -14,8 +14,9 @@ const DT_CSS_HREF = "/extensions/ComfyUI-Neo-Nodes/director-timeline.css";
 export class DirectorTimeline {
   constructor(container, options) {
     this.container = container;
-    this.opts = Object.assign({ height: 92, getSegments: () => [], onSelect: null, onReorder: null, onDropImage: null, onAdd: null, readOnly: false }, options);
+    this.opts = Object.assign({ height: 92, getSegments: () => [], onSelect: null, onReorder: null, onDropImage: null, onAdd: null, readOnly: false, getProgress: () => ({ active: false, segment_index: -1, total_segments: 0 }) }, options);
     this._segs = [];
+    this._progress = null; // 当前 director 运行进度（宿主经 getProgress() 提供）
     this._thumbs = new Map(); // url -> HTMLImageElement
     this._hueById = new Map(); // 段身份 -> 色相槽位（首次出现顺序分配，重排不变）
     this._selected = -1;
@@ -66,6 +67,7 @@ export class DirectorTimeline {
   _doRefresh() {
     const segs = (this.opts.getSegments && this.opts.getSegments()) || [];
     this._segs = segs;
+    this._progress = (this.opts.getProgress && this.opts.getProgress()) || null;
     // 身份色槽位：段首次出现时按顺序占一个色相，之后重排颜色跟随内容不变
     for (let i = 0; i < segs.length; i++) {
       const id = segs[i].id;
@@ -383,7 +385,7 @@ export class DirectorTimeline {
         ctx.globalAlpha = 1;
         continue;
       }
-      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(b.i + 1), this._identityHue(seg, b.i), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i);
+      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(b.i + 1), this._identityHue(seg, b.i), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i, this._segProgressState(b.i));
     }
 
     // 时间轴尾部「＋」添加段按钮（宿主提供 onAdd 且非只读时）
@@ -430,8 +432,19 @@ export class DirectorTimeline {
     }
   }
 
+  // 某段当前的生成状态：done（已完成）/ current（正在生成）/ ""（未开始或不显示）。
+  // 由宿主经 getProgress() 提供 director 运行进度；非活动或无进度时全部返回空。
+  _segProgressState(i) {
+    const p = this._progress;
+    if (!p || !p.active) return "";
+    const cur = Number(p.segment_index);
+    if (i < cur) return "done";
+    if (i === cur) return "current";
+    return "";
+  }
+
   // 绘制单个分段块（普通/幽灵共用）：浅色身份底（重排不变色）；有首帧图则平铺满块宽，文字白字描边，否则浅底深字
-  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop) {
+  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop, prog) {
     const iw = Math.max(2, w - 2);
     this._rr(ctx, x + 1, top, iw, bh, 4);
     // 半透明块底色：选中加深、拖拽幽灵更淡
@@ -483,6 +496,14 @@ export class DirectorTimeline {
       ctx.font = "9px sans-serif";
       ctx.textBaseline = "bottom";
       put(d, x + w - ctx.measureText(d).width - 5, top + bh - 3, "9px sans-serif", tiled ? "#fff" : "#555");
+    }
+
+    // 生成进度：段底部细条——done 绿 / current 琥珀（仅 director 运行中显示）
+    if (prog === "done" || prog === "current") {
+      const barH = 3;
+      ctx.fillStyle = prog === "done" ? "#3fb950" : "#e6a23c";
+      this._rr(ctx, x + 3, top + bh - barH - 1, Math.max(2, iw - 6), barH, 1.5);
+      ctx.fill();
     }
   }
 }

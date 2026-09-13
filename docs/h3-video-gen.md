@@ -18,6 +18,7 @@
 - **连续性（Tier A）**：`continuity` 开时，上一段的**尾帧**作为下一段的 I2V 首帧（data-URI 走单段同款参考路径），并**丢下一段第一帧**避免边界重复；关则各段独立、不丢帧。
 - **音频对齐**：各段 `AudioInput`（`{waveform:[B,C,T], sample_rate}`）按序拼接，每个接缝丢弃被丢帧对应的采样数（`round(sample_rate/fps)`），使总音频长度恰好等于拼接后帧数对应的时长（A/V 对齐）。
 - **输出**：`InputImpl.VideoFromComponents(VideoComponents(images, audio, frame_rate=24))`，单个 `VIDEO` 接 SaveVideo。
+- **运行时进度**：节点内嵌的只读时间轴在生成时实时显示各段状态——正在生成的段底部为琥珀色条、已完成段为绿色条、待处理段无条。前端每 500ms 轮询 `/neo_video_gen/director_progress`（返回 `{active, segment_index, total_segments}`），后端在 `generate()` 逐段推进时更新该状态，并在结束/异常时复位为 inactive。
 - **v1 参考范围**：每段仅取一个首帧图（`first_frame` 或 `refs.images[0]`）；多参考/视频/音频参考待模板占位符支持后再扩展。
 
 ## 模板与配置

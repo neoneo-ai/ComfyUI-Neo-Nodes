@@ -11,13 +11,29 @@ import torch
 from fractions import Fraction
 
 import nodes as comfy_nodes
+from aiohttp import web
 from comfy_api.latest import InputImpl, Types
+from server import PromptServer
 
 from .image_gen import render_template
 from .krea2_generate import _image_to_data_uri, execute_graph_inprocess
 from .h3_video_gen import H3_FPS, _resolve_skill_id, _seconds_to_frames, resolve_video_params
 from .skill import get_skill_gen_config, load_skill_workflow
 from .recipes import list_director_recipes, load_director_spec
+
+# 当前 director 运行进度（进程内单例）。ComfyUI 串行执行 prompt，同一时刻只有一个活动 director。
+# segment_index：正在生成的段序号（-1 = 尚未开始/已结束）；total_segments：总段数。
+_DIRECTOR_PROGRESS = {"active": False, "segment_index": -1, "total_segments": 0}
+
+
+def get_director_progress() -> dict:
+    return dict(_DIRECTOR_PROGRESS)
+
+
+@PromptServer.instance.routes.get("/neo_video_gen/director_progress")
+async def neo_video_gen_director_progress(request):
+    """返回当前 director 运行进度，供节点内时间轴实时显示各段生成状态。"""
+    return web.json_response(get_director_progress())
 
 
 def _concat_segment_audio(audios, frame_rate: int, drop_per_seam: int):
@@ -79,54 +95,59 @@ class NeoH3VideoDirector:
         out_w = int(width) if int(width) > 0 else int(shared.get("width") or 1344)
         out_h = int(height) if int(height) > 0 else int(shared.get("height") or 768)
 
+        _DIRECTOR_PROGRESS.update(active=True, segment_index=-1, total_segments=len(segments))
         all_frames = []
         all_audio = []
         prev_tail = None
-        for i, seg in enumerate(segments):
-            body = {
-                "prompt": seg.get("prompt", ""),
-                "seed": (base_seed + i) % (2**63),
-                "width": out_w,
-                "height": out_h,
-            }
-            dur = seg.get("duration_sec")
-            if dur is not None and float(dur) > 0:
-                body["length"] = _seconds_to_frames(float(dur))
+        try:
+            for i, seg in enumerate(segments):
+                _DIRECTOR_PROGRESS["segment_index"] = i
+                body = {
+                    "prompt": seg.get("prompt", ""),
+                    "seed": (base_seed + i) % (2**63),
+                    "width": out_w,
+                    "height": out_h,
+                }
+                dur = seg.get("duration_sec")
+                if dur is not None and float(dur) > 0:
+                    body["length"] = _seconds_to_frames(float(dur))
 
-            ref = None
-            if continuity and i > 0 and prev_tail is not None:
-                ref = {"kind": "data", "data": _image_to_data_uri(prev_tail)}
-            elif seg.get("ref_input"):
-                ref = {"kind": "input", "value": seg["ref_input"]}
-            if ref:
-                body["references"] = [ref]
+                ref = None
+                if continuity and i > 0 and prev_tail is not None:
+                    ref = {"kind": "data", "data": _image_to_data_uri(prev_tail)}
+                elif seg.get("ref_input"):
+                    ref = {"kind": "input", "value": seg["ref_input"]}
+                if ref:
+                    body["references"] = [ref]
 
-            real_id = _resolve_skill_id(seg.get("skill_id") or "")
-            template = load_skill_workflow(real_id)
-            if template is None:
-                raise RuntimeError(f"第 {i + 1} 段 skill '{seg.get('skill_id')}' 缺少 workflow.json，无法生成")
-            cfg = get_skill_gen_config(real_id)
-            params = resolve_video_params(body, cfg)
-            graph, _warns = render_template(template, params)
-            video = execute_graph_inprocess(graph, output_type="VIDEO")
-            comp = video.get_components()
-            frames = comp.images
+                real_id = _resolve_skill_id(seg.get("skill_id") or "")
+                template = load_skill_workflow(real_id)
+                if template is None:
+                    raise RuntimeError(f"第 {i + 1} 段 skill '{seg.get('skill_id')}' 缺少 workflow.json，无法生成")
+                cfg = get_skill_gen_config(real_id)
+                params = resolve_video_params(body, cfg)
+                graph, _warns = render_template(template, params)
+                video = execute_graph_inprocess(graph, output_type="VIDEO")
+                comp = video.get_components()
+                frames = comp.images
 
-            if i == 0:
-                all_frames.append(frames)
-            elif continuity and frames.shape[0] > 1:
-                all_frames.append(frames[1:])   # 丢与上段重复的边界帧
-            else:
-                all_frames.append(frames)
-            all_audio.append(comp.audio)
-            prev_tail = frames[-1:]
+                if i == 0:
+                    all_frames.append(frames)
+                elif continuity and frames.shape[0] > 1:
+                    all_frames.append(frames[1:])   # 丢与上段重复的边界帧
+                else:
+                    all_frames.append(frames)
+                all_audio.append(comp.audio)
+                prev_tail = frames[-1:]
 
-        final_frames = torch.cat(all_frames, dim=0)
-        drop = 1 if continuity else 0
-        final_audio = _concat_segment_audio(all_audio, H3_FPS, drop)
-        return (InputImpl.VideoFromComponents(
-            Types.VideoComponents(images=final_frames, audio=final_audio, frame_rate=Fraction(H3_FPS))
-        ),)
+            final_frames = torch.cat(all_frames, dim=0)
+            drop = 1 if continuity else 0
+            final_audio = _concat_segment_audio(all_audio, H3_FPS, drop)
+            return (InputImpl.VideoFromComponents(
+                Types.VideoComponents(images=final_frames, audio=final_audio, frame_rate=Fraction(H3_FPS))
+            ),)
+        finally:
+            _DIRECTOR_PROGRESS.update(active=False, segment_index=-1, total_segments=0)
 
 
 NODE_CLASS_MAPPINGS = {"NeoH3VideoDirector": NeoH3VideoDirector}

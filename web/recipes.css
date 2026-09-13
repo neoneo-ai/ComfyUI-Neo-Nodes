@@ -639,8 +639,8 @@
 /* 首帧候选网格：参照配方详情资产网格，缩略图单选（含「无」项） */
 .neo-director-ff-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-    gap: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 8px;
 }
 
 .neo-director-ff-grid.neo-director-drop {
@@ -693,7 +693,7 @@
 
 .neo-director-ff-thumb {
     width: 100%;
-    height: 56px;
+    height: 112px;
     object-fit: contain;
     display: block;
     background: #111;
