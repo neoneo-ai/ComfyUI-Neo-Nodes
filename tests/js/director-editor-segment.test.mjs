@@ -15,7 +15,7 @@ function mouse(type, x) {
 }
 
 test("导演编辑器：默认仅第 1 段有 current 标记，点击时间轴块切换当前段", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 无媒体候选
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -71,7 +71,7 @@ test("导演编辑器：默认仅第 1 段有 current 标记，点击时间轴�
 });
 
 test("时间轴说明行最右侧「拉伸」控制条：点按钮/拖滑块驱动 timeline.setZoom", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -118,7 +118,7 @@ test("时间轴说明行最右侧「拉伸」控制条：点按钮/拖滑块驱�
 });
 
 test("导演编辑器：添加段后自动切换到新段，删除当前段后切回前一段", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -153,7 +153,7 @@ test("导演编辑器：添加段后自动切换到新段，删除当前段后�
 });
 
 test("素材格 ✕ 删除：移除候选并清理不再被任何段引用的 imageRefs", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     // 画布：LoadImage(10) 输出 → 下游目标(20) 的 IMAGE 输入（slot 非空才会进候选）
     appState.graph = {
         _nodes: [
@@ -205,7 +205,7 @@ test("素材格 ✕ 删除：移除候选并清理不再被任何段引用的 im
 });
 
 test("素材直接拖到时间轴段块：落地并选中该段候选（覆盖非当前段）", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -255,7 +255,7 @@ test("素材直接拖到时间轴段块：落地并选中该段候选（覆盖�
 });
 
 test("共享分辨率：旧配方 W/H 反推宽高比+百万像素；改 MP 更新显示；自定义切手输", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -307,7 +307,7 @@ test("共享分辨率：旧配方 W/H 反推宽高比+百万像素；改 MP 更�
 });
 
 test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -344,7 +344,7 @@ test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
 });
 
 test("标题栏拖动：mousedown 切绝对定位，mousemove 平移面板，mouseup 后停止；✕ 不触发", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -400,7 +400,7 @@ test("标题栏拖动：mousedown 切绝对定位，mousemove 平移面板，mou
 });
 
 test("导演编辑器单例：同一配方重复点击忽略，另一配方重新加载，关闭后可重开", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -434,7 +434,7 @@ test("导演编辑器单例：同一配方重复点击忽略，另一配方重�
 });
 
 test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 参考图网格为空
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
@@ -500,7 +500,7 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
 });
 
 test("导演编辑器：素材直接拖入首帧网格 / 参考图网格（非时间轴 canvas）也能加入", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "dropped.png" }));
@@ -538,7 +538,7 @@ test("导演编辑器：素材直接拖入首帧网格 / 参考图网格（非�
 });
 
 test("导演编辑器：首帧图再点一次取消选中（回落文生视频），再点重新选中", async () => {
-    const { openDirectorEditor } = await import("../../web/recipes.js");
+    const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "picked.png" }));

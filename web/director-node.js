@@ -3,7 +3,8 @@
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { DirectorTimeline } from "./director-timeline.js";
-import { openDirectorEditor, listRecipes } from "./recipes.js";
+import { openDirectorEditor } from "./director.js";
+import { listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 
 const TL_H = 96; // 节点内时间轴显示区高度（px）
