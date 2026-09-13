@@ -378,3 +378,69 @@ test("导演编辑器单例：已打开时再次调用不重复创建浮层，�
     await openDirectorEditor(existing);
     assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "关闭后可重新打开");
 });
+
+test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () => {
+    const { openDirectorEditor } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] }; // 无 Load* 节点 → 参考图网格为空
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+    mockRoute("/rs_recipes/director_generate_story", () => jsonResponse({ success: true, story: "生成的故事正文" }));
+    mockRoute("/rs_recipes/director_split_segments", () => jsonResponse({
+        success: true,
+        segments: [
+            { prompt: "场景A提示词", duration_sec: 5 },
+            { prompt: "场景B提示词", duration_sec: 10 },
+        ],
+    }));
+
+    await openDirectorEditor(null); // 新建：默认 1 个空段
+    await sleep(60);
+
+    // 页签结构：默认落在「时间轴分段」，故事板页隐藏
+    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
+    assert.equal(tabs.length, 2, "两个页签");
+    const tabStory = tabs.find((t) => t.textContent.includes("自动故事板"));
+    const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
+    assert.ok(tabStory && tabTimeline, "两个页签齐全");
+    assert.ok(tabTimeline.classList.contains("active"), "默认激活时间轴页");
+    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none", "故事板页默认隐藏");
+
+    // 切到「自动故事板」页
+    tabStory.click();
+    await sleep(20);
+    assert.ok(tabStory.classList.contains("active"), "切换到故事板页");
+    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页被隐藏");
+
+    // 故事区元素齐全
+    const ideaInp = document.querySelector(".neo-director-story-idea");
+    const genBtn = document.querySelector(".neo-director-gen-story");
+    const storyTa = document.querySelector(".neo-director-story");
+    assert.ok(ideaInp && genBtn && storyTa, "主题输入 / 生成按钮 / 故事框齐全");
+    assert.ok(document.querySelector(".neo-director-refgrid"), "参考图网格存在");
+    assert.ok(document.querySelector(".neo-director-seglen"), "分段粒度选择器存在");
+
+    // ① 自动生成故事 → 写入可编辑故事框
+    ideaInp.value = "一只机器猫找家";
+    genBtn.click();
+    await sleep(50);
+    assert.equal(storyTa.value, "生成的故事正文", "生成结果写入故事框");
+
+    // ② 确认并拆分 → 替换时间轴段落并自动切回时间轴页（技能取首个可用视频技能）
+    const splitBtn = document.querySelector(".neo-director-split");
+    assert.ok(splitBtn, "拆分按钮存在");
+    storyTa.value = "场景一…";
+    splitBtn.click();
+    await sleep(50);
+
+    assert.ok(tabTimeline.classList.contains("active"), "拆分后自动切回时间轴页");
+    const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(segs.length, 2, "拆分成 2 段");
+    assert.equal(segs[0].querySelector(".neo-director-prompt").value, "场景A提示词");
+    assert.equal(segs[1].querySelector(".neo-director-prompt").value, "场景B提示词");
+    assert.equal(segs[0].querySelector(".neo-director-skill").value, "sk-a", "技能取首个可用视频技能");
+    assert.equal(Number(segs[1].querySelector(".neo-director-dur").value), 10);
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});

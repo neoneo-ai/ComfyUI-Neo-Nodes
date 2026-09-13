@@ -754,8 +754,120 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         }
     };
 
-    const body = $el('div', { className: 'neo-director-body' }, [
-        $el('div', { className: 'neo-director-field' }, [$el('label', { className: 'neo-director-field-label', textContent: '配方名称' }), nameInp]),
+    // ==========================================
+    // 📖 故事生成（半自动）：主题→LLM 生成故事→确认拆分填充时间轴；可选角色/背景参考图
+    // ==========================================
+    function buildRefGrid() {
+        const grid = $el('div', { className: 'neo-director-refgrid' });
+        const selected = new Map(); // filename -> desc
+        const thumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
+        const ensureInRefs = (fname) => { if (!imageRefs.some(r => r.filename === fname)) imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' }); };
+        function makeTile(ref) {
+            const descInp = $el('input', { className: 'neo-director-ref-desc', type: 'text', placeholder: '描述（可选）', value: selected.has(ref.filename) ? selected.get(ref.filename) : '' });
+            const delBtn = $el('button', { className: 'neo-director-ref-del', title: '移除', textContent: '✕' });
+            const tile = $el('div', { className: 'neo-director-ref-item' + (selected.has(ref.filename) ? ' neo-director-ref-active' : ''), dataset: { file: ref.filename } }, [
+                $el('img', { className: 'neo-director-ref-thumb', src: thumbUrl(ref), alt: ref.filename, loading: 'lazy' }),
+                descInp, delBtn,
+            ]);
+            tile.onclick = (e) => {
+                if (e.target === delBtn || e.target === descInp) return;
+                if (selected.has(ref.filename)) selected.delete(ref.filename); else selected.set(ref.filename, '');
+                ensureInRefs(ref.filename);
+                tile.classList.toggle('neo-director-ref-active', selected.has(ref.filename));
+            };
+            descInp.onclick = (e) => e.stopPropagation();
+            descInp.oninput = () => { if (selected.has(ref.filename)) selected.set(ref.filename, descInp.value.trim()); };
+            delBtn.onclick = (e) => { e.stopPropagation(); selected.delete(ref.filename); tile.remove(); };
+            return tile;
+        }
+        for (const r of imageRefs) grid.appendChild(makeTile(r));
+        grid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; grid.classList.add('neo-director-drop'); });
+        grid.addEventListener('dragleave', (e) => { if (!grid.contains(e.relatedTarget)) grid.classList.remove('neo-director-drop'); });
+        grid.addEventListener('drop', async (e) => {
+            e.preventDefault(); grid.classList.remove('neo-director-drop');
+            const fname = await copyGalleryToInput(grabDataType(e));
+            if (!fname) return;
+            ensureInRefs(fname);
+            selected.set(fname, '');
+            grid.appendChild(makeTile({ filename: fname, subfolder: '', type: 'input', kind: 'image' }));
+        });
+        return { el: grid, getRefs: () => Array.from(selected.entries()).map(([filename, desc]) => ({ filename, desc })) };
+    }
+
+    const ideaInp = $el('textarea', { className: 'neo-director-story-idea', placeholder: '输入故事主题 / 想法（如：一只机器猫在雨夜的城市寻找回家的路）' });
+    const genBtn = $el('button', { className: 'rs-btn neo-director-gen-story', textContent: '✨ 自动生成故事' });
+    const storyTa = $el('textarea', { className: 'neo-director-story', placeholder: '（生成后可编辑，或直接手写故事脚本）' });
+    const storyStatus = $el('span', { className: 'neo-director-story-status' });
+    const segLenSel = $el('select', { className: 'neo-director-seglen' });
+    for (const s of [5, 10, 15]) segLenSel.appendChild($el('option', { value: String(s), textContent: `${s} 秒 / 段` }));
+    segLenSel.value = '10';
+    const charGrid = buildRefGrid();
+    const bgGrid = buildRefGrid();
+    const setFfChk = $el('input', { className: 'neo-director-setff', type: 'checkbox' });
+    const splitBtn = $el('button', { className: 'rs-btn neo-director-split', textContent: '✅ 确认并拆分到时间轴' });
+
+    genBtn.onclick = async () => {
+        const idea = ideaInp.value.trim();
+        if (!idea) { app.extensionManager.toast.add({ severity: 'error', summary: '故事生成', detail: '请先填写故事主题', life: 4000 }); return; }
+        genBtn.disabled = true; storyStatus.textContent = '正在生成故事…';
+        try {
+            const res = await fetch('/rs_recipes/director_generate_story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea, characters: charGrid.getRefs(), backgrounds: bgGrid.getRefs() }) });
+            const data = await res.json();
+            if (data.success) { storyTa.value = data.story || ''; storyStatus.textContent = '已生成，可编辑后拆分'; }
+            else { storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '故事生成失败', detail: data.error || 'Unknown error', life: 5000 }); }
+        } catch (e) {
+            console.error('[Neo Recipes] Director: generate story failed', e);
+            storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '故事生成失败', detail: e.message, life: 5000 });
+        } finally { genBtn.disabled = false; }
+    };
+
+    splitBtn.onclick = async () => {
+        const story = storyTa.value.trim();
+        if (!story) { app.extensionManager.toast.add({ severity: 'error', summary: '拆分', detail: '请先生成或填写故事', life: 4000 }); return; }
+        splitBtn.disabled = true; storyStatus.textContent = '正在拆分…';
+        try {
+            const res = await fetch('/rs_recipes/director_split_segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ story, segment_seconds: Number(segLenSel.value), characters: charGrid.getRefs(), backgrounds: bgGrid.getRefs() }) });
+            const data = await res.json();
+            if (!data.success) { storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '拆分失败', detail: data.error || 'Unknown error', life: 5000 }); return; }
+            const defaultSkill = skills.length ? skills[0].id : '';
+            let ffFile = '';
+            if (setFfChk.checked) {
+                const bg = bgGrid.getRefs()[0]; const ch = charGrid.getRefs()[0];
+                ffFile = (bg && bg.filename) || (ch && ch.filename) || '';
+            }
+            segsWrap.innerHTML = '';
+            for (const s of data.segments) {
+                const seg = { skill_id: defaultSkill, prompt: s.prompt, duration_sec: s.duration_sec };
+                if (ffFile) seg.first_frame = ffFile;
+                segsWrap.appendChild(buildSeg(seg));
+            }
+            renumberSegs(); showSeg(0);
+            switchTab('timeline'); // 拆分后切到时间轴页查看/微调结果
+            storyStatus.textContent = `已拆分 ${data.segments.length} 段，可在下方逐段微调`;
+            app.extensionManager.toast.add({ severity: 'success', summary: '已填充时间轴', detail: `${data.segments.length} 段`, life: 4000 });
+        } catch (e) {
+            console.error('[Neo Recipes] Director: split segments failed', e);
+            storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '拆分失败', detail: e.message, life: 5000 });
+        } finally { splitBtn.disabled = false; }
+    };
+
+    // ---- 两个可切换页签：自动故事板 / 时间轴分段（避免单页过于复杂）----
+    const storyboardPane = $el('div', { className: 'neo-director-pane neo-director-pane-story' }, [
+        $el('div', { className: 'neo-director-story-idea-row' }, [ideaInp, genBtn]),
+        storyTa,
+        storyStatus,
+        $el('div', { className: 'neo-director-story-refs' }, [
+            $el('label', { className: 'neo-director-field-label', textContent: '角色参考图（可选，点选 / 从左侧素材栏拖入）' }), charGrid.el,
+            $el('label', { className: 'neo-director-field-label', textContent: '背景参考图（可选，点选 / 从左侧素材栏拖入）' }), bgGrid.el,
+        ]),
+        $el('div', { className: 'neo-director-story-actions' }, [
+            $el('label', { className: 'neo-director-seglen-wrap' }, [$el('span', { textContent: '分段粒度' }), segLenSel]),
+            $el('label', { className: 'neo-director-setff-wrap' }, [setFfChk, $el('span', { textContent: '将选中参考图设为各段首帧' })]),
+            splitBtn,
+        ]),
+    ]);
+
+    const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '宽高比' }), aspectSel,
             $el('label', { textContent: '百万像素' }), mpInp,
@@ -766,6 +878,28 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         tlWrap,
         segsWrap, addBtn,
     ]);
+
+    const tabStory = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '📖 自动故事板' });
+    const tabTimeline = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '🎞️ 时间轴分段' });
+    function switchTab(which) {
+        const story = which === 'story';
+        tabStory.classList.toggle('active', story);
+        tabTimeline.classList.toggle('active', !story);
+        storyboardPane.style.display = story ? '' : 'none';
+        timelinePane.style.display = story ? 'none' : '';
+        if (!story && timeline) timeline.refresh(); // 切回时间轴时按真实宽度重绘 canvas
+    }
+    tabStory.onclick = () => switchTab('story');
+    tabTimeline.onclick = () => switchTab('timeline');
+    const tabBar = $el('div', { className: 'neo-director-tabs' }, [tabStory, tabTimeline]);
+
+    const body = $el('div', { className: 'neo-director-body' }, [
+        $el('div', { className: 'neo-director-field' }, [$el('label', { className: 'neo-director-field-label', textContent: '配方名称' }), nameInp]),
+        tabBar,
+        storyboardPane,
+        timelinePane,
+    ]);
+    switchTab('timeline'); // 默认落在时间轴分段页，故事板作为可选页签
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
     const titleBar = $el('div', { className: 'neo-director-title' }, [
         $el('span', { textContent: '🎬 多段视频导演' }),

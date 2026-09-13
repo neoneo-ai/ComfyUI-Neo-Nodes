@@ -51,6 +51,9 @@
 | GET | `/rs_recipes/asset` | 配方资源文件 |
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |
+| GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（首帧已解析为 input 名） |
+| POST | `/rs_recipes/director_generate_story` | 导演编辑器：主题 + 可选角色/背景参考 → LLM 生成完整故事脚本 |
+| POST | `/rs_recipes/director_split_segments` | 导演编辑器：已确认故事按目标秒数拆分场景并（结合角色/背景）重生成每段提示词，返回 `segments[]` |
 
 ## workflow.py — `/neo_nodes/*`
 

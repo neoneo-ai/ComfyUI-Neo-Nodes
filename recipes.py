@@ -7,6 +7,7 @@
 import re
 import json
 import shutil
+import asyncio
 import datetime
 import mimetypes
 from pathlib import Path
@@ -700,6 +701,170 @@ async def rs_recipes_director_spec(request):
         return web.json_response({"success": True, "name": name, **spec})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+def _read_input_image_bytes(filename, subfolder=""):
+    """读取 input/ 下图片字节，供多模态 LLM 参考；读不到返回 None。"""
+    filename = str(filename or "").strip()
+    if not filename or ".." in filename:
+        return None
+    import folder_paths as _fp
+    name = filename
+    subfolder = str(subfolder or "").strip("/")
+    if subfolder:
+        name = subfolder + "/" + filename
+    try:
+        p = Path(_fp.get_annotated_filepath(name, _fp.get_input_directory()))
+    except ValueError:
+        return None
+    if not p.is_file():
+        return None
+    return p.read_bytes()
+
+
+def _describe_refs(names, descs):
+    """把角色/背景参考拼成喂给 LLM 的文本行（有描述带描述，无则仅文件名）。"""
+    lines = []
+    for i, n in enumerate(names):
+        d = descs[i] if i < len(descs) else ""
+        lines.append(f"- {n}：{d}" if d else f"- {n}")
+    return "\n".join(lines)
+
+
+def _collect_ref_bytes(refs):
+    """从 [{filename, subfolder?}] 里 best-effort 读图片字节列表（缺失跳过）。"""
+    byte_list = []
+    for r in (refs or []):
+        if not isinstance(r, dict):
+            continue
+        fn = str(r.get("filename") or "").strip()
+        if not fn:
+            continue
+        b = _read_input_image_bytes(fn, r.get("subfolder"))
+        if b:
+            byte_list.append(b)
+    return byte_list
+
+
+def _ref_names_descs(refs):
+    """从 [{filename, desc?}] 里取 (names, descs)，保持顺序一致。"""
+    names, descs = [], []
+    for r in (refs or []):
+        if not isinstance(r, dict):
+            continue
+        fn = str(r.get("filename") or "").strip()
+        if not fn:
+            continue
+        names.append(fn)
+        descs.append(str(r.get("desc") or "").strip())
+    return names, descs
+
+
+def _director_llm(task_name, text, image_bytes):
+    """调用导演专用 LLM 任务；优先带参考图（多模态），失败回退为纯文本。"""
+    from .llm import run_llm_task
+    result = run_llm_task(task_name, text, images=image_bytes or None)
+    if "error" in result and image_bytes:
+        retry = run_llm_task(task_name, text)  # provider 不支持视觉 → 纯文本重试
+        if "error" not in retry:
+            return retry
+    return result
+
+
+def _parse_segments(raw):
+    """把 LLM 返回的分段文本解析为 [{prompt, duration_sec}]；容错剥掉 ```json 包裹与多余文字。"""
+    if not raw:
+        return []
+    text = str(raw).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    start, end = text.find("["), text.rfind("]")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        prompt = str(item.get("prompt") or "").strip()
+        if not prompt:
+            continue
+        try:
+            dur = int(round(float(item.get("duration_sec"))))
+        except (TypeError, ValueError):
+            dur = 0
+        out.append({"prompt": prompt, "duration_sec": dur})
+    return out
+
+
+@PromptServer.instance.routes.post("/rs_recipes/director_generate_story")
+async def rs_recipes_director_generate_story(request):
+    """根据主题 + 可选角色/背景参考，用 LLM 生成完整故事脚本（供导演编辑器确认后拆分）。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+    idea = str(data.get("idea") or "").strip()
+    if not idea:
+        return web.json_response({"success": False, "error": "请填写故事主题"}, status=400)
+
+    char_names, char_descs = _ref_names_descs(data.get("characters"))
+    bg_names, bg_descs = _ref_names_descs(data.get("backgrounds"))
+    all_bytes = _collect_ref_bytes((data.get("characters") or []) + (data.get("backgrounds") or []))
+
+    parts = [f"故事主题 / 想法：\n{idea}"]
+    if char_names:
+        parts.append("角色参考（请在故事中保持一致出现）：\n" + _describe_refs(char_names, char_descs))
+    if bg_names:
+        parts.append("背景参考（请保持场景基调一致）：\n" + _describe_refs(bg_names, bg_descs))
+    text = "\n\n".join(parts)
+
+    result = await asyncio.to_thread(_director_llm, "director_story", text, all_bytes)
+    if "error" in result:
+        return web.json_response({"success": False, "error": result["error"]}, status=422)
+    return web.json_response({"success": True, "story": str(result.get("story") or "")})
+
+
+@PromptServer.instance.routes.post("/rs_recipes/director_split_segments")
+async def rs_recipes_director_split_segments(request):
+    """把已确认的故事拆成约指定秒数的场景，结合角色/背景重生成每段提示词。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+    story = str(data.get("story") or "").strip()
+    if not story:
+        return web.json_response({"success": False, "error": "故事为空，无法拆分"}, status=400)
+    try:
+        seg_sec = int(data.get("segment_seconds") or 10)
+    except (TypeError, ValueError):
+        seg_sec = 10
+    seg_sec = max(1, min(3600, seg_sec))
+
+    char_names, char_descs = _ref_names_descs(data.get("characters"))
+    bg_names, bg_descs = _ref_names_descs(data.get("backgrounds"))
+    all_bytes = _collect_ref_bytes((data.get("characters") or []) + (data.get("backgrounds") or []))
+
+    parts = [f"目标每段时长：约 {seg_sec} 秒", "", "已确认的故事脚本：\n" + story]
+    if char_names:
+        parts.append("角色参考（各场景保持一致）：\n" + _describe_refs(char_names, char_descs))
+    if bg_names:
+        parts.append("背景参考（各场景保持一致）：\n" + _describe_refs(bg_names, bg_descs))
+    text = "\n".join(parts)
+
+    result = await asyncio.to_thread(_director_llm, "director_split", text, all_bytes)
+    if "error" in result:
+        return web.json_response({"success": False, "error": result["error"]}, status=422)
+    segments = _parse_segments(result.get("segments") or "")
+    if not segments:
+        return web.json_response({"success": False, "error": "拆分结果解析失败，请重试"}, status=422)
+    return web.json_response({"success": True, "segments": segments})
 
 
 def _normalize_loras(raw) -> list:

@@ -1230,7 +1230,9 @@ def _build_llm_tasks() -> Dict[str, Any]:
         "translate_prompt",
         "smart_prompt",
         "template_prompt",
-        "reverse_prompt"
+        "reverse_prompt",
+        "director_story",
+        "director_split",
     ]
 
     for task_name in task_names:
