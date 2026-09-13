@@ -37,6 +37,13 @@ async function copyGalleryToInput(raw) {
     }
 }
 
+/** 打开/收起 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）。 */
+function toggleGallerySidebar() {
+    const em = app.extensionManager;
+    if (!em || !em.sidebarTab) return;
+    em.sidebarTab.activeSidebarTabId = em.sidebarTab.activeSidebarTabId === 'neo.gallery' ? null : 'neo.gallery';
+}
+
 // ==========================================
 // 多段导演分辨率选择（移植自 ComfyUI_MiniMaxH3_Director 的 ResolutionSelector 算法）：
 // 宽高比 + 百万像素 → 宽/高（按 32 对齐）；「自定义」时手输 W/H。
@@ -205,7 +212,18 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             $el('div', { className: 'neo-director-seg-head' }, [$el('span', { className: 'neo-director-seg-title', textContent: '段' }), removeBtn]),
             $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
             $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
-            $el('label', { className: 'neo-director-field-label', textContent: '首帧图（点选或从左侧素材栏拖入；不选 = 文生视频）' }), ffGrid,
+            $el('div', { className: 'neo-director-ff-row' }, [
+                $el('label', { className: 'neo-director-field-label', textContent: '首帧图（点选或从左侧素材栏拖入；不选 = 文生视频）' }),
+                $el('button', {
+                    className: 'neo-director-ff-lib',
+                    title: '打开/收起左侧素材面板',
+                    onclick: () => toggleGallerySidebar(),
+                }, [
+                    $el('i', { className: 'pi pi-images' }),
+                    $el('span', { textContent: '素材库' }),
+                ]),
+            ]),
+            ffGrid,
             $el('div', { className: 'neo-director-dur-row' }, [$el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp]),
         ]);
         row._addCandidate = addCandidate; // 供时间轴拖放到该段时复用

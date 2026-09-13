@@ -51,6 +51,22 @@ export const app = {
     },
 };
 
+// sidebarTab：模拟 ComfyUI 左侧栏 tab 切换（记录 activeSidebarTabId 赋值历史）
+export function resetSidebarTab() {
+    appState._sidebarTab = { activeSidebarTabId: null, history: [] };
+    let cur = null;
+    Object.defineProperty(appState._sidebarTab, "activeSidebarTabId", {
+        configurable: true,
+        get() { return cur; },
+        set(v) { cur = v; appState._sidebarTab.history.push(v); },
+    });
+}
+Object.defineProperty(app.extensionManager, "sidebarTab", {
+    configurable: true,
+    get() { return appState._sidebarTab ?? null; },
+    set(v) { appState._sidebarTab = v; },
+});
+
 export function getExtension(name) {
     return appState.extensions.find((e) => e?.name === name) ?? null;
 }
@@ -62,4 +78,5 @@ export function resetAppState() {
     appState.toasts.length = 0;
     appState.loaded.length = 0;
     appState.promptGraph = null;
+    appState._sidebarTab = null;
 }

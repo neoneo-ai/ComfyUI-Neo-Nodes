@@ -3,11 +3,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep } from "./setup.mjs";
-import { appState } from "./mocks/comfy-app.mjs";
+import { app, appState, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
     resetEnv();
     clearRoutes();
+    resetSidebarTab();
 });
 
 function mouse(type, x) {
@@ -664,6 +665,28 @@ test("导演编辑器：首帧图再点一次取消选中（回落文生视频�
     tile.click();
     await sleep(20);
     assert.ok(tile.classList.contains("neo-director-ff-active"), "再次点击重新选中");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+test("导演编辑器：首帧素材库按钮打开/收起 ComfyUI 左侧素材面板", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor(null);
+    await sleep(60);
+
+    const libBtn = document.querySelector(".neo-director-ff-lib");
+    assert.ok(libBtn, "首帧说明行存在素材库按钮");
+
+    const tab = app.extensionManager.sidebarTab;
+    libBtn.click();
+    assert.equal(tab.activeSidebarTabId, "neo.gallery", "点击打开素材面板");
+    libBtn.click();
+    assert.equal(tab.activeSidebarTabId, null, "再次点击收起素材面板");
+    libBtn.click();
+    assert.equal(tab.activeSidebarTabId, "neo.gallery", "可再次打开");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);

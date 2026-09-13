@@ -1018,6 +1018,41 @@
     cursor: pointer;
 }
 
+/* 首帧说明行：label 左、素材库按钮右 */
+.neo-director-ff-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.neo-director-ff-row .neo-director-field-label {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.neo-director-ff-lib {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+}
+
+.neo-director-ff-lib:hover {
+    border-color: #5a5a5a;
+    color: #fff;
+}
+
 .neo-director-foot {
     display: flex;
     justify-content: flex-end;
