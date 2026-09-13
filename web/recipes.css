@@ -431,6 +431,9 @@
 .neo-director-panel {
     width: min(780px, 96vw);
     max-height: 88vh;
+    position: relative;      /* 右下角缩放手柄以面板为定位基准 */
+    min-width: 580px;        /* 拖拽缩放下限：内容不塌 */
+    min-height: min(840px, 88vh); /* 拖拽缩放下限：时间轴页元素（段卡片+首帧资产+时长）基本全部可见；矮屏跟随 88vh 不溢出 */
     display: flex;
     flex-direction: column;
     background: #1e1e1e;
@@ -452,7 +455,14 @@
     user-select: none;
 }
 
-.neo-director-close {
+.neo-director-title-btns {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.neo-director-close,
+.neo-director-maximize {
     flex: 0 0 auto;
     width: 26px;
     height: 26px;
@@ -468,9 +478,28 @@
     line-height: 1;
 }
 
-.neo-director-close:hover {
+.neo-director-close:hover,
+.neo-director-maximize:hover {
     background: #2c2f36;
     color: #fff;
+}
+
+.neo-director-maximize.neo-director-maximized {
+    color: #7ce38b;
+}
+
+.neo-director-resize {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    background-image: linear-gradient(135deg, transparent 0 52%, #6b7686 52% 62%, transparent 62% 74%, #6b7686 74% 84%, transparent 84%);
+}
+
+.neo-director-resize:hover {
+    background-image: linear-gradient(135deg, transparent 0 52%, #8cf 52% 62%, transparent 62% 74%, #8cf 74% 84%, transparent 84%);
 }
 
 .neo-director-body {
@@ -479,6 +508,8 @@
     flex-direction: column;
     gap: 10px;
     overflow-y: auto;
+    flex: 1;          /* 填满标题栏与底部按钮之间的空间，多余高度下沉到内容区 */
+    min-height: 0;
 }
 
 .neo-director-row {
@@ -488,7 +519,7 @@
 }
 
 .neo-director-name {
-    width: 100%;
+    width: 280px;          /* 配方名称输入框定宽，不必拉满整行 */
 }
 
 .neo-director-shared label {
@@ -518,8 +549,9 @@
 
 .neo-director-field {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-direction: row;   /* 配方名称：label 与输入框同一行 */
+    align-items: center;
+    gap: 8px;
 }
 
 .neo-director-field-label {
@@ -578,12 +610,17 @@
     border: 1px solid #2a2d33;
     border-radius: 6px;
     overflow: hidden;
+    flex: 0 0 auto;   /* 时间轴保持固定高度，伸缩空间只给段卡片 */
 }
 
 .neo-director-segs {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex: 1;          /* 时间轴页：段卡片区填满剩余高度 */
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto; /* 段卡片高于可用区时内部滚动，避免越界盖住添加按钮/资产区 */
 }
 
 /* 只显示当前编辑段（默认第 1 段）；点击时间轴块切换到对应段 */
@@ -594,11 +631,22 @@
 .neo-director-seg {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 10px;
+    gap: 5px;
+    padding: 8px;
     background: #262626;
     border: 1px solid #3a3a3a;
     border-radius: 8px;
+    flex: 1;
+    min-height: 0;    /* 卡片填满 segs；提示词区伸缩，首帧资产区钉在卡片底部 */
+}
+
+/* 卡片内除提示词外的字段与资产区不让步缩水，挤压时由 segs 内部滚动承载 */
+.neo-director-seg-head,
+.neo-director-seg > .neo-director-field-label,
+.neo-director-skill,
+.neo-director-ff-grid,
+.neo-director-dur-row {
+    flex-shrink: 0;
 }
 
 .neo-director-seg-head {
@@ -652,8 +700,9 @@
 
 .neo-director-prompt {
     width: 100%;
-    min-height: 54px;
-    resize: vertical;
+    min-height: 44px;
+    flex: 1;          /* 窗口拉高/拉低时提示词区随之伸缩，资产区保持贴底 */
+    flex-shrink: 1;
     background: #1e1e1e;
     color: #ddd;
     border: 1px solid #3a3a3a;
@@ -719,7 +768,7 @@
 
 .neo-director-ff-thumb {
     width: 100%;
-    height: 112px;
+    height: 96px;
     object-fit: contain;
     display: block;
     background: #111;
@@ -777,6 +826,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    flex: 1;          /* 当前可见页签填满 body 剩余高度 */
+    min-height: 0;
 }
 
 .neo-director-pane-story {
@@ -810,7 +861,7 @@
 .neo-director-story {
     width: 100%;
     min-height: 96px;
-    resize: vertical;
+    flex: 1;          /* 窗口拉高时故事脚本区自动撑满 */
     background: #1e1e1e;
     color: #ddd;
     border: 1px solid #3a3a3a;
@@ -827,8 +878,30 @@
 
 .neo-director-story-refs {
     display: flex;
+    flex-direction: row;      /* 角色/背景参考图同一行 */
+    gap: 10px;
+}
+
+.neo-director-ref-col {
+    display: flex;
     flex-direction: column;
     gap: 6px;
+    flex: 1;                  /* 角色参考图占剩余宽度 */
+    min-width: 0;
+}
+
+.neo-director-ref-col-bg {
+    flex: 0 0 auto;           /* 背景参考图固定宽度 */
+    width: 274px;             /* 预留 2 张 16:9 图：列 128×2 + 间距 8 + 网格内边距 8 + 边框 2 */
+}
+
+.neo-director-ref-col-bg .neo-director-refgrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));  /* 恰好两列 */
+}
+
+.neo-director-ref-col-bg .neo-director-ref-thumb {
+    aspect-ratio: 16 / 9;     /* 高随列宽自适应 → 图 120×67.5，标准 16:9 */
+    height: auto;
 }
 
 .neo-director-refgrid {
@@ -935,8 +1008,13 @@
     font-size: 12px;
 }
 
-.neo-director-add {
-    align-self: flex-start;
+/* 「＋ 添加段」并入时间轴说明行最右侧（不占独立行，避免底部资产区被挤压/遮挡） */
+.neo-director-tl-label .neo-director-add {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 11px;
+    white-space: nowrap;
     cursor: pointer;
 }
 

@@ -399,6 +399,102 @@ test("标题栏拖动：mousedown 切绝对定位，mousemove 平移面板，mou
     await sleep(20);
 });
 
+test("导演编辑器：右下角手柄拖拽缩放窗口，越界钳制在视口内", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+
+    const existing = {
+        name: "T-resize",
+        shared: { width: 864, height: 480, aspect_ratio: "16:9 (宽屏)", megapixels: 0.4 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const panel = document.querySelector(".neo-director-panel");
+    const handle = document.querySelector(".neo-director-resize");
+    assert.ok(panel && handle, "面板与右下角缩放手柄已创建");
+
+    // jsdom 无布局：桩出可预测的矩形 + 初始宽高，供 mousedown 读取起点(780×500)
+    panel.__rect = { x: 100, y: 100, top: 100, left: 100, right: 880, bottom: 600, width: 780, height: 500 };
+    Object.defineProperty(panel, "offsetWidth", { value: 780, configurable: true });
+    Object.defineProperty(panel, "offsetHeight", { value: 500, configurable: true });
+
+    const evt = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+
+    // 在手柄按下 → 切绝对定位并记录起点
+    handle.dispatchEvent(evt("mousedown", 860, 580));
+    assert.equal(panel.style.position, "absolute", "首次缩放切到绝对定位");
+
+    // 拖拽放大：width/height 随位移增长
+    window.dispatchEvent(evt("mousemove", 960, 620));
+    assert.equal(panel.style.width, "880px", "宽度随 dx=+100 增大");
+    assert.equal(panel.style.height, "540px", "高度随 dy=+40 增大");
+
+    // 继续拖：相对起点累计，不回跳
+    window.dispatchEvent(evt("mousemove", 900, 600));
+    assert.equal(panel.style.width, "820px", "宽度相对起点累计 (dx=+40)");
+    assert.equal(panel.style.height, "520px", "高度相对起点累计 (dy=+20)");
+
+    // mouseup 结束：之后 mousemove 不再跟随
+    window.dispatchEvent(evt("mouseup", 900, 600));
+    window.dispatchEvent(evt("mousemove", 1200, 900));
+    assert.equal(panel.style.width, "820px", "松开后停止跟随（width）");
+    assert.equal(panel.style.height, "520px", "松开后停止跟随（height）");
+
+    const closeBtn = document.querySelector(".neo-director-close");
+    if (closeBtn) closeBtn.click();
+    await sleep(20);
+});
+
+test("导演编辑器：标题栏 ⛶ 放大到最大，双击标题栏还原", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+
+    await openDirectorEditor(null);
+    await sleep(60);
+
+    const titleBar = document.querySelector(".neo-director-title");
+    const panel = document.querySelector(".neo-director-panel");
+    const maxBtn = document.querySelector(".neo-director-maximize");
+    assert.ok(titleBar && panel && maxBtn, "标题栏/面板/⛶ 按钮已创建");
+    assert.equal(maxBtn.textContent, "⛶");
+
+    // 放大：记录当前几何（桩矩形）→ 绝对定位铺满视口（留 8px 边距）
+    panel.__rect = { x: 100, y: 80, top: 80, left: 100, right: 600, bottom: 480, width: 500, height: 400 };
+    maxBtn.click();
+    assert.equal(panel.style.position, "absolute", "放大时切到绝对定位");
+    assert.equal(panel.style.left, "8px");
+    assert.equal(panel.style.top, "8px");
+    assert.equal(panel.style.width, (window.innerWidth - 16) + "px");
+    assert.equal(panel.style.height, (window.innerHeight - 16) + "px");
+    assert.ok(maxBtn.classList.contains("neo-director-maximized"), "放大态标记");
+
+    // 双击标题栏 → 还原到放大前几何
+    titleBar.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    assert.equal(panel.style.left, "100px");
+    assert.equal(panel.style.top, "80px");
+    assert.equal(panel.style.width, "500px");
+    assert.equal(panel.style.height, "400px");
+    assert.ok(!maxBtn.classList.contains("neo-director-maximized"), "还原后取消放大态");
+
+    // 再点按钮 → 再次放大；双击按钮自身不触发切换
+    maxBtn.click();
+    assert.equal(panel.style.left, "8px", "按钮再点重新放大");
+    maxBtn.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    assert.equal(panel.style.left, "8px", "双击按钮本体不切换（忽略按钮目标）");
+
+    const closeBtn = document.querySelector(".neo-director-close");
+    if (closeBtn) closeBtn.click();
+    await sleep(20);
+});
+
 test("导演编辑器单例：同一配方重复点击忽略，另一配方重新加载，关闭后可重开", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };

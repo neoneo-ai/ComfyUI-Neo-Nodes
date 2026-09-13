@@ -502,8 +502,12 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         storyTa,
         storyStatus,
         $el('div', { className: 'neo-director-story-refs' }, [
-            $el('label', { className: 'neo-director-field-label', textContent: '角色参考图（可选，点选 / 从左侧素材栏拖入）' }), charGrid.el,
-            $el('label', { className: 'neo-director-field-label', textContent: '背景参考图（可选，点选 / 从左侧素材栏拖入）' }), bgGrid.el,
+            $el('div', { className: 'neo-director-ref-col' }, [
+                $el('label', { className: 'neo-director-field-label', textContent: '角色参考图（可选，点选 / 从左侧素材栏拖入）' }), charGrid.el,
+            ]),
+            $el('div', { className: 'neo-director-ref-col neo-director-ref-col-bg' }, [
+                $el('label', { className: 'neo-director-field-label', textContent: '背景参考图（可选，点选 / 从左侧素材栏拖入）' }), bgGrid.el,
+            ]),
         ]),
         $el('div', { className: 'neo-director-story-actions' }, [
             $el('label', { className: 'neo-director-seglen-wrap' }, [$el('span', { textContent: '分段粒度' }), segLenSel]),
@@ -524,6 +528,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     });
     const tlLabelRow = $el('div', { className: 'neo-director-tl-label' }, [
         $el('span', { textContent: '时间轴（拖拽重排 · 点击定位分段 · 尾部 ＋ 添加段）' }),
+        addBtn,
         $el('div', { className: 'neo-director-zoom' }, [zoomToggle, zoomSlider]),
     ]);
     const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
@@ -535,7 +540,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         customRow,
         tlLabelRow,
         tlWrap,
-        segsWrap, addBtn,
+        segsWrap,
     ]);
 
     const tabStory = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '📖 自动故事板' });
@@ -560,11 +565,43 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     ]);
     switchTab('timeline'); // 默认落在时间轴分段页，故事板作为可选页签
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
+    // 「放大到最大」：标题栏 ⛶ 按钮 / 双击标题栏均可切换。放大=铺满视口（留 8px
+    // 边距，高度受 CSS max-height:88vh 约束），还原=回到放大前几何。
+    let maximized = false;
+    let prevRect = null;
+    const maxBtn = $el('button', { className: 'neo-director-maximize', type: 'button', title: '放大到最大', textContent: '⛶' });
+    const toggleMaximize = () => {
+        if (!maximized) {
+            const r = panel.getBoundingClientRect();
+            prevRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+            if (!panel.style.left) panel.style.position = 'absolute';
+            panel.style.left = '8px';
+            panel.style.top = '8px';
+            panel.style.width = (window.innerWidth - 16) + 'px';
+            panel.style.height = (window.innerHeight - 16) + 'px';
+            maximized = true;
+        } else {
+            panel.style.left = prevRect.left + 'px';
+            panel.style.top = prevRect.top + 'px';
+            panel.style.width = prevRect.width + 'px';
+            panel.style.height = prevRect.height + 'px';
+            maximized = false;
+            prevRect = null;
+        }
+        maxBtn.classList.toggle('neo-director-maximized', maximized);
+        maxBtn.title = maximized ? '还原窗口' : '放大到最大';
+    };
+    maxBtn.onclick = toggleMaximize;
+
     const titleBar = $el('div', { className: 'neo-director-title' }, [
         $el('span', { textContent: '🎬 多段视频导演' }),
-        $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close })
+        $el('div', { className: 'neo-director-title-btns' }, [
+            maxBtn,
+            $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close }),
+        ]),
     ]);
-    const panel = $el('div', { className: 'neo-director-panel' }, [titleBar, body, foot]);
+    const resizeHandle = $el('div', { className: 'neo-director-resize', title: '拖拽调整窗口大小' });
+    const panel = $el('div', { className: 'neo-director-panel' }, [titleBar, body, foot, resizeHandle]);
 
     // 标题栏拖动：首次按下从 flex 居中切到绝对定位并记录起点，之后按鼠标位移更新 left/top；
     // 钳制保证窗口不会被拖出视口（始终留一条可点到的标题栏 / ✕）。
@@ -598,6 +635,46 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         dragging = true;
         window.addEventListener('mousemove', onTitleMove);
         window.addEventListener('mouseup', onTitleUp);
+    });
+
+    titleBar.addEventListener('dblclick', (e) => {
+        if (e.target.closest('button')) return; // 双击 ⛶ / ✕ 等按钮不触发行内切换
+        toggleMaximize();
+    });
+
+    // 右下角手柄拖拽缩放：改面板 width/height（首次同样从居中切到绝对定位）；
+    // 宽度下限保证内容不塌，上限钳制在视口内。时间轴经 ResizeObserver 自动跟随重排。
+    let resizing = false;
+    let rStartMX = 0, rStartMY = 0, rStartW = 0, rStartH = 0;
+    const DT_MIN_W = 420, DT_MIN_H = 360; // 高度下限实际由 CSS .neo-director-panel min-height:min(840px,88vh) 强制，此处仅兜底防负数
+    const onResizeMove = (e) => {
+        if (!resizing) return;
+        let w = rStartW + (e.clientX - rStartMX);
+        let h = rStartH + (e.clientY - rStartMY);
+        w = Math.max(DT_MIN_W, Math.min(w, window.innerWidth - 16));
+        h = Math.max(DT_MIN_H, Math.min(h, window.innerHeight - 16));
+        panel.style.width = w + 'px';
+        panel.style.height = h + 'px';
+    };
+    const onResizeUp = () => {
+        resizing = false;
+        window.removeEventListener('mousemove', onResizeMove);
+        window.removeEventListener('mouseup', onResizeUp);
+    };
+    resizeHandle.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); // 避免拖动时选中文字 / 图片
+        if (!panel.style.left) { // 首次：从居中切到绝对定位，无跳变
+            const r = panel.getBoundingClientRect();
+            panel.style.position = 'absolute';
+            panel.style.left = r.left + 'px';
+            panel.style.top = r.top + 'px';
+        }
+        rStartMX = e.clientX; rStartMY = e.clientY;
+        rStartW = panel.offsetWidth; rStartH = panel.offsetHeight;
+        resizing = true;
+        window.addEventListener('mousemove', onResizeMove);
+        window.addEventListener('mouseup', onResizeUp);
     });
     overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
     document.body.appendChild(overlay);
