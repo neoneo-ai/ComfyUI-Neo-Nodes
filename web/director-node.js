@@ -66,6 +66,8 @@ app.registerExtension({
                     progress = { active: !!p.active, segment_index: Number(p.segment_index) || -1, total_segments: Number(p.total_segments) || 0 };
                     if (progress.active !== prev.active || progress.segment_index !== prev.segment_index || progress.total_segments !== prev.total_segments) {
                         tl?.refresh();
+                        // 跟随运行：段切换时把正在生成的块横向滚动到可视区（段多/放大时才需要）
+                        if (progress.active && progress.segment_index !== prev.segment_index) tl?.revealSeg(progress.segment_index);
                     }
                 } catch (_) {}
             };

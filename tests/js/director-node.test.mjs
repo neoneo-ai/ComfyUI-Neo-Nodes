@@ -167,3 +167,35 @@ test("时间轴显示区外右下角「＋ 新增导演配方」按钮打开新�
     await sleep(120); // openNewRecipe：listRecipes → openDirectorEditor(null) 建浮层
     assert.ok(document.querySelector(".neo-director-overlay"), "点击后打开新建编辑器");
 });
+
+test("运行进度跳到后段时节点时间轴自动把该段滚进可视区", async () => {
+    resetEnv();
+    clearRoutes();
+    const payload = { active: true, segment_index: 0, total_segments: 8 };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true,
+        segments: Array.from({ length: 8 }, (_, i) => ({ prompt: "seg" + i, duration_sec: 5 })),
+    }));
+    mockRoute("/neo_video_gen/director_progress", () => jsonResponse(payload));
+
+    const node = await createDirectorNode("dir-recipe");
+    clearInterval(node._neoDtProgressTimer);
+    await sleep(60); // 等 loadSpec 把 8 段填进时间轴
+
+    const tl = node._neoDtTimeline;
+    Object.defineProperty(tl.canvas, "clientWidth", { value: 320, configurable: true });
+    const view = tl._visibleWidth();
+    assert.ok(tl._width() > view, "8 段内容宽于可视区（可滚动）");
+    assert.equal(tl.scroll.scrollLeft, 0);
+
+    payload.segment_index = 6;          // 后端推进到第 7 段
+    await node._neoDtProgressTick();
+    assert.ok(tl.scroll.scrollLeft > 0, "自动滚动跟随当前生成段");
+    const b = tl._layout().blocks[6];
+    assert.ok(b.x >= tl.scroll.scrollLeft && b.x + b.w <= tl.scroll.scrollLeft + view, "当前段整体落在可视区内");
+
+    const settled = tl.scroll.scrollLeft;
+    await node._neoDtProgressTick();    // 同一段再轮询：不重复滚动
+    assert.equal(tl.scroll.scrollLeft, settled, "同一段重复轮询不再滚动");
+});
+

@@ -14,7 +14,7 @@ const DT_MIN_ZOOM = 0.25;    // 时间轴最小缩放（缩小看更多段）
 const DT_MAX_ZOOM = 4;       // 时间轴最大缩放倍数
 const DT_RULER_H = 18;       // 顶部秒刻度尺高度
 const DT_TOP_GAP = 4;        // 刻度尺与块之间的间距
-const DT_BOTTOM_PAD = 6;     // 底部进度条/提示区
+const DT_BOTTOM_PAD = 6;     // 块底部留白（横向滚动条与悬停时间提示占这一带）
 
 export class DirectorTimeline {
   constructor(container, options) {
@@ -133,6 +133,21 @@ export class DirectorTimeline {
   // 当前拉伸倍数（宿主据此同步自己的滑块/按钮 UI）。
   getZoom() {
     return this._zoom;
+  }
+
+  // 把第 i 段横向滚动到可视区（已整体可见则不动），供宿主在运行进度跳段时跟随当前段。
+  // 内容未溢出可视区（无需滚动）时不做任何事；两侧各留 pad 便于看到相邻块。
+  revealSeg(i) {
+    const b = this._layout().blocks[i];
+    if (!b || !this.scroll) return;
+    const view = this._visibleWidth();
+    const max = Math.max(0, this._width() - view);
+    if (max <= 0) return;
+    const pad = 12;
+    let left = this.scroll.scrollLeft;
+    if (b.x < left + pad) left = b.x - pad;
+    else if (b.x + b.w > left + view - pad) left = b.x + b.w - view + pad;
+    this.scroll.scrollLeft = Math.max(0, Math.min(max, left));
   }
 
   // 光标是否落在某块右缘的调时长热区（仅非 readOnly）
@@ -574,18 +589,19 @@ export class DirectorTimeline {
     if (seg.prompt) {
       ctx.font = "11px sans-serif";
       const lines = this._fitLines(ctx, seg.prompt, Math.max(20, w - 14), 2);
-      const baseBottom = top + bh - 6;   // 底部留 6px（进度条占最底 3px）
+      const baseBottom = top + bh - 6;   // 底部留 6px（避开横向滚动条与悬停提示）
       ctx.textBaseline = "bottom";
       for (let li = 0; li < lines.length; li++) {
         put(lines[li], x + 6, baseBottom - (lines.length - 1 - li) * 13, "11px sans-serif", "#fff");
       }
     }
 
-    // 生成进度：段底部细条——done 绿 / current 琥珀（仅 director 运行中显示）
+    // 生成进度：段顶部细条——done 绿 / current 琥珀（仅 director 运行中显示）。
+    // 放顶部而非底部：块下沿就是横向滚动条（放大态 10px），画在底部会被滚动条盖住。
     if (prog === "done" || prog === "current") {
       const barH = 3;
       ctx.fillStyle = prog === "done" ? "#3fb950" : "#e6a23c";
-      this._rr(ctx, x + 3, top + bh - barH - 1, Math.max(2, iw - 6), barH, 1.5);
+      this._rr(ctx, x + 3, top + 1, Math.max(2, iw - 6), barH, 1.5);
       ctx.fill();
     }
   }

@@ -427,3 +427,82 @@ test("_fitLines：中间行取满不加省略号，仅最后一行超出时加�
     assert.deepEqual(tl._fitLines(tl.ctx, "ab", 40, 2), ["ab"], "单行放得下：只一行无省略号");
     tl.destroy();
 });
+
+// 记录路径与填充：canvas 无后端，进度条是「圆角路径 + fill」，需回读坐标断言画在哪
+function recordingCtx() {
+    const paths = [];
+    let cur = null;
+    const rec = {
+        _paths: paths,
+        font: "", fillStyle: "", strokeStyle: "", lineWidth: 1, globalAlpha: 1, textAlign: "left", textBaseline: "top",
+        measureText: () => ({ width: 0 }),
+        canvas: null,
+        beginPath() { cur = { moveTo: null, arcs: [], fill: null }; paths.push(cur); },
+        moveTo(x, y) { if (cur) cur.moveTo = [x, y]; },
+        arcTo(x1, y1, x2, y2, r) { if (cur) cur.arcs.push([x1, y1, x2, y2, r]); },
+        closePath() {},
+        fill() { if (cur) cur.fill = this.fillStyle; },
+        stroke() {}, fillText() {}, strokeText() {}, fillRect() {},
+        save() {}, restore() {}, clip() {}, setLineDash() {}, drawImage() {},
+        setTransform() {}, clearRect() {},
+    };
+    return rec;
+}
+
+const DT_TOP = 18 + 4; // DT_RULER_H + DT_TOP_GAP，与 _draw 一致
+
+test("生成进度条画在块顶部（块底部被横向滚动条占用）", async () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }]);
+    const ctx = recordingCtx();
+    const bh = 60;
+
+    tl._paintSeg(ctx, 8, 200, DT_TOP, bh, { duration: 5, prompt: "" }, "1", 0, false, false, false, "current");
+    const cur = ctx._paths.filter((p) => p.fill === "#e6a23c");
+    assert.equal(cur.length, 1, "运行中画一条琥珀色进度条");
+    assert.equal(cur[0].moveTo[1], DT_TOP + 1, "进度条贴在块顶部");
+    assert.equal(cur[0].arcs[0][3] - cur[0].moveTo[1], 3, "进度条高 3px");
+
+    tl._paintSeg(ctx, 8, 200, DT_TOP, bh, { duration: 5, prompt: "" }, "1", 0, false, false, false, "done");
+    const done = ctx._paths.filter((p) => p.fill === "#3fb950");
+    assert.equal(done.length, 1, "已完成段画绿色进度条");
+    assert.equal(done[0].moveTo[1], DT_TOP + 1, "已完成段进度条同样在顶部");
+
+    // 块下半部不再有任何进度条
+    const lowHalf = ctx._paths.filter((p) => (p.fill === "#e6a23c" || p.fill === "#3fb950") && p.moveTo[1] > DT_TOP + bh / 2);
+    assert.equal(lowHalf.length, 0, "块下半部不画进度条（原位置已被滚动条盖住）");
+    tl.destroy();
+});
+
+test("revealSeg：内容溢出时把目标段滚进可视区，已可见则不动，未溢出不滚动", async () => {
+    resetEnv();
+    // 10 段 × 5s、编辑面板尺寸（height=184 → 每段默认宽≈277px）：默认总宽超出可视区 320
+    const { tl } = makeTimeline(Array.from({ length: 10 }, () => ({ duration: 5 })), { height: 184 });
+    await sleep(40);
+    const view = tl._visibleWidth();
+    assert.ok(tl._width() > view, "内容宽于可视区");
+    assert.equal(tl.scroll.scrollLeft, 0);
+
+    tl.revealSeg(9);
+    const b = tl._layout().blocks[9];
+    assert.ok(tl.scroll.scrollLeft > 0, "末段在可视区外 → 滚动");
+    assert.ok(b.x >= tl.scroll.scrollLeft, "末段左缘进入可视区");
+    assert.ok(b.x + b.w <= tl.scroll.scrollLeft + view, "末段右缘进入可视区");
+
+    const settled = tl.scroll.scrollLeft;
+    tl.revealSeg(9);
+    assert.equal(tl.scroll.scrollLeft, settled, "已可见的段不再滚动");
+
+    tl.revealSeg(0);
+    assert.equal(tl.scroll.scrollLeft, 0, "回到首段滚回最左");
+    tl.destroy();
+
+    // 段少（默认总宽 < 可视区）：无需滚动
+    const { tl: tl2 } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+    assert.ok(tl2._width() <= tl2._visibleWidth(), "内容未溢出");
+    tl2.revealSeg(1);
+    assert.equal(tl2.scroll.scrollLeft, 0, "未溢出时不滚动");
+    tl2.destroy();
+});
+
