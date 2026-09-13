@@ -101,12 +101,13 @@ function currentDirectorEditor() {
 /** 打开多段视频导演编辑器：shared(宽高比/百万像素或自定义 W/H) + 逐段(skill/prompt/首帧/时长)。
  *  existing 为既有 director 配方 meta（编辑时预填），null = 新建；onSaved 保存成功后回调刷新。
  *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。
- *  单例：已打开同一配方 → 忽略重复点击；已打开另一配方 → 关闭旧窗口并重新加载为该配方。 */
-export async function openDirectorEditor(existing = null, onSaved = null) {
+ *  单例：已打开同一配方 → 忽略重复点击（但按 focusSeg 切换当前段）；已打开另一配方 → 关闭旧窗口并重新加载为该配方。
+ *  focusSeg：打开时定位到该段（0 基；<0 表示不指定，保持默认第 1 段）。 */
+export async function openDirectorEditor(existing = null, onSaved = null, focusSeg = -1) {
     const requestedName = (existing && existing.name) || '';
     const cur = currentDirectorEditor();
     if (cur) {
-        if (cur.name === requestedName) return; // 同一配方重复点击 → 忽略
+        if (cur.name === requestedName) { cur.focusSeg?.(focusSeg); return; } // 同一配方重复点击 → 只切换当前段
         cur.close();                            // 另一配方 → 关闭旧窗口，重载为该配方
     } else if (document.querySelector('.neo-director-overlay')) {
         return; // 兜底：状态缺失但浮层仍在 → 忽略，避免叠加
@@ -239,19 +240,23 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     }
 
     const segsWrap = $el('div', { className: 'neo-director-segs' });
+    let timeline = null;
     let currentSegId = null; // 当前编辑段身份（dataset.segId，重排/删除后仍可追踪）
+    let currentSegIdx = 0;   // 当前编辑段序号（首帧数据就绪后据此把该块滚入可视区）
     function renumberSegs() {
         segsWrap.querySelectorAll('.neo-director-seg').forEach((row, i) => {
             row.querySelector('.neo-director-seg-title').textContent = `段 ${i + 1}`;
         });
     }
-    // 只显示当前段（其余段保留 DOM，readSegData/保存仍读取全部数据）
+    // 只显示当前段（其余段保留 DOM，readSegData/保存仍读取全部数据）；时间轴同步把该块滚进可视区
     function showSeg(i) {
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
         if (!rows.length) return;
         i = Math.max(0, Math.min(i, rows.length - 1));
         currentSegId = rows[i].dataset.segId;
+        currentSegIdx = i;
         rows.forEach((row, k) => row.classList.toggle('neo-director-seg-current', k === i));
+        if (timeline) timeline.revealSeg(i);
     }
     function showSegById(id) {
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
@@ -260,12 +265,13 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     }
     for (const s of (exSegs.length ? exSegs : [{}])) segsWrap.appendChild(buildSeg(s));
     renumberSegs();
-    showSeg(0);
+    // 定位到指定段（节点时间轴上被点击的那一段）；未指定时仍默认显示第 1 段
+    const focusSegAt = (i) => { const n = Number(i); if (Number.isFinite(n) && n >= 0) showSeg(n); };
+    focusSegAt(focusSeg >= 0 ? focusSeg : 0);
     const addBtn = $el('button', { className: 'rs-btn neo-director-add', textContent: '＋ 添加段', onclick: () => { segsWrap.appendChild(buildSeg({})); renumberSegs(); showSeg(segsWrap.children.length - 1); } });
 
     // 时间轴组件（复用 web/director-timeline.js）：按时长比例绘制分段块 + 秒尺，点击定位、拖拽重排。
     const tlWrap = $el('div', { className: 'neo-director-timeline' });
-    let timeline = null;
     const readSegData = () => Array.from(segsWrap.querySelectorAll('.neo-director-seg')).map(row => {
         const durInp = row.querySelector('.neo-director-dur');
         const promptTa = row.querySelector('.neo-director-prompt');
@@ -316,6 +322,8 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             },
         });
     } catch (e) { console.error('[Neo Recipes] Director: timeline init failed', e); }
+    // 首次定位（如节点上点的那一段）延后一帧：组件首帧数据就绪后 showSeg 才能算出块坐标并滚动
+    requestAnimationFrame(() => showSeg(currentSegIdx));
     const tlObserver = new MutationObserver(() => { if (timeline) timeline.refresh(); });
     tlObserver.observe(segsWrap, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     segsWrap.addEventListener('input', (e) => {
@@ -721,5 +729,5 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     });
     overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
     document.body.appendChild(overlay);
-    _directorEditor = { name: requestedName, close, overlay };
+    _directorEditor = { name: requestedName, close, overlay, focusSeg: focusSegAt };
 }

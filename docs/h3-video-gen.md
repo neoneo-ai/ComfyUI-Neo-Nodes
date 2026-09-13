@@ -18,7 +18,8 @@
 - **连续性（Tier A）**：`continuity` 开时，上一段的**尾帧**作为下一段的 I2V 首帧（data-URI 走单段同款参考路径），并**丢下一段第一帧**避免边界重复；关则各段独立、不丢帧。
 - **音频对齐**：各段 `AudioInput`（`{waveform:[B,C,T], sample_rate}`）按序拼接，每个接缝丢弃被丢帧对应的采样数（`round(sample_rate/fps)`），使总音频长度恰好等于拼接后帧数对应的时长（A/V 对齐）。
 - **输出**：`InputImpl.VideoFromComponents(VideoComponents(images, audio, frame_rate=24))`，单个 `VIDEO` 接 SaveVideo。
-- **运行时进度**：节点内嵌的只读时间轴在生成时实时显示各段状态——正在生成的段顶部为琥珀色条、已完成段为绿色条、待处理段无条（条画在**块顶部**：块底紧邻横向滚动条，画底部会被滚动条盖住）；段切换时时间轴**自动把当前段横向滚动到可视区**（段数多/放大过、内容宽于可视区时才滚动；已整体可见则不动）。前端每 500ms 轮询 `/neo_video_gen/director_progress`（返回 `{active, segment_index, total_segments}`），后端在 `generate()` 逐段推进时更新该状态，并在结束/异常时复位为 inactive。
+- **交互**：节点内嵌只读时间轴（`web/director-timeline.js` 复用）显示各段块；**点击某块**直接打开该配方的导演编辑器并**定位到该段**（窗口已打开时再点别的块只切换当前段、不重建窗口），右上角 **✎** 打开编辑器（不带段索引，保持当前段）。
+- **运行时进度**：正在生成的段顶部为琥珀色条、已完成段为绿色条、待处理段无条（条画在**块顶部**：块底紧邻横向滚动条，画底部会被滚动条盖住）；段切换时时间轴**自动把当前段横向滚动到可视区**（段数多/放大过、内容宽于可视区时才滚动；已整体可见则不动）。前端每 500ms 轮询 `/neo_video_gen/director_progress`（返回 `{active, segment_index, total_segments}`），后端在 `generate()` 逐段推进时更新该状态，并在结束/异常时复位为 inactive。
 - **v1 参考范围**：每段仅取一个首帧图（`first_frame` 或 `refs.images[0]`）；多参考/视频/音频参考待模板占位符支持后再扩展。
 
 ## 模板与配置

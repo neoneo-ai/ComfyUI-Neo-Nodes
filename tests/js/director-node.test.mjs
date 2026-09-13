@@ -199,3 +199,42 @@ test("运行进度跳到后段时节点时间轴自动把该段滚进可视区",
     assert.equal(tl.scroll.scrollLeft, settled, "同一段重复轮询不再滚动");
 });
 
+
+test("点击节点时间轴第 3 块：编辑器打开即定位到该段", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true,
+        segments: [
+            { prompt: "a", duration_sec: 5 },
+            { prompt: "b", duration_sec: 5 },
+            { prompt: "c", duration_sec: 5 },
+        ],
+    }));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        { name: "dir-recipe", type: "video_director", shared: {}, segments: [
+            { skill_id: "sk-a", prompt: "a", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "b", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "c", duration_sec: 5 },
+        ] },
+    ]));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const node = await createDirectorNode("dir-recipe");
+    await sleep(60); // 等 loadSpec 把 3 段填进节点时间轴
+
+    const canvas = node._neoDtTimeline.canvas;
+    Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 88, width: 320, height: 88 };
+
+    // 3 段等长、可点区间 [8,312]：第 3 块 [210.7,312]，点中点 261
+    canvas.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: 261, clientY: 40 }));
+    await sleep(140); // openEditor：listRecipes → openDirectorEditor(meta, cb, 2)
+
+    const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(segs.length, 3, "编辑器载入全部 3 段");
+    assert.equal(segs.findIndex((s) => s.classList.contains("neo-director-seg-current")), 2, "定位到点击的第 3 段");
+    assert.equal(segs[2].querySelector(".neo-director-prompt").value, "c", "显示的是被点段的内容");
+});
+

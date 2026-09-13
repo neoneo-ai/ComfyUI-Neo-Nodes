@@ -772,3 +772,90 @@ test("导演编辑器：新建配方无故事内容时 story 各字段为空（�
     assert.deepEqual(saveCall.body.story.backgrounds, []);
 });
 
+
+test("导演编辑器：打开时按 focusSeg 定位到指定段（节点上点的那块）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const existing = {
+        name: "T-focus",
+        shared: { width: 1344, height: 768 },
+        segments: [
+            { skill_id: "sk-a", prompt: "第一段", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "第二段", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "第三段", duration_sec: 5 },
+        ],
+    };
+    const currentIdx = () => Array.from(document.querySelectorAll(".neo-director-seg"))
+        .findIndex((s) => s.classList.contains("neo-director-seg-current"));
+
+    await openDirectorEditor(existing, null, 2); // 节点上点了第 3 块
+    assert.equal(currentIdx(), 2, "打开即定位到指定段");
+
+    // 同一配方、窗口已打开：再点第 1 块 → 复用窗口并切换当前段（不叠加、不重建）
+    await openDirectorEditor(existing, null, 0);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "同一配方不叠加浮层");
+    assert.equal(currentIdx(), 0, "已打开的窗口切换到所点段");
+
+    // 不带索引（列表 / ✎ 进入）→ 保持当前段不变
+    await openDirectorEditor(existing);
+    assert.equal(currentIdx(), 0, "未指定段时不改变当前段");
+
+    // 索引超出段数 → 钳到最后一段（节点与编辑器段数不一致时不至于空窗）
+    await openDirectorEditor(existing, null, 9);
+    assert.equal(currentIdx(), 2, "越界索引钳到最后一段");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+
+test("导演编辑器：切换当前段时编辑器时间轴自动把该段滚进可视区", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    // 可视区宽度要在打开前就固定（组件首次绘制/定位滚动按它算块坐标）；jsdom 无布局，只能如此
+    const CANVAS_VW = 600;
+    Object.defineProperty(window.HTMLCanvasElement.prototype, "clientWidth", { value: CANVAS_VW, configurable: true });
+
+    const existing = {
+        name: "T-reveal",
+        shared: { width: 1344, height: 768 },
+        segments: Array.from({ length: 12 }, (_, i) => ({ skill_id: "sk-a", prompt: "p" + i, duration_sec: 5 })),
+    };
+    const currentIdx = () => Array.from(document.querySelectorAll(".neo-director-seg"))
+        .findIndex((s) => s.classList.contains("neo-director-seg-current"));
+
+    try {
+        await openDirectorEditor(existing, null, 10); // 打开即定位第 11 段
+        await sleep(80);
+        const scroll = document.querySelector(".neo-director-timeline .neo-dtl-scroll");
+        assert.ok(scroll, "编辑器时间轴存在");
+        assert.equal(currentIdx(), 10, "定位到第 11 段");
+
+        // 12 段 × 5s、面板时间轴高 184 → 块净高 156 → 每块 16:9 ≈277.3px（内容远超 600px 可视区）
+        const blockW = (184 - 18 - 4 - 6) * 16 / 9;
+        const contentW = Math.ceil(12 * blockW + 8 * 2 + 32); // padX*2 + 尾部「＋」
+        const want = Math.min(contentW - CANVAS_VW, 8 + 10 * blockW + blockW - CANVAS_VW + 12);
+        assert.ok(Math.abs(scroll.scrollLeft - want) < 3, `滚动到第 11 块（期望≈${Math.round(want)}，实际 ${Math.round(scroll.scrollLeft)}）`);
+
+        // 同一窗口内切回第 1 段 → 滚回最左
+        await openDirectorEditor(existing, null, 0);
+        assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "复用同一窗口");
+        assert.equal(currentIdx(), 0, "当前段切到第 1 段");
+        assert.equal(scroll.scrollLeft, 0, "时间轴滚回最左");
+
+        // 再切回第 11 段 → 再次滚到该段
+        await openDirectorEditor(existing, null, 10);
+        assert.equal(currentIdx(), 10);
+        assert.ok(Math.abs(scroll.scrollLeft - want) < 3, "再次滚动到第 11 块");
+    } finally {
+        delete window.HTMLCanvasElement.prototype.clientWidth; // 还原 jsdom 原型，避免影响同文件其它用例
+    }
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+

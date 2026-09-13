@@ -41,8 +41,8 @@ app.registerExtension({
                 tl = new DirectorTimeline(tlRow, {
                     height: TL_H - 8,
                     readOnly: true,
-                    onSelect: () => openEditor(), // 点击分段块直接打开编辑器
-                    getProgress: () => progress,   // 各段底部实时显示生成状态（done/current）
+                    onSelect: (i) => openEditor(i), // 点击分段块直接打开编辑器，并定位到该段
+                    getProgress: () => progress,   // 各段顶部实时显示生成状态（done/current）
                     getSegments: () => (tlData.segments || []).map(s => ({
                         // 内容派生身份：spec 重载后颜色保持稳定（只读预览不重排）
                         id: `${s.prompt || ''}|${Number(s.duration_sec) || 0}|${s.ref_input || ''}`,
@@ -115,8 +115,9 @@ app.registerExtension({
                 recipeWidget.onchange = function() { oc.apply(this, arguments); loadSpec(); };
             }
 
-            // 时间轴右上角「✎」：打开当前配方的导演编辑器，保存后自动刷新时间轴
-            const openEditor = async () => {
+            // 时间轴右上角「✎」：打开当前配方的导演编辑器，保存后自动刷新时间轴；
+            // 点击分段块时带上该段索引（segIndex），编辑器打开即定位到被点的段
+            const openEditor = async (segIndex = -1) => {
                 const name = recipeWidget ? String(recipeWidget.value || "").trim() : "";
                 if (!name) { showToast(app, "warn", "请先选择分段配方", ""); return; }
                 editBtn.disabled = true;
@@ -127,7 +128,7 @@ app.registerExtension({
                         showToast(app, "warn", "未找到分段配方：" + name, "");
                         return;
                     }
-                    await openDirectorEditor(meta, () => loadSpec());
+                    await openDirectorEditor(meta, () => loadSpec(), segIndex);
                 } catch (e) {
                     console.error("[Neo Nodes] open director editor failed", e);
                     showToast(app, "error", "打开配方编辑器失败", String(e));
