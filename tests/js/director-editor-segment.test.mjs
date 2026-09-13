@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, fetchLog } from "./setup.mjs";
 import { app, appState, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
@@ -691,3 +691,84 @@ test("导演编辑器：首帧素材库按钮打开/收起 ComfyUI 左侧素材�
     document.querySelector(".neo-director-close").click();
     await sleep(20);
 });
+
+test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/参考图/粒度），保存时带回 story", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] }; // 画布无素材 → 参考图靠已存名回填
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "旧配方" }));
+
+    const existing = {
+        name: "旧配方",
+        type: "video_director",
+        shared: { width: 1344, height: 768 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+        story: {
+            idea: "旧主题",
+            story: "旧故事正文",
+            characters: [{ filename: "char.png", desc: "猫" }],
+            backgrounds: [{ filename: "bg.png" }],
+            segment_seconds: 15,
+        },
+    };
+    await openDirectorEditor(existing, null);
+    await sleep(60);
+
+    const tabStory = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("自动故事板"));
+    tabStory.click();
+    await sleep(20);
+
+    // 主题 / 故事脚本 / 分段粒度回显
+    assert.equal(document.querySelector(".neo-director-story-idea").value, "旧主题");
+    assert.equal(document.querySelector(".neo-director-story").value, "旧故事正文");
+    assert.equal(document.querySelector(".neo-director-seglen").value, "15");
+
+    // 角色 / 背景参考图回填并保持选中（含描述）
+    const grids = Array.from(document.querySelectorAll(".neo-director-refgrid"));
+    assert.equal(grids.length, 2, "角色/背景两个参考图网格");
+    const charTile = Array.from(grids[0].querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "char.png");
+    assert.ok(charTile, "角色参考图回填");
+    assert.ok(charTile.classList.contains("neo-director-ref-active"), "角色参考图为选中态");
+    assert.equal(charTile.querySelector(".neo-director-ref-desc").value, "猫", "参考图描述回显");
+    const bgTile = Array.from(grids[1].querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "bg.png");
+    assert.ok(bgTile, "背景参考图回填");
+    assert.ok(bgTile.classList.contains("neo-director-ref-active"), "背景参考图为选中态");
+
+    // 未改动直接保存：请求体完整带回 story（后端据此落盘，下次打开可再回显）
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.equal(saveCall.body.story.idea, "旧主题");
+    assert.equal(saveCall.body.story.story, "旧故事正文");
+    assert.deepEqual(saveCall.body.story.characters, [{ filename: "char.png", desc: "猫" }]);
+    assert.deepEqual(saveCall.body.story.backgrounds, [{ filename: "bg.png", desc: "" }]);
+    assert.equal(saveCall.body.story.segment_seconds, 15);
+});
+
+test("导演编辑器：新建配方无故事内容时 story 各字段为空（由后端判空、不落盘）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "新配方" }));
+
+    await openDirectorEditor(null, null);
+    await sleep(60);
+    assert.equal(document.querySelector(".neo-director-story-idea").value, "", "新建时主题为空");
+    assert.equal(document.querySelector(".neo-director-story").value, "", "新建时故事为空");
+    assert.equal(document.querySelector(".neo-director-seglen").value, "10", "粒度回落默认 10 秒");
+
+    document.querySelector(".neo-director-name").value = "新配方";
+    document.querySelector(".neo-director-seg .neo-director-skill").value = "sk-a";
+    document.querySelector(".neo-director-seg .neo-director-prompt").value = "提示词";
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.equal(saveCall.body.story.idea, null);
+    assert.equal(saveCall.body.story.story, null);
+    assert.deepEqual(saveCall.body.story.characters, []);
+    assert.deepEqual(saveCall.body.story.backgrounds, []);
+});
+

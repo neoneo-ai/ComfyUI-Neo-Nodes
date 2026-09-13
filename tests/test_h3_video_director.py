@@ -227,6 +227,45 @@ class NormalizeDirectorTests(unittest.TestCase):
 
 
 # ===========================================================================
+# P1：_normalize_director_story（自动故事板内容随配方落盘）
+# ===========================================================================
+class NormalizeDirectorStoryTests(unittest.TestCase):
+    def test_story_normalized_and_refs_rewritten(self):
+        # 描述去空白保留；参考图原始名回写为落盘最终名；粒度转 int
+        story = recipes._normalize_director_story(
+            {"story": {"idea": " 主题 ", "story": " 正文 ",
+                       "characters": [{"filename": "c.png", "desc": " 猫 "}],
+                       "backgrounds": [{"filename": "b.png"}],
+                       "segment_seconds": "10"}},
+            {"c.png": "c_copied.png", "b.png": "b_copied.png"})
+        self.assertEqual(story["idea"], "主题")
+        self.assertEqual(story["story"], "正文")
+        self.assertEqual(story["characters"], [{"filename": "c_copied.png", "desc": "猫"}])
+        self.assertEqual(story["backgrounds"], [{"filename": "b_copied.png"}])
+        self.assertEqual(story["segment_seconds"], 10)
+
+    def test_missing_and_empty_story_returns_none(self):
+        self.assertIsNone(recipes._normalize_director_story({}, {}))
+        self.assertIsNone(recipes._normalize_director_story({"story": {}}, {}))
+        self.assertIsNone(recipes._normalize_director_story({"story": {"idea": "  "}}, {}))
+        self.assertIsNone(recipes._normalize_director_story({"story": "不是对象"}, {}))
+
+    def test_unstored_ref_dropped_without_failing(self):
+        # 参考图只喂故事生成：引用未落盘资产时丢该条，其余内容仍保存
+        story = recipes._normalize_director_story(
+            {"story": {"story": "正文", "characters": [{"filename": "ghost.png"}]}}, {})
+        self.assertEqual(story["characters"], [])
+        self.assertEqual(story["story"], "正文")
+
+    def test_resave_keeps_stored_ref(self):
+        # 二次保存：参考图是上次回写的最终名（不在本次 orig_to_copied）→ 直接保留
+        story = recipes._normalize_director_story(
+            {"story": {"idea": "x", "characters": [{"filename": "c_copied.png", "desc": "猫"}]}},
+            {}, {"c_copied.png"})
+        self.assertEqual(story["characters"], [{"filename": "c_copied.png", "desc": "猫"}])
+
+
+# ===========================================================================
 # P1：list_director_recipes / load_director_spec（临时目录，不污染真实配方）
 # ===========================================================================
 class DirectorRecipeIOTests(unittest.TestCase):
@@ -333,6 +372,49 @@ class DirectorRecipeIOTests(unittest.TestCase):
             saved = json.load(f)
         self.assertEqual(saved["segments"][0]["first_frame"], "f.png")
         self.assertIn("f.png", saved["assets"], "未重传的既有资产应保留在清单")
+
+    def test_story_saved_and_returned_on_reopen(self):
+        # 自动故事板内容随配方落盘，重新打开（扫描 recipe.json）时带回给编辑器回显
+        payload = {"name": "story-dir", "type": "video_director",
+                   "shared": {"width": 8, "height": 8, "seed": 3},
+                   "segments": [{"skill_id": "s", "prompt": "p", "duration_sec": 5}],
+                   "story": {"idea": "主题", "story": "正文", "characters": [], "backgrounds": [],
+                             "segment_seconds": 10}}
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        resp = _run_async(recipes.rs_recipes_save(_Req()))
+        self.assertEqual(resp.status, 200, f"保存失败：{resp.body}")
+
+        import pathlib
+        scanned = recipes._scan_recipe_dir(pathlib.Path(self.custom) / "story-dir", "custom")
+        self.assertEqual(scanned["story"]["story"], "正文")
+        self.assertEqual(scanned["story"]["segment_seconds"], 10)
+
+    def test_director_without_story_has_no_story_key(self):
+        # 旧配方（保存时没有故事板内容）不该凭空多出 story 键
+        self._make_recipe("nostory-dir", {"type": "video_director", "shared": {},
+                                          "segments": [{"skill_id": "s", "prompt": "p"}]})
+        payload = {"name": "nostory-dir", "type": "video_director", "shared": {},
+                   "segments": [{"skill_id": "s", "prompt": "p"}],
+                   "story": {"idea": None, "story": None, "characters": [], "backgrounds": [],
+                             "segment_seconds": None}}
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        resp = _run_async(recipes.rs_recipes_save(_Req()))
+        self.assertEqual(resp.status, 200, f"保存失败：{resp.body}")
+        with open(os.path.join(self.custom, "nostory-dir", "recipe.json"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertNotIn("story", saved)
+
+        import pathlib
+        scanned = recipes._scan_recipe_dir(pathlib.Path(self.custom) / "nostory-dir", "custom")
+        self.assertNotIn("story", scanned)
 
 
 # ===========================================================================

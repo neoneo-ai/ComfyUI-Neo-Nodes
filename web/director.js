@@ -123,6 +123,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
 
     const exShared = (existing && existing.shared) || {};
     const exSegs = (existing && Array.isArray(existing.segments)) ? existing.segments : [];
+    const exStory = (existing && existing.story) || {};   // 自动故事板内容（主题/脚本/参考图/粒度），编辑旧配方时回显
     let segCounter = 0; // 段身份计数：时间轴颜色按段内容绑定，重排不变色
 
     function buildSeg(seg = {}) {
@@ -401,6 +402,15 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
                     ? { width: outW, height: outH, aspect_ratio: DIRECTOR_CUSTOM }
                     : { width: outW, height: outH, aspect_ratio: aspectSel.value, megapixels: directorClampMp(mpInp.value) },
                 segments,
+                // 自动故事板内容（主题 / 脚本 / 参考图 / 粒度）：随配方落盘，重新打开编辑器回显。
+                // 空内容由后端判空后不写入，前端无需分支。
+                story: {
+                    idea: ideaInp.value.trim() || null,
+                    story: storyTa.value.trim() || null,
+                    characters: charGrid.getRefs(),
+                    backgrounds: bgGrid.getRefs(),
+                    segment_seconds: Number(segLenSel.value) || null,
+                },
             });
             if (result.success) {
                 app.extensionManager.toast.add({ severity: 'success', summary: '多段导演已保存', detail: `${name}（${segments.length} 段）`, life: 4000 });
@@ -420,9 +430,14 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     // ==========================================
     // 📖 故事生成（半自动）：主题→LLM 生成故事→确认拆分填充时间轴；可选角色/背景参考图
     // ==========================================
-    function buildRefGrid() {
+    function buildRefGrid(initialRefs = []) {
         const grid = $el('div', { className: 'neo-director-refgrid' });
         const selected = new Map(); // filename -> desc
+        // 编辑旧配方：先回填已保存的参考图（含描述），使下面按素材建瓷砖时即为选中态
+        for (const r of (Array.isArray(initialRefs) ? initialRefs : [])) {
+            const fname = (r && r.filename) || '';
+            if (fname) selected.set(fname, (r && r.desc) || '');
+        }
         const thumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
         const ensureInRefs = (fname) => { if (!imageRefs.some(r => r.filename === fname)) imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' }); };
         function makeTile(ref) {
@@ -444,6 +459,12 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             return tile;
         }
         for (const r of imageRefs) grid.appendChild(makeTile(r));
+        // 已存参考图若不在当前画布素材里，补占位瓷砖（同段首帧的旧配方处理），否则回显会丢
+        for (const fname of selected.keys()) {
+            if (!Array.from(grid.children).some(el => el.dataset.file === fname)) {
+                grid.appendChild(makeTile({ filename: fname, subfolder: '', type: 'input' }));
+            }
+        }
         grid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; grid.classList.add('neo-director-drop'); });
         grid.addEventListener('dragleave', (e) => { if (!grid.contains(e.relatedTarget)) grid.classList.remove('neo-director-drop'); });
         grid.addEventListener('drop', async (e) => {
@@ -460,12 +481,16 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     const ideaInp = $el('textarea', { className: 'neo-director-story-idea', placeholder: '输入故事主题 / 想法（如：一只机器猫在雨夜的城市寻找回家的路）' });
     const genBtn = $el('button', { className: 'rs-btn neo-director-gen-story', textContent: '✨ 自动生成故事' });
     const storyTa = $el('textarea', { className: 'neo-director-story', placeholder: '（生成后可编辑，或直接手写故事脚本）' });
+    ideaInp.value = exStory.idea || '';   // textarea 用属性赋值回显（$el 的 value 选项对 textarea 不生效）
+    storyTa.value = exStory.story || '';
     const storyStatus = $el('span', { className: 'neo-director-story-status' });
     const segLenSel = $el('select', { className: 'neo-director-seglen' });
     for (const s of [5, 10, 15]) segLenSel.appendChild($el('option', { value: String(s), textContent: `${s} 秒 / 段` }));
     segLenSel.value = '10';
-    const charGrid = buildRefGrid();
-    const bgGrid = buildRefGrid();
+    if (exStory.segment_seconds) segLenSel.value = String(exStory.segment_seconds);
+    if (!segLenSel.value) segLenSel.value = '10'; // 存了非预设粒度时落回默认
+    const charGrid = buildRefGrid(exStory.characters);
+    const bgGrid = buildRefGrid(exStory.backgrounds);
     const setFfChk = $el('input', { className: 'neo-director-setff', type: 'checkbox' });
     const splitBtn = $el('button', { className: 'rs-btn neo-director-split', textContent: '✅ 确认并拆分到时间轴' });
 

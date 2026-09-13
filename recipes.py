@@ -148,6 +148,8 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         result["type"] = "video_director"
         result["shared"] = meta.get("shared") or {}
         result["segments"] = meta.get("segments") or []
+        if meta.get("story"):
+            result["story"] = meta["story"]   # 自动故事板内容（可选）：重新打开编辑器时回显
     return result
 
 
@@ -359,6 +361,52 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
     return shared, segments
 
 
+def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> dict | None:
+    """规范化自动故事板的可选内容：主题 / 故事脚本 / 角色・背景参考图 / 拆分粒度。
+
+    参考图 filename 与段首帧一样由前端以原始名引用，这里回写为落盘 assets 的最终名。
+    引用未落盘资产的条目直接丢弃：参考图只用于生成故事，缺一条不该让整份配方保存失败。
+    完全没有内容时返回 None（不写进 recipe.json）。
+    """
+    raw = data.get("story")
+    if not isinstance(raw, dict):
+        return None
+
+    def _kept_refs(key):
+        kept = []
+        for r in (raw.get(key) or []):
+            if not isinstance(r, dict):
+                continue
+            fname = str(r.get("filename") or "").strip()
+            stored = orig_to_copied.get(fname)
+            if not stored and existing_assets and fname in existing_assets:
+                stored = fname   # 上次保存已落盘的参考图（回写后的最终名），直接保留
+            if not stored:
+                continue
+            entry = {"filename": stored}
+            desc = str(r.get("desc") or "").strip()
+            if desc:
+                entry["desc"] = desc
+            kept.append(entry)
+        return kept
+
+    try:
+        segment_seconds = int(raw.get("segment_seconds"))
+    except (TypeError, ValueError):
+        segment_seconds = None
+
+    story = {
+        "idea": str(raw.get("idea") or "").strip() or None,
+        "story": str(raw.get("story") or "").strip() or None,
+        "characters": _kept_refs("characters"),
+        "backgrounds": _kept_refs("backgrounds"),
+        "segment_seconds": segment_seconds,
+    }
+    if all(v is None or v == [] for v in story.values()):
+        return None
+    return story
+
+
 @PromptServer.instance.routes.post("/rs_recipes/save")
 async def rs_recipes_save(request):
     try:
@@ -435,14 +483,15 @@ async def rs_recipes_save(request):
             loras.append({"name": nm, "strength": st})
 
         rtype = str(data.get("type") or "").strip()
-        director_shared, director_segments = None, None
+        director_shared, director_segments, director_story = None, None, None
         if rtype == "video_director":
+            # 已落盘 assets（旧清单 + 本次拷贝）：段 / 故事板参考图引用其中任一名字都合法，重存旧配方不报错
+            existing_assets = set(copied)
             try:
-                # 已落盘 assets（旧清单 + 本次拷贝）：段引用其中任一名字都合法，重存旧配方不报错
-                existing_assets = set(copied)
                 director_shared, director_segments = _normalize_director(data, orig_to_copied, existing_assets)
             except ValueError as e:
                 return web.json_response({"success": False, "error": str(e)}, status=400)
+            director_story = _normalize_director_story(data, orig_to_copied, existing_assets)
 
         recipe = {
             "name": name,
@@ -458,6 +507,8 @@ async def rs_recipes_save(request):
             recipe["type"] = "video_director"
             recipe["shared"] = director_shared
             recipe["segments"] = director_segments
+            if director_story:
+                recipe["story"] = director_story
         with open(recipe_dir / "recipe.json", "w", encoding="utf-8") as f:
             json.dump(recipe, f, ensure_ascii=False, indent=2)
 

@@ -454,8 +454,8 @@ export class DirectorTimeline {
     }
     for (const b of L.blocks) {
       const seg = b.seg || this._segs[b.i];
-      if (drag && drag.src === b.i) {
-        // 源块被"拿起"：原位只留虚线占位
+      if (drag && !drag.resize && drag.src === b.i) {
+        // 重排拖动：源块被"拿起"，原位只留虚线占位（调时长拖动保持原内容，仅宽度预览变化）
         ctx.globalAlpha = 0.5;
         ctx.setLineDash([4, 3]);
         this._rr(ctx, b.x + 1, top, Math.max(2, b.w - 2), bh, 4);

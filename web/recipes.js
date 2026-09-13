@@ -365,6 +365,7 @@ export async function saveRecipe(name, prompt, assets, results = [], loras = [],
         body.type = 'video_director';
         body.shared = director.shared || {};
         body.segments = director.segments;
+        if (director.story) body.story = director.story; // 自动故事板内容（可选），后端落盘并随列表回读
     }
     const resp = await api.fetchApi('/rs_recipes/save', {
         method: 'POST',
