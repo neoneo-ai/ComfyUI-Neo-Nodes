@@ -46,8 +46,8 @@ test("导演编辑器：默认仅第 1 段有 current 标记，点击时间轴�
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
     canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
 
-    canvas.dispatchEvent(mouse("mousedown", 236)); // 块1 [160,312] 内
-    window.dispatchEvent(mouse("mouseup", 236));
+    canvas.dispatchEvent(mouse("mousedown", 450)); // 块1（最小宽溢出后 [335,662]）内
+    window.dispatchEvent(mouse("mouseup", 450));
 
     const after = Array.from(document.querySelectorAll(".neo-director-seg"));
     const currentAfter = after.filter((s) => s.classList.contains("neo-director-seg-current"));
@@ -68,6 +68,53 @@ test("导演编辑器：默认仅第 1 段有 current 标记，点击时间轴�
     await sleep(20);
     // eslint-disable-next-line no-unused-vars
     void segs;
+});
+
+test("时间轴说明行最右侧「拉伸」控制条：点按钮/拖滑块驱动 timeline.setZoom", async () => {
+    const { openDirectorEditor } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+    const existing = {
+        name: "T",
+        shared: { width: 1344, height: 768, seed: 0 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    // 说明行：左侧文字 span + 最右侧「拉伸」控制条（🔍 拉伸 按钮 + 滑块）
+    const label = document.querySelector(".neo-director-tl-label");
+    assert.ok(label, "时间轴说明行存在");
+    assert.ok(label.querySelector("span"), "说明行含文字 span");
+    const zoomGroup = label.querySelector(".neo-director-zoom");
+    assert.ok(zoomGroup, "说明行最右侧有「拉伸」控制条");
+    const toggle = zoomGroup.querySelector(".neo-director-zoom-toggle");
+    const slider = zoomGroup.querySelector(".neo-director-zoom-slider");
+    assert.ok(toggle && toggle.textContent.includes("拉伸"), "🔍 拉伸按钮");
+    assert.ok(slider && slider.type === "range", "滑块存在");
+
+    // canvas 可视宽 320（供 setZoom 后按像素宽断言）
+    const canvas = document.querySelector("canvas.neo-dtl-canvas");
+    Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
+
+    // 点「🔍 拉伸」→ zoom 1→2：滑块同步、canvas 按像素宽（320×2）
+    toggle.click();
+    await sleep(60);
+    assert.equal(slider.value, "2", "点按钮后滑块同步到 2");
+    assert.equal(canvas.style.width, "640px", "zoom=2 canvas 按像素宽");
+
+    // 拖滑块到 4 → zoom 跟随：canvas 320×4
+    slider.value = "4";
+    slider.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(60);
+    assert.equal(canvas.style.width, "1280px", "拖滑块到 4 → canvas 320×4");
+
+    const closeBtn = document.querySelector(".neo-director-close");
+    if (closeBtn) closeBtn.click();
+    await sleep(20);
 });
 
 test("导演编辑器：添加段后自动切换到新段，删除当前段后切回前一段", async () => {
@@ -184,10 +231,10 @@ test("素材直接拖到时间轴段块：落地并选中该段候选（覆盖�
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
     canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
 
-    // 拖到第 2 块（x=236）；素材 MIME 携带 dragged.png
+    // 拖到第 2 块（x=450，最小宽溢出后块1=[335,662]）；素材 MIME 携带 dragged.png
     const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"dragged.png","subfolder":""}' : "") };
     const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
-    Object.defineProperty(dropEv, "clientX", { value: 236, configurable: true });
+    Object.defineProperty(dropEv, "clientX", { value: 450, configurable: true });
     Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
     canvas.dispatchEvent(dropEv);
     await sleep(30);
@@ -281,9 +328,9 @@ test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
     canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 184, width: 320, height: 184 };
 
-    // onAdd 预留尾部 32px：usable=272 → 块 [8,144]/[144,280]；「＋」在 x∈[288,312]、y∈[88,112]（时间轴高度 184）
+    // 最小宽溢出后 W≈702：「＋」在 x∈[670,694]、y∈[88,112]（时间轴高度 184）
     const click = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
-    canvas.dispatchEvent(click("mousedown", 300, 100));
+    canvas.dispatchEvent(click("mousedown", 680, 100));
 
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
     assert.equal(segs.length, 3, "点击 ＋ 后新增一段");
@@ -485,6 +532,42 @@ test("导演编辑器：素材直接拖入首帧网格 / 参考图网格（非�
     const refTile = Array.from(document.querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "dropped.png");
     assert.ok(refTile, "拖入的素材加入参考图网格");
     assert.ok(refTile.classList.contains("neo-director-ref-active"), "拖入的素材被选中");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：首帧图再点一次取消选中（回落文生视频），再点重新选中", async () => {
+    const { openDirectorEditor } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "picked.png" }));
+
+    await openDirectorEditor(null); // 新建：1 个空段
+    await sleep(60);
+
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"picked.png","subfolder":""}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+
+    const ffGrid = document.querySelector(".neo-director-seg .neo-director-ff-grid");
+    ffGrid.dispatchEvent(dropEv);
+    await sleep(30);
+    const tile = Array.from(document.querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === "picked.png");
+    assert.ok(tile, "素材加入首帧网格");
+    assert.ok(tile.classList.contains("neo-director-ff-active"), "拖入后被选中");
+
+    // 再点一次 → 取消选中（回落到「无 / 文生视频」）
+    tile.click();
+    await sleep(20);
+    assert.ok(!tile.classList.contains("neo-director-ff-active"), "再点一次取消选中");
+    const activeFf = document.querySelector(".neo-director-seg .neo-director-ff-item.neo-director-ff-active");
+    assert.ok(activeFf && !activeFf.dataset.file, "当前选中回落到「无（文生视频）」");
+
+    // 再点一次 → 重新选中
+    tile.click();
+    await sleep(20);
+    assert.ok(tile.classList.contains("neo-director-ff-active"), "再次点击重新选中");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);

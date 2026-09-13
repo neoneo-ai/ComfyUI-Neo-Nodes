@@ -5,6 +5,22 @@
   cursor: pointer;
 }
 
+/* 横向滚动容器：包裹 canvas，放大（zoom>1）时内容变宽、超出部分横向滚动 */
+.neo-dtl-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* 放大态：显示可见的横向滚动条（参考 MiniMax H3 Director） */
+.neo-dtl-scroll.neo-dtl-zoomed {
+  scrollbar-width: thin;
+  scrollbar-color: #555 #1a1a1a;
+}
+.neo-dtl-scroll.neo-dtl-zoomed::-webkit-scrollbar { height: 10px; }
+.neo-dtl-scroll.neo-dtl-zoomed::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 5px; }
+.neo-dtl-scroll.neo-dtl-zoomed::-webkit-scrollbar-thumb { background: #555; border-radius: 5px; }
+.neo-dtl-scroll.neo-dtl-zoomed::-webkit-scrollbar-thumb:hover { background: #777; }
+
 /* 挂在 NeoH3VideoDirector 节点内的容器（addDOMWidget 的 root）。
    flex 列：上行 = 时间轴显示区（canvas + ✎），下行 = 操作条（右下角「＋ 新增导演配方」）。 */
 .neo-dtl-node {
@@ -63,7 +79,7 @@
 
 /* canvas 是替换元素，flex 项默认 min-width:auto（=内在宽度）会拒绝收缩、把按钮挤出节点；
    这里允许它收缩到剩余空间，组件的 ResizeObserver 会按新宽度重绘。 */
-.neo-dtl-tlrow > canvas.neo-dtl-canvas {
+.neo-dtl-tlrow > .neo-dtl-scroll {
   flex: 1 1 auto;
   min-width: 0;
 }

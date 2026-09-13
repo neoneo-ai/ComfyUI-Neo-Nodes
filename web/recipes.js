@@ -547,7 +547,8 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
                 delBtn,
             ]);
             delBtn.onclick = (e) => { e.stopPropagation(); removeFf(tile); };
-            tile.onclick = () => selectFf(ref.filename);
+            // 点选切换：已选中再点一次即取消（回落到「无 / 文生视频」）
+            tile.onclick = () => selectFf(tile.classList.contains('neo-director-ff-active') ? '' : ref.filename);
             return tile;
         };
         // 把素材加入本段候选并选中（时间轴拖放 / 网格拖放 / 画布素材共用）
@@ -889,6 +890,20 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
         ]),
     ]);
 
+    // 「拉伸」控制条：放在时间轴说明行最右侧（不独占一行），驱动 timeline.setZoom()。
+    const zoomSlider = $el('input', { className: 'neo-director-zoom-slider', type: 'range', min: 1, max: 8, step: 0.5, value: 1 });
+    zoomSlider.addEventListener('input', () => { if (timeline) timeline.setZoom(Number(zoomSlider.value)); });
+    const zoomToggle = $el('button', { className: 'neo-director-zoom-toggle', type: 'button', title: '拉伸时间轴', textContent: '🔍 拉伸' });
+    zoomToggle.addEventListener('click', () => {
+        if (!timeline) return;
+        const next = timeline.getZoom() <= 1 ? 2 : 1;
+        timeline.setZoom(next);
+        zoomSlider.value = String(next);
+    });
+    const tlLabelRow = $el('div', { className: 'neo-director-tl-label' }, [
+        $el('span', { textContent: '时间轴（拖拽重排 · 点击定位分段 · 尾部 ＋ 添加段）' }),
+        $el('div', { className: 'neo-director-zoom' }, [zoomToggle, zoomSlider]),
+    ]);
     const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '宽高比' }), aspectSel,
@@ -896,7 +911,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
             resOut,
         ]),
         customRow,
-        $el('div', { className: 'neo-director-tl-label', textContent: '时间轴（拖拽重排 · 点击定位分段 · 尾部 ＋ 添加段）' }),
+        tlLabelRow,
         tlWrap,
         segsWrap, addBtn,
     ]);

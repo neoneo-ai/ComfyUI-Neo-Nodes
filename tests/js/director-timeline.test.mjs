@@ -32,7 +32,7 @@ function makeTimeline(segs, opts = {}) {
     document.body.appendChild(container);
     const calls = { select: [], reorder: [], resize: [] };
     const extResize = opts.onResize;
-    const tl = new DirectorTimeline(container, Object.assign(opts, {
+    const tl = new DirectorTimeline(container, Object.assign({ height: 40 }, opts, {
         getSegments: () => segs,
         onSelect: (i) => calls.select.push(i),
         onReorder: (o) => calls.reorder.push(o),
@@ -250,7 +250,7 @@ test("尾部 ＋ 按钮：提供 onAdd 且非只读时占位并响应点击；re
     const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }], { onAdd: () => adds.push(1) });
     await sleep(40);
 
-    // W=320，onAdd 预留 32px：usable=272 → 块 [8,144]/[144,280]；「＋」x∈[288,312]、y∈[42,66]
+    // W=320，onAdd 预留 32px：usable=272 → 块 [8,144]/[144,280]；「＋」x∈[288,312]、y∈[16,40]（height=40）
     const chip = tl._addChipRect();
     assert.ok(chip, "非只读 + onAdd：按钮位置存在");
     const L = tl._layout();
@@ -258,7 +258,7 @@ test("尾部 ＋ 按钮：提供 onAdd 且非只读时占位并响应点击；re
     assert.equal(last.x + last.w, 280, "块布局为 ＋ 预留尾部空间");
 
     const click = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
-    tl.canvas.dispatchEvent(click("mousedown", 300, 50));
+    tl.canvas.dispatchEvent(click("mousedown", 300, 28));
     assert.equal(adds.length, 1, "点击 ＋ 触发 onAdd");
     assert.equal(calls.select.length, 0, "点击 ＋ 不选中块");
     tl.destroy();
@@ -282,4 +282,121 @@ test("尾部 ＋ 按钮：提供 onAdd 且非只读时占位并响应点击；re
     const lastNo = LNo.blocks[LNo.blocks.length - 1];
     assert.equal(lastNo.x + lastNo.w, 312, "布局不预留尾部空间");
     tlNo.destroy();
+});
+
+test("setZoom/getZoom：拉伸 → 内容变宽、canvas 按像素宽；缩回铺满；越界钳制", async () => {
+    resetEnv();
+    const { tl, container } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+
+    // 组件不再内置控制条（UI 由宿主建）；canvas 位于横向滚动容器内
+    assert.equal(container.querySelector(".neo-dtl-zoombar"), null, "无内置放大控制条");
+    assert.equal(tl.scroll.parentNode, container, "canvas 位于横向滚动容器内");
+
+    // 初始 zoom=1：内容宽度 = 可视宽（320），canvas 铺满
+    assert.equal(tl.getZoom(), 1);
+    assert.equal(tl._width(), 320, "zoom=1 内容宽度=可视宽");
+    assert.equal(tl.canvas.style.width, "100%", "zoom=1 canvas 铺满");
+
+    // 拉伸到 2x：内容宽度 = 640，canvas 按像素宽（横向滚动）
+    tl.setZoom(2);
+    await sleep(40);
+    assert.equal(tl.getZoom(), 2, "getZoom 同步");
+    assert.equal(tl._width(), 640, "zoom=2 内容宽度=可视宽×2");
+    assert.equal(tl.canvas.style.width, "640px", "zoom>1 canvas 按像素宽");
+
+    // 缩回铺满（zoom→1）：内容回到可视宽，滚动归零
+    tl.setZoom(1);
+    await sleep(40);
+    assert.equal(tl.getZoom(), 1, "缩回铺满");
+    assert.equal(tl._width(), 320, "缩回后内容宽度=可视宽");
+    assert.equal(tl.canvas.style.width, "100%", "缩回后 canvas 铺满");
+
+    // setZoom 越界钳制到 [1, DT_MAX_ZOOM]
+    tl.setZoom(99);
+    await sleep(40);
+    assert.ok(tl.getZoom() <= 8, "超过上限钳制到最大倍数");
+    tl.setZoom(0);
+    await sleep(40);
+    assert.equal(tl.getZoom(), 1, "低于下限钳制到 1");
+
+    tl.destroy();
+});
+
+test("默认拉伸=1：_width 恒等于可视宽、canvas 铺满", async () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+    assert.equal(tl.getZoom(), 1);
+    assert.equal(tl._width(), 320);
+    assert.equal(tl.canvas.style.width, "100%");
+    tl.destroy();
+});
+
+test("拉伸时滚轮驱动横向滚动 + 显示可见滚动条类；未拉伸不响应", async () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+
+    const wheel = (deltaY) => {
+        const ev = new window.WheelEvent("wheel", { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "deltaX", { value: 0, configurable: true });
+        Object.defineProperty(ev, "deltaY", { value: deltaY, configurable: true });
+        return ev;
+    };
+
+    // 初始未拉伸：无 zoomed 类，滚轮不横向滚动
+    assert.ok(!tl.scroll.classList.contains("neo-dtl-zoomed"), "zoom=1 无 zoomed 类");
+    tl.scroll.dispatchEvent(wheel(120));
+    assert.equal(tl.scroll.scrollLeft, 0, "未拉伸：滚轮不横向滚动");
+
+    // 拉伸后：出现 zoomed 类（可见滚动条），竖直滚轮 deltaY → scrollLeft
+    tl.setZoom(3);
+    await sleep(40);
+    assert.ok(tl.scroll.classList.contains("neo-dtl-zoomed"), "zoom>1 显示可见滚动条");
+    tl.scroll.dispatchEvent(wheel(120));
+    assert.equal(tl.scroll.scrollLeft, 120, "拉伸：滚轮 deltaY → scrollLeft");
+    tl.scroll.dispatchEvent(wheel(-40));
+    assert.equal(tl.scroll.scrollLeft, 80, "反向滚动累加");
+
+    // 缩回铺满：zoomed 类移除
+    tl.setZoom(1);
+    await sleep(40);
+    assert.ok(!tl.scroll.classList.contains("neo-dtl-zoomed"), "缩回后移除 zoomed 类");
+
+    tl.destroy();
+});
+
+test("每段最小宽度：短段过多时内容加宽并横向滚动，块宽不低于最小值；够宽则铺满", async () => {
+    resetEnv();
+    // 10 段各 1s：比例布局会把每块压到约 30px（低于最小宽）→ 触发最小宽，内容加宽超过可视宽（320）
+    const segs = Array.from({ length: 10 }, () => ({ duration: 1 }));
+    const { tl } = makeTimeline(segs);
+    await sleep(40);
+
+    const minW = tl.opts.height * 16 / 9; // 每段最小宽 = 块高 × 16/9（height=40 → ≈71px）
+    assert.ok(tl._width() > 320, "内容宽度超出可视区");
+    const blocks = tl._layout().blocks;
+    assert.equal(blocks.length, 10);
+    for (const b of blocks) assert.ok(b.w >= minW - 0.5, "每块宽度不低于最小宽（按高 16:9）");
+    assert.equal(tl.canvas.style.width, tl._width() + "px", "溢出时 canvas 按像素宽");
+    assert.ok(tl.scroll.classList.contains("neo-dtl-zoomed"), "溢出显示可见滚动条");
+    tl.destroy();
+
+    // 段少且够宽：不触发加宽，铺满可视区
+    const { tl: tl2 } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+    assert.equal(tl2._width(), 320, "段够宽时不额外加宽");
+    assert.equal(tl2.canvas.style.width, "100%", "铺满可视区");
+    tl2.destroy();
+});
+
+test("_fitLines：中间行取满不加省略号，仅最后一行超出时加省略号", () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }]);
+    tl.ctx.measureText = (t) => ({ width: String(t).length * 10 }); // 每字符 10px，maxW=40 → 中间行满 4 字 / 末行 3 字+…
+    assert.deepEqual(tl._fitLines(tl.ctx, "abcdefghij", 40, 2), ["abcd", "efg…"], "超两行：首行取满无省略号、仅末行加省略号");
+    assert.deepEqual(tl._fitLines(tl.ctx, "abcdef", 40, 2), ["abcd", "ef"], "两行放得下：均无省略号");
+    assert.deepEqual(tl._fitLines(tl.ctx, "ab", 40, 2), ["ab"], "单行放得下：只一行无省略号");
+    tl.destroy();
 });

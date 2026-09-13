@@ -10,6 +10,7 @@
 //       onAdd()（点击时间轴尾部「＋」按钮添加段；仅非 readOnly 且提供时显示）。
 
 const DT_CSS_HREF = "/extensions/ComfyUI-Neo-Nodes/director-timeline.css";
+const DT_MAX_ZOOM = 8;       // 时间轴最大拉伸倍数（参考 MiniMax H3 Director）
 
 export class DirectorTimeline {
   constructor(container, options) {
@@ -27,10 +28,27 @@ export class DirectorTimeline {
     this._raf = 0;
 
     this._ensureCss();
+    // 横向滚动容器：拉伸（zoom>1）时内容宽度超过可视区，超出部分横向滚动
+    this.scroll = document.createElement("div");
+    this.scroll.className = "neo-dtl-scroll";
+    this.scroll.style.height = (this.opts.height || 0) + "px";
     this.canvas = document.createElement("canvas");
     this.canvas.className = "neo-dtl-canvas";
-    this.canvas.style.cssText = "display:block;width:100%;cursor:pointer;";
-    container.appendChild(this.canvas);
+    this.canvas.style.cssText = "display:block;cursor:pointer;";
+    this.scroll.appendChild(this.canvas);
+
+    // 拉伸（zoom）状态：由宿主经 setZoom() 控制；>1 时内容变宽并横向滚动（参考 MiniMax H3 Director）
+    this._zoom = 1;
+    container.appendChild(this.scroll);
+    // 内容超出可视区（放大或最小宽导致）时：鼠标滚轮驱动横向滚动；stopPropagation 挡掉画布平移/缩放
+    this.scroll.addEventListener("wheel", (e) => {
+      if (this._width() <= this._visibleWidth()) return;
+      e.stopPropagation();
+      if (e.deltaX === 0 && e.deltaY !== 0) {
+        e.preventDefault();
+        this.scroll.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
     this.ctx = this.canvas.getContext("2d");
 
     this._onMoveB = (e) => this._onMove(e);
@@ -95,7 +113,21 @@ export class DirectorTimeline {
     this._ro.disconnect();
     window.removeEventListener("mousemove", this._onMoveB);
     window.removeEventListener("mouseup", this._onUpB);
-    if (this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
+    if (this.scroll.parentNode) this.scroll.parentNode.removeChild(this.scroll);
+  }
+
+  // 设置时间轴拉伸倍数（1=铺满可视区，>1 内容变宽并横向滚动）。参考 MiniMax H3 Director。
+  setZoom(z) {
+    const next = Math.max(1, Math.min(DT_MAX_ZOOM, Number(z) || 1));
+    if (next === this._zoom) return;
+    this._zoom = next;
+    if (this.scroll && next <= 1) this.scroll.scrollLeft = 0; // 缩回铺满时回到最左（时间 0 对齐）
+    this.refresh();
+  }
+
+  // 当前拉伸倍数（宿主据此同步自己的滑块/按钮 UI）。
+  getZoom() {
+    return this._zoom;
   }
 
   // 光标是否落在某块右缘的调时长热区（仅非 readOnly）
@@ -153,8 +185,40 @@ export class DirectorTimeline {
     this.refresh();
     if (i >= 0 && e.dataTransfer) this.opts.onDropImage(i, e.dataTransfer);
   }
-  _width() {
+  // 每段最小宽度（px）：按块高以 16:9 计算，使短段保持视频帧比例、避免被挤成细条；不足时内容加宽并横向滚动
+  _minBlockW() {
+    return (this.opts.height || 0) * 16 / 9;
+  }
+
+  // 可视区宽度：优先 scroll 容器 clientWidth（放大时不含滚动内容）；回退 canvas/容器（测试桩常 mock canvas.clientWidth）
+  _visibleWidth() {
+    const sc = this.scroll && this.scroll.clientWidth;
+    if (sc > 0) return sc;
     return this.canvas.clientWidth || this.container.clientWidth || 0;
+  }
+
+  // 内容宽度：取「放大后可视宽」与「满足每段最小宽所需宽度」的较大者；超出可视区即横向滚动
+  _width() {
+    const visible = this._visibleWidth();
+    const base = this._zoom > 1 ? Math.round(visible * this._zoom) : visible;
+    return Math.max(base, this._minFitWidth());
+  }
+
+  // 保证每段宽度 >= _minBlockW()（按高 16:9）所需的内容宽度（含 padding 与尾部 ＋）；无分段时返回 0
+  _minFitWidth() {
+    const segs = this._segs;
+    const n = segs.length;
+    if (n === 0) return 0;
+    let total = 0, pps = 0;
+    for (let i = 0; i < n; i++) {
+      const d = Number(segs[i].duration) || 0;
+      total += d;
+      if (d > 0) pps = Math.max(pps, this._minBlockW() / d);
+    }
+    if (total <= 0) return 0;
+    const padX = 8;
+    const addW = (typeof this.opts.onAdd === "function" && !this.opts.readOnly) ? 32 : 0;
+    return Math.ceil(total * pps + padX * 2 + addW);
   }
 
   // 依据当前分段计算每块像素位置：{ padX, usable, total, pxPerSec, blocks:[{i,x,w}] }
@@ -178,7 +242,7 @@ export class DirectorTimeline {
       const pps = usable / total;
       let x = padX;
       for (let i = 0; i < n; i++) {
-        const w = Math.max(durOf(i) * pps, n > 1 ? 3 : usable);
+        const w = Math.max(durOf(i) * pps, this._minBlockW());
         blocks.push({ i, x, w, seg: segs[i] });
         x += w;
       }
@@ -298,11 +362,20 @@ export class DirectorTimeline {
     ctx.closePath();
   }
 
-  _fitText(ctx, text, maxW) {
-    if (ctx.measureText(text).width <= maxW) return text;
-    let t = text;
-    while (t.length > 1 && ctx.measureText(t + "…").width > maxW) t = t.slice(0, -1);
-    return t + "…";
+  // 把文本折成最多 maxLines 行：中间行按宽度取满（不加省略号，内容在下一行续接），
+  // 仅最后一行在超出时加省略号。用于时间轴块内多行显示。
+  _fitLines(ctx, text, maxW, maxLines) {
+    const out = [];
+    let rest = String(text || "");
+    for (let n = 0; n < maxLines && rest.length > 0; n++) {
+      if (ctx.measureText(rest).width <= maxW) { out.push(rest); break; } // 剩余整段放得下：作为末行，无省略号
+      const last = n === maxLines - 1;
+      let t = rest;
+      while (t.length > 1 && ctx.measureText(t + (last ? "…" : "")).width > maxW) t = t.slice(0, -1);
+      out.push(last ? t + "…" : t);
+      rest = rest.slice(t.length);
+    }
+    return out;
   }
 
   _drawThumb(img, x, y, w, h) {
@@ -326,6 +399,11 @@ export class DirectorTimeline {
     if (W <= 0) return;
     this.canvas.width = Math.round(W * dpr);
     this.canvas.height = Math.round(H * dpr);
+    // 内容超出可视区（放大或最小宽导致）时按像素宽并横向滚动，否则铺满；打 zoomed 类显示可见滚动条
+    const overflows = W > this._visibleWidth();
+    this.canvas.style.width = overflows ? W + "px" : "100%";
+    this.canvas.style.height = H + "px";
+    if (this.scroll) this.scroll.classList.toggle("neo-dtl-zoomed", overflows);
     const ctx = this.ctx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -475,27 +553,29 @@ export class DirectorTimeline {
 
     const put = (t, tx, ty, font, color) => {
       ctx.font = font;
-      if (tiled) { ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(0,0,0,0.65)"; ctx.strokeText(t, tx, ty); }
+      ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(0,0,0,0.65)"; ctx.strokeText(t, tx, ty);
       ctx.fillStyle = color;
       ctx.fillText(t, tx, ty);
     };
 
-    // 序号（当前位置）
+    // 序号（左上）+ 时长（右上）：块顶部一行（白字 + 深色描边，有图/无图统一）
     ctx.textBaseline = "top";
-    put(numLabel, x + 6, top + 4, "bold 10px sans-serif", tiled ? "#fff" : "#2a2a2a");
-
-    // 提示词片段
-    if (seg.prompt) {
-      ctx.font = "11px sans-serif";
-      put(this._fitText(ctx, seg.prompt, Math.max(20, w - 14)), x + 6, top + 17, "11px sans-serif", tiled ? "#fff" : "#333");
-    }
-
-    // 时长
+    put(numLabel, x + 6, top + 4, "bold 10px sans-serif", "#fff");
     if (seg.duration) {
       const d = String(seg.duration) + "s";
       ctx.font = "9px sans-serif";
+      put(d, x + w - ctx.measureText(d).width - 5, top + 4, "9px sans-serif", "#fff");
+    }
+
+    // 提示词片段：块底部，最多两行（超出截断加省略号）
+    if (seg.prompt) {
+      ctx.font = "11px sans-serif";
+      const lines = this._fitLines(ctx, seg.prompt, Math.max(20, w - 14), 2);
+      const baseBottom = top + bh - 6;   // 底部留 6px（进度条占最底 3px）
       ctx.textBaseline = "bottom";
-      put(d, x + w - ctx.measureText(d).width - 5, top + bh - 3, "9px sans-serif", tiled ? "#fff" : "#555");
+      for (let li = 0; li < lines.length; li++) {
+        put(lines[li], x + 6, baseBottom - (lines.length - 1 - li) * 13, "11px sans-serif", "#fff");
+      }
     }
 
     // 生成进度：段底部细条——done 绿 / current 琥珀（仅 director 运行中显示）

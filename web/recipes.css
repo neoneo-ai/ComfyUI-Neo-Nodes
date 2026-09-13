@@ -539,13 +539,39 @@
 }
 
 .neo-director-tl-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 11px;
     color: #9aa4b0;
 }
 
+/* 「拉伸」控制条：时间轴说明行最右侧（不独占一行），驱动 DirectorTimeline.setZoom() */
+.neo-director-zoom {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.neo-director-zoom-toggle {
+    padding: 1px 6px;
+    border: 1px solid #4a4d55;
+    border-radius: 4px;
+    background: rgba(30, 30, 30, 0.85);
+    color: #ccc;
+    font-size: 11px;
+    line-height: 1.5;
+    cursor: pointer;
+}
+.neo-director-zoom-toggle:hover { border-color: #8cf; color: #fff; }
+.neo-director-zoom-slider {
+    width: 90px;
+    accent-color: #4fff8f;
+    cursor: pointer;
+}
+
 .neo-director-timeline {
     width: 100%;
-    height: 184px;
     padding: 6px;
     box-sizing: border-box;
     background: #161719;
