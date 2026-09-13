@@ -284,7 +284,7 @@ test("尾部 ＋ 按钮：提供 onAdd 且非只读时占位并响应点击；re
     tlNo.destroy();
 });
 
-test("setZoom/getZoom：拉伸 → 内容变宽、canvas 按像素宽；缩回铺满；越界钳制", async () => {
+test("setZoom/getZoom：放大/缩小 → canvas 按像素宽；缩回铺满；越界钳制", async () => {
     resetEnv();
     const { tl, container } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
     await sleep(40);
@@ -312,13 +312,31 @@ test("setZoom/getZoom：拉伸 → 内容变宽、canvas 按像素宽；缩回�
     assert.equal(tl._width(), 320, "缩回后内容宽度=可视宽");
     assert.equal(tl.canvas.style.width, "100%", "缩回后 canvas 铺满");
 
-    // setZoom 越界钳制到 [1, DT_MAX_ZOOM]
+    // 缩小（zoom<1）：[5,5] natural=320=可视宽，缩到 0.5 → 内容不窄于可视宽，仍铺满（不拉伸失真）
+    tl.setZoom(0.5);
+    await sleep(40);
+    assert.equal(tl.getZoom(), 0.5, "getZoom 同步（缩小）");
+    assert.equal(tl._width(), 320, "内容不窄于可视宽 → 铺满");
+    assert.equal(tl.canvas.style.width, "100%", "缩到小于可视宽时仍铺满（不拉伸）");
+
+    // 多段溢出时缩小：内容从默认总宽收窄，但不小于可视宽（横向滚动范围减小）
+    const { tl: tlMany } = makeTimeline(Array.from({ length: 10 }, () => ({ duration: 1 })), { height: 184 });
+    await sleep(40);
+    const manyDefaultW = tlMany._width();
+    assert.ok(manyDefaultW > 320, "默认总宽溢出可视区");
+    tlMany.setZoom(0.5);
+    await sleep(40);
+    assert.equal(tlMany.getZoom(), 0.5);
+    assert.ok(tlMany._width() < manyDefaultW && tlMany._width() >= 320, "缩小后内容变窄但不小于可视宽");
+    tlMany.destroy();
+
+    // setZoom 越界钳制到 [DT_MIN_ZOOM, DT_MAX_ZOOM] = [0.25, 4]
     tl.setZoom(99);
     await sleep(40);
-    assert.ok(tl.getZoom() <= 8, "超过上限钳制到最大倍数");
+    assert.equal(tl.getZoom(), 4, "超过上限钳制到最大倍数 4");
     tl.setZoom(0);
     await sleep(40);
-    assert.equal(tl.getZoom(), 1, "低于下限钳制到 1");
+    assert.equal(tl.getZoom(), 0.25, "低于下限钳制到 0.25");
 
     tl.destroy();
 });
@@ -367,28 +385,37 @@ test("拉伸时滚轮驱动横向滚动 + 显示可见滚动条类；未拉伸�
     tl.destroy();
 });
 
-test("每段最小宽度：短段过多时内容加宽并横向滚动，块宽不低于最小值；够宽则铺满", async () => {
+test("默认总宽 = 段数×(块净高×16/9)：超可视区横滚、窄则铺满；段内按时长比例分配", async () => {
     resetEnv();
-    // 10 段各 1s：比例布局会把每块压到约 30px（低于最小宽）→ 触发最小宽，内容加宽超过可视宽（320）
+    // 用编辑器同款高度 184（块净高=184-28=156）→ 每段默认宽 ≈277px；10 段总宽 = 10×277 + padding(16) ≈ 2790 > 可视宽(320) → 横滚
     const segs = Array.from({ length: 10 }, () => ({ duration: 1 }));
-    const { tl } = makeTimeline(segs);
+    const { tl } = makeTimeline(segs, { height: 184 });
     await sleep(40);
 
-    const minW = tl.opts.height * 16 / 9; // 每段最小宽 = 块高 × 16/9（height=40 → ≈71px）
+    const frameW = (tl.opts.height - 28) * 16 / 9; // 每段默认宽 = 块净高 × 16/9（height=184 → ≈277px）
     assert.ok(tl._width() > 320, "内容宽度超出可视区");
+    assert.equal(tl._width(), Math.ceil(10 * frameW + 16), "默认总宽 = 段数×默认宽 + padding");
     const blocks = tl._layout().blocks;
     assert.equal(blocks.length, 10);
-    for (const b of blocks) assert.ok(b.w >= minW - 0.5, "每块宽度不低于最小宽（按高 16:9）");
+    for (const b of blocks) assert.ok(Math.abs(b.w - frameW) < 1, "时长相等时每块≈默认帧宽（比例分配，非下限）");
     assert.equal(tl.canvas.style.width, tl._width() + "px", "溢出时 canvas 按像素宽");
     assert.ok(tl.scroll.classList.contains("neo-dtl-zoomed"), "溢出显示可见滚动条");
     tl.destroy();
 
-    // 段少且够宽：不触发加宽，铺满可视区
+    // 段少且默认总宽 < 可视区：拉伸铺满可视区
     const { tl: tl2 } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
     await sleep(40);
-    assert.equal(tl2._width(), 320, "段够宽时不额外加宽");
+    assert.equal(tl2._width(), 320, "默认总宽不足时铺满可视区");
     assert.equal(tl2.canvas.style.width, "100%", "铺满可视区");
     tl2.destroy();
+
+    // 时长不等：段内按 dur 比例分配相对宽（长段更宽）
+    const { tl: tl3 } = makeTimeline([{ duration: 1 }, { duration: 3 }]);
+    await sleep(40);
+    const b3 = tl3._layout().blocks;
+    assert.ok(b3[1].w > b3[0].w, "长段更宽（按时长比例）");
+    assert.ok(Math.abs(b3[1].w / b3[0].w - 3) < 0.5, "宽度比≈时长比 3:1");
+    tl3.destroy();
 });
 
 test("_fitLines：中间行取满不加省略号，仅最后一行超出时加省略号", () => {

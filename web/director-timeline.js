@@ -10,7 +10,11 @@
 //       onAdd()（点击时间轴尾部「＋」按钮添加段；仅非 readOnly 且提供时显示）。
 
 const DT_CSS_HREF = "/extensions/ComfyUI-Neo-Nodes/director-timeline.css";
-const DT_MAX_ZOOM = 8;       // 时间轴最大拉伸倍数（参考 MiniMax H3 Director）
+const DT_MIN_ZOOM = 0.25;    // 时间轴最小缩放（缩小看更多段）
+const DT_MAX_ZOOM = 4;       // 时间轴最大缩放倍数
+const DT_RULER_H = 18;       // 顶部秒刻度尺高度
+const DT_TOP_GAP = 4;        // 刻度尺与块之间的间距
+const DT_BOTTOM_PAD = 6;     // 底部进度条/提示区
 
 export class DirectorTimeline {
   constructor(container, options) {
@@ -37,7 +41,7 @@ export class DirectorTimeline {
     this.canvas.style.cssText = "display:block;cursor:pointer;";
     this.scroll.appendChild(this.canvas);
 
-    // 拉伸（zoom）状态：由宿主经 setZoom() 控制；>1 时内容变宽并横向滚动（参考 MiniMax H3 Director）
+    // 拉伸（zoom）状态：由宿主经 setZoom() 控制；>1 时内容变宽并横向滚动
     this._zoom = 1;
     container.appendChild(this.scroll);
     // 内容超出可视区（放大或最小宽导致）时：鼠标滚轮驱动横向滚动；stopPropagation 挡掉画布平移/缩放
@@ -116,13 +120,14 @@ export class DirectorTimeline {
     if (this.scroll.parentNode) this.scroll.parentNode.removeChild(this.scroll);
   }
 
-  // 设置时间轴拉伸倍数（1=铺满可视区，>1 内容变宽并横向滚动）。参考 MiniMax H3 Director。
+  // 设置时间轴缩放倍数（作用于自然内容宽：>1 放大、<1 缩小；超出可视区横向滚动）。
   setZoom(z) {
-    const next = Math.max(1, Math.min(DT_MAX_ZOOM, Number(z) || 1));
+    const next = Math.max(DT_MIN_ZOOM, Math.min(DT_MAX_ZOOM, Number(z) || DT_MIN_ZOOM));
     if (next === this._zoom) return;
     this._zoom = next;
-    if (this.scroll && next <= 1) this.scroll.scrollLeft = 0; // 缩回铺满时回到最左（时间 0 对齐）
     this.refresh();
+    // 内容不再溢出可视区时回到最左（时间 0 对齐）
+    if (this.scroll && this._width() <= this._visibleWidth()) this.scroll.scrollLeft = 0;
   }
 
   // 当前拉伸倍数（宿主据此同步自己的滑块/按钮 UI）。
@@ -142,7 +147,7 @@ export class DirectorTimeline {
     if (this.opts.readOnly || typeof this.opts.onAdd !== "function") return null;
     const W = this._width();
     const H = this.opts.height;
-    const top = 22, bh = H - top - 6; // 与 _draw 一致：rulerH(18)+4
+    const top = DT_RULER_H + DT_TOP_GAP, bh = this._blockHeight(); // 与 _draw 一致
     const s = 24;
     return { x: W - 8 - s, y: top + (bh - s) / 2, w: s, h: s };
   }
@@ -185,9 +190,14 @@ export class DirectorTimeline {
     this.refresh();
     if (i >= 0 && e.dataTransfer) this.opts.onDropImage(i, e.dataTransfer);
   }
-  // 每段最小宽度（px）：按块高以 16:9 计算，使短段保持视频帧比例、避免被挤成细条；不足时内容加宽并横向滚动
-  _minBlockW() {
-    return (this.opts.height || 0) * 16 / 9;
+  // 块净高：画布总高减去顶部秒刻度尺、间距与底部进度条区，即视频预览区的实际高度
+  _blockHeight() {
+    return Math.max(0, (this.opts.height || 0) - DT_RULER_H - DT_TOP_GAP - DT_BOTTOM_PAD);
+  }
+
+  // 每段默认宽度（px）：按块净高以 16:9 计算，作为内容宽度的默认基准（非下限）——每段约一个视频帧宽
+  _defaultSegW() {
+    return this._blockHeight() * 16 / 9;
   }
 
   // 可视区宽度：优先 scroll 容器 clientWidth（放大时不含滚动内容）；回退 canvas/容器（测试桩常 mock canvas.clientWidth）
@@ -197,28 +207,21 @@ export class DirectorTimeline {
     return this.canvas.clientWidth || this.container.clientWidth || 0;
   }
 
-  // 内容宽度：取「放大后可视宽」与「满足每段最小宽所需宽度」的较大者；超出可视区即横向滚动
+  // 内容宽度：以「自然宽 = max(可视宽, 默认总宽)」为基数，按缩放倍数放大/缩小（作用于内容本身）；
+  // 缩放后不窄于可视宽（缩到铺满为止），超出可视区即横向滚动。zoom=1 时恒等于自然宽（铺满或默认总宽）。
   _width() {
-    const visible = this._visibleWidth();
-    const base = this._zoom > 1 ? Math.round(visible * this._zoom) : visible;
-    return Math.max(base, this._minFitWidth());
+    const natural = Math.max(this._visibleWidth(), this._defaultContentW());
+    return Math.max(Math.round(natural * this._zoom), this._visibleWidth());
   }
 
-  // 保证每段宽度 >= _minBlockW()（按高 16:9）所需的内容宽度（含 padding 与尾部 ＋）；无分段时返回 0
-  _minFitWidth() {
-    const segs = this._segs;
-    const n = segs.length;
+  // 默认总内容宽度：段数 × 每段默认宽（按高 16:9，含 padding 与尾部 ＋）；无分段时返回 0。
+  // 段内仍按时长比例分配相对宽（见 _layout），故平均约一个帧宽、长段更宽短段更窄
+  _defaultContentW() {
+    const n = this._segs.length;
     if (n === 0) return 0;
-    let total = 0, pps = 0;
-    for (let i = 0; i < n; i++) {
-      const d = Number(segs[i].duration) || 0;
-      total += d;
-      if (d > 0) pps = Math.max(pps, this._minBlockW() / d);
-    }
-    if (total <= 0) return 0;
     const padX = 8;
     const addW = (typeof this.opts.onAdd === "function" && !this.opts.readOnly) ? 32 : 0;
-    return Math.ceil(total * pps + padX * 2 + addW);
+    return Math.ceil(n * this._defaultSegW() + padX * 2 + addW);
   }
 
   // 依据当前分段计算每块像素位置：{ padX, usable, total, pxPerSec, blocks:[{i,x,w}] }
@@ -242,7 +245,7 @@ export class DirectorTimeline {
       const pps = usable / total;
       let x = padX;
       for (let i = 0; i < n; i++) {
-        const w = Math.max(durOf(i) * pps, this._minBlockW());
+        const w = durOf(i) * pps;
         blocks.push({ i, x, w, seg: segs[i] });
         x += w;
       }
@@ -421,7 +424,7 @@ export class DirectorTimeline {
     }
 
     // 顶部秒刻度尺
-    const rulerH = 18;
+    const rulerH = DT_RULER_H;
     if (L.total > 0) {
       ctx.strokeStyle = "#3a3a3a";
       ctx.beginPath(); ctx.moveTo(L.padX, rulerH - 2); ctx.lineTo(W - L.padX, rulerH - 2); ctx.stroke();
@@ -438,8 +441,8 @@ export class DirectorTimeline {
       }
     }
 
-    const top = rulerH + 4;
-    const bh = H - top - 6;
+    const top = rulerH + DT_TOP_GAP;
+    const bh = this._blockHeight();
     const drag = this._drag && this._drag.moved ? this._drag : null;
     // 悬停块的起止秒（时间范围提示）；调时长拖动中跟随预览值
     let hoverRange = null;

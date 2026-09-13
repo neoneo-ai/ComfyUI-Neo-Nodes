@@ -100,17 +100,17 @@ test("时间轴说明行最右侧「拉伸」控制条：点按钮/拖滑块驱�
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
     canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
 
-    // 点「🔍 拉伸」→ zoom 1→2：滑块同步、canvas 按像素宽（320×2）
+    // 点「🔍 拉伸」→ zoom 1→2：滑块同步、canvas 按像素宽（自然宽 = max(可视宽, 默认总宽) = 326，×2）
     toggle.click();
     await sleep(60);
     assert.equal(slider.value, "2", "点按钮后滑块同步到 2");
-    assert.equal(canvas.style.width, "640px", "zoom=2 canvas 按像素宽");
+    assert.equal(canvas.style.width, "652px", "zoom=2 canvas 按像素宽（自然宽 326×2）");
 
-    // 拖滑块到 4 → zoom 跟随：canvas 320×4
+    // 拖滑块到 4 → zoom 跟随：canvas 自然宽 326×4
     slider.value = "4";
     slider.dispatchEvent(new window.Event("input", { bubbles: true }));
     await sleep(60);
-    assert.equal(canvas.style.width, "1280px", "拖滑块到 4 → canvas 320×4");
+    assert.equal(canvas.style.width, "1304px", "拖滑块到 4 → canvas 自然宽 326×4");
 
     const closeBtn = document.querySelector(".neo-director-close");
     if (closeBtn) closeBtn.click();
@@ -328,9 +328,9 @@ test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
     canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 184, width: 320, height: 184 };
 
-    // 最小宽溢出后 W≈702：「＋」在 x∈[670,694]、y∈[88,112]（时间轴高度 184）
+    // 默认总宽溢出后 W≈603：「＋」在 x∈[571,595]、y∈[88,112]（时间轴高度 184）
     const click = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
-    canvas.dispatchEvent(click("mousedown", 680, 100));
+    canvas.dispatchEvent(click("mousedown", 583, 100));
 
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
     assert.equal(segs.length, 3, "点击 ＋ 后新增一段");

@@ -513,7 +513,7 @@ export async function openDirectorEditor(existing = null, onSaved = null) {
     ]);
 
     // 「拉伸」控制条：放在时间轴说明行最右侧（不独占一行），驱动 timeline.setZoom()。
-    const zoomSlider = $el('input', { className: 'neo-director-zoom-slider', type: 'range', min: 1, max: 8, step: 0.5, value: 1 });
+    const zoomSlider = $el('input', { className: 'neo-director-zoom-slider', type: 'range', min: 0.25, max: 4, step: 0.25, value: 1 });
     zoomSlider.addEventListener('input', () => { if (timeline) timeline.setZoom(Number(zoomSlider.value)); });
     const zoomToggle = $el('button', { className: 'neo-director-zoom-toggle', type: 'button', title: '拉伸时间轴', textContent: '🔍 拉伸' });
     zoomToggle.addEventListener('click', () => {
