@@ -11,6 +11,7 @@
 //     --python <exe>  python with Pillow (default: project python)
 //     --width <px>    output width after scaling (default 900)
 //     --crop-w <px>   crop to this width before scaling; 0 = no crop (default full)
+//     --crop-x <px>   left offset of the crop window (default 0); use with --crop-w
 //     --keep-frames   keep the temp frames dir for inspection
 //
 // To add a new doc GIF: register a scenario below (a small async function that
@@ -118,19 +119,96 @@ const SCENARIOS = {
       await h.snap('reordered', 520);
     },
   },
+
+  // Open the Neo Gallery sidebar, enter a directory, open the lightbox and
+  // wheel-zoom in. Full-width capture: the lightbox is a centered overlay.
+  'gallery-lightbox': {
+    out: 'neo-gallery-lightbox.gif',
+    cropW: 1050, // keep left panel + centered lightbox; drop the empty right canvas
+    async run(h) {
+      const page = h.page;
+      await page.setViewportSize({ width: 1500, height: 860 });
+      await page.goto(COMFY_URL, { waitUntil: 'load' });
+      await page.waitForFunction(() => !!window.comfyAPI, null, { timeout: 30000 });
+      await h.wait(2500);
+
+      // Sidebar -> 素材 tab (aria-label = tooltip "Neo Gallery").
+      await page.locator('button[aria-label="Neo Gallery"]').click();
+      await page.waitForSelector('.neo-gallery-category-card', { timeout: 15000 });
+      await h.wait(700);
+      await h.snap('gallery-open', 320);
+
+      // Enter the "Input" category (has ~90 images).
+      await h.clickByText('.neo-gallery-category-card', 'Input');
+      await page.waitForSelector('.neo-gallery-thumb-img:not(.neo-gallery-thumb-placeholder)', { timeout: 15000 });
+      await h.wait(800);
+      await h.snap('input-dir', 320);
+
+      // Click a thumbnail to open the lightbox.
+      await page.locator('.neo-gallery-thumb-img:not(.neo-gallery-thumb-placeholder)').first().click();
+      await page.waitForSelector('.neo-lightbox .neo-lightbox-media', { timeout: 15000 });
+      await h.wait(700);
+      await h.snap('lightbox-open', 320);
+
+      // Wheel-zoom in on the stage so the scale change reads as motion.
+      const stage = page.locator('.neo-lightbox-stage').first();
+      await stage.hover();
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, -140);
+        await h.wait(200);
+        await h.snap('zoom', 130);
+      }
+
+      // Step to the next image with the arrow button.
+      await page.locator('.neo-lightbox-next').first().click();
+      await h.wait(550);
+      await h.snap('next', 460);
+    },
+  },
+
+  // Open the Neo Recipes sidebar and one-click send a recipe to the workflow.
+  'recipes-send': {
+    out: 'neo-recipes-send.gif',
+    async run(h) {
+      const page = h.page;
+      await page.setViewportSize({ width: 1500, height: 860 });
+      await page.goto(COMFY_URL, { waitUntil: 'load' });
+      await page.waitForFunction(() => !!window.comfyAPI, null, { timeout: 30000 });
+      await h.wait(2500);
+
+      // Sidebar -> 配方 tab.
+      await page.locator('button[aria-label="Neo Recipes (视频配方)"]').click();
+      await page.waitForSelector('.neo-recipes-panel .neo-recipes-card', { timeout: 15000 });
+      await h.wait(700);
+      await h.snap('panel', 340);
+
+      // Hover the non-director recipe card to reveal its action buttons.
+      const card = page.locator('.neo-recipes-card').filter({ hasText: /Protogen/i }).first();
+      await card.hover();
+      await h.wait(350);
+      await h.snap('hover', 280);
+
+      // One-click send to workflow; wait for the response toast.
+      await card.locator('.neo-recipes-send').click();
+      await h.wait(900);
+      await h.snap('pressed', 300);
+      await h.wait(1800);
+      await h.snap('toast', 750);
+    },
+  },
 };
 
 // ---- GIF build (inline Pillow) --------------------------------------------
 const PY_BUILD = `
 import json, os, sys
 from PIL import Image
-frames_dir, out, target_w, crop_w = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+frames_dir, out, target_w, crop_w, crop_x = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 manifest = json.load(open(os.path.join(frames_dir, "manifest.json"), encoding="utf-8"))
 frames = []
 for item in manifest:
     im = Image.open(os.path.join(frames_dir, item["file"])).convert("RGB")
-    if crop_w and 0 < crop_w < im.width:
-        im = im.crop((0, 0, crop_w, im.height))
+    if crop_w and 0 < crop_x + crop_w <= im.width:
+        im = im.crop((crop_x, 0, crop_x + crop_w, im.height))
     h = round(im.height * target_w / im.width)
     frames.append((im.resize((target_w, h), Image.LANCZOS), item["duration"]))
 dedup = []
@@ -173,7 +251,8 @@ async function main() {
 
   const width = Number(getOpt('width', 900));
   const cropW = argv.includes('--crop-w') ? Number(getOpt('crop-w', '0')) : (scenario.cropW || 0);
-  execFileSync(PYTHON, ['-c', PY_BUILD, framesDir, outPath, String(width), String(cropW)], { stdio: 'inherit' });
+  const cropX = argv.includes('--crop-x') ? Number(getOpt('crop-x', '0')) : (scenario.cropX || 0);
+  execFileSync(PYTHON, ['-c', PY_BUILD, framesDir, outPath, String(width), String(cropW), String(cropX)], { stdio: 'inherit' });
 
   if (KEEP_FRAMES) {
     console.log('frames kept at', framesDir);

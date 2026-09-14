@@ -16,8 +16,17 @@
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 | [recipes](docs/recipes.md) |
 | 🔧 工作流修复 | 顶栏工具 | 换机器 / 改目录后模型路径失效时，按文件名匹配磁盘真实文件一键修复；可手动改选、记住映射、载入前自动检查 | [workflow-repair](docs/workflow-repair.md) |
 
+## 功能演示
+
+主要模块的交互实录（点击缩略图进入对应文档）：
+
+| 🖼️ Neo Gallery · 灯箱 | 🧊 Neo Recipes · 一键发送 | 🎞️ H3 Video Director · 时间轴重排 |
+|:---:|:---:|:---:|
+| [![Neo Gallery 灯箱浏览](docs/assets/images/neo-gallery-lightbox.gif)](docs/gallery.md) | [![配方一键发送到工作流](docs/assets/images/neo-recipes-send.gif)](docs/recipes.md) | [![多段导演时间轴拖拽重排](docs/assets/images/neo-video-director-timeline.gif)](docs/h3-video-gen.md) |
+
 ## 目录
 
+- [功能演示](#功能演示)
 - [安装](#安装)
 - [依赖](#依赖)
 - [快速上手](#快速上手)
