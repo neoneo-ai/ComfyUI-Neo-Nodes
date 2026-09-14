@@ -140,6 +140,19 @@ class AgentBundleOutputTests(unittest.TestCase):
         self.assertTrue(refs[0]["data"].startswith("data:image/png;base64,"))
         self.assertEqual(prompts._bundle_references(None), [])
 
+    def test_bundle_references_multi_image(self):
+        # 批量 [N,H,W,C] → N 个 reference（顺序对应 image_1..image_N）
+        refs = prompts._bundle_references(torch.full((3, 4, 4, 3), 0.5))
+        self.assertEqual(len(refs), 3)
+        for r in refs:
+            self.assertEqual(r["kind"], "data")
+            self.assertTrue(r["data"].startswith("data:image/png;base64,"))
+
+    def test_bundle_references_capped_at_max(self):
+        # 超过上限只取前 MAX_BUNDLE_REFERENCES 张，避免无界 base64 内存增长
+        refs = prompts._bundle_references(torch.full((12, 2, 2, 3), 0.5))
+        self.assertEqual(len(refs), prompts.MAX_BUNDLE_REFERENCES)
+
 
 class BundleInputPlacementTests(unittest.TestCase):
     """bundle 输入须可见（非 hidden）且紧跟 image 之后。"""

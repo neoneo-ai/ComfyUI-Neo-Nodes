@@ -13,6 +13,7 @@ import threading
 import copy
 import logging
 import random
+import time
 import base64
 from server import PromptServer
 
@@ -182,15 +183,79 @@ def image_tensor_to_png(image: torch.Tensor) -> bytes | None:
         return None
 
 
+MAX_BUNDLE_REFERENCES = 9  # bundle 参考图上限，对齐官方 MiniMaxH3ReferenceToVideo.ref_images
+
+
 def _bundle_references(image) -> list:
-    """把连接的 image 张量编码成 H3/Krea2 可消费的 reference（data URI）；无图/失败返回空列表。"""
-    if image is None:
+    """把连接的 image 张量按 batch 维逐帧编码成 H3/Krea2/Ref2V 可消费的 reference（data URI）列表；无图/失败返回空列表。
+
+    单图 [1,H,W,C] → 1 个 reference；批量 [N,H,W,C] → N 个（顺序对应 image_1..image_N，超过上限只取前 MAX_BUNDLE_REFERENCES 张）。
+    """
+    if image is None or not isinstance(image, torch.Tensor) or image.dim() != 4:
         return []
-    png = image_tensor_to_png(image)
-    if not png:
+    references = []
+    for i in range(min(int(image.shape[0]), MAX_BUNDLE_REFERENCES)):
+        png = image_tensor_to_png(image[i:i + 1])
+        if not png:
+            continue
+        data_uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+        references.append({"kind": "data", "data": data_uri})
+    return references
+
+
+# 前端采集的 @引用/本地上传参考图按节点 id 暂存（原始 src：data URI / input 引用），
+# 供 get_prompt 出队创建 bundle 时合并进 references。只存轻量引用，TTL + 取出即删防泄漏。
+_PENDING_BUNDLE_REFS = {}
+_PENDING_BUNDLE_REFS_LOCK = threading.Lock()
+_BUNDLE_REFS_TTL_SECONDS = 3600
+
+
+def store_bundle_refs(node_id, refs) -> None:
+    """暂存前端采集的参考图（@引用/本地上传），供 get_prompt 出队时合并进 bundle.references。
+
+    node_id 与节点 hidden UNIQUE_ID 一致；refs 为 [{kind:"data",data:...}|{kind:"input",value:...}]。
+    replace 语义：以当前 refs 整体覆盖该节点旧值（前端每次图片增删/清空都推送完整列表）；
+    refs 为空列表表示清空该节点暂存。take_bundle_refs 取出一条后即删除（与最近一次生成绑定）。
+    """
+    key = str(node_id or "")
+    if not key:
+        return
+    now = time.time()
+    with _PENDING_BUNDLE_REFS_LOCK:
+        for k in [k for k, (t, _) in _PENDING_BUNDLE_REFS.items() if now - t > _BUNDLE_REFS_TTL_SECONDS]:
+            del _PENDING_BUNDLE_REFS[k]
+        if refs:
+            _PENDING_BUNDLE_REFS[key] = (now, list(refs))
+        else:
+            _PENDING_BUNDLE_REFS.pop(key, None)
+
+
+def take_bundle_refs(node_id) -> list:
+    """取出并清除暂存的参考图，转成 reference data URI 列表（与 _bundle_references 输出格式一致）。"""
+    key = str(node_id or "")
+    if not key:
         return []
-    data_uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
-    return [{"kind": "data", "data": data_uri}]
+    with _PENDING_BUNDLE_REFS_LOCK:
+        entry = _PENDING_BUNDLE_REFS.pop(key, None)
+    if not entry:
+        return []
+    refs = []
+    for src in entry[1]:
+        png = resolve_image_bytes(src)
+        if png:
+            refs.append({"kind": "data", "data": "data:image/png;base64," + base64.b64encode(png).decode("ascii")})
+    return refs
+
+
+@server.PromptServer.instance.routes.post("/rs_prompts/bundle_refs")
+async def neo_store_bundle_refs(request):
+    """前端图片增删时推送 @引用/本地上传参考图暂存（与点击生成解耦），出队合并进 bundle.references。"""
+    data = await request.json()
+    node_id = str(data.get("uid") or "")
+    refs = data.get("refs") or []
+    if node_id:
+        store_bundle_refs(node_id, refs)
+    return web.json_response({"success": True})
 
 
 def _load_tags_index(tags_file: str = TAGS_FILE) -> dict:
@@ -1315,9 +1380,11 @@ class NeoPromptAgent:
         # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
         _auto_unload_local_after_generate()
         # 运行时 bundle：把本次 prompt/连接图/skill 打包成临时 id，供下游 H3/Krea2 按 id 消费
+        # references = 连线张量 + 前端采集的 @引用/本地上传图（按节点 id 暂存，取出即删）
+        references = (_bundle_references(image) + take_bundle_refs(unique_id))[:MAX_BUNDLE_REFERENCES]
         bundle_id = create_bundle({
             "prompts": list(prompts_list),
-            "references": _bundle_references(image),
+            "references": references,
             "gen_type": "",   # 运行时无法确定目标模态（图/视频），留空；消费端按自身类型处理
             "skill_id": skill_id or "",
         })

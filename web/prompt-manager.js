@@ -125,7 +125,7 @@ function createDeleteModal() {
 // ==========================================
 
 function createPromptManagerUI() {
-    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, thinkingDepthSelect, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow } = createStatusBars();
+    const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, thinkingDepthSelect, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, setAttachedChangeListener } = createStatusBars();
     const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint, saveResultsRow: recipeResultsRow, saveResultsCheck: recipeResultsCheck } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
@@ -372,9 +372,21 @@ function createPromptManagerUI() {
     let isLoading = false;
     let isListOpen = false;
 
+    // 图片增删即时推送暂存（按节点 id）：使 @引用/本地上传图不依赖点击生成即进入 bundle.references
+    function pushBundleRefs(nodeId, images) {
+        const refs = images.map(img => img.input ? { kind: "input", value: img.input } : { kind: "data", data: img.data });
+        fetch("/rs_prompts/bundle_refs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ uid: nodeId, refs })
+        }).catch(e => console.warn("pushBundleRefs failed:", e));
+    }
+
     function init(ctx) {
         context = ctx;
         const { node, textWidget, allowRecipe } = ctx;
+
+        setAttachedChangeListener(images => pushBundleRefs(node.id, images));
 
         function handleSaveClick() {
             presetListOverlay.style.display = "none";

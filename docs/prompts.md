@@ -32,7 +32,7 @@
 
 - **无需 CLIP 输入** - 不绑定文本编码器
 - **无状态栏/切换开关** - 界面更简洁
-- **输出 PROMPT + BUNDLE** - PROMPT 为提示词文本；BUNDLE 为本次生成的运行时包 id，供 🎨 Krea2 / 🎬 H3 按 id 消费（携带 prompt、连接图参考、skill）
+- **输出 PROMPT + BUNDLE** - PROMPT 为提示词文本；BUNDLE 为本次生成的运行时包 id，供 🎨 Krea2 / 🎬 H3 按 id 消费（携带 prompt、参考图（连线·@引用·本地上传）、skill）
 
 ### 输入/输出
 
@@ -44,7 +44,7 @@
 | 输出 | 类型 | 说明 |
 |------|------|------|
 | PROMPT | STRING | 提示词字符串（多结果 skill 按条目循环消费） |
-| BUNDLE | STRING | 运行时 bundle id（`bnd_*`）；连到 Krea2/H3 的 `bundle` 输入可一次性带上 prompt/连接图/skill。仅存内存，过期后下游安全回退本地输入 |
+| BUNDLE | STRING | 运行时 bundle id（`bnd_*`）；连到 Krea2/H3 的 `bundle` 输入可一次性带上 prompt/参考图（连线·@引用·本地上传）/skill。仅存内存，过期后下游安全回退本地输入 |
 
 ## 节点界面与按钮
 

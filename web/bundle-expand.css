@@ -1,0 +1,103 @@
+/* NeoBundleExpand 节点内展示块：提示词 + 参考图缩略图网格（编号对应输出 image_1..image_N）。 */
+
+.neo-be-view {
+    box-sizing: border-box;
+    font-size: 12px;
+    color: #ccc;
+}
+
+/* 区块标题（提示词 / 参考图） */
+.neo-be-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #9fb0d8;
+    margin: 2px 0 5px;
+    letter-spacing: .3px;
+}
+
+.neo-be-label .neo-be-count {
+    font-weight: 400;
+    color: #7c8aa8;
+}
+
+/* 提示词：有界高度 + 滚动，避免超长文本把节点撑得过高 */
+.neo-be-prompt {
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.55;
+    background: rgba(128, 140, 255, .10);
+    border: 1px solid rgba(128, 140, 255, .18);
+    border-radius: 7px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+
+.neo-be-prompt-empty {
+    color: #6b7488;
+    font-style: italic;
+}
+
+/* 缩略图网格：固定 3 列，每张随节点宽度等比放大（节点越宽图越大） */
+.neo-be-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.neo-be-cell {
+    position: relative;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #1c1f2b;
+}
+
+.neo-be-thumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    display: block;
+    cursor: pointer;
+    transition: filter .12s ease;
+}
+
+.neo-be-cell:hover .neo-be-thumb {
+    filter: brightness(1.14);
+}
+
+/* 编号角标：左上角，对应 image_N 输出槽位 */
+.neo-be-badge {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: rgba(18, 22, 44, .85);
+    border: 1px solid rgba(140, 160, 255, .55);
+    border-radius: 9px;
+    pointer-events: none;
+}
+
+.neo-be-none {
+    color: #7c8aa8;
+    font-style: italic;
+    padding: 4px 0;
+}
+
+.neo-be-hint {
+    color: #7c8aa8;
+    font-size: 11px;
+    padding: 6px 0;
+}

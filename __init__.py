@@ -80,6 +80,18 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] h3_video_director 节点注册失败（多段视频导演不可用）: {e}")
 
+    # Neo Bundle Expand：把 NeoPromptAgent 的 BUNDLE 展开成 prompt + image，便于对接官方 MiniMax H3 视频节点。
+    # 依赖 prompts/bundles 已加载；导入失败时优雅降级。
+    BUNDLE_EXPAND_MAPPINGS = {}
+    BUNDLE_EXPAND_DISPLAY_MAPPINGS = {}
+    try:
+        from .bundle_expand import (
+            NODE_CLASS_MAPPINGS as BUNDLE_EXPAND_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as BUNDLE_EXPAND_DISPLAY_MAPPINGS,
+        )
+    except Exception as e:
+        print(f"[NeoNodes] bundle_expand 节点注册失败（BUNDLE 展开不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
@@ -87,6 +99,7 @@ if __package__ not in (None, ""):
         **KREA2_GENERATE_MAPPINGS,
         **H3_VIDEO_MAPPINGS,
         **H3_DIRECTOR_MAPPINGS,
+        **BUNDLE_EXPAND_MAPPINGS,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
@@ -95,6 +108,7 @@ if __package__ not in (None, ""):
         **KREA2_GENERATE_DISPLAY_MAPPINGS,
         **H3_VIDEO_DISPLAY_MAPPINGS,
         **H3_DIRECTOR_DISPLAY_MAPPINGS,
+        **BUNDLE_EXPAND_DISPLAY_MAPPINGS,
     }
 
 # Web directory for frontend extensions

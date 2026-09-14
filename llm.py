@@ -1607,6 +1607,12 @@ async def handle_llm_api_stream(task_name, request):
         text = data.get("text", "")
         skill_id = data.get("skillId", data.get("skill_id", ""))
         raw_images = data.get("images") or []
+        # 前端采集的 @引用/本地上传参考图（不含连线图）+ 节点 id，供出队时合并进 bundle.references
+        bundle_refs = data.get("bundleRefs") or []
+        node_id = str(data.get("uid") or "")
+        if node_id and bundle_refs:
+            from .prompts import store_bundle_refs
+            store_bundle_refs(node_id, bundle_refs)
         # 前端采集的工作流上下文（MiniMax H3 参数 + 参考媒体清单），仅元数据，无图像素
         context = data.get("context")
         # "思考深度"下拉：off→enable_thinking=False；low/medium/xhigh→reasoning_effort（Qwen3.8 模板档位）

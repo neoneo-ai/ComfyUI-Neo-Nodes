@@ -85,10 +85,17 @@ function createStatusBars() {
     fileInput.style.display = "none";
     const attachedImages = []; // [{data: dataURI, name: string}]
 
+    // 图片增删后通知（init 时由 node 绑定后设置）：把当前 @引用/本地上传图推送暂存，
+    // 使"添加参考图"不依赖点击生成即可进入 bundle.references。
+    let _attachedChangeListener = null;
+    function setAttachedChangeListener(fn) { _attachedChangeListener = fn; }
+    function notifyAttachedChange() { if (_attachedChangeListener) _attachedChangeListener(attachedImages); }
+
     function addImageFile(file) {
         return fileToBase64(file).then(img => {
             attachedImages.push(img);
             renderImageChips();
+            notifyAttachedChange();
             return img;
         }).catch(e => console.error("Failed to read image:", e));
     }
@@ -169,6 +176,7 @@ function createStatusBars() {
             del.addEventListener("click", () => {
                 attachedImages.splice(idx, 1);
                 renderImageChips();
+                notifyAttachedChange();
             });
 
             controls.appendChild(del);
@@ -181,6 +189,7 @@ function createStatusBars() {
     function clearImages() {
         attachedImages.length = 0;
         renderImageChips();
+        notifyAttachedChange();
     }
 
     // input 目录图片的缩略图地址（ComfyUI /view 端点）
@@ -207,6 +216,7 @@ function createStatusBars() {
         if (dup) return;
         attachedImages.push({ name: name || key.split("/").pop(), input: value, pictureNo });
         renderImageChips();
+        notifyAttachedChange();
     }
 
     // 图片选择按钮（+）
@@ -693,7 +703,7 @@ function createStatusBars() {
     // It will be placed in topRightBtnGroup by createPromptManagerUI().
     buttonsWrapper.appendChild(actionRow);
 
-    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, thinkingDepthSelect, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker };
+    return { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, thinkingDepthSelect, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, openAtImagePicker, setAttachedChangeListener };
 }
 
 // ==========================================
@@ -911,11 +921,13 @@ function createGenerateHandler(promptUI) {
 
         // 附加图片、节点 image 输入连接 -> vision skill 路由（反推等）
         const slotImage = resolveConnectedImageSource(node);
+        // @引用/本地上传参考图（不含连线 slotImage）：供出队时合并进 bundle.references
+        const attachedPayload = attachedImages.map(img => img.input
+            ? { kind: "input", value: img.input }
+            : { kind: "data", data: img.data });
         const imagesPayload = [
             ...(slotImage ? [slotImage] : []),
-            ...attachedImages.map(img => img.input
-                ? { kind: "input", value: img.input }
-                : { kind: "data", data: img.data }),
+            ...attachedPayload,
         ];
         const hasImages = imagesPayload.length > 0;
 
@@ -1085,6 +1097,8 @@ function createGenerateHandler(promptUI) {
                     text: messageToLLM,
                     skillId,
                     images: imagesPayload,
+                    uid: node.id,
+                    bundleRefs: attachedPayload,
                     description: quickText || currentPrompt,
                     context: workflowContext,
                     ...enableThinkingField
