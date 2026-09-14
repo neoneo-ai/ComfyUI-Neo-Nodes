@@ -307,6 +307,26 @@ test("共享分辨率：旧配方 W/H 反推宽高比+百万像素；改 MP 更�
     await sleep(20);
 });
 
+test("共享分辨率：新建配方初始为 16:9 @ 百万像素 0.5（默认 960×544）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+
+    await openDirectorEditor(null); // 新建：无 existing → 走默认分支
+    await sleep(60);
+
+    assert.equal(document.querySelector(".neo-director-aspect").value, "16:9 (宽屏)");
+    assert.equal(document.querySelector(".neo-director-mp").value, "0.5", "新建配方百万像素初始 0.5");
+    assert.equal(document.querySelector(".neo-director-res").textContent, "960×544", "按 32 对齐的默认分辨率");
+
+    const closeBtn = document.querySelector(".neo-director-close");
+    if (closeBtn) closeBtn.click();
+    await sleep(20);
+});
+
+
 test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
@@ -495,6 +515,102 @@ test("导演编辑器：标题栏 ⛶ 放大到最大，双击标题栏还原", 
     if (closeBtn) closeBtn.click();
     await sleep(20);
 });
+
+test("标题栏配方名：默认直显文本、点击行内编辑（Enter/失焦提交、Esc 还原），名称区不触发拖动/最大化", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "T-renamed" }));
+
+    const existing = {
+        name: "T-name",
+        shared: { width: 1344, height: 768 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const titleBar = document.querySelector(".neo-director-title");
+    const wrap = titleBar.querySelector(".neo-director-name-wrap");
+    assert.ok(wrap, "配方名在标题栏内");
+    assert.equal(document.querySelectorAll(".neo-director-name").length, 1, "配方名输入框唯一（内容区不再重复一份）");
+    const view = wrap.querySelector(".neo-director-name-view");
+    const inp = wrap.querySelector(".neo-director-name");
+    assert.equal(view.textContent, "T-name", "默认直接显示配方名");
+
+    // 点击进入编辑：输入框出现并聚焦
+    view.click();
+    assert.ok(wrap.classList.contains("neo-director-name-editing"), "点击后进入编辑态");
+    assert.equal(document.activeElement, inp, "编辑态自动聚焦输入框");
+
+    // Enter 提交 → 退出编辑态并更新显示文本
+    inp.value = "T-renamed";
+    inp.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    assert.ok(!wrap.classList.contains("neo-director-name-editing"), "Enter 后退出编辑态");
+    assert.equal(view.textContent, "T-renamed", "显示文本随提交更新");
+
+    // Esc 还原为打开时的配方名
+    view.click();
+    inp.value = "临时改的名";
+    inp.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(inp.value, "T-name", "Esc 还原原配方名");
+    assert.equal(view.textContent, "T-name", "Esc 后显示文本不变");
+
+    // 失焦同样提交
+    view.click();
+    inp.value = "T-renamed";
+    inp.dispatchEvent(new window.Event("blur"));
+    assert.ok(!wrap.classList.contains("neo-director-name-editing"), "失焦后退出编辑态");
+    assert.equal(view.textContent, "T-renamed", "失焦提交后更新显示文本");
+
+    // 名称区按下 / 双击不触发标题栏拖动与最大化切换
+    const panel = document.querySelector(".neo-director-panel");
+    panel.__rect = { x: 100, y: 100, top: 100, left: 100, right: 880, bottom: 500, width: 780, height: 400 };
+    const evt = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+    view.dispatchEvent(evt("mousedown", 400, 120));
+    window.dispatchEvent(evt("mousemove", 500, 160));
+    assert.notEqual(panel.style.position, "absolute", "名称区按下不触发拖动");
+    view.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    assert.notEqual(panel.style.left, "8px", "名称区双击不触发最大化");
+
+    // 标题栏空白处仍可拖动
+    titleBar.dispatchEvent(evt("mousedown", 120, 120));
+    assert.equal(panel.style.position, "absolute", "标题栏空白处仍可拖动");
+    window.dispatchEvent(evt("mouseup", 120, 120));
+
+    // 保存取行内编辑后的名称
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.equal(saveCall.body.name, "T-renamed", "保存使用行内编辑后的名称");
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "保存成功后窗口关闭");
+});
+
+test("标题栏配方名：新建（无名称）时显示占位文本，输入后去除占位样式", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor(null);
+    await sleep(60);
+
+    const view = document.querySelector(".neo-director-name-view");
+    assert.equal(view.textContent, "未命名配方", "新建时显示占位名");
+    assert.ok(view.classList.contains("neo-director-name-empty"), "占位名标记为空态");
+
+    const wrap = document.querySelector(".neo-director-name-wrap");
+    const inp = wrap.querySelector(".neo-director-name");
+    view.click();
+    inp.value = "  我的导演  ";
+    inp.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    assert.equal(view.textContent, "我的导演", "提交时去掉首尾空格");
+    assert.ok(!view.classList.contains("neo-director-name-empty"), "有名称后取消空态标记");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
 
 test("导演编辑器单例：同一配方重复点击忽略，另一配方重新加载，关闭后可重开", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");

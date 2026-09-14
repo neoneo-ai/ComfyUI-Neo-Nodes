@@ -444,10 +444,11 @@
 }
 
 .neo-director-title {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));   /* 左标题 / 中间配方名（居中、超长省略号）/ 右按钮：三等分保证名称真正居中 */
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
+    gap: 10px;
+    padding: 10px 14px;
     font-size: 14px;
     font-weight: 600;
     border-bottom: 1px solid #333;
@@ -455,9 +456,66 @@
     user-select: none;
 }
 
+.neo-director-title > span:first-child {
+    justify-self: start;
+    white-space: nowrap;
+}
+
+/* 配方名称：默认直接显示文本，点击进入行内编辑（Enter/失焦提交、Esc 还原） */
+.neo-director-name-wrap {
+    justify-self: center;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.neo-director-name-view {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 3px 10px;
+    border: 1px dashed transparent;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #ddd;
+    cursor: text;
+}
+
+.neo-director-name-view:hover {
+    border-color: #4a4d55;
+    background: #262626;
+}
+
+.neo-director-name-view.neo-director-name-empty {
+    color: #6b7686;
+    font-weight: 400;
+}
+
+.neo-director-name {
+    width: 100%;
+    max-width: 320px;
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #5090cc;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 13px;
+    font-weight: 400;
+    cursor: text;
+    user-select: text;
+}
+
+.neo-director-name-wrap:not(.neo-director-name-editing) .neo-director-name,
+.neo-director-name-wrap.neo-director-name-editing .neo-director-name-view {
+    display: none;
+}
+
 .neo-director-title-btns {
     display: flex;
     align-items: center;
+    justify-self: end;
     gap: 2px;
 }
 
@@ -518,10 +576,6 @@
     gap: 8px;
 }
 
-.neo-director-name {
-    width: 280px;          /* 配方名称输入框定宽，不必拉满整行 */
-}
-
 .neo-director-shared label {
     font-size: 11px;
     color: #9aa4b0;
@@ -545,13 +599,6 @@
     font-size: 11px;
     color: #8cf;
     min-width: 60px;
-}
-
-.neo-director-field {
-    display: flex;
-    flex-direction: row;   /* 配方名称：label 与输入框同一行 */
-    align-items: center;
-    gap: 8px;
 }
 
 .neo-director-field-label {

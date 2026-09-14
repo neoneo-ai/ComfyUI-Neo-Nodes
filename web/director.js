@@ -330,7 +330,32 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (timeline && (e.target.classList.contains('neo-director-dur') || e.target.classList.contains('neo-director-prompt'))) timeline.refresh();
     });
 
+    // 配方名称：钉在标题栏中间，默认以文本直接显示，点击进入行内编辑
+    // （Enter / 失焦提交，Esc 还原为打开时的名称）
     const nameInp = $el('input', { className: 'neo-director-name', type: 'text', placeholder: '配方名称', value: (existing && existing.name) || '' });
+    const nameView = $el('span', { className: 'neo-director-name-view', title: '点击编辑配方名称' });
+    const nameWrap = $el('div', { className: 'neo-director-name-wrap' }, [nameView, nameInp]);
+    const renderName = () => {
+        const v = nameInp.value.trim();
+        nameView.textContent = v || '未命名配方';
+        nameView.classList.toggle('neo-director-name-empty', !v);
+    };
+    const stopNameEdit = () => {
+        nameWrap.classList.remove('neo-director-name-editing');
+        renderName();
+    };
+    renderName();
+    nameView.onclick = () => {
+        nameWrap.classList.add('neo-director-name-editing');
+        nameInp.focus();
+        nameInp.select();
+        nameInp.scrollLeft = 0;    // 全选后回到开头，长名称不至于只显示尾部
+    };
+    nameInp.addEventListener('blur', stopNameEdit);
+    nameInp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); stopNameEdit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); nameInp.value = requestedName; stopNameEdit(); }
+    });
     // 分辨率：宽高比 + 百万像素 → W/H（32 对齐）；「自定义」手输 W/H。不再保存 seed（后端默认 0，节点输入可覆盖）
     const initRes = (() => {
         const w = Number(exShared.width) || 1344, h = Number(exShared.height) || 768;
@@ -609,7 +634,6 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const tabBar = $el('div', { className: 'neo-director-tabs' }, [tabStory, tabTimeline]);
 
     const body = $el('div', { className: 'neo-director-body' }, [
-        $el('div', { className: 'neo-director-field' }, [$el('label', { className: 'neo-director-field-label', textContent: '配方名称' }), nameInp]),
         tabBar,
         storyboardPane,
         timelinePane,
@@ -646,6 +670,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     const titleBar = $el('div', { className: 'neo-director-title' }, [
         $el('span', { textContent: '🎬 多段视频导演' }),
+        nameWrap,
         $el('div', { className: 'neo-director-title-btns' }, [
             maxBtn,
             $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close }),
@@ -674,7 +699,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         window.removeEventListener('mouseup', onTitleUp);
     };
     titleBar.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.target.closest('button')) return; // ✕ 等标题栏按钮不触发拖动
+        if (e.button !== 0 || e.target.closest('button') || e.target.closest('.neo-director-name-wrap')) return; // ✕ / 配方名区不触发拖动
         const r = panel.getBoundingClientRect();
         if (!panel.style.left) { // 首次：从居中切到绝对定位，无跳变
             panel.style.position = 'absolute';
@@ -689,7 +714,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     });
 
     titleBar.addEventListener('dblclick', (e) => {
-        if (e.target.closest('button')) return; // 双击 ⛶ / ✕ 等按钮不触发行内切换
+        if (e.target.closest('button') || e.target.closest('.neo-director-name-wrap')) return; // 双击 ⛶ / ✕ / 配方名区不触发放大还原
         toggleMaximize();
     });
 

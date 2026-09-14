@@ -11,7 +11,7 @@ if (!document.getElementById("neo-be-css")) {
     document.head.appendChild(link);
 }
 
-// ui 值经核心 get_output_from_returns 展平为列表（裸字符串会被逐字符拆开），这里把 prompt 还原成显示文本。
+// ui 值经核心 get_output_from_returns 展平为列表（字符串会被逐字符拆开），这里把 prompt 还原成显示文本。
 function asText(v) {
     if (v == null) return "";
     if (Array.isArray(v)) return v.join("");
