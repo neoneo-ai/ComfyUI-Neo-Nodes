@@ -98,10 +98,13 @@ class TestScanSkills(unittest.TestCase):
         self.assertFalse({"template_prompt", "extract_title", "extract_classify"} & ids)
 
     def test_template_skills_are_text_only(self):
-        """未声明 image 输入的模板默认为纯文本 skill"""
+        """纯 prompt 模板（非工作流导入）未声明 image 输入时默认为纯文本 skill。
+
+        工作流导入的 skill（带 workflow.json，has_workflow=True）可合法引用图片，不参与此断言。"""
         styles = {s["id"]: s for s in self._scan()
                   if s["source"] in ("presets", "custom")
-                  and s["id"] not in ("minimax_h3_base", "minimax_h3_full_ref", "minimax_h3_image_ref", "image_to_video", "minimax_h3_i2v")}
+                  and not s.get("has_workflow")
+                  and s["id"] not in ("minimax_h3_base", "minimax_h3_full_ref", "minimax_h3_image_ref", "image_to_video")}
         self.assertTrue(len(styles) > 0, "至少应扫描到一个模板 skill")
         for sid, s in styles.items():
             self.assertFalse(s["needs_image"], f"普通模板不应需要图片: {sid}")

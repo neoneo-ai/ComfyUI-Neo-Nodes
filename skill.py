@@ -721,7 +721,7 @@ def _skill_name_pinyin_tags(name) -> list:
 def scan_skills() -> list:
     """合并 tasks + presets/custom 为统一 skill 元数据列表。
 
-    每个 skill 返回: {id, name, category, source, inputs, needs_image, multi_turn, tags, description}
+    每个 skill 返回: {id, name, category, source, inputs, needs_image, multi_turn, has_workflow, tags, description}
     """
     skills = []
 
@@ -775,6 +775,7 @@ def scan_skills() -> list:
                     "gen_image": bool(meta.get("gen_image", False)),
                     "gen_video": bool(meta.get("gen_video", False)),
                     "requires_ref": bool(meta.get("requires_ref", False)),
+                    "has_workflow": os.path.isfile(os.path.join(d, "workflow.json")),
                     "description": meta.get("description", ""),
                 })
 

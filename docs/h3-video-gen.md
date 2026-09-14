@@ -9,6 +9,8 @@
 4. 可选覆盖 `seed`（默认 0，固定；要随机把「生成后控制」设为 randomize）/ `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
 5. 执行后输出 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
+> **bundle 直连**：也可把 ⚡ Neo Prompt Agent 的 BUNDLE 输出连到本节点 `bundle` 输入，一次性带上 prompt/连接图/skill——prompt 留空时取 bundle、连接图优先于首帧 IMAGE、bundle 携带的视频 skill 有效时覆盖 `skill_id`；bundle 缺失/过期则回退本地。连上 BUNDLE 后 `prompt`/`skill_id` 控件会被禁用（以 bundle 为准）；`bundle` 输入前端渲染为纯连线槽（同 image，无文本框）。多 prompt 逐项循环需同时连 PROMPT 与 BUNDLE（只连 BUNDLE 仅用第一条）。
+
 ## NeoH3VideoDirector（多段导演）
 
 `NeoH3VideoDirector` 节点：以 **video_director 配方**为参数，把多段 H3 视频按序逐段生成并拼接成单个含音频 `VIDEO`。每段复用上面单段节点的解析/执行链（`resolve_video_params` + `render_template` + `execute_graph_inprocess`），只是参数来自配方而非节点入参。

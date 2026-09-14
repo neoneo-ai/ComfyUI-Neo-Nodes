@@ -419,7 +419,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     backgrounds: bgGrid.getRefs(),
                     segment_seconds: Number(segLenSel.value) || null,
                 },
-            });
+            }, "video");
             if (result.success) {
                 app.extensionManager.toast.add({ severity: 'success', summary: '多段导演已保存', detail: `${name}（${segments.length} 段）`, life: 4000 });
                 close();

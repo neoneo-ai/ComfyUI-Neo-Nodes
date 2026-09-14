@@ -18,6 +18,14 @@ import {
 import { mkEl } from "./dom-utils.js";
 import { createStatusBars, createPromptOutputArea, triggerTextChange } from "./llm-chat.js";
 
+// 配方类型：按当前工作流里的生成节点判定（H3=视频 / Krea2=图像），供列表筛选；都没有则空
+function detectGenType(graph) {
+    const types = (graph?._nodes || []).map(n => n.type);
+    if (types.includes("NeoH3VideoGenerate")) return "video";
+    if (types.includes("NeoKrea2Generate")) return "image";
+    return "";
+}
+
 // ==========================================
 // UI 组件创建 (内部使用)
 // ==========================================
@@ -457,7 +465,8 @@ function createPromptManagerUI() {
                 const results = recipeResultsCheck.checked ? collectWorkflowResults() : [];
                 const loras = await collectWorkflowLoras(node);
                 const promptText = customTextarea?.value || textWidget?.value || "";
-                const result = await saveRecipe(name, promptText, assets, results, loras);
+                const genType = detectGenType(node.graph);
+                const result = await saveRecipe(name, promptText, assets, results, loras, null, genType);
                 if (result.success) {
                     const extra = result.sample_added ? ` + ${result.sample_added} 结果` : "";
                     app.extensionManager.toast.add({ severity: "success", summary: "配方已保存", detail: `${name}（${result.asset_count} 资源${extra}）`, life: 4000 });

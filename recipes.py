@@ -142,6 +142,7 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         "assets": assets,
         "loras": meta.get("loras", []) or [],
         "samples": samples,
+        "gen_type": meta.get("gen_type", ""),
     }
     # video_director 配方：透传结构化多段字段（缺省 type 的旧扁平配方不受影响）
     if meta.get("type") == "video_director":
@@ -502,6 +503,7 @@ async def rs_recipes_save(request):
             "loras": loras,
             "samples": old_samples,
             "sample_kinds": old_sample_kinds,
+            "gen_type": str(data.get("gen_type") or "").strip(),
         }
         if rtype == "video_director":
             recipe["type"] = "video_director"

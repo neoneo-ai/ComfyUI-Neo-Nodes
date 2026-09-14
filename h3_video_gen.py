@@ -16,6 +16,7 @@ from .image_gen import _reference_name, _resolve_loras, render_template, resolve
 from .video_gen import get_video_settings, suggest_audio_vae, suggest_video_model
 from .krea2_generate import _image_to_data_uri, execute_graph_inprocess
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
+from .bundles import get_bundle
 
 
 def _gen_video_skills():
@@ -133,6 +134,7 @@ class NeoH3VideoGenerate:
             "optional": {
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
                 "image": ("IMAGE",),  # I2V 首帧；T2V 忽略
+                "bundle": ("STRING", {"forceInput": True}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）；提供时覆盖 prompt/image/skill
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
                 "duration": ("INT", {"default": 5, "min": -1, "max": 3600}),     # 秒；-1 = 用 config/默认(约5s)
                 "width": ("INT", {"default": 1344, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),   # -1 = 用 config/默认
@@ -146,12 +148,27 @@ class NeoH3VideoGenerate:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "MiniMax H3 视频生成节点：按所选 skill 的 workflow.json 模板同步生成，输出含音频的 VIDEO（可接 SaveVideo）。"
 
-    def generate(self, skill_id, prompt="", image=None, seed=-1, duration=-1, width=-1, height=-1):
-        real_id = _resolve_skill_id(skill_id)
+    def generate(self, skill_id, prompt="", image=None, seed=-1, duration=-1, width=-1, height=-1, bundle=""):
+        payload = get_bundle(bundle) if bundle else None
+
+        # bundle 携带的 skill_id 若对本节点有效（gen_video + workflow.json）则覆盖本地选择，否则沿用本地
+        eff_skill = skill_id
+        if payload and payload.get("skill_id"):
+            cand = _resolve_skill_id(payload["skill_id"])
+            if any(s["id"] == cand for s in _gen_video_skills()):
+                eff_skill = payload["skill_id"]
+
+        real_id = _resolve_skill_id(eff_skill)
         template = load_skill_workflow(real_id)
         if template is None:
-            raise RuntimeError(f"[NeoNodes] H3 视频 skill '{skill_id}' 缺少 workflow.json，无法生成")
+            raise RuntimeError(f"[NeoNodes] H3 视频 skill '{eff_skill}' 缺少 workflow.json，无法生成")
         cfg = get_skill_gen_config(real_id)
+
+        # prompt：节点输入优先（多 prompt 逐项循环时每次拿到各自的），空则回退 bundle 里的第一条
+        if not str(prompt or "").strip() and payload:
+            prompts = payload.get("prompts") or []
+            prompt = prompts[0] if prompts else ""
+
         body = {"prompt": prompt}
         if seed is not None and int(seed) >= 0:
             body["seed"] = int(seed)
@@ -161,7 +178,11 @@ class NeoH3VideoGenerate:
             body["width"] = int(width)
         if height is not None and int(height) > 0:
             body["height"] = int(height)
-        if image is not None:
+        # references：bundle 里的（连接图/附加图）优先，否则用节点 image 输入
+        refs = (payload or {}).get("references")
+        if refs:
+            body["references"] = refs
+        elif image is not None:
             body["references"] = [{"kind": "data", "data": _image_to_data_uri(image)}]
         params = resolve_video_params(body, cfg)
         graph, _render_warnings = render_template(template, params)

@@ -17,6 +17,7 @@ from PIL import Image
 import nodes as comfy_nodes
 from .image_gen import DEFAULT_SETTINGS, MAX_IMAGES, get_settings, render_template, resolve_request
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
+from .bundles import get_bundle
 
 # 落盘/预览输出节点：mini-executor 不执行（避免重复写盘与事件副作用）
 _SKIP_OUTPUT_NODES = {"SaveImage", "PreviewImage", "SaveVideo"}
@@ -190,6 +191,7 @@ class NeoKrea2Generate:
             "optional": {
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
                 "image": ("IMAGE",),  # 参考图；requires_ref skill 需要，文生图忽略
+                "bundle": ("STRING", {"forceInput": True}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）；提供时覆盖 prompt/image/skill
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
                 "count": ("INT", {"default": 1, "min": 1, "max": MAX_IMAGES}),
             },
@@ -201,20 +203,39 @@ class NeoKrea2Generate:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "Krea2 生图节点：按所选 skill 的 workflow.json 模板同步生成，输出 IMAGE 张量到下游。"
 
-    def generate(self, skill_id, prompt="", image=None, seed=-1, count=1):
-        real_id = _resolve_skill_id(skill_id)
+    def generate(self, skill_id, prompt="", image=None, seed=-1, count=1, bundle=""):
+        payload = get_bundle(bundle) if bundle else None
+
+        # bundle 携带的 skill_id 若对本节点有效（gen_image + workflow.json）则覆盖本地选择，否则沿用本地
+        eff_skill = skill_id
+        if payload and payload.get("skill_id"):
+            cand = _resolve_skill_id(payload["skill_id"])
+            if any(s["id"] == cand for s in _gen_image_skills()):
+                eff_skill = payload["skill_id"]
+
+        real_id = _resolve_skill_id(eff_skill)
         template = load_skill_workflow(real_id)
         if template is None:
             raise RuntimeError(
-                f"[NeoNodes] Krea2 生图 skill '{skill_id}' 缺少 workflow.json，无法生成")
+                f"[NeoNodes] Krea2 生图 skill '{eff_skill}' 缺少 workflow.json，无法生成")
         settings = dict(get_settings())
         for key, value in get_skill_gen_config(real_id).items():
             if key in DEFAULT_SETTINGS and value not in (None, "", []):
                 settings[key] = value
+
+        # prompt：节点输入优先（多 prompt 逐项循环时每次拿到各自的），空则回退 bundle 里的第一条
+        if not str(prompt or "").strip() and payload:
+            prompts = payload.get("prompts") or []
+            prompt = prompts[0] if prompts else ""
+
         body = {"prompt": prompt, "count": int(count)}
         if seed is not None and int(seed) >= 0:
             body["seed"] = int(seed)
-        if image is not None:
+        # references：bundle 里的（连接图/附加图）优先，否则用节点 image 输入
+        refs = (payload or {}).get("references")
+        if refs:
+            body["references"] = refs
+        elif image is not None:
             body["references"] = [{"kind": "data", "data": _image_to_data_uri(image)}]
         params = resolve_request(body, settings)
         graph, _render_warnings = render_template(template, params)

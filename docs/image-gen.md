@@ -19,6 +19,7 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 - **skill_id 下拉** - 按生图 skill 的**名称**（frontmatter `name`，缺省回退 id）列出，仅含带 `workflow.json` 的生图 skill（`gen_image: true`）；节点内部把所选名称解析回 skill id 再取模板，旧工作流里存的 id 也能兼容；skill 增删/改名后需刷新 `/object_info`
 - **prompt 可连线** - STRING 输入既可手填，也可连 Neo Prompt 节点的 PROMPT 输出
 - **参考图可选** - IMAGE 输入供 `requires_ref`（四视图）skill 使用，文生图 skill 忽略
+- **bundle 输入（可选）** - 连 ⚡ Neo Prompt Agent 的 BUNDLE 输出：prompt 留空时取 bundle 里的、连接图作为参考图优先于 `image` 输入、bundle 携带的生图 skill 有效时覆盖 `skill_id`；bundle 缺失/过期则回退本地。**前端渲染为纯连线槽**（与 `image` 一致，节点体内不显示文本框，只留左侧 slot）。连上 BUNDLE 后 `prompt`/`skill_id` 控件会被禁用（以 bundle 为准）
 - **需 GPU/显存** - forward 内加载 UNET+CLIP+VAE 并采样，执行期间阻塞主工作流
 
 ### 输入/输出
@@ -28,6 +29,7 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 | skill_id | COMBO | 生图 skill 名称（仅含 workflow.json 的 gen_image skill；显示 name，内部解析为 id） |
 | prompt | STRING | 提示词（可手填或连 Neo Prompt 的 PROMPT） |
 | image | IMAGE (可选) | 参考图；四视图等 requires_ref skill 需要 |
+| bundle | STRING (可选) | Neo Prompt Agent 的 BUNDLE id；前端为纯连线槽（同 image，无文本框）。连上后 `prompt`/`skill_id` 控件禁用，参考图/skill 以 bundle 为准、prompt 留空时取 bundle |
 | seed | INT (可选) | 随机种子，默认 0（固定）；要随机把「生成后控制」设为 randomize |
 | count | INT (可选) | 生成张数（1–8） |
 

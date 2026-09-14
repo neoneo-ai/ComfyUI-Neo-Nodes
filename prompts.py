@@ -13,6 +13,7 @@ import threading
 import copy
 import logging
 import random
+import base64
 from server import PromptServer
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 from . import prompt_lines
 from . import skill
 from .llm import strip_inline_thinking, get_stored_api_key, build_remote_models_url, API_KEY_MASK
+from .bundles import create_bundle
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(CURRENT_DIR, "prompts")
@@ -178,6 +180,17 @@ def image_tensor_to_png(image: torch.Tensor) -> bytes | None:
     except Exception as e:
         logger.warning(f"image_tensor_to_png: failed: {e}")
         return None
+
+
+def _bundle_references(image) -> list:
+    """把连接的 image 张量编码成 H3/Krea2 可消费的 reference（data URI）；无图/失败返回空列表。"""
+    if image is None:
+        return []
+    png = image_tensor_to_png(image)
+    if not png:
+        return []
+    data_uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    return [{"kind": "data", "data": data_uri}]
 
 
 def _load_tags_index(tags_file: str = TAGS_FILE) -> dict:
@@ -1152,10 +1165,10 @@ class NeoPromptAgent:
             }
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("PROMPT",)
-    # 多结果 skill：输出按条目循环消费（OUTPUT_IS_LIST），单结果等价于原行为
-    OUTPUT_IS_LIST = (True,)
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("PROMPT", "BUNDLE")
+    # 多结果 skill：PROMPT 按条目循环消费（OUTPUT_IS_LIST），单结果等价于原行为；BUNDLE 为本次生成的运行时包 id
+    OUTPUT_IS_LIST = (True, False)
     FUNCTION = "get_prompt"
     CATEGORY = "Neo-Nodes"
     OUTPUT_NODE = True
@@ -1301,9 +1314,16 @@ class NeoPromptAgent:
 
         # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
         _auto_unload_local_after_generate()
+        # 运行时 bundle：把本次 prompt/连接图/skill 打包成临时 id，供下游 H3/Krea2 按 id 消费
+        bundle_id = create_bundle({
+            "prompts": list(prompts_list),
+            "references": _bundle_references(image),
+            "gen_type": "",   # 运行时无法确定目标模态（图/视频），留空；消费端按自身类型处理
+            "skill_id": skill_id or "",
+        })
         return {
             "ui": {"text": [current_text]},
-            "result": (prompts_list,)
+            "result": (prompts_list, bundle_id)
         }
 
     @classmethod

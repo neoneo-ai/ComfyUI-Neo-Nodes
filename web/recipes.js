@@ -359,8 +359,9 @@ async function copySampleWorkflowToCanvas(recipeName, sampleFile) {
     }
 }
 
-export async function saveRecipe(name, prompt, assets, results = [], loras = [], director = null) {
+export async function saveRecipe(name, prompt, assets, results = [], loras = [], director = null, genType = "") {
     const body = { name, prompt, assets, results, loras };
+    if (genType) body.gen_type = genType;
     if (director && director.segments) {
         body.type = 'video_director';
         body.shared = director.shared || {};
