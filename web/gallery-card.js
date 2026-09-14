@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, getThumbnailSrc, showToast, showInlineFeedback } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, showToast, showInlineFeedback } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
@@ -988,6 +988,8 @@ export class GalleryCard {
     createImageElement(gallery, image, subfolder, source = "") {
         const isImageFileResult = isImageFile(image.filename);
         const isVideoFileResult = isVideoFile(image.filename);
+        const isAudioFileResult = isAudioFile(image.filename);
+        const isDraggableMedia = (isImageFileResult || isVideoFileResult || isAudioFileResult) && !image.lora_path;
         const reservedSpace = getReservedSpace(gallery.displayLabels);
         const imageHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
 
@@ -998,9 +1000,9 @@ export class GalleryCard {
                 width: `${gallery.maxThumbnailSize}px`
             },
             onclick: () => this.showLightbox(gallery, image, subfolder),
-            draggable: isImageFileResult && !image.lora_path,
+            draggable: isDraggableMedia,
             ondragstart: (e) => {
-                if (!isImageFileResult || image.lora_path) { e.preventDefault(); return; }
+                if (!isDraggableMedia) { e.preventDefault(); return; }
                 e.dataTransfer.setData("application/x-neo-gallery", JSON.stringify({ filename: image.filename, subfolder }));
                 e.dataTransfer.setData("text/plain", image.filename);
                 e.dataTransfer.effectAllowed = "copy";

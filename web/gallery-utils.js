@@ -62,6 +62,13 @@ export function isVideoFile(filename) {
 }
 
 /**
+ * Check if filename is an audio file
+ */
+export function isAudioFile(filename) {
+    return /\.(mp3|wav|ogg|flac|aac|m4a|wma|opus)$/i.test(filename);
+}
+
+/**
  * Get video source URL
  */
 export function getVideoSrc(video, subfolder) {

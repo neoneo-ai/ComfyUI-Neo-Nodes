@@ -40,6 +40,9 @@ def _first_nonempty(*vals):
 
 H3_FPS = 24
 
+# MiniMaxH3ReferenceToVideo 三类参考的上限（与官方 autogrow 槽位一致）
+_MAX_REF = {"image": 9, "video": 3, "audio": 3}
+
 
 def _seconds_to_frames(seconds):
     """秒 → H3 帧数：按 24fps 取整后向上对齐到模型的 17k+5 网格（官方模板同款公式）。"""
@@ -88,14 +91,24 @@ def resolve_video_params(body: dict, cfg: dict) -> dict:
     # LoRA：复用生图解析（校验存在性 + 强度裁剪）；视频无「依赖参考图」概念，配置的全部无条件加载
     loras, _lora_warns = _resolve_loras(cfg)
 
-    # 参考图（I2V 首帧）：取第一张，落盘成 LoadImage 可用名
+    # 参考媒体：按 media（缺省 image）分成参考图 / 参考视频 / 参考音频三组，
+    # 各自按 H3 参考节点上限裁剪；第一张参考图同时作为单路 {{REF_IMAGE}} 首帧。
     refs = body.get("references")
     refs = refs if isinstance(refs, list) else ([refs] if refs else [])
-    ref_name = None
+    ref_images, ref_videos, ref_audios = [], [], []
+    buckets = {"image": ref_images, "video": ref_videos, "audio": ref_audios}
     for src in refs:
-        name = _reference_name(src)
-        if name and ref_name is None:
-            ref_name = name
+        media = str(src.get("media") or "image").strip().lower() if isinstance(src, dict) else "image"
+        bucket = buckets.get(media)
+        if bucket is None or len(bucket) >= _MAX_REF[media]:
+            continue
+        name = _reference_name(src, media)
+        if name:
+            bucket.append(name)
+
+    # 尾帧（首尾帧技能）：单项可选，未给或解析失败时为 None（模板里对应 LoadImage 会被裁掉）
+    last_src = body.get("last_frame")
+    ref_last = _reference_name(last_src, "image") if isinstance(last_src, dict) else None
 
     width = int(body.get("width") or cfg.get("width") or 1344)
     height = int(body.get("height") or cfg.get("height") or 768)
@@ -117,7 +130,11 @@ def resolve_video_params(body: dict, cfg: dict) -> dict:
         "length": length,
         "steps": steps,
         "seed": seed,
-        "ref_name": ref_name,
+        "ref_name": ref_images[0] if ref_images else None,
+        "ref_last": ref_last,
+        "ref_images": ref_images,
+        "ref_videos": ref_videos,
+        "ref_audios": ref_audios,
     }
 
 
@@ -135,6 +152,7 @@ class NeoH3VideoGenerate:
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
                 "image": ("IMAGE",),  # I2V 首帧；T2V 忽略
                 "bundle": ("STRING", {"forceInput": True}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）；提供时覆盖 prompt/image/skill
+                "last_frame": ("IMAGE",),  # FL2V 尾帧（首尾帧技能）；i2v/t2v 忽略
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
                 "duration": ("INT", {"default": 5, "min": -1, "max": 3600}),     # 秒；-1 = 用 config/默认(约5s)
                 "width": ("INT", {"default": 1344, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),   # -1 = 用 config/默认
@@ -148,7 +166,7 @@ class NeoH3VideoGenerate:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "MiniMax H3 视频生成节点：按所选 skill 的 workflow.json 模板同步生成，输出含音频的 VIDEO（可接 SaveVideo）。"
 
-    def generate(self, skill_id, prompt="", image=None, seed=-1, duration=-1, width=-1, height=-1, bundle=""):
+    def generate(self, skill_id, prompt="", image=None, last_frame=None, seed=-1, duration=-1, width=-1, height=-1, bundle=""):
         payload = get_bundle(bundle) if bundle else None
 
         # bundle 携带的 skill_id 若对本节点有效（gen_video + workflow.json）则覆盖本地选择，否则沿用本地
@@ -184,6 +202,9 @@ class NeoH3VideoGenerate:
             body["references"] = refs
         elif image is not None:
             body["references"] = [{"kind": "data", "data": _image_to_data_uri(image)}]
+        # 尾帧：首尾帧技能用（模板 {{REF_IMAGE_LAST}}）；其它技能模板没有该槽位会自然忽略
+        if last_frame is not None:
+            body["last_frame"] = {"kind": "data", "data": _image_to_data_uri(last_frame)}
         params = resolve_video_params(body, cfg)
         graph, _render_warnings = render_template(template, params)
         return (execute_graph_inprocess(graph, output_type="VIDEO"),)

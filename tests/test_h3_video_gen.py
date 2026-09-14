@@ -8,6 +8,7 @@ API 节点分支用带 define_schema + classmethod execute（返回 NodeOutput(.
 import base64
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -106,6 +107,10 @@ video_gen = _load("video_gen", "video_gen.py")
 class _FakeNodeOutput:
     def __init__(self, *args):
         self.args = args
+
+
+def _data_uri(mime: str, raw: bytes) -> str:
+    return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
 
 
 class _ApiSingle:
@@ -348,6 +353,61 @@ class ResolveVideoParamsTests(unittest.TestCase):
         self.assertIsNotNone(p["ref_name"])
         self.assertTrue(p["ref_name"].startswith("NeoAgent/"))
 
+    def test_references_split_by_media(self):
+        # references 按 media 分成三类参考；缺省 media 视为参考图，ref_name 取第一张图
+        p = h3_video_gen.resolve_video_params({"prompt": "x", "references": [
+            {"kind": "data", "data": _data_uri("image/png", b"img")},
+            {"kind": "data", "data": _data_uri("video/mp4", b"vid"), "media": "video"},
+            {"kind": "data", "data": _data_uri("audio/wav", b"aud"), "media": "audio"},
+        ]}, self._cfg())
+        self.assertEqual(len(p["ref_images"]), 1)
+        self.assertEqual(len(p["ref_videos"]), 1)
+        self.assertEqual(len(p["ref_audios"]), 1)
+        self.assertEqual(p["ref_name"], p["ref_images"][0])
+        self.assertTrue(p["ref_videos"][0].endswith(".mp4"))
+        self.assertTrue(p["ref_audios"][0].endswith(".wav"))
+
+    def test_reference_caps_match_official_slots(self):
+        # 参考节点上限 9 图 / 3 视频 / 3 音频，超出的按顺序丢弃
+        refs = ([{"kind": "data", "data": _data_uri("image/png", bytes([i]))} for i in range(11)]
+                + [{"kind": "data", "data": _data_uri("video/mp4", bytes([i])), "media": "video"} for i in range(5)]
+                + [{"kind": "data", "data": _data_uri("audio/wav", bytes([i])), "media": "audio"} for i in range(5)])
+        p = h3_video_gen.resolve_video_params({"prompt": "x", "references": refs}, self._cfg())
+        self.assertEqual(len(p["ref_images"]), 9)
+        self.assertEqual(len(p["ref_videos"]), 3)
+        self.assertEqual(len(p["ref_audios"]), 3)
+
+    def test_reference_media_mismatch_dropped(self):
+        # media=image 却给 mp4：后缀不符不解析，避免把视频塞进 LoadImage
+        p = h3_video_gen.resolve_video_params(
+            {"prompt": "x", "references": [{"kind": "data", "data": _data_uri("video/mp4", b"vid")}]},
+            self._cfg())
+        self.assertEqual(p["ref_images"], [])
+        self.assertIsNone(p["ref_name"])
+
+    def test_input_media_refs_resolved_by_kind(self):
+        # 导演配方走 kind=input（input/ 下的相对名）：图/视频/音频分别按后缀识别
+        for name in ("ref_a.png", "ref_v.mp4", "ref_s.wav"):
+            with open(os.path.join(_INPUT_DIR, name), "wb") as f:
+                f.write(b"media")
+        p = h3_video_gen.resolve_video_params({"prompt": "x", "references": [
+            {"kind": "input", "value": "ref_a.png"},
+            {"kind": "input", "value": "ref_v.mp4", "media": "video"},
+            {"kind": "input", "value": "ref_s.wav", "media": "audio"},
+        ]}, self._cfg())
+        self.assertEqual(p["ref_images"], ["ref_a.png"])
+        self.assertEqual(p["ref_videos"], ["ref_v.mp4"])
+        self.assertEqual(p["ref_audios"], ["ref_s.wav"])
+
+    def test_last_frame_resolved_and_absent_by_default(self):
+        p = h3_video_gen.resolve_video_params({"prompt": "x"}, self._cfg())
+        self.assertIsNone(p["ref_last"], "未给尾帧时 ref_last 为 None")
+        p = h3_video_gen.resolve_video_params(
+            {"prompt": "x", "last_frame": {"kind": "data", "data": _data_uri("image/png", b"last")}},
+            self._cfg())
+        self.assertIsNotNone(p["ref_last"])
+        self.assertTrue(p["ref_last"].startswith("NeoAgent/"))
+
     def test_audio_vae_resolved(self):
         p = h3_video_gen.resolve_video_params({"prompt": "x"}, self._cfg())
         self.assertEqual(p["audio_vae"], "minimax_h3_audio_vae_fp32.safetensors")
@@ -379,11 +439,56 @@ class ResolveVideoParamsTests(unittest.TestCase):
             h3_video_gen.suggest_audio_vae = orig
 
 
+class NeoH3VideoGenerateTests(unittest.TestCase):
+    """节点层：尾帧输入进 body["last_frame"]，bundle 参考优先等既有行为不变。"""
+
+    def _patch(self, expect):
+        orig = (h3_video_gen._resolve_skill_id, h3_video_gen.load_skill_workflow,
+                h3_video_gen.get_skill_gen_config, h3_video_gen.resolve_video_params,
+                h3_video_gen.render_template, h3_video_gen.execute_graph_inprocess)
+        bodies = []
+        h3_video_gen._resolve_skill_id = lambda v: v
+        h3_video_gen.load_skill_workflow = lambda id: {"1": {}}
+        h3_video_gen.get_skill_gen_config = lambda id: {}
+        h3_video_gen.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
+        h3_video_gen.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3_video_gen.execute_graph_inprocess = lambda graph, output_type="IMAGE": expect
+        return orig, bodies
+
+    def _restore(self, orig):
+        (h3_video_gen._resolve_skill_id, h3_video_gen.load_skill_workflow,
+         h3_video_gen.get_skill_gen_config, h3_video_gen.resolve_video_params,
+         h3_video_gen.render_template, h3_video_gen.execute_graph_inprocess) = orig
+
+    def test_last_frame_input_reaches_body(self):
+        orig, bodies = self._patch("video_out")
+        try:
+            h3_video_gen.NeoH3VideoGenerate().generate(
+                "minimax_h3_fl2v", prompt="p", image=torch.zeros(1, 4, 4, 3),
+                last_frame=torch.zeros(1, 4, 4, 3))
+        finally:
+            self._restore(orig)
+        body = bodies[0]
+        self.assertEqual(len(body["references"]), 1)
+        self.assertIn("last_frame", body)
+        self.assertTrue(body["last_frame"]["data"].startswith("data:image/png;base64,"))
+
+    def test_without_last_frame_body_has_no_last_frame(self):
+        orig, bodies = self._patch("video_out")
+        try:
+            h3_video_gen.NeoH3VideoGenerate().generate("minimax_h3_i2v", prompt="p", image=torch.zeros(1, 4, 4, 3))
+        finally:
+            self._restore(orig)
+        self.assertNotIn("last_frame", bodies[0])
+
+
 class GenVideoSkillsTests(unittest.TestCase):
     def test_new_presets_are_video_skills(self):
         ids = {s["id"] for s in h3_video_gen._gen_video_skills()}
         self.assertIn("minimax_h3_t2v", ids)
         self.assertIn("minimax_h3_i2v", ids)
+        self.assertIn("minimax-h3-r2v", ids)
+        self.assertIn("minimax_h3_fl2v", ids)
 
     def test_image_presets_not_video_skills(self):
         ids = {s["id"] for s in h3_video_gen._gen_video_skills()}
@@ -479,6 +584,46 @@ class _F_VAEDecodeAudio:
         return _FakeNodeOutput("audio")
 
 
+class _F_LoadVideo:
+    FUNCTION = "load"
+    RETURN_TYPES = ("VIDEO",)
+    @classmethod
+    def INPUT_TYPES(cls): return {"required": {"file": ("x",)}}
+    def load(self, file): return (f"video:{file}",)
+
+
+class _F_LoadAudio:
+    FUNCTION = "load"
+    RETURN_TYPES = ("AUDIO",)
+    @classmethod
+    def INPUT_TYPES(cls): return {"required": {"audio": ("x",)}}
+    def load(self, audio): return (f"audio:{audio}",)
+
+
+class _F_GetVideoComponents:
+    RETURN_TYPES = ("IMAGE", "AUDIO", "FLOAT", "INT")
+    @classmethod
+    def define_schema(cls): return object()
+    @classmethod
+    def execute(cls, video):
+        return _FakeNodeOutput(torch.zeros(1, 4, 4, 3), "video_audio", 24.0, 8)
+
+
+class _F_H3ReferenceToVideo:
+    """假参考节点：校验点号 autogrow 输入被收成嵌套 dict（ref_images.ref_image_0 → {"ref_image_0": ...}）。"""
+
+    RETURN_TYPES = ("CONDITIONING", "LATENT")
+    @classmethod
+    def define_schema(cls): return object()
+    @classmethod
+    def execute(cls, clip, vae, audio_vae, prompt, width, height, length, ref_image_size="match",
+                ref_images=None, ref_videos=None, ref_video_audios=None, ref_audios=None):
+        for group in (ref_images, ref_videos, ref_audios):
+            if group is not None:
+                assert isinstance(group, dict), f"autogrow 参考应为嵌套 dict，实际: {type(group)}"
+        return _FakeNodeOutput("cond", torch.zeros(1))
+
+
 class _F_CreateVideo:
     RETURN_TYPES = ("VIDEO",)
     @classmethod
@@ -495,6 +640,8 @@ class RealTemplateExecutionTests(unittest.TestCase):
         "MiniMaxH3ImageToVideo": _F_H3ImageToVideo, "MiniMaxH3SigmaShift": _F_H3SigmaShift,
         "LTXVSeparateAVLatent": _F_LTXVSeparateAV,
         "VAEDecodeAudio": _F_VAEDecodeAudio, "CreateVideo": _F_CreateVideo,
+        "MiniMaxH3ReferenceToVideo": _F_H3ReferenceToVideo, "LoadVideo": _F_LoadVideo,
+        "LoadAudio": _F_LoadAudio, "GetVideoComponents": _F_GetVideoComponents,
     }
 
     def setUp(self):
@@ -531,6 +678,112 @@ class RealTemplateExecutionTests(unittest.TestCase):
 
     def test_i2v_template_executes(self):
         self._run_preset("minimax_h3_i2v", with_ref=True)
+
+    def _r2v_template(self):
+        import json as _json
+        wf_path = os.path.join(PLUGIN_DIR, "skills", "presets", "minimax-h3-r2v", "workflow.json")
+        with open(wf_path, encoding="utf-8") as f:
+            return _json.load(f)
+
+    def _preset_template(self, preset):
+        import json as _json
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", preset, "workflow.json"), encoding="utf-8") as f:
+            return _json.load(f)
+
+    def _fl2v_cfg(self):
+        return {"model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+                "vae": "minimax_h3_video_vae_fp16.safetensors"}
+
+    def test_fl2v_template_wires_first_and_last_frame(self):
+        # 首尾帧：两个 LoadImage 分别接 first_frame / last_frame
+        body = {"prompt": "a cat walks",
+                "references": [{"kind": "data", "data": _data_uri("image/png", b"first")}],
+                "last_frame": {"kind": "data", "data": _data_uri("image/png", b"last")}}
+        params = h3_video_gen.resolve_video_params(body, self._fl2v_cfg())
+        graph, _ = h3_video_gen.render_template(self._preset_template("minimax_h3_fl2v"), params)
+        self.assertEqual(self._nodes_of(graph, "LoadImage"), ["13", "9"])
+        self.assertEqual(graph["4"]["inputs"]["first_frame"], ["9", 0])
+        self.assertEqual(graph["4"]["inputs"]["last_frame"], ["13", 0])
+        self.assertEqual(krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
+
+    def test_fl2v_without_last_frame_prunes_last_node(self):
+        # 只给首帧 → 尾帧 LoadImage 与连线一并裁掉（退化为 I2VA）
+        body = {"prompt": "x", "references": [{"kind": "data", "data": _data_uri("image/png", b"first")}]}
+        params = h3_video_gen.resolve_video_params(body, self._fl2v_cfg())
+        graph, _ = h3_video_gen.render_template(self._preset_template("minimax_h3_fl2v"), params)
+        self.assertEqual(self._nodes_of(graph, "LoadImage"), ["9"])
+        self.assertIn("first_frame", graph["4"]["inputs"])
+        self.assertNotIn("last_frame", graph["4"]["inputs"])
+
+    def test_fl2v_without_first_frame_prunes_first_node(self):
+        # 只给尾帧 → 首帧 LoadImage 裁掉（退化为 L2VA，模板仍可执行）
+        body = {"prompt": "x", "last_frame": {"kind": "data", "data": _data_uri("image/png", b"last")}}
+        params = h3_video_gen.resolve_video_params(body, self._fl2v_cfg())
+        graph, _ = h3_video_gen.render_template(self._preset_template("minimax_h3_fl2v"), params)
+        self.assertEqual(self._nodes_of(graph, "LoadImage"), ["13"])
+        self.assertNotIn("first_frame", graph["4"]["inputs"])
+        self.assertIn("last_frame", graph["4"]["inputs"])
+
+    def test_fl2v_needs_at_least_one_frame(self):
+        params = h3_video_gen.resolve_video_params({"prompt": "x"}, self._fl2v_cfg())
+        with self.assertRaises(ValueError):
+            h3_video_gen.render_template(self._preset_template("minimax_h3_fl2v"), params)
+
+    def _nodes_of(self, graph, class_type):
+        return sorted(nid for nid, n in graph.items() if n.get("class_type") == class_type)
+
+    def test_r2v_template_executes_with_all_reference_kinds(self):
+        # 参考图/参考视频/参考音频各自填入对应槽位；未挂的槽位连同加载链裁掉
+        cfg = {"model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+               "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+               "vae": "minimax_h3_video_vae_fp16.safetensors"}
+        body = {"prompt": "a cat walks", "references": [
+            {"kind": "data", "data": _data_uri("image/png", b"img1")},
+            {"kind": "data", "data": _data_uri("image/png", b"img2")},
+            {"kind": "data", "data": _data_uri("video/mp4", b"vid1"), "media": "video"},
+            {"kind": "data", "data": _data_uri("audio/wav", b"aud1"), "media": "audio"},
+        ]}
+        params = h3_video_gen.resolve_video_params(body, cfg)
+        graph, _ = h3_video_gen.render_template(self._r2v_template(), params)
+        self.assertEqual(self._nodes_of(graph, "LoadImage"), ["21", "22"])
+        self.assertEqual(self._nodes_of(graph, "LoadVideo"), ["31"])
+        self.assertEqual(self._nodes_of(graph, "GetVideoComponents"), ["41"])
+        self.assertEqual(self._nodes_of(graph, "LoadAudio"), ["51"])
+        ref_in = graph["5"]["inputs"]
+        self.assertIn("ref_images.ref_image_1", ref_in)
+        self.assertNotIn("ref_images.ref_image_2", ref_in)   # 只挂 2 张图 → 其余槽位裁掉
+        self.assertNotIn("ref_videos.ref_video_1", ref_in)
+        self.assertIn("ref_audios.ref_audio_0", ref_in)
+        self.assertNotIn("{{", json.dumps(graph), "渲染后不应残留占位符")
+        out = krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")
+        self.assertEqual(out[0], "video")
+        self.assertEqual(out[2], 24)
+        self.assertEqual(out[3], "audio")
+
+    def test_r2v_template_single_image_prunes_video_and_audio(self):
+        cfg = {"model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+               "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+               "vae": "minimax_h3_video_vae_fp16.safetensors"}
+        body = {"prompt": "x", "references": [{"kind": "data", "data": _data_uri("image/png", b"only")}]}
+        params = h3_video_gen.resolve_video_params(body, cfg)
+        graph, _ = h3_video_gen.render_template(self._r2v_template(), params)
+        self.assertEqual(self._nodes_of(graph, "LoadImage"), ["21"])
+        for cls in ("LoadVideo", "GetVideoComponents", "LoadAudio"):
+            self.assertEqual(self._nodes_of(graph, cls), [], f"{cls} 无对应参考时应整条裁掉")
+        self.assertIn("ref_images.ref_image_0", graph["5"]["inputs"])
+        self.assertNotIn("ref_images.ref_image_1", graph["5"]["inputs"])
+        self.assertNotIn("ref_videos.ref_video_0", graph["5"]["inputs"])
+        self.assertNotIn("ref_audios.ref_audio_0", graph["5"]["inputs"])
+        self.assertEqual(krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
+
+    def test_r2v_template_requires_reference(self):
+        cfg = {"model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+               "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+               "vae": "minimax_h3_video_vae_fp16.safetensors"}
+        params = h3_video_gen.resolve_video_params({"prompt": "x"}, cfg)
+        with self.assertRaises(ValueError):
+            h3_video_gen.render_template(self._r2v_template(), params)
 
 
 class VideoModelsSortTests(unittest.TestCase):

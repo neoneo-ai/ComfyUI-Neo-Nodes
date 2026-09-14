@@ -86,6 +86,27 @@ def _api_outputs(result):
     return [result]
 
 
+def _nest_dotted_inputs(inputs: dict) -> dict:
+    """把 autogrow 的点号输入（如 "ref_images.ref_image_0"）收成嵌套 dict 参数。
+
+    ComfyUI 主循环用 _io.build_nested_inputs 做同一件事；mini-executor 不做校验、拿不到
+    v3_data 里的 dynamic_paths，这里按第一个点号之后的层级直接展开即可。
+    """
+    if not any("." in k for k in inputs):
+        return inputs
+    nested = {}
+    for key, value in inputs.items():
+        parts = key.split(".")
+        if len(parts) == 1:
+            nested[key] = value
+            continue
+        cur = nested
+        for p in parts[:-1]:
+            cur = cur.setdefault(p, {})
+        cur[parts[-1]] = value
+    return nested
+
+
 def _terminal_output(graph, results, out_type):
     """收集末端指定类型输出：产出该类型、且未被其它执行节点引用的 (node_id, index)。"""
     produced = []
@@ -131,7 +152,7 @@ def execute_graph_inprocess(graph, output_type="IMAGE"):
             inputs[k] = results[v[0]][v[1]] if _is_ref(v, graph) else v
 
         if _is_api_node(class_def):
-            results[nid] = _api_outputs(class_def.execute(**inputs))
+            results[nid] = _api_outputs(class_def.execute(**_nest_dotted_inputs(inputs)))
             continue
 
         func_name = getattr(class_def, "FUNCTION", None)

@@ -77,6 +77,23 @@ _MODEL_HINTS = {
 _QUADVIEW_HINTS = ("quadview", "四视图")
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+_AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac"}
+
+# 参考媒体类型 → 允许的后缀（参考图/参考视频/参考音频，对应 H3 的 ref_images/ref_videos/ref_audios）
+_REF_MEDIA_SUFFIXES = {
+    "image": _IMAGE_SUFFIXES,
+    "video": _VIDEO_SUFFIXES,
+    "audio": _AUDIO_SUFFIXES,
+}
+
+# data URI 的 mime → 落盘后缀（参考媒体以 kind=data 传来时用；未知 mime 回落 .bin 由 Comfy 报错）
+_MIME_SUFFIXES = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/bmp": ".bmp",
+    "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
+    "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/mpeg": ".mp3",
+    "audio/flac": ".flac", "audio/ogg": ".ogg", "audio/mp4": ".m4a",
+}
 
 
 # ===========================================================================
@@ -294,10 +311,15 @@ def _reference_size(ref_name: str) -> tuple | None:
         return None
 
 
-def _reference_name(src: dict) -> str | None:
-    """把参考图落到 input 目录，返回 LoadImage 可用的相对名；无法解析返回 None。"""
+def _reference_name(src: dict, media: str = "image") -> str | None:
+    """把参考媒体落到 input 目录，返回对应加载节点（LoadImage/LoadVideo/LoadAudio）可用的相对名。
+
+    media 为 image / video / audio（缺省 image，保持既有调用不变）：决定允许的后缀。
+    无法解析（类型不符/文件不存在/内容非法）返回 None。
+    """
     if not isinstance(src, dict):
         return None
+    suffixes = _REF_MEDIA_SUFFIXES.get(media, _IMAGE_SUFFIXES)
     input_dir = os.path.realpath(folder_paths.get_input_directory())
     kind = src.get("kind", "input")
 
@@ -305,16 +327,16 @@ def _reference_name(src: dict) -> str | None:
         stem, tag = _split_tagged(src.get("value", ""))
         if not stem or ".." in stem.split("/"):
             return None
-        if os.path.splitext(stem)[1].lower() not in _IMAGE_SUFFIXES:
+        if os.path.splitext(stem)[1].lower() not in suffixes:
             return None
         base = input_dir if tag != "output" else os.path.realpath(folder_paths.get_output_directory())
         real = os.path.realpath(os.path.join(base, *stem.split("/")))
         if not _within(real, base) or not os.path.isfile(real):
-            logger.warning(f"[NeoNodes] image_gen: reference image not found: {src.get('value')}")
+            logger.warning(f"[NeoNodes] image_gen: reference {media} not found: {src.get('value')}")
             return None
         if tag != "output":
             return stem
-        # output 里的图 LoadImage 看不到，复制进 input 目录再用
+        # output 里的文件对应加载节点看不到，复制进 input 目录再用
         dest_dir = os.path.join(input_dir, "NeoAgent")
         os.makedirs(dest_dir, exist_ok=True)
         root, ext = os.path.splitext(os.path.basename(real))
@@ -326,17 +348,23 @@ def _reference_name(src: dict) -> str | None:
         data_uri = str(src.get("data", ""))
         if "," not in data_uri:
             return None
+        head, payload = data_uri.split(",", 1)
+        mime = head[5:].split(";", 1)[0].strip().lower() if head.startswith("data:") else ""
+        if mime and mime.split("/", 1)[0] != media:
+            return None   # mime 与声明的参考类型不符（如把视频当参考图传进来）
+        ext = _MIME_SUFFIXES.get(mime, ".png")
         try:
-            raw = base64.b64decode(data_uri.split(",", 1)[1])
+            raw = base64.b64decode(payload)
         except Exception as e:
             logger.warning(f"[NeoNodes] image_gen: bad base64 reference: {e}")
             return None
         dest_dir = os.path.join(input_dir, "NeoAgent")
         os.makedirs(dest_dir, exist_ok=True)
         digest = hashlib.sha1(raw).hexdigest()[:12]
-        with open(os.path.join(dest_dir, f"ref_{digest}.png"), "wb") as f:
+        name = f"ref_{digest}{ext}"
+        with open(os.path.join(dest_dir, name), "wb") as f:
             f.write(raw)
-        return f"NeoAgent/ref_{digest}.png"
+        return f"NeoAgent/{name}"
 
     return None
 
@@ -505,7 +533,18 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
 
 _PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{STEPS}}", "{{WIDTH}}", "{{HEIGHT}}",
                        "{{LENGTH}}", "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
-                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
+                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_IMAGE_LAST}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
+
+# 单帧占位符（首帧 {{REF_IMAGE}} / 尾帧 {{REF_IMAGE_LAST}}）：未挂该帧时整值判未填，
+# 所在 LoadImage 节点会被裁掉 —— 首尾帧技能因此可只给一边（仅首帧=I2VA、仅尾帧=L2VA）。
+_FRAME_TOKENS = {"{{REF_IMAGE}}": "ref_name", "{{REF_IMAGE_LAST}}": "ref_last"}
+
+# 多路参考槽位占位符：{{REF_IMAGE_1..n}} / {{REF_VIDEO_1..n}} / {{REF_AUDIO_1..n}}。
+# 序号按媒体类型各自 1 基编号，列表由调用方按目标节点上限裁好（H3 为 9 图 / 3 视频 / 3 音频）。
+# 未提供对应序号时该值判为「未填」，render_template 会把所在节点连同连线一起裁掉。
+_REF_SLOT_RE = re.compile(r"^\{\{REF_(IMAGE|VIDEO|AUDIO)_(\d+)\}\}$")
+_REF_SLOT_KEYS = {"IMAGE": "ref_images", "VIDEO": "ref_videos", "AUDIO": "ref_audios"}
+_UNFILLED = object()
 
 
 def _typed_value(token: str, params: dict):
@@ -538,6 +577,8 @@ def _typed_value(token: str, params: dict):
         return params["audio_vae"]
     if token == "{{REF_IMAGE}}":
         return params["ref_name"]
+    if token == "{{REF_IMAGE_LAST}}":
+        return params.get("ref_last")
     scale = params.get("ref_scale") or (0, 0)
     if token == "{{REF_WIDTH}}":
         return scale[0]
@@ -547,7 +588,18 @@ def _typed_value(token: str, params: dict):
 
 
 def _substitute_value(value: str, params: dict):
-    """替换字符串值里的占位符；整值恰好是单个占位符时直接取类型化值（保持 int 等原类型）。"""
+    """替换字符串值里的占位符；整值恰好是单个占位符时直接取类型化值（保持 int 等原类型）。
+
+    整值是 {{REF_<MEDIA>_<n>}} 参考槽位且没有第 n 个参考时返回 _UNFILLED（该节点待裁）；
+    整值是单帧占位符（{{REF_IMAGE}} / {{REF_IMAGE_LAST}}）且该帧未挂时同样返回 _UNFILLED。"""
+    token = value.strip()
+    if token in _FRAME_TOKENS:
+        return params.get(_FRAME_TOKENS[token]) or _UNFILLED
+    slot = _REF_SLOT_RE.match(token)
+    if slot:
+        names = params.get(_REF_SLOT_KEYS[slot.group(1)]) or []
+        idx = int(slot.group(2)) - 1
+        return names[idx] if 0 <= idx < len(names) else _UNFILLED
     tokens = [t for t in _PLACEHOLDER_TOKENS if t in value]
     if not tokens:
         return value
@@ -654,18 +706,54 @@ def _apply_loras(graph: dict, loras: list, warnings: list):
     graph[consumer]["inputs"]["model"] = [prev, 0]
 
 
+_REF_IMAGE_TOKEN_RE = re.compile(r"\{\{REF_IMAGE(_\d+|_LAST)?\}\}")
+
+
+def _prune_unfilled(graph: dict, unfilled: set) -> None:
+    """裁掉未填参考槽位的节点链：先删该节点，再删指向它们的连线；
+    只剩连线、被裁空的中间节点（如参考视频的 GetVideoComponents）随之递归裁掉。"""
+    dead = set(unfilled)
+    while dead:
+        for nid in dead:
+            graph.pop(nid, None)
+        dead = set()
+        for nid, node in list(graph.items()):
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs")
+            if not inputs:
+                continue
+            for key, value in list(inputs.items()):
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str) and value[0] not in graph:
+                    del inputs[key]   # 上游已被裁掉：这条连线一并去掉
+            if not inputs:
+                dead.add(nid)         # 纯连线节点被裁空 → 该中转节点也失效
+
+
 def render_template(template: dict, params: dict) -> tuple[dict, list]:
-    """把 workflow.json 模板渲染成可提交队列的 API prompt。返回 (graph, warnings)。"""
-    if "{{REF_IMAGE}}" in json.dumps(template, ensure_ascii=False) and not params.get("ref_name"):
+    """把 workflow.json 模板渲染成可提交队列的 API prompt。返回 (graph, warnings)。
+
+    模板用 {{REF_IMAGE}}（单路首帧）或 {{REF_IMAGE_n}} / {{REF_VIDEO_n}} / {{REF_AUDIO_n}}
+    声明参考槽位；未提供对应序号的槽位整条裁掉，模板可同时容纳多种参考的上限槽位。"""
+    text = json.dumps(template, ensure_ascii=False)
+    if _REF_IMAGE_TOKEN_RE.search(text) and not (
+            params.get("ref_images") or params.get("ref_name") or params.get("ref_last")):
         raise ValueError("该技能需要参考图，请添加参考图后再生成")
     graph = copy.deepcopy(template)
-    for node in graph.values():
+    unfilled = set()
+    for nid, node in graph.items():
         if not isinstance(node, dict):
             continue
         inputs = node.get("inputs") or {}
         for key, value in list(inputs.items()):
             if isinstance(value, str) and "{{" in value:
-                inputs[key] = _substitute_value(value, params)
+                resolved = _substitute_value(value, params)
+                if resolved is _UNFILLED:
+                    unfilled.add(nid)
+                    break
+                inputs[key] = resolved
+    if unfilled:
+        _prune_unfilled(graph, unfilled)
     warnings = []
     _apply_loras(graph, params.get("loras") or [], warnings)
     return graph, warnings

@@ -36,24 +36,26 @@ async def neo_video_gen_director_progress(request):
     return web.json_response(get_director_progress())
 
 
-def _concat_segment_audio(audios, frame_rate: int, drop_per_seam: int):
-    """把各段 AudioInput 拼成一条；每段接缝丢 drop_per_seam 帧对应的采样（对齐被丢的边界帧）。
+def _concat_segment_audio(audios, frame_rate: int, drops):
+    """把各段 AudioInput 拼成一条；每个接缝按 drops[i]（0/1）决定是否裁掉对应采样。
 
     audios 为每段的 comp.audio（AudioInput {waveform:[B,C,T], sample_rate} 或 None），顺序对应各段。
+    drops 与 segments 对齐：drops[i]=1 表示第 i 段被连续性链入、首帧已丢弃，需同步裁掉等量采样保 A/V 对齐。
     返回合并后的 AudioInput；全部无音频时返回 None。
     """
     present = [a for a in audios if a is not None]
     if not present:
         return None
     sample_rate = int(present[0].get("sample_rate") or 1)
-    drop = int(round(sample_rate / frame_rate)) * max(0, drop_per_seam)   # 每丢一帧对应的采样数
+    per_frame = max(0, int(round(sample_rate / frame_rate)))   # 每帧对应的采样数
     parts = []
     for i, a in enumerate(audios):
         if a is None:
             continue
         w = a["waveform"]
-        if i > 0 and drop > 0:
-            w = w[..., drop:]
+        d = drops[i] if i < len(drops) else 0
+        if i > 0 and d > 0 and per_frame > 0:
+            w = w[..., per_frame * d:]
         parts.append(w)
     if not parts:
         return None
@@ -98,6 +100,7 @@ class NeoH3VideoDirector:
         _DIRECTOR_PROGRESS.update(active=True, segment_index=-1, total_segments=len(segments))
         all_frames = []
         all_audio = []
+        drops = []       # 与 segments 对齐：1 = 该段被连续性链入（丢首帧 + 对应音频）
         prev_tail = None
         try:
             for i, seg in enumerate(segments):
@@ -112,13 +115,44 @@ class NeoH3VideoDirector:
                 if dur is not None and float(dur) > 0:
                     body["length"] = _seconds_to_frames(float(dur))
 
-                ref = None
-                if continuity and i > 0 and prev_tail is not None:
-                    ref = {"kind": "data", "data": _image_to_data_uri(prev_tail)}
-                elif seg.get("ref_input"):
-                    ref = {"kind": "input", "value": seg["ref_input"]}
-                if ref:
-                    body["references"] = [ref]
+                # 按段模式组装参考（T2V 段不带任何参考）：
+                #   i2v/fl2v 首帧（continuity 时链入上段尾帧）+ 该段挂的参考素材
+                #   r2v 仅参考素材（图/视频/音频）  fl2v 另带尾帧锁收尾
+                mode = seg.get("mode") or "t2v"
+                refs = []
+                chained = False
+                if mode in ("i2v", "fl2v"):
+                    primary_input = None
+                    if continuity and i > 0 and prev_tail is not None:
+                        refs.append({"kind": "data", "data": _image_to_data_uri(prev_tail)})
+                        chained = True
+                    elif seg.get("ref_input"):
+                        primary_input = seg["ref_input"]
+                        refs.append({"kind": "input", "value": primary_input})
+                elif mode == "r2v":
+                    primary_input = None
+                if mode in ("i2v", "fl2v", "r2v"):
+                    seg_refs = seg.get("refs") or {}
+                    for name in (seg_refs.get("images") or []):
+                        if name != primary_input:
+                            refs.append({"kind": "input", "value": name})
+                    for name in (seg_refs.get("videos") or []):
+                        refs.append({"kind": "input", "value": name, "media": "video"})
+                    for name in (seg_refs.get("audios") or []):
+                        refs.append({"kind": "input", "value": name, "media": "audio"})
+                if refs:
+                    body["references"] = refs
+                if mode == "fl2v":
+                    if not seg.get("last_input"):
+                        raise ValueError(f"第 {i + 1} 段为首尾帧生视频但缺少尾帧：请为该段设置尾帧图")
+                    body["last_frame"] = {"kind": "input", "value": seg["last_input"]}
+                if mode in ("i2v", "fl2v") and not refs:
+                    raise ValueError(
+                        f"第 {i + 1} 段为{'首尾帧' if mode == 'fl2v' else '图生视频'}但没有可用首帧：" +
+                        ("请为该段设置首帧，或开启「连续性」以上段尾帧链入"
+                         if i > 0 else "首段需自带首帧"))
+                if mode == "r2v" and not refs:
+                    raise ValueError(f"第 {i + 1} 段为参考主体生视频但没有参考素材：请挂参考图 / 视频 / 音频")
 
                 real_id = _resolve_skill_id(seg.get("skill_id") or "")
                 template = load_skill_workflow(real_id)
@@ -133,16 +167,16 @@ class NeoH3VideoDirector:
 
                 if i == 0:
                     all_frames.append(frames)
-                elif continuity and frames.shape[0] > 1:
+                elif chained and frames.shape[0] > 1:
                     all_frames.append(frames[1:])   # 丢与上段重复的边界帧
                 else:
                     all_frames.append(frames)
+                drops.append(1 if (i > 0 and chained) else 0)
                 all_audio.append(comp.audio)
                 prev_tail = frames[-1:]
 
             final_frames = torch.cat(all_frames, dim=0)
-            drop = 1 if continuity else 0
-            final_audio = _concat_segment_audio(all_audio, H3_FPS, drop)
+            final_audio = _concat_segment_audio(all_audio, H3_FPS, drops)
             return (InputImpl.VideoFromComponents(
                 Types.VideoComponents(images=final_frames, audio=final_audio, frame_rate=Fraction(H3_FPS))
             ),)

@@ -289,6 +289,14 @@ async def rs_recipes_load(request):
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+# 每段参考素材上限：与 MiniMaxH3ReferenceToVideo 的 autogrow 槽位一致（图 9 / 视频 3 / 音频 3）
+_DIRECTOR_REF_CAPS = {"images": 9, "videos": 3, "audios": 3}
+
+# 段级生成模式（与 ComfyUI_MiniMaxH3_Director 的任务模式对齐）：
+# t2v 文生 / i2v 首帧 / fl2v 首尾帧 / r2v 参考主体；全局可再取 mixed（逐段 seg.mode 生效）
+_DIRECTOR_MODES = ("t2v", "i2v", "fl2v", "r2v")
+
+
 def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> tuple[dict, list]:
     """校验并规范化 video_director 配方的 shared/segments；非法抛 ValueError（消息可直接回前端）。
 
@@ -313,6 +321,10 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
         "height": _si(shared_raw.get("height"), 768),
         "seed": _si(shared_raw.get("seed"), 0),
     }
+    # 全局生成模式：具体模式全体统一，mixed 每段独立（seg.mode）；缺省不写，执行时按首帧/参考推断
+    shared_mode = str(shared_raw.get("mode") or "").strip()
+    if shared_mode in _DIRECTOR_MODES + ("mixed",):
+        shared["mode"] = shared_mode
 
     segs_raw = data.get("segments")
     if not isinstance(segs_raw, list) or not segs_raw:
@@ -348,12 +360,19 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
             raise ValueError(f"第 {idx + 1} 段 {where} 引用了未保存的资产：{fname}")
 
         first_frame = str(s.get("first_frame") or "").strip()
+        last_frame = str(s.get("last_frame") or "").strip()
         seg = {"skill_id": skill_id, "prompt": prompt, "duration_sec": dur}
+        # 段级模式仅在混合模式下有意义；保留合法值（t2v/i2v/fl2v/r2v），其余丢弃
+        seg_mode = str(s.get("mode") or "").strip()
+        if seg_mode in _DIRECTOR_MODES:
+            seg["mode"] = seg_mode
         if first_frame:
             seg["first_frame"] = _resolve_ref(first_frame, "first_frame")
+        if last_frame:
+            seg["last_frame"] = _resolve_ref(last_frame, "last_frame")
         kept_refs = {}
         for k in ("images", "videos", "audios"):
-            vals = [str(x) for x in (refs.get(k) or []) if str(x)]
+            vals = [str(x) for x in (refs.get(k) or []) if str(x)][:_DIRECTOR_REF_CAPS[k]]
             if vals:
                 kept_refs[k] = [_resolve_ref(v, f"refs.{k}") for v in vals]
         if kept_refs:
@@ -722,6 +741,7 @@ def load_director_spec(name: str) -> dict:
         raise ValueError(f"配方不是 video_director 类型：{name}")
 
     assets_dir = recipe_dir / "assets"
+    shared_mode = str((meta.get("shared") or {}).get("mode") or "").strip()
     segments = []
     for seg in (meta.get("segments") or []):
         img = str(seg.get("first_frame") or "").strip()
@@ -734,11 +754,49 @@ def load_director_spec(name: str) -> dict:
             if src.is_file():
                 resolved, _skipped = _copy_media_to_input(src, img)
                 ref_input = resolved
+        # 尾帧（首尾帧技能）：与首帧同样解析成 input 相对名
+        last_input = None
+        last_img = str(seg.get("last_frame") or "").strip()
+        if last_img:
+            src = assets_dir / last_img
+            if src.is_file():
+                resolved, _skipped = _copy_media_to_input(src, last_img)
+                last_input = resolved
+        # 多路参考素材：图 / 视频 / 音频按类型解析成 input 相对名，供参考生视频（ref2va）技能使用
+        refs_out = {}
+        seg_refs = seg.get("refs") if isinstance(seg.get("refs"), dict) else {}
+        for key in _DIRECTOR_REF_CAPS:
+            names = []
+            for fn in (seg_refs.get(key) or []):
+                src = assets_dir / str(fn)
+                if not src.is_file():
+                    continue
+                resolved, _skipped = _copy_media_to_input(src, str(fn))
+                names.append(resolved)
+            if names:
+                refs_out[key] = names
+        # 有效生成模式：shared.mode 为具体模式时全体统一；mixed/缺省时按段（seg.mode，再按帧/参考推断）
+        seg_mode = str(seg.get("mode") or "").strip()
+        if shared_mode in _DIRECTOR_MODES:
+            mode = shared_mode
+        elif seg_mode in _DIRECTOR_MODES:
+            mode = seg_mode
+        elif last_input:
+            mode = "fl2v"
+        elif ref_input:
+            mode = "i2v"
+        elif refs_out.get("videos") or refs_out.get("audios"):
+            mode = "r2v"
+        else:
+            mode = "t2v"
         segments.append({
             "skill_id": str(seg.get("skill_id") or ""),
             "prompt": seg.get("prompt", ""),
             "duration_sec": seg.get("duration_sec"),
             "ref_input": ref_input,
+            "last_input": last_input,
+            "refs": refs_out,
+            "mode": mode,
         })
     return {"shared": meta.get("shared") or {}, "segments": segments}
 

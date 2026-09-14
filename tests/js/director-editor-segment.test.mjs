@@ -975,3 +975,277 @@ test("导演编辑器：切换当前段时编辑器时间轴自动把该段滚�
     await sleep(20);
 });
 
+test("导演编辑器：图生视频段三组参考网格回显，保存写入 refs 并把参考视频/音频带进 assets", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };   // 画布无素材 → 参考靠已存名回填
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "R2V" }));
+
+    const existing = {
+        name: "R2V",
+        type: "video_director",
+        shared: { mode: "i2v", width: 960, height: 544 },
+        segments: [{
+            skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "i2v", first_frame: "ff.png",
+            refs: { images: ["a.png"], videos: ["v.mp4"], audios: ["s.wav"] },
+        }],
+    };
+    await openDirectorEditor(existing, null);
+    await sleep(60);
+
+    const rows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
+    assert.equal(rows.length, 3, "参考图 / 参考视频 / 参考音频三组网格");
+    assert.deepEqual(rows.map((r) => r.querySelector(".neo-director-refpick-count").textContent),
+        ["1/9", "1/3", "1/3"], "各自上限：图 9 / 视频 3 / 音频 3");
+    const isActive = (row, name) => {
+        const tile = Array.from(row.querySelectorAll(".neo-director-refpick-item")).find((it) => it.dataset.file === name);
+        return !!tile && tile.classList.contains("neo-director-refpick-active");
+    };
+    assert.ok(isActive(rows[0], "a.png"), "参考图回显为选中");
+    assert.ok(isActive(rows[1], "v.mp4"), "参考视频回显为选中");
+    assert.ok(isActive(rows[2], "s.wav"), "参考音频回显为选中");
+
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.deepEqual(saveCall.body.segments[0].refs,
+        { images: ["a.png"], videos: ["v.mp4"], audios: ["s.wav"] });
+    assert.equal(saveCall.body.shared.mode, "i2v");
+    const assets = saveCall.body.assets.map((a) => `${a.filename}:${a.kind}`);
+    assert.ok(assets.includes("v.mp4:video"), "参考视频进配方 assets");
+    assert.ok(assets.includes("s.wav:audio"), "参考音频进配方 assets");
+});
+
+test("导演编辑器：参考素材区仅图生视频段显示（文生段隐藏）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "T2V", shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5 }],
+    });
+    await sleep(60);
+    const block = document.querySelector(".neo-director-seg .neo-director-refs-block");
+    assert.ok(block, "参考素材区容器存在");
+    assert.equal(block.style.display, "none", "文生段隐藏参考素材区");
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：切换段模式/全局模式即时刷新参考素材区显隐", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "MODE", shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5 }],
+    });
+    await sleep(60);
+    const block = document.querySelector(".neo-director-seg .neo-director-refs-block");
+    assert.equal(block.style.display, "none", "初始文生模式隐藏");
+
+    const modeSel = document.querySelector(".neo-director-mode");
+    modeSel.value = "r2v";
+    modeSel.dispatchEvent(new Event("change"));
+    await sleep(10);
+    assert.equal(block.style.display, "", "切到参考主体模式后显示参考素材区");
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：首尾帧模式显示首帧+尾帧区，保存写入 last_frame", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "FL2V" }));
+
+    await openDirectorEditor({
+        name: "FL2V", shared: { mode: "fl2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "fl2v",
+                     first_frame: "a.png", last_frame: "z.png" }],
+    }, null);
+    await sleep(60);
+
+    const ffBlock = document.querySelector(".neo-director-seg .neo-director-ff-block");
+    const lfBlock = document.querySelector(".neo-director-seg .neo-director-lf-block");
+    const refsBlock = document.querySelector(".neo-director-seg .neo-director-refs-block");
+    assert.ok(lfBlock, "尾帧区存在");
+    assert.equal(ffBlock.style.display, "", "首尾帧模式显示首帧区");
+    assert.equal(lfBlock.style.display, "", "首尾帧模式显示尾帧区");
+    assert.equal(refsBlock.style.display, "none", "首尾帧模式隐藏参考素材区");
+    // 尾帧网格以独立类名前缀渲染，并按已存文件名回填选中
+    const lfActive = lfBlock.querySelector(".neo-director-lf-item.neo-director-lf-active");
+    assert.ok(lfActive, "尾帧已选中");
+    assert.equal(lfActive.dataset.file, "z.png");
+
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saved = fetchLog.find((c) => c.path === "/rs_recipes/save").body.segments[0];
+    assert.equal(saved.first_frame, "a.png");
+    assert.equal(saved.last_frame, "z.png");
+    assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save").body.shared.mode, "fl2v");
+});
+
+test("导演编辑器：首尾帧模式缺尾帧时保存被拒（提示尾帧）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "FL2V-x" }));
+
+    await openDirectorEditor({
+        name: "FL2V-x", shared: { mode: "fl2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "fl2v", first_frame: "a.png" }],
+    }, null);
+    await sleep(60);
+    document.querySelector(".neo-director-save").click();
+    await sleep(40);
+    assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save"), undefined, "缺尾帧不发保存请求");
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：参考主体模式显示参考素材区、隐藏首尾帧区", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "R2V", shared: { mode: "r2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "r2v",
+                     refs: { images: ["a.png"] } }],
+    }, null);
+    await sleep(60);
+
+    const row = document.querySelector(".neo-director-seg");
+    assert.equal(row.querySelector(".neo-director-ff-block").style.display, "none", "参考主体模式隐藏首帧区");
+    assert.equal(row.querySelector(".neo-director-lf-block").style.display, "none", "参考主体模式隐藏尾帧区");
+    assert.equal(row.querySelector(".neo-director-refs-block").style.display, "", "参考主体模式显示参考素材区");
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：混合模式下每段可选 t2v/i2v/fl2v/r2v，切换后即时刷新分区显隐", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "MIX", shared: { mode: "mixed" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "t2v" }],
+    }, null);
+    await sleep(60);
+
+    const row = document.querySelector(".neo-director-seg");
+    const segMode = row.querySelector(".neo-director-segmode");
+    assert.deepEqual(Array.from(segMode.options).map((o) => o.value), ["t2v", "i2v", "fl2v", "r2v"]);
+
+    segMode.value = "fl2v";
+    segMode.dispatchEvent(new Event("change"));
+    await sleep(10);
+    assert.equal(row.querySelector(".neo-director-ff-block").style.display, "", "fl2v 显示首帧区");
+    assert.equal(row.querySelector(".neo-director-lf-block").style.display, "", "fl2v 显示尾帧区");
+
+    segMode.value = "r2v";
+    segMode.dispatchEvent(new Event("change"));
+    await sleep(10);
+    assert.equal(row.querySelector(".neo-director-ff-block").style.display, "none", "r2v 隐藏首帧区");
+    assert.equal(row.querySelector(".neo-director-refs-block").style.display, "", "r2v 显示参考素材区");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：所有网格都有「本地」按钮（首帧/尾帧/参考图/参考视频/参考音频）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "LOCAL", shared: { mode: "fl2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "fl2v" }],
+    }, null);
+    await sleep(60);
+
+    // 首帧区、尾帧区各有一个「本地」按钮
+    const ffBlock = document.querySelector(".neo-director-ff-block");
+    const lfBlock = document.querySelector(".neo-director-lf-block");
+    assert.ok(ffBlock.querySelector(".neo-director-local-add"), "首帧区有「本地」按钮");
+    assert.ok(lfBlock.querySelector(".neo-director-local-add"), "尾帧区有「本地」按钮");
+
+    // 参考素材区三组网格各有「本地」按钮
+    const refRows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
+    assert.equal(refRows.length, 3, "参考图/视频/音频三组");
+    for (const row of refRows) {
+        assert.ok(row.querySelector(".neo-director-local-add"), `参考组有「本地」按钮: ${row.querySelector(".neo-director-field-label").textContent}`);
+    }
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：「本地」按钮点击上传文件后加入候选并选中", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/upload/image", () => jsonResponse({ name: "uploaded_local.png", subfolder: "", type: "input" }));
+
+    await openDirectorEditor(null);
+    await sleep(60);
+
+    // 找到首帧区的「本地」按钮内的 file input
+    const ffBlock = document.querySelector(".neo-director-ff-block");
+    const localBtn = ffBlock.querySelector(".neo-director-local-add");
+    assert.ok(localBtn, "首帧区有「本地」按钮");
+    const fileInput = localBtn.querySelector("input[type=file]");
+    assert.ok(fileInput, "「本地」按钮内含 file input");
+    assert.equal(fileInput.accept, "image/*", "首帧区 file input accept=image/*");
+
+    // 模拟选择文件
+    const fakeFile = new File(["fake"], "local.png", { type: "image/png" });
+    Object.defineProperty(fileInput, "files", { value: [fakeFile], configurable: true });
+    fileInput.dispatchEvent(new Event("change"));
+    await sleep(50);
+
+    // 上传成功后，文件加入首帧网格并选中
+    const uploadCall = fetchLog.find((c) => c.path === "/upload/image");
+    assert.ok(uploadCall, "调用了 /upload/image");
+    assert.equal(uploadCall.method, "POST");
+
+    const ffTile = Array.from(document.querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === "uploaded_local.png");
+    assert.ok(ffTile, "上传的文件加入首帧网格");
+    assert.ok(ffTile.classList.contains("neo-director-ff-active"), "上传的文件被选中");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：参考视频/音频的「本地」按钮 accept 正确过滤", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "REF", shared: { mode: "r2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "r2v" }],
+    }, null);
+    await sleep(60);
+
+    const refRows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
+    const labels = refRows.map((r) => r.querySelector(".neo-director-field-label").textContent);
+    // 参考图/参考视频/参考音频
+    const imgRow = refRows.find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考图"));
+    const vidRow = refRows.find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考视频"));
+    const audRow = refRows.find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考音频"));
+    assert.ok(imgRow && vidRow && audRow, "三组参考网格都存在");
+
+    assert.equal(imgRow.querySelector("input[type=file]").accept, "image/*", "参考图 accept=image/*");
+    assert.equal(vidRow.querySelector("input[type=file]").accept, "video/*", "参考视频 accept=video/*");
+    assert.equal(audRow.querySelector("input[type=file]").accept, "audio/*", "参考音频 accept=audio/*");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+

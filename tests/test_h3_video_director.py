@@ -225,6 +225,38 @@ class NormalizeDirectorTests(unittest.TestCase):
             recipes._normalize_director(
                 {"segments": [{"prompt": "  ", "skill_id": "s"}]}, {})
 
+    def test_global_mode_preserved(self):
+        shared, _ = recipes._normalize_director(
+            {"shared": {"mode": "i2v"}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertEqual(shared["mode"], "i2v")
+
+    def test_invalid_global_mode_dropped(self):
+        shared, _ = recipes._normalize_director(
+            {"shared": {"mode": "xxx"}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertNotIn("mode", shared)
+
+    def test_segment_mode_kept_when_valid_dropped_when_invalid(self):
+        _, segs = recipes._normalize_director(
+            {"shared": {"mode": "mixed"},
+             "segments": [{"prompt": "x", "skill_id": "s", "mode": "t2v"},
+                          {"prompt": "y", "skill_id": "s", "mode": "bogus"}]}, {})
+        self.assertEqual(segs[0]["mode"], "t2v")
+        self.assertNotIn("mode", segs[1])
+
+    def test_segment_ref_media_capped(self):
+        # 每段参考上限与参考节点槽位一致：图 9 / 视频 3 / 音频 3
+        names = ([f"i{n}.png" for n in range(12)] + [f"v{n}.mp4" for n in range(5)]
+                 + [f"a{n}.wav" for n in range(5)])
+        _, segs = recipes._normalize_director(
+            {"shared": {"mode": "i2v"},
+             "segments": [{"prompt": "x", "skill_id": "s",
+                           "refs": {"images": names[:12], "videos": names[12:17], "audios": names[17:]}}]},
+            {n: n for n in names})
+        self.assertEqual(len(segs[0]["refs"]["images"]), 9)
+        self.assertEqual(len(segs[0]["refs"]["videos"]), 3)
+        self.assertEqual(len(segs[0]["refs"]["audios"]), 3)
+
+
 
 # ===========================================================================
 # P1：_normalize_director_story（自动故事板内容随配方落盘）
@@ -313,6 +345,107 @@ class DirectorRecipeIOTests(unittest.TestCase):
         self.assertEqual(len(spec["segments"]), 2)
         self.assertEqual(spec["segments"][0]["ref_input"], "f.png")
         self.assertIsNone(spec["segments"][1]["ref_input"])
+
+    def test_load_spec_global_i2v_forces_all_modes(self):
+        # 全局图生视频：所有段有效模式都是 i2v（后续段可无自带首帧，靠连续性链入）
+        self._make_recipe("g", {"type": "video_director",
+                                "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                "segments": [
+                                    {"skill_id": "s0", "prompt": "a", "first_frame": "f.png"},
+                                    {"skill_id": "s1", "prompt": "b"},
+                                ]}, assets=["f.png"])
+        spec = recipes.load_director_spec("g")
+        self.assertEqual([s["mode"] for s in spec["segments"]], ["i2v", "i2v"])
+
+    def test_load_spec_global_t2v_forces_all_modes(self):
+        # 全局文生视频：即便段带首帧，有效模式仍统一为 t2v
+        self._make_recipe("g", {"type": "video_director",
+                                "shared": {"mode": "t2v", "width": 8, "height": 8},
+                                "segments": [
+                                    {"skill_id": "s0", "prompt": "a", "first_frame": "f.png"},
+                                ]}, assets=["f.png"])
+        spec = recipes.load_director_spec("g")
+        self.assertEqual(spec["segments"][0]["mode"], "t2v")
+
+    def test_load_spec_mixed_respects_segment_mode(self):
+        # 混合模式：逐段采用各自 seg.mode
+        self._make_recipe("g", {"type": "video_director",
+                                "shared": {"mode": "mixed", "width": 8, "height": 8},
+                                "segments": [
+                                    {"skill_id": "s0", "prompt": "a", "mode": "i2v", "first_frame": "f.png"},
+                                    {"skill_id": "s1", "prompt": "b", "mode": "t2v"},
+                                ]}, assets=["f.png"])
+        spec = recipes.load_director_spec("g")
+        self.assertEqual([s["mode"] for s in spec["segments"]], ["i2v", "t2v"])
+
+    def test_load_spec_legacy_infers_mode_from_first_frame(self):
+        # 旧配方无 shared.mode / seg.mode：按是否带首帧推断（有=i2v，无=t2v）
+        self._make_recipe("g", {"type": "video_director",
+                                "shared": {"width": 8, "height": 8},
+                                "segments": [
+                                    {"skill_id": "s0", "prompt": "a", "first_frame": "f.png"},
+                                    {"skill_id": "s1", "prompt": "b"},
+                                ]}, assets=["f.png"])
+        spec = recipes.load_director_spec("g")
+        self.assertEqual([s["mode"] for s in spec["segments"]], ["i2v", "t2v"])
+
+    def test_load_spec_resolves_segment_ref_media(self):
+        # 每段挂的图/视频/音频参考解析成 input 相对名，供参考生视频技能使用
+        self._make_recipe("r", {"type": "video_director",
+                                "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                "segments": [{"skill_id": "s", "prompt": "p",
+                                              "refs": {"images": ["a.png", "b.png"],
+                                                       "videos": ["v.mp4"],
+                                                       "audios": ["s.wav"]}}]},
+                         assets=["a.png", "b.png", "v.mp4", "s.wav"])
+        spec = recipes.load_director_spec("r")
+        self.assertEqual(spec["segments"][0]["refs"],
+                         {"images": ["a.png", "b.png"], "videos": ["v.mp4"], "audios": ["s.wav"]})
+
+    def test_load_spec_skips_missing_ref_media(self):
+        # 缺文件的参考只跳过该条，其余照常解析（不整段失败）
+        self._make_recipe("r", {"type": "video_director",
+                                "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                "segments": [{"skill_id": "s", "prompt": "p",
+                                              "refs": {"videos": ["gone.mp4", "v.mp4"]}}]},
+                         assets=["v.mp4"])
+        spec = recipes.load_director_spec("r")
+        self.assertEqual(spec["segments"][0]["refs"], {"videos": ["v.mp4"]})
+
+    def test_load_spec_resolves_last_frame(self):
+        # 首尾帧模式：首帧 → ref_input，尾帧 → last_input，模式沿用配方 shared.mode
+        self._make_recipe("f", {"type": "video_director",
+                                "shared": {"mode": "fl2v", "width": 8, "height": 8},
+                                "segments": [{"skill_id": "s", "prompt": "p",
+                                              "first_frame": "a.png", "last_frame": "z.png"}]},
+                         assets=["a.png", "z.png"])
+        seg = recipes.load_director_spec("f")["segments"][0]
+        self.assertEqual(seg["ref_input"], "a.png")
+        self.assertEqual(seg["last_input"], "z.png")
+        self.assertEqual(seg["mode"], "fl2v")
+
+    def test_load_spec_infers_fl2v_from_last_frame(self):
+        # 旧配方无 mode：只挂尾帧也识别为首尾帧模式
+        self._make_recipe("f", {"type": "video_director", "shared": {"width": 8, "height": 8},
+                                "segments": [{"skill_id": "s", "prompt": "p", "last_frame": "z.png"}]},
+                         assets=["z.png"])
+        self.assertEqual(recipes.load_director_spec("f")["segments"][0]["mode"], "fl2v")
+
+    def test_new_modes_kept_by_normalize(self):
+        # 新段级模式（fl2v/r2v）与 last_frame 都要保留
+        shared, segs = recipes._normalize_director(
+            {"shared": {"mode": "fl2v"},
+             "segments": [{"prompt": "x", "skill_id": "s", "mode": "r2v", "last_frame": "z.png"}]},
+            {"z.png": "z.png"})
+        self.assertEqual(shared["mode"], "fl2v")
+        self.assertEqual(segs[0]["mode"], "r2v")
+        self.assertEqual(segs[0]["last_frame"], "z.png")
+
+    def test_load_spec_without_refs_has_empty_refs(self):
+        self._make_recipe("r", {"type": "video_director",
+                                "shared": {"mode": "t2v", "width": 8, "height": 8},
+                                "segments": [{"skill_id": "s", "prompt": "p"}]})
+        self.assertEqual(recipes.load_director_spec("r")["segments"][0]["refs"], {})
 
     def test_load_spec_rejects_flat_recipe(self):
         self._make_recipe("flat", {"prompt": "p"})
@@ -443,7 +576,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
     FPS = 24
     SPF = SR // FPS   # 2000 samples/frame
 
-    def _patch(self, n_segments, frame_counts, seed_base=100):
+    def _patch(self, n_segments, frame_counts, seed_base=100, mode=None):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
@@ -454,8 +587,10 @@ class DirectorOrchestrationTests(unittest.TestCase):
         def _fake_exec(graph, output_type="IMAGE"):
             return next(it)
 
+        # i2v 段首段需自带首帧才能通过执行校验，给占位 ref_input；t2v / 无模式段不带参考。
+        ref = "ff.png" if mode == "i2v" else None
         segments = [{"skill_id": f"s{i}", "prompt": f"p{i}",
-                     "duration_sec": 5, "ref_input": None} for i in range(n_segments)]
+                     "duration_sec": 5, "ref_input": ref, "mode": mode} for i in range(n_segments)]
         h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": seed_base},
                                                "segments": segments}
         h3d._resolve_skill_id = lambda v: v
@@ -472,7 +607,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         return orig, bodies
 
     def test_continuity_on_drops_boundary_frames(self):
-        orig, bodies = self._patch(3, [124, 124, 124])
+        orig, bodies = self._patch(3, [124, 124, 124], mode="i2v")
         try:
             (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True)
         finally:
@@ -500,7 +635,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertEqual([b["seed"] for b in bodies], [500, 501])
 
     def test_audio_trimmed_to_match_dropped_frames(self):
-        orig, _ = self._patch(3, [124, 124, 124])
+        orig, _ = self._patch(3, [124, 124, 124], mode="i2v")
         try:
             (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True)
         finally:
@@ -511,8 +646,100 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertEqual(comp.audio["waveform"].shape[-1], 370 * self.SPF)
 
     def test_concat_audio_none_when_no_audio(self):
-        out = h3_video_director._concat_segment_audio([None, None], self.FPS, 1)
+        out = h3_video_director._concat_segment_audio([None, None], self.FPS, [0, 1])
         self.assertIsNone(out)
+
+    def test_t2v_continuity_keeps_all_frames(self):
+        # T2V 段不带参考图，continuity 也不链入上段尾帧、不丢边界帧 → 全帧拼接
+        orig, _ = self._patch(3, [124, 124, 124])   # mode=None → t2v
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True)
+        finally:
+            self._restore(orig)
+        comp = video.get_components()
+        self.assertEqual(comp.images.shape[0], 124 * 3)
+
+    def test_ref_attached_only_to_i2v_segments(self):
+        # 混合模式：i2v 段携带首帧参考，t2v 段绝不带
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess)
+        bodies = []
+        it = iter(_FakeVideo(100, self.FPS, self.SR) for _ in range(2))
+        segments = [
+            {"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "ref_input": "ff.png", "mode": "i2v"},
+            {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "ref_input": None, "mode": "t2v"},
+        ]
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 1},
+                                               "segments": segments}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+
+        def _fake_resolve(body, cfg):
+            bodies.append(dict(body))
+            return {"prompt": body["prompt"]}
+
+        h3d.resolve_video_params = _fake_resolve
+        h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": next(it)
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertIn("references", bodies[0])
+        self.assertEqual(bodies[0]["references"][0]["value"], "ff.png")
+        self.assertNotIn("references", bodies[1])
+
+    def test_media_refs_attached_with_type_for_i2v_segment(self):
+        # i2v 段：首帧 + 挂的图/视频/音频参考都进 body["references"]，视频/音频带 media 标记
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess)
+        bodies = []
+        it = iter(_FakeVideo(100, self.FPS, self.SR) for _ in range(1))
+        h3d.load_director_spec = lambda name: {
+            "shared": {"width": 8, "height": 8, "seed": 1},
+            "segments": [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "i2v",
+                          "ref_input": "ff.png",
+                          "refs": {"images": ["a.png"], "videos": ["v.mp4"], "audios": ["s.wav"]}}]}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body["prompt"]}
+        h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": next(it)
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        refs = bodies[0]["references"]
+        self.assertEqual([r["value"] for r in refs], ["ff.png", "a.png", "v.mp4", "s.wav"])
+        self.assertEqual([r.get("media") for r in refs], [None, None, "video", "audio"])
+
+    def test_i2v_without_first_frame_raises(self):
+        # 首段 i2v 无自带首帧、无上段可链入 → 明确报错而非静默按 t2v 生成
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess)
+        h3d.load_director_spec = lambda name: {
+            "shared": {"width": 8, "height": 8, "seed": 1},
+            "segments": [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5,
+                          "ref_input": None, "mode": "i2v"}]}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.resolve_video_params = lambda body, cfg: {"prompt": body["prompt"]}
+        h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": _FakeVideo(100, self.FPS, self.SR)
+        try:
+            with self.assertRaises(ValueError):
+                h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
 
     def test_reports_progress_per_segment_and_resets(self):
         h3d = h3_video_director
@@ -535,6 +762,57 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertEqual([s["segment_index"] for s in seen], [0, 1, 2])
         # 结束后复位为 inactive
         self.assertEqual(h3d.get_director_progress(), {"active": False, "segment_index": -1, "total_segments": 0})
+
+    def _run_single(self, seg, continuity=False):
+        """用单个自定义段跑一次 generate；返回 (bodies, 错误文本)。"""
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess)
+        bodies = []
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 1},
+                                               "segments": [seg]}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
+        h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": _FakeVideo(100, self.FPS, self.SR)
+        err = None
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=continuity)
+        except ValueError as e:
+            err = str(e)
+        finally:
+            self._restore(orig)
+        return bodies, err
+
+    def test_fl2v_segment_sends_first_and_last_frame(self):
+        # 首尾帧段：首帧进 references（模板 {{REF_IMAGE}}），尾帧进 body["last_frame"]（{{REF_IMAGE_LAST}}）
+        bodies, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "fl2v",
+                                        "ref_input": "ff.png", "last_input": "lf.png"})
+        self.assertIsNone(err)
+        self.assertEqual(bodies[0]["references"], [{"kind": "input", "value": "ff.png"}])
+        self.assertEqual(bodies[0]["last_frame"], {"kind": "input", "value": "lf.png"})
+
+    def test_fl2v_segment_without_last_frame_raises(self):
+        _, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "fl2v",
+                                   "ref_input": "ff.png"})
+        self.assertIn("尾帧", err or "")
+
+    def test_r2v_segment_attaches_refs_without_first_frame(self):
+        # 参考主体段：只挂参考素材即可，不需要首帧
+        bodies, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v",
+                                        "ref_input": None,
+                                        "refs": {"images": ["a.png"], "videos": ["v.mp4"], "audios": ["s.wav"]}})
+        self.assertIsNone(err)
+        self.assertEqual([(r["value"], r.get("media")) for r in bodies[0]["references"]],
+                         [("a.png", None), ("v.mp4", "video"), ("s.wav", "audio")])
+        self.assertNotIn("last_frame", bodies[0])
+
+    def test_r2v_segment_without_refs_raises(self):
+        _, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v"})
+        self.assertIn("参考", err or "")
 
     def _restore(self, orig):
         (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,

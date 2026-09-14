@@ -54,7 +54,7 @@ recipes/
 
 - **编辑器界面**：
   - 居中面板设共享分辨率：**宽高比 + 百万像素（0.1–2，一位小数）→ 宽/高**（按 32 对齐，算法移植自 MiniMax H3 Director 的 ResolutionSelector；选「自定义」改手输 W/H；新建配方初始 16:9 @ 0.5 百万像素 = 960×544），种子不在编辑器设置（后端默认 0，可用节点 `seed` 输入覆盖）。
-  - 再逐段填 **技能（skill_id，必填）** / 提示词 / 首帧（缩略图网格：点选当前画布已连线的 LoadImage，或直接从左侧 Neo Gallery 素材栏拖入该段；**再点一次已选中的图即取消、回落文生视频**；可留空走文生）/ 时长(秒，位于该段最后一行)。
+  - 逐段填 **技能（skill_id，必填）** / 提示词 / 时长(秒，位于该段最后一行)。**生成模式**决定该段携带哪些帧与参考：顶部全局下拉（文生视频 / 图生视频 / 首尾帧生视频 / 参考主体生视频 / 混合模式，写入 `shared.mode`）下，具体模式全体统一并隐藏逐段模式，`mixed` 时每段显示**本段模式**下拉（`seg.mode`，四选一）。分区显隐：**首帧区**（i2v/fl2v；单选缩略图网格，点选当前画布已连线的 LoadImage 或从左侧 Neo Gallery 拖入，**再点一次已选中的图即取消**）、**尾帧区**（fl2v；同构的独立网格，锁该段收尾画面）、**参考素材区**（i2v/fl2v/r2v；三组多选网格——参考图 ≤9 / 参考视频 ≤3 / 参考音频 ≤3，候选取自当前画布已连线的 LoadImage / LoadVideo / LoadAudio，也可拖入，标题右侧显示已选/上限计数，超出上限时提示，点 ✕ 移除候选）。**每个网格（首帧/尾帧/参考图/参考视频/参考音频）标题行都有「📤 本地」按钮**：点击弹出文件选择器（按类型过滤 accept），选择后上传到 `input/` 并自动加入候选、选中；左侧 Neo Gallery 素材栏的图/视频/音频素材均可直接拖入任意网格。保存校验：图生段需首帧或参考素材、首尾帧段需尾帧、参考主体段需至少一条参考素材，否则报错；文生段隐藏各分区、不写 `first_frame`/`last_frame`/`refs`。旧配方无 `shared.mode` 时按各段是否已带首帧推断初始全局模式（全有=图生、全无=文生、部分=混合）。
   - 编辑面板**不加遮罩、不 dim 背景**（浮层完全穿透），便于边编辑边从左侧 Neo Gallery 素材栏把图直接拖入指定段落。
   - 窗口标题栏可按住拖动以调整位置，右下角手柄可拖拽缩放窗口大小（拉宽时时间轴随面板宽度自动重排；**拉高时「自动故事板」的故事脚本区、以及当前段的提示词区随之撑满可用高度**、首帧资产区钉在卡片底部不被挤出）。
   - 标题栏右侧 **⛶** 按钮可一键**放大到最大**（铺满视口、留 8px 边距，高度受 88vh 上限约束），再点一次或**双击标题栏**即还原到放大前尺寸。
@@ -68,11 +68,12 @@ recipes/
   - 组件数据完全由宿主 `getSegments()` 提供、经 `onSelect` / `onReorder` / `onResize` / `onAdd` 回调驱动（`onAdd` 仅非只读且提供时显示），因此同样可挂到 `NeoH3VideoDirector` 节点内复用（节点内为只读预览，无 ＋）。
 - **半自动故事生成（「📖 自动故事板」页签）**：
   - 编辑器在内容区顶部（标题栏配方名之下）提供两个可切换页签——**🎞️ 时间轴分段**（默认，含共享分辨率 + 时间轴 + 逐段卡片）与 **📖 自动故事板**（半自动流程，二者互不叠加、随时切换）。
-  - 故事板页内：① 填一段主题/想法，点 **✨ 自动生成故事**，后端 `/rs_recipes/director_generate_story` 用 LLM 产出完整故事脚本（可编辑）；② 选分段粒度（5 / 10 / 15 秒），可选在「角色参考图 / 背景参考图」网格点选已连线 LoadImage 或从左侧 Neo Gallery 拖入（每项可补一句文字描述，选中图会作为多模态参考发给 LLM、provider 不支持视觉时自动降级为纯文本），点 **✅ 确认并拆分到时间轴**，后端 `/rs_recipes/director_split_segments` 把故事切成约目标秒数的若干场景并结合角色/背景重生成每段提示词，前端据此**替换**时间轴现有段落（技能取首个可用视频技能）并自动切回时间轴页；勾选「将选中参考图设为各段首帧」时以背景图优先、否则第一张角色图作为所有段 `first_frame`。生成的段落仍可在时间轴页逐段微调后再保存。
+  - 故事板页内：① 填一段主题/想法，点 **✨ 自动生成故事**，后端 `/rs_recipes/director_generate_story` 用 LLM 产出完整故事脚本（可编辑）；② 选分段粒度（5 / 10 / 15 秒），可选在「角色参考图 / 背景参考图」网格点选已连线 LoadImage 或从左侧 Neo Gallery 拖入（每项可补一句文字描述，选中图会作为多模态参考发给 LLM、provider 不支持视觉时自动降级为纯文本），点 **✅ 确认并拆分到时间轴**，后端 `/rs_recipes/director_split_segments` 把故事切成约目标秒数的若干场景并结合角色/背景重生成每段提示词，前端据此**替换**时间轴现有段落（技能取首个可用视频技能）并自动切回时间轴页；勾选「将选中参考图设为各段首帧」时以背景图优先、否则第一张角色图作为所有段 `first_frame`，并把每段 `mode` 记为 `i2v`（设了首帧）或 `t2v`（未设）。生成的段落仍可在时间轴页逐段微调后再保存。
   - **故事板内容随配方保存**：主题 / 故事脚本 / 角色・背景参考图（含描述）/ 分段粒度在保存时一并写入 `recipe.json`（归档于可选字段 `story`），重新打开该配方时全部原样回显（参考图不在当前画布素材中也会补出占位项并保持选中）；全新配方且未用过故事板时不写入该字段。
 - **schema**：
-  - `recipe.json` 在扁平字段之外多出 `type: "video_director"`、`shared {width,height,aspect_ratio,megapixels?}`（预设比例存 `aspect_ratio` + `megapixels`；自定义模式存 `aspect_ratio:"自定义"` + 手输 W/H；旧配方的 `seed` 仍被后端读取，但编辑器不再写入）、`segments[]`、可选 `story {idea?, story?, characters[{filename,desc?}], backgrounds[{filename,desc?}], segment_seconds?}`（自动故事板内容；参考图 filename 与段首帧同样回写为落盘 `assets/` 最终名，引用未落盘资产的条目直接丢弃——参考图仅用于生成故事，缺一条不应让整份配方保存失败）。
-  - 每段 `{skill_id, prompt, duration_sec, first_frame?}`（`first_frame` 为已落盘 `assets/` 的文件名）。**缺省 `type` 的旧扁平配方行为完全不变。**
+  - `recipe.json` 在扁平字段之外多出 `type: "video_director"`、`shared {width,height,aspect_ratio,megapixels?,mode?}`（预设比例存 `aspect_ratio` + `megapixels`；自定义模式存 `aspect_ratio:"自定义"` + 手输 W/H；`mode` 为全局生成模式 `t2v`/`i2v`/`mixed`，缺省时按各段是否带首帧推断；旧配方的 `seed` 仍被后端读取，但编辑器不再写入）、`segments[]`、可选 `story {idea?, story?, characters[{filename,desc?}], backgrounds[{filename,desc?}], segment_seconds?}`（自动故事板内容；参考图 filename 与段首帧同样回写为落盘 `assets/` 最终名，引用未落盘资产的条目直接丢弃——参考图仅用于生成故事，缺一条不应让整份配方保存失败）。
+  - 每段 `{skill_id, prompt, duration_sec, first_frame?, last_frame?, mode?, refs?}`（`first_frame` / `last_frame` 为已落盘 `assets/` 的文件名；`mode` 仅混合模式下逐段写入，取值 `t2v`/`i2v`/`fl2v`/`r2v`；`refs` 为 `{images?[≤9], videos?[≤3], audios?[≤3]}`，仅在挂了参考素材时写入，参考生视频技能据此填参考节点槽位）。**缺省 `type` 的旧扁平配方行为完全不变。**
+- **参考素材引用**：段 `refs.*` 与首帧同样以原始文件名引用、保存时回写为落盘最终名；前端保存时把用到的参考视频/音频并入配方 `assets`（`kind` 记 `video`/`audio`），执行前由 `load_director_spec` 复制进 `input/` 再交给模板。
 - **首帧引用**：前端以原始文件名引用，保存时后端把原始名映射到落盘 `assets/` 的最终名并回写（同名不同内容被重命名也不失效）；`first_frame` / `refs.*` 引用了未保存的资产会被拒绝。
 - **执行**见 [h3-video-gen.md](h3-video-gen.md) 的「NeoH3VideoDirector」。
 
