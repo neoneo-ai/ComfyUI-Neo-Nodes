@@ -18,7 +18,8 @@
 
 ![🎞️ NeoH3VideoDirector 节点](assets/images/neo-h3-video-director.png)
 
-- **输入**：`recipe`（video_director 配方名，下拉自动列出）+ 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认值）/ `continuity`（默认开）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值）。`model` / `steps` 与单段节点同款「运行时加速」语义、**逐段生效**：提供 `model` 时每段跳过内部主模型解析、剪掉该段纯模型链并注入外部模型（无需 VDN 插件）；`steps > 0` 覆盖每段采样步数。选中配方后节点会自动把 `width` / `height` / `steps` 填成该配方**首段** skill config 的默认值（仅当当前值为 -1 时，尊重已保存/手动设置）。
+- **输入**：`recipe`（video_director 配方名，下拉自动列出）+ 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认值）/ `continuity`（默认开）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值）/ `preview`（BOOLEAN，默认开，见下）。`model` / `steps` 与单段节点同款「运行时加速」语义、**逐段生效**：提供 `model` 时每段跳过内部主模型解析、剪掉该段纯模型链并注入外部模型（无需 VDN 插件）；`steps > 0` 覆盖每段采样步数。选中配方后节点会自动把 `width` / `height` / `steps` 填成该配方**首段** skill config 的默认值（仅当当前值为 -1 时，尊重已保存/手动设置）。
+- **实时预览**：节点内时间轴左侧的「👁」开关（对应节点输入 `preview`，随工作流保存）控制采样期间的实时预览——**开**（默认）用 `models/vae_approx/taeh3.safetensors` 把潜空间解成真彩图（上限 1024px，替代核心对 H3 只能给的 Latent2RGB 粗色预览）；缺文件或加载失败时自动回退 Latent2RGB，不影响出片。**关**则本次生成完全不出预览。该开关是最终决定：开就一定有预览，关就一定没有，与 ComfyUI 全局预览设置无关。
 - **逐段执行**：第 i 段用其 `skill_id` 解析模板与 config，提示词/时长/首帧取该段字段；`seed = base_seed + i`（base 优先节点覆盖、否则配方 `shared.seed`），保证可复现且各段不同。
 - **生成模式**：配方可选 `shared.mode`（`t2v` / `i2v` / `fl2v` / `r2v` / `mixed`，与 ComfyUI_MiniMaxH3_Director 的任务模式对齐）决定各段携带哪些帧与参考：具体模式全体统一，`mixed` 时逐段 `seg.mode` 生效；缺省（旧配方）按该段是否有尾帧/首帧/参考推断（尾帧→`fl2v`、首帧→`i2v`、仅有视频/音频参考→`r2v`、否则 `t2v`）。段级语义与编辑器显隐：
 

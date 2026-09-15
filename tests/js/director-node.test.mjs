@@ -3,7 +3,7 @@
 // 拖拽缩小节点会把固定高度的时间轴裁掉——扩展必须在 onResize 里补钳制（最小高度含时间轴）。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
 import { getExtension, appState } from "./mocks/comfy-app.mjs";
 
 const TL_H = 96; // 与 web/director-node.js 的 TL_H 保持一致
@@ -12,12 +12,12 @@ const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（运行时采�
 const BASE_W = 340;
 const BASE_H = 220;
 
-function makeDirectorNode(recipeValue = "") {
+function makeDirectorNode(recipeValue = "", extraWidgets = []) {
     const node = {
         id: 1,
         type: "NeoH3VideoDirector",
         properties: {},
-        widgets: [{ name: "recipe", value: recipeValue }],
+        widgets: [{ name: "recipe", value: recipeValue }, ...extraWidgets.map((w) => ({ ...w }))],
         inputs: [],
         outputs: [],
         size: [BASE_W, BASE_H],
@@ -39,13 +39,13 @@ function makeDirectorNode(recipeValue = "") {
     return node;
 }
 
-async function createDirectorNode(recipeValue = "") {
+async function createDirectorNode(recipeValue = "", extraWidgets = []) {
     await import("../../web/director-node.js");
     const ext = getExtension("NeoH3VideoDirector.Timeline");
     assert.ok(ext, "director 时间轴扩展未注册");
     const nodeType = { prototype: {} };
     await ext.beforeRegisterNodeDef(nodeType, { name: "NeoH3VideoDirector" });
-    const node = makeDirectorNode(recipeValue);
+    const node = makeDirectorNode(recipeValue, extraWidgets);
     nodeType.prototype.onNodeCreated.call(node);
     return node;
 }
@@ -291,5 +291,113 @@ test("切换 recipe 下拉后节点时间轴重新拉取并更新", async () => 
     await sleep(60); // loadSpec 重新拉取 recipe-b → 2 段
 
     assert.equal(tl._segs.length, 2, "切换后时间轴更新为 recipe-b 的 2 段");
+});
+
+const DIM_WIDGETS = [
+    { name: "width", value: -1 },
+    { name: "height", value: -1 },
+    { name: "steps", value: -1 },
+];
+
+// 按配方名返回不同的首段默认尺寸/步数（recipe-b 用 turbo 的低步数）
+function mockDimDefaults(getRecipeWidget) {
+    mockRoute("/rs_recipes/director_spec", () => {
+        const name = getRecipeWidget() ? String(getRecipeWidget().value || "") : "";
+        const defaults = name === "recipe-b"
+            ? { width: 960, height: 544, steps: 8 }
+            : { width: 1344, height: 768, steps: 20 };
+        return jsonResponse({ success: true, segments: [{ prompt: "s", duration_sec: 5 }], defaults });
+    });
+}
+
+test("重新载入配方时 width/height/steps 按新配方要求初始化（手改值也不保留）", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    let recipeWidgetRef = null;
+    mockDimDefaults(() => recipeWidgetRef);
+
+    const node = await createDirectorNode("recipe-a", DIM_WIDGETS);
+    recipeWidgetRef = node.widgets.find((w) => w.name === "recipe");
+    clearInterval(node._neoDtProgressTimer);
+    await sleep(60); // 初始 loadSpec
+
+    const dims = () => DIM_WIDGETS.map((d) => node.widgets.find((w) => w.name === d.name).value);
+    assert.deepEqual(dims(), [1344, 768, 20], "初始按配方 A 首段填充");
+
+    node.widgets.find((w) => w.name === "steps").value = 15; // 用户手改
+
+    recipeWidgetRef.value = "recipe-b";
+    recipeWidgetRef.callback("recipe-b");
+    await sleep(60);
+
+    assert.deepEqual(dims(), [960, 544, 8], "切换配方后按新配方要求重新初始化，手改的 steps 也不保留");
+});
+
+test("创建时保留工作流已存值，切换配方后按新配方要求初始化", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    let recipeWidgetRef = null;
+    mockDimDefaults(() => recipeWidgetRef);
+
+    // 工作流还原出的实值（非 -1）：首次载入不得被配方默认覆盖
+    const node = await createDirectorNode("recipe-a", [
+        { name: "width", value: 1280 },
+        { name: "height", value: 544 },
+        { name: "steps", value: 15 },
+    ]);
+    recipeWidgetRef = node.widgets.find((w) => w.name === "recipe");
+    clearInterval(node._neoDtProgressTimer);
+    await sleep(60);
+
+    const dims = () => DIM_WIDGETS.map((d) => node.widgets.find((w) => w.name === d.name).value);
+    assert.deepEqual(dims(), [1280, 544, 15], "创建工作流时保留已存值");
+
+    recipeWidgetRef.value = "recipe-b";
+    recipeWidgetRef.callback("recipe-b");
+    await sleep(60);
+
+    assert.deepEqual(dims(), [960, 544, 8], "切换配方后按新配方要求初始化");
+});
+
+// 节点内实时预览开关：与 preview 输入同一份状态（widget.value 随工作流保存），
+// 点「👁」= 改输入值 + 触发回调；输入被别处改动 / 工作流还原后按钮态同步。
+test("「👁」实时预览开关与 preview 输入双向同步", async () => {
+    resetEnv();
+    const seen = [];
+    const node = await createDirectorNode("", [
+        { name: "preview", value: true, callback: (v) => seen.push(v) },
+    ]);
+    clearInterval(node._neoDtProgressTimer);
+
+    const previewWidget = node.widgets.find((w) => w.name === "preview");
+    const root = node.domWidgets.find((w) => w.name === "director_timeline").el;
+    const btn = root.querySelector(".neo-dtl-preview");
+    assert.ok(btn, "时间轴左侧缺少「👁」预览开关");
+    assert.equal(root.querySelector(".neo-dtl-tlrow").firstElementChild, btn, "开关应在时间轴左侧");
+    assert.ok(btn.classList.contains("neo-dtl-preview-on"), "默认开：与后端 preview 默认值一致");
+
+    click(btn);
+    assert.equal(previewWidget.value, false, "点开关应写入 preview 输入");
+    assert.deepEqual(seen, [false], "点开关应触发输入回调（后端起效 + 随工作流保存）");
+    assert.equal(btn.classList.contains("neo-dtl-preview-on"), false, "关闭后按钮变灰");
+    assert.match(btn.title, /关/);
+
+    click(btn);
+    assert.equal(previewWidget.value, true);
+    assert.deepEqual(seen, [false, true]);
+    assert.match(btn.title, /开/);
+
+    // 节点自带的 preview 开关 / 别的代码改 value 后触发回调 → 按钮跟随
+    previewWidget.value = false;
+    previewWidget.callback(false);
+    assert.equal(btn.classList.contains("neo-dtl-preview-on"), false);
+    assert.deepEqual(seen, [false, true, false]);
+
+    // 工作流还原按 widgets_values 直写 value、不触发回调 → configure 后补同步
+    previewWidget.value = true;
+    node.onConfigure({});
+    assert.ok(btn.classList.contains("neo-dtl-preview-on"), "还原工作流后按钮态与 preview 输入一致");
 });
 

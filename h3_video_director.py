@@ -20,6 +20,7 @@ from .bundles import get_bundle
 from .image_gen import render_template
 from .krea2_generate import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
 from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
+from .h3_preview import load_h3_tiny_vae, preview_override
 from .skill import get_skill_gen_config, load_skill_workflow
 from .recipes import list_director_recipes, load_director_spec
 
@@ -64,10 +65,11 @@ def _concat_segment_audio(audios, frame_rate: int, drops):
     return {"waveform": torch.cat(parts, dim=-1), "sample_rate": sample_rate}
 
 
-def _run_segment_graph(body, skill_id, model, steps, label=""):
+def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview=True):
     """单段执行链：解析参数 → 渲染模板 → 模型注入/VDN 校验 → 进程内执行，返回 VIDEO。
 
     recipe 逐段与 BUNDLE 单段共用；label 仅用于错误消息前缀（如「第 3 段：」）。
+    vae/preview 控制采样期间节点内的实时预览（见 h3_preview）。
     """
     real_id = _resolve_skill_id(skill_id or "")
     template = load_skill_workflow(real_id)
@@ -88,7 +90,8 @@ def _run_segment_graph(body, skill_id, model, steps, label=""):
         overrides = {x_id: [model]}
     else:
         _require_vdn_plugin(graph)
-    return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+    with preview_override(preview, vae):
+        return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
 
 
 class NeoH3VideoDirector:
@@ -108,6 +111,7 @@ class NeoH3VideoDirector:
                 "continuity": ("BOOLEAN", {"default": True}),   # Tier A：上段尾帧→下段首帧 + 丢边界帧
                 "model": ("MODEL",),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
                 "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
+                "preview": ("BOOLEAN", {"default": True}),   # 节点内实时预览：开 = taeh3 真彩（≤1024），关 = 完全不出
                 "bundle": ("STRING", {"forceInput": True}),   # NeoPromptAgent BUNDLE；提供时忽略 recipe，按单段生成
             },
         }
@@ -118,7 +122,7 @@ class NeoH3VideoDirector:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "多段视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。"
 
-    def _run_bundle_segment(self, payload, seed, width, height, model, steps):
+    def _run_bundle_segment(self, payload, seed, width, height, model, steps, vae=None, preview=True):
         """BUNDLE 单段生成：skill/提示词/参考都来自 NeoPromptAgent 的 BUNDLE（data URI），忽略 recipe。"""
         sid = payload.get("skill_id") or ""
         if not any(s["id"] == _resolve_skill_id(sid) for s in _gen_video_skills()):
@@ -139,16 +143,17 @@ class NeoH3VideoDirector:
         refs = payload.get("references") or []
         if refs:
             body["references"] = list(refs)
-        video = _run_segment_graph(body, sid, model, steps)
+        video = _run_segment_graph(body, sid, model, steps, vae=vae, preview=preview)
         comp = video.get_components()
         return (InputImpl.VideoFromComponents(
             Types.VideoComponents(images=comp.images, audio=comp.audio, frame_rate=Fraction(H3_FPS))
         ),)
 
-    def generate(self, recipe, seed=-1, width=-1, height=-1, continuity=True, model=None, steps=-1, bundle=""):
+    def generate(self, recipe, seed=-1, width=-1, height=-1, continuity=True, model=None, steps=-1, bundle="", preview=True):
+        vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
         payload = get_bundle(bundle) if bundle else None
         if payload:
-            return self._run_bundle_segment(payload, seed, width, height, model, steps)
+            return self._run_bundle_segment(payload, seed, width, height, model, steps, vae, preview)
         spec = load_director_spec(recipe)
         shared = spec.get("shared") or {}
         segments = spec.get("segments") or []
@@ -219,7 +224,7 @@ class NeoH3VideoDirector:
                 if mode == "r2v" and not refs:
                     raise ValueError(f"第 {i + 1} 段为全参考生视频但没有参考素材：请挂参考图 / 视频 / 音频")
 
-                video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：")
+                video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：", vae, preview)
                 comp = video.get_components()
                 frames = comp.images
 

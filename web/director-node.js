@@ -113,26 +113,28 @@ app.registerExtension({
             };
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
-            // 按配方首段 skill config 初始化 width/height/steps widget：仅当当前为默认(-1)时填充，尊重工作流/手动已设值
-            const applyDimDefaults = (d) => {
+            // 按配方首段 skill config 填充 width/height/steps widget。
+            // 每个配方有自己的硬性要求（如 VDN/turbo 配方要求 steps=8），所以重新载入配方时一律重新初始化，用户手改值也不保留。
+            // 唯一例外是创建节点时的首次载入：工作流已存的实值优先，只在仍为默认 -1 时填充。
+            const applyDimDefaults = (d, force) => {
                 if (!d) return;
                 for (const [nm, val] of [["width", d.width], ["height", d.height], ["steps", d.steps]]) {
                     const w = node.widgets?.find((x) => x.name === nm);
                     if (!w || !Number.isFinite(val)) continue;
-                    if (Number(w.value) !== -1) continue;
+                    if (!force && Number(w.value) !== -1) continue;
                     w.value = val;
                     w.callback?.(val);
                 }
             };
 
-            const loadSpec = async () => {
+            const loadSpec = async (force = false) => {
                 const name = recipeWidget ? String(recipeWidget.value || "") : "";
                 if (!name) { tlData = { segments: [] }; if (tl) tl.refresh(); return; }
                 try {
                     const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
                     if (resp.ok) {
                         const data = await resp.json();
-                        if (data.success) { tlData = data; applyDimDefaults(data.defaults); if (tl) tl.refresh(); }
+                        if (data.success) { tlData = data; applyDimDefaults(data.defaults, force); if (tl) tl.refresh(); }
                     }
                 } catch (e) {
                     console.error("[Neo Nodes] director spec fetch failed", e);
@@ -140,10 +142,10 @@ app.registerExtension({
             };
             loadSpec();
 
-            // 切换 recipe 下拉时重新拉取（本版本 combo widget 用 callback 触发变化，onchange 不存在）
+            // 切换 recipe 下拉时重新拉取并重新初始化尺寸/步数（本版本 combo widget 用 callback 触发变化，onchange 不存在）
             if (recipeWidget) {
                 const oc = recipeWidget.callback;
-                recipeWidget.callback = function() { oc?.apply(this, arguments); loadSpec(); };
+                recipeWidget.callback = function() { oc?.apply(this, arguments); loadSpec(true); };
             }
 
             // 时间轴右上角「✎」：打开当前配方的导演编辑器，保存后自动刷新时间轴；
@@ -159,7 +161,7 @@ app.registerExtension({
                         showToast(app, "warn", "未找到分段配方：" + name, "");
                         return;
                     }
-                    await openDirectorEditor(meta, () => loadSpec(), segIndex);
+                    await openDirectorEditor(meta, () => loadSpec(true), segIndex);
                 } catch (e) {
                     console.error("[Neo Nodes] open director editor failed", e);
                     showToast(app, "error", "打开配方编辑器失败", String(e));
@@ -176,6 +178,41 @@ app.registerExtension({
             editBtn.addEventListener("click", (e) => { e.stopPropagation(); openEditor(); });
             tlRow.appendChild(editBtn);
 
+            // 时间轴左侧「👁」实时预览开关：与节点输入 preview（BOOLEAN）双向同步，随工作流保存。
+            // 开（默认）= 采样期间用 taeh3 真彩预览；关 = 本次生成完全不出预览（不受全局预览设置影响）。
+            const previewWidget = node.widgets?.find(w => w.name === "preview");
+            const previewBtn = document.createElement("button");
+            previewBtn.type = "button";
+            previewBtn.className = "neo-dtl-preview";
+            previewBtn.textContent = "👁";
+            const syncPreviewBtn = () => {
+                const on = previewWidget ? !!previewWidget.value : true;
+                previewBtn.classList.toggle("neo-dtl-preview-on", on);
+                previewBtn.title = on ? "节点内实时预览：开（taeh3 真彩，≤1024）" : "节点内实时预览：关（采样期间不出预览）";
+            };
+            previewBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
+            previewBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (!previewWidget) return;
+                previewWidget.value = !previewWidget.value;
+                previewWidget.callback?.(previewWidget.value);
+                syncPreviewBtn();
+            });
+            if (previewWidget) {
+                const origPreviewCallback = previewWidget.callback;
+                previewWidget.callback = function() { origPreviewCallback?.apply(this, arguments); syncPreviewBtn(); };
+            }
+            syncPreviewBtn();
+            tlRow.insertBefore(previewBtn, tlRow.firstChild);
+
+            // 工作流还原按 widgets_values 直接写 value、不触发 callback，故在 configure 后补一次同步
+            const origOnConfigure = node.onConfigure;
+            node.onConfigure = function() {
+                const r = origOnConfigure?.apply(this, arguments);
+                syncPreviewBtn();
+                return r;
+            };
+
             // 时间轴显示区外右下角「＋ 新增导演配方」：打开新建模式编辑器；保存后把新配方加入下拉并选中、重载时间轴
             const openNewRecipe = async () => {
                 let priorNames = new Set();
@@ -187,7 +224,7 @@ app.registerExtension({
                         const fresh = directors.find((r) => !priorNames.has(r.name));
                         if (fresh && recipeWidget) recipeWidget.value = fresh.name;
                     } catch (_) {}
-                    await loadSpec();
+                    await loadSpec(true);
                 });
             };
             const actBar = document.createElement("div");

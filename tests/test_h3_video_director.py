@@ -6,6 +6,7 @@ recipes 的 gallery/bookmark/gallery_lora/util 依赖用假模块；director 编
 execute_graph_inprocess / resolve_video_params 等验证帧拼接、边界丢帧、seed 派生与音频对齐。"""
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -14,6 +15,7 @@ import types
 import unittest
 
 import torch
+from PIL import Image
 
 _TMP = tempfile.mkdtemp(prefix="neo_h3director_")
 _INPUT_DIR = os.path.join(_TMP, "input")
@@ -128,6 +130,87 @@ _util._extract_media_metadata = lambda *a, **k: {}
 _util._json_safe = lambda v: v
 sys.modules[f"{_PKG}.util"] = _util
 setattr(_pkg, "util", _util)
+
+# ---- h3_preview 依赖桩：latent_preview / comfy.model_management / comfy.latent_formats / comfy.taesd.taesd ----
+# taeh3 缺失时预览走 Latent2RGB 回退，故 get_full_path 返回 None（离线测试不碰真实权重）。
+_folder_paths.get_full_path = lambda folder, name: None
+
+_comfy_mm = types.ModuleType("comfy.model_management")
+_comfy_mm.vae_device = lambda *a, **k: torch.device("cpu")
+_comfy_mm.vae_dtype = lambda device, allowed=None: torch.float32
+sys.modules["comfy.model_management"] = _comfy_mm
+
+_comfy_lf = types.ModuleType("comfy.latent_formats")
+
+
+class _StubMiniMaxH3Video:
+    latent_rgb_factors = [[0.1, 0.2, 0.3]]
+    latent_rgb_factors_bias = None
+    latent_rgb_factors_reshape = None
+
+
+_comfy_lf.MiniMaxH3Video = _StubMiniMaxH3Video
+sys.modules["comfy.latent_formats"] = _comfy_lf
+
+_comfy_taesd = types.ModuleType("comfy.taesd")
+_comfy_taesd_taesd = types.ModuleType("comfy.taesd.taesd")
+
+
+class _StubClamp(torch.nn.Module):
+    def forward(self, x):
+        return x
+
+
+class _StubBlock(torch.nn.Module):
+    """占位 Block：只留通道数，供 _build_decoder 的结构断言（真实 Block 由真机覆盖）。"""
+
+    def __init__(self, n_in, n_out):
+        super().__init__()
+        self.n_in = n_in
+        self.n_out = n_out
+
+
+def _stub_conv(n_in, n_out, **kwargs):
+    return torch.nn.Conv2d(n_in, n_out, 3, padding=1, bias=kwargs.get("bias", True))
+
+
+_comfy_taesd_taesd.Clamp = _StubClamp
+_comfy_taesd_taesd.Block = _StubBlock
+_comfy_taesd_taesd.conv = _stub_conv
+sys.modules["comfy.taesd"] = _comfy_taesd
+sys.modules["comfy.taesd.taesd"] = _comfy_taesd_taesd
+
+
+class _StubLatentPreviewer:
+    def decode_latent_to_preview(self, x0):
+        pass
+
+    def decode_latent_to_preview_image(self, preview_format, x0):
+        return ("JPEG", self.decode_latent_to_preview(x0), 512)
+
+
+class _StubLatent2RGBPreviewer(_StubLatentPreviewer):
+    def __init__(self, factors, bias=None, reshape=None):
+        self.factors = factors
+
+
+def _stub_preview_to_image(latent_image, do_scale=True):
+    return Image.new("RGB", (int(latent_image.shape[1]), int(latent_image.shape[0])))
+
+
+_latent_preview_stub = types.ModuleType("latent_preview")
+_latent_preview_stub.LatentPreviewer = _StubLatentPreviewer
+_latent_preview_stub.Latent2RGBPreviewer = _StubLatent2RGBPreviewer
+_latent_preview_stub.preview_to_image = _stub_preview_to_image
+_latent_preview_stub.get_previewer = lambda device, latent_format: None
+sys.modules["latent_preview"] = _latent_preview_stub
+
+# 预置在 sys.modules 的子模块不会自动挂到父模块，补上属性以支持 `comfy.x.y` 形式访问。
+setattr(_comfy, "model_management", _comfy_mm)
+setattr(_comfy, "utils", _comfy_utils)
+setattr(_comfy, "latent_formats", _comfy_lf)
+setattr(_comfy, "taesd", _comfy_taesd)
+setattr(_comfy_taesd, "taesd", _comfy_taesd_taesd)
 
 # ---- 加载插件模块 ----
 _load("skill", "skill.py")
@@ -1201,6 +1284,151 @@ class DirectorProgressRouteTests(unittest.TestCase):
         self.assertEqual(resp.status, 200)
         body = json.loads(resp.body)
         self.assertEqual(body, {"active": True, "segment_index": 1, "total_segments": 4})
+
+
+class H3PreviewTests(unittest.TestCase):
+    """h3_preview：taeh3 解码器重建、潜空间取帧、预览接管/还原与节点开关语义。"""
+
+    def setUp(self):
+        self.h3p = sys.modules[f"{_PKG}.h3_preview"]
+        self.lp = sys.modules["latent_preview"]
+        self.original = self.lp.get_previewer
+
+    def tearDown(self):
+        self.lp.get_previewer = self.original
+
+    def _vae(self):
+        return self.h3p.H3TinyVAE({"1.weight": torch.zeros(8, 24, 3, 3), "1.bias": torch.zeros(8),
+                                   "4.weight": torch.zeros(3, 8, 3, 3), "4.bias": torch.zeros(3)})
+
+    def test_build_decoder_maps_flat_indices(self):
+        # 缺号：0→Clamp、2→ReLU；conv.* → Block；裸 weight → conv（按有无 bias 定）
+        sd = {
+            "1.weight": torch.zeros(8, 4, 3, 3), "1.bias": torch.zeros(8),
+            "3.conv.0.weight": torch.zeros(8, 8, 3, 3), "3.conv.0.bias": torch.zeros(8),
+            "3.conv.2.weight": torch.zeros(8, 8, 3, 3), "3.conv.2.bias": torch.zeros(8),
+            "3.conv.4.weight": torch.zeros(8, 8, 3, 3), "3.conv.4.bias": torch.zeros(8),
+            "4.weight": torch.zeros(8, 8, 3, 3),
+            "5.weight": torch.zeros(3, 8, 3, 3), "5.bias": torch.zeros(3),
+        }
+        model = self.h3p._build_decoder(sd)
+        self.assertEqual([type(m).__name__ for m in model],
+                         ["_StubClamp", "Conv2d", "ReLU", "_StubBlock", "Conv2d", "Conv2d"])
+        self.assertEqual((model[3].n_in, model[3].n_out), (8, 8))
+        self.assertIsNone(model[4].bias)          # 索引 4 无 bias → conv(bias=False)
+        self.assertIsNotNone(model[5].bias)
+
+    def test_build_decoder_fills_other_gaps_with_upsample(self):
+        sd = {"1.weight": torch.zeros(4, 4, 3, 3), "1.bias": torch.zeros(4),
+              "4.weight": torch.zeros(4, 4, 3, 3)}
+        model = self.h3p._build_decoder(sd)
+        self.assertEqual([type(m).__name__ for m in model],
+                         ["_StubClamp", "Conv2d", "ReLU", "Upsample", "Conv2d"])
+
+    def test_build_decoder_rejects_non_flat_state_dict(self):
+        with self.assertRaises(ValueError):
+            self.h3p._build_decoder({"decoder.1.weight": torch.zeros(4, 4, 3, 3)})
+
+    def test_tiny_vae_reads_channels_and_decodes_frame(self):
+        vae = self._vae()
+        self.assertEqual(vae.latent_channels, 24)
+        img = vae.decode_frame(torch.randn(1, 24, 4, 6))
+        self.assertEqual((img.mode, img.size), ("RGB", (12, 8)))   # 缺号里的 Upsample 使边长翻倍
+
+    def test_video_frame_takes_first_frame_of_5d(self):
+        self.assertEqual(tuple(self.h3p._video_frame(torch.randn(1, 24, 2, 5, 7), 24).shape),
+                         (1, 24, 5, 7))
+
+    def test_video_frame_returns_none_without_matching_stream(self):
+        self.assertIsNone(self.h3p._video_frame(torch.randn(1, 32, 2, 5, 7), 24))
+        self.assertIsNone(self.h3p._video_frame(torch.randn(1, 24), 24))
+
+    def test_preview_off_suppresses_and_restores(self):
+        with self.h3p.preview_override(False, None):
+            self.assertIsNot(self.lp.get_previewer, self.original)
+            self.assertIsNone(self.lp.get_previewer(None, _StubMiniMaxH3Video()))
+        self.assertIs(self.lp.get_previewer, self.original)
+
+    def test_preview_on_uses_taeh3_and_restores(self):
+        with self.h3p.preview_override(True, self._vae()):
+            prev = self.lp.get_previewer(None, _StubMiniMaxH3Video())
+        self.assertIs(self.lp.get_previewer, self.original)
+        self.assertIsInstance(prev, self.h3p.H3Previewer)
+        fmt, img, limit = prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 24, 2, 4, 6))
+        self.assertEqual((fmt, limit), ("JPEG", self.h3p.MAX_SIDE))
+        self.assertEqual(img.mode, "RGB")
+
+    def test_preview_on_without_taeh3_falls_back_to_latent2rgb(self):
+        with self.h3p.preview_override(True, None):
+            prev = self.lp.get_previewer(None, _StubMiniMaxH3Video())
+        self.assertIsInstance(prev, _StubLatent2RGBPreviewer)
+
+    def test_preview_leaves_other_latent_formats_to_the_original(self):
+        sentinel = object()
+        self.lp.get_previewer = lambda device, latent_format: sentinel
+        with self.h3p.preview_override(False, None):
+            self.assertIs(self.lp.get_previewer(None, object()), sentinel)
+
+    def test_preview_restores_on_exception(self):
+        with self.assertRaises(RuntimeError):
+            with self.h3p.preview_override(True, None):
+                raise RuntimeError("boom")
+        self.assertIs(self.lp.get_previewer, self.original)
+
+    def test_previewer_downscales_frames_over_max_side(self):
+        orig = self.lp.preview_to_image
+        try:
+            self.lp.preview_to_image = lambda t, do_scale=False: Image.new("RGB", (1200, 1400))
+            img = self.h3p.H3Previewer(self._vae()).decode_latent_to_preview(torch.randn(1, 24, 4, 6))
+        finally:
+            self.lp.preview_to_image = orig
+        self.assertEqual(img.size, (878, 1024))   # 等比缩到最长边 MAX_SIDE
+
+    def test_previewer_skips_non_video_shapes(self):
+        prev = self.h3p.H3Previewer(self._vae())
+        self.assertIsNone(prev.decode_latent_to_preview(torch.randn(1, 32, 2, 5, 7)))
+        self.assertIsNone(prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 32, 2, 5, 7)))
+
+    def test_load_returns_none_without_taeh3_file(self):
+        self.assertIsNone(self.h3p.load_h3_tiny_vae())
+
+    def test_input_types_exposes_preview_toggle(self):
+        opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
+        self.assertIs(opt["preview"][1]["default"], True)
+
+    def test_generate_loads_decoder_only_when_preview_is_on(self):
+        h3d = h3_video_director
+        names = ("load_director_spec", "_resolve_skill_id", "load_skill_workflow", "get_skill_gen_config",
+                 "resolve_video_params", "render_template", "execute_graph_inprocess",
+                 "_require_vdn_plugin", "load_h3_tiny_vae", "preview_override")
+        orig = tuple(getattr(h3d, n) for n in names)
+        seen, loads = [], []
+
+        @contextlib.contextmanager
+        def _rec(enabled, vae):
+            seen.append((enabled, vae))
+            yield
+
+        try:
+            h3d.load_director_spec = lambda n: {"shared": {}, "segments": [
+                {"skill_id": "s", "prompt": "p", "duration_sec": 5}]}
+            h3d._resolve_skill_id = lambda v: v
+            h3d.load_skill_workflow = lambda i: {"1": {}}
+            h3d.get_skill_gen_config = lambda i: {}
+            h3d.resolve_video_params = lambda body, cfg, skip_model=False: dict(body)
+            h3d.render_template = lambda tpl, params: ({"1": {}}, [])
+            h3d.execute_graph_inprocess = lambda graph, output_type="VIDEO", overrides=None: _FakeVideo(4)
+            h3d._require_vdn_plugin = lambda graph: None
+            h3d.load_h3_tiny_vae = lambda: (loads.append(1), "VAE")[1]
+            h3d.preview_override = _rec
+            node = h3d.NeoH3VideoDirector()
+            node.generate("r")                  # 默认开：段执行期间用 taeh3
+            node.generate("r", preview=False)   # 关：不加载解码器，段内完全不出预览
+        finally:
+            for n, v in zip(names, orig):
+                setattr(h3d, n, v)
+        self.assertEqual(seen, [(True, "VAE"), (False, None)])
+        self.assertEqual(len(loads), 1)
 
 
 if __name__ == "__main__":
