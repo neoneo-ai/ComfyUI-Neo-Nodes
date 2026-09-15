@@ -76,6 +76,13 @@ export function getVideoSrc(video, subfolder) {
 }
 
 /**
+ * Get audio source URL (waveform decode + playback + lightbox)
+ */
+export function getAudioSrc(audio, subfolder) {
+    return `${window.location.protocol}//${window.location.host}/neo_gallery/audio?filename=${encodeURIComponent(audio.filename)}&subfolder=${encodeURIComponent(subfolder)}`;
+}
+
+/**
  * Get image source URL
  */
 export function getImageSrc(image, subfolder) {

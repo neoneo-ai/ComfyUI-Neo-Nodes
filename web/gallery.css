@@ -813,10 +813,20 @@ Accordion Section Buttons (Clear)
     opacity: 1 !important;
 }
 
+/* 音频长条卡片太矮，浮动按钮栏会盖住波形/播放区；改为放在波形条下方正常流布局。 */
+.neo-gallery-thumb-container-audio .neo-gallery-thumb-btn-bar {
+    position: static;
+    opacity: 1;
+    background: none;
+    border-radius: 0;
+    padding: 6px 4px 2px;
+}
+
 /* Thumbnail action buttons (Send, Image Send, Video Send, Bookmark) */
 .neo-gallery-thumb-send-btn,
 .neo-gallery-thumb-img-send-btn,
 .neo-gallery-thumb-video-send-btn,
+.neo-gallery-thumb-audio-send-btn,
 .neo-gallery-thumb-bookmark-btn {
     display: flex;
     align-items: center;
@@ -837,6 +847,7 @@ Accordion Section Buttons (Clear)
 .neo-gallery-thumb-send-btn:hover,
 .neo-gallery-thumb-img-send-btn:hover,
 .neo-gallery-thumb-video-send-btn:hover,
+.neo-gallery-thumb-audio-send-btn:hover,
 .neo-gallery-thumb-bookmark-btn:hover {
     background-color: rgba(0, 0, 0, 0.8);
     transform: scale(1.1);
@@ -845,7 +856,8 @@ Accordion Section Buttons (Clear)
 /* Feedback positioning - fixed to viewport, will be set dynamically by JS */
 .neo-gallery-thumb-send-btn .neo-gallery-feedback,
 .neo-gallery-thumb-img-send-btn .neo-gallery-feedback,
-.neo-gallery-thumb-video-send-btn .neo-gallery-feedback {
+.neo-gallery-thumb-video-send-btn .neo-gallery-feedback,
+.neo-gallery-thumb-audio-send-btn .neo-gallery-feedback {
     position: fixed;
     transform: translate(-50%, -100%);
     margin: 8px;
@@ -896,6 +908,61 @@ Accordion Section Buttons (Clear)
     line-height: 1;
     pointer-events: none;
     z-index: 5;
+}
+
+/* Audio card — square media tile with waveform + centered play button */
+.neo-gallery-audio-card {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: linear-gradient(160deg, rgba(30, 45, 70, 0.92), rgba(15, 22, 38, 0.96));
+    border: 1px solid rgba(120, 200, 255, 0.25);
+    overflow: hidden;
+}
+
+.neo-gallery-audio-waveform {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 72%;
+    display: block;
+}
+
+.neo-gallery-audio-play-btn {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.neo-gallery-audio-play-btn:hover {
+    transform: scale(1.1);
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+.neo-gallery-audio-time {
+    flex: 0 0 auto;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--neo-text-muted, #94a3b8);
+    pointer-events: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 /* Image label */

@@ -4,8 +4,15 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, showToast, showInlineFeedback } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
+
+// 已解码波形峰值的会话缓存：同一文件在页面内只请求/解码一次，跨卡片复用。
+// 持久化到后端本地目录由 /neo_gallery/waveform 负责（见 gallery.py）。
+const _waveformSessionCache = new Map(); // "subfolder::filename" -> { peaks, duration }
+function _waveformKey(filename, subfolder) {
+    return `${subfolder || ""}::${filename}`;
+}
 
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
 // keys need different wording: Civitai is unreachable without a proxy on many networks,
@@ -994,12 +1001,18 @@ export class GalleryCard {
         const imageHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
 
         const container = $el("div", {
-            className: "neo-gallery-thumb-container",
+            className: isAudioFileResult
+                ? "neo-gallery-thumb-container neo-gallery-thumb-container-audio"
+                : "neo-gallery-thumb-container",
             style: {
                 height: `${gallery.maxThumbnailSize}px`,
                 width: `${gallery.maxThumbnailSize}px`
             },
-            onclick: () => this.showLightbox(gallery, image, subfolder),
+            // 音频卡片不需要灯箱：点击容器不打开大图（播放由卡片自身处理）
+            onclick: () => {
+                if (isAudioFileResult) return;
+                this.showLightbox(gallery, image, subfolder);
+            },
             draggable: isDraggableMedia,
             ondragstart: (e) => {
                 if (!isDraggableMedia) { e.preventDefault(); return; }
@@ -1011,7 +1024,7 @@ export class GalleryCard {
         });
 
         let imgSendBtn = null;
-        if (!isVideoFileResult) {
+        if (!isVideoFileResult && !isAudioFileResult) {
             imgSendBtn = $el("div", {
                 className: "neo-gallery-thumb-img-send-btn",
                 title: image.lora_path ? "发送 Lora 到画布上的 LoraLoader" : "发送图片到画布上的 Load Image 节点",
@@ -1050,6 +1063,18 @@ export class GalleryCard {
             }, ["\uD83D\uDCE5"]);
         }
 
+        let audioSendBtn = null;
+        if (isAudioFileResult) {
+            audioSendBtn = $el("div", {
+                className: "neo-gallery-thumb-audio-send-btn",
+                title: "发送音频到画布上的 LoadAudio 节点",
+                onclick: (e) => {
+                    e.stopPropagation();
+                    this._showAudioSendMenu(gallery, image, audioSendBtn);
+                }
+            }, ["\uD83C\uDFB5"]);
+        }
+
         // 右下角信息扩展按钮：点击弹出扩展菜单（收藏 / Lora 发送 / 提示词预览 / 导入工作流 / 删除）。
         const bookmarkBtn = $el("div", {
             className: "neo-gallery-thumb-bookmark-btn",
@@ -1063,7 +1088,11 @@ export class GalleryCard {
         let mediaEl;
         const thumbnailSrc = isVideoFileResult || isImageFileResult ? getThumbnailSrc(image, subfolder) : null;
         
-        if (thumbnailSrc) {
+        if (isAudioFileResult) {
+            mediaEl = this._buildAudioCard(gallery, image, subfolder);
+            // 音频用长条形卡片：容器高度收窄以贴合波形条，避免方形留白
+            container.style.height = "auto";
+        } else if (thumbnailSrc) {
             // Lazy loading: defer actual src until image scrolls into view
             mediaEl = $el("img", {
                 className: "neo-gallery-thumb-img",
@@ -1098,7 +1127,7 @@ export class GalleryCard {
             className: "neo-gallery-thumb-video-badge"
         }, ["\u25B6"]) : null;
 
-        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, sendBtn, imgSendBtn, bookmarkBtn].filter(Boolean));
+        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, audioSendBtn, sendBtn, imgSendBtn, bookmarkBtn].filter(Boolean));
 
         const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar].filter(Boolean));
 
@@ -1115,6 +1144,284 @@ export class GalleryCard {
         container.title = `${fullPath}\n点击打开大图，右下角 ⋯ 更多操作`;
 
         return container;
+    }
+
+    // ====== 音频卡片：波形 + 播放预览 ======
+
+    _buildAudioCard(gallery, image, subfolder) {
+        const card = $el("div", { className: "neo-gallery-thumb-img neo-gallery-audio-card" });
+
+        const playBtn = $el("div", {
+            className: "neo-gallery-audio-play-btn",
+            title: "播放 / 暂停预览"
+        }, ["\u25B6"]);
+        card.appendChild(playBtn);
+
+        const canvas = $el("canvas", { className: "neo-gallery-audio-waveform" });
+        card.appendChild(canvas);
+
+        const timeEl = $el("span", { className: "neo-gallery-audio-time", textContent: "0:00 / 0:00" });
+        card.appendChild(timeEl);
+        card._audioTimeEl = timeEl;
+
+        // 默认画装饰性波形占位（按文件名做确定性种子），首次播放再解码真实峰值重绘。
+        // bars 存在卡片上，进度更新时据此重绘填充。
+        card._audioBars = this._decorativeHeights(image.filename);
+        card._renderAudio = (progress) => this._renderWaveform(canvas, card._audioBars, progress);
+        card._renderAudio(0);
+
+        // 若后端已缓存该文件的真实峰值（之前播放过），直接应用，无需再解码。
+        this._loadCachedWaveform(image, subfolder, canvas, card);
+
+        // 点击整条卡片即播放/暂停；阻止冒泡到容器，避免误触打开灯箱。
+        card.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this._toggleAudioPlayback(gallery, image, subfolder, card);
+        });
+        return card;
+    }
+
+    _toggleAudioPlayback(gallery, image, subfolder, card) {
+        const canvas = card.querySelector(".neo-gallery-audio-waveform");
+        const playBtn = card.querySelector(".neo-gallery-audio-play-btn");
+        const url = getAudioSrc(image, subfolder);
+        let player = gallery._audioPlayer;
+        if (!player) {
+            player = new Audio();
+            gallery._audioPlayer = player;
+            // 播放进度：重绘当前卡片波形填充 + 更新时长标签；播完复位
+            player.addEventListener("timeupdate", () => gallery._onAudioTimeUpdate());
+            player.addEventListener("ended", () => gallery._stopAudio());
+        }
+        // 已在播放本文件 → 暂停（保留当前进度）
+        if (gallery._audioActiveUrl === url && !player.paused) {
+            player.pause();
+            playBtn.textContent = "\u25B6";
+            return;
+        }
+        // 同一文件的暂停态 → 直接续播，不重载、不清进度
+        if (gallery._audioActiveUrl === url && player.paused) {
+            playBtn.textContent = "\u23F8";
+            gallery._audioActiveCard = card;
+            gallery._audioActiveBtn = playBtn;
+            player.play().catch(err => { console.error('[Neo Gallery] audio playback failed', err); gallery._stopAudio(); });
+            return;
+        }
+        // 切换文件：先停掉上一个并复位其按钮/波形，再加载新文件
+        gallery._stopAudio();
+        player.src = url;
+        playBtn.textContent = "\u23F8";
+        gallery._audioActiveUrl = url;
+        gallery._audioActiveCard = card;
+        gallery._audioActiveBtn = playBtn;
+        player.play().catch(err => { console.error('[Neo Gallery] audio playback failed', err); gallery._stopAudio(); });
+
+        // 首次播放：解码出真实峰值重绘波形（一次性开销，失败则保留装饰波形）
+        if (!canvas.dataset.decoded) {
+            this._decodeAndDrawWaveform(gallery, card, url, image, subfolder)
+                .then(() => { canvas.dataset.decoded = "1"; })
+                .catch(err => { console.warn('[Neo Gallery] waveform decode failed', err); });
+        }
+    }
+
+    _renderWaveform(canvas, heights, progress = 0) {
+        const dpr = window.devicePixelRatio || 1;
+        // 布局前 clientWidth/Height 为 0，回退到默认尺寸；布局后按实际显示尺寸绘制更清晰
+        const W = canvas.clientWidth || 240;
+        const H = canvas.clientHeight || 72;
+        canvas.width = Math.round(W * dpr);
+        canvas.height = Math.round(H * dpr);
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, W, H);
+        const n = heights.length;
+        const gap = W / n;
+        for (let i = 0; i < n; i++) {
+            const bh = Math.max(2, Math.min(1, heights[i]) * H * 0.9);
+            const played = progress > 0 && (i + 0.5) / n <= progress;
+            ctx.fillStyle = played ? "#8b5cf6" : "rgba(148, 163, 184, 0.45)";
+            ctx.fillRect(i * gap, (H - bh) / 2, Math.max(1, gap - 1), bh);
+        }
+    }
+
+    _decorativeHeights(seedStr) {
+        const n = 60;
+        let seed = 2166136261;
+        for (let i = 0; i < seedStr.length; i++) {
+            seed ^= seedStr.charCodeAt(i);
+            seed = Math.imul(seed, 16777619) >>> 0;
+        }
+        const phase = (seed % 628) / 100;
+        const heights = new Array(n);
+        for (let i = 0; i < n; i++) {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            const rnd = seed / 4294967296;
+            const t = i / n;
+            const base = 0.25 + 0.5 * Math.abs(Math.sin(t * Math.PI * 3 + phase));
+            heights[i] = Math.min(1, base * (0.55 + rnd * 0.8));
+        }
+        return heights;
+    }
+
+    async _decodeAndDrawWaveform(gallery, card, url, image, subfolder) {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const buf = await resp.arrayBuffer();
+        let actx = gallery._audioCtx;
+        if (!actx) {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) throw new Error('AudioContext unavailable');
+            actx = new AC();
+            gallery._audioCtx = actx;
+        }
+        if (actx.state === 'suspended') await actx.resume().catch(() => {});
+        const audioBuf = await actx.decodeAudioData(buf);
+        const data = audioBuf.getChannelData(0);
+        const n = 60;
+        const step = Math.max(1, Math.floor(data.length / n));
+        const peaks = new Array(n);
+        for (let i = 0; i < n; i++) {
+            let peak = 0;
+            const start = i * step;
+            for (let j = start; j < start + step && j < data.length; j += 8) {
+                const v = Math.abs(data[j]);
+                if (v > peak) peak = v;
+            }
+            peaks[i] = Math.min(1, peak);
+        }
+        card._audioBars = peaks;
+        // 持久化真实峰值到后端本地目录，之后打开卡片可直接显示正确波形。
+        this._saveWaveform(image, subfolder, peaks, audioBuf.duration || 0);
+        // 按当前播放进度重绘（未开始/已暂停则 progress=0）
+        const player = gallery._audioPlayer;
+        const dur = player && isFinite(player.duration) ? player.duration : 0;
+        const progress = (dur > 0 && player) ? Math.min(1, player.currentTime / dur) : 0;
+        card._renderAudio(progress);
+    }
+
+    // 从后端读取已缓存的真实波形峰值；命中则替换装饰占位并标记为已解码。
+    async _loadCachedWaveform(image, subfolder, canvas, card) {
+        const key = _waveformKey(image.filename, subfolder);
+        let entry = _waveformSessionCache.get(key);
+        if (!entry) {
+            try {
+                const url = `${window.location.protocol}//${window.location.host}/neo_gallery/waveform?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder || "")}`;
+                const resp = await fetch(url, { headers: { "X-StopPropagation": "1" } });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data && data.has && Array.isArray(data.peaks) && data.peaks.length) {
+                        entry = { peaks: data.peaks, duration: Number(data.duration) || 0 };
+                        _waveformSessionCache.set(key, entry);
+                    }
+                }
+            } catch (_) {}
+        }
+        if (!entry) return;
+        card._audioBars = entry.peaks;
+        canvas.dataset.decoded = "1"; // 已有真实峰值，播放时无需再解码
+        if (entry.duration > 0 && card._audioTimeEl) {
+            const m = Math.floor(entry.duration / 60);
+            const s = Math.floor(entry.duration % 60).toString().padStart(2, "0");
+            card._audioTimeEl.textContent = `0:00 / ${m}:${s}`;
+        }
+        card._renderAudio(0);
+    }
+
+    // 将解码出的真实峰值写入后端本地目录缓存（失败静默，不影响播放）。
+    async _saveWaveform(image, subfolder, peaks, duration) {
+        const key = _waveformKey(image.filename, subfolder);
+        _waveformSessionCache.set(key, { peaks, duration });
+        try {
+            await fetch(`${window.location.protocol}//${window.location.host}/neo_gallery/waveform`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-StopPropagation": "1" },
+                body: JSON.stringify({ filename: image.filename, subfolder: subfolder || "", peaks, duration }),
+            });
+        } catch (_) {}
+    }
+
+    // ====== 音频发送到 LoadAudio 节点 ======
+
+    async _showAudioSendMenu(gallery, image, button) {
+        this._removeAudioSendMenu();
+        if (!isAudioFile(image.filename)) {
+            showToast(gallery.app, 'warning', 'Not an Audio', 'This file is not audio.');
+            return;
+        }
+        const menuItems = [];
+        gallery.app.graph._nodes.forEach(node => {
+            // Skip nodes that are in bypass state (mode === 4, set by Ctrl+B or RS_Bypass)
+            if (node.mode === 4) return;
+            if (!node.widgets) return;
+            node.widgets.forEach((widget, index) => {
+                const wn = (widget.name || '').toLowerCase();
+                const isLoadAudio = /load.?audio/i.test(node.comfyClass || '') || /load.?audio/i.test(node.title || '');
+                const isAudioWidget = /audio/.test(wn);
+                if (isLoadAudio && widget.type === 'combo' && isAudioWidget) {
+                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isText: false });
+                } else if ((isLoadAudio || isAudioWidget) && widget.inputEl) {
+                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isText: widget.type === 'customtext' || widget.type === 'text' });
+                }
+            });
+        });
+
+        const selKeys = Object.keys(gallery.app.canvas.selected_nodes);
+        let selectedNodeId = null;
+        if (selKeys.length > 0) {
+            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
+            const isLoadAudio = /load.?audio/i.test(sn.comfyClass || '') || /load.?audio/i.test(sn.title || '');
+            const hasAudioWidget = sn.widgets && sn.widgets.some(w => /audio/.test((w.name || '').toLowerCase()));
+            if (isLoadAudio && hasAudioWidget) {
+                selectedNodeId = sn.id;
+            }
+        }
+        if (menuItems.length === 0 && !selectedNodeId) {
+            showToast(gallery.app, 'warning', 'No Target', 'No LoadAudio-type nodes found.');
+            return;
+        }
+
+        menuItems.forEach(item => { item.isSelected = item.nodeId === selectedNodeId; });
+        menuItems.sort((a, b) => {
+            if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
+            return 0;
+        });
+
+        if (menuItems.length === 1 && !selectedNodeId) {
+            const item = menuItems[0];
+            gallery.sendAudioToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button);
+            return;
+        }
+
+        const dropdown = $el("div", { id: "neo-gallery-audio-send-menu", className: "neo-gallery-send-menu" });
+        for (const item of menuItems) {
+            const label = item.isSelected ? `${item.label} \u2713` : item.label;
+            const el = $el("div", {
+                className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
+                onclick: (e) => { e.stopPropagation(); this._removeAudioSendMenu(); gallery.sendAudioToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
+                textContent: label
+            });
+            dropdown.appendChild(el);
+        }
+        const rect = button.getBoundingClientRect();
+        dropdown.style.position = 'fixed';
+        dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
+        dropdown.style.zIndex = '10001';
+        document.body.appendChild(dropdown);
+        requestAnimationFrame(() => {
+            dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';
+        });
+        const closeHandler = (e) => {
+            if (!dropdown.contains(e.target) && e.target !== button) {
+                this._removeAudioSendMenu();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 10);
+    }
+
+    _removeAudioSendMenu() {
+        const existing = document.getElementById('neo-gallery-audio-send-menu');
+        if (existing) existing.remove();
     }
 
     // ====== Lightbox（复用通用 Lightbox 组件）======
@@ -1137,15 +1444,18 @@ export class GalleryCard {
     _toLightboxItem(img, fallbackSubfolder) {
         const owner = img.subfolder || fallbackSubfolder;
         const isVideo = isVideoFile(img.filename);
-        const url = isVideo ? this._lightboxVideoUrl(img, owner) : this._lightboxImageUrl(img, owner);
+        const isAudio = isAudioFile(img.filename);
+        const url = isVideo ? this._lightboxVideoUrl(img, owner)
+            : isAudio ? getAudioSrc(img, owner)
+            : this._lightboxImageUrl(img, owner);
         return {
             raw: img,
             subfolder: owner,
-            kind: isVideo ? 'video' : 'image',
+            kind: isVideo ? 'video' : isAudio ? 'audio' : 'image',
             title: img.filename,
             url,
             // 图片用 fetch+blob 取源：加载完成可判定，翻页时不会出现半张图与闪烁
-            resolve: isVideo ? null : () => this._fetchBlobUrl(url)
+            resolve: (isVideo || isAudio) ? null : () => this._fetchBlobUrl(url)
         };
     }
 
@@ -1182,6 +1492,13 @@ export class GalleryCard {
                 label: "\uD83D\uDCE5 Video",
                 title: "\u5C06\u89C6\u9891\u53D1\u9001\u5230\u8282\u70B9",
                 onClick: (_item, _lightbox, btn) => this._showVideoSendMenu(gallery, item.raw, btn)
+            });
+        }
+        if (item.kind === 'audio') {
+            actions.push({
+                label: "\uD83C\uDFB5 Audio",
+                title: "将音频发送到节点",
+                onClick: (_item, _lightbox, btn) => this._showAudioSendMenu(gallery, item.raw, btn)
             });
         }
         return actions;

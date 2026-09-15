@@ -39,6 +39,7 @@ PRESETS_DIR = GALLERY_DIR / "presets"
 CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
+WAVEFORM_DIR = GALLERY_DIR / "waveform_cache"  # decoded audio waveform peaks (JSON)
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -197,6 +198,10 @@ def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
                 if media_file is None:
                     media_file = f
                     media_type = "image"
+            elif f.suffix.lower() in AUDIO_EXTENSIONS:
+                if media_file is None:
+                    media_file = f
+                    media_type = "audio"
             elif f.suffix.lower() == ".txt":
                 txt_file = f
 
@@ -316,6 +321,10 @@ def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
                 if media_file is None:
                     media_file = f
                     media_type = "image"
+            elif f.suffix.lower() in AUDIO_EXTENSIONS:
+                if media_file is None:
+                    media_file = f
+                    media_type = "audio"
             elif f.suffix.lower() == ".txt":
                 txt_file = f
 
@@ -393,6 +402,10 @@ def _scan_gallery_entries_with_subdirs(directory: Path, subfolder: str = "") -> 
                 if media_file is None:
                     media_file = f
                     media_type = "image"
+            elif f.suffix.lower() in AUDIO_EXTENSIONS:
+                if media_file is None:
+                    media_file = f
+                    media_type = "audio"
 
         if not media_file:
             continue
@@ -1484,7 +1497,7 @@ def _get_thumbnail_path(filename: str, subfolder: str, size: int) -> Path:
 
 
 def _find_source_media(filename: str, subfolder: str) -> Path | None:
-    """Find the source media file (image or video) for a given filename and subfolder."""
+    """Find the source media file (image, video, or audio) for a given filename and subfolder."""
     user_custom_dirs = _get_user_custom_dirs()
     source_path = None
     
@@ -1770,6 +1783,126 @@ async def view_video(request):
         content_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
     )
+
+
+@PromptServer.instance.routes.get("/neo_gallery/audio")
+async def view_audio(request):
+    """Serve gallery audio by filename (waveform decode + playback + lightbox)."""
+    if "filename" not in request.rel_url.query:
+        return web.Response(status=400)
+
+    filename = request.rel_url.query["filename"]
+    subfolder = request.rel_url.query.get("subfolder", "presets")
+
+    if ".." in filename or ".." in subfolder:
+        return web.Response(status=400)
+
+    source_path = _find_source_media(filename, subfolder)
+    if not source_path:
+        return web.Response(status=404)
+
+    if source_path.suffix.lower() not in AUDIO_EXTENSIONS:
+        return web.Response(status=400)
+
+    with open(source_path, "rb") as f:
+        content = f.read()
+    content_type, _ = mimetypes.guess_type(str(source_path))
+    if not content_type:
+        content_type = "audio/mpeg"
+    return web.Response(
+        body=content,
+        content_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
+    )
+
+
+def _get_waveform_path(filename: str, subfolder: str) -> Path | None:
+    """Return the disk cache path for decoded waveform peaks of an audio file.
+
+    Mirrors the thumbnail cache key (source path + size + mtime) so the entry
+    invalidates automatically when the source audio is replaced or edited.
+    Returns None when the source audio cannot be located.
+    """
+    source_path = _find_source_media(filename, subfolder)
+    if not (source_path and source_path.exists()):
+        return None
+    stat = source_path.stat()
+    cache_key = f"{source_path.resolve().as_posix()}_{stat.st_size}_{int(stat.st_mtime)}"
+    hash_hex = hashlib.md5(cache_key.encode()).hexdigest()[:16]
+    WAVEFORM_DIR.mkdir(parents=True, exist_ok=True)
+    return WAVEFORM_DIR / f"{hash_hex}.json"
+
+
+@PromptServer.instance.routes.get("/neo_gallery/waveform")
+async def get_waveform(request):
+    """Return cached decoded waveform peaks for a gallery audio file."""
+    filename = request.rel_url.query.get("filename", "")
+    subfolder = request.rel_url.query.get("subfolder", "")
+    if not filename or ".." in filename or ".." in subfolder:
+        return web.json_response({"has": False})
+
+    cache_path = _get_waveform_path(filename, subfolder)
+    if not cache_path or not cache_path.exists():
+        return web.json_response({"has": False})
+
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        peaks = data.get("peaks")
+        if not isinstance(peaks, list) or not peaks:
+            return web.json_response({"has": False})
+        duration = data.get("duration", 0)
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            duration = 0.0
+        return web.json_response({"has": True, "peaks": peaks, "duration": duration})
+    except Exception:
+        return web.json_response({"has": False})
+
+
+@PromptServer.instance.routes.post("/neo_gallery/waveform")
+async def save_waveform(request):
+    """Persist decoded waveform peaks for a gallery audio file to the cache dir."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.Response(status=400)
+
+    filename = str(body.get("filename", ""))
+    subfolder = str(body.get("subfolder", ""))
+    peaks = body.get("peaks")
+    if not filename or ".." in filename or ".." in subfolder:
+        return web.Response(status=400)
+    if not isinstance(peaks, list) or not peaks or len(peaks) > 4096:
+        return web.Response(status=400)
+
+    # Only cache for real audio files that exist on disk.
+    source_path = _find_source_media(filename, subfolder)
+    if not (source_path and source_path.suffix.lower() in AUDIO_EXTENSIONS):
+        return web.Response(status=404)
+
+    try:
+        clean_peaks = [float(p) for p in peaks]
+    except (TypeError, ValueError):
+        return web.Response(status=400)
+
+    duration = body.get("duration", 0)
+    try:
+        duration = float(duration)
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    cache_path = _get_waveform_path(filename, subfolder)
+    if not cache_path:
+        return web.Response(status=404)
+
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"peaks": clean_peaks, "duration": duration}, f)
+    except Exception:
+        return web.Response(status=500)
+    return web.json_response({"ok": True})
 
 
 @PromptServer.instance.routes.get("/neo_gallery/media_meta")

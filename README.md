@@ -11,7 +11,7 @@
 | 🎬 H3 Video Generate | 节点 | MiniMax H3 文生视频 / 图生视频 / 首尾帧生视频 / 参考生视频：按所选视频 skill 的 workflow.json 模板同步生成，输出含原生音频的 `VIDEO`（进程内 mini-executor 执行，支持 V3 API 节点；需 GPU/显存，采样期间阻塞主工作流）；首尾帧可只给一边（退化为图生/锁尾）；参考生视频支持 ≤9 张参考图 / ≤3 个参考视频 / ≤3 个参考音频（未挂的槽位自动裁掉）；LoRA 可选（同生图，无「依赖参考图」） | [h3-video](docs/h3-video-gen.md) |
 | 🎞️ H3 Video Director | 节点 | 多段视频导演：以 `video_director` 配方为参数，逐段生成（每段自带 skill/提示词/时长/首帧/尾帧，生成模式可选 文生 / 图生 / 首尾帧 / 参考主体 / 混合）并拼接成单个含音频 `VIDEO`；图生段携带首帧、首尾帧段额外携带尾帧、参考主体段携带 ≤9 图 / ≤3 视频 / ≤3 音频；Tier A 连续性（上段尾帧→下个图生/首尾帧段首帧、丢边界重复帧、音频按帧对齐）。编辑器另支持**半自动故事生成**：LLM 由主题产出故事脚本，确认后按 5/10/15s 拆分场景并结合角色/背景参考图重生成每段提示词填充时间轴 | [h3-video](docs/h3-video-gen.md) |
 | 📦 Neo Bundle Expand | 节点 | 把 ⚡ Neo Prompt Agent 的 BUNDLE 展开成 `prompt`(STRING) + `image_1..image_9`(IMAGE)，对齐官方 MiniMax H3 Reference to Video 的 `ref_images`（最多 9 张，按需连线、未用槽位闲置）；输出槽自动增长：默认只显示 `prompt` + `image_1`，连上最后一个可见图片槽后露出下一个，上限 9 张；执行后节点内只读展示提示词与参考图缩略图网格（按输出顺序）。视频/音频参考暂不展开 | [prompts](docs/prompts.md) |
-| 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频素材浏览与管理：内置预设素材，支持自定义素材目录与 Civitai LORA 资源匹配；灯箱预览、一键发送到节点 | [gallery](docs/gallery.md) |
+| 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频/音频素材浏览与管理：内置预设素材，支持自定义素材目录与 Civitai LORA 资源匹配；灯箱预览、一键发送到节点 | [gallery](docs/gallery.md) |
 | ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） | [gallery](docs/gallery.md) |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 | [recipes](docs/recipes.md) |
 | 🔧 工作流修复 | 顶栏工具 | 换机器 / 改目录后模型路径失效时，按文件名匹配磁盘真实文件一键修复；可手动改选、记住映射、载入前自动检查 | [workflow-repair](docs/workflow-repair.md) |

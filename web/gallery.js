@@ -79,6 +79,17 @@ class NeoGallery {
         // 滚动位置状态
         this._scrollPositions = {};
         this._currentScrollKey = null;
+
+        // 音频卡片共享播放器：同一时刻只播一个，点击音频卡片外区域停止
+        this._audioPlayer = null;
+        this._audioCtx = null;
+        this._audioActiveUrl = null;
+        this._audioActiveBtn = null;
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.neo-gallery-audio-card')) {
+                this._stopAudio();
+            }
+        });
         
         
         // Custom dir input
@@ -1268,6 +1279,43 @@ class NeoGallery {
 
     // ====== Video Send ======
 
+    _stopAudio() {
+        const player = this._audioPlayer;
+        if (player && !player.paused) player.pause();
+        const card = this._audioActiveCard;
+        if (card) {
+            const btn = card.querySelector(".neo-gallery-audio-play-btn");
+            if (btn) btn.textContent = "\u25B6";
+            if (card._renderAudio) card._renderAudio(0);
+            if (card._audioTimeEl) {
+                const dur = player && isFinite(player.duration) ? player.duration : 0;
+                card._audioTimeEl.textContent = `0:00 / ${this._formatAudioTime(dur)}`;
+            }
+        }
+        this._audioActiveUrl = null;
+        this._audioActiveCard = null;
+        this._audioActiveBtn = null;
+    }
+
+    _onAudioTimeUpdate() {
+        const card = this._audioActiveCard;
+        if (!card) return;
+        const player = this._audioPlayer;
+        const dur = isFinite(player.duration) ? player.duration : 0;
+        const progress = (dur > 0) ? Math.min(1, player.currentTime / dur) : 0;
+        if (card._renderAudio) card._renderAudio(progress);
+        if (card._audioTimeEl) {
+            card._audioTimeEl.textContent = `${this._formatAudioTime(player.currentTime)} / ${this._formatAudioTime(dur)}`;
+        }
+    }
+
+    _formatAudioTime(sec) {
+        if (!isFinite(sec) || sec < 0) sec = 0;
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m}:${s.toString().padStart(2, "0")}`;
+    }
+
     async sendVideoToNode(image, target, button) {
         const selectedValue = target === 'selected' ? 'selected' : target;
         let targetNode = null;
@@ -1329,6 +1377,69 @@ class NeoGallery {
         app.graph.setDirtyCanvas(true, true);
         showInlineFeedback(button, '\u2705 Video Sent!', 'success');
         showToast(this.app, 'success', 'Video Sent!', `Sent to ${targetNode.title || 'Node'} - ${targetWidget.name}`);
+    }
+
+    async sendAudioToNode(image, target, button) {
+        const selectedValue = target === 'selected' ? 'selected' : target;
+        let targetNode = null;
+        let targetWidget = null;
+        if (selectedValue === 'selected') {
+            const selKeys = Object.keys(app.canvas.selected_nodes);
+            if (selKeys.length > 0) {
+                targetNode = app.canvas.selected_nodes[selKeys[0]];
+                targetWidget = targetNode?.widgets?.find(w => /audio/.test((w.name||'').toLowerCase()));
+            }
+        } else {
+            const [nodeId, , index] = selectedValue.split(':');
+            targetNode = app.graph.getNodeById(parseInt(nodeId));
+            targetWidget = targetNode?.widgets?.[parseInt(index)];
+        }
+        if (!targetNode || !targetWidget) {
+            showToast(this.app, 'error', 'Send Failed', 'Could not find target node/widget.');
+            return;
+        }
+        const widgetType = targetWidget.type || '';
+
+        if (widgetType === 'combo') {
+            try {
+                const resp = await api.fetchApi('/neo_gallery/copy_to_input?filename=' + encodeURIComponent(image.filename) + (image.subfolder ? '&subfolder=' + encodeURIComponent(image.subfolder) : ''));
+                if (resp.ok) {
+                    const result = await resp.json();
+                    if (result.success) {
+                        targetWidget.value = result.skipped ? image.filename : result.filename;
+                    } else {
+                        showToast(this.app, 'error', 'Copy Failed', result.error || 'Failed to copy audio to input directory');
+                        return;
+                    }
+                } else {
+                    showToast(this.app, 'error', 'Copy Failed', 'Failed to copy audio');
+                    return;
+                }
+            } catch (e) {
+                console.error('[Gallery] Error copying audio:', e);
+                showToast(this.app, 'error', 'Copy Failed', 'Error copying audio');
+                return;
+            }
+        } else {
+            const filePath = `${image.subfolder || ''}/${image.filename}`;
+            if (widgetType === 'customtext' || widgetType === 'text') {
+                targetWidget.value = filePath;
+            } else {
+                targetWidget.value = {
+                    filename: image.filename,
+                    subfolder: image.subfolder || '',
+                    type: image.type || 'input'
+                };
+            }
+        }
+        if (widgetType === 'combo' && targetWidget.callback) {
+            targetWidget.callback(targetWidget.value);
+        } else if (targetNode.onWidgetChanged) {
+            targetNode.onWidgetChanged(targetWidget.name, targetWidget.value);
+        }
+        app.graph.setDirtyCanvas(true, true);
+        showInlineFeedback(button, '\u2705 Audio Sent!', 'success');
+        showToast(this.app, 'success', 'Audio Sent!', `Sent to ${targetNode.title || 'Node'} - ${targetWidget.name}`);
     }
 
     // ====== Send Menus ======
