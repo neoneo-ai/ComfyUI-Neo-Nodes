@@ -2832,6 +2832,19 @@
 }
 .rs-gen-save:hover { background: #456ba8; }
 .rs-gen-save:disabled { opacity: 0.6; cursor: default; }
+.llm-btn-row { display: flex; gap: 8px; }
+.rs-gen-test {
+    width: 100%;
+    padding: 6px 0;
+    font-size: 12px;
+    color: #fff;
+    background: #3a5a8c;
+    border: 1px solid #5090cc;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rs-gen-test:hover { background: #456ba8; }
+.rs-gen-test:disabled { opacity: 0.6; cursor: default; }
 .rs-gen-readonly-hint { font-size: 12px; color: #999; }
 
 /* ---- 技能详情弹窗：出图设置两栏表格（仅 .rs-skill-gen-settings，全局出图设置菜单不受影响）---- */

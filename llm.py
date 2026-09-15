@@ -359,6 +359,40 @@ def _get_active_remote_config() -> Dict[str, Any]:
 
 
 
+def test_remote_connection(provider: str, api_key: str = "", base_url: str = "", model: str = "") -> Dict[str, Any]:
+    """连接测试：用给定 provider/密钥/端点/模型发送「你好」，成功返回 {success, reply}，失败返回 {success, error}。
+
+    空值回退到该 provider 已存配置（前端掩码未改动时 api_key 传空，此处沿用已存明文密钥）。
+    """
+    if not provider or provider == "local":
+        return {"success": False, "error": "本地模型无需连接测试"}
+    saved = _load_remote_config().get("providers", {}).get(provider) or {}
+    config = {
+        "provider": provider,
+        "api_key": (api_key or "").strip() or saved.get("api_key", ""),
+        "base_url": (base_url or "").strip() or saved.get("base_url", ""),
+        "model": (model or "").strip() or saved.get("model", ""),
+        "timeout": 30,
+    }
+    if not config["model"]:
+        return {"success": False, "error": "请先选择模型"}
+    client = RemoteLLMClient(config)
+    try:
+        response = client.chat_completion(
+            messages=[{"role": "user", "content": "你好"}],
+            max_tokens=100,
+        )
+        content = (response.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        reply = (content or "").strip()
+        if not reply:
+            return {"success": False, "error": "模型返回为空"}
+        preview = reply[:80] + ("…" if len(reply) > 80 else "")
+        return {"success": True, "reply": preview}
+    except Exception as e:
+        logger.warning(f"LLM connection test failed ({provider}): {e}")
+        return {"success": False, "error": str(e)}
+
+
 def _load_remote_config() -> Dict[str, Any]:
     """加载远程 LLM 配置"""
     try:
@@ -1064,12 +1098,9 @@ def _run_llm_inference(system_prompt: str, user_text: str, max_tokens: int,
         max_tokens = STREAM_MIN_MAX_TOKENS
 
     if use_remote:
-        result = _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream,
-                                       enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
-        if result is not None:
-            return result
-        logger.warning("Remote LLM failed, falling back to local mode")
-        return _run_local_inference(system_prompt, user_text, max_tokens, images, stream=stream)
+        # 远程模式不再回退本地：请求成功返回结果，不能访问则直接抛错由上层上报
+        return _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream,
+                                     enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
     else:
         return _run_local_inference(system_prompt, user_text, max_tokens, images, stream=stream)
 
@@ -1141,9 +1172,7 @@ def _run_remote_inference(system_prompt: str, user_text: str, max_tokens: int,
 
     client = RemoteLLMClient(config)
 
-    if not client.is_available():
-        raise RuntimeError("Remote LLM client is not available (missing API key or provider)")
-
+    # 不做 is_available() 前置拦截（缺 API key / provider 也继续发请求），不能访问时直接抛出错误
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_text}
@@ -1187,12 +1216,12 @@ def _run_remote_inference(system_prompt: str, user_text: str, max_tokens: int,
 
         return content.strip() if content else ""
     except (RuntimeError, OSError, socket.gaierror) as e:
-        # 网络相关错误已在上层捕获，直接返回
+        # 不能访问直接报错：保留真实原因向上抛（run_llm_task / 流式路由统一上报），不再静默返回 None
         logger.warning(f"Remote LLM inference failed (network): {e}")
-        return None
+        raise
     except Exception as e:
         logger.exception(f"Error during remote LLM inference: {e}")
-        return None
+        raise
 
 
 # ==========================================

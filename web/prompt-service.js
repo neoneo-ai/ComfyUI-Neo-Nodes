@@ -66,6 +66,25 @@ async function saveRemoteLLMConfig(config) {
 }
 
 /**
+ * 连接测试：用当前表单的 provider/密钥/端点/模型发送「你好」，成功返回 {success, reply}
+ * @param {Object} config - { provider, api_key, base_url, model }
+ * @returns {Promise<Object>}
+ */
+async function testLLMConnection(config) {
+    try {
+        const res = await fetch("/rs_prompts/llm_connection_test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(config || {})
+        });
+        return await res.json();
+    } catch (e) {
+        console.error("Failed to test LLM connection:", e);
+        return { success: false, error: e.message };
+    }
+}
+
+/**
  * 获取当前 LLM 模式
  * @returns {Promise<string>} - "local" 或 "remote"
  */
@@ -515,6 +534,7 @@ export {
     // 远程 LLM 配置相关
     getRemoteLLMConfig,
     saveRemoteLLMConfig,
+    testLLMConnection,
     getLLMMode,
     fileToBase64,
     imagesFromClipboard,
@@ -533,5 +553,6 @@ if (typeof window !== 'undefined') {
     }
     window.NeoNodes.getRemoteLLMConfig = getRemoteLLMConfig;
     window.NeoNodes.saveRemoteLLMConfig = saveRemoteLLMConfig;
+    window.NeoNodes.testLLMConnection = testLLMConnection;
     window.NeoNodes.getLLMMode = getLLMMode;
 }

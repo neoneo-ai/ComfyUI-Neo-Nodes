@@ -62,6 +62,7 @@ from .llm import (
     LLM_TASKS,
     resolve_multi_result,
     get_provider_list,
+    test_remote_connection,
 )
 
 
@@ -864,6 +865,27 @@ async def rs_prompts_set_remote_llm_config(request):
         })
     except Exception as e:
         logger.error(f"Error setting remote LLM config: {e}")
+        return web.Response(status=500, text=str(e))
+
+
+@server.PromptServer.instance.routes.post("/rs_prompts/llm_connection_test")
+async def rs_prompts_llm_connection_test(request):
+    """连接测试：用当前表单的 provider/密钥/端点/模型发送「你好」，成功返回回复摘要"""
+    try:
+        data = await request.json() or {}
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: test_remote_connection(
+                provider=data.get("provider", ""),
+                api_key=data.get("api_key", ""),
+                base_url=data.get("base_url", ""),
+                model=data.get("model", ""),
+            ),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        logger.error(f"Error testing LLM connection: {e}")
         return web.Response(status=500, text=str(e))
 
 

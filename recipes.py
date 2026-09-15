@@ -293,7 +293,7 @@ async def rs_recipes_load(request):
 _DIRECTOR_REF_CAPS = {"images": 9, "videos": 3, "audios": 3}
 
 # 段级生成模式（与 ComfyUI_MiniMaxH3_Director 的任务模式对齐）：
-# t2v 文生 / i2v 首帧 / fl2v 首尾帧 / r2v 参考主体；全局可再取 mixed（逐段 seg.mode 生效）
+# t2v 文生 / i2v 首帧 / fl2v 首尾帧 / r2v 全参考；全局可再取 mixed（逐段 seg.mode 生效）
 _DIRECTOR_MODES = ("t2v", "i2v", "fl2v", "r2v")
 
 

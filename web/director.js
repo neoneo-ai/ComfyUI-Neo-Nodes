@@ -194,7 +194,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ['t2v', '文生视频'],
         ['i2v', '图生视频'],
         ['fl2v', '首尾帧生视频'],
-        ['r2v', '参考主体生视频'],
+        ['r2v', '全参考生视频'],
     ];
     const SEG_MODE_KEYS = new Set(SEG_MODES.map(([k]) => k));
     const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
@@ -418,7 +418,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const ffGrid = buildFrameGrid('neo-director-ff', seg.first_frame, '无（文生视频）');
         const lfGrid = buildFrameGrid('neo-director-lf', seg.last_frame, '无（不锁尾帧）');
 
-        // 本段模式（仅全局“混合模式”下显示）：文生 / 图生 / 首尾帧 / 参考主体
+        // 本段模式（仅全局“混合模式”下显示）：文生 / 图生 / 首尾帧 / 全参考
         const segModeSel = $el('select', { className: 'neo-director-segmode' });
         for (const [val, label] of SEG_MODES) segModeSel.appendChild($el('option', { value: val, textContent: label }));
         segModeSel.value = SEG_MODE_KEYS.has(seg.mode) ? seg.mode : 't2v';
@@ -771,7 +771,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 warnings.push(`第 ${segNo} 段（首尾帧生视频）缺尾帧图`);
             }
             if (eff === 'r2v' && !seg.refs) {
-                warnings.push(`第 ${segNo} 段（参考主体生视频）缺参考素材（图 / 视频 / 音频）`);
+                warnings.push(`第 ${segNo} 段（全参考生视频）缺参考素材（图 / 视频 / 音频）`);
             }
             segments.push(seg);
         }
@@ -954,7 +954,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         addBtn,
         $el('div', { className: 'neo-director-zoom' }, [zoomToggle, zoomSlider]),
     ]);
-    // 全局生成模式：文生 / 图生 / 首尾帧 / 参考主体 / 混合（决定各段携带哪些帧与参考）。
+    // 全局生成模式：文生 / 图生 / 首尾帧 / 全参考 / 混合（决定各段携带哪些帧与参考）。
     // 旧配方无 shared.mode 时按各段内容推断：有尾帧=fl2v、有首帧=i2v、有参考=r2v、全无=t2v、混合=mixed。
     const initMode = (() => {
         if (MODE_LABELS.has(exShared.mode)) return exShared.mode;

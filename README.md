@@ -9,7 +9,7 @@
 | 🖌️ 聊天生图（Krea2） | 节点内置 | 选生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板，LoRA 可选（依赖参考图模式），底部状态行实时显示进度/取消，结果 Markdown 预览并一键装配回 LoadImage | [image-gen](docs/image-gen.md) |
 | 🎨 Krea2 Generate | 节点 | 按所选生图 skill 的 workflow.json 模板同步生成，直接输出 IMAGE 张量到下游节点（进程内 mini-executor 执行，无需聊天界面；需 GPU/显存，采样期间阻塞主工作流） | [image-gen](docs/image-gen.md) |
 | 🎬 H3 Video Generate | 节点 | MiniMax H3 文生视频 / 图生视频 / 首尾帧生视频 / 参考生视频：按所选视频 skill 的 workflow.json 模板同步生成，输出含原生音频的 `VIDEO`（进程内 mini-executor 执行，支持 V3 API 节点；需 GPU/显存，采样期间阻塞主工作流）；首尾帧可只给一边（退化为图生/锁尾）；参考生视频支持 ≤9 张参考图 / ≤3 个参考视频 / ≤3 个参考音频（未挂的槽位自动裁掉）；LoRA 可选（同生图，无「依赖参考图」） | [h3-video](docs/h3-video-gen.md) |
-| 🎞️ H3 Video Director | 节点 | 多段视频导演：以 `video_director` 配方为参数，逐段生成（每段自带 skill/提示词/时长/首帧/尾帧，生成模式可选 文生 / 图生 / 首尾帧 / 参考主体 / 混合）并拼接成单个含音频 `VIDEO`；图生段携带首帧、首尾帧段额外携带尾帧、参考主体段携带 ≤9 图 / ≤3 视频 / ≤3 音频；Tier A 连续性（上段尾帧→下个图生/首尾帧段首帧、丢边界重复帧、音频按帧对齐）。编辑器另支持**半自动故事生成**：LLM 由主题产出故事脚本，确认后按 5/10/15s 拆分场景并结合角色/背景参考图重生成每段提示词填充时间轴 | [h3-video](docs/h3-video-gen.md) |
+| 🎞️ H3 Video Director | 节点 | 多段视频导演：以 `video_director` 配方为参数，逐段生成（每段自带 skill/提示词/时长/首帧/尾帧，生成模式可选 文生 / 图生 / 首尾帧 / 全参考 / 混合）并拼接成单个含音频 `VIDEO`；图生段携带首帧、首尾帧段额外携带尾帧、全参考段携带 ≤9 图 / ≤3 视频 / ≤3 音频；Tier A 连续性（上段尾帧→下个图生/首尾帧段首帧、丢边界重复帧、音频按帧对齐）。编辑器另支持**半自动故事生成**：LLM 由主题产出故事脚本，确认后按 5/10/15s 拆分场景并结合角色/背景参考图重生成每段提示词填充时间轴 | [h3-video](docs/h3-video-gen.md) |
 | 📦 Neo Bundle Expand | 节点 | 把 ⚡ Neo Prompt Agent 的 BUNDLE 展开成 `prompt`(STRING) + `image_1..image_9`(IMAGE)，对齐官方 MiniMax H3 Reference to Video 的 `ref_images`（最多 9 张，按需连线、未用槽位闲置）；输出槽自动增长：默认只显示 `prompt` + `image_1`，连上最后一个可见图片槽后露出下一个，上限 9 张；执行后节点内只读展示提示词与参考图缩略图网格（按输出顺序）。视频/音频参考暂不展开 | [prompts](docs/prompts.md) |
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频/音频素材浏览与管理：内置预设素材，支持自定义素材目录与 Civitai LORA 资源匹配；灯箱预览、一键发送到节点 | [gallery](docs/gallery.md) |
 | ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） | [gallery](docs/gallery.md) |
@@ -57,7 +57,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 1. **安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（或见上方手动安装），重启 ComfyUI。
 2. **配置 LLM（二选一）**
-   - **远程**：节点 Settings 里选 Provider（内置 DeepSeek、阿里云百炼(通义千问 / Token Plan)、Kimi、智谱 GLM、硅基流动，以及 OpenAI 兼容 / LM Studio / Ollama / OpenRouter 等），填 API Key + 端点。各家端点与申请入口见 [docs/llm.md](docs/llm.md)。
+   - **远程**：节点 Settings 里选 Provider（内置 DeepSeek、阿里云百炼(通义千问 / Token Plan)、Kimi、智谱 GLM、硅基流动，以及 OpenAI 兼容 / LM Studio / Ollama / OpenRouter 等），填 API Key + 端点。各家端点与申请入口见 [docs/llm.md](docs/llm.md)。表单底部「🔌 测试连接」会用当前填写的 Provider/密钥/端点/模型发送「你好」，能正常回复即表示连通（无需先保存；留空字段沿用已存配置）。
    - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型后点 💾 保存（目录只有一个模型时可跳过，运行时自动使用）。安装与模型目录规范见 [docs/llm.md](docs/llm.md)。
 3. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨ → 得到 AI 生成的提示词文本（无需连 CLIP，可直接接下游如 🎨 Krea2）。
 4. **第一次生图**：添加 🎨 Krea2 Generate 节点 → 选一个带 `workflow.json` 的生图 skill → prompt 接 ⚡ Neo Prompt Agent（常用）或手填，四视图类再连参考图 → 排队执行 → 直接输出 IMAGE 张量。

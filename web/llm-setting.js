@@ -190,9 +190,47 @@ export function createModelConfigForm() {
         clearTimeout(saveResetTimer);
         saveResetTimer = setTimeout(() => { saveBtn.textContent = "💾 保存设置"; }, 1600);
     });
-    const saveRow = mkEl("div", "rs-config-row");
+    const saveRow = mkEl("div", "llm-btn-row");
     saveRow.appendChild(saveBtn);
     remoteForm.appendChild(saveRow);
+
+    // 连接测试按钮：用当前表单值发送「你好」，成功返回回复摘要（本地模型不适用）
+    const testBtn = mkEl("button", "rs-gen-test");
+    testBtn.type = "button";
+    testBtn.textContent = "🔌 测试连接";
+    let testBusy = false;
+    testBtn.addEventListener("click", async () => {
+        if (testBusy) return;
+        const def = getProviderDef(providerSelect.value);
+        if (def.type === 'local') {
+            setLocalStatusMsg("本地模型无需连接测试", "#999");
+            return;
+        }
+        testBusy = true;
+        testBtn.disabled = true;
+        testBtn.textContent = "⏳ 测试中…";
+        setLocalStatusMsg("正在测试连接…", "#999", false);
+        try {
+            const result = await window.NeoNodes?.testLLMConnection?.({
+                provider: providerSelect.value,
+                api_key: effectiveApiKey(),
+                base_url: baseUrlInput.value.trim(),
+                model: getModelValue(),
+            });
+            if (result && result.success) {
+                setLocalStatusMsg("✅ 连接正常：" + (result.reply || ""), "#22c55e", false);
+            } else {
+                setLocalStatusMsg("❌ 连接失败：" + ((result && result.error) || "未知错误"), "#dc2626", false);
+            }
+        } catch (e) {
+            setLocalStatusMsg("❌ 测试出错：" + (e.message || e), "#dc2626", false);
+        } finally {
+            testBusy = false;
+            testBtn.disabled = false;
+            testBtn.textContent = "🔌 测试连接";
+        }
+    });
+    saveRow.insertBefore(testBtn, saveBtn);
 
     // ==========================================
     // Provider change handler - show/hide fields dynamically

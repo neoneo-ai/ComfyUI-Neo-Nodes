@@ -662,6 +662,80 @@ class TestInlineThinkStripping(unittest.TestCase):
 
 
 @unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestRemoteConnection(unittest.TestCase):
+    """连接测试：test_remote_connection 用表单值发「你好」，成功返回 reply、失败返回 error。"""
+
+    def _run(self, provider="openai", api_key="", base_url="", model="",
+             chat_result=None, raise_exc=None, saved=None):
+        captured = {}
+
+        class _FakeClient:
+            def __init__(self, config):
+                captured["config"] = config
+            def chat_completion(self, **kw):
+                captured["messages"] = kw.get("messages")
+                if raise_exc is not None:
+                    raise raise_exc
+                return chat_result
+
+        orig_client = llm_mod.RemoteLLMClient
+        orig_load = llm_mod._load_remote_config
+        llm_mod.RemoteLLMClient = _FakeClient
+        llm_mod._load_remote_config = lambda: (saved if saved is not None else {"providers": {}})
+        try:
+            result = llm_mod.test_remote_connection(
+                provider=provider, api_key=api_key, base_url=base_url, model=model)
+        finally:
+            llm_mod.RemoteLLMClient = orig_client
+            llm_mod._load_remote_config = orig_load
+        return result, captured
+
+    def test_success_returns_reply_preview(self):
+        result, captured = self._run(
+            provider="openai", api_key="sk-test", base_url="https://api.openai.com/v1", model="gpt-4o-mini",
+            chat_result={"choices": [{"message": {"content": "你好！有什么可以帮你？"}}]},
+        )
+        self.assertTrue(result["success"])
+        self.assertIn("你好", result["reply"])
+        self.assertEqual(captured["messages"], [{"role": "user", "content": "你好"}])
+        self.assertEqual(captured["config"]["provider"], "openai")
+        self.assertEqual(captured["config"]["api_key"], "sk-test")
+        self.assertEqual(captured["config"]["model"], "gpt-4o-mini")
+
+    def test_failure_returns_error(self):
+        result, _ = self._run(
+            provider="openai", model="gpt-4o-mini",
+            raise_exc=RuntimeError("Remote LLM HTTP 401: unauthorized"),
+        )
+        self.assertFalse(result["success"])
+        self.assertIn("401", result["error"])
+
+    def test_local_provider_not_applicable(self):
+        result, captured = self._run(provider="local")
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error"], "本地模型无需连接测试")
+        self.assertNotIn("config", captured)  # 未构造客户端
+
+    def test_missing_model_reports_hint(self):
+        result, _ = self._run(provider="openai")  # 无表单 model，也无已存 model
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error"], "请先选择模型")
+
+    def test_falls_back_to_saved_config_when_blank(self):
+        saved = {"providers": {"deepseek": {
+            "api_key": "sk-saved", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"}}}
+        result, captured = self._run(
+            provider="deepseek",  # 表单值全空（掩码未改动 → api_key 传空），应回退已存配置
+            chat_result={"choices": [{"message": {"content": "ok"}}]},
+            saved=saved,
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["config"]["api_key"], "sk-saved")
+        self.assertEqual(captured["config"]["base_url"], "https://api.deepseek.com/v1")
+        self.assertEqual(captured["config"]["model"], "deepseek-chat")
+
+
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
 class TestEnableThinking(unittest.TestCase):
     """enable_thinking（关闭思考）：经 chat_template_kwargs 透传到请求体；未设置则不发送。"""
 
@@ -763,6 +837,79 @@ class TestEnableThinking(unittest.TestCase):
             llm_mod.RemoteLLMClient = orig_client
             llm_mod._get_active_remote_config = orig_cfg
         self.assertEqual(captured.get("reasoning_effort"), "medium")
+
+    def test_run_remote_inference_missing_key_still_sends_request(self):
+        # 缺少 API key / provider：不做前置拦截，仍继续发起请求（调用 chat_completion）
+        called = {}
+
+        class _FakeClient:
+            provider = "openai"
+            model = "test-model"
+            def __init__(self, config):
+                pass
+            def is_available(self):
+                return False
+            def chat_completion(self, **kw):
+                called["invoked"] = True
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        orig_client = llm_mod.RemoteLLMClient
+        orig_cfg = llm_mod._get_active_remote_config
+        llm_mod.RemoteLLMClient = _FakeClient
+        llm_mod._get_active_remote_config = lambda: {"enabled": True, "provider": "openai"}
+        try:
+            result = llm_mod._run_remote_inference("sys", "usr", 500, stream=False)
+        finally:
+            llm_mod.RemoteLLMClient = orig_client
+            llm_mod._get_active_remote_config = orig_cfg
+        self.assertTrue(called.get("invoked"))
+        self.assertEqual(result, "ok")
+
+    def test_run_remote_inference_propagates_failure(self):
+        # 不能访问直接报错：chat_completion 抛错时不再吞成 None，而是向上抛出
+        class _FakeClient:
+            provider = "openai"
+            model = "test-model"
+            def __init__(self, config):
+                pass
+            def is_available(self):
+                return True
+            def chat_completion(self, **kw):
+                raise RuntimeError("Remote LLM HTTP 401: unauthorized")
+
+        orig_client = llm_mod.RemoteLLMClient
+        orig_cfg = llm_mod._get_active_remote_config
+        llm_mod.RemoteLLMClient = _FakeClient
+        llm_mod._get_active_remote_config = lambda: {"enabled": True, "provider": "openai"}
+        try:
+            with self.assertRaises(RuntimeError):
+                llm_mod._run_remote_inference("sys", "usr", 500, stream=False)
+        finally:
+            llm_mod.RemoteLLMClient = orig_client
+            llm_mod._get_active_remote_config = orig_cfg
+
+    def test_run_llm_inference_remote_no_fallback_to_local(self):
+        # 远程模式失败不回退本地：异常直接向上抛，且不触碰本地推理
+        local_called = {}
+
+        def fake_remote(*a, **k):
+            raise RuntimeError("Remote LLM HTTP 401: unauthorized")
+
+        def fake_local(*a, **k):
+            local_called["invoked"] = True
+            return "local-result"
+
+        orig_remote = llm_mod._run_remote_inference
+        orig_local = llm_mod._run_local_inference
+        llm_mod._run_remote_inference = fake_remote
+        llm_mod._run_local_inference = fake_local
+        try:
+            with self.assertRaises(RuntimeError):
+                llm_mod._run_llm_inference("sys", "usr", 500, use_remote=True)
+        finally:
+            llm_mod._run_remote_inference = orig_remote
+            llm_mod._run_local_inference = orig_local
+        self.assertNotIn("invoked", local_called)
 
     def test_route_passes_enable_thinking_to_skill_stream(self):
         captured = {}

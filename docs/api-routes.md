@@ -89,6 +89,7 @@
 | GET | `/rs_prompts/get_models` | 可用 LLM 模型列表（远程 + 本地） |
 | POST | `/rs_prompts/set_model` | 切换当前 LLM 模型 |
 | GET/POST | `/rs_prompts/remote_llm_config` | 远程 LLM 配置读取 / 保存 |
+| POST | `/rs_prompts/llm_connection_test` | 连接测试：用当前表单值发送「你好」，成功返回回复摘要 |
 | GET | `/rs_prompts/llm_mode` | 当前 LLM 模式 |
 | POST | `/rs_prompts/extract_title` | AI 提取标题 |
 | POST | `/rs_prompts/extract_classify` | AI 提取分类 |

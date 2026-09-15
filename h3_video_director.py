@@ -152,7 +152,7 @@ class NeoH3VideoDirector:
                         ("请为该段设置首帧，或开启「连续性」以上段尾帧链入"
                          if i > 0 else "首段需自带首帧"))
                 if mode == "r2v" and not refs:
-                    raise ValueError(f"第 {i + 1} 段为参考主体生视频但没有参考素材：请挂参考图 / 视频 / 音频")
+                    raise ValueError(f"第 {i + 1} 段为全参考生视频但没有参考素材：请挂参考图 / 视频 / 音频")
 
                 real_id = _resolve_skill_id(seg.get("skill_id") or "")
                 template = load_skill_workflow(real_id)

@@ -801,7 +801,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertIn("尾帧", err or "")
 
     def test_r2v_segment_attaches_refs_without_first_frame(self):
-        # 参考主体段：只挂参考素材即可，不需要首帧
+        # 全参考段：只挂参考素材即可，不需要首帧
         bodies, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v",
                                         "ref_input": None,
                                         "refs": {"images": ["a.png"], "videos": ["v.mp4"], "audios": ["s.wav"]}})

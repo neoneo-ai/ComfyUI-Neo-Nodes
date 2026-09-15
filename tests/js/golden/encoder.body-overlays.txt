@@ -77,7 +77,8 @@ body
             input#rs-local-auto-unload.rs-form-checkbox <type=checkbox val="on">
             label.rs-form-label "本节点执行完自动卸载本地模型"
           div.rs-form-hint
-        div.rs-config-row
+        div.llm-btn-row
+          button.rs-gen-test <type=button> "🔌 测试连接"
           button.rs-gen-save <type=button> "💾 保存设置"
     div.rs-auto-panel <display=none>
       div.rs-gen-settings

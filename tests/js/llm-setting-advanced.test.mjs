@@ -178,3 +178,38 @@ test("填入 API Key 后自动重拉模型列表并携带新密钥", async () =>
     assert.equal(calls.length, before + 1, "填入密钥后应多触发一次拉取");
     assert.equal(calls[calls.length - 1].body.api_key, "sk-new", "新填密钥应随请求发送");
 });
+
+test("连接测试：远程 provider 点「🔌 测试连接」发当前表单值并回显回复", async () => {
+    await llmForm.load();
+    await flush();
+    mockRoute("/rs_prompts/llm_connection_test", () => jsonResponse({ success: true, reply: "你好！" }));
+    const status = () => llmForm.el.querySelector(".rs-provider-save-status");
+
+    await switchProvider("deepseek"); // 远程 provider
+    apiKeyInput().value = "sk-test";   // 显式填密钥，避开掩码分支
+    llmForm.el.querySelector(".rs-gen-test").click();
+    await sleep(200);
+    await flush();
+
+    const calls = fetchLog.filter((c) => c.method === "POST" && c.path === "/rs_prompts/llm_connection_test");
+    assert.equal(calls.length, 1, "点测试应发一次连接测试请求");
+    assert.equal(calls[0].body.provider, "deepseek", "应携带当前 provider");
+    assert.equal(calls[0].body.api_key, "sk-test", "显式填写的密钥应随请求发送");
+    assert.match(status().textContent, /连接正常/, "成功时应显示连接正常");
+    assert.match(status().textContent, /你好/, "应回显模型回复摘要");
+});
+
+test("连接测试：本地 provider 点按钮不发请求并提示不适用", async () => {
+    await llmForm.load();
+    await flush();
+    const status = () => llmForm.el.querySelector(".rs-provider-save-status");
+
+    await switchProvider("local");
+    llmForm.el.querySelector(".rs-gen-test").click();
+    await sleep(100);
+    await flush();
+
+    const calls = fetchLog.filter((c) => c.path === "/rs_prompts/llm_connection_test");
+    assert.equal(calls.length, 0, "本地模型不应发连接测试请求");
+    assert.match(status().textContent, /无需连接测试/, "应提示本地模型无需连接测试");
+});
