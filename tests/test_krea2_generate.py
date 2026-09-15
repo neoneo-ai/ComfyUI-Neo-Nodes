@@ -151,6 +151,60 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(krea2_generate._normalize_outputs((1, 2), ("A", "B")), [1, 2])
 
 
+class ModelInjectionTests(unittest.TestCase):
+    """_model_injection_node：定位外部 MODEL 注入点 + 沿 model 边追纯模型链。"""
+
+    def test_vdn_chain_injects_at_sigma_shift_source(self):
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "60": {"class_type": "ApplyVDNH3Advanced", "inputs": {"model": ["1", 0]}},
+            "5": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["60", 0]}},
+            "6": {"class_type": "KSampler", "inputs": {"model": ["5", 0], "steps": 8}},
+        }
+        x_id, pruned = krea2_generate._model_injection_node(graph)
+        self.assertEqual(x_id, "60")          # SigmaShift.model 的来源（VDN 节点）
+        self.assertEqual(pruned, {"1"})       # 只追 model 边 → UNETLoader
+
+    def test_k_sampler_direct_unet(self):
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "10": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "steps": 8}},
+        }
+        x_id, pruned = krea2_generate._model_injection_node(graph)
+        self.assertEqual(x_id, "1")
+        self.assertEqual(pruned, set())
+
+    def test_lora_chain(self):
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "20": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0]}},
+            "10": {"class_type": "KSampler", "inputs": {"model": ["20", 0], "steps": 8}},
+        }
+        x_id, pruned = krea2_generate._model_injection_node(graph)
+        self.assertEqual(x_id, "20")
+        self.assertEqual(pruned, {"1"})
+
+    def test_shared_inputs_not_pruned(self):
+        # Krea2EditModelPatch 除 model 外还吃 vae/latent：只追 model 边，共享节点不被误删
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "3": {"class_type": "VAELoader", "inputs": {}},
+            "9": {"class_type": "EmptySD3LatentImage", "inputs": {}},
+            "14": {"class_type": "Krea2EditModelPatch",
+                   "inputs": {"model": ["1", 0], "vae": ["3", 0], "target_latent": ["9", 0]}},
+            "10": {"class_type": "KSampler", "inputs": {"model": ["14", 0], "steps": 8}},
+        }
+        x_id, pruned = krea2_generate._model_injection_node(graph)
+        self.assertEqual(x_id, "14")
+        self.assertEqual(pruned, {"1"})       # 只删 UNETLoader，VAE/latent 保留
+
+    def test_no_sink_returns_none(self):
+        graph = {"1": {"class_type": "UNETLoader", "inputs": {}}}
+        x_id, pruned = krea2_generate._model_injection_node(graph)
+        self.assertIsNone(x_id)
+        self.assertEqual(pruned, set())
+
+
 class ExecuteTests(unittest.TestCase):
     def setUp(self):
         self._orig = dict(_nodes.NODE_CLASS_MAPPINGS)
@@ -175,6 +229,24 @@ class ExecuteTests(unittest.TestCase):
         graph = {"1": {"class_type": "NoSuchNode", "inputs": {}}}
         with self.assertRaises(RuntimeError):
             krea2_generate.execute_graph_inprocess(graph)
+
+    def test_overrides_skip_execution(self):
+        # 命中的节点直接采用给定输出、跳过 forward（外部 MODEL 注入的执行侧）
+        marker = torch.full((1, 2, 2, 3), 7.0)
+        graph = {
+            "1": {"class_type": "_SourceA", "inputs": {}},   # 正常会产出 ones，被 override 覆盖
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+        }
+        out = krea2_generate.execute_graph_inprocess(graph, overrides={"1": [marker]})
+        self.assertTrue(torch.allclose(out, marker))
+
+    def test_overrides_none_preserves_behavior(self):
+        graph = {
+            "1": {"class_type": "_SourceA", "inputs": {}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+        }
+        out = krea2_generate.execute_graph_inprocess(graph, overrides=None)
+        self.assertTrue(torch.allclose(out, torch.ones(1, 2, 2, 3)))
 
 
 class ImageToUriTests(unittest.TestCase):
@@ -217,6 +289,54 @@ class GenerateTests(unittest.TestCase):
         krea2_generate.render_template = lambda tpl, params: (graph, [])
         (out,) = krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi", seed=42, count=1)
         self.assertTrue(torch.allclose(out, torch.ones(1, 2, 2, 3)))
+
+    def test_generate_model_injection_and_steps(self):
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "20": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0]}},
+            "10": {"class_type": "KSampler", "inputs": {"model": ["20", 0], "steps": 8}},
+        }
+        krea2_generate.load_skill_workflow = lambda sid: {"template": True}
+        krea2_generate.get_settings = lambda: {}
+        krea2_generate.get_skill_gen_config = lambda sid: {}
+        krea2_generate.resolve_request = lambda body, settings: {"steps": 8}
+        krea2_generate.render_template = lambda tpl, params: (graph, [])
+        orig_exec = krea2_generate.execute_graph_inprocess
+        captured = {}
+        krea2_generate.execute_graph_inprocess = (
+            lambda g, output_type="IMAGE", overrides=None: (captured.update(graph=g, overrides=overrides), "img")[1])
+        try:
+            ext = object()
+            (out,) = krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi", model=ext, steps=3)
+        finally:
+            krea2_generate.execute_graph_inprocess = orig_exec
+        self.assertEqual(out, "img")
+        self.assertEqual(captured["graph"]["10"]["inputs"]["steps"], 3)   # steps 覆盖到采样器节点
+        self.assertNotIn("1", captured["graph"])                          # UNETLoader（纯模型链）被剪掉
+        self.assertIn("20", captured["graph"])                            # LoRA 节点作为注入点保留
+        self.assertEqual(captured["overrides"], {"20": [ext]})
+
+    def test_generate_no_model_leaves_graph_untouched(self):
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "10": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "steps": 8}},
+        }
+        krea2_generate.load_skill_workflow = lambda sid: {"template": True}
+        krea2_generate.get_settings = lambda: {}
+        krea2_generate.get_skill_gen_config = lambda sid: {}
+        krea2_generate.resolve_request = lambda body, settings: {"steps": 8}
+        krea2_generate.render_template = lambda tpl, params: (graph, [])
+        orig_exec = krea2_generate.execute_graph_inprocess
+        captured = {}
+        krea2_generate.execute_graph_inprocess = (
+            lambda g, output_type="IMAGE", overrides=None: (captured.update(graph=g, overrides=overrides), "img")[1])
+        try:
+            krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi")
+        finally:
+            krea2_generate.execute_graph_inprocess = orig_exec
+        self.assertIsNone(captured["overrides"])                          # 无外部模型 → 不注入
+        self.assertIn("1", captured["graph"])                             # UNETLoader 保留
+        self.assertEqual(captured["graph"]["10"]["inputs"]["steps"], 8)   # steps 未覆盖（默认 -1）
 
 
 class ResolveSkillIdTests(unittest.TestCase):

@@ -16,8 +16,8 @@ from comfy_api.latest import InputImpl, Types
 from server import PromptServer
 
 from .image_gen import render_template
-from .krea2_generate import _image_to_data_uri, execute_graph_inprocess
-from .h3_video_gen import H3_FPS, _resolve_skill_id, _seconds_to_frames, resolve_video_params
+from .krea2_generate import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
+from .h3_video_gen import H3_FPS, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
 from .skill import get_skill_gen_config, load_skill_workflow
 from .recipes import list_director_recipes, load_director_spec
 
@@ -74,9 +74,11 @@ class NeoH3VideoDirector:
             },
             "optional": {
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),   # -1 = 用配方 shared.seed
-                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用 shared
-                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用 shared
+                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用各段 skill config（选中配方时前端自动填首段默认）
+                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用各段 skill config（选中配方时前端自动填首段默认）
                 "continuity": ("BOOLEAN", {"default": True}),   # Tier A：上段尾帧→下段首帧 + 丢边界帧
+                "model": ("MODEL",),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
+                "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
             },
         }
 
@@ -86,7 +88,7 @@ class NeoH3VideoDirector:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "多段视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。"
 
-    def generate(self, recipe, seed=-1, width=-1, height=-1, continuity=True):
+    def generate(self, recipe, seed=-1, width=-1, height=-1, continuity=True, model=None, steps=-1):
         spec = load_director_spec(recipe)
         shared = spec.get("shared") or {}
         segments = spec.get("segments") or []
@@ -94,8 +96,9 @@ class NeoH3VideoDirector:
             raise ValueError(f"配方 '{recipe}' 没有可执行的段")
 
         base_seed = int(seed) if int(seed) >= 0 else (int(shared.get("seed", 0)) if shared.get("seed") is not None else 0)
-        out_w = int(width) if int(width) > 0 else int(shared.get("width") or 1344)
-        out_h = int(height) if int(height) > 0 else int(shared.get("height") or 768)
+        # width/height：节点入参 > 0 时覆盖全部段；-1 时不写入 body，交由 resolve_video_params 按各段 skill config 默认回退。
+        in_w = int(width) if int(width) > 0 else 0
+        in_h = int(height) if int(height) > 0 else 0
 
         _DIRECTOR_PROGRESS.update(active=True, segment_index=-1, total_segments=len(segments))
         all_frames = []
@@ -108,9 +111,11 @@ class NeoH3VideoDirector:
                 body = {
                     "prompt": seg.get("prompt", ""),
                     "seed": (base_seed + i) % (2**63),
-                    "width": out_w,
-                    "height": out_h,
                 }
+                if in_w > 0:
+                    body["width"] = in_w
+                if in_h > 0:
+                    body["height"] = in_h
                 dur = seg.get("duration_sec")
                 if dur is not None and float(dur) > 0:
                     body["length"] = _seconds_to_frames(float(dur))
@@ -159,9 +164,21 @@ class NeoH3VideoDirector:
                 if template is None:
                     raise RuntimeError(f"第 {i + 1} 段 skill '{seg.get('skill_id')}' 缺少 workflow.json，无法生成")
                 cfg = get_skill_gen_config(real_id)
-                params = resolve_video_params(body, cfg)
+                params = resolve_video_params(body, cfg, skip_model=(model is not None))
+                if steps is not None and int(steps) > 0:
+                    params["steps"] = int(steps)
                 graph, _warns = render_template(template, params)
-                video = execute_graph_inprocess(graph, output_type="VIDEO")
+                overrides = None
+                if model is not None:
+                    x_id, pruned = _model_injection_node(graph)
+                    if x_id is None:
+                        raise RuntimeError(f"第 {i + 1} 段无法定位模型注入点（缺少 KSampler/SigmaShift 的 model 输入）")
+                    for pid in pruned:
+                        del graph[pid]
+                    overrides = {x_id: [model]}
+                else:
+                    _require_vdn_plugin(graph)
+                video = execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
                 comp = video.get_components()
                 frames = comp.images
 

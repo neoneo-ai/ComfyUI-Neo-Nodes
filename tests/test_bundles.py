@@ -181,11 +181,14 @@ class H3BundleConsumeTests(unittest.TestCase):
             (h3_video_gen, "execute_graph_inprocess", h3_video_gen.execute_graph_inprocess),
             (h3_video_gen, "load_skill_workflow", h3_video_gen.load_skill_workflow),
         ]
-        h3_video_gen.resolve_video_params = lambda body, cfg: self._captured.setdefault("body", body) or {"model": "x"}
+        h3_video_gen.resolve_video_params = lambda body, cfg, skip_model=False: self._captured.setdefault("body", body) or {"model": "x"}
         # render_template 只在 generate 里显式调用一次（_resolve_skill_id/_gen_video_skills 不会碰它），
         # 用它捕获真实用到的模板，从而反查生效的 skill id
-        h3_video_gen.render_template = lambda template, params: self._captured.setdefault("template", template) or ({"graph": True}, [])
-        h3_video_gen.execute_graph_inprocess = lambda graph, output_type=None: ("VIDEO_MARKER",)
+        def _fake_render(template, params):
+            self._captured.setdefault("template", template)
+            return {"1": {"class_type": "UNETLoader", "inputs": {}}}, []
+        h3_video_gen.render_template = _fake_render
+        h3_video_gen.execute_graph_inprocess = lambda graph, output_type=None, overrides=None: ("VIDEO_MARKER",)
         h3_video_gen.load_skill_workflow = lambda sid: {"__skill_id": sid, "template": True}
 
     def tearDown(self):
@@ -254,8 +257,11 @@ class Krea2BundleConsumeTests(unittest.TestCase):
         ]
         krea2_generate.resolve_request = lambda body, settings: self._captured.setdefault("body", body) or {"model": "x"}
         # render_template 只在 generate 里显式调用一次，用它捕获真实用到的模板以反查生效的 skill id
-        krea2_generate.render_template = lambda template, params: self._captured.setdefault("template", template) or ({"graph": True}, [])
-        krea2_generate.execute_graph_inprocess = lambda graph: ("IMAGE_MARKER",)
+        def _fake_render(template, params):
+            self._captured.setdefault("template", template)
+            return {"1": {"class_type": "UNETLoader", "inputs": {}}}, []
+        krea2_generate.render_template = _fake_render
+        krea2_generate.execute_graph_inprocess = lambda graph, output_type="IMAGE", overrides=None: ("IMAGE_MARKER",)
         krea2_generate.load_skill_workflow = lambda sid: {"__skill_id": sid, "template": True}
 
     def tearDown(self):

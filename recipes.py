@@ -839,6 +839,26 @@ def load_director_spec(name: str) -> dict:
     return {"shared": meta.get("shared") or {}, "segments": segments}
 
 
+def _director_default_dims(segments):
+    """取首段 skill config 的 width/height/steps 默认值，供 director 节点 widget 动态填充；无有效段或读取失败回退 H3 默认。"""
+    width, height, steps = 1344, 768, 20
+    try:
+        from .skill import get_skill_gen_config
+        from .h3_video_gen import _resolve_skill_id
+        for seg in segments or []:
+            sid = str((seg or {}).get("skill_id") or "").strip()
+            if not sid:
+                continue
+            cfg = get_skill_gen_config(_resolve_skill_id(sid)) or {}
+            width = int(cfg.get("width") or 1344)
+            height = int(cfg.get("height") or 768)
+            steps = int(cfg.get("steps") or 20)
+            break
+    except Exception:
+        pass
+    return {"width": width, "height": height, "steps": steps}
+
+
 @PromptServer.instance.routes.get("/rs_recipes/director_spec")
 async def rs_recipes_director_spec(request):
     """返回 video_director 配方的 {shared, segments}（首帧已解析为 input 名），供节点时间轴预览。"""
@@ -847,7 +867,7 @@ async def rs_recipes_director_spec(request):
         return web.json_response({"success": False, "error": "缺少配方名"}, status=400)
     try:
         spec = load_director_spec(name)
-        return web.json_response({"success": True, "name": name, **spec})
+        return web.json_response({"success": True, "name": name, **spec, "defaults": _director_default_dims(spec.get("segments") or [])})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 

@@ -101,6 +101,18 @@ app.registerExtension({
             runtimeBaseH = bh + TL_H + ACT_H; // 记录自然高度，供运行时加高/还原采样预览预留区
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
+            // 按配方首段 skill config 初始化 width/height/steps widget：仅当当前为默认(-1)时填充，尊重工作流/手动已设值
+            const applyDimDefaults = (d) => {
+                if (!d) return;
+                for (const [nm, val] of [["width", d.width], ["height", d.height], ["steps", d.steps]]) {
+                    const w = node.widgets?.find((x) => x.name === nm);
+                    if (!w || !Number.isFinite(val)) continue;
+                    if (Number(w.value) !== -1) continue;
+                    w.value = val;
+                    w.callback?.(val);
+                }
+            };
+
             const loadSpec = async () => {
                 const name = recipeWidget ? String(recipeWidget.value || "") : "";
                 if (!name) { tlData = { segments: [] }; if (tl) tl.refresh(); return; }
@@ -108,7 +120,7 @@ app.registerExtension({
                     const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
                     if (resp.ok) {
                         const data = await resp.json();
-                        if (data.success) { tlData = data; if (tl) tl.refresh(); }
+                        if (data.success) { tlData = data; applyDimDefaults(data.defaults); if (tl) tl.refresh(); }
                     }
                 } catch (e) {
                     console.error("[Neo Nodes] director spec fetch failed", e);

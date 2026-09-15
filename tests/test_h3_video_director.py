@@ -650,11 +650,11 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
-                h3d.execute_graph_inprocess)
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
         bodies = []
         it = iter(_FakeVideo(n, self.FPS, self.SR) for n in frame_counts)
 
-        def _fake_exec(graph, output_type="IMAGE"):
+        def _fake_exec(graph, output_type="IMAGE", **kw):
             return next(it)
 
         # i2v 段首段需自带首帧才能通过执行校验，给占位 ref_input；t2v / 无模式段不带参考。
@@ -667,12 +667,13 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
 
-        def _fake_resolve(body, cfg):
+        def _fake_resolve(body, cfg, **kw):
             bodies.append(dict(body))
             return {"prompt": body["prompt"]}
 
         h3d.resolve_video_params = _fake_resolve
         h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d._require_vdn_plugin = lambda graph: None
         h3d.execute_graph_inprocess = _fake_exec
         return orig, bodies
 
@@ -734,7 +735,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
-                h3d.execute_graph_inprocess)
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
         bodies = []
         it = iter(_FakeVideo(100, self.FPS, self.SR) for _ in range(2))
         segments = [
@@ -747,13 +748,14 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
 
-        def _fake_resolve(body, cfg):
+        def _fake_resolve(body, cfg, **kw):
             bodies.append(dict(body))
             return {"prompt": body["prompt"]}
 
         h3d.resolve_video_params = _fake_resolve
         h3d.render_template = lambda tpl, params: ({"g": 1}, [])
-        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": next(it)
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: next(it)
         try:
             h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
         finally:
@@ -767,7 +769,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
-                h3d.execute_graph_inprocess)
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
         bodies = []
         it = iter(_FakeVideo(100, self.FPS, self.SR) for _ in range(1))
         h3d.load_director_spec = lambda name: {
@@ -778,9 +780,10 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
-        h3d.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body["prompt"]}
+        h3d.resolve_video_params = lambda body, cfg, **kw: bodies.append(dict(body)) or {"prompt": body["prompt"]}
         h3d.render_template = lambda tpl, params: ({"g": 1}, [])
-        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": next(it)
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: next(it)
         try:
             h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
         finally:
@@ -794,7 +797,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
-                h3d.execute_graph_inprocess)
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
         h3d.load_director_spec = lambda name: {
             "shared": {"width": 8, "height": 8, "seed": 1},
             "segments": [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5,
@@ -802,9 +805,10 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
-        h3d.resolve_video_params = lambda body, cfg: {"prompt": body["prompt"]}
+        h3d.resolve_video_params = lambda body, cfg, **kw: {"prompt": body["prompt"]}
         h3d.render_template = lambda tpl, params: ({"g": 1}, [])
-        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": _FakeVideo(100, self.FPS, self.SR)
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: _FakeVideo(100, self.FPS, self.SR)
         try:
             with self.assertRaises(ValueError):
                 h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
@@ -817,9 +821,9 @@ class DirectorOrchestrationTests(unittest.TestCase):
         seen = []
         real_exec = h3d.execute_graph_inprocess
 
-        def _recording_exec(graph, output_type="IMAGE"):
+        def _recording_exec(graph, output_type="IMAGE", **kw):
             seen.append(dict(h3d._DIRECTOR_PROGRESS))
-            return real_exec(graph, output_type)
+            return real_exec(graph, output_type, **kw)
 
         h3d.execute_graph_inprocess = _recording_exec
         try:
@@ -838,16 +842,17 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
-                h3d.execute_graph_inprocess)
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
         bodies = []
         h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 1},
                                                "segments": [seg]}
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
-        h3d.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
+        h3d.resolve_video_params = lambda body, cfg, **kw: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
         h3d.render_template = lambda tpl, params: ({"g": 1}, [])
-        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE": _FakeVideo(100, self.FPS, self.SR)
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: _FakeVideo(100, self.FPS, self.SR)
         err = None
         try:
             h3_video_director.NeoH3VideoDirector().generate("r", continuity=continuity)
@@ -888,7 +893,111 @@ class DirectorOrchestrationTests(unittest.TestCase):
         (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
          h3_video_director.load_skill_workflow, h3_video_director.get_skill_gen_config,
          h3_video_director.resolve_video_params, h3_video_director.render_template,
-         h3_video_director.execute_graph_inprocess) = orig
+         h3_video_director.execute_graph_inprocess, h3_video_director._require_vdn_plugin) = orig
+
+
+class DirectorModelStepsTests(unittest.TestCase):
+    """外部 MODEL / steps 入参：逐段注入模型 + 覆盖步数；无 model 时校验 VDN 插件。"""
+
+    SR = 48000
+    FPS = 24
+
+    def _run(self, model=None, steps=-1, sink_present=True, width=-1, height=-1):
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess, h3d._model_injection_node, h3d._require_vdn_plugin)
+        resolve_calls = []
+        exec_calls = []
+        render_params = []
+        vdn_checks = 0
+        h3d.load_director_spec = lambda name: {
+            "shared": {"width": 8, "height": 8, "seed": 1},
+            "segments": [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v"},
+                         {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v"}]}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+
+        def _fake_resolve(body, cfg, skip_model=False):
+            resolve_calls.append(skip_model)
+            return dict(body)
+
+        h3d.resolve_video_params = _fake_resolve
+
+        def _fake_render(tpl, params):
+            render_params.append(dict(params))
+            return {"inj": 1, "u": 1}, []
+
+        h3d.render_template = _fake_render
+
+        def _fake_exec(graph, output_type="IMAGE", overrides=None):
+            exec_calls.append(overrides)
+            return _FakeVideo(100, self.FPS, self.SR)
+
+        h3d.execute_graph_inprocess = _fake_exec
+        if sink_present:
+            h3d._model_injection_node = lambda graph: ("inj", {"u"})
+        else:
+            h3d._model_injection_node = lambda graph: (None, set())
+
+        def _fake_vdn(graph):
+            nonlocal vdn_checks
+            vdn_checks += 1
+
+        h3d._require_vdn_plugin = _fake_vdn
+        err = None
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", model=model, steps=steps, width=width, height=height)
+        except Exception as e:
+            err = str(e)
+        finally:
+            self._restore(orig)
+        return resolve_calls, exec_calls, render_params, vdn_checks, err
+
+    def _restore(self, orig):
+        (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
+         h3_video_director.load_skill_workflow, h3_video_director.get_skill_gen_config,
+         h3_video_director.resolve_video_params, h3_video_director.render_template,
+         h3_video_director.execute_graph_inprocess, h3_video_director._model_injection_node,
+         h3_video_director._require_vdn_plugin) = orig
+
+    def test_model_injected_per_segment_and_skips_model_resolve(self):
+        resolve_calls, exec_calls, _, vdn_checks, err = self._run(model="M")
+        self.assertIsNone(err)
+        self.assertEqual(resolve_calls, [True, True])   # 每段跳过主模型解析
+        self.assertEqual(vdn_checks, 0)                 # 有 model 时不校验 VDN 插件
+        self.assertEqual(exec_calls, [{"inj": ["M"]}, {"inj": ["M"]}])
+
+    def test_steps_override_applied_per_segment(self):
+        _, _, render_params, _, err = self._run(model=None, steps=8)
+        self.assertIsNone(err)
+        self.assertTrue(all(p.get("steps") == 8 for p in render_params))
+
+    def test_no_model_validates_vdn_plugin_and_keeps_internal_resolve(self):
+        resolve_calls, exec_calls, _, vdn_checks, err = self._run(model=None)
+        self.assertIsNone(err)
+        self.assertEqual(resolve_calls, [False, False])  # 无 model 走内部模型解析
+        self.assertEqual(vdn_checks, 2)                  # 每段校验一次 VDN 插件
+        self.assertEqual(exec_calls, [None, None])       # 无覆盖
+
+    def test_model_without_injection_point_raises(self):
+        _, _, _, _, err = self._run(model="M", sink_present=False)
+        self.assertIn("注入点", err or "")
+    def test_width_height_default_omitted_from_body(self):
+        # 节点 width/height=-1（默认）时不写入 body，交由 resolve_video_params 按各段 skill config 回退
+        _, _, render_params, _, err = self._run()
+        self.assertIsNone(err)
+        for p in render_params:
+            self.assertNotIn("width", p)
+            self.assertNotIn("height", p)
+
+    def test_width_height_override_applied_per_segment(self):
+        # 节点 width/height>0 时覆盖全部段（忽略配方 shared.width/height）
+        _, _, render_params, _, err = self._run(width=512, height=288)
+        self.assertIsNone(err)
+        self.assertTrue(all(p.get("width") == 512 and p.get("height") == 288 for p in render_params))
+
 
 
 class DirectorSpecRouteTests(unittest.TestCase):
@@ -930,6 +1039,51 @@ class DirectorSpecRouteTests(unittest.TestCase):
         finally:
             recipes.load_director_spec = orig
         self.assertEqual(resp.status, 500)
+
+
+class DirectorDefaultDimsTests(unittest.TestCase):
+    """recipes._director_default_dims：取首段 skill config 的 width/height/steps，供节点 widget 动态填充。"""
+
+    def _patch(self, cfg_by_id):
+        skill_mod = sys.modules[f"{_PKG}.skill"]
+        h3v_mod = sys.modules[f"{_PKG}.h3_video_gen"]
+        orig = (skill_mod.get_skill_gen_config, h3v_mod._resolve_skill_id)
+        skill_mod.get_skill_gen_config = lambda sid: cfg_by_id.get(sid, {})
+        h3v_mod._resolve_skill_id = lambda v: v
+        return (skill_mod, h3v_mod, orig)
+
+    def _restore(self, ctx):
+        skill_mod, h3v_mod, (orig_cfg, orig_res) = ctx
+        skill_mod.get_skill_gen_config = orig_cfg
+        h3v_mod._resolve_skill_id = orig_res
+
+    def test_first_segment_skill_config_used(self):
+        ctx = self._patch({"s1": {"width": 960, "height": 544, "steps": 8}})
+        try:
+            d = recipes._director_default_dims([{"skill_id": "s1"}, {"skill_id": "s2"}])
+        finally:
+            self._restore(ctx)
+        self.assertEqual(d, {"width": 960, "height": 544, "steps": 8})
+
+    def test_skips_segments_without_skill_id(self):
+        ctx = self._patch({"s2": {"width": 512, "height": 288, "steps": 4}})
+        try:
+            d = recipes._director_default_dims([{"skill_id": ""}, {"skill_id": "s2"}])
+        finally:
+            self._restore(ctx)
+        self.assertEqual(d, {"width": 512, "height": 288, "steps": 4})
+
+    def test_falls_back_to_h3_defaults_when_no_config(self):
+        ctx = self._patch({})
+        try:
+            d = recipes._director_default_dims([{"skill_id": "s1"}])
+        finally:
+            self._restore(ctx)
+        self.assertEqual(d, {"width": 1344, "height": 768, "steps": 20})
+
+    def test_empty_segments_returns_h3_defaults(self):
+        d = recipes._director_default_dims([])
+        self.assertEqual(d, {"width": 1344, "height": 768, "steps": 20})
 
 
 class DirectorProgressRouteTests(unittest.TestCase):

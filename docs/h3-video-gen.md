@@ -7,6 +7,7 @@
 2. `skill_id` 选一个带 `gen_video: true` + `workflow.json` 的视频 skill（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)；另有同名带 `(VDN)` 的 4 个加速变体，依赖 ComfyUI-VDN-H3 插件、8 步，见「VDN 加速」节）。
 3. 接 prompt（可来自 ⚡ Neo Prompt Agent 或手填）；i2v 再连首帧 IMAGE，首尾帧（fl2v）再连 `last_frame` IMAGE（尾帧可选：只给首帧=I2VA、只给尾帧=L2VA、两边都给=FL2VA；其它技能模板没有该槽位会自然忽略）。
 4. 可选覆盖 `seed`（默认 0，固定；要随机把「生成后控制」设为 randomize）/ `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
+   - 另有两个**运行时加速**可选输入：`model`（MODEL 连线槽，外部加速模型）与 `steps`（INT，-1 = 用 preset/config 值），见下文「运行时加速」节。
 5. 执行后输出 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
 > **bundle 直连**：也可把 ⚡ Neo Prompt Agent 的 BUNDLE 输出连到本节点 `bundle` 输入，一次性带上 prompt/连接图/skill——prompt 留空时取 bundle、连接图优先于首帧 IMAGE、bundle 携带的视频 skill 有效时覆盖 `skill_id`；bundle 缺失/过期则回退本地。连上 BUNDLE 后 `prompt`/`skill_id` 控件会被禁用（以 bundle 为准）；`bundle` 输入前端渲染为纯连线槽（同 image，无文本框）。多 prompt 逐项循环需同时连 PROMPT 与 BUNDLE（只连 BUNDLE 仅用第一条）。
@@ -19,7 +20,7 @@
 
 ![🎞️ NeoH3VideoDirector 节点](assets/images/neo-h3-video-director.png)
 
-- **输入**：`recipe`（video_director 配方名，下拉自动列出）+ 可选覆盖 `seed` / `width` / `height`（-1 = 用配方 `shared`）/ `continuity`（默认开）。
+- **输入**：`recipe`（video_director 配方名，下拉自动列出）+ 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认值）/ `continuity`（默认开）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值）。`model` / `steps` 与单段节点同款「运行时加速」语义、**逐段生效**：提供 `model` 时每段跳过内部主模型解析、剪掉该段纯模型链并注入外部模型（无需 VDN 插件）；`steps > 0` 覆盖每段采样步数。选中配方后节点会自动把 `width` / `height` / `steps` 填成该配方**首段** skill config 的默认值（仅当当前值为 -1 时，尊重已保存/手动设置）。
 - **逐段执行**：第 i 段用其 `skill_id` 解析模板与 config，提示词/时长/首帧取该段字段；`seed = base_seed + i`（base 优先节点覆盖、否则配方 `shared.seed`），保证可复现且各段不同。
 - **生成模式**：配方可选 `shared.mode`（`t2v` / `i2v` / `fl2v` / `r2v` / `mixed`，与 ComfyUI_MiniMaxH3_Director 的任务模式对齐）决定各段携带哪些帧与参考：具体模式全体统一，`mixed` 时逐段 `seg.mode` 生效；缺省（旧配方）按该段是否有尾帧/首帧/参考推断（尾帧→`fl2v`、首帧→`i2v`、仅有视频/音频参考→`r2v`、否则 `t2v`）。段级语义与编辑器显隐：
 
@@ -62,6 +63,13 @@
 - **参数默认值**（按发布模型原样，模板里写死）：`vdn_checkpoint: stage-dmd-step-250`、`apply_turbo_adapter: true`、`stage_b_strength/turbo_strength: 1.0`、`lora_mode: merge`、`branch_weights: auto`、`retain_buffers: auto`、`attention_backend: grouped`、`window_radius: 1` / `window_chunk: 5` / `anchor_frames: both`、`text_state/linear_branch: true`、`fast_kernels: false`。
 - **依赖插件**：VDN preset 需要安装 `ComfyUI-VDN-H3`（提供 `ApplyVDNH3Advanced`）并把 8 步 stage 放到 `models/vdn/stage-dmd-step-250/`。**未安装该插件时**，执行会在渲染后、采样前抛出明确报错「需要 VDN 加速插件 ComfyUI-VDN-H3（节点 ApplyVDNH3Advanced 未注册）」，提示安装并重启、或改用非 VDN 的 H3 skill——而不是通用的「未知节点」错误。
 - 模型/编码器/视频 VAE/音频 VAE 解析与非 VDN preset 一致（见上）；`vdn_checkpoint` 目前写死为 `stage-dmd-step-250`，需要其它 stage 时请「⧉ Copy as custom」后改模板里的 `vdn_checkpoint`。
+
+## 运行时加速：外部 `MODEL` / `steps`（可选）
+`NeoH3VideoGenerate`、`NeoKrea2Generate` 与 `NeoH3VideoDirector`（多段导演，**逐段**应用下述规则）都新增两个**可选**输入，用于不改 skill 模板就临时换模型 / 调步数：
+- **`model`（MODEL，连线槽）**：提供时把外部加速模型注入到最终消费扩散模型的位置——视频为 `MiniMaxH3SigmaShift.model` 的来源、生图为 `KSampler`/`KSamplerAdvanced.model` 的来源。节点**只沿 `model` 输入边向上剪掉纯模型链**（UNETLoader / LoRA / VDN 等只出 MODEL 的节点），保留文本编码器 / 视频 VAE / 音频 VAE / 采样器等共享节点，并把注入点输出直接替换为外部模型（mini-executor 跳过该节点执行）。
+- **`steps`（INT，默认 -1）**：`-1` = 用 preset/config 值；`>0` = 覆盖渲染后的 `{{STEPS}}`。生图模板可能硬编码步数（非 `{{STEPS}}`），故生图侧直接改写采样器节点的 `steps` 字段，两种情况都生效。
+
+典型用法：把 ComfyUI-VDN-H3 的 `ApplyVDNH3Advanced`（或量化/蒸馏后的模型）输出连到本节点 `model`，即可**不依赖 VDN preset、甚至无需安装该插件**跑加速——因为内部 UNETLoader 与 VDN 节点都被剪掉、注入点被外部模型覆盖，此时不再触发「需要 ComfyUI-VDN-H3」的校验（该校验只在未提供 `model` 时执行）。
 
 ## 说明
 - 末端 `CreateVideo` 把视频帧 + 音频打包成原生 `VIDEO`（fps=24），不直接落盘；接 SaveVideo 即可导出带声音的视频。

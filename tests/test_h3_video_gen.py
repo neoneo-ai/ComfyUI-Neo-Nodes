@@ -450,9 +450,9 @@ class NeoH3VideoGenerateTests(unittest.TestCase):
         h3_video_gen._resolve_skill_id = lambda v: v
         h3_video_gen.load_skill_workflow = lambda id: {"1": {}}
         h3_video_gen.get_skill_gen_config = lambda id: {}
-        h3_video_gen.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
+        h3_video_gen.resolve_video_params = lambda body, cfg, skip_model=False: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
         h3_video_gen.render_template = lambda tpl, params: ({}, [])
-        h3_video_gen.execute_graph_inprocess = lambda graph, output_type="IMAGE": expect
+        h3_video_gen.execute_graph_inprocess = lambda graph, output_type="IMAGE", overrides=None: expect
         return orig, bodies
 
     def _restore(self, orig):
@@ -801,6 +801,69 @@ class VideoModelsSortTests(unittest.TestCase):
         files = ["zeta.safetensors", "Minimax_H3/base.safetensors", "alpha.safetensors"]
         self.assertEqual(video_gen._video_display_sort(files),
                          ["Minimax_H3/base.safetensors", "alpha.safetensors", "zeta.safetensors"])
+
+
+class H3ModelStepsOverrideTests(unittest.TestCase):
+    """外部 MODEL / steps 覆盖：注入点定位、纯模型链剪枝、skip_model、steps 落 params。"""
+
+    def setUp(self):
+        self._saved = {k: getattr(h3_video_gen, k) for k in (
+            "_resolve_skill_id", "load_skill_workflow", "get_skill_gen_config",
+            "resolve_video_params", "render_template", "execute_graph_inprocess")}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(h3_video_gen, k, v)
+
+    def _vdn_graph(self):
+        return {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "60": {"class_type": "ApplyVDNH3Advanced", "inputs": {"model": ["1", 0]}},
+            "5": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["60", 0]}},
+            "6": {"class_type": "KSampler", "inputs": {"model": ["5", 0], "steps": "{{STEPS}}"}},
+        }
+
+    def test_model_injection_prunes_chain_and_skips_vdn_check(self):
+        h3_video_gen._resolve_skill_id = lambda v: v
+        h3_video_gen.load_skill_workflow = lambda sid: {"t": True}
+        h3_video_gen.get_skill_gen_config = lambda sid: {}
+        skip_flags = []
+        h3_video_gen.resolve_video_params = (
+            lambda body, cfg, skip_model=False: (skip_flags.append(skip_model), {"prompt": "p"})[1])
+        rendered = {}
+
+        def fake_render(tpl, params):
+            rendered.update(params)
+            return self._vdn_graph(), []
+
+        h3_video_gen.render_template = fake_render
+        captured = {}
+        h3_video_gen.execute_graph_inprocess = (
+            lambda graph, output_type="IMAGE", overrides=None:
+            (captured.update(graph=graph, overrides=overrides), "video")[1])
+
+        ext = object()
+        (out,) = h3_video_gen.NeoH3VideoGenerate().generate("minimax_h3_vdn_t2v", prompt="p", model=ext, steps=6)
+        self.assertEqual(out, "video")
+        self.assertEqual(skip_flags, [True])                  # 外部模型 → skip_model=True
+        self.assertEqual(rendered["steps"], 6)                # steps 覆盖落进 params（{{STEPS}}）
+        self.assertNotIn("1", captured["graph"])              # UNETLoader（纯模型链）剪掉
+        self.assertIn("60", captured["graph"])                # VDN 节点保留（被 override，无需插件）
+        self.assertEqual(captured["overrides"], {"60": [ext]})
+
+    def test_no_model_runs_vdn_check_and_keeps_chain(self):
+        h3_video_gen._resolve_skill_id = lambda v: v
+        h3_video_gen.load_skill_workflow = lambda sid: {"t": True}
+        h3_video_gen.get_skill_gen_config = lambda sid: {}
+        skip_flags = []
+        h3_video_gen.resolve_video_params = (
+            lambda body, cfg, skip_model=False: (skip_flags.append(skip_model), {"prompt": "p"})[1])
+        h3_video_gen.render_template = lambda tpl, params: (self._vdn_graph(), [])
+        # 未装 VDN 插件 → _require_vdn_plugin 报错（仅无外部模型时才走该检查）
+        with self.assertRaises(RuntimeError) as ctx:
+            h3_video_gen.NeoH3VideoGenerate().generate("minimax_h3_vdn_t2v", prompt="p")
+        self.assertIn("ComfyUI-VDN-H3", str(ctx.exception))
+        self.assertEqual(skip_flags, [False])
 
 
 class VdnSkillTests(unittest.TestCase):

@@ -14,7 +14,7 @@ import nodes as comfy_nodes
 
 from .image_gen import _reference_name, _resolve_loras, render_template, resolve_model
 from .video_gen import get_video_settings, suggest_audio_vae, suggest_video_model
-from .krea2_generate import _image_to_data_uri, execute_graph_inprocess
+from .krea2_generate import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
 from .bundles import get_bundle
 
@@ -50,11 +50,12 @@ def _seconds_to_frames(seconds):
     return n + (5 - (n % 17)) % 17
 
 
-def resolve_video_params(body: dict, cfg: dict) -> dict:
+def resolve_video_params(body: dict, cfg: dict, skip_model: bool = False) -> dict:
     """把一次视频生成请求解析成模板参数；非法时抛 ValueError（消息可直接回前端）。
 
     cfg 为 skill 的 config.json：model/text_encoder/vae 优先取 cfg，缺省回落到独立「生视频模型」
     设置（video_gen.json / get_video_settings），仍空则按 H3 名称线索自动挑选；width/height/length 缺省用 H3 默认。
+    skip_model=True 时跳过主模型解析/校验（外部 MODEL 注入模式，内部 UNETLoader 会被剪掉）。
     """
     prompt_text = str(body.get("prompt") or "").strip()
     if not prompt_text:
@@ -63,18 +64,21 @@ def resolve_video_params(body: dict, cfg: dict) -> dict:
     # H3 模型/文本编码器/VAE：skill config.json 优先，回落到独立「生视频模型」设置（video_gen.json），
     # 仍空则按 H3 名称线索自动挑选（与生图 suggest_model 一致）；都拿不到才报错
     vs = get_video_settings()
-    model = _first_nonempty(cfg.get("model"), vs.get("video_model")) or suggest_video_model("diffusion_models")
-    if not model:
-        raise ValueError("未找到 H3 视频模型：diffusion_models 里没有 h3 模型，且未在设置或 skill config.json 指定")
+    model = ""
+    if not skip_model:
+        model = _first_nonempty(cfg.get("model"), vs.get("video_model")) or suggest_video_model("diffusion_models")
+        if not model:
+            raise ValueError("未找到 H3 视频模型：diffusion_models 里没有 h3 模型，且未在设置或 skill config.json 指定")
     encoder = _first_nonempty(cfg.get("text_encoder"), vs.get("video_text_encoder")) or suggest_video_model("text_encoders")
     if not encoder:
         raise ValueError("未找到 H3 视频 Text Encoder：text_encoders 里没有 h3 模型，且未在设置或 skill config.json 指定")
     vae = _first_nonempty(cfg.get("vae"), vs.get("video_vae")) or suggest_video_model("vae")
     if not vae:
         raise ValueError("未找到 H3 视频 VAE：vae 里没有 h3_video 模型，且未在设置或 skill config.json 指定")
-    model, err = resolve_model("diffusion_models", model)
-    if err:
-        raise ValueError(err)
+    if not skip_model:
+        model, err = resolve_model("diffusion_models", model)
+        if err:
+            raise ValueError(err)
     encoder, err = resolve_model("text_encoders", encoder)
     if err:
         raise ValueError(err)
@@ -169,6 +173,8 @@ class NeoH3VideoGenerate:
                 "duration": ("INT", {"default": 5, "min": -1, "max": 3600}),     # 秒；-1 = 用 config/默认(约5s)
                 "width": ("INT", {"default": 1344, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),   # -1 = 用 config/默认
                 "height": ("INT", {"default": 768, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),    # -1 = 用 config/默认
+                "model": ("MODEL",),  # 外部加速模型；提供时覆盖内部主模型链（UNETLoader/LoRA/VDN）
+                "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
             },
         }
 
@@ -178,7 +184,7 @@ class NeoH3VideoGenerate:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "MiniMax H3 视频生成节点：按所选 skill 的 workflow.json 模板同步生成，输出含音频的 VIDEO（可接 SaveVideo）。"
 
-    def generate(self, skill_id, prompt="", image=None, last_frame=None, seed=-1, duration=-1, width=-1, height=-1, bundle=""):
+    def generate(self, skill_id, prompt="", image=None, last_frame=None, seed=-1, duration=-1, width=-1, height=-1, bundle="", model=None, steps=-1):
         payload = get_bundle(bundle) if bundle else None
 
         # bundle 携带的 skill_id 若对本节点有效（gen_video + workflow.json）则覆盖本地选择，否则沿用本地
@@ -217,10 +223,21 @@ class NeoH3VideoGenerate:
         # 尾帧：首尾帧技能用（模板 {{REF_IMAGE_LAST}}）；其它技能模板没有该槽位会自然忽略
         if last_frame is not None:
             body["last_frame"] = {"kind": "data", "data": _image_to_data_uri(last_frame)}
-        params = resolve_video_params(body, cfg)
+        params = resolve_video_params(body, cfg, skip_model=(model is not None))
+        if steps is not None and int(steps) > 0:
+            params["steps"] = int(steps)
         graph, _render_warnings = render_template(template, params)
-        _require_vdn_plugin(graph)
-        return (execute_graph_inprocess(graph, output_type="VIDEO"),)
+        overrides = None
+        if model is not None:
+            x_id, pruned = _model_injection_node(graph)
+            if x_id is None:
+                raise RuntimeError("[NeoNodes] 无法在 H3 视频 workflow 中定位模型注入点（缺少 KSampler/SigmaShift 的 model 输入）")
+            for pid in pruned:
+                del graph[pid]
+            overrides = {x_id: [model]}
+        else:
+            _require_vdn_plugin(graph)
+        return (execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides),)
 
 
 NODE_CLASS_MAPPINGS = {"NeoH3VideoGenerate": NeoH3VideoGenerate}
