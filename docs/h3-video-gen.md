@@ -4,7 +4,7 @@
 
 ## 用法
 1. 添加 🎬 H3 Video Generate 节点。
-2. `skill_id` 选一个带 `gen_video: true` + `workflow.json` 的视频 skill（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)）。
+2. `skill_id` 选一个带 `gen_video: true` + `workflow.json` 的视频 skill（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)；另有同名带 `(VDN)` 的 4 个加速变体，依赖 ComfyUI-VDN-H3 插件、8 步，见「VDN 加速」节）。
 3. 接 prompt（可来自 ⚡ Neo Prompt Agent 或手填）；i2v 再连首帧 IMAGE，首尾帧（fl2v）再连 `last_frame` IMAGE（尾帧可选：只给首帧=I2VA、只给尾帧=L2VA、两边都给=FL2VA；其它技能模板没有该槽位会自然忽略）。
 4. 可选覆盖 `seed`（默认 0，固定；要随机把「生成后控制」设为 randomize）/ `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
 5. 执行后输出 `VIDEO`（含音频），接 SaveVideo 等节点导出。
@@ -56,6 +56,12 @@
 
   参考以 `references` 列表传入，每项可用 `media` 标类型（`image` 缺省 / `video` / `audio`）；`resolve_video_params` 按类型分流并各自按上限截断，`render_template` 把**未挂的槽位连同加载节点一并裁掉**（模板可同时声明全部上限槽位，只挂 1 张图也能跑）。mini-executor 会把 `ref_images.ref_image_0` 这类点号输入收成嵌套 dict（与 ComfyUI 主循环的 `build_nested_inputs` 一致）后再调节点。提示词用 `<Picture i>` / `<Video k>` / `<Audio j>` 指代对应序号的参考（写法见 `minimax_h3_full_ref` 技能正文）。
 - **从画布导出（📋 From Canvas）**：技能下拉底部「📋 From Canvas」把当前画布 API prompt 导出为技能。检测到 H3 视频工作流（含 `MiniMaxH3*ToVideo` 入口，或 `CreateVideo`+`VAEDecodeAudio`）时自动存为 `gen_video: true` / `category: video_gen` 的视频 skill，并按上表占位符模板化（模型/编码器/视频 VAE/音频 VAE/prompt/尺寸/时长/seed/主链 LoRA；I2V 的 `LoadImage` → `{{REF_IMAGE}}`、首帧连线保留），否则仍存为出图 skill。只弹一个标题对话框输入名称（不再问描述/标签），成功/失败用 toast 提示。导出的模板会保留画布上的 `SaveVideo`/`ResolutionSelector`/数学表达式等旁支节点，改用内置 preset 风格（`{{WIDTH}}`/`{{HEIGHT}}`/`{{LENGTH}}`/`{{SEED}}`/`{{STEPS}}`）才能让节点入参与逐段 seed 真正生效。
+
+## VDN 加速（可选插件 ComfyUI-VDN-H3）
+内置 4 个 VDN 变体 preset：`H3 文生视频 (VDN)` / `H3 图生视频 (VDN)` / `首尾帧生视频 (VDN)` / `H3参考生视频 (VDN)`（id `minimax_h3_vdn_t2v` / `_i2v` / `_fl2v` / `minimax-h3-vdn-r2v`）。它们与对应非 VDN preset **完全同构**，只在 `UNETLoader → MiniMaxH3SigmaShift` 之间多插一个 `ApplyVDNH3Advanced` 节点（来自可选插件 **ComfyUI-VDN-H3**），并把 `config.json` 的 `steps` 设为 **8**（对齐 8 步 DMD 蒸馏 checkpoint）。
+- **参数默认值**（按发布模型原样，模板里写死）：`vdn_checkpoint: stage-dmd-step-250`、`apply_turbo_adapter: true`、`stage_b_strength/turbo_strength: 1.0`、`lora_mode: merge`、`branch_weights: auto`、`retain_buffers: auto`、`attention_backend: grouped`、`window_radius: 1` / `window_chunk: 5` / `anchor_frames: both`、`text_state/linear_branch: true`、`fast_kernels: false`。
+- **依赖插件**：VDN preset 需要安装 `ComfyUI-VDN-H3`（提供 `ApplyVDNH3Advanced`）并把 8 步 stage 放到 `models/vdn/stage-dmd-step-250/`。**未安装该插件时**，执行会在渲染后、采样前抛出明确报错「需要 VDN 加速插件 ComfyUI-VDN-H3（节点 ApplyVDNH3Advanced 未注册）」，提示安装并重启、或改用非 VDN 的 H3 skill——而不是通用的「未知节点」错误。
+- 模型/编码器/视频 VAE/音频 VAE 解析与非 VDN preset 一致（见上）；`vdn_checkpoint` 目前写死为 `stage-dmd-step-250`，需要其它 stage 时请「⧉ Copy as custom」后改模板里的 `vdn_checkpoint`。
 
 ## 说明
 - 末端 `CreateVideo` 把视频帧 + 音频打包成原生 `VIDEO`（fps=24），不直接落盘；接 SaveVideo 即可导出带声音的视频。

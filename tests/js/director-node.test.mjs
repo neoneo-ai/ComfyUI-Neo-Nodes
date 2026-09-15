@@ -8,6 +8,7 @@ import { getExtension, appState } from "./mocks/comfy-app.mjs";
 
 const TL_H = 96; // 与 web/director-node.js 的 TL_H 保持一致
 const ACT_H = 28; // 与 web/director-node.js 的 ACT_H（时间轴下方操作条）保持一致
+const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（运行时采样预览预留高度）保持一致
 const BASE_W = 340;
 const BASE_H = 220;
 
@@ -126,6 +127,28 @@ test("轮询 /neo_video_gen/director_progress 后时间轴读到各段生成状�
         { active: true, segment_index: 1, total_segments: 3 },
         "进度应写入时间轴 getProgress()",
     );
+});
+
+test("运行时节点加高预留采样预览空间，结束后还原自然高度", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({ success: true, segments: [] }));
+    const payload = { active: false, segment_index: -1, total_segments: 0 };
+    mockRoute("/neo_video_gen/director_progress", () => jsonResponse(payload));
+
+    const node = await createDirectorNode("dir-recipe");
+    clearInterval(node._neoDtProgressTimer); // 手动驱动，停止自动轮询
+    const baseH = BASE_H + TL_H + ACT_H;
+    assert.equal(node.size[1], baseH, "初始为自然高度（含时间轴+操作条）");
+
+    payload.active = true; payload.segment_index = 0; payload.total_segments = 3;
+    await node._neoDtProgressTick();
+    assert.equal(node.size[1], baseH + PREVIEW_H, "运行时加高预留采样预览空间");
+
+    payload.active = false; payload.segment_index = -1;
+    await node._neoDtProgressTick();
+    assert.equal(node.size[1], baseH, "结束后还原自然高度");
 });
 
 test("时间轴按进度状态给各段标 done/current，非活动时不显示", async () => {

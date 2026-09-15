@@ -138,6 +138,18 @@ def resolve_video_params(body: dict, cfg: dict) -> dict:
     }
 
 
+def _require_vdn_plugin(graph):
+    """VDN 加速 skill 依赖可选插件 ComfyUI-VDN-H3；未安装时给出明确提示，而非通用的「未知节点」错误。"""
+    missing = sorted(
+        ct for ct in {n.get("class_type") for n in graph.values()}
+        if ct and ct.startswith("ApplyVDNH3") and ct not in comfy_nodes.NODE_CLASS_MAPPINGS
+    )
+    if missing:
+        raise RuntimeError(
+            f"[NeoNodes] 该 skill 需要 VDN 加速插件 ComfyUI-VDN-H3（节点 {', '.join(missing)} 未注册）。"
+            "请安装该插件并重启 ComfyUI 后重试，或改用非 VDN 的 H3 skill。")
+
+
 class NeoH3VideoGenerate:
     """按所选 skill 的 workflow.json 模板同步生成 MiniMax H3 视频，输出含音频的 VIDEO（可接 SaveVideo）。"""
 
@@ -207,6 +219,7 @@ class NeoH3VideoGenerate:
             body["last_frame"] = {"kind": "data", "data": _image_to_data_uri(last_frame)}
         params = resolve_video_params(body, cfg)
         graph, _render_warnings = render_template(template, params)
+        _require_vdn_plugin(graph)
         return (execute_graph_inprocess(graph, output_type="VIDEO"),)
 
 

@@ -9,6 +9,7 @@ import { showToast } from "./gallery-utils.js";
 
 const TL_H = 96; // 节点内时间轴显示区高度（px）
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
+const PREVIEW_H = 300; // 运行时采样预览预留高度：ComfyUI 内置采样组件在节点内显示实时预览，运行中为其加高预留空间，避免与时间轴重叠
 
 app.registerExtension({
     name: "NeoH3VideoDirector.Timeline",
@@ -36,6 +37,7 @@ app.registerExtension({
 
             let tlData = { segments: [] };
             let progress = { active: false, segment_index: -1, total_segments: 0 }; // 当前 director 运行进度（轮询 /neo_video_gen/director_progress）
+            let runtimeBaseH = 0; // 节点自然高度（含时间轴+操作条），运行时为采样预览加高后据此还原
             let tl = null;
             try {
                 tl = new DirectorTimeline(tlRow, {
@@ -68,6 +70,10 @@ app.registerExtension({
                         tl?.refresh();
                         // 跟随运行：段切换时把正在生成的块横向滚动到可视区（段多/放大时才需要）
                         if (progress.active && progress.segment_index !== prev.segment_index) tl?.revealSeg(progress.segment_index);
+                        // 运行时为 ComfyUI 内置采样预览加高预留空间，结束后还原自然高度，避免预览与时间轴重叠
+                        if (progress.active !== prev.active && runtimeBaseH > 0) {
+                            node.setSize([node.size[0], progress.active ? runtimeBaseH + PREVIEW_H : runtimeBaseH]);
+                        }
                     }
                 } catch (_) {}
             };
@@ -92,6 +98,7 @@ app.registerExtension({
             node.setSize([Math.max(bw, 340), bh + TL_H + ACT_H]);
             node.minWidth = Math.max(bw, 340);
             node.minHeight = bh + TL_H + ACT_H;
+            runtimeBaseH = bh + TL_H + ACT_H; // 记录自然高度，供运行时加高/还原采样预览预留区
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
             const loadSpec = async () => {

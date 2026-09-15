@@ -451,7 +451,7 @@ class NeoH3VideoGenerateTests(unittest.TestCase):
         h3_video_gen.load_skill_workflow = lambda id: {"1": {}}
         h3_video_gen.get_skill_gen_config = lambda id: {}
         h3_video_gen.resolve_video_params = lambda body, cfg: bodies.append(dict(body)) or {"prompt": body.get("prompt", "")}
-        h3_video_gen.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3_video_gen.render_template = lambda tpl, params: ({}, [])
         h3_video_gen.execute_graph_inprocess = lambda graph, output_type="IMAGE": expect
         return orig, bodies
 
@@ -801,6 +801,49 @@ class VideoModelsSortTests(unittest.TestCase):
         files = ["zeta.safetensors", "Minimax_H3/base.safetensors", "alpha.safetensors"]
         self.assertEqual(video_gen._video_display_sort(files),
                          ["Minimax_H3/base.safetensors", "alpha.safetensors", "zeta.safetensors"])
+
+
+class VdnSkillTests(unittest.TestCase):
+    """VDN 加速 skill：未装 ComfyUI-VDN-H3 时的明确报错 + 4 个 VDN preset 的结构校验。"""
+
+    def test_vdn_missing_plugin_raises_clear_error(self):
+        graph = {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "60": {"class_type": "ApplyVDNH3Advanced",
+                   "inputs": {"model": ["1", 0], "vdn_checkpoint": "stage-dmd-step-250"}},
+        }
+        self.assertNotIn("ApplyVDNH3Advanced", _nodes.NODE_CLASS_MAPPINGS)
+        with self.assertRaises(RuntimeError) as ctx:
+            h3_video_gen._require_vdn_plugin(graph)
+        self.assertIn("ComfyUI-VDN-H3", str(ctx.exception))
+
+    def test_vdn_registered_passes(self):
+        class _FakeVdn:
+            pass
+        graph = {"60": {"class_type": "ApplyVDNH3Advanced", "inputs": {}}}
+        _nodes.NODE_CLASS_MAPPINGS["ApplyVDNH3Advanced"] = _FakeVdn
+        try:
+            h3_video_gen._require_vdn_plugin(graph)   # 已注册 → 不报错
+        finally:
+            del _nodes.NODE_CLASS_MAPPINGS["ApplyVDNH3Advanced"]
+
+    def test_non_vdn_graph_passes(self):
+        graph = {"1": {"class_type": "UNETLoader", "inputs": {}},
+                 "5": {"class_type": "MiniMaxH3SigmaShift", "inputs": {}}}
+        h3_video_gen._require_vdn_plugin(graph)   # 无 VDN 节点 → 不报错
+
+    def test_vdn_presets_wired_and_steps8(self):
+        base = os.path.join(PLUGIN_DIR, "skills", "presets")
+        for p in ("minimax_h3_vdn_t2v", "minimax_h3_vdn_i2v", "minimax_h3_vdn_fl2v", "minimax-h3-vdn-r2v"):
+            wf = json.load(open(os.path.join(base, p, "workflow.json"), encoding="utf-8"))
+            cfg = json.load(open(os.path.join(base, p, "config.json"), encoding="utf-8"))
+            vdn = [nid for nid, n in wf.items() if str(n.get("class_type", "")).startswith("ApplyVDNH3")]
+            self.assertEqual(len(vdn), 1, f"{p} 应恰有一个 VDN 节点")
+            unet = [nid for nid, n in wf.items() if n.get("class_type") == "UNETLoader"]
+            self.assertEqual(wf[vdn[0]]["inputs"]["model"], [unet[0], 0], f"{p} VDN 应接在 UNETLoader 之后")
+            shifts = [n for n in wf.values() if n.get("class_type") == "MiniMaxH3SigmaShift"]
+            self.assertTrue(any(n["inputs"]["model"] == [vdn[0], 0] for n in shifts), f"{p} SigmaShift 应接 VDN 输出")
+            self.assertEqual(cfg.get("steps"), 8, f"{p} steps 应为 8")
 
 
 if __name__ == "__main__":
