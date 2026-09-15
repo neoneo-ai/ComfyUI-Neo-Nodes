@@ -100,6 +100,18 @@ app.registerExtension({
             node.minHeight = bh + TL_H + ACT_H;
             runtimeBaseH = bh + TL_H + ACT_H; // 记录自然高度，供运行时加高/还原采样预览预留区
 
+            // bundle 连接时由 NeoNodes.BundleLock 调用：隐藏时间轴+操作条并收缩节点高度；断开恢复。
+            let tlVisible = true;
+            node._neoDtApplyBundleLock = (locked) => {
+                const visible = !locked;
+                if (visible === tlVisible) return;
+                tlVisible = visible;
+                root.style.display = visible ? "" : "none";
+                runtimeBaseH = bh + (visible ? TL_H + ACT_H : 0);
+                node.minHeight = runtimeBaseH;
+                node.setSize([node.size[0], runtimeBaseH + (progress.active ? PREVIEW_H : 0)]);
+            };
+
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
             // 按配方首段 skill config 初始化 width/height/steps widget：仅当当前为默认(-1)时填充，尊重工作流/手动已设值
             const applyDimDefaults = (d) => {

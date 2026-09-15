@@ -1,11 +1,10 @@
-"""MiniMax H3 视频生成节点：按所选 skill 的 workflow.json 模板同步生成，输出含音频的 VIDEO（可接 SaveVideo）到下游。
+"""MiniMax H3 视频生成的共享 helper：解析单次生成请求为模板参数、渲染 skill workflow.json 模板、校验 VDN 插件。
 
-设计（复用 Krea2 mini-executor）：
-- NeoH3VideoGenerate 在 forward 内渲染 skill 的 workflow.json 模板（占位符替换），
-  由进程内 mini-executor (execute_graph_inprocess) 拓扑执行该 graph，返回末端 CreateVideo 的 VIDEO（含音频）。
-- H3 条件/采样链含 V3 API 节点（MiniMaxH3*、LTXVSeparateAVLatent、VAEDecodeAudio、CreateVideo），mini-executor 已支持 API 节点分支。
-- T2V：无参考图；I2V：首帧 IMAGE → LoadImage → MiniMaxH3ImageToVideo.first_frame。
-- 模型/文本编码器/VAE 优先取 skill config.json，回落到独立「生视频模型」设置（video_gen.json / get_video_settings）；尺寸/时长可由节点入参覆盖。
+供 NeoH3VideoDirector（配方多段 / BUNDLE 单段）复用；本模块不再注册节点。
+- resolve_video_params：把一次视频生成请求解析成模板参数（模型/编码器/VAE/音频 VAE/LoRA/参考媒体/尺寸/时长/seed）。
+- _gen_video_skills / _resolve_skill_id：列出带 workflow.json 的视频 skill、按 name 反查 id。
+- _require_vdn_plugin：VDN 加速 skill 依赖可选插件 ComfyUI-VDN-H3，未装时给出明确报错。
+- 模板渲染与进程内执行复用 image_gen.render_template 与 krea2_generate.execute_graph_inprocess（由调用方引入）。
 """
 
 import random
@@ -14,9 +13,7 @@ import nodes as comfy_nodes
 
 from .image_gen import _reference_name, _resolve_loras, render_template, resolve_model
 from .video_gen import get_video_settings, suggest_audio_vae, suggest_video_model
-from .krea2_generate import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
-from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
-from .bundles import get_bundle
+from .skill import load_skill_workflow, scan_skills
 
 
 def _gen_video_skills():
@@ -152,93 +149,3 @@ def _require_vdn_plugin(graph):
         raise RuntimeError(
             f"[NeoNodes] 该 skill 需要 VDN 加速插件 ComfyUI-VDN-H3（节点 {', '.join(missing)} 未注册）。"
             "请安装该插件并重启 ComfyUI 后重试，或改用非 VDN 的 H3 skill。")
-
-
-class NeoH3VideoGenerate:
-    """按所选 skill 的 workflow.json 模板同步生成 MiniMax H3 视频，输出含音频的 VIDEO（可接 SaveVideo）。"""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        names = [s["name"] for s in _gen_video_skills()]
-        return {
-            "required": {
-                "skill_id": (names, {"default": names[0] if names else ""}),
-            },
-            "optional": {
-                "prompt": ("STRING", {"multiline": True, "dynamicPrompts": True, "default": ""}),
-                "image": ("IMAGE",),  # I2V 首帧；T2V 忽略
-                "bundle": ("STRING", {"forceInput": True}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）；提供时覆盖 prompt/image/skill
-                "last_frame": ("IMAGE",),  # FL2V 尾帧（首尾帧技能）；i2v/t2v 忽略
-                "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
-                "duration": ("INT", {"default": 5, "min": -1, "max": 3600}),     # 秒；-1 = 用 config/默认(约5s)
-                "width": ("INT", {"default": 1344, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),   # -1 = 用 config/默认
-                "height": ("INT", {"default": 768, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),    # -1 = 用 config/默认
-                "model": ("MODEL",),  # 外部加速模型；提供时覆盖内部主模型链（UNETLoader/LoRA/VDN）
-                "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
-            },
-        }
-
-    RETURN_TYPES = ("VIDEO",)
-    RETURN_NAMES = ("video",)
-    FUNCTION = "generate"
-    CATEGORY = "Neo-Nodes"
-    DESCRIPTION = "MiniMax H3 视频生成节点：按所选 skill 的 workflow.json 模板同步生成，输出含音频的 VIDEO（可接 SaveVideo）。"
-
-    def generate(self, skill_id, prompt="", image=None, last_frame=None, seed=-1, duration=-1, width=-1, height=-1, bundle="", model=None, steps=-1):
-        payload = get_bundle(bundle) if bundle else None
-
-        # bundle 携带的 skill_id 若对本节点有效（gen_video + workflow.json）则覆盖本地选择，否则沿用本地
-        eff_skill = skill_id
-        if payload and payload.get("skill_id"):
-            cand = _resolve_skill_id(payload["skill_id"])
-            if any(s["id"] == cand for s in _gen_video_skills()):
-                eff_skill = payload["skill_id"]
-
-        real_id = _resolve_skill_id(eff_skill)
-        template = load_skill_workflow(real_id)
-        if template is None:
-            raise RuntimeError(f"[NeoNodes] H3 视频 skill '{eff_skill}' 缺少 workflow.json，无法生成")
-        cfg = get_skill_gen_config(real_id)
-
-        # prompt：节点输入优先（多 prompt 逐项循环时每次拿到各自的），空则回退 bundle 里的第一条
-        if not str(prompt or "").strip() and payload:
-            prompts = payload.get("prompts") or []
-            prompt = prompts[0] if prompts else ""
-
-        body = {"prompt": prompt}
-        if seed is not None and int(seed) >= 0:
-            body["seed"] = int(seed)
-        if duration is not None and int(duration) > 0:
-            body["length"] = _seconds_to_frames(int(duration))
-        if width is not None and int(width) > 0:
-            body["width"] = int(width)
-        if height is not None and int(height) > 0:
-            body["height"] = int(height)
-        # references：bundle 里的（连接图/附加图）优先，否则用节点 image 输入
-        refs = (payload or {}).get("references")
-        if refs:
-            body["references"] = refs
-        elif image is not None:
-            body["references"] = [{"kind": "data", "data": _image_to_data_uri(image)}]
-        # 尾帧：首尾帧技能用（模板 {{REF_IMAGE_LAST}}）；其它技能模板没有该槽位会自然忽略
-        if last_frame is not None:
-            body["last_frame"] = {"kind": "data", "data": _image_to_data_uri(last_frame)}
-        params = resolve_video_params(body, cfg, skip_model=(model is not None))
-        if steps is not None and int(steps) > 0:
-            params["steps"] = int(steps)
-        graph, _render_warnings = render_template(template, params)
-        overrides = None
-        if model is not None:
-            x_id, pruned = _model_injection_node(graph)
-            if x_id is None:
-                raise RuntimeError("[NeoNodes] 无法在 H3 视频 workflow 中定位模型注入点（缺少 KSampler/SigmaShift 的 model 输入）")
-            for pid in pruned:
-                del graph[pid]
-            overrides = {x_id: [model]}
-        else:
-            _require_vdn_plugin(graph)
-        return (execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides),)
-
-
-NODE_CLASS_MAPPINGS = {"NeoH3VideoGenerate": NeoH3VideoGenerate}
-NODE_DISPLAY_NAME_MAPPINGS = {"NeoH3VideoGenerate": "Neo H3 Video Generate"}

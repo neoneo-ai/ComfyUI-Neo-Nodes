@@ -1,22 +1,20 @@
-# H3 Video Generate（MiniMax H3 视频生成）
+# H3 Video（MiniMax H3 视频生成）
 
-`NeoH3VideoGenerate` 节点：按所选**视频 skill** 的 `workflow.json` 模板同步生成 MiniMax H3 视频，直接输出含原生音频的 `VIDEO`（可接 SaveVideo）到下游节点。复用 Krea2 Generate 的进程内 mini-executor（已支持 V3 API 节点），无需聊天界面、不嵌套官方 PromptExecutor。
+`NeoH3VideoDirector` 节点：MiniMax H3 视频生成的唯一入口，直接输出含原生音频的 `VIDEO`（可接 SaveVideo）到下游。复用 Krea2 Generate 的进程内 mini-executor（已支持 V3 API 节点），无需聊天界面、不嵌套官方 PromptExecutor。两种用法：**配方多段**（以 `video_director` 配方逐段生成并拼接成单个长视频）与 **BUNDLE 单段**（连 ⚡ Neo Prompt Agent 的 BUNDLE，按单片段生成）。
 
 ## 用法
-1. 添加 🎬 H3 Video Generate 节点。
-2. `skill_id` 选一个带 `gen_video: true` + `workflow.json` 的视频 skill（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)；另有同名带 `(VDN)` 的 4 个加速变体，依赖 ComfyUI-VDN-H3 插件、8 步，见「VDN 加速」节）。
-3. 接 prompt（可来自 ⚡ Neo Prompt Agent 或手填）；i2v 再连首帧 IMAGE，首尾帧（fl2v）再连 `last_frame` IMAGE（尾帧可选：只给首帧=I2VA、只给尾帧=L2VA、两边都给=FL2VA；其它技能模板没有该槽位会自然忽略）。
-4. 可选覆盖 `seed`（默认 0，固定；要随机把「生成后控制」设为 randomize）/ `duration`(秒) / `width` / `height`（-1 = 用 skill config.json 默认；`duration` 按 24fps 向上对齐到模型 17k+5 帧网格后作为 H3 `length`）。
-   - 另有两个**运行时加速**可选输入：`model`（MODEL 连线槽，外部加速模型）与 `steps`（INT，-1 = 用 preset/config 值），见下文「运行时加速」节。
-5. 执行后输出 `VIDEO`（含音频），接 SaveVideo 等节点导出。
+### 配方多段（video_director）
+1. 添加 🎞️ H3 Video Director 节点，`recipe` 选一个 `video_director` 配方（下拉自动列出；编辑器可增删/重排段、半自动故事生成）。
+2. 配方的每段自带 `skill_id` + prompt + 时长 + 首/尾帧 + 参考素材。视频 skill 需带 `gen_video: true` + `workflow.json`（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)；另有同名带 `(VDN)` 的 4 个加速变体，依赖 ComfyUI-VDN-H3 插件、8 步，见「VDN 加速」节）。
+3. 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认）/ `continuity`（Tier A 连续性，默认开）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值），见「运行时加速」节。
+4. 执行后输出单个拼接好的 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
-> **bundle 直连**：也可把 ⚡ Neo Prompt Agent 的 BUNDLE 输出连到本节点 `bundle` 输入，一次性带上 prompt/连接图/skill——prompt 留空时取 bundle、连接图优先于首帧 IMAGE、bundle 携带的视频 skill 有效时覆盖 `skill_id`；bundle 缺失/过期则回退本地。连上 BUNDLE 后 `prompt`/`skill_id` 控件会被禁用（以 bundle 为准）；`bundle` 输入前端渲染为纯连线槽（同 image，无文本框）。多 prompt 逐项循环需同时连 PROMPT 与 BUNDLE（只连 BUNDLE 仅用第一条）。
-
-![🎬 H3 Video Generate 节点](assets/images/neo-h3-video-generate.png)
+### BUNDLE 单段
+把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：skill / 提示词 / 参考图（data URI）全部取自 bundle，按单个片段生成、**忽略 `recipe`**。要求 bundle 携带有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。连上 BUNDLE 后 `recipe` 下拉被禁用（以 bundle 为准）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
 
 ## NeoH3VideoDirector（多段导演）
 
-`NeoH3VideoDirector` 节点：以 **video_director 配方**为参数，把多段 H3 视频按序逐段生成并拼接成单个含音频 `VIDEO`。每段复用上面单段节点的解析/执行链（`resolve_video_params` + `render_template` + `execute_graph_inprocess`），只是参数来自配方而非节点入参。
+`NeoH3VideoDirector` 的多段模式：以 **video_director 配方**为参数，把多段 H3 视频按序逐段生成并拼接成单个含音频 `VIDEO`。每段复用共享的单段解析/执行链 `_run_segment_graph`（`resolve_video_params` + `render_template` + `execute_graph_inprocess`），参数来自配方。
 
 ![🎞️ NeoH3VideoDirector 节点](assets/images/neo-h3-video-director.png)
 
@@ -65,7 +63,7 @@
 - 模型/编码器/视频 VAE/音频 VAE 解析与非 VDN preset 一致（见上）；`vdn_checkpoint` 目前写死为 `stage-dmd-step-250`，需要其它 stage 时请「⧉ Copy as custom」后改模板里的 `vdn_checkpoint`。
 
 ## 运行时加速：外部 `MODEL` / `steps`（可选）
-`NeoH3VideoGenerate`、`NeoKrea2Generate` 与 `NeoH3VideoDirector`（多段导演，**逐段**应用下述规则）都新增两个**可选**输入，用于不改 skill 模板就临时换模型 / 调步数：
+`NeoKrea2Generate` 与 `NeoH3VideoDirector`（视频，**逐段/单段**应用下述规则）都有两个**可选**输入，用于不改 skill 模板就临时换模型 / 调步数：
 - **`model`（MODEL，连线槽）**：提供时把外部加速模型注入到最终消费扩散模型的位置——视频为 `MiniMaxH3SigmaShift.model` 的来源、生图为 `KSampler`/`KSamplerAdvanced.model` 的来源。节点**只沿 `model` 输入边向上剪掉纯模型链**（UNETLoader / LoRA / VDN 等只出 MODEL 的节点），保留文本编码器 / 视频 VAE / 音频 VAE / 采样器等共享节点，并把注入点输出直接替换为外部模型（mini-executor 跳过该节点执行）。
 - **`steps`（INT，默认 -1）**：`-1` = 用 preset/config 值；`>0` = 覆盖渲染后的 `{{STEPS}}`。生图模板可能硬编码步数（非 `{{STEPS}}`），故生图侧直接改写采样器节点的 `steps` 字段，两种情况都生效。
 

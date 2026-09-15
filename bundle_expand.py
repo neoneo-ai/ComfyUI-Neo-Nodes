@@ -1,7 +1,7 @@
 # ComfyUI-Neo-Nodes - Bundle 展开节点
 # 把 NeoPromptAgent 输出的运行时 BUNDLE（id）展开成官方视频节点可直接消费的输入：
 # prompt(STRING) + image_1..image_9(IMAGE)。用于对接官方 MiniMax H3 Reference to Video
-# （ref_images 最多 9 张），而不必走内置 NeoH3VideoGenerate。bundle 只携带轻量数据
+# （ref_images 最多 9 张），对接官方节点而不必走内置 NeoH3VideoDirector。bundle 只携带轻量数据
 # （提示词文本 + 参考图 data URI），本节点把参考图按输出顺序还原成 IMAGE 张量，
 # 未用到的槽位返回空批次占位；同时回传 ui payload（提示词 + 缩略图）供节点内展示。
 

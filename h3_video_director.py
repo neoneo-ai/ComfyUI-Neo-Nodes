@@ -1,8 +1,9 @@
-"""Neo H3 Video Director：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。
+"""Neo H3 Video Director：以 video_director 配方为参数逐段生成并拼接成单个含音频 VIDEO；也可接 NeoPromptAgent 的 BUNDLE 按单段生成。
 
 设计（复用单段 H3 路径）：
 - NeoH3VideoDirector 从配方读取 {shared, segments[]}；每段带自己的 skill_id、prompt、时长、首帧参考。
-- 逐段复用 NeoH3VideoGenerate 的解析/执行链（resolve_video_params + render_template + execute_graph_inprocess）。
+- 逐段复用单段解析/执行链 _run_segment_graph（resolve_video_params + render_template + execute_graph_inprocess）。
+- BUNDLE 输入（forceInput）：提供时忽略 recipe，用 bundle 的 skill/提示词/参考图（data URI）跑单个片段。
 - Tier A 连续性：上一段尾帧作为下一段 I2V 首帧；丢下段第一帧避免边界重复，并按丢帧数裁音频保 A/V 对齐。
 - seed 派生：base_seed + i（i 为段序号），保证可复现且各段不同。
 """
@@ -15,9 +16,10 @@ from aiohttp import web
 from comfy_api.latest import InputImpl, Types
 from server import PromptServer
 
+from .bundles import get_bundle
 from .image_gen import render_template
 from .krea2_generate import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
-from .h3_video_gen import H3_FPS, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
+from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
 from .skill import get_skill_gen_config, load_skill_workflow
 from .recipes import list_director_recipes, load_director_spec
 
@@ -62,8 +64,35 @@ def _concat_segment_audio(audios, frame_rate: int, drops):
     return {"waveform": torch.cat(parts, dim=-1), "sample_rate": sample_rate}
 
 
+def _run_segment_graph(body, skill_id, model, steps, label=""):
+    """单段执行链：解析参数 → 渲染模板 → 模型注入/VDN 校验 → 进程内执行，返回 VIDEO。
+
+    recipe 逐段与 BUNDLE 单段共用；label 仅用于错误消息前缀（如「第 3 段：」）。
+    """
+    real_id = _resolve_skill_id(skill_id or "")
+    template = load_skill_workflow(real_id)
+    if template is None:
+        raise RuntimeError(f"{label}skill '{skill_id}' 缺少 workflow.json，无法生成")
+    cfg = get_skill_gen_config(real_id)
+    params = resolve_video_params(body, cfg, skip_model=(model is not None))
+    if steps is not None and int(steps) > 0:
+        params["steps"] = int(steps)
+    graph, _warns = render_template(template, params)
+    overrides = None
+    if model is not None:
+        x_id, pruned = _model_injection_node(graph)
+        if x_id is None:
+            raise RuntimeError(f"{label}无法定位模型注入点（缺少 KSampler/SigmaShift 的 model 输入）")
+        for pid in pruned:
+            del graph[pid]
+        overrides = {x_id: [model]}
+    else:
+        _require_vdn_plugin(graph)
+    return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+
+
 class NeoH3VideoDirector:
-    """以 video_director 配方为参数：逐段按各自 skill 模板生成，Tier A 连续性拼接，输出单个含音频 VIDEO。"""
+    """以 video_director 配方为参数逐段生成并拼接成单个含音频 VIDEO；连 NeoPromptAgent 的 BUNDLE 时按单片段生成（忽略配方）。"""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -79,6 +108,7 @@ class NeoH3VideoDirector:
                 "continuity": ("BOOLEAN", {"default": True}),   # Tier A：上段尾帧→下段首帧 + 丢边界帧
                 "model": ("MODEL",),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
                 "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
+                "bundle": ("STRING", {"forceInput": True}),   # NeoPromptAgent BUNDLE；提供时忽略 recipe，按单段生成
             },
         }
 
@@ -88,7 +118,37 @@ class NeoH3VideoDirector:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "多段视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。"
 
-    def generate(self, recipe, seed=-1, width=-1, height=-1, continuity=True, model=None, steps=-1):
+    def _run_bundle_segment(self, payload, seed, width, height, model, steps):
+        """BUNDLE 单段生成：skill/提示词/参考都来自 NeoPromptAgent 的 BUNDLE（data URI），忽略 recipe。"""
+        sid = payload.get("skill_id") or ""
+        if not any(s["id"] == _resolve_skill_id(sid) for s in _gen_video_skills()):
+            raise ValueError(f"BUNDLE 指定的视频 skill 无效：'{sid}'（需为含 workflow.json 的视频技能）")
+        prompts = payload.get("prompts") or []
+        prompt = str(prompts[0]).strip() if prompts else ""
+        if not prompt:
+            raise ValueError("BUNDLE 缺少提示词，无法生成视频")
+        body = {"prompt": prompt}
+        if int(seed) >= 0:
+            body["seed"] = int(seed)
+        in_w = int(width) if int(width) > 0 else 0
+        in_h = int(height) if int(height) > 0 else 0
+        if in_w > 0:
+            body["width"] = in_w
+        if in_h > 0:
+            body["height"] = in_h
+        refs = payload.get("references") or []
+        if refs:
+            body["references"] = list(refs)
+        video = _run_segment_graph(body, sid, model, steps)
+        comp = video.get_components()
+        return (InputImpl.VideoFromComponents(
+            Types.VideoComponents(images=comp.images, audio=comp.audio, frame_rate=Fraction(H3_FPS))
+        ),)
+
+    def generate(self, recipe, seed=-1, width=-1, height=-1, continuity=True, model=None, steps=-1, bundle=""):
+        payload = get_bundle(bundle) if bundle else None
+        if payload:
+            return self._run_bundle_segment(payload, seed, width, height, model, steps)
         spec = load_director_spec(recipe)
         shared = spec.get("shared") or {}
         segments = spec.get("segments") or []
@@ -159,26 +219,7 @@ class NeoH3VideoDirector:
                 if mode == "r2v" and not refs:
                     raise ValueError(f"第 {i + 1} 段为全参考生视频但没有参考素材：请挂参考图 / 视频 / 音频")
 
-                real_id = _resolve_skill_id(seg.get("skill_id") or "")
-                template = load_skill_workflow(real_id)
-                if template is None:
-                    raise RuntimeError(f"第 {i + 1} 段 skill '{seg.get('skill_id')}' 缺少 workflow.json，无法生成")
-                cfg = get_skill_gen_config(real_id)
-                params = resolve_video_params(body, cfg, skip_model=(model is not None))
-                if steps is not None and int(steps) > 0:
-                    params["steps"] = int(steps)
-                graph, _warns = render_template(template, params)
-                overrides = None
-                if model is not None:
-                    x_id, pruned = _model_injection_node(graph)
-                    if x_id is None:
-                        raise RuntimeError(f"第 {i + 1} 段无法定位模型注入点（缺少 KSampler/SigmaShift 的 model 输入）")
-                    for pid in pruned:
-                        del graph[pid]
-                    overrides = {x_id: [model]}
-                else:
-                    _require_vdn_plugin(graph)
-                video = execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+                video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：")
                 comp = video.get_components()
                 frames = comp.images
 

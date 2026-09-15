@@ -1000,6 +1000,106 @@ class DirectorModelStepsTests(unittest.TestCase):
 
 
 
+class DirectorBundleTests(unittest.TestCase):
+    """BUNDLE 单段：NeoPromptAgent 的 BUNDLE（data URI 参考）作为单个片段生成，忽略 recipe。"""
+
+    SR = 48000
+    FPS = 24
+
+    def _run(self, payload, seed=-1, width=-1, height=-1, model=None, steps=-1,
+             valid_skills=("minimax_h3_t2v",)):
+        h3d = h3_video_director
+        orig = (h3d.get_bundle, h3d._gen_video_skills, h3d.load_director_spec,
+                h3d._resolve_skill_id, h3d.load_skill_workflow, h3d.get_skill_gen_config,
+                h3d.resolve_video_params, h3d.render_template, h3d.execute_graph_inprocess,
+                h3d._model_injection_node, h3d._require_vdn_plugin)
+        bodies = []
+        recipe_calls = []
+
+        h3d.get_bundle = lambda b: payload
+        h3d._gen_video_skills = lambda: [{"id": s} for s in valid_skills]
+        h3d.load_director_spec = lambda name: recipe_calls.append(name) or {"shared": {}, "segments": []}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+
+        def _fake_resolve(body, cfg, skip_model=False):
+            bodies.append(dict(body))
+            return dict(body)
+
+        h3d.resolve_video_params = _fake_resolve
+        h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d._model_injection_node = lambda graph: (None, set())
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", overrides=None: _FakeVideo(100, self.FPS, self.SR)
+
+        err = None
+        out = None
+        try:
+            (out,) = h3_video_director.NeoH3VideoDirector().generate(
+                "ignored_recipe", seed=seed, width=width, height=height, model=model, steps=steps, bundle="B1")
+        except Exception as e:
+            err = str(e)
+        finally:
+            self._restore(orig)
+        return out, bodies, recipe_calls, err
+
+    def _restore(self, orig):
+        (h3_video_director.get_bundle, h3_video_director._gen_video_skills,
+         h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
+         h3_video_director.load_skill_workflow, h3_video_director.get_skill_gen_config,
+         h3_video_director.resolve_video_params, h3_video_director.render_template,
+         h3_video_director.execute_graph_inprocess, h3_video_director._model_injection_node,
+         h3_video_director._require_vdn_plugin) = orig
+
+    def test_bundle_single_segment_runs_and_ignores_recipe(self):
+        payload = {"skill_id": "minimax_h3_t2v", "prompts": ["a cat walks"],
+                   "references": [{"kind": "data", "data": "data:image/png;base64,AAA"}]}
+        out, bodies, recipe_calls, err = self._run(payload)
+        self.assertIsNone(err)
+        self.assertEqual(recipe_calls, [])            # bundle 优先：recipe 不加载
+        self.assertEqual(len(bodies), 1)              # 单段
+        self.assertEqual(bodies[0]["prompt"], "a cat walks")
+        # data URI 参考原样透传（不做文件名解析）
+        self.assertEqual(bodies[0]["references"][0], {"kind": "data", "data": "data:image/png;base64,AAA"})
+        self.assertIsNotNone(out.get_components())
+
+    def test_bundle_seed_width_height_applied(self):
+        payload = {"skill_id": "minimax_h3_t2v", "prompts": ["p"]}
+        _, bodies, _, err = self._run(payload, seed=500, width=512, height=288)
+        self.assertIsNone(err)
+        self.assertEqual(bodies[0].get("seed"), 500)
+        self.assertEqual((bodies[0].get("width"), bodies[0].get("height")), (512, 288))
+
+    def test_bundle_default_seed_omitted(self):
+        # seed/width/height=-1（默认）时不写入 body，交由 resolve_video_params 随机 / skill config 回退
+        payload = {"skill_id": "minimax_h3_t2v", "prompts": ["p"]}
+        _, bodies, _, err = self._run(payload)
+        self.assertIsNone(err)
+        self.assertNotIn("seed", bodies[0])
+        self.assertNotIn("width", bodies[0])
+        self.assertNotIn("height", bodies[0])
+
+    def test_bundle_invalid_skill_raises(self):
+        payload = {"skill_id": "not_a_video_skill", "prompts": ["p"]}
+        _, bodies, _, err = self._run(payload)
+        self.assertIn("skill 无效", err or "")
+        self.assertEqual(bodies, [])                  # 未进入执行链
+
+    def test_bundle_missing_prompt_raises(self):
+        payload = {"skill_id": "minimax_h3_t2v"}      # 无 prompts
+        _, bodies, _, err = self._run(payload)
+        self.assertIn("提示词", err or "")
+        self.assertEqual(bodies, [])
+
+    def test_bundle_input_exposed_as_forceinput(self):
+        # NeoPromptAgent BUNDLE 连线槽在 H3 视频节点上可见（forceInput，非 hidden）
+        opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
+        self.assertIn("bundle", opt)
+        self.assertTrue(opt["bundle"][1].get("forceInput"))
+        self.assertNotIn("hidden", opt["bundle"][1])
+
+
 class DirectorSpecRouteTests(unittest.TestCase):
     """/rs_recipes/director_spec 请求解析与错误分支（load_director_spec 打桩）。"""
 

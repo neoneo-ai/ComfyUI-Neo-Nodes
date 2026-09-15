@@ -1,14 +1,18 @@
 /**
  * bundle-lock.js
- * NeoKrea2Generate / NeoH3VideoGenerate：
+ * NeoKrea2Generate / NeoH3VideoDirector：
  * 1) bundle 是 NeoPromptAgent 产出的引用 id，不由用户手输——后端以 forceInput 声明为纯连线槽，
  *    与 image 一致：节点体内不显示文本框，只留左侧 slot；未连接时后端收到 ""。
- * 2) bundle 输入一旦链接，即禁用 prompt / skill_id 两个控件，表示"以 bundle 为准"（后端同优先级）。断开后恢复；
- *    节点创建/工作流加载时按当前连线状态设置初始态。
+ * 2) bundle 输入一旦链接，即禁用「以 bundle 为准」的控件（Krea2: prompt/skill_id；Director: recipe），断开后恢复；
+ *    实时连线变化（onConnectionsChange）与加载工作流（onAfterGraphConfigured）都按当前连线状态刷新。
  */
 
-const BUNDLE_LOCK_NODES = ["NeoKrea2Generate", "NeoH3VideoGenerate"];
-const LOCKED_WIDGETS = ["prompt", "skill_id"];
+import { app } from "../../../../scripts/app.js";
+
+const BUNDLE_LOCK_NODES = {
+    "NeoKrea2Generate": ["prompt", "skill_id"],
+    "NeoH3VideoDirector": ["recipe"],
+};
 
 function bundleLinked(node) {
     const input = node.inputs?.find((i) => i.name === "bundle");
@@ -17,30 +21,34 @@ function bundleLinked(node) {
 
 function applyBundleLock(node) {
     const locked = bundleLinked(node);
-    for (const name of LOCKED_WIDGETS) {
+    for (const name of BUNDLE_LOCK_NODES[node.type] || []) {
         const w = node.widgets?.find((w) => w.name === name);
         if (w) w.disabled = locked;
     }
+    // Director 额外隐藏/恢复节点内时间轴（Krea2 无此方法，?. 安全跳过）
+    node._neoDtApplyBundleLock?.(locked);
     if (node.graph) node.graph.setDirtyCanvas(true, true);
 }
 
 app.registerExtension({
     name: "NeoNodes.BundleLock",
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!BUNDLE_LOCK_NODES.includes(nodeData.name)) return;
+        if (!(nodeData.name in BUNDLE_LOCK_NODES)) return;
 
-        // 连线变化（bundle 输入 link 增删）时切换禁用态
+        // 实时连线变化（bundle 输入 link 增删）：延迟一拍读取，确保 inputs[slot].link 已写入。
         const origOnConnectionsChange = nodeType.prototype.onConnectionsChange;
-        nodeType.prototype.onConnectionsChange = function (side, slot, connect) {
-            origOnConnectionsChange?.apply(this, arguments);
-            applyBundleLock(this);
+        nodeType.prototype.onConnectionsChange = function () {
+            const result = origOnConnectionsChange?.apply(this, arguments);
+            setTimeout(() => applyBundleLock(this), 0);
+            return result;
         };
 
-        // 节点创建（含工作流加载）：按当前连线状态设置禁用初始态
-        const origOnNodeCreated = nodeType.prototype.onNodeCreated;
-        nodeType.prototype.onNodeCreated = function () {
-            origOnNodeCreated?.apply(this, arguments);
-            applyBundleLock(this);
+        // 加载工作流：图配置完成后按最终连线状态刷新禁用态。
+        const origOnAfterGraphConfigured = nodeType.prototype.onAfterGraphConfigured;
+        nodeType.prototype.onAfterGraphConfigured = function () {
+            const result = origOnAfterGraphConfigured?.apply(this, arguments);
+            setTimeout(() => applyBundleLock(this), 0);
+            return result;
         };
     },
 });

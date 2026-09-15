@@ -56,18 +56,6 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] krea2_generate 节点注册失败（生图不可用）: {e}")
 
-    # MiniMax H3 视频生成节点：按 skill workflow.json 同步生成，输出解码后的 IMAGE 帧栈。
-    # 复用 krea2_generate 的 mini-executor（已支持 V3 API 节点）；导入失败时优雅降级。
-    H3_VIDEO_MAPPINGS = {}
-    H3_VIDEO_DISPLAY_MAPPINGS = {}
-    try:
-        from .h3_video_gen import (
-            NODE_CLASS_MAPPINGS as H3_VIDEO_MAPPINGS,
-            NODE_DISPLAY_NAME_MAPPINGS as H3_VIDEO_DISPLAY_MAPPINGS,
-        )
-    except Exception as e:
-        print(f"[NeoNodes] h3_video_gen 节点注册失败（H3 视频生成不可用）: {e}")
-
     # Neo H3 Video Director：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。
     # 复用单段 H3 解析/执行链；导入失败时优雅降级。
     H3_DIRECTOR_MAPPINGS = {}
@@ -97,7 +85,6 @@ if __package__ not in (None, ""):
         **PROMPT_CLASS_MAPPINGS,
         **KREA2_EDIT_MAPPINGS,
         **KREA2_GENERATE_MAPPINGS,
-        **H3_VIDEO_MAPPINGS,
         **H3_DIRECTOR_MAPPINGS,
         **BUNDLE_EXPAND_MAPPINGS,
     }
@@ -106,7 +93,6 @@ if __package__ not in (None, ""):
         **PROMPT_DISPLAY_NAME_MAPPINGS,
         **KREA2_EDIT_DISPLAY_MAPPINGS,
         **KREA2_GENERATE_DISPLAY_MAPPINGS,
-        **H3_VIDEO_DISPLAY_MAPPINGS,
         **H3_DIRECTOR_DISPLAY_MAPPINGS,
         **BUNDLE_EXPAND_DISPLAY_MAPPINGS,
     }

@@ -96,7 +96,6 @@ bundles = _load("bundles", "bundles.py")
 _load("skill", "skill.py")
 _load("image_gen", "image_gen.py")
 krea2_generate = _load("krea2_generate", "krea2_generate.py")
-h3_video_gen = _load("h3_video_gen", "h3_video_gen.py")
 prompts = _load("prompts", "prompts.py")
 
 
@@ -157,93 +156,12 @@ class AgentBundleOutputTests(unittest.TestCase):
 class BundleInputPlacementTests(unittest.TestCase):
     """bundle 输入须可见（非 hidden）且紧跟 image 之后。"""
 
-    def test_h3_bundle_visible_after_image(self):
-        opt = h3_video_gen.NeoH3VideoGenerate.INPUT_TYPES()["optional"]
-        self.assertIn("bundle", opt)
-        self.assertNotIn("hidden", opt["bundle"][1])
-        keys = list(opt.keys())
-        self.assertEqual(keys.index("bundle"), keys.index("image") + 1)
-
     def test_krea2_bundle_visible_after_image(self):
         opt = krea2_generate.NeoKrea2Generate.INPUT_TYPES()["optional"]
         self.assertIn("bundle", opt)
         self.assertNotIn("hidden", opt["bundle"][1])
         keys = list(opt.keys())
         self.assertEqual(keys.index("bundle"), keys.index("image") + 1)
-
-
-class H3BundleConsumeTests(unittest.TestCase):
-    def setUp(self):
-        self._captured = {}
-        self._restore = [
-            (h3_video_gen, "resolve_video_params", h3_video_gen.resolve_video_params),
-            (h3_video_gen, "render_template", h3_video_gen.render_template),
-            (h3_video_gen, "execute_graph_inprocess", h3_video_gen.execute_graph_inprocess),
-            (h3_video_gen, "load_skill_workflow", h3_video_gen.load_skill_workflow),
-        ]
-        h3_video_gen.resolve_video_params = lambda body, cfg, skip_model=False: self._captured.setdefault("body", body) or {"model": "x"}
-        # render_template 只在 generate 里显式调用一次（_resolve_skill_id/_gen_video_skills 不会碰它），
-        # 用它捕获真实用到的模板，从而反查生效的 skill id
-        def _fake_render(template, params):
-            self._captured.setdefault("template", template)
-            return {"1": {"class_type": "UNETLoader", "inputs": {}}}, []
-        h3_video_gen.render_template = _fake_render
-        h3_video_gen.execute_graph_inprocess = lambda graph, output_type=None, overrides=None: ("VIDEO_MARKER",)
-        h3_video_gen.load_skill_workflow = lambda sid: {"__skill_id": sid, "template": True}
-
-    def tearDown(self):
-        for mod, name, orig in self._restore:
-            setattr(mod, name, orig)
-
-    def _valid_video_skill(self):
-        return h3_video_gen._gen_video_skills()[0]["id"]
-
-    def test_bundle_prompt_used_when_node_prompt_empty(self):
-        bid = bundles.create_bundle({"prompts": ["from bundle"], "references": [], "gen_type": "", "skill_id": ""})
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=self._valid_video_skill(), prompt="", image=None, bundle=bid)
-        self.assertEqual(self._captured["body"]["prompt"], "from bundle")
-
-    def test_node_prompt_wins_over_bundle(self):
-        bid = bundles.create_bundle({"prompts": ["from bundle"], "references": [], "gen_type": "", "skill_id": ""})
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=self._valid_video_skill(), prompt="local", image=None, bundle=bid)
-        self.assertEqual(self._captured["body"]["prompt"], "local")
-
-    def test_bundle_references_override_image(self):
-        refs = [{"kind": "data", "data": "data:image/png;base64,AAAA"}]
-        bid = bundles.create_bundle({"prompts": ["p"], "references": refs, "gen_type": "", "skill_id": ""})
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=self._valid_video_skill(), prompt="p", image=torch.full((1, 2, 2, 3), 0.1), bundle=bid)
-        self.assertEqual(self._captured["body"]["references"], refs)
-
-    def test_no_bundle_uses_node_image(self):
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=self._valid_video_skill(), prompt="p", image=torch.full((1, 2, 2, 3), 0.1))
-        self.assertEqual(len(self._captured["body"]["references"]), 1)
-        self.assertTrue(self._captured["body"]["references"][0]["data"].startswith("data:image/png;base64,"))
-
-    def test_bundle_valid_skill_overrides_local(self):
-        local = self._valid_video_skill()
-        other = next(s["id"] for s in h3_video_gen._gen_video_skills() if s["id"] != local)
-        bid = bundles.create_bundle({"prompts": ["p"], "references": [], "gen_type": "", "skill_id": other})
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=local, prompt="p", image=None, bundle=bid)
-        self.assertEqual(self._captured["template"]["__skill_id"], h3_video_gen._resolve_skill_id(other))
-
-    def test_bundle_invalid_skill_falls_back_to_local(self):
-        local = self._valid_video_skill()
-        bid = bundles.create_bundle(
-            {"prompts": ["p"], "references": [], "gen_type": "", "skill_id": "not_a_video_skill"})
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=local, prompt="p", image=None, bundle=bid)
-        self.assertEqual(self._captured["template"]["__skill_id"], h3_video_gen._resolve_skill_id(local))
-
-    def test_missing_bundle_falls_back_to_local(self):
-        local = self._valid_video_skill()
-        h3_video_gen.NeoH3VideoGenerate().generate(
-            skill_id=local, prompt="p", image=None, bundle="bnd_gone")
-        self.assertEqual(self._captured["template"]["__skill_id"], h3_video_gen._resolve_skill_id(local))
 
 
 class Krea2BundleConsumeTests(unittest.TestCase):

@@ -1188,7 +1188,7 @@ def _template_video_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
                 seed_cfg.setdefault("vae", inputs["vae_name"])
                 inputs["vae_name"] = "{{VAE}}"
         elif ct.startswith("MiniMaxH3"):
-            # prompt 无论字符串还是连线都替换为运行时 {{PROMPT}}（断开原提示词来源节点，由 NeoH3VideoGenerate 注入）
+            # prompt 无论字符串还是连线都替换为运行时 {{PROMPT}}（断开原提示词来源节点，由 NeoH3VideoDirector 注入）
             if "prompt" in inputs:
                 inputs["prompt"] = "{{PROMPT}}"
             for key, token in (("width", "{{WIDTH}}"), ("height", "{{HEIGHT}}"), ("length", "{{LENGTH}}")):
