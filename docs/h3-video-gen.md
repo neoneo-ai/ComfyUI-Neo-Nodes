@@ -59,5 +59,5 @@
 
 ## 说明
 - 末端 `CreateVideo` 把视频帧 + 音频打包成原生 `VIDEO`（fps=24），不直接落盘；接 SaveVideo 即可导出带声音的视频。
-- 采样步数 `steps` 由 skill `config.json` 的 `steps` 配置（模板占位符 `{{STEPS}}`），缺省默认 **20**；cfg/sampler/scheduler 仍写在各 skill 的 `workflow.json` 中，按需调整。
+- 采样步数 `steps` 由 skill `config.json` 的 `steps` 配置（模板占位符 `{{STEPS}}`），缺省默认 **20**——在技能详情「🎬 生视频设置」区的「步数」输入框填写；cfg/sampler/scheduler 仍写在各 skill 的 `workflow.json` 中，按需调整。
 - 「出图设置 → 生视频模型」区的模型下拉由 `/neo_video_gen/models` 提供：H3 相关（文件名含 `h3`）排前面、其余按名称排序（与生图的 krea2-first 独立），方便快速定位 H3 模型。

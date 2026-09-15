@@ -238,3 +238,35 @@ test("点击节点时间轴第 3 块：编辑器打开即定位到该段", async
     assert.equal(segs[2].querySelector(".neo-director-prompt").value, "c", "显示的是被点段的内容");
 });
 
+test("切换 recipe 下拉后节点时间轴重新拉取并更新", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+
+    // mock 按「当前」recipe widget 值返回不同 spec，验证 loadSpec 读到的是切换后的新值
+    let recipeWidgetRef = null;
+    mockRoute("/rs_recipes/director_spec", async () => {
+        const name = recipeWidgetRef ? String(recipeWidgetRef.value || "") : "";
+        if (name === "recipe-b") {
+            return jsonResponse({ success: true, segments: [
+                { prompt: "B1", duration_sec: 5 },
+                { prompt: "B2", duration_sec: 5 },
+            ] });
+        }
+        return jsonResponse({ success: true, segments: [{ prompt: "A1", duration_sec: 5 }] });
+    });
+
+    const node = await createDirectorNode("recipe-a");
+    recipeWidgetRef = node.widgets.find((w) => w.name === "recipe");
+    await sleep(60); // 初始 loadSpec：recipe-a → 1 段
+    const tl = node._neoDtTimeline;
+    assert.equal(tl._segs.length, 1, "初始载入 recipe-a 的 1 段");
+
+    // 模拟 LiteGraph combo 变化：先更新 value，再触发 callback（本版本 combo 用 callback 而非 onchange）
+    recipeWidgetRef.value = "recipe-b";
+    recipeWidgetRef.callback("recipe-b");
+    await sleep(60); // loadSpec 重新拉取 recipe-b → 2 段
+
+    assert.equal(tl._segs.length, 2, "切换后时间轴更新为 recipe-b 的 2 段");
+});
+

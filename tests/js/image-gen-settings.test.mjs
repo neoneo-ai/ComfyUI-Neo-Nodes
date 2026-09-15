@@ -119,7 +119,26 @@ test("createVideoModelConfigSection：load 填充四个模型下拉、collect �
     // 「自动」项标注客户端建议名（videoSuggestion 挑首个含 h3/minimax，shortModelName 取末段去扩展名）
     assert.equal(selects[0].options[0].textContent, "自动（model）");
     assert.deepEqual(section.collect(), { model: "h3/model.safetensors", text_encoder: "h3/te.safetensors",
-        vae: "h3/video_vae.safetensors", audio_vae: "h3/audio_vae.safetensors", loras: [] });
+        vae: "h3/video_vae.safetensors", audio_vae: "h3/audio_vae.safetensors", steps: 20, loras: [] });
+});
+
+test("createVideoModelConfigSection：步数 load 回填 / 缺省 20 / collect 返回 int", async () => {
+    const { createVideoModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createVideoModelConfigSection();
+    document.body.appendChild(section.el);
+    // 显式 steps=35 → 回填输入框并 collect 出 35
+    section.load({ model: "h3/model.safetensors", steps: 35 }, { diffusion_models: ["h3/model.safetensors"] });
+    const stepsInput = section.el.querySelector("input.rs-form-input:not(.rs-combo-input)");
+    assert.ok(stepsInput, "应有步数数字输入框");
+    assert.equal(parseInt(stepsInput.value, 10), 35, "load 应回填已保存步数");
+    assert.equal(section.collect().steps, 35);
+    // 未保存 steps → 缺省 20（与后端 resolve_video_params 默认一致）
+    section.load({ model: "h3/model.safetensors" }, { diffusion_models: ["h3/model.safetensors"] });
+    assert.equal(parseInt(stepsInput.value, 10), 20, "缺省应为 20");
+    assert.equal(section.collect().steps, 20);
+    // 用户改值 → collect 反映新值
+    stepsInput.value = "32";
+    assert.equal(section.collect().steps, 32);
 });
 
 test("createVideoModelConfigSection：视频 LoRA 行 load/collect 往返，且无「依赖参考图」复选框", async () => {

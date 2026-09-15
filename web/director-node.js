@@ -109,10 +109,10 @@ app.registerExtension({
             };
             loadSpec();
 
-            // 切换 recipe 下拉时重新拉取
-            if (recipeWidget && typeof recipeWidget.onchange === "function") {
-                const oc = recipeWidget.onchange;
-                recipeWidget.onchange = function() { oc.apply(this, arguments); loadSpec(); };
+            // 切换 recipe 下拉时重新拉取（本版本 combo widget 用 callback 触发变化，onchange 不存在）
+            if (recipeWidget) {
+                const oc = recipeWidget.callback;
+                recipeWidget.callback = function() { oc?.apply(this, arguments); loadSpec(); };
             }
 
             // 时间轴右上角「✎」：打开当前配方的导演编辑器，保存后自动刷新时间轴；

@@ -655,6 +655,8 @@ export function createVideoModelConfigSection() {
     const encoderCtl = makeComboRow("Text Encoder", "rs-gen-adv-row");
     const videoVaeCtl = makeComboRow("VAE（视频）", "rs-gen-adv-row");
     const audioVaeCtl = makeComboRow("VAE（音频）", "rs-gen-adv-row");
+    // 采样步数：写 skill config.json 的 steps（模板 {{STEPS}}），缺省 20；放可见区，不收进高级折叠
+    const stepsCtl = numberRow("步数", { min: 1, max: 100, step: 1, value: 20 });
 
     // LoRA 行：动态增删，每行 = 模型选择 + 强度。视频无「依赖参考图」概念，故不设复选框（与生图区不同）。
     const loraRow = mkEl("div", "rs-config-row");
@@ -666,7 +668,7 @@ export function createVideoModelConfigSection() {
     loraAddBtn.textContent = "+ 添加 LoRA";
     loraRow.append(loraLabel, loraList, loraAddBtn);
 
-    section.append(modelCtl.row, encoderCtl.row, videoVaeCtl.row, audioVaeCtl.row, loraRow);
+    section.append(modelCtl.row, stepsCtl.row, encoderCtl.row, videoVaeCtl.row, audioVaeCtl.row, loraRow);
 
     let loraFiles = [];
 
@@ -702,6 +704,7 @@ export function createVideoModelConfigSection() {
             videoVideoVaeSuggestion(models.vae), settings.vae || "");
         fillComboSelect(audioVaeCtl.select, models.vae || [],
             videoAudioVaeSuggestion(models.vae), settings.audio_vae || "");
+        stepsCtl.input.value = settings.steps ?? 20;
         loraList.innerHTML = "";
         for (const entry of settings.loras || []) {
             if (typeof entry === "string") addLoraRow(entry, 1.0);
@@ -724,6 +727,7 @@ export function createVideoModelConfigSection() {
             text_encoder: encoderCtl.select.value.trim(),
             vae: videoVaeCtl.select.value.trim(),
             audio_vae: audioVaeCtl.select.value.trim(),
+            steps: parseInt(stepsCtl.input.value, 10) || 20,
             loras,
         };
     }
