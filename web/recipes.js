@@ -419,6 +419,15 @@ export async function deleteRecipe(name) {
     return resp.json();
 }
 
+export async function copyRecipe(name) {
+    const resp = await api.fetchApi('/rs_recipes/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+    });
+    return resp.json();
+}
+
 export async function sendRecipeToWorkflow(name) {
     const resp = await api.fetchApi('/rs_recipes/send_to_workflow', {
         method: 'POST',
@@ -935,6 +944,25 @@ export async function createRecipesPanel() {
             });
             actions.append(delBtn);
         }
+
+        const copyBtn = $el('button', {
+            className: 'rs-btn rs-action-btn neo-recipes-copy',
+            title: '复制配方（生成副本）',
+            textContent: '⧉',
+            onclick: async (e) => {
+                e.stopPropagation();
+                copyBtn.disabled = true;
+                const res = await copyRecipe(r.name);
+                copyBtn.disabled = false;
+                if (res?.success) {
+                    app.extensionManager.toast.add({ severity: 'success', summary: '配方已复制', detail: `已创建副本「${res.name}」`, life: 4000 });
+                    await renderList();
+                } else {
+                    app.extensionManager.toast.add({ severity: 'error', summary: '复制失败', detail: res?.error || 'Unknown error', life: 4000 });
+                }
+            }
+        });
+        actions.append(copyBtn);
         card.append(top, actions);
         return card;
     }

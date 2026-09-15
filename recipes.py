@@ -266,12 +266,16 @@ async def rs_recipes_list(request):
     _ensure_dirs()
     recipes = []
     for source, base in (("preset", PRESETS_DIR), ("custom", CUSTOM_DIR)):
-        for p in sorted(base.iterdir()):
+        metas = []
+        for p in base.iterdir():
             if not p.is_dir():
                 continue
             meta = _scan_recipe_dir(p, source)
             if meta:
-                recipes.append(meta)
+                metas.append(meta)
+        # 最近修改的配方排在最前（新建/复制/保存都会刷新 recipe.json 的 mtime）
+        metas.sort(key=lambda m: m.get("mtime") or 0, reverse=True)
+        recipes.extend(metas)
     return web.json_response(recipes)
 
 
@@ -608,6 +612,40 @@ async def rs_recipes_delete(request):
             return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
         shutil.rmtree(recipe_dir, ignore_errors=True)
         return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/rs_recipes/copy")
+async def rs_recipes_copy(request):
+    """复制配方（含资源/示例/director 分段）为新的 custom 配方，自动生成不冲突的名字。"""
+    try:
+        data = await request.json()
+        name = str(data.get("name", "")).strip()
+        src = _find_recipe_dir(name)
+        if src is None:
+            return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+
+        # 目标名：源名-copy，冲突（custom 或 preset 已占用）则 -2/-3...
+        candidate = f"{name}-copy"
+        n = 2
+        while _find_recipe_dir(candidate) is not None:
+            candidate = f"{name}-{n}"
+            n += 1
+
+        _ensure_dirs()
+        dest = CUSTOM_DIR / candidate
+        shutil.copytree(src, dest)
+
+        # 改写新目录 recipe.json 的 name，使列表/发送按新名工作
+        meta_path = dest / "recipe.json"
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["name"] = candidate
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        return web.json_response({"success": True, "name": candidate})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 

@@ -42,12 +42,13 @@
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/rs_recipes/list` | 配方列表（custom / presets） |
+| POST | `/rs_recipes/list` | 配方列表（custom / presets，组内按最近修改时间倒序） |
 | POST | `/rs_recipes/load` | 读取单个配方 |
 | POST | `/rs_recipes/save` | 保存配方（含 assets 收集） |
 | POST | `/rs_recipes/append_results` | 追加示例结果（含工作流备份） |
 | POST | `/rs_recipes/delete_sample` | 删除示例结果 |
 | POST | `/rs_recipes/delete` | 删除配方（仅 custom） |
+| POST | `/rs_recipes/copy` | 复制配方为新的 custom 副本（自动生成不冲突名 `<原名>-copy/-2/…`，含资源/示例/director 分段；preset 亦可复制成 custom） |
 | GET | `/rs_recipes/asset` | 配方资源文件 |
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |

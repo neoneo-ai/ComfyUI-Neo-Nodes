@@ -44,3 +44,31 @@ test("配方列表：多段导演配方点缩略图直接打开编辑器，普�
     assert.ok(document.querySelector(".neo-recipes-detail"), "普通配方点缩略图打开详情");
     assert.equal(document.querySelector(".neo-director-overlay"), null, "未打开编辑器");
 });
+
+test("配方卡片：每个配方都有复制按钮，点击调用 /rs_recipes/copy 传源名", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        { name: "src-recipe", source: "custom", prompt: "hello", assets: [], samples: [] },
+        { name: "preset-x", source: "preset", prompt: "pp", assets: [], samples: [] },
+    ]));
+    let copyBody = null;
+    mockRoute("/rs_recipes/copy", (body) => {
+        copyBody = body;
+        return jsonResponse({ success: true, name: "src-recipe-copy" });
+    });
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+
+    // custom 与 preset 配方都应显示复制按钮（preset 可复制成 custom）
+    assert.equal(panel.querySelectorAll(".neo-recipes-card").length, 2, "两个配方卡片");
+    const copyBtns = panel.querySelectorAll(".neo-recipes-copy");
+    assert.equal(copyBtns.length, 2, "每个配方都有复制按钮");
+
+    copyBtns[0].click();
+    await sleep(80);
+    assert.deepEqual(copyBody, { name: "src-recipe" }, "调用 /rs_recipes/copy 传源配方名");
+    assert.ok(appState.toasts.some(t => t.summary === "配方已复制"), "复制成功弹 toast");
+});

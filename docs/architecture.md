@@ -65,7 +65,7 @@ ComfyUI-Neo-Nodes/
 │   ├── lightbox.css
 │   ├── node-behavior.js    # 节点拖拽/粘贴等交互行为
 │   ├── combo-box.js        # 通用下拉组件
-│   ├── recipes.js          # 配方逻辑（保存/面板/一键发送）
+│   ├── recipes.js          # 配方逻辑（保存/复制/面板/一键发送）
 │   ├── recipes.css
 │   ├── director.js         # 多段视频导演编辑器（配方编辑窗口）：shared 分辨率 + 逐段 skill/提示词/首帧/时长 + 半自动故事生成/拆分；时间轴复用 director-timeline.js
 │   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 顶栏按钮）
@@ -117,7 +117,7 @@ ComfyUI-Neo-Nodes/
 | `lightbox.js` / `lightbox.css` | 通用灯箱组件：异步 blob 加载、相邻预加载、缩放平移、尺寸显示、`panelProvider` 侧栏钩子；素材与配方通过各自适配接入 |
 | `node-behavior.js` | 节点级交互行为（拖拽图片、粘贴、`@` 引用等） |
 | `combo-box.js` | 通用下拉选择组件：点击展开/键入过滤覆盖、键盘导航；option 可带 `data-tags`（空格分隔，如中文拼音/首字母缩写）作为附加搜索文本参与过滤（无该属性的下拉不受影响）；`<optgroup>` 渲染为分类标题（无 `data-value`，自动被键盘导航与取值逻辑跳过），过滤时空组隐藏 |
-| `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片、详情浮层、一键发送；并导出导演编辑器依赖的 `saveRecipe` / `listVideoSkills` / `scanMediaNodes` / `widgetValueToRef` |
+| `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片（含复制）、详情浮层、一键发送；并导出导演编辑器依赖的 `saveRecipe` / `listVideoSkills` / `scanMediaNodes` / `widgetValueToRef` |
 | `director.js` | 多段视频导演编辑器（配方编辑窗口，从 recipes.js 拆出）：配方名钉在标题栏中间（默认纯文本直显、点击进入行内编辑）+ shared 分辨率（宽高比/百万像素或自定义 W/H）+ 逐段 skill/提示词/首帧/时长 + 半自动故事生成与拆分；时间轴复用 `director-timeline.js`，保存走 `recipes.js` 的 `saveRecipe` |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip；节点移除时统一注销 document/window/api 监听并销毁挂 body 的浮层菜单 |

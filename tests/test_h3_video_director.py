@@ -333,6 +333,21 @@ class DirectorRecipeIOTests(unittest.TestCase):
             {"skill_id": "s", "prompt": "p"}]}, assets=["f.png"])
         self.assertEqual(recipes.list_director_recipes(), ["dir1"])
 
+    def test_list_sorted_by_mtime_descending(self):
+        # /rs_recipes/list 组内按最近修改时间倒序：最新改动的配方排在最前
+        import time
+        self._make_recipe("aaa", {"prompt": "p"})
+        self._make_recipe("zzz", {"prompt": "q"})
+        now = time.time()
+        os.utime(os.path.join(self.custom, "aaa", "recipe.json"), (now - 3600, now - 3600))
+        os.utime(os.path.join(self.custom, "zzz", "recipe.json"), (now, now))
+
+        resp = _run_async(recipes.rs_recipes_list(None))
+        self.assertEqual(resp.status, 200)
+        names = [r["name"] for r in json.loads(resp.body)]
+        # zzz（新）在 aaa（旧）之前；若按名字字母序则会反过来
+        self.assertEqual(names[:2], ["zzz", "aaa"])
+
     def test_load_spec_resolves_first_frame(self):
         self._make_recipe("d", {"type": "video_director",
                                 "shared": {"width": 8, "height": 8, "seed": 1},
@@ -548,6 +563,61 @@ class DirectorRecipeIOTests(unittest.TestCase):
         import pathlib
         scanned = recipes._scan_recipe_dir(pathlib.Path(self.custom) / "nostory-dir", "custom")
         self.assertNotIn("story", scanned)
+
+    def test_copy_route_creates_new_custom_recipe(self):
+        # 复制配方：整目录复制到 custom，recipe.json 的 name 改写为新名，资源一并复制
+        self._make_recipe("src", {"prompt": "p", "assets": ["f.png"]}, assets=["f.png"])
+
+        class _Req:
+            async def json(self):
+                return {"name": "src"}
+
+        resp = _run_async(recipes.rs_recipes_copy(_Req()))
+        self.assertEqual(resp.status, 200)
+        data = json.loads(resp.body)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["name"], "src-copy")
+        with open(os.path.join(self.custom, "src-copy", "recipe.json"), encoding="utf-8") as f:
+            copied = json.load(f)
+        self.assertEqual(copied["name"], "src-copy")
+        self.assertTrue(os.path.isfile(os.path.join(self.custom, "src-copy", "assets", "f.png")))
+
+    def test_copy_route_increments_on_conflict(self):
+        # 目标名冲突时自动加 -2/-3：已存在 src-copy → 复制得到 src-2
+        self._make_recipe("src", {"prompt": "p"})
+        self._make_recipe("src-copy", {"prompt": "q"})
+
+        class _Req:
+            async def json(self):
+                return {"name": "src"}
+
+        resp = _run_async(recipes.rs_recipes_copy(_Req()))
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(resp.body)["name"], "src-2")
+
+    def test_copy_route_copies_preset_to_custom(self):
+        # preset 只读不可删，但可复制成 custom（副本落在 custom/）
+        d = os.path.join(self.presets, "pre")
+        os.makedirs(os.path.join(d, "assets"), exist_ok=True)
+        with open(os.path.join(d, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump({"prompt": "preset-p"}, f)
+
+        class _Req:
+            async def json(self):
+                return {"name": "pre"}
+
+        resp = _run_async(recipes.rs_recipes_copy(_Req()))
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(resp.body)["name"], "pre-copy")
+        self.assertTrue(os.path.isfile(os.path.join(self.custom, "pre-copy", "recipe.json")))
+
+    def test_copy_route_missing_source_404(self):
+        class _Req:
+            async def json(self):
+                return {"name": "nope"}
+
+        resp = _run_async(recipes.rs_recipes_copy(_Req()))
+        self.assertEqual(resp.status, 404)
 
 
 # ===========================================================================
