@@ -140,9 +140,9 @@ test("身份色相按段 id 绑定（重排不变色），无 id 回退按位置
     resetEnv();
     const { tl } = makeTimeline([{ duration: 5, id: "a" }, { duration: 5, id: "b" }]);
     await sleep(40); // rAF 后色相槽位已分配：a→slot0，b→slot1
-    assert.equal(tl._identityHue({ id: "a" }, 1), 0);   // a 移到位置 1 颜色不变
-    assert.equal(tl._identityHue({ id: "b" }, 0), 47);  // b 移到位置 0 颜色不变
-    assert.equal(tl._identityHue({}, 2), (2 * 47) % 360); // 无 id → 按位置
+    assert.equal(tl._identityHue({ id: "a" }, 1), (0 * 47 + 180) % 360);   // a 移到位置 1 颜色不变（slot0，青绿起点）
+    assert.equal(tl._identityHue({ id: "b" }, 0), (1 * 47 + 180) % 360);  // b 移到位置 0 颜色不变（slot1）
+    assert.equal(tl._identityHue({}, 2), (2 * 47 + 180) % 360);           // 无 id → 按位置
     tl.destroy();
 });
 

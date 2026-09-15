@@ -11,6 +11,7 @@ prompts/templates/custom
 gallery/thumbnails/
 gallery/oss_cache/
 gallery/lora_cache/
+gallery/waveform_cache/
 gallery/civitai_bookmarks/
 gallery/presets/
 .tiktoken_cache/

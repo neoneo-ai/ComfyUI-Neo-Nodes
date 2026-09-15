@@ -429,11 +429,12 @@
 }
 
 .neo-director-panel {
-    width: min(780px, 96vw);
+    width: min(1280px, 96vw);
+    height: min(840px, 88vh);   /* 默认 1280×840；矮屏高度跟随 88vh */
     max-height: 88vh;
     position: relative;      /* 右下角缩放手柄以面板为定位基准 */
     min-width: 580px;        /* 拖拽缩放下限：内容不塌 */
-    min-height: min(840px, 88vh); /* 拖拽缩放下限：时间轴页元素（段卡片+首帧资产+时长）基本全部可见；矮屏跟随 88vh 不溢出 */
+    min-height: 480px;       /* 拖拽缩放下限；加宽到 1280 后内容更紧凑，下限下调（body 内滚动） */
     display: flex;
     flex-direction: column;
     background: #1e1e1e;
@@ -445,7 +446,7 @@
 
 .neo-director-title {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));   /* 左标题 / 中间配方名（居中、超长省略号）/ 右按钮：三等分保证名称真正居中 */
+    grid-template-columns: 1fr auto 1fr;   /* 左：标签+配方名 / 中：页签（严格居中）/ 右：按钮 */
     align-items: center;
     gap: 10px;
     padding: 10px 14px;
@@ -456,15 +457,21 @@
     user-select: none;
 }
 
-.neo-director-title > span:first-child {
-    justify-self: start;
+.neo-director-title-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.neo-director-title-left > span {
+    flex: none;
     white-space: nowrap;
 }
 
 /* 配方名称：默认直接显示文本，点击进入行内编辑（Enter/失焦提交、Esc 还原） */
 .neo-director-name-wrap {
-    justify-self: center;
-    width: 100%;
+    flex: 0 1 auto;
     min-width: 0;
     display: flex;
     justify-content: center;
@@ -515,8 +522,8 @@
 .neo-director-title-btns {
     display: flex;
     align-items: center;
-    justify-self: end;
     gap: 2px;
+    justify-self: end;
 }
 
 .neo-director-close,
@@ -616,15 +623,15 @@
     color: #9aa4b0;
 }
 
-.neo-director-dur-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
 .neo-director-num,
 .neo-director-dur {
     width: 72px;
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
 }
 
 .neo-director-tl-label {
@@ -655,7 +662,6 @@
 .neo-director-zoom-toggle:hover { border-color: #8cf; color: #fff; }
 .neo-director-zoom-slider {
     width: 90px;
-    accent-color: #4fff8f;
     cursor: pointer;
 }
 
@@ -700,7 +706,7 @@
 /* 卡片内除提示词外的字段与资产区不让步缩水，挤压时由 segs 内部滚动承载 */
 .neo-director-seg-head,
 .neo-director-seg > .neo-director-field-label,
-.neo-director-skill,
+.neo-director-fflf,
 .neo-director-ff-grid,
 .neo-director-ff-block,
 .neo-director-lf-grid,
@@ -708,8 +714,7 @@
 .neo-director-refs-block,
 .neo-director-segref-row,
 .neo-director-refpick-grid,
-.neo-director-segmode-row,
-.neo-director-dur-row {
+.neo-director-segmode-row {
     flex-shrink: 0;
 }
 
@@ -730,10 +735,30 @@
     gap: 5px;
 }
 
+/* 首帧区 + 尾帧区容器：默认纵向堆叠；fl2v（两块都显示）时并排同一行，各占一半 */
+.neo-director-fflf {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.neo-director-fflf-row {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
+}
+.neo-director-fflf-row .neo-director-ff-block,
+.neo-director-fflf-row .neo-director-lf-block {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 .neo-director-seg-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 8px;
+}
+.neo-director-seg-head .neo-director-field-label {
+    white-space: nowrap;
 }
 
 .neo-director-seg-title {
@@ -744,6 +769,7 @@
 
 .neo-director-seg-del {
     flex: 0 0 auto;
+    margin-left: auto;   /* 技能/时长移入标题行后，删除按钮仍贴最右 */
     width: 24px;
     height: 22px;
     display: flex;
@@ -770,7 +796,7 @@
 }
 
 .neo-director-skill {
-    width: 100%;
+    width: 240px;      /* 段标题行内固定宽度 */
     background: #1e1e1e;
     color: #ddd;
     border: 1px solid #3a3a3a;
@@ -879,6 +905,18 @@
     gap: 6px;
 }
 
+/* 参考素材区标题行：label 左、素材库按钮右 */
+.neo-director-refs-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.neo-director-refs-head > .neo-director-field-label {
+    flex: 1;
+    min-width: 0;
+}
+
 .neo-director-segref-row {
     display: flex;
     flex-direction: column;
@@ -898,22 +936,32 @@
 }
 
 .neo-director-refpick-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-    gap: 6px;
-    min-height: 80px;  /* 预留拖放空间，即使没有候选素材也能接收拖入 */
-    padding: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;   /* 瓷砖紧密平铺、不留空白（与时间轴参考图一致） */
+    min-height: 104px; /* 空态预留拖放空间（与瓷砖高度一致），即使没有素材也能接收拖入 */
+    padding: 0;
     background: #1a1a1a;
-    border: 1px dashed #3a3a3a;
+    border: 1px dashed #3a3a3a;   /* 空态/拖放提示框；有素材时移除（见 .has-items） */
     border-radius: 6px;
+    cursor: pointer;   /* 黑色空区可点击 = 本地上传 */
 }
 
-.neo-director-refpick-placeholder {
-    display: flex;
+/* 空态：黑色背景居中显示「点击上传 / 拖入」提示，整块可点击弹出文件选择器 */
+.neo-director-refpick-grid:not(.has-items) {
     align-items: center;
     justify-content: center;
-    min-height: 72px;
-    grid-column: 1 / -1;
+}
+.neo-director-refpick-grid:not(.has-items)::before {
+    content: '点击上传 / 拖入素材';
+    color: #6b7280;
+    font-size: 11px;
+    pointer-events: none;   /* 提示文字不拦截，点击落到网格触发上传 */
+}
+
+.neo-director-refpick-grid.has-items {
+    min-height: 0;
+    border: none;   /* 有素材时去掉虚线框；背景保持深色（剩余空区与空态一致） */
 }
 
 .neo-director-refpick-grid.neo-director-drop {
@@ -934,34 +982,33 @@
 }
 
 .neo-director-refpick-item {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 3px;
-    background: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    cursor: pointer;
     position: relative;
+    height: 96px;   /* 固定高度（与首帧缩略图一致），宽度按画面比例自适应（JS 设置） */
+    width: 96px;    /* 加载前占位；音频/未知尺寸维持正方形 */
+    cursor: grab;
+    overflow: hidden;   /* 图片裁切在瓷砖内、紧密平铺无间隙 */
+}
+
+.neo-director-refpick-item:active {
+    cursor: grabbing;
+}
+
+.neo-director-refpick-item.neo-director-refpick-dragging {
+    opacity: 0.45;
 }
 
 .neo-director-refpick-item:hover {
-    border-color: rgba(255, 255, 255, 0.28);
+    outline: 1px solid rgba(255, 255, 255, 0.35);
+    outline-offset: -1px;
 }
 
-.neo-director-refpick-active {
-    border-color: #e6a23c;
-    box-shadow: 0 0 0 1px #e6a23c;
-}
-
-/* 缩略图按类型渲染：图 <img>、视频 <video> 取首帧、音频用音符占位 */
+/* 缩略图按类型渲染：图 <img>、视频 <video> 取首帧、音频用音符占位；填满瓷砖不留空白 */
 .neo-director-refpick-thumb {
     width: 100%;
-    height: 62px;
-    object-fit: contain;
+    height: 100%;
+    object-fit: cover;   /* 宽度已按画面比例，cover 填满不留空白 */
     display: block;
     background: #111;
-    border-radius: 4px;
 }
 
 .neo-director-refpick-thumb-audio {
@@ -972,33 +1019,27 @@
     color: #8a94a0;
 }
 
-.neo-director-refpick-name {
-    font-size: 10px;
-    color: #9aa4b0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
 .neo-director-refpick-del {
     position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 17px;
-    height: 17px;
+    top: 3px;
+    right: 3px;
+    width: 16px;
+    height: 16px;
     padding: 0;
     cursor: pointer;
-    background: #2b2b2b;
+    background: rgba(20, 20, 20, 0.85);
     color: #d8a03c;
     border: 1px solid #5a5f6b;
     border-radius: 50%;
     font-size: 10px;
     line-height: 1;
     z-index: 2;
+    opacity: 0;   /* hover 才显示 */
+    transition: opacity .1s;
 }
 
 .neo-director-refpick-item:hover .neo-director-refpick-del {
-    background: #3a3a3a;
+    opacity: 1;
 }
 
 /* 尾帧区（仅首尾帧模式显示）：与首帧区同构，独立类名前缀以避免与首帧网格混淆 */
@@ -1086,11 +1127,11 @@
     z-index: 2;
 }
 
-/* 页签栏：自动故事板 / 时间轴分段 */
+/* 页签栏：自动故事板 / 时间轴分段（位于标题栏内） */
 .neo-director-tabs {
     display: flex;
     gap: 4px;
-    border-bottom: 1px solid #333;
+    flex: none;
 }
 
 .neo-director-tab {
@@ -1099,9 +1140,8 @@
     background: transparent;
     color: #9aa4b0;
     border: 1px solid transparent;
-    border-bottom: none;
-    border-radius: 6px 6px 0 0;
-    padding: 6px 12px;
+    border-radius: 6px;
+    padding: 5px 12px;
     font-size: 12px;
 }
 
@@ -1112,8 +1152,8 @@
 
 .neo-director-tab.active {
     color: #fff;
-    background: #1e1e1e;
-    border-color: #3a3a3a;
+    background: #2a2d33;
+    border-color: #4a4d55;
 }
 
 /* 页签内容面板（自动故事板 / 时间轴分段） */
@@ -1171,111 +1211,72 @@
     min-height: 14px;
 }
 
-.neo-director-story-refs {
+/* ---- 自动故事板：左右两栏（左 = 分段前故事 / 右 = 分段后的故事）---- */
+.neo-director-story-cols {
     display: flex;
-    flex-direction: row;      /* 角色/背景参考图同一行 */
-    gap: 10px;
+    gap: 14px;
+    flex: 1;
+    min-height: 0;
 }
 
-.neo-director-ref-col {
+.neo-director-story-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+.neo-director-story-right {
+    border-left: 1px solid #2a2d33;   /* 两栏分隔线 */
+    padding-left: 14px;
+}
+
+.neo-director-story-segs-title {
+    font-weight: 600;
+    color: #cdd6e0;
+}
+
+.neo-director-story-segs {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    flex: 1;                  /* 角色参考图占剩余宽度 */
-    min-width: 0;
-}
-
-.neo-director-ref-col-bg {
-    flex: 0 0 auto;           /* 背景参考图固定宽度 */
-    width: 274px;             /* 预留 2 张 16:9 图：列 128×2 + 间距 8 + 网格内边距 8 + 边框 2 */
-}
-
-.neo-director-ref-col-bg .neo-director-refgrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));  /* 恰好两列 */
-}
-
-.neo-director-ref-col-bg .neo-director-ref-thumb {
-    aspect-ratio: 16 / 9;     /* 高随列宽自适应 → 图 120×67.5，标准 16:9 */
-    height: auto;
-}
-
-.neo-director-refgrid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 8px;
-    min-height: 24px;
-    padding: 4px;
     background: #161616;
-    border: 1px dashed #3a3a3a;
+    border: 1px solid #2a2d33;
     border-radius: 6px;
+    padding: 8px;
 }
 
-.neo-director-refgrid.neo-director-drop {
-    outline: 2px dashed #e6a23c;
-    outline-offset: 2px;
+.neo-director-story-segs-empty {
+    color: #6b7280;
+    font-size: 11px;
+    line-height: 1.5;
 }
 
-.neo-director-ref-item {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 3px;
+.neo-director-story-seg-item {
     background: #1e1e1e;
     border: 1px solid #3a3a3a;
     border-radius: 6px;
-    cursor: pointer;
-    position: relative;
+    padding: 6px 8px;
 }
 
-.neo-director-ref-item:hover {
-    border-color: rgba(255, 255, 255, 0.28);
+.neo-director-story-seg-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #e6a23c;
+    margin-bottom: 4px;
 }
 
-.neo-director-ref-active {
-    border-color: #e6a23c;
-    box-shadow: 0 0 0 1px #e6a23c;
-}
-
-.neo-director-ref-thumb {
-    width: 100%;
-    height: 72px;
-    object-fit: cover;
-    display: block;
-    background: #111;
-    border-radius: 4px;
-    pointer-events: none;
-}
-
-.neo-director-ref-desc {
-    width: 100%;
-    box-sizing: border-box;
-    background: #161616;
+.neo-director-story-seg-prompt {
+    font-size: 12px;
     color: #ddd;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 2px 5px;
-    font-size: 10px;
-}
-
-.neo-director-ref-del {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 17px;
-    height: 17px;
-    padding: 0;
-    cursor: pointer;
-    background: #2b2b2b;
-    color: #d8a03c;
-    border: 1px solid #5a5f6b;
-    border-radius: 50%;
-    font-size: 10px;
-    line-height: 1;
-    z-index: 2;
-}
-
-.neo-director-ref-item:hover .neo-director-ref-del {
-    background: #3a3a3a;
+    white-space: pre-wrap;
+    line-height: 1.5;
 }
 
 .neo-director-story-actions {
@@ -1285,8 +1286,7 @@
     flex-wrap: wrap;
 }
 
-.neo-director-seglen-wrap,
-.neo-director-setff-wrap {
+.neo-director-seglen-wrap {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -1353,6 +1353,27 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    white-space: nowrap;
+    cursor: pointer;
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 5px;
+}
+
+.neo-director-local-add:hover {
+    border-color: #5a5a5a;
+    color: #fff;
+}
+
+/* 「同步到所有分段」按钮：与素材库按钮同排（参考素材区标题行右侧） */
+.neo-director-segref-sync {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
     gap: 5px;
     padding: 2px 8px;
     font-size: 11px;
@@ -1364,7 +1385,7 @@
     border-radius: 6px;
 }
 
-.neo-director-local-add:hover {
+.neo-director-segref-sync:hover {
     border-color: #5a5a5a;
     color: #fff;
 }

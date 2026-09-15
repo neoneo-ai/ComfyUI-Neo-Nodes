@@ -97,11 +97,14 @@ export class DirectorTimeline {
       if (!this._hueById.has(id)) this._hueById.set(id, this._hueById.size);
     }
     for (const s of segs) {
-      if (!s.thumbUrl || this._thumbs.has(s.thumbUrl)) continue;
-      const img = new Image();
-      img.onload = () => this.refresh();
-      img.src = s.thumbUrl;
-      this._thumbs.set(s.thumbUrl, img);
+      const urls = [s.thumbUrl].concat(Array.isArray(s.matThumbs) ? s.matThumbs : []);
+      for (const u of urls) {
+        if (!u || this._thumbs.has(u)) continue;
+        const img = new Image();
+        img.onload = () => this.refresh();
+        img.src = u;
+        this._thumbs.set(u, img);
+      }
     }
     this._draw();
   }
@@ -357,10 +360,10 @@ export class DirectorTimeline {
     else this.select(d.src);
     this.refresh();
   }
-  // 段身份色相：有 id 按身份槽位（重排不变），无 id 回退按位置
+  // 段身份色相：有 id 按身份槽位（重排不变），无 id 回退按位置；+180 让默认段落在青绿色系而非红色
   _identityHue(seg, i) {
     const slot = seg && seg.id != null ? this._hueById.get(seg.id) : undefined;
-    return ((slot == null ? i : slot) * 47) % 360;
+    return (((slot == null ? i : slot) * 47 + 180) % 360);
   }
 
   _rulerStep(pps, usable) {
@@ -539,6 +542,62 @@ export class DirectorTimeline {
     return "";
   }
 
+  // 参考素材展示（r2v）：参考图按原比例逐张横排平铺满块高（能放几张放几张，画在首帧同区域之上），
+  // 视频/音频无缩略图，右上角小徽标显示数量。seg.mat = { images, videos, audios }、seg.matThumbs = [url...]。
+  _paintMat(ctx, x, w, top, bh, seg) {
+    const mat = seg.mat;
+    if (!mat || !(mat.images || mat.videos || mat.audios)) return;
+    const iw = Math.max(2, w - 2);
+    // 参考图平铺：逐张按原比例裁竖条横排，一轮放完后整组循环重复，铺满块宽不留空白
+    const urls = Array.isArray(seg.matThumbs) ? seg.matThumbs : [];
+    const imgs = [];
+    for (const u of urls) {
+      const img = this._thumbs.get(u);
+      if (!img || !img.complete || !img.naturalWidth) continue;
+      imgs.push(img);
+    }
+    if (imgs.length) {
+      const tileH = bh - 8;
+      const right = x + w - 5;
+      ctx.save();
+      this._rr(ctx, x + 5, top + 4, Math.max(2, iw - 8), tileH, 3);
+      ctx.clip();
+      let cx = x + 5;
+      let i = 0;
+      while (cx < right) {
+        const img = imgs[i % imgs.length];
+        const tw = Math.max(12, tileH * (img.naturalWidth / img.naturalHeight));
+        this._drawThumb(img, cx, top + 4, tw, tileH);
+        cx += tw;
+        i++;
+      }
+      ctx.restore();
+    }
+    // 视频/音频数量徽标（右上角，位于时长左侧，避开左上序号）
+    const badges = [];
+    if (mat.videos) badges.push(['▶' + mat.videos, '#b06bff']);
+    if (mat.audios) badges.push(['♪' + mat.audios, '#3fbf7f']);
+    if (!badges.length) return;
+    ctx.font = 'bold 9px sans-serif';
+    let bw = 0;
+    for (const [label] of badges) bw += ctx.measureText(label).width + 8 + 3;
+    let bx = x + w - 5 - bw;
+    if (seg.duration) bx -= ctx.measureText(String(seg.duration) + 's').width + 6;   // 给时长让位（粗体偏宽，方向安全）
+    const by = top + 4;
+    for (const [label, color] of badges) {
+      const tw2 = ctx.measureText(label).width + 8;
+      this._rr(ctx, bx, by, tw2, 13, 3);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, bx + tw2 / 2, by + 7);
+      ctx.textAlign = 'left';
+      bx += tw2 + 3;
+    }
+  }
+
   // 绘制单个分段块（普通/幽灵共用）：浅色身份底（重排不变色）；有首帧图则平铺满块宽，文字白字描边，否则浅底深字
   _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop, prog) {
     const iw = Math.max(2, w - 2);
@@ -576,7 +635,10 @@ export class DirectorTimeline {
       ctx.fillText(t, tx, ty);
     };
 
-    // 序号（左上）+ 时长（右上）：块顶部一行（白字 + 深色描边，有图/无图统一）
+    // 参考素材展示（r2v）：参考图平铺满块 + 视频/音频数量徽标（先画图片，文字再覆盖其上保证可读）
+    this._paintMat(ctx, x, w, top, bh, seg);
+
+    // 序号（左上）+ 时长（右上）：块顶部一行（白字 + 深色描边，画在图片之上）
     ctx.textBaseline = "top";
     put(numLabel, x + 6, top + 4, "bold 10px sans-serif", "#fff");
     if (seg.duration) {
@@ -585,14 +647,14 @@ export class DirectorTimeline {
       put(d, x + w - ctx.measureText(d).width - 5, top + 4, "9px sans-serif", "#fff");
     }
 
-    // 提示词片段：块底部，最多两行（超出截断加省略号）
+    // 提示词片段：块底部（Y轴底部，末行贴下沿留 5px），最多两行（超出截断加省略号），画在图片之上
     if (seg.prompt) {
       ctx.font = "11px sans-serif";
       const lines = this._fitLines(ctx, seg.prompt, Math.max(20, w - 14), 2);
-      const baseBottom = top + bh - 6;   // 底部留 6px（避开横向滚动条与悬停提示）
       ctx.textBaseline = "bottom";
+      const bottomY = top + bh - 5;
       for (let li = 0; li < lines.length; li++) {
-        put(lines[li], x + 6, baseBottom - (lines.length - 1 - li) * 13, "11px sans-serif", "#fff");
+        put(lines[li], x + 6, bottomY - (lines.length - 1 - li) * 13, "11px sans-serif", "#fff");
       }
     }
 

@@ -85,7 +85,7 @@ test("时间轴说明行最右侧「拉伸」控制条：点按钮/拖滑块驱�
     await openDirectorEditor(existing);
     await sleep(60);
 
-    // 说明行：左侧文字 span + 最右侧「拉伸」控制条（🔍 拉伸 按钮 + 滑块）
+    // 说明行：左侧文字 span + 最右侧「拉伸」控制条（↔ 拉伸 按钮 + 滑块）
     const label = document.querySelector(".neo-director-tl-label");
     assert.ok(label, "时间轴说明行存在");
     assert.ok(label.querySelector("span"), "说明行含文字 span");
@@ -101,7 +101,7 @@ test("时间轴说明行最右侧「拉伸」控制条：点按钮/拖滑块驱�
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
     canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
 
-    // 点「🔍 拉伸」→ zoom 1→2：滑块同步、canvas 按像素宽（自然宽 = max(可视宽, 默认总宽) = 326，×2）
+    // 点「↔ 拉伸」→ zoom 1→2：滑块同步、canvas 按像素宽（自然宽 = max(可视宽, 默认总宽) = 326，×2）
     toggle.click();
     await sleep(60);
     assert.equal(slider.value, "2", "点按钮后滑块同步到 2");
@@ -664,27 +664,21 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     await openDirectorEditor(null); // 新建：默认 1 个空段
     await sleep(60);
 
-    // 页签结构：默认落在「时间轴分段」，故事板页隐藏
+    // 页签结构：新建默认落在「自动故事板」，时间轴页隐藏
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
     assert.equal(tabs.length, 2, "两个页签");
     const tabStory = tabs.find((t) => t.textContent.includes("自动故事板"));
     const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
     assert.ok(tabStory && tabTimeline, "两个页签齐全");
-    assert.ok(tabTimeline.classList.contains("active"), "默认激活时间轴页");
-    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none", "故事板页默认隐藏");
-
-    // 切到「自动故事板」页
-    tabStory.click();
-    await sleep(20);
-    assert.ok(tabStory.classList.contains("active"), "切换到故事板页");
-    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页被隐藏");
+    assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
+    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
 
     // 故事区元素齐全
     const ideaInp = document.querySelector(".neo-director-story-idea");
     const genBtn = document.querySelector(".neo-director-gen-story");
     const storyTa = document.querySelector(".neo-director-story");
     assert.ok(ideaInp && genBtn && storyTa, "主题输入 / 生成按钮 / 故事框齐全");
-    assert.ok(document.querySelector(".neo-director-refgrid"), "参考图网格存在");
+    assert.equal(document.querySelector(".neo-director-refgrid"), null, "已移除参考图网格");
     assert.ok(document.querySelector(".neo-director-seglen"), "分段粒度选择器存在");
 
     // ① 自动生成故事 → 写入可编辑故事框
@@ -693,14 +687,14 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     await sleep(50);
     assert.equal(storyTa.value, "生成的故事正文", "生成结果写入故事框");
 
-    // ② 确认并拆分 → 替换时间轴段落并自动切回时间轴页（技能取首个可用视频技能）
+    // ② 确认并拆分 → 填充时间轴段落，右栏显示分段后的故事（留在本页，不再自动切页）
     const splitBtn = document.querySelector(".neo-director-split");
     assert.ok(splitBtn, "拆分按钮存在");
     storyTa.value = "场景一…";
     splitBtn.click();
     await sleep(50);
 
-    assert.ok(tabTimeline.classList.contains("active"), "拆分后自动切回时间轴页");
+    assert.ok(tabStory.classList.contains("active"), "拆分后仍停留在故事板页（左右两栏对照）");
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
     assert.equal(segs.length, 2, "拆分成 2 段");
     assert.equal(segs[0].querySelector(".neo-director-prompt").value, "场景A提示词");
@@ -708,17 +702,23 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     assert.equal(segs[0].querySelector(".neo-director-skill").value, "sk-a", "技能取首个可用视频技能");
     assert.equal(Number(segs[1].querySelector(".neo-director-dur").value), 10);
 
+    // 右栏：分段后的故事（2 段，含提示词）
+    const segItems = Array.from(document.querySelectorAll(".neo-director-story-seg-item"));
+    assert.equal(segItems.length, 2, "右栏显示 2 个分段");
+    assert.ok(segItems[0].textContent.includes("场景A提示词"), "右栏第 1 段含提示词");
+    assert.ok(segItems[1].textContent.includes("场景B提示词"), "右栏第 2 段含提示词");
+
     document.querySelector(".neo-director-close").click();
     await sleep(20);
 });
 
-test("导演编辑器：素材直接拖入首帧网格 / 参考图网格（非时间轴 canvas）也能加入", async () => {
+test("导演编辑器：素材直接拖入首帧网格（非时间轴 canvas）也能加入", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "dropped.png" }));
 
-    await openDirectorEditor(null); // 新建：默认时间轴页，1 个空段
+    await openDirectorEditor(null); // 新建：1 个空段（首帧网格在时间轴页，DOM 仍存在可拖入）
     await sleep(60);
 
     const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"dragged.png","subfolder":""}' : "") };
@@ -733,18 +733,6 @@ test("导演编辑器：素材直接拖入首帧网格 / 参考图网格（非�
     const ffTile = Array.from(document.querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === "dropped.png");
     assert.ok(ffTile, "拖入的素材加入首帧网格");
     assert.ok(ffTile.classList.contains("neo-director-ff-active"), "拖入的素材被选中");
-
-    // ② 故事板页：拖到角色参考图网格 → 加入并选中
-    const tabStory = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("自动故事板"));
-    tabStory.click();
-    await sleep(20);
-    const refGrid = document.querySelector(".neo-director-refgrid");
-    assert.ok(refGrid, "参考图网格存在");
-    refGrid.dispatchEvent(dropEv);
-    await sleep(30);
-    const refTile = Array.from(document.querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "dropped.png");
-    assert.ok(refTile, "拖入的素材加入参考图网格");
-    assert.ok(refTile.classList.contains("neo-director-ref-active"), "拖入的素材被选中");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
@@ -808,9 +796,9 @@ test("导演编辑器：首帧素材库按钮打开/收起 ComfyUI 左侧素材�
     await sleep(20);
 });
 
-test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/参考图/粒度），保存时带回 story", async () => {
+test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/粒度），保存时带回 story", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
-    appState.graph = { _nodes: [] }; // 画布无素材 → 参考图靠已存名回填
+    appState.graph = { _nodes: [] }; // 画布无素材
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
     mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "旧配方" }));
 
@@ -822,8 +810,7 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/参
         story: {
             idea: "旧主题",
             story: "旧故事正文",
-            characters: [{ filename: "char.png", desc: "猫" }],
-            backgrounds: [{ filename: "bg.png" }],
+            backgrounds: [{ filename: "bg.png" }], // 旧配方遗留字段：应被忽略、不再回显/回传
             segment_seconds: 15,
         },
     };
@@ -839,26 +826,18 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/参
     assert.equal(document.querySelector(".neo-director-story").value, "旧故事正文");
     assert.equal(document.querySelector(".neo-director-seglen").value, "15");
 
-    // 角色 / 背景参考图回填并保持选中（含描述）
-    const grids = Array.from(document.querySelectorAll(".neo-director-refgrid"));
-    assert.equal(grids.length, 2, "角色/背景两个参考图网格");
-    const charTile = Array.from(grids[0].querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "char.png");
-    assert.ok(charTile, "角色参考图回填");
-    assert.ok(charTile.classList.contains("neo-director-ref-active"), "角色参考图为选中态");
-    assert.equal(charTile.querySelector(".neo-director-ref-desc").value, "猫", "参考图描述回显");
-    const bgTile = Array.from(grids[1].querySelectorAll(".neo-director-ref-item")).find((it) => it.dataset.file === "bg.png");
-    assert.ok(bgTile, "背景参考图回填");
-    assert.ok(bgTile.classList.contains("neo-director-ref-active"), "背景参考图为选中态");
+    // 已移除角色/背景参考图：不再渲染任何参考网格（旧配方的 backgrounds 被忽略）
+    assert.equal(document.querySelectorAll(".neo-director-refgrid").length, 0, "无参考图网格");
 
-    // 未改动直接保存：请求体完整带回 story（后端据此落盘，下次打开可再回显）
+    // 未改动直接保存：请求体带回 story（主题/脚本/粒度），已移除的参考图字段不回传
     document.querySelector(".neo-director-save").click();
     await sleep(50);
     const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
     assert.ok(saveCall, "发出保存请求");
     assert.equal(saveCall.body.story.idea, "旧主题");
     assert.equal(saveCall.body.story.story, "旧故事正文");
-    assert.deepEqual(saveCall.body.story.characters, [{ filename: "char.png", desc: "猫" }]);
-    assert.deepEqual(saveCall.body.story.backgrounds, [{ filename: "bg.png", desc: "" }]);
+    assert.equal(saveCall.body.story.characters, undefined, "不再回传 characters");
+    assert.equal(saveCall.body.story.backgrounds, undefined, "不再回传 backgrounds");
     assert.equal(saveCall.body.story.segment_seconds, 15);
 });
 
@@ -884,8 +863,87 @@ test("导演编辑器：新建配方无故事内容时 story 各字段为空（�
     assert.ok(saveCall, "发出保存请求");
     assert.equal(saveCall.body.story.idea, null);
     assert.equal(saveCall.body.story.story, null);
-    assert.deepEqual(saveCall.body.story.characters, []);
-    assert.deepEqual(saveCall.body.story.backgrounds, []);
+    assert.equal(saveCall.body.story.characters, undefined, "已移除角色参考图，不再回传 characters");
+    assert.equal(saveCall.body.story.backgrounds, undefined, "已移除背景参考图，不再回传 backgrounds");
+});
+
+test("导演编辑器：新建默认故事板页，标题随主题输入实时同步（超 20 字截断），手动命名后不再覆盖", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    // ① 新建：默认落在自动故事板页，时间轴页隐藏
+    await openDirectorEditor(null);
+    await sleep(60);
+    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
+    const tabStory = tabs.find((t) => t.textContent.includes("自动故事板"));
+    assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
+    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
+
+    const ideaInp = document.querySelector(".neo-director-story-idea");
+    const nameInp = document.querySelector(".neo-director-name");
+    const nameView = document.querySelector(".neo-director-name-view");
+
+    // ② 输入主题 → 标题实时同步（未超 20 字）
+    ideaInp.value = "一只机器猫在雨夜找家";
+    ideaInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value, "一只机器猫在雨夜找家", "标题同步主题");
+    assert.equal(nameView.textContent, "一只机器猫在雨夜找家", "标题视图更新");
+
+    // ③ 超过 20 字 → 截断加 …（长度 = 20 + 省略号）
+    ideaInp.value = "这是一个非常非常长的故事主题用来测试标题截断逻辑是否正常工作啊";
+    ideaInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value.length, 21, "20 字 + 省略号");
+    assert.ok(nameInp.value.endsWith("…"), "超长截断加省略号");
+
+    // ④ 手动命名后，再改主题不再覆盖标题
+    nameInp.value = "我手动的名字";
+    nameInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    ideaInp.value = "又改了主题内容";
+    ideaInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value, "我手动的名字", "手动命名后不再被主题覆盖");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：编辑已有配方默认时间轴页，且主题输入不同步标题", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const existing = {
+        name: "旧配方",
+        type: "video_director",
+        shared: { width: 1344, height: 768 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing, null);
+    await sleep(60);
+
+    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
+    const tabStory = tabs.find((t) => t.textContent.includes("自动故事板"));
+    const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
+    assert.ok(tabTimeline.classList.contains("active"), "编辑默认激活时间轴页");
+    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none", "故事板页默认隐藏");
+
+    // 切到故事板页，改主题不应覆盖已有配方名
+    tabStory.click();
+    await sleep(20);
+    const ideaInp = document.querySelector(".neo-director-story-idea");
+    const nameInp = document.querySelector(".neo-director-name");
+    assert.equal(nameInp.value, "旧配方", "初始为已有配方名");
+    ideaInp.value = "新主题内容";
+    ideaInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value, "旧配方", "编辑时主题输入不同步标题");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
 });
 
 
@@ -997,13 +1055,11 @@ test("导演编辑器：图生视频段三组参考网格回显，保存写入 r
     assert.equal(rows.length, 3, "参考图 / 参考视频 / 参考音频三组网格");
     assert.deepEqual(rows.map((r) => r.querySelector(".neo-director-refpick-count").textContent),
         ["1/9", "1/3", "1/3"], "各自上限：图 9 / 视频 3 / 音频 3");
-    const isActive = (row, name) => {
-        const tile = Array.from(row.querySelectorAll(".neo-director-refpick-item")).find((it) => it.dataset.file === name);
-        return !!tile && tile.classList.contains("neo-director-refpick-active");
-    };
-    assert.ok(isActive(rows[0], "a.png"), "参考图回显为选中");
-    assert.ok(isActive(rows[1], "v.mp4"), "参考视频回显为选中");
-    assert.ok(isActive(rows[2], "s.wav"), "参考音频回显为选中");
+    const hasTile = (row, name) =>
+        Array.from(row.querySelectorAll(".neo-director-refpick-item")).some((it) => it.dataset.file === name);
+    assert.ok(hasTile(rows[0], "a.png"), "参考图回显");
+    assert.ok(hasTile(rows[1], "v.mp4"), "参考视频回显");
+    assert.ok(hasTile(rows[2], "s.wav"), "参考音频回显");
 
     document.querySelector(".neo-director-save").click();
     await sleep(50);
@@ -1015,6 +1071,120 @@ test("导演编辑器：图生视频段三组参考网格回显，保存写入 r
     const assets = saveCall.body.assets.map((a) => `${a.filename}:${a.kind}`);
     assert.ok(assets.includes("v.mp4:video"), "参考视频进配方 assets");
     assert.ok(assets.includes("s.wav:audio"), "参考音频进配方 assets");
+});
+
+test("导演编辑器：r2v 参考素材为已用列表——拖放排序、✕ 移除、拖入超限拒绝，保存按顺序写 refs", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };   // 无连线素材：只靠已存名回显
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "R2V" }));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "d.mp4" }));
+
+    const existing = {
+        name: "R2V", type: "video_director", shared: { mode: "r2v", width: 960, height: 544 },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "r2v",
+                     refs: { images: ["a.png", "b.png", "c.png"], videos: ["v1.mp4", "v2.mp4", "v3.mp4"] } }],
+    };
+    await openDirectorEditor(existing, null);
+    await sleep(60);
+
+    const imgGrid = document.querySelector(".neo-director-seg .neo-director-refpick-grid");
+    assert.ok(imgGrid, "参考图列表存在");
+    const tilesOf = (grid) => Array.from(grid.querySelectorAll(".neo-director-refpick-item"));
+    const orderOf = (grid) => tilesOf(grid).map((it) => it.dataset.file);
+    // 模拟 HTML5 拖放重排：给瓷砖受控横向矩形（宽 50、间隔 10），按 clientX 命中某砖中线前/后触发 dragstart+drop
+    const simulateDrag = (grid, fromFile, clientX) => {
+        const tiles = Array.from(grid.querySelectorAll(".neo-director-refpick-item"));
+        tiles.forEach((t, k) => { t.getBoundingClientRect = () => ({ left: k * 60, right: k * 60 + 50, width: 50, top: 0, bottom: 0, height: 0 }); });
+        const src = tiles.find((t) => t.dataset.file === fromFile);
+        assert.ok(src, `瓷砖 ${fromFile} 存在`);
+        const dt = { effectAllowed: "", setData() {}, getData: () => "" };
+        const startEv = new window.Event("dragstart", { bubbles: true, cancelable: true });
+        Object.defineProperty(startEv, "dataTransfer", { value: dt, configurable: true });
+        src.dispatchEvent(startEv);
+        const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+        Object.defineProperty(dropEv, "clientX", { value: clientX, configurable: true });
+        Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+        grid.dispatchEvent(dropEv);
+    };
+
+    assert.deepEqual(orderOf(imgGrid), ["a.png", "b.png", "c.png"], "回显顺序即已存顺序");
+
+    // 拖放重排：把 c 拖到最前 → [c,a,b]；再把 a 拖到最后 → [c,b,a]
+    simulateDrag(imgGrid, "c.png", 5);      // clientX<首砖中线 → 插入位 0
+    assert.deepEqual(orderOf(imgGrid), ["c.png", "a.png", "b.png"], "拖 c 到最前");
+    simulateDrag(imgGrid, "a.png", 10000);   // clientX 超末砖 → 追加到末尾
+    assert.deepEqual(orderOf(imgGrid), ["c.png", "b.png", "a.png"], "拖 a 到最后");
+
+    // ✕ 移除 c（现居首）→ [b,a]，计数 2/9
+    tilesOf(imgGrid).find((it) => it.dataset.file === "c.png").querySelector(".neo-director-refpick-del").click();
+    assert.deepEqual(orderOf(imgGrid), ["b.png", "a.png"], "✕ 移除后剩两项");
+    assert.equal(imgGrid.parentElement.querySelector(".neo-director-refpick-count").textContent, "2/9", "计数更新为 2/9");
+
+    // 视频组已满 3：拖入第 4 个被拒，保持 3/3 与顺序（按瓷砖内容定位，不依赖行序）
+    const allGrids = Array.from(document.querySelectorAll(".neo-director-seg .neo-director-refpick-grid"));
+    assert.equal(allGrids.length, 3, "三组参考列表都在");
+    const vidGrid = allGrids.find((g) => Array.from(g.querySelectorAll(".neo-director-refpick-item")).some((it) => it.dataset.file === "v1.mp4"));
+    assert.ok(vidGrid, "视频组列表存在");
+    assert.equal(vidGrid.parentElement.querySelector(".neo-director-refpick-count").textContent, "3/3", "视频组初始 3/3");
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"d.mp4","subfolder":""}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    vidGrid.dispatchEvent(dropEv);
+    await sleep(30);
+    assert.deepEqual(orderOf(vidGrid), ["v1.mp4", "v2.mp4", "v3.mp4"], "超限拖入被拒，顺序不变");
+    assert.equal(vidGrid.parentElement.querySelector(".neo-director-refpick-count").textContent, "3/3", "计数保持 3/3");
+
+    // 最后保存（成功即关闭编辑器，故 DOM 断言都放在此之前）：refs 按当前排序写入
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.deepEqual(saveCall.body.segments[0].refs.images, ["b.png", "a.png"], "图 refs 按排序后顺序写入");
+    assert.deepEqual(saveCall.body.segments[0].refs.videos, ["v1.mp4", "v2.mp4", "v3.mp4"], "视频 refs 保持顺序");
+});
+
+test("导演编辑器：「同步到所有分段」把当前段参考素材一键覆盖式复制到其余各段", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };   // 无连线素材：只靠已存名回显
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const existing = {
+        name: "SYNC", type: "video_director", shared: { mode: "r2v", width: 960, height: 544 },
+        segments: [
+            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "r2v",
+              refs: { images: ["a.png", "b.png"], videos: ["v1.mp4"] } },
+            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, mode: "r2v",
+              refs: { images: ["x.png"], audios: ["m1.mp3"] } },
+        ],
+    };
+    await openDirectorEditor(existing, null);
+    await sleep(60);
+
+    const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(segs.length, 2);
+    const orderOf = (grid) => Array.from(grid.querySelectorAll(".neo-director-refpick-item")).map((it) => it.dataset.file);
+    const gridsOf = (seg) => Array.from(seg.querySelectorAll(".neo-director-refpick-grid")); // DOM 序：图 / 视频 / 音频
+
+    assert.deepEqual(orderOf(gridsOf(segs[0])[0]), ["a.png", "b.png"], "第1段参考图回显");
+    assert.deepEqual(orderOf(gridsOf(segs[1])[0]), ["x.png"], "第2段参考图初始不同");
+    assert.deepEqual(orderOf(gridsOf(segs[1])[2]), ["m1.mp3"], "第2段音频初始存在");
+
+    // 点第1段的「同步到所有分段」→ 其余各段覆盖为第1段三组素材（含清空第2段独有音频）
+    const syncBtn = segs[0].querySelector(".neo-director-segref-sync");
+    assert.ok(syncBtn, "参考素材区标题行有同步按钮");
+    syncBtn.click();
+    await sleep(30);
+
+    for (const seg of segs) {
+        const g = gridsOf(seg);
+        assert.deepEqual(orderOf(g[0]), ["a.png", "b.png"], "各段参考图与第1段一致");
+        assert.deepEqual(orderOf(g[1]), ["v1.mp4"], "各段参考视频与第1段一致");
+        assert.deepEqual(orderOf(g[2]), [], "第1段无音频 → 其余段音频被清空");
+    }
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
 });
 
 test("导演编辑器：参考素材区仅图生视频段显示（文生段隐藏）", async () => {
@@ -1089,7 +1259,7 @@ test("导演编辑器：首尾帧模式显示首帧+尾帧区，保存写入 las
     assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save").body.shared.mode, "fl2v");
 });
 
-test("导演编辑器：首尾帧模式缺尾帧时保存被拒（提示尾帧）", async () => {
+test("导演编辑器：首尾帧模式缺尾帧时仅提示、仍按当前内容保存", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
@@ -1102,9 +1272,9 @@ test("导演编辑器：首尾帧模式缺尾帧时保存被拒（提示尾帧�
     await sleep(60);
     document.querySelector(".neo-director-save").click();
     await sleep(40);
-    assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save"), undefined, "缺尾帧不发保存请求");
-    document.querySelector(".neo-director-close").click();
-    await sleep(20);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "缺尾帧仍发保存请求（只提示、不阻止）");
+    assert.equal(saveCall.body.segments[0].last_frame, undefined, "缺尾帧则不带 last_frame 字段");
 });
 
 test("导演编辑器：参考主体模式显示参考素材区、隐藏首尾帧区", async () => {
@@ -1158,7 +1328,7 @@ test("导演编辑器：混合模式下每段可选 t2v/i2v/fl2v/r2v，切换后
     await sleep(20);
 });
 
-test("导演编辑器：所有网格都有「本地」按钮（首帧/尾帧/参考图/参考视频/参考音频）", async () => {
+test("导演编辑器：首帧/尾帧有「本地」按钮，参考组网格点击上传（无按钮、含隐藏 file input）", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
@@ -1175,12 +1345,58 @@ test("导演编辑器：所有网格都有「本地」按钮（首帧/尾帧/参
     assert.ok(ffBlock.querySelector(".neo-director-local-add"), "首帧区有「本地」按钮");
     assert.ok(lfBlock.querySelector(".neo-director-local-add"), "尾帧区有「本地」按钮");
 
-    // 参考素材区三组网格各有「本地」按钮
+    // 参考素材区三组网格：去掉「本地」按钮，改为点击黑色空区上传（行内含隐藏 file input）
     const refRows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
     assert.equal(refRows.length, 3, "参考图/视频/音频三组");
     for (const row of refRows) {
-        assert.ok(row.querySelector(".neo-director-local-add"), `参考组有「本地」按钮: ${row.querySelector(".neo-director-field-label").textContent}`);
+        const label = row.querySelector(".neo-director-field-label").textContent;
+        assert.ok(!row.querySelector(".neo-director-local-add"), `参考组无「本地」按钮: ${label}`);
+        assert.ok(row.querySelector("input[type=file]"), `参考组含隐藏 file input（点击网格上传）: ${label}`);
     }
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：参考组网格点击黑色空区触发本地上传并加入该组", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/upload/image", () => jsonResponse({ name: "ref_up.png", subfolder: "", type: "input" }));
+
+    await openDirectorEditor({
+        name: "REFUP", shared: { mode: "r2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "r2v" }],
+    }, null);
+    await sleep(60);
+
+    const imgRow = Array.from(document.querySelectorAll(".neo-director-segref-row"))
+        .find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考图"));
+    const grid = imgRow.querySelector(".neo-director-refpick-grid");
+    assert.ok(grid, "参考图网格存在");
+
+    // 点击黑色空区（非瓷砖）→ 触发隐藏 file input.click()
+    const fileInput = imgRow.querySelector("input[type=file]");
+    let openCalls = 0;
+    fileInput.click = () => { openCalls++; };   // 拦截：jsdom 无文件选择器
+    grid.click();
+    assert.equal(openCalls, 1, "点击空区触发 file input.click()");
+
+    // 模拟选择文件 → 上传并加入参考图组
+    const fakeFile = new File(["fake"], "ref.png", { type: "image/png" });
+    Object.defineProperty(fileInput, "files", { value: [fakeFile], configurable: true });
+    fileInput.dispatchEvent(new Event("change"));
+    await sleep(50);
+
+    const uploadCall = fetchLog.find((c) => c.path === "/upload/image");
+    assert.ok(uploadCall, "调用了 /upload/image");
+    const tile = Array.from(grid.querySelectorAll(".neo-director-refpick-item")).find((it) => it.dataset.file === "ref_up.png");
+    assert.ok(tile, "上传文件加入参考图组");
+
+    // 点瓷砖不额外触发上传
+    const before = openCalls;
+    grid.querySelector(".neo-director-refpick-item").click();
+    assert.equal(openCalls, before, "点瓷砖不触发上传");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
@@ -1244,6 +1460,67 @@ test("导演编辑器：参考视频/音频的「本地」按钮 accept 正确�
     assert.equal(imgRow.querySelector("input[type=file]").accept, "image/*", "参考图 accept=image/*");
     assert.equal(vidRow.querySelector("input[type=file]").accept, "video/*", "参考视频 accept=video/*");
     assert.equal(audRow.querySelector("input[type=file]").accept, "audio/*", "参考音频 accept=audio/*");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：视频技能按段有效模式过滤（skill.mode 由后端提供，无匹配回退全量）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-t2v", name: "文生", gen_video: true, mode: "t2v" },
+        { id: "sk-i2v", name: "图生", gen_video: true, mode: "i2v" },
+    ]));
+
+    const existing = {
+        name: "MODE-SKILL",
+        shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-t2v", prompt: "p", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const seg = document.querySelector(".neo-director-seg");
+    const skillSel = seg.querySelector(".neo-director-skill");
+    assert.equal(skillSel.options.length, 1, "t2v 段仅列 t2v 技能");
+    assert.equal(skillSel.value, "sk-t2v", "默认选中该段模式对应技能");
+
+    // 全局切到 i2v → 该段技能列表刷新为 i2v 技能
+    const modeSel = document.querySelector(".neo-director-mode");
+    modeSel.value = "i2v";
+    modeSel.dispatchEvent(new Event("change"));
+    assert.equal(skillSel.options.length, 1, "切 i2v 后仅列 i2v 技能");
+    assert.equal(skillSel.value, "sk-i2v", "刷新后默认选中 i2v 技能");
+
+    // 切到 fl2v（无对应技能）→ 回退全量，避免空下拉
+    modeSel.value = "fl2v";
+    modeSel.dispatchEvent(new Event("change"));
+    assert.equal(skillSel.options.length, 2, "无匹配模式时回退全量");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：参考素材区标题行「素材库」按钮打开/收起左侧素材面板", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "r2v" }]));
+
+    await openDirectorEditor({
+        name: "REF-LIB", shared: { mode: "r2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "r2v" }],
+    }, null);
+    await sleep(60);
+
+    const refsLib = document.querySelector(".neo-director-refs-head .neo-director-ff-lib");
+    assert.ok(refsLib, "参考素材区标题行存在素材库按钮");
+
+    const tab = app.extensionManager.sidebarTab;
+    refsLib.click();
+    assert.equal(tab.activeSidebarTabId, "neo.gallery", "点击打开素材面板");
+    refsLib.click();
+    assert.equal(tab.activeSidebarTabId, null, "再次点击收起素材面板");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);

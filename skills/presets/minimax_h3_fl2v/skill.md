@@ -11,6 +11,7 @@ inputs:
 description: 'H3 首尾帧生视频：首帧 + 尾帧锁定片段收尾'
 category: video_gen
 gen_video: true
+mode: fl2v
 requires_ref: true
 created_at: '2026-09-12T00:00:00+00:00'
 ---

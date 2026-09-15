@@ -61,9 +61,9 @@ async function uploadLocalFile(file) {
     }
 }
 
-/** 创建「从本地添加」按钮：点击弹出文件选择器，选择后上传并回调 onUploaded(fname)。
- *  accept 按素材类型过滤（image/video/audio/all）。 */
-function buildLocalAddButton(accept, onUploaded) {
+/** 创建本地上传用的隐藏 <input type=file>：accept 按素材类型过滤；open() 打开文件选择器，
+ *  选择后上传并回调 onUploaded(fname)。返回 { input, open }（input 需挂进 DOM 才能弹出选择器）。 */
+function buildLocalFilePicker(accept, onUploaded) {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = accept;
@@ -75,15 +75,21 @@ function buildLocalAddButton(accept, onUploaded) {
         fileInput.value = '';  // 允许重复选择同名文件
         if (fname) onUploaded(fname);
     };
+    return { input: fileInput, open: () => fileInput.click() };
+}
+
+/** 创建「从本地添加」按钮：点击弹出文件选择器，选择后上传并回调 onUploaded(fname)。 */
+function buildLocalAddButton(accept, onUploaded) {
+    const picker = buildLocalFilePicker(accept, onUploaded);
     const btn = $el('button', {
         className: 'neo-director-local-add',
         title: '从本地添加素材',
-        onclick: () => fileInput.click(),
+        onclick: picker.open,
     }, [
         $el('i', { className: 'pi pi-upload' }),
         $el('span', { textContent: '本地' }),
     ]);
-    btn.appendChild(fileInput);
+    btn.appendChild(picker.input);
     return btn;
 }
 
@@ -193,91 +199,115 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const SEG_MODE_KEYS = new Set(SEG_MODES.map(([k]) => k));
     const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
     const segRefReaders = new Map();    // 段行 → [读取该段三组参考的函数]（保存时按当前 DOM 顺序取）
+    const segRefSetters = new Map();    // 段行 → [设置该段三组参考的函数]（「同步到所有分段」用）
     const segFrameReaders = new Map();  // 段行 → {first, last} 读取该段首/尾帧的函数
 
-    /** 一组参考素材的多选网格：候选 = 已连线同类媒体（可拖入新素材），点选/取消，✕ 移除候选。 */
-    function buildSegRefRow(group, initialNames) {
-        const candidates = { image: imageRefs, video: videoRefs, audio: audioRefs }[group.kind];
-        const selected = new Set(Array.isArray(initialNames) ? initialNames : []);
-        const shown = new Set();
+    /** 一组参考素材的「已用列表」：只显示当前挂上的素材，拖入/本地上传直接插入；
+     *  瓷砖可鼠标拖放调整顺序、✕ 移除。顺序即保存与时间轴展示顺序，数量受 group.max 上限约束。 */
+    function buildSegRefRow(group, initialNames, headExtra) {
+        const list = [];   // 已用素材文件名（有序）：顺序即该段参考素材的先后
         const grid = $el('div', { className: 'neo-director-refpick-grid' });
         const count = $el('span', { className: 'neo-director-refpick-count' });
-        const thumb = (name) => {
-            const url = `/view?filename=${encodeURIComponent(name)}&subfolder=&type=input`;
-            if (group.kind === 'image') return $el('img', { className: 'neo-director-refpick-thumb', src: url, alt: name, loading: 'lazy' });
-            if (group.kind === 'video') return $el('video', { className: 'neo-director-refpick-thumb', src: url, muted: true, preload: 'metadata' });
-            return $el('div', { className: 'neo-director-refpick-thumb neo-director-refpick-thumb-audio', textContent: '🎵' });
-        };
-        const syncSel = () => {
-            for (const it of Array.from(grid.children)) {
-                it.classList.toggle('neo-director-refpick-active', selected.has(it.dataset.file));
-            }
-            count.textContent = `${selected.size}/${group.max}`;
-        };
+        const REF_THUMB_H = 96;   // 瓷砖固定高度（与首帧缩略图 .neo-director-ff-thumb 一致）；宽度按画面比例自适应、紧密平铺不留空白
+        const sizeTile = (tile, w, h) => { if (w && h) tile.style.width = Math.max(36, REF_THUMB_H * (w / h)) + 'px'; };
         const warn = (detail) => app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail, life: 4000 });
-        const makeTile = (name) => {
-            const delBtn = $el('button', { className: 'neo-director-refpick-del', title: '移除该素材', textContent: '✕' });
-            const tile = $el('div', { className: 'neo-director-refpick-item', title: name, dataset: { file: name } }, [
-                thumb(name), $el('div', { className: 'neo-director-refpick-name', textContent: name }), delBtn,
-            ]);
-            tile.onclick = () => {
-                if (selected.has(name)) selected.delete(name);
-                else if (selected.size >= group.max) { warn(`${group.label}最多 ${group.max} 个`); return; }
-                else selected.add(name);
-                syncSel();
-            };
-            delBtn.onclick = (e) => {
-                e.stopPropagation();
-                selected.delete(name);
-                shown.delete(name);
-                tile.remove();
-                const idx = candidates.findIndex(r => r.filename === name);
-                if (idx >= 0) candidates.splice(idx, 1);   // 不再作为候选（保存资产也随之去掉）
-                syncSel();
-            };
-            return tile;
+        let dragIdx = null;   // 正在拖放的瓷砖序号（内部重排用，区别于外部素材拖入）
+        // 每次改动都整体重建瓷砖（列表 ≤9，开销可忽略），保证顺序始终对应当前排列
+        const render = () => {
+            grid.innerHTML = '';
+            list.forEach((name, i) => {
+                const url = `/view?filename=${encodeURIComponent(name)}&subfolder=&type=input`;
+                let media;
+                if (group.kind === 'image') media = $el('img', { className: 'neo-director-refpick-thumb', src: url, alt: name, loading: 'lazy', draggable: false });
+                else if (group.kind === 'video') media = $el('video', { className: 'neo-director-refpick-thumb', src: url, muted: true, preload: 'metadata' });
+                else media = $el('div', { className: 'neo-director-refpick-thumb neo-director-refpick-thumb-audio', textContent: '🎵' });
+                const delBtn = $el('button', { className: 'neo-director-refpick-del', title: '移除该素材', textContent: '✕' });
+                const tile = $el('div', { className: 'neo-director-refpick-item', title: name, draggable: true, dataset: { file: name } }, [media, delBtn]);
+                // 加载后按画面比例设置瓷砖宽度（图 naturalWidth/Height、视频 videoWidth/Height）
+                if (group.kind === 'image') media.addEventListener('load', () => sizeTile(tile, media.naturalWidth, media.naturalHeight));
+                else if (group.kind === 'video') media.addEventListener('loadedmetadata', () => sizeTile(tile, media.videoWidth, media.videoHeight));
+                delBtn.onclick = (e) => { e.stopPropagation(); list.splice(i, 1); render(); };
+                tile.addEventListener('dragstart', (e) => {
+                    dragIdx = i;
+                    e.dataTransfer.effectAllowed = 'move';
+                    try { e.dataTransfer.setData('text/plain', name); } catch (_) {}
+                    tile.classList.add('neo-director-refpick-dragging');
+                });
+                tile.addEventListener('dragend', () => {
+                    dragIdx = null;
+                    tile.classList.remove('neo-director-refpick-dragging');
+                });
+                grid.appendChild(tile);
+            });
+            grid.classList.toggle('has-items', list.length > 0);   // 有素材时去掉空态虚线框、瓷砖顶格紧密平铺
+            count.textContent = `${list.length}/${group.max}`;
         };
-        const addTile = (name) => {
-            if (shown.has(name)) return;
-            shown.add(name);
-            grid.appendChild(makeTile(name));
+        // 插入新素材（拖入/本地上传）：去重 + 上限校验，达上限则提示并拒绝
+        const insert = (name) => {
+            if (!name || list.includes(name)) return;
+            if (list.length >= group.max) { warn(`${group.label}最多 ${group.max} 个`); return; }
+            list.push(name);
+            render();
         };
-        for (const r of candidates) addTile(r.filename);
-        for (const name of selected) addTile(name);
-        syncSel();
-        grid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; grid.classList.add('neo-director-drop'); });
+        // 整体替换本组素材（「同步到所有分段」用）：去重 + 上限约束后重建
+        const set = (names) => {
+            list.length = 0;
+            for (const n of (Array.isArray(names) ? names : [])) {
+                if (n && !list.includes(n) && list.length < group.max) list.push(n);
+            }
+            render();
+        };
+        for (const name of (Array.isArray(initialNames) ? initialNames : [])) {
+            if (name && !list.includes(name)) list.push(name);   // 编辑旧配方回显（已存数据本就合规）
+        }
+        render();
+        // 拖放重排：把被拖瓷砖移到指针所在瓷砖的前/后（按水平中线判断插入位）
+        const reorderFromDrop = (e) => {
+            const from = dragIdx;
+            dragIdx = null;
+            if (from == null || from >= list.length) return;
+            const tiles = Array.from(grid.querySelectorAll('.neo-director-refpick-item'));
+            let insertAt = tiles.length;
+            for (let k = 0; k < tiles.length; k++) {
+                const r = tiles[k].getBoundingClientRect();
+                if (e.clientX < r.left + r.width / 2) { insertAt = k; break; }
+            }
+            let at = from < insertAt ? insertAt - 1 : insertAt;
+            const item = list.splice(from, 1)[0];
+            at = Math.max(0, Math.min(list.length, at));
+            list.splice(at, 0, item);
+            render();
+        };
+        grid.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (dragIdx != null) { e.dataTransfer.dropEffect = 'move'; return; }   // 内部重排：不亮「新素材」高亮
+            e.dataTransfer.dropEffect = 'copy';
+            grid.classList.add('neo-director-drop');
+        });
         grid.addEventListener('dragleave', (e) => { if (!grid.contains(e.relatedTarget)) grid.classList.remove('neo-director-drop'); });
         grid.addEventListener('drop', async (e) => {
             e.preventDefault(); grid.classList.remove('neo-director-drop');
+            if (dragIdx != null) { reorderFromDrop(e); return; }   // 内部瓷砖拖放 = 重排
             const fname = await copyGalleryToInput(grabDataType(e));
-            if (!fname) return;
-            if (!candidates.some(r => r.filename === fname)) {
-                candidates.push({ filename: fname, subfolder: '', type: 'input', kind: group.kind });
-            }
-            addTile(fname);
-            if (selected.size >= group.max) { warn(`${group.label}最多 ${group.max} 个`); return; }
-            selected.add(fname);
-            syncSel();
+            if (fname) insert(fname);
         });
         const acceptMap = { image: 'image/*', video: 'video/*', audio: 'audio/*' };
-        const localBtn = buildLocalAddButton(acceptMap[group.kind] || '*/*', (fname) => {
-            if (!candidates.some(r => r.filename === fname)) {
-                candidates.push({ filename: fname, subfolder: '', type: 'input', kind: group.kind });
-            }
-            addTile(fname);
-            if (selected.size >= group.max) { warn(`${group.label}最多 ${group.max} 个`); return; }
-            selected.add(fname);
-            syncSel();
+        // 本地上传：去掉「本地」按钮，改为点击网格黑色空区弹出文件选择器（隐藏 input 挂在行上，避免被 render() 清空）
+        const picker = buildLocalFilePicker(acceptMap[group.kind] || '*/*', (fname) => insert(fname));
+        grid.addEventListener('click', (e) => {
+            if (e.target.closest('.neo-director-refpick-item')) return;   // 点瓷砖（移除/拖拽）不触发上传
+            picker.open();
         });
         const row = $el('div', { className: 'neo-director-segref-row' }, [
             $el('div', { className: 'neo-director-segref-head' }, [
                 $el('span', { className: 'neo-director-field-label', textContent: `${group.label}（最多 ${group.max}）` }),
+                ...(headExtra ? [headExtra] : []),
                 count,
-                localBtn,
             ]),
             grid,
         ]);
-        return { row, getSelected: () => Array.from(selected) };
+        row.appendChild(picker.input);
+        return { row, getSelected: () => list.slice(), set };
     }
 
     /** 单帧候选网格（首帧/尾帧共用）：「无」项 + 已连线 LoadImage 缩略图，单选。
@@ -358,18 +388,21 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         };
     }
 
+    /** 「素材库」按钮：打开/收起 ComfyUI 左侧 Neo Gallery 面板（首帧行 / 参考区共用）。 */
+    const buildAssetLibButton = () => $el('button', {
+        className: 'neo-director-ff-lib',
+        title: '打开/收起左侧素材面板',
+        onclick: () => toggleGallerySidebar(),
+    }, [
+        $el('i', { className: 'pi pi-images' }),
+        $el('span', { textContent: '素材库' }),
+    ]);
+
     /** 单帧区的标题行（字段名 + 「本地」+ 「素材库」按钮）。onLocalAdd(fname) 在本地上传成功后回调。 */
     const frameRow = (labelText, onLocalAdd) => $el('div', { className: 'neo-director-ff-row' }, [
         $el('label', { className: 'neo-director-field-label', textContent: labelText }),
         buildLocalAddButton('image/*', onLocalAdd),
-        $el('button', {
-            className: 'neo-director-ff-lib',
-            title: '打开/收起左侧素材面板',
-            onclick: () => toggleGallerySidebar(),
-        }, [
-            $el('i', { className: 'pi pi-images' }),
-            $el('span', { textContent: '素材库' }),
-        ]),
+        buildAssetLibButton(),
     ]);
 
     function buildSeg(seg = {}) {
@@ -398,13 +431,36 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const lfBlock = $el('div', { className: 'neo-director-lf-block' }, [
             frameRow('尾帧图（首尾帧模式：锁住该段收尾画面）', (fname) => lfGrid.addCandidate(fname)), lfGrid.grid,
         ]);
-        const segModeRow = $el('div', { className: 'neo-director-row neo-director-segmode-row' }, [
+        // 首帧区 + 尾帧区包一层容器：fl2v（两块都显示）时并排同一行，其余模式仅显示其一、纵向占满
+        const ffLfWrap = $el('div', { className: 'neo-director-fflf' }, [ffBlock, lfBlock]);
+        const segModeRow = $el('div', { className: 'neo-director-segmode-row' }, [
             $el('label', { className: 'neo-director-field-label', textContent: '本段模式' }), segModeSel,
         ]);
 
-        const segRefRows = SEG_REF_GROUPS.map(g => buildSegRefRow(g, (seg.refs || {})[g.key]));
+        // 「同步到所有分段」：把本段三组参考素材（图/视频/音频）一键覆盖式复制到其余各段
+        let selfRowRef = null;   // 本段行引用（row 创建后赋值），供同步按钮定位同步源
+        const syncBtn = $el('button', { className: 'neo-director-segref-sync', title: '把本段参考素材同步到所有分段' }, [
+            $el('i', { className: 'pi pi-copy' }),
+            $el('span', { textContent: '同步到所有分段' }),
+        ]);
+        syncBtn.onclick = () => {
+            const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+            if (rows.length < 2) { app.extensionManager.toast.add({ severity: 'info', summary: '多段导演', detail: '只有一个分段，无需同步', life: 3000 }); return; }
+            const src = (segRefReaders.get(selfRowRef) || []).map(r => r());   // [图, 视频, 音频]
+            if (!src.some(a => a.length)) { app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail: '本段没有可同步的参考素材', life: 3000 }); return; }
+            for (const other of rows) {
+                const setters = segRefSetters.get(other) || [];
+                setters.forEach((set, gi) => set && set(src[gi]));
+            }
+            app.extensionManager.toast.add({ severity: 'success', summary: '多段导演', detail: `已把本段参考素材同步到全部 ${rows.length} 个分段`, life: 3000 });
+        };
+        const segRefRows = SEG_REF_GROUPS.map((g) => buildSegRefRow(g, (seg.refs || {})[g.key]));
         const refsBlock = $el('div', { className: 'neo-director-refs-block' }, [
-            $el('div', { className: 'neo-director-field-label', textContent: '参考素材（参考生视频技能用：图 / 视频 / 音频）' }),
+            $el('div', { className: 'neo-director-refs-head' }, [
+                $el('span', { className: 'neo-director-field-label', textContent: '参考素材（参考生视频技能用：图 / 视频 / 音频）' }),
+                syncBtn,
+                buildAssetLibButton(),
+            ]),
             segRefRows[0].row,  // 参考图独占一行（最多 9 个，需要更多空间）
             $el('div', { className: 'neo-director-ref-row-pair' }, [
                 segRefRows[1].row,  // 参考视频
@@ -413,14 +469,16 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ]);
 
         const row = $el('div', { className: 'neo-director-seg', dataset: { segId: 'seg-' + (++segCounter) } }, [
-            $el('div', { className: 'neo-director-seg-head' }, [$el('span', { className: 'neo-director-seg-title', textContent: '段' }), removeBtn]),
-            $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
-            segModeRow,
+            $el('div', { className: 'neo-director-seg-head' }, [
+                $el('span', { className: 'neo-director-seg-title', textContent: '段' }),
+                segModeRow,   // 本段模式（仅混合模式显示）：紧跟段标题、位于技能之前，同一行
+                $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
+                $el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp,
+                removeBtn,
+            ]),
             $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
-            ffBlock,
-            lfBlock,
+            ffLfWrap,
             refsBlock,
-            $el('div', { className: 'neo-director-dur-row' }, [$el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp]),
         ]);
 
         // 本段模式切换 → 刷新该段首帧/尾帧/参考素材区显隐
@@ -428,6 +486,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         row._addCandidate = ffGrid.addCandidate; // 时间轴拖放到该段 → 作为首帧（与首帧网格共用候选）
         segFrameReaders.set(row, { first: ffGrid.getSelected, last: lfGrid.getSelected });
         segRefReaders.set(row, segRefRows.map(r => r.getSelected));
+        segRefSetters.set(row, segRefRows.map(r => r.set));
+        selfRowRef = row;   // 同步按钮据此定位本段（作为同步源）
         removeBtn.onclick = () => {
             const idx = Array.from(segsWrap.querySelectorAll('.neo-director-seg')).indexOf(row);
             const wasCurrent = currentSegId === row.dataset.segId;
@@ -467,6 +527,21 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // 按有效模式刷新各段：混合模式下显示“本段模式”下拉并逐段生效；
     // 首帧区（i2v/fl2v）、尾帧区（fl2v）、参考素材区（i2v/r2v）分别显隐。
+    // 按该段有效模式过滤视频技能（skill.mode 由后端 frontmatter 提供）；无匹配时回退全量，避免空下拉。
+    function refreshSegSkillOptions(skillSel, eff) {
+        if (!skillSel) return;
+        const prev = skillSel.value;
+        let pool = skills.filter(s => s.mode === eff);
+        if (!pool.length) pool = skills;
+        skillSel.innerHTML = '';
+        if (!pool.length) {
+            skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
+            return;
+        }
+        for (const s of pool) skillSel.appendChild($el('option', { value: s.id, textContent: s.name || s.id }));
+        if ([...skillSel.options].some(o => o.value === prev)) skillSel.value = prev;
+    }
+
     function applyGlobalMode() {
         if (!modeSel) return;
         const g = modeSel.value;   // 't2v' | 'i2v' | 'fl2v' | 'r2v' | 'mixed'
@@ -475,6 +550,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const ffBlock = row.querySelector('.neo-director-ff-block');
             const lfBlock = row.querySelector('.neo-director-lf-block');
             const modeRow = row.querySelector('.neo-director-segmode-row');
+            const ffLfWrap = row.querySelector('.neo-director-fflf');
             if (g === 'mixed' && segModeSel) {
                 // 首次进入混合：按该段已有的首/尾帧或参考素材初始化本段模式
                 if (!row.dataset.modeInit) {
@@ -489,9 +565,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 }
             }
             const eff = (g === 'mixed' && segModeSel) ? segModeSel.value : g;
+            refreshSegSkillOptions(row.querySelector('.neo-director-skill'), eff);
             if (modeRow) modeRow.style.display = (g === 'mixed') ? '' : 'none';
             if (ffBlock) ffBlock.style.display = (eff === 'i2v' || eff === 'fl2v') ? '' : 'none';
             if (lfBlock) lfBlock.style.display = (eff === 'fl2v') ? '' : 'none';
+            if (ffLfWrap) ffLfWrap.classList.toggle('neo-director-fflf-row', eff === 'fl2v');
             const refsBlock = row.querySelector('.neo-director-refs-block');
             if (refsBlock) refsBlock.style.display = (eff === 'r2v') ? '' : 'none';
         }
@@ -519,7 +597,18 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const imgEl = activeFf.querySelector('img.neo-director-ff-thumb');
             thumbUrl = imgEl ? imgEl.getAttribute('src') : null;
         }
-        return { id: row.dataset.segId, duration: Number(durInp.value) || 0, prompt: (promptTa.value || '').trim(), thumbUrl };
+        // 参考素材（r2v）：三组计数 + 全部参考图缩略（按顺序），供时间轴块平铺展示（增删改经 observer 自动刷新）
+        const reads = segRefReaders.get(row) || [];
+        const mat = { images: 0, videos: 0, audios: 0 };
+        const matThumbs = [];
+        reads.forEach((read, gi) => {
+            const names = read ? read() : [];
+            mat[SEG_REF_GROUPS[gi].key] = names.length;
+            if (SEG_REF_GROUPS[gi].key === 'images') {
+                for (const n of names) matThumbs.push(`/view?filename=${encodeURIComponent(n)}&subfolder=&type=input`);
+            }
+        });
+        return { id: row.dataset.segId, duration: Number(durInp.value) || 0, prompt: (promptTa.value || '').trim(), thumbUrl, mat, matThumbs };
     });
     const onSelectSeg = (i) => {
         const row = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))[i];
@@ -644,10 +733,13 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (!name) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '请填写配方名称', life: 4000 }); return; }
         const gMode = modeSel.value;   // 't2v' | 'i2v' | 'mixed'
         const segments = [];
+        const warnings = [];   // 内容不完整只提示、不阻止保存（允许先存草稿再补素材）
+        let segNo = 0;
         for (const row of Array.from(segsWrap.querySelectorAll('.neo-director-seg'))) {
+            segNo += 1;
             const skill_id = row.querySelector('.neo-director-skill').value;
             const prompt = row.querySelector('.neo-director-prompt').value.trim();
-            if (!skill_id || !prompt) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '每段需选择技能并填写提示词', life: 4000 }); return; }
+            if (!skill_id || !prompt) warnings.push(`第 ${segNo} 段未选择技能或未填提示词`);
             const eff = (gMode === 'mixed') ? row.querySelector('.neo-director-segmode').value : gMode;
             const frames = segFrameReaders.get(row) || {};
             const first = frames.first ? frames.first() : '';
@@ -671,27 +763,27 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (eff === 'fl2v') {
                 if (last) seg.last_frame = last;
             }
-            // 各模式的最低要求（与后端校验一致；连续性链入由节点上的 continuity 决定）
+            // 各模式的内容完整性：只提示、不阻止保存（允许先存草稿再补素材）
             if ((eff === 'i2v' || eff === 'fl2v') && !seg.first_frame && !seg.refs) {
-                app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: `${MODE_LABELS.get(eff)}段需选择首帧图或参考素材`, life: 4000 });
-                return;
+                warnings.push(`第 ${segNo} 段（${MODE_LABELS.get(eff)}）缺首帧图或参考素材`);
             }
             if (eff === 'fl2v' && !seg.last_frame) {
-                app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '首尾帧生视频段需选择尾帧图', life: 4000 });
-                return;
+                warnings.push(`第 ${segNo} 段（首尾帧生视频）缺尾帧图`);
             }
             if (eff === 'r2v' && !seg.refs) {
-                app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '参考主体生视频段需挂参考素材（图 / 视频 / 音频）', life: 4000 });
-                return;
+                warnings.push(`第 ${segNo} 段（参考主体生视频）缺参考素材（图 / 视频 / 音频）`);
             }
             segments.push(seg);
         }
         if (!segments.length) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '至少需要一个段', life: 4000 }); return; }
-        // 参考视频/音频需进配方 assets 才能在 load_director_spec 里解析成 input 相对名；参考图已在 imageRefs 中
+        if (warnings.length) {
+            app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail: `有 ${warnings.length} 段待完善（不阻止保存）：${warnings.join('；')}`, life: 6000 });
+        }
+        // 参考素材（图/视频/音频）都需进配方 assets 才能在 load_director_spec 里解析成 input 相对名
         const assets = imageRefs.slice();
         const assetNames = new Set(assets.map(r => r.filename));
         for (const seg of segments) {
-            for (const [key, kind] of [['videos', 'video'], ['audios', 'audio']]) {
+            for (const [key, kind] of [['images', 'image'], ['videos', 'video'], ['audios', 'audio']]) {
                 for (const name of ((seg.refs || {})[key] || [])) {
                     if (assetNames.has(name)) continue;
                     assetNames.add(name);
@@ -718,13 +810,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     { mode: gMode },
                 ),
                 segments,
-                // 自动故事板内容（主题 / 脚本 / 参考图 / 粒度）：随配方落盘，重新打开编辑器回显。
+                // 自动故事板内容（主题 / 脚本 / 粒度）：随配方落盘，重新打开编辑器回显。
                 // 空内容由后端判空后不写入，前端无需分支。
                 story: {
                     idea: ideaInp.value.trim() || null,
                     story: storyTa.value.trim() || null,
-                    characters: charGrid.getRefs(),
-                    backgrounds: bgGrid.getRefs(),
                     segment_seconds: Number(segLenSel.value) || null,
                 },
             }, "video");
@@ -744,55 +834,28 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
 
     // ==========================================
-    // 📖 故事生成（半自动）：主题→LLM 生成故事→确认拆分填充时间轴；可选角色/背景参考图
+    // 📖 故事生成（半自动）：主题→LLM 生成故事→确认拆分填充时间轴
     // ==========================================
-    function buildRefGrid(initialRefs = []) {
-        const grid = $el('div', { className: 'neo-director-refgrid' });
-        const selected = new Map(); // filename -> desc
-        // 编辑旧配方：先回填已保存的参考图（含描述），使下面按素材建瓷砖时即为选中态
-        for (const r of (Array.isArray(initialRefs) ? initialRefs : [])) {
-            const fname = (r && r.filename) || '';
-            if (fname) selected.set(fname, (r && r.desc) || '');
+
+    // 右栏：分段后的故事（拆分成功后填充；左栏是分段前的完整故事）
+    const segPreview = $el('div', { className: 'neo-director-story-segs' });
+    function renderSegPreview(segments) {
+        segPreview.innerHTML = '';
+        if (!segments || !segments.length) {
+            segPreview.appendChild($el('div', { className: 'neo-director-story-segs-empty', textContent: '（点击左侧「拆分」后，这里显示分段后的故事）' }));
+            return;
         }
-        const thumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
-        const ensureInRefs = (fname) => { if (!imageRefs.some(r => r.filename === fname)) imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' }); };
-        function makeTile(ref) {
-            const descInp = $el('input', { className: 'neo-director-ref-desc', type: 'text', placeholder: '描述（可选）', value: selected.has(ref.filename) ? selected.get(ref.filename) : '' });
-            const delBtn = $el('button', { className: 'neo-director-ref-del', title: '移除', textContent: '✕' });
-            const tile = $el('div', { className: 'neo-director-ref-item' + (selected.has(ref.filename) ? ' neo-director-ref-active' : ''), dataset: { file: ref.filename } }, [
-                $el('img', { className: 'neo-director-ref-thumb', src: thumbUrl(ref), alt: ref.filename, loading: 'lazy' }),
-                descInp, delBtn,
-            ]);
-            tile.onclick = (e) => {
-                if (e.target === delBtn || e.target === descInp) return;
-                if (selected.has(ref.filename)) selected.delete(ref.filename); else selected.set(ref.filename, '');
-                ensureInRefs(ref.filename);
-                tile.classList.toggle('neo-director-ref-active', selected.has(ref.filename));
-            };
-            descInp.onclick = (e) => e.stopPropagation();
-            descInp.oninput = () => { if (selected.has(ref.filename)) selected.set(ref.filename, descInp.value.trim()); };
-            delBtn.onclick = (e) => { e.stopPropagation(); selected.delete(ref.filename); tile.remove(); };
-            return tile;
-        }
-        for (const r of imageRefs) grid.appendChild(makeTile(r));
-        // 已存参考图若不在当前画布素材里，补占位瓷砖（同段首帧的旧配方处理），否则回显会丢
-        for (const fname of selected.keys()) {
-            if (!Array.from(grid.children).some(el => el.dataset.file === fname)) {
-                grid.appendChild(makeTile({ filename: fname, subfolder: '', type: 'input' }));
-            }
-        }
-        grid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; grid.classList.add('neo-director-drop'); });
-        grid.addEventListener('dragleave', (e) => { if (!grid.contains(e.relatedTarget)) grid.classList.remove('neo-director-drop'); });
-        grid.addEventListener('drop', async (e) => {
-            e.preventDefault(); grid.classList.remove('neo-director-drop');
-            const fname = await copyGalleryToInput(grabDataType(e));
-            if (!fname) return;
-            ensureInRefs(fname);
-            selected.set(fname, '');
-            grid.appendChild(makeTile({ filename: fname, subfolder: '', type: 'input', kind: 'image' }));
+        segments.forEach((s, i) => {
+            segPreview.appendChild($el('div', { className: 'neo-director-story-seg-item' }, [
+                $el('div', { className: 'neo-director-story-seg-head' }, [
+                    $el('span', { textContent: `#${i + 1}` }),
+                    $el('span', { textContent: `${s.duration_sec}s` }),
+                ]),
+                $el('div', { className: 'neo-director-story-seg-prompt', textContent: s.prompt || '' }),
+            ]));
         });
-        return { el: grid, getRefs: () => Array.from(selected.entries()).map(([filename, desc]) => ({ filename, desc })) };
     }
+    renderSegPreview([]); // 初始占位提示
 
     const ideaInp = $el('textarea', { className: 'neo-director-story-idea', placeholder: '输入故事主题 / 想法（如：一只机器猫在雨夜的城市寻找回家的路）' });
     const genBtn = $el('button', { className: 'rs-btn neo-director-gen-story', textContent: '✨ 自动生成故事' });
@@ -805,17 +868,24 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     segLenSel.value = '10';
     if (exStory.segment_seconds) segLenSel.value = String(exStory.segment_seconds);
     if (!segLenSel.value) segLenSel.value = '10'; // 存了非预设粒度时落回默认
-    const charGrid = buildRefGrid(exStory.characters);
-    const bgGrid = buildRefGrid(exStory.backgrounds);
-    const setFfChk = $el('input', { className: 'neo-director-setff', type: 'checkbox' });
     const splitBtn = $el('button', { className: 'rs-btn neo-director-split', textContent: '✅ 确认并拆分到时间轴' });
+
+    // 新建配方：标题随「主题/想法」输入实时同步（超 20 字截断）；手动命名后不再覆盖，编辑已有配方不同步
+    let nameManuallySet = false;
+    nameInp.addEventListener('input', () => { nameManuallySet = true; });
+    ideaInp.addEventListener('input', () => {
+        if (existing || nameManuallySet) return;
+        const v = ideaInp.value.trim();
+        nameInp.value = v.length > 20 ? v.slice(0, 20) + '…' : v;
+        renderName();
+    });
 
     genBtn.onclick = async () => {
         const idea = ideaInp.value.trim();
         if (!idea) { app.extensionManager.toast.add({ severity: 'error', summary: '故事生成', detail: '请先填写故事主题', life: 4000 }); return; }
         genBtn.disabled = true; storyStatus.textContent = '正在生成故事…';
         try {
-            const res = await fetch('/rs_recipes/director_generate_story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea, characters: charGrid.getRefs(), backgrounds: bgGrid.getRefs() }) });
+            const res = await fetch('/rs_recipes/director_generate_story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idea }) });
             const data = await res.json();
             if (data.success) { storyTa.value = data.story || ''; storyStatus.textContent = '已生成，可编辑后拆分'; }
             else { storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '故事生成失败', detail: data.error || 'Unknown error', life: 5000 }); }
@@ -830,24 +900,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (!story) { app.extensionManager.toast.add({ severity: 'error', summary: '拆分', detail: '请先生成或填写故事', life: 4000 }); return; }
         splitBtn.disabled = true; storyStatus.textContent = '正在拆分…';
         try {
-            const res = await fetch('/rs_recipes/director_split_segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ story, segment_seconds: Number(segLenSel.value), characters: charGrid.getRefs(), backgrounds: bgGrid.getRefs() }) });
+            const res = await fetch('/rs_recipes/director_split_segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ story, segment_seconds: Number(segLenSel.value) }) });
             const data = await res.json();
             if (!data.success) { storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '拆分失败', detail: data.error || 'Unknown error', life: 5000 }); return; }
             const defaultSkill = skills.length ? skills[0].id : '';
-            let ffFile = '';
-            if (setFfChk.checked) {
-                const bg = bgGrid.getRefs()[0]; const ch = charGrid.getRefs()[0];
-                ffFile = (bg && bg.filename) || (ch && ch.filename) || '';
-            }
             segsWrap.innerHTML = '';
             for (const s of data.segments) {
-                const seg = { skill_id: defaultSkill, prompt: s.prompt, duration_sec: s.duration_sec, mode: ffFile ? 'i2v' : 't2v' };
-                if (ffFile) seg.first_frame = ffFile;
-                segsWrap.appendChild(buildSeg(seg));
+                segsWrap.appendChild(buildSeg({ skill_id: defaultSkill, prompt: s.prompt, duration_sec: s.duration_sec, mode: 't2v' }));
             }
             renumberSegs(); showSeg(0); applyGlobalMode();
-            switchTab('timeline'); // 拆分后切到时间轴页查看/微调结果
-            storyStatus.textContent = `已拆分 ${data.segments.length} 段，可在下方逐段微调`;
+            renderSegPreview(data.segments); // 右栏显示分段后的故事（留在本页，保留左右两栏对照）
+            storyStatus.textContent = `已拆分 ${data.segments.length} 段，详见右侧`;
             app.extensionManager.toast.add({ severity: 'success', summary: '已填充时间轴', detail: `${data.segments.length} 段`, life: 4000 });
         } catch (e) {
             console.error('[Neo Recipes] Director: split segments failed', e);
@@ -857,28 +920,29 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // ---- 两个可切换页签：自动故事板 / 时间轴分段（避免单页过于复杂）----
     const storyboardPane = $el('div', { className: 'neo-director-pane neo-director-pane-story' }, [
-        $el('div', { className: 'neo-director-story-idea-row' }, [ideaInp, genBtn]),
-        storyTa,
-        storyStatus,
-        $el('div', { className: 'neo-director-story-refs' }, [
-            $el('div', { className: 'neo-director-ref-col' }, [
-                $el('label', { className: 'neo-director-field-label', textContent: '角色参考图（可选，点选 / 从左侧素材栏拖入）' }), charGrid.el,
+        $el('div', { className: 'neo-director-story-cols' }, [
+            // 左栏：分段前故事（主题 + 生成 + 脚本 + 拆分控制）
+            $el('div', { className: 'neo-director-story-col neo-director-story-left' }, [
+                $el('div', { className: 'neo-director-story-idea-row' }, [ideaInp, genBtn]),
+                storyTa,
+                storyStatus,
+                $el('div', { className: 'neo-director-story-actions' }, [
+                    $el('label', { className: 'neo-director-seglen-wrap' }, [$el('span', { textContent: '分段粒度' }), segLenSel]),
+                    splitBtn,
+                ]),
             ]),
-            $el('div', { className: 'neo-director-ref-col neo-director-ref-col-bg' }, [
-                $el('label', { className: 'neo-director-field-label', textContent: '背景参考图（可选，点选 / 从左侧素材栏拖入）' }), bgGrid.el,
+            // 右栏：分段后的故事（拆分成功后显示）
+            $el('div', { className: 'neo-director-story-col neo-director-story-right' }, [
+                $el('label', { className: 'neo-director-field-label neo-director-story-segs-title', textContent: '分段的故事' }),
+                segPreview,
             ]),
-        ]),
-        $el('div', { className: 'neo-director-story-actions' }, [
-            $el('label', { className: 'neo-director-seglen-wrap' }, [$el('span', { textContent: '分段粒度' }), segLenSel]),
-            $el('label', { className: 'neo-director-setff-wrap' }, [setFfChk, $el('span', { textContent: '将选中参考图设为各段首帧' })]),
-            splitBtn,
         ]),
     ]);
 
     // 「拉伸」控制条：放在时间轴说明行最右侧（不独占一行），驱动 timeline.setZoom()。
     const zoomSlider = $el('input', { className: 'neo-director-zoom-slider', type: 'range', min: 0.25, max: 4, step: 0.25, value: 1 });
     zoomSlider.addEventListener('input', () => { if (timeline) timeline.setZoom(Number(zoomSlider.value)); });
-    const zoomToggle = $el('button', { className: 'neo-director-zoom-toggle', type: 'button', title: '拉伸时间轴', textContent: '🔍 拉伸' });
+    const zoomToggle = $el('button', { className: 'neo-director-zoom-toggle', type: 'button', title: '拉伸时间轴', textContent: '↔ 拉伸' });
     zoomToggle.addEventListener('click', () => {
         if (!timeline) return;
         const next = timeline.getZoom() <= 1 ? 2 : 1;
@@ -939,11 +1003,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const tabBar = $el('div', { className: 'neo-director-tabs' }, [tabStory, tabTimeline]);
 
     const body = $el('div', { className: 'neo-director-body' }, [
-        tabBar,
         storyboardPane,
         timelinePane,
     ]);
-    switchTab('timeline'); // 默认落在时间轴分段页，故事板作为可选页签
+    switchTab(existing ? 'timeline' : 'story'); // 新建默认自动故事板，编辑保持时间轴分段
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
     // 「放大到最大」：标题栏 ⛶ 按钮 / 双击标题栏均可切换。放大=铺满视口（留 8px
     // 边距，高度受 CSS max-height:88vh 约束），还原=回到放大前几何。
@@ -974,8 +1037,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     maxBtn.onclick = toggleMaximize;
 
     const titleBar = $el('div', { className: 'neo-director-title' }, [
-        $el('span', { textContent: '🎬 多段视频导演' }),
-        nameWrap,
+        $el('div', { className: 'neo-director-title-left' }, [
+            $el('span', { textContent: '🎬 多段视频导演' }),
+            nameWrap,
+        ]),
+        tabBar,
         $el('div', { className: 'neo-director-title-btns' }, [
             maxBtn,
             $el('button', { className: 'neo-director-close', textContent: '✕', onclick: close }),
@@ -1004,7 +1070,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         window.removeEventListener('mouseup', onTitleUp);
     };
     titleBar.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.target.closest('button') || e.target.closest('.neo-director-name-wrap')) return; // ✕ / 配方名区不触发拖动
+        if (e.button !== 0 || e.target.closest('button') || e.target.closest('.neo-director-name-view, .neo-director-name')) return; // 仅按钮（⛶/✕/页签）与配方名输入/显示区不触发拖动，标题栏其余空白可拖窗口
         const r = panel.getBoundingClientRect();
         if (!panel.style.left) { // 首次：从居中切到绝对定位，无跳变
             panel.style.position = 'absolute';
@@ -1019,7 +1085,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     });
 
     titleBar.addEventListener('dblclick', (e) => {
-        if (e.target.closest('button') || e.target.closest('.neo-director-name-wrap')) return; // 双击 ⛶ / ✕ / 配方名区不触发放大还原
+        if (e.target.closest('button') || e.target.closest('.neo-director-name-view, .neo-director-name')) return; // 仅双击按钮（⛶/✕/页签）与配方名区不触发放大还原，其余空白可最大化
         toggleMaximize();
     });
 
@@ -1027,7 +1093,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 宽度下限保证内容不塌，上限钳制在视口内。时间轴经 ResizeObserver 自动跟随重排。
     let resizing = false;
     let rStartMX = 0, rStartMY = 0, rStartW = 0, rStartH = 0;
-    const DT_MIN_W = 420, DT_MIN_H = 360; // 高度下限实际由 CSS .neo-director-panel min-height:min(840px,88vh) 强制，此处仅兜底防负数
+    const DT_MIN_W = 420, DT_MIN_H = 360; // 高度下限实际由 CSS .neo-director-panel min-height:480px 强制，此处仅兜底防负数
     const onResizeMove = (e) => {
         if (!resizing) return;
         let w = rStartW + (e.clientX - rStartMX);

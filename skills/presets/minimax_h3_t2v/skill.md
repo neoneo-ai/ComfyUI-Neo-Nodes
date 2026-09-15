@@ -7,6 +7,7 @@ tags:
 - 文生
 category: video_gen
 gen_video: true
+mode: t2v
 created_at: '2026-09-12T00:00:00+00:00'
 ---
 
