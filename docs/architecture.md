@@ -68,6 +68,7 @@ ComfyUI-Neo-Nodes/
 │   ├── recipes.js          # 配方逻辑（保存/复制/面板/一键发送）
 │   ├── recipes.css
 │   ├── director.js         # 多段视频导演编辑器（配方编辑窗口）：shared 分辨率 + 逐段 skill/提示词/首帧/时长 + 半自动故事生成/拆分；时间轴复用 director-timeline.js
+│   ├── director-node.js    # NeoH3VideoDirector 节点内嵌只读时间轴 + 采样实时预览面板（rs.h3.preview 载荷，自动循环/暂停/逐帧/逐步）
 │   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 顶栏按钮）
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
@@ -95,7 +96,7 @@ ComfyUI-Neo-Nodes/
 | `h3_prompt_audit.py` | H3 提示词确定性格式审计（纯规则、零 token）：六段/三字段结构顺序、时间戳格式与时长上限、参考标签与工作流连线一致性、对白说话人 ID、内部表示术语泄漏；并提供窄修复消息构造（`narrow_repair_messages`）与修复验收（`repair_acceptable`），供 minimax_h3.py 在 `audit: h3` 技能生成后调用 |
 | `video_gen.py` | 生视频（MiniMax H3）全局设置：独立于生图 image_gen.json，落盘 `configs/video_gen.json`；`/neo_video_gen/*` 路由（`/settings` 读写、`/models` 列可选模型与 LoRA 且 H3 相关靠前 `_video_display_sort`）；H3 模型/文本编码器/VAE 自动挑选（`suggest_video_model` 按 h3 名称线索、turbo 优先；`suggest_audio_vae` 需文件名同时含 h3 与 audio） |
 | `h3_video_gen.py` | MiniMax H3 视频生成的共享 helper（供 NeoH3VideoDirector 复用，本模块不再注册节点）：`resolve_video_params` 把一次生成请求解析成模板参数——模型/编码器/视频 VAE 走 config→生视频设置→自动挑选；**音频 VAE 单独解析**（config `audio_vae` → 名称线索），模板里 `VAEDecodeAudio` 必须接独立音频 `VAELoader`，不能复用视频 VAE；参考媒体按 media 分图/视频/音频三组并各按上限裁剪。`_gen_video_skills`/`_resolve_skill_id` 列出/反查带 workflow.json 的视频 skill；`_require_vdn_plugin` 校验 VDN 加速插件（未装 ComfyUI-VDN-H3 时报错）。**LoRA 复用生图链路**：skill config.json 的 `loras` 经 `image_gen._resolve_loras` 校验后由 `render_template` 动态串入主链（模板无槽位时在 `UNETLoader → MiniMaxH3SigmaShift` 间插入 `LoraLoaderModelOnly`），视频无「依赖参考图」概念、配置的全部无条件加载 |
-| `h3_preview.py` | H3 实时预览：`models/vae_approx/taeh3.safetensors` 是「96 宽 / 4 次上采样」的扁平 2D TAE，核心 `TAESD.Decoder` 建不出来（`MiniMaxH3Video` 也未声明 taesd 解码器），这里按 checkpoint 的扁平索引重建解码器（缺号按位置补 `Clamp`/`ReLU`/`Upsample`）；`H3Previewer` 从 AV 潜空间的视频流取首帧解成真彩图（按形状与通道数认视频流，音频流跳过；上限 1024px，核心默认 512）。`preview_override` 只在 NeoH3VideoDirector 逐段执行期间替换 `latent_preview.get_previewer`（退出时含异常无条件还原；非 H3 latent format 一律交还原实现），缺 taeh3 或加载失败时回退 Latent2RGB，不影响出片 |
+| `h3_preview.py` | H3 实时预览：`models/vae_approx/taeh3.safetensors` 是「96 宽 / 4 次上采样」的扁平 2D TAE，核心 `TAESD.Decoder` 建不出来（`MiniMaxH3Video` 也未声明 taesd 解码器），这里按 checkpoint 的扁平索引重建解码器（缺号按位置补 `Clamp`/`ReLU`/`Upsample`）。采样期间**每步沿潜空间时间轴均匀抽 `PREVIEW_FRAMES`(8) 帧**（首尾都取到，音频流按通道数排除）解成真彩图，缩到最长边 `PREVIEW_SIDE`(512) 编成 JPEG **data URL** 序列（前端直接塞 `<img>.src`），经自有 WS 事件 `rs.h3.preview` 推给发起本次执行的客户端（载荷带 `node_id`，前端路由到对应节点内的动画面板；核心一步只出一张静图的预览通道返回 `None` 关掉）。`preview_override` 只在 NeoH3VideoDirector 逐段执行期间替换 `latent_preview.get_previewer`（退出时含异常无条件还原；非 H3 latent format 一律交还原实现），缺 taeh3 或加载失败时回退 Latent2RGB，解码失败只跳过本步，都不影响出片 |
 | `llm.py` | LLM 推理层：`RemoteLLMClient`（OpenAI 兼容 HTTP，支持 `tools=` 工具调用）、`LLMSingleton`（进程内 llama.cpp GGUF，含 mmproj 多模态绑定与自动卸载）、远程配置存取（`configs/remote_llm_config.json`，按 provider 分槽）、模型目录扫描（`scan_llm_directory`）、任务模板加载（`skills/` 目录，Markdown + frontmatter）与流式/非流式执行（思考模型把 `reasoning_content` 与正文 `content` 分块打标为 `{"text","kind":"thinking"|"content"}`，流式（远程/本地）按 `STREAM_MIN_MAX_TOKENS` 保底 token）、模式无关的单轮对话原语 `chat_turn`（按当前模式分发本地 llama.cpp / 远程 API，供 skill 代理循环按需调用） |
 | `gallery.py` | Neo Gallery 素材后端：预设/自定义/系统（input、output）目录聚合浏览、缩略图生成与缓存、媒体文件服务、上传/删除、目录设置（`gallery_settings.json`）。导入时加载 `gallery_lora` / `gallery_oss` 以注册其路由 |
 | `gallery_lora.py` | Civitai LORA 示例后台抓取队列：打开 Lora 目录时按文件 SHA256 查询并下载示例图 + 提示词 sidecar，缓存于 `gallery/lora_cache/` |
@@ -120,6 +121,7 @@ ComfyUI-Neo-Nodes/
 | `combo-box.js` | 通用下拉选择组件：点击展开/键入过滤覆盖、键盘导航；option 可带 `data-tags`（空格分隔，如中文拼音/首字母缩写）作为附加搜索文本参与过滤（无该属性的下拉不受影响）；`<optgroup>` 渲染为分类标题（无 `data-value`，自动被键盘导航与取值逻辑跳过），过滤时空组隐藏 |
 | `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片（含复制）、详情浮层、一键发送；并导出导演编辑器依赖的 `saveRecipe` / `listVideoSkills` / `scanMediaNodes` / `widgetValueToRef` |
 | `director.js` | 多段视频导演编辑器（配方编辑窗口，从 recipes.js 拆出）：配方名钉在标题栏中间（默认纯文本直显、点击进入行内编辑）+ shared 分辨率（宽高比/百万像素或自定义 W/H）+ 逐段 skill/提示词/首帧/时长 + 半自动故事生成与拆分；时间轴复用 `director-timeline.js`，保存走 `recipes.js` 的 `saveRecipe` |
+| `director-node.js` | NeoH3VideoDirector 节点内嵌只读时间轴（复用 `director-timeline.js`，点击分段块打开编辑器并定位到该段）+ **采样实时预览面板**：消费后端每步推来的 `rs.h3.preview` 多帧载荷（按 `node_id` 路由到对应节点），自动循环播放该步动画，支持暂停/继续、逐帧、逐采样步回看（回看旧步时新载荷不改画面）；采样期间面板占节点底部加高的 300px，换段或运行结束即清空复位 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip；节点移除时统一注销 document/window/api 监听并销毁挂 body 的浮层菜单 |
 | `prompt-manager.js` | 提示词管理器：预设列表、集合视图、保存与删除；聊天域 DOM 由 `llm-chat.js` 的 `createStatusBars()` / `createPromptOutputArea()` 提供并经 `createPromptManagerUI()` 组装 |

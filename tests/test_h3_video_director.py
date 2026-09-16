@@ -6,7 +6,9 @@ recipes 的 gallery/bookmark/gallery_lora/util 依赖用假模块；director 编
 execute_graph_inprocess / resolve_video_params 等验证帧拼接、边界丢帧、seed 派生与音频对齐。"""
 
 import asyncio
+import base64
 import contextlib
+import io
 import json
 import os
 import sys
@@ -34,7 +36,7 @@ _MODELS = {
 _server = types.ModuleType("server")
 _server.PromptServer = types.SimpleNamespace(instance=types.SimpleNamespace(
     routes=types.SimpleNamespace(get=lambda p: (lambda f: f), post=lambda p: (lambda f: f)),
-    prompt_queue=types.SimpleNamespace(), send_sync=lambda *a, **k: None))
+    prompt_queue=types.SimpleNamespace(), client_id=None, send_sync=lambda *a, **k: None))
 sys.modules["server"] = _server
 
 _comfy = types.ModuleType("comfy")
@@ -1287,15 +1289,20 @@ class DirectorProgressRouteTests(unittest.TestCase):
 
 
 class H3PreviewTests(unittest.TestCase):
-    """h3_preview：taeh3 解码器重建、潜空间取帧、预览接管/还原与节点开关语义。"""
+    """h3_preview：taeh3 解码器重建、潜空间抽帧、每步多帧载荷推送与接管/还原、节点开关语义。"""
 
     def setUp(self):
         self.h3p = sys.modules[f"{_PKG}.h3_preview"]
         self.lp = sys.modules["latent_preview"]
         self.original = self.lp.get_previewer
+        self.sent = []   # 后端每步推的预览载荷都会记到这里
+        self.server = self.h3p.PromptServer.instance
+        self.orig_send = self.server.send_sync
+        self.server.send_sync = lambda event, data, sid=None: self.sent.append((event, data, sid))
 
     def tearDown(self):
         self.lp.get_previewer = self.original
+        self.server.send_sync = self.orig_send
 
     def _vae(self):
         return self.h3p.H3TinyVAE({"1.weight": torch.zeros(8, 24, 3, 3), "1.bias": torch.zeros(8),
@@ -1335,13 +1342,40 @@ class H3PreviewTests(unittest.TestCase):
         img = vae.decode_frame(torch.randn(1, 24, 4, 6))
         self.assertEqual((img.mode, img.size), ("RGB", (12, 8)))   # 缺号里的 Upsample 使边长翻倍
 
-    def test_video_frame_takes_first_frame_of_5d(self):
-        self.assertEqual(tuple(self.h3p._video_frame(torch.randn(1, 24, 2, 5, 7), 24).shape),
-                         (1, 24, 5, 7))
+    def test_frame_indices_spread_across_time_axis(self):
+        self.assertEqual(self.h3p._frame_indices(5, 8), [0, 1, 2, 3, 4])           # 帧数不足 → 全取
+        self.assertEqual(self.h3p._frame_indices(8, 8), list(range(8)))
+        self.assertEqual(self.h3p._frame_indices(120, 8), [0, 17, 34, 51, 68, 85, 102, 119])   # 首尾都取到
+        self.assertEqual(self.h3p._frame_indices(120, 1), [0])
 
-    def test_video_frame_returns_none_without_matching_stream(self):
-        self.assertIsNone(self.h3p._video_frame(torch.randn(1, 32, 2, 5, 7), 24))
-        self.assertIsNone(self.h3p._video_frame(torch.randn(1, 24), 24))
+    def test_frame_indices_are_unique_for_odd_lengths(self):
+        self.assertEqual(len(set(self.h3p._frame_indices(37, 8))), 8)
+
+    def test_video_frames_picks_evenly_spaced_frames(self):
+        frames = self.h3p._video_frames(torch.randn(1, 24, 6, 5, 7), 24, 3)
+        self.assertEqual([tuple(f.shape) for f in frames], [(1, 24, 5, 7)] * 3)
+
+    def test_video_frames_single_frame_input(self):
+        frames = self.h3p._video_frames(torch.randn(1, 24, 5, 7), 24, 8)
+        self.assertEqual([tuple(f.shape) for f in frames], [(1, 24, 5, 7)])
+
+    def test_video_frames_returns_none_without_matching_stream(self):
+        self.assertIsNone(self.h3p._video_frames(torch.randn(1, 32, 2, 5, 7), 24, 8))   # 音频流
+        self.assertIsNone(self.h3p._video_frames(torch.randn(1, 24), 24, 8))
+
+    def test_preview_payload_encodes_jpeg_frames(self):
+        payload = self.h3p._preview_payload([Image.new("RGB", (600, 1200), (20, 40, 60)) for _ in range(2)])
+        self.assertEqual(payload["fps"], self.h3p.PREVIEW_FPS)
+        self.assertEqual((payload["w"], payload["h"]), (256, 512))   # 等比缩到最长边 PREVIEW_SIDE
+        self.assertEqual(len(payload["frames"]), 2)
+        for frame in payload["frames"]:
+            self.assertTrue(frame.startswith(self.h3p.JPEG_DATA_URL))   # 前端直接塞 <img>.src，必须是 data URL
+            raw = base64.b64decode(frame[len(self.h3p.JPEG_DATA_URL):])
+            self.assertEqual(raw[:3], b"\xff\xd8\xff")   # JPEG 魔数
+            with Image.open(io.BytesIO(raw)) as im:
+                self.assertEqual(im.size, (256, 512))
+                for got, want in zip(im.convert("RGB").getpixel((128, 256)), (20, 40, 60)):
+                    self.assertLessEqual(abs(got - want), 3)   # 画面内容存活，没被压成黑
 
     def test_preview_off_suppresses_and_restores(self):
         with self.h3p.preview_override(False, None):
@@ -1350,13 +1384,13 @@ class H3PreviewTests(unittest.TestCase):
         self.assertIs(self.lp.get_previewer, self.original)
 
     def test_preview_on_uses_taeh3_and_restores(self):
-        with self.h3p.preview_override(True, self._vae()):
+        with self.h3p.preview_override(True, self._vae(), "9"):
             prev = self.lp.get_previewer(None, _StubMiniMaxH3Video())
         self.assertIs(self.lp.get_previewer, self.original)
         self.assertIsInstance(prev, self.h3p.H3Previewer)
-        fmt, img, limit = prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 24, 2, 4, 6))
-        self.assertEqual((fmt, limit), ("JPEG", self.h3p.MAX_SIDE))
-        self.assertEqual(img.mode, "RGB")
+        self.assertEqual(prev.node_id, "9")
+        prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 24, 3, 4, 6))
+        self.assertEqual(self.sent[0][1]["node_id"], "9")
 
     def test_preview_on_without_taeh3_falls_back_to_latent2rgb(self):
         with self.h3p.preview_override(True, None):
@@ -1375,26 +1409,46 @@ class H3PreviewTests(unittest.TestCase):
                 raise RuntimeError("boom")
         self.assertIs(self.lp.get_previewer, self.original)
 
-    def test_previewer_downscales_frames_over_max_side(self):
-        orig = self.lp.preview_to_image
-        try:
-            self.lp.preview_to_image = lambda t, do_scale=False: Image.new("RGB", (1200, 1400))
-            img = self.h3p.H3Previewer(self._vae()).decode_latent_to_preview(torch.randn(1, 24, 4, 6))
-        finally:
-            self.lp.preview_to_image = orig
-        self.assertEqual(img.size, (878, 1024))   # 等比缩到最长边 MAX_SIDE
+    def test_previewer_pushes_frames_and_suppresses_core_image(self):
+        """核心一步只出一张静图的通道返回 None（进度条照常推进），多帧载荷改走自有事件。"""
+        prev = self.h3p.H3Previewer(self._vae(), "7")
+        self.assertIsNone(prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 24, 8, 4, 6)))
+        self.assertEqual(len(self.sent), 1)
+        event, data, sid = self.sent[0]
+        self.assertEqual(event, self.h3p.PREVIEW_EVENT)
+        self.assertEqual(data["node_id"], "7")
+        self.assertEqual(len(data["frames"]), self.h3p.PREVIEW_FRAMES)   # 每步抽 PREVIEW_FRAMES 帧
+        self.assertEqual((data["w"], data["h"]), (12, 8))
+        self.assertIsNone(sid)   # 推给发起本次执行的客户端（client_id 为 None 即广播）
+
+    def test_previewer_without_node_id_skips_send(self):
+        prev = self.h3p.H3Previewer(self._vae())
+        self.assertIsNone(prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 24, 4, 4, 6)))
+        self.assertEqual(self.sent, [])
 
     def test_previewer_skips_non_video_shapes(self):
-        prev = self.h3p.H3Previewer(self._vae())
-        self.assertIsNone(prev.decode_latent_to_preview(torch.randn(1, 32, 2, 5, 7)))
+        prev = self.h3p.H3Previewer(self._vae(), "7")
         self.assertIsNone(prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 32, 2, 5, 7)))
+        self.assertEqual(self.sent, [])
+
+    def test_previewer_keeps_sampling_alive_when_decode_fails(self):
+        class _Bad:
+            latent_channels = 24
+
+            def decode_frame(self, frame):
+                raise RuntimeError("boom")
+
+        prev = self.h3p.H3Previewer(_Bad(), "7")
+        self.assertIsNone(prev.decode_latent_to_preview_image("JPEG", torch.randn(1, 24, 2, 4, 6)))
+        self.assertEqual(self.sent, [])
 
     def test_load_returns_none_without_taeh3_file(self):
         self.assertIsNone(self.h3p.load_h3_tiny_vae())
 
     def test_input_types_exposes_preview_toggle(self):
-        opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
-        self.assertIs(opt["preview"][1]["default"], True)
+        types = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()
+        self.assertIs(types["optional"]["preview"][1]["default"], True)
+        self.assertEqual(types["hidden"]["unique_id"], "UNIQUE_ID")   # 预览载荷靠它路由回节点
 
     def test_generate_loads_decoder_only_when_preview_is_on(self):
         h3d = h3_video_director
@@ -1405,8 +1459,8 @@ class H3PreviewTests(unittest.TestCase):
         seen, loads = [], []
 
         @contextlib.contextmanager
-        def _rec(enabled, vae):
-            seen.append((enabled, vae))
+        def _rec(enabled, vae, node_id=None):
+            seen.append((enabled, vae, node_id))
             yield
 
         try:
@@ -1422,12 +1476,12 @@ class H3PreviewTests(unittest.TestCase):
             h3d.load_h3_tiny_vae = lambda: (loads.append(1), "VAE")[1]
             h3d.preview_override = _rec
             node = h3d.NeoH3VideoDirector()
-            node.generate("r")                  # 默认开：段执行期间用 taeh3
-            node.generate("r", preview=False)   # 关：不加载解码器，段内完全不出预览
+            node.generate("r", unique_id="12")                  # 默认开：段执行期间用 taeh3
+            node.generate("r", preview=False, unique_id="12")   # 关：不加载解码器，段内完全不出预览
         finally:
             for n, v in zip(names, orig):
                 setattr(h3d, n, v)
-        self.assertEqual(seen, [(True, "VAE"), (False, None)])
+        self.assertEqual(seen, [(True, "VAE", "12"), (False, None, "12")])
         self.assertEqual(len(loads), 1)
 
 

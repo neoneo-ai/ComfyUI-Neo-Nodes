@@ -96,6 +96,62 @@
 }
 .neo-dtl-new:hover { border-color: #8cf; color: #fff; }
 
+/* 节点内实时预览面板（NeoH3VideoDirector）：每步一段多帧动画，运行中占用节点加高的预留区。
+   <img> 换 src 播放，object-fit: contain 保证不同宽高比都完整显示并垂直居中留白。 */
+.neo-dtl-live {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.neo-dtl-live-img {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  background: #111;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* 控制条：◀ 第 k/n 步 ▶ ⏪ f/n 帧 ⏩ ⏸ */
+.neo-dtl-live-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.neo-dtl-live-btn {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: rgba(30, 30, 30, 0.85);
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.neo-dtl-live-btn:hover { border-color: #8cf; color: #fff; }
+
+.neo-dtl-live-label {
+  flex: 0 0 auto;
+  color: #9aa4b0;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 /* canvas 是替换元素，flex 项默认 min-width:auto（=内在宽度）会拒绝收缩、把按钮挤出节点；
    这里允许它收缩到剩余空间，组件的 ResizeObserver 会按新宽度重绘。 */
 .neo-dtl-tlrow > .neo-dtl-scroll {

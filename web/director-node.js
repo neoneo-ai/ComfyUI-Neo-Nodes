@@ -1,5 +1,7 @@
 // NeoH3VideoDirector 节点：在节点内嵌入只读导演时间轴（复用 web/director-timeline.js）。
 // 按当前 recipe 下拉值拉取配方 spec，按时长比例绘制分段块 + 秒尺；点击分段块直接打开编辑器（只读，不重排）。
+// 采样期间另有一块实时预览面板：后端 h3_preview.py 每步抽多帧、经自有 WS 事件推来，
+// 这里自动循环播放该段的动作，并可暂停 / 逐帧 / 逐采样步回看（核心的单图预览通道后端已关掉）。
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { DirectorTimeline } from "./director-timeline.js";
@@ -9,7 +11,155 @@ import { showToast } from "./gallery-utils.js";
 
 const TL_H = 96; // 节点内时间轴显示区高度（px）
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
-const PREVIEW_H = 300; // 运行时采样预览预留高度：ComfyUI 内置采样组件在节点内显示实时预览，运行中为其加高预留空间，避免与时间轴重叠
+const PREVIEW_H = 300; // 运行时实时预览面板高度（px）：运行中为面板加高节点，结束还原
+const PREVIEW_EVENT = "rs.h3.preview"; // 后端每步推来的多帧载荷（见 h3_preview.py）
+const PREVIEW_STEPS = 40; // 保留的采样步数上限，超出丢最旧（每步 PREVIEW_FRAMES 张 JPEG）
+const PREVIEW_FPS = 4; // 载荷未带 fps 时的兜底播放帧率（与后端 PREVIEW_FPS 同值）
+
+// 画布上存活的预览面板：事件按 node_id 路由（node.id 可能被克隆/载入改写，匹配时现读）
+const livePreviews = new Set();
+
+function onPreviewEvent(e) {
+    const data = e?.detail;
+    if (!data || data.node_id == null) return;
+    const wanted = String(data.node_id).split(":").pop(); // 子图里的 UNIQUE_ID 形如 "12:7"
+    for (const live of livePreviews) {
+        if (String(live.node.id) === wanted) live.apply(data);
+    }
+}
+
+api.addEventListener(PREVIEW_EVENT, onPreviewEvent);
+
+/**
+ * 节点内实时预览面板：每步一段多帧动画，自动循环 + 暂停 / 逐帧 / 逐采样步。
+ * 显示用 <img> 换 src 而不是 canvas：不依赖浏览器解码 API（ImageDecoder 只有 Chromium 有），
+ * 且每步的帧先 new Image() 预热进图片缓存，换帧不闪。
+ * grow() 由调用方提供：首个载荷可能早于 500ms 轮询，先兜一次节点加高。
+ */
+function createLivePreview(node, box, grow) {
+    const img = document.createElement("img");
+    img.className = "neo-dtl-live-img";
+    img.title = "点击暂停 / 继续";
+
+    const bar = document.createElement("div");
+    bar.className = "neo-dtl-live-bar";
+    const mkBtn = (cls, text, title) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "neo-dtl-live-btn " + cls;
+        btn.textContent = text;
+        btn.title = title;
+        btn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
+        return btn;
+    };
+    const playBtn = mkBtn("neo-dtl-live-play", "⏸", "暂停动画");
+    const framePrev = mkBtn("neo-dtl-live-frame-prev", "⏪", "上一帧（自动暂停）");
+    const frameLabel = document.createElement("span");
+    frameLabel.className = "neo-dtl-live-label";
+    const frameNext = mkBtn("neo-dtl-live-frame-next", "⏩", "下一帧（自动暂停）");
+    const stepPrev = mkBtn("neo-dtl-live-step-prev", "◀", "上一个采样步");
+    const stepLabel = document.createElement("span");
+    stepLabel.className = "neo-dtl-live-label";
+    const stepNext = mkBtn("neo-dtl-live-step-next", "▶", "下一个采样步");
+    bar.append(stepPrev, stepLabel, stepNext, framePrev, frameLabel, frameNext, playBtn);
+    box.append(img, bar);
+
+    let steps = [];   // [{frames:[dataURL...], imgs:[Image...]|null, fps}]
+    let sel = -1;     // 当前显示的采样步
+    let frame = 0;    // 当前帧
+    let playing = true;
+    let last = 0;     // 上一帧的时间戳（rAF 时钟）
+    let raf = 0;
+
+    const current = () => steps[sel] || null;
+
+    function paint() {
+        const step = current();
+        if (!step) return;
+        if (!step.imgs) {
+            step.imgs = step.frames.map((url) => { const pre = new Image(); pre.src = url; return pre; });
+            for (const s of steps) { if (s !== step) s.imgs = null; }   // 只留当前步的解码图，别屯内存
+        }
+        img.src = step.frames[frame] || step.frames[0];
+        stepLabel.textContent = `第 ${sel + 1}/${steps.length} 步`;
+        frameLabel.textContent = `${frame + 1}/${step.frames.length} 帧`;
+    }
+
+    function tick(now) {
+        raf = requestAnimationFrame(tick);
+        const step = current();
+        if (!step || !playing) return;
+        if (!last) { last = now; return; }
+        if (now - last < 1000 / (step.fps || PREVIEW_FPS)) return;
+        last = now;
+        frame = (frame + 1) % step.frames.length;
+        paint();
+    }
+
+    const setPlaying = (on) => {
+        playing = on;
+        if (on) last = 0;   // 继续播放时不立刻跳帧，从当前帧安稳接着走
+        playBtn.textContent = on ? "⏸" : "▶";
+        playBtn.title = on ? "暂停动画" : "继续动画";
+    };
+
+    function apply(data) {
+        if (!Array.isArray(data.frames) || !data.frames.length) return;
+        const following = sel < 0 || sel === steps.length - 1;   // 回看旧步时不要被新载荷拽走
+        steps.push({ frames: data.frames, imgs: null, fps: Number(data.fps) || PREVIEW_FPS });
+        if (steps.length > PREVIEW_STEPS) { steps.shift(); sel -= 1; }
+        if (following) { sel = steps.length - 1; frame = 0; }
+        else if (sel < 0) sel = 0;
+        last = 0;
+        box.style.display = "";
+        box.style.height = PREVIEW_H + "px";
+        grow();
+        paint();
+        if (!raf) raf = requestAnimationFrame(tick);
+    }
+
+    function reset() {
+        steps = [];
+        sel = -1;
+        frame = 0;
+        last = 0;
+        setPlaying(true);
+        img.removeAttribute("src");
+        frameLabel.textContent = "";
+        stepLabel.textContent = "";
+        if (raf) { cancelAnimationFrame(raf); raf = 0; }
+        box.style.display = "none";
+        box.style.height = "0px";
+    }
+
+    const shiftStep = (d) => {
+        if (!steps.length) return;
+        sel = Math.min(steps.length - 1, Math.max(0, sel + d));
+        frame = 0;
+        last = 0;
+        paint();
+    };
+
+    const shiftFrame = (d) => {
+        const step = current();
+        if (!step) return;
+        setPlaying(false);   // 逐帧看就是暂停看：停下动画再挪一帧
+        frame = (frame + d + step.frames.length) % step.frames.length;
+        last = 0;
+        paint();
+    };
+
+    const onClick = (el, fn) => el.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+    onClick(playBtn, () => setPlaying(!playing));
+    onClick(img, () => setPlaying(!playing));
+    onClick(stepPrev, () => shiftStep(-1));
+    onClick(stepNext, () => shiftStep(1));
+    onClick(framePrev, () => shiftFrame(-1));
+    onClick(frameNext, () => shiftFrame(1));
+
+    reset();
+    return { node, apply, tick, reset };
+}
 
 app.registerExtension({
     name: "NeoH3VideoDirector.Timeline",
@@ -30,6 +180,15 @@ app.registerExtension({
             root.style.maxWidth = "none";
             root.style.height = (TL_H + ACT_H) + "px";
 
+            // 实时预览面板：与时间轴分属两个 DOM widget（运行中占 PREVIEW_H 高、空闲 0 高），
+            // 分开是因为 bundle 锁定时时间轴整个隐藏，面板仍要能用。
+            const previewBox = document.createElement("div");
+            previewBox.className = "neo-dtl-live";
+            previewBox.style.display = "none";
+            previewBox.style.height = "0px";
+            const liveWidget = node.addDOMWidget("director_preview", "custom", previewBox);
+            liveWidget.width = (node.size && node.size[0]) || 340;
+
             // 时间轴显示区（canvas + ✎）；「＋ 新增导演配方」按钮另起一行，位于其下方右下角
             const tlRow = document.createElement("div");
             tlRow.className = "neo-dtl-tlrow";
@@ -38,6 +197,13 @@ app.registerExtension({
             let tlData = { segments: [] };
             let progress = { active: false, segment_index: -1, total_segments: 0 }; // 当前 director 运行进度（轮询 /neo_video_gen/director_progress）
             let runtimeBaseH = 0; // 节点自然高度（含时间轴+操作条），运行时为采样预览加高后据此还原
+            // 后端每步推来的多帧载荷走这里：自动循环播放该步动画，可暂停/逐帧/逐步（见 createLivePreview）
+            const live = createLivePreview(node, previewBox, () => {
+                // 首个载荷可能早于 500ms 进度轮询，先兜一次加高（幂等）；还原仍由轮询负责
+                if (runtimeBaseH > 0 && node.size[1] < runtimeBaseH + PREVIEW_H) node.setSize([node.size[0], runtimeBaseH + PREVIEW_H]);
+            });
+            node._neoDtLive = live; // 暴露给测试驱动（tick）
+            livePreviews.add(live);
             let tl = null;
             try {
                 tl = new DirectorTimeline(tlRow, {
@@ -70,7 +236,9 @@ app.registerExtension({
                         tl?.refresh();
                         // 跟随运行：段切换时把正在生成的块横向滚动到可视区（段多/放大时才需要）
                         if (progress.active && progress.segment_index !== prev.segment_index) tl?.revealSeg(progress.segment_index);
-                        // 运行时为 ComfyUI 内置采样预览加高预留空间，结束后还原自然高度，避免预览与时间轴重叠
+                        // 运行结束或换段：预览面板清空重来（每段的采样步各自从第 1 步计数）
+                        if (progress.active !== prev.active || progress.segment_index !== prev.segment_index) live.reset();
+                        // 运行时为实时预览面板加高预留空间，结束后还原自然高度，避免与时间轴重叠
                         if (progress.active !== prev.active && runtimeBaseH > 0) {
                             node.setSize([node.size[0], progress.active ? runtimeBaseH + PREVIEW_H : runtimeBaseH]);
                         }
@@ -86,6 +254,7 @@ app.registerExtension({
                 if (node.minWidth && node.size[0] < node.minWidth) node.size[0] = node.minWidth;
                 if (node.minHeight && node.size[1] < node.minHeight) node.size[1] = node.minHeight;
                 widget.width = node.size[0];
+                liveWidget.width = node.size[0];
             };
             node.onResize = node.onResize || function() {};
             const origOnResize = node.onResize;
@@ -127,14 +296,18 @@ app.registerExtension({
                 }
             };
 
+            // specSeq：loadSpec 并发令牌。工作流还原会先后拉两次（创建时的默认值 + configure 后的还原值），
+            // 响应可能交错，旧响应用 seq 判废，不得覆盖新值
+            let specSeq = 0;
             const loadSpec = async (force = false) => {
+                const seq = ++specSeq;
                 const name = recipeWidget ? String(recipeWidget.value || "") : "";
                 if (!name) { tlData = { segments: [] }; if (tl) tl.refresh(); return; }
                 try {
                     const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
                     if (resp.ok) {
                         const data = await resp.json();
-                        if (data.success) { tlData = data; applyDimDefaults(data.defaults, force); if (tl) tl.refresh(); }
+                        if (data.success && seq === specSeq) { tlData = data; applyDimDefaults(data.defaults, force); if (tl) tl.refresh(); }
                     }
                 } catch (e) {
                     console.error("[Neo Nodes] director spec fetch failed", e);
@@ -205,11 +378,14 @@ app.registerExtension({
             syncPreviewBtn();
             tlRow.insertBefore(previewBtn, tlRow.firstChild);
 
-            // 工作流还原按 widgets_values 直接写 value、不触发 callback，故在 configure 后补一次同步
+            // 工作流还原按 widgets_values 直接写 value、不触发 callback，故在 configure 后补一次同步：
+            // 预览按钮态 + 按还原后的 recipe 重拉 spec（onNodeCreated 的首次拉取用的是还原前的默认值，
+            // 不补这一次时间轴就会停在默认配方的分段上）
             const origOnConfigure = node.onConfigure;
             node.onConfigure = function() {
                 const r = origOnConfigure?.apply(this, arguments);
                 syncPreviewBtn();
+                loadSpec();
                 return r;
             };
 
@@ -244,6 +420,7 @@ app.registerExtension({
         nodeType.prototype.onRemoved = function() {
             if (this._neoDtProgressTimer) { clearInterval(this._neoDtProgressTimer); this._neoDtProgressTimer = null; }
             if (this._neoDtTimeline) { try { this._neoDtTimeline.destroy(); } catch (_) {} this._neoDtTimeline = null; }
+            if (this._neoDtLive) { this._neoDtLive.reset(); livePreviews.delete(this._neoDtLive); this._neoDtLive = null; }
             return origOnRemoved?.apply(this, arguments);
         };
     },

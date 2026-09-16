@@ -5,10 +5,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
 import { getExtension, appState } from "./mocks/comfy-app.mjs";
+import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 const TL_H = 96; // 与 web/director-node.js 的 TL_H 保持一致
 const ACT_H = 28; // 与 web/director-node.js 的 ACT_H（时间轴下方操作条）保持一致
-const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（运行时采样预览预留高度）保持一致
+const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（运行时实时预览面板高度）保持一致
+const PREVIEW_EVENT = "rs.h3.preview"; // 与 web/director-node.js 的 PREVIEW_EVENT（后端 h3_preview 推载荷）保持一致
+const PREVIEW_FPS = 8; // 载荷自带的播放帧率
+const FRAME_MS = 1000 / PREVIEW_FPS; // 一帧的毫秒数（tick 的推进阈值）
 const BASE_W = 340;
 const BASE_H = 220;
 
@@ -47,7 +51,14 @@ async function createDirectorNode(recipeValue = "", extraWidgets = []) {
     await ext.beforeRegisterNodeDef(nodeType, { name: "NeoH3VideoDirector" });
     const node = makeDirectorNode(recipeValue, extraWidgets);
     nodeType.prototype.onNodeCreated.call(node);
+    node._neoDtNodeType = nodeType; // 测试清理用：可调 onRemoved 注销面板/计时器
     return node;
+}
+
+// 测试收尾：清掉 500ms 进度轮询，并按节点移除路径注销预览面板（从事件路由表里摘掉）
+function destroyNode(node) {
+    clearInterval(node._neoDtProgressTimer);
+    node._neoDtNodeType.prototype.onRemoved.call(node);
 }
 
 test("创建后节点高度与最小高度都包含时间轴", async () => {
@@ -293,6 +304,47 @@ test("切换 recipe 下拉后节点时间轴重新拉取并更新", async () => 
     assert.equal(tl._segs.length, 2, "切换后时间轴更新为 recipe-b 的 2 段");
 });
 
+test("工作流还原：configure 直写 recipe 不触发回调，时间轴按还原值重拉且保留已存尺寸", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    let recipeWidgetRef = null;
+    mockRoute("/rs_recipes/director_spec", async () => {
+        const name = recipeWidgetRef ? String(recipeWidgetRef.value || "") : "";
+        if (name === "recipe-b") {
+            return jsonResponse({ success: true, segments: [
+                { prompt: "B1", duration_sec: 5 },
+                { prompt: "B2", duration_sec: 5 },
+            ], defaults: { width: 960, height: 544, steps: 8 } });
+        }
+        return jsonResponse({ success: true, segments: [{ prompt: "A1", duration_sec: 5 }],
+            defaults: { width: 1344, height: 768, steps: 20 } });
+    });
+
+    // 工作流已存的尺寸（steps=-1 表示按配方默认填充）
+    const node = await createDirectorNode("recipe-a", [
+        { name: "width", value: 1280 },
+        { name: "height", value: 544 },
+        { name: "steps", value: -1 },
+    ]);
+    recipeWidgetRef = node.widgets.find((w) => w.name === "recipe");
+    clearInterval(node._neoDtProgressTimer);
+    await sleep(60); // onNodeCreated 的首次拉取用的是还原前的值
+    assert.equal(node._neoDtTimeline._segs.length, 1, "初始拉取为还原前 recipe-a 的 1 段");
+
+    // 模拟 LiteGraph configure：按 widgets_values 直写 value（不触发 callback），随后调 onConfigure
+    recipeWidgetRef.value = "recipe-b";
+    node.widgets.find((w) => w.name === "width").value = 1280;
+    node.widgets.find((w) => w.name === "height").value = 544;
+    node.widgets.find((w) => w.name === "steps").value = -1; // 工作流里存的就是 -1
+    node.onConfigure({});
+    await sleep(60); // onConfigure 补拉的 loadSpec 按还原值重取
+
+    assert.equal(node._neoDtTimeline._segs.length, 2, "还原后时间轴与选中的 recipe-b 对应");
+    const dims = () => ["width", "height", "steps"].map((n) => node.widgets.find((w) => w.name === n).value);
+    assert.deepEqual(dims(), [1280, 544, 8], "已存尺寸保留，-1 按还原配方的默认填充");
+});
+
 const DIM_WIDGETS = [
     { name: "width", value: -1 },
     { name: "height", value: -1 },
@@ -399,5 +451,157 @@ test("「👁」实时预览开关与 preview 输入双向同步", async () => {
     previewWidget.value = true;
     node.onConfigure({});
     assert.ok(btn.classList.contains("neo-dtl-preview-on"), "还原工作流后按钮态与 preview 输入一致");
+});
+
+// 节点内实时预览面板：后端（h3_preview.py）每步抽多帧经自有事件 rs.h3.preview 推来，
+// 前端自动循环播放该步动画，支持暂停/逐帧/逐采样步回看；运行结束或换段清空（每段各自从第 1 步计数）。
+const frame = (name) => `data:image/jpeg;base64,${name}`;
+
+function payload(nodeId, names, fps = PREVIEW_FPS) {
+    return { node_id: nodeId, frames: names.map(frame), fps, w: 512, h: 288 };
+}
+
+async function createPreviewNode() {
+    const node = await createDirectorNode();
+    clearInterval(node._neoDtProgressTimer);
+    const box = node.domWidgets.find((w) => w.name === "director_preview").el;
+    return {
+        node,
+        box,
+        img: box.querySelector(".neo-dtl-live-img"),
+        labels: () => [...box.querySelectorAll(".neo-dtl-live-label")].map((e) => e.textContent),
+    };
+}
+
+test("实时预览：载荷到达立即显示面板、加高节点并播第一帧", async () => {
+    resetEnv();
+    const { node, box, img, labels } = await createPreviewNode();
+    assert.equal(box.style.display, "none", "空闲时不占位");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H);
+
+    assert.equal(dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a", "b", "c"])), 1, "预览事件应有监听者");
+    assert.equal(box.style.display, "");
+    assert.equal(box.style.height, PREVIEW_H + "px");
+    assert.equal(img.src, frame("a"));
+    assert.equal(labels()[0], "第 1/1 步");
+    assert.equal(labels()[1], "1/3 帧");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H + PREVIEW_H, "首个载荷不等 500ms 轮询就先加高");
+    destroyNode(node);
+});
+
+test("实时预览：事件按 node_id 过滤，别的节点不显示面板", async () => {
+    resetEnv();
+    const { node, box } = await createPreviewNode();
+    dispatchApiEvent(PREVIEW_EVENT, payload(99, ["x"]));
+    assert.equal(box.style.display, "none");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H);
+    destroyNode(node);
+});
+
+test("实时预览：自动循环播放，可暂停/继续", async () => {
+    resetEnv();
+    const { node, box, img } = await createPreviewNode();
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a", "b", "c"]));
+
+    node._neoDtLive.tick(1000);                       // 第一次 tick 只对时
+    node._neoDtLive.tick(1000 + FRAME_MS);
+    assert.equal(img.src, frame("b"));
+    node._neoDtLive.tick(1000 + 2 * FRAME_MS);
+    assert.equal(img.src, frame("c"));
+    node._neoDtLive.tick(1000 + 3 * FRAME_MS);
+    assert.equal(img.src, frame("a"), "到尾自动循环回第一帧");
+
+    click(box.querySelector(".neo-dtl-live-play"));
+    assert.match(box.querySelector(".neo-dtl-live-play").title, /继续/);
+    node._neoDtLive.tick(2000);
+    node._neoDtLive.tick(4000);
+    assert.equal(img.src, frame("a"), "暂停后不再换帧");
+
+    click(box.querySelector(".neo-dtl-live-play"));
+    node._neoDtLive.tick(5000);                       // 继续播放：先对时，不立刻跳帧
+    assert.equal(img.src, frame("a"));
+    node._neoDtLive.tick(5000 + FRAME_MS);
+    assert.equal(img.src, frame("b"));
+    destroyNode(node);
+});
+
+test("实时预览：逐采样步回看，新载荷不把画面拽走", async () => {
+    resetEnv();
+    const { node, box, img, labels } = await createPreviewNode();
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["s1a", "s1b"]));
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["s2a"]));
+    assert.equal(img.src, frame("s2a"), "默认跟随最新步");
+    assert.equal(labels()[0], "第 2/2 步");
+
+    click(box.querySelector(".neo-dtl-live-step-prev"));
+    assert.equal(img.src, frame("s1a"));
+    assert.equal(labels()[0], "第 1/2 步");
+    assert.equal(labels()[1], "1/2 帧");
+
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["s3a"]));
+    assert.equal(img.src, frame("s1a"), "回看旧步时新载荷不改画面");
+    assert.equal(labels()[0], "第 1/3 步");
+
+    click(box.querySelector(".neo-dtl-live-step-next"));
+    assert.equal(labels()[0], "第 2/3 步");
+    click(box.querySelector(".neo-dtl-live-step-next"));
+    assert.equal(labels()[0], "第 3/3 步");
+    assert.equal(img.src, frame("s3a"), "回到最新步后播放它的动画");
+    destroyNode(node);
+});
+
+test("实时预览：逐帧按钮自动暂停并循环取帧", async () => {
+    resetEnv();
+    const { node, box, img } = await createPreviewNode();
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a", "b", "c"]));
+
+    click(box.querySelector(".neo-dtl-live-frame-next"));
+    assert.equal(img.src, frame("b"));
+    assert.match(box.querySelector(".neo-dtl-live-play").title, /继续/, "逐帧即暂停");
+    click(box.querySelector(".neo-dtl-live-frame-next"));
+    assert.equal(img.src, frame("c"));
+    click(box.querySelector(".neo-dtl-live-frame-prev"));
+    assert.equal(img.src, frame("b"));
+    click(box.querySelector(".neo-dtl-live-frame-prev"));
+    assert.equal(img.src, frame("a"));
+    click(box.querySelector(".neo-dtl-live-frame-prev"));
+    assert.equal(img.src, frame("c"), "第一帧往前回头到尾帧");
+    destroyNode(node);
+});
+
+test("实时预览：换段清空重来，运行结束收起面板并还原节点高度", async () => {
+    resetEnv();
+    clearRoutes();
+    let state = { active: true, segment_index: 0, total_segments: 2 };
+    mockRoute("/neo_video_gen/director_progress", () => jsonResponse(state));
+
+    const { node, box, labels } = await createPreviewNode();
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a"]));
+    assert.equal(box.style.display, "");
+
+    state = { active: true, segment_index: 1, total_segments: 2 }; // 换段：仍在运行
+    await node._neoDtProgressTick();
+    assert.equal(box.style.display, "none");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H + PREVIEW_H, "运行中保留加高");
+
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["b"]));
+    assert.equal(labels()[0], "第 1/1 步", "新段从第 1 步重新计数");
+
+    state = { active: false, segment_index: -1, total_segments: 0 }; // 本次运行结束
+    await node._neoDtProgressTick();
+    assert.equal(box.style.display, "none");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H);
+    destroyNode(node);
+});
+
+test("实时预览：节点移除后载荷不再驱动面板", async () => {
+    resetEnv();
+    const { node, box, img } = await createPreviewNode();
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a"]));
+    destroyNode(node);
+
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["b"]));
+    assert.equal(box.style.display, "none");
+    assert.equal(img.hasAttribute("src"), false);
 });
 
