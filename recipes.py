@@ -151,6 +151,8 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         result["segments"] = meta.get("segments") or []
         if meta.get("story"):
             result["story"] = meta["story"]   # 自动故事板内容（可选）：重新打开编辑器时回显
+        if meta.get("setup"):
+            result["setup"] = meta["setup"]   # 统一设置区状态（可选）：重新打开编辑器时回显
     return result
 
 
@@ -431,6 +433,68 @@ def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets:
     return story
 
 
+def _normalize_director_setup(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> dict | None:
+    """规范化「🎯 统一设置」区的可选内容：统一参考素材 / 首帧 / 尾帧（编辑器里已选中的状态）+ 优化前后提示词对照。
+
+    仅用于重新打开时回显，执行读各段自己的字段。引用名与段参考一样回写为落盘最终名；
+    引用未保存资产的条目直接丢弃——缺一条不该让整份配方保存失败。
+    完全没有内容时返回 None（不写进 recipe.json）。
+    """
+    raw = data.get("setup")
+    if not isinstance(raw, dict):
+        return None
+
+    def _resolve(fname):
+        fname = str(fname or "").strip()
+        if not fname:
+            return None
+        stored = orig_to_copied.get(fname)
+        if stored:
+            return stored
+        if existing_assets and fname in existing_assets:
+            return fname   # 上次保存已落盘的资产（回写后的最终名），直接保留
+        return None
+
+    def _str_list(key):
+        vals = raw.get(key)
+        if not isinstance(vals, list):
+            return None
+        kept = []
+        for v in vals:
+            s = v.strip() if isinstance(v, str) else (str(v) if isinstance(v, (int, float)) else "")
+            if s:
+                kept.append(s)
+        return kept or None
+
+    refs_raw = raw.get("refs") or {}
+    if not isinstance(refs_raw, dict):
+        refs_raw = {}
+    kept_refs = {}
+    for k in ("images", "videos", "audios"):
+        vals = [v for v in (_resolve(x) for x in (refs_raw.get(k) or [])) if v][:_DIRECTOR_REF_CAPS[k]]
+        if vals:
+            kept_refs[k] = vals
+
+    setup = {}
+    if kept_refs:
+        setup["refs"] = kept_refs
+    first_frame = _resolve(raw.get("first_frame"))
+    last_frame = _resolve(raw.get("last_frame"))
+    if first_frame:
+        setup["first_frame"] = first_frame
+    if last_frame:
+        setup["last_frame"] = last_frame
+    orig_prompts = _str_list("orig_prompts")   # 优化前各段原文快照（对照左栏）
+    opt_prompts = _str_list("opt_prompts")     # 最近一次优化结果（对照右栏）
+    if orig_prompts:
+        setup["orig_prompts"] = orig_prompts
+    if opt_prompts:
+        setup["opt_prompts"] = opt_prompts
+    if not kept_refs and not first_frame and not last_frame and not orig_prompts and not opt_prompts:
+        return None
+    return setup
+
+
 @PromptServer.instance.routes.post("/rs_recipes/save")
 async def rs_recipes_save(request):
     try:
@@ -507,7 +571,7 @@ async def rs_recipes_save(request):
             loras.append({"name": nm, "strength": st})
 
         rtype = str(data.get("type") or "").strip()
-        director_shared, director_segments, director_story = None, None, None
+        director_shared, director_segments, director_story, director_setup = None, None, None, None
         if rtype == "video_director":
             # 已落盘 assets（旧清单 + 本次拷贝）：段 / 故事板参考图引用其中任一名字都合法，重存旧配方不报错
             existing_assets = set(copied)
@@ -516,6 +580,7 @@ async def rs_recipes_save(request):
             except ValueError as e:
                 return web.json_response({"success": False, "error": str(e)}, status=400)
             director_story = _normalize_director_story(data, orig_to_copied, existing_assets)
+            director_setup = _normalize_director_setup(data, orig_to_copied, existing_assets)
 
         recipe = {
             "name": name,
@@ -534,6 +599,8 @@ async def rs_recipes_save(request):
             recipe["segments"] = director_segments
             if director_story:
                 recipe["story"] = director_story
+            if director_setup:
+                recipe["setup"] = director_setup
         with open(recipe_dir / "recipe.json", "w", encoding="utf-8") as f:
             json.dump(recipe, f, ensure_ascii=False, indent=2)
 
@@ -1034,6 +1101,73 @@ async def rs_recipes_director_split_segments(request):
     if not segments:
         return web.json_response({"success": False, "error": "拆分结果解析失败，请重试"}, status=422)
     return web.json_response({"success": True, "segments": segments})
+
+
+def _parse_prompt_list(raw):
+    """把 LLM 返回的提示词列表文本解析为 [str]；容错剥掉 ```json 包裹与多余文字。"""
+    if not raw:
+        return []
+    text = str(raw).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    start, end = text.find("["), text.rfind("]")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(x).strip() for x in data]
+
+
+@PromptServer.instance.routes.post("/rs_recipes/director_optimize_prompts")
+async def rs_recipes_director_optimize_prompts(request):
+    """按模式与统一参考素材，把各段提示词重写为 H3 官方格式（段落结构 / 参考标签 / 时间戳）。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+    segments = data.get("segments") or []
+    if not isinstance(segments, list) or not segments:
+        return web.json_response({"success": False, "error": "没有可优化的分段"}, status=400)
+    seg_lines = []
+    for i, s in enumerate(segments):
+        if not isinstance(s, dict):
+            return web.json_response({"success": False, "error": f"第 {i + 1} 段格式无效"}, status=400)
+        prompt = str(s.get("prompt") or "").strip()
+        if not prompt:
+            return web.json_response({"success": False, "error": f"第 {i + 1} 段没有提示词可优化"}, status=400)
+        try:
+            dur = int(round(float(s.get("duration_sec"))))
+        except (TypeError, ValueError):
+            dur = 0
+        seg_lines.append(f"第 {i + 1} 段（约 {dur} 秒）：\n{prompt}")
+
+    mode = str(data.get("mode") or "t2v").strip()
+    refs = data.get("refs") or {}
+    parts = [f"生成模式：{mode}", ""]
+    image_names = []
+    for key, label, tag in (("images", "参考图", "Picture"), ("videos", "参考视频", "Video"), ("audios", "参考音频", "Audio")):
+        names = [str(n).strip() for n in (refs.get(key) or []) if str(n or "").strip()]
+        if not names:
+            continue
+        if key == "images":
+            image_names = names
+        parts.append(f"{label}（在提示词中按顺序引用为 <{tag} 1>…<{tag} {len(names)}>）：")
+        parts.extend(f"- {n}" for n in names)
+    parts += ["", "各段现有提示词（逐段重写，数量与顺序保持不变）：\n" + "\n\n".join(seg_lines)]
+
+    result = await asyncio.to_thread(_director_llm, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in image_names]))
+    if "error" in result:
+        return web.json_response({"success": False, "error": result["error"]}, status=422)
+    prompts = _parse_prompt_list(result.get("prompts") or "")
+    if len(prompts) != len(segments):
+        return web.json_response({"success": False, "error": f"优化结果数量（{len(prompts)}）与分段数（{len(segments)}）不一致，请重试"}, status=422)
+    return web.json_response({"success": True, "prompts": prompts})
+
 
 
 def _normalize_loras(raw) -> list:

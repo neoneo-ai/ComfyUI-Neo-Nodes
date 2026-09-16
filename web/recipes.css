@@ -1169,6 +1169,56 @@
     padding-top: 4px;
 }
 
+/* 🎯 统一设置页：模式 / 统一参考素材 / 提示词批量优化 */
+.neo-director-pane-setup {
+    padding-top: 4px;
+}
+
+.neo-director-setup-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+/* 统一设置页：各段提示词两栏对照（左 = 优化前 / 右 = 优化后） */
+.neo-director-setup-segs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #161616;
+    border: 1px solid #2a2d33;
+    border-radius: 6px;
+    padding: 8px;
+    flex: 1;          /* 自适应填满统一设置页剩余高度，超出才内部滚动 */
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.neo-director-setup-seg-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: start;
+}
+
+.neo-director-setup-seg-labels {
+    font-size: 11px;
+    color: #9a9a9a;
+    padding: 0 2px;
+}
+
+/* 统一设置页：无素材模式（文生 / 混合）的说明行 */
+.neo-director-setup-hint {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px dashed #3a3a3a;
+    border-radius: 6px;
+    color: #9a9a9a;
+    font-size: 12px;
+}
+
+
 .neo-director-story-idea-row {
     display: flex;
     gap: 8px;
@@ -1402,3 +1452,50 @@
 .neo-director-cancel {
     cursor: pointer;
 }
+
+/* 未保存修改确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）：有改动时点 ✕/取消弹出，body 与 foot 之间。
+   仅未隐藏时启用 flex 布局：直接 display:flex 会压过 hidden 属性的 UA 规则，导致确认条一直可见。 */
+.neo-director-dirty-confirm:not([hidden]) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 14px 8px;
+    padding: 6px 8px;
+    border: 1px solid #b45309;
+    border-radius: 6px;
+    background: #2a2318;
+}
+.neo-director-dirty-text {
+    color: #fbbf24;
+    font-size: 11px;
+    white-space: nowrap;
+}
+.neo-director-dirty-save,
+.neo-director-dirty-discard,
+.neo-director-dirty-keep {
+    flex: none;
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.neo-director-dirty-save {
+    color: #fff;
+    background: #3a5a8c;
+    border: 1px solid #5090cc;
+}
+.neo-director-dirty-save:hover { background: #456ba8; }
+.neo-director-dirty-discard {
+    color: #fca5a5;
+    background: #3a2a2a;
+    border: 1px solid #7f1d1d;
+}
+.neo-director-dirty-discard:hover { background: #4a2f2f; }
+.neo-director-dirty-keep {
+    color: #ddd;
+    background: #2a2a2a;
+    border: 1px solid #555;
+}
+.neo-director-dirty-keep:hover { background: #363636; }

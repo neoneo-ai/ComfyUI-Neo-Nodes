@@ -55,6 +55,7 @@
 | GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（每段首帧/尾帧与参考图·视频·音频均已解析为 input 名，并给出有效生成模式 `mode`） |
 | POST | `/rs_recipes/director_generate_story` | 导演编辑器：主题 + 可选角色/背景参考 → LLM 生成完整故事脚本 |
 | POST | `/rs_recipes/director_split_segments` | 导演编辑器：已确认故事按目标秒数拆分场景并（结合角色/背景）重生成每段提示词，返回 `segments[]` |
+| POST | `/rs_recipes/director_optimize_prompts` | 导演编辑器「统一设置」：各段优化前原文 + 模式 + 统一参考清单 → LLM 按 H3 官方格式逐段重写（附参考图走多模态），返回数量与分段数一致的 `prompts[]` |
 
 ## workflow.py — `/neo_nodes/*`
 

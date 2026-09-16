@@ -35,9 +35,9 @@ _BUILTIN_PROVIDER_DEFS = [
     {"id": "local", "name": "Local GGUF (llama.cpp)", "type": "local"},
     {"id": "deepseek", "name": "DeepSeek 深度求索", "type": "remote",
      "default_base_url": "https://api.deepseek.com/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
-    {"id": "dashscope", "name": "阿里云百炼 (通义千问)", "type": "remote",
+    {"id": "aliyun-dashscope", "name": "阿里云百炼 (通义千问)", "type": "remote",
      "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
-    {"id": "dashscope-plan", "name": "阿里云百炼 Token Plan", "type": "remote",
+    {"id": "aliyun-token-plan", "name": "阿里云百炼 Token Plan", "type": "remote",
      "default_base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
     {"id": "moonshot", "name": "月之暗面 Kimi", "type": "remote",
      "default_base_url": "https://api.moonshot.cn/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
@@ -1262,6 +1262,7 @@ def _build_llm_tasks() -> Dict[str, Any]:
         "reverse_prompt",
         "director_story",
         "director_split",
+        "director_optimize",
     ]
 
     for task_name in task_names:

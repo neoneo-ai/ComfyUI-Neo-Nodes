@@ -383,6 +383,59 @@ class NormalizeDirectorStoryTests(unittest.TestCase):
 
 
 # ===========================================================================
+# P1：_normalize_director_setup（统一设置区状态随配方落盘）
+# ===========================================================================
+class NormalizeDirectorSetupTests(unittest.TestCase):
+    def test_setup_normalized_and_refs_rewritten(self):
+        # 参考原始名回写为落盘最终名；首/尾帧同样回写
+        setup = recipes._normalize_director_setup(
+            {"setup": {"refs": {"images": ["a.png", "ghost.png"], "videos": ["v.mp4"]},
+                       "first_frame": "f.png", "last_frame": "l.png"}},
+            {"a.png": "a_copied.png", "v.mp4": "v_copied.mp4",
+             "f.png": "f_copied.png", "l.png": "l_copied.png"})
+        self.assertEqual(setup["refs"]["images"], ["a_copied.png"])   # 未落盘资产被丢弃、不报错
+        self.assertEqual(setup["refs"]["videos"], ["v_copied.mp4"])
+        self.assertEqual(setup["first_frame"], "f_copied.png")
+        self.assertEqual(setup["last_frame"], "l_copied.png")
+
+    def test_missing_and_empty_setup_returns_none(self):
+        self.assertIsNone(recipes._normalize_director_setup({}, {}))
+        self.assertIsNone(recipes._normalize_director_setup({"setup": {}}, {}))
+        self.assertIsNone(recipes._normalize_director_setup({"setup": {"refs": {}}}, {}))
+        self.assertIsNone(recipes._normalize_director_setup({"setup": "不是对象"}, {}))
+
+    def test_resave_keeps_stored_ref(self):
+        # 二次保存：统一素材是上次回写的最终名（不在本次 orig_to_copied）→ 直接保留
+        setup = recipes._normalize_director_setup(
+            {"setup": {"refs": {"images": ["a_copied.png"]}, "first_frame": "f_copied.png"}},
+            {}, {"a_copied.png", "f_copied.png"})
+        self.assertEqual(setup["refs"]["images"], ["a_copied.png"])
+        self.assertEqual(setup["first_frame"], "f_copied.png")
+
+    def test_prompt_compare_kept(self):
+        # 优化前后提示词对照原样落盘（仅回显用）；空项/非文本项被丢弃
+        setup = recipes._normalize_director_setup(
+            {"setup": {"orig_prompts": ["a", "  b  ", "", None], "opt_prompts": [1]}}, {})
+        self.assertEqual(setup["orig_prompts"], ["a", "b"])
+        self.assertEqual(setup["opt_prompts"], ["1"])
+
+    def test_prompt_compare_only_still_writes(self):
+        # 仅对照内容也写入 setup；空列表不写该字段
+        setup = recipes._normalize_director_setup(
+            {"setup": {"orig_prompts": ["a"], "opt_prompts": []}}, {})
+        self.assertEqual(setup["orig_prompts"], ["a"])
+        self.assertNotIn("opt_prompts", setup)
+
+    def test_bad_prompt_compare_dropped(self):
+        # 非列表的对照字段丢弃，不影响其他字段
+        setup = recipes._normalize_director_setup(
+            {"setup": {"orig_prompts": "不是列表", "first_frame": "f.png"}},
+            {"f.png": "f_copied.png"})
+        self.assertNotIn("orig_prompts", setup)
+        self.assertEqual(setup["first_frame"], "f_copied.png")
+
+
+# ===========================================================================
 # P1：list_director_recipes / load_director_spec（临时目录，不污染真实配方）
 # ===========================================================================
 class DirectorRecipeIOTests(unittest.TestCase):
@@ -625,6 +678,55 @@ class DirectorRecipeIOTests(unittest.TestCase):
         scanned = recipes._scan_recipe_dir(pathlib.Path(self.custom) / "story-dir", "custom")
         self.assertEqual(scanned["story"]["story"], "正文")
         self.assertEqual(scanned["story"]["segment_seconds"], 10)
+
+    def test_setup_saved_and_returned_on_reopen(self):
+        # 统一设置区状态随配方落盘，重新打开（扫描 recipe.json）时带回给编辑器回显
+        self._make_recipe("setup-dir", {"type": "video_director", "shared": {},
+                                        "segments": [{"skill_id": "s", "prompt": "p"}],
+                                        "assets": ["a.png", "f.png"]},
+                          assets=["a.png", "f.png"])
+        payload = {"name": "setup-dir", "type": "video_director", "shared": {},
+                   "segments": [{"skill_id": "s", "prompt": "p", "duration_sec": 5}],
+                   "setup": {"refs": {"images": ["a.png"]}, "first_frame": "f.png"}}
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        resp = _run_async(recipes.rs_recipes_save(_Req()))
+        self.assertEqual(resp.status, 200, f"保存失败：{resp.body}")
+
+        with open(os.path.join(self.custom, "setup-dir", "recipe.json"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["setup"]["refs"]["images"], ["a.png"])
+        self.assertEqual(saved["setup"]["first_frame"], "f.png")
+
+        import pathlib
+        scanned = recipes._scan_recipe_dir(pathlib.Path(self.custom) / "setup-dir", "custom")
+        self.assertEqual(scanned["setup"]["first_frame"], "f.png")
+        self.assertEqual(scanned["setup"]["refs"]["images"], ["a.png"])
+
+    def test_director_without_setup_has_no_setup_key(self):
+        # 统一区为空时不写 setup 键，旧配方重存也不该凭空多出
+        self._make_recipe("nosetup-dir", {"type": "video_director", "shared": {},
+                                          "segments": [{"skill_id": "s", "prompt": "p"}]})
+        payload = {"name": "nosetup-dir", "type": "video_director", "shared": {},
+                   "segments": [{"skill_id": "s", "prompt": "p"}],
+                   "setup": {"refs": {}}}
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        resp = _run_async(recipes.rs_recipes_save(_Req()))
+        self.assertEqual(resp.status, 200, f"保存失败：{resp.body}")
+        with open(os.path.join(self.custom, "nosetup-dir", "recipe.json"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertNotIn("setup", saved)
+
+        import pathlib
+        scanned = recipes._scan_recipe_dir(pathlib.Path(self.custom) / "nosetup-dir", "custom")
+        self.assertNotIn("setup", scanned)
 
     def test_director_without_story_has_no_story_key(self):
         # 旧配方（保存时没有故事板内容）不该凭空多出 story 键

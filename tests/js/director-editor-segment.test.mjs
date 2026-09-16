@@ -189,10 +189,11 @@ test("素材格 ✕ 删除：移除候选并清理不再被任何段引用的 im
     await openDirectorEditor(null); // 新建：默认 1 个空段，候选含 hero.png
     await sleep(60);
 
-    const delBtn = Array.from(document.querySelectorAll(".neo-director-ff-del"))
-        .find(b => b.closest(".neo-director-ff-item").dataset.file === "hero.png");
-    assert.ok(delBtn, "素材格有 ✕ 删除按钮");
-    delBtn.click();
+    // 首帧候选在「各段」与「🎯 统一设置」区共享：两处都删掉后 imageRefs 才清理
+    const delBtns = Array.from(document.querySelectorAll(".neo-director-ff-del"))
+        .filter(b => b.closest(".neo-director-ff-item").dataset.file === "hero.png");
+    assert.equal(delBtns.length, 2, "段区与统一设置区各有一个 hero.png 候选格");
+    for (const b of delBtns) b.click();
     await sleep(10);
 
     const tiles = Array.from(document.querySelectorAll(".neo-director-ff-item"))
@@ -664,12 +665,13 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     await openDirectorEditor(null); // 新建：默认 1 个空段
     await sleep(60);
 
-    // 页签结构：新建默认落在「自动故事板」，时间轴页隐藏
+    // 页签结构：新建默认落在「自动故事板」，统一设置 / 时间轴页隐藏
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    assert.equal(tabs.length, 2, "两个页签");
+    assert.equal(tabs.length, 3, "三个页签");
     const tabStory = tabs.find((t) => t.textContent.includes("自动故事板"));
+    const tabSetup = tabs.find((t) => t.textContent.includes("统一设置"));
     const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
-    assert.ok(tabStory && tabTimeline, "两个页签齐全");
+    assert.ok(tabStory && tabSetup && tabTimeline, "三个页签齐全");
     assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
     assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
 
@@ -694,7 +696,7 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     splitBtn.click();
     await sleep(50);
 
-    assert.ok(tabStory.classList.contains("active"), "拆分后仍停留在故事板页（左右两栏对照）");
+    assert.ok(tabSetup.classList.contains("active"), "拆分后自动切到「🎯 统一设置」页");
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
     assert.equal(segs.length, 2, "拆分成 2 段");
     assert.equal(segs[0].querySelector(".neo-director-prompt").value, "场景A提示词");
@@ -703,7 +705,7 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     assert.equal(Number(segs[1].querySelector(".neo-director-dur").value), 10);
 
     // 右栏：分段后的故事（2 段，含提示词）
-    const segItems = Array.from(document.querySelectorAll(".neo-director-story-seg-item"));
+    const segItems = Array.from(document.querySelectorAll(".neo-director-story-segs .neo-director-story-seg-item"));
     assert.equal(segItems.length, 2, "右栏显示 2 个分段");
     assert.ok(segItems[0].textContent.includes("场景A提示词"), "右栏第 1 段含提示词");
     assert.ok(segItems[1].textContent.includes("场景B提示词"), "右栏第 2 段含提示词");
@@ -1051,7 +1053,7 @@ test("导演编辑器：图生视频段三组参考网格回显，保存写入 r
     await openDirectorEditor(existing, null);
     await sleep(60);
 
-    const rows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
+    const rows = Array.from(document.querySelectorAll(".neo-director-seg .neo-director-segref-row"));
     assert.equal(rows.length, 3, "参考图 / 参考视频 / 参考音频三组网格");
     assert.deepEqual(rows.map((r) => r.querySelector(".neo-director-refpick-count").textContent),
         ["1/9", "1/3", "1/3"], "各自上限：图 9 / 视频 3 / 音频 3");
@@ -1346,7 +1348,7 @@ test("导演编辑器：首帧/尾帧有「本地」按钮，参考组网格点�
     assert.ok(lfBlock.querySelector(".neo-director-local-add"), "尾帧区有「本地」按钮");
 
     // 参考素材区三组网格：去掉「本地」按钮，改为点击黑色空区上传（行内含隐藏 file input）
-    const refRows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
+    const refRows = Array.from(document.querySelectorAll(".neo-director-seg .neo-director-segref-row"));
     assert.equal(refRows.length, 3, "参考图/视频/音频三组");
     for (const row of refRows) {
         const label = row.querySelector(".neo-director-field-label").textContent;
@@ -1524,5 +1526,501 @@ test("导演编辑器：参考素材区标题行「素材库」按钮打开/收�
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
+});
+
+
+test("导演编辑器：「🎯 统一设置」页签存在，两处生成模式下拉双向同步", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "SETUP", shared: { mode: "t2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "第一段", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "第二段", duration_sec: 5 },
+        ],
+    });
+    await sleep(60);
+
+    // 三个页签：自动故事板 / 统一设置 / 时间轴分段
+    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
+    assert.equal(tabs.length, 3, "标题栏共三个页签");
+    assert.ok(tabs.some((t) => t.textContent.includes("统一设置")), "含「🎯 统一设置」页签");
+    const tabSetup = tabs.find((t) => t.textContent.includes("统一设置"));
+
+    // 切到统一设置页：setup 面板显示，故事板 / 时间轴隐藏
+    tabSetup.click();
+    await sleep(20);
+    assert.ok(tabSetup.classList.contains("active"), "统一设置页签激活");
+    assert.equal(document.querySelector(".neo-director-pane-setup").style.display, "");
+    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none");
+    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none");
+
+    // 统一设置页含模式下拉 + 素材区（按模式显隐）+ 优化按钮
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupModeSel = setupPane.querySelector(".neo-director-mode");
+    assert.ok(setupModeSel, "统一设置页有生成模式下拉");
+    assert.equal(setupModeSel.value, "t2v", "初始与 shared.mode 一致");
+    assert.equal(setupPane.querySelectorAll(".neo-director-refpick-grid").length, 3, "图/视频/音频三组网格（DOM 常驻）");
+    assert.ok(setupPane.querySelector(".neo-director-segref-sync"), "「应用到所有分段」按钮");
+    assert.ok(setupPane.querySelector(".neo-director-optimize"), "提示词优化按钮");
+
+    // t2v：不需要参考素材 → 参考区 / 首尾帧区隐藏，显示说明文字
+    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "none", "t2v 隐藏参考素材区");
+    assert.equal(setupPane.querySelector(".neo-director-setup-frames").style.display, "none", "t2v 隐藏首尾帧区");
+    assert.ok(setupPane.querySelector(".neo-director-setup-hint").style.display !== "none", "t2v 显示说明文字");
+
+    // setup → timeline 同步：改统一设置页下拉，时间轴页跟随且各段显隐生效
+    setupModeSel.value = "r2v";
+    setupModeSel.dispatchEvent(new Event("change"));
+    const tlModeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
+    assert.equal(tlModeSel.value, "r2v", "时间轴页模式跟随");
+    assert.ok(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-refs-block"))
+        .every((b) => b.style.display !== "none"), "r2v 下各段参考素材区显示");
+    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "", "r2v 显示统一参考素材区");
+    assert.ok(Array.from(setupPane.querySelectorAll(".neo-director-setup-hint")).every((h) => h.style.display === "none"), "r2v 隐藏说明文字");
+
+    // timeline → setup 同步：改时间轴页下拉，统一设置页跟随
+    tlModeSel.value = "t2v";
+    tlModeSel.dispatchEvent(new Event("change"));
+    assert.equal(setupModeSel.value, "t2v", "统一设置页模式跟随");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：拆分成功后自动切到「🎯 统一设置」页", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/director_split_segments", () => jsonResponse({
+        success: true,
+        segments: [{ prompt: "a", duration_sec: 5 }, { prompt: "b", duration_sec: 5 }],
+    }));
+
+    await openDirectorEditor(null); // 新建：默认故事板页
+    await sleep(60);
+    document.querySelector(".neo-director-story").value = "一段完整的故事";
+    document.querySelector(".neo-director-split").click();
+    await sleep(40);
+
+    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
+    const tabSetup = tabs.find((t) => t.textContent.includes("统一设置"));
+    assert.ok(tabSetup.classList.contains("active"), "拆分后自动激活统一设置页签");
+    assert.equal(document.querySelector(".neo-director-pane-setup").style.display, "");
+    assert.equal(Array.from(document.querySelectorAll(".neo-director-seg")).length, 2, "时间轴已填充 2 段");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+
+test("导演编辑器：统一设置「应用到所有分段」覆盖式写入各段参考区", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "r2v" }]));
+    mockRoute("/upload/image", () => jsonResponse({ name: "uni_ref.png", subfolder: "", type: "input" }));
+
+    await openDirectorEditor({
+        name: "UNI-APPLY", shared: { mode: "r2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "r2v", refs: { images: ["a.png"] } },
+            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, mode: "r2v", refs: { audios: ["m1.mp3"] } },
+        ],
+    });
+    await sleep(60);
+
+    // 切到统一设置页，往统一参考图网格上传一张图（走本地上传路径）
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("统一设置"));
+    tabSetup.click();
+    await sleep(20);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const imgRow = Array.from(setupPane.querySelectorAll(".neo-director-segref-row"))
+        .find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考图"));
+    const fileInput = imgRow.querySelector("input[type=file]");
+    fileInput.click = () => {};   // 拦截 jsdom 文件选择器
+    Object.defineProperty(fileInput, "files", { value: [new File(["fake"], "uni.png", { type: "image/png" })], configurable: true });
+    fileInput.dispatchEvent(new Event("change"));
+    await sleep(50);
+    const uniGrid = imgRow.querySelector(".neo-director-refpick-grid");
+    assert.ok(Array.from(uniGrid.querySelectorAll(".neo-director-refpick-item")).some((it) => it.dataset.file === "uni_ref.png"), "统一参考图已加入");
+
+    // 点「应用到所有分段」→ 各段三组参考被覆盖（图=统一图、视频/音频清空）
+    setupPane.querySelector(".neo-director-segref-sync").click();
+    await sleep(30);
+    const orderOf = (grid) => Array.from(grid.querySelectorAll(".neo-director-refpick-item")).map((it) => it.dataset.file);
+    for (const seg of document.querySelectorAll(".neo-director-seg")) {
+        const grids = Array.from(seg.querySelectorAll(".neo-director-refpick-grid")); // DOM 序：图 / 视频 / 音频
+        assert.deepEqual(orderOf(grids[0]), ["uni_ref.png"], "各段参考图被统一覆盖");
+        assert.deepEqual(orderOf(grids[1]), [], "各段参考视频被清空");
+        assert.deepEqual(orderOf(grids[2]), [], "各段参考音频被清空");
+    }
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一首帧到所有分段", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "i2v" }]));
+    mockRoute("/upload/image", () => jsonResponse({ name: "uni_ff.png", subfolder: "", type: "input" }));
+
+    await openDirectorEditor({
+        name: "UNI-FRAME", shared: { mode: "i2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "i2v" },
+            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, mode: "i2v" },
+        ],
+    });
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("统一设置"));
+    tabSetup.click();
+    await sleep(20);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+
+    // i2v：显示统一首帧区（无尾帧行），隐藏参考素材区与说明
+    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "none", "i2v 隐藏参考素材区");
+    const framesBlock = setupPane.querySelector(".neo-director-setup-frames");
+    assert.equal(framesBlock.style.display, "", "i2v 显示统一首帧区");
+    assert.equal(setupPane.querySelector(".neo-director-setup-lf").style.display, "none", "i2v 隐藏尾帧行");
+
+    // 「本地」上传一张图作为统一首帧
+    const localBtn = framesBlock.querySelector(".neo-director-local-add");
+    const fileInput = localBtn.querySelector("input[type=file]");
+    fileInput.click = () => {};   // 拦截 jsdom 文件选择器
+    Object.defineProperty(fileInput, "files", { value: [new File(["fake"], "uni.png", { type: "image/png" })], configurable: true });
+    fileInput.dispatchEvent(new Event("change"));
+    await sleep(50);
+    assert.ok(Array.from(framesBlock.querySelectorAll(".neo-director-ff-item"))
+        .some((it) => it.dataset.file === "uni_ff.png" && it.classList.contains("neo-director-ff-active")), "统一首帧已选中");
+
+    // 点「应用到所有分段」→ 各段首帧网格选中同一张图
+    framesBlock.querySelector(".neo-director-segref-sync").click();
+    await sleep(30);
+    for (const seg of document.querySelectorAll(".neo-director-seg")) {
+        assert.ok(Array.from(seg.querySelectorAll(".neo-director-ff-item"))
+            .some((it) => it.dataset.file === "uni_ff.png" && it.classList.contains("neo-director-ff-active")), "各段首帧被统一应用");
+    }
+
+    // fl2v：尾帧行出现；mixed：显示逐段设置说明
+    const setupModeSel = setupPane.querySelector(".neo-director-mode");
+    setupModeSel.value = "fl2v";
+    setupModeSel.dispatchEvent(new Event("change"));
+    await sleep(20);
+    assert.equal(setupPane.querySelector(".neo-director-setup-lf").style.display, "", "fl2v 显示尾帧行");
+
+    // 「素材库」按钮不重复：标题行没有，首/尾帧行各留一个（与逐段布局一致）
+    assert.equal(framesBlock.querySelector(".neo-director-refs-head .neo-director-ff-lib"), null, "统一首帧区标题行不重复挂素材库按钮");
+    assert.equal(framesBlock.querySelectorAll(".neo-director-ff-row .neo-director-ff-lib").length, 2, "首帧/尾帧行各保留自己的素材库按钮");
+
+    setupModeSel.value = "mixed";
+    setupModeSel.dispatchEvent(new Event("change"));
+    await sleep(20);
+    const hints = Array.from(setupPane.querySelectorAll(".neo-director-setup-hint"));
+    assert.equal(hints[1].style.display, "", "mixed 显示逐段设置说明");
+    assert.equal(framesBlock.style.display, "none", "mixed 隐藏统一素材区");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：「优化所有分段提示词」请求体正确、结果逐段写回", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/director_optimize_prompts", (body) => jsonResponse({
+        success: false,
+        error: `优化结果数量（${body.segments.length > 1 ? 1 : body.segments.length}）与分段数不一致，请重试`,
+    }));
+
+    await openDirectorEditor({
+        name: "OPT", shared: { mode: "t2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "第一段原始", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "第二段原始", duration_sec: 8 },
+        ],
+    });
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("统一设置"));
+    tabSetup.click();
+    await sleep(20);
+    document.querySelector(".neo-director-optimize").click();
+    await sleep(50);
+
+    // 请求体：segments（提示词+时长）/ mode / refs（空）
+    const call = fetchLog.find((c) => c.path === "/rs_recipes/director_optimize_prompts");
+    assert.ok(call, "调用了优化端点");
+    assert.equal(call.method, "POST");
+    assert.deepEqual(call.body.segments.map((s) => s.prompt), ["第一段原始", "第二段原始"]);
+    assert.deepEqual(call.body.segments.map((s) => s.duration_sec), [5, 8]);
+    assert.equal(call.body.mode, "t2v");
+    assert.deepEqual(call.body.refs, {});
+
+    // 失败路径：后端 success:false → 原提示词保留、状态清空
+    const tas = Array.from(document.querySelectorAll(".neo-director-prompt"));
+    assert.equal(tas[0].value, "第一段原始", "失败时原提示词保留");
+    assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent === "");
+
+    // 成功路径：数量一致 → 逐段写回
+    clearRoutes();
+    mockRoute("/rs_recipes/director_optimize_prompts", () => jsonResponse({
+        success: true,
+        prompts: ["integrated_multimodal_description: [Shot 1] 段一…", "overall_soundscape: …"],
+    }));
+    document.querySelector(".neo-director-optimize").click();
+    await sleep(50);
+
+    const tas2 = Array.from(document.querySelectorAll(".neo-director-prompt"));
+    assert.equal(tas2[0].value, "integrated_multimodal_description: [Shot 1] 段一…", "第 1 段写回");
+    assert.equal(tas2[1].value, "overall_soundscape: …", "第 2 段写回");
+    assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent.includes("已优化 2 段"));
+
+    // 右栏分段故事不被优化结果覆盖（本用例无拆分，保持占位提示）
+    assert.ok(!document.querySelector(".neo-director-story-segs").textContent.includes("[Shot 1]"), "右栏不刷新为优化后提示词");
+
+    // 统一设置页两栏对照：左 = 未优化原文，右 = 优化后
+    const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
+    assert.equal(setupItems.length, 2, "统一设置页显示 2 段");
+    let cells = setupItems[0].querySelectorAll(".neo-director-setup-seg-cols > div");
+    assert.equal(cells[0].textContent, "第一段原始", "左栏保留未优化提示词");
+    assert.equal(cells[1].textContent, "integrated_multimodal_description: [Shot 1] 段一…", "右栏显示优化后提示词");
+
+    // 重新点优化：请求仍基于未优化原文；左栏不变，右栏更新为最新结果
+    clearRoutes();
+    mockRoute("/rs_recipes/director_optimize_prompts", () => jsonResponse({ success: true, prompts: ["第二次优化 段一", "第二次优化 段二"] }));
+    const logLen = fetchLog.length;
+    document.querySelector(".neo-director-optimize").click();
+    await sleep(50);
+    assert.deepEqual(fetchLog[logLen].body.segments.map((s) => s.prompt), ["第一段原始", "第二段原始"], "重新优化基于未优化原文");
+    const setupItems2 = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
+    cells = setupItems2[0].querySelectorAll(".neo-director-setup-seg-cols > div");
+    assert.equal(cells[0].textContent, "第一段原始", "重新优化后左栏仍是未优化原文");
+    assert.equal(cells[1].textContent, "第二次优化 段一", "右栏更新为最新优化结果");
+
+    // 保存：优化前后对照快照写入 setup，重开时可回显
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "OPT" }));
+    document.querySelector(".neo-director-save").click();
+    await sleep(60);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.deepEqual(saveCall.body.setup.orig_prompts, ["第一段原始", "第二段原始"], "优化前原文写入 setup");
+    assert.deepEqual(saveCall.body.setup.opt_prompts, ["第二次优化 段一", "第二次优化 段二"], "最新优化结果写入 setup");
+});
+
+test("导演编辑器：打开旧配方回显右栏分段故事与统一设置区状态", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "r2v" }]));
+
+    await openDirectorEditor({
+        name: "ECHO", shared: { mode: "r2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "场景A", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "场景B", duration_sec: 10 },
+        ],
+        setup: { refs: { images: ["u1.png"] }, orig_prompts: ["场景A原文", "场景B原文"], opt_prompts: ["优化结果A", "优化结果B"] },
+    });
+    await sleep(60);
+
+    // 右栏回显分段后的故事（优化前原文：orig_prompts 快照优先于段内已优化的提示词）
+    const items = Array.from(document.querySelectorAll(".neo-director-story-segs .neo-director-story-seg-item"));
+    assert.equal(items.length, 2, "右栏显示 2 个分段");
+    assert.ok(items[0].textContent.includes("场景A原文"), "右栏第 1 段显示优化前原文");
+    assert.ok(!items[0].textContent.includes("优化结果A"), "右栏不显示优化后内容");
+    assert.ok(items[1].textContent.includes("10s"), "右栏第 2 段含时长");
+
+    // 统一设置页两栏回显：左 = 落盘的优化前原文，右 = 落盘的最新优化结果
+    const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
+    assert.equal(setupItems.length, 2, "统一设置页回显 2 段");
+    const cells = setupItems[0].querySelectorAll(".neo-director-setup-seg-cols > div");
+    assert.equal(cells[0].textContent, "场景A原文", "左栏回显落盘的优化前原文");
+    assert.equal(cells[1].textContent, "优化结果A", "右栏回显落盘的优化结果");
+
+    // 统一设置区回显已存状态：参考图网格有对应瓷砖
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const uniTiles = Array.from(setupPane.querySelectorAll(".neo-director-refpick-item"));
+    assert.equal(uniTiles.length, 1, "统一参考网格回显 1 张");
+    assert.equal(uniTiles[0].dataset.file, "u1.png", "回显已存的统一参考图");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：打开旧配方回显统一首帧/尾帧选中态", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "fl2v" }]));
+
+    await openDirectorEditor({
+        name: "ECHO-FRAME", shared: { mode: "fl2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "fl2v" }],
+        setup: { first_frame: "uf.png", last_frame: "ul.png" },
+    });
+    await sleep(60);
+
+    const framesBlock = document.querySelector(".neo-director-pane-setup .neo-director-setup-frames");
+    assert.ok(Array.from(framesBlock.querySelectorAll(".neo-director-ff-item"))
+        .some((it) => it.dataset.file === "uf.png" && it.classList.contains("neo-director-ff-active")), "统一首帧回显选中");
+    assert.ok(Array.from(framesBlock.querySelectorAll(".neo-director-lf-item"))
+        .some((it) => it.dataset.file === "ul.png" && it.classList.contains("neo-director-lf-active")), "统一尾帧回显选中");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：保存时统一设置区状态（统一参考/首帧/尾帧）写入 setup", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SETUP-SAVE" }));
+    let upCount = 0;
+    mockRoute("/upload/image", () => jsonResponse({ name: ["uni_ref.png", "uni_ff.png", "uni_lf.png"][upCount++], subfolder: "", type: "input" }));
+
+    await openDirectorEditor({
+        name: "SETUP-SAVE", shared: { mode: "r2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "r2v" }],
+    });
+    await sleep(60);
+
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    // r2v：点统一参考图网格空区上传一张
+    const refInput = setupPane.querySelector(".neo-director-setup-refs .neo-director-segref-row input[type=file]");
+    refInput.click = () => {};
+    Object.defineProperty(refInput, "files", { value: [new File(["fake"], "r.png", { type: "image/png" })], configurable: true });
+    refInput.dispatchEvent(new Event("change"));
+    await sleep(50);
+
+    // 切 fl2v：本地上传统一首帧 + 尾帧（两个「本地」按钮）
+    const setupModeSel = setupPane.querySelector(".neo-director-mode");
+    setupModeSel.value = "fl2v";
+    setupModeSel.dispatchEvent(new Event("change"));
+    await sleep(20);
+    const localBtns = Array.from(setupPane.querySelectorAll(".neo-director-setup-frames .neo-director-local-add"));
+    assert.equal(localBtns.length, 2, "首帧/尾帧行各有一个「本地」按钮");
+    for (const btn of localBtns) {
+        const fi = btn.querySelector("input[type=file]");
+        fi.click = () => {};
+        Object.defineProperty(fi, "files", { value: [new File(["fake"], "f.png", { type: "image/png" })], configurable: true });
+        fi.dispatchEvent(new Event("change"));
+        await sleep(50);
+    }
+
+    document.querySelector(".neo-director-save").click();
+    await sleep(60);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.deepEqual(saveCall.body.setup.refs.images, ["uni_ref.png"], "统一参考图写入 setup.refs");
+    assert.equal(saveCall.body.setup.first_frame, "uni_ff.png", "统一首帧写入 setup");
+    assert.equal(saveCall.body.setup.last_frame, "uni_lf.png", "统一尾帧写入 setup");
+});
+
+test("导演编辑器关闭保护：无修改直接关；有未保存修改先出确认条（保存并关闭 / 放弃修改 / 继续编辑）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true }));
+
+    const existing = {
+        name: "T-dirty",
+        shared: { width: 1344, height: 768 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+
+    // ① 无修改：✕ 直接关闭；仅动拉伸滑块（视图状态）也不算修改
+    await openDirectorEditor(existing);
+    await sleep(60);
+    const slider = document.querySelector(".neo-director-zoom-slider");
+    slider.value = "2";
+    slider.dispatchEvent(new window.Event("input", { bubbles: true }));
+    assert.equal(document.querySelector(".neo-director-dirty-confirm").hidden, true, "初始确认条隐藏");
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "无修改直接关闭（滑块不算修改）");
+
+    // ② 改提示词后 ✕ → 不关，出确认条；「继续编辑」收起确认条、窗口仍在
+    await openDirectorEditor(existing);
+    await sleep(60);
+    const promptTa = document.querySelector(".neo-director-prompt");
+    promptTa.value = "改过的提示词";
+    promptTa.dispatchEvent(new window.Event("input", { bubbles: true }));
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "有未保存修改：✕ 不关闭");
+    const confirm = document.querySelector(".neo-director-dirty-confirm");
+    assert.equal(confirm.hidden, false, "确认条出现");
+    document.querySelector(".neo-director-dirty-keep").click();
+    await sleep(20);
+    assert.equal(confirm.hidden, true, "「继续编辑」收起确认条");
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "窗口仍在");
+
+    // ③ 再点底部「取消」→ 确认条再次出现；「放弃修改」直接关闭
+    document.querySelector(".neo-director-cancel").click();
+    await sleep(20);
+    assert.equal(confirm.hidden, false, "「取消」同样走确认条");
+    document.querySelector(".neo-director-dirty-discard").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "「放弃修改」关闭且不发保存请求");
+    assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save"), undefined, "放弃修改不保存");
+
+    // ④ 「保存并关闭」：发保存请求并关闭窗口
+    await openDirectorEditor(existing);
+    await sleep(60);
+    const promptTa2 = document.querySelector(".neo-director-prompt");
+    promptTa2.value = "又改了";
+    promptTa2.dispatchEvent(new window.Event("input", { bubbles: true }));
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+    assert.equal(document.querySelector(".neo-director-dirty-confirm").hidden, false, "再次出现确认条");
+    document.querySelector(".neo-director-dirty-save").click();
+    await sleep(60);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "「保存并关闭」发出保存请求");
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "保存成功后窗口关闭");
+});
+
+test("导演编辑器单例：有未保存修改时切另一配方被拦截并出确认条，处理后才能切换", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const recipeA = {
+        name: "T-keep",
+        shared: { width: 1344, height: 768 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    const recipeB = {
+        name: "T-other",
+        shared: {},
+        segments: [{ skill_id: "sk-a", prompt: "x", duration_sec: 5 }],
+    };
+    await openDirectorEditor(recipeA);
+    await sleep(60);
+
+    // 改提示词 → 点另一配方：不重载，仍显示 A，且弹出确认条
+    const promptTa = document.querySelector(".neo-director-prompt");
+    promptTa.value = "未保存的改动";
+    promptTa.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await openDirectorEditor(recipeB);
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "仍只有一个浮层");
+    assert.equal(document.querySelector(".neo-director-name").value, "T-keep", "未重载为另一配方");
+    assert.equal(document.querySelector(".neo-director-dirty-confirm").hidden, false, "切配方被拦截并出确认条");
+
+    // 「放弃修改」关闭后再点 B → 正常打开 B
+    document.querySelector(".neo-director-dirty-discard").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "放弃后旧窗口关闭");
+    await openDirectorEditor(recipeB);
+    await sleep(20);
+    assert.equal(document.querySelector(".neo-director-name").value, "T-other", "之后可正常打开另一配方");
+
+    // 无修改时切配方仍直接重载（原行为不变）
+    await openDirectorEditor(recipeA);
+    await sleep(20);
+    assert.equal(document.querySelector(".neo-director-name").value, "T-keep", "无修改直接切换");
 });
 
