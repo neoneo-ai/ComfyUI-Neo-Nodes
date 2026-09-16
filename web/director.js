@@ -210,10 +210,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const segRefReaders = new Map();    // 段行 → [读取该段三组参考的函数]（保存时按当前 DOM 顺序取）
     const segRefSetters = new Map();    // 段行 → [设置该段三组参考的函数]（「同步到所有分段」用）
     const segFrameReaders = new Map();  // 段行 → {first, last} 读取该段首/尾帧的函数
+    const segFrameSetters = new Map();  // 段行 → {first, last} 设置该段首/尾帧的函数（统一设置自动应用用）
 
     /** 一组参考素材的「已用列表」：只显示当前挂上的素材，拖入/本地上传直接插入；
      *  瓷砖可鼠标拖放调整顺序、✕ 移除。顺序即保存与时间轴展示顺序，数量受 group.max 上限约束。 */
-    function buildSegRefRow(group, initialNames, headExtra) {
+    function buildSegRefRow(group, initialNames, headExtra, onChange) {
         const list = [];   // 已用素材文件名（有序）：顺序即该段参考素材的先后
         const grid = $el('div', { className: 'neo-director-refpick-grid' });
         const count = $el('span', { className: 'neo-director-refpick-count' });
@@ -235,7 +236,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 // 加载后按画面比例设置瓷砖宽度（图 naturalWidth/Height、视频 videoWidth/Height）
                 if (group.kind === 'image') media.addEventListener('load', () => sizeTile(tile, media.naturalWidth, media.naturalHeight));
                 else if (group.kind === 'video') media.addEventListener('loadedmetadata', () => sizeTile(tile, media.videoWidth, media.videoHeight));
-                delBtn.onclick = (e) => { e.stopPropagation(); list.splice(i, 1); render(); markDirty(); };
+                delBtn.onclick = (e) => { e.stopPropagation(); list.splice(i, 1); render(); markDirty(); if (onChange) onChange(); };
                 tile.addEventListener('dragstart', (e) => {
                     dragIdx = i;
                     e.dataTransfer.effectAllowed = 'move';
@@ -258,6 +259,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             list.push(name);
             render();
             markDirty();
+            if (onChange) onChange();
         };
         // 整体替换本组素材（「同步到所有分段」用）：去重 + 上限约束后重建
         const set = (names) => {
@@ -289,6 +291,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             list.splice(at, 0, item);
             render();
             markDirty();
+            if (onChange) onChange();
         };
         grid.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -325,7 +328,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     /** 单帧候选网格（首帧/尾帧共用）：「无」项 + 已连线 LoadImage 缩略图，单选。
      *  prefix 为类名前缀（首帧 `neo-director-ff` / 尾帧 `neo-director-lf`）；
      *  编辑旧配方时若已存文件名不在当前画布素材里，补占位项以免保存时被丢弃。 */
-    function buildFrameGrid(prefix, initialName, emptyText) {
+    function buildFrameGrid(prefix, initialName, emptyText, onChange) {
         const grid = $el('div', { className: `${prefix}-grid` });
         const candidates = imageRefs.slice();
         if (initialName && !candidates.some(r => r.filename === initialName)) {
@@ -349,7 +352,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const wasActive = tile.classList.contains(`${prefix}-active`);
             tile.remove();
             markDirty();
-            if (wasActive) select('');
+            if (wasActive) { select(''); if (onChange) onChange(''); }
             if (!fname) return;
             const stillUsed = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))
                 .some(row => Array.from(row.querySelectorAll(`.${prefix}-item`)).some(it => it.dataset.file === fname));
@@ -367,7 +370,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             ]);
             delBtn.onclick = (e) => { e.stopPropagation(); removeTile(tile); };
             // 点选切换：已选中再点一次即取消（回落到「无」）
-            tile.onclick = () => { select(tile.classList.contains(`${prefix}-active`) ? '' : ref.filename); markDirty(); };
+            tile.onclick = () => { const v = tile.classList.contains(`${prefix}-active`) ? '' : ref.filename; select(v); markDirty(); if (onChange) onChange(v); };
             return tile;
         };
         // 把素材加入候选并选中（网格拖放 / 时间轴拖放 / 画布素材共用）
@@ -382,6 +385,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             }
             select(fname);
             markDirty();
+            if (onChange) onChange(fname);
         };
         for (const r of candidates) grid.appendChild(makeTile(r));
         select(initialName || '');
@@ -399,6 +403,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 const active = Array.from(grid.children).find(it => it.classList.contains(`${prefix}-active`));
                 return (active && active.dataset.file) ? active.dataset.file : '';
             },
+            setSelected: (value) => { select(value); markDirty(); },   // 程序化改选中（统一设置取消选择时清空各段用）
         };
     }
 
@@ -500,6 +505,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         row._addCandidate = ffGrid.addCandidate; // 时间轴拖放到该段 → 作为首帧（与首帧网格共用候选）
         row._lfAddCandidate = lfGrid.addCandidate; // 统一设置「应用到所有分段」写入尾帧用
         segFrameReaders.set(row, { first: ffGrid.getSelected, last: lfGrid.getSelected });
+        segFrameSetters.set(row, { first: ffGrid.setSelected, last: lfGrid.setSelected });
         segRefReaders.set(row, segRefRows.map(r => r.getSelected));
         segRefSetters.set(row, segRefRows.map(r => r.set));
         selfRowRef = row;   // 同步按钮据此定位本段（作为同步源）
@@ -1034,59 +1040,47 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     setupModeSel.addEventListener('change', () => { modeSel.value = setupModeSel.value; applyGlobalMode(); refreshSetupRefs(); });
 
     // 统一素材区：按全局模式显示（与各段素材要求一致）——
-    // r2v → 三组参考素材网格；i2v → 统一首帧；fl2v → 统一首帧+尾帧；t2v / mixed → 说明文字
-    const uniRefRows = SEG_REF_GROUPS.map((g) => buildSegRefRow(g, (exSetup.refs || {})[g.key]));
-    const uniApplyBtn = $el('button', { className: 'neo-director-segref-sync', title: '把统一参考素材覆盖到所有分段' }, [
-        $el('i', { className: 'pi pi-copy' }),
-        $el('span', { textContent: '应用到所有分段' }),
-    ]);
-    uniApplyBtn.onclick = () => {
+    // r2v → 三组参考素材网格；i2v → 统一首帧；fl2v → 统一首帧+尾帧；t2v / mixed → 说明文字。
+    // 改动即自动覆盖式应用到所有分段（无需手动点应用）。
+    const applyUniRefs = () => {
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
-        if (!rows.length) { app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail: '还没有分段，请先在故事板页拆分', life: 3000 }); return; }
+        if (!rows.length) return;
         const src = uniRefRows.map(r => r.getSelected());
-        if (!src.some(a => a.length)) { app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail: '请先添加参考素材（点网格空区本地上传，或从素材库拖入）', life: 4000 }); return; }
         for (const row of rows) {
             const setters = segRefSetters.get(row) || [];
             setters.forEach((set, gi) => set && set(src[gi]));
         }
-        app.extensionManager.toast.add({ severity: 'success', summary: '多段导演', detail: `已把统一参考素材应用到全部 ${rows.length} 个分段`, life: 3000 });
     };
+    const uniRefRows = SEG_REF_GROUPS.map((g) => buildSegRefRow(g, (exSetup.refs || {})[g.key], null, applyUniRefs));
     const uniR2vBlock = $el('div', { className: 'neo-director-setup-refs' }, [
         $el('div', { className: 'neo-director-refs-head' }, [
-            $el('span', { className: 'neo-director-field-label', textContent: '统一参考素材（选一次应用到所有分段；图 ≤9 / 视频 ≤3 / 音频 ≤3）' }),
-            uniApplyBtn,
+            $el('span', { className: 'neo-director-field-label', textContent: '统一参考素材（改动自动应用到所有分段；图 ≤9 / 视频 ≤3 / 音频 ≤3）' }),
             buildAssetLibButton(),
         ]),
         uniRefRows[0].row,   // 参考图独占一行（与每段布局一致）
         $el('div', { className: 'neo-director-ref-row-pair' }, [uniRefRows[1].row, uniRefRows[2].row]),
     ]);
 
-    const uniFFGrid = buildFrameGrid('neo-director-ff', exSetup.first_frame || '', '无');
-    const uniLFGrid = buildFrameGrid('neo-director-lf', exSetup.last_frame || '', '无');
-    const uniFrameApplyBtn = $el('button', { className: 'neo-director-segref-sync', title: '把统一首帧/尾帧覆盖到所有分段' }, [
-        $el('i', { className: 'pi pi-copy' }),
-        $el('span', { textContent: '应用到所有分段' }),
-    ]);
-    uniFrameApplyBtn.onclick = () => {
+    // 统一首帧/尾帧选中变化 → 自动应用到所有分段（取消选择则清空各段对应帧）
+    const applyUniFrames = (fname, last) => {
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
-        if (!rows.length) { app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail: '还没有分段，请先在故事板页拆分', life: 3000 }); return; }
-        const first = uniFFGrid.getSelected();
-        const last = (setupModeSel.value === 'fl2v') ? uniLFGrid.getSelected() : '';
-        if (!first && !last) { app.extensionManager.toast.add({ severity: 'warning', summary: '多段导演', detail: '请先选择首帧图（点「本地」上传，或从素材库拖入）', life: 4000 }); return; }
+        if (!rows.length) return;
         for (const row of rows) {
-            if (first) row._addCandidate(first);   // 与时间轴拖放同一候选路径：加入并选中
-            if (last) row._lfAddCandidate(last);
+            const setters = segFrameSetters.get(row);
+            if (!setters) continue;
+            if (last) { if (fname) row._lfAddCandidate(fname); else setters.last(''); }
+            else { if (fname) row._addCandidate(fname); else setters.first(''); }
         }
-        const what = [first ? '首帧' : '', last ? '尾帧' : ''].filter(Boolean).join(' + ');
-        app.extensionManager.toast.add({ severity: 'success', summary: '多段导演', detail: `已把统一${what}应用到全部 ${rows.length} 个分段`, life: 3000 });
     };
-    const uniFrameLabel = $el('span', { className: 'neo-director-field-label', textContent: '统一首帧（选一次应用到所有分段）' });
+    const uniFFGrid = buildFrameGrid('neo-director-ff', exSetup.first_frame || '', '无', (f) => applyUniFrames(f, false));
+    const uniLFGrid = buildFrameGrid('neo-director-lf', exSetup.last_frame || '', '无', (f) => applyUniFrames(f, true));
+    const uniFrameLabel = $el('span', { className: 'neo-director-field-label', textContent: '统一首帧（改动自动应用到所有分段）' });
     const uniLfRow = $el('div', { className: 'neo-director-setup-lf' }, [
         frameRow('尾帧图（首尾帧模式：锁住该段收尾画面）', (fname) => uniLFGrid.addCandidate(fname)), uniLFGrid.grid,
     ]);
     const uniFrameBlock = $el('div', { className: 'neo-director-setup-frames' }, [
         // 「素材库」按钮只留在各帧行上（与逐段布局一致），head 不再重复挂一个
-        $el('div', { className: 'neo-director-refs-head' }, [uniFrameLabel, uniFrameApplyBtn]),
+        $el('div', { className: 'neo-director-refs-head' }, [uniFrameLabel]),
         frameRow('首帧图（点选或从左侧素材栏拖入）', (fname) => uniFFGrid.addCandidate(fname)), uniFFGrid.grid,
         uniLfRow,
     ]);
@@ -1100,7 +1094,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         uniR2vBlock.style.display = (m === 'r2v') ? '' : 'none';
         uniFrameBlock.style.display = (m === 'i2v' || m === 'fl2v') ? '' : 'none';
         uniLfRow.style.display = (m === 'fl2v') ? '' : 'none';
-        uniFrameLabel.textContent = (m === 'fl2v') ? '统一首帧 / 尾帧（选一次应用到所有分段）' : '统一首帧（选一次应用到所有分段）';
+        uniFrameLabel.textContent = (m === 'fl2v') ? '统一首帧 / 尾帧（改动自动应用到所有分段）' : '统一首帧（改动自动应用到所有分段）';
         uniT2vHint.style.display = (m === 't2v') ? '' : 'none';
         uniMixedHint.style.display = (m === 'mixed') ? '' : 'none';
     }

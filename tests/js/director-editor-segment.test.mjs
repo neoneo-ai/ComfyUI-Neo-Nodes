@@ -1563,7 +1563,7 @@ test("导演编辑器：「🎯 统一设置」页签存在，两处生成模式
     assert.ok(setupModeSel, "统一设置页有生成模式下拉");
     assert.equal(setupModeSel.value, "t2v", "初始与 shared.mode 一致");
     assert.equal(setupPane.querySelectorAll(".neo-director-refpick-grid").length, 3, "图/视频/音频三组网格（DOM 常驻）");
-    assert.ok(setupPane.querySelector(".neo-director-segref-sync"), "「应用到所有分段」按钮");
+    assert.equal(setupPane.querySelector(".neo-director-segref-sync"), null, "统一素材改动自动应用，无「应用到所有分段」按钮");
     assert.ok(setupPane.querySelector(".neo-director-optimize"), "提示词优化按钮");
 
     // t2v：不需要参考素材 → 参考区 / 首尾帧区隐藏，显示说明文字
@@ -1616,7 +1616,7 @@ test("导演编辑器：拆分成功后自动切到「🎯 统一设置」页", 
 });
 
 
-test("导演编辑器：统一设置「应用到所有分段」覆盖式写入各段参考区", async () => {
+test("导演编辑器：统一设置参考素材改动自动覆盖式应用到各段", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "r2v" }]));
@@ -1646,8 +1646,7 @@ test("导演编辑器：统一设置「应用到所有分段」覆盖式写入�
     const uniGrid = imgRow.querySelector(".neo-director-refpick-grid");
     assert.ok(Array.from(uniGrid.querySelectorAll(".neo-director-refpick-item")).some((it) => it.dataset.file === "uni_ref.png"), "统一参考图已加入");
 
-    // 点「应用到所有分段」→ 各段三组参考被覆盖（图=统一图、视频/音频清空）
-    setupPane.querySelector(".neo-director-segref-sync").click();
+    // 上传即自动应用到各段：三组参考被覆盖（图=统一图、视频/音频清空）
     await sleep(30);
     const orderOf = (grid) => Array.from(grid.querySelectorAll(".neo-director-refpick-item")).map((it) => it.dataset.file);
     for (const seg of document.querySelectorAll(".neo-director-seg")) {
@@ -1697,8 +1696,7 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     assert.ok(Array.from(framesBlock.querySelectorAll(".neo-director-ff-item"))
         .some((it) => it.dataset.file === "uni_ff.png" && it.classList.contains("neo-director-ff-active")), "统一首帧已选中");
 
-    // 点「应用到所有分段」→ 各段首帧网格选中同一张图
-    framesBlock.querySelector(".neo-director-segref-sync").click();
+    // 上传即自动应用：各段首帧网格选中同一张图（无需点按钮）
     await sleep(30);
     for (const seg of document.querySelectorAll(".neo-director-seg")) {
         assert.ok(Array.from(seg.querySelectorAll(".neo-director-ff-item"))

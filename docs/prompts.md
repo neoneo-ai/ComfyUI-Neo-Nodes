@@ -48,6 +48,22 @@
 | PROMPT | STRING | 提示词字符串（多结果 skill 按条目循环消费） |
 | BUNDLE | STRING | 运行时 bundle id（`bnd_*`）；连到 Krea2/H3 的 `bundle` 输入可一次性带上 prompt/参考图（连线·@引用·本地上传）/skill。仅存内存，过期后下游安全回退本地输入 |
 
+## 📦 Neo Bundle Expand - BUNDLE 展开节点
+
+把 ⚡ Neo Prompt Agent 的 **BUNDLE** 展开成标准输入槽，对齐官方 MiniMax H3 Reference to Video 的 `ref_images`（最多 9 张）：
+
+- **输出槽自动增长**：默认只显示 `prompt` + `image_1`；连上最后一个可见图片槽后露出下一个，上限 9 张（按需连线、未用槽位闲置）。
+- 执行后节点内只读展示提示词与参考图缩略图网格（按输出顺序）。视频/音频参考暂不展开。
+
+| 输入 | 类型 | 说明 |
+|------|------|------|
+| bundle | STRING (forceInput) | ⚡ Neo Prompt Agent 的 BUNDLE 输出 |
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| prompt | STRING | bundle 内的提示词文本 |
+| image_1..image_9 | IMAGE | 参考图（最多 9 张，自动增长露出） |
+
 ## 节点界面与按钮
 
 两个节点共享同一套界面布局（Agent 不显示状态栏）：
