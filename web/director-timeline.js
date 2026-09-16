@@ -3,8 +3,8 @@
 // 数据完全由宿主通过 options.getSegments() 提供（返回当前顺序的数组），因此可挂到
 // 任意容器——导演编辑器浮层或 NeoH3VideoDirector 节点 DOM 均可复用同一组件。
 //
-// getSegments() 应返回：[{ duration, prompt, thumbUrl, id? }]，顺序即宿主当前分段顺序。
-// id 为段身份（可选）：提供后颜色按身份绑定，重排时颜色跟随段内容而非位置。
+// getSegments() 应返回：[{ duration, prompt, thumbUrl }]，顺序即宿主当前分段顺序。
+// 段色相一律按当前位置着色（节点与编辑器复用同一组件、同一配色，始终一致）。
 // 回调：onSelect(index)、onReorder(order)（原始索引的新排列）、
 //       onResize(index, durationSec)（拖块右缘调时长，吸附 0.5s、最小 1s；仅非 readOnly）、
 //       onAdd()（点击时间轴尾部「＋」按钮添加段；仅非 readOnly 且提供时显示）。
@@ -23,7 +23,6 @@ export class DirectorTimeline {
     this._segs = [];
     this._progress = null; // 当前 director 运行进度（宿主经 getProgress() 提供）
     this._thumbs = new Map(); // url -> HTMLImageElement
-    this._hueById = new Map(); // 段身份 -> 色相槽位（首次出现顺序分配，重排不变）
     this._selected = -1;
     this._drag = null; // { src, order, moved, startX, cursorX }
     this._hover = null; // 悬停块索引（高亮 + 时间范围提示）
@@ -90,12 +89,6 @@ export class DirectorTimeline {
     const segs = (this.opts.getSegments && this.opts.getSegments()) || [];
     this._segs = segs;
     this._progress = (this.opts.getProgress && this.opts.getProgress()) || null;
-    // 身份色槽位：段首次出现时按顺序占一个色相，之后重排颜色跟随内容不变
-    for (let i = 0; i < segs.length; i++) {
-      const id = segs[i].id;
-      if (id == null) continue;
-      if (!this._hueById.has(id)) this._hueById.set(id, this._hueById.size);
-    }
     for (const s of segs) {
       const urls = [s.thumbUrl].concat(Array.isArray(s.matThumbs) ? s.matThumbs : []);
       for (const u of urls) {
@@ -243,36 +236,43 @@ export class DirectorTimeline {
   }
 
   // 依据当前分段计算每块像素位置：{ padX, usable, total, pxPerSec, blocks:[{i,x,w}] }
-  // 调时长拖动中传入 preview（索引 -> 预览秒数），按新总时长重排，实时反馈拉伸效果
-  _layout(preview) {
+  // preview（索引 -> 预览秒数）用于调时长拖动按新总时长重排；order（索引数组）用于重排拖动，
+  // 按其顺序摆放各块（源块占其落位槽），使其余块实时让位、幽灵块不与他人重叠。
+  _layout(preview, order) {
     const W = this._width();
     const padX = 8;
     // 宿主提供 onAdd 且非只读时，尾部预留「＋」按钮空间
     const addW = (typeof this.opts.onAdd === "function" && !this.opts.readOnly) ? 32 : 0;
     const usable = Math.max(10, W - padX * 2 - addW);
     const segs = this._segs;
-    const n = segs.length;
+    const idxs = order || segs.map((_, k) => k);
     const durOf = (i) => {
       if (preview && typeof preview[i] === "number") return preview[i];
       return Number(segs[i].duration) || 0;
     };
     let total = 0;
-    for (let i = 0; i < n; i++) total += durOf(i);
+    for (const i of idxs) total += durOf(i);
     const blocks = [];
-    if (n > 0 && total > 0) {
+    if (idxs.length > 0 && total > 0) {
       const pps = usable / total;
       let x = padX;
-      for (let i = 0; i < n; i++) {
+      for (const i of idxs) {
         const w = durOf(i) * pps;
         blocks.push({ i, x, w, seg: segs[i] });
         x += w;
       }
-    } else if (n > 0) {
-      const w = usable / n;
+    } else if (idxs.length > 0) {
+      const w = usable / idxs.length;
       let x = padX;
-      for (let i = 0; i < n; i++) { blocks.push({ i, x, w, seg: segs[i] }); x += w; }
+      for (const i of idxs) { blocks.push({ i, x, w, seg: segs[i] }); x += w; }
     }
     return { padX, usable, total, pxPerSec: total > 0 ? usable / total : 0, blocks };
+  }
+
+  // 重排拖动中幽灵块的横向位置：跟随光标（保持按下时的抓取偏移），夹在内容区内
+  _ghostX(d, L) {
+    const raw = d.cursorX - d.grabOff;
+    return Math.max(L.padX, Math.min(L.padX + L.usable - d.w, raw));
   }
 
   _blockAt(x) {
@@ -302,7 +302,9 @@ export class DirectorTimeline {
       window.addEventListener("mouseup", this._onUpB);
       return;
     }
-    this._drag = { src: i, order: this._segs.map((_, k) => k), moved: false, startX: e.clientX, cursorX: 0 };
+    const srcBlock = this._layout().blocks[i];
+    // cursorX/grabOff 为画布内坐标：拖动中幽灵块跟随光标，保持按下点相对块左缘的距离
+    this._drag = { src: i, order: this._segs.map((_, k) => k), moved: false, startX: e.clientX, cursorX: x, grabOff: srcBlock ? x - srcBlock.x : 0, w: srcBlock ? srcBlock.w : 0 };
     window.addEventListener("mousemove", this._onMoveB);
     window.addEventListener("mouseup", this._onUpB);
   }
@@ -338,10 +340,6 @@ export class DirectorTimeline {
     const order = this._drag.order.filter((i) => i !== this._drag.src);
     order.splice(p, 0, this._drag.src);
     this._drag.order = order;
-    // 目标槽位：按新顺序前 p 个块的宽度累加，得到源块落位后的 x（幽灵块与指示线对齐）
-    let sx = L.padX;
-    for (let k = 0; k < p; k++) { const b = L.blocks[order[k]]; if (b) sx += b.w; }
-    this._drag.slotX = sx;
     this.refresh();
   }
 
@@ -360,10 +358,9 @@ export class DirectorTimeline {
     else this.select(d.src);
     this.refresh();
   }
-  // 段身份色相：有 id 按身份槽位（重排不变），无 id 回退按位置；+180 让默认段落在青绿色系而非红色
-  _identityHue(seg, i) {
-    const slot = seg && seg.id != null ? this._hueById.get(seg.id) : undefined;
-    return (((slot == null ? i : slot) * 47 + 180) % 360);
+  // 段色相按位置着色（+180 让默认段落在青绿色系而非红色）；节点与编辑器同一配色，始终一致
+  _segHue(i) {
+    return ((i * 47 + 180) % 360);
   }
 
   _rulerStep(pps, usable) {
@@ -438,10 +435,11 @@ export class DirectorTimeline {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
-    // 调时长拖动中按预览值重排布局，实时反馈拉伸效果
+    // 调时长拖动按预览值重排；重排拖动按“新顺序”布局（源块占其落位槽，其余块让位、幽灵不重叠）
     const resizeDrag = this._drag && this._drag.moved && this._drag.resize ? this._drag : null;
+    const reorderDrag = this._drag && this._drag.moved && !this._drag.resize ? this._drag : null;
     const preview = resizeDrag && typeof resizeDrag.newDur === "number" ? { [resizeDrag.src]: resizeDrag.newDur } : undefined;
-    const L = this._layout(preview);
+    const L = reorderDrag ? this._layout(undefined, reorderDrag.order) : this._layout(preview);
     if (L.blocks.length === 0) {
       ctx.fillStyle = "#666";
       ctx.font = "11px sans-serif";
@@ -473,7 +471,7 @@ export class DirectorTimeline {
     const drag = this._drag && this._drag.moved ? this._drag : null;
     // 悬停块的起止秒（时间范围提示）；调时长拖动中跟随预览值
     let hoverRange = null;
-    if (this._hover != null && this._segs[this._hover]) {
+    if (!reorderDrag && this._hover != null && this._segs[this._hover]) {
       const durs = drag && drag.resize ? L.blocks.map((bb) => (bb.i === drag.src ? drag.newDur : Number(this._segs[bb.i].duration) || 0)) : this._segs.map((s) => Number(s.duration) || 0);
       let st = 0;
       for (let k = 0; k < this._hover; k++) st += durs[k];
@@ -481,19 +479,38 @@ export class DirectorTimeline {
     }
     for (const b of L.blocks) {
       const seg = b.seg || this._segs[b.i];
-      if (drag && !drag.resize && drag.src === b.i) {
-        // 重排拖动：源块被"拿起"，原位只留虚线占位（调时长拖动保持原内容，仅宽度预览变化）
-        ctx.globalAlpha = 0.5;
-        ctx.setLineDash([4, 3]);
+      // 重排拖动：按新顺序定位，色相/序号随落位槽变化；源块本身改成跟随光标的幽灵（见下方落位框），此处只留槽
+      const posIdx = reorderDrag ? reorderDrag.order.indexOf(b.i) : b.i;
+      if (reorderDrag && reorderDrag.src === b.i) continue;
+      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(posIdx + 1), this._segHue(posIdx), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i, this._segProgressState(b.i));
+    }
+
+    // 重排拖动中：非源块整体压暗，让被"拿起"的幽灵块一眼突出（源块不遮）
+    if (reorderDrag) {
+      ctx.fillStyle = "rgba(8,12,18,0.5)";
+      for (const b of L.blocks) {
+        if (b.i === reorderDrag.src) continue;
         this._rr(ctx, b.x + 1, top, Math.max(2, b.w - 2), bh, 4);
-        ctx.strokeStyle = "rgba(140,204,255,0.6)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-        continue;
+        ctx.fill();
       }
-      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(b.i + 1), this._identityHue(seg, b.i), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i, this._segProgressState(b.i));
+      // 落位槽虚框：源块松手后落在这里；幽灵块跟随光标浮动，拖动全程都有位移反馈
+      const posIdx = reorderDrag.order.indexOf(reorderDrag.src);
+      const slot = L.blocks[posIdx];
+      if (slot) {
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 2;
+        this._rr(ctx, slot.x + 1, top, Math.max(2, slot.w - 2), bh, 4);
+        ctx.fillStyle = "rgba(191,230,255,0.08)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(191,230,255,0.9)";
+        ctx.stroke();
+        ctx.restore();
+      }
+      const srcSeg = this._segs[reorderDrag.src];
+      if (srcSeg && reorderDrag.w > 0) {
+        this._paintSeg(ctx, this._ghostX(reorderDrag, L), reorderDrag.w, top, bh, srcSeg, String(posIdx + 1), this._segHue(posIdx), true, false, false, this._segProgressState(reorderDrag.src));
+      }
     }
 
     // 时间轴尾部「＋」添加段按钮（宿主提供 onAdd 且非只读时）
@@ -531,13 +548,7 @@ export class DirectorTimeline {
       }
     }
 
-    // 拖拽：幽灵块落在目标槽位（自带新序号），替代旧的光标指示线
-    if (drag && typeof drag.slotX === "number") {
-      const srcB = L.blocks[drag.src];
-      const seg = srcB.seg || this._segs[drag.src];
-      const newIdx = drag.order.indexOf(drag.src);
-      this._paintSeg(ctx, drag.slotX, srcB.w, top, bh, seg, String(newIdx + 1), this._identityHue(seg, drag.src), true, false, false);
-    }
+    // 拖拽：源块在落位槽留虚框占位、本体作为幽灵块跟随光标浮动（其余块已让位，落位框不与他人重叠）
   }
 
   // 某段当前的生成状态：done（已完成）/ current（正在生成）/ ""（未开始或不显示）。
@@ -611,12 +622,15 @@ export class DirectorTimeline {
   _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop, prog) {
     const iw = Math.max(2, w - 2);
     this._rr(ctx, x + 1, top, iw, bh, 4);
-    // 半透明块底色：选中加深、拖拽幽灵更淡
-    ctx.fillStyle = "hsla(" + hue + ",55%," + (ghost ? 62 : sel ? 70 : 58) + "%," + (ghost ? 0.45 : sel ? 0.75 : 0.45) + ")";
+    // 半透明块底色：静止淡、选中加深；拖动中的幽灵块另加醒目强调
+    // 拖动中的块（幽灵）更醒目：填充更实更亮、描边更粗且用更亮的色，并加轻微投影营造“拿起/悬浮”感；静止与选中态配色不变
+    if (ghost) { ctx.shadowColor = "rgba(120,205,255,0.85)"; ctx.shadowBlur = 8; }
+    ctx.fillStyle = "hsla(" + hue + ",55%," + (ghost ? 70 : sel ? 70 : 58) + "%," + (ghost ? 0.8 : sel ? 0.75 : 0.45) + ")";
     ctx.fill();
-    ctx.lineWidth = ghost || sel || drop ? 1.5 : 1;
-    ctx.strokeStyle = ghost || sel ? "#8cf" : drop ? "#e6a23c" : "rgba(255,255,255,0.16)";
+    ctx.lineWidth = ghost ? 2.5 : (sel || drop ? 1.5 : 1);
+    ctx.strokeStyle = ghost ? "#bfe6ff" : sel ? "#8cf" : drop ? "#e6a23c" : "rgba(255,255,255,0.16)";
     ctx.stroke();
+    if (ghost) { ctx.shadowBlur = 0; }
     if (drop) {
       // 素材拖放落点：半透明橙色覆盖提示「放到这 = 设为该段首帧」
       ctx.fillStyle = "rgba(230,162,60,0.18)";

@@ -7,6 +7,10 @@ import { app } from "../../../../scripts/app.js";
 import { $el } from "../../../../scripts/ui.js";
 import { DirectorTimeline } from "./director-timeline.js";
 import { saveRecipe, listVideoSkills, scanMediaNodes, widgetValueToRef } from "./recipes.js";
+
+// 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
+export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
+
 /** 从拖放事件的 dataTransfer 提取素材标识（Neo Gallery 自定义 MIME，回退 text/plain）。
  *  兼容传入 DropEvent（取 .dataTransfer）或 dataTransfer 本身。 */
 function grabDataType(dt) {
@@ -631,7 +635,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 for (const n of names) matThumbs.push(`/view?filename=${encodeURIComponent(n)}&subfolder=&type=input`);
             }
         });
-        return { id: row.dataset.segId, duration: Number(durInp.value) || 0, prompt: (promptTa.value || '').trim(), thumbUrl, mat, matThumbs };
+        return { duration: Number(durInp.value) || 0, prompt: (promptTa.value || '').trim(), thumbUrl, mat, matThumbs };
     });
     const onSelectSeg = (i) => {
         const row = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))[i];
@@ -870,6 +874,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (result.success) {
                 app.extensionManager.toast.add({ severity: 'success', summary: '多段导演已保存', detail: `${name}（${segments.length} 段）`, life: 4000 });
                 close();
+                // 广播配方已落盘：节点内时间轴据此刷新下拉 + 重载 spec。created=true 表示新建，供节点自动选中刚保存的配方。
+                window.dispatchEvent(new CustomEvent(DIRECTOR_RECIPE_SAVED_EVENT, { detail: { name, created: !existing } }));
                 if (typeof onSaved === 'function') onSaved();
             } else {
                 app.extensionManager.toast.add({ severity: 'error', summary: '保存失败', detail: result.error || 'Unknown error', life: 5000 });
@@ -928,6 +934,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ideaInp.addEventListener('input', () => {
         if (existing || nameManuallySet) return;
         const v = ideaInp.value.trim();
+        nameInp.value = v.length > 20 ? v.slice(0, 20) + '…' : v;
+        renderName();
+    });
+    // 新建配方：直接在时间轴输入段提示词时，若尚未手动命名则同样截取生成标题（与「主题/想法」一致）
+    segsWrap.addEventListener('input', (e) => {
+        if (!e.target.classList.contains('neo-director-prompt')) return;
+        if (existing || nameManuallySet) return;
+        const v = e.target.value.trim();
         nameInp.value = v.length > 20 ? v.slice(0, 20) + '…' : v;
         renderName();
     });

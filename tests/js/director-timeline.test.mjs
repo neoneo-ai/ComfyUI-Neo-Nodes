@@ -114,6 +114,66 @@ test("3 段拖到中段：光标在 B、C 之间只越过 A 中心 → [1,0,2]",
     tl.destroy();
 });
 
+test("重排拖动布局：_layout(order) 按新顺序摆放、源块占落位槽、首尾相接不重叠", async () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }, { duration: 10 }]);
+    await sleep(40);
+
+    // 无 order：原始顺序 [0,1,2]
+    assert.deepEqual(tl._layout().blocks.map((b) => b.i), [0, 1, 2], "无 order 时按原始顺序");
+
+    // 重排到新顺序 [2,0,1]：源块(2)落到最前槽，其余依次让位；块连续、无重叠
+    const L = tl._layout(undefined, [2, 0, 1]);
+    assert.deepEqual(L.blocks.map((b) => b.i), [2, 0, 1], "按传入 order 摆放");
+    for (let k = 0; k < L.blocks.length - 1; k++) {
+        const a = L.blocks[k], c = L.blocks[k + 1];
+        assert.ok(Math.abs((a.x + a.w) - c.x) < 1e-6, `块${k}与块${k + 1}首尾相接不重叠`);
+    }
+    assert.equal(L.blocks[0].i, 2, "源块(2)在最前槽");
+    assert.ok(Math.abs(L.blocks[0].x - L.padX) < 1e-6, "源块 x 起点为 padX（无重叠）");
+    tl.destroy();
+});
+
+test("重排拖动：幽灵块跟随光标移动，槽位留虚框（不越内容区）", async () => {
+    resetEnv();
+    const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+
+    // W=320, padX=8 → usable=304；块0 [8,160] 宽 152
+    tl.canvas.dispatchEvent(mouse("mousedown", 40)); // 块0 内按下，抓取偏移 40-8=32
+    window.dispatchEvent(mouse("mousemove", 70));    // 光标右移 30px（仍在块0 槽内，顺序不变）
+
+    const L = tl._layout();
+    assert.equal(tl._drag.grabOff, 32);
+    assert.equal(tl._drag.w, 152);
+    assert.deepEqual(tl._drag.order, [0, 1], "同槽内小幅拖动不改顺序");
+    assert.equal(tl._ghostX(tl._drag, L), 38, "幽灵块左缘跟随光标右移 30px（8→38）");
+    // 松手前后的落位槽虚框位置由 _layout(order) 决定
+    assert.ok(Math.abs(tl._layout(undefined, tl._drag.order).blocks[0].x - 8) < 1e-6);
+
+    window.dispatchEvent(mouse("mouseup", 70));
+    assert.deepEqual(calls.reorder, [[0, 1]]);
+    tl.destroy();
+});
+
+test("重排拖动：拖出内容区时幽灵块夹在边界内", async () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }, { duration: 5 }]);
+    await sleep(40);
+
+    tl.canvas.dispatchEvent(mouse("mousedown", 40));
+    window.dispatchEvent(mouse("mousemove", 1000)); // 远超右边界
+    const L = tl._layout();
+    assert.equal(tl._ghostX(tl._drag, L), L.padX + L.usable - tl._drag.w, "右边界夹紧");
+    window.dispatchEvent(mouse("mouseup", 1000));
+
+    tl.canvas.dispatchEvent(mouse("mousedown", 300)); // 块1 右缘附近按下
+    window.dispatchEvent(mouse("mousemove", -500));   // 远超左边界
+    assert.equal(tl._ghostX(tl._drag, tl._layout()), 8, "左边界夹紧到 padX");
+    window.dispatchEvent(mouse("mouseup", -500));
+    tl.destroy();
+});
+
 test("readOnly：点击只选中，不进入拖拽", async () => {
     resetEnv();
     const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }], { readOnly: true });
@@ -136,13 +196,13 @@ test("destroy 移除 canvas 并停止监听", async () => {
     assert.equal(container.querySelector("canvas"), null);
 });
 
-test("身份色相按段 id 绑定（重排不变色），无 id 回退按位置", async () => {
+test("段色相一律按位置着色（节点与编辑器同一配色，不随身份/重排变化）", async () => {
     resetEnv();
     const { tl } = makeTimeline([{ duration: 5, id: "a" }, { duration: 5, id: "b" }]);
-    await sleep(40); // rAF 后色相槽位已分配：a→slot0，b→slot1
-    assert.equal(tl._identityHue({ id: "a" }, 1), (0 * 47 + 180) % 360);   // a 移到位置 1 颜色不变（slot0，青绿起点）
-    assert.equal(tl._identityHue({ id: "b" }, 0), (1 * 47 + 180) % 360);  // b 移到位置 0 颜色不变（slot1）
-    assert.equal(tl._identityHue({}, 2), (2 * 47 + 180) % 360);           // 无 id → 按位置
+    await sleep(40);
+    assert.equal(tl._segHue(0), (0 * 47 + 180) % 360);   // 位置 0 → 青绿起点（与 id 无关）
+    assert.equal(tl._segHue(1), (1 * 47 + 180) % 360);   // 位置 1
+    assert.equal(tl._segHue(2), (2 * 47 + 180) % 360);   // 位置 2
     tl.destroy();
 });
 

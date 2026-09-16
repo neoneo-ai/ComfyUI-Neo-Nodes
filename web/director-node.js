@@ -5,7 +5,7 @@
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { DirectorTimeline } from "./director-timeline.js";
-import { openDirectorEditor } from "./director.js";
+import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
 import { listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 
@@ -321,6 +321,27 @@ app.registerExtension({
                 recipeWidget.callback = function() { oc?.apply(this, arguments); loadSpec(true); };
             }
 
+            // 配方编辑器保存成功（任意入口：节点「＋/✎」或侧栏新建/编辑）都会广播，据此刷新下拉候选、
+            // 必要时重选并重载时间轴。集中在此一处，避免各入口各自刷导致重复拉取 / 选择冲突。
+            const onDirectorRecipeSaved = async (e) => {
+                const detail = e?.detail || {};
+                try {
+                    const directors = (await listRecipes()).filter((r) => r.type === "video_director");
+                    if (recipeWidget && Array.isArray(recipeWidget.options?.values)) recipeWidget.options.values = directors.map((r) => r.name);
+                    if (recipeWidget) {
+                        const cur = String(recipeWidget.value || "").trim();
+                        const stillThere = directors.some((r) => r.name === cur);
+                        // 新建：选中刚保存的配方；编辑后当前值失效（如重命名）：落到第一个有效项
+                        if (detail.created || !stillThere) {
+                            recipeWidget.value = (detail.name && directors.some((r) => r.name === detail.name)) ? detail.name : (directors[0]?.name ?? "");
+                        }
+                    }
+                } catch (_) {}
+                await loadSpec(true);
+            };
+            node._neoDtOnRecipeSaved = onDirectorRecipeSaved;
+            window.addEventListener(DIRECTOR_RECIPE_SAVED_EVENT, onDirectorRecipeSaved);
+
             // 时间轴右上角「✎」：打开当前配方的导演编辑器，保存后自动刷新时间轴；
             // 点击分段块时带上该段索引（segIndex），编辑器打开即定位到被点的段
             const openEditor = async (segIndex = -1) => {
@@ -334,7 +355,7 @@ app.registerExtension({
                         showToast(app, "warn", "未找到分段配方：" + name, "");
                         return;
                     }
-                    await openDirectorEditor(meta, () => loadSpec(true), segIndex);
+                    await openDirectorEditor(meta, null, segIndex);
                 } catch (e) {
                     console.error("[Neo Nodes] open director editor failed", e);
                     showToast(app, "error", "打开配方编辑器失败", String(e));
@@ -389,20 +410,7 @@ app.registerExtension({
                 return r;
             };
 
-            // 时间轴显示区外右下角「＋ 新增导演配方」：打开新建模式编辑器；保存后把新配方加入下拉并选中、重载时间轴
-            const openNewRecipe = async () => {
-                let priorNames = new Set();
-                try { priorNames = new Set((await listRecipes()).filter((r) => r.type === "video_director").map((r) => r.name)); } catch (_) {}
-                await openDirectorEditor(null, async () => {
-                    try {
-                        const directors = (await listRecipes()).filter((r) => r.type === "video_director");
-                        if (recipeWidget && Array.isArray(recipeWidget.options?.values)) recipeWidget.options.values = directors.map((r) => r.name);
-                        const fresh = directors.find((r) => !priorNames.has(r.name));
-                        if (fresh && recipeWidget) recipeWidget.value = fresh.name;
-                    } catch (_) {}
-                    await loadSpec(true);
-                });
-            };
+            // 时间轴显示区外右下角「＋ 新增导演配方」：打开新建模式编辑器；保存后由 DIRECTOR_RECIPE_SAVED_EVENT 统一刷新下拉并选中新配方
             const actBar = document.createElement("div");
             actBar.className = "neo-dtl-actbar";
             const newBtn = document.createElement("button");
@@ -411,7 +419,7 @@ app.registerExtension({
             newBtn.title = "新建多段视频导演配方";
             newBtn.textContent = "＋ 新增导演配方";
             newBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
-            newBtn.addEventListener("click", (e) => { e.stopPropagation(); openNewRecipe(); });
+            newBtn.addEventListener("click", (e) => { e.stopPropagation(); openDirectorEditor(null); });
             actBar.appendChild(newBtn);
             root.appendChild(actBar);
             return result;
@@ -421,6 +429,7 @@ app.registerExtension({
             if (this._neoDtProgressTimer) { clearInterval(this._neoDtProgressTimer); this._neoDtProgressTimer = null; }
             if (this._neoDtTimeline) { try { this._neoDtTimeline.destroy(); } catch (_) {} this._neoDtTimeline = null; }
             if (this._neoDtLive) { this._neoDtLive.reset(); livePreviews.delete(this._neoDtLive); this._neoDtLive = null; }
+            if (this._neoDtOnRecipeSaved) { window.removeEventListener(DIRECTOR_RECIPE_SAVED_EVENT, this._neoDtOnRecipeSaved); this._neoDtOnRecipeSaved = null; }
             return origOnRemoved?.apply(this, arguments);
         };
     },

@@ -198,8 +198,53 @@ test("时间轴显示区外右下角「＋ 新增导演配方」按钮打开新�
     assert.ok(!root.querySelector(".neo-dtl-tlrow .neo-dtl-new"), "按钮不在时间轴显示区内");
 
     newBtn.click();
-    await sleep(120); // openNewRecipe：listRecipes → openDirectorEditor(null) 建浮层
+    await sleep(120); // 直接 openDirectorEditor(null) 建浮层
     assert.ok(document.querySelector(".neo-director-overlay"), "点击后打开新建编辑器");
+});
+
+test("配方保存广播（新建）：节点刷新下拉候选并自动选中刚保存的配方", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    let listResp = [{ name: "old-recipe", type: "video_director" }];
+    mockRoute("/rs_recipes/list", () => jsonResponse(listResp));
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({ success: true, segments: [] }));
+
+    const node = await createDirectorNode("old-recipe");
+    // 模拟真实 combo widget：下拉候选随 INPUT_TYPES 预填
+    const recipeWidget = node.widgets.find((w) => w.name === "recipe");
+    recipeWidget.options = { values: ["old-recipe"] };
+
+    // 侧栏「新增导演配方」保存成功 → director.js 广播 created=true
+    listResp = [{ name: "old-recipe", type: "video_director" }, { name: "new-recipe", type: "video_director" }];
+    window.dispatchEvent(new CustomEvent("neo-director-recipe-saved", { detail: { name: "new-recipe", created: true } }));
+    await sleep(120); // 等 handler：listRecipes + loadSpec
+
+    assert.ok(recipeWidget.options.values.includes("new-recipe"), "新配方应出现在下拉候选");
+    assert.equal(recipeWidget.value, "new-recipe", "新建后自动选中刚保存的配方");
+    destroyNode(node);
+});
+
+test("配方保存广播（编辑重命名）：当前值失效时回落到第一个有效项", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        { name: "renamed-recipe", type: "video_director" },
+    ]));
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({ success: true, segments: [] }));
+
+    // 节点当前选中已被重命名的旧名（created=false，不强制选中广播里的 name）
+    const node = await createDirectorNode("old-name");
+    const recipeWidget = node.widgets.find((w) => w.name === "recipe");
+    recipeWidget.options = { values: ["old-name"] };
+
+    window.dispatchEvent(new CustomEvent("neo-director-recipe-saved", { detail: { name: "renamed-recipe", created: false } }));
+    await sleep(120);
+
+    assert.deepEqual(recipeWidget.options.values, ["renamed-recipe"], "下拉候选刷新为最新列表");
+    assert.equal(recipeWidget.value, "renamed-recipe", "旧值失效后回落到第一个有效项");
+    destroyNode(node);
 });
 
 test("运行进度跳到后段时节点时间轴自动把该段滚进可视区", async () => {

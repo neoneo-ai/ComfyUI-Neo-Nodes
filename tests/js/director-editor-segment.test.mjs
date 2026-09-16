@@ -913,6 +913,47 @@ test("导演编辑器：新建默认故事板页，标题随主题输入实时�
     await sleep(20);
 });
 
+test("导演编辑器：新建时直接在时间轴输入段提示词，标题未命名则截取生成（超 20 字截断），手动命名后不再覆盖", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor(null);
+    await sleep(60);
+
+    const promptTa = document.querySelector(".neo-director-prompt");
+    const nameInp = document.querySelector(".neo-director-name");
+    const nameView = document.querySelector(".neo-director-name-view");
+    assert.ok(promptTa, "新建默认含一个空段提示词输入框");
+    assert.equal(nameInp.value, "", "初始标题为空");
+
+    // ① 在时间轴直接输入提示词 → 标题实时同步（未超 20 字）
+    promptTa.value = "一只机器猫在雨夜找家";
+    promptTa.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value, "一只机器猫在雨夜找家", "标题同步提示词");
+    assert.equal(nameView.textContent, "一只机器猫在雨夜找家", "标题视图更新");
+
+    // ② 超过 20 字 → 截断加 …（长度 = 20 + 省略号）
+    promptTa.value = "这是一个非常非常长的段提示词用来测试标题截断逻辑是否正常工作啊";
+    promptTa.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value.length, 21, "20 字 + 省略号");
+    assert.ok(nameInp.value.endsWith("…"), "超长截断加省略号");
+
+    // ③ 手动命名后，再改提示词不再覆盖标题
+    nameInp.value = "我手动的名字";
+    nameInp.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    promptTa.value = "又改了提示词内容";
+    promptTa.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await sleep(20);
+    assert.equal(nameInp.value, "我手动的名字", "手动命名后不再被提示词覆盖");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
 test("导演编辑器：编辑已有配方默认时间轴页，且主题输入不同步标题", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
