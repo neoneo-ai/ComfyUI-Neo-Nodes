@@ -45,7 +45,7 @@ _comfy_cli.args = types.SimpleNamespace(listen="127.0.0.1", port=8188, tls_keyfi
 sys.modules["comfy"] = _comfy
 sys.modules["comfy.cli_args"] = _comfy_cli
 _comfy_pe = types.ModuleType("comfy.patcher_extension")
-_comfy_pe.WrappersMP = types.SimpleNamespace(DIFFUSION_MODEL="DIFFUSION_MODEL")
+_comfy_pe.WrappersMP = types.SimpleNamespace(DIFFUSION_MODEL="DIFFUSION_MODEL", APPLY_MODEL="APPLY_MODEL")
 _comfy_pe.add_wrapper_with_key = lambda *a, **k: None
 sys.modules["comfy.patcher_extension"] = _comfy_pe
 _comfy_utils = types.ModuleType("comfy.utils")
@@ -76,6 +76,23 @@ _nodes = types.ModuleType("nodes")
 _nodes.NODE_CLASS_MAPPINGS = {}
 _nodes.MAX_RESOLUTION = 8192
 sys.modules["nodes"] = _nodes
+
+# node_helpers 桩：conditioning_set_values 只做「复制 metadata 并写入给定值」（与 core 同语义）
+_node_helpers = types.ModuleType("node_helpers")
+
+
+def _stub_conditioning_set_values(conditioning, values=None, append=False):
+    out = []
+    for t, d in conditioning:
+        nd = dict(d)
+        for k, v in (values or {}).items():
+            nd[k] = ((nd.get(k) or []) + v) if append else v
+        out.append([t, nd])
+    return out
+
+
+_node_helpers.conditioning_set_values = _stub_conditioning_set_values
+sys.modules["node_helpers"] = _node_helpers
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
@@ -865,9 +882,10 @@ class DirectorOrchestrationTests(unittest.TestCase):
         return orig, bodies
 
     def test_continuity_on_drops_boundary_frames(self):
+        # context_frames=0：退回 Tier A（上段尾帧当首帧 + 丢边界帧）
         orig, bodies = self._patch(3, [124, 124, 124], mode="i2v")
         try:
-            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True)
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True, context_frames=0)
         finally:
             self._restore(orig)
         comp = video.get_components()
@@ -895,7 +913,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
     def test_audio_trimmed_to_match_dropped_frames(self):
         orig, _ = self._patch(3, [124, 124, 124], mode="i2v")
         try:
-            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True)
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True, context_frames=0)
         finally:
             self._restore(orig)
         comp = video.get_components()
@@ -908,10 +926,10 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertIsNone(out)
 
     def test_t2v_continuity_keeps_all_frames(self):
-        # T2V 段不带参考图，continuity 也不链入上段尾帧、不丢边界帧 → 全帧拼接
+        # T2V 段在 Tier A（context_frames=0）下不带参考图、也不链入上段尾帧 → 全帧拼接
         orig, _ = self._patch(3, [124, 124, 124])   # mode=None → t2v
         try:
-            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True)
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True, context_frames=0)
         finally:
             self._restore(orig)
         comp = video.get_components()
@@ -1076,6 +1094,124 @@ class DirectorOrchestrationTests(unittest.TestCase):
         _, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v"})
         self.assertIn("参考", err or "")
 
+    def _r2v_template(self):
+        """H3 r2v 形状的最小模板图（含可注入模型的 KSampler）。"""
+        return {
+            "1": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},
+            "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "u.safetensors"}},
+            "5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "clip": ["3", 0], "vae": ["1", 0], "prompt": "p", "length": 124}},
+            "6": {"class_type": "KSampler", "inputs": {
+                "model": ["2", 0], "positive": ["5", 0], "negative": ["5", 0],
+                "latent_image": ["5", 1]}},
+        }
+
+    def _run_r2v_chain(self, continuity=True, context_frames=22, frame_counts=(124, 141, 141), mode="r2v"):
+        """三段配方跑一次（模板用 r2v 形状）；返回 ([(graph, overrides), ...], [各段 body], [各段 _FakeVideo], 输出 VIDEO)。
+
+        第 1 段自带 a.png/b.png（身份来源）、第 2 段带 c.png、第 3 段带 a.png（用于验证身份去重）。
+        """
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
+        calls, bodies = [], []
+        videos = [_FakeVideo(n, self.FPS, self.SR) for n in frame_counts]
+        it = iter(videos)
+        own = (["a.png", "b.png"], ["c.png"], ["a.png"])
+        h3d.load_director_spec = lambda name: {
+            "shared": {"width": 8, "height": 8, "seed": 1},
+            "segments": [{"skill_id": f"s{i}", "prompt": f"p{i}", "duration_sec": 5, "mode": mode,
+                          "ref_input": "ff.png" if (mode == "i2v" and i == 0) else None,
+                          "refs": {"images": own[i]}} for i in range(len(frame_counts))]}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.resolve_video_params = lambda body, cfg, **kw: bodies.append(dict(body)) or {"prompt": body["prompt"]}
+        h3d.render_template = lambda tpl, params: (self._r2v_template(), [])
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: calls.append(
+            (graph, kw.get("overrides"))) or next(it)
+        try:
+            (out,) = h3_video_director.NeoH3VideoDirector().generate(
+                "r", continuity=continuity, context_frames=context_frames)
+        finally:
+            self._restore(orig)
+        return calls, bodies, videos, out
+
+    def test_context_window_chains_via_injected_nodes(self):
+        """跨段上下文窗口：第 2/3 段注入「身份图 + 上段尾部 22 帧」，采样器改由注入链供模型与 conditioning。"""
+        calls, _, videos, _ = self._run_r2v_chain()
+        self.assertNotIn("NeoH3AddContext", [n.get("class_type") for n in calls[0][0].values()])
+        graph, overrides = calls[1]
+        nodes = sorted((int(nid), n) for nid, n in graph.items()
+                       if n.get("class_type") == "NeoH3AddContext")
+        self.assertEqual(len(nodes), 3)                       # a.png + b.png + 上下文窗口
+        names = [graph[n["inputs"]["identity_image"][0]]["inputs"]["image"] for _, n in nodes[:2]]
+        self.assertEqual(names, ["a.png", "b.png"])
+        tail_id = nodes[2][1]["inputs"]["context_image"][0]
+        self.assertTrue(torch.equal(overrides[tail_id][0], videos[0]._images[-22:]))
+        self.assertEqual(graph["6"]["inputs"]["model"], [str(nodes[2][0]), 0])
+        self.assertEqual(graph["6"]["inputs"]["positive"], [str(nodes[2][0]), 1])
+        self.assertEqual(graph["6"]["inputs"]["negative"], [str(nodes[2][0]), 1])
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 1])
+        self.assertEqual(nodes[2][1]["inputs"]["context_frames"], 22)
+        # 第 3 段已自带 a.png → 只继承 b.png
+        third = sorted((int(nid), n) for nid, n in calls[2][0].items()
+                       if n.get("class_type") == "NeoH3AddContext")
+        self.assertEqual(len(third), 2)
+        self.assertEqual(calls[2][0][third[0][1]["inputs"]["identity_image"][0]]["inputs"]["image"], "b.png")
+
+    def test_context_window_trims_head_frames_and_audio(self):
+        """链入段丢掉头部 22 帧（重生成窗口），音频按同样帧数裁掉保 A/V 对齐。"""
+        _, _, _, out = self._run_r2v_chain()
+        comp = out.get_components()
+        # 首段 124；后两段各生成 141（124+22=146 就近对齐）丢头部 22 → 交付 119
+        self.assertEqual(comp.images.shape[0], 124 + 119 * 2)
+        self.assertEqual(comp.audio["waveform"].shape[-1], (124 + 119 * 2) * self.SPF)
+
+    def test_context_window_trims_tail_of_previous_segment(self):
+        """窗口取的是上段「交付帧」的尾部 window 帧（拼接序列里紧邻新段的那一段）。"""
+        calls, _, videos, out = self._run_r2v_chain()
+        tail_id = next(nid for nid, n in calls[2][0].items()
+                       if n.get("class_type") == "LoadImage" and n["inputs"]["image"] == "__neo_context_tail__")
+        window = calls[2][1][tail_id][0]
+        self.assertTrue(torch.equal(window, videos[1]._images[-22:]))
+        # 第 1 段交付 124 帧、第 2 段交付 119 帧 → 总帧数对得上
+        self.assertEqual(out.get_components().images.shape[0], 124 + 119 * 2)
+
+    def test_context_window_off_inherits_identity_only(self):
+        """context_frames=0：不注入窗口（不丢帧），但身份参考图仍继承（连续性总开关仍然开着）。"""
+        calls, _, _, out = self._run_r2v_chain(context_frames=0, frame_counts=(124, 124, 124))
+        self.assertEqual(out.get_components().images.shape[0], 124 * 3)
+        for graph in (calls[1][0], calls[2][0]):
+            nodes = [n for n in graph.values() if n.get("class_type") == "NeoH3AddContext"]
+            self.assertTrue(nodes)
+            self.assertTrue(all("context_image" not in n["inputs"] for n in nodes))
+
+    def test_continuity_off_skips_injection_entirely(self):
+        """continuity 关：既不注入窗口也不继承身份，各段完全独立。"""
+        calls, _, _, out = self._run_r2v_chain(continuity=False, frame_counts=(124, 124, 124))
+        for graph, overrides in calls:
+            self.assertNotIn("NeoH3AddContext", [n.get("class_type") for n in graph.values()])
+            self.assertIsNone(overrides)
+        self.assertEqual(out.get_components().images.shape[0], 124 * 3)
+
+    def test_i2v_chained_segment_anchors_on_window_first_frame(self):
+        """i2v 段有上下文窗口时首帧取窗口第 0 帧（与窗口行同内容），不再用上段尾帧。"""
+        _, bodies, videos, _ = self._run_r2v_chain(mode="i2v")
+        self.assertEqual(bodies[0]["references"][0]["value"], "ff.png")   # 首段自带首帧
+        tail = videos[0]._images[-22:]
+        self.assertEqual(bodies[1]["references"][0]["data"],
+                         h3_video_director._image_to_data_uri(tail[:1]))
+        self.assertEqual(bodies[1]["references"][1]["value"], "c.png")    # 该段自己的素材照旧排在后面
+
+    def test_i2v_tier_a_still_chains_prev_tail_as_first_frame(self):
+        """context_frames=0 时 i2v 段仍是 Tier A：上段尾帧当首帧链入（data URI）。"""
+        _, bodies, videos, _ = self._run_r2v_chain(mode="i2v", context_frames=0, frame_counts=(124, 124, 124))
+        self.assertEqual(bodies[1]["references"][0]["data"],
+                         h3_video_director._image_to_data_uri(videos[0]._images[-1:]))
+
     def _restore(self, orig):
         (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
          h3_video_director.load_skill_workflow, h3_video_director.get_skill_gen_config,
@@ -1135,7 +1271,8 @@ class DirectorModelStepsTests(unittest.TestCase):
         h3d._require_vdn_plugin = _fake_vdn
         err = None
         try:
-            h3_video_director.NeoH3VideoDirector().generate("r", model=model, steps=steps, width=width, height=height)
+            h3_video_director.NeoH3VideoDirector().generate("r", model=model, steps=steps, width=width,
+                                                            height=height, context_frames=0)
         except Exception as e:
             err = str(e)
         finally:
@@ -1585,6 +1722,519 @@ class H3PreviewTests(unittest.TestCase):
                 setattr(h3d, n, v)
         self.assertEqual(seen, [(True, "VAE", "12"), (False, None, "12")])
         self.assertEqual(len(loads), 1)
+
+
+class _FakeModelPatcher:
+    """ModelPatcher 桩：只实现 clone + 命名空间 wrapper 增删。"""
+
+    def __init__(self, wrappers=None):
+        self.clones = 0
+        self.wrappers = wrappers or {}
+
+    def clone(self):
+        self.clones += 1
+        copied = {k: {k1: list(v1) for k1, v1 in v.items()} for k, v in self.wrappers.items()}
+        return _FakeModelPatcher(copied)
+
+    def remove_wrappers_with_key(self, wrapper_type, key):
+        self.wrappers.get(wrapper_type, {}).pop(key, None)
+
+    def add_wrapper_with_key(self, wrapper_type, key, wrapper):
+        self.wrappers.setdefault(wrapper_type, {}).setdefault(key, []).append(wrapper)
+
+
+class _KwargsExecutor:
+    """APPLY_MODEL executor 桩：记录本次调用拿到的 kwargs，并把 payload 交回调用方。"""
+
+    def __init__(self):
+        self.kwargs = None
+
+    def __call__(self, *args, **kwargs):
+        self.kwargs = kwargs
+        return kwargs.get("minimax_payload")
+
+
+class _StubVae:
+    def __init__(self):
+        self.seen = None
+
+    def encode(self, image):
+        self.seen = image
+        return torch.zeros(1, 16, 2, 2, 2)
+
+
+class _StubH3Vae:
+    """H3 视频 VAE 桩：latent 时间步按模型的 17k+5 网格（22 帧 → 7 步，单图 → 1 步）。"""
+
+    def __init__(self):
+        self.seen = []
+
+    def encode(self, frames):
+        self.seen.append(frames)
+        n = int(frames.shape[0])
+        latent_t = 1 if n < 5 else 2 + 5 * ((n - 5) // 17)
+        return torch.zeros(1, 24, latent_t, frames.shape[1] // 16, frames.shape[2] // 16)
+
+
+class _StubNode:
+    """mini-executor 用的极简节点桩：INPUT_TYPES 无必填项，run 从类属性取预设值。"""
+
+    RETURN_TYPES = ()
+    FUNCTION = "run"
+    value = None
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}}
+
+    def run(self, **kwargs):
+        return (self.value,)
+
+
+class _StubVaeLoader(_StubNode):
+    RETURN_TYPES = ("VAE",)
+
+
+class _StubUnetLoader(_StubNode):
+    RETURN_TYPES = ("MODEL",)
+
+
+class _StubImageLoader(_StubNode):
+    RETURN_TYPES = ("IMAGE",)
+
+
+class _StubR2V(_StubNode):
+    RETURN_TYPES = ("CONDITIONING", "LATENT")
+    ref_latent = None
+
+    def run(self, **kwargs):
+        return ([["tok", {"minimax_refs": [{"latent": self.ref_latent}]}]], {"samples": torch.zeros(1)})
+
+
+class _StubSampler(_StubNode):
+    RETURN_TYPES = ("LATENT",)
+    seen = None
+
+    def run(self, model=None, positive=None, negative=None, latent_image=None, **kwargs):
+        _StubSampler.seen = {"model": model, "positive": positive, "negative": negative}
+        return ({"samples": torch.zeros(1)},)
+
+
+class _StubCreateVideo(_StubNode):
+    RETURN_TYPES = ("VIDEO",)
+
+    def run(self, **kwargs):
+        return ("VIDEO-OUT",)
+
+
+class HybridKeyframeTests(unittest.TestCase):
+    """P2 Hybrid：r2v 段注入首帧 keyframe 锚点 + cond 合并 wrapper 的单元测试。"""
+
+    def setUp(self):
+        # 各测试模块都会重写 comfy.patcher_extension 桩（后导入者生效），这里确保 APPLY_MODEL 可用
+        wrappers = sys.modules["comfy.patcher_extension"].WrappersMP
+        if not hasattr(wrappers, "APPLY_MODEL"):
+            wrappers.APPLY_MODEL = "APPLY_MODEL"
+
+    def _r2v_graph(self):
+        return {
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": "x.safetensors"}},
+            "5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "clip": ["2", 0], "vae": ["3", 0], "prompt": "test",
+                "width": 1344, "height": 768, "length": 124,
+            }},
+            "7": {"class_type": "KSampler", "inputs": {
+                "model": ["6", 0], "seed": 42, "steps": 20, "cfg": 1.0,
+                "sampler_name": "euler", "scheduler": "simple",
+                "positive": ["5", 0], "negative": ["5", 0], "latent_image": ["5", 1],
+                "denoise": 1.0,
+            }},
+        }
+
+    def test_align_frame_count(self):
+        self.assertEqual(h3_video_director._align_frame_count(5), 5)
+        self.assertEqual(h3_video_director._align_frame_count(124), 124)
+        self.assertEqual(h3_video_director._align_frame_count(6), 22)
+        self.assertEqual(h3_video_director._align_frame_count(3), 5)
+        self.assertEqual(h3_video_director._align_frame_count(125), 141)
+
+    def test_inject_continuity_nodes_chains_identity_then_context(self):
+        """r2v 模板图注入后：身份参考图各一个节点、上下文窗口用虚拟 LoadImage，采样器改指注入链末端。"""
+        tail = torch.zeros(22, 768, 1344, 3)
+        modified, overrides = h3_video_director._inject_continuity_nodes(
+            self._r2v_graph(), tail, 22, ["a.png", "b.png"])
+        nodes = sorted((int(nid), node) for nid, node in modified.items()
+                       if node.get("class_type") == "NeoH3AddContext")
+        self.assertEqual(len(nodes), 3)                                     # 2 张身份图 + 1 个上下文窗口
+        self.assertEqual(nodes[0][1]["inputs"]["model"], ["6", 0])           # 第一棒接采样器原 model 源
+        self.assertEqual(nodes[0][1]["inputs"]["conditioning"], ["5", 0])
+        self.assertEqual(nodes[0][1]["inputs"]["vae"], ["3", 0])
+        self.assertEqual(nodes[0][1]["inputs"]["width"], 1344)
+        self.assertEqual(nodes[0][1]["inputs"]["height"], 768)
+        self.assertEqual([modified[n["inputs"]["identity_image"][0]]["inputs"]["image"] for _, n in nodes[:2]],
+                         ["a.png", "b.png"])
+        self.assertNotIn("context_image", nodes[0][1]["inputs"])
+        self.assertEqual(nodes[1][1]["inputs"]["model"], [str(nodes[0][0]), 0])   # 链式接棒
+        self.assertEqual(nodes[1][1]["inputs"]["conditioning"], [str(nodes[0][0]), 1])
+        tail_id = nodes[2][1]["inputs"]["context_image"][0]
+        self.assertEqual(modified[tail_id]["inputs"]["image"], "__neo_context_tail__")
+        self.assertEqual(nodes[2][1]["inputs"]["context_frames"], 22)
+        self.assertIs(overrides[tail_id][0], tail)
+        last = str(nodes[2][0])
+        self.assertEqual(modified["7"]["inputs"]["model"], [last, 0])
+        self.assertEqual(modified["7"]["inputs"]["positive"], [last, 1])
+        self.assertEqual(modified["7"]["inputs"]["negative"], [last, 1])
+        self.assertEqual(modified["7"]["inputs"]["latent_image"], ["5", 1])
+        # 注入节点占独立 id 段，模板原有节点一个不少
+        injected = {str(nid) for nid, _ in nodes} | {n["inputs"]["identity_image"][0] for _, n in nodes[:2]} | {tail_id}
+        self.assertEqual(injected, {"9000", "9001", "9002", "9003", "9004", "9005"})
+        self.assertEqual(set(modified) - injected, {"3", "5", "7"})
+
+    def test_inject_continuity_nodes_skips_without_window_and_identity(self):
+        """没有上下文窗口也没有身份图时不注入（返回 None，调用方保持原 overrides）。"""
+        graph = self._r2v_graph()
+        modified, overrides = h3_video_director._inject_continuity_nodes(graph, None, 0)
+        self.assertIsNone(overrides)
+        self.assertEqual(set(modified), {"3", "5", "7"})
+
+    def test_inject_continuity_nodes_needs_h3_sampler(self):
+        """模板里没有消费 H3 conditioning 的采样器 → 明确报错，而不是静默丢掉连续性。"""
+        graph = {
+            "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "u.safetensors"}},
+            "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "x"}},
+            "6": {"class_type": "KSampler", "inputs": {
+                "model": ["2", 0], "positive": ["4", 0], "negative": ["4", 0], "latent_image": ["4", 1]}},
+        }
+        img = torch.zeros(22, 768, 1344, 3)
+        with self.assertRaises(RuntimeError) as ctx:
+            h3_video_director._inject_continuity_nodes(graph, img, 22)
+        self.assertIn("跨段连续性", str(ctx.exception))
+
+    def test_inject_continuity_nodes_without_model_source_raises(self):
+        """采样器没有 model 引用时挂不上连续性 wrapper → 报错。"""
+        graph = self._r2v_graph()
+        del graph["7"]["inputs"]["model"]
+        img = torch.zeros(22, 768, 1344, 3)
+        with self.assertRaises(RuntimeError) as ctx:
+            h3_video_director._inject_continuity_nodes(graph, img, 22)
+        self.assertIn("model 来源", str(ctx.exception))
+
+    def test_inject_continuity_nodes_avoids_template_id_collision(self):
+        """模板已占用 9000 时注入节点顺延取号，不覆盖模板节点。"""
+        graph = self._r2v_graph()
+        graph["9000"] = {"class_type": "LoadImage", "inputs": {"image": "keep.png"}}
+        modified, overrides = h3_video_director._inject_continuity_nodes(
+            graph, torch.zeros(22, 768, 1344, 3), 22)
+        ids = sorted(int(nid) for nid in modified if int(nid) >= 9000)
+        self.assertEqual(ids, [9000, 9001, 9002])
+        self.assertEqual(modified["9000"]["inputs"]["image"], "keep.png")
+        self.assertEqual(modified["9002"]["inputs"]["context_image"], ["9001", 0])
+        self.assertIn("9001", overrides)
+
+    def test_merge_cond_latents_puts_keyframes_first(self):
+        """锚点在前、参考在后（与 PackedLayout 的 cond/ref row 顺序一致）。"""
+        kf = {"latent": torch.ones(1, 16, 2, 2, 2), "audio_latent": torch.ones(1, 2, 7)}
+        ref = {"latent": torch.zeros(1, 16, 2, 2, 2), "audio_latent": torch.zeros(1, 2, 7)}
+        payload = {"keyframes": [kf], "refs": [ref]}
+        h3_video_director._merge_cond_latents(payload)
+        self.assertEqual(len(payload["cond_video_latents"]), 2)
+        self.assertIs(payload["cond_video_latents"][0], kf["latent"])
+        self.assertIs(payload["cond_video_latents"][1], ref["latent"])
+        self.assertIs(payload["cond_audio_latents"][0], kf["audio_latent"])
+        self.assertIs(payload["cond_audio_latents"][1], ref["audio_latent"])
+
+    def test_continuity_wrapper_fixes_payload_for_model_call(self):
+        """core 会把 keyframe 的 cond 换成 refs，wrapper 需在模型调用前合回一条列表。"""
+        kf = {"resolved_frame_index": 0, "latent": torch.ones(1, 16, 2, 2, 2)}
+        ref = {"latent": torch.zeros(1, 16, 2, 2, 2)}
+        payload = {"keyframes": [kf], "refs": [ref], "cond_video_latents": [ref["latent"]]}
+        exec_ = _KwargsExecutor()
+        out = h3_video_director._continuity_wrapper(exec_, torch.zeros(1), minimax_payload=payload)
+        merged = exec_.kwargs["minimax_payload"]
+        self.assertEqual(len(merged["cond_video_latents"]), 2)
+        self.assertIs(merged["cond_video_latents"][0], kf["latent"])
+        self.assertIs(merged["cond_video_latents"][1], ref["latent"])
+        self.assertIs(out, merged)
+        self.assertIsNot(merged, payload)                       # 不改调用方的 payload
+        self.assertEqual(payload["cond_video_latents"], [ref["latent"]])
+
+    def test_continuity_wrapper_passes_through_without_refs(self):
+        """只有 keyframes（或 payload 不是 dict）时原样透传。"""
+        payload = {"keyframes": [{"latent": torch.ones(1)}], "cond_video_latents": []}
+        exec_ = _KwargsExecutor()
+        out = h3_video_director._continuity_wrapper(exec_, torch.zeros(1), minimax_payload=payload)
+        self.assertIs(out, payload)
+        self.assertIsNone(h3_video_director._continuity_wrapper(
+            _KwargsExecutor(), torch.zeros(1), minimax_payload=None))
+
+    def test_install_continuity_clones_and_replaces_wrapper(self):
+        """安装到 clone 上、同一 key 只留一份（在已安装的 patcher 上重复安装不会叠加）。"""
+        key = h3_video_director._CONTINUITY_WRAPPER_KEY
+        model = _FakeModelPatcher()
+        patched = h3_video_director._install_continuity(model)
+        self.assertEqual(model.clones, 1)
+        self.assertEqual(patched.wrappers["APPLY_MODEL"][key], [h3_video_director._continuity_wrapper])
+        self.assertEqual(model.wrappers, {})                    # 原 model 不被改动
+        again = h3_video_director._install_continuity(patched)
+        self.assertEqual(len(again.wrappers["APPLY_MODEL"][key]), 1)
+
+    def test_add_keyframe_returns_patched_model_and_keyframe_cond(self):
+        """节点：写 keyframe 元数据 + 返回挂了合并 wrapper 的 MODEL，参考元数据原样保留。"""
+        vae = _StubVae()
+        refs = [{"latent": torch.zeros(1, 16, 2, 2, 2)}]
+        cond = [["tokens", {"minimax_refs": refs}]]
+        model = _FakeModelPatcher()
+        patched, out = h3_video_director.NeoH3AddKeyframe().add_keyframe(
+            model, cond, vae, torch.zeros(2, 64, 64, 3), 124)
+        self.assertEqual(vae.seen.shape[0], 1)                  # 只用第一张图
+        self.assertEqual(model.clones, 1)                       # 在原 model 上 clone 一份再挂 wrapper
+        self.assertEqual(patched.wrappers["APPLY_MODEL"].keys(), {h3_video_director._CONTINUITY_WRAPPER_KEY})
+        meta = out[0][1]
+        self.assertIs(meta["minimax_refs"], refs)
+        self.assertEqual(meta["minimax_frame_count"], 124)
+        self.assertEqual([(k["resolved_frame_index"], tuple(k["latent"].shape))
+                          for k in meta["minimax_keyframes"]], [(0, (1, 16, 2, 2, 2))])
+
+
+    def test_inject_continuity_nodes_on_real_presets(self):
+        """真实数据：四种预设模板（i2v/t2v/r2v + VDN 变体）都能定位注入点，模板节点一个不少。"""
+        tail = torch.zeros(22, 768, 1344, 3)
+        for preset in ("minimax-h3-r2v", "minimax-h3-vdn-r2v", "minimax_h3_i2v", "minimax_h3_t2v"):
+            with open(os.path.join(PLUGIN_DIR, "skills", "presets", preset, "workflow.json"),
+                      encoding="utf-8") as f:
+                graph = json.load(f)
+            template_ids = set(graph)
+            cond_id = next(nid for nid, n in graph.items()
+                           if n.get("class_type") in ("MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo"))
+            sampler_id = next(nid for nid, n in graph.items() if n.get("class_type") == "KSampler")
+            model_src = list(graph[sampler_id]["inputs"]["model"])
+            cond_vae = list(graph[cond_id]["inputs"]["vae"])
+            modified, overrides = h3_video_director._inject_continuity_nodes(graph, tail, 22, ["a.png"])
+            nodes = sorted((int(nid), n) for nid, n in modified.items()
+                           if n.get("class_type") == "NeoH3AddContext")
+            self.assertEqual(len(nodes), 2, preset)
+            self.assertEqual(nodes[0][1]["inputs"]["model"], model_src, preset)
+            self.assertEqual(nodes[0][1]["inputs"]["conditioning"], [cond_id, 0], preset)
+            self.assertEqual(nodes[0][1]["inputs"]["vae"], cond_vae, preset)
+            last = str(nodes[1][0])
+            self.assertEqual(modified[sampler_id]["inputs"]["model"], [last, 0], preset)
+            self.assertEqual(modified[sampler_id]["inputs"]["positive"], [last, 1], preset)
+            if graph[sampler_id]["inputs"]["negative"][0] == cond_id:
+                self.assertEqual(modified[sampler_id]["inputs"]["negative"], [last, 1], preset)
+            injected = {str(nid) for nid, _ in nodes} | set(overrides)
+            for _, node in nodes:
+                for name in ("identity_image", "context_image"):
+                    if name in node["inputs"]:
+                        injected.add(node["inputs"][name][0])
+            self.assertEqual(set(modified) - injected, template_ids, preset)
+
+    def test_continuity_injection_executes_end_to_end(self):
+        """整链路：注入后的图经 mini-executor 执行，采样器拿到挂过连续性 wrapper 的模型 + 带上下文窗口的 conditioning。"""
+        key = h3_video_director._CONTINUITY_WRAPPER_KEY
+        vae, model = _StubH3Vae(), _FakeModelPatcher()
+        _StubVaeLoader.value = vae
+        _StubUnetLoader.value = model
+        _StubImageLoader.value = torch.zeros(1, 768, 1344, 3)
+        _StubR2V.ref_latent = torch.zeros(1, 16, 2, 2, 2)
+        _StubSampler.seen = None
+        registry = {
+            "VAELoader": _StubVaeLoader, "UNETLoader": _StubUnetLoader, "LoadImage": _StubImageLoader,
+            "MiniMaxH3ReferenceToVideo": _StubR2V, "KSampler": _StubSampler,
+            "CreateVideo": _StubCreateVideo, "NeoH3AddContext": h3_video_director.NeoH3AddContext,
+        }
+        krea2_generate.comfy_nodes.NODE_CLASS_MAPPINGS.update(registry)
+        graph = {
+            "1": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},
+            "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "u.safetensors"}},
+            "5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "vae": ["1", 0], "prompt": "p", "width": 1344, "height": 768}},
+            "6": {"class_type": "KSampler", "inputs": {
+                "model": ["2", 0], "positive": ["5", 0], "negative": ["5", 0],
+                "latent_image": ["5", 1]}},
+            "7": {"class_type": "CreateVideo", "inputs": {"images": ["6", 0], "fps": 24}},
+        }
+        tail = torch.zeros(22, 768, 1344, 3)
+        try:
+            graph, overrides = h3_video_director._inject_continuity_nodes(graph, tail, 22, ["a.png"])
+            out = krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+        finally:
+            for name in registry:
+                krea2_generate.comfy_nodes.NODE_CLASS_MAPPINGS.pop(name, None)
+        self.assertEqual(out, "VIDEO-OUT")
+        seen = _StubSampler.seen
+        self.assertEqual(model.clones, 1)                        # 注入链上每个节点都在上一棒上 clone 一份
+        self.assertIsNot(seen["model"], model)
+        self.assertEqual(seen["model"].wrappers["APPLY_MODEL"].keys(), {key})
+        identity, context = vae.seen                              # 先身份图、后上下文窗口
+        self.assertEqual(tuple(identity.shape), (1, 768, 1344, 3))
+        self.assertEqual(tuple(context.shape), (22, 768, 1344, 3))
+        for key_ in ("positive", "negative"):                    # positive/negative 都拿到注入了上下文窗口的 conditioning
+            refs = seen[key_][0][1]["minimax_refs"]
+            self.assertEqual([r.get("kind") for r in refs], [None, "image", "video"])
+            window = refs[2]
+            self.assertEqual(window["latent_t"], 7)              # 22 帧 → 7 个 latent 步
+            self.assertEqual(window[h3_video_director._CONTEXT_FRAMES_MARK], 22)
+            self.assertEqual(window["ref_audio_t"], 0)
+            self.assertEqual(tuple(window["latent"].shape), (1, 24, 7, 48, 84))
+            self.assertEqual(seen[key_][0][1]["minimax_refs"][1]["latent_h"], 48)
+
+
+class _FakeLayout:
+    """PackedLayout 桩：只保留我们用到的契约（segments / signature / position_ids），构建顺序与 core 一致。"""
+
+    def __init__(self, text_len=3, latent_t=7, frame_rows=2, refs=(), keyframes=0):
+        self.signature = (text_len, latent_t, frame_rows, 2, 1)
+        segments, times = [], []
+        row = 0
+
+        def add(kind, n, first_t):
+            nonlocal row
+            segments.append((row, row + n, kind))
+            times.extend((first_t + i, 0.0, 0.0) for i in range(n))
+            row += n
+
+        add("text", text_len, 0.0)
+        cursor = float(text_len)          # 与 core 一致：cond / ref 行的 t 都从 text_len 起算
+        for _ in range(keyframes):
+            add("cond", frame_rows, cursor)
+        for ref in refs:
+            if int(ref.get("ref_audio_t") or 0) > 0:
+                add("ref_audio", int(ref["ref_audio_t"]) * 2, cursor)
+            n = frame_rows if ref["kind"] == "image" else int(ref["latent_t"]) * frame_rows
+            add("ref_img", n, cursor)
+            cursor += 1.0 if ref["kind"] == "image" else max(int(ref["latent_t"]) * 1.5, 1.0)
+        add("audio", 2, cursor)
+        add("video", latent_t * frame_rows, cursor)
+        self.segments = segments
+        self.position_ids = torch.tensor(times, dtype=torch.float64)
+
+
+class ContextWindowTests(unittest.TestCase):
+    """跨段上下文窗口：窗口帧数/步数、参考块构造、时间轴对齐。"""
+
+    def setUp(self):
+        # 各测试模块都会重写 comfy.patcher_extension 桩（后导入者生效），这里确保 APPLY_MODEL 可用
+        wrappers = sys.modules["comfy.patcher_extension"].WrappersMP
+        if not hasattr(wrappers, "APPLY_MODEL"):
+            wrappers.APPLY_MODEL = "APPLY_MODEL"
+
+    def test_align_context_frames_snaps_to_grid(self):
+        h3d = h3_video_director
+        self.assertEqual([h3d._align_context_frames(n) for n in (5, 22, 39, 20, 10, 0)],
+                         [5, 22, 39, 22, 5, 5])
+
+    def test_context_latent_t_matches_h3_grid(self):
+        h3d = h3_video_director
+        self.assertEqual([h3d._context_latent_t(n) for n in (5, 22, 39)], [2, 7, 12])
+
+    def test_align_frame_count_nearest_keeps_window_sized_total(self):
+        h3d = h3_video_director
+        # 124 帧段 + 22 帧窗口 = 146 → 就近取 141（交付 119），不是向上取 158
+        self.assertEqual(h3d._align_frame_count_nearest(146, minimum=27), 141)
+        # 124 帧段 + 5 帧窗口 = 129 → 124（交付 119）
+        self.assertEqual(h3d._align_frame_count_nearest(129, minimum=10), 124)
+        # 低于下限时落到不低于下限的最近网格点（22 帧窗口的下限 27 → 39）
+        self.assertEqual(h3d._align_frame_count_nearest(10, minimum=27), 39)
+        # 不带窗口时与原有向上对齐一致
+        self.assertEqual(h3d._align_frame_count_nearest(124), 124)
+
+    def _node(self, context_frames=22, identity=None):
+        """跑一次 NeoH3AddContext（已有 1 条参考），返回 (patched_model, cond, vae, 原 model)。"""
+        vae = _StubH3Vae()
+        model = _FakeModelPatcher()
+        refs = [{"kind": "image", "latent": torch.zeros(1, 16, 2, 2, 2)}]
+        cond = [["tokens", {"minimax_refs": refs}]]
+        patched, out = h3_video_director.NeoH3AddContext().add_context(
+            model, cond, vae, 1344, 768, context_image=torch.zeros(context_frames, 768, 1344, 3),
+            identity_image=identity, context_frames=context_frames)
+        return patched, out, vae, model
+
+    def test_context_node_appends_video_ref_to_existing_refs(self):
+        patched, out, vae, model = self._node()
+        self.assertEqual([tuple(f.shape) for f in vae.seen], [(22, 768, 1344, 3)])
+        refs = out[0][1]["minimax_refs"]
+        self.assertEqual(len(refs), 2)                                   # 原有参考保留 + 追加窗口
+        window = refs[1]
+        self.assertEqual((window["kind"], window["latent_t"], window["ref_audio_t"]), ("video", 7, 0))
+        self.assertEqual((window["latent_h"], window["latent_w"]), (48, 84))
+        self.assertEqual(window[h3_video_director._CONTEXT_FRAMES_MARK], 22)
+        self.assertIsNone(window["audio_latent"])
+        self.assertEqual(patched.wrappers["APPLY_MODEL"].keys(),
+                         {h3_video_director._CONTINUITY_WRAPPER_KEY})
+        self.assertEqual(model.clones, 1)
+
+    def test_context_node_encodes_identity_batch_per_image(self):
+        _, out, vae, _ = self._node(identity=torch.zeros(2, 768, 1344, 3))
+        refs = out[0][1]["minimax_refs"]
+        self.assertEqual([r.get("kind") for r in refs], ["image", "image", "image", "video"])
+        self.assertEqual([tuple(r["latent"].shape) for r in refs[1:3]], [(1, 24, 1, 48, 84)] * 2)
+        self.assertEqual([tuple(f.shape) for f in vae.seen[:2]], [(1, 768, 1344, 3)] * 2)
+
+    def test_context_node_without_images_passes_through(self):
+        model = _FakeModelPatcher()
+        cond = [["tokens", {"minimax_refs": []}]]
+        patched, out = h3_video_director.NeoH3AddContext().add_context(
+            model, cond, _StubH3Vae(), 1344, 768, context_frames=0)
+        self.assertIs(patched, model)
+        self.assertIs(out, cond)
+        self.assertEqual(model.clones, 0)
+
+    def test_ref_row_ranges_follow_layout_order(self):
+        """video_audio 参考先占 ref_audio 行、再占 ref_img 行（消费顺序与 PackedLayout 构建顺序一致）。"""
+        refs = [{"kind": "video", "latent_t": 3, "ref_audio_t": 2}, {"kind": "image"}]
+        layout = _FakeLayout(refs=refs)
+        rows = h3_video_director._ref_row_ranges(layout, refs)
+        self.assertEqual(rows[0]["audio"], layout.segments[1][:2])
+        self.assertEqual(rows[0]["video"], layout.segments[2][:2])
+        self.assertEqual(rows[1]["video"], layout.segments[3][:2])
+        self.assertIsNone(rows[1]["audio"])
+
+    def test_align_payload_timeline_moves_context_rows_onto_target(self):
+        """上下文窗口行整体搬到目标视频开头的行上（ref 行默认从 text_len 起算，与目标时间轴错开一个窗口）。"""
+        refs = [{"kind": "image", "latent_t": 1, "latent": torch.zeros(1)},
+                {"kind": "video", "latent_t": 7, "ref_audio_t": 0, "latent": torch.zeros(1),
+                 h3_video_director._CONTEXT_FRAMES_MARK: 22}]
+        layout = _FakeLayout(refs=refs)
+        payload = {"layout": layout, "refs": refs}
+        video_start, video_stop = layout.segments[-1][:2]
+        target = layout.position_ids[video_start:video_stop].clone()
+        window_start, window_stop = layout.segments[2][:2]
+        h3_video_director._align_payload_timeline(payload)
+        self.assertTrue(torch.equal(layout.position_ids[window_start:window_stop], target[:14]))
+        self.assertTrue(torch.equal(layout.position_ids[video_start:video_stop], target))   # 目标行一个没动
+        self.assertTrue(getattr(layout, h3_video_director._CONTEXT_ALIGNED_ATTR))
+
+    def test_align_payload_timeline_shifts_keyframe_anchors_by_refs_advance(self):
+        """锚点行跟着目标一起平移（refs 的推进量），锚点才落在目标时间轴上。"""
+        refs = [{"kind": "image", "latent_t": 1, "latent": torch.zeros(1)}]
+        layout = _FakeLayout(refs=refs, keyframes=1)
+        payload = {"layout": layout, "refs": refs}
+        cond_start = layout.segments[1][0]
+        video_start = layout.segments[-1][0]
+        before = float(layout.position_ids[cond_start, 0])
+        target_t = float(layout.position_ids[video_start, 0])
+        h3_video_director._align_payload_timeline(payload)
+        self.assertAlmostEqual(float(layout.position_ids[cond_start, 0]), target_t)
+        self.assertAlmostEqual(target_t - before, 1.0)               # = 参考图的推进量
+
+    def test_align_payload_timeline_is_idempotent_and_skips_without_layout(self):
+        refs = [{"kind": "video", "latent_t": 7, "ref_audio_t": 0, "latent": torch.zeros(1),
+                 h3_video_director._CONTEXT_FRAMES_MARK: 22}]
+        layout = _FakeLayout(refs=refs)
+        payload = {"layout": layout, "refs": refs}
+        h3_video_director._align_payload_timeline(payload)
+        snapshot = layout.position_ids.clone()
+        h3_video_director._align_payload_timeline(payload)
+        self.assertTrue(torch.equal(layout.position_ids, snapshot))
+        h3_video_director._align_payload_timeline({})                # 没有 layout 时什么都不做
+
+    def test_align_payload_timeline_rejects_window_larger_than_target(self):
+        refs = [{"kind": "video", "latent_t": 12, "ref_audio_t": 0, "latent": torch.zeros(1),
+                 h3_video_director._CONTEXT_FRAMES_MARK: 39}]
+        layout = _FakeLayout(latent_t=7, refs=refs)
+        with self.assertRaises(RuntimeError) as ctx:
+            h3_video_director._align_payload_timeline({"layout": layout, "refs": refs})
+        self.assertIn("超过目标视频", str(ctx.exception))
 
 
 if __name__ == "__main__":

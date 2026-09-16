@@ -816,6 +816,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (eff === 'r2v' && !seg.refs) {
                 warnings.push(`第 ${segNo} 段（全参考生视频）缺参考素材（图 / 视频 / 音频）`);
             }
+            if ((eff === 'i2v' || eff === 'fl2v') && seg.refs) {
+                const extra = (seg.refs.images || []).length + (seg.refs.videos || []).length + (seg.refs.audios || []).length;
+                if (extra > 0) warnings.push(`第 ${segNo} 段（${MODE_LABELS.get(eff)}）有 ${extra} 条参考素材，该模式仅使用首帧/尾帧，多余参考不会生效`);
+            }
             segments.push(seg);
         }
         if (!segments.length) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '至少需要一个段', life: 4000 }); return; }
@@ -1103,12 +1107,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
 
     const uniT2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '文生视频不需要参考素材，直接为各段填写提示词即可' });
-    const uniMixedHint = $el('div', { className: 'neo-director-setup-hint', textContent: '混合模式下各段素材要求不同，请到「🎞️ 时间轴分段」页逐段设置' });
+    const uniMixedHint = $el('div', { className: 'neo-director-setup-hint', textContent: '混合模式：统一参考图会应用到所有分段（仅 r2v 段生效），i2v/fl2v 段请到「🎞️ 时间轴分段」页逐段设置首帧' });
 
     // 按全局模式切换统一素材区（与每段有效模式的显隐规则一致）
     function refreshSetupRefs() {
         const m = setupModeSel.value;
-        uniR2vBlock.style.display = (m === 'r2v') ? '' : 'none';
+        uniR2vBlock.style.display = (m === 'r2v' || m === 'mixed') ? '' : 'none';
         uniFrameBlock.style.display = (m === 'i2v' || m === 'fl2v') ? '' : 'none';
         uniLfBlock.style.display = (m === 'fl2v') ? '' : 'none';
         uniFrameLabel.textContent = (m === 'fl2v') ? '统一首帧 / 尾帧（改动自动应用到所有分段）' : '统一首帧（改动自动应用到所有分段）';
