@@ -1075,14 +1075,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const uniFFGrid = buildFrameGrid('neo-director-ff', exSetup.first_frame || '', '无', (f) => applyUniFrames(f, false));
     const uniLFGrid = buildFrameGrid('neo-director-lf', exSetup.last_frame || '', '无', (f) => applyUniFrames(f, true));
     const uniFrameLabel = $el('span', { className: 'neo-director-field-label', textContent: '统一首帧（改动自动应用到所有分段）' });
-    const uniLfRow = $el('div', { className: 'neo-director-setup-lf' }, [
+    // 首/尾帧各包一块（与时间轴分段页同构）：fl2v 两块都显示时并排同一行、各占一半
+    const uniFfBlock = $el('div', { className: 'neo-director-ff-block' }, [
+        frameRow('首帧图（点选或从左侧素材栏拖入）', (fname) => uniFFGrid.addCandidate(fname)), uniFFGrid.grid,
+    ]);
+    const uniLfBlock = $el('div', { className: 'neo-director-lf-block' }, [
         frameRow('尾帧图（首尾帧模式：锁住该段收尾画面）', (fname) => uniLFGrid.addCandidate(fname)), uniLFGrid.grid,
     ]);
     const uniFrameBlock = $el('div', { className: 'neo-director-setup-frames' }, [
         // 「素材库」按钮只留在各帧行上（与逐段布局一致），head 不再重复挂一个
         $el('div', { className: 'neo-director-refs-head' }, [uniFrameLabel]),
-        frameRow('首帧图（点选或从左侧素材栏拖入）', (fname) => uniFFGrid.addCandidate(fname)), uniFFGrid.grid,
-        uniLfRow,
+        $el('div', { className: 'neo-director-fflf neo-director-fflf-row' }, [uniFfBlock, uniLfBlock]),
     ]);
 
     const uniT2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '文生视频不需要参考素材，直接为各段填写提示词即可' });
@@ -1093,7 +1096,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const m = setupModeSel.value;
         uniR2vBlock.style.display = (m === 'r2v') ? '' : 'none';
         uniFrameBlock.style.display = (m === 'i2v' || m === 'fl2v') ? '' : 'none';
-        uniLfRow.style.display = (m === 'fl2v') ? '' : 'none';
+        uniLfBlock.style.display = (m === 'fl2v') ? '' : 'none';
         uniFrameLabel.textContent = (m === 'fl2v') ? '统一首帧 / 尾帧（改动自动应用到所有分段）' : '统一首帧（改动自动应用到所有分段）';
         uniT2vHint.style.display = (m === 't2v') ? '' : 'none';
         uniMixedHint.style.display = (m === 'mixed') ? '' : 'none';

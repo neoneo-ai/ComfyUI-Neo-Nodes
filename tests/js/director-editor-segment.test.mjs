@@ -1684,7 +1684,7 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "none", "i2v 隐藏参考素材区");
     const framesBlock = setupPane.querySelector(".neo-director-setup-frames");
     assert.equal(framesBlock.style.display, "", "i2v 显示统一首帧区");
-    assert.equal(setupPane.querySelector(".neo-director-setup-lf").style.display, "none", "i2v 隐藏尾帧行");
+    assert.equal(setupPane.querySelector(".neo-director-setup-frames .neo-director-lf-block").style.display, "none", "i2v 隐藏尾帧行");
 
     // 「本地」上传一张图作为统一首帧
     const localBtn = framesBlock.querySelector(".neo-director-local-add");
@@ -1708,7 +1708,8 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     setupModeSel.value = "fl2v";
     setupModeSel.dispatchEvent(new Event("change"));
     await sleep(20);
-    assert.equal(setupPane.querySelector(".neo-director-setup-lf").style.display, "", "fl2v 显示尾帧行");
+    assert.equal(setupPane.querySelector(".neo-director-setup-frames .neo-director-lf-block").style.display, "", "fl2v 显示尾帧行");
+    assert.ok(framesBlock.querySelector(".neo-director-fflf.neo-director-fflf-row"), "fl2v 统一首帧/尾帧并排两列（与时间轴分段页一致）");
 
     // 「素材库」按钮不重复：标题行没有，首/尾帧行各留一个（与逐段布局一致）
     assert.equal(framesBlock.querySelector(".neo-director-refs-head .neo-director-ff-lib"), null, "统一首帧区标题行不重复挂素材库按钮");

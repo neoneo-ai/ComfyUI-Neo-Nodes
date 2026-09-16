@@ -399,6 +399,15 @@ export class DirectorTimeline {
     return out;
   }
 
+  // 时间轴块摘要：优化后的 H3 提示词带 integrated_multimodal_description / overall_soundscape 等固定字段标签，
+  // 两行小字放不下也没必要显示——只取画面描述段（integrated_multimodal_description，Ref2VA 为 detailed_description）
+  // 正文、去掉字段标签并压成单行供 _fitLines 折行；非结构化提示词原样压缩空白返回。
+  _promptSummary(text) {
+    const t = String(text || "");
+    const m = t.match(/(?:integrated_multimodal_description|detailed_description)\s*:\s*([\s\S]*?)(?:\n\s*(?:overall_soundscape|non_diegetic_music)\s*:|$)/i);
+    return (m ? m[1] : t).replace(/\s+/g, " ").trim();
+  }
+
   _drawThumb(img, x, y, w, h) {
     const ctx = this.ctx;
     const ir = img.naturalWidth / (img.naturalHeight || 1);
@@ -635,26 +644,49 @@ export class DirectorTimeline {
       ctx.fillText(t, tx, ty);
     };
 
+    // 半透明文字背景：按字号定位圆角矩形（文字顶在 ty），画在描边/填充之前，提升缩略图上的可读性。
+    const textBg = (t, tx, ty, font) => {
+      const m = font.match(/(\d+(?:\.\d+)?)px/);
+      const fs = m ? parseFloat(m[1]) : 12;
+      ctx.font = font;
+      this._rr(ctx, tx - 3, ty - 2, ctx.measureText(t).width + 6, fs + 4, 3);
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      ctx.fill();
+    };
+
     // 参考素材展示（r2v）：参考图平铺满块 + 视频/音频数量徽标（先画图片，文字再覆盖其上保证可读）
     this._paintMat(ctx, x, w, top, bh, seg);
 
-    // 序号（左上）+ 时长（右上）：块顶部一行（白字 + 深色描边，画在图片之上）
+    // 序号（左上）+ 时长（右上）：块顶部一行；半透明背景 + 白字深色描边，画在图片之上
     ctx.textBaseline = "top";
+    textBg(numLabel, x + 6, top + 4, "bold 10px sans-serif");
     put(numLabel, x + 6, top + 4, "bold 10px sans-serif", "#fff");
     if (seg.duration) {
       const d = String(seg.duration) + "s";
       ctx.font = "9px sans-serif";
-      put(d, x + w - ctx.measureText(d).width - 5, top + 4, "9px sans-serif", "#fff");
+      const dx = x + w - ctx.measureText(d).width - 5;
+      textBg(d, dx, top + 4, "9px sans-serif");
+      put(d, dx, top + 4, "9px sans-serif", "#fff");
     }
 
-    // 提示词片段：块底部（Y轴底部，末行贴下沿留 5px），最多两行（超出截断加省略号），画在图片之上
+    // 提示词片段：块底部（Y轴底部，末行贴下沿留 5px），最多两行（超出截断加省略号），画在图片之上。
+    // 用 _promptSummary 去掉 H3 固定字段标签，只留画面描述正文，避免摘要被标签占满。
     if (seg.prompt) {
       ctx.font = "11px sans-serif";
-      const lines = this._fitLines(ctx, seg.prompt, Math.max(20, w - 14), 2);
-      ctx.textBaseline = "bottom";
-      const bottomY = top + bh - 5;
-      for (let li = 0; li < lines.length; li++) {
-        put(lines[li], x + 6, bottomY - (lines.length - 1 - li) * 13, "11px sans-serif", "#fff");
+      const lines = this._fitLines(ctx, this._promptSummary(seg.prompt), Math.max(20, w - 14), 2);
+      if (lines.length) {
+        const fs = 11, lineH = 13;
+        const bottomY = top + bh - 5;
+        // 半透明背景块：覆盖全部行（末行底在 bottomY，首行顶在 bottomY-(n-1)*lineH-fs）
+        let maxW = 0;
+        for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln).width);
+        this._rr(ctx, x + 3, bottomY - (lines.length - 1) * lineH - fs - 2, maxW + 6, (lines.length - 1) * lineH + fs + 4, 3);
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.fill();
+        ctx.textBaseline = "bottom";
+        for (let li = 0; li < lines.length; li++) {
+          put(lines[li], x + 6, bottomY - (lines.length - 1 - li) * lineH, "11px sans-serif", "#fff");
+        }
       }
     }
 

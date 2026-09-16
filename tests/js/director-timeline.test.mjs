@@ -428,6 +428,25 @@ test("_fitLines：中间行取满不加省略号，仅最后一行超出时加�
     tl.destroy();
 });
 
+test("_promptSummary：去掉 H3 固定字段标签，只留画面描述正文并压成单行", () => {
+    resetEnv();
+    const { tl } = makeTimeline([{ duration: 5 }]);
+
+    // 基础模式：integrated_multimodal_description / overall_soundscape / non_diegetic_music
+    const base = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] Live-action cinematic night fantasy, a woman rises into a midnight sky.\n\noverall_soundscape: Strong high-altitude wind surrounds her.\n\nnon_diegetic_music: N/A";
+    assert.equal(tl._promptSummary(base), "[Shot 1] Live-action cinematic night fantasy, a woman rises into a midnight sky.", "基础模式只取 integrated_multimodal_description 正文，去掉标签与前导/尾部字段");
+
+    // Ref2VA 模式：detailed_description 作为画面描述段
+    const ref = "subject_definitions: ...\nsummary: [reference generation] x\nretention_analysis: y\ndetailed_description: [Shot 1] A hero leaps through mid-air.\noverall_soundscape: wind rush.\nnon_diegetic_music: orchestral.";
+    assert.equal(tl._promptSummary(ref), "[Shot 1] A hero leaps through mid-air.", "Ref2VA 模式取 detailed_description 正文");
+
+    // 非结构化提示词：原样压缩空白
+    assert.equal(tl._promptSummary("a  \n\nb\tc"), "a b c", "无字段标签时仅压缩空白");
+    assert.equal(tl._promptSummary(""), "", "空提示词返回空串");
+
+    tl.destroy();
+});
+
 // 记录路径与填充：canvas 无后端，进度条是「圆角路径 + fill」，需回读坐标断言画在哪
 function recordingCtx() {
     const paths = [];
