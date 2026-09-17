@@ -1,5 +1,5 @@
 ---
-name: 生图 Krea2 文生角色图
+name: Krea2文生角色图
 tags: []
 description: ''
 category: image_gen

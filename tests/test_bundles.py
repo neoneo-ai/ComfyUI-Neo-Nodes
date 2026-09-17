@@ -3,7 +3,7 @@
 
 不依赖 ComfyUI 运行中的服务器与真实模型：server/comfy/folder_paths/nodes 用桩模块替换；
 H3/Krea2 generate 的 resolve/render/execute/load_skill_workflow 用捕获型假函数，
-验证 prompt 回退、references 覆盖、skill 有效覆盖 / 无效回退这几条流向。"""
+验证 prompt 回退、references 覆盖、bundle 不携带 skill（本地选择始终生效）这几条流向。"""
 
 import importlib.util
 import os
@@ -190,30 +190,22 @@ class Krea2BundleConsumeTests(unittest.TestCase):
         return krea2_generate._gen_image_skills()[0]["id"]
 
     def test_bundle_prompt_used_when_node_prompt_empty(self):
-        bid = bundles.create_bundle({"prompts": ["from bundle"], "references": [], "gen_type": "", "skill_id": ""})
+        bid = bundles.create_bundle({"prompts": ["from bundle"], "references": [], "gen_type": ""})
         krea2_generate.NeoKrea2Generate().generate(
             skill_id=self._valid_image_skill(), prompt="", image=None, bundle=bid)
         self.assertEqual(self._captured["body"]["prompt"], "from bundle")
 
     def test_bundle_references_override_image(self):
         refs = [{"kind": "data", "data": "data:image/png;base64,AAAA"}]
-        bid = bundles.create_bundle({"prompts": ["p"], "references": refs, "gen_type": "", "skill_id": ""})
+        bid = bundles.create_bundle({"prompts": ["p"], "references": refs, "gen_type": ""})
         krea2_generate.NeoKrea2Generate().generate(
             skill_id=self._valid_image_skill(), prompt="p", image=torch.full((1, 2, 2, 3), 0.1), bundle=bid)
         self.assertEqual(self._captured["body"]["references"], refs)
 
-    def test_bundle_valid_skill_overrides_local(self):
+    def test_bundle_does_not_override_local_skill(self):
+        # bundle 只带资源（prompt/参考图），不携带生图 skill：本地选择的 skill 始终生效
         local = self._valid_image_skill()
-        other = next(s["id"] for s in krea2_generate._gen_image_skills() if s["id"] != local)
-        bid = bundles.create_bundle({"prompts": ["p"], "references": [], "gen_type": "", "skill_id": other})
-        krea2_generate.NeoKrea2Generate().generate(
-            skill_id=local, prompt="p", image=None, bundle=bid)
-        self.assertEqual(self._captured["template"]["__skill_id"], krea2_generate._resolve_skill_id(other))
-
-    def test_bundle_invalid_skill_falls_back_to_local(self):
-        local = self._valid_image_skill()
-        bid = bundles.create_bundle(
-            {"prompts": ["p"], "references": [], "gen_type": "", "skill_id": "not_an_image_skill"})
+        bid = bundles.create_bundle({"prompts": ["p"], "references": [], "gen_type": ""})
         krea2_generate.NeoKrea2Generate().generate(
             skill_id=local, prompt="p", image=None, bundle=bid)
         self.assertEqual(self._captured["template"]["__skill_id"], krea2_generate._resolve_skill_id(local))

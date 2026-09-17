@@ -70,6 +70,24 @@ test("创建后节点高度与最小高度都包含时间轴", async () => {
     assert.equal(node.minHeight, BASE_H + TL_H + ACT_H);
 });
 
+test("bundle 连接时隐藏 recipe、显示视频 skill 选择器；断开恢复", async () => {
+    resetEnv();
+    const node = await createDirectorNode("", [{ name: "skill_id", value: "minimax_h3_t2v" }]);
+    const recipe = node.widgets.find((w) => w.name === "recipe");
+    const skillId = node.widgets.find((w) => w.name === "skill_id");
+    assert.ok(!recipe.hidden, "默认（无 bundle）显示 recipe");
+    assert.equal(skillId.hidden, true, "默认隐藏视频 skill 选择器");
+
+    node._neoDtApplyBundleLock(true);   // 连上 BUNDLE：单段模式
+    assert.equal(recipe.hidden, true, "bundle 模式隐藏 recipe");
+    assert.equal(skillId.hidden, false, "bundle 模式显示视频 skill 选择器");
+
+    node._neoDtApplyBundleLock(false);  // 断开：恢复配方模式
+    assert.ok(!recipe.hidden, "断开后恢复 recipe");
+    assert.equal(skillId.hidden, true, "断开后隐藏视频 skill 选择器");
+    destroyNode(node);
+});
+
 test("拖拽缩小被钳制在最小尺寸，时间轴不被裁切", async () => {
     resetEnv();
     const node = await createDirectorNode();

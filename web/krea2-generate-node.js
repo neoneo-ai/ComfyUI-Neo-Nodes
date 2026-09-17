@@ -1,6 +1,9 @@
 // NeoKrea2Generate 节点：width/height 默认跟随所选 skill 预设（base_resolution + default_ratio）。
 // 参考 NeoH3VideoDirector（web/director-node.js）的 applyDimDefaults：仅当仍为默认 -1 时填充，
 // 切换 skill_id 下拉强制重填；工作流已存的实值优先（首次载入不覆盖）。
+// 另修复旧版本工作流/复制粘贴导致的 widgets_values 串位：seed 之后会自动追加 control_after_generate
+// 下拉（吃一个位置），widget 集合变化后按位置还原会把它落到数字上。正常态它恒为模式串、seed 恒为非负整数，
+// 二者任一非法即判定 seed/count/width/height 整块错位 → 复位 control/seed/count 并强制按预设重填宽高。
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 
@@ -10,6 +13,7 @@ app.registerExtension({
         if (nodeData.name !== "NeoKrea2Generate") return;
 
         const origOnNodeCreated = nodeType.prototype.onNodeCreated;
+
         nodeType.prototype.onNodeCreated = function() {
             const result = origOnNodeCreated?.apply(this, arguments);
             const node = this;
@@ -43,6 +47,33 @@ app.registerExtension({
                     console.error("[Neo Nodes] krea2 skill dims fetch failed", e);
                 }
             };
+
+            // 串位修复：control_after_generate 正常恒为模式串，seed 恒为 >=0 的整数。二者任一非法即判定
+            // seed/count/width/height 数字块错位（或复制粘贴损坏）→ 复位 control/seed/count，强制按预设重填宽高。
+            const repairShiftedWidgets = () => {
+                const control = node.widgets?.find((w) => w.name === "control_after_generate");
+                const cv = control ? control.value : null;
+                const controlBad = typeof cv === "number" || (typeof cv === "string" && cv.trim() !== "" && Number.isFinite(Number(cv)));
+                const seedW = node.widgets?.find((w) => w.name === "seed");
+                const seedNum = seedW ? Number(seedW.value) : 0;
+                const seedBad = !Number.isFinite(seedNum) || seedNum < 0;
+                if (!controlBad && !seedBad) return;
+
+                // control 落到数字 → 整块错位：复位 control、count，宽高按预设重填
+                if (controlBad) {
+                    if (control) {
+                        const modes = control.options?.values || control.values || [];
+                        control.value = modes.includes("fixed") ? "fixed" : (modes[0] ?? "fixed");
+                        control.callback?.(control.value);
+                    }
+                    const countW = node.widgets?.find((x) => x.name === "count");
+                    if (countW) { countW.value = 1; countW.callback?.(1); }
+                    loadDims(true);
+                }
+                // seed 非法（NaN/负数）→ 串位块无法可靠恢复原值，复位为默认 0
+                if (seedBad && seedW) { seedW.value = 0; seedW.callback?.(0); }
+            };
+
             loadDims();
 
             // 切换 skill_id 下拉时强制重填预设尺寸（本版本 combo widget 用 callback 触发变化，onchange 不存在）
@@ -50,6 +81,19 @@ app.registerExtension({
                 const oc = skillWidget.callback;
                 skillWidget.callback = function() { oc?.apply(this, arguments); loadDims(true); };
             }
+
+            // 载入/粘贴按 widgets_values 还原后修复串位：control 是数字 → 复位并强制重填宽高；
+            // 旧格式（widgets_values 少于当前控件数，width/height 是新加的）→ 强制按预设重填。
+            // onNodeCreated 先于 configure 运行，故在此挂接实例钩子（同 web/director-node.js）。
+            const origOnConfigure = node.onConfigure;
+            node.onConfigure = function(data) {
+                const r = origOnConfigure?.apply(this, arguments);
+                repairShiftedWidgets();
+                const sv = data?.widgets_values;
+                if (Array.isArray(sv) && sv.length < (this.widgets?.length || 0)) loadDims(true);
+                return r;
+            };
+
             return result;
         };
     },

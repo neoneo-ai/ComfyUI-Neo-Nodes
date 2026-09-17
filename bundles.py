@@ -1,5 +1,5 @@
 # ComfyUI-Neo-Nodes - Runtime bundles
-# 运行时「bundle」：NeoPromptAgent 出队执行时生成的临时生成包（prompt/参考图/gen_type/skill_id），
+# 运行时「bundle」：NeoPromptAgent 出队执行时生成的临时生成包（prompt/参考图，只带资源、不带 skill_id），
 # 由下游 H3/Krea2 通过 bundle id 消费。仅存内存，TTL + LRU 淘汰；与磁盘持久化 recipe（配方）完全分离。
 
 from __future__ import annotations

@@ -20,118 +20,39 @@
       "vae_name": "{{VAE}}"
     }
   },
-  "6": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE}}"
-    }
-  },
-  "7": {
-    "class_type": "ImageScale",
-    "inputs": {
-      "image": [
-        "6",
-        0
-      ],
-      "upscale_method": "lanczos",
-      "width": "{{REF_WIDTH}}",
-      "height": "{{REF_HEIGHT}}",
-      "crop": "disabled"
-    }
-  },
-  "8": {
-    "class_type": "VAEEncode",
-    "inputs": {
-      "pixels": [
-        "7",
-        0
-      ],
-      "vae": [
-        "3",
-        0
-      ]
-    }
-  },
   "4": {
-    "class_type": "Krea2EditGroundedEncode",
+    "class_type": "CLIPTextEncode",
     "inputs": {
       "clip": [
         "2",
         0
       ],
-      "prompt": "{{PROMPT}}",
-      "image": [
-        "7",
-        0
-      ],
-      "grounding_px": 0
+      "text": "{{PROMPT}}"
     }
   },
   "5": {
-    "class_type": "Krea2EditGroundedEncode",
+    "class_type": "CLIPTextEncode",
     "inputs": {
       "clip": [
         "2",
         0
       ],
-      "prompt": "",
-      "image": [
-        "7",
-        0
-      ],
-      "grounding_px": 768
+      "text": "{{NEGATIVE}}"
     }
   },
   "9": {
-    "class_type": "EmptySD3LatentImage",
+    "class_type": "EmptyLatentImage",
     "inputs": {
       "width": "{{WIDTH}}",
       "height": "{{HEIGHT}}",
-      "batch_size": 1
-    }
-  },
-  "20": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "model": [
-        "1",
-        0
-      ],
-      "lora_name": "{{LORA_1_NAME}}",
-      "strength_model": "{{LORA_1_STRENGTH}}"
-    }
-  },
-  "14": {
-    "class_type": "Krea2EditModelPatch",
-    "inputs": {
-      "model": [
-        "20",
-        0
-      ],
-      "source_latent": [
-        "8",
-        0
-      ],
-      "fit_mode": "fit",
-      "vae": [
-        "3",
-        0
-      ],
-      "source_image": [
-        "7",
-        0
-      ],
-      "target_latent": [
-        "9",
-        0
-      ]
+      "batch_size": "{{COUNT}}"
     }
   },
   "10": {
     "class_type": "KSampler",
     "inputs": {
       "model": [
-        "14",
+        "1",
         0
       ],
       "seed": "{{SEED}}",

@@ -9,9 +9,11 @@
 
 import { app } from "../../../../scripts/app.js";
 
+// Krea2 只锁 prompt（bundle 携带的增强提示词）；skill_id 保持可用——bundle 只带资源、不带 skill。
+// Director 的 recipe / 视频 skill 选择器显隐由 director-node.js 自行处理，这里不锁控件。
 const BUNDLE_LOCK_NODES = {
-    "NeoKrea2Generate": ["prompt", "skill_id"],
-    "NeoH3VideoDirector": ["recipe"],
+    "NeoKrea2Generate": ["prompt"],
+    "NeoH3VideoDirector": [],
 };
 
 function bundleLinked(node) {

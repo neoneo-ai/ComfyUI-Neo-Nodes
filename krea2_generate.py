@@ -276,18 +276,12 @@ class NeoKrea2Generate:
     def generate(self, skill_id, prompt="", image=None, seed=-1, count=1, width=-1, height=-1, bundle="", model=None):
         payload = get_bundle(bundle) if bundle else None
 
-        # bundle 携带的 skill_id 若对本节点有效（gen_image + workflow.json）则覆盖本地选择，否则沿用本地
-        eff_skill = skill_id
-        if payload and payload.get("skill_id"):
-            cand = _resolve_skill_id(payload["skill_id"])
-            if any(s["id"] == cand for s in _gen_image_skills()):
-                eff_skill = payload["skill_id"]
-
-        real_id = _resolve_skill_id(eff_skill)
+        # skill 以节点本地选择为准：bundle 只带资源（prompt/参考图），不携带生图 skill
+        real_id = _resolve_skill_id(skill_id)
         template = load_skill_workflow(real_id)
         if template is None:
             raise RuntimeError(
-                f"[NeoNodes] Krea2 生图 skill '{eff_skill}' 缺少 workflow.json，无法生成")
+                f"[NeoNodes] Krea2 生图 skill '{skill_id}' 缺少 workflow.json，无法生成")
         settings = dict(get_settings())
         for key, value in get_skill_gen_config(real_id).items():
             if key in DEFAULT_SETTINGS and value not in (None, "", []):

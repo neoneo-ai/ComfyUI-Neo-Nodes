@@ -190,7 +190,7 @@ MAX_BUNDLE_REFERENCES = 9  # bundle 参考图上限，对齐官方 MiniMaxH3Refe
 def _bundle_references(image) -> list:
     """把连接的 image 张量按 batch 维逐帧编码成 H3/Krea2/Ref2V 可消费的 reference（data URI）列表；无图/失败返回空列表。
 
-    单图 [1,H,W,C] → 1 个 reference；批量 [N,H,W,C] → N 个（顺序对应 image_1..image_N，超过上限只取前 MAX_BUNDLE_REFERENCES 张）。
+    单图 [1,H,W,C] → 1 个 reference；批量 [N,H,W,C] → N 个（超过上限只取前 MAX_BUNDLE_REFERENCES 张）。
     """
     if image is None or not isinstance(image, torch.Tensor) or image.dim() != 4:
         return []
@@ -1408,7 +1408,6 @@ class NeoPromptAgent:
             "prompts": list(prompts_list),
             "references": references,
             "gen_type": "",   # 运行时无法确定目标模态（图/视频），留空；消费端按自身类型处理
-            "skill_id": skill_id or "",
         })
         return {
             "ui": {"text": [current_text]},

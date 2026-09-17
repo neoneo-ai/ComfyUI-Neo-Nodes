@@ -10,7 +10,7 @@
 4. 执行后输出单个拼接好的 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
 ### BUNDLE 单段
-把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：skill / 提示词 / 参考图（data URI）全部取自 bundle，按单个片段生成、**忽略 `recipe`**。要求 bundle 携带有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。连上 BUNDLE 后 `recipe` 下拉被禁用（以 bundle 为准）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
+把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：提示词 / 参考图（data URI）取自 bundle，视频 skill 用节点上**隐藏的视频 skill 选择器**（连上 BUNDLE 时自动显示、同时隐藏 `recipe`），按单个片段生成、**忽略 `recipe`**。需在节点上选择一个有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
 
 ## NeoH3VideoDirector（多段导演）
 

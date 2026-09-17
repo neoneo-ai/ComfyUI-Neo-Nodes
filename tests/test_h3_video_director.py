@@ -1331,7 +1331,7 @@ class DirectorBundleTests(unittest.TestCase):
     FPS = 24
 
     def _run(self, payload, seed=-1, width=-1, height=-1, model=None, steps=-1,
-             valid_skills=("minimax_h3_t2v",)):
+             skill_id="minimax_h3_t2v", valid_skills=("minimax_h3_t2v",)):
         h3d = h3_video_director
         orig = (h3d.get_bundle, h3d._gen_video_skills, h3d.load_director_spec,
                 h3d._resolve_skill_id, h3d.load_skill_workflow, h3d.get_skill_gen_config,
@@ -1361,7 +1361,7 @@ class DirectorBundleTests(unittest.TestCase):
         out = None
         try:
             (out,) = h3_video_director.NeoH3VideoDirector().generate(
-                "ignored_recipe", seed=seed, width=width, height=height, model=model, steps=steps, bundle="B1")
+                "ignored_recipe", skill_id=skill_id, seed=seed, width=width, height=height, model=model, steps=steps, bundle="B1")
         except Exception as e:
             err = str(e)
         finally:
@@ -1377,7 +1377,7 @@ class DirectorBundleTests(unittest.TestCase):
          h3_video_director._require_vdn_plugin) = orig
 
     def test_bundle_single_segment_runs_and_ignores_recipe(self):
-        payload = {"skill_id": "minimax_h3_t2v", "prompts": ["a cat walks"],
+        payload = {"prompts": ["a cat walks"],
                    "references": [{"kind": "data", "data": "data:image/png;base64,AAA"}]}
         out, bodies, recipe_calls, err = self._run(payload)
         self.assertIsNone(err)
@@ -1389,7 +1389,7 @@ class DirectorBundleTests(unittest.TestCase):
         self.assertIsNotNone(out.get_components())
 
     def test_bundle_seed_width_height_applied(self):
-        payload = {"skill_id": "minimax_h3_t2v", "prompts": ["p"]}
+        payload = {"prompts": ["p"]}
         _, bodies, _, err = self._run(payload, seed=500, width=512, height=288)
         self.assertIsNone(err)
         self.assertEqual(bodies[0].get("seed"), 500)
@@ -1397,7 +1397,7 @@ class DirectorBundleTests(unittest.TestCase):
 
     def test_bundle_default_seed_omitted(self):
         # seed/width/height=-1（默认）时不写入 body，交由 resolve_video_params 随机 / skill config 回退
-        payload = {"skill_id": "minimax_h3_t2v", "prompts": ["p"]}
+        payload = {"prompts": ["p"]}
         _, bodies, _, err = self._run(payload)
         self.assertIsNone(err)
         self.assertNotIn("seed", bodies[0])
@@ -1405,13 +1405,13 @@ class DirectorBundleTests(unittest.TestCase):
         self.assertNotIn("height", bodies[0])
 
     def test_bundle_invalid_skill_raises(self):
-        payload = {"skill_id": "not_a_video_skill", "prompts": ["p"]}
-        _, bodies, _, err = self._run(payload)
-        self.assertIn("skill 无效", err or "")
+        payload = {"prompts": ["p"]}
+        _, bodies, _, err = self._run(payload, skill_id="not_a_video_skill")
+        self.assertIn("视频 skill", err or "")
         self.assertEqual(bodies, [])                  # 未进入执行链
 
     def test_bundle_missing_prompt_raises(self):
-        payload = {"skill_id": "minimax_h3_t2v"}      # 无 prompts
+        payload = {"prompts": []}                     # bundle 有效但无提示词
         _, bodies, _, err = self._run(payload)
         self.assertIn("提示词", err or "")
         self.assertEqual(bodies, [])

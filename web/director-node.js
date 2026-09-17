@@ -275,12 +275,18 @@ app.registerExtension({
                 tlVisible = visible;
                 tlRow.style.display = visible ? "" : "none";
                 actBar.style.display = visible ? "" : "none";
+                // bundle 单段模式：隐藏 recipe、显示视频 skill 选择器；断开恢复
+                if (recipeWidget) recipeWidget.hidden = !visible;
+                if (skillIdWidget) skillIdWidget.hidden = visible;
                 runtimeBaseH = bh + (visible ? TL_H + ACT_H : 0);
                 node.minHeight = runtimeBaseH;
                 node.setSize([node.size[0], runtimeBaseH + (progress.active ? PREVIEW_H : 0)]);
             };
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
+            const skillIdWidget = node.widgets?.find(w => w.name === "skill_id");
+            // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
+            if (skillIdWidget) skillIdWidget.hidden = true;
             // 按配方首段 skill config 填充 width/height/steps widget。
             // 每个配方有自己的硬性要求（如 VDN/turbo 配方要求 steps=8），所以重新载入配方时一律重新初始化，用户手改值也不保留。
             // 唯一例外是创建节点时的首次载入：工作流已存的实值优先，只在仍为默认 -1 时填充。
