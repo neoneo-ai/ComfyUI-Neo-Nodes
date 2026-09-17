@@ -134,12 +134,17 @@ def _push_preview(node_id, payload):
 class H3Previewer(latent_preview.LatentPreviewer):
     """H3 段预览：taeh3 真彩、每步抽 PREVIEW_FRAMES 帧，经自有 WS 事件推给节点内动画面板。"""
 
-    def __init__(self, vae, node_id=None):
+    def __init__(self, vae, node_id=None, on_step=None):
         self.vae = vae
         self.node_id = node_id
+        self._on_step = on_step
+        self._step_count = 0
 
     def decode_latent_to_preview_image(self, preview_format, x0):
         """核心的单图通道这里不用（返回 None，进度条照常推进）：改推多帧载荷给自有面板。"""
+        self._step_count += 1
+        if self._on_step:
+            self._on_step(self._step_count)
         frames = _video_frames(x0, self.vae.latent_channels, PREVIEW_FRAMES)
         if frames is None:
             return None
@@ -187,10 +192,11 @@ def _latent2rgb(latent_format):
 
 
 @contextlib.contextmanager
-def preview_override(enabled, vae, node_id=None):
+def preview_override(enabled, vae, node_id=None, on_step=None):
     """段执行期间接管 H3 预览：关 = 完全不出；开 = taeh3 真彩动作预览（缺 taeh3 则 Latent2RGB 兜底）。
 
     node_id 是发起本次执行的 NeoH3VideoDirector 节点 id，随载荷推给前端定位面板。
+    on_step 是每采样步回调（step_number），供 director 更新进度。
     非 H3 的 latent format 一律交还原实现；退出时（含异常）无条件还原。
     """
     original = latent_preview.get_previewer
@@ -200,7 +206,7 @@ def preview_override(enabled, vae, node_id=None):
             return original(device, latent_format)
         if not enabled:
             return None
-        return H3Previewer(vae, node_id) if vae is not None else _latent2rgb(latent_format)
+        return H3Previewer(vae, node_id, on_step) if vae is not None else _latent2rgb(latent_format)
 
     latent_preview.get_previewer = overridden
     try:

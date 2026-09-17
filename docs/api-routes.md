@@ -76,6 +76,7 @@
 | GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`（仅运行中且全局 registry 命中本 prompt 时非空）、错误、告警 |
 | GET | `/neo_image_gen/tasks` | 最近任务列表（按创建时间倒序，最多 32 条） |
 | POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
+| GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`，与节点 `width`/`height=-1` 时一致），供 NeoKrea2Generate widget 填充默认值（定义于 krea2_generate.py） |
 
 任务状态不走 HTTP 轮询：`_watch` 协程按变化经 WebSocket 事件 `rs.image_gen.status` 推送任务快照（广播，前端 `watchTask` 按 `task_id` 过滤）；`/status` 仅作订阅前兜底首拉与断线重连补漏，取消时后端也主动推送 `cancelled` 快照。
 

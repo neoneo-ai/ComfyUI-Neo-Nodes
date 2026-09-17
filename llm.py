@@ -35,9 +35,9 @@ _BUILTIN_PROVIDER_DEFS = [
     {"id": "local", "name": "Local GGUF (llama.cpp)", "type": "local"},
     {"id": "deepseek", "name": "DeepSeek 深度求索", "type": "remote",
      "default_base_url": "https://api.deepseek.com/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
-    {"id": "aliyun-dashscope", "name": "阿里云百炼 (通义千问)", "type": "remote",
+    {"id": "dashscope", "name": "阿里云百炼 (通义千问)", "type": "remote",
      "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
-    {"id": "aliyun-token-plan", "name": "阿里云百炼 Token Plan", "type": "remote",
+    {"id": "dashscope-plan", "name": "阿里云百炼 Token Plan", "type": "remote",
      "default_base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
     {"id": "moonshot", "name": "月之暗面 Kimi", "type": "remote",
      "default_base_url": "https://api.moonshot.cn/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
@@ -917,9 +917,14 @@ class RemoteLLMClient:
         """检查客户端是否可用"""
         if not self.provider:
             return False
-        # 本地提供商（ollama, lmstudio, llamacpp, vllm）不需要 API key
-        local_providers = {"ollama", "lmstudio", "llamacpp", "vllm"}
-        if self.provider not in local_providers and not self.api_key:
+        # 是否需要 API key 以 provider 定义（configs/llm_providers.json）的 requires_api_key 为准；
+        # 自建/本地服务（unsloth / lmstudio / ollama / vllm / OpenAI Compatible）不要求 key
+        requires_key = False
+        for p in _load_provider_defs():
+            if p.get("id") == self.provider:
+                requires_key = bool(p.get("requires_api_key", False))
+                break
+        if requires_key and not self.api_key:
             return False
         return True
 

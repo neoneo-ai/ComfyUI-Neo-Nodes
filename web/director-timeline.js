@@ -466,6 +466,9 @@ export class DirectorTimeline {
       }
     }
 
+    // 刻度线上的生成进度条（done 绿满条 / current 琥珀按比例增长）
+    this._drawRulerProgress(ctx, L);
+
     const top = rulerH + DT_TOP_GAP;
     const bh = this._blockHeight();
     const drag = this._drag && this._drag.moved ? this._drag : null;
@@ -551,15 +554,48 @@ export class DirectorTimeline {
     // 拖拽：源块在落位槽留虚框占位、本体作为幽灵块跟随光标浮动（其余块已让位，落位框不与他人重叠）
   }
 
-  // 某段当前的生成状态：done（已完成）/ current（正在生成）/ ""（未开始或不显示）。
-  // 由宿主经 getProgress() 提供 director 运行进度；非活动或无进度时全部返回空。
+  // 刻度线上的生成进度条：在秒刻度尺底部画彩色填充条，按段宽对齐。
+  // done = 绿色满条；current = 琥珀色按 step/total_steps 比例增长；未开始不画。
+  _drawRulerProgress(ctx, L) {
+    const p = this._progress;
+    if (!p || !p.active) return;
+    const barH = 5;
+    const y = DT_RULER_H - barH - 1;   // 刻度线底沿上方
+    for (const b of L.blocks) {
+      const [state, ratio] = this._segProgressState(b.i);
+      if (!state) continue;
+      const x = b.x + 2;
+      const fullW = Math.max(4, b.w - 4);
+      if (state === "done") {
+        ctx.fillStyle = "#3fb950";
+        this._rr(ctx, x, y, fullW, barH, 2);
+        ctx.fill();
+      } else if (state === "current") {
+        // 背景槽（暗色）+ 前景填充（按比例增长）
+        ctx.fillStyle = "rgba(230,162,60,0.2)";
+        this._rr(ctx, x, y, fullW, barH, 2);
+        ctx.fill();
+        const fillW = Math.max(4, fullW * ratio);
+        ctx.fillStyle = "#e6a23c";
+        this._rr(ctx, x, y, fillW, barH, 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // 某段当前的生成状态：返回 [state, ratio]——state: "done"|"current"|""，ratio: 0~1（当前段内步数进度）。
+  // 由宿主经 getProgress() 提供 director 运行进度；非活动或无进度时全部返回 ["", 0]。
   _segProgressState(i) {
     const p = this._progress;
-    if (!p || !p.active) return "";
+    if (!p || !p.active) return ["", 0];
     const cur = Number(p.segment_index);
-    if (i < cur) return "done";
-    if (i === cur) return "current";
-    return "";
+    if (i < cur) return ["done", 1];
+    if (i === cur) {
+      const total = Number(p.total_steps) || 0;
+      const step = Number(p.step) || 0;
+      return ["current", total > 0 ? Math.min(1, step / total) : 0];
+    }
+    return ["", 0];
   }
 
   // 参考素材展示（r2v）：参考图按原比例逐张横排平铺满块高（能放几张放几张，画在首帧同区域之上），
@@ -704,13 +740,6 @@ export class DirectorTimeline {
       }
     }
 
-    // 生成进度：段顶部细条——done 绿 / current 琥珀（仅 director 运行中显示）。
-    // 放顶部而非底部：块下沿就是横向滚动条（放大态 10px），画在底部会被滚动条盖住。
-    if (prog === "done" || prog === "current") {
-      const barH = 3;
-      ctx.fillStyle = prog === "done" ? "#3fb950" : "#e6a23c";
-      this._rr(ctx, x + 3, top + 1, Math.max(2, iw - 6), barH, 1.5);
-      ctx.fill();
-    }
+    // 生成进度已移到刻度线上渲染（见 _drawRulerProgress），块内不再画顶部细条。
   }
 }

@@ -1340,7 +1340,53 @@ test("导演编辑器：参考主体模式显示参考素材区、隐藏首尾�
     await sleep(20);
 });
 
-test("导演编辑器：混合模式下每段可选 t2v/i2v/fl2v/r2v，切换后即时刷新分区显隐", async () => {
+test("导演编辑器：v2v 模式显示源视频区、保存时携带 source_video", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "V2V" }));
+
+    await openDirectorEditor({
+        name: "V2V", shared: { mode: "v2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "v2v", source_video: "src.mp4" }],
+    }, null);
+    await sleep(60);
+
+    const row = document.querySelector(".neo-director-seg");
+    assert.equal(row.querySelector(".neo-director-ff-block").style.display, "none", "v2v 隐藏首帧区");
+    assert.equal(row.querySelector(".neo-director-refs-block").style.display, "none", "v2v 隐藏参考素材区");
+    assert.ok(row.querySelector(".neo-director-sv-block"), "v2v 显示源视频区");
+    assert.ok(row.querySelector(".neo-director-sv-item.neo-director-sv-active"), "回显已选源视频");
+
+    document.querySelector(".neo-director-save").click();
+    await sleep(40);
+    const saved = fetchLog.find((c) => c.path === "/rs_recipes/save").body.segments[0];
+    assert.equal(saved.source_video, "src.mp4", "保存时携带 source_video");
+    assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save").body.shared.mode, "v2v");
+});
+
+test("导演编辑器：rv2v 同时显示源视频区与参考素材区", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "RV2V", shared: { mode: "rv2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p", duration_sec: 5, mode: "rv2v",
+                     source_video: "src.mp4", refs: { images: ["a.png"] } }],
+    }, null);
+    await sleep(60);
+
+    const row = document.querySelector(".neo-director-seg");
+    assert.ok(row.querySelector(".neo-director-sv-block"), "rv2v 显示源视频区");
+    assert.equal(row.querySelector(".neo-director-refs-block").style.display, "", "rv2v 显示参考素材区");
+    assert.equal(row.querySelector(".neo-director-ff-block").style.display, "none", "rv2v 隐藏首帧区");
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+
+test("导演编辑器：混合模式下每段可选 t2v/i2v/fl2v/r2v/v2v/rv2v，切换后即时刷新分区显隐", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
@@ -1353,7 +1399,7 @@ test("导演编辑器：混合模式下每段可选 t2v/i2v/fl2v/r2v，切换后
 
     const row = document.querySelector(".neo-director-seg");
     const segMode = row.querySelector(".neo-director-segmode");
-    assert.deepEqual(Array.from(segMode.options).map((o) => o.value), ["t2v", "i2v", "fl2v", "r2v"]);
+    assert.deepEqual(Array.from(segMode.options).map((o) => o.value), ["t2v", "i2v", "fl2v", "r2v", "v2v", "rv2v"]);
 
     segMode.value = "fl2v";
     segMode.dispatchEvent(new Event("change"));

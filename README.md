@@ -29,6 +29,7 @@
 - [安装](#安装)
 - [依赖](#依赖)
 - [快速上手](#快速上手)
+- [示例工作流](#示例工作流)
 - [模块文档](#模块文档)
 - [许可证](#许可证)
 - [引用参考](#引用参考)
@@ -66,6 +67,21 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 5. **素材一键入节点**：打开右侧边栏「素材」面板 → 浏览/搜索到目标图片 → 点缩略图进灯箱 → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
 6. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏「🔧 修复工作流」→ 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
+
+---
+
+## 示例工作流
+
+`example_workflows/` 下提供可直接加载的 UI 格式模板，ComfyUI 会自动将它们暴露在顶栏 **Templates（模板）** 面板中，选择后一键载入画布：
+
+| 文件 | 内容 |
+|------|------|
+| `neo-krea2-text-to-image.json` | ⚡ Neo Prompt Agent → 🎨 Krea2 Generate → SaveImage，文生图最短链路 |
+| `neo-krea2-ref-image-to-image.json` | LoadImage 提供参考图 + ⚡ Neo Prompt Agent → 🎨 Krea2 Generate（image 输入），参考图生图 |
+| `neo-prompt-encoder-txt2img.json` | 🧠 Neo Prompt Encoder 输出 POSITIVE，接标准 UNETLoader / CLIPLoader / KSampler / VAEDecode 文生图采样链路 |
+| `neo-h3-reference-to-video.json` | ⚡ Neo Prompt Agent → 🔗 Bundle Expand → 官方 MiniMax H3 Reference to Video（prompt + 参考图），完整 H3 出片链路 |
+
+> 模板中的模型 / skill / 参考图为占位默认值，载入后按需替换为本地实际资源即可运行。
 
 ---
 

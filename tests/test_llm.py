@@ -1149,6 +1149,13 @@ class TestProviderDefinitions(unittest.TestCase):
         for pid in ("local", "openai", "lmstudio", "ollama", "unsloth", "vllm"):
             self.assertFalse(flags.get(pid), pid)
 
+    def test_is_available_follows_requires_api_key(self):
+        # is_available 以配置 requires_api_key 为准：自建/本地服务无 key 也可用，云厂商缺 key 不可用
+        for pid in ("unsloth", "lmstudio", "ollama", "vllm", "openai"):
+            self.assertTrue(llm_mod.RemoteLLMClient({"provider": pid, "api_key": ""}).is_available(), pid)
+        self.assertFalse(llm_mod.RemoteLLMClient({"provider": "deepseek", "api_key": ""}).is_available())
+        self.assertTrue(llm_mod.RemoteLLMClient({"provider": "deepseek", "api_key": "sk-x"}).is_available())
+
     def test_cloud_providers_have_runtime_slots(self):
         for pid in self.CLOUD_IDS:
             self.assertIn(pid, llm_mod._REMOTE_PROVIDERS, pid)

@@ -208,6 +208,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ['i2v', '图生视频'],
         ['fl2v', '首尾帧生视频'],
         ['r2v', '全参考生视频'],
+        ['v2v', '视频编辑'],
+        ['rv2v', '视频+参考图编辑'],
     ];
     const SEG_MODE_KEYS = new Set(SEG_MODES.map(([k]) => k));
     const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
@@ -215,6 +217,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const segRefSetters = new Map();    // 段行 → [设置该段三组参考的函数]（「同步到所有分段」用）
     const segFrameReaders = new Map();  // 段行 → {first, last} 读取该段首/尾帧的函数
     const segFrameSetters = new Map();  // 段行 → {first, last} 设置该段首/尾帧的函数（统一设置自动应用用）
+    const segSvReaders = new Map();     // 段行 → 读取该段源视频（v2v/rv2v）的函数
+    const segSvSetters = new Map();     // 段行 → 设置该段源视频的函数
 
     /** 一组参考素材的「已用列表」：只显示当前挂上的素材，拖入/本地上传直接插入；
      *  瓷砖可鼠标拖放调整顺序、✕ 移除。顺序即保存与时间轴展示顺序，数量受 group.max 上限约束。 */
@@ -411,6 +415,82 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         };
     }
 
+    /** 视频选择网格（v2v/rv2v 源视频用）：与 buildFrameGrid 类似但使用 videoRefs 候选、显示视频缩略图 */
+    function buildVideoGrid(prefix, initialName, emptyText, onChange) {
+        const grid = $el('div', { className: `${prefix}-grid` });
+        const candidates = videoRefs.slice();
+        if (initialName && !candidates.some(r => r.filename === initialName)) {
+            candidates.unshift({ filename: initialName, subfolder: '', type: 'input' });
+        }
+        const thumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
+        const noneTile = $el('div', { className: `${prefix}-item`, title: emptyText }, [
+            $el('div', { className: `${prefix}-thumb ${prefix}-thumb-empty`, textContent: '🎬' }),
+            $el('div', { className: `${prefix}-name`, textContent: emptyText }),
+        ]);
+        grid.appendChild(noneTile);
+        const select = (value) => {
+            for (const it of Array.from(grid.children)) {
+                it.classList.toggle(`${prefix}-active`, (it === noneTile) ? value === '' : it.dataset.file === value);
+            }
+        };
+        const removeTile = (tile) => {
+            const fname = tile.dataset.file;
+            const wasActive = tile.classList.contains(`${prefix}-active`);
+            tile.remove();
+            markDirty();
+            if (wasActive) { select(''); if (onChange) onChange(''); }
+            if (!fname) return;
+            const stillUsed = Array.from(segsWrap.querySelectorAll('.neo-director-seg'))
+                .some(row => Array.from(row.querySelectorAll(`.${prefix}-item`)).some(it => it.dataset.file === fname));
+            if (!stillUsed) {
+                const idx = videoRefs.findIndex(r => r.filename === fname);
+                if (idx >= 0) videoRefs.splice(idx, 1);
+            }
+        };
+        const makeTile = (ref) => {
+            const delBtn = $el('button', { className: `${prefix}-del`, title: '移除该素材', textContent: '✕' });
+            const tile = $el('div', { className: `${prefix}-item`, title: ref.filename, dataset: { file: ref.filename } }, [
+                $el('video', { className: `${prefix}-thumb`, src: thumbUrl(ref), muted: true, preload: 'metadata' }),
+                $el('div', { className: `${prefix}-name`, textContent: ref.filename }),
+                delBtn,
+            ]);
+            delBtn.onclick = (e) => { e.stopPropagation(); removeTile(tile); };
+            tile.onclick = () => { const v = tile.classList.contains(`${prefix}-active`) ? '' : ref.filename; select(v); markDirty(); if (onChange) onChange(v); };
+            return tile;
+        };
+        const addCandidate = (fname) => {
+            if (!videoRefs.some(r => r.filename === fname)) {
+                videoRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'video' });
+            }
+            let tile = Array.from(grid.children).find(it => it.dataset.file === fname);
+            if (!tile) {
+                tile = makeTile({ filename: fname, subfolder: '', type: 'input', kind: 'video' });
+                grid.appendChild(tile);
+            }
+            select(fname);
+            markDirty();
+            if (onChange) onChange(fname);
+        };
+        for (const r of candidates) grid.appendChild(makeTile(r));
+        select(initialName || '');
+        grid.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; grid.classList.add('neo-director-drop'); });
+        grid.addEventListener('dragleave', (e) => { if (!grid.contains(e.relatedTarget)) grid.classList.remove('neo-director-drop'); });
+        grid.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            grid.classList.remove('neo-director-drop');
+            const fname = await copyGalleryToInput(grabDataType(e));
+            if (fname) addCandidate(fname);
+        });
+        return {
+            grid, addCandidate,
+            getSelected: () => {
+                const active = Array.from(grid.children).find(it => it.classList.contains(`${prefix}-active`));
+                return (active && active.dataset.file) ? active.dataset.file : '';
+            },
+            setSelected: (value) => { select(value); markDirty(); },
+        };
+    }
+
     /** 「素材库」按钮：打开/收起 ComfyUI 左侧 Neo Gallery 面板（首帧行 / 参考区共用）。 */
     const buildAssetLibButton = () => $el('button', {
         className: 'neo-director-ff-lib',
@@ -440,6 +520,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // 首帧 / 尾帧候选网格：「无」+ 已连线 LoadImage 缩略图，单选（首帧驱动 I2V 与连续性，尾帧锁 FL2V 收尾）
         const ffGrid = buildFrameGrid('neo-director-ff', seg.first_frame, '无（文生视频）');
         const lfGrid = buildFrameGrid('neo-director-lf', seg.last_frame, '无（不锁尾帧）');
+        
+        // 源视频选择（v2v/rv2v 用）：单文件选择，显示视频缩略图
+        const svGrid = buildVideoGrid('neo-director-sv', seg.source_video, '无（源视频）');
 
         // 本段模式（仅全局“混合模式”下显示）：文生 / 图生 / 首尾帧 / 全参考
         const segModeSel = $el('select', { className: 'neo-director-segmode' });
@@ -453,6 +536,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ]);
         const lfBlock = $el('div', { className: 'neo-director-lf-block' }, [
             frameRow('尾帧图（首尾帧模式：锁住该段收尾画面）', (fname) => lfGrid.addCandidate(fname)), lfGrid.grid,
+        ]);
+        // 源视频区（v2v/rv2v 显示）：标题行 + 单选网格
+        const svBlock = $el('div', { className: 'neo-director-sv-block' }, [
+            $el('div', { className: 'neo-director-ff-row' }, [
+                $el('label', { className: 'neo-director-field-label', textContent: '源视频（视频编辑：提示词用 <Video 1> 指代）' }),
+                buildLocalAddButton('video/*', (fname) => svGrid.addCandidate(fname)),
+                buildAssetLibButton(),
+            ]),
+            svGrid.grid,
         ]);
         // 首帧区 + 尾帧区包一层容器：fl2v（两块都显示）时并排同一行，其余模式仅显示其一、纵向占满
         const ffLfWrap = $el('div', { className: 'neo-director-fflf' }, [ffBlock, lfBlock]);
@@ -501,6 +593,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             ]),
             $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
             ffLfWrap,
+            svBlock,
             refsBlock,
         ]);
 
@@ -510,6 +603,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         row._lfAddCandidate = lfGrid.addCandidate; // 统一设置「应用到所有分段」写入尾帧用
         segFrameReaders.set(row, { first: ffGrid.getSelected, last: lfGrid.getSelected });
         segFrameSetters.set(row, { first: ffGrid.setSelected, last: lfGrid.setSelected });
+        segSvReaders.set(row, svGrid.getSelected);
+        segSvSetters.set(row, svGrid.setSelected);
         segRefReaders.set(row, segRefRows.map(r => r.getSelected));
         segRefSetters.set(row, segRefRows.map(r => r.set));
         selfRowRef = row;   // 同步按钮据此定位本段（作为同步源）
@@ -557,7 +652,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     function refreshSegSkillOptions(skillSel, eff) {
         if (!skillSel) return;
         const prev = skillSel.value;
-        let pool = skills.filter(s => s.mode === eff);
+        // v2v/rv2v 复用 r2v 技能模板（H3 视频编辑走参考视频路径），按 r2v 过滤技能列表
+        let pool = skills.filter(s => s.mode === (eff === 'v2v' || eff === 'rv2v' ? 'r2v' : eff));
         if (!pool.length) pool = skills;
         skillSel.innerHTML = '';
         if (!pool.length) {
@@ -577,6 +673,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const lfBlock = row.querySelector('.neo-director-lf-block');
             const modeRow = row.querySelector('.neo-director-segmode-row');
             const ffLfWrap = row.querySelector('.neo-director-fflf');
+            const svBlock = row.querySelector('.neo-director-sv-block');
             if (g === 'mixed' && segModeSel) {
                 // 首次进入混合：按该段已有的首/尾帧或参考素材初始化本段模式
                 if (!row.dataset.modeInit) {
@@ -584,8 +681,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     const hasRef = (segRefReaders.get(row) || []).some(read => read().length);
                     const hasLast = !!(readers.last && readers.last());
                     const hasFirst = !!(readers.first && readers.first());
+                    const hasSv = !!(segSvReaders.get(row) && segSvReaders.get(row)());
                     if (hasFirst && hasLast) segModeSel.value = 'fl2v';
                     else if (hasFirst) segModeSel.value = 'i2v';
+                    else if (hasSv) segModeSel.value = 'v2v';
                     else if (hasRef) segModeSel.value = 'r2v';
                     row.dataset.modeInit = '1';
                 }
@@ -597,7 +696,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (lfBlock) lfBlock.style.display = (eff === 'fl2v') ? '' : 'none';
             if (ffLfWrap) ffLfWrap.classList.toggle('neo-director-fflf-row', eff === 'fl2v');
             const refsBlock = row.querySelector('.neo-director-refs-block');
-            if (refsBlock) refsBlock.style.display = (eff === 'r2v') ? '' : 'none';
+            if (refsBlock) refsBlock.style.display = (eff === 'r2v' || eff === 'rv2v') ? '' : 'none';
+            if (svBlock) svBlock.style.display = (eff === 'v2v' || eff === 'rv2v') ? '' : 'none';
         }
     }
     // 定位到指定段（节点时间轴上被点击的那一段）；未指定时仍默认显示第 1 段
@@ -806,6 +906,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (eff === 'fl2v') {
                 if (last) seg.last_frame = last;
             }
+            // 源视频：仅视频编辑模式携带
+            if (eff === 'v2v' || eff === 'rv2v') {
+                const sv = segSvReaders.get(row) ? segSvReaders.get(row)() : '';
+                if (sv) seg.source_video = sv;
+            }
             // 各模式的内容完整性：只提示、不阻止保存（允许先存草稿再补素材）
             if ((eff === 'i2v' || eff === 'fl2v') && !seg.first_frame && !seg.refs) {
                 warnings.push(`第 ${segNo} 段（${MODE_LABELS.get(eff)}）缺首帧图或参考素材`);
@@ -815,6 +920,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             }
             if (eff === 'r2v' && !seg.refs) {
                 warnings.push(`第 ${segNo} 段（全参考生视频）缺参考素材（图 / 视频 / 音频）`);
+            }
+            if ((eff === 'v2v' || eff === 'rv2v') && !seg.source_video) {
+                warnings.push(`第 ${segNo} 段（${MODE_LABELS.get(eff)}）缺源视频`);
             }
             if ((eff === 'i2v' || eff === 'fl2v') && seg.refs) {
                 const extra = (seg.refs.images || []).length + (seg.refs.videos || []).length + (seg.refs.audios || []).length;
@@ -836,6 +944,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     assetNames.add(name);
                     assets.push({ filename: name, subfolder: '', type: 'input', kind });
                 }
+            }
+            if (seg.source_video && !assetNames.has(seg.source_video)) {
+                assetNames.add(seg.source_video);
+                assets.push({ filename: seg.source_video, subfolder: '', type: 'input', kind: 'video' });
             }
         }
         const custom = aspectSel.value === DIRECTOR_CUSTOM;
@@ -1032,8 +1144,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (MODE_LABELS.has(exShared.mode)) return exShared.mode;
         const hasFirst = exSegs.some(s => s && s.first_frame);
         const hasLast = exSegs.some(s => s && s.last_frame);
+        const hasSource = exSegs.some(s => s && s.source_video);
         const hasRef = exSegs.some(s => s && s.refs && Object.keys(s.refs).length);
         if (hasLast) return 'fl2v';
+        if (hasSource) return hasRef ? 'rv2v' : 'v2v';
         if (hasFirst && hasRef) return 'mixed';
         if (hasFirst) return 'i2v';
         if (hasRef) return 'r2v';
@@ -1108,6 +1222,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     const uniT2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '文生视频不需要参考素材，直接为各段填写提示词即可' });
     const uniMixedHint = $el('div', { className: 'neo-director-setup-hint', textContent: '混合模式：统一参考图会应用到所有分段（仅 r2v 段生效），i2v/fl2v 段请到「🎞️ 时间轴分段」页逐段设置首帧' });
+    const uniV2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '视频编辑：源视频请到「🎞️ 时间轴分段」页逐段设置（每段一段切片），提示词用 <Video 1> 指代源视频' });
 
     // 按全局模式切换统一素材区（与每段有效模式的显隐规则一致）
     function refreshSetupRefs() {
@@ -1118,6 +1233,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         uniFrameLabel.textContent = (m === 'fl2v') ? '统一首帧 / 尾帧（改动自动应用到所有分段）' : '统一首帧（改动自动应用到所有分段）';
         uniT2vHint.style.display = (m === 't2v') ? '' : 'none';
         uniMixedHint.style.display = (m === 'mixed') ? '' : 'none';
+        uniV2vHint.style.display = (m === 'v2v' || m === 'rv2v') ? '' : 'none';
     }
 
     // 提示词批量优化：各段现有提示词 + 模式 + 统一参考 → LLM 重写为 H3 官方格式，逐段写回编辑器
@@ -1202,6 +1318,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         uniFrameBlock,   // 图生 / 首尾帧：统一首帧（+ 尾帧）
         uniT2vHint,      // 文生：无需素材说明
         uniMixedHint,    // 混合：逐段设置提示
+        uniV2vHint,      // 视频编辑：逐段设置源视频提示
         $el('div', { className: 'neo-director-setup-opt' }, [optBtn, optStatus]),
         $el('label', { className: 'neo-director-field-label neo-director-story-segs-title', textContent: '各段提示词对照（左 = 优化前 · 右 = 优化后，重新点优化基于原文再试）' }),
         setupSegPreview,

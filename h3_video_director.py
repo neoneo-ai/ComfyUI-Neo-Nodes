@@ -33,7 +33,8 @@ from .recipes import list_director_recipes, load_director_spec
 
 # 当前 director 运行进度（进程内单例）。ComfyUI 串行执行 prompt，同一时刻只有一个活动 director。
 # segment_index：正在生成的段序号（-1 = 尚未开始/已结束）；total_segments：总段数。
-_DIRECTOR_PROGRESS = {"active": False, "segment_index": -1, "total_segments": 0}
+# step / total_steps：当前段已完成的采样步数 / 总步数（前端据此渲染段内进度条）。
+_DIRECTOR_PROGRESS = {"active": False, "segment_index": -1, "total_segments": 0, "step": 0, "total_steps": 0}
 
 
 def get_director_progress() -> dict:
@@ -442,11 +443,12 @@ def _align_frame_count_nearest(n, minimum=5):
 
 
 def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
-                       context_tail=None, context_frames=0, identity_names=()):
+                       context_tail=None, context_frames=0, identity_names=(), on_step=None):
     """单段执行链：解析参数 → 渲染模板 → 模型注入/VDN 校验 → 连续性注入 → 进程内执行，返回 VIDEO。
 
     recipe 逐段与 BUNDLE 单段共用；label 仅用于错误消息前缀（如「第 3 段：」）。
     vae/preview/node_id 控制采样期间节点内的实时预览（见 h3_preview）。
+    on_step：每采样步回调（step_number），供 director 更新进度。
     context_tail：本段开头的重生成窗口（上段尾部 context_frames 帧，[F,H,W,C]）——给了它就把目标时长
     加 window 帧并就近对齐到 17k+5 网格，那段帧由调用方在拼接时丢掉。
     identity_names：继承到本段的身份参考图文件名（用 input 目录里的真实 LoadImage 加载）。
@@ -477,7 +479,7 @@ def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview
     graph, c_overrides = _inject_continuity_nodes(graph, context_tail, window, identity_names)
     if c_overrides:
         overrides = {**(overrides or {}), **c_overrides}
-    with preview_override(preview, vae, node_id):
+    with preview_override(preview, vae, node_id, on_step=on_step):
         return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
 
 
@@ -560,7 +562,8 @@ class NeoH3VideoDirector:
         window = _align_context_frames(context_frames) if continuity and int(context_frames or 0) > 0 else 0
         identity_names = _inherited_identity_names(segments) if continuity else []
 
-        _DIRECTOR_PROGRESS.update(active=True, segment_index=-1, total_segments=len(segments))
+        _DIRECTOR_PROGRESS.update(active=True, segment_index=-1, total_segments=len(segments), step=0,
+                                  total_steps=max(1, int(steps)) if int(steps) > 0 else 0)
         all_frames = []
         all_audio = []
         drops = []       # 与 segments 对齐：该段丢掉的头部帧数（上下文窗口帧数 / Tier A 的 1 帧 / 0）
@@ -568,8 +571,10 @@ class NeoH3VideoDirector:
         try:
             for i, seg in enumerate(segments):
                 _DIRECTOR_PROGRESS["segment_index"] = i
+                _DIRECTOR_PROGRESS["step"] = 0
+                prompt = seg.get("prompt", "")
                 body = {
-                    "prompt": seg.get("prompt", ""),
+                    "prompt": prompt,
                     "seed": (base_seed + i) % (2**63),
                 }
                 if in_w > 0:
@@ -588,10 +593,20 @@ class NeoH3VideoDirector:
                 # 按段模式组装参考（T2V 段不带任何参考）：
                 #   i2v/fl2v 首帧（Tier A：continuity 时链入上段尾帧；有上下文窗口时窗口自己承担开头的引导）
                 #   r2v 仅参考素材（图/视频/音频）
+                #   v2v/rv2v 源视频（自动作为 ref_videos[0]，提示词自动加 <Video 1>）
                 #   fl2v 另带尾帧锁收尾
                 mode = seg.get("mode") or "t2v"
                 refs = []
                 chained = False
+                
+                # v2v/rv2v: 源视频作为第一个参考视频
+                source_video = seg.get("source_video")
+                if source_video and mode in ("v2v", "rv2v"):
+                    refs.append({"kind": "input", "value": source_video, "media": "video"})
+                    # 提示词自动加 <Video 1> 标签（如果没有的话）
+                    if "<Video 1>" not in prompt:
+                        body["prompt"] = f"<Video 1> {prompt}"
+                
                 if mode in ("i2v", "fl2v"):
                     primary_input = None
                     if context_tail is not None:
@@ -632,10 +647,13 @@ class NeoH3VideoDirector:
                          if i > 0 else "首段需自带首帧"))
                 if mode == "r2v" and not refs and not inherited and context_tail is None:
                     raise ValueError(f"第 {i + 1} 段为全参考生视频但没有参考素材：请挂参考图 / 视频 / 音频")
+                if mode in ("v2v", "rv2v") and not source_video:
+                    raise ValueError(f"第 {i + 1} 段为{'视频编辑' if mode == 'v2v' else '视频+参考图编辑'}但缺少源视频：请为该段设置 source_video")
 
                 video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：",
                                            vae, preview, unique_id, context_tail=context_tail,
-                                           context_frames=window, identity_names=inherited)
+                                           context_frames=window, identity_names=inherited,
+                                           on_step=lambda s: _DIRECTOR_PROGRESS.__setitem__("step", s))
                 comp = video.get_components()
                 frames = comp.images
 
@@ -652,7 +670,7 @@ class NeoH3VideoDirector:
                 Types.VideoComponents(images=final_frames, audio=final_audio, frame_rate=Fraction(H3_FPS))
             ),)
         finally:
-            _DIRECTOR_PROGRESS.update(active=False, segment_index=-1, total_segments=0)
+            _DIRECTOR_PROGRESS.update(active=False, segment_index=-1, total_segments=0, step=0, total_steps=0)
 
 
 NODE_CLASS_MAPPINGS = {"NeoH3VideoDirector": NeoH3VideoDirector, "NeoH3AddKeyframe": NeoH3AddKeyframe,

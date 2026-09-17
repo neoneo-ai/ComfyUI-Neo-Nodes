@@ -135,7 +135,7 @@ test("轮询 /neo_video_gen/director_progress 后时间轴读到各段生成状�
 
     assert.deepEqual(
         node._neoDtTimeline.opts.getProgress(),
-        { active: true, segment_index: 1, total_segments: 3 },
+        { active: true, segment_index: 1, total_segments: 3, step: 0, total_steps: 0 },
         "进度应写入时间轴 getProgress()",
     );
 });
@@ -170,13 +170,13 @@ test("时间轴按进度状态给各段标 done/current，非活动时不显示"
     clearInterval(node._neoDtProgressTimer);
 
     const tl = node._neoDtTimeline;
-    tl._progress = { active: true, segment_index: 1, total_segments: 3 };
-    assert.equal(tl._segProgressState(0), "done", "已完成段标 done");
-    assert.equal(tl._segProgressState(1), "current", "当前段标 current");
-    assert.equal(tl._segProgressState(2), "", "待处理段不显示");
+    tl._progress = { active: true, segment_index: 1, total_segments: 3, step: 2, total_steps: 8 };
+    assert.deepEqual(tl._segProgressState(0), ["done", 1], "已完成段标 done");
+    assert.deepEqual(tl._segProgressState(1), ["current", 0.25], "当前段标 current + 步数比例");
+    assert.deepEqual(tl._segProgressState(2), ["", 0], "待处理段不显示");
 
     tl._progress = { active: false, segment_index: -1, total_segments: 3 };
-    assert.equal(tl._segProgressState(0), "", "非活动时全部不显示");
+    assert.deepEqual(tl._segProgressState(0), ["", 0], "非活动时全部不显示");
 });
 
 test("时间轴显示区外右下角「＋ 新增导演配方」按钮打开新建编辑器", async () => {
@@ -509,7 +509,7 @@ function payload(nodeId, names, fps = PREVIEW_FPS) {
 async function createPreviewNode() {
     const node = await createDirectorNode();
     clearInterval(node._neoDtProgressTimer);
-    const box = node.domWidgets.find((w) => w.name === "director_preview").el;
+    const box = node._neoDtPreviewBox;
     return {
         node,
         box,

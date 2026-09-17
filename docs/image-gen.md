@@ -33,9 +33,10 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 | image | IMAGE (可选) | 参考图；四视图等 requires_ref skill 需要 |
 | bundle | STRING (可选) | Neo Prompt Agent 的 BUNDLE id；前端为纯连线槽（同 image，无文本框）。连上后 `prompt`/`skill_id` 控件禁用，参考图/skill 以 bundle 为准、prompt 留空时取 bundle |
 | seed | INT (可选) | 随机种子，默认 0（固定）；要随机把「生成后控制」设为 randomize |
-| count | INT (可选) | 生成张数（1–8） |
+| count | INT (可选) | 生成张数（1–8），默认 1 |
+| width | INT (可选) | 输出宽度，默认 -1 = 用 skill/preset 比例算尺寸；>0 覆盖模板分辨率。前端选中/切换 skill 时自动填入该 skill 预设宽高（`/neo_image_gen/skill_dims`），手改后生效 |
+| height | INT (可选) | 输出高度，默认 -1 = 用 skill/preset 比例算尺寸；>0 覆盖模板分辨率。前端选中/切换 skill 时自动填入该 skill 预设宽高（`/neo_image_gen/skill_dims`），手改后生效 |
 | model | MODEL (可选) | 外部加速模型连线槽；提供时覆盖内部主模型链（UNETLoader/LoRA 等，只沿 `model` 边剪枝），注入到 `KSampler.model` 来源处 |
-| steps | INT (可选) | 采样步数，默认 -1 = 用 preset/config 值；>0 直接改写采样器节点 `steps`（模板硬编码步数时也生效） |
 
 | 输出 | 类型 | 说明 |
 |------|------|------|

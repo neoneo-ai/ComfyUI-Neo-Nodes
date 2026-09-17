@@ -299,8 +299,9 @@ async def rs_recipes_load(request):
 _DIRECTOR_REF_CAPS = {"images": 9, "videos": 3, "audios": 3}
 
 # 段级生成模式（与 ComfyUI_MiniMaxH3_Director 的任务模式对齐）：
-# t2v 文生 / i2v 首帧 / fl2v 首尾帧 / r2v 全参考；全局可再取 mixed（逐段 seg.mode 生效）
-_DIRECTOR_MODES = ("t2v", "i2v", "fl2v", "r2v")
+# t2v 文生 / i2v 首帧 / fl2v 首尾帧 / r2v 全参考 / v2v 视频编辑 / rv2v 视频+参考图编辑
+# 全局可再取 mixed（逐段 seg.mode 生效）
+_DIRECTOR_MODES = ("t2v", "i2v", "fl2v", "r2v", "v2v", "rv2v")
 
 
 def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> tuple[dict, list]:
@@ -367,8 +368,9 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
 
         first_frame = str(s.get("first_frame") or "").strip()
         last_frame = str(s.get("last_frame") or "").strip()
+        source_video = str(s.get("source_video") or "").strip()
         seg = {"skill_id": skill_id, "prompt": prompt, "duration_sec": dur}
-        # 段级模式仅在混合模式下有意义；保留合法值（t2v/i2v/fl2v/r2v），其余丢弃
+        # 段级模式仅在混合模式下有意义；保留合法值（t2v/i2v/fl2v/r2v/v2v/rv2v），其余丢弃
         seg_mode = str(s.get("mode") or "").strip()
         if seg_mode in _DIRECTOR_MODES:
             seg["mode"] = seg_mode
@@ -376,6 +378,8 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
             seg["first_frame"] = _resolve_ref(first_frame, "first_frame")
         if last_frame:
             seg["last_frame"] = _resolve_ref(last_frame, "last_frame")
+        if source_video:
+            seg["source_video"] = _resolve_ref(source_video, "source_video")
         kept_refs = {}
         for k in ("images", "videos", "audios"):
             vals = [str(x) for x in (refs.get(k) or []) if str(x)][:_DIRECTOR_REF_CAPS[k]]

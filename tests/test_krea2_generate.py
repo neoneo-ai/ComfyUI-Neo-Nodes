@@ -4,9 +4,11 @@
 不依赖 ComfyUI 运行中的服务器与真实 Krea2 模型：server/comfy/folder_paths/nodes 用桩模块替换，
 mini-executor 用注入的纯张量假节点验证执行逻辑。"""
 
+import asyncio
 import base64
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -70,6 +72,7 @@ sys.modules["folder_paths"] = _folder_paths
 
 _nodes = types.ModuleType("nodes")
 _nodes.NODE_CLASS_MAPPINGS = {}
+_nodes.MAX_RESOLUTION = 16384
 sys.modules["nodes"] = _nodes
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -290,7 +293,7 @@ class GenerateTests(unittest.TestCase):
         (out,) = krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi", seed=42, count=1)
         self.assertTrue(torch.allclose(out, torch.ones(1, 2, 2, 3)))
 
-    def test_generate_model_injection_and_steps(self):
+    def test_generate_model_injection(self):
         graph = {
             "1": {"class_type": "UNETLoader", "inputs": {}},
             "20": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0]}},
@@ -299,7 +302,7 @@ class GenerateTests(unittest.TestCase):
         krea2_generate.load_skill_workflow = lambda sid: {"template": True}
         krea2_generate.get_settings = lambda: {}
         krea2_generate.get_skill_gen_config = lambda sid: {}
-        krea2_generate.resolve_request = lambda body, settings: {"steps": 8}
+        krea2_generate.resolve_request = lambda body, settings: {"p": 1}
         krea2_generate.render_template = lambda tpl, params: (graph, [])
         orig_exec = krea2_generate.execute_graph_inprocess
         captured = {}
@@ -307,11 +310,11 @@ class GenerateTests(unittest.TestCase):
             lambda g, output_type="IMAGE", overrides=None: (captured.update(graph=g, overrides=overrides), "img")[1])
         try:
             ext = object()
-            (out,) = krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi", model=ext, steps=3)
+            (out,) = krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi", model=ext)
         finally:
             krea2_generate.execute_graph_inprocess = orig_exec
         self.assertEqual(out, "img")
-        self.assertEqual(captured["graph"]["10"]["inputs"]["steps"], 3)   # steps 覆盖到采样器节点
+        self.assertEqual(captured["graph"]["10"]["inputs"]["steps"], 8)   # steps 由模板决定，节点不再覆盖
         self.assertNotIn("1", captured["graph"])                          # UNETLoader（纯模型链）被剪掉
         self.assertIn("20", captured["graph"])                            # LoRA 节点作为注入点保留
         self.assertEqual(captured["overrides"], {"20": [ext]})
@@ -336,7 +339,28 @@ class GenerateTests(unittest.TestCase):
             krea2_generate.execute_graph_inprocess = orig_exec
         self.assertIsNone(captured["overrides"])                          # 无外部模型 → 不注入
         self.assertIn("1", captured["graph"])                             # UNETLoader 保留
-        self.assertEqual(captured["graph"]["10"]["inputs"]["steps"], 8)   # steps 未覆盖（默认 -1）
+        self.assertEqual(captured["graph"]["10"]["inputs"]["steps"], 8)   # steps 由模板决定，节点不再覆盖
+
+    def test_generate_width_height_override(self):
+        graph = {
+            "1": {"class_type": "_SourceA", "inputs": {}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+        }
+        krea2_generate.load_skill_workflow = lambda sid: {"template": True}
+        krea2_generate.get_settings = lambda: {}
+        krea2_generate.get_skill_gen_config = lambda sid: {}
+        captured = {}
+        krea2_generate.resolve_request = lambda body, settings: (captured.update(body=body), {"p": 1})[1]
+        krea2_generate.render_template = lambda tpl, params: (graph, [])
+        # 显式宽高 >0 → 写入 body（覆盖 skill/preset 比例）
+        krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi", width=1024, height=768)
+        self.assertEqual(captured["body"].get("width"), 1024)
+        self.assertEqual(captured["body"].get("height"), 768)
+        # 默认 -1 → 不写入 body，交由 skill/preset 比例
+        captured.clear()
+        krea2_generate.NeoKrea2Generate().generate("ok", prompt="hi")
+        self.assertNotIn("width", captured["body"])
+        self.assertNotIn("height", captured["body"])
 
 
 class ResolveSkillIdTests(unittest.TestCase):
@@ -381,6 +405,35 @@ class ResolveSkillIdTests(unittest.TestCase):
         it = krea2_generate.NeoKrea2Generate.INPUT_TYPES()
         values, _ = it["required"]["skill_id"]
         self.assertEqual(values, ["Alpha"])
+
+
+class SkillDimsRouteTests(unittest.TestCase):
+    def setUp(self):
+        self._saved = {k: getattr(krea2_generate, k) for k in
+                       ("_resolve_skill_id", "get_skill_gen_config", "get_settings")}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(krea2_generate, k, v)
+
+    @staticmethod
+    def _req(skill_id):
+        return types.SimpleNamespace(rel_url=types.SimpleNamespace(query={"skill_id": skill_id}))
+
+    def test_returns_preset_dims(self):
+        # 与 generate() 在 width/height=-1 时同一路径：base_resolution + default_ratio → round 到 16
+        krea2_generate._resolve_skill_id = lambda v: "sk_test"
+        krea2_generate.get_skill_gen_config = lambda sid: {"default_ratio": "16:9", "base_resolution": 1280}
+        krea2_generate.get_settings = lambda: dict(krea2_generate.DEFAULT_SETTINGS)
+        resp = asyncio.run(krea2_generate.skill_dims_route(self._req("Alpha")))
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.body)
+        self.assertTrue(body["success"])
+        self.assertEqual((body["width"], body["height"]), (1280, 720))
+
+    def test_missing_skill_id_400(self):
+        resp = asyncio.run(krea2_generate.skill_dims_route(self._req("")))
+        self.assertEqual(resp.status, 400)
 
 
 if __name__ == "__main__":

@@ -178,16 +178,13 @@ app.registerExtension({
             const widget = node.addDOMWidget("director_timeline", "custom", root);
             root.style.width = "100%";
             root.style.maxWidth = "none";
-            root.style.height = (TL_H + ACT_H) + "px";
 
-            // 实时预览面板：与时间轴分属两个 DOM widget（运行中占 PREVIEW_H 高、空闲 0 高），
-            // 分开是因为 bundle 锁定时时间轴整个隐藏，面板仍要能用。
+            // 实时预览面板：放在 root 内部（时间轴+操作条下方），与时间轴同属一个 DOM widget，
+            // 避免两个独立 widget 之间 LiteGraph 的额外间距。bundle 锁定时只隐藏时间轴行和操作条。
             const previewBox = document.createElement("div");
             previewBox.className = "neo-dtl-live";
             previewBox.style.display = "none";
             previewBox.style.height = "0px";
-            const liveWidget = node.addDOMWidget("director_preview", "custom", previewBox);
-            liveWidget.width = (node.size && node.size[0]) || 340;
 
             // 时间轴显示区（canvas + ✎）；「＋ 新增导演配方」按钮另起一行，位于其下方右下角
             const tlRow = document.createElement("div");
@@ -203,6 +200,7 @@ app.registerExtension({
                 if (runtimeBaseH > 0 && node.size[1] < runtimeBaseH + PREVIEW_H) node.setSize([node.size[0], runtimeBaseH + PREVIEW_H]);
             });
             node._neoDtLive = live; // 暴露给测试驱动（tick）
+            node._neoDtPreviewBox = previewBox; // 暴露给测试定位面板元素
             livePreviews.add(live);
             let tl = null;
             try {
@@ -231,8 +229,9 @@ app.registerExtension({
                     if (!resp.ok) return;
                     const p = await resp.json();
                     const prev = progress;
-                    progress = { active: !!p.active, segment_index: Number(p.segment_index) || -1, total_segments: Number(p.total_segments) || 0 };
-                    if (progress.active !== prev.active || progress.segment_index !== prev.segment_index || progress.total_segments !== prev.total_segments) {
+                    progress = { active: !!p.active, segment_index: Number(p.segment_index) || -1, total_segments: Number(p.total_segments) || 0,
+                                 step: Number(p.step) || 0, total_steps: Number(p.total_steps) || 0 };
+                    if (progress.active !== prev.active || progress.segment_index !== prev.segment_index || progress.total_segments !== prev.total_segments || progress.step !== prev.step) {
                         tl?.refresh();
                         // 跟随运行：段切换时把正在生成的块横向滚动到可视区（段多/放大时才需要）
                         if (progress.active && progress.segment_index !== prev.segment_index) tl?.revealSeg(progress.segment_index);
@@ -254,7 +253,6 @@ app.registerExtension({
                 if (node.minWidth && node.size[0] < node.minWidth) node.size[0] = node.minWidth;
                 if (node.minHeight && node.size[1] < node.minHeight) node.size[1] = node.minHeight;
                 widget.width = node.size[0];
-                liveWidget.width = node.size[0];
             };
             node.onResize = node.onResize || function() {};
             const origOnResize = node.onResize;
@@ -275,7 +273,8 @@ app.registerExtension({
                 const visible = !locked;
                 if (visible === tlVisible) return;
                 tlVisible = visible;
-                root.style.display = visible ? "" : "none";
+                tlRow.style.display = visible ? "" : "none";
+                actBar.style.display = visible ? "" : "none";
                 runtimeBaseH = bh + (visible ? TL_H + ACT_H : 0);
                 node.minHeight = runtimeBaseH;
                 node.setSize([node.size[0], runtimeBaseH + (progress.active ? PREVIEW_H : 0)]);
@@ -422,6 +421,7 @@ app.registerExtension({
             newBtn.addEventListener("click", (e) => { e.stopPropagation(); openDirectorEditor(null); });
             actBar.appendChild(newBtn);
             root.appendChild(actBar);
+            root.appendChild(previewBox);
             return result;
         };
 

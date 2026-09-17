@@ -12,12 +12,16 @@ import inspect
 import io
 
 import torch
+from aiohttp import web
 from PIL import Image
 
 import nodes as comfy_nodes
-from .image_gen import DEFAULT_SETTINGS, MAX_IMAGES, get_settings, render_template, resolve_request
+from server import PromptServer
+from .image_gen import DEFAULT_SETTINGS, MAX_IMAGES, get_settings, render_template, resolve_dimensions, resolve_request
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
 from .bundles import get_bundle
+
+routes = PromptServer.instance.routes
 
 # 落盘/预览输出节点：mini-executor 不执行（避免重复写盘与事件副作用）
 _SKIP_OUTPUT_NODES = {"SaveImage", "PreviewImage", "SaveVideo"}
@@ -257,8 +261,9 @@ class NeoKrea2Generate:
                 "bundle": ("STRING", {"forceInput": True}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）；提供时覆盖 prompt/image/skill
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**63 - 1}),  # 默认固定，随机走「生成后控制」
                 "count": ("INT", {"default": 1, "min": 1, "max": MAX_IMAGES}),
+                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),   # -1 = 用 skill/preset 比例算尺寸
+                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用 skill/preset 比例算尺寸
                 "model": ("MODEL",),  # 外部加速模型；提供时覆盖内部主模型链（UNETLoader/LoRA 等）
-                "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
             },
         }
 
@@ -268,7 +273,7 @@ class NeoKrea2Generate:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "Krea2 生图节点：按所选 skill 的 workflow.json 模板同步生成，输出 IMAGE 张量到下游。"
 
-    def generate(self, skill_id, prompt="", image=None, seed=-1, count=1, bundle="", model=None, steps=-1):
+    def generate(self, skill_id, prompt="", image=None, seed=-1, count=1, width=-1, height=-1, bundle="", model=None):
         payload = get_bundle(bundle) if bundle else None
 
         # bundle 携带的 skill_id 若对本节点有效（gen_image + workflow.json）则覆盖本地选择，否则沿用本地
@@ -296,6 +301,12 @@ class NeoKrea2Generate:
         body = {"prompt": prompt, "count": int(count)}
         if seed is not None and int(seed) >= 0:
             body["seed"] = int(seed)
+        in_w = int(width) if int(width) > 0 else 0
+        in_h = int(height) if int(height) > 0 else 0
+        if in_w > 0:
+            body["width"] = in_w
+        if in_h > 0:
+            body["height"] = in_h
         # references：bundle 里的（连接图/附加图）优先，否则用节点 image 输入
         refs = (payload or {}).get("references")
         if refs:
@@ -304,11 +315,6 @@ class NeoKrea2Generate:
             body["references"] = [{"kind": "data", "data": _image_to_data_uri(image)}]
         params = resolve_request(body, settings)
         graph, _render_warnings = render_template(template, params)
-        # steps：生图模板可能硬编码采样步数（非 {{STEPS}}），直接改采样器节点最稳
-        if steps is not None and int(steps) > 0:
-            for node in graph.values():
-                if node.get("class_type") in ("KSampler", "KSamplerAdvanced"):
-                    node.setdefault("inputs", {})["steps"] = int(steps)
         overrides = None
         if model is not None:
             x_id, pruned = _model_injection_node(graph)
@@ -318,6 +324,23 @@ class NeoKrea2Generate:
                 del graph[pid]
             overrides = {x_id: [model]}
         return (execute_graph_inprocess(graph, output_type="IMAGE", overrides=overrides),)
+
+
+@routes.get("/neo_image_gen/skill_dims")
+async def skill_dims_route(request):
+    """返回 gen_image skill 的预设尺寸（base_resolution + default_ratio），与 generate() 在 width/height=-1 时一致，供节点 widget 填充默认值。"""
+    name = (request.rel_url.query.get("skill_id") or "").strip()
+    if not name:
+        return web.json_response({"success": False, "error": "缺少 skill_id"}, status=400)
+    try:
+        settings = dict(get_settings())
+        for key, value in get_skill_gen_config(_resolve_skill_id(name)).items():
+            if key in DEFAULT_SETTINGS and value not in (None, "", []):
+                settings[key] = value
+        width, height = resolve_dimensions(settings)
+        return web.json_response({"success": True, "width": width, "height": height})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 NODE_CLASS_MAPPINGS = {"NeoKrea2Generate": NeoKrea2Generate}
