@@ -3025,8 +3025,11 @@
     align-items: center;
     justify-content: center;
     background: rgba(0, 0, 0, 0.55);
-    z-index: 99999;
+    /* 高于 .neo-director-overlay（2147483000）：从导演编辑器内打开技能选择窗时必须盖在面板之上 */
+    z-index: 2147483647;
 }
+/* 锚定浮层模式：去掉遮罩，仅保留点击外部关闭的透明层（面板由 JS 定位到控件附近） */
+.rs-skill-modal-overlay.rs-skill-picker--anchored { background: transparent; }
 
 .rs-skill-modal {
     display: flex;
@@ -3130,8 +3133,9 @@
 .rs-skill-dropdown-footer {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 6px;
+    padding: 8px 14px;
     border-top: 1px solid #444;
     background: #26262f;
 }
@@ -3172,6 +3176,59 @@
     border-color: #5090cc;
     opacity: 1;
 }
+
+/* ---- 技能选择弹窗（锚定浮层，替代原生 combo 下拉；无 anchor 时回退居中模态）---- */
+.rs-skill-modal.rs-skill-picker {
+    width: min(420px, calc(100vw - 32px));
+    max-height: min(60vh, calc(100vh - 32px));
+    border-radius: 10px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+.rs-skill-picker-search {
+    /* 覆盖 .rs-form-input 的 width:100%：margin 不参与 stretch 计算，100% 会溢出面板右缘 */
+    width: auto;
+    margin: 10px 14px 8px;
+    flex-shrink: 0;
+    padding: 7px 10px;
+    background: #10131a;
+    border: 1px solid #394452;
+    border-radius: 6px;
+    color: #e6edf3;
+    font-size: 13px;
+    outline: none;
+    transition: border-color .12s ease, box-shadow .12s ease;
+}
+.rs-skill-picker-search::placeholder { color: #5a6b7d; }
+.rs-skill-picker-search:focus {
+    border-color: #5090cc;
+    box-shadow: 0 0 0 2px rgba(80, 144, 204, 0.2);
+}
+.rs-skill-picker-list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 2px 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.rs-skill-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 9px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #d0d7de;
+    transition: background .1s ease;
+}
+.rs-skill-picker-item:hover,
+.rs-skill-picker-item.is-highlighted { background: #2c3e52; }
+.rs-skill-picker-item.is-selected { background: #1f3a5c; box-shadow: inset 0 0 0 1px #5090cc; color: #fff; }
+.rs-skill-picker-badge { flex-shrink: 0; font-size: 12px; }
+.rs-skill-picker-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rs-skill-picker-empty { padding: 14px 8px; font-size: 12px; color: #777; text-align: center; }
 
 /* dice lives inside .rs-random-wrap - re-apply the collapsed floating-group
    gray styling that used to target .rs-button-group > .rs-random-btn directly,

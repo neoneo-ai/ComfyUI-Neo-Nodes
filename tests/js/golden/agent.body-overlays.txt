@@ -3,7 +3,7 @@ body
     div.rs-combo-items
       div <display=flex>
         span "默认"
-        button.rs-skill-row-action <type=button title=Edit this skill> "✎ Edit"
+        button.rs-skill-row-action <type=button title=查看 / 编辑此技能> "👁 查看"
     div.rs-skill-dropdown-footer
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Create a new custom skill> "+ New Skill"
       button.rs-btn.rs-btn-local.rs-skill-footer-btn <type=button title=Upload a .zip skill package> "⬆ ZIP"

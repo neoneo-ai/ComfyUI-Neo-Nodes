@@ -7,6 +7,7 @@ import { app } from "../../../../scripts/app.js";
 import { $el } from "../../../../scripts/ui.js";
 import { DirectorTimeline } from "./director-timeline.js";
 import { saveRecipe, listVideoSkills, scanMediaNodes, widgetValueToRef } from "./recipes.js";
+import { attachSkillPickerToSelect } from "./skill.js";
 
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
@@ -511,8 +512,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     function buildSeg(seg = {}) {
         const skillSel = $el('select', { className: 'neo-director-skill' });
         if (!skills.length) skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
-        for (const s of skills) skillSel.appendChild($el('option', { value: s.id, textContent: s.name || s.id }));
+        for (const s of skills) {
+            const opt = $el('option', { value: s.id, textContent: s.name || s.id });
+            opt.dataset.source = s.source || 'custom'; // 行内查看/编辑按钮按 source 区分（预设只读）
+            skillSel.appendChild(opt);
+        }
         if (seg.skill_id) skillSel.value = seg.skill_id;
+        // 点击弹居中搜索窗（替代原生下拉）；refreshSegSkillOptions 重建 options 后监听仍在 select 上生效
+        attachSkillPickerToSelect(skillSel);
 
         const promptTa = $el('textarea', { className: 'neo-director-prompt', placeholder: '该段画面 / 运动描述（必填）', value: seg.prompt || '' });
         const durInp = $el('input', { className: 'neo-director-dur', type: 'number', min: 1, max: 3600, value: (seg.duration_sec != null ? seg.duration_sec : 5) });
@@ -660,7 +667,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
             return;
         }
-        for (const s of pool) skillSel.appendChild($el('option', { value: s.id, textContent: s.name || s.id }));
+        for (const s of pool) {
+            const opt = $el('option', { value: s.id, textContent: s.name || s.id });
+            opt.dataset.source = s.source || 'custom';
+            skillSel.appendChild(opt);
+        }
         if ([...skillSel.options].some(o => o.value === prev)) skillSel.value = prev;
     }
 

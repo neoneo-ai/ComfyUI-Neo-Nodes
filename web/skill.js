@@ -838,18 +838,43 @@ function getSkillUploadInputs() {
 }
 
 // ==========================================
-// 技能下拉组装：原生 select（数据源）+ 可搜索组件 + 底部管理工具栏 + 行内操作一体创建。
-// prompt-manager 只需 const { selectEl, combo } = createSkillDropdown() 并挂载 combo.box；
-// 选项填充仍走 populateSkillOptions(selectEl, skills)，combo 自动跟随（选项带 data-source 供行内操作判断）。
+// 技能选择弹窗（居中式，替代原生 combo 下拉）：
+// - openSkillPickerModal()：通用居中弹窗（标题 + 搜索过滤 + 分组列表 + 可选底部管理工具栏 / 行内 Edit/查看）
+// - attachSkillPickerToComboWidget()：拦截 ComfyUI 画布 combo widget 的点击（widget.mouse），
+//   弹出选择窗；选中写回 widget.value 并触发 callback（保留 Krea2/H3 既有的 loadDims/loadSpec 钩子）
+// - attachSkillPickerToSelect()：拦截原生 <select>（导演编辑器分段技能下拉），同样弹居中窗口
 // ==========================================
 
-function createSkillDropdown() {
-    const selectEl = mkEl("select", "rs-tpl-selector");
-    selectEl.title = "Select a skill";
+/** 把 skill 元数据映射为选择窗条目（value/label/badge/tags/source/group），按 category 分组排序。
+ *  combo 的取值可能是 name 或 id：以实际出现在 allowed(options.values) 里的为准，保证写回合法；
+ *  无 allowed 时默认用 name。 */
+function skillItemsFromMeta(skills, allowed) {
+    const items = [];
+    for (const s of skills || []) {
+        let value;
+        if (allowed) value = allowed.includes(s.name) ? s.name : (allowed.includes(s.id) ? s.id : null);
+        else value = s.name || s.id;
+        if (!value) continue;
+        items.push({
+            value,
+            skillId: s.id, // 行内 Edit/查看需按 id 打开详情（value 可能是 name，仅用于写回 combo）
+            label: s.name || s.id,
+            badge: s.needs_image ? "📷" : "",
+            tags: (s.tags || []).join(" "),
+            source: s.source || "custom",
+            group: CATEGORY_LABELS[s.category]?.label || "",
+        });
+    }
+    items.sort((a, b) => {
+        if (a.group !== b.group) return a.group < b.group ? -1 : 1;
+        return a.label.localeCompare(b.label);
+    });
+    return items;
+}
 
-    // 底部工具栏：+ New Skill / ⬆ ZIP / ⬆ Folder —— 管理入口（替代原 ⚙️ 设置弹窗）
-    const skillFooter = mkEl("div", "rs-skill-dropdown-footer");
-    const makeFooterBtn = (label, title) => {
+/** 底部管理工具栏按钮（+ New Skill / ⬆ ZIP / ⬆ Folder / 📋 From Canvas）；onClose 在动作前关闭当前容器 */
+function buildSkillManagementButtons(onClose) {
+    const makeBtn = (label, title) => {
         const b = mkEl("button", "rs-btn rs-btn-local rs-skill-footer-btn");
         b.type = "button";
         b.textContent = label;
@@ -857,17 +882,17 @@ function createSkillDropdown() {
         b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
         return b;
     };
-    const footerNewBtn = makeFooterBtn("+ New Skill", "Create a new custom skill");
-    footerNewBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillDetailPopup().openNew(); });
-    const footerZipBtn = makeFooterBtn("⬆ ZIP", "Upload a .zip skill package");
-    footerZipBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().zipInput.click(); });
-    const footerDirBtn = makeFooterBtn("⬆ Folder", "Upload a skill folder (all .md files)");
-    footerDirBtn.addEventListener("click", (e) => { e.stopPropagation(); combo.close(); getSkillUploadInputs().dirInput.click(); });
+    const newBtn = makeBtn("+ New Skill", "Create a new custom skill");
+    newBtn.addEventListener("click", (e) => { e.stopPropagation(); onClose(); getSkillDetailPopup().openNew(); });
+    const zipBtn = makeBtn("⬆ ZIP", "Upload a .zip skill package");
+    zipBtn.addEventListener("click", (e) => { e.stopPropagation(); onClose(); getSkillUploadInputs().zipInput.click(); });
+    const dirBtn = makeBtn("⬆ Folder", "Upload a skill folder (all .md files)");
+    dirBtn.addEventListener("click", (e) => { e.stopPropagation(); onClose(); getSkillUploadInputs().dirInput.click(); });
     // 把当前画布工作流（API prompt）导出为生图技能：后端自动抽模板占位符 + LoRA 槽位
-    const footerCanvasBtn = makeFooterBtn("📋 From Canvas", "Export the current canvas workflow as a skill (image or H3 video)");
-    footerCanvasBtn.addEventListener("click", async (e) => {
+    const canvasBtn = makeBtn("📋 From Canvas", "Export the current canvas workflow as a skill (image or H3 video)");
+    canvasBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        combo.close();
+        onClose();
         try {
             const { output, error } = (await app.graphToPrompt()) || {};
             if (error || !output || !Object.keys(output).length) {
@@ -883,7 +908,266 @@ function createSkillDropdown() {
             showToast(app, "error", "保存失败", err.message);
         }
     });
-    skillFooter.append(footerNewBtn, footerZipBtn, footerDirBtn, footerCanvasBtn);
+    return [newBtn, zipBtn, dirBtn, canvasBtn];
+}
+
+/**
+ * 打开居中技能选择弹窗。
+ * opts: { title, items:[{value,label,badge,tags,source,group}], currentValue, onPick(value,item), showFooter, showRowActions }
+ * 返回 { close, overlay }；每次调用新建并挂到 body，close 时移除。
+ * 同一时刻只允许一个选择窗：重复点击 / 异步竞态（连点 combo）不会叠加出多个弹窗。
+ */
+// 把 anchor（DOM 元素 / 带 clientX/clientY 的指针事件 / {left,top,width,height}）归一成视口坐标矩形；无法解析返回 null
+function resolveAnchorRect(anchor) {
+    if (!anchor || typeof anchor !== "object") return null;
+    if (typeof anchor.getBoundingClientRect === "function") {
+        const r = anchor.getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+    }
+    if (Number.isFinite(anchor.clientX)) {
+        // 指针事件：以点击点为锚，矩形退化为一个点（弹窗贴在该点下方）
+        return { left: anchor.clientX, top: anchor.clientY, right: anchor.clientX, bottom: anchor.clientY, width: 0, height: 0 };
+    }
+    if (Number.isFinite(anchor.left) && Number.isFinite(anchor.top)) {
+        return { left: anchor.left, top: anchor.top, right: anchor.right ?? anchor.left, bottom: anchor.bottom ?? anchor.top, width: anchor.width || 0, height: anchor.height || 0 };
+    }
+    return null;
+}
+
+// 把弹窗面板锚定到矩形附近：默认贴下方左侧，越界翻到上方并夹在视口内。jsdom 无布局（offsetWidth=0）时用回退尺寸。
+function positionPickerPanel(panel, rect) {
+    const GAP = 10;
+    const MARGIN = 8;
+    const vw = window.innerWidth || 1200;
+    const vh = window.innerHeight || 800;
+    const pw = panel.offsetWidth || 440;
+    const ph = panel.offsetHeight || 320;
+    let left = rect.left;
+    let top = rect.bottom + GAP;
+    if (top + ph > vh - MARGIN) top = rect.top - ph - GAP; // 下方放不下 → 翻到上方
+    left = Math.max(MARGIN, Math.min(left, vw - pw - MARGIN));
+    top = Math.max(MARGIN, Math.min(top, vh - ph - MARGIN));
+    panel.style.position = "fixed";
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+}
+
+let _skillPickerOpen = false;
+
+function openSkillPickerModal(opts = {}) {
+    if (_skillPickerOpen) return; // 已有选择窗打开，忽略重复触发
+    _skillPickerOpen = true;
+    const items = Array.isArray(opts.items) ? opts.items : [];
+    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    overlay.style.display = "flex";
+
+    // 键盘导航状态：visibleItems/Rows 为当前过滤后的候选，highlightIndex 是光标（-1 未聚焦）
+    let visibleItems = [];
+    let visibleRows = [];
+    let highlightIndex = -1;
+    const setHighlight = (i) => {
+        if (!visibleRows.length) return;
+        highlightIndex = ((i % visibleRows.length) + visibleRows.length) % visibleRows.length;
+        visibleRows.forEach((r, j) => r.classList.toggle("is-highlighted", j === highlightIndex));
+        visibleRows[highlightIndex]?.scrollIntoView?.({ block: "nearest" });
+    };
+    const pickHighlighted = () => {
+        const it = visibleItems[highlightIndex];
+        if (!it) return;
+        close();
+        opts.onPick?.(it.value, it);
+    };
+
+    // close 需在构建 footer（引用它）之前定义；onKey 与 close 互相闭包，实际调用都在二者初始化之后
+    const onKey = (e) => {
+        if (e.key === "Escape") { e.preventDefault(); close(); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); setHighlight(highlightIndex + 1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight(highlightIndex - 1); }
+        else if (e.key === "Enter") { e.preventDefault(); pickHighlighted(); }
+    };
+    const close = () => { _skillPickerOpen = false; overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+
+    const panel = mkEl("div", "rs-skill-modal rs-skill-picker");
+
+    const search = mkEl("input", "rs-form-input rs-skill-picker-search");
+    search.type = "text";
+    search.placeholder = "🔍 输入过滤...";
+
+    const list = mkEl("div", "rs-skill-picker-list");
+    panel.append(search, list);
+
+    if (opts.showFooter) {
+        const footer = mkEl("div", "rs-skill-dropdown-footer");
+        buildSkillManagementButtons(close).forEach((b) => footer.appendChild(b));
+        panel.appendChild(footer);
+    }
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKey, true);
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+
+    const render = (filter) => {
+        list.innerHTML = "";
+        const f = String(filter || "").trim().toLowerCase();
+        const matches = items.filter((it) => !f || `${it.label} ${it.tags || ""}`.toLowerCase().includes(f));
+        visibleItems = matches;
+        visibleRows = [];
+        highlightIndex = -1;
+        if (!matches.length) {
+            const empty = mkEl("div", "rs-skill-picker-empty");
+            empty.textContent = "无匹配项";
+            list.appendChild(empty);
+            return;
+        }
+        let lastGroup = null;
+        matches.forEach((it, i) => {
+            if (it.group && it.group !== lastGroup) {
+                const gh = mkEl("div", "rs-combo-category");
+                gh.textContent = it.group;
+                list.appendChild(gh);
+                lastGroup = it.group;
+            }
+            const row = mkEl("div", "rs-skill-picker-item" + (it.value === opts.currentValue ? " is-selected" : ""));
+            if (it.badge) { const b = mkEl("span", "rs-skill-picker-badge"); b.textContent = it.badge; row.appendChild(b); }
+            const lbl = mkEl("span", "rs-skill-picker-label");
+            lbl.textContent = it.label;
+            row.appendChild(lbl);
+            row.addEventListener("mousedown", (e) => e.preventDefault()); // 保持搜索框焦点
+            if (opts.showRowActions) {
+                const isCustom = it.source !== "preset";
+                const btn = mkEl("button", "rs-skill-row-action");
+                btn.type = "button";
+                btn.textContent = "👁 查看";
+                btn.title = isCustom ? "查看 / 编辑此技能" : "查看此技能（只读）";
+                btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+                btn.addEventListener("click", (e) => { e.stopPropagation(); close(); getSkillDetailPopup().openExisting(it.skillId || it.value, it.source); });
+                row.appendChild(btn);
+            }
+            row.addEventListener("click", (e) => { e.stopPropagation(); close(); opts.onPick?.(it.value, it); });
+            visibleRows[i] = row;
+            list.appendChild(row);
+        });
+        const cur = matches.findIndex((it) => it.value === opts.currentValue); // 默认高亮当前值所在行
+        if (cur >= 0) setHighlight(cur);
+    };
+    render("");
+    search.addEventListener("input", () => render(search.value));
+
+    // 传入 anchor 时贴到触发控件附近（去遮罩的浮层）；否则保持居中模态
+    const anchorRect = resolveAnchorRect(opts.anchor);
+    if (anchorRect) {
+        overlay.classList.add("rs-skill-picker--anchored");
+        positionPickerPanel(panel, anchorRect);
+    }
+
+    search.focus();
+    return { close, overlay };
+}
+
+/** 写回 combo widget：更新 value + 触发 callback（Krea2/H3 已在其上挂 loadDims/loadSpec）+ 标记画布脏 */
+function setComboWidgetValue(node, widget, value) {
+    if (widget.value === value) return;
+    const old = widget.value;
+    widget.value = value;
+    try { if (typeof widget.callback === "function") widget.callback(value); } catch (_) {}
+    try { node?.onWidgetChanged?.(widget.name, value, old, widget); } catch (_) {}
+    try { node?.graph?.change?.(); } catch (_) {}
+}
+
+/** 默认技能条目来源：listSkills() 元数据，value 对齐该 combo 的合法 options.values（Krea2/H3 skill_id 通用） */
+async function defaultSkillItemsProvider(widget) {
+    const skills = await listSkills();
+    const allowed = Array.isArray(widget?.options?.values) ? widget.options.values : null;
+    return skillItemsFromMeta(skills, allowed);
+}
+
+/** 打开 combo 对应的选择窗（异步取条目后展示） */
+async function openComboSkillPicker(node, widget, title, showFooter, showRowActions, provider, anchor) {
+    let items = [];
+    try { items = (await provider(widget)) || []; } catch (e) { console.error("[Neo Nodes] skill picker load failed", e); }
+    openSkillPickerModal({
+        title,
+        items,
+        currentValue: String(widget.value || ""),
+        showFooter,
+        showRowActions,
+        anchor,
+        onPick: (value) => setComboWidgetValue(node, widget, value),
+    });
+}
+
+/**
+ * 拦截 ComfyUI 画布 combo widget 的点击，改为弹出技能选择窗（锚定到鼠标位置）。
+ * opts: { title, showFooter(默认 true), showRowActions(默认同 showFooter), itemsProvider(widget)->Promise<items[]> }
+ * 新版前端 processWidgetClick 只认 onPointerDown 返回真值来短路原生 combo 下拉；
+ * 其 pointer 参数没有视口坐标，因此用 document 捕获阶段记录的真实 pointerdown 坐标做锚点。
+ * 不能挂 widget.mouse：processMouseMove 也会调用它，会导致悬停/点击别处时重复弹窗。
+ */
+let _neoLastPointer = null;
+function ensureNeoPointerTracker() {
+    if (_neoLastPointer) return;
+    _neoLastPointer = { x: 0, y: 0 };
+    document.addEventListener("pointerdown", (e) => {
+        _neoLastPointer.x = e.clientX;
+        _neoLastPointer.y = e.clientY;
+    }, true);
+}
+
+function attachSkillPickerToComboWidget(widget, opts = {}) {
+    if (!widget || widget.__neoSkillPickerAttached) return;
+    const showFooter = opts.showFooter !== false;
+    const showRowActions = opts.showRowActions ?? showFooter;
+    const provider = typeof opts.itemsProvider === "function" ? opts.itemsProvider : defaultSkillItemsProvider;
+    ensureNeoPointerTracker();
+    const node = widget.node;
+    widget.onPointerDown = () => {
+        openComboSkillPicker(node || widget.node, widget, null, showFooter, showRowActions, provider, { clientX: _neoLastPointer.x, clientY: _neoLastPointer.y });
+        return true;
+    };
+    widget.__neoSkillPickerAttached = true;
+}
+
+/** 拦截原生 <select>（导演编辑器分段技能下拉）：点击弹居中搜索窗，选中写回 select.value */
+function attachSkillPickerToSelect(selectEl, opts = {}) {
+    if (!selectEl || selectEl.__neoSkillPickerAttached) return;
+    const title = opts.title || "选择视频技能";
+    selectEl.__neoSkillPickerAttached = true;
+    selectEl.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // 阻止原生下拉展开
+        const items = Array.from(selectEl.options)
+            .filter((o) => o.value !== "")
+            .map((o) => ({ value: o.value, label: o.textContent || o.value, source: (o.dataset && o.dataset.source) || "custom" }));
+        openSkillPickerModal({
+            title,
+            items,
+            currentValue: selectEl.value,
+            anchor: selectEl,
+            showFooter: false,
+            showRowActions: true, // 行内 👁 查看：自定义可编辑、预设只读
+            onPick: (value) => {
+                if (selectEl.value !== value) {
+                    selectEl.value = value;
+                    selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+            },
+        });
+    });
+}
+
+// ==========================================
+// 技能下拉组装：原生 select（数据源）+ 可搜索组件 + 底部管理工具栏 + 行内操作一体创建。
+// prompt-manager 只需 const { selectEl, combo } = createSkillDropdown() 并挂载 combo.box；
+// 选项填充仍走 populateSkillOptions(selectEl, skills)，combo 自动跟随（选项带 data-source 供行内操作判断）。
+// ==========================================
+
+function createSkillDropdown() {
+    const selectEl = mkEl("select", "rs-tpl-selector");
+    selectEl.title = "Select a skill";
+
+    // 底部工具栏：+ New Skill / ⬆ ZIP / ⬆ Folder / 📋 From Canvas —— 管理入口（与技能选择弹窗共用同一组按钮）
+    const skillFooter = mkEl("div", "rs-skill-dropdown-footer");
+    buildSkillManagementButtons(() => combo.close()).forEach((b) => skillFooter.appendChild(b));
 
     // 行内操作：自定义 skill → ✎ Edit；内置 SYS/TASK → 👁 查看。点击先关下拉再开详情弹窗，
     // mousedown 上 preventDefault + stopPropagation 避免触发整行的选中(pickValue)。
@@ -892,8 +1176,8 @@ function createSkillDropdown() {
         const isCustomSkill = source === "custom";
         const btn = mkEl("button", "rs-skill-row-action");
         btn.type = "button";
-        btn.textContent = isCustomSkill ? "✎ Edit" : "👁 查看";
-        btn.title = isCustomSkill ? "Edit this skill" : "View this skill (read-only)";
+        btn.textContent = "👁 查看";
+        btn.title = isCustomSkill ? "查看 / 编辑此技能" : "查看此技能（只读）";
         btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
         btn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -962,5 +1246,8 @@ export {
     CATEGORY_LABELS,
     renderMarkdown,
     createSkillDetailPopup,
-    createSkillDropdown
+    createSkillDropdown,
+    openSkillPickerModal,
+    attachSkillPickerToComboWidget,
+    attachSkillPickerToSelect
 };

@@ -8,6 +8,7 @@ import { DirectorTimeline } from "./director-timeline.js";
 import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
 import { listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
+import { attachSkillPickerToComboWidget } from "./skill.js";
 
 const TL_H = 96; // 节点内时间轴显示区高度（px）
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
@@ -287,6 +288,16 @@ app.registerExtension({
             const skillIdWidget = node.widgets?.find(w => w.name === "skill_id");
             // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
             if (skillIdWidget) skillIdWidget.hidden = true;
+            // 点击 recipe / skill_id combo → 弹居中选择窗（替代原生下拉）。
+            // recipe：仅搜索、无底部工具栏；skill_id：默认技能列表（含管理工具栏）
+            const recipeItemsProvider = async (w) => {
+                const recipes = (await listRecipes()).filter((r) => r.type === "video_director");
+                const allowed = Array.isArray(w?.options?.values) ? w.options.values : null;
+                const pool = allowed ? recipes.filter((r) => allowed.includes(r.name)) : recipes;
+                return pool.map((r) => ({ value: r.name, label: r.name }));
+            };
+            if (recipeWidget) attachSkillPickerToComboWidget(recipeWidget, { title: "选择导演配方", showFooter: false, itemsProvider: recipeItemsProvider });
+            if (skillIdWidget) attachSkillPickerToComboWidget(skillIdWidget, { title: "选择视频技能（H3）" });
             // 按配方首段 skill config 填充 width/height/steps widget。
             // 每个配方有自己的硬性要求（如 VDN/turbo 配方要求 steps=8），所以重新载入配方时一律重新初始化，用户手改值也不保留。
             // 唯一例外是创建节点时的首次载入：工作流已存的实值优先，只在仍为默认 -1 时填充。

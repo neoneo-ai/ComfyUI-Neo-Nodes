@@ -2110,3 +2110,53 @@ test("导演编辑器单例：有未保存修改时切另一配方被拦截并�
     assert.equal(document.querySelector(".neo-director-name").value, "T-keep", "无修改直接切换");
 });
 
+test("导演编辑器：段技能搜索窗行内有 👁 查看按钮，点击按 skill id 打开详情（预设只读/自定义可编辑）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-p", name: "预设技能", gen_video: true, mode: "t2v", source: "preset" },
+        { id: "sk-c", name: "自定义技能", gen_video: true, mode: "t2v", source: "custom" },
+    ]));
+    let loadedId = null;
+    mockRoute("/rs_prompts/load_skill", (b) => {
+        loadedId = b && b.id;
+        return jsonResponse({ id: b.id, name: "Loaded", content: "", files: [], gen_image: false, requires_ref: false, multi_turn: false, tags: [], category: "task" });
+    });
+
+    await openDirectorEditor({
+        name: "T-view",
+        shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-c", prompt: "p", duration_sec: 5 }],
+    });
+    await sleep(60);
+
+    const skillSel = document.querySelector(".neo-director-seg .neo-director-skill");
+    assert.equal(skillSel.selectedOptions[0].dataset.source, "custom", "option 携带 data-source");
+
+    // 点击下拉 → 搜索窗出现，行内均为 👁 查看按钮
+    skillSel.dispatchEvent(mouse("mousedown", 10));
+    await sleep(30);
+    const overlay = document.querySelector(".rs-skill-modal-overlay");
+    assert.ok(overlay, "点击技能下拉弹出搜索窗");
+    const actions = Array.from(overlay.querySelectorAll(".rs-skill-row-action"));
+    assert.equal(actions.length, 2, "每个技能行都有查看按钮");
+    assert.ok(actions.every((b) => b.textContent.includes("查看")), "按钮文案为「查看」而非「编辑」");
+
+    // 点击自定义技能行的查看 → 按 id 打开详情（自定义可编辑）
+    const customRow = Array.from(overlay.querySelectorAll(".rs-skill-picker-item"))
+        .find((r) => r.textContent.includes("自定义技能"));
+    customRow.querySelector(".rs-skill-row-action").click();
+    await sleep(40);
+    assert.equal(loadedId, "sk-c", "按 skill id 打开详情");
+    assert.equal(document.querySelectorAll(".rs-skill-modal-overlay").length, 1, "搜索窗关闭，详情弹窗打开");
+
+    // 关闭详情弹窗（详情弹窗 close 为 display:none，不移除节点）
+    const detailOverlay = document.querySelector(".rs-skill-modal-overlay");
+    document.querySelector(".rs-skill-modal-close").click();
+    await sleep(20);
+    assert.equal(detailOverlay.style.display, "none", "详情弹窗可关闭");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+

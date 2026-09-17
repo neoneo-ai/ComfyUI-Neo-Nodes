@@ -6,6 +6,7 @@
 // 二者任一非法即判定 seed/count/width/height 整块错位 → 复位 control/seed/count 并强制按预设重填宽高。
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
+import { attachSkillPickerToComboWidget } from "./skill.js";
 
 app.registerExtension({
     name: "NeoKrea2Generate.DimDefaults",
@@ -18,6 +19,9 @@ app.registerExtension({
             const result = origOnNodeCreated?.apply(this, arguments);
             const node = this;
             const skillWidget = node.widgets?.find((w) => w.name === "skill_id");
+            // 点击 skill_id combo → 弹居中技能选择窗（替代原生下拉）；选中写回 widget.value，
+            // 其 callback 已被下方包装为 loadDims(true)，故尺寸预设自动刷新
+            if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: "选择 Skill（Krea2）" });
 
             // 用 skill 预设尺寸填 width/height widget；force=false 时仅当仍为默认 -1（保留工作流已存值）。
             const applyDimDefaults = (d, force) => {
