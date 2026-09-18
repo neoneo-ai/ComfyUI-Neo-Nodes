@@ -575,6 +575,35 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body2["id"], body["id"] + "-2")
 
+    def test_get_skill_workflow_route(self):
+        # 预设带 workflow.json → 200 + 原样返回模板
+        status, body = self._call(
+            image_gen.get_skill_workflow_route,
+            self._req(query={"skill_id": "image_gen"}))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["skill_id"], "image_gen")
+        self.assertEqual(body["workflow"], {"1": {"class_type": "UNETLoader", "inputs": {}}})
+
+        # 缺 skill_id → 400
+        status, _ = self._call(image_gen.get_skill_workflow_route, self._req(query={}))
+        self.assertEqual(status, 400)
+
+        # 自定义技能无 workflow.json → 404
+        self._make_custom_skill("no_wf")
+        status, _ = self._call(
+            image_gen.get_skill_workflow_route,
+            self._req(query={"skill_id": "no_wf"}))
+        self.assertEqual(status, 404)
+
+        # workflow.json 损坏 → 404（不抛异常）
+        d = self._make_custom_skill("bad_wf")
+        with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+            f.write("{not json")
+        status, _ = self._call(
+            image_gen.get_skill_workflow_route,
+            self._req(query={"skill_id": "bad_wf"}))
+        self.assertEqual(status, 404)
+
     def _h3_video_workflow(self, i2v=False):
         wf = {
             "1": {"class_type": "UNETLoader",

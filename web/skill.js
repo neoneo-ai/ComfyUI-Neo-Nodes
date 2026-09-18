@@ -12,8 +12,9 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
+import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
-import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion } from "./image-gen.js";
+import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
 
 // ==========================================
@@ -45,6 +46,65 @@ async function loadSkill(id) {
         console.error("Failed to load skill:", e);
         return { error: e.message };
     }
+}
+
+/** 加载技能工作流模板（API prompt，/neo_image_gen/skill_workflow）；缺失返回 null */
+async function loadSkillWorkflow(id) {
+    try {
+        const res = await fetch(`/neo_image_gen/skill_workflow?skill_id=${encodeURIComponent(id)}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return (data && data.workflow) || null;
+    } catch (e) {
+        console.error("Failed to load skill workflow:", e);
+        return null;
+    }
+}
+
+// 工作流模板预渲染的已知参数：设置显式值优先，空值回落自动建议模型（与设置区「自动」项一致）；
+// 运行时变量（提示词/种子/参考图）不填。genInfo = { config, models }，来自设置区加载结果。
+function workflowParamValues(isVideo, genInfo) {
+    const cfg = (genInfo && genInfo.config) || {};
+    const models = (genInfo && genInfo.models) || {};
+    const values = {};
+    if (isVideo) {
+        values.MODEL = cfg.model || videoSuggestion(models.diffusion_models || []);
+        values.TEXT_ENCODER = cfg.text_encoder || videoSuggestion(models.text_encoders || []);
+        values.VAE = cfg.vae || videoVideoVaeSuggestion(models.vae || []);
+        values.AUDIO_VAE = cfg.audio_vae || videoAudioVaeSuggestion(models.vae || []);
+        values.STEPS = cfg.steps ?? 20;
+        values.WIDTH = cfg.width ?? 1344;
+        values.HEIGHT = cfg.height ?? 768;
+        values.LENGTH = cfg.length ?? 124;
+    } else {
+        values.MODEL = cfg.model || models.suggested_diffusion_models;
+        values.TEXT_ENCODER = cfg.text_encoder || models.suggested_text_encoders;
+        values.VAE = cfg.vae || models.suggested_vae;
+        values.COUNT = cfg.count ?? 1;
+        values.PREFIX = cfg.output_prefix || "NeoAgent";
+        const [w, h] = defaultSizeFromConfig(cfg);
+        values.WIDTH = w;
+        values.HEIGHT = h;
+    }
+    for (const [i, entry] of (cfg.loras || []).entries()) {
+        const name = typeof entry === "string" ? entry : (entry && entry.name);
+        if (!name) continue;
+        values[`LORA_${i + 1}_NAME`] = name;
+        values[`LORA_${i + 1}_STRENGTH`] = String(typeof entry === "string" ? 1.0 : (entry.strength ?? 1.0));
+    }
+    return values;
+}
+
+// 默认宽高：长边 base_resolution、比例 default_ratio（与后端 resolve_dimensions 一致，对齐 16）
+function defaultSizeFromConfig(cfg) {
+    const round16 = (v) => Math.max(16, Math.round(v / 16 + 0.5) * 16);
+    const longSide = Math.max(256, parseInt(cfg.base_resolution, 10) || 1280);
+    let ratio = 1.0;
+    const text = String(cfg.default_ratio || "1:1").trim();
+    const m = text.match(/^(\d+(?:\.\d+)?)\s*[:x]\s*(\d+(?:\.\d+)?)$/i);
+    if (m && parseFloat(m[2]) > 0) ratio = parseFloat(m[1]) / parseFloat(m[2]);
+    else { const f = parseFloat(text); if (f > 0) ratio = f; }
+    return ratio >= 1.0 ? [round16(longSide), round16(longSide / ratio)] : [round16(longSide * ratio), round16(longSide)];
 }
 
 /** 保存/更新 skill 主文件 skill.md（预设只读） */
@@ -445,6 +505,19 @@ function createSkillDetailPopup() {
     videoGenSettingsWrap.append(videoGenSettingsHeader, videoModelSection.el);
     if (videoAdvEl) videoGenSettingsWrap.appendChild(videoAdvEl);
 
+    // ---- 工作流流程图（仅 gen_image/gen_video 技能显示）：workflow.json 模板自动布局为只读 SVG，
+    //      红框 = 节点未安装/模型缺失，蓝框 = 含 {{模板变量}}；无 workflow.json 时隐藏
+    const workflowWrap = mkEl("div", "rs-skill-workflow");
+    workflowWrap.style.display = "none";
+    const workflowHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
+    const workflowTitle = mkEl("label", "rs-form-label");
+    workflowTitle.textContent = "🔀 工作流（节点流程图）";
+    workflowTitle.title = "技能 workflow.json 模板的自动布局；红框 = 节点未安装/模型缺失，蓝框 = 含待替换模板变量";
+    const workflowBody = mkEl("div", "rs-wf-body");
+    const workflowSummary = mkEl("div", "rs-wf-summary");
+    workflowHeader.appendChild(workflowTitle);
+    workflowWrap.append(workflowHeader, workflowBody, workflowSummary);
+
     // 设置区头部「💾 Save / ↺ 恢复默认」与本地覆盖提示的显隐（仅预设；恢复仅在存在覆盖时显示）
     function updateCfgButtons(btns, saveBtn, restoreBtn, localHint, readOnly) {
         const preset = currentSource === "presets";
@@ -456,7 +529,7 @@ function createSkillDetailPopup() {
     }
 
     async function loadVideoGenSettings(readOnly) {
-        if (!currentSkillId) return;
+        if (!currentSkillId) return null;
         const [config, videoModels] = await Promise.all([
             getSkillGenConfig(currentSkillId),
             listVideoGenModels().catch(() => ({})),
@@ -465,12 +538,13 @@ function createSkillDetailPopup() {
         for (const el of videoGenSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
         updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint, readOnly);
         videoReadOnlyHint.style.display = readOnly ? "block" : "none";
+        return { config: config || {}, models: videoModels };
     }
 
     // readOnly（任务技能）时禁用全部控件；config 缺失按空对象回落默认。
     // 禁用必须在 load() 之后：load 会动态新建 LoRA 行，新建元素不会被前面的禁用循环覆盖
     async function loadGenSettings(readOnly) {
-        if (!currentSkillId) return;
+        if (!currentSkillId) return null;
         const config = await getSkillGenConfig(currentSkillId);
         let models = {};
         try { models = await listGenModels(); } catch (e) { console.warn("Failed to load gen models:", e); }
@@ -481,6 +555,7 @@ function createSkillDetailPopup() {
         enhancePromptChk.disabled = readOnly;
         updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint, readOnly);
         genReadOnlyHint.style.display = readOnly ? "block" : "none";
+        return { config: config || {}, models };
     }
 
     // ---- 预设技能设置区：独立保存（主 Save 对预设隐藏）+ 一键恢复默认 ----
@@ -526,7 +601,7 @@ function createSkillDetailPopup() {
     deleteBtn.textContent = "🗑 Delete";
     footerBtns.append(saveBtn, deleteBtn);
 
-    content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, footerBtns);
+    content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, workflowWrap, footerBtns);
     modal.append(header, content);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -540,6 +615,13 @@ function createSkillDetailPopup() {
     let editorMode = "preview";
     const isCustom = () => currentSource === "custom";
     const isMainFile = (name) => String(name || "").toLowerCase() === "skill.md";
+    let workflowShown = false;   // 是否渲染了工作流流程图（正文区高度减半，为空时进一步压缩）
+
+    // 有工作流的技能：正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
+    function updateContentCompact() {
+        contentRow.classList.toggle("rs-content-row-workflow", workflowShown);
+        contentRow.classList.toggle("rs-content-row-compact", workflowShown && !contentTextarea.value.trim());
+    }
 
     // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）
     function stripFrontmatter(text) {
@@ -568,6 +650,7 @@ function createSkillDetailPopup() {
     }
     previewBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("preview"); });
     editBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("edit"); });
+    contentTextarea.addEventListener("input", updateContentCompact);
 
     function populateFileSelect(defaultName) {
         fileSelect.innerHTML = "";
@@ -615,6 +698,7 @@ function createSkillDetailPopup() {
         contentTextarea.value = text;
         setEditorMode(/\.md$/i.test(name) ? editorMode : "edit");
         updateControls();
+        updateContentCompact();
     }
     fileSelect.addEventListener("change", () => selectFile(fileSelect.value));
 
@@ -648,27 +732,64 @@ function createSkillDetailPopup() {
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
         else { selectedFile = null; contentTextarea.value = ""; }
+        // workflow.json 拉取与设置区加载互不依赖 → 提前并发发出，省一段串行等待
+        const wfPromise = (full && (full.gen_image || full.gen_video)) ? loadSkillWorkflow(id) : null;
         // 生图/生视频技能显示各自 config.json 覆盖区（预设可编辑：本地覆盖；任务只读）；其余技能隐藏。
         // multi_turn 是文本多轮概念，生图/生视频技能用不到 → 一并隐藏
         const cfgReadOnly = currentSource === "tasks";
+        let genInfo = null; // 设置区加载的 { config, models }，供工作流模板预渲染复用（不再重复请求）
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
             videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "";
-            await loadGenSettings(cfgReadOnly);
+            genInfo = await loadGenSettings(cfgReadOnly);
         } else if (full && full.gen_video) {
             genSettingsWrap.style.display = "none";
             videoGenSettingsWrap.style.display = "block";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "none";
-            await loadVideoGenSettings(cfgReadOnly);
+            genInfo = await loadVideoGenSettings(cfgReadOnly);
         } else {
             genSettingsWrap.style.display = "none";
             videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "";
             enhancePromptWrap.style.display = "none";
         }
+        // 工作流流程图：仅生图/生视频技能。先显示骨架占位并同步压缩正文区（预留位置），加载完成后原地替换 → 打开时布局不跳；无 workflow.json 时隐藏。
+        // 分步渲染：workflow.json + 设置就绪后先用同步预检（仅模板变量蓝框）画出流程图，
+        // /object_info·/models/* 校验在后台进行，完成后原地重画补红框与摘要 → 图不必等最慢的请求。
+        workflowBody.innerHTML = "";
+        workflowSummary.textContent = "";
+        workflowWrap.style.display = "none";
+        workflowShown = false;
+        if (wfPromise) {
+            const skel = mkEl("div", "rs-wf-skeleton");
+            skel.textContent = "加载工作流图中…";
+            workflowBody.appendChild(skel);
+            workflowWrap.style.display = "block";
+            workflowShown = true;
+            updateContentCompact();   // 先占位：正文区立即让位，避免加载完成后整体下移
+            const wf = await wfPromise;
+            if (wf) {
+                const rendered = applyWorkflowParams(wf, workflowParamValues(full.gen_video, genInfo));
+                renderWorkflowGraph(workflowBody, rendered, validateWorkflow(rendered, null, {}), workflowSummary); // 内部先清空占位再画
+                const validation = await checkWorkflow(rendered);   // /object_info + /models/*，失败内部按跳过处理
+                if (currentSkillId === id && workflowShown) {       // 等待期间切了技能/关区 → 丢弃过期结果
+                    const sl = workflowBody.scrollLeft, st = workflowBody.scrollTop;
+                    renderWorkflowGraph(workflowBody, rendered, validation, workflowSummary);
+                    workflowBody.scrollLeft = sl;
+                    workflowBody.scrollTop = st;
+                }
+            } else {
+                workflowWrap.style.display = "none";
+                workflowShown = false;
+                workflowBody.innerHTML = "";
+            }
+        }
+        updateContentCompact();
+        // 紧凑类在正文填充之后才确定 → 重设一次模式，让预览框高度与（可能已压缩的）编辑框一致
+        setEditorMode(editorMode);
         updateControls();
     }
 
@@ -692,6 +813,10 @@ function createSkillDetailPopup() {
         multiTurnRow.style.display = "";
         enhancePromptWrap.style.display = "none";
         enhancePromptChk.checked = false;
+        workflowWrap.style.display = "none";
+        workflowShown = false;
+        workflowBody.innerHTML = "";
+        workflowSummary.textContent = "";
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         setEditorMode("edit");

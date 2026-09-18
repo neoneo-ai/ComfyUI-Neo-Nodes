@@ -1268,6 +1268,20 @@ async def save_workflow_skill_route(request):
     return web.json_response(result)
 
 
+@routes.get("/neo_image_gen/skill_workflow")
+async def get_skill_workflow_route(request):
+    """返回技能 workflow.json（API prompt 模板），供详情弹窗渲染节点流程图；缺失/非法 404。"""
+    from . import skill as _skill
+
+    skill_id = request.query.get("skill_id", "")
+    if not skill_id:
+        return web.json_response({"error": "缺少 skill_id"}, status=400)
+    wf = _skill.load_skill_workflow(skill_id)
+    if wf is None:
+        return web.json_response({"error": "workflow.json 不存在或非法"}, status=404)
+    return web.json_response({"skill_id": skill_id, "workflow": wf})
+
+
 @routes.get("/neo_image_gen/skill_config")
 async def get_skill_config_route(request):
     from . import skill as _skill

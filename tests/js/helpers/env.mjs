@@ -1,7 +1,7 @@
 // jsdom 环境装配：全局拷贝、确定性随机/UUID、无 canvas 依赖的图片桩、观察者桩、可预测的矩形。
 const COPY_GLOBALS = [
     "document", "navigator", "location", "history", "localStorage", "sessionStorage",
-    "Event", "CustomEvent", "KeyboardEvent", "MouseEvent", "InputEvent", "ClipboardEvent",
+    "Event", "CustomEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "InputEvent", "ClipboardEvent",
     "DragEvent", "File", "FileList", "Blob", "FileReader", "FormData", "XMLHttpRequest",
     "Node", "Element", "HTMLElement", "HTMLInputElement", "HTMLTextAreaElement",
     "HTMLCanvasElement", "MutationObserver", "DOMParser", "XMLSerializer", "AbortController",

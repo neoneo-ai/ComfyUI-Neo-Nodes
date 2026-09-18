@@ -78,6 +78,7 @@
 | POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
 | GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`，与节点 `width`/`height=-1` 时一致），供 NeoKrea2Generate widget 填充默认值（定义于 krea2_generate.py） |
 | GET | `/neo_image_gen/skill_config?skill_id=` | 读取技能生图/生视频设置：预设 = 自身 `config.json` ⊕ 本地覆盖文件（`configs/skill_overrides/<id>.json`），其余直接读 `config.json` |
+| GET | `/neo_image_gen/skill_workflow?skill_id=` | 返回技能 `workflow.json`（API prompt 模板，只读），供详情弹窗渲染节点流程图；缺失/非法 404 |
 | POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length` 保留既有有效值（非模型设置区管理） |
 
 任务状态不走 HTTP 轮询：`_watch` 协程按变化经 WebSocket 事件 `rs.image_gen.status` 推送任务快照（广播，前端 `watchTask` 按 `task_id` 过滤）；`/status` 仅作订阅前兜底首拉与断线重连补漏，取消时后端也主动推送 `cancelled` 快照。

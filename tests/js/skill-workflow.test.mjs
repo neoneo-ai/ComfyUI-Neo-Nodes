@@ -67,14 +67,14 @@ test("From Canvas：画布无有效工作流时不发请求并 toast 提示", as
 });
 
 // 详情弹窗出图设置区：mock 一条 load_skill + skill_config（GET/POST 分流）+ models
-async function openGenPopup({ id, source, genImage = true, config = {}, category = "", overridden = false }) {
+async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", overridden = false, fileContent = "body" }) {
     const { createSkillDetailPopup } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
-        id: b.id, name: "Gen Skill", content: "body", files: [{ name: "skill.md", size: 5 }],
-        gen_image: genImage, requires_ref: false, multi_turn: false, tags: [], category,
+        id: b.id, name: "Gen Skill", content: fileContent, files: [{ name: "skill.md", size: 5 }],
+        gen_image: genImage, gen_video: genVideo, requires_ref: false, multi_turn: false, tags: [], category,
         config_overridden: overridden,
     }));
-    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: fileContent }));
     let saved = null;
     mockRoute("/neo_image_gen/skill_config", (b, call) => {
         if (call.method === "GET") return jsonResponse(config);
@@ -217,3 +217,302 @@ test("复制为自定义：name 与已有 skill 冲突时递增序号", async ()
     assert.ok(savedSkill, "应发出 /rs_prompts/save_skill");
     assert.equal(savedSkill.name, "Gen Skill (Copy) 3", "冲突时 name 递增序号");
 });
+
+
+// ============ 技能详情弹窗：工作流流程图（只读 SVG + 校验高亮）============
+
+const WF_SAMPLE = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "no_such_model.safetensors" } }, // 模型缺失
+    "2": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 0], text: "{{PROMPT}}" } },  // 模板变量
+    "3": { class_type: "KSampler", inputs: { model: ["1", 0], seed: 1 } },
+    "4": { class_type: "SaveImage", inputs: { images: ["3", 0] } },                          // 节点未安装（object_info 未注册）
+};
+
+test("layoutWorkflow：拓扑分层、连线收集、环安全", async () => {
+    const { layoutWorkflow } = await import("../../web/workflow-graph.js");
+    const lay = layoutWorkflow({
+        "1": { class_type: "A", inputs: {} },
+        "2": { class_type: "B", inputs: { a: ["1", 0] } },
+        "3": { class_type: "C", inputs: { a: ["1", 0], b: ["2", 0] } },
+    });
+    const byId = Object.fromEntries(lay.nodes.map(n => [n.id, n]));
+    assert.ok(byId["1"].layer < byId["2"].layer && byId["2"].layer < byId["3"].layer, "分层应随拓扑顺序递增");
+    assert.equal(lay.edges.length, 3);
+    // 环：4→5→4 不死循环
+    const cyc = layoutWorkflow({
+        "4": { class_type: "A", inputs: { x: ["5", 0] } },
+        "5": { class_type: "B", inputs: { x: ["4", 0] } },
+    });
+    assert.equal(cyc.nodes.length, 2);
+});
+
+test("validateWorkflow：objectInfo 缺失跳过检查；模板变量不算模型缺失", async () => {
+    const { validateWorkflow } = await import("../../web/workflow-graph.js");
+    // objectInfo=null → 跳过存在性检查，只报模板变量
+    const r1 = validateWorkflow(WF_SAMPLE, null, null);
+    assert.equal(r1.counts.missingNodes, 0);
+    assert.equal(r1.counts.missingModels, 0);
+    assert.equal(r1.counts.templates, 1);
+    // 完整 objectInfo + 模型列表 → 报缺节点 / 缺模型
+    const info = {
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+        KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
+    };
+    const r2 = validateWorkflow(WF_SAMPLE, info, { diffusion_models: ["real.safetensors"] });
+    assert.equal(r2.counts.missingNodes, 1);   // SaveImage
+    assert.equal(r2.counts.missingModels, 1);  // no_such_model.safetensors
+    assert.ok(r2.issues["4"].some(i => i.kind === "missing_node"));
+    assert.ok(r2.issues["1"].some(i => i.kind === "missing_model"));
+});
+
+test("详情弹窗：gen_image 技能渲染工作流流程图，高亮缺节点/缺模型/模板变量", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", (b, call) => jsonResponse({ skill_id: "x", workflow: WF_SAMPLE }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+        KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
+    }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
+
+    await openGenPopup({ id: "image_gen_text", source: "custom" });
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wfWrap && wfWrap.style.display !== "none", "应渲染工作流区");
+    assert.equal(wfWrap.querySelectorAll(".rs-wf-node").length, 4, "每个工作流节点一个组");
+    assert.equal(wfWrap.querySelectorAll(".rs-wf-edge").length, 3, "三条连线");
+    assert.equal(wfWrap.querySelectorAll(".rs-wf-edge-dot").length, 3, "每条连线一个落点标记");
+    const edgeColors = Array.from(wfWrap.querySelectorAll("[class^='rs-wf-edge-c']")).map(g => g.getAttribute("class"));
+    assert.equal(new Set(edgeColors).size, 3, "不同连线应使用不同颜色便于区分");
+    assert.ok(wfWrap.querySelector(".rs-wf-node-bad"), "缺节点/缺模型应红框高亮");
+    assert.ok(wfWrap.querySelector(".rs-wf-node-tpl"), "模板变量应蓝框标记");
+    const summary = wfWrap.querySelector(".rs-wf-summary").textContent;
+    assert.ok(summary.includes("节点未安装") && summary.includes("模型缺失") && summary.includes("模板变量"), "摘要应含三类问题");
+});
+
+test("详情弹窗：非生图技能不渲染工作流区、不发请求", async () => {
+    let wfCalled = false;
+    mockRoute("/neo_image_gen/skill_workflow", () => { wfCalled = true; return jsonResponse({ workflow: WF_SAMPLE }); });
+    await openGenPopup({ id: "text_skill", source: "custom", genImage: false });
+    assert.equal(document.querySelector(".rs-skill-workflow").style.display, "none");
+    assert.equal(wfCalled, false, "不应请求 workflow.json");
+});
+
+test("详情弹窗：生图技能无 workflow.json 时隐藏流程图", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ error: "missing" }, 404));
+    await openGenPopup({ id: "image_gen_text", source: "custom" });
+    assert.equal(document.querySelector(".rs-skill-workflow").style.display, "none");
+    assert.equal(document.querySelector(".rs-content-row-compact"), null, "无工作流时正文区保持常规高度");
+});
+
+// ============ 模板变量按已有参数预渲染（设置值 / 自动建议模型替换，运行时变量保留）============
+
+test("applyWorkflowParams：替换已知参数、保留运行时变量、不改原对象", async () => {
+    const { applyWorkflowParams } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+        "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" } },
+        "3": { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}", filename: "out/{{PREFIX}}/x" } },
+    };
+    const out = applyWorkflowParams(wf, { MODEL: "m.safetensors", LORA_1_NAME: "q.safetensors", LORA_1_STRENGTH: 0.6, PREFIX: "NeoAgent" });
+    assert.equal(out["1"].inputs.unet_name, "m.safetensors");
+    assert.equal(out["2"].inputs.lora_name, "q.safetensors");
+    assert.equal(out["2"].inputs.strength_model, "0.6", "数值参数转字符串填入");
+    assert.equal(out["3"].inputs.text, "{{PROMPT}}", "运行时变量保留");
+    assert.equal(out["3"].inputs.filename, "out/NeoAgent/x", "内嵌占位符同样替换");
+    assert.equal(wf["1"].inputs.unet_name, "{{MODEL}}", "原模板不被修改");
+    // 空值不替换；无任何有效参数时原样返回
+    assert.equal(applyWorkflowParams(wf, { MODEL: "" }), wf);
+});
+
+const WF_RENDER = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+    "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" } },
+    "3": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{PROMPT}}" } },
+};
+
+test("详情弹窗：生图工作流模板变量按 config 预替换，缺失模型按真实文件名判定", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: { strength_model: ["FLOAT"] } } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+    }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["m.safetensors"]));
+    mockRoute("/models/loras", () => jsonResponse(["q.safetensors"]));
+
+    await openGenPopup({
+        id: "image_gen_text", source: "custom",
+        config: { model: "m.safetensors", loras: [{ name: "q.safetensors", strength: 0.6 }] },
+    });
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wfWrap && wfWrap.style.display !== "none", "应渲染工作流区");
+    const summary = wfWrap.querySelector(".rs-wf-summary").textContent;
+    assert.ok(!summary.includes("模型缺失"), "config 里的模型/LoRA 都在列表中，不应报缺失：" + summary);
+    assert.equal(wfWrap.querySelectorAll(".rs-wf-node-tpl").length, 1, "仅 {{PROMPT}} 节点保留模板变量标记");
+    assert.ok(summary.includes("模板变量运行时填入"), "摘要应说明剩余变量运行时填入：" + summary);
+    // 有工作流 → 正文区高度减半（.rs-content-row-workflow）；正文非空不进一步压缩，为空时压缩（见下条用例）
+    assert.ok(document.querySelector(".rs-content-row-workflow"), "有工作流时正文区应减半高度");
+    assert.equal(document.querySelector(".rs-content-row-compact"), null, "正文非空时不进一步压缩");
+    // tooltip 显示渲染后的输入值：替换后的模型名 / 连线来源 / 运行时变量原样
+    const nodeTitles = Array.from(wfWrap.querySelectorAll(".rs-wf-node title")).map(t => t.textContent);
+    assert.ok(nodeTitles.some(t => t.includes("unet_name: m.safetensors")), "UNETLoader tooltip 应显示替换后模型名");
+    assert.ok(nodeTitles.some(t => t.includes("model: ← #1") && t.includes("lora_name: q.safetensors")), "LoRA 节点 tooltip 应显示连线来源与 LoRA 名");
+    assert.ok(nodeTitles.some(t => t.includes("text: {{PROMPT}}")), "运行时变量在 tooltip 中原样显示");
+});
+
+test("详情弹窗：有工作流且正文为空时压缩 System Prompt Content 区", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: {} } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+    }));
+    await openGenPopup({ id: "image_gen_text", source: "custom", fileContent: "" });
+    assert.ok(document.querySelector(".rs-skill-workflow") && document.querySelector(".rs-skill-workflow").style.display !== "none");
+    assert.ok(document.querySelector(".rs-skill-modal-content .rs-content-row-compact"), "正文为空且渲染了工作流时应压缩正文区");
+});
+
+const WF_VIDEO = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+    "2": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 0], text: "{{PROMPT}}" } },
+    "3": { class_type: "KSampler", inputs: { model: ["1", 0], steps: "{{STEPS}}", width: "{{WIDTH}}", height: "{{HEIGHT}}" } },
+};
+
+test("详情弹窗：生视频工作流模板变量按 config + H3 缺省预替换", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "v", workflow: WF_VIDEO }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+        KSampler: { input: { required: { model: ["MODEL"], steps: ["INT"], width: ["INT"], height: ["INT"] }, optional: {} } },
+    }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["h3.safetensors"]));
+
+    await openGenPopup({
+        id: "h3_t2v", source: "custom", genImage: false, genVideo: true,
+        config: { model: "h3.safetensors" },
+    });
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wfWrap && wfWrap.style.display !== "none", "生视频技能应渲染工作流区");
+    const summary = wfWrap.querySelector(".rs-wf-summary").textContent;
+    assert.ok(!summary.includes("模型缺失"), "{{MODEL}} 已替换为 config 值，不应报缺失：" + summary);
+    assert.equal(wfWrap.querySelectorAll(".rs-wf-node-tpl").length, 1, "仅 {{PROMPT}} 节点保留模板变量标记");
+    const unet = wfWrap.querySelector("g.rs-wf-node");
+    assert.ok(unet.textContent.includes("unet_name: h3.safetensors"), "替换后的模型名直接显示在节点上");
+});
+
+test("工作流图：参数行直接画在节点上，第一列加载器更宽显示更多字符，超 6 行折叠「+N 项」、高度随行数增长", async () => {
+    const { layoutWorkflow } = await import("../../web/workflow-graph.js");
+    const inputs = { long: "x".repeat(80) };
+    for (let i = 0; i < 8; i++) inputs[`k${i}`] = `v${i}`;
+    const lay = layoutWorkflow({
+        "1": { class_type: "Big", inputs },
+        "2": { class_type: "Next", inputs: { a: ["1", 0], long: "y".repeat(80) } },
+    });
+    const byId = Object.fromEntries(lay.nodes.map(n => [n.id, n]));
+    assert.equal(byId["1"].w, 196, "第一列（加载器）更宽");
+    assert.equal(byId["2"].w, 150, "其余列保持常规宽度");
+    assert.ok(byId["2"].x > byId["1"].x + byId["1"].w, "后续列按第一列实际宽度偏移");
+    assert.equal(byId["1"].lines.length, 7, "9 个输入 → 6 行 + 1 行「+N 项」");
+    assert.ok(byId["1"].lines[6].includes("+3 项"), "折叠行应标注剩余数量：" + byId["1"].lines[6]);
+    assert.ok(byId["1"].lines.every(l => l.length <= 32), "第一列单行上限 32 字符");
+    assert.ok(byId["1"].lines.find(l => l.startsWith("long")).endsWith("…"), "超长值截断并以省略号结尾");
+    assert.ok(byId["2"].lines.find(l => l.startsWith("long")).length <= 23, "其余列单行上限 23 字符");
+    assert.ok(byId["2"].lines.includes("a"), "连线输入只显示参数名（不再显示 ← #N）");
+    assert.ok(!byId["2"].lines.some(l => l.includes("←")), "节点上不再出现 ← 编号");
+    const aIdx = byId["2"].lines.indexOf("a");
+    assert.equal(lay.edges[0].targetY, byId["2"].y + 47 + aIdx * 13 - 3.5, "连线终点对准对应参数行文字中心（INPUT_FIRST_Y=47、LINE_H=13、基线上方 3.5px）");
+    assert.ok(byId["1"].h > 46, "高度随参数行数增长");
+    // 同层两节点：无输入 vs 多输入 → 高度不同、y 依次堆叠
+    const lay2 = layoutWorkflow({
+        "1": { class_type: "A", inputs: {} },
+        "2": { class_type: "B", inputs: { a: 1, b: 2, c: 3 } },
+    });
+    const byId2 = Object.fromEntries(lay2.nodes.map(x => [x.id, x]));
+    assert.equal(byId2["1"].h, 46);
+    assert.ok(byId2["2"].h > 46);
+    assert.ok(byId2["2"].y >= byId2["1"].y + byId2["1"].h, "同层节点按各自高度堆叠不重叠");
+});
+
+test("工作流图：滚动区内拖拽平移 scrollLeft/Top（同画布体验），松开后停止", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
+    mockRoute("/object_info", () => jsonResponse({}));
+    await openGenPopup({ id: "image_gen_text", source: "custom" });
+    const body = document.querySelector(".rs-wf-body");
+    const svg = body.querySelector("svg.rs-wf-svg");
+    assert.ok(svg, "应渲染 SVG 流程图");
+    body.scrollLeft = 10;
+    body.scrollTop = 5;
+    svg.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, clientX: 0, clientY: 0 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: -30, clientY: 12 }));
+    assert.equal(body.scrollLeft, 40, "左拖 → scrollLeft 增大");
+    assert.equal(body.scrollTop, -7, "下拖 → scrollTop 减小（jsdom 不裁剪，浏览器内自动夹取）");
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: -60, clientY: 24 }));
+    assert.equal(body.scrollLeft, 40, "松开后不再跟随拖动");
+});
+
+test("详情弹窗：工作流区先骨架占位（正文同步让位），加载完成后原地渲染不跳布局", async () => {
+    const { createSkillDetailPopup } = await import("../../web/skill.js");
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id, name: "Gen Skill", content: "body", files: [{ name: "skill.md", size: 5 }],
+        gen_image: true, gen_video: false, requires_ref: false, multi_turn: false, tags: [], category: "", config_overridden: false,
+    }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
+
+    // skill_workflow 延迟响应 → 可断言加载中的占位中间态
+    let resolveWf;
+    mockRoute("/neo_image_gen/skill_workflow", () => new Promise((res) => {
+        resolveWf = () => res(jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
+    }));
+
+    const popup = createSkillDetailPopup();
+    const opened = popup.openExisting("image_gen_text", "custom");
+    await sleep(80);
+
+    // 占位态：工作流区已显示 + 骨架 + 正文区已压缩让位
+    const wrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wrap && wrap.style.display !== "none", "加载中工作流区应先显示占位");
+    assert.ok(document.querySelector(".rs-wf-skeleton"), "应显示骨架占位（加载提示）");
+    assert.ok(document.querySelector(".rs-content-row-workflow"), "正文区应同步压缩让位");
+
+    resolveWf();
+    await opened;
+    assert.equal(document.querySelector(".rs-wf-skeleton"), null, "加载完成后骨架应被替换");
+    assert.ok(document.querySelector(".rs-wf-node"), "流程图应原地渲染出来");
+});
+
+test("工作流图分步渲染：校验请求未回先出图（蓝框），/object_info 返回后原地补红框", async () => {
+    const { createSkillDetailPopup } = await import("../../web/skill.js");
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id, name: "Gen Skill", content: "body", files: [{ name: "skill.md", size: 5 }],
+        gen_image: true, gen_video: false, requires_ref: false, multi_turn: false, tags: [], category: "", config_overridden: false,
+    }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_SAMPLE }));
+
+    // /object_info 延迟响应 → 可断言「图已画出但校验未完成」的中间态；返回空对象 → 全部节点判为未安装
+    let resolveInfo;
+    mockRoute("/object_info", () => new Promise((res) => {
+        resolveInfo = () => res(jsonResponse({}));
+    }));
+
+    const popup = createSkillDetailPopup();
+    const opened = popup.openExisting("image_gen_text", "custom");
+    await sleep(80);
+
+    assert.equal(document.querySelector(".rs-wf-skeleton"), null, "骨架应已被流程图替换（不等校验请求）");
+    assert.ok(document.querySelector(".rs-wf-node"), "校验请求未回也应先画出流程图");
+    assert.ok(document.querySelector(".rs-wf-node-tpl"), "模板变量蓝框来自同步预检，应立即出现");
+    assert.equal(document.querySelector(".rs-wf-node-bad"), null, "/object_info 未返回前不应有红框");
+
+    resolveInfo();
+    await opened;
+    assert.ok(document.querySelector(".rs-wf-node-bad"), "校验完成后应原地补上缺失节点红框");
+    const wfSummarySlot = document.querySelector(".rs-skill-workflow > .rs-wf-summary");
+    assert.equal(wfSummarySlot.querySelectorAll(":scope > .rs-wf-summary").length, 1, "分步重渲染不应重复追加摘要行");
+});
+

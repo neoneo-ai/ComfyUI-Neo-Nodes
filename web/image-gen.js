@@ -411,12 +411,12 @@ export function videoSuggestion(files) {
 }
 
 // H3 音频 VAE：文件名同时含 h3 与 audio（与后端 suggest_audio_vae 对齐）
-function videoAudioVaeSuggestion(files) {
+export function videoAudioVaeSuggestion(files) {
     return (files || []).find((n) => /h3/i.test(String(n)) && /audio/i.test(String(n))) || "";
 }
 
 // H3 视频 VAE：文件名含 h3_video（与后端 _VIDEO_MODEL_HINTS.vae 对齐），避开 audio vae
-function videoVideoVaeSuggestion(files) {
+export function videoVideoVaeSuggestion(files) {
     return (files || []).find((n) => /h3_video/i.test(String(n))) || "";
 }
 
