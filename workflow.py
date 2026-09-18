@@ -262,6 +262,63 @@ def match_model_file(folder_name: str, wanted: str, strict_ext: bool = True, min
     return match_model_ref(wanted, candidates, strict_ext=strict_ext, min_score=min_score)
 
 
+# skill config.json 的模型路径字段 → 文件夹（运行时 resolve_model 读取的原值）
+_SKILL_CONFIG_MODEL_FIELDS = (
+    ("model", "diffusion_models"),
+    ("text_encoder", "text_encoders"),
+    ("vae", "vae"),
+    ("audio_vae", "vae"),
+)
+
+
+def suggest_skill_model_fixes(config, min_score=None):
+    """Report broken model paths in a skill config.json with replacement candidates.
+
+    Reuses match_model_file so suggestions stay consistent with workflow repair
+    (same fuzzy scoring / thresholds). Returns {field: {value, status, suggestion,
+    score, candidates}} for scalar fields plus a "loras" list for LoRA names.
+    Empty values are skipped (runtime auto-picks them, not broken paths).
+    """
+    out = {}
+    cfg = config or {}
+    ms = REPAIR_ACCEPT_SCORE if min_score is None else min_score
+    for key, folder in _SKILL_CONFIG_MODEL_FIELDS:
+        value = cfg.get(key)
+        if not value or not str(value).strip():
+            continue
+        value = str(value)
+        name, score, cands = match_model_file(folder, value, strict_ext=True, min_score=ms)
+        # 「已解析」= 返回值即原值（get_full_path 命中）；同 basename 不同子目录的模糊匹配也会得 1.0，但 name≠原值 → 仍算失效
+        ok = (name == value) and score >= 1.0
+        out[key] = {
+            "value": value,
+            "status": "ok" if ok else "missing",
+            "suggestion": None if ok else name,
+            "score": round(score, 3),
+            "candidates": cands[:MAX_CANDIDATES],
+        }
+    loras = cfg.get("loras") or []
+    lora_out = []
+    if isinstance(loras, list):
+        for i, entry in enumerate(loras):
+            name = entry.get("name") if isinstance(entry, dict) else (entry if isinstance(entry, str) else None)
+            if not name or not str(name).strip():
+                continue
+            name = str(name)
+            m, s, cands = match_model_file("loras", name, strict_ext=True, min_score=ms)
+            ok = (m == name) and s >= 1.0
+            lora_out.append({
+                "index": i, "value": name,
+                "status": "ok" if ok else "missing",
+                "suggestion": None if ok else m,
+                "score": round(s, 3),
+                "candidates": cands[:MAX_CANDIDATES],
+            })
+    if lora_out:
+        out["loras"] = lora_out
+    return out
+
+
 def guess_model_folder(input_name: str):
     """Best-effort model folder for an input named `input_name`."""
     if not input_name:
@@ -806,6 +863,25 @@ async def rs_repair_workflow(request):
         "applied": sum(1 for c in changes if c.get("new")),
         "missing": sum(1 for c in changes if c.get("reason") == "missing"),
     })
+
+
+@PromptServer.instance.routes.post("/neo_nodes/skill_model_suggest")
+async def rs_skill_model_suggest(request):
+    """Suggest replacements for broken model paths in a skill config.json, reusing
+    the same matching as workflow repair. Body: {"config": {...}, "threshold"?}."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON body"}, status=400)
+    config = (data or {}).get("config") if isinstance(data, dict) else None
+    if not isinstance(config, dict):
+        return web.json_response({"success": False, "error": "Missing config object"}, status=400)
+    threshold = data.get("threshold")
+    min_score = REPAIR_THRESHOLD_SCORES.get(str(threshold).lower()) if isinstance(threshold, str) else None
+    fields = suggest_skill_model_fixes(config, min_score)
+    missing = sum(1 for k, v in fields.items() if k != "loras" and v.get("status") == "missing")
+    missing += sum(1 for v in fields.get("loras", []) if v.get("status") == "missing")
+    return web.json_response({"success": True, "fields": fields, "missing": missing})
 
 
 @PromptServer.instance.routes.get("/neo_nodes/repair_mappings")

@@ -89,9 +89,9 @@ test("createModelConfigSection：config 反斜杠模型名匹配正斜杠列表�
     assert.equal(collected.model, "Krea2/krea2_turbo_fp8_scaled.safetensors", "反斜杠 config 应匹配正斜杠列表并回填");
     assert.equal(collected.text_encoder, "Qwen/qwen_2.5_vl_7b_fp8_scaled.safetensors");
     assert.equal(collected.vae, "sdxl_vae.safetensors", "无分隔符值仍正常匹配");
-    // 不存在的模型名（换分隔符也匹配不上）应回落「自动」
+    // 不存在的模型名（换分隔符也匹配不上）→ 如实保留原值并标缺失，不再回落「自动」
     section.load({ model: "Krea2\\nonexistent.safetensors" }, { diffusion_models: ["Krea2/krea2_turbo_fp8_scaled.safetensors"] });
-    assert.equal(section.collect().model, "", "未匹配值应回落自动");
+    assert.equal(section.collect().model, "Krea2\\nonexistent.safetensors", "未匹配值应如实保留原值（标缺失），不回落自动");
 });
 
 test("全局生图默认设置表单只含 生图模型区 + 输出前缀（不含 LoRA/张数/比例/视频）", async () => {
@@ -200,26 +200,28 @@ test("createVideoModelConfigSection：新增 LoRA 行后 collect 收集（空名
     assert.deepEqual(section.collect().loras, [{ name: "h3/style_a.safetensors", strength: 0.6 }]);
 });
 
-test("createModelConfigSection：config 存旧目录路径（模型挪进子目录）时按文件名回填", async () => {
+test("createModelConfigSection：config 存旧目录路径（模型挪进子目录）时如实标缺失，不自愈回填", async () => {
     const { createModelConfigSection } = await import("../../web/image-gen.js");
     const section = createModelConfigSection();
     document.body.appendChild(section.el);
-    // config 里是旧路径 MiniMaxH3/xxx（缺 Speed 层），实际文件在 MiniMaxH3/Speed/xxx → 全路径未命中，按文件名唯一匹配回填
+    // config 里是旧路径 MiniMaxH3/xxx（缺 Speed 层），实际文件在 MiniMaxH3/Speed/xxx → 全路径未命中，
+    // 不再按文件名静默回填（会误导用户以为已修好，而运行时仍读失效的 config 原值）；如实保留原值并标缺失
     section.load(
         { model: "MiniMaxH3\\Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors" },
         { diffusion_models: ["MiniMaxH3/Speed/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors"] },
     );
-    assert.equal(section.collect().model, "MiniMaxH3/Speed/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors", "旧目录路径应按文件名唯一匹配回填");
+    assert.equal(section.collect().model, "MiniMaxH3\\Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors", "旧目录路径应如实保留原值（标缺失），不静默回填");
 });
 
-test("createModelConfigSection：同名文件在多个子目录时不回填（避免误选）", async () => {
+test("createModelConfigSection：同名文件在多个子目录时仍如实标缺失（不自愈）", async () => {
     const { createModelConfigSection } = await import("../../web/image-gen.js");
     const section = createModelConfigSection();
     document.body.appendChild(section.el);
-    // config 存 C/model.safetensors（C 不在列表），列表里 A/、B/ 各有一个同名文件 → 文件名不唯一，回落「自动」
+    // config 存 C/model.safetensors（C 不在列表），列表里 A/、B/ 各有一个同名文件 → 文件名不唯一，
+    // 同样如实保留原值并标缺失（旧行为回落「自动」会掩盖失效路径）
     section.load(
         { model: "C/model.safetensors" },
         { diffusion_models: ["A/model.safetensors", "B/model.safetensors"] },
     );
-    assert.equal(section.collect().model, "", "文件名不唯一时应回落自动，避免误选");
+    assert.equal(section.collect().model, "C/model.safetensors", "失效路径应如实保留原值（标缺失），不回落自动");
 });

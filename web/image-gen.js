@@ -439,18 +439,25 @@ function fillComboSelect(select, files, suggested, current) {
     }
     // config.json 可能存反斜杠（工作流导出），模型列表用正斜杠；归一化后匹配，避免已保存值回落"自动"
     let matched = "";
+    let missing = false;
     if (current) {
         const norm = String(current).replace(/\\/g, "/");
         for (const f of files || []) {
             if (String(f).replace(/\\/g, "/") === norm) { matched = f; break; }   // 全路径精确命中
         }
-        // 全路径未命中（模型被挪进/移出子目录，旧路径失效）→ 按文件名匹配；仅唯一时回填，避免同名误选
-        if (!matched) {
-            const base = norm.split("/").pop();
-            const hits = (files || []).filter((f) => String(f).replace(/\\/g, "/").split("/").pop() === base);
-            if (hits.length === 1) matched = hits[0];
-        }
+        if (!matched) missing = true;   // 已保存值不在列表（模型被挪走/删除）
     }
+    if (missing) {
+        // 如实显示原值并标缺失，不再静默回填唯一同名文件——回填会误导用户以为已修好，
+        // 而运行时仍读失效的 config 原值。修复交给「修复失效路径」按钮（复用后端匹配）。
+        const opt = document.createElement("option");
+        opt.value = current;
+        opt.textContent = shortModelName(current) + " (缺失)";
+        select.appendChild(opt);
+        matched = current;
+    }
+    const box = select.closest(".rs-model-select-box");
+    if (box) box.classList.toggle("rs-model-missing", missing);
     select.value = matched;
 }
 

@@ -40,8 +40,13 @@ const harnessDom = `
           </div>
         </div>
       </div>
-      <!-- 视频设置区容器没有 rs-skill-gen-settings class，高级组行为必须一致 -->
+      <!-- 视频设置区容器没有 rs-skill-gen-settings class，模型行与高级组行为都必须一致 -->
       <div class="rs-gen-settings rs-skill-video-gen-settings">
+        <div class="rs-gen-model-section">
+          <div class="rs-config-row"><label class="rs-form-label">生视频模型</label><select></select></div>
+          <div class="rs-config-row"><label class="rs-form-label">步数</label><input type="number"></div>
+          <div class="rs-config-row"><label class="rs-form-label">LoRA</label><div class="rs-gen-lora-list"></div><button type="button" class="rs-gen-lora-add">+ 添加 LoRA</button></div>
+        </div>
         <div class="rs-gen-advanced">
           <input type="checkbox" class="rs-gen-adv-check" aria-label="Text Encoder / VAE（视频）/ VAE（音频）（高级）">
           <span class="rs-gen-adv-label">Text Encoder / VAE（视频）/ VAE（音频）（高级）</span>
@@ -102,6 +107,8 @@ test("技能弹窗出图设置：各配置行标签左|控件右（模型/LoRA/�
                 adv: colsOf(".rs-skill-gen-settings .rs-gen-adv-row"),
                 lora: colsOf(".rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child"),
                 size: colsOf(".rs-skill-gen-settings .rs-gen-size-section > .rs-config-row"),
+                vModel: colsOf(".rs-skill-video-gen-settings .rs-gen-model-section > .rs-config-row"),
+                vLora: colsOf(".rs-skill-video-gen-settings .rs-gen-model-section > .rs-config-row:last-child"),
                 labelNarrow: !!(label && advBox &&
                     label.getBoundingClientRect().width < advBox.getBoundingClientRect().width - 1),
             };
@@ -111,6 +118,8 @@ test("技能弹窗出图设置：各配置行标签左|控件右（模型/LoRA/�
         assert.equal(r.adv, 2, `折叠区内 Text Encoder/VAE 行应为两栏，实际 ${r.adv}`);
         assert.equal(r.lora, 3, `LoRA 行应为三栏（label | 列表 | 添加按钮），实际 ${r.lora}`);
         assert.equal(r.size, 2, `尺寸区各行（张数/长边/比例）应为两栏，实际 ${r.size}`);
+        assert.equal(r.vModel, 2, `视频模型/步数行应为两栏（label | 控件），实际 ${r.vModel}`);
+        assert.equal(r.vLora, 3, `视频 LoRA 行应为三栏（label | 列表 | 添加按钮），实际 ${r.vLora}`);
         assert.ok(r.labelNarrow, "折叠标题应只占文字宽度（仅勾选复选框展开），不应铺满整行");
     } finally {
         if (browser) await browser.close();

@@ -417,11 +417,8 @@ function createSkillDetailPopup() {
     const genSettingsTitle = mkEl("label", "rs-form-label");
     genSettingsTitle.textContent = "🖼️ 生图设置（优先于默认设置）";
     genSettingsTitle.title = "仅对本技能生效，未填项回落全局生图设置";
-    const genReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
-    genReadOnlyHint.textContent = "任务技能只读：点标题栏「⧉ Copy as custom」复制后可编辑";
-    genReadOnlyHint.style.display = "none";
     const genLocalHint = mkEl("span", "rs-gen-readonly-hint");
-    genLocalHint.textContent = "预设内容只读；设置保存为本地覆盖（不改预设文件）";
+    genLocalHint.textContent = "预设的设置改动保存为本地覆盖，不修改预设文件";
     genLocalHint.title = "模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除";
     genLocalHint.style.display = "none";
     const genSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
@@ -436,7 +433,7 @@ function createSkillDetailPopup() {
     genRestoreCfgBtn.style.display = "none";
     const genCfgBtns = mkEl("div", "rs-gen-cfg-btns");
     genCfgBtns.append(genSaveCfgBtn, genRestoreCfgBtn);
-    genSettingsHeader.append(genSettingsTitle, genReadOnlyHint, genLocalHint, genCfgBtns);
+    genSettingsHeader.append(genSettingsTitle, genLocalHint, genCfgBtns);
     const genModelSection = createModelConfigSection();
     const genSizeSection = createGenSizeRows();
     // Text Encoder / VAE / 生图张数 / 输出前缀 很少改动：收进可折叠「高级选项」（默认收起），放到最底部
@@ -474,11 +471,8 @@ function createSkillDetailPopup() {
     const videoGenSettingsTitle = mkEl("label", "rs-form-label");
     videoGenSettingsTitle.textContent = "🎬 生视频设置（优先于默认设置）";
     videoGenSettingsTitle.title = "仅对本技能生效，未填项回落全局「生视频模型」设置";
-    const videoReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
-    videoReadOnlyHint.textContent = "任务技能只读：点标题栏「⧉ Copy as custom」复制后可编辑";
-    videoReadOnlyHint.style.display = "none";
     const videoLocalHint = mkEl("span", "rs-gen-readonly-hint");
-    videoLocalHint.textContent = "预设内容只读；设置保存为本地覆盖（不改预设文件）";
+    videoLocalHint.textContent = "预设的设置改动保存为本地覆盖，不修改预设文件";
     videoLocalHint.title = "模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除";
     videoLocalHint.style.display = "none";
     const videoSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
@@ -493,7 +487,7 @@ function createSkillDetailPopup() {
     videoRestoreCfgBtn.style.display = "none";
     const videoCfgBtns = mkEl("div", "rs-gen-cfg-btns");
     videoCfgBtns.append(videoSaveCfgBtn, videoRestoreCfgBtn);
-    videoGenSettingsHeader.append(videoGenSettingsTitle, videoReadOnlyHint, videoLocalHint, videoCfgBtns);
+    videoGenSettingsHeader.append(videoGenSettingsTitle, videoLocalHint, videoCfgBtns);
     const videoModelSection = createVideoModelConfigSection();
     // Text Encoder / VAE（视频）/ VAE（音频）很少改动：收进可折叠「高级选项」（默认收起），放到最底部
     let videoAdvEl = null;
@@ -521,32 +515,172 @@ function createSkillDetailPopup() {
     workflowHeader.appendChild(workflowTitle);
     workflowWrap.append(workflowHeader, workflowBody, workflowSummary);
 
-    // 设置区头部「💾 Save / ↺ 恢复默认」与本地覆盖提示的显隐（仅预设；恢复仅在存在覆盖时显示）
-    function updateCfgButtons(btns, saveBtn, restoreBtn, localHint, readOnly) {
-        const preset = currentSource === "presets";
-        const showSave = preset && !readOnly;
-        btns.style.display = showSave ? "flex" : "none";
-        saveBtn.style.display = showSave ? "inline-block" : "none";
-        restoreBtn.style.display = preset && !readOnly && configOverridden ? "inline-block" : "none";
-        localHint.style.display = preset && !readOnly ? "inline" : "none";
+    // 失效模型路径修复：复用后端 /neo_nodes/skill_model_suggest（与工作流修复同款 match_model_file），
+    // 弹窗列出 config 里所有失效字段与候选/置信度，批量套用后回填对应设置区，用户再点 Save 写入 config.json。
+    // 「🔧 修复失效路径」+「📋 修复记录」并排放在各设置区头部（随 gen/video 设置区显隐）。config.json 恒可编辑（模型路径因机器而异、无统一预设），设置区无只读态。
+    let genRepairBtn = null, videoRepairBtn = null;   // 各设置区「修复」按钮引用：检测/应用后切换红框+右上角红点告警态
+    const makeSectionRepairBtns = () => {
+        const group = mkEl("div", "rs-model-repair-group");
+        const repairBtn = mkEl("button", "rs-btn rs-model-repair-btn");
+        repairBtn.type = "button";
+        repairBtn.textContent = "🔧 修复失效路径";
+        repairBtn.title = "检测本技能 config 里失效的模型路径，给出候选并批量套用（复用工作流修复匹配）";
+        repairBtn.addEventListener("click", (e) => { e.stopPropagation(); openModelRepairDialog(); });
+        const logBtn = mkEl("button", "rs-btn rs-model-repair-log-btn");
+        logBtn.type = "button";
+        logBtn.textContent = "📋 修复记录";
+        logBtn.title = "查看本技能的模型路径修复历史（本机本地记录）";
+        logBtn.addEventListener("click", (e) => { e.stopPropagation(); openSkillRepairLogDialog(); });
+        group.append(repairBtn, logBtn);
+        return { group, repairBtn };
+    };
+    const genRepairGroup = makeSectionRepairBtns();
+    genSettingsHeader.appendChild(genRepairGroup.group);
+    const videoRepairGroup = makeSectionRepairBtns();
+    videoGenSettingsHeader.appendChild(videoRepairGroup.group);
+    genRepairBtn = genRepairGroup.repairBtn;
+    videoRepairBtn = videoRepairGroup.repairBtn;
+
+    // 当前活动设置区（生图/生视频互斥）的上下文：section、对应「修复」按钮、collect() 出的 config。
+    // 「修复失效路径」弹窗与告警检测都基于它，保证用的是当前显示区的最新值而非最近 load 的快照。
+    const activeRepairContext = () => {
+        const isVideo = videoGenSettingsWrap.style.display !== "none";
+        return {
+            section: isVideo ? videoModelSection : genModelSection,
+            btn: isVideo ? videoRepairBtn : genRepairBtn,
+            config: isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() },
+        };
+    };
+    const setRepairAlert = (btn, on) => { if (btn) btn.classList.toggle("rs-alert", !!on); };
+    function countMissingFields(fields) {
+        if (!fields || typeof fields !== "object") return 0;
+        let n = 0;
+        for (const k of ["model", "text_encoder", "vae", "audio_vae"]) if (fields[k] && fields[k].status === "missing") n++;
+        for (const l of fields.loras || []) if (l.status === "missing") n++;
+        return n;
     }
 
-    async function loadVideoGenSettings(readOnly) {
+    // 设置区头部「💾 Save / ↺ 恢复默认」与本地覆盖提示的显隐（仅预设；恢复仅在存在覆盖时显示）
+    // 检测当前活动设置区是否有失效模型路径 → 「修复」按钮红框+右上角红点；无缺失则清除。
+    // 打开/重载技能、应用修复后调用；异步结果按「技能未切换且该区仍显示」校验，避免过期覆盖。
+    async function checkRepairStatus() {
+        const ctx = activeRepairContext();
+        if (!ctx.btn) return;
+        const idAtStart = currentSkillId;
+        if (!idAtStart) { setRepairAlert(ctx.btn, false); return; }
+        let missing = 0;
+        try {
+            const resp = await fetch("/neo_nodes/skill_model_suggest", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ config: ctx.config }),
+            });
+            const data = await resp.json();
+            if (data && data.success) missing = countMissingFields(data.fields);
+        } catch (e) { /* 检测失败不告警，保持现状 */ }
+        if (currentSkillId === idAtStart && ctx.btn === activeRepairContext().btn) setRepairAlert(ctx.btn, missing > 0);
+    }
+
+    // ---- 修复记录（localStorage，按技能 id 关联，新→旧，每技能上限 SKILL_REPAIR_LOG_LIMIT 条）----
+    const SKILL_REPAIR_LOG_KEY = "neo.skillRepairLog";
+    const SKILL_REPAIR_LOG_LIMIT = 50;
+    function readSkillRepairLog() {
+        try { const l = JSON.parse(localStorage.getItem(SKILL_REPAIR_LOG_KEY) || "[]"); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+    }
+    function writeSkillRepairLog(log) {
+        try { localStorage.setItem(SKILL_REPAIR_LOG_KEY, JSON.stringify(log)); } catch (e) { console.warn("[Neo Skill] 修复记录写入失败:", e); }
+    }
+    function getSkillRepairLog(skillId) { return readSkillRepairLog().filter((e) => e.skillId === skillId); }
+    function clearSkillRepairLog(skillId) { writeSkillRepairLog(readSkillRepairLog().filter((e) => e.skillId !== skillId)); }
+    function recordSkillRepair(skillId, changes, kind) {
+        const log = readSkillRepairLog();
+        const mine = log.filter((e) => e.skillId === skillId);
+        const others = log.filter((e) => e.skillId !== skillId);
+        mine.unshift({ skillId, time: new Date().toISOString(), kind: kind || "gen_image", changes });
+        writeSkillRepairLog([...mine.slice(0, SKILL_REPAIR_LOG_LIMIT), ...others]);
+    }
+
+    // 修复记录弹窗：列出本技能历史修复（时间·类型 + 每处 from→to），可清空；纯本地，不影响 config.json
+    function openSkillRepairLogDialog() {
+        if (!currentSkillId) return;
+        const existing = document.querySelector(".rs-skill-repair-log-overlay");
+        if (existing) existing.remove();
+        const log = getSkillRepairLog(currentSkillId);
+        const overlay = mkEl("div", "rs-repair-overlay rs-skill-repair-log-overlay");
+        const box = mkEl("div", "rs-repair-box");
+        const head = mkEl("div", "rs-repair-head");
+        const title = mkEl("span", "");
+        title.textContent = `修复记录（${log.length}）`;
+        const closeBtn = mkEl("button", "rs-repair-close");
+        closeBtn.type = "button";
+        closeBtn.textContent = "✕";
+        head.append(title, closeBtn);
+        const body = mkEl("div", "rs-repair-body");
+        if (!log.length) {
+            const empty = mkEl("div", "rs-repair-log-empty");
+            empty.textContent = "本技能暂无修复记录 — 点「🔧 修复失效路径」套用后，修改会记录在这里。";
+            body.appendChild(empty);
+        } else {
+            for (const entry of log) {
+                const group = mkEl("div", "rs-repair-log-group");
+                const t = mkEl("div", "rs-repair-log-time");
+                t.textContent = `${new Date(entry.time).toLocaleString("zh-CN", { hour12: false })} · ${entry.kind === "gen_video" ? "生视频" : "生图"}`;
+                group.appendChild(t);
+                for (const c of entry.changes || []) {
+                    const row = mkEl("div", "rs-repair-row");
+                    const label = mkEl("span", "rs-repair-label");
+                    label.textContent = REPAIR_FIELD_LABELS[c.field] || c.field;
+                    const from = mkEl("span", "rs-repair-cur");
+                    from.textContent = shortModelName(c.from);
+                    from.title = c.from;
+                    const arrow = mkEl("span", "rs-repair-arrow");
+                    arrow.textContent = "→";
+                    const to = mkEl("span", "rs-repair-new");
+                    to.textContent = shortModelName(c.to);
+                    to.title = c.to;
+                    row.append(label, from, arrow, to);
+                    group.appendChild(row);
+                }
+                body.appendChild(group);
+            }
+        }
+        const foot = mkEl("div", "rs-repair-foot");
+        const hint = mkEl("span", "rs-repair-hint");
+        hint.textContent = "仅本机本地记录，不影响 config.json";
+        const clearBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+        clearBtn.type = "button";
+        clearBtn.textContent = "清空记录";
+        foot.append(hint, clearBtn);
+        box.append(head, body, foot);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        const closeDialog = () => overlay.remove();
+        closeBtn.addEventListener("click", closeDialog);
+        clearBtn.addEventListener("click", () => { clearSkillRepairLog(currentSkillId); closeDialog(); showToast(app, "info", "本技能修复记录已清空"); });
+        overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeDialog(); });
+    }
+
+    function updateCfgButtons(btns, saveBtn, restoreBtn, localHint) {
+        const preset = currentSource === "presets";
+        btns.style.display = preset ? "flex" : "none";
+        saveBtn.style.display = preset ? "inline-block" : "none";
+        restoreBtn.style.display = preset && configOverridden ? "inline-block" : "none";
+        localHint.style.display = preset ? "inline" : "none";
+    }
+
+    async function loadVideoGenSettings() {
         if (!currentSkillId) return null;
         const [config, videoModels] = await Promise.all([
             getSkillGenConfig(currentSkillId),
             listVideoGenModels().catch(() => ({})),
         ]);
         videoModelSection.load(config || {}, videoModels);
-        for (const el of videoGenSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
-        updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint, readOnly);
-        videoReadOnlyHint.style.display = readOnly ? "block" : "none";
+        updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint);
+        checkRepairStatus();   // 打开/重载后检测失效路径 → 「修复」按钮告警态
         return { config: config || {}, models: videoModels };
     }
 
-    // readOnly（任务技能）时禁用全部控件；config 缺失按空对象回落默认。
-    // 禁用必须在 load() 之后：load 会动态新建 LoRA 行，新建元素不会被前面的禁用循环覆盖
-    async function loadGenSettings(readOnly) {
+    // config.json 恒可编辑（模型路径因机器而异、无统一预设）→ 设置区不置灰；config 缺失按空对象回落默认。
+    async function loadGenSettings() {
         if (!currentSkillId) return null;
         const config = await getSkillGenConfig(currentSkillId);
         let models = {};
@@ -554,11 +688,158 @@ function createSkillDetailPopup() {
         genModelSection.load(config || {}, models);
         genSizeSection.load(config || {});
         enhancePromptChk.checked = !!(config && config.enhance_prompt);
-        for (const el of genSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
-        enhancePromptChk.disabled = readOnly;
-        updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint, readOnly);
-        genReadOnlyHint.style.display = readOnly ? "block" : "none";
+        updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint);
+        checkRepairStatus();   // 打开/重载后检测失效路径 → 「修复」按钮告警态
         return { config: config || {}, models };
+    }
+
+    // ---- 失效模型路径修复：检测 config 里失效字段，弹窗批量套用候选后回填设置区 ----
+    const REPAIR_FIELD_LABELS = { model: "主模型", text_encoder: "Text Encoder", vae: "VAE", audio_vae: "音频 VAE" };
+
+    // 「修复失效路径」应用后重渲染工作流图：用当前设置区值重新预渲染模板并重新校验，清掉已修好的红框（复用已加载的原始模板，不重新拉 workflow.json）
+    async function refreshWorkflowGraph() {
+        if (!workflowShown || !currentSkillId || !skillWorkflowRaw) return;
+        const isVideo = videoGenSettingsWrap.style.display !== "none";
+        const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
+        const genInfo = { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} };
+        const rendered = applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), workflowParamValues(isVideo, genInfo));
+        renderWorkflowGraph(workflowBody, rendered, validateWorkflow(rendered, null, {}), workflowSummary);   // 先同步预检（蓝框）
+        const validation = await checkWorkflow(rendered);   // /object_info + /models/*，失败内部按跳过处理
+        if (currentSkillId && workflowShown) {               // 等待期间切了技能/关区 → 丢弃过期结果
+            const sl = workflowBody.scrollLeft, st = workflowBody.scrollTop;
+            renderWorkflowGraph(workflowBody, rendered, validation, workflowSummary);
+            workflowBody.scrollLeft = sl;
+            workflowBody.scrollTop = st;
+        }
+    }
+
+    // 把接受的修复项回填到当前活动的设置区（生图/生视频）：合并进 collect() 后重新 load，
+    // LoRA 按原失效名匹配替换（不依赖下标，避免用户增删行后错位）。回填不自动保存。
+    function applyModelFixes(fixes) {
+        const isGen = genSettingsWrap.style.display !== "none";
+        const section = isGen ? genModelSection : videoModelSection;
+        const models = (loadedGenInfo && loadedGenInfo.models) || {};
+        const merged = { ...section.collect() };
+        for (const k of ["model", "text_encoder", "vae", "audio_vae"]) if (k in fixes) merged[k] = fixes[k];
+        if (fixes.loras && fixes.loras.length) {
+            merged.loras = (merged.loras || []).map((e) => {
+                const fix = fixes.loras.find((f) => f.from === e.name);
+                return fix ? Object.assign({}, e, { name: fix.to }) : e;
+            });
+        }
+        section.load(merged, models);
+        refreshWorkflowGraph();   // 设置区已回填 → 重渲染工作流图并重新校验，清掉已修好的红框
+    }
+
+    async function openModelRepairDialog() {
+        if (!currentSkillId) return;
+        const config = activeRepairContext().config;   // 用当前活动设置区最新值（而非最近 load 的快照）
+        let data;
+        try {
+            const resp = await fetch("/neo_nodes/skill_model_suggest", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ config }),
+            });
+            data = await resp.json();
+        } catch (e) {
+            showToast(app, "error", "修复检查失败", String(e.message || e));
+            return;
+        }
+        if (!data || !data.success) { showToast(app, "error", "修复检查失败", (data && data.error) || ""); return; }
+        const fields = data.fields || {};
+        // 收集失效项（标量字段 + LoRA），保留后端返回顺序
+        const rows = [];
+        for (const key of ["model", "text_encoder", "vae", "audio_vae"]) {
+            const f = fields[key];
+            if (f && f.status === "missing")
+                rows.push({ kind: "field", key, value: f.value, suggestion: f.suggestion, score: f.score, candidates: f.candidates || [] });
+        }
+        for (const l of fields.loras || []) {
+            if (l.status === "missing")
+                rows.push({ kind: "lora", index: l.index, value: l.value, suggestion: l.suggestion, score: l.score, candidates: l.candidates || [] });
+        }
+        if (!rows.length) { showToast(app, "info", "没有失效的模型路径"); return; }
+
+        const overlay = mkEl("div", "rs-repair-overlay");
+        const box = mkEl("div", "rs-repair-box");
+        const head = mkEl("div", "rs-repair-head");
+        const title = mkEl("span", "");
+        title.textContent = `修复失效模型路径（${rows.length}）`;
+        const closeBtn = mkEl("button", "rs-repair-close");
+        closeBtn.type = "button";
+        closeBtn.textContent = "✕";
+        head.append(title, closeBtn);
+
+        const body = mkEl("div", "rs-repair-body");
+        const selects = [];   // 与 rows 对齐：每项一个 <select>，value="" 表示跳过
+        for (const r of rows) {
+            const row = mkEl("div", "rs-repair-row");
+            const label = mkEl("span", "rs-repair-label");
+            label.textContent = r.kind === "lora" ? `LoRA #${(r.index ?? 0) + 1}` : (REPAIR_FIELD_LABELS[r.key] || r.key);
+            const cur = mkEl("span", "rs-repair-cur");
+            cur.textContent = shortModelName(r.value);
+            cur.title = r.value;
+            const sel = document.createElement("select");
+            sel.className = "rs-repair-sel rs-form-input";
+            const ph = document.createElement("option");
+            ph.value = "";
+            ph.textContent = "（跳过）";
+            sel.appendChild(ph);
+            const addOpt = (val, text) => {
+                const o = document.createElement("option");
+                o.value = val;
+                o.textContent = text;
+                sel.appendChild(o);
+            };
+            if (r.suggestion) addOpt(r.suggestion, `${shortModelName(r.suggestion)}（推荐 ${Math.round((r.score || 0) * 100)}%）`);
+            for (const c of r.candidates) {
+                if (c === r.suggestion) continue;
+                addOpt(c, shortModelName(c));
+            }
+            if (r.suggestion) sel.value = r.suggestion;   // 高置信默认选中推荐项
+            row.append(label, cur, sel);
+            body.appendChild(row);
+            selects.push(sel);
+        }
+
+        const foot = mkEl("div", "rs-repair-foot");
+        const hint = mkEl("span", "rs-repair-hint");
+        hint.textContent = "套用后需点 Save 才写入 config.json";
+        const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+        cancelBtn.type = "button";
+        cancelBtn.textContent = "取消";
+        const applyBtn = mkEl("button", "rs-btn");
+        applyBtn.type = "button";
+        applyBtn.textContent = "应用选中项";
+        foot.append(hint, cancelBtn, applyBtn);
+
+        box.append(head, body, foot);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        const closeDialog = () => overlay.remove();
+        closeBtn.addEventListener("click", closeDialog);
+        cancelBtn.addEventListener("click", closeDialog);
+        overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeDialog(); });
+
+        applyBtn.addEventListener("click", () => {
+            const fixes = {};
+            const changes = [];   // 写入本技能修复记录：{ field, from, to }
+            let n = 0;
+            rows.forEach((r, i) => {
+                const val = selects[i].value;
+                if (!val) return;
+                if (r.kind === "field") { fixes[r.key] = val; n++; changes.push({ field: r.key, from: r.value, to: val }); }
+                else { (fixes.loras = fixes.loras || []).push({ from: r.value, to: val }); n++; changes.push({ field: `LoRA #${(r.index ?? 0) + 1}`, from: r.value, to: val }); }
+            });
+            if (!n) { closeDialog(); return; }
+            const kind = videoGenSettingsWrap.style.display !== "none" ? "gen_video" : "gen_image";
+            applyModelFixes(fixes);
+            recordSkillRepair(currentSkillId, changes, kind);   // 记录到本技能修复历史（localStorage）
+            checkRepairStatus();                                 // 重新检测：无缺失则清除红框/红点
+            closeDialog();
+            showToast(app, "success", `已填入 ${n} 项，请点 Save 保存到 config.json`);
+        });
     }
 
     // ---- 预设技能设置区：独立保存（主 Save 对预设隐藏）+ 一键恢复默认 ----
@@ -572,8 +853,8 @@ function createSkillDetailPopup() {
             }
             configOverridden = true;
             genSettingsBaseline = collectGenSettingsJson();
-            updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint, false);
-            updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint, false);
+            updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint);
+            updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint);
         } catch (err) {
             alert("Save gen settings failed: " + err.message);
         }
@@ -586,8 +867,8 @@ function createSkillDetailPopup() {
         if (!r.success) { alert("Restore failed: " + (r.error || "")); return; }
         configOverridden = false;
         try {
-            if (genSettingsWrap.style.display !== "none") await loadGenSettings(false);
-            else if (videoGenSettingsWrap.style.display !== "none") await loadVideoGenSettings(false);
+            if (genSettingsWrap.style.display !== "none") await loadGenSettings();
+            else if (videoGenSettingsWrap.style.display !== "none") await loadVideoGenSettings();
         } catch (err) {
             alert("Reload settings failed: " + err.message);
         }
@@ -622,6 +903,8 @@ function createSkillDetailPopup() {
     let workflowShown = false;   // 是否渲染了工作流流程图（正文区高度减半，为空时进一步压缩）
     let contentBaseline = null;   // { name, content, multiTurn } 加载/新建后的快照，关闭时判断正文有无未保存修改
     let genSettingsBaseline = null;   // 生图/生视频设置区 collect() 的 JSON 快照（load/save 后刷新）；null = 无设置区
+    let loadedGenInfo = null;         // 最近一次 loadGenSettings/loadVideoGenSettings 返回的 { config, models }，供「修复失效路径」回填复用
+    let skillWorkflowRaw = null;     // 最近加载的技能 workflow.json 原始模板（「修复失效路径」后重渲染复用，避免重新拉取）
 
     // 有工作流的技能：正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
     function updateContentCompact() {
@@ -743,28 +1026,30 @@ function createSkillDetailPopup() {
         else { selectedFile = null; contentTextarea.value = ""; contentBaseline = { name: nm, content: "", multiTurn: multiTurnChk.checked }; }
         // workflow.json 拉取与设置区加载互不依赖 → 提前并发发出，省一段串行等待
         const wfPromise = (full && (full.gen_image || full.gen_video)) ? loadSkillWorkflow(id) : null;
-        // 生图/生视频技能显示各自 config.json 覆盖区（预设可编辑：本地覆盖；任务只读）；其余技能隐藏。
+        // 生图/生视频技能显示各自 config.json 覆盖区（恒可编辑：预设存本地覆盖、自定义随主 Save）；其余技能隐藏。
         // multi_turn 是文本多轮概念，生图/生视频技能用不到 → 一并隐藏
-        const cfgReadOnly = currentSource === "tasks";
         let genInfo = null; // 设置区加载的 { config, models }，供工作流模板预渲染复用（不再重复请求）
+        setRepairAlert(genRepairBtn, false);   // 打开新技能先清告警；loadGenSettings/loadVideoGenSettings 内 checkRepairStatus 检测后再点亮
+        setRepairAlert(videoRepairBtn, false);
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
             videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "";
-            genInfo = await loadGenSettings(cfgReadOnly);
+            genInfo = await loadGenSettings();
         } else if (full && full.gen_video) {
             genSettingsWrap.style.display = "none";
             videoGenSettingsWrap.style.display = "block";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "none";
-            genInfo = await loadVideoGenSettings(cfgReadOnly);
+            genInfo = await loadVideoGenSettings();
         } else {
             genSettingsWrap.style.display = "none";
             videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "";
             enhancePromptWrap.style.display = "none";
         }
+        loadedGenInfo = genInfo || null;                  // 「修复失效路径」用：保存 { config, models }
         genSettingsBaseline = collectGenSettingsJson();   // 设置区回填完成 → 脏检查基线就绪
         // 工作流流程图：仅生图/生视频技能。先显示骨架占位并同步压缩正文区（预留位置），加载完成后原地替换 → 打开时布局不跳；无 workflow.json 时隐藏。
         // 分步渲染：workflow.json + 设置就绪后先用同步预检（仅模板变量蓝框）画出流程图，
@@ -773,6 +1058,7 @@ function createSkillDetailPopup() {
         workflowSummary.textContent = "";
         workflowWrap.style.display = "none";
         workflowShown = false;
+        skillWorkflowRaw = null;
         if (wfPromise) {
             const skel = mkEl("div", "rs-wf-skeleton");
             skel.textContent = "加载工作流图中…";
@@ -781,6 +1067,7 @@ function createSkillDetailPopup() {
             workflowShown = true;
             updateContentCompact();   // 先占位：正文区立即让位，避免加载完成后整体下移
             const wf = await wfPromise;
+            if (currentSkillId === id && wf) skillWorkflowRaw = wf;   // 存原始模板：「修复失效路径」后重渲染复用（apply/inject 返回新对象不改原模板）
             if (wf) {
                 // 超出模板槽位的 LoRA 运行时动态插入（同后端 _apply_loras：在 render_template 之后、LoRA 槽位填充之前执行，流程图与真实提交一致）；配置了才注入
                 const rendered = applyWorkflowParams(injectRuntimeLoras(wf, ((genInfo || {}).config || {}).loras), workflowParamValues(full.gen_video, genInfo));
@@ -830,6 +1117,7 @@ function createSkillDetailPopup() {
         workflowSummary.textContent = "";
         contentBaseline = { name: "", content: "", multiTurn: false };
         genSettingsBaseline = null;
+        loadedGenInfo = null;
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         setEditorMode("edit");

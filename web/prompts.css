@@ -2888,6 +2888,33 @@
 .rs-gen-settings-header { flex-direction: row; align-items: center; flex-wrap: wrap; }
 .rs-gen-cfg-btns { display: flex; gap: 8px; margin-left: auto; }
 .rs-gen-cfg-btns .rs-btn { flex: none; padding: 4px 12px; }
+/* 失效模型路径修复：设置区头部按钮 + 批量套用弹窗 + 下拉框缺失态 */
+.rs-model-repair-group { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.rs-model-repair-btn, .rs-model-repair-log-btn { flex: none; padding: 4px 12px; font-size: 12px; }
+.rs-model-repair-btn { position: relative; }
+/* 检测到失效模型路径：「修复」按钮红框 + 右上角红点；无缺失（修复完成）后移除 */
+.rs-model-repair-btn.rs-alert { border-color: #f87171; color: #fca5a5; background: #3a1e24; }
+.rs-model-repair-btn.rs-alert:hover { background: #4a262e; color: #fff; }
+.rs-model-repair-btn.rs-alert::after { content: ""; position: absolute; top: -3px; right: -3px; width: 9px; height: 9px; border-radius: 50%; background: #f87171; box-shadow: 0 0 0 2px #1b1b1f; }
+.rs-model-select-box.rs-model-missing .rs-combo-input { border-color: #f87171; color: #fca5a5; }
+.rs-repair-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 2147483647; display: flex; align-items: center; justify-content: center; }
+.rs-repair-box { width: 540px; max-width: 92vw; max-height: 72vh; background: #1b1b1f; border: 1px solid #444; border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); }
+.rs-repair-head { padding: 10px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }
+.rs-repair-close { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 2px 6px; }
+.rs-repair-close:hover { color: #fff; }
+.rs-repair-body { padding: 6px 14px; overflow-y: auto; }
+.rs-repair-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #2a2a2e; }
+.rs-repair-label { width: 92px; flex: none; font-size: 12px; color: #bbb; }
+.rs-repair-cur { flex: 1; min-width: 0; font-size: 11px; color: #f87171; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-repair-sel { width: 210px; flex: none; }
+.rs-repair-foot { padding: 10px 14px; border-top: 1px solid #333; display: flex; align-items: center; gap: 8px; }
+.rs-repair-hint { flex: 1; font-size: 11px; color: #888; }
+/* 修复记录弹窗：按次分组（时间·类型）+ 每处 from→to */
+.rs-repair-log-group { margin-bottom: 12px; }
+.rs-repair-log-time { font-size: 11px; color: #8cf; font-weight: 600; padding: 2px 0 6px; }
+.rs-repair-log-empty { padding: 24px 8px; text-align: center; color: #888; font-size: 12px; line-height: 1.6; }
+.rs-repair-new { flex: 1; min-width: 0; font-size: 11px; color: #4ade80; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-repair-arrow { flex: none; color: #666; font-size: 12px; }
 .rs-skill-gen-settings .rs-gen-model-section,
 .rs-skill-gen-settings .rs-gen-size-section {
     display: flex;
@@ -2903,6 +2930,7 @@
 }
 /* 配置行：标签 | 控件 两栏布局；折叠区（高级选项）内的 Text Encoder / VAE / 出图张数 / 输出前缀 行同样两栏 */
 .rs-skill-gen-settings .rs-gen-model-section .rs-config-row,
+.rs-skill-video-gen-settings .rs-gen-model-section .rs-config-row,
 .rs-skill-gen-settings .rs-gen-size-section > .rs-config-row,
 .rs-gen-advanced .rs-gen-adv-content > .rs-config-row {
     display: grid !important;
@@ -2910,12 +2938,14 @@
     align-items: center !important;
     column-gap: 10px !important;
 }
-.rs-skill-gen-settings .rs-form-label {
+.rs-skill-gen-settings .rs-form-label,
+.rs-skill-video-gen-settings .rs-form-label {
     margin-bottom: 0;
     white-space: nowrap;
 }
 /* LoRA 行：标签 | 动态列表 | 「+ 添加」按钮右对齐（section 最后一个直接子元素） */
-.rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child {
+.rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child,
+.rs-skill-video-gen-settings .rs-gen-model-section > .rs-config-row:last-child {
     grid-template-columns: 110px minmax(0, 1fr) auto !important;
 }
 /* Text Encoder / VAE 折叠区：默认收起，勾选开头复选框展开（生图/生视频两个高级组共用；class 为本功能独有，不限定外层容器；点标题其余部分不触发，防误点） */
@@ -3168,6 +3198,10 @@
     gap: 8px;
     margin-top: 10px;
 }
+
+/* 技能详情弹窗按钮统一字号（基础 .rs-btn 为 9px，弹窗内偏小）；修复/记录弹窗同属本功能一并放大 */
+.rs-skill-detail .rs-btn,
+.rs-repair-overlay .rs-btn { font-size: 12px; }
 
 /* 技能下拉底部管理工具栏（+ New Skill / ⬆ ZIP / ⬆ Folder） */
 .rs-skill-dropdown-footer {
