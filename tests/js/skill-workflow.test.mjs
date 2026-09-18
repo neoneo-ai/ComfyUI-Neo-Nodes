@@ -324,6 +324,92 @@ test("applyWorkflowParams：替换已知参数、保留运行时变量、不改�
     assert.equal(applyWorkflowParams(wf, { MODEL: "" }), wf);
 });
 
+// ============ LoRA 运行时动态注入（镜像后端 _apply_loras：流程图与真实执行一致）============
+
+test("injectRuntimeLoras：无槽位 → UNETLoader 后串联插入并重接下游", async () => {
+    const { injectRuntimeLoras } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "m.safetensors" } },
+        "2": { class_type: "KSampler", inputs: { model: ["1", 0], seed: 1 } },
+    };
+    const out = injectRuntimeLoras(wf, [{ name: "a.safetensors", strength: 0.8 }, "b.safetensors"]);
+    assert.notEqual(out, wf, "返回新对象");
+    assert.equal(Object.keys(out).length, 4);
+    assert.deepEqual(out["3"], { class_type: "LoraLoaderModelOnly", runtime_injected: true, inputs: { model: ["1", 0], lora_name: "a.safetensors", strength_model: 0.8 } });
+    assert.equal(out["4"].inputs.lora_name, "b.safetensors");
+    assert.equal(out["4"].inputs.strength_model, 1.0, "字符串形式 LoRA 默认强度 1.0");
+    assert.deepEqual(out["2"].inputs.model, ["4", 0], "下游节点重接到新链尾");
+    assert.deepEqual(wf["2"].inputs.model, ["1", 0], "原模板不被修改");
+});
+
+test("injectRuntimeLoras：槽位不足 → 最后一个槽位后插入；未配置/槽位够用 → 原样返回", async () => {
+    const { injectRuntimeLoras } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "m.safetensors" } },
+        "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "{{LORA_1_NAME}}", strength_model: 1.0 } },
+        "3": { class_type: "KSampler", inputs: { model: ["2", 0], seed: 1 } },
+    };
+    assert.equal(injectRuntimeLoras(wf, []), wf, "未配置 LoRA → 原样返回");
+    assert.equal(injectRuntimeLoras(wf, [{ name: "a.safetensors" }]), wf, "槽位够用 → 原样返回（槽位由 applyWorkflowParams 预填）");
+    const out = injectRuntimeLoras(wf, [
+        { name: "a.safetensors", strength: 1.0 }, { name: "b.safetensors", strength: 0.5 }, { name: "c.safetensors", strength: 0.3 },
+    ]);
+    assert.equal(Object.keys(out).length, 5);
+    assert.deepEqual(out["4"].inputs.model, ["2", 0], "插入点接在最后一个槽位节点后");
+    assert.equal(out["4"].inputs.lora_name, "b.safetensors");
+    assert.deepEqual(out["5"].inputs.model, ["4", 0]);
+    assert.equal(out["5"].inputs.lora_name, "c.safetensors");
+    assert.deepEqual(out["3"].inputs.model, ["5", 0], "KSampler 重接到新链尾");
+});
+
+test("injectRuntimeLoras：无槽位且有手写 LoRA 链 → 锚点推到链尾；无 UNETLoader/无下游 → 跳过", async () => {
+    const { injectRuntimeLoras } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "m.safetensors" } },
+        "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "hand.safetensors", strength_model: 1.0 } },
+        "3": { class_type: "KSampler", inputs: { model: ["2", 0], seed: 1 } },
+    };
+    const out = injectRuntimeLoras(wf, [{ name: "a.safetensors" }]);
+    assert.equal(out["4"].inputs.lora_name, "a.safetensors");
+    assert.deepEqual(out["4"].inputs.model, ["2", 0], "插入在手写 LoRA 链之后");
+    assert.deepEqual(out["3"].inputs.model, ["4", 0]);
+
+    const noUnet = { "1": { class_type: "KSampler", inputs: { seed: 1 } } };
+    assert.equal(injectRuntimeLoras(noUnet, [{ name: "a.safetensors" }]), noUnet, "无 UNETLoader → 跳过");
+    const noConsumer = { "1": { class_type: "UNETLoader", inputs: { unet_name: "m.safetensors" } } };
+    assert.equal(injectRuntimeLoras(noConsumer, [{ name: "a.safetensors" }]), noConsumer, "无下游节点 → 跳过");
+});
+
+test("详情弹窗：超出模板槽位的 LoRA 动态注入流程图（与运行时一致）", async () => {
+    const WF_INJECT = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+        "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" } },
+        "3": { class_type: "KSampler", inputs: { model: ["2", 0], seed: 1 } },
+    };
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_INJECT }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: { strength_model: ["FLOAT"] } } },
+        KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
+    }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["m.safetensors"]));
+    mockRoute("/models/loras", () => jsonResponse(["q.safetensors", "r.safetensors"]));
+
+    await openGenPopup({
+        id: "image_gen_text", source: "custom",
+        config: { model: "m.safetensors", loras: [{ name: "q.safetensors", strength: 0.6 }, { name: "r.safetensors", strength: 0.4 }] },
+    });
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wfWrap && wfWrap.style.display !== "none", "应渲染工作流区");
+    const nodes = wfWrap.querySelectorAll(".rs-wf-body .rs-wf-node");
+    assert.equal(nodes.length, 4, "1 个超出槽位的 LoRA → 图里多一个 LoraLoaderModelOnly");
+    const loraNodes = Array.from(nodes).filter(g => g.textContent.includes("LoraLoaderModelOnly"));
+    assert.equal(loraNodes.length, 2);
+    assert.ok(loraNodes.some(g => g.textContent.includes("#4")), "注入节点 id = max_id+1（与后端一致）");
+    const summary = wfWrap.querySelector(".rs-wf-summary").textContent;
+    assert.ok(!summary.includes("模型缺失"), "配置的 LoRA 都在列表中，不应报缺失：" + summary);
+});
+
 const WF_RENDER = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
     "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" } },

@@ -10,7 +10,7 @@ import { listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 import { attachSkillPickerToComboWidget } from "./skill.js";
 
-const TL_H = 96; // 节点内时间轴显示区高度（px）
+const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
 const PREVIEW_H = 300; // 运行时实时预览面板高度（px）：运行中为面板加高节点，结束还原
 const PREVIEW_EVENT = "rs.h3.preview"; // 后端每步推来的多帧载荷（见 h3_preview.py）
@@ -30,6 +30,78 @@ function onPreviewEvent(e) {
 }
 
 api.addEventListener(PREVIEW_EVENT, onPreviewEvent);
+
+// 选择窗预览卡的配方 spec 缓存：name -> {shared, segments}；配方保存（新建/编辑/重命名）后清空，避免显示旧分段
+const _recipeSpecCache = new Map();
+async function fetchRecipeSpec(name) {
+    if (_recipeSpecCache.has(name)) return _recipeSpecCache.get(name);
+    const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
+    const data = resp.ok ? await resp.json() : null;
+    if (data && data.success) { _recipeSpecCache.set(name, data); return data; }
+    return null;
+}
+
+// 预览卡时间轴实例（只读，与节点内嵌同款组件）：焦点切换 / 选择窗关闭时销毁，避免残留 ResizeObserver
+let _previewCardTL = null;
+function destroyPreviewTimeline() {
+    if (_previewCardTL) { _previewCardTL.destroy(); _previewCardTL = null; }
+}
+const PREVIEW_TL_H = 112; // 预览卡时间轴高度（与节点内嵌 canvas 同高）
+/** 在预览卡里用只读时间轴画出焦点配方的分段（与节点内嵌同款组件、同映射，含首帧缩略图） */
+function mountPreviewTimeline(body, segments) {
+    body.innerHTML = "";
+    if (!segments || !segments.length) { body.textContent = "（无分段）"; return; }
+    const box = document.createElement("div");
+    body.appendChild(box);
+    try {
+        _previewCardTL = new DirectorTimeline(box, {
+            height: PREVIEW_TL_H,
+            readOnly: true,
+            getSegments: () => segments.map(s => ({
+                // 内容派生身份：与节点内嵌时间轴同配色规则
+                id: `${s.prompt || ''}|${Number(s.duration_sec) || 0}|${s.ref_input || ''}`,
+                duration: Number(s.duration_sec) || 0,
+                prompt: s.prompt || "",
+                thumbUrl: s.ref_input ? `/view?filename=${encodeURIComponent(s.ref_input)}&subfolder=&type=input` : null,
+            })),
+        });
+    } catch (e) {
+        console.error("[Neo Nodes] recipe preview timeline init failed", e);
+        _previewCardTL = null;
+        body.textContent = "加载失败";
+    }
+}
+
+/** 配方选择窗的浮动预览卡（替代技能详情预览）：焦点配方的只读时间轴；点击卡片由 onPreviewClick 打开该配方编辑器 */
+function renderRecipePreview(preview, it) {
+    destroyPreviewTimeline();
+    preview.innerHTML = "";
+    if (!it) {
+        const hint = document.createElement("div");
+        hint.className = "rs-skill-preview-empty";
+        hint.textContent = "用 ↑ / ↓ 或悬停浏览配方";
+        preview.appendChild(hint);
+        return;
+    }
+    preview.dataset.focusId = it.value;
+    const nameEl = document.createElement("div");
+    nameEl.className = "rs-skill-preview-name";
+    nameEl.textContent = it.label;
+    nameEl.title = it.label;
+    const body = document.createElement("div");
+    body.textContent = "加载中…";
+    const hint = document.createElement("div");
+    hint.className = "rs-skill-preview-hint";
+    hint.textContent = "点击卡片打开配方编辑器";
+    preview.append(nameEl, body, hint);
+    fetchRecipeSpec(it.value).then((spec) => {
+        if (preview.dataset.focusId !== it.value || !preview.isConnected) return; // 焦点已切走或选择窗已关，丢弃过期结果
+        mountPreviewTimeline(body, spec ? spec.segments || [] : null);
+    }).catch(() => {
+        if (preview.dataset.focusId === it.value && preview.isConnected) body.textContent = "加载失败";
+    });
+}
+
 
 /**
  * 节点内实时预览面板：每步一段多帧动画，自动循环 + 暂停 / 逐帧 / 逐采样步。
@@ -289,14 +361,21 @@ app.registerExtension({
             // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
             if (skillIdWidget) skillIdWidget.hidden = true;
             // 点击 recipe / skill_id combo → 弹居中选择窗（替代原生下拉）。
-            // recipe：仅搜索、无底部工具栏；skill_id：默认技能列表（含管理工具栏）
+            // recipe：仅搜索、无底部工具栏，预览卡显示焦点配方只读时间轴（节点内嵌同款组件）；skill_id：默认技能列表（含管理工具栏）
             const recipeItemsProvider = async (w) => {
                 const recipes = (await listRecipes()).filter((r) => r.type === "video_director");
                 const allowed = Array.isArray(w?.options?.values) ? w.options.values : null;
                 const pool = allowed ? recipes.filter((r) => allowed.includes(r.name)) : recipes;
                 return pool.map((r) => ({ value: r.name, label: r.name }));
             };
-            if (recipeWidget) attachSkillPickerToComboWidget(recipeWidget, { title: "选择导演配方", showFooter: false, itemsProvider: recipeItemsProvider });
+            if (recipeWidget) attachSkillPickerToComboWidget(recipeWidget, {
+                title: "选择导演配方",
+                showFooter: false,
+                itemsProvider: recipeItemsProvider,
+                previewRenderer: renderRecipePreview,
+                onPreviewClick: (it) => openEditor(-1, it.value), // 点预览卡直接打开该配方的编辑器
+                onClose: destroyPreviewTimeline, // 选择窗关闭时销毁预览卡时间轴实例
+            });
             if (skillIdWidget) attachSkillPickerToComboWidget(skillIdWidget, { title: "选择视频技能（H3）" });
             // 按配方首段 skill config 填充 width/height/steps widget。
             // 每个配方有自己的硬性要求（如 VDN/turbo 配方要求 steps=8），所以重新载入配方时一律重新初始化，用户手改值也不保留。
@@ -341,6 +420,7 @@ app.registerExtension({
             // 必要时重选并重载时间轴。集中在此一处，避免各入口各自刷导致重复拉取 / 选择冲突。
             const onDirectorRecipeSaved = async (e) => {
                 const detail = e?.detail || {};
+                _recipeSpecCache.clear(); // 配方内容可能已变（新建/编辑/重命名），预览卡不得再用旧 spec
                 try {
                     const directors = (await listRecipes()).filter((r) => r.type === "video_director");
                     if (recipeWidget && Array.isArray(recipeWidget.options?.values)) recipeWidget.options.values = directors.map((r) => r.name);
@@ -359,9 +439,10 @@ app.registerExtension({
             window.addEventListener(DIRECTOR_RECIPE_SAVED_EVENT, onDirectorRecipeSaved);
 
             // 时间轴右上角「✎」：打开当前配方的导演编辑器，保存后自动刷新时间轴；
-            // 点击分段块时带上该段索引（segIndex），编辑器打开即定位到被点的段
-            const openEditor = async (segIndex = -1) => {
-                const name = recipeWidget ? String(recipeWidget.value || "").trim() : "";
+            // 点击分段块时带上该段索引（segIndex），编辑器打开即定位到被点的段；
+            // nameOverride 供选择窗预览卡点击直接打开焦点配方（而非当前选中值）
+            const openEditor = async (segIndex = -1, nameOverride = "") => {
+                const name = nameOverride || (recipeWidget ? String(recipeWidget.value || "").trim() : "");
                 if (!name) { showToast(app, "warn", "请先选择分段配方", ""); return; }
                 editBtn.disabled = true;
                 try {

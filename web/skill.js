@@ -12,7 +12,7 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
-import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow } from "./workflow-graph.js";
+import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
@@ -782,7 +782,8 @@ function createSkillDetailPopup() {
             updateContentCompact();   // 先占位：正文区立即让位，避免加载完成后整体下移
             const wf = await wfPromise;
             if (wf) {
-                const rendered = applyWorkflowParams(wf, workflowParamValues(full.gen_video, genInfo));
+                // 超出模板槽位的 LoRA 运行时动态插入（同后端 _apply_loras：在 render_template 之后、LoRA 槽位填充之前执行，流程图与真实提交一致）；配置了才注入
+                const rendered = applyWorkflowParams(injectRuntimeLoras(wf, ((genInfo || {}).config || {}).loras), workflowParamValues(full.gen_video, genInfo));
                 renderWorkflowGraph(workflowBody, rendered, validateWorkflow(rendered, null, {}), workflowSummary); // 内部先清空占位再画
                 const validation = await checkWorkflow(rendered);   // /object_info + /models/*，失败内部按跳过处理
                 if (currentSkillId === id && workflowShown) {       // 等待期间切了技能/关区 → 丢弃过期结果
@@ -1263,7 +1264,7 @@ function positionPreviewCard(previewEl, rect) {
     const vw = window.innerWidth || 1200;
     const vh = window.innerHeight || 800;
     const MARGIN = 8, GAP = 8;
-    const w = previewEl.offsetWidth || 340;
+    const w = previewEl.offsetWidth || 420;
     const h = previewEl.offsetHeight || 120;
     let left = rect.right + GAP;
     if (left + w > vw - MARGIN) left = rect.left - w - GAP; // 右侧放不下 → 翻到行左侧
@@ -1393,7 +1394,7 @@ function openSkillPickerModal(opts = {}) {
         else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight(highlightIndex - 1); }
         else if (e.key === "Enter") { e.preventDefault(); pickHighlighted(); }
     };
-    const close = () => { _skillPickerOpen = false; overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", positionPreview); };
+    const close = () => { _skillPickerOpen = false; overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", positionPreview); opts.onClose?.(); };
     // 打开技能详情（编辑）弹窗：选择窗关闭后按 skill id 加载（名称可改，id 是稳定键）
     const openDetail = (it) => { close(); getSkillDetailPopup().openExisting(it.skillId || it.value, it.source); };
 
@@ -1413,17 +1414,20 @@ function openSkillPickerModal(opts = {}) {
     }
 
     // 技能列表：浮动预览卡，以焦点行为锚点贴其右侧（键盘高亮 / hover 跟随）；
-    // 生成技能显示配置摘要（未保存字段按详情同款自动默认），其余技能显示 skill.md 模板正文摘录，故只要存在技能条目就渲染
+    // 生成技能显示配置摘要（未保存字段按详情同款自动默认），其余技能显示 skill.md 模板正文摘录，故只要存在技能条目就渲染。
+    // 调用方传 previewRenderer 时改用自定义渲染（如导演配方的只读时间轴），此时只要有候选项就渲染
     const wrap = mkEl("div", "rs-skill-picker-wrap");
     wrap.appendChild(panel);
     let preview = null;
-    if (items.some((it) => it.skillId || it.genImage || it.genVideo)) {
+    if (opts.previewRenderer || items.some((it) => it.skillId || it.genImage || it.genVideo)) {
         preview = mkEl("div", "rs-skill-picker-preview");
-        preview.title = "点击打开技能详情";
+        preview.title = opts.previewRenderer ? "" : "点击打开技能详情";
         preview.addEventListener("mousedown", (e) => e.preventDefault()); // 不抢搜索框焦点
         preview.addEventListener("click", () => {
             const it = visibleItems[highlightIndex];
-            if (it) openDetail(it);
+            if (!it) return;
+            if (opts.onPreviewClick) { close(); opts.onPreviewClick(it); }
+            else openDetail(it);
         });
         overlay.appendChild(preview); // absolute 挂在 overlay（fixed inset:0）上，按视口坐标锚定焦点行
     }
@@ -1443,7 +1447,9 @@ function openSkillPickerModal(opts = {}) {
     }
     const updatePreview = () => {
         if (!preview) return;
-        renderSkillPreview(preview, visibleItems[highlightIndex] || null, { genModels, videoModels });
+        const it = visibleItems[highlightIndex] || null;
+        if (opts.previewRenderer) opts.previewRenderer(preview, it);
+        else renderSkillPreview(preview, it, { genModels, videoModels });
         positionPreview(); // 内容行数变化后卡片高度变，需重新锚定
     };
 
@@ -1498,6 +1504,7 @@ function openSkillPickerModal(opts = {}) {
     if (anchorRect) {
         overlay.classList.add("rs-skill-picker--anchored");
         positionPickerPanel(wrap, anchorRect);
+        positionPreview(); // 面板锚定后焦点行坐标已变，预览卡需重新对齐（首次定位发生在居中布局下）
     }
 
     search.focus();
@@ -1521,8 +1528,8 @@ async function defaultSkillItemsProvider(widget) {
     return skillItemsFromMeta(skills, allowed);
 }
 
-/** 打开 combo 对应的选择窗（异步取条目后展示） */
-async function openComboSkillPicker(node, widget, title, showFooter, provider, anchor) {
+/** 打开 combo 对应的选择窗（异步取条目后展示）；extra 透传给 openSkillPickerModal（previewRenderer / onPreviewClick） */
+async function openComboSkillPicker(node, widget, title, showFooter, provider, anchor, extra = {}) {
     let items = [];
     try { items = (await provider(widget)) || []; } catch (e) { console.error("[Neo Nodes] skill picker load failed", e); }
     openSkillPickerModal({
@@ -1532,12 +1539,14 @@ async function openComboSkillPicker(node, widget, title, showFooter, provider, a
         showFooter,
         anchor,
         onPick: (value) => setComboWidgetValue(node, widget, value),
+        ...extra,
     });
 }
 
 /**
  * 拦截 ComfyUI 画布 combo widget 的点击，改为弹出技能选择窗（锚定到鼠标位置）。
- * opts: { title, showFooter(默认 true), itemsProvider(widget)->Promise<items[]> }
+ * opts: { title, showFooter(默认 true), itemsProvider(widget)->Promise<items[]>,
+ *         previewRenderer(previewEl, item|null)（自定义预览卡渲染，如配方时间轴）, onPreviewClick(item)（点预览卡动作，默认打开技能详情）, onClose()（选择窗关闭时回调，供调用方清理预览卡资源） }
  * 新版前端 processWidgetClick 只认 onPointerDown 返回真值来短路原生 combo 下拉；
  * 其 pointer 参数没有视口坐标，因此用 document 捕获阶段记录的真实 pointerdown 坐标做锚点。
  * 不能挂 widget.mouse：processMouseMove 也会调用它，会导致悬停/点击别处时重复弹窗。
@@ -1556,10 +1565,14 @@ function attachSkillPickerToComboWidget(widget, opts = {}) {
     if (!widget || widget.__neoSkillPickerAttached) return;
     const showFooter = opts.showFooter !== false;
     const provider = typeof opts.itemsProvider === "function" ? opts.itemsProvider : defaultSkillItemsProvider;
+    const extra = {};
+    if (typeof opts.previewRenderer === "function") extra.previewRenderer = opts.previewRenderer;
+    if (typeof opts.onPreviewClick === "function") extra.onPreviewClick = opts.onPreviewClick;
+    if (typeof opts.onClose === "function") extra.onClose = opts.onClose;
     ensureNeoPointerTracker();
     const node = widget.node;
     widget.onPointerDown = () => {
-        openComboSkillPicker(node || widget.node, widget, null, showFooter, provider, { clientX: _neoLastPointer.x, clientY: _neoLastPointer.y });
+        openComboSkillPicker(node || widget.node, widget, null, showFooter, provider, { clientX: _neoLastPointer.x, clientY: _neoLastPointer.y }, extra);
         return true;
     };
     widget.__neoSkillPickerAttached = true;

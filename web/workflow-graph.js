@@ -3,6 +3,8 @@
  * 技能工作流模板（API prompt 格式）的只读 SVG 流程图渲染：
  * - layoutWorkflow：拓扑分层 → 从左到右自动布局（节点高度随参数行数自适应；纯函数，无 DOM 依赖）
  * - applyWorkflowParams：按已知参数（设置 + 自动建议模型）预替换模板变量，运行时变量保留
+ * - injectRuntimeLoras：配置 LoRA 超出模板槽位时镜像后端 _apply_loras 动态插入 LoraLoaderModelOnly，
+ *   使流程图与运行时实际提交的图一致；未配置或槽位够用时原样返回
  * - validateWorkflow / checkWorkflow：对照 /object_info 与 /models/{folder}
  *   标记 节点未安装 / 模型未找到 / {{模板变量}}（请求失败时跳过对应检查，不误报）
  * - renderWorkflowGraph：画 SVG（节点框 + 参数行 + 贝塞尔连线 + 徽标 + tooltip）+ 问题摘要到容器
@@ -236,6 +238,83 @@ export function applyWorkflowParams(workflow, values) {
 }
 
 
+// LoRA 运行时动态注入（镜像 image_gen.py _apply_loras）：配置 LoRA 超出模板 {{LORA_i_*}} 槽位时，
+// 在主链末端串联插入 LoraLoaderModelOnly（id = max_id+1...），使流程图与运行时实际提交的图一致。
+// 未配置或槽位够用时原样返回；返回新对象不改原模板。注入节点带 runtime_injected 标记（tooltip 标注）。
+const LORA_SLOT_RE = /^\{\{LORA_(\d+)_NAME\}\}$/;
+
+function _loraModelConsumer(wf, srcId) {
+    let best = null;
+    for (const [id, node] of Object.entries(wf)) {
+        if (!node || node.class_type !== "LoraLoaderModelOnly") continue;
+        const v = (node.inputs || {}).model;
+        if (Array.isArray(v) && typeof v[0] === "string" && v[0] === String(srcId)) {
+            if (best === null || _sortNodeIds(id, best) < 0) best = id;
+        }
+    }
+    return best;
+}
+
+function _anyModelConsumer(wf, srcId) {
+    let best = null;
+    for (const [id, node] of Object.entries(wf)) {
+        if (id === srcId || !node) continue;
+        const v = (node.inputs || {}).model;
+        if (Array.isArray(v) && typeof v[0] === "string" && v[0] === String(srcId)) {
+            if (best === null || _sortNodeIds(id, best) < 0) best = id;
+        }
+    }
+    return best;
+}
+
+export function injectRuntimeLoras(workflow, loras) {
+    const entries = (loras || [])
+        .map(l => (typeof l === "string" ? { name: l, strength: 1.0 } : l))
+        .filter(l => l && l.name);
+    if (!entries.length) return workflow;
+    const slots = {};
+    for (const [id, node] of Object.entries(workflow || {})) {
+        if (!node || node.class_type !== "LoraLoaderModelOnly") continue;
+        const m = LORA_SLOT_RE.exec(String((node.inputs || {}).lora_name || ""));
+        if (m) slots[Number(m[1])] = id;
+    }
+    const ordered = Object.keys(slots).map(Number).sort((a, b) => a - b).map(i => slots[i]);
+    if (entries.length <= ordered.length) return workflow;
+
+    // 锚点：最后一个槽位节点；无槽位时取第一个 UNETLoader，模板手写过 LoRA 链则推到链尾（与后端一致）
+    let anchor = ordered[ordered.length - 1];
+    if (!anchor) {
+        const unets = Object.entries(workflow).filter(([, n]) => n && n.class_type === "UNETLoader").map(([id]) => id);
+        if (!unets.length) return workflow;
+        anchor = unets.sort(_sortNodeIds)[0];
+        for (;;) {
+            const nxt = _loraModelConsumer(workflow, anchor);
+            if (!nxt) break;
+            anchor = nxt;
+        }
+    }
+    const consumer = _anyModelConsumer(workflow, anchor);
+    if (!consumer) return workflow;
+
+    let maxId = 0;
+    for (const id of Object.keys(workflow)) {
+        const n = Number(id);
+        if (Number.isInteger(n) && n > maxId) maxId = n;
+    }
+    const out = {};
+    for (const [id, node] of Object.entries(workflow)) out[id] = { ...node, inputs: { ...(node.inputs || {}) } };
+    let prev = anchor;
+    entries.slice(ordered.length).forEach((entry, i) => {
+        const nid = String(maxId + i + 1);
+        out[nid] = { class_type: "LoraLoaderModelOnly", runtime_injected: true,
+                     inputs: { model: [prev, 0], lora_name: entry.name, strength_model: entry.strength ?? 1.0 } };
+        prev = nid;
+    });
+    out[consumer].inputs.model = [prev, 0];
+    return out;
+}
+
+
 /**
  * 校验 workflow：objectInfo（/object_info）与 modelLists（folder→文件名列表）任一为 null/缺项时跳过对应检查。
  * 返回 { issues: nodeId → [{kind, message}], counts: {missingNodes, missingModels, templates} }。
@@ -364,7 +443,8 @@ function nodeH(nLines) {
 }
 
 function nodeTooltip(id, workflow, issues) {
-    const lines = [`${(workflow[id] && workflow[id].class_type) || "?"} #${id}`];
+    const injected = workflow[id] && workflow[id].runtime_injected ? "（运行时动态注入）" : "";
+    const lines = [`${(workflow[id] && workflow[id].class_type) || "?"} #${id}${injected}`];
     const inputs = (workflow[id] && workflow[id].inputs) || {};
     for (const [k, v] of Object.entries(inputs)) lines.push(`${k}: ${_fmtVal(v)}`);
     for (const i of issues || []) lines.push(i.message);

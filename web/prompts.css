@@ -3250,7 +3250,7 @@
 /* 技能浮动预览卡：选择窗内 absolute 挂 overlay、agent 技能下拉内 fixed 挂 body（--fixed），均以焦点行为锚点贴其右侧（JS 计算坐标）；随行焦点（键盘高亮 / hover）跟随 */
 .rs-skill-picker-preview {
     position: absolute;
-    width: 340px;
+    width: 420px;
     max-width: calc(100vw - 24px);
     max-height: calc(100vh - 24px);
     overflow-y: auto;

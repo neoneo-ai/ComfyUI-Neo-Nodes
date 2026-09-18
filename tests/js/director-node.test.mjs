@@ -7,7 +7,7 @@ import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./
 import { getExtension, appState } from "./mocks/comfy-app.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
-const TL_H = 96; // 与 web/director-node.js 的 TL_H 保持一致
+const TL_H = 120; // 与 web/director-node.js 的 TL_H 保持一致
 const ACT_H = 28; // 与 web/director-node.js 的 ACT_H（时间轴下方操作条）保持一致
 const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（运行时实时预览面板高度）保持一致
 const PREVIEW_EVENT = "rs.h3.preview"; // 与 web/director-node.js 的 PREVIEW_EVENT（后端 h3_preview 推载荷）保持一致
@@ -124,13 +124,44 @@ test("点击节点时间轴分段块直接打开配方编辑器", async () => {
 
     const canvas = node._neoDtTimeline.canvas;
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
-    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 88, width: 320, height: 88 };
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 112, width: 320, height: 112 };
 
     // 单段块占满 [8,312]，点中间命中块0 → readOnly select → onSelect → openEditor
     canvas.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: 160, clientY: 40 }));
 
     await sleep(120); // openEditor：listRecipes → openDirectorEditor 建浮层
     assert.ok(document.querySelector(".neo-director-overlay"), "点击时间轴块打开编辑器");
+});
+
+test("recipe 选择窗预览卡：焦点配方显示只读时间轴（节点内嵌同款组件）", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true,
+        segments: [
+            { prompt: "a", duration_sec: 5 },
+            { prompt: "b", duration_sec: 10 },
+            { prompt: "c", duration_sec: 5 },
+        ],
+    }));
+    mockRoute("/rs_recipes/list", () => jsonResponse([{ name: "pv-recipe", type: "video_director" }]));
+
+    const node = await createDirectorNode("pv-recipe");
+    const recipe = node.widgets.find((w) => w.name === "recipe");
+    assert.equal(typeof recipe.onPointerDown, "function", "recipe combo 应挂选择窗拦截");
+    recipe.onPointerDown();
+    await sleep(200); // listRecipes → openSkillPickerModal → fetchRecipeSpec → 挂载时间轴
+
+    const preview = document.querySelector(".rs-skill-picker-preview");
+    assert.ok(preview, "预览卡应渲染");
+    assert.ok(preview.querySelector(".neo-dtl-canvas"), "预览卡内嵌只读时间轴 canvas");
+    assert.ok(!preview.textContent.includes("加载中"), "预览卡不应停留在加载态");
+
+    document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await sleep(30); // Esc 关窗：onClose 应销毁预览卡时间轴实例
+    assert.equal(document.querySelector(".rs-skill-modal-overlay"), null, "Esc 关闭选择窗");
+    destroyNode(node);
 });
 
 test("轮询 /neo_video_gen/director_progress 后时间轴读到各段生成状态", async () => {
@@ -323,10 +354,10 @@ test("点击节点时间轴第 3 块：编辑器打开即定位到该段", async
 
     const canvas = node._neoDtTimeline.canvas;
     Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
-    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 88, width: 320, height: 88 };
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 112, width: 320, height: 112 };
 
-    // 3 段等长、可点区间 [8,312]：第 3 块 [210.7,312]，点中点 261
-    canvas.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: 261, clientY: 40 }));
+    // 内容宽按块净高 84×16/9 取默认基准：3 段 ≈ 464，每段 149.3；第 3 块 [306.7,456]，点中点 381
+    canvas.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: 381, clientY: 40 }));
     await sleep(140); // openEditor：listRecipes → openDirectorEditor(meta, cb, 2)
 
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));

@@ -358,7 +358,7 @@ test("预览卡跟随焦点行锚定在其右侧（放不下翻左侧）", async
         { value: "a", label: "Alpha", genImage: true, genConfig: { model: "m.safetensors" } },
         { value: "b", label: "Beta", genVideo: true, genConfig: { model: "v.safetensors" } },
     ];
-    openSkillPickerModal({ items });
+    const res = openSkillPickerModal({ items });
     const overlay = document.querySelector(".rs-skill-modal-overlay");
     const preview = document.querySelector(".rs-skill-picker-preview");
     assert.ok(preview, "存在生成技能时渲染预览卡");
@@ -380,4 +380,45 @@ test("预览卡跟随焦点行锚定在其右侧（放不下翻左侧）", async
     fire(rows[1], "mouseenter"); // 行贴近视口右缘（jsdom vw=1024），右侧放不下 → 翻到行左侧
     assert.equal(preview.style.left, "552px", "右侧放不下时翻到行左侧（left - w - 8）");
     assert.equal(preview.style.top, "300px");
+    res.close(); // 清理 _skillPickerOpen，避免影响后续测试
+});
+
+// 自定义 previewRenderer（导演配方选择窗用）：条目无 skillId/genImage 也渲染预览卡、由调用方函数渲染；
+// 点卡片走 onPreviewClick（打开配方编辑器）而非技能详情
+test("previewRenderer 自定义预览卡：随焦点更新，点击触发 onPreviewClick 并关窗", async () => {
+    const { openSkillPickerModal } = await import("../../web/skill.js");
+    let clicked = null;
+    const res = openSkillPickerModal({
+        items: [
+            { value: "rec-a", label: "配方 A" },
+            { value: "rec-b", label: "配方 B" },
+        ],
+        previewRenderer: (preview, it) => { preview.textContent = it ? `preview:${it.value}` : "hint"; },
+        onPreviewClick: (it) => { clicked = it; },
+    });
+    const overlay = document.querySelector(".rs-skill-modal-overlay");
+    const preview = document.querySelector(".rs-skill-picker-preview");
+    assert.ok(preview, "传 previewRenderer 时，无 skillId/genImage 的条目也应渲染预览卡");
+    assert.equal(preview.textContent, "hint", "无焦点行时由自定义渲染器画提示态");
+
+    keydown(overlay, "ArrowDown"); // 焦点行 0
+    await sleep(20);
+    assert.equal(preview.textContent, "preview:rec-a");
+
+    keydown(overlay, "ArrowDown"); // 焦点移到行 1，预览卡跟随
+    await sleep(20);
+    assert.equal(preview.textContent, "preview:rec-b");
+
+    click(preview);
+    await sleep(20);
+    assert.ok(clicked && clicked.value === "rec-b", "点预览卡应以焦点条目调用 onPreviewClick");
+    assert.equal(document.querySelector(".rs-skill-modal-overlay"), null, "点预览卡后选择窗应关闭");
+});
+
+// 回归：不传 previewRenderer 且条目无 skillId/genImage（纯 label 条目）时不渲染预览卡
+test("无 previewRenderer 的纯文本条目：不渲染预览卡", async () => {
+    const { openSkillPickerModal } = await import("../../web/skill.js");
+    const res = openSkillPickerModal({ items: [{ value: "x", label: "X" }] });
+    assert.equal(document.querySelector(".rs-skill-picker-preview"), null, "无技能条目且无自定义渲染器时不渲染预览卡");
+    res.close();
 });
