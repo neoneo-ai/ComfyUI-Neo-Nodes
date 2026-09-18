@@ -163,6 +163,22 @@ async function deleteSkillFile(id, file) {
     }
 }
 
+/** 预设技能生图/生视频设置恢复默认（删除本地覆盖文件） */
+async function resetSkillGenConfig(id) {
+    try {
+        const res = await fetch("/rs_prompts/reset_skill_config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id })
+        });
+        if (!res.ok) return { success: false, error: await res.text() };
+        return await res.json();
+    } catch (e) {
+        console.error("Failed to reset skill config:", e);
+        return { success: false, error: e.message };
+    }
+}
+
 // ==========================================
 // Markdown 渲染：marked（GFM + breaks:true 保留换行）+ DOMPurify 消毒，防 LLM/用户内容注入
 // ==========================================
@@ -244,16 +260,22 @@ function createSkillDetailPopup() {
     const overlay = mkEl("div", "rs-skill-modal-overlay");
     const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
 
-    // ---- 头部：标题 + 来源徽标 + 关闭 ----
+    // ---- 头部：标题 + 来源徽标 + Copy as custom + 关闭 ----
     const header = mkEl("div", "rs-skill-modal-header");
     const titleSpan = mkEl("span", "rs-skill-modal-title");
     titleSpan.textContent = "📝 Skill";
     const sourceBadge = mkEl("span", "rs-source-badge rs-skill-detail-badge");
     header.append(titleSpan, sourceBadge);
+    // Copy as custom 放标题栏（仅预设/任务技能显示），在 ✕ 左侧
+    const copyBtn = mkEl("button", "rs-btn rs-btn-local");
+    copyBtn.type = "button";
+    copyBtn.textContent = "⧉ Copy as custom";
+    copyBtn.title = "Copy this built-in skill into a new editable custom skill";
+    copyBtn.style.display = "none";
     const closeBtn = mkEl("button", "rs-skill-modal-close");
     closeBtn.textContent = "✕";
     closeBtn.setAttribute("aria-label", "Close");
-    header.appendChild(closeBtn);
+    header.append(copyBtn, closeBtn);
 
     // ---- 内容：名称行 + 正文区（多文件下拉 + 预览/编辑切换）----
     const content = mkEl("div", "rs-skill-modal-content");
@@ -335,9 +357,25 @@ function createSkillDetailPopup() {
     genSettingsTitle.textContent = "🖼️ 生图设置（优先于默认设置）";
     genSettingsTitle.title = "仅对本技能生效，未填项回落全局生图设置";
     const genReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
-    genReadOnlyHint.textContent = "预设/任务技能只读：点下方「⧉ Copy as custom」复制后可编辑";
+    genReadOnlyHint.textContent = "任务技能只读：点标题栏「⧉ Copy as custom」复制后可编辑";
     genReadOnlyHint.style.display = "none";
-    genSettingsHeader.append(genSettingsTitle, genReadOnlyHint);
+    const genLocalHint = mkEl("span", "rs-gen-readonly-hint");
+    genLocalHint.textContent = "预设内容只读；设置保存为本地覆盖（不改预设文件）";
+    genLocalHint.title = "模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除";
+    genLocalHint.style.display = "none";
+    const genSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
+    genSaveCfgBtn.type = "button";
+    genSaveCfgBtn.textContent = "💾 Save";
+    genSaveCfgBtn.title = "保存本技能生图设置（预设技能存为本地覆盖）";
+    genSaveCfgBtn.style.display = "none";
+    const genRestoreCfgBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+    genRestoreCfgBtn.type = "button";
+    genRestoreCfgBtn.textContent = "↺ 恢复默认";
+    genRestoreCfgBtn.title = "清除本技能本地覆盖设置，恢复预设默认值";
+    genRestoreCfgBtn.style.display = "none";
+    const genCfgBtns = mkEl("div", "rs-gen-cfg-btns");
+    genCfgBtns.append(genSaveCfgBtn, genRestoreCfgBtn);
+    genSettingsHeader.append(genSettingsTitle, genReadOnlyHint, genLocalHint, genCfgBtns);
     const genModelSection = createModelConfigSection();
     const genSizeSection = createGenSizeRows();
     // Text Encoder / VAE / 生图张数 / 输出前缀 很少改动：收进可折叠「高级选项」（默认收起），放到最底部
@@ -369,9 +407,25 @@ function createSkillDetailPopup() {
     videoGenSettingsTitle.textContent = "🎬 生视频设置（优先于默认设置）";
     videoGenSettingsTitle.title = "仅对本技能生效，未填项回落全局「生视频模型」设置";
     const videoReadOnlyHint = mkEl("span", "rs-gen-readonly-hint");
-    videoReadOnlyHint.textContent = "预设/任务技能只读：点下方「⧉ Copy as custom」复制后可编辑";
+    videoReadOnlyHint.textContent = "任务技能只读：点标题栏「⧉ Copy as custom」复制后可编辑";
     videoReadOnlyHint.style.display = "none";
-    videoGenSettingsHeader.append(videoGenSettingsTitle, videoReadOnlyHint);
+    const videoLocalHint = mkEl("span", "rs-gen-readonly-hint");
+    videoLocalHint.textContent = "预设内容只读；设置保存为本地覆盖（不改预设文件）";
+    videoLocalHint.title = "模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除";
+    videoLocalHint.style.display = "none";
+    const videoSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
+    videoSaveCfgBtn.type = "button";
+    videoSaveCfgBtn.textContent = "💾 Save";
+    videoSaveCfgBtn.title = "保存本技能生视频设置（预设技能存为本地覆盖）";
+    videoSaveCfgBtn.style.display = "none";
+    const videoRestoreCfgBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+    videoRestoreCfgBtn.type = "button";
+    videoRestoreCfgBtn.textContent = "↺ 恢复默认";
+    videoRestoreCfgBtn.title = "清除本技能本地覆盖设置，恢复预设默认值";
+    videoRestoreCfgBtn.style.display = "none";
+    const videoCfgBtns = mkEl("div", "rs-gen-cfg-btns");
+    videoCfgBtns.append(videoSaveCfgBtn, videoRestoreCfgBtn);
+    videoGenSettingsHeader.append(videoGenSettingsTitle, videoReadOnlyHint, videoLocalHint, videoCfgBtns);
     const videoModelSection = createVideoModelConfigSection();
     // Text Encoder / VAE（视频）/ VAE（音频）很少改动：收进可折叠「高级选项」（默认收起），放到最底部
     let videoAdvEl = null;
@@ -390,6 +444,16 @@ function createSkillDetailPopup() {
     videoGenSettingsWrap.append(videoGenSettingsHeader, videoModelSection.el);
     if (videoAdvEl) videoGenSettingsWrap.appendChild(videoAdvEl);
 
+    // 设置区头部「💾 Save / ↺ 恢复默认」与本地覆盖提示的显隐（仅预设；恢复仅在存在覆盖时显示）
+    function updateCfgButtons(btns, saveBtn, restoreBtn, localHint, readOnly) {
+        const preset = currentSource === "presets";
+        const showSave = preset && !readOnly;
+        btns.style.display = showSave ? "flex" : "none";
+        saveBtn.style.display = showSave ? "inline-block" : "none";
+        restoreBtn.style.display = preset && !readOnly && configOverridden ? "inline-block" : "none";
+        localHint.style.display = preset && !readOnly ? "inline" : "none";
+    }
+
     async function loadVideoGenSettings(readOnly) {
         if (!currentSkillId) return;
         const [config, videoModels] = await Promise.all([
@@ -398,10 +462,11 @@ function createSkillDetailPopup() {
         ]);
         videoModelSection.load(config || {}, videoModels);
         for (const el of videoGenSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
+        updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint, readOnly);
         videoReadOnlyHint.style.display = readOnly ? "block" : "none";
     }
 
-    // readOnly（预设/任务技能）时禁用全部控件；config 缺失按空对象回落默认。
+    // readOnly（任务技能）时禁用全部控件；config 缺失按空对象回落默认。
     // 禁用必须在 load() 之后：load 会动态新建 LoRA 行，新建元素不会被前面的禁用循环覆盖
     async function loadGenSettings(readOnly) {
         if (!currentSkillId) return;
@@ -413,21 +478,52 @@ function createSkillDetailPopup() {
         enhancePromptChk.checked = !!(config && config.enhance_prompt);
         for (const el of genSettingsWrap.querySelectorAll("select, input, button")) el.disabled = readOnly;
         enhancePromptChk.disabled = readOnly;
+        updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint, readOnly);
         genReadOnlyHint.style.display = readOnly ? "block" : "none";
     }
 
-    // ---- 底部按钮：随状态显隐（Save / Copy-as-custom / Delete / Close）----
+    // ---- 预设技能设置区：独立保存（主 Save 对预设隐藏）+ 一键恢复默认 ----
+    async function savePresetGenSettings() {
+        if (!currentSkillId || currentSource !== "presets") return;
+        try {
+            if (genSettingsWrap.style.display !== "none") {
+                await saveSkillGenConfig(currentSkillId, { ...genModelSection.collect(), ...genSizeSection.collect(), enhance_prompt: enhancePromptChk.checked });
+            } else if (videoGenSettingsWrap.style.display !== "none") {
+                await saveSkillGenConfig(currentSkillId, videoModelSection.collect());
+            }
+            configOverridden = true;
+            updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint, false);
+            updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint, false);
+        } catch (err) {
+            alert("Save gen settings failed: " + err.message);
+        }
+    }
+
+    async function restorePresetGenSettings() {
+        if (!currentSkillId || currentSource !== "presets") return;
+        if (!confirm("恢复本技能设置为预设默认？（将清除本地覆盖设置）")) return;
+        const r = await resetSkillGenConfig(currentSkillId);
+        if (!r.success) { alert("Restore failed: " + (r.error || "")); return; }
+        configOverridden = false;
+        try {
+            if (genSettingsWrap.style.display !== "none") await loadGenSettings(false);
+            else if (videoGenSettingsWrap.style.display !== "none") await loadVideoGenSettings(false);
+        } catch (err) {
+            alert("Reload settings failed: " + err.message);
+        }
+    }
+    genSaveCfgBtn.addEventListener("click", (e) => { e.stopPropagation(); savePresetGenSettings(); });
+    videoSaveCfgBtn.addEventListener("click", (e) => { e.stopPropagation(); savePresetGenSettings(); });
+    genRestoreCfgBtn.addEventListener("click", (e) => { e.stopPropagation(); restorePresetGenSettings(); });
+    videoRestoreCfgBtn.addEventListener("click", (e) => { e.stopPropagation(); restorePresetGenSettings(); });
+
+    // ---- 底部按钮：随状态显隐（Save / Delete）；关闭走标题栏 ✕，复制走标题栏 Copy as custom ----
     const footerBtns = mkEl("div", "rs-modal-btns rs-skill-detail-actions");
     const saveBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-save-btn");
     saveBtn.textContent = "💾 Save";
-    const copyBtn = mkEl("button", "rs-btn rs-btn-local");
-    copyBtn.textContent = "⧉ Copy as custom";
-    copyBtn.title = "Copy this built-in skill into a new editable custom skill";
     const deleteBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
     deleteBtn.textContent = "🗑 Delete";
-    const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-tpl-cancel-btn");
-    cancelBtn.textContent = "✕ Close";
-    footerBtns.append(saveBtn, copyBtn, deleteBtn, cancelBtn);
+    footerBtns.append(saveBtn, deleteBtn);
 
     content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, footerBtns);
     modal.append(header, content);
@@ -437,6 +533,7 @@ function createSkillDetailPopup() {
     // ---- 状态 ----
     let currentSkillId = null;
     let currentSource = "custom";
+    let configOverridden = false;   // 预设技能是否存在本地配置覆盖（load_skill 返回）
     let currentFiles = [];   // [{ name, size }]（递归 .md/.txt 相对路径，含主文件 skill.md）
     let selectedFile = null;
     let editorMode = "preview";
@@ -541,6 +638,7 @@ function createSkillDetailPopup() {
         titleSpan.textContent = "📝 " + nm + roSuffix;
         titleSpan.title = nm;
         multiTurnChk.checked = !!(full && full.multi_turn);
+        configOverridden = !!(full && full.config_overridden);
         currentFiles = (full && full.files) || [];
         let mainName = null;
         for (const f of currentFiles) { if (isMainFile(f.name)) { mainName = f.name; break; } }
@@ -549,20 +647,21 @@ function createSkillDetailPopup() {
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
         else { selectedFile = null; contentTextarea.value = ""; }
-        // 生图/生视频技能显示各自 config.json 覆盖区（预设/任务只读）；其余技能隐藏。
+        // 生图/生视频技能显示各自 config.json 覆盖区（预设可编辑：本地覆盖；任务只读）；其余技能隐藏。
         // multi_turn 是文本多轮概念，生图/生视频技能用不到 → 一并隐藏
+        const cfgReadOnly = currentSource === "tasks";
         if (full && full.gen_image) {
             genSettingsWrap.style.display = "block";
             videoGenSettingsWrap.style.display = "none";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "";
-            await loadGenSettings(!isCustom());
+            await loadGenSettings(cfgReadOnly);
         } else if (full && full.gen_video) {
             genSettingsWrap.style.display = "none";
             videoGenSettingsWrap.style.display = "block";
             multiTurnRow.style.display = "none";
             enhancePromptWrap.style.display = "none";
-            await loadVideoGenSettings(!isCustom());
+            await loadVideoGenSettings(cfgReadOnly);
         } else {
             genSettingsWrap.style.display = "none";
             videoGenSettingsWrap.style.display = "none";
@@ -580,6 +679,7 @@ function createSkillDetailPopup() {
         currentSkillId = null;
         currentFiles = [];
         currentSource = "custom";
+        configOverridden = false;
         setBadge();
         nameInput.value = "";
         contentTextarea.value = "";
@@ -601,7 +701,7 @@ function createSkillDetailPopup() {
     function close() { overlay.style.display = "none"; }
 
     // ---- 保存（新建主文件 / 已有 skill 的当前选中文件）----
-    // 生图设置区可见且可编辑时随主 Save 一起写入该技能 config.json（弹窗内只有一个保存入口）
+    // 自定义技能：生图设置区随主 Save 一起写入该技能 config.json；预设技能：走设置区头部「💾 Save」（本地覆盖，见 savePresetGenSettings）
     async function persistGenSettings() {
         if (!currentSkillId || !isCustom()) return;
         try {
@@ -698,8 +798,6 @@ function createSkillDetailPopup() {
         if (r.success) { await openExisting(currentSkillId, currentSource); document.dispatchEvent(new CustomEvent("rs.skills.updated")); }
         else alert("Delete failed: " + (r.error || ""));
     });
-
-    cancelBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
 
     // 拦截弹窗内部指针事件向外冒泡，避免触发画布选节点等副作用（同预设列表浮层）
     ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => {

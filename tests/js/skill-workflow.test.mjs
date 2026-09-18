@@ -1,6 +1,6 @@
 // 出图技能工作流导出与每技能设置 UI：
 // 技能下拉「📋 From Canvas」把画布 API prompt 导出为出图技能（空画布不发请求）；
-// 详情弹窗对 gen_image 技能显示 config.json 覆盖区（自定义可编辑保存 / 预设只读 / 非出图技能隐藏）。
+// 详情弹窗对 gen_image 技能显示 config.json 覆盖区（自定义可编辑保存 / 预设可编辑存本地覆盖+一键恢复默认 / 非出图技能隐藏）。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
@@ -67,11 +67,12 @@ test("From Canvas：画布无有效工作流时不发请求并 toast 提示", as
 });
 
 // 详情弹窗出图设置区：mock 一条 load_skill + skill_config（GET/POST 分流）+ models
-async function openGenPopup({ id, source, genImage = true, config = {}, category = "" }) {
+async function openGenPopup({ id, source, genImage = true, config = {}, category = "", overridden = false }) {
     const { createSkillDetailPopup } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
         id: b.id, name: "Gen Skill", content: "body", files: [{ name: "skill.md", size: 5 }],
         gen_image: genImage, requires_ref: false, multi_turn: false, tags: [], category,
+        config_overridden: overridden,
     }));
     mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
     let saved = null;
@@ -123,25 +124,50 @@ test("详情弹窗：gen_image 技能显示设置区，回填 config 并可保�
     assert.equal(r.saved.config.default_ratio, "9:16");
 });
 
-test("详情弹窗：预设 gen_image 技能设置区只读（控件禁用、无独立保存按钮）", async () => {
-    const { wrap } = await openGenPopup({
+test("详情弹窗：预设 gen_image 技能设置区可编辑（本地覆盖保存 / 一键恢复默认）", async () => {
+    let resetBody = null;
+    mockRoute("/rs_prompts/reset_skill_config", (b) => { resetBody = b; return jsonResponse({ success: true }); });
+    const r = await openGenPopup({
         id: "image_gen", source: "presets",
         config: { loras: [{ name: "q.safetensors", strength: 0.5 }] },
     });
+    const wrap = r.wrap;
 
     assert.ok(wrap);
     assert.notEqual(wrap.style.display, "none");
+    // 预设设置区可编辑（改动存本地覆盖），不再只读禁用
     const controls = wrap.querySelectorAll("select, input");
     assert.ok(controls.length > 0, "应有可展示的控件");
-    for (const el of controls) assert.equal(el.disabled, true, "预设技能控件应禁用");
-    assert.equal(wrap.querySelector(".rs-gen-save"), null, "设置区不应有独立保存按钮（统一走底部 Save）");
-    const footerSave = document.querySelector(".rs-tpl-save-btn");
-    assert.ok(footerSave && footerSave.style.display === "none", "预设技能底部 Save 应隐藏");
-    // load 动态新建的 LoRA 行在只读模式下同样禁用
+    for (const el of controls) assert.equal(el.disabled, false, "预设技能设置控件应可编辑");
+    // load 动态新建的 LoRA 行同样可编辑
     const loraStrength = wrap.querySelector(".rs-gen-lora-strength");
     assert.ok(loraStrength, "预设 config 的 LoRA 行应回填");
-    assert.equal(loraStrength.disabled, true);
-    assert.notEqual(wrap.querySelector(".rs-gen-readonly-hint").style.display, "none", "只读提示应显示");
+    assert.equal(loraStrength.disabled, false);
+    // 设置区头部：独立 💾 Save（底部主 Save 仍隐藏）；无覆盖时不显示「↺ 恢复默认」
+    const cfgBtns = wrap.querySelector(".rs-gen-cfg-btns");
+    assert.ok(cfgBtns && cfgBtns.style.display === "flex", "预设设置区应显示保存按钮行");
+    const sectionSave = Array.from(cfgBtns.querySelectorAll("button")).find((b) => b.textContent === "💾 Save");
+    assert.ok(sectionSave, "设置区应有独立保存按钮");
+    let restoreBtn = Array.from(cfgBtns.querySelectorAll("button")).find((b) => b.textContent.includes("恢复默认"));
+    assert.ok(restoreBtn && restoreBtn.style.display === "none", "无覆盖时不应显示「恢复默认」");
+    const footerSave = document.querySelector(".rs-tpl-save-btn");
+    assert.ok(footerSave && footerSave.style.display === "none", "预设技能底部 Save 应隐藏");
+
+    // 点设置区 💾 Save → POST skill_config（本地覆盖），不写正文
+    loraStrength.value = "0.9";
+    sectionSave.click();
+    await sleep(80);
+    assert.ok(r.saved, "应发出 /neo_image_gen/skill_config POST");
+    assert.equal(r.saved.skill_id, "image_gen");
+    assert.equal(r.saved.config.loras[0].strength, 0.9);
+    // 保存后存在覆盖 → 「↺ 恢复默认」出现
+    restoreBtn = Array.from(cfgBtns.querySelectorAll("button")).find((b) => b.textContent.includes("恢复默认"));
+    assert.equal(restoreBtn.style.display, "inline-block", "保存后应显示「恢复默认」");
+
+    // 点「↺ 恢复默认」→ POST /rs_prompts/reset_skill_config（confirm 默认 true）
+    restoreBtn.click();
+    await sleep(80);
+    assert.deepEqual(resetBody, { id: "image_gen" });
 });
 
 test("详情弹窗：非 gen_image 技能不显示设置区", async () => {
@@ -158,7 +184,7 @@ test("复制为自定义：出图技能保留 category/gen_image/requires_ref", 
     mockRoute("/rs_prompts/skills", () => jsonResponse([]));
     await openGenPopup({ id: "image_gen", source: "presets", category: "image_gen" });
 
-    const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail-actions button"))
+    const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail button"))
         .find((b) => b.textContent.includes("Copy as custom"));
     assert.ok(copyBtn, "预设技能应显示复制按钮");
     copyBtn.click();
@@ -182,7 +208,7 @@ test("复制为自定义：name 与已有 skill 冲突时递增序号", async ()
     ]));
     await openGenPopup({ id: "image_gen", source: "presets", category: "image_gen" });
 
-    const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail-actions button"))
+    const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail button"))
         .find((b) => b.textContent.includes("Copy as custom"));
     assert.ok(copyBtn, "预设技能应显示复制按钮");
     copyBtn.click();

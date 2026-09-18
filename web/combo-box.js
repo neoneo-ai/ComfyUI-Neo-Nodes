@@ -64,13 +64,14 @@ export function attachComboBox(selectEl, opts = {}) {
     inputEl.style.paddingRight = "24px"; // 右缘常显 caret 预留位
 
     // 列表挂在 body 上用 fixed 定位：不被弹窗 overflow 裁剪，下方空间不足时自动向上翻。
+    // z-index 取最大值：高于 .rs-skill-modal-overlay（2147483646），技能详情等弹窗内打开的列表不被盖住。
     // opts.footerEl 存在时改为 flex 列布局（滚动区 itemsHost + 固定底部工具栏），否则保持原样
     // （整个 listEl 自身滚动）——模型下拉等未传 footer 的既有行为完全不变。
     const hasFooter = !!opts.footerEl;
     const listOpenDisplay = hasFooter ? "flex" : "block";
     const listEl = el("div", "rs-combo-list", hasFooter
-        ? "position:fixed;display:none;max-height:400px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
-        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:120000;box-shadow:0 4px 12px rgba(0,0,0,.5);");
+        ? "position:fixed;display:none;max-height:400px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
+        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.5);");
     document.body.appendChild(listEl);
 
     // 行容器：有 footer 时为内部滚动区，无 footer 时即 listEl 自身（保持既有行为）
@@ -83,7 +84,7 @@ export function attachComboBox(selectEl, opts = {}) {
     }
 
     // 右缘 caret 常显，指示「点击展开列表」；pointer-events:none 让点击落到输入框统一处理
-    const caret = el("span", "rs-combo-caret", "position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;line-height:1;color:#888;pointer-events:none;z-index:1;");
+    const caret = el("span", "rs-combo-caret", "position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:14px;line-height:1;color:#888;pointer-events:none;z-index:1;");
     caret.textContent = "▾";
 
     const items = () => Array.from(listEl.querySelectorAll("[data-value]"));

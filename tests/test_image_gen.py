@@ -496,9 +496,25 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._orig_dir = _skill_mod.SKILL_CUSTOM_DIR
         _skill_mod.SKILL_CUSTOM_DIR = self._tmp.name
+        # 预设本地覆盖文件隔离到临时目录，避免污染真实 configs/skill_overrides/
+        self._orig_ovr = _skill_mod.SKILL_OVERRIDES_DIR
+        _skill_mod.SKILL_OVERRIDES_DIR = os.path.join(self._tmp.name, "skill_overrides")
+        # 临时预设（含已知 config.json）替代真实 presets 目录，断言不依赖本机预设内容
+        self._orig_presets = _skill_mod.SKILL_PRESETS_DIR
+        pdir = os.path.join(self._tmp.name, "presets", "image_gen")
+        os.makedirs(pdir)
+        with open(os.path.join(pdir, "skill.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: image_gen\n---\nbody")
+        with open(os.path.join(pdir, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"default_ratio": "16:9"}, f)
+        with open(os.path.join(pdir, "workflow.json"), "w", encoding="utf-8") as f:
+            json.dump({"1": {"class_type": "UNETLoader", "inputs": {}}}, f)
+        _skill_mod.SKILL_PRESETS_DIR = os.path.join(self._tmp.name, "presets")
 
     def tearDown(self):
         _skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
+        _skill_mod.SKILL_OVERRIDES_DIR = self._orig_ovr
+        _skill_mod.SKILL_PRESETS_DIR = self._orig_presets
         self._tmp.cleanup()
 
     @staticmethod
@@ -676,10 +692,61 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["loras"], [{"name": "style_a.safetensors", "strength": 0.7,
                                          "ref_only": False}])
 
-        # 预设只读 → 403
+        # 预设设置可编辑：写本地覆盖文件（configs/skill_overrides/<id>.json），不改预设文件
+        status, body = self._call(image_gen.post_skill_config_route,
+                                  self._req({"skill_id": "image_gen", "config": {"count": 2}}))
+        self.assertEqual(status, 200)
+        ov_path = os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json")
+        self.assertTrue(os.path.isfile(ov_path), "预设保存应写本地覆盖文件")
+        with open(ov_path, encoding="utf-8") as f:
+            ov = json.load(f)
+        self.assertEqual(ov["count"], 2)
+        # GET 返回合并后的有效 config（预设 default_ratio + 覆盖 count）
+        status, body = self._call(image_gen.get_skill_config_route,
+                                  self._req(query={"skill_id": "image_gen"}))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 2)
+        self.assertEqual(body["default_ratio"], "16:9")
+
+    def test_reset_skill_config(self):
+        # 先写一条本地覆盖，再恢复默认（删覆盖文件）；幂等、未知 skill 404
         status, _ = self._call(image_gen.post_skill_config_route,
-                               self._req({"skill_id": "image_gen", "config": {"count": 2}}))
-        self.assertEqual(status, 403)
+                               self._req({"skill_id": "image_gen", "config": {"count": 3}}))
+        self.assertEqual(status, 200)
+        ov_path = os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json")
+        self.assertTrue(os.path.isfile(ov_path))
+
+        status, body = self._call(_skill_mod.rs_prompts_reset_skill_config,
+                                  self._req({"id": "image_gen"}))
+        self.assertEqual(status, 200)
+        self.assertFalse(os.path.isfile(ov_path), "恢复默认应删除本地覆盖文件")
+        # 恢复后 GET 回落预设默认
+        status, body = self._call(image_gen.get_skill_config_route,
+                                  self._req(query={"skill_id": "image_gen"}))
+        self.assertEqual(status, 200)
+        self.assertNotIn("count", body)
+
+        status, _ = self._call(_skill_mod.rs_prompts_reset_skill_config,
+                               self._req({"id": "image_gen"}))
+        self.assertEqual(status, 200, "无覆盖时恢复默认应幂等成功")
+        # 未知 skill → 404（纯文本响应，不走 _call 的 JSON 解析）
+        resp = asyncio.run(_skill_mod.rs_prompts_reset_skill_config(self._req({"id": "no_such_skill"})))
+        self.assertEqual(resp.status, 404)
+
+    def test_copy_skill_files_preset_with_override(self):
+        # 复制带本地覆盖的预设 → 副本写入合并后的有效 config
+        status, _ = self._call(image_gen.post_skill_config_route,
+                               self._req({"skill_id": "image_gen", "config": {"count": 5}}))
+        self.assertEqual(status, 200)
+        d = self._make_custom_skill("copy_ovr")
+        status, body = self._call(
+            image_gen.copy_skill_files_route,
+            self._req({"from_id": "image_gen", "to_id": "copy_ovr"}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["count"], 5)
+        self.assertEqual(cfg["default_ratio"], "16:9")
 
     def test_post_skill_config_persists_video_audio_vae(self):
         # 视频技能 per-skill 覆盖：model/text_encoder/vae/audio_vae 落盘，且保留既有 width/height/length（尺寸/时长默认）

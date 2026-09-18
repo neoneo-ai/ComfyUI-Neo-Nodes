@@ -132,7 +132,7 @@ export async function getSkillGenConfig(skillId) {
     }
 }
 
-/** 写技能的生图设置覆盖（预设只读，失败抛 Error(后端消息)） */
+/** 写技能的生图/生视频设置覆盖（自定义写自身 config.json，预设写本地覆盖文件；失败抛 Error(后端消息)） */
 export async function saveSkillGenConfig(skillId, config) {
     const resp = await fetch(`${GEN_API}/skill_config`, {
         method: "POST",

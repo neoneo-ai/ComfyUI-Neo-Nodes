@@ -2850,6 +2850,10 @@
 /* ---- 技能详情弹窗：出图设置两栏表格（仅 .rs-skill-gen-settings，全局出图设置菜单不受影响）---- */
 .rs-skill-gen-settings { gap: 12px; }
 .rs-skill-gen-settings .rs-gen-settings-header { margin-top: 12px; margin-bottom: 10px; }
+/* 设置区头部（生图/生视频共用）：标题+提示在左，「💾 Save / ↺ 恢复默认」顶到该行最右侧 */
+.rs-gen-settings-header { flex-direction: row; align-items: center; flex-wrap: wrap; }
+.rs-gen-cfg-btns { display: flex; gap: 8px; margin-left: auto; }
+.rs-gen-cfg-btns .rs-btn { flex: none; padding: 4px 12px; }
 .rs-skill-gen-settings .rs-gen-model-section,
 .rs-skill-gen-settings .rs-gen-size-section {
     display: flex;
@@ -3025,8 +3029,9 @@
     align-items: center;
     justify-content: center;
     background: rgba(0, 0, 0, 0.55);
-    /* 高于 .neo-director-overlay（2147483000）：从导演编辑器内打开技能选择窗时必须盖在面板之上 */
-    z-index: 2147483647;
+    /* 高于 .neo-director-overlay（2147483000）与画廊灯箱（2147483645）：从导演编辑器内打开技能选择窗时必须盖在面板之上；
+       低于 combo 列表最大值（2147483647）：弹窗内打开的模型/LoRA 下拉必须可见 */
+    z-index: 2147483646;
 }
 /* 锚定浮层模式：去掉遮罩，仅保留点击外部关闭的透明层（面板由 JS 定位到控件附近） */
 .rs-skill-modal-overlay.rs-skill-picker--anchored { background: transparent; }
@@ -3080,6 +3085,9 @@
 .rs-skill-modal-close:hover {
     color: #fff;
 }
+
+/* 标题栏 Copy as custom：基础 .rs-btn 是 flex:1（底部按钮行用），标题栏内不拉伸 */
+.rs-skill-modal-header .rs-btn { flex: none; padding: 4px 10px; }
 
 .rs-skill-modal-content {
     flex: 1;

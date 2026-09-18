@@ -57,8 +57,10 @@ SKILLS_DIR = os.path.join(CURRENT_DIR, "skills")
 SKILL_PRESETS_DIR = os.path.join(SKILLS_DIR, "presets")
 SKILL_CUSTOM_DIR = os.path.join(SKILLS_DIR, "custom")
 TASKS_DIR = os.path.join(SKILLS_DIR, "tasks")
+# 预设技能本地配置覆盖（用户本机模型路径等；运行期并入有效 config，不进 git）
+SKILL_OVERRIDES_DIR = os.path.join(CURRENT_DIR, "configs", "skill_overrides")
 
-for _d in (SKILLS_DIR, SKILL_PRESETS_DIR, SKILL_CUSTOM_DIR, TASKS_DIR):
+for _d in (SKILLS_DIR, SKILL_PRESETS_DIR, SKILL_CUSTOM_DIR, TASKS_DIR, SKILL_OVERRIDES_DIR):
     if not os.path.exists(_d):
         os.makedirs(_d)
 
@@ -935,27 +937,71 @@ def load_skill_workflow(skill_id: str):
     return wf if isinstance(wf, dict) and wf else None
 
 
-def get_skill_gen_config(skill_id: str) -> dict:
-    """读 skill 的 config.json（生图设置覆盖）；缺失或损坏返回 {}。"""
-    d = _skill_dir(str(skill_id or ""))
-    if not d:
-        return {}
+def _read_config_file(skill_dir: str) -> dict:
+    """读技能目录下的 config.json；缺失或损坏返回 {}。"""
     try:
-        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+        with open(os.path.join(skill_dir, "config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
     except Exception:
         return {}
     return cfg if isinstance(cfg, dict) else {}
 
 
-def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
-    """写 skill 的 config.json（预设只读）。返回 (success, message)。"""
+def _override_path(sid: str) -> str:
+    """预设技能本地配置覆盖文件路径（configs/skill_overrides/<id>.json）。"""
+    return os.path.join(SKILL_OVERRIDES_DIR, f"{sid}.json")
+
+
+def _read_override(sid: str) -> dict:
+    """读预设技能的本地配置覆盖；缺失或损坏返回 {}。"""
+    try:
+        with open(_override_path(sid), encoding="utf-8") as f:
+            ov = json.load(f)
+    except Exception:
+        return {}
+    return ov if isinstance(ov, dict) else {}
+
+
+def get_skill_gen_config(skill_id: str) -> dict:
+    """读 skill 的生图/生视频设置：预设 = 自身 config.json ⊕ 本地覆盖文件；缺失或损坏返回 {}。"""
+    d = _skill_dir(str(skill_id or ""))
+    if not d:
+        return {}
+    cfg = _read_config_file(d)
+    if _skill_source(d) == "presets":
+        ov = _read_override(_normalize_skill_id(str(skill_id or "")))
+        if ov:
+            cfg = {**cfg, **ov}
+    return cfg
+
+
+def has_skill_config_override(skill_id: str) -> bool:
+    """预设技能是否存在本地配置覆盖（UI 的「已修改」标记 / 恢复默认按钮）。"""
+    sid = _normalize_skill_id(str(skill_id or ""))
+    d = _skill_dir(sid) if sid else None
+    return bool(d and _skill_source(d) == "presets" and os.path.isfile(_override_path(sid)))
+
+
+def reset_skill_gen_config(skill_id: str) -> tuple[bool, str]:
+    """预设技能生图/生视频设置恢复默认：删除本地覆盖文件（幂等）。返回 (success, message)。"""
     sid = _normalize_skill_id(str(skill_id or ""))
     d = _skill_dir(sid) if sid else None
     if not d:
         return False, "Skill not found"
-    if _skill_source(d) == "presets":
-        return False, "Cannot modify preset skill"
+    with _skills_lock:
+        p = _override_path(sid)
+        if os.path.isfile(p):
+            os.remove(p)
+    return True, ""
+
+
+def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
+    """写 skill 的生图/生视频设置：自定义写自身 config.json，预设写本地覆盖文件（不改预设文件）。返回 (success, message)。"""
+    sid = _normalize_skill_id(str(skill_id or ""))
+    d = _skill_dir(sid) if sid else None
+    if not d:
+        return False, "Skill not found"
+    is_preset = _skill_source(d) == "presets"
     cfg = cfg if isinstance(cfg, dict) else {}
     clean = {}
     for key in ("model", "text_encoder", "vae", "audio_vae"):
@@ -988,24 +1034,21 @@ def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
     if cfg.get("enhance_prompt"):
         clean["enhance_prompt"] = True
     with _skills_lock:
-        # width/height/length 是视频 skill 的尺寸/时长默认值，非模型设置区管理；保存时保留既有 config.json 的值
-        try:
-            with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
-                existing = json.load(f)
-        except Exception:
-            existing = {}
-        if not isinstance(existing, dict):
-            existing = {}
+        # width/height/length 是视频 skill 的尺寸/时长默认值，非模型设置区管理；保存时保留既有有效值（预设取合并后的有效 config）
+        existing = get_skill_gen_config(sid) if is_preset else _read_config_file(d)
         for key in ("width", "height", "length"):
             val = cfg.get(key, existing.get(key))
             try:
                 clean[key] = max(1, int(val))
             except (TypeError, ValueError):
                 continue
-        tmp = os.path.join(d, "config.json.tmp")
+        target = _override_path(sid) if is_preset else os.path.join(d, "config.json")
+        if is_preset:
+            os.makedirs(SKILL_OVERRIDES_DIR, exist_ok=True)
+        tmp = target + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(clean, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, os.path.join(d, "config.json"))
+        os.replace(tmp, target)
     return True, ""
 
 
@@ -1291,18 +1334,27 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
 
 
 def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:
-    """把 from 技能的 workflow.json / config.json 复制到 to（供「复制为自定义」补全生图模板）。"""
+    """把 from 技能的 workflow.json / config.json 复制到 to（供「复制为自定义」补全生图模板）；预设源写合并后的有效 config（含本地覆盖）。"""
     src = _skill_dir(str(from_id or ""))
     dst = _skill_dir(str(to_id or ""))
     if not src or not dst:
         return False, "Skill not found"
     copied = 0
     with _skills_lock:
-        for fn in ("workflow.json", "config.json"):
-            s = os.path.join(src, fn)
-            if os.path.isfile(s):
-                shutil.copy2(s, os.path.join(dst, fn))
+        ws = os.path.join(src, "workflow.json")
+        if os.path.isfile(ws):
+            shutil.copy2(ws, os.path.join(dst, "workflow.json"))
+            copied += 1
+        cs = os.path.join(src, "config.json")
+        ov_sid = _normalize_skill_id(str(from_id or ""))
+        if _skill_source(src) == "presets":
+            if os.path.isfile(cs) or os.path.isfile(_override_path(ov_sid)):
+                with open(os.path.join(dst, "config.json"), "w", encoding="utf-8") as f:
+                    json.dump(get_skill_gen_config(ov_sid), f, indent=2, ensure_ascii=False)
                 copied += 1
+        elif os.path.isfile(cs):
+            shutil.copy2(cs, os.path.join(dst, "config.json"))
+            copied += 1
     return True, f"copied {copied} file(s)"
 
 
@@ -1452,6 +1504,7 @@ async def rs_prompts_load_skill(request):
             "result_key": meta.get("result_key"),
             "gen_image": bool(meta.get("gen_image", False)),
             "gen_video": bool(meta.get("gen_video", False)),
+            "config_overridden": has_skill_config_override(skill_id),
         })
     except Exception as e:
         logger.error(f"Error loading skill: {e}")
@@ -1507,6 +1560,20 @@ async def rs_prompts_delete_skill(request):
         return web.json_response({"success": True})
     except Exception as e:
         logger.error(f"Error deleting skill: {e}")
+        return web.Response(status=500, text=str(e))
+
+
+@server.PromptServer.instance.routes.post("/rs_prompts/reset_skill_config")
+async def rs_prompts_reset_skill_config(request):
+    """预设技能生图/生视频设置恢复默认（删除本地覆盖文件，幂等）。"""
+    try:
+        data = await request.json()
+        ok, msg = reset_skill_gen_config(_normalize_skill_id(data.get("id", "")))
+        if not ok:
+            return web.Response(status=404, text=msg)
+        return web.json_response({"success": True})
+    except Exception as e:
+        logger.error(f"Error resetting skill config: {e}")
         return web.Response(status=500, text=str(e))
 
 

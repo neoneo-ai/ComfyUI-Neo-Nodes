@@ -2,5 +2,6 @@
   "loras": [],
   "base_resolution": 1280,
   "count": 1,
+  "default_ratio": "16:9",
   "enhance_prompt": true
 }

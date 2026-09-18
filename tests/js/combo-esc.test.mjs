@@ -40,3 +40,20 @@ test("combo：Esc 列表开着只关列表不冒泡；列表已关则冒泡", as
     document.removeEventListener("keydown", onDocKey);
     destroy();
 });
+
+test("combo：列表 z-index 取最大值，盖过技能选择窗遮罩（.rs-skill-modal-overlay = 2147483646）", async () => {
+    resetEnv();
+    const { attachComboBox } = await import("../../web/combo-box.js");
+
+    const select = document.createElement("select");
+    const o = document.createElement("option");
+    o.value = "a";
+    o.textContent = "a";
+    select.appendChild(o);
+    document.body.appendChild(select);
+    const { destroy } = attachComboBox(select);
+    // 列表挂在 body 上：技能详情弹窗（.rs-skill-modal-overlay）内打开时也必须可见
+    assert.equal(document.querySelector(".rs-combo-list").style.zIndex, "2147483647",
+        "combo 列表 z-index 必须高于 prompts.css .rs-skill-modal-overlay");
+    destroy();
+});

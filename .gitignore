@@ -19,5 +19,6 @@ _tags_index.json
 **/_tags_index.json
 recipes/custom/
 skills/custom/
+configs/skill_overrides/
 tools/output/
 node_modules/
