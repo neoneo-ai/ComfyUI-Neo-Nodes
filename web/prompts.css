@@ -1865,9 +1865,9 @@
     resize: vertical;
 }
 
-/* 有工作流的技能：正文区高度减半给流程图让位（min-height 360→180）；正文为空时进一步压缩 */
-.rs-skill-modal-content .rs-content-row-workflow > .rs-tpl-content { min-height: 180px; }
-.rs-skill-modal-content .rs-content-row-workflow > .rs-md-preview { min-height: 180px; }
+/* 有工作流的技能：正文区高度减半给流程图让位（min-height 360→180, max-height 520→240）；正文为空时进一步压缩 */
+.rs-skill-modal-content .rs-content-row-workflow > .rs-tpl-content { min-height: 180px; max-height: 240px; }
+.rs-skill-modal-content .rs-content-row-workflow > .rs-md-preview { min-height: 180px; max-height: 240px; }
 .rs-skill-modal-content .rs-content-row-compact > .rs-tpl-content { min-height: 42px; }
 .rs-skill-modal-content .rs-content-row-compact > .rs-md-preview { min-height: 0; }
 
@@ -2894,10 +2894,17 @@
     flex-direction: column;
     gap: 12px;
 }
+/* ---- 技能详情弹窗：生视频设置区（.rs-skill-video-gen-settings）间距与出图设置一致 ---- */
+.rs-skill-video-gen-settings .rs-gen-settings-header { margin-top: 12px; margin-bottom: 10px; }
+.rs-skill-video-gen-settings .rs-gen-model-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
 /* 配置行：标签 | 控件 两栏布局；折叠区（高级选项）内的 Text Encoder / VAE / 出图张数 / 输出前缀 行同样两栏 */
 .rs-skill-gen-settings .rs-gen-model-section .rs-config-row,
 .rs-skill-gen-settings .rs-gen-size-section > .rs-config-row,
-.rs-skill-gen-settings details.rs-gen-advanced .rs-gen-adv-content > .rs-config-row {
+.rs-gen-advanced .rs-gen-adv-content > .rs-config-row {
     display: grid !important;
     grid-template-columns: 110px minmax(0, 1fr) !important;
     align-items: center !important;
@@ -2911,20 +2918,11 @@
 .rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child {
     grid-template-columns: 110px minmax(0, 1fr) auto !important;
 }
-/* Text Encoder / VAE 折叠区：默认收起，点标题展开（仅本技能设置区） */
-.rs-skill-gen-settings details.rs-gen-advanced { display: flex; flex-direction: column; gap: 12px; }
-.rs-skill-gen-settings details.rs-gen-advanced .rs-gen-adv-content { display: flex; flex-direction: column; gap: 12px; }
-.rs-skill-gen-settings details.rs-gen-advanced > summary {
-    cursor: pointer;
-    font-size: 12px;
-    color: #ccc;
-    user-select: none;
-    list-style: none;
-    width: fit-content; /* 仅标题文字可点击展开，避免整行误点 */
-}
-.rs-skill-gen-settings details.rs-gen-advanced > summary::-webkit-details-marker { display: none; }
-.rs-skill-gen-settings details.rs-gen-advanced > summary::before { content: "▸ "; color: #888; }
-.rs-skill-gen-settings details.rs-gen-advanced[open] > summary::before { content: "▾ "; }
+/* Text Encoder / VAE 折叠区：默认收起，勾选开头复选框展开（生图/生视频两个高级组共用；class 为本功能独有，不限定外层容器；点标题其余部分不触发，防误点） */
+.rs-gen-advanced .rs-gen-adv-check { margin: 0 6px 0 0; vertical-align: -2px; cursor: pointer; }
+.rs-gen-advanced .rs-gen-adv-label { font-size: 12px; color: #ccc; user-select: none; }
+.rs-gen-advanced .rs-gen-adv-content { display: none; margin-top: 12px; }
+.rs-gen-advanced .rs-gen-adv-check:checked ~ .rs-gen-adv-content { display: flex; flex-direction: column; gap: 12px; }
 
 .rs-runtime-row {
     display: flex;

@@ -440,6 +440,18 @@ function createSkillDetailPopup() {
     const genModelSection = createModelConfigSection();
     const genSizeSection = createGenSizeRows();
     // Text Encoder / VAE / 生图张数 / 输出前缀 很少改动：收进可折叠「高级选项」（默认收起），放到最底部
+    // 可折叠「高级选项」组（默认收起）：勾选开头复选框展开、取消勾选收起；点标题其余部分不触发（防误点）。纯原生 checkbox + CSS :checked，无 JS 逻辑
+    function makeAdvGroup(label) {
+        const adv = mkEl("div", "rs-gen-advanced");
+        const chk = mkEl("input", "rs-gen-adv-check");
+        chk.type = "checkbox";
+        chk.setAttribute("aria-label", label);
+        const lbl = mkEl("span", "rs-gen-adv-label");
+        lbl.textContent = label;
+        const advContent = mkEl("div", "rs-gen-adv-content");
+        adv.append(chk, lbl, advContent);
+        return { adv, content: advContent };
+    }
     let advEl = null;
     {
         const advRows = [
@@ -447,14 +459,9 @@ function createSkillDetailPopup() {
             ...genSizeSection.el.querySelectorAll(".rs-gen-adv-row"),
         ];
         if (advRows.length) {
-            const adv = mkEl("details", "rs-gen-advanced");
-            const advSummary = mkEl("summary", "rs-gen-advanced-summary");
-            advSummary.textContent = "Text Encoder / VAE / 生图张数 / 输出前缀（高级）";
-            // Chromium <details> 即使 display:flex 也会将非 summary 子元素包入匿名块，gap 不生效；用 div 包裹让 flex gap 正确应用
-            const advContent = mkEl("div", "rs-gen-adv-content");
-            for (const r of advRows) advContent.appendChild(r);
-            adv.append(advSummary, advContent);
-            advEl = adv;
+            const g = makeAdvGroup("Text Encoder / VAE / 生图张数 / 输出前缀（高级）");
+            for (const r of advRows) g.content.appendChild(r);
+            advEl = g.adv;
         }
     }
     genSettingsWrap.append(genSettingsHeader, genModelSection.el, genSizeSection.el);
@@ -493,13 +500,9 @@ function createSkillDetailPopup() {
     {
         const advRows = [...videoModelSection.el.querySelectorAll(".rs-gen-adv-row")];
         if (advRows.length) {
-            const adv = mkEl("details", "rs-gen-advanced");
-            const advSummary = mkEl("summary", "rs-gen-advanced-summary");
-            advSummary.textContent = "Text Encoder / VAE（视频）/ VAE（音频）（高级）";
-            const advContent = mkEl("div", "rs-gen-adv-content");
-            for (const r of advRows) advContent.appendChild(r);
-            adv.append(advSummary, advContent);
-            videoAdvEl = adv;
+            const g = makeAdvGroup("Text Encoder / VAE（视频）/ VAE（音频）（高级）");
+            for (const r of advRows) g.content.appendChild(r);
+            videoAdvEl = g.adv;
         }
     }
     videoGenSettingsWrap.append(videoGenSettingsHeader, videoModelSection.el);
@@ -568,6 +571,7 @@ function createSkillDetailPopup() {
                 await saveSkillGenConfig(currentSkillId, videoModelSection.collect());
             }
             configOverridden = true;
+            genSettingsBaseline = collectGenSettingsJson();
             updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint, false);
             updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint, false);
         } catch (err) {
@@ -616,6 +620,8 @@ function createSkillDetailPopup() {
     const isCustom = () => currentSource === "custom";
     const isMainFile = (name) => String(name || "").toLowerCase() === "skill.md";
     let workflowShown = false;   // 是否渲染了工作流流程图（正文区高度减半，为空时进一步压缩）
+    let contentBaseline = null;   // { name, content, multiTurn } 加载/新建后的快照，关闭时判断正文有无未保存修改
+    let genSettingsBaseline = null;   // 生图/生视频设置区 collect() 的 JSON 快照（load/save 后刷新）；null = 无设置区
 
     // 有工作流的技能：正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
     function updateContentCompact() {
@@ -696,6 +702,7 @@ function createSkillDetailPopup() {
         let text = (data && data.content) || "";
         if (isMainFile(name)) text = stripFrontmatter(text);
         contentTextarea.value = text;
+        contentBaseline = { name: nameInput.value, content: text, multiTurn: multiTurnChk.checked };
         setEditorMode(/\.md$/i.test(name) ? editorMode : "edit");
         updateControls();
         updateContentCompact();
@@ -715,6 +722,8 @@ function createSkillDetailPopup() {
         fileSelect.innerHTML = "";
         fileSelect.style.display = "none";
         selectedFile = null;
+        contentBaseline = null;
+        genSettingsBaseline = null;
         const full = await loadSkill(id);
         if (full && full.error) { alert("Failed to load skill: " + full.error); close(); return; }
         const nm = (full && full.name) || id;
@@ -731,7 +740,7 @@ function createSkillDetailPopup() {
         populateFileSelect(mainName);
         setEditorMode("preview");
         if (mainName) await selectFile(mainName);
-        else { selectedFile = null; contentTextarea.value = ""; }
+        else { selectedFile = null; contentTextarea.value = ""; contentBaseline = { name: nm, content: "", multiTurn: multiTurnChk.checked }; }
         // workflow.json 拉取与设置区加载互不依赖 → 提前并发发出，省一段串行等待
         const wfPromise = (full && (full.gen_image || full.gen_video)) ? loadSkillWorkflow(id) : null;
         // 生图/生视频技能显示各自 config.json 覆盖区（预设可编辑：本地覆盖；任务只读）；其余技能隐藏。
@@ -756,6 +765,7 @@ function createSkillDetailPopup() {
             multiTurnRow.style.display = "";
             enhancePromptWrap.style.display = "none";
         }
+        genSettingsBaseline = collectGenSettingsJson();   // 设置区回填完成 → 脏检查基线就绪
         // 工作流流程图：仅生图/生视频技能。先显示骨架占位并同步压缩正文区（预留位置），加载完成后原地替换 → 打开时布局不跳；无 workflow.json 时隐藏。
         // 分步渲染：workflow.json + 设置就绪后先用同步预检（仅模板变量蓝框）画出流程图，
         // /object_info·/models/* 校验在后台进行，完成后原地重画补红框与摘要 → 图不必等最慢的请求。
@@ -817,6 +827,8 @@ function createSkillDetailPopup() {
         workflowShown = false;
         workflowBody.innerHTML = "";
         workflowSummary.textContent = "";
+        contentBaseline = { name: "", content: "", multiTurn: false };
+        genSettingsBaseline = null;
         nameInput.disabled = false;
         contentTextarea.disabled = false;
         setEditorMode("edit");
@@ -824,7 +836,57 @@ function createSkillDetailPopup() {
         nameInput.focus();
     }
 
-    function close() { overlay.style.display = "none"; }
+    // ---- 关闭保护：有未保存修改先出确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）----
+    // 当前生图/生视频设置区的 JSON 快照（脏检查与保存共用）；无设置区返回 null
+    function collectGenSettingsJson() {
+        if (genSettingsWrap.style.display !== "none")
+            return JSON.stringify({ ...genModelSection.collect(), ...genSizeSection.collect(), enhance_prompt: enhancePromptChk.checked });
+        if (videoGenSettingsWrap.style.display !== "none")
+            return JSON.stringify(videoModelSection.collect());
+        return null;
+    }
+
+    function hasUnsavedChanges() {
+        if (contentBaseline && (nameInput.value !== contentBaseline.name ||
+            contentTextarea.value !== contentBaseline.content ||
+            multiTurnChk.checked !== contentBaseline.multiTurn)) return true;
+        return genSettingsBaseline !== null && collectGenSettingsJson() !== genSettingsBaseline;
+    }
+
+    const dirtyConfirm = mkEl("div", "rs-gen-dirty-confirm");
+    dirtyConfirm.hidden = true;
+    const dirtyText = mkEl("span", "rs-gen-dirty-text");
+    dirtyText.textContent = "⚠ 有未保存的修改";
+    const dirtyActions = mkEl("div", "rs-gen-dirty-actions");
+    const btnSaveClose = mkEl("button", "rs-btn rs-gen-dirty-save");
+    btnSaveClose.type = "button";
+    btnSaveClose.textContent = "💾 保存并关闭";
+    const btnDiscard = mkEl("button", "rs-btn rs-gen-dirty-discard");
+    btnDiscard.type = "button";
+    btnDiscard.textContent = "放弃修改";
+    const btnKeepEditing = mkEl("button", "rs-btn rs-gen-dirty-keep");
+    btnKeepEditing.type = "button";
+    btnKeepEditing.textContent = "继续编辑";
+    dirtyActions.append(btnSaveClose, btnDiscard, btnKeepEditing);
+    dirtyConfirm.append(dirtyText, dirtyActions);
+    content.insertBefore(dirtyConfirm, footerBtns);
+
+    function close() { dirtyConfirm.hidden = true; overlay.style.display = "none"; }
+
+    // 用户主动关闭（✕ / 点遮罩 / Esc）：有未保存修改时暂停关闭，等用户在确认条里选择
+    function requestClose() {
+        if (!hasUnsavedChanges()) { close(); return; }
+        dirtyConfirm.hidden = false;
+    }
+    btnDiscard.addEventListener("click", (e) => { e.stopPropagation(); close(); });
+    btnKeepEditing.addEventListener("click", (e) => { e.stopPropagation(); dirtyConfirm.hidden = true; });
+    btnSaveClose.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btnSaveClose.disabled = true;
+        if (isCustom() || !currentSkillId) await handleSave();   // 自定义/新建：主 Save（含生图设置），成功即关
+        else { await savePresetGenSettings(); if (!hasUnsavedChanges()) close(); }   // 预设：正文只读，仅设置区可能脏；失败留在弹窗重试
+        btnSaveClose.disabled = false;
+    });
 
     // ---- 保存（新建主文件 / 已有 skill 的当前选中文件）----
     // 自定义技能：生图设置区随主 Save 一起写入该技能 config.json；预设技能：走设置区头部「💾 Save」（本地覆盖，见 savePresetGenSettings）
@@ -836,6 +898,7 @@ function createSkillDetailPopup() {
             } else if (videoGenSettingsWrap.style.display !== "none") {
                 await saveSkillGenConfig(currentSkillId, videoModelSection.collect());
             }
+            genSettingsBaseline = collectGenSettingsJson();
         } catch (err) {
             alert("Save gen settings failed: " + err.message);
         }
@@ -929,9 +992,9 @@ function createSkillDetailPopup() {
     ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => {
         modal.addEventListener(t, (e) => e.stopPropagation());
     });
-    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
-    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); close(); });
-    const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") close(); };
+    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) requestClose(); });
+    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); requestClose(); });
+    const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") requestClose(); };
     document.addEventListener("keydown", onKey);
 
     return { overlay, openExisting, openNew, close };

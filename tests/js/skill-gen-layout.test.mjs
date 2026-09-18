@@ -29,15 +29,26 @@ const harnessDom = `
           <div class="rs-config-row"><label class="rs-form-label">长边尺寸</label><select></select></div>
           <div class="rs-config-row"><label class="rs-form-label">默认比例</label><select></select></div>
         </div>
-        <details class="rs-gen-advanced" open>
-          <summary class="rs-gen-advanced-summary">Text Encoder / VAE / 出图张数 / 输出前缀（高级）</summary>
+        <div class="rs-gen-advanced">
+          <input type="checkbox" class="rs-gen-adv-check" aria-label="Text Encoder / VAE / 出图张数 / 输出前缀（高级）">
+          <span class="rs-gen-adv-label">Text Encoder / VAE / 出图张数 / 输出前缀（高级）</span>
           <div class="rs-gen-adv-content">
             <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">Text Encoder</label><select></select></div>
             <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">VAE</label><select></select></div>
             <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">出图张数</label><input class="rs-form-input" type="number"></div>
             <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">输出前缀</label><input class="rs-form-input" type="text"></div>
           </div>
-        </details>
+        </div>
+      </div>
+      <!-- 视频设置区容器没有 rs-skill-gen-settings class，高级组行为必须一致 -->
+      <div class="rs-gen-settings rs-skill-video-gen-settings">
+        <div class="rs-gen-advanced">
+          <input type="checkbox" class="rs-gen-adv-check" aria-label="Text Encoder / VAE（视频）/ VAE（音频）（高级）">
+          <span class="rs-gen-adv-label">Text Encoder / VAE（视频）/ VAE（音频）（高级）</span>
+          <div class="rs-gen-adv-content">
+            <div class="rs-config-row rs-gen-adv-row"><label class="rs-form-label">VAE（视频）</label><select></select></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -58,6 +69,25 @@ test("技能弹窗出图设置：各配置行标签左|控件右（模型/LoRA/�
             { waitUntil: "load" },
         );
 
+        // 默认收起；点标题文字不展开（防误点），勾选开头复选框才展开
+        const advCheck = page.locator(".rs-skill-gen-settings .rs-gen-adv-check");
+        const advContent = page.locator(".rs-skill-gen-settings .rs-gen-adv-content");
+        assert.equal(await advCheck.isChecked(), false, "复选框应默认未勾选");
+        assert.equal(await advContent.evaluate((c) => getComputedStyle(c).display), "none", "折叠区应默认收起");
+        await page.locator(".rs-skill-gen-settings .rs-gen-adv-label").click({ position: { x: 60, y: 8 } });
+        assert.equal(await advCheck.isChecked(), false, "点标题文字不应展开");
+        assert.equal(await advContent.evaluate((c) => getComputedStyle(c).display), "none", "点标题文字后仍应收起");
+        await advCheck.check();
+        assert.equal(await advContent.evaluate((c) => getComputedStyle(c).display), "flex", "勾选复选框应展开");
+
+        // 视频设置区容器（无 rs-skill-gen-settings class）的高级组行为必须一致
+        const vCheck = page.locator(".rs-skill-video-gen-settings .rs-gen-adv-check");
+        const vContent = page.locator(".rs-skill-video-gen-settings .rs-gen-adv-content");
+        assert.equal(await vContent.evaluate((c) => getComputedStyle(c).display), "none", "视频高级组应默认收起");
+        await vCheck.check();
+        assert.equal(await vContent.evaluate((c) => getComputedStyle(c).display), "flex", "勾选视频高级组复选框应展开");
+
+        // 展开后再量列数（隐藏时 grid 轨道不解析为 used 值，minmax() 序列化带空格会干扰计数）
         const r = await page.evaluate(() => {
             const colsOf = (sel) => {
                 const el = document.querySelector(sel);
@@ -65,15 +95,15 @@ test("技能弹窗出图设置：各配置行标签左|控件右（模型/LoRA/�
                 const s = getComputedStyle(el);
                 return s.display === "grid" ? s.gridTemplateColumns.split(" ").filter(Boolean).length : -1;
             };
-            const summary = document.querySelector(".rs-gen-advanced > summary");
+            const label = document.querySelector(".rs-gen-advanced .rs-gen-adv-label");
             const advBox = document.querySelector(".rs-gen-advanced");
             return {
                 model: colsOf(".rs-skill-gen-settings .rs-gen-model-section > .rs-config-row"),
                 adv: colsOf(".rs-skill-gen-settings .rs-gen-adv-row"),
                 lora: colsOf(".rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child"),
                 size: colsOf(".rs-skill-gen-settings .rs-gen-size-section > .rs-config-row"),
-                summaryNarrow: !!(summary && advBox &&
-                    summary.getBoundingClientRect().width < advBox.getBoundingClientRect().width - 1),
+                labelNarrow: !!(label && advBox &&
+                    label.getBoundingClientRect().width < advBox.getBoundingClientRect().width - 1),
             };
         });
 
@@ -81,7 +111,7 @@ test("技能弹窗出图设置：各配置行标签左|控件右（模型/LoRA/�
         assert.equal(r.adv, 2, `折叠区内 Text Encoder/VAE 行应为两栏，实际 ${r.adv}`);
         assert.equal(r.lora, 3, `LoRA 行应为三栏（label | 列表 | 添加按钮），实际 ${r.lora}`);
         assert.equal(r.size, 2, `尺寸区各行（张数/长边/比例）应为两栏，实际 ${r.size}`);
-        assert.ok(r.summaryNarrow, "折叠标题应只占文字宽度（仅点标题展开），不应铺满整行");
+        assert.ok(r.labelNarrow, "折叠标题应只占文字宽度（仅勾选复选框展开），不应铺满整行");
     } finally {
         if (browser) await browser.close();
     }

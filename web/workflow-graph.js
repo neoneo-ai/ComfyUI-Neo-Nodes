@@ -40,12 +40,13 @@ function _sortNodeIds(a, b) {
 
 /** API prompt → { nodes, edges, width, height }。inputs 里 ["srcId", slot] 视为连线；环安全（回边忽略）。 */
 export function layoutWorkflow(workflow) {
-    const ids = Object.keys(workflow || {});
+    const wf = collapseRefLoaders(workflow || {});
+    const ids = Object.keys(wf);
     const idSet = new Set(ids);
     const preds = {};
     for (const id of ids) preds[id] = [];
     for (const id of ids) {
-        const inputs = (workflow[id] && workflow[id].inputs) || {};
+        const inputs = (wf[id] && wf[id].inputs) || {};
         for (const v of Object.values(inputs)) {
             if (Array.isArray(v) && typeof v[0] === "string" && v[0] !== id && idSet.has(v[0])) {
                 preds[id].push(v[0]);
@@ -72,7 +73,7 @@ export function layoutWorkflow(workflow) {
     for (const id of ids) (byLayer[layer[id]] ||= []).push(id);
     const layers = Object.keys(byLayer).map(Number).sort((a, b) => a - b);
     const lines = {};
-    for (const id of ids) lines[id] = nodeInputLines(workflow, id, lineMaxChars(nodeW(layer[id])));
+    for (const id of ids) lines[id] = nodeInputLines(wf, id, lineMaxChars(nodeW(layer[id])));
     const pos = {};
     let maxRowH = 0, x = PAD;
     for (const L of layers) {
@@ -93,14 +94,14 @@ export function layoutWorkflow(workflow) {
 
     const nodes = ids.map(id => ({
         id,
-        classType: (workflow[id] && workflow[id].class_type) || "?",
+        classType: (wf[id] && wf[id].class_type) || "?",
         x: pos[id].x, y: pos[id].y, w: nodeW(layer[id]), h: nodeH(lines[id].length), layer: layer[id],
         lines: lines[id],
     }));
     const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
     const edges = [];
     for (const id of ids) {
-        const inputs = (workflow[id] && workflow[id].inputs) || {};
+        const inputs = (wf[id] && wf[id].inputs) || {};
         for (const [k, v] of Object.entries(inputs)) {
             if (Array.isArray(v) && typeof v[0] === "string" && nodeById[v[0]] && v[0] !== id) {
                 const t = nodeById[id];
@@ -111,6 +112,98 @@ export function layoutWorkflow(workflow) {
         }
     }
     return { nodes, edges, width, height };
+}
+
+// 合并同类参考加载器：autogrow 槽位（ref_images.ref_image_0..8）的专属源节点（LoadImage/LoadVideo/LoadAudio 等）
+// 按 (目标节点, 槽位族) 分组，2+ 个成员时替换为单个合成节点 "ClassName ×N"，大幅减少图的高度
+const AUTOGROW_SLOT_RE = /\.\w+_\d+$/;
+function collapseRefLoaders(workflow) {
+    const ids = Object.keys(workflow);
+    // 收集 autogrow 槽位的连线：targetId → slotFamily → [sourceIds]
+    const slotGroups = {};
+    for (const id of ids) {
+        const inputs = workflow[id].inputs || {};
+        for (const [k, v] of Object.entries(inputs)) {
+            if (Array.isArray(v) && typeof v[0] === "string" && AUTOGROW_SLOT_RE.test(k)) {
+                const family = k.replace(/_\d+$/, "");
+                const key = `${id}|${family}`;
+                (slotGroups[key] ||= []).push(v[0]);
+            }
+        }
+    }
+    // 对每个 2+ 源的组，扩展收集专属上游节点（如 LoadVideo → GetVideoComponents → H3），生成合成节点
+    const removeSet = new Set();
+    const synthMap = {}; // removedId → syntheticId
+    const synthNodes = {};
+
+    // 反向邻接：sourceId → Set<targetId>（谁连出到谁）
+    const outTo = {};
+    for (const id of ids) {
+        const inputs = workflow[id].inputs || {};
+        for (const v of Object.values(inputs)) {
+            if (Array.isArray(v) && typeof v[0] === "string") {
+                (outTo[v[0]] ||= new Set()).add(id);
+            }
+        }
+    }
+
+    for (const [key, sourceIds] of Object.entries(slotGroups)) {
+        // 只保留实际存在于 workflow 中的源节点（外部引用/未定义节点不参与合并）
+        const uniqueSources = [...new Set(sourceIds)].filter(s => workflow[s]);
+        if (uniqueSources.length < 2) continue;
+        const targetId = key.split("|")[0];
+
+        // 扩展：把输出只连向本组成员的上游节点也纳入（如 LoadVideo → GetVideoComponents）
+        const members = new Set(uniqueSources);
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const id of ids) {
+                if (members.has(id)) continue;
+                const targets = outTo[id];
+                if (targets && targets.size > 0 && [...targets].every(t => members.has(t))) {
+                    members.add(id);
+                    changed = true;
+                }
+            }
+        }
+
+        const synthId = `__grp_${targetId}_${key.split("|")[1]}`;
+        for (const m of members) { removeSet.add(m); synthMap[m] = synthId; }
+
+        // 合成节点：优先取叶子源节点（无数组连线输入的）的 class_type，如 LoadVideo 而非 GetVideoComponents
+        const leafSrc = uniqueSources.find(s => {
+            const ins = workflow[s].inputs || {};
+            return !Object.values(ins).some(v => Array.isArray(v) && typeof v[0] === "string");
+        }) || [...members].find(m => {
+            const ins = workflow[m].inputs || {};
+            return !Object.values(ins).some(v => Array.isArray(v) && typeof v[0] === "string");
+        }) || uniqueSources[0];
+        synthNodes[synthId] = { class_type: `${workflow[leafSrc].class_type} ×${uniqueSources.length}`, inputs: {} };
+    }
+
+    if (removeSet.size === 0) return workflow;
+
+    // 构建新 workflow：移除被合并节点，添加合成节点，重定向边
+    const result = {};
+    for (const id of ids) {
+        if (removeSet.has(id)) continue;
+        const node = workflow[id];
+        result[id] = { ...node, inputs: { ...node.inputs } };
+    }
+    Object.assign(result, synthNodes);
+
+    // 重定向：指向被移除节点的连线改为指向对应合成节点（去重）
+    for (const id of Object.keys(result)) {
+        const inputs = result[id].inputs || {};
+        for (const k of Object.keys(inputs)) {
+            const v = inputs[k];
+            if (Array.isArray(v) && typeof v[0] === "string" && removeSet.has(v[0])) {
+                inputs[k] = [synthMap[v[0]], v[1]];
+            }
+        }
+    }
+    return result;
 }
 
 
@@ -234,13 +327,31 @@ function _fmtVal(v, max = 60) {
 }
 
 // 节点上展示的参数行：`key: value`（截断到 maxChars）；连线输入只显示参数名（连线直接指向该行），超过 MAX_INPUT_LINES 行 → 「+N 项」
+// autogrow 同类输入（如 ref_images.ref_image_0..8）合并为一行摘要 "base ×N"，减少可选槽位的视觉噪音
 function nodeInputLines(workflow, id, maxChars) {
     const inputs = (workflow[id] && workflow[id].inputs) || {};
-    const all = Object.entries(inputs).map(([k, v]) => {
-        if (Array.isArray(v) && typeof v[0] === "string") return k;
-        const l = `${k}: ${_fmtVal(v, 60)}`;
-        return l.length > maxChars ? l.slice(0, maxChars - 1) + "…" : l;
-    });
+    // 按 base name 分组带数字后缀的输入（如 ref_images.ref_image_0 → base "ref_images.ref_image"）
+    const groups = {};
+    const regular = [];
+    for (const [k, v] of Object.entries(inputs)) {
+        const m = k.match(/^(.+)_\d+$/);
+        if (m) (groups[m[1]] ||= []).push(k);
+        else regular.push([k, v]);
+    }
+    // 仅对 2+ 个同 base 的输入做合并；单个保留原名
+    const groupLines = [];
+    for (const [base, names] of Object.entries(groups)) {
+        if (names.length >= 2) groupLines.push(`${base} ×${names.length}`);
+        else regular.push([names[0], inputs[names[0]]]);
+    }
+    const all = [
+        ...regular.map(([k, v]) => {
+            if (Array.isArray(v) && typeof v[0] === "string") return k;
+            const l = `${k}: ${_fmtVal(v, 60)}`;
+            return l.length > maxChars ? l.slice(0, maxChars - 1) + "…" : l;
+        }),
+        ...groupLines,
+    ];
     if (all.length > MAX_INPUT_LINES) {
         return [...all.slice(0, MAX_INPUT_LINES), `… +${all.length - MAX_INPUT_LINES} 项`];
     }

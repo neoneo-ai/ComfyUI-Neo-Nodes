@@ -433,6 +433,44 @@ test("工作流图：参数行直接画在节点上，第一列加载器更宽�
     assert.ok(byId2["2"].y >= byId2["1"].y + byId2["1"].h, "同层节点按各自高度堆叠不重叠");
 });
 
+test("工作流图：autogrow 同类输入合并为一行摘要（ref_images.ref_image ×9）", async () => {
+    const { layoutWorkflow } = await import("../../web/workflow-graph.js");
+    // 模拟 MiniMaxH3ReferenceToVideo + 9 LoadImage + 3 LoadVideo/GetVideoComponents + 3 LoadAudio
+    const wf = {
+        "5": { class_type: "MiniMaxH3ReferenceToVideo", inputs: { clip: ["2", 0], vae: ["3", 0], prompt: "{{PROMPT}}" } },
+        "2": { class_type: "CLIPLoader", inputs: {} },
+        "3": { class_type: "VAELoader", inputs: {} },
+    };
+    for (let i = 0; i < 9; i++) {
+        wf[String(20 + i)] = { class_type: "LoadImage", inputs: { image: `{{REF_IMAGE_${i + 1}}}` } };
+        wf["5"].inputs[`ref_images.ref_image_${i}`] = [String(20 + i), 0];
+    }
+    for (let i = 0; i < 3; i++) {
+        const vid = String(30 + i), comp = String(40 + i);
+        wf[vid] = { class_type: "LoadVideo", inputs: { file: `{{REF_VIDEO_${i + 1}}}` } };
+        wf[comp] = { class_type: "GetVideoComponents", inputs: { video: [vid, 0] } };
+        wf["5"].inputs[`ref_videos.ref_video_${i}`] = [comp, 0];
+    }
+    for (let i = 0; i < 3; i++) {
+        const aid = String(50 + i);
+        wf[aid] = { class_type: "LoadAudio", inputs: { audio: `{{REF_AUDIO_${i + 1}}}` } };
+        wf["5"].inputs[`ref_audios.ref_audio_${i}`] = [aid, 0];
+    }
+    const lay = layoutWorkflow(wf);
+    // 合并后节点数：H3(1) + CLIP(1) + VAE(1) + LoadImage×9(1合成) + LoadVideo+GetVideoComponents×3(1合成) + LoadAudio×3(1合成) = 6
+    assert.equal(lay.nodes.length, 6, `合并后应有 6 个节点（实际 ${lay.nodes.length}）`);
+    // 合成节点显示 "ClassName ×N"
+    const byType = Object.fromEntries(lay.nodes.map(n => [n.classType, n]));
+    assert.ok(byType["LoadImage ×9"], "9 个 LoadImage 应合并为 'LoadImage ×9'");
+    assert.ok(byType["LoadVideo ×3"], "3 个 LoadVideo(+GetVideoComponents) 应合并为 'LoadVideo ×3'");
+    assert.ok(byType["LoadAudio ×3"], "3 个 LoadAudio 应合并为 'LoadAudio ×3'");
+    // H3 节点的参数行：autogrow 输入合并显示
+    const h3 = lay.nodes.find(n => n.id === "5");
+    assert.ok(h3.lines.includes("ref_images.ref_image ×9"), "H3 节点应显示 ref_images 组合并");
+    assert.ok(h3.lines.includes("ref_videos.ref_video ×3"), "H3 节点应显示 ref_videos 组合并");
+    assert.ok(h3.lines.includes("ref_audios.ref_audio ×3"), "H3 节点应显示 ref_audios 组合并");
+});
+
 test("工作流图：滚动区内拖拽平移 scrollLeft/Top（同画布体验），松开后停止", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
     mockRoute("/object_info", () => jsonResponse({}));
@@ -514,5 +552,74 @@ test("工作流图分步渲染：校验请求未回先出图（蓝框），/obje
     assert.ok(document.querySelector(".rs-wf-node-bad"), "校验完成后应原地补上缺失节点红框");
     const wfSummarySlot = document.querySelector(".rs-skill-workflow > .rs-wf-summary");
     assert.equal(wfSummarySlot.querySelectorAll(":scope > .rs-wf-summary").length, 1, "分步重渲染不应重复追加摘要行");
+});
+
+test("详情弹窗关闭保护：正文有未保存修改时 ✕ 先出确认条（继续编辑 / 放弃 / 保存并关闭）", async () => {
+    const { createSkillDetailPopup } = await import("../../web/skill.js");
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id, name: "My Skill", content: "body", files: [{ name: "skill.md", size: 5 }],
+        gen_image: false, gen_video: false, requires_ref: false, multi_turn: false, tags: [], category: "", config_overridden: false,
+    }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    let savedSkill = null;
+    mockRoute("/rs_prompts/save_skill", (b) => { savedSkill = b; return jsonResponse({ success: true }); });
+
+    const popup = createSkillDetailPopup();
+    const overlay = document.querySelector(".rs-skill-modal-overlay");
+    const closeX = () => click(document.querySelector(".rs-skill-detail .rs-skill-modal-close"));
+    const bar = () => document.querySelector(".rs-skill-detail .rs-gen-dirty-confirm");
+    const barBtn = (label) => click(Array.from(bar().querySelectorAll("button")).find((b) => b.textContent === label));
+
+    // 无修改 → ✕ 直接关闭
+    await popup.openExisting("my-skill", "custom");
+    closeX();
+    assert.equal(overlay.style.display, "none", "无修改应直接关闭");
+
+    // 正文改动 → ✕ 暂停关闭并出确认条
+    await popup.openExisting("my-skill", "custom");
+    document.querySelector(".rs-skill-detail textarea").value = "body edited";
+    closeX();
+    assert.equal(overlay.style.display, "flex", "有未保存修改不应关闭");
+    assert.ok(!bar().hidden, "应显示未保存修改确认条");
+
+    // 继续编辑 → 隐藏确认条，弹窗保持打开；再点 ✕ 重新出现
+    barBtn("继续编辑");
+    assert.ok(bar().hidden, "继续编辑应隐藏确认条");
+    closeX();
+    assert.ok(!bar().hidden, "再点 ✕ 应重新显示确认条");
+
+    // 放弃修改 → 直接关闭，不发保存请求
+    barBtn("放弃修改");
+    assert.equal(overlay.style.display, "none", "放弃修改应关闭");
+    assert.equal(savedSkill, null, "放弃修改不应发保存请求");
+
+    // 保存并关闭 → 发出 save_skill 且携带新正文，成功后关闭
+    await popup.openExisting("my-skill", "custom");
+    document.querySelector(".rs-skill-detail textarea").value = "body v2";
+    closeX();
+    barBtn("💾 保存并关闭");
+    await sleep(80);
+    assert.ok(savedSkill, "应发出 /rs_prompts/save_skill");
+    assert.equal(savedSkill.content, "body v2");
+    assert.equal(overlay.style.display, "none", "保存成功后应关闭");
+});
+
+test("详情弹窗关闭保护：预设技能设置区未保存时，保存并关闭写本地覆盖后关闭", async () => {
+    const r = await openGenPopup({ id: "image_gen_text", source: "presets", config: {} });
+    // 改生图张数 → 设置区脏（正文只读不参与）
+    document.querySelector(".rs-gen-advanced input[type=number]").value = "3";
+    click(document.querySelector(".rs-skill-detail .rs-skill-modal-close"));
+    await sleep(20);
+
+    const overlay = document.querySelector(".rs-skill-modal-overlay");
+    assert.equal(overlay.style.display, "flex", "设置区有未保存修改不应关闭");
+    const bar = document.querySelector(".rs-skill-detail .rs-gen-dirty-confirm");
+    assert.ok(!bar.hidden, "应显示未保存修改确认条");
+
+    click(Array.from(bar.querySelectorAll("button")).find((b) => b.textContent === "💾 保存并关闭"));
+    await sleep(80);
+    assert.ok(r.saved, "应 POST /neo_image_gen/skill_config（本地覆盖）");
+    assert.equal(r.saved.config.count, 3);
+    assert.equal(overlay.style.display, "none", "保存成功后应关闭");
 });
 
