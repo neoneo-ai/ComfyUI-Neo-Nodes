@@ -514,7 +514,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (!skills.length) skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
         for (const s of skills) {
             const opt = $el('option', { value: s.id, textContent: s.name || s.id });
-            opt.dataset.source = s.source || 'custom'; // 行内查看/编辑按钮按 source 区分（预设只读）
+            opt.dataset.source = s.source || 'custom'; // 详情弹窗按 source 区分预设只读/自定义可编辑
+            opt.__skillMeta = s; // 选择窗浮动预览卡取 gen_config / 分类等元数据
             skillSel.appendChild(opt);
         }
         if (seg.skill_id) skillSel.value = seg.skill_id;
@@ -670,6 +671,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         for (const s of pool) {
             const opt = $el('option', { value: s.id, textContent: s.name || s.id });
             opt.dataset.source = s.source || 'custom';
+            opt.__skillMeta = s; // 选择窗浮动预览卡取 gen_config / 分类等元数据
             skillSel.appendChild(opt);
         }
         if ([...skillSel.options].some(o => o.value === prev)) skillSel.value = prev;

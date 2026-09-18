@@ -3,7 +3,7 @@
  * Skill 模块（ES 模块：export API + UI；导入 marked/purify 用于 Markdown 渲染）
  * - API：listSkills / loadSkill / saveSkill / deleteSkill / uploadSkill
  *        listSkillFiles / loadSkillFile / saveSkillFile / deleteSkillFile
- * - UI ：createSkillDetailPopup()（单技能详情弹窗）+ createSkillDropdown()（技能下拉组装：管理入口）
+ * - UI ：createSkillDetailPopup()（单技能详情弹窗）+ createSkillDropdown()（技能下拉组装：管理入口 + 浮动预览卡）
  */
 
 // Markdown 渲染复用 ComfyUI 内置同款库（marked + DOMPurify），breaks:true 保留单行换行
@@ -12,8 +12,8 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
-// 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置）；与 image-gen.js 的循环导入均为延迟使用，安全
-import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels } from "./image-gen.js";
+// 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
+import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
 
 // ==========================================
@@ -242,6 +242,7 @@ function populateSkillOptions(selectEl, skills) {
             opt.dataset.requiresRef = s.requires_ref ? "1" : "";
             // tags（含后端追加的中文拼音/首字母缩写）供 combo box 搜索匹配
             opt.dataset.tags = (s.tags || []).join(" ");
+            opt.__skillMeta = s; // 完整元数据（gen_config / 分类 / 名称）供浮动预览卡读取
             const imgBadge = s.needs_image ? "📷 " : "";
             opt.textContent = `${imgBadge}${s.name || s.id}`;
             optgroup.appendChild(opt);
@@ -937,7 +938,8 @@ function getSkillUploadInputs() {
 
 // ==========================================
 // 技能选择弹窗（居中式，替代原生 combo 下拉）：
-// - openSkillPickerModal()：通用居中弹窗（标题 + 搜索过滤 + 分组列表 + 可选底部管理工具栏 / 行内 Edit/查看）
+// - openSkillPickerModal()：通用居中弹窗（标题 + 搜索过滤 + 分组列表 + 可选底部管理工具栏）；
+//   技能列表在右侧附浮动预览卡（生成技能 = 主模型 / LoRA / 长边尺寸 / 默认比例，未保存字段显示与详情一致的自动默认值；其余技能 = skill.md 模板提示词正文摘录），随行焦点（键盘高亮 / hover）切换，点击打开详情弹窗
 // - attachSkillPickerToComboWidget()：拦截 ComfyUI 画布 combo widget 的点击（widget.mouse），
 //   弹出选择窗；选中写回 widget.value 并触发 callback（保留 Krea2/H3 既有的 loadDims/loadSpec 钩子）
 // - attachSkillPickerToSelect()：拦截原生 <select>（导演编辑器分段技能下拉），同样弹居中窗口
@@ -961,6 +963,9 @@ function skillItemsFromMeta(skills, allowed) {
             tags: (s.tags || []).join(" "),
             source: s.source || "custom",
             group: CATEGORY_LABELS[s.category]?.label || "",
+            genImage: !!s.gen_image, // 预览卡自动默认值需区分生图 / 生视频（建议模型来源不同）
+            genVideo: !!s.gen_video,
+            genConfig: (s.gen_config && typeof s.gen_config === "object") ? s.gen_config : null, // 生图/生视频配置摘要（主模型 / LoRA / 长边 / 默认比例）
         });
     }
     items.sort((a, b) => {
@@ -1011,7 +1016,7 @@ function buildSkillManagementButtons(onClose) {
 
 /**
  * 打开居中技能选择弹窗。
- * opts: { title, items:[{value,label,badge,tags,source,group}], currentValue, onPick(value,item), showFooter, showRowActions }
+ * opts: { title, items:[{value,label,badge,tags,source,group,skillId,genImage,genVideo,genConfig}], currentValue, onPick(value,item), showFooter }
  * 返回 { close, overlay }；每次调用新建并挂到 body，close 时移除。
  * 同一时刻只允许一个选择窗：重复点击 / 异步竞态（连点 combo）不会叠加出多个弹窗。
  */
@@ -1050,6 +1055,122 @@ function positionPickerPanel(panel, rect) {
     panel.style.top = `${top}px`;
 }
 
+// 预览卡正文摘录长度（skill.md 模板提示词，超长截断）
+const PREVIEW_EXCERPT_LEN = 400;
+
+// skill.md 正文缓存：非生成技能预览按需 loadSkill 取正文，避免每次 hover 都请求；技能增删改后随广播清空
+const _skillPreviewContent = new Map(); // skillId -> 正文（"" = 已加载且为空）
+document.addEventListener("rs.skills.updated", () => _skillPreviewContent.clear());
+
+async function getSkillPreviewContent(id) {
+    if (_skillPreviewContent.has(id)) return _skillPreviewContent.get(id);
+    const data = await loadSkill(id);
+    const body = (data && !data.error) ? String(data.content || "") : "";
+    _skillPreviewContent.set(id, body);
+    return body;
+}
+
+/** 预览卡锚定：紧贴焦点行右侧、顶边对齐；右侧放不下翻到行左侧，坐标夹在视口内 */
+function positionPreviewCard(previewEl, rect) {
+    const vw = window.innerWidth || 1200;
+    const vh = window.innerHeight || 800;
+    const MARGIN = 8, GAP = 8;
+    const w = previewEl.offsetWidth || 340;
+    const h = previewEl.offsetHeight || 120;
+    let left = rect.right + GAP;
+    if (left + w > vw - MARGIN) left = rect.left - w - GAP; // 右侧放不下 → 翻到行左侧
+    left = Math.max(MARGIN, Math.min(left, vw - w - MARGIN));
+    const top = Math.max(MARGIN, Math.min(rect.top, vh - h - MARGIN));
+    previewEl.style.left = `${left}px`;
+    previewEl.style.top = `${top}px`;
+}
+
+// 自动建议模型列表（未保存主模型时显示「自动（建议名）」，与详情弹窗同源）：模块级懒加载，选择窗与技能下拉共享
+let _previewGenModelsPromise = null;
+let _previewVideoModelsPromise = null;
+function ensurePreviewModelLists() {
+    if (!_previewGenModelsPromise) _previewGenModelsPromise = listGenModels().catch(() => null);
+    if (!_previewVideoModelsPromise) _previewVideoModelsPromise = listVideoGenModels().catch(() => null);
+    return Promise.all([_previewGenModelsPromise, _previewVideoModelsPromise]).then(([genModels, videoModels]) => ({ genModels, videoModels }));
+}
+
+/** 把焦点技能渲染进预览卡：生成技能 = 主模型 / LoRA（逐条 chip）/ 长边尺寸 / 默认比例，未保存的按详情弹窗同款自动默认显示；
+ *  其余技能 = skill.md 模板提示词正文摘录（懒加载 + 缓存）。it 为 null（无焦点行）时显示操作提示。整卡点击打开详情由调用方绑定。 */
+function renderSkillPreview(preview, it, ctx = {}) {
+    preview.innerHTML = "";
+    if (!it) {
+        const hint = mkEl("div", "rs-skill-preview-empty");
+        hint.textContent = "用 ↑ / ↓ 或悬停浏览技能";
+        preview.appendChild(hint);
+        return;
+    }
+    const id = it.skillId || it.value;
+    preview.dataset.focusId = id;
+    const name = mkEl("div", "rs-skill-preview-name");
+    name.textContent = it.label;
+    name.title = it.label;
+    preview.appendChild(name);
+    if (it.genImage || it.genVideo) {
+        const cfg = (it.genConfig && typeof it.genConfig === "object") ? it.genConfig : {};
+        const addRow = (key, valEl) => {
+            const r = mkEl("div", "rs-skill-preview-row");
+            const k = mkEl("span", "rs-skill-preview-key");
+            k.textContent = key;
+            r.append(k, valEl);
+            preview.appendChild(r);
+        };
+        // 主模型：已保存值优先；未保存时与详情「自动（建议名）」一致——生图取 suggested_diffusion_models，生视频按 H3 名称线索挑
+        let model = String(cfg.model || "").trim();
+        if (!model) {
+            const suggested = it.genImage
+                ? (ctx.genModels && ctx.genModels.suggested_diffusion_models) || ""
+                : videoSuggestion(ctx.videoModels ? ctx.videoModels.diffusion_models : []);
+            model = suggested ? `自动（${shortModelName(suggested)}）` : "自动";
+        }
+        const mv = mkEl("span", "rs-skill-preview-val");
+        mv.textContent = model;
+        addRow("主模型", mv);
+        // LoRA：仅已保存配置展示（详情同样不自动加行）
+        const loras = Array.isArray(cfg.loras) ? cfg.loras.filter((n) => n) : [];
+        if (loras.length) {
+            const chips = mkEl("span", "rs-skill-preview-val rs-skill-preview-chips");
+            loras.forEach((n) => {
+                const c = mkEl("span", "rs-skill-preview-chip");
+                c.textContent = n;
+                chips.appendChild(c);
+            });
+            addRow("LoRA", chips);
+        }
+        // 长边 / 比例：生图与生视频共用同一 gen_config 字段，未保存时显示后端默认（与详情「默认 (1280)」/「默认 (1:1)」一致）
+        const base = Number.isFinite(cfg.base_resolution) && cfg.base_resolution > 0 ? cfg.base_resolution : null;
+        const bv = mkEl("span", "rs-skill-preview-val");
+        bv.textContent = base ? `${base}px` : "默认 (1280)";
+        addRow("长边尺寸", bv);
+        const ratio = String(cfg.default_ratio || "").trim();
+        const rv = mkEl("span", "rs-skill-preview-val");
+        rv.textContent = ratio || "默认 (1:1)";
+        addRow("默认比例", rv);
+    } else {
+        // 非生成技能：skill.md 模板提示词正文摘录（懒加载 + 缓存，超长截断）
+        const showBody = (body) => (body.length > PREVIEW_EXCERPT_LEN ? body.slice(0, PREVIEW_EXCERPT_LEN) + "…" : body) || "（无正文）";
+        const bodyEl = mkEl("div", "rs-skill-preview-body");
+        preview.appendChild(bodyEl);
+        const cached = _skillPreviewContent.get(id);
+        if (cached !== undefined) {
+            bodyEl.textContent = showBody(cached);
+        } else {
+            bodyEl.textContent = "加载中…";
+            getSkillPreviewContent(id).then((body) => {
+                if (preview.dataset.focusId !== id) return; // 焦点已切走，丢弃过期结果
+                bodyEl.textContent = showBody(body);
+            });
+        }
+    }
+    const hint = mkEl("div", "rs-skill-preview-hint");
+    hint.textContent = "点击卡片打开技能详情";
+    preview.appendChild(hint);
+}
+
 let _skillPickerOpen = false;
 
 function openSkillPickerModal(opts = {}) {
@@ -1068,6 +1189,7 @@ function openSkillPickerModal(opts = {}) {
         highlightIndex = ((i % visibleRows.length) + visibleRows.length) % visibleRows.length;
         visibleRows.forEach((r, j) => r.classList.toggle("is-highlighted", j === highlightIndex));
         visibleRows[highlightIndex]?.scrollIntoView?.({ block: "nearest" });
+        updatePreview(); // 预览卡随焦点切换
     };
     const pickHighlighted = () => {
         const it = visibleItems[highlightIndex];
@@ -1083,7 +1205,9 @@ function openSkillPickerModal(opts = {}) {
         else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight(highlightIndex - 1); }
         else if (e.key === "Enter") { e.preventDefault(); pickHighlighted(); }
     };
-    const close = () => { _skillPickerOpen = false; overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+    const close = () => { _skillPickerOpen = false; overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", positionPreview); };
+    // 打开技能详情（编辑）弹窗：选择窗关闭后按 skill id 加载（名称可改，id 是稳定键）
+    const openDetail = (it) => { close(); getSkillDetailPopup().openExisting(it.skillId || it.value, it.source); };
 
     const panel = mkEl("div", "rs-skill-modal rs-skill-picker");
 
@@ -1100,9 +1224,46 @@ function openSkillPickerModal(opts = {}) {
         panel.appendChild(footer);
     }
 
-    overlay.appendChild(panel);
+    // 技能列表：浮动预览卡，以焦点行为锚点贴其右侧（键盘高亮 / hover 跟随）；
+    // 生成技能显示配置摘要（未保存字段按详情同款自动默认），其余技能显示 skill.md 模板正文摘录，故只要存在技能条目就渲染
+    const wrap = mkEl("div", "rs-skill-picker-wrap");
+    wrap.appendChild(panel);
+    let preview = null;
+    if (items.some((it) => it.skillId || it.genImage || it.genVideo)) {
+        preview = mkEl("div", "rs-skill-picker-preview");
+        preview.title = "点击打开技能详情";
+        preview.addEventListener("mousedown", (e) => e.preventDefault()); // 不抢搜索框焦点
+        preview.addEventListener("click", () => {
+            const it = visibleItems[highlightIndex];
+            if (it) openDetail(it);
+        });
+        overlay.appendChild(preview); // absolute 挂在 overlay（fixed inset:0）上，按视口坐标锚定焦点行
+    }
+    // 预览卡锚点定位：紧贴焦点行右侧，顶边对齐；右侧放不下翻到行左侧，垂直夹在视口内。无焦点时锚定列表顶部
+    const positionPreview = () => {
+        if (!preview) return;
+        positionPreviewCard(preview, (visibleRows[highlightIndex] || list).getBoundingClientRect());
+    };
+    // 有生成技能未保存主模型时，拉一次模型列表取自动建议（与详情弹窗同源）；到位后刷新当前预览
+    let genModels = null;
+    let videoModels = null;
+    if (preview) {
+        const needModels = items.some((it) => (it.genImage || it.genVideo) && !(it.genConfig && it.genConfig.model));
+        if (needModels) {
+            ensurePreviewModelLists().then((m) => { genModels = m.genModels; videoModels = m.videoModels; updatePreview(); });
+        }
+    }
+    const updatePreview = () => {
+        if (!preview) return;
+        renderSkillPreview(preview, visibleItems[highlightIndex] || null, { genModels, videoModels });
+        positionPreview(); // 内容行数变化后卡片高度变，需重新锚定
+    };
+
+    overlay.appendChild(wrap);
     document.body.appendChild(overlay);
     document.addEventListener("keydown", onKey, true);
+    list.addEventListener("scroll", positionPreview); // 列表滚动时焦点行位置变化
+    window.addEventListener("resize", positionPreview);
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
 
     const render = (filter) => {
@@ -1112,6 +1273,7 @@ function openSkillPickerModal(opts = {}) {
         visibleItems = matches;
         visibleRows = [];
         highlightIndex = -1;
+        updatePreview(); // 过滤后焦点重置，预览卡回到提示态（下方命中当前值时会重新高亮）
         if (!matches.length) {
             const empty = mkEl("div", "rs-skill-picker-empty");
             empty.textContent = "无匹配项";
@@ -1132,16 +1294,7 @@ function openSkillPickerModal(opts = {}) {
             lbl.textContent = it.label;
             row.appendChild(lbl);
             row.addEventListener("mousedown", (e) => e.preventDefault()); // 保持搜索框焦点
-            if (opts.showRowActions) {
-                const isCustom = it.source !== "preset";
-                const btn = mkEl("button", "rs-skill-row-action");
-                btn.type = "button";
-                btn.textContent = "👁 查看";
-                btn.title = isCustom ? "查看 / 编辑此技能" : "查看此技能（只读）";
-                btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
-                btn.addEventListener("click", (e) => { e.stopPropagation(); close(); getSkillDetailPopup().openExisting(it.skillId || it.value, it.source); });
-                row.appendChild(btn);
-            }
+            row.addEventListener("mouseenter", () => setHighlight(i)); // hover 行同步右侧预览卡
             row.addEventListener("click", (e) => { e.stopPropagation(); close(); opts.onPick?.(it.value, it); });
             visibleRows[i] = row;
             list.appendChild(row);
@@ -1152,11 +1305,11 @@ function openSkillPickerModal(opts = {}) {
     render("");
     search.addEventListener("input", () => render(search.value));
 
-    // 传入 anchor 时贴到触发控件附近（去遮罩的浮层）；否则保持居中模态
+    // 传入 anchor 时贴到触发控件附近（去遮罩的浮层）；否则保持居中模态。预览卡独立 absolute 定位，不受面板位置影响
     const anchorRect = resolveAnchorRect(opts.anchor);
     if (anchorRect) {
         overlay.classList.add("rs-skill-picker--anchored");
-        positionPickerPanel(panel, anchorRect);
+        positionPickerPanel(wrap, anchorRect);
     }
 
     search.focus();
@@ -1181,7 +1334,7 @@ async function defaultSkillItemsProvider(widget) {
 }
 
 /** 打开 combo 对应的选择窗（异步取条目后展示） */
-async function openComboSkillPicker(node, widget, title, showFooter, showRowActions, provider, anchor) {
+async function openComboSkillPicker(node, widget, title, showFooter, provider, anchor) {
     let items = [];
     try { items = (await provider(widget)) || []; } catch (e) { console.error("[Neo Nodes] skill picker load failed", e); }
     openSkillPickerModal({
@@ -1189,7 +1342,6 @@ async function openComboSkillPicker(node, widget, title, showFooter, showRowActi
         items,
         currentValue: String(widget.value || ""),
         showFooter,
-        showRowActions,
         anchor,
         onPick: (value) => setComboWidgetValue(node, widget, value),
     });
@@ -1197,7 +1349,7 @@ async function openComboSkillPicker(node, widget, title, showFooter, showRowActi
 
 /**
  * 拦截 ComfyUI 画布 combo widget 的点击，改为弹出技能选择窗（锚定到鼠标位置）。
- * opts: { title, showFooter(默认 true), showRowActions(默认同 showFooter), itemsProvider(widget)->Promise<items[]> }
+ * opts: { title, showFooter(默认 true), itemsProvider(widget)->Promise<items[]> }
  * 新版前端 processWidgetClick 只认 onPointerDown 返回真值来短路原生 combo 下拉；
  * 其 pointer 参数没有视口坐标，因此用 document 捕获阶段记录的真实 pointerdown 坐标做锚点。
  * 不能挂 widget.mouse：processMouseMove 也会调用它，会导致悬停/点击别处时重复弹窗。
@@ -1215,18 +1367,18 @@ function ensureNeoPointerTracker() {
 function attachSkillPickerToComboWidget(widget, opts = {}) {
     if (!widget || widget.__neoSkillPickerAttached) return;
     const showFooter = opts.showFooter !== false;
-    const showRowActions = opts.showRowActions ?? showFooter;
     const provider = typeof opts.itemsProvider === "function" ? opts.itemsProvider : defaultSkillItemsProvider;
     ensureNeoPointerTracker();
     const node = widget.node;
     widget.onPointerDown = () => {
-        openComboSkillPicker(node || widget.node, widget, null, showFooter, showRowActions, provider, { clientX: _neoLastPointer.x, clientY: _neoLastPointer.y });
+        openComboSkillPicker(node || widget.node, widget, null, showFooter, provider, { clientX: _neoLastPointer.x, clientY: _neoLastPointer.y });
         return true;
     };
     widget.__neoSkillPickerAttached = true;
 }
 
-/** 拦截原生 <select>（导演编辑器分段技能下拉）：点击弹居中搜索窗，选中写回 select.value */
+/** 拦截原生 <select>（导演编辑器分段技能下拉）：点击弹居中搜索窗，选中写回 select.value。
+ *  option 可携带 __skillMeta（listVideoSkills 元数据），透传给选择窗条目以渲染浮动预览卡 */
 function attachSkillPickerToSelect(selectEl, opts = {}) {
     if (!selectEl || selectEl.__neoSkillPickerAttached) return;
     const title = opts.title || "选择视频技能";
@@ -1235,14 +1387,25 @@ function attachSkillPickerToSelect(selectEl, opts = {}) {
         e.preventDefault(); // 阻止原生下拉展开
         const items = Array.from(selectEl.options)
             .filter((o) => o.value !== "")
-            .map((o) => ({ value: o.value, label: o.textContent || o.value, source: (o.dataset && o.dataset.source) || "custom" }));
+            .map((o) => {
+                const meta = o.__skillMeta || {};
+                return {
+                    value: o.value,
+                    skillId: meta.id || o.value,
+                    label: String(o.textContent || o.value).trim(),
+                    source: (o.dataset && o.dataset.source) || "custom",
+                    group: CATEGORY_LABELS[meta.category]?.label || "",
+                    genImage: !!meta.gen_image,
+                    genVideo: !!meta.gen_video,
+                    genConfig: (meta.gen_config && typeof meta.gen_config === "object") ? meta.gen_config : null,
+                };
+            });
         openSkillPickerModal({
             title,
             items,
             currentValue: selectEl.value,
             anchor: selectEl,
             showFooter: false,
-            showRowActions: true, // 行内 👁 查看：自定义可编辑、预设只读
             onPick: (value) => {
                 if (selectEl.value !== value) {
                     selectEl.value = value;
@@ -1267,31 +1430,78 @@ function createSkillDropdown() {
     const skillFooter = mkEl("div", "rs-skill-dropdown-footer");
     buildSkillManagementButtons(() => combo.close()).forEach((b) => skillFooter.appendChild(b));
 
-    // 行内操作：自定义 skill → ✎ Edit；内置 SYS/TASK → 👁 查看。点击先关下拉再开详情弹窗，
-    // mousedown 上 preventDefault + stopPropagation 避免触发整行的选中(pickValue)。
-    const renderItemExtra = (itemEl, value, o) => {
-        const source = (o && o.dataset && o.dataset.source) || "custom";
-        const isCustomSkill = source === "custom";
-        const btn = mkEl("button", "rs-skill-row-action");
-        btn.type = "button";
-        btn.textContent = "👁 查看";
-        btn.title = isCustomSkill ? "查看 / 编辑此技能" : "查看此技能（只读）";
-        btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
-        btn.addEventListener("click", (e) => {
-            e.stopPropagation();
+    // 浮动预览卡：与选择窗同款，挂在 body 上（fixed），跟随焦点行；所有技能可预览
+    // （生成技能 = 配置摘要，其余 = skill.md 模板正文摘录），点击打开详情弹窗
+    let skillPreview = null;
+    let previewFocusItem = null;
+    let previewFocusRow = null;
+    const ensureSkillPreview = () => {
+        if (skillPreview) return skillPreview;
+        skillPreview = mkEl("div", "rs-skill-picker-preview rs-skill-picker-preview--fixed");
+        skillPreview.style.display = "none";
+        skillPreview.title = "点击打开技能详情";
+        // stopPropagation 必须：combo 点外关闭是 document mousedown，不拦的话列表先关、click 到不了卡片（同 viewBtn / 底部按钮）
+        skillPreview.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }); // 不抢输入框焦点
+        skillPreview.addEventListener("click", () => {
+            const it = previewFocusItem;
+            if (!it) return;
             combo.close();
-            getSkillDetailPopup().openExisting(value, source);
+            getSkillDetailPopup().openExisting(it.skillId, it.source);
         });
-        itemEl.appendChild(btn);
+        document.body.appendChild(skillPreview);
+        return skillPreview;
     };
+    // 未保存主模型的生成技能需拉模型列表取自动建议（与选择窗 / 详情弹窗同源）
+    let genModels = null;
+    let videoModels = null;
+    const onItemFocus = (itemEl) => {
+        const val = itemEl && itemEl.dataset.value;
+        const opt = val ? [...selectEl.options].find((o) => o.value === val) : null;
+        if (!opt) {
+            previewFocusItem = null;
+            previewFocusRow = null;
+            if (skillPreview) skillPreview.style.display = "none";
+            return;
+        }
+        const meta = opt.__skillMeta || {};
+        previewFocusItem = {
+            value: val,
+            skillId: meta.id || val,
+            label: meta.name || String(opt.textContent || val).trim(),
+            source: (opt.dataset && opt.dataset.source) || "custom",
+            genImage: !!meta.gen_image,
+            genVideo: !!meta.gen_video,
+            genConfig: (meta.gen_config && typeof meta.gen_config === "object") ? meta.gen_config : null,
+        };
+        previewFocusRow = itemEl;
+        const preview = ensureSkillPreview();
+        preview.style.display = "";
+        renderSkillPreview(preview, previewFocusItem, { genModels, videoModels });
+        positionPreviewCard(preview, itemEl.getBoundingClientRect());
+        if ((previewFocusItem.genImage || previewFocusItem.genVideo) && !(previewFocusItem.genConfig && previewFocusItem.genConfig.model)) {
+            const focusToken = previewFocusItem;
+            ensurePreviewModelLists().then((m) => {
+                genModels = m.genModels;
+                videoModels = m.videoModels;
+                if (previewFocusItem !== focusToken) return; // 焦点已切走，丢弃过期结果
+                renderSkillPreview(preview, previewFocusItem, { genModels, videoModels });
+                positionPreviewCard(preview, previewFocusRow.getBoundingClientRect());
+            });
+        }
+    };
+    window.addEventListener("resize", () => {
+        if (skillPreview && skillPreview.style.display !== "none" && previewFocusRow) {
+            positionPreviewCard(skillPreview, previewFocusRow.getBoundingClientRect());
+        }
+    });
 
-    // combo 声明在其后：footer/行内操作闭包只在用户交互时执行，届时 combo 已赋值
+    // combo 声明在其后：footer / 预览卡闭包只在用户交互时执行，届时 combo 已赋值
     const combo = attachComboBox(selectEl, {
         placeholder: "🔍 输入过滤 skill...",
         emptyText: "无匹配 skill",
         listMinWidth: 306,
         footerEl: skillFooter,
-        renderItemExtra,
+        onItemFocus,
     });
 
     // hover 已选 skill 时右侧出现 👁 按钮，点击打开详情弹窗（覆盖 caret 区域）

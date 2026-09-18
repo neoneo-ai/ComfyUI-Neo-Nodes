@@ -3164,27 +3164,6 @@
     border-color: #5090cc !important;
 }
 
-/* 技能下拉行内操作按钮（✎ Edit / 👁 查看）：弱化展示、悬停增强，尽量少挤占技能名 */
-.rs-skill-row-action {
-    flex-shrink: 0;
-    padding: 1px 7px;
-    font-size: 10px;
-    line-height: 1.5;
-    background: transparent;
-    color: #7d8fa3;
-    border: 1px solid #394452;
-    border-radius: 3px;
-    cursor: pointer;
-    opacity: .8;
-}
-
-.rs-skill-row-action:hover {
-    background: #2c3e52;
-    color: #d6e4f5;
-    border-color: #5090cc;
-    opacity: 1;
-}
-
 /* ---- 技能选择弹窗（锚定浮层，替代原生 combo 下拉；无 anchor 时回退居中模态）---- */
 .rs-skill-modal.rs-skill-picker {
     width: min(420px, calc(100vw - 32px));
@@ -3236,6 +3215,66 @@
 .rs-skill-picker-item.is-selected { background: #1f3a5c; box-shadow: inset 0 0 0 1px #5090cc; color: #fff; }
 .rs-skill-picker-badge { flex-shrink: 0; font-size: 12px; }
 .rs-skill-picker-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 技能浮动预览卡：选择窗内 absolute 挂 overlay、agent 技能下拉内 fixed 挂 body（--fixed），均以焦点行为锚点贴其右侧（JS 计算坐标）；随行焦点（键盘高亮 / hover）跟随 */
+.rs-skill-picker-preview {
+    position: absolute;
+    width: 340px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    background: #1a1a2a;
+    border: 1px solid #394452;
+    border-radius: 8px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: #d0d7de;
+    cursor: pointer;
+    transition: border-color .12s ease;
+}
+.rs-skill-picker-preview:hover { border-color: #5090cc; }
+/* agent 技能下拉的预览卡挂 body（fixed），与 combo 列表同层叠、不被弹窗裁剪 */
+.rs-skill-picker-preview--fixed { position: fixed; z-index: 2147483647; }
+.rs-skill-preview-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rs-skill-preview-row { display: flex; align-items: baseline; gap: 8px; }
+.rs-skill-preview-key { flex-shrink: 0; width: 52px; font-size: 11px; color: #7d8ea1; }
+.rs-skill-preview-val { flex: 1; min-width: 0; word-break: break-all; color: #cfe3f7; }
+.rs-skill-preview-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.rs-skill-preview-chip {
+    background: rgba(80, 144, 204, 0.15);
+    border: 1px solid #394452;
+    border-radius: 8px;
+    padding: 0 7px;
+    font-size: 11px;
+    color: #8fb3d9;
+}
+/* 非生成技能：skill.md 模板提示词正文摘录（懒加载，超长截断），保留换行便于扫读 */
+.rs-skill-preview-body {
+    font-size: 11px;
+    line-height: 1.55;
+    color: #9fb3c8;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.rs-skill-preview-empty { margin: auto 0; text-align: center; font-size: 12px; color: #6b7a8c; }
+.rs-skill-preview-hint {
+    margin-top: auto;
+    padding-top: 6px;
+    border-top: 1px solid #2c3e52;
+    text-align: center;
+    font-size: 11px;
+    color: #5a6b7d;
+}
 .rs-skill-picker-empty { padding: 14px 8px; font-size: 12px; color: #777; text-align: center; }
 
 /* dice lives inside .rs-random-wrap - re-apply the collapsed floating-group

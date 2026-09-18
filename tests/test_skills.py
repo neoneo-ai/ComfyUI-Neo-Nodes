@@ -149,6 +149,123 @@ class TestScanSkills(unittest.TestCase):
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestGenConfigSummary(unittest.TestCase):
+    """_gen_config_summary：从技能有效 config 提取列表预览摘要，只保留非空项，全空返回 None"""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib as _il
+        cls.skill_mod = _il.import_module(f"{_PKG_NAME}.skill")
+
+    def test_full_config(self):
+        s = self.skill_mod._gen_config_summary({
+            "model": "qwen3.safetensors",
+            "loras": [{"name": "a.safetensors", "strength": 0.8}, {"name": "b.safetensors"}],
+            "base_resolution": 1024,
+            "default_ratio": "9:16",
+        })
+        self.assertEqual(s, {
+            "model": "qwen3.safetensors",
+            "loras": ["a.safetensors", "b.safetensors"],
+            "base_resolution": 1024,
+            "default_ratio": "9:16",
+        })
+
+    def test_empty_or_invalid_omitted(self):
+        s = self.skill_mod._gen_config_summary({
+            "model": "   ",
+            "loras": [{"name": ""}, {"name": "x.safetensors"}, None, "y.safetensors", "x.safetensors"],
+            "base_resolution": "not-a-number",
+            "default_ratio": "",
+            "count": 4,  # 非摘要字段，忽略
+        })
+        self.assertEqual(s, {"loras": ["x.safetensors", "y.safetensors"]})
+
+    def test_all_empty_returns_none(self):
+        self.assertIsNone(self.skill_mod._gen_config_summary({}))
+        self.assertIsNone(self.skill_mod._gen_config_summary(
+            {"model": "", "loras": [], "base_resolution": 0, "default_ratio": None}))
+        self.assertIsNone(self.skill_mod._gen_config_summary(None))
+
+    def test_base_resolution_positive_int_only(self):
+        self.assertIsNone(self.skill_mod._gen_config_summary({"base_resolution": -5}))
+        self.assertEqual(self.skill_mod._gen_config_summary({"base_resolution": "1024"})["base_resolution"], 1024)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestScanSkillsGenConfig(unittest.TestCase):
+    """scan_skills：生图/生视频技能附带 gen_config 摘要（tasks 与 presets/custom 两分支）；非生图或空配置不附"""
+
+    def setUp(self):
+        self.skill_mod = getattr(prompts_mod, "skill", None)
+        if self.skill_mod is None:
+            self.skipTest("prompts 未暴露 skill 模块")
+        self._tmp = tempfile.TemporaryDirectory()
+        root = self._tmp.name
+        self._orig_custom = self.skill_mod.SKILL_CUSTOM_DIR
+        self._orig_tasks = self.skill_mod.TASKS_DIR
+        self.skill_mod.SKILL_CUSTOM_DIR = os.path.join(root, "custom")
+        self.skill_mod.TASKS_DIR = os.path.join(root, "tasks")
+
+    def tearDown(self):
+        self.skill_mod.SKILL_CUSTOM_DIR = self._orig_custom
+        self.skill_mod.TASKS_DIR = self._orig_tasks
+        self._tmp.cleanup()
+
+    def _write_config(self, d, config):
+        if config is not None:
+            with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+                json.dump(config, f)
+
+    def _by_id(self):
+        return {s["id"]: s for s in self.skill_mod.scan_skills()}
+
+    def test_task_gen_image_skill_gets_summary(self):
+        # tasks 分支：gen_image 任务技能附带有效 config 摘要
+        d = os.path.join(self._tmp.name, "tasks", "zz-test-gen-task")
+        os.makedirs(d)
+        with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: zz-test-gen-task\ngen_image: true\n---\nbody\n")
+        self._write_config(d, {"model": "task-model.safetensors", "default_ratio": "16:9"})
+        s = self._by_id().get("zz-test-gen-task")
+        self.assertIsNotNone(s, "任务技能应被扫描到")
+        self.assertEqual(s["source"], "tasks")
+        self.assertEqual(s.get("gen_config"), {"model": "task-model.safetensors", "default_ratio": "16:9"})
+
+    def test_custom_gen_skill_partial_config(self):
+        # presets/custom 分支：部分配置只附非空项
+        sid = "zz-test-custom-gen"
+        self.assertTrue(self.skill_mod.save_skill_main(
+            sid, "ZZ Test Custom Gen", "body", None, "custom", False,
+            category="image_gen", gen_image=True))
+        self._write_config(os.path.join(self._tmp.name, "custom", sid), {"model": "m.safetensors"})
+        s = self._by_id().get(sid)
+        self.assertIsNotNone(s, "自定义技能应被扫描到")
+        self.assertEqual(s.get("gen_config"), {"model": "m.safetensors"})
+
+    def test_empty_config_not_attached(self):
+        # 生视频但 config 全空 → 不附 gen_config 键
+        sid = "zz-test-empty-cfg"
+        self.assertTrue(self.skill_mod.save_skill_main(
+            sid, "ZZ Test Empty Cfg", "body", None, "custom", False,
+            category="video_gen", gen_video=True))
+        self._write_config(os.path.join(self._tmp.name, "custom", sid), {})
+        s = self._by_id().get(sid)
+        self.assertIsNotNone(s)
+        self.assertNotIn("gen_config", s)
+
+    def test_non_gen_skill_not_attached_even_with_config(self):
+        # 非生图/生视频技能：即使有 config.json 也不附 gen_config
+        sid = "zz-test-non-gen"
+        self.assertTrue(self.skill_mod.save_skill_main(
+            sid, "ZZ Test Non Gen", "body", None, "custom"))
+        self._write_config(os.path.join(self._tmp.name, "custom", sid), {"model": "m.safetensors"})
+        s = self._by_id().get(sid)
+        self.assertIsNotNone(s)
+        self.assertNotIn("gen_config", s)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestSaveSkillMultiTurn(unittest.TestCase):
     """save_skill_main 的 multi_turn 设置：显式写入 / 缺省沿用 / False 移除"""
 

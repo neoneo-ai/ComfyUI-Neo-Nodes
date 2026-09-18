@@ -400,13 +400,13 @@ export async function assembleAllGenerated(images) {
 // 生图设置表单（挂「自动增强」菜单内）
 // ==========================================
 
-function shortModelName(name) {
+export function shortModelName(name) {
     const tail = String(name || "").split("/").pop();
     return tail.replace(/\.(safetensors|sft|pt|bin|gguf)$/i, "");
 }
 
 // H3 视频模型建议：从文件列表挑首个含 h3/minimax 的名字供「自动」项显示（无匹配返回空串）
-function videoSuggestion(files) {
+export function videoSuggestion(files) {
     return (files || []).find((n) => /h3|minimax/i.test(String(n))) || "";
 }
 

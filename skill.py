@@ -720,10 +720,47 @@ def _skill_name_pinyin_tags(name) -> list:
     return tags
 
 
+def _gen_config_summary(cfg: dict) -> dict | None:
+    """从技能有效 config（预设含本地覆盖）提取列表预览摘要；只保留非空项，全空返回 None。"""
+    if not isinstance(cfg, dict):
+        return None
+    out = {}
+    model = str(cfg.get("model") or "").strip()
+    if model:
+        out["model"] = model[:256]
+    loras = []
+    for entry in cfg.get("loras") or []:
+        name = str((entry or {}).get("name") or "").strip() if isinstance(entry, dict) else str(entry or "").strip()
+        if name and name not in loras:
+            loras.append(name[:256])
+    if loras:
+        out["loras"] = loras
+    try:
+        base = int(cfg.get("base_resolution"))
+        if base > 0:
+            out["base_resolution"] = base
+    except (TypeError, ValueError):
+        pass
+    ratio = str(cfg.get("default_ratio") or "").strip()
+    if ratio:
+        out["default_ratio"] = ratio[:32]
+    return out or None
+
+
+def _attach_gen_config(skill: dict, skill_id: str) -> None:
+    """生图/生视频技能附带紧凑生成配置摘要（主模型 / LoRA 名 / 长边尺寸 / 默认比例），供前端选择窗行内预览卡片。"""
+    if not (skill.get("gen_image") or skill.get("gen_video")):
+        return
+    summary = _gen_config_summary(get_skill_gen_config(skill_id))
+    if summary:
+        skill["gen_config"] = summary
+
+
 def scan_skills() -> list:
     """合并 tasks + presets/custom 为统一 skill 元数据列表。
 
-    每个 skill 返回: {id, name, category, source, inputs, needs_image, multi_turn, has_workflow, tags, description}
+    每个 skill 返回: {id, name, category, source, inputs, needs_image, multi_turn, has_workflow, tags, description}；
+    生图/生视频技能另带 gen_config 摘要（主模型 / LoRA 名 / 长边尺寸 / 默认比例，取自有效 config.json）。
     """
     skills = []
 
@@ -738,7 +775,7 @@ def scan_skills() -> list:
                 continue
             meta, _ = _read_skill_md(d)
             inputs = meta.get("inputs") or _SKILL_DEFAULT_INPUTS.get(skill_id, ["text"])
-            skills.append({
+            skill = {
                 "id": skill_id,
                 "name": meta.get("name", skill_id),
                 "category": _skill_category(skill_id, {**meta, "inputs": inputs}),
@@ -752,7 +789,9 @@ def scan_skills() -> list:
                 "requires_ref": bool(meta.get("requires_ref", False)),
                 "mode": str(meta.get("mode") or "").strip(),
                 "description": meta.get("description", ""),
-            })
+            }
+            _attach_gen_config(skill, skill_id)
+            skills.append(skill)
 
     # 2) 预设 + 自定义 (presets/<id>/, custom/<id>/) -> category=frontmatter（缺省 image_enhance）
     with _skills_lock:
@@ -766,7 +805,7 @@ def scan_skills() -> list:
                 skill_id = entry
                 meta, _ = _read_skill_md(d)
                 inputs = meta.get("inputs") or ["text"]
-                skills.append({
+                skill = {
                     "id": skill_id,
                     "name": meta.get("name", skill_id),
                     "category": meta.get("category", "image_enhance"),
@@ -781,7 +820,9 @@ def scan_skills() -> list:
                     "mode": str(meta.get("mode") or "").strip(),
                     "has_workflow": os.path.isfile(os.path.join(d, "workflow.json")),
                     "description": meta.get("description", ""),
-                })
+                }
+                _attach_gen_config(skill, skill_id)
+                skills.append(skill)
 
     return skills
 

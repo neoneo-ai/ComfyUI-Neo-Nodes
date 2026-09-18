@@ -4,6 +4,8 @@
  * ↑↓+Enter 键盘选择；右缘常显下拉箭头作视觉指示。
  *
  * 用法：const { box, destroy } = attachComboBox(selectEl, { placeholder, emptyText });
+ * opts.onItemFocus?.(itemEl | null)：焦点行变化回调（打开列表 / hover / 键盘高亮），
+ * 过滤重置与关闭列表时以 null 调用；供技能下拉挂浮动预览卡等场景使用。
  * 原生 <select> 被移到屏幕外保留为数据源与取值真相——外部代码对 select 的选项填充、
  * style 显隐切换、.value 读写、disabled 切换全部照旧生效，组件自动跟随同步。
  */
@@ -89,7 +91,7 @@ export function attachComboBox(selectEl, opts = {}) {
 
     const items = () => Array.from(listEl.querySelectorAll("[data-value]"));
     let highlight = -1;
-    const closeList = () => { listEl.style.display = "none"; highlight = -1; };
+    const closeList = () => { listEl.style.display = "none"; highlight = -1; opts.onItemFocus?.(null); };
 
     const syncInputFromSelect = () => {
         const sel = selectEl.selectedOptions && selectEl.selectedOptions[0];
@@ -133,6 +135,7 @@ export function attachComboBox(selectEl, opts = {}) {
         highlight = ((idx % els.length) + els.length) % els.length;
         els.forEach((n, i) => { n.style.background = i === highlight ? "#3a5a8c" : ""; });
         els[highlight].scrollIntoView({ block: "nearest" });
+        opts.onItemFocus?.(els[highlight]);
     };
 
     const renderList = (query) => {
@@ -153,18 +156,9 @@ export function attachComboBox(selectEl, opts = {}) {
         const renderItem = (o, indented = false) => {
             const item = document.createElement("div");
             item.dataset.value = o.value;
-            if (opts.renderItemExtra) {
-                item.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:12px;color:#ccc;cursor:pointer;" +
-                    (o.value === selectEl.value ? "background:#3a5a8c;" : "");
-                const label = document.createElement("span");
-                label.textContent = o.textContent;
-                label.style.cssText = "flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-                item.appendChild(label);
-            } else {
-                item.textContent = o.textContent;
-                item.style.cssText = "padding:6px 8px;font-size:12px;color:#ccc;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
-                    (o.value === selectEl.value ? "background:#3a5a8c;" : "");
-            }
+            item.textContent = o.textContent;
+            item.style.cssText = "padding:6px 8px;font-size:12px;color:#ccc;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" +
+                (o.value === selectEl.value ? "background:#3a5a8c;" : "");
             if (indented) item.style.paddingLeft = "22px";
             if (o.value === selectEl.value) highlight = items().length;
             item.addEventListener("mousedown", (e) => {
@@ -172,7 +166,6 @@ export function attachComboBox(selectEl, opts = {}) {
                 pickValue(o.value);
             });
             item.addEventListener("mouseenter", () => setHighlight(items().indexOf(item)));
-            if (opts.renderItemExtra) opts.renderItemExtra(item, o.value, o);
             itemsHost.appendChild(item);
         };
         Array.from(selectEl.children).forEach((child) => {
@@ -203,6 +196,7 @@ export function attachComboBox(selectEl, opts = {}) {
         renderList(""); // 打开即全量，过滤只发生在键入时
         listEl.style.display = listOpenDisplay;
         placeList();
+        opts.onItemFocus?.(items()[highlight] || null); // 打开时焦点在已选项（无则 null）
     };
 
     const pickValue = (value) => {
@@ -230,6 +224,7 @@ export function attachComboBox(selectEl, opts = {}) {
         renderList(inputEl.value);
         if (!selectEl.disabled) { listEl.style.display = listOpenDisplay; placeList(); }
         highlight = -1;
+        opts.onItemFocus?.(null); // 过滤后焦点重置
     });
     inputEl.addEventListener("keydown", (e) => {
         if (e.key === "ArrowDown") {
