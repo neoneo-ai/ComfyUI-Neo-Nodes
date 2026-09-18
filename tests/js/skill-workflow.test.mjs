@@ -266,6 +266,45 @@ test("validateWorkflow：objectInfo 缺失跳过检查；模板变量不算模�
     assert.ok(r2.issues["1"].some(i => i.kind === "missing_model"));
 });
 
+test("validateWorkflow：模型名与列表分隔符不一致时两边归一化，真缺失仍标红", async () => {
+    const { validateWorkflow } = await import("../../web/workflow-graph.js");
+    const info = { UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } };
+    // Windows 后端 /models 返回反斜杠、config 存正斜杠 → 两边归一化后命中，不误报缺失
+    const ok = validateWorkflow(
+        { "1": { class_type: "UNETLoader", inputs: { unet_name: "MiniMaxH3/Speed/foo.safetensors" } } },
+        info, { diffusion_models: ["MiniMaxH3\\Speed\\foo.safetensors"] });
+    assert.equal(ok.counts.missingModels, 0, "config 正斜杠 vs 列表反斜杠应归一化后匹配");
+    // 反向：config 存反斜杠、列表正斜杠 → 同样命中
+    const ok2 = validateWorkflow(
+        { "1": { class_type: "UNETLoader", inputs: { unet_name: "MiniMaxH3\\Speed\\foo.safetensors" } } },
+        info, { diffusion_models: ["MiniMaxH3/Speed/foo.safetensors"] });
+    assert.equal(ok2.counts.missingModels, 0);
+    // 文件挪进别的子目录、config 仍是旧路径 → 报 missing_model（红标）
+    const miss = validateWorkflow(
+        { "1": { class_type: "UNETLoader", inputs: { unet_name: "MiniMaxH3/Speed/foo.safetensors" } } },
+        info, { diffusion_models: ["MiniMaxH3\\Other\\foo.safetensors"] });
+    assert.equal(miss.counts.missingModels, 1, "路径失效（文件挪走）应报缺失");
+    assert.ok(miss.issues["1"].some(i => i.kind === "missing_model"));
+});
+
+test("validateWorkflow：object_info 内联解析后的 combo 列表时也能判定模型缺失", async () => {
+    const { validateWorkflow } = await import("../../web/workflow-graph.js");
+    // 本环境 /object_info 把 unet_name 直接内联成路径列表（非 "UNET_NAME" 类型名），
+    // 且 Windows 后端返回反斜杠；此时 checkWorkflow 不会拉 /models，需直接用内联列表判定。
+    const info = { UNETLoader: { input: { required: { unet_name: [["MiniMaxH3\\Speed\\foo.safetensors", "MiniMaxH3\\top_pruned.safetensors"]] }, optional: {} } } };
+    // config 存的是失效旧路径（列表里没有）→ 报 missing_model（红标），不受类型名检测失败影响
+    const miss = validateWorkflow(
+        { "1": { class_type: "UNETLoader", inputs: { unet_name: "MiniMaxH3/Speed/foo_pruned.safetensors" } } },
+        info, {}); // modelLists 为空（未拉取）也应能判定
+    assert.equal(miss.counts.missingModels, 1, "内联列表里查不到 config 路径应报缺失");
+    assert.ok(miss.issues["1"].some(i => i.kind === "missing_model"));
+    // config 存正斜杠、内联列表反斜杠 → 归一化后命中，不误报
+    const ok = validateWorkflow(
+        { "1": { class_type: "UNETLoader", inputs: { unet_name: "MiniMaxH3/top_pruned.safetensors" } } },
+        info, {});
+    assert.equal(ok.counts.missingModels, 0, "内联列表应归一化分隔符后匹配");
+});
+
 test("详情弹窗：gen_image 技能渲染工作流流程图，高亮缺节点/缺模型/模板变量", async () => {
     mockRoute("/neo_image_gen/skill_workflow", (b, call) => jsonResponse({ skill_id: "x", workflow: WF_SAMPLE }));
     mockRoute("/object_info", () => jsonResponse({

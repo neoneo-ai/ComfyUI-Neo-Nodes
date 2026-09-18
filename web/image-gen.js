@@ -437,7 +437,21 @@ function fillComboSelect(select, files, suggested, current) {
         opt.textContent = shortModelName(f);
         select.appendChild(opt);
     }
-    select.value = (files || []).includes(current) ? current : "";
+    // config.json 可能存反斜杠（工作流导出），模型列表用正斜杠；归一化后匹配，避免已保存值回落"自动"
+    let matched = "";
+    if (current) {
+        const norm = String(current).replace(/\\/g, "/");
+        for (const f of files || []) {
+            if (String(f).replace(/\\/g, "/") === norm) { matched = f; break; }   // 全路径精确命中
+        }
+        // 全路径未命中（模型被挪进/移出子目录，旧路径失效）→ 按文件名匹配；仅唯一时回填，避免同名误选
+        if (!matched) {
+            const base = norm.split("/").pop();
+            const hits = (files || []).filter((f) => String(f).replace(/\\/g, "/").split("/").pop() === base);
+            if (hits.length === 1) matched = hits[0];
+        }
+    }
+    select.value = matched;
 }
 
 function numberRow(labelText, attrs) {

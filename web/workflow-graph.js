@@ -342,13 +342,25 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
             const entry = [...Object.entries(def.required || {}), ...Object.entries(def.optional || {})]
                 .find(([n]) => n === name);
             if (!entry) continue;
-            const typeList = Array.isArray(entry[1]) ? entry[1] : [entry[1]];
-            const folder = MODEL_INPUT_TYPE_TO_FOLDER[typeList[0]];
-            if (!folder) continue;
-            const files = (modelLists || {})[folder];
-            if (!files) continue; // 模型列表拉取失败 → 跳过，不误报
-            if (!files.includes(value) && !files.includes(value + ".safetensors") && !files.includes(value + ".ckpt")) {
-                list.push({ kind: "missing_model", message: `模型未找到：${value}（${folder}）` });
+            // 有效模型列表有两个来源：
+            //  1) object_info 直接内联的解析后 combo 列表（本环境）：spec = [["a.safetensors", ...]]
+            //  2) 标准类型名 spec = ["UNET_NAME"] → 用 checkWorkflow 拉取的 modelLists[folder]
+            let files = null, label = "";
+            if (Array.isArray(entry[1]) && Array.isArray(entry[1][0]) && entry[1][0].length > 0
+                && entry[1][0].every((x) => typeof x === "string")) {
+                files = entry[1][0];
+                label = name;
+            } else {
+                const typeList = Array.isArray(entry[1]) ? entry[1] : [entry[1]];
+                const folder = MODEL_INPUT_TYPE_TO_FOLDER[typeList[0]];
+                if (folder) { files = (modelLists || {})[folder]; label = folder; }
+            }
+            if (!files) continue; // 列表不可用 → 跳过，不误报
+            // config 与模型列表的分隔符可能不一致（Windows 后端返回反斜杠）→ 两边归一化后精确比对
+            const normList = files.map((f) => String(f).replace(/\\/g, "/"));
+            const v = value.replace(/\\/g, "/");
+            if (!normList.includes(v) && !normList.includes(v + ".safetensors") && !normList.includes(v + ".ckpt")) {
+                list.push({ kind: "missing_model", message: `模型未找到：${value}（${label}）` });
                 counts.missingModels++;
             }
         }

@@ -74,6 +74,26 @@ test("LoRA「自动」选项显示后端建议的四视图 LoRA", async () => {
     assert.equal(select.options[0].textContent, "自动（Krea2-QuadView_krea2_v1）", "首项应为带建议名的「自动」");
 });
 
+test("createModelConfigSection：config 反斜杠模型名匹配正斜杠列表（不回落自动）", async () => {
+    const { createModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createModelConfigSection();
+    document.body.appendChild(section.el);
+    // config.json 存反斜杠（工作流导出），模型列表用正斜杠（scan_models）；应归一化后匹配并回填真实选项
+    section.load(
+        { model: "Krea2\\krea2_turbo_fp8_scaled.safetensors",
+          text_encoder: "Qwen\\qwen_2.5_vl_7b_fp8_scaled.safetensors", vae: "sdxl_vae.safetensors" },
+        { diffusion_models: ["Krea2/krea2_turbo_fp8_scaled.safetensors"],
+          text_encoders: ["Qwen/qwen_2.5_vl_7b_fp8_scaled.safetensors"], vae: ["sdxl_vae.safetensors"] },
+    );
+    const collected = section.collect();
+    assert.equal(collected.model, "Krea2/krea2_turbo_fp8_scaled.safetensors", "反斜杠 config 应匹配正斜杠列表并回填");
+    assert.equal(collected.text_encoder, "Qwen/qwen_2.5_vl_7b_fp8_scaled.safetensors");
+    assert.equal(collected.vae, "sdxl_vae.safetensors", "无分隔符值仍正常匹配");
+    // 不存在的模型名（换分隔符也匹配不上）应回落「自动」
+    section.load({ model: "Krea2\\nonexistent.safetensors" }, { diffusion_models: ["Krea2/krea2_turbo_fp8_scaled.safetensors"] });
+    assert.equal(section.collect().model, "", "未匹配值应回落自动");
+});
+
 test("全局生图默认设置表单只含 生图模型区 + 输出前缀（不含 LoRA/张数/比例/视频）", async () => {
     const { createImageGenSettingsForm } = await import("../../web/image-gen.js");
     mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
@@ -178,4 +198,28 @@ test("createVideoModelConfigSection：新增 LoRA 行后 collect 收集（空名
     rows[1].querySelector("select").value = "h3/style_a.safetensors";
     rows[1].querySelector(".rs-gen-lora-strength").value = "0.6";
     assert.deepEqual(section.collect().loras, [{ name: "h3/style_a.safetensors", strength: 0.6 }]);
+});
+
+test("createModelConfigSection：config 存旧目录路径（模型挪进子目录）时按文件名回填", async () => {
+    const { createModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createModelConfigSection();
+    document.body.appendChild(section.el);
+    // config 里是旧路径 MiniMaxH3/xxx（缺 Speed 层），实际文件在 MiniMaxH3/Speed/xxx → 全路径未命中，按文件名唯一匹配回填
+    section.load(
+        { model: "MiniMaxH3\\Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors" },
+        { diffusion_models: ["MiniMaxH3/Speed/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors"] },
+    );
+    assert.equal(section.collect().model, "MiniMaxH3/Speed/Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors", "旧目录路径应按文件名唯一匹配回填");
+});
+
+test("createModelConfigSection：同名文件在多个子目录时不回填（避免误选）", async () => {
+    const { createModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createModelConfigSection();
+    document.body.appendChild(section.el);
+    // config 存 C/model.safetensors（C 不在列表），列表里 A/、B/ 各有一个同名文件 → 文件名不唯一，回落「自动」
+    section.load(
+        { model: "C/model.safetensors" },
+        { diffusion_models: ["A/model.safetensors", "B/model.safetensors"] },
+    );
+    assert.equal(section.collect().model, "", "文件名不唯一时应回落自动，避免误选");
 });

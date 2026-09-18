@@ -2,6 +2,8 @@
 
 一个 ComfyUI 自定义节点插件：提示词管理与 AI 增强（支持推理/thinking 模型），内置 Krea2 生图（文生图 / 参考图四视图）、素材浏览与图片或提示词一键发送、图片反推、配方保存和一键还原，以及工作流路径自动修复。
 
+
+
 | 模块 | 类型 | 说明 | 文档 |
 |------|------|------|------|
 | 📝 Neo Prompt Encoder | 节点 | 提示词管理 + AI 增强（预设 / 搜索 / LLM 增强），输出 CLIP 编码（CONDITIONING）+ 文本，接标准 txt2img 采样器 | [prompts](docs/prompts.md) |
@@ -74,14 +76,28 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 `example_workflows/` 下提供可直接加载的 UI 格式模板，ComfyUI 会自动将它们暴露在顶栏 **Templates（模板）** 面板中，选择后一键载入画布：
 
-| 文件 | 内容 |
-|------|------|
-| `neo-krea2-text-to-image.json` | ⚡ Neo Prompt Agent → 🎨 Krea2 Generate → SaveImage，文生图最短链路 |
-| `neo-krea2-ref-image-to-image.json` | LoadImage 提供参考图 + ⚡ Neo Prompt Agent → 🎨 Krea2 Generate（image 输入），参考图生图 |
-| `neo-prompt-encoder-txt2img.json` | 🧠 Neo Prompt Encoder 输出 POSITIVE，接标准 UNETLoader / CLIPLoader / KSampler / VAEDecode 文生图采样链路 |
-| `neo-h3-reference-to-video.json` | ⚡ Neo Prompt Agent → 🔗 Bundle Expand → 官方 MiniMax H3 Reference to Video（prompt + 参考图），完整 H3 出片链路 |
 
-> 模板中的模型 / skill / 参考图为占位默认值，载入后按需替换为本地实际资源即可运行。
+## 基础概念
+
+### skill：
+
+这里的Skill不仅仅是提示词模板，而是包含了内置模型配置信息（model，vae，clip等），内置工作流程和默认基础参数，Skill选择列表可以进入详情页查看，系统预设的不可编辑，复制之后可自定义编辑
+
+### bundle：
+
+包含了运行时需要的参数：提示词和图片（可选）
+
+### recipe
+
+分为基础配方和导演配方
+#### 基础配方：
+仅是把当前的提示词和图片资源保存下来，便于复用
+#### 导演配方：
+支持多段连续生成，由导演台进行编辑生成并保存，director节点运行时选择对应的配方。点击节点上timeline可以直接进入编辑。
+
+### model：
+虽然内置了模型，如果觉得常修改也可以直接接入加入的model和lora，可以覆盖掉skill内置的主模型配置
+
 
 ---
 
