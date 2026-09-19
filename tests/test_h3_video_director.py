@@ -1031,16 +1031,20 @@ class DirectorOrchestrationTests(unittest.TestCase):
             return real_exec(graph, output_type, **kw)
 
         h3d.execute_graph_inprocess = _recording_exec
+        # 桩 resolve 返回该段真实步数：on_total 应在每段执行前把 total_steps 上报到进度状态
+        h3d.resolve_video_params = lambda body, cfg, **kw: {"prompt": body["prompt"], "steps": 12}
         try:
             h3d.NeoH3VideoDirector().generate("r", continuity=False)
         finally:
             self._restore(orig)
-        # 每段执行时：active、total_segments=3，segment_index 依次 0/1/2
+        # 每段执行时：active、total_segments=3，segment_index 依次 0/1/2，total_steps 为该段真实步数
         self.assertEqual([s["active"] for s in seen], [True, True, True])
         self.assertEqual([s["total_segments"] for s in seen], [3, 3, 3])
         self.assertEqual([s["segment_index"] for s in seen], [0, 1, 2])
+        self.assertEqual([s["total_steps"] for s in seen], [12, 12, 12])
         # 结束后复位为 inactive
-        self.assertEqual(h3d.get_director_progress(), {"active": False, "segment_index": -1, "total_segments": 0})
+        self.assertEqual(h3d.get_director_progress(),
+                         {"active": False, "segment_index": -1, "total_segments": 0, "step": 0, "total_steps": 0})
 
     def _run_single(self, seg, continuity=False):
         """用单个自定义段跑一次 generate；返回 (bodies, 错误文本)。"""
@@ -1556,7 +1560,7 @@ class DirectorProgressRouteTests(unittest.TestCase):
             h3d._DIRECTOR_PROGRESS.update(orig)
         self.assertEqual(resp.status, 200)
         body = json.loads(resp.body)
-        self.assertEqual(body, {"active": True, "segment_index": 1, "total_segments": 4})
+        self.assertEqual(body, {"active": True, "segment_index": 1, "total_segments": 4, "step": 0, "total_steps": 0})
 
 
 class H3PreviewTests(unittest.TestCase):
@@ -1730,7 +1734,7 @@ class H3PreviewTests(unittest.TestCase):
         seen, loads = [], []
 
         @contextlib.contextmanager
-        def _rec(enabled, vae, node_id=None):
+        def _rec(enabled, vae, node_id=None, **_):
             seen.append((enabled, vae, node_id))
             yield
 

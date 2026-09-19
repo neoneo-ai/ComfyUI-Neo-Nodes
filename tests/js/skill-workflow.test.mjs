@@ -67,11 +67,11 @@ test("From Canvas：画布无有效工作流时不发请求并 toast 提示", as
 });
 
 // 详情弹窗出图设置区：mock 一条 load_skill + skill_config（GET/POST 分流）+ models
-async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", overridden = false, fileContent = "body" }) {
+async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", mode = "", requiresRef = false, overridden = false, fileContent = "body" }) {
     const { createSkillDetailPopup } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
         id: b.id, name: "Gen Skill", content: fileContent, files: [{ name: "skill.md", size: 5 }],
-        gen_image: genImage, gen_video: genVideo, requires_ref: false, multi_turn: false, tags: [], category,
+        gen_image: genImage, gen_video: genVideo, requires_ref: requiresRef, multi_turn: false, tags: [], category, mode,
         config_overridden: overridden,
     }));
     mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: fileContent }));
@@ -195,6 +195,29 @@ test("复制为自定义：出图技能保留 category/gen_image/requires_ref", 
     assert.equal(savedSkill.category, "image_gen", "复制后应保留出图分类");
     assert.equal(savedSkill.gen_image, true, "复制后 gen_image 应保留");
     assert.equal(savedSkill.requires_ref, false);
+});
+
+test("复制为自定义：视频技能保留 mode（导演分段技能下拉按它过滤）", async () => {
+    let savedSkill = null;
+    mockRoute("/rs_prompts/save_skill", (b) => { savedSkill = b; return jsonResponse({ success: true }); });
+    mockRoute("/neo_image_gen/copy_skill_files", () => jsonResponse({ success: true }));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    await openGenPopup({
+        id: "minimax_h3_i2v", source: "presets",
+        genImage: false, genVideo: true, category: "video_gen", mode: "i2v", requiresRef: true,
+    });
+
+    const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail button"))
+        .find((b) => b.textContent.includes("Copy as custom"));
+    assert.ok(copyBtn, "预设技能应显示复制按钮");
+    copyBtn.click();
+    await sleep(60);
+
+    assert.ok(savedSkill, "应发出 /rs_prompts/save_skill 请求");
+    assert.equal(savedSkill.category, "video_gen", "复制后应保留生视频分类");
+    assert.equal(savedSkill.gen_video, true, "复制后 gen_video 应保留");
+    assert.equal(savedSkill.mode, "i2v", "复制后视频模式应保留");
+    assert.equal(savedSkill.requires_ref, true, "复制后参考图要求应保留");
 });
 
 test("复制为自定义：name 与已有 skill 冲突时递增序号", async () => {

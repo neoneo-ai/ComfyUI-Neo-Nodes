@@ -160,7 +160,7 @@ NODE_CLASS_MAPPINGS = {
 |------|------|
 | `prompts/presets/` | 内置提示词预设（`.txt`，`collections/` 为合集、`video/` 为视频提示词子集） |
 | `prompts/custom/` | 用户保存的提示词，`_tags_index.json` 为 AI 分类标签索引 |
-| `skills/presets/<id>/skill.md` | 内置风格技能（SYS，Markdown + YAML frontmatter：name / tags / max_tokens）；生图技能额外声明 `category: image_gen` + `gen_image: true` + `requires_ref`（四视图必须带参考图，缺图在预览区底部报错不提交）；文生图宽高比由生图设置的「默认比例」决定，四视图模式由后端固定 16:9 横版并自动追加四视图 LoRA；生视频技能声明 `category: video_gen` + `gen_video: true`（技能下拉里独立成「🎬 生视频 (H3)」组） |
+| `skills/presets/<id>/skill.md` | 内置风格技能（SYS，Markdown + YAML frontmatter：name / tags / max_tokens）；生图技能额外声明 `category: image_gen` + `gen_image: true` + `requires_ref`（四视图必须带参考图，缺图在预览区底部报错不提交）；文生图宽高比由生图设置的「默认比例」决定，四视图模式由后端固定 16:9 横版并自动追加四视图 LoRA；生视频技能声明 `category: video_gen` + `gen_video: true` + `mode: t2v|i2v|fl2v|r2v`（技能下拉里独立成「🎬 生视频 (H3)」组；导演编辑器的分段技能下拉按 `skill.mode` 过滤，复制为自定义时随 frontmatter 一起保留） |
 | `skills/tasks/<id>/skill.md` | 内置任务技能（extract_title / extract_classify / reverse_prompt / smart_prompt / template_prompt / translate_prompt） |
 | `skills/custom/<id>/skill.md` | 用户自定义技能（USR，可编辑删除） |
 | `gallery/presets/` | 内置预设素材（只读） |

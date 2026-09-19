@@ -443,12 +443,13 @@ def _align_frame_count_nearest(n, minimum=5):
 
 
 def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
-                       context_tail=None, context_frames=0, identity_names=(), on_step=None):
+                       context_tail=None, context_frames=0, identity_names=(), on_step=None, on_total=None):
     """单段执行链：解析参数 → 渲染模板 → 模型注入/VDN 校验 → 连续性注入 → 进程内执行，返回 VIDEO。
 
     recipe 逐段与 BUNDLE 单段共用；label 仅用于错误消息前缀（如「第 3 段：」）。
     vae/preview/node_id 控制采样期间节点内的实时预览（见 h3_preview）。
     on_step：每采样步回调（step_number），供 director 更新进度。
+    on_total：总步数确定后回调（节点入参或各段 skill config），供 director 修正 total_steps。
     context_tail：本段开头的重生成窗口（上段尾部 context_frames 帧，[F,H,W,C]）——给了它就把目标时长
     加 window 帧并就近对齐到 17k+5 网格，那段帧由调用方在拼接时丢掉。
     identity_names：继承到本段的身份参考图文件名（用 input 目录里的真实 LoadImage 加载）。
@@ -461,6 +462,8 @@ def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview
     params = resolve_video_params(body, cfg, skip_model=(model is not None))
     if steps is not None and int(steps) > 0:
         params["steps"] = int(steps)
+    if on_total is not None:
+        on_total(int(params.get("steps") or 0))  # 真实总步数（节点入参或该段 skill config），供前端进度条按比例推进
     window = int(context_frames or 0) if context_tail is not None else 0
     if window > 0:
         params["length"] = _align_frame_count_nearest(int(params.get("length") or 124) + window,
@@ -662,7 +665,8 @@ class NeoH3VideoDirector:
                 video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：",
                                            vae, preview, unique_id, context_tail=context_tail,
                                            context_frames=window, identity_names=inherited,
-                                           on_step=lambda s: _DIRECTOR_PROGRESS.__setitem__("step", s))
+                                           on_step=lambda s: _DIRECTOR_PROGRESS.__setitem__("step", s),
+                                           on_total=lambda n: _DIRECTOR_PROGRESS.__setitem__("total_steps", max(1, int(n) or 1)))
                 comp = video.get_components()
                 frames = comp.images
 

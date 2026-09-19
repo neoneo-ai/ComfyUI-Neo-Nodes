@@ -799,6 +799,44 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         # 尺寸/时长默认值不被模型设置覆盖清掉
         self.assertEqual((cfg["width"], cfg["height"], cfg["length"]), (1344, 768, 247))
 
+    def test_post_skill_config_persists_video_steps(self):
+        # 视频技能 per-skill「步数」：保存白名单此前丢弃 steps，输入框改完保存无效
+        d = self._make_custom_skill("vidsteps")
+        with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: vidsteps\ncategory: video_gen\ngen_video: true\n---\nbody\n")
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"width": 960, "height": 544, "length": 124, "steps": 20}, f)
+        status, _ = self._call(
+            image_gen.post_skill_config_route,
+            self._req({"skill_id": "vidsteps",
+                       "config": {"model": "h3/h3.safetensors", "steps": 8}}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["steps"], 8)
+        self.assertEqual((cfg["width"], cfg["height"], cfg["length"]), (960, 544, 124))
+        # GET 回显已存步数（详情弹窗 load 据此回填「步数」输入框）
+        status, body = self._call(image_gen.get_skill_config_route,
+                                  self._req(query={"skill_id": "vidsteps"}))
+        self.assertEqual(body["steps"], 8)
+        # 技能列表摘要（浮动预览卡数据源）同样带上步数
+        scanned = {s["id"]: s for s in _skill_mod.scan_skills()}
+        self.assertEqual(scanned["vidsteps"]["gen_config"]["steps"], 8)
+        # 不传 steps（如生图设置区保存）时保留既有值
+        status, _ = self._call(image_gen.post_skill_config_route,
+                               self._req({"skill_id": "vidsteps", "config": {"count": 2}}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["steps"], 8, "未传 steps 时保留既有步数")
+        # 预设技能同样落盘（写本地覆盖文件，不改预设 config.json）
+        status, _ = self._call(image_gen.post_skill_config_route,
+                               self._req({"skill_id": "image_gen", "config": {"steps": 12}}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json"), encoding="utf-8") as f:
+            ov = json.load(f)
+        self.assertEqual(ov["steps"], 12)
+
     def test_copy_skill_files(self):
         d = self._make_custom_skill("copy_dst")
         status, body = self._call(

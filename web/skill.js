@@ -1250,6 +1250,8 @@ function createSkillDetailPopup() {
             category: (full && full.category) || "",
             gen_image: !!(full && full.gen_image),
             gen_video: !!(full && full.gen_video),
+            // 视频模式（t2v/i2v/fl2v/r2v）：导演编辑器的分段技能下拉按 skill.mode 过滤，复制后必须保留
+            mode: (full && full.mode) || "",
             requires_ref: !!(full && full.requires_ref)
         });
         await copySkillFiles(currentSkillId, newId); // 生图技能连同 workflow.json / config.json 一起复制（失败静默）
@@ -1416,7 +1418,7 @@ function getSkillUploadInputs() {
 // ==========================================
 // 技能选择弹窗（居中式，替代原生 combo 下拉）：
 // - openSkillPickerModal()：通用居中弹窗（标题 + 搜索过滤 + 分组列表 + 可选底部管理工具栏）；
-//   技能列表在右侧附浮动预览卡（生成技能 = 主模型 / LoRA / 长边尺寸 / 默认比例，未保存字段显示与详情一致的自动默认值；其余技能 = skill.md 模板提示词正文摘录），随行焦点（键盘高亮 / hover）切换，点击打开详情弹窗
+//   技能列表在右侧附浮动预览卡（生成技能 = 主模型 / LoRA / 长边尺寸 / 默认比例 / 步数，未保存字段显示与详情一致的自动默认值；其余技能 = skill.md 模板提示词正文摘录），随行焦点（键盘高亮 / hover）切换，点击打开详情弹窗
 // - attachSkillPickerToComboWidget()：拦截 ComfyUI 画布 combo widget 的点击（widget.mouse），
 //   弹出选择窗；选中写回 widget.value 并触发 callback（保留 Krea2/H3 既有的 loadDims/loadSpec 钩子）
 // - attachSkillPickerToSelect()：拦截原生 <select>（导演编辑器分段技能下拉），同样弹居中窗口
@@ -1442,7 +1444,7 @@ function skillItemsFromMeta(skills, allowed) {
             group: CATEGORY_LABELS[s.category]?.label || "",
             genImage: !!s.gen_image, // 预览卡自动默认值需区分生图 / 生视频（建议模型来源不同）
             genVideo: !!s.gen_video,
-            genConfig: (s.gen_config && typeof s.gen_config === "object") ? s.gen_config : null, // 生图/生视频配置摘要（主模型 / LoRA / 长边 / 默认比例）
+            genConfig: (s.gen_config && typeof s.gen_config === "object") ? s.gen_config : null, // 生图/生视频配置摘要（主模型 / LoRA / 长边 / 默认比例 / 步数）
         });
     }
     items.sort((a, b) => {
@@ -1571,7 +1573,7 @@ function ensurePreviewModelLists() {
     return Promise.all([_previewGenModelsPromise, _previewVideoModelsPromise]).then(([genModels, videoModels]) => ({ genModels, videoModels }));
 }
 
-/** 把焦点技能渲染进预览卡：生成技能 = 主模型 / LoRA（逐条 chip）/ 长边尺寸 / 默认比例，未保存的按详情弹窗同款自动默认显示；
+/** 把焦点技能渲染进预览卡：生成技能 = 主模型 / LoRA（逐条 chip）/ 长边尺寸 / 默认比例 / 步数，未保存的按详情弹窗同款自动默认显示；
  *  其余技能 = skill.md 模板提示词正文摘录（懒加载 + 缓存）。it 为 null（无焦点行）时显示操作提示。整卡点击打开详情由调用方绑定。 */
 function renderSkillPreview(preview, it, ctx = {}) {
     preview.innerHTML = "";
@@ -1627,6 +1629,11 @@ function renderSkillPreview(preview, it, ctx = {}) {
         const rv = mkEl("span", "rs-skill-preview-val");
         rv.textContent = ratio || "默认 (1:1)";
         addRow("默认比例", rv);
+        // 步数：详情「🎬 生视频设置」的「步数」输入框 / 模板 {{STEPS}}，缺省 20（与后端 resolve 一致）
+        const steps = Number.isFinite(cfg.steps) && cfg.steps > 0 ? cfg.steps : null;
+        const sv = mkEl("span", "rs-skill-preview-val");
+        sv.textContent = steps ? String(steps) : "默认 (20)";
+        addRow("步数", sv);
     } else {
         // 非生成技能：skill.md 模板提示词正文摘录（懒加载 + 缓存，超长截断）
         const showBody = (body) => (body.length > PREVIEW_EXCERPT_LEN ? body.slice(0, PREVIEW_EXCERPT_LEN) + "…" : body) || "（无正文）";

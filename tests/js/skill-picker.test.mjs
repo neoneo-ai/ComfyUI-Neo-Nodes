@@ -168,12 +168,12 @@ test("键盘导航：方向键移动高亮、回车确认选中并写回", async
     assert.equal(document.querySelectorAll(".rs-skill-modal-overlay").length, 0, "确认后关闭弹窗");
 });
 
-// 浮动预览卡：生成技能结构化显示 主模型 / LoRA chips / 长边尺寸 / 默认比例（未保存字段显示与详情一致的自动默认值），非生成技能显示 skill.md 模板正文摘录；随行焦点（键盘高亮 + hover）切换
+// 浮动预览卡：生成技能结构化显示 主模型 / LoRA chips / 长边尺寸 / 默认比例 / 步数（未保存字段显示与详情一致的自动默认值），非生成技能显示 skill.md 模板正文摘录；随行焦点（键盘高亮 + hover）切换
 test("gen_config 预览卡：结构化渲染、随焦点切换、非生成技能显示正文摘录", async () => {
     const { openSkillPickerModal } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({ id: b.id, name: "Plain", content: "模板正文：把输入改写为提示词", files: [] }));
     const items = [
-        { value: "full", label: "Full Skill", genImage: true, genConfig: { model: "qwen3.safetensors", loras: ["a.safetensors", "b.safetensors", "c.safetensors"], base_resolution: 1024, default_ratio: "9:16" } },
+        { value: "full", label: "Full Skill", genImage: true, genConfig: { model: "qwen3.safetensors", loras: ["a.safetensors", "b.safetensors", "c.safetensors"], base_resolution: 1024, default_ratio: "9:16", steps: 8 } },
         { value: "partial", label: "Partial Skill", genImage: true, genConfig: { model: "m.safetensors" } },
         { value: "none", label: "Plain Skill" },
     ];
@@ -186,17 +186,19 @@ test("gen_config 预览卡：结构化渲染、随焦点切换、非生成技能
     keydown(overlay, "ArrowDown"); // 聚焦第一项 Full Skill
     assert.equal(preview.querySelector(".rs-skill-preview-name").textContent, "Full Skill", "预览卡头部为焦点技能名");
     const rowsOf = () => Array.from(preview.querySelectorAll(".rs-skill-preview-row"));
-    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "LoRA", "长边尺寸", "默认比例"], "四字段按序展示");
+    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "LoRA", "长边尺寸", "默认比例", "步数"], "五字段按序展示");
     assert.equal(rowsOf()[0].querySelector(".rs-skill-preview-val").textContent, "qwen3.safetensors");
     assert.deepEqual(Array.from(preview.querySelectorAll(".rs-skill-preview-chip")).map((c) => c.textContent), ["a.safetensors", "b.safetensors", "c.safetensors"], "LoRA 逐条 chip 展示不折叠");
     assert.equal(rowsOf()[2].querySelector(".rs-skill-preview-val").textContent, "1024px");
     assert.equal(rowsOf()[3].querySelector(".rs-skill-preview-val").textContent, "9:16");
+    assert.equal(rowsOf()[4].querySelector(".rs-skill-preview-val").textContent, "8", "已保存步数直接显示");
 
-    keydown(overlay, "ArrowDown"); // Partial Skill：仅保存主模型，长边/比例显示与详情一致的默认值
-    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "长边尺寸", "默认比例"], "未保存字段显示自动默认值");
+    keydown(overlay, "ArrowDown"); // Partial Skill：仅保存主模型，长边/比例/步数显示与详情一致的默认值
+    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "长边尺寸", "默认比例", "步数"], "未保存字段显示自动默认值");
     assert.equal(rowsOf()[0].querySelector(".rs-skill-preview-val").textContent, "m.safetensors");
     assert.equal(rowsOf()[1].querySelector(".rs-skill-preview-val").textContent, "默认 (1280)");
     assert.equal(rowsOf()[2].querySelector(".rs-skill-preview-val").textContent, "默认 (1:1)");
+    assert.equal(rowsOf()[3].querySelector(".rs-skill-preview-val").textContent, "默认 (20)", "未保存步数显示缺省 20");
 
     keydown(overlay, "ArrowDown"); // Plain Skill：非生成技能 → skill.md 模板正文摘录
     await sleep(30);
@@ -337,17 +339,19 @@ test("未保存配置：预览卡显示与详情一致的自动默认值", async
     keydown(overlay, "ArrowDown"); // Img NoCfg
     await sleep(30); // 等模型列表拉取到位后刷新
     const rowsOf = () => Array.from(preview.querySelectorAll(".rs-skill-preview-row"));
-    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "长边尺寸", "默认比例"]);
+    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "长边尺寸", "默认比例", "步数"]);
     assert.equal(rowsOf()[0].querySelector(".rs-skill-preview-val").textContent, "自动（krea2-turbo）", "未保存主模型显示与详情一致的建议模型");
     assert.equal(rowsOf()[1].querySelector(".rs-skill-preview-val").textContent, "默认 (1280)");
     assert.equal(rowsOf()[2].querySelector(".rs-skill-preview-val").textContent, "默认 (1:1)");
+    assert.equal(rowsOf()[3].querySelector(".rs-skill-preview-val").textContent, "默认 (20)");
 
     keydown(overlay, "ArrowDown"); // Vid NoCfg
     await sleep(30);
-    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "长边尺寸", "默认比例"], "生视频同样显示全部字段（含默认值）");
+    assert.deepEqual(rowsOf().map((r) => r.querySelector(".rs-skill-preview-key").textContent), ["主模型", "长边尺寸", "默认比例", "步数"], "生视频同样显示全部字段（含默认值）");
     assert.equal(rowsOf()[0].querySelector(".rs-skill-preview-val").textContent, "自动（minimax_h3_7b）", "生视频按 H3 名称线索自动挑选，与详情一致");
     assert.equal(rowsOf()[1].querySelector(".rs-skill-preview-val").textContent, "默认 (1280)");
     assert.equal(rowsOf()[2].querySelector(".rs-skill-preview-val").textContent, "默认 (1:1)");
+    assert.equal(rowsOf()[3].querySelector(".rs-skill-preview-val").textContent, "默认 (20)");
     res.close(); // 清理 _skillPickerOpen，避免影响后续测试
 });
 

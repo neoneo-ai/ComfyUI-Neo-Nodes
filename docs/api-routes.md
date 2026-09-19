@@ -79,7 +79,7 @@
 | GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`，与节点 `width`/`height=-1` 时一致），供 NeoKrea2Generate widget 填充默认值（定义于 krea2_generate.py） |
 | GET | `/neo_image_gen/skill_config?skill_id=` | 读取技能生图/生视频设置：预设 = 自身 `config.json` ⊕ 本地覆盖文件（`configs/skill_overrides/<id>.json`），其余直接读 `config.json` |
 | GET | `/neo_image_gen/skill_workflow?skill_id=` | 返回技能 `workflow.json`（API prompt 模板，只读），供详情弹窗渲染节点流程图；缺失/非法 404 |
-| POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length` 保留既有有效值（非模型设置区管理） |
+| POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length`/`steps` 保留既有有效值（非模型设置区管理，视频技能「步数」由此落盘） |
 
 任务状态不走 HTTP 轮询：`_watch` 协程按变化经 WebSocket 事件 `rs.image_gen.status` 推送任务快照（广播，前端 `watchTask` 按 `task_id` 过滤）；`/status` 仅作订阅前兜底首拉与断线重连补漏，取消时后端也主动推送 `cancelled` 快照。
 
@@ -107,9 +107,9 @@
 | POST | `/rs_prompts/stream_generate_prompt` | 流式生成 |
 | POST | `/rs_prompts/random_prompt` | 随机提示词 |
 | POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表（请求带 `provider`；`api_key` 留空时回退该 provider 已存密钥，端点按 provider 的 `append_v1` 规则拼接） |
-| GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组）；生图/生视频技能另带可选 `gen_config` 摘要对象（有效 config.json 的非空子集：`model` 主模型、`loras` LoRA 名列表、`base_resolution` 长边尺寸、`default_ratio` 默认比例），全空时不附该字段 |
-| POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens、gen_image 生图标记、gen_video 生视频标记、config_overridden 预设是否存在本地配置覆盖） |
-| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `gen_video` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这些字段保留生图/生视频分类与设置区）；**名称唯一性校验**：name 与其它 skill 重复时返回 409 |
+| GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组）；生图/生视频技能另带可选 `gen_config` 摘要对象（有效 config.json 的非空子集：`model` 主模型、`loras` LoRA 名列表、`base_resolution` 长边尺寸、`default_ratio` 默认比例、`steps` 采样步数），全空时不附该字段 |
+| POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens、gen_image 生图标记、gen_video 生视频标记、mode 视频模式、requires_ref 参考图要求、config_overridden 预设是否存在本地配置覆盖） |
+| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `gen_video` / `mode` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这些字段保留生图/生视频分类、视频模式与设置区）；**名称唯一性校验**：name 与其它 skill 重复时返回 409 |
 | POST | `/rs_prompts/delete_skill` | 删除整个技能目录（仅 USR） |
 | POST | `/rs_prompts/reset_skill_config` | 预设技能生图/生视频设置恢复默认：删除本地覆盖文件 `configs/skill_overrides/<id>.json`（幂等，无覆盖也成功） |
 

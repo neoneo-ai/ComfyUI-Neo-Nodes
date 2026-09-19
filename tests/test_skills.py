@@ -163,12 +163,14 @@ class TestGenConfigSummary(unittest.TestCase):
             "loras": [{"name": "a.safetensors", "strength": 0.8}, {"name": "b.safetensors"}],
             "base_resolution": 1024,
             "default_ratio": "9:16",
+            "steps": 8,
         })
         self.assertEqual(s, {
             "model": "qwen3.safetensors",
             "loras": ["a.safetensors", "b.safetensors"],
             "base_resolution": 1024,
             "default_ratio": "9:16",
+            "steps": 8,
         })
 
     def test_empty_or_invalid_omitted(self):
@@ -190,6 +192,15 @@ class TestGenConfigSummary(unittest.TestCase):
     def test_base_resolution_positive_int_only(self):
         self.assertIsNone(self.skill_mod._gen_config_summary({"base_resolution": -5}))
         self.assertEqual(self.skill_mod._gen_config_summary({"base_resolution": "1024"})["base_resolution"], 1024)
+
+    def test_steps_positive_int_only(self):
+        # 预览卡「步数」行：只保留正整数（缺省 20 由前端显示）
+        self.assertEqual(self.skill_mod._gen_config_summary({"steps": 8}), {"steps": 8})
+        self.assertEqual(self.skill_mod._gen_config_summary({"steps": "12"})["steps"], 12)
+        self.assertIsNone(self.skill_mod._gen_config_summary({"steps": 0}))
+        self.assertIsNone(self.skill_mod._gen_config_summary({"steps": -1}))
+        self.assertIsNone(self.skill_mod._gen_config_summary({"steps": "many"}))
+        self.assertIsNone(self.skill_mod._gen_config_summary({"steps": None}))
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
@@ -314,7 +325,7 @@ class TestSaveSkillMultiTurn(unittest.TestCase):
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestSaveSkillGenFields(unittest.TestCase):
-    """save_skill_main 生图字段（复制为自定义场景）：显式写入 / 缺省沿用 / 假值移除"""
+    """save_skill_main 生图/生视频字段（复制为自定义场景）：显式写入 / 缺省沿用 / 假值移除"""
 
     def setUp(self):
         self.skill_mod = getattr(prompts_mod, "skill", None)
@@ -363,6 +374,33 @@ class TestSaveSkillGenFields(unittest.TestCase):
         self.assertNotIn("category", meta)
         self.assertNotIn("gen_image", meta)
         self.assertNotIn("requires_ref", meta)
+
+    def test_copy_like_save_writes_video_mode(self):
+        # 前端复制预设视频技能时发送 category/gen_video/mode：mode（t2v/i2v/fl2v/r2v）必须落盘
+        self.assertTrue(self.skill_mod.save_skill_main(
+            "vid-copy", "Vid (Copy)", "body", None, "custom", False,
+            category="video_gen", gen_video=True, mode="i2v"))
+        meta, _ = self._read_meta("vid-copy")
+        self.assertEqual(meta.get("category"), "video_gen")
+        self.assertIs(meta.get("gen_video"), True)
+        self.assertEqual(meta.get("mode"), "i2v")
+
+    def test_video_mode_omitted_preserves_existing(self):
+        # 普通保存（handleSave 不传 mode）不得清掉视频模式
+        self.skill_mod.save_skill_main("vid-keep", "VK", "body", None, "custom", False,
+                                       category="video_gen", gen_video=True, mode="t2v")
+        self.assertTrue(self.skill_mod.save_skill_main("vid-keep", "VK2", "body2", None, "custom"))
+        meta, _ = self._read_meta("vid-keep")
+        self.assertEqual(meta.get("mode"), "t2v")
+
+    def test_empty_video_mode_removes_field(self):
+        self.skill_mod.save_skill_main("vid-off", "VO", "body", None, "custom", False,
+                                       category="video_gen", gen_video=True, mode="r2v")
+        self.assertTrue(self.skill_mod.save_skill_main(
+            "vid-off", "VO", "body", None, "custom", False,
+            category="video_gen", gen_video=False, mode=""))
+        meta, _ = self._read_meta("vid-off")
+        self.assertNotIn("mode", meta)
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
@@ -1332,6 +1370,22 @@ class TestGenImageSkill(unittest.TestCase):
             types.SimpleNamespace(json=_json)))
         body = json.loads(resp.body)
         self.assertTrue(body["gen_video"])
+
+    def test_load_skill_route_returns_video_mode(self):
+        # 「复制为自定义」靠 load_skill 响应的 mode / requires_ref 还原视频模式与参考图要求；
+        # 导演编辑器的分段技能下拉按扫描结果的 skill.mode 过滤
+        self._write_skill("vid-m", [
+            "name: Vid M", "category: video_gen", "gen_video: true",
+            "mode: i2v", "requires_ref: true",
+        ])
+        async def _json():
+            return {"id": "vid-m"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json)))
+        body = json.loads(resp.body)
+        self.assertEqual(body["mode"], "i2v")
+        self.assertTrue(body["requires_ref"])
+        self.assertEqual(self._scanned()["vid-m"]["mode"], "i2v")
 
     def test_find_name_conflict(self):
         self._write_skill("dup-a", ["name: Dup Name"])
