@@ -95,6 +95,7 @@ test("bundle 连接时隐藏 recipe、显示视频 skill 选择器与时长；�
 test("bundle 模式时长（秒）跟随所选 skill config 的 length", async () => {
     resetEnv();
     clearRoutes();
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "sk-a" }, { id: "sk-b", name: "sk-b" }]));
     mockRoute("/neo_image_gen/skill_config", () => jsonResponse({ length: 124, width: 512, height: 288 }));
     const node = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
     const duration = node.widgets.find((w) => w.name === "duration_sec");
@@ -109,6 +110,24 @@ test("bundle 模式时长（秒）跟随所选 skill config 的 length", async (
     await sleep(60);
     assert.equal(duration.value, 10, "240 帧 → 10 秒");
     destroyNode(node);
+});
+
+test("旧工作流遗留的 duration_sec=-1 载入即修复为 5 秒（同步，不依赖请求）", async () => {
+    resetEnv();
+    clearRoutes(); // 不 mock 技能/配置接口：修复必须是同步的，不依赖任何请求结果
+    const node = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
+    const duration = node.widgets.find((w) => w.name === "duration_sec");
+    duration.value = -1; // 模拟旧版默认写回 widgets_values
+    node.onConfigure?.(); // 载入工作流：configure 后同步修复，不等任何请求
+    assert.equal(duration.value, 5, "-1 就地改回 5 秒");
+    destroyNode(node);
+
+    // 已存实值不被覆盖
+    const node2 = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 8 }]);
+    const duration2 = node2.widgets.find((w) => w.name === "duration_sec");
+    node2.onConfigure?.();
+    assert.equal(duration2.value, 8, "已存实值保持不变");
+    destroyNode(node2);
 });
 
 test("continuity / context_frames 暂不开放：创建后即隐藏，值保持默认", async () => {

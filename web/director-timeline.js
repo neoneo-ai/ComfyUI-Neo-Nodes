@@ -382,14 +382,21 @@ export class DirectorTimeline {
 
   // 把文本折成最多 maxLines 行：中间行按宽度取满（不加省略号，内容在下一行续接），
   // 仅最后一行在超出时加省略号。用于时间轴块内多行显示。
+  // 截断点用二分查找（找加省略号后仍放得下的最大前缀），替代逐字符缩减——
+  // 逐字符对长提示词要 O(n) 次 measureText、每次 O(n) 字符整形，超长 prompt 单段即秒级。
   _fitLines(ctx, text, maxW, maxLines) {
     const out = [];
     let rest = String(text || "");
     for (let n = 0; n < maxLines && rest.length > 0; n++) {
       if (ctx.measureText(rest).width <= maxW) { out.push(rest); break; } // 剩余整段放得下：作为末行，无省略号
       const last = n === maxLines - 1;
-      let t = rest;
-      while (t.length > 1 && ctx.measureText(t + (last ? "…" : "")).width > maxW) t = t.slice(0, -1);
+      let lo = 1, hi = rest.length, fit = 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (ctx.measureText(rest.slice(0, mid) + (last ? "…" : "")).width <= maxW) { fit = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      const t = rest.slice(0, fit);
       out.push(last ? t + "…" : t);
       rest = rest.slice(t.length);
     }

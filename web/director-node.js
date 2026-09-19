@@ -8,7 +8,7 @@ import { DirectorTimeline } from "./director-timeline.js";
 import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
 import { listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
-import { attachSkillPickerToComboWidget } from "./skill.js";
+import { attachSkillPickerToComboWidget, listSkills } from "./skill.js";
 import { getSkillGenConfig } from "./image-gen.js";
 
 const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
@@ -18,6 +18,7 @@ const PREVIEW_EVENT = "rs.h3.preview"; // 后端每步推来的多帧载荷（�
 const PREVIEW_STEPS = 40; // 保留的采样步数上限，超出丢最旧（每步 PREVIEW_FRAMES 张 JPEG）
 const PREVIEW_FPS = 4; // 载荷未带 fps 时的兜底播放帧率（与后端 PREVIEW_FPS 同值）
 const H3_FPS = 24; // 与后端 h3_video_director.H3_FPS 同值：skill config 的 length（帧）折算时长（秒）用
+const DURATION_DEFAULT = 5; // 与后端 INPUT_TYPES duration_sec 默认一致（内置 H3 skill config 的 length ≈ 5 秒）
 
 // 画布上存活的预览面板：事件按 node_id 路由（node.id 可能被克隆/载入改写，匹配时现读）
 const livePreviews = new Set();
@@ -365,22 +366,36 @@ app.registerExtension({
             // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器与时长（秒）；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
             if (skillIdWidget) skillIdWidget.hidden = true;
             if (durationWidget) durationWidget.hidden = true;
-            // duration（秒）跟随 bundle 模式选中的视频 skill：按该 skill config 的 length（帧）折算秒（24fps）。
-            // 新建节点按默认 skill 填一次；bundle 模式里切换 skill 时重填。
-            // 工作流还原（onConfigure）后已存值优先，初始填充不再覆盖。
+            // duration（秒）仅 bundle 单段模式使用（recipe 多段的时长在各段自带 duration_sec 里）。
+            // 默认 5 秒 = 内置 H3 skill config 的 length（124 帧）；新建节点、bundle 模式里切换 skill 时
+            // 按所选 skill config 的 length 重新折算。旧版默认 -1 的哨兵已删：载入工作流时把遗留的
+            // -1/0 就地改回 5（同步、不依赖请求），避免「低于最小值 1」校验报错而无法出队。
             let configured = false;
+            const repairDuration = () => {
+                if (!durationWidget) return false;
+                const cur = Number(durationWidget.value);
+                if (Number.isFinite(cur) && cur > 0) return false;
+                durationWidget.value = DURATION_DEFAULT;
+                durationWidget.callback?.(DURATION_DEFAULT);
+                return true;
+            };
             const applyDurationFromSkill = async (initial = false) => {
                 const name = skillIdWidget ? String(skillIdWidget.value || "") : "";
                 if (!name || !durationWidget) return;
-                const cfg = await getSkillGenConfig(name);
-                if (initial && configured) return; // fetch 期间工作流已完成还原，让位给已存值
+                const repaired = repairDuration(); // 同步修复，fetch 前先保证值合法
+                const metas = await listSkills();
+                const skills = Array.isArray(metas) ? metas : []; // listSkills 对非 2xx 会把错误体当结果返回，这里兜住
+                const id = (skills.find((s) => s.name === name) || { id: name }).id; // combo 存的是 skill 名称；映射不到就按原值查（旧工作流可能存的是 id）
+                const cfg = await getSkillGenConfig(id);
+                if (initial && configured && !repaired) return; // 还原的工作流已存值优先；刚修复的继续按 skill config 精确化
                 const frames = Number(cfg && cfg.length);
-                if (!Number.isFinite(frames) || frames <= 0) return; // config 无 length：保持现值（后端默认 5 秒）
+                if (!Number.isFinite(frames) || frames <= 0) return;
                 const seconds = Math.max(1, Math.round(frames / H3_FPS));
                 if (durationWidget.value === seconds) return;
                 durationWidget.value = seconds;
                 durationWidget.callback?.(seconds);
             };
+            repairDuration();
             applyDurationFromSkill(true);
             if (skillIdWidget) {
                 const ocSkill = skillIdWidget.callback;
@@ -536,6 +551,7 @@ app.registerExtension({
             node.onConfigure = function() {
                 const r = origOnConfigure?.apply(this, arguments);
                 configured = true; // 此后已存 widgets_values 优先：初始的时长按 skill 填充不再覆盖
+                applyDurationFromSkill(true); // 旧工作流遗留的 -1/0 同步改回 5 秒，避免「低于最小值 1」校验报错
                 syncPreviewBtn();
                 loadSpec();
                 return r;

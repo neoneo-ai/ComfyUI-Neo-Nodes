@@ -10,7 +10,7 @@
 4. 执行后输出单个拼接好的 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
 ### BUNDLE 单段
-把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：提示词 / 参考图（data URI）取自 bundle，视频 skill 与**时长（秒）**用节点上**隐藏的单段控件**（连上 BUNDLE 时自动显示 `skill_id` + `duration_sec`，同时隐藏 `recipe`），按单个片段生成、**忽略 `recipe`**。需在节点上选择一个有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。**`duration_sec`**（INT 秒，默认 5 = 内置 H3 skill config 的 `length` 折算秒）按 24fps 换算成 H3 帧数并向上对齐模型的 `17k+5` 网格（5 秒 → 124 帧、10 秒 → 243 帧），写入 `body["length"]`（模板 `{{LENGTH}}`）；前端新建节点时按所选 skill config 的 `length` 自动填秒数、bundle 模式里切换 skill 时重填。配方多段模式下该控件隐藏、被忽略（各段自带 `duration_sec`）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
+把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：提示词 / 参考图（data URI）取自 bundle，视频 skill 与**时长（秒）**用节点上**隐藏的单段控件**（连上 BUNDLE 时自动显示 `skill_id` + `duration_sec`，同时隐藏 `recipe`），按单个片段生成、**忽略 `recipe`**。需在节点上选择一个有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。**`duration_sec`**（INT 秒，默认 5 = 内置 H3 skill config 的 `length` 折算秒）按 24fps 换算成 H3 帧数并向上对齐模型的 `17k+5` 网格（5 秒 → 124 帧、10 秒 → 243 帧），写入 `body["length"]`（模板 `{{LENGTH}}`）；前端新建节点时按所选 skill config 的 `length` 自动填秒数、bundle 模式里切换 skill 时重填；旧工作流里遗留的 -1/0（本功能早期默认）载入时自动改回 5 秒。配方多段模式下该控件隐藏、被忽略（各段自带 `duration_sec`）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
 
 ## NeoH3VideoDirector（多段导演）
 
