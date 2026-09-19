@@ -9,7 +9,7 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 import { Lightbox } from "./lightbox.js";
-import { openDirectorEditor } from "./director.js";
+import { openDirectorEditor, MODE_LABELS } from "./director.js";
 
 const assetUrl = (recipe, file, dir) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
@@ -388,6 +388,30 @@ export async function listVideoSkills() {
     }
 }
 
+/** 导演配方概览行：段数 · 模式 · 技能 · 宽×高 · 总时长。skills 用于 skill_id → 名称映射（未取到时按 id 显示）。 */
+export function directorMetaText(r, skills) {
+    const shared = r.shared || {};
+    const segs = r.segments || [];
+    const nameOf = new Map(skills.map(s => [s.id, s.name]));
+    const modeText = (shared.mode && MODE_LABELS.get(shared.mode)) || '自动';
+    const skillCounts = new Map();
+    for (const s of segs) {
+        const sid = s.skill_id || '';
+        if (sid) skillCounts.set(sid, (skillCounts.get(sid) || 0) + 1);
+    }
+    const skillText = [...skillCounts.entries()]
+        .map(([sid, n]) => `${nameOf.get(sid) || sid}${n > 1 ? ` ×${n}` : ''}`)
+        .join('、');
+    const total = segs.reduce((sum, s) => sum + (Number(s.duration_sec) || 0), 0);
+    return [
+        `${segs.length} 段`,
+        modeText,
+        skillText || '—',
+        shared.width && shared.height ? `${shared.width}×${shared.height}` : '',
+        total > 0 ? `总时长 ${Number.isInteger(total) ? total : total.toFixed(1)}s` : '',
+    ].filter(Boolean).join(' · ');
+}
+
 export async function appendResultsToRecipe(name, results) {
     const resp = await api.fetchApi('/rs_recipes/append_results', {
         method: 'POST',
@@ -740,11 +764,19 @@ export async function createRecipesPanel() {
                 textContent: `${l.name} × ${Number(l.strength).toFixed(2)}`
             }))
         ]) : null;
+        // 导演配方概览行（段数/模式/技能/宽×高/总时长）：先按 skill id 渲染，取回技能列表后原地换成名称
+        let metaLine = null;
+        if (r.type === 'video_director') {
+            metaLine = $el('div', { className: 'neo-recipes-detail-meta', textContent: directorMetaText(r, []) });
+            listVideoSkills().then(skills => { metaLine.textContent = directorMetaText(r, skills); });
+        }
+
         const bodyChildren = [
             $el('div', { className: 'neo-recipes-detail-head' }, [
                 $el('div', { className: 'neo-recipes-detail-name', textContent: r.name }),
                 $el('div', { className: 'neo-recipes-detail-source', textContent: r.source === 'preset' ? '内置预设' : '我的配方' })
             ]),
+            ...(metaLine ? [metaLine] : []),
             $el('div', { className: 'neo-recipes-detail-prompt', textContent: r.prompt || '（无提示词）' }),
             ...(lorasEl ? [lorasEl] : []),
             ...((r.assets || []).length ? [grid] : []),
@@ -849,7 +881,7 @@ export async function createRecipesPanel() {
         document.body.appendChild(overlay);
     }
 
-    function buildCard(r) {
+    function buildCard(r, skills) {
         const card = $el('div', { className: 'neo-recipes-card' });
 
         // 多段导演配方：点缩略图直接进编辑器（跳过详情）；普通配方仍打开详情
@@ -872,9 +904,11 @@ export async function createRecipesPanel() {
             cover.appendChild($el('div', { className: 'neo-recipes-card-badge', textContent: '🎬 多段' }));
         }
 
+        // 多段导演配方：正文摘要行（段数 · 模式 · 技能 · 宽×高 · 总时长）替代「无提示词」
+        const summary = r.type === 'video_director' && (r.segments || []).length ? directorMetaText(r, skills) : '';
         const body = $el('div', { className: 'neo-recipes-card-body' }, [
             $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: '查看资源', onclick: () => openDetail(r) }),
-            $el('div', { className: 'neo-recipes-card-meta', textContent: [r.asset_count ? `${r.asset_count} 个资源` : '', r.sample_count ? `${r.sample_count} 个示例` : '', (r.prompt || '').slice(0, 120) || '无提示词'].filter(Boolean).join(' · ') })
+            $el('div', { className: 'neo-recipes-card-meta', textContent: [r.asset_count ? `${r.asset_count} 个资源` : '', r.sample_count ? `${r.sample_count} 个示例` : '', summary || (r.prompt || '').slice(0, 120) || '无提示词'].filter(Boolean).join(' · ') })
         ]);
 
         const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
@@ -971,7 +1005,9 @@ export async function createRecipesPanel() {
     async function renderList() {
         listEl.innerHTML = '';
         let recipes = [];
-        try { recipes = await listRecipes(); } catch (e) { /* 忽略 */ }
+        let skills = [];
+        // 技能列表供多段导演卡片摘要行做 skill_id → 名称映射（listVideoSkills 内部已吞错，不会拒绝）
+        try { [recipes, skills] = await Promise.all([listRecipes(), listVideoSkills()]); } catch (e) { /* 忽略 */ }
 
         if (recipes.length === 0) {
             listEl.appendChild($el('div', { className: 'neo-recipes-empty', textContent: '暂无配方。在 Neo Prompt 节点点 💾 保存，点「保存配方」。' }));
@@ -985,7 +1021,7 @@ export async function createRecipesPanel() {
         for (const g of groups) {
             if (!g.items.length) continue;
             listEl.appendChild($el('div', { className: 'neo-recipes-group-title', textContent: g.label }));
-            for (const r of g.items) listEl.appendChild(buildCard(r));
+            for (const r of g.items) listEl.appendChild(buildCard(r, skills));
         }
     }
 

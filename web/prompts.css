@@ -2880,6 +2880,12 @@
 .rs-wf-badge-error { fill: #e5484d; }
 .rs-wf-badge-tpl { fill: #5090cc; }
 .rs-wf-summary { font-size: 12px; color: #999; min-height: 14px; }
+/* 缺失项摘要：未安装节点/缺失模型名称芯片 + 复制按钮（点击复制，✓/✗ 短暂反馈） */
+.rs-wf-missing { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.rs-wf-missing-item { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; font-size: 12px; color: #d9a7a7; background: #33272a; border: 1px solid #5c3b3e; border-radius: 4px; padding: 1px 5px 1px 8px; }
+.rs-wf-missing-name { word-break: break-all; }
+.rs-wf-copy { flex: none; border: none; background: transparent; color: inherit; cursor: pointer; font-size: 12px; line-height: 1.2; padding: 0 2px; }
+.rs-wf-copy:hover { color: #fff; }
 
 /* ---- 技能详情弹窗：出图设置两栏表格（仅 .rs-skill-gen-settings，全局出图设置菜单不受影响）---- */
 .rs-skill-gen-settings { gap: 12px; }
@@ -3312,6 +3318,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.rs-skill-preview-meta { margin-top: 2px; font-size: 11px; color: #7d8ea1; }
 .rs-skill-preview-row { display: flex; align-items: baseline; gap: 8px; }
 .rs-skill-preview-key { flex-shrink: 0; width: 52px; font-size: 11px; color: #7d8ea1; }
 .rs-skill-preview-val { flex: 1; min-width: 0; word-break: break-all; color: #cfe3f7; }

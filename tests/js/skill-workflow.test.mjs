@@ -351,6 +351,37 @@ test("详情弹窗：gen_image 技能渲染工作流流程图，高亮缺节点/
     assert.ok(summary.includes("节点未安装") && summary.includes("模型缺失") && summary.includes("模板变量"), "摘要应含三类问题");
 });
 
+test("详情弹窗：缺失节点/模型摘要给出名称芯片与复制按钮，点击写入剪贴板且同名去重", async () => {
+    // SaveImage 出现两个节点、缺失模型同名出现两处 → 计数各 +2，但芯片各只一个（去重）
+    const WF_DUP = {
+        ...WF_SAMPLE,
+        "5": { class_type: "SaveImage", inputs: {} },
+        "6": { class_type: "UNETLoader", inputs: { unet_name: "no_such_model.safetensors" } },
+    };
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_DUP }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+        KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
+    }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
+    const copied = [];
+    navigator.clipboard = { writeText: async (t) => { copied.push(t); } };
+
+    await openGenPopup({ id: "image_gen_text", source: "custom" });
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    const chips = Array.from(wfWrap.querySelectorAll(".rs-wf-missing-item"));
+    assert.equal(chips.length, 2, "同名缺失项应去重为两个芯片");
+    const names = chips.map((c) => c.querySelector(".rs-wf-missing-name").textContent);
+    assert.deepEqual(names.sort(), ["SaveImage", "no_such_model.safetensors"], "芯片显示节点类名/模型文件名");
+    assert.ok(chips.some((c) => (c.title || "").includes("节点未安装：SaveImage")), "节点芯片 title 说明类型");
+
+    for (const c of chips) { c.querySelector(".rs-wf-copy").click(); }
+    await sleep(30);
+    assert.deepEqual(copied.sort(), ["SaveImage", "no_such_model.safetensors"], "点击复制按钮把名称写入剪贴板");
+    assert.ok(chips.every((c) => c.querySelector(".rs-wf-copy").textContent === "✓"), "复制成功按钮短暂显示 ✓");
+});
+
 test("详情弹窗：非生图技能不渲染工作流区、不发请求", async () => {
     let wfCalled = false;
     mockRoute("/neo_image_gen/skill_workflow", () => { wfCalled = true; return jsonResponse({ workflow: WF_SAMPLE }); });

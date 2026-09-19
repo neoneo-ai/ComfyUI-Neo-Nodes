@@ -6,7 +6,7 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { DirectorTimeline } from "./director-timeline.js";
 import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
-import { listRecipes } from "./recipes.js";
+import { listRecipes, listVideoSkills, directorMetaText } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 import { attachSkillPickerToComboWidget, listSkills } from "./skill.js";
 import { getSkillGenConfig } from "./image-gen.js";
@@ -43,6 +43,13 @@ async function fetchRecipeSpec(name) {
     if (data && data.success) { _recipeSpecCache.set(name, data); return data; }
     return null;
 }
+// 预览卡概览行的技能列表：整页取一次复用（技能增删后刷新页面即更新）
+let _videoSkillsPromise = null;
+function videoSkillsOnce() {
+    if (!_videoSkillsPromise) _videoSkillsPromise = listVideoSkills();
+    return _videoSkillsPromise;
+}
+
 
 // 预览卡时间轴实例（只读，与节点内嵌同款组件）：焦点切换 / 选择窗关闭时销毁，避免残留 ResizeObserver
 let _previewCardTL = null;
@@ -75,7 +82,7 @@ function mountPreviewTimeline(body, segments) {
     }
 }
 
-/** 配方选择窗的浮动预览卡（替代技能详情预览）：焦点配方的只读时间轴；点击卡片由 onPreviewClick 打开该配方编辑器 */
+/** 配方选择窗的浮动预览卡（替代技能详情预览）：焦点配方的概览行 + 只读时间轴；点击卡片由 onPreviewClick 打开该配方编辑器 */
 function renderRecipePreview(preview, it) {
     destroyPreviewTimeline();
     preview.innerHTML = "";
@@ -91,15 +98,22 @@ function renderRecipePreview(preview, it) {
     nameEl.className = "rs-skill-preview-name";
     nameEl.textContent = it.label;
     nameEl.title = it.label;
+    const metaEl = document.createElement("div");
+    metaEl.className = "rs-skill-preview-meta";
     const body = document.createElement("div");
     body.textContent = "加载中…";
     const hint = document.createElement("div");
     hint.className = "rs-skill-preview-hint";
     hint.textContent = "点击卡片打开配方编辑器";
-    preview.append(nameEl, body, hint);
+    preview.append(nameEl, metaEl, body, hint);
     fetchRecipeSpec(it.value).then((spec) => {
         if (preview.dataset.focusId !== it.value || !preview.isConnected) return; // 焦点已切走或选择窗已关，丢弃过期结果
         mountPreviewTimeline(body, spec ? spec.segments || [] : null);
+        if (!spec) return;
+        videoSkillsOnce().then((skills) => {
+            // 技能列表返回时焦点可能已切走：再校验一次，避免把别的配方的概览写进当前卡
+            if (preview.dataset.focusId === it.value && preview.isConnected) metaEl.textContent = directorMetaText(spec, skills);
+        });
     }).catch(() => {
         if (preview.dataset.focusId === it.value && preview.isConnected) body.textContent = "加载失败";
     });

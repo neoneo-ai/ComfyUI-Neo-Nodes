@@ -8,6 +8,7 @@
  * - validateWorkflow / checkWorkflow：对照 /object_info 与 /models/{folder}
  *   标记 节点未安装 / 模型未找到 / {{模板变量}}（请求失败时跳过对应检查，不误报）
  * - renderWorkflowGraph：画 SVG（节点框 + 参数行 + 贝塞尔连线 + 徽标 + tooltip）+ 问题摘要到容器
+ *   （摘要含缺失节点/模型的名称芯片与复制按钮，方便一键复制去安装/下载）
  */
 
 const NODE_W = 150, NODE_H = 46, GAP_X = 64, GAP_Y = 18, PAD = 12;
@@ -326,7 +327,7 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
         const list = (issues[id] ||= []);
         const cls = node && node.class_type;
         if (objectInfo && cls && !objectInfo[cls]) {
-            list.push({ kind: "missing_node", message: `节点未安装：${cls}` });
+            list.push({ kind: "missing_node", message: `节点未安装：${cls}`, value: cls });
             counts.missingNodes++;
             continue; // 节点不存在则查不到输入类型，跳过后续检查
         }
@@ -360,7 +361,7 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
             const normList = files.map((f) => String(f).replace(/\\/g, "/"));
             const v = value.replace(/\\/g, "/");
             if (!normList.includes(v) && !normList.includes(v + ".safetensors") && !normList.includes(v + ".ckpt")) {
-                list.push({ kind: "missing_model", message: `模型未找到：${value}（${label}）` });
+                list.push({ kind: "missing_model", message: `模型未找到：${value}（${label}）`, value, label });
                 counts.missingModels++;
             }
         }
@@ -487,6 +488,27 @@ function attachDragPan(svg, scroller) {
     svg.addEventListener("pointercancel", end);
 }
 
+// 复制缺失项名称：优先异步 Clipboard API；不可用（非安全上下文等）回落 execCommand。按钮上即时反馈 ✓/✗。
+function copyName(text, btn) {
+    const feedback = (ok) => {
+        btn.textContent = ok ? "✓" : "✗";
+        setTimeout(() => { btn.textContent = "📋"; }, 1000);
+    };
+    if (typeof navigator.clipboard?.writeText === "function") {
+        navigator.clipboard.writeText(text).then(() => feedback(true), () => feedback(false));
+        return;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:absolute;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { /* 环境不支持按失败处理 */ }
+    ta.remove();
+    feedback(ok);
+}
+
 /** 把流程图画进 container（先清空旧内容）；summaryTarget 提供时摘要行画到滚动区外。返回 { svg, summary }。 */
 export function renderWorkflowGraph(container, workflow, validation, summaryTarget) {
     container.innerHTML = "";
@@ -552,7 +574,7 @@ export function renderWorkflowGraph(container, workflow, validation, summaryTarg
     container.appendChild(svg);
     attachDragPan(svg, container); // 内容超出滚动区时可按住拖拽平移（同画布体验）
 
-    // 问题摘要（无问题时隐藏）
+    // 问题摘要（无问题时隐藏）：计数行 + 缺失项芯片（节点/模型名称 + 复制按钮，同名去重按节点 id 排序）
     const summary = document.createElement("div");
     summary.className = "rs-wf-summary";
     const c = (validation && validation.counts) || { missingNodes: 0, missingModels: 0, templates: 0 };
@@ -560,7 +582,42 @@ export function renderWorkflowGraph(container, workflow, validation, summaryTarg
     if (c.missingNodes) parts.push(`⚠️ ${c.missingNodes} 个节点未安装`);
     if (c.missingModels) parts.push(`⚠️ ${c.missingModels} 个模型缺失`);
     if (c.templates) parts.push(`🔵 ${c.templates} 个模板变量运行时填入`);
-    summary.textContent = parts.join(" · ");
+    const countLine = document.createElement("div");
+    countLine.className = "rs-wf-summary-count";
+    countLine.textContent = parts.join(" · ");
+    summary.appendChild(countLine);
+    const missingItems = [];
+    const seenMissing = new Set();
+    for (const id of Object.keys(issues).sort(_sortNodeIds)) {
+        for (const i of issues[id] || []) {
+            if (i.kind !== "missing_node" && i.kind !== "missing_model") continue;
+            const key = `${i.kind}\u0000${i.value}`;
+            if (!i.value || seenMissing.has(key)) continue;
+            seenMissing.add(key);
+            missingItems.push(i);
+        }
+    }
+    if (missingItems.length) {
+        const chipsRow = document.createElement("div");
+        chipsRow.className = "rs-wf-missing";
+        for (const i of missingItems) {
+            const chip = document.createElement("span");
+            chip.className = `rs-wf-missing-item${i.kind === "missing_node" ? " rs-wf-missing-node" : ""}`;
+            chip.title = i.message;
+            const name = document.createElement("span");
+            name.className = "rs-wf-missing-name";
+            name.textContent = i.value;
+            const btn = document.createElement("button");
+            btn.className = "rs-wf-copy";
+            btn.type = "button";
+            btn.textContent = "📋";
+            btn.title = "复制名称";
+            btn.onclick = () => copyName(i.value, btn);
+            chip.append(name, btn);
+            chipsRow.appendChild(chip);
+        }
+        summary.appendChild(chipsRow);
+    }
     // 分阶段渲染会多次调用本函数，summaryTarget 是外部持久元素，必须整体替换而不是追加
     if (summaryTarget) summaryTarget.replaceChildren(summary);
     else container.appendChild(summary);

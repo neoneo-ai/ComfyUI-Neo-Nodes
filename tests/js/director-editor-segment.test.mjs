@@ -1591,6 +1591,98 @@ test("导演编辑器：视频技能按段有效模式过滤（skill.mode 由后
     await sleep(20);
 });
 
+test("导演编辑器：非混合模式统一选择技能（紧邻生成模式，各段行不再显示技能下拉）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-t2v", name: "文生", gen_video: true, mode: "t2v" },
+        { id: "sk-t2v2", name: "文生二", gen_video: true, mode: "t2v" },
+    ]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "UNI" }));
+
+    await openDirectorEditor({
+        name: "UNI", shared: { mode: "t2v", width: 960, height: 544 },
+        segments: [
+            { skill_id: "sk-t2v", prompt: "第一段", duration_sec: 5 },
+            { skill_id: "sk-t2v2", prompt: "第二段", duration_sec: 5 },
+        ],
+    });
+    await sleep(60);
+
+    // 位置：时间轴页顶行「生成模式」之后、宽高比之前
+    const tlRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
+    const kids = Array.from(tlRow.children);
+    const gSkillSel = tlRow.querySelector(".neo-director-global-skill");
+    assert.ok(gSkillSel, "非混合模式显示统一技能框");
+    const gSkillLabel = tlRow.querySelector(".neo-director-global-skill-label");
+    assert.equal(kids.indexOf(gSkillLabel), kids.indexOf(tlRow.querySelector(".neo-director-mode")) + 1, "技能标签紧邻生成模式之后");
+    assert.equal(kids.indexOf(gSkillSel), kids.indexOf(gSkillLabel) + 1, "技能下拉紧随其标签");
+    assert.ok(kids.indexOf(gSkillSel) < kids.indexOf(tlRow.querySelector(".neo-director-aspect")), "位于宽高比之前");
+    assert.equal(gSkillSel.value, "sk-t2v", "初始取首段技能");
+    assert.equal(gSkillLabel.style.display, "", "标签可见");
+
+    // 各段行的技能下拉与标签隐藏（技能由统一框决定）
+    for (const row of document.querySelectorAll(".neo-director-seg")) {
+        assert.equal(row.querySelector(".neo-director-skill").style.display, "none", "段内技能下拉隐藏");
+        assert.equal(row.querySelector(".neo-director-skill-label").style.display, "none", "段内技能标签隐藏");
+    }
+    assert.deepEqual(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-skill")).map((s) => s.value),
+        ["sk-t2v", "sk-t2v"], "打开即按统一技能归一各段");
+
+    // 统一设置页有同一选择器，改任一处都双向同步
+    const setupSkillSel = document.querySelector(".neo-director-pane-setup .neo-director-global-skill");
+    assert.ok(setupSkillSel, "统一设置页同样显示统一技能框");
+    assert.equal(setupSkillSel.value, "sk-t2v");
+    gSkillSel.value = "sk-t2v2";
+    gSkillSel.dispatchEvent(new window.Event("change"));
+    assert.equal(setupSkillSel.value, "sk-t2v2", "统一设置页跟随");
+    assert.deepEqual(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-skill")).map((s) => s.value),
+        ["sk-t2v2", "sk-t2v2"], "统一技能同步到各段");
+
+    // 保存：每一段都写统一技能
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
+    assert.ok(saveCall, "发出保存请求");
+    assert.deepEqual(saveCall.body.segments.map((s) => s.skill_id), ["sk-t2v2", "sk-t2v2"], "统一技能写入每一段");
+});
+
+test("导演编辑器：混合模式隐藏统一技能框，技能回到逐段选择", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-t2v", name: "文生", gen_video: true, mode: "t2v" },
+        { id: "sk-i2v", name: "图生", gen_video: true, mode: "i2v" },
+    ]));
+
+    await openDirectorEditor({
+        name: "MIX", shared: { mode: "mixed", width: 960, height: 544 },
+        segments: [{ skill_id: "sk-t2v", prompt: "第一段", duration_sec: 5, mode: "t2v" }],
+    });
+    await sleep(60);
+
+    const tlRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
+    assert.equal(tlRow.querySelector(".neo-director-global-skill").style.display, "none", "混合模式隐藏统一技能框");
+    assert.equal(tlRow.querySelector(".neo-director-global-skill-label").style.display, "none", "标签一并隐藏");
+    const segSkill = document.querySelector(".neo-director-seg .neo-director-skill");
+    assert.equal(segSkill.style.display, "", "混合模式段内技能下拉恢复显示");
+    assert.equal(document.querySelector(".neo-director-seg .neo-director-skill-label").style.display, "");
+    assert.deepEqual(Array.from(segSkill.options).map((o) => o.value), ["sk-t2v"], "段内技能池按该段有效模式（t2v）过滤");
+
+    // 切回非混合模式：统一框显示、段内隐藏，且技能池按新全局模式过滤
+    const modeSel = tlRow.querySelector(".neo-director-mode");
+    modeSel.value = "i2v";
+    modeSel.dispatchEvent(new window.Event("change"));
+    assert.equal(tlRow.querySelector(".neo-director-global-skill").style.display, "", "非混合模式恢复显示统一技能框");
+    assert.equal(segSkill.style.display, "none", "段内技能下拉重新隐藏");
+    assert.deepEqual(Array.from(tlRow.querySelector(".neo-director-global-skill").options).map((o) => o.value),
+        ["sk-i2v"], "统一技能池按全局模式过滤");
+    assert.equal(segSkill.value, "sk-i2v", "各段跟随统一技能");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
 test("导演编辑器：参考素材区标题行「素材库」按钮打开/收起左侧素材面板", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };

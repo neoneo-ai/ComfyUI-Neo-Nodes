@@ -12,6 +12,18 @@ import { attachSkillPickerToSelect } from "./skill.js";
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
 
+// 生成模式（与 ComfyUI_MiniMaxH3_Director 的任务模式对齐；mixed 仅全局可选）
+export const SEG_MODES = [
+    ['t2v', '文生视频'],
+    ['i2v', '图生视频'],
+    ['fl2v', '首尾帧生视频'],
+    ['r2v', '全参考生视频'],
+    ['v2v', '视频编辑'],
+    ['rv2v', '视频+参考图编辑'],
+];
+export const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
+
+
 /** 从拖放事件的 dataTransfer 提取素材标识（Neo Gallery 自定义 MIME，回退 text/plain）。
  *  兼容传入 DropEvent（取 .dataTransfer）或 dataTransfer 本身。 */
 function grabDataType(dt) {
@@ -192,6 +204,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let optPrompts = Array.isArray(exSetup.opt_prompts) ? exSetup.opt_prompts : null;    // 最近一次优化结果，随 setup 落盘、重开回显
     let segCounter = 0; // 段身份计数：时间轴颜色按段内容绑定，重排不变色
     let modeSel = null;   // 全局生成模式（文生/图生/混合），在时间线面板中创建后赋值
+    let gSkillSel = null;      // 统一技能选择（非混合模式：各段共用，紧邻生成模式；混合模式隐藏）
+    let setupSkillSel = null;  // 统一设置页的同一控件（与 gSkillSel 双向同步）
 
     // 未保存修改标记：任何会改变落盘内容的操作置位；成功保存 / 关闭后清零。
     let dirty = false;
@@ -203,17 +217,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         { key: 'videos', kind: 'video', label: '参考视频', max: 3 },
         { key: 'audios', kind: 'audio', label: '参考音频', max: 3 },
     ];
-    // 生成模式（与 ComfyUI_MiniMaxH3_Director 的任务模式对齐；mixed 仅全局可选）
-    const SEG_MODES = [
-        ['t2v', '文生视频'],
-        ['i2v', '图生视频'],
-        ['fl2v', '首尾帧生视频'],
-        ['r2v', '全参考生视频'],
-        ['v2v', '视频编辑'],
-        ['rv2v', '视频+参考图编辑'],
-    ];
     const SEG_MODE_KEYS = new Set(SEG_MODES.map(([k]) => k));
-    const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
     const segRefReaders = new Map();    // 段行 → [读取该段三组参考的函数]（保存时按当前 DOM 顺序取）
     const segRefSetters = new Map();    // 段行 → [设置该段三组参考的函数]（「同步到所有分段」用）
     const segFrameReaders = new Map();  // 段行 → {first, last} 读取该段首/尾帧的函数
@@ -595,7 +599,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             $el('div', { className: 'neo-director-seg-head' }, [
                 $el('span', { className: 'neo-director-seg-title', textContent: '段' }),
                 segModeRow,   // 本段模式（仅混合模式显示）：紧跟段标题、位于技能之前，同一行
-                $el('label', { className: 'neo-director-field-label', textContent: '技能（决定模板与模型）' }), skillSel,
+                $el('label', { className: 'neo-director-field-label neo-director-skill-label', textContent: '技能（决定模板与模型）' }), skillSel,
                 $el('label', { className: 'neo-director-field-label', textContent: '时长（秒）' }), durInp,
                 removeBtn,
             ]),
@@ -654,32 +658,60 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     for (const s of (exSegs.length ? exSegs : [{}])) segsWrap.appendChild(buildSeg(s));
     renumberSegs();
 
-    // 按有效模式刷新各段：混合模式下显示“本段模式”下拉并逐段生效；
-    // 首帧区（i2v/fl2v）、尾帧区（fl2v）、参考素材区（i2v/r2v）分别显隐。
-    // 按该段有效模式过滤视频技能（skill.mode 由后端 frontmatter 提供）；无匹配时回退全量，避免空下拉。
-    function refreshSegSkillOptions(skillSel, eff) {
-        if (!skillSel) return;
-        const prev = skillSel.value;
-        // v2v/rv2v 复用 r2v 技能模板（H3 视频编辑走参考视频路径），按 r2v 过滤技能列表
-        let pool = skills.filter(s => s.mode === (eff === 'v2v' || eff === 'rv2v' ? 'r2v' : eff));
-        if (!pool.length) pool = skills;
-        skillSel.innerHTML = '';
+    // 按有效模式过滤视频技能（skill.mode 由后端 frontmatter 提供）：v2v/rv2v 复用 r2v 技能模板
+    // （H3 视频编辑走参考视频路径）；无匹配时回退全量，避免空下拉。
+    function skillOptionPool(eff) {
+        const pool = skills.filter(s => s.mode === (eff === 'v2v' || eff === 'rv2v' ? 'r2v' : eff));
+        return pool.length ? pool : skills;
+    }
+
+    /** 填充技能下拉（统一技能框与各段技能框共用）；keep 仍在新池里时保持选中，否则落回第一个选项。 */
+    function fillSkillOptions(sel, eff, keep) {
+        sel.innerHTML = '';
+        const pool = skillOptionPool(eff);
         if (!pool.length) {
-            skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
+            sel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
             return;
         }
         for (const s of pool) {
             const opt = $el('option', { value: s.id, textContent: s.name || s.id });
-            opt.dataset.source = s.source || 'custom';
+            opt.dataset.source = s.source || 'custom'; // 详情弹窗按 source 区分预设只读/自定义可编辑
             opt.__skillMeta = s; // 选择窗浮动预览卡取 gen_config / 分类等元数据
-            skillSel.appendChild(opt);
+            sel.appendChild(opt);
         }
-        if ([...skillSel.options].some(o => o.value === prev)) skillSel.value = prev;
+        if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
     }
 
+    function refreshSegSkillOptions(skillSel, eff) {
+        if (skillSel) fillSkillOptions(skillSel, eff, skillSel.value);
+    }
+
+    /** 当前统一技能 id（非混合模式即各段技能；混合模式该框隐藏，其值仍作为新段默认）。 */
+    const currentSkillId = () => (gSkillSel ? gSkillSel.value : '');
+
+    /** 把统一技能写进各段下拉（段内下拉在非混合模式隐藏，但保存/执行仍读段内 skill_id）。 */
+    function pushGlobalSkill() {
+        const sid = currentSkillId();
+        if (!sid) return;
+        for (const row of segsWrap.querySelectorAll('.neo-director-seg')) {
+            const sel = row.querySelector('.neo-director-skill');
+            if (sel) sel.value = sid;
+        }
+    }
+
+    // 按有效模式刷新各段：非混合模式下技能统一由 gSkillSel 决定（段内技能下拉隐藏）；
+    // 混合模式下显示“本段模式”与段内技能下拉并逐段生效；
+    // 首帧区（i2v/fl2v）、尾帧区（fl2v）、参考素材区（i2v/r2v）分别显隐。
     function applyGlobalMode() {
         if (!modeSel) return;
         const g = modeSel.value;   // 't2v' | 'i2v' | 'fl2v' | 'r2v' | 'mixed'
+        const mixed = (g === 'mixed');
+        // 统一技能框（紧邻生成模式）：非混合模式按全局模式过滤选项并显示；混合模式整体隐藏
+        if (gSkillSel) fillSkillOptions(gSkillSel, g, gSkillSel.value);
+        if (setupSkillSel) fillSkillOptions(setupSkillSel, g, gSkillSel ? gSkillSel.value : setupSkillSel.value);
+        for (const el of [gSkillLabel, gSkillSel, setupSkillLabel, setupSkillSel]) {
+            if (el) el.style.display = mixed ? 'none' : '';
+        }
         for (const row of segsWrap.querySelectorAll('.neo-director-seg')) {
             const segModeSel = row.querySelector('.neo-director-segmode');
             const ffBlock = row.querySelector('.neo-director-ff-block');
@@ -687,7 +719,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const modeRow = row.querySelector('.neo-director-segmode-row');
             const ffLfWrap = row.querySelector('.neo-director-fflf');
             const svBlock = row.querySelector('.neo-director-sv-block');
-            if (g === 'mixed' && segModeSel) {
+            if (mixed && segModeSel) {
                 // 首次进入混合：按该段已有的首/尾帧或参考素材初始化本段模式
                 if (!row.dataset.modeInit) {
                     const readers = segFrameReaders.get(row) || {};
@@ -702,9 +734,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     row.dataset.modeInit = '1';
                 }
             }
-            const eff = (g === 'mixed' && segModeSel) ? segModeSel.value : g;
-            refreshSegSkillOptions(row.querySelector('.neo-director-skill'), eff);
-            if (modeRow) modeRow.style.display = (g === 'mixed') ? '' : 'none';
+            const eff = (mixed && segModeSel) ? segModeSel.value : g;
+            const skillSel = row.querySelector('.neo-director-skill');
+            refreshSegSkillOptions(skillSel, eff);
+            // 段内技能下拉只在混合模式显示；其余模式的技能由上方统一技能框决定
+            const skillLabel = row.querySelector('.neo-director-skill-label');
+            if (skillLabel) skillLabel.style.display = mixed ? '' : 'none';
+            if (skillSel) skillSel.style.display = mixed ? '' : 'none';
+            if (modeRow) modeRow.style.display = mixed ? '' : 'none';
             if (ffBlock) ffBlock.style.display = (eff === 'i2v' || eff === 'fl2v') ? '' : 'none';
             if (lfBlock) lfBlock.style.display = (eff === 'fl2v') ? '' : 'none';
             if (ffLfWrap) ffLfWrap.classList.toggle('neo-director-fflf-row', eff === 'fl2v');
@@ -712,6 +749,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (refsBlock) refsBlock.style.display = (eff === 'r2v' || eff === 'rv2v') ? '' : 'none';
             if (svBlock) svBlock.style.display = (eff === 'v2v' || eff === 'rv2v') ? '' : 'none';
         }
+        if (!mixed) pushGlobalSkill();   // 统一技能落到各段（新增段 / 切模式后同样生效）
     }
     // 定位到指定段（节点时间轴上被点击的那一段）；未指定时仍默认显示第 1 段
     const focusSegAt = (i) => { const n = Number(i); if (Number.isFinite(n) && n >= 0) showSeg(n); };
@@ -893,7 +931,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         let segNo = 0;
         for (const row of Array.from(segsWrap.querySelectorAll('.neo-director-seg'))) {
             segNo += 1;
-            const skill_id = row.querySelector('.neo-director-skill').value;
+            // 非混合模式：技能取顶部的统一技能框（段内下拉隐藏、值同源，此处兜底归一）
+            const skill_id = (gMode === 'mixed')
+                ? row.querySelector('.neo-director-skill').value
+                : (currentSkillId() || row.querySelector('.neo-director-skill').value);
             const prompt = row.querySelector('.neo-director-prompt').value.trim();
             if (!skill_id || !prompt) warnings.push(`第 ${segNo} 段未选择技能或未填提示词`);
             const eff = (gMode === 'mixed') ? row.querySelector('.neo-director-segmode').value : gMode;
@@ -1098,7 +1139,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const res = await fetch('/rs_recipes/director_split_segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ story, segment_seconds: Number(segLenSel.value) }) });
             const data = await res.json();
             if (!data.success) { storyStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '拆分失败', detail: data.error || 'Unknown error', life: 5000 }); return; }
-            const defaultSkill = skills.length ? skills[0].id : '';
+            const defaultSkill = currentSkillId() || (skills.length ? skills[0].id : '');
             segsWrap.innerHTML = '';
             for (const s of data.segments) {
                 segsWrap.appendChild(buildSeg({ skill_id: defaultSkill, prompt: s.prompt, duration_sec: s.duration_sec, mode: 't2v' }));
@@ -1172,7 +1213,24 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     }
     modeSel.value = initMode;
     modeSel.addEventListener('change', () => applyGlobalMode());
-    applyGlobalMode();   // 初始化各段首帧/尾帧/参考素材区与模式选择器的显隐
+
+    // 统一技能（非混合模式）：紧邻生成模式，一次选择应用到所有分段（各段行不再单独选技能）；
+    // 混合模式整体隐藏（逐段各选）。与生成模式同样在时间轴页 / 统一设置页各放一个实例，双向同步。
+    const initSkillId = (exSegs[0] && exSegs[0].skill_id) || (skills.length ? skills[0].id : '');
+    const gSkillLabel = $el('label', { className: 'neo-director-global-skill-label', textContent: '技能' });
+    const setupSkillLabel = $el('label', { className: 'neo-director-global-skill-label', textContent: '技能（全局统一）' });
+    gSkillSel = $el('select', { className: 'neo-director-global-skill', title: '统一决定各段模板与模型；混合模式下改为逐段选择' });
+    setupSkillSel = $el('select', { className: 'neo-director-global-skill', title: '统一决定各段模板与模型；混合模式下改为逐段选择' });
+    for (const sel of [gSkillSel, setupSkillSel]) {
+        fillSkillOptions(sel, initMode, initSkillId);
+        attachSkillPickerToSelect(sel);   // 点击弹居中搜索窗（与段内技能下拉一致）
+        sel.addEventListener('change', () => {
+            const other = (sel === gSkillSel) ? setupSkillSel : gSkillSel;
+            if (other) other.value = sel.value;
+            pushGlobalSkill();
+        });
+    }
+    applyGlobalMode();   // 初始化各段首帧/尾帧/参考素材区、统一技能框显隐，并把统一技能同步到各段
 
     // ==========================================
     // 🎯 统一设置（中间步骤）：选模式 → 统一参考素材 → 按 H3 官方格式批量重写提示词，再到时间轴逐段微调
@@ -1234,7 +1292,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
 
     const uniT2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '文生视频不需要参考素材，直接为各段填写提示词即可' });
-    const uniMixedHint = $el('div', { className: 'neo-director-setup-hint', textContent: '混合模式：统一参考图会应用到所有分段（仅 r2v 段生效），i2v/fl2v 段请到「🎞️ 时间轴分段」页逐段设置首帧' });
+    const uniMixedHint = $el('div', { className: 'neo-director-setup-hint', textContent: '混合模式：技能与首帧/尾帧请到「🎞️ 时间轴分段」页逐段设置；统一参考图会应用到所有分段（仅 r2v 段生效）' });
     const uniV2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '视频编辑：源视频请到「🎞️ 时间轴分段」页逐段设置（每段一段切片），提示词用 <Video 1> 指代源视频' });
 
     // 按全局模式切换统一素材区（与每段有效模式的显隐规则一致）
@@ -1326,6 +1384,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const setupPane = $el('div', { className: 'neo-director-pane neo-director-pane-setup' }, [
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '生成模式（全局统一）' }), setupModeSel,
+            setupSkillLabel, setupSkillSel,   // 统一技能：紧邻生成模式（混合模式隐藏）
         ]),
         uniR2vBlock,     // 全参考：三组参考素材
         uniFrameBlock,   // 图生 / 首尾帧：统一首帧（+ 尾帧）
@@ -1343,6 +1402,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '生成模式' }), modeSel,
+            gSkillLabel, gSkillSel,   // 统一技能：紧邻生成模式（混合模式隐藏）
             $el('label', { textContent: '宽高比' }), aspectSel,
             $el('label', { textContent: '百万像素' }), mpInp,
             resOut,

@@ -243,6 +243,11 @@
     padding: 1px 8px;
 }
 
+.neo-recipes-detail-meta {
+    font-size: 12px;
+    color: #9a9a9a;
+}
+
 .neo-recipes-detail-prompt {
     font-size: 12px;
     line-height: 1.5;
@@ -795,8 +800,9 @@
     opacity: 1;
 }
 
-.neo-director-skill {
-    width: 240px;      /* 段标题行内固定宽度 */
+.neo-director-skill,
+.neo-director-global-skill {
+    width: 240px;      /* 段标题行（混合模式逐段选）/ 统一设置行（紧邻生成模式）内固定宽度 */
     background: #1e1e1e;
     color: #ddd;
     border: 1px solid #3a3a3a;

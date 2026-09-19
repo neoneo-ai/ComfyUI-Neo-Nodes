@@ -188,28 +188,34 @@ test("点击节点时间轴分段块直接打开配方编辑器", async () => {
     assert.ok(document.querySelector(".neo-director-overlay"), "点击时间轴块打开编辑器");
 });
 
-test("recipe 选择窗预览卡：焦点配方显示只读时间轴（节点内嵌同款组件）", async () => {
+test("recipe 选择窗预览卡：焦点配方显示概览行 + 只读时间轴（节点内嵌同款组件）", async () => {
     resetEnv();
     clearRoutes();
     appState.graph = { _nodes: [] };
     mockRoute("/rs_recipes/director_spec", () => jsonResponse({
         success: true,
+        shared: { mode: "i2v", width: 960, height: 544 },
         segments: [
-            { prompt: "a", duration_sec: 5 },
-            { prompt: "b", duration_sec: 10 },
-            { prompt: "c", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "a", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "b", duration_sec: 10 },
+            { skill_id: "sk-a", prompt: "c", duration_sec: 5 },
         ],
     }));
     mockRoute("/rs_recipes/list", () => jsonResponse([{ name: "pv-recipe", type: "video_director" }]));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
 
     const node = await createDirectorNode("pv-recipe");
     const recipe = node.widgets.find((w) => w.name === "recipe");
     assert.equal(typeof recipe.onPointerDown, "function", "recipe combo 应挂选择窗拦截");
     recipe.onPointerDown();
-    await sleep(200); // listRecipes → openSkillPickerModal → fetchRecipeSpec → 挂载时间轴
+    await sleep(200); // listRecipes → openSkillPickerModal → fetchRecipeSpec → 挂载时间轴 + 概览行
 
     const preview = document.querySelector(".rs-skill-picker-preview");
     assert.ok(preview, "预览卡应渲染");
+    const meta = preview.querySelector(".rs-skill-preview-meta");
+    assert.equal(meta?.textContent, "3 段 · 图生视频 · 技能 A ×3 · 960×544 · 总时长 20s", "预览卡显示概览行");
     assert.ok(preview.querySelector(".neo-dtl-canvas"), "预览卡内嵌只读时间轴 canvas");
     assert.ok(!preview.textContent.includes("加载中"), "预览卡不应停留在加载态");
 

@@ -72,3 +72,74 @@ test("配方卡片：每个配方都有复制按钮，点击调用 /rs_recipes/c
     assert.deepEqual(copyBody, { name: "src-recipe" }, "调用 /rs_recipes/copy 传源配方名");
     assert.ok(appState.toasts.some(t => t.summary === "配方已复制"), "复制成功弹 toast");
 });
+
+test("配方详情：导演配方显示段数/模式/技能/宽×高/总时长概览行", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+        { id: "sk-b", name: "技能 B", gen_video: true },
+    ]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        {
+            name: "dir-unified", type: "video_director", source: "custom", prompt: "", assets: [], samples: [],
+            shared: { width: 1344, height: 768, mode: "t2v" },
+            segments: [
+                { skill_id: "sk-a", prompt: "p1", duration_sec: 5 },
+                { skill_id: "sk-a", prompt: "p2", duration_sec: 5 },
+                { skill_id: "sk-a", prompt: "p3", duration_sec: 5 },
+            ],
+        },
+        {
+            name: "dir-mixed", type: "video_director", source: "custom", prompt: "", assets: [], samples: [],
+            shared: { width: 768, height: 1344, mode: "mixed" },
+            segments: [
+                { skill_id: "sk-a", prompt: "p1", duration_sec: 5, mode: "i2v" },
+                { skill_id: "sk-b", prompt: "p2", duration_sec: 3.5, mode: "t2v" },
+            ],
+        },
+    ]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+
+    // 统一模式：技能同名聚合 ×3，总时长 15s
+    panel.querySelector(".neo-recipes-card-name").click();
+    await sleep(80);
+    let meta = document.querySelector(".neo-recipes-detail-meta");
+    assert.ok(meta, "导演配方详情有概览行");
+    assert.equal(meta.textContent, "3 段 · 文生视频 · 技能 A ×3 · 1344×768 · 总时长 15s", "统一模式概览行内容");
+
+    // 混合模式：多技能并列、小数总时长
+    document.querySelector(".neo-recipes-detail-close")?.click();
+    await sleep(20);
+    const names = panel.querySelectorAll(".neo-recipes-card-name");
+    names[1].click();
+    await sleep(80);
+    meta = document.querySelector(".neo-recipes-detail-meta");
+    assert.equal(meta.textContent, "2 段 · 混合模式 · 技能 A、技能 B · 768×1344 · 总时长 8.5s", "混合模式概览行内容");
+});
+
+test("配方卡片：多段导演配方正文显示摘要行（代替无提示词）", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        {
+            name: "dir-card", type: "video_director", source: "custom", prompt: "", assets: [], samples: [],
+            shared: { width: 960, height: 544, mode: "i2v" },
+            segments: [
+                { skill_id: "sk-a", prompt: "p1", duration_sec: 5 },
+                { skill_id: "sk-a", prompt: "p2", duration_sec: 5 },
+            ],
+        },
+    ]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    const meta = panel.querySelector(".neo-recipes-card-meta");
+    assert.equal(meta.textContent, "2 段 · 图生视频 · 技能 A ×2 · 960×544 · 总时长 10s", "多段导演卡片正文显示摘要行");
+});
+
