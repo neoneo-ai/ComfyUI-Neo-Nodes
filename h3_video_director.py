@@ -504,6 +504,10 @@ class NeoH3VideoDirector:
                 "model": ("MODEL",),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
                 "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
                 "preview": ("BOOLEAN", {"default": True}),   # 节点内实时预览：开 = taeh3 真彩动作预览，关 = 完全不出
+                # 仅 BUNDLE 单段模式用（配方多段时各段自带 duration_sec）：秒 → 帧（24fps，向上对齐 17k+5 网格）
+                # 默认 5 秒 = 内置 H3 skill config 的 length（124 帧）；前端选中 skill 后按该 skill 的 length 自动填秒数
+                "duration_sec": ("INT", {"default": 5, "min": 1, "max": 150,
+                                         "tooltip": "BUNDLE 单段时长（秒）：按 24fps 换算成 H3 帧数并对齐 17k+5 网格（5 秒 → 124 帧）；切换视频 skill 时按该 skill config 的 length 自动填"}),
                 "bundle": ("STRING", {"forceInput": True}),   # NeoPromptAgent BUNDLE；提供时忽略 recipe，按单段生成
             },
             "hidden": {
@@ -517,8 +521,9 @@ class NeoH3VideoDirector:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "多段视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO（跨段上下文窗口保连续性）。"
 
-    def _run_bundle_segment(self, payload, skill_id, seed, width, height, model, steps, vae=None, preview=True, node_id=None):
-        """BUNDLE 单段生成：提示词/参考来自 NeoPromptAgent 的 BUNDLE（data URI），视频 skill 用节点入参，忽略 recipe。"""
+    def _run_bundle_segment(self, payload, skill_id, seed, width, height, model, steps, vae=None, preview=True, node_id=None,
+                           duration_sec=5):
+        """BUNDLE 单段生成：提示词/参考来自 NeoPromptAgent 的 BUNDLE（data URI），视频 skill / 时长（秒）用节点入参，忽略 recipe。"""
         sid = _resolve_skill_id(skill_id)
         if not any(s["id"] == sid for s in _gen_video_skills()):
             raise ValueError(f"未选择有效的视频 skill：'{skill_id}'（需为含 workflow.json 的视频技能）")
@@ -535,6 +540,7 @@ class NeoH3VideoDirector:
             body["width"] = in_w
         if in_h > 0:
             body["height"] = in_h
+        body["length"] = _seconds_to_frames(int(duration_sec))
         refs = payload.get("references") or []
         if refs:
             body["references"] = list(refs)
@@ -544,11 +550,12 @@ class NeoH3VideoDirector:
             Types.VideoComponents(images=comp.images, audio=comp.audio, frame_rate=Fraction(H3_FPS))
         ),)
 
-    def generate(self, recipe, skill_id="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, bundle="", preview=True, unique_id=None):
+    def generate(self, recipe, skill_id="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, duration_sec=5, bundle="", preview=True, unique_id=None):
         vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
         payload = get_bundle(bundle) if bundle else None
         if payload:
-            return self._run_bundle_segment(payload, skill_id, seed, width, height, model, steps, vae, preview, unique_id)
+            return self._run_bundle_segment(payload, skill_id, seed, width, height, model, steps, vae, preview, unique_id,
+                                            duration_sec=duration_sec)
         spec = load_director_spec(recipe)
         shared = spec.get("shared") or {}
         segments = spec.get("segments") or []

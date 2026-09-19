@@ -1106,7 +1106,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
                 "latent_image": ["5", 1]}},
         }
 
-    def _run_r2v_chain(self, continuity=True, context_frames=22, frame_counts=(124, 141, 141), mode="r2v"):
+    def _run_r2v_chain(self, continuity=True, context_frames=22, frame_counts=(124, 141, 141), mode="r2v", duration_sec=-1):
         """三段配方跑一次（模板用 r2v 形状）；返回 ([(graph, overrides), ...], [各段 body], [各段 _FakeVideo], 输出 VIDEO)。
 
         第 1 段自带 a.png/b.png（身份来源）、第 2 段带 c.png、第 3 段带 a.png（用于验证身份去重）。
@@ -1134,7 +1134,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
             (graph, kw.get("overrides"))) or next(it)
         try:
             (out,) = h3_video_director.NeoH3VideoDirector().generate(
-                "r", continuity=continuity, context_frames=context_frames)
+                "r", continuity=continuity, context_frames=context_frames, duration_sec=duration_sec)
         finally:
             self._restore(orig)
         return calls, bodies, videos, out
@@ -1161,6 +1161,12 @@ class DirectorOrchestrationTests(unittest.TestCase):
                        if n.get("class_type") == "NeoH3AddContext")
         self.assertEqual(len(third), 2)
         self.assertEqual(calls[2][0][third[0][1]["inputs"]["identity_image"][0]]["inputs"]["image"], "b.png")
+
+    def test_node_duration_sec_ignored_in_recipe_mode(self):
+        """节点上的 duration_sec 只服务 BUNDLE 单段：配方多段各段仍用自己的 duration_sec（5s → 124 帧）。"""
+        _, bodies, _, _ = self._run_r2v_chain(duration_sec=30)
+        self.assertEqual([b["length"] for b in bodies], [h3_video_director._seconds_to_frames(5)] * 3)
+        self.assertEqual(bodies[0]["length"], 124)
 
     def test_context_window_trims_head_frames_and_audio(self):
         """链入段丢掉头部 22 帧（重生成窗口），音频按同样帧数裁掉保 A/V 对齐。"""
@@ -1330,7 +1336,7 @@ class DirectorBundleTests(unittest.TestCase):
     SR = 48000
     FPS = 24
 
-    def _run(self, payload, seed=-1, width=-1, height=-1, model=None, steps=-1,
+    def _run(self, payload, seed=-1, width=-1, height=-1, model=None, steps=-1, duration_sec=5,
              skill_id="minimax_h3_t2v", valid_skills=("minimax_h3_t2v",)):
         h3d = h3_video_director
         orig = (h3d.get_bundle, h3d._gen_video_skills, h3d.load_director_spec,
@@ -1361,7 +1367,8 @@ class DirectorBundleTests(unittest.TestCase):
         out = None
         try:
             (out,) = h3_video_director.NeoH3VideoDirector().generate(
-                "ignored_recipe", skill_id=skill_id, seed=seed, width=width, height=height, model=model, steps=steps, bundle="B1")
+                "ignored_recipe", skill_id=skill_id, seed=seed, width=width, height=height, model=model, steps=steps,
+                duration_sec=duration_sec, bundle="B1")
         except Exception as e:
             err = str(e)
         finally:
@@ -1403,6 +1410,31 @@ class DirectorBundleTests(unittest.TestCase):
         self.assertNotIn("seed", bodies[0])
         self.assertNotIn("width", bodies[0])
         self.assertNotIn("height", bodies[0])
+
+    def test_bundle_duration_sec_applied_as_frames(self):
+        # 时长（秒）→ H3 帧数：按 24fps 取整后向上对齐 17k+5 网格
+        payload = {"prompts": ["p"]}
+        _, bodies, _, err = self._run(payload, duration_sec=10)
+        self.assertIsNone(err)
+        self.assertEqual(bodies[0].get("length"), h3_video_director._seconds_to_frames(10))
+        self.assertEqual(bodies[0].get("length"), 243)          # 10s → 240 帧 → 243
+
+    def test_bundle_default_duration_is_skill_config(self):
+        # duration_sec=5（默认）= 内置 H3 skill config 的 length（124 帧 ≈ 5 秒），不再有 -1 哨兵
+        payload = {"prompts": ["p"]}
+        _, bodies, _, err = self._run(payload)
+        self.assertIsNone(err)
+        self.assertEqual(bodies[0].get("length"), h3_video_director._seconds_to_frames(5))
+        self.assertEqual(bodies[0].get("length"), 124)
+
+    def test_bundle_duration_sec_exposed_as_widget(self):
+        # 时长（秒）是节点 widget（非连线槽），默认 5 秒 = 内置 H3 skill config 的 length 折算，最小 1 秒
+        opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
+        self.assertIn("duration_sec", opt)
+        self.assertEqual(opt["duration_sec"][0], "INT")
+        self.assertEqual(opt["duration_sec"][1]["default"], 5)
+        self.assertEqual(opt["duration_sec"][1]["min"], 1)
+        self.assertNotIn("forceInput", opt["duration_sec"][1])
 
     def test_bundle_invalid_skill_raises(self):
         payload = {"prompts": ["p"]}

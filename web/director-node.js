@@ -9,6 +9,7 @@ import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
 import { listRecipes } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 import { attachSkillPickerToComboWidget } from "./skill.js";
+import { getSkillGenConfig } from "./image-gen.js";
 
 const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
@@ -16,6 +17,7 @@ const PREVIEW_H = 300; // 运行时实时预览面板高度（px）：运行中�
 const PREVIEW_EVENT = "rs.h3.preview"; // 后端每步推来的多帧载荷（见 h3_preview.py）
 const PREVIEW_STEPS = 40; // 保留的采样步数上限，超出丢最旧（每步 PREVIEW_FRAMES 张 JPEG）
 const PREVIEW_FPS = 4; // 载荷未带 fps 时的兜底播放帧率（与后端 PREVIEW_FPS 同值）
+const H3_FPS = 24; // 与后端 h3_video_director.H3_FPS 同值：skill config 的 length（帧）折算时长（秒）用
 
 // 画布上存活的预览面板：事件按 node_id 路由（node.id 可能被克隆/载入改写，匹配时现读）
 const livePreviews = new Set();
@@ -348,9 +350,10 @@ app.registerExtension({
                 tlVisible = visible;
                 tlRow.style.display = visible ? "" : "none";
                 actBar.style.display = visible ? "" : "none";
-                // bundle 单段模式：隐藏 recipe、显示视频 skill 选择器；断开恢复
+                // bundle 单段模式：隐藏 recipe、显示视频 skill 选择器与时长（秒）；断开恢复
                 if (recipeWidget) recipeWidget.hidden = !visible;
                 if (skillIdWidget) skillIdWidget.hidden = visible;
+                if (durationWidget) durationWidget.hidden = visible;
                 runtimeBaseH = bh + (visible ? TL_H + ACT_H : 0);
                 node.minHeight = runtimeBaseH;
                 node.setSize([node.size[0], runtimeBaseH + (progress.active ? PREVIEW_H : 0)]);
@@ -358,8 +361,38 @@ app.registerExtension({
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
             const skillIdWidget = node.widgets?.find(w => w.name === "skill_id");
-            // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
+            const durationWidget = node.widgets?.find(w => w.name === "duration_sec");
+            // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器与时长（秒）；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
             if (skillIdWidget) skillIdWidget.hidden = true;
+            if (durationWidget) durationWidget.hidden = true;
+            // duration（秒）跟随 bundle 模式选中的视频 skill：按该 skill config 的 length（帧）折算秒（24fps）。
+            // 新建节点按默认 skill 填一次；bundle 模式里切换 skill 时重填。
+            // 工作流还原（onConfigure）后已存值优先，初始填充不再覆盖。
+            let configured = false;
+            const applyDurationFromSkill = async (initial = false) => {
+                const name = skillIdWidget ? String(skillIdWidget.value || "") : "";
+                if (!name || !durationWidget) return;
+                const cfg = await getSkillGenConfig(name);
+                if (initial && configured) return; // fetch 期间工作流已完成还原，让位给已存值
+                const frames = Number(cfg && cfg.length);
+                if (!Number.isFinite(frames) || frames <= 0) return; // config 无 length：保持现值（后端默认 5 秒）
+                const seconds = Math.max(1, Math.round(frames / H3_FPS));
+                if (durationWidget.value === seconds) return;
+                durationWidget.value = seconds;
+                durationWidget.callback?.(seconds);
+            };
+            applyDurationFromSkill(true);
+            if (skillIdWidget) {
+                const ocSkill = skillIdWidget.callback;
+                skillIdWidget.callback = function() { ocSkill?.apply(this, arguments); applyDurationFromSkill(); };
+            }
+            // continuity / context_frames：暂不开放给用户设置，只在节点上隐藏 widget。
+            // 隐藏≠清空：两个 widget 仍占 widgets_values 的位置、值仍随工作流保存并随 prompt 发给后端，
+            // 所以新节点走后端默认（连续性开、窗口 22 帧），旧工作流里已存的值照旧生效。
+            for (const nm of ["continuity", "context_frames"]) {
+                const w = node.widgets?.find((x) => x.name === nm);
+                if (w) w.hidden = true;
+            }
             // 点击 recipe / skill_id combo → 弹居中选择窗（替代原生下拉）。
             // recipe：仅搜索、无底部工具栏，预览卡显示焦点配方只读时间轴（节点内嵌同款组件）；skill_id：默认技能列表（含管理工具栏）
             const recipeItemsProvider = async (w) => {
@@ -502,6 +535,7 @@ app.registerExtension({
             const origOnConfigure = node.onConfigure;
             node.onConfigure = function() {
                 const r = origOnConfigure?.apply(this, arguments);
+                configured = true; // 此后已存 widgets_values 优先：初始的时长按 skill 填充不再覆盖
                 syncPreviewBtn();
                 loadSpec();
                 return r;

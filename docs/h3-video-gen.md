@@ -6,11 +6,11 @@
 ### 配方多段（video_director）
 1. 添加 🎞️ H3 Video Director 节点，`recipe` 选一个 `video_director` 配方（下拉自动列出；编辑器可增删/重排段、半自动故事生成）。
 2. 配方的每段自带 `skill_id` + prompt + 时长 + 首/尾帧 + 参考素材。视频 skill 需带 `gen_video: true` + `workflow.json`（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)；另有同名带 `(VDN)` 的 4 个加速变体，依赖 ComfyUI-VDN-H3 插件、8 步，见「VDN 加速」节）。
-3. 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认）/ `continuity`（跨段连续性总开关，默认开）/ `context_frames`（跨段上下文窗口帧数，默认 22，0 = 关闭）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值），见「运行时加速」节。
+3. 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值），见「运行时加速」节。跨段连续性参数（`continuity` / `context_frames`）仍是后端入参，但节点上已隐藏、暂不开放设置（见「输入」）。
 4. 执行后输出单个拼接好的 `VIDEO`（含音频），接 SaveVideo 等节点导出。
 
 ### BUNDLE 单段
-把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：提示词 / 参考图（data URI）取自 bundle，视频 skill 用节点上**隐藏的视频 skill 选择器**（连上 BUNDLE 时自动显示、同时隐藏 `recipe`），按单个片段生成、**忽略 `recipe`**。需在节点上选择一个有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
+把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：提示词 / 参考图（data URI）取自 bundle，视频 skill 与**时长（秒）**用节点上**隐藏的单段控件**（连上 BUNDLE 时自动显示 `skill_id` + `duration_sec`，同时隐藏 `recipe`），按单个片段生成、**忽略 `recipe`**。需在节点上选择一个有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。**`duration_sec`**（INT 秒，默认 5 = 内置 H3 skill config 的 `length` 折算秒）按 24fps 换算成 H3 帧数并向上对齐模型的 `17k+5` 网格（5 秒 → 124 帧、10 秒 → 243 帧），写入 `body["length"]`（模板 `{{LENGTH}}`）；前端新建节点时按所选 skill config 的 `length` 自动填秒数、bundle 模式里切换 skill 时重填。配方多段模式下该控件隐藏、被忽略（各段自带 `duration_sec`）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
 
 ## NeoH3VideoDirector（多段导演）
 
@@ -18,7 +18,7 @@
 
 ![🎞️ NeoH3VideoDirector 节点](assets/images/neo-h3-video-director.png)
 
-- **输入**：`recipe`（video_director 配方名，下拉自动列出；点击弹出居中可搜索选择窗，仅搜索、无管理入口）+ 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认值）/ `continuity`（默认开）/ `context_frames`（跨段上下文窗口帧数，默认 22，0 = 关闭上下文窗口、退回 Tier A）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值）/ `preview`（BOOLEAN，默认开，见下）。`model` / `steps` 与单段节点同款「运行时加速」语义、**逐段生效**：提供 `model` 时每段跳过内部主模型解析、剪掉该段纯模型链并注入外部模型（无需 VDN 插件）；`steps > 0` 覆盖每段采样步数。选中配方后节点会自动把 `width` / `height` / `steps` 填成该配方**首段** skill config 的默认值（仅当当前值为 -1 时，尊重已保存/手动设置）。
+- **输入**：`recipe`（video_director 配方名，下拉自动列出；点击弹出居中可搜索选择窗，仅搜索、无管理入口）+ 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 用各段 skill config 默认值）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值）/ `preview`（BOOLEAN，默认开，见下）。**`continuity`（跨段连续性总开关，默认开）与 `context_frames`（跨段上下文窗口帧数，默认 22，0 = 关闭并退回 Tier A）仍是节点入参，但节点上已隐藏、暂不开放给用户设置**：新节点按后端默认值跑（连续性开、窗口 22 帧），旧工作流里已保存的值照旧生效（隐藏只影响显示，值仍随工作流保存、随 prompt 发给后端）。`model` / `steps` 与单段节点同款「运行时加速」语义、**逐段生效**：提供 `model` 时每段跳过内部主模型解析、剪掉该段纯模型链并注入外部模型（无需 VDN 插件）；`steps > 0` 覆盖每段采样步数。选中配方后节点会自动把 `width` / `height` / `steps` 填成该配方**首段** skill config 的默认值（仅当当前值为 -1 时，尊重已保存/手动设置）。BUNDLE 单段模式另有个 `duration_sec`（INT 秒，默认 5，跟随所选 skill config 的 `length`）控制单段时长：`recipe` 模式下隐藏、被忽略（多段的时长由各段自带的 `duration_sec` 决定），见「BUNDLE 单段」节。
 - **实时预览**：节点内时间轴左侧的「👁」开关（对应节点输入 `preview`，随工作流保存）控制采样期间的实时预览——**开**（默认）时每步沿潜空间时间轴均匀抽 8 帧，用 `models/vae_approx/taeh3.safetensors` 解成真彩 JPEG 序列（最长边 512px，替代核心对 H3 只能给的 Latent2RGB 粗色预览），经插件自有 WS 事件 `rs.h3.preview` 推给节点底部的**动画面板**：按 4 fps 自动循环播放该步的动作（8 帧一圈 2 秒；想调快慢改后端 `h3_preview.PREVIEW_FPS`，前端跟载荷里的 `fps` 走），可暂停/继续（点画面同样切换）、`⏪/⏩` 逐帧（自动暂停）、`◀/▶` 回看之前的采样步（回看时不被新载荷拽走）。面板只在采样期间占用节点加高的 300px，换段或运行结束即收起复位（每段的采样步各自从第 1 步计数）。缺文件或加载失败时自动回退 Latent2RGB（走核心通道），不影响出片。**关**则本次生成完全不出预览。该开关是最终决定：开就一定有预览，关就一定没有，与 ComfyUI 全局预览设置无关。代价：每步多解码/编码 8 帧，实测约 +0.2s/步（GPU fp16、8 帧 512px）。
 - **逐段执行**：第 i 段用其 `skill_id` 解析模板与 config，提示词/时长/首帧取该段字段；`seed = base_seed + i`（base 优先节点覆盖、否则配方 `shared.seed`），保证可复现且各段不同。
 - **生成模式**：配方可选 `shared.mode`（`t2v` / `i2v` / `fl2v` / `r2v` / `v2v` / `rv2v` / `mixed`，与 ComfyUI_MiniMaxH3_Director 的任务模式对齐）决定各段携带哪些帧与参考：具体模式全体统一，`mixed` 时逐段 `seg.mode` 生效；缺省（旧配方）按该段是否有尾帧/首帧/参考推断（尾帧→`fl2v`、首帧→`i2v`、仅有视频/音频参考→`r2v`、否则 `t2v`）。段级语义与编辑器显隐：
@@ -34,10 +34,10 @@
 
   校验：`i2v` 需首帧（或可链入上段尾帧）、`fl2v` 需尾帧、`r2v` 需至少一条参考素材、`v2v`/`rv2v` 需源视频；**保存前仅提示、不阻止**（可先存草稿再补），执行时仍给明确报错。新增段、拆分、切换全局/段级模式后即时刷新各分区显隐。
   - **统一参考素材（常驻身份）**：「🎯 统一设置」页的参考素材区在 `r2v` 和 `mixed` 模式下可见，改动即覆盖式应用到所有分段（仅 r2v 段执行时生效）。混合模式下用它铺角色身份图可保证各 r2v 段的 `<Picture N>` 编号一致；i2v/fl2v 段保存时若携带额外参考素材会收到提示。
-- **跨段上下文窗口（连续性的主路径）**：`continuity` 开时（默认），上段**交付帧**的尾部 `context_frames` 帧（节点入参，默认 22；0 = 关闭）作为下一段开头的**视频参考**注入，下一段先重生成这 22 帧、再在拼接时**丢掉头部 22 帧**——接缝不再有重复帧，新段带着上段的真实像素开场（与 H3-Continuum 的 context window 同思路）。窗口帧数就近对齐到模型要求的 `17k+5` 网格（22 / 39 正在网格上），目标总帧数 = 该段时长帧数 + 窗口帧数后再就近对齐（124+22=146 → 141，交付 119 帧），裁剪与音频丢弃同一帧数保 A/V 对齐。`t2v` 段也链入窗口（那是它唯一的连续性来源）。
+- **跨段上下文窗口（连续性的主路径）**：`continuity` 开时（默认），上段**交付帧**的尾部 `context_frames` 帧（默认 22；节点上已隐藏，暂不开放设置）作为下一段开头的**视频参考**注入，下一段先重生成这 22 帧、再在拼接时**丢掉头部 22 帧**——接缝不再有重复帧，新段带着上段的真实像素开场（与 H3-Continuum 的 context window 同思路）。窗口帧数就近对齐到模型要求的 `17k+5` 网格（22 / 39 正在网格上），目标总帧数 = 该段时长帧数 + 窗口帧数后再就近对齐（124+22=146 → 141，交付 119 帧），裁剪与音频丢弃同一帧数保 A/V 对齐。`t2v` 段也链入窗口（那是它唯一的连续性来源）。
 - **身份继承**：配方里**第一个带参考素材的段**的参考图（上限 4 张）领养到之后所有段——r2v 段转成自己的参考图进 conditioning，i2v/fl2v/t2v 段（模板没有多路参考槽位）直接注入参考图片块。本段已经送出的图不重复注入；`continuity` 关时不继承。
 - **注入实现（`NeoH3AddContext`）**：注入节点串在 H3 conditioning 节点与采样器之间（采样器的 `model` / `positive` / `negative` 改由注入链提供），每加一条参考 append 一次 `minimax_refs`：先身份图、后窗口。窗口帧用虚拟 `LoadImage` + mini-executor override 直接喂张量（不写临时文件），身份图用 input 目录里的真实 `LoadImage`。**i2v/fl2v 段有窗口时首帧取窗口的第 0 帧**（与窗口行同内容，锚点时间线由 wrapper 修正到目标原点），不再用上段尾帧；该段自己挂的素材仍照常写进 `references`（i2v/fl2v 模板只有首帧槽位，额外素材不生效）。窗口的 `latent_t` 与帧数在节点里校验（对不上说明 vae 不是 H3 视频 VAE，直接报错）。
-- **Tier A 回退（`context_frames=0`）**：上段尾帧作为下段 **i2v/fl2v** 段首帧（data-URI 走单段同款参考路径），并丢该段第一帧避免边界重复；`t2v` 段不链入、不丢帧。r2v 段在 Tier A 下不再注入任何连续性锚点（旧的首帧 keyframe 锚点已由窗口取代），要 r2v 连续性请把 `context_frames` 设为 ≥5。
+- **Tier A 回退（`context_frames=0`，节点上已隐藏，仅当旧工作流里存了该值时才可达）**：上段尾帧作为下段 **i2v/fl2v** 段首帧（data-URI 走单段同款参考路径），并丢该段第一帧避免边界重复；`t2v` 段不链入、不丢帧。r2v 段在 Tier A 下不再注入任何连续性锚点（旧的首帧 keyframe 锚点已由窗口取代），要 r2v 连续性请把 `context_frames` 设为 ≥5。
 - **锚点与窗口的时间轴对齐**：`PackedLayout` 把 keyframe 锚点行与 ref 行的时间坐标一律从 `text_len` 起算，而目标视频的 t 原点在所有 ref 之后，于是只要本段带 refs，锚点就整体早一个「refs 推进量」、窗口行则整段错开一个窗口。连续性 wrapper（`WrappersMP.APPLY_MODEL`，key `neo_h3_continuity.apply_model.v1`，同 key 先清再挂）在模型调用前一次性修正：keyframes 与 refs 并存时把两者合回一条 `cond_video_latents`（core 只留 refs），就地平移锚点行，并把窗口行拷到目标视频开头的行上（保持 `position_ids` 张量本体，Sol-Attn 的 span 注册认它）。不改 core、不与其它插件的 `extra_conds` 补丁抢所有权。手动搭图时把 `NeoH3AddContext`（或做单帧锚点的 `NeoH3AddKeyframe`）串在 `MiniMaxH3*ToVideo` 与采样器之间即可；`tools/check_h3_context_layout.py` 用真机 core 的 `PackedLayout` 复核这套对齐。
 - **音频对齐**：各段 `AudioInput`（`{waveform:[B,C,T], sample_rate}`）按序拼接，每个接缝丢弃被丢帧对应的采样数（`round(sample_rate/fps)`），使总音频长度恰好等于拼接后帧数对应的时长（A/V 对齐）。
 - **输出**：`InputImpl.VideoFromComponents(VideoComponents(images, audio, frame_rate=24))`，单个 `VIDEO` 接 SaveVideo。

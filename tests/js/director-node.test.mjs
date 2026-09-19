@@ -70,21 +70,57 @@ test("创建后节点高度与最小高度都包含时间轴", async () => {
     assert.equal(node.minHeight, BASE_H + TL_H + ACT_H);
 });
 
-test("bundle 连接时隐藏 recipe、显示视频 skill 选择器；断开恢复", async () => {
+test("bundle 连接时隐藏 recipe、显示视频 skill 选择器与时长；断开恢复", async () => {
     resetEnv();
-    const node = await createDirectorNode("", [{ name: "skill_id", value: "minimax_h3_t2v" }]);
+    const node = await createDirectorNode("", [{ name: "skill_id", value: "minimax_h3_t2v" }, { name: "duration_sec", value: 5 }]);
     const recipe = node.widgets.find((w) => w.name === "recipe");
     const skillId = node.widgets.find((w) => w.name === "skill_id");
+    const duration = node.widgets.find((w) => w.name === "duration_sec");
     assert.ok(!recipe.hidden, "默认（无 bundle）显示 recipe");
     assert.equal(skillId.hidden, true, "默认隐藏视频 skill 选择器");
+    assert.equal(duration.hidden, true, "默认隐藏时长（配方模式各段自带时长）");
 
     node._neoDtApplyBundleLock(true);   // 连上 BUNDLE：单段模式
     assert.equal(recipe.hidden, true, "bundle 模式隐藏 recipe");
     assert.equal(skillId.hidden, false, "bundle 模式显示视频 skill 选择器");
+    assert.equal(duration.hidden, false, "bundle 模式显示时长（秒）");
 
     node._neoDtApplyBundleLock(false);  // 断开：恢复配方模式
     assert.ok(!recipe.hidden, "断开后恢复 recipe");
     assert.equal(skillId.hidden, true, "断开后隐藏视频 skill 选择器");
+    assert.equal(duration.hidden, true, "断开后隐藏时长");
+    destroyNode(node);
+});
+
+test("bundle 模式时长（秒）跟随所选 skill config 的 length", async () => {
+    resetEnv();
+    clearRoutes();
+    mockRoute("/neo_image_gen/skill_config", () => jsonResponse({ length: 124, width: 512, height: 288 }));
+    const node = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
+    const duration = node.widgets.find((w) => w.name === "duration_sec");
+    await sleep(60); // 初始按 skill config 填充：124 帧 / 24fps → 5 秒
+    assert.equal(duration.value, 5, "124 帧 → 5 秒");
+
+    // bundle 模式里切换 skill：按新 skill config 重填（240 帧 → 10 秒）
+    mockRoute("/neo_image_gen/skill_config", () => jsonResponse({ length: 240 }));
+    const skillId = node.widgets.find((w) => w.name === "skill_id");
+    skillId.value = "sk-b";
+    skillId.callback?.("sk-b");
+    await sleep(60);
+    assert.equal(duration.value, 10, "240 帧 → 10 秒");
+    destroyNode(node);
+});
+
+test("continuity / context_frames 暂不开放：创建后即隐藏，值保持默认", async () => {
+    resetEnv();
+    const node = await createDirectorNode("recipe-a", [{ name: "continuity", value: true }, { name: "context_frames", value: 22 }]);
+    const continuity = node.widgets.find((w) => w.name === "continuity");
+    const contextFrames = node.widgets.find((w) => w.name === "context_frames");
+    assert.equal(continuity.hidden, true, "隐藏 continuity");
+    assert.equal(contextFrames.hidden, true, "隐藏 context_frames");
+    // 隐藏不等于清空：值仍随工作流保存、仍随 prompt 发给后端（旧工作流里存的值照旧生效）
+    assert.equal(continuity.value, true);
+    assert.equal(contextFrames.value, 22);
     destroyNode(node);
 });
 
