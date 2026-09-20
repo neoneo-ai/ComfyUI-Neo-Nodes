@@ -310,7 +310,9 @@
     outline: 1px solid rgba(255, 255, 255, 0.18);
 }
 
-.neo-recipes-detail-asset .neo-recipes-sample-del {
+/* 示例结果 / 结果的删除按钮：悬浮右上角 */
+.neo-recipes-detail-asset .neo-recipes-sample-del,
+.neo-recipes-detail-asset .neo-recipes-result-del {
     position: absolute;
     top: 4px;
     right: 4px;
@@ -324,7 +326,8 @@
     border-radius: 4px;
 }
 
-.neo-recipes-detail-asset .neo-recipes-sample-del:hover {
+.neo-recipes-detail-asset .neo-recipes-sample-del:hover,
+.neo-recipes-detail-asset .neo-recipes-result-del:hover {
     background: rgba(0, 0, 0, 0.85);
 }
 

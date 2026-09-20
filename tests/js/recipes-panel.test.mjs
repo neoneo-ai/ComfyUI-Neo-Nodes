@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, dialogs, setConfirmAnswer } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
@@ -141,5 +141,79 @@ test("配方卡片：多段导演配方正文显示摘要行（代替无提示�
     document.body.appendChild(panel);
     const meta = panel.querySelector(".neo-recipes-card-meta");
     assert.equal(meta.textContent, "2 段 · 图生视频 · 技能 A ×2 · 960×544 · 总时长 10s", "多段导演卡片正文显示摘要行");
+});
+
+
+// ---- 配方结果（results）：执行产物路径的查看与删除 ----
+
+function resultRecipe(over = {}) {
+    return {
+        name: "res-recipe", type: "video_director", source: "custom", prompt: "", assets: [], samples: [],
+        result_count: 1,
+        results: [{ filename: "shot_00001.mp4", subfolder: "", kind: "video", at: "2026-01-01 00:00:00" }],
+        ...over,
+    };
+}
+
+test("配方详情：结果区按 output 路径渲染，点击打开 Lightbox，卡片显示结果数", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([resultRecipe()]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    assert.match(panel.querySelector(".neo-recipes-card-meta").textContent, /1 个结果/, "卡片元信息带结果数");
+
+    panel.querySelector(".neo-recipes-card-name").click();
+    await sleep(60);
+    const sections = [...document.querySelectorAll(".neo-recipes-detail-section")].map(e => e.textContent);
+    assert.ok(sections.includes("结果（1）"), `详情有结果区：${sections.join(",")}`);
+
+    const item = document.querySelector(".neo-recipes-result-del").closest(".neo-recipes-detail-asset");
+    const video = item.querySelector("video");
+    assert.ok(video, "视频结果用 video 缩略图");
+    assert.equal(video.getAttribute("src"), "/view?filename=shot_00001.mp4&subfolder=&type=output", "走 ComfyUI 原生 /view 读 output 文件");
+    assert.match(item.querySelector(".neo-recipes-detail-file").textContent, /shot_00001\.mp4/);
+    assert.match(document.querySelector(".neo-recipes-result-del").title, /output/, "删除按钮说明会删磁盘文件");
+
+    item.click();
+    await sleep(60);
+    assert.ok(document.querySelector(".neo-lightbox"), "点击结果打开 Lightbox");
+    document.querySelector(".neo-lightbox-close")?.click();
+});
+
+test("配方详情：🗑 删除结果先 confirm；取消不删，确认后调 delete_result 并刷新", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    let recipes = [resultRecipe()];
+    mockRoute("/rs_recipes/list", () => jsonResponse(recipes));
+    let deleted = null;
+    mockRoute("/rs_recipes/delete_result", (body) => {
+        deleted = body;
+        recipes = [resultRecipe({ results: [], result_count: 0 })];
+        return jsonResponse({ success: true, deleted: true });
+    });
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    panel.querySelector(".neo-recipes-card-name").click();
+    await sleep(60);
+
+    setConfirmAnswer(false); // 取消
+    document.querySelector(".neo-recipes-result-del").click();
+    await sleep(40);
+    assert.equal(deleted, null, "取消确认不得调用删除接口");
+    assert.equal(dialogs.confirms.length, 1);
+    assert.match(dialogs.confirms[0], /shot_00001\.mp4/, "确认文案带文件名");
+    assert.ok(document.querySelector(".neo-recipes-result-del"), "条目仍在");
+
+    setConfirmAnswer(true); // 确认
+    document.querySelector(".neo-recipes-result-del").click();
+    await sleep(100);
+    assert.deepEqual(deleted, { name: "res-recipe", filename: "shot_00001.mp4", subfolder: "", kind: "video" },
+        "传配方名 + 路径 + 类型");
+    assert.equal(document.querySelectorAll(".neo-recipes-result-del").length, 0, "删除后详情重渲染，结果区消失");
 });
 

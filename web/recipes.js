@@ -14,6 +14,10 @@ import { openDirectorEditor, MODE_LABELS } from "./director.js";
 const assetUrl = (recipe, file, dir) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
 
+// 配方结果（results）指向 output 目录里的真实产物，直接走 ComfyUI 原生 /view 读取
+const outputUrl = (r) =>
+    `/view?filename=${encodeURIComponent(r.filename)}&subfolder=${encodeURIComponent(r.subfolder || '')}&type=output`;
+
 // 配方统一立方体图标：侧边栏标题、保存弹窗按钮、预设列表条目共用
 export const RECIPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
 
@@ -426,6 +430,26 @@ export async function deleteRecipeSample(name, file) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, file })
+    });
+    return resp.json();
+}
+
+/** 把执行产物（output 目录）的路径记进配方 results；导演节点跑完自动调用。 */
+export async function addRecipeResults(name, results) {
+    const resp = await api.fetchApi('/rs_recipes/add_results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, results })
+    });
+    return resp.json();
+}
+
+/** 从配方结果里删掉一条，并删除 output 目录里的真实文件（前端先 confirm）。 */
+export async function deleteRecipeResult(name, ref) {
+    const resp = await api.fetchApi('/rs_recipes/delete_result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, filename: ref.filename, subfolder: ref.subfolder || '', kind: ref.kind || '' })
     });
     return resp.json();
 }
@@ -850,6 +874,49 @@ export async function createRecipesPanel() {
             bodyChildren.push(sampleGrid);
         }
 
+        // 结果（results）：只记 output 目录产物路径，点击即可查看，🗑 确认后连同磁盘文件一起删
+        const results = r.results || [];
+        if (results.length) {
+            const resultGrid = $el('div', { className: 'neo-recipes-detail-grid' });
+            const resultItems = results.map(x => ({ kind: x.kind, url: outputUrl(x), title: x.filename }));
+            results.forEach((x, i) => {
+                const item = $el('div', {
+                    className: 'neo-recipes-detail-asset',
+                    title: x.at ? `点击查看（${x.at}）` : '点击查看',
+                    onclick: () => Lightbox.open({ items: resultItems, index: i })
+                }, [
+                    x.kind === 'video' ? $el('video', { src: outputUrl(x), preload: 'metadata' })
+                        : x.kind === 'audio' ? $el('div', { className: 'neo-recipes-detail-asset-audio', textContent: `🎵 ${x.filename}` })
+                            : $el('img', { src: outputUrl(x), alt: x.filename, loading: 'lazy' }),
+                    $el('div', { className: 'neo-recipes-detail-file', textContent: x.filename, title: x.filename })
+                ]);
+                const delBtn = $el('button', {
+                    className: 'neo-recipes-result-del',
+                    textContent: '🗑',
+                    title: '删除该结果文件（连同 output 目录里的文件）',
+                    onclick: async (e) => {
+                        e.stopPropagation();
+                        if (!confirm(`删除结果文件「${x.filename}」？\n会同时从磁盘删除该文件。`)) return;
+                        delBtn.disabled = true;
+                        const res = await deleteRecipeResult(r.name, x);
+                        delBtn.disabled = false;
+                        if (res?.success) {
+                            overlay.remove();
+                            await renderList();
+                            const fresh = (await listRecipes()).find(v => v.name === r.name);
+                            if (fresh) openDetail(fresh);
+                        } else {
+                            app.extensionManager.toast.add({ severity: 'error', summary: '删除失败', detail: res?.error || 'Unknown error', life: 4000 });
+                        }
+                    }
+                });
+                item.appendChild(delBtn);
+                resultGrid.appendChild(item);
+            });
+            bodyChildren.push($el('div', { className: 'neo-recipes-detail-section', textContent: `结果（${results.length}）` }));
+            bodyChildren.push(resultGrid);
+        }
+
         const closeBtn = $el('button', { className: 'rs-btn neo-recipes-detail-close', textContent: '关闭', onclick: () => overlay.remove() });
         const footBtns = [closeBtn];
         if (r.type === 'video_director') {
@@ -908,7 +975,7 @@ export async function createRecipesPanel() {
         const summary = r.type === 'video_director' && (r.segments || []).length ? directorMetaText(r, skills) : '';
         const body = $el('div', { className: 'neo-recipes-card-body' }, [
             $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: '查看资源', onclick: () => openDetail(r) }),
-            $el('div', { className: 'neo-recipes-card-meta', textContent: [r.asset_count ? `${r.asset_count} 个资源` : '', r.sample_count ? `${r.sample_count} 个示例` : '', summary || (r.prompt || '').slice(0, 120) || '无提示词'].filter(Boolean).join(' · ') })
+            $el('div', { className: 'neo-recipes-card-meta', textContent: [r.asset_count ? `${r.asset_count} 个资源` : '', r.sample_count ? `${r.sample_count} 个示例` : '', r.result_count ? `${r.result_count} 个结果` : '', summary || (r.prompt || '').slice(0, 120) || '无提示词'].filter(Boolean).join(' · ') })
         ]);
 
         const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);

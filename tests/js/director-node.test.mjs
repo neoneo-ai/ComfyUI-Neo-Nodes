@@ -9,7 +9,8 @@ import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 const TL_H = 120; // 与 web/director-node.js 的 TL_H 保持一致
 const ACT_H = 28; // 与 web/director-node.js 的 ACT_H（时间轴下方操作条）保持一致
-const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（运行时实时预览面板高度）保持一致
+const PREVIEW_H = 300; // 与 web/director-node.js 的 PREVIEW_H（预览面板默认高度）保持一致
+const PREVIEW_H_MAX = 560; // 与 web/director-node.js 的 PREVIEW_H_MAX（竖屏面板高度上限）保持一致
 const PREVIEW_EVENT = "rs.h3.preview"; // 与 web/director-node.js 的 PREVIEW_EVENT（后端 h3_preview 推载荷）保持一致
 const PREVIEW_FPS = 8; // 载荷自带的播放帧率
 const FRAME_MS = 1000 / PREVIEW_FPS; // 一帧的毫秒数（tick 的推进阈值）
@@ -250,7 +251,7 @@ test("轮询 /neo_video_gen/director_progress 后时间轴读到各段生成状�
     );
 });
 
-test("运行时节点加高预留采样预览空间，结束后还原自然高度", async () => {
+test("运行时节点加高预留采样预览空间，没有预览内容时结束还原自然高度", async () => {
     resetEnv();
     clearRoutes();
     appState.graph = { _nodes: [] };
@@ -269,7 +270,7 @@ test("运行时节点加高预留采样预览空间，结束后还原自然高�
 
     payload.active = false; payload.segment_index = -1;
     await node._neoDtProgressTick();
-    assert.equal(node.size[1], baseH, "结束后还原自然高度");
+    assert.equal(node.size[1], baseH, "没收到任何预览载荷 → 结束后还原自然高度，不留空位");
 });
 
 test("时间轴按进度状态给各段标 done/current，非活动时不显示", async () => {
@@ -612,8 +613,8 @@ test("「👁」实时预览开关与 preview 输入双向同步", async () => {
 // 前端自动循环播放该步动画，支持暂停/逐帧/逐采样步回看；运行结束或换段清空（每段各自从第 1 步计数）。
 const frame = (name) => `data:image/jpeg;base64,${name}`;
 
-function payload(nodeId, names, fps = PREVIEW_FPS) {
-    return { node_id: nodeId, frames: names.map(frame), fps, w: 512, h: 288 };
+function payload(nodeId, names, fps = PREVIEW_FPS, w = 512, h = 288) {
+    return { node_id: nodeId, frames: names.map(frame), fps, w, h };
 }
 
 async function createPreviewNode() {
@@ -643,6 +644,30 @@ test("实时预览：载荷到达立即显示面板、加高节点并播第一�
     assert.equal(node.size[1], BASE_H + TL_H + ACT_H + PREVIEW_H, "首个载荷不等 500ms 轮询就先加高");
     destroyNode(node);
 });
+
+test("实时预览：面板高度按画面比例自适应，手动拉高节点时面板跟着长高", async () => {
+    resetEnv();
+    const { node, box } = await createPreviewNode();
+    const baseH = BASE_H + TL_H + ACT_H;
+
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a"], PREVIEW_FPS, 288, 512)); // 竖屏：按比例要高于默认高度
+    assert.equal(box.style.height, PREVIEW_H_MAX + "px", "竖屏载荷面板按比例放大（封顶 PREVIEW_H_MAX）");
+    assert.equal(node.size[1], baseH + PREVIEW_H_MAX, "节点加高到装得下面板");
+
+    node.setSize([node.size[0], baseH + PREVIEW_H_MAX + 160]); // 手动拉高节点
+    assert.equal(node.size[1], baseH + PREVIEW_H_MAX + 160);
+    assert.equal(box.style.height, PREVIEW_H_MAX + 160 + "px", "拉高后预览面板吃满多出来的高度，下方不留空白");
+
+    node.setSize([node.size[0], baseH]); // 压回基础高度
+    assert.equal(node.size[1], baseH, "压到基础高度由 minHeight 兜住");
+    assert.equal(box.style.height, PREVIEW_H + "px", "面板停在默认高度，不缩到装不下");
+
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["b"])); // 横向 512×288
+    assert.equal(box.style.height, PREVIEW_H + "px", "横向载荷保持默认高度");
+    assert.equal(node.size[1], baseH + PREVIEW_H, "换横向载荷后按默认高度加高节点");
+    destroyNode(node);
+});
+
 
 test("实时预览：事件按 node_id 过滤，别的节点不显示面板", async () => {
     resetEnv();
@@ -724,13 +749,14 @@ test("实时预览：逐帧按钮自动暂停并循环取帧", async () => {
     destroyNode(node);
 });
 
-test("实时预览：换段清空重来，运行结束收起面板并还原节点高度", async () => {
+test("实时预览：换段清空重来；运行结束停在最后一帧暂停并保持加高，下一轮才清空", async () => {
     resetEnv();
     clearRoutes();
     let state = { active: true, segment_index: 0, total_segments: 2 };
     mockRoute("/neo_video_gen/director_progress", () => jsonResponse(state));
 
-    const { node, box, labels } = await createPreviewNode();
+    const { node, box, img, labels } = await createPreviewNode();
+    const playTitle = () => box.querySelector(".neo-dtl-live-play").title;
     dispatchApiEvent(PREVIEW_EVENT, payload(1, ["a"]));
     assert.equal(box.style.display, "");
 
@@ -744,8 +770,22 @@ test("实时预览：换段清空重来，运行结束收起面板并还原节�
 
     state = { active: false, segment_index: -1, total_segments: 0 }; // 本次运行结束
     await node._neoDtProgressTick();
-    assert.equal(box.style.display, "none");
-    assert.equal(node.size[1], BASE_H + TL_H + ACT_H);
+    assert.equal(box.style.display, "", "结束后面板保留，停在最后一帧");
+    assert.equal(img.src, frame("b"), "画面停在最后一帧");
+    assert.match(playTitle(), /继续/, "结束后动画暂停");
+    assert.equal(node.size[1], BASE_H + TL_H + ACT_H + PREVIEW_H, "面板还在 → 节点保持加高");
+
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["迟到"])); // 结束后迟到的载荷
+    assert.equal(img.src, frame("b"), "迟到载荷不得把画面拽走");
+    assert.match(playTitle(), /继续/, "迟到载荷不得重新自动播放");
+    assert.equal(box.style.display, "");
+
+    state = { active: true, segment_index: 0, total_segments: 1 }; // 下一轮运行：这时才清空
+    await node._neoDtProgressTick();
+    assert.equal(box.style.display, "none", "新一轮运行清空面板");
+    dispatchApiEvent(PREVIEW_EVENT, payload(1, ["c"]));
+    assert.equal(img.src, frame("c"));
+    assert.match(playTitle(), /暂停/, "新一轮恢复自动播放");
     destroyNode(node);
 });
 
@@ -759,6 +799,50 @@ test("实时预览：节点移除后载荷不再驱动面板", async () => {
     assert.equal(box.style.display, "none");
     assert.equal(img.hasAttribute("src"), false);
 });
+test("运行结束：本次产物路径自动记进所选配方（只记路径，不复制文件）", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [{ id: 2, type: "SaveVideo", comfyClass: "SaveVideo" }], links: [] };
+    appState.nodeOutputs = { "2": { images: [{ filename: "h3_00001.mp4", subfolder: "", type: "output" }] } };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true, segments: [{ skill_id: "s", prompt: "a", duration_sec: 5 }],
+    }));
+    let state = { active: true, segment_index: 0, total_segments: 1 };
+    mockRoute("/neo_video_gen/director_progress", () => jsonResponse(state));
+    let recorded = null;
+    mockRoute("/rs_recipes/add_results", (body) => {
+        recorded = body;
+        return jsonResponse({ success: true, added: 1, skipped: 0 });
+    });
+
+    const node = await createDirectorNode("res-recipe");
+    clearInterval(node._neoDtProgressTimer);
+    await node._neoDtProgressTick();   // 本轮开始
+    assert.equal(recorded, null, "运行中不记录");
+
+    state = { active: false, segment_index: -1, total_segments: 0 };
+    await node._neoDtProgressTick();   // 运行结束
+    await sleep(40);
+    assert.deepEqual(recorded, {
+        name: "res-recipe",
+        results: [{ filename: "h3_00001.mp4", subfolder: "", type: "output", kind: "video" }],
+    }, "把执行产物路径记进所选配方");
+    destroyNode(node);
+
+    // bundle 单段模式（没有配方）不记录
+    appState.nodeOutputs = { "2": { images: [{ filename: "h3_00002.mp4", subfolder: "", type: "output" }] } };
+    recorded = null;
+    state = { active: true, segment_index: 0, total_segments: 1 };
+    const bundleNode = await createDirectorNode("");
+    clearInterval(bundleNode._neoDtProgressTimer);
+    await bundleNode._neoDtProgressTick();   // 本轮开始
+    state = { active: false, segment_index: -1, total_segments: 0 };
+    await bundleNode._neoDtProgressTick();
+    await sleep(40);
+    assert.equal(recorded, null, "没有配方时不记录");
+    destroyNode(bundleNode);
+});
+
 test("节点底部挂 skill 状态条：配方各段 skill 缺模型时告警，移除节点即销毁", async () => {
     resetEnv();
     clearRoutes();

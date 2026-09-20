@@ -69,6 +69,35 @@ def _kind_of(asset_file: Path) -> str:
     return "image"
 
 
+def _norm_result(ref) -> dict | None:
+    """规范化一条配方结果引用：只记 output 目录产物的路径，不复制文件。非法返回 None。"""
+    if not isinstance(ref, dict):
+        return None
+    filename = str(ref.get("filename", "")).strip()
+    subfolder = str(ref.get("subfolder", "") or "").strip().strip("/")
+    if not _valid_name(filename) or not filename:
+        return None
+    if ".." in subfolder or "\\" in subfolder:
+        return None
+    if str(ref.get("type", "output") or "output") != "output":
+        return None   # 只记执行产物；input/temp 是输入资产
+    kind = str(ref.get("kind", "") or "")
+    if kind not in ("image", "video", "audio"):
+        kind = _kind_of(Path(filename))
+    return {"filename": filename, "subfolder": subfolder, "kind": kind}
+
+
+def _result_path(ref: dict) -> Path | None:
+    """结果引用 → 物理文件路径；越出 output 目录或文件不存在返回 None。"""
+    import folder_paths as _folder_paths
+    name = f"{ref['subfolder']}/{ref['filename']}" if ref.get("subfolder") else ref["filename"]
+    try:
+        path = Path(_folder_paths.get_annotated_filepath(name, _folder_paths.get_output_directory()))
+    except ValueError:
+        return None
+    return path if path.is_file() else None
+
+
 def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
     """Return recipe metadata (name, prompt, asset list + cover) for one folder."""
     meta_path = recipe_dir / "recipe.json"
@@ -130,6 +159,14 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
     if cover is None:
         cover = next((a["file"] for a in assets if a["kind"] == "image"), None)
 
+    # 结果路径（results）：只记 output 目录产物，文件被删掉（含在别处删）后自动不再列出
+    results = []
+    for r in meta.get("results", []) or []:
+        item = _norm_result(r)
+        if item is None or _result_path(item) is None:
+            continue
+        results.append({**item, "at": str((r or {}).get("at", "") or "")})
+
     result = {
         "name": recipe_dir.name,
         "source": source,
@@ -142,6 +179,8 @@ def _scan_recipe_dir(recipe_dir: Path, source: str) -> dict | None:
         "assets": assets,
         "loras": meta.get("loras", []) or [],
         "samples": samples,
+        "results": results,
+        "result_count": len(results),
         "gen_type": meta.get("gen_type", ""),
     }
     # video_director 配方：透传结构化多段字段（缺省 type 的旧扁平配方不受影响）
@@ -525,7 +564,7 @@ async def rs_recipes_save(request):
         orig_to_copied = {}   # 原始文件名 → 落盘 assets 的最终名（供 director 段引用回写）
 
         # 重存同一配方：先读旧 meta，保留磁盘上仍在的既有资产与示例结果（samples 随保存/追加累积）
-        old_assets, old_kinds, old_samples, old_sample_kinds = [], {}, [], {}
+        old_assets, old_kinds, old_samples, old_sample_kinds, old_results = [], {}, [], {}, []
         meta_path = recipe_dir / "recipe.json"
         if meta_path.exists():
             try:
@@ -533,6 +572,7 @@ async def rs_recipes_save(request):
                     old_meta = json.load(f)
                 old_samples = old_meta.get("samples", []) or []
                 old_sample_kinds = old_meta.get("sample_kinds", {}) or {}
+                old_results = old_meta.get("results", []) or []   # 结果路径是执行历史，重存不清空
                 for a in old_meta.get("assets", []) or []:
                     if isinstance(a, str) and (assets_dir / a).is_file():
                         old_assets.append(a)
@@ -595,6 +635,7 @@ async def rs_recipes_save(request):
             "loras": loras,
             "samples": old_samples,
             "sample_kinds": old_sample_kinds,
+            "results": old_results,
             "gen_type": str(data.get("gen_type") or "").strip(),
         }
         if rtype == "video_director":
@@ -637,6 +678,55 @@ async def rs_recipes_append_results(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+@PromptServer.instance.routes.post("/rs_recipes/add_results")
+async def rs_recipes_add_results(request):
+    """把本次执行产物的路径记进配方 results（只记路径不复制文件，按 filename+subfolder 去重）。"""
+    try:
+        data = await request.json()
+        name = data.get("name", "")
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
+            return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        if recipe_dir.parent == PRESETS_DIR:
+            return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
+
+        meta_path = recipe_dir / "recipe.json"
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            return web.json_response({"success": False, "error": "Recipe meta unreadable"}, status=500)
+
+        results = meta.get("results", []) or []
+        if not isinstance(results, list):
+            results = []
+        seen = {(str(r.get("filename", "")), str(r.get("subfolder", "") or ""))
+                for r in results if isinstance(r, dict)}
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        added = 0
+        skipped = 0
+        for ref in (data.get("results") or []):
+            item = _norm_result(ref)
+            if item is None or _result_path(item) is None:
+                continue
+            key = (item["filename"], item["subfolder"])
+            if key in seen:
+                skipped += 1
+                continue
+            seen.add(key)
+            results.append({**item, "at": stamp})
+            added += 1
+
+        if added:
+            meta["results"] = results
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+        return web.json_response({"success": True, "added": added, "skipped": skipped})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.post("/rs_recipes/delete_sample")
 async def rs_recipes_delete_sample(request):
     try:
@@ -667,6 +757,51 @@ async def rs_recipes_delete_sample(request):
         if target.is_file():
             target.unlink()
         return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/rs_recipes/delete_result")
+async def rs_recipes_delete_result(request):
+    """从配方结果里摘掉一条，并删除 output 目录里的真实产物（连同同名 .txt 旁车）。"""
+    try:
+        data = await request.json()
+        name = data.get("name", "")
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
+            return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        if recipe_dir.parent == PRESETS_DIR:
+            return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
+
+        item = _norm_result({"filename": data.get("filename", ""), "subfolder": data.get("subfolder", ""),
+                             "kind": data.get("kind", "")})
+        if item is None:
+            return web.json_response({"success": False, "error": "Invalid file"}, status=400)
+
+        meta_path = recipe_dir / "recipe.json"
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            return web.json_response({"success": False, "error": "Recipe meta unreadable"}, status=500)
+
+        meta["results"] = [r for r in (meta.get("results", []) or []) if not (
+            isinstance(r, dict)
+            and str(r.get("filename", "")) == item["filename"]
+            and str(r.get("subfolder", "") or "") == item["subfolder"]
+        )]
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        deleted = False
+        target = _result_path(item)
+        if target is not None:
+            target.unlink()
+            deleted = True
+            sidecar = target.with_suffix(".txt")   # 提示词元数据旁车，与画廊删除口径一致
+            if sidecar.is_file():
+                sidecar.unlink()
+        return web.json_response({"success": True, "deleted": deleted})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 

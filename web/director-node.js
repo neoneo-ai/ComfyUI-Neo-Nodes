@@ -6,14 +6,16 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { DirectorTimeline } from "./director-timeline.js";
 import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
-import { listRecipes, listVideoSkills, directorMetaText } from "./recipes.js";
+import { listRecipes, listVideoSkills, directorMetaText, collectWorkflowResults, addRecipeResults } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
 import { attachSkillPickerToComboWidget, listSkills, createSkillStatusRow } from "./skill.js";
 import { getSkillGenConfig } from "./image-gen.js";
 
 const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
-const PREVIEW_H = 300; // 运行时实时预览面板高度（px）：运行中为面板加高节点，结束还原
+const PREVIEW_H = 300; // 运行时实时预览面板默认高度（px）：横向载荷的最小高度，节点据此加高
+const PREVIEW_H_MAX = 560; // 竖屏载荷的面板高度上限：按画面比例放大，避免节点被拉得过长
+const PREVIEW_CHROME_H = 30; // 面板里画面之外的固定占用（控制条 + 间隙）
 const PREVIEW_EVENT = "rs.h3.preview"; // 后端每步推来的多帧载荷（见 h3_preview.py）
 const PREVIEW_STEPS = 40; // 保留的采样步数上限，超出丢最旧（每步 PREVIEW_FRAMES 张 JPEG）
 const PREVIEW_FPS = 4; // 载荷未带 fps 时的兜底播放帧率（与后端 PREVIEW_FPS 同值）
@@ -124,8 +126,19 @@ function renderRecipePreview(preview, it) {
  * 节点内实时预览面板：每步一段多帧动画，自动循环 + 暂停 / 逐帧 / 逐采样步。
  * 显示用 <img> 换 src 而不是 canvas：不依赖浏览器解码 API（ImageDecoder 只有 Chromium 有），
  * 且每步的帧先 new Image() 预热进图片缓存，换帧不闪。
- * grow() 由调用方提供：首个载荷可能早于 500ms 轮询，先兜一次节点加高。
+ * grow(desiredH) 由调用方提供：按内容比例给面板定高并加高节点（首个载荷可能早于 500ms 轮询）。
  */
+
+/** 面板高度按载荷画面比例定：横向（含无 w/h）保持默认高度，竖屏按节点宽度放大到装得下整幅画面。 */
+function previewPanelH(w, h, nodeW) {
+    const aw = Number(w) || 0;
+    const ah = Number(h) || 0;
+    if (aw <= 0 || ah <= 0) return PREVIEW_H;
+    const contentW = Math.max(160, (Number(nodeW) || 340) - 24); // 减去节点与面板左右内边距
+    const need = Math.round(contentW * (ah / aw)) + PREVIEW_CHROME_H;
+    return Math.min(PREVIEW_H_MAX, Math.max(PREVIEW_H, need));
+}
+
 function createLivePreview(node, box, grow) {
     const img = document.createElement("img");
     img.className = "neo-dtl-live-img";
@@ -158,6 +171,7 @@ function createLivePreview(node, box, grow) {
     let sel = -1;     // 当前显示的采样步
     let frame = 0;    // 当前帧
     let playing = true;
+    let finished = false; // 本次运行是否已结束（结束后停在最后一帧，不再接受迟到载荷）
     let last = 0;     // 上一帧的时间戳（rAF 时钟）
     let raf = 0;
 
@@ -188,12 +202,19 @@ function createLivePreview(node, box, grow) {
 
     const setPlaying = (on) => {
         playing = on;
-        if (on) last = 0;   // 继续播放时不立刻跳帧，从当前帧安稳接着走
+        if (on) {
+            last = 0;   // 继续播放时不立刻跳帧，从当前帧安稳接着走
+            if (!raf && steps.length) raf = requestAnimationFrame(tick); // 没有内容就不空转时钟
+        } else if (raf) {
+            cancelAnimationFrame(raf);   // 暂停即停掉时钟，画面留在当前帧不再空转
+            raf = 0;
+        }
         playBtn.textContent = on ? "⏸" : "▶";
         playBtn.title = on ? "暂停动画" : "继续动画";
     };
 
     function apply(data) {
+        if (finished) return;   // 本次运行已结束：迟到载荷不得把画面拽走 / 重新自动播放
         if (!Array.isArray(data.frames) || !data.frames.length) return;
         const following = sel < 0 || sel === steps.length - 1;   // 回看旧步时不要被新载荷拽走
         steps.push({ frames: data.frames, imgs: null, fps: Number(data.fps) || PREVIEW_FPS });
@@ -202,13 +223,19 @@ function createLivePreview(node, box, grow) {
         else if (sel < 0) sel = 0;
         last = 0;
         box.style.display = "";
-        box.style.height = PREVIEW_H + "px";
-        grow();
+        grow(previewPanelH(data.w, data.h, node.size && node.size[0])); // 面板高度按画面比例（竖屏更高），节点据此加高
         paint();
-        if (!raf) raf = requestAnimationFrame(tick);
+        if (!raf && playing) raf = requestAnimationFrame(tick);
+    }
+
+    /** 运行结束：停在最后一帧（面板保留、动画暂停），供逐帧 / 逐采样步回看；下次运行或换段由 reset 清空 */
+    function pause() {
+        finished = true;
+        setPlaying(false);
     }
 
     function reset() {
+        finished = false;
         steps = [];
         sel = -1;
         frame = 0;
@@ -248,7 +275,7 @@ function createLivePreview(node, box, grow) {
     onClick(frameNext, () => shiftFrame(1));
 
     reset();
-    return { node, apply, tick, reset };
+    return { node, apply, tick, reset, pause };
 }
 
 app.registerExtension({
@@ -275,6 +302,10 @@ app.registerExtension({
             previewBox.className = "neo-dtl-live";
             previewBox.style.display = "none";
             previewBox.style.height = "0px";
+            // 预览面板高度：默认 PREVIEW_H，首个载荷按画面比例重定（竖屏更高）；
+            // 之后手动拉高节点时面板吃满多出来的高度（见 updateSize），下方不留空白
+            let previewH = PREVIEW_H;
+            const setPreviewH = (h) => { previewH = h; previewBox.style.height = h + "px"; };
 
             // 时间轴显示区（canvas + ✎）；「＋ 新增导演配方」按钮另起一行，位于其下方右下角
             const tlRow = document.createElement("div");
@@ -285,9 +316,13 @@ app.registerExtension({
             let progress = { active: false, segment_index: -1, total_segments: 0 }; // 当前 director 运行进度（轮询 /neo_video_gen/director_progress）
             let runtimeBaseH = 0; // 节点自然高度（含时间轴+操作条），运行时为采样预览加高后据此还原
             // 后端每步推来的多帧载荷走这里：自动循环播放该步动画，可暂停/逐帧/逐步（见 createLivePreview）
-            const live = createLivePreview(node, previewBox, () => {
-                // 首个载荷可能早于 500ms 进度轮询，先兜一次加高（幂等）；还原仍由轮询负责
-                if (runtimeBaseH > 0 && node.size[1] < runtimeBaseH + PREVIEW_H) node.setSize([node.size[0], runtimeBaseH + PREVIEW_H]);
+            const live = createLivePreview(node, previewBox, (desiredH) => {
+                // 首个载荷可能早于 500ms 进度轮询，先兜一次加高（幂等）；还原仍由轮询负责。
+                // 节点已被手动拉高时保留多出来的高度，面板吃掉这部分空间（竖屏时尤其需要）
+                if (runtimeBaseH <= 0) { setPreviewH(desiredH); return; }
+                const free = Math.round(node.size[1] - runtimeBaseH);
+                setPreviewH(free > desiredH ? free : desiredH);
+                if (node.size[1] < runtimeBaseH + previewH) node.setSize([node.size[0], runtimeBaseH + previewH]);
             });
             node._neoDtLive = live; // 暴露给测试驱动（tick）
             node._neoDtPreviewBox = previewBox; // 暴露给测试定位面板元素
@@ -325,11 +360,26 @@ app.registerExtension({
                         tl?.refresh();
                         // 跟随运行：段切换时把正在生成的块横向滚动到可视区（段多/放大时才需要）
                         if (progress.active && progress.segment_index !== prev.segment_index) tl?.revealSeg(progress.segment_index);
-                        // 运行结束或换段：预览面板清空重来（每段的采样步各自从第 1 步计数）
-                        if (progress.active !== prev.active || progress.segment_index !== prev.segment_index) live.reset();
-                        // 运行时为实时预览面板加高预留空间，结束后还原自然高度，避免与时间轴重叠
+                        // 换段 / 新一轮运行：清空重来（每段的采样步各自从第 1 步计数）；
+                        // 运行结束：停在最后一帧暂停，面板保留供逐帧 / 逐采样步回看；并把本次产物路径记回配方
+                        if (progress.active !== prev.active || progress.segment_index !== prev.segment_index) {
+                            if (progress.active) {
+                                live.reset();
+                            } else {
+                                live.pause();
+                                recordResults();
+                            }
+                        }
+                        // 运行时为实时预览面板加高预留空间；结束后面板还在（停在最后一帧）就保持加高，
+                        // 本次运行没有任何预览内容才还原自然高度，不留一块空位
                         if (progress.active !== prev.active && runtimeBaseH > 0) {
-                            node.setSize([node.size[0], progress.active ? runtimeBaseH + PREVIEW_H : runtimeBaseH]);
+                            if (progress.active) {
+                                // 新一轮：沿用当前高度（手动拉高的部分不丢），首个载荷再按画面比例定
+                                setPreviewH(Math.max(PREVIEW_H, Math.round(node.size[1] - runtimeBaseH)));
+                                if (node.size[1] < runtimeBaseH + previewH) node.setSize([node.size[0], runtimeBaseH + previewH]);
+                            } else if (previewBox.style.display === "none") {
+                                node.setSize([node.size[0], runtimeBaseH]);
+                            }
                         }
                     }
                 } catch (_) {}
@@ -343,6 +393,11 @@ app.registerExtension({
                 if (node.minWidth && node.size[0] < node.minWidth) node.size[0] = node.minWidth;
                 if (node.minHeight && node.size[1] < node.minHeight) node.size[1] = node.minHeight;
                 widget.width = node.size[0];
+                // 运行中手动拉高节点：多出来的高度给预览面板（竖屏尤其需要），下方不留空白。
+                // 压到基础高度以下时面板停在默认高度，由 minHeight 兜住不被裁切
+                if (runtimeBaseH > 0 && previewBox.style.display !== "none") {
+                    setPreviewH(Math.max(PREVIEW_H, Math.round(node.size[1] - runtimeBaseH)));
+                }
             };
             node.onResize = node.onResize || function() {};
             const origOnResize = node.onResize;
@@ -371,7 +426,7 @@ app.registerExtension({
                 if (durationWidget) durationWidget.hidden = visible;
                 runtimeBaseH = bh + (visible ? TL_H + ACT_H : 0);
                 node.minHeight = runtimeBaseH;
-                node.setSize([node.size[0], runtimeBaseH + (progress.active ? PREVIEW_H : 0)]);
+                node.setSize([node.size[0], runtimeBaseH + (previewBox.style.display === "none" ? 0 : previewH)]);
             };
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
@@ -415,6 +470,21 @@ app.registerExtension({
                 const ocSkill = skillIdWidget.callback;
                 skillIdWidget.callback = function() { ocSkill?.apply(this, arguments); applyDurationFromSkill(); if (node._neoDtStatusRow) node._neoDtStatusRow.refresh(); }; // 手动切换 skill 后按新技能重检有效性
             }
+
+            // 运行结束：把本次执行产物（output 目录）的路径记进当前配方 results，
+            // 「配方」面板据此点击查看 / 删除真实文件（只记路径，不复制文件）
+            const recordResults = async () => {
+                const name = recipeWidget ? String(recipeWidget.value || "").trim() : "";
+                if (!name) return;   // bundle 单段模式没有配方，跳过
+                const results = collectWorkflowResults();
+                if (!results.length) return;
+                try {
+                    const res = await addRecipeResults(name, results);
+                    if (!res?.success) console.warn("[Neo Nodes] director results not recorded:", res?.error || res);
+                } catch (e) {
+                    console.warn("[Neo Nodes] director results record failed", e);
+                }
+            };
             // continuity / context_frames：暂不开放给用户设置，只在节点上隐藏 widget。
             // 隐藏≠清空：两个 widget 仍占 widgets_values 的位置、值仍随工作流保存并随 prompt 发给后端，
             // 所以新节点走后端默认（连续性开、窗口 22 帧），旧工作流里已存的值照旧生效。
