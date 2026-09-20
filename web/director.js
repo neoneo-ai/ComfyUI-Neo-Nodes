@@ -755,6 +755,109 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         refreshHint();
         anchorSel.addEventListener('change', refreshHint);
         filmSel?.addEventListener('change', refreshHint);
+        // ② 单段生成的后续步骤：把这一段拼回成片（其余段沿用原成片）
+        let hasClip = ((existing && existing.results) || [])
+            .some((res) => res.kind === 'video' && res.segment === index);
+        const blendCheck = $el('input', { type: 'checkbox', className: 'neo-director-merge-blend' });
+        blendCheck.checked = true;
+        const mergeBtn = $el('button', { className: 'rs-btn neo-director-merge-run', type: 'button', textContent: '拼回成片' });
+        const mergeCancel = $el('button', { className: 'rs-btn neo-director-merge-cancel', type: 'button', textContent: '取消拼接' });
+        mergeCancel.style.display = 'none';
+        const mergeLine = $el('div', { className: 'neo-director-merge-status' });
+        const mergeRow = $el('div', { className: 'neo-director-regen-merge' }, [
+            $el('label', { className: 'neo-director-asm-check' }, [blendCheck, $el('span', { textContent: '接缝交叉淡化' })]),
+            mergeBtn, mergeCancel,
+        ]);
+        panel.appendChild(mergeRow);
+        panel.appendChild(mergeLine);
+        let mergeHandle = null;
+        const setMergeIdle = (text) => {
+            mergeHandle = null;
+            mergeBtn.disabled = !hasClip;
+            mergeCancel.style.display = 'none';
+            mergeLine.textContent = text
+                || (hasClip ? '这一段已有片段：可拼回成片（其余段沿用原成片，原成片不受影响）'
+                            : '先生成这一段，之后就能一键拼回成片');
+        };
+        setMergeIdle('');
+        const widgetValue = (n) => { const w = hostNode?.widgets?.find((x) => x.name === n); return w ? w.value : undefined; };
+        const mergeBody = () => {
+            const payload = { recipe: name, use: [index], blend: blendCheck.checked ? 6 : 0 };
+            if (filmSel?.value) payload.film = filmSel.value;      // 用的是这一段的锚点来源成片
+            if (hostNode) {
+                payload.continuity = !!widgetValue('continuity');
+                const cf = Number(widgetValue('context_frames'));
+                if (Number.isFinite(cf)) payload.context_frames = cf;
+            }
+            return payload;
+        };
+        mergeBtn.onclick = async () => {
+            mergeBtn.disabled = true;
+            mergeCancel.style.display = '';
+            mergeLine.textContent = '正在提交拼接…';
+            let taskId = null;
+            try {
+                const res = await fetch('/neo_video_gen/assemble_segments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(mergeBody()),
+                });
+                const data = await res.json().catch(() => null);
+                if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
+                taskId = data.task_id;
+            } catch (err) {
+                setMergeIdle(`提交失败：${err.message}`);
+                app.extensionManager.toast.add({ severity: 'error', summary: '拼接提交失败', detail: err.message, life: 8000 });
+                return;
+            }
+            mergeHandle = {
+                cancel: async () => {
+                    try { await fetch(`/neo_video_gen/assemble_segments/${taskId}/cancel`, { method: 'POST' }); } catch { /* 忽略 */ }
+                },
+            };
+            let timer = null;
+            const tick = async () => {
+                let data = null;
+                try {
+                    const res = await fetch(`/neo_video_gen/assemble_segments/${taskId}`);
+                    data = await res.json().catch(() => null);
+                    if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
+                } catch (err) {
+                    clearInterval(timer);
+                    setMergeIdle(`状态查询失败：${err.message}`);
+                    return;
+                }
+                const pct = (data.progress && data.progress.max > 0)
+                    ? ` ${Math.round((Number(data.progress.value) / Number(data.progress.max)) * 100)}%` : '';
+                if (data.status === 'queued' || data.status === 'running') {
+                    mergeLine.textContent = `${data.stage || '拼接中'}…${pct}`;
+                    return;
+                }
+                clearInterval(timer);
+                if (data.status === 'succeeded') {
+                    for (const warning of (data.warnings || [])) {
+                        app.extensionManager.toast.add({ severity: 'warn', summary: '拼接提示', detail: warning, life: 6000 });
+                    }
+                    app.extensionManager.toast.add({
+                        severity: 'success', summary: '已拼回成片',
+                        detail: `${data.filename}（${data.frames} 帧，第 ${index + 1} 段已换成新片段）`, life: 6000,
+                    });
+                    setMergeIdle(`已拼成新成片：${data.filename}（记进配方「结果」区，后续重生成默认基于它）`);
+                    if (typeof onSaved === 'function') onSaved();
+                    return;
+                }
+                if (data.status === 'cancelled') { setMergeIdle('已取消拼接'); return; }
+                setMergeIdle(`拼接失败：${data.error}`);
+                app.extensionManager.toast.add({ severity: 'error', summary: '拼接失败', detail: data.error, life: 8000 });
+            };
+            timer = setInterval(tick, 1000);
+            tick();
+        };
+        mergeCancel.onclick = async () => {
+            if (!mergeHandle) return;
+            mergeLine.textContent = '已请求取消…';
+            await mergeHandle.cancel();
+        };
         let handle = null;
         const setIdle = (text) => {
             handle = null;
@@ -799,6 +902,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     app.extensionManager.toast.add({ severity: 'warn', summary: '生成提示', detail: warning, life: 6000 });
                 }
                 setIdle(`已完成：${data.filename}${data.film ? `（锚点自 ${data.film}）` : ''}，已记进配方「结果」区`);
+                hasClip = true;                       // 后续步骤：可以拼回成片了
+                mergeBtn.disabled = false;
+                mergeLine.textContent = '已生成：可点「拼回成片」把这一段换进成片（其余段沿用原成片）';
                 if (typeof onSaved === 'function') onSaved();
                 return;
             }
@@ -1608,325 +1714,28 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         segsWrap,
     ]);
 
-    // ===== 🧩 拼接成片（P2）：左边「① 先单段出」，右边「② 确认后拼接」=====
-    const asmLeft = $el('div', { className: 'neo-director-asm-list' });
-    const asmStatus = $el('div', { className: 'neo-director-asm-status' });
-    const asmFrom = $el('select', { className: 'neo-director-asm-from' });
-    const asmPlan = $el('div', { className: 'neo-director-asm-plan' });
-    const asmBlend = $el('input', { type: 'checkbox', className: 'neo-director-asm-blend' });
-    asmBlend.checked = true;
-    const asmRun = $el('button', { className: 'rs-btn neo-director-asm-run', type: 'button', textContent: '拼接成新成片' });
-    const asmCancel = $el('button', { className: 'rs-btn neo-director-asm-cancel', type: 'button', textContent: '取消拼接' });
-    asmCancel.style.display = 'none';
-    const asmPane = $el('div', { className: 'neo-director-assemble' }, [
-        $el('div', { className: 'neo-director-asm-col' }, [
-            $el('div', { className: 'neo-director-asm-title', textContent: '① 先出单段' }),
-            $el('div', {
-                className: 'neo-director-asm-hint',
-                textContent: '逐段生成/重生成（产物记进配方「结果」区）；先▶播一遍确认，再到右边拼接。',
-            }),
-            asmLeft,
-        ]),
-        $el('div', { className: 'neo-director-asm-col' }, [
-            $el('div', { className: 'neo-director-asm-title', textContent: '② 确认后拼接' }),
-            $el('div', { className: 'neo-director-asm-row' }, [
-                $el('label', { className: 'neo-director-field-label', textContent: '起始段' }), asmFrom,
-            ]),
-            $el('label', { className: 'neo-director-asm-check' }, [
-                asmBlend, $el('span', { textContent: '接缝交叉淡化（6 帧）' }),
-            ]),
-            asmPlan,
-            $el('div', { className: 'neo-director-asm-row' }, [asmRun, asmCancel]),
-            asmStatus,
-        ]),
-    ]);
-    let asmData = null;      // /neo_video_gen/segment_clips 快照（成片 + 每段片段）
-    let asmHandle = null;    // 拼接任务句柄
-    const asmClip = (index) => ((asmData && asmData.clips) || []).find((c) => c.segment === index) || null;
-    const asmTailComplete = (from) => {
-        const total = asmData ? asmData.segments : 0;
-        for (let i = from; i < total; i += 1) if (!asmClip(i)) return false;
-        return total > 0;
-    };
-    const asmStarts = () => {
-        const total = asmData ? asmData.segments : 0;
-        const hasPrefix = !!(asmData && asmData.film && !asmData.film.error);
-        const starts = [];
-        for (let i = 0; i < total; i += 1) {
-            if (!asmTailComplete(i)) continue;
-            if (i > 0 && !hasPrefix) continue;   // 没有可用成片就没有前缀可取
-            starts.push(i);
-        }
-        return starts;
-    };
-    const asmNodeOpts = () => {
-        const opts = {};
-        if (hostNode) {
-            const widget = (n) => { const w = hostNode.widgets?.find((x) => x.name === n); return w ? w.value : undefined; };
-            opts.continuity = !!widget('continuity');
-            const cf = Number(widget('context_frames'));
-            if (Number.isFinite(cf)) opts.context_frames = cf;
-        }
-        return opts;
-    };
-    const asmView = (filename, subfolder) => `/view?filename=${encodeURIComponent(filename)}`
-        + `&subfolder=${encodeURIComponent(subfolder || '')}&type=output`;
-
-    function asmRender() {
-        asmLeft.replaceChildren();
-        asmFrom.replaceChildren();
-        asmPlan.replaceChildren();
-        if (!asmData) {
-            asmStatus.textContent = '正在读取配方结果…';
-            asmRun.disabled = true;
-            return;
-        }
-        // 左：逐段出片（有片段可播 / 可重生成）
-        for (let i = 0; i < asmData.segments; i += 1) {
-            const clip = asmClip(i);
-            const cell = $el('span', {
-                className: 'neo-director-asm-cell',
-                textContent: clip ? `${clip.filename}（${clip.frames} 帧）` : '未生成',
-            });
-            const play = clip ? $el('a', {
-                className: 'neo-director-asm-play', textContent: '▶', title: '播放片段',
-                href: asmView(clip.filename, 'neo_director_regen'), target: '_blank',
-            }) : null;
-            const gen = $el('button', {
-                className: 'rs-btn neo-director-asm-gen', type: 'button',
-                textContent: clip ? '重生成' : '生成',
-            });
-            const stop = $el('button', { className: 'rs-btn neo-director-asm-stop', type: 'button', textContent: '取消' });
-            stop.style.display = 'none';
-            const row = $el('div', { className: `neo-director-asm-item${clip ? ' has-clip' : ''}` }, [
-                $el('span', { className: 'neo-director-asm-seg', textContent: `第 ${i + 1} 段` }),
-                cell,
-                ...(play ? [play] : []),   // 没有片段时不给播放入口（null 不能当子节点传给 $el）
-                gen,
-                stop,
-            ]);
-            gen.onclick = () => {
-                gen.disabled = true;
-                stop.style.display = '';
-                cell.textContent = '提交中…';
-                const payload = {
-                    recipe: (nameInp?.value || '').trim() || requestedName,
-                    segment: i,
-                    anchors: asmData.film ? 'both' : 'none',
-                    seed: -1,
-                    ...asmNodeOpts(),
-                };
-                if (hostNode?.id != null) payload.node_id = hostNode.id;
-                if (asmData.film?.filename) payload.film = asmData.film.filename;
-                let handle = null;
-                handle = runSegmentTask(payload, {
-                    onStatus: (data) => {
-                        const pct = (data.progress && data.progress.max > 0)
-                            ? ` ${Math.round((Number(data.progress.value) / Number(data.progress.max)) * 100)}%` : '';
-                        cell.textContent = data.status === 'running' ? `生成中…${pct}` : '排队中…';
-                    },
-                    onDone: (data) => {
-                        gen.disabled = false;
-                        stop.style.display = 'none';
-                        if (data.status === 'succeeded') {
-                            app.extensionManager.toast.add({
-                                severity: 'success', summary: '该段已生成',
-                                detail: `第 ${data.segment + 1} 段：${data.filename}`, life: 6000,
-                            });
-                            loadAssemble();
-                            return;
-                        }
-                        if (data.status === 'cancelled') { cell.textContent = '已取消'; return; }
-                        app.extensionManager.toast.add({
-                            severity: 'error', summary: data.submitFailed ? '提交失败' : '生成失败',
-                            detail: data.error || '未知错误', life: 8000,
-                        });
-                        cell.textContent = `失败：${data.error || '未知错误'}`;
-                    },
-                });
-                stop.onclick = () => handle.cancel();
-            };
-            asmLeft.appendChild(row);
-        }
-        // 右：起始段候选（只列「从该段到末段片段齐全」的起点）+ 拼接方案
-        const starts = asmStarts();
-        if (!starts.length) {
-            asmFrom.appendChild($el('option', { value: '', textContent: '（还没有可拼的组合）' }));
-            asmRun.disabled = true;
-            asmStatus.textContent = '先把要接的段全部生成出来（从某段到末段要齐全）。';
-            return;
-        }
-        for (const i of starts) {
-            asmFrom.appendChild($el('option', {
-                value: String(i),
-                textContent: i === 0 ? '第 1 段起（全部用新片段）' : `第 ${i + 1} 段起（前 ${i} 段沿用原成片）`,
-            }));
-        }
-        if (!starts.includes(Number(asmFrom.value))) asmFrom.value = String(starts[0]);
-        asmRun.disabled = false;
-        const from = Number(asmFrom.value);
-        const film = asmData.film;
-        const rows = [];
-        let frames = 0;
-        if (from > 0) {
-            const kept = (film.segments || []).filter((s) => s.segment < from).reduce((sum, s) => sum + s.kept, 0);
-            frames += kept;
-            rows.push(`前缀：${film.filename} 的第 1..${from} 段，共 ${kept} 帧`);
-        }
-        for (let i = from; i < asmData.segments; i += 1) {
-            const clip = asmClip(i);
-            frames += clip.frames;
-            rows.push(`第 ${i + 1} 段：${clip.filename}（${clip.frames} 帧）`);
-        }
-        asmPlan.replaceChildren(
-            ...rows.map((text) => $el('div', { className: 'neo-director-asm-plan-row', textContent: text })),
-            $el('div', {
-                className: 'neo-director-asm-plan-total',
-                textContent: `预计总帧数 ${frames}（${(frames / 24).toFixed(2)} 秒）`,
-            }),
-        );
-        asmStatus.textContent = film && film.error ? `成片段边界不可用：${film.error}` : '';
-    }
-
-    function asmSetBusy(busy) {
-        asmRun.disabled = busy;
-        asmCancel.style.display = busy ? '' : 'none';
-    }
-    async function loadAssemble() {
-        const target = (nameInp?.value || '').trim() || requestedName;
-        if (!target) {
-            asmData = null;
-            asmStatus.textContent = '请先填写配方名称并保存后再拼接。';
-            asmRender();
-            return;
-        }
-        const opts = asmNodeOpts();
-        const query = `recipe=${encodeURIComponent(target)}&continuity=${opts.continuity === false ? 0 : 1}`
-            + `&context_frames=${opts.context_frames ?? 22}`;
-        try {
-            const res = await fetch(`/neo_video_gen/segment_clips?${query}`);
-            const data = await res.json().catch(() => null);
-            if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
-            asmData = data;
-        } catch (err) {
-            asmData = null;
-            asmRender();
-            asmStatus.textContent = `读取现状失败：${err.message}`;
-            return;
-        }
-        asmRender();
-    }
-    asmFrom.addEventListener('change', asmRender);
-    asmRun.onclick = async () => {
-        if (!asmData) return;
-        asmSetBusy(true);
-        asmStatus.textContent = '正在提交拼接…';
-        const payload = {
-            recipe: (nameInp?.value || '').trim() || requestedName,
-            from: Number(asmFrom.value),
-            blend: asmBlend.checked ? 6 : 0,
-            ...asmNodeOpts(),
-        };
-        if (asmData.film?.filename) payload.film = asmData.film.filename;
-        let taskId = null;
-        try {
-            const res = await fetch('/neo_video_gen/assemble_segments', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const data = await res.json().catch(() => null);
-            if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
-            taskId = data.task_id;
-        } catch (err) {
-            asmSetBusy(false);
-            asmStatus.textContent = `提交失败：${err.message}`;
-            app.extensionManager.toast.add({ severity: 'error', summary: '拼接提交失败', detail: err.message, life: 8000 });
-            return;
-        }
-        asmHandle = {
-            cancel: async () => {
-                try { await fetch(`/neo_video_gen/assemble_segments/${taskId}/cancel`, { method: 'POST' }); } catch { /* 忽略 */ }
-            },
-        };
-        let timer = null;
-        const tick = async () => {
-            let data = null;
-            try {
-                const res = await fetch(`/neo_video_gen/assemble_segments/${taskId}`);
-                data = await res.json().catch(() => null);
-                if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
-            } catch (err) {
-                clearInterval(timer);
-                asmHandle = null;
-                asmSetBusy(false);
-                asmStatus.textContent = `状态查询失败：${err.message}`;
-                return;
-            }
-            const pct = (data.progress && data.progress.max > 0)
-                ? ` ${Math.round((Number(data.progress.value) / Number(data.progress.max)) * 100)}%` : '';
-            if (data.status === 'queued' || data.status === 'running') {
-                asmStatus.textContent = `${data.stage || '拼接中'}…${pct}`;
-                return;
-            }
-            clearInterval(timer);
-            asmHandle = null;
-            asmSetBusy(false);
-            if (data.status === 'succeeded') {
-                for (const warning of (data.warnings || [])) {
-                    app.extensionManager.toast.add({ severity: 'warn', summary: '拼接提示', detail: warning, life: 6000 });
-                }
-                app.extensionManager.toast.add({
-                    severity: 'success', summary: '已拼成新成片',
-                    detail: `${data.filename}（${data.frames} 帧）`, life: 6000,
-                });
-                await loadAssemble();     // 先刷新现状（新成片成为默认来源），再把完成信息写在状态行
-                asmStatus.textContent = `已完成：${data.filename}（已记进配方「结果」区，后续重生成默认基于它）`;
-                if (typeof onSaved === 'function') onSaved();
-                return;
-            }
-            if (data.status === 'cancelled') { asmStatus.textContent = '已取消'; return; }
-            asmStatus.textContent = `拼接失败：${data.error}`;
-            app.extensionManager.toast.add({ severity: 'error', summary: '拼接失败', detail: data.error, life: 8000 });
-        };
-        timer = setInterval(tick, 1000);
-        tick();
-    };
-    asmCancel.onclick = async () => {
-        if (!asmHandle) return;
-        asmStatus.textContent = '已请求取消…';
-        await asmHandle.cancel();
-    };
-
-
     const tabStory = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '📖 自动故事板' });
     const tabSetup = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '🎯 统一设置' });
     const tabTimeline = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '🎞️ 时间轴分段' });
-    const tabAssemble = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '🧩 拼接成片' });
     function switchTab(which) {
         tabStory.classList.toggle('active', which === 'story');
         tabSetup.classList.toggle('active', which === 'setup');
         tabTimeline.classList.toggle('active', which === 'timeline');
-        tabAssemble.classList.toggle('active', which === 'assemble');
         storyboardPane.style.display = (which === 'story') ? '' : 'none';
         setupPane.style.display = (which === 'setup') ? '' : 'none';
         timelinePane.style.display = (which === 'timeline') ? '' : 'none';
-        asmPane.style.display = (which === 'assemble') ? '' : 'none';
         if (which === 'setup') renderSetupSegs();   // 切到统一设置页时刷新各段当前内容（含时间轴页的改动）
         else if (which === 'timeline' && timeline) timeline.refresh(); // 切回时间轴时按真实宽度重绘 canvas
-        else if (which === 'assemble') loadAssemble();  // 拼接页：每次进入都重拉「成片 + 每段片段」现状
     }
     tabStory.onclick = () => switchTab('story');
     tabSetup.onclick = () => switchTab('setup');
     tabTimeline.onclick = () => switchTab('timeline');
-    tabAssemble.onclick = () => switchTab('assemble');
-    const tabBar = $el('div', { className: 'neo-director-tabs' }, [tabStory, tabSetup, tabTimeline, tabAssemble]);
+    const tabBar = $el('div', { className: 'neo-director-tabs' }, [tabStory, tabSetup, tabTimeline]);
 
     const body = $el('div', { className: 'neo-director-body' }, [
         storyboardPane,
         setupPane,
         timelinePane,
-        asmPane,
     ]);
     switchTab(existing ? 'timeline' : 'story'); // 新建默认自动故事板，编辑保持时间轴分段
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
@@ -1975,7 +1784,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 窗口内表单控件统一脏标记：数据字段（名称/提示词/时长/模式/分辨率…）的 input/change 都算未保存修改；
     // 拉伸滑块只是视图状态，排除。程序化写回（生成/拆分/优化/同步）不触发事件，由各自路径显式 markDirty。
     const isViewOnlyControl = (el) => !!(el && el.classList
-        && (el.classList.contains('neo-director-zoom-slider') || el.closest('.neo-director-assemble')));
+        && (el.classList.contains('neo-director-zoom-slider') || el.closest('.neo-director-seg-regen-panel')));
     panel.addEventListener('input', (e) => { if (!isViewOnlyControl(e.target)) markDirty(); }, true);
     panel.addEventListener('change', (e) => { if (!isViewOnlyControl(e.target)) markDirty(); }, true);
 

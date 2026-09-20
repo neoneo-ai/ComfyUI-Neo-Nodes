@@ -95,6 +95,13 @@ def _segment_frame_ranges(spec: dict, continuity: bool, context_frames: int) -> 
     return ranges
 
 
+def _video_size(path: str) -> tuple:
+    """成片分辨率 (W, H)：容器元数据，不解码。"""
+    with av.open(path, mode="r") as container:
+        stream = container.streams.video[0]
+        return int(stream.width or 0), int(stream.height or 0)
+
+
 def _video_frame_count(path: str) -> int:
     """成片帧数：优先用容器元数据，缺失时按时长×帧率估算（不解码）。"""
     with av.open(path, mode="r") as container:
@@ -280,6 +287,17 @@ def run_single_segment(recipe: str, index: int, anchors: str, seed: int, *, step
 
     film_entry = _film_entry(recipe, film) if anchors != "none" else None
     warnings = []
+    # 锚点帧来自成片 → 就按成片的像素尺寸生成：同尺寸才能和成片无缝拼回（否则拼接只能缩放，必然掉画质）
+    width = height = -1
+    if film_entry is not None:
+        size = _video_size(film_entry["path"])
+        if all(size):
+            width, height = size
+            shared = spec.get("shared") or {}
+            want = (int(shared.get("width") or 0), int(shared.get("height") or 0))
+            if all(want) and want != size:
+                warnings.append(f"按成片尺寸 {size[0]}×{size[1]} 生成（配方共享分辨率是 {want[0]}×{want[1]}）："
+                                f"锚点帧取自该成片，同尺寸才能无缝拼回")
     first_name = last_name = None
     if anchors != "none":
         if anchors_ready:
@@ -295,7 +313,7 @@ def run_single_segment(recipe: str, index: int, anchors: str, seed: int, *, step
     if seed is None or int(seed) < 0:
         seed = random.randint(0, 2 ** 63 - 1)   # 默认换种子：同参数同种子会得到几乎一样的结果
     seed = int(seed)
-    (video,) = NeoH3VideoDirector()._run_spec(single, seed, -1, -1, continuity=False, context_frames=0,
+    (video,) = NeoH3VideoDirector()._run_spec(single, seed, width, height, continuity=False, context_frames=0,
                                               model=None, steps=int(steps), preview=bool(preview),
                                               unique_id=preview_node_id)
     frames = int(video.get_components().images.shape[0])

@@ -493,6 +493,7 @@ class RunSingleSegmentTests(_RecipeCase):
                     patch.object(h3_segment, "resolve_anchors", lambda *a, **k: ("both", "a.png", "b.png")), \
                     patch.object(h3_segment, "_film_entry",
                                  lambda recipe, film=None: {"path": "F:/film.mp4", "filename": "film.mp4"}), \
+                    patch.object(h3_segment, "_video_size", lambda path: (0, 0)), \
                     patch.object(h3_segment, "_pick_anchor_skill", lambda seg_skill, need_last: "anchor-skill"):
                 out = h3_segment.run_single_segment("T", 1, "both", 1234, record=False)
             seg = rec.calls[0]["spec"]["segments"][0]
@@ -544,6 +545,39 @@ def _task_snapshot(task_id="t1", prompt_id="p1") -> dict:
     return {"task_id": task_id, "prompt_id": prompt_id, "status": "running", "recipe": "T", "segment": 0,
             "seed": -1, "filename": None, "film": None, "progress": None, "warnings": [], "error": "",
             "created": 0.0, "updated": 0.0}
+
+
+class FilmSizeNoticeTests(_RecipeCase):
+    def test_generates_at_the_film_size(self):
+        with _pin_folder_paths() as work:
+            spec = self.spec()
+            total = sum(r[1] for r in h3_segment._segment_frame_ranges(spec, False, 0))
+            _write_test_mp4(work / "output" / "film.mp4", frames=total, size=24)     # 成片 24×24
+            self.write_recipe(results=[{"filename": "film.mp4", "kind": "video", "type": "output"}],
+                              shared={"mode": "t2v", "seed": 7, "width": 32, "height": 32})
+            rec = _RunSpecRecorder()
+            with patch.object(h3_video_director.NeoH3VideoDirector, "_run_spec", rec), \
+                    patch.object(h3_segment, "_pick_anchor_skill", lambda seg_skill, need_last: "anchor-skill"):
+                out = h3_segment.run_single_segment("T", 0, "both", 1, record=False,
+                                                    continuity=False, context_frames=0)
+            # 按成片尺寸生成（而不是配方的 32×32），并提示两者不同
+            self.assertEqual((rec.calls[0]["width"], rec.calls[0]["height"]), (24, 24))
+            self.assertIn("按成片尺寸 24×24 生成", " ".join(out["warnings"]))
+
+    def test_no_notice_and_film_size_when_sizes_match(self):
+        with _pin_folder_paths() as work:
+            spec = self.spec()
+            total = sum(r[1] for r in h3_segment._segment_frame_ranges(spec, False, 0))
+            _write_test_mp4(work / "output" / "film.mp4", frames=total, size=32)
+            self.write_recipe(results=[{"filename": "film.mp4", "kind": "video", "type": "output"}],
+                              shared={"mode": "t2v", "seed": 7, "width": 32, "height": 32})
+            rec = _RunSpecRecorder()
+            with patch.object(h3_video_director.NeoH3VideoDirector, "_run_spec", rec), \
+                    patch.object(h3_segment, "_pick_anchor_skill", lambda seg_skill, need_last: "anchor-skill"):
+                out = h3_segment.run_single_segment("T", 0, "both", 1, record=False,
+                                                    continuity=False, context_frames=0)
+            self.assertEqual(out["warnings"], [])
+            self.assertEqual((rec.calls[0]["width"], rec.calls[0]["height"]), (32, 32))
 
 
 class RunSegmentRouteTests(_RecipeCase):

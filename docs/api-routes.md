@@ -64,11 +64,10 @@
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/neo_video_gen/director_progress` | 当前 director 运行进度（`active` / `segment_index` / `total_segments` / `step` / `total_steps`），节点内时间轴与预览面板按它显示每段状态 |
-| POST | `/neo_video_gen/run_segment` | **单段生成/重生成入队**（`{recipe, segment, anchors, seed, film?, continuity?, context_frames?, steps?, preview?, node_id?}`）：校验 + 把「跑这一段」组装成单节点 prompt（`NeoH3SegmentRun`）提交到 ComfyUI 执行队列，返回任务快照。`film` 指定用哪个成片结果取锚点（文件名或 `subfolder/文件名`；空＝最新成片），不在配方 `results` 里则报错；段序号越界 / 未知锚点 / 成片帧数与复算不一致 / 预设配方 一律 400 |
+| POST | `/neo_video_gen/run_segment` | **单段生成/重生成入队**（`{recipe, segment, anchors, seed, film?, continuity?, context_frames?, steps?, preview?, node_id?}`）：校验 + 把「跑这一段」组装成单节点 prompt（`NeoH3SegmentRun`）提交到 ComfyUI 执行队列，返回任务快照。`film` 指定用哪个成片结果取锚点（文件名或 `subfolder/文件名`；空＝最新成片），不在配方 `results` 里则报错；**分辨率沿用该成片**（同尺寸才能无缝拼回，与配方共享分辨率不同时在提示里说明）；段序号越界 / 未知锚点 / 成片帧数与复算不一致 / 预设配方 一律 400 |
 | GET | `/neo_video_gen/run_segment/{task_id}` | 单段任务快照：`status`（queued/running/succeeded/failed/cancelled）+ `progress {value,max}` + `filename` + `film`（实际用作锚点来源的成片）+ `seed` + `warnings` + `error` |
 | POST | `/neo_video_gen/run_segment/{task_id}/cancel` | 取消单段任务：未执行则出队、执行中则中断（同生图任务做法）；任务已结束 409 |
-| GET | `/neo_video_gen/segment_clips` | 拼接页两端现状（`?recipe=&continuity=&context_frames=`）：`segments` 段数、`films` 成片列表、`film {filename,frames,layout,segments[{segment,start,kept}]}`（段边界，对不上时给 `error`）、`clips[{segment,filename,frames}]`（每段最新的单段产物） |
-| POST | `/neo_video_gen/assemble_segments` | **确认后拼接**（`{recipe, from, film?, blend?, continuity?, context_frames?}`）：把〔原成片第 1..from 段〕+〔第 from..N-1 段的片段〕拼成新成片，返回任务快照；片段不齐 / 起始段越界 / 预设配方 一律 400 |
+| POST | `/neo_video_gen/assemble_segments` | **拼回成片**（`{recipe, use:[段序号], film?, blend?, continuity?, context_frames?}`）：把勾选的段换成对应的单段产物、**其余段沿用原成片**（解码→拼接→再编码），产出新的完整成片；返回任务快照。片段缺 / 段序号越界 / 没勾任何段 / 预设配方 一律 400 |
 | GET | `/neo_video_gen/assemble_segments/{task_id}` | 拼接任务快照：`status`（queued/running/succeeded/failed/cancelled）+ `progress {value,max}` + `stage`（中文阶段）+ `filename` + `frames` + `clips` + `warnings` + `error` |
 | POST | `/neo_video_gen/assemble_segments/{task_id}/cancel` | 取消拼接（协作式：当前片段处理完后生效）；任务已结束 409 |
 | GET | `/neo_video_gen/settings` | 读取「生视频模型」独立设置（`configs/video_gen.json`） |
@@ -80,8 +79,9 @@
 插件自己的 taeh3 通道（`rs.h3.preview`）：带 `node_id` 时把预览推回该编号的节点面板（编辑器里点 ♻ 即导演节点），
 不带则回落到该节点自己的 `unique_id`。产物写 `output/neo_director_regen/<配方>_s<N>_<时间戳>.mp4` 并记进配方 `results`（带 `segment`/`seed`）。
 
-`assemble_segments`（`h3_assemble.py`）只做「解码 → 拼接 → 再编码」，不用模型、不占执行队列，所以在后台线程里跑：
-进度按「已拼帧数 / 总帧数」上报（`stage` 是中文阶段，如「读取第 2 段片段（141 帧）」），取消是协作式的（当前片段处理完生效）。
+`assemble_segments`（`h3_assemble.py`）是「单段生成」的**后续步骤**（不是独立入口）：只把勾选的那几段换成单段产物，
+其余段直接沿用原成片对应帧与音频。它只做「解码 → 拼接 → 再编码」，不用模型、不占执行队列，所以在后台线程里跑：
+进度按「已拼帧数 / 总帧数」上报（`stage` 是中文阶段，如「沿用原成片第 1..1 段（124 帧）」），取消是协作式的（当前来源处理完生效）。
 新成片写 `output/neo_director_merge/<配方>_merged_<时间戳>.mp4`，并记进配方 `results` 时带 **`layout`**（逐段的真实保留帧数）——
 后续「单段重生成」按这个 `layout` 定位该成片的段边界（没有 `layout` 的成片按配方复算并要求总帧数吻合）。
 
