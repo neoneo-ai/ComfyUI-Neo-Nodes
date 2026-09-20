@@ -6,7 +6,7 @@
 // 二者任一非法即判定 seed/count/width/height 整块错位 → 复位 control/seed/count 并强制按预设重填宽高。
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
-import { attachSkillPickerToComboWidget } from "./skill.js";
+import { attachSkillPickerToComboWidget, createSkillStatusRow } from "./skill.js";
 
 app.registerExtension({
     name: "NeoKrea2Generate.DimDefaults",
@@ -22,6 +22,12 @@ app.registerExtension({
             // 点击 skill_id combo → 弹居中技能选择窗（替代原生下拉）；选中写回 widget.value，
             // 其 callback 已被下方包装为 loadDims(true)，故尺寸预设自动刷新
             if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: "选择 Skill（Krea2）" });
+
+            // 节点底部 Skill 有效性状态条：选完 skill 后台检测缺模型/缺节点，有缺失显示告警并可点开详情修复
+            // （skill_id 下拉存的是技能名称，状态条内部反查真实 skill 再校验）
+            const statusRow = createSkillStatusRow({ getSkills: () => (skillWidget ? [String(skillWidget.value || "")] : []), isVideo: false });
+            node.addDOMWidget("skill_status", "custom", statusRow.el);
+            statusRow.refresh();
 
             // 用 skill 预设尺寸填 width/height widget；force=false 时仅当仍为默认 -1（保留工作流已存值）。
             const applyDimDefaults = (d, force) => {
@@ -83,7 +89,7 @@ app.registerExtension({
             // 切换 skill_id 下拉时强制重填预设尺寸（本版本 combo widget 用 callback 触发变化，onchange 不存在）
             if (skillWidget) {
                 const oc = skillWidget.callback;
-                skillWidget.callback = function() { oc?.apply(this, arguments); loadDims(true); };
+                skillWidget.callback = function() { oc?.apply(this, arguments); loadDims(true); statusRow.refresh(); };
             }
 
             // 载入/粘贴按 widgets_values 还原后修复串位：control 是数字 → 复位并强制重填宽高；
@@ -95,7 +101,14 @@ app.registerExtension({
                 repairShiftedWidgets();
                 const sv = data?.widgets_values;
                 if (Array.isArray(sv) && sv.length < (this.widgets?.length || 0)) loadDims(true);
+                statusRow.refresh(); // 工作流还原后按还原的 skill 重检有效性
                 return r;
+            };
+
+            const origOnRemoved = node.onRemoved;
+            node.onRemoved = function() {
+                statusRow.destroy();
+                return origOnRemoved?.apply(this, arguments);
             };
 
             return result;

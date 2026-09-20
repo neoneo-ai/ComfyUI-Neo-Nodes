@@ -79,7 +79,7 @@ export async function handleFetch(input, init = {}) {
     } else if (body) {
         body = "[non-json]";
     }
-    const call = { path: url.pathname, method, body };
+    const call = { path: url.pathname, query: url.searchParams, method, body };
     fetchLog.push(call);
 
     const responder = routes.get(url.pathname);

@@ -759,4 +759,75 @@ test("实时预览：节点移除后载荷不再驱动面板", async () => {
     assert.equal(box.style.display, "none");
     assert.equal(img.hasAttribute("src"), false);
 });
+test("节点底部挂 skill 状态条：配方各段 skill 缺模型时告警，移除节点即销毁", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    let workflow = { "1": { class_type: "UNETLoader", inputs: { unet_name: "no_such.safetensors" } } };
+    const ready = { "1": { class_type: "UNETLoader", inputs: { unet_name: "real.safetensors" } } };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true,
+        segments: [{ skill_id: "vid-bad", prompt: "a", duration_sec: 5 }],
+    }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ workflow }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/object_info", () => jsonResponse({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
+
+    const node = await createDirectorNode("dir-recipe", [{ name: "skill_id", value: "" }]);
+    await sleep(80); // 等 loadSpec 把段（含 skill_id）填进来后重检
+
+    const row = node._neoDtStatusRow;
+    assert.ok(row, "节点应持有 skill 状态条实例");
+    const root = node.domWidgets.find((w) => w.name === "director_timeline").el;
+    assert.ok(root.contains(row.el), "状态条应挂在节点 DOM 根部");
+    assert.notEqual(row.el.style.display, "none", "配方段 skill 缺模型应显示告警");
+    assert.ok(row.el.querySelector(".neo-skill-status-label").textContent.includes("1 个模型缺失"));
+
+    // 移除节点：状态条销毁并注销事件监听 → 之后的事件不再驱动它
+    workflow = ready;
+    destroyNode(node);
+    assert.equal(node._neoDtStatusRow, null, "onRemoved 应释放状态条");
+    window.dispatchEvent(new window.CustomEvent("neo.skillChanged", { detail: { skillId: "vid-bad" } }));
+    await sleep(80);
+    assert.notEqual(row.el.style.display, "none", "移除后事件不应再驱动检测");
+});
+
+test("bundle 模式：预选视频技能缺模型即告警，手动切换 skill 后按新技能重检收起", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    const { invalidateSkillValidation } = await import("../../web/skill.js");
+    invalidateSkillValidation(); // 前面用例的 mock 技能列表会建出旧名称反查表，清掉避免按旧表兜底成原值
+    const badWf = { "1": { class_type: "UNETLoader", inputs: { unet_name: "no_such.safetensors" } } };
+    const okWf = { "1": { class_type: "UNETLoader", inputs: { unet_name: "real.safetensors" } } };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "dbad", name: "坏视频技能", gen_image: false, gen_video: true },
+        { id: "dok", name: "好视频技能", gen_image: false, gen_video: true },
+    ]));
+    mockRoute("/neo_image_gen/skill_workflow", (b, call) => jsonResponse({ workflow: String(call.query?.get("skill_id")) === "dbad" ? badWf : okWf }));
+    mockRoute("/neo_image_gen/skill_config", () => jsonResponse({}));
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
+    mockRoute("/object_info", () => jsonResponse({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } }));
+
+    const node = await createDirectorNode("", [{ name: "skill_id", value: "坏视频技能" }, { name: "duration_sec", value: 5 }]);
+    node._neoDtApplyBundleLock(true);
+    await sleep(80); // 初始检测：预选的 skill 缺模型 → 告警
+
+    const row = node._neoDtStatusRow;
+    assert.ok(row, "节点应持有 skill 状态条实例");
+    assert.notEqual(row.el.style.display, "none", "预选技能缺模型应显示告警");
+
+    // 手动切换到工作流齐备的技能 → widget callback 触发按新技能重检 → 收起告警
+    const skillId = node.widgets.find((w) => w.name === "skill_id");
+    skillId.value = "好视频技能";
+    skillId.callback?.("好视频技能");
+    await sleep(80);
+    assert.equal(row.el.style.display, "none", "切换 skill 后应按新技能重检并收起告警");
+
+    destroyNode(node);
+});
+
 

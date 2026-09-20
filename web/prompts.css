@@ -2903,6 +2903,12 @@
 .rs-model-repair-btn.rs-alert:hover { background: #4a262e; color: #fff; }
 .rs-model-repair-btn.rs-alert::after { content: ""; position: absolute; top: -3px; right: -3px; width: 9px; height: 9px; border-radius: 50%; background: #f87171; box-shadow: 0 0 0 2px #1b1b1f; }
 .rs-model-select-box.rs-model-missing .rs-combo-input { border-color: #f87171; color: #fca5a5; }
+/* 节点底部 Skill 有效性状态条（Krea2 / H3 导演）：仅在有缺失时显示，点击进详情修复 */
+.neo-skill-status { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 4px 8px; margin-top: 2px; font-size: 11px; line-height: 1.2; }
+.neo-skill-status-warn { background: #3a1e24; border-top: 1px solid #f87171; color: #fca5a5; }
+.neo-skill-status-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.neo-skill-status-open { flex: 0 0 auto; cursor: pointer; border: 1px solid #f87171; background: transparent; color: #fca5a5; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
+.neo-skill-status-open:hover { background: #4a262e; color: #fff; }
 .rs-repair-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 2147483647; display: flex; align-items: center; justify-content: center; }
 .rs-repair-box { width: 540px; max-width: 92vw; max-height: 72vh; background: #1b1b1f; border: 1px solid #444; border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); }
 .rs-repair-head { padding: 10px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }

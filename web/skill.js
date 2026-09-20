@@ -312,6 +312,174 @@ function populateSkillOptions(selectEl, skills) {
 }
 
 // ==========================================
+// 节点级 Skill 有效性检测：选完 skill 后在节点底部提前提示「缺模型/缺节点」，可一键进详情修复
+// - 节点的 skill 下拉 value 是技能「名称」（见 krea2_generate/h3_video_gen 的 INPUT_TYPES；旧工作流可能存的是
+//   目录名/id）→ resolveSkillId 按与后端 _resolve_skill_id 同规则反查真实 skill，再取模板校验。
+// - validateSkillForNode(skill, isVideo)：复用 checkWorkflow（对照 /object_info + /models/*），
+//   只检测带 workflow.json 的生图/生视频 skill；结果按 (类型 + 真实 skill) 会话级缓存（TTL）+ 在途去重，检测失败不误报。
+// - createSkillStatusRow({ getSkills, isVideo })：节点底部状态条 DOM 工厂（无问题隐藏、不占高），
+//   聚合多个 skill 的缺失项显示「N 个模型缺失 · M 个节点未安装 → 查看详情/修复」，点击打开首个有问题的 skill 详情。
+// - openSkillDetailById(skillId)：按 id 解析 source 后打开单技能详情弹窗（供节点状态条复用）。
+// ==========================================
+
+const SKILL_VALIDATION_TTL = 60_000; // 检测结果会话级缓存有效期（模型/节点可用性极少变化，过期自动重检）
+const _skillValidationCache = new Map();    // key(类型: skill) -> { t, data }
+const _skillValidationInflight = new Map(); // key -> Promise
+let _skillNameLookup = { image: { t: 0, map: null }, video: { t: 0, map: null } }; // 技能名称 → 真实 skill（按生图/生视频各自建表）
+
+const SKILL_CHANGED_EVENT = "neo.skillChanged"; // 详情弹窗保存/修复后派发，节点状态条据此即时重检
+function dispatchSkillChanged(skillId) {
+    window.dispatchEvent(new CustomEvent(SKILL_CHANGED_EVENT, { detail: { skillId: String(skillId || "") } }));
+}
+
+/** 把节点下拉的 skill 名称（或旧工作流里存的 id）解析成真实 skill；名称表不可用时原样返回（按 id 兜底）。
+ *  与后端 _resolve_skill_id 同规则：只认带 workflow.json 的同类型技能（名称取列表最后一个同名项），
+ *  下拉 value 就是技能名称，所以校验前必须先反查，否则 /neo_image_gen/skill_workflow 拿不到模板。 */
+async function resolveSkillId(skill, isVideo) {
+    const ref = String(skill || "").trim();
+    if (!ref) return "";
+    const entry = _skillNameLookup[isVideo ? "video" : "image"];
+    if (!entry.map || Date.now() - entry.t > SKILL_VALIDATION_TTL) {
+        const list = await listSkills();
+        const map = new Map();
+        for (const s of Array.isArray(list) ? list : []) {
+            if (s && s.id && (isVideo ? s.gen_video : s.gen_image)) map.set(String(s.name || s.id), s.id);
+        }
+        if (map.size) { entry.map = map; entry.t = Date.now(); }
+    }
+    return (entry.map && entry.map.get(ref)) || ref;
+}
+
+/** 全量失效：技能可能已改名/新增/修复 → 下次重新反查名称并重校验（缓存很小，整体清比按名逐条准）。 */
+function invalidateSkillValidation() {
+    _skillValidationCache.clear();
+    _skillNameLookup.image.t = 0;
+    _skillNameLookup.video.t = 0;
+}
+
+/** 检测某个生图/生视频 skill（下拉里是技能名称，旧工作流可能是目录名/id）在本机是否可用（缺模型/缺节点）。
+ *  返回 { ok, id, noWorkflow, missingNodes:[], missingModels:[] }，id 为反查出的真实 skill（供打开详情用）。 */
+async function validateSkillForNode(skill, isVideo) {
+    const id = await resolveSkillId(skill, isVideo);
+    if (!id) return { ok: true, id: "", empty: true, missingNodes: [], missingModels: [] };
+    const key = (isVideo ? "vid:" : "img:") + id;
+    const hit = _skillValidationCache.get(key);
+    if (hit && Date.now() - hit.t < SKILL_VALIDATION_TTL) return hit.data;
+    if (_skillValidationInflight.has(key)) return _skillValidationInflight.get(key);
+
+    const p = (async () => {
+        let data;
+        try {
+            const workflow = await loadSkillWorkflow(id);
+            if (!workflow) {
+                data = { ok: true, id, noWorkflow: true, missingNodes: [], missingModels: [] }; // 无 workflow.json → 无模型依赖可查
+            } else {
+                const [config, models] = await Promise.all([
+                    getSkillGenConfig(id).catch(() => ({})),
+                    (isVideo ? listVideoGenModels() : listGenModels()).catch(() => ({})),
+                ]);
+                const cfg = config || {};
+                const genInfo = { config: cfg, models: models || {} };
+                const rendered = applyWorkflowParams(injectRuntimeLoras(workflow, cfg.loras), workflowParamValues(isVideo, genInfo));
+                const validation = await checkWorkflow(rendered);
+                const c = validation.counts || {};
+                const missingNodes = [], missingModels = [];
+                for (const list of Object.values(validation.issues || {})) {
+                    for (const i of list) {
+                        if (i.kind === "missing_node" && i.value && !missingNodes.includes(i.value)) missingNodes.push(i.value);
+                        else if (i.kind === "missing_model" && i.value && !missingModels.includes(i.value)) missingModels.push(i.value);
+                    }
+                }
+                data = { ok: !(c.missingNodes || 0) && !(c.missingModels || 0), id, noWorkflow: false, missingNodes, missingModels };
+            }
+        } catch (e) {
+            console.warn("[Neo Nodes] validateSkillForNode failed", e);
+            data = { ok: true, id, noWorkflow: false, error: String(e), missingNodes: [], missingModels: [] }; // 检测失败不误报
+        }
+        _skillValidationCache.set(key, { t: Date.now(), data });
+        return data;
+    })();
+    _skillValidationInflight.set(key, p);
+    try { return await p; } finally { _skillValidationInflight.delete(key); }
+}
+
+/** 按 id 解析 source 后打开单技能详情弹窗（跨节点单例）。 */
+async function openSkillDetailById(skillId) {
+    const id = String(skillId || "").trim();
+    if (!id) return;
+    let source = "custom";
+    try {
+        const list = await listSkills();
+        const hit = (list || []).find((s) => s.id === id);
+        if (hit && hit.source) source = hit.source;
+    } catch (_) {}
+    getSkillDetailPopup().openExisting(id, source);
+}
+
+/** 节点底部 Skill 有效性状态条：返回 { el, refresh, destroy }。getSkills() 返回要检测的 skill 引用（下拉 value
+ *  即技能名称，旧工作流可能是目录名/id），内部先反查真实 skill 再校验（重复项去重）。
+ *  无问题/无 workflow 时隐藏（不占高），有缺失显示聚合告警并可点开首个有问题的 skill 详情；节点移除时调 destroy() 注销监听。 */
+function createSkillStatusRow(opts) {
+    const isVideo = !!opts.isVideo;
+    const getSkills = opts.getSkills || (() => []);
+    const el = document.createElement("div");
+    el.className = "neo-skill-status";
+    el.style.display = "none";
+
+    let seq = 0;
+    let currentKey = "";
+
+    function render(agg) {
+        el.innerHTML = "";
+        const show = agg && agg.hasWorkflow && ((agg.missingModels || []).length || (agg.missingNodes || []).length);
+        if (!show) { el.style.display = "none"; return; }
+        el.style.display = "";
+        el.classList.add("neo-skill-status-warn");
+        const parts = [];
+        if (agg.missingModels.length) parts.push(`${agg.missingModels.length} 个模型缺失`);
+        if (agg.missingNodes.length) parts.push(`${agg.missingNodes.length} 个节点未安装`);
+        const label = document.createElement("span");
+        label.className = "neo-skill-status-label";
+        label.textContent = "⚠️ " + parts.join(" · ");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "neo-skill-status-open";
+        btn.textContent = "查看详情/修复 →";
+        btn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
+        btn.addEventListener("click", (e) => { e.stopPropagation(); openSkillDetailById(agg.firstBadId); });
+        el.append(label, btn);
+    }
+
+    const refresh = async (force = false) => {
+        const s = ++seq;
+        const skills = [...new Set((getSkills() || []).map((v) => String(v || "").trim()).filter(Boolean))];
+        currentKey = skills.join("\u0000");
+        if (!skills.length) { render({ hasWorkflow: false }); return; }
+        if (force) invalidateSkillValidation(); // 事件（保存/修复/改名）后全量失效，重新反查名称与校验
+        render(null); // 检测中先清旧告警，避免闪现过期红条
+        const missingModels = [], missingNodes = [];
+        let hasWorkflow = false, firstBadId = null;
+        for (const skill of skills) { // 顺序检测：把 /object_info·/models/* 的并发压到 1，同 skill 由在途去重兜住
+            const d = await validateSkillForNode(skill, isVideo);
+            if (d.noWorkflow) continue;
+            hasWorkflow = true;
+            for (const v of d.missingModels || []) if (!missingModels.includes(v)) missingModels.push(v);
+            for (const v of d.missingNodes || []) if (!missingNodes.includes(v)) missingNodes.push(v);
+            if (!firstBadId && ((d.missingModels || []).length || (d.missingNodes || []).length)) firstBadId = d.id;
+        }
+        if (s === seq && currentKey === skills.join("\u0000")) render({ hasWorkflow, missingModels, missingNodes, firstBadId });
+    };
+
+    // 整行不触发节点拖拽/选中；详情弹窗保存/修复后即时重检（force 绕过缓存）
+    el.addEventListener("mousedown", (e) => e.stopPropagation());
+    const onSkillChanged = () => refresh(true);
+    window.addEventListener(SKILL_CHANGED_EVENT, onSkillChanged);
+    const destroy = () => window.removeEventListener(SKILL_CHANGED_EVENT, onSkillChanged);
+
+    return { el, refresh, destroy };
+}
+
+// ==========================================
 // UI：createSkillDetailPopup() —— 单技能详情弹窗（查看 / 编辑 / 删除 / 复制为自定义 / 新建）
 // 由技能下拉的行内操作与底部工具栏打开；overlay 挂到 document.body，跨节点共享一个实例。
 // 返回 { overlay, openExisting(id, source), openNew(), close }。
@@ -855,6 +1023,7 @@ function createSkillDetailPopup() {
             genSettingsBaseline = collectGenSettingsJson();
             updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint);
             updateCfgButtons(videoCfgBtns, videoSaveCfgBtn, videoRestoreCfgBtn, videoLocalHint);
+            dispatchSkillChanged(currentSkillId); // 预设设置落盘（本地覆盖）→ 通知节点状态条即时重检
         } catch (err) {
             alert("Save gen settings failed: " + err.message);
         }
@@ -1188,6 +1357,7 @@ function createSkillDetailPopup() {
                 await saveSkillGenConfig(currentSkillId, videoModelSection.collect());
             }
             genSettingsBaseline = collectGenSettingsJson();
+            dispatchSkillChanged(currentSkillId); // 自定义技能设置落盘 → 通知节点状态条即时重检
         } catch (err) {
             alert("Save gen settings failed: " + err.message);
         }
@@ -2047,6 +2217,11 @@ export {
     saveSkillFile,
     deleteSkillFile,
     populateSkillOptions,
+    validateSkillForNode,
+    invalidateSkillValidation,
+    openSkillDetailById,
+    createSkillStatusRow,
+    SKILL_CHANGED_EVENT,
     CATEGORY_LABELS,
     renderMarkdown,
     createSkillDetailPopup,

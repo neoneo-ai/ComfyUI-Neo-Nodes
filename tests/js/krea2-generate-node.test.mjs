@@ -2,7 +2,7 @@
 // 参考 web/director-node.js 的 applyDimDefaults：仅当仍为 -1 时填充，切换 skill_id 下拉强制重填。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, window } from "./setup.mjs";
 import { getExtension } from "./mocks/comfy-app.mjs";
 
 function makeNode(skillId = "", width = -1, height = -1) {
@@ -15,6 +15,13 @@ function makeNode(skillId = "", width = -1, height = -1) {
             { name: "width", value: width },
             { name: "height", value: height },
         ],
+        // addDOMWidget 挂在 domWidgets 上、不混入 widgets：真实 LGraphNode 的 DOM 控件不参与 widgets_values 位置还原
+        domWidgets: [],
+        addDOMWidget(name, type, el) {
+            const w = { name, type, el };
+            this.domWidgets.push(w);
+            return w;
+        },
     };
 }
 
@@ -96,6 +103,12 @@ function makeFullNode({ skillId = "", prompt = "", seed = 0, control = "fixed", 
             { name: "width", value: width },
             { name: "height", value: height },
         ],
+        domWidgets: [],
+        addDOMWidget(name, type, el) {
+            const w = { name, type, el };
+            this.domWidgets.push(w);
+            return w;
+        },
     };
 }
 
@@ -176,3 +189,60 @@ test("仅 seed 为 NaN（control 正常）时只复位 seed，不动 control/cou
     assert.equal(w(node, "width").value, 512);
     assert.equal(w(node, "height").value, 384);
 });
+
+// ---- 节点底部 skill 有效性状态条（createSkillStatusRow 接入）----
+
+const OBJ_INFO = { UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } };
+const WF_MISSING = { "1": { class_type: "UNETLoader", inputs: { unet_name: "no_such.safetensors" } } };
+const WF_READY = { "1": { class_type: "UNETLoader", inputs: { unet_name: "real.safetensors" } } };
+
+function mockStatusRoutes(getWorkflow) {
+    mockRoute("/neo_image_gen/skill_dims", () => jsonResponse({ success: true, width: 1024, height: 1024 }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ workflow: getWorkflow() }));
+    mockRoute("/object_info", () => jsonResponse(OBJ_INFO));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));
+}
+
+test("节点底部挂 skill 状态条：缺模型时告警，切换 skill 后按新技能重检收起", async () => {
+    resetEnv();
+    clearRoutes();
+    let workflow = WF_MISSING;
+    mockStatusRoutes(() => workflow);
+
+    const node = await createNode("krea_missing");
+    const statusWidget = node.domWidgets.find((x) => x.name === "skill_status");
+    assert.ok(statusWidget, "节点应挂载 skill 状态条 DOM widget");
+    assert.ok(statusWidget.el.classList.contains("neo-skill-status"), "应使用状态条样式类");
+    await sleep(60);
+    assert.notEqual(statusWidget.el.style.display, "none", "缺模型应显示告警条");
+    assert.ok(statusWidget.el.querySelector(".neo-skill-status-label").textContent.includes("1 个模型缺失"));
+
+    // 换到工作流齐备的新技能 → 重检后收起告警
+    workflow = WF_READY;
+    w(node, "skill_id").value = "krea_ready";
+    w(node, "skill_id").callback?.("krea_ready");
+    await sleep(80);
+    assert.equal(statusWidget.el.style.display, "none", "切换 skill 后应按新技能重检");
+});
+
+test("节点移除时状态条注销 SKILL_CHANGED_EVENT 监听", async () => {
+    resetEnv();
+    clearRoutes();
+    let workflow = WF_MISSING;
+    mockStatusRoutes(() => workflow);
+
+    const node = await createNode("krea_removed");
+    const statusWidget = node.domWidgets.find((x) => x.name === "skill_status");
+    await sleep(60);
+    assert.notEqual(statusWidget.el.style.display, "none", "缺模型应显示告警条");
+
+    // 移除节点后事件不应再驱动该状态条：若监听仍在，事件会把告警条按 WF_READY 重检后收起
+    workflow = WF_READY;
+    node.onRemoved?.();
+    window.dispatchEvent(new window.CustomEvent("neo.skillChanged", { detail: { skillId: "krea_removed" } }));
+    await sleep(80);
+    assert.notEqual(statusWidget.el.style.display, "none", "移除后事件不应再驱动检测");
+});
+

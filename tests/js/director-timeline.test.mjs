@@ -528,28 +528,41 @@ function recordingCtx() {
     return rec;
 }
 
-const DT_TOP = 18 + 4; // DT_RULER_H + DT_TOP_GAP，与 _draw 一致
+const BLOCK_TOP = 18 + 4; // DT_RULER_H + DT_TOP_GAP，与 _draw 一致
+const RULER_H = 18;       // DT_RULER_H
 
-test("生成进度条画在块顶部（块底部被横向滚动条占用）", async () => {
+// _rr 走圆角路径：moveTo 从 x+r 起步，arcTo[0] 是右缘 x+w，半径在 arcTo[4] → 反推填充宽度
+const rrWidth = (p) => p.arcs[0][0] - (p.moveTo[0] - p.arcs[0][4]);
+
+test("生成进度条画在刻度尺上（块内不再画顶部细条）", async () => {
     resetEnv();
-    const { tl } = makeTimeline([{ duration: 5 }]);
+    const { tl } = makeTimeline([
+        { duration: 5, prompt: "a" },
+        { duration: 5, prompt: "b" },
+        { duration: 5, prompt: "c" },
+    ]);
+    await sleep(40); // rAF 后 _segs 就绪
+    tl._progress = { active: true, segment_index: 1, total_segments: 3, step: 2, total_steps: 8 };
+
     const ctx = recordingCtx();
-    const bh = 60;
+    const L = tl._layout();
+    tl._drawRulerProgress(ctx, L);
 
-    tl._paintSeg(ctx, 8, 200, DT_TOP, bh, { duration: 5, prompt: "" }, "1", 0, false, false, false, "current");
-    const cur = ctx._paths.filter((p) => p.fill === "#e6a23c");
-    assert.equal(cur.length, 1, "运行中画一条琥珀色进度条");
-    assert.equal(cur[0].moveTo[1], DT_TOP + 1, "进度条贴在块顶部");
-    assert.equal(cur[0].arcs[0][3] - cur[0].moveTo[1], 3, "进度条高 3px");
+    const green = ctx._paths.filter((p) => p.fill === "#3fb950");
+    const amber = ctx._paths.filter((p) => p.fill === "#e6a23c");
+    assert.equal(green.length, 1, "已完成段画绿色满条");
+    assert.equal(amber.length, 1, "当前段画琥珀色进度条");
+    const fullW = Math.max(4, L.blocks[1].w - 4);
+    assert.equal(green[0].moveTo[0] - green[0].arcs[0][4], L.blocks[0].x + 2, "按段左缘对齐");
+    assert.equal(rrWidth(green[0]), fullW, "已完成段满条");
+    assert.equal(amber[0].moveTo[1], RULER_H - 5 - 1, "进度条贴在刻度尺底沿上方");
+    assert.ok(Math.abs(rrWidth(amber[0]) - fullW * 0.25) < 0.01, "当前段按 step/total_steps 比例增长");
 
-    tl._paintSeg(ctx, 8, 200, DT_TOP, bh, { duration: 5, prompt: "" }, "1", 0, false, false, false, "done");
-    const done = ctx._paths.filter((p) => p.fill === "#3fb950");
-    assert.equal(done.length, 1, "已完成段画绿色进度条");
-    assert.equal(done[0].moveTo[1], DT_TOP + 1, "已完成段进度条同样在顶部");
-
-    // 块下半部不再有任何进度条
-    const lowHalf = ctx._paths.filter((p) => (p.fill === "#e6a23c" || p.fill === "#3fb950") && p.moveTo[1] > DT_TOP + bh / 2);
-    assert.equal(lowHalf.length, 0, "块下半部不画进度条（原位置已被滚动条盖住）");
+    // 块内不再画进度条（旧位置在块顶部，已被横向滚动条占用）
+    const segCtx = recordingCtx();
+    tl._paintSeg(segCtx, 8, 200, BLOCK_TOP, 60, { duration: 5, prompt: "" }, "1", 0, false, false, false);
+    const inBlock = segCtx._paths.filter((p) => p.fill === "#e6a23c" || p.fill === "#3fb950");
+    assert.equal(inBlock.length, 0, "块内不画进度条");
     tl.destroy();
 });
 

@@ -492,7 +492,7 @@ export class DirectorTimeline {
       // 重排拖动：按新顺序定位，色相/序号随落位槽变化；源块本身改成跟随光标的幽灵（见下方落位框），此处只留槽
       const posIdx = reorderDrag ? reorderDrag.order.indexOf(b.i) : b.i;
       if (reorderDrag && reorderDrag.src === b.i) continue;
-      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(posIdx + 1), this._segHue(posIdx), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i, this._segProgressState(b.i));
+      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(posIdx + 1), this._segHue(posIdx), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i);
     }
 
     // 重排拖动中：非源块整体压暗，让被"拿起"的幽灵块一眼突出（源块不遮）
@@ -519,7 +519,7 @@ export class DirectorTimeline {
       }
       const srcSeg = this._segs[reorderDrag.src];
       if (srcSeg && reorderDrag.w > 0) {
-        this._paintSeg(ctx, this._ghostX(reorderDrag, L), reorderDrag.w, top, bh, srcSeg, String(posIdx + 1), this._segHue(posIdx), true, false, false, this._segProgressState(reorderDrag.src));
+        this._paintSeg(ctx, this._ghostX(reorderDrag, L), reorderDrag.w, top, bh, srcSeg, String(posIdx + 1), this._segHue(posIdx), true, false, false);
       }
     }
 
@@ -662,7 +662,7 @@ export class DirectorTimeline {
   }
 
   // 绘制单个分段块（普通/幽灵共用）：浅色身份底（重排不变色）；有首帧图则平铺满块宽，文字白字描边，否则浅底深字
-  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop, prog) {
+  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop) {
     const iw = Math.max(2, w - 2);
     this._rr(ctx, x + 1, top, iw, bh, 4);
     // 半透明块底色：静止淡、选中加深；拖动中的幽灵块另加醒目强调

@@ -8,7 +8,7 @@ import { DirectorTimeline } from "./director-timeline.js";
 import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT } from "./director.js";
 import { listRecipes, listVideoSkills, directorMetaText } from "./recipes.js";
 import { showToast } from "./gallery-utils.js";
-import { attachSkillPickerToComboWidget, listSkills } from "./skill.js";
+import { attachSkillPickerToComboWidget, listSkills, createSkillStatusRow } from "./skill.js";
 import { getSkillGenConfig } from "./image-gen.js";
 
 const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
@@ -413,7 +413,7 @@ app.registerExtension({
             applyDurationFromSkill(true);
             if (skillIdWidget) {
                 const ocSkill = skillIdWidget.callback;
-                skillIdWidget.callback = function() { ocSkill?.apply(this, arguments); applyDurationFromSkill(); };
+                skillIdWidget.callback = function() { ocSkill?.apply(this, arguments); applyDurationFromSkill(); if (node._neoDtStatusRow) node._neoDtStatusRow.refresh(); }; // 手动切换 skill 后按新技能重检有效性
             }
             // continuity / context_frames：暂不开放给用户设置，只在节点上隐藏 widget。
             // 隐藏≠清空：两个 widget 仍占 widgets_values 的位置、值仍随工作流保存并随 prompt 发给后端，
@@ -459,12 +459,12 @@ app.registerExtension({
             const loadSpec = async (force = false) => {
                 const seq = ++specSeq;
                 const name = recipeWidget ? String(recipeWidget.value || "") : "";
-                if (!name) { tlData = { segments: [] }; if (tl) tl.refresh(); return; }
+                if (!name) { tlData = { segments: [] }; if (tl) tl.refresh(); if (node._neoDtStatusRow) node._neoDtStatusRow.refresh(); return; }
                 try {
                     const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
                     if (resp.ok) {
                         const data = await resp.json();
-                        if (data.success && seq === specSeq) { tlData = data; applyDimDefaults(data.defaults, force); if (tl) tl.refresh(); }
+                        if (data.success && seq === specSeq) { tlData = data; applyDimDefaults(data.defaults, force); if (tl) tl.refresh(); if (node._neoDtStatusRow) node._neoDtStatusRow.refresh(); }
                     }
                 } catch (e) {
                     console.error("[Neo Nodes] director spec fetch failed", e);
@@ -584,10 +584,26 @@ app.registerExtension({
             actBar.appendChild(newBtn);
             root.appendChild(actBar);
             root.appendChild(previewBox);
+
+            // 节点底部 Skill 有效性状态条：检测所选视频 skill（bundle 单段，下拉存的是技能名称）或配方各段的 skill，
+            // 缺模型/节点时告警并可点开详情修复
+            node._neoDtStatusRow = createSkillStatusRow({
+                getSkills: () => {
+                    const skills = [];
+                    if (skillIdWidget) skills.push(String(skillIdWidget.value || ""));
+                    for (const seg of (tlData && tlData.segments) || []) if (seg && seg.skill_id) skills.push(String(seg.skill_id));
+                    return skills;
+                },
+                isVideo: true,
+            });
+            root.appendChild(node._neoDtStatusRow.el);
+            node._neoDtStatusRow.refresh(); // 首次检测（loadSpec 完成后也会再触发一次）
+
             return result;
         };
 
         nodeType.prototype.onRemoved = function() {
+            if (this._neoDtStatusRow) { this._neoDtStatusRow.destroy(); this._neoDtStatusRow = null; }
             if (this._neoDtProgressTimer) { clearInterval(this._neoDtProgressTimer); this._neoDtProgressTimer = null; }
             if (this._neoDtTimeline) { try { this._neoDtTimeline.destroy(); } catch (_) {} this._neoDtTimeline = null; }
             if (this._neoDtLive) { this._neoDtLive.reset(); livePreviews.delete(this._neoDtLive); this._neoDtLive = null; }
