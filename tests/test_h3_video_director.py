@@ -2273,5 +2273,82 @@ class ContextWindowTests(unittest.TestCase):
         self.assertIn("超过目标视频", str(ctx.exception))
 
 
+class SeamBlendTests(unittest.TestCase):
+    """段间接缝交叉淡化：_blend_seam 的权重、边界与编排效果。"""
+
+    def test_blend_ramps_new_version_in_over_overlap_tail(self):
+        prev = torch.zeros(5, 2, 2, 3)
+        new = torch.ones(4, 2, 2, 3)
+        out = h3_video_director._blend_seam(prev, new, drop=3, blend=2)
+        # 只动最后 2 帧：权重 1/3 → 2/3 给了本段新版本
+        self.assertTrue(torch.all(out[:-2] == 0))
+        self.assertAlmostEqual(float(out[-2][0, 0, 0]), 1 / 3, places=6)
+        self.assertAlmostEqual(float(out[-1][0, 0, 0]), 2 / 3, places=6)
+        self.assertEqual(out.shape, prev.shape)
+
+    def test_blend_uses_overlap_tail_of_new_segment(self):
+        # 新段的 frames[:drop] 是重合区；取其中最后 blend 帧参与融合
+        prev = torch.full((3, 1, 1, 1), 0.0)
+        new = torch.tensor([[10.0], [20.0], [30.0], [40.0]]).view(4, 1, 1, 1)
+        out = h3_video_director._blend_seam(prev, new, drop=3, blend=1)
+        self.assertAlmostEqual(float(out[-1][0, 0, 0]), 30.0 / 2, places=6)   # 用 new[2]，不是 new[3]
+
+    def test_blend_disabled_and_degenerate_cases(self):
+        prev = torch.zeros(4, 2, 2, 3)
+        new = torch.ones(4, 2, 2, 3)
+        short = prev[:2]
+        self.assertIs(h3_video_director._blend_seam(prev, new, drop=3, blend=0), prev)      # 关闭
+        self.assertIs(h3_video_director._blend_seam(prev, new, drop=0, blend=6), prev)      # 无重合
+        self.assertIs(h3_video_director._blend_seam(short, new, drop=3, blend=6), short)    # 上一段太短
+        mismatched = torch.ones(4, 4, 4, 3)
+        self.assertIs(h3_video_director._blend_seam(prev, mismatched, drop=3, blend=2), prev)   # 分辨率不同
+
+    def test_window_run_blends_seam_frames_in_place(self):
+        # 两段：首段全 0、次段全 1，window=22 → 接缝最后 6 帧应是 1/7..6/7，总帧数/时长不变
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
+        _orig_inject = h3d._inject_continuity_nodes
+        it = iter([_ConstFakeVideo(124, 0.0), _ConstFakeVideo(141, 1.0)])
+        segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v"},
+                    {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v"}]
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 0}, "segments": segments}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.resolve_video_params = lambda body, cfg, **kw: {"prompt": body["prompt"]}
+        h3d.render_template = lambda tpl, params: ({"g": 1}, [])
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d._inject_continuity_nodes = lambda graph, tail, window, names=(): (graph, None)   # 图是桩，跳过注入
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: next(it)
+        try:
+            (video,) = h3d.NeoH3VideoDirector().generate("r", continuity=True, context_frames=22)
+        finally:
+            (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+             h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+             h3d.execute_graph_inprocess, h3d._require_vdn_plugin) = orig
+            h3d._inject_continuity_nodes = _orig_inject
+        frames = video.get_components().images
+        self.assertEqual(frames.shape[0], 124 + 119, "接缝淡化不改变总帧数（141-22 帧入片）")
+        self.assertTrue(torch.all(frames[:118] == 0))
+        blend = [round(float(v), 6) for v in frames[118:124, 0, 0, 0]]
+        self.assertEqual(blend, [round(i / 7, 6) for i in range(1, 7)], "接缝 6 帧按 1/7..6/7 渐入本段")
+        self.assertTrue(torch.all(frames[124:] == 1))
+
+
+class _ConstFakeVideo:
+    """所有帧填同一常量（便于断言接缝混合结果）。"""
+
+    def __init__(self, n_frames, value, frame_rate=24, sample_rate=48000):
+        self._images = torch.full((n_frames, 8, 8, 3), float(value))
+        spf = sample_rate // frame_rate
+        self._audio = {"waveform": torch.zeros(1, 1, n_frames * spf), "sample_rate": sample_rate}
+
+    def get_components(self):
+        return _FakeComp(self._images, self._audio)
+
+
 if __name__ == "__main__":
     unittest.main()
+

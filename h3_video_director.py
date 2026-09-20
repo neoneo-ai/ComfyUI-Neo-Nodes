@@ -82,6 +82,25 @@ def _concat_segment_audio(audios, frame_rate: int, drops):
 _CONTINUITY_WRAPPER_KEY = "neo_h3_continuity.apply_model.v1"
 _CONTEXT_FRAMES_MARK = "neo_context_frames"       # 上下文窗口 ref 上标记占多少帧（对齐时间轴时据此定位）
 _CONTEXT_ALIGNED_ATTR = "_neo_h3_context_aligned"  # 同一 layout 只对齐一次（拷贝本身也是幂等的）
+SEAM_BLEND_FRAMES = 6   # 段间接缝的交叉淡化帧数（0 = 关闭）：把「丢掉重生成窗口帧」的硬切摊成渐变
+
+
+def _blend_seam(prev_frames, frames, drop, blend):
+    """接缝交叉淡化：用本段重生成的重合帧与上一段已入片的真实尾帧按权重融合，替换回上一段尾部。
+
+    重合区两份内容是同一时间位置的两版（上一段的真实帧 + 本段重生成的那 window 帧），所以是「替换 + 融合」：
+    帧数与时长都不变，不需要额外采样，只是把硬切的瞬时跳变摊到 blend 帧上（权重 0→1）。
+    各段分辨率不一致（-1 尺寸下各段 skill config 可能不同）或没有重合帧时原样返回。
+    """
+    n = min(int(blend or 0), int(drop or 0))
+    if n <= 0 or prev_frames.shape[0] < n or frames.shape[0] < n:
+        return prev_frames
+    if tuple(prev_frames.shape[1:]) != tuple(frames.shape[1:]):
+        return prev_frames
+    t = torch.arange(1, n + 1, device=frames.device, dtype=torch.float32) / (n + 1)
+    w = t.to(frames.dtype).view(n, *([1] * (frames.ndim - 1)))
+    tail = prev_frames[-n:] * (1 - w) + frames[drop - n:drop] * w
+    return torch.cat([prev_frames[:-n], tail], dim=0)
 
 
 def _merge_cond_latents(payload):
@@ -670,8 +689,11 @@ class NeoH3VideoDirector:
                 comp = video.get_components()
                 frames = comp.images
 
-                # 丢掉头部：上下文窗口重生成的 window 帧；Tier A 则丢与上段重复的那一帧
+                # 丢掉头部：上下文窗口重生成的 window 帧；Tier A 则丢与上段重复的那一帧。
+                # 丢弃前先把重合区与上一段真实尾帧交叉淡化（帧数不变），接缝不再硬切
                 drop = window if context_tail is not None else (1 if (i > 0 and chained) else 0)
+                if context_tail is not None and all_frames:
+                    all_frames[-1] = _blend_seam(all_frames[-1], frames, drop, SEAM_BLEND_FRAMES)
                 all_frames.append(frames[drop:] if drop and frames.shape[0] > drop else frames)
                 drops.append(drop)
                 all_audio.append(comp.audio)
