@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, fetchLog } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, fetchLog, changeValue } from "./setup.mjs";
 import { app, appState, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
@@ -665,13 +665,14 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     await openDirectorEditor(null); // 新建：默认 1 个空段
     await sleep(60);
 
-    // 页签结构：新建默认落在「自动故事板」，统一设置 / 时间轴页隐藏
+    // 页签结构：新建默认落在「自动故事板」，统一设置 / 时间轴 / 拼接页隐藏
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    assert.equal(tabs.length, 3, "三个页签");
+    assert.equal(tabs.length, 4, "四个页签");
     const tabStory = tabs.find((t) => t.textContent.includes("自动故事板"));
     const tabSetup = tabs.find((t) => t.textContent.includes("统一设置"));
     const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
-    assert.ok(tabStory && tabSetup && tabTimeline, "三个页签齐全");
+    assert.ok(tabStory && tabSetup && tabTimeline, "页签齐全");
+    assert.ok(tabs.some((t) => t.textContent.includes("拼接成片")), "含「🧩 拼接成片」页签");
     assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
     assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
 
@@ -1722,9 +1723,9 @@ test("导演编辑器：「🎯 统一设置」页签存在，两处生成模式
     });
     await sleep(60);
 
-    // 三个页签：自动故事板 / 统一设置 / 时间轴分段
+    // 四个页签：自动故事板 / 统一设置 / 时间轴分段 / 拼接成片
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    assert.equal(tabs.length, 3, "标题栏共三个页签");
+    assert.equal(tabs.length, 4, "标题栏共四个页签");
     assert.ok(tabs.some((t) => t.textContent.includes("统一设置")), "含「🎯 统一设置」页签");
     const tabSetup = tabs.find((t) => t.textContent.includes("统一设置"));
 
@@ -2254,4 +2255,252 @@ test("导演编辑器：段技能选择窗带浮动预览卡，点击按 skill i
     document.querySelector(".neo-director-close").click();
     await sleep(20);
 });
+
+test("导演编辑器：段行 ♻ 单段生成 → 提交队列 + 轮询进度 + 取消 + 完成提示", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    let submitted = null;
+    mockRoute("/neo_video_gen/run_segment", (body) => {
+        submitted = body;
+        return jsonResponse({ success: true, task_id: "t1", prompt_id: "p1", status: "queued", segment: 1, seed: 123 });
+    });
+    let statusCalls = 0;
+    let cancelled = 0;
+    mockRoute("/neo_video_gen/run_segment/t1", () => {
+        statusCalls += 1;
+        if (statusCalls === 1) {
+            return jsonResponse({ success: true, task_id: "t1", status: "running", segment: 1, seed: 123,
+                                  progress: { value: 5, max: 20 }, warnings: [] });
+        }
+        if (statusCalls === 2) {
+            return jsonResponse({ success: true, task_id: "t1", status: "succeeded", segment: 1, seed: 123,
+                                  filename: "T_s2_20260920-120000.mp4", film: "film-old.mp4",
+                                  warnings: ["该段没有可用的尾帧锚点（末段）：只用首帧锚点"] });
+        }
+        return jsonResponse({ success: true, task_id: "t1", status: "running", segment: 1, seed: 123,
+                              progress: { value: 12, max: 20 }, warnings: [] });
+    });
+    mockRoute("/neo_video_gen/run_segment/t1/cancel", () => { cancelled += 1; return jsonResponse({ success: true }); });
+
+    const existing = {
+        name: "T",
+        // 两个成片结果 → 面板要能看出（并能切换）锚点基于哪个视频
+        results: [{ filename: "film-old.mp4", subfolder: "", kind: "video", at: "2026-09-19 10:00:00" },
+                  { filename: "film-new.mp4", subfolder: "", kind: "video", at: "2026-09-20 10:00:00" }],
+        shared: { width: 1344, height: 768, seed: 5 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 },
+                   { skill_id: "sk-a", prompt: "第二段", duration_sec: 5 }],
+    };
+    const node = { id: 7, widgets: [
+        { name: "seed", value: 99 }, { name: "continuity", value: true }, { name: "context_frames", value: 22 }] };
+    await openDirectorEditor(existing, null, -1, { node });
+    await sleep(60);
+
+    const row = Array.from(document.querySelectorAll(".neo-director-seg"))[1];
+    const regenBtn = row.querySelector(".neo-director-seg-regen");
+    assert.ok(regenBtn, "段标题行有 ♻ 按钮");
+    regenBtn.click();
+    let panel = row.querySelector(".neo-director-seg-regen-panel");
+    assert.ok(panel, "点击 ♻ 出现参数面板");
+    // 多个成片结果：默认写明用最新的那个，并能切换来源
+    const filmSel = panel.querySelector(".neo-director-regen-film");
+    assert.ok(filmSel, "多个成片结果时出现「锚点来源」下拉");
+    assert.match(panel.querySelector(".neo-director-regen-status").textContent, /film-new\.mp4/);
+    assert.match(panel.querySelector(".neo-director-regen-status").textContent, /2 个成片结果/);
+    changeValue(filmSel, "film-old.mp4");
+    assert.match(panel.querySelector(".neo-director-regen-status").textContent, /film-old\.mp4/);
+
+    panel.querySelector(".neo-director-regen-run").click();
+    await sleep(60);
+    assert.deepEqual(submitted, { recipe: "T", segment: 1, anchors: "both", seed: -1, node_id: 7,
+                                  continuity: true, context_frames: 22, film: "film-old.mp4" },
+                     "提交到队列（换种子 + 节点参数 + 指定锚点来源成片）");
+    assert.equal(panel.querySelector(".neo-director-regen-cancel").style.display, "", "提交后出现取消按钮");
+
+    await sleep(1200);   // 等两次轮询：running（带进度）→ succeeded
+    assert.ok(statusCalls >= 2, "轮询任务状态");
+    const done = appState.toasts.find((t) => t.summary === "该段已生成");
+    assert.ok(done, "完成后提示产物");
+    assert.match(done.detail, /film-old\.mp4/, "完成提示里写明锚点基于哪个成片");
+    assert.ok(appState.toasts.some((t) => t.summary === "生成提示"), "降级/警告逐条提示");
+    assert.match(panel.querySelector(".neo-director-regen-status").textContent, /已完成/);
+
+    // 提交失败：后端 400 → 错误 toast，按钮恢复可重试
+    mockRoute("/neo_video_gen/run_segment", () => jsonResponse({ success: false, error: "成片帧数不一致" }, 400));
+    panel.querySelector(".neo-director-regen-run").click();
+    await sleep(60);
+    const failed = appState.toasts.find((t) => t.summary === "提交失败");
+    assert.ok(failed, "提交失败弹错误 toast");
+    assert.match(failed.detail, /成片帧数不一致/);
+    assert.equal(panel.querySelector(".neo-director-regen-run").disabled, false, "失败后可重试");
+
+    // 取消任务：调 cancel 接口
+    mockRoute("/neo_video_gen/run_segment", () => jsonResponse({ success: true, task_id: "t1", status: "queued", segment: 1 }));
+    panel.querySelector(".neo-director-regen-run").click();
+    await sleep(60);
+    assert.equal(panel.querySelector(".neo-director-regen-cancel").style.display, "", "新任务再次出现取消按钮");
+    panel.querySelector(".neo-director-regen-cancel").click();
+    await sleep(40);
+    assert.equal(cancelled, 1, "点取消调 /cancel");
+    assert.match(panel.querySelector(".neo-director-regen-status").textContent, /已请求取消/);
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+
+test("导演编辑器：🧩 拼接成片页 —— 左先出单段（提交+进度），右确认后拼接", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    let clipCalls = 0;
+    mockRoute("/neo_video_gen/segment_clips", () => {
+        clipCalls += 1;
+        return jsonResponse({
+            success: true, recipe: "T", segments: 3, films: ["film.mp4"],
+            film: { filename: "film.mp4", frames: 362, layout: [], segments: [
+                { segment: 0, start: 0, kept: 124 },
+                { segment: 1, start: 124, kept: 119 },
+                { segment: 2, start: 243, kept: 119 }] },
+            // 首次进入还没有片段；「生成第 1 段」成功后重拉时第 2/3 段已有片段
+            clips: clipCalls === 1 ? [] : [{ segment: 1, filename: "T_s2_x.mp4", frames: 141 },
+                                           { segment: 2, filename: "T_s3_x.mp4", frames: 141 }],
+        });
+    });
+    let segBody = null;
+    mockRoute("/neo_video_gen/run_segment", (body) => {
+        segBody = body;
+        return jsonResponse({ success: true, task_id: "t1", status: "queued", segment: 0, seed: 11 });
+    });
+    let segPoll = 0;
+    mockRoute("/neo_video_gen/run_segment/t1", () => {
+        segPoll += 1;
+        if (segPoll === 1) {
+            return jsonResponse({ success: true, task_id: "t1", status: "running", segment: 0, seed: 11,
+                                  progress: { value: 5, max: 20 }, film: "film.mp4", warnings: [] });
+        }
+        return jsonResponse({ success: true, task_id: "t1", status: "succeeded", segment: 0, seed: 11,
+                              filename: "T_s1_x.mp4", film: "film.mp4", warnings: [] });
+    });
+    let asmBody = null;
+    mockRoute("/neo_video_gen/assemble_segments", (body) => {
+        asmBody = body;
+        return jsonResponse({ success: true, task_id: "m1", status: "running", stage: "读取成片前缀（124 帧）",
+                              progress: { value: 0, max: 406 } });
+    });
+    let asmPoll = 0;
+    mockRoute("/neo_video_gen/assemble_segments/m1", () => {
+        asmPoll += 1;
+        if (asmPoll === 1) {
+            return jsonResponse({ success: true, task_id: "m1", status: "running", stage: "读取第 2 段片段（141 帧）",
+                                  progress: { value: 124, max: 406 } });
+        }
+        return jsonResponse({ success: true, task_id: "m1", status: "succeeded", filename: "T_merged_1.mp4",
+                              frames: 406, warnings: ["有片段没有音频轨：已输出无声成片"] });
+    });
+
+    const existing = {
+        name: "T",
+        results: [{ filename: "film.mp4", subfolder: "", kind: "video", type: "output" }],
+        shared: { width: 1344, height: 768, seed: 5 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 },
+                   { skill_id: "sk-a", prompt: "第二段", duration_sec: 5 },
+                   { skill_id: "sk-a", prompt: "第三段", duration_sec: 5 }],
+    };
+    const node = { id: 7, widgets: [
+        { name: "seed", value: 99 }, { name: "continuity", value: true }, { name: "context_frames", value: 22 }] };
+    await openDirectorEditor(existing, null, -1, { node });
+    await sleep(60);
+
+    const tab = Array.from(document.querySelectorAll(".neo-director-tab"))
+        .find((t) => t.textContent.includes("拼接成片"));
+    assert.ok(tab, "标题栏有「🧩 拼接成片」页签");
+    tab.click();
+    await sleep(60);
+    const pane = document.querySelector(".neo-director-assemble");
+    assert.ok(pane, "拼接页存在");
+    assert.equal(tab.classList.contains("active"), true, "切到拼接页");
+    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页隐藏");
+    assert.equal(clipCalls, 1, "进入拼接页拉一次现状");
+
+    // 左半边：逐段一行，没片段时标「未生成」；右边提示先补齐
+    const rows = Array.from(pane.querySelectorAll(".neo-director-asm-item"));
+    assert.equal(rows.length, 3, "左：逐段一行");
+    assert.match(rows[0].querySelector(".neo-director-asm-cell").textContent, /未生成/);
+    assert.doesNotMatch(rows[0].textContent, /null/, "没有片段的行不出现 null 字样");
+    assert.match(pane.querySelector(".neo-director-asm-status").textContent, /先把要接的段全部生成出来/);
+    assert.equal(pane.querySelector(".neo-director-asm-run").disabled, true, "没有可拼组合时禁用拼接");
+
+    // 左半边：生成第 1 段（带锚点来源成片 + 节点连续性参数）
+    rows[0].querySelector(".neo-director-asm-gen").click();
+    await sleep(60);
+    const cellText = rows[0].querySelector(".neo-director-asm-cell").textContent;
+    assert.deepEqual(segBody, { recipe: "T", segment: 0, anchors: "both", seed: -1, continuity: true,
+                                context_frames: 22, node_id: 7, film: "film.mp4" },
+                     `生成第 1 段的提交体；行内文本=${cellText}；实际请求：`
+                     + JSON.stringify(fetchLog.map((c) => `${c.method} ${c.path}`)));
+    assert.match(rows[0].querySelector(".neo-director-asm-cell").textContent, /生成中/);
+    assert.equal(rows[0].querySelector(".neo-director-asm-stop").style.display, "", "运行中出现取消");
+    await sleep(1200);   // 轮询：running → succeeded（成功后自动重拉现状）
+    assert.equal(clipCalls, 2, "生成成功后重拉现状");
+    const rows2 = Array.from(pane.querySelectorAll(".neo-director-asm-item"));   // 重拉后是新的 DOM 节点
+    assert.match(rows2[1].querySelector(".neo-director-asm-cell").textContent, /T_s2_x\.mp4（141 帧）/);
+    assert.ok(rows2[1].querySelector(".neo-director-asm-play"), "有片段的行带播放链接");
+
+    // 右半边：只列「从该段到末段片段齐全」的起点（这里是第 2 段），方案含前缀与总帧数
+    const fromSel = pane.querySelector(".neo-director-asm-from");
+    assert.deepEqual(Array.from(fromSel.options).map((o) => o.value), ["1", "2"], "只列「尾部片段齐全」的起点");
+    assert.equal(fromSel.value, "1", "默认选最小的可用起点");
+    assert.match(pane.querySelector(".neo-director-asm-plan").textContent, /film\.mp4 的第 1\.\.1 段，共 124 帧/);
+    assert.match(pane.querySelector(".neo-director-asm-plan").textContent, /第 2 段：T_s2_x\.mp4（141 帧）/);
+    assert.match(pane.querySelector(".neo-director-asm-plan-total").textContent, /预计总帧数 406/);
+    assert.equal(pane.querySelector(".neo-director-asm-run").disabled, false, "有可拼组合时启用拼接");
+
+    // 右半边：确认后拼接（带起始段 / 交叉淡化 / 成片来源），进度与完成提示
+    pane.querySelector(".neo-director-asm-run").click();
+    await sleep(60);
+    assert.deepEqual(asmBody, { recipe: "T", from: 1, blend: 6, continuity: true, context_frames: 22,
+                                film: "film.mp4" });
+    assert.equal(pane.querySelector(".neo-director-asm-cancel").style.display, "", "拼接中可取消");
+    await sleep(1200);
+    assert.ok(appState.toasts.some((t) => t.summary === "已拼成新成片"), "完成提示新成片");
+    assert.ok(appState.toasts.some((t) => t.summary === "拼接提示"), "无声等提示逐条弹出");
+    assert.match(pane.querySelector(".neo-director-asm-status").textContent, /已完成：T_merged_1\.mp4/);
+    assert.equal(clipCalls, 3, "拼完后重拉现状（新成片成为默认来源）");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：只有一个成片时 ♻ 面板不出「锚点来源」下拉，也不出现 null", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    const existing = {
+        name: "T",
+        results: [{ filename: "only-film.mp4", subfolder: "", kind: "video", type: "output" }],
+        shared: { width: 1344, height: 768, seed: 5 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 },
+                   { skill_id: "sk-a", prompt: "第二段", duration_sec: 5 }],
+    };
+    const node = { id: 7, widgets: [
+        { name: "seed", value: 99 }, { name: "continuity", value: true }, { name: "context_frames", value: 22 }] };
+    await openDirectorEditor(existing, null, -1, { node });
+    await sleep(60);
+
+    const row = Array.from(document.querySelectorAll(".neo-director-seg"))[1];
+    row.querySelector(".neo-director-seg-regen").click();
+    const panel = row.querySelector(".neo-director-seg-regen-panel");
+    assert.ok(panel, "点 ♻ 出现面板");
+    assert.equal(panel.querySelector(".neo-director-regen-film"), null, "单成片不给来源下拉");
+    assert.doesNotMatch(panel.textContent, /null/, "面板不出现 null 字样");
+    assert.match(panel.querySelector(".neo-director-regen-status").textContent, /only-film\.mp4/,
+                 "提示行写明基于哪个成片");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
 

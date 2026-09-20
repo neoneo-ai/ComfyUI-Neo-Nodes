@@ -11,6 +11,7 @@ import contextlib
 import io
 import json
 import os
+import pathlib
 import sys
 import tempfile
 import types
@@ -18,6 +19,8 @@ import unittest
 
 import torch
 from PIL import Image
+
+import av
 
 _TMP = tempfile.mkdtemp(prefix="neo_h3director_")
 _INPUT_DIR = os.path.join(_TMP, "input")
@@ -70,6 +73,7 @@ _folder_paths = types.ModuleType("folder_paths")
 _folder_paths.get_filename_list = lambda folder: list(_MODELS.get(folder, []))
 _folder_paths.get_input_directory = lambda: _INPUT_DIR
 _folder_paths.get_output_directory = lambda: _OUTPUT_DIR
+_folder_paths.get_annotated_filepath = lambda name, base_dir: os.path.join(base_dir, str(name).replace("/", os.sep))
 sys.modules["folder_paths"] = _folder_paths
 
 _nodes = types.ModuleType("nodes")
@@ -157,6 +161,8 @@ _folder_paths.get_full_path = lambda folder, name: None
 _comfy_mm = types.ModuleType("comfy.model_management")
 _comfy_mm.vae_device = lambda *a, **k: torch.device("cpu")
 _comfy_mm.vae_dtype = lambda device, allowed=None: torch.float32
+_comfy_mm.unload_all_models = lambda: None      # 重生成前先卸载驻留模型（用例里只验证调用与顺序）
+_comfy_mm.soft_empty_cache = lambda force=False: None
 sys.modules["comfy.model_management"] = _comfy_mm
 
 _comfy_lf = types.ModuleType("comfy.latent_formats")
@@ -260,7 +266,11 @@ class _StubVideoFromComponents:
 
 _comfy_api = types.ModuleType("comfy_api")
 _comfy_api_latest = types.ModuleType("comfy_api.latest")
-_comfy_api_latest.Types = types.SimpleNamespace(VideoComponents=_StubVideoComponents)
+_comfy_api_latest.Types = types.SimpleNamespace(
+    VideoComponents=_StubVideoComponents,
+    VideoContainer=types.SimpleNamespace(MP4="mp4"),
+    VideoCodec=types.SimpleNamespace(H264="h264"),
+)
 _comfy_api_latest.InputImpl = types.SimpleNamespace(VideoFromComponents=_StubVideoFromComponents)
 sys.modules["comfy_api"] = _comfy_api
 sys.modules["comfy_api.latest"] = _comfy_api_latest
@@ -2351,4 +2361,5 @@ class _ConstFakeVideo:
 
 if __name__ == "__main__":
     unittest.main()
+
 

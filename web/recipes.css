@@ -799,6 +799,163 @@
     opacity: 1;
 }
 
+/* ♻ 重生成该段：与删除按钮同款外观，两者一起贴段标题行最右（♻ 在左、🗑 在右） */
+.neo-director-seg-regen {
+    flex: 0 0 auto;
+    margin-left: auto;
+    width: 24px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    color: #8cb4d8;
+    font-size: 12px;
+    line-height: 1;
+    opacity: .6;
+}
+
+.neo-director-seg-regen:hover {
+    background: rgba(140, 180, 216, 0.15);
+    opacity: 1;
+}
+
+.neo-director-seg:hover .neo-director-seg-regen {
+    opacity: 1;
+}
+
+.neo-director-seg-regen + .neo-director-seg-del {
+    margin-left: 0;   /* 贴右由 ♻ 承担 */
+}
+
+/* 段内「重生成该段」参数面板（种子 / 锚点 + 执行） */
+.neo-director-seg-regen-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    margin-top: 4px;
+    background: #1c1c1c;
+    border: 1px solid #333;
+    border-radius: 6px;
+}
+
+.neo-director-regen-status {
+    flex: 1 1 100%;
+    color: #9aa4b0;
+    font-size: 11px;
+}
+
+/* 🧩 拼接成片：左右两半（左＝先出单段，右＝确认后拼接） */
+.neo-director-assemble {
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+    min-height: 200px;
+}
+
+.neo-director-asm-col {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid #3a3f4a;
+    border-radius: 6px;
+    background: #23262d;
+    min-width: 0;
+    overflow: auto;
+    max-height: 52vh;
+}
+
+.neo-director-asm-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #d7dbe2;
+}
+
+.neo-director-asm-hint,
+.neo-director-asm-status {
+    color: #9aa4b0;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.neo-director-asm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.neo-director-asm-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    background: #1e2127;
+}
+
+.neo-director-asm-item.has-clip {
+    background: #1f2a24;
+}
+
+.neo-director-asm-seg {
+    color: #d7dbe2;
+    min-width: 44px;
+}
+
+.neo-director-asm-cell {
+    flex: 1 1 auto;
+    color: #9aa4b0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-director-asm-play {
+    color: #8fd694;
+    text-decoration: none;
+    padding: 0 2px;
+}
+
+.neo-director-asm-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.neo-director-asm-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #9aa4b0;
+    font-size: 11px;
+}
+
+.neo-director-asm-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 11px;
+    color: #c8ccd4;
+    border: 1px dashed #3a3f4a;
+    border-radius: 4px;
+    padding: 6px;
+}
+
+.neo-director-asm-plan-total {
+    margin-top: 2px;
+    color: #d7dbe2;
+    font-weight: 600;
+}
+
 .neo-director-seg:hover .neo-director-seg-del {
     opacity: 1;
 }

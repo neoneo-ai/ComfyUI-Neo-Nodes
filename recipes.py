@@ -84,7 +84,26 @@ def _norm_result(ref) -> dict | None:
     kind = str(ref.get("kind", "") or "")
     if kind not in ("image", "video", "audio"):
         kind = _kind_of(Path(filename))
-    return {"filename": filename, "subfolder": subfolder, "kind": kind}
+    item = {"filename": filename, "subfolder": subfolder, "kind": kind}
+    for key in ("segment", "seed"):   # 单段重生成产物带的来源信息（可选）：面板据此标注「第 k 段」
+        if ref.get(key) is not None:
+            try:
+                item[key] = int(ref[key])
+            except (TypeError, ValueError):
+                pass
+    # layout：拼接成片的真实段边界（逐段保留帧数），供后续单段重生成按该成片取锚点帧
+    layout = ref.get("layout")
+    if isinstance(layout, (list, tuple)):
+        counts = []
+        for value in layout:
+            try:
+                counts.append(int(value))
+            except (TypeError, ValueError):
+                counts = []
+                break
+        if counts and all(n > 0 for n in counts):
+            item["layout"] = counts
+    return item
 
 
 def _result_path(ref: dict) -> Path | None:
@@ -678,6 +697,77 @@ async def rs_recipes_append_results(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+def add_recipe_results(name: str, refs: list) -> tuple[int, int]:
+    """把执行产物的路径并进配方的 results（只记路径不复制文件，按 filename+subfolder 去重）。
+
+    返回 (added, skipped)；配方不存在抛 ValueError（HTTP 语义由调用方决定）。
+    """
+    recipe_dir = _find_recipe_dir(name)
+    if recipe_dir is None:
+        raise ValueError(f"配方不存在：{name}")
+    meta_path = recipe_dir / "recipe.json"
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception as e:
+        raise ValueError(f"配方读取失败：{name}（{e}）")
+
+    results = meta.get("results", []) or []
+    if not isinstance(results, list):
+        results = []
+    seen = {(str(r.get("filename", "")), str(r.get("subfolder", "") or ""))
+            for r in results if isinstance(r, dict)}
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    added = 0
+    skipped = 0
+    for ref in (refs or []):
+        item = _norm_result(ref)
+        if item is None or _result_path(item) is None:
+            continue
+        key = (item["filename"], item["subfolder"])
+        if key in seen:
+            skipped += 1
+            continue
+        seen.add(key)
+        results.append({**item, "at": stamp})
+        added += 1
+
+    if added:
+        meta["results"] = results
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    return added, skipped
+
+
+def is_preset_recipe(name: str) -> bool:
+    """配方是否为内置预设（只读）。"""
+    recipe_dir = _find_recipe_dir(name)
+    return recipe_dir is not None and recipe_dir.parent == PRESETS_DIR
+
+
+def list_recipe_results(name: str) -> list:
+    """配方已记录且仍存在的产物（新 → 旧），每项在 results 字段外附 path（物理路径，供内部使用）。"""
+    recipe_dir = _find_recipe_dir(name)
+    if recipe_dir is None:
+        return []
+    try:
+        with open(recipe_dir / "recipe.json", "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        return []
+    out = []
+    for ref in reversed(meta.get("results", []) or []):
+        item = _norm_result(ref)
+        if item is None:
+            continue
+        path = _result_path(item)
+        if path is None:
+            continue   # 文件已不在（外部删掉）→ 不列出
+        out.append({**item, "at": str((ref or {}).get("at", "") or ""), "path": str(path)})
+    return out
+
+
 @PromptServer.instance.routes.post("/rs_recipes/add_results")
 async def rs_recipes_add_results(request):
     """把本次执行产物的路径记进配方 results（只记路径不复制文件，按 filename+subfolder 去重）。"""
@@ -689,39 +779,7 @@ async def rs_recipes_add_results(request):
             return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
         if recipe_dir.parent == PRESETS_DIR:
             return web.json_response({"success": False, "error": "Preset recipes are read-only"}, status=403)
-
-        meta_path = recipe_dir / "recipe.json"
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            return web.json_response({"success": False, "error": "Recipe meta unreadable"}, status=500)
-
-        results = meta.get("results", []) or []
-        if not isinstance(results, list):
-            results = []
-        seen = {(str(r.get("filename", "")), str(r.get("subfolder", "") or ""))
-                for r in results if isinstance(r, dict)}
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        added = 0
-        skipped = 0
-        for ref in (data.get("results") or []):
-            item = _norm_result(ref)
-            if item is None or _result_path(item) is None:
-                continue
-            key = (item["filename"], item["subfolder"])
-            if key in seen:
-                skipped += 1
-                continue
-            seen.add(key)
-            results.append({**item, "at": stamp})
-            added += 1
-
-        if added:
-            meta["results"] = results
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
+        added, skipped = add_recipe_results(name, data.get("results") or [])
         return web.json_response({"success": True, "added": added, "skipped": skipped})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)

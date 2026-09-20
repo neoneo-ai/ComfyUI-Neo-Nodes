@@ -584,7 +584,7 @@ app.registerExtension({
                         showToast(app, "warn", "未找到分段配方：" + name, "");
                         return;
                     }
-                    await openDirectorEditor(meta, null, segIndex);
+                    await openDirectorEditor(meta, null, segIndex, { node });
                 } catch (e) {
                     console.error("[Neo Nodes] open director editor failed", e);
                     showToast(app, "error", "打开配方编辑器失败", String(e));

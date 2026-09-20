@@ -80,12 +80,27 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] bundle_expand 节点注册失败（BUNDLE 展开不可用）: {e}")
 
+    # Neo H3 单段生成/重生成（h3_segment.py）：NeoH3SegmentRun 节点 + /neo_video_gen/run_segment* 路由。
+    # 走执行队列，节点是为"单段调试"准备的；导入失败时优雅降级。
+    H3_SEGMENT_MAPPINGS = {}
+    H3_SEGMENT_DISPLAY_MAPPINGS = {}
+    try:
+        from .h3_segment import (
+            NODE_CLASS_MAPPINGS as H3_SEGMENT_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as H3_SEGMENT_DISPLAY_MAPPINGS,
+        )
+        # 段落拼接（h3_assemble.py）：只注册 /neo_video_gen/segment_clips + assemble_segments* 路由。
+        from . import h3_assemble  # noqa: F401
+    except Exception as e:
+        print(f"[NeoNodes] h3_segment 节点注册失败（单段生成/重生成不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
         **KREA2_EDIT_MAPPINGS,
         **KREA2_GENERATE_MAPPINGS,
         **H3_DIRECTOR_MAPPINGS,
+        **H3_SEGMENT_MAPPINGS,
         **BUNDLE_EXPAND_MAPPINGS,
     }
 
@@ -94,6 +109,7 @@ if __package__ not in (None, ""):
         **KREA2_EDIT_DISPLAY_MAPPINGS,
         **KREA2_GENERATE_DISPLAY_MAPPINGS,
         **H3_DIRECTOR_DISPLAY_MAPPINGS,
+        **H3_SEGMENT_DISPLAY_MAPPINGS,
         **BUNDLE_EXPAND_DISPLAY_MAPPINGS,
     }
 

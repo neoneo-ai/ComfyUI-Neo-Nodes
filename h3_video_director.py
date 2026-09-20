@@ -5,11 +5,15 @@
 - 逐段复用单段解析/执行链 _run_segment_graph（resolve_video_params + render_template + execute_graph_inprocess）。
 - BUNDLE 输入（forceInput）：提供时忽略 recipe，用 bundle 的 skill/提示词/参考图（data URI）跑单个片段。
 - 跨段上下文窗口（主路径）：上段尾部 window 帧作为本段开头的视频参考注入（NeoH3AddContext），本段重生成
-  这 window 帧后丢掉头部 window 帧——接缝不再重复边界帧，且新段带着上段的真实像素开场。
+  这 window 帧后丢掉头部 window 帧——接缝不再重复边界帧，且新段带着上段的真实像素开场；丢之前先把重合区与
+  上段真实尾帧交叉淡化（_blend_seam，帧数不变），硬切摊成渐变。
 - 身份继承：首段（第一个带参考素材的段）的身份参考图领养到后续段，同走 NeoH3AddContext 的图片参考块。
 - Tier A 回退（context_frames=0）：上段尾帧作为下段 i2v/fl2v 首帧；丢下段第一帧避免边界重复。
   两种情况都按丢帧数裁音频保 A/V 对齐。
 - seed 派生：base_seed + i（i 为段序号），保证可复现且各段不同。
+
+单段生成/重生成（含从成片取前后真实帧当锚点、换种子重跑某一段）走**执行队列**，
+单独放在 h3_segment.py（NeoH3SegmentRun 节点 + /neo_video_gen/run_segment* 路由）。
 """
 
 import math
@@ -573,16 +577,26 @@ class NeoH3VideoDirector:
         ),)
 
     def generate(self, recipe, skill_id="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, duration_sec=5, bundle="", preview=True, unique_id=None):
-        vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
         payload = get_bundle(bundle) if bundle else None
         if payload:
+            vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
             return self._run_bundle_segment(payload, skill_id, seed, width, height, model, steps, vae, preview, unique_id,
                                             duration_sec=duration_sec)
         spec = load_director_spec(recipe)
+        if not (spec.get("segments") or []):
+            raise ValueError(f"配方 '{recipe}' 没有可执行的段")
+        return self._run_spec(spec, seed, width, height, continuity, context_frames, model, steps, preview, unique_id)
+
+    def _run_spec(self, spec, seed, width, height, continuity, context_frames, model, steps, preview, unique_id,
+                  progress_index=0, progress_total=None):
+        """按 spec 逐段生成并拼接成单个含音频 VIDEO；配方多段运行与「单段重生成」共用同一条执行链。
+
+        progress_index / progress_total：单段重生成时把进度映射回配方里的真实段序号与总段数
+        （默认从 0 开始，即整条配方从头跑）。
+        """
+        vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
         shared = spec.get("shared") or {}
         segments = spec.get("segments") or []
-        if not segments:
-            raise ValueError(f"配方 '{recipe}' 没有可执行的段")
 
         base_seed = int(seed) if int(seed) >= 0 else (int(shared.get("seed", 0)) if shared.get("seed") is not None else 0)
         # width/height：节点入参 > 0 时覆盖全部段；-1 时不写入 body，交由 resolve_video_params 按各段 skill config 默认回退。
@@ -593,7 +607,8 @@ class NeoH3VideoDirector:
         window = _align_context_frames(context_frames) if continuity and int(context_frames or 0) > 0 else 0
         identity_names = _inherited_identity_names(segments) if continuity else []
 
-        _DIRECTOR_PROGRESS.update(active=True, segment_index=-1, total_segments=len(segments), step=0,
+        _DIRECTOR_PROGRESS.update(active=True, segment_index=progress_index - 1,
+                                  total_segments=max(1, int(progress_total or len(segments))), step=0,
                                   total_steps=max(1, int(steps)) if int(steps) > 0 else 0)
         all_frames = []
         all_audio = []
@@ -601,7 +616,7 @@ class NeoH3VideoDirector:
         prev_tail = None
         try:
             for i, seg in enumerate(segments):
-                _DIRECTOR_PROGRESS["segment_index"] = i
+                _DIRECTOR_PROGRESS["segment_index"] = progress_index + i
                 _DIRECTOR_PROGRESS["step"] = 0
                 prompt = seg.get("prompt", "")
                 body = {
