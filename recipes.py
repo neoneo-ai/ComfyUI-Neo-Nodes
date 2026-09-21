@@ -361,6 +361,9 @@ _DIRECTOR_REF_CAPS = {"images": 9, "videos": 3, "audios": 3}
 # 全局可再取 mixed（逐段 seg.mode 生效）
 _DIRECTOR_MODES = ("t2v", "i2v", "fl2v", "r2v", "v2v", "rv2v")
 
+# 身份参考图上限：与 h3_video_director 的身份继承上限一致（关键帧没脸时靠它保住角色身份）
+_DIRECTOR_IDENTITY_CAP = 4
+
 
 def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> tuple[dict, list]:
     """校验并规范化 video_director 配方的 shared/segments；非法抛 ValueError（消息可直接回前端）。
@@ -390,6 +393,9 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
     shared_mode = str(shared_raw.get("mode") or "").strip()
     if shared_mode in _DIRECTOR_MODES + ("mixed",):
         shared["mode"] = shared_mode
+    # 身份参考（配方「角色参考图」是否作为各段身份参考）：默认开，编辑器里显式关掉才落盘（对比测试用）
+    if shared_raw.get("identity_refs") is False:
+        shared["identity_refs"] = False
 
     segs_raw = data.get("segments")
     if not isinstance(segs_raw, list) or not segs_raw:
@@ -1050,11 +1056,36 @@ def list_director_recipes() -> list:
     return sorted(names)
 
 
+def _director_identity_images(meta: dict, assets_dir: Path) -> list[str]:
+    """配方「角色参考图」（story.characters）→ input 相对名，供视频段身份参考。
+
+    背景参考图不计入（背景不承载角色身份）。按角色顺序去重、缺文件的跳过、上限 4 张
+    （与 h3_video_director 的身份继承上限一致）。
+    """
+    story = meta.get("story") if isinstance(meta.get("story"), dict) else {}
+    names = []
+    for ref in (story.get("characters") or []):
+        fn = str((ref or {}).get("filename") or "").strip()
+        if not fn or fn in names:
+            continue
+        src = assets_dir / fn
+        if not src.is_file():
+            continue
+        resolved, _skipped = _copy_media_to_input(src, fn)
+        if resolved:
+            names.append(resolved)
+        if len(names) >= _DIRECTOR_IDENTITY_CAP:
+            break
+    return names
+
+
 def load_director_spec(name: str) -> dict:
     """读取 video_director 配方，把每段有效首帧图解析成 input 相对名（复制进 input/）。
 
     返回 {shared, segments}；segments 每项含 skill_id/prompt/duration_sec/ref_input。
     ref_input 为该段用于 I2V 首帧的 input 文件名（first_frame 或 refs.images[0]），无则 None。
+    额外返回 identity_images：配方「角色参考图」解析出的身份参考图（有才写该键），
+    供导演运行时给各段注入身份参考（分镜关键帧不含面部时靠它保住角色身份）。
     """
     recipe_dir = _find_recipe_dir(name)
     if recipe_dir is None:
@@ -1068,7 +1099,8 @@ def load_director_spec(name: str) -> dict:
         raise ValueError(f"配方不是 video_director 类型：{name}")
 
     assets_dir = recipe_dir / "assets"
-    shared_mode = str((meta.get("shared") or {}).get("mode") or "").strip()
+    director_shared = meta.get("shared") or {}
+    shared_mode = str(director_shared.get("mode") or "").strip()
     segments = []
     for seg in (meta.get("segments") or []):
         img = str(seg.get("first_frame") or "").strip()
@@ -1125,7 +1157,13 @@ def load_director_spec(name: str) -> dict:
             "refs": refs_out,
             "mode": mode,
         })
-    return {"shared": meta.get("shared") or {}, "segments": segments}
+    out = {"shared": director_shared, "segments": segments}
+    # 身份参考默认开（配方「角色参考图」→ 各段身份参考）；配方里显式关掉时既不解析也不注入
+    if director_shared.get("identity_refs") is not False:
+        identity_images = _director_identity_images(meta, assets_dir)
+        if identity_images:
+            out["identity_images"] = identity_images
+    return out
 
 
 def _director_default_dims(segments):

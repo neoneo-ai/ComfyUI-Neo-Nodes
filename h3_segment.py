@@ -37,7 +37,6 @@ from .h3_video_director import (
     NeoH3VideoDirector,
     _align_context_frames,
     _align_frame_count_nearest,
-    _inherited_identity_names,
 )
 from .h3_video_gen import _gen_video_skills, _resolve_skill_id, _seconds_to_frames
 from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
@@ -205,8 +204,12 @@ def film_layout(film: dict, spec: dict, continuity: bool, context_frames: int) -
     return [(start, kept) for start, kept, _generated in ranges]
 
 
-def _regen_spec(spec: dict, index: int, mode, first_name, last_name, skill_id: str, identity_names) -> dict:
-    """把配方第 index 段改成「锚点单段」的 spec：mode/skill 按可用锚点定，其余字段原样保留。"""
+def _regen_spec(spec: dict, index: int, mode, first_name, last_name, skill_id: str) -> dict:
+    """把配方第 index 段改成「锚点单段」的 spec：mode/skill 按可用锚点定，其余字段原样保留。
+
+    配方级身份参考图（identity_images）一并带下去：单段重生成走同一条身份注入通路，
+    不塞 refs.images —— i2v/fl2v 模板只有单路首帧槽位，塞进去也不会生效。
+    """
     seg = dict((spec.get("segments") or [])[index])
     if mode:
         seg["mode"] = mode
@@ -214,16 +217,10 @@ def _regen_spec(spec: dict, index: int, mode, first_name, last_name, skill_id: s
         seg["last_input"] = last_name
     if skill_id:
         seg["skill_id"] = skill_id
-    refs = dict(seg.get("refs") or {})
-    images = list(refs.get("images") or [])
-    for name in (identity_names or []):   # 原运行时由 NeoH3AddContext 注入的身份参考，这里走模板参考槽位补齐
-        if name not in images:
-            images.append(name)
-    if images:
-        refs["images"] = images
-    if refs:
-        seg["refs"] = refs
-    return {"shared": dict(spec.get("shared") or {}), "segments": [seg]}
+    single = {"shared": dict(spec.get("shared") or {}), "segments": [seg]}
+    if spec.get("identity_images"):
+        single["identity_images"] = list(spec["identity_images"])
+    return single
 
 
 def resolve_anchors(spec: dict, index: int, anchors: str, continuity: bool, context_frames: int,
@@ -307,13 +304,13 @@ def run_single_segment(recipe: str, index: int, anchors: str, seed: int, *, step
                                                              warnings, film_entry)
     mode = {"both": "fl2v", "first": "i2v"}.get(anchors)
     skill_id = _pick_anchor_skill(segments[index].get("skill_id") or "", need_last=(mode == "fl2v")) if mode else ""
-    identity_names = _inherited_identity_names(segments) if continuity else []
-    single = _regen_spec(spec, index, mode, first_name, last_name, skill_id, identity_names)
+    single = _regen_spec(spec, index, mode, first_name, last_name, skill_id)
 
     if seed is None or int(seed) < 0:
         seed = random.randint(0, 2 ** 63 - 1)   # 默认换种子：同参数同种子会得到几乎一样的结果
     seed = int(seed)
-    (video,) = NeoH3VideoDirector()._run_spec(single, seed, width, height, continuity=False, context_frames=0,
+    # 传真实 continuity：身份参考随连续性生效（与整条配方一致）；context_frames=0 保证单段不链入上下文窗口
+    (video,) = NeoH3VideoDirector()._run_spec(single, seed, width, height, continuity=continuity, context_frames=0,
                                               model=None, steps=int(steps), preview=bool(preview),
                                               unique_id=preview_node_id)
     frames = int(video.get_components().images.shape[0])

@@ -143,7 +143,12 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
                          preview_url=f"/view?filename={quote(fname)}&subfolder=NeoDirector&type=input&t={int(time.time())}")
             task["processed"] += 1
             continue
-        prompt = str(seg.get("storyboard_prompt") or seg.get("prompt")).strip()
+        storyboard_prompt = str(seg.get("storyboard_prompt") or "").strip()
+        prompt = storyboard_prompt or str(seg.get("prompt") or "").strip()
+        # 缺分镜提示词 → 回退视频提示词（旧配方/未拆分快照仍可跑），但要让用户看见：
+        # 视频提示词写的是运动过程与时间流，不一定适合当生图提示词
+        fallback_warnings = [] if storyboard_prompt else ["该段没有分镜提示词，已回退用视频提示词生图（含运动描述，不一定适合生图）"]
+        entry["warnings"] = list(fallback_warnings)
         # 参考图：角色/背景在前，链式最近两张分镜在后（<imageN> 顺序与之一致），总数截断到上限。
         # 单段重生成时链式参考从磁盘取已落盘的分镜（本任务里没有前面各段的记录）。
         refs = list(story_refs)
@@ -175,7 +180,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         try:
             params = resolve_request(body, settings, max_refs=_STORYBOARD_MAX_REFS, auto_quadview=False)
             graph, warns = render_template(template, params)
-            entry["warnings"] = list(warns) + (["该段带参考图，已切 Qwen Image 2.1 参考编辑"] if eff_skill != skill_id else [])
+            entry["warnings"] = fallback_warnings + list(warns) + (["该段带参考图，已切 Qwen Image 2.1 参考编辑"] if eff_skill != skill_id else [])
             # 进程内执行不走 ComfyUI 队列，没有 last_prompt_id；显式给一个执行上下文（prompt_id=task_id），
             # 采样器上报进度时 hook 靠它取 prompt_id/node_id，否则会回退读 server_instance.last_prompt_id → AttributeError。
             with CurrentNodeContext(prompt_id=task_id, node_id=f"storyboard_{name}_{n}"):

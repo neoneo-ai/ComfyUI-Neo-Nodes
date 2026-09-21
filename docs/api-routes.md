@@ -54,7 +54,7 @@
 | GET | `/rs_recipes/asset` | 配方资源文件 |
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |
-| GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（每段首帧/尾帧与参考图·视频·音频均已解析为 input 名，并给出有效生成模式 `mode`） |
+| GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（每段首帧/尾帧与参考图·视频·音频均已解析为 input 名，并给出有效生成模式 `mode`）；配方有「角色参考图」且未关掉身份参考时另带 `identity_images[]`（≤4，视频段身份参考） |
 | POST | `/rs_recipes/director_generate_story` | 导演编辑器：主题 → LLM 生成完整故事脚本（纯文本，不再接收角色/背景参考） |
 | POST | `/rs_recipes/director_split_segments` | 导演编辑器：已确认故事按目标秒数拆分场景并重生成每段提示词（纯文本，不再接收角色/背景参考），返回 `segments[]` |
 | POST | `/rs_recipes/director_optimize_prompts` | 导演编辑器「统一设置」：各段优化前原文 + 模式 + 统一参考清单 → LLM 按 H3 官方格式逐段重写（附参考图走多模态），返回数量与分段数一致的 `prompts[]` |

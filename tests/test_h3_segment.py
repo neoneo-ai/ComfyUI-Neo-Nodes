@@ -207,19 +207,26 @@ class RegenSpecTests(unittest.TestCase):
             "segments": [{"skill_id": "seg-skill", "prompt": "p", "mode": "r2v", "duration_sec": 5,
                           "refs": {"images": ["a.png"], "videos": ["v.mp4"]}}]}
 
-    def test_both_anchors_rewrite_to_fl2v_and_append_identity_refs(self):
-        out = h3_segment._regen_spec(self.SPEC, 0, "fl2v", "first.png", "last.png", "anchor-skill", ["id.png", "a.png"])
+    def test_both_anchors_rewrite_to_fl2v_without_touching_segment_refs(self):
+        out = h3_segment._regen_spec(self.SPEC, 0, "fl2v", "first.png", "last.png", "anchor-skill")
         self.assertEqual(out["shared"], self.SPEC["shared"])
         seg = out["segments"][0]
         self.assertEqual(seg["mode"], "fl2v")
         self.assertEqual((seg["ref_input"], seg["last_input"]), ("first.png", "last.png"))
         self.assertEqual(seg["skill_id"], "anchor-skill")
-        self.assertEqual(seg["refs"]["images"], ["a.png", "id.png"])     # 身份参考去重追加
+        # 身份参考走运行时注入通路（i2v/fl2v 模板只有单路首帧槽位），不再混进段参考
+        self.assertEqual(seg["refs"]["images"], ["a.png"])
         self.assertEqual(seg["refs"]["videos"], ["v.mp4"])
         self.assertEqual(seg["prompt"], "p")
+        self.assertNotIn("identity_images", out)     # 配方没有角色参考图
+
+    def test_recipe_identity_images_ride_into_single_segment_spec(self):
+        # 配方「角色参考图」原样带进单段 spec：单段重生成也靠它锚住角色身份
+        out = h3_segment._regen_spec(dict(self.SPEC, identity_images=["char.png"]), 0, None, None, None, "")
+        self.assertEqual(out["identity_images"], ["char.png"])
 
     def test_no_anchors_keeps_original_mode_and_skill(self):
-        out = h3_segment._regen_spec(self.SPEC, 0, None, None, None, "", [])
+        out = h3_segment._regen_spec(self.SPEC, 0, None, None, None, "")
         seg = out["segments"][0]
         self.assertEqual(seg["mode"], "r2v")
         self.assertEqual(seg["skill_id"], "seg-skill")
@@ -455,7 +462,8 @@ class RunSingleSegmentTests(_RecipeCase):
             self.assertEqual(call["seed"], out["seed"])
             self.assertGreaterEqual(call["seed"], 0)
             self.assertEqual((call["steps"], call["preview"], call["unique_id"]), (8, True, "42"))
-            self.assertEqual(call["continuity"], False)     # 单段不走上下文窗口：靠锚点/自身模式接续
+            # 连续性开关按入参透传（身份参考随它生效）；单段不链入上下文窗口：context_frames 恒为 0
+            self.assertEqual((call["continuity"], call["context_frames"]), (True, 0))
             self.assertEqual(call["model"], None)           # 队列执行：模型由模板里的加载器提供
             self.assertEqual(call["spec"]["segments"][0]["skill_id"], "sk-a")
             self.assertEqual((out["frames"], out["anchors"], out["film"]), (124, "none", None))

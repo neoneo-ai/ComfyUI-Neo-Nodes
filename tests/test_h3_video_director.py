@@ -370,6 +370,15 @@ class NormalizeDirectorTests(unittest.TestCase):
             {"shared": {"mode": "xxx"}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
         self.assertNotIn("mode", shared)
 
+    def test_identity_refs_only_written_when_disabled(self):
+        # 默认开 → 不落盘该键（旧配方行为不变）；显式关掉才写 false
+        shared, _ = recipes._normalize_director(
+            {"shared": {"identity_refs": True}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertNotIn("identity_refs", shared)
+        shared, _ = recipes._normalize_director(
+            {"shared": {"identity_refs": False}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertFalse(shared["identity_refs"])
+
     def test_segment_mode_kept_when_valid_dropped_when_invalid(self):
         _, segs = recipes._normalize_director(
             {"shared": {"mode": "mixed"},
@@ -1158,10 +1167,12 @@ class DirectorOrchestrationTests(unittest.TestCase):
                 "latent_image": ["5", 1]}},
         }
 
-    def _run_r2v_chain(self, continuity=True, context_frames=22, frame_counts=(124, 141, 141), mode="r2v", duration_sec=-1):
+    def _run_r2v_chain(self, continuity=True, context_frames=22, frame_counts=(124, 141, 141), mode="r2v",
+                       duration_sec=-1, identity_images=None):
         """三段配方跑一次（模板用 r2v 形状）；返回 ([(graph, overrides), ...], [各段 body], [各段 _FakeVideo], 输出 VIDEO)。
 
-        第 1 段自带 a.png/b.png（身份来源）、第 2 段带 c.png、第 3 段带 a.png（用于验证身份去重）。
+        第 1 段自带 a.png/b.png（身份来源）、第 2 段带 c.png、第 3 段带 a.png（用于验证身份去重）；
+        identity_images 模拟配方「角色参考图」（load_director_spec 的 spec 级身份参考）。
         """
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
@@ -1171,11 +1182,14 @@ class DirectorOrchestrationTests(unittest.TestCase):
         videos = [_FakeVideo(n, self.FPS, self.SR) for n in frame_counts]
         it = iter(videos)
         own = (["a.png", "b.png"], ["c.png"], ["a.png"])
-        h3d.load_director_spec = lambda name: {
+        spec = {
             "shared": {"width": 8, "height": 8, "seed": 1},
             "segments": [{"skill_id": f"s{i}", "prompt": f"p{i}", "duration_sec": 5, "mode": mode,
                           "ref_input": "ff.png" if (mode == "i2v" and i == 0) else None,
                           "refs": {"images": own[i]}} for i in range(len(frame_counts))]}
+        if identity_images:
+            spec["identity_images"] = list(identity_images)
+        h3d.load_director_spec = lambda name: spec
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
@@ -1263,6 +1277,59 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertEqual(bodies[1]["references"][0]["data"],
                          h3_video_director._image_to_data_uri(tail[:1]))
         self.assertEqual(bodies[1]["references"][1]["value"], "c.png")    # 该段自己的素材照旧排在后面
+
+    def test_identity_names_put_recipe_characters_first_then_segment_refs(self):
+        """身份来源：配方角色参考图在前，段自带参考补齐；重复的只留一份。"""
+        segs = [{"refs": {"images": ["a.png", "char.png"]}}]
+        spec = {"identity_images": ["char.png"], "segments": segs}
+        self.assertEqual(h3_video_director._identity_names(spec, segs), ["char.png", "a.png"])
+
+    def test_identity_names_capped_at_four(self):
+        segs = [{"refs": {"images": [f"r{i}.png" for i in range(6)]}}]
+        spec = {"identity_images": ["c1.png", "c2.png", "c3.png"], "segments": segs}
+        self.assertEqual(h3_video_director._identity_names(spec, segs),
+                         ["c1.png", "c2.png", "c3.png", "r0.png"])
+
+    def test_recipe_character_refs_anchor_first_segment(self):
+        """配方角色参考图独立于段自带参考：首段只有首帧（分镜关键帧看不到脸）时也注入身份参考。"""
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
+                h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin)
+        graphs = []
+        segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5,
+                     "ref_input": "sb01.png", "mode": "i2v"}]
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 1},
+                                               "identity_images": ["char.png"], "segments": segments}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.load_skill_workflow = lambda id: {"1": {}}
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.resolve_video_params = lambda body, cfg, **kw: {"prompt": body["prompt"]}
+        h3d.render_template = lambda tpl, params: (self._r2v_template(), [])
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: graphs.append(graph) or _FakeVideo(
+            124, self.FPS, self.SR)
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=True, context_frames=0)
+        finally:
+            self._restore(orig)
+        nodes = [n for n in graphs[0].values() if n.get("class_type") == "NeoH3AddContext"]
+        self.assertEqual([graphs[0][n["inputs"]["identity_image"][0]]["inputs"]["image"] for n in nodes],
+                         ["char.png"])
+        self.assertTrue(all("context_image" not in n["inputs"] for n in nodes))   # context_frames=0：只注入身份
+
+    def test_recipe_identity_images_injected_into_every_segment(self):
+        """配方角色参考图注入每一个段（含首段）；段自己已经送出的参考不重复注入。"""
+        calls, _, _, _ = self._run_r2v_chain(identity_images=["char.png"], context_frames=0,
+                                             frame_counts=(124, 124, 124))
+        injected = []
+        for graph, _ in calls:
+            nodes = [n for n in graph.values() if n.get("class_type") == "NeoH3AddContext"]
+            injected.append([graph[n["inputs"]["identity_image"][0]]["inputs"]["image"] for n in nodes])
+        # 首段：自己的 a.png/b.png 已由 references 送出，只补配方角色参考图（不重复注入）
+        self.assertEqual(injected[0], ["char.png"])
+        # 后续段：配方角色参考图仍在前（作为身份第一来源），再补齐首个带参考素材的段的图
+        self.assertEqual(injected[1], ["char.png", "a.png", "b.png"])
 
     def test_i2v_tier_a_still_chains_prev_tail_as_first_frame(self):
         """context_frames=0 时 i2v 段仍是 Tier A：上段尾帧当首帧链入（data URI）。"""
@@ -2492,6 +2559,74 @@ class StoryboardStoryRefsTests(unittest.TestCase):
         self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), [])
 
 
+class DirectorIdentityRefsTests(unittest.TestCase):
+    """load_director_spec 把配方「角色参考图」（story.characters）解析成 identity_images（视频身份参考）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="neo_idrefs_")
+        self.custom = os.path.join(self._tmp, "custom")
+        os.makedirs(self.custom)
+        import pathlib
+        self._orig_custom = recipes.CUSTOM_DIR
+        recipes.CUSTOM_DIR = pathlib.Path(self.custom)
+        # 桩掉拷贝（确定性返回文件名）：只验证读取顺序 / 去重 / 截断，不测内容去重改名
+        self._orig_copy = recipes._copy_media_to_input
+        recipes._copy_media_to_input = lambda src, fn: (fn, False)
+        self.recipe_dir = os.path.join(self.custom, "id-recipe")
+        os.makedirs(os.path.join(self.recipe_dir, "assets"))
+
+    def tearDown(self):
+        recipes._copy_media_to_input = self._orig_copy
+        recipes.CUSTOM_DIR = self._orig_custom
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _write_recipe(self, story=None, segments=None, shared=None):
+        body = {"name": "id-recipe", "type": "video_director", "shared": shared or {},
+                "segments": segments or [{"skill_id": "h3_t2v", "prompt": "p"}]}
+        if story is not None:
+            body["story"] = story
+        with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump(body, f)
+
+    def _write_asset(self, name):
+        _write_png(os.path.join(self.recipe_dir, "assets", name))
+
+    def test_characters_become_identity_images_ignoring_backgrounds(self):
+        self._write_recipe({"characters": [{"filename": "char.png"}, {"filename": "char2.png"}],
+                            "backgrounds": [{"filename": "bg.png"}]})
+        for name in ("char.png", "char2.png", "bg.png"):
+            self._write_asset(name)
+        spec = recipes.load_director_spec("id-recipe")
+        # 背景图不承载角色身份 → 不进身份参考
+        self.assertEqual(spec["identity_images"], ["char.png", "char2.png"])
+
+    def test_missing_asset_and_duplicate_skipped(self):
+        self._write_recipe({"characters": [{"filename": "char.png"}, {"filename": "gone.png"},
+                                           {"filename": "char.png"}]})
+        self._write_asset("char.png")
+        self.assertEqual(recipes.load_director_spec("id-recipe")["identity_images"], ["char.png"])
+
+    def test_capped_at_four(self):
+        self._write_recipe({"characters": [{"filename": f"c{i}.png"} for i in range(5)]})
+        for i in range(5):
+            self._write_asset(f"c{i}.png")
+        self.assertEqual(recipes.load_director_spec("id-recipe")["identity_images"],
+                         ["c0.png", "c1.png", "c2.png", "c3.png"])
+
+    def test_no_characters_omits_identity_images(self):
+        self._write_recipe({"idea": "只有主题"})
+        self.assertNotIn("identity_images", recipes.load_director_spec("id-recipe"))
+
+    def test_disabled_switch_skips_identity_images(self):
+        # 界面上关掉「角色身份参考」→ 不解析也不注入（对比测试用）
+        story = {"characters": [{"filename": "char.png"}]}
+        self._write_recipe(story, shared={"identity_refs": False})
+        self._write_asset("char.png")
+        self.assertNotIn("identity_images", recipes.load_director_spec("id-recipe"))
+        self._write_recipe(story, shared={"identity_refs": True})
+        self.assertEqual(recipes.load_director_spec("id-recipe")["identity_images"], ["char.png"])
+
+
 class StoryboardGenerateTests(unittest.TestCase):
     """端到端（桩掉生图执行）：参考解析/链式/文件名/幂等跳过/单段重生成序号对齐。"""
 
@@ -2628,7 +2763,8 @@ class StoryboardGenerateTests(unittest.TestCase):
 
         storyboard.load_skill_workflow = _load
         storyboard._storyboard_story_refs = lambda name: []   # 无角色/背景参考：第 1 段纯文生图
-        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}], skill_id="image_gen")
+        st = self._generate(segments=[{"prompt": "段一", "storyboard_prompt": "首帧一"},
+                                      {"prompt": "段二", "storyboard_prompt": "首帧二"}], skill_id="image_gen")
         self.assertEqual(st["status"], "done")
         # 端点校验一次 + 逐段懒加载：第 1 段用所选 Krea2，第 2 段（带链式参考）切 Qwen
         self.assertEqual(asked[-2:], ["image_gen", "qwen_image_21"])
@@ -2644,7 +2780,8 @@ class StoryboardGenerateTests(unittest.TestCase):
             return json.loads(json.dumps(self._TEMPLATE))
 
         storyboard.load_skill_workflow = _load
-        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}],
+        st = self._generate(segments=[{"prompt": "段一", "storyboard_prompt": "首帧一"},
+                                      {"prompt": "段二", "storyboard_prompt": "首帧二"}],
                             skill_id="image_gen", chain_prev=True, mode="t2i")
         self.assertEqual(st["status"], "done")
         for d in st["details"]:
@@ -2663,7 +2800,8 @@ class StoryboardGenerateTests(unittest.TestCase):
             return json.loads(json.dumps(self._TEMPLATE))
 
         storyboard.load_skill_workflow = _load
-        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}],
+        st = self._generate(segments=[{"prompt": "段一", "storyboard_prompt": "首帧一"},
+                                      {"prompt": "段二", "storyboard_prompt": "首帧二"}],
                             skill_id="image_gen", chain_prev=True, mode="r2i")
         self.assertEqual(st["status"], "done")
         for d in st["details"]:
@@ -2672,6 +2810,20 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertEqual(self.captured[0][0], ["char.png"])
         self.assertEqual(self.captured[1][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
         self.assertTrue(all(sid == "image_gen" for sid in asked), "r2i 不强制切 Qwen Image 2.1")
+
+    def test_storyboard_prompt_is_what_gets_rendered(self):
+        # 分镜图用 storyboard_prompt（拆分 LLM 产出的静态画面提示词），不是视频段提示词；无回退 warning
+        st = self._generate(segments=[{"prompt": "镜头跟随她走进大厅", "storyboard_prompt": "女孩站在门内，中景，暖光"}])
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(self.captured[0][1], "女孩站在门内，中景，暖光")
+        self.assertEqual(st["details"][0]["warnings"], [])
+
+    def test_missing_storyboard_prompt_falls_back_with_warning(self):
+        # 旧配方 / 缺 storyboard_prompt：回退视频提示词，但必须留 warning 让用户看见（视频提示词含运动描述）
+        st = self._generate(segments=[{"prompt": "镜头跟随她走进大厅"}])
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(self.captured[0][1], "镜头跟随她走进大厅")
+        self.assertTrue(any("回退" in w for w in st["details"][0]["warnings"]))
 
     def test_invalid_mode_rejected(self):
         class _Req:

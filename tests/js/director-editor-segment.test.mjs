@@ -2325,6 +2325,119 @@ test("导演编辑器：image_mode/image_skill/frame_source 保存回显；分�
     assert.equal(saveCall.body.story.frame_source, "storyboard", "frame_source 随 story 落盘");
 });
 
+test("导演编辑器：分镜回退用视频提示词时点名提示（后端 warning 不再被吞掉）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "image_gen", name: "Krea2 文生图", gen_image: true }]));
+    mockRoute("/neo_video_gen/storyboard_generate", () => jsonResponse({ success: true, task_id: "t-fb", total: 2 }));
+    const fallbackWarn = "该段没有分镜提示词，已回退用视频提示词生图（含运动描述，不一定适合生图）";
+    mockRoute("/neo_video_gen/storyboard_status/t-fb", () => jsonResponse({
+        success: true, status: "done", total: 2, processed: 2,
+        details: [
+            { index: 0, status: "done", filename: "storyboard_FB_01.png", warnings: [fallbackWarn] },
+            { index: 1, status: "done", filename: "storyboard_FB_02.png", warnings: [] },
+        ],
+    }));
+
+    await openDirectorEditor({
+        name: "FB",
+        shared: { mode: "t2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "镜头跟随她走进大厅", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "她停在吧台前", duration_sec: 5 },
+        ],
+    });
+    await sleep(60);
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const sbStatus = setupPane.querySelector(".neo-director-sb-status");
+    setupPane.querySelector(".neo-director-sb-gen").click();
+    for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
+
+    assert.match(sbStatus.textContent, /第 1 段无分镜提示词/, "状态文案点名回退的段号");
+    const warn = appState.toasts.find((t) => t.summary === "图片分镜" && /回退视频提示词/.test(t.detail || ""));
+    assert.ok(warn, "回退段弹提示条（不再静默用视频提示词生图）");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：身份参考开关默认开，关掉后随 shared 落盘并可回显（对比测试用）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "ID-ON" }));
+
+    // ① 新建/旧配方（无该键）：开关默认勾选，保存时不写该键
+    await openDirectorEditor({
+        name: "ID-ON",
+        shared: { mode: "i2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5 }],
+    });
+    await sleep(60);
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const chk = setupPane.querySelector(".neo-director-identity-refs");
+    assert.ok(chk, "分镜故事板页有身份参考开关");
+    assert.equal(chk.checked, true, "默认启用");
+    assert.ok(setupPane.querySelector(".neo-director-setup-sb") && setupPane.querySelector(".neo-director-identity-refs"),
+        "开关与图片分镜卡片同页");
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const onCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    assert.equal(onCall.body.shared.identity_refs, undefined, "默认开不落盘该键");
+});
+
+test("导演编辑器：身份参考开关关掉 → shared.identity_refs=false，重开回显未勾选", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "ID-OFF" }));
+
+    // ① 旧配方里已关掉 → 回显未勾选
+    await openDirectorEditor({
+        name: "ID-OFF",
+        shared: { mode: "i2v", identity_refs: false },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5 }],
+    });
+    await sleep(60);
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const chk = document.querySelector(".neo-director-pane-setup .neo-director-identity-refs");
+    assert.equal(chk.checked, false, "回显未勾选");
+
+    // ② 勾回来 → 保存不再带该键（恢复默认；保存后编辑器自动关闭）
+    chk.checked = true;
+    chk.dispatchEvent(new Event("change"));
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    let saveCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    assert.equal(saveCall.body.shared.identity_refs, undefined, "勾回启用后不再落盘该键");
+
+    // ③ 再关掉一次并保存 → 写 false
+    fetchLog.length = 0;
+    await openDirectorEditor({
+        name: "ID-OFF",
+        shared: { mode: "i2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5 }],
+    });
+    await sleep(60);
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板").click();
+    await sleep(30);
+    const chk2 = document.querySelector(".neo-director-pane-setup .neo-director-identity-refs");
+    chk2.checked = false;
+    chk2.dispatchEvent(new Event("change"));
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    saveCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    assert.equal(saveCall.body.shared.identity_refs, false, "关掉时落盘 false");
+});
+
 test("导演编辑器关闭保护：无修改直接关；有未保存修改先出确认条（保存并关闭 / 放弃修改 / 继续编辑）", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };

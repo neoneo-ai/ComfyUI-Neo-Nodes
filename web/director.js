@@ -1378,6 +1378,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                         ? { width: outW, height: outH, aspect_ratio: DIRECTOR_CUSTOM }
                         : { width: outW, height: outH, aspect_ratio: aspectSel.value, megapixels: directorClampMp(mpInp.value) },
                     { mode: gMode },
+                    // 身份参考默认开：只有关掉时才落盘（重开时由该键回显开关）
+                    identityRefsChk.checked ? {} : { identity_refs: false },
                 ),
                 segments,
                 // 自动故事板内容（主题 / 脚本 / 粒度 / 图片分镜设置）：随配方落盘，重新打开编辑器回显。
@@ -1582,7 +1584,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     fillSbSkills();   // 初始填充（异步，不阻塞）
     const sbCard = $el('div', { className: 'neo-director-setup-sb' }, [
         $el('div', { className: 'neo-director-refs-head' }, [
-            $el('span', { className: 'neo-director-field-label', textContent: '🎨 图片分镜（逐段关键帧；i2v/fl2v 段自动用作首帧）' }),
+            $el('span', { className: 'neo-director-field-label', title: '角色参考图同时是视频各段的身份参考（「连续性」开启时生效）：关键帧是背影 / 局部特写、看不到脸时靠它保住角色身份', textContent: '🎨 图片分镜（逐段关键帧；i2v/fl2v 段自动用作首帧）' }),
         ]),
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { className: 'neo-director-field-label', textContent: '生图模式' }), sbModeSel,
@@ -1629,6 +1631,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             }) });
             const data = await res.json();
             if (!data.success) { sbStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '图片分镜', detail: data.error || '生成失败', life: 5000 }); return; }
+            const fallbacks = [];   // 回退用视频提示词生图的段号：后端 warning 里点名，收尾时一次告诉用户
             for (;;) {
                 await new Promise(r => setTimeout(r, 1500));
                 const st = await (await fetch(`/neo_video_gen/storyboard_status/${data.task_id}`)).json();
@@ -1636,6 +1639,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 sbStatus.textContent = `分镜 ${st.processed}/${st.total}…`;
                 let segUpdated = false;
                 for (const d of (st.details || [])) {
+                    for (const w of (d.warnings || [])) {
+                        if (w.includes('回退') && !fallbacks.includes(d.index + 1)) fallbacks.push(d.index + 1);
+                    }
                     if (d.status === 'done' && d.filename) {
                         const row = rows[d.index];
                         if (!row) continue;
@@ -1649,8 +1655,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 if (st.status === 'done' || st.status === 'cancelled') {
                     markDirty();
                     const failed = (st.details || []).filter(d => d.status === 'failed').length;
-                    sbStatus.textContent = st.status === 'cancelled' ? '已停止' : `完成${failed ? `（${failed} 段失败）` : ''}`;
+                    const fbNote = fallbacks.length ? `；第 ${fallbacks.join('、')} 段无分镜提示词，用视频提示词生图` : '';
+                    sbStatus.textContent = st.status === 'cancelled' ? '已停止' : `完成${failed ? `（${failed} 段失败）` : ''}${fbNote}`;
                     if (failed) app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: `${failed} 段生成失败，见各段状态`, life: 5000 });
+                    if (fallbacks.length) app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: `第 ${fallbacks.join('、')} 段没有分镜提示词，已回退视频提示词（含运动描述，不一定适合生图）：建议重新拆分或补上分镜提示词`, life: 7000 });
                     break;
                 }
             }
@@ -1930,12 +1938,26 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         });
     }
 
+    // 身份参考开关（默认开）：配方「角色参考图」是否作为视频各段身份参考——关掉就能与旧行为对比。
+    // 放在本页（不是 🎨 卡片内）：r2v / 统一图片方式下卡片隐藏，但这条设置对各段仍然生效。
+    const identityRefsChk = $el('input', { className: 'neo-director-identity-refs', type: 'checkbox' });
+    identityRefsChk.checked = exShared.identity_refs !== false;
+    identityRefsChk.addEventListener('change', () => markDirty());
+    const identityRefsRow = $el('div', { className: 'neo-director-row neo-director-shared' }, [
+        $el('label', { className: 'neo-director-field-label', textContent: '角色身份参考' }),
+        $el('label', {
+            className: 'neo-director-seglen-wrap',
+            title: '把「角色参考图」作为各段身份参考（关键帧是背影 / 局部特写、看不到脸时靠它保住角色身份）；需「连续性」开启。关掉便于做前后对比测试',
+        }, [identityRefsChk, $el('span', { textContent: '启用' })]),
+    ]);
+
     const setupPane = $el('div', { className: 'neo-director-pane neo-director-pane-setup' }, [
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '分镜 / 首帧方式' }), frameSourceSel,   // 逐段图片分镜 ↔ 统一图片，严格二选一
         ]),
         uniR2vBlock,     // 全参考：三组参考素材
         sbCard,         // 🎨 图片分镜（逐段关键帧；i2v/fl2v 下与统一首帧互斥）
+        identityRefsRow, // 身份参考开关（关掉 = 旧行为，便于对比）
         uniFrameBlock,   // 图生 / 首尾帧：统一首帧（+ 尾帧）
         uniT2vHint,      // 文生：无需素材说明
         uniMixedHint,    // 混合：逐段设置提示

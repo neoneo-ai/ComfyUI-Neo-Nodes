@@ -447,6 +447,20 @@ def _inherited_identity_names(segments):
     return []
 
 
+def _identity_names(spec, segments):
+    """本次生成要注入各段的身份参考图：配方「角色参考图」在前，段自带参考补齐；去重截 4。
+
+    配方角色参考图（load_director_spec 的 identity_images）是身份的第一来源——分镜关键帧
+    不含面部（背影 / 局部特写）时，它是唯一能锚住角色身份的东西；段自带参考（首个带参考
+    素材的段）按既有语义补齐。
+    """
+    names = []
+    for name in list(spec.get("identity_images") or []) + _inherited_identity_names(segments):
+        if name not in names:
+            names.append(name)
+    return names[:4]
+
+
 def _align_frame_count(n):
     """向上对齐到 H3 的 17k+5 帧网格。"""
     n = max(5, int(n))
@@ -605,7 +619,7 @@ class NeoH3VideoDirector:
 
         # 跨段上下文窗口：上段尾部 window 帧作为下段开头的重生成窗口（0 = 退回 Tier A 的尾帧链入）
         window = _align_context_frames(context_frames) if continuity and int(context_frames or 0) > 0 else 0
-        identity_names = _inherited_identity_names(segments) if continuity else []
+        identity_names = _identity_names(spec, segments) if continuity else []
 
         _DIRECTOR_PROGRESS.update(active=True, segment_index=progress_index - 1,
                                   total_segments=max(1, int(progress_total or len(segments))), step=0,
@@ -677,9 +691,10 @@ class NeoH3VideoDirector:
                         refs.append({"kind": "input", "value": name, "media": "video"})
                     for name in (seg_refs.get("audios") or []):
                         refs.append({"kind": "input", "value": name, "media": "audio"})
-                # 身份继承：首段的身份参考图领养到后续段（本段已经送出的那些不再重复注入）
+                # 身份参考：配方角色参考图 + 段自带参考，注入每个还没有这些图的段
+                # （首段也在内——分镜关键帧没脸时它是唯一的身份锚点；段自带的参考不重复注入）
                 sent = {r["value"] for r in refs if r.get("kind") == "input"}
-                inherited = [n for n in identity_names if n not in sent] if i > 0 else []
+                inherited = [n for n in identity_names if n not in sent]
                 if refs:
                     body["references"] = refs
                 if mode == "fl2v":
