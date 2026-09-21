@@ -12,6 +12,7 @@ import io
 import json
 import os
 import pathlib
+import random
 import sys
 import shutil
 import tempfile
@@ -2556,7 +2557,8 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.captured = []   # 每次 execute_graph_inprocess 收到的 (参考图列表, prompt)
 
         def _fake_execute(graph, *args):
-            self.captured.append((self._refs_of(graph), graph["4"]["inputs"]["prompt"]))
+            self.captured.append((self._refs_of(graph), graph["4"]["inputs"]["prompt"],
+                                  graph["6"]["inputs"]["seed"]))   # (参考图, prompt, KSampler seed)
             return torch.zeros(1, 8, 6, 3)   # IMAGE 张量 [B,H,W,C]（execute_graph_inprocess 真实契约）
 
         orig = (storyboard.load_skill_workflow, storyboard.get_skill_gen_config,
@@ -2573,8 +2575,11 @@ class StoryboardGenerateTests(unittest.TestCase):
         recipes.CUSTOM_DIR = self._orig_custom
 
     def _generate(self, **extra):
-        """提交生成请求并在同一事件循环里轮询到结束（后台任务跑在提交时的循环上）。"""
-        payload = {"name": "sb-e2e", "skill_id": "qwen_image_21", "chain_prev": True, "seed": 7}
+        """提交生成请求并在同一事件循环里轮询到结束（后台任务跑在提交时的循环上）。seed=None 时省略该字段。"""
+        payload = {"name": "sb-e2e", "skill_id": "qwen_image_21", "chain_prev": True}
+        seed = extra.pop("seed", 7)
+        if seed is not None:
+            payload["seed"] = seed
         payload.update(extra)
 
         class _Req:
@@ -2690,6 +2695,33 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertEqual(st["status"], "done")
         self.assertEqual(len(self.captured), 1, "已有产物应跳过、只生成缺失的第 2 段")
         self.assertEqual(st["details"][0]["filename"], "storyboard_sb-e2e_01.png")
+
+    def test_force_regenerates_existing_storyboard(self):
+        # 再次点「🎨 生成图片分镜」带 force=True：已有产物的段也重新生成（不做幂等跳过）
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
+        os.makedirs(out_dir, exist_ok=True)
+        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))
+        self.captured.clear()
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}], force=True)
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(len(self.captured), 2, "force：两段都重新生成（含已有产物的一段）")
+
+    def test_force_without_seed_uses_fresh_random_base(self):
+        # 强制重生成且未钉种子 → 换新随机基（否则同 seed → 同图，重生成无意义）；显式钉的 seed 不受影响。
+        # 同一次生成内各段共用同一 seed（不再按段序号偏移）。
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
+        os.makedirs(out_dir, exist_ok=True)
+        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))
+        self.captured.clear()
+        orig_randint = random.randint
+        random.randint = lambda a, b: 987654
+        try:
+            st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}], force=True, seed=None)
+        finally:
+            random.randint = orig_randint
+        self.assertEqual(st["status"], "done")
+        # 两段共用新基 987654（不再是旧默认 0+n）
+        self.assertEqual([c[2] for c in self.captured], [987654, 987654])
 
     def test_single_segment_regen_aligns_index_and_chains_from_disk(self):
         out_dir = os.path.join(_INPUT_DIR, "NeoDirector")

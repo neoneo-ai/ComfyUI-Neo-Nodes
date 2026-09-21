@@ -8,7 +8,8 @@
 .neo-lightbox {
     position: fixed;
     inset: 0;
-    z-index: 20000;
+    /* 全屏查看器需盖住所有浮层（含导演编辑器面板 z-index: 2147483000） */
+    z-index: 2147483647;
     background: rgba(0, 0, 0, 0.72);
     display: flex;
     align-items: center;

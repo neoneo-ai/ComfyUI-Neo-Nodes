@@ -2313,6 +2313,7 @@ test("导演编辑器：image_mode/image_skill/frame_source 保存回显；分�
     assert.equal(sbCalls.length, 1, "发出分镜生成请求");
     assert.equal(sbCalls[0].mode, "r2i", "请求携带生图模式");
     assert.equal(sbCalls[0].chain_prev, true, "r2i 链式参考默认开");
+    assert.equal(sbCalls[0].force, true, "按钮点击强制重生成（已有产物也重出）");
 
     // 保存：三字段写入 story
     document.querySelector(".neo-director-save").click();
@@ -2704,6 +2705,55 @@ test("导演编辑器：打开带分镜图的旧配方 → 不报 TDZ，段行�
     assert.equal(activeFf.length, 0, "首帧正是该分镜图 → ✕ 一并取消选中");
     const afterItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
     assert.equal(afterItems[0].querySelector(".neo-director-setup-seg-thumb").textContent, "无", "清除后第一列回到「无」");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：对照表分镜图缩略点击打开 Lightbox（←/→ 切换各段，✕ 不触发）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const existing = {
+        name: "T-SB-LB",
+        shared: { width: 1344, height: 768 },
+        segments: [
+            { skill_id: "sk-a", prompt: "第一段", duration_sec: 5, storyboard: "sb_0_aaa.png" },
+            { skill_id: "sk-a", prompt: "第二段", duration_sec: 5, storyboard: "sb_1_bbb.png" },
+        ],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(20);
+    const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
+    assert.equal(setupItems.length, 2);
+
+    // 点第 2 段缩略图 → 打开 Lightbox（不再新开标签），各段分镜图在同一列表、从该段开始
+    setupItems[1].querySelector(".neo-director-setup-seg-thumb a").click();
+    await sleep(30);
+    let lb = document.querySelector(".neo-lightbox");
+    assert.ok(lb, "点击缩略图打开 Lightbox（不再新开标签）");
+    assert.equal(lb.querySelector(".neo-lightbox-counter").textContent, "2 / 2", "两段分镜图在同一列表，从第 2 段开始");
+    assert.match(String(lb.querySelector("img.neo-lightbox-media").src), /sb_1_bbb\.png/, "当前显示所点段的分镜图");
+
+    // ← 上一页 → 第 1 段分镜图
+    lb.querySelector(".neo-lightbox-prev").click();
+    await sleep(30);
+    assert.equal(lb.querySelector(".neo-lightbox-counter").textContent, "1 / 2", "上一页回到第 1 段");
+    assert.match(String(lb.querySelector("img.neo-lightbox-media").src), /sb_0_aaa\.png/, "上一页显示第 1 段分镜图");
+
+    lb.querySelector(".neo-lightbox-close").click();
+    await sleep(20);
+    assert.equal(document.querySelector(".neo-lightbox"), null, "Lightbox 正常关闭");
+
+    // ✕ 清除按钮只清记录，不触发 Lightbox
+    setupItems[0].querySelector(".neo-director-setup-seg-sb-clear").click();
+    await sleep(20);
+    assert.equal(document.querySelector(".neo-lightbox"), null, "✕ 未打开 Lightbox");
 
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);

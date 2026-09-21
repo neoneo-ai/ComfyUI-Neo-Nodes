@@ -168,7 +168,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         body = {
             "prompt": prompt,
             "width": entry["width"], "height": entry["height"],
-            "seed": int(base_seed) + n,
+            "seed": int(base_seed),   # 同一次生成各段共用同一 seed（提示词仍逐段不同），降低段间随机漂移；再次生成换新基
             "references": [{"kind": "input", "value": r} for r in refs[:_STORYBOARD_MAX_REFS]],
             "loras": settings.get("loras") or [],
         }
@@ -207,7 +207,8 @@ routes = PromptServer.instance.routes
 async def neo_video_gen_storyboard_generate(request):
     """按段串行生成图片分镜；返回 task_id 轮询进度。
     mode：t2i=纯文生图（忽略角色/背景参考与链式前帧）；r2i=参考编辑（用所选技能，不强制切 Qwen）；
-    缺省为旧行为（文生图默认 Krea2，带参考图的段自动切 Qwen Image 2.1）。"""
+    缺省为旧行为（文生图默认 Krea2，带参考图的段自动切 Qwen Image 2.1）。
+    force=True：已有产物的段也重新生成（未显式钉 seed 时换新随机基，避免同图）。"""
     try:
         data = await request.json()
     except Exception:
@@ -230,9 +231,13 @@ async def neo_video_gen_storyboard_generate(request):
         return web.json_response({"success": False, "error": f"生图技能 {skill_id} 没有工作流模板"}, status=400)
 
     shared = meta.get("shared") or {}
+    force = bool(data.get("force"))
     try:
         base_seed = int(data.get("seed")) if data.get("seed") not in (None, "") else int(shared.get("seed") or 0)
     except (TypeError, ValueError):
+        base_seed = random.randint(0, 2**31 - 1)
+    if force and data.get("seed") in (None, ""):
+        # 强制重生成 = 用户明确要「换图」：未钉种子时换新随机基（否则同 seed → 同图，重生成无意义）
         base_seed = random.randint(0, 2**31 - 1)
 
     task_id = str(uuid.uuid4())
@@ -252,7 +257,7 @@ async def neo_video_gen_storyboard_generate(request):
                         "filename": fname if (out_dir / fname).is_file() else None,
                         "error": "", "preview_url": None, "warnings": [],
                         "width": width, "height": height})
-        if data.get("force"):
+        if force:
             seg["_force"] = True
     _storyboard_tasks[task_id] = {
         "task_id": task_id, "name": name, "skill_id": skill_id,

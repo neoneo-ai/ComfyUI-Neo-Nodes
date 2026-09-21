@@ -8,6 +8,7 @@ import { $el } from "../../../../scripts/ui.js";
 import { DirectorTimeline } from "./director-timeline.js";
 import { saveRecipe, listVideoSkills, scanMediaNodes, widgetValueToRef } from "./recipes.js";
 import { attachSkillPickerToSelect } from "./skill.js";
+import { Lightbox } from "./lightbox.js";
 
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
@@ -1416,16 +1417,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 优化结果只写时间轴与「🎨 分镜故事板」页对照表，右栏保持拆分时的原文不变。
     const segPreview = $el('div', { className: 'neo-director-story-segs' });
     // 分镜图缩略：「🎨 分镜故事板」页对照表第一列就地展示（生成按钮与状态都在该页，结果也回显在那）。
-    // URL 用 /view（与 buildSeg 回显一致）；点击缩略图新开标签看大图。
+    // URL 用 /view（与 buildSeg 回显一致）；点击缩略图复用 Lightbox 看大图（←/→ 切换各段），中键/Ctrl+点仍新开标签。
     function sbViewUrl(fname) {
         return `/view?filename=${encodeURIComponent(fname)}&subfolder=NeoDirector&type=input&t=${Date.now()}`;
     }
-    /** 对照表第一列缩略：点击看大图；传 onClear 时右上角悬停出现 ✕（清除该段分镜图记录）。 */
-    function fillSegThumb(thumb, fname, onClear) {
+    /** 对照表第一列缩略：点击经 Lightbox 看大图（onOpen）；传 onClear 时右上角悬停出现 ✕（清除该段分镜图记录）。 */
+    function fillSegThumb(thumb, fname, onClear, onOpen) {
         if (!thumb || !fname) return;
         thumb.innerHTML = '';
         const url = sbViewUrl(fname);
-        const a = $el('a', { href: url, target: '_blank', rel: 'noopener', title: '点击查看大图' });
+        const a = $el('a', { href: url, target: '_blank', rel: 'noopener', title: '点击查看大图（←/→ 切换各段）' });
+        if (onOpen) a.addEventListener('click', (e) => { e.preventDefault(); onOpen(); });
         a.appendChild($el('img', { src: url, alt: fname, loading: 'lazy' }));
         thumb.appendChild(a);
         if (onClear) thumb.appendChild($el('button', { className: 'neo-director-setup-seg-sb-clear', type: 'button', title: '清除该段分镜图（不影响已选首帧）', textContent: '✕', onclick: onClear }));
@@ -1623,6 +1625,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const res = await fetch('/neo_video_gen/storyboard_generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
                 name, segments, skill_id: sbSkillSel.value || 'qwen_image_21',
                 chain_prev: sbModeSel.value === 'r2i' && sbChainChk.checked, mode: sbModeSel.value,
+                force: true,   // 按钮点击 = 重新生成：已有产物的段也重出（后端换新随机种子，不重复旧图）
             }) });
             const data = await res.json();
             if (!data.success) { sbStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '图片分镜', detail: data.error || '生成失败', life: 5000 }); return; }
@@ -1881,6 +1884,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             $el('span', { textContent: '优化前' }),
             $el('span', { textContent: '优化后' }),
         ]));
+        // 各段分镜图汇总成一份 Lightbox 列表：点任一缩略图从该段开始，←/→ 在各段间切换；
+        // 统一图片方式各行共用同一张首帧，按文件名去重避免重复页
+        const src = frameSourceSel ? frameSourceSel.value : 'storyboard';
+        const sbItems = [];
+        const sbItemIdx = new Map();
         rows.forEach((row, i) => {
             const dur = row.querySelector('.neo-director-dur').value;
             const before = (origPrompts && origPrompts[i]) || row.querySelector('.neo-director-prompt').value || '';
@@ -1890,7 +1898,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (sbFname) {
                 // 悬停 ✕：清除该段分镜图记录（仅「逐段图片分镜」方式——统一图片方式本列显示的是统一首帧，
                 // 不由本段记录决定）。若该段首帧正是这张关键帧则一并取消选中；storyboard_prompt 快照保留，便于重新生成。
-                const clearStoryboard = ((frameSourceSel ? frameSourceSel.value : 'storyboard') !== 'unified' && row.dataset.storyboard)
+                const clearStoryboard = (src !== 'unified' && row.dataset.storyboard)
                     ? () => {
                         const fname = row.dataset.storyboard;
                         delete row.dataset.storyboard;
@@ -1900,7 +1908,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                         renderSetupSegs();   // 本列回到「无」
                     }
                     : null;
-                fillSegThumb(thumb, sbFname, clearStoryboard);
+                if (!sbItemIdx.has(sbFname)) {
+                    sbItemIdx.set(sbFname, sbItems.length);
+                    sbItems.push({ kind: 'image', url: sbViewUrl(sbFname), title: (src === 'unified' ? '统一首帧 · ' : `第 ${i + 1} 段 · `) + sbFname });
+                }
+                fillSegThumb(thumb, sbFname, clearStoryboard, () => Lightbox.open({ items: sbItems, index: sbItemIdx.get(sbFname) }));
             } else {
                 thumb.appendChild($el('span', { textContent: '无' }));
             }
