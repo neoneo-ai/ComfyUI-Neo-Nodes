@@ -117,7 +117,7 @@ class _FakeRequest:
 
 
 # ===========================================================================
-# 纯函数：_parse_segments / _describe_refs / _ref_names_descs / _read_input_image_bytes
+# 纯函数：_parse_segments / _read_input_image_bytes
 # ===========================================================================
 class ParseSegmentsTests(unittest.TestCase):
     def test_plain_json_array(self):
@@ -147,15 +147,6 @@ class ParseSegmentsTests(unittest.TestCase):
 
 
 class RefHelpersTests(unittest.TestCase):
-    def test_describe_refs_with_and_without_desc(self):
-        self.assertEqual(recipes._describe_refs(["a.png"], ["一只猫"]), "- a.png：一只猫")
-        self.assertEqual(recipes._describe_refs(["b.png"], []), "- b.png")
-
-    def test_ref_names_descs_keeps_order_and_drops_empty(self):
-        names, descs = recipes._ref_names_descs([{"filename": "a.png", "desc": "d1"}, {"filename": "  "}, {"filename": "b.png"}])
-        self.assertEqual(names, ["a.png", "b.png"])
-        self.assertEqual(descs, ["d1", ""])
-
     def test_read_input_image_bytes_missing_returns_none(self):
         self.assertIsNone(recipes._read_input_image_bytes(""))
         self.assertIsNone(recipes._read_input_image_bytes("../evil.png"))
@@ -173,14 +164,25 @@ class RefHelpersTests(unittest.TestCase):
 # ===========================================================================
 class GenerateStoryEndpointTests(unittest.TestCase):
     def test_success(self):
-        req = _FakeRequest({"idea": "一只机器猫找家", "characters": [{"filename": "cat.png", "desc": "橘色机器猫"}]})
+        req = _FakeRequest({"idea": "一只机器猫找家"})
         resp = _run_async(recipes.rs_recipes_director_generate_story(req))
         data = json.loads(resp.body)
         self.assertTrue(data["success"])
         self.assertEqual(data["story"], "生成的故事正文")
         call = _llm_calls[-1]
         self.assertIn("一只机器猫找家", call["text"])
-        self.assertIn("橘色机器猫", call["text"])
+        self.assertIsNone(call["images"], "故事生成不带参考图")
+
+    def test_refs_ignored(self):
+        # 旧请求体可能仍带 characters/backgrounds：后端忽略，不再喂给 LLM（一致性由 r2i 图片分镜负责）
+        req = _FakeRequest({"idea": "一只机器猫找家",
+                            "characters": [{"filename": "cat.png", "desc": "橘色机器猫"}]})
+        resp = _run_async(recipes.rs_recipes_director_generate_story(req))
+        data = json.loads(resp.body)
+        self.assertTrue(data["success"])
+        call = _llm_calls[-1]
+        self.assertNotIn("橘色机器猫", call["text"])
+        self.assertIsNone(call["images"])
 
     def test_empty_idea_rejected(self):
         req = _FakeRequest({"idea": "   "})
@@ -221,18 +223,16 @@ class SplitSegmentsEndpointTests(unittest.TestCase):
         finally:
             _llm.run_llm_task = original
 
-    def test_multimodal_fallback_to_text(self):
-        """带参考图失败（provider 不支持视觉）时，应自动降级为纯文本重试并成功。"""
+    def test_refs_ignored_no_images(self):
+        """拆分不再带参考图：旧请求体里的 backgrounds 被忽略（无图片字节、文本无 <imageN>）。"""
         original = _llm.run_llm_task
         calls = []
 
-        def _vision_fail(task_name, text, images=None, **kw):
-            calls.append(images)
-            if images:
-                return {"error": "provider does not support vision"}
+        def _rec(task_name, text, images=None, **kw):
+            calls.append((text, images))
             return {"status": "success", "segments": '[{"prompt": "ok", "duration_sec": 5}]'}
 
-        _llm.run_llm_task = _vision_fail
+        _llm.run_llm_task = _rec
         try:
             p = os.path.join(_INPUT_DIR, "ref.png")
             with open(p, "wb") as f:
@@ -241,9 +241,10 @@ class SplitSegmentsEndpointTests(unittest.TestCase):
             resp = _run_async(recipes.rs_recipes_director_split_segments(req))
             data = json.loads(resp.body)
             self.assertTrue(data["success"])
-            self.assertEqual(len(calls), 2)
-            self.assertTrue(calls[0])   # 第一次带图
-            self.assertFalse(calls[1])  # 第二次纯文本
+            self.assertEqual(len(calls), 1)
+            text, images = calls[0]
+            self.assertIsNone(images, "拆分不再发送参考图字节")
+            self.assertNotIn("<image", text)
         finally:
             _llm.run_llm_task = original
 

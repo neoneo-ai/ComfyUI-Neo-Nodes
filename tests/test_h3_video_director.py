@@ -54,6 +54,7 @@ _comfy_pe.add_wrapper_with_key = lambda *a, **k: None
 sys.modules["comfy.patcher_extension"] = _comfy_pe
 _comfy_utils = types.ModuleType("comfy.utils")
 _comfy_utils.common_upscale = lambda *a, **k: None
+_comfy_utils.PROGRESS_BAR_HOOK = None   # 进度钩子：e2e 用例装 hijack_progress 等价物，验证 last_prompt_id 回退
 sys.modules["comfy.utils"] = _comfy_utils
 _comfy_common_dit = types.ModuleType("comfy.ldm.common_dit")
 _comfy_common_dit.pad_to_patch_size = lambda *a, **k: None
@@ -165,6 +166,13 @@ _comfy_mm.vae_device = lambda *a, **k: torch.device("cpu")
 _comfy_mm.vae_dtype = lambda device, allowed=None: torch.float32
 _comfy_mm.unload_all_models = lambda: None      # 重生成前先卸载驻留模型（用例里只验证调用与顺序）
 _comfy_mm.soft_empty_cache = lambda force=False: None
+
+
+class _StubInterruptProcessingException(BaseException):
+    pass
+
+
+_comfy_mm.InterruptProcessingException = _StubInterruptProcessingException
 sys.modules["comfy.model_management"] = _comfy_mm
 
 _comfy_lf = types.ModuleType("comfy.latent_formats")
@@ -281,6 +289,14 @@ sys.modules["comfy_api"] = _comfy_api
 sys.modules["comfy_api.latest"] = _comfy_api_latest
 
 h3_video_director = _load("h3_video_director", "h3_video_director.py")
+# comfy_execution.utils 加载真实实现（自包含，仅依赖 contextvars）：storyboard 的 CurrentNodeContext
+# 与进度钩子的 get_executing_context 都靠它，e2e 用例要验证真实的执行上下文传播。
+import importlib.util
+_comfy_exec_utils_path = os.path.join(PLUGIN_DIR, "..", "..", "comfy_execution", "utils.py")
+_spec = importlib.util.spec_from_file_location("comfy_execution.utils", _comfy_exec_utils_path)
+_comfy_exec_utils = importlib.util.module_from_spec(_spec)
+sys.modules["comfy_execution.utils"] = _comfy_exec_utils
+_spec.loader.exec_module(_comfy_exec_utils)
 storyboard = _load("storyboard", "storyboard.py")
 
 
@@ -413,6 +429,21 @@ class NormalizeDirectorStoryTests(unittest.TestCase):
             {"story": {"idea": "x", "characters": [{"filename": "c_copied.png", "desc": "猫"}]}},
             {}, {"c_copied.png"})
         self.assertEqual(story["characters"], [{"filename": "c_copied.png", "desc": "猫"}])
+
+    def test_image_storyboard_settings_normalized(self):
+        # 图片分镜设置（t2i/r2i + 生图技能 + 分镜/首帧方式）随 story 落盘；非法值丢弃不落盘
+        story = recipes._normalize_director_story(
+            {"story": {"idea": "x", "image_mode": "r2i", "image_skill": "qwen_image_21",
+                       "frame_source": "unified"}}, {})
+        self.assertEqual(story["image_mode"], "r2i")
+        self.assertEqual(story["image_skill"], "qwen_image_21")
+        self.assertEqual(story["frame_source"], "unified")
+
+        story = recipes._normalize_director_story(
+            {"story": {"idea": "x", "image_mode": "v2i", "frame_source": "both", "image_skill": "  "}}, {})
+        self.assertIsNone(story["image_mode"])
+        self.assertIsNone(story["frame_source"])
+        self.assertIsNone(story["image_skill"])
 
 
 # ===========================================================================
@@ -2418,6 +2449,48 @@ class StoryboardDimsTests(unittest.TestCase):
         self.assertAlmostEqual(w / h, 16 / 9, places=2)
 
 
+class StoryboardStoryRefsTests(unittest.TestCase):
+    """_storyboard_story_refs 从 recipe["story"] 取角色/背景参考图（键名修复：不再误读 director_story）。"""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="neo_sbrefs_")
+        self.custom = os.path.join(self._tmp, "custom")
+        os.makedirs(self.custom)
+        import pathlib
+        self._orig_custom = recipes.CUSTOM_DIR
+        recipes.CUSTOM_DIR = pathlib.Path(self.custom)
+        self.recipe_dir = os.path.join(self.custom, "refs-recipe")
+        os.makedirs(os.path.join(self.recipe_dir, "assets"))
+        with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "refs-recipe", "type": "video_director",
+                       "story": {"characters": [{"filename": "char.png"}],
+                                 "backgrounds": [{"filename": "bg.png"}]}}, f)
+        _write_png(os.path.join(self.recipe_dir, "assets", "char.png"))
+        _write_png(os.path.join(self.recipe_dir, "assets", "bg.png"))
+        # 桩掉拷贝（确定性返回文件名）：只验证键名读取与角色/背景顺序，不测内容去重改名
+        self._orig_copy = storyboard._copy_media_to_input
+        storyboard._copy_media_to_input = lambda src, fn: (fn, False)
+
+    def tearDown(self):
+        storyboard._copy_media_to_input = self._orig_copy
+        recipes.CUSTOM_DIR = self._orig_custom
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_reads_story_key_chars_before_bg(self):
+        # 真实配方把故事存在 recipe["story"]；角色在前、背景在后（第 1 张为 Qwen Image 2.1 编辑目标）
+        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), ["char.png", "bg.png"])
+
+    def test_missing_asset_file_skipped(self):
+        os.remove(os.path.join(self.recipe_dir, "assets", "bg.png"))
+        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), ["char.png"])
+
+    def test_no_story_key_returns_empty(self):
+        # 旧配方没有 story 键 → 空列表（不报错）
+        with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "refs-recipe", "type": "video_director"}, f)
+        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), [])
+
+
 class StoryboardGenerateTests(unittest.TestCase):
     """端到端（桩掉生图执行）：参考解析/链式/文件名/幂等跳过/单段重生成序号对齐。"""
 
@@ -2429,8 +2502,8 @@ class StoryboardGenerateTests(unittest.TestCase):
         "4": {"class_type": "TextEncodeQwenImage21", "inputs": {
             "clip": ["2", 0], "prompt": "{{PROMPT}}", "negative_prompt": "{{NEGATIVE}}",
             "vae": ["3", 0],
-            "image_1": ["10", 0], "image_2": ["12", 0],
-            "image_3": ["14", 0], "image_4": ["16", 0]}},
+            "images.image_1": ["10", 0], "images.image_2": ["12", 0],
+            "images.image_3": ["14", 0], "images.image_4": ["16", 0]}},
         "5": {"class_type": "EmptyLatentImage", "inputs": {"width": "{{WIDTH}}", "height": "{{HEIGHT}}", "batch_size": 1}},
         "6": {"class_type": "KSampler", "inputs": {
             "model": ["1", 0], "seed": "{{SEED}}", "steps": 25, "cfg": 1.0,
@@ -2450,7 +2523,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         inputs = graph["4"]["inputs"]
         refs = []
         for i in (1, 2, 3, 4):
-            key = f"image_{i}"
+            key = f"images.image_{i}"
             if key not in inputs:
                 break
             src_id = inputs[key][0]   # LoadImage 节点 id
@@ -2473,8 +2546,8 @@ class StoryboardGenerateTests(unittest.TestCase):
         os.makedirs(os.path.join(self.recipe_dir, "assets"), exist_ok=True)
         with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
             json.dump({"name": "sb-e2e", "type": "video_director", "shared": {},
-                       "director_story": {"characters": [{"filename": "char.png"}],
-                                          "backgrounds": []}}, f)
+                       "story": {"characters": [{"filename": "char.png"}],
+                                 "backgrounds": []}}, f)
         _write_png(os.path.join(self.recipe_dir, "assets", "char.png"))
         # _storyboard_story_refs 被桩成返回 ["char.png"]（相对 input 目录）；resolve_request 会校验文件存在，
         # 故需在 input 目录放一份同名图。
@@ -2482,9 +2555,9 @@ class StoryboardGenerateTests(unittest.TestCase):
 
         self.captured = []   # 每次 execute_graph_inprocess 收到的 (参考图列表, prompt)
 
-        def _fake_execute(graph, task_id):
+        def _fake_execute(graph, *args):
             self.captured.append((self._refs_of(graph), graph["4"]["inputs"]["prompt"]))
-            return {"images": [Image.new("RGB", (8, 6), (10, 200, 10))]}
+            return torch.zeros(1, 8, 6, 3)   # IMAGE 张量 [B,H,W,C]（execute_graph_inprocess 真实契约）
 
         orig = (storyboard.load_skill_workflow, storyboard.get_skill_gen_config,
                 storyboard._storyboard_story_refs, storyboard.execute_graph_inprocess)
@@ -2519,7 +2592,7 @@ class StoryboardGenerateTests(unittest.TestCase):
                 loop.run_until_complete(asyncio.sleep(0.01))   # 让后台任务推进（桩执行无真实 I/O）
                 st = json.loads(loop.run_until_complete(
                     storyboard.neo_video_gen_storyboard_status(status_req)).body)
-                if st["status"] in ("done", "cancelled"):
+                if st["status"] in ("done", "cancelled", "failed"):
                     return st
             self.fail("分镜任务未在限定轮次内结束")
         finally:
@@ -2539,6 +2612,74 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertEqual(self.captured[1][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
         self.assertEqual(self.captured[2][0],
                          ["char.png", "NeoDirector/storyboard_sb-e2e_01.png", "NeoDirector/storyboard_sb-e2e_02.png"])
+
+    def test_ref_segments_switch_to_qwen_for_reference_edit(self):
+        # 文生图默认 Krea2（image_gen）；带参考图的段（链式前帧）固定切 Qwen Image 2.1 参考编辑并在段上留 warning
+        asked = []
+
+        def _load(sid):
+            asked.append(sid)
+            return json.loads(json.dumps(self._TEMPLATE))
+
+        storyboard.load_skill_workflow = _load
+        storyboard._storyboard_story_refs = lambda name: []   # 无角色/背景参考：第 1 段纯文生图
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}], skill_id="image_gen")
+        self.assertEqual(st["status"], "done")
+        # 端点校验一次 + 逐段懒加载：第 1 段用所选 Krea2，第 2 段（带链式参考）切 Qwen
+        self.assertEqual(asked[-2:], ["image_gen", "qwen_image_21"])
+        self.assertEqual(st["details"][0]["warnings"], [])
+        self.assertTrue(any("Qwen Image 2.1" in w for w in st["details"][1]["warnings"]))
+
+    def test_mode_t2i_ignores_story_refs_and_chain(self):
+        # t2i 纯文生图：即使请求带 chain_prev=True、配方有角色参考，也不挂任何参考图、不切技能
+        asked = []
+
+        def _load(sid):
+            asked.append(sid)
+            return json.loads(json.dumps(self._TEMPLATE))
+
+        storyboard.load_skill_workflow = _load
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}],
+                            skill_id="image_gen", chain_prev=True, mode="t2i")
+        self.assertEqual(st["status"], "done")
+        for d in st["details"]:
+            self.assertEqual(d["warnings"], [])
+        # 两段都是纯文生图：无参考图，技能始终是所选 Krea2（不切 Qwen）
+        self.assertEqual(self.captured[0][0], [])
+        self.assertEqual(self.captured[1][0], [])
+        self.assertTrue(all(sid == "image_gen" for sid in asked))
+
+    def test_mode_r2i_keeps_refs_without_forced_skill_switch(self):
+        # r2i 参考编辑：角色/背景 + 链式前帧照常挂上，但按所选技能执行（不强制切 Qwen、无切换 warning）
+        asked = []
+
+        def _load(sid):
+            asked.append(sid)
+            return json.loads(json.dumps(self._TEMPLATE))
+
+        storyboard.load_skill_workflow = _load
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}],
+                            skill_id="image_gen", chain_prev=True, mode="r2i")
+        self.assertEqual(st["status"], "done")
+        for d in st["details"]:
+            self.assertEqual(d["warnings"], [])
+        # 链式参考照常：第 2 段带角色 + 前帧
+        self.assertEqual(self.captured[0][0], ["char.png"])
+        self.assertEqual(self.captured[1][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
+        self.assertTrue(all(sid == "image_gen" for sid in asked), "r2i 不强制切 Qwen Image 2.1")
+
+    def test_invalid_mode_rejected(self):
+        class _Req:
+            async def json(self):
+                return {"name": "sb-e2e", "segments": [{"prompt": "段一"}], "mode": "v2i"}
+
+        loop = asyncio.new_event_loop()
+        try:
+            resp = loop.run_until_complete(storyboard.neo_video_gen_storyboard_generate(_Req()))
+        finally:
+            loop.close()
+        self.assertEqual(resp.status, 400)
+        self.assertIn("未知的分镜模式", json.loads(resp.body)["error"])
 
     def test_existing_storyboards_skipped_without_force(self):
         out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
@@ -2561,6 +2702,151 @@ class StoryboardGenerateTests(unittest.TestCase):
         # 文件名对齐真实序号 _03，链式参考从磁盘取 _01
         self.assertTrue(os.path.isfile(os.path.join(out_dir, "storyboard_sb-e2e_03.png")))
         self.assertEqual(self.captured[0][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
+
+    def test_interrupt_mid_run_cancels_cleanly(self):
+        # 用户点「取消」→ execute_graph_inprocess 抛 InterruptProcessingException（继承 BaseException）。
+        # 修复前 except Exception 接不住：任务异常从未被取回、状态卡在 running。修复后捕获并置 cancelled。
+        calls = {"n": 0}
+
+        def _exec_interrupt_on_second(graph, *args):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _comfy_mm.InterruptProcessingException()
+            return torch.zeros(1, 8, 6, 3)
+
+        storyboard.execute_graph_inprocess = _exec_interrupt_on_second
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}])
+        self.assertEqual(st["status"], "cancelled")
+        self.assertEqual(st["details"][0]["status"], "done")
+        self.assertNotEqual(st["details"][1]["status"], "done")
+
+    def test_setup_error_marks_task_failed(self):
+        # 循环外的 setup（_storyboard_story_refs）抛异常会逃出 _run_storyboard_task；
+        # done callback 取回异常并置 failed，避免 "Task exception was never retrieved"、状态卡 running。
+        def _boom(name):
+            raise RuntimeError("recipe read blew up")
+
+        storyboard._storyboard_story_refs = _boom
+        st = self._generate(segments=[{"prompt": "段一"}])
+        self.assertEqual(st["status"], "failed")
+
+
+class StoryboardInProcessProgressTests(unittest.TestCase):
+    """e2e：后台分镜任务进程内执行时，采样进度上报不得因缺 last_prompt_id 崩。
+
+    复现线上故障链：storyboard 走 asyncio.to_thread 进程内跑生图、不经 ComfyUI 队列，PromptServer
+    没有 last_prompt_id；KSampler 采样经 comfy.utils 全局钩子上报进度（不带 prompt_id），hijack_progress
+    无执行上下文时回退读 server_instance.last_prompt_id → AttributeError。修复后 _run_storyboard_task
+    用 CurrentNodeContext 提供 prompt_id=task_id，进度正常上报、任务跑完（去掉该 wrapper 本用例即失败）。"""
+
+    def setUp(self):
+        nd = os.path.join(_INPUT_DIR, "NeoDirector")
+        if os.path.isdir(nd):
+            shutil.rmtree(nd)
+        self._tmp = tempfile.mkdtemp(prefix="neo_sbprog_")
+        self.custom = os.path.join(self._tmp, "custom")
+        os.makedirs(self.custom)
+        import pathlib
+        self._orig_custom = recipes.CUSTOM_DIR
+        recipes.CUSTOM_DIR = pathlib.Path(self.custom)
+
+        self.recipe_dir = os.path.join(self.custom, "sb-prog")
+        os.makedirs(os.path.join(self.recipe_dir, "assets"), exist_ok=True)
+        with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "sb-prog", "type": "video_director", "shared": {},
+                       "story": {"characters": [], "backgrounds": []}}, f)
+
+        # 进度钩子：与 main.py hijack_progress 同语义（无执行上下文时回退读 last_prompt_id）。
+        self.updates = []
+        srv = _server.PromptServer.instance
+        self._had_last_prompt_id = hasattr(srv, "last_prompt_id")
+        if self._had_last_prompt_id:
+            del srv.last_prompt_id   # 后台任务真实状态：没有 last_prompt_id
+
+        def _hook(value, total, preview_image=None, prompt_id=None, node_id=None):
+            ctx = _comfy_exec_utils.get_executing_context()
+            if prompt_id is None and ctx is not None:
+                prompt_id = ctx.prompt_id
+            if node_id is None and ctx is not None:
+                node_id = ctx.node_id
+            if prompt_id is None:
+                prompt_id = srv.last_prompt_id   # ← 崩溃点：无上下文且缺 last_prompt_id
+            self.updates.append((prompt_id, node_id, value, total))
+
+        self._orig_hook = _comfy_utils.PROGRESS_BAR_HOOK
+        _comfy_utils.PROGRESS_BAR_HOOK = _hook
+
+        def _fake_execute(graph, *args):
+            hook = _comfy_utils.PROGRESS_BAR_HOOK
+            if hook is not None:
+                for step in range(1, 4):   # KSampler 采样进度：不带 prompt_id（真实 ProgressBar 行为）
+                    hook(step, 3, node_id=None)
+            return torch.zeros(1, 8, 6, 3)
+
+        self._orig = (storyboard.load_skill_workflow, storyboard.get_skill_gen_config,
+                      storyboard._storyboard_story_refs, storyboard.render_template,
+                      storyboard.execute_graph_inprocess)
+        storyboard.load_skill_workflow = lambda sid: {}
+        storyboard.get_skill_gen_config = lambda sid: {}
+        storyboard._storyboard_story_refs = lambda name: []
+        storyboard.render_template = lambda template, params: ({}, [])   # 图内容无关（execute 已桩）
+        storyboard.execute_graph_inprocess = _fake_execute
+
+    def tearDown(self):
+        (storyboard.load_skill_workflow, storyboard.get_skill_gen_config,
+         storyboard._storyboard_story_refs, storyboard.render_template,
+         storyboard.execute_graph_inprocess) = self._orig
+        _comfy_utils.PROGRESS_BAR_HOOK = self._orig_hook
+        srv = _server.PromptServer.instance
+        if self._had_last_prompt_id:
+            srv.last_prompt_id = None
+        recipes.CUSTOM_DIR = self._orig_custom
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _generate(self):
+        payload = {"name": "sb-prog", "skill_id": "qwen_image_21", "chain_prev": True, "seed": 7,
+                   "segments": [{"prompt": "段一"}]}
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        status_req = types.SimpleNamespace(match_info={})
+        loop = asyncio.new_event_loop()
+        try:
+            resp = loop.run_until_complete(storyboard.neo_video_gen_storyboard_generate(_Req()))
+            self.assertEqual(resp.status, 200, f"生成请求失败：{resp.body}")
+            data = json.loads(resp.body)
+            status_req.match_info["task_id"] = data["task_id"]
+            for _ in range(200):
+                loop.run_until_complete(asyncio.sleep(0.01))
+                st = json.loads(loop.run_until_complete(
+                    storyboard.neo_video_gen_storyboard_status(status_req)).body)
+                if st["status"] in ("done", "cancelled", "failed"):
+                    return data, st
+            self.fail("分镜任务未在限定轮次内结束")
+        finally:
+            loop.close()
+
+    def test_progress_reporting_without_last_prompt_id_does_not_crash(self):
+        data, st = self._generate()
+        # 段必须真正跑完（修复前：AttributeError → 段 failed）
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(st["details"][0]["status"], "done", f"段失败：{st['details'][0].get('error')}")
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
+        self.assertTrue(os.path.isfile(os.path.join(out_dir, "storyboard_sb-prog_01.png")))
+        # 进度确实被上报，且 prompt_id 来自执行上下文（=task_id），而非回退 last_prompt_id
+        self.assertTrue(any(u[2] == 3 and u[3] == 3 for u in self.updates), "采样末步进度未上报")
+        self.assertTrue(all(u[0] == data["task_id"] for u in self.updates),
+                        f"进度 prompt_id 应为 task_id：{self.updates}")
+
+    def test_missing_context_still_crashes_without_fix(self):
+        # 回归护栏：直接复现崩溃路径——无执行上下文 + last_prompt_id 缺失时，钩子必抛 AttributeError。
+        # 证明本用例确实踩到了线上故障点（若回退逻辑被改，此断言会先失败提醒）。
+        srv = _server.PromptServer.instance
+        self.assertFalse(hasattr(srv, "last_prompt_id"), "测试前提：PromptServer 无 last_prompt_id")
+        with self.assertRaises(AttributeError):
+            _comfy_utils.PROGRESS_BAR_HOOK(1, 3, None, node_id=None)
 
 
 class StoryboardMultiRefTests(unittest.TestCase):
@@ -2627,6 +2913,33 @@ class Qwen21TemplateTests(unittest.TestCase):
         for node_id in ("10", "12", "14", "16", "18"):
             self.assertIn(node_id, graph)
         self.assertNotIn("20", graph, "第 6 个未挂的参考槽应被裁掉")
+
+    def test_rendered_refs_use_dotted_autogrow_keys(self):
+        # TextEncodeQwenImage21 的 autogrow 容器是 images，模板必须用点号键 images.image_N；
+        # 扁平 image_N 会绕过 _nest_dotted_inputs，变成 execute() 不认识的 kwarg 而崩溃。
+        graph = self._render(3)
+        inputs = graph["4"]["inputs"]
+        for i in (1, 2, 3):
+            self.assertIn(f"images.image_{i}", inputs, f"第 {i} 张参考应挂在 images.image_{i}")
+        flat = [k for k in inputs if "." not in k and k.startswith("image_")]
+        self.assertEqual(flat, [], "TextEncodeQwenImage21 不应再有扁平 image_N 键（会破坏 autogrow 聚合）")
+
+    def test_dotted_refs_aggregate_to_nested_images_dict(self):
+        # mini-executor 调 execute() 前用 _nest_dotted_inputs 把点号键收成嵌套 dict，
+        # 与 ComfyUI 主循环 build_nested_inputs 一致；这里直接验证聚合结果符合 execute(images=...) 契约。
+        graph = self._render(2)
+        nested = krea2_generate._nest_dotted_inputs(dict(graph["4"]["inputs"]))
+        self.assertIn("images", nested, "点号键 images.image_N 应聚合成 images 字典")
+        self.assertEqual(set(nested["images"]), {"image_1", "image_2"})
+        self.assertFalse(any(k.startswith("image_") and "." not in k for k in nested),
+                         "聚合后顶层不应残留扁平 image_N 键")
+
+    def test_other_autogrow_prefixes_still_nest(self):
+        # 回归护栏：Krea2/H3 的 ref_images.ref_image_0 等点号键同样被聚合成嵌套 dict，
+        # 证明 _nest_dotted_inputs 不针对 images 特判。
+        nested = krea2_generate._nest_dotted_inputs(
+            {"ref_images.ref_image_0": "a", "prompt": "p"})
+        self.assertEqual(nested, {"ref_images": {"ref_image_0": "a"}, "prompt": "p"})
 
 
 if __name__ == "__main__":

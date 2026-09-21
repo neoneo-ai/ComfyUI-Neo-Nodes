@@ -1,5 +1,5 @@
 ---
-name: Qwen Image 2.1 生图
+name: Qwen Image 2.1 生图/编辑
 tags:
 - 生图
 - Qwen

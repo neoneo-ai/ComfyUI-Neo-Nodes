@@ -462,10 +462,11 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
 
 
 def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> dict | None:
-    """规范化自动故事板的可选内容：主题 / 故事脚本 / 角色・背景参考图 / 拆分粒度。
+    """规范化自动故事板的可选内容：主题 / 故事脚本 / 角色・背景参考图 / 拆分粒度 / 图片分镜设置。
 
     参考图 filename 与段首帧一样由前端以原始名引用，这里回写为落盘 assets 的最终名。
-    引用未落盘资产的条目直接丢弃：参考图只用于生成故事，缺一条不该让整份配方保存失败。
+    引用未落盘资产的条目直接丢弃：参考图只用于 r2i 图片分镜，缺一条不该让整份配方保存失败。
+    image_mode（t2i/r2i）/ frame_source（storyboard/unified）非法值丢弃；image_skill 为所选生图技能 id。
     完全没有内容时返回 None（不写进 recipe.json）。
     """
     raw = data.get("story")
@@ -495,12 +496,24 @@ def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets:
     except (TypeError, ValueError):
         segment_seconds = None
 
+    # 图片分镜设置：非法/缺省值丢弃（不落盘），前端按默认 t2i + storyboard 回显
+    image_mode = str(raw.get("image_mode") or "").strip()
+    if image_mode not in ("t2i", "r2i"):
+        image_mode = None
+    frame_source = str(raw.get("frame_source") or "").strip()
+    if frame_source not in ("storyboard", "unified"):
+        frame_source = None
+    image_skill = str(raw.get("image_skill") or "").strip() or None
+
     story = {
         "idea": str(raw.get("idea") or "").strip() or None,
         "story": str(raw.get("story") or "").strip() or None,
         "characters": _kept_refs("characters"),
         "backgrounds": _kept_refs("backgrounds"),
         "segment_seconds": segment_seconds,
+        "image_mode": image_mode,
+        "image_skill": image_skill,
+        "frame_source": frame_source,
     }
     if all(v is None or v == [] for v in story.values()):
         return None
@@ -1167,15 +1180,6 @@ def _read_input_image_bytes(filename, subfolder=""):
     return p.read_bytes()
 
 
-def _describe_refs(names, descs):
-    """把角色/背景参考拼成喂给 LLM 的文本行（有描述带描述，无则仅文件名）。"""
-    lines = []
-    for i, n in enumerate(names):
-        d = descs[i] if i < len(descs) else ""
-        lines.append(f"- {n}：{d}" if d else f"- {n}")
-    return "\n".join(lines)
-
-
 def _collect_ref_bytes(refs):
     """从 [{filename, subfolder?}] 里 best-effort 读图片字节列表（缺失跳过）。"""
     byte_list = []
@@ -1191,22 +1195,8 @@ def _collect_ref_bytes(refs):
     return byte_list
 
 
-def _ref_names_descs(refs):
-    """从 [{filename, desc?}] 里取 (names, descs)，保持顺序一致。"""
-    names, descs = [], []
-    for r in (refs or []):
-        if not isinstance(r, dict):
-            continue
-        fn = str(r.get("filename") or "").strip()
-        if not fn:
-            continue
-        names.append(fn)
-        descs.append(str(r.get("desc") or "").strip())
-    return names, descs
-
-
-def _director_llm(task_name, text, image_bytes):
-    """调用导演专用 LLM 任务；优先带参考图（多模态），失败回退为纯文本。"""
+def _director_llm(task_name, text, image_bytes=None):
+    """调用导演专用 LLM 任务；可选带参考图（多模态），失败回退为纯文本。"""
     from .llm import run_llm_task
     result = run_llm_task(task_name, text, images=image_bytes or None)
     if "error" in result and image_bytes:
@@ -1254,7 +1244,7 @@ def _parse_segments(raw):
 
 @PromptServer.instance.routes.post("/rs_recipes/director_generate_story")
 async def rs_recipes_director_generate_story(request):
-    """根据主题 + 可选角色/背景参考，用 LLM 生成完整故事脚本（供导演编辑器确认后拆分）。"""
+    """根据主题用 LLM 生成完整故事脚本（供导演编辑器确认后拆分）。不带参考图：角色/背景一致性由 r2i 图片分镜负责。"""
     try:
         data = await request.json()
     except Exception:
@@ -1263,18 +1253,7 @@ async def rs_recipes_director_generate_story(request):
     if not idea:
         return web.json_response({"success": False, "error": "请填写故事主题"}, status=400)
 
-    char_names, char_descs = _ref_names_descs(data.get("characters"))
-    bg_names, bg_descs = _ref_names_descs(data.get("backgrounds"))
-    all_bytes = _collect_ref_bytes((data.get("characters") or []) + (data.get("backgrounds") or []))
-
-    parts = [f"故事主题 / 想法：\n{idea}"]
-    if char_names:
-        parts.append("角色参考（请在故事中保持一致出现）：\n" + _describe_refs(char_names, char_descs))
-    if bg_names:
-        parts.append("背景参考（请保持场景基调一致）：\n" + _describe_refs(bg_names, bg_descs))
-    text = "\n\n".join(parts)
-
-    result = await asyncio.to_thread(_director_llm, "director_story", text, all_bytes)
+    result = await asyncio.to_thread(_director_llm, "director_story", f"故事主题 / 想法：\n{idea}")
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     return web.json_response({"success": True, "story": str(result.get("story") or "")})
@@ -1282,7 +1261,7 @@ async def rs_recipes_director_generate_story(request):
 
 @PromptServer.instance.routes.post("/rs_recipes/director_split_segments")
 async def rs_recipes_director_split_segments(request):
-    """把已确认的故事拆成约指定秒数的场景，结合角色/背景重生成每段提示词。"""
+    """把已确认的故事拆成约指定秒数的场景，为每段生成视频提示词与分镜图提示词。不带参考图（<imageN> 由 r2i 图片分镜的参考图承担）。"""
     try:
         data = await request.json()
     except Exception:
@@ -1296,26 +1275,10 @@ async def rs_recipes_director_split_segments(request):
         seg_sec = 10
     seg_sec = max(1, min(3600, seg_sec))
 
-    char_names, char_descs = _ref_names_descs(data.get("characters"))
-    bg_names, bg_descs = _ref_names_descs(data.get("backgrounds"))
-    # 参考图按「角色在前、背景在后」的顺序附给 LLM（_add_images_to_messages 同序），文本里用 <imageN> 编号对齐，
-    # storyboard_prompt 才能正确指代；读不到的文件跳过，编号只对成功读取的连续计。
-    ref_lines, all_bytes = [], []
-    for names, descs in ((char_names, char_descs), (bg_names, bg_descs)):
-        for i, n in enumerate(names):
-            d = descs[i] if i < len(descs) else ""
-            b = _read_input_image_bytes(n)
-            if not b:
-                continue
-            all_bytes.append(b)
-            ref_lines.append(f"- <image{len(all_bytes)}> {n}：{d}" if d else f"- <image{len(all_bytes)}> {n}")
-
     parts = [f"目标每段时长：约 {seg_sec} 秒", "", "已确认的故事脚本：\n" + story]
-    if ref_lines:
-        parts.append("角色/背景参考（各场景保持一致；storyboard_prompt 里用 <imageN> 指代对应图）：\n" + "\n".join(ref_lines))
     text = "\n".join(parts)
 
-    result = await asyncio.to_thread(_director_llm, "director_split", text, all_bytes)
+    result = await asyncio.to_thread(_director_llm, "director_split", text)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     segments = _parse_segments(result.get("segments") or "")

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes — 图片分镜（storyboard）生成
-# 用生图技能（默认 Qwen Image 2.1，Krea2 备选）逐段生成关键帧，落在
-# input/NeoDirector/storyboard_{recipe}_{seg:02d}.png；i2v/fl2v 段可自动用作首帧。
+# 用生图技能逐段生成关键帧：mode=t2i 纯文生图（不带参考，默认 Krea2），
+# mode=r2i 参考编辑（角色/背景 + 链式前帧，用所选技能不强制切 Qwen），
+# 缺省 mode 为旧行为（文生图默认 Krea2，带参考图的段固定切 Qwen Image 2.1）；
+# 落在 input/NeoDirector/storyboard_{recipe}_{seg:02d}.png；i2v/fl2v 段可自动用作首帧。
 # 独立于 h3_video_director（节点运行时），只依赖生图链（image_gen/skill）与配方读取。
 
 from __future__ import annotations
@@ -13,11 +15,16 @@ import random
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import folder_paths
 import nodes as comfy_nodes
+import comfy.model_management
+import torch
 from aiohttp import web
+from PIL import Image
 from server import PromptServer
+from comfy_execution.utils import CurrentNodeContext
 
 from .image_gen import (
     DEFAULT_SETTINGS,
@@ -33,6 +40,7 @@ from .skill import get_skill_gen_config, load_skill_workflow
 logger = logging.getLogger(__name__)
 
 _STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色/背景 + 链式上一分镜）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
+_STORYBOARD_REF_SKILL = "qwen_image_21"   # 带参考图的段固定用它做参考编辑（Krea2 单路模板不支持多参考延续）；纯文生图用所选技能（默认 Krea2）
 _storyboard_tasks: dict[str, dict] = {}
 
 
@@ -53,7 +61,7 @@ def _storyboard_story_refs(name: str) -> list[str]:
     meta = _storyboard_recipe_meta(name)
     if not meta:
         return []
-    story = meta.get("director_story") or {}
+    story = meta.get("story") or {}
     names = []
     for ref in (story.get("characters") or []) + (story.get("backgrounds") or []):
         fn = str((ref or {}).get("filename") or "").strip()
@@ -83,19 +91,43 @@ def _storyboard_dims(width, height, ratio):
     return resolve_dimensions(settings)
 
 
-async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id: str,
-                               chain_prev: bool, base_seed, index_offset: int = 0):
-    """串行生成。index_offset：单段重生成时该段在配方里的真实序号（文件名对齐 storyboard_{recipe}_{n:02d}）。"""
-    template = load_skill_workflow(skill_id)
-    settings = {**DEFAULT_SETTINGS}
-    for key, value in (get_skill_gen_config(skill_id) or {}).items():
-        if key in DEFAULT_SETTINGS and value not in (None, "", []):
-            settings[key] = value
+def _tensor_to_pil(image):
+    """[H,W,C] float(0-1) 张量 → PIL RGB 图（单通道转灰度）。"""
+    arr = (image.detach().cpu() * 255).clamp(0, 255).to(torch.uint8).numpy()
+    if arr.ndim == 3 and arr.shape[2] == 1:
+        arr = arr[:, :, 0]
+    return Image.fromarray(arr)
 
-    story_refs = await asyncio.to_thread(_storyboard_story_refs, name)
+
+async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id: str,
+                               chain_prev: bool, base_seed, index_offset: int = 0, mode=None):
+    """串行生成。index_offset：单段重生成时该段在配方里的真实序号（文件名对齐 storyboard_{recipe}_{n:02d}）。
+    mode：t2i=纯文生图（不用角色/背景参考与链式前帧）；r2i=参考编辑（两者都用）；
+    均按所选技能执行、不强制切 Qwen Image 2.1。缺省 None 为旧行为（带参考图的段自动切 Qwen）。"""
+    if mode == "t2i":
+        story_refs = []
+        chain_prev = False
+    else:
+        story_refs = await asyncio.to_thread(_storyboard_story_refs, name)
+    _assets_cache: dict[str, tuple] = {}
+
+    def _skill_assets(sid):
+        """技能 (workflow 模板, 生图设置)；按段在「所选文生图技能 / Qwen Image 2.1 参考编辑」间切换，懒加载并缓存。"""
+        assets = _assets_cache.get(sid)
+        if assets is None:
+            settings = {**DEFAULT_SETTINGS}
+            for key, value in (get_skill_gen_config(sid) or {}).items():
+                if key in DEFAULT_SETTINGS and value not in (None, "", []):
+                    settings[key] = value
+            assets = (load_skill_workflow(sid), settings)
+            _assets_cache[sid] = assets
+        return assets
+
     out_dir = Path(folder_paths.get_input_directory()) / "NeoDirector"
     out_dir.mkdir(parents=True, exist_ok=True)
     task = _storyboard_tasks[task_id]
+    # 清掉上一次运行/取消残留的全局中断标志，避免新任务一开始就被误判为已取消。
+    comfy_nodes.interrupt_processing(False)
 
     for i, seg in enumerate(segments):
         entry = task["details"][i]
@@ -108,7 +140,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         if entry.get("filename") and not seg.get("_force"):
             # 已有产物且非强制重生成：跳过（幂等，重复点「生成分镜」不重复出图）
             entry.update(status="done", filename=entry["filename"],
-                         preview_url=f"/input/NeoDirector/{fname}?t={int(time.time())}")
+                         preview_url=f"/view?filename={quote(fname)}&subfolder=NeoDirector&type=input&t={int(time.time())}")
             task["processed"] += 1
             continue
         prompt = str(seg.get("storyboard_prompt") or seg.get("prompt")).strip()
@@ -125,6 +157,14 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
                         prev_fname = candidate
                 if prev_fname:
                     refs.append(f"NeoDirector/{prev_fname}")
+        # 旧行为（mode=None）：带参考图 → 固定 Qwen Image 2.1 参考编辑，纯文生图用所选技能（默认 Krea2）；
+        # 显式 t2i/r2i 模式一律按所选技能执行（r2i 的参考能力由技能模板自身决定）
+        eff_skill = _STORYBOARD_REF_SKILL if (mode is None and refs and skill_id != _STORYBOARD_REF_SKILL) else skill_id
+        template, settings = _skill_assets(eff_skill)
+        if template is None:
+            entry.update(status="failed", error=f"生图技能 {eff_skill} 没有工作流模板")
+            task["processed"] += 1
+            continue
         body = {
             "prompt": prompt,
             "width": entry["width"], "height": entry["height"],
@@ -135,21 +175,24 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         try:
             params = resolve_request(body, settings, max_refs=_STORYBOARD_MAX_REFS, auto_quadview=False)
             graph, warns = render_template(template, params)
-            entry["warnings"] = list(warns)
-            result = await asyncio.to_thread(execute_graph_inprocess, graph, task_id)
-            img = (result.get("images") or [None])[0]
-            if img is None:
-                raise ValueError("生图工作流没有输出图片节点")
+            entry["warnings"] = list(warns) + (["该段带参考图，已切 Qwen Image 2.1 参考编辑"] if eff_skill != skill_id else [])
+            # 进程内执行不走 ComfyUI 队列，没有 last_prompt_id；显式给一个执行上下文（prompt_id=task_id），
+            # 采样器上报进度时 hook 靠它取 prompt_id/node_id，否则会回退读 server_instance.last_prompt_id → AttributeError。
+            with CurrentNodeContext(prompt_id=task_id, node_id=f"storyboard_{name}_{n}"):
+                result = await asyncio.to_thread(execute_graph_inprocess, graph)
+            img = _tensor_to_pil(result[0])
             await asyncio.to_thread(img.save, out_dir / fname, "PNG")
             entry.update(status="done", filename=fname,
-                         preview_url=f"/input/NeoDirector/{fname}?t={int(time.time())}")
+                         preview_url=f"/view?filename={quote(fname)}&subfolder=NeoDirector&type=input&t={int(time.time())}")
+        except comfy.model_management.InterruptProcessingException:
+            # 用户点「取消」：当前段被中断。该异常继承 BaseException，except Exception 接不住，
+            # 必须单独捕获并收尾，否则任务异常从未被取回、状态卡在 running（抛出时 ComfyUI 已复位全局标志）。
+            task.update(status="cancelled")
+            break
         except Exception as e:
             logger.warning(f"[NeoNodes] storyboard seg {i + 1} failed: {e}")
             entry.update(status="failed", error=str(e))
         task["processed"] += 1
-        if comfy_nodes.interrupt_processing(task_id):
-            task.update(status="cancelled")
-            break
 
     if task["status"] != "cancelled":
         task["status"] = "done"
@@ -162,7 +205,9 @@ routes = PromptServer.instance.routes
 
 @routes.post("/neo_video_gen/storyboard_generate")
 async def neo_video_gen_storyboard_generate(request):
-    """按段串行生成图片分镜（生图技能默认 qwen_image_21，Krea2 备选）；返回 task_id 轮询进度。"""
+    """按段串行生成图片分镜；返回 task_id 轮询进度。
+    mode：t2i=纯文生图（忽略角色/背景参考与链式前帧）；r2i=参考编辑（用所选技能，不强制切 Qwen）；
+    缺省为旧行为（文生图默认 Krea2，带参考图的段自动切 Qwen Image 2.1）。"""
     try:
         data = await request.json()
     except Exception:
@@ -177,7 +222,10 @@ async def neo_video_gen_storyboard_generate(request):
     segments = data.get("segments") or []
     if not isinstance(segments, list) or not segments:
         return web.json_response({"success": False, "error": "请先拆分出分段"}, status=400)
-    skill_id = str(data.get("skill_id") or "qwen_image_21").strip()
+    mode = str(data.get("mode") or "").strip().lower()
+    if mode not in ("", "t2i", "r2i"):
+        return web.json_response({"success": False, "error": f"未知的分镜模式：{mode}"}, status=400)
+    skill_id = str(data.get("skill_id") or "image_gen").strip()   # 文生图默认 Krea2；旧行为下带参考图的段在任务内切 Qwen Image 2.1
     if load_skill_workflow(skill_id) is None:
         return web.json_response({"success": False, "error": f"生图技能 {skill_id} 没有工作流模板"}, status=400)
 
@@ -211,8 +259,22 @@ async def neo_video_gen_storyboard_generate(request):
         "status": "running", "total": len(details), "processed": 0,
         "created": time.time(), "updated": time.time(), "details": details,
     }
-    asyncio.create_task(_run_storyboard_task(task_id, name, segments, skill_id,
-                                             bool(data.get("chain_prev", True)), base_seed, index_offset))
+    handle = asyncio.create_task(_run_storyboard_task(task_id, name, segments, skill_id,
+                                                      bool(data.get("chain_prev", True)), base_seed, index_offset,
+                                                      mode or None))
+
+    def _on_done(done_handle, _tid=task_id):
+        # fire-and-forget 收尾：取回异常，避免未捕获时打出 "Task exception was never retrieved"。
+        # 正常/取消已在任务内收尾（无异常）；这里只兜底 setup 阶段等未预期异常，把卡 running 的任务置 failed。
+        exc = done_handle.exception()
+        if exc is None:
+            return
+        logger.warning(f"[NeoNodes] storyboard task {_tid} crashed: {exc}")
+        t = _storyboard_tasks.get(_tid)
+        if t and t["status"] == "running":
+            t.update(status="failed", error=str(exc))
+
+    handle.add_done_callback(_on_done)
     return web.json_response({"success": True, "task_id": task_id, "total": len(details)})
 
 

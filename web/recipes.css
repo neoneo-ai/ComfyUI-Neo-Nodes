@@ -589,11 +589,22 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;   /* 窄窗时行内控件换行，避免靠右按钮把下拉/输入挤成一条线 */
 }
 
 .neo-director-shared label {
     font-size: 11px;
     color: #9aa4b0;
+}
+
+/* director 面板内的按钮不跟随 .rs-btn 的 flex:1 铺满（那套尺寸是给侧边栏底部按钮行的）：
+   统一按内容宽度 + 面板字号排布；需要靠右的按钮由所在行给它 margin-left:auto
+   （同「＋ 添加段」/「↔ 拉伸」的做法）。未保存确认条自带尺寸规则，不在 body/foot 内，不受影响。 */
+.neo-director-body .rs-btn,
+.neo-director-foot .rs-btn {
+    flex: none;
+    padding: 4px 14px;
+    font-size: 12px;
 }
 
 .neo-director-aspect {
@@ -832,60 +843,13 @@
     margin-left: 0;   /* 贴右由 ♻ 承担 */
 }
 
-/* 🎨 段内「分镜图」缩略区：标签 + 缩略（生成后回显）+ 重生成/清除小按钮 */
-.neo-director-seg-sb {
+/* 「🎨 图片分镜」卡片的生成按钮 + 状态：并入「生图模式 / 生图技能」行最右侧（不独占一行） */
+.neo-director-sb-run {
+    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 4px 0;
-}
-
-.neo-director-seg-sb-thumb {
-    width: 96px;
-    height: 54px;
-    border-radius: 6px;
-    overflow: hidden;
-    background: #1c1c1c;
-    border: 1px dashed #3a3a3a;
-}
-
-.neo-director-seg-sb-thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-}
-
-.neo-director-seg-sb-regen,
-.neo-director-seg-sb-clear {
-    flex: 0 0 auto;
-    width: 24px;
-    height: 22px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    cursor: pointer;
-    background: transparent;
-    border: none;
-    border-radius: 5px;
-    color: #8cb4d8;
-    font-size: 12px;
-    line-height: 1;
-    opacity: .6;
-}
-
-.neo-director-seg-sb-regen:hover,
-.neo-director-seg-sb-clear:hover {
-    background: rgba(140, 180, 216, 0.15);
-    opacity: 1;
-}
-
-/* 自动故事板页签的「图片分镜」控制行（生图技能 / 链式参考 / 生成按钮） */
-.neo-director-sb-actions {
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px dashed #333;
+    flex: none;
 }
 
 .neo-director-sb-skill {
@@ -905,6 +869,34 @@
 .neo-director-sb-status {
     font-size: 11px;
     color: #9aa4b0;
+}
+
+/* 统一设置页：「🎨 图片分镜」卡片（逐段关键帧；i2v/fl2v 下与统一首帧互斥） */
+.neo-director-setup-sb {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #161616;
+    border: 1px solid #2a2d33;
+    border-radius: 6px;
+    padding: 8px;
+}
+
+/* r2i 专属控件（链式参考 + 角色/背景参考行） */
+.neo-director-sb-r2i {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.neo-director-sb-mode,
+.neo-director-frame-source {
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
 }
 
 /* 段内「重生成该段」参数面板（种子 / 锚点 + 执行） */
@@ -1142,6 +1134,22 @@
 .neo-director-ref-row-pair > .neo-director-segref-row {
     flex: 1;
     min-width: 0;
+}
+
+/* 故事板页：角色/背景参考图并排一行，各占一半；瓷砖超出宽度时横向滚动（不折行） */
+.neo-director-story-refs {
+    display: flex;
+    gap: 10px;
+}
+
+.neo-director-story-refs > .neo-director-segref-row {
+    flex: 1;
+    min-width: 0;
+}
+
+.neo-director-story-refs .neo-director-refpick-grid {
+    flex-wrap: nowrap;
+    overflow-x: auto;
 }
 
 .neo-director-refpick-item {
@@ -1423,14 +1431,21 @@
     padding-top: 4px;
 }
 
+/* 「各段对照」标题行：优化按钮 + 状态跟在标题后面、靠最右（不独占一行） */
 .neo-director-setup-opt {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
     margin-top: 4px;
 }
 
-/* 统一设置页：各段提示词两栏对照（左 = 优化前 / 右 = 优化后） */
+.neo-director-setup-opt .neo-director-story-segs-title {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 「🎨 分镜故事板」页：各段三栏对照（左 = 分镜图 / 中 = 优化前 / 右 = 优化后） */
 .neo-director-setup-segs {
     display: flex;
     flex-direction: column;
@@ -1439,14 +1454,14 @@
     border: 1px solid #2a2d33;
     border-radius: 6px;
     padding: 8px;
-    flex: 1;          /* 自适应填满统一设置页剩余高度，超出才内部滚动 */
+    flex: 1;          /* 自适应填满本页剩余高度，超出才内部滚动 */
     min-height: 0;
     overflow-y: auto;
 }
 
 .neo-director-setup-seg-cols {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 200px 1fr 1fr;   /* 第一列分镜图缩略图留足宽度（约 16:9） */
     gap: 8px;
     align-items: start;
 }
@@ -1455,6 +1470,87 @@
     font-size: 11px;
     color: #9a9a9a;
     padding: 0 2px;
+}
+
+/* 对照表第一列的分镜图缩略（逐段关键帧或统一首帧）；未生成显示「无」占位 */
+.neo-director-setup-seg-thumb {
+    position: relative;   /* 悬停 ✕ 以缩略图为定位基准 */
+    height: 112px;        /* 与 200px 列宽接近 16:9，关键帧看得清 */
+    border-radius: 6px;
+    overflow: hidden;
+    background: #1c1c1c;
+    border: 1px dashed #3a3a3a;
+}
+
+/* 悬停右上角 ✕：清除该段分镜图记录（不影响已选首帧）；不悬停时不占位、不误点 */
+.neo-director-setup-seg-sb-clear {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #ddd;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.neo-director-setup-seg-thumb:hover .neo-director-setup-seg-sb-clear {
+    display: flex;
+}
+
+.neo-director-setup-seg-sb-clear:hover {
+    background: #b45309;
+    color: #fff;
+}
+
+.neo-director-setup-seg-thumb a {
+    display: block;
+    height: 100%;
+}
+
+.neo-director-setup-seg-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.neo-director-setup-seg-thumb span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    font-size: 11px;
+    color: #6b7280;
+}
+
+/* radio 组（分镜/首帧方式、生图模式）：选项横向展开，比下拉更直观 */
+.neo-director-radios {
+    display: inline-flex;
+    gap: 14px;
+}
+
+.neo-director-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #ccc;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.neo-director-radio input {
+    margin: 0;
+    accent-color: #4d8cba;
 }
 
 /* 统一设置页：无素材模式（文生 / 混合）的说明行 */
@@ -1537,6 +1633,18 @@
     color: #cdd6e0;
 }
 
+/* 右栏标题行：左「分段的故事」+ 右侧「分段粒度 + ✅ 确认并拆分到时间轴」控制组（不独占一行） */
+.neo-director-story-segs-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.neo-director-story-segs-head .neo-director-story-actions {
+    margin-left: auto;
+}
+
 .neo-director-story-segs {
     flex: 1;
     min-height: 0;
@@ -1572,6 +1680,8 @@
 }
 
 .neo-director-story-seg-prompt {
+    flex: 1;
+    min-width: 0;
     font-size: 12px;
     color: #ddd;
     white-space: pre-wrap;
@@ -1689,17 +1799,19 @@
     color: #fff;
 }
 
+/* 底部「取消 / 保存」：三个页签共用这一行，紧凑靠右、不各占半行 */
 .neo-director-foot {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding: 12px 14px;
+    padding: 8px 14px;
     border-top: 1px solid #333;
 }
 
-.neo-director-save,
-.neo-director-cancel {
-    cursor: pointer;
+.neo-director-foot .neo-director-save,
+.neo-director-foot .neo-director-cancel {
+    padding: 5px 20px;
 }
 
 /* 未保存修改确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）：有改动时点 ✕/取消弹出，body 与 foot 之间。
