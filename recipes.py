@@ -438,6 +438,18 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
             seg["last_frame"] = _resolve_ref(last_frame, "last_frame")
         if source_video:
             seg["source_video"] = _resolve_ref(source_video, "source_video")
+        # 分镜图：由「生成图片分镜」落在 input/NeoDirector/ 下的固定命名文件，不走 assets；
+        # 校验存在（防引用已被删除的图），storyboard_prompt 是分镜提示词快照（可缺省回落到 prompt）
+        storyboard = str(s.get("storyboard") or "").strip()
+        if storyboard:
+            import folder_paths as _fp
+            sb_path = Path(_fp.get_input_directory()) / "NeoDirector" / storyboard
+            if not sb_path.is_file():
+                raise ValueError(f"第 {idx + 1} 段分镜图不存在：{storyboard}")
+            seg["storyboard"] = storyboard
+        storyboard_prompt = str(s.get("storyboard_prompt") or "").strip()
+        if storyboard_prompt:
+            seg["storyboard_prompt"] = storyboard_prompt
         kept_refs = {}
         for k in ("images", "videos", "audios"):
             vals = [str(x) for x in (refs.get(k) or []) if str(x)][:_DIRECTOR_REF_CAPS[k]]
@@ -1205,7 +1217,7 @@ def _director_llm(task_name, text, image_bytes):
 
 
 def _parse_segments(raw):
-    """把 LLM 返回的分段文本解析为 [{prompt, duration_sec}]；容错剥掉 ```json 包裹与多余文字。"""
+    """把 LLM 返回的分段文本解析为 [{prompt, duration_sec, storyboard_prompt?}]；容错剥掉 ```json 包裹与多余文字。"""
     if not raw:
         return []
     text = str(raw).strip()
@@ -1232,7 +1244,11 @@ def _parse_segments(raw):
             dur = int(round(float(item.get("duration_sec"))))
         except (TypeError, ValueError):
             dur = 0
-        out.append({"prompt": prompt, "duration_sec": dur})
+        entry = {"prompt": prompt, "duration_sec": dur}
+        sb_prompt = str(item.get("storyboard_prompt") or "").strip()
+        if sb_prompt:
+            entry["storyboard_prompt"] = sb_prompt
+        out.append(entry)
     return out
 
 
@@ -1282,13 +1298,21 @@ async def rs_recipes_director_split_segments(request):
 
     char_names, char_descs = _ref_names_descs(data.get("characters"))
     bg_names, bg_descs = _ref_names_descs(data.get("backgrounds"))
-    all_bytes = _collect_ref_bytes((data.get("characters") or []) + (data.get("backgrounds") or []))
+    # 参考图按「角色在前、背景在后」的顺序附给 LLM（_add_images_to_messages 同序），文本里用 <imageN> 编号对齐，
+    # storyboard_prompt 才能正确指代；读不到的文件跳过，编号只对成功读取的连续计。
+    ref_lines, all_bytes = [], []
+    for names, descs in ((char_names, char_descs), (bg_names, bg_descs)):
+        for i, n in enumerate(names):
+            d = descs[i] if i < len(descs) else ""
+            b = _read_input_image_bytes(n)
+            if not b:
+                continue
+            all_bytes.append(b)
+            ref_lines.append(f"- <image{len(all_bytes)}> {n}：{d}" if d else f"- <image{len(all_bytes)}> {n}")
 
     parts = [f"目标每段时长：约 {seg_sec} 秒", "", "已确认的故事脚本：\n" + story]
-    if char_names:
-        parts.append("角色参考（各场景保持一致）：\n" + _describe_refs(char_names, char_descs))
-    if bg_names:
-        parts.append("背景参考（各场景保持一致）：\n" + _describe_refs(bg_names, bg_descs))
+    if ref_lines:
+        parts.append("角色/背景参考（各场景保持一致；storyboard_prompt 里用 <imageN> 指代对应图）：\n" + "\n".join(ref_lines))
     text = "\n".join(parts)
 
     result = await asyncio.to_thread(_director_llm, "director_split", text, all_bytes)

@@ -335,10 +335,10 @@ class RenderTemplateTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen_text", "workflow.json"),
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen", "workflow.json"),
                   encoding="utf-8") as f:
             cls.text_template = json.load(f)
-        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen", "workflow.json"),
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen_image", "workflow.json"),
                   encoding="utf-8") as f:
             cls.ref_template = json.load(f)
 

@@ -433,8 +433,13 @@ def _quadview_lora(user_loras: list) -> tuple:
         "或在 models/loras 放一个文件名含 quadview / 四视图 的 LoRA（如 Krea2-QuadView_*.safetensors）后重试")
 
 
-def resolve_request(body: dict, settings: dict | None = None) -> dict:
-    """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。"""
+def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
+                    auto_quadview: bool = True) -> dict:
+    """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。
+
+    max_refs：保留的参考图张数上限（默认 1，Krea2 单路模板）；多参考技能（如 Qwen Image 2.1
+    分镜）传更大值，超出部分截断并提示。auto_quadview=False 时跳过 Krea2 四视图 LoRA 的
+    自动挑选（其它模型没有这个概念），ref_only 过滤规则不变。"""
     body = body if isinstance(body, dict) else {}
     settings = settings or get_settings()
     merged = dict(settings)
@@ -469,14 +474,15 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
             names.append(name)
     if refs and not names:
         raise ValueError("参考图无法读取，请确认图片仍然存在")
+    if len(names) > max_refs:
+        warnings.append("只使用第一张参考图" if max_refs == 1 else f"只使用前 {max_refs} 张参考图")
+        names = names[:max_refs]
     ref_name = names[0] if names else None
-    if len(names) > 1:
-        warnings.append("只使用第一张参考图")
 
     # 参考图模式：LoRA 列表里没有勾「依赖参考图」的则按名称线索自动挑选四视图 LoRA 追加到
     # 链尾（用于填模板 LoRA 槽位）；文生图模式跳过 ref_only 的 LoRA（只在有参考图时才有意义）。
     if ref_name:
-        if not any(l.get("ref_only") for l in loras):
+        if auto_quadview and not any(l.get("ref_only") for l in loras):
             quadview, already = _quadview_lora(loras)
             if not already:
                 loras.append(quadview)
@@ -521,6 +527,7 @@ def resolve_request(body: dict, settings: dict | None = None) -> dict:
         "width": width,
         "height": height,
         "ref_name": ref_name,
+        "ref_images": names,
         "ref_scale": ref_scale if ref_name else None,
         "prefix": prefix,
         "warnings": warnings,
@@ -538,6 +545,9 @@ _PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{STEPS}}", "{
 # 单帧占位符（首帧 {{REF_IMAGE}} / 尾帧 {{REF_IMAGE_LAST}}）：未挂该帧时整值判未填，
 # 所在 LoadImage 节点会被裁掉 —— 首尾帧技能因此可只给一边（仅首帧=I2VA、仅尾帧=L2VA）。
 _FRAME_TOKENS = {"{{REF_IMAGE}}": "ref_name", "{{REF_IMAGE_LAST}}": "ref_last"}
+# 需要参考图的判定只看单帧占位符：多路槽位（{{REF_IMAGE_n}}）未挂时裁掉即可，
+# 0 张参考对「文生图 + 可选参考」模板（如 Qwen Image 2.1）是合法路径。
+_SINGLE_REF_TOKEN_RE = re.compile(r"\{\{REF_IMAGE(_LAST)?\}\}")
 
 # 多路参考槽位占位符：{{REF_IMAGE_1..n}} / {{REF_VIDEO_1..n}} / {{REF_AUDIO_1..n}}。
 # 序号按媒体类型各自 1 基编号，列表由调用方按目标节点上限裁好（H3 为 9 图 / 3 视频 / 3 音频）。
@@ -706,9 +716,6 @@ def _apply_loras(graph: dict, loras: list, warnings: list):
     graph[consumer]["inputs"]["model"] = [prev, 0]
 
 
-_REF_IMAGE_TOKEN_RE = re.compile(r"\{\{REF_IMAGE(_\d+|_LAST)?\}\}")
-
-
 def _prune_unfilled(graph: dict, unfilled: set) -> None:
     """裁掉未填参考槽位的节点链：先删该节点，再删指向它们的连线；
     只剩连线、被裁空的中间节点（如参考视频的 GetVideoComponents）随之递归裁掉。"""
@@ -736,7 +743,7 @@ def render_template(template: dict, params: dict) -> tuple[dict, list]:
     模板用 {{REF_IMAGE}}（单路首帧）或 {{REF_IMAGE_n}} / {{REF_VIDEO_n}} / {{REF_AUDIO_n}}
     声明参考槽位；未提供对应序号的槽位整条裁掉，模板可同时容纳多种参考的上限槽位。"""
     text = json.dumps(template, ensure_ascii=False)
-    if _REF_IMAGE_TOKEN_RE.search(text) and not (
+    if _SINGLE_REF_TOKEN_RE.search(text) and not (
             params.get("ref_images") or params.get("ref_name") or params.get("ref_last")):
         raise ValueError("该技能需要参考图，请添加参考图后再生成")
     graph = copy.deepcopy(template)

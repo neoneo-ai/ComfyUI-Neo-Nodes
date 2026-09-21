@@ -1305,17 +1305,11 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertNotIn("ratio", s, "skill 声明比例已废弃，扫描结果不再输出")
 
     def test_preset_image_gen_skill_scanned(self):
-        s = self._scanned().get("image_gen")
+        s = self._scanned().get("image_gen_image")
         self.assertIsNotNone(s)
         self.assertTrue(s["gen_image"])
         self.assertTrue(s["requires_ref"], "四视图 skill 必须声明 requires_ref")
         self.assertEqual(s["category"], "image_gen")
-
-    def test_preset_image_gen_text_skill_scanned(self):
-        s = self._scanned().get("image_gen_text")
-        self.assertIsNotNone(s)
-        self.assertTrue(s["gen_image"])
-        self.assertFalse(s["requires_ref"], "纯文生图 skill 不要求参考图")
 
     def test_save_skill_main_preserves_gen_meta(self):
         self._write_skill("gen-c", [

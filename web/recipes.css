@@ -832,6 +832,81 @@
     margin-left: 0;   /* 贴右由 ♻ 承担 */
 }
 
+/* 🎨 段内「分镜图」缩略区：标签 + 缩略（生成后回显）+ 重生成/清除小按钮 */
+.neo-director-seg-sb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
+}
+
+.neo-director-seg-sb-thumb {
+    width: 96px;
+    height: 54px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #1c1c1c;
+    border: 1px dashed #3a3a3a;
+}
+
+.neo-director-seg-sb-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.neo-director-seg-sb-regen,
+.neo-director-seg-sb-clear {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    color: #8cb4d8;
+    font-size: 12px;
+    line-height: 1;
+    opacity: .6;
+}
+
+.neo-director-seg-sb-regen:hover,
+.neo-director-seg-sb-clear:hover {
+    background: rgba(140, 180, 216, 0.15);
+    opacity: 1;
+}
+
+/* 自动故事板页签的「图片分镜」控制行（生图技能 / 链式参考 / 生成按钮） */
+.neo-director-sb-actions {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #333;
+}
+
+.neo-director-sb-skill {
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+    max-width: 220px;
+}
+
+.neo-director-sb-chain {
+    accent-color: #8cb4d8;
+}
+
+.neo-director-sb-status {
+    font-size: 11px;
+    color: #9aa4b0;
+}
+
 /* 段内「重生成该段」参数面板（种子 / 锚点 + 执行） */
 .neo-director-seg-regen-panel {
     display: flex;

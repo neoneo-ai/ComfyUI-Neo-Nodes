@@ -723,6 +723,11 @@ class NeoH3VideoDirector:
             _DIRECTOR_PROGRESS.update(active=False, segment_index=-1, total_segments=0, step=0, total_steps=0)
 
 
+# ===========================================================================
+# 图片分镜（storyboard）逻辑已迁至 storyboard.py（独立于节点运行时）。
+# ===========================================================================
+
+
 NODE_CLASS_MAPPINGS = {"NeoH3VideoDirector": NeoH3VideoDirector, "NeoH3AddKeyframe": NeoH3AddKeyframe,
                        "NeoH3AddContext": NeoH3AddContext}
 NODE_DISPLAY_NAME_MAPPINGS = {"NeoH3VideoDirector": "Neo H3 Video Director",

@@ -68,6 +68,13 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] h3_video_director 节点注册失败（多段视频导演不可用）: {e}")
 
+    # 图片分镜（storyboard）：用生图技能逐段生成关键帧，注册 /neo_video_gen/storyboard_* 路由。
+    # 独立于 director 节点运行时；依赖 image_gen/skill/krea2_generate/recipes 已加载。导入失败时优雅降级。
+    try:
+        from . import storyboard  # noqa: F401
+    except Exception as e:
+        print(f"[NeoNodes] storyboard 路由注册失败（图片分镜不可用）: {e}")
+
     # Neo Bundle Expand：把 NeoPromptAgent 的 BUNDLE 展开成 prompt + image，便于对接官方 MiniMax H3 视频节点。
     # 依赖 prompts/bundles 已加载；导入失败时优雅降级。
     BUNDLE_EXPAND_MAPPINGS = {}

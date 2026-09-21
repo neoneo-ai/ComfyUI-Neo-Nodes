@@ -279,6 +279,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const segFrameSetters = new Map();  // 段行 → {first, last} 设置该段首/尾帧的函数（统一设置自动应用用）
     const segSvReaders = new Map();     // 段行 → 读取该段源视频（v2v/rv2v）的函数
     const segSvSetters = new Map();     // 段行 → 设置该段源视频的函数
+    const segStoryboards = new Map();   // 段行 → {thumb, status} 分镜图缩略区（生成图片分镜后回填）
 
     /** 一组参考素材的「已用列表」：只显示当前挂上的素材，拖入/本地上传直接插入；
      *  瓷砖可鼠标拖放调整顺序、✕ 移除。顺序即保存与时间轴展示顺序，数量受 group.max 上限约束。 */
@@ -400,7 +401,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const grid = $el('div', { className: `${prefix}-grid` });
         const candidates = imageRefs.slice();
         if (initialName && !candidates.some(r => r.filename === initialName)) {
-            candidates.unshift({ filename: initialName, subfolder: '', type: 'input' });
+            // 分镜图产物在 input/NeoDirector/ 下（旧配方回显的首帧可能是它），带子目录才能按位置拷贝
+            candidates.unshift({ filename: initialName, subfolder: /^storyboard_.*\.png$/.test(initialName) ? 'NeoDirector' : '', type: 'input' });
         }
         const thumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
         const noneTile = $el('div', { className: `${prefix}-item`, title: emptyText }, [
@@ -444,7 +446,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // 把素材加入候选并选中（网格拖放 / 时间轴拖放 / 画布素材共用）
         const addCandidate = (fname) => {
             if (!imageRefs.some(r => r.filename === fname)) {
-                imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
+                // 分镜图产物在 input/NeoDirector/ 下，记住子目录供保存时按位置拷贝
+                imageRefs.push({ filename: fname, subfolder: /^storyboard_.*\.png$/.test(fname) ? 'NeoDirector' : '', type: 'input', kind: 'image' });
             }
             let tile = Array.from(grid.children).find(it => it.dataset.file === fname);
             if (!tile) {
@@ -600,6 +603,18 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // ♻ 重生成该段：从成片取前后真实帧当锚点，换种子单独跑这一段（产物记进配方「结果」区）
         const regenBtn = $el('button', { className: 'neo-director-seg-regen', title: '重生成该段（锚点：用成片里的前后真实帧）', textContent: '♻' });
         regenBtn.onclick = (e) => { e.stopPropagation(); openRegenPanel(row, regenBtn); };
+        // 图片分镜缩略区：「生成图片分镜」的产物回显在此；i2v/fl2v 段生成后自动设为首帧
+        const sbThumb = $el('div', { className: 'neo-director-seg-sb-thumb' });
+        if (seg.storyboard) {
+            row.dataset.storyboard = seg.storyboard;
+            sbThumb.appendChild($el('img', { src: `/view?filename=${encodeURIComponent('NeoDirector/' + seg.storyboard)}&subfolder=&type=input`, alt: seg.storyboard, loading: 'lazy' }));
+        }
+        const sbRegenBtn = $el('button', { className: 'neo-director-seg-sb-regen', title: '重新生成该段分镜图', textContent: '🎨' });
+        const sbClearBtn = $el('button', { className: 'neo-director-seg-sb-clear', title: '清除该段分镜图（不影响已选首帧）', textContent: '✕' });
+        const sbBlock = $el('div', { className: 'neo-director-seg-sb' }, [
+            $el('span', { className: 'neo-director-field-label', textContent: '分镜图' }),
+            sbThumb, sbRegenBtn, sbClearBtn,
+        ]);
         // 首帧区 / 尾帧区（标题行 + 候选网格）各包一层，按有效模式显隐
         const ffBlock = $el('div', { className: 'neo-director-ff-block' }, [
             frameRow('首帧图（点选或从左侧素材栏拖入）', (fname) => ffGrid.addCandidate(fname)), ffGrid.grid,
@@ -663,6 +678,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 removeBtn,
             ]),
             $el('label', { className: 'neo-director-field-label', textContent: '提示词（必填）' }), promptTa,
+            sbBlock,
             ffLfWrap,
             svBlock,
             refsBlock,
@@ -687,6 +703,64 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             markDirty();
             if (wasCurrent) showSeg(Math.max(0, idx - 1));
         };
+        // 🎨 单段分镜图重生成（链式沿用全局开关，force 覆盖已有产物）
+        sbRegenBtn.onclick = async () => {
+            const name = (nameInp?.value || '').trim() || requestedName;
+            if (!name) { app.extensionManager.toast.add({ severity: 'warn', summary: '分镜图', detail: '请先填写配方名称', life: 4000 }); return; }
+            const idx = Array.from(segsWrap.querySelectorAll('.neo-director-seg')).indexOf(row);
+            sbRegenBtn.disabled = true;
+            try {
+                const res = await fetch('/neo_video_gen/storyboard_generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+                    name, segments: [{ prompt: (row.querySelector('.neo-director-prompt')?.value || '').trim(), storyboard_prompt: row.dataset.storyboardPrompt || '' }],
+                    skill_id: sbSkillSel ? sbSkillSel.value : 'qwen_image_21', chain_prev: !!(sbChainChk && sbChainChk.checked), force: true, index: idx,
+                }) });
+                const data = await res.json();
+                if (!data.success) { app.extensionManager.toast.add({ severity: 'error', summary: '分镜图', detail: data.error || '生成失败', life: 5000 }); return; }
+                for (;;) {
+                    await new Promise(r => setTimeout(r, 1500));
+                    const st = await (await fetch(`/neo_video_gen/storyboard_status/${data.task_id}`)).json();
+                    if (!st.success) break;
+                    const d = (st.details || [])[0] || {};
+                    if (d.status === 'done') { applyStoryboardToSeg(row, d.filename, d.preview_url); break; }
+                    if (d.status === 'failed' || d.status === 'skipped' || st.status === 'done' || st.status === 'cancelled') {
+                        app.extensionManager.toast.add({ severity: 'error', summary: '分镜图', detail: d.error || '生成失败', life: 5000 }); break;
+                    }
+                }
+            } catch (e) {
+                console.error('[Neo Recipes] Director storyboard regen failed:', e);
+                app.extensionManager.toast.add({ severity: 'error', summary: '分镜图', detail: e.message, life: 5000 });
+            } finally { sbRegenBtn.disabled = false; }
+        };
+        // ✕ 清除本段分镜图（只清缩略与记录；若首帧正是它则一并取消选中）
+        sbClearBtn.onclick = () => {
+            const fname = row.dataset.storyboard;
+            sbThumb.innerHTML = '';
+            delete row.dataset.storyboard;
+            segStoryboards.delete(row);
+            const setters = segFrameSetters.get(row);
+            if (fname && setters?.first && setters.first() === fname) setters.first('');
+            markDirty();
+        };
+        segStoryboards.set(row, { thumb: sbThumb });
+        if (seg.storyboard_prompt) row.dataset.storyboardPrompt = seg.storyboard_prompt;   // 分镜图提示词快照（拆分 LLM 产出，可缺省）
+        // 分镜图产物回填：记到段行（保存时随 storyboard 字段落盘）；i2v/fl2v 自动设为首帧，其余模式提示手动添加
+        function applyStoryboardToSeg(r, fname, url) {
+            if (!fname || !r.isConnected) return;
+            r.dataset.storyboard = fname;
+            const thumb = (segStoryboards.get(r) || {}).thumb;
+            if (thumb) {
+                thumb.innerHTML = '';
+                thumb.appendChild($el('img', { src: url || `/view?filename=${encodeURIComponent('NeoDirector/' + fname)}&subfolder=&type=input`, alt: fname, loading: 'lazy' }));
+            }
+            const gModeNow = modeSel ? modeSel.value : 't2v';
+            const eff = (gModeNow === 'mixed') ? (r.querySelector('.neo-director-segmode')?.value || '') : gModeNow;
+            if (eff === 'i2v' || eff === 'fl2v') {
+                r._addCandidate?.(fname);   // 加入首帧候选并选中（同时进 imageRefs，保存时自动落 assets）
+            } else {
+                app.extensionManager.toast.add({ severity: 'info', summary: '分镜图', detail: `第 ${Array.from(segsWrap.querySelectorAll('.neo-director-seg')).indexOf(r) + 1} 段分镜已生成（当前模式不自动用首帧，需要时可手动加到首帧/参考）`, life: 5000 });
+            }
+            markDirty();
+        }
         return row;
     }
 
@@ -1266,6 +1340,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 const sv = segSvReaders.get(row) ? segSvReaders.get(row)() : '';
                 if (sv) seg.source_video = sv;
             }
+            // 分镜图：记录 input/NeoDirector 下的文件名与提示词快照（文件本身不进 assets，保存时单独落一份）
+            const sb = row.dataset.storyboard || '';
+            if (sb) {
+                seg.storyboard = sb;
+                if (row.dataset.storyboardPrompt) seg.storyboard_prompt = row.dataset.storyboardPrompt;
+            }
             // 各模式的内容完整性：只提示、不阻止保存（允许先存草稿再补素材）
             if ((eff === 'i2v' || eff === 'fl2v') && !seg.first_frame && !seg.refs) {
                 warnings.push(`第 ${segNo} 段（${MODE_LABELS.get(eff)}）缺首帧图或参考素材`);
@@ -1443,7 +1523,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const defaultSkill = currentSkillId() || (skills.length ? skills[0].id : '');
             segsWrap.innerHTML = '';
             for (const s of data.segments) {
-                segsWrap.appendChild(buildSeg({ skill_id: defaultSkill, prompt: s.prompt, duration_sec: s.duration_sec, mode: 't2v' }));
+                segsWrap.appendChild(buildSeg({ skill_id: defaultSkill, prompt: s.prompt, duration_sec: s.duration_sec, mode: 't2v', storyboard_prompt: s.storyboard_prompt || '' }));
             }
             renumberSegs(); showSeg(0); applyGlobalMode();
             renderSegPreview(data.segments); // 右栏显示分段后的故事（留在本页，保留左右两栏对照）
@@ -1457,6 +1537,79 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         } finally { splitBtn.disabled = false; }
     };
 
+    // ---- 图片分镜：拆分后用生图技能（默认 Qwen Image 2.1，Krea2 备选）逐段出关键帧；
+    //      i2v/fl2v 段生成后自动设为首帧，其余模式仅回显（可手动加到首帧/参考）。----
+    const sbSkillSel = $el('select', { className: 'neo-director-sb-skill' });
+    (async () => {
+        try {
+            const list = await (await fetch('/rs_skills')).json();
+            for (const s of (list || []).filter(s => s.gen_image)) {
+                sbSkillSel.appendChild($el('option', { value: s.id, textContent: s.name || s.id }));
+            }
+        } catch (_) {}
+        if (!sbSkillSel.value) sbSkillSel.appendChild($el('option', { value: 'qwen_image_21', textContent: 'Qwen Image 2.1 生图' }));
+        if (!sbSkillSel.value) sbSkillSel.value = 'qwen_image_21';
+    })();
+    const sbChainChk = $el('input', { className: 'neo-director-sb-chain', type: 'checkbox' });
+    sbChainChk.checked = true;   // 链式：把最近生成的分镜图当参考（角色/背景 + 前两张，共 ≤4 张）
+    const sbGenBtn = $el('button', { className: 'rs-btn neo-director-sb-gen', textContent: '🎨 生成图片分镜' });
+    const sbStatus = $el('span', { className: 'neo-director-story-status neo-director-sb-status' });
+    const sbActions = $el('div', { className: 'neo-director-story-actions neo-director-sb-actions' }, [
+        $el('label', { className: 'neo-director-seglen-wrap' }, [$el('span', { textContent: '生图技能' }), sbSkillSel]),
+        $el('label', { className: 'neo-director-seglen-wrap' }, [sbChainChk, $el('span', { textContent: '链式参考' })]),
+        sbGenBtn, sbStatus,
+    ]);
+
+    async function generateAllStoryboards() {
+        const name = (nameInp?.value || '').trim() || requestedName;
+        if (!name) { app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: '请先填写配方名称', life: 4000 }); return; }
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        if (!rows.length) { app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: '请先拆分出分段', life: 4000 }); return; }
+        const segments = rows.map((row, i) => ({
+            prompt: (row.querySelector('.neo-director-prompt')?.value || '').trim(),
+            storyboard_prompt: row.dataset.storyboardPrompt || '',
+        }));
+        sbGenBtn.disabled = true;
+        try {
+            const res = await fetch('/neo_video_gen/storyboard_generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+                name, segments, skill_id: sbSkillSel.value || 'qwen_image_21', chain_prev: sbChainChk.checked,
+            }) });
+            const data = await res.json();
+            if (!data.success) { sbStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '图片分镜', detail: data.error || '生成失败', life: 5000 }); return; }
+            for (;;) {
+                await new Promise(r => setTimeout(r, 1500));
+                const st = await (await fetch(`/neo_video_gen/storyboard_status/${data.task_id}`)).json();
+                if (!st.success) break;
+                sbStatus.textContent = `分镜 ${st.processed}/${st.total}…`;
+                for (const d of (st.details || [])) {
+                    if (d.status === 'done' && d.filename) {
+                        const row = rows[d.index];
+                        const thumb = row && (segStoryboards.get(row) || {}).thumb;
+                        if (row && thumb) {
+                            row.dataset.storyboard = d.filename;
+                            thumb.innerHTML = '';
+                            thumb.appendChild($el('img', { src: d.preview_url, alt: d.filename, loading: 'lazy' }));
+                            const eff = (modeSel.value === 'mixed') ? (row.querySelector('.neo-director-segmode')?.value || '') : modeSel.value;
+                            if (eff === 'i2v' || eff === 'fl2v') row._addCandidate?.(d.filename);   // 自动设为首帧
+                        }
+                    }
+                }
+                if (st.status === 'done' || st.status === 'cancelled') {
+                    markDirty();
+                    const failed = (st.details || []).filter(d => d.status === 'failed').length;
+                    sbStatus.textContent = st.status === 'cancelled' ? '已停止' : `完成${failed ? `（${failed} 段失败）` : ''}`;
+                    if (failed) app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: `${failed} 段生成失败，见各段状态`, life: 5000 });
+                    break;
+                }
+            }
+        } catch (e) {
+            console.error('[Neo Recipes] Director storyboard generate failed:', e);
+            sbStatus.textContent = '';
+            app.extensionManager.toast.add({ severity: 'error', summary: '图片分镜', detail: e.message, life: 5000 });
+        } finally { sbGenBtn.disabled = false; }
+    }
+    sbGenBtn.onclick = () => generateAllStoryboards();
+
     // ---- 两个可切换页签：自动故事板 / 时间轴分段（避免单页过于复杂）----
     const storyboardPane = $el('div', { className: 'neo-director-pane neo-director-pane-story' }, [
         $el('div', { className: 'neo-director-story-cols' }, [
@@ -1469,6 +1622,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     $el('label', { className: 'neo-director-seglen-wrap' }, [$el('span', { textContent: '分段粒度' }), segLenSel]),
                     splitBtn,
                 ]),
+                sbActions,   // 图片分镜（生图技能 + 链式参考 + 生成按钮）
             ]),
             // 右栏：分段后的故事（拆分成功后显示）
             $el('div', { className: 'neo-director-story-col neo-director-story-right' }, [

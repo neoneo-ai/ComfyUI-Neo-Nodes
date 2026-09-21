@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import sys
+import shutil
 import tempfile
 import types
 import unittest
@@ -32,7 +33,7 @@ _MODELS = {
     "diffusion_models": ["minimax_h3_fl2va_pruned_int8_convrot.safetensors"],
     "text_encoders": ["qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"],
     "vae": ["minimax_h3_video_vae_fp16.safetensors", "minimax_h3_audio_vae_fp32.safetensors"],
-    "loras": [],
+    "loras": ["Krea2-QuadView_test.safetensors"],
 }
 
 # ---- 桩模块（对齐 test_h3_video_gen.py）----
@@ -79,6 +80,7 @@ sys.modules["folder_paths"] = _folder_paths
 _nodes = types.ModuleType("nodes")
 _nodes.NODE_CLASS_MAPPINGS = {}
 _nodes.MAX_RESOLUTION = 8192
+_nodes.interrupt_processing = lambda *a, **k: False   # storyboard 逐段检查中断；桩默认不中断
 sys.modules["nodes"] = _nodes
 
 # node_helpers 桩：conditioning_set_values 只做「复制 metadata 并写入给定值」（与 core 同语义）
@@ -238,8 +240,11 @@ setattr(_comfy, "taesd", _comfy_taesd)
 setattr(_comfy_taesd, "taesd", _comfy_taesd_taesd)
 
 # ---- 加载插件模块 ----
-_load("skill", "skill.py")
-_load("image_gen", "image_gen.py")
+skill = _load("skill", "skill.py")
+image_gen = _load("image_gen", "image_gen.py")
+# storyboard 端到端用例走真实 resolve_request/render_template（验证多参考去重/截断与槽位裁剪），
+# 但不关心模型文件是否存在：桩掉 resolve_model 返回占位名，避免依赖 _MODELS 与 Krea2 名称线索匹配。
+image_gen.resolve_model = lambda folder, wanted: (str(wanted or "").strip() or f"{folder}_stub.safetensors", "")
 krea2_generate = _load("krea2_generate", "krea2_generate.py")
 h3_video_gen = _load("h3_video_gen", "h3_video_gen.py")
 video_gen = _load("video_gen", "video_gen.py")
@@ -276,6 +281,7 @@ sys.modules["comfy_api"] = _comfy_api
 sys.modules["comfy_api.latest"] = _comfy_api_latest
 
 h3_video_director = _load("h3_video_director", "h3_video_director.py")
+storyboard = _load("storyboard", "storyboard.py")
 
 
 def _run_async(coro):
@@ -2357,6 +2363,270 @@ class _ConstFakeVideo:
 
     def get_components(self):
         return _FakeComp(self._images, self._audio)
+
+
+# ===========================================================================
+# 图片分镜（storyboard）：字段持久化 / 尺寸解析 / 多参考截断 / Qwen 2.1 模板裁剪 / 端到端生成
+# ===========================================================================
+
+def _write_png(path: str, width: int = 8, height: int = 6) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with Image.new("RGB", (width, height), (30, 120, 200)) as img:
+        img.save(path, format="PNG")
+
+
+class StoryboardFieldTests(unittest.TestCase):
+    def test_normalize_keeps_storyboard_fields(self):
+        _write_png(os.path.join(_INPUT_DIR, "NeoDirector", "storyboard_sb-dir_01.png"))
+        shared, segs = recipes._normalize_director(
+            {"shared": {}, "segments": [
+                {"skill_id": "h3_t2v", "prompt": "p",
+                 "storyboard": "storyboard_sb-dir_01.png", "storyboard_prompt": "<image1>中的女孩"},
+            ]}, {})
+        self.assertEqual(segs[0]["storyboard"], "storyboard_sb-dir_01.png")
+        self.assertEqual(segs[0]["storyboard_prompt"], "<image1>中的女孩")
+
+    def test_normalize_rejects_missing_storyboard_file(self):
+        with self.assertRaises(ValueError):
+            recipes._normalize_director(
+                {"shared": {}, "segments": [
+                    {"skill_id": "h3_t2v", "prompt": "p", "storyboard": "nope.png"}]}, {})
+
+    def test_parse_segments_keeps_storyboard_prompt(self):
+        raw = json.dumps([
+            {"prompt": "视频提示词", "duration_sec": 5, "storyboard_prompt": "构图描述"},
+            {"prompt": "第二段", "duration_sec": 8},   # 缺省 storyboard_prompt → 不写字段
+        ])
+        segs = recipes._parse_segments(raw)
+        self.assertEqual(segs[0]["storyboard_prompt"], "构图描述")
+        self.assertNotIn("storyboard_prompt", segs[1])
+
+
+class StoryboardDimsTests(unittest.TestCase):
+    def test_explicit_width_height(self):
+        self.assertEqual(storyboard._storyboard_dims(800, 600, None), (800, 608))
+
+    def test_ratio_uses_1024_base(self):
+        self.assertEqual(storyboard._storyboard_dims(0, 0, "1:1"), (1024, 1024))
+
+    def test_default_is_1024_square(self):
+        # 无显式宽高/比例时走设置默认（base 1024、1:1）
+        self.assertEqual(storyboard._storyboard_dims(None, None, None), (1024, 1024))
+
+    def test_16_9_ratio(self):
+        w, h = storyboard._storyboard_dims(None, None, "16:9")
+        self.assertAlmostEqual(w / h, 16 / 9, places=2)
+
+
+class StoryboardGenerateTests(unittest.TestCase):
+    """端到端（桩掉生图执行）：参考解析/链式/文件名/幂等跳过/单段重生成序号对齐。"""
+
+    # Qwen Image 2.1 同款模板：4 个参考槽未挂时连同 LoadImage 裁掉，TextEncodeQwenImage21 保留
+    _TEMPLATE = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "c.safetensors", "type": "qwen_image"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},
+        "4": {"class_type": "TextEncodeQwenImage21", "inputs": {
+            "clip": ["2", 0], "prompt": "{{PROMPT}}", "negative_prompt": "{{NEGATIVE}}",
+            "vae": ["3", 0],
+            "image_1": ["10", 0], "image_2": ["12", 0],
+            "image_3": ["14", 0], "image_4": ["16", 0]}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": "{{WIDTH}}", "height": "{{HEIGHT}}", "batch_size": 1}},
+        "6": {"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "seed": "{{SEED}}", "steps": 25, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "simple",
+            "positive": ["4", 0], "negative": ["4", 1], "latent_image": ["5", 0], "denoise": 1.0}},
+        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
+        "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": "{{PREFIX}}"}},
+        "10": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_1}}"}},
+        "12": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_2}}"}},
+        "14": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_3}}"}},
+        "16": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_4}}"}},
+    }
+
+    @staticmethod
+    def _refs_of(graph):
+        """从渲染后的图里按序取挂上的参考图名（未挂槽位已被裁掉）。"""
+        inputs = graph["4"]["inputs"]
+        refs = []
+        for i in (1, 2, 3, 4):
+            key = f"image_{i}"
+            if key not in inputs:
+                break
+            src_id = inputs[key][0]   # LoadImage 节点 id
+            refs.append(graph[src_id]["inputs"]["image"])
+        return refs
+
+    def setUp(self):
+        # _INPUT_DIR 是模块级共享的：清掉上一用例遗留的分镜产物，避免「已有产物跳过 / 磁盘链式参考」误判。
+        nd = os.path.join(_INPUT_DIR, "NeoDirector")
+        if os.path.isdir(nd):
+            shutil.rmtree(nd)
+        self._tmp = tempfile.mkdtemp(prefix="neo_sbrec_")
+        self.custom = os.path.join(self._tmp, "custom")
+        os.makedirs(self.custom)
+        import pathlib
+        self._orig_custom = recipes.CUSTOM_DIR
+        recipes.CUSTOM_DIR = pathlib.Path(self.custom)
+
+        self.recipe_dir = os.path.join(self.custom, "sb-e2e")
+        os.makedirs(os.path.join(self.recipe_dir, "assets"), exist_ok=True)
+        with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "sb-e2e", "type": "video_director", "shared": {},
+                       "director_story": {"characters": [{"filename": "char.png"}],
+                                          "backgrounds": []}}, f)
+        _write_png(os.path.join(self.recipe_dir, "assets", "char.png"))
+        # _storyboard_story_refs 被桩成返回 ["char.png"]（相对 input 目录）；resolve_request 会校验文件存在，
+        # 故需在 input 目录放一份同名图。
+        _write_png(os.path.join(_INPUT_DIR, "char.png"))
+
+        self.captured = []   # 每次 execute_graph_inprocess 收到的 (参考图列表, prompt)
+
+        def _fake_execute(graph, task_id):
+            self.captured.append((self._refs_of(graph), graph["4"]["inputs"]["prompt"]))
+            return {"images": [Image.new("RGB", (8, 6), (10, 200, 10))]}
+
+        orig = (storyboard.load_skill_workflow, storyboard.get_skill_gen_config,
+                storyboard._storyboard_story_refs, storyboard.execute_graph_inprocess)
+        self.orig = orig
+        storyboard.load_skill_workflow = lambda sid: json.loads(json.dumps(self._TEMPLATE))
+        storyboard.get_skill_gen_config = lambda sid: {}
+        storyboard._storyboard_story_refs = lambda name: ["char.png"]
+        storyboard.execute_graph_inprocess = _fake_execute
+
+    def tearDown(self):
+        (storyboard.load_skill_workflow, storyboard.get_skill_gen_config,
+         storyboard._storyboard_story_refs, storyboard.execute_graph_inprocess) = self.orig
+        recipes.CUSTOM_DIR = self._orig_custom
+
+    def _generate(self, **extra):
+        """提交生成请求并在同一事件循环里轮询到结束（后台任务跑在提交时的循环上）。"""
+        payload = {"name": "sb-e2e", "skill_id": "qwen_image_21", "chain_prev": True, "seed": 7}
+        payload.update(extra)
+
+        class _Req:
+            async def json(self):
+                return payload
+
+        status_req = types.SimpleNamespace(match_info={})
+        loop = asyncio.new_event_loop()
+        try:
+            resp = loop.run_until_complete(storyboard.neo_video_gen_storyboard_generate(_Req()))
+            self.assertEqual(resp.status, 200, f"生成请求失败：{resp.body}")
+            data = json.loads(resp.body)
+            status_req.match_info["task_id"] = data["task_id"]
+            for _ in range(200):
+                loop.run_until_complete(asyncio.sleep(0.01))   # 让后台任务推进（桩执行无真实 I/O）
+                st = json.loads(loop.run_until_complete(
+                    storyboard.neo_video_gen_storyboard_status(status_req)).body)
+                if st["status"] in ("done", "cancelled"):
+                    return st
+            self.fail("分镜任务未在限定轮次内结束")
+        finally:
+            loop.close()
+
+    def test_batch_generation_chains_previous_storyboards(self):
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}, {"prompt": "段三"}])
+        self.assertEqual(st["status"], "done")
+        for d in st["details"]:
+            self.assertEqual(d["status"], "done", f"第 {d['index']} 段失败：{d['error']}")
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
+        for n in (1, 2, 3):
+            self.assertTrue(os.path.isfile(os.path.join(out_dir, f"storyboard_sb-e2e_{n:02d}.png")))
+
+        # 参考图：角色在前 + 链式最近两张分镜在后，总数 ≤4
+        self.assertEqual(self.captured[0][0], ["char.png"])
+        self.assertEqual(self.captured[1][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
+        self.assertEqual(self.captured[2][0],
+                         ["char.png", "NeoDirector/storyboard_sb-e2e_01.png", "NeoDirector/storyboard_sb-e2e_02.png"])
+
+    def test_existing_storyboards_skipped_without_force(self):
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
+        os.makedirs(out_dir, exist_ok=True)
+        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))
+        self.captured.clear()
+        st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}])
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(len(self.captured), 1, "已有产物应跳过、只生成缺失的第 2 段")
+        self.assertEqual(st["details"][0]["filename"], "storyboard_sb-e2e_01.png")
+
+    def test_single_segment_regen_aligns_index_and_chains_from_disk(self):
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
+        os.makedirs(out_dir, exist_ok=True)
+        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))   # 前面段已有分镜
+        self.captured.clear()
+        st = self._generate(segments=[{"prompt": "重生成第3段"}], index=2, force=True)
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(st["details"][0]["status"], "done", st["details"][0].get("error"))
+        # 文件名对齐真实序号 _03，链式参考从磁盘取 _01
+        self.assertTrue(os.path.isfile(os.path.join(out_dir, "storyboard_sb-e2e_03.png")))
+        self.assertEqual(self.captured[0][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
+
+
+class StoryboardMultiRefTests(unittest.TestCase):
+    """resolve_request 多参考：保留列表 / 去重 / 按上限截断 / Krea2 单参考行为不变。"""
+
+    def setUp(self):
+        self.names = []
+        for i in range(12):
+            n = f"sb_ref_{i}.png"
+            _write_png(os.path.join(_INPUT_DIR, n))
+            self.names.append(n)
+
+    def test_multi_refs_kept_and_capped(self):
+        settings = dict(image_gen.DEFAULT_SETTINGS)
+        params = image_gen.resolve_request(
+            {"prompt": "p", "references": [{"kind": "input", "value": n} for n in self.names]},
+            settings, max_refs=10, auto_quadview=False)
+        self.assertEqual(params["ref_images"], self.names[:10])
+        self.assertEqual(params["ref_name"], self.names[0])
+        self.assertTrue(any("只使用前 10 张参考图" in w for w in params["warnings"]))
+
+    def test_single_ref_default_unchanged(self):
+        settings = dict(image_gen.DEFAULT_SETTINGS)
+        # Krea2 路径：max_refs 缺省 1，第二张被截断并提示（原有行为）
+        params = image_gen.resolve_request(
+            {"prompt": "p", "references": [{"kind": "input", "value": self.names[0]},
+                                           {"kind": "input", "value": self.names[1]}]},
+            settings)
+        self.assertEqual(params["ref_images"], [self.names[0]])
+        self.assertTrue(any("只使用第一张参考图" in w for w in params["warnings"]))
+
+
+class Qwen21TemplateTests(unittest.TestCase):
+    """Qwen Image 2.1 预设模板：未挂的参考槽连同 LoadImage 一并裁掉，主链保留。"""
+
+    def _render(self, ref_count, max_refs=10):
+        template = skill.load_skill_workflow("qwen_image_21")
+        self.assertIsNotNone(template, "qwen_image_21 预设应可加载 workflow.json")
+        settings = dict(image_gen.DEFAULT_SETTINGS)
+        for i in range(ref_count):
+            _write_png(os.path.join(_INPUT_DIR, f"q_ref_{i}.png"))
+        params = image_gen.resolve_request(
+            {"prompt": "p", "width": 1024, "height": 576,
+             "references": [{"kind": "input", "value": f"q_ref_{i}.png"} for i in range(ref_count)]},
+            settings, max_refs=max_refs, auto_quadview=False)
+        graph, warns = image_gen.render_template(template, params)
+        return graph
+
+    def test_no_refs_prunes_all_load_images(self):
+        graph = self._render(0)
+        for node_id in ("10", "12", "14", "16", "18", "20", "22", "24", "26", "28"):
+            self.assertNotIn(node_id, graph, f"无参考时 LoadImage {node_id} 应被裁掉")
+        self.assertIn("4", graph)   # TextEncodeQwenImage21 保留
+
+    def test_partial_refs_prune_unused_slots(self):
+        graph = self._render(3)
+        for node_id in ("10", "12", "14"):
+            self.assertIn(node_id, graph)
+        self.assertNotIn("16", graph, "第 4 个未挂的参考槽应被裁掉")
+
+    def test_many_refs_fill_high_slots_and_prune_rest(self):
+        # 上限提到 10：前 5 张占满 image_1..image_5（node 10..18），第 6 张起仍未挂 → 裁掉
+        graph = self._render(5)
+        for node_id in ("10", "12", "14", "16", "18"):
+            self.assertIn(node_id, graph)
+        self.assertNotIn("20", graph, "第 6 个未挂的参考槽应被裁掉")
 
 
 if __name__ == "__main__":
