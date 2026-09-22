@@ -1362,7 +1362,7 @@ def _parse_prompt_list(raw):
 
 @PromptServer.instance.routes.post("/rs_recipes/director_optimize_prompts")
 async def rs_recipes_director_optimize_prompts(request):
-    """按模式与统一参考素材，把各段提示词重写为 H3 官方格式（段落结构 / 参考标签 / 时间戳）。"""
+    """按模式与逐段参考素材，把各段提示词重写为 H3 官方格式（段落结构 / 参考标签 / 时间戳）。"""
     try:
         data = await request.json()
     except Exception:
@@ -1371,6 +1371,7 @@ async def rs_recipes_director_optimize_prompts(request):
     if not isinstance(segments, list) or not segments:
         return web.json_response({"success": False, "error": "没有可优化的分段"}, status=400)
     seg_lines = []
+    image_names = []
     for i, s in enumerate(segments):
         if not isinstance(s, dict):
             return web.json_response({"success": False, "error": f"第 {i + 1} 段格式无效"}, status=400)
@@ -1381,23 +1382,28 @@ async def rs_recipes_director_optimize_prompts(request):
             dur = int(round(float(s.get("duration_sec"))))
         except (TypeError, ValueError):
             dur = 0
-        seg_lines.append(f"第 {i + 1} 段（约 {dur} 秒）：\n{prompt}")
+        # 该段自己的参考素材（仅全参考模式由前端携带）：清单写进本段块内，<Picture N> 等标签按本段顺序编号
+        ref_lines = []
+        seg_refs = s.get("refs") or {}
+        if not isinstance(seg_refs, dict):
+            seg_refs = {}
+        for key, label, tag in (("images", "参考图", "Picture"), ("videos", "参考视频", "Video"), ("audios", "参考音频", "Audio")):
+            names = [str(n).strip() for n in (seg_refs.get(key) or []) if str(n or "").strip()]
+            if not names:
+                continue
+            if key == "images":
+                image_names.extend(names)
+            ref_lines.append(f"{label}（在提示词中按顺序引用为 <{tag} 1>…<{tag} {len(names)}>）：")
+            ref_lines.extend(f"- {n}" for n in names)
+        head = f"第 {i + 1} 段（约 {dur} 秒）："
+        if ref_lines:
+            head += "\n" + "\n".join(ref_lines) + "\n"
+        seg_lines.append(head + prompt)
 
     mode = str(data.get("mode") or "t2v").strip()
-    refs = data.get("refs") or {}
-    parts = [f"生成模式：{mode}", ""]
-    image_names = []
-    for key, label, tag in (("images", "参考图", "Picture"), ("videos", "参考视频", "Video"), ("audios", "参考音频", "Audio")):
-        names = [str(n).strip() for n in (refs.get(key) or []) if str(n or "").strip()]
-        if not names:
-            continue
-        if key == "images":
-            image_names = names
-        parts.append(f"{label}（在提示词中按顺序引用为 <{tag} 1>…<{tag} {len(names)}>）：")
-        parts.extend(f"- {n}" for n in names)
-    parts += ["", "各段现有提示词（逐段重写，数量与顺序保持不变）：\n" + "\n\n".join(seg_lines)]
+    parts = [f"生成模式：{mode}", "", "各段现有提示词（逐段重写，数量与顺序保持不变）：\n" + "\n\n".join(seg_lines)]
 
-    result = await asyncio.to_thread(_director_llm, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in image_names]))
+    result = await asyncio.to_thread(_director_llm, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]))
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     prompts = _parse_prompt_list(result.get("prompts") or "")

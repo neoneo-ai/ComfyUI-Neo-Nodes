@@ -1756,12 +1756,10 @@ test("导演编辑器：「🎨 分镜故事板」页签存在，生成模式只
     const setupPane = document.querySelector(".neo-director-pane-setup");
     assert.equal(setupPane.querySelector(".neo-director-mode"), null, "本页不再生成模式下拉（时间轴页唯一）");
     assert.equal(setupPane.querySelector(".neo-director-global-skill"), null, "本页不再统一技能框（时间轴页唯一）");
-    assert.equal(setupPane.querySelector(".neo-director-setup-refs").querySelectorAll(".neo-director-refpick-grid").length, 3, "统一参考区图/视频/音频三组网格（DOM 常驻）");
-    assert.equal(setupPane.querySelector(".neo-director-segref-sync"), null, "统一素材改动自动应用，无「应用到所有分段」按钮");
+    assert.equal(setupPane.querySelector(".neo-director-setup-refs"), null, "统一参考素材区已移除（参考素材到时间轴页逐段设置）");
     assert.ok(setupPane.querySelector(".neo-director-optimize"), "提示词优化按钮");
 
-    // t2v：不需要参考素材 → 参考区 / 首尾帧区隐藏，显示说明文字
-    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "none", "t2v 隐藏参考素材区");
+    // t2v：不需要参考素材 → 首尾帧区隐藏，显示说明文字
     assert.equal(setupPane.querySelector(".neo-director-setup-frames").style.display, "none", "t2v 隐藏首尾帧区");
     assert.ok(setupPane.querySelector(".neo-director-setup-hint").style.display !== "none", "t2v 显示说明文字");
 
@@ -1772,12 +1770,14 @@ test("导演编辑器：「🎨 分镜故事板」页签存在，生成模式只
     tlModeSel.dispatchEvent(new Event("change"));
     assert.ok(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-refs-block"))
         .every((b) => b.style.display !== "none"), "r2v 下各段参考素材区显示");
-    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "", "r2v 显示统一参考素材区");
-    assert.ok(Array.from(setupPane.querySelectorAll(".neo-director-setup-hint")).every((h) => h.style.display === "none"), "r2v 隐藏说明文字");
+    const hints = Array.from(setupPane.querySelectorAll(".neo-director-setup-hint"));
+    const r2vHint = hints.find((h) => h.textContent.includes("全参考模式"));
+    assert.ok(r2vHint && r2vHint.style.display !== "none", "r2v 显示「到时间轴页逐段设置」说明");
+    assert.ok(hints.every((h) => h === r2vHint || h.style.display === "none"), "r2v 隐藏其余说明文字");
 
     tlModeSel.value = "t2v";
     tlModeSel.dispatchEvent(new Event("change"));
-    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "none", "切回 t2v 本页参考区隐藏");
+    assert.equal(r2vHint.style.display, "none", "切回 t2v 隐藏全参考说明");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
@@ -1809,50 +1809,6 @@ test("导演编辑器：拆分成功后自动切到「🎨 分镜故事板」页
 });
 
 
-test("导演编辑器：统一设置参考素材改动自动覆盖式应用到各段", async () => {
-    const { openDirectorEditor } = await import("../../web/director.js");
-    appState.graph = { _nodes: [] };
-    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true, mode: "r2v" }]));
-    mockRoute("/upload/image", () => jsonResponse({ name: "uni_ref.png", subfolder: "", type: "input" }));
-
-    await openDirectorEditor({
-        name: "UNI-APPLY", shared: { mode: "r2v" },
-        segments: [
-            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "r2v", refs: { images: ["a.png"] } },
-            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, mode: "r2v", refs: { audios: ["m1.mp3"] } },
-        ],
-    });
-    await sleep(60);
-
-    // 切到分镜故事板页，往统一参考图网格上传一张图（走本地上传路径）
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
-    tabSetup.click();
-    await sleep(20);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
-    const imgRow = Array.from(setupPane.querySelectorAll(".neo-director-segref-row"))
-        .find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考图"));
-    const fileInput = imgRow.querySelector("input[type=file]");
-    fileInput.click = () => {};   // 拦截 jsdom 文件选择器
-    Object.defineProperty(fileInput, "files", { value: [new File(["fake"], "uni.png", { type: "image/png" })], configurable: true });
-    fileInput.dispatchEvent(new Event("change"));
-    await sleep(50);
-    const uniGrid = imgRow.querySelector(".neo-director-refpick-grid");
-    assert.ok(Array.from(uniGrid.querySelectorAll(".neo-director-refpick-item")).some((it) => it.dataset.file === "uni_ref.png"), "统一参考图已加入");
-
-    // 上传即自动应用到各段：三组参考被覆盖（图=统一图、视频/音频清空）
-    await sleep(30);
-    const orderOf = (grid) => Array.from(grid.querySelectorAll(".neo-director-refpick-item")).map((it) => it.dataset.file);
-    for (const seg of document.querySelectorAll(".neo-director-seg")) {
-        const grids = Array.from(seg.querySelectorAll(".neo-director-refpick-grid")); // DOM 序：图 / 视频 / 音频
-        assert.deepEqual(orderOf(grids[0]), ["uni_ref.png"], "各段参考图被统一覆盖");
-        assert.deepEqual(orderOf(grids[1]), [], "各段参考视频被清空");
-        assert.deepEqual(orderOf(grids[2]), [], "各段参考音频被清空");
-    }
-
-    document.querySelector(".neo-director-close").click();
-    await sleep(20);
-});
-
 test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一首帧到所有分段", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
@@ -1873,8 +1829,7 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     await sleep(20);
     const setupPane = document.querySelector(".neo-director-pane-setup");
 
-    // i2v：隐藏参考素材区；默认「逐段图片分镜」方式 → 显示 🎨 图片分镜卡片、隐藏统一首帧区（互斥）
-    assert.equal(setupPane.querySelector(".neo-director-setup-refs").style.display, "none", "i2v 隐藏参考素材区");
+    // i2v：默认「逐段图片分镜」方式 → 显示 🎨 图片分镜卡片、隐藏统一首帧区（互斥）
     assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "默认逐段图片分镜方式显示图片分镜卡片");
     const framesBlock = setupPane.querySelector(".neo-director-setup-frames");
     assert.equal(framesBlock.style.display, "none", "默认隐藏统一首帧区（与图片分镜互斥）");
@@ -1923,7 +1878,7 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     tlModeSel.dispatchEvent(new Event("change"));
     await sleep(20);
     const hints = Array.from(setupPane.querySelectorAll(".neo-director-setup-hint"));
-    assert.equal(hints[1].style.display, "", "mixed 显示逐段设置说明");
+    assert.equal(hints.find((h) => h.textContent.includes("混合模式")).style.display, "", "mixed 显示逐段设置说明");
     assert.equal(framesBlock.style.display, "none", "mixed 隐藏统一素材区");
 
     document.querySelector(".neo-director-close").click();
@@ -1954,14 +1909,14 @@ test("导演编辑器：「优化所有分段提示词」请求体正确、结�
     document.querySelector(".neo-director-optimize").click();
     await sleep(50);
 
-    // 请求体：segments（提示词+时长）/ mode / refs（空）
+    // 请求体：segments（提示词+时长）/ mode；非全参考模式不携带参考素材，也无全局 refs 字段
     const call = fetchLog.find((c) => c.path === "/rs_recipes/director_optimize_prompts");
     assert.ok(call, "调用了优化端点");
     assert.equal(call.method, "POST");
     assert.deepEqual(call.body.segments.map((s) => s.prompt), ["第一段原始", "第二段原始"]);
     assert.deepEqual(call.body.segments.map((s) => s.duration_sec), [5, 8]);
     assert.equal(call.body.mode, "t2v");
-    assert.deepEqual(call.body.refs, {});
+    assert.equal(call.body.refs, undefined, "全局 refs 字段已移除");
 
     // 失败路径：后端 success:false → 原提示词保留、状态清空
     const tas = Array.from(document.querySelectorAll(".neo-director-prompt"));
@@ -2011,6 +1966,28 @@ test("导演编辑器：「优化所有分段提示词」请求体正确、结�
     assert.equal(cells[1].textContent, "第一段原始", "重新优化后中栏仍是未优化原文");
     assert.equal(cells[2].textContent, "第二次优化 段一", "右栏更新为最新优化结果");
 
+    // r2v 模式：请求体携带各段自己的参考素材（替代旧「统一参考」）
+    const tlModeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
+    tlModeSel.value = "r2v";
+    tlModeSel.dispatchEvent(new Event("change"));
+    await sleep(20);
+    mockRoute("/upload/image", () => jsonResponse({ name: "opt_ref.png", subfolder: "", type: "input" }));
+    const segRefImgRow = document.querySelectorAll(".neo-director-seg .neo-director-segref-row")[0];   // 第 1 段参考图组
+    const refFileInput = segRefImgRow.querySelector("input[type=file]");
+    refFileInput.click = () => {};   // 拦截 jsdom 文件选择器
+    Object.defineProperty(refFileInput, "files", { value: [new File(["fake"], "opt.png", { type: "image/png" })], configurable: true });
+    refFileInput.dispatchEvent(new Event("change"));
+    await sleep(50);
+    clearRoutes();
+    mockRoute("/rs_recipes/director_optimize_prompts", () => jsonResponse({ success: true, prompts: ["第三次 段一", "第三次 段二"] }));
+    const r2vLogLen = fetchLog.length;
+    document.querySelector(".neo-director-optimize").click();
+    await sleep(50);
+    const r2vBody = fetchLog[r2vLogLen].body;
+    assert.deepEqual(r2vBody.segments[0].refs, { images: ["opt_ref.png"] }, "第 1 段携带自己的参考图");
+    assert.equal(r2vBody.segments[1].refs, undefined, "第 2 段无参考素材不带 refs");
+    assert.equal(r2vBody.refs, undefined, "r2v 请求体也无全局 refs 字段");
+
     // 保存：优化前后对照快照写入 setup，重开时可回显
     mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "OPT" }));
     document.querySelector(".neo-director-save").click();
@@ -2018,7 +1995,7 @@ test("导演编辑器：「优化所有分段提示词」请求体正确、结�
     const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
     assert.ok(saveCall, "发出保存请求");
     assert.deepEqual(saveCall.body.setup.orig_prompts, ["第一段原始", "第二段原始"], "优化前原文写入 setup");
-    assert.deepEqual(saveCall.body.setup.opt_prompts, ["第二次优化 段一", "第二次优化 段二"], "最新优化结果写入 setup");
+    assert.deepEqual(saveCall.body.setup.opt_prompts, ["第三次 段一", "第三次 段二"], "最新优化结果写入 setup");
 });
 
 test("导演编辑器：打开旧配方回显右栏分段故事与统一设置区状态", async () => {
@@ -2050,11 +2027,9 @@ test("导演编辑器：打开旧配方回显右栏分段故事与统一设置�
     assert.equal(cells[1].textContent, "场景A原文", "中栏回显落盘的优化前原文");
     assert.equal(cells[2].textContent, "优化结果A", "右栏回显落盘的优化结果");
 
-    // 统一设置区回显已存状态：参考图网格有对应瓷砖
+    // 统一参考素材区已移除：旧配方的 setup.refs 不再回显（参考素材到时间轴页逐段设置）
     const setupPane = document.querySelector(".neo-director-pane-setup");
-    const uniTiles = Array.from(setupPane.querySelectorAll(".neo-director-refpick-item"));
-    assert.equal(uniTiles.length, 1, "统一参考网格回显 1 张");
-    assert.equal(uniTiles[0].dataset.file, "u1.png", "回显已存的统一参考图");
+    assert.equal(setupPane.querySelectorAll(".neo-director-refpick-item").length, 0, "本页无统一参考网格，旧 setup.refs 不回显");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
@@ -2082,33 +2057,22 @@ test("导演编辑器：打开旧配方回显统一首帧/尾帧选中态", asyn
     await sleep(20);
 });
 
-test("导演编辑器：保存时统一设置区状态（统一参考/首帧/尾帧）写入 setup", async () => {
+test("导演编辑器：保存时统一设置区状态（统一首帧/尾帧）写入 setup", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
     mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SETUP-SAVE" }));
     let upCount = 0;
-    mockRoute("/upload/image", () => jsonResponse({ name: ["uni_ref.png", "uni_ff.png", "uni_lf.png"][upCount++], subfolder: "", type: "input" }));
+    mockRoute("/upload/image", () => jsonResponse({ name: ["uni_ff.png", "uni_lf.png"][upCount++], subfolder: "", type: "input" }));
 
     await openDirectorEditor({
-        name: "SETUP-SAVE", shared: { mode: "r2v" },
-        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "r2v" }],
+        name: "SETUP-SAVE", shared: { mode: "fl2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "fl2v" }],
     });
     await sleep(60);
 
     const setupPane = document.querySelector(".neo-director-pane-setup");
-    // r2v：点统一参考图网格空区上传一张
-    const refInput = setupPane.querySelector(".neo-director-setup-refs .neo-director-segref-row input[type=file]");
-    refInput.click = () => {};
-    Object.defineProperty(refInput, "files", { value: [new File(["fake"], "r.png", { type: "image/png" })], configurable: true });
-    refInput.dispatchEvent(new Event("change"));
-    await sleep(50);
-
-    // 切 fl2v：本地上传统一首帧 + 尾帧（两个「本地」按钮；模式在时间轴页切换）
-    const tlModeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
-    tlModeSel.value = "fl2v";
-    tlModeSel.dispatchEvent(new Event("change"));
-    await sleep(20);
+    // fl2v：本地上传统一首帧 + 尾帧（两个「本地」按钮）
     const localBtns = Array.from(setupPane.querySelectorAll(".neo-director-setup-frames .neo-director-local-add"));
     assert.equal(localBtns.length, 2, "首帧/尾帧行各有一个「本地」按钮");
     for (const btn of localBtns) {
@@ -2123,7 +2087,7 @@ test("导演编辑器：保存时统一设置区状态（统一参考/首帧/尾
     await sleep(60);
     const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
     assert.ok(saveCall, "发出保存请求");
-    assert.deepEqual(saveCall.body.setup.refs.images, ["uni_ref.png"], "统一参考图写入 setup.refs");
+    assert.equal(saveCall.body.setup.refs, undefined, "统一参考素材区已移除，不再写 setup.refs");
     assert.equal(saveCall.body.setup.first_frame, "uni_ff.png", "统一首帧写入 setup");
     assert.equal(saveCall.body.setup.last_frame, "uni_lf.png", "统一尾帧写入 setup");
 });
@@ -2246,7 +2210,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     const sbCard = setupPane.querySelector(".neo-director-setup-sb");
     assert.ok(sbCard, "图片分镜卡片在统一设置页");
     const paneChildren = Array.from(setupPane.children);
-    assert.ok(paneChildren.indexOf(setupPane.querySelector(".neo-director-setup-refs")) < paneChildren.indexOf(sbCard), "图片分镜卡片在统一参考区之后");
+    assert.equal(paneChildren.indexOf(sbCard), 1, "图片分镜卡片紧跟「分镜/首帧方式」行（统一参考区已移除）");
     assert.ok(paneChildren.indexOf(sbCard) < paneChildren.indexOf(setupPane.querySelector(".neo-director-setup-opt")), "图片分镜卡片在提示词优化之前");
 
     const sbModeSel = sbCard.querySelector(".neo-director-sb-mode");
@@ -2409,6 +2373,229 @@ test("导演编辑器：生成的分镜自动回填首帧 → 首帧缩略图走
     const asset = (saveCall.body.assets || []).find((a) => a.filename === "storyboard_SB-SUB_01.png");
     assert.equal(asset, undefined, "关键帧不进保存资产清单（避免重复拷贝）");
     assert.equal((saveCall.body.segments || [])[0].storyboard, "storyboard_SB-SUB_01.png", "段仍记录分镜图名");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：文生模式下生成的分镜也立即回填各段首帧（不区分生成模式），切到图生后保存携带 first_frame", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+        { id: "image_gen", name: "Krea2 文生图", gen_image: true },
+    ]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SB-T2V" }));
+    mockRoute("/neo_video_gen/storyboard_generate", () => jsonResponse({ success: true, task_id: "t-sbt2v", total: 2 }));
+    mockRoute("/neo_video_gen/storyboard_status/t-sbt2v", () => jsonResponse({
+        success: true, status: "done", total: 2, processed: 2,
+        details: [
+            { index: 0, status: "done", filename: "storyboard_SB-T2V_01.png" },
+            { index: 1, status: "done", filename: "storyboard_SB-T2V_02.png" },
+        ],
+    }));
+
+    await openDirectorEditor({
+        name: "SB-T2V",
+        shared: { mode: "t2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, storyboard_prompt: "画面一" },
+            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, storyboard_prompt: "画面二" },
+        ],
+    });
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const sbStatus = setupPane.querySelector(".neo-director-sb-status");
+    setupPane.querySelector(".neo-director-sb-gen").click();
+    for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
+    assert.match(sbStatus.textContent, /完成/, "分镜生成完成");
+
+    // 文生模式下也立即回填：两段的首帧网格各自出现关键帧候选且处于选中态
+    const rows = document.querySelectorAll(".neo-director-seg");
+    const expected = ["storyboard_SB-T2V_01.png", "storyboard_SB-T2V_02.png"];
+    rows.forEach((row, i) => {
+        const tile = Array.from(row.querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === expected[i]);
+        assert.ok(tile, `第 ${i + 1} 段生成后立即出现首帧候选`);
+        assert.ok(tile.classList.contains("neo-director-ff-active"), `第 ${i + 1} 段关键帧立即被选中为首帧`);
+    });
+
+    // 文生模式保存不带 first_frame 由既有保存用例覆盖；这里切到图生后已回填的关键帧应直接随段落盘
+    const modeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
+    changeValue(modeSel, "i2v");
+    await sleep(30);
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    const segs = saveCall.body.segments || [];
+    assert.equal(segs[0].first_frame, "storyboard_SB-T2V_01.png", "切到图生后携带已回填的关键帧首帧");
+    assert.equal(segs[1].first_frame, "storyboard_SB-T2V_02.png", "第 2 段同样生效");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：全参考模式下生成的分镜关键帧进入各段参考图池（不回填首帧），保存写入 refs.images", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+        { id: "image_gen", name: "Krea2 文生图", gen_image: true },
+    ]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SB-R2V" }));
+    mockRoute("/neo_video_gen/storyboard_generate", () => jsonResponse({ success: true, task_id: "t-sbr2v", total: 2 }));
+    mockRoute("/neo_video_gen/storyboard_status/t-sbr2v", () => jsonResponse({
+        success: true, status: "done", total: 2, processed: 2,
+        details: [
+            { index: 0, status: "done", filename: "storyboard_SB-R2V_01.png" },
+            { index: 1, status: "done", filename: "storyboard_SB-R2V_02.png" },
+        ],
+    }));
+
+    await openDirectorEditor({
+        name: "SB-R2V",
+        shared: { mode: "r2v" },
+        segments: [
+            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, storyboard_prompt: "画面一" },
+            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, storyboard_prompt: "画面二" },
+        ],
+    });
+    await sleep(60);
+
+    // 🎨 分镜故事板页：图片分镜卡片不再被生成模式隐藏（r2v 也可见，直接在本页生成）
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "全参考模式下图片分镜卡片可见");
+
+    const sbStatus = setupPane.querySelector(".neo-director-sb-status");
+    setupPane.querySelector(".neo-director-sb-gen").click();
+    for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
+    assert.match(sbStatus.textContent, /完成/, "分镜生成完成");
+
+    // 关键帧进各段参考图池（refs-block 瓷砖），且不进首帧候选网格
+    const rows = document.querySelectorAll(".neo-director-seg");
+    const expected = ["storyboard_SB-R2V_01.png", "storyboard_SB-R2V_02.png"];
+    rows.forEach((row, i) => {
+        const tiles = Array.from(row.querySelectorAll(".neo-director-refs-block .neo-director-refpick-item"));
+        assert.equal(tiles.length, 1, `第 ${i + 1} 段参考图池只有回填的关键帧一项`);
+        assert.equal(tiles[0].dataset.file, expected[i], `第 ${i + 1} 段关键帧进入参考图池`);
+        assert.ok(!Array.from(row.querySelectorAll(".neo-director-ff-item")).some((it) => it.dataset.file === expected[i]), `第 ${i + 1} 段关键帧不进首帧候选`);
+    });
+
+    // 保存：refs.images 记录关键帧并随参考素材进 assets；全参考段不带 first_frame
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    const segs = saveCall.body.segments || [];
+    assert.deepEqual(segs[0].refs.images, ["storyboard_SB-R2V_01.png"], "保存写入 refs.images");
+    assert.deepEqual(segs[1].refs.images, ["storyboard_SB-R2V_02.png"], "第 2 段同样写入");
+    assert.ok(!segs[0].first_frame, "全参考段不携带 first_frame");
+    assert.equal(segs[0].storyboard, "storyboard_SB-R2V_01.png", "段仍记录分镜图名");
+    assert.ok((saveCall.body.assets || []).some((a) => a.filename === "storyboard_SB-R2V_01.png"), "参考图池里的关键帧随 assets 落盘（后端按名解析）");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：混合模式下分镜生成按各段模式路由（i2v 段作首帧、r2v 段进参考图池）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+        { id: "image_gen", name: "Krea2 文生图", gen_image: true },
+    ]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SB-MIX" }));
+    mockRoute("/neo_video_gen/storyboard_generate", () => jsonResponse({ success: true, task_id: "t-sbmix", total: 2 }));
+    mockRoute("/neo_video_gen/storyboard_status/t-sbmix", () => jsonResponse({
+        success: true, status: "done", total: 2, processed: 2,
+        details: [
+            { index: 0, status: "done", filename: "storyboard_SB-MIX_01.png" },
+            { index: 1, status: "done", filename: "storyboard_SB-MIX_02.png" },
+        ],
+    }));
+
+    await openDirectorEditor({
+        name: "SB-MIX",
+        shared: { mode: "mixed" },
+        segments: [
+            { skill_id: "sk-a", prompt: "p0", duration_sec: 5, mode: "i2v" },
+            { skill_id: "sk-a", prompt: "p1", duration_sec: 5, mode: "r2v" },
+        ],
+    });
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "混合模式下图片分镜卡片可见");
+
+    const sbStatus = setupPane.querySelector(".neo-director-sb-status");
+    setupPane.querySelector(".neo-director-sb-gen").click();
+    for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
+    assert.match(sbStatus.textContent, /完成/, "分镜生成完成");
+
+    const rows = document.querySelectorAll(".neo-director-seg");
+    // 第 1 段（i2v）：关键帧回填为首帧候选并选中；不进参考图池
+    const ff0 = Array.from(rows[0].querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === "storyboard_SB-MIX_01.png");
+    assert.ok(ff0 && ff0.classList.contains("neo-director-ff-active"), "i2v 段关键帧立即回填为首帧");
+    assert.equal(rows[0].querySelectorAll(".neo-director-refs-block .neo-director-refpick-item").length, 0, "i2v 段关键帧不进参考图池");
+    // 第 2 段（r2v）：关键帧进参考图池；不进首帧候选
+    const tiles1 = Array.from(rows[1].querySelectorAll(".neo-director-refs-block .neo-director-refpick-item"));
+    assert.equal(tiles1.length, 1, "r2v 段参考图池出现关键帧");
+    assert.equal(tiles1[0].dataset.file, "storyboard_SB-MIX_02.png", "r2v 段关键帧文件名正确");
+    assert.ok(!Array.from(rows[1].querySelectorAll(".neo-director-ff-item")).some((it) => it.dataset.file === "storyboard_SB-MIX_02.png"), "r2v 段关键帧不进首帧候选");
+
+    // 保存：i2v 段落 first_frame，r2v 段落 refs.images
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    const segs = saveCall.body.segments || [];
+    assert.equal(segs[0].first_frame, "storyboard_SB-MIX_01.png", "i2v 段保存携带 first_frame");
+    assert.ok(!segs[0].refs, "i2v 段无 refs");
+    assert.deepEqual(segs[1].refs.images, ["storyboard_SB-MIX_02.png"], "r2v 段保存写入 refs.images");
+    assert.ok(!segs[1].first_frame, "r2v 段不携带 first_frame");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：带分镜图的旧配方切到全参考模式，关键帧自动加入该段参考图池（去重不堆叠）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    await openDirectorEditor({
+        name: "SB-SW",
+        shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, storyboard: "storyboard_sb-sw_01.png" }],
+    });
+    await sleep(60);
+
+    const row = document.querySelector(".neo-director-seg");
+    assert.equal(row.querySelectorAll(".neo-director-refs-block .neo-director-refpick-item").length, 0, "文生模式下参考图池为空");
+
+    const modeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
+    modeSel.value = "r2v";
+    modeSel.dispatchEvent(new Event("change"));
+    await sleep(20);
+    let tiles = Array.from(row.querySelectorAll(".neo-director-refs-block .neo-director-refpick-item"));
+    assert.equal(tiles.length, 1, "切到全参考后关键帧进入参考图池");
+    assert.equal(tiles[0].dataset.file, "storyboard_sb-sw_01.png", "进池的是已生成的分镜关键帧");
+
+    // 再切走切回：insert 去重，不堆重复项
+    modeSel.value = "t2v";
+    modeSel.dispatchEvent(new Event("change"));
+    modeSel.value = "r2v";
+    modeSel.dispatchEvent(new Event("change"));
+    await sleep(20);
+    tiles = Array.from(row.querySelectorAll(".neo-director-refs-block .neo-director-refpick-item"));
+    assert.equal(tiles.length, 1, "重复切模式不堆重复项");
 
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);

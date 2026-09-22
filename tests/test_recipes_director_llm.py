@@ -266,9 +266,11 @@ class ParsePromptListTests(unittest.TestCase):
 class OptimizePromptsEndpointTests(unittest.TestCase):
     def test_success_returns_prompts(self):
         req = _FakeRequest({
-            "segments": [{"prompt": "段一", "duration_sec": 5}, {"prompt": "段二", "duration_sec": 8}],
+            "segments": [
+                {"prompt": "段一", "duration_sec": 5, "refs": {"images": ["a.png", "b.png"], "videos": ["v.mp4"]}},
+                {"prompt": "段二", "duration_sec": 8},
+            ],
             "mode": "r2v",
-            "refs": {"images": ["a.png", "b.png"], "videos": ["v.mp4"]},
         })
         resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
         data = json.loads(resp.body)
@@ -304,7 +306,7 @@ class OptimizePromptsEndpointTests(unittest.TestCase):
             _llm.run_llm_task = original
 
     def test_multimodal_sends_image_bytes(self):
-        """统一参考图存在于 input/ 时，LLM 调用应带上图片字节（多模态）。"""
+        """逐段参考图存在于 input/ 时，LLM 调用应带上图片字节（多模态）。"""
         original = _llm.run_llm_task
         calls = []
 
@@ -317,12 +319,12 @@ class OptimizePromptsEndpointTests(unittest.TestCase):
             p = os.path.join(_INPUT_DIR, "opt_ref.png")
             with open(p, "wb") as f:
                 f.write(b"opt-bytes")
-            req = _FakeRequest({"segments": [{"prompt": "段一", "duration_sec": 5}], "refs": {"images": ["opt_ref.png"]}})
+            req = _FakeRequest({"segments": [{"prompt": "段一", "duration_sec": 5, "refs": {"images": ["opt_ref.png"]}}]})
             resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
             data = json.loads(resp.body)
             self.assertTrue(data["success"])
             self.assertEqual(len(data["prompts"]), 1)
-            self.assertTrue(calls[0])   # 统一参考图存在 → LLM 调用带图片字节
+            self.assertTrue(calls[0])   # 逐段参考图存在 → LLM 调用带图片字节
         finally:
             _llm.run_llm_task = original
 
