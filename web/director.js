@@ -292,6 +292,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let dirty = false;
     const markDirty = () => { dirty = true; };
 
+    // 配方 assets/ 里的文件名（含新生成的分镜关键帧）：缩略图走 /rs_recipes/asset，不经 input/
+    const recipeAssetFiles = new Set(((existing && existing.assets) || [])
+        .map(a => (typeof a === 'string' ? a : ((a || {}).file || ''))));
+    const assetThumbUrl = (fname) => `/rs_recipes/asset?recipe=${encodeURIComponent(requestedName)}&file=${encodeURIComponent(fname)}&t=${Date.now()}`;
+    // 缩略图按来源解析：配方资产走 /rs_recipes/asset，其余（画布 LoadImage / 新拖入文件）走 /view
+    const thumbSrc = (fname, subfolder = '') => recipeAssetFiles.has(fname)
+        ? assetThumbUrl(fname)
+        : `/view?filename=${encodeURIComponent(fname)}&subfolder=${encodeURIComponent(subfolder)}&type=input`;
+
     // 每段参考素材：三组多选网格，上限与 H3 参考节点（MiniMaxH3ReferenceToVideo）槽位一致
     const SEG_REF_GROUPS = [
         { key: 'images', kind: 'image', label: '参考图', max: 9 },
@@ -320,7 +329,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const render = () => {
             grid.innerHTML = '';
             list.forEach((name, i) => {
-                const url = `/view?filename=${encodeURIComponent(name)}&subfolder=&type=input`;
+                const url = thumbSrc(name);
                 let media;
                 if (group.kind === 'image') media = $el('img', { className: 'neo-director-refpick-thumb', src: url, alt: name, loading: 'lazy', draggable: false });
                 else if (group.kind === 'video') media = $el('video', { className: 'neo-director-refpick-thumb', src: url, muted: true, preload: 'metadata' });
@@ -426,10 +435,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const grid = $el('div', { className: `${prefix}-grid` });
         const candidates = imageRefs.slice();
         if (initialName && !candidates.some(r => r.filename === initialName)) {
-            // 分镜图产物在 input/NeoDirector/ 下（旧配方回显的首帧可能是它），带子目录才能按位置拷贝
-            candidates.unshift({ filename: initialName, subfolder: /^storyboard_.*\.png$/.test(initialName) ? 'NeoDirector' : '', type: 'input' });
+            // 回显的首帧可能只是配方 assets/ 里的名字（分镜关键帧），带 asset 标记走资产路由
+            candidates.unshift({ filename: initialName, subfolder: '', type: 'input', asset: recipeAssetFiles.has(initialName) });
         }
-        const thumbUrl = (ref) => `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
+        const thumbUrl = (ref) => ref.asset ? assetThumbUrl(ref.filename)
+            : `/view?filename=${encodeURIComponent(ref.filename)}&subfolder=${encodeURIComponent(ref.subfolder || '')}&type=${ref.type || 'input'}`;
         const noneTile = $el('div', { className: `${prefix}-item`, title: emptyText }, [
             $el('div', { className: `${prefix}-thumb ${prefix}-thumb-empty`, textContent: '🎬' }),
             $el('div', { className: `${prefix}-name`, textContent: emptyText }),
@@ -470,13 +480,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         };
         // 把素材加入候选并选中（网格拖放 / 时间轴拖放 / 画布素材共用）
         const addCandidate = (fname) => {
-            if (!imageRefs.some(r => r.filename === fname)) {
-                // 分镜图产物在 input/NeoDirector/ 下，记住子目录供保存时按位置拷贝
-                imageRefs.push({ filename: fname, subfolder: /^storyboard_.*\.png$/.test(fname) ? 'NeoDirector' : '', type: 'input', kind: 'image' });
+            // 已在配方 assets/ 里的（分镜关键帧）只作缩略图来源：不进保存资产清单，后端按名沿用现有文件
+            const isAsset = recipeAssetFiles.has(fname);
+            if (!isAsset && !imageRefs.some(r => r.filename === fname)) {
+                imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
             }
             let tile = Array.from(grid.children).find(it => it.dataset.file === fname);
             if (!tile) {
-                tile = makeTile({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
+                tile = makeTile({ filename: fname, subfolder: '', type: 'input', kind: 'image', asset: isAsset });
                 grid.appendChild(tile);
             }
             select(fname);
@@ -715,7 +726,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             markDirty();
             if (wasCurrent) showSeg(Math.max(0, idx - 1));
         };
-        if (seg.storyboard) row.dataset.storyboard = seg.storyboard;   // 回显已存分镜图：记到段行（保存时随 storyboard 落盘）
+        if (seg.storyboard) {
+            // 回显已存分镜图：记到段行（保存时随 storyboard 落盘），并登记为配方资产（缩略图走 /rs_recipes/asset）
+            row.dataset.storyboard = seg.storyboard;
+            recipeAssetFiles.add(seg.storyboard);
+        }
         if (seg.storyboard_prompt) row.dataset.storyboardPrompt = seg.storyboard_prompt;   // 分镜图提示词快照（拆分 LLM 产出，可缺省）
         return row;
     }
@@ -1119,7 +1134,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const names = read ? read() : [];
             mat[SEG_REF_GROUPS[gi].key] = names.length;
             if (SEG_REF_GROUPS[gi].key === 'images') {
-                for (const n of names) matThumbs.push(`/view?filename=${encodeURIComponent(n)}&subfolder=&type=input`);
+                for (const n of names) matThumbs.push(thumbSrc(n));
             }
         });
         return { duration: Number(durInp.value) || 0, prompt: (promptTa.value || '').trim(), thumbUrl, mat, matThumbs };
@@ -1301,7 +1316,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 const sv = segSvReaders.get(row) ? segSvReaders.get(row)() : '';
                 if (sv) seg.source_video = sv;
             }
-            // 分镜图：记录 input/NeoDirector 下的文件名与提示词快照（文件本身不进 assets，保存时单独落一份）
+            // 分镜图：记录配方 assets/ 里的关键帧名与提示词快照（文件已在 assets，保存不再重复拷贝）
             const sb = row.dataset.storyboard || '';
             if (sb) {
                 seg.storyboard = sb;
@@ -1418,16 +1433,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 右栏：分段后的故事（优化前原文）——打开旧配方时回显、拆分成功后刷新；左栏是分段前的完整故事。
     // 优化结果只写时间轴与「🎨 分镜故事板」页对照表，右栏保持拆分时的原文不变。
     const segPreview = $el('div', { className: 'neo-director-story-segs' });
-    // 分镜图缩略：「🎨 分镜故事板」页对照表第一列就地展示（生成按钮与状态都在该页，结果也回显在那）。
-    // URL 用 /view（与 buildSeg 回显一致）；点击缩略图复用 Lightbox 看大图（←/→ 切换各段），中键/Ctrl+点仍新开标签。
-    function sbViewUrl(fname) {
-        return `/view?filename=${encodeURIComponent(fname)}&subfolder=NeoDirector&type=input&t=${Date.now()}`;
-    }
     /** 对照表第一列缩略：点击经 Lightbox 看大图（onOpen）；传 onClear 时右上角悬停出现 ✕（清除该段分镜图记录）。 */
     function fillSegThumb(thumb, fname, onClear, onOpen) {
         if (!thumb || !fname) return;
         thumb.innerHTML = '';
-        const url = sbViewUrl(fname);
+        const url = assetThumbUrl(fname);
         const a = $el('a', { href: url, target: '_blank', rel: 'noopener', title: '点击查看大图（←/→ 切换各段）' });
         if (onOpen) a.addEventListener('click', (e) => { e.preventDefault(); onOpen(); });
         a.appendChild($el('img', { src: url, alt: fname, loading: 'lazy' }));
@@ -1642,6 +1652,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                         const row = rows[d.index];
                         if (!row) continue;
                         row.dataset.storyboard = d.filename;   // 记到段行（保存时随 storyboard 落盘）
+                        recipeAssetFiles.add(d.filename);      // 关键帧已落在配方 assets/：缩略图与首帧候选都按资产解析
                         const eff = (modeSel.value === 'mixed') ? (row.querySelector('.neo-director-segmode')?.value || '') : modeSel.value;
                         if ((eff === 'i2v' || eff === 'fl2v') && frameSourceSel.value === 'storyboard') row._addCandidate?.(d.filename);   // 自动设为首帧（逐段图片分镜方式）
                         segUpdated = true;
@@ -1914,7 +1925,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     : null;
                 if (!sbItemIdx.has(sbFname)) {
                     sbItemIdx.set(sbFname, sbItems.length);
-                    sbItems.push({ kind: 'image', url: sbViewUrl(sbFname), title: (src === 'unified' ? '统一首帧 · ' : `第 ${i + 1} 段 · `) + sbFname });
+                    sbItems.push({ kind: 'image', url: thumbSrc(sbFname), title: (src === 'unified' ? '统一首帧 · ' : `第 ${i + 1} 段 · `) + sbFname });
                 }
                 fillSegThumb(thumb, sbFname, clearStoryboard, () => Lightbox.open({ items: sbItems, index: sbItemIdx.get(sbFname) }));
             } else {

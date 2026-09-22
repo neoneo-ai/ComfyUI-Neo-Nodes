@@ -651,6 +651,46 @@ class DirectorRecipeIOTests(unittest.TestCase):
         self.assertEqual(seg["last_input"], "z.png")
         self.assertEqual(seg["mode"], "fl2v")
 
+    def test_load_spec_storyboard_fills_missing_first_frame(self):
+        # 逐段图片分镜：i2v 段没设首帧时用配方 assets/ 里的分镜关键帧（节点只读时间轴与导演台缩略图同源）
+        self._make_recipe("sb", {"type": "video_director",
+                                 "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                 "segments": [{"skill_id": "s", "prompt": "p",
+                                               "storyboard": "storyboard_sb_01.png"}]},
+                          assets=["storyboard_sb_01.png"])
+        seg = recipes.load_director_spec("sb")["segments"][0]
+        self.assertEqual(seg["ref_input"], "storyboard_sb_01.png")
+        self.assertEqual(seg["mode"], "i2v")
+
+    def test_load_spec_storyboard_ignored_when_file_gone(self):
+        # 配方 assets/ 里的关键帧已被清理：跳过，不报错（与编辑器同样显示不出缩略图）
+        self._make_recipe("sbm", {"type": "video_director",
+                                  "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                  "segments": [{"skill_id": "s", "prompt": "p",
+                                                "storyboard": "storyboard_sbm_01.png"}]})
+        self.assertIsNone(recipes.load_director_spec("sbm")["segments"][0]["ref_input"])
+
+    def test_load_spec_storyboard_not_used_for_t2v(self):
+        # t2v 段不拿分镜关键帧当首帧（执行时也不带参考）
+        self._make_recipe("sbt", {"type": "video_director",
+                                  "shared": {"mode": "t2v", "width": 8, "height": 8},
+                                  "segments": [{"skill_id": "s", "prompt": "p",
+                                                "storyboard": "storyboard_sbt_01.png"}]},
+                          assets=["storyboard_sbt_01.png"])
+        seg = recipes.load_director_spec("sbt")["segments"][0]
+        self.assertIsNone(seg["ref_input"])
+
+    def test_load_spec_storyboard_not_used_when_first_frame_set(self):
+        # 段自己设了首帧：优先首帧，分镜关键帧不覆盖
+        self._make_recipe("sb2", {"type": "video_director",
+                                  "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                  "segments": [{"skill_id": "s", "prompt": "p",
+                                                "first_frame": "own.png",
+                                                "storyboard": "storyboard_sb2_01.png"}]},
+                           assets=["own.png", "storyboard_sb2_01.png"])
+        seg = recipes.load_director_spec("sb2")["segments"][0]
+        self.assertEqual(seg["ref_input"], "own.png")
+
     def test_load_spec_infers_fl2v_from_last_frame(self):
         # 旧配方无 mode：只挂尾帧也识别为首尾帧模式
         self._make_recipe("f", {"type": "video_director", "shared": {"width": 8, "height": 8},
@@ -2476,20 +2516,31 @@ def _write_png(path: str, width: int = 8, height: int = 6) -> None:
 
 class StoryboardFieldTests(unittest.TestCase):
     def test_normalize_keeps_storyboard_fields(self):
-        _write_png(os.path.join(_INPUT_DIR, "NeoDirector", "storyboard_sb-dir_01.png"))
+        # 分镜关键帧是配方资产：与 first_frame 同源，按已落盘资产名保留（不再查 input）
         shared, segs = recipes._normalize_director(
             {"shared": {}, "segments": [
                 {"skill_id": "h3_t2v", "prompt": "p",
                  "storyboard": "storyboard_sb-dir_01.png", "storyboard_prompt": "<image1>中的女孩"},
-            ]}, {})
+            ]}, {}, {"storyboard_sb-dir_01.png"})
         self.assertEqual(segs[0]["storyboard"], "storyboard_sb-dir_01.png")
         self.assertEqual(segs[0]["storyboard_prompt"], "<image1>中的女孩")
 
-    def test_normalize_rejects_missing_storyboard_file(self):
-        with self.assertRaises(ValueError):
-            recipes._normalize_director(
-                {"shared": {}, "segments": [
-                    {"skill_id": "h3_t2v", "prompt": "p", "storyboard": "nope.png"}]}, {})
+    def test_normalize_drops_missing_storyboard_ref(self):
+        # 关键帧不在配方资产里（旧配方的 input 产物已清理）：丢掉引用、不阻塞保存，提示词快照保留
+        shared, segs = recipes._normalize_director(
+            {"shared": {}, "segments": [
+                {"skill_id": "h3_t2v", "prompt": "p", "storyboard": "nope.png",
+                 "storyboard_prompt": "画面描述"}]}, {})
+        self.assertNotIn("storyboard", segs[0])
+        self.assertEqual(segs[0]["storyboard_prompt"], "画面描述")
+
+    def test_normalize_rewrites_storyboard_to_copied_name(self):
+        # 本次保存新拷贝的资产：原始名回写为落盘最终名（同名不同内容可能被重命名）
+        shared, segs = recipes._normalize_director(
+            {"shared": {}, "segments": [
+                {"skill_id": "h3_t2v", "prompt": "p", "storyboard": "storyboard_sb-dir_01.png"}]},
+            {"storyboard_sb-dir_01.png": "storyboard_sb-dir_01_1.png"})
+        self.assertEqual(segs[0]["storyboard"], "storyboard_sb-dir_01_1.png")
 
     def test_parse_segments_keeps_storyboard_prompt(self):
         raw = json.dumps([
@@ -2667,10 +2718,6 @@ class StoryboardGenerateTests(unittest.TestCase):
         return refs
 
     def setUp(self):
-        # _INPUT_DIR 是模块级共享的：清掉上一用例遗留的分镜产物，避免「已有产物跳过」误判。
-        nd = os.path.join(_INPUT_DIR, "NeoDirector")
-        if os.path.isdir(nd):
-            shutil.rmtree(nd)
         self._tmp = tempfile.mkdtemp(prefix="neo_sbrec_")
         self.custom = os.path.join(self._tmp, "custom")
         os.makedirs(self.custom)
@@ -2679,7 +2726,9 @@ class StoryboardGenerateTests(unittest.TestCase):
         recipes.CUSTOM_DIR = pathlib.Path(self.custom)
 
         self.recipe_dir = os.path.join(self.custom, "sb-e2e")
-        os.makedirs(os.path.join(self.recipe_dir, "assets"), exist_ok=True)
+        # 关键帧的落盘位置就是配方 assets/（与 storyboard.py 一致）
+        self.assets_dir = os.path.join(self.recipe_dir, "assets")
+        os.makedirs(self.assets_dir, exist_ok=True)
         with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
             json.dump({"name": "sb-e2e", "type": "video_director", "shared": {},
                        "story": {"characters": [{"filename": "char.png"}],
@@ -2743,9 +2792,8 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertEqual(st["status"], "done")
         for d in st["details"]:
             self.assertEqual(d["status"], "done", f"第 {d['index']} 段失败：{d['error']}")
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
         for n in (1, 2, 3):
-            self.assertTrue(os.path.isfile(os.path.join(out_dir, f"storyboard_sb-e2e_{n:02d}.png")))
+            self.assertTrue(os.path.isfile(os.path.join(self.assets_dir, f"storyboard_sb-e2e_{n:02d}.png")))
 
         # 参考图：只有角色/背景（各段相同，不再链式带前一分镜）
         for c in self.captured:
@@ -2836,9 +2884,8 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertIn("未知的分镜模式", json.loads(resp.body)["error"])
 
     def test_existing_storyboards_skipped_without_force(self):
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
-        os.makedirs(out_dir, exist_ok=True)
-        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))
+        # 已有产物在配方 assets/ 里：非 force 时幂等跳过，只补缺失段
+        _write_png(os.path.join(self.assets_dir, "storyboard_sb-e2e_01.png"))
         self.captured.clear()
         st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}])
         self.assertEqual(st["status"], "done")
@@ -2847,9 +2894,7 @@ class StoryboardGenerateTests(unittest.TestCase):
 
     def test_force_regenerates_existing_storyboard(self):
         # 再次点「🎨 生成图片分镜」带 force=True：已有产物的段也重新生成（不做幂等跳过）
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
-        os.makedirs(out_dir, exist_ok=True)
-        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))
+        _write_png(os.path.join(self.assets_dir, "storyboard_sb-e2e_01.png"))
         self.captured.clear()
         st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}], force=True)
         self.assertEqual(st["status"], "done")
@@ -2858,9 +2903,7 @@ class StoryboardGenerateTests(unittest.TestCase):
     def test_force_without_seed_uses_fresh_random_base(self):
         # 强制重生成且未钉种子 → 换新随机基（否则同 seed → 同图，重生成无意义）；显式钉的 seed 不受影响。
         # 同一次生成内各段共用同一 seed（不再按段序号偏移）。
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
-        os.makedirs(out_dir, exist_ok=True)
-        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))
+        _write_png(os.path.join(self.assets_dir, "storyboard_sb-e2e_01.png"))
         self.captured.clear()
         orig_randint = random.randint
         random.randint = lambda a, b: 987654
@@ -2878,8 +2921,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         st = self._generate(segments=[{"prompt": "重生成第3段"}], index=2, force=True)
         self.assertEqual(st["status"], "done")
         self.assertEqual(st["details"][0]["status"], "done", st["details"][0].get("error"))
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
-        self.assertTrue(os.path.isfile(os.path.join(out_dir, "storyboard_sb-e2e_03.png")))
+        self.assertTrue(os.path.isfile(os.path.join(self.assets_dir, "storyboard_sb-e2e_03.png")))
         self.assertEqual(self.captured[0][0], ["char.png"])
 
     def test_interrupt_mid_run_cancels_cleanly(self):
@@ -2919,9 +2961,6 @@ class StoryboardInProcessProgressTests(unittest.TestCase):
     用 CurrentNodeContext 提供 prompt_id=task_id，进度正常上报、任务跑完（去掉该 wrapper 本用例即失败）。"""
 
     def setUp(self):
-        nd = os.path.join(_INPUT_DIR, "NeoDirector")
-        if os.path.isdir(nd):
-            shutil.rmtree(nd)
         self._tmp = tempfile.mkdtemp(prefix="neo_sbprog_")
         self.custom = os.path.join(self._tmp, "custom")
         os.makedirs(self.custom)
@@ -2930,7 +2969,8 @@ class StoryboardInProcessProgressTests(unittest.TestCase):
         recipes.CUSTOM_DIR = pathlib.Path(self.custom)
 
         self.recipe_dir = os.path.join(self.custom, "sb-prog")
-        os.makedirs(os.path.join(self.recipe_dir, "assets"), exist_ok=True)
+        self.assets_dir = os.path.join(self.recipe_dir, "assets")
+        os.makedirs(self.assets_dir, exist_ok=True)
         with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
             json.dump({"name": "sb-prog", "type": "video_director", "shared": {},
                        "story": {"characters": [], "backgrounds": []}}, f)
@@ -3012,8 +3052,7 @@ class StoryboardInProcessProgressTests(unittest.TestCase):
         # 段必须真正跑完（修复前：AttributeError → 段 failed）
         self.assertEqual(st["status"], "done")
         self.assertEqual(st["details"][0]["status"], "done", f"段失败：{st['details'][0].get('error')}")
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
-        self.assertTrue(os.path.isfile(os.path.join(out_dir, "storyboard_sb-prog_01.png")))
+        self.assertTrue(os.path.isfile(os.path.join(self.assets_dir, "storyboard_sb-prog_01.png")))
         # 进度确实被上报，且 prompt_id 来自执行上下文（=task_id），而非回退 last_prompt_id
         self.assertTrue(any(u[2] == 3 and u[3] == 3 for u in self.updates), "采样末步进度未上报")
         self.assertTrue(all(u[0] == data["task_id"] for u in self.updates),

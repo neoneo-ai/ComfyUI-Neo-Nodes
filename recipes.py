@@ -240,9 +240,11 @@ def _copy_ref_into_dir(ref: dict, dest_dir: Path) -> str | None:
     try:
         source_path = Path(_folder_paths.get_annotated_filepath(name, base_dir))
     except ValueError:
-        return None
-    if not source_path.is_file():
-        return None
+        source_path = None
+    if source_path is None or not source_path.is_file():
+        # 引用不在 Comfy 目录里但已是本配方资产（如刚生成的分镜关键帧）：按名沿用，不重复拷贝
+        already = dest_dir / Path(filename).name
+        return already.name if already.is_file() else None
 
     source_size = source_path.stat().st_size
     source_md5 = hashlib.md5()
@@ -444,15 +446,17 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
             seg["last_frame"] = _resolve_ref(last_frame, "last_frame")
         if source_video:
             seg["source_video"] = _resolve_ref(source_video, "source_video")
-        # 分镜图：由「生成图片分镜」落在 input/NeoDirector/ 下的固定命名文件，不走 assets；
-        # 校验存在（防引用已被删除的图），storyboard_prompt 是分镜提示词快照（可缺省回落到 prompt）
+        # 分镜关键帧：由「生成图片分镜」直接落在配方 assets/，与 first_frame 同源解析。
+        # 引用不在资产里（旧配方的 input 产物已清理）时丢掉该引用而不是拒绝保存：
+        # 缩略图显示为「无」，重新生成分镜即回填；storyboard_prompt 快照仍保留。
         storyboard = str(s.get("storyboard") or "").strip()
         if storyboard:
-            import folder_paths as _fp
-            sb_path = Path(_fp.get_input_directory()) / "NeoDirector" / storyboard
-            if not sb_path.is_file():
-                raise ValueError(f"第 {idx + 1} 段分镜图不存在：{storyboard}")
-            seg["storyboard"] = storyboard
+            sb_stored = orig_to_copied.get(storyboard)
+            if not sb_stored and existing_assets and storyboard in existing_assets:
+                sb_stored = storyboard
+            if sb_stored:
+                seg["storyboard"] = sb_stored
+        # storyboard_prompt 是分镜提示词快照（可缺省回落到 prompt）
         storyboard_prompt = str(s.get("storyboard_prompt") or "").strip()
         if storyboard_prompt:
             seg["storyboard_prompt"] = storyboard_prompt
@@ -667,8 +671,10 @@ async def rs_recipes_save(request):
         rtype = str(data.get("type") or "").strip()
         director_shared, director_segments, director_story, director_setup = None, None, None, None
         if rtype == "video_director":
-            # 已落盘 assets（旧清单 + 本次拷贝）：段 / 故事板参考图引用其中任一名字都合法，重存旧配方不报错
+            # 已落盘 assets（旧清单 + 本次拷贝 + 目录里实际文件，含刚生成的分镜关键帧）：
+            # 段 / 故事板参考图引用其中任一名字都合法，重存旧配方不报错
             existing_assets = set(copied)
+            existing_assets.update(f.name for f in assets_dir.iterdir() if f.is_file())
             try:
                 director_shared, director_segments = _normalize_director(data, orig_to_copied, existing_assets)
             except ValueError as e:
@@ -1083,7 +1089,8 @@ def load_director_spec(name: str) -> dict:
     """读取 video_director 配方，把每段有效首帧图解析成 input 相对名（复制进 input/）。
 
     返回 {shared, segments}；segments 每项含 skill_id/prompt/duration_sec/ref_input。
-    ref_input 为该段用于 I2V 首帧的 input 文件名（first_frame 或 refs.images[0]），无则 None。
+    ref_input 为该段用于 I2V 首帧的 input 文件名（first_frame 或 refs.images[0]，
+    i2v/fl2v 段两者皆无时回退该段落盘的分镜关键帧 storyboard），无则 None。
     额外返回 identity_images：配方「角色参考图」解析出的身份参考图（有才写该键），
     供导演运行时给各段注入身份参考（分镜关键帧不含面部时靠它保住角色身份）。
     """
@@ -1148,6 +1155,14 @@ def load_director_spec(name: str) -> dict:
             mode = "r2v"
         else:
             mode = "t2v"
+        # 逐段图片分镜：i2v/fl2v 段没另设首帧时，配方 assets/ 里的分镜关键帧就是首帧
+        # （与 first_frame 同源；导演台编辑器与节点只读时间轴的缩略图必须一致）
+        if mode in ("i2v", "fl2v") and not ref_input:
+            sb_img = str(seg.get("storyboard") or "").strip()
+            src = assets_dir / sb_img
+            if sb_img and src.is_file():
+                resolved, _skipped = _copy_media_to_input(src, sb_img)
+                ref_input = resolved
         segments.append({
             "skill_id": str(seg.get("skill_id") or ""),
             "prompt": seg.get("prompt", ""),

@@ -2363,6 +2363,57 @@ test("导演编辑器：分镜回退用视频提示词时点名提示（后端 w
     await sleep(20);
 });
 
+test("导演编辑器：生成的分镜自动回填首帧 → 首帧缩略图走配方资产路由，保存不再重复拷贝该关键帧", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+        { id: "image_gen", name: "Krea2 文生图", gen_image: true },
+    ]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SB-SUB" }));
+    mockRoute("/neo_video_gen/storyboard_generate", () => jsonResponse({ success: true, task_id: "t-sub", total: 1 }));
+    mockRoute("/neo_video_gen/storyboard_status/t-sub", () => jsonResponse({
+        success: true, status: "done", total: 1, processed: 1,
+        details: [{ index: 0, status: "done", filename: "storyboard_SB-SUB_01.png" }],
+    }));
+
+    await openDirectorEditor({
+        name: "SB-SUB",
+        shared: { mode: "i2v" },
+        segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5, storyboard_prompt: "画面一" }],
+    });
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板");
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const sbStatus = setupPane.querySelector(".neo-director-sb-status");
+    setupPane.querySelector(".neo-director-sb-gen").click();
+    for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
+    assert.match(sbStatus.textContent, /完成/, "分镜生成完成");
+
+    const row = document.querySelectorAll(".neo-director-seg")[0];
+    const tile = Array.from(row.querySelectorAll(".neo-director-ff-item")).find((it) => it.dataset.file === "storyboard_SB-SUB_01.png");
+    assert.ok(tile, "生成的分镜自动回填为第 1 段首帧候选");
+    assert.ok(tile.classList.contains("neo-director-ff-active"), "自动选中为首帧");
+    const src = decodeURIComponent(tile.querySelector("img.neo-director-ff-thumb").getAttribute("src"));
+    // 关键帧就在配方 assets/：缩略图必须走 /rs_recipes/asset（不经 input/，与节点只读时间轴同源）
+    assert.match(src, /^\/rs_recipes\/asset\?recipe=SB-SUB/, "缩略图走配方资产路由（带配方名）");
+    assert.match(src, /file=storyboard_SB-SUB_01\.png/, "资产路由带上关键帧文件名");
+
+    // 保存：已在配方 assets/ 里的关键帧不再作为待拷贝资产提交（后端按名沿用，不重复落一份）
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const saveCall = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop();
+    const asset = (saveCall.body.assets || []).find((a) => a.filename === "storyboard_SB-SUB_01.png");
+    assert.equal(asset, undefined, "关键帧不进保存资产清单（避免重复拷贝）");
+    assert.equal((saveCall.body.segments || [])[0].storyboard, "storyboard_SB-SUB_01.png", "段仍记录分镜图名");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
 test("导演编辑器：身份参考开关默认开，关掉后随 shared 落盘并可回显（对比测试用）", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };

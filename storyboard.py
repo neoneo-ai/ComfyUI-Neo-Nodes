@@ -3,7 +3,8 @@
 # 用生图技能逐段生成关键帧：mode=t2i 纯文生图（不带参考，默认 Krea2），
 # mode=r2i 参考编辑（角色/背景参考，用所选技能不强制切 Qwen），
 # 缺省 mode 为旧行为（文生图默认 Krea2，带参考图的段固定切 Qwen Image 2.1）；
-# 落在 input/NeoDirector/storyboard_{recipe}_{seg:02d}.png；i2v/fl2v 段可自动用作首帧。
+# 关键帧直接落配方自己的 assets/storyboard_{recipe}_{seg:02d}.png（配方自包含、导出即带分镜图），
+# i2v/fl2v 段没另设首帧时用它作首帧，预览走 /rs_recipes/asset。
 # 独立于 h3_video_director（节点运行时），只依赖生图链（image_gen/skill）与配方读取。
 
 from __future__ import annotations
@@ -14,10 +15,8 @@ import logging
 import random
 import time
 import uuid
-from pathlib import Path
 from urllib.parse import quote
 
-import folder_paths
 import nodes as comfy_nodes
 import comfy.model_management
 import torch
@@ -119,7 +118,8 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
             _assets_cache[sid] = assets
         return assets
 
-    out_dir = Path(folder_paths.get_input_directory()) / "NeoDirector"
+    # 关键帧是配方资产：直接写进 <recipe>/assets/，不进全局 input/（导出配方即自带分镜图）
+    out_dir = _find_recipe_dir(name) / "assets"
     out_dir.mkdir(parents=True, exist_ok=True)
     task = _storyboard_tasks[task_id]
     # 清掉上一次运行/取消残留的全局中断标志，避免新任务一开始就被误判为已取消。
@@ -136,7 +136,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         if entry.get("filename") and not seg.get("_force"):
             # 已有产物且非强制重生成：跳过（幂等，重复点「生成分镜」不重复出图）
             entry.update(status="done", filename=entry["filename"],
-                         preview_url=f"/view?filename={quote(fname)}&subfolder=NeoDirector&type=input&t={int(time.time())}")
+                         preview_url=f"/rs_recipes/asset?recipe={quote(name)}&file={quote(fname)}&t={int(time.time())}")
             task["processed"] += 1
             continue
         storyboard_prompt = str(seg.get("storyboard_prompt") or "").strip()
@@ -173,7 +173,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
             img = _tensor_to_pil(result[0])
             await asyncio.to_thread(img.save, out_dir / fname, "PNG")
             entry.update(status="done", filename=fname,
-                         preview_url=f"/view?filename={quote(fname)}&subfolder=NeoDirector&type=input&t={int(time.time())}")
+                         preview_url=f"/rs_recipes/asset?recipe={quote(name)}&file={quote(fname)}&t={int(time.time())}")
         except comfy.model_management.InterruptProcessingException:
             # 用户点「取消」：当前段被中断。该异常继承 BaseException，except Exception 接不住，
             # 必须单独捕获并收尾，否则任务异常从未被取回、状态卡在 running（抛出时 ComfyUI 已复位全局标志）。
@@ -231,7 +231,8 @@ async def neo_video_gen_storyboard_generate(request):
         base_seed = random.randint(0, 2**31 - 1)
 
     task_id = str(uuid.uuid4())
-    out_dir = Path(folder_paths.get_input_directory()) / "NeoDirector"
+    # 幂等跳过检查看的是配方 assets/（关键帧就生成在那里）
+    out_dir = _find_recipe_dir(name) / "assets"
     try:
         index_offset = int(data.get("index") or 0)
     except (TypeError, ValueError):
