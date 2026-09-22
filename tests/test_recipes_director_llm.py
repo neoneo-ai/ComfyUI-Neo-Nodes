@@ -329,6 +329,93 @@ class OptimizePromptsEndpointTests(unittest.TestCase):
             _llm.run_llm_task = original
 
 
+# ===========================================================================
+# 端点：宫格图拆分 / 逐格 LLM 描述
+# ===========================================================================
+class GridSplitEndpointTests(unittest.TestCase):
+    @staticmethod
+    def _make_grid(path, rows=2, cols=3, cell=(160, 120), gap=8):
+        from PIL import Image, ImageDraw
+        cw, ch = cell
+        img = Image.new("RGB", (cols * cw + (cols + 1) * gap, rows * ch + (rows + 1) * gap), (255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        for r in range(rows):
+            for c in range(cols):
+                color = ((r * cols + c) * 37 % 200 + 20, (r * 13 + 40) % 200, (c * 53 + 60) % 200)
+                x0 = gap + c * (cw + gap)
+                y0 = gap + r * (ch + gap)
+                draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=color)
+        img.save(path)
+
+    def test_split_2x3_grid(self):
+        """真实 PIL 6 格图 → 检出 2×3，各格落 input/（尺寸=内容区），返回行优先文件名。"""
+        from PIL import Image
+        src = os.path.join(_INPUT_DIR, "grid_src.png")
+        self._make_grid(src)
+        req = _FakeRequest({"filename": "grid_src.png"})
+        resp = _run_async(recipes.rs_recipes_grid_split(req))
+        data = json.loads(resp.body)
+        self.assertTrue(data["success"], data)
+        self.assertEqual((data["rows"], data["cols"]), (2, 3))
+        self.assertEqual(len(data["panels"]), 6)
+        for p in data["panels"]:
+            saved = Image.open(os.path.join(_INPUT_DIR, p["filename"]))
+            self.assertEqual(saved.size, (160, 120))   # 格子不带分隔条 / 图边
+            self.assertIn("/view?filename=", p["preview_url"])
+
+    def test_split_missing_file(self):
+        resp = _run_async(recipes.rs_recipes_grid_split(_FakeRequest({"filename": "no_such.png"})))
+        data = json.loads(resp.body)
+        self.assertFalse(data["success"])
+
+    def test_split_bad_filename_rejected(self):
+        resp = _run_async(recipes.rs_recipes_grid_split(_FakeRequest({"filename": "../evil.png"})))
+        data = json.loads(resp.body)
+        self.assertFalse(data["success"])
+
+
+class DescribePanelsEndpointTests(unittest.TestCase):
+    def test_success_sends_panel_bytes_in_order(self):
+        """各格图字节按顺序喂给多模态 LLM；结果数量必须与格子数一致。"""
+        original = _llm.run_llm_task
+        calls = []
+
+        def _one(task_name, text, images=None, **kw):
+            calls.append((task_name, images))
+            return {"status": "success", "prompts": json.dumps(["描述一", "描述二", "描述三"])}
+
+        _llm.run_llm_task = _one
+        try:
+            for n in ("pa.png", "pb.png", "pc.png"):
+                with open(os.path.join(_INPUT_DIR, n), "wb") as f:
+                    f.write(b"panel-bytes-" + n.encode())
+            req = _FakeRequest({"panels": ["pa.png", "pb.png", "pc.png"], "duration_sec": 4})
+            resp = _run_async(recipes.rs_recipes_director_describe_panels(req))
+            data = json.loads(resp.body)
+            self.assertTrue(data["success"], data)
+            self.assertEqual(data["prompts"], ["描述一", "描述二", "描述三"])
+            task, images = calls[0]
+            self.assertEqual(task, "director_panel_describe")
+            self.assertEqual(len(images), 3)   # 每格一张图，按顺序
+        finally:
+            _llm.run_llm_task = original
+
+    def test_count_mismatch_rejected(self):
+        original = _llm.run_llm_task
+        _llm.run_llm_task = lambda *a, **k: {"status": "success", "prompts": json.dumps(["只有一条"])}
+        try:
+            resp = _run_async(recipes.rs_recipes_director_describe_panels(_FakeRequest({"panels": ["a.png", "b.png"]})))
+            data = json.loads(resp.body)
+            self.assertFalse(data["success"])
+        finally:
+            _llm.run_llm_task = original
+
+    def test_empty_panels_rejected(self):
+        resp = _run_async(recipes.rs_recipes_director_describe_panels(_FakeRequest({"panels": []})))
+        data = json.loads(resp.body)
+        self.assertFalse(data["success"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

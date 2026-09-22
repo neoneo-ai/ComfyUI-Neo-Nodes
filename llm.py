@@ -1268,6 +1268,7 @@ def _build_llm_tasks() -> Dict[str, Any]:
         "director_story",
         "director_split",
         "director_optimize",
+        "director_panel_describe",
     ]
 
     for task_name in task_names:

@@ -878,6 +878,106 @@
     padding: 8px;
 }
 
+/* 统一设置页：「🧩 宫格图拆分」卡片（与图片分镜同页的另一种分镜来源） */
+.neo-director-setup-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #161616;
+    border: 1px solid #2a2d33;
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.neo-director-grid-src {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    max-width: 120px;
+    min-width: 64px;
+    height: 48px;
+    padding: 2px 6px;
+    font-size: 10px;
+    color: #9aa4b0;
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.neo-director-grid-src img {
+    max-width: 100%;
+    max-height: 44px;
+    object-fit: contain;
+    cursor: zoom-in;
+}
+
+.neo-director-grid-mode,
+.neo-director-grid-n {
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.neo-director-grid-n {
+    width: 52px;
+}
+
+.neo-director-grid-manual {
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #9aa4b0;
+}
+
+.neo-director-grid-split,
+.neo-director-grid-desc {
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+}
+
+.neo-director-grid-split:hover,
+.neo-director-grid-desc:hover:not(:disabled) {
+    border-color: #5a5a5a;
+    color: #fff;
+}
+
+.neo-director-grid-desc:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* 拆分后的格子缩略条（行优先顺序，点击 Lightbox 看大图） */
+.neo-director-grid-panels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.neo-director-grid-panels a {
+    flex: 0 0 auto;
+    width: 72px;
+    height: 48px;
+    border: 1px solid #3a3a3a;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.neo-director-grid-panels img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    cursor: zoom-in;
+}
+
 /* r2i 专属控件（角色/背景参考行） */
 .neo-director-sb-r2i {
     display: flex;

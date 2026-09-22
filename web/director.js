@@ -1387,7 +1387,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     function fillSegThumb(thumb, fname, onClear, onOpen) {
         if (!thumb || !fname) return;
         thumb.innerHTML = '';
-        const url = assetThumbUrl(fname);
+        const url = thumbSrc(fname);   // 配方资产走 /rs_recipes/asset；宫格格子等 input/ 文件走 /view
         const a = $el('a', { href: url, target: '_blank', rel: 'noopener', title: '点击查看大图（←/→ 切换各段）' });
         if (onOpen) a.addEventListener('click', (e) => { e.preventDefault(); onOpen(); });
         a.appendChild($el('img', { src: url, alt: fname, loading: 'lazy' }));
@@ -1629,6 +1629,136 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         } finally { sbGenBtn.disabled = false; }
     }
     sbGenBtn.onclick = () => generateAllStoryboards();
+
+    // ---- 🧩 宫格图拆分：一张宫格图自动切分（均匀间隙检测 / 手动行列）→ 替换分段，各格作该段首帧与分镜图 ----
+    let gridPanels = [];   // 最近一次拆分的格子文件名（行优先顺序）
+    const gridSrcThumb = $el('div', { className: 'neo-director-grid-src' });
+    let gridSrcFile = '';
+    function setGridSrc(fname) {
+        gridSrcFile = fname || '';
+        gridSrcThumb.innerHTML = '';
+        if (gridSrcFile) {
+            const img = $el('img', { src: thumbSrc(gridSrcFile), alt: gridSrcFile, title: gridSrcFile });
+            img.onclick = () => Lightbox.open({ items: [{ kind: 'image', url: thumbSrc(gridSrcFile), title: gridSrcFile }] });
+            gridSrcThumb.appendChild(img);
+        } else {
+            gridSrcThumb.appendChild($el('span', { textContent: '未选择' }));
+        }
+    }
+    setGridSrc('');
+    const gridModeSel = $el('select', { className: 'neo-director-grid-mode' });
+    for (const [val, label] of [['auto', '自动检测'], ['manual', '手动行列']]) {
+        gridModeSel.appendChild($el('option', { value: val, textContent: label }));
+    }
+    const gridRowsInp = $el('input', { className: 'neo-director-grid-n', type: 'number', min: 1, max: 12, value: 2 });
+    const gridColsInp = $el('input', { className: 'neo-director-grid-n', type: 'number', min: 1, max: 12, value: 3 });
+    const manualCtrls = $el('div', { className: 'neo-director-grid-manual' }, [
+        $el('span', { textContent: '行' }), gridRowsInp, $el('span', { textContent: '×' }), gridColsInp,
+    ]);
+    manualCtrls.style.display = 'none';   // 默认自动检测；切「手动行列」才显示
+    gridModeSel.addEventListener('change', () => { manualCtrls.style.display = (gridModeSel.value === 'manual') ? 'flex' : 'none'; });
+    const gridSplitBtn = $el('button', { className: 'neo-director-grid-split', type: 'button', textContent: '✅ 拆分并分配到分段' });
+    const gridDescBtn = $el('button', { className: 'neo-director-grid-desc', type: 'button', disabled: true, textContent: '✨ 逐格描述提示词' });
+    const gridStatus = $el('span', { className: 'neo-director-sb-status' });
+    const gridPanelsWrap = $el('div', { className: 'neo-director-grid-panels' });
+    function renderGridPanels() {
+        gridPanelsWrap.innerHTML = '';
+        gridPanels.forEach((fname, i) => {
+            const items = gridPanels.map((f, j) => ({ kind: 'image', url: thumbSrc(f), title: `第 ${j + 1} 格 · ${f}` }));
+            const a = $el('a', { href: thumbSrc(fname), target: '_blank', rel: 'noopener', title: fname });
+            a.addEventListener('click', (e) => { e.preventDefault(); Lightbox.open({ items, index: i }); });
+            a.appendChild($el('img', { src: thumbSrc(fname), alt: fname, loading: 'lazy' }));
+            gridPanelsWrap.appendChild(a);
+        });
+    }
+
+    function assignGridPanels(fnames) {
+        gridPanels = fnames.slice();
+        renderGridPanels();
+        gridDescBtn.disabled = false;
+        const defaultSkill = currentSkillId() || (skills.length ? skills[0].id : '');
+        segsWrap.innerHTML = '';
+        for (const fname of fnames) {
+            if (!imageRefs.some(r => r.filename === fname)) imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' });   // 保存时随 assets 落盘
+            const row = buildSeg({ skill_id: defaultSkill, prompt: '', duration_sec: 5, mode: 'i2v', first_frame: fname });
+            row.dataset.storyboard = fname;   // 对照表「分镜图」列显示本格（保存时随 storyboard 落盘）
+            segsWrap.appendChild(row);
+        }
+        renumberSegs(); showSeg(0); applyGlobalMode();
+        if (frameSourceSel.value !== 'storyboard') {
+            frameSourceSel.value = 'storyboard';   // 对照表按逐段分镜图显示各格
+            frameSourceSel.dispatchEvent(new Event('change'));
+        }
+        renderSetupSegs();
+        markDirty();
+    }
+
+    gridSplitBtn.onclick = async () => {
+        if (!gridSrcFile) { app.extensionManager.toast.add({ severity: 'error', summary: '宫格拆分', detail: '请先选择宫格图（本地添加或素材库）', life: 4000 }); return; }
+        const body = { filename: gridSrcFile };
+        if (gridModeSel.value === 'manual') {
+            body.rows = Number(gridRowsInp.value) || 1;
+            body.cols = Number(gridColsInp.value) || 1;
+        }
+        // 拆分即替换现有分段：旧段有内容（提示词 / 分镜图）时先确认
+        const oldRows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        const hasContent = oldRows.some(r => r.querySelector('.neo-director-prompt').value.trim() || r.dataset.storyboard);
+        if (oldRows.length && hasContent && !confirm('拆分后现有分段将被替换，继续？')) return;
+        gridSplitBtn.disabled = true; gridStatus.textContent = '正在拆分…';
+        try {
+            const res = await fetch('/rs_recipes/grid_split', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const data = await res.json();
+            if (!data.success) { gridStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '宫格拆分', detail: data.error || '切分失败', life: 5000 }); return; }
+            assignGridPanels(data.panels.map(p => p.filename));
+            gridStatus.textContent = `检测到 ${data.rows}×${data.cols}，已拆出 ${data.panels.length} 格并分配到分段`;
+            app.extensionManager.toast.add({ severity: 'success', summary: '宫格拆分', detail: `${data.rows}×${data.cols} → ${data.panels.length} 段（各格已作首帧）`, life: 4000 });
+            if (data.panels.length > 9) app.extensionManager.toast.add({ severity: 'warning', summary: '宫格拆分', detail: `格子数 ${data.panels.length} 超过 H3 参考上限 9，保存时多余段不会被执行`, life: 6000 });
+        } catch (e) {
+            console.error('[Neo Recipes] Director grid split failed:', e);
+            gridStatus.textContent = '';
+            app.extensionManager.toast.add({ severity: 'error', summary: '宫格拆分', detail: e.message, life: 5000 });
+        } finally { gridSplitBtn.disabled = false; }
+    };
+
+    gridDescBtn.onclick = async () => {
+        if (!gridPanels.length) return;
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        if (rows.length !== gridPanels.length) { app.extensionManager.toast.add({ severity: 'warn', summary: '逐格描述', detail: '分段与格子数不一致，请重新拆分', life: 4000 }); return; }
+        const dur = Number(rows[0].querySelector('.neo-director-dur').value) || 5;
+        gridDescBtn.disabled = true; gridStatus.textContent = '正在逐格描述…';
+        try {
+            const res = await fetch('/rs_recipes/director_describe_panels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ panels: gridPanels, duration_sec: dur }) });
+            const data = await res.json();
+            if (!data.success) { gridStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '逐格描述', detail: data.error || '生成失败', life: 5000 }); return; }
+            rows.forEach((row, i) => {
+                const ta = row.querySelector('.neo-director-prompt');
+                ta.value = data.prompts[i] || '';
+                ta.dispatchEvent(new Event('input', { bubbles: true }));   // 触发自动命名 / 脏标记等既有逻辑
+            });
+            renderSetupSegs();
+            markDirty();
+            gridStatus.textContent = `已描述 ${data.prompts.length} 格，可到时间轴页逐段微调`;
+        } catch (e) {
+            console.error('[Neo Recipes] Director describe panels failed:', e);
+            gridStatus.textContent = '';
+            app.extensionManager.toast.add({ severity: 'error', summary: '逐格描述', detail: e.message, life: 5000 });
+        } finally { gridDescBtn.disabled = false; }
+    };
+
+    const gridCard = $el('div', { className: 'neo-director-setup-grid' }, [
+        $el('div', { className: 'neo-director-refs-head' }, [
+            $el('span', { className: 'neo-director-field-label', title: '上传一张分镜宫格图（带分隔条 / 留白），自动检测行列并切分；各格按阅读顺序替换现有分段，并作为该段首帧与分镜图', textContent: '🧩 宫格图拆分（一张宫格图 → 逐段首帧）' }),
+        ]),
+        $el('div', { className: 'neo-director-row neo-director-shared' }, [
+            buildLocalAddButton('image/*', (fname) => setGridSrc(fname)),
+            buildAssetLibButton(),
+            gridSrcThumb,
+            $el('label', { className: 'neo-director-field-label', textContent: '切分方式' }), gridModeSel,
+            manualCtrls,
+        ]),
+        $el('div', { className: 'neo-director-row neo-director-shared' }, [gridSplitBtn, gridDescBtn, gridStatus]),
+        gridPanelsWrap,
+    ]);
 
     // 当前选中的角色/背景参考（{filename} 列表），供保存与 r2i 图片分镜共用；空则不写该键。
     const storyRefsPayload = () => {
@@ -1900,6 +2030,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             $el('label', { textContent: '分镜 / 首帧方式' }), frameSourceSel,   // 逐段图片分镜 ↔ 统一图片，严格二选一
         ]),
         sbCard,         // 🎨 图片分镜（逐段关键帧；与生成模式解耦，仅「统一图片」方式时隐藏）
+        gridCard,       // 🧩 宫格图拆分（一张宫格图 → 逐段首帧；与图片分镜同页的另一种分镜来源）
         identityRefsRow, // 身份参考开关（关掉 = 旧行为，便于对比）
         uniFrameBlock,   // 图生 / 首尾帧：统一首帧（+ 尾帧）
         uniT2vHint,      // 文生：无需素材说明

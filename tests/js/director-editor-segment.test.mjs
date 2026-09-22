@@ -3109,4 +3109,72 @@ test("导演编辑器：对照表分镜图缩略点击打开 Lightbox（←/→ 
     await sleep(20);
 });
 
+test("导演编辑器：🧩 宫格图拆分卡片——自动/手动行列，拆分替换分段并回填首帧与分镜图，逐格 LLM 描述", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/upload/image", () => jsonResponse({ name: "grid_src.png", subfolder: "", type: "input" }));
+    let splitBody = null;
+    const panelNames = ["p0.png", "p1.png", "p2.png", "p3.png", "p4.png", "p5.png"];
+    mockRoute("/rs_recipes/grid_split", (body) => {
+        splitBody = body;
+        return jsonResponse({ success: true, rows: 2, cols: 3, panels: panelNames.map((n) => ({ filename: n, width: 160, height: 120 })) });
+    });
+    let descBody = null;
+    mockRoute("/rs_recipes/director_describe_panels", (body) => {
+        descBody = body;
+        return jsonResponse({ success: true, prompts: panelNames.map((n) => `描述 ${n}`) });
+    });
+
+    await openDirectorEditor({
+        name: "GRID", shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-a", prompt: "旧段", duration_sec: 5 }],
+    });
+    await sleep(60);
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 分镜故事板").click();
+    await sleep(20);
+
+    const card = document.querySelector(".neo-director-setup-grid");
+    assert.ok(card, "宫格拆分卡片在统一设置页");
+    const paneChildren = Array.from(document.querySelector(".neo-director-pane-setup").children);
+    assert.equal(paneChildren.indexOf(card), 2, "宫格卡片紧跟图片分镜卡片之后");
+    assert.equal(card.querySelector(".neo-director-grid-manual").style.display, "none", "手动行列默认隐藏");
+    const modeSel = card.querySelector(".neo-director-grid-mode");
+    modeSel.value = "manual";
+    modeSel.dispatchEvent(new Event("change"));
+    assert.equal(card.querySelector(".neo-director-grid-manual").style.display, "flex", "手动模式显示行列输入");
+
+    // 本地上传宫格图 → 缩略回显
+    const localBtn = card.querySelector(".neo-director-local-add");
+    const fileInput = localBtn.querySelector("input[type=file]");
+    Object.defineProperty(fileInput, "files", { value: [new File(["fake"], "grid_src.png", { type: "image/png" })], configurable: true });
+    fileInput.dispatchEvent(new Event("change"));
+    await sleep(40);
+    assert.ok(card.querySelector(".neo-director-grid-src img")?.src.includes("grid_src.png"), "宫格图缩略回显");
+
+    // 拆分（confirm 桩默认 true）→ 替换分段、各格回填首帧与分镜图记录
+    card.querySelector(".neo-director-grid-split").click();
+    await sleep(60);
+    assert.deepEqual(splitBody, { filename: "grid_src.png", rows: 2, cols: 3 }, "手动模式带行列参数");
+    const rows = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(rows.length, 6, "旧段被替换为 6 格");
+    rows.forEach((row, i) => {
+        assert.ok(Array.from(row.querySelectorAll(".neo-director-ff-item"))
+            .some((it) => it.dataset.file === panelNames[i] && it.classList.contains("neo-director-ff-active")), `第 ${i + 1} 格回填为首帧`);
+        assert.equal(row.dataset.storyboard, panelNames[i], "分镜图记录为本格");
+    });
+    assert.equal(document.querySelector(".neo-director-frame-source").value, "storyboard", "自动切到逐段图片分镜方式");
+    assert.ok(card.querySelector(".neo-director-grid-desc"), "逐格描述按钮可用");
+    assert.equal(card.querySelectorAll(".neo-director-grid-panels a").length, 6, "格子缩略条回显");
+
+    // 逐格 LLM 描述 → 各段提示词回填
+    card.querySelector(".neo-director-grid-desc").click();
+    await sleep(60);
+    assert.deepEqual(descBody.panels, panelNames, "描述请求带全部格子（行优先顺序）");
+    rows.forEach((row, i) => assert.equal(row.querySelector(".neo-director-prompt").value, `描述 ${panelNames[i]}`, `第 ${i + 1} 段提示词回填`));
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
 

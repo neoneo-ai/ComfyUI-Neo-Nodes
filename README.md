@@ -94,7 +94,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 #### 基础配方：
 仅是把当前的提示词和图片资源保存下来，便于复用
 #### 导演配方：
-支持多段连续生成，由导演台进行编辑生成并保存，director节点运行时选择对应的配方。点击节点上timeline可以直接进入编辑。
+支持多段连续生成，由导演台进行编辑生成并保存，director节点运行时选择对应的配方。点击节点上timeline可以直接进入编辑。也支持宫格图自动拆分（各格作分段首帧）与逐格 LLM 描述提示词。
 
 ### model：
 虽然内置了模型，如果觉得常修改也可以直接接入加入的model和lora，可以覆盖掉skill内置的主模型配置

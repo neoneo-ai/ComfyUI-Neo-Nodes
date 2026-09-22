@@ -1412,6 +1412,84 @@ async def rs_recipes_director_optimize_prompts(request):
     return web.json_response({"success": True, "prompts": prompts})
 
 
+@PromptServer.instance.routes.post("/rs_recipes/grid_split")
+async def rs_recipes_grid_split(request):
+    """宫格图自动切分：均匀间隙检测（或手动行列）→ 各格落 input/，返回文件名与预览地址。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+    filename = str(data.get("filename") or "").strip()
+    if not filename or ".." in filename:
+        return web.json_response({"success": False, "error": "缺少有效的图片文件名"}, status=400)
+    rows = data.get("rows")
+    cols = data.get("cols")
+
+    def _si(v):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return None
+        return n if 1 <= n <= MAX_GRID_CELLS else None
+
+    import folder_paths as _fp
+    from PIL import Image
+    from .grid_split import MAX_GRID_CELLS, detect_grid, split_image
+    try:
+        src = Path(_fp.get_annotated_filepath(filename, _fp.get_input_directory()))
+    except ValueError:
+        return web.json_response({"success": False, "error": f"无法定位图片：{filename}"}, status=400)
+    if not src.is_file():
+        return web.json_response({"success": False, "error": f"图片不存在：{filename}"}, status=404)
+    try:
+        img = Image.open(src).convert("RGB")
+        grid = detect_grid(img, rows=_si(rows), cols=_si(cols))
+        cells = split_image(img, grid)
+    except Exception as e:
+        return web.json_response({"success": False, "error": f"切分失败：{e}"}, status=500)
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    out_dir = _fp.get_input_directory()
+    panels = []
+    for i, cell in enumerate(cells):
+        name = f"neo_grid_{stamp}_{i:02d}.png"
+        cell.save(Path(out_dir) / name)
+        panels.append({
+            "filename": name,
+            "width": cell.width,
+            "height": cell.height,
+            "preview_url": f"/view?filename={name}&subfolder=&type=input",
+        })
+    return web.json_response({"success": True, "rows": grid["rows"], "cols": grid["cols"], "panels": panels})
+
+
+@PromptServer.instance.routes.post("/rs_recipes/director_describe_panels")
+async def rs_recipes_director_describe_panels(request):
+    """宫格拆分后逐格 LLM 描述：各格图（多模态）→ 每段一条视频提示词，数量与顺序对应。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+    names = [str(n).strip() for n in (data.get("panels") or []) if str(n or "").strip()]
+    if not isinstance(data.get("panels"), list) or not names:
+        return web.json_response({"success": False, "error": "没有可描述的格子"}, status=400)
+    from .grid_split import MAX_GRID_CELLS
+    if len(names) > MAX_GRID_CELLS:
+        return web.json_response({"success": False, "error": f"格子数超过上限 {MAX_GRID_CELLS}"}, status=400)
+    try:
+        dur = int(round(float(data.get("duration_sec") or 5)))
+    except (TypeError, ValueError):
+        dur = 5
+    text = f"共 {len(names)} 张分镜图，按顺序对应第 1~{len(names)} 段（每段约 {dur} 秒）。请逐格生成视频提示词。"
+    result = await asyncio.to_thread(_director_llm, "director_panel_describe", text, _collect_ref_bytes([{"filename": n} for n in names]))
+    if "error" in result:
+        return web.json_response({"success": False, "error": result["error"]}, status=422)
+    prompts = _parse_prompt_list(result.get("prompts") or "")
+    if len(prompts) != len(names):
+        return web.json_response({"success": False, "error": f"描述结果数量（{len(prompts)}）与格子数（{len(names)}）不一致，请重试"}, status=422)
+    return web.json_response({"success": True, "prompts": prompts})
+
+
 
 def _normalize_loras(raw) -> list:
     """Coerce an untrusted loras payload into [{name, strength}] (strength default 1.0)."""
