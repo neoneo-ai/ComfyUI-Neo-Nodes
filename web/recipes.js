@@ -25,6 +25,8 @@ export const RECIPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1
 // 从工作流收集资源
 // ==========================================
 
+const GRID_REF_MAX = 12;   // NeoRefGrid 宫格槽位上限（运行时可调 1~12，与 ref_grid.GRID_MAX 一致）
+
 /** 把 widget 值规范成 Comfy 文件引用 {filename, subfolder, type}；无法解析返回 null。
  * 兼容对象 / ["name","sub","type"] 数组 / 字符串（含 [input]/[output]/[temp] 注解）。 */
 export function widgetValueToRef(v) {
@@ -206,6 +208,13 @@ export async function scanMediaNodes() {
 export async function collectWorkflowAssets(anchorNode) {
     const { media: scanned, comps } = await scanMediaNodes();
     const root = anchorNode ? comps.get(String(anchorNode.id)) : null;
+    // 参考图宫格节点（NeoRefGrid）：宫格槽位是主参考集，排在连线 LoadImage 之前收集（鸭子类型 _neoRg API）
+    const gridAssets = [];
+    for (const n of app.graph?._nodes || []) {
+        if (!n._neoRg?.getAssets || isNodeDisabled(n)) continue;
+        if (root != null && comps.get(String(n.id)) !== root) continue;
+        for (const name of n._neoRg.getAssets()) gridAssets.push({ filename: name, subfolder: '', type: 'input', kind: 'image' });
+    }
     const pick = (kind) => scanned
         .filter(s => s.kind === kind && s.slot != null && comps.get(String(s.node.id)) === root)
         .sort((a, b) => a.slot - b.slot)
@@ -217,7 +226,7 @@ export async function collectWorkflowAssets(anchorNode) {
         })
         .filter(Boolean);
     // 保存时后端按此顺序写入配方 assets，还原时按同规则反解即可落回原参数位置
-    return [...pick('image'), ...pick('video'), ...pick('audio')];
+    return [...gridAssets, ...pick('image'), ...pick('video'), ...pick('audio')];
 }
 
 /** 扫描工作流，收集 LoRA Loader 节点（保存用）：只收 anchorNode 所在连通子图内、
@@ -624,6 +633,16 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         const root = comps.get(String(n.id));
         if (root != null) statOf(root).prompt = true;
     }
+    // 参考图宫格节点（NeoRefGrid）：宫格槽位可容纳最多 GRID_REF_MAX 张图，
+    // 还原时先填宫格、其余再进 LoadImage（鸭子类型 _neoRg API）
+    const gridByRoot = new Map();
+    for (const n of app.graph?._nodes || []) {
+        if (!n._neoRg?.setAssets || isNodeDisabled(n)) continue;
+        const root = comps.get(String(n.id));
+        if (root != null && !gridByRoot.has(root)) gridByRoot.set(root, n);
+    }
+    // 纯宫格子图（无任何 Load 节点）也要进候选：占位一条空 stat，容量由 gridCap 表达
+    for (const root of gridByRoot.keys()) statOf(root);
 
     // 选定目标子图：anchorNode 直接指定；否则按数量一致性精确匹配
     let target = null;
@@ -637,10 +656,11 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         const needPrompt = fillPrompt && !!recipe.prompt;
         const candidates = [...statByRoot.keys()]
             .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
-            .map(root => ({ root, stat: statByRoot.get(root), size: sizes.get(root) || 0 }));
-        const matched = candidates.filter(({ stat }) =>
-            stat.image.length === want.image && stat.video.length === want.video
-            && stat.audio.length === want.audio && (!needPrompt || stat.prompt));
+            .map(root => ({ root, stat: statByRoot.get(root), size: sizes.get(root) || 0, gridCap: gridByRoot.has(root) ? GRID_REF_MAX : 0 }));
+        // 图片按区间匹配：有宫格的子图可容纳 stat.image.length ~ +gridCap 张（宫格先吸收）；无宫格退化为精确相等
+        const matched = candidates.filter(({ stat, gridCap }) =>
+            want.image >= stat.image.length && want.image <= stat.image.length + gridCap
+            && stat.video.length === want.video && stat.audio.length === want.audio && (!needPrompt || stat.prompt));
         if (matched.length === 1) {
             target = matched[0];
         } else if (!candidates.length) {
@@ -658,6 +678,18 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
             const picked = await chooseSubgraphDialog(options);
             if (picked == null) return false;
             target = { root: picked, stat: statByRoot.get(picked) };
+        }
+    }
+
+    // 先填宫格：把最多 GRID_REF_MAX 张图片资产填入 NeoRefGrid 宫格槽位（主参考集），
+    // 并从剩余 LoadImage 目标数中扣除（须在 autoToggleByTarget 之前，对齐逻辑按扣除后的 want 启/禁用 Load 节点）
+    let gridFilled = 0;
+    if (target && want.image > 0) {
+        const gridNode = gridByRoot.get(target.root);
+        if (gridNode) {
+            gridFilled = Math.min(GRID_REF_MAX, want.image);
+            gridNode._neoRg.setAssets(result.assets.filter(a => a.kind === 'image').slice(0, gridFilled).map(a => a.file));
+            want.image -= gridFilled;
         }
     }
 
@@ -688,14 +720,16 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         }
     }
 
-    // 只还原到选定子图：连线节点按参数位升序与配方资产逐一配对
+    // 只还原到选定子图：连线节点按参数位升序与配方资产逐一配对（已填入宫格的前 gridFilled 张图跳过）
     let applied = 0, missing = 0;
+    let gridSkipped = 0;
     for (const kind of ['image', 'video', 'audio']) {
         const slots = target ? target.stat[kind] : [];
         slots.sort((a, b) => a.slot - b.slot);
         let si = 0;
         for (const asset of result.assets) {
             if (asset.kind !== kind) continue;
+            if (kind === 'image' && gridSkipped < gridFilled) { gridSkipped++; continue; }
             const t = si < slots.length ? slots[si++] : null;
             if (!t) { missing++; continue; }
             setWidgetValue({ node: t.live, widget: t.widget }, asset.file);
@@ -712,16 +746,25 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
         if (textWidget) textWidget.value = recipe.prompt;
         customTextarea.dispatchEvent(new Event('input', { bubbles: true }));
         promptApplied = true;
+    } else if (wantPrompt && target) {
+        // 子图无 Neo Prompt：兜底写入宫格节点的提示词框
+        const gridNode = gridByRoot.get(target.root);
+        if (gridNode?._neoRg?.setPrompt) {
+            gridNode._neoRg.setPrompt(recipe.prompt);
+            promptApplied = true;
+        }
     }
 
     const total = result.assets.length;
+    const restored = applied + gridFilled;
     const partial = missing > 0 || (wantPrompt && !promptApplied);
-    const parts = [`按参数位还原 ${applied}/${total} 个资源`];
+    const parts = [`按参数位还原 ${restored}/${total} 个资源`];
+    if (gridFilled) parts.push(`宫格填入 ${gridFilled}`);
     if (missing) parts.push(`${missing} 个资源该子图无可用节点`);
     if (promptApplied) parts.push('提示词已写入');
-    else if (wantPrompt) parts.push('提示词未写入：该子图无 Neo Prompt');
+    else if (wantPrompt) parts.push('提示词未写入：该子图无 Neo Prompt / 宫格');
     app.extensionManager.toast.add({
-        severity: partial ? 'warn' : (applied || promptApplied ? 'success' : 'info'),
+        severity: partial ? 'warn' : (restored || promptApplied ? 'success' : 'info'),
         summary: '配方已发送',
         detail: `${recipe.name}：${partial ? '仅还原了部分，' : ''}${parts.join('，')}`,
         life: 4000
@@ -1095,4 +1138,5 @@ export async function createRecipesPanel() {
     await renderList();
     return root;
 }
+
 

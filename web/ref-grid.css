@@ -1,0 +1,284 @@
+/* ref-grid.css — Neo Reference Grid（参考图宫格节点）样式 */
+
+/* root 由核心 addDOMWidget 管理（h-full w-full）；body 占满节点宽度，宫格列数按宽度流式排布 */
+.neo-rg-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+/* 工具条：图标按钮 + 右侧计数 */
+.neo-rg-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.neo-rg-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    color: #ddd;
+    font-size: 13px;
+    line-height: 1;
+    padding: 4px 7px;
+    cursor: pointer;
+}
+
+.neo-rg-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.neo-rg-btn:disabled { opacity: 0.5; cursor: default; }
+.neo-rg-btn i.pi { font-size: 13px; line-height: inherit; }
+
+/* 右侧素材组（素材面板 / 本地添加 / 加载配方）整体推到工具条右端 */
+.neo-rg-right { margin-left: auto; }
+
+.neo-rg-count {
+    font-size: 12px;
+    color: #9ab;
+    white-space: nowrap;
+}
+
+/* 宫格：列数随节点宽度流式排布（最小卡片宽 84px），行数由槽位数与图片比例决定 */
+.neo-rg-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 6px;
+}
+
+.neo-rg-cell {
+    position: relative;
+    aspect-ratio: 1 / 1;   /* 空槽/图片未加载时的默认比例；有图后 JS 按真实宽高比覆写 */
+    border-radius: 5px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px dashed rgba(255, 255, 255, 0.18);
+}
+
+.neo-rg-cell:not(.neo-rg-cell-empty) {
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.25);
+    cursor: grab;
+}
+
+.neo-rg-grid.neo-rg-drop .neo-rg-cell-empty {
+    border-color: #4c8dff;
+    background: rgba(76, 141, 255, 0.12);
+}
+
+.neo-rg-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;   /* 卡片比例与图一致时铺满；被同行更高卡片拉伸时留黑边也不裁剪 */
+    display: block;
+    cursor: pointer;
+}
+
+.neo-rg-cell.neo-rg-dragging { opacity: 0.4; }
+
+.neo-rg-badge {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 3px;
+    pointer-events: none;
+}
+
+.neo-rg-del {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 5px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+
+.neo-rg-cell:hover .neo-rg-del { opacity: 1; }
+.neo-rg-del:hover { background: rgba(220, 60, 60, 0.9); }
+
+.neo-rg-plus {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 18px;
+    pointer-events: none;
+}
+
+/* 提示词框（固定高，长文内部滚动） */
+.neo-rg-prompt {
+    width: 100%;
+    height: 44px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 4px;
+    color: #ddd;
+    font-size: 12px;
+    padding: 5px 7px;
+    box-sizing: border-box;
+}
+
+.neo-rg-prompt:focus { outline: none; border-color: #4c8dff; }
+
+/* 执行状态行 */
+.neo-rg-status {
+    font-size: 11px;
+    color: #8a9;
+    min-height: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 保存配方弹窗 */
+.neo-rg-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.neo-rg-dialog {
+    background: #1e1e22;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 16px;
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.neo-rg-dialog-title { font-size: 14px; color: #eee; }
+
+.neo-rg-input {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    color: #eee;
+    font-size: 13px;
+    padding: 6px 8px;
+}
+
+.neo-rg-input:focus { outline: none; border-color: #4c8dff; }
+
+.neo-rg-dialog-hint { font-size: 12px; color: #9ab; min-height: 16px; }
+
+.neo-rg-dialog-btns { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* 加载配方选择窗：左列表（缩略图 + 名称/摘要）+ 右预览（封面 / 图片条 / 提示词摘录） */
+.neo-rg-picker { width: 540px; }
+
+.neo-rg-picker-main { display: flex; gap: 10px; align-items: stretch; }
+
+.neo-rg-picker-list {
+    width: 236px;
+    max-height: 300px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.neo-rg-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.neo-rg-picker-row:hover { background: rgba(255, 255, 255, 0.08); }
+.neo-rg-picker-active { background: rgba(76, 141, 255, 0.16); border-color: rgba(76, 141, 255, 0.5); }
+
+.neo-rg-picker-thumb {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.5);
+    flex: none;
+}
+
+.neo-rg-picker-rowtext { min-width: 0; }
+
+.neo-rg-picker-name {
+    font-size: 12px;
+    color: #eee;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-rg-picker-sub { font-size: 11px; color: #9ab; }
+
+.neo-rg-picker-preview {
+    flex: 1;
+    min-width: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+    padding: 8px;
+}
+
+.neo-rg-picker-cover {
+    width: 100%;
+    max-height: 140px;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+}
+
+.neo-rg-picker-strip { display: flex; flex-wrap: wrap; gap: 3px; }
+
+.neo-rg-picker-strip img {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.neo-rg-picker-meta {
+    font-size: 12px;
+    color: #eee;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-rg-picker-prompt {
+    font-size: 11px;
+    color: #9ab;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.neo-rg-picker-empty { font-size: 12px; color: #889; padding: 12px 4px; }

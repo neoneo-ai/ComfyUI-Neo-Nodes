@@ -9,6 +9,7 @@ import { DirectorTimeline } from "./director-timeline.js";
 import { saveRecipe, listVideoSkills, scanMediaNodes, widgetValueToRef } from "./recipes.js";
 import { attachSkillPickerToSelect } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
+import { grabDataType, copyGalleryToInput, toggleGallerySidebar, uploadLocalFiles } from "./media-transfer.js";
 
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
@@ -24,18 +25,6 @@ export const SEG_MODES = [
 ];
 export const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
 
-
-/** 从拖放事件的 dataTransfer 提取素材标识（Neo Gallery 自定义 MIME，回退 text/plain）。
- *  兼容传入 DropEvent（取 .dataTransfer）或 dataTransfer 本身。 */
-function grabDataType(dt) {
-    const target = (dt && typeof dt.getData === 'function') ? dt : (dt && dt.dataTransfer);
-    if (!target || typeof target.getData !== 'function') return '';
-    try {
-        return target.getData('application/x-neo-gallery') || target.getData('text/plain') || '';
-    } catch {
-        return '';
-    }
-}
 
 // 单选按钮组：对外模仿 select（.value 读写、change 冒泡到容器），选项横向展开更直观。
 // name 加序号保证同页多个 radio 组互不串组；外部 change 监听注册在本函数之后，读 .value 时已是新值。
@@ -61,48 +50,6 @@ function buildRadioGroup(className, options, initialValue) {
     return wrap;
 }
 
-/** 把素材落地到 input/：返回落盘后的 input 文件名（失败返回 null）。 */
-async function copyGalleryToInput(raw) {
-    let payload;
-    try { payload = JSON.parse(raw); } catch { return null; }
-    if (!payload || !payload.filename) return null;
-    try {
-        const qs = '/neo_gallery/copy_to_input?filename=' + encodeURIComponent(payload.filename)
-            + (payload.subfolder ? '&subfolder=' + encodeURIComponent(payload.subfolder) : '');
-        const res = await fetch(qs);
-        if (!res.ok) return null;
-        const data = await res.json();
-        return data && data.success ? data.filename : null;
-    } catch (err) {
-        console.error('[Neo Recipes] Director: copy gallery image failed', err);
-        return null;
-    }
-}
-
-/** 打开/收起 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）。 */
-function toggleGallerySidebar() {
-    const em = app.extensionManager;
-    if (!em || !em.sidebarTab) return;
-    em.sidebarTab.activeSidebarTabId = em.sidebarTab.activeSidebarTabId === 'neo.gallery' ? null : 'neo.gallery';
-}
-
-/** 上传本地文件到 ComfyUI input 目录（复用 /upload/image 端点，实际接受任意文件）。
- *  返回落盘后的文件名（失败返回 null）。 */
-async function uploadLocalFile(file) {
-    try {
-        const fd = new FormData();
-        fd.append('image', file);
-        fd.append('type', 'input');
-        const resp = await fetch('/upload/image', { method: 'POST', body: fd });
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        return data && data.name ? data.name : null;
-    } catch (err) {
-        console.error('[Neo Recipes] Director: upload local file failed', err);
-        return null;
-    }
-}
-
 /** 创建本地上传用的隐藏 <input type=file>：accept 按素材类型过滤；open() 打开文件选择器，
  *  选择后上传并回调 onUploaded(fname)。返回 { input, open }（input 需挂进 DOM 才能弹出选择器）。 */
 function buildLocalFilePicker(accept, onUploaded) {
@@ -113,7 +60,7 @@ function buildLocalFilePicker(accept, onUploaded) {
     fileInput.onchange = async () => {
         const file = fileInput.files && fileInput.files[0];
         if (!file) return;
-        const fname = await uploadLocalFile(file);
+        const [fname] = await uploadLocalFiles([file]);
         fileInput.value = '';  // 允许重复选择同名文件
         if (fname) onUploaded(fname);
     };

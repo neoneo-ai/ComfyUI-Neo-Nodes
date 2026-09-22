@@ -92,6 +92,7 @@ ComfyUI-Neo-Nodes/
 |------|------|
 | `__init__.py` | 插件入口。导入 `gallery` / `recipes` / `workflow` / `image_gen` 模块以注册各自的 API 路由，从 `prompts.py` 合并 `NODE_CLASS_MAPPINGS` / `NODE_DISPLAY_NAME_MAPPINGS`（含 `krea2_edit` 的两个节点与 `krea2_generate` 的 NeoKrea2Generate；若用户已安装外部 comfyui-krea2edit 则跳过以免重复注册），声明 `WEB_DIRECTORY = "./web"` |
 | `prompts.py` | 两个提示词节点（`NeoPrompts` → Neo Prompt Encoder，`NeoPromptAgent` → Neo Prompt Agent）与 `/rs_prompts/*` 路由：预设提示词 CRUD、LLM 模型切换、图片解析（`resolve_image_bytes`）、标签索引 |
+| `ref_grid.py` | 参考图宫格节点 `NeoRefGrid`：隐藏 `refs` widget（JSON 文件名数组，前端宫格槽位）+ 隐藏 `prompt_text` → `prompt` + 运行时 `BUNDLE`（提示词 + 参考图 data URI，复用 `bundles.create_bundle`）+ `image_1..image_12`。宫格按槽位还原（坏文件保位空缺），总数上限 `GRID_MAX`=12（槽位数 1~12 由前端运行时调整，不持久化） |
 | `skill.py` | 技能系统：Markdown + YAML frontmatter 解析（PyYAML 事件流）、`skills/{presets,tasks,custom}/<id>/skill.md` 扫描与加载（`scan_skills` / `load_skill_content` / `load_task_template`）、多结果契约读取、语言互斥主文件选择（`SKILL.md`/`SKILL.cn.md`）与按需引用加载的工具调用代理循环（`run_skill_agent[_stream]` / `read_skill_file`，仅运行时惰性导入 llm 原语以避免与 llm.py 的顶层依赖形成循环）、工作流上下文格式化（`_format_workflow_context`，H3 节点块委托 minimax_h3）、`audit: h3` 技能的生成后审计接入（调用 minimax_h3 的 `_h3_audit_and_repair` / `_h3_audit_events`，流式路径以 status/replace 事件上报自检与修复阶段）、`/rs_prompts/skill*` 路由（列表/读取/保存/删除/上传） |
 | `minimax_h3.py` | MiniMax H3 特定逻辑：生成模式判定（`_h3_mode`，T2VA/I2VA/FL2VA/L2VA/Reference）与各模式最终 grounding 约束（`_h3_grounding_check`）、skill 正文条件段落裁剪（`_filter_mode_sections`，`<!-- @if TOKENS -->` 的 token 为生成模式 + H3 节点已连参考媒体类型）、工作流上下文 H3 节点块格式化（`format_h3_context_lines`）、`audit: h3` 技能生成后的确定性格式审计与窄修复（`_h3_narrow_repair` / `_h3_audit_and_repair` / `_h3_audit_events`，规则实现在 h3_prompt_audit.py） |
 | `h3_prompt_audit.py` | H3 提示词确定性格式审计（纯规则、零 token）：六段/三字段结构顺序、时间戳格式与时长上限、参考标签与工作流连线一致性、对白说话人 ID、内部表示术语泄漏；并提供窄修复消息构造（`narrow_repair_messages`）与修复验收（`repair_acceptable`），供 minimax_h3.py 在 `audit: h3` 技能生成后调用 |
@@ -121,7 +122,9 @@ ComfyUI-Neo-Nodes/
 | `lightbox.js` / `lightbox.css` | 通用灯箱组件：异步 blob 加载、相邻预加载、缩放平移、尺寸显示、`panelProvider` 侧栏钩子；素材与配方通过各自适配接入 |
 | `node-behavior.js` | 节点级交互行为（拖拽图片、粘贴、`@` 引用等） |
 | `combo-box.js` | 通用下拉选择组件：点击展开/键入过滤覆盖、键盘导航；option 可带 `data-tags`（空格分隔，如中文拼音/首字母缩写）作为附加搜索文本参与过滤（无该属性的下拉不受影响）；`<optgroup>` 渲染为分类标题（无 `data-value`，自动被键盘导航与取值逻辑跳过），过滤时空组隐藏 |
-| `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片（含复制）、详情浮层、一键发送；并导出导演编辑器依赖的 `saveRecipe` / `listVideoSkills` / `scanMediaNodes` / `widgetValueToRef` |
+| `recipes.js` / `recipes.css` | 配方侧边栏面板：保存弹窗、卡片（含复制）、详情浮层、一键发送；并导出导演编辑器依赖的 `saveRecipe` / `listVideoSkills` / `scanMediaNodes` / `widgetValueToRef`。收集/还原时经鸭子类型 `_neoRg` API 把 NeoRefGrid 宫格图作为主图片资产（还原先填宫格、其余进 LoadImage，子图无 Neo Prompt 时提示词兜底写宫格） |
+| `ref-grid.js` / `ref-grid.css` | NeoRefGrid 节点内宫格 UI：画廊拖入（`application/x-neo-gallery`）/本地批量上传/OS 文件拖入，瓷砖重排、✕ 移除、Lightbox；槽位数 1~12 由工具条 −/+ 运行时调整（默认 9，图更多时自动扩，不持久化）；列数按节点宽度流式排布（CSS `auto-fill/minmax(84px,1fr)`），卡片宽高按图片真实比例自适应（缩略图加载后写 `aspect-ratio`，`object-fit: contain` 保证整图可见）；节点高度经 ResizeObserver 现测内容高 `setSize` 跟随（`getMinHeight` 防手动缩到裁切，同 bundle-expand 模式）；refs 隐藏 widget 为序列化事实源（每次渲染回写），旧工作流经实例 `onConfigure` 钩子回填；输出 autogrow（默认 prompt/BUNDLE/image_1，连线增长到 image_12）；工具条布局：−/+、清空、💾 保存配方在左，素材面板（pi-images 图标，同 Neo Gallery）/本地添加/☰ 加载配方在右；☰ 打开加载配方选择窗（`/rs_recipes/list` 只列普通含图配方，排除多段导演与无图；左列表缩略图 + 右预览封面/图片条/提示词摘要，悬停切换，点击经 `_neoRg.setAssets/setPrompt` 载入宫格并 toast）；挂 `_neoRg = { getAssets, setAssets, getPrompt, setPrompt }` 供 recipes.js 调用 |
+| `media-transfer.js` | 素材 → input/ 目录共享搬运助手（自 director.js 拆出，ref-grid.js 共用）：`grabDataType`（拖放载荷提取）、`copyGalleryToInput`（`/neo_gallery/copy_to_input`）、`uploadLocalFiles`（`/upload/image` 批量）、`toggleGallerySidebar` |
 | `director.js` | 多段视频导演编辑器（配方编辑窗口，从 recipes.js 拆出）：配方名钉在标题栏中间（默认纯文本直显、点击进入行内编辑）+ shared 分辨率（宽高比/百万像素或自定义 W/H）+ 生成模式（全局模式，mixed 逐段）+ 紧邻其后的**统一技能选择**（非混合模式各段共用、段内技能下拉隐藏；mixed 时隐藏、回到逐段选择）+ 逐段提示词/首帧/时长 + 半自动故事生成与拆分；时间轴复用 `director-timeline.js`，保存走 `recipes.js` 的 `saveRecipe` |
 | `director-node.js` | NeoH3VideoDirector 节点内嵌只读时间轴（复用 `director-timeline.js`，点击分段块打开编辑器并定位到该段）+ **采样实时预览面板**：消费后端每步推来的 `rs.h3.preview` 多帧载荷（按 `node_id` 路由到对应节点），自动循环播放该步动画，支持暂停/继续、逐帧、逐采样步回看（回看旧步时新载荷不改画面）；采样期间面板占节点底部加高的 300px，换段或运行结束即清空复位。**recipe combo 选择窗**：走 `attachSkillPickerToComboWidget`（仅搜索、无管理工具栏），浮动预览卡经自定义 `previewRenderer` 显示焦点配方的只读时间轴——复用节点内嵌同款 `DirectorTimeline` 组件（秒级标尺 / 分段块 / 首帧缩略图，高度 112px，选择窗关闭时销毁实例）；spec 走 `/rs_recipes/director_spec` 并缓存，配方保存事件后清空；点预览卡经 `onPreviewClick` 直接打开该配方的导演编辑器 |
 | `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
@@ -151,6 +154,7 @@ NODE_CLASS_MAPPINGS = {
 
 - `NeoPrompts`（显示名 Neo Prompt Encoder）：输出 `CONDITIONING` + `STRING`，内置编码缓存（LRU，上限 50）
 - `NeoPromptAgent`（显示名 Neo Prompt Agent）：无 CLIP 输入，仅输出 `STRING`
+- `NeoRefGrid`（显示名 Neo Reference Grid (参考图宫格)，`ref_grid.py` 映射、同式合并导出）：输出 `STRING`×2（prompt / BUNDLE）+ `IMAGE`×12
 
 前端扩展目录由 `WEB_DIRECTORY = "./web"` 声明。
 
