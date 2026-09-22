@@ -370,7 +370,8 @@ _DIRECTOR_IDENTITY_CAP = 4
 def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> tuple[dict, list]:
     """校验并规范化 video_director 配方的 shared/segments；非法抛 ValueError（消息可直接回前端）。
 
-    段级 skill_id 必填（每段用各自的 H3 skill 模板）。first_frame / refs.* 由前端以**原始文件名**
+    段级 skill_id / prompt 允许为空（草稿保存：前端只提示、不阻止，执行时再校验）。
+    first_frame / refs.* 由前端以**原始文件名**
     引用，orig_to_copied 把原始名映射到已落盘 assets 的最终名（同名不同内容可能被重命名），
     规范化时回写为最终名使 recipe.json 与 assets/ 自洽。existing_assets 是本次保存前已在
     assets/ 的文件名集合：引用这些名字（上次保存回写的最终名）直接保留，重存旧配方不报错。
@@ -407,12 +408,9 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
     for idx, s in enumerate(segs_raw):
         if not isinstance(s, dict):
             raise ValueError(f"第 {idx + 1} 段不是对象")
+        # 提示词 / 技能允许为空（草稿）：前端保存只提示、不阻止，后端同样放行，执行时再校验
         prompt = str(s.get("prompt") or "").strip()
-        if not prompt:
-            raise ValueError(f"第 {idx + 1} 段提示词为空")
         skill_id = str(s.get("skill_id") or "").strip()
-        if not skill_id:
-            raise ValueError(f"第 {idx + 1} 段缺少 skill_id")
 
         dur = s.get("duration_sec")
         try:
@@ -511,7 +509,7 @@ def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets:
     if image_mode not in ("t2i", "r2i"):
         image_mode = None
     frame_source = str(raw.get("frame_source") or "").strip()
-    if frame_source not in ("storyboard", "unified"):
+    if frame_source not in ("storyboard", "unified", "grid"):
         frame_source = None
     image_skill = str(raw.get("image_skill") or "").strip() or None
 
@@ -1463,31 +1461,30 @@ async def rs_recipes_grid_split(request):
     return web.json_response({"success": True, "rows": grid["rows"], "cols": grid["cols"], "panels": panels})
 
 
-@PromptServer.instance.routes.post("/rs_recipes/director_describe_panels")
-async def rs_recipes_director_describe_panels(request):
-    """宫格拆分后逐格 LLM 描述：各格图（多模态）→ 每段一条视频提示词，数量与顺序对应。"""
+@PromptServer.instance.routes.post("/rs_recipes/director_describe_panel")
+async def rs_recipes_director_describe_panel(request):
+    """宫格拆分后逐格 LLM 描述（单格）：一张分镜图（该段首帧，多模态）→ 一条 H3 i2v 成品提示词。
+
+    前端按格子自动循环调用本端点，每次只处理一格，降低单次大模型负担并支持逐格进度反馈。"""
     try:
         data = await request.json()
     except Exception:
         return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
-    names = [str(n).strip() for n in (data.get("panels") or []) if str(n or "").strip()]
-    if not isinstance(data.get("panels"), list) or not names:
-        return web.json_response({"success": False, "error": "没有可描述的格子"}, status=400)
-    from .grid_split import MAX_GRID_CELLS
-    if len(names) > MAX_GRID_CELLS:
-        return web.json_response({"success": False, "error": f"格子数超过上限 {MAX_GRID_CELLS}"}, status=400)
+    name = str(data.get("panel") or "").strip()
+    if not name:
+        return web.json_response({"success": False, "error": "缺少格子图"}, status=400)
     try:
         dur = int(round(float(data.get("duration_sec") or 5)))
     except (TypeError, ValueError):
         dur = 5
-    text = f"共 {len(names)} 张分镜图，按顺序对应第 1~{len(names)} 段（每段约 {dur} 秒）。请逐格生成视频提示词。"
-    result = await asyncio.to_thread(_director_llm, "director_panel_describe", text, _collect_ref_bytes([{"filename": n} for n in names]))
+    text = f"这是分镜图（该段首帧），本段约 {dur} 秒。请为这一格生成一条可直接提交的 H3 i2v 成品提示词。"
+    result = await asyncio.to_thread(_director_llm, "director_panel_describe", text, _collect_ref_bytes([{"filename": name}]))
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
-    prompts = _parse_prompt_list(result.get("prompts") or "")
-    if len(prompts) != len(names):
-        return web.json_response({"success": False, "error": f"描述结果数量（{len(prompts)}）与格子数（{len(names)}）不一致，请重试"}, status=422)
-    return web.json_response({"success": True, "prompts": prompts})
+    prompt = str(result.get("prompt") or "").strip()
+    if not prompt:
+        return web.json_response({"success": False, "error": "描述结果为空，请重试"}, status=422)
+    return web.json_response({"success": True, "prompt": prompt})
 
 
 

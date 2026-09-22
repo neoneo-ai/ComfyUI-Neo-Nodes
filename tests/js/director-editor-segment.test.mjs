@@ -1759,9 +1759,10 @@ test("导演编辑器：「🎨 分镜故事板」页签存在，生成模式只
     assert.equal(setupPane.querySelector(".neo-director-setup-refs"), null, "统一参考素材区已移除（参考素材到时间轴页逐段设置）");
     assert.ok(setupPane.querySelector(".neo-director-optimize"), "提示词优化按钮");
 
-    // t2v：不需要参考素材 → 首尾帧区隐藏，显示说明文字
+    // t2v：不需要参考素材 → 首尾帧区隐藏，不再显示文生说明（已移除）
     assert.equal(setupPane.querySelector(".neo-director-setup-frames").style.display, "none", "t2v 隐藏首尾帧区");
-    assert.ok(setupPane.querySelector(".neo-director-setup-hint").style.display !== "none", "t2v 显示说明文字");
+    assert.ok(Array.from(setupPane.querySelectorAll(".neo-director-setup-hint"))
+        .every((h) => h.style.display === "none"), "t2v 不显示任何说明文字");
 
     // 改时间轴页生成模式 → 本页素材区跟随显隐
     const tlModeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
@@ -1885,7 +1886,7 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     await sleep(20);
 });
 
-test("导演编辑器：「优化所有分段提示词」请求体正确、结果逐段写回", async () => {
+test("导演编辑器：「生成所有分段的提示词」请求体正确、结果逐段写回", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
@@ -1935,7 +1936,7 @@ test("导演编辑器：「优化所有分段提示词」请求体正确、结�
     const tas2 = Array.from(document.querySelectorAll(".neo-director-prompt"));
     assert.equal(tas2[0].value, "integrated_multimodal_description: [Shot 1] 段一…", "第 1 段写回");
     assert.equal(tas2[1].value, "overall_soundscape: …", "第 2 段写回");
-    assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent.includes("已优化 2 段"));
+    assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent.includes("已生成 2 段"));
 
     // 右栏分段故事不被优化结果覆盖（本用例无拆分，保持占位提示）
     assert.ok(!document.querySelector(".neo-director-story-segs").textContent.includes("[Shot 1]"), "右栏不刷新为优化后提示词");
@@ -3120,10 +3121,10 @@ test("导演编辑器：🧩 宫格图拆分卡片——自动/手动行列，�
         splitBody = body;
         return jsonResponse({ success: true, rows: 2, cols: 3, panels: panelNames.map((n) => ({ filename: n, width: 160, height: 120 })) });
     });
-    let descBody = null;
-    mockRoute("/rs_recipes/director_describe_panels", (body) => {
-        descBody = body;
-        return jsonResponse({ success: true, prompts: panelNames.map((n) => `描述 ${n}`) });
+    const descBodies = [];
+    mockRoute("/rs_recipes/director_describe_panel", (body) => {
+        descBodies.push(body);
+        return jsonResponse({ success: true, prompt: `描述 ${body.panel}` });
     });
 
     await openDirectorEditor({
@@ -3138,6 +3139,17 @@ test("导演编辑器：🧩 宫格图拆分卡片——自动/手动行列，�
     assert.ok(card, "宫格拆分卡片在统一设置页");
     const paneChildren = Array.from(document.querySelector(".neo-director-pane-setup").children);
     assert.equal(paneChildren.indexOf(card), 2, "宫格卡片紧跟图片分镜卡片之后");
+
+    // 三方互斥：默认「逐段图片分镜」→ 🎨 显示、🧩 隐藏；切到 grid → 反之
+    const sbCard = document.querySelector(".neo-director-setup-sb");
+    assert.equal(sbCard.style.display, "", "默认逐段图片分镜：🎨 卡片显示");
+    assert.equal(card.style.display, "none", "默认 🧩 宫格卡片隐藏");
+    const fsSel = document.querySelector(".neo-director-frame-source");
+    fsSel.value = "grid";
+    fsSel.dispatchEvent(new Event("change"));
+    assert.equal(card.style.display, "", "切到 grid：🧩 卡片显示");
+    assert.equal(sbCard.style.display, "none", "切到 grid：🎨 卡片隐藏");
+
     assert.equal(card.querySelector(".neo-director-grid-manual").style.display, "none", "手动行列默认隐藏");
     const modeSel = card.querySelector(".neo-director-grid-mode");
     modeSel.value = "manual";
@@ -3152,7 +3164,7 @@ test("导演编辑器：🧩 宫格图拆分卡片——自动/手动行列，�
     await sleep(40);
     assert.ok(card.querySelector(".neo-director-grid-src img")?.src.includes("grid_src.png"), "宫格图缩略回显");
 
-    // 拆分（confirm 桩默认 true）→ 替换分段、各格回填首帧与分镜图记录
+    // 拆分（confirm 桩默认 true）→ 替换分段、各格回填首帧与分镜图记录，frame source 自动切到 grid
     card.querySelector(".neo-director-grid-split").click();
     await sleep(60);
     assert.deepEqual(splitBody, { filename: "grid_src.png", rows: 2, cols: 3 }, "手动模式带行列参数");
@@ -3163,16 +3175,95 @@ test("导演编辑器：🧩 宫格图拆分卡片——自动/手动行列，�
             .some((it) => it.dataset.file === panelNames[i] && it.classList.contains("neo-director-ff-active")), `第 ${i + 1} 格回填为首帧`);
         assert.equal(row.dataset.storyboard, panelNames[i], "分镜图记录为本格");
     });
-    assert.equal(document.querySelector(".neo-director-frame-source").value, "storyboard", "自动切到逐段图片分镜方式");
+    assert.equal(fsSel.value, "grid", "拆分后自动切到宫格图拆分方式");
     assert.ok(card.querySelector(".neo-director-grid-desc"), "逐格描述按钮可用");
     assert.equal(card.querySelectorAll(".neo-director-grid-panels a").length, 6, "格子缩略条回显");
 
-    // 逐格 LLM 描述 → 各段提示词回填
+    // 逐格 LLM 描述（前端自动循环，每格单独一次请求）→ 各段提示词回填
     card.querySelector(".neo-director-grid-desc").click();
-    await sleep(60);
-    assert.deepEqual(descBody.panels, panelNames, "描述请求带全部格子（行优先顺序）");
+    await sleep(120);
+    assert.equal(descBodies.length, 6, "逐格循环：每格单独发一次单格描述请求");
+    descBodies.forEach((b, i) => assert.equal(b.panel, panelNames[i], `第 ${i + 1} 次请求对应本格`));
     rows.forEach((row, i) => assert.equal(row.querySelector(".neo-director-prompt").value, `描述 ${panelNames[i]}`, `第 ${i + 1} 段提示词回填`));
 
+    // 宫格图拆分：各段无「优化前」原文，对照表降为两栏（分镜图 / 提示词），不显示空的「优化前」列
+    const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
+    assert.equal(setupItems.length, 6, "本页回显 6 段");
+    const gridCells = setupItems[0].querySelectorAll(".neo-director-setup-seg-cols > div");
+    assert.equal(gridCells.length, 2, "宫格方式两列：分镜图 / 提示词");
+    assert.equal(gridCells[1].textContent, `描述 ${panelNames[0]}`, "第二列为该段提示词，无空「优化前」占位");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("标题栏右侧「🤖 LLM 配置」按钮：打开弹窗复用 LLM 表单，✕/Esc 关闭，脏改动出确认条", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_prompts/remote_llm_config", (body, call) =>
+        call.method === "POST" ? jsonResponse({ success: true }) : jsonResponse({
+            enabled: false,
+            active_provider: "local",
+            auto_unload_local: false,
+            provider_list: [{ id: "local", name: "Local GGUF (llama.cpp)", type: "local" }],
+            providers: { local: { models_dir: "" } },
+        }));
+    mockRoute("/rs_prompts/get_models", () => jsonResponse({ current_model: "", models: [] }));
+
+    const existing = {
+        name: "T",
+        shared: { width: 1344, height: 768, seed: 0 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(40);
+
+    // 🤖 按钮在标题栏右侧按钮组最左（⛶/✕ 之前）
+    const titleBtns = Array.from(document.querySelector(".neo-director-title-btns").children);
+    assert.ok(titleBtns[0].classList.contains("neo-director-llm-config"), "🤖 按钮在最左");
+
+    // 点击打开弹窗：复用 LLM 表单（provider 下拉已填充）
+    document.querySelector(".neo-director-llm-config").click();
+    await sleep(40); // 等 load() 回填落定
+    let overlay = document.querySelector(".neo-director-llm-overlay");
+    assert.ok(overlay, "打开 LLM 配置弹窗");
+    assert.ok(overlay.querySelector(".neo-director-llm-head"), "弹窗含标题栏");
+    assert.ok(overlay.querySelector("#rs-remote-provider"), "复用 LLM 表单（provider 下拉）");
+
+    // 重复点击不叠加
+    document.querySelector(".neo-director-llm-config").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-llm-overlay").length, 1, "重复点击不叠加");
+
+    // 无改动：✕ 直接关、Esc 也能关
+    overlay.querySelector(".neo-director-llm-close").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-llm-overlay").length, 0, "无改动 ✕ 直接关");
+
+    document.querySelector(".neo-director-llm-config").click();
+    await sleep(40);
+    document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-llm-overlay").length, 0, "无改动 Esc 关闭");
+
+    // 有未保存修改：✕ 出确认条；「放弃修改」关闭、不写盘
+    document.querySelector(".neo-director-llm-config").click();
+    await sleep(40);
+    overlay = document.querySelector(".neo-director-llm-overlay");
+    const unloadChk = overlay.querySelector("#rs-local-auto-unload");
+    assert.ok(unloadChk, "本地 provider 显示自动卸载复选框");
+    unloadChk.checked = true;   // 改一处（不触发异步）→ 脏
+    overlay.querySelector(".neo-director-llm-close").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-llm-overlay").length, 1, "有改动 ✕ 不关");
+    const confirm = overlay.querySelector(".neo-director-llm-dirty");
+    assert.equal(confirm.hidden, false, "确认条出现");
+    overlay.querySelector(".neo-director-llm-btn-discard").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-llm-overlay").length, 0, "放弃修改后关闭");
+
+    // 清理：关编辑器
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);
 });

@@ -330,10 +330,11 @@ class NormalizeDirectorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             recipes._normalize_director({"segments": []}, {})
 
-    def test_missing_skill_id_rejected(self):
-        with self.assertRaises(ValueError):
-            recipes._normalize_director(
-                {"segments": [{"prompt": "x", "skill_id": ""}]}, {})
+    def test_empty_skill_id_allowed_as_draft(self):
+        # 技能为空允许保存（草稿）：前端只提示、不阻止，后端同样放行，执行时再校验
+        shared, segs = recipes._normalize_director(
+            {"segments": [{"prompt": "x", "skill_id": ""}]}, {})
+        self.assertEqual(segs[0]["skill_id"], "")
 
     def test_bad_first_frame_ref_rejected(self):
         # 段引用了未出现在 orig_to_copied 的资产 → 拒绝
@@ -355,10 +356,11 @@ class NormalizeDirectorTests(unittest.TestCase):
                 {"segments": [{"prompt": "x", "skill_id": "s", "first_frame": "ghost.png"}]},
                 {}, {"f_copied.png"})
 
-    def test_empty_prompt_rejected(self):
-        with self.assertRaises(ValueError):
-            recipes._normalize_director(
-                {"segments": [{"prompt": "  ", "skill_id": "s"}]}, {})
+    def test_empty_prompt_allowed_as_draft(self):
+        # 提示词为空允许保存（草稿）：前端只提示、不阻止，后端同样放行，执行时再校验
+        shared, segs = recipes._normalize_director(
+            {"segments": [{"prompt": "  ", "skill_id": "s"}]}, {})
+        self.assertEqual(segs[0]["prompt"], "")
 
     def test_global_mode_preserved(self):
         shared, _ = recipes._normalize_director(
@@ -454,6 +456,12 @@ class NormalizeDirectorStoryTests(unittest.TestCase):
         self.assertIsNone(story["image_mode"])
         self.assertIsNone(story["frame_source"])
         self.assertIsNone(story["image_skill"])
+
+    def test_frame_source_grid_preserved(self):
+        # 宫格图拆分方式（grid）是合法值，随 story 落盘并回显
+        story = recipes._normalize_director_story(
+            {"story": {"idea": "x", "frame_source": "grid"}}, {})
+        self.assertEqual(story["frame_source"], "grid")
 
 
 # ===========================================================================

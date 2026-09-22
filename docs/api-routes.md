@@ -58,6 +58,8 @@
 | POST | `/rs_recipes/director_generate_story` | 导演编辑器：主题 → LLM 生成完整故事脚本（纯文本，不再接收角色/背景参考） |
 | POST | `/rs_recipes/director_split_segments` | 导演编辑器：已确认故事按目标秒数拆分场景并重生成每段提示词（纯文本，不再接收角色/背景参考），返回 `segments[]` |
 | POST | `/rs_recipes/director_optimize_prompts` | 导演编辑器「统一设置」：各段优化前原文 + 模式 + 统一参考清单 → LLM 按 H3 官方格式逐段重写（附参考图走多模态），返回数量与分段数一致的 `prompts[]` |
+| POST | `/rs_recipes/grid_split` | 导演编辑器「🧩 宫格图拆分」：一张带分隔条/留白的分镜宫格图 → 纯 PIL 均匀间隙检测（或手动行×列，1~12）自动判行列，按行优先顺序把各格裁到 `input/`，返回 `{rows, cols, panels:[{filename,width,height,preview_url}]}`（格子数超上限拒绝） |
+| POST | `/rs_recipes/director_describe_panel` | 导演编辑器「🧩 宫格图拆分」逐格描述（**单格**）：一张分镜图（该段首帧，多模态）+ 时长 → LLM（任务 `director_panel_describe`）生成一条可直接提交的 MiniMax H3 i2v 成品提示词，返回 `{prompt}`；前端按格子自动循环调用本端点、逐格反馈进度，单格失败不中断 |
 
 ## h3_video_director.py / h3_segment.py / h3_assemble.py / video_gen.py — `/neo_video_gen/*`
 

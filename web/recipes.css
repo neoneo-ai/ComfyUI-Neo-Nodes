@@ -561,6 +561,124 @@
     color: #7ce38b;
 }
 
+/* 标题栏右侧「LLM 配置」按钮：与 ⛶/✕ 同款图标按钮 */
+.neo-director-llm-config {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #9aa4b0;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.neo-director-llm-config:hover {
+    background: #2c2f36;
+    color: #fff;
+}
+
+/* LLM 配置弹窗：标题栏 🤖 打开，居中模态。z-index 高于编辑器浮层（2147483000），
+   低于 combo 下拉最大值（2147483647）与技能选择窗（2147483646）：弹窗内模型/LoRA 下拉须可见。 */
+.neo-director-llm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483644;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.neo-director-llm-panel {
+    width: min(420px, 92vw);
+    max-height: min(720px, 86vh);
+    display: flex;
+    flex-direction: column;
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.neo-director-llm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    border-bottom: 1px solid #333;
+}
+
+.neo-director-llm-close {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #9aa4b0;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.neo-director-llm-close:hover {
+    background: #2c2f36;
+    color: #fff;
+}
+
+.neo-director-llm-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 6px 10px;
+}
+
+/* 未保存修改确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）：仅未隐藏时启用 flex，
+   直接 display:flex 会压过 hidden 的 UA 规则导致确认条一直可见。 */
+.neo-director-llm-dirty:not([hidden]) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    border-top: 1px solid #333;
+    background: #26221a;
+}
+
+.neo-director-llm-dirty-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.neo-director-llm-dirty button {
+    cursor: pointer;
+    background: #2c2f36;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
+    color: #ddd;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+.neo-director-llm-dirty button:hover {
+    background: #383b43;
+}
+
+.neo-director-llm-btn-save {
+    color: #7ce38b;
+}
+
 .neo-director-resize {
     position: absolute;
     right: 3px;
@@ -1541,7 +1659,7 @@
     min-width: 0;
 }
 
-/* 「🎨 分镜故事板」页：各段三栏对照（左 = 分镜图 / 中 = 优化前 / 右 = 优化后） */
+/* 「🎨 分镜故事板」页：各段三栏对照（左 = 分镜图 / 中 = 优化前 / 右 = 优化后）；宫格图拆分无原文时降为两栏 */
 .neo-director-setup-segs {
     display: flex;
     flex-direction: column;
@@ -1560,6 +1678,11 @@
     grid-template-columns: 200px 1fr 1fr;   /* 第一列分镜图缩略图留足宽度（约 16:9） */
     gap: 8px;
     align-items: start;
+}
+
+/* 宫格图拆分：各段无「优化前」原文，对照表降为两栏（分镜图 / 提示词） */
+.neo-director-setup-segs-grid .neo-director-setup-seg-cols {
+    grid-template-columns: 200px 1fr;
 }
 
 .neo-director-setup-seg-labels {

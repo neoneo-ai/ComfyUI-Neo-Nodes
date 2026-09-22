@@ -374,46 +374,45 @@ class GridSplitEndpointTests(unittest.TestCase):
         self.assertFalse(data["success"])
 
 
-class DescribePanelsEndpointTests(unittest.TestCase):
-    def test_success_sends_panel_bytes_in_order(self):
-        """各格图字节按顺序喂给多模态 LLM；结果数量必须与格子数一致。"""
+class DescribePanelEndpointTests(unittest.TestCase):
+    def test_success_returns_single_prompt_with_panel_image(self):
+        """单格多模态调用：一张分镜图字节喂给 LLM，返回该格的 H3 i2v 提示词。"""
         original = _llm.run_llm_task
         calls = []
 
         def _one(task_name, text, images=None, **kw):
-            calls.append((task_name, images))
-            return {"status": "success", "prompts": json.dumps(["描述一", "描述二", "描述三"])}
+            calls.append((task_name, text, images))
+            return {"status": "success", "prompt": "H3 i2v 提示词"}
 
         _llm.run_llm_task = _one
         try:
-            for n in ("pa.png", "pb.png", "pc.png"):
-                with open(os.path.join(_INPUT_DIR, n), "wb") as f:
-                    f.write(b"panel-bytes-" + n.encode())
-            req = _FakeRequest({"panels": ["pa.png", "pb.png", "pc.png"], "duration_sec": 4})
-            resp = _run_async(recipes.rs_recipes_director_describe_panels(req))
+            with open(os.path.join(_INPUT_DIR, "pa.png"), "wb") as f:
+                f.write(b"panel-bytes-pa")
+            req = _FakeRequest({"panel": "pa.png", "duration_sec": 4})
+            resp = _run_async(recipes.rs_recipes_director_describe_panel(req))
             data = json.loads(resp.body)
             self.assertTrue(data["success"], data)
-            self.assertEqual(data["prompts"], ["描述一", "描述二", "描述三"])
-            task, images = calls[0]
+            self.assertEqual(data["prompt"], "H3 i2v 提示词")
+            task, text, images = calls[0]
             self.assertEqual(task, "director_panel_describe")
-            self.assertEqual(len(images), 3)   # 每格一张图，按顺序
+            self.assertEqual(len(images), 1)   # 每次调用只带一张分镜图
+            self.assertIn("约 4 秒", text)
         finally:
             _llm.run_llm_task = original
 
-    def test_count_mismatch_rejected(self):
+    def test_empty_prompt_rejected(self):
+        """LLM 返回空提示词 → 422（前端据此标记该格失败并继续下一格）。"""
         original = _llm.run_llm_task
-        _llm.run_llm_task = lambda *a, **k: {"status": "success", "prompts": json.dumps(["只有一条"])}
+        _llm.run_llm_task = lambda *a, **k: {"status": "success", "prompt": "   "}
         try:
-            resp = _run_async(recipes.rs_recipes_director_describe_panels(_FakeRequest({"panels": ["a.png", "b.png"]})))
-            data = json.loads(resp.body)
-            self.assertFalse(data["success"])
+            resp = _run_async(recipes.rs_recipes_director_describe_panel(_FakeRequest({"panel": "a.png"})))
+            self.assertEqual(resp.status, 422)
         finally:
             _llm.run_llm_task = original
 
-    def test_empty_panels_rejected(self):
-        resp = _run_async(recipes.rs_recipes_director_describe_panels(_FakeRequest({"panels": []})))
-        data = json.loads(resp.body)
-        self.assertFalse(data["success"])
+    def test_missing_panel_rejected(self):
+        resp = _run_async(recipes.rs_recipes_director_describe_panel(_FakeRequest({"panel": ""})))
+        self.assertEqual(resp.status, 400)
 
 
 if __name__ == "__main__":
