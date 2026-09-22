@@ -29,7 +29,7 @@ from server import PromptServer
 
 from .bundles import get_bundle
 from .image_gen import render_template
-from .krea2_generate import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
+from .image_gen_edit import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
 from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
 from .h3_preview import load_h3_tiny_vae, preview_override
 from .skill import get_skill_gen_config, load_skill_workflow

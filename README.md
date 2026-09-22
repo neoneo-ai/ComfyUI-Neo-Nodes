@@ -9,7 +9,7 @@
 | 📝 Neo Prompt Encoder | 节点 | 提示词管理 + AI 增强（预设 / 搜索 / LLM 增强），输出 CLIP 编码（CONDITIONING）+ 文本，接标准 txt2img 采样器 | [prompts](docs/prompts.md) |
 | ⚡ Neo Prompt Agent | 节点 | 提示词管理 + AI 生成，无需连 CLIP；输出 PROMPT 文本 + BUNDLE 运行时包（可直连 🎨 Krea2 / 🎞️ H3） | [prompts](docs/prompts.md) |
 | 🖌️ 聊天生图（Krea2） | 节点内置 | 选生图 skill 后 ✨ 直接生成（文生图 / 参考图四视图），状态行实时进度/取消，结果 Markdown 预览并一键装配回 LoadImage | [image-gen](docs/image-gen.md) |
-| 🎨 Krea2 Generate | 节点 | 按所选生图 skill 模板同步生成，直接输出 IMAGE 张量到下游（进程内 mini-executor，无需聊天界面） | [image-gen](docs/image-gen.md) |
+| 🎨 Neo Image Gen & Edit | 节点 | 按所选生图 skill 模板同步生成/参考编辑，直接输出 IMAGE 张量到下游（进程内 mini-executor，无需聊天界面；参考图为 Autogrow 动态槽位，Qwen Image 2.1 编辑可多图输入） | [image-gen](docs/image-gen.md) |
 | 🎞️ H3 Video Director | 节点 | MiniMax H3 视频生成：以 `video_director` 配方逐段生成（每段自带 skill/提示词/时长/首尾帧/参考素材，模式 文生/图生/首尾帧/全参考/混合）并拼接为单个含原生音频 `VIDEO`；也可连 BUNDLE 按单片段生成。编辑器支持半自动故事拆分、统一设置（改动自动应用到所有分段）、提示词批量优化与时间轴逐段微调 | [h3-video](docs/h3-video-gen.md) |
 | 📦 Neo Bundle Expand | 节点 | 把 BUNDLE 展开成 `prompt` + `image_1..9`，对齐官方 H3 Reference to Video；输出槽自动增长（默认仅 prompt + image_1，上限 9 张） | [prompts](docs/prompts.md) |
 | 🔲 Neo Reference Grid (参考图宫格) | 节点 | 单节点搞定「提示词 + 最多 12 张参考图」：宫格槽位 1~12（工具条 −/+ 运行时调整），布局按节点宽度流式排布，卡片按图片真实比例自适应，随工作流持久化 → `prompt` + `BUNDLE` + `image_1..image_12`；宫格参与配方保存/还原，工具条 ☰ 可带预览载入已有含图配方 | [prompts](docs/prompts.md) |
@@ -63,7 +63,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
    - **远程**：节点 Settings 里选 Provider（内置 DeepSeek、阿里云百炼(通义千问 / Token Plan)、Kimi、智谱 GLM、硅基流动，以及 OpenAI 兼容 / LM Studio / Ollama / OpenRouter 等），填 API Key + 端点。各家端点与申请入口见 [docs/llm.md](docs/llm.md)。表单底部「🔌 测试连接」会用当前填写的 Provider/密钥/端点/模型发送「你好」，能正常回复即表示连通（无需先保存；留空字段沿用已存配置）。
    - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型后点 💾 保存（目录只有一个模型时可跳过，运行时自动使用）。安装与模型目录规范见 [docs/llm.md](docs/llm.md)。
 3. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨ → 得到 AI 生成的提示词文本（无需连 CLIP，可直接接下游如 🎨 Krea2）。
-4. **第一次生图**：添加 🎨 Krea2 Generate 节点 → 选一个带 `workflow.json` 的生图 skill → prompt 接 ⚡ Neo Prompt Agent（常用）或手填，四视图类再连参考图 → 排队执行 → 直接输出 IMAGE 张量。
+4. **第一次生图**：添加 🎨 Neo Image Gen & Edit 节点 → 选一个带 `workflow.json` 的生图 skill → prompt 接 ⚡ Neo Prompt Agent（常用）或手填，参考编辑类（四视图 / Qwen Image 2.1 编辑）再连参考图槽位 → 排队执行 → 直接输出 IMAGE 张量。
 
    > 生图需 GPU/显存，且所选 skill 必须声明 `gen_image: true` 并附 `workflow.json`。
    > 生图模型 / Text Encoder / VAE 默认「自动」按 skill 模板匹配，无需手配；未匹配到时再到节点生图设置里手动指定。
@@ -110,7 +110,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 |------|------|
 | [docs/prompts.md](docs/prompts.md) | 提示词节点：Neo Prompt Encoder / Agent、节点界面与按钮、模板与技能管理、图片反推与 `@` 引用、`/` 技能菜单 |
 | [docs/llm.md](docs/llm.md) | LLM 模式（远程/本地）、思考模型、本地 GGUF 安装（预编译 wheel / 源码编译 / Windows 排障）、模型目录规范 |
-| [docs/image-gen.md](docs/image-gen.md) | Krea2 生图：聊天生图与 Krea2 Generate 节点（IMAGE 输出） |
+| [docs/image-gen.md](docs/image-gen.md) | 生图：聊天生图与 Neo Image Gen & Edit 节点（文生图 + 参考编辑，IMAGE 输出） |
 | [docs/recipes.md](docs/recipes.md) | 配方：保存、一键发送到工作流、示例结果、多段视频导演配方（video_director） |
 | [docs/gallery.md](docs/gallery.md) | Neo Gallery：浏览、灯箱、文件管理、Civitai LORA 缓存、收藏（书签） |
 | [docs/workflow-repair.md](docs/workflow-repair.md) | 工作流模型路径修复 |

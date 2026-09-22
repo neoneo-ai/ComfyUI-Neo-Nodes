@@ -45,7 +45,7 @@ class NeoRefGrid:
 
     - refs（隐藏 widget，JSON 文件名数组）：唯一参考图来源，槽位号 = 槽序；坏文件/缺失保留该槽空缺不补位。
     - prompt_text（隐藏 widget）：节点内提示词框内容。
-    - 输出 BUNDLE 为运行时包（提示词 + 参考图 data URI），可直连 NeoKrea2Generate / NeoH3VideoDirector，
+    - 输出 BUNDLE 为运行时包（提示词 + 参考图 data URI），可直连 NeoImageGenEdit / NeoH3VideoDirector，
       或经 NeoBundleExpand 展开对接官方 H3 Ref2V；image_N 也可直接连线到官方节点的 ref_image_N。
     """
 

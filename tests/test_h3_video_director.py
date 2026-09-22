@@ -104,6 +104,9 @@ sys.modules["node_helpers"] = _node_helpers
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
+# V3 节点（image_gen_edit）导入期要 comfy_api.latest：先备好 ComfyUI 根目录与占位子模块
+import _comfy_api_bootstrap  # noqa: E402
+_comfy_api_bootstrap.bootstrap(PLUGIN_DIR)
 
 _PKG = "_neo_h3director_pkg"
 _pkg = types.ModuleType(_PKG)
@@ -254,7 +257,7 @@ image_gen = _load("image_gen", "image_gen.py")
 # storyboard 端到端用例走真实 resolve_request/render_template（验证多参考去重/截断与槽位裁剪），
 # 但不关心模型文件是否存在：桩掉 resolve_model 返回占位名，避免依赖 _MODELS 与 Krea2 名称线索匹配。
 image_gen.resolve_model = lambda folder, wanted: (str(wanted or "").strip() or f"{folder}_stub.safetensors", "")
-krea2_generate = _load("krea2_generate", "krea2_generate.py")
+image_gen_edit = _load("image_gen_edit", "image_gen_edit.py")
 h3_video_gen = _load("h3_video_gen", "h3_video_gen.py")
 video_gen = _load("video_gen", "video_gen.py")
 recipes = _load("recipes", "recipes.py")
@@ -2241,7 +2244,7 @@ class HybridKeyframeTests(unittest.TestCase):
             "MiniMaxH3ReferenceToVideo": _StubR2V, "KSampler": _StubSampler,
             "CreateVideo": _StubCreateVideo, "NeoH3AddContext": h3_video_director.NeoH3AddContext,
         }
-        krea2_generate.comfy_nodes.NODE_CLASS_MAPPINGS.update(registry)
+        image_gen_edit.comfy_nodes.NODE_CLASS_MAPPINGS.update(registry)
         graph = {
             "1": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},
             "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "u.safetensors"}},
@@ -2255,10 +2258,10 @@ class HybridKeyframeTests(unittest.TestCase):
         tail = torch.zeros(22, 768, 1344, 3)
         try:
             graph, overrides = h3_video_director._inject_continuity_nodes(graph, tail, 22, ["a.png"])
-            out = krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+            out = image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
         finally:
             for name in registry:
-                krea2_generate.comfy_nodes.NODE_CLASS_MAPPINGS.pop(name, None)
+                image_gen_edit.comfy_nodes.NODE_CLASS_MAPPINGS.pop(name, None)
         self.assertEqual(out, "VIDEO-OUT")
         seen = _StubSampler.seen
         self.assertEqual(model.clones, 1)                        # 注入链上每个节点都在上一棒上 clone 一份
@@ -3154,7 +3157,7 @@ class Qwen21TemplateTests(unittest.TestCase):
         # mini-executor 调 execute() 前用 _nest_dotted_inputs 把点号键收成嵌套 dict，
         # 与 ComfyUI 主循环 build_nested_inputs 一致；这里直接验证聚合结果符合 execute(images=...) 契约。
         graph = self._render(2)
-        nested = krea2_generate._nest_dotted_inputs(dict(graph["4"]["inputs"]))
+        nested = image_gen_edit._nest_dotted_inputs(dict(graph["4"]["inputs"]))
         self.assertIn("images", nested, "点号键 images.image_N 应聚合成 images 字典")
         self.assertEqual(set(nested["images"]), {"image_1", "image_2"})
         self.assertFalse(any(k.startswith("image_") and "." not in k for k in nested),
@@ -3163,7 +3166,7 @@ class Qwen21TemplateTests(unittest.TestCase):
     def test_other_autogrow_prefixes_still_nest(self):
         # 回归护栏：Krea2/H3 的 ref_images.ref_image_0 等点号键同样被聚合成嵌套 dict，
         # 证明 _nest_dotted_inputs 不针对 images 特判。
-        nested = krea2_generate._nest_dotted_inputs(
+        nested = image_gen_edit._nest_dotted_inputs(
             {"ref_images.ref_image_0": "a", "prompt": "p"})
         self.assertEqual(nested, {"ref_images": {"ref_image_0": "a"}, "prompt": "p"})
 

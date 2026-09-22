@@ -1,4 +1,4 @@
-// NeoKrea2Generate 节点：width/height 默认跟随所选 skill 预设（base_resolution + default_ratio）。
+// NeoImageGenEdit 节点：width/height 默认跟随所选 skill 预设（base_resolution + default_ratio）。
 // 参考 NeoH3VideoDirector（web/director-node.js）的 applyDimDefaults：仅当仍为默认 -1 时填充，
 // 切换 skill_id 下拉强制重填；工作流已存的实值优先（首次载入不覆盖）。
 // 另修复旧版本工作流/复制粘贴导致的 widgets_values 串位：seed 之后会自动追加 control_after_generate
@@ -9,9 +9,9 @@ import { api } from "../../../../scripts/api.js";
 import { attachSkillPickerToComboWidget, createSkillStatusRow } from "./skill.js";
 
 app.registerExtension({
-    name: "NeoKrea2Generate.DimDefaults",
+    name: "NeoImageGenEdit.DimDefaults",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== "NeoKrea2Generate") return;
+        if (nodeData.name !== "NeoImageGenEdit") return;
 
         const origOnNodeCreated = nodeType.prototype.onNodeCreated;
 
@@ -21,7 +21,7 @@ app.registerExtension({
             const skillWidget = node.widgets?.find((w) => w.name === "skill_id");
             // 点击 skill_id combo → 弹居中技能选择窗（替代原生下拉）；选中写回 widget.value，
             // 其 callback 已被下方包装为 loadDims(true)，故尺寸预设自动刷新
-            if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: "选择 Skill（Krea2）" });
+            if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: "选择 Skill（生图/编辑）" });
 
             // 节点底部 Skill 有效性状态条：选完 skill 后台检测缺模型/缺节点，有缺失显示告警并可点开详情修复
             // （skill_id 下拉存的是技能名称，状态条内部反查真实 skill 再校验）

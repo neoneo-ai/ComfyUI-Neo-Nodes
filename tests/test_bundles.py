@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""bundles 运行时包 + NeoPromptAgent BUNDLE 输出 + H3/Krea2 bundle 消费的离线单测。
+"""bundles 运行时包 + NeoPromptAgent BUNDLE 输出 + H3 / 生图（image_gen_edit）bundle 消费的离线单测。
 
 不依赖 ComfyUI 运行中的服务器与真实模型：server/comfy/folder_paths/nodes 用桩模块替换；
-H3/Krea2 generate 的 resolve/render/execute/load_skill_workflow 用捕获型假函数，
+H3 / 生图节点的 resolve/render/execute/load_skill_workflow 用捕获型假函数，
 验证 prompt 回退、references 覆盖、bundle 不携带 skill（本地选择始终生效）这几条流向。"""
 
 import importlib.util
@@ -76,6 +76,9 @@ sys.modules["nodes"] = _nodes
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
+# V3 节点（image_gen_edit）导入期要 comfy_api.latest：先备好 ComfyUI 根目录与占位子模块
+import _comfy_api_bootstrap  # noqa: E402
+_comfy_api_bootstrap.bootstrap(PLUGIN_DIR)
 
 _PKG = "_neo_bundles_pkg"
 _pkg = types.ModuleType(_PKG)
@@ -95,7 +98,7 @@ def _load(name, fname):
 bundles = _load("bundles", "bundles.py")
 _load("skill", "skill.py")
 _load("image_gen", "image_gen.py")
-krea2_generate = _load("krea2_generate", "krea2_generate.py")
+image_gen_edit = _load("image_gen_edit", "image_gen_edit.py")
 prompts = _load("prompts", "prompts.py")
 
 
@@ -154,61 +157,63 @@ class AgentBundleOutputTests(unittest.TestCase):
 
 
 class BundleInputPlacementTests(unittest.TestCase):
-    """bundle 输入须可见（非 hidden）且紧跟 image 之后。"""
+    """bundle 输入须可见（非 hidden）且排在参考图之后。"""
 
-    def test_krea2_bundle_visible_after_image(self):
-        opt = krea2_generate.NeoKrea2Generate.INPUT_TYPES()["optional"]
-        self.assertIn("bundle", opt)
-        self.assertNotIn("hidden", opt["bundle"][1])
-        keys = list(opt.keys())
-        self.assertEqual(keys.index("bundle"), keys.index("image") + 1)
+    def test_bundle_visible_after_refs(self):
+        schema = image_gen_edit.NeoImageGenEdit.GET_SCHEMA()
+        ids = [i.id for i in schema.inputs]
+        self.assertEqual(ids.index("bundle"), ids.index("refs") + 1)
+        bundle = next(i for i in schema.inputs if i.id == "bundle")
+        self.assertTrue(bundle.force_input)   # 纯连线槽：节点体内不显示文本框
+        self.assertTrue(bundle.optional)
 
 
-class Krea2BundleConsumeTests(unittest.TestCase):
+class ImageGenEditBundleConsumeTests(unittest.TestCase):
     def setUp(self):
         self._captured = {}
         self._restore = [
-            (krea2_generate, "resolve_request", krea2_generate.resolve_request),
-            (krea2_generate, "render_template", krea2_generate.render_template),
-            (krea2_generate, "execute_graph_inprocess", krea2_generate.execute_graph_inprocess),
-            (krea2_generate, "load_skill_workflow", krea2_generate.load_skill_workflow),
+            (image_gen_edit, "resolve_request", image_gen_edit.resolve_request),
+            (image_gen_edit, "render_template", image_gen_edit.render_template),
+            (image_gen_edit, "execute_graph_inprocess", image_gen_edit.execute_graph_inprocess),
+            (image_gen_edit, "load_skill_workflow", image_gen_edit.load_skill_workflow),
         ]
-        krea2_generate.resolve_request = lambda body, settings: self._captured.setdefault("body", body) or {"model": "x"}
-        # render_template 只在 generate 里显式调用一次，用它捕获真实用到的模板以反查生效的 skill id
+        image_gen_edit.resolve_request = lambda body, settings, **kw: self._captured.setdefault("body", body) or {"model": "x"}
+        # render_template 只在 execute 里显式调用一次，用它捕获真实用到的模板以反查生效的 skill id
         def _fake_render(template, params):
             self._captured.setdefault("template", template)
             return {"1": {"class_type": "UNETLoader", "inputs": {}}}, []
-        krea2_generate.render_template = _fake_render
-        krea2_generate.execute_graph_inprocess = lambda graph, output_type="IMAGE", overrides=None: ("IMAGE_MARKER",)
-        krea2_generate.load_skill_workflow = lambda sid: {"__skill_id": sid, "template": True}
+        image_gen_edit.render_template = _fake_render
+        image_gen_edit.execute_graph_inprocess = lambda graph, output_type="IMAGE", overrides=None: "IMAGE_MARKER"
+        image_gen_edit.load_skill_workflow = lambda sid: {"__skill_id": sid, "template": True}
 
     def tearDown(self):
         for mod, name, orig in self._restore:
             setattr(mod, name, orig)
 
     def _valid_image_skill(self):
-        return krea2_generate._gen_image_skills()[0]["id"]
+        return image_gen_edit._gen_image_skills()[0]["id"]
+
+    def _run(self, **kwargs):
+        return image_gen_edit.NeoImageGenEdit.execute(**kwargs).args[0]
 
     def test_bundle_prompt_used_when_node_prompt_empty(self):
         bid = bundles.create_bundle({"prompts": ["from bundle"], "references": [], "gen_type": ""})
-        krea2_generate.NeoKrea2Generate().generate(
-            skill_id=self._valid_image_skill(), prompt="", image=None, bundle=bid)
+        self._run(skill_id=self._valid_image_skill(), prompt="", bundle=bid)
         self.assertEqual(self._captured["body"]["prompt"], "from bundle")
 
-    def test_bundle_references_override_image(self):
+    def test_bundle_references_override_node_refs(self):
         refs = [{"kind": "data", "data": "data:image/png;base64,AAAA"}]
         bid = bundles.create_bundle({"prompts": ["p"], "references": refs, "gen_type": ""})
-        krea2_generate.NeoKrea2Generate().generate(
-            skill_id=self._valid_image_skill(), prompt="p", image=torch.full((1, 2, 2, 3), 0.1), bundle=bid)
+        self._run(skill_id=self._valid_image_skill(), prompt="p", bundle=bid,
+                  refs={"image_1": torch.full((1, 2, 2, 3), 0.1)})
         self.assertEqual(self._captured["body"]["references"], refs)
 
     def test_bundle_does_not_override_local_skill(self):
         # bundle 只带资源（prompt/参考图），不携带生图 skill：本地选择的 skill 始终生效
         local = self._valid_image_skill()
         bid = bundles.create_bundle({"prompts": ["p"], "references": [], "gen_type": ""})
-        krea2_generate.NeoKrea2Generate().generate(
-            skill_id=local, prompt="p", image=None, bundle=bid)
-        self.assertEqual(self._captured["template"]["__skill_id"], krea2_generate._resolve_skill_id(local))
+        self._run(skill_id=local, prompt="p", bundle=bid)
+        self.assertEqual(self._captured["template"]["__skill_id"], image_gen_edit._resolve_skill_id(local))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-// NeoKrea2Generate 节点：width/height 默认跟随所选 skill 预设（/neo_image_gen/skill_dims）。
+// NeoImageGenEdit 节点：width/height 默认跟随所选 skill 预设（/neo_image_gen/skill_dims）。
 // 参考 web/director-node.js 的 applyDimDefaults：仅当仍为 -1 时填充，切换 skill_id 下拉强制重填。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,7 @@ import { getExtension } from "./mocks/comfy-app.mjs";
 function makeNode(skillId = "", width = -1, height = -1) {
     return {
         id: 1,
-        type: "NeoKrea2Generate",
+        type: "NeoImageGenEdit",
         properties: {},
         widgets: [
             { name: "skill_id", value: skillId },
@@ -26,11 +26,11 @@ function makeNode(skillId = "", width = -1, height = -1) {
 }
 
 async function createNode(skillId = "", width = -1, height = -1) {
-    await import("../../web/krea2-generate-node.js");
-    const ext = getExtension("NeoKrea2Generate.DimDefaults");
+    await import("../../web/image-gen-edit-node.js");
+    const ext = getExtension("NeoImageGenEdit.DimDefaults");
     assert.ok(ext, "krea2 dim 扩展未注册");
     const nodeType = { prototype: {} };
-    await ext.beforeRegisterNodeDef(nodeType, { name: "NeoKrea2Generate" });
+    await ext.beforeRegisterNodeDef(nodeType, { name: "NeoImageGenEdit" });
     const node = makeNode(skillId, width, height);
     nodeType.prototype.onNodeCreated.call(node);
     return node;
@@ -92,7 +92,7 @@ test("无 skill_id 时不请求也不填充", async () => {
 function makeFullNode({ skillId = "", prompt = "", seed = 0, control = "fixed", count = 1, width = -1, height = -1 } = {}) {
     return {
         id: 1,
-        type: "NeoKrea2Generate",
+        type: "NeoImageGenEdit",
         properties: {},
         widgets: [
             { name: "skill_id", value: skillId },
@@ -113,11 +113,11 @@ function makeFullNode({ skillId = "", prompt = "", seed = 0, control = "fixed", 
 }
 
 async function configureFullNode(node, data) {
-    await import("../../web/krea2-generate-node.js");
-    const ext = getExtension("NeoKrea2Generate.DimDefaults");
+    await import("../../web/image-gen-edit-node.js");
+    const ext = getExtension("NeoImageGenEdit.DimDefaults");
     assert.ok(ext, "krea2 dim 扩展未注册");
     const nodeType = { prototype: {} };
-    await ext.beforeRegisterNodeDef(nodeType, { name: "NeoKrea2Generate" });
+    await ext.beforeRegisterNodeDef(nodeType, { name: "NeoImageGenEdit" });
     nodeType.prototype.onNodeCreated.call(node);
     node.onConfigure?.(data); // onConfigure 是实例钩子，onNodeCreated 内挂接（先于 configure 运行）
     return node;

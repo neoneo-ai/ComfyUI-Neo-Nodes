@@ -4,7 +4,7 @@
 - resolve_video_params：把一次视频生成请求解析成模板参数（模型/编码器/VAE/音频 VAE/LoRA/参考媒体/尺寸/时长/seed）。
 - _gen_video_skills / _resolve_skill_id：列出带 workflow.json 的视频 skill、按 name 反查 id。
 - _require_vdn_plugin：VDN 加速 skill 依赖可选插件 ComfyUI-VDN-H3，未装时给出明确报错。
-- 模板渲染与进程内执行复用 image_gen.render_template 与 krea2_generate.execute_graph_inprocess（由调用方引入）。
+- 模板渲染与进程内执行复用 image_gen.render_template 与 image_gen_edit.execute_graph_inprocess（由调用方引入）。
 """
 
 import random

@@ -313,7 +313,7 @@ function populateSkillOptions(selectEl, skills) {
 
 // ==========================================
 // 节点级 Skill 有效性检测：选完 skill 后在节点底部提前提示「缺模型/缺节点」，可一键进详情修复
-// - 节点的 skill 下拉 value 是技能「名称」（见 krea2_generate/h3_video_gen 的 INPUT_TYPES；旧工作流可能存的是
+// - 节点的 skill 下拉 value 是技能「名称」（见 image_gen_edit/h3_video_gen 的 schema；旧工作流可能存的是
 //   目录名/id）→ resolveSkillId 按与后端 _resolve_skill_id 同规则反查真实 skill，再取模板校验。
 // - validateSkillForNode(skill, isVideo)：复用 checkWorkflow（对照 /object_info + /models/*），
 //   只检测带 workflow.json 的生图/生视频 skill；结果按 (类型 + 真实 skill) 会话级缓存（TTL）+ 在途去重，检测失败不误报。

@@ -423,6 +423,30 @@ class RenderTemplateTests(unittest.TestCase):
         self.assertEqual(params["ref_scale"], (1024, 512))
 
 
+class TemplateRefSlotTests(unittest.TestCase):
+    """模板探测：{{REF_IMAGE_n}} 槽位数（可保留的参考图张数）与 Krea2 编辑链识别（四视图 LoRA 开关）。"""
+
+    def test_max_refs_counts_highest_slot(self):
+        template = {
+            "4": {"class_type": "TextEncodeQwenImage21",
+                  "inputs": {"images.image_1": "{{REF_IMAGE_1}}", "images.image_4": "{{REF_IMAGE_4}}"}},
+        }
+        self.assertEqual(image_gen.template_max_refs(template), 4)
+
+    def test_max_refs_defaults_to_one(self):
+        # 单路单帧模板（Krea2/首帧技能）与纯文生图模板都按 1 张处理
+        self.assertEqual(image_gen.template_max_refs(
+            {"1": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE}}"}}}), 1)
+        self.assertEqual(image_gen.template_max_refs({}), 1)
+
+    def test_uses_krea2_edit(self):
+        self.assertTrue(image_gen.template_uses_krea2_edit(
+            {"2": {"class_type": "Krea2EditModelPatch", "inputs": {}}}))
+        self.assertFalse(image_gen.template_uses_krea2_edit(
+            {"2": {"class_type": "KSampler", "inputs": {}}}))
+        self.assertFalse(image_gen.template_uses_krea2_edit({}))
+
+
 class Krea2EditHelperTests(unittest.TestCase):
     """vendor 的 krea2_edit.py 纯函数单测（CPU 可跑，不加载模型）。"""
 

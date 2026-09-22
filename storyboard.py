@@ -32,7 +32,7 @@ from .image_gen import (
     resolve_dimensions,
     resolve_request,
 )
-from .krea2_generate import execute_graph_inprocess
+from .image_gen_edit import execute_graph_inprocess
 from .recipes import _copy_media_to_input, _find_recipe_dir
 from .skill import get_skill_gen_config, load_skill_workflow
 

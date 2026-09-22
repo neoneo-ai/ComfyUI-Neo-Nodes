@@ -44,17 +44,17 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] krea2_edit 节点注册失败（以图生图不可用）: {e}")
 
-    # Krea2 生图节点（方案 A mini-executor）：按 skill workflow.json 同步生成 IMAGE 输出。
-    # 依赖 image_gen/skill 已加载；导入失败时优雅降级，不阻断其它节点。
-    KREA2_GENERATE_MAPPINGS = {}
-    KREA2_GENERATE_DISPLAY_MAPPINGS = {}
+    # 生图/编辑节点（NeoImageGenEdit，方案 A mini-executor）：按 skill workflow.json 同步生成
+    # IMAGE 输出。依赖 image_gen/skill 已加载；导入失败时优雅降级，不阻断其它节点。
+    IMAGE_GEN_EDIT_MAPPINGS = {}
+    IMAGE_GEN_EDIT_DISPLAY_MAPPINGS = {}
     try:
-        from .krea2_generate import (
-            NODE_CLASS_MAPPINGS as KREA2_GENERATE_MAPPINGS,
-            NODE_DISPLAY_NAME_MAPPINGS as KREA2_GENERATE_DISPLAY_MAPPINGS,
+        from .image_gen_edit import (
+            NODE_CLASS_MAPPINGS as IMAGE_GEN_EDIT_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as IMAGE_GEN_EDIT_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] krea2_generate 节点注册失败（生图不可用）: {e}")
+        print(f"[NeoNodes] image_gen_edit 节点注册失败（生图/编辑不可用）: {e}")
 
     # Neo H3 Video Director：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。
     # 复用单段 H3 解析/执行链；导入失败时优雅降级。
@@ -69,7 +69,7 @@ if __package__ not in (None, ""):
         print(f"[NeoNodes] h3_video_director 节点注册失败（多段视频导演不可用）: {e}")
 
     # 图片分镜（storyboard）：用生图技能逐段生成关键帧，注册 /neo_video_gen/storyboard_* 路由。
-    # 独立于 director 节点运行时；依赖 image_gen/skill/krea2_generate/recipes 已加载。导入失败时优雅降级。
+    # 独立于 director 节点运行时；依赖 image_gen/skill/image_gen_edit/recipes 已加载。导入失败时优雅降级。
     try:
         from . import storyboard  # noqa: F401
     except Exception as e:
@@ -117,7 +117,7 @@ if __package__ not in (None, ""):
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
         **KREA2_EDIT_MAPPINGS,
-        **KREA2_GENERATE_MAPPINGS,
+        **IMAGE_GEN_EDIT_MAPPINGS,
         **H3_DIRECTOR_MAPPINGS,
         **H3_SEGMENT_MAPPINGS,
         **BUNDLE_EXPAND_MAPPINGS,
@@ -127,7 +127,7 @@ if __package__ not in (None, ""):
     NODE_DISPLAY_NAME_MAPPINGS = {
         **PROMPT_DISPLAY_NAME_MAPPINGS,
         **KREA2_EDIT_DISPLAY_MAPPINGS,
-        **KREA2_GENERATE_DISPLAY_MAPPINGS,
+        **IMAGE_GEN_EDIT_DISPLAY_MAPPINGS,
         **H3_DIRECTOR_DISPLAY_MAPPINGS,
         **H3_SEGMENT_DISPLAY_MAPPINGS,
         **BUNDLE_EXPAND_DISPLAY_MAPPINGS,

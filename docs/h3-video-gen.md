@@ -1,6 +1,6 @@
 # H3 Video（MiniMax H3 视频生成）
 
-`NeoH3VideoDirector` 节点：MiniMax H3 视频生成的唯一入口，直接输出含原生音频的 `VIDEO`（可接 SaveVideo）到下游。复用 Krea2 Generate 的进程内 mini-executor（已支持 V3 API 节点），无需聊天界面、不嵌套官方 PromptExecutor。两种用法：**配方多段**（以 `video_director` 配方逐段生成并拼接成单个长视频）与 **BUNDLE 单段**（连 ⚡ Neo Prompt Agent 的 BUNDLE，按单片段生成）。
+`NeoH3VideoDirector` 节点：MiniMax H3 视频生成的唯一入口，直接输出含原生音频的 `VIDEO`（可接 SaveVideo）到下游。复用 Neo Image Gen & Edit 的进程内 mini-executor（已支持 V3 API 节点），无需聊天界面、不嵌套官方 PromptExecutor。两种用法：**配方多段**（以 `video_director` 配方逐段生成并拼接成单个长视频）与 **BUNDLE 单段**（连 ⚡ Neo Prompt Agent 的 BUNDLE，按单片段生成）。
 
 ## 用法
 ### 配方多段（video_director）
@@ -75,9 +75,9 @@
 - 模型/编码器/视频 VAE/音频 VAE 解析与非 VDN preset 一致（见上）；`vdn_checkpoint` 目前写死为 `stage-dmd-step-250`，需要其它 stage 时请「⧉ Copy as custom」后改模板里的 `vdn_checkpoint`。
 
 ## 运行时加速：外部 `MODEL` / `steps`（可选）
-`NeoKrea2Generate` 与 `NeoH3VideoDirector`（视频，**逐段/单段**应用下述规则）都有两个**可选**输入，用于不改 skill 模板就临时换模型 / 调步数：
+`NeoImageGenEdit` 与 `NeoH3VideoDirector`（视频，**逐段/单段**应用下述规则）都支持外部 `MODEL` 输入，用于不改 skill 模板就临时换模型：
 - **`model`（MODEL，连线槽）**：提供时把外部加速模型注入到最终消费扩散模型的位置——视频为 `MiniMaxH3SigmaShift.model` 的来源、生图为 `KSampler`/`KSamplerAdvanced.model` 的来源。节点**只沿 `model` 输入边向上剪掉纯模型链**（UNETLoader / LoRA / VDN 等只出 MODEL 的节点），保留文本编码器 / 视频 VAE / 音频 VAE / 采样器等共享节点，并把注入点输出直接替换为外部模型（mini-executor 跳过该节点执行）。
-- **`steps`（INT，默认 -1）**：`-1` = 用 preset/config 值；`>0` = 覆盖渲染后的 `{{STEPS}}`。生图模板可能硬编码步数（非 `{{STEPS}}`），故生图侧直接改写采样器节点的 `steps` 字段，两种情况都生效。
+- **`steps`（INT，默认 -1，仅视频节点）**：`-1` = 用 preset/config 值；`>0` = 覆盖渲染后的 `{{STEPS}}`。
 
 典型用法：把 ComfyUI-VDN-H3 的 `ApplyVDNH3Advanced`（或量化/蒸馏后的模型）输出连到本节点 `model`，即可**不依赖 VDN preset、甚至无需安装该插件**跑加速——因为内部 UNETLoader 与 VDN 节点都被剪掉、注入点被外部模型覆盖，此时不再触发「需要 ComfyUI-VDN-H3」的校验（该校验只在未提供 `model` 时执行）。
 

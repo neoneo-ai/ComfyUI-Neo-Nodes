@@ -433,6 +433,28 @@ def _quadview_lora(user_loras: list) -> tuple:
         "或在 models/loras 放一个文件名含 quadview / 四视图 的 LoRA（如 Krea2-QuadView_*.safetensors）后重试")
 
 
+_REF_IMAGE_SLOT_RE = re.compile(r"\{\{REF_IMAGE_(\d+)\}\}")
+
+
+def template_max_refs(template: dict) -> int:
+    """模板 {{REF_IMAGE_n}} 多路参考槽位的最大序号（= 可保留的参考图张数）；无多路槽位时为 1。"""
+    found = 0
+    for node in (template or {}).values():
+        if not isinstance(node, dict):
+            continue
+        for value in (node.get("inputs") or {}).values():
+            if isinstance(value, str):
+                for m in _REF_IMAGE_SLOT_RE.finditer(value):
+                    found = max(found, int(m.group(1)))
+    return found or 1
+
+
+def template_uses_krea2_edit(template: dict) -> bool:
+    """模板是否走 Krea2 单路编辑链（含 Krea2EditModelPatch）：只有它需要自动挑选四视图 LoRA。"""
+    return any(isinstance(node, dict) and node.get("class_type") == "Krea2EditModelPatch"
+               for node in (template or {}).values())
+
+
 def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
                     auto_quadview: bool = True) -> dict:
     """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。

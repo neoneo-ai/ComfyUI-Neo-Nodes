@@ -12,7 +12,7 @@ python -m pytest tests -v
 - `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析（分隔符 / JSON 数组）、skill 代理（语言互斥主文件选择、引用列表、安全读取越界拒绝、工具调用循环按需读引用、本地模式回退）、`gen_image` / `requires_ref` 元数据透传与编辑保存保留
 - `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确/归一化匹配、量化变体替换、歧义拒绝、扩展名约束
 - `tests/test_image_gen.py` — 内置生图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选（Krea2 只精确匹配 Qwen3-VL-4B，8B/32B 不参与；VAE 优先 Qwen-Image）、下拉展示排序（krea2 靠前）与 LoRA「自动」建议名、LoRA 缺失告警、参考图（input / data URI）落地、四视图固定 16:9（参考图长边限 1024px、`Krea2EditModelPatch` fit 接线、denoise=1.0、四视图 LoRA 自动追加/去重/缺失报错）、生图张数（设置默认 / 单次覆盖 / 四视图强制 1）、工作流图结构与 sidecar 写入、vendor `krea2_edit` 纯函数单测（RoPE 偏移 / latent fit / 5D 展平）
-- `tests/test_krea2_generate.py` — mini-executor 单测：拓扑排序与环检测、引用解析与输出归一化（单/多输出）、末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量→base64 PNG 编码往返、`NeoKrea2Generate` 请求组装（缺 workflow.json 报错 / happy path 返回 IMAGE）
+- `tests/test_image_gen_edit.py` — mini-executor 单测：拓扑排序与环检测、引用解析与输出归一化（单/多输出）、末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量→base64 PNG 编码往返、`NeoImageGenEdit` 请求组装（缺 workflow.json 报错 / happy path 返回 IMAGE / Autogrow 参考图按槽位排序成 references / bundle 参考图优先 / 按模板自适应 `max_refs` 与四视图开关）、V3 schema 与 Autogrow 槽位展开
 
 ## 前端回归测试（tests/js）
 

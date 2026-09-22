@@ -79,6 +79,9 @@ sys.modules["nodes"] = _nodes
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
+# V3 节点（image_gen_edit）导入期要 comfy_api.latest：先备好 ComfyUI 根目录与占位子模块
+import _comfy_api_bootstrap  # noqa: E402
+_comfy_api_bootstrap.bootstrap(PLUGIN_DIR)
 
 _PKG = "_neo_bundle_refs_pkg"
 _pkg = types.ModuleType(_PKG)
@@ -98,7 +101,7 @@ def _load(name, fname):
 bundles = _load("bundles", "bundles.py")
 _load("skill", "skill.py")
 _load("image_gen", "image_gen.py")
-krea2_generate = _load("krea2_generate", "krea2_generate.py")
+image_gen_edit = _load("image_gen_edit", "image_gen_edit.py")
 h3_video_gen = _load("h3_video_gen", "h3_video_gen.py")
 prompts = _load("prompts", "prompts.py")
 

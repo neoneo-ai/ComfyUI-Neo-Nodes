@@ -1,18 +1,18 @@
 /**
  * bundle-lock.js
- * NeoKrea2Generate / NeoH3VideoDirector：
+ * NeoImageGenEdit / NeoH3VideoDirector：
  * 1) bundle 是 NeoPromptAgent 产出的引用 id，不由用户手输——后端以 forceInput 声明为纯连线槽，
  *    与 image 一致：节点体内不显示文本框，只留左侧 slot；未连接时后端收到 ""。
- * 2) bundle 输入一旦链接，即禁用「以 bundle 为准」的控件（Krea2: prompt/skill_id；Director: recipe），断开后恢复；
+ * 2) bundle 输入一旦链接，即禁用「以 bundle 为准」的控件（Gen&Edit: prompt；Director: recipe），断开后恢复；
  *    实时连线变化（onConnectionsChange）与加载工作流（onAfterGraphConfigured）都按当前连线状态刷新。
  */
 
 import { app } from "../../../../scripts/app.js";
 
-// Krea2 只锁 prompt（bundle 携带的增强提示词）；skill_id 保持可用——bundle 只带资源、不带 skill。
+// Gen&Edit 只锁 prompt（bundle 携带的增强提示词）；skill_id 保持可用——bundle 只带资源、不带 skill。
 // Director 的 recipe / 视频 skill 选择器显隐由 director-node.js 自行处理，这里不锁控件。
 const BUNDLE_LOCK_NODES = {
-    "NeoKrea2Generate": ["prompt"],
+    "NeoImageGenEdit": ["prompt"],
     "NeoH3VideoDirector": [],
 };
 

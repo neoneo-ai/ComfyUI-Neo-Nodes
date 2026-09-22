@@ -80,6 +80,9 @@ sys.modules["nodes"] = _nodes
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
+# V3 节点（image_gen_edit）导入期要 comfy_api.latest：先备好 ComfyUI 根目录与占位子模块
+import _comfy_api_bootstrap  # noqa: E402
+_comfy_api_bootstrap.bootstrap(PLUGIN_DIR)
 
 _PKG = "_neo_h3vidgen_pkg"
 _pkg = types.ModuleType(_PKG)
@@ -98,7 +101,7 @@ def _load(name, fname):
 
 _load("skill", "skill.py")
 _load("image_gen", "image_gen.py")
-krea2_generate = _load("krea2_generate", "krea2_generate.py")
+image_gen_edit = _load("image_gen_edit", "image_gen_edit.py")
 h3_video_gen = _load("h3_video_gen", "h3_video_gen.py")
 video_gen = _load("video_gen", "video_gen.py")
 
@@ -180,7 +183,7 @@ class ApiNodeExecutorTests(unittest.TestCase):
 
     def test_api_single_output_terminal(self):
         graph = {"1": {"class_type": "_ApiSingle", "inputs": {"value": 5}}}
-        out = krea2_generate.execute_graph_inprocess(graph)
+        out = image_gen_edit.execute_graph_inprocess(graph)
         self.assertTrue(torch.allclose(out, torch.full((1, 2, 2, 3), 5.0)))
 
     def test_api_multi_output_downstream_ref(self):
@@ -189,17 +192,17 @@ class ApiNodeExecutorTests(unittest.TestCase):
             "1": {"class_type": "_ApiAV", "inputs": {"clip": "c", "vae": "v"}},
             "2": {"class_type": "_LegacyDecode", "inputs": {"latent": ["1", 1]}},
         }
-        out = krea2_generate.execute_graph_inprocess(graph)
+        out = image_gen_edit.execute_graph_inprocess(graph)
         self.assertTrue(torch.allclose(out, torch.full((1, 2, 2, 3), 9.0)))
 
     def test_is_api_node_detection(self):
-        self.assertTrue(krea2_generate._is_api_node(_ApiSingle))
-        self.assertFalse(krea2_generate._is_api_node(_LegacySource))
+        self.assertTrue(image_gen_edit._is_api_node(_ApiSingle))
+        self.assertFalse(image_gen_edit._is_api_node(_LegacySource))
 
     def test_api_outputs_unwrap_args(self):
-        self.assertEqual(krea2_generate._api_outputs(_FakeNodeOutput(1, 2)), [1, 2])
-        self.assertEqual(krea2_generate._api_outputs((3, 4)), [3, 4])
-        self.assertEqual(krea2_generate._api_outputs(7), [7])
+        self.assertEqual(image_gen_edit._api_outputs(_FakeNodeOutput(1, 2)), [1, 2])
+        self.assertEqual(image_gen_edit._api_outputs((3, 4)), [3, 4])
+        self.assertEqual(image_gen_edit._api_outputs(7), [7])
 
 
 class LengthPlaceholderTests(unittest.TestCase):
@@ -625,7 +628,7 @@ class RealTemplateExecutionTests(unittest.TestCase):
             body["references"] = [{"kind": "data", "data": uri}]
         params = h3_video_gen.resolve_video_params(body, cfg)
         graph, _ = h3_video_gen.render_template(template, params)
-        out = krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")
+        out = image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")
         self.assertEqual(out[0], "video")      # 末端 CreateVideo 的 VIDEO marker
         self.assertEqual(out[2], 24)           # fps=24
         self.assertEqual(out[3], "audio")      # 音频来自 VAEDecodeAudio
@@ -662,7 +665,7 @@ class RealTemplateExecutionTests(unittest.TestCase):
         self.assertEqual(self._nodes_of(graph, "LoadImage"), ["13", "9"])
         self.assertEqual(graph["4"]["inputs"]["first_frame"], ["9", 0])
         self.assertEqual(graph["4"]["inputs"]["last_frame"], ["13", 0])
-        self.assertEqual(krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
+        self.assertEqual(image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
 
     def test_fl2v_without_last_frame_prunes_last_node(self):
         # 只给首帧 → 尾帧 LoadImage 与连线一并裁掉（退化为 I2VA）
@@ -713,7 +716,7 @@ class RealTemplateExecutionTests(unittest.TestCase):
         self.assertNotIn("ref_videos.ref_video_1", ref_in)
         self.assertIn("ref_audios.ref_audio_0", ref_in)
         self.assertNotIn("{{", json.dumps(graph), "渲染后不应残留占位符")
-        out = krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")
+        out = image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")
         self.assertEqual(out[0], "video")
         self.assertEqual(out[2], 24)
         self.assertEqual(out[3], "audio")
@@ -732,7 +735,7 @@ class RealTemplateExecutionTests(unittest.TestCase):
         self.assertNotIn("ref_images.ref_image_1", graph["5"]["inputs"])
         self.assertNotIn("ref_videos.ref_video_0", graph["5"]["inputs"])
         self.assertNotIn("ref_audios.ref_audio_0", graph["5"]["inputs"])
-        self.assertEqual(krea2_generate.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
+        self.assertEqual(image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
 
     def test_r2v_template_requires_reference(self):
         cfg = {"model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",

@@ -169,8 +169,8 @@ test("素材格 ✕ 删除：移除候选并清理不再被任何段引用的 im
             },
             {
                 id: 20,
-                comfyClass: "NeoKrea2Generate",
-                type: "NeoKrea2Generate",
+                comfyClass: "NeoImageGenEdit",
+                type: "NeoImageGenEdit",
                 inputs: [{ name: "image", type: "IMAGE" }],
                 outputs: [],
                 mode: 0,

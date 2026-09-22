@@ -8,7 +8,7 @@
 |------|------|
 | [prompts.md](prompts.md) | 提示词节点：Neo Prompt Encoder / Agent、节点界面与按钮、模板与技能管理、图片反推与 `@` 引用、`/` 技能菜单 |
 | [llm.md](llm.md) | LLM 模式（远程/本地）、思考模型、本地 GGUF 安装（wheel / 源码编译 / Windows 排障）、模型目录规范 |
-| [image-gen.md](image-gen.md) | Krea2 生图：聊天生图与 Krea2 Generate 节点（IMAGE 输出） |
+| [image-gen.md](image-gen.md) | 生图：聊天生图与 Neo Image Gen & Edit 节点（文生图 + 参考编辑，IMAGE 输出） |
 | [recipes.md](recipes.md) | 配方：保存、一键发送到工作流、示例结果 + 实现细节（资源收集 / 子图对齐） |
 | [gallery.md](gallery.md) | Neo Gallery：浏览、灯箱、文件管理、Civitai LORA 缓存、收藏（书签）+ 实现细节 |
 | [workflow-repair.md](workflow-repair.md) | 工作流模型路径修复 |

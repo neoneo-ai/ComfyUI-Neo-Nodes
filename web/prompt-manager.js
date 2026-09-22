@@ -18,11 +18,11 @@ import {
 import { mkEl } from "./dom-utils.js";
 import { createStatusBars, createPromptOutputArea, triggerTextChange } from "./llm-chat.js";
 
-// 配方类型：按当前工作流里的生成节点判定（H3=视频 / Krea2=图像），供列表筛选；都没有则空
+// 配方类型：按当前工作流里的生成节点判定（H3=视频 / Gen&Edit=图像），供列表筛选；都没有则空
 function detectGenType(graph) {
     const types = (graph?._nodes || []).map(n => n.type);
     if (types.includes("NeoH3VideoDirector")) return "video";
-    if (types.includes("NeoKrea2Generate")) return "image";
+    if (types.includes("NeoImageGenEdit")) return "image";
     return "";
 }
 
