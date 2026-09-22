@@ -2667,7 +2667,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         return refs
 
     def setUp(self):
-        # _INPUT_DIR 是模块级共享的：清掉上一用例遗留的分镜产物，避免「已有产物跳过 / 磁盘链式参考」误判。
+        # _INPUT_DIR 是模块级共享的：清掉上一用例遗留的分镜产物，避免「已有产物跳过」误判。
         nd = os.path.join(_INPUT_DIR, "NeoDirector")
         if os.path.isdir(nd):
             shutil.rmtree(nd)
@@ -2711,7 +2711,7 @@ class StoryboardGenerateTests(unittest.TestCase):
 
     def _generate(self, **extra):
         """提交生成请求并在同一事件循环里轮询到结束（后台任务跑在提交时的循环上）。seed=None 时省略该字段。"""
-        payload = {"name": "sb-e2e", "skill_id": "qwen_image_21", "chain_prev": True}
+        payload = {"name": "sb-e2e", "skill_id": "qwen_image_21"}
         seed = extra.pop("seed", 7)
         if seed is not None:
             payload["seed"] = seed
@@ -2738,7 +2738,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         finally:
             loop.close()
 
-    def test_batch_generation_chains_previous_storyboards(self):
+    def test_batch_generation_uses_story_refs(self):
         st = self._generate(segments=[{"prompt": "段一"}, {"prompt": "段二"}, {"prompt": "段三"}])
         self.assertEqual(st["status"], "done")
         for d in st["details"]:
@@ -2747,14 +2747,12 @@ class StoryboardGenerateTests(unittest.TestCase):
         for n in (1, 2, 3):
             self.assertTrue(os.path.isfile(os.path.join(out_dir, f"storyboard_sb-e2e_{n:02d}.png")))
 
-        # 参考图：角色在前 + 链式最近两张分镜在后，总数 ≤4
-        self.assertEqual(self.captured[0][0], ["char.png"])
-        self.assertEqual(self.captured[1][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
-        self.assertEqual(self.captured[2][0],
-                         ["char.png", "NeoDirector/storyboard_sb-e2e_01.png", "NeoDirector/storyboard_sb-e2e_02.png"])
+        # 参考图：只有角色/背景（各段相同，不再链式带前一分镜）
+        for c in self.captured:
+            self.assertEqual(c[0], ["char.png"])
 
     def test_ref_segments_switch_to_qwen_for_reference_edit(self):
-        # 文生图默认 Krea2（image_gen）；带参考图的段（链式前帧）固定切 Qwen Image 2.1 参考编辑并在段上留 warning
+        # 旧行为（请求不带 mode）：带参考图的段固定切 Qwen Image 2.1 参考编辑并在段上留 warning
         asked = []
 
         def _load(sid):
@@ -2762,17 +2760,16 @@ class StoryboardGenerateTests(unittest.TestCase):
             return json.loads(json.dumps(self._TEMPLATE))
 
         storyboard.load_skill_workflow = _load
-        storyboard._storyboard_story_refs = lambda name: []   # 无角色/背景参考：第 1 段纯文生图
         st = self._generate(segments=[{"prompt": "段一", "storyboard_prompt": "首帧一"},
                                       {"prompt": "段二", "storyboard_prompt": "首帧二"}], skill_id="image_gen")
         self.assertEqual(st["status"], "done")
-        # 端点校验一次 + 逐段懒加载：第 1 段用所选 Krea2，第 2 段（带链式参考）切 Qwen
+        # 端点校验一次 + 逐段懒加载：带角色参考的段都切 Qwen Image 2.1
         self.assertEqual(asked[-2:], ["image_gen", "qwen_image_21"])
-        self.assertEqual(st["details"][0]["warnings"], [])
-        self.assertTrue(any("Qwen Image 2.1" in w for w in st["details"][1]["warnings"]))
+        for d in st["details"]:
+            self.assertTrue(any("Qwen Image 2.1" in w for w in d["warnings"]))
 
-    def test_mode_t2i_ignores_story_refs_and_chain(self):
-        # t2i 纯文生图：即使请求带 chain_prev=True、配方有角色参考，也不挂任何参考图、不切技能
+    def test_mode_t2i_ignores_story_refs(self):
+        # t2i 纯文生图：即使配方有角色参考，也不挂任何参考图、不切技能
         asked = []
 
         def _load(sid):
@@ -2782,7 +2779,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         storyboard.load_skill_workflow = _load
         st = self._generate(segments=[{"prompt": "段一", "storyboard_prompt": "首帧一"},
                                       {"prompt": "段二", "storyboard_prompt": "首帧二"}],
-                            skill_id="image_gen", chain_prev=True, mode="t2i")
+                            skill_id="image_gen", mode="t2i")
         self.assertEqual(st["status"], "done")
         for d in st["details"]:
             self.assertEqual(d["warnings"], [])
@@ -2792,7 +2789,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertTrue(all(sid == "image_gen" for sid in asked))
 
     def test_mode_r2i_keeps_refs_without_forced_skill_switch(self):
-        # r2i 参考编辑：角色/背景 + 链式前帧照常挂上，但按所选技能执行（不强制切 Qwen、无切换 warning）
+        # r2i 参考编辑：角色/背景参考照常挂上，但按所选技能执行（不强制切 Qwen、无切换 warning）
         asked = []
 
         def _load(sid):
@@ -2802,13 +2799,13 @@ class StoryboardGenerateTests(unittest.TestCase):
         storyboard.load_skill_workflow = _load
         st = self._generate(segments=[{"prompt": "段一", "storyboard_prompt": "首帧一"},
                                       {"prompt": "段二", "storyboard_prompt": "首帧二"}],
-                            skill_id="image_gen", chain_prev=True, mode="r2i")
+                            skill_id="image_gen", mode="r2i")
         self.assertEqual(st["status"], "done")
         for d in st["details"]:
             self.assertEqual(d["warnings"], [])
-        # 链式参考照常：第 2 段带角色 + 前帧
-        self.assertEqual(self.captured[0][0], ["char.png"])
-        self.assertEqual(self.captured[1][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
+        # 各段都只带角色参考（不链式带前一分镜）
+        for c in self.captured:
+            self.assertEqual(c[0], ["char.png"])
         self.assertTrue(all(sid == "image_gen" for sid in asked), "r2i 不强制切 Qwen Image 2.1")
 
     def test_storyboard_prompt_is_what_gets_rendered(self):
@@ -2875,17 +2872,15 @@ class StoryboardGenerateTests(unittest.TestCase):
         # 两段共用新基 987654（不再是旧默认 0+n）
         self.assertEqual([c[2] for c in self.captured], [987654, 987654])
 
-    def test_single_segment_regen_aligns_index_and_chains_from_disk(self):
-        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
-        os.makedirs(out_dir, exist_ok=True)
-        _write_png(os.path.join(out_dir, "storyboard_sb-e2e_01.png"))   # 前面段已有分镜
+    def test_single_segment_regen_aligns_index(self):
+        # 单段重生成（index=2）：文件名对齐真实序号 _03，参考图只带角色/背景
         self.captured.clear()
         st = self._generate(segments=[{"prompt": "重生成第3段"}], index=2, force=True)
         self.assertEqual(st["status"], "done")
         self.assertEqual(st["details"][0]["status"], "done", st["details"][0].get("error"))
-        # 文件名对齐真实序号 _03，链式参考从磁盘取 _01
+        out_dir = os.path.join(_INPUT_DIR, "NeoDirector")
         self.assertTrue(os.path.isfile(os.path.join(out_dir, "storyboard_sb-e2e_03.png")))
-        self.assertEqual(self.captured[0][0], ["char.png", "NeoDirector/storyboard_sb-e2e_01.png"])
+        self.assertEqual(self.captured[0][0], ["char.png"])
 
     def test_interrupt_mid_run_cancels_cleanly(self):
         # 用户点「取消」→ execute_graph_inprocess 抛 InterruptProcessingException（继承 BaseException）。
@@ -2988,7 +2983,7 @@ class StoryboardInProcessProgressTests(unittest.TestCase):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _generate(self):
-        payload = {"name": "sb-prog", "skill_id": "qwen_image_21", "chain_prev": True, "seed": 7,
+        payload = {"name": "sb-prog", "skill_id": "qwen_image_21", "seed": 7,
                    "segments": [{"prompt": "段一"}]}
 
         class _Req:

@@ -1526,7 +1526,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
 
     // ---- 🎨 图片分镜：拆分后用生图技能逐段出关键帧（🎨 分镜故事板页；i2v/fl2v 下与「统一首帧」互斥）----
-    // mode：t2i = 纯文生图（不带参考）；r2i = 参考编辑（角色/背景 + 链式前帧，按所选技能执行、不强制切 Qwen）。
+    // mode：t2i = 纯文生图（不带参考）；r2i = 参考编辑（角色/背景，按所选技能执行、不强制切 Qwen）。
     sbModeSel = buildRadioGroup('neo-director-sb-mode', [
         ['t2i', 't2i（文生图）'],
         ['r2i', 'r2i（参考图编辑）'],
@@ -1565,13 +1565,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         { key: 'backgrounds', kind: 'image', label: '背景参考图', max: 4 },
         (exStory.backgrounds || []).map(r => r.filename).filter(Boolean)
     );
-    const sbChainChk = $el('input', { className: 'neo-director-sb-chain', type: 'checkbox' });
-    sbChainChk.checked = true;   // 链式：把最近生成的分镜图当下一段参考（仅 r2i）
     const sbGenBtn = $el('button', { className: 'rs-btn neo-director-sb-gen', textContent: '🎨 生成图片分镜' });
     const sbStatus = $el('span', { className: 'neo-director-sb-status' });
-    // 链式参考 + 角色/背景参考行：仅 r2i 显示
+    // 角色/背景参考行：仅 r2i 显示
     const sbR2iCtrls = $el('div', { className: 'neo-director-sb-r2i' }, [
-        $el('label', { className: 'neo-director-seglen-wrap', title: '把最近生成的分镜图（最多两张）作为下一段参考' }, [sbChainChk, $el('span', { textContent: '链式参考' })]),
         $el('div', { className: 'neo-director-story-refs' }, [charRefRow.row, bgRefRow.row]),
     ]);
     sbR2iCtrls.style.display = (sbCurMode === 'r2i') ? '' : 'none';
@@ -1588,7 +1585,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ]),
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { className: 'neo-director-field-label', textContent: '生图模式' }), sbModeSel,
-            $el('label', { className: 'neo-director-field-label', title: 't2i 纯文生图；r2i 带角色/背景 + 链式前帧参考（按所选技能执行）', textContent: '生图技能' }), sbSkillSel,
+            $el('label', { className: 'neo-director-field-label', title: 't2i 纯文生图；r2i 带角色/背景参考（按所选技能执行）', textContent: '生图技能' }), sbSkillSel,
             $el('div', { className: 'neo-director-sb-run' }, [sbStatus, sbGenBtn]),   // 生成按钮 + 状态靠本行最右，不独占一行
         ]),
         sbR2iCtrls,
@@ -1625,8 +1622,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         sbGenBtn.disabled = true;
         try {
             const res = await fetch('/neo_video_gen/storyboard_generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-                name, segments, skill_id: sbSkillSel.value || 'qwen_image_21',
-                chain_prev: sbModeSel.value === 'r2i' && sbChainChk.checked, mode: sbModeSel.value,
+                name, segments, skill_id: sbSkillSel.value || 'qwen_image_21', mode: sbModeSel.value,
                 force: true,   // 按钮点击 = 重新生成：已有产物的段也重出（后端换新随机种子，不重复旧图）
             }) });
             const data = await res.json();

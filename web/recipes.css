@@ -862,10 +862,6 @@
     max-width: 220px;
 }
 
-.neo-director-sb-chain {
-    accent-color: #8cb4d8;
-}
-
 .neo-director-sb-status {
     font-size: 11px;
     color: #9aa4b0;
@@ -882,7 +878,7 @@
     padding: 8px;
 }
 
-/* r2i 专属控件（链式参考 + 角色/背景参考行） */
+/* r2i 专属控件（角色/背景参考行） */
 .neo-director-sb-r2i {
     display: flex;
     flex-direction: column;

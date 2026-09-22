@@ -2223,7 +2223,7 @@ test("导演编辑器：t2v→i2v 首帧自动回填受分镜/首帧方式门控
     await sleep(20);
 });
 
-test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i 模式、生图技能过滤与记忆、链式参考仅 r2i", async () => {
+test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i 模式、生图技能过滤与记忆、角色/背景行仅 r2i", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
@@ -2256,7 +2256,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     assert.ok(sbModeSel.querySelector("input[type=radio]"), "生图模式用 radio 组展开（非下拉）");
     assert.deepEqual(Array.from(sbSkillSel.options).map((o) => o.value), ["image_gen", "qwen_image_21"], "只列生图技能（排除四视图/视频）");
     assert.equal(sbSkillSel.value, "image_gen", "t2i 默认 Krea2");
-    assert.equal(sbCard.querySelector(".neo-director-sb-r2i").style.display, "none", "t2i 隐藏链式参考与角色/背景行");
+    assert.equal(sbCard.querySelector(".neo-director-sb-r2i").style.display, "none", "t2i 隐藏角色/背景行");
     assert.equal(sbCard.querySelector(".neo-director-sb-gen").closest(".neo-director-row").querySelector(".neo-director-sb-mode"),
         sbModeSel, "生成图片分镜按钮与生图模式同行（不独占一行）");
 
@@ -2265,7 +2265,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     sbModeSel.value = "r2i";
     sbModeSel.dispatchEvent(new Event("change"));
     await sleep(30);
-    assert.equal(sbCard.querySelector(".neo-director-sb-r2i").style.display, "", "r2i 显示链式参考与角色/背景行");
+    assert.equal(sbCard.querySelector(".neo-director-sb-r2i").style.display, "", "r2i 显示角色/背景行");
     assert.equal(sbSkillSel.value, "qwen_image_21", "r2i 默认 Qwen Image 2.1");
     sbModeSel.value = "t2i";
     sbModeSel.dispatchEvent(new Event("change"));
@@ -2303,7 +2303,7 @@ test("导演编辑器：image_mode/image_skill/frame_source 保存回显；分�
     assert.equal(setupPane.querySelector(".neo-director-frame-source").value, "unified", "回显 frame_source");
     assert.equal(setupPane.querySelector(".neo-director-sb-skill").value, "qwen_image_21", "回显 image_skill");
 
-    // 切到逐段图片分镜后点生成：请求带 mode=r2i，r2i 链式参考默认开
+    // 切到逐段图片分镜后点生成：请求带 mode=r2i
     const frameSourceSel = setupPane.querySelector(".neo-director-frame-source");
     frameSourceSel.value = "storyboard";
     frameSourceSel.dispatchEvent(new Event("change"));
@@ -2312,7 +2312,6 @@ test("导演编辑器：image_mode/image_skill/frame_source 保存回显；分�
     await sleep(80);
     assert.equal(sbCalls.length, 1, "发出分镜生成请求");
     assert.equal(sbCalls[0].mode, "r2i", "请求携带生图模式");
-    assert.equal(sbCalls[0].chain_prev, true, "r2i 链式参考默认开");
     assert.equal(sbCalls[0].force, true, "按钮点击强制重生成（已有产物也重出）");
 
     // 保存：三字段写入 story

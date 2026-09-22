@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes — 图片分镜（storyboard）生成
 # 用生图技能逐段生成关键帧：mode=t2i 纯文生图（不带参考，默认 Krea2），
-# mode=r2i 参考编辑（角色/背景 + 链式前帧，用所选技能不强制切 Qwen），
+# mode=r2i 参考编辑（角色/背景参考，用所选技能不强制切 Qwen），
 # 缺省 mode 为旧行为（文生图默认 Krea2，带参考图的段固定切 Qwen Image 2.1）；
 # 落在 input/NeoDirector/storyboard_{recipe}_{seg:02d}.png；i2v/fl2v 段可自动用作首帧。
 # 独立于 h3_video_director（节点运行时），只依赖生图链（image_gen/skill）与配方读取。
@@ -39,7 +39,7 @@ from .skill import get_skill_gen_config, load_skill_workflow
 
 logger = logging.getLogger(__name__)
 
-_STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色/背景 + 链式上一分镜）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
+_STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色 ≤6 + 背景 ≤4，前端已限）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
 _STORYBOARD_REF_SKILL = "qwen_image_21"   # 带参考图的段固定用它做参考编辑（Krea2 单路模板不支持多参考延续）；纯文生图用所选技能（默认 Krea2）
 _storyboard_tasks: dict[str, dict] = {}
 
@@ -100,15 +100,11 @@ def _tensor_to_pil(image):
 
 
 async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id: str,
-                               chain_prev: bool, base_seed, index_offset: int = 0, mode=None):
+                               base_seed, index_offset: int = 0, mode=None):
     """串行生成。index_offset：单段重生成时该段在配方里的真实序号（文件名对齐 storyboard_{recipe}_{n:02d}）。
-    mode：t2i=纯文生图（不用角色/背景参考与链式前帧）；r2i=参考编辑（两者都用）；
+    mode：t2i=纯文生图（不用角色/背景参考）；r2i=参考编辑（用角色/背景参考）；
     均按所选技能执行、不强制切 Qwen Image 2.1。缺省 None 为旧行为（带参考图的段自动切 Qwen）。"""
-    if mode == "t2i":
-        story_refs = []
-        chain_prev = False
-    else:
-        story_refs = await asyncio.to_thread(_storyboard_story_refs, name)
+    story_refs = [] if mode == "t2i" else await asyncio.to_thread(_storyboard_story_refs, name)
     _assets_cache: dict[str, tuple] = {}
 
     def _skill_assets(sid):
@@ -149,19 +145,8 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         # 视频提示词写的是运动过程与时间流，不一定适合当生图提示词
         fallback_warnings = [] if storyboard_prompt else ["该段没有分镜提示词，已回退用视频提示词生图（含运动描述，不一定适合生图）"]
         entry["warnings"] = list(fallback_warnings)
-        # 参考图：角色/背景在前，链式最近两张分镜在后（<imageN> 顺序与之一致），总数截断到上限。
-        # 单段重生成时链式参考从磁盘取已落盘的分镜（本任务里没有前面各段的记录）。
+        # 参考图：角色/背景（<imageN> 顺序与之一致），总数截断到上限。
         refs = list(story_refs)
-        if chain_prev:
-            for j in range(max(n - 4, -1) + 1, n - 1):
-                prev = task["details"][j] if (not index_offset and j < len(task["details"])) else None
-                prev_fname = prev.get("filename") if prev and prev.get("status") == "done" else None
-                if not prev_fname:
-                    candidate = f"storyboard_{name}_{j + 1:02d}.png"
-                    if (out_dir / candidate).is_file():
-                        prev_fname = candidate
-                if prev_fname:
-                    refs.append(f"NeoDirector/{prev_fname}")
         # 旧行为（mode=None）：带参考图 → 固定 Qwen Image 2.1 参考编辑，纯文生图用所选技能（默认 Krea2）；
         # 显式 t2i/r2i 模式一律按所选技能执行（r2i 的参考能力由技能模板自身决定）
         eff_skill = _STORYBOARD_REF_SKILL if (mode is None and refs and skill_id != _STORYBOARD_REF_SKILL) else skill_id
@@ -211,7 +196,7 @@ routes = PromptServer.instance.routes
 @routes.post("/neo_video_gen/storyboard_generate")
 async def neo_video_gen_storyboard_generate(request):
     """按段串行生成图片分镜；返回 task_id 轮询进度。
-    mode：t2i=纯文生图（忽略角色/背景参考与链式前帧）；r2i=参考编辑（用所选技能，不强制切 Qwen）；
+    mode：t2i=纯文生图（忽略角色/背景参考）；r2i=参考编辑（用所选技能，不强制切 Qwen）；
     缺省为旧行为（文生图默认 Krea2，带参考图的段自动切 Qwen Image 2.1）。
     force=True：已有产物的段也重新生成（未显式钉 seed 时换新随机基，避免同图）。"""
     try:
@@ -270,8 +255,7 @@ async def neo_video_gen_storyboard_generate(request):
         "created": time.time(), "updated": time.time(), "details": details,
     }
     handle = asyncio.create_task(_run_storyboard_task(task_id, name, segments, skill_id,
-                                                      bool(data.get("chain_prev", True)), base_seed, index_offset,
-                                                      mode or None))
+                                                      base_seed, index_offset, mode or None))
 
     def _on_done(done_handle, _tid=task_id):
         # fire-and-forget 收尾：取回异常，避免未捕获时打出 "Task exception was never retrieved"。
