@@ -37,6 +37,7 @@ from .h3_video_director import (
     NeoH3VideoDirector,
     _align_context_frames,
     _align_frame_count_nearest,
+    _panel_first,
 )
 from .h3_video_gen import _gen_video_skills, _resolve_skill_id, _seconds_to_frames
 from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
@@ -75,8 +76,9 @@ def _segment_length(seg: dict) -> int:
 def _segment_frame_ranges(spec: dict, continuity: bool, context_frames: int) -> list:
     """复算每段在成片里的帧区间 [(start, kept, generated)]，用于把成片帧映射回段边界。
 
-    派生规则与 _run_spec 完全一致：窗口模式各段多生成 window 帧、丢掉头部 window 帧；
-    Tier A（window=0）下 i2v/fl2v 段链入上段尾帧、丢 1 帧。
+    派生规则与 _run_spec 完全一致：分镜首帧段（i2v/fl2v 自带首帧图）不加窗口、不丢帧；
+    其余段窗口模式各段多生成 window 帧、丢掉头部 window 帧；Tier A（window=0）下 i2v/fl2v 段
+    链入上段尾帧、丢 1 帧。
     """
     window = _align_context_frames(context_frames) if continuity and int(context_frames or 0) > 0 else 0
     ranges = []
@@ -84,9 +86,10 @@ def _segment_frame_ranges(spec: dict, continuity: bool, context_frames: int) -> 
     prev_generated = 0
     for i, seg in enumerate(spec.get("segments") or []):
         length = _segment_length(seg)
-        has_context = window > 0 and i > 0 and prev_generated >= window
+        panel = _panel_first(seg)
+        has_context = not panel and window > 0 and i > 0 and prev_generated >= window
         generated = _align_frame_count_nearest(length + window, minimum=window + 5) if has_context else length
-        chained = has_context or (continuity and i > 0 and (seg.get("mode") or "t2v") in ("i2v", "fl2v"))
+        chained = not panel and (has_context or (continuity and i > 0 and (seg.get("mode") or "t2v") in ("i2v", "fl2v")))
         drop = min(window if has_context else (1 if chained else 0), generated)
         ranges.append((start, generated - drop, generated))
         start += generated - drop

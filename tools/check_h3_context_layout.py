@@ -3,7 +3,8 @@
 验证三件事：
 1) 上下文窗口帧数/步数与 core 的 17k+5 网格公式一致（video_latent_t）；
 2) _ref_row_ranges 能把本插件造的两条参考映射到布局真实的 ref_img 行；
-3) _align_payload_timeline 把窗口行搬到目标视频开头，且目标行一个没动。
+3) _align_payload_timeline 把窗口行搬到目标视频开头，且目标行与锚点行一个没动
+   （core 的 PackedLayout 已让 refs 先占位、锚点从目标原点起算）。
 """
 import importlib.util
 import os
@@ -80,14 +81,17 @@ assert torch.equal(layout.position_ids[video_start:video_stop], target_rows), "�
 print("[ok] 窗口行对齐到目标开头；refs 推进量 offset =", target_origin - float(layout.signature[0]),
       "；真实布局 seq_len =", layout.seq_len)
 
-# 3) 锚点行平移（keyframe + refs 并存时）
+# 3) 锚点行时间轴（keyframe + refs 并存时）：core 已把锚点放在目标原点，_align 不得再动它
 layout2 = h3m.PackedLayout(42, target_t, latent_h, latent_w, 70,
                            keyframes=[{"resolved_frame_index": 0, "latent": torch.zeros(1, 24, 1, latent_h, latent_w)}],
-                           refs=refs, frame_count=TARGET_FRAMES)
+                           refs=refs)
 cond_seg = [seg[:2] for seg in layout2.segments if seg[2] == "cond"][0]
 video2 = [seg[:2] for seg in layout2.segments if seg[2] == "video"][-1]
+origin = float(layout2.position_ids[video2[0], 0])
 before = float(layout2.position_ids[cond_seg[0], 0])
+assert abs(before - origin) < 1e-9, "core 建好时锚点就该在目标原点"
 mod._align_payload_timeline({"refs": refs, "layout": layout2})
-assert abs(float(layout2.position_ids[cond_seg[0], 0]) - float(layout2.position_ids[video2[0], 0])) < 1e-9
-print("[ok] 锚点行平移到目标原点（位移 %.4f → %.4f）" % (before, float(layout2.position_ids[cond_seg[0], 0])))
+after = float(layout2.position_ids[cond_seg[0], 0])
+assert abs(after - origin) < 1e-9, "锚点行被多平移了 %.4f" % (after - origin)
+print("[ok] 锚点行保持在目标原点（core 建好 %.4f / 对齐后 %.4f）" % (before, after))
 print("ALL OK")

@@ -958,7 +958,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
     FPS = 24
     SPF = SR // FPS   # 2000 samples/frame
 
-    def _patch(self, n_segments, frame_counts, seed_base=100, mode=None):
+    def _patch(self, n_segments, frame_counts, seed_base=100, mode=None, panel=False):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
@@ -969,10 +969,11 @@ class DirectorOrchestrationTests(unittest.TestCase):
         def _fake_exec(graph, output_type="IMAGE", **kw):
             return next(it)
 
-        # i2v 段首段需自带首帧才能通过执行校验，给占位 ref_input；t2v / 无模式段不带参考。
-        ref = "ff.png" if mode == "i2v" else None
-        segments = [{"skill_id": f"s{i}", "prompt": f"p{i}",
-                     "duration_sec": 5, "ref_input": ref, "mode": mode} for i in range(n_segments)]
+        # i2v 段首段需自带首帧才能通过执行校验，给占位 ref_input；其余段靠连续性链入（t2v 段不带任何参考）。
+        # panel=True：每段自带分镜首帧（走「分镜首帧」路径）。
+        segments = [{"skill_id": f"s{i}", "prompt": f"p{i}", "duration_sec": 5, "mode": mode,
+                     "ref_input": f"panel{i}.png" if panel
+                     else ("ff.png" if (mode == "i2v" and i == 0) else None)} for i in range(n_segments)]
         h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": seed_base},
                                                "segments": segments}
         h3d._resolve_skill_id = lambda v: v
@@ -1028,6 +1029,17 @@ class DirectorOrchestrationTests(unittest.TestCase):
         # 帧数 370 → 音频应恰好 370 * SPF 采样（A/V 对齐）
         self.assertEqual(comp.images.shape[0], 370)
         self.assertEqual(comp.audio["waveform"].shape[-1], 370 * self.SPF)
+
+    def test_panel_first_segments_do_not_chain_in_tier_a(self):
+        # 每段自带分镜首帧：Tier A 下不链入上段尾帧、不丢帧（段首就是各自的分镜图）
+        orig, bodies = self._patch(3, [124, 124, 124], mode="i2v", panel=True)
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=True, context_frames=0)
+        finally:
+            self._restore(orig)
+        self.assertEqual([b["references"][0] for b in bodies],
+                         [{"kind": "input", "value": f"panel{i}.png"} for i in range(3)])
+        self.assertEqual(video.get_components().images.shape[0], 124 * 3)
 
     def test_concat_audio_none_when_no_audio(self):
         out = h3_video_director._concat_segment_audio([None, None], self.FPS, [0, 1])
@@ -1219,11 +1231,13 @@ class DirectorOrchestrationTests(unittest.TestCase):
         }
 
     def _run_r2v_chain(self, continuity=True, context_frames=22, frame_counts=(124, 141, 141), mode="r2v",
-                       duration_sec=-1, identity_images=None):
+                       duration_sec=-1, identity_images=None, panels=False, params_sink=None):
         """三段配方跑一次（模板用 r2v 形状）；返回 ([(graph, overrides), ...], [各段 body], [各段 _FakeVideo], 输出 VIDEO)。
 
         第 1 段自带 a.png/b.png（身份来源）、第 2 段带 c.png、第 3 段带 a.png（用于验证身份去重）；
         identity_images 模拟配方「角色参考图」（load_director_spec 的 spec 级身份参考）。
+        panels=True 时每段自带首帧图（ref_input=panelN.png）→ 走「分镜首帧」路径；
+        params_sink 给了就把各段的模板参数收集进去（用于断言时长有没有被窗口撑长）。
         """
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
@@ -1236,7 +1250,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         spec = {
             "shared": {"width": 8, "height": 8, "seed": 1},
             "segments": [{"skill_id": f"s{i}", "prompt": f"p{i}", "duration_sec": 5, "mode": mode,
-                          "ref_input": "ff.png" if (mode == "i2v" and i == 0) else None,
+                          "ref_input": f"panel{i}.png" if panels else ("ff.png" if (mode == "i2v" and i == 0) else None),
                           "refs": {"images": own[i]}} for i in range(len(frame_counts))]}
         if identity_images:
             spec["identity_images"] = list(identity_images)
@@ -1244,7 +1258,14 @@ class DirectorOrchestrationTests(unittest.TestCase):
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}
-        h3d.resolve_video_params = lambda body, cfg, **kw: bodies.append(dict(body)) or {"prompt": body["prompt"]}
+        def _resolve(body, cfg, **kw):
+            bodies.append(dict(body))
+            params = {"prompt": body["prompt"], "length": int(body.get("length") or 124)}
+            if params_sink is not None:
+                params_sink.append(params)
+            return params
+
+        h3d.resolve_video_params = _resolve
         h3d.render_template = lambda tpl, params: (self._r2v_template(), [])
         h3d._require_vdn_plugin = lambda graph: None
         h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: calls.append(
@@ -1328,6 +1349,33 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertEqual(bodies[1]["references"][0]["data"],
                          h3_video_director._image_to_data_uri(tail[:1]))
         self.assertEqual(bodies[1]["references"][1]["value"], "c.png")    # 该段自己的素材照旧排在后面
+
+    def test_panel_first_segment_anchors_on_its_own_storyboard(self):
+        """i2v 段自带分镜首帧：锚点用它（不再是窗口第 0 帧），不再被连续性顶替。"""
+        _, bodies, _, _ = self._run_r2v_chain(mode="i2v", panels=True, frame_counts=(124, 124, 124))
+        self.assertEqual([b["references"][0] for b in bodies],
+                         [{"kind": "input", "value": f"panel{i}.png"} for i in range(3)])
+
+    def test_panel_first_segment_keeps_length_and_drops_nothing(self):
+        """分镜首帧段：目标时长不加窗口（124 而非 141），拼接不丢帧、音频同步不减。"""
+        seen = []
+        _, _, _, out = self._run_r2v_chain(mode="i2v", panels=True, frame_counts=(124, 124, 124), params_sink=seen)
+        self.assertEqual([p["length"] for p in seen], [124] * 3)
+        comp = out.get_components()
+        self.assertEqual(comp.images.shape[0], 124 * 3)
+        self.assertEqual(comp.audio["waveform"].shape[-1], 124 * 3 * self.SPF)
+
+    def test_panel_first_segment_injects_prev_tail_as_reference(self):
+        """分镜首帧段仍带上段尾部，但走 reference：不搬时间轴、不做窗口丢弃。"""
+        calls, _, videos, _ = self._run_r2v_chain(mode="i2v", panels=True, frame_counts=(124, 124, 124))
+        graph, overrides = calls[1]
+        nodes = sorted((int(nid), n) for nid, n in graph.items() if n.get("class_type") == "NeoH3AddContext")
+        context = [n for _, n in nodes if "context_image" in n["inputs"]]
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]["inputs"]["context_mode"], "reference")
+        self.assertEqual(context[0]["inputs"]["context_frames"], 22)
+        tail_id = context[0]["inputs"]["context_image"][0]
+        self.assertTrue(torch.equal(overrides[tail_id][0], videos[0]._images[-22:]))
 
     def test_identity_names_put_recipe_characters_first_then_segment_refs(self):
         """身份来源：配方角色参考图在前，段自带参考补齐；重复的只留一份。"""
@@ -2092,6 +2140,16 @@ class HybridKeyframeTests(unittest.TestCase):
         self.assertEqual(injected, {"9000", "9001", "9002", "9003", "9004", "9005"})
         self.assertEqual(set(modified) - injected, {"3", "5", "7"})
 
+    def test_inject_continuity_nodes_passes_reference_mode(self):
+        """注入节点的 context_mode 原样透传：默认 window / 分镜首帧段 reference。"""
+        tail = torch.zeros(22, 768, 1344, 3)
+        for mode, expected in ((None, "window"), ("reference", "reference")):
+            args = (self._r2v_graph(), tail, 22, ()) if mode is None else \
+                (self._r2v_graph(), tail, 22, (), mode)
+            modified, _ = h3_video_director._inject_continuity_nodes(*args)
+            node = next(n for n in modified.values() if n.get("class_type") == "NeoH3AddContext")
+            self.assertEqual(node["inputs"]["context_mode"], expected)
+
     def test_inject_continuity_nodes_skips_without_window_and_identity(self):
         """没有上下文窗口也没有身份图时不注入（返回 None，调用方保持原 overrides）。"""
         graph = self._r2v_graph()
@@ -2280,9 +2338,63 @@ class HybridKeyframeTests(unittest.TestCase):
             self.assertEqual(tuple(window["latent"].shape), (1, 24, 7, 48, 84))
             self.assertEqual(seen[key_][0][1]["minimax_refs"][1]["latent_h"], 48)
 
+    def test_continuity_injection_reference_mode_skips_window_mark(self):
+        """reference 模式（分镜首帧段）：窗口块照样注入，但不打上下文标记 → 时间轴不搬到目标开头。"""
+        key = h3_video_director._CONTINUITY_WRAPPER_KEY
+        vae, model = _StubH3Vae(), _FakeModelPatcher()
+        _StubVaeLoader.value = vae
+        _StubUnetLoader.value = model
+        _StubImageLoader.value = torch.zeros(1, 768, 1344, 3)
+        _StubR2V.ref_latent = torch.zeros(1, 16, 2, 2, 2)
+        _StubSampler.seen = None
+        registry = {
+            "VAELoader": _StubVaeLoader, "UNETLoader": _StubUnetLoader, "LoadImage": _StubImageLoader,
+            "MiniMaxH3ReferenceToVideo": _StubR2V, "KSampler": _StubSampler,
+            "CreateVideo": _StubCreateVideo, "NeoH3AddContext": h3_video_director.NeoH3AddContext,
+        }
+        image_gen_edit.comfy_nodes.NODE_CLASS_MAPPINGS.update(registry)
+        graph = {
+            "1": {"class_type": "VAELoader", "inputs": {"vae_name": "v.safetensors"}},
+            "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "u.safetensors"}},
+            "5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+                "vae": ["1", 0], "prompt": "p", "width": 1344, "height": 768}},
+            "6": {"class_type": "KSampler", "inputs": {
+                "model": ["2", 0], "positive": ["5", 0], "negative": ["5", 0],
+                "latent_image": ["5", 1]}},
+            "7": {"class_type": "CreateVideo", "inputs": {"images": ["6", 0], "fps": 24}},
+        }
+        tail = torch.zeros(22, 768, 1344, 3)
+        try:
+            graph, overrides = h3_video_director._inject_continuity_nodes(graph, tail, 22, ["a.png"], "reference")
+            image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+        finally:
+            for name in registry:
+                image_gen_edit.comfy_nodes.NODE_CLASS_MAPPINGS.pop(name, None)
+        _, context = vae.seen
+        self.assertEqual(tuple(context.shape), (22, 768, 1344, 3))
+        self.assertEqual(_StubSampler.seen["model"].wrappers["APPLY_MODEL"].keys(), {key})
+        window = _StubSampler.seen["positive"][0][1]["minimax_refs"][-1]
+        self.assertEqual(window["latent_t"], 7)
+        self.assertNotIn(h3_video_director._CONTEXT_FRAMES_MARK, window)   # 不搬时间轴
+
+
+_STUB_FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
+_STUB_FRAME_RESCALE = 5.0 / 3.0
+
+
+def _ref_advance(ref):
+    """参考块在目标之前占的时间轴推进量（与 core 的 _ref_t_span 同式）。"""
+    if ref["kind"] == "image":
+        return 1.0
+    spans = sum(_STUB_FRAME_RESCALE * _STUB_FRAME_PER_TOKEN[k % 5] for k in range(int(ref["latent_t"])))
+    return max(float(ref.get("ref_audio_t") or 0), spans)
+
 
 class _FakeLayout:
-    """PackedLayout 桩：只保留我们用到的契约（segments / signature / position_ids），构建顺序与 core 一致。"""
+    """PackedLayout 桩：只保留我们用到的契约（segments / signature / position_ids），构建顺序与 core 一致。
+
+    与 core 同步：refs 先占目标之前的时间轴，cond 行（keyframe 锚点）与目标流从目标时间轴原点（refs 之后）起算。
+    """
 
     def __init__(self, text_len=3, latent_t=7, frame_rows=2, refs=(), keyframes=0):
         self.signature = (text_len, latent_t, frame_rows, 2, 1)
@@ -2296,17 +2408,18 @@ class _FakeLayout:
             row += n
 
         add("text", text_len, 0.0)
-        cursor = float(text_len)          # 与 core 一致：cond / ref 行的 t 都从 text_len 起算
+        origin = float(text_len) + sum(_ref_advance(ref) for ref in refs)   # 目标时间轴原点 = refs 之后
         for _ in range(keyframes):
-            add("cond", frame_rows, cursor)
+            add("cond", frame_rows, origin)
+        cursor = float(text_len)
         for ref in refs:
             if int(ref.get("ref_audio_t") or 0) > 0:
                 add("ref_audio", int(ref["ref_audio_t"]) * 2, cursor)
             n = frame_rows if ref["kind"] == "image" else int(ref["latent_t"]) * frame_rows
             add("ref_img", n, cursor)
-            cursor += 1.0 if ref["kind"] == "image" else max(int(ref["latent_t"]) * 1.5, 1.0)
-        add("audio", 2, cursor)
-        add("video", latent_t * frame_rows, cursor)
+            cursor += _ref_advance(ref)
+        add("audio", 2, origin)
+        add("video", latent_t * frame_rows, origin)
         self.segments = segments
         self.position_ids = torch.tensor(times, dtype=torch.float64)
 
@@ -2406,8 +2519,8 @@ class ContextWindowTests(unittest.TestCase):
         self.assertTrue(torch.equal(layout.position_ids[video_start:video_stop], target))   # 目标行一个没动
         self.assertTrue(getattr(layout, h3_video_director._CONTEXT_ALIGNED_ATTR))
 
-    def test_align_payload_timeline_shifts_keyframe_anchors_by_refs_advance(self):
-        """锚点行跟着目标一起平移（refs 的推进量），锚点才落在目标时间轴上。"""
+    def test_align_payload_timeline_keeps_keyframe_anchors_on_target_origin(self):
+        """锚点行不动：core 已让 refs 先占位、keyframe 锚点从目标时间轴原点起算。"""
         refs = [{"kind": "image", "latent_t": 1, "latent": torch.zeros(1)}]
         layout = _FakeLayout(refs=refs, keyframes=1)
         payload = {"layout": layout, "refs": refs}
@@ -2415,9 +2528,10 @@ class ContextWindowTests(unittest.TestCase):
         video_start = layout.segments[-1][0]
         before = float(layout.position_ids[cond_start, 0])
         target_t = float(layout.position_ids[video_start, 0])
+        self.assertAlmostEqual(before, target_t)                     # 建好时锚点就在目标原点
+        self.assertAlmostEqual(before - layout.signature[0], 1.0)    # 目标原点 = text_len + refs 推进量
         h3_video_director._align_payload_timeline(payload)
         self.assertAlmostEqual(float(layout.position_ids[cond_start, 0]), target_t)
-        self.assertAlmostEqual(target_t - before, 1.0)               # = 参考图的推进量
 
     def test_align_payload_timeline_is_idempotent_and_skips_without_layout(self):
         refs = [{"kind": "video", "latent_t": 7, "ref_audio_t": 0, "latent": torch.zeros(1),
@@ -2486,7 +2600,7 @@ class SeamBlendTests(unittest.TestCase):
         h3d.resolve_video_params = lambda body, cfg, **kw: {"prompt": body["prompt"]}
         h3d.render_template = lambda tpl, params: ({"g": 1}, [])
         h3d._require_vdn_plugin = lambda graph: None
-        h3d._inject_continuity_nodes = lambda graph, tail, window, names=(): (graph, None)   # 图是桩，跳过注入
+        h3d._inject_continuity_nodes = lambda graph, tail, window, names=(), mode="window": (graph, None)   # 图是桩，跳过注入
         h3d.execute_graph_inprocess = lambda graph, output_type="IMAGE", **kw: next(it)
         try:
             (video,) = h3d.NeoH3VideoDirector().generate("r", continuity=True, context_frames=22)

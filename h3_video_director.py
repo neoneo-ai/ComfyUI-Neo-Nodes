@@ -4,12 +4,14 @@
 - NeoH3VideoDirector 从配方读取 {shared, segments[]}；每段带自己的 skill_id、prompt、时长、首帧参考。
 - 逐段复用单段解析/执行链 _run_segment_graph（resolve_video_params + render_template + execute_graph_inprocess）。
 - BUNDLE 输入（forceInput）：提供时忽略 recipe，用 bundle 的 skill/提示词/参考图（data URI）跑单个片段。
-- 跨段上下文窗口（主路径）：上段尾部 window 帧作为本段开头的视频参考注入（NeoH3AddContext），本段重生成
+- 跨段上下文窗口（默认）：上段尾部 window 帧作为本段开头的视频参考注入（NeoH3AddContext），本段重生成
   这 window 帧后丢掉头部 window 帧——接缝不再重复边界帧，且新段带着上段的真实像素开场；丢之前先把重合区与
   上段真实尾帧交叉淡化（_blend_seam，帧数不变），硬切摊成渐变。
+- 分镜首帧优先：i2v/fl2v 段自带首帧图（分镜格）时，首帧锚点用它（不再被连续性顶替），上段尾部改走
+  context_mode="reference"——目标之前的参考视频，不改时长、不丢帧、不做接缝淡化。
 - 身份继承：首段（第一个带参考素材的段）的身份参考图领养到后续段，同走 NeoH3AddContext 的图片参考块。
-- Tier A 回退（context_frames=0）：上段尾帧作为下段 i2v/fl2v 首帧；丢下段第一帧避免边界重复。
-  两种情况都按丢帧数裁音频保 A/V 对齐。
+- Tier A 回退（context_frames=0）：没自带首帧图的 i2v/fl2v 段用上段尾帧当首帧；丢下段第一帧避免边界重复。
+  以上各情况的丢帧数都同步裁音频保 A/V 对齐。
 - seed 派生：base_seed + i（i 为段序号），保证可复现且各段不同。
 
 单段生成/重生成（含从成片取前后真实帧当锚点、换种子重跑某一段）走**执行队列**，
@@ -87,6 +89,7 @@ _CONTINUITY_WRAPPER_KEY = "neo_h3_continuity.apply_model.v1"
 _CONTEXT_FRAMES_MARK = "neo_context_frames"       # 上下文窗口 ref 上标记占多少帧（对齐时间轴时据此定位）
 _CONTEXT_ALIGNED_ATTR = "_neo_h3_context_aligned"  # 同一 layout 只对齐一次（拷贝本身也是幂等的）
 SEAM_BLEND_FRAMES = 6   # 段间接缝的交叉淡化帧数（0 = 关闭）：把「丢掉重生成窗口帧」的硬切摊成渐变
+CONTEXT_MODES = ("window", "reference")   # window = 目标开头重生成（调用方丢头帧）/ reference = 目标之前的参考视频
 
 
 def _blend_seam(prev_frames, frames, drop, blend):
@@ -149,11 +152,12 @@ def _ref_row_ranges(layout, refs):
 
 
 def _align_payload_timeline(payload):
-    """把锚点行与上下文窗口行的时间坐标对齐到目标视频时间轴（就地改 PackedLayout.position_ids）。
+    """把上下文窗口行的时间坐标搬到目标视频开头（就地改 PackedLayout.position_ids）。
 
-    keyframe 锚点是「目标第 N 帧」的锚点，本应与目标同处一条时间轴；上下文窗口则要回到目标视频开头，
-    因为本段会重生成上段尾部的那些帧。这里保持 position_ids 张量本体不变（Sol-Attn 的 span 注册认它），
-    只改坐标：锚点整体平移 refs 的总推进量，上下文行直接复用目标开头的行（H3-Continuum 的共时对齐同法）。
+    锚点行不用动：core 的 PackedLayout 已让 refs 先占位、keyframe 锚点从目标时间轴原点起算。
+    要搬的只有「窗口模式」的上下文行——本段会重生成上段尾部的那些帧，所以复用目标开头的行；
+    reference 模式的窗口行不带标记，保持在目标之前的参考位。保持 position_ids 张量本体不变
+    （Sol-Attn 的 span 注册认它），只改坐标。
     """
     layout = payload.get("layout")
     if layout is None or getattr(layout, _CONTEXT_ALIGNED_ATTR, False):
@@ -166,11 +170,6 @@ def _align_payload_timeline(payload):
     target_t = int(layout.signature[1])
     frame_rows = max(1, (video_stop - video_start) // target_t)
     position_ids = layout.position_ids
-    offset = float(position_ids[video_start, 0]) - float(layout.signature[0])
-    if refs and offset:
-        for start, stop, kind in layout.segments:
-            if kind == "cond":
-                position_ids[start:stop, 0].add_(offset)
     for ref, row in zip(refs, _ref_row_ranges(layout, refs)):
         if _CONTEXT_FRAMES_MARK not in ref:
             continue
@@ -263,12 +262,13 @@ def _free_node_id(graph):
     return str(nid)
 
 
-def _inject_continuity_nodes(graph, context_tail, context_frames, identity_names=()):
+def _inject_continuity_nodes(graph, context_tail, context_frames, identity_names=(), context_mode=CONTEXT_MODES[0]):
     """在渲染后的模板图里注入 NeoH3AddContext（先身份参考、后上下文窗口），返回 (graph, overrides)。
 
     定位消费 H3 conditioning 的采样器，把采样器的 model / positive / negative 改指到注入节点——模型输出
     带连续性 wrapper，refs 与 keyframe 锚点才会同时生效、时间轴才对齐。context_tail 通过 override 注入虚拟
     LoadImage（不写临时文件）；身份参考图直接用 input 目录里的真实 LoadImage（与 r2v 模板同一条加载路径）。
+    context_mode 原样传给注入节点：window = 目标开头重生成（调用方丢头帧）/ reference = 目标之前的参考视频。
     """
     if context_tail is None and not identity_names:
         return graph, None
@@ -318,7 +318,7 @@ def _inject_continuity_nodes(graph, context_tail, context_frames, identity_names
     if context_tail is not None:
         image_id = _free_node_id(graph)
         graph[image_id] = {"class_type": "LoadImage", "inputs": {"image": "__neo_context_tail__"}}
-        add_node("context_image", image_id, context_frames=int(context_frames))
+        add_node("context_image", image_id, context_frames=int(context_frames), context_mode=context_mode)
         overrides[image_id] = [context_tail]
 
     sampler_inputs["model"] = model_ref
@@ -334,8 +334,10 @@ class NeoH3AddContext:
 
     context_image 取尾部 context_frames 帧编成一条参考视频块（帧数就近对齐到模型要求的 17k+5 网格），
     identity_image 的每张图各编成一条参考图片块（按画布面积等比缩放，与官方 r2v 的参考图同规格）。
-    返回的 MODEL 挂了连续性 wrapper：keyframes 与 refs 并存时合回一条 cond 列表，并把上下文行与锚点行的
-    时间坐标对齐到目标视频时间轴（wrapper 按命名空间安装，链式多段调用也只会保留一份）。
+    context_mode：window = 本段开头重生成这些帧（上下文行搬到目标开头，调用方丢头帧）；
+    reference = 目标之前的参考视频（不搬时间轴、不丢帧，用于自带分镜首帧的段）。
+    返回的 MODEL 挂了连续性 wrapper：keyframes 与 refs 并存时合回一条 cond 列表（wrapper 按命名空间安装，
+    链式多段调用也只会保留一份）。
     """
 
     @classmethod
@@ -352,6 +354,7 @@ class NeoH3AddContext:
                 "context_image": ("IMAGE",),   # 上段尾部 window 帧
                 "identity_image": ("IMAGE",),  # 身份参考图（可批量，逐张成块）
                 "context_frames": ("INT", {"default": 22, "min": 0, "max": 362}),   # 0 = 不注入上下文窗口
+                "context_mode": (list(CONTEXT_MODES), {"default": CONTEXT_MODES[0]}),
             },
         }
 
@@ -359,17 +362,17 @@ class NeoH3AddContext:
     RETURN_NAMES = ("model", "conditioning")
     FUNCTION = "add_context"
     CATEGORY = "Neo-Nodes"
-    DESCRIPTION = "跨段上下文窗口：上段尾部若干帧作为 H3 视频参考（+可选身份参考图）注入 conditioning。"
+    DESCRIPTION = "跨段连续性：上段尾部若干帧作为 H3 视频参考（window=开头重生成 / reference=目标之前的参考）注入 conditioning。"
 
-    def add_context(self, model, conditioning, vae, width, height,
-                    context_image=None, identity_image=None, context_frames=22):
+    def add_context(self, model, conditioning, vae, width, height, context_image=None, identity_image=None,
+                    context_frames=22, context_mode=CONTEXT_MODES[0]):
         import node_helpers
         canvas = _ref_canvas(width, height)
         images = identity_image if identity_image is not None else []
         refs = [_identity_ref(vae, image.unsqueeze(0), canvas) for image in images]
         window = _align_context_frames(context_frames) if int(context_frames or 0) > 0 else 0
         if context_image is not None and window > 0:
-            refs.append(_context_ref(vae, context_image, window, canvas))
+            refs.append(_context_ref(vae, context_image, window, canvas, reference=(context_mode == "reference")))
         if not refs:
             return (model, conditioning)
         cond = node_helpers.conditioning_set_values(conditioning, {"minimax_refs": refs}, append=True)
@@ -411,8 +414,12 @@ def _identity_ref(vae, image, canvas):
     return {"kind": "image", "latent_h": height // 16, "latent_w": width // 16, "latent": latent}
 
 
-def _context_ref(vae, frames, window, canvas):
-    """尾部 window 帧 → 布局的视频参考块（无音轨，ref_audio_t=0）。"""
+def _context_ref(vae, frames, window, canvas, reference=False):
+    """尾部 window 帧 → 布局的视频参考块（无音轨，ref_audio_t=0）。
+
+    reference=True（本段自带分镜首帧的段）时不打上下文标记：时间轴保持 core 给的「目标之前」参考位，
+    既不搬到目标开头、也不会被调用方当成待重生成的窗口丢掉。
+    """
     width, height = _ref_pixels(frames.shape[2], frames.shape[1], canvas)
     latent = vae.encode(_resize_frames(frames[-window:], width, height))
     latent_t = int(latent.shape[2])
@@ -421,8 +428,11 @@ def _context_ref(vae, frames, window, canvas):
         raise ValueError(
             f"上下文窗口 {window} 帧编码后得到 latent T={latent_t}，与 H3 的 17k+5 网格（T={expect}）不符："
             "请确认 vae 是 MiniMax H3 视频 VAE")
-    return {"kind": "video", "latent_t": latent_t, "latent_h": height // 16, "latent_w": width // 16,
-            "ref_audio_t": 0, "latent": latent, "audio_latent": None, _CONTEXT_FRAMES_MARK: int(window)}
+    ref = {"kind": "video", "latent_t": latent_t, "latent_h": height // 16, "latent_w": width // 16,
+           "ref_audio_t": 0, "latent": latent, "audio_latent": None}
+    if not reference:
+        ref[_CONTEXT_FRAMES_MARK] = int(window)
+    return ref
 
 
 def _align_context_frames(n):
@@ -479,16 +489,23 @@ def _align_frame_count_nearest(n, minimum=5):
     return up
 
 
+def _panel_first(seg: dict) -> bool:
+    """该段是否「分镜首帧」：i2v/fl2v 段自带首帧图（分镜格）→ 首帧锚点用它，连续性不再顶替它。"""
+    return (seg.get("mode") or "t2v") in ("i2v", "fl2v") and bool(seg.get("ref_input"))
+
+
 def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
-                       context_tail=None, context_frames=0, identity_names=(), on_step=None, on_total=None):
+                       context_tail=None, context_frames=0, identity_names=(), context_mode=CONTEXT_MODES[0],
+                       on_step=None, on_total=None):
     """单段执行链：解析参数 → 渲染模板 → 模型注入/VDN 校验 → 连续性注入 → 进程内执行，返回 VIDEO。
 
     recipe 逐段与 BUNDLE 单段共用；label 仅用于错误消息前缀（如「第 3 段：」）。
     vae/preview/node_id 控制采样期间节点内的实时预览（见 h3_preview）。
     on_step：每采样步回调（step_number），供 director 更新进度。
     on_total：总步数确定后回调（节点入参或各段 skill config），供 director 修正 total_steps。
-    context_tail：本段开头的重生成窗口（上段尾部 context_frames 帧，[F,H,W,C]）——给了它就把目标时长
-    加 window 帧并就近对齐到 17k+5 网格，那段帧由调用方在拼接时丢掉。
+    context_tail：跨段上下文（上段尾部 context_frames 帧，[F,H,W,C]）。context_mode="window" 时它是本段
+    开头的重生成窗口——目标时长加 window 帧并就近对齐到 17k+5 网格，那段帧由调用方在拼接时丢掉；
+    "reference" 时它只是目标之前的参考视频，不改时长、不丢帧。
     identity_names：继承到本段的身份参考图文件名（用 input 目录里的真实 LoadImage 加载）。
     """
     real_id = _resolve_skill_id(skill_id or "")
@@ -502,7 +519,7 @@ def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview
     if on_total is not None:
         on_total(int(params.get("steps") or 0))  # 真实总步数（节点入参或该段 skill config），供前端进度条按比例推进
     window = int(context_frames or 0) if context_tail is not None else 0
-    if window > 0:
+    if window > 0 and context_mode == CONTEXT_MODES[0]:
         params["length"] = _align_frame_count_nearest(int(params.get("length") or 124) + window,
                                                      minimum=window + 5)
     graph, _warns = render_template(template, params)
@@ -516,7 +533,7 @@ def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview
         overrides = {x_id: [model]}
     else:
         _require_vdn_plugin(graph)
-    graph, c_overrides = _inject_continuity_nodes(graph, context_tail, window, identity_names)
+    graph, c_overrides = _inject_continuity_nodes(graph, context_tail, window, identity_names, context_mode)
     if c_overrides:
         overrides = {**(overrides or {}), **c_overrides}
     with preview_override(preview, vae, node_id, on_step=on_step):
@@ -607,6 +624,8 @@ class NeoH3VideoDirector:
 
         progress_index / progress_total：单段重生成时把进度映射回配方里的真实段序号与总段数
         （默认从 0 开始，即整条配方从头跑）。
+        首帧锚点：i2v/fl2v 段自带首帧图（分镜格）时用它，上段尾部只作为「目标之前」的参考视频；
+        没自带首帧图时才由连续性接手（窗口第 0 帧 / Tier A 上段尾帧）。
         """
         vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
         shared = spec.get("shared") or {}
@@ -626,7 +645,7 @@ class NeoH3VideoDirector:
                                   total_steps=max(1, int(steps)) if int(steps) > 0 else 0)
         all_frames = []
         all_audio = []
-        drops = []       # 与 segments 对齐：该段丢掉的头部帧数（上下文窗口帧数 / Tier A 的 1 帧 / 0）
+        drops = []       # 与 segments 对齐：该段丢掉的头部帧数（窗口帧数 / Tier A 的 1 帧 / 0）
         prev_tail = None
         try:
             for i, seg in enumerate(segments):
@@ -645,17 +664,22 @@ class NeoH3VideoDirector:
                 if dur is not None and float(dur) > 0:
                     body["length"] = _seconds_to_frames(float(dur))
 
-                # 跨段上下文窗口：上段尾部 window 帧作为本段开头的重生成窗口（上段得够长）
+                mode = seg.get("mode") or "t2v"
+                # 分镜首帧段（i2v/fl2v 自带首帧图）：首帧锚点用它，不再被连续性顶替；上段尾部随之改为
+                # 「目标之前」的参考视频（不重生成、不丢帧）——段首就是本段分镜图。
+                panel_anchor = _panel_first(seg)
+                segment_context = "reference" if panel_anchor else CONTEXT_MODES[0]
+
+                # 跨段上下文：上段尾部 window 帧（上段得够长）
                 context_tail = None
                 if window > 0 and prev_tail is not None and prev_tail.shape[0] >= window:
                     context_tail = prev_tail
 
                 # 按段模式组装参考（T2V 段不带任何参考）：
-                #   i2v/fl2v 首帧（Tier A：continuity 时链入上段尾帧；有上下文窗口时窗口自己承担开头的引导）
+                #   i2v/fl2v 首帧：本段分镜首帧图优先；否则窗口第 0 帧 / Tier A 链入上段尾帧
                 #   r2v 仅参考素材（图/视频/音频）
                 #   v2v/rv2v 源视频（自动作为 ref_videos[0]，提示词自动加 <Video 1>）
                 #   fl2v 另带尾帧锁收尾
-                mode = seg.get("mode") or "t2v"
                 refs = []
                 chained = False
                 
@@ -669,16 +693,16 @@ class NeoH3VideoDirector:
                 
                 if mode in ("i2v", "fl2v"):
                     primary_input = None
-                    if context_tail is not None:
-                        # 窗口的第 0 帧就是目标第 0 帧：拿它当首帧（与窗口行同内容，锚点时间轴由 wrapper 修正）
+                    if panel_anchor:
+                        primary_input = seg["ref_input"]
+                        refs.append({"kind": "input", "value": primary_input})
+                    elif context_tail is not None:
+                        # 窗口的第 0 帧就是目标第 0 帧：拿它当首帧（与窗口行同内容）
                         refs.append({"kind": "data", "data": _image_to_data_uri(context_tail[:1])})
                         chained = True
                     elif continuity and i > 0 and prev_tail is not None:
                         refs.append({"kind": "data", "data": _image_to_data_uri(prev_tail[-1:])})
                         chained = True
-                    elif seg.get("ref_input"):
-                        primary_input = seg["ref_input"]
-                        refs.append({"kind": "input", "value": primary_input})
                 elif mode == "r2v":
                     primary_input = None
                     chained = context_tail is not None
@@ -714,15 +738,18 @@ class NeoH3VideoDirector:
                 video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：",
                                            vae, preview, unique_id, context_tail=context_tail,
                                            context_frames=window, identity_names=inherited,
+                                           context_mode=segment_context,
                                            on_step=lambda s: _DIRECTOR_PROGRESS.__setitem__("step", s),
                                            on_total=lambda n: _DIRECTOR_PROGRESS.__setitem__("total_steps", max(1, int(n) or 1)))
                 comp = video.get_components()
                 frames = comp.images
 
-                # 丢掉头部：上下文窗口重生成的 window 帧；Tier A 则丢与上段重复的那一帧。
-                # 丢弃前先把重合区与上一段真实尾帧交叉淡化（帧数不变），接缝不再硬切
-                drop = window if context_tail is not None else (1 if (i > 0 and chained) else 0)
-                if context_tail is not None and all_frames:
+                # 丢掉头部：窗口模式丢本段重生成的那 window 帧；Tier A 丢与上段重复的一帧；
+                # 分镜首帧段两者都不丢（段首就是本段分镜图）。窗口模式丢帧前先把重合区与上一段真实尾帧
+                # 交叉淡化（帧数不变），接缝不再硬切。
+                drop = window if (context_tail is not None and segment_context == CONTEXT_MODES[0]) \
+                    else (1 if (i > 0 and chained) else 0)
+                if context_tail is not None and segment_context == CONTEXT_MODES[0] and all_frames:
                     all_frames[-1] = _blend_seam(all_frames[-1], frames, drop, SEAM_BLEND_FRAMES)
                 all_frames.append(frames[drop:] if drop and frames.shape[0] > drop else frames)
                 drops.append(drop)
