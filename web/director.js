@@ -1330,13 +1330,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 if (picked.length) refs[SEG_REF_GROUPS[gi].key] = picked;
             });
             if (Object.keys(refs).length) seg.refs = refs;
-            // 首帧：图生与首尾帧模式携带；尾帧：仅首尾帧模式携带
-            if (eff === 'i2v' || eff === 'fl2v') {
-                if (first) seg.first_frame = first;
-            }
-            if (eff === 'fl2v') {
-                if (last) seg.last_frame = last;
-            }
+            // 首帧/尾帧：有值即落盘（与模式解耦——宫格拆分、分镜回填等均可在任意模式下写入）
+            if (first) seg.first_frame = first;
+            if (last) seg.last_frame = last;
             // 源视频：仅视频编辑模式携带
             if (eff === 'v2v' || eff === 'rv2v') {
                 const sv = segSvReaders.get(row) ? segSvReaders.get(row)() : '';
@@ -1631,9 +1627,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // 分镜/首帧方式：宫格分镜图拆分（一张宫格分镜图切多图 → 逐段首帧）、逐段图片分镜（关键帧作首帧）与统一图片（全体共用首帧）三选一，随 story.frame_source 落盘。
     frameSourceSel = buildRadioGroup('neo-director-frame-source', [
-        ['grid', '宫格分镜图拆分（一张宫格分镜图切多图 → 逐段首帧）'],
-        ['storyboard', '逐段图片分镜（关键帧作首帧）'],
-        ['unified', '统一图片（全体共用首帧）'],
+        ['grid', '宫格分镜图'],
+        ['storyboard', '逐段生成分镜图'],
+        ['unified', '统一首帧图'],
     ], 'grid');
     {
         const fs = exStory.frame_source;
@@ -1768,7 +1764,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
     manualCtrls.style.display = 'none';   // 默认自动检测；切「手动行列」才显示
     gridModeSel.addEventListener('change', () => { manualCtrls.style.display = (gridModeSel.value === 'manual') ? 'flex' : 'none'; });
-    const gridSplitBtn = $el('button', { className: 'neo-director-grid-split', type: 'button', textContent: '✅ 拆分并分配到分段' });
+    const gridSplitBtn = $el('button', { className: 'neo-director-grid-split', type: 'button', textContent: '✂️ 拆分到各段' });
     const gridStatus = $el('span', { className: 'neo-director-sb-status' });
     const gridPanelsWrap = $el('div', { className: 'neo-director-grid-panels' });
     function renderGridPanels() {
@@ -1793,7 +1789,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             row.dataset.storyboard = fname;   // 对照表「分镜图」列显示本格（保存时随 storyboard 落盘）
             segsWrap.appendChild(row);
         }
-        renumberSegs(); showSeg(0); applyGlobalMode();
+        if (modeSel && modeSel.value !== 'i2v') modeSel.value = 'i2v';   // 宫格拆分各段均为图生模式：同步全局，保存时首帧才能落盘
+        renumberSegs(); showSeg(0); applyGlobalMode(); refreshSetupRefs();
         if (frameSourceSel.value !== 'grid') {
             frameSourceSel.value = 'grid';   // 对照表按宫格各格显示（🧩 卡片）
             frameSourceSel.dispatchEvent(new Event('change'));
@@ -1973,9 +1970,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const m = modeSel.value;
         const src = frameSourceSel ? frameSourceSel.value : 'storyboard';
         uniR2vHint.style.display = (m === 'r2v') ? '' : 'none';   // 参考素材到时间轴页逐段设置（本页无统一入口）
-        // 统一首/尾帧区：i2v 仅「统一图片」方式显示；fl2v 始终保留（首帧行与图片分镜互斥、尾帧行不受影响）
-        uniFrameBlock.style.display = (m === 'fl2v' || (m === 'i2v' && src === 'unified')) ? '' : 'none';
-        uniFfBlock.style.display = ((m === 'i2v' || m === 'fl2v') && src === 'unified') ? '' : 'none';
+        // 统一首/尾帧区：「统一图片」方式在非混合模式下始终显示首帧输入；fl2v 额外显示尾帧行
+        uniFrameBlock.style.display = (m === 'fl2v' || (src === 'unified' && m !== 'mixed')) ? '' : 'none';
+        uniFfBlock.style.display = (src === 'unified' && m !== 'mixed') ? '' : 'none';
         uniLfBlock.style.display = (m === 'fl2v') ? '' : 'none';
         if (src === 'unified') {
             uniFrameLabel.textContent = (m === 'fl2v') ? '统一首帧 / 尾帧（改动自动应用到所有分段）' : '统一首帧（改动自动应用到所有分段）';
@@ -2152,8 +2149,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     const setupPane = $el('div', { className: 'neo-director-pane neo-director-pane-setup' }, [
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
-            $el('label', { textContent: '分镜 / 首帧方式' }), frameSourceSel,   // 宫格分镜图拆分 ↔ 逐段图片分镜 ↔ 统一图片，三选一
-            identityRefsRow,   // 角色身份参考：靠第一行右侧（关掉 = 旧行为，便于对比）
+            $el('label', { textContent: '分镜 / 首帧方式' }), frameSourceSel,   // 宫格分镜图 ↔ 逐段生成分镜图 ↔ 统一首帧图，三选一
+            identityRefsRow,   // 角色身份参考：靠右侧（关掉 = 旧行为，便于对比）
         ]),
         sbCard,         // 🎨 图片分镜（逐段关键帧；与生成模式解耦，仅「统一图片」方式时隐藏）
         gridCard,       // 🧩 宫格分镜图拆分（一张宫格分镜图 → 逐段首帧；与图片分镜同页的另一种分镜来源）
