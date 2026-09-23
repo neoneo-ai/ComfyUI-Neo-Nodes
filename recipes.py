@@ -1338,76 +1338,49 @@ async def rs_recipes_director_split_segments(request):
     return web.json_response({"success": True, "segments": segments})
 
 
-def _parse_prompt_list(raw):
-    """把 LLM 返回的提示词列表文本解析为 [str]；容错剥掉 ```json 包裹与多余文字。"""
-    if not raw:
-        return []
-    text = str(raw).strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    start, end = text.find("["), text.rfind("]")
-    if start >= 0 and end > start:
-        text = text[start:end + 1]
-    try:
-        data = json.loads(text)
-    except Exception:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [str(x).strip() for x in data]
-
-
 @PromptServer.instance.routes.post("/rs_recipes/director_optimize_prompts")
 async def rs_recipes_director_optimize_prompts(request):
-    """按模式与逐段参考素材，把各段提示词重写为 H3 官方格式（段落结构 / 参考标签 / 时间戳）。"""
+    """把单段提示词按 H3 官方格式重写（段落结构 / 参考标签 / 时间戳）。前端逐段循环调用，一次一段。"""
     try:
         data = await request.json()
     except Exception:
         return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
-    segments = data.get("segments") or []
-    if not isinstance(segments, list) or not segments:
-        return web.json_response({"success": False, "error": "没有可优化的分段"}, status=400)
-    seg_lines = []
-    image_names = []
-    for i, s in enumerate(segments):
-        if not isinstance(s, dict):
-            return web.json_response({"success": False, "error": f"第 {i + 1} 段格式无效"}, status=400)
-        prompt = str(s.get("prompt") or "").strip()
-        if not prompt:
-            return web.json_response({"success": False, "error": f"第 {i + 1} 段没有提示词可优化"}, status=400)
-        try:
-            dur = int(round(float(s.get("duration_sec"))))
-        except (TypeError, ValueError):
-            dur = 0
-        # 该段自己的参考素材（仅全参考模式由前端携带）：清单写进本段块内，<Picture N> 等标签按本段顺序编号
-        ref_lines = []
-        seg_refs = s.get("refs") or {}
-        if not isinstance(seg_refs, dict):
-            seg_refs = {}
-        for key, label, tag in (("images", "参考图", "Picture"), ("videos", "参考视频", "Video"), ("audios", "参考音频", "Audio")):
-            names = [str(n).strip() for n in (seg_refs.get(key) or []) if str(n or "").strip()]
-            if not names:
-                continue
-            if key == "images":
-                image_names.extend(names)
-            ref_lines.append(f"{label}（在提示词中按顺序引用为 <{tag} 1>…<{tag} {len(names)}>）：")
-            ref_lines.extend(f"- {n}" for n in names)
-        head = f"第 {i + 1} 段（约 {dur} 秒）："
-        if ref_lines:
-            head += "\n" + "\n".join(ref_lines) + "\n"
-        seg_lines.append(head + prompt)
+    prompt = str(data.get("prompt") or "").strip()
+    if not prompt:
+        return web.json_response({"success": False, "error": "没有提示词可优化"}, status=400)
+    try:
+        dur = int(round(float(data.get("duration_sec"))))
+    except (TypeError, ValueError):
+        dur = 0
 
     mode = str(data.get("mode") or "t2v").strip()
-    parts = [f"生成模式：{mode}", "", "各段现有提示词（逐段重写，数量与顺序保持不变）：\n" + "\n\n".join(seg_lines)]
+    # 该段自己的参考素材（仅全参考模式由前端携带）：清单写进本段块内，<Picture N> 等标签按本段顺序编号
+    ref_lines = []
+    image_names = []
+    seg_refs = data.get("refs") or {}
+    if not isinstance(seg_refs, dict):
+        seg_refs = {}
+    for key, label, tag in (("images", "参考图", "Picture"), ("videos", "参考视频", "Video"), ("audios", "参考音频", "Audio")):
+        names = [str(n).strip() for n in (seg_refs.get(key) or []) if str(n or "").strip()]
+        if not names:
+            continue
+        if key == "images":
+            image_names.extend(names)
+        ref_lines.append(f"{label}（在提示词中按顺序引用为 <{tag} 1>…<{tag} {len(names)}>）：")
+        ref_lines.extend(f"- {n}" for n in names)
+
+    parts = [f"生成模式：{mode}", f"本段时长：约 {dur} 秒", ""]
+    if ref_lines:
+        parts.append("\n".join(ref_lines) + "\n")
+    parts.append("该段现有提示词（重写为一条成品提示词）：\n" + prompt)
 
     result = await asyncio.to_thread(_director_llm, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]))
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
-    prompts = _parse_prompt_list(result.get("prompts") or "")
-    if len(prompts) != len(segments):
-        return web.json_response({"success": False, "error": f"优化结果数量（{len(prompts)}）与分段数（{len(segments)}）不一致，请重试"}, status=422)
-    return web.json_response({"success": True, "prompts": prompts})
+    out = str(result.get("prompt") or "").strip()
+    if not out:
+        return web.json_response({"success": False, "error": "优化结果为空，请重试"}, status=422)
+    return web.json_response({"success": True, "prompt": out})
 
 
 @PromptServer.instance.routes.post("/rs_recipes/grid_split")

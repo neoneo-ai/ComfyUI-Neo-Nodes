@@ -86,7 +86,7 @@ def _default_run_llm_task(task_name, text, images=None, **kw):
     if task_name == "director_story":
         return {"status": "success", "story": "生成的故事正文"}
     if task_name == "director_optimize":
-        return {"status": "success", "prompts": json.dumps(["优化段1", "优化段2"])}
+        return {"status": "success", "prompt": "优化段"}
     return {"status": "success", "segments": json.dumps([{"prompt": "p1", "duration_sec": 5}, {"prompt": "p2", "duration_sec": 5}])}
 
 
@@ -249,82 +249,52 @@ class SplitSegmentsEndpointTests(unittest.TestCase):
             _llm.run_llm_task = original
 
 
-class ParsePromptListTests(unittest.TestCase):
-    def test_plain_json_array(self):
-        self.assertEqual(recipes._parse_prompt_list('["a", "b"]'), ["a", "b"])
-
-    def test_markdown_wrapped_and_prose(self):
-        raw = '好的：\n```json\n["p1", "p2"]\n```\n以上。'
-        self.assertEqual(recipes._parse_prompt_list(raw), ["p1", "p2"])
-
-    def test_invalid_returns_empty(self):
-        self.assertEqual(recipes._parse_prompt_list("not json"), [])
-        self.assertEqual(recipes._parse_prompt_list('{"a": 1}'), [])
-        self.assertEqual(recipes._parse_prompt_list(""), [])
-
-
 class OptimizePromptsEndpointTests(unittest.TestCase):
-    def test_success_returns_prompts(self):
-        req = _FakeRequest({
-            "segments": [
-                {"prompt": "段一", "duration_sec": 5, "refs": {"images": ["a.png", "b.png"], "videos": ["v.mp4"]}},
-                {"prompt": "段二", "duration_sec": 8},
-            ],
-            "mode": "r2v",
-        })
+    def test_success_returns_single_prompt(self):
+        req = _FakeRequest({"prompt": "段一", "duration_sec": 5, "mode": "r2v", "refs": {"images": ["a.png", "b.png"], "videos": ["v.mp4"]}})
         resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
         data = json.loads(resp.body)
         self.assertTrue(data["success"])
-        self.assertEqual(data["prompts"], ["优化段1", "优化段2"])
+        self.assertEqual(data["prompt"], "优化段")
         text = _llm_calls[-1]["text"]
         self.assertIn("生成模式：r2v", text)
         self.assertIn("<Picture 1>…<Picture 2>", text)
         self.assertIn("<Video 1>", text)
-        self.assertIn("第 1 段（约 5 秒）", text)
-
-    def test_empty_segments_rejected(self):
-        resp = _run_async(recipes.rs_recipes_director_optimize_prompts(_FakeRequest({"segments": []})))
-        self.assertEqual(resp.status, 400)
+        self.assertIn("约 5 秒", text)
 
     def test_missing_prompt_rejected(self):
-        req = _FakeRequest({"segments": [{"prompt": "ok"}, {"prompt": ""}]})
-        resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
+        resp = _run_async(recipes.rs_recipes_director_optimize_prompts(_FakeRequest({"prompt": ""})))
         self.assertEqual(resp.status, 400)
 
-    def test_count_mismatch_rejected(self):
+    def test_empty_llm_result_rejected(self):
         original = _llm.run_llm_task
-
-        def _bad(task_name, text, images=None, **kw):
-            return {"status": "success", "prompts": '["只有一段"]'}
-
-        _llm.run_llm_task = _bad
+        _llm.run_llm_task = lambda *a, **k: {"status": "success", "prompt": "   "}
         try:
-            req = _FakeRequest({"segments": [{"prompt": "a"}, {"prompt": "b"}]})
-            resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
+            resp = _run_async(recipes.rs_recipes_director_optimize_prompts(_FakeRequest({"prompt": "a"})))
             self.assertEqual(resp.status, 422)
         finally:
             _llm.run_llm_task = original
 
     def test_multimodal_sends_image_bytes(self):
-        """逐段参考图存在于 input/ 时，LLM 调用应带上图片字节（多模态）。"""
+        """参考图存在于 input/ 时，LLM 调用应带上图片字节（多模态）。"""
         original = _llm.run_llm_task
         calls = []
 
         def _one(task_name, text, images=None, **kw):
             calls.append(images)
-            return {"status": "success", "prompts": '["优化后的段一"]'}
+            return {"status": "success", "prompt": "优化后的段一"}
 
         _llm.run_llm_task = _one
         try:
             p = os.path.join(_INPUT_DIR, "opt_ref.png")
             with open(p, "wb") as f:
                 f.write(b"opt-bytes")
-            req = _FakeRequest({"segments": [{"prompt": "段一", "duration_sec": 5, "refs": {"images": ["opt_ref.png"]}}]})
+            req = _FakeRequest({"prompt": "段一", "duration_sec": 5, "refs": {"images": ["opt_ref.png"]}})
             resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
             data = json.loads(resp.body)
             self.assertTrue(data["success"])
-            self.assertEqual(len(data["prompts"]), 1)
-            self.assertTrue(calls[0])   # 逐段参考图存在 → LLM 调用带图片字节
+            self.assertEqual(data["prompt"], "优化后的段一")
+            self.assertTrue(calls[0])   # 参考图存在 → LLM 调用带图片字节
         finally:
             _llm.run_llm_task = original
 
