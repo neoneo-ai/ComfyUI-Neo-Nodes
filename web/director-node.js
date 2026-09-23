@@ -509,7 +509,7 @@ app.registerExtension({
                 onClose: destroyPreviewTimeline, // 选择窗关闭时销毁预览卡时间轴实例
             });
             if (skillIdWidget) attachSkillPickerToComboWidget(skillIdWidget, { title: "选择视频技能（H3）" });
-            // 按配方首段 skill config 填充 width/height/steps widget。
+            // 按配方默认填充 width/height/steps widget：width/height 优先配方 shared（自定义分辨率），缺省回退首段 skill config；steps 取首段 skill config。
             // 每个配方有自己的硬性要求（如 VDN/turbo 配方要求 steps=8），所以重新载入配方时一律重新初始化，用户手改值也不保留。
             // 唯一例外是创建节点时的首次载入：工作流已存的实值优先，只在仍为默认 -1 时填充。
             const applyDimDefaults = (d, force) => {

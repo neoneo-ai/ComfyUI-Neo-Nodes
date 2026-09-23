@@ -1179,8 +1179,9 @@ def load_director_spec(name: str) -> dict:
     return out
 
 
-def _director_default_dims(segments):
-    """取首段 skill config 的 width/height/steps 默认值，供 director 节点 widget 动态填充；无有效段或读取失败回退 H3 默认。"""
+def _director_default_dims(segments, shared=None):
+    """取 director 节点 widget 动态填充的默认值：width/height 优先配方 shared（自定义分辨率），
+    缺省时回退首段 skill config；steps 始终取首段 skill config；无有效段或读取失败回退 H3 默认。"""
     width, height, steps = 1344, 768, 20
     try:
         from .skill import get_skill_gen_config
@@ -1196,6 +1197,11 @@ def _director_default_dims(segments):
             break
     except Exception:
         pass
+    shared = shared or {}
+    if int(shared.get("width") or 0) > 0:
+        width = int(shared["width"])
+    if int(shared.get("height") or 0) > 0:
+        height = int(shared["height"])
     return {"width": width, "height": height, "steps": steps}
 
 
@@ -1207,7 +1213,7 @@ async def rs_recipes_director_spec(request):
         return web.json_response({"success": False, "error": "缺少配方名"}, status=400)
     try:
         spec = load_director_spec(name)
-        return web.json_response({"success": True, "name": name, **spec, "defaults": _director_default_dims(spec.get("segments") or [])})
+        return web.json_response({"success": True, "name": name, **spec, "defaults": _director_default_dims(spec.get("segments") or [], spec.get("shared"))})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -1432,6 +1438,42 @@ async def rs_recipes_grid_split(request):
             "preview_url": f"/view?filename={name}&subfolder=&type=input",
         })
     return web.json_response({"success": True, "rows": grid["rows"], "cols": grid["cols"], "panels": panels})
+
+
+@PromptServer.instance.routes.post("/rs_recipes/image_sizes")
+async def rs_recipes_image_sizes(request):
+    """批量读图片尺寸（首帧比例一致性检查用）：input/ 优先、配方 assets 兜底，非图片/缺失跳过。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+    filenames = data.get("filenames") or []
+    if not isinstance(filenames, list):
+        return web.json_response({"success": False, "error": "filenames 必须是数组"}, status=400)
+    recipe = str(data.get("recipe") or "").strip()
+
+    import folder_paths as _fp
+    from PIL import Image
+    in_dir = Path(_fp.get_input_directory())
+    recipe_dir = _find_recipe_dir(recipe) if recipe else None
+    sizes = []
+    for name in filenames[:64]:
+        name = str(name or "").strip()
+        if not name or ".." in name:
+            continue
+        candidates = [in_dir / name]
+        if recipe_dir is not None:
+            candidates.append(recipe_dir / "assets" / name)
+        for path in candidates:
+            if not path.is_file():
+                continue
+            try:
+                with Image.open(path) as im:
+                    sizes.append({"filename": name, "width": im.width, "height": im.height})
+            except Exception:
+                pass
+            break
+    return web.json_response({"success": True, "sizes": sizes})
 
 
 @PromptServer.instance.routes.post("/rs_recipes/director_describe_panel")

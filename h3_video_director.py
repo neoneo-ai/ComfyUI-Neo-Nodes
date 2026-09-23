@@ -554,8 +554,8 @@ class NeoH3VideoDirector:
             "optional": {
                 "skill_id": ([s["name"] for s in vskills], {"default": vskills[0]["name"] if vskills else ""}),  # BUNDLE 单段用的视频 skill；recipe 多段模式忽略（各段自带）
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),   # -1 = 用配方 shared.seed
-                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用各段 skill config（选中配方时前端自动填首段默认）
-                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 用各段 skill config（选中配方时前端自动填首段默认）
+                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
+                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
                 "continuity": ("BOOLEAN", {"default": True}),   # 跨段连续性总开关：开 = 上下文窗口 + 身份继承
                 "context_frames": ("INT", {"default": 22, "min": 0, "max": 362}),  # 上下文窗口帧数；0 = 退回 Tier A 尾帧链入
                 "model": ("MODEL",),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
@@ -632,9 +632,9 @@ class NeoH3VideoDirector:
         segments = spec.get("segments") or []
 
         base_seed = int(seed) if int(seed) >= 0 else (int(shared.get("seed", 0)) if shared.get("seed") is not None else 0)
-        # width/height：节点入参 > 0 时覆盖全部段；-1 时不写入 body，交由 resolve_video_params 按各段 skill config 默认回退。
-        in_w = int(width) if int(width) > 0 else 0
-        in_h = int(height) if int(height) > 0 else 0
+        # width/height：节点入参 > 0 时覆盖全部段；-1 时优先配方 shared 分辨率，缺省再回退各段 skill config 默认。
+        in_w = int(width) if int(width) > 0 else int(shared.get("width") or 0)
+        in_h = int(height) if int(height) > 0 else int(shared.get("height") or 0)
 
         # 跨段上下文窗口：上段尾部 window 帧作为下段开头的重生成窗口（0 = 退回 Tier A 的尾帧链入）
         window = _align_context_frames(context_frames) if continuity and int(context_frames or 0) > 0 else 0

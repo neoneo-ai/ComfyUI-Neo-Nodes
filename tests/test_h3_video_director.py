@@ -1449,7 +1449,7 @@ class DirectorModelStepsTests(unittest.TestCase):
     SR = 48000
     FPS = 24
 
-    def _run(self, model=None, steps=-1, sink_present=True, width=-1, height=-1):
+    def _run(self, model=None, steps=-1, sink_present=True, width=-1, height=-1, shared=None):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.load_skill_workflow,
                 h3d.get_skill_gen_config, h3d.resolve_video_params, h3d.render_template,
@@ -1458,8 +1458,10 @@ class DirectorModelStepsTests(unittest.TestCase):
         exec_calls = []
         render_params = []
         vdn_checks = 0
+        if shared is None:
+            shared = {"width": 8, "height": 8, "seed": 1}
         h3d.load_director_spec = lambda name: {
-            "shared": {"width": 8, "height": 8, "seed": 1},
+            "shared": dict(shared),
             "segments": [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v"},
                          {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v"}]}
         h3d._resolve_skill_id = lambda v: v
@@ -1532,9 +1534,15 @@ class DirectorModelStepsTests(unittest.TestCase):
     def test_model_without_injection_point_raises(self):
         _, _, _, _, err = self._run(model="M", sink_present=False)
         self.assertIn("注入点", err or "")
-    def test_width_height_default_omitted_from_body(self):
-        # 节点 width/height=-1（默认）时不写入 body，交由 resolve_video_params 按各段 skill config 回退
+    def test_width_height_falls_back_to_shared_when_node_default(self):
+        # 节点 width/height=-1（默认）时优先用配方 shared 分辨率写入 body
         _, _, render_params, _, err = self._run()
+        self.assertIsNone(err)
+        self.assertTrue(all(p.get("width") == 8 and p.get("height") == 8 for p in render_params))
+
+    def test_width_height_omitted_when_node_and_shared_absent(self):
+        # 节点 width/height=-1 且配方 shared 无分辨率时不写入 body，交由 resolve_video_params 按 skill config 回退
+        _, _, render_params, _, err = self._run(shared={"seed": 1})
         self.assertIsNone(err)
         for p in render_params:
             self.assertNotIn("width", p)
@@ -1738,6 +1746,24 @@ class DirectorDefaultDimsTests(unittest.TestCase):
         finally:
             self._restore(ctx)
         self.assertEqual(d, {"width": 960, "height": 544, "steps": 8})
+
+    def test_shared_dims_preferred_over_skill_config(self):
+        # 配方 shared 有分辨率时优先（steps 仍取 skill config）
+        ctx = self._patch({"s1": {"width": 960, "height": 544, "steps": 8}})
+        try:
+            d = recipes._director_default_dims([{"skill_id": "s1"}], {"width": 736, "height": 736})
+        finally:
+            self._restore(ctx)
+        self.assertEqual(d, {"width": 736, "height": 736, "steps": 8})
+
+    def test_shared_partial_falls_back_per_dim(self):
+        # shared 只给一个维度时，另一维回退 skill config
+        ctx = self._patch({"s1": {"width": 960, "height": 544, "steps": 8}})
+        try:
+            d = recipes._director_default_dims([{"skill_id": "s1"}], {"width": 736})
+        finally:
+            self._restore(ctx)
+        self.assertEqual(d, {"width": 736, "height": 544, "steps": 8})
 
     def test_skips_segments_without_skill_id(self):
         ctx = self._patch({"s2": {"width": 512, "height": 288, "steps": 4}})

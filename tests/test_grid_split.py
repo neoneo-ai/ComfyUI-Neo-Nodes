@@ -2,7 +2,8 @@
 """grid_split 宫格图自动切分的离线单测（纯 PIL，不依赖 ComfyUI）。
 
 覆盖：1×N / M×N 均匀间隙检测、无间隙等分回退、纯色图整幅一格、
-手动行列覆盖（含分隔条内缩）、行优先裁切顺序。"""
+手动行列覆盖（含分隔条内缩）、行优先裁切顺序、无意义细条剔除
+（整幅标题栏 / 页脚行 / 边缘窄条 / 内部误检分隔）、无 numpy 回退路径。"""
 
 import importlib.util
 import os
@@ -29,6 +30,36 @@ def make_grid(rows, cols, cell=(160, 120), gap=8, bg=(255, 255, 255)):
             x0 = gap + c * (cw + gap)
             y0 = gap + r * (ch + gap)
             draw.rectangle([x0, y0, x0 + cw - 1, y0 + ch - 1], fill=color)
+    return img
+
+
+def make_grid_with_strips():
+    """3×3 宫格 + 顶部整幅标题栏 / 底部页脚行（竖条内容）+ 左缘 2px 非均匀窄条。
+
+    标题栏 / 页脚行的行 profile 有方差（模拟文字内容），会被误检成「一行格子」；
+    左缘窄条的列 profile 有方差，会切出 2px 宽的无意义细条。"""
+    cw, ch, gap = 160, 120, 8
+    sliver_w, left_margin = 2, 16
+    top_h, bot_h = 24, 20
+    w = sliver_w + left_margin + 3 * cw + 4 * gap   # 530
+    h = top_h + gap + 3 * ch + 2 * gap + gap + bot_h   # 436
+    img = Image.new("RGB", (w, h), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    x0 = sliver_w + left_margin
+    y0 = top_h + gap
+    for r in range(3):
+        for c in range(3):
+            v = 30 + (r * 3 + c) * 25
+            draw.rectangle([x0 + c * (cw + gap), y0 + r * (ch + gap),
+                            x0 + c * (cw + gap) + cw - 1, y0 + r * (ch + gap) + ch - 1], fill=(v, v, v))
+    # 标题栏 / 页脚：每格列区域铺深色块（行 profile 有方差模拟文字内容；间隙 / 留白列保持均匀）
+    for y0s, hgt in ((0, top_h), (h - bot_h, bot_h)):
+        for c in range(3):
+            draw.rectangle([x0 + c * (cw + gap), y0s, x0 + c * (cw + gap) + cw - 1, y0s + hgt - 1], fill=(30, 30, 30))
+    for y in range(h):   # 窄条取浅灰渐变：列 profile 有方差，但对白间隙行的 std 影响 < GAP_STD
+        v = 200 + (y % 40)
+        draw.point((0, y), fill=(v, v, v))
+        draw.point((1, y), fill=(239 - (y % 40),) * 3)
     return img
 
 
@@ -99,6 +130,45 @@ class DetectGridTests(unittest.TestCase):
                 draw_colors.append(img.getpixel((x0 + 5, y0 + 5)))
         for i, cell in enumerate(cells):
             self.assertEqual(cell.getpixel((5, 5)), draw_colors[i])
+
+
+    def test_edge_strips_dropped(self):
+        # 顶部标题栏 / 底部页脚行 / 左缘 2px 窄条都是误检 → 剔除后仍是干净的 3×3
+        img = make_grid_with_strips()
+        grid = _gs.detect_grid(img)
+        self.assertEqual((grid["rows"], grid["cols"]), (3, 3))
+        cells = _gs.split_image(img, grid)
+        self.assertEqual(len(cells), 9)
+        for cell in cells:
+            self.assertEqual(cell.size, (160, 120))
+
+    def test_manual_match_on_stripped_grid(self):
+        # 手动行列与剔除细条后的检出一致 → 用检出边界（不带边）
+        img = make_grid_with_strips()
+        grid = _gs.detect_grid(img, rows=3, cols=3)
+        self.assertEqual((grid["rows"], grid["cols"]), (3, 3))
+        self.assertEqual(len(_gs.split_image(img, grid)), 9)
+
+    def test_clean_bounds_drops_edge_slivers(self):
+        self.assertEqual(_gs._clean_bounds(((0, 24), (32, 152), (160, 280)), 436), ((32, 152), (160, 280)))
+
+    def test_clean_bounds_merges_interior_sliver(self):
+        # 内部误检分隔切出的细条 → 并入较大邻格（吸收其间分隔）
+        self.assertEqual(_gs._clean_bounds(((0, 200), (210, 230), (240, 500)), 500), ((0, 200), (210, 500)))
+
+    def test_clean_bounds_keeps_even_grid(self):
+        self.assertEqual(_gs._clean_bounds(((0, 100), (100, 200), (200, 300)), 300), ((0, 100), (100, 200), (200, 300)))
+
+    def test_fallback_without_numpy(self):
+        img = make_grid(2, 3)
+        ref = _gs.detect_grid(img)
+        saved = _gs._np
+        _gs._np = None
+        try:
+            got = _gs.detect_grid(img)
+        finally:
+            _gs._np = saved
+        self.assertEqual(got, ref)
 
 
 if __name__ == "__main__":
