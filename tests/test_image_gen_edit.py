@@ -380,6 +380,25 @@ class GenerateTests(unittest.TestCase):
         self.assertNotIn("width", captured["body"])
         self.assertNotIn("height", captured["body"])
 
+    def test_generate_steps_override(self):
+        graph = {
+            "1": {"class_type": "_SourceA", "inputs": {}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+        }
+        image_gen_edit.load_skill_workflow = lambda sid: {"template": True}
+        image_gen_edit.get_settings = lambda: {}
+        image_gen_edit.get_skill_gen_config = lambda sid: {}
+        captured = {}
+        image_gen_edit.resolve_request = lambda body, settings, **kw: (captured.update(body=body), {"p": 1})[1]
+        image_gen_edit.render_template = lambda tpl, params: (graph, [])
+        # 显式 steps >0 → 写入 body（覆盖 skill config.json 默认值）
+        self.run_node(skill_id="ok", prompt="hi", steps=8)
+        self.assertEqual(captured["body"].get("steps"), 8)
+        # 默认 -1 → 不写入 body，交由 skill config.json 的 steps（缺省 20）
+        captured.clear()
+        self.run_node(skill_id="ok", prompt="hi")
+        self.assertNotIn("steps", captured["body"])
+
     def _capture_request(self, template, **node_kwargs):
         """跑节点并捕获 resolve_request 收到的 body / 参数。"""
         graph = {

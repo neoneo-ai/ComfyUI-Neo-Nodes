@@ -80,6 +80,7 @@ function workflowParamValues(isVideo, genInfo) {
         values.MODEL = cfg.model || models.suggested_diffusion_models;
         values.TEXT_ENCODER = cfg.text_encoder || models.suggested_text_encoders;
         values.VAE = cfg.vae || models.suggested_vae;
+        values.STEPS = Number.isFinite(cfg.steps) && cfg.steps > 0 ? cfg.steps : 20;
         values.COUNT = cfg.count ?? 1;
         values.PREFIX = cfg.output_prefix || "NeoAgent";
         const [w, h] = defaultSizeFromConfig(cfg);

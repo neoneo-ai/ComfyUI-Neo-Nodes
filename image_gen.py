@@ -58,10 +58,14 @@ DEFAULT_SETTINGS = {
     "enhance_prompt": False,           # 是否启用 LLM 提示词增强（指令即技能 skill.md 正文）
 }
 
-# 采样参数（steps/cfg/sampler/denoise 等）不走设置，直接写死在各技能的 workflow.json 模板里。
+# 采样参数（cfg/sampler/denoise 等）不走设置，直接写死在各技能的 workflow.json 模板里；
+# steps 例外：skill config.json 可配默认值，节点/请求可覆盖。
 # 单次请求允许覆盖的设置键（其余设置一律以全局为准）
 _OVERRIDE_KEYS = ("model", "text_encoder", "vae", "loras",
-                  "base_resolution", "default_ratio", "output_prefix")
+                  "base_resolution", "default_ratio", "output_prefix", "steps")
+
+# skill config.json 里可覆盖全局生图设置的键（steps 为采样步数默认值，非模型设置区管理）
+_SKILL_SETTING_KEYS = tuple(DEFAULT_SETTINGS) + ("steps",)
 
 # 自动挑选默认模型时的名称线索（按优先级）
 _MODEL_HINTS = {
@@ -514,6 +518,8 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
     count = max(1, min(MAX_IMAGES, _int(body.get("count"), _int(merged.get("count"), 1))))
     width, height = resolve_dimensions(merged, ratio=body.get("ratio"),
                                        width=body.get("width"), height=body.get("height"))
+    # 采样步数：本次请求（节点入参/接口）> skill config.json > 默认 20
+    steps = max(1, _int(merged.get("steps"), 20))
 
     ref_scale = None
     if ref_name:
@@ -548,6 +554,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
         "count": count,
         "width": width,
         "height": height,
+        "steps": steps,
         "ref_name": ref_name,
         "ref_images": names,
         "ref_scale": ref_scale if ref_name else None,
@@ -1121,7 +1128,7 @@ async def start_generation(body: dict) -> dict:
     settings = get_settings()
     cfg = _skill.get_skill_gen_config(skill_id)
     for key, value in cfg.items():
-        if key in DEFAULT_SETTINGS and value not in (None, "", []):
+        if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
             settings[key] = value
 
     params = resolve_request(body or {}, settings)

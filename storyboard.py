@@ -29,6 +29,7 @@ from comfy_execution.utils import CurrentNodeContext
 
 from .image_gen import (
     DEFAULT_SETTINGS,
+    _SKILL_SETTING_KEYS,
     parse_ratio,
     render_template,
     resolve_dimensions,
@@ -122,7 +123,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         if assets is None:
             settings = {**DEFAULT_SETTINGS}
             for key, value in (get_skill_gen_config(sid) or {}).items():
-                if key in DEFAULT_SETTINGS and value not in (None, "", []):
+                if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
                     settings[key] = value
             assets = (load_skill_workflow(sid), settings)
             _assets_cache[sid] = assets
@@ -208,7 +209,7 @@ async def _run_grid_storyboard_task(task_id: str, name: str, idea: str, base_see
     comfy_nodes.interrupt_processing(False)   # 清掉上一次运行/取消残留的全局中断标志
     settings = {**DEFAULT_SETTINGS}
     for key, value in (get_skill_gen_config(_GRID_STORYBOARD_SKILL) or {}).items():
-        if key in DEFAULT_SETTINGS and value not in (None, "", []):
+        if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
             settings[key] = value
     template = load_skill_workflow(_GRID_STORYBOARD_SKILL)
     body = {

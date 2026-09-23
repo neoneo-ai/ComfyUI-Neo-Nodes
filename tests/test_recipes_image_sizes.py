@@ -168,8 +168,6 @@ class ImageSizesTests(StubFolderPathsMixin, unittest.TestCase):
         self.assertEqual(resp.status, 400)
 
 
-if __name__ == "__main__":
-    unittest.main()
 _gallery.VIDEO_EXTENSIONS = {".mp4", ".webm"}
 _gallery._copy_media_to_input = lambda src, fname: (fname, False)
 sys.modules[f"{_PKG}.gallery"] = _gallery
@@ -194,3 +192,7 @@ sys.modules[f"{_PKG}.util"] = _util
 setattr(_pkg, "util", _util)
 
 recipes = _load("recipes", "recipes.py")
+
+
+if __name__ == "__main__":
+    unittest.main()

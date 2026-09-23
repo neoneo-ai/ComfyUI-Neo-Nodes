@@ -258,6 +258,19 @@ class ResolveTests(unittest.TestCase):
         params = image_gen.resolve_request({"prompt": "a cat", "count": 99}, settings)
         self.assertEqual(params["count"], 8)
 
+    def test_steps_priority(self):
+        # 缺省 20（skill config.json 与请求都未给）
+        params = image_gen.resolve_request({"prompt": "a cat"}, base_settings())
+        self.assertEqual(params["steps"], 20)
+        # skill config.json 的默认值（经设置合并传入）
+        settings = base_settings()
+        settings["steps"] = 25
+        params = image_gen.resolve_request({"prompt": "a cat"}, settings)
+        self.assertEqual(params["steps"], 25)
+        # 本次请求（节点入参/接口 body）覆盖 skill 设置
+        params = image_gen.resolve_request({"prompt": "a cat", "steps": 8}, settings)
+        self.assertEqual(params["steps"], 8)
+
     def test_missing_model_folder_raises(self):
         with self.assertRaises(ValueError):
             image_gen.resolve_request({"prompt": "a cat"},
@@ -393,6 +406,24 @@ class RenderTemplateTests(unittest.TestCase):
     def test_ref_template_requires_reference(self):
         with self.assertRaises(ValueError):
             image_gen.render_template(self.ref_template, self.params())
+
+    def test_preset_template_steps_from_config(self):
+        # 生图预设模板的 steps 是 {{STEPS}} 占位符：默认值取该技能 config.json（经设置合并），请求可覆盖
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "image_gen", "config.json"),
+                  encoding="utf-8") as f:
+            cfg = json.load(f)
+        settings = dict(image_gen.DEFAULT_SETTINGS)
+        for key, value in cfg.items():
+            if key in image_gen._SKILL_SETTING_KEYS and value not in (None, "", []):
+                settings[key] = value
+        params = image_gen.resolve_request({"prompt": "a cat"}, settings)
+        self.assertEqual(params["steps"], 8)   # config.json 默认 steps=8
+        graph, _ = image_gen.render_template(self.text_template, params)
+        self.assertEqual(graph["10"]["inputs"]["steps"], 8)
+        # 请求覆盖（节点 steps 入参 / 接口 body）
+        params = image_gen.resolve_request({"prompt": "a cat", "steps": 30}, settings)
+        graph, _ = image_gen.render_template(self.text_template, params)
+        self.assertEqual(graph["10"]["inputs"]["steps"], 30)
 
     def test_lora_slot_fallback_and_missing_raises(self):
         template = {

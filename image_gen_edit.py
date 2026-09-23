@@ -22,8 +22,8 @@ from PIL import Image
 import nodes as comfy_nodes
 from comfy_api.latest import io
 from server import PromptServer
-from .image_gen import (DEFAULT_SETTINGS, MAX_IMAGES, get_settings, render_template, resolve_dimensions,
-                        resolve_request, template_max_refs, template_uses_krea2_edit)
+from .image_gen import (DEFAULT_SETTINGS, MAX_IMAGES, _SKILL_SETTING_KEYS, get_settings, render_template,
+                        resolve_dimensions, resolve_request, template_max_refs, template_uses_krea2_edit)
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
 from .bundles import get_bundle
 
@@ -305,6 +305,8 @@ class NeoImageGenEdit(io.ComfyNode):
                              tooltip="-1 = 用 skill/preset 的比例算尺寸"),
                 io.Int.Input("height", default=-1, min=-1, max=comfy_nodes.MAX_RESOLUTION,
                              tooltip="-1 = 用 skill/preset 的比例算尺寸"),
+                io.Int.Input("steps", default=-1, min=-1, max=100,
+                             tooltip="-1 = 用 skill config.json 的 steps（缺省 20）"),
                 io.Model.Input("model", optional=True,
                                tooltip="外部加速模型；提供时覆盖内部主模型链（UNETLoader/LoRA 等）"),
             ],
@@ -313,7 +315,7 @@ class NeoImageGenEdit(io.ComfyNode):
 
     @classmethod
     def execute(cls, skill_id, prompt="", refs=None, bundle="", seed=0, count=1,
-                width=-1, height=-1, model=None):
+                width=-1, height=-1, steps=-1, model=None):
         payload = get_bundle(bundle) if bundle else None
 
         # skill 以节点本地选择为准：bundle 只带资源（prompt/参考图），不携带生图 skill
@@ -323,7 +325,7 @@ class NeoImageGenEdit(io.ComfyNode):
             raise RuntimeError(f"[NeoNodes] skill '{skill_id}' 缺少 workflow.json，无法生成")
         settings = dict(get_settings())
         for key, value in get_skill_gen_config(real_id).items():
-            if key in DEFAULT_SETTINGS and value not in (None, "", []):
+            if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
                 settings[key] = value
 
         # prompt：节点输入优先（多 prompt 逐项循环时每次拿到各自的），空则回退 bundle 里的第一条
@@ -334,6 +336,8 @@ class NeoImageGenEdit(io.ComfyNode):
         body = {"prompt": prompt, "count": int(count)}
         if seed is not None and int(seed) >= 0:
             body["seed"] = int(seed)
+        if int(steps) > 0:
+            body["steps"] = int(steps)   # -1 = 用 skill config.json 的 steps（缺省 20）
         in_w = int(width) if int(width) > 0 else 0
         in_h = int(height) if int(height) > 0 else 0
         if in_w > 0:
