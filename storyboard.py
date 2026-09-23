@@ -93,6 +93,13 @@ def _storyboard_dims(width, height, ratio):
     return resolve_dimensions(settings)
 
 
+def _grid_storyboard_dims(ratio):
+    """九宫格尺寸：2048 基准（每格约 683×384 @16:9，够拆分后当首帧用）；
+    无比例（未保存新配方）默认 16:9，不回退 1:1 方图。"""
+    value = parse_ratio(ratio) or (16 / 9)
+    return resolve_dimensions({"base_resolution": 2048}, ratio=value)
+
+
 def _tensor_to_pil(image):
     """[H,W,C] float(0-1) 张量 → PIL RGB 图（单通道转灰度）。"""
     arr = (image.detach().cpu() * 255).clamp(0, 255).to(torch.uint8).numpy()
@@ -383,7 +390,7 @@ async def neo_video_gen_grid_storyboard_generate(request):
         base_seed = random.randint(0, 2**31 - 1)
 
     task_id = str(uuid.uuid4())
-    width, height = _storyboard_dims(None, None, shared.get("ratio"))
+    width, height = _grid_storyboard_dims(shared.get("ratio"))
     _storyboard_tasks[task_id] = {
         "task_id": task_id, "name": name, "skill_id": _GRID_STORYBOARD_SKILL,
         "status": "running", "total": 1, "processed": 0,

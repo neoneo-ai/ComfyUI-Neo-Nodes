@@ -1874,6 +1874,18 @@
     display: flex;
     gap: 8px;
     align-items: stretch;
+    flex-wrap: wrap;   /* 窗口窄时两个路径按钮换行，不挤压主题输入框 */
+}
+
+/* 右栏顶部占位：与左栏 ① 块（标签 + 主题行）同高，使「分段的故事」标题行与「② 故事脚本」对齐 */
+.neo-director-story-right-spacer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.neo-director-story-idea-spacer {
+    min-height: 40px;   /* 与主题输入框 min-height 一致 */
 }
 
 .neo-director-story-idea {
@@ -1912,11 +1924,23 @@
     min-height: 14px;
 }
 
-/* 🧩 九宫格分镜图（故事板生成页）：一键生成按钮 + 状态 + 结果预览 */
+/* 故事板生成页顶部引导行：讲清两条并行路径（文字 / 图片） */
+.neo-director-story-hint {
+    font-size: 11px;
+    color: #9aa4b0;
+    margin-bottom: 8px;
+    line-height: 1.6;
+}
+
+.neo-director-story-hint b {
+    color: #cdd6e0;
+}
+
+/* 🧩 九宫格分镜图（故事板生成页）：图片路径结果区（按钮在主题行右侧，这里只放状态 + 预览） */
 .neo-director-grid-idea {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .neo-director-grid-idea-gen {

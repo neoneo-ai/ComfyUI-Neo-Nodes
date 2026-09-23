@@ -682,6 +682,13 @@ test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () =>
     assert.ok(ideaInp && genBtn && storyTa, "主题输入 / 生成按钮 / 故事框齐全");
     assert.equal(document.querySelector(".neo-director-refgrid"), null, "已移除参考图网格");
     assert.ok(document.querySelector(".neo-director-seglen"), "分段粒度选择器存在");
+    // 页面结构：顶部两条路径引导 + ①/② 步骤标签；九宫格按钮与「生成故事脚本」并排在主题行右侧
+    assert.ok(document.querySelector(".neo-director-story-hint"), "顶部有两条分镜路径的引导行");
+    const leftLabels = [...document.querySelectorAll(".neo-director-story-left .neo-director-field-label")].map(l => l.textContent);
+    assert.ok(leftLabels.some(t => t.includes("① 故事主题")), "左栏有 ① 主题步骤标签");
+    assert.ok(leftLabels.some(t => t.includes("② 故事脚本")), "左栏有 ② 脚本步骤标签");
+    assert.ok(document.querySelector(".neo-director-story-idea-row .neo-director-grid-idea-gen"), "九宫格按钮与生成故事脚本并排在主题行右侧");
+    assert.ok(document.querySelector(".neo-director-story-right-spacer"), "右栏有顶部占位（分段的故事与 ② 故事脚本对齐）");
     // 分段粒度 + 拆分按钮整体在右栏标题行最右侧（不再占左栏底部一行）
     const segsHead = document.querySelector(".neo-director-story-segs-head");
     assert.ok(segsHead.querySelector(".neo-director-seglen"), "分段粒度在右栏标题行内");

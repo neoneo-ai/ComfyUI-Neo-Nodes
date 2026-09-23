@@ -1531,8 +1531,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     renderSegPreview(exSegPreview.length ? exSegPreview : []);
 
     const ideaInp = $el('textarea', { className: 'neo-director-story-idea', placeholder: '输入故事主题 / 想法（如：一只机器猫在雨夜的城市寻找回家的路）' });
-    const genBtn = $el('button', { className: 'rs-btn neo-director-gen-story', textContent: '✨ 自动生成故事' });
-    const storyTa = $el('textarea', { className: 'neo-director-story', placeholder: '（生成后可编辑，或直接手写故事脚本）' });
+    const genBtn = $el('button', { className: 'rs-btn neo-director-gen-story', textContent: '✨ 生成故事脚本' });
+    const storyTa = $el('textarea', { className: 'neo-director-story', placeholder: '逐段的故事内容（可手写，或点左侧 ✨ 自动生成）' });
     ideaInp.value = exStory.idea || '';   // textarea 用属性赋值回显（$el 的 value 选项对 textarea 不生效）
     storyTa.value = exStory.story || '';
     const storyStatus = $el('span', { className: 'neo-director-story-status' });
@@ -1968,17 +1968,33 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // ---- 两个可切换页签：自动故事板 / 时间轴分段（避免单页过于复杂）----
     const storyboardPane = $el('div', { className: 'neo-director-pane neo-director-pane-story' }, [
+        // 顶部引导：两条路径都从 ① 主题出发，之后分叉（文字 / 图片）
+        $el('div', { className: 'neo-director-story-hint' }, [
+            $el('span', { textContent: '两种方式都先填 ① 故事主题 / 想法，再二选一——' }),
+            $el('b', { textContent: '文字路径' }),
+            $el('span', { textContent: '：✨ 生成脚本 → ✅ 右侧拆分成分段；' }),
+            $el('b', { textContent: '图片路径' }),
+            $el('span', { textContent: '：🧩 一键九宫格（Qwen Image 2.1 出 3×3 宫格，成功后自动切到参考图设置拆成 9 段）' }),
+        ]),
         $el('div', { className: 'neo-director-story-cols' }, [
-            // 左栏：分段前故事（主题 + 生成 + 脚本 + 状态）；角色/背景参考图与图片分镜控制已移到「🎨 参考图设置」页
+            // 左栏：分段前故事（主题行右侧并排两条路径按钮；九宫格结果区在下方）
             $el('div', { className: 'neo-director-story-col neo-director-story-left' }, [
-                $el('div', { className: 'neo-director-story-idea-row' }, [ideaInp, genBtn]),
+                $el('label', { className: 'neo-director-field-label', textContent: '① 故事主题 / 想法' }),
+                // 两条路径按钮并排在主题行右侧：✨ 文字路径 / 🧩 图片路径（都以上方主题为输入）
+                $el('div', { className: 'neo-director-story-idea-row' }, [ideaInp, genBtn, gridIdeaBtn]),
+                $el('label', { className: 'neo-director-field-label', textContent: '② 故事脚本（生成后可编辑，或直接手写）' }),
                 storyTa,
                 storyStatus,
-                // 🧩 九宫格分镜图：从上方主题/想法一键生成；成功后自动切到「🎨 参考图设置」并回填为待拆分分镜图
-                $el('div', { className: 'neo-director-grid-idea' }, [gridIdeaBtn, gridIdeaStatus, gridIdeaPreview]),
+                // 🧩 图片路径结果区：状态 + 预览（成功后自动切到「🎨 参考图设置」并回填为待拆分分镜图）
+                $el('div', { className: 'neo-director-grid-idea' }, [gridIdeaStatus, gridIdeaPreview]),
             ]),
-            // 右栏：分段后的故事（拆分成功后显示）；分段粒度 + 拆分按钮放在本栏标题行最右侧（不占左栏底部一行）
+            // 右栏：分段后的故事；顶部占位与左栏 ① 块同高，使标题行与「② 故事脚本」对齐
             $el('div', { className: 'neo-director-story-col neo-director-story-right' }, [
+                $el('div', { className: 'neo-director-story-right-spacer' }, [
+                    $el('label', { className: 'neo-director-field-label', textContent: '\u200b' }),   // 零宽字符撑出行框，与左栏标签同高
+                    $el('div', { className: 'neo-director-story-idea-row neo-director-story-idea-spacer' }),
+                ]),
+                // 分段粒度 + 拆分按钮放在本栏标题行最右侧（不占左栏底部一行）
                 $el('div', { className: 'neo-director-story-segs-head' }, [
                     $el('label', { className: 'neo-director-field-label neo-director-story-segs-title', textContent: '分段的故事' }),
                     $el('div', { className: 'neo-director-story-actions' }, [
