@@ -36,7 +36,7 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 | count | INT (可选) | 生成张数（1–8），默认 1 |
 | width | INT (可选) | 输出宽度，默认 -1 = 用 skill/preset 比例算尺寸；>0 覆盖模板分辨率。前端选中/切换 skill 时自动填入该 skill 预设宽高（`/neo_image_gen/skill_dims`），手改后生效 |
 | height | INT (可选) | 输出高度，默认 -1 = 用 skill/preset 比例算尺寸；>0 覆盖模板分辨率。前端选中/切换 skill 时自动填入该 skill 预设宽高（`/neo_image_gen/skill_dims`），手改后生效 |
-| steps | INT (可选) | 采样步数，默认 -1 = 用 skill `config.json` 的 `steps`（缺省 20）；>0 覆盖。模板里对应 `{{STEPS}}` 占位符 |
+| steps | INT (可选) | 采样步数，默认 -1 = 用 skill `config.json` 的 `steps`（缺省 20）；>0 覆盖。前端选中/切换 skill 时自动填入该 skill 预设值（`/neo_image_gen/skill_dims`），手改后生效。模板里对应 `{{STEPS}}` 占位符 |
 | model | MODEL (可选) | 外部加速模型连线槽；提供时覆盖内部主模型链（UNETLoader/LoRA 等，只沿 `model` 边剪枝），注入到 `KSampler.model` 来源处 |
 
 | 输出 | 类型 | 说明 |

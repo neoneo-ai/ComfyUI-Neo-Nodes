@@ -106,7 +106,7 @@
 | GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`（仅运行中且全局 registry 命中本 prompt 时非空）、错误、告警 |
 | GET | `/neo_image_gen/tasks` | 最近任务列表（按创建时间倒序，最多 32 条） |
 | POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
-| GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`，与节点 `width`/`height=-1` 时一致），供 NeoImageGenEdit widget 填充默认值（定义于 image_gen_edit.py） |
+| GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`）与 `steps`（skill config，缺省 20；与节点 `width`/`height`/`steps=-1` 时一致），供 NeoImageGenEdit widget 填充默认值（定义于 image_gen_edit.py） |
 | GET | `/neo_image_gen/skill_config?skill_id=` | 读取技能生图/生视频设置：预设 = 自身 `config.json` ⊕ 本地覆盖文件（`configs/skill_overrides/<id>.json`），其余直接读 `config.json` |
 | GET | `/neo_image_gen/skill_workflow?skill_id=` | 返回技能 `workflow.json`（API prompt 模板，只读），供详情弹窗渲染节点流程图；缺失/非法 404 |
 | POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length`/`steps` 保留既有有效值（非模型设置区管理，视频技能「步数」由此落盘） |

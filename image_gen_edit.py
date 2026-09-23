@@ -22,7 +22,7 @@ from PIL import Image
 import nodes as comfy_nodes
 from comfy_api.latest import io
 from server import PromptServer
-from .image_gen import (DEFAULT_SETTINGS, MAX_IMAGES, _SKILL_SETTING_KEYS, get_settings, render_template,
+from .image_gen import (MAX_IMAGES, _SKILL_SETTING_KEYS, get_settings, render_template,
                         resolve_dimensions, resolve_request, template_max_refs, template_uses_krea2_edit)
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
 from .bundles import get_bundle
@@ -369,17 +369,23 @@ class NeoImageGenEdit(io.ComfyNode):
 
 @routes.get("/neo_image_gen/skill_dims")
 async def skill_dims_route(request):
-    """返回 gen_image skill 的预设尺寸（base_resolution + default_ratio），与 execute() 在 width/height=-1 时一致，供节点 widget 填充默认值。"""
+    """返回 gen_image skill 的预设宽高（base_resolution + default_ratio）与 steps，与 execute() 在 width/height/steps=-1 时一致，供节点 widget 填充默认值。"""
     name = (request.rel_url.query.get("skill_id") or "").strip()
     if not name:
         return web.json_response({"success": False, "error": "缺少 skill_id"}, status=400)
     try:
         settings = dict(get_settings())
         for key, value in get_skill_gen_config(_resolve_skill_id(name)).items():
-            if key in DEFAULT_SETTINGS and value not in (None, "", []):
+            if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
                 settings[key] = value
         width, height = resolve_dimensions(settings)
-        return web.json_response({"success": True, "width": width, "height": height})
+        try:
+            steps = int(settings.get("steps"))
+        except (TypeError, ValueError):
+            steps = 20
+        if steps <= 0:
+            steps = 20
+        return web.json_response({"success": True, "width": width, "height": height, "steps": steps})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 

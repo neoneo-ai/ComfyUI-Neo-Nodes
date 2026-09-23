@@ -1,4 +1,4 @@
-// NeoImageGenEdit 节点：width/height 默认跟随所选 skill 预设（base_resolution + default_ratio）。
+// NeoImageGenEdit 节点：width/height/steps 默认跟随所选 skill 预设（base_resolution + default_ratio + steps）。
 // 参考 NeoH3VideoDirector（web/director-node.js）的 applyDimDefaults：仅当仍为默认 -1 时填充，
 // 切换 skill_id 下拉强制重填；工作流已存的实值优先（首次载入不覆盖）。
 // 另修复旧版本工作流/复制粘贴导致的 widgets_values 串位：seed 之后会自动追加 control_after_generate
@@ -29,10 +29,10 @@ app.registerExtension({
             node.addDOMWidget("skill_status", "custom", statusRow.el);
             statusRow.refresh();
 
-            // 用 skill 预设尺寸填 width/height widget；force=false 时仅当仍为默认 -1（保留工作流已存值）。
+            // 用 skill 预设填 width/height/steps widget；force=false 时仅当仍为默认 -1（保留工作流已存值）。
             const applyDimDefaults = (d, force) => {
                 if (!d) return;
-                for (const [nm, val] of [["width", d.width], ["height", d.height]]) {
+                for (const [nm, val] of [["width", d.width], ["height", d.height], ["steps", d.steps]]) {
                     const w = node.widgets?.find((x) => x.name === nm);
                     if (!w || !Number.isFinite(val)) continue;
                     if (!force && Number(w.value) !== -1) continue;
@@ -86,7 +86,7 @@ app.registerExtension({
 
             loadDims();
 
-            // 切换 skill_id 下拉时强制重填预设尺寸（本版本 combo widget 用 callback 触发变化，onchange 不存在）
+            // 切换 skill_id 下拉时强制重填预设宽高/步数（本版本 combo widget 用 callback 触发变化，onchange 不存在）
             if (skillWidget) {
                 const oc = skillWidget.callback;
                 skillWidget.callback = function() { oc?.apply(this, arguments); loadDims(true); statusRow.refresh(); };

@@ -105,7 +105,7 @@ def _load(name, fname):
 
 
 _load("skill", "skill.py")
-_load("image_gen", "image_gen.py")
+_image_gen = _load("image_gen", "image_gen.py")
 image_gen_edit = _load("image_gen_edit", "image_gen_edit.py")
 
 # V3 节点的 schema 展开用真实 _io 校验（comfy_api 已可离线导入）
@@ -576,15 +576,24 @@ class SkillDimsRouteTests(unittest.TestCase):
         return types.SimpleNamespace(rel_url=types.SimpleNamespace(query={"skill_id": skill_id}))
 
     def test_returns_preset_dims(self):
-        # 与 generate() 在 width/height=-1 时同一路径：base_resolution + default_ratio → round 到 16
+        # 与 generate() 在 width/height/steps=-1 时同一路径：base_resolution + default_ratio → round 到 16，steps 取 skill config
         image_gen_edit._resolve_skill_id = lambda v: "sk_test"
-        image_gen_edit.get_skill_gen_config = lambda sid: {"default_ratio": "16:9", "base_resolution": 1280}
-        image_gen_edit.get_settings = lambda: dict(image_gen_edit.DEFAULT_SETTINGS)
+        image_gen_edit.get_skill_gen_config = lambda sid: {"default_ratio": "16:9", "base_resolution": 1280, "steps": 25}
+        image_gen_edit.get_settings = lambda: dict(_image_gen.DEFAULT_SETTINGS)
         resp = asyncio.run(image_gen_edit.skill_dims_route(self._req("Alpha")))
         self.assertEqual(resp.status, 200)
         body = json.loads(resp.body)
         self.assertTrue(body["success"])
         self.assertEqual((body["width"], body["height"]), (1280, 720))
+        self.assertEqual(body["steps"], 25)
+
+    def test_steps_fallback_20_without_config(self):
+        image_gen_edit._resolve_skill_id = lambda v: "sk_test"
+        image_gen_edit.get_skill_gen_config = lambda sid: {"default_ratio": "16:9", "base_resolution": 1280}
+        image_gen_edit.get_settings = lambda: dict(_image_gen.DEFAULT_SETTINGS)
+        resp = asyncio.run(image_gen_edit.skill_dims_route(self._req("Alpha")))
+        body = json.loads(resp.body)
+        self.assertEqual(body["steps"], 20)
 
     def test_missing_skill_id_400(self):
         resp = asyncio.run(image_gen_edit.skill_dims_route(self._req("")))
