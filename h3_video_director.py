@@ -10,6 +10,10 @@
 - 分镜首帧优先：i2v/fl2v 段自带首帧图（分镜格）时，首帧锚点用它（不再被连续性顶替），上段尾部改走
   context_mode="reference"——目标之前的参考视频，不改时长、不丢帧、不做接缝淡化。
 - 身份继承：首段（第一个带参考素材的段）的身份参考图领养到后续段，同走 NeoH3AddContext 的图片参考块。
+- 多帧单次分块（shared.chunk_sec，默认 15 秒；整配方开关 shared.multiframe 默认开）：连续兼容段
+  （t2v/i2v/fl2v、无自带参考素材/源视频、总时长 ≤ chunk_sec）合并成一次 ref2va 运行
+  （_MULTIFRAME_TEMPLATE + NeoH3AddGuides），各段分镜关键帧按累计起点钉在对应帧号；不兼容 / 超长的段自动退回逐段路径。
+  multiframe 关闭时强制逐段（旧模式），忽略 chunk_sec。块间上下文只走 reference 模式（目标之前的参考视频，不改时长、不丢帧）。
 - Tier A 回退（context_frames=0）：没自带首帧图的 i2v/fl2v 段用上段尾帧当首帧；丢下段第一帧避免边界重复。
   以上各情况的丢帧数都同步裁音频保 A/V 对齐。
 - seed 派生：base_seed + i（i 为段序号），保证可复现且各段不同。
@@ -35,7 +39,7 @@ from .image_gen_edit import _image_to_data_uri, _model_injection_node, execute_g
 from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
 from .h3_preview import load_h3_tiny_vae, preview_override
 from .skill import get_skill_gen_config, load_skill_workflow
-from .recipes import list_director_recipes, load_director_spec
+from .recipes import list_director_recipes, load_director_spec, _director_llm
 
 # 当前 director 运行进度（进程内单例）。ComfyUI 串行执行 prompt，同一时刻只有一个活动 director。
 # segment_index：正在生成的段序号（-1 = 尚未开始/已结束）；total_segments：总段数。
@@ -244,6 +248,68 @@ class NeoH3AddKeyframe:
         return (_install_continuity(model), cond)
 
 
+_MAX_GUIDES = 32   # 多帧单次一块允许的关键帧锚点上限（15 秒块内段数 × fl2v 首尾双锚点的余量）
+
+
+def _resize_guide(image, width, height):
+    """关键帧图 [B,H,W,C] → 精确缩放到画布 [B,height,width,3]（同官方 H3 guide 节点，中心裁剪保比例）。"""
+    samples = image[..., :3].movedim(-1, 1)
+    samples = comfy.utils.common_upscale(samples, width, height, "lanczos", "center")
+    return samples.movedim(1, -1)
+
+
+class NeoH3AddGuides:
+    """多帧单次（director 分块运行，内部节点用）：把多个带时间戳的 keyframe 锚点批量注入 H3 conditioning。
+
+    每对 guide_N_image / guide_N_frame 编码后以该帧号写入 minimax_keyframes，与 minimax_refs 共存；
+    director 的分块单次模式用它把各段分镜关键帧钉在各自累计起点（等价于多个 MiniMaxH3AddGuide）。
+    新旧模式开关 = latent 是否连接：接上目标 AV latent → 关键帧先缩放到该画布再编码（新，与主视频
+    latent 空间维度一致，首帧图/分镜图分辨率≠配方画布时不 patchify 报错）；不接 → 按原图分辨率编码
+    （旧，兼容老工作流）。director 分块运行时自动接线，恒走新模式。
+    返回挂了连续性 wrapper 的 MODEL，锚点与参考同时生效、时间轴对齐（机制同 NeoH3AddKeyframe）。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = {}
+        for i in range(8):   # 画布用槽位；director 运行时经 kwargs 可传满 _MAX_GUIDES 对
+            optional[f"guide_{i}_image"] = ("IMAGE",)
+            optional[f"guide_{i}_frame"] = ("INT", {"default": 0, "min": -3600, "max": 3600})
+        optional["latent"] = ("LATENT",)   # 可选：接上=关键帧对齐目标画布（新）；不接=按原图分辨率编码（旧，兼容老工作流）
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "conditioning": ("CONDITIONING",),
+                "vae": ("VAE",),
+            },
+            "optional": optional,
+        }
+
+    RETURN_TYPES = ("MODEL", "CONDITIONING")
+    RETURN_NAMES = ("model", "conditioning")
+    FUNCTION = "add_guides"
+    CATEGORY = "Neo-Nodes"
+
+    def add_guides(self, model, conditioning, vae, latent=None, **kwargs):
+        import node_helpers
+        width = height = None
+        if latent is not None:   # 新模式：按目标 AV latent 的画布尺寸对齐关键帧（同官方 MiniMaxH3AddGuide）
+            video = latent["samples"].tensors[0]   # [B, 24, T, H/16, W/16]
+            width, height = int(video.shape[4] * 16), int(video.shape[3] * 16)   # 像素画布（latent × 16）
+        keyframes = []
+        for i in range(_MAX_GUIDES):
+            img = kwargs.get(f"guide_{i}_image")
+            if img is None:
+                continue
+            idx = int(kwargs.get(f"guide_{i}_frame", 0) or 0)
+            frames = _resize_guide(img[:1], width, height) if width else img[:1]   # 未接 latent → 旧模式原分辨率
+            keyframes.append({"resolved_frame_index": max(0, idx), "latent": vae.encode(frames)})
+        if not keyframes:
+            return (model, conditioning)
+        cond = node_helpers.conditioning_set_values(conditioning, {"minimax_keyframes": keyframes}, append=True)
+        return (_install_continuity(model), cond)
+
+
 _H3_COND_NODES = ("MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo")
 _H3_SAMPLER_NODES = ("KSampler", "KSamplerAdvanced")
 _CANVAS_MULTIPLE = 32   # 参考块的像素对齐（官方 H3 节点同款；latent 侧即 16 分频后的偶数）
@@ -327,6 +393,57 @@ def _inject_continuity_nodes(graph, context_tail, context_frames, identity_names
         if isinstance(src, (list, tuple)) and len(src) == 2 and src[0] == cond_id:
             sampler_inputs[key] = cond_ref
     return graph, overrides
+
+
+def _inject_multiframe_guides(graph, guides):
+    """在渲染后的模板图里注入 NeoH3AddGuides（每个关键帧一个 LoadImage），返回 (graph, overrides)。
+
+    供多帧单次分块运行用：定位 latent_image 指向 H3 conditioning 的采样器，把它的 model / positive / negative
+    改指到注入节点——接在 _inject_continuity_nodes 之后调用时即串在连续性链尾（身份/上下文 → 关键帧锚点）。
+    guides 为空时不动图。
+    """
+    if not guides:
+        return graph, None
+    sampler_id = cond_id = None
+    for nid, node in graph.items():
+        if node.get("class_type") not in _H3_SAMPLER_NODES:
+            continue
+        latent_src = (node.get("inputs") or {}).get("latent_image")
+        if not (isinstance(latent_src, (list, tuple)) and len(latent_src) == 2):
+            continue
+        cond_node = graph.get(latent_src[0])
+        if cond_node is not None and cond_node.get("class_type") in _H3_COND_NODES:
+            sampler_id, cond_id = nid, latent_src[0]
+            break
+    if sampler_id is None:
+        raise RuntimeError("[NeoNodes] 未找到消费 H3 conditioning 的 KSampler，无法注入多帧关键帧锚点")
+    vae_src = (graph[cond_id].get("inputs") or {}).get("vae")
+    if not (isinstance(vae_src, (list, tuple)) and len(vae_src) == 2):
+        raise RuntimeError("[NeoNodes] H3 conditioning 节点没有 vae 来源，无法编码多帧关键帧")
+    sampler_inputs = graph[sampler_id]["inputs"]
+    model_ref = sampler_inputs.get("model")
+    cond_ref = None
+    for key in ("positive", "negative"):
+        src = sampler_inputs.get(key)
+        if isinstance(src, (list, tuple)) and len(src) == 2:
+            cond_ref = list(src)
+            break
+    if not (isinstance(model_ref, (list, tuple)) and len(model_ref) == 2) or cond_ref is None:
+        raise RuntimeError("[NeoNodes] H3 采样器没有 model / conditioning 来源，无法注入多帧关键帧锚点")
+    node_id = _free_node_id(graph)
+    inputs = {"model": list(model_ref), "conditioning": cond_ref, "vae": list(vae_src), "latent": [cond_id, 1]}
+    graph[node_id] = {"class_type": "NeoH3AddGuides", "inputs": inputs}   # 先入图占号，image id 才不会撞上它
+    for i, g in enumerate(guides[:_MAX_GUIDES]):
+        image_id = _free_node_id(graph)
+        graph[image_id] = {"class_type": "LoadImage", "inputs": {"image": g["name"]}}
+        inputs[f"guide_{i}_image"] = [image_id, 0]
+        inputs[f"guide_{i}_frame"] = int(g["frame_idx"])
+    sampler_inputs["model"] = [node_id, 0]
+    for key in ("positive", "negative"):
+        src = sampler_inputs.get(key)
+        if isinstance(src, (list, tuple)) and len(src) == 2 and src[0] == cond_ref[0] and src[1] == cond_ref[1]:
+            sampler_inputs[key] = [node_id, 1]
+    return graph, None
 
 
 class NeoH3AddContext:
@@ -494,6 +611,126 @@ def _panel_first(seg: dict) -> bool:
     return (seg.get("mode") or "t2v") in ("i2v", "fl2v") and bool(seg.get("ref_input"))
 
 
+def _seg_duration(seg: dict) -> float:
+    """段时长（秒）：配方给了正值用它，否则按 5 秒计（与执行时 length 缺省回退一致）。"""
+    try:
+        d = float(seg.get("duration_sec"))
+    except (TypeError, ValueError):
+        return 5.0
+    return d if d > 0 else 5.0
+
+
+def _chunk_compatible(seg: dict) -> bool:
+    """该段能否进多帧单次分块：文生/图生/首尾帧，且没有自带参考素材或源视频（那些走全参考/编辑路径）。"""
+    return ((seg.get("mode") or "t2v") in ("t2v", "i2v", "fl2v")
+            and not (seg.get("refs") or {}) and not seg.get("source_video"))
+
+
+def _chunk_budget(shared: dict) -> float:
+    """多帧单次分块的有效时长预算：整配方开关 shared.multiframe 关闭时强制 0（逐段旧模式，忽略 chunk_sec）；
+    开启时取 shared.chunk_sec（缺省 15 秒）。"""
+    if shared.get("multiframe", True) is False:
+        return 0.0
+    cs = shared.get("chunk_sec")
+    return float(cs) if cs is not None else 15.0
+
+
+def _plan_chunks(segments, chunk_sec):
+    """把段规划成执行单元：连续兼容段（总时长 ≤ chunk_sec）合并成一个多帧单次块，其余各成 legacy 单元。
+
+    返回 [{"kind": "multi"/"legacy", "segs": [...]}]，顺序与输入一致、不丢段。chunk_sec <= 0 时全为
+    legacy 单元（逐段路径，行为与旧版完全一致）；单段的兼容块也归 legacy（无锚点可加，多帧模板没有收益）。
+    """
+    budget = float(chunk_sec or 0)
+    if budget <= 0:
+        return [{"kind": "legacy", "segs": [s]} for s in segments]
+    units, cur, cur_dur = [], [], 0.0
+
+    def flush():
+        if not cur:
+            return
+        units.append({"kind": "multi" if len(cur) > 1 else "legacy", "segs": list(cur)})
+        cur.clear()
+
+    for seg in segments:
+        d = _seg_duration(seg)
+        if not _chunk_compatible(seg) or d > budget:
+            flush()
+            units.append({"kind": "legacy", "segs": [seg]})
+            continue
+        if cur and cur_dur + d > budget:
+            flush()
+        cur.append(seg)
+        cur_dur += d
+    flush()
+    return units
+
+
+def _plan_multiframe_guides(segs, total_frames):
+    """块内各段的累计起点 → 关键帧锚点帧号（24fps）。
+
+    返回 ([{name, frame_idx}], skipped)：name 取段的关键帧（spec.keyframe，first_frame 优先于分镜图），
+    fl2v 段另在段末钉一个尾帧锚点；落位超出 total_frames 的锚点跳过并计数。
+    """
+    guides, skipped = [], 0
+    start = 0.0
+    for seg in segs:
+        d = _seg_duration(seg)
+        name = seg.get("keyframe") or seg.get("ref_input")
+        if name:
+            idx = int(round(start * H3_FPS))
+            if idx < total_frames:
+                guides.append({"name": name, "frame_idx": idx})
+            else:
+                skipped += 1
+        if (seg.get("mode") or "t2v") == "fl2v" and seg.get("last_input"):
+            idx = min(int(round((start + d) * H3_FPS)) - 1, total_frames - 1)
+            if idx >= 0:
+                guides.append({"name": seg["last_input"], "frame_idx": idx})
+        start += d
+    return guides, skipped
+
+
+def _fmt_ts(sec):
+    """秒 → MM:SS.mmm（H3 提示词时间戳格式）。"""
+    m = int(sec // 60)
+    return f"{m:02d}:{sec - m * 60:06.3f}"
+
+
+def _merge_chunk_prompt(segs, total_sec, total_frames, identity_count=0):
+    """把块内多段合并成一条多镜头提示词（多帧单次运行用）。
+
+    单段直接用原文；多段走 LLM（director_merge_prompt）按内容/顺序合并，失败回退机械拼接
+    （[Shot N] + 切点时间戳）。返回 (prompt, note)：note 为回退提示（正常时为 None）。
+    """
+    if len(segs) == 1:
+        return segs[0].get("prompt") or "", None
+    parts = [f"多帧单次生成：把以下 {len(segs)} 段合并成一条总时长 {total_sec:g} 秒（{total_frames} 帧）的连续视频提示词，"
+             f"各段起点有画面锚点；保留每段内容与顺序，不增删剧情。"]
+    if identity_count > 0:
+        parts.append(f"本次运行带 {identity_count} 张角色身份参考图，用 <Picture 1>..<Picture {identity_count}> 引用（按给定顺序编号）。")
+    start = 0.0
+    for i, seg in enumerate(segs, 1):
+        d = _seg_duration(seg)
+        parts.append(f"[第{i}段] 时长 {d:g} 秒，累计起点 {_fmt_ts(start)}\n{str(seg.get('prompt') or '').strip()}")
+        start += d
+    try:
+        result = _director_llm("director_merge_prompt", "\n\n".join(parts))
+        if "error" not in result:
+            prompt = str(result.get("prompt") or "").strip()
+            if prompt:
+                return prompt, None
+    except Exception as e:
+        print(f"[NeoNodes] 多帧单次提示词合并 LLM 调用失败：{e}")
+    lines = []
+    start = 0.0
+    for i, seg in enumerate(segs, 1):
+        d = _seg_duration(seg)
+        lines.append(f"[Shot {i}] At {_fmt_ts(start)} cut... {str(seg.get('prompt') or '').strip()}")
+        start += d
+    return "\n".join(lines), "多帧单次提示词合并 LLM 不可用，已回退机械拼接（[Shot N] + 切点时间戳）"
+
+
 def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
                        context_tail=None, context_frames=0, identity_names=(), context_mode=CONTEXT_MODES[0],
                        on_step=None, on_total=None):
@@ -536,6 +773,66 @@ def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview
     graph, c_overrides = _inject_continuity_nodes(graph, context_tail, window, identity_names, context_mode)
     if c_overrides:
         overrides = {**(overrides or {}), **c_overrides}
+    with preview_override(preview, vae, node_id, on_step=on_step):
+        return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
+
+
+# 多帧单次分块的基础模板：ref2va + KSampler + AV 解码（与 minimax-h3-r2v 预设同构，但不带参考槽位——
+# 身份图 / 跨块上下文 / 关键帧锚点全部运行时注入）。不作为可选手册 skill，仅供 director 分块运行渲染。
+_MULTIFRAME_TEMPLATE = {
+    "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}", "weight_dtype": "default"}},
+    "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "{{TEXT_ENCODER}}", "type": "minimax", "device": "default"}},
+    "3": {"class_type": "VAELoader", "inputs": {"vae_name": "{{VAE}}"}},
+    "4": {"class_type": "VAELoader", "inputs": {"vae_name": "{{AUDIO_VAE}}"}},
+    "5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+        "clip": ["2", 0], "vae": ["3", 0], "audio_vae": ["4", 0],
+        "prompt": "{{PROMPT}}", "width": "{{WIDTH}}", "height": "{{HEIGHT}}", "length": "{{LENGTH}}"}},
+    "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["1", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+    "7": {"class_type": "KSampler", "inputs": {
+        "model": ["6", 0], "seed": "{{SEED}}", "steps": "{{STEPS}}", "cfg": 1.0,
+        "sampler_name": "euler", "scheduler": "simple",
+        "positive": ["5", 0], "negative": ["5", 0], "latent_image": ["5", 1], "denoise": 1.0}},
+    "8": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["7", 0]}},
+    "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+    "10": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["8", 1], "vae": ["4", 0]}},
+    "11": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24, "audio": ["10", 0]}},
+}
+
+
+def _run_multiframe_unit(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
+                         guides=(), context_tail=None, context_frames=0, identity_names=(),
+                         on_step=None, on_total=None):
+    """多帧单次分块执行链：渲染基础模板 → 模型注入 / 连续性（身份 + 跨块上下文）→ 关键帧锚点 → 进程内执行，返回 VIDEO。
+
+    skill_id 取块内首段的技能（决定 config.json 的模型 / LoRA 缺省）；guides 为 _plan_multiframe_guides 的
+    [{name, frame_idx}]。跨块上下文固定 reference 模式——块边界由关键帧锚点钉住，上块尾部只作「目标之前」
+    的参考视频（不改时长、不丢帧、不做接缝淡化）。
+    """
+    real_id = _resolve_skill_id(skill_id or "")
+    cfg = get_skill_gen_config(real_id) if skill_id else {}
+    params = resolve_video_params(body, cfg, skip_model=(model is not None))
+    if steps is not None and int(steps) > 0:
+        params["steps"] = int(steps)
+    if on_total is not None:
+        on_total(int(params.get("steps") or 0))   # 真实总步数，供前端进度条按比例推进
+    graph, _warns = render_template(_MULTIFRAME_TEMPLATE, params)
+    overrides = None
+    if model is not None:
+        x_id, pruned = _model_injection_node(graph)
+        if x_id is None:
+            raise RuntimeError(f"{label}无法定位模型注入点（缺少 KSampler/SigmaShift 的 model 输入）")
+        for pid in pruned:
+            del graph[pid]
+        overrides = {x_id: [model]}
+    else:
+        _require_vdn_plugin(graph)
+    window = int(context_frames or 0) if context_tail is not None else 0
+    graph, c_overrides = _inject_continuity_nodes(graph, context_tail, window, identity_names, "reference")
+    if c_overrides:
+        overrides = {**(overrides or {}), **c_overrides}
+    graph, g_overrides = _inject_multiframe_guides(graph, guides)
+    if g_overrides:
+        overrides = {**(overrides or {}), **g_overrides}
     with preview_override(preview, vae, node_id, on_step=on_step):
         return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
 
@@ -645,12 +942,55 @@ class NeoH3VideoDirector:
                                   total_steps=max(1, int(steps)) if int(steps) > 0 else 0)
         all_frames = []
         all_audio = []
-        drops = []       # 与 segments 对齐：该段丢掉的头部帧数（窗口帧数 / Tier A 的 1 帧 / 0）
+        drops = []       # 与执行单元（每次 all_audio.append）对齐：该单元丢掉的头部帧数（窗口帧数 / Tier A 的 1 帧 / 0）
         prev_tail = None
+        # 多帧单次分块：连续兼容段合并成一次 ref2va 运行、关键帧锚点钉在各段累计起点；
+        # 不兼容（自带参考素材 / 源视频 / 超长）或超预算的段退回逐段路径。整配方「多帧合并」开关关闭时强制逐段旧模式。
+        units = _plan_chunks(segments, _chunk_budget(shared))
+        multi_at, consumed = {}, set()   # 多帧块首段序号 → 块内段；块内其余段由 consumed 跳过
+        offset = 0
+        for unit in units:
+            if unit["kind"] == "multi":
+                multi_at[offset] = unit["segs"]
+                consumed.update(range(offset + 1, offset + len(unit["segs"])))
+            offset += len(unit["segs"])
         try:
             for i, seg in enumerate(segments):
                 _DIRECTOR_PROGRESS["segment_index"] = progress_index + i
                 _DIRECTOR_PROGRESS["step"] = 0
+                m_segs = multi_at.get(i)
+                if m_segs is not None:
+                    # 多帧单次：整块一次 ref2va；跨块上下文只走 reference（不改时长、不丢帧、不做接缝淡化）
+                    total_sec = sum(_seg_duration(s) for s in m_segs)
+                    total_frames = _align_frame_count(int(round(total_sec * H3_FPS)))
+                    guides, n_skipped = _plan_multiframe_guides(m_segs, total_frames)
+                    if n_skipped:
+                        print(f"[NeoNodes] 多帧单次块（第 {i + 1}–{i + len(m_segs)} 段）：{n_skipped} 个关键帧锚点超出帧预算，已跳过")
+                    prompt, merge_note = _merge_chunk_prompt(m_segs, total_sec, total_frames, len(identity_names))
+                    if merge_note:
+                        print(f"[NeoNodes] {merge_note}")
+                    body = {"prompt": prompt, "seed": (base_seed + i) % (2**63), "length": total_frames}
+                    if in_w > 0:
+                        body["width"] = in_w
+                    if in_h > 0:
+                        body["height"] = in_h
+                    context_tail = None
+                    if window > 0 and prev_tail is not None and prev_tail.shape[0] >= window:
+                        context_tail = prev_tail
+                    video = _run_multiframe_unit(body, m_segs[0].get("skill_id") or "", model, steps,
+                                                 f"多帧块（第 {i + 1}–{i + len(m_segs)} 段）：", vae, preview, unique_id,
+                                                 guides=guides, context_tail=context_tail, context_frames=window,
+                                                 identity_names=identity_names,
+                                                 on_step=lambda s: _DIRECTOR_PROGRESS.__setitem__("step", s),
+                                                 on_total=lambda n: _DIRECTOR_PROGRESS.__setitem__("total_steps", max(1, int(n) or 1)))
+                    comp = video.get_components()
+                    all_frames.append(comp.images)
+                    drops.append(0)
+                    all_audio.append(comp.audio)
+                    prev_tail = comp.images[-window:] if window > 0 else comp.images[-1:]
+                    continue
+                if i in consumed:
+                    continue   # 已并入上面的多帧块
                 prompt = seg.get("prompt", "")
                 body = {
                     "prompt": prompt,
@@ -771,7 +1111,8 @@ class NeoH3VideoDirector:
 
 
 NODE_CLASS_MAPPINGS = {"NeoH3VideoDirector": NeoH3VideoDirector, "NeoH3AddKeyframe": NeoH3AddKeyframe,
-                       "NeoH3AddContext": NeoH3AddContext}
+                       "NeoH3AddContext": NeoH3AddContext, "NeoH3AddGuides": NeoH3AddGuides}
 NODE_DISPLAY_NAME_MAPPINGS = {"NeoH3VideoDirector": "Neo H3 Video Director",
                               "NeoH3AddKeyframe": "Neo H3 Add Keyframe (Hybrid)",
-                              "NeoH3AddContext": "Neo H3 Add Context (Cross-segment)"}
+                              "NeoH3AddContext": "Neo H3 Add Context (Cross-segment)",
+                              "NeoH3AddGuides": "Neo H3 Add Guides (Multiframe)"}

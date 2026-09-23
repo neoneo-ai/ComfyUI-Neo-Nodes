@@ -384,6 +384,30 @@ class NormalizeDirectorTests(unittest.TestCase):
             {"shared": {"identity_refs": False}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
         self.assertFalse(shared["identity_refs"])
 
+    def test_chunk_sec_normalized(self):
+        # 分块秒数：合法值转 int 落盘；0 保留（显式关闭）；越界 / 非法丢弃（执行时按默认 15）
+        shared, _ = recipes._normalize_director(
+            {"shared": {"chunk_sec": 12.7}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertEqual(shared["chunk_sec"], 12)
+        shared, _ = recipes._normalize_director(
+            {"shared": {"chunk_sec": 0}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertEqual(shared["chunk_sec"], 0)
+        shared, _ = recipes._normalize_director(
+            {"shared": {"chunk_sec": -5}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertNotIn("chunk_sec", shared)
+
+    def test_multiframe_only_written_when_disabled(self):
+        # 默认开 → 不落盘该键（旧配方行为不变）；显式关掉才写 false
+        shared, _ = recipes._normalize_director(
+            {"shared": {"multiframe": True}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertNotIn("multiframe", shared)
+        shared, _ = recipes._normalize_director(
+            {"shared": {}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertNotIn("multiframe", shared)
+        shared, _ = recipes._normalize_director(
+            {"shared": {"multiframe": False}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertFalse(shared["multiframe"])
+
     def test_segment_mode_kept_when_valid_dropped_when_invalid(self):
         _, segs = recipes._normalize_director(
             {"shared": {"mode": "mixed"},
@@ -583,6 +607,18 @@ class DirectorRecipeIOTests(unittest.TestCase):
         self.assertEqual(len(spec["segments"]), 2)
         self.assertEqual(spec["segments"][0]["ref_input"], "f.png")
         self.assertIsNone(spec["segments"][1]["ref_input"])
+
+    def test_load_spec_resolves_keyframe_for_chunking(self):
+        # 多帧单次关键帧：first_frame 优先；缺省时回退分镜图（t2v 段也算）；文件缺失 → None
+        self._make_recipe("k", {"type": "video_director",
+                                "shared": {},
+                                "segments": [
+                                    {"skill_id": "s0", "prompt": "a", "first_frame": "f.png", "storyboard": "sb.png"},
+                                    {"skill_id": "s1", "prompt": "b", "storyboard": "sb1.png"},
+                                    {"skill_id": "s2", "prompt": "c", "storyboard": "ghost.png"},
+                                ]}, assets=["f.png", "sb.png", "sb1.png"])
+        spec = recipes.load_director_spec("k")
+        self.assertEqual([s["keyframe"] for s in spec["segments"]], ["f.png", "sb1.png", None])
 
     def test_load_spec_global_i2v_forces_all_modes(self):
         # 全局图生视频：所有段有效模式都是 i2v（后续段可无自带首帧，靠连续性链入）
@@ -974,7 +1010,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
         segments = [{"skill_id": f"s{i}", "prompt": f"p{i}", "duration_sec": 5, "mode": mode,
                      "ref_input": f"panel{i}.png" if panel
                      else ("ff.png" if (mode == "i2v" and i == 0) else None)} for i in range(n_segments)]
-        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": seed_base},
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": seed_base, "chunk_sec": 0},
                                                "segments": segments}
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
@@ -1067,7 +1103,7 @@ class DirectorOrchestrationTests(unittest.TestCase):
             {"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "ref_input": "ff.png", "mode": "i2v"},
             {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "ref_input": None, "mode": "t2v"},
         ]
-        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 1},
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 1, "chunk_sec": 0},
                                                "segments": segments}
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
@@ -1443,6 +1479,256 @@ class DirectorOrchestrationTests(unittest.TestCase):
          h3_video_director.execute_graph_inprocess, h3_video_director._require_vdn_plugin) = orig
 
 
+# ===========================================================================
+# 多帧单次分块：_plan_chunks / _plan_multiframe_guides / 提示词合并 / 单元执行编排
+# ===========================================================================
+class ChunkPlanTests(unittest.TestCase):
+    def seg(self, i, dur=5, mode="t2v", **kw):
+        s = {"skill_id": f"s{i}", "prompt": f"p{i}", "duration_sec": dur, "mode": mode}
+        s.update(kw)
+        return s
+
+    def kinds(self, segs, budget):
+        return [u["kind"] for u in h3_video_director._plan_chunks(segs, budget)]
+
+    def test_disabled_all_legacy(self):
+        self.assertEqual(self.kinds([self.seg(0), self.seg(1)], 0), ["legacy", "legacy"])
+
+    def test_compatible_merged_within_budget(self):
+        units = h3_video_director._plan_chunks([self.seg(0), self.seg(1), self.seg(2)], 15)
+        self.assertEqual([u["kind"] for u in units], ["multi"])
+        self.assertEqual(len(units[0]["segs"]), 3)
+
+    def test_budget_breaks_chunk(self):
+        # 8+8 > 15：各成单元；单段兼容块归 legacy（无锚点可加，多帧模板没有收益）
+        self.assertEqual(self.kinds([self.seg(0, 8), self.seg(1, 8)], 15), ["legacy", "legacy"])
+
+    def test_budget_split_multi_and_single(self):
+        # 6+6 成块；第三个 6 超预算 → 单段 legacy
+        self.assertEqual(self.kinds([self.seg(0, 6), self.seg(1, 6), self.seg(2, 6)], 15), ["multi", "legacy"])
+
+    def test_incompatible_breaks_chain(self):
+        segs = [self.seg(0), self.seg(1, mode="r2v", refs={"images": ["a.png"]}), self.seg(2)]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy", "legacy"])
+
+    def test_source_video_incompatible(self):
+        segs = [self.seg(0), self.seg(1, mode="v2v", source_video="v.mp4")]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
+
+    def test_overlong_single_segment_legacy(self):
+        self.assertEqual(self.kinds([self.seg(0, 20)], 15), ["legacy"])
+
+    def test_missing_duration_defaults_five(self):
+        units = h3_video_director._plan_chunks([self.seg(0, None), self.seg(1, None)], 10)
+        self.assertEqual([u["kind"] for u in units], ["multi"])
+
+    def test_chunk_budget_default_on(self):
+        # multiframe 缺省开 → 取 chunk_sec（缺省 15）
+        self.assertEqual(h3_video_director._chunk_budget({}), 15.0)
+        self.assertEqual(h3_video_director._chunk_budget({"chunk_sec": 8}), 8.0)
+
+    def test_chunk_budget_multiframe_off_forces_zero(self):
+        # multiframe 关闭 → 强制 0（逐段旧模式），忽略 chunk_sec > 0
+        self.assertEqual(h3_video_director._chunk_budget({"multiframe": False, "chunk_sec": 20}), 0.0)
+        self.assertEqual(h3_video_director._chunk_budget({"multiframe": False}), 0.0)
+
+    def test_chunk_budget_off_yields_all_legacy(self):
+        # 开关关闭时，即便 chunk_sec > 0 也全逐段（旧模式）
+        segs = [self.seg(0), self.seg(1), self.seg(2)]
+        budget = h3_video_director._chunk_budget({"multiframe": False, "chunk_sec": 20})
+        self.assertEqual(self.kinds(segs, budget), ["legacy", "legacy", "legacy"])
+
+    def test_chunk_budget_on_merges_compatible(self):
+        # 开关开启（缺省）→ 连续兼容段按预算合并成一次多帧单次块
+        segs = [self.seg(0), self.seg(1), self.seg(2)]
+        budget = h3_video_director._chunk_budget({"multiframe": True, "chunk_sec": 15})
+        self.assertEqual(self.kinds(segs, budget), ["multi"])
+
+
+class MultiframeGuideTests(unittest.TestCase):
+    def test_cumulative_frame_indices(self):
+        segs = [{"duration_sec": 5, "keyframe": "a.png"}, {"duration_sec": 4}]
+        guides, skipped = h3_video_director._plan_multiframe_guides(segs, 124)
+        self.assertEqual(guides, [{"name": "a.png", "frame_idx": 0}])
+        self.assertEqual(skipped, 0)
+
+    def test_fl2v_tail_guide(self):
+        segs = [{"duration_sec": 5, "mode": "fl2v", "keyframe": "a.png", "last_input": "b.png"}]
+        guides, _ = h3_video_director._plan_multiframe_guides(segs, 124)
+        self.assertEqual([(g["name"], g["frame_idx"]) for g in guides], [("a.png", 0), ("b.png", 119)])
+
+    def test_ref_input_fallback(self):
+        segs = [{"duration_sec": 5, "ref_input": "c.png"}, {"duration_sec": 5, "keyframe": "d.png"}]
+        guides, skipped = h3_video_director._plan_multiframe_guides(segs, 124)
+        self.assertEqual([(g["name"], g["frame_idx"]) for g in guides], [("c.png", 0), ("d.png", 120)])
+        self.assertEqual(skipped, 0)
+
+    def test_guide_past_budget_skipped(self):
+        segs = [{"duration_sec": 5}, {"duration_sec": 5, "keyframe": "d.png"}]
+        guides, skipped = h3_video_director._plan_multiframe_guides(segs, 120)
+        self.assertEqual(guides, [])
+        self.assertEqual(skipped, 1)
+
+    def test_resize_guide_aligns_to_canvas(self):
+        # 关键帧图缩放到目标画布（latent×16），保证编码后与主视频 latent 空间维度一致，避免 patchify 报错
+        h3d = h3_video_director
+        orig = h3d.comfy.utils.common_upscale
+        h3d.comfy.utils.common_upscale = (lambda t, w, h, m="nearest", c="disabled":
+                                          torch.nn.functional.interpolate(t, size=(h, w), mode="area"))
+        try:
+            img = torch.zeros(1, 200, 300, 3)   # [B,H,W,C]，原生分辨率 ≠ 配方画布
+            out = h3d._resize_guide(img, 800, 600)   # width=800, height=600
+        finally:
+            h3d.comfy.utils.common_upscale = orig
+        self.assertEqual(tuple(out.shape), (1, 600, 800, 3))
+
+
+class ChunkPromptMergeTests(unittest.TestCase):
+    def test_single_segment_uses_original(self):
+        prompt, note = h3_video_director._merge_chunk_prompt([{"prompt": "原文", "duration_sec": 5}], 5, 124)
+        self.assertEqual(prompt, "原文")
+        self.assertIsNone(note)
+
+    def test_llm_merge_used_when_available(self):
+        h3d = h3_video_director
+        orig = h3d._director_llm
+        h3d._director_llm = lambda task, text: {"status": "success", "prompt": " 合并后 "}
+        try:
+            segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
+            prompt, note = h3d._merge_chunk_prompt(segs, 9, 218)
+        finally:
+            h3d._director_llm = orig
+        self.assertEqual(prompt, "合并后")
+        self.assertIsNone(note)
+
+    def test_fallback_mechanical_merge(self):
+        h3d = h3_video_director
+        orig = h3d._director_llm
+        h3d._director_llm = lambda task, text: {"error": "no llm"}
+        try:
+            segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
+            prompt, note = h3d._merge_chunk_prompt(segs, 9, 218)
+        finally:
+            h3d._director_llm = orig
+        self.assertIn("[Shot 1] At 00:00.000 cut... a", prompt)
+        self.assertIn("[Shot 2] At 00:05.000 cut... b", prompt)
+        self.assertIsNotNone(note)
+
+    def test_llm_text_carries_cut_times_and_identity(self):
+        h3d = h3_video_director
+        orig = h3d._director_llm
+        captured = {}
+
+        def _fake(task, text):
+            captured["task"], captured["text"] = task, text
+            return {"status": "success", "prompt": "ok"}
+
+        h3d._director_llm = _fake
+        try:
+            segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
+            h3d._merge_chunk_prompt(segs, 9, 218, identity_count=2)
+        finally:
+            h3d._director_llm = orig
+        self.assertEqual(captured["task"], "director_merge_prompt")
+        self.assertIn("00:05.000", captured["text"])
+        self.assertIn("<Picture 2>", captured["text"])
+
+
+class MultiframeChunkOrchestrationTests(unittest.TestCase):
+    SR = 48000
+    FPS = 24
+    SPF = SR // FPS
+
+    def _patch(self, segments, frame_counts, chunk_sec=15, seed_base=100):
+        import copy as _copy
+        h3d = h3_video_director
+        orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.get_skill_gen_config,
+                h3d.load_skill_workflow, h3d.resolve_video_params, h3d.render_template,
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin, h3d._merge_chunk_prompt)
+        bodies, graphs = [], []
+        it = iter(_FakeVideo(n, self.FPS, self.SR) for n in frame_counts)
+
+        def _fake_exec(graph, output_type="IMAGE", **kw):
+            graphs.append(graph)
+            return next(it)
+
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": seed_base,
+                                                          "chunk_sec": chunk_sec}, "segments": segments}
+        h3d._resolve_skill_id = lambda v: v
+        h3d.get_skill_gen_config = lambda id: {}
+        h3d.load_skill_workflow = lambda id: {"1": {}}   # legacy 逐段路径要模板存在
+
+        def _fake_resolve(body, cfg, **kw):
+            bodies.append(dict(body))
+            return {"prompt": body["prompt"]}
+
+        h3d.resolve_video_params = _fake_resolve
+        h3d.render_template = lambda tpl, params: (_copy.deepcopy(h3d._MULTIFRAME_TEMPLATE), [])
+        h3d._require_vdn_plugin = lambda graph: None
+        h3d.execute_graph_inprocess = _fake_exec
+        return orig, bodies, graphs
+
+    def _restore(self, orig):
+        (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
+         h3_video_director.get_skill_gen_config, h3_video_director.load_skill_workflow,
+         h3_video_director.resolve_video_params, h3_video_director.render_template,
+         h3_video_director.execute_graph_inprocess, h3_video_director._require_vdn_plugin,
+         h3_video_director._merge_chunk_prompt) = orig
+
+    def test_three_t2v_segments_run_once_with_guides(self):
+        # 3×5s ≤ 15：一次 ref2va 运行（362 帧），两个关键帧锚点钉在 0 / 120，采样器改指注入节点
+        segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v", "keyframe": "k0.png"},
+                    {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v", "keyframe": "k1.png"},
+                    {"skill_id": "s2", "prompt": "p2", "duration_sec": 5, "mode": "t2v"}]
+        orig, bodies, graphs = self._patch(segments, [362])
+        h3_video_director._merge_chunk_prompt = lambda segs, total_sec, total_frames, identity_count=0: ("MERGED", None)
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertEqual(len(bodies), 1)   # 一次多帧单次运行
+        self.assertEqual(bodies[0]["prompt"], "MERGED")
+        self.assertEqual(bodies[0]["length"], 362)
+        self.assertEqual(bodies[0]["seed"], 100)
+        comp = video.get_components()
+        self.assertEqual(comp.images.shape[0], 362)   # 不丢帧
+        self.assertEqual(comp.audio["waveform"].shape[-1], 362 * self.SPF)
+        g = graphs[0]
+        guides = {nid: n for nid, n in g.items() if n.get("class_type") == "NeoH3AddGuides"}
+        self.assertEqual(len(guides), 1)
+        gid, gnode = next(iter(guides.items()))
+        gi = gnode["inputs"]
+        self.assertEqual(gi["guide_0_frame"], 0)
+        self.assertEqual(gi["guide_1_frame"], 120)
+        self.assertNotIn("guide_2_image", gi)
+        load_names = sorted(n["inputs"]["image"] for n in g.values() if n.get("class_type") == "LoadImage")
+        self.assertEqual(load_names, ["k0.png", "k1.png"])
+        sampler = next(n for n in g.values() if n.get("class_type") == "KSampler")
+        self.assertEqual(sampler["inputs"]["model"], [gid, 0])
+        self.assertEqual(sampler["inputs"]["positive"], [gid, 1])
+        # 关键帧锚点接目标 AV latent（据此把各段首帧图缩放到配方画布再编码，避免 patchify 报错）
+        self.assertEqual(gi["latent"], ["5", 1])
+
+    def test_incompatible_segment_falls_back_to_legacy(self):
+        # t2v×2（成块，243 帧）+ r2v（自带参考 → legacy 逐段，124 帧）：两次执行、不丢帧拼接
+        segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v", "keyframe": "k0.png"},
+                    {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v"},
+                    {"skill_id": "s2", "prompt": "p2", "duration_sec": 5, "mode": "r2v",
+                     "refs": {"images": ["a.png"]}}]
+        orig, bodies, graphs = self._patch(segments, [243, 124])
+        h3_video_director._merge_chunk_prompt = lambda segs, total_sec, total_frames, identity_count=0: ("MERGED", None)
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertEqual(len(bodies), 2)
+        self.assertEqual(bodies[0]["prompt"], "MERGED")
+        self.assertEqual(bodies[1]["prompt"], "p2")
+        comp = video.get_components()
+        self.assertEqual(comp.images.shape[0], 243 + 124)
+        self.assertEqual(comp.audio["waveform"].shape[-1], (243 + 124) * self.SPF)
+
+
 class DirectorModelStepsTests(unittest.TestCase):
     """外部 MODEL / steps 入参：逐段注入模型 + 覆盖步数；无 model 时校验 VDN 插件。"""
 
@@ -1459,7 +1745,7 @@ class DirectorModelStepsTests(unittest.TestCase):
         render_params = []
         vdn_checks = 0
         if shared is None:
-            shared = {"width": 8, "height": 8, "seed": 1}
+            shared = {"width": 8, "height": 8, "seed": 1, "chunk_sec": 0}   # 关闭分块：本组用例验证逐段注入行为
         h3d.load_director_spec = lambda name: {
             "shared": dict(shared),
             "segments": [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v"},
@@ -2619,7 +2905,7 @@ class SeamBlendTests(unittest.TestCase):
         it = iter([_ConstFakeVideo(124, 0.0), _ConstFakeVideo(141, 1.0)])
         segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v"},
                     {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v"}]
-        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 0}, "segments": segments}
+        h3d.load_director_spec = lambda name: {"shared": {"width": 8, "height": 8, "seed": 0, "chunk_sec": 0}, "segments": segments}
         h3d._resolve_skill_id = lambda v: v
         h3d.load_skill_workflow = lambda id: {"1": {}}
         h3d.get_skill_gen_config = lambda id: {}

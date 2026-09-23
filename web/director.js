@@ -331,6 +331,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let gSkillSel = null;      // 统一技能选择（非混合模式：各段共用，紧邻生成模式；混合模式隐藏）
     let sbModeSel = null;      // 🎨 图片分镜生图模式 t2i/r2i（统一设置页创建后赋值；缺省按旧行为）
     let frameSourceSel = null; // 分镜/首帧方式 storyboard|unified（统一设置页创建后赋值，与统一首帧互斥）
+    let chunkSecInp = null;    // 分块秒数 shared.chunk_sec：连续兼容段合并成一次多帧单次运行的预算（0 = 关闭），时间线面板创建后赋值
+    let multiframeChk = null;  // 多帧合并开关 shared.multiframe：默认开；关闭 → 强制逐段旧模式（忽略分块秒数）
 
     // 未保存修改标记：任何会改变落盘内容的操作置位；成功保存 / 关闭后清零。
     let dirty = false;
@@ -1146,6 +1148,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (svBlock) svBlock.style.display = (eff === 'v2v' || eff === 'rv2v') ? '' : 'none';
         }
         if (!mixed) pushGlobalSkill();   // 统一技能落到各段（新增段 / 切模式后同样生效）
+        refreshChunkMarkers?.();         // 有效模式变化 → 重算多帧单次分块标记
     }
     // 定位到指定段（节点时间轴上被点击的那一段）；未指定时仍默认显示第 1 段
     const focusSegAt = (i) => { const n = Number(i); if (Number.isFinite(n) && n >= 0) showSeg(n); };
@@ -1226,7 +1229,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     } catch (e) { console.error('[Neo Recipes] Director: timeline init failed', e); }
     // 首次定位（如节点上点的那一段）延后一帧：组件首帧数据就绪后 showSeg 才能算出块坐标并滚动
     requestAnimationFrame(() => showSeg(currentSegIdx));
-    const tlObserver = new MutationObserver(() => { if (timeline) timeline.refresh(); });
+    const tlObserver = new MutationObserver(() => { if (timeline) timeline.refresh(); refreshChunkMarkers?.(); });
     tlObserver.observe(segsWrap, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     segsWrap.addEventListener('input', (e) => {
         if (timeline && (e.target.classList.contains('neo-director-dur') || e.target.classList.contains('neo-director-prompt'))) timeline.refresh();
@@ -1459,8 +1462,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                         ? { width: outW, height: outH, aspect_ratio: DIRECTOR_CUSTOM }
                         : { width: outW, height: outH, aspect_ratio: aspectSel.value, megapixels: directorClampMp(mpInp.value) },
                     { mode: gMode },
+                    // 多帧单次分块秒数：0 = 关闭（纯逐段生成）；显式落盘，重开回显
+                    { chunk_sec: Math.max(0, Math.round(Number(chunkSecInp.value) || 0)) },
                     // 身份参考默认开：只有关掉时才落盘（重开时由该键回显开关）
                     identityRefsChk.checked ? {} : { identity_refs: false },
+                    // 多帧合并开关默认开：只有关掉时才落盘（强制逐段旧模式，忽略分块秒数）
+                    multiframeChk.checked ? {} : { multiframe: false },
                 ),
                 segments,
                 // 自动故事板内容（主题 / 脚本 / 粒度 / 图片分镜设置）：随配方落盘，重新打开编辑器回显。
@@ -2045,6 +2052,85 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 生成模式只在时间轴页这一处选择：切换时刷新各段显隐，并联动「🎨 参考图设置」页的素材区 / 图片分镜卡片
     modeSel.addEventListener('change', () => { applyGlobalMode(); refreshSetupRefs(); });
 
+    // 分块秒数（shared.chunk_sec）：连续兼容段合并成一次多帧单次 ref2va 运行的总时长预算；0 = 关闭（纯逐段生成）
+    chunkSecInp = $el('input', {
+        className: 'neo-director-chunk-sec', type: 'number', min: 0, max: 30, step: 1,
+        value: (exShared.chunk_sec != null ? exShared.chunk_sec : 15),
+        title: '多帧单次分块：连续兼容段（文生/图生/首尾帧、无自带参考素材）总时长 ≤ 该值时合并成一次 ref2va 运行，各段分镜关键帧钉在起点；0 = 关闭（纯逐段生成）。建议 ≤15',
+    });
+    chunkSecInp.addEventListener('input', () => { markDirty(); refreshChunkMarkers(); });
+
+    // 多帧合并开关（shared.multiframe）：默认开；关闭 → 强制逐段旧模式（忽略分块秒数）。放在时间轴首行最右。
+    multiframeChk = $el('input', { className: 'neo-director-multiframe', type: 'checkbox' });
+    multiframeChk.checked = exShared.multiframe !== false;   // 缺省开（旧配方无此键 → 开）
+    const syncChunkSecState = () => { chunkSecInp.disabled = !multiframeChk.checked; };   // 关闭时置灰分块秒数（后端忽略其值）
+    multiframeChk.addEventListener('change', () => { markDirty(); syncChunkSecState(); refreshChunkMarkers(); });
+    const multiframeRow = $el('div', { className: 'neo-director-row neo-director-shared' }, [
+        $el('label', { className: 'neo-director-field-label', textContent: '多帧合并' }),
+        $el('label', { className: 'neo-director-seglen-wrap', title: '开：连续兼容段（文生/图生/首尾帧、无自带参考素材）按「分块秒数」预算合并成一次 ref2va 运行；关：强制逐段生成（旧模式），忽略分块秒数。' }, [multiframeChk, $el('span', { textContent: '启用' })]),
+    ]);
+    multiframeRow.style.marginLeft = 'auto';   // 靠时间轴首行最右
+    syncChunkSecState();   // 初始按开关状态置灰分块秒数
+
+    // 多帧单次分块预览（后端 _plan_chunks 的镜像，仅显示用）：把会合并进同一次 ref2va 运行的连续兼容段标成一个块
+    const CHUNK_COMPATIBLE_MODES = new Set(['t2v', 'i2v', 'fl2v']);
+    const rowDurSec = (row) => {
+        const durInp = row.querySelector('.neo-director-dur');
+        return Number(durInp && durInp.value) || 5;
+    };
+    const planChunkUnits = (rows, budgetSec) => {
+        const units = [];
+        let cur = [], curDur = 0;
+        const flush = () => { if (cur.length) { units.push({ kind: cur.length > 1 ? 'multi' : 'legacy', segs: cur }); cur = []; curDur = 0; } };
+        for (const row of rows) {
+            const dur = rowDurSec(row);
+            const segModeSel = row.querySelector('.neo-director-segmode');
+            const effMode = modeSel.value === 'mixed' ? (segModeSel ? segModeSel.value : 't2v') : modeSel.value;
+            const reads = segRefReaders.get(row) || [];
+            const hasRefs = reads.some((r) => r && r().length);
+            const svReader = segSvReaders.get(row);
+            if (!CHUNK_COMPATIBLE_MODES.has(effMode) || hasRefs || (svReader && svReader()) || dur > budgetSec) {
+                flush(); units.push({ kind: 'legacy', segs: [row] }); continue;
+            }
+            if (cur.length && curDur + dur > budgetSec) flush();
+            cur.push(row); curDur += dur;
+        }
+        flush();
+        return units;
+    };
+    let chunkSig = '';
+    const refreshChunkMarkers = () => {
+        if (!chunkSecInp || !modeSel) return;   // 初始化顺序保护：分块输入 / 模式选择器未就绪时跳过
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        const budget = multiframeChk.checked ? Number(chunkSecInp.value) : 0;   // 多帧合并关闭 → 预算 0（全逐段）
+        const marks = [];
+        if (Number.isFinite(budget) && budget > 0) {
+            for (const u of planChunkUnits(rows, budget)) {
+                if (u.kind !== 'multi') continue;
+                const total = Math.round(u.segs.reduce((s, r) => s + rowDurSec(r), 0) * 10) / 10;
+                marks.push({ row: u.segs[0], total, n: u.segs.length });
+            }
+        }
+        const sig = JSON.stringify(marks.map((m) => [m.row.dataset.segId, m.total]));
+        if (sig === chunkSig) return;   // 无变化不动 DOM（本函数挂在 MutationObserver 上，避免自触发循环）
+        chunkSig = sig;
+        for (const r of rows) {
+            r.classList.remove('neo-director-chunk');
+            const b = r.querySelector('.neo-director-chunk-badge');
+            if (b) b.remove();
+        }
+        for (const m of marks) {
+            m.row.classList.add('neo-director-chunk');
+            const head = m.row.querySelector('.neo-director-seg-head');
+            if (!head) continue;
+            head.prepend($el('span', {
+                className: 'neo-director-chunk-badge',
+                title: `多帧单次块：${m.n} 段合并成一次 ref2va 运行（总时长 ${m.total}s，各段分镜关键帧钉在起点）`,
+                textContent: `⚡${m.total}s`,
+            }));
+        }
+    };
+
     // 统一技能（非混合模式）：紧邻生成模式，一次选择应用到所有分段（各段行不再单独选技能）；混合模式整体隐藏（逐段各选）。
     const initSkillId = (exSegs[0] && exSegs[0].skill_id) || (skills.length ? skills[0].id : '');
     const gSkillLabel = $el('label', { className: 'neo-director-global-skill-label', textContent: '技能' });
@@ -2301,9 +2387,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '生成模式' }), modeSel,
             gSkillLabel, gSkillSel,   // 统一技能：紧邻生成模式（混合模式隐藏）
+            $el('label', { textContent: '分块秒数' }), chunkSecInp,   // 多帧单次分块预算（0 = 关闭，纯逐段生成）
             $el('label', { textContent: '宽高比' }), aspectSel,
             $el('label', { textContent: '百万像素' }), mpInp,
             resOut,
+            multiframeRow,   // 多帧合并开关：靠本行最右（margin-left:auto）
         ]),
         customRow,
         tlLabelRow,

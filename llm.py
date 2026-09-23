@@ -1269,6 +1269,7 @@ def _build_llm_tasks() -> Dict[str, Any]:
         "director_split",
         "director_optimize",
         "director_panel_describe",
+        "director_merge_prompt",
     ]
 
     for task_name in task_names:

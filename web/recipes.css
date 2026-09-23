@@ -840,6 +840,25 @@
     min-height: 0;    /* 卡片填满 segs；提示词区伸缩，首帧资产区钉在卡片底部 */
 }
 
+/* 多帧单次分块标记：会合并进同一次 ref2va 运行的连续兼容段（左边框 + 首段 ⚡ 徽章） */
+.neo-director-seg.neo-director-chunk {
+    border-left: 3px solid #9c6ade;
+}
+.neo-director-chunk-badge {
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    background: rgba(156, 106, 222, 0.18);
+    border: 1px solid rgba(156, 106, 222, 0.55);
+    color: #c9a6ff;
+    white-space: nowrap;
+}
+.neo-director-chunk-sec {
+    width: 64px;
+}
+
 /* 卡片内除提示词外的字段与资产区不让步缩水，挤压时由 segs 内部滚动承载 */
 .neo-director-seg-head,
 .neo-director-seg > .neo-director-field-label,

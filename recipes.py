@@ -399,6 +399,16 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
     # 身份参考（配方「角色参考图」是否作为各段身份参考）：默认开，编辑器里显式关掉才落盘（对比测试用）
     if shared_raw.get("identity_refs") is False:
         shared["identity_refs"] = False
+    # 多帧单次合并开关：默认开；显式关掉才落盘（强制逐段旧模式，忽略 chunk_sec）
+    if shared_raw.get("multiframe") is False:
+        shared["multiframe"] = False
+    # 多帧单次分块秒数：连续兼容段合并成一次 ref2va 运行（总时长 ≤ 该值）；0 = 关闭（纯逐段生成）
+    try:
+        chunk_sec = float(shared_raw.get("chunk_sec"))
+    except (TypeError, ValueError):
+        chunk_sec = None
+    if chunk_sec is not None and 0 <= chunk_sec <= 120:
+        shared["chunk_sec"] = int(chunk_sec)
 
     segs_raw = data.get("segments")
     if not isinstance(segs_raw, list) or not segs_raw:
@@ -1161,6 +1171,19 @@ def load_director_spec(name: str) -> dict:
             if sb_img and src.is_file():
                 resolved, _skipped = _copy_media_to_input(src, sb_img)
                 ref_input = resolved
+        # 多帧单次分块的关键帧锚点：first_frame 优先，其次分镜图（与模式推断无关，仅分块规划读取）
+        keyframe = None
+        ff_img = str(seg.get("first_frame") or "").strip()
+        if ff_img:
+            src = assets_dir / ff_img
+            if src.is_file():
+                keyframe, _skipped = _copy_media_to_input(src, ff_img)
+        else:
+            sb_key = str(seg.get("storyboard") or "").strip()
+            if sb_key:
+                src = assets_dir / sb_key
+                if src.is_file():
+                    keyframe, _skipped = _copy_media_to_input(src, sb_key)
         segments.append({
             "skill_id": str(seg.get("skill_id") or ""),
             "prompt": seg.get("prompt", ""),
@@ -1169,6 +1192,7 @@ def load_director_spec(name: str) -> dict:
             "last_input": last_input,
             "refs": refs_out,
             "mode": mode,
+            "keyframe": keyframe,
         })
     out = {"shared": director_shared, "segments": segments}
     # 身份参考默认开（配方「角色参考图」→ 各段身份参考）；配方里显式关掉时既不解析也不注入
