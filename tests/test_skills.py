@@ -99,9 +99,11 @@ class TestScanSkills(unittest.TestCase):
         self.assertIsNotNone(s, "storyboard_story 任务未被扫描到")
         self.assertTrue(s["needs_image"], "storyboard_story 需要参考图")
         self.assertEqual(s["category"], "vision")
-        llm_mod = sys.modules.get(f"{_PKG_NAME}.llm")
-        self.assertIsNotNone(llm_mod, "llm 模块未加载")
-        self.assertIn("storyboard_story", llm_mod.LLM_TASKS, "storyboard_story 未注册进 LLM_TASKS")
+        # 其它测试文件可能把 llm 从 sys.modules 里移除过（如 h3_prompt_audit 的桩清理），
+        # 这里按需重新导入再查注册表，避免受文件间执行顺序影响
+        llm_mod = importlib.import_module(f"{_PKG_NAME}.llm")
+        self.assertIn("storyboard_story", getattr(llm_mod, "LLM_TASKS", {}),
+                      "storyboard_story 未注册进 llm 的任务列表（task_names）")
 
     def test_internal_tasks_hidden(self):
         """内部任务不作为可选 skill 暴露"""

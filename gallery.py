@@ -980,22 +980,10 @@ async def copy_to_input(request):
                             source_path = candidate
                             break
 
-        if not source_path:
-            for dir_path in user_custom_dirs:
-                candidate = dir_path / filename
-                if candidate.exists():
-                    source_path = candidate
-                    break
-
-        # System dirs (input/output): source already lives in input, or copy from output
-        if not source_path:
-            for info in _get_system_dirs():
-                candidate = info["path"] / filename
-                if candidate.exists():
-                    source_path = candidate
-                    break
-
-        # System dirs with relative subfolder (deep navigation drops the dir prefix)
+        # 先按 subfolder 精确解析（系统目录，再自定义目录）：卡片只带「相对子路径」
+        # （如自定义目录下的 "刘亦菲"、input 下的 "pasted"），必须优先于下面「按文件名」的
+        # 宽松兜底——否则 input/output 根目录里同名的另一张图会盖过用户选中的那张，
+        # 复制出的参考图与 /neo_gallery/thumbnail 预览看到的不一致。
         if not source_path and subfolder and ".." not in subfolder:
             for info in _get_system_dirs():
                 candidate = info["path"]
@@ -1006,10 +994,24 @@ async def copy_to_input(request):
                     source_path = candidate
                     break
 
-        # Fallback: try subfolder as relative path under any custom dir
         if not source_path and subfolder:
             for dir_path in user_custom_dirs:
                 candidate = dir_path / subfolder / filename
+                if candidate.exists():
+                    source_path = candidate
+                    break
+
+        # 宽松兜底：忽略 subfolder，按文件名在自定义目录 / 系统目录根查找
+        if not source_path:
+            for dir_path in user_custom_dirs:
+                candidate = dir_path / filename
+                if candidate.exists():
+                    source_path = candidate
+                    break
+
+        if not source_path:
+            for info in _get_system_dirs():
+                candidate = info["path"] / filename
                 if candidate.exists():
                     source_path = candidate
                     break
