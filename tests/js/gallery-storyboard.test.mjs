@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click, sseResponse } from "./setup.mjs";
+import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 const STORY = "雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下。";
 
@@ -55,7 +56,7 @@ test("buildStoryboardGridRequest：Qwen Image 2.1 + 原图参考 + 九宫格指�
     assert.match(body.prompt, /细白缝/);       // 便于「🧩 宫格分镜图拆分」自动切格
 });
 
-test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求生图，成功后跳到产物目录", async () => {
+test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求生图，窗内出结果预览，点「打开输出目录」跳转", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const toasts = [];
     const { gallery, jumps } = makeGallery(toasts);
@@ -109,9 +110,54 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(body.output_prefix, "StoryBoard");
     assert.deepEqual(body.references, [{ kind: "input", value: "shot.png" }]);
     assert.match(body.prompt, /雨夜的地铁口/);
-    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), null, "提交后小窗应关闭");
-    assert.deepEqual(jumps, [["Output", ["StoryBoard", "2026-09-24"]]], "成功后跳到产物所在目录");
-    assert.ok(toasts.some((t) => t.severity === "success"), "应弹成功提示");
+
+    // 窗口保持打开并显示结果预览（走 thumbnail 缓存接口，size=640），不是点生成就关闭
+    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "生成过程中小窗不关闭");
+    const resultImg = overlay.querySelector(".neo-gallery-cs-result-img");
+    assert.match(resultImg?.getAttribute("src") || "",
+        /\/neo_gallery\/thumbnail\?filename=nine_panel_storyboard_sheet_00001_\.png&subfolder=StoryBoard%2F2026-09-24&size=640$/);
+    // 成功不自动跳目录，由「打开输出目录」触发（跳实际产物日期子目录）并关窗
+    assert.deepEqual(jumps, [], "成功后不自动跳目录");
+    const openDirBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "打开输出目录");
+    assert.ok(openDirBtn, "成功后应有「打开输出目录」按钮");
+    click(openDirBtn);
+    await sleep(10);
+    assert.deepEqual(jumps, [["Output", ["StoryBoard", "2026-09-24"]]], "打开实际产物目录");
+    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), null, "跳转后关窗");
+});
+
+test("⋯ 菜单「生成九宫格分镜图」：生成中窗内显示进度条与「取消任务」，故事表单让位", async () => {
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const { gallery } = makeGallery([]);
+    const card = new GalleryCard(gallery);
+    openMenu(card, gallery);
+    click(itemByLabel("生成九宫格分镜图"));
+
+    const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
+    const genBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成");
+
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "g2", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/g2", () => jsonResponse({
+        task_id: "g2", status: "running", progress: { value: 3, max: 10 }, images: [],
+    }));
+
+    overlay.querySelector(".neo-gallery-story-input").value = STORY;
+    click(genBtn);
+    await sleep(50);
+
+    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "生成中小窗保持打开");
+    assert.equal(overlay.querySelector(".neo-gallery-story-form").style.display, "none", "生成中故事表单让位给进度区");
+    const fillEl = overlay.querySelector(".neo-gallery-cs-progress-fill");
+    assert.equal(fillEl?.style.width, "30%", "进度条按 progress.value/max 填充");
+    assert.ok([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "取消任务"), "生成中可取消任务");
+
+    // 派发终态让 watcher 收尾（不留悬挂监听/定时器），窗内转为错误/重试态
+    dispatchApiEvent("rs.image_gen.status", { task_id: "g2", status: "cancelled" });
+    await sleep(10);
+    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "取消后小窗仍在");
+    assert.match(overlay.querySelector(".neo-gallery-cs-status .neo-gallery-story-hint").textContent, /已取消/);
+    assert.ok([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "重试"), "可重试");
 });
 
 test("⋯ 菜单「直达分镜目录」打开 Output/StoryBoard", async () => {
@@ -128,7 +174,7 @@ test("⋯ 菜单「直达分镜目录」打开 Output/StoryBoard", async () => {
     assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
 });
 
-test("小窗「✨ LLM 生成提示词」：参考图经反推流式写入故事框（已有内容追加）", async () => {
+test("小窗「✨ LLM 生成九宫格故事」：简要故事 + 参考图生成 1→9 故事，覆盖写入上方故事框", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const toasts = [];
     const { gallery } = makeGallery(toasts);
@@ -139,32 +185,68 @@ test("小窗「✨ LLM 生成提示词」：参考图经反推流式写入故事
     const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
     assert.ok(overlay, "应弹出填故事小窗");
     const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
-        .find((b) => b.textContent === "✨ LLM 生成提示词");
-    assert.ok(llmBtn, "应有「LLM 生成提示词」按钮");
+        .find((b) => b.textContent === "✨ LLM 生成九宫格故事");
+    assert.ok(llmBtn, "应有「LLM 生成九宫格故事」按钮");
+    // 现有输入框（九宫格故事）下面还要有个「简要故事 / 想法」输入框
+    const ideaBox = overlay.querySelector(".neo-gallery-story-idea");
+    assert.ok(ideaBox, "九宫格故事框下面应有简要故事输入框");
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
     mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
         llmBody = b;
         return sseResponse([
-            'data: {"text":"雨夜的地铁口，","kind":"content"}',
-            'data: {"text":"她收起伞抬头。","kind":"content"}',
+            'data: {"text":"雨夜的地铁口，她收起伞仰望。","kind":"content"}',
+            'data: {"text":"\\n他站在灯下，两人相望。","kind":"content"}',
             "data: [DONE]",
         ]);
     });
 
-    // 已有内容应保留并追加到下方，而非被覆盖
-    overlay.querySelector(".neo-gallery-story-input").value = "我想要一个悬疑开场";
+    overlay.querySelector(".neo-gallery-story-input").value = "我手写的旧故事";
+    ideaBox.value = "雨夜地铁口偶遇旧友";
     click(llmBtn);
     await sleep(50);
 
     assert.ok(llmBody, "应调用 /rs_prompts/stream_generate_prompt");
-    assert.equal(llmBody.skillId, "reverse_prompt");
+    assert.equal(llmBody.skillId, "storyboard_story", "应走九宫格故事任务（不是反推）");
+    assert.equal(llmBody.text, "雨夜地铁口偶遇旧友", "简要故事应作为文本输入带给 LLM");
     assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
     assert.ok(fetchLog.find((c) => c.path === "/neo_gallery/copy_to_input"), "参考图应先经 copy_to_input 落到 input/ 再交给 LLM");
 
-    assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "我想要一个悬疑开场\n\n雨夜的地铁口，她收起伞抬头。");
-    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已按参考图生成提示词/);
+    // 生成结果覆盖写入上方故事框（不是追加），供继续编辑后再「生成」
+    assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "雨夜的地铁口，她收起伞仰望。\n他站在灯下，两人相望。");
+    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已生成九宫格故事/);
     assert.equal(llmBtn.disabled, false, "完成后按钮应恢复可用");
-    assert.equal(llmBtn.textContent, "✨ LLM 生成提示词");
+    assert.equal(llmBtn.textContent, "✨ LLM 生成九宫格故事");
+});
+
+test("小窗「✨ LLM 生成九宫格故事」：简要故事留空则只按参考图生成", async () => {
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const { gallery } = makeGallery([]);
+    const card = new GalleryCard(gallery);
+    openMenu(card, gallery);
+    click(itemByLabel("生成九宫格分镜图"));
+
+    const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
+    const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
+        .find((b) => b.textContent === "✨ LLM 生成九宫格故事");
+
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
+    let llmBody = null;
+    mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
+        llmBody = b;
+        return sseResponse([
+            'data: {"text":"她把伞收好，走向灯下。","kind":"content"}',
+            "data: [DONE]",
+        ]);
+    });
+
+    overlay.querySelector(".neo-gallery-story-idea").value = "   ";   // 只输空格 = 没填
+    click(llmBtn);
+    await sleep(50);
+
+    assert.ok(llmBody, "留空也应调用 LLM");
+    assert.equal(llmBody.text, "", "留空时文本为空，仅凭参考图生成");
+    assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
+    assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "她把伞收好，走向灯下。");
 });

@@ -38,6 +38,8 @@ const STORYBOARD_WIDTH = 2048;
 const STORYBOARD_HEIGHT = 1152;
 // 小窗里的参考图预览尺寸（px，走 /neo_gallery/thumbnail 缓存，不为预览另存大图）
 const STORYBOARD_PREVIEW_SIZE = 480;
+// 九宫格故事生成任务（skills/tasks/storyboard_story）：简要故事 / 想法 + 参考图 → 1→9 逐格推进的故事
+const STORYBOARD_STORY_SKILL_ID = "storyboard_story";
 
 /** 故事 → 九宫格指令（语义同预设技能 nine_grid_storyboard 的模板前缀，另加 <image1> 身份锚定）。
  * qwen_image21 分词器会为每张参考图插字面量 <imageN>，所以提示词里可以直接写 <image1>。 */
@@ -72,34 +74,6 @@ async function copyImageToInput(image, subfolder) {
         throw new Error((result && result.error) || '无法读取该图片');
     }
     return result.filename;
-}
-
-/** 一键九宫格分镜图：卡片图片先落 input/ 当参考图，再按故事出 3×3 故事板；
- * 成功后直接跳到产物所在目录（供拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧）。 */
-async function generateStoryboard(gallery, image, subfolder, story) {
-    let refName;
-    try {
-        refName = await copyImageToInput(image, subfolder);
-    } catch (e) {
-        console.error('[Gallery] storyboard copy_to_input failed:', e);
-        showToast(gallery.app, 'error', '生成分镜图失败', String(e?.message || e));
-        return;
-    }
-    try {
-        const snap = await requestGeneration(buildStoryboardGridRequest(refName, story));
-        showToast(gallery.app, 'info', '九宫格分镜图生成中', '排队/生图中…结果保存在 Output/StoryBoard');
-        const final = await watchTask(snap.task_id);
-        if (final.status === "succeeded") {
-            showToast(gallery.app, 'success', '九宫格分镜图已生成', '可拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧');
-            const dir = (final.images || []).map(i => i.subfolder).find(Boolean);
-            if (dir) gallery.showDirectoryStructure("Output", dir.split("/").filter(Boolean));
-        } else if (final.status !== "cancelled") {
-            showToast(gallery.app, 'error', '九宫格分镜图生成失败', final.error || '未知错误');
-        }
-    } catch (e) {
-        console.error('[Gallery] storyboard generation failed:', e);
-        showToast(gallery.app, 'error', '生成分镜图失败', String(e?.message || e));
-    }
 }
 
 /** 一键角色图的前置小窗（复用九宫格分镜图同款弹窗结构）：先看参考图确认，点「生成」后
@@ -226,40 +200,146 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
     document.body.appendChild(overlay);
 }
 
-/** 九宫格分镜图的前置小窗：填故事 / 想法（Ctrl+Enter 生成，Esc 或点遮罩关闭） */
+/** 九宫格分镜图的前置小窗（与角色图小窗同款）：上面是九宫格故事（可手写，或由下方「简要故事 / 想法」+ 参考图
+ * 用 LLM 生成），下面是可选的简要故事 / 想法；点「生成」后窗口内显示排队/生图进度与结果预览。 */
 function openStoryboardDialog(gallery, image, subfolder) {
     document.querySelector('.neo-gallery-story-modal-overlay')?.remove();
     // 预览按卡片图片的高度显示：小窗里的参考图和卡片里看到的一样大，方便确认用的就是这张
     const previewHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
     const pathLabel = (subfolder ? `${subfolder}/` : "") + (image.filename || image.name || "");
-    const hint = $el("div", {
-        className: "neo-gallery-story-hint",
-        textContent: "写下这个故事：九宫格按 1→9 逐格推进，人物沿用这张图。"
-    });
+    const hint = $el("div", { className: "neo-gallery-story-hint" });
     const input = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 6,
         placeholder: "例：雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下……"
     });
+    // 简要故事 / 想法：LLM 的输入，可留空（留空则只按参考图编故事）；生成结果覆盖写入上面的九宫格故事框
+    const ideaInput = $el("textarea", {
+        className: "neo-gallery-story-idea",
+        rows: 3,
+        placeholder: "可选：一句话想法（如：雨夜地铁口偶遇旧友）。留空则直接按参考图编故事"
+    });
+    // 表单整块（故事框 + 提示 + 简要故事框）：生成中被下面的进度/结果区整块替换
+    const formBox = $el("div", { className: "neo-gallery-story-form" }, [
+        input,
+        hint,
+        $el("div", { className: "neo-gallery-story-field-label", textContent: "简要故事 / 想法（可留空，留空则按参考图生成）" }),
+        ideaInput
+    ]);
+    const statusBox = $el("div", { className: "neo-gallery-cs-status" });
+    const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
+
+    let refName = null;          // copy_to_input 后的 input 文件名（生成故事与生图复用，不重复落盘）
+    let running = false;         // 防重复提交（生图）
+    let cancelId = null;         // 当前生图任务 id（取消用）
+    let cancelRequested = false; // 用户点了「取消任务」
+    let llmRunning = false;      // 防重复提交（生成故事）
+    let llmBtn = null;
+
     const overlay = $el("div", { className: "neo-gallery-story-modal-overlay" });
     const close = () => overlay.remove();
-    const submit = () => {
-        const story = input.value.trim();
-        if (!story) {
-            hint.textContent = "请先填写故事 / 想法";
+    const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
+    const btn = (label, onclick, primary = false) =>
+        $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
+    // 产物目录：优先跳到实际落盘的日期子目录，取不到时回退 StoryBoard 根目录
+    const openOutputDir = (final) => {
+        const dir = (final.images || []).map(i => i.subfolder).find(Boolean);
+        gallery.showDirectoryStructure("Output", dir ? dir.split("/").filter(Boolean) : [STORYBOARD_DIR]);
+    };
+
+    // 表单态：故事框 + 简要故事框可编辑，右下有 LLM / 取消 / 生成
+    const renderForm = () => {
+        hint.classList.remove("neo-gallery-story-hint-error");
+        hint.textContent = "九宫格按 1→9 逐格推进，人物沿用这张图；可手写，或用下面的简要故事 / 想法让 LLM 生成。";
+        formBox.style.display = "";
+        statusBox.style.display = "none";
+        fill(actionsBox, llmBtn, btn("取消", close), btn("生成", onSubmit, true));
+    };
+
+    const renderRunning = (label, progress) => {
+        const hasSteps = !!(progress && progress.max > 0);
+        const fillEl = $el("div", { className: "neo-gallery-cs-progress-fill" });
+        if (hasSteps) {
+            fillEl.style.width = `${Math.max(0, Math.min(100, (progress.value / progress.max) * 100))}%`;
+        } else {
+            fillEl.classList.add("neo-gallery-cs-progress-indeterminate");
+        }
+        formBox.style.display = "none";
+        statusBox.style.display = "";
+        fill(statusBox,
+            $el("div", { className: "neo-gallery-cs-running" }, [
+                $el("span", { className: "neo-gallery-cs-spinner" }),
+                $el("span", { textContent: label })
+            ]),
+            $el("div", { className: "neo-gallery-cs-progress" }, [fillEl]));
+        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+    };
+
+    const renderSuccess = (final) => {
+        const images = final.images || [];
+        const box = $el("div", { className: "neo-gallery-cs-result" });
+        if (images.length > 0) {
+            const img = $el("img", {
+                className: "neo-gallery-cs-result-img",
+                src: `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`,
+                alt: images[0].filename
+            });
+            img.addEventListener("click", () => Lightbox.open({ items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), index: 0 }));
+            box.appendChild(img);
+        }
+        formBox.style.display = "none";
+        statusBox.style.display = "";
+        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成九宫格分镜图，可拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧。" }));
+        fill(actionsBox, btn("打开输出目录", () => { openOutputDir(final); close(); }, true), btn("关闭", close));
+    };
+
+    const renderError = (message) => {
+        formBox.style.display = "none";
+        statusBox.style.display = "";
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
+        fill(actionsBox, btn("重试", onSubmit), btn("关闭", close));
+    };
+
+    // 生图：卡片原图落 input/ 当参考图，按故事出 3×3 故事板；进度/结果都留在窗口内
+    const start = async () => {
+        if (running) return;
+        running = true;
+        cancelRequested = false;
+        renderRunning("排队中…");
+        try {
+            if (!refName) refName = await copyImageToInput(image, subfolder);
+            const snap = await requestGeneration(buildStoryboardGridRequest(refName, input.value.trim()));
+            cancelId = snap.task_id;
+            renderRunning("排队中…");
+            const final = await watchTask(snap.task_id, (s) => {
+                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress);
+            }, () => cancelRequested);
+            if (final.status === "succeeded") renderSuccess(final);
+            else if (final.status === "cancelled") renderError("已取消");
+            else renderError(final.error || "生成失败");
+        } catch (e) {
+            console.error('[Gallery] storyboard generation failed:', e);
+            renderError(String(e?.message || e));
+        } finally {
+            running = false;
+            cancelId = null;
+        }
+    };
+
+    const onSubmit = () => {
+        if (running) return;
+        if (!input.value.trim()) {
+            hint.textContent = "请先填写九宫格故事，或点「✨ LLM 生成九宫格故事」";
             hint.classList.add("neo-gallery-story-hint-error");
             input.focus();
             return;
         }
-        close();
-        generateStoryboard(gallery, image, subfolder, story);
+        start();
     };
-    // LLM 参考图生成提示词：卡片原图经 copy_to_input 落到 input/，以 kind=input 交给反推任务流式产出，
-    // 逐帧写进故事框（已有内容追加到下方），供继续编辑后再生成。refName 缓存避免重复落盘。
-    let llmBtn;
-    let refName = null;
-    let llmRunning = false;
-    const generatePromptFromRef = async () => {
+    // 九宫格故事生成：卡片原图经 copy_to_input 落到 input/，连同一句简要故事 / 想法（可空）交给
+    // storyboard_story 任务流式产出 1→9 逐格推进的故事，覆盖写入上面的故事框，供编辑后再生成。
+    // refName 缓存避免重复落盘。
+    const generateStoryFromIdea = async () => {
         if (llmRunning) return;
         llmRunning = true;
         llmBtn.disabled = true;
@@ -267,39 +347,38 @@ function openStoryboardDialog(gallery, image, subfolder) {
         hint.classList.remove("neo-gallery-story-hint-error");
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
-            const prior = input.value.trim() ? input.value.trim() + "\n\n" : "";
             let buf = "";
             await invokePromptStream(
-                { text: "", skillId: "reverse_prompt", images: [{ kind: "input", value: refName }] },
+                { text: ideaInput.value.trim(), skillId: STORYBOARD_STORY_SKILL_ID, images: [{ kind: "input", value: refName }] },
                 {
                     onChunk: (chunk) => {
                         if (!chunk || chunk.kind === "thinking") return;
                         buf += chunk.text || "";
-                        input.value = prior + buf;
+                        input.value = buf;
                     },
                     onDone: () => {
-                        input.value = prior + buf;
-                        hint.textContent = "已按参考图生成提示词，可继续编辑后再生成。";
+                        input.value = buf;
+                        hint.textContent = "已生成九宫格故事，可继续编辑后再点「生成」。";
                     },
                     onError: (err) => {
-                        console.error('[Gallery] storyboard LLM prompt failed:', err);
-                        showToast(gallery.app, 'error', 'LLM 生成提示词失败', String(err));
+                        console.error('[Gallery] storyboard story generation failed:', err);
+                        showToast(gallery.app, 'error', 'LLM 生成九宫格故事失败', String(err));
                     }
                 }
             );
         } catch (e) {
-            console.error('[Gallery] storyboard LLM prompt failed:', e);
-            showToast(gallery.app, 'error', 'LLM 生成提示词失败', String(e?.message || e));
+            console.error('[Gallery] storyboard story generation failed:', e);
+            showToast(gallery.app, 'error', 'LLM 生成九宫格故事失败', String(e?.message || e));
         } finally {
             llmRunning = false;
             llmBtn.disabled = false;
-            llmBtn.textContent = "✨ LLM 生成提示词";
+            llmBtn.textContent = "✨ LLM 生成九宫格故事";
         }
     };
-    llmBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ LLM 生成提示词", onclick: generatePromptFromRef });
+    llmBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ LLM 生成九宫格故事", onclick: generateStoryFromIdea });
     const onKey = (e) => {
         if (e.key === "Escape") close();
-        else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
+        else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onSubmit();
     };
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
@@ -319,14 +398,12 @@ function openStoryboardDialog(gallery, image, subfolder) {
                 $el("div", { className: "neo-gallery-story-path", title: pathLabel, textContent: pathLabel })
             ])
         ]),
-        input,
-        hint,
-        $el("div", { className: "neo-gallery-story-actions" }, [
-            llmBtn,
-            $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close }),
-            $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "生成", onclick: submit })
-        ])
+        formBox,
+        statusBox,
+        actionsBox
     ]));
+
+    renderForm();
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
     document.addEventListener("keydown", onKey);
     const origRemove = overlay.remove.bind(overlay);

@@ -92,6 +92,17 @@ class TestScanSkills(unittest.TestCase):
         ids = {s["id"] for s in self._scan()}
         self.assertTrue({"smart_prompt", "translate_prompt"} <= ids)
 
+    def test_storyboard_story_task_registered(self):
+        """"九宫格故事" 任务：简要故事 + 参考图（vision），且已注册进 llm.LLM_TASKS"""
+        by_id = {s["id"]: s for s in self._scan()}
+        s = by_id.get("storyboard_story")
+        self.assertIsNotNone(s, "storyboard_story 任务未被扫描到")
+        self.assertTrue(s["needs_image"], "storyboard_story 需要参考图")
+        self.assertEqual(s["category"], "vision")
+        llm_mod = sys.modules.get(f"{_PKG_NAME}.llm")
+        self.assertIsNotNone(llm_mod, "llm 模块未加载")
+        self.assertIn("storyboard_story", llm_mod.LLM_TASKS, "storyboard_story 未注册进 LLM_TASKS")
+
     def test_internal_tasks_hidden(self):
         """内部任务不作为可选 skill 暴露"""
         ids = {s["id"] for s in self._scan()}

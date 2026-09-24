@@ -1912,7 +1912,15 @@ Accordion Section Buttons (Clear)
     white-space: nowrap;
 }
 
-.neo-gallery-story-input {
+/* 九宫格小窗的故事表单（故事框 + 提示 + 简要故事框）：生成中被进度/结果区整块替换 */
+.neo-gallery-story-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.neo-gallery-story-input,
+.neo-gallery-story-idea {
     min-height: 110px;
     padding: 8px;
     font-family: inherit;
@@ -1925,9 +1933,21 @@ Accordion Section Buttons (Clear)
     resize: vertical;
 }
 
-.neo-gallery-story-input:focus {
+/* 简要故事 / 想法：LLM 的输入，可留空；比上面的九宫格故事框矮一些 */
+.neo-gallery-story-idea {
+    min-height: 56px;
+}
+
+.neo-gallery-story-input:focus,
+.neo-gallery-story-idea:focus {
     outline: none;
     border-color: rgba(76, 154, 255, 0.6);
+}
+
+/* 输入框上方的小标签（九宫格故事 / 简要故事 / 想法） */
+.neo-gallery-story-field-label {
+    font-size: 11px;
+    color: #b8c2ce;
 }
 
 .neo-gallery-story-hint {
