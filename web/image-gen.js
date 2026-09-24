@@ -236,7 +236,7 @@ export async function buildGenPrompt(skillId, text, hasRefs) {
 // 发送到 LoadImage 节点（复用 Gallery 的 copy_to_input 通道）
 // ==========================================
 
-function findImageWidget(node) {
+export function findImageWidget(node) {
     return (node.widgets || []).find(w =>
         w.type === "combo" && /image/i.test(w.name || "")) || null;
 }
@@ -270,7 +270,7 @@ async function copyOutputToInput(image) {
     return result.skipped ? image.filename : result.filename;
 }
 
-async function applyImageToTarget(target, image) {
+export async function applyImageToTarget(target, image) {
     const filename = await copyOutputToInput(image);
     target.widget.value = filename;
     if (target.widget.type === "combo" && target.widget.callback) {

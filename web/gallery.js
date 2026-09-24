@@ -5,6 +5,7 @@ import { GalleryList } from './gallery-list.js';
 import { GalleryCard } from './gallery-card.js';
 import { GallerySetting } from './gallery-setting.js';
 import { createRecipesPanel } from './recipes.js';
+import { attachGalleryNodeDrop } from './gallery-node-drop.js';
 import {
     THUMBNAIL_SIZE_DEFAULT,
     THUMBNAIL_SIZE_MIN,
@@ -1817,6 +1818,9 @@ app.registerExtension({
         const gallery = new NeoGallery(app);
         app.neoGallery = gallery;
         await gallery.init();
+
+        // 允许把 Gallery 卡片图片拖放到画布上的 LoadImage 节点
+        attachGalleryNodeDrop();
 
         app.ui.settings.addSetting({
             id: "Neo Gallery._General.maxThumbnailSize",

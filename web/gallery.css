@@ -1978,3 +1978,15 @@ Accordion Section Buttons (Clear)
     background: rgba(76, 154, 255, 0.5);
 }
 
+/* Gallery 卡片拖放到 LoadImage 节点时的命中高亮 */
+.neo-gallery-node-drop-highlight {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    display: none;
+    border: 2px solid #4f8cff;
+    border-radius: 6px;
+    background: rgba(79, 140, 255, 0.12);
+    box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.35);
+}
+
