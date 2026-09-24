@@ -6,59 +6,7 @@ import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
 import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
-import { requestGeneration, watchTask } from "./image-gen.js";
-
-// 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
-const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
-// 用所选人像作参考图生成四视图角色设定图，供拖入导演配方的 👤 角色参考图。
-const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人物，在一张横版画面中生成四个视图横向并排的角色设定图：第一格为大头特写（肩部以上，突出五官脸型），第二格为正面全身站立，第三格为侧面全身站立，第四格为背面全身站立。严格保持与参考图一致的五官脸型、发型发色、服装配饰和体型比例；全身视图中人物自然站立，双臂下垂，纯白背景，均匀柔光，写实摄影风格，高清细节，画面内不出现文字标注。";
-// 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
-const CHARACTER_SHEET_DIR = "CharacterSheet";
-
-/** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（输出尺寸按 16 对齐）；输出走独立 CharacterSheet 目录 */
-export function buildCharacterSheetRequest(refName) {
-    return {
-        skill_id: QWEN_IMAGE_SKILL_ID,
-        prompt: CHARACTER_SHEET_PROMPT,
-        width: 1920,
-        height: 1080,
-        references: [{ kind: "input", value: refName }],
-        loras: [],          // 不带全局 LoRA（避免把 Krea2 风格 LoRA 灌进 Qwen 模型）
-        skip_enhance: true, // 固定提示词，不走 LLM 增强
-        output_prefix: CHARACTER_SHEET_DIR, // 独立输出目录（覆盖全局 output_prefix）
-    };
-}
-
-// 一键九宫格分镜图：原图当参考 + 九宫格指令出 3×3 故事板，供导演编辑器「🧩 宫格分镜图拆分」
-// 切成视频关键帧。尺寸与导演编辑器一键九宫格一致：2048 基准 16:9（每格约 683×384）。
-const STORYBOARD_DIR = "StoryBoard";
-const STORYBOARD_WIDTH = 2048;
-const STORYBOARD_HEIGHT = 1152;
-// 小窗里的参考图预览尺寸（px，走 /neo_gallery/thumbnail 缓存，不为预览另存大图）
-const STORYBOARD_PREVIEW_SIZE = 480;
-
-/** 故事 → 九宫格指令（语义同预设技能 nine_grid_storyboard 的模板前缀，另加 <image1> 身份锚定）。
- * qwen_image21 分词器会为每张参考图插字面量 <imageN>，所以提示词里可以直接写 <image1>。 */
-export function buildStoryboardGridPrompt(story) {
-    return "一张 3×3 九宫格分镜故事板（nine-panel storyboard sheet），按阅读顺序（从左到右、从上到下，第 1 格到第 9 格）讲述以下故事：\n"
-        + story + "\n"
-        + "参考图 <image1> 里的人物就是故事主角：所有格子保持与参考图一致的五官脸型、发型发色、服装配饰与体型比例，场景与画风统一。\n"
-        + "要求：每格一个镜头，叙事逐格推进；格子之间用均匀细白缝分隔，便于后续自动切分；格子内不出现任何文字、字幕或编号。";
-}
-
-/** 一键九宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 九宫格指令；输出走独立 StoryBoard 目录 */
-export function buildStoryboardGridRequest(refName, story) {
-    return {
-        skill_id: QWEN_IMAGE_SKILL_ID,
-        prompt: buildStoryboardGridPrompt(story),
-        width: STORYBOARD_WIDTH,
-        height: STORYBOARD_HEIGHT,
-        references: [{ kind: "input", value: refName }],
-        loras: [],          // 不带全局 LoRA（避免把 Krea2 风格 LoRA 灌进 Qwen 模型）
-        skip_enhance: true, // 固定提示词，不走 LLM 增强
-        output_prefix: STORYBOARD_DIR, // 独立输出目录（覆盖全局 output_prefix）
-    };
-}
+import { buildGenerationMenuItems } from "./gallery-gen.js";
 
 // 已解码波形峰值的会话缓存：同一文件在页面内只请求/解码一次，跨卡片复用。
 // 持久化到后端本地目录由 /neo_gallery/waveform 负责（见 gallery.py）。
@@ -662,26 +610,7 @@ export class GalleryCard {
                 className: "neo-gallery-collect-item",
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
             }, ["\u2B50 收藏本图"]),
-            isImageFile(image.filename) ? $el("div", {
-                className: "neo-gallery-collect-item",
-                title: "用 Qwen Image 2.1 基于这张人像生成头特写+正/侧/背四视图角色设定图；完成后在 Gallery 输出目录拖入配方的 👤 角色参考图",
-                onclick: () => { this._removeCollectMenu(); this._generateCharacterSheet(image, subfolder); }
-            }, ["\uD83E\uDDAC 生成角色图（多视图）"]) : null,
-            isImageFile(image.filename) ? $el("div", {
-                className: "neo-gallery-collect-item",
-                title: "以这张图为参考、按你填的故事生成 3×3 九宫格分镜图（每格一镜，可直接进导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧）",
-                onclick: () => { this._removeCollectMenu(); this._openStoryboardDialog(image, subfolder); }
-            }, ["\uD83E\uDDE9 生成九宫格分镜图"]) : null,
-            $el("div", {
-                className: "neo-gallery-collect-item",
-                title: "在画廊中打开角色图输出目录（Output/CharacterSheet），最新结果排在最前",
-                onclick: () => { this._removeCollectMenu(); gallery.showDirectoryStructure("Output", [CHARACTER_SHEET_DIR]); }
-            }, ["\uD83D\uDCC2 直达角色输出目录"]),
-            $el("div", {
-                className: "neo-gallery-collect-item",
-                title: "在画廊中打开分镜图输出目录（Output/StoryBoard），最新结果排在最前",
-                onclick: () => { this._removeCollectMenu(); gallery.showDirectoryStructure("Output", [STORYBOARD_DIR]); }
-            }, ["\uD83D\uDCC2 直达分镜目录"]),
+            ...buildGenerationMenuItems({ card: this, gallery, image, subfolder }),
             ...(image.lora_path ? [
                 $el("div", {
                     className: "neo-gallery-collect-item",
@@ -735,140 +664,6 @@ export class GalleryCard {
         };
         const origRemove = menu.remove.bind(menu);
         menu.remove = () => { if (menu._cleanup) menu._cleanup(); origRemove(); };
-    }
-
-    /** 卡片图片经 copy_to_input 落到 input 目录（与发送到 LoadImage 同一通道），返回 input 内的文件名 */
-    async _copyImageToInput(image, subfolder) {
-        const query = "filename=" + encodeURIComponent(image.filename || "")
-            + (subfolder ? "&subfolder=" + encodeURIComponent(subfolder) : "");
-        const resp = await api.fetchApi("/neo_gallery/copy_to_input?" + query);
-        const result = await resp.json().catch(() => null);
-        if (!resp.ok || !result || !result.success) {
-            throw new Error((result && result.error) || '无法读取该图片');
-        }
-        return result.filename;
-    }
-
-    /** 一键角色图：卡片图片先经 copy_to_input 落到 input 目录（与发送到 LoadImage 同一通道），
-     * 再作为参考图提交 Qwen Image 2.1 多视图生成；完成后提示把结果拖入配方 👤 角色参考图。 */
-    async _generateCharacterSheet(image, subfolder) {
-        const gallery = this.gallery;
-        let refName;
-        try {
-            refName = await this._copyImageToInput(image, subfolder);
-        } catch (e) {
-            console.error('[Gallery] character sheet copy_to_input failed:', e);
-            showToast(gallery.app, 'error', '生成角色图失败', String(e?.message || e));
-            return;
-        }
-        try {
-            const snap = await requestGeneration(buildCharacterSheetRequest(refName));
-            showToast(gallery.app, 'info', '角色图生成中', '排队/生图中…结果保存在 Gallery 输出目录');
-            const final = await watchTask(snap.task_id);
-            if (final.status === "succeeded") {
-                showToast(gallery.app, 'success', '角色图已生成', '在 Neo Gallery 输出目录找到后，拖入配方的 👤 角色参考图');
-            } else if (final.status !== "cancelled") {
-                showToast(gallery.app, 'error', '角色图生成失败', final.error || '未知错误');
-            }
-        } catch (e) {
-            console.error('[Gallery] character sheet generation failed:', e);
-            showToast(gallery.app, 'error', '生成角色图失败', String(e?.message || e));
-        }
-    }
-
-    /** 九宫格分镜图的前置小窗：填故事 / 想法（Ctrl+Enter 生成，Esc 或点遮罩关闭） */
-    _openStoryboardDialog(image, subfolder) {
-        document.querySelector('.neo-gallery-story-modal-overlay')?.remove();
-        const gallery = this.gallery;
-        // 预览按卡片图片的高度显示：小窗里的参考图和卡片里看到的一样大，方便确认用的就是这张
-        const previewHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
-        const pathLabel = (subfolder ? `${subfolder}/` : "") + (image.filename || image.name || "");
-        const hint = $el("div", {
-            className: "neo-gallery-story-hint",
-            textContent: "写下这个故事：九宫格按 1→9 逐格推进，人物沿用这张图。"
-        });
-        const input = $el("textarea", {
-            className: "neo-gallery-story-input",
-            rows: 6,
-            placeholder: "例：雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下……"
-        });
-        const overlay = $el("div", { className: "neo-gallery-story-modal-overlay" });
-        const close = () => overlay.remove();
-        const submit = () => {
-            const story = input.value.trim();
-            if (!story) {
-                hint.textContent = "请先填写故事 / 想法";
-                hint.classList.add("neo-gallery-story-hint-error");
-                input.focus();
-                return;
-            }
-            close();
-            this._generateStoryboard(image, subfolder, story);
-        };
-        const onKey = (e) => {
-            if (e.key === "Escape") close();
-            else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
-        };
-        overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
-            $el("div", { className: "neo-gallery-story-titlebar" }, [
-                $el("span", { className: "neo-gallery-story-title", textContent: "\uD83E\uDDE9 生成九宫格分镜图" }),
-                $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
-            ]),
-            // 参考图直接出缩略图（同一张卡片走同一缓存接口），避免只看到文件名却不确定是哪张
-            $el("div", { className: "neo-gallery-story-ref" }, [
-                $el("img", {
-                    className: "neo-gallery-story-ref-img",
-                    src: getThumbnailSrc(image, subfolder, STORYBOARD_PREVIEW_SIZE),
-                    alt: image.name || image.filename,
-                    style: { height: `${previewHeight}px` }
-                }),
-                $el("div", { className: "neo-gallery-story-ref-info" }, [
-                    $el("div", { className: "neo-gallery-story-ref-label", textContent: "参考图 \u00B7 人物沿用这张" }),
-                    $el("div", { className: "neo-gallery-story-path", title: pathLabel, textContent: pathLabel })
-                ])
-            ]),
-            input,
-            hint,
-            $el("div", { className: "neo-gallery-story-actions" }, [
-                $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close }),
-                $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "生成", onclick: submit })
-            ])
-        ]));
-        overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
-        document.addEventListener("keydown", onKey);
-        const origRemove = overlay.remove.bind(overlay);
-        overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
-        document.body.appendChild(overlay);
-        setTimeout(() => input.focus(), 0);
-    }
-
-    /** 一键九宫格分镜图：卡片图片先落 input/ 当参考图，再按故事出 3×3 故事板；
-     * 成功后直接跳到产物所在目录（供拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧）。 */
-    async _generateStoryboard(image, subfolder, story) {
-        const gallery = this.gallery;
-        let refName;
-        try {
-            refName = await this._copyImageToInput(image, subfolder);
-        } catch (e) {
-            console.error('[Gallery] storyboard copy_to_input failed:', e);
-            showToast(gallery.app, 'error', '生成分镜图失败', String(e?.message || e));
-            return;
-        }
-        try {
-            const snap = await requestGeneration(buildStoryboardGridRequest(refName, story));
-            showToast(gallery.app, 'info', '九宫格分镜图生成中', '排队/生图中…结果保存在 Output/StoryBoard');
-            const final = await watchTask(snap.task_id);
-            if (final.status === "succeeded") {
-                showToast(gallery.app, 'success', '九宫格分镜图已生成', '可拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧');
-                const dir = (final.images || []).map(i => i.subfolder).find(Boolean);
-                if (dir) gallery.showDirectoryStructure("Output", dir.split("/").filter(Boolean));
-            } else if (final.status !== "cancelled") {
-                showToast(gallery.app, 'error', '九宫格分镜图生成失败', final.error || '未知错误');
-            }
-        } catch (e) {
-            console.error('[Gallery] storyboard generation failed:', e);
-            showToast(gallery.app, 'error', '生成分镜图失败', String(e?.message || e));
-        }
     }
 
     // ====== Image Element ======

@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click, sseResponse } from "./setup.mjs";
 
 const STORY = "雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下。";
 
@@ -39,7 +39,7 @@ function openMenu(card, gallery) {
 }
 
 test("buildStoryboardGridRequest：Qwen Image 2.1 + 原图参考 + 九宫格指令 + StoryBoard 目录", async () => {
-    const { buildStoryboardGridRequest, buildStoryboardGridPrompt } = await import("../../web/gallery-card.js");
+    const { buildStoryboardGridRequest, buildStoryboardGridPrompt } = await import("../../web/gallery-gen.js");
     const body = buildStoryboardGridRequest("NeoAgent/portrait.png", STORY);
     assert.equal(body.skill_id, "qwen_image_21");
     assert.equal(body.width, 2048);   // 2048 基准 16:9，与导演编辑器一键九宫格同尺寸（每格约 683×384）
@@ -77,7 +77,7 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(refImg?.style.height, "268px");
     assert.equal(overlay.querySelector(".neo-gallery-story-ref-label").textContent, "参考图 · 人物沿用这张");
     assert.equal(overlay.querySelector(".neo-gallery-story-path").textContent, "shot.png");
-    const genBtn = overlay.querySelectorAll(".neo-gallery-story-btn")[1];
+    const genBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成");
 
     // 空故事：只提示、窗口留着、不发请求
     click(genBtn);
@@ -126,4 +126,45 @@ test("⋯ 菜单「直达分镜目录」打开 Output/StoryBoard", async () => {
     await sleep(10);
     assert.deepEqual(jumps, [["Output", ["StoryBoard"]]]);
     assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
+});
+
+test("小窗「✨ LLM 生成提示词」：参考图经反推流式写入故事框（已有内容追加）", async () => {
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const toasts = [];
+    const { gallery } = makeGallery(toasts);
+    const card = new GalleryCard(gallery);
+    openMenu(card, gallery);
+    click(itemByLabel("生成九宫格分镜图"));
+
+    const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
+    assert.ok(overlay, "应弹出填故事小窗");
+    const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
+        .find((b) => b.textContent === "✨ LLM 生成提示词");
+    assert.ok(llmBtn, "应有「LLM 生成提示词」按钮");
+
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
+    let llmBody = null;
+    mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
+        llmBody = b;
+        return sseResponse([
+            'data: {"text":"雨夜的地铁口，","kind":"content"}',
+            'data: {"text":"她收起伞抬头。","kind":"content"}',
+            "data: [DONE]",
+        ]);
+    });
+
+    // 已有内容应保留并追加到下方，而非被覆盖
+    overlay.querySelector(".neo-gallery-story-input").value = "我想要一个悬疑开场";
+    click(llmBtn);
+    await sleep(50);
+
+    assert.ok(llmBody, "应调用 /rs_prompts/stream_generate_prompt");
+    assert.equal(llmBody.skillId, "reverse_prompt");
+    assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
+    assert.ok(fetchLog.find((c) => c.path === "/neo_gallery/copy_to_input"), "参考图应先经 copy_to_input 落到 input/ 再交给 LLM");
+
+    assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "我想要一个悬疑开场\n\n雨夜的地铁口，她收起伞抬头。");
+    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已按参考图生成提示词/);
+    assert.equal(llmBtn.disabled, false, "完成后按钮应恢复可用");
+    assert.equal(llmBtn.textContent, "✨ LLM 生成提示词");
 });

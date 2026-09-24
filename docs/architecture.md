@@ -58,6 +58,7 @@ ComfyUI-Neo-Nodes/
 │   ├── gallery.js          # 素材侧边栏主逻辑（状态/持久化/API/视图切换/收藏视图数据）
 │   ├── gallery-list.js     # 列表浏览层：工具条与面包屑、视图渲染管线、滚动分页与封面懒加载、滚动位置记忆、灯箱导航媒体聚合
 │   ├── gallery-card.js     # 单卡片内容与交互：目录卡封面、缩略图卡、发送/收藏菜单、灯箱适配（提示词侧栏/反推/导入工作流）
+│   ├── gallery-gen.js      # 一键生图（角色图/九宫格分镜图）：Qwen Image 2.1 请求体 + 前置小窗 + ⋯菜单生图入口
 │   ├── gallery-setting.js  # 目录管理配置弹窗（自定义目录/OSS/Civitai 同步）
 │   ├── gallery-utils.js    # 素材工具函数
 │   ├── gallery.css
@@ -118,7 +119,7 @@ ComfyUI-Neo-Nodes/
 
 | 文件 | 职责 |
 |------|------|
-| `gallery.js` / `gallery-list.js` / `gallery-card.js` / `gallery-setting.js` / `gallery-utils.js` / `gallery.css` | 素材侧边栏：目录卡片、懒加载列表、搜索、上传删除、设置弹窗 |
+| `gallery.js` / `gallery-list.js` / `gallery-card.js` / `gallery-gen.js` / `gallery-setting.js` / `gallery-utils.js` / `gallery.css` | 素材侧边栏：目录卡片、懒加载列表、搜索、上传删除、设置弹窗；一键生图（角色图/九宫格分镜图）在 gallery-gen.js |
 | `lightbox.js` / `lightbox.css` | 通用灯箱组件：异步 blob 加载、相邻预加载、缩放平移、尺寸显示、`panelProvider` 侧栏钩子；素材与配方通过各自适配接入 |
 | `node-behavior.js` | 节点级交互行为（拖拽图片、粘贴、`@` 引用等） |
 | `combo-box.js` | 通用下拉选择组件：点击展开/键入过滤覆盖、键盘导航；option 可带 `data-tags`（空格分隔，如中文拼音/首字母缩写）作为附加搜索文本参与过滤（无该属性的下拉不受影响）；`<optgroup>` 渲染为分类标题（无 `data-value`，自动被键盘导航与取值逻辑跳过），过滤时空组隐藏 |

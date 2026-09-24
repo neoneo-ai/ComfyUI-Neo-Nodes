@@ -1969,6 +1969,74 @@ Accordion Section Buttons (Clear)
     background: rgba(76, 154, 255, 0.5);
 }
 
+/* ====== Character sheet dialog (生成角色图：进度 + 结果预览) ====== */
+
+.neo-gallery-cs-status {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 20px;
+}
+
+.neo-gallery-cs-running {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #b8c2ce;
+}
+
+.neo-gallery-cs-spinner {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(76, 154, 255, 0.3);
+    border-top-color: #4c9aff;
+    border-radius: 50%;
+    animation: neoGallerySpin 0.8s linear infinite;
+}
+
+.neo-gallery-cs-progress {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.neo-gallery-cs-progress-fill {
+    height: 100%;
+    width: 0;
+    background: rgba(76, 154, 255, 0.85);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.neo-gallery-cs-progress-indeterminate {
+    width: 40% !important;
+    animation: neoCsSlide 1.1s ease-in-out infinite;
+}
+
+@keyframes neoCsSlide {
+    0% { margin-left: -40%; }
+    100% { margin-left: 100%; }
+}
+
+.neo-gallery-cs-result {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.neo-gallery-cs-result-img {
+    width: 100%;
+    max-height: 320px;
+    display: block;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    cursor: zoom-in;
+}
+
 /* Gallery 卡片拖放到 LoadImage 节点时的命中高亮 */
 .neo-gallery-node-drop-highlight {
     position: fixed;
