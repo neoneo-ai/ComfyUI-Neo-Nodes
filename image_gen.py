@@ -1131,7 +1131,11 @@ async def start_generation(body: dict) -> dict:
         if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
             settings[key] = value
 
-    params = resolve_request(body or {}, settings)
+    # 参考槽位数与四视图 LoRA 自动挑选按模板决定（与 ImageGenEditNode 一致）：
+    # Qwen Image 2.1 等多路槽位模板不走 Krea2 单路编辑链，不能强挑四视图 LoRA
+    params = resolve_request(body or {}, settings,
+                             max_refs=template_max_refs(template),
+                             auto_quadview=template_uses_krea2_edit(template))
     if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance"):
         params["prompt"] = await _enhance_prompt(
             params["prompt"], params["width"], params["height"], skill_id)

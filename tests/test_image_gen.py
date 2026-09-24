@@ -478,6 +478,118 @@ class TemplateRefSlotTests(unittest.TestCase):
         self.assertFalse(image_gen.template_uses_krea2_edit({}))
 
 
+class StartGenerationTemplateRouteTests(unittest.TestCase):
+    """start_generation 按模板决定参考槽位数与四视图 LoRA 自动挑选（与 ImageGenEditNode 一致）。"""
+
+    QWEN_TEMPLATE = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "{{TEXT_ENCODER}}"}},
+        "4": {"class_type": "TextEncodeQwenImage21",
+              "inputs": {"prompt": "{{PROMPT}}",
+                         "images.image_1": ["10", 0], "images.image_2": ["12", 0]}},
+        "5": {"class_type": "EmptyLatentImage",
+              "inputs": {"width": "{{WIDTH}}", "height": "{{HEIGHT}}"}},
+        "6": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "seed": "{{SEED}}", "steps": "{{STEPS}}",
+                         "positive": ["4", 0], "negative": ["4", 1], "latent_image": ["5", 0]}},
+        "8": {"class_type": "SaveImage",
+              "inputs": {"images": ["6", 0], "filename_prefix": "{{PREFIX}}"}},
+        "10": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_1}}"}},
+        "12": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_2}}"}},
+    }
+
+    KREA2_TEMPLATE = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}},
+        "2": {"class_type": "Krea2EditModelPatch",
+              "inputs": {"model": ["1", 0], "image": "{{REF_IMAGE}}"}},
+        "8": {"class_type": "SaveImage", "inputs": {"images": ["3", 0]}},
+    }
+
+    def _run(self, template, body, cfg=None):
+        captured = {}
+        orig = (image_gen.get_settings, image_gen.submit_graph, image_gen._watch,
+                _skill_mod.load_skill_workflow, _skill_mod.get_skill_gen_config)
+
+        async def no_watch(task_id):
+            return None
+
+        async def fake_submit(graph):
+            captured["graph"] = graph
+            return "prompt-1"
+
+        try:
+            image_gen.get_settings = lambda: dict(base_settings(), **{k: v for k, v in (cfg or {}).items()
+                                                                      if k in image_gen._SKILL_SETTING_KEYS})
+            image_gen.submit_graph = fake_submit
+            image_gen._watch = no_watch
+            _skill_mod.load_skill_workflow = lambda sid: template
+            _skill_mod.get_skill_gen_config = lambda sid: (cfg or {})
+            write_png(os.path.join(_INPUT_DIR, "portrait.png"), 768, 1024)
+            snap = asyncio.run(image_gen.start_generation(body))
+        finally:
+            (image_gen.get_settings, image_gen.submit_graph, image_gen._watch,
+             _skill_mod.load_skill_workflow, _skill_mod.get_skill_gen_config) = orig
+        return snap, captured
+
+    def test_multi_ref_template_skips_quadview_lora(self):
+        # Qwen Image 2.1 多路槽位模板：参考槽正常填充，不自动挑 Krea2 四视图 LoRA
+        snap, captured = self._run(
+            self.QWEN_TEMPLATE,
+            {"skill_id": "qwen_image_21", "prompt": "角色设定图",
+             "references": [{"kind": "input", "value": "portrait.png"}]})
+        self.assertEqual(snap["status"], "queued")
+        graph = captured["graph"]
+        self.assertEqual(graph["10"]["inputs"]["image"], "portrait.png")
+        self.assertNotIn("12", graph)  # 第二槽无参考 → LoadImage 与连线一并裁掉
+        self.assertNotIn("images.image_2", graph["4"]["inputs"])
+        loras = [n for n in graph.values() if isinstance(n, dict)
+                 and n.get("class_type") == "LoraLoaderModelOnly"]
+        self.assertEqual(loras, [])
+
+    def test_krea2_template_keeps_quadview_lora(self):
+        # Krea2 单路编辑模板：保留四视图 LoRA 自动挑选（动态注入 LoraLoaderModelOnly）
+        snap, captured = self._run(
+            self.KREA2_TEMPLATE,
+            {"skill_id": "image_gen_image", "prompt": "角色设定图",
+             "references": [{"kind": "input", "value": "portrait.png"}]})
+        graph = captured["graph"]
+        loras = [n for n in graph.values() if isinstance(n, dict)
+                 and n.get("class_type") == "LoraLoaderModelOnly"]
+        self.assertEqual(len(loras), 1)
+        self.assertEqual(loras[0]["inputs"]["lora_name"],
+                         "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
+
+    def test_real_qwen_preset_renders_with_required_inputs(self):
+        # 真实预设模板必须带 TextEncodeQwenImage21 的必填 resolution 输入，
+        # 否则 ComfyUI prompt 校验整图拒绝（"Required input is missing: resolution"）
+        preset_dir = os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21")
+        with open(os.path.join(preset_dir, "workflow.json"), encoding="utf-8") as f:
+            template = json.load(f)
+        with open(os.path.join(preset_dir, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        orig_models = {k: list(v) for k, v in _MODELS.items()}
+        _MODELS["diffusion_models"].append(cfg["model"])
+        _MODELS["text_encoders"].append(cfg["text_encoder"])
+        _MODELS["vae"].append(cfg["vae"])
+        try:
+            snap, captured = self._run(
+                template,
+                {"skill_id": "qwen_image_21", "prompt": "角色设定图",
+                 "width": 1920, "height": 1080,
+                 "references": [{"kind": "input", "value": "portrait.png"}]},
+                cfg=cfg)
+        finally:
+            _MODELS.clear()
+            _MODELS.update(orig_models)
+        self.assertEqual(snap["status"], "queued")
+        graph = captured["graph"]
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 1024)
+        # 显式 1920×1080 按全局规则对齐到 16 → 1920×1088
+        self.assertEqual((graph["5"]["inputs"]["width"], graph["5"]["inputs"]["height"]), (1920, 1088))
+        loads = [v for v in graph.values() if v.get("class_type") == "LoadImage"]
+        self.assertEqual(len(loads), 1)  # 其余 9 个空槽连同 LoadImage 裁掉
+
+
 class Krea2EditHelperTests(unittest.TestCase):
     """vendor 的 krea2_edit.py 纯函数单测（CPU 可跑，不加载模型）。"""
 

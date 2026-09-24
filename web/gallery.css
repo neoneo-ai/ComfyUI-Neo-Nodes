@@ -1721,3 +1721,156 @@ Accordion Section Buttons (Clear)
     color: #9aa4b0;
 }
 
+/* ====== Storyboard story dialog (九宫格分镜图：填故事) ====== */
+
+.neo-gallery-story-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+}
+
+.neo-gallery-story-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 480px;
+    max-width: 90vw;
+    padding: 12px;
+    background: rgba(24, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.neo-gallery-story-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.neo-gallery-story-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #eee;
+}
+
+.neo-gallery-story-close {
+    padding: 2px 6px;
+    font-size: 18px;
+    line-height: 1;
+    color: #888;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.neo-gallery-story-close:hover {
+    color: #FF9944;
+    background: rgba(255, 106, 0, 0.1);
+}
+
+/* 参考图预览：小窗里直接看到用作参考的那张图，大小与卡片一致（缩略图走 /neo_gallery/thumbnail 缓存） */
+.neo-gallery-story-ref {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+}
+
+.neo-gallery-story-ref-img {
+    flex: none;
+    width: 100%;
+    display: block;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+}
+
+.neo-gallery-story-ref-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0; /* 让下面的文件名能省略号截断 */
+}
+
+.neo-gallery-story-ref-label {
+    font-size: 11px;
+    color: #b8c2ce;
+}
+
+/* 参考图文件名（让用户确认用的是哪张图） */
+.neo-gallery-story-path {
+    font-size: 11px;
+    color: #8a93a0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-gallery-story-input {
+    min-height: 110px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    resize: vertical;
+}
+
+.neo-gallery-story-input:focus {
+    outline: none;
+    border-color: rgba(76, 154, 255, 0.6);
+}
+
+.neo-gallery-story-hint {
+    font-size: 11px;
+    color: #8a93a0;
+}
+
+.neo-gallery-story-hint-error {
+    color: #ff6b6b;
+}
+
+.neo-gallery-story-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.neo-gallery-story-btn {
+    padding: 5px 14px;
+    font-size: 12px;
+    color: #ccc;
+    background: rgba(42, 42, 46, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.neo-gallery-story-btn:hover {
+    background: rgba(76, 154, 255, 0.22);
+    color: #fff;
+}
+
+.neo-gallery-story-btn-primary {
+    color: #fff;
+    background: rgba(76, 154, 255, 0.35);
+}
+
+.neo-gallery-story-btn-primary:hover {
+    background: rgba(76, 154, 255, 0.5);
+}
+
