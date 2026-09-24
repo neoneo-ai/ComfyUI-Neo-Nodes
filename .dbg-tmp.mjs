@@ -1,0 +1,15 @@
+import { resetEnv, clearRoutes, mockRoute, flush } from "./tests/js/setup.mjs";
+const { NeoGallery } = await import("./web/gallery.js");
+resetEnv(); clearRoutes();
+mockRoute("/neo_gallery/delete", (body) => ({ success: true, deleted: body.filename }));
+const gallery = new NeoGallery({ extensionManager: { toast: { added: [], add(t) { this.added.push(t); } } } });
+document.body.appendChild(gallery.element);
+gallery.list = { sortAndDisplayImages: async () => { console.log("REFRESH CALLED"); } };
+gallery.currentView = { mode: "directory", source: "Output", categoryPath: [] };
+gallery._currentDirStructure = { subdirs: {}, items: [{ name: "a", filename: "a.png" }] };
+gallery._currentDirImages = [...gallery._currentDirStructure.items];
+console.log("before:", JSON.stringify(gallery.currentView), !!gallery._currentDirStructure);
+gallery.toggleSelection("a", "Output");
+await gallery.deleteSelected();
+await flush();
+console.log("after items:", gallery._currentDirStructure.items.length, "selected:", gallery._selectedItems.size);

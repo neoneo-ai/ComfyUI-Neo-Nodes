@@ -39,7 +39,7 @@ const CIVITAI_VIEW_SOURCE = CIVITAI_DIR_KEY;  // same stable identifier reused i
 /**
  * NeoGallery — preset-based gallery (no YAML).
  */
-class NeoGallery {
+export class NeoGallery {
     constructor(app) {
         this.app = app;
         this.maxThumbnailSize = THUMBNAIL_SIZE_DEFAULT;
@@ -80,6 +80,15 @@ class NeoGallery {
         this._scrollPositions = {};
         this._currentScrollKey = null;
 
+        // 导航历史（顶部前进/后退按钮）
+        this._navStack = [];
+        this._navPos = -1;
+        this._navRestoring = false;
+
+        // 多选删除：卡片左上角勾选框选中后，底部操作条批量删除
+        this._selectedItems = new Set();
+        this._selectionBar = null;
+
         // 音频卡片共享播放器：同一时刻只播一个，点击音频卡片外区域停止
         this._audioPlayer = null;
         this._audioCtx = null;
@@ -102,6 +111,7 @@ class NeoGallery {
         });
 
         const customDirBtn = this.list.createCustomDirSettingBtn(this);
+        const navGroup = this.list.createNavButtons(this);
 
         // Main content area
         this.accordion = $el("div", { className: "neo-gallery-accordion" });
@@ -109,7 +119,7 @@ class NeoGallery {
         this.element = $el("div", { id: this.elementId, className: "neo-gallery-panel" }, [
             $el("div", { 
                 className: "neo-gallery-header-row",
-                style: { display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center' }
+                style: { display: 'grid', gridTemplateColumns: 'auto auto 1fr auto', alignItems: 'center' }
             }, [
                 $el("h3", { 
                     className: "neo-gallery-header-title",
@@ -117,8 +127,9 @@ class NeoGallery {
                     onclick: () => this.showCategoryCards(),
                     title: "Click to return to home"
                 }),
+                navGroup,
                 $el("div", { 
-                    style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, gridColumn: '2' }
+                    style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, gridColumn: '3' }
                 }, [this.thumbnailSizeSlider]),
                 $el("div", { style: { display: 'flex', gap: '12px', alignItems: 'center' } }, [customDirBtn])
             ]),
@@ -356,6 +367,55 @@ class NeoGallery {
         }
     }
 
+    // ====== 导航历史（顶部前进/后退按钮） ======
+
+    _snapshotView() {
+        return {
+            mode: this.currentView.mode,
+            source: this.currentView.source,
+            categoryPath: [...(this.currentView.categoryPath || [])]
+        };
+    }
+
+    // 每次视图切换（进入目录 / 收藏页 / 首页）记录一条历史；相同视图不重复入栈。
+    _recordNavState() {
+        if (this._navRestoring) return;
+        const view = this._snapshotView();
+        const cur = this._navStack[this._navPos];
+        if (cur && cur.mode === view.mode && cur.source === view.source &&
+            JSON.stringify(cur.categoryPath) === JSON.stringify(view.categoryPath)) {
+            return;
+        }
+        this._navStack.length = this._navPos + 1; // 丢弃前进分支
+        this._navStack.push(view);
+        this._navPos = this._navStack.length - 1;
+        this._updateNavButtons();
+    }
+
+    _updateNavButtons() {
+        if (this.navBackBtn) this.navBackBtn.disabled = this._navPos <= 0;
+        if (this.navForwardBtn) this.navForwardBtn.disabled = this._navPos >= this._navStack.length - 1;
+    }
+
+    // delta: -1 后退 / +1 前进。无可达条目时返回 false（调用方可走旧逻辑兜底）。
+    async navigateHistory(delta) {
+        const target = this._navPos + delta;
+        if (target < 0 || target >= this._navStack.length) return false;
+        const view = this._navStack[target];
+        this._navPos = target;
+        this._updateNavButtons();
+        this._navRestoring = true; // 恢复渲染时不再入栈、不写浏览器历史
+        try {
+            if (view.mode === 'categories') await this.showCategoryCards();
+            else if (view.mode === 'local_bookmarks') await this.showLocalBookmarks();
+            else if (view.mode === 'civitai_bookmarks') await this.showCivitaiBookmarks();
+            else await this.showDirectoryStructure(view.source, view.categoryPath);
+        } finally {
+            this._navRestoring = false;
+        }
+        return true;
+    }
+
     // ====== 本地收藏（仅记录路径信息，打开时基于路径查找） ======
 
     _createLocalHomeCard() {
@@ -397,11 +457,14 @@ class NeoGallery {
         this.list.updateBreadcrumb(this, [], '');
 
         const stateKey = 'gallery_v2:local_bookmarks:';
-        const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('gallery', stateKey);
-        history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+        if (!this._navRestoring) {
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('gallery', stateKey);
+            history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+        }
 
         await this._renderLocalBookmarks();
+        this._recordNavState();
     }
 
     async _renderLocalBookmarks() {
@@ -541,6 +604,7 @@ class NeoGallery {
     }
 
     async showCivitaiBookmarks() {
+        this.clearSelection();
         await this.list._saveCurrentScrollPosition();
         this.currentView.mode = 'civitai_bookmarks';
         this.currentView.source = CIVITAI_DIR_KEY;
@@ -549,11 +613,14 @@ class NeoGallery {
         this.list.updateBreadcrumb(this, [], '');
 
         const stateKey = `gallery_v2:${encodeURIComponent(CIVITAI_VIEW_SOURCE)}:`;
-        const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('gallery', stateKey);
-        history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+        if (!this._navRestoring) {
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('gallery', stateKey);
+            history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+        }
 
         await this._renderCivitaiBookmarks();
+        this._recordNavState();
     }
 
     async _renderCivitaiBookmarks(refresh = false, page = 0) {
@@ -873,6 +940,7 @@ class NeoGallery {
     }
 
     async showDirectoryStructure(source, pathSegments = []) {
+        this.clearSelection();
         const dirName = source;
         const relPath = pathSegments.join("/");
 
@@ -927,9 +995,13 @@ class NeoGallery {
             
             // Push state to history for back button support (use query param to avoid conflict with workflow hash)
             const stateKey = `gallery_v2:${encodeURIComponent(dirName)}:${pathSegments.join('/')}`;
-            const currentUrl = new URL(window.location.href);
-            currentUrl.searchParams.set('gallery', stateKey);
-            history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+            if (!this._navRestoring) {
+                const currentUrl = new URL(window.location.href);
+                currentUrl.searchParams.set('gallery', stateKey);
+                history.pushState({ galleryState: stateKey }, '', currentUrl.toString());
+            }
+
+            this._recordNavState();
 
         } catch (error) {
             console.error('[Gallery] Error loading directory structure:', error);
@@ -942,6 +1014,7 @@ class NeoGallery {
     }
 
     async showCategoryCards() {
+        this.clearSelection();
         // 保存当前滚动位置（在切换 mode 之前）
         const currentKey = this.list._getScrollKey();
         if (currentKey) {
@@ -968,11 +1041,12 @@ class NeoGallery {
         history.replaceState(null, '', currentUrl.toString());
 
         await this.list.sortAndDisplayImages();
+        this._recordNavState();
     }
 
     // ====== Actions ======
 
-    async deleteItem(name, subfolder) {
+    async deleteItem(name, subfolder, { silent = false, rerender = true } = {}) {
         try {
             const response = await api.fetchApi('/neo_gallery/delete', {
                 method: 'POST',
@@ -983,7 +1057,7 @@ class NeoGallery {
             
             // Check success field (new format) or deleted field (legacy fallback)
             if (result.success || result.deleted) {
-                showToast(this.app, 'success', 'Deleted', `Removed: ${name}`);
+                if (!silent) showToast(this.app, 'success', 'Deleted', `Removed: ${name}`);
                 
                 // Remove from data source immediately
                 // In lazy mode, use _currentDirImages as fallback since dir.items is undefined
@@ -1006,11 +1080,17 @@ class NeoGallery {
                     }
                 }
                 
-                // Also remove from _currentDirImages (lazy mode fallback)
+                // Also remove from the cached directory structure (directory view re-renders from it;
+                // its items are scoped to the current view, so name match is enough)
+                if (this._currentDirStructure && Array.isArray(this._currentDirStructure.items)) {
+                    this._currentDirStructure.items = this._currentDirStructure.items.filter(item => item.name !== name);
+                }
+
+                // Also remove from _currentDirImages (lazy mode fallback; items may lack subfolder)
                 if (this._currentDirImages && this._currentDirImages.length > 0) {
                     const before = this._currentDirImages.length;
-                    this._currentDirImages = this._currentDirImages.filter(item => item.name !== name || item.subfolder !== subfolder);
-                    if (before !== this._currentDirImages.length) {
+                    this._currentDirImages = this._currentDirImages.filter(item => item.name !== name);
+                    if (before !== this._currentDirImages.length && rerender) {
                         // Re-render current view to reflect deletion
                         await this.list.sortAndDisplayImages();
                     }
@@ -1063,13 +1143,120 @@ class NeoGallery {
                 if (remaining.length === 0 && !this.isSearchActive) {
                     this.displayNoFilesMessage();
                 }
+                return true;
             } else {
                 const errorMsg = result.error || 'Unknown error';
-                showToast(this.app, 'error', 'Delete Failed', errorMsg);
+                if (!silent) showToast(this.app, 'error', 'Delete Failed', errorMsg);
+                return false;
             }
         } catch (error) {
             console.error("Error deleting item:", error);
-            showToast(this.app, 'error', 'Delete Failed', error.message || 'Network error');
+            if (!silent) showToast(this.app, 'error', 'Delete Failed', error.message || 'Network error');
+            return false;
+        }
+        return false;
+    }
+
+    // ====== 多选删除（卡片左上角勾选框） ======
+
+    _selectionKey(name, subfolder) {
+        return `${subfolder || ''}\u0000${name}`;
+    }
+
+    /** 与 ⋯ 菜单的 canDelete 判定一致：presets/lora/C站收藏目录（按目录名或子路径）与 oss 只读。 */
+    isDeletableItem(name, subfolder, source = "", dirName = "") {
+        const lower = (s) => String(s || "").toLowerCase();
+        const readOnlyPrefixes = ["presets", "lora", "civitai_bookmarks"];
+        const isReadOnlyPath = (p) => readOnlyPrefixes.some((pre) => p === pre || p.startsWith(pre + "/"));
+        if (isReadOnlyPath(lower(subfolder)) || isReadOnlyPath(lower(dirName))) return false;
+        return source !== "oss";
+    }
+
+    toggleSelection(name, subfolder) {
+        const key = this._selectionKey(name, subfolder);
+        if (this._selectedItems.has(key)) this._selectedItems.delete(key);
+        else this._selectedItems.add(key);
+        this._updateSelectionBar();
+    }
+
+    clearSelection() {
+        if (this._selectedItems.size === 0 && !this._selectionBar) return;
+        this._selectedItems.clear();
+        this._updateSelectionBar();
+    }
+
+    /** Ctrl+A：选中当前视图内所有可删除素材。 */
+    selectAllVisible() {
+        const items = this.isSearchActive ? this.filteredDirectories : this.allDirectories;
+        for (const dir of items || []) {
+            for (const item of Array.isArray(dir.items) ? dir.items : []) {
+                if (!this.isDeletableItem(item.name, item.subfolder, dir.source, dir.name)) continue;
+                this._selectedItems.add(this._selectionKey(item.name, item.subfolder));
+            }
+        }
+        this._updateSelectionBar();
+    }
+
+    /** 重绘后把勾选框/选中态同步回 _selectedItems（删除触发的重渲染会重建卡片 DOM）。 */
+    _syncSelectionDom() {
+        if (this._selectedItems.size === 0) return;
+        document.querySelectorAll('.neo-gallery-thumb-container').forEach((el) => {
+            const key = this._selectionKey(el.dataset.filename, el.dataset.subfolder);
+            const cb = el.querySelector('.neo-gallery-select-check');
+            const selected = this._selectedItems.has(key);
+            if (cb) cb.checked = selected;
+            el.classList.toggle('neo-gallery-thumb-selected', selected);
+        });
+    }
+
+    _updateSelectionBar() {
+        if (this._selectionBar) { this._selectionBar.remove(); this._selectionBar = null; }
+        const count = this._selectedItems.size;
+        if (count === 0) return;
+        const bar = $el("div", { className: "neo-gallery-selection-bar" }, [
+            $el("span", { className: "neo-gallery-selection-count", textContent: `已选 ${count} 项` }),
+            $el("div", {
+                className: "neo-gallery-selection-btn neo-gallery-selection-btn-danger",
+                title: "仅删除勾选的素材，不影响未选中文件",
+                onclick: () => this.deleteSelected()
+            }, ["\uD83D\uDDD1\uFE0F 删除"]),
+            $el("div", { className: "neo-gallery-selection-btn", onclick: () => this.clearSelection() }, ["✕ 清空"])
+        ]);
+        this.element.appendChild(bar);
+        this._selectionBar = bar;
+    }
+
+    async deleteSelected() {
+        const count = this._selectedItems.size;
+        if (count === 0) return;
+        if (!confirm(`删除已选中的 ${count} 个素材？此操作不可恢复。`)) return;
+        const targets = [...this._selectedItems];
+        this._selectedItems.clear();
+        this._updateSelectionBar();
+        let okCount = 0;
+        let skipped = 0;
+        for (const key of targets) {
+            const idx = key.indexOf('\u0000');
+            const subfolder = key.slice(0, idx);
+            const name = key.slice(idx + 1);
+            if (!this.isDeletableItem(name, subfolder)) { skipped += 1; continue; } // 只读源（presets/lora/C站收藏/oss）跳过
+            // 批量时跳过逐项重绘，最后统一刷新一次
+            if (await this.deleteItem(name, subfolder, { silent: true, rerender: false })) okCount += 1;
+        }
+        const attempted = count - skipped;
+        if (attempted > 0 && okCount === attempted) {
+            showToast(this.app, 'success', '批量删除完成', `已删除 ${okCount} 个素材` + (skipped ? `，跳过 ${skipped} 个只读项` : ''));
+        } else if (okCount > 0) {
+            showToast(this.app, 'error', '部分删除失败', `成功 ${okCount} / ${attempted}`);
+        } else if (attempted > 0) {
+            showToast(this.app, 'error', '批量删除失败', '没有素材被删除');
+        }
+        // 目录视图从 _currentDirStructure 缓存重绘（deleteItem 已同步移除被删项），必须无条件刷新一次，
+        // 否则删光整个目录时（_currentDirImages 为空）旧卡片会残留在列表里
+        console.log('[DBG] refresh check:', this.currentView && this.currentView.mode, !!this._currentDirStructure, this.list && this.list.constructor && this.list.constructor.name);
+        if (this.currentView.mode === 'directory' && this._currentDirStructure) {
+            await this.list.sortAndDisplayImages();
+            this._syncSelectionDom();
         }
     }
 
@@ -1515,12 +1702,15 @@ class NeoGallery {
         window.addEventListener('popstate', (e) => {
             if (!this.isVisible) return;
             if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-            if (this.currentView.mode === 'directory' && this.currentView.categoryPath.length > 0) {
-                const parentPath = this.currentView.categoryPath.slice(0, -1);
-                this.showDirectoryStructure(this.currentView.source, parentPath);
-            } else {
-                this.showCategoryCards();
-            }
+            this.navigateHistory(-1).then(handled => {
+                if (handled) return;
+                if (this.currentView.mode === 'directory' && this.currentView.categoryPath.length > 0) {
+                    const parentPath = this.currentView.categoryPath.slice(0, -1);
+                    this.showDirectoryStructure(this.currentView.source, parentPath);
+                } else {
+                    this.showCategoryCards();
+                }
+            });
         });
 
         // Intercept keyboard back navigation (Alt+Left, Backspace) - use capture to beat ComfyUI
@@ -1537,6 +1727,13 @@ class NeoGallery {
                 } else {
                     this.showCategoryCards();
                 }
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+                // 多选：Ctrl+A 全选当前视图内可删除素材
+                e.preventDefault();
+                e.stopPropagation();
+                this.selectAllVisible();
+            } else if (e.key === 'Escape' && this._selectedItems.size > 0) {
+                this.clearSelection();
             } else if (e.key === 'Backspace') {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1557,7 +1754,8 @@ class NeoGallery {
         // 直接加载（不额外增加延迟）
         await this.loadGallery();
         await this.list.sortAndDisplayImages();
-        
+        this._recordNavState();
+
         if (loadingEl.parentNode) loadingEl.remove();
     }
 
@@ -1658,6 +1856,7 @@ app.registerExtension({
                 } else {
                     gallery.accordion.innerHTML = "";
                     await gallery.list.sortAndDisplayImages();
+                    gallery._recordNavState();
                 }
                 // Re-initialize breadcrumb if URL has gallery param (panel was mounted after init)
                 const params = new URLSearchParams(window.location.search);

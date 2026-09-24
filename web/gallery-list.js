@@ -56,6 +56,24 @@ export class GalleryList {
         ]);
     }
 
+    createNavButtons(gallery) {
+        const backBtn = $el("button", {
+            className: "neo-gallery-nav-btn",
+            title: "后退 (Back)",
+            textContent: "\u2190",
+            onclick: () => gallery.navigateHistory(-1)
+        });
+        const forwardBtn = $el("button", {
+            className: "neo-gallery-nav-btn",
+            title: "前进 (Forward)",
+            textContent: "\u2192",
+            onclick: () => gallery.navigateHistory(1)
+        });
+        gallery.navBackBtn = backBtn;
+        gallery.navForwardBtn = forwardBtn;
+        return $el("div", { className: "neo-gallery-nav-group" }, [backBtn, forwardBtn]);
+    }
+
     createCustomDirSettingBtn(gallery) {
         const btn = $el("button", {
             className: "neo-gallery-custom-dir-btn",

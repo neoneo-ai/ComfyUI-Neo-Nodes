@@ -938,6 +938,15 @@ export class GalleryCard {
         }
     }
 
+    /** 只读素材源判定：presets/lora/C站收藏目录与远程 oss（⋯ 菜单删除项与左上角勾选框共用）。 */
+    _isReadOnlySource(subfolder, source) {
+        const subLower = String(subfolder || "").toLowerCase();
+        return subLower === 'presets' || subLower.startsWith('presets/') ||
+            subLower === 'lora' || subLower.startsWith('lora/') ||
+            subLower === 'civitai_bookmarks' || subLower.startsWith('civitai_bookmarks/') ||
+            source === "oss";
+    }
+
     _showCollectMenu(gallery, image, subfolder, source, anchor) {
         this._removeCollectMenu();
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
@@ -952,10 +961,9 @@ export class GalleryCard {
         }, displayName);
 
         // 系统输入/输出文件可删除；presets、lora 与远程 oss 来源只读。
-        const subLower = (subfolder || '').toLowerCase();
-        const isReadOnlySource = subLower === 'presets' || subLower.startsWith('presets/') || subLower === 'lora' || subLower.startsWith('lora/')
-            || subLower === 'civitai_bookmarks' || subLower.startsWith('civitai_bookmarks/');
-        const canDelete = !isReadOnlySource && source !== "oss";
+        const canDelete = !this._isReadOnlySource(subfolder, source);
+        // 有勾选时菜单「删除」升级为批量删除已选素材
+        const selectedCount = (gallery._selectedItems && gallery._selectedItems.size) || 0;
 
         // 导入工作流：仅当素材内嵌了 ComfyUI 工作流时显示（异步探测后放开）。
         const wfItem = $el("div", {
@@ -1034,8 +1042,9 @@ export class GalleryCard {
             wfItem,
             canDelete ? $el("div", {
                 className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
-                onclick: () => { this._removeCollectMenu(); gallery.deleteItem(image.name, subfolder); }
-            }, ["\uD83D\uDDD1\uFE0F 删除"]) : null
+                title: selectedCount > 0 ? `删除已勾选的 ${selectedCount} 个素材，不影响未选中文件` : "仅删除当前素材",
+                onclick: () => { this._removeCollectMenu(); selectedCount > 0 ? gallery.deleteSelected() : gallery.deleteItem(image.name, subfolder); }
+            }, [selectedCount > 0 ? `\uD83D\uDDD1\uFE0F 删除已选素材（${selectedCount}）` : "\uD83D\uDDD1\uFE0F 删除"]) : null
         ].filter(Boolean));
 
         document.body.appendChild(menu);
@@ -1292,6 +1301,20 @@ export class GalleryCard {
             }
         }, ["\u22EF"]);
 
+        // 左上角勾选框：多选后由底部操作条批量删除（仅可删除来源显示，与 ⋯ 菜单 canDelete 一致）
+        const selectCheck = (!this._isReadOnlySource(subfolder, source) && !isAudioFileResult) ? $el("input", {
+            className: "neo-gallery-select-check",
+            type: "checkbox",
+            title: "选中（可多选，Ctrl+A 全选）",
+            onclick: (e) => e.stopPropagation(),
+            onchange: (e) => {
+                e.stopPropagation();
+                const checked = e.target.checked;
+                gallery.toggleSelection(image.name, subfolder);
+                container.classList.toggle('neo-gallery-thumb-selected', checked);
+            }
+        }) : null;
+
         let mediaEl;
         const thumbnailSrc = isVideoFileResult || isImageFileResult ? getThumbnailSrc(image, subfolder) : null;
         
@@ -1336,7 +1359,7 @@ export class GalleryCard {
 
         const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, audioSendBtn, sendBtn, imgSendBtn, bookmarkBtn].filter(Boolean));
 
-        const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar].filter(Boolean));
+        const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar, selectCheck].filter(Boolean));
 
         const labelEl = gallery.displayLabels ? $el("span", {
             className: "neo-gallery-image-label",

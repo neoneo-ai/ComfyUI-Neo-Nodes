@@ -115,6 +115,7 @@
     padding: 10px;
     background-color: #1a1a1a;
     min-height: 400px;
+    position: relative; /* 多选操作条等绝对定位子元素的锚点 */
 }
 
 /* Panel header row — title left (col1), spacer (col2), buttons right (col3) */
@@ -162,6 +163,42 @@
     background-color: rgba(255, 106, 0, 0.2);
     border-color: #FF6A00;
     color: #FF9944;
+}
+
+/* Back / forward navigation buttons in header */
+.neo-gallery-nav-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.neo-gallery-nav-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background-color: transparent;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-nav-btn:hover:not(:disabled) {
+    background-color: rgba(255, 106, 0, 0.2);
+    border-color: #FF6A00;
+    color: #FF9944;
+}
+
+.neo-gallery-nav-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
 }
 
 /* Search row */
@@ -908,6 +945,73 @@ Accordion Section Buttons (Clear)
     line-height: 1;
     pointer-events: none;
     z-index: 5;
+}
+
+/* Multi-select checkbox — top-left corner of the thumbnail (deletable sources only) */
+.neo-gallery-select-check {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: #FF6A00;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+    z-index: 6;
+}
+
+.neo-gallery-thumb-container:hover .neo-gallery-select-check,
+.neo-gallery-thumb-selected .neo-gallery-select-check {
+    opacity: 1;
+}
+
+/* Selected card highlight */
+.neo-gallery-thumb-selected .neo-gallery-thumb-img-wrapper {
+    outline: 2px solid #FF6A00;
+    outline-offset: -2px;
+}
+
+/* Batch action bar — pinned to the bottom of the gallery panel while items are selected */
+.neo-gallery-selection-bar {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background-color: rgba(20, 20, 20, 0.95);
+    border: 1px solid rgba(255, 106, 0, 0.4);
+    border-radius: 6px;
+    backdrop-filter: blur(6px);
+}
+
+.neo-gallery-selection-count {
+    flex: 1;
+    font-size: 13px;
+    color: #ddd;
+}
+
+.neo-gallery-selection-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: white;
+    background-color: rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.neo-gallery-selection-btn:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+}
+
+.neo-gallery-selection-btn-danger:hover {
+    background-color: #d64545;
 }
 
 /* Audio card — square media tile with waveform + centered play button */
