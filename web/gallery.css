@@ -859,11 +859,8 @@ Accordion Section Buttons (Clear)
     padding: 6px 4px 2px;
 }
 
-/* Thumbnail action buttons (Send, Image Send, Video Send, Bookmark) */
-.neo-gallery-thumb-send-btn,
+/* Thumbnail action buttons (Lora Send, Bookmark) */
 .neo-gallery-thumb-img-send-btn,
-.neo-gallery-thumb-video-send-btn,
-.neo-gallery-thumb-audio-send-btn,
 .neo-gallery-thumb-bookmark-btn {
     display: flex;
     align-items: center;
@@ -881,20 +878,14 @@ Accordion Section Buttons (Clear)
     line-height: 1;
 }
 
-.neo-gallery-thumb-send-btn:hover,
 .neo-gallery-thumb-img-send-btn:hover,
-.neo-gallery-thumb-video-send-btn:hover,
-.neo-gallery-thumb-audio-send-btn:hover,
 .neo-gallery-thumb-bookmark-btn:hover {
     background-color: rgba(0, 0, 0, 0.8);
     transform: scale(1.1);
 }
 
 /* Feedback positioning - fixed to viewport, will be set dynamically by JS */
-.neo-gallery-thumb-send-btn .neo-gallery-feedback,
-.neo-gallery-thumb-img-send-btn .neo-gallery-feedback,
-.neo-gallery-thumb-video-send-btn .neo-gallery-feedback,
-.neo-gallery-thumb-audio-send-btn .neo-gallery-feedback {
+.neo-gallery-thumb-img-send-btn .neo-gallery-feedback {
     position: fixed;
     transform: translate(-50%, -100%);
     margin: 8px;

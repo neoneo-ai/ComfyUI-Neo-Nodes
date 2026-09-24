@@ -93,182 +93,6 @@ export class GalleryCard {
 
     // ====== Send Menus ======
 
-    _removeSendMenu() {
-        const existing = document.getElementById('neo-gallery-send-menu');
-        if (existing) existing.remove();
-    }
-
-    _removeImgSendMenu() {
-        const existing = document.getElementById('neo-gallery-img-send-menu');
-        if (existing) existing.remove();
-    }
-
-    async _showVideoSendMenu(gallery, image, button) {
-        this._removeVideoSendMenu();
-        if (!isVideoFile(image.filename)) {
-            showToast(gallery.app, 'warning', 'Not a Video', 'This file is not a video.');
-            return;
-        }
-        const menuItems = [];
-        gallery.app.graph._nodes.forEach(node => {
-            // Skip nodes that are in bypass state (mode === 4, set by Ctrl+B or RS_Bypass)
-            if (node.mode === 4) return;
-            if (!node.widgets) return;
-            node.widgets.forEach((widget, index) => {
-                const wn = (widget.name || '').toLowerCase();
-                const isLoadVideo = /load.?video/i.test(node.comfyClass || '') || /load.?video/i.test(node.title || '');
-                const isVideoWidget = /video/.test(wn);
-                if (isLoadVideo && widget.type === 'combo' && /video/.test(wn)) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isLoadVideo, isText: false });
-                } else if ((isLoadVideo || isVideoWidget) && widget.inputEl) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isLoadImage, isText: widget.type === 'customtext' || widget.type === 'text' });
-                }
-            });
-        });
-
-        const selKeys = Object.keys(gallery.app.canvas.selected_nodes);
-        let selectedNodeId = null;
-        if (selKeys.length > 0) {
-            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
-            const isLoadVideo = /load.?video/i.test(sn.comfyClass || '') || /load.?video/i.test(sn.title || '');
-            const hasVideoWidget = sn.widgets && sn.widgets.some(w => /video/.test((w.name || '').toLowerCase()));
-            if (isLoadVideo && hasVideoWidget) {
-                selectedNodeId = sn.id;
-            }
-        }
-        if (menuItems.length === 0 && !selectedNodeId) {
-            showToast(gallery.app, 'warning', 'No Target', 'No LoadVideo-type nodes found.');
-            return;
-        }
-
-        menuItems.forEach(item => {
-            item.isSelected = item.nodeId === selectedNodeId;
-        });
-        menuItems.sort((a, b) => {
-            if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
-            if (a.isLoadImage !== b.isLoadImage) return a.isLoadImage ? -1 : 1;
-            return 0;
-        });
-
-        if (menuItems.length === 1 && !selectedNodeId) {
-            const item = menuItems[0];
-            gallery.sendVideoToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button);
-            return;
-        }
-
-        const dropdown = $el("div", { id: "neo-gallery-video-send-menu", className: "neo-gallery-send-menu" });
-        for (const item of menuItems) {
-            const label = item.isSelected ? `${item.label} \u2713` : item.label;
-            const el = $el("div", {
-                className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
-                onclick: (e) => { e.stopPropagation(); this._removeVideoSendMenu(); gallery.sendVideoToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
-                textContent: label
-            });
-            dropdown.appendChild(el);
-        }
-        const rect = button.getBoundingClientRect();
-        dropdown.style.position = 'fixed';
-        dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
-        dropdown.style.zIndex = '10001';
-        document.body.appendChild(dropdown);
-        requestAnimationFrame(() => {
-            dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';
-        });
-        const closeHandler = (e) => {
-            if (!dropdown.contains(e.target) && e.target !== button) {
-                this._removeVideoSendMenu();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler), 10);
-    }
-
-    _removeVideoSendMenu() {
-        const existing = document.getElementById('neo-gallery-video-send-menu');
-        if (existing) existing.remove();
-    }
-
-    async _showImgSendMenu(gallery, image, button) {
-        this._removeImgSendMenu();
-        if (!/\.(png|jpg|jpeg|gif|webp|bmp|tiff|mp4|webm|mov|avi)$/i.test(image.filename)) {
-            showToast(gallery.app, 'warning', 'Not an Image', 'This file is not an image.');
-            return;
-        }
-        const menuItems = [];
-        gallery.app.graph._nodes.forEach(node => {
-            // Skip nodes that are in bypass state (mode === 4, set by Ctrl+B or RS_Bypass)
-            if (node.mode === 4) return;
-            if (!node.widgets) return;
-            node.widgets.forEach((widget, index) => {
-                const wn = (widget.name || '').toLowerCase();
-                const isLoadImage = /load.?image/i.test(node.comfyClass || '') || /load.?image/i.test(node.title || '');
-                const isImageWidget = /image|upload/.test(wn);
-                if (isLoadImage && widget.type === 'combo' && /image/.test(wn)) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isLoadImage, isText: false });
-                } else if ((isLoadImage || isImageWidget) && widget.inputEl) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isLoadImage, isText: widget.type === 'customtext' || widget.type === 'text' });
-                }
-            });
-        });
-
-        const selKeys = Object.keys(gallery.app.canvas.selected_nodes);
-        let selectedNodeId = null;
-        if (selKeys.length > 0) {
-            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
-            const isLoadImage = /load.?image/i.test(sn.comfyClass || '') || /load.?image/i.test(sn.title || '');
-            const hasImageWidget = sn.widgets && sn.widgets.some(w => /image|upload/.test((w.name || '').toLowerCase()));
-            const hasTextWidget = sn.widgets && sn.widgets.some(w => ['string', 'text', 'customtext'].includes(w.type));
-            if ((isLoadImage && hasImageWidget) || hasTextWidget) {
-                selectedNodeId = sn.id;
-            }
-        }
-        if (menuItems.length === 0 && !selectedNodeId) {
-            showToast(gallery.app, 'warning', 'No Target', 'No LoadImage-type nodes found.');
-            return;
-        }
-
-        menuItems.forEach(item => {
-            item.isSelected = item.nodeId === selectedNodeId;
-        });
-        menuItems.sort((a, b) => {
-            if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
-            if (a.isLoadImage !== b.isLoadImage) return a.isLoadImage ? -1 : 1;
-            return 0;
-        });
-
-        if (menuItems.length === 1 && !selectedNodeId) {
-            const item = menuItems[0];
-            gallery.sendImageToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button);
-            return;
-        }
-
-        const dropdown = $el("div", { id: "neo-gallery-img-send-menu", className: "neo-gallery-send-menu" });
-        for (const item of menuItems) {
-            const label = item.isSelected ? `${item.label} \u2713` : item.label;
-            const el = $el("div", {
-                className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
-                onclick: (e) => { e.stopPropagation(); this._removeImgSendMenu(); gallery.sendImageToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
-                textContent: label
-            });
-            dropdown.appendChild(el);
-        }
-        const rect = button.getBoundingClientRect();
-        dropdown.style.position = 'fixed';
-        dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
-        dropdown.style.zIndex = '10001';
-        document.body.appendChild(dropdown);
-        requestAnimationFrame(() => {
-            dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';
-        });
-        const closeHandler = (e) => {
-            if (!dropdown.contains(e.target) && e.target !== button) {
-                this._removeImgSendMenu();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler), 10);
-    }
-
     _removeLoraSendMenu() {
         const existing = document.getElementById('neo-gallery-lora-send-menu');
         if (existing) existing.remove();
@@ -348,166 +172,7 @@ export class GalleryCard {
         setTimeout(() => document.addEventListener('click', closeHandler), 10);
     }
 
-    async _showSendMenu(gallery, image, button) {
-        this._removeSendMenu();
-        const menuItems = [];
-
-        gallery.app.graph._nodes.forEach(node => {
-            // Skip nodes that are in bypass state (mode === 4, set by Ctrl+B or RS_Bypass)
-            if (node.mode === 4) return;
-            if (!node.widgets) return;
-            node.widgets.forEach((widget, index) => {
-                const wn = (widget.name || '').toLowerCase();
-                if (/negative/.test(wn)) return;
-                if (widget.inputEl && /string|text|custom/.test(widget.type || '')) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isNeoPrompt: /neo.?prompt/i.test(node.title) });
-                }
-            });
-        });
-
-        const selKeys = Object.keys(gallery.app.canvas.selected_nodes);
-        let selectedNodeId = null;
-        if (selKeys.length > 0) {
-            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
-            if (sn && sn.widgets && sn.widgets.some(w => !/negative/.test((w.name || '').toLowerCase()) && w.inputEl && /string|text|custom/.test(w.type || ''))) {
-                selectedNodeId = sn.id;
-            }
-        }
-
-        if (menuItems.length === 0 && !selectedNodeId) {
-            showToast(gallery.app, 'warning', 'No Target', 'No valid text nodes found.');
-            return;
-        }
-
-        menuItems.forEach(item => { item.isSelected = item.nodeId === selectedNodeId; });
-        menuItems.sort((a, b) => {
-            if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
-            if (a.isNeoPrompt !== b.isNeoPrompt) return a.isNeoPrompt ? -1 : 1;
-            return 0;
-        });
-
-        const hasSelection = selKeys.length > 0;
-        if (!hasSelection && menuItems.length === 1) {
-            this.sendToTarget(image.name, image.txt_content, button, menuItems[0].nodeId, menuItems[0].widgetIndex);
-            return;
-        }
-
-        const dropdown = $el("div", { id: "neo-gallery-send-menu", className: "neo-gallery-send-menu" });
-        for (const item of menuItems) {
-            const label = item.isSelected ? `${item.label} \u2713` : item.label;
-            const el = $el("div", {
-                className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this._removeSendMenu();
-                    this.sendToTarget(image.name, image.txt_content, button, item.nodeId, item.widgetIndex);
-                },
-                textContent: label
-            });
-            dropdown.appendChild(el);
-        }
-        const rect = button.getBoundingClientRect();
-        dropdown.style.position = 'fixed';
-        dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
-        dropdown.style.zIndex = '10001';
-        document.body.appendChild(dropdown);
-        requestAnimationFrame(() => {
-            dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';
-        });
-        const closeHandler = (e) => {
-            if (!dropdown.contains(e.target) && e.target !== button) {
-                this._removeSendMenu();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler), 10);
-    }
-
-    // ====== Internal Helpers ======
-
-    /**
-     * Resolve target node and widget from a nodeId (used by copyToClipboard).
-     */
-    _resolveTargetFromNodeId(nodeId) {
-        const targetNode = this.gallery.app.graph.getNodeById(parseInt(nodeId));
-        if (!targetNode) return null;
-
-        let isPromptNode = !!targetNode._rsPromptUIElements;
-        let targetWidget = null;
-
-        if (isPromptNode) {
-            return { targetNode, isPromptNode: true, targetWidget: null };
-        }
-
-        // Find first valid text widget as fallback
-        targetWidget = targetNode.widgets?.find(w => ['string', 'text', 'customtext'].includes(w.type));
-        return { targetNode, isPromptNode: false, targetWidget };
-    }
-
-    /**
-     * Send cleaned text to a resolved target (prompt node or regular widget).
-     */
-    _sendToResolvedTarget(textToCopy, targetNode, isPromptNode, targetWidget, feedbackBtn) {
-        if (!targetNode) return;
-
-        // Branch 1: Neo Prompt node with custom textarea
-        if (isPromptNode && targetNode._rsPromptUIElements) {
-            const { customTextarea, textWidget } = targetNode._rsPromptUIElements;
-            if (customTextarea) {
-                customTextarea.value = textToCopy;
-                customTextarea.dispatchEvent(new Event("input", { bubbles: true }));
-            }
-            if (textWidget) {
-                textWidget.value = textToCopy;
-            }
-            this.gallery.app.graph.setDirtyCanvas(true, true);
-            if (feedbackBtn) showInlineFeedback(feedbackBtn, '\u2705 Sent!', 'success');
-            else showToast(this.gallery.app, 'success', 'Tags Sent!', `Sent to ${targetNode.title || 'Node'}`);
-        }
-        // Branch 2: Regular widget on target node
-        else if (targetWidget) {
-            targetWidget.value = textToCopy;
-            try {
-                if (targetNode.onWidgetChanged) {
-                    targetNode.onWidgetChanged(targetWidget.name, targetWidget.value);
-                }
-            } catch (e) {
-                console.warn(`[Neo Gallery] onWidgetChanged threw: ${e.message}`);
-            }
-            this.gallery.app.graph.setDirtyCanvas(true, true);
-            if (feedbackBtn) showInlineFeedback(feedbackBtn, '\u2705 Sent!', 'success');
-            else showToast(this.gallery.app, 'success', 'Tags Sent!', `Sent to ${targetNode.title} - ${targetWidget.name}`);
-        }
-    }
-
     // ====== Public API ======
-
-    /**
-     * Send text to a specific node/widget by explicit nodeId and widgetIndex.
-     * Falls back to clipboard copy if target resolution fails.
-     */
-    sendToTarget(imageName, txtContent, feedbackBtn = null, targetNodeId, targetWidgetIndex) {
-        const textToCopy = this._cleanText(txtContent);
-
-        // Resolve target node by explicit nodeId
-        const resolved = this._resolveTargetFromNodeId(targetNodeId);
-        if (!resolved || !resolved.targetNode) {
-            console.error(`[Neo Gallery] sendToTarget: Failed to get node by id ${targetNodeId}, falling back to clipboard`);
-            return this._fallbackToClipboard(textToCopy, feedbackBtn);
-        }
-
-        // For regular widgets, use the specific widget index
-        let targetWidget = resolved.targetWidget;
-        if (!resolved.isPromptNode && targetWidgetIndex != null) {
-            targetWidget = resolved.targetNode.widgets?.[parseInt(targetWidgetIndex)];
-            if (!targetWidget) {
-                console.error(`[Neo Gallery] sendToTarget: targetWidget[${targetWidgetIndex}] is null/undefined, falling back to clipboard`);
-                return this._fallbackToClipboard(textToCopy, feedbackBtn);
-            }
-        }
-
-        this._sendToResolvedTarget(textToCopy, resolved.targetNode, resolved.isPromptNode, targetWidget, feedbackBtn);
-    }
 
     /**
      * Fetch an image, re-encode it as PNG (clipboard only reliably accepts PNG),
@@ -1240,55 +905,15 @@ export class GalleryCard {
         });
 
         let imgSendBtn = null;
-        if (!isVideoFileResult && !isAudioFileResult) {
+        if (image.lora_path) {
             imgSendBtn = $el("div", {
                 className: "neo-gallery-thumb-img-send-btn",
-                title: image.lora_path ? "发送 Lora 到画布上的 LoraLoader" : "发送图片到画布上的 Load Image 节点",
+                title: "发送 Lora 到画布上的 LoraLoader",
                 onclick: (e) => {
                     e.stopPropagation();
-                    if (image.lora_path) {
-                        this._showLoraSendMenu(gallery, image.lora_path, imgSendBtn);
-                    } else {
-                        this._showImgSendMenu(gallery, image, imgSendBtn);
-                    }
+                    this._showLoraSendMenu(gallery, image.lora_path, imgSendBtn);
                 }
             }, ["\uD83D\uDCE4"]);
-        }
-
-        let sendBtn = null;
-        if (image.txt_content) {
-            sendBtn = $el("div", {
-                className: "neo-gallery-thumb-send-btn",
-                title: "发送提示词到画布节点",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this._showSendMenu(gallery, image, sendBtn);
-                }
-            }, ["\u2708\uFE0F"]);
-        }
-
-        let videoSendBtn = null;
-        if (isVideoFileResult) {
-            videoSendBtn = $el("div", {
-                className: "neo-gallery-thumb-video-send-btn",
-                title: "发送视频到画布节点",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this._showVideoSendMenu(gallery, image, videoSendBtn);
-                }
-            }, ["\uD83D\uDCE5"]);
-        }
-
-        let audioSendBtn = null;
-        if (isAudioFileResult) {
-            audioSendBtn = $el("div", {
-                className: "neo-gallery-thumb-audio-send-btn",
-                title: "发送音频到画布上的 LoadAudio 节点",
-                onclick: (e) => {
-                    e.stopPropagation();
-                    this._showAudioSendMenu(gallery, image, audioSendBtn);
-                }
-            }, ["\uD83C\uDFB5"]);
         }
 
         // 右下角信息扩展按钮：点击弹出扩展菜单（收藏 / Lora 发送 / 提示词预览 / 导入工作流 / 删除）。
@@ -1357,7 +982,7 @@ export class GalleryCard {
             className: "neo-gallery-thumb-video-badge"
         }, ["\u25B6"]) : null;
 
-        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [videoSendBtn, audioSendBtn, sendBtn, imgSendBtn, bookmarkBtn].filter(Boolean));
+        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [imgSendBtn, bookmarkBtn].filter(Boolean));
 
         const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar, selectCheck].filter(Boolean));
 
@@ -1570,90 +1195,6 @@ export class GalleryCard {
         } catch (_) {}
     }
 
-    // ====== 音频发送到 LoadAudio 节点 ======
-
-    async _showAudioSendMenu(gallery, image, button) {
-        this._removeAudioSendMenu();
-        if (!isAudioFile(image.filename)) {
-            showToast(gallery.app, 'warning', 'Not an Audio', 'This file is not audio.');
-            return;
-        }
-        const menuItems = [];
-        gallery.app.graph._nodes.forEach(node => {
-            // Skip nodes that are in bypass state (mode === 4, set by Ctrl+B or RS_Bypass)
-            if (node.mode === 4) return;
-            if (!node.widgets) return;
-            node.widgets.forEach((widget, index) => {
-                const wn = (widget.name || '').toLowerCase();
-                const isLoadAudio = /load.?audio/i.test(node.comfyClass || '') || /load.?audio/i.test(node.title || '');
-                const isAudioWidget = /audio/.test(wn);
-                if (isLoadAudio && widget.type === 'combo' && isAudioWidget) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isText: false });
-                } else if ((isLoadAudio || isAudioWidget) && widget.inputEl) {
-                    menuItems.push({ nodeId: node.id, widgetIndex: index, label: `\u25B8 ${node.title || 'Node'} \u2192 ${widget.name}`, isText: widget.type === 'customtext' || widget.type === 'text' });
-                }
-            });
-        });
-
-        const selKeys = Object.keys(gallery.app.canvas.selected_nodes);
-        let selectedNodeId = null;
-        if (selKeys.length > 0) {
-            const sn = gallery.app.canvas.selected_nodes[selKeys[0]];
-            const isLoadAudio = /load.?audio/i.test(sn.comfyClass || '') || /load.?audio/i.test(sn.title || '');
-            const hasAudioWidget = sn.widgets && sn.widgets.some(w => /audio/.test((w.name || '').toLowerCase()));
-            if (isLoadAudio && hasAudioWidget) {
-                selectedNodeId = sn.id;
-            }
-        }
-        if (menuItems.length === 0 && !selectedNodeId) {
-            showToast(gallery.app, 'warning', 'No Target', 'No LoadAudio-type nodes found.');
-            return;
-        }
-
-        menuItems.forEach(item => { item.isSelected = item.nodeId === selectedNodeId; });
-        menuItems.sort((a, b) => {
-            if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
-            return 0;
-        });
-
-        if (menuItems.length === 1 && !selectedNodeId) {
-            const item = menuItems[0];
-            gallery.sendAudioToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button);
-            return;
-        }
-
-        const dropdown = $el("div", { id: "neo-gallery-audio-send-menu", className: "neo-gallery-send-menu" });
-        for (const item of menuItems) {
-            const label = item.isSelected ? `${item.label} \u2713` : item.label;
-            const el = $el("div", {
-                className: "neo-gallery-send-menu-item" + (item.isSelected ? " neo-gallery-send-menu-selected" : ""),
-                onclick: (e) => { e.stopPropagation(); this._removeAudioSendMenu(); gallery.sendAudioToNode(image, `${item.nodeId}:widget:${item.widgetIndex}`, button); },
-                textContent: label
-            });
-            dropdown.appendChild(el);
-        }
-        const rect = button.getBoundingClientRect();
-        dropdown.style.position = 'fixed';
-        dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
-        dropdown.style.zIndex = '10001';
-        document.body.appendChild(dropdown);
-        requestAnimationFrame(() => {
-            dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';
-        });
-        const closeHandler = (e) => {
-            if (!dropdown.contains(e.target) && e.target !== button) {
-                this._removeAudioSendMenu();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler), 10);
-    }
-
-    _removeAudioSendMenu() {
-        const existing = document.getElementById('neo-gallery-audio-send-menu');
-        if (existing) existing.remove();
-    }
-
     // ====== Lightbox（复用通用 Lightbox 组件）======
 
     _lightboxImageUrl(image, subfolder) {
@@ -1717,20 +1258,6 @@ export class GalleryCard {
             title: "\u590D\u5236\u56FE\u7247\u5230\u526A\u8D34\u677F",
             onClick: (_item, _lightbox, btn) => this._copyImageToClipboard(item.url, btn)
         }];
-        if (item.kind === 'video') {
-            actions.push({
-                label: "\uD83D\uDCE5 Video",
-                title: "\u5C06\u89C6\u9891\u53D1\u9001\u5230\u8282\u70B9",
-                onClick: (_item, _lightbox, btn) => this._showVideoSendMenu(gallery, item.raw, btn)
-            });
-        }
-        if (item.kind === 'audio') {
-            actions.push({
-                label: "\uD83C\uDFB5 Audio",
-                title: "将音频发送到节点",
-                onClick: (_item, _lightbox, btn) => this._showAudioSendMenu(gallery, item.raw, btn)
-            });
-        }
         return actions;
     }
     // 侧栏：txt 副文件即时渲染；无 txt 时等内嵌元数据，没有内容就不占位。
