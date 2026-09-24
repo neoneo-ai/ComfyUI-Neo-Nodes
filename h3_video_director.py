@@ -10,10 +10,9 @@
 - 分镜首帧优先：i2v/fl2v 段自带首帧图（分镜格）时，首帧锚点用它（不再被连续性顶替），上段尾部改走
   context_mode="reference"——目标之前的参考视频，不改时长、不丢帧、不做接缝淡化。
 - 身份继承：首段（第一个带参考素材的段）的身份参考图领养到后续段，同走 NeoH3AddContext 的图片参考块。
-- 多帧单次分块（shared.chunk_sec，默认 15 秒；整配方开关 shared.multiframe 默认开）：连续兼容段
-  （t2v/i2v/fl2v、无自带参考素材/源视频、总时长 ≤ chunk_sec）合并成一次 ref2va 运行
-  （_MULTIFRAME_TEMPLATE + NeoH3AddGuides），各段分镜关键帧按累计起点钉在对应帧号；不兼容 / 超长的段自动退回逐段路径。
-  multiframe 关闭时强制逐段（旧模式），忽略 chunk_sec。块间上下文只走 reference 模式（目标之前的参考视频，不改时长、不丢帧）。
+- 多帧单次分块（shared.chunk_sec，默认 15 秒；0 = 关闭）：连续兼容段（t2v/i2v/fl2v、无自带参考素材/源视频、
+  选中技能为多帧单次技能、总时长 ≤ chunk_sec）合并成一次 ref2va 运行（渲染该技能的 workflow.json + NeoH3AddGuides），
+  各段分镜关键帧按累计起点钉在对应帧号；不兼容 / 超长的段自动退回逐段路径。块间上下文只走 reference 模式（目标之前的参考视频，不改时长、不丢帧）。
 - Tier A 回退（context_frames=0）：没自带首帧图的 i2v/fl2v 段用上段尾帧当首帧；丢下段第一帧避免边界重复。
   以上各情况的丢帧数都同步裁音频保 A/V 对齐。
 - seed 派生：base_seed + i（i 为段序号），保证可复现且各段不同。
@@ -36,10 +35,10 @@ from server import PromptServer
 from .bundles import get_bundle
 from .image_gen import render_template
 from .image_gen_edit import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
-from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, resolve_video_params
+from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, is_multiframe_skill, resolve_video_params
 from .h3_preview import load_h3_tiny_vae, preview_override
 from .skill import get_skill_gen_config, load_skill_workflow
-from .recipes import list_director_recipes, load_director_spec, _director_llm
+from .recipes import list_director_recipes, load_director_spec
 
 # 当前 director 运行进度（进程内单例）。ComfyUI 串行执行 prompt，同一时刻只有一个活动 director。
 # segment_index：正在生成的段序号（-1 = 尚未开始/已结束）；total_segments：总段数。
@@ -621,16 +620,14 @@ def _seg_duration(seg: dict) -> float:
 
 
 def _chunk_compatible(seg: dict) -> bool:
-    """该段能否进多帧单次分块：文生/图生/首尾帧，且没有自带参考素材或源视频（那些走全参考/编辑路径）。"""
+    """该段能否进多帧单次分块：文生/图生/首尾帧、无自带参考素材或源视频，且选中技能为多帧单次技能。"""
     return ((seg.get("mode") or "t2v") in ("t2v", "i2v", "fl2v")
-            and not (seg.get("refs") or {}) and not seg.get("source_video"))
+            and not (seg.get("refs") or {}) and not seg.get("source_video")
+            and is_multiframe_skill(seg.get("skill_id")))
 
 
 def _chunk_budget(shared: dict) -> float:
-    """多帧单次分块的有效时长预算：整配方开关 shared.multiframe 关闭时强制 0（逐段旧模式，忽略 chunk_sec）；
-    开启时取 shared.chunk_sec（缺省 15 秒）。"""
-    if shared.get("multiframe", True) is False:
-        return 0.0
+    """多帧单次分块的时长预算：取 shared.chunk_sec（缺省 15 秒）；0 = 关闭合并（纯逐段生成）。"""
     cs = shared.get("chunk_sec")
     return float(cs) if cs is not None else 15.0
 
@@ -697,38 +694,20 @@ def _fmt_ts(sec):
     return f"{m:02d}:{sec - m * 60:06.3f}"
 
 
-def _merge_chunk_prompt(segs, total_sec, total_frames, identity_count=0):
+def _merge_chunk_prompt(segs):
     """把块内多段合并成一条多镜头提示词（多帧单次运行用）。
 
-    单段直接用原文；多段走 LLM（director_merge_prompt）按内容/顺序合并，失败回退机械拼接
-    （[Shot N] + 切点时间戳）。返回 (prompt, note)：note 为回退提示（正常时为 None）。
+    单段直接用原文；多段按顺序机械拼接（[Shot N] + 切点时间戳），确定性、无 LLM 依赖。
     """
     if len(segs) == 1:
-        return segs[0].get("prompt") or "", None
-    parts = [f"多帧单次生成：把以下 {len(segs)} 段合并成一条总时长 {total_sec:g} 秒（{total_frames} 帧）的连续视频提示词，"
-             f"各段起点有画面锚点；保留每段内容与顺序，不增删剧情。"]
-    if identity_count > 0:
-        parts.append(f"本次运行带 {identity_count} 张角色身份参考图，用 <Picture 1>..<Picture {identity_count}> 引用（按给定顺序编号）。")
-    start = 0.0
-    for i, seg in enumerate(segs, 1):
-        d = _seg_duration(seg)
-        parts.append(f"[第{i}段] 时长 {d:g} 秒，累计起点 {_fmt_ts(start)}\n{str(seg.get('prompt') or '').strip()}")
-        start += d
-    try:
-        result = _director_llm("director_merge_prompt", "\n\n".join(parts))
-        if "error" not in result:
-            prompt = str(result.get("prompt") or "").strip()
-            if prompt:
-                return prompt, None
-    except Exception as e:
-        print(f"[NeoNodes] 多帧单次提示词合并 LLM 调用失败：{e}")
+        return segs[0].get("prompt") or ""
     lines = []
     start = 0.0
     for i, seg in enumerate(segs, 1):
         d = _seg_duration(seg)
         lines.append(f"[Shot {i}] At {_fmt_ts(start)} cut... {str(seg.get('prompt') or '').strip()}")
         start += d
-    return "\n".join(lines), "多帧单次提示词合并 LLM 不可用，已回退机械拼接（[Shot N] + 切点时间戳）"
+    return "\n".join(lines)
 
 
 def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
@@ -777,45 +756,23 @@ def _run_segment_graph(body, skill_id, model, steps, label="", vae=None, preview
         return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
 
 
-# 多帧单次分块的基础模板：ref2va + KSampler + AV 解码（与 minimax-h3-r2v 预设同构，但不带参考槽位——
-# 身份图 / 跨块上下文 / 关键帧锚点全部运行时注入）。不作为可选手册 skill，仅供 director 分块运行渲染。
-_MULTIFRAME_TEMPLATE = {
-    "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}", "weight_dtype": "default"}},
-    "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "{{TEXT_ENCODER}}", "type": "minimax", "device": "default"}},
-    "3": {"class_type": "VAELoader", "inputs": {"vae_name": "{{VAE}}"}},
-    "4": {"class_type": "VAELoader", "inputs": {"vae_name": "{{AUDIO_VAE}}"}},
-    "5": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
-        "clip": ["2", 0], "vae": ["3", 0], "audio_vae": ["4", 0],
-        "prompt": "{{PROMPT}}", "width": "{{WIDTH}}", "height": "{{HEIGHT}}", "length": "{{LENGTH}}"}},
-    "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["1", 0], "shift_video": 12.0, "shift_audio": 3.0}},
-    "7": {"class_type": "KSampler", "inputs": {
-        "model": ["6", 0], "seed": "{{SEED}}", "steps": "{{STEPS}}", "cfg": 1.0,
-        "sampler_name": "euler", "scheduler": "simple",
-        "positive": ["5", 0], "negative": ["5", 0], "latent_image": ["5", 1], "denoise": 1.0}},
-    "8": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["7", 0]}},
-    "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
-    "10": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["8", 1], "vae": ["4", 0]}},
-    "11": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24, "audio": ["10", 0]}},
-}
-
-
 def _run_multiframe_unit(body, skill_id, model, steps, label="", vae=None, preview=True, node_id=None,
                          guides=(), context_tail=None, context_frames=0, identity_names=(),
                          on_step=None, on_total=None):
-    """多帧单次分块执行链：渲染基础模板 → 模型注入 / 连续性（身份 + 跨块上下文）→ 关键帧锚点 → 进程内执行，返回 VIDEO。
+    """多帧单次分块执行链：渲染块内首段多帧技能的 workflow.json → 模型注入 / 连续性（身份 + 跨块上下文）→ 关键帧锚点 → 进程内执行，返回 VIDEO。
 
-    skill_id 取块内首段的技能（决定 config.json 的模型 / LoRA 缺省）；guides 为 _plan_multiframe_guides 的
+    skill_id 取块内首段的技能（决定 config.json 的模型 / LoRA 缺省与 ref2va 工作流模板）；guides 为 _plan_multiframe_guides 的
     [{name, frame_idx}]。跨块上下文固定 reference 模式——块边界由关键帧锚点钉住，上块尾部只作「目标之前」
     的参考视频（不改时长、不丢帧、不做接缝淡化）。
     """
     real_id = _resolve_skill_id(skill_id or "")
-    cfg = get_skill_gen_config(real_id) if skill_id else {}
+    cfg = get_skill_gen_config(real_id)
     params = resolve_video_params(body, cfg, skip_model=(model is not None))
     if steps is not None and int(steps) > 0:
         params["steps"] = int(steps)
     if on_total is not None:
         on_total(int(params.get("steps") or 0))   # 真实总步数，供前端进度条按比例推进
-    graph, _warns = render_template(_MULTIFRAME_TEMPLATE, params)
+    graph, _warns = render_template(load_skill_workflow(real_id), params)
     overrides = None
     if model is not None:
         x_id, pruned = _model_injection_node(graph)
@@ -966,9 +923,7 @@ class NeoH3VideoDirector:
                     guides, n_skipped = _plan_multiframe_guides(m_segs, total_frames)
                     if n_skipped:
                         print(f"[NeoNodes] 多帧单次块（第 {i + 1}–{i + len(m_segs)} 段）：{n_skipped} 个关键帧锚点超出帧预算，已跳过")
-                    prompt, merge_note = _merge_chunk_prompt(m_segs, total_sec, total_frames, len(identity_names))
-                    if merge_note:
-                        print(f"[NeoNodes] {merge_note}")
+                    prompt = _merge_chunk_prompt(m_segs)
                     body = {"prompt": prompt, "seed": (base_seed + i) % (2**63), "length": total_frames}
                     if in_w > 0:
                         body["width"] = in_w

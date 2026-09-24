@@ -293,6 +293,8 @@ sys.modules["comfy_api"] = _comfy_api
 sys.modules["comfy_api.latest"] = _comfy_api_latest
 
 h3_video_director = _load("h3_video_director", "h3_video_director.py")
+# 多帧单次预设的工作流模板（从 skills/presets/minimax_h3_multiframe/workflow.json 读，供编排测试渲染桩用）
+_MULTIFRAME_WF = json.load(open(os.path.join(PLUGIN_DIR, "skills", "presets", "minimax_h3_multiframe", "workflow.json"), encoding="utf-8"))
 # comfy_execution.utils 加载真实实现（自包含，仅依赖 contextvars）：storyboard 的 CurrentNodeContext
 # 与进度钩子的 get_executing_context 都靠它，e2e 用例要验证真实的执行上下文传播。
 import importlib.util
@@ -396,17 +398,12 @@ class NormalizeDirectorTests(unittest.TestCase):
             {"shared": {"chunk_sec": -5}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
         self.assertNotIn("chunk_sec", shared)
 
-    def test_multiframe_only_written_when_disabled(self):
-        # 默认开 → 不落盘该键（旧配方行为不变）；显式关掉才写 false
-        shared, _ = recipes._normalize_director(
-            {"shared": {"multiframe": True}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
-        self.assertNotIn("multiframe", shared)
-        shared, _ = recipes._normalize_director(
-            {"shared": {}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
-        self.assertNotIn("multiframe", shared)
-        shared, _ = recipes._normalize_director(
-            {"shared": {"multiframe": False}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
-        self.assertFalse(shared["multiframe"])
+    def test_multiframe_flag_ignored(self):
+        # shared.multiframe 已废弃：无论输入取值如何都不落盘（多帧行为改由选中技能决定）
+        for val in (True, False):
+            shared, _ = recipes._normalize_director(
+                {"shared": {"multiframe": val}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+            self.assertNotIn("multiframe", shared)
 
     def test_segment_mode_kept_when_valid_dropped_when_invalid(self):
         _, segs = recipes._normalize_director(
@@ -1491,6 +1488,13 @@ class ChunkPlanTests(unittest.TestCase):
     def kinds(self, segs, budget):
         return [u["kind"] for u in h3_video_director._plan_chunks(segs, budget)]
 
+    def setUp(self):
+        self._orig_mf = h3_video_director.is_multiframe_skill
+        h3_video_director.is_multiframe_skill = lambda v: bool(v)   # 测试段 skill_id 一律视为多帧技能
+
+    def tearDown(self):
+        h3_video_director.is_multiframe_skill = self._orig_mf
+
     def test_disabled_all_legacy(self):
         self.assertEqual(self.kinds([self.seg(0), self.seg(1)], 0), ["legacy", "legacy"])
 
@@ -1522,27 +1526,35 @@ class ChunkPlanTests(unittest.TestCase):
         units = h3_video_director._plan_chunks([self.seg(0, None), self.seg(1, None)], 10)
         self.assertEqual([u["kind"] for u in units], ["multi"])
 
-    def test_chunk_budget_default_on(self):
-        # multiframe 缺省开 → 取 chunk_sec（缺省 15）
+    def test_chunk_budget_default(self):
+        # chunk_sec 缺省 15
         self.assertEqual(h3_video_director._chunk_budget({}), 15.0)
         self.assertEqual(h3_video_director._chunk_budget({"chunk_sec": 8}), 8.0)
 
-    def test_chunk_budget_multiframe_off_forces_zero(self):
-        # multiframe 关闭 → 强制 0（逐段旧模式），忽略 chunk_sec > 0
-        self.assertEqual(h3_video_director._chunk_budget({"multiframe": False, "chunk_sec": 20}), 0.0)
-        self.assertEqual(h3_video_director._chunk_budget({"multiframe": False}), 0.0)
+    def test_chunk_budget_zero_disables(self):
+        # chunk_sec=0 → 预算 0（纯逐段生成）
+        self.assertEqual(h3_video_director._chunk_budget({"chunk_sec": 0}), 0.0)
 
-    def test_chunk_budget_off_yields_all_legacy(self):
-        # 开关关闭时，即便 chunk_sec > 0 也全逐段（旧模式）
+    def test_chunk_budget_zero_yields_all_legacy(self):
         segs = [self.seg(0), self.seg(1), self.seg(2)]
-        budget = h3_video_director._chunk_budget({"multiframe": False, "chunk_sec": 20})
+        budget = h3_video_director._chunk_budget({"chunk_sec": 0})
         self.assertEqual(self.kinds(segs, budget), ["legacy", "legacy", "legacy"])
 
-    def test_chunk_budget_on_merges_compatible(self):
-        # 开关开启（缺省）→ 连续兼容段按预算合并成一次多帧单次块
+    def test_chunk_budget_merges_compatible(self):
+        # 连续兼容段（选中多帧技能）按预算合并成一次多帧单次块
         segs = [self.seg(0), self.seg(1), self.seg(2)]
-        budget = h3_video_director._chunk_budget({"multiframe": True, "chunk_sec": 15})
+        budget = h3_video_director._chunk_budget({"chunk_sec": 15})
         self.assertEqual(self.kinds(segs, budget), ["multi"])
+
+    def test_non_multiframe_skill_stays_per_segment(self):
+        # 未选中多帧技能 → 即便模式/预算都满足也逐段（不合并）
+        orig = h3_video_director.is_multiframe_skill
+        h3_video_director.is_multiframe_skill = lambda v: False
+        try:
+            segs = [self.seg(0), self.seg(1), self.seg(2)]
+            self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy", "legacy"])
+        finally:
+            h3_video_director.is_multiframe_skill = orig
 
 
 class MultiframeGuideTests(unittest.TestCase):
@@ -1585,53 +1597,14 @@ class MultiframeGuideTests(unittest.TestCase):
 
 class ChunkPromptMergeTests(unittest.TestCase):
     def test_single_segment_uses_original(self):
-        prompt, note = h3_video_director._merge_chunk_prompt([{"prompt": "原文", "duration_sec": 5}], 5, 124)
-        self.assertEqual(prompt, "原文")
-        self.assertIsNone(note)
+        self.assertEqual(h3_video_director._merge_chunk_prompt([{"prompt": "原文", "duration_sec": 5}]), "原文")
 
-    def test_llm_merge_used_when_available(self):
-        h3d = h3_video_director
-        orig = h3d._director_llm
-        h3d._director_llm = lambda task, text: {"status": "success", "prompt": " 合并后 "}
-        try:
-            segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
-            prompt, note = h3d._merge_chunk_prompt(segs, 9, 218)
-        finally:
-            h3d._director_llm = orig
-        self.assertEqual(prompt, "合并后")
-        self.assertIsNone(note)
-
-    def test_fallback_mechanical_merge(self):
-        h3d = h3_video_director
-        orig = h3d._director_llm
-        h3d._director_llm = lambda task, text: {"error": "no llm"}
-        try:
-            segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
-            prompt, note = h3d._merge_chunk_prompt(segs, 9, 218)
-        finally:
-            h3d._director_llm = orig
+    def test_mechanical_merge_preserves_order_and_timestamps(self):
+        # 多段确定性机械拼接：[Shot N] + 切点时间戳，无 LLM
+        segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
+        prompt = h3_video_director._merge_chunk_prompt(segs)
         self.assertIn("[Shot 1] At 00:00.000 cut... a", prompt)
         self.assertIn("[Shot 2] At 00:05.000 cut... b", prompt)
-        self.assertIsNotNone(note)
-
-    def test_llm_text_carries_cut_times_and_identity(self):
-        h3d = h3_video_director
-        orig = h3d._director_llm
-        captured = {}
-
-        def _fake(task, text):
-            captured["task"], captured["text"] = task, text
-            return {"status": "success", "prompt": "ok"}
-
-        h3d._director_llm = _fake
-        try:
-            segs = [{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 4}]
-            h3d._merge_chunk_prompt(segs, 9, 218, identity_count=2)
-        finally:
-            h3d._director_llm = orig
-        self.assertEqual(captured["task"], "director_merge_prompt")
-        self.assertIn("00:05.000", captured["text"])
-        self.assertIn("<Picture 2>", captured["text"])
 
 
 class MultiframeChunkOrchestrationTests(unittest.TestCase):
@@ -1644,7 +1617,8 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.get_skill_gen_config,
                 h3d.load_skill_workflow, h3d.resolve_video_params, h3d.render_template,
-                h3d.execute_graph_inprocess, h3d._require_vdn_plugin, h3d._merge_chunk_prompt)
+                h3d.execute_graph_inprocess, h3d._require_vdn_plugin, h3d._merge_chunk_prompt,
+                h3d.is_multiframe_skill)
         bodies, graphs = [], []
         it = iter(_FakeVideo(n, self.FPS, self.SR) for n in frame_counts)
 
@@ -1657,13 +1631,14 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
         h3d._resolve_skill_id = lambda v: v
         h3d.get_skill_gen_config = lambda id: {}
         h3d.load_skill_workflow = lambda id: {"1": {}}   # legacy 逐段路径要模板存在
+        h3d.is_multiframe_skill = lambda v: bool(v)      # 测试段 skill_id 一律视为多帧技能
 
         def _fake_resolve(body, cfg, **kw):
             bodies.append(dict(body))
             return {"prompt": body["prompt"]}
 
         h3d.resolve_video_params = _fake_resolve
-        h3d.render_template = lambda tpl, params: (_copy.deepcopy(h3d._MULTIFRAME_TEMPLATE), [])
+        h3d.render_template = lambda tpl, params: (_copy.deepcopy(_MULTIFRAME_WF), [])
         h3d._require_vdn_plugin = lambda graph: None
         h3d.execute_graph_inprocess = _fake_exec
         return orig, bodies, graphs
@@ -1673,7 +1648,7 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
          h3_video_director.get_skill_gen_config, h3_video_director.load_skill_workflow,
          h3_video_director.resolve_video_params, h3_video_director.render_template,
          h3_video_director.execute_graph_inprocess, h3_video_director._require_vdn_plugin,
-         h3_video_director._merge_chunk_prompt) = orig
+         h3_video_director._merge_chunk_prompt, h3_video_director.is_multiframe_skill) = orig
 
     def test_three_t2v_segments_run_once_with_guides(self):
         # 3×5s ≤ 15：一次 ref2va 运行（362 帧），两个关键帧锚点钉在 0 / 120，采样器改指注入节点
@@ -1681,7 +1656,7 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
                     {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v", "keyframe": "k1.png"},
                     {"skill_id": "s2", "prompt": "p2", "duration_sec": 5, "mode": "t2v"}]
         orig, bodies, graphs = self._patch(segments, [362])
-        h3_video_director._merge_chunk_prompt = lambda segs, total_sec, total_frames, identity_count=0: ("MERGED", None)
+        h3_video_director._merge_chunk_prompt = lambda segs: "MERGED"
         try:
             (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
         finally:
@@ -1716,7 +1691,7 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
                     {"skill_id": "s2", "prompt": "p2", "duration_sec": 5, "mode": "r2v",
                      "refs": {"images": ["a.png"]}}]
         orig, bodies, graphs = self._patch(segments, [243, 124])
-        h3_video_director._merge_chunk_prompt = lambda segs, total_sec, total_frames, identity_count=0: ("MERGED", None)
+        h3_video_director._merge_chunk_prompt = lambda segs: "MERGED"
         try:
             (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
         finally:

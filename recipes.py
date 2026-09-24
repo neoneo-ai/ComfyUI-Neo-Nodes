@@ -399,9 +399,6 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
     # 身份参考（配方「角色参考图」是否作为各段身份参考）：默认开，编辑器里显式关掉才落盘（对比测试用）
     if shared_raw.get("identity_refs") is False:
         shared["identity_refs"] = False
-    # 多帧单次合并开关：默认开；显式关掉才落盘（强制逐段旧模式，忽略 chunk_sec）
-    if shared_raw.get("multiframe") is False:
-        shared["multiframe"] = False
     # 多帧单次分块秒数：连续兼容段合并成一次 ref2va 运行（总时长 ≤ 该值）；0 = 关闭（纯逐段生成）
     try:
         chunk_sec = float(shared_raw.get("chunk_sec"))

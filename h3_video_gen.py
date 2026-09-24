@@ -27,6 +27,14 @@ def _resolve_skill_id(value):
     return by_name.get(value, value)
 
 
+def is_multiframe_skill(value) -> bool:
+    """该 skill（name 或 id）是否标记为多帧单次（frontmatter multi_frame: true）。"""
+    if not value:
+        return False
+    v = str(value).strip()
+    return any(s.get("multi_frame") and (s["id"] == v or s["name"] == v) for s in scan_skills())
+
+
 def _first_nonempty(*vals):
     for v in vals:
         s = str(v or "").strip()

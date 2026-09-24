@@ -793,6 +793,7 @@ def scan_skills() -> list:
                 "gen_image": bool(meta.get("gen_image", False)),
                 "gen_video": bool(meta.get("gen_video", False)),
                 "requires_ref": bool(meta.get("requires_ref", False)),
+                "multi_frame": bool(meta.get("multi_frame", False)),
                 "mode": str(meta.get("mode") or "").strip(),
                 "description": meta.get("description", ""),
             }
@@ -823,6 +824,7 @@ def scan_skills() -> list:
                     "gen_image": bool(meta.get("gen_image", False)),
                     "gen_video": bool(meta.get("gen_video", False)),
                     "requires_ref": bool(meta.get("requires_ref", False)),
+                    "multi_frame": bool(meta.get("multi_frame", False)),
                     "mode": str(meta.get("mode") or "").strip(),
                     "has_workflow": os.path.isfile(os.path.join(d, "workflow.json")),
                     "description": meta.get("description", ""),

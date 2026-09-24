@@ -3522,3 +3522,49 @@ test("导演编辑器：未保存的新配方也能一键生成九宫格（产�
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);
 });
+
+test("导演编辑器：分块秒数仅在统一技能支持多帧时显示", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-norm", name: "普通技能", gen_video: true, mode: "t2v" },
+        { id: "sk-mf", name: "多帧技能", gen_video: true, mode: "t2v", multi_frame: true },
+    ]));
+
+    const existing = {
+        name: "T",
+        shared: { mode: "t2v", width: 1344, height: 768, seed: 0 },
+        segments: [{ skill_id: "sk-norm", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const gSkillSel = document.querySelector(".neo-director-global-skill");
+    assert.ok(gSkillSel, "统一技能选择器存在");
+    const chunkInp = document.querySelector(".neo-director-chunk-sec");
+    assert.ok(chunkInp, "分块秒数输入框存在");
+    const chunkLabel = Array.from(document.querySelectorAll(".neo-director-shared label"))
+        .find((l) => l.textContent === "分块秒数");
+    assert.ok(chunkLabel, "分块秒数标签存在");
+
+    // 默认（普通技能）→ 隐藏：用户不该看到突然出现的分块秒数
+    assert.equal(gSkillSel.value, "sk-norm", "初始统一技能为普通技能");
+    assert.equal(chunkInp.style.display, "none", "非多帧技能：分块秒数输入框隐藏");
+    assert.equal(chunkLabel.style.display, "none", "非多帧技能：分块秒数标签隐藏");
+
+    // 切到多帧技能 → 显示
+    gSkillSel.value = "sk-mf";
+    gSkillSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await sleep(20);
+    assert.equal(chunkInp.style.display, "", "多帧技能：分块秒数输入框显示");
+    assert.equal(chunkLabel.style.display, "", "多帧技能：分块秒数标签显示");
+
+    // 再切回普通技能 → 重新隐藏
+    gSkillSel.value = "sk-norm";
+    gSkillSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await sleep(20);
+    assert.equal(chunkInp.style.display, "none", "切回非多帧技能：分块秒数重新隐藏");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});

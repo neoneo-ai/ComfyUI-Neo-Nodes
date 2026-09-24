@@ -332,7 +332,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let sbModeSel = null;      // 🎨 图片分镜生图模式 t2i/r2i（统一设置页创建后赋值；缺省按旧行为）
     let frameSourceSel = null; // 分镜/首帧方式 storyboard|unified（统一设置页创建后赋值，与统一首帧互斥）
     let chunkSecInp = null;    // 分块秒数 shared.chunk_sec：连续兼容段合并成一次多帧单次运行的预算（0 = 关闭），时间线面板创建后赋值
-    let multiframeChk = null;  // 多帧合并开关 shared.multiframe：默认开；关闭 → 强制逐段旧模式（忽略分块秒数）
+    let chunkSecLabel = null;   // 「分块秒数」标签：与输入框成对，仅当统一技能支持多帧时显示
 
     // 未保存修改标记：任何会改变落盘内容的操作置位；成功保存 / 关闭后清零。
     let dirty = false;
@@ -1049,7 +1049,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 按有效模式过滤视频技能（skill.mode 由后端 frontmatter 提供）：v2v/rv2v 复用 r2v 技能模板
     // （H3 视频编辑走参考视频路径）；无匹配时回退全量，避免空下拉。
     function skillOptionPool(eff) {
-        const pool = skills.filter(s => s.mode === (eff === 'v2v' || eff === 'rv2v' ? 'r2v' : eff));
+        const base = eff === 'v2v' || eff === 'rv2v' ? 'r2v' : eff;
+        // 多帧单次技能跨 t2v/i2v/fl2v 通用（frontmatter multi_frame），按生效模式纳入候选池
+        const pool = skills.filter(s => s.mode === base || (s.multi_frame && ['t2v', 'i2v', 'fl2v'].includes(base)));
         return pool.length ? pool : skills;
     }
 
@@ -1466,8 +1468,6 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     { chunk_sec: Math.max(0, Math.round(Number(chunkSecInp.value) || 0)) },
                     // 身份参考默认开：只有关掉时才落盘（重开时由该键回显开关）
                     identityRefsChk.checked ? {} : { identity_refs: false },
-                    // 多帧合并开关默认开：只有关掉时才落盘（强制逐段旧模式，忽略分块秒数）
-                    multiframeChk.checked ? {} : { multiframe: false },
                 ),
                 segments,
                 // 自动故事板内容（主题 / 脚本 / 粒度 / 图片分镜设置）：随配方落盘，重新打开编辑器回显。
@@ -2050,7 +2050,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     }
     modeSel.value = initMode;
     // 生成模式只在时间轴页这一处选择：切换时刷新各段显隐，并联动「🎨 参考图设置」页的素材区 / 图片分镜卡片
-    modeSel.addEventListener('change', () => { applyGlobalMode(); refreshSetupRefs(); });
+    modeSel.addEventListener('change', () => { applyGlobalMode(); refreshSetupRefs(); refreshChunkSecVisibility(); });
 
     // 分块秒数（shared.chunk_sec）：连续兼容段合并成一次多帧单次 ref2va 运行的总时长预算；0 = 关闭（纯逐段生成）
     chunkSecInp = $el('input', {
@@ -2060,20 +2060,23 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     });
     chunkSecInp.addEventListener('input', () => { markDirty(); refreshChunkMarkers(); });
 
-    // 多帧合并开关（shared.multiframe）：默认开；关闭 → 强制逐段旧模式（忽略分块秒数）。放在时间轴首行最右。
-    multiframeChk = $el('input', { className: 'neo-director-multiframe', type: 'checkbox' });
-    multiframeChk.checked = exShared.multiframe !== false;   // 缺省开（旧配方无此键 → 开）
-    const syncChunkSecState = () => { chunkSecInp.disabled = !multiframeChk.checked; };   // 关闭时置灰分块秒数（后端忽略其值）
-    multiframeChk.addEventListener('change', () => { markDirty(); syncChunkSecState(); refreshChunkMarkers(); });
-    const multiframeRow = $el('div', { className: 'neo-director-row neo-director-shared' }, [
-        $el('label', { className: 'neo-director-field-label', textContent: '多帧合并' }),
-        $el('label', { className: 'neo-director-seglen-wrap', title: '开：连续兼容段（文生/图生/首尾帧、无自带参考素材）按「分块秒数」预算合并成一次 ref2va 运行；关：强制逐段生成（旧模式），忽略分块秒数。' }, [multiframeChk, $el('span', { textContent: '启用' })]),
-    ]);
-    multiframeRow.style.marginLeft = 'auto';   // 靠时间轴首行最右
-    syncChunkSecState();   // 初始按开关状态置灰分块秒数
-
     // 多帧单次分块预览（后端 _plan_chunks 的镜像，仅显示用）：把会合并进同一次 ref2va 运行的连续兼容段标成一个块
     const CHUNK_COMPATIBLE_MODES = new Set(['t2v', 'i2v', 'fl2v']);
+    const multiFrameSkillIds = new Set(skills.filter((s) => s.multi_frame).map((s) => s.id));   // 多帧单次技能 id（frontmatter multi_frame）
+    // 「分块秒数」仅在统一技能支持多帧时显示（否则用户不该看到它）；混合模式 gSkillSel 池为空 → 隐藏
+    const refreshChunkSecVisibility = () => {
+        if (!chunkSecLabel || !chunkSecInp) return;
+        const show = !!(gSkillSel && multiFrameSkillIds.has(gSkillSel.value));
+        chunkSecLabel.style.display = show ? '' : 'none';
+        chunkSecInp.style.display = show ? '' : 'none';
+    };
+    const rowEffSkillId = (row) => {   // 该段生效的视频技能 id：非混合取统一技能框，混合取段内下拉
+        if (modeSel.value === 'mixed') {
+            const sel = row.querySelector('.neo-director-skill');
+            return sel ? sel.value : '';
+        }
+        return gSkillSel ? gSkillSel.value : '';
+    };
     const rowDurSec = (row) => {
         const durInp = row.querySelector('.neo-director-dur');
         return Number(durInp && durInp.value) || 5;
@@ -2089,7 +2092,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const reads = segRefReaders.get(row) || [];
             const hasRefs = reads.some((r) => r && r().length);
             const svReader = segSvReaders.get(row);
-            if (!CHUNK_COMPATIBLE_MODES.has(effMode) || hasRefs || (svReader && svReader()) || dur > budgetSec) {
+            if (!CHUNK_COMPATIBLE_MODES.has(effMode) || !multiFrameSkillIds.has(rowEffSkillId(row)) || hasRefs || (svReader && svReader()) || dur > budgetSec) {
                 flush(); units.push({ kind: 'legacy', segs: [row] }); continue;
             }
             if (cur.length && curDur + dur > budgetSec) flush();
@@ -2102,7 +2105,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const refreshChunkMarkers = () => {
         if (!chunkSecInp || !modeSel) return;   // 初始化顺序保护：分块输入 / 模式选择器未就绪时跳过
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
-        const budget = multiframeChk.checked ? Number(chunkSecInp.value) : 0;   // 多帧合并关闭 → 预算 0（全逐段）
+        const budget = Number(chunkSecInp.value);   // 分块秒数；0 = 关闭（全逐段）
         const marks = [];
         if (Number.isFinite(budget) && budget > 0) {
             for (const u of planChunkUnits(rows, budget)) {
@@ -2137,7 +2140,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     gSkillSel = $el('select', { className: 'neo-director-global-skill', title: '统一决定各段模板与模型；混合模式下改为逐段选择' });
     fillSkillOptions(gSkillSel, initMode, initSkillId);
     attachSkillPickerToSelect(gSkillSel);   // 点击弹居中搜索窗（与段内技能下拉一致）
-    gSkillSel.addEventListener('change', () => pushGlobalSkill());
+    gSkillSel.addEventListener('change', () => { pushGlobalSkill(); refreshChunkSecVisibility(); });
     applyGlobalMode();   // 初始化各段首帧/尾帧/参考素材区、统一技能框显隐，并把统一技能同步到各段
 
     // ==========================================
@@ -2387,17 +2390,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: '生成模式' }), modeSel,
             gSkillLabel, gSkillSel,   // 统一技能：紧邻生成模式（混合模式隐藏）
-            $el('label', { textContent: '分块秒数' }), chunkSecInp,   // 多帧单次分块预算（0 = 关闭，纯逐段生成）
+            chunkSecLabel = $el('label', { textContent: '分块秒数' }), chunkSecInp,   // 分块秒数：仅统一技能支持多帧时显示（refreshChunkSecVisibility）
             $el('label', { textContent: '宽高比' }), aspectSel,
             $el('label', { textContent: '百万像素' }), mpInp,
             resOut,
-            multiframeRow,   // 多帧合并开关：靠本行最右（margin-left:auto）
         ]),
         customRow,
         tlLabelRow,
         tlWrap,
         segsWrap,
     ]);
+    refreshChunkSecVisibility();   // 初始显隐：默认统一技能非多帧时隐藏「分块秒数」
 
     const tabStory = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '📖 故事板生成' });
     const tabSetup = $el('button', { className: 'neo-director-tab', type: 'button', textContent: '🎨 参考图设置' });
