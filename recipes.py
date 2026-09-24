@@ -477,7 +477,7 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
 
 
 def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets: set | None = None) -> dict | None:
-    """规范化自动故事板的可选内容：主题 / 故事脚本 / 角色・背景参考图 / 拆分粒度 / 图片分镜设置。
+    """规范化自动故事板的可选内容：主题 / 故事脚本 / 角色参考图 / 拆分粒度 / 图片分镜设置。
 
     参考图 filename 与段首帧一样由前端以原始名引用，这里回写为落盘 assets 的最终名。
     引用未落盘资产的条目直接丢弃：参考图只用于 r2i 图片分镜，缺一条不该让整份配方保存失败。
@@ -524,7 +524,6 @@ def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets:
         "idea": str(raw.get("idea") or "").strip() or None,
         "story": str(raw.get("story") or "").strip() or None,
         "characters": _kept_refs("characters"),
-        "backgrounds": _kept_refs("backgrounds"),
         "segment_seconds": segment_seconds,
         "image_mode": image_mode,
         "image_skill": image_skill,
@@ -1070,8 +1069,7 @@ def list_director_recipes() -> list:
 def _director_identity_images(meta: dict, assets_dir: Path) -> list[str]:
     """配方「角色参考图」（story.characters）→ input 相对名，供视频段身份参考。
 
-    背景参考图不计入（背景不承载角色身份）。按角色顺序去重、缺文件的跳过、上限 4 张
-    （与 h3_video_director 的身份继承上限一致）。
+    按角色顺序去重、缺文件的跳过、上限 4 张（与 h3_video_director 的身份继承上限一致）。
     """
     story = meta.get("story") if isinstance(meta.get("story"), dict) else {}
     names = []
@@ -1322,7 +1320,7 @@ def _parse_segments(raw):
 
 @PromptServer.instance.routes.post("/rs_recipes/director_generate_story")
 async def rs_recipes_director_generate_story(request):
-    """根据主题用 LLM 生成完整故事脚本（供导演编辑器确认后拆分）。不带参考图：角色/背景一致性由 r2i 图片分镜负责。"""
+    """根据主题用 LLM 生成完整故事脚本（供导演编辑器确认后拆分）。不带参考图：角色一致性由 r2i 图片分镜负责。"""
     try:
         data = await request.json()
     except Exception:

@@ -1435,8 +1435,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 assets.push({ filename: seg.source_video, subfolder: '', type: 'input', kind: 'video' });
             }
         }
-        // 角色/背景参考图同样要落 assets：图片分镜从配方 assets 读取并喂给 Qwen Image 2.1
-        for (const name of [...charRefRow.getSelected(), ...bgRefRow.getSelected()]) {
+        // 角色参考图同样要落 assets：r2i 图片分镜从配方 assets 读取并作为参考喂给生图技能
+        for (const name of charRefRow.getSelected()) {
             if (assetNames.has(name)) continue;
             assetNames.add(name);
             assets.push({ filename: name, subfolder: '', type: 'input', kind: 'image' });
@@ -1691,40 +1691,35 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const fallback = (sbCurMode === 'r2i') ? 'qwen_image_21' : 'image_gen';
         if (sbSkillSel.querySelector(`option[value="${fallback}"]`)) sbSkillSel.value = fallback;
     }
-    // 角色/背景参考图：喂给 r2i 图片分镜，让各段角色/场景保持一致（从故事板页移来；不再发给生成故事/拆分 LLM）。
+    // 角色参考图（配方级，常驻显示）：主用途是视频各段身份参考（「角色身份参考」开启时），次用途喂给 r2i 图片分镜让各段角色一致。
     // 复用每段参考网格（本地上传 / 素材库拖入 / 拖拽排序）；顺序即参考先后（第 1 张为编辑目标）。
     const charRefRow = buildSegRefRow(
         { key: 'characters', kind: 'image', label: '角色参考图', max: 6 },
         (exStory.characters || []).map(r => r.filename).filter(Boolean)
     );
-    const bgRefRow = buildSegRefRow(
-        { key: 'backgrounds', kind: 'image', label: '背景参考图', max: 4 },
-        (exStory.backgrounds || []).map(r => r.filename).filter(Boolean)
-    );
     const sbGenBtn = $el('button', { className: 'rs-btn neo-director-sb-gen', textContent: '🎨 生成图片分镜' });
     const sbStatus = $el('span', { className: 'neo-director-sb-status' });
-    // 角色/背景参考行：仅 r2i 显示
-    const sbR2iCtrls = $el('div', { className: 'neo-director-sb-r2i' }, [
-        $el('div', { className: 'neo-director-story-refs' }, [charRefRow.row, bgRefRow.row]),
-    ]);
-    sbR2iCtrls.style.display = (sbCurMode === 'r2i') ? '' : 'none';
     sbModeSel.addEventListener('change', () => {
         sbSkillMemory[sbCurMode] = sbSkillSel.value || null;   // 记住上一模式用的技能
         sbCurMode = sbModeSel.value;
         fillSbSkills();
-        sbR2iCtrls.style.display = (sbCurMode === 'r2i') ? '' : 'none';
     });
     fillSbSkills();   // 初始填充（异步，不阻塞）
+    const charCard = $el('div', { className: 'neo-director-setup-char' }, [
+        $el('div', { className: 'neo-director-refs-head' }, [
+            $el('span', { className: 'neo-director-field-label', title: '作为视频各段的身份参考（「连续性」与「角色身份参考」开启时生效）：关键帧是背影 / 局部特写、看不到脸时靠它保住角色身份；r2i 图片分镜也会用它保持各段角色一致。最多取前 4 张作身份参考', textContent: '👤 角色参考图（配方级；视频各段身份参考，同时喂给 r2i 图片分镜）' }),
+        ]),
+        $el('div', { className: 'neo-director-story-refs' }, [charRefRow.row]),
+    ]);
     const sbCard = $el('div', { className: 'neo-director-setup-sb' }, [
         $el('div', { className: 'neo-director-refs-head' }, [
-            $el('span', { className: 'neo-director-field-label', title: '角色参考图同时是视频各段的身份参考（「连续性」开启时生效）：关键帧是背影 / 局部特写、看不到脸时靠它保住角色身份', textContent: '🎨 图片分镜（逐段关键帧；图生 / 首尾帧段自动用作首帧，全参考段自动加入该段参考图）' }),
+            $el('span', { className: 'neo-director-field-label', title: '角色参考图在上方「👤 角色参考图」设置（配方级）', textContent: '🎨 图片分镜（逐段关键帧；图生 / 首尾帧段自动用作首帧，全参考段自动加入该段参考图）' }),
         ]),
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { className: 'neo-director-field-label', textContent: '生图模式' }), sbModeSel,
-            $el('label', { className: 'neo-director-field-label', title: 't2i 纯文生图；r2i 带角色/背景参考（按所选技能执行）', textContent: '生图技能' }), sbSkillSel,
+            $el('label', { className: 'neo-director-field-label', title: 't2i 纯文生图；r2i 参考上方「👤 角色参考图」（配方级），按所选技能执行', textContent: '生图技能' }), sbSkillSel,
             $el('div', { className: 'neo-director-sb-run' }, [sbStatus, sbGenBtn]),   // 生成按钮 + 状态靠本行最右，不独占一行
         ]),
-        sbR2iCtrls,
     ]);
 
     // 分镜/首帧方式：宫格分镜图拆分（一张宫格分镜图切多图 → 逐段首帧）、逐段图片分镜（关键帧作首帧）与统一图片（全体共用首帧）三选一，随 story.frame_source 落盘。
@@ -1965,12 +1960,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ]),
     ]);
 
-    // 当前选中的角色/背景参考（{filename} 列表），供保存与 r2i 图片分镜共用；空则不写该键。
+    // 当前选中的角色参考（{filename} 列表），供保存与 r2i 图片分镜共用；空则不写该键。
     const storyRefsPayload = () => {
-        const p = {};
-        const c = charRefRow.getSelected(); if (c.length) p.characters = c.map(fn => ({ filename: fn }));
-        const b = bgRefRow.getSelected(); if (b.length) p.backgrounds = b.map(fn => ({ filename: fn }));
-        return p;
+        const c = charRefRow.getSelected();
+        return c.length ? { characters: c.map(fn => ({ filename: fn })) } : {};
     };
 
     // ---- 两个可切换页签：自动故事板 / 时间轴分段（避免单页过于复杂）----
@@ -2378,6 +2371,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             $el('label', { textContent: '分镜 / 首帧方式' }), frameSourceSel,   // 宫格分镜图 ↔ 逐段生成分镜图 ↔ 统一首帧图，三选一
             identityRefsRow,   // 角色身份参考：靠右侧（关掉 = 旧行为，便于对比）
         ]),
+        charCard,       // 👤 角色参考图：配方级常驻（任何分镜方式 / 生图模式下都可见）
         sbCard,         // 🎨 图片分镜（逐段关键帧；与生成模式解耦，仅「统一图片」方式时隐藏）
         gridCard,       // 🧩 宫格分镜图拆分（一张宫格分镜图 → 逐段首帧；与图片分镜同页的另一种分镜来源）
         uniFrameBlock,   // 图生 / 首尾帧：统一首帧（+ 尾帧）

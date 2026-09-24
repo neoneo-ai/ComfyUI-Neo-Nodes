@@ -833,7 +833,7 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/粒
         story: {
             idea: "旧主题",
             story: "旧故事正文",
-            backgrounds: [{ filename: "bg.png" }], // 旧配方遗留字段：回显到背景参考图网格并随保存带回
+            backgrounds: [{ filename: "bg.png" }], // 旧配方遗留字段：不再读取、不回显、保存时丢弃
             segment_seconds: 15,
         },
     };
@@ -849,14 +849,14 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/粒
     assert.equal(document.querySelector(".neo-director-story").value, "旧故事正文");
     assert.equal(document.querySelector(".neo-director-seglen").value, "15");
 
-    // 角色/背景参考图：旧配方的 backgrounds 回显到背景参考图网格，保存时原样带回
+    // 背景参考图已移除：旧配方的 backgrounds 不再回显，任何网格都不出现 bg.png
     assert.ok(
-        Array.from(document.querySelectorAll(".neo-director-refpick-grid"))
+        !Array.from(document.querySelectorAll(".neo-director-refpick-grid"))
             .some((g) => g.querySelector(".neo-director-refpick-item")?.dataset.file === "bg.png"),
-        "旧配方 backgrounds 回显到背景参考图网格"
+        "旧配方 backgrounds 不再回显"
     );
 
-    // 未改动直接保存：请求体带回 story（主题/脚本/粒度），旧配方 backgrounds 原样带回
+    // 未改动直接保存：请求体带回 story（主题/脚本/粒度），遗留 backgrounds 丢弃
     document.querySelector(".neo-director-save").click();
     await sleep(50);
     const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
@@ -864,7 +864,7 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/粒
     assert.equal(saveCall.body.story.idea, "旧主题");
     assert.equal(saveCall.body.story.story, "旧故事正文");
     assert.equal(saveCall.body.story.characters, undefined, "未设置角色参考图时不回传 characters");
-    assert.deepEqual(saveCall.body.story.backgrounds, [{ filename: "bg.png" }], "backgrounds 随保存原样带回");
+    assert.equal(saveCall.body.story.backgrounds, undefined, "遗留 backgrounds 不再回传");
     assert.equal(saveCall.body.story.segment_seconds, 15);
 });
 
@@ -2213,7 +2213,7 @@ test("导演编辑器：t2v→i2v 首帧自动回填受分镜/首帧方式门控
     await sleep(20);
 });
 
-test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i 模式、生图技能过滤与记忆、角色/背景行仅 r2i", async () => {
+test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i 模式、生图技能过滤与记忆、角色参考图常驻", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
@@ -2233,10 +2233,14 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     tabSetup.click();
     await sleep(20);
     const setupPane = document.querySelector(".neo-director-pane-setup");
+    const charCard = setupPane.querySelector(".neo-director-setup-char");
+    assert.ok(charCard, "角色参考图卡片在统一设置页（配方级常驻）");
+    assert.ok(charCard.querySelector(".neo-director-segref-row"), "角色参考网格在角色卡片内");
     const sbCard = setupPane.querySelector(".neo-director-setup-sb");
     assert.ok(sbCard, "图片分镜卡片在统一设置页");
     const paneChildren = Array.from(setupPane.children);
-    assert.equal(paneChildren.indexOf(sbCard), 1, "图片分镜卡片紧跟「分镜/首帧方式」行（统一参考区已移除）");
+    assert.equal(paneChildren.indexOf(charCard), 1, "角色参考图卡片紧跟「分镜/首帧方式」行（身份参考开关所在行）");
+    assert.equal(paneChildren.indexOf(sbCard), 2, "图片分镜卡片紧跟角色参考图卡片之后");
     assert.ok(paneChildren.indexOf(sbCard) < paneChildren.indexOf(setupPane.querySelector(".neo-director-setup-opt")), "图片分镜卡片在提示词优化之前");
 
     const sbModeSel = sbCard.querySelector(".neo-director-sb-mode");
@@ -2246,7 +2250,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     assert.ok(sbModeSel.querySelector("input[type=radio]"), "生图模式用 radio 组展开（非下拉）");
     assert.deepEqual(Array.from(sbSkillSel.options).map((o) => o.value), ["image_gen", "qwen_image_21"], "只列生图技能（排除四视图/视频）");
     assert.equal(sbSkillSel.value, "image_gen", "t2i 默认 Krea2");
-    assert.equal(sbCard.querySelector(".neo-director-sb-r2i").style.display, "none", "t2i 隐藏角色/背景行");
+    assert.ok(!sbCard.querySelector(".neo-director-sb-r2i"), "无 r2i 专属控件行（背景参考图已移除）");
     assert.equal(sbCard.querySelector(".neo-director-sb-gen").closest(".neo-director-row").querySelector(".neo-director-sb-mode"),
         sbModeSel, "生成图片分镜按钮与生图模式同行（不独占一行）");
 
@@ -2255,7 +2259,6 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     sbModeSel.value = "r2i";
     sbModeSel.dispatchEvent(new Event("change"));
     await sleep(30);
-    assert.equal(sbCard.querySelector(".neo-director-sb-r2i").style.display, "", "r2i 显示角色/背景行");
     assert.equal(sbSkillSel.value, "qwen_image_21", "r2i 默认 Qwen Image 2.1");
     sbModeSel.value = "t2i";
     sbModeSel.dispatchEvent(new Event("change"));
@@ -3163,7 +3166,7 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     const card = document.querySelector(".neo-director-setup-grid");
     assert.ok(card, "宫格拆分卡片在统一设置页");
     const paneChildren = Array.from(document.querySelector(".neo-director-pane-setup").children);
-    assert.equal(paneChildren.indexOf(card), 2, "宫格卡片紧跟图片分镜卡片之后");
+    assert.equal(paneChildren.indexOf(card), 3, "宫格卡片紧跟图片分镜卡片之后");
 
     // 三方互斥：默认「逐段图片分镜」→ 🎨 显示、🧩 隐藏；切到 grid → 反之
     const sbCard = document.querySelector(".neo-director-setup-sb");

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes — 图片分镜（storyboard）生成
 # 用生图技能逐段生成关键帧：mode=t2i 纯文生图（不带参考，默认 Krea2），
-# mode=r2i 参考编辑（角色/背景参考，用所选技能不强制切 Qwen），
+# mode=r2i 参考编辑（角色参考，用所选技能不强制切 Qwen），
 # 缺省 mode 为旧行为（文生图默认 Krea2，带参考图的段固定切 Qwen Image 2.1）；
 # 关键帧直接落配方自己的 assets/storyboard_{recipe}_{seg:02d}.png（配方自包含、导出即带分镜图），
 # i2v/fl2v 段没另设首帧时用它作首帧，预览走 /rs_recipes/asset。
@@ -41,7 +41,7 @@ from .skill import get_skill_gen_config, load_skill_workflow
 
 logger = logging.getLogger(__name__)
 
-_STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色 ≤6 + 背景 ≤4，前端已限）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
+_STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色 ≤6，前端已限）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
 _STORYBOARD_REF_SKILL = "qwen_image_21"   # 带参考图的段固定用它做参考编辑（Krea2 单路模板不支持多参考延续）；纯文生图用所选技能（默认 Krea2）
 _GRID_STORYBOARD_SKILL = "nine_grid_storyboard"   # 一键九宫格分镜图：idea → Qwen Image 2.1（模板内置九宫格指令）
 _storyboard_tasks: dict[str, dict] = {}
@@ -60,13 +60,13 @@ def _storyboard_recipe_meta(name: str) -> dict | None:
 
 
 def _storyboard_story_refs(name: str) -> list[str]:
-    """故事里的角色/背景参考图（assets 最终名）复制到 input/，返回 LoadImage 可用的相对名列表。"""
+    """故事里的角色参考图（assets 最终名）复制到 input/，返回 LoadImage 可用的相对名列表。"""
     meta = _storyboard_recipe_meta(name)
     if not meta:
         return []
     story = meta.get("story") or {}
     names = []
-    for ref in (story.get("characters") or []) + (story.get("backgrounds") or []):
+    for ref in (story.get("characters") or []):
         fn = str((ref or {}).get("filename") or "").strip()
         if not fn:
             continue
@@ -112,7 +112,7 @@ def _tensor_to_pil(image):
 async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id: str,
                                base_seed, index_offset: int = 0, mode=None):
     """串行生成。index_offset：单段重生成时该段在配方里的真实序号（文件名对齐 storyboard_{recipe}_{n:02d}）。
-    mode：t2i=纯文生图（不用角色/背景参考）；r2i=参考编辑（用角色/背景参考）；
+    mode：t2i=纯文生图（不用角色参考）；r2i=参考编辑（用角色参考）；
     均按所选技能执行、不强制切 Qwen Image 2.1。缺省 None 为旧行为（带参考图的段自动切 Qwen）。"""
     story_refs = [] if mode == "t2i" else await asyncio.to_thread(_storyboard_story_refs, name)
     _assets_cache: dict[str, tuple] = {}
@@ -156,7 +156,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
         # 视频提示词写的是运动过程与时间流，不一定适合当生图提示词
         fallback_warnings = [] if storyboard_prompt else ["该段没有分镜提示词，已回退用视频提示词生图（含运动描述，不一定适合生图）"]
         entry["warnings"] = list(fallback_warnings)
-        # 参考图：角色/背景（<imageN> 顺序与之一致），总数截断到上限。
+        # 参考图：角色参考（<imageN> 顺序与之一致），总数截断到上限。
         refs = list(story_refs)
         # 旧行为（mode=None）：带参考图 → 固定 Qwen Image 2.1 参考编辑，纯文生图用所选技能（默认 Krea2）；
         # 显式 t2i/r2i 模式一律按所选技能执行（r2i 的参考能力由技能模板自身决定）
@@ -256,7 +256,7 @@ routes = PromptServer.instance.routes
 @routes.post("/neo_video_gen/storyboard_generate")
 async def neo_video_gen_storyboard_generate(request):
     """按段串行生成图片分镜；返回 task_id 轮询进度。
-    mode：t2i=纯文生图（忽略角色/背景参考）；r2i=参考编辑（用所选技能，不强制切 Qwen）；
+    mode：t2i=纯文生图（忽略角色参考）；r2i=参考编辑（用所选技能，不强制切 Qwen）；
     缺省为旧行为（文生图默认 Krea2，带参考图的段自动切 Qwen Image 2.1）。
     force=True：已有产物的段也重新生成（未显式钉 seed 时换新随机基，避免同图）。"""
     try:

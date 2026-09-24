@@ -1015,6 +1015,17 @@
     padding: 8px;
 }
 
+/* 统一设置页：「👤 角色参考图」卡片（配方级常驻；视频各段身份参考 + r2i 图片分镜共用） */
+.neo-director-setup-char {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #161616;
+    border: 1px solid #2a2d33;
+    border-radius: 6px;
+    padding: 8px;
+}
+
 /* 统一设置页：「🧩 宫格分镜图拆分」卡片（与图片分镜同页的另一种分镜来源） */
 .neo-director-setup-grid {
     display: flex;
@@ -1209,13 +1220,6 @@
     height: 100%;
     object-fit: contain;   /* 整图按比例完整可见（不裁切），适配各格真实宽高比 */
     cursor: zoom-in;
-}
-
-/* r2i 专属控件（角色/背景参考行） */
-.neo-director-sb-r2i {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
 .neo-director-sb-mode,
@@ -1456,7 +1460,7 @@
     min-width: 0;
 }
 
-/* 故事板页：角色/背景参考图并排一行，各占一半；瓷砖超出宽度时横向滚动（不折行） */
+/* 参考图容器：瓷砖超出宽度时横向滚动（不折行） */
 .neo-director-story-refs {
     display: flex;
     gap: 10px;

@@ -437,13 +437,12 @@ class NormalizeDirectorStoryTests(unittest.TestCase):
         story = recipes._normalize_director_story(
             {"story": {"idea": " 主题 ", "story": " 正文 ",
                        "characters": [{"filename": "c.png", "desc": " 猫 "}],
-                       "backgrounds": [{"filename": "b.png"}],
                        "segment_seconds": "10"}},
-            {"c.png": "c_copied.png", "b.png": "b_copied.png"})
+            {"c.png": "c_copied.png"})
         self.assertEqual(story["idea"], "主题")
         self.assertEqual(story["story"], "正文")
         self.assertEqual(story["characters"], [{"filename": "c_copied.png", "desc": "猫"}])
-        self.assertEqual(story["backgrounds"], [{"filename": "b_copied.png"}])
+        self.assertNotIn("backgrounds", story, "背景参考图已移除，不再落盘")
         self.assertEqual(story["segment_seconds"], 10)
 
     def test_missing_and_empty_story_returns_none(self):
@@ -822,7 +821,7 @@ class DirectorRecipeIOTests(unittest.TestCase):
         payload = {"name": "story-dir", "type": "video_director",
                    "shared": {"width": 8, "height": 8, "seed": 3},
                    "segments": [{"skill_id": "s", "prompt": "p", "duration_sec": 5}],
-                   "story": {"idea": "主题", "story": "正文", "characters": [], "backgrounds": [],
+                   "story": {"idea": "主题", "story": "正文", "characters": [],
                              "segment_seconds": 10}}
 
         class _Req:
@@ -892,7 +891,7 @@ class DirectorRecipeIOTests(unittest.TestCase):
                                           "segments": [{"skill_id": "s", "prompt": "p"}]})
         payload = {"name": "nostory-dir", "type": "video_director", "shared": {},
                    "segments": [{"skill_id": "s", "prompt": "p"}],
-                   "story": {"idea": None, "story": None, "characters": [], "backgrounds": [],
+                   "story": {"idea": None, "story": None, "characters": [],
                              "segment_seconds": None}}
 
         class _Req:
@@ -3060,7 +3059,7 @@ class StoryboardDimsTests(unittest.TestCase):
 
 
 class StoryboardStoryRefsTests(unittest.TestCase):
-    """_storyboard_story_refs 从 recipe["story"] 取角色/背景参考图（键名修复：不再误读 director_story）。"""
+    """_storyboard_story_refs 从 recipe["story"] 取角色参考图（键名修复：不再误读 director_story）。"""
 
     def setUp(self):
         self._tmp = tempfile.mkdtemp(prefix="neo_sbrefs_")
@@ -3073,11 +3072,9 @@ class StoryboardStoryRefsTests(unittest.TestCase):
         os.makedirs(os.path.join(self.recipe_dir, "assets"))
         with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
             json.dump({"name": "refs-recipe", "type": "video_director",
-                       "story": {"characters": [{"filename": "char.png"}],
-                                 "backgrounds": [{"filename": "bg.png"}]}}, f)
+                       "story": {"characters": [{"filename": "char.png"}]}}, f)
         _write_png(os.path.join(self.recipe_dir, "assets", "char.png"))
-        _write_png(os.path.join(self.recipe_dir, "assets", "bg.png"))
-        # 桩掉拷贝（确定性返回文件名）：只验证键名读取与角色/背景顺序，不测内容去重改名
+        # 桩掉拷贝（确定性返回文件名）：只验证键名读取与顺序，不测内容去重改名
         self._orig_copy = storyboard._copy_media_to_input
         storyboard._copy_media_to_input = lambda src, fn: (fn, False)
 
@@ -3086,13 +3083,13 @@ class StoryboardStoryRefsTests(unittest.TestCase):
         recipes.CUSTOM_DIR = self._orig_custom
         shutil.rmtree(self._tmp, ignore_errors=True)
 
-    def test_reads_story_key_chars_before_bg(self):
-        # 真实配方把故事存在 recipe["story"]；角色在前、背景在后（第 1 张为 Qwen Image 2.1 编辑目标）
-        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), ["char.png", "bg.png"])
+    def test_reads_story_key_characters(self):
+        # 真实配方把故事存在 recipe["story"]；第 1 张为 Qwen Image 2.1 编辑目标
+        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), ["char.png"])
 
     def test_missing_asset_file_skipped(self):
-        os.remove(os.path.join(self.recipe_dir, "assets", "bg.png"))
-        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), ["char.png"])
+        os.remove(os.path.join(self.recipe_dir, "assets", "char.png"))
+        self.assertEqual(storyboard._storyboard_story_refs("refs-recipe"), [])
 
     def test_no_story_key_returns_empty(self):
         # 旧配方没有 story 键 → 空列表（不报错）
@@ -3133,13 +3130,11 @@ class DirectorIdentityRefsTests(unittest.TestCase):
     def _write_asset(self, name):
         _write_png(os.path.join(self.recipe_dir, "assets", name))
 
-    def test_characters_become_identity_images_ignoring_backgrounds(self):
-        self._write_recipe({"characters": [{"filename": "char.png"}, {"filename": "char2.png"}],
-                            "backgrounds": [{"filename": "bg.png"}]})
-        for name in ("char.png", "char2.png", "bg.png"):
+    def test_characters_become_identity_images(self):
+        self._write_recipe({"characters": [{"filename": "char.png"}, {"filename": "char2.png"}]})
+        for name in ("char.png", "char2.png"):
             self._write_asset(name)
         spec = recipes.load_director_spec("id-recipe")
-        # 背景图不承载角色身份 → 不进身份参考
         self.assertEqual(spec["identity_images"], ["char.png", "char2.png"])
 
     def test_missing_asset_and_duplicate_skipped(self):
@@ -3222,8 +3217,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         os.makedirs(self.assets_dir, exist_ok=True)
         with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
             json.dump({"name": "sb-e2e", "type": "video_director", "shared": {},
-                       "story": {"characters": [{"filename": "char.png"}],
-                                 "backgrounds": []}}, f)
+                       "story": {"characters": [{"filename": "char.png"}]}}, f)
         _write_png(os.path.join(self.recipe_dir, "assets", "char.png"))
         # _storyboard_story_refs 被桩成返回 ["char.png"]（相对 input 目录）；resolve_request 会校验文件存在，
         # 故需在 input 目录放一份同名图。
@@ -3328,7 +3322,7 @@ class StoryboardGenerateTests(unittest.TestCase):
         self.assertTrue(all(sid == "image_gen" for sid in asked))
 
     def test_mode_r2i_keeps_refs_without_forced_skill_switch(self):
-        # r2i 参考编辑：角色/背景参考照常挂上，但按所选技能执行（不强制切 Qwen、无切换 warning）
+        # r2i 参考编辑：角色参考照常挂上，但按所选技能执行（不强制切 Qwen、无切换 warning）
         asked = []
 
         def _load(sid):
@@ -3464,7 +3458,7 @@ class StoryboardInProcessProgressTests(unittest.TestCase):
         os.makedirs(self.assets_dir, exist_ok=True)
         with open(os.path.join(self.recipe_dir, "recipe.json"), "w", encoding="utf-8") as f:
             json.dump({"name": "sb-prog", "type": "video_director", "shared": {},
-                       "story": {"characters": [], "backgrounds": []}}, f)
+                       "story": {"characters": []}}, f)
 
         # 进度钩子：与 main.py hijack_progress 同语义（无执行上下文时回退读 last_prompt_id）。
         self.updates = []
