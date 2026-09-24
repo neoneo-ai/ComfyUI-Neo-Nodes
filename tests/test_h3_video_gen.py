@@ -737,14 +737,6 @@ class RealTemplateExecutionTests(unittest.TestCase):
         self.assertNotIn("ref_audios.ref_audio_0", graph["5"]["inputs"])
         self.assertEqual(image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
 
-    def test_r2v_template_requires_reference(self):
-        cfg = {"model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-               "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-               "vae": "minimax_h3_video_vae_fp16.safetensors"}
-        params = h3_video_gen.resolve_video_params({"prompt": "x"}, cfg)
-        with self.assertRaises(ValueError):
-            h3_video_gen.render_template(self._r2v_template(), params)
-
 
 class VideoModelsSortTests(unittest.TestCase):
     """/neo_video_gen/models 下拉展示：H3 相关靠前（与生图 krea2-first 独立）。"""

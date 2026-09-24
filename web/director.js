@@ -1050,8 +1050,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // （H3 视频编辑走参考视频路径）；无匹配时回退全量，避免空下拉。
     function skillOptionPool(eff) {
         const base = eff === 'v2v' || eff === 'rv2v' ? 'r2v' : eff;
-        // 多帧单次技能跨 t2v/i2v/fl2v 通用（frontmatter multi_frame），按生效模式纳入候选池
-        const pool = skills.filter(s => s.mode === base || (s.multi_frame && ['t2v', 'i2v', 'fl2v'].includes(base)));
+        // 多帧单次技能跨 t2v/i2v/fl2v 通用（frontmatter multi_frame）：仅当技能本身也是帧模式时纳入，避免 r2v 多帧技能泄漏进帧模式候选池
+        const pool = skills.filter(s => s.mode === base || (s.multi_frame && ['t2v', 'i2v', 'fl2v'].includes(base) && ['t2v', 'i2v', 'fl2v'].includes(s.mode)));
         return pool.length ? pool : skills;
     }
 
@@ -2054,7 +2054,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // 分块秒数（shared.chunk_sec）：连续兼容段合并成一次多帧单次 ref2va 运行的总时长预算；0 = 关闭（纯逐段生成）
     chunkSecInp = $el('input', {
-        className: 'neo-director-chunk-sec', type: 'number', min: 0, max: 30, step: 1,
+        className: 'neo-director-num neo-director-chunk-sec', type: 'number', min: 0, max: 30, step: 1,
         value: (exShared.chunk_sec != null ? exShared.chunk_sec : 15),
         title: '多帧单次分块：连续兼容段（文生/图生/首尾帧、无自带参考素材）总时长 ≤ 该值时合并成一次 ref2va 运行，各段分镜关键帧钉在起点；0 = 关闭（纯逐段生成）。建议 ≤15',
     });
@@ -2085,6 +2085,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const units = [];
         let cur = [], curDur = 0;
         const flush = () => { if (cur.length) { units.push({ kind: cur.length > 1 ? 'multi' : 'legacy', segs: cur }); cur = []; curDur = 0; } };
+        // 参考集签名（图/视频/音频各自按顺序）：后端 _ref_signature 的镜像，块内各段须一致才合并
+        const refSig = (row) => [0, 1, 2].map((g) => {
+            const r = (segRefReaders.get(row) || [])[g];
+            return r && r() ? (r() || []) : [];
+        }).map((l) => l.join('\u0001')).join('\u0002');
         for (const row of rows) {
             const dur = rowDurSec(row);
             const segModeSel = row.querySelector('.neo-director-segmode');
@@ -2092,10 +2097,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const reads = segRefReaders.get(row) || [];
             const hasRefs = reads.some((r) => r && r().length);
             const svReader = segSvReaders.get(row);
-            if (!CHUNK_COMPATIBLE_MODES.has(effMode) || !multiFrameSkillIds.has(rowEffSkillId(row)) || hasRefs || (svReader && svReader()) || dur > budgetSec) {
+            // 兼容（后端 _chunk_compatible 镜像）：多帧技能 + 无源视频，且（t2v/i2v/fl2v 无参考）或（r2v 有参考）
+            let compatible;
+            if (!multiFrameSkillIds.has(rowEffSkillId(row)) || (svReader && svReader())) compatible = false;
+            else if (effMode === 'r2v') compatible = hasRefs;
+            else compatible = CHUNK_COMPATIBLE_MODES.has(effMode) && !hasRefs;
+            if (!compatible || dur > budgetSec) {
                 flush(); units.push({ kind: 'legacy', segs: [row] }); continue;
             }
-            if (cur.length && curDur + dur > budgetSec) flush();
+            if (cur.length && (curDur + dur > budgetSec || refSig(cur[0]) !== refSig(row))) flush();
             cur.push(row); curDur += dur;
         }
         flush();

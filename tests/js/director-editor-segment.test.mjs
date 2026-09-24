@@ -3568,3 +3568,38 @@ test("导演编辑器：分块秒数仅在统一技能支持多帧时显示", as
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);
 });
+
+test("导演编辑器：r2v 多帧技能不泄漏进 t2v/i2v/fl2v 候选池，切 r2v 模式后可选", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-t2v", name: "文生", gen_video: true, mode: "t2v" },
+        { id: "sk-mf", name: "多帧(帧)", gen_video: true, mode: "t2v", multi_frame: true },
+        { id: "sk-r2v", name: "参考生", gen_video: true, mode: "r2v", multi_frame: true },
+    ]));
+
+    const existing = {
+        name: "T",
+        shared: { mode: "t2v", width: 1344, height: 768, seed: 0 },
+        segments: [{ skill_id: "sk-t2v", prompt: "第一段", duration_sec: 5 }],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const gSkillSel = document.querySelector(".neo-director-global-skill");
+    const modeSel = document.querySelector(".neo-director-mode");
+    assert.ok(gSkillSel && modeSel, "统一技能与模式选择器存在");
+    const opts = () => Array.from(gSkillSel.options).map((o) => o.value);
+
+    // t2v 模式：帧技能 + 帧多帧技能，不含 r2v 技能（避免把参考生视频塞进文生段）
+    assert.deepEqual(opts().sort(), ["sk-mf", "sk-t2v"].sort(), "t2v 候选池不含 r2v 技能");
+
+    // 切到 r2v → 只有 r2v 技能
+    modeSel.value = "r2v";
+    modeSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await sleep(30);
+    assert.deepEqual(opts(), ["sk-r2v"], "r2v 候选池只含 r2v 技能");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});

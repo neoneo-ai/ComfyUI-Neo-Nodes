@@ -620,10 +620,36 @@ def _seg_duration(seg: dict) -> float:
 
 
 def _chunk_compatible(seg: dict) -> bool:
-    """该段能否进多帧单次分块：文生/图生/首尾帧、无自带参考素材或源视频，且选中技能为多帧单次技能。"""
-    return ((seg.get("mode") or "t2v") in ("t2v", "i2v", "fl2v")
-            and not (seg.get("refs") or {}) and not seg.get("source_video")
-            and is_multiframe_skill(seg.get("skill_id")))
+    """该段能否进多帧单次分块：选中技能为多帧单次技能，且（文生/图生/首尾帧、无自带参考素材）或 r2v
+    （须带参考集，块内再校验各段参考一致）。source_video 一律排除。"""
+    if not is_multiframe_skill(seg.get("skill_id")):
+        return False
+    mode = seg.get("mode") or "t2v"
+    if seg.get("source_video"):
+        return False
+    if mode == "r2v":
+        return bool(seg.get("refs") or {})
+    return mode in ("t2v", "i2v", "fl2v") and not (seg.get("refs") or {})
+
+
+def _ref_signature(seg):
+    """段的参考集签名（图/视频/音频各自按顺序）。多帧块内各段参考必须完全一致（含顺序）才能合并，
+    这样 <Picture N> 编号在整块内保持一致；无参考的段恒为 ([], [], [])。"""
+    refs = seg.get("refs") or {}
+    return (tuple(refs.get("images") or []), tuple(refs.get("videos") or []), tuple(refs.get("audios") or []))
+
+
+def _segment_references(seg):
+    """seg.refs（{images,videos,audios}）→ body.references 列表（与逐段路径同格式），供多帧块共享参考集。"""
+    refs = seg.get("refs") or {}
+    out = []
+    for name in (refs.get("images") or []):
+        out.append({"kind": "input", "value": name})
+    for name in (refs.get("videos") or []):
+        out.append({"kind": "input", "value": name, "media": "video"})
+    for name in (refs.get("audios") or []):
+        out.append({"kind": "input", "value": name, "media": "audio"})
+    return out
 
 
 def _chunk_budget(shared: dict) -> float:
@@ -655,7 +681,7 @@ def _plan_chunks(segments, chunk_sec):
             flush()
             units.append({"kind": "legacy", "segs": [seg]})
             continue
-        if cur and cur_dur + d > budget:
+        if cur and (cur_dur + d > budget or _ref_signature(cur[0]) != _ref_signature(seg)):
             flush()
         cur.append(seg)
         cur_dur += d
@@ -929,6 +955,9 @@ class NeoH3VideoDirector:
                         body["width"] = in_w
                     if in_h > 0:
                         body["height"] = in_h
+                    references = _segment_references(m_segs[0])
+                    if references:
+                        body["references"] = references
                     context_tail = None
                     if window > 0 and prev_tail is not None and prev_tail.shape[0] >= window:
                         context_tail = prev_tail

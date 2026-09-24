@@ -1512,7 +1512,8 @@ class ChunkPlanTests(unittest.TestCase):
         self.assertEqual(self.kinds([self.seg(0, 6), self.seg(1, 6), self.seg(2, 6)], 15), ["multi", "legacy"])
 
     def test_incompatible_breaks_chain(self):
-        segs = [self.seg(0), self.seg(1, mode="r2v", refs={"images": ["a.png"]}), self.seg(2)]
+        # v2v（非多帧兼容模式）夹在 t2v 之间 → 三段各自成块（单段归 legacy）
+        segs = [self.seg(0), self.seg(1, mode="v2v"), self.seg(2)]
         self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy", "legacy"])
 
     def test_source_video_incompatible(self):
@@ -1555,6 +1556,65 @@ class ChunkPlanTests(unittest.TestCase):
             self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy", "legacy"])
         finally:
             h3_video_director.is_multiframe_skill = orig
+
+    def test_r2v_identical_refs_merge(self):
+        # r2v 各段参考集完全一致（含顺序）→ 合并成一次多帧单次，<Picture N> 编号整块一致
+        segs = [self.seg(0, mode="r2v", refs={"images": ["a.png", "b.png"]}),
+                self.seg(1, mode="r2v", refs={"images": ["a.png", "b.png"]})]
+        units = h3_video_director._plan_chunks(segs, 15)
+        self.assertEqual([u["kind"] for u in units], ["multi"])
+        self.assertEqual(len(units[0]["segs"]), 2)
+
+    def test_r2v_mismatched_refs_fallback(self):
+        # r2v 参考集不同 → 无法统一 <Picture N>，回退逐段
+        segs = [self.seg(0, mode="r2v", refs={"images": ["a.png"]}),
+                self.seg(1, mode="r2v", refs={"images": ["b.png"]})]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
+
+    def test_r2v_ref_order_matters(self):
+        # 参考图顺序不同（编号会错位）→ 视为不一致，回退逐段
+        segs = [self.seg(0, mode="r2v", refs={"images": ["a.png", "b.png"]}),
+                self.seg(1, mode="r2v", refs={"images": ["b.png", "a.png"]})]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
+
+    def test_r2v_source_video_fallback(self):
+        # r2v 段带 source_video → 一律不合并
+        segs = [self.seg(0, mode="r2v", refs={"images": ["a.png"]}, source_video="v.mp4"),
+                self.seg(1, mode="r2v", refs={"images": ["a.png"]})]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
+
+    def test_r2v_without_refs_incompatible(self):
+        # r2v 无参考集（退化态，无可共享）→ 不合并，回退逐段
+        segs = [self.seg(0, mode="r2v"), self.seg(1, mode="r2v")]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
+
+    def test_r2v_mixed_media_refs_merge_when_identical(self):
+        # 图/视频/音频混合参考，各段完全一致 → 合并
+        r = {"images": ["a.png"], "videos": ["v.mp4"], "audios": ["x.wav"]}
+        segs = [self.seg(0, mode="r2v", refs={k: list(v) for k, v in r.items()}),
+                self.seg(1, mode="r2v", refs={k: list(v) for k, v in r.items()})]
+        units = h3_video_director._plan_chunks(segs, 15)
+        self.assertEqual([u["kind"] for u in units], ["multi"])
+
+    def test_r2v_between_t2v_breaks_chain(self):
+        # r2v（有参考）夹在 t2v 之间 → 参考签名与两侧都不同，三段各自成块（单段归 legacy）
+        segs = [self.seg(0), self.seg(1, mode="r2v", refs={"images": ["a.png"]}), self.seg(2)]
+        self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy", "legacy"])
+
+    def test_ref_signature_order_sensitive(self):
+        self.assertEqual(h3_video_director._ref_signature({"refs": {"images": ["a", "b"]}}),
+                         (("a", "b"), (), ()))
+        self.assertNotEqual(h3_video_director._ref_signature({"refs": {"images": ["a", "b"]}}),
+                            h3_video_director._ref_signature({"refs": {"images": ["b", "a"]}}))
+
+    def test_segment_references_format(self):
+        seg = {"refs": {"images": ["a.png"], "videos": ["v.mp4"], "audios": ["x.wav"]}}
+        self.assertEqual(h3_video_director._segment_references(seg), [
+            {"kind": "input", "value": "a.png"},
+            {"kind": "input", "value": "v.mp4", "media": "video"},
+            {"kind": "input", "value": "x.wav", "media": "audio"},
+        ])
+        self.assertEqual(h3_video_director._segment_references({}), [])
 
 
 class MultiframeGuideTests(unittest.TestCase):
@@ -1685,7 +1745,7 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
         self.assertEqual(gi["latent"], ["5", 1])
 
     def test_incompatible_segment_falls_back_to_legacy(self):
-        # t2v×2（成块，243 帧）+ r2v（自带参考 → legacy 逐段，124 帧）：两次执行、不丢帧拼接
+        # t2v×2（成块，243 帧）+ r2v（参考集与 t2v 块不一致 → 回退 legacy 逐段，124 帧）：两次执行、不丢帧拼接
         segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "t2v", "keyframe": "k0.png"},
                     {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "t2v"},
                     {"skill_id": "s2", "prompt": "p2", "duration_sec": 5, "mode": "r2v",
@@ -1702,6 +1762,25 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
         comp = video.get_components()
         self.assertEqual(comp.images.shape[0], 243 + 124)
         self.assertEqual(comp.audio["waveform"].shape[-1], (243 + 124) * self.SPF)
+
+    def test_r2v_shared_refs_flow_into_multiframe_body(self):
+        # r2v×2 参考一致 → 一次多帧运行，共享参考集按顺序写入 body.references（<Picture N> 据此编号）
+        segments = [{"skill_id": "s0", "prompt": "p0", "duration_sec": 5, "mode": "r2v",
+                     "refs": {"images": ["a.png", "b.png"]}},
+                    {"skill_id": "s1", "prompt": "p1", "duration_sec": 5, "mode": "r2v",
+                     "refs": {"images": ["a.png", "b.png"]}}]
+        orig, bodies, graphs = self._patch(segments, [243])
+        h3_video_director._merge_chunk_prompt = lambda segs: "MERGED"
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertEqual(len(bodies), 1)   # 一次多帧单次运行
+        self.assertEqual(bodies[0]["prompt"], "MERGED")
+        self.assertEqual(bodies[0]["references"], [
+            {"kind": "input", "value": "a.png"},
+            {"kind": "input", "value": "b.png"},
+        ])
 
 
 class DirectorModelStepsTests(unittest.TestCase):
