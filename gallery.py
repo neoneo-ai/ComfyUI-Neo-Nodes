@@ -389,18 +389,47 @@ def _recent_media_buckets(directory: Path, limit: int) -> list[dict]:
     return [own, *children.values()]
 
 
+_COVER_KIND_RANK = {"image": 0, "video": 1, "audio": 2}
+
+
+def _cover_kind(filename: str) -> str:
+    """Cover tile kind for a media filename; drives frontend rendering (audio != <img>)."""
+    ext = Path(filename).suffix.lower()
+    if ext in IMG_EXTENSIONS:
+        return "image"
+    if ext in VIDEO_EXTENSIONS:
+        return "video"
+    if ext in AUDIO_EXTENSIONS:
+        return "audio"
+    return "other"
+
+
+def _order_covers_by_kind(entries: list[dict]) -> list[dict]:
+    """Stable-partition cover entries so images beat videos beat audio.
+
+    Within a kind the original order (recency for recent dirs, name order otherwise)
+    is preserved, so higher-priority media fills the limited cover slots first.
+    """
+    return sorted(entries, key=lambda e: _COVER_KIND_RANK.get(e.get("kind", "other"), 9))
+
+
 def _recent_cover_entries(directory: Path, subfolder_prefix: str, count: int) -> list[dict]:
     """Newest media files anywhere under a plugin-updated dir, as cover entries.
 
     Each subfolder is anchored with ``subfolder_prefix`` so the thumbnail route
-    resolves it the same way listing items do.
+    resolves it the same way listing items do. Covers prefer image > video > audio
+    at the same level (newest first within a kind) and carry a ``kind`` field so the
+    frontend renders audio as a tile instead of a broken <img>.
     """
     candidates = [c for bucket in _recent_media_buckets(directory, count) for c in bucket["covers"]]
-    candidates.sort(key=lambda c: c["mtime"], reverse=True)
+    for c in candidates:
+        c["kind"] = _cover_kind(c["filename"])
+    candidates.sort(key=lambda c: (_COVER_KIND_RANK.get(c["kind"], 9), -c["mtime"]))
     return [{
         "filename": c["filename"],
         "name": c["name"],
         "subfolder": "/".join(p for p in (subfolder_prefix, c["rel"]) if p),
+        "kind": c["kind"],
     } for c in candidates[:count]]
 
 
@@ -1357,47 +1386,6 @@ async def copy_to_input(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-def _collect_cover_recursive(parent_dir: Path, current_subfolder: str, needed: int, result: list[dict]):
-    """Recursively scan subdirectories for cover media (images + videos).
-    
-    Performance optimized: stops immediately when enough samples collected.
-    Only descends into directories that don't already have direct media files.
-    """
-    if needed <= 0 or not parent_dir.exists():
-        return
-    
-    for subdir in sorted(parent_dir.iterdir()):
-        if len(result) >= needed:
-            break
-        
-        if not subdir.is_dir():
-            continue
-        
-        new_subfolder = f"{current_subfolder}/{subdir.name}" if current_subfolder else subdir.name
-        
-        # Check direct media files first (shallow scan at this level)
-        found_direct = []
-        for f in sorted(subdir.iterdir()):
-            if len(result) >= needed:
-                break
-            if f.is_file() and f.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-                found_direct.append({
-                    "filename": f.name,
-                    "name": f.stem,
-                    "subfolder": new_subfolder,
-                })
-        
-        # If we found media at this level, add them and stop recursing deeper for this subdir
-        if found_direct:
-            result.extend(found_direct)
-            # Check if we've collected enough - stop immediately
-            if len(result) >= needed:
-                return
-        else:
-            # No direct media - recurse into nested subdirectory
-            _collect_cover_recursive(subdir, new_subfolder, needed, result)
-
-
 def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_count: int, base_subfolder: str = ""):
     """Collect cover images for a directory.
 
@@ -1422,16 +1410,17 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
 
     result: list[dict] = []
     
-    # Level 1: Scan root level files first
+    # Level 1: Scan root level files first (image > video > audio)
+    root_files = []
     for p in sorted(base_dir.iterdir()):
-        if len(result) >= sample_count:
-            break
         if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-            result.append({
+            root_files.append({
                 "filename": p.name,
                 "name": p.stem,
                 "subfolder": base_subfolder,
+                "kind": _cover_kind(p.name),
             })
+    result.extend(_order_covers_by_kind(root_files)[:sample_count])
     
     # Level 2+: Recursively scan subdirectories if not enough at root level
     _collect_covers_recursive(base_dir, sample_count - len(result), result, sample_count, base_subfolder)
@@ -1465,18 +1454,19 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
         else:
             new_subfolder = subdir.name
         
-        # Check direct media files at this subdirectory level (limit per-subdir contribution)
-        found_direct = []
+        # Check direct media files at this subdirectory level (image > video > audio,
+        # limited to what's still needed)
         remaining = sample_count - len(result)
+        subdir_media = []
         for f in sorted(subdir.iterdir()):
-            if len(found_direct) >= remaining:
-                break
             if f.is_file() and f.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-                found_direct.append({
+                subdir_media.append({
                     "filename": f.name,
                     "name": f.stem,
                     "subfolder": new_subfolder,
+                    "kind": _cover_kind(f.name),
                 })
+        found_direct = _order_covers_by_kind(subdir_media)[:remaining]
         
         # If we found media at this level, add them and stop recursing deeper for this subdir
         if found_direct:

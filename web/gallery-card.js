@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, getCardHeight, getCoverHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, getCardHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems } from "./gallery-gen.js";
 
@@ -190,7 +190,7 @@ export class GalleryCard {
         });
     }
 
-    async createDirCard(gallery, name, path, items, subdirs = {}, readOnly = false, source = "local", dirInfo = null) {
+    async createDirCard(gallery, name, path, items, subdirs = {}, source = "local", dirInfo = null) {
         const isRemote = source === "oss";
         // Lora dirs are addressed by their "Lora/..." path; name may be just the lora stem.
         const isLoraDir = String(path || "").toLowerCase().startsWith("lora/");
@@ -205,8 +205,7 @@ export class GalleryCard {
         const civitai = (dirInfo && dirInfo.civitai) || null;
 
         const coverWrapper = $el("div", {
-            className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(gallery.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(gallery.maxThumbnailSize, 80)}px` }
+            className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
 
         // Mark card as lazy-load target with data attributes
@@ -229,18 +228,6 @@ export class GalleryCard {
             className: "neo-gallery-card-type-badge " + (isRemote ? "type-remote" : "type-directory"),
             title: isRemote ? "Remote (OSS)" : "Directory"
         }, [isRemote ? "\u2601\uFE0F" : "\uD83D\uDCC1"]);
-
-        if (!readOnly) {
-            const deleteBtn = $el("div", {
-                className: "neo-gallery-card-delete-btn",
-                title: `Remove directory "${name}"`,
-                onclick: (e) => {
-                    e.stopPropagation();
-                    gallery.removeCustomDir(path);
-                }
-            }, ["\u00D7"]);
-            card.appendChild(deleteBtn);
-        }
 
         // Pending lora fetch (queued/running/failed) status badge.
         if (isPending) {
@@ -300,7 +287,7 @@ export class GalleryCard {
                        [];
 
         if (covers.length > 0) {
-            this._renderCoverGrid(coverWrapper, covers, dirName, displayLabel, gallery);
+            this._renderCoverGrid(coverWrapper, covers, displayLabel);
             // Remove skeleton loading state
             coverWrapper.classList.remove('skeleton-loading');
             coverWrapper.classList.add('skeleton-loaded');
@@ -309,53 +296,16 @@ export class GalleryCard {
             // Don't remove skeleton-loading here, let IntersectionObserver handle it
             // Only show placeholder if skeleton is not active
             if (!coverWrapper.classList.contains('skeleton-loading')) {
-                coverWrapper.innerHTML = '';
-                coverWrapper.appendChild($el("div", {
-                    className: "neo-gallery-card-cover neo-gallery-card-placeholder",
-                    textContent: "\uD83D\uDCCB"
-                }));
+                renderCoverTiles(coverWrapper, [], dirName);
             }
         }
     }
 
     /**
-     * Render a cover grid from an array of image entries.
+     * Render a directory/subdir cover from an array of cover entries (shared renderer).
      */
-    _renderCoverGrid(coverWrapper, images, dirName, displayLabel, gallery) {
-        const displayImages = images.slice(0, 2);
-        if (displayImages.length === 0) return;
-
-        coverWrapper.innerHTML = '';
-        const coverGrid = $el("div", { className: "neo-gallery-card-cover-grid" });
-
-        let loadedCount = 0;
-
-        displayImages.forEach((imgData) => {
-            const imgSubfolder = imgData.subfolder || "";
-            const imgItem = $el("div", { className: "neo-gallery-card-cover-grid-item" });
-
-            const img = $el("img", {
-                src: getThumbnailSrc(imgData, imgSubfolder),
-                alt: displayLabel,
-                loading: "lazy"
-            });
-
-            img.onload = () => {
-                if (loadedCount === displayImages.length) {
-                    const height = getCoverHeight(coverWrapper, gallery);
-                    coverGrid.style.height = `${height * 2}px`;
-                }
-            };
-
-            img.onerror = () => {
-                imgItem.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:24px;">\uD83D\uDCCB</div>';
-            };
-
-            imgItem.appendChild(img);
-            coverGrid.appendChild(imgItem);
-        });
-
-        coverWrapper.appendChild(coverGrid);
+    _renderCoverGrid(coverWrapper, images, displayLabel) {
+        renderCoverTiles(coverWrapper, images, displayLabel);
     }
 
     async createSubdirCard(gallery, subdirName, parentDir, fullPath, subdirData = null) {
@@ -377,8 +327,7 @@ export class GalleryCard {
         }, ["\uD83D\uDCC1"]);
 
         const coverWrapper = $el("div", {
-            className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(gallery.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${gallery.maxThumbnailSize}px` }
+            className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
 
         const info = $el("div", { className: "neo-gallery-card-info" }, [
@@ -427,81 +376,16 @@ export class GalleryCard {
                        (gallery._dirCovers && Object.entries(gallery._dirCovers).find(([k]) => k.toLowerCase() === subdirKey.toLowerCase())?.[1]) || [];
 
         if (covers.length > 0) {
-            this._renderCoverGrid(coverWrapper, covers, subdirKey, subdirName, gallery);
+            this._renderCoverGrid(coverWrapper, covers, subdirName);
             // Remove skeleton loading state
             coverWrapper.classList.remove('skeleton-loading');
             coverWrapper.classList.add('skeleton-loaded');
         } else {
             // No cover images available - show placeholder
-            coverWrapper.innerHTML = '';
-            coverWrapper.appendChild($el("div", {
-                className: "neo-gallery-card-cover neo-gallery-card-placeholder",
-                textContent: "\uD83D\uDCCB"
-            }));
+            renderCoverTiles(coverWrapper, [], subdirName);
             // Remove skeleton loading state even for placeholder
             coverWrapper.classList.remove('skeleton-loading');
             coverWrapper.classList.add('skeleton-loaded');
-        }
-    }
-
-    /**
-     * Update subdir card cover with sample images.
-     */
-    _updateSubdirCardCover(card, coverWrapper, structure, subdirName, gallery) {
-        let coverImages = [];
-
-        // First priority: use sample_images from backend (recursively collected)
-        if (structure.sample_images && structure.sample_images.length > 0) {
-            coverImages = structure.sample_images.slice(0, 2);
-        } else if (structure.images && structure.images.length > 0) {
-            // Fallback: use direct images at this level
-            coverImages = structure.images.slice(0, 2);
-        }
-
-        if (coverImages.length > 0) {
-            coverWrapper.innerHTML = '';
-
-            const coverGrid = $el("div", { className: "neo-gallery-card-cover-grid" });
-
-            let loadedCount = 0;
-            const displayImages = coverImages.slice(0, 2);
-
-            displayImages.forEach((imgData) => {
-                // Use the subfolder from the image data itself (set by backend)
-                const imgSubfolder = imgData.subfolder || "";
-
-                const imgItem = $el("div", { className: "neo-gallery-card-cover-grid-item" });
-
-                const img = $el("img", {
-                    src: getThumbnailSrc(imgData, imgSubfolder),
-                    alt: subdirName,
-                    loading: "lazy"
-                });
-
-                img.onload = () => {
-                    loadedCount++;
-                    if (loadedCount === displayImages.length) {
-                        const height = getCoverHeight(coverWrapper, gallery);
-                        coverGrid.style.height = `${height * 2}px`;
-                    }
-                };
-
-                img.onerror = () => {
-                    imgItem.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:24px;">\uD83D\uDCCB</div>';
-                };
-
-                imgItem.appendChild(img);
-                coverGrid.appendChild(imgItem);
-            });
-
-            coverWrapper.appendChild(coverGrid);
-        } else {
-            // No images found at any level, show folder icon
-            coverWrapper.innerHTML = '';
-            coverWrapper.appendChild($el("div", {
-                className: "neo-gallery-card-cover neo-gallery-card-placeholder",
-                textContent: "\uD83D\uDCCB"
-            }));
         }
     }
 
@@ -817,8 +701,8 @@ export class GalleryCard {
 
         // 默认画装饰性波形占位（按文件名做确定性种子），首次播放再解码真实峰值重绘。
         // bars 存在卡片上，进度更新时据此重绘填充。
-        card._audioBars = this._decorativeHeights(image.filename);
-        card._renderAudio = (progress) => this._renderWaveform(canvas, card._audioBars, progress);
+        card._audioBars = decorativeHeights(image.filename);
+        card._renderAudio = (progress) => renderWaveform(canvas, card._audioBars, progress);
         card._renderAudio(0);
 
         // 若后端已缓存该文件的真实峰值（之前播放过），直接应用，无需再解码。
@@ -873,45 +757,6 @@ export class GalleryCard {
                 .then(() => { canvas.dataset.decoded = "1"; })
                 .catch(err => { console.warn('[Neo Gallery] waveform decode failed', err); });
         }
-    }
-
-    _renderWaveform(canvas, heights, progress = 0) {
-        const dpr = window.devicePixelRatio || 1;
-        // 布局前 clientWidth/Height 为 0，回退到默认尺寸；布局后按实际显示尺寸绘制更清晰
-        const W = canvas.clientWidth || 240;
-        const H = canvas.clientHeight || 72;
-        canvas.width = Math.round(W * dpr);
-        canvas.height = Math.round(H * dpr);
-        const ctx = canvas.getContext('2d');
-        ctx.scale(dpr, dpr);
-        ctx.clearRect(0, 0, W, H);
-        const n = heights.length;
-        const gap = W / n;
-        for (let i = 0; i < n; i++) {
-            const bh = Math.max(2, Math.min(1, heights[i]) * H * 0.9);
-            const played = progress > 0 && (i + 0.5) / n <= progress;
-            ctx.fillStyle = played ? "#8b5cf6" : "rgba(148, 163, 184, 0.45)";
-            ctx.fillRect(i * gap, (H - bh) / 2, Math.max(1, gap - 1), bh);
-        }
-    }
-
-    _decorativeHeights(seedStr) {
-        const n = 60;
-        let seed = 2166136261;
-        for (let i = 0; i < seedStr.length; i++) {
-            seed ^= seedStr.charCodeAt(i);
-            seed = Math.imul(seed, 16777619) >>> 0;
-        }
-        const phase = (seed % 628) / 100;
-        const heights = new Array(n);
-        for (let i = 0; i < n; i++) {
-            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-            const rnd = seed / 4294967296;
-            const t = i / n;
-            const base = 0.25 + 0.5 * Math.abs(Math.sin(t * Math.PI * 3 + phase));
-            heights[i] = Math.min(1, base * (0.55 + rnd * 0.8));
-        }
-        return heights;
     }
 
     async _decodeAndDrawWaveform(gallery, card, url, image, subfolder) {

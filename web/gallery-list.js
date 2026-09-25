@@ -319,31 +319,40 @@ export class GalleryList {
         // Collect workflow-used loras once for the smart filter (only lora dirs are filtered).
         const usedLoras = this.gallery.workflowMatchActive ? this.gallery.collectUsedLoras() : null;
 
-        for (const dir of dirGroups) {
-            // Show cards if there are subdirs, root_count or a pending lora fetch.
+        const _renderDirCard = async (dir) => {
             const hasContent = (dir.subdirs && Object.keys(dir.subdirs).length > 0) ||
                                (dir.root_count && dir.root_count > 0) ||
                                dir.pending;
-            if (!hasContent) continue;
+            if (!hasContent) return;
 
-            // Smart filter: hide lora dirs not used in the current workflow
             if (usedLoras && dir.path && String(dir.path).toLowerCase().startsWith('lora/') && dir.lora_path) {
-                if (!usedLoras.has(dir.lora_path.replace(/\\/g, '/'))) continue;
+                if (!usedLoras.has(dir.lora_path.replace(/\\/g, '/'))) return;
             }
 
-            // FIX: For presets, only show the card as a directory entry (no root items displayed directly)
-            // This prevents mixing root-level files with subdirectory cards on the home page
             const isPresets = dir.name.toLowerCase() === 'presets';
             const displayItems = isPresets ? [] : (dir.items || []);
 
-            const card = await this.gallery.card.createDirCard(this.gallery, dir.name, dir.path, displayItems, dir.subdirs, dir.read_only, dir.source, dir);
+            const card = await this.gallery.card.createDirCard(this.gallery, dir.name, dir.path, displayItems, dir.subdirs, dir.source, dir);
             container.appendChild(card);
+        };
+
+        // System dirs (Output/Input) first
+        for (const dir of dirGroups) {
+            if (dir.name === "Output" || dir.name === "Input") {
+                await _renderDirCard(dir);
+            }
         }
 
-        // 收藏入口 — 首页卡片（本地收藏 / C 站收藏），封面取对应收藏内容首两张。
+        // 收藏入口 — 首页卡片（本地收藏 / C 站收藏），插在系统目录和自定义目录之间。
         if (!this.gallery.isSearchActive) {
             container.appendChild(this.gallery._createLocalHomeCard());
             container.appendChild(this.gallery._createCivitaiHomeCard());
+        }
+
+        // Remaining dirs (custom, presets, lora, oss, etc.)
+        for (const dir of dirGroups) {
+            if (dir.name === "Output" || dir.name === "Input") continue;
+            await _renderDirCard(dir);
         }
 
         return container;

@@ -11,13 +11,13 @@ import {
     THUMBNAIL_SIZE_MIN,
     THUMBNAIL_SIZE_MAX,
     THUMBNAIL_SIZE_STEP,
-    getReservedSpace,
-    getThumbnailSrc,
-    getCoverHeight,
+    renderCoverTiles,
+    buildPlaceholderTile,
     showNoFilesMessage,
     showLoadingOverlay,
     showToast,
-    showInlineFeedback
+    showInlineFeedback,
+    isAudioFile
 } from './gallery-utils.js';
 
 // Load gallery CSS
@@ -425,13 +425,9 @@ export class NeoGallery {
             onclick: () => this.showLocalBookmarks()
         });
         const coverWrapper = $el("div", {
-            className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(this.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(this.maxThumbnailSize, 80)}px` }
+            className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
-        coverWrapper.appendChild($el("div", {
-            className: "neo-gallery-card-cover neo-gallery-card-placeholder",
-            textContent: "\uD83D\uDCCD"
-        }));
+        coverWrapper.appendChild(buildPlaceholderTile());
         // 首页卡封面取收藏内容前两张（有收藏时异步补齐）。
         api.fetchApi('/neo_bookmark/local').then(r => (r.ok ? r.json() : { items: [] })).then(d => {
             const first = ((d && d.items) || []).find(i => i.covers && i.covers.length);
@@ -497,17 +493,28 @@ export class NeoGallery {
     // ====== Civitai 收藏 (bookmarked C-site models, shown like the Lora section) ======
 
     _createLocalBookmarkCard(item) {
+        const isAudio = !!(item.filename && isAudioFile(item.filename));
         const card = $el("div", {
-            className: "neo-gallery-category-card neo-gallery-local-card",
-            onclick: () => this._openLocalBookmark(item)
+            className: "neo-gallery-category-card neo-gallery-local-card" + (isAudio ? " neo-gallery-local-card-audio" : ""),
+            onclick: () => {
+                if (isAudio) { this._toggleBookmarkAudio(item, card); return; }
+                this._openLocalBookmark(item);
+            }
         });
         card.dataset.bookmarkId = item.id;
         const coverWrapper = $el("div", {
-            className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(this.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(this.maxThumbnailSize, 80)}px` }
+            className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
         card._coverWrapper = coverWrapper;
-        this._applyBookmarkCovers(coverWrapper, item.covers || [], item);
+        if (isAudio) {
+            const subfolder = this._resolveBookmarkSubfolder(item);
+            const audioCard = this.card._buildAudioCard(this, { filename: item.filename }, subfolder);
+            coverWrapper.classList.remove('skeleton-loading');
+            coverWrapper.classList.add('skeleton-loaded');
+            coverWrapper.appendChild(audioCard);
+        } else {
+            this._applyBookmarkCovers(coverWrapper, item.covers || [], item);
+        }
 
         const sourceLabel = item.source === "oss" ? "OSS 预设" : (item.source === "civitai" ? "C 站" : "本地");
         const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: item.name || item.filename || "未命名" });
@@ -517,9 +524,9 @@ export class NeoGallery {
         ]);
         const isFile = !!item.filename;
         const typeBadge = $el("div", {
-            className: `neo-gallery-card-type-badge ${isFile ? "type-image" : "type-directory"}`,
+            className: `neo-gallery-card-type-badge ${isAudio ? "type-audio" : (isFile ? "type-image" : "type-directory")}`,
             title: `${sourceLabel}收藏 · ${[item.dir, item.subfolder, item.filename].filter(Boolean).join("/")}`
-        }, [item.source === "oss" ? "\u2601\uFE0F" : (isFile ? "\uD83D\uDDBC\uFE0F" : "\uD83D\uDCCD")]);
+        }, [isAudio ? "\u266A" : (item.source === "oss" ? "\u2601\uFE0F" : (isFile ? "\uD83D\uDDBC\uFE0F" : "\uD83D\uDCCD"))]);
         const delBtn = $el("div", {
             className: "neo-gallery-card-civitai-save-btn",
             title: "取消收藏",
@@ -533,17 +540,24 @@ export class NeoGallery {
         return card;
     }
 
+    _resolveBookmarkSubfolder(item) {
+        return item.source === "oss"
+            ? (item.dir || "")
+            : ((item.subfolder) ? `${item.dir}/${item.subfolder}` : (item.dir || ""));
+    }
+
+    _toggleBookmarkAudio(item, card) {
+        const subfolder = this._resolveBookmarkSubfolder(item);
+        this.card._toggleAudioPlayback(this, { filename: item.filename }, subfolder, card);
+    }
+
     async _openLocalBookmark(item) {
         try {
             if (item.source === "civitai") {
                 await this.showDirectoryStructure(CIVITAI_DIR_KEY, [item.dir || item.filename]);
             } else if (item.filename) {
                 // 单图收藏：仅显示本图，直接以灯箱打开该媒体（不进入目录）
-                // 本地 subfolder 只是卡片内相对路径，需拼上顶层 dir 才能定位（与后端封面解析一致）
-                const lbSub = item.source === "oss"
-                    ? (item.dir || "")
-                    : ((item.subfolder) ? `${item.dir}/${item.subfolder}` : (item.dir || ""));
-                this.card.showLightbox(this, { filename: item.filename }, lbSub);
+                this.card.showLightbox(this, { filename: item.filename }, this._resolveBookmarkSubfolder(item));
             } else {
                 const segs = (item.subfolder || "").split("/").filter(Boolean);
                 await this.showDirectoryStructure(item.dir, segs);
@@ -577,13 +591,9 @@ export class NeoGallery {
             onclick: () => this.showCivitaiBookmarks()
         });
         const coverWrapper = $el("div", {
-            className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(this.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(this.maxThumbnailSize, 80)}px` }
+            className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
-        coverWrapper.appendChild($el("div", {
-            className: "neo-gallery-card-cover neo-gallery-card-placeholder",
-            textContent: "\uD83D\uDCDA"
-        }));
+        coverWrapper.appendChild(buildPlaceholderTile());
         // 首页卡封面取收藏列表内容前两张（开关开启且有收藏时异步补齐）。
         api.fetchApi('/neo_bookmark/civitai/list', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
@@ -712,8 +722,7 @@ export class NeoGallery {
         card.dataset.civitaiId = item.id;
 
         const coverWrapper = $el("div", {
-            className: "neo-gallery-card-cover-wrapper skeleton-loading",
-            style: { minHeight: `${Math.max(this.maxThumbnailSize * 0.5, 80)}px`, maxHeight: `${Math.max(this.maxThumbnailSize, 80)}px` }
+            className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
 
         const typeLabel = [item.type, item.baseModel].filter(Boolean).join(" · ");
@@ -817,56 +826,18 @@ export class NeoGallery {
     }
 
     /**
-     * 收藏卡封面：从收藏内容取前两张渲染成双图网格。
+     * 收藏卡封面：交给共享渲染器竖排展示（图/视频自然比例，音频走音频瓦片）。
      * covers 项形如 {filename, subfolder}（本地缓存，走缩略图接口）或 {url}（远程直链）。
      */
     _applyBookmarkCovers(coverWrapper, covers, item) {
         coverWrapper.classList.remove('skeleton-loading');
         coverWrapper.classList.add('skeleton-loaded');
-        coverWrapper.innerHTML = '';
-        const list = (covers || []).slice(0, 2);
-        if (list.length === 0) {
-            this._setCivitaiCoverPlaceholder(coverWrapper);
-            return;
-        }
-        const coverGrid = $el("div", { className: "neo-gallery-card-cover-grid" });
-        let loadedCount = 0;
-        for (const c of list) {
-            const itemEl = $el("div", { className: "neo-gallery-card-cover-grid-item" });
-            const img = (c && c.url !== undefined && c.url !== null)
-                ? $el("img", { src: c.url, alt: item.name || "", loading: "lazy" })
-                : $el("img", { src: getThumbnailSrc(c, c.subfolder), alt: item.name || "", loading: "lazy" });
-            img.onload = () => {
-                loadedCount++;
-                // 单图封面按真实宽高比撑高，contain 显示，避免裁切变形
-                if (list.length === 1 && img.naturalWidth > 0) {
-                    const cardWidth = coverWrapper.clientWidth || 160;
-                    const maxCoverHeight = this.maxThumbnailSize - getReservedSpace(this.displayLabels);
-                    const h = Math.round(Math.min(Math.max(cardWidth * img.naturalHeight / img.naturalWidth, 60), maxCoverHeight));
-                    coverGrid.style.height = `${h}px`;
-                    coverGrid.classList.add('aspect-fit');
-                } else if (loadedCount === list.length) {
-                    const h = getCoverHeight(coverWrapper, this);
-                    coverGrid.style.height = `${h * list.length}px`;
-                }
-            };
-            img.onerror = () => {
-                loadedCount++;
-                itemEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:24px;">\uD83D\uDCDA</div>';
-            };
-            itemEl.appendChild(img);
-            coverGrid.appendChild(itemEl);
-        }
-        coverWrapper.appendChild(coverGrid);
+        renderCoverTiles(coverWrapper, covers || [], (item && item.name) || "");
     }
 
     _setCivitaiCoverPlaceholder(coverWrapper) {
         coverWrapper.classList.remove('skeleton-loading');
-        coverWrapper.innerHTML = '';
-        coverWrapper.appendChild($el("div", {
-            className: "neo-gallery-card-cover neo-gallery-card-placeholder",
-            textContent: "\uD83D\uDCDA"
-        }));
+        renderCoverTiles(coverWrapper, [], "");
     }
 
     _setupCivitaiCoverLazyLoad() {

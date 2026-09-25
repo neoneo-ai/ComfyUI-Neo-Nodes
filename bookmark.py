@@ -20,6 +20,7 @@ from server import PromptServer
 from .util import (
     IMG_EXTENSIONS,
     VIDEO_EXTENSIONS,
+    AUDIO_EXTENSIONS,
     _load_settings,
     _json_safe,
 )
@@ -75,19 +76,31 @@ def _save_local_bookmarks(items: list) -> None:
         print(f"[Neo Bookmark] Failed to save local bookmarks: {e}")
 
 
+def _media_kind(filename: str) -> str:
+    """Cover tile kind for a media filename (mirrors gallery._cover_kind)."""
+    ext = Path(filename).suffix.lower()
+    if ext in IMG_EXTENSIONS:
+        return "image"
+    if ext in VIDEO_EXTENSIONS:
+        return "video"
+    if ext in AUDIO_EXTENSIONS:
+        return "audio"
+    return "other"
+
+
 def _first_media_covers(directory: Path, subfolder: str, limit: int = 2) -> list:
     """Scan a bookmark target's content for its first `limit` media files (cover feed).
 
-    与目录卡封面一致：按文件名排序取前两张，仅返回 filename + subfolder，
+    与目录卡封面一致：按文件名排序取前两张，仅返回 filename + subfolder + kind，
     缩略图 URL 由前端走 /neo_gallery/thumbnail 生成。
     """
     covers = []
     if not directory.is_dir():
         return covers
-    exts = IMG_EXTENSIONS | VIDEO_EXTENSIONS
+    exts = IMG_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
     for p in sorted(directory.iterdir()):
         if p.is_file() and p.suffix.lower() in exts and not p.name.startswith("_"):
-            covers.append({"filename": p.name, "subfolder": subfolder})
+            covers.append({"filename": p.name, "subfolder": subfolder, "kind": _media_kind(p.name)})
             if len(covers) >= limit:
                 break
     return covers
@@ -108,7 +121,7 @@ def _local_bookmark_covers(item: dict) -> list:
         filename = str(item.get("filename") or "")
         if filename:
             # 单图收藏：仅显示本图（缩略图端点按需从索引/缓存拉取）
-            return [{"filename": filename, "subfolder": dir_name}]
+            return [{"filename": filename, "subfolder": dir_name, "kind": _media_kind(filename)}]
         return _first_media_covers(target, dir_name)
     # source == "local": 自定义目录或系统 Input/Output 目录
     from .gallery import _get_user_custom_dirs, _resolve_system_dir
@@ -128,7 +141,7 @@ def _local_bookmark_covers(item: dict) -> list:
         # 单图收藏：仅显示本图，封面只取该文件（文件已删除则无封面）
         p = target / filename if target and target.is_dir() else None
         if p and p.exists():
-            return [{"filename": filename, "subfolder": cover_sub}]
+            return [{"filename": filename, "subfolder": cover_sub, "kind": _media_kind(filename)}]
         return []
     return _first_media_covers(target, cover_sub)
 

@@ -442,6 +442,88 @@ class RecentDirSortTests(unittest.TestCase):
         gallery._collect_all_dir_covers(covers, base, "stars", 2)
         self.assertEqual([c["filename"] for c in covers["stars"]], ["old.png", "new.png"])  # 名称序
 
+    def test_cover_kind_classification(self):
+        self.assertEqual(gallery._cover_kind("a.png"), "image")
+        self.assertEqual(gallery._cover_kind("B.JPG"), "image")
+        self.assertEqual(gallery._cover_kind("c.mp4"), "video")
+        self.assertEqual(gallery._cover_kind("d.mp3"), "audio")
+        self.assertEqual(gallery._cover_kind("e.txt"), "other")
+
+    def test_cover_kind_prefers_image_over_audio(self):
+        base = Path(_TMP) / "cover_img_audio"
+        if base.exists():
+            shutil.rmtree(base)
+        _write(base / "pic.png")
+        _write(base / "song.mp3")
+
+        covers: dict = {}
+        gallery._collect_all_dir_covers(covers, base, "stars", 2)
+        self.assertEqual([c["kind"] for c in covers["stars"]], ["image", "audio"])
+        self.assertEqual(covers["stars"][0]["filename"], "pic.png")
+
+    def test_cover_kind_prefers_video_over_audio(self):
+        base = Path(_TMP) / "cover_vid_audio"
+        if base.exists():
+            shutil.rmtree(base)
+        _write(base / "clip.mp4")
+        _write(base / "song.mp3")
+
+        covers: dict = {}
+        gallery._collect_all_dir_covers(covers, base, "stars", 2)
+        self.assertEqual([c["kind"] for c in covers["stars"]], ["video", "audio"])
+        self.assertEqual(covers["stars"][0]["filename"], "clip.mp4")
+
+    def test_audio_only_dir_yields_audio_kind_covers(self):
+        base = Path(_TMP) / "cover_audio_only"
+        if base.exists():
+            shutil.rmtree(base)
+        _write(base / "a.mp3")
+        _write(base / "b.mp3")
+
+        covers: dict = {}
+        gallery._collect_all_dir_covers(covers, base, "stars", 2)
+        self.assertTrue(covers["stars"])
+        self.assertEqual([c["kind"] for c in covers["stars"]], ["audio", "audio"])
+
+    def test_oss_covers_resolve_via_thumbnail_proxy(self):
+        # 回归：OSS 索引的 thumbnail 是远端相对路径，不能当浏览器 URL 放进 url 字段，
+        # 否则前端 <img> 直接 404 退化成文件夹图标；应走 /neo_gallery/thumbnail 代理。
+        index = {
+            "directories": {
+                "26-06-25": {"items": [
+                    {"filename": "a.jpg", "thumbnail": "thumbnails/26-06-25/a.jpg"},
+                    {"filename": "b.mp4", "thumbnail": "thumbnails/26-06-25/b.jpg"},
+                ]},
+                "voice": {"items": [
+                    {"filename": "song.mp3", "thumbnail": ""},
+                ]},
+            }
+        }
+        covers: dict = {}
+        _oss._collect_oss_covers(covers, index)
+
+        media = covers["Cloud Presets/26-06-25"]
+        self.assertEqual([c["filename"] for c in media], ["a.jpg", "b.mp4"])
+        self.assertEqual([c["kind"] for c in media], ["image", "video"])
+        for c in media:
+            self.assertNotIn("url", c)
+            self.assertEqual(c["subfolder"], "Cloud Presets/26-06-25")
+
+        # 纯音频目录：kind=audio 封面，无需缩略图
+        self.assertEqual([c["kind"] for c in covers["Cloud Presets/voice"]], ["audio"])
+
+    def test_recent_cover_kind_beats_recency(self):
+        base = Path(_TMP) / "cover_recent_mixed"
+        if base.exists():
+            shutil.rmtree(base)
+        self._touch(base / "old" / "pic.png", 1000)
+        self._touch(base / "new" / "song.mp3", 3000)
+
+        entries = gallery._recent_cover_entries(base, "Character", 2)
+        # image is preferred over the newer audio even though the audio is fresher
+        self.assertEqual([e["kind"] for e in entries], ["image", "audio"])
+        self.assertEqual(entries[0]["filename"], "pic.png")
+
     def test_recent_dir_whitelist(self):
         for name in ("Output", "output", "Grid", "grid/2026-09-25", "Character/2026-09-25"):
             self.assertTrue(gallery._is_recent_dir(name), name)

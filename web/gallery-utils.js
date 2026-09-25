@@ -39,15 +39,6 @@ export function getCardHeight(gallery) {
 }
 
 /**
- * Get cover image height for card grid
- */
-export function getCoverHeight(coverWrapper, gallery) {
-    const cardWidth = coverWrapper.clientWidth || 160;
-    const maxCoverHeight = gallery.maxThumbnailSize - getReservedSpace(gallery.displayLabels);
-    return Math.min(Math.max(cardWidth * 0.5, 40), maxCoverHeight / 2);
-}
-
-/**
  * Check if filename is an image
  */
 export function isImageFile(filename) {
@@ -138,49 +129,116 @@ export function createPaginationUI(container, items, renderPage, gallery) {
 }
 
 /**
- * Build cover image grid for cards
+ * Deterministic decorative waveform heights seeded from a string (FNV-1a + LCG).
+ * The same seed always yields the same bars, so a tile looks stable across renders.
  */
-export async function buildCoverGrid(coverImages, subfolder, gallery, placeholder = '\uD83D\uDCC1', placeholderClass = 'neo-gallery-card-cover neo-gallery-card-placeholder') {
-    const coverWrapper = $el("div", { className: "neo-gallery-card-cover-wrapper" });
-    
-    if (coverImages.length > 0) {
-        const coverGrid = $el("div", { className: "neo-gallery-card-cover-grid" });
-        
-        let loadedCount = 0;
-        coverImages.forEach((imgData) => {
-            // Use thumbnail API for cover images to reduce bandwidth (original image can be several MB)
-            const src = getThumbnailSrc(imgData, subfolder);
-            
-            const imgItem = $el("div", { className: "neo-gallery-card-cover-grid-item" });
-            
-            const img = $el("img", {
-                src: src,
-                alt: subfolder,
-                loading: "lazy"
-            });
-            
-            img.onload = () => {
-                loadedCount++;
-                if (loadedCount === coverImages.length) {
-                    const height = getCoverHeight(coverWrapper, gallery);
-                    coverGrid.style.height = `${height * 2}px`;
-                }
-            };
-            
-            img.onerror = () => {
-                imgItem.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:24px;">${placeholder}</div>`;
-            };
-            
-            imgItem.appendChild(img);
-            coverGrid.appendChild(imgItem);
-        });
-        
-        coverWrapper.appendChild(coverGrid);
-    } else {
-        coverWrapper.appendChild($el("div", { className: placeholderClass, textContent: placeholder }));
+export function decorativeHeights(seedStr) {
+    const s = String(seedStr || "");
+    const n = 60;
+    let seed = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+        seed ^= s.charCodeAt(i);
+        seed = Math.imul(seed, 16777619) >>> 0;
     }
-    
-    return coverWrapper;
+    const phase = (seed % 628) / 100;
+    const heights = new Array(n);
+    for (let i = 0; i < n; i++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        const rnd = seed / 4294967296;
+        const t = i / n;
+        const base = 0.25 + 0.5 * Math.abs(Math.sin(t * Math.PI * 3 + phase));
+        heights[i] = Math.min(1, base * (0.55 + rnd * 0.8));
+    }
+    return heights;
+}
+
+/**
+ * Draw a bar waveform onto a canvas. `progress` (0..1) fills the played portion.
+ */
+export function renderWaveform(canvas, heights, progress = 0) {
+    const dpr = window.devicePixelRatio || 1;
+    // 布局前 clientWidth/Height 为 0，回退到默认尺寸；布局后按实际显示尺寸绘制更清晰
+    const W = canvas.clientWidth || 240;
+    const H = canvas.clientHeight || 72;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+    const n = heights.length;
+    const gap = W / n;
+    for (let i = 0; i < n; i++) {
+        const bh = Math.max(2, Math.min(1, heights[i]) * H * 0.9);
+        const played = progress > 0 && (i + 0.5) / n <= progress;
+        ctx.fillStyle = played ? "#8b5cf6" : "rgba(148, 163, 184, 0.45)";
+        ctx.fillRect(i * gap, (H - bh) / 2, Math.max(1, gap - 1), bh);
+    }
+}
+
+/**
+ * Cover entries carry a `kind` ("image" | "video" | "audio"). Audio renders as a
+ * dedicated tile; anything else (or a legacy entry without kind) is an <img>.
+ */
+export function getCoverTileKind(cover) {
+    return cover && cover.kind === "audio" ? "audio" : "media";
+}
+
+function _coverImgSrc(cover) {
+    if (cover && cover.url) return cover.url;
+    return getThumbnailSrc(cover, (cover && cover.subfolder) || "");
+}
+
+/** Generic placeholder tile for an empty or failed non-audio cover. */
+export function buildPlaceholderTile() {
+    const tile = $el("div", { className: "neo-gallery-card-placeholder" });
+    tile.appendChild($el("span", { className: "neo-gallery-card-placeholder-icon", textContent: "\uD83D\uDCC1" }));
+    return tile;
+}
+
+/** Audio cover tile reusing the audio-card visual language (badge + waveform). */
+export function buildAudioTile(seed) {
+    const tile = $el("div", { className: "neo-gallery-cover-audio-tile" });
+    tile.appendChild($el("span", { className: "neo-gallery-cover-audio-badge", textContent: "\u266A" }));
+    const canvas = $el("canvas", { className: "neo-gallery-cover-audio-waveform" });
+    tile.appendChild(canvas);
+    renderWaveform(canvas, decorativeHeights(seed), 0);
+    return tile;
+}
+
+/**
+ * Render a directory / bookmark cover into `coverWrapper`.
+ * Up to MAX_COVER_IMAGES image/video rows at natural ratio; portrait images are
+ * laid out side by side (decided from the first image that loads), an audio-only
+ * set becomes one audio tile, and nothing usable becomes one placeholder.
+ */
+export function renderCoverTiles(coverWrapper, covers, alt = "") {
+    coverWrapper.innerHTML = "";
+    const list = (covers || []).slice(0, MAX_COVER_IMAGES);
+    const mediaCovers = list.filter(c => getCoverTileKind(c) === "media");
+
+    if (mediaCovers.length > 0) {
+        const grid = $el("div", { className: "neo-gallery-card-cover-grid" });
+        let oriented = false;
+        for (const c of mediaCovers) {
+            const itemEl = $el("div", { className: "neo-gallery-card-cover-grid-item" });
+            const img = $el("img", { src: _coverImgSrc(c), alt, loading: "lazy" });
+            img.onerror = () => itemEl.replaceWith(buildPlaceholderTile());
+            img.onload = () => {
+                if (oriented) return;
+                oriented = true;
+                // 竖图上下堆叠会让卡片过高，改为左右并排；横图保持竖排
+                if (img.naturalHeight > img.naturalWidth) grid.classList.add("neo-gallery-card-cover-grid-row");
+            };
+            itemEl.appendChild(img);
+            grid.appendChild(itemEl);
+        }
+        coverWrapper.appendChild(grid);
+    } else if (list.some(c => getCoverTileKind(c) === "audio")) {
+        const firstAudio = list.find(c => getCoverTileKind(c) === "audio");
+        coverWrapper.appendChild(buildAudioTile(firstAudio && (firstAudio.filename || firstAudio.name)));
+    } else {
+        coverWrapper.appendChild(buildPlaceholderTile());
+    }
 }
 
 /**

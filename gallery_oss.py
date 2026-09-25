@@ -11,6 +11,8 @@ import aiohttp
 from aiohttp import web
 from server import PromptServer
 
+from .util import IMG_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
+
 # ---------------------------------------------------------------------------
 # Paths (self-contained: this file lives next to gallery.py)
 # ---------------------------------------------------------------------------
@@ -294,6 +296,17 @@ def _oss_directories_to_gallery_dirs(index: dict, category: str | None = OSS_CAT
     return result
 
 
+def _oss_cover_kind(filename: str) -> str:
+    ext = Path(filename).suffix.lower()
+    if ext in IMG_EXTENSIONS:
+        return "image"
+    if ext in VIDEO_EXTENSIONS:
+        return "video"
+    if ext in AUDIO_EXTENSIONS:
+        return "audio"
+    return "other"
+
+
 def _collect_oss_covers(covers: dict, index: dict, category: str | None = OSS_CATEGORY_PRESETS):
     """Collect cover images from OSS index for each remote directory."""
     path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
@@ -302,13 +315,24 @@ def _collect_oss_covers(covers: dict, index: dict, category: str | None = OSS_CA
         items = dir_data.get("items", [])
         cover_items = []
         for item in items[:2]:
-            thumb = item.get("thumbnail", "")
-            if thumb:
+            kind = _oss_cover_kind(item["filename"])
+            if kind == "audio":
+                # Audio renders as a decorative waveform tile; no thumbnail needed.
                 cover_items.append({
                     "filename": item["filename"],
                     "name": Path(item["filename"]).stem,
                     "subfolder": f"{path_prefix}/{dir_name}",
-                    "oss_thumbnail": thumb,
+                    "kind": "audio",
+                })
+            elif item.get("thumbnail"):
+                # Media covers resolve through the /neo_gallery/thumbnail proxy
+                # (subfolder points at the OSS dir); the index "thumbnail" is a
+                # remote relative path, not a browser URL.
+                cover_items.append({
+                    "filename": item["filename"],
+                    "name": Path(item["filename"]).stem,
+                    "subfolder": f"{path_prefix}/{dir_name}",
+                    "kind": kind,
                 })
         if cover_items:
             covers[f"{path_prefix}/{dir_name}"] = cover_items

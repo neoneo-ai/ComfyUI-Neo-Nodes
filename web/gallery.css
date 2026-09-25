@@ -254,9 +254,9 @@
 }
 
 .neo-gallery-category-card:hover {
-    border-color: #FF6A00;
+    border-color: #fff;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(255, 106, 0, 0.2);
+    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
 }
 
 /* Type indicator badge (top-left corner) */
@@ -307,6 +307,12 @@
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
+.neo-gallery-card-type-badge.type-audio {
+    background-color: transparent;
+    color: #66ccff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
 /* Remove loading animation from type badge - skeleton screen handles loading */
 .neo-gallery-card-type-badge.neo-gallery-card-type-loading {
     animation: none;
@@ -328,42 +334,105 @@
     object-fit: contain;
 }
 
-/* Directory card with two images side by side */
+/* Directory card covers: up to two images at natural ratio, stacked vertically */
 .neo-gallery-card-cover-grid {
     display: flex;
+    flex-direction: column;
     width: 100%;
-    height: 100%;
     gap: 2px;
     padding: 2px;
     background-color: #111;
 }
 
+/* Portrait covers: laid out side by side (switched on after the first image loads) */
+.neo-gallery-card-cover-grid-row {
+    flex-direction: row;
+}
+
+.neo-gallery-card-cover-grid-row .neo-gallery-card-cover-grid-item,
+.neo-gallery-card-cover-grid-row .neo-gallery-card-placeholder {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 .neo-gallery-card-cover-grid-item {
-    flex: 1;
+    width: 100%;
+    flex: none;
     overflow: hidden;
     border-radius: 4px;
 }
 
 .neo-gallery-card-cover-grid-item img {
     width: 100%;
-    height: 100%;
-    object-fit: cover;
+    height: auto;
+    object-fit: contain;
     display: block;
 }
 
-/* Single-cover bookmark card: keep image aspect ratio */
-.neo-gallery-card-cover-grid.aspect-fit .neo-gallery-card-cover-grid-item img {
-    object-fit: contain;
-}
-
-/* Placeholder when no cover image */
+/* Placeholder tile when a cover is empty or fails to load */
 .neo-gallery-card-placeholder {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 48px;
-    color: #555;
-    background-color: #222;
+    background:
+        radial-gradient(60% 80% at 50% 40%, rgba(120, 200, 255, 0.08), transparent 70%),
+        linear-gradient(160deg, #232323, #191919);
+    border-top: 1px solid #333;
+    border-bottom: 1px solid #333;
+}
+
+.neo-gallery-card-placeholder-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    color: #a3a3a3;
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.25), 0 0 18px rgba(120, 200, 255, 0.10);
+}
+
+/* Audio cover tile: deep-blue gradient + note badge + decorative waveform */
+.neo-gallery-cover-audio-tile {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    min-height: 80px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: linear-gradient(160deg, rgba(30, 45, 70, 0.95), rgba(15, 22, 38, 0.98));
+    border-top: 1px solid rgba(120, 200, 255, 0.25);
+    border-bottom: 1px solid rgba(120, 200, 255, 0.25);
+    overflow: hidden;
+}
+
+.neo-gallery-cover-audio-badge {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.neo-gallery-cover-audio-waveform {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 64%;
+    display: block;
 }
 
 /* Skeleton screen for loading cards */
@@ -407,10 +476,10 @@
     animation: neoGalleryShimmer 1.5s ease-in-out infinite;
     z-index: 2;
     border-radius: 2px;
-    /* Simulate the split between two images in the grid */
+    /* Simulate the split between two stacked images in the grid */
     background-image: 
         linear-gradient(90deg, #252525 25%, #353535 50%, #252525 75%),
-        linear-gradient(to right, transparent 49%, #1a1a1a 49%, #1a1a1a 51%, transparent 51%);
+        linear-gradient(to bottom, transparent 49%, #1a1a1a 49%, #1a1a1a 51%, transparent 51%);
     background-size: 200px 100%, 100% 100%;
 }
 
@@ -444,30 +513,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     margin-bottom: 2px;
-}
-
-/* Card delete button (hover to show) */
-.neo-gallery-card-delete-btn {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 24px;
-    height: 24px;
-    background-color: rgba(244, 67, 54, 0.9);
-    color: white;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    cursor: pointer;
-    z-index: 5;
-}
-
-.neo-gallery-category-card:hover .neo-gallery-card-delete-btn {
-    opacity: 1 !important;
 }
 
 /* ============================================
@@ -946,7 +991,7 @@ Accordion Section Buttons (Clear)
     width: 20px;
     height: 20px;
     margin: 0;
-    accent-color: #FF6A00;
+    accent-color: #fff;
     cursor: pointer;
     opacity: 0.55;
     transition: opacity 0.15s ease;
@@ -960,7 +1005,7 @@ Accordion Section Buttons (Clear)
 
 /* Selected card highlight */
 .neo-gallery-thumb-selected .neo-gallery-thumb-img-wrapper {
-    outline: 2px solid #FF6A00;
+    outline: 2px solid #fff;
     outline-offset: -2px;
 }
 
@@ -976,7 +1021,7 @@ Accordion Section Buttons (Clear)
     gap: 8px;
     padding: 6px 10px;
     background-color: rgba(20, 20, 20, 0.95);
-    border: 1px solid rgba(255, 106, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.4);
     border-radius: 6px;
     backdrop-filter: blur(6px);
 }
@@ -1058,6 +1103,16 @@ Accordion Section Buttons (Clear)
     pointer-events: none;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+}
+
+/* Audio card inside bookmark cover fills the wrapper */
+.neo-gallery-local-card-audio .neo-gallery-card-cover-wrapper {
+    display: flex;
+    align-items: center;
+}
+.neo-gallery-local-card-audio .neo-gallery-audio-card {
+    height: 100%;
+    min-height: 48px;
 }
 
 /* Image label */
@@ -1566,11 +1621,11 @@ Accordion Section Buttons (Clear)
     background: rgba(255, 193, 7, 1);
 }
 
-/* Civitai bookmark card: remote cover image fills the wrapper */
+/* Civitai bookmark card: remote cover image at natural ratio */
 .neo-gallery-civitai-card .neo-gallery-card-cover-wrapper img {
     width: 100%;
-    height: 100%;
-    object-fit: cover;
+    height: auto;
+    object-fit: contain;
     display: block;
     border-radius: 4px;
 }
