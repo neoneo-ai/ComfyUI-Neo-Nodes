@@ -330,7 +330,7 @@ class GridSplitEndpointTests(unittest.TestCase):
         self.assertEqual(len(data["panels"]), 6)
         for p in data["panels"]:
             saved = Image.open(os.path.join(_INPUT_DIR, p["filename"]))
-            self.assertEqual(saved.size, (160, 120))   # 格子不带分隔条 / 图边
+            self.assertEqual(saved.size, (158, 118))   # 格子不带分隔条 / 图边，并各内缩 1px
             self.assertIn("/view?filename=", p["preview_url"])
         self.assertEqual(data["prompts"], [], "原图没有元信息 → 没有提示词")
 

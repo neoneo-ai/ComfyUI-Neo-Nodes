@@ -1431,7 +1431,7 @@ async def rs_recipes_grid_split(request):
 
     import folder_paths as _fp
     from PIL import Image
-    from .grid_split import MAX_GRID_CELLS, detect_grid, metadata_prompts, split_image
+    from .grid_split import MAX_GRID_CELLS, detect_grid, metadata_prompts, split_image, trim_cell
     try:
         src = Path(_fp.get_annotated_filepath(filename, _fp.get_input_directory()))
     except ValueError:
@@ -1451,6 +1451,7 @@ async def rs_recipes_grid_split(request):
     out_dir = _fp.get_input_directory()
     panels = []
     for i, cell in enumerate(cells):
+        cell = trim_cell(cell)
         name = f"neo_grid_{stamp}_{i:02d}.png"
         cell.save(Path(out_dir) / name)
         panels.append({
