@@ -120,6 +120,35 @@ def make_thin_separator_grid(rows, cols, cell=(60, 50), sep=2, speck=12):
     return img
 
 
+def make_mixed_sep_grid(rows, cols, cell=(160, 120), wide=8, odd_px=3, odd_color=(255, 255, 255)):
+    """贴边宫格图：横分隔条都是 wide px 白条；竖分隔条第一条特殊（odd_px 宽 / odd_color 色）。
+
+    odd_px < GAP_MIN_PX 的细白竖条会被均匀间隙规则漏检（只能靠近白占比回退）；
+    odd_color 取中间灰时两条规则都漏检，触发「以最小格为单位等分」的最终一致性兜底。
+    """
+    cw, ch = cell
+    seps_x = [odd_px] + [wide] * (cols - 2)
+    w = cols * cw + sum(seps_x)
+    h = rows * ch + (rows - 1) * wide
+    img = Image.new("RGB", (w, h), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    for r in range(rows):
+        for c in range(cols):
+            x0 = sum(seps_x[:c]) + c * cw
+            y0 = r * (ch + wide)
+            for dy in range(ch):   # 纵向渐变填充：列 / 行 profile 方差足够，不会被误判为间隙
+                v = 40 + (dy * 3 + c * 17) % 180
+                draw.line([(x0, y0 + dy), (x0 + cw - 1, y0 + dy)], fill=(v, v, v))
+    x = cw
+    draw.rectangle([x, 0, x + odd_px - 1, h - 1], fill=odd_color)   # 特殊竖条
+    for c in range(2, cols):
+        x = c * cw + sum(seps_x[:c]) - wide
+        draw.rectangle([x, 0, x + wide - 1, h - 1], fill=(255, 255, 255))
+    for r in range(1, rows):   # 横分隔条
+        draw.rectangle([0, r * ch + (r - 1) * wide, w - 1, r * ch + r * wide - 1], fill=(255, 255, 255))
+    return img
+
+
 class DetectGridTests(unittest.TestCase):
     def test_detect_2x3(self):
         grid = _gs.detect_grid(make_grid(2, 3))
@@ -147,6 +176,23 @@ class DetectGridTests(unittest.TestCase):
         # 60x50 的内容：两侧贴分隔条的格子各内缩 1px，贴图边的少 1px
         self.assertEqual(sorted({w for w, _ in sizes}), [58, 59])
         self.assertEqual(sorted({h for _, h in sizes}), [48, 49])
+
+    def test_missed_thin_separator_recovered_by_light_fallback(self):
+        """一条竖分隔条只有 3px（低于 GAP_MIN_PX）被均匀间隙漏检 → 大小悬殊不采用，细白条回退切出等分格。"""
+        img = make_mixed_sep_grid(1, 3, odd_px=3)
+        grid = _gs.detect_grid(img)
+        self.assertEqual((grid["rows"], grid["cols"]), (1, 3))
+        widths = [c.width for c in _gs.split_image(img, grid)]
+        self.assertLessEqual(max(widths) - min(widths), 4)   # 各列宽接近等分，无合并格
+
+    def test_undetected_separator_final_even_split_fallback(self):
+        """竖分隔条是中间细灰条（间隙 / 近白两条规则都漏检）→ 最终大小一致性校验按最小格等分。"""
+        img = make_mixed_sep_grid(1, 3, odd_px=6, odd_color=(150, 150, 150))
+        grid = _gs.detect_grid(img)
+        self.assertEqual((grid["rows"], grid["cols"]), (1, 3))
+        widths = [c.width for c in _gs.split_image(img, grid)]
+        self.assertLessEqual(max(widths) - min(widths), 2)   # 整幅三等分
+
 
     def test_thin_bright_bar_in_content_not_split(self):
         """画面内一条 2px 亮竖线切出的格子大小悬殊 → 不当作分隔条，保持整幅一格。"""

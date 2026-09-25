@@ -13,7 +13,7 @@
 | 🎞️ H3 Video Director | 节点 | MiniMax H3 视频生成：以 `video_director` 配方逐段生成（每段自带 skill/提示词/时长/首尾帧/参考素材，模式 文生/图生/首尾帧/全参考/混合）并拼接为单个含原生音频 `VIDEO`；也可连 BUNDLE 按单片段生成。编辑器支持半自动故事拆分、统一设置（改动自动应用到所有分段）、提示词批量优化与时间轴逐段微调 | [h3-video](docs/h3-video-gen.md) |
 | 📦 Neo Bundle Expand | 节点 | 把 BUNDLE 展开成 `prompt` + `image_1..9`，对齐官方 H3 Reference to Video；输出槽自动增长（默认仅 prompt + image_1，上限 9 张） | [prompts](docs/prompts.md) |
 | 🔲 Neo Reference Grid (参考图宫格) | 节点 | 单节点搞定「提示词 + 最多 12 张参考图」：宫格槽位 1~12（工具条 −/+ 运行时调整），布局按节点宽度流式排布，卡片按图片真实比例自适应，随工作流持久化 → `prompt` + `BUNDLE` + `image_1..image_12`；宫格参与配方保存/还原，工具条 ☰ 可带预览载入已有含图配方 | [prompts](docs/prompts.md) |
-| 🧩 Neo Grid Split (宫格图拆分) | 节点 | 一张带分隔条/留白的分镜宫格图（input/ 里选）→ 自动切各格（均匀间隙检测，含细白条回退与等分校验；trim 清四边白/黑框与底部字幕条），行优先拼成一个 `IMAGE` 批次（统一到最大宽高，可连多图/多帧下游）+ 原图内嵌提示词 `prompt` | [h3-video](docs/h3-video-gen.md) |
+| 🧩 Neo Grid Split (宫格图拆分) | 节点 | 一张带分隔条/留白的分镜宫格图（input/ 里选）→ 自动切各格（均匀间隙检测，含细白条回退与大小一致性校验：分隔条漏检切出大小悬殊的格子时按最小格等分；trim 清四边白/黑框与底部字幕条），行优先拼成一个 `IMAGE` 批次（统一到最大宽高，可连多图/多帧下游）+ 原图内嵌提示词 `prompt` | [h3-video](docs/h3-video-gen.md) |
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频/音频素材浏览与管理：内置预设素材、自定义目录与 Civitai LORA 匹配；灯箱预览、一键发送到节点 | [gallery](docs/gallery.md) |
 | ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） | [gallery](docs/gallery.md) |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 | [recipes](docs/recipes.md) |

@@ -1,6 +1,7 @@
 # ComfyUI-Neo-Nodes - 宫格图自动切分
 # 导演台「宫格图拆分」的纯像素核心：对带分隔条 / 留白的分镜宫格图做均匀间隙检测
 # （只有 1~2px 的细白分隔条靠近白占比识别），剔除无意义细条（整幅宽的标题栏 / 底部文字行 / 边缘窄条），
+# 检出格子大小悬殊（分隔条漏检出的合并格）时不采用，回退后仍不等分则按最小格等单位等分该轴；
 # 按行优先顺序裁出各格（内容边界在分隔条一侧内缩 1px：交界处那 1px 是白与画面的混色，看着仍是条边）。
 # trim_cell 再逐格清理：裁掉四边白框 / 黑框（含框外那 1~2px 接缝）与底部「白底 + 文字」字幕条（其上沿同样内缩 1px），各格可直接作视频首帧。
 # 另含元信息提示词解析（metadata_prompts）：宫格图内嵌的 ComfyUI 元信息里「包含的提示词」。
@@ -21,7 +22,7 @@ GAP_MEAN_HI = 190.0      # 间隙亮度上限：mean > 此值视为浅色边框�
 GAP_MEAN_LO = 40.0       # 间隙亮度下限：mean < 此值视为深色边框（黑边）；中间调内容不算间隙
 LIGHT_FRAC = 0.85        # 细白分隔条回退判定：整行/列近白占比 ≥ 此值（实测条内 0.90~0.95、画面列仅 0.17~0.51）
 LIGHT_MIN_PX = 1         # 细白分隔条最小宽度（px）——细白条可能只有 1~2px
-LIGHT_EVEN_RATIO = 1.1   # 细白条回退的合理性：分出的格子最大/最小宽（高）≤ 此值才采用（合图按等分格）
+LIGHT_EVEN_RATIO = 1.1   # 大小一致性容差：各格最大/最小宽（高）≤ 此值才算等分（合图按等分格拼）
 MAX_GRID_CELLS = 12      # 单轴格数上限（与 NeoRefGrid 槽位一致，防止噪点误检）
 # 元信息里算「提示词」的文本输入键：各工作流命名不一（TextEncodeQwenImage21 用 prompt、
 # NeoPromptEncoder 用 text、部分节点用 positive / caption），只认像提示词的键，
@@ -92,9 +93,9 @@ def _light_runs(light, size):
 
 
 def _even_sized(bounds, ratio=LIGHT_EVEN_RATIO):
-    """各格宽/高是否接近等分：细白条回退只应切出等分格（宫格合图按等分格拼）。
+    """各格宽/高是否接近等分：宫格合图按等分格拼，大小悬殊说明分隔条漏检 / 误检。
 
-    只找到部分细白条时会切出大小悬殊的格子，此时宁可不切（保持整幅一格）。
+    只找到部分分隔条时会切出大小悬殊的格子（合并格），此时不采用该检出结果。
     """
     sizes = [e - s for s, e in bounds]
     return max(sizes) <= ratio * min(sizes)
@@ -178,7 +179,8 @@ def detect_grid(img, rows=None, cols=None):
 
     返回 {"rows": int, "cols": int, "row_bounds": [(s,e)...], "col_bounds": [(s,e)...]}；
     rows/cols 为手动指定（1~MAX_GRID_CELLS）；缺省由均匀间隙自动判定并剔除无意义细条，
-    均匀间隙检不出时再按细白分隔条回退（只接受等分格），仍检不出则整幅一格。
+    均匀间隙检不出、或只找到部分分隔条切出大小悬殊的格子时，再按细白分隔条回退（只接受等分格），
+    仍不等分则以最小格为单位整幅等分兜底，彻底检不出则整幅一格。
     格子边界贴着分隔条内容一侧再内缩 1px（见 _bounds_from_gaps），手动行列与检出不一致时的等分回退不内缩。
     """
     w, h = img.size
@@ -207,13 +209,22 @@ def detect_grid(img, rows=None, cols=None):
         return [sum(1 for v in buf[x::w] if v > BRIGHT_PX) / h for x in range(w)]
 
     def cell_bounds(axis, manual):
-        """单轴格边界：均匀间隙优先，检不出整幅一格时再按细白分隔条回退（必须切出等分格）。"""
+        """单轴格边界：均匀间隙优先；检不出整幅一格、或部分分隔条漏检切出大小悬殊的格子时，
+        按细白分隔条回退（必须切出等分格）；仍不等分时以最小格为单位整幅等分兜底。"""
         size = h if axis == 0 else w
         found = _cell_bounds(_gap_runs(profile(axis)), size, manual)
-        if manual is not None or len(found) > 1:
+        if manual is not None:
             return found
-        thin = _cell_bounds(_light_runs(light(axis), size), size, None)
-        return thin if len(thin) > 1 and _even_sized(thin) else found
+        if len(found) <= 1 or not _even_sized(found):
+            thin = _cell_bounds(_light_runs(light(axis), size), size, None)
+            if len(thin) > 1 and _even_sized(thin):
+                found = thin
+        # 最终大小一致性校验：分隔条被部分漏检会出现合并格（宽/高约是正常格的整数倍），
+        # 以最小格为单位等分该轴（宫格合图按等分格拼）。整幅一格（len≤1）不触发，避免误切画面内亮线。
+        if len(found) > 1 and not _even_sized(found):
+            n = min(MAX_GRID_CELLS, max(2, round(size / min(e - s for s, e in found))))
+            found = _even_bounds(n, size)
+        return found
 
     row_bounds = cell_bounds(0, rows)
     col_bounds = cell_bounds(1, cols)
@@ -307,8 +318,8 @@ def trim_cell(cell, gap_std=GAP_STD):
         白框不是一整条连续近白：框外有 1~2px 混色接缝，框内也可能被 1~2px 接缝（抗锯齿 / 框内缘细线）
         断成几段，故按 EDGE_SEAM_PX 容忍接缝、整段一起削（白框自带轻微纹理，框内缘线 / 标题字还会让 std
         明显高于 GAP_STD，故按近白占比认）；但一路近白到 FRAME_MAX_PX 还不停的是画面里的白底 / 亮天空
-        （实测白框 3~14px）。均匀色框（黑框 / 纯白框）按连续判定、不限厚度，
-        只是跳过接缝后才认出的框至少 FRAME_MIN_PX 厚（1px 均匀线是分隔条渗色 / 画面暗线）。
+        （实测白框 3~14px）。均匀色框（黑框 / 纯白框）同样最厚 FRAME_MAX_PX：一路均匀暗到更深处是
+        照片自身的暗部 / 黑场（暗场景照片边缘），不是框，不能削。
         """
         end = missed = 0
         for k in range(min(len(stds), FRAME_MAX_PX + 1)):
@@ -326,6 +337,8 @@ def trim_cell(cell, gap_std=GAP_STD):
         j = i
         while j < len(stds) and _is_uniform_frame(j, stds, means):
             j += 1
+        if j - i > FRAME_MAX_PX:   # 一路均匀暗 / 白到底：照片暗部 / 亮天空本身，不是框
+            j = i
         if j > i and (i == 0 or j - i >= FRAME_MIN_PX):
             end = max(end, j)
         return end
