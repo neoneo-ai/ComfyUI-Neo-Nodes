@@ -24,6 +24,55 @@ OSS_INDEX_CACHE_FILE = OSS_CACHE_DIR / "_index.json"
 _oss_index_cache: dict | None = None
 _oss_index_fetch_time: float = 0.0
 
+# OSS preset categories: the index may group remote directories under a top-level
+# "categories" mapping ({"grid": [...], "character": [...]}) for the plugin-owned
+# main Gallery dirs. Directories not listed in any category stay "presets"
+# (the legacy Cloud Presets section), so old indexes keep working unchanged.
+OSS_CATEGORY_PRESETS = "presets"
+OSS_CATEGORY_GRID = "grid"
+OSS_CATEGORY_CHARACTER = "character"
+# Navigation prefix of the OSS preset cards per category. Presets are top-level
+# cards ("Cloud Presets/<dir>"); the Grid/Character caches live under a read-only
+# "presets" folder inside their main dir ("Grid/presets/<dir>").
+_OSS_CATEGORY_PATH_PREFIX = {
+    OSS_CATEGORY_PRESETS: "Cloud Presets",
+    OSS_CATEGORY_GRID: "Grid/presets",
+    OSS_CATEGORY_CHARACTER: "Character/presets",
+}
+
+
+def _oss_index_categories(index: dict) -> dict[str, list[str]]:
+    """Return the index's top-level category -> directory-name mapping."""
+    categories = (index or {}).get("categories")
+    if not isinstance(categories, dict):
+        return {}
+    result = {}
+    for cat, names in categories.items():
+        if isinstance(names, list):
+            result[str(cat)] = [n for n in names if isinstance(n, str)]
+    return result
+
+
+def _oss_category_dirs(index: dict, category: str | None) -> list[str]:
+    """Directory names belonging to a category (None = every non-root directory).
+
+    Directories listed under another category are excluded from "presets", so
+    the legacy Cloud Presets section only shows unlisted directories.
+    """
+    directories = (index or {}).get("directories", {})
+    if not category:
+        return [d for d in directories if d != "_root"]
+    if category == OSS_CATEGORY_PRESETS:
+        # Unlisted directories plus any explicitly listed under "presets";
+        # directories owned by another category never show up in Cloud Presets.
+        listed = set()
+        for cat, names in _oss_index_categories(index).items():
+            if cat != OSS_CATEGORY_PRESETS:
+                listed.update(names)
+        return [d for d in directories if d != "_root" and d not in listed]
+    cat_names = _oss_index_categories(index).get(category, [])
+    return [d for d in cat_names if d in directories]
+
 
 def _get_oss_config() -> dict:
     """Read OSS presets configuration from configs/oss_presets.json."""
@@ -42,7 +91,15 @@ def _is_oss_enabled() -> bool:
     return bool(cfg.get("enabled")) and bool(cfg.get("index_url"))
 
 
-def _get_oss_cache_dir() -> Path:
+def _get_oss_cache_dir(category: str | None = None) -> Path:
+    """Local cache root for downloaded OSS files.
+
+    grid/character presets are cached under the plugin-owned main Gallery dirs
+    (gallery/grid/presets, gallery/character/presets); everything else keeps
+    the legacy oss_cache location.
+    """
+    if category in (OSS_CATEGORY_GRID, OSS_CATEGORY_CHARACTER):
+        return GALLERY_DIR / category / "presets"
     cfg = _get_oss_config()
     custom = cfg.get("cache_dir", "")
     if custom:
@@ -125,14 +182,14 @@ def _load_oss_index_from_disk() -> dict | None:
     return None
 
 
-async def _download_oss_file(remote_rel_path: str) -> Path | None:
+async def _download_oss_file(remote_rel_path: str, category: str | None = None) -> Path | None:
     """Download a single file from OSS to local cache. Returns local cache path or None."""
     cfg = _get_oss_config()
     base_url = cfg.get("base_url", "").rstrip("/")
     if not base_url:
         return None
 
-    cache_dir = _get_oss_cache_dir()
+    cache_dir = _get_oss_cache_dir(category)
     local_path = cache_dir / remote_rel_path
     if local_path.exists():
         return local_path
@@ -157,13 +214,14 @@ async def _download_oss_file(remote_rel_path: str) -> Path | None:
         return None
 
 
-def _find_in_oss_index(filename: str, subdir: str) -> str | None:
+def _find_in_oss_index(filename: str, subdir: str, category: str | None = None) -> str | None:
     """Look up a file in the OSS index. Returns the remote relative path or None."""
     index = _oss_index_cache or _load_oss_index_from_disk()
     if not index:
         return None
 
-    directories = index.get("directories", {})
+    directories = {d: v for d, v in index.get("directories", {}).items()
+                   if d in set(_oss_category_dirs(index, category))}
 
     if subdir:
         dir_data = directories.get(subdir)
@@ -184,14 +242,15 @@ def _find_in_oss_index(filename: str, subdir: str) -> str | None:
     return None
 
 
-def _find_thumbnail_in_oss_index(filename: str, subdir: str) -> str | None:
+def _find_thumbnail_in_oss_index(filename: str, subdir: str, category: str | None = None) -> str | None:
     """Look up a thumbnail in the OSS index. Returns the remote relative path or None."""
     index = _oss_index_cache or _load_oss_index_from_disk()
     if not index:
         return None
 
     stem = Path(filename).stem
-    directories = index.get("directories", {})
+    directories = {d: v for d, v in index.get("directories", {}).items()
+                   if d in set(_oss_category_dirs(index, category))}
 
     if subdir:
         dir_data = directories.get(subdir)
@@ -212,16 +271,19 @@ def _find_thumbnail_in_oss_index(filename: str, subdir: str) -> str | None:
     return None
 
 
-def _oss_directories_to_gallery_dirs(index: dict) -> list[dict]:
-    """Convert OSS index directories to gallery directory response format."""
+def _oss_directories_to_gallery_dirs(index: dict, category: str | None = OSS_CATEGORY_PRESETS) -> list[dict]:
+    """Convert OSS index directories to gallery directory response format.
+
+    `path_prefix` controls the navigation prefix ("Cloud Presets" for the legacy
+    section, "Grid"/"Character" for the main-dir preset cards).
+    """
+    path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
     result = []
-    for dir_name, dir_data in index.get("directories", {}).items():
-        if dir_name == "_root":
-            continue
-        items = dir_data.get("items", [])
+    for dir_name in _oss_category_dirs(index, category):
+        items = index.get("directories", {}).get(dir_name, {}).get("items", [])
         result.append({
             "name": dir_name,
-            "path": f"Cloud Presets/{dir_name}",
+            "path": f"{path_prefix}/{dir_name}",
             "read_only": True,
             "source": "oss",
             "subdirs": {},
@@ -232,11 +294,11 @@ def _oss_directories_to_gallery_dirs(index: dict) -> list[dict]:
     return result
 
 
-def _collect_oss_covers(covers: dict, index: dict):
+def _collect_oss_covers(covers: dict, index: dict, category: str | None = OSS_CATEGORY_PRESETS):
     """Collect cover images from OSS index for each remote directory."""
-    for dir_name, dir_data in index.get("directories", {}).items():
-        if dir_name == "_root":
-            continue
+    path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
+    for dir_name in _oss_category_dirs(index, category):
+        dir_data = index.get("directories", {}).get(dir_name, {})
         items = dir_data.get("items", [])
         cover_items = []
         for item in items[:2]:
@@ -245,11 +307,37 @@ def _collect_oss_covers(covers: dict, index: dict):
                 cover_items.append({
                     "filename": item["filename"],
                     "name": Path(item["filename"]).stem,
-                    "subfolder": f"Cloud Presets/{dir_name}",
+                    "subfolder": f"{path_prefix}/{dir_name}",
                     "oss_thumbnail": thumb,
                 })
         if cover_items:
-            covers[f"Cloud Presets/{dir_name}"] = cover_items
+            covers[f"{path_prefix}/{dir_name}"] = cover_items
+
+
+def _oss_dir_cards(index: dict, category: str) -> dict:
+    """subdirs mapping (dir name -> image_count) for one OSS category."""
+    return {dname: {"image_count": len(index.get("directories", {}).get(dname, {}).get("items", []))}
+            for dname in _oss_category_dirs(index, category)}
+
+
+def _oss_dir_items(index: dict, dir_name: str, subfolder_prefix: str) -> list[dict]:
+    """Item entries of one OSS remote directory, with the navigation subfolder prefix."""
+    items = []
+    for item in index.get("directories", {}).get(dir_name, {}).get("items", []):
+        entry = {
+            "name": Path(item["filename"]).stem,
+            "filename": item["filename"],
+            "type": item.get("type", "image"),
+            "category": "",
+            "subfolder": f"{subfolder_prefix}/{dir_name}",
+            "mtime": item.get("mtime", 0),
+            "source": "oss",
+        }
+        txt = item.get("txt_content", "")
+        if txt:
+            entry["txt_content"] = txt
+        items.append(entry)
+    return items
 
 
 async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
@@ -260,23 +348,16 @@ async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
     if not oss_index:
         return web.json_response({"error": "OSS not configured or index unavailable"}, status=404)
 
-    directories = oss_index.get("directories", {})
     dir_name_lower = dir_name_param.lower()
 
     # "Cloud Presets" — show subdirectory cards
     if dir_name_lower == "cloud presets":
-        subdirs = {}
-        for dname, ddata in directories.items():
-            if dname == "_root":
-                continue
-            subdirs[dname] = {"image_count": len(ddata.get("items", []))}
-
         resp_dir = {
             "name": "Cloud Presets",
             "path": "Cloud Presets",
             "read_only": True,
             "source": "oss",
-            "subdirs": subdirs,
+            "subdirs": _oss_dir_cards(oss_index, OSS_CATEGORY_PRESETS),
             "root_count": 0,
             "items": [],
         }
@@ -291,25 +372,10 @@ async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
     # "Cloud Presets/<subdir>" — show items from that subdir
     if dir_name_lower.startswith("cloud presets/"):
         subdir_name = dir_name_param[len("Cloud Presets/"):]
-        dir_data = directories.get(subdir_name)
-        if not dir_data:
+        if subdir_name not in _oss_category_dirs(oss_index, OSS_CATEGORY_PRESETS):
             return web.json_response({"error": f"OSS directory not found: {subdir_name}"}, status=404)
 
-        items = []
-        for item in dir_data.get("items", []):
-            entry = {
-                "name": Path(item["filename"]).stem,
-                "filename": item["filename"],
-                "type": item.get("type", "image"),
-                "category": "",
-                "subfolder": f"Cloud Presets/{subdir_name}",
-                "mtime": item.get("mtime", 0),
-                "source": "oss",
-            }
-            txt = item.get("txt_content", "")
-            if txt:
-                entry["txt_content"] = txt
-            items.append(entry)
+        items = _oss_dir_items(oss_index, subdir_name, "Cloud Presets")
 
         resp_dir = {
             "name": f"Cloud Presets/{subdir_name}",

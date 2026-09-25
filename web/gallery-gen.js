@@ -90,6 +90,22 @@ async function copyImageToInput(image, subfolder) {
     return result.filename;
 }
 
+// 生成结果归档：成品先落 ComfyUI output/，这里再复制一份进插件主目录
+// （gallery/grid/<date>/ 或 gallery/character/<date>/），画廊首页的 Grid / Character 卡即可浏览。
+const _ARCHIVE_DATE_RE = /\d{4}-\d{2}-\d{2}/;
+export function archiveGenerated(category, images) {
+    const list = (images || []).map((im) => ({ subfolder: im.subfolder || "", filename: im.filename })).filter((f) => f.filename);
+    if (!list.length) return Promise.resolve();
+    // 日期取 subfolder 里的日期段（StoryBoard/2026-09-24），角色图无子目录时从文件名前缀提取。
+    const date = (list.map((f) => f.subfolder || "").join("/") + " " + list.map((f) => f.filename).join(" "))
+        .match(_ARCHIVE_DATE_RE)?.[0] || "";
+    return api.fetchApi("/neo_gallery/archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, date, files: list }),
+    }).catch((e) => console.error('[Gallery] archive generated failed:', e));
+}
+
 /** 一键角色图的前置小窗（复用九宫格分镜图同款弹窗结构）：先看参考图确认，点「生成」后
  * 在窗口内显示排队/生图进度与结果预览；Esc 或点遮罩关闭。 */
 function openCharacterSheetDialog(gallery, image, subfolder) {
@@ -136,6 +152,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
 
     const renderSuccess = (final) => {
         const images = final.images || [];
+        archiveGenerated("character", images);   // 归档进画廊 Character 主目录（异步，不阻塞 UI）
         const box = $el("div", { className: "neo-gallery-cs-result" });
         if (images.length > 0) {
             const img = $el("img", {
@@ -148,7 +165,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
         }
         const size = final.width && final.height ? ` · ${final.width}×${final.height}` : "";
         fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: `已生成${size}，可拖入配方的 👤 角色参考图` }));
-        fill(actionsBox, btn("打开输出目录", () => gallery.showDirectoryStructure("Output", [CHARACTER_SHEET_DIR])), btn("关闭", close, true));
+        fill(actionsBox, btn("打开输出目录", () => gallery.showDirectoryStructure("Character", [])), btn("关闭", close, true));
     };
 
     const renderError = (message) => {
@@ -264,10 +281,11 @@ function openStoryboardDialog(gallery, image, subfolder) {
     const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
     const btn = (label, onclick, primary = false) =>
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
-    // 产物目录：优先跳到实际落盘的日期子目录，取不到时回退 StoryBoard 根目录
+    // 产物目录：归档后打开画廊 Grid 主目录（优先跳到实际落盘的日期子目录，取不到时回退根目录）
     const openOutputDir = (final) => {
-        const dir = (final.images || []).map(i => i.subfolder).find(Boolean);
-        gallery.showDirectoryStructure("Output", dir ? dir.split("/").filter(Boolean) : [STORYBOARD_DIR]);
+        const sub = (final.images || []).map(i => i.subfolder).find(Boolean);
+        const date = sub ? sub.split("/").filter(Boolean).pop() : "";
+        gallery.showDirectoryStructure("Grid", date ? [date] : []);
     };
 
     // 表单态：故事框 + 简要故事框可编辑，右下有 LLM / 取消 / 生成
@@ -300,6 +318,7 @@ function openStoryboardDialog(gallery, image, subfolder) {
 
     const renderSuccess = (final) => {
         const images = final.images || [];
+        archiveGenerated("grid", images);         // 归档进画廊 Grid 主目录（异步，不阻塞 UI）
         const box = $el("div", { className: "neo-gallery-cs-result" });
         if (images.length > 0) {
             const img = $el("img", {
@@ -453,13 +472,13 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
         }, ["\uD83E\uDDE9 生成九宫格分镜图"]) : null,
         $el("div", {
             className: "neo-gallery-collect-item",
-            title: "在画廊中打开角色图输出目录（Output/CharacterSheet），最新结果排在最前",
-            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure("Output", [CHARACTER_SHEET_DIR]); }
-        }, ["\uD83D\uDCC2 直达角色输出目录"]),
+            title: "在画廊中打开角色主目录（Character），生成结果已按日期归档",
+            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure("Character", []); }
+        }, ["\uD83D\uDCC2 直达角色目录"]),
         $el("div", {
             className: "neo-gallery-collect-item",
-            title: "在画廊中打开分镜图输出目录（Output/StoryBoard），最新结果排在最前",
-            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure("Output", [STORYBOARD_DIR]); }
+            title: "在画廊中打开分镜主目录（Grid），生成结果已按日期归档",
+            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure("Grid", []); }
         }, ["\uD83D\uDCC2 直达分镜目录"]),
     ];
 }

@@ -40,6 +40,10 @@ CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 WAVEFORM_DIR = GALLERY_DIR / "waveform_cache"  # decoded audio waveform peaks (JSON)
+# Plugin-owned main dirs for generated assets: locally generated results live in
+# <date>/ subfolders, read-only OSS preset cache under presets/<oss-dir>/.
+GRID_DIR = GALLERY_DIR / "grid"
+CHARACTER_DIR = GALLERY_DIR / "character"
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -51,7 +55,7 @@ def _get_system_dirs():
     """
     import folder_paths as _folder_paths
     result = []
-    for label in ("input", "output"):
+    for label in ("output", "input"):
         try:
             base_dir = getattr(_folder_paths, f"{label}_directory")
             p = Path(base_dir).resolve()
@@ -113,7 +117,8 @@ def _get_user_custom_dirs():
 
 
 def _ensure_dirs() -> None:
-    for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR, CIVITAI_BOOKMARK_DIR):
+    for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR,
+              CIVITAI_BOOKMARK_DIR, GRID_DIR, CHARACTER_DIR):
         d.mkdir(parents=True, exist_ok=True)
     _repair_mislabeled_media()
 
@@ -149,6 +154,9 @@ def _repair_mislabeled_media() -> None:
 # OSS / Lora modules (split out of this file)
 # ---------------------------------------------------------------------------
 from .gallery_oss import (
+    OSS_CATEGORY_PRESETS,
+    OSS_CATEGORY_GRID,
+    OSS_CATEGORY_CHARACTER,
     _is_oss_enabled,
     _load_oss_index_from_disk,
     _fetch_oss_index,
@@ -158,6 +166,8 @@ from .gallery_oss import (
     _find_in_oss_index,
     _find_thumbnail_in_oss_index,
     _download_oss_file,
+    _oss_dir_cards,
+    _oss_dir_items,
 )
 from .gallery_lora import (
     _lora_pending_subdirs,
@@ -274,6 +284,136 @@ def _scan_directory_structure_only(directory: Path) -> dict:
 
     return result
 
+
+# Dirs this plugin writes into itself: generation results (output/) and archived
+# storyboard / character sheets (grid/, character/). Their cards are ordered by the
+# newest media they hold, so what was just produced shows up first. Everything else
+# (custom dirs, presets, lora cache, input, OSS) keeps its scan order.
+_RECENT_DIR_KEYS = {"output", "grid", "character"}
+
+
+def _is_recent_dir(dir_name: str) -> bool:
+    """True for the plugin-updated dirs, including sub paths ("Grid/2026-09-24")."""
+    return (dir_name or "").split("/", 1)[0].strip().lower() in _RECENT_DIR_KEYS
+
+
+def _media_mtime(entry: os.DirEntry) -> float:
+    """Media file mtime from a scandir entry (0.0 for other files)."""
+    if Path(entry.name).suffix.lower() not in ALL_MEDIA_EXTENSIONS:
+        return 0.0
+    try:
+        return entry.stat(follow_symlinks=False).st_mtime
+    except OSError:
+        return 0.0
+
+
+def _add_recent_media(bucket: dict, entry: os.DirEntry, rel_dir: str, limit: int):
+    """Track the newest mtime and the newest ``limit`` media files of one bucket.
+
+    ``rel_dir`` is the path of the file's directory relative to the scanned root
+    ("" for root-level files), which is what the cover subfolder is built from.
+    """
+    mtime = _media_mtime(entry)
+    if not mtime:
+        return
+    if mtime > bucket["mtime"]:
+        bucket["mtime"] = mtime
+    covers = bucket["covers"]
+    covers.append({
+        "mtime": mtime,
+        "filename": entry.name,
+        "name": Path(entry.name).stem,
+        "rel": rel_dir,
+    })
+    if len(covers) > limit:
+        covers.sort(key=lambda c: c["mtime"], reverse=True)
+        del covers[limit:]
+
+
+def _scan_recent_media(directory: Path, limit: int) -> tuple[dict, dict[str, dict]]:
+    """Newest media of a directory and of each of its direct children.
+
+    One scandir pass per call: every bucket (the dir itself and each first-level
+    child) keeps its newest ``limit`` media files, and nested files are attributed
+    to the first-level child they sit under. A level listing therefore gets both
+    the card order and the covers without walking once per card (entry.stat() is
+    served from the directory enumeration cache on Windows).
+    """
+    own = {"mtime": 0.0, "covers": []}
+    children: dict[str, dict] = {}
+    if not directory.exists():
+        return own, children
+
+    try:
+        with os.scandir(directory) as it:
+            entries = list(it)
+    except OSError:
+        return own, children
+
+    buckets = {"": own}
+    pending: list[tuple[str, str]] = []
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            children[entry.name] = {"mtime": 0.0, "covers": []}
+            buckets[entry.name] = children[entry.name]
+            pending.append((entry.path, entry.name))
+        elif entry.is_file(follow_symlinks=False):
+            _add_recent_media(own, entry, "", limit)
+
+    while pending:
+        current, rel_dir = pending.pop()
+        bucket = buckets[rel_dir.split("/", 1)[0]]
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append((entry.path, f"{rel_dir}/{entry.name}"))
+                    elif entry.is_file(follow_symlinks=False):
+                        _add_recent_media(bucket, entry, rel_dir, limit)
+        except OSError:
+            continue
+
+    for bucket in buckets.values():
+        bucket["covers"].sort(key=lambda c: c["mtime"], reverse=True)
+    return own, children
+
+
+def _recent_media_buckets(directory: Path, limit: int) -> list[dict]:
+    """Buckets of a plugin-updated dir: the dir itself plus each direct child.
+
+    The read-only OSS preset cache (``presets/``) is a download, not generated
+    content, so it never counts as an update of the dir that hosts it.
+    """
+    own, children = _scan_recent_media(directory, limit)
+    children.pop("presets", None)
+    return [own, *children.values()]
+
+
+def _recent_cover_entries(directory: Path, subfolder_prefix: str, count: int) -> list[dict]:
+    """Newest media files anywhere under a plugin-updated dir, as cover entries.
+
+    Each subfolder is anchored with ``subfolder_prefix`` so the thumbnail route
+    resolves it the same way listing items do.
+    """
+    candidates = [c for bucket in _recent_media_buckets(directory, count) for c in bucket["covers"]]
+    candidates.sort(key=lambda c: c["mtime"], reverse=True)
+    return [{
+        "filename": c["filename"],
+        "name": c["name"],
+        "subfolder": "/".join(p for p in (subfolder_prefix, c["rel"]) if p),
+    } for c in candidates[:count]]
+
+
+def _sort_subdirs_by_recency(subdirs: dict, directory: Path):
+    """Reorder plugin-updated subdir cards so the most recently written one is first.
+
+    Ties (subdirs without media) keep the name order they were scanned in.
+    """
+    _, children = _scan_recent_media(directory, 1)
+    ordered = sorted(subdirs.items(),
+                     key=lambda kv: children.get(kv[0], {}).get("mtime", 0.0), reverse=True)
+    subdirs.clear()
+    subdirs.update(ordered)
 
 
 def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
@@ -493,7 +633,12 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
                 1 for p in target_dir.iterdir()
                 if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS
             )
-    
+
+    # Plugin-updated dirs (Output / Grid / Character) show the most recently written
+    # subdir card first; other dirs keep their scanned name order.
+    if scan_result.get("subdirs") and _is_recent_dir(dir_name):
+        _sort_subdirs_by_recency(scan_result["subdirs"], target_dir)
+
     # Build directory info
     dir_info = {
         "name": dir_name,
@@ -510,6 +655,122 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
             entry["custom_source"] = dir_name
     
     return resp_dir
+
+
+# ---------------------------------------------------------------------------
+# Main dirs (Grid / Character): plugin-owned, mix writable generated results
+# (<date>/ subfolders) with a read-only OSS preset cache (presets/<oss-dir>/).
+# ---------------------------------------------------------------------------
+_MAIN_DIRS = {
+    "grid": (GRID_DIR, OSS_CATEGORY_GRID),
+    "character": (CHARACTER_DIR, OSS_CATEGORY_CHARACTER),
+}
+
+
+async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: Path,
+                                include_dirs: bool, include_items: bool,
+                                include_covers: bool) -> web.Response:
+    """Handle /neo_gallery/list for the Grid/Character main dirs.
+
+    Local generated results are scanned normally (the presets/ cache is skipped);
+    a read-only "Cloud Presets" card is injected at the top level and
+    path=presets[/<oss-dir>] routes to the matching OSS category listing.
+    """
+    key = dir_name_param.lower()
+    # Deep links may carry the sub path in dir_name ("Grid/presets/<dir>"); names and
+    # navigation prefixes are always built from the main dir label.
+    main_label = dir_name_param.split("/", 1)[0]
+    oss_category = _MAIN_DIRS[key.split("/", 1)[0]][1]
+    rel_lower = rel_path_param.lower()
+
+    if rel_lower == "presets":
+        oss_index = await _fetch_oss_index()
+        if not oss_index:
+            return web.json_response({"error": "OSS not configured or index unavailable"}, status=404)
+        resp_dir = {
+            "name": f"{main_label}/presets",
+            "path": f"{main_label}/presets",
+            "read_only": True,
+            "source": "oss",
+            "subdirs": _oss_dir_cards(oss_index, oss_category),
+            "root_count": 0,
+            "items": [],
+        }
+        response_data = {"directories": [resp_dir], "total": 0}
+        if include_covers:
+            covers: dict[str, list[dict]] = {}
+            _collect_oss_covers(covers, oss_index, oss_category)
+            response_data["covers"] = covers
+        return web.json_response(response_data)
+
+    if rel_lower.startswith("presets/"):
+        oss_dir = rel_path_param[len("presets/"):]
+        oss_index = await _fetch_oss_index()
+        if not oss_index or oss_dir not in _oss_dir_cards(oss_index, oss_category):
+            return web.json_response({"error": f"OSS directory not found: {oss_dir}"}, status=404)
+        items = _oss_dir_items(oss_index, oss_dir, f"{main_label}/presets")
+        resp_dir = {
+            "name": f"{main_label}/presets/{oss_dir}",
+            "path": f"{main_label}/presets/{oss_dir}",
+            "read_only": True,
+            "source": "oss",
+            "subdirs": {},
+            "root_count": len(items),
+            "items": items,
+        }
+        response_data = {"directories": [resp_dir], "total": len(items)}
+        if include_covers:
+            covers = {}
+            _collect_oss_covers(covers, oss_index, oss_category)
+            response_data["covers"] = covers
+        return web.json_response(response_data)
+
+    resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, False,
+                                         include_dirs, include_items, False)
+    if "subdirs" in resp_dir:
+        resp_dir["subdirs"].pop("presets", None)  # read-only cache is surfaced via the injected card
+    if not rel_path_param and _is_oss_enabled():
+        oss_index = _load_oss_index_from_disk() or await _fetch_oss_index()
+        if oss_index:
+            cards = _oss_dir_cards(oss_index, oss_category)
+            if cards:
+                resp_dir.setdefault("subdirs", {})["Cloud Presets"] = {
+                    "image_count": sum(c.get("image_count", 0) for c in cards.values()),
+                    "path": "presets",
+                    "read_only": True,
+                    "source": "oss",
+                }
+
+    response_data = {"directories": [resp_dir], "total": len(resp_dir.get("items", []))}
+    if include_covers:
+        covers: dict[str, list[dict]] = {}
+        target_dir = base
+        for part in [p for p in rel_path_param.split("/") if p]:
+            target_dir = target_dir / part
+        # Covers are keyed by the navigation path of the card they belong to
+        # ("Character/2026-09-24"), with subfolders carrying the same main-dir
+        # anchored prefix so the thumbnail route picks the right main dir.
+        full_key = f"{main_label}/{rel_path_param}" if rel_path_param else main_label
+        _collect_all_dir_covers(covers, target_dir, full_key, 2, base_subfolder=full_key)
+        # Immediate child subdirs need covers of their own, otherwise their cards
+        # render as bare folder placeholders when this level is displayed.
+        for subdir_name in resp_dir.get("subdirs", {}):
+            if subdir_name == "Cloud Presets":
+                continue
+            child_key = f"{full_key}/{subdir_name}"
+            _collect_all_dir_covers(covers, target_dir / subdir_name, child_key, 2,
+                                    base_subfolder=child_key)
+        oss_index = _load_oss_index_from_disk() or await _fetch_oss_index()
+        if oss_index:
+            _collect_oss_covers(covers, oss_index, oss_category)
+            # The injected read-only entry aggregates the OSS presets: borrow the
+            # first preset cover so the card is not an empty placeholder.
+            if not rel_path_param:
+                first_oss_key = next((k for k in covers if k.startswith(f"{main_label}/presets/")), "")
+                if first_oss_key:
+                    covers[f"{main_label}/presets"] = covers[first_oss_key]
+        response_data["covers"] = covers
+    return web.json_response(response_data)
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +832,16 @@ async def get_gallery_list(request):
         # Resolve base directory from dir_name
         base: Path | None = None
         dir_name_lower = dir_name_param.lower()
+
+        # Main dirs (Grid / Character): plugin-owned generated assets + OSS preset cache.
+        # dir_name may carry the sub path ("Grid/presets/26-06-25") for deep links.
+        main_key = dir_name_lower.split("/", 1)[0]
+        if main_key in _MAIN_DIRS:
+            if not rel_path_param and "/" in dir_name_param:
+                rel_path_param = dir_name_param.split("/", 1)[1]
+            return await _handle_main_dir_list(dir_name_param, rel_path_param, _MAIN_DIRS[main_key][0],
+                                               include_dirs, include_items, include_covers)
+
         if dir_name_lower == "presets":
             base = PRESETS_DIR
         elif dir_name_lower.startswith("presets/"):
@@ -669,7 +940,10 @@ async def get_gallery_list(request):
             # Lora covers must resolve inside LORA_CACHE_DIR, so their subfolder is
             # anchored with a "Lora/" prefix (same prefix _find_source_media expects).
             lora_anchor = f"Lora/{rel_path_param}" if (is_lora and rel_path_param) else ("Lora" if is_lora else "")
-            _collect_all_dir_covers(covers, target_dir, full_key, 2, base_subfolder=lora_anchor)
+            # Anchor the current level's covers to the dir root as well, so they resolve
+            # when browsing below the top level (e.g. Output/StoryBoard).
+            _collect_all_dir_covers(covers, target_dir, full_key, 2,
+                                    base_subfolder=lora_anchor or rel_path_param)
             
             # Also collect covers for immediate child subdirectories (like homepage does)
             # This ensures subdir cards show cover images when entering a directory
@@ -961,6 +1235,15 @@ async def copy_to_input(request):
                 candidate = candidate / filename
                 if candidate.exists():
                     source_path = candidate
+            elif dir_parts[0].lower() in ("grid", "character") and ".." not in dir_parts:
+                # Main dirs (Grid / Character): generated results + OSS preset cache
+                main_base = GRID_DIR if dir_parts[0].lower() == "grid" else CHARACTER_DIR
+                candidate = main_base
+                for part in dir_parts[1:]:
+                    candidate = candidate / part
+                candidate = candidate / filename
+                if candidate.exists():
+                    source_path = candidate
             elif dir_parts[0] == "presets":
                 candidate = PRESETS_DIR
                 for part in dir_parts[1:]:
@@ -987,6 +1270,18 @@ async def copy_to_input(request):
         if not source_path and subfolder and ".." not in subfolder:
             for info in _get_system_dirs():
                 candidate = info["path"]
+                for part in dir_parts:
+                    candidate = candidate / part
+                candidate = candidate / filename
+                if candidate.exists():
+                    source_path = candidate
+                    break
+
+        # Main dirs: bare relative subfolders (cards inside Grid/Character carry
+        # only the path below the main dir, e.g. "2026-09-24").
+        if not source_path and subfolder and ".." not in subfolder:
+            for main_base in (GRID_DIR, CHARACTER_DIR):
+                candidate = main_base
                 for part in dir_parts:
                     candidate = candidate / part
                 candidate = candidate / filename
@@ -1031,12 +1326,24 @@ async def copy_to_input(request):
             subfolder_lower = subfolder.lower()
             if subfolder_lower.startswith("cloud presets/"):
                 oss_subdir = subfolder_lower[len("cloud presets/"):]
-                oss_rel = _find_in_oss_index(filename, oss_subdir)
+                oss_rel = _find_in_oss_index(filename, oss_subdir, OSS_CATEGORY_PRESETS)
                 if not oss_rel:
                     from urllib.parse import unquote as _uq
-                    oss_rel = _find_in_oss_index(_uq(filename), oss_subdir)
+                    oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, OSS_CATEGORY_PRESETS)
                 if oss_rel:
-                    cached = await _download_oss_file(oss_rel)
+                    cached = await _download_oss_file(oss_rel, OSS_CATEGORY_PRESETS)
+                    if cached and cached.exists():
+                        source_path = cached
+            elif subfolder_lower.startswith("grid/presets/") or subfolder_lower.startswith("character/presets/"):
+                # Main-dir OSS preset cache (not downloaded yet): fetch on demand
+                oss_category = OSS_CATEGORY_GRID if subfolder_lower.startswith("grid/") else OSS_CATEGORY_CHARACTER
+                oss_subdir = subfolder_lower.split("/")[2]
+                oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
+                if not oss_rel:
+                    from urllib.parse import unquote as _uq
+                    oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
+                if oss_rel:
+                    cached = await _download_oss_file(oss_rel, oss_category)
                     if cached and cached.exists():
                         source_path = cached
 
@@ -1093,10 +1400,12 @@ def _collect_cover_recursive(parent_dir: Path, current_subfolder: str, needed: i
 
 def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_count: int, base_subfolder: str = ""):
     """Collect cover images for a directory.
-    
-    Scans root level first, then recursively descends into subdirectories if needed.
+
+    Plugin-updated dirs (Output / Grid / Character) use their newest files, so their
+    cards keep up with what was just produced instead of freezing on the oldest ones.
+    Everything else scans the root level first, then descends into subdirectories.
     Total cover images limited to sample_count (default 2).
-    
+
     Args:
         covers: Dict to populate with results (keyed by "dir_name")
         base_dir: Root directory path
@@ -1106,7 +1415,11 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
     """
     if not base_dir.exists():
         return
-    
+
+    if _is_recent_dir(dir_name):
+        covers[dir_name] = _recent_cover_entries(base_dir, base_subfolder, sample_count)
+        return
+
     result: list[dict] = []
     
     # Level 1: Scan root level files first
@@ -1522,7 +1835,15 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
             candidate = CIVITAI_BOOKMARK_DIR.joinpath(*bm_parts, filename)
             if candidate.exists():
                 return candidate
-    
+    elif subfolder_lower.startswith("grid/") or subfolder_lower.startswith("character/"):
+        # Main dirs (Grid / Character): generated results + OSS preset cache
+        main_base = GRID_DIR if subfolder_lower.startswith("grid/") else CHARACTER_DIR
+        sub_parts = [p for p in subfolder.split("/")[1:] if p]
+        if sub_parts and ".." not in sub_parts and ".." not in filename:
+            candidate = main_base.joinpath(*sub_parts, filename)
+            if candidate.exists():
+                return candidate
+
     # Search in custom dirs - try every dir directly first (most reliable)
     for dir_path in user_custom_dirs:
         candidate = dir_path / filename
@@ -1613,6 +1934,25 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
                 source_path = candidate
                 break
 
+    # Main dirs (Grid / Character): generated results + OSS preset cache. Cards carry
+    # the bare path below the main dir ("2026-09-24") or the prefixed form
+    # ("Grid/2026-09-24"); only the matching main dir is searched for a prefix.
+    if not source_path and ".." not in filename and ".." not in subfolder:
+        main_parts = [p for p in (subfolder or "").split("/") if p]
+        if main_parts and main_parts[0].lower() in ("grid", "character"):
+            main_bases = (GRID_DIR if main_parts[0].lower() == "grid" else CHARACTER_DIR,)
+            main_parts = main_parts[1:]
+        else:
+            main_bases = (GRID_DIR, CHARACTER_DIR)
+        for main_base in main_bases:
+            candidate = main_base
+            for part in main_parts:
+                candidate = candidate / part
+            candidate = candidate / filename
+            if candidate.exists():
+                source_path = candidate
+                break
+
     # Search in presets (including subfolders)
     if not source_path:
         subfolder_lower = (subfolder or "").lower()
@@ -1689,19 +2029,28 @@ async def get_thumbnail(request):
     # OSS fallback: try pre-generated thumbnail from remote index
     if not source_path and _is_oss_enabled():
         oss_subdir = ""
+        oss_category = OSS_CATEGORY_PRESETS
+        subfolder_lower = subfolder.lower()
         if subfolder.startswith("Cloud Presets/"):
             oss_subdir = subfolder[len("Cloud Presets/"):]
-        thumb_rel = _find_thumbnail_in_oss_index(filename, oss_subdir)
-        if thumb_rel:
-            cached = await _download_oss_file(thumb_rel)
-            if cached and cached.exists():
-                with open(cached, "rb") as f:
-                    content = f.read()
-                return web.Response(
-                    body=content,
-                    content_type="image/jpeg",
-                    headers={"Cache-Control": "public, max-age=31536000, immutable"}
-                )
+        elif subfolder_lower.startswith("grid/presets/"):
+            oss_category = OSS_CATEGORY_GRID
+            oss_subdir = subfolder_lower.split("/")[2]
+        elif subfolder_lower.startswith("character/presets/"):
+            oss_category = OSS_CATEGORY_CHARACTER
+            oss_subdir = subfolder_lower.split("/")[2]
+        if oss_subdir:
+            thumb_rel = _find_thumbnail_in_oss_index(filename, oss_subdir, oss_category)
+            if thumb_rel:
+                cached = await _download_oss_file(thumb_rel, oss_category)
+                if cached and cached.exists():
+                    with open(cached, "rb") as f:
+                        content = f.read()
+                    return web.Response(
+                        body=content,
+                        content_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"}
+                    )
 
     if not source_path:
         return web.Response(status=404)
@@ -2086,15 +2435,26 @@ async def view_image(request):
                     base = candidate
                     break
 
-    # OSS fallback: serve from cache or download on demand
-    if subfolder_lower.startswith("cloud presets/") and _is_oss_enabled():
+    # OSS fallback: serve from cache or download on demand. Category scoping keeps
+    # Cloud Presets, Grid and Character from resolving each other's files.
+    oss_category = None
+    oss_subdir = ""
+    if subfolder_lower.startswith("cloud presets/"):
+        oss_category = OSS_CATEGORY_PRESETS
         oss_subdir = subfolder_lower[len("cloud presets/"):]
-        oss_rel = _find_in_oss_index(filename, oss_subdir)
+    elif subfolder_lower.startswith("grid/presets/"):
+        oss_category = OSS_CATEGORY_GRID
+        oss_subdir = subfolder_lower.split("/", 2)[2]
+    elif subfolder_lower.startswith("character/presets/"):
+        oss_category = OSS_CATEGORY_CHARACTER
+        oss_subdir = subfolder_lower.split("/", 2)[2]
+    if oss_subdir and _is_oss_enabled():
+        oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
         if not oss_rel:
             from urllib.parse import unquote as _uq
-            oss_rel = _find_in_oss_index(_uq(filename), oss_subdir)
+            oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
         if oss_rel:
-            cached = await _download_oss_file(oss_rel)
+            cached = await _download_oss_file(oss_rel, oss_category)
             if cached and cached.exists():
                 with open(cached, "rb") as f:
                     content = f.read()
@@ -2308,7 +2668,8 @@ async def delete_gallery_item(request):
         subfolder_lower = (subfolder or "").lower()
         if subfolder_lower == "presets" or subfolder_lower.startswith("presets/") \
                 or subfolder_lower == "lora" or subfolder_lower.startswith("lora/") \
-                or subfolder_lower == "civitai_bookmarks" or subfolder_lower.startswith("civitai_bookmarks/"):
+                or subfolder_lower == "civitai_bookmarks" or subfolder_lower.startswith("civitai_bookmarks/") \
+                or subfolder_lower.startswith("grid/presets") or subfolder_lower.startswith("character/presets"):
             return web.json_response({"success": False, "error": "Cannot delete from read-only directory"}, status=403)
 
         # --- Resolve base directory and target path ---
@@ -2389,6 +2750,37 @@ async def delete_gallery_item(request):
                     candidate = sys_base / f"{filename}{ext}"
                     if candidate.exists():
                         base, found_path = sys_base, candidate
+                        break
+                if found_path:
+                    break
+
+        # Main dirs (Grid / Character): generated results are deletable; the OSS
+        # preset cache is blocked above. Prefixed ("Grid/2026-09-24") and bare
+        # relative ("2026-09-24") subfolder forms, like system dirs.
+        if not found_path and ".." not in filename and ".." not in subfolder:
+            for main_base in (GRID_DIR, CHARACTER_DIR):
+                main_name = main_base.name  # "grid" / "character"
+                sub_lower = (subfolder or "").lower()
+                if sub_lower == main_name:
+                    rel_parts = []
+                elif sub_lower.startswith(main_name + "/"):
+                    rel_parts = [p for p in subfolder[len(main_name):].split("/") if p]
+                elif subfolder:
+                    rel_parts = [p for p in subfolder.split("/") if p]
+                else:
+                    continue
+                if any(p in ("..", ".") for p in rel_parts):
+                    continue
+                main_target = main_base
+                for part in rel_parts:
+                    main_target = main_target / part
+                if (main_target / filename).is_file():
+                    base, found_path = main_target, main_target / filename
+                    break
+                for ext in ALL_MEDIA_EXTENSIONS:
+                    candidate = main_target / f"{filename}{ext}"
+                    if candidate.exists():
+                        base, found_path = main_target, candidate
                         break
                 if found_path:
                     break
@@ -2492,6 +2884,83 @@ async def delete_gallery_item(request):
         print(f"[Neo Gallery] delete_gallery_item error: {e}")
         import traceback
         traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+def _resolve_output_file(subfolder: str, filename: str) -> Path | None:
+    """Resolve a file inside ComfyUI's output directory; None when outside it."""
+    if ".." in filename or "/" in filename:
+        return None
+    parts = [p for p in (subfolder or "").split("/") if p]
+    if any(p in ("..", ".") for p in parts):
+        return None
+    output_root = Path(folder_paths.get_output_directory()).resolve()
+    candidate = output_root.joinpath(*parts, filename) if parts else output_root / filename
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if not (resolved.is_file() and str(resolved).startswith(str(output_root) + os.sep)):
+        return None
+    return resolved
+
+
+@PromptServer.instance.routes.post("/neo_gallery/archive")
+async def archive_generated(request):
+    """Archive generated media from ComfyUI output/ into the plugin-owned Gallery
+    main dirs (gallery/grid/<date>/, gallery/character/<date>/).
+
+    Body: {"category": "grid"|"character", "date": "YYYY-MM-DD" (optional),
+           "files": [{"subfolder": "...", "filename": "..."}]}
+    Existing files are skipped, so repeated archives are idempotent.
+    """
+    try:
+        data = await request.json()
+        category = str(data.get("category") or "").lower()
+        if category not in ("grid", "character"):
+            return web.json_response({"success": False, "error": "Invalid category"}, status=400)
+        main_base = GRID_DIR if category == "grid" else CHARACTER_DIR
+
+        date_str = str(data.get("date") or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+            date_str = time.strftime("%Y-%m-%d")
+
+        files = data.get("files") or []
+        if not isinstance(files, list) or not files:
+            return web.json_response({"success": False, "error": "No files to archive"}, status=400)
+
+        archived = 0
+        skipped = 0
+        for entry in files[:50]:
+            if not isinstance(entry, dict):
+                continue
+            filename = str(entry.get("filename") or "")
+            subfolder = str(entry.get("subfolder") or "")
+            source = _resolve_output_file(subfolder, filename)
+            if not source:
+                continue
+            dest_dir = main_base / date_str
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / filename
+            if dest.exists():
+                skipped += 1
+                continue
+            shutil.copy2(source, dest)
+            archived += 1
+            # Keep the .txt sidecar (prompt + params) with the image.
+            if source.suffix.lower() in IMG_EXTENSIONS:
+                sidecar = source.with_suffix(".txt")
+                if sidecar.is_file() and not dest.with_suffix(".txt").exists():
+                    shutil.copy2(sidecar, dest.with_suffix(".txt"))
+
+        return web.json_response({
+            "success": True,
+            "archived": archived,
+            "skipped": skipped,
+            "path": f"{main_base.name}/{date_str}",
+        })
+    except Exception as e:
+        print(f"[Neo Gallery] archive error: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 

@@ -804,7 +804,7 @@ test("导演编辑器：首帧素材库按钮打开/收起 ComfyUI 左侧素材�
     await openDirectorEditor(null);
     await sleep(60);
 
-    const libBtn = document.querySelector(".neo-director-ff-lib");
+    const libBtn = document.querySelector(".neo-director-seg .neo-director-ff-row .neo-director-ff-lib");
     assert.ok(libBtn, "首帧说明行存在素材库按钮");
 
     const tab = app.extensionManager.sidebarTab;
@@ -1716,7 +1716,7 @@ test("导演编辑器：参考素材区标题行「素材库」按钮打开/收�
     }, null);
     await sleep(60);
 
-    const refsLib = document.querySelector(".neo-director-refs-head .neo-director-ff-lib");
+    const refsLib = document.querySelector(".neo-director-seg .neo-director-refs-head .neo-director-ff-lib");
     assert.ok(refsLib, "参考素材区标题行存在素材库按钮");
 
     const tab = app.extensionManager.sidebarTab;

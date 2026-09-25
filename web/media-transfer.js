@@ -38,11 +38,19 @@ export async function copyGalleryToInput(raw) {
     }
 }
 
-/** 打开/收起 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）。 */
-export function toggleGallerySidebar() {
+/** 打开 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）；传入 source/path 时直接导航到对应目录。
+ *  无 target 时保持原有开/关切换行为。 */
+export function toggleGallerySidebar(source, path) {
     const em = app.extensionManager;
     if (!em || !em.sidebarTab) return;
-    em.sidebarTab.activeSidebarTabId = em.sidebarTab.activeSidebarTabId === 'neo.gallery' ? null : 'neo.gallery';
+    if (!source) {
+        em.sidebarTab.activeSidebarTabId = em.sidebarTab.activeSidebarTabId === 'neo.gallery' ? null : 'neo.gallery';
+        return;
+    }
+    em.sidebarTab.activeSidebarTabId = 'neo.gallery';
+    if (app.neoGallery && typeof app.neoGallery.showDirectoryStructure === 'function') {
+        app.neoGallery.showDirectoryStructure(source, path || []);
+    }
 }
 
 /** 上传本地文件到 ComfyUI input 目录（复用 /upload/image 端点，实际接受任意文件）。

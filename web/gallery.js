@@ -1167,7 +1167,7 @@ export class NeoGallery {
     /** 与 ⋯ 菜单的 canDelete 判定一致：presets/lora/C站收藏目录（按目录名或子路径）与 oss 只读。 */
     isDeletableItem(name, subfolder, source = "", dirName = "") {
         const lower = (s) => String(s || "").toLowerCase();
-        const readOnlyPrefixes = ["presets", "lora", "civitai_bookmarks"];
+        const readOnlyPrefixes = ["presets", "lora", "civitai_bookmarks", "grid/presets", "character/presets"];
         const isReadOnlyPath = (p) => readOnlyPrefixes.some((pre) => p === pre || p.startsWith(pre + "/"));
         if (isReadOnlyPath(lower(subfolder)) || isReadOnlyPath(lower(dirName))) return false;
         return source !== "oss";
@@ -1254,7 +1254,6 @@ export class NeoGallery {
         }
         // 目录视图从 _currentDirStructure 缓存重绘（deleteItem 已同步移除被删项），必须无条件刷新一次，
         // 否则删光整个目录时（_currentDirImages 为空）旧卡片会残留在列表里
-        console.log('[DBG] refresh check:', this.currentView && this.currentView.mode, !!this._currentDirStructure, this.list && this.list.constructor && this.list.constructor.name);
         if (this.currentView.mode === 'directory' && this._currentDirStructure) {
             await this.list.sortAndDisplayImages();
             this._syncSelectionDom();

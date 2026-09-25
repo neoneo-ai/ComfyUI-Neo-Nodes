@@ -282,7 +282,7 @@ export class GalleryList {
             return;
         }
 
-        // In lazy mode, count dirs with subdirs, root_count, or pending lora fetches
+        // In lazy mode, count dirs with subdirs, root_count or pending lora fetches
         const totalDirs = dirsToDisplay.filter(d => 
             (d.subdirs && Object.keys(d.subdirs).length > 0) || (d.root_count && d.root_count > 0) || d.pending
         ).length;
@@ -320,7 +320,7 @@ export class GalleryList {
         const usedLoras = this.gallery.workflowMatchActive ? this.gallery.collectUsedLoras() : null;
 
         for (const dir of dirGroups) {
-            // Show cards if there are subdirs, root_count, or a pending lora fetch
+            // Show cards if there are subdirs, root_count or a pending lora fetch.
             const hasContent = (dir.subdirs && Object.keys(dir.subdirs).length > 0) ||
                                (dir.root_count && dir.root_count > 0) ||
                                dir.pending;
@@ -368,7 +368,10 @@ export class GalleryList {
             lora_path: subdirs[name].lora_path || null,
             model_name: subdirs[name].model_name || "",
             base_model: subdirs[name].base_model || "",
-            civitai: subdirs[name].civitai || null
+            civitai: subdirs[name].civitai || null,
+            // 注入的 OSS 预设入口（Grid / Character 下的 Cloud Presets）靠 path 导航
+            source: subdirs[name].source || "",
+            read_only: subdirs[name].read_only || false
         }));
 
         // Include pending lora subdirs (queued/running/failed) even with no cached images yet.
@@ -468,7 +471,10 @@ export class GalleryList {
 
         for (const subdir of subdirArray) {
             const subdirName = typeof subdir === 'string' ? subdir : subdir.name;
-            const fullPath = [...pathSegments, subdirName];
+            // Injected OSS preset cards under Grid / Character carry an explicit nav
+            // path ("presets"); regular subdirs navigate by their display name.
+            const subdirSeg = (subdir && subdir.source === 'oss' && subdir.path) ? subdir.path : subdirName;
+            const fullPath = [...pathSegments, subdirSeg];
             
             const card = await this.gallery.card.createSubdirCard(this.gallery, subdirName, dirName, fullPath, subdir);
             if (jumpTarget) {

@@ -1,0 +1,545 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Grid / Character 主目录：OSS 预设分类、只读预设入口与 /neo_gallery/archive 归档（离线单测）。
+
+主目录把「可写的生成结果（<日期>/）」与「只读的 OSS 预设缓存（presets/<远端目录>/）」
+放在同一棵树里，因此：分类归属决定预设出现在哪个目录（旧的 Cloud Presets / Grid /
+Character），归档只允许把 ComfyUI output/ 里的文件复制进来，历史索引（没有 categories）
+必须继续按老行为工作。
+"""
+
+import asyncio
+import json
+import os
+import shutil
+import sys
+import tempfile
+import types
+import unittest
+import importlib.util as _importlib_util
+from pathlib import Path
+
+_TMP = tempfile.mkdtemp(prefix="neo_gallery_main_")
+_INPUT = os.path.join(_TMP, "input")
+_OUTPUT = os.path.join(_TMP, "output")
+os.makedirs(_INPUT, exist_ok=True)
+os.makedirs(_OUTPUT, exist_ok=True)
+
+_prev_server = sys.modules.get("server")
+_prev_folder_paths = sys.modules.get("folder_paths")
+
+_server = types.ModuleType("server")
+_server.PromptServer = types.SimpleNamespace(
+    instance=types.SimpleNamespace(
+        routes=types.SimpleNamespace(get=lambda p: (lambda f: f), post=lambda p: (lambda f: f))))
+sys.modules["server"] = _server
+
+_folder_paths = types.ModuleType("folder_paths")
+_folder_paths.input_directory = _INPUT
+_folder_paths.output_directory = _OUTPUT
+_folder_paths.get_output_directory = lambda: _OUTPUT
+_folder_paths.get_input_directory = lambda: _INPUT
+sys.modules["folder_paths"] = _folder_paths
+
+PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PLUGIN_DIR)
+
+_PKG = "_neo_gallery_main_pkg"
+_pkg = types.ModuleType(_PKG)
+_pkg.__path__ = [PLUGIN_DIR]
+sys.modules[_PKG] = _pkg
+
+
+def _stub(name, **attrs):
+    mod = types.ModuleType(f"{_PKG}.{name}")
+    for key, value in attrs.items():
+        setattr(mod, key, value)
+    sys.modules[f"{_PKG}.{name}"] = mod
+    setattr(_pkg, name, mod)
+    return mod
+
+
+def _load(name):
+    spec = _importlib_util.spec_from_file_location(f"{_PKG}.{name}", os.path.join(PLUGIN_DIR, f"{name}.py"))
+    mod = _importlib_util.module_from_spec(spec)
+    sys.modules[f"{_PKG}.{name}"] = mod
+    setattr(_pkg, name, mod)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_stub("util",
+      IMG_EXTENSIONS={".png", ".jpg", ".jpeg"}, VIDEO_EXTENSIONS={".mp4"},
+      AUDIO_EXTENSIONS={".mp3"}, ALL_MEDIA_EXTENSIONS={".png", ".jpg", ".jpeg", ".mp4", ".mp3"},
+      _has_media_recursive=lambda *a, **k: False,
+      _has_media_in_dir_any=lambda *a, **k: False,
+      _extract_media_metadata=lambda *a, **k: {},
+      _collect_prompt_texts=lambda *a, **k: [],
+      _load_settings=lambda *a, **k: {},
+      _save_settings=lambda *a, **k: None,
+      _json_safe=lambda v: v)
+_oss = _load("gallery_oss")      # 真实模块：分类解析与缓存路径就是要测的逻辑
+_stub("gallery_lora",
+      _lora_pending_subdirs=lambda *a, **k: {},
+      _attach_lora_meta=lambda *a, **k: None,
+      _attach_lora_subdir_paths=lambda *a, **k: None,
+      _ensure_auto_cache=lambda *a, **k: None,
+      _normalize_lora_dir=lambda *a, **k: "")
+_stub("bookmark", CIVITAI_BOOKMARK_DIR=Path(_TMP) / "civitai_bookmarks",
+      CIVITAI_DIR_KEY="civitai_bookmarks", _is_civitai_bookmark_enabled=lambda: False)
+
+gallery = _load("gallery")
+
+# 桩只在导入期占用全局名，避免影响其它测试文件。
+if _prev_server is None:
+    sys.modules.pop("server", None)
+else:
+    sys.modules["server"] = _prev_server
+if _prev_folder_paths is None:
+    sys.modules.pop("folder_paths", None)
+else:
+    sys.modules["folder_paths"] = _prev_folder_paths
+
+GRID_DIR = Path(_TMP) / "gallery" / "grid"
+CHARACTER_DIR = Path(_TMP) / "gallery" / "character"
+gallery.GRID_DIR = GRID_DIR
+gallery.CHARACTER_DIR = CHARACTER_DIR
+gallery._MAIN_DIRS = {
+    "grid": (GRID_DIR, _oss.OSS_CATEGORY_GRID),
+    "character": (CHARACTER_DIR, _oss.OSS_CATEGORY_CHARACTER),
+}
+
+
+class _Query:
+    def __init__(self, params):
+        self._params = params
+
+    def get(self, key, default=""):
+        return self._params.get(key, default)
+
+
+class _GetRequest:
+    def __init__(self, params):
+        self.rel_url = types.SimpleNamespace(query=_Query(params))
+
+
+class _PostRequest:
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+
+def _call(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def _payload(resp):
+    return json.loads(resp.body.decode())
+
+
+def _write(path, content=b"x"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
+_LEGACY_INDEX = {
+    "base_url": "https://oss.example/presets/",
+    "directories": {
+        "styles": {"items": [{"filename": "a.png", "type": "image"}]},
+        "已分类分镜": {"items": [{"filename": "g.png", "type": "image"}]},
+        "已分类角色": {"items": [{"filename": "c.png", "type": "image"}]},
+    },
+}
+
+_CATEGORY_INDEX = {
+    "categories": {
+        "grid": ["已分类分镜"],
+        "character": ["已分类角色"],
+        "presets": ["显式预设"],
+    },
+    "directories": {
+        "显式预设": {"items": [{"filename": "p.png", "type": "image", "thumbnail": "thumbs/p.png"}]},
+        "已分类分镜": {"items": [{"filename": "g.png", "type": "image", "thumbnail": "thumbs/g.png"}]},
+        "已分类角色": {"items": [{"filename": "c.png", "type": "image", "thumbnail": "thumbs/c.png"}]},
+        "未分类": {"items": [{"filename": "u.png", "type": "image", "thumbnail": "thumbs/u.png"}]},
+    },
+}
+
+
+class OssCategoryTests(unittest.TestCase):
+    """索引里的 categories 决定预设归属；旧索引（无 categories）全部仍是 Cloud Presets。"""
+
+    def test_legacy_index_keeps_everything_in_presets(self):
+        dirs = _oss._oss_category_dirs(_LEGACY_INDEX, _oss.OSS_CATEGORY_PRESETS)
+        self.assertEqual(sorted(dirs), ["styles", "已分类分镜", "已分类角色"])
+        self.assertEqual(_oss._oss_category_dirs(_LEGACY_INDEX, _oss.OSS_CATEGORY_GRID), [])
+        self.assertEqual(_oss._oss_category_dirs(_LEGACY_INDEX, _oss.OSS_CATEGORY_CHARACTER), [])
+
+    def test_categories_split_presets_grid_character(self):
+        self.assertEqual(_oss._oss_category_dirs(_CATEGORY_INDEX, _oss.OSS_CATEGORY_GRID), ["已分类分镜"])
+        self.assertEqual(_oss._oss_category_dirs(_CATEGORY_INDEX, _oss.OSS_CATEGORY_CHARACTER), ["已分类角色"])
+        # presets = 显式列在 presets 里的 + 未归类目录；别类的不再混进 Cloud Presets
+        self.assertEqual(sorted(_oss._oss_category_dirs(_CATEGORY_INDEX, _oss.OSS_CATEGORY_PRESETS)),
+                         ["显式预设", "未分类"])
+
+    def test_cache_dir_per_category(self):
+        prev = _oss.GALLERY_DIR
+        _oss.GALLERY_DIR = Path(_TMP) / "gallery"
+        try:
+            self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_GRID),
+                             Path(_TMP) / "gallery" / "grid" / "presets")
+            self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_CHARACTER),
+                             Path(_TMP) / "gallery" / "character" / "presets")
+        finally:
+            _oss.GALLERY_DIR = prev
+
+    def test_legacy_presets_lookup_does_not_leak_other_categories(self):
+        prev = _oss._oss_index_cache
+        _oss._oss_index_cache = _CATEGORY_INDEX
+        try:
+            # 逐个目录在第一轮就命中，不会跨分类兜底扫描到别类的同名文件
+            self.assertEqual(_oss._find_in_oss_index("g.png", "已分类分镜", _oss.OSS_CATEGORY_GRID),
+                             "已分类分镜/g.png")
+            self.assertIsNone(_oss._find_in_oss_index("g.png", "已分类分镜", _oss.OSS_CATEGORY_CHARACTER))
+            self.assertIsNone(_oss._find_in_oss_index("g.png", "已分类分镜", _oss.OSS_CATEGORY_PRESETS))
+        finally:
+            _oss._oss_index_cache = prev
+
+
+class MainDirListingTests(unittest.TestCase):
+    """固定首页卡（空目录也显示）+ Grid/Character 下只读的 Cloud Presets 入口。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_oss_enabled = gallery._is_oss_enabled
+        cls._prev_load_index = gallery._load_oss_index_from_disk
+        cls._prev_fetch_index = gallery._fetch_oss_index
+
+        async def _index(*a, **k):
+            return _CATEGORY_INDEX
+
+        _write(GRID_DIR / "2026-09-24" / "shot.png")
+        _write(CHARACTER_DIR / "2026-09-24" / "sheet.png")
+        gallery._is_oss_enabled = lambda: True
+        gallery._load_oss_index_from_disk = lambda: _CATEGORY_INDEX
+        gallery._fetch_oss_index = _index
+
+    @classmethod
+    def tearDownClass(cls):
+        gallery._is_oss_enabled = cls._prev_oss_enabled
+        gallery._load_oss_index_from_disk = cls._prev_load_index
+        gallery._fetch_oss_index = cls._prev_fetch_index
+
+    def test_root_listing_injects_cloud_presets_card(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Grid", "fields": "dirs"}))))
+        resp_dir = out["directories"][0]
+        self.assertEqual(resp_dir["name"], "Grid")
+        self.assertIn("2026-09-24", resp_dir["subdirs"])
+        presets = resp_dir["subdirs"]["Cloud Presets"]
+        self.assertEqual(presets["path"], "presets")
+        self.assertTrue(presets["read_only"])
+        self.assertEqual(presets["source"], "oss")
+        # 本地 OSS 缓存目录本身不再作为普通子目录出现
+        self.assertNotIn("presets", resp_dir["subdirs"])
+
+    def test_presets_branch_lists_category_dirs(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Grid", "path": "presets"}))))
+        resp_dir = out["directories"][0]
+        self.assertTrue(resp_dir["read_only"])
+        self.assertEqual(resp_dir["source"], "oss")
+        self.assertEqual(list(resp_dir["subdirs"]), ["已分类分镜"])
+
+    def test_presets_branch_items_carry_navigable_subfolder(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Character", "path": "presets/已分类角色"}))))
+        items = out["directories"][0]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["subfolder"], "Character/presets/已分类角色")
+        self.assertEqual(items[0]["source"], "oss")
+
+    def test_deep_link_dir_name_with_sub_path(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Grid/presets/已分类分镜"}))))
+        items = out["directories"][0]["items"]
+        self.assertEqual(items[0]["subfolder"], "Grid/presets/已分类分镜")
+
+
+class MainDirDeleteTests(unittest.TestCase):
+    """主目录删除：生成结果可删，presets 预设缓存按只读拒绝。"""
+
+    def _delete(self, **payload):
+        return _call(gallery.delete_gallery_item(_PostRequest(payload)))
+
+    def test_generated_result_is_deletable(self):
+        target = _write(GRID_DIR / "2026-09-26" / "shot.png", b"png")
+        _write(GRID_DIR / "2026-09-26" / "shot.txt", b"prompt")
+        resp = self._delete(filename="shot.png", subfolder="2026-09-26")
+        self.assertEqual(resp.status, 200)
+        self.assertFalse(target.exists())
+        self.assertFalse((GRID_DIR / "2026-09-26" / "shot.txt").exists())
+
+    def test_prefixed_subfolder_also_resolves(self):
+        target = _write(CHARACTER_DIR / "2026-09-27" / "sheet.png", b"png")
+        resp = self._delete(filename="sheet.png", subfolder="Character/2026-09-27")
+        self.assertEqual(resp.status, 200)
+        self.assertFalse(target.exists())
+
+    def test_preset_cache_is_read_only(self):
+        cached = _write(GRID_DIR / "presets" / "风格" / "a.png", b"png")
+        resp = self._delete(filename="a.png", subfolder="Grid/presets/风格")
+        self.assertEqual(resp.status, 403)
+        self.assertTrue(cached.exists())
+
+
+class MainDirCoverTests(unittest.TestCase):
+    """主目录每一层级都要给「当前目录 + 直接子目录」返回封面，子目录卡片才有缩略图。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_oss_enabled = gallery._is_oss_enabled
+        cls._prev_load_index = gallery._load_oss_index_from_disk
+        cls._prev_fetch_index = gallery._fetch_oss_index
+
+        async def _index(*a, **k):
+            return _CATEGORY_INDEX
+
+        # 封面现在按时间倒序取，显式给出 mtime 让断言稳定
+        os.utime(_write(CHARACTER_DIR / "2026-09-24" / "sheet.png"), (2000, 2000))
+        os.utime(_write(CHARACTER_DIR / "2026-09-25" / "pose.png"), (3000, 3000))
+        os.utime(_write(CHARACTER_DIR / "2026-09-24" / "takes" / "take1.png"), (1000, 1000))
+        gallery._is_oss_enabled = lambda: True
+        gallery._load_oss_index_from_disk = lambda: _CATEGORY_INDEX
+        gallery._fetch_oss_index = _index
+
+    @classmethod
+    def tearDownClass(cls):
+        gallery._is_oss_enabled = cls._prev_oss_enabled
+        gallery._load_oss_index_from_disk = cls._prev_load_index
+        gallery._fetch_oss_index = cls._prev_fetch_index
+
+    def test_child_dir_cards_get_covers_keyed_by_nav_path(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Character", "fields": "dirs,covers"}))))
+        covers = out["covers"]
+        # 卡片 key 与导航路径一致（前端 subdirKey = "Character/<date>"）
+        self.assertEqual([c["filename"] for c in covers["Character/2026-09-24"]],
+                         ["sheet.png", "take1.png"])  # 每个目录最多取 2 张，可下沉到子目录
+        self.assertEqual(covers["Character/2026-09-24"][0]["subfolder"], "Character/2026-09-24")
+        self.assertEqual(covers["Character/2026-09-24"][1]["subfolder"], "Character/2026-09-24/takes")
+        self.assertEqual([c["filename"] for c in covers["Character/2026-09-25"]], ["pose.png"])
+        # 当前目录自身（首页卡）也有封面，供返回上级时复用
+        self.assertIn("Character", covers)
+
+    def test_nested_level_covers_use_full_relative_path(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Character", "path": "2026-09-24", "fields": "dirs,covers"}))))
+        covers = out["covers"]
+        self.assertEqual([c["filename"] for c in covers["Character/2026-09-24/takes"]], ["take1.png"])
+        self.assertEqual(covers["Character/2026-09-24/takes"][0]["subfolder"],
+                         "Character/2026-09-24/takes")
+
+    def test_aggregate_preset_card_borrows_a_cover(self):
+        out = _payload(_call(gallery.get_gallery_list(
+            _GetRequest({"dir_name": "Grid", "fields": "dirs,covers"}))))
+        covers = out["covers"]
+        self.assertTrue(covers["Grid/presets"])
+        self.assertEqual(covers["Grid/presets"], covers["Grid/presets/已分类分镜"])
+
+
+class RecentDirSortTests(unittest.TestCase):
+    """插件自写目录（Output / Grid / Character）在目录内按最近更新排子目录；首页不再注入主目录卡。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_oss_enabled = gallery._is_oss_enabled
+        cls._prev_system_dirs = gallery._get_system_dirs
+        cls._prev_custom_dirs = gallery._get_user_custom_dirs
+        gallery._is_oss_enabled = lambda: False
+        # 只认本用例自己的 output/input：同进程内其他测试文件会替换全局 folder_paths
+        gallery._get_system_dirs = lambda: [
+            {"path": Path(_OUTPUT), "name": "Output", "read_only": True},
+            {"path": Path(_INPUT), "name": "Input", "read_only": True},
+        ]
+        gallery._get_user_custom_dirs = lambda: []
+
+    @classmethod
+    def tearDownClass(cls):
+        gallery._is_oss_enabled = cls._prev_oss_enabled
+        gallery._get_system_dirs = cls._prev_system_dirs
+        gallery._get_user_custom_dirs = cls._prev_custom_dirs
+
+    def setUp(self):
+        # 每个用例从干净的三棵树开始；目录本身保留（插件启动时会确保它们存在）
+        for base in (GRID_DIR, CHARACTER_DIR, Path(_OUTPUT)):
+            base.mkdir(parents=True, exist_ok=True)
+            for child in base.iterdir():
+                shutil.rmtree(child) if child.is_dir() else child.unlink()
+
+    @staticmethod
+    def _touch(path, when):
+        _write(path)
+        os.utime(path, (when, when))
+        return path
+
+    def test_scan_recent_media_buckets_by_first_level_child(self):
+        base = Path(_TMP) / "mt"
+        if base.exists():
+            shutil.rmtree(base)
+        self._touch(base / "a" / "x.png", 1000)
+        self._touch(base / "b" / "y.png", 2000)
+        self._touch(base / "b" / "deep" / "z.png", 3000)
+        self._touch(base / "top.png", 500)
+        _write(base / "empty" / "note.txt")
+
+        own, children = gallery._scan_recent_media(base, 2)
+
+        self.assertEqual(own["mtime"], 500)
+        self.assertEqual([c["rel"] for c in own["covers"]], [""])  # 根层文件
+        self.assertEqual(children["a"]["mtime"], 1000)
+        self.assertEqual(children["b"]["mtime"], 3000)  # 深层文件归到第一层子目录
+        self.assertEqual([c["rel"] for c in children["b"]["covers"]], ["b/deep", "b"])
+        self.assertEqual(children["empty"]["mtime"], 0.0)
+        self.assertEqual(children["empty"]["covers"], [])
+
+    def test_recent_covers_pick_the_newest_two(self):
+        base = Path(_TMP) / "newest"
+        if base.exists():
+            shutil.rmtree(base)
+        self._touch(base / "2026-09-20" / "old.png", 1000)
+        self._touch(base / "2026-09-24" / "mid.png", 2000)
+        self._touch(base / "2026-09-26" / "new.png", 3000)
+        _write(base / "presets" / "风格" / "oss.png")  # 只读 OSS 缓存不算内容
+
+        entries = gallery._recent_cover_entries(base, "Character", 2)
+        self.assertEqual([e["filename"] for e in entries], ["new.png", "mid.png"])
+        self.assertEqual([e["subfolder"] for e in entries],
+                         ["Character/2026-09-26", "Character/2026-09-24"])
+        self.assertEqual([e["name"] for e in entries], ["new", "mid"])
+        # 无前缀时 subfolder 是该目录内的相对路径（系统目录的既有约定）
+        self.assertEqual(gallery._recent_cover_entries(base, "", 1)[0]["subfolder"], "2026-09-26")
+
+    def test_dir_covers_follow_recency_only_for_plugin_dirs(self):
+        base = Path(_TMP) / "covers"
+        if base.exists():
+            shutil.rmtree(base)
+        self._touch(base / "a" / "old.png", 1000)
+        self._touch(base / "b" / "new.png", 3000)
+
+        covers: dict = {}
+        gallery._collect_all_dir_covers(covers, base, "Output", 2)
+        self.assertEqual([c["filename"] for c in covers["Output"]], ["new.png", "old.png"])
+        self.assertEqual([c["subfolder"] for c in covers["Output"]], ["b", "a"])
+
+        covers = {}
+        gallery._collect_all_dir_covers(covers, base, "stars", 2)
+        self.assertEqual([c["filename"] for c in covers["stars"]], ["old.png", "new.png"])  # 名称序
+
+    def test_recent_dir_whitelist(self):
+        for name in ("Output", "output", "Grid", "grid/2026-09-25", "Character/2026-09-25"):
+            self.assertTrue(gallery._is_recent_dir(name), name)
+        for name in ("Input", "presets", "Lora", "stars", "civitai_bookmarks", ""):
+            self.assertFalse(gallery._is_recent_dir(name), name)
+
+    def test_level_listing_orders_recent_dir_by_update_time(self):
+        base = Path(_TMP) / "level"
+        if base.exists():
+            shutil.rmtree(base)
+        self._touch(base / "2026-09-20" / "old.png", 1000)
+        self._touch(base / "2026-09-26" / "new.png", 3000)
+        self._touch(base / "2026-09-24" / "mid.png", 2000)
+        _write(base / "2026-09-22" / "note.txt")
+
+        recent = gallery._process_single_directory(base, "Output", "", True, True, False, False)
+        self.assertEqual(list(recent["subdirs"]), ["2026-09-26", "2026-09-24", "2026-09-20", "2026-09-22"])
+
+        # 非白名单目录保持名称序（= 当前行为）
+        other = gallery._process_single_directory(base, "stars", "", False, True, False, False)
+        self.assertEqual(list(other["subdirs"]), ["2026-09-20", "2026-09-22", "2026-09-24", "2026-09-26"])
+
+    def test_home_listing_has_no_main_dir_cards(self):
+        self._touch(Path(_OUTPUT) / "CharacterSheet" / "sheet.png", 2000)
+        self._touch(CHARACTER_DIR / "2026-09-25" / "newest.png", 3000)
+        _write(GRID_DIR / "presets" / "风格" / "a.png")  # 只读缓存不算内容
+
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs"}))))
+        names = [d["name"] for d in out["directories"]]
+
+        # 首页不再注入 Grid / Character 卡；入口是生成对话框「直达」按钮、素材卡菜单与深链
+        self.assertNotIn("Grid", names)
+        self.assertNotIn("Character", names)
+        self.assertEqual(names[:2], ["Output", "Input"])  # 系统目录：Output 在前
+
+
+    def test_home_output_card_uses_the_newest_images_as_covers(self):
+        self._touch(Path(_OUTPUT) / "CharacterSheet" / "old.png", 1000)
+        self._touch(Path(_OUTPUT) / "StoryBoard" / "new.png", 3000)
+
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs,covers"}))))
+        covers = out["covers"]
+
+        # 系统目录（Output）卡封面取最新两张，subfolder 保持相对 output 的既有约定
+        self.assertEqual([c["filename"] for c in covers["Output"]], ["new.png", "old.png"])
+        self.assertEqual([c["subfolder"] for c in covers["Output"]], ["StoryBoard", "CharacterSheet"])
+
+
+class ArchiveEndpointTests(unittest.TestCase):
+    """/neo_gallery/archive：只接受 output/ 内的文件，复制进主目录对应日期子目录且可重复调用。"""
+
+
+    def _archive(self, payload):
+        return _payload(_call(gallery.archive_generated(_PostRequest(payload))))
+
+    def test_copies_image_and_txt_sidecar(self):
+        _write(Path(_OUTPUT) / "StoryBoard" / "2026-09-24" / "sheet.png", b"png")
+        _write(Path(_OUTPUT) / "StoryBoard" / "2026-09-24" / "sheet.txt", b"prompt")
+        out = self._archive({
+            "category": "grid", "date": "2026-09-24",
+            "files": [{"subfolder": "StoryBoard/2026-09-24", "filename": "sheet.png"}],
+        })
+        self.assertTrue(out["success"], out)
+        self.assertEqual(out["archived"], 1)
+        self.assertEqual(out["path"], "grid/2026-09-24")
+        self.assertEqual((GRID_DIR / "2026-09-24" / "sheet.png").read_bytes(), b"png")
+        self.assertEqual((GRID_DIR / "2026-09-24" / "sheet.txt").read_bytes(), b"prompt")
+
+    def test_repeat_archive_skips_existing(self):
+        _write(Path(_OUTPUT) / "CharacterSheet" / "2026-09-25" / "c.png", b"c")
+        payload = {"category": "character", "date": "2026-09-25",
+                   "files": [{"subfolder": "CharacterSheet/2026-09-25", "filename": "c.png"}]}
+        self.assertEqual(self._archive(payload)["archived"], 1)
+        again = self._archive(payload)
+        self.assertEqual(again["archived"], 0)
+        self.assertEqual(again["skipped"], 1)
+
+    def test_rejects_escaping_and_out_of_output_paths(self):
+        out = self._archive({"category": "grid", "date": "2026-09-24",
+                             "files": [{"subfolder": "../..", "filename": "secret.png"}]})
+        self.assertTrue(out["success"])
+        self.assertEqual(out["archived"], 0)
+        out = self._archive({"category": "grid", "date": "2026-09-24",
+                             "files": [{"subfolder": "..", "filename": "escaped.png"}]})
+        self.assertEqual(out["archived"], 0)
+        self.assertFalse((GRID_DIR / "2026-09-24" / "escaped.png").exists())
+        self.assertFalse((Path(_OUTPUT).parent / "escaped.png").exists())
+
+    def test_rejects_bad_category_and_empty_files(self):
+        self.assertEqual(_call(gallery.archive_generated(
+            _PostRequest({"category": "presets", "files": [{"filename": "a.png"}]}))).status, 400)
+        self.assertEqual(_call(gallery.archive_generated(
+            _PostRequest({"category": "grid", "files": []}))).status, 400)
+
+    def test_bad_date_falls_back_to_today(self):
+        _write(Path(_OUTPUT) / "StoryBoard" / "2026-09-24" / "today.png", b"t")
+        out = self._archive({"category": "grid", "date": "not-a-date",
+                             "files": [{"subfolder": "StoryBoard/2026-09-24", "filename": "today.png"}]})
+        self.assertTrue(out["success"])
+        self.assertEqual(out["archived"], 1)
+        self.assertRegex(out["path"], r"^grid/\d{4}-\d{2}-\d{2}$")

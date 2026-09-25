@@ -196,7 +196,8 @@ function makeDirViewGallery() {
 
 test("目录视图批量删除后同步 _currentDirStructure 缓存并刷新列表", async () => {
     await loadNeoGallery();
-    const { gallery, refreshCount } = makeDirViewGallery();
+    const view = makeDirViewGallery();
+    const { gallery } = view;
 
     gallery.toggleSelection("a", "Output");
     await gallery.deleteSelected();
@@ -208,12 +209,13 @@ test("目录视图批量删除后同步 _currentDirStructure 缓存并刷新列�
         "被删项应从目录结构缓存移除，重绘不再显示旧卡片"
     );
     assert.deepEqual(gallery._currentDirImages.map((i) => i.name), ["b"]);
-    assert.equal(refreshCount, 1, "删除后应触发一次列表重绘");
+    assert.equal(view.refreshCount, 1, "删除后应触发一次列表重绘");
 });
 
 test("删光整个目录也会刷新（不依赖 _currentDirImages 非空判断）", async () => {
     await loadNeoGallery();
-    const { gallery, refreshCount } = makeDirViewGallery();
+    const view = makeDirViewGallery();
+    const { gallery } = view;
 
     gallery.toggleSelection("a", "Output");
     gallery.toggleSelection("b", "Output");
@@ -222,5 +224,5 @@ test("删光整个目录也会刷新（不依赖 _currentDirImages 非空判断�
 
     assert.equal(gallery._currentDirStructure.items.length, 0);
     assert.equal(gallery._currentDirImages.length, 0);
-    assert.equal(refreshCount, 1, "删光目录时也必须重绘以显示空态");
+    assert.equal(view.refreshCount, 1, "删光目录时也必须重绘以显示空态");
 });

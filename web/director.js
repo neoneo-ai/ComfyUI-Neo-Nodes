@@ -636,11 +636,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         };
     }
 
-    /** 「素材库」按钮：打开/收起 ComfyUI 左侧 Neo Gallery 面板（首帧行 / 参考区共用）。 */
-    const buildAssetLibButton = () => $el('button', {
+    /** 「素材库」按钮：打开 ComfyUI 左侧 Neo Gallery 面板（首帧行 / 参考区共用）。
+     *  target 传主目录名（"Character" / "Grid"）时顺带导航到该目录，便于直接取角色图 / 分镜图。 */
+    const buildAssetLibButton = (target) => $el('button', {
         className: 'neo-director-ff-lib',
-        title: '打开/收起左侧素材面板',
-        onclick: () => toggleGallerySidebar(),
+        title: target ? `打开左侧素材面板（${target}）` : '打开/收起左侧素材面板',
+        onclick: () => toggleGallerySidebar(target, []),
     }, [
         $el('i', { className: 'pi pi-images' }),
         $el('span', { textContent: '素材库' }),
@@ -1708,6 +1709,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const charCard = $el('div', { className: 'neo-director-setup-char' }, [
         $el('div', { className: 'neo-director-refs-head' }, [
             $el('span', { className: 'neo-director-field-label', title: '作为视频各段的身份参考（「连续性」与「角色身份参考」开启时生效）：关键帧是背影 / 局部特写、看不到脸时靠它保住角色身份；r2i 图片分镜也会用它保持各段角色一致。最多取前 4 张作身份参考', textContent: '👤 角色参考图（配方级；视频各段身份参考，同时喂给 r2i 图片分镜）' }),
+            buildAssetLibButton('Character'),
         ]),
         $el('div', { className: 'neo-director-story-refs' }, [charRefRow.row]),
     ]);
@@ -1953,7 +1955,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const gridCard = $el('div', { className: 'neo-director-setup-grid' }, [
         $el('div', { className: 'neo-director-refs-head' }, [
             $el('span', { className: 'neo-director-field-label', title: '上传一张分镜宫格图（带分隔条 / 留白），自动检测行列并切分；各格按阅读顺序替换现有分段，并作为该段首帧与分镜图，拆分后右侧就地显示该图元信息里的提示词。点击输入区本地上传，或从左侧素材库 / 本地文件拖入', textContent: '🧩 宫格分镜图拆分（一张宫格分镜图 → 逐段首帧）' }),
-            buildAssetLibButton(),   // 打开左侧素材面板，拖入下方输入区
+            buildAssetLibButton('Grid'),   // 打开左侧素材面板（Grid），拖入下方输入区
         ]),
         // 源图 → 切分方式 / 拆分按钮 → 原宫格提示词，同一行：单张分镜图不再独占整行
         $el('div', { className: 'neo-director-grid-io' }, [

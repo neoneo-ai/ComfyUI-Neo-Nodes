@@ -5,7 +5,7 @@
 # Usage:
 #   python gallery_preprocess.py --presets <presets_dir> --output <output_dir> [--size 320]
 #   cd <dir_with_new_dirs> && python gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
-#       (--presets omitted in incremental mode: the current working directory is used)
+#       [--category grid|character]   (--presets omitted in incremental mode: cwd is used)
 #
 # Without --dirs: full scan of all subdirectories, index.json is rebuilt from scratch.
 # With --dirs DIR...: only those subdirectories are (re)scanned — new directories are added,
@@ -397,6 +397,11 @@ def main():
         help="Base URL prefix for OSS (written into index.json; "
              "default in --dirs mode: configs/oss_presets.json -> base_url)"
     )
+    parser.add_argument(
+        "--category", type=str, default="presets", choices=["presets", "grid", "character"],
+        help="Category the (re)scanned --dirs belong to (index.json top-level "
+             "'categories'); 'presets' keeps the legacy Cloud Presets section"
+    )
 
     args = parser.parse_args()
 
@@ -422,6 +427,7 @@ def main():
     print(f"  Copy:     {'no' if args.no_copy else 'yes'}")
     if args.dirs:
         print(f"  Dirs:     {', '.join(args.dirs)} (incremental)")
+        print(f"  Category: {args.category}")
 
     # Merge base: in incremental mode default to the latest index.json on OSS
     fetch_url = args.fetch_index
@@ -454,6 +460,26 @@ def main():
         merged = dict(existing["directories"])
         merged.update(index["directories"])
         index["directories"] = merged
+
+    # Category membership: --dirs are assigned to --category; every other category
+    # (and each directory's other members) is carried over from the merge base, so
+    # incremental runs never drop the legacy Cloud Presets section.
+    categories = {}
+    if existing:
+        for cat, names in (existing.get("categories") or {}).items():
+            if isinstance(names, list):
+                categories[str(cat)] = [n for n in names if isinstance(n, str)]
+    if args.dirs:
+        scanned = [d for d in args.dirs if d in index["directories"]]
+        for cat in list(categories):
+            categories[cat] = [n for n in categories[cat] if n not in scanned]
+        for name in scanned:
+            categories.setdefault(args.category, [])
+            if name not in categories[args.category]:
+                categories[args.category].append(name)
+    categories = {cat: names for cat, names in categories.items() if names}
+    if categories:
+        index["categories"] = categories
 
     # Write index.json
     with open(index_path, "w", encoding="utf-8") as f:
