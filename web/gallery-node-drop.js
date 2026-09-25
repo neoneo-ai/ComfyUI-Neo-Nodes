@@ -1,8 +1,8 @@
 /**
  * gallery-node-drop.js
  * 把 Gallery 卡片（图/视频/音频）直接拖放到画布上对应的 Load 节点：命中指针下方的
- * LoadImage / LoadVideo / LoadAudio，复用 image-gen 的 copy_to_input 通道写入
- * （与「发送到节点」同一逻辑）。载荷媒体类型须与目标节点匹配，否则不写入。
+ * LoadImage / LoadVideo / LoadAudio，以及用 filename combo 接收图片的 Neo Grid Split，
+ * 复用 image-gen 的 copy_to_input 通道写入（与「发送到节点」同一逻辑）。载荷媒体类型须与目标节点匹配，否则不写入。
  * 只处理 application/x-neo-gallery 载荷；ComfyUI 自身的资产/文件拖放不受影响。
  */
 
@@ -48,24 +48,26 @@ function makeCanvasTransforms(cv) {
     };
 }
 
-// 由节点类名判断媒体类型：LoadVideo / LoadAudio / LoadImage，非媒体 Load 节点返回 null。
+// 由节点类名判断媒体类型：LoadVideo / LoadAudio / LoadImage；Neo Grid Split 用
+// filename combo（image_upload）接收图片，同样作为图片落点。非媒体节点返回 null。
 function nodeMediaKind(node) {
     const cls = String(node.comfyClass || node.type || "");
     if (/load.?video/i.test(cls)) return "video";
     if (/load.?audio/i.test(cls)) return "audio";
     if (/load.?image/i.test(cls)) return "image";
+    if (/^neogridsplit$/i.test(cls)) return "image";
     return null;
 }
 
-// 找到 Load 节点上可写入的文件 combo widget。标准 Load 节点只有一个 combo，
-// 优先按名称匹配（LoadVideo 的 combo 名为 file），退化到第一个 combo。
+// 找到可写入的文件 combo widget。标准 Load 节点只有一个 combo，优先按名称匹配
+// （LoadVideo 的 combo 名为 file、Neo Grid Split 为 filename），退化到第一个 combo。
 function findMediaWidget(node, kind) {
     const widgets = node.widgets || [];
     const byName = (pat) => widgets.find(w => w.type === "combo" && pat.test(w.name || ""));
     const firstCombo = () => widgets.find(w => w.type === "combo");
     if (kind === "video") return byName(/video|file/i) || firstCombo();
     if (kind === "audio") return byName(/audio/i) || firstCombo();
-    return byName(/image/i) || firstCombo();
+    return byName(/image|filename/i) || firstCombo();
 }
 
 // 命中指针下方、可写入媒体的 Load 节点，返回 { node, widget, kind }，否则 null

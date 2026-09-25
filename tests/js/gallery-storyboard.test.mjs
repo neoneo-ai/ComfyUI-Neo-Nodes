@@ -39,21 +39,36 @@ function openMenu(card, gallery) {
     card._showCollectMenu(gallery, { name: "shot", filename: "shot.png" }, "", "Output", anchor);
 }
 
-test("buildStoryboardGridRequest：Qwen Image 2.1 + 原图参考 + 九宫格指令 + StoryBoard 目录", async () => {
+test("buildStoryboardGridRequest：默认 6 宫格（2×3），Qwen Image 2.1 + 原图参考 + StoryBoard 目录", async () => {
     const { buildStoryboardGridRequest, buildStoryboardGridPrompt } = await import("../../web/gallery-gen.js");
     const body = buildStoryboardGridRequest("NeoAgent/portrait.png", STORY);
     assert.equal(body.skill_id, "qwen_image_21");
-    assert.equal(body.width, 2048);   // 2048 基准 16:9，与导演编辑器一键九宫格同尺寸（每格约 683×384）
-    assert.equal(body.height, 1152);
+    assert.equal(body.width, 2048);   // 每格约 683×384（16:9）
+    assert.equal(body.height, 768);   // 默认 6 宫格（2×3）
     assert.deepEqual(body.references, [{ kind: "input", value: "NeoAgent/portrait.png" }]);
     assert.deepEqual(body.loras, []);
     assert.equal(body.skip_enhance, true);
     assert.equal(body.output_prefix, "StoryBoard");
-    assert.equal(body.prompt, buildStoryboardGridPrompt(STORY));
-    assert.match(body.prompt, /九宫格/);
+    assert.equal(body.prompt, buildStoryboardGridPrompt(STORY));   // 默认同 6 宫格
+    assert.match(body.prompt, /六宫格/);
+    assert.match(body.prompt, /第 1 格到第 6 格/);
     assert.match(body.prompt, /雨夜的地铁口/);  // 故事原文进提示词
     assert.match(body.prompt, /<image1>/);     // 身份锚定：qwen_image21 分词器为每张参考图插字面量 <imageN>
     assert.match(body.prompt, /细白缝/);       // 便于「🧩 宫格分镜图拆分」自动切格
+});
+
+test("buildStoryboardGridRequest：4 / 9 宫格布局与提示词", async () => {
+    const { buildStoryboardGridRequest } = await import("../../web/gallery-gen.js");
+    const b4 = buildStoryboardGridRequest("p.png", STORY, 4);
+    assert.equal(b4.width, 2048);
+    assert.equal(b4.height, 1152);   // 2×2，每格约 1024×576
+    assert.match(b4.prompt, /四宫格/);
+    assert.match(b4.prompt, /第 1 格到第 4 格/);
+    const b9 = buildStoryboardGridRequest("p.png", STORY, 9);
+    assert.equal(b9.width, 2048);
+    assert.equal(b9.height, 1152);   // 3×3，每格约 683×384
+    assert.match(b9.prompt, /九宫格/);
+    assert.match(b9.prompt, /第 1 格到第 9 格/);
 });
 
 test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求生图，窗内出结果预览，点「打开输出目录」跳转", async () => {
@@ -174,7 +189,7 @@ test("⋯ 菜单「直达分镜目录」打开 Output/StoryBoard", async () => {
     assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
 });
 
-test("小窗「✨ LLM 生成九宫格故事」：简要故事 + 参考图生成 1→9 故事，覆盖写入上方故事框", async () => {
+test("小窗「✨ LLM 生成分镜故事」：简要故事 + 参考图按所选宫格数生成逐格故事，覆盖写入上方故事框", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const toasts = [];
     const { gallery } = makeGallery(toasts);
@@ -185,11 +200,15 @@ test("小窗「✨ LLM 生成九宫格故事」：简要故事 + 参考图生成
     const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
     assert.ok(overlay, "应弹出填故事小窗");
     const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
-        .find((b) => b.textContent === "✨ LLM 生成九宫格故事");
-    assert.ok(llmBtn, "应有「LLM 生成九宫格故事」按钮");
+        .find((b) => b.textContent === "✨ LLM 生成分镜故事");
+    assert.ok(llmBtn, "应有「LLM 生成分镜故事」按钮");
     // 现有输入框（九宫格故事）下面还要有个「简要故事 / 想法」输入框
     const ideaBox = overlay.querySelector(".neo-gallery-story-idea");
     assert.ok(ideaBox, "九宫格故事框下面应有简要故事输入框");
+    // 宫格数下拉：4 / 6 / 9，默认 6
+    const gridSel = overlay.querySelector(".neo-gallery-story-grid");
+    assert.ok(gridSel, "应有宫格数下拉");
+    assert.equal(gridSel.value, "6", "默认 6 宫格");
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
@@ -209,18 +228,18 @@ test("小窗「✨ LLM 生成九宫格故事」：简要故事 + 参考图生成
 
     assert.ok(llmBody, "应调用 /rs_prompts/stream_generate_prompt");
     assert.equal(llmBody.skillId, "storyboard_story", "应走九宫格故事任务（不是反推）");
-    assert.equal(llmBody.text, "雨夜地铁口偶遇旧友", "简要故事应作为文本输入带给 LLM");
+    assert.equal(llmBody.text, "雨夜地铁口偶遇旧友（按 6 格分镜）", "简要故事 + 宫格数一起带给 LLM");
     assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
     assert.ok(fetchLog.find((c) => c.path === "/neo_gallery/copy_to_input"), "参考图应先经 copy_to_input 落到 input/ 再交给 LLM");
 
     // 生成结果覆盖写入上方故事框（不是追加），供继续编辑后再「生成」
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "雨夜的地铁口，她收起伞仰望。\n他站在灯下，两人相望。");
-    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已生成九宫格故事/);
+    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已生成分镜故事/);
     assert.equal(llmBtn.disabled, false, "完成后按钮应恢复可用");
-    assert.equal(llmBtn.textContent, "✨ LLM 生成九宫格故事");
+    assert.equal(llmBtn.textContent, "✨ LLM 生成分镜故事");
 });
 
-test("小窗「✨ LLM 生成九宫格故事」：简要故事留空则只按参考图生成", async () => {
+test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按参考图生成", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const { gallery } = makeGallery([]);
     const card = new GalleryCard(gallery);
@@ -229,7 +248,7 @@ test("小窗「✨ LLM 生成九宫格故事」：简要故事留空则只按参
 
     const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
     const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
-        .find((b) => b.textContent === "✨ LLM 生成九宫格故事");
+        .find((b) => b.textContent === "✨ LLM 生成分镜故事");
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
@@ -246,7 +265,7 @@ test("小窗「✨ LLM 生成九宫格故事」：简要故事留空则只按参
     await sleep(50);
 
     assert.ok(llmBody, "留空也应调用 LLM");
-    assert.equal(llmBody.text, "", "留空时文本为空，仅凭参考图生成");
+    assert.equal(llmBody.text, "（按 6 格分镜，按参考图设计故事）", "留空时只带宫格数，按参考图生成");
     assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "她把伞收好，走向灯下。");
 });

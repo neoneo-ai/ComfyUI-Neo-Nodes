@@ -113,6 +113,18 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] h3_segment 节点注册失败（单段生成/重生成不可用）: {e}")
 
+    # Neo Grid Split：宫格图拆分节点，一张分镜宫格图 → 各格 IMAGE（行优先）+ 原图内嵌提示词。
+    # 复用 grid_split.py 纯像素核心；导入失败时优雅降级。
+    GRID_SPLIT_MAPPINGS = {}
+    GRID_SPLIT_DISPLAY_MAPPINGS = {}
+    try:
+        from .grid_split_node import (
+            NODE_CLASS_MAPPINGS as GRID_SPLIT_MAPPINGS,
+            NODE_DISPLAY_NAME_MAPPINGS as GRID_SPLIT_DISPLAY_MAPPINGS,
+        )
+    except Exception as e:
+        print(f"[NeoNodes] grid_split_node 节点注册失败（宫格图拆分不可用）: {e}")
+
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
@@ -122,6 +134,7 @@ if __package__ not in (None, ""):
         **H3_SEGMENT_MAPPINGS,
         **BUNDLE_EXPAND_MAPPINGS,
         **REF_GRID_MAPPINGS,
+        **GRID_SPLIT_MAPPINGS,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
@@ -132,6 +145,7 @@ if __package__ not in (None, ""):
         **H3_SEGMENT_DISPLAY_MAPPINGS,
         **BUNDLE_EXPAND_DISPLAY_MAPPINGS,
         **REF_GRID_DISPLAY_MAPPINGS,
+        **GRID_SPLIT_DISPLAY_MAPPINGS,
     }
 
 # Web directory for frontend extensions

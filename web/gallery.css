@@ -1950,6 +1950,22 @@ Accordion Section Buttons (Clear)
     color: #b8c2ce;
 }
 
+/* 宫格数下拉：与故事框同款底色/边框，窄一些 */
+.neo-gallery-story-grid {
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+}
+
+.neo-gallery-story-grid:focus {
+    outline: none;
+    border-color: rgba(76, 154, 255, 0.6);
+}
+
 .neo-gallery-story-hint {
     font-size: 11px;
     color: #8a93a0;

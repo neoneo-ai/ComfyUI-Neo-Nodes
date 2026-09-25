@@ -268,3 +268,57 @@ test("类型不匹配：视频载荷落在 LoadImage 上不写入、不接管落
     assert.equal(widget.value, "", "视频载荷不应写入 LoadImage");
     assert.equal(fetchLog.length, 0);
 });
+
+// ====== Neo Grid Split 落放（filename combo）======
+
+function makeGridSplitNode(id) {
+    const n = {
+        id, type: "NeoGridSplit", comfyClass: "NeoGridSplit", title: "宫格图拆分",
+        pos: [...NODE_POS], size: [...NODE_SIZE], mode: 0,
+        widgets: [
+            { name: "filename", type: "combo", value: "", options: { values: [] } },
+            { name: "rows", type: "combo", value: "auto", options: { values: ["auto"] } },
+            { name: "cols", type: "combo", value: "auto", options: { values: ["auto"] } },
+        ],
+    };
+    n.isPointInside = (x, y) => x >= n.pos[0] && x <= n.pos[0] + n.size[0]
+        && y >= n.pos[1] && y <= n.pos[1] + n.size[1];
+    return n;
+}
+
+const gridSplitNode = makeGridSplitNode(81);
+
+test("落点命中 Neo Grid Split：图片载荷经 copy_to_input 写入 filename widget 并提示成功", async () => {
+    resetFetchLog();
+    appState.toasts.length = 0;
+    gridSplitNode.widgets[0].value = "";
+    mockRoute("/neo_gallery/copy_to_input", jsonResponse({ success: true, filename: "grid_6.png" }));
+    const restore = swapNodes([gridSplitNode]);
+    try {
+        const dt = makeDataTransfer({ filename: "grid_6.png", subfolder: "" });
+        dispatchDrag("dragover", { ...NODE_CENTER_CLIENT, dataTransfer: dt });
+        const ev = dispatchDrag("drop", { ...NODE_CENTER_CLIENT, dataTransfer: dt });
+        await flush(30);
+        assert.equal(ev.defaultPrevented, true, "命中且类型匹配时应接管落放");
+        assert.equal(gridSplitNode.widgets[0].value, "grid_6.png", "应写入 filename widget");
+        assert.equal(gridSplitNode.widgets[1].value, "auto", "不应误写 rows/cols");
+        assert.ok(fetchLog.some((f) => f.path === "/neo_gallery/copy_to_input"), "应调用复制到输入目录接口");
+        assert.equal(appState.toasts.at(-1)?.severity, "success");
+    } finally { restore(); }
+});
+
+test("类型不匹配：视频载荷落在 Neo Grid Split 上不写入、不接管落放", async () => {
+    resetFetchLog();
+    appState.toasts.length = 0;
+    gridSplitNode.widgets[0].value = "";
+    const restore = swapNodes([gridSplitNode]);
+    try {
+        const dt = makeDataTransfer({ filename: "clip.mp4" });
+        dispatchDrag("dragover", { ...NODE_CENTER_CLIENT, dataTransfer: dt });
+        const ev = dispatchDrag("drop", { ...NODE_CENTER_CLIENT, dataTransfer: dt });
+        await flush(30);
+        assert.equal(ev.defaultPrevented, false, "类型不匹配不应接管落放");
+        assert.equal(gridSplitNode.widgets[0].value, "", "视频载荷不应写入 Neo Grid Split");
+        assert.equal(fetchLog.length, 0);
+    } finally { restore(); }
+});

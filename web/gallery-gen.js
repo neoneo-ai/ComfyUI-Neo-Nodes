@@ -31,32 +31,46 @@ export function buildCharacterSheetRequest(refName) {
     };
 }
 
-// 一键九宫格分镜图：原图当参考 + 九宫格指令出 3×3 故事板，供导演编辑器「🧩 宫格分镜图拆分」
-// 切成视频关键帧。尺寸与导演编辑器一键九宫格一致：2048 基准 16:9（每格约 683×384）。
+// 一键宫格分镜图：原图当参考 + 宫格指令出 N 格故事板，供导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧。
+// 每格保持约 16:9（够拆完当视频首帧），按布局调整体宽高；默认 6 宫格（2×3）。
 const STORYBOARD_DIR = "StoryBoard";
-const STORYBOARD_WIDTH = 2048;
-const STORYBOARD_HEIGHT = 1152;
+const STORYBOARD_GRID_OPTIONS = [4, 6, 9];
+const STORYBOARD_DEFAULT_GRIDS = 6;
+// 各宫格数对应的布局与画布尺寸（每格约 16:9）：4=2×2、6=2×3、9=3×3。
+const STORYBOARD_LAYOUTS = {
+    4: { rows: 2, cols: 2, width: 2048, height: 1152 },   // 每格约 1024×576
+    6: { rows: 2, cols: 3, width: 2048, height: 768 },    // 每格约 683×384
+    9: { rows: 3, cols: 3, width: 2048, height: 1152 },   // 每格约 683×384
+};
+const STORYBOARD_GRID_LABELS = { 4: "2×2 四宫格", 6: "2×3 六宫格", 9: "3×3 九宫格" };
 // 小窗里的参考图预览尺寸（px，走 /neo_gallery/thumbnail 缓存，不为预览另存大图）
 const STORYBOARD_PREVIEW_SIZE = 480;
-// 九宫格故事生成任务（skills/tasks/storyboard_story）：简要故事 / 想法 + 参考图 → 1→9 逐格推进的故事
+// 宫格故事生成任务（skills/tasks/storyboard_story）：简要故事 / 想法 + 参考图 → 逐格推进的故事
 const STORYBOARD_STORY_SKILL_ID = "storyboard_story";
 
-/** 故事 → 九宫格指令（语义同预设技能 nine_grid_storyboard 的模板前缀，另加 <image1> 身份锚定）。
+function _normalizeGrids(count) {
+    return STORYBOARD_GRID_OPTIONS.includes(Number(count)) ? Number(count) : STORYBOARD_DEFAULT_GRIDS;
+}
+
+/** 故事 → 宫格指令（语义同预设技能 nine_grid_storyboard 的模板前缀，另加 <image1> 身份锚定）。
  * qwen_image21 分词器会为每张参考图插字面量 <imageN>，所以提示词里可以直接写 <image1>。 */
-export function buildStoryboardGridPrompt(story) {
-    return "一张 3×3 九宫格分镜故事板（nine-panel storyboard sheet），按阅读顺序（从左到右、从上到下，第 1 格到第 9 格）讲述以下故事：\n"
+export function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRIDS) {
+    const n = _normalizeGrids(count);
+    return `一张 ${STORYBOARD_GRID_LABELS[n]}分镜故事板（${n}-panel storyboard sheet），按阅读顺序（从左到右、从上到下，第 1 格到第 ${n} 格）讲述以下故事：\n`
         + story + "\n"
         + "参考图 <image1> 里的人物就是故事主角：所有格子保持与参考图一致的五官脸型、发型发色、服装配饰与体型比例，场景与画风统一。\n"
         + "要求：每格一个镜头，叙事逐格推进；格子之间用均匀细白缝分隔，便于后续自动切分；格子内不出现任何文字、字幕或编号。";
 }
 
-/** 一键九宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 九宫格指令；输出走独立 StoryBoard 目录 */
-export function buildStoryboardGridRequest(refName, story) {
+/** 一键宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 宫格指令；输出走独立 StoryBoard 目录 */
+export function buildStoryboardGridRequest(refName, story, count = STORYBOARD_DEFAULT_GRIDS) {
+    const n = _normalizeGrids(count);
+    const layout = STORYBOARD_LAYOUTS[n];
     return {
         skill_id: QWEN_IMAGE_SKILL_ID,
-        prompt: buildStoryboardGridPrompt(story),
-        width: STORYBOARD_WIDTH,
-        height: STORYBOARD_HEIGHT,
+        prompt: buildStoryboardGridPrompt(story, n),
+        width: layout.width,
+        height: layout.height,
         references: [{ kind: "input", value: refName }],
         loras: [],          // 不带全局 LoRA（避免把 Krea2 风格 LoRA 灌进 Qwen 模型）
         skip_enhance: true, // 固定提示词，不走 LLM 增强
@@ -219,10 +233,19 @@ function openStoryboardDialog(gallery, image, subfolder) {
         rows: 3,
         placeholder: "可选：一句话想法（如：雨夜地铁口偶遇旧友）。留空则直接按参考图编故事"
     });
-    // 表单整块（故事框 + 提示 + 简要故事框）：生成中被下面的进度/结果区整块替换
+    // 宫格数：4 / 6 / 9（默认 6），决定生图布局与 LLM 故事的格数
+    const gridSel = $el("select", { className: "neo-gallery-story-grid" }, [
+        $el("option", { value: "4", textContent: "4 宫格（2×2）" }),
+        $el("option", { value: "6", textContent: "6 宫格（2×3）" }),
+        $el("option", { value: "9", textContent: "9 宫格（3×3）" }),
+    ]);
+    gridSel.value = String(STORYBOARD_DEFAULT_GRIDS);
+    // 表单整块（故事框 + 提示 + 宫格数 + 简要故事框）：生成中被下面的进度/结果区整块替换
     const formBox = $el("div", { className: "neo-gallery-story-form" }, [
         input,
         hint,
+        $el("div", { className: "neo-gallery-story-field-label", textContent: "宫格数" }),
+        gridSel,
         $el("div", { className: "neo-gallery-story-field-label", textContent: "简要故事 / 想法（可留空，留空则按参考图生成）" }),
         ideaInput
     ]);
@@ -308,7 +331,7 @@ function openStoryboardDialog(gallery, image, subfolder) {
         renderRunning("排队中…");
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
-            const snap = await requestGeneration(buildStoryboardGridRequest(refName, input.value.trim()));
+            const snap = await requestGeneration(buildStoryboardGridRequest(refName, input.value.trim(), _normalizeGrids(gridSel.value)));
             cancelId = snap.task_id;
             renderRunning("排队中…");
             const final = await watchTask(snap.task_id, (s) => {
@@ -329,15 +352,15 @@ function openStoryboardDialog(gallery, image, subfolder) {
     const onSubmit = () => {
         if (running) return;
         if (!input.value.trim()) {
-            hint.textContent = "请先填写九宫格故事，或点「✨ LLM 生成九宫格故事」";
+            hint.textContent = "请先填写分镜故事，或点「✨ LLM 生成分镜故事」";
             hint.classList.add("neo-gallery-story-hint-error");
             input.focus();
             return;
         }
         start();
     };
-    // 九宫格故事生成：卡片原图经 copy_to_input 落到 input/，连同一句简要故事 / 想法（可空）交给
-    // storyboard_story 任务流式产出 1→9 逐格推进的故事，覆盖写入上面的故事框，供编辑后再生成。
+    // 宫格故事生成：卡片原图经 copy_to_input 落到 input/，连同一句简要故事 / 想法（可空）+ 所选宫格数交给
+    // storyboard_story 任务流式产出逐格推进的故事（格数随「宫格数」下拉），覆盖写入上面的故事框，供编辑后再生成。
     // refName 缓存避免重复落盘。
     const generateStoryFromIdea = async () => {
         if (llmRunning) return;
@@ -348,8 +371,11 @@ function openStoryboardDialog(gallery, image, subfolder) {
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
             let buf = "";
+            const n = _normalizeGrids(gridSel.value);
+            const idea = ideaInput.value.trim();
+            const storyText = idea ? `${idea}（按 ${n} 格分镜）` : `（按 ${n} 格分镜，按参考图设计故事）`;
             await invokePromptStream(
-                { text: ideaInput.value.trim(), skillId: STORYBOARD_STORY_SKILL_ID, images: [{ kind: "input", value: refName }] },
+                { text: storyText, skillId: STORYBOARD_STORY_SKILL_ID, images: [{ kind: "input", value: refName }] },
                 {
                     onChunk: (chunk) => {
                         if (!chunk || chunk.kind === "thinking") return;
@@ -358,24 +384,24 @@ function openStoryboardDialog(gallery, image, subfolder) {
                     },
                     onDone: () => {
                         input.value = buf;
-                        hint.textContent = "已生成九宫格故事，可继续编辑后再点「生成」。";
+                        hint.textContent = "已生成分镜故事，可继续编辑后再点「生成」。";
                     },
                     onError: (err) => {
                         console.error('[Gallery] storyboard story generation failed:', err);
-                        showToast(gallery.app, 'error', 'LLM 生成九宫格故事失败', String(err));
+                        showToast(gallery.app, 'error', 'LLM 生成分镜故事失败', String(err));
                     }
                 }
             );
         } catch (e) {
             console.error('[Gallery] storyboard story generation failed:', e);
-            showToast(gallery.app, 'error', 'LLM 生成九宫格故事失败', String(e?.message || e));
+            showToast(gallery.app, 'error', 'LLM 生成分镜故事失败', String(e?.message || e));
         } finally {
             llmRunning = false;
             llmBtn.disabled = false;
-            llmBtn.textContent = "✨ LLM 生成九宫格故事";
+            llmBtn.textContent = "✨ LLM 生成分镜故事";
         }
     };
-    llmBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ LLM 生成九宫格故事", onclick: generateStoryFromIdea });
+    llmBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ LLM 生成分镜故事", onclick: generateStoryFromIdea });
     const onKey = (e) => {
         if (e.key === "Escape") close();
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onSubmit();
