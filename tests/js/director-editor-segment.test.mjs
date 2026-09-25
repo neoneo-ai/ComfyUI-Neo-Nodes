@@ -3147,7 +3147,11 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     const panelNames = ["p0.png", "p1.png", "p2.png", "p3.png", "p4.png", "p5.png"];
     mockRoute("/rs_recipes/grid_split", (body) => {
         splitBody = body;
-        return jsonResponse({ success: true, rows: 2, cols: 3, panels: panelNames.map((n) => ({ filename: n, width: 160, height: 120 })) });
+        return jsonResponse({
+            success: true, rows: 2, cols: 3,
+            panels: panelNames.map((n) => ({ filename: n, width: 160, height: 120 })),
+            prompts: ["原宫格提示词一"],
+        });
     });
     const descBodies = [];
     mockRoute("/rs_recipes/director_describe_panel", (body) => {
@@ -3209,7 +3213,9 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     const ioRow2 = card.querySelector(".neo-director-grid-io");
     assert.ok(ioRow2.contains(card.querySelector(".neo-director-grid-mode")), "切分方式在该行内（源图之后）");
     assert.ok(ioRow2.contains(card.querySelector(".neo-director-grid-split")), "拆分按钮在该行内（结果之前）");
-    assert.equal(card.querySelectorAll(".neo-director-grid-panels a").length, 6, "格子缩略条回显");
+    // 拆分结果缩略条已移除（各段分镜图在「各段对照」逐格显示）；改为在「原宫格提示词」处展示元信息里的提示词
+    assert.equal(card.querySelector(".neo-director-grid-panels"), null, "不再重复列格子缩略条");
+    assert.equal(card.querySelector(".neo-director-grid-prompts").value, "原宫格提示词一", "原宫格图元信息里的提示词就地展示");
 
     // 逐格 LLM 描述已并入「生成所有分段的提示词」：宫格空原文段按该段分镜图逐格描述（每格单独一次请求）
     document.querySelector(".neo-director-optimize").click();
@@ -3217,6 +3223,16 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     assert.equal(descBodies.length, 6, "逐格循环：每格单独发一次单格描述请求");
     descBodies.forEach((b, i) => assert.equal(b.panel, panelNames[i], `第 ${i + 1} 次请求对应本格`));
     rows.forEach((row, i) => assert.equal(row.querySelector(".neo-director-prompt").value, `描述 ${panelNames[i]}`, `第 ${i + 1} 段提示词回填`));
+    // 宫格上下文：每格带全片位置（第 i/6 段、2×3 行列）+ 原宫格提示词作故事上下文；承接上一段本轮结果
+    descBodies.forEach((b, i) => {
+        assert.equal(b.panel_index, i + 1, `第 ${i + 1} 次请求 panel_index`);
+        assert.equal(b.panel_total, 6, "panel_total = 格子数");
+        assert.equal(b.rows, 2, "宫格行数随请求下发");
+        assert.equal(b.cols, 3, "宫格列数随请求下发");
+        assert.deepEqual(b.grid_prompts, ["原宫格提示词一"], "原宫格提示词作全片故事上下文");
+    });
+    assert.equal(descBodies[0].prev_prompt, "", "第 1 段无上一段承接");
+    assert.equal(descBodies[1].prev_prompt, "描述 p0.png", "第 2 段承接第 1 段本轮结果");
 
     // 宫格分镜图拆分：各段无「优化前」原文，对照表降为两栏（分镜图 / 提示词），不显示空的「优化前」列
     const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
@@ -3248,33 +3264,35 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
     assert.ok(drop.querySelector("input[type=file]"), "输入区内含隐藏 file input（点击本地上传）");
     assert.equal(card.querySelector(".neo-director-local-add"), null, "宫格卡片不再单列「本地」按钮");
 
-    // 源图与拆分结果同行，label 区分（单张分镜图不再独占整行）
+    // 源图与「原宫格提示词」同行，label 区分（单张分镜图不再独占整行）
     const ioRow = card.querySelector(".neo-director-grid-io");
-    assert.ok(ioRow, "源图与结果共用一行容器");
+    assert.ok(ioRow, "源图与提示词列共用一行容器");
     assert.ok(ioRow.contains(drop), "宫格图片输入区在该行内");
-    assert.ok(ioRow.contains(card.querySelector(".neo-director-grid-panels")), "拆分结果缩略条也在该行内");
+    const promptBox = card.querySelector(".neo-director-grid-prompts");
+    assert.ok(ioRow.contains(promptBox), "原宫格提示词文本框也在该行内");
+    assert.equal(promptBox.readOnly, true, "提示词只读展示（不改动各段）");
+    assert.equal(promptBox.value, "", "未拆分时不展示提示词");
     const ioLabels = Array.from(ioRow.querySelectorAll(".neo-director-field-label")).map((el) => el.textContent);
     assert.ok(ioLabels.includes("分镜图"), "源图列有「分镜图」label");
-    assert.ok(ioLabels.includes("拆分结果"), "结果列有「拆分结果」label");
+    assert.ok(ioLabels.includes("原宫格提示词"), "提示词列有「原宫格提示词」label");
+    assert.equal(card.querySelector(".neo-director-grid-panels"), null, "格子缩略条已移除");
+    assert.equal(card.querySelector(".neo-director-grid-pager"), null, "‹ / › 翻页按钮已随缩略条移除");
+    assert.ok(card.querySelector(".neo-director-grid-pt-head .neo-director-grid-pt-copy"), "提示词列 label 行有复制按钮");
 
-    // 「拆分结果」label 行右侧 ‹ / › 翻页：格多时缩略条横向溢出靠它翻（jsdom 无布局，clientWidth=0 → 每页 1px）
-    const pager = card.querySelector(".neo-director-grid-pager");
-    assert.ok(pager, "结果列 label 行有翻页按钮组");
-    const pageBtns = Array.from(pager.querySelectorAll(".neo-director-grid-page"));
-    assert.equal(pageBtns.length, 2, "‹ / › 两个翻页按钮");
-    const strip = card.querySelector(".neo-director-grid-panels");
-    pageBtns[1].click();
-    assert.ok(strip.scrollLeft > 0, "点 › 缩略条右移");
-    pageBtns[0].click();
-    assert.equal(strip.scrollLeft, 0, "点 ‹ 回到最左");
+    // 换图（素材库拖入 / 本地拖入）后，上一张图提取到的提示词作废清空
+    const copyBtn = card.querySelector(".neo-director-grid-pt-copy");
+    promptBox.value = "上一张图的提示词";
+    copyBtn.click();
+    assert.ok(["✓ 已复制", "✗ 复制失败"].includes(copyBtn.textContent), "复制按钮给出即时反馈");
 
-    // 素材库（Neo Gallery）拖入 → copy_to_input 落盘后回显
+    // 素材库（Neo Gallery）拖入 → copy_to_input 落盘后回显（换图即清掉上一张图提取到的提示词）
     const dt = { files: [], getData: (t) => (t === "application/x-neo-gallery" ? JSON.stringify({ filename: "g.png", subfolder: "" }) : "") };
     const ev = new window.Event("drop", { bubbles: true, cancelable: true });
     Object.defineProperty(ev, "dataTransfer", { value: dt, configurable: true });
     drop.dispatchEvent(ev);
     await sleep(40);
     assert.ok(drop.querySelector("img")?.src.includes("copied_g.png"), "素材库拖入回显");
+    assert.equal(promptBox.value, "", "换图后提示词清空");
 
     // OS 本地文件拖入 → upload 后回显（覆盖原图）
     dropFiles(drop, [makeFile("local_drop.png", "image/png")]);

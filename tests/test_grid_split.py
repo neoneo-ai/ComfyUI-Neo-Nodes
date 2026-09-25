@@ -3,9 +3,11 @@
 
 覆盖：1×N / M×N 均匀间隙检测、无间隙等分回退、纯色图整幅一格、
 手动行列覆盖（含分隔条内缩）、行优先裁切顺序、无意义细条剔除
-（整幅标题栏 / 页脚行 / 边缘窄条 / 内部误检分隔）、无 numpy 回退路径。"""
+（整幅标题栏 / 页脚行 / 边缘窄条 / 内部误检分隔）、无 numpy 回退路径、
+原宫格图元信息里的提示词提取（正向键 / 负向剔除 / 去重 / 无元信息）。"""
 
 import importlib.util
+import json
 import os
 import unittest
 
@@ -169,6 +171,52 @@ class DetectGridTests(unittest.TestCase):
         finally:
             _gs._np = saved
         self.assertEqual(got, ref)
+
+
+class MetadataPromptsTests(unittest.TestCase):
+    """原宫格图元信息里的提示词提取（宫格图「包含的提示词」）。"""
+
+    def test_collects_positive_text_keys(self):
+        # 文本输入的键随工作流不同：TextEncodeQwenImage21 用 prompt、NeoPromptEncoder 用 text
+        info = {"prompt": json.dumps({
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "Qwen\\qwen_image_2.1_int8.safetensors"}},
+            "4": {"class_type": "TextEncodeQwenImage21", "inputs": {"prompt": "一张 3×3 九宫格分镜故事板"}},
+            "7": {"class_type": "NeoPromptEncoder", "inputs": {"text": "美女跳起中国舞"}},
+            "9": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_8b.safetensors"}},
+        })}
+        self.assertEqual(_gs.metadata_prompts(info), ["一张 3×3 九宫格分镜故事板", "美女跳起中国舞"])
+
+    def test_negative_node_excluded(self):
+        # 正负两个文本节点键名相同（都叫 text）→ 按 negative 连线剔掉负向节点
+        info = {"prompt": json.dumps({
+            "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "模糊、低质量"}},
+            "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "海边白色连衣裙"}},
+            "5": {"class_type": "KSampler", "inputs": {"positive": ["4", 0], "negative": ["3", 0], "steps": 20}},
+        })}
+        self.assertEqual(_gs.metadata_prompts(info), ["海边白色连衣裙"])
+
+    def test_shared_node_keeps_positive(self):
+        # Qwen 的 TextEncodeQwenImage21：同一节点出正负两路（negative 也连它）→ 正向提示词不能被误剔
+        info = {"prompt": json.dumps({
+            "4": {"class_type": "TextEncodeQwenImage21", "inputs": {"prompt": "九宫格分镜", "negative_prompt": "低质量"}},
+            "6": {"class_type": "KSampler", "inputs": {"positive": ["4", 0], "negative": ["4", 1]}},
+        })}
+        self.assertEqual(_gs.metadata_prompts(info), ["九宫格分镜"])
+
+    def test_dedupes_and_strips(self):
+        info = {"prompt": json.dumps({
+            "1": {"class_type": "A", "inputs": {"prompt": "  同一句话  "}},
+            "2": {"class_type": "B", "inputs": {"text": "同一句话"}},
+            "3": {"class_type": "C", "inputs": {"prompt": "   "}},
+        })}
+        self.assertEqual(_gs.metadata_prompts(info), ["同一句话"])
+
+    def test_missing_or_broken_metadata(self):
+        self.assertEqual(_gs.metadata_prompts({}), [])
+        self.assertEqual(_gs.metadata_prompts(None), [])
+        self.assertEqual(_gs.metadata_prompts({"prompt": "not-json"}), [])
+        self.assertEqual(_gs.metadata_prompts({"prompt": json.dumps(["list-not-dict"])}), [])
+        self.assertEqual(_gs.metadata_prompts({"workflow": json.dumps({"nodes": []})}), [])
 
 
 if __name__ == "__main__":

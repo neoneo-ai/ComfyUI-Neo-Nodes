@@ -1037,7 +1037,7 @@
     padding: 8px;
 }
 
-/* 「🧩 宫格分镜图拆分」源图与拆分结果同行：单张分镜图不再独占整行，label 区分两侧 */
+/* 「🧩 宫格分镜图拆分」源图与「原宫格提示词」同行：单张分镜图不再独占整行，label 区分两侧 */
 .neo-director-grid-io {
     display: flex;
     align-items: flex-start;
@@ -1166,25 +1166,17 @@
     color: #fff;
 }
 
-/* 「拆分结果」label 行：右侧 ‹ / › 翻页（overlay 滚动条模式下原生横条不常驻，靠按钮兜底横向翻） */
-.neo-director-grid-res-head {
+/* 「原宫格提示词」列：label 行右侧 ⧉ 复制；下方只读文本框展示元信息里提取到的提示词 */
+.neo-director-grid-pt-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
 }
 
-.neo-director-grid-pager {
-    display: flex;
-    gap: 4px;
-}
-
-.neo-director-grid-page {
-    width: 22px;
-    height: 20px;
-    line-height: 18px;
-    padding: 0;
-    font-size: 13px;
+.neo-director-grid-pt-copy {
+    padding: 2px 8px;
+    font-size: 11px;
     color: #ddd;
     background: #1e1e1e;
     border: 1px solid #3a3a3a;
@@ -1192,34 +1184,23 @@
     cursor: pointer;
 }
 
-.neo-director-grid-page:hover {
+.neo-director-grid-pt-copy:hover {
     border-color: #5a5a5a;
     color: #fff;
 }
 
-/* 拆分后的格子缩略条（行优先顺序，点击 Lightbox 看大图）；格多时横向滚动 */
-.neo-director-grid-panels {
-    display: flex;
-    flex-wrap: nowrap;
-    gap: 6px;
-    overflow-x: auto;
-}
-
-.neo-director-grid-panels a {
-    flex: 0 0 auto;
-    width: 132px;
-    height: 90px;
-    border: 1px solid #3a3a3a;
-    border-radius: 5px;
-    overflow: hidden;
-    background: #1c1c1c;   /* contain 留白底色，避免透出底层 */
-}
-
-.neo-director-grid-panels img {
+/* 只读文本框：高度与左侧宫格图输入区对齐，提示词长时框内滚动 */
+.neo-director-grid-prompts {
     width: 100%;
-    height: 100%;
-    object-fit: contain;   /* 整图按比例完整可见（不裁切），适配各格真实宽高比 */
-    cursor: zoom-in;
+    height: 90px;
+    resize: none;
+    background: #1c1c1c;
+    color: #cfd6de;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.4;
 }
 
 .neo-director-sb-mode,

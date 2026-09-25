@@ -1,9 +1,12 @@
 # ComfyUI-Neo-Nodes - 宫格图自动切分
 # 导演台「宫格图拆分」的纯像素核心：对带分隔条 / 留白的分镜宫格图做均匀间隙检测，
 # 剔除无意义细条（整幅宽的标题栏 / 底部文字行 / 边缘窄条），按行优先顺序裁出各格。
+# 另含元信息提示词解析（metadata_prompts）：宫格图内嵌的 ComfyUI 元信息里「包含的提示词」。
 # 不依赖 ComfyUI（PIL，numpy 可用时加速 profile 计算），便于单测。
 
 from __future__ import annotations
+
+import json
 
 try:
     import numpy as _np
@@ -13,6 +16,10 @@ except ImportError:
 GAP_STD = 8.0        # 间隙判定：该行/列像素标准差低于此值视为均匀（白边 / 黑边 / 纯色分隔条）
 GAP_MIN_PX = 2       # 间隙最小宽度（px）
 MAX_GRID_CELLS = 12  # 单轴格数上限（与 NeoRefGrid 槽位一致，防止噪点误检）
+# 元信息里算「提示词」的文本输入键：各工作流命名不一（TextEncodeQwenImage21 用 prompt、
+# NeoPromptEncoder 用 text、部分节点用 positive / caption），只认像提示词的键，
+# unet_name / lora_name 之类的文件名与参数不取。
+PROMPT_TEXT_KEYS = ("text", "text_input", "prompt", "positive", "positive_prompt", "prompt_text", "caption", "text_g", "text_l")
 DEGEN_SLIVER_FRACTION = 0.03   # 格子窄于轴长 3% → 无意义细条
 DEGEN_NEIGHBOR_RATIO = 0.30    # 格子 ≤ 较大邻格的 30% → 误检分隔（标题栏 / 页脚 / 窄边）
 
@@ -145,4 +152,52 @@ def split_image(img, grid):
         for c0, c1 in grid["col_bounds"]:
             cells.append(img.crop((c0, r0, c1, r1)))
     return cells
+
+
+def _negative_only_node_ids(prompt):
+    """只在 negative 输入里被连到的节点 id：这些节点的文本是负向提示词，不算宫格图包含的提示词。
+
+    同一节点既连 positive 又连 negative 时不算（Qwen 的 TextEncodeQwenImage21 一个节点出正负两路，
+    节点内另有 negative_prompt 键），否则会把该节点的正向提示词一起丢掉。
+    """
+    positive, negative = set(), set()
+    for node in prompt.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs") or {}
+        for key, bucket in (("positive", positive), ("negative", negative)):
+            link = inputs.get(key)
+            if isinstance(link, list) and link:
+                bucket.add(str(link[0]))
+    return negative - positive
+
+
+def metadata_prompts(info):
+    """宫格图元信息（PIL 读到的 PNG 文本块）里该图包含的正向提示词，按出现顺序去重。
+
+    ComfyUI 保存 PNG 时把 API 格式 prompt 写进元信息，宫格图「包含的提示词」就是它。
+    标准工作流里正 / 负两个文本节点的输入键相同（都叫 text），故再按 negative 连线剔掉负向节点。
+    无元信息 / JSON 解析失败 / 空文本一律返回 []。
+    """
+    raw = (info or {}).get("prompt")
+    if not isinstance(raw, str):
+        return []
+    try:
+        prompt = json.loads(raw)
+    except ValueError:
+        return []
+    if not isinstance(prompt, dict):
+        return []
+    negative_ids = _negative_only_node_ids(prompt)
+    texts = []
+    for node_id, node in prompt.items():
+        if not isinstance(node, dict) or str(node_id) in negative_ids:
+            continue
+        for key, val in (node.get("inputs") or {}).items():
+            if str(key).lower() not in PROMPT_TEXT_KEYS or not isinstance(val, str):
+                continue
+            val = val.strip()
+            if val and val not in texts:
+                texts.append(val)
+    return texts
 

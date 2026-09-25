@@ -1810,7 +1810,40 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     sbGenBtn.onclick = () => generateAllStoryboards();
 
     // ---- 🧩 宫格分镜图拆分：一张宫格分镜图自动切分（均匀间隙检测 / 手动行列）→ 替换分段，各格作该段首帧与分镜图 ----
-    let gridPanels = [];   // 最近一次拆分的格子文件名（行优先顺序）
+    // 「原宫格提示词」：从原宫格图内嵌的 ComfyUI 元信息（PNG 里的 API 格式 prompt）自动提取到的提示词，
+    // 只读展示 + 复制。各格缩略图不再重复列（各段分镜图已在下方「各段对照」逐格显示）。
+    // 先声明：setGridSrc 换图 / 清除时要把上一张图提取到的提示词作废并一起清掉。
+    let gridPromptList = [];   // 原宫格提示词数组（setGridPrompts 时更新）：逐格 LLM 描述时作全片故事上下文传给后端
+    let gridPanelShape = null; // {rows, cols}：拆分成功后记录，供逐格描述标注本格在九宫格中的位置
+    const gridPromptsTa = $el('textarea', {
+        className: 'neo-director-grid-prompts', readOnly: true,
+        placeholder: '拆分后显示原宫格图元信息里的提示词',
+    });
+    const gridPromptCopy = $el('button', { className: 'neo-director-grid-pt-copy', type: 'button', title: '复制提示词', textContent: '⧉ 复制' });
+    gridPromptCopy.onclick = () => {
+        const text = gridPromptsTa.value;
+        if (!text) return;
+        const feedback = (ok) => {
+            gridPromptCopy.textContent = ok ? '✓ 已复制' : '✗ 复制失败';
+            setTimeout(() => { gridPromptCopy.textContent = '⧉ 复制'; }, 1000);
+        };
+        // 优先异步 Clipboard API；不可用（非安全上下文）回落 execCommand
+        if (typeof navigator.clipboard?.writeText === 'function') {
+            navigator.clipboard.writeText(text).then(() => feedback(true), () => feedback(false));
+            return;
+        }
+        gridPromptsTa.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { /* 环境不支持按失败处理 */ }
+        feedback(ok);
+    };
+    function setGridPrompts(prompts) {
+        const list = (prompts || []).map((t) => String(t || '').trim()).filter(Boolean);
+        gridPromptList = list;   // 保留数组：逐格描述时作为全片故事上下文（第 i/N 段）传给后端
+        gridPromptsTa.value = list.join('\n\n');
+        gridPromptsTa.placeholder = gridSrcFile ? '原宫格图元信息里没有提示词' : '拆分后显示原宫格图元信息里的提示词';
+    }
+
     // 图片输入区：更大的拖放区——点击=本地上传，支持素材库（Neo Gallery）/ 本地文件拖入
     const gridSrcDrop = $el('div', { className: 'neo-director-grid-src' });
     const gridSrcBody = $el('div', { className: 'neo-director-grid-src-body' });
@@ -1818,6 +1851,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let gridSrcFile = '';
     function setGridSrc(fname) {
         gridSrcFile = fname || '';
+        setGridPrompts([]);   // 换图 / 清除：上一张宫格图提取到的提示词作废
+        gridPanelShape = null;   // 行列随源图失效（需重新拆分才恢复）
         gridSrcBody.innerHTML = '';
         if (gridSrcFile) {
             const img = $el('img', { src: thumbSrc(gridSrcFile), alt: gridSrcFile, title: gridSrcFile });
@@ -1863,30 +1898,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     gridModeSel.addEventListener('change', () => { manualCtrls.style.display = (gridModeSel.value === 'manual') ? 'flex' : 'none'; });
     const gridSplitBtn = $el('button', { className: 'neo-director-grid-split', type: 'button', textContent: '✂️ 拆分到各段' });
     const gridStatus = $el('span', { className: 'neo-director-sb-status' });
-    const gridPanelsWrap = $el('div', { className: 'neo-director-grid-panels' });
-    // 格子多时缩略条横向溢出（overlay 滚动条模式下原生横条不常驻）：label 行右侧 ‹ / › 翻页按钮兜底
-    const gridPageBtns = [
-        $el('button', { className: 'neo-director-grid-page', type: 'button', title: '向左翻一页', textContent: '‹' }),
-        $el('button', { className: 'neo-director-grid-page', type: 'button', title: '向右翻一页', textContent: '›' }),
-    ];
-    const gridPageStep = () => Math.max(1, Math.round(gridPanelsWrap.clientWidth * 0.8));   // 每页约 4 格（留半格重叠便于定位）
-    gridPageBtns[0].onclick = () => { gridPanelsWrap.scrollLeft = Math.max(0, gridPanelsWrap.scrollLeft - gridPageStep()); };
-    gridPageBtns[1].onclick = () => { gridPanelsWrap.scrollLeft = gridPanelsWrap.scrollLeft + gridPageStep(); };
-    function renderGridPanels() {
-        gridPanelsWrap.innerHTML = '';
-        gridPanels.forEach((fname, i) => {
-            const items = gridPanels.map((f, j) => ({ kind: 'image', url: thumbSrc(f), title: `第 ${j + 1} 格 · ${f}` }));
-            const a = $el('a', { href: thumbSrc(fname), target: '_blank', rel: 'noopener', title: fname });
-            a.addEventListener('click', (e) => { e.preventDefault(); Lightbox.open({ items, index: i }); });
-            a.appendChild($el('img', { src: thumbSrc(fname), alt: fname, loading: 'lazy' }));
-            gridPanelsWrap.appendChild(a);
-        });
-    }
 
     function assignGridPanels(panels) {
         const fnames = panels.map(p => p.filename);
-        gridPanels = fnames.slice();
-        renderGridPanels();
         const defaultSkill = currentSkillId() || (skills.length ? skills[0].id : '');
         segsWrap.innerHTML = '';
         for (const fname of fnames) {
@@ -1924,6 +1938,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const data = await res.json();
             if (!data.success) { gridStatus.textContent = ''; app.extensionManager.toast.add({ severity: 'error', summary: '宫格拆分', detail: data.error || '切分失败', life: 5000 }); return; }
             assignGridPanels(data.panels);
+            setGridPrompts(data.prompts);   // 原宫格图元信息里的提示词：就地展示（不改动各段提示词）
+            gridPanelShape = { rows: Number(data.rows) || 0, cols: Number(data.cols) || 0 };   // 记录行列，供逐格描述标注本格位置
             gridStatus.textContent = `${data.rows}×${data.cols} → ${data.panels.length}格`;
             app.extensionManager.toast.add({ severity: 'success', summary: '宫格拆分', detail: `${data.rows}×${data.cols} → ${data.panels.length} 段（各格已作首帧）`, life: 4000 });
             if (data.panels.length > 9) app.extensionManager.toast.add({ severity: 'warning', summary: '宫格拆分', detail: `格子数 ${data.panels.length} 超过 H3 参考上限 9，保存时多余段不会被执行`, life: 6000 });
@@ -1936,10 +1952,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     const gridCard = $el('div', { className: 'neo-director-setup-grid' }, [
         $el('div', { className: 'neo-director-refs-head' }, [
-            $el('span', { className: 'neo-director-field-label', title: '上传一张分镜宫格图（带分隔条 / 留白），自动检测行列并切分；各格按阅读顺序替换现有分段，并作为该段首帧与分镜图。点击输入区本地上传，或从左侧素材库 / 本地文件拖入', textContent: '🧩 宫格分镜图拆分（一张宫格分镜图 → 逐段首帧）' }),
+            $el('span', { className: 'neo-director-field-label', title: '上传一张分镜宫格图（带分隔条 / 留白），自动检测行列并切分；各格按阅读顺序替换现有分段，并作为该段首帧与分镜图，拆分后右侧就地显示该图元信息里的提示词。点击输入区本地上传，或从左侧素材库 / 本地文件拖入', textContent: '🧩 宫格分镜图拆分（一张宫格分镜图 → 逐段首帧）' }),
             buildAssetLibButton(),   // 打开左侧素材面板，拖入下方输入区
         ]),
-        // 源图 → 切分方式 / 拆分按钮 → 拆分结果，同一行：单张分镜图不再独占整行
+        // 源图 → 切分方式 / 拆分按钮 → 原宫格提示词，同一行：单张分镜图不再独占整行
         $el('div', { className: 'neo-director-grid-io' }, [
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-src' }, [
                 $el('span', { className: 'neo-director-field-label', textContent: '分镜图' }),
@@ -1951,11 +1967,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 $el('div', { className: 'neo-director-row neo-director-shared' }, [gridSplitBtn, gridStatus]),
             ]),
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-res' }, [
-                $el('div', { className: 'neo-director-grid-res-head' }, [
-                    $el('span', { className: 'neo-director-field-label', textContent: '拆分结果' }),
-                    $el('span', { className: 'neo-director-grid-pager' }, gridPageBtns),   // ‹ / › 横向翻页（格多时缩略条溢出）
+                $el('div', { className: 'neo-director-grid-pt-head' }, [
+                    $el('span', {
+                        className: 'neo-director-field-label',
+                        title: '拆分时从原宫格图内嵌的 ComfyUI 元信息（PNG 里的 prompt）自动提取的提示词，只读 + 可复制；各段分镜图见下方「各段对照」',
+                        textContent: '原宫格提示词',
+                    }),
+                    gridPromptCopy,
                 ]),
-                gridPanelsWrap,   // 拆分后的格子缩略条（行优先顺序，可横向滚动）
+                gridPromptsTa,   // 只读展示提取到的提示词（各格缩略图已在「各段对照」逐段显示，此处不再重复）
             ]),
         ]),
     ]);
@@ -2222,6 +2242,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 duration_sec: Number(row.querySelector('.neo-director-dur').value) || null,
                 panel: isGrid ? segStoryboardFname(row) : '',   // 宫格方式：空原文时按该段分镜图（首帧）描述
             };
+            if (isGrid) {   // 宫格拆分：带全片位置 + 原宫格提示词作上下文，让 LLM 判断本格是第几段、承接哪一段
+                s.panel_index = i + 1;
+                s.panel_total = rows.length;
+                if (gridPanelShape && gridPanelShape.rows && gridPanelShape.cols) {
+                    s.rows = gridPanelShape.rows;
+                    s.cols = gridPanelShape.cols;
+                }
+                if (gridPromptList.length) s.grid_prompts = gridPromptList;
+            }
             if (modeSel.value === 'r2v') {   // 参考素材仅全参考模式携带：取该段自己的参考素材区，其余模式不带
                 const refs = {};
                 (segRefReaders.get(row) || []).forEach((read, gi) => { const picked = read() || []; if (picked.length) refs[SEG_REF_GROUPS[gi].key] = picked; });
@@ -2248,7 +2277,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 } else if (segs[i].panel) {   // 宫格空原文 → 按该段分镜图（首帧）逐格描述
                     res = await fetch('/rs_recipes/director_describe_panel', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ panel: segs[i].panel, duration_sec: segs[i].duration_sec }),
+                        body: JSON.stringify({
+                            panel: segs[i].panel, duration_sec: segs[i].duration_sec,
+                            panel_index: segs[i].panel_index, panel_total: segs[i].panel_total,
+                            rows: segs[i].rows, cols: segs[i].cols, grid_prompts: segs[i].grid_prompts,
+                            prev_prompt: prompts[i - 1] || '',   // 上一段本轮已生成提示词：承接上下文（第 1 段无）
+                        }),
                     });
                 } else {
                     throw new Error('该段无提示词也无分镜图');

@@ -332,6 +332,28 @@ class GridSplitEndpointTests(unittest.TestCase):
             saved = Image.open(os.path.join(_INPUT_DIR, p["filename"]))
             self.assertEqual(saved.size, (160, 120))   # 格子不带分隔条 / 图边
             self.assertIn("/view?filename=", p["preview_url"])
+        self.assertEqual(data["prompts"], [], "原图没有元信息 → 没有提示词")
+
+    def test_split_returns_metadata_prompts(self):
+        """原宫格图元信息里的正向提示词随拆分结果返回（前端在「原宫格提示词」处只读展示）。"""
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        src = os.path.join(_INPUT_DIR, "grid_meta.png")
+        self._make_grid(src)
+        info = PngInfo()
+        info.add_text("prompt", json.dumps({
+            "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "模糊、低质量"}},
+            "4": {"class_type": "TextEncodeQwenImage21", "inputs": {"prompt": "九宫格分镜：美女跳起中国舞"}},
+            "5": {"class_type": "KSampler", "inputs": {"negative": ["3", 0], "steps": 20}},
+        }))
+        with Image.open(src) as im:
+            loaded = im.copy()   # 先读进内存再带元信息覆写（Windows 下同文件读写句柄会冲突）
+        loaded.save(src, pnginfo=info)
+
+        resp = _run_async(recipes.rs_recipes_grid_split(_FakeRequest({"filename": "grid_meta.png"})))
+        data = json.loads(resp.body)
+        self.assertTrue(data["success"], data)
+        self.assertEqual(data["prompts"], ["九宫格分镜：美女跳起中国舞"])
 
     def test_split_missing_file(self):
         resp = _run_async(recipes.rs_recipes_grid_split(_FakeRequest({"filename": "no_such.png"})))
@@ -383,6 +405,71 @@ class DescribePanelEndpointTests(unittest.TestCase):
     def test_missing_panel_rejected(self):
         resp = _run_async(recipes.rs_recipes_director_describe_panel(_FakeRequest({"panel": ""})))
         self.assertEqual(resp.status, 400)
+
+    def test_context_fields_appended_to_text(self):
+        """宫格上下文：本格序号/行列、原宫格提示词、上一段结果都拼进 text，图仍只一张。"""
+        original = _llm.run_llm_task
+        calls = []
+
+        def _one(task_name, text, images=None, **kw):
+            calls.append((task_name, text, images))
+            return {"status": "success", "prompt": "H3 i2v 提示词"}
+
+        _llm.run_llm_task = _one
+        try:
+            with open(os.path.join(_INPUT_DIR, "pb.png"), "wb") as f:
+                f.write(b"panel-bytes-pb")
+            req = _FakeRequest({
+                "panel": "pb.png", "duration_sec": 4,
+                "panel_index": 4, "panel_total": 9, "rows": 3, "cols": 3,
+                "grid_prompts": ["九宫格故事指令一", "   ", "第二句"],
+                "prev_prompt": "上一段提示词XYZ",
+            })
+            resp = _run_async(recipes.rs_recipes_director_describe_panel(req))
+            data = json.loads(resp.body)
+            self.assertTrue(data["success"], data)
+            task, text, images = calls[0]
+            self.assertEqual(len(images), 1)   # 上下文全走文本，图仍只一张分镜图
+            self.assertIn("第 4 段（共 9 段）", text)
+            self.assertIn("第 2 行第 1 列", text)   # idx=4 → 第 2 行第 1 列（行优先）
+            self.assertIn("九宫格故事指令一", text)
+            self.assertIn("第二句", text)
+            self.assertNotIn("故事上下文：\n\n", text)   # 空白项被过滤，不留空行
+            self.assertIn("上一段（第 3 段）已生成的提示词", text)
+            self.assertIn("上一段提示词XYZ", text)
+        finally:
+            _llm.run_llm_task = original
+
+    def test_context_missing_or_invalid_degrades(self):
+        """上下文字段缺失/非法时静默降级：仍 200，text 只含图+时长，不报错。"""
+        original = _llm.run_llm_task
+        calls = []
+
+        def _one(task_name, text, images=None, **kw):
+            calls.append((task_name, text, images))
+            return {"status": "success", "prompt": "H3 i2v 提示词"}
+
+        _llm.run_llm_task = _one
+        try:
+            with open(os.path.join(_INPUT_DIR, "pc.png"), "wb") as f:
+                f.write(b"panel-bytes-pc")
+            req = _FakeRequest({
+                "panel": "pc.png", "duration_sec": 6,
+                "panel_index": 10, "panel_total": 9,   # 越界 → 不加位置块
+                "rows": "abc", "cols": None,           # 非数字 → 不算行列
+                "grid_prompts": "不是数组",             # 非数组 → 不加故事上下文
+                "prev_prompt": "   ",                   # 空串 → 不加承接
+            })
+            resp = _run_async(recipes.rs_recipes_director_describe_panel(req))
+            data = json.loads(resp.body)
+            self.assertTrue(data["success"], data)
+            text = calls[0][1]
+            self.assertIn("约 6 秒", text)
+            self.assertNotIn("第 10 段", text)
+            self.assertNotIn("故事上下文", text)
+            self.assertNotIn("上一段", text)
+        finally:
+            _llm.run_llm_task = original
 
 
 if __name__ == "__main__":

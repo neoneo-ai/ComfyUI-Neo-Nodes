@@ -1410,7 +1410,8 @@ async def rs_recipes_director_optimize_prompts(request):
 
 @PromptServer.instance.routes.post("/rs_recipes/grid_split")
 async def rs_recipes_grid_split(request):
-    """宫格图自动切分：均匀间隙检测（或手动行列）→ 各格落 input/，返回文件名与预览地址。"""
+    """宫格图自动切分：均匀间隙检测（或手动行列）→ 各格落 input/，返回文件名与预览地址；
+    另从原图元信息（ComfyUI 写进 PNG 的 API 格式 prompt）里提取该宫格图包含的提示词（`prompts`）。"""
     try:
         data = await request.json()
     except Exception:
@@ -1430,7 +1431,7 @@ async def rs_recipes_grid_split(request):
 
     import folder_paths as _fp
     from PIL import Image
-    from .grid_split import MAX_GRID_CELLS, detect_grid, split_image
+    from .grid_split import MAX_GRID_CELLS, detect_grid, metadata_prompts, split_image
     try:
         src = Path(_fp.get_annotated_filepath(filename, _fp.get_input_directory()))
     except ValueError:
@@ -1438,7 +1439,9 @@ async def rs_recipes_grid_split(request):
     if not src.is_file():
         return web.json_response({"success": False, "error": f"图片不存在：{filename}"}, status=404)
     try:
-        img = Image.open(src).convert("RGB")
+        img = Image.open(src)
+        info = dict(img.info)   # 原图元信息（PNG 文本块）：切出来的格子不带元信息，提示词只能从原图取
+        img = img.convert("RGB")
         grid = detect_grid(img, rows=_si(rows), cols=_si(cols))
         cells = split_image(img, grid)
     except Exception as e:
@@ -1456,7 +1459,8 @@ async def rs_recipes_grid_split(request):
             "height": cell.height,
             "preview_url": f"/view?filename={name}&subfolder=&type=input",
         })
-    return web.json_response({"success": True, "rows": grid["rows"], "cols": grid["cols"], "panels": panels})
+    return web.json_response({"success": True, "rows": grid["rows"], "cols": grid["cols"],
+                              "panels": panels, "prompts": metadata_prompts(info)})
 
 
 @PromptServer.instance.routes.post("/rs_recipes/image_sizes")
@@ -1511,7 +1515,32 @@ async def rs_recipes_director_describe_panel(request):
         dur = int(round(float(data.get("duration_sec") or 5)))
     except (TypeError, ValueError):
         dur = 5
-    text = f"这是分镜图（该段首帧），本段约 {dur} 秒。请为这一格生成一条可直接提交的 H3 i2v 成品提示词。"
+    lines = [f"这是分镜图（该段首帧），本段约 {dur} 秒。请为这一格生成一条可直接提交的 H3 i2v 成品提示词。"]
+    # 宫格拆分上下文（全部可选，缺失/非法时静默降级为仅图+时长）：本格序号、九宫格行列、原宫格提示词、上一段结果
+    def _opt_int(v):
+        try:
+            return int(round(float(v)))
+        except (TypeError, ValueError):
+            return None
+
+    idx = _opt_int(data.get("panel_index"))
+    total = _opt_int(data.get("panel_total"))
+    if idx is not None and total is not None and 1 <= idx <= total:
+        pos = f"这一段是整片的第 {idx} 段（共 {total} 段）"
+        rn, cn = _opt_int(data.get("rows")), _opt_int(data.get("cols"))
+        if rn and cn and rn * cn == total:
+            r, c = (idx - 1) // cn + 1, (idx - 1) % cn + 1
+            pos += f"，对应 {rn}×{cn} 九宫格分镜图的第 {idx} 格（第 {r} 行第 {c} 列，行优先）"
+        lines.append(pos + "。请按该段在全片中的位置安排动作承接与情绪走向，不要复述其它格的内容。")
+    raw_prompts = data.get("grid_prompts")
+    grid_prompts = [str(t).strip() for t in raw_prompts if str(t or "").strip()] if isinstance(raw_prompts, list) else []
+    if grid_prompts:
+        lines.append("故事上下文（原宫格图生成提示词，仅供理解全片故事与风格，不要照抄进视频提示词）：\n" + "\n".join(grid_prompts))
+    prev = str(data.get("prev_prompt") or "").strip()
+    if prev:
+        head = f"上一段（第 {idx - 1} 段）已生成的提示词" if idx else "上一段已生成的提示词"
+        lines.append(f"{head}，本段需与之承接、避免重复：\n{prev}")
+    text = "\n".join(lines)
     result = await asyncio.to_thread(_director_llm, "director_panel_describe", text, _collect_ref_bytes([{"filename": name}]))
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
