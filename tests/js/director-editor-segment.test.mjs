@@ -2316,8 +2316,8 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     const sbModeSel = sbCard.querySelector(".neo-director-sb-mode");
     const sbSkillSel = sbCard.querySelector(".neo-director-sb-skill");
     await sleep(30);   // 等技能列表异步填充
-    assert.equal(sbModeSel.value, "t2i", "默认 t2i 文生图");
-    assert.ok(sbModeSel.querySelector("input[type=radio]"), "生图模式用 radio 组展开（非下拉）");
+    assert.equal(sbModeSel.tagName, "SELECT", "生图模式用下拉选择");
+    assert.equal(sbModeSel.value, "t2i", "无角色参考图 → 默认 t2i 文生图");
     assert.deepEqual(Array.from(sbSkillSel.options).map((o) => o.value), ["image_gen", "qwen_image_21"], "只列生图技能（排除四视图/视频）");
     assert.equal(sbSkillSel.value, "image_gen", "t2i 默认 Krea2");
     assert.ok(!sbCard.querySelector(".neo-director-sb-r2i"), "无 r2i 专属控件行（背景参考图已移除）");
@@ -2334,6 +2334,58 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     sbModeSel.dispatchEvent(new Event("change"));
     await sleep(30);
     assert.equal(sbSkillSel.value, "qwen_image_21", "切回 t2i 恢复记住的技能选择");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：生图模式默认随角色参考图（有图 r2i / 无图 t2i），手动改过后不再跟随", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", name: "Krea2 文生图", gen_image: true },
+        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true },
+    ]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "char.png" }));
+
+    await openDirectorEditor({
+        name: "SB-MODE-FOLLOW", shared: { mode: "t2v" },
+        segments: [{ skill_id: "sk-v", prompt: "p0", duration_sec: 5 }],
+    });
+    await sleep(60);
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
+    tabSetup.click();
+    await sleep(30);
+    const setupPane = document.querySelector(".neo-director-pane-story");
+    const sbModeSel = setupPane.querySelector(".neo-director-sb-mode");
+    const sbSkillSel = setupPane.querySelector(".neo-director-sb-skill");
+    assert.equal(sbModeSel.value, "t2i", "无角色参考图 → 默认 t2i");
+
+    // 拖入角色参考图 → 自动切 r2i（技能同步切到 Qwen）
+    const charGrid = setupPane.querySelector(".neo-director-setup-char .neo-director-refpick-grid");
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"char.png","subfolder":""}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    charGrid.dispatchEvent(dropEv);
+    await sleep(30);
+    assert.equal(sbModeSel.value, "r2i", "加入角色参考图 → 自动切 r2i");
+    assert.equal(sbSkillSel.value, "qwen_image_21", "切到 r2i 后技能默认 Qwen Image 2.1");
+
+    // 删掉唯一角色图 → 回落 t2i（未手动改过，继续跟随）
+    setupPane.querySelector(".neo-director-setup-char .neo-director-refpick-del").click();
+    await sleep(30);
+    assert.equal(sbModeSel.value, "t2i", "删除角色参考图 → 回落 t2i");
+
+    // 手动改过后不再跟随：手选 r2i，再增删角色图都保持 r2i
+    sbModeSel.value = "r2i";
+    sbModeSel.dispatchEvent(new Event("change"));
+    await sleep(30);
+    charGrid.dispatchEvent(dropEv);   // 重新拖入（删除后列表已空）
+    await sleep(30);
+    assert.equal(sbModeSel.value, "r2i", "手动改过后，加入角色图不再跟随");
+    setupPane.querySelector(".neo-director-setup-char .neo-director-refpick-del").click();
+    await sleep(30);
+    assert.equal(sbModeSel.value, "r2i", "手动改过后，删除角色图不再跟随");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);

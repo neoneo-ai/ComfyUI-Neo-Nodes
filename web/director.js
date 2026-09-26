@@ -276,7 +276,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let segCounter = 0; // 段身份计数：时间轴颜色按段内容绑定，重排不变色
     let modeSel = null;   // 全局生成模式（文生/图生/混合），在时间线面板中创建后赋值
     let gSkillSel = null;      // 统一技能选择（非混合模式：各段共用，紧邻生成模式；混合模式隐藏）
-    let sbModeSel = null;      // 🎨 图片分镜生图模式 t2i/r2i（📖 故事分镜页 band 2 创建后赋值；缺省按旧行为）
+    let sbModeSel = null;      // 🎨 图片分镜生图模式 t2i/r2i（下拉；📖 故事分镜页 band 2 创建后赋值）：默认随角色参考图（有图 r2i / 无图 t2i），手动改过后不再跟随
     let frameSourceSel = null; // 分镜来源状态 grid|storyboard（📖 故事分镜页创建后赋值，随 story.frame_source 落盘）
     let chunkSecInp = null;    // 分块秒数 shared.chunk_sec：连续兼容段合并成一次多帧单次运行的预算（0 = 关闭），时间线面板创建后赋值
     let chunkSecLabel = null;   // 「分块秒数」标签：与输入框成对，仅当统一技能支持多帧时显示
@@ -739,11 +739,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     function openRegenPanel(row, btn) {
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
         const index = rows.indexOf(row);
-        const name = (nameInp?.value || '').trim() || requestedName;
-        if (!name) {
-            app.extensionManager.toast.add({ severity: 'warn', summary: '单段生成', detail: '请先填写配方名称', life: 4000 });
-            return;
-        }
+        const name = (nameInp?.value || '').trim() || requestedName || 'untitled';
         row.querySelector('.neo-director-seg-regen-panel')?.remove();
         // 成片候选：配方 results 的存储顺序是旧 → 新，倒过来即「最新在前」，与后端 list_recipe_results 一致
         // （不按 at 排序：老记录可能没有 at 字段，存储顺序才是权威）
@@ -1541,16 +1537,19 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
 
     // ---- 🎨 图片分镜：文字故事板分段后用生图技能逐段出关键帧（📖 故事分镜页 band 2）----
-    // mode：t2i = 纯文生图（不带参考）；r2i = 参考编辑（角色/背景，按所选技能执行、不强制切 Qwen）。
-    sbModeSel = buildRadioGroup('neo-director-sb-mode', [
-        ['t2i', 't2i（文生图）'],
-        ['r2i', 'r2i（参考图编辑）'],
-    ], 't2i');
-    sbModeSel.value = (exStory.image_mode === 'r2i') ? 'r2i' : 't2i';
+    // mode：t2i = 纯文生图（不带参考）；r2i = 参考编辑（角色图，按所选技能执行、不强制切 Qwen）。
+    // 默认随角色参考图：有图 → r2i（参考角色图生成），无图 → t2i；已落盘的 image_mode 优先回显。
+    sbModeSel = $el('select', { className: 'neo-director-sb-mode' }, [
+        $el('option', { value: 't2i', textContent: 't2i（文生图）' }),
+        $el('option', { value: 'r2i', textContent: 'r2i（参考图编辑）' }),
+    ]);
+    const hasCharRefs = (exStory.characters || []).some(c => c && c.filename);
+    sbModeSel.value = ['t2i', 'r2i'].includes(exStory.image_mode) ? exStory.image_mode : (hasCharRefs ? 'r2i' : 't2i');
     const sbSkillSel = $el('select', { className: 'neo-director-sb-skill' });
     let sbImageSkills = null;   // 生图技能列表（拉一次，两种模式共用）
     let sbCurMode = sbModeSel.value;
     const sbSkillMemory = {};   // t2i/r2i 各自记住所选生图技能（切回时恢复）
+    let sbModeTouched = false;  // 用户手动改过生图模式后，不再随角色参考图自动切换
     async function fillSbSkills() {
         if (!sbImageSkills) {
             try {
@@ -1575,12 +1574,22 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const charRefRow = buildSegRefRow(
         { key: 'characters', kind: 'image', label: '角色参考图', max: 6, hideHead: true },
         (exStory.characters || []).map(r => r.filename).filter(Boolean),
-        null, null,
+        null,
+        () => {   // 生图模式默认随角色参考图：有图 r2i / 无图 t2i（手动改过后不再跟随）
+            if (sbModeTouched) return;
+            const v = charRefRow.getSelected().length ? 'r2i' : 't2i';
+            if (v === sbModeSel.value) return;
+            sbSkillMemory[sbCurMode] = sbSkillSel.value || null;   // 切换时同样记住上一模式的技能
+            sbModeSel.value = v;
+            sbCurMode = v;
+            fillSbSkills();
+        },
         (names, idx) => Lightbox.open({ items: names.map(n => ({ kind: 'image', url: thumbSrc(n), title: n })), index: idx })   // 点缩略图经 Lightbox 看大图（←/→ 切换各张）
     );
     const sbGenBtn = $el('button', { className: 'rs-btn neo-director-sb-gen', textContent: '🎨 生成图片分镜' });
     const sbStatus = $el('span', { className: 'neo-director-sb-status' });
     sbModeSel.addEventListener('change', () => {
+        sbModeTouched = true;   // 手动选择后以用户为准，角色参考图增删不再自动切换
         sbSkillMemory[sbCurMode] = sbSkillSel.value || null;   // 记住上一模式用的技能
         sbCurMode = sbModeSel.value;
         fillSbSkills();
@@ -1637,8 +1646,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     srcSel.addEventListener('change', onFrameSourceChange);
 
     async function generateAllStoryboards() {
-        const name = (nameInp?.value || '').trim() || requestedName;
-        if (!name) { app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: '请先填写配方名称', life: 4000 }); return; }
+        const name = (nameInp?.value || '').trim() || requestedName || 'untitled';
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
         if (!rows.length) { app.extensionManager.toast.add({ severity: 'warn', summary: '图片分镜', detail: '请先拆分出分段', life: 4000 }); return; }
         const segments = rows.map((row, i) => ({
@@ -2096,7 +2104,6 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // band 1 来源：radio 行常驻横排（可随时切），下面只显示选中来源的卡——不会两张卡同时亮着
         srcGridCard.style.display = (src === 'grid') ? '' : 'none';
         srcTextCard.style.display = (src === 'grid') ? 'none' : '';
-        gridNote.style.display = (src === 'grid') ? '' : 'none';
         uniR2vHint.style.display = (m === 'r2v') ? '' : 'none';   // 参考素材到时间轴页逐段设置（本页无统一入口）
         // 统一尾帧区：仅首尾帧模式显示
         uniFrameBlock.style.display = (m === 'fl2v') ? '' : 'none';
@@ -2242,10 +2249,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         genSegBtn.title = hasIdea ? '按故事主题 / 脚本生成各段提示词与关键帧提示词' : '请先填写故事主题 / 脚本';
         gridSplitBtn.disabled = !hasGridSrc || gridSplitBusy;
         gridSplitBtn.title = hasGridSrc ? '把宫格图按行列切成各段（各格作该段首帧与分镜图）' : '请先选宫格图（本地上传或素材库拖入）';
-        const sbReady = hasSegs && anyPrompt && !!name;
+        const sbReady = hasSegs && anyPrompt;
         sbGenBtn.disabled = !sbReady || sbBusy;
-        sbGenBtn.title = sbReady ? '按各段提示词逐段生成关键帧'
-            : (!name ? '请先填写配方名称（产物按配方名落盘）' : '请先在左侧生成分段');
+        sbGenBtn.title = sbReady ? '按各段提示词逐段生成关键帧' : '请先在左侧生成分段';
         optBtn.disabled = !(isGrid ? anyPanel : anyPrompt) || optBusy;
         optBtn.title = (isGrid ? anyPanel : anyPrompt) ? '逐段重写为 H3 官方格式提示词' : (isGrid ? '请先拆分宫格图' : '先生成分段提示词');
     }
@@ -2329,7 +2335,6 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // 文字侧子设置（🎨 图片分镜 / 统一尾帧 / 模式提示）挂在文字故事板卡的右栏——与主题输入同一行，不再单独占 band；
     // 宫格来源时文字卡整体隐藏，这些也随之一并隐藏。
-    const gridNote = $el('div', { className: 'neo-director-setup-hint', textContent: '宫格图故事板：拆分后各格自动作为该段首帧与分镜图（图生视频），用下方「✨ 生成所有分段的提示词」逐格写出 H3 i2v 成品提示词。' });
     const textStack = $el('div', { className: 'neo-director-idea-stack' }, [
         sbCard,         // 🎨 图片分镜（逐段关键帧；与生成模式解耦）
         uniFrameBlock,   // 首尾帧 fl2v：统一尾帧
@@ -2339,7 +2344,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
     srcTextSide.appendChild(textStack);
 
-    // 📖 故事分镜页：band 0 第一行分镜来源 + 角色参考 → band 1 选中来源的卡（文字卡内右栏带图片分镜等）→ band 2 宫格说明 → band 3 各段对照
+    // 📖 故事分镜页：band 0 第一行分镜来源 + 角色参考 → band 1 选中来源的卡（文字卡内右栏带图片分镜等）→ band 2 各段对照
     const genPane = $el('div', { className: 'neo-director-pane neo-director-pane-story' }, [
         // band 0：第一行分镜来源（radio 横排）+ 角色身份参考（靠右）；角色参考图为两种来源共用，常驻不隐藏
         $el('div', { className: 'neo-director-band' }, [
@@ -2352,8 +2357,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ]),
         // band 1：只显示选中来源的卡（另一张整体隐藏——不会两张同时亮着）；文字卡右栏内含图片分镜 / 统一尾帧
         $el('div', { className: 'neo-director-band' }, [srcGridCard, srcTextCard]),
-        $el('div', { className: 'neo-director-band' }, [gridNote]),    // band 2：宫格说明行（文字来源时为空，不占高度）
-        // band 3：各段对照（文字来源三栏：分镜图 / 优化前 / 优化后；宫格来源两栏：分镜图 / 提示词）
+        // band 2：各段对照（文字来源三栏：分镜图 / 优化前 / 优化后；宫格来源两栏：分镜图 / 提示词）
         $el('div', { className: 'neo-director-band neo-director-band-segs' }, [
             // 「各段对照」标题行：优化按钮 + 状态靠本行最右（列名见下方表头），不独占一行
             $el('div', { className: 'neo-director-setup-opt' }, [
