@@ -481,7 +481,7 @@ def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets:
 
     参考图 filename 与段首帧一样由前端以原始名引用，这里回写为落盘 assets 的最终名。
     引用未落盘资产的条目直接丢弃：参考图只用于 r2i 图片分镜，缺一条不该让整份配方保存失败。
-    image_mode（t2i/r2i）/ frame_source（storyboard/unified）非法值丢弃；image_skill 为所选生图技能 id。
+    image_mode（t2i/r2i）/ frame_source（storyboard/grid）非法值丢弃；image_skill 为所选生图技能 id。
     完全没有内容时返回 None（不写进 recipe.json）。
     """
     raw = data.get("story")
@@ -516,8 +516,8 @@ def _normalize_director_story(data: dict, orig_to_copied: dict, existing_assets:
     if image_mode not in ("t2i", "r2i"):
         image_mode = None
     frame_source = str(raw.get("frame_source") or "").strip()
-    if frame_source not in ("storyboard", "unified", "grid"):
-        frame_source = None
+    if frame_source not in ("storyboard", "grid"):
+        frame_source = None   # 旧配方的 unified 值随非法值丢弃，前端按默认回落
     image_skill = str(raw.get("image_skill") or "").strip() or None
 
     story = {

@@ -466,18 +466,18 @@ class NormalizeDirectorStoryTests(unittest.TestCase):
         self.assertEqual(story["characters"], [{"filename": "c_copied.png", "desc": "猫"}])
 
     def test_image_storyboard_settings_normalized(self):
-        # 图片分镜设置（t2i/r2i + 生图技能 + 分镜/首帧方式）随 story 落盘；非法值丢弃不落盘
+        # 图片分镜设置（t2i/r2i + 生图技能 + 分镜来源）随 story 落盘；非法值丢弃不落盘
         story = recipes._normalize_director_story(
             {"story": {"idea": "x", "image_mode": "r2i", "image_skill": "qwen_image_21",
-                       "frame_source": "unified"}}, {})
+                       "frame_source": "storyboard"}}, {})
         self.assertEqual(story["image_mode"], "r2i")
         self.assertEqual(story["image_skill"], "qwen_image_21")
-        self.assertEqual(story["frame_source"], "unified")
+        self.assertEqual(story["frame_source"], "storyboard")
 
         story = recipes._normalize_director_story(
-            {"story": {"idea": "x", "image_mode": "v2i", "frame_source": "both", "image_skill": "  "}}, {})
+            {"story": {"idea": "x", "image_mode": "v2i", "frame_source": "unified", "image_skill": "  "}}, {})
         self.assertIsNone(story["image_mode"])
-        self.assertIsNone(story["frame_source"])
+        self.assertIsNone(story["frame_source"])   # 旧 unified 值随非法值丢弃
         self.assertIsNone(story["image_skill"])
 
     def test_frame_source_grid_preserved(self):
