@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Generator
 from pathlib import Path
 import folder_paths
 from collections import OrderedDict
+from urllib.parse import urlparse
 
 from . import skill
 
@@ -54,7 +55,7 @@ _BUILTIN_PROVIDER_DEFS = [
     {"id": "openrouter", "name": "OpenRouter", "type": "remote",
      "default_base_url": "https://openrouter.ai/api/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "dropdown"},
     {"id": "unsloth", "name": "Unsloth", "type": "remote",
-     "default_base_url": "http://192.168.0.176:8888", "append_v1": False, "show_api_key": False, "model_mode": "dropdown"},
+     "default_base_url": "http://192.168.0.176:8888/v1", "append_v1": False, "show_api_key": True, "model_mode": "dropdown"},
     {"id": "vllm", "name": "vLLM Server", "type": "remote",
      "default_base_url": "http://localhost:8000/v1", "append_v1": True, "show_api_key": False, "model_mode": "dropdown"},
 ]
@@ -105,6 +106,121 @@ def build_remote_models_url(base_url: str, provider: str = "") -> str:
     if append_v1 and not base.endswith("/v1"):
         return f"{base}/v1/models"
     return f"{base}/models"         # /v1 结尾或 append_v1=false（如智谱 /api/paas/v4）
+
+
+# 本地 / 局域网端点：LM Studio / Ollama / vLLM 等在收到请求时按需加载模型，客户端只需放宽超时；
+# Unsloth Studio 的 /v1 则要求先调 POST /api/inference/load 显式加载（见 RemoteLLMClient._maybe_load_local_model）。
+_LOCAL_HOST_NAMES = {"localhost", "0.0.0.0", "::1", "host.docker.internal"}
+_PRIVATE_IPV4_RE = re.compile(r"^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|127\.)")
+# 冷加载大模型可能持续数分钟（Cline 对 Ollama 用 5 分钟口径），低于该值一律抬高
+LOCAL_ENDPOINT_MIN_TIMEOUT = 300
+
+
+def is_local_endpoint(base_url: str) -> bool:
+    """端点是否指向本机 / 局域网服务（按 host 判断，与 provider 名无关）"""
+    host = (urlparse(base_url or "").hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in _LOCAL_HOST_NAMES or host.endswith(".local"):
+        return True
+    return bool(_PRIVATE_IPV4_RE.match(host))
+
+
+def _service_root(base_url: str) -> str:
+    """剥掉 /models、/v1、/api 尾巴得到服务根（兼容 http://host/api/v1/models 这类整段粘贴的端点）"""
+    root = (base_url or "").strip().rstrip("/")
+    while True:
+        for suffix in ("/models", "/v1", "/api"):
+            if root.endswith(suffix):
+                root = root[: -len(suffix)]
+                break
+        else:
+            break
+    return root
+
+
+def local_list_endpoints(base_url: str, provider: str = "") -> List[tuple]:
+    """本地端点的模型列表候选，按顺序尝试、首个有结果者胜：
+    LM Studio 的 /api/v1/models 列出全部已下载模型（含 loaded_instances），
+    Ollama 的 /api/tags 列出已 pull 的模型；其余服务（Unsloth Studio 等）走 OpenAI 兼容端点。
+
+    只看 /v1/models 时未加载的模型在部分服务上会缺失，前端会看不到可选模型。"""
+    root = _service_root(base_url)
+    return [
+        ("lmstudio", f"{root}/api/v1/models"),
+        ("ollama", f"{root}/api/tags"),
+        ("openai", build_remote_models_url(base_url, provider)),
+    ]
+
+
+def build_inference_load_url(base_url: str) -> str:
+    """Unsloth Studio 的显式加载端点：/v1 报「No model loaded」时客户端须先调用它"""
+    return f"{_service_root(base_url)}/api/inference/load"
+
+
+def is_no_model_loaded_error(status_code: int, detail: str) -> bool:
+    """Unsloth Studio 的未加载错误：400 + 'No model loaded. Call POST /inference/load first.'"""
+    if status_code != 400 or not detail:
+        return False
+    text = detail.lower()
+    return "no model loaded" in text or "model not loaded" in text
+
+
+def parse_service_models(kind: str, payload: Dict[str, Any],
+                         running_payload: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """把各服务的模型列表响应归一化为 [{id, name, size?, vision?, loaded?}]；loaded 未知时不带该键。"""
+    models: List[Dict[str, Any]] = []
+
+    def _entry(model_id: str, name: str = "", size: int = 0,
+               vision: bool = False, loaded: Optional[bool] = None) -> Dict[str, Any]:
+        item: Dict[str, Any] = {"id": model_id, "name": name or model_id}
+        if size:
+            item["size"] = size
+        if vision:
+            item["vision"] = True
+        if loaded is not None:
+            item["loaded"] = loaded
+        return item
+
+    if kind == "ollama":
+        running = set()
+        for m in (running_payload or {}).get("models") or []:
+            name = (m.get("name") or m.get("model") or "") if isinstance(m, dict) else str(m)
+            if name:
+                running.add(name)
+        for m in payload.get("models") or []:
+            name = (m.get("name") or m.get("model") or "") if isinstance(m, dict) else str(m)
+            if name:
+                # 运行中的模型会出现在 /api/ps；未加载的照样可选，首次请求由 Ollama 自行加载
+                models.append(_entry(name, name, loaded=name in running))
+        return models
+
+    if kind == "lmstudio":
+        for m in payload.get("models") or []:
+            if not isinstance(m, dict) or m.get("type") == "embedding":
+                continue
+            model_id = m.get("key") or m.get("id") or ""
+            if not model_id:
+                continue
+            caps = m.get("capabilities") or {}
+            models.append(_entry(model_id, m.get("display_name") or "",
+                                 int(m.get("size_bytes") or 0), bool(caps.get("vision")),
+                                 bool(m.get("loaded_instances"))))
+        return models
+
+    # OpenAI 兼容 /v1/models：列表项即服务端可服务的模型；带 loaded 字段的服务（Unsloth Studio）照实标注
+    for m in payload.get("data") or []:
+        if not isinstance(m, dict):
+            if m:
+                models.append(_entry(str(m)))
+            continue
+        model_id = m.get("id") or m.get("name") or ""
+        if not model_id:
+            continue
+        loaded = m.get("loaded")
+        models.append(_entry(model_id, m.get("display_name") or "",
+                             loaded=loaded if isinstance(loaded, bool) else None))
+    return models
 
 
 # ==========================================
@@ -709,6 +825,17 @@ def _log_llm_usage(usage) -> None:
     logger.info(line)
 
 
+def _api_status_detail(e) -> str:
+    """提取 openai.APIStatusError 的服务端错误体文本（4xx 响应会说明具体原因，如模型不存在）"""
+    body = getattr(e, "body", None)
+    if body is None:
+        return ""
+    try:
+        return str(body)[:500]
+    except Exception:
+        return ""
+
+
 class RemoteLLMClient:
     """基于 OpenAI SDK 的远程 LLM 客户端，调用 OpenAI 兼容 API"""
 
@@ -743,9 +870,60 @@ class RemoteLLMClient:
             result.append({"role": role, "content": content})
         return result
 
+    def _effective_timeout(self) -> float:
+        """本地端点的冷加载远超默认 60s（首次把模型读进显存）：抬高到 LOCAL_ENDPOINT_MIN_TIMEOUT"""
+        if is_local_endpoint(self.base_url):
+            return max(self.timeout, LOCAL_ENDPOINT_MIN_TIMEOUT)
+        return self.timeout
+
+    def load_remote_model(self):
+        """Unsloth Studio：POST /api/inference/load 显式加载模型，阻塞至加载完成（大模型可达数分钟）。
+
+        该接口要 Studio 的 API Key（Settings > API 里创建，sk-unsloth- 开头），就放在插件的 API Key 输入框。"""
+        import urllib.request
+        url = build_inference_load_url(self.base_url)
+        req = urllib.request.Request(
+            url, data=json.dumps({"model_path": self.model}).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {self.api_key}"},
+            method="POST")
+        logger.info(f"Loading local model on demand: {url} model={self.model}")
+        with urllib.request.urlopen(req, timeout=self._effective_timeout()) as resp:
+            body = resp.read().decode("utf-8", "replace")[:200]
+        logger.info(f"Local model loaded: {body}")
+
+    def _maybe_load_local_model(self, status_code: int, detail: str) -> bool:
+        """本地端点回「模型未加载」时先显式加载一次（服务端的报错就是让客户端去调 /api/inference/load）；
+        没填 API Key 就不试，免得拿占位值换一个 401。"""
+        if not (self.base_url and is_local_endpoint(self.base_url)
+                and is_no_model_loaded_error(status_code, detail)):
+            return False
+        if not (self.api_key or "").strip():
+            return False
+        try:
+            self.load_remote_model()
+            return True
+        except Exception as e:
+            logger.warning(f"Local model load failed: {e}")
+            return False
+
+    def _no_model_loaded_hint(self, status_code: int, detail: str) -> str:
+        """本地端点没加载模型而我们又没加载成时，给出能直接照做的处置建议"""
+        if not (self.base_url and is_local_endpoint(self.base_url)
+                and is_no_model_loaded_error(status_code, detail)):
+            return ""
+        if not (self.api_key or "").strip():
+            # Studio 只让带 API Key 的调用者触发加载：免鉴权请求连自动切换都被跳过，光开开关没用
+            return (" | The server loads models only for callers that present an API key: create one "
+                    "under Settings > API and paste it in the API Key field (or load the model in "
+                    "the server UI first).")
+        return (" | The on-demand load failed: load the model in the server UI and check the "
+                "server-side reason (memory, missing weights).")
+
     def _build_client(self):
         """构造 OpenAI 兼容客户端（指向 base_url；本地/自建服务端 api_key 可为任意非空占位值）。"""
         import openai
+        timeout = self._effective_timeout()
         if self.base_url:
             base = self.base_url.rstrip('/')
             # 根据 provider 定义决定是否自动追加 /v1（Unsloth 等服务端不使用 /v1 前缀）
@@ -756,8 +934,8 @@ class RemoteLLMClient:
                     break
             if append_v1 and not base.endswith('/v1'):
                 base = f"{base}/v1"
-            return openai.OpenAI(base_url=base, api_key=self.api_key or "lm-studio", timeout=self.timeout)
-        return openai.OpenAI(api_key=self.api_key or "lm-studio", timeout=self.timeout)
+            return openai.OpenAI(base_url=base, api_key=self.api_key or "lm-studio", timeout=timeout)
+        return openai.OpenAI(api_key=self.api_key or "lm-studio", timeout=timeout)
 
     def chat_completion(self, messages: List[Dict[str, Any]],
                         max_tokens: Optional[int] = None,
@@ -821,34 +999,32 @@ class RemoteLLMClient:
 
         logger.info(f"Sending request to remote LLM: model={self.model}, stream={stream}, chat_template_kwargs={(kwargs.get('extra_body') or {}).get('chat_template_kwargs')}")
 
-        try:
-            if stream:
-                kwargs["stream"] = True
-                return self._stream_response_generator(client, **kwargs)
-            else:
+        for attempt in (1, 2):
+            try:
+                if stream:
+                    kwargs["stream"] = True
+                    return self._stream_response_generator(client, **kwargs)
                 response = client.chat.completions.create(**kwargs)
                 _log_llm_usage(getattr(response, "usage", None))
                 return self._parse_response(response.model_dump())
-        except openai.APIConnectionError as e:
-            logger.warning(f"Remote LLM connection error: {e}")
-            raise RuntimeError(f"Remote LLM network error: {e}")
-        except openai.APITimeoutError as e:
-            logger.warning(f"Remote LLM timeout: {e}")
-            raise RuntimeError(f"Remote LLM timeout: {e}")
-        except openai.APIStatusError as e:
-            # 带上服务端错误体（OpenRouter/OpenAI/LM Studio 的 4xx 会说明具体原因，如模型不存在）
-            detail = ""
-            body = getattr(e, "body", None)
-            if body is not None:
-                try:
-                    detail = str(body)[:500]
-                except Exception:
-                    detail = ""
-            logger.error(f"Remote LLM HTTP error: {e.status_code} | body={detail}")
-            raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}")
-        except Exception as e:
-            logger.error(f"Remote LLM completion failed: {e}")
-            raise
+            except openai.APIConnectionError as e:
+                logger.warning(f"Remote LLM connection error: {e}")
+                raise RuntimeError(f"Remote LLM network error: {e}")
+            except openai.APITimeoutError as e:
+                logger.warning(f"Remote LLM timeout: {e}")
+                raise RuntimeError(f"Remote LLM timeout: {e}")
+            except openai.APIStatusError as e:
+                detail = _api_status_detail(e)
+                # Unsloth Studio：模型未加载时返回 400，先显式调用 /api/inference/load 再重试一次
+                if attempt == 1 and self._maybe_load_local_model(e.status_code, detail):
+                    logger.info(f"Local model loaded on demand, retrying: {self.model}")
+                    continue
+                logger.error(f"Remote LLM HTTP error: {e.status_code} | body={detail}")
+                raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}"
+                                   f"{self._no_model_loaded_hint(e.status_code, detail)}")
+            except Exception as e:
+                logger.error(f"Remote LLM completion failed: {e}")
+                raise
 
     def _parse_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
         """解析响应为统一格式"""
@@ -876,42 +1052,46 @@ class RemoteLLMClient:
         """
         import openai
 
-        try:
-            stream = client.chat.completions.create(**kwargs)
-            usage = None
-            for chunk in stream:
-                if getattr(chunk, "usage", None) is not None:
-                    usage = chunk.usage
-                choices = getattr(chunk, "choices", None) or []
-                if not choices:
+        for attempt in (1, 2):
+            yielded = False
+            try:
+                stream = client.chat.completions.create(**kwargs)
+                usage = None
+                for chunk in stream:
+                    if getattr(chunk, "usage", None) is not None:
+                        usage = chunk.usage
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = choices[0].delta
+                    content = getattr(delta, "content", None) or ""
+                    reasoning = getattr(delta, "reasoning_content", None) or (getattr(delta, "model_extra", None) or {}).get("reasoning_content") or ""
+                    if content:
+                        yielded = True
+                        yield {"text": content, "kind": "content"}
+                    if reasoning:
+                        yielded = True
+                        yield {"text": reasoning, "kind": "thinking"}
+                _log_llm_usage(usage)
+                return
+            except openai.APIConnectionError as e:
+                logger.warning(f"Remote LLM stream connection error: {e}")
+                raise RuntimeError(f"Remote LLM network error: {e}")
+            except openai.APITimeoutError as e:
+                logger.warning(f"Remote LLM stream timeout: {e}")
+                raise RuntimeError(f"Remote LLM timeout: {e}")
+            except openai.APIStatusError as e:
+                detail = _api_status_detail(e)
+                # Unsloth Studio：模型未加载时返回 400（必然在任何 chunk 之前），先显式调用 /api/inference/load 再重试一次
+                if attempt == 1 and not yielded and self._maybe_load_local_model(e.status_code, detail):
+                    logger.info(f"Local model loaded on demand, retrying stream: {self.model}")
                     continue
-                delta = choices[0].delta
-                content = getattr(delta, "content", None) or ""
-                reasoning = getattr(delta, "reasoning_content", None) or (getattr(delta, "model_extra", None) or {}).get("reasoning_content") or ""
-                if content:
-                    yield {"text": content, "kind": "content"}
-                if reasoning:
-                    yield {"text": reasoning, "kind": "thinking"}
-            _log_llm_usage(usage)
-        except openai.APIConnectionError as e:
-            logger.warning(f"Remote LLM stream connection error: {e}")
-            raise RuntimeError(f"Remote LLM network error: {e}")
-        except openai.APITimeoutError as e:
-            logger.warning(f"Remote LLM stream timeout: {e}")
-            raise RuntimeError(f"Remote LLM timeout: {e}")
-        except openai.APIStatusError as e:
-            detail = ""
-            body = getattr(e, "body", None)
-            if body is not None:
-                try:
-                    detail = str(body)[:500]
-                except Exception:
-                    detail = ""
-            logger.error(f"Remote LLM stream HTTP {e.status_code}: {detail}")
-            raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}")
-        except Exception as e:
-            logger.error(f"Remote LLM stream failed: {e}")
-            raise
+                logger.error(f"Remote LLM stream HTTP {e.status_code}: {detail}")
+                raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}"
+                                   f"{self._no_model_loaded_hint(e.status_code, detail)}")
+            except Exception as e:
+                logger.error(f"Remote LLM stream failed: {e}")
+                raise
 
     def is_available(self) -> bool:
         """检查客户端是否可用"""

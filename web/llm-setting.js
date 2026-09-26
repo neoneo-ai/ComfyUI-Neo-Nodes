@@ -241,6 +241,14 @@ export function createModelConfigForm() {
         return isMaskedKey(v) ? '' : v;
     };
 
+    const formatFileSize = (bytes) => {
+        if (!bytes || bytes <= 0) return '';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0, v = Number(bytes);
+        while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+        return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)}${units[i]}`;
+    };
+
     const fetchModelsFromUrl = async (baseUrl, targetSelect) => {
         targetSelect.innerHTML = '';
         const loadingOpt = document.createElement('option');
@@ -276,31 +284,36 @@ export function createModelConfigForm() {
                 if (!id) return;
                 const opt = document.createElement('option');
                 opt.value = id;
-                opt.textContent = id;
+                // 本地服务（LM Studio / Ollama 等）会给出是否已加载：未加载也可选，
+                // 服务端收到请求时按需加载（同 Cline），这里只做状态提示
+                const size = m && m.size > 0 ? `  (${formatFileSize(m.size)})` : '';
+                const state = m && m.loaded === true ? '  ● 已加载' : (m && m.loaded === false ? '  ○ 未加载' : '');
+                const vision = m && m.vision ? ' 🖼️' : '';
+                const label = m && m.name && m.name !== id ? `${m.name} (${id})` : id;
+                opt.textContent = label + size + state + vision;
                 targetSelect.appendChild(opt);
             });
             
             if (!targetSelect.options.length) {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'No models found';
+                opt.textContent = '○ 无可用模型';
                 targetSelect.appendChild(opt);
             }
         } catch (e) {
             console.warn('Failed to fetch models:', e);
-            targetSelect.innerHTML = '<option value="">❌ 未加载</option>';
+            targetSelect.innerHTML = '<option value="">❌ 无法连接服务</option>';
         } finally {
             targetSelect.disabled = false;
         }
     };
 
-    // LM Studio / Ollama：根据远端模型列表回填/占位。未加载或加载失败时显示「未加载」，
-    // 不回填可能来自其它 provider 的旧值（如 gpt-4o-mini）。
+    // LM Studio / Ollama：根据远端模型列表回填/占位。不可达或无可用模型时保留 fetchModelsFromUrl
+    // 设置的提示，不回填可能来自其它 provider 的旧值（如 gpt-4o-mini）。
     const realRemoteOptions = () => Array.from(modelSelectEl.options).filter(o => o.value && o.value !== '__loading__');
     const applyRemoteSavedModel = (savedModel) => {
         const real = realRemoteOptions();
         if (!real.length) {
-            modelSelectEl.innerHTML = '<option value="">❌ 未加载</option>';
             modelSelectEl.value = '';
             return;
         }

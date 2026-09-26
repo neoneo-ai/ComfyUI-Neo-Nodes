@@ -1205,5 +1205,184 @@ class TestProviderDefinitions(unittest.TestCase):
                 self.assertEqual(llm_mod.get_stored_api_key("moonshot"), "")
 
 
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestLocalServiceModels(unittest.TestCase):
+    """本地/局域网端点：判定、列表候选顺序、各服务列表解析、冷加载超时下限"""
+
+    def test_local_endpoint_detection(self):
+        for url in ("http://localhost:1234/v1", "http://127.0.0.1:8000", "http://192.168.0.176:8888",
+                    "http://10.0.0.5/v1", "http://172.16.3.9:11434/api", "http://169.254.1.1",
+                    "http://host.docker.internal:1234/v1", "http://ollama.local:11434"):
+            self.assertTrue(llm_mod.is_local_endpoint(url), url)
+
+    def test_public_endpoint_detection(self):
+        for url in ("https://api.deepseek.com/v1", "https://openrouter.ai/api/v1",
+                    "http://api.example.com:8000/v1", "", "http://172.32.0.1/v1"):
+            self.assertFalse(llm_mod.is_local_endpoint(url), url)
+
+    def test_local_list_endpoints_order(self):
+        # LM Studio / Ollama 原生端点优先，其后是通用 OpenAI 兼容端点
+        self.assertEqual(
+            llm_mod.local_list_endpoints("http://192.168.0.176:1234/v1", "lmstudio"),
+            [("lmstudio", "http://192.168.0.176:1234/api/v1/models"),
+             ("ollama", "http://192.168.0.176:1234/api/tags"),
+             ("openai", "http://192.168.0.176:1234/v1/models")],
+        )
+        # unsloth 预设不带 /v1（append_v1=false），兜底端点须与聊天请求拼接规则一致
+        self.assertEqual(llm_mod.local_list_endpoints("http://192.168.0.176:8888", "unsloth")[2],
+                         ("openai", "http://192.168.0.176:8888/models"))
+        # 整段粘贴 /models 端点、Ollama 原生 /api 端点：剥尾后原生候选仍指向服务根
+        self.assertEqual(llm_mod.local_list_endpoints("http://host:1234/api/v1/models", "lmstudio")[0],
+                         ("lmstudio", "http://host:1234/api/v1/models"))
+        self.assertEqual(llm_mod.local_list_endpoints("http://localhost:11434/api", "ollama")[1],
+                         ("ollama", "http://localhost:11434/api/tags"))
+
+    def test_parse_lmstudio_models(self):
+        payload = {"models": [
+            {"type": "llm", "key": "google/gemma-4-26b-a4b", "display_name": "Gemma 4 26B A4B",
+             "size_bytes": 17990911801, "loaded_instances": [], "capabilities": {"vision": True}},
+            {"type": "llm", "key": "deepseek-r1", "display_name": "DeepSeek R1", "size_bytes": 40492610355,
+             "loaded_instances": [{"id": "deepseek-r1"}], "capabilities": {"vision": False}},
+            {"type": "embedding", "key": "nomic-embed-text-v1.5", "loaded_instances": []},
+        ]}
+        models = llm_mod.parse_service_models("lmstudio", payload)
+        self.assertEqual([m["id"] for m in models], ["google/gemma-4-26b-a4b", "deepseek-r1"])
+        self.assertEqual(models[0]["name"], "Gemma 4 26B A4B")
+        self.assertFalse(models[0]["loaded"])   # 未加载也照样可选，由服务端按需加载
+        self.assertTrue(models[0]["vision"])
+        self.assertTrue(models[1]["loaded"])
+
+    def test_parse_ollama_models_marks_running(self):
+        tags = {"models": [{"name": "qwen3:4b"}, {"name": "llama3.2:1b"}]}
+        ps = {"models": [{"name": "qwen3:4b"}]}
+        models = llm_mod.parse_service_models("ollama", tags, ps)
+        self.assertEqual([m["id"] for m in models], ["qwen3:4b", "llama3.2:1b"])
+        self.assertTrue(models[0]["loaded"])
+        self.assertFalse(models[1]["loaded"])
+
+    def test_parse_openai_compatible_models(self):
+        models = llm_mod.parse_service_models("openai", {"data": [{"id": "gpt-oss-20b"}, {"id": "qwen3-8b"}]})
+        self.assertEqual([m["id"] for m in models], ["gpt-oss-20b", "qwen3-8b"])
+        self.assertNotIn("loaded", models[0])   # 通用端点不谎报加载状态
+
+    def test_local_endpoint_timeout_floor(self):
+        # 冷加载常超过默认 60s：本地端点抬高到 LOCAL_ENDPOINT_MIN_TIMEOUT，公网端点保持原值
+        local = llm_mod.RemoteLLMClient({"provider": "lmstudio", "base_url": "http://192.168.0.176:8888", "timeout": 60})
+        self.assertEqual(local._effective_timeout(), llm_mod.LOCAL_ENDPOINT_MIN_TIMEOUT)
+        cloud = llm_mod.RemoteLLMClient({"provider": "deepseek", "base_url": "https://api.deepseek.com/v1", "timeout": 60})
+        self.assertEqual(cloud._effective_timeout(), 60)
+
+
+    def test_parse_unsloth_v1_models_keeps_loaded(self):
+        # Unsloth Studio 的 /v1/models 自带 loaded 字段：照实标注（未加载的照样可选）
+        payload = {"object": "list", "data": [
+            {"id": "HauhauCS/Qwen3.5-9B-Uncensored", "object": "model", "loaded": False,
+             "quant": "Q4_K_M", "display_name": "Qwen3.5-9B-Uncensored"},
+            {"id": "Qwen/Qwen3.6-35B-A3B", "object": "model", "loaded": True},
+        ]}
+        models = llm_mod.parse_service_models("openai", payload)
+        self.assertEqual([m["id"] for m in models], ["HauhauCS/Qwen3.5-9B-Uncensored", "Qwen/Qwen3.6-35B-A3B"])
+        self.assertFalse(models[0]["loaded"])
+        self.assertTrue(models[1]["loaded"])
+        self.assertEqual(models[0]["name"], "Qwen3.5-9B-Uncensored")
+
+    def test_build_inference_load_url(self):
+        self.assertEqual(llm_mod.build_inference_load_url("http://192.168.0.176:8888"),
+                         "http://192.168.0.176:8888/api/inference/load")
+        # 整段粘贴 /v1 端点也剥尾到服务根
+        self.assertEqual(llm_mod.build_inference_load_url("http://192.168.0.176:8888/v1/"),
+                         "http://192.168.0.176:8888/api/inference/load")
+
+    def test_is_no_model_loaded_error(self):
+        msg = "{'message': 'No model loaded. Call POST /inference/load first.', 'type': 'invalid_request_error'}"
+        self.assertTrue(llm_mod.is_no_model_loaded_error(400, msg))
+        self.assertTrue(llm_mod.is_no_model_loaded_error(400, "Model not loaded yet"))
+        self.assertFalse(llm_mod.is_no_model_loaded_error(404, msg))   # 状态码不对
+        self.assertFalse(llm_mod.is_no_model_loaded_error(400, "model 'x' does not exist"))
+        self.assertFalse(llm_mod.is_no_model_loaded_error(400, ""))
+
+    def test_chat_triggers_inference_load_and_retries(self):
+        # Unsloth Studio：/v1 未加载时返回 400，客户端须带 API Key 调 /api/inference/load 再重试一次
+        from aiohttp import web as aweb
+        state = {"loaded": False, "load_calls": 0}
+
+        async def main():
+            async def chat(_):
+                if not state["loaded"]:
+                    return aweb.json_response(
+                        {"error": {"message": "No model loaded. Call POST /inference/load first.",
+                                   "type": "invalid_request_error"}}, status=400)
+                return aweb.json_response({
+                    "id": "c1", "object": "chat.completion", "created": 1, "model": "m",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                                 "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+
+            async def load(request):
+                self.assertEqual(request.headers.get("Authorization"), "Bearer sk-unsloth-test")
+                body = await request.json()
+                self.assertEqual(body.get("model_path"), "m")   # Studio 的字段名是 model_path
+                state["load_calls"] += 1
+                state["loaded"] = True
+                return aweb.json_response({"status": "loaded", "model": "m", "display_name": "m"})
+
+            app = aweb.Application()
+            app.router.add_post("/v1/chat/completions", chat)
+            app.router.add_post("/api/inference/load", load)
+            runner = aweb.AppRunner(app)
+            await runner.setup()
+            site = aweb.TCPSite(runner, "127.0.0.1", 18941)
+            await site.start()
+            try:
+                client = llm_mod.RemoteLLMClient(
+                    {"provider": "unsloth", "base_url": "http://127.0.0.1:18941/v1",
+                     "model": "m", "api_key": "sk-unsloth-test"})
+                # chat_completion 内部是阻塞 HTTP（生产环境跑在 ComfyUI 工作线程）：
+                # 测试里必须放独立线程，否则会冻结本事件循环、假服务端无法响应 /api/inference/load
+                result = await asyncio.to_thread(
+                    client.chat_completion, [{"role": "user", "content": "hi"}])
+                self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+                self.assertEqual(state["load_calls"], 1)   # 只加载一次，不循环
+            finally:
+                await runner.cleanup()
+
+        asyncio.run(main())
+
+    def test_chat_without_api_key_reports_actionable_error(self):
+        # 没填 Studio API Key 时不发加载请求（拿占位值只会换 401），错误里要带上处置建议
+        from aiohttp import web as aweb
+        state = {"load_calls": 0}
+
+        async def main():
+            async def chat(_):
+                return aweb.json_response(
+                    {"error": {"message": "No model loaded. Call POST /inference/load first.",
+                               "type": "invalid_request_error"}}, status=400)
+
+            async def load(_):
+                state["load_calls"] += 1
+                return aweb.json_response({"status": "loaded"})
+
+            app = aweb.Application()
+            app.router.add_post("/v1/chat/completions", chat)
+            app.router.add_post("/api/inference/load", load)
+            runner = aweb.AppRunner(app)
+            await runner.setup()
+            site = aweb.TCPSite(runner, "127.0.0.1", 18942)
+            await site.start()
+            try:
+                client = llm_mod.RemoteLLMClient(
+                    {"provider": "unsloth", "base_url": "http://127.0.0.1:18942/v1", "model": "m"})
+                with self.assertRaises(RuntimeError) as ctx:
+                    await asyncio.to_thread(client.chat_completion, [{"role": "user", "content": "hi"}])
+                self.assertIn("No model loaded", str(ctx.exception))
+                self.assertIn("Settings > API", str(ctx.exception))   # 提示去哪里拿 Key
+                self.assertEqual(state["load_calls"], 0)
+            finally:
+                await runner.cleanup()
+
+        asyncio.run(main())
+
+
 if __name__ == '__main__':
     unittest.main()

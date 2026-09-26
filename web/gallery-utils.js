@@ -207,9 +207,9 @@ export function buildAudioTile(seed) {
 
 /**
  * Render a directory / bookmark cover into `coverWrapper`.
- * Up to MAX_COVER_IMAGES image/video rows at natural ratio; portrait images are
- * laid out side by side (decided from the first image that loads), an audio-only
- * set becomes one audio tile, and nothing usable becomes one placeholder.
+ * Multiple media covers default to vertical stacking; if the first loaded image
+ * is square or portrait (height >= width) they switch to side-by-side row.
+ * An audio-only set becomes one audio tile, and nothing usable becomes one placeholder.
  */
 export function renderCoverTiles(coverWrapper, covers, alt = "") {
     coverWrapper.innerHTML = "";
@@ -223,12 +223,14 @@ export function renderCoverTiles(coverWrapper, covers, alt = "") {
             const itemEl = $el("div", { className: "neo-gallery-card-cover-grid-item" });
             const img = $el("img", { src: _coverImgSrc(c), alt, loading: "lazy" });
             img.onerror = () => itemEl.replaceWith(buildPlaceholderTile());
-            img.onload = () => {
-                if (oriented) return;
-                oriented = true;
-                // 竖图上下堆叠会让卡片过高，改为左右并排；横图保持竖排
-                if (img.naturalHeight > img.naturalWidth) grid.classList.add("neo-gallery-card-cover-grid-row");
-            };
+            if (mediaCovers.length > 1) {
+                img.onload = () => {
+                    if (oriented) return;
+                    oriented = true;
+                    // 方形或竖图上下堆叠会让卡片过高，改为左右并排；横图保持竖排
+                    if (img.naturalHeight >= img.naturalWidth) grid.classList.add("neo-gallery-card-cover-grid-row");
+                };
+            }
             itemEl.appendChild(img);
             grid.appendChild(itemEl);
         }

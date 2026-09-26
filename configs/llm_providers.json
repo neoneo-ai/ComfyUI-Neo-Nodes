@@ -106,9 +106,9 @@
       "id": "unsloth",
       "name": "Unsloth",
       "type": "remote",
-      "default_base_url": "http://192.168.0.176:8888",
+      "default_base_url": "http://192.168.0.176:8888/v1",
       "append_v1": false,
-      "show_api_key": false,
+      "show_api_key": true,
       "model_mode": "dropdown"
     },
     {

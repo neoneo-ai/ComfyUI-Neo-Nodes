@@ -37,6 +37,20 @@ Settings → Provider 下拉里已内置以下国产云端入口，选好后填 
 - 下拉里**没有** Coding Plan：其条款仅允许在编程工具内交互使用，禁止以 API 形式用于自动化脚本 / 应用后端 / 非交互式批量调用，违规可能导致订阅暂停或 Key 被封。按订阅额度用请选「阿里云百炼 Token Plan」，按调用付费请选「阿里云百炼 (通义千问)」。
 - 供应商清单定义在 `configs/llm_providers.json`，增删改（含接入自建服务）直接编辑该文件，重启 ComfyUI 后下拉即生效。
 
+## 本地 LLM 推理服务（LM Studio / Ollama / vLLM / Unsloth）
+
+本地 / 局域网端点大多在收到请求时按需加载模型（LM Studio 的 Just In Time Model Loading、Ollama 天然如此），插件对它们只做两件事：
+
+- **模型列表**：本地端点先依次尝试原生端点——LM Studio `/api/v1/models`（列全部已下载模型）、Ollama `/api/tags` + `/api/ps`（列已 pull 模型）——没有结果再退回 OpenAI 兼容 `/v1/models`（Unsloth Studio 的 `/v1/models` 会列出全部已下载模型并带 `loaded` 字段）。下拉显示大小、视觉能力与 `loaded` 状态，**未加载的模型同样可选**。
+- **超时**：本地端点的有效超时抬高到至少 300s（大模型冷加载常超过默认 60s）；公网端点不受影响。
+
+**Unsloth Studio 例外**：它的 `/v1/chat/completions` 在未加载模型时直接回 400 `No model loaded. Call POST /inference/load first.`，不会自己加载；而且它只让**带 API Key 的调用者**触发加载——免鉴权（keyless）请求即使开了 `Settings → API` 里的 **Model auto-switch** 也会被跳过。所以要在插件里填 Key：
+
+1. 在 Studio 的 **Settings → API** 建一个 API Key（`sk-unsloth-` 开头），填进插件 Unsloth 的 API Key 输入框。
+2. 之后插件遇到上述 400 会带该 Key 调 `POST /api/inference/load`（`{"model_path": "<模型>"}`），加载完自动重试一次；若同时也打开了 **Model auto-switch**，服务端在首个请求里就自己冷加载了。没填 Key 时不发这个请求（免鉴权调用会被拒），错误信息里会提示去建 Key。
+
+只有服务不可达时下拉才显示 `❌ 无法连接服务`；列表为空只显示「无可用模型」。
+
 ## 本地 LLM 推理安装（可选）
 
 本地 GGUF 模式依赖 `llama-cpp-python`。它默认从源码编译（需要 C 编译器 / CUDA 工具链），Windows 上很容易失败，**推荐直接安装预编译 wheel**。

@@ -8,6 +8,7 @@ import json
 import asyncio
 import server
 import torch
+import aiohttp
 from aiohttp import web
 import threading
 import copy
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 from . import prompt_lines
 from . import skill
-from .llm import strip_inline_thinking, get_stored_api_key, build_remote_models_url, API_KEY_MASK
+from .llm import strip_inline_thinking, get_stored_api_key, build_remote_models_url, is_local_endpoint, local_list_endpoints, parse_service_models, API_KEY_MASK
 from .bundles import create_bundle
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1158,54 +1159,75 @@ async def rs_prompts_random_prompt(request):
 # Proxy API for fetching remote models (CORS workaround)
 # ==========================================
 
+async def _fetch_json(session, url: str, headers: dict):
+    """GET 一个 JSON 端点：返回 (payload, 错误串)；出错即让调用方换下一个候选"""
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                return None, f"HTTP {resp.status}"
+            return await resp.json(), ""
+    except asyncio.TimeoutError:
+        return None, "Timeout"
+    except Exception as e:
+        return None, str(e)
+
+
 @server.PromptServer.instance.routes.post("/rs_prompts/fetch_remote_models")
 async def rs_prompts_fetch_remote_models(request):
-    """Proxy request to fetch model list from LM Studio / Ollama / OpenAI-compatible APIs"""
+    """Proxy request to fetch model list from LM Studio / Ollama / OpenAI-compatible APIs.
+
+    本地 / 局域网端点依次尝试原生列表端点（LM Studio /api/v1/models 列全部已下载模型、
+    Ollama /api/tags+ps 列已 pull 模型）与 OpenAI 兼容 /v1/models（Unsloth Studio 带 loaded 字段）；云端端点行为不变。
+    """
     try:
-        import aiohttp
         data = await request.json()
         base_url = (data.get("base_url", "") or "").strip().rstrip("/")
         api_key = (data.get("api_key", "") or "").strip()
         provider = (data.get("provider", "") or "").strip()
-        
+
         if not base_url:
             return web.Response(status=400, text="base_url required")
-        
+
         # 输入框留空沿用已存密钥：前端只回传掩码，明文仅存于服务端配置
         if not api_key and provider:
             api_key = get_stored_api_key(provider)
-        
-        url = build_remote_models_url(base_url, provider)
 
         # 部分 OpenAI 兼容云端点（如官方 API）拉取列表也需要鉴权
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return web.json_response({"success": False, "error": f"HTTP {resp.status}"}, status=502)
-                payload = await resp.json()
+        is_local = is_local_endpoint(base_url)
+        endpoints = (local_list_endpoints(base_url, provider) if is_local
+                     else [("openai", build_remote_models_url(base_url, provider))])
 
         models = []
-        data_list = payload.get("data")
-        if isinstance(data_list, list):  # OpenAI 兼容: {"data": [{"id": ...}]}
-            for item in data_list:
-                if isinstance(item, str):
-                    models.append(item)
-                elif isinstance(item, dict):
-                    models.append(item.get("id") or item.get("name") or "")
-        models_list = payload.get("models")
-        if isinstance(models_list, list):  # Ollama tags: {"models": [{"name": ...}]}
-            for item in models_list:
-                if isinstance(item, str):
-                    models.append(item)
-                elif isinstance(item, dict):
-                    models.append(item.get("name") or item.get("id") or "")
+        source = ""
+        last_error = ""
+        saw_http = False
+        async with aiohttp.ClientSession() as session:
+            for kind, url in endpoints:
+                payload, err = await _fetch_json(session, url, headers)
+                if payload is None:
+                    last_error = err
+                    # 本地服务的候选端点 404 属正常（不是每种服务都有全部端点）：服务有响应即视为可达
+                    if is_local and err.startswith("HTTP "):
+                        saw_http = True
+                    continue
+                running = None
+                if kind == "ollama":
+                    # /api/ps 给出正在运行的模型，用于标注「已加载 / 未加载」（不影响可选性）
+                    running, _ = await _fetch_json(session, f"{url.rsplit('/api/', 1)[0]}/api/ps", headers)
+                parsed = parse_service_models(kind, payload, running)
+                if parsed:
+                    models, source = parsed, kind
+                    break
 
-        models = sorted({m for m in models if m})
-        return web.json_response({"success": True, "models": models})
-    except asyncio.TimeoutError:
-        return web.json_response({"success": False, "error": "Timeout"}, status=504)
+        if models:
+            return web.json_response({"success": True, "models": models, "source": source})
+        if last_error == "Timeout":
+            return web.json_response({"success": False, "error": "Timeout"}, status=504)
+        if last_error and not saw_http:
+            return web.json_response({"success": False, "error": last_error}, status=502)
+        # 服务可达但所有候选都没列出模型：返回空列表（前端显示「无可用模型」而非连接失败）
+        return web.json_response({"success": True, "models": [], "source": ""})
     except Exception as e:
         logger.error(f"Error fetching remote models: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=502)

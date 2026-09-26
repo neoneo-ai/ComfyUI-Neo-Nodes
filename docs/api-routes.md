@@ -141,7 +141,7 @@ grid/character 预设下载缓存在 `gallery/grid/presets/`、`gallery/characte
 | POST | `/rs_prompts/stream_{task_name}` | 按任务名动态注册的流式生成端点 |
 | POST | `/rs_prompts/stream_generate_prompt` | 流式生成 |
 | POST | `/rs_prompts/random_prompt` | 随机提示词 |
-| POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表（请求带 `provider`；`api_key` 留空时回退该 provider 已存密钥，端点按 provider 的 `append_v1` 规则拼接） |
+| POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表（请求带 `provider`；`api_key` 留空时回退该 provider 已存密钥）。本地 / 局域网端点先依次尝试 LM Studio `/api/v1/models`、Ollama `/api/tags`+`/api/ps` 原生端点，没有结果再按 `append_v1` 规则试 OpenAI 兼容 `/v1/models`（Unsloth Studio 的列表带 `loaded` 字段）；云端端点行为不变。返回 `models: [{id, name, size?, vision?, loaded?}]` 与来源端点类型 |
 | GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组）；生图/生视频技能另带可选 `gen_config` 摘要对象（有效 config.json 的非空子集：`model` 主模型、`loras` LoRA 名列表、`base_resolution` 长边尺寸、`default_ratio` 默认比例、`steps` 采样步数），全空时不附该字段 |
 | POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens、gen_image 生图标记、gen_video 生视频标记、mode 视频模式、requires_ref 参考图要求、config_overridden 预设是否存在本地配置覆盖） |
 | POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `gen_video` / `mode` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这些字段保留生图/生视频分类、视频模式与设置区）；**名称唯一性校验**：name 与其它 skill 重复时返回 409 |
