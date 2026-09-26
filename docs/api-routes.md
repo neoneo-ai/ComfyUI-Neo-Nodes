@@ -59,8 +59,7 @@ grid/character 预设下载缓存在 `output/StoryBoard/presets/`、`output/Char
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |
 | GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（每段首帧/尾帧与参考图·视频·音频均已解析为 input 名，并给出有效生成模式 `mode`）；配方有「角色参考图」且未关掉身份参考时另带 `identity_images[]`（≤4，视频段身份参考） |
-| POST | `/rs_recipes/director_generate_story` | 导演编辑器：主题 → LLM 生成完整故事脚本（纯文本，不再接收角色/背景参考） |
-| POST | `/rs_recipes/director_split_segments` | 导演编辑器：已确认故事按目标秒数拆分场景并重生成每段提示词（纯文本，不再接收角色/背景参考），返回 `segments[]` |
+| POST | `/rs_recipes/director_generate_segments` | 导演编辑器「📖 故事分镜」文字故事板：主题（`idea`）或已写好的故事脚本（`script`）+ 分段粒度（`segment_seconds`）→ LLM（任务 `director_story`）**直接输出分段 JSON**，返回 `segments[]`（每段 `prompt` / `duration_sec` / `storyboard_prompt`）；角色参考图文件名列表（`characters`）以多模态附上锁身份，provider 不支持视觉时自动回退纯文本 |
 | POST | `/rs_recipes/director_optimize_prompts` | 导演编辑器「统一设置」：单段优化前原文 + 时长 + 模式 + 该段参考清单 → LLM 按 H3 官方格式重写为一条成品提示词（附参考图走多模态），返回 `{prompt}`；前端逐段循环调用、逐段反馈进度 |
 | POST | `/rs_recipes/grid_split` | 导演编辑器「🧩 宫格分镜图拆分」：一张带分隔条/留白的分镜宫格图 → 纯像素均匀间隙检测（含只有 1~2px 的细白分隔条：条上压着字幕文字时按近白占比识别）+ 无意义细条剔除（整幅标题栏 / 页脚行 / 边缘窄条，或手动行×列，1~12）自动判行列，按行优先顺序把各格裁到 `input/`（各格内容在分隔条一侧再内缩 1px，并裁掉四边白框 / 黑框（含框外那 1~2px 接缝）与底部「白底 + 文字」字幕条，使格子可直接当视频首帧），返回 `{rows, cols, panels:[{filename,width,height,preview_url}], prompts[]}`（格子数超上限拒绝）；`prompts[]` 是从**原图内嵌的 ComfyUI 元信息**（PNG 的 API 格式 `prompt`）提取的正向提示词（文本输入键随工作流不同：`prompt` / `text` 等，按 negative 连线剔掉纯负向节点，切出的格子不带元信息所以只能从原图取），前端在「原宫格提示词」处只读展示 |
 | POST | `/rs_recipes/director_describe_panel` | 导演编辑器「🧩 宫格分镜图拆分」逐格描述（**单格**）：一张分镜图（该段首帧，多模态）+ 时长 +（可选）本格序号/总段数/九宫格行列、原宫格提示词、上一段已生成提示词 → LLM（任务 `director_panel_describe`）生成一条可直接提交的 MiniMax H3 i2v 成品提示词，返回 `{prompt}`；宫格方式下各段无原文，由「✨ 生成所有分段的提示词」按格子自动循环调用本端点、逐格反馈进度，单格失败不中断（上下文字段缺失/非法时静默降级为仅图+时长） |

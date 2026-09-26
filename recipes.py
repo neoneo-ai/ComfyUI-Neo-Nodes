@@ -1318,48 +1318,40 @@ def _parse_segments(raw):
     return out
 
 
-@PromptServer.instance.routes.post("/rs_recipes/director_generate_story")
-async def rs_recipes_director_generate_story(request):
-    """根据主题用 LLM 生成完整故事脚本（供导演编辑器确认后拆分）。不带参考图：角色一致性由 r2i 图片分镜负责。"""
+@PromptServer.instance.routes.post("/rs_recipes/director_generate_segments")
+async def rs_recipes_director_generate_segments(request):
+    """文字故事板一步到位：主题（idea）或已写好的故事脚本（script）→ LLM 直接输出分段 JSON
+    （每段 prompt / duration_sec / storyboard_prompt）。角色参考图以多模态附上锁角色身份，
+    provider 不支持视觉时自动回退纯文本。"""
     try:
         data = await request.json()
     except Exception:
         return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
     idea = str(data.get("idea") or "").strip()
-    if not idea:
+    script = str(data.get("script") or "").strip()
+    if not idea and not script:
         return web.json_response({"success": False, "error": "请填写故事主题"}, status=400)
-
-    result = await asyncio.to_thread(_director_llm, "director_story", f"故事主题 / 想法：\n{idea}")
-    if "error" in result:
-        return web.json_response({"success": False, "error": result["error"]}, status=422)
-    return web.json_response({"success": True, "story": str(result.get("story") or "")})
-
-
-@PromptServer.instance.routes.post("/rs_recipes/director_split_segments")
-async def rs_recipes_director_split_segments(request):
-    """把已确认的故事拆成约指定秒数的场景，为每段生成视频提示词与分镜图提示词。不带参考图（<imageN> 由 r2i 图片分镜的参考图承担）。"""
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
-    story = str(data.get("story") or "").strip()
-    if not story:
-        return web.json_response({"success": False, "error": "故事为空，无法拆分"}, status=400)
     try:
         seg_sec = int(data.get("segment_seconds") or 10)
     except (TypeError, ValueError):
         seg_sec = 10
     seg_sec = max(1, min(3600, seg_sec))
 
-    parts = [f"目标每段时长：约 {seg_sec} 秒", "", "已确认的故事脚本：\n" + story]
-    text = "\n".join(parts)
+    parts = [f"目标每段时长：约 {seg_sec} 秒", ""]
+    if script:
+        parts.append("已确认的故事脚本（按原剧情拆分，不要改写情节）：\n" + script)
+    else:
+        parts.append("故事主题 / 想法：\n" + idea)
 
-    result = await asyncio.to_thread(_director_llm, "director_split", text)
+    char_names = [str(n).strip() for n in (data.get("characters") or []) if str(n or "").strip()]
+    result = await asyncio.to_thread(
+        _director_llm, "director_story", "\n".join(parts),
+        _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(char_names)]))
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     segments = _parse_segments(result.get("segments") or "")
     if not segments:
-        return web.json_response({"success": False, "error": "拆分结果解析失败，请重试"}, status=422)
+        return web.json_response({"success": False, "error": "生成结果解析失败，请重试"}, status=422)
     return web.json_response({"success": True, "segments": segments})
 
 

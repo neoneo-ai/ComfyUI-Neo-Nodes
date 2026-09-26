@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, fetchLog, changeValue, dropFiles, makeFile } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, fetchLog, inputText, changeValue, dropFiles, makeFile } from "./setup.mjs";
 import { app, appState, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
@@ -647,89 +647,201 @@ test("导演编辑器单例：同一配方重复点击忽略，另一配方重�
     assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "关闭后可重新打开");
 });
 
-test("导演编辑器：故事生成 + 确认拆分填充时间轴", async () => {
+test("导演编辑器：文字故事板一键生成分段填充时间轴", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 参考图网格为空
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "sk-a", name: "技能 A", gen_video: true },
     ]));
-    mockRoute("/rs_recipes/director_generate_story", () => jsonResponse({ success: true, story: "生成的故事正文" }));
-    mockRoute("/rs_recipes/director_split_segments", () => jsonResponse({
+    let segBody;
+    mockRoute("/rs_recipes/director_generate_segments", (body) => { segBody = body; return jsonResponse({
         success: true,
         segments: [
-            { prompt: "场景A提示词", duration_sec: 5 },
+            { prompt: "场景A提示词", duration_sec: 5, storyboard_prompt: "场景A关键帧" },
             { prompt: "场景B提示词", duration_sec: 10 },
         ],
-    }));
+    }); });
 
-    await openDirectorEditor(null); // 新建：默认 1 个空段
+    await openDirectorEditor(null); // 新建：默认 📖 故事分镜页
     await sleep(60);
 
-    // 页签结构：新建默认落在「故事板生成」，参考图设置 / 时间轴页隐藏
+    // 页签结构：只有两个页签，新建默认落在「📖 故事分镜」，时间轴页隐藏
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    assert.equal(tabs.length, 3, "三个页签");
-    const tabStory = tabs.find((t) => t.textContent.includes("故事板生成"));
-    const tabSetup = tabs.find((t) => t.textContent.trim() === "🎨 参考图设置");
+    assert.equal(tabs.length, 2, "两个页签");
+    const tabStory = tabs.find((t) => t.textContent.includes("故事分镜"));
     const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
-    assert.ok(tabStory && tabSetup && tabTimeline, "三个页签齐全");
-    assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
+    assert.ok(tabStory && tabTimeline, "两个页签齐全");
+    assert.ok(tabStory.classList.contains("active"), "新建默认激活故事分镜页");
     assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
 
-    // 故事区元素齐全
-    const ideaInp = document.querySelector(".neo-director-story-idea");
-    const genBtn = document.querySelector(".neo-director-gen-story");
-    const storyTa = document.querySelector(".neo-director-story");
-    assert.ok(ideaInp && genBtn && storyTa, "主题输入 / 生成按钮 / 故事框齐全");
-    assert.equal(document.querySelector(".neo-director-refgrid"), null, "已移除参考图网格");
-    assert.ok(document.querySelector(".neo-director-seglen"), "分段粒度选择器存在");
-    // 页面结构：顶部两条路径引导 + ①/② 步骤标签；九宫格按钮与「生成故事脚本」并排在主题行右侧
-    assert.ok(document.querySelector(".neo-director-story-hint"), "顶部有两条分镜路径的引导行");
-    const leftLabels = [...document.querySelectorAll(".neo-director-story-left .neo-director-field-label")].map(l => l.textContent);
-    assert.ok(leftLabels.some(t => t.includes("① 故事主题")), "左栏有 ① 主题步骤标签");
-    assert.ok(leftLabels.some(t => t.includes("② 故事脚本")), "左栏有 ② 脚本步骤标签");
-    assert.ok(document.querySelector(".neo-director-story-idea-row .neo-director-grid-idea-gen"), "九宫格按钮与生成故事脚本并排在主题行右侧");
-    assert.ok(document.querySelector(".neo-director-story-right-spacer"), "右栏有顶部占位（分段的故事与 ② 故事脚本对齐）");
-    // 分段粒度 + 拆分按钮整体在右栏标题行最右侧（不再占左栏底部一行）
-    const segsHead = document.querySelector(".neo-director-story-segs-head");
-    assert.ok(segsHead.querySelector(".neo-director-seglen"), "分段粒度在右栏标题行内");
-    assert.ok(segsHead.querySelector(".neo-director-story-segs-title"), "标题行含「分段的故事」标题");
+    // band 1 来源 radio 横排（与旧版一致）：宫格 / 文字二选一，下面只显示选中来源的那张卡
+    const srcGroup = document.querySelector(".neo-director-src");
+    const srcRadio = (v) => srcGroup.querySelector(`input[value="${v}"]`);
+    assert.ok(srcRadio("grid") && srcRadio("text"), "来源含「🧩 宫格图故事板」「📝 文字故事板」两个横向 radio");
+    assert.ok(srcGroup.textContent.includes("🧩 宫格图故事板") && srcGroup.textContent.includes("📝 文字故事板"), "两个 radio 标签齐全");
+    const srcGridCard = document.querySelector(".neo-director-src-card-grid");
+    const srcTextCard = document.querySelector(".neo-director-src-card-text");
+    const band0 = srcGroup.closest(".neo-director-band");
+    assert.ok(srcGroup.parentElement.classList.contains("neo-director-row"), "分镜来源在第一行的行内横排");
+    assert.equal(band0, document.querySelector(".neo-director-pane-story").children[0], "分镜来源所在 band 是故事分镜页第一段");
+    assert.ok(band0.querySelector(".neo-director-setup-char"), "角色参考图卡片在两种来源下都常驻（与来源同行 band）");
+    assert.ok(srcGroup.parentElement.querySelector(".neo-director-identity-refs"), "角色身份参考同第一行（靠右）");
+    assert.equal(srcGridCard.style.display, "", "新配方默认显示宫格图来源卡");
+    assert.equal(srcTextCard.style.display, "none", "默认隐藏文字卡（不同时显示两张）");
 
-    // ① 自动生成故事 → 写入可编辑故事框
-    ideaInp.value = "一只机器猫找家";
+    // 切到文字来源：只换卡（radio 行不动），不会两张卡同时亮着
+    srcRadio("text").click();
+    await sleep(20);
+    assert.equal(srcRadio("text").checked, true, "点文字 radio 即选中");
+    assert.equal(srcTextCard.style.display, "", "切到文字来源后文字卡显示");
+    assert.equal(srcGridCard.style.display, "none", "宫格卡隐藏（两张不同时显示）");
+
+    // 文字卡内元素齐全：主题输入 / 分段粒度 / 一键生成按钮
+    const ideaInp = srcTextCard.querySelector(".neo-director-story-idea");
+    const genBtn = srcTextCard.querySelector(".neo-director-gen-segs");
+    assert.ok(ideaInp && genBtn, "主题输入 / 生成分段按钮齐全");
+    assert.ok(srcTextCard.querySelector(".neo-director-seglen"), "分段粒度选择器在文字卡内");
+
+    // 紧凑布局：一行两栏 + 动作靠各段右上角——左 = 故事主题 / 脚本（粒度 + 生成分镜分段在左栏右上角），
+    // 右 = 分镜 / 首帧方式 + 🎨 图片分镜（生成图片分镜在卡片右上角）
+    const ideaCols = srcTextCard.querySelector(".neo-director-idea-cols");
+    const ideaCol = ideaCols.querySelector(".neo-director-idea-col");
+    const ideaSide = ideaCols.querySelector(".neo-director-idea-side");
+    assert.ok(ideaCol.contains(ideaInp), "故事主题 / 脚本在左栏");
+    const leftHead = ideaCol.querySelector(".neo-director-idea-head");
+    const leftAct = leftHead && leftHead.querySelector(".neo-director-step-act");
+    assert.ok(leftAct && leftAct.contains(genBtn) && leftAct.contains(srcTextCard.querySelector(".neo-director-seglen")),
+        "分段粒度 + 生成分镜分段在左栏（故事）标题行右上角");
+    assert.ok(!srcTextCard.querySelector(".neo-director-src-head .neo-director-step-act"), "文字卡总标题行不放动作按钮");
+    assert.ok(ideaSide.contains(srcTextCard.querySelector(".neo-director-text-mode")), "分镜 / 首帧方式在右栏");
+    assert.equal(document.querySelectorAll(".neo-director-text-mode").length, 1,
+        "分镜 / 首帧方式只有文字卡右栏这一处（band 2 不再重复）");
+    assert.ok(ideaSide.contains(srcTextCard.querySelector(".neo-director-setup-sb")), "🎨 图片分镜卡片也在右栏（与主题输入同一行）");
+    assert.ok(!document.querySelector(".neo-director-band-text"), "文字侧子设置不再单独占 band（已并入文字卡右栏）");
+
+    // 一键生成 → 请求带 idea + 粒度，时间轴填充段落（主题用 input 事件输入，与真实输入一致）
+    inputText(ideaInp, "一只机器猫找家");
     genBtn.click();
     await sleep(50);
-    assert.equal(storyTa.value, "生成的故事正文", "生成结果写入故事框");
-    const genCall = fetchLog.find((c) => c.path === "/rs_recipes/director_generate_story");
-    assert.ok(genCall, "发出故事生成请求");
-    assert.equal(genCall.body.characters, undefined, "故事生成不再发送角色参考图");
-    assert.equal(genCall.body.backgrounds, undefined, "故事生成不再发送背景参考图");
 
-    // ② 确认并拆分 → 填充时间轴段落，右栏显示分段后的故事（留在本页，不再自动切页）
-    const splitBtn = document.querySelector(".neo-director-split");
-    assert.ok(splitBtn, "拆分按钮存在");
-    assert.ok(segsHead.contains(splitBtn), "拆分按钮在右栏标题行内");
-    storyTa.value = "场景一…";
-    splitBtn.click();
-    await sleep(50);
+    const genCall = fetchLog.find((c) => c.path === "/rs_recipes/director_generate_segments");
+    assert.ok(genCall, "发出分镜分段生成请求");
+    assert.equal(segBody.idea, "一只机器猫找家", "请求携带主题");
+    assert.ok(Number.isInteger(segBody.segment_seconds), "请求携带分段粒度");
 
-    const splitCall = fetchLog.find((c) => c.path === "/rs_recipes/director_split_segments");
-    assert.ok(splitCall, "发出拆分请求");
-    assert.equal(splitCall.body.characters, undefined, "拆分不再发送角色参考图");
-    assert.equal(splitCall.body.backgrounds, undefined, "拆分不再发送背景参考图");
-
-    assert.ok(tabSetup.classList.contains("active"), "拆分后自动切到「🎨 参考图设置」页");
     const segs = Array.from(document.querySelectorAll(".neo-director-seg"));
-    assert.equal(segs.length, 2, "拆分成 2 段");
+    assert.equal(segs.length, 2, "生成 2 段");
     assert.equal(segs[0].querySelector(".neo-director-prompt").value, "场景A提示词");
-    assert.equal(segs[1].querySelector(".neo-director-prompt").value, "场景B提示词");
     assert.equal(segs[0].querySelector(".neo-director-skill").value, "sk-a", "技能取首个可用视频技能");
     assert.equal(Number(segs[1].querySelector(".neo-director-dur").value), 10);
 
-    // 右栏：分段后的故事（2 段，含提示词）
-    const segItems = Array.from(document.querySelectorAll(".neo-director-story-segs .neo-director-story-seg-item"));
-    assert.equal(segItems.length, 2, "右栏显示 2 个分段");
-    assert.ok(segItems[0].textContent.includes("场景A提示词"), "右栏第 1 段含提示词");
-    assert.ok(segItems[1].textContent.includes("场景B提示词"), "右栏第 2 段含提示词");
+    // band 3 各段对照（文字来源三栏：分镜图 / 优化前 / 优化后）
+    const labels = Array.from(document.querySelectorAll(".neo-director-setup-seg-labels span")).map((s) => s.textContent);
+    assert.deepEqual(labels, ["分镜图", "优化前", "优化后"], "文字来源对照表三栏");
+    const segItems = Array.from(document.querySelectorAll(".neo-director-story-seg-item"));
+    assert.equal(segItems.length, 2, "对照表显示 2 段");
+    assert.ok(segItems[0].textContent.includes("场景A提示词"), "第 1 段含优化前原文");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：故事分镜页四步徽标（① 来源 → ② 分段 → ③ 关键帧 → ④ 提示词）与动作按前置置灰", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/director_generate_segments", () => jsonResponse({
+        success: true,
+        segments: [{ prompt: "场景A提示词", duration_sec: 5 }],
+    }));
+
+    await openDirectorEditor(null); // 新建：默认宫格来源、1 个空段、无主题也无配方名
+    await sleep(60);
+
+    // 徽标排在各自步骤的标题行：①「分镜来源」行、② 宫格 / 文字两张来源卡、③「🎨 图片分镜」、④「各段对照」
+    const story = document.querySelector(".neo-director-pane-story");
+    const badges = Array.from(story.querySelectorAll(".neo-director-step-badge"));
+    assert.deepEqual(badges.map((b) => b.textContent), ["①", "②", "②", "③", "④"], "四步徽标齐全且按序号排布");
+    assert.ok(document.querySelector(".neo-director-src").parentElement.querySelector(".neo-director-step-badge"), "① 在「分镜来源」这一行");
+    assert.equal(story.querySelector(".neo-director-src-card-grid .neo-director-src-head .neo-director-step-badge"), badges[1], "② 在宫格卡标题行");
+    assert.equal(story.querySelector(".neo-director-src-card-text .neo-director-src-head .neo-director-step-badge"), badges[2], "② 在文字卡标题行");
+    assert.equal(story.querySelector(".neo-director-setup-sb .neo-director-refs-head .neo-director-step-badge"), badges[3], "③ 在「🎨 图片分镜」标题行");
+    assert.equal(story.querySelector(".neo-director-setup-opt > .neo-director-step-badge"), badges[4], "④ 在「各段对照」标题行");
+
+    const genBtn = story.querySelector(".neo-director-gen-segs");
+    const splitBtn = story.querySelector(".neo-director-grid-split");
+    const sbBtn = story.querySelector(".neo-director-sb-gen");
+    const optBtn = story.querySelector(".neo-director-optimize");
+    const states = () => badges.map((b) => (b.classList.contains("neo-director-step-done") ? "done"
+        : b.classList.contains("neo-director-step-current") ? "current" : "todo"));
+
+    // 初始：宫格来源还没选图 → ① 等输入（高亮），②③④ 前置未满足（变淡）；四个动作都点不动，缺什么写在 title
+    assert.deepEqual(states(), ["current", "todo", "todo", "todo", "todo"], "初始四步状态");
+    assert.equal(genBtn.disabled, true, "主题为空：生成分镜分段置灰");
+    assert.match(genBtn.title, /主题/, "置灰原因写在 title");
+    assert.equal(splitBtn.disabled, true, "未选宫格图：拆分到各段置灰");
+    assert.match(splitBtn.title, /宫格图/, "置灰原因写在 title");
+    assert.equal(sbBtn.disabled, true, "分段为空：生成图片分镜置灰");
+    assert.equal(optBtn.disabled, true, "没有可描述的段：生成提示词置灰");
+    splitBtn.click();   // 置灰按钮点不动（不报错、不发请求）
+    await sleep(20);
+    assert.ok(!fetchLog.some((c) => c.path === "/rs_recipes/grid_split"), "置灰的拆分按钮不发请求");
+
+    // 文字侧填主题（input 事件 = 真实输入）→ ① 完成、② 轮到这一步、生成分镜分段可用
+    story.querySelector('input[value="text"]').click();
+    await sleep(20);
+    inputText(story.querySelector(".neo-director-story-idea"), "一只机器猫找家");
+    assert.deepEqual(states(), ["done", "current", "current", "todo", "todo"], "主题就绪：① 完成、② 当前、③/④ 仍等分段");
+    assert.equal(genBtn.disabled, false, "有主题 → 生成分镜分段可用");
+
+    // 生成分段（LLM 直出各段 / 时长 / 关键帧提示词）→ ② 完成、③ 轮到关键帧、④ 轮到提示词（优化结果还没出）
+    genBtn.click();
+    await sleep(60);
+    assert.deepEqual(states(), ["done", "done", "done", "current", "current"], "分段到手：② 完成、③/④ 就绪");
+    assert.equal(sbBtn.disabled, false, "有分段 + 配方名（随主题同步）→ 生成图片分镜可用");
+    assert.equal(optBtn.disabled, false, "有分段原文 → 生成所有分段的提示词可用");
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：宫格来源的分步状态——选图后 ① 完成、拆分后可进入提示词步", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "grid.png" }));
+    mockRoute("/rs_recipes/grid_split", () => jsonResponse({
+        success: true, rows: 1, cols: 2,
+        panels: [
+            { filename: "p0.png", width: 512, height: 288 },
+            { filename: "p1.png", width: 512, height: 288 },
+        ],
+        prompts: [],
+    }));
+
+    await openDirectorEditor(null); // 新建：默认宫格来源
+    await sleep(60);
+
+    const story = document.querySelector(".neo-director-pane-story");
+    const badges = Array.from(story.querySelectorAll(".neo-director-step-badge"));
+    const states = () => badges.map((b) => (b.classList.contains("neo-director-step-done") ? "done"
+        : b.classList.contains("neo-director-step-current") ? "current" : "todo"));
+    const splitBtn = story.querySelector(".neo-director-grid-split");
+
+    // 从素材库拖入宫格图 → ① 完成、② 轮到拆分
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"grid.png","subfolder":""}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    story.querySelector(".neo-director-grid-src").dispatchEvent(dropEv);
+    await sleep(40);
+    assert.deepEqual(states(), ["done", "current", "current", "todo", "todo"], "选图后 ① 完成、② 当前");
+    assert.equal(splitBtn.disabled, false, "有宫格图 → 拆分到各段可用");
+
+    // 拆分 → ② 完成（✓）、④ 可按各格分镜图逐格描述
+    splitBtn.click();
+    await sleep(60);
+    assert.deepEqual(states(), ["done", "done", "done", "done", "current"], "拆分后 ② 完成、④ 当前");
+    assert.equal(story.querySelector(".neo-director-optimize").disabled, false, "各格有分镜图 → 生成所有分段的提示词可用");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
@@ -840,13 +952,12 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/粒
     await openDirectorEditor(existing, null);
     await sleep(60);
 
-    const tabStory = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事板生成"));
+    const tabStory = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabStory.click();
     await sleep(20);
 
-    // 主题 / 故事脚本 / 分段粒度回显
+    // 主题 / 分段粒度回显（旧「story」字段同样回显到主题框）
     assert.equal(document.querySelector(".neo-director-story-idea").value, "旧主题");
-    assert.equal(document.querySelector(".neo-director-story").value, "旧故事正文");
     assert.equal(document.querySelector(".neo-director-seglen").value, "15");
 
     // 背景参考图已移除：旧配方的 backgrounds 不再回显，任何网格都不出现 bg.png
@@ -862,7 +973,7 @@ test("导演编辑器：打开旧配方回显自动故事板（主题/脚本/粒
     const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
     assert.ok(saveCall, "发出保存请求");
     assert.equal(saveCall.body.story.idea, "旧主题");
-    assert.equal(saveCall.body.story.story, "旧故事正文");
+    assert.equal(saveCall.body.story.story, undefined, "旧「story」字段不再落盘");
     assert.equal(saveCall.body.story.characters, undefined, "未设置角色参考图时不回传 characters");
     assert.equal(saveCall.body.story.backgrounds, undefined, "遗留 backgrounds 不再回传");
     assert.equal(saveCall.body.story.segment_seconds, 15);
@@ -877,7 +988,6 @@ test("导演编辑器：新建配方无故事内容时 story 各字段为空（�
     await openDirectorEditor(null, null);
     await sleep(60);
     assert.equal(document.querySelector(".neo-director-story-idea").value, "", "新建时主题为空");
-    assert.equal(document.querySelector(".neo-director-story").value, "", "新建时故事为空");
     assert.equal(document.querySelector(".neo-director-seglen").value, "10", "粒度回落默认 10 秒");
 
     document.querySelector(".neo-director-name").value = "新配方";
@@ -889,21 +999,21 @@ test("导演编辑器：新建配方无故事内容时 story 各字段为空（�
     const saveCall = fetchLog.find((c) => c.path === "/rs_recipes/save");
     assert.ok(saveCall, "发出保存请求");
     assert.equal(saveCall.body.story.idea, null);
-    assert.equal(saveCall.body.story.story, null);
+    assert.equal(saveCall.body.story.story, undefined, "旧「story」字段不再落盘");
     assert.equal(saveCall.body.story.characters, undefined, "未设置角色参考图时不回传 characters");
     assert.equal(saveCall.body.story.backgrounds, undefined, "未设置背景参考图时不回传 backgrounds");
 });
 
-test("导演编辑器：新建默认故事板页，标题随主题输入实时同步（超 20 字截断），手动命名后不再覆盖", async () => {
+test("导演编辑器：新建默认故事分镜页，标题随主题输入实时同步（超 20 字截断），手动命名后不再覆盖", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
 
-    // ① 新建：默认落在自动故事板页，时间轴页隐藏
+    // ① 新建：默认落在故事分镜页，时间轴页隐藏
     await openDirectorEditor(null);
     await sleep(60);
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    const tabStory = tabs.find((t) => t.textContent.includes("故事板生成"));
+    const tabStory = tabs.find((t) => t.textContent.includes("故事分镜"));
     assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
     assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
 
@@ -994,7 +1104,7 @@ test("导演编辑器：编辑已有配方默认时间轴页，且主题输入�
     await sleep(60);
 
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    const tabStory = tabs.find((t) => t.textContent.includes("故事板生成"));
+    const tabStory = tabs.find((t) => t.textContent.includes("故事分镜"));
     const tabTimeline = tabs.find((t) => t.textContent.includes("时间轴分段"));
     assert.ok(tabTimeline.classList.contains("active"), "编辑默认激活时间轴页");
     assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none", "故事板页默认隐藏");
@@ -1634,15 +1744,15 @@ test("导演编辑器：非混合模式统一选择技能（紧邻生成模式�
     });
     await sleep(60);
 
-    // 位置：时间轴页顶行「生成模式」之后、宽高比之前
-    const tlRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
-    const kids = Array.from(tlRow.children);
-    const gSkillSel = tlRow.querySelector(".neo-director-global-skill");
+    // 位置：🎞️ 时间轴分段页首行「生成模式」之后（生成设置归时间轴页，故事分镜与生成模式无关）
+    const stRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
+    const kids = Array.from(stRow.children);
+    const gSkillSel = stRow.querySelector(".neo-director-global-skill");
     assert.ok(gSkillSel, "非混合模式显示统一技能框");
-    const gSkillLabel = tlRow.querySelector(".neo-director-global-skill-label");
-    assert.equal(kids.indexOf(gSkillLabel), kids.indexOf(tlRow.querySelector(".neo-director-mode")) + 1, "技能标签紧邻生成模式之后");
+    const gSkillLabel = stRow.querySelector(".neo-director-global-skill-label");
+    assert.equal(kids.indexOf(gSkillLabel), kids.indexOf(stRow.querySelector(".neo-director-mode")) + 1, "技能标签紧邻生成模式之后");
     assert.equal(kids.indexOf(gSkillSel), kids.indexOf(gSkillLabel) + 1, "技能下拉紧随其标签");
-    assert.ok(kids.indexOf(gSkillSel) < kids.indexOf(tlRow.querySelector(".neo-director-aspect")), "位于宽高比之前");
+    assert.equal(document.querySelector(".neo-director-pane-story .neo-director-global-skill"), null, "故事分镜页没有统一技能框（生成设置只在时间轴页）");
     assert.equal(gSkillSel.value, "sk-t2v", "初始取首段技能");
     assert.equal(gSkillLabel.style.display, "", "标签可见");
 
@@ -1654,10 +1764,10 @@ test("导演编辑器：非混合模式统一选择技能（紧邻生成模式�
     assert.deepEqual(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-skill")).map((s) => s.value),
         ["sk-t2v", "sk-t2v"], "打开即按统一技能归一各段");
 
-    // 时间轴页统一技能改选 → 各段跟随（本页不再有重复的技能框）
+    // 时间轴页统一技能改选 → 各段跟随（故事分镜页没有重复的技能框）
     gSkillSel.value = "sk-t2v2";
     gSkillSel.dispatchEvent(new window.Event("change"));
-    assert.equal(document.querySelector(".neo-director-pane-setup .neo-director-global-skill"), null, "参考图设置页不再重复统一技能框");
+    assert.equal(document.querySelector(".neo-director-pane-story .neo-director-global-skill"), null, "故事分镜页不重复统一技能框");
     assert.deepEqual(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-skill")).map((s) => s.value),
         ["sk-t2v2", "sk-t2v2"], "统一技能同步到各段");
 
@@ -1683,21 +1793,21 @@ test("导演编辑器：混合模式隐藏统一技能框，技能回到逐段�
     });
     await sleep(60);
 
-    const tlRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
-    assert.equal(tlRow.querySelector(".neo-director-global-skill").style.display, "none", "混合模式隐藏统一技能框");
-    assert.equal(tlRow.querySelector(".neo-director-global-skill-label").style.display, "none", "标签一并隐藏");
+    const stRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
+    assert.equal(stRow.querySelector(".neo-director-global-skill").style.display, "none", "混合模式隐藏统一技能框");
+    assert.equal(stRow.querySelector(".neo-director-global-skill-label").style.display, "none", "标签一并隐藏");
     const segSkill = document.querySelector(".neo-director-seg .neo-director-skill");
     assert.equal(segSkill.style.display, "", "混合模式段内技能下拉恢复显示");
     assert.equal(document.querySelector(".neo-director-seg .neo-director-skill-label").style.display, "");
     assert.deepEqual(Array.from(segSkill.options).map((o) => o.value), ["sk-t2v"], "段内技能池按该段有效模式（t2v）过滤");
 
     // 切回非混合模式：统一框显示、段内隐藏，且技能池按新全局模式过滤
-    const modeSel = tlRow.querySelector(".neo-director-mode");
+    const modeSel = stRow.querySelector(".neo-director-mode");
     modeSel.value = "i2v";
     modeSel.dispatchEvent(new window.Event("change"));
-    assert.equal(tlRow.querySelector(".neo-director-global-skill").style.display, "", "非混合模式恢复显示统一技能框");
+    assert.equal(stRow.querySelector(".neo-director-global-skill").style.display, "", "非混合模式恢复显示统一技能框");
     assert.equal(segSkill.style.display, "none", "段内技能下拉重新隐藏");
-    assert.deepEqual(Array.from(tlRow.querySelector(".neo-director-global-skill").options).map((o) => o.value),
+    assert.deepEqual(Array.from(stRow.querySelector(".neo-director-global-skill").options).map((o) => o.value),
         ["sk-i2v"], "统一技能池按全局模式过滤");
     assert.equal(segSkill.value, "sk-i2v", "各段跟随统一技能");
 
@@ -1730,7 +1840,7 @@ test("导演编辑器：参考素材区标题行「素材库」按钮打开/收�
 });
 
 
-test("导演编辑器：「🎨 参考图设置」页签存在，生成模式只在时间轴页选择并联动本页素材区", async () => {
+test("导演编辑器：「📖 故事分镜」页签——时间轴页生成模式联动本页素材区", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
@@ -1744,38 +1854,37 @@ test("导演编辑器：「🎨 参考图设置」页签存在，生成模式只
     });
     await sleep(60);
 
-    // 三个页签：故事板生成 / 参考图设置 / 时间轴分段
+    // 两个页签：📖 故事分镜 / 🎞️ 时间轴分段
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    assert.equal(tabs.length, 3, "标题栏共三个页签");
-    assert.ok(tabs.some((t) => t.textContent.includes("故事板生成")), "含「📖 故事板生成」页签");
-    const tabSetup = tabs.find((t) => t.textContent.trim() === "🎨 参考图设置");
-    assert.ok(tabSetup, "含「🎨 参考图设置」页签");
+    assert.equal(tabs.length, 2, "标题栏共两个页签");
+    const tabStory = tabs.find((t) => t.textContent.includes("故事分镜"));
+    assert.ok(tabStory, "含「📖 故事分镜」页签");
 
-    // 切到参考图设置页：setup 面板显示，故事板 / 时间轴隐藏
-    tabSetup.click();
+    // 切到故事分镜页：story 面板显示，时间轴隐藏
+    tabStory.click();
     await sleep(20);
-    assert.ok(tabSetup.classList.contains("active"), "参考图设置页签激活");
-    assert.equal(document.querySelector(".neo-director-pane-setup").style.display, "");
-    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none");
+    assert.ok(tabStory.classList.contains("active"), "故事分镜页签激活");
+    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "");
     assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none");
 
-    // 本页不再重复「生成模式 / 技能」下拉（只在时间轴页选），但保留素材区 + 优化按钮
-    const setupPane = document.querySelector(".neo-director-pane-setup");
-    assert.equal(setupPane.querySelector(".neo-director-mode"), null, "本页不再生成模式下拉（时间轴页唯一）");
-    assert.equal(setupPane.querySelector(".neo-director-global-skill"), null, "本页不再统一技能框（时间轴页唯一）");
+    // 生成模式 / 统一技能在「🎞️ 时间轴分段」页首行（故事分镜与生成模式无关，本页不重复）
+    const setupPane = document.querySelector(".neo-director-pane-story");
+    const tlRow = document.querySelector(".neo-director-pane-timeline .neo-director-shared");
+    assert.ok(tlRow.querySelector(".neo-director-mode"), "生成模式下拉在时间轴页");
+    assert.equal(setupPane.querySelector(".neo-director-mode"), null, "故事分镜页没有生成模式下拉（生成设置只在时间轴页）");
     assert.equal(setupPane.querySelector(".neo-director-setup-refs"), null, "统一参考素材区已移除（参考素材到时间轴页逐段设置）");
     assert.ok(setupPane.querySelector(".neo-director-optimize"), "提示词优化按钮");
 
-    // t2v：不需要参考素材 → 首尾帧区隐藏，不再显示文生说明（已移除）
+    // t2v：不需要参考素材 → 首尾帧区隐藏，不显示任何说明文字
     assert.equal(setupPane.querySelector(".neo-director-setup-frames").style.display, "none", "t2v 隐藏首尾帧区");
     assert.ok(Array.from(setupPane.querySelectorAll(".neo-director-setup-hint"))
         .every((h) => h.style.display === "none"), "t2v 不显示任何说明文字");
 
     // 改时间轴页生成模式 → 本页素材区跟随显隐
-    const tlModeSel = document.querySelector(".neo-director-pane-timeline .neo-director-mode");
-    assert.equal(tlModeSel.value, "t2v", "初始与 shared.mode 一致");
-    tlModeSel.value = "r2v";
-    tlModeSel.dispatchEvent(new Event("change"));
+    const stModeSel = tlRow.querySelector(".neo-director-mode");
+    assert.equal(stModeSel.value, "t2v", "初始与 shared.mode 一致");
+    stModeSel.value = "r2v";
+    stModeSel.dispatchEvent(new Event("change"));
     assert.ok(Array.from(document.querySelectorAll(".neo-director-seg .neo-director-refs-block"))
         .every((b) => b.style.display !== "none"), "r2v 下各段参考素材区显示");
     const hints = Array.from(setupPane.querySelectorAll(".neo-director-setup-hint"));
@@ -1783,60 +1892,40 @@ test("导演编辑器：「🎨 参考图设置」页签存在，生成模式只
     assert.ok(r2vHint && r2vHint.style.display !== "none", "r2v 显示「到时间轴页逐段设置」说明");
     assert.ok(hints.every((h) => h === r2vHint || h.style.display === "none"), "r2v 隐藏其余说明文字");
 
-    tlModeSel.value = "t2v";
-    tlModeSel.dispatchEvent(new Event("change"));
+    stModeSel.value = "t2v";
+    stModeSel.dispatchEvent(new Event("change"));
     assert.equal(r2vHint.style.display, "none", "切回 t2v 隐藏全参考说明");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
 });
 
-test("导演编辑器：拆分成功后自动切到「🎨 参考图设置」页", async () => {
+test("导演编辑器：分镜来源默认宫格图，一键文字生成后回落逐段图片分镜", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
-    mockRoute("/rs_recipes/director_split_segments", () => jsonResponse({
+    mockRoute("/rs_recipes/director_generate_segments", () => jsonResponse({
         success: true,
         segments: [{ prompt: "a", duration_sec: 5 }, { prompt: "b", duration_sec: 5 }],
     }));
 
-    await openDirectorEditor(null); // 新建：默认故事板页
+    await openDirectorEditor(null); // 新建：无文字拆分段 → 默认宫格图故事板
     await sleep(60);
-    document.querySelector(".neo-director-story").value = "一段完整的故事";
-    document.querySelector(".neo-director-split").click();
-    await sleep(40);
+    const srcGroup = document.querySelector(".neo-director-src");
+    const srcGridCard = document.querySelector(".neo-director-src-card-grid");
+    const srcTextCard = document.querySelector(".neo-director-src-card-text");
+    assert.equal(srcGridCard.style.display, "", "全新配方（无文字拆分段）默认宫格图故事板");
+    assert.equal(srcTextCard.style.display, "none", "默认隐藏文字卡（radio 行横排可见可点）");
 
-    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    const tabSetup = tabs.find((t) => t.textContent.trim() === "🎨 参考图设置");
-    assert.ok(tabSetup.classList.contains("active"), "拆分后自动激活参考图设置页签");
-    assert.equal(document.querySelector(".neo-director-pane-setup").style.display, "");
-    assert.equal(Array.from(document.querySelectorAll(".neo-director-seg")).length, 2, "时间轴已填充 2 段");
-
-    document.querySelector(".neo-director-close").click();
+    // 一键文字生成 → 成功后回落逐段图片分镜（band 2 显示 🎨 图片分镜卡片）
+    srcGroup.querySelector('input[value="text"]').click();
     await sleep(20);
-});
-
-
-test("导演编辑器：分镜/首帧方式默认宫格分镜图拆分，文字拆分段后回落逐段图片分镜", async () => {
-    const { openDirectorEditor } = await import("../../web/director.js");
-    appState.graph = { _nodes: [] };
-    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
-    mockRoute("/rs_recipes/director_split_segments", () => jsonResponse({
-        success: true,
-        segments: [{ prompt: "a", duration_sec: 5 }, { prompt: "b", duration_sec: 5 }],
-    }));
-
-    await openDirectorEditor(null); // 新建：无文字拆分段 → 默认宫格分镜图拆分
-    await sleep(60);
-    const fsSel = document.querySelector(".neo-director-frame-source");
-    assert.ok(fsSel, "分镜/首帧方式选择器存在");
-    assert.equal(fsSel.value, "grid", "全新配方（无文字拆分段）默认宫格分镜图拆分");
-
-    // 文字拆分 → 默认回落逐段图片分镜
-    document.querySelector(".neo-director-story").value = "一段完整的故事";
-    document.querySelector(".neo-director-split").click();
-    await sleep(40);
-    assert.equal(fsSel.value, "storyboard", "文字拆分段后默认逐段图片分镜");
+    srcTextCard.querySelector(".neo-director-story-idea").value = "一段完整的故事";
+    srcTextCard.querySelector(".neo-director-gen-segs").click();
+    await sleep(50);
+    assert.equal(srcTextCard.style.display, "", "文字生成后文字卡显示");
+    const setupPane = document.querySelector(".neo-director-pane-story");
+    assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "默认逐段图片分镜方式显示图片分镜卡片");
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
@@ -1858,10 +1947,10 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
 
     // i2v：默认「逐段图片分镜」方式 → 显示 🎨 图片分镜卡片、隐藏统一首帧区（互斥）
     assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "默认逐段图片分镜方式显示图片分镜卡片");
@@ -1869,7 +1958,7 @@ test("导演编辑器：统一设置素材区随模式切换，i2v 应用统一�
     assert.equal(framesBlock.style.display, "none", "默认隐藏统一首帧区（与图片分镜互斥）");
 
     // 切到「统一图片」：显示统一首帧区、隐藏图片分镜卡片
-    const frameSourceSel = setupPane.querySelector(".neo-director-frame-source");
+    const frameSourceSel = setupPane.querySelector(".neo-director-text-mode");
     assert.equal(frameSourceSel.value, "storyboard", "默认分镜/首帧方式为逐段图片分镜");
     assert.ok(frameSourceSel.querySelector("input[type=radio]"), "分镜/首帧方式用 radio 组展开（非下拉）");
     frameSourceSel.value = "unified";
@@ -1941,7 +2030,7 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
 
@@ -1953,7 +2042,7 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     assert.deepEqual(optBodies[1], { prompt: "第二段原始", duration_sec: 8, mode: "t2v" }, "第 2 段请求体（单段）");
     const tas = Array.from(document.querySelectorAll(".neo-director-prompt"));
     assert.equal(tas[0].value, "第一段原始", "失败时原提示词保留");
-    assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent.includes("1、2 段生成失败"), "状态显示失败的段号");
+    assert.ok(document.querySelector(".neo-director-opt-status").textContent.includes("1、2 段生成失败"), "状态显示失败的段号");
     assert.ok(!document.querySelector(".neo-director-llm-overlay"), "失败不自动弹出 LLM 配置弹窗");
     const atAction = document.querySelector(".neo-at .neo-at-action");
     assert.equal(atAction?.textContent, "打开 LLM 设置", "action toast 给出「打开 LLM 设置」入口");
@@ -1970,12 +2059,9 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     const tas2 = Array.from(document.querySelectorAll(".neo-director-prompt"));
     assert.equal(tas2[0].value, "integrated_multimodal_description: [Shot 1] 段一…", "第 1 段写回");
     assert.equal(tas2[1].value, "integrated_multimodal_description: [Shot 1] 段一…", "第 2 段写回（同一 mock）");
-    assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent.includes("已生成 2 段"), "状态显示完成段数");
+    assert.ok(document.querySelector(".neo-director-opt-status").textContent.includes("已生成 2 段"), "状态显示完成段数");
 
-    // 右栏分段故事不被优化结果覆盖（本用例无拆分，保持占位提示）
-    assert.ok(!document.querySelector(".neo-director-story-segs").textContent.includes("[Shot 1]"), "右栏不刷新为优化后提示词");
-
-    // 「🎨 参考图设置」页三栏对照：左 = 分镜图（未生成为「无」），中 = 未优化原文，右 = 优化后
+    // 「📖 故事分镜」页三栏对照：左 = 分镜图（未生成为「无」），中 = 未优化原文，右 = 优化后
     const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
     assert.equal(setupItems.length, 2, "本页显示 2 段");
     let cells = setupItems[0].querySelectorAll(".neo-director-setup-seg-cols > div");
@@ -1985,7 +2071,7 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     assert.equal(cells[2].textContent, "integrated_multimodal_description: [Shot 1] 段一…", "右栏显示优化后提示词");
 
     // 「各段对照」标题行：优化按钮与标题同行（不独占一行）
-    const optRow = document.querySelector(".neo-director-pane-setup .neo-director-setup-opt");
+    const optRow = document.querySelector(".neo-director-pane-story .neo-director-setup-opt");
     assert.ok(optRow.querySelector(".neo-director-optimize"), "优化按钮在「各段对照」标题行内");
     assert.ok(optRow.querySelector(".neo-director-story-segs-title"), "标题行内保留「各段对照」标题");
 
@@ -2044,14 +2130,7 @@ test("导演编辑器：打开旧配方回显右栏分段故事与统一设置�
     });
     await sleep(60);
 
-    // 右栏回显分段后的故事（优化前原文：orig_prompts 快照优先于段内已优化的提示词）
-    const items = Array.from(document.querySelectorAll(".neo-director-story-segs .neo-director-story-seg-item"));
-    assert.equal(items.length, 2, "右栏显示 2 个分段");
-    assert.ok(items[0].textContent.includes("场景A原文"), "右栏第 1 段显示优化前原文");
-    assert.ok(!items[0].textContent.includes("优化结果A"), "右栏不显示优化后内容");
-    assert.ok(items[1].textContent.includes("10s"), "右栏第 2 段含时长");
-
-    // 「🎨 参考图设置」页三栏回显：中 = 落盘的优化前原文，右 = 落盘的最新优化结果
+    // 「📖 故事分镜」页三栏回显：中 = 落盘的优化前原文，右 = 落盘的最新优化结果
     const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
     assert.equal(setupItems.length, 2, "本页回显 2 段");
     const cells = setupItems[0].querySelectorAll(".neo-director-setup-seg-cols > div");
@@ -2059,7 +2138,7 @@ test("导演编辑器：打开旧配方回显右栏分段故事与统一设置�
     assert.equal(cells[2].textContent, "优化结果A", "右栏回显落盘的优化结果");
 
     // 统一参考素材区已移除：旧配方的 setup.refs 不再回显（参考素材到时间轴页逐段设置）
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     assert.equal(setupPane.querySelectorAll(".neo-director-refpick-item").length, 0, "本页无统一参考网格，旧 setup.refs 不回显");
 
     document.querySelector(".neo-director-close").click();
@@ -2078,7 +2157,7 @@ test("导演编辑器：打开旧配方回显统一首帧/尾帧选中态", asyn
     });
     await sleep(60);
 
-    const framesBlock = document.querySelector(".neo-director-pane-setup .neo-director-setup-frames");
+    const framesBlock = document.querySelector(".neo-director-pane-story .neo-director-setup-frames");
     assert.ok(Array.from(framesBlock.querySelectorAll(".neo-director-ff-item"))
         .some((it) => it.dataset.file === "uf.png" && it.classList.contains("neo-director-ff-active")), "统一首帧回显选中");
     assert.ok(Array.from(framesBlock.querySelectorAll(".neo-director-lf-item"))
@@ -2102,7 +2181,7 @@ test("导演编辑器：保存时统一设置区状态（统一首帧/尾帧）�
     });
     await sleep(60);
 
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     // fl2v：本地上传统一首帧 + 尾帧（两个「本地」按钮）
     const localBtns = Array.from(setupPane.querySelectorAll(".neo-director-setup-frames .neo-director-local-add"));
     assert.equal(localBtns.length, 2, "首帧/尾帧行各有一个「本地」按钮");
@@ -2139,11 +2218,11 @@ test("导演编辑器：分镜/首帧方式选择器——切回逐段图片分�
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
-    const frameSourceSel = setupPane.querySelector(".neo-director-frame-source");
+    const setupPane = document.querySelector(".neo-director-pane-story");
+    const frameSourceSel = setupPane.querySelector(".neo-director-text-mode");
     assert.equal(frameSourceSel.value, "unified", "回显落盘的统一图片方式");
     assert.equal(setupPane.querySelector(".neo-director-setup-frames").style.display, "", "统一图片方式显示统一首帧区");
     assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "none", "隐藏图片分镜卡片");
@@ -2185,11 +2264,11 @@ test("导演编辑器：t2v→i2v 首帧自动回填受分镜/首帧方式门控
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
-    const frameSourceSel = setupPane.querySelector(".neo-director-frame-source");
+    const setupPane = document.querySelector(".neo-director-pane-story");
+    const frameSourceSel = setupPane.querySelector(".neo-director-text-mode");
     frameSourceSel.value = "unified";
     frameSourceSel.dispatchEvent(new Event("change"));
     await sleep(20);
@@ -2234,19 +2313,18 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     const charCard = setupPane.querySelector(".neo-director-setup-char");
     assert.ok(charCard, "角色参考图卡片在统一设置页（配方级常驻）");
     assert.ok(charCard.querySelector(".neo-director-segref-row"), "角色参考网格在角色卡片内");
     const sbCard = setupPane.querySelector(".neo-director-setup-sb");
     assert.ok(sbCard, "图片分镜卡片在统一设置页");
     const paneChildren = Array.from(setupPane.children);
-    assert.equal(paneChildren.indexOf(charCard), 1, "角色参考图卡片紧跟「分镜/首帧方式」行（身份参考开关所在行）");
-    assert.equal(paneChildren.indexOf(sbCard), 2, "图片分镜卡片紧跟角色参考图卡片之后");
-    assert.ok(paneChildren.indexOf(sbCard) < paneChildren.indexOf(setupPane.querySelector(".neo-director-setup-opt")), "图片分镜卡片在提示词优化之前");
+    assert.ok(paneChildren[0].contains(charCard), "角色参考图卡片在 band 0（配方级常驻）");
+    assert.ok(paneChildren.indexOf(sbCard.closest(".neo-director-band")) < paneChildren.indexOf(setupPane.querySelector(".neo-director-setup-opt").closest(".neo-director-band")), "图片分镜卡片在提示词优化之前");
 
     const sbModeSel = sbCard.querySelector(".neo-director-sb-mode");
     const sbSkillSel = sbCard.querySelector(".neo-director-sb-skill");
@@ -2256,8 +2334,8 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     assert.deepEqual(Array.from(sbSkillSel.options).map((o) => o.value), ["image_gen", "qwen_image_21"], "只列生图技能（排除四视图/视频）");
     assert.equal(sbSkillSel.value, "image_gen", "t2i 默认 Krea2");
     assert.ok(!sbCard.querySelector(".neo-director-sb-r2i"), "无 r2i 专属控件行（背景参考图已移除）");
-    assert.equal(sbCard.querySelector(".neo-director-sb-gen").closest(".neo-director-row").querySelector(".neo-director-sb-mode"),
-        sbModeSel, "生成图片分镜按钮与生图模式同行（不独占一行）");
+    assert.equal(sbCard.querySelector(".neo-director-sb-gen").closest(".neo-director-step-act"),
+        sbCard.querySelector(".neo-director-refs-head .neo-director-step-act"), "生成图片分镜按钮在卡标题行右上角（本步唯一动作）");
 
     // t2i 改选 Qwen → 切 r2i（默认 Qwen）→ 切回 t2i 恢复记住的 Qwen
     sbSkillSel.value = "qwen_image_21";
@@ -2293,16 +2371,16 @@ test("导演编辑器：image_mode/image_skill/frame_source 保存回显；分�
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     assert.equal(setupPane.querySelector(".neo-director-sb-mode").value, "r2i", "回显 image_mode");
-    assert.equal(setupPane.querySelector(".neo-director-frame-source").value, "unified", "回显 frame_source");
+    assert.equal(setupPane.querySelector(".neo-director-text-mode").value, "unified", "回显 frame_source");
     assert.equal(setupPane.querySelector(".neo-director-sb-skill").value, "qwen_image_21", "回显 image_skill");
 
     // 切到逐段图片分镜后点生成：请求带 mode=r2i
-    const frameSourceSel = setupPane.querySelector(".neo-director-frame-source");
+    const frameSourceSel = setupPane.querySelector(".neo-director-text-mode");
     frameSourceSel.value = "storyboard";
     frameSourceSel.dispatchEvent(new Event("change"));
     await sleep(20);
@@ -2345,10 +2423,10 @@ test("导演编辑器：分镜回退用视频提示词时点名提示（后端 w
         ],
     });
     await sleep(60);
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     const sbStatus = setupPane.querySelector(".neo-director-sb-status");
     setupPane.querySelector(".neo-director-sb-gen").click();
     for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
@@ -2382,10 +2460,10 @@ test("导演编辑器：生成的分镜自动回填首帧 → 首帧缩略图走
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     const sbStatus = setupPane.querySelector(".neo-director-sb-status");
     setupPane.querySelector(".neo-director-sb-gen").click();
     for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
@@ -2439,10 +2517,10 @@ test("导演编辑器：文生模式下生成的分镜也立即回填各段首�
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     const sbStatus = setupPane.querySelector(".neo-director-sb-status");
     setupPane.querySelector(".neo-director-sb-gen").click();
     for (let i = 0; i < 40 && !/完成|已停止/.test(sbStatus.textContent); i++) await sleep(100);
@@ -2499,11 +2577,11 @@ test("导演编辑器：全参考模式下生成的分镜关键帧进入各段�
     });
     await sleep(60);
 
-    // 🎨 参考图设置页：图片分镜卡片不再被生成模式隐藏（r2v 也可见，直接在本页生成）
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    // 📖 故事分镜页：图片分镜卡片不再被生成模式隐藏（r2v 也可见，直接在本页生成）
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "全参考模式下图片分镜卡片可见");
 
     const sbStatus = setupPane.querySelector(".neo-director-sb-status");
@@ -2563,10 +2641,10 @@ test("导演编辑器：混合模式下分镜生成按各段模式路由（i2v �
     });
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     assert.equal(setupPane.querySelector(".neo-director-setup-sb").style.display, "", "混合模式下图片分镜卡片可见");
 
     const sbStatus = setupPane.querySelector(".neo-director-sb-status");
@@ -2648,12 +2726,12 @@ test("导演编辑器：身份参考开关默认开，关掉后随 shared 落盘
         segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5 }],
     });
     await sleep(60);
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const setupPane = document.querySelector(".neo-director-pane-setup");
+    const setupPane = document.querySelector(".neo-director-pane-story");
     const chk = setupPane.querySelector(".neo-director-identity-refs");
-    assert.ok(chk, "参考图设置页有身份参考开关");
+    assert.ok(chk, "📖 故事分镜页有身份参考开关");
     assert.equal(chk.checked, true, "默认启用");
     assert.ok(setupPane.querySelector(".neo-director-setup-sb") && setupPane.querySelector(".neo-director-identity-refs"),
         "开关与图片分镜卡片同页");
@@ -2676,10 +2754,10 @@ test("导演编辑器：身份参考开关关掉 → shared.identity_refs=false�
         segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5 }],
     });
     await sleep(60);
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(30);
-    const chk = document.querySelector(".neo-director-pane-setup .neo-director-identity-refs");
+    const chk = document.querySelector(".neo-director-pane-story .neo-director-identity-refs");
     assert.equal(chk.checked, false, "回显未勾选");
 
     // ② 勾回来 → 保存不再带该键（恢复默认；保存后编辑器自动关闭）
@@ -2698,9 +2776,9 @@ test("导演编辑器：身份参考开关关掉 → shared.identity_refs=false�
         segments: [{ skill_id: "sk-a", prompt: "p0", duration_sec: 5 }],
     });
     await sleep(60);
-    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置").click();
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜")).click();
     await sleep(30);
-    const chk2 = document.querySelector(".neo-director-pane-setup .neo-director-identity-refs");
+    const chk2 = document.querySelector(".neo-director-pane-story .neo-director-identity-refs");
     chk2.checked = false;
     chk2.dispatchEvent(new Event("change"));
     document.querySelector(".neo-director-save").click();
@@ -3048,7 +3126,7 @@ test("导演编辑器：打开带分镜图的旧配方 → 不报 TDZ，段行�
     await openDirectorEditor(existing);   // 修复前：seg.storyboard 触发 row TDZ，此处会 reject
     await sleep(60);
 
-    // 时间轴段行：不再有「分镜图」缩略行（分镜图只在「🎨 参考图设置」页对照表第一列展示），
+    // 时间轴段行：不再有「分镜图」缩略行（分镜图只在「📖 故事分镜」页对照表第一列展示），
     // 但 dataset 仍记录已存分镜图与提示词快照（保存时随 storyboard 落盘）
     const rows = Array.from(document.querySelectorAll(".neo-director-seg"));
     assert.equal(rows.length, 2);
@@ -3057,16 +3135,8 @@ test("导演编辑器：打开带分镜图的旧配方 → 不报 TDZ，段行�
     assert.equal(rows[0].dataset.storyboard, "sb_0_ab12cd.png", "dataset 记录已存分镜图（保存时随 storyboard 落盘）");
     assert.equal(rows[0].dataset.storyboardPrompt, "一只机器猫", "dataset 记录分镜提示词快照");
 
-    // 故事板生成页右栏：只显示序号/时长/提示词，不再展示分镜缩略（已移到「🎨 参考图设置」页对照表）
-    const tabStory = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事板生成"));
-    tabStory.click();
-    await sleep(20);
-    const items = Array.from(document.querySelectorAll(".neo-director-story-segs .neo-director-story-seg-item"));
-    assert.equal(items.length, 2);
-    assert.ok(!items[0].querySelector(".neo-director-story-seg-thumb"), "右栏不再展示分镜缩略");
-
-    // 「🎨 参考图设置」页对照表：第一列 = 分镜图（逐段图片分镜方式 → 该段关键帧）
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    // 「📖 故事分镜」页对照表：第一列 = 分镜图（逐段图片分镜方式 → 该段关键帧）
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
     const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
@@ -3110,7 +3180,7 @@ test("导演编辑器：对照表分镜图缩略点击打开 Lightbox（←/→ 
     await openDirectorEditor(existing);
     await sleep(60);
 
-    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置");
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
     tabSetup.click();
     await sleep(20);
     const setupItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
@@ -3169,23 +3239,21 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
         segments: [{ skill_id: "sk-a", prompt: "旧段", duration_sec: 5 }],
     });
     await sleep(60);
-    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置").click();
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜")).click();
     await sleep(20);
 
-    const card = document.querySelector(".neo-director-setup-grid");
-    assert.ok(card, "宫格拆分卡片在统一设置页");
-    const paneChildren = Array.from(document.querySelector(".neo-director-pane-setup").children);
-    assert.equal(paneChildren.indexOf(card), 3, "宫格卡片紧跟图片分镜卡片之后");
+    const srcGroup = document.querySelector(".neo-director-src");
+    const card = document.querySelector(".neo-director-src-card-grid");
+    assert.ok(card, "宫格拆分卡片在「📖 故事分镜」页");
 
-    // 三方互斥：默认「逐段图片分镜」→ 🎨 显示、🧩 隐藏；切到 grid → 反之
+    // 来源二选一：本配方有文字拆分段 → 默认逐段图片分镜（🎨 显示、宫格卡隐藏）；radio 行横排可切
     const sbCard = document.querySelector(".neo-director-setup-sb");
     assert.equal(sbCard.style.display, "", "默认逐段图片分镜：🎨 卡片显示");
     assert.equal(card.style.display, "none", "默认 🧩 宫格卡片隐藏");
-    const fsSel = document.querySelector(".neo-director-frame-source");
-    fsSel.value = "grid";
-    fsSel.dispatchEvent(new Event("change"));
-    assert.equal(card.style.display, "", "切到 grid：🧩 卡片显示");
-    assert.equal(sbCard.style.display, "none", "切到 grid：🎨 卡片隐藏");
+    srcGroup.querySelector('input[value="grid"]').click();
+    await sleep(20);
+    assert.equal(card.style.display, "", "切到宫格：🧩 卡片显示");
+    assert.equal(sbCard.style.display, "none", "切到宫格：🎨 卡片隐藏");
 
     assert.equal(card.querySelector(".neo-director-grid-manual").style.display, "none", "手动行列默认隐藏");
     const modeSel = card.querySelector(".neo-director-grid-mode");
@@ -3212,12 +3280,19 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
             .some((it) => it.dataset.file === panelNames[i] && it.classList.contains("neo-director-ff-active")), `第 ${i + 1} 格回填为首帧`);
         assert.equal(row.dataset.storyboard, panelNames[i], "分镜图记录为本格");
     });
-    assert.equal(fsSel.value, "grid", "拆分后自动切到宫格分镜图拆分方式");
+    assert.equal(card.style.display, "", "拆分后保持宫格图来源（各格已作首帧/分镜图）");
     assert.ok(!card.querySelector(".neo-director-grid-desc"), "独立的「逐格描述」按钮已移除（并入生成所有分段提示词）");
-    // 切分方式 + 拆分按钮在源图与结果之间、同一行
+    // 卡标题行右上角是本步动作组：切分方式（先定怎么切）+ 状态 + 「拆分到各段」，切分方式排在拆分按钮之前
     const ioRow2 = card.querySelector(".neo-director-grid-io");
-    assert.ok(ioRow2.contains(card.querySelector(".neo-director-grid-mode")), "切分方式在该行内（源图之后）");
-    assert.ok(ioRow2.contains(card.querySelector(".neo-director-grid-split")), "拆分按钮在该行内（结果之前）");
+    const gridAct = card.querySelector(".neo-director-src-head .neo-director-step-act");
+    assert.ok(gridAct && gridAct.contains(card.querySelector(".neo-director-grid-split")),
+        "拆分按钮在卡标题行右上角（本步唯一动作）");
+    assert.ok(gridAct.contains(card.querySelector(".neo-director-grid-mode")), "切分方式也在标题行动作组内");
+    assert.deepEqual(Array.from(gridAct.querySelectorAll(".neo-director-grid-mode, .neo-director-grid-split"))
+        .map((el) => (el.classList.contains("neo-director-grid-mode") ? "切分方式" : "拆分按钮")),
+        ["切分方式", "拆分按钮"], "切分方式排在拆分按钮之前");
+    assert.ok(!ioRow2.contains(card.querySelector(".neo-director-grid-mode")), "切分方式不再留在源图行");
+    assert.ok(!ioRow2.contains(card.querySelector(".neo-director-grid-split")), "拆分按钮不在源图行里重复");
     // 拆分结果缩略条已移除（各段分镜图在「各段对照」逐格显示）；改为在「原宫格提示词」处展示元信息里的提示词
     assert.equal(card.querySelector(".neo-director-grid-panels"), null, "不再重复列格子缩略条");
     assert.equal(card.querySelector(".neo-director-grid-prompts").value, "原宫格提示词一", "原宫格图元信息里的提示词就地展示");
@@ -3259,10 +3334,10 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
 
     await openDirectorEditor({ name: "GRID2", shared: { mode: "t2v" }, segments: [{ skill_id: "sk-a", prompt: "旧段", duration_sec: 5 }] });
     await sleep(60);
-    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置").click();
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜")).click();
     await sleep(20);
 
-    const card = document.querySelector(".neo-director-setup-grid");
+    const card = document.querySelector(".neo-director-src-card-grid");
     const drop = card.querySelector(".neo-director-grid-src");
     assert.ok(drop, "宫格图片输入区存在");
     assert.ok(drop.querySelector(".neo-director-grid-src-hint"), "空区显示上传提示");
@@ -3422,13 +3497,13 @@ test("导演编辑器：宫格拆分后共享分辨率默认跟随首帧比例�
 
     await openDirectorEditor({ name: "GRID-AR", shared: { mode: "t2v" }, segments: [{ skill_id: "sk-a", prompt: "旧段", duration_sec: 5 }] });
     await sleep(60);
-    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.trim() === "🎨 参考图设置").click();
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜")).click();
     await sleep(20);
 
-    const fsSel = document.querySelector(".neo-director-frame-source");
+    const fsSel = document.querySelector(".neo-director-text-mode");
     fsSel.value = "grid";
     fsSel.dispatchEvent(new Event("change"));
-    const card = document.querySelector(".neo-director-setup-grid");
+    const card = document.querySelector(".neo-director-src-card-grid");
     const fileInput = card.querySelector(".neo-director-grid-src input[type=file]");
     Object.defineProperty(fileInput, "files", { value: [new File(["fake"], "grid_src.png", { type: "image/png" })], configurable: true });
     fileInput.dispatchEvent(new Event("change"));
@@ -3477,73 +3552,6 @@ test("导演编辑器：保存时多段首帧比例不一致 → 调 image_sizes
     assert.deepEqual([...sizesBody.filenames].sort(), ["a.png", "b.png"], "请求带两段不同首帧名");
     const warn = appState.toasts.find((t) => t.severity === "warning" && (t.detail || "").includes("首帧图比例不一致"));
     assert.ok(warn, "给出首帧比例不一致告警");
-
-    document.querySelector(".neo-director-close")?.click();
-    await sleep(20);
-});
-
-test("导演编辑器：🧩 一键九宫格分镜图（Qwen Image 2.1）→ 自动切参考图设置并回填待拆分分镜图", async () => {
-    const { openDirectorEditor } = await import("../../web/director.js");
-    appState.graph = { _nodes: [] };
-    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
-    let genBody = null;
-    mockRoute("/neo_video_gen/grid_storyboard_generate", (body) => { genBody = body; return jsonResponse({ success: true, task_id: "t-grid" }); });
-    mockRoute("/neo_video_gen/storyboard_status/t-grid", () => jsonResponse({
-        success: true, status: "done", total: 1, processed: 1,
-        details: [{ index: 0, status: "done", filename: "grid_storyboard_GRID9.png", preview_url: "/rs_recipes/asset?recipe=GRID9&file=grid_storyboard_GRID9.png" }],
-    }));
-
-    await openDirectorEditor({ name: "GRID9", shared: { mode: "t2v" }, segments: [] });
-    await sleep(60);
-
-    // 页签新命名：📖 故事板生成 / 🎨 参考图设置
-    const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
-    assert.ok(tabs.some((t) => t.textContent.includes("故事板生成")), "含「📖 故事板生成」页签");
-    const tabSetup = tabs.find((t) => t.textContent.trim() === "🎨 参考图设置");
-    assert.ok(tabSetup, "含「🎨 参考图设置」页签");
-
-    // 无主题 → 提示，不发请求
-    const btn = document.querySelector(".neo-director-grid-idea-gen");
-    assert.ok(btn, "九宫格分镜图生成按钮在故事板生成页");
-    btn.click();
-    await sleep(30);
-    assert.equal(genBody, null, "无主题时不发生成请求");
-
-    document.querySelector(".neo-director-story-idea").value = "一只机器猫寻找回家的路";
-    btn.click();
-    await sleep(1700);   // 一轮轮询（首次状态查询在 1500ms）
-    assert.ok(genBody && genBody.name === "GRID9" && genBody.idea === "一只机器猫寻找回家的路", "请求带配方名与主题");
-    const preview = document.querySelector(".neo-director-grid-idea-preview img");
-    assert.ok(preview, "当前页显示九宫格结果预览");
-    assert.ok(tabSetup.classList.contains("active"), "自动切到「🎨 参考图设置」页签");
-    const srcImg = document.querySelector(".neo-director-grid-src img");
-    assert.ok(srcImg && srcImg.src.includes("grid_storyboard_GRID9.png"), "回填为待拆分的九宫格分镜图");
-
-    document.querySelector(".neo-director-close")?.click();
-    await sleep(20);
-});
-
-test("导演编辑器：未保存的新配方也能一键生成九宫格（产物落 input/，缩略走 /view）", async () => {
-    const { openDirectorEditor } = await import("../../web/director.js");
-    appState.graph = { _nodes: [] };
-    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
-    let genBody = null;
-    mockRoute("/neo_video_gen/grid_storyboard_generate", (body) => { genBody = body; return jsonResponse({ success: true, task_id: "t-grid2" }); });
-    mockRoute("/neo_video_gen/storyboard_status/t-grid2", () => jsonResponse({
-        success: true, status: "done", total: 1, processed: 1,
-        details: [{ index: 0, status: "done", filename: "grid_storyboard_NEW9.png", preview_url: "/view?filename=grid_storyboard_NEW9.png&subfolder=&type=input" }],
-    }));
-
-    await openDirectorEditor(null);   // 未保存的新配方
-    await sleep(60);
-    document.querySelector(".neo-director-name").value = "NEW9";
-    document.querySelector(".neo-director-story-idea").value = "新配方九宫格";
-    document.querySelector(".neo-director-grid-idea-gen").click();
-    await sleep(1700);
-
-    assert.ok(genBody && genBody.name === "NEW9", "未保存的新配方也能触发生成并带名称");
-    const srcImg = document.querySelector(".neo-director-grid-src img");
-    assert.ok(srcImg && srcImg.src.includes("/view?") && srcImg.src.includes("grid_storyboard_NEW9.png"), "缩略图走 /view input 而非资产路由");
 
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);

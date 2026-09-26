@@ -36,14 +36,13 @@ from .image_gen import (
     resolve_request,
 )
 from .image_gen_edit import execute_graph_inprocess
-from .recipes import _copy_media_to_input, _find_recipe_dir, _sanitize_name_re
+from .recipes import _copy_media_to_input, _find_recipe_dir
 from .skill import get_skill_gen_config, load_skill_workflow
 
 logger = logging.getLogger(__name__)
 
 _STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色 ≤6，前端已限）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
 _STORYBOARD_REF_SKILL = "qwen_image_21"   # 带参考图的段固定用它做参考编辑（Krea2 单路模板不支持多参考延续）；纯文生图用所选技能（默认 Krea2）
-_GRID_STORYBOARD_SKILL = "nine_grid_storyboard"   # 一键九宫格分镜图：idea → Qwen Image 2.1（模板内置九宫格指令）
 _storyboard_tasks: dict[str, dict] = {}
 
 
@@ -92,13 +91,6 @@ def _storyboard_dims(width, height, ratio):
     if value:
         return resolve_dimensions(settings, ratio=ratio)
     return resolve_dimensions(settings)
-
-
-def _grid_storyboard_dims(ratio):
-    """九宫格尺寸：2048 基准（每格约 683×384 @16:9，够拆分后当首帧用）；
-    无比例（未保存新配方）默认 16:9，不回退 1:1 方图。"""
-    value = parse_ratio(ratio) or (16 / 9)
-    return resolve_dimensions({"base_resolution": 2048}, ratio=value)
 
 
 def _tensor_to_pil(image):
@@ -195,55 +187,6 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
             entry.update(status="failed", error=str(e))
         task["processed"] += 1
 
-    if task["status"] != "cancelled":
-        task["status"] = "done"
-    task["updated"] = time.time()
-
-
-async def _run_grid_storyboard_task(task_id: str, name: str, idea: str, base_seed):
-    """一键九宫格分镜图：单图任务（details 一条）。已保存配方产物落 assets/ 并拷到 input/；
-    未保存的新配方直接落 input/（保存时由前端按资产引用拷进 assets/）。grid_split 都从 input/ 读。"""
-    task = _storyboard_tasks[task_id]
-    entry = task["details"][0]
-    fname = f"grid_storyboard_{name}.png"
-    comfy_nodes.interrupt_processing(False)   # 清掉上一次运行/取消残留的全局中断标志
-    settings = {**DEFAULT_SETTINGS}
-    for key, value in (get_skill_gen_config(_GRID_STORYBOARD_SKILL) or {}).items():
-        if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
-            settings[key] = value
-    template = load_skill_workflow(_GRID_STORYBOARD_SKILL)
-    body = {
-        "prompt": idea,   # 九宫格指令已内置在技能模板（固定前缀 + {{PROMPT}}），这里只传 idea
-        "width": entry["width"], "height": entry["height"],
-        "seed": int(base_seed),
-        "references": [],
-        "loras": settings.get("loras") or [],
-    }
-    try:
-        params = resolve_request(body, settings, max_refs=0, auto_quadview=False)
-        graph, warns = render_template(template, params)
-        entry["warnings"] = list(warns)
-        with CurrentNodeContext(prompt_id=task_id, node_id=f"grid_storyboard_{name}"):
-            result = await asyncio.to_thread(execute_graph_inprocess, graph)
-        img = _tensor_to_pil(result[0])
-        if _find_recipe_dir(name) is not None:
-            out_dir = _find_recipe_dir(name) / "assets"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(img.save, out_dir / fname, "PNG")
-            resolved, _skipped = await asyncio.to_thread(_copy_media_to_input, out_dir / fname, fname)
-            preview_url = f"/rs_recipes/asset?recipe={quote(name)}&file={quote(resolved or fname)}&t={int(time.time())}"
-        else:
-            in_dir = Path(folder_paths.input_directory)
-            await asyncio.to_thread(img.save, in_dir / fname, "PNG")
-            resolved = fname
-            preview_url = f"/view?filename={quote(fname)}&subfolder=&type=input"
-        entry.update(status="done", filename=resolved, preview_url=preview_url)
-    except comfy.model_management.InterruptProcessingException:
-        task.update(status="cancelled")
-    except Exception as e:
-        logger.warning(f"[NeoNodes] grid storyboard failed: {e}")
-        entry.update(status="failed", error=str(e))
-    task["processed"] += 1
     if task["status"] != "cancelled":
         task["status"] = "done"
     task["updated"] = time.time()
@@ -356,61 +299,3 @@ async def neo_video_gen_storyboard_cancel(request):
         return web.json_response({"success": False, "error": "任务不存在或已过期"}, status=404)
     comfy_nodes.interrupt_processing(task["task_id"])
     return web.json_response({"success": True})
-
-
-@routes.post("/neo_video_gen/grid_storyboard_generate")
-async def neo_video_gen_grid_storyboard_generate(request):
-    """一键九宫格分镜图：idea → Qwen Image 2.1 出 3×3 宫格（nine_grid_storyboard 技能，模板内置九宫格指令）。
-    允许未保存的新配方（产物直接落 input/）；已保存配方落 assets/ 并拷到 input/。
-    details[0].filename 为 input/ 名，可直接作宫格拆分源图；返回 task_id，进度复用 /neo_video_gen/storyboard_status/{task_id} 轮询。"""
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
-    name = str(data.get("name") or "").strip()
-    if not name:
-        return web.json_response({"success": False, "error": "请先填写配方名称"}, status=400)
-    # 与配方保存同一套清洗：未保存的新配方先生成产物，落盘名不能随保存时清洗漂移
-    name = _sanitize_name_re.sub("", name).strip().replace(" ", "-")
-    if not name:
-        return web.json_response({"success": False, "error": "请先填写配方名称"}, status=400)
-    idea = str(data.get("idea") or "").strip()
-    if not idea:
-        return web.json_response({"success": False, "error": "请先填写故事主题 / 想法"}, status=400)
-    meta = _storyboard_recipe_meta(name)   # 未保存的新配方为 None：默认宽高比，产物直接落 input/
-    if load_skill_workflow(_GRID_STORYBOARD_SKILL) is None:
-        return web.json_response({"success": False, "error": f"生图技能 {_GRID_STORYBOARD_SKILL} 没有工作流模板"}, status=400)
-
-    shared = (meta or {}).get("shared") or {}
-    try:
-        base_seed = int(data.get("seed")) if data.get("seed") not in (None, "") else int(shared.get("seed") or 0)
-    except (TypeError, ValueError):
-        base_seed = random.randint(0, 2**31 - 1)
-    if data.get("seed") in (None, ""):
-        # 一键生成 = 每次都要新图：未钉种子时换新随机基（否则同 seed → 同图，重生成无意义）
-        base_seed = random.randint(0, 2**31 - 1)
-
-    task_id = str(uuid.uuid4())
-    width, height = _grid_storyboard_dims(shared.get("ratio"))
-    _storyboard_tasks[task_id] = {
-        "task_id": task_id, "name": name, "skill_id": _GRID_STORYBOARD_SKILL,
-        "status": "running", "total": 1, "processed": 0,
-        "created": time.time(), "updated": time.time(),
-        "details": [{"index": 0, "status": "pending", "filename": None,
-                     "error": "", "preview_url": None, "warnings": [],
-                     "width": width, "height": height}],
-    }
-    handle = asyncio.create_task(_run_grid_storyboard_task(task_id, name, idea, base_seed))
-
-    def _on_done(done_handle, _tid=task_id):
-        # 兜底 setup 阶段等未预期异常：把卡 running 的任务置 failed（正常/取消已在任务内收尾）
-        exc = done_handle.exception()
-        if exc is None:
-            return
-        logger.warning(f"[NeoNodes] grid storyboard task {_tid} crashed: {exc}")
-        t = _storyboard_tasks.get(_tid)
-        if t and t["status"] == "running":
-            t.update(status="failed", error=str(exc))
-
-    handle.add_done_callback(_on_done)
-    return web.json_response({"success": True, "task_id": task_id, "total": 1})

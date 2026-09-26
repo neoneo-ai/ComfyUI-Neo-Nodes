@@ -981,12 +981,55 @@
 }
 
 /* 「🎨 图片分镜」卡片的生成按钮 + 状态：并入「生图模式 / 生图技能」行最右侧（不独占一行） */
-.neo-director-sb-run {
+/* 每步一个动作：各卡标题行右侧的动作组（状态 + 唯一按钮），统一靠卡右上角 */
+.neo-director-step-act {
     margin-left: auto;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 8px;
     flex: none;
+}
+
+/* 步骤徽标（故事分镜页四步）：序号表达先后关系——✓ = 已完成、序号高亮 = 轮到这一步、序号变淡 = 前置未满足 */
+.neo-director-step-badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 17px;
+    height: 17px;
+    border: 1px solid #3a3a3a;
+    border-radius: 9px;
+    background: #1e1e1e;
+    color: #9aa4b0;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.neo-director-step-badge.neo-director-step-current {
+    border-color: #4a6fa5;
+    background: #22303f;
+    color: #8cb4d8;
+}
+
+.neo-director-step-badge.neo-director-step-done {
+    border-color: #3d6b48;
+    background: #1c2b21;
+    color: #7fc08f;
+}
+
+.neo-director-step-badge.neo-director-step-todo {
+    opacity: .5;
+}
+
+/* 各步唯一动作：前置没满足时置灰（缺什么见按钮 title），不用点了才知道。
+   挂了 rs-btn 的按钮由 prompts.css 的 .rs-btn:disabled 统一置灰，这里只补没挂的「✂️ 拆分到各段」 */
+.neo-director-grid-split:disabled {
+    background: #2a3a4a;
+    color: #666;
+    border-color: #2a3a4a;
+    cursor: not-allowed;
+    opacity: .5;
 }
 
 .neo-director-sb-skill {
@@ -1009,6 +1052,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    justify-content: space-evenly;   /* 铺满右栏时把富余高度摊到上 / 中 / 下三处，不堆在卡片底部 */
+    flex: 1;   /* 铺满右栏剩余高度：与左栏「故事主题 / 脚本」输入框等高，两栏底部齐平 */
     background: #161616;
     border: 1px solid #2a2d33;
     border-radius: 6px;
@@ -1026,8 +1071,9 @@
     padding: 8px;
 }
 
-/* 统一设置页：「🧩 宫格分镜图拆分」卡片（与图片分镜同页的另一种分镜来源） */
-.neo-director-setup-grid {
+/* 📖 故事分镜页 band 1：来源卡（宫格图 / 文字，二选一）。
+   来源 radio 在 band 1 顶部横排常驻，这里只显示选中来源的那张卡（另一张 display:none，不会两张同时亮着） */
+.neo-director-src-card {
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1037,7 +1083,25 @@
     padding: 8px;
 }
 
-/* 「🧩 宫格分镜图拆分」源图 / 切分方式 / 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（单张分镜图不再独占整行） */
+/* 来源卡标题行：只说明这张卡是什么（来源 radio 在 band 0 第一行横排）；右侧是本步唯一的动作按钮组。
+   不用橘色高亮（强调交给上面的来源 radio 加粗），与其他卡片标题同色 */
+.neo-director-src-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;   /* 窄窗时动作组换到第二行，仍靠右 */
+    font-size: 12px;
+    color: #cdd6e0;
+    font-weight: 600;
+}
+
+.neo-director-src-desc {
+    font-size: 11px;
+    font-weight: 400;
+    color: #9aa4b0;
+}
+
+/* 「🧩 宫格图故事板」源图 + 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（单张分镜图不再独占整行） */
 .neo-director-grid-io {
     display: flex;
     align-items: center;
@@ -1056,31 +1120,15 @@
     flex: 0 0 auto;
 }
 
-.neo-director-grid-io-res {
-    flex: 1 1 0;
-    min-width: 0;
-}
-
-.neo-director-grid-io-ctrl {
-    flex: 0 0 auto;
-}
-
-.neo-director-grid-ctrl-body {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    align-items: flex-start;
-}
-
-/* 图片输入区：紧凑拖放框——点击本地上传 / 素材库·本地文件拖入 */
+/* 图片输入区：拖放框——点击本地上传 / 素材库·本地文件拖入；宫格图缩略够大才看得清每格构图 */
 .neo-director-grid-src {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 60px;
-    min-width: 132px;
-    max-width: 200px;
+    height: 104px;
+    min-width: 160px;
+    max-width: 260px;
     padding: 6px;
     background: #1e1e1e;
     border: 1px dashed #4a4d55;
@@ -1111,7 +1159,7 @@
 
 .neo-director-grid-src img {
     max-width: 100%;
-    max-height: 44px;
+    max-height: 92px;
     object-fit: contain;
     cursor: zoom-in;
 }
@@ -1174,12 +1222,21 @@
 }
 
 /* 「原宫格提示词」列：label + ⧉ 复制 靠左、只读文本框同行填充，提示词长时框内滚动 */
+/* 原宫格提示词：可折叠（summary 作标题行，展开显示只读框 + 复制） */
+.neo-director-grid-pt {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 .neo-director-grid-pt-head {
-    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: flex-start;
     gap: 8px;
+    cursor: pointer;
 }
 
 .neo-director-grid-pt-copy {
@@ -1380,6 +1437,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;   /* 右侧动作组（素材库 / 生成图片分镜）窄窗时换行，仍靠右 */
 }
 
 .neo-director-refs-head > .neo-director-field-label {
@@ -1728,7 +1786,7 @@
     border-color: #4a4d55;
 }
 
-/* 页签内容面板（自动故事板 / 时间轴分段） */
+/* 页签内容面板（📖 故事分镜 / 时间轴分段） */
 .neo-director-pane {
     display: flex;
     flex-direction: column;
@@ -1741,9 +1799,17 @@
     padding-top: 4px;
 }
 
-/* 🎯 统一设置页：模式 / 统一参考素材 / 提示词批量优化 */
-.neo-director-pane-setup {
-    padding-top: 4px;
+/* 📖 故事分镜页：band（第一行来源+角色参考 / 来源卡 / 宫格说明 / 各段对照） */
+.neo-director-band {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* band 3 各段对照：填满本页剩余高度，超出才内部滚动 */
+.neo-director-band-segs {
+    flex: 1;
+    min-height: 0;
 }
 
 /* 「各段对照」标题行：优化按钮 + 状态跟在标题后面、靠最右（不独占一行） */
@@ -1852,7 +1918,7 @@
     color: #6b7280;
 }
 
-/* radio 组（分镜/首帧方式、生图模式）：选项横向展开，比下拉更直观 */
+/* radio 组（分镜/首帧方式、生图模式、分镜来源）：选项横向展开，比下拉更直观；选中态靠字重区分而不是彩色高亮 */
 .neo-director-radios {
     display: inline-flex;
     gap: 14px;
@@ -1863,6 +1929,7 @@
     align-items: center;
     gap: 5px;
     font-size: 12px;
+    font-weight: 600;
     color: #ccc;
     cursor: pointer;
     white-space: nowrap;
@@ -1884,27 +1951,48 @@
 }
 
 
-.neo-director-story-idea-row {
+/* 文字故事板卡：一行两栏（两栏等高、底部齐平，左右都不挤）——左 = 故事主题 / 脚本（标题行右上角是本步动作），
+   右 = 分镜 / 首帧方式 + 🎨 图片分镜（统一首帧方式时换成统一首帧区） */
+.neo-director-idea-cols {
     display: flex;
-    gap: 8px;
     align-items: stretch;
-    flex-wrap: wrap;   /* 窗口窄时两个路径按钮换行，不挤压主题输入框 */
+    gap: 12px;
 }
 
-/* 右栏顶部占位：与左栏 ① 块（标签 + 主题行）同高，使「分段的故事」标题行与「② 故事脚本」对齐 */
-.neo-director-story-right-spacer {
+.neo-director-idea-col {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    flex: 1 1 0;
+    min-width: 240px;
 }
 
-.neo-director-story-idea-spacer {
-    min-height: 40px;   /* 与主题输入框 min-height 一致 */
+/* 左栏（故事文本）自己的标题行：名字在左，本步唯一动作（分段粒度 + 生成分镜分段）靠右上角 */
+.neo-director-idea-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;   /* 窄窗时动作组换到第二行，仍靠右 */
+}
+
+.neo-director-idea-side {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1.4 1 0;   /* 右栏还放 🎨 图片分镜 / 统一首帧，给宽一点 */
+    min-width: 340px;
+}
+
+.neo-director-idea-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;   /* 右栏底部的 🎨 图片分镜 / 统一首帧跟着左栏文本高度一起长高，两栏底部齐平 */
 }
 
 .neo-director-story-idea {
     flex: 1;
-    min-height: 40px;
+    min-height: 140px;   /* 写主题 / 粘整段脚本都留足行数，两栏高度也不至于挤在一起 */
     resize: vertical;
     background: #1e1e1e;
     color: #ddd;
@@ -1914,112 +2002,21 @@
     font-size: 12px;
 }
 
-.neo-director-gen-story,
-.neo-director-split {
+.neo-director-gen-segs {
     cursor: pointer;
     white-space: nowrap;
 }
 
-.neo-director-story {
-    width: 100%;
-    min-height: 96px;
-    flex: 1;          /* 窗口拉高时故事脚本区自动撑满 */
-    background: #1e1e1e;
-    color: #ddd;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 12px;
-}
-
-.neo-director-story-status {
+.neo-director-story-status,
+.neo-director-opt-status {
     font-size: 11px;
     color: #8cf;
     min-height: 14px;
 }
 
-/* 故事板生成页顶部引导行：讲清两条并行路径（文字 / 图片） */
-.neo-director-story-hint {
-    font-size: 11px;
-    color: #9aa4b0;
-    margin-bottom: 8px;
-    line-height: 1.6;
-}
-
-.neo-director-story-hint b {
-    color: #cdd6e0;
-}
-
-/* 🧩 九宫格分镜图（故事板生成页）：图片路径结果区（按钮在主题行右侧，这里只放状态 + 预览） */
-.neo-director-grid-idea {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.neo-director-grid-idea-gen {
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.neo-director-grid-idea-preview img {
-    max-width: 200px;
-    max-height: 150px;
-    object-fit: contain;
-    border-radius: 6px;
-    cursor: zoom-in;
-}
-
-/* ---- 自动故事板：左右两栏（左 = 分段前故事 / 右 = 分段后的故事）---- */
-.neo-director-story-cols {
-    display: flex;
-    gap: 14px;
-    flex: 1;
-    min-height: 0;
-}
-
-.neo-director-story-col {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-}
-
-.neo-director-story-right {
-    border-left: 1px solid #2a2d33;   /* 两栏分隔线 */
-    padding-left: 14px;
-}
-
 .neo-director-story-segs-title {
     font-weight: 600;
     color: #cdd6e0;
-}
-
-/* 右栏标题行：左「分段的故事」+ 右侧「分段粒度 + ✅ 确认并拆分到时间轴」控制组（不独占一行） */
-.neo-director-story-segs-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.neo-director-story-segs-head .neo-director-story-actions {
-    margin-left: auto;
-}
-
-.neo-director-story-segs {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: #161616;
-    border: 1px solid #2a2d33;
-    border-radius: 6px;
-    padding: 8px;
 }
 
 .neo-director-story-segs-empty {
@@ -2050,13 +2047,6 @@
     color: #ddd;
     white-space: pre-wrap;
     line-height: 1.5;
-}
-
-.neo-director-story-actions {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
 }
 
 .neo-director-seglen-wrap {
