@@ -12,6 +12,7 @@
 import { attachComboBox } from "./combo-box.js";
 import { setCurrentModel } from "./prompt-service.js";
 import { mkEl } from "./dom-utils.js";
+import { $el } from "../../scripts/ui.js";
 
 // 字节数转人类可读大小（本地模型列表显示用）
 function formatFileSize(bytes) {
@@ -642,4 +643,64 @@ export function createModelConfigForm() {
     };
 
     return { el: remoteForm, load: loadModelConfig, save: saveForm, isDirty };
+}
+
+// ---- LLM 配置弹窗（全局单例，与具体节点/编辑器无关）：复用 createModelConfigForm()。
+// 打开即后台 load() 回填、load 落定前关闭不判脏；有未保存修改时 ✕/点遮罩/Esc 先出确认条
+// （💾 保存并关闭 / 放弃修改 / 继续编辑）。幂等：已打开时重复调用不叠加。
+let _llmConfigModal = null;
+
+export function openLLMSettingsModal() {
+    if (_llmConfigModal && !_llmConfigModal.parentNode) _llmConfigModal = null;   // 浮层已被清除（外部/测试重置 body）→ 丢弃过期状态
+    if (_llmConfigModal) return;   // 已打开：忽略，避免叠加
+    const form = createModelConfigForm();
+
+    const saveCloseBtn = $el('button', { className: 'neo-director-llm-btn-save', type: 'button', textContent: '💾 保存并关闭' });
+    const discardBtn = $el('button', { className: 'neo-director-llm-btn-discard', type: 'button', textContent: '放弃修改' });
+    const keepBtn = $el('button', { className: 'neo-director-llm-btn-keep', type: 'button', textContent: '继续编辑' });
+    const dirtyConfirm = $el('div', { className: 'neo-director-llm-dirty', hidden: true }, [
+        $el('span', { textContent: '⚠ 有未保存的修改' }),
+        $el('div', { className: 'neo-director-llm-dirty-actions' }, [saveCloseBtn, discardBtn, keepBtn]),
+    ]);
+
+    const closeBtn = $el('button', { className: 'neo-director-llm-close', type: 'button', title: '关闭（Esc）', textContent: '✕' });
+    const head = $el('div', { className: 'neo-director-llm-head' }, [
+        $el('span', { textContent: '🤖 LLM 配置' }),
+        closeBtn,
+    ]);
+    const bodyEl = $el('div', { className: 'neo-director-llm-body' }, [form.el]);
+    const panel = $el('div', { className: 'neo-director-llm-panel' }, [head, bodyEl, dirtyConfirm]);
+    const overlay = $el('div', { className: 'neo-director-llm-overlay' }, [panel]);
+
+    let ready = false;   // load 全部落定前关闭不判脏（初始化回填不算用户改动）
+    let confirmShown = false;
+    const hideConfirm = () => { confirmShown = false; dirtyConfirm.hidden = true; };
+    const performClose = () => {
+        hideConfirm();
+        overlay.remove();
+        document.removeEventListener('keydown', onKey, true);
+        _llmConfigModal = null;
+    };
+    const requestClose = () => {
+        if (!ready) { performClose(); return; }
+        if (form.isDirty()) { confirmShown = true; dirtyConfirm.hidden = false; return; }
+        performClose();
+    };
+    closeBtn.onclick = (e) => { e.stopPropagation(); requestClose(); };
+    overlay.onclick = (e) => { if (e.target === overlay) requestClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); requestClose(); } };
+
+    saveCloseBtn.onclick = async () => {
+        saveCloseBtn.disabled = true;
+        const ok = await form.save();   // 保存失败留在弹窗重试
+        saveCloseBtn.disabled = false;
+        if (ok) performClose();
+    };
+    discardBtn.onclick = () => performClose();
+    keepBtn.onclick = () => hideConfirm();
+
+    document.body.appendChild(overlay);
+    document.addEventListener('keydown', onKey, true);
+    form.load().catch(() => {}).then(() => { ready = true; });   // 打开即后台回填，落定后放行脏检查
+    _llmConfigModal = overlay;
 }

@@ -5,7 +5,9 @@
 
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
-import { getImageHeight, getThumbnailSrc, isImageFile, showToast } from "./gallery-utils.js";
+import { getImageHeight, getThumbnailSrc, isImageFile } from "./gallery-utils.js";
+import { openLLMSettingsModal } from "./llm-setting.js";
+import { actionToast } from "./toast.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask } from "./image-gen.js";
 import { invokePromptStream } from "./prompt-service.js";
@@ -407,13 +409,13 @@ function openStoryboardDialog(gallery, image, subfolder) {
                     },
                     onError: (err) => {
                         console.error('[Gallery] storyboard story generation failed:', err);
-                        showToast(gallery.app, 'error', 'LLM 生成分镜故事失败', String(err));
+                        actionToast({ severity: 'error', summary: 'LLM 生成分镜故事失败', detail: String(err), actionLabel: '打开 LLM 设置', onAction: openLLMSettingsModal });
                     }
                 }
             );
         } catch (e) {
             console.error('[Gallery] storyboard story generation failed:', e);
-            showToast(gallery.app, 'error', 'LLM 生成分镜故事失败', String(e?.message || e));
+            actionToast({ severity: 'error', summary: 'LLM 生成分镜故事失败', detail: String(e?.message || e), actionLabel: '打开 LLM 设置', onAction: openLLMSettingsModal });
         } finally {
             llmRunning = false;
             llmBtn.disabled = false;

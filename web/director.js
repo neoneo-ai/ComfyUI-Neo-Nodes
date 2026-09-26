@@ -10,7 +10,8 @@ import { saveRecipe, listVideoSkills, scanMediaNodes, widgetValueToRef } from ".
 import { attachSkillPickerToSelect } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { grabDataType, copyGalleryToInput, toggleGallerySidebar, uploadLocalFiles } from "./media-transfer.js";
-import { createModelConfigForm } from "./llm-setting.js";
+import { openLLMSettingsModal } from "./llm-setting.js";
+import { actionToast } from "./toast.js";
 
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
@@ -27,75 +28,17 @@ export const SEG_MODES = [
 export const MODE_LABELS = new Map([...SEG_MODES, ['mixed', '混合模式']]);
 
 
-// ---- LLM 配置弹窗：标题栏 🤖 按钮打开，复用 llm-setting.js 的 createModelConfigForm()。
-// 全局单例（与编辑器实例无关）；打开即后台 load() 回填、load 落定前关闭不判脏；
-// 有未保存修改时 ✕/点遮罩/Esc 先出确认条（💾 保存并关闭 / 放弃修改 / 继续编辑）。
-let _llmConfigModal = null;
+// ---- LLM 配置弹窗已下沉到 llm-setting.js（openLLMSettingsModal，全局单例），标题栏 🤖 按钮直接调用。
 
-function openLLMConfig() {
-    if (_llmConfigModal && !_llmConfigModal.parentNode) _llmConfigModal = null;   // 浮层已被清除（外部/测试重置 body）→ 丢弃过期状态
-    if (_llmConfigModal) return;   // 已打开：忽略，避免叠加
-    const form = createModelConfigForm();
-
-    const saveCloseBtn = $el('button', { className: 'neo-director-llm-btn-save', type: 'button', textContent: '💾 保存并关闭' });
-    const discardBtn = $el('button', { className: 'neo-director-llm-btn-discard', type: 'button', textContent: '放弃修改' });
-    const keepBtn = $el('button', { className: 'neo-director-llm-btn-keep', type: 'button', textContent: '继续编辑' });
-    const dirtyConfirm = $el('div', { className: 'neo-director-llm-dirty', hidden: true }, [
-        $el('span', { textContent: '⚠ 有未保存的修改' }),
-        $el('div', { className: 'neo-director-llm-dirty-actions' }, [saveCloseBtn, discardBtn, keepBtn]),
-    ]);
-
-    const closeBtn = $el('button', { className: 'neo-director-llm-close', type: 'button', title: '关闭（Esc）', textContent: '✕' });
-    const head = $el('div', { className: 'neo-director-llm-head' }, [
-        $el('span', { textContent: '🤖 LLM 配置' }),
-        closeBtn,
-    ]);
-    const bodyEl = $el('div', { className: 'neo-director-llm-body' }, [form.el]);
-    const panel = $el('div', { className: 'neo-director-llm-panel' }, [head, bodyEl, dirtyConfirm]);
-    const overlay = $el('div', { className: 'neo-director-llm-overlay' }, [panel]);
-
-    let ready = false;   // load 全部落定前关闭不判脏（初始化回填不算用户改动）
-    let confirmShown = false;
-    const hideConfirm = () => { confirmShown = false; dirtyConfirm.hidden = true; };
-    const performClose = () => {
-        hideConfirm();
-        overlay.remove();
-        document.removeEventListener('keydown', onKey, true);
-        _llmConfigModal = null;
-    };
-    const requestClose = () => {
-        if (!ready) { performClose(); return; }
-        if (form.isDirty()) { confirmShown = true; dirtyConfirm.hidden = false; return; }
-        performClose();
-    };
-    closeBtn.onclick = (e) => { e.stopPropagation(); requestClose(); };
-    overlay.onclick = (e) => { if (e.target === overlay) requestClose(); };
-    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); requestClose(); } };
-
-    saveCloseBtn.onclick = async () => {
-        saveCloseBtn.disabled = true;
-        const ok = await form.save();   // 保存失败留在弹窗重试
-        saveCloseBtn.disabled = false;
-        if (ok) performClose();
-    };
-    discardBtn.onclick = () => performClose();
-    keepBtn.onclick = () => hideConfirm();
-
-    document.body.appendChild(overlay);
-    document.addEventListener('keydown', onKey, true);
-    form.load().catch(() => {}).then(() => { ready = true; });   // 打开即后台回填，落定后放行脏检查
-    _llmConfigModal = overlay;
-}
-
-// LLM 依赖的操作失败：给出可操作提示并自动打开 LLM 配置弹窗（openLLMConfig 幂等，重复调用不叠加）。
+// LLM 依赖的操作失败：action toast 给出处理入口，点「打开 LLM 设置」才弹窗（不自动弹出挡界面）。
 function handleLLMError(summary, error) {
-    app.extensionManager.toast.add({
+    actionToast({
         severity: 'error',
         summary: `${summary}失败`,
-        detail: `${error || '未知错误'}。已打开 LLM 配置，请检查 API Key / 模型 / 端点。`,
-        life: 6000,
+        detail: `${error || '未知错误'}。请检查 API Key / 模型 / 端点。`,
+        actionLabel: '打开 LLM 设置',
+        onAction: openLLMSettingsModal,
     });
-    openLLMConfig();
 }
 
 
@@ -2502,7 +2445,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         ]),
         tabBar,
         $el('div', { className: 'neo-director-title-btns' }, [
-            $el('button', { className: 'neo-director-llm-config', type: 'button', title: 'LLM 配置', textContent: '🤖', onclick: openLLMConfig }),
+            $el('button', { className: 'neo-director-llm-config', type: 'button', title: 'LLM 配置', textContent: '🤖', onclick: openLLMSettingsModal }),
             maxBtn,
             $el('button', { className: 'neo-director-close', textContent: '✕', onclick: requestClose }),
         ]),

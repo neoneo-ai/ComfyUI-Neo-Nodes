@@ -1945,7 +1945,7 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     tabSetup.click();
     await sleep(20);
 
-    // 失败路径：两段都失败 → 逐段两次请求、原提示词保留、状态显示失败段号、LLM 配置自动弹出
+    // 失败路径：两段都失败 → 逐段两次请求、原提示词保留、状态显示失败段号、action toast 给处理入口（不自动弹弹窗）
     document.querySelector(".neo-director-optimize").click();
     await sleep(100);
     assert.equal(optBodies.length, 2, "逐段循环：每段单独一次请求");
@@ -1954,7 +1954,12 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     const tas = Array.from(document.querySelectorAll(".neo-director-prompt"));
     assert.equal(tas[0].value, "第一段原始", "失败时原提示词保留");
     assert.ok(document.querySelector(".neo-director-pane-setup .neo-director-story-status").textContent.includes("1、2 段生成失败"), "状态显示失败的段号");
-    assert.ok(document.querySelector(".neo-director-llm-overlay"), "LLM 失败自动打开 LLM 配置弹窗");
+    assert.ok(!document.querySelector(".neo-director-llm-overlay"), "失败不自动弹出 LLM 配置弹窗");
+    const atAction = document.querySelector(".neo-at .neo-at-action");
+    assert.equal(atAction?.textContent, "打开 LLM 设置", "action toast 给出「打开 LLM 设置」入口");
+    atAction.click();
+    await sleep(20);
+    assert.ok(document.querySelector(".neo-director-llm-overlay"), "点 action 才打开 LLM 配置弹窗");
     document.querySelector(".neo-director-llm-close").click();   // 关闭以保持后续断言干净
     await sleep(20);
 

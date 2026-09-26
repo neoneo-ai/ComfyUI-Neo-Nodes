@@ -7,8 +7,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { fileToBase64, imagesFromClipboard, sseStream, invokePromptStream } from "./prompt-service.js";
-import { listSkills, populateSkillOptions, createSkillDropdown, renderMarkdown } from "./skill.js";
-import { createModelConfigForm } from "./llm-setting.js";
+import { listSkills, populateSkillOptions, createSkillDropdown, renderMarkdown, resolveSkillId, openSkillDetailById } from "./skill.js";
+import { createModelConfigForm, openLLMSettingsModal } from "./llm-setting.js";
 import { mkEl } from "./dom-utils.js";
 import { collectWorkflowContext } from "./workflow-context.js";
 import { saveTextToStorage, markQuickInputConsumed } from "./node-behavior.js";
@@ -17,10 +17,29 @@ import { createSlashSkillPicker } from "./slash-picker.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm, requestGeneration, watchTask, cancelTask, buildGenPrompt, sendImageToLoadImage, assembleAllGenerated, enhancePromptStream, getGenSettings, getSkillGenConfig } from "./image-gen.js";
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
+import { actionToast } from "./toast.js";
 
 // 「思考深度」下拉 → Qwen3.8 模板参数映射：off=不思考（enable_thinking:false）；
 // low/medium/high 对应 chat_template_kwargs.reasoning_effort 档位（xhigh 为模板的深度档）。
 const THINKING_EFFORTS = { low: "low", medium: "medium", high: "xhigh" };
+
+// LLM 自身异常的报文特征（llm.py 的 Remote LLM network error / timeout / HTTP <code>、
+// "LLM model not found" / "Model not loaded"、provider 的 openai 报错 "Error code: 401"、
+// 缺 API key 提示等）。端点 / 密钥 / 模型 / 网络问题换 skill 也没用 → 一律给 LLM 设置。
+const LLM_ERROR_PATTERN = /remote llm|remote provider|remote_llm_config|local model|llm model|model not loaded|api key|unauthorized|rate limit|insufficient_quota|timeout|timed out|network error|connection (error|refused)|econnrefused|fetch failed|error code:|http [45]\d\d/i;
+
+function isLLMError(err) {
+    return LLM_ERROR_PATTERN.test(String(err || ""));
+}
+
+// 失败提示入口：LLM 异常 → LLM 设置；否则选了 skill → 技能详情页修复；都没命中（智能/反推路由）→ LLM 设置。
+// actionToast 不自动关闭，点 action 或 ✕ 才消失。
+function failAction(skillId, err) {
+    if (skillId && !isLLMError(err)) {
+        return { summary: "技能执行失败", actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillId) };
+    }
+    return { summary: "LLM 处理失败", actionLabel: "打开 LLM 设置", onAction: openLLMSettingsModal };
+}
 
 // ==========================================
 // Quick input tips rotation
@@ -832,6 +851,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
             state.statusText = "增强提示词中…";
             state.phase = "enhance";
             controller.set(state);
+            let enhanceErr = null;
             try {
                 const enhanced = await new Promise((resolve) => {
                     let rafId = null;
@@ -851,7 +871,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
                                 state.enhancedPrompt = fullText || "";
                                 resolve(fullText);
                             },
-                            onError: () => resolve(null),
+                            onError: (err) => { enhanceErr = err || "未知错误"; resolve(null); },
                         }
                     );
                 });
@@ -859,7 +879,18 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
                     finalPrompt = enhanced.trim();
                 }
             } catch (e) {
+                enhanceErr = e?.message || String(e);
                 console.warn("prompt enhancement failed, using original:", e);
+            }
+            // 增强是可选步骤，失败仍用原文出图；但 LLM 异常要给出处理入口，不再静默
+            if (enhanceErr) {
+                actionToast({
+                    severity: "warning",
+                    summary: "LLM 提示词增强失败，已用原文生成",
+                    detail: `${enhanceErr}。请检查 API Key / 模型 / 端点。`,
+                    actionLabel: "打开 LLM 设置",
+                    onAction: openLLMSettingsModal,
+                });
             }
         }
 
@@ -898,6 +929,17 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
         if (!controller.isStale(myToken)) {
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
+            // 生图失败：action toast 引导到技能详情页处理（缺模型/缺节点等），不自动关闭
+            if (state.error) {
+                const skillName = opt?.value || "";
+                actionToast({
+                    severity: "error",
+                    summary: "生图失败",
+                    detail: state.error,
+                    actionLabel: "打开技能详情",
+                    onAction: () => resolveSkillId(skillName, false).then((id) => { if (id) openSkillDetailById(id); }),
+                });
+            }
         }
     }
 }
@@ -1021,8 +1063,9 @@ function createGenerateHandler(promptUI) {
             if (statusEl) { statusEl.remove(); statusEl = null; }
         }
         // 三条流式分支共用的 SSE 处理：正文先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排；
-        // 思考块（kind=thinking）实时显示在临时面板，正文出现时清除，最终只保留正文
-        const streamHandlers = (errorLabel) => ({
+        // 思考块（kind=thinking）实时显示在临时面板，正文出现时清除，最终只保留正文。
+        // failOpts = (err) => ({ summary, actionLabel, onAction })：失败时按错误来源给处理入口
+        const streamHandlers = (errorLabel, failOpts) => ({
             onChunk: (chunk) => {
                 if (!chunk || !chunk.text) return;
                 if (chunk.kind === "status") {
@@ -1083,7 +1126,12 @@ function createGenerateHandler(promptUI) {
                 console.error(errorLabel, err);
                 clearThinking();
                 clearStatus();
-                showToast(app, "error", "处理失败", String(err));
+                const opts = failOpts?.(err);
+                if (opts?.actionLabel) {
+                    actionToast({ severity: "error", detail: String(err), ...opts });
+                } else {
+                    showToast(app, "error", "处理失败", String(err));
+                }
             }
         });
         try {
@@ -1103,7 +1151,7 @@ function createGenerateHandler(promptUI) {
                     context: workflowContext,
                     ...enableThinkingField
                 };
-                await invokePromptStream(payload, streamHandlers("Skill invoke error:"));
+                await invokePromptStream(payload, streamHandlers("Skill invoke error:", (err) => failAction(selectedSkillId, err)));
             } else if (selectedSkillId) {
                 // 使用选中的模板进行生成（流式）
                 generateBtn.textContent = "⏳"; // 统一短反馈
@@ -1112,7 +1160,7 @@ function createGenerateHandler(promptUI) {
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
 
                 // 使用流式API，传入skillId
-                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Skill stream error:"), { 
+                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Skill stream error:", (err) => failAction(selectedSkillId, err)), { 
                     text: userPrompt, 
                     skillId: selectedSkillId,
                     description: quickText || currentPrompt,
@@ -1124,7 +1172,7 @@ function createGenerateHandler(promptUI) {
                 generateBtn.textContent = "⏳"; // 统一短反馈
                 // 拼接 currentPrompt 和 quickText（与选择了模版时保持一致）
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
-                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Smart prompt stream error:"), {
+                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Smart prompt stream error:", (err) => failAction("", err)), {
                     text: userPrompt,
                     description: quickText || currentPrompt,
                     context: workflowContext,
@@ -1156,7 +1204,9 @@ function createGenerateHandler(promptUI) {
  * 返回注销函数，节点移除时调用，避免残留监听持有已销毁节点的 DOM。
  */
 function wireBackendStreamUpdate(promptUI) {
-    const { customTextarea, textWidget, node, refreshMarkdownPreviewAuto } = promptUI;
+    const { customTextarea, textWidget, node, refreshMarkdownPreviewAuto, skillSelector } = promptUI;
+    // 后端流失败时生成器 yield "[ERROR] xxx"，随 accumulated 逐次推送；只弹一次 toast
+    let errorToastShown = false;
     const handler = (event) => {
         const currentUid = node.properties?.rs_instance_uid || node.widgets?.find(w => w.name === "instance_uid")?.value;
         if (event.detail.instance_uid !== currentUid) return;
@@ -1167,6 +1217,15 @@ function wireBackendStreamUpdate(promptUI) {
         // 用 node.graph 而非闭包捕获的 graph：加载/切换工作流后旧图引用会失效
         if (node.graph) node.graph.setDirtyCanvas(true, true);
         refreshMarkdownPreviewAuto?.();
+        if (promptText.includes("[ERROR]")) {
+            if (!errorToastShown) {
+                errorToastShown = true;
+                const detail = promptText.replace(/^\[ERROR\]\s*/, "");
+                actionToast({ severity: "error", detail, ...failAction(skillSelector?.value || "", detail) });
+            }
+        } else {
+            errorToastShown = false;
+        }
     };
     api.addEventListener("rs.prompt.auto_generate_update", handler);
     return () => api.removeEventListener("rs.prompt.auto_generate_update", handler);

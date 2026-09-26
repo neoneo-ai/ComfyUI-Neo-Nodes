@@ -426,7 +426,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, statusBar: null,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect, skillSelector
             };
 
             const handleGeneratePrompt = createGenerateHandler(
@@ -961,7 +961,7 @@ app.registerExtension({
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, statusBar,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect, skillSelector
             };
 
             const handleGeneratePrompt = createGenerateHandler(

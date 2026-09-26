@@ -156,8 +156,20 @@ async function sseStream(url, options = {}, body = null) {
                     onDone?.();
                     return;
                 }
+                // 生成器（llm.py / image_gen.py / skill.py）失败时以 [ERROR] 前缀的文本帧上报：
+                // 交给 onError 让调用方弹 action toast，不再当作正文写进提示词
+                if (data.startsWith("[ERROR]")) {
+                    onError?.(data.slice("[ERROR]".length).trim());
+                    return;
+                }
                 try {
                     const parsed = JSON.parse(data);
+                    // 生成器内部失败同样以正文块上报（llm.py / skill.py / image_gen.py 的
+                    // {"text":"[ERROR] …","kind":"content"}）：当错误处理，不写进提示词正文
+                    if (typeof parsed?.text === "string" && parsed.text.startsWith("[ERROR]")) {
+                        onError?.(parsed.text.slice("[ERROR]".length).trim());
+                        return;
+                    }
                     onChunk?.(parsed);
                 } catch {
                     onChunk?.({ text: data });

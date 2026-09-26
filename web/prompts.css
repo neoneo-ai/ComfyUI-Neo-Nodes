@@ -3464,3 +3464,70 @@
     0%, 100% { box-shadow: 0 0 5px rgba(122,184,245,.35), 0 0 0 0 rgba(122,184,245,.25); }
     50%      { box-shadow: 0 0 5px rgba(122,184,245,.35), 0 0 0 3px rgba(122,184,245,0); }
 }
+
+/* ==========================================
+   Action toast（web/toast.js）：需用户处理的错误，不自动关闭，带处理入口
+   ========================================== */
+#neo-action-toast-stack {
+    position: fixed;
+    right: 16px;
+    /* 顶部菜单（工作流标签行）+ 工具栏（运行/活动任务行）下方 */
+    top: 108px;
+    z-index: 2147483645;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(440px, calc(100vw - 32px));
+    pointer-events: none;
+}
+.neo-at {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #1e1e24;
+    color: #eee;
+    border: 1px solid #3a3a44;
+    border-left-width: 3px;
+    border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .45);
+    font-size: 13px;
+    animation: neo-at-in .18s ease-out;
+}
+.neo-at-error   { border-left-color: #e5484d; }
+.neo-at-warning { border-left-color: #f5a623; }
+.neo-at-success { border-left-color: #46a758; }
+.neo-at-info    { border-left-color: #4b9fe1; }
+.neo-at-icon { line-height: 1.4; }
+.neo-at-body { flex: 1; min-width: 0; }
+.neo-at-summary { font-weight: 600; line-height: 1.4; }
+.neo-at-detail { margin-top: 2px; color: #b9b9c3; line-height: 1.45; word-break: break-word; }
+.neo-at-action {
+    flex: none;
+    margin-left: 4px;
+    padding: 4px 10px;
+    border: 1px solid #4b9fe1;
+    border-radius: 6px;
+    background: rgba(75, 159, 225, .15);
+    color: #8ec6f2;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.neo-at-action:hover { background: rgba(75, 159, 225, .3); }
+.neo-at-close {
+    flex: none;
+    border: none;
+    background: none;
+    color: #8a8a94;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 4px;
+}
+.neo-at-close:hover { color: #fff; }
+.neo-at-out { opacity: 0; transform: translateX(12px); transition: all .2s ease; }
+@keyframes neo-at-in {
+    from { opacity: 0; transform: translateX(16px); }
+    to   { opacity: 1; transform: none; }
+}

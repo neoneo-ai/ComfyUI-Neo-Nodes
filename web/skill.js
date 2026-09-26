@@ -2220,6 +2220,7 @@ export {
     populateSkillOptions,
     validateSkillForNode,
     invalidateSkillValidation,
+    resolveSkillId,
     openSkillDetailById,
     createSkillStatusRow,
     SKILL_CHANGED_EVENT,

@@ -293,6 +293,121 @@ test("流式更新事件按 instance_uid 隔离，不跨节点写入", async () 
     assert.equal(parts(b).promptArea.value, beforeB);
 });
 
+test("后端流失败 [ERROR]：写回输入框的同时弹统一 action toast，同一失败只弹一次", async () => {
+    const node = await makeNode(20);
+    const el = parts(node);
+    // 确定性桩下每个用例的首个节点都拿到同一个 uid，先前用例残留的监听会一起命中；
+    // 换成唯一 uid 等价于真实环境（每节点各自 uuid），也让计数只反映本次分发
+    const uid = "rs_inst_toast_case";
+    node.properties.rs_instance_uid = uid;
+    const before = document.querySelectorAll(".neo-at").length;
+
+    // accumulated 逐块推送，同一失败会多次带上 [ERROR]，只弹一个 toast
+    for (let i = 0; i < 2; i++) {
+        dispatchApiEvent("rs.prompt.auto_generate_update", {
+            instance_uid: uid,
+            prompt: "[ERROR] Remote LLM HTTP 502: Error code: 502",
+        });
+    }
+
+    assert.equal(el.promptArea.value, "[ERROR] Remote LLM HTTP 502: Error code: 502");
+    assert.equal(document.querySelectorAll(".neo-at").length, before + 1);
+    const toast = [...document.querySelectorAll(".neo-at")].at(-1);
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "LLM 处理失败");
+    assert.equal(toast.querySelector(".neo-at-detail").textContent, "Remote LLM HTTP 502: Error code: 502");
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开 LLM 设置");
+
+    // 新一次生成（正常正文）之后再次失败 → 再弹一个新 toast
+    dispatchApiEvent("rs.prompt.auto_generate_update", { instance_uid: uid, prompt: "正常正文" });
+    dispatchApiEvent("rs.prompt.auto_generate_update", {
+        instance_uid: uid,
+        prompt: "[ERROR] Remote LLM timeout: read timeout",
+    });
+    assert.equal(document.querySelectorAll(".neo-at").length, before + 2);
+});
+
+test("流式 [ERROR] 帧：按错误上报并弹 action toast，错误文本不写进输入框", async () => {
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse([
+        'data: {"text":"半截正文"}',
+        "data: [ERROR] Remote LLM HTTP 502: Error code: 502",
+        "data: [DONE]",
+    ]));
+
+    const node = await makeNode(22);
+    const el = parts(node);
+    inputText(el.quickInput, "a cat");
+    keydown(el.quickInput, "Enter");
+    await sleep(200);
+
+    assert.ok(!el.promptArea.value.includes("[ERROR]"), "错误文本不进提示词输入框");
+    const toast = [...document.querySelectorAll(".neo-at")].find((t) =>
+        (t.querySelector(".neo-at-detail")?.textContent || "").includes("502"),
+    );
+    assert.ok(toast, "失败应弹 action toast");
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "LLM 处理失败");
+    assert.equal(toast.querySelector(".neo-at-detail").textContent, "Remote LLM HTTP 502: Error code: 502");
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开 LLM 设置");
+});
+
+test("选中 skill 时失败按来源分流：LLM 异常 → LLM 设置，skill 自身错误 → 技能详情", async () => {
+    // 端点/密钥类失败（Remote LLM HTTP …）：即使选了 skill 也给 LLM 设置入口
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse([
+        "data: [ERROR] Remote LLM HTTP 502: Error code: 502",
+        "data: [DONE]",
+    ]));
+    const llmNode = await makeNode(23);
+    const llmEl = parts(llmNode);
+    llmEl.selector.value = "anime_style";
+    inputText(llmEl.quickInput, "more detail");
+    click(llmEl.generateBtn);
+    await sleep(200);
+
+    let toast = [...document.querySelectorAll(".neo-at")].at(-1);
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "LLM 处理失败");
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开 LLM 设置");
+
+    // skill 自身错误（模板为空等）：给技能详情入口
+    clearRoutes();
+    mockRoute("/rs_prompts/skills", () => jsonResponse(SKILLS));
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse([
+        "data: [ERROR] 技能内容为空，无法执行",
+        "data: [DONE]",
+    ]));
+    const skillNode = await makeNode(24);
+    const skillEl = parts(skillNode);
+    skillEl.selector.value = "anime_style";
+    inputText(skillEl.quickInput, "more detail");
+    click(skillEl.generateBtn);
+    await sleep(200);
+
+    toast = [...document.querySelectorAll(".neo-at")].at(-1);
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "技能执行失败");
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开技能详情");
+});
+
+test("流式正文块 [ERROR]（JSON 帧）：按错误上报并弹 toast，错误文本不写进输入框", async () => {
+    // 真实链路：llm.py / skill.py / image_gen.py 生成器内部 catch 后 yield 正文块 [ERROR]
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse([
+        'data: {"text":"半截正文","kind":"content"}',
+        'data: {"text":"[ERROR] Remote LLM HTTP 502: Error code: 502","kind":"content"}',
+        "data: [DONE]",
+    ]));
+
+    const node = await makeNode(25);
+    const el = parts(node);
+    inputText(el.quickInput, "a cat");
+    keydown(el.quickInput, "Enter");
+    await sleep(200);
+
+    assert.ok(!el.promptArea.value.includes("[ERROR]"), "错误文本不进提示词输入框");
+    const toast = [...document.querySelectorAll(".neo-at")].find((t) =>
+        (t.querySelector(".neo-at-detail")?.textContent || "").includes("502"),
+    );
+    assert.ok(toast, "失败应弹 action toast");
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "LLM 处理失败");
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开 LLM 设置");
+});
+
 test("节点移除后注销全局监听并清掉挂 body 的浮层", async () => {
     const node = await makeNode(19);
     dispatchApiEvent("rs.prompt.auto_generate_update", {

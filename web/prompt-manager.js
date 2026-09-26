@@ -17,6 +17,19 @@ import {
 } from "./prompt-service.js";
 import { mkEl } from "./dom-utils.js";
 import { createStatusBars, createPromptOutputArea, triggerTextChange } from "./llm-chat.js";
+import { openLLMSettingsModal } from "./llm-setting.js";
+import { actionToast } from "./toast.js";
+
+// 「保存预设」时的自动命名/打标签依赖 LLM：失败给 LLM 设置入口，标题与标签仍可手填
+function llmAnalysisErrorToast(detail) {
+    actionToast({
+        severity: "warning",
+        summary: "LLM 分析提示词失败",
+        detail: `${detail}。请手动填写标题/标签，或检查 API Key / 模型 / 端点。`,
+        actionLabel: "打开 LLM 设置",
+        onAction: openLLMSettingsModal,
+    });
+}
 
 // 配方类型：按当前工作流里的生成节点判定（H3=视频 / Gen&Edit=图像），供列表筛选；都没有则空
 function detectGenType(graph) {
@@ -447,9 +460,11 @@ function createPromptManagerUI() {
                     } else {
                         aiStatus.className = "rs-ai-status error";
                         aiStatus.innerHTML = "❌ AI 分析失败，请手动填写";
+                        llmAnalysisErrorToast(dataClassify.error || dataTitle.error || "未能识别标题与标签");
                     }
                 }).catch(e => {
                     console.error("Auto-extract error:", e);
+                    llmAnalysisErrorToast(e?.message || String(e));
                 }).finally(() => {
                     saveBtn.disabled = false;
                 });
