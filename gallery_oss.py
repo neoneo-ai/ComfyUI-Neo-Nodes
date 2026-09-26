@@ -10,6 +10,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 from server import PromptServer
+import folder_paths
 
 from .util import IMG_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
 
@@ -41,6 +42,11 @@ _OSS_CATEGORY_PATH_PREFIX = {
     OSS_CATEGORY_GRID: "Grid/presets",
     OSS_CATEGORY_CHARACTER: "Character/presets",
 }
+# Output main dirs that hold the grid/character content the 素材库 buttons browse.
+# The read-only OSS preset cache lives in their "presets/" subdir.
+OUTPUT_DIR = Path(folder_paths.output_directory).resolve()
+GRID_MAIN_DIR = OUTPUT_DIR / "StoryBoard"
+CHARACTER_MAIN_DIR = OUTPUT_DIR / "CharacterSheet"
 
 
 def _oss_index_categories(index: dict) -> dict[str, list[str]]:
@@ -96,12 +102,14 @@ def _is_oss_enabled() -> bool:
 def _get_oss_cache_dir(category: str | None = None) -> Path:
     """Local cache root for downloaded OSS files.
 
-    grid/character presets are cached under the plugin-owned main Gallery dirs
-    (gallery/grid/presets, gallery/character/presets); everything else keeps
-    the legacy oss_cache location.
+    grid/character presets are cached under the output main dirs' read-only
+    "presets/" subdir (output/StoryBoard/presets, output/CharacterSheet/presets);
+    everything else keeps the legacy oss_cache location.
     """
-    if category in (OSS_CATEGORY_GRID, OSS_CATEGORY_CHARACTER):
-        return GALLERY_DIR / category / "presets"
+    if category == OSS_CATEGORY_GRID:
+        return GRID_MAIN_DIR / "presets"
+    if category == OSS_CATEGORY_CHARACTER:
+        return CHARACTER_MAIN_DIR / "presets"
     cfg = _get_oss_config()
     custom = cfg.get("cache_dir", "")
     if custom:

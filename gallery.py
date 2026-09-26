@@ -40,10 +40,12 @@ CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 WAVEFORM_DIR = GALLERY_DIR / "waveform_cache"  # decoded audio waveform peaks (JSON)
-# Plugin-owned main dirs for generated assets: locally generated results live in
-# <date>/ subfolders, read-only OSS preset cache under presets/<oss-dir>/.
-GRID_DIR = GALLERY_DIR / "grid"
-CHARACTER_DIR = GALLERY_DIR / "character"
+# Main dirs (Grid / Character): browsable output subdirs. Character images land
+# in output/CharacterSheet, storyboard/grid sheets in output/StoryBoard; each
+# keeps a read-only "presets/" subfolder for the OSS preset cache.
+OUTPUT_DIR = Path(folder_paths.output_directory).resolve()
+GRID_DIR = OUTPUT_DIR / "StoryBoard"
+CHARACTER_DIR = OUTPUT_DIR / "CharacterSheet"
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -53,11 +55,10 @@ def _get_system_dirs():
     Returns a list of dicts: [{\"path\": Path, \"name\": str, \"read_only\": True}, ...]
     Only includes dirs that actually exist on disk.
     """
-    import folder_paths as _folder_paths
     result = []
     for label in ("output", "input"):
         try:
-            base_dir = getattr(_folder_paths, f"{label}_directory")
+            base_dir = getattr(folder_paths, f"{label}_directory")
             p = Path(base_dir).resolve()
             if p.exists():
                 result.append({"path": p, "name": label.capitalize(), "read_only": True})
@@ -118,7 +119,7 @@ def _get_user_custom_dirs():
 
 def _ensure_dirs() -> None:
     for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR,
-              CIVITAI_BOOKMARK_DIR, GRID_DIR, CHARACTER_DIR):
+              CIVITAI_BOOKMARK_DIR):
         d.mkdir(parents=True, exist_ok=True)
     _repair_mislabeled_media()
 
@@ -285,10 +286,10 @@ def _scan_directory_structure_only(directory: Path) -> dict:
     return result
 
 
-# Dirs this plugin writes into itself: generation results (output/) and archived
-# storyboard / character sheets (grid/, character/). Their cards are ordered by the
-# newest media they hold, so what was just produced shows up first. Everything else
-# (custom dirs, presets, lora cache, input, OSS) keeps its scan order.
+# Grid / Character are output subdirs this plugin browses (storyboard sheets /
+# character images). Their cards are ordered by the newest media they hold, so
+# what was just produced shows up first. Everything else (custom dirs, presets,
+# lora cache, input, OSS) keeps its scan order.
 _RECENT_DIR_KEYS = {"output", "grid", "character"}
 
 
@@ -687,7 +688,7 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
 
 
 # ---------------------------------------------------------------------------
-# Main dirs (Grid / Character): plugin-owned, mix writable generated results
+# Main dirs (Grid / Character): output subdirs, mix writable generated results
 # (<date>/ subfolders) with a read-only OSS preset cache (presets/<oss-dir>/).
 # ---------------------------------------------------------------------------
 _MAIN_DIRS = {
@@ -1179,11 +1180,10 @@ def _copy_media_to_input(source_path: Path, filename: str) -> tuple[str, bool]:
     `skipped` is True when the exact file already lives in the input directory,
     so callers can reuse the existing Comfy filename without another copy.
     """
-    import folder_paths as _folder_paths
     import shutil
     import hashlib
 
-    input_dir = Path(_folder_paths.input_directory).resolve()
+    input_dir = Path(folder_paths.input_directory).resolve()
     resolved_source = source_path.resolve()
     if resolved_source.parent == input_dir:
         return filename, True
@@ -2746,23 +2746,20 @@ async def delete_gallery_item(request):
 
         # Main dirs (Grid / Character): generated results are deletable; the OSS
         # preset cache is blocked above. Prefixed ("Grid/2026-09-24") and bare
-        # relative ("2026-09-24") subfolder forms, like system dirs.
+        # relative ("2026-09-24") subfolder forms, like system dirs. The prefix
+        # is the display name ("Grid"/"Character"), not the on-disk dir name.
         if not found_path and ".." not in filename and ".." not in subfolder:
-            for main_base in (GRID_DIR, CHARACTER_DIR):
-                main_name = main_base.name  # "grid" / "character"
-                sub_lower = (subfolder or "").lower()
-                if sub_lower == main_name:
-                    rel_parts = []
-                elif sub_lower.startswith(main_name + "/"):
-                    rel_parts = [p for p in subfolder[len(main_name):].split("/") if p]
-                elif subfolder:
-                    rel_parts = [p for p in subfolder.split("/") if p]
-                else:
-                    continue
-                if any(p in ("..", ".") for p in rel_parts):
+            main_parts = [p for p in (subfolder or "").split("/") if p]
+            if main_parts and main_parts[0].lower() in ("grid", "character"):
+                main_bases = (GRID_DIR if main_parts[0].lower() == "grid" else CHARACTER_DIR,)
+                main_parts = main_parts[1:]
+            else:
+                main_bases = (GRID_DIR, CHARACTER_DIR)
+            for main_base in main_bases:
+                if any(p in ("..", ".") for p in main_parts):
                     continue
                 main_target = main_base
-                for part in rel_parts:
+                for part in main_parts:
                     main_target = main_target / part
                 if (main_target / filename).is_file():
                     base, found_path = main_target, main_target / filename
@@ -2877,81 +2874,7 @@ async def delete_gallery_item(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-def _resolve_output_file(subfolder: str, filename: str) -> Path | None:
-    """Resolve a file inside ComfyUI's output directory; None when outside it."""
-    if ".." in filename or "/" in filename:
-        return None
-    parts = [p for p in (subfolder or "").split("/") if p]
-    if any(p in ("..", ".") for p in parts):
-        return None
-    output_root = Path(folder_paths.get_output_directory()).resolve()
-    candidate = output_root.joinpath(*parts, filename) if parts else output_root / filename
-    try:
-        resolved = candidate.resolve()
-    except OSError:
-        return None
-    if not (resolved.is_file() and str(resolved).startswith(str(output_root) + os.sep)):
-        return None
-    return resolved
 
-
-@PromptServer.instance.routes.post("/neo_gallery/archive")
-async def archive_generated(request):
-    """Archive generated media from ComfyUI output/ into the plugin-owned Gallery
-    main dirs (gallery/grid/<date>/, gallery/character/<date>/).
-
-    Body: {"category": "grid"|"character", "date": "YYYY-MM-DD" (optional),
-           "files": [{"subfolder": "...", "filename": "..."}]}
-    Existing files are skipped, so repeated archives are idempotent.
-    """
-    try:
-        data = await request.json()
-        category = str(data.get("category") or "").lower()
-        if category not in ("grid", "character"):
-            return web.json_response({"success": False, "error": "Invalid category"}, status=400)
-        main_base = GRID_DIR if category == "grid" else CHARACTER_DIR
-
-        date_str = str(data.get("date") or "").strip()
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
-            date_str = time.strftime("%Y-%m-%d")
-
-        files = data.get("files") or []
-        if not isinstance(files, list) or not files:
-            return web.json_response({"success": False, "error": "No files to archive"}, status=400)
-
-        archived = 0
-        skipped = 0
-        for entry in files[:50]:
-            if not isinstance(entry, dict):
-                continue
-            filename = str(entry.get("filename") or "")
-            subfolder = str(entry.get("subfolder") or "")
-            source = _resolve_output_file(subfolder, filename)
-            if not source:
-                continue
-            dest_dir = main_base / date_str
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / filename
-            if dest.exists():
-                skipped += 1
-                continue
-            shutil.copy2(source, dest)
-            archived += 1
-            # Keep the .txt sidecar (prompt + params) with the image.
-            if source.suffix.lower() in IMG_EXTENSIONS:
-                sidecar = source.with_suffix(".txt")
-                if sidecar.is_file() and not dest.with_suffix(".txt").exists():
-                    shutil.copy2(sidecar, dest.with_suffix(".txt"))
-
-        return web.json_response({
-            "success": True,
-            "archived": archived,
-            "skipped": skipped,
-            "path": f"{main_base.name}/{date_str}",
-        })
-    except Exception as e:
-        print(f"[Neo Gallery] archive error: {e}")
-        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 @PromptServer.instance.routes.post("/neo_gallery/clear_thumbnails")

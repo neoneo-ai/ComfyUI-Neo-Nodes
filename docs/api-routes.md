@@ -20,7 +20,6 @@
 | POST | `/neo_gallery/upload_txt` | 上传配套 `.txt` 描述 |
 | POST | `/neo_gallery/copy_to_input` | 复制素材到 `input/` |
 | POST | `/neo_gallery/delete` | 删除素材（presets 只读保护） |
-| POST | `/neo_gallery/archive` | 归档生成结果到主目录：body `{category: grid\|character, date?, files:[{subfolder, filename}]}`，仅接受 ComfyUI `output/` 内文件，复制进 `gallery/<category>/<日期>/` 并连同 `.txt` sidecar，已存在则跳过（幂等） |
 | POST | `/neo_gallery/clear_thumbnails` | 清空缩略图缓存 |
 
 ## gallery_lora.py — Civitai LORA
@@ -36,7 +35,7 @@
 
 `index.json` 顶层可选的 `categories`（`{"grid": [...], "character": [...]}`）把远端目录归到主目录的
 只读预设区；未归类的目录仍留在旧版 **Cloud Presets**（没有 `categories` 的旧索引行为不变）。
-grid/character 预设下载缓存在 `gallery/grid/presets/`、`gallery/character/presets/`。
+grid/character 预设下载缓存在 `output/StoryBoard/presets/`、`output/CharacterSheet/presets/`。
 
 | 方法 | 路由 | 说明 |
 |------|------|------|

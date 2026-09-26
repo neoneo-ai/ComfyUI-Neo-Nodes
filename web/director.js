@@ -405,12 +405,13 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (e.target.closest('.neo-director-refpick-item')) return;   // 点瓷砖（移除/拖拽）不触发上传
             picker.open();
         });
+        const head = $el('div', { className: 'neo-director-segref-head' }, [
+            $el('span', { className: 'neo-director-field-label', textContent: `${group.label}（最多 ${group.max}）` }),
+            ...(headExtra ? [headExtra] : []),
+            count,
+        ]);
         const row = $el('div', { className: 'neo-director-segref-row' }, [
-            $el('div', { className: 'neo-director-segref-head' }, [
-                $el('span', { className: 'neo-director-field-label', textContent: `${group.label}（最多 ${group.max}）` }),
-                ...(headExtra ? [headExtra] : []),
-                count,
-            ]),
+            ...(group.hideHead ? [] : [head]),
             grid,
         ]);
         row.appendChild(picker.input);
@@ -580,15 +581,18 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     }
 
     /** 「素材库」按钮：打开 ComfyUI 左侧 Neo Gallery 面板（首帧行 / 参考区共用）。
-     *  target 传主目录名（"Character" / "Grid"）时顺带导航到该目录，便于直接取角色图 / 分镜图。 */
-    const buildAssetLibButton = (target) => $el('button', {
-        className: 'neo-director-ff-lib',
-        title: target ? `打开左侧素材面板（${target}）` : '打开/收起左侧素材面板',
-        onclick: () => toggleGallerySidebar(target, []),
-    }, [
-        $el('i', { className: 'pi pi-images' }),
-        $el('span', { textContent: '素材库' }),
-    ]);
+     *  target 传主目录名（"Character" / "Grid"）时顺带导航到该目录，按钮文案随之具体化（角色素材库 / 宫格图素材库），便于直接取角色图 / 分镜图。 */
+    const buildAssetLibButton = (target) => {
+        const label = target === 'Character' ? '角色素材库' : target === 'Grid' ? '宫格图素材库' : '素材库';
+        return $el('button', {
+            className: 'neo-director-ff-lib',
+            title: target ? `打开左侧素材面板（${target}）` : '打开/收起左侧素材面板',
+            onclick: () => toggleGallerySidebar(target, []),
+        }, [
+            $el('i', { className: 'pi pi-images' }),
+            $el('span', { textContent: label }),
+        ]);
+    };
 
     /** 单帧区的标题行（字段名 + 「本地」+ 「素材库」按钮）。onLocalAdd(fname) 在本地上传成功后回调。 */
     const frameRow = (labelText, onLocalAdd) => $el('div', { className: 'neo-director-ff-row' }, [
@@ -1638,7 +1642,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 角色参考图（配方级，常驻显示）：主用途是视频各段身份参考（「角色身份参考」开启时），次用途喂给 r2i 图片分镜让各段角色一致。
     // 复用每段参考网格（本地上传 / 素材库拖入 / 拖拽排序）；顺序即参考先后（第 1 张为编辑目标）。
     const charRefRow = buildSegRefRow(
-        { key: 'characters', kind: 'image', label: '角色参考图', max: 6 },
+        { key: 'characters', kind: 'image', label: '角色参考图', max: 6, hideHead: true },
         (exStory.characters || []).map(r => r.filename).filter(Boolean)
     );
     const sbGenBtn = $el('button', { className: 'rs-btn neo-director-sb-gen', textContent: '🎨 生成图片分镜' });
@@ -1900,7 +1904,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             $el('span', { className: 'neo-director-field-label', title: '上传一张分镜宫格图（带分隔条 / 留白），自动检测行列并切分；各格按阅读顺序替换现有分段，并作为该段首帧与分镜图，拆分后右侧就地显示该图元信息里的提示词。点击输入区本地上传，或从左侧素材库 / 本地文件拖入', textContent: '🧩 宫格分镜图拆分（一张宫格分镜图 → 逐段首帧）' }),
             buildAssetLibButton('Grid'),   // 打开左侧素材面板（Grid），拖入下方输入区
         ]),
-        // 源图 → 切分方式 / 拆分按钮 → 原宫格提示词，同一行：单张分镜图不再独占整行
+        // 源图 / 切分方式 / 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（单张分镜图不再独占整行）
         $el('div', { className: 'neo-director-grid-io' }, [
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-src' }, [
                 $el('span', { className: 'neo-director-field-label', textContent: '分镜图' }),
@@ -1908,8 +1912,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             ]),
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-ctrl' }, [
                 $el('span', { className: 'neo-director-field-label', textContent: '切分方式' }),
-                $el('div', { className: 'neo-director-row neo-director-shared' }, [gridModeSel, manualCtrls]),
-                $el('div', { className: 'neo-director-row neo-director-shared' }, [gridSplitBtn, gridStatus]),
+                $el('div', { className: 'neo-director-grid-ctrl-body' }, [
+                    $el('div', { className: 'neo-director-row neo-director-shared' }, [gridModeSel, manualCtrls]),
+                    $el('div', { className: 'neo-director-row neo-director-shared' }, [gridSplitBtn, gridStatus]),
+                ]),
             ]),
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-res' }, [
                 $el('div', { className: 'neo-director-grid-pt-head' }, [

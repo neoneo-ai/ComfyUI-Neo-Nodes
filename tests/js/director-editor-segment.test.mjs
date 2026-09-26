@@ -1484,7 +1484,7 @@ test("导演编辑器：参考组网格点击黑色空区触发本地上传并�
     }, null);
     await sleep(60);
 
-    const imgRow = Array.from(document.querySelectorAll(".neo-director-segref-row"))
+    const imgRow = Array.from(document.querySelectorAll(".neo-director-seg .neo-director-segref-row"))
         .find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考图"));
     const grid = imgRow.querySelector(".neo-director-refpick-grid");
     assert.ok(grid, "参考图网格存在");
@@ -1563,7 +1563,7 @@ test("导演编辑器：参考视频/音频的「本地」按钮 accept 正确�
     }, null);
     await sleep(60);
 
-    const refRows = Array.from(document.querySelectorAll(".neo-director-segref-row"));
+    const refRows = Array.from(document.querySelectorAll(".neo-director-seg .neo-director-segref-row"));
     const labels = refRows.map((r) => r.querySelector(".neo-director-field-label").textContent);
     // 参考图/参考视频/参考音频
     const imgRow = refRows.find((r) => r.querySelector(".neo-director-field-label").textContent.includes("参考图"));

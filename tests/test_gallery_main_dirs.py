@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Grid / Character 主目录：OSS 预设分类、只读预设入口与 /neo_gallery/archive 归档（离线单测）。
+"""Grid / Character 主目录：OSS 预设分类与只读预设入口（离线单测）。
 
-主目录把「可写的生成结果（<日期>/）」与「只读的 OSS 预设缓存（presets/<远端目录>/）」
-放在同一棵树里，因此：分类归属决定预设出现在哪个目录（旧的 Cloud Presets / Grid /
-Character），归档只允许把 ComfyUI output/ 里的文件复制进来，历史索引（没有 categories）
-必须继续按老行为工作。
+主目录是 output 下的子目录（StoryBoard / CharacterSheet），把「可写的生成结果
+（<日期>/）」与「只读的 OSS 预设缓存（presets/<远端目录>/）」放在同一棵树里；
+分类归属决定预设出现在哪个目录（旧的 Cloud Presets / Grid / Character），历史
+索引（没有 categories）必须继续按老行为工作。
 """
 
 import asyncio
@@ -99,8 +99,8 @@ if _prev_folder_paths is None:
 else:
     sys.modules["folder_paths"] = _prev_folder_paths
 
-GRID_DIR = Path(_TMP) / "gallery" / "grid"
-CHARACTER_DIR = Path(_TMP) / "gallery" / "character"
+GRID_DIR = Path(_OUTPUT) / "StoryBoard"
+CHARACTER_DIR = Path(_OUTPUT) / "CharacterSheet"
 gallery.GRID_DIR = GRID_DIR
 gallery.CHARACTER_DIR = CHARACTER_DIR
 gallery._MAIN_DIRS = {
@@ -189,15 +189,10 @@ class OssCategoryTests(unittest.TestCase):
                          ["显式预设", "未分类"])
 
     def test_cache_dir_per_category(self):
-        prev = _oss.GALLERY_DIR
-        _oss.GALLERY_DIR = Path(_TMP) / "gallery"
-        try:
-            self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_GRID),
-                             Path(_TMP) / "gallery" / "grid" / "presets")
-            self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_CHARACTER),
-                             Path(_TMP) / "gallery" / "character" / "presets")
-        finally:
-            _oss.GALLERY_DIR = prev
+        self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_GRID),
+                         Path(_OUTPUT) / "StoryBoard" / "presets")
+        self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_CHARACTER),
+                         Path(_OUTPUT) / "CharacterSheet" / "presets")
 
     def test_legacy_presets_lookup_does_not_leak_other_categories(self):
         prev = _oss._oss_index_cache
@@ -570,58 +565,3 @@ class RecentDirSortTests(unittest.TestCase):
         # 系统目录（Output）卡封面取最新两张，subfolder 保持相对 output 的既有约定
         self.assertEqual([c["filename"] for c in covers["Output"]], ["new.png", "old.png"])
         self.assertEqual([c["subfolder"] for c in covers["Output"]], ["StoryBoard", "CharacterSheet"])
-
-
-class ArchiveEndpointTests(unittest.TestCase):
-    """/neo_gallery/archive：只接受 output/ 内的文件，复制进主目录对应日期子目录且可重复调用。"""
-
-
-    def _archive(self, payload):
-        return _payload(_call(gallery.archive_generated(_PostRequest(payload))))
-
-    def test_copies_image_and_txt_sidecar(self):
-        _write(Path(_OUTPUT) / "StoryBoard" / "2026-09-24" / "sheet.png", b"png")
-        _write(Path(_OUTPUT) / "StoryBoard" / "2026-09-24" / "sheet.txt", b"prompt")
-        out = self._archive({
-            "category": "grid", "date": "2026-09-24",
-            "files": [{"subfolder": "StoryBoard/2026-09-24", "filename": "sheet.png"}],
-        })
-        self.assertTrue(out["success"], out)
-        self.assertEqual(out["archived"], 1)
-        self.assertEqual(out["path"], "grid/2026-09-24")
-        self.assertEqual((GRID_DIR / "2026-09-24" / "sheet.png").read_bytes(), b"png")
-        self.assertEqual((GRID_DIR / "2026-09-24" / "sheet.txt").read_bytes(), b"prompt")
-
-    def test_repeat_archive_skips_existing(self):
-        _write(Path(_OUTPUT) / "CharacterSheet" / "2026-09-25" / "c.png", b"c")
-        payload = {"category": "character", "date": "2026-09-25",
-                   "files": [{"subfolder": "CharacterSheet/2026-09-25", "filename": "c.png"}]}
-        self.assertEqual(self._archive(payload)["archived"], 1)
-        again = self._archive(payload)
-        self.assertEqual(again["archived"], 0)
-        self.assertEqual(again["skipped"], 1)
-
-    def test_rejects_escaping_and_out_of_output_paths(self):
-        out = self._archive({"category": "grid", "date": "2026-09-24",
-                             "files": [{"subfolder": "../..", "filename": "secret.png"}]})
-        self.assertTrue(out["success"])
-        self.assertEqual(out["archived"], 0)
-        out = self._archive({"category": "grid", "date": "2026-09-24",
-                             "files": [{"subfolder": "..", "filename": "escaped.png"}]})
-        self.assertEqual(out["archived"], 0)
-        self.assertFalse((GRID_DIR / "2026-09-24" / "escaped.png").exists())
-        self.assertFalse((Path(_OUTPUT).parent / "escaped.png").exists())
-
-    def test_rejects_bad_category_and_empty_files(self):
-        self.assertEqual(_call(gallery.archive_generated(
-            _PostRequest({"category": "presets", "files": [{"filename": "a.png"}]}))).status, 400)
-        self.assertEqual(_call(gallery.archive_generated(
-            _PostRequest({"category": "grid", "files": []}))).status, 400)
-
-    def test_bad_date_falls_back_to_today(self):
-        _write(Path(_OUTPUT) / "StoryBoard" / "2026-09-24" / "today.png", b"t")
-        out = self._archive({"category": "grid", "date": "not-a-date",
-                             "files": [{"subfolder": "StoryBoard/2026-09-24", "filename": "today.png"}]})
-        self.assertTrue(out["success"])
-        self.assertEqual(out["archived"], 1)
-        self.assertRegex(out["path"], r"^grid/\d{4}-\d{2}-\d{2}$")

@@ -92,21 +92,7 @@ async function copyImageToInput(image, subfolder) {
     return result.filename;
 }
 
-// 生成结果归档：成品先落 ComfyUI output/，这里再复制一份进插件主目录
-// （gallery/grid/<date>/ 或 gallery/character/<date>/），画廊首页的 Grid / Character 卡即可浏览。
-const _ARCHIVE_DATE_RE = /\d{4}-\d{2}-\d{2}/;
-export function archiveGenerated(category, images) {
-    const list = (images || []).map((im) => ({ subfolder: im.subfolder || "", filename: im.filename })).filter((f) => f.filename);
-    if (!list.length) return Promise.resolve();
-    // 日期取 subfolder 里的日期段（StoryBoard/2026-09-24），角色图无子目录时从文件名前缀提取。
-    const date = (list.map((f) => f.subfolder || "").join("/") + " " + list.map((f) => f.filename).join(" "))
-        .match(_ARCHIVE_DATE_RE)?.[0] || "";
-    return api.fetchApi("/neo_gallery/archive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category, date, files: list }),
-    }).catch((e) => console.error('[Gallery] archive generated failed:', e));
-}
+
 
 /** 一键角色图的前置小窗（复用九宫格分镜图同款弹窗结构）：先看参考图确认，点「生成」后
  * 在窗口内显示排队/生图进度与结果预览；Esc 或点遮罩关闭。 */
@@ -154,7 +140,6 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
 
     const renderSuccess = (final) => {
         const images = final.images || [];
-        archiveGenerated("character", images);   // 归档进画廊 Character 主目录（异步，不阻塞 UI）
         const box = $el("div", { className: "neo-gallery-cs-result" });
         if (images.length > 0) {
             const img = $el("img", {
@@ -320,7 +305,6 @@ function openStoryboardDialog(gallery, image, subfolder) {
 
     const renderSuccess = (final) => {
         const images = final.images || [];
-        archiveGenerated("grid", images);         // 归档进画廊 Grid 主目录（异步，不阻塞 UI）
         const box = $el("div", { className: "neo-gallery-cs-result" });
         if (images.length > 0) {
             const img = $el("img", {

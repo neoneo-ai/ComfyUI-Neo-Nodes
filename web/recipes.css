@@ -1037,18 +1037,18 @@
     padding: 8px;
 }
 
-/* 「🧩 宫格分镜图拆分」源图与「原宫格提示词」同行：单张分镜图不再独占整行，label 区分两侧 */
+/* 「🧩 宫格分镜图拆分」源图 / 切分方式 / 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（单张分镜图不再独占整行） */
 .neo-director-grid-io {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
     flex-wrap: nowrap;
 }
 
 .neo-director-grid-io-col {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
 }
 
@@ -1065,13 +1065,20 @@
     flex: 0 0 auto;
 }
 
+.neo-director-grid-ctrl-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+}
+
 /* 图片输入区：紧凑拖放框——点击本地上传 / 素材库·本地文件拖入 */
 .neo-director-grid-src {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 90px;
+    height: 60px;
     min-width: 132px;
     max-width: 200px;
     padding: 6px;
@@ -1104,7 +1111,7 @@
 
 .neo-director-grid-src img {
     max-width: 100%;
-    max-height: 76px;
+    max-height: 44px;
     object-fit: contain;
     cursor: zoom-in;
 }
@@ -1166,11 +1173,12 @@
     color: #fff;
 }
 
-/* 「原宫格提示词」列：label 行右侧 ⧉ 复制；下方只读文本框展示元信息里提取到的提示词 */
+/* 「原宫格提示词」列：label + ⧉ 复制 靠左、只读文本框同行填充，提示词长时框内滚动 */
 .neo-director-grid-pt-head {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 8px;
 }
 
@@ -1189,10 +1197,12 @@
     color: #fff;
 }
 
-/* 只读文本框：高度与左侧宫格图输入区对齐，提示词长时框内滚动 */
+/* 只读文本框：与左侧宫格图输入区同行同高，提示词长时框内滚动 */
 .neo-director-grid-prompts {
-    width: 100%;
-    height: 90px;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 60px;
+    overflow-y: auto;
     resize: none;
     background: #1c1c1c;
     color: #cfd6de;
