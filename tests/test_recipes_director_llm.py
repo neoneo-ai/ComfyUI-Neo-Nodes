@@ -2,8 +2,8 @@
 """recipes 导演「文字故事板分段」后端逻辑的离线单测。
 
 不依赖 ComfyUI 运行中的服务器与真实 LLM：server/folder_paths 用桩模块替换，
-recipes 的 gallery/bookmark/gallery_lora/util 依赖用假模块；`_director_llm` 通过
-桩 `_PKG.llm.run_llm_task` 注入可控返回，验证端点组装、JSON 解析容错与多模态回退。"""
+recipes 的 gallery/bookmark/gallery_lora/util 依赖用假模块；`run_llm_task` 通过
+桩 `_PKG.llm.run_llm_task` 注入可控返回，验证端点组装、JSON 解析容错与多模态调用。"""
 
 import asyncio
 import json
@@ -77,7 +77,7 @@ _util._json_safe = lambda v: v
 sys.modules[f"{_PKG}.util"] = _util
 setattr(_pkg, "util", _util)
 
-# llm 桩：run_llm_task 由测试用例按需替换（记录调用参数，便于验证多模态回退）
+# llm 桩：run_llm_task 由测试用例按需替换（记录调用参数，便于验证多模态调用）
 _llm_calls = []
 
 

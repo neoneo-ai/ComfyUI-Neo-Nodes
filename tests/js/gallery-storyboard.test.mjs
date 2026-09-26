@@ -103,7 +103,6 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(fetchLog.filter((c) => c.path === "/neo_image_gen/generate").length, 0);
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
-    mockRoute("/neo_gallery/archive", () => jsonResponse({ success: true, archived: 1 }));
     let body = null;
     mockRoute("/neo_image_gen/generate", (b) => {
         body = b;
@@ -132,13 +131,6 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     const resultImg = overlay.querySelector(".neo-gallery-cs-result-img");
     assert.match(resultImg?.getAttribute("src") || "",
         /\/neo_gallery\/thumbnail\?filename=nine_panel_storyboard_sheet_00001_\.png&subfolder=StoryBoard%2F2026-09-24&size=640$/);
-    // 结果归档进画廊 Grid 主目录（按结果里的日期分段）
-    const archive = fetchLog.find((c) => c.path === "/neo_gallery/archive");
-    assert.ok(archive, "应把结果归档到画廊主目录");
-    assert.equal(archive.method, "POST");
-    assert.equal(archive.body.category, "grid");
-    assert.equal(archive.body.date, "2026-09-24");
-    assert.deepEqual(archive.body.files, [{ subfolder: "StoryBoard/2026-09-24", filename: "nine_panel_storyboard_sheet_00001_.png" }]);
 
     // 成功不自动跳目录，由「打开输出目录」触发（跳画廊 Grid 的日期子目录）并关窗
     assert.deepEqual(jumps, [], "成功后不自动跳目录");

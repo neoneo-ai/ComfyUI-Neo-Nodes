@@ -29,7 +29,6 @@ if "folder_paths" not in sys.modules:
     _fp.get_output_directory = lambda: _OUTPUT_DIR
     sys.modules["folder_paths"] = _fp
 _folder_paths = sys.modules["folder_paths"]
-_orig_input_dir = _folder_paths.get_input_directory
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
@@ -84,12 +83,19 @@ def _write_grid_png(name, rows=3, cols=3, cw=40, ch=30, gap=6):
 
 class NeoGridSplitTests(unittest.TestCase):
     def setUp(self):
+        # 节点调用期懒导入 folder_paths（查 sys.modules）：其他测试文件会在收集期替换桩条目，
+        # 测试期间钉回本文件的桩，结束还原
+        self._prev_folder_paths = sys.modules.get("folder_paths")
+        sys.modules["folder_paths"] = _folder_paths
         _folder_paths.get_input_directory = lambda: _INPUT_DIR
         if not hasattr(_folder_paths, "get_filename_list"):
             _folder_paths.get_filename_list = lambda folder: []
 
     def tearDown(self):
-        _folder_paths.get_input_directory = _orig_input_dir
+        if self._prev_folder_paths is None:
+            sys.modules.pop("folder_paths", None)
+        else:
+            sys.modules["folder_paths"] = self._prev_folder_paths
 
     def test_input_and_return_types(self):
         spec = gsn.NeoGridSplit.INPUT_TYPES()

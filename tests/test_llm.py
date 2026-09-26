@@ -1055,6 +1055,108 @@ class TestUsageLogging(unittest.TestCase):
         self.assertTrue(any("LLM usage: prompt=10 completion=20" in line and "reasoning=" not in line
                             for line in cm.output), cm.output)
 
+    def _status_error(self, status, retry_after=None):
+        import httpx
+        import openai
+        headers = {"retry-after": str(retry_after)} if retry_after is not None else {}
+        response = httpx.Response(
+            status, request=httpx.Request("POST", "http://127.0.0.1/v1/chat/completions"),
+            headers=headers)
+        return openai.APIStatusError("error", response=response, body={"message": f"HTTP {status}"})
+
+    def _ok_resp(self):
+        class _Resp:
+            usage = None
+            def model_dump(self):
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        return _Resp()
+
+    def test_transient_429_retried_once(self):
+        # 429 + retry-after: 0 → 插件层重试一次、第二次成功，共两次请求
+        client, fake_client, orig_build = self._client_with_fake(
+            [self._status_error(429, retry_after=0), self._ok_resp()])
+        try:
+            result = client.chat_completion([{"role": "user", "content": "x"}])
+            self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+            self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+
+    def test_transient_5xx_retried_once(self):
+        # 5xx（无 Retry-After）→ 默认延迟重试一次、第二次成功
+        client, fake_client, orig_build = self._client_with_fake(
+            [self._status_error(503), self._ok_resp()])
+        try:
+            result = client.chat_completion([{"role": "user", "content": "x"}])
+            self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+            self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+
+    def test_semantic_400_not_retried(self):
+        # 语义性 4xx（如模型不存在）→ 不重试、立即报错
+        client, fake_client, orig_build = self._client_with_fake(
+            [self._status_error(400), self._status_error(400)])
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                client.chat_completion([{"role": "user", "content": "x"}])
+            self.assertIn("HTTP 400", str(ctx.exception))
+            self.assertEqual(fake_client.chat.completions.create.call_count, 1)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+
+    def test_retry_after_too_long_not_retried(self):
+        # Retry-After 超过上限（20s）→ 不等待、不重试、立即报错
+        client, fake_client, orig_build = self._client_with_fake(
+            [self._status_error(429, retry_after=120), self._status_error(429)])
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                client.chat_completion([{"role": "user", "content": "x"}])
+            self.assertIn("HTTP 429", str(ctx.exception))
+            self.assertEqual(fake_client.chat.completions.create.call_count, 1)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+
+    def _chunk(self, content="hi"):
+        class _Delta:
+            pass
+        class _Choice:
+            pass
+        class _Chunk:
+            pass
+        d = _Delta(); d.content = content; d.reasoning_content = None
+        c = _Choice(); c.delta = d
+        ch = _Chunk(); ch.choices = [c]; ch.usage = None
+        return ch
+
+    def test_stream_retries_transient_before_content(self):
+        # 流式：首个 chunk 之前瞬态失败 → 重试一次、第二次成功
+        client, fake_client, orig_build = self._client_with_fake(
+            [self._status_error(429, retry_after=0), iter([self._chunk()])])
+        try:
+            out = list(client.chat_completion([{"role": "user", "content": "x"}], stream=True))
+            self.assertEqual(out, [{"text": "hi", "kind": "content"}])
+            self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+
+    def test_stream_no_retry_after_content_yielded(self):
+        # 流式：已吐出内容后的失败 → 不重试（内容无法撤回），直接报错
+        def _fail():
+            yield self._chunk()
+            raise self._status_error(429, retry_after=0)
+
+        client, fake_client, orig_build = self._client_with_fake([_fail(), iter([])])
+        try:
+            out = []
+            with self.assertRaises(RuntimeError):
+                for piece in client.chat_completion([{"role": "user", "content": "x"}], stream=True):
+                    out.append(piece)
+            self.assertEqual(out, [{"text": "hi", "kind": "content"}])
+            self.assertEqual(fake_client.chat.completions.create.call_count, 1)
+        finally:
+            llm_mod.RemoteLLMClient._build_client = orig_build
+
 
 class TestLocalSingleModelFallback(unittest.TestCase):
     """_load_model：无已保存选择且目录只有一个模型时直接回落，否则仍报清晰错误"""
@@ -1286,13 +1388,6 @@ class TestLocalServiceModels(unittest.TestCase):
         self.assertTrue(models[1]["loaded"])
         self.assertEqual(models[0]["name"], "Qwen3.5-9B-Uncensored")
 
-    def test_build_inference_load_url(self):
-        self.assertEqual(llm_mod.build_inference_load_url("http://192.168.0.176:8888"),
-                         "http://192.168.0.176:8888/api/inference/load")
-        # 整段粘贴 /v1 端点也剥尾到服务根
-        self.assertEqual(llm_mod.build_inference_load_url("http://192.168.0.176:8888/v1/"),
-                         "http://192.168.0.176:8888/api/inference/load")
-
     def test_is_no_model_loaded_error(self):
         msg = "{'message': 'No model loaded. Call POST /inference/load first.', 'type': 'invalid_request_error'}"
         self.assertTrue(llm_mod.is_no_model_loaded_error(400, msg))
@@ -1301,60 +1396,14 @@ class TestLocalServiceModels(unittest.TestCase):
         self.assertFalse(llm_mod.is_no_model_loaded_error(400, "model 'x' does not exist"))
         self.assertFalse(llm_mod.is_no_model_loaded_error(400, ""))
 
-    def test_chat_triggers_inference_load_and_retries(self):
-        # Unsloth Studio：/v1 未加载时返回 400，客户端须带 API Key 调 /api/inference/load 再重试一次
+    def test_no_model_loaded_not_retried_reports_actionable_error(self):
+        # Unsloth Studio 未加载时返回 400「No model loaded」：语义性错误，不重试、不自动加载，直接报可操作建议
         from aiohttp import web as aweb
-        state = {"loaded": False, "load_calls": 0}
+        state = {"chat_calls": 0, "load_calls": 0}
 
         async def main():
             async def chat(_):
-                if not state["loaded"]:
-                    return aweb.json_response(
-                        {"error": {"message": "No model loaded. Call POST /inference/load first.",
-                                   "type": "invalid_request_error"}}, status=400)
-                return aweb.json_response({
-                    "id": "c1", "object": "chat.completion", "created": 1, "model": "m",
-                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
-                                 "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
-
-            async def load(request):
-                self.assertEqual(request.headers.get("Authorization"), "Bearer sk-unsloth-test")
-                body = await request.json()
-                self.assertEqual(body.get("model_path"), "m")   # Studio 的字段名是 model_path
-                state["load_calls"] += 1
-                state["loaded"] = True
-                return aweb.json_response({"status": "loaded", "model": "m", "display_name": "m"})
-
-            app = aweb.Application()
-            app.router.add_post("/v1/chat/completions", chat)
-            app.router.add_post("/api/inference/load", load)
-            runner = aweb.AppRunner(app)
-            await runner.setup()
-            site = aweb.TCPSite(runner, "127.0.0.1", 18941)
-            await site.start()
-            try:
-                client = llm_mod.RemoteLLMClient(
-                    {"provider": "unsloth", "base_url": "http://127.0.0.1:18941/v1",
-                     "model": "m", "api_key": "sk-unsloth-test"})
-                # chat_completion 内部是阻塞 HTTP（生产环境跑在 ComfyUI 工作线程）：
-                # 测试里必须放独立线程，否则会冻结本事件循环、假服务端无法响应 /api/inference/load
-                result = await asyncio.to_thread(
-                    client.chat_completion, [{"role": "user", "content": "hi"}])
-                self.assertEqual(result["choices"][0]["message"]["content"], "ok")
-                self.assertEqual(state["load_calls"], 1)   # 只加载一次，不循环
-            finally:
-                await runner.cleanup()
-
-        asyncio.run(main())
-
-    def test_chat_without_api_key_reports_actionable_error(self):
-        # 没填 Studio API Key 时不发加载请求（拿占位值只会换 401），错误里要带上处置建议
-        from aiohttp import web as aweb
-        state = {"load_calls": 0}
-
-        async def main():
-            async def chat(_):
+                state["chat_calls"] += 1
                 return aweb.json_response(
                     {"error": {"message": "No model loaded. Call POST /inference/load first.",
                                "type": "invalid_request_error"}}, status=400)
@@ -1376,8 +1425,9 @@ class TestLocalServiceModels(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as ctx:
                     await asyncio.to_thread(client.chat_completion, [{"role": "user", "content": "hi"}])
                 self.assertIn("No model loaded", str(ctx.exception))
-                self.assertIn("Settings > API", str(ctx.exception))   # 提示去哪里拿 Key
-                self.assertEqual(state["load_calls"], 0)
+                self.assertIn("Load the model in the server UI", str(ctx.exception))   # 可操作建议
+                self.assertEqual(state["chat_calls"], 1)   # 语义性 4xx 不重试
+                self.assertEqual(state["load_calls"], 0)   # 不自动加载
             finally:
                 await runner.cleanup()
 

@@ -27,6 +27,7 @@ from .bookmark import (
 )
 from .gallery_lora import LORA_CACHE_DIR, _load_lora_index
 from .util import _extract_media_metadata, _json_safe
+from . import llm
 
 CURRENT_DIR = Path(__file__).parent.resolve()
 RECIPES_DIR = CURRENT_DIR / "recipes"
@@ -1271,17 +1272,6 @@ def _collect_ref_bytes(refs):
     return byte_list
 
 
-def _director_llm(task_name, text, image_bytes=None):
-    """调用导演专用 LLM 任务；可选带参考图（多模态），失败回退为纯文本。"""
-    from .llm import run_llm_task
-    result = run_llm_task(task_name, text, images=image_bytes or None)
-    if "error" in result and image_bytes:
-        retry = run_llm_task(task_name, text)  # provider 不支持视觉 → 纯文本重试
-        if "error" not in retry:
-            return retry
-    return result
-
-
 def _parse_segments(raw):
     """把 LLM 返回的分段文本解析为 [{prompt, duration_sec, storyboard_prompt?}]；容错剥掉 ```json 包裹与多余文字。"""
     if not raw:
@@ -1345,8 +1335,8 @@ async def rs_recipes_director_generate_segments(request):
 
     char_names = [str(n).strip() for n in (data.get("characters") or []) if str(n or "").strip()]
     result = await asyncio.to_thread(
-        _director_llm, "director_story", "\n".join(parts),
-        _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(char_names)]))
+        llm.run_llm_task, "director_story", "\n".join(parts),
+        _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(char_names)]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     segments = _parse_segments(result.get("segments") or "")
@@ -1391,7 +1381,7 @@ async def rs_recipes_director_optimize_prompts(request):
         parts.append("\n".join(ref_lines) + "\n")
     parts.append("该段现有提示词（重写为一条成品提示词）：\n" + prompt)
 
-    result = await asyncio.to_thread(_director_llm, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]))
+    result = await asyncio.to_thread(llm.run_llm_task, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     out = str(result.get("prompt") or "").strip()
@@ -1534,7 +1524,7 @@ async def rs_recipes_director_describe_panel(request):
         head = f"上一段（第 {idx - 1} 段）已生成的提示词" if idx else "上一段已生成的提示词"
         lines.append(f"{head}，本段需与之承接、避免重复：\n{prev}")
     text = "\n".join(lines)
-    result = await asyncio.to_thread(_director_llm, "director_panel_describe", text, _collect_ref_bytes([{"filename": name}]))
+    result = await asyncio.to_thread(llm.run_llm_task, "director_panel_describe", text, _collect_ref_bytes([{"filename": name}]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     prompt = str(result.get("prompt") or "").strip()

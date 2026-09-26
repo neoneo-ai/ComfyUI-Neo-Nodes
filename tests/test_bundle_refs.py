@@ -119,6 +119,16 @@ def _data_uri(png):
 class BundleRefsStoreTests(unittest.TestCase):
     def setUp(self):
         prompts._PENDING_BUNDLE_REFS.clear()
+        # 插件代码调用期懒导入 folder_paths（查 sys.modules）：其他测试文件会在收集期替换桩条目，
+        # 测试期间钉回本文件的桩，结束还原
+        self._prev_folder_paths = sys.modules.get("folder_paths")
+        sys.modules["folder_paths"] = _folder_paths
+
+    def tearDown(self):
+        if self._prev_folder_paths is None:
+            sys.modules.pop("folder_paths", None)
+        else:
+            sys.modules["folder_paths"] = self._prev_folder_paths
 
     def test_data_uri_roundtrip_and_delete_on_take(self):
         uri = _data_uri(_png_bytes())

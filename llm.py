@@ -14,6 +14,7 @@ import io
 import hashlib
 import socket
 import threading
+import time
 from typing import Any, Dict, List, Optional, Generator
 from pathlib import Path
 import folder_paths
@@ -109,11 +110,16 @@ def build_remote_models_url(base_url: str, provider: str = "") -> str:
 
 
 # 本地 / 局域网端点：LM Studio / Ollama / vLLM 等在收到请求时按需加载模型，客户端只需放宽超时；
-# Unsloth Studio 的 /v1 则要求先调 POST /api/inference/load 显式加载（见 RemoteLLMClient._maybe_load_local_model）。
+# Unsloth Studio 的 /v1 未加载时返回 400「No model loaded」，客户端不自动加载，直接报可操作的错误（见 _no_model_loaded_hint）。
 _LOCAL_HOST_NAMES = {"localhost", "0.0.0.0", "::1", "host.docker.internal"}
 _PRIVATE_IPV4_RE = re.compile(r"^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.|127\.)")
 # 冷加载大模型可能持续数分钟（Cline 对 Ollama 用 5 分钟口径），低于该值一律抬高
 LOCAL_ENDPOINT_MIN_TIMEOUT = 300
+# OpenAI SDK 自身重试已禁用（max_retries=0）；插件层只对瞬态失败（408/409/429/5xx/网络中断）
+# 重试一次，语义性 4xx（400/401/403/404/413/422 等）立即报错；Retry-After 超过上限不等待、直接报错。
+_TRANSIENT_RETRY_STATUSES = frozenset({408, 409, 429})
+_TRANSIENT_RETRY_DELAY = 2.0
+_RETRY_AFTER_MAX_WAIT = 20.0
 
 
 def is_local_endpoint(base_url: str) -> bool:
@@ -151,11 +157,6 @@ def local_list_endpoints(base_url: str, provider: str = "") -> List[tuple]:
         ("ollama", f"{root}/api/tags"),
         ("openai", build_remote_models_url(base_url, provider)),
     ]
-
-
-def build_inference_load_url(base_url: str) -> str:
-    """Unsloth Studio 的显式加载端点：/v1 报「No model loaded」时客户端须先调用它"""
-    return f"{_service_root(base_url)}/api/inference/load"
 
 
 def is_no_model_loaded_error(status_code: int, detail: str) -> bool:
@@ -836,6 +837,32 @@ def _api_status_detail(e) -> str:
         return ""
 
 
+def _transient_retry_delay(e) -> Optional[float]:
+    """瞬态失败的插件层重试间隔（秒）；不可重试（语义性 4xx 等）返回 None。
+
+    可重试：网络中断 / 连接失败 / 超时（httpx.TransportError、openai.APIConnectionError，
+    含 APITimeoutError），以及 408/409/429/5xx 状态码。带 Retry-After 且不超过上限时按其等待，
+    否则固定 _TRANSIENT_RETRY_DELAY；Retry-After 过长（> _RETRY_AFTER_MAX_WAIT）不等待、直接报错。
+    """
+    import httpx
+    import openai
+    transient = isinstance(e, (httpx.TransportError, openai.APIConnectionError))
+    if not transient and isinstance(e, openai.APIStatusError):
+        status = e.status_code
+        transient = status in _TRANSIENT_RETRY_STATUSES or status >= 500
+    if not transient:
+        return None
+    delay = _TRANSIENT_RETRY_DELAY
+    response = getattr(e, "response", None)
+    header = (getattr(response, "headers", None) or {}).get("retry-after")
+    if header is not None:
+        try:
+            delay = float(header)
+        except (TypeError, ValueError):
+            pass
+    return delay if 0 <= delay <= _RETRY_AFTER_MAX_WAIT else None
+
+
 class RemoteLLMClient:
     """基于 OpenAI SDK 的远程 LLM 客户端，调用 OpenAI 兼容 API"""
 
@@ -876,49 +903,13 @@ class RemoteLLMClient:
             return max(self.timeout, LOCAL_ENDPOINT_MIN_TIMEOUT)
         return self.timeout
 
-    def load_remote_model(self):
-        """Unsloth Studio：POST /api/inference/load 显式加载模型，阻塞至加载完成（大模型可达数分钟）。
-
-        该接口要 Studio 的 API Key（Settings > API 里创建，sk-unsloth- 开头），就放在插件的 API Key 输入框。"""
-        import urllib.request
-        url = build_inference_load_url(self.base_url)
-        req = urllib.request.Request(
-            url, data=json.dumps({"model_path": self.model}).encode("utf-8"),
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {self.api_key}"},
-            method="POST")
-        logger.info(f"Loading local model on demand: {url} model={self.model}")
-        with urllib.request.urlopen(req, timeout=self._effective_timeout()) as resp:
-            body = resp.read().decode("utf-8", "replace")[:200]
-        logger.info(f"Local model loaded: {body}")
-
-    def _maybe_load_local_model(self, status_code: int, detail: str) -> bool:
-        """本地端点回「模型未加载」时先显式加载一次（服务端的报错就是让客户端去调 /api/inference/load）；
-        没填 API Key 就不试，免得拿占位值换一个 401。"""
-        if not (self.base_url and is_local_endpoint(self.base_url)
-                and is_no_model_loaded_error(status_code, detail)):
-            return False
-        if not (self.api_key or "").strip():
-            return False
-        try:
-            self.load_remote_model()
-            return True
-        except Exception as e:
-            logger.warning(f"Local model load failed: {e}")
-            return False
-
     def _no_model_loaded_hint(self, status_code: int, detail: str) -> str:
-        """本地端点没加载模型而我们又没加载成时，给出能直接照做的处置建议"""
+        """本地端点没加载模型时，给出能直接照做的处置建议"""
         if not (self.base_url and is_local_endpoint(self.base_url)
                 and is_no_model_loaded_error(status_code, detail)):
             return ""
-        if not (self.api_key or "").strip():
-            # Studio 只让带 API Key 的调用者触发加载：免鉴权请求连自动切换都被跳过，光开开关没用
-            return (" | The server loads models only for callers that present an API key: create one "
-                    "under Settings > API and paste it in the API Key field (or load the model in "
-                    "the server UI first).")
-        return (" | The on-demand load failed: load the model in the server UI and check the "
-                "server-side reason (memory, missing weights).")
+        return (" | Load the model in the server UI first (or POST /api/inference/load with the "
+                "server's API key), then retry.")
 
     def _build_client(self):
         """构造 OpenAI 兼容客户端（指向 base_url；本地/自建服务端 api_key 可为任意非空占位值）。"""
@@ -934,8 +925,9 @@ class RemoteLLMClient:
                     break
             if append_v1 and not base.endswith('/v1'):
                 base = f"{base}/v1"
-            return openai.OpenAI(base_url=base, api_key=self.api_key or "lm-studio", timeout=timeout)
-        return openai.OpenAI(api_key=self.api_key or "lm-studio", timeout=timeout)
+            # max_retries=0：SDK 层不隐藏重试，瞬态失败由插件层统一按 _transient_retry_delay 重试一次
+            return openai.OpenAI(base_url=base, api_key=self.api_key or "lm-studio", timeout=timeout, max_retries=0)
+        return openai.OpenAI(api_key=self.api_key or "lm-studio", timeout=timeout, max_retries=0)
 
     def chat_completion(self, messages: List[Dict[str, Any]],
                         max_tokens: Optional[int] = None,
@@ -1007,17 +999,29 @@ class RemoteLLMClient:
                 response = client.chat.completions.create(**kwargs)
                 _log_llm_usage(getattr(response, "usage", None))
                 return self._parse_response(response.model_dump())
-            except openai.APIConnectionError as e:
-                logger.warning(f"Remote LLM connection error: {e}")
-                raise RuntimeError(f"Remote LLM network error: {e}")
             except openai.APITimeoutError as e:
+                delay = _transient_retry_delay(e)
+                if attempt == 1 and delay is not None:
+                    logger.warning(f"Remote LLM timeout, retrying in {delay}s: {e}")
+                    time.sleep(delay)
+                    continue
                 logger.warning(f"Remote LLM timeout: {e}")
                 raise RuntimeError(f"Remote LLM timeout: {e}")
+            except openai.APIConnectionError as e:
+                delay = _transient_retry_delay(e)
+                if attempt == 1 and delay is not None:
+                    logger.warning(f"Remote LLM connection error, retrying in {delay}s: {e}")
+                    time.sleep(delay)
+                    continue
+                logger.warning(f"Remote LLM connection error: {e}")
+                raise RuntimeError(f"Remote LLM network error: {e}")
             except openai.APIStatusError as e:
                 detail = _api_status_detail(e)
-                # Unsloth Studio：模型未加载时返回 400，先显式调用 /api/inference/load 再重试一次
-                if attempt == 1 and self._maybe_load_local_model(e.status_code, detail):
-                    logger.info(f"Local model loaded on demand, retrying: {self.model}")
+                # 瞬态状态码（408/409/429/5xx）重试一次；其余 4xx 是语义性错误，立即上报
+                delay = _transient_retry_delay(e)
+                if attempt == 1 and delay is not None:
+                    logger.warning(f"Remote LLM HTTP {e.status_code}, retrying in {delay}s: {detail}")
+                    time.sleep(delay)
                     continue
                 logger.error(f"Remote LLM HTTP error: {e.status_code} | body={detail}")
                 raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}"
@@ -1074,17 +1078,30 @@ class RemoteLLMClient:
                         yield {"text": reasoning, "kind": "thinking"}
                 _log_llm_usage(usage)
                 return
-            except openai.APIConnectionError as e:
-                logger.warning(f"Remote LLM stream connection error: {e}")
-                raise RuntimeError(f"Remote LLM network error: {e}")
             except openai.APITimeoutError as e:
+                # 瞬态失败：仅当尚未产出任何内容时重试一次（已吐出的内容无法撤回）
+                delay = _transient_retry_delay(e)
+                if attempt == 1 and not yielded and delay is not None:
+                    logger.warning(f"Remote LLM stream timeout, retrying in {delay}s: {e}")
+                    time.sleep(delay)
+                    continue
                 logger.warning(f"Remote LLM stream timeout: {e}")
                 raise RuntimeError(f"Remote LLM timeout: {e}")
+            except openai.APIConnectionError as e:
+                delay = _transient_retry_delay(e)
+                if attempt == 1 and not yielded and delay is not None:
+                    logger.warning(f"Remote LLM stream connection error, retrying in {delay}s: {e}")
+                    time.sleep(delay)
+                    continue
+                logger.warning(f"Remote LLM stream connection error: {e}")
+                raise RuntimeError(f"Remote LLM network error: {e}")
             except openai.APIStatusError as e:
                 detail = _api_status_detail(e)
-                # Unsloth Studio：模型未加载时返回 400（必然在任何 chunk 之前），先显式调用 /api/inference/load 再重试一次
-                if attempt == 1 and not yielded and self._maybe_load_local_model(e.status_code, detail):
-                    logger.info(f"Local model loaded on demand, retrying stream: {self.model}")
+                # 瞬态状态码（408/409/429/5xx）且尚未产出内容时重试一次；其余 4xx 是语义性错误，立即上报
+                delay = _transient_retry_delay(e)
+                if attempt == 1 and not yielded and delay is not None:
+                    logger.warning(f"Remote LLM stream HTTP {e.status_code}, retrying in {delay}s: {detail}")
+                    time.sleep(delay)
                     continue
                 logger.error(f"Remote LLM stream HTTP {e.status_code}: {detail}")
                 raise RuntimeError(f"Remote LLM HTTP {e.status_code}: {detail or e.message}"

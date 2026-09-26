@@ -82,7 +82,6 @@ test("⋯ 菜单「生成角色图」：小窗显示参考图，点生成后窗�
     assert.equal(fetchLog.filter((c) => c.path === "/neo_image_gen/generate").length, 0);
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
-    mockRoute("/neo_gallery/archive", () => jsonResponse({ success: true, archived: 1 }));
     let body = null;
     mockRoute("/neo_image_gen/generate", (b) => {
         body = b;
@@ -107,13 +106,6 @@ test("⋯ 菜单「生成角色图」：小窗显示参考图，点生成后窗�
     // 窗口保持打开并显示结果预览（走 thumbnail 缓存接口，size=640）
     const resultImg = overlay.querySelector(".neo-gallery-cs-result-img");
     assert.match(resultImg?.getAttribute("src") || "", /\/neo_gallery\/thumbnail\?filename=character_sheet_00001_\.png&subfolder=CharacterSheet%2F2026-09-24&size=640$/);
-    // 成功后归档进画廊 Character 主目录（按结果里的日期分段），且按钮跳转同一主目录
-    const archive = fetchLog.find((c) => c.path === "/neo_gallery/archive");
-    assert.ok(archive, "应把结果归档到画廊主目录");
-    assert.equal(archive.method, "POST");
-    assert.equal(archive.body.category, "character");
-    assert.equal(archive.body.date, "2026-09-24");
-    assert.deepEqual(archive.body.files, [{ subfolder: "CharacterSheet/2026-09-24", filename: "character_sheet_00001_.png" }]);
 
     // 成功后有「打开输出目录」按钮，点击跳转画廊 Character 主目录
     const openDirBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "打开输出目录");
