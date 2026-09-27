@@ -55,6 +55,8 @@ grid/character 预设下载缓存在 `output/StoryBoard/presets/`、`output/Char
 | POST | `/rs_recipes/delete_sample` | 删除示例结果 |
 | POST | `/rs_recipes/delete` | 删除配方（仅 custom） |
 | POST | `/rs_recipes/copy` | 复制配方为新的 custom 副本（自动生成不冲突名 `<原名>-copy/-2/…`，含资源/示例/director 分段；preset 亦可复制成 custom） |
+| GET | `/rs_recipes/export` | 导出整个配方为 zip（顶层目录 = 配方名），包内附 `Readme.txt`（包内容 / 快速应用说明；中/英按远程配置 `readme_language`，缺省自动判断） |
+| POST | `/rs_recipes/import` | 导入配方 zip（`file` 字段 multipart）：包内须含 `recipe.json`（根目录或唯一顶层目录下），拒绝路径穿越条目；重名自动 `-copy/-2/…`，落盘 `recipes/custom/` |
 | GET | `/rs_recipes/asset` | 配方资源文件 |
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |

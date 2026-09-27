@@ -781,6 +781,33 @@ export async function createRecipesPanel() {
 
     const header = $el('div', { className: 'neo-recipes-header' }, [
         $el('h3', { className: 'neo-recipes-title', innerHTML: `${RECIPE_ICON_SVG}<span>配方</span>` }),
+        $el('input', {
+            type: 'file', accept: '.zip,application/zip', style: { display: 'none' }, id: 'neo-recipes-import-file',
+            onchange: async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                const form = new FormData();
+                form.append('file', file);
+                try {
+                    const res = await fetch('/rs_recipes/import', { method: 'POST', body: form });
+                    const data = await res.json().catch(() => ({}));
+                    if (data?.success) {
+                        app.extensionManager.toast.add({ severity: 'success', summary: `导入成功：${data.name}` });
+                        await renderList();
+                    } else {
+                        app.extensionManager.toast.add({ severity: 'error', summary: '导入失败', detail: data?.error || 'Unknown error', life: 4000 });
+                    }
+                } catch (err) {
+                    app.extensionManager.toast.add({ severity: 'error', summary: '导入失败', detail: String(err), life: 4000 });
+                }
+            }
+        }),
+        $el('button', {
+            className: 'rs-btn rs-action-btn neo-recipes-import',
+            textContent: '📦 导入', title: '导入配方 zip 包',
+            onclick: () => document.getElementById('neo-recipes-import-file')?.click()
+        }),
         $el('button', {
             className: 'rs-btn rs-action-btn neo-recipes-director',
             textContent: '🎬 新增导演配方', title: '新建多段视频导演配方',
@@ -1023,6 +1050,26 @@ export async function createRecipesPanel() {
 
         const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
         const actions = $el('div', { className: 'neo-recipes-card-actions' });
+        const exportBtn = $el('button', {
+            className: 'rs-btn rs-action-btn neo-recipes-export',
+            title: '导出为 zip 包（含 Readme.txt）',
+            textContent: '⬇️',
+            onclick: async () => {
+                try {
+                    const res = await fetch(`/rs_recipes/export?name=${encodeURIComponent(r.name)}`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const url = URL.createObjectURL(await res.blob());
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${r.name}.zip`;
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                } catch (err) {
+                    app.extensionManager.toast.add({ severity: 'error', summary: '导出失败', detail: String(err), life: 4000 });
+                }
+            }
+        });
+        actions.append(exportBtn);
         if (r.source !== 'preset') {
             const appendBtn = $el('button', {
                 className: 'rs-btn rs-action-btn neo-recipes-append',

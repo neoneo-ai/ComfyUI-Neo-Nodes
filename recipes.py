@@ -4,12 +4,16 @@
 # stored in its own preset directory with an assets/ folder.
 # 收藏（本地/C 站）后端逻辑已统一收敛到 bookmark.py，本模块只保留配方职责。
 
+import os
 import re
+import io
 import json
 import shutil
 import asyncio
 import datetime
 import mimetypes
+import tempfile
+import zipfile
 from pathlib import Path
 import aiohttp
 from aiohttp import web
@@ -952,6 +956,188 @@ async def rs_recipes_copy(request):
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
         return web.json_response({"success": True, "name": candidate})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+# 导演配方模式标签（Readme 展示用）
+_README_MODE_LABELS = {
+    "cn": {"t2v": "文生视频", "i2v": "图生视频", "fl2v": "首尾帧",
+           "r2v": "参考生视频", "v2v": "视频编辑", "rv2v": "参考视频编辑",
+           "mixed": "混合（逐段）"},
+    "en": {"t2v": "text-to-video", "i2v": "image-to-video", "fl2v": "first & last frame",
+           "r2v": "reference-to-video", "v2v": "video edit", "rv2v": "reference video edit",
+           "mixed": "mixed (per segment)"},
+}
+
+# Readme 文案模板（cn/en），占位符：name/type/mode/width/height/total/assets/import_step/use_step
+_README_TEMPLATES = {
+    "cn": {
+        "title": "# 配方包：{name}",
+        "contents": "【包内容】", "name_line": "- 配方名：{name}",
+        "director_type": "- 类型：多段视频导演配方（{segs} 段）",
+        "normal_type": "- 类型：普通配方（{assets} 个资源）",
+        "mode": "- 模式：{mode}", "resolution": "- 分辨率：{width}×{height}",
+        "total": "- 总时长 {total}s",
+        "samples": "- 示例结果：{samples} 个（samples/ 目录）",
+        "usage": "【快速应用】",
+        "install_step": "1. 安装 ComfyUI-Neo-Nodes 插件：https://github.com/neoneo-ai/ComfyUI-Neo-Nodes",
+        "import_step": "2. 在 ComfyUI 侧边栏「配方」页点「📦 导入」，选择本 zip 包完成导入。",
+        "use_director": "3. 添加 NeoH3VideoDirector 节点，在 recipe（配方）下拉中选择该配方后运行。",
+        "use_normal": '3. 在配方列表点该配方的「✈️ 发送到工作流」，即可将配方包含的图片、音频等参考资源和提示词载入工作流。',
+    },
+    "en": {
+        "title": "# Recipe package: {name}",
+        "contents": "[Contents]", "name_line": "- Recipe: {name}",
+        "director_type": "- Type: multi-segment video director recipe ({segs} segments)",
+        "normal_type": "- Type: standard recipe ({assets} assets)",
+        "mode": "- Mode: {mode}", "resolution": "- Resolution: {width}x{height}",
+        "total": "- Total duration: {total}s",
+        "samples": "- Sample results: {samples} (in samples/)",
+        "usage": "[Quick start]",
+        "install_step": "1. Install the ComfyUI-Neo-Nodes plugin: https://github.com/neoneo-ai/ComfyUI-Neo-Nodes",
+        "import_step": '2. In the ComfyUI sidebar, open the "Recipes" page and click "📦 Import" to import this zip.',
+        "use_director": "3. Add a NeoH3VideoDirector node, select this recipe from the recipe dropdown, then run it.",
+        "use_normal": '3. In the recipe list, click "✈️ Send to workflow" on this recipe to load its prompt and reference assets into the workflow.',
+    },
+}
+
+
+def _readme_language(meta: dict) -> str:
+    """Readme 语言：远程配置 readme_language（en/cn）优先，auto/缺省按配方名与提示词判断。"""
+    try:
+        pref = str(llm._load_remote_config().get("readme_language", "auto")).lower()
+    except Exception:
+        pref = "auto"
+    if pref in ("en", "cn"):
+        return pref
+    text = f"{meta.get('name', '')} {meta.get('prompt', '')}"
+    return "cn" if llm._detect_language(text) == "Chinese" else "en"
+
+
+def _readme_text(meta: dict) -> str:
+    """生成导出包内的 Readme.txt（按配置/自动判断输出中文或英文）：包内容、来源、快速应用。"""
+    lang = _readme_language(meta)
+    t = _README_TEMPLATES[lang]
+    name = meta.get("name", "")
+    is_director = meta.get("type") == "video_director"
+    lines = [t["title"].format(name=name), "", t["contents"], t["name_line"].format(name=name)]
+    if is_director:
+        shared = meta.get("shared") or {}
+        segs = meta.get("segments") or []
+        total = sum(float(s.get("duration_sec") or 0) for s in segs)
+        mode = shared.get("mode") or "mixed"
+        lines.append(t["director_type"].format(segs=len(segs)))
+        if mode:
+            lines.append(t["mode"].format(mode=_README_MODE_LABELS[lang].get(mode, mode)))
+        if shared.get("width") and shared.get("height"):
+            lines.append(t["resolution"].format(width=shared["width"], height=shared["height"]))
+        if total:
+            lines.append(t["total"].format(total=f"{total:g}"))
+    else:
+        assets = meta.get("assets") or []
+        lines.append(t["normal_type"].format(assets=len(assets)))
+    if meta.get("sample_count"):
+        lines.append(t["samples"].format(samples=meta["sample_count"]))
+    lines += [
+        "",
+        t["usage"],
+        t["install_step"],
+        t["import_step"],
+        t["use_director"] if is_director else t["use_normal"],
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@PromptServer.instance.routes.get("/rs_recipes/export")
+async def rs_recipes_export(request):
+    """把整个配方目录导出为 zip（顶层目录 = 配方名），包内附中文 Readme.txt（内容/来源/快速应用）。"""
+    try:
+        name = request.rel_url.query.get("name", "")
+        recipe_dir = _find_recipe_dir(name)
+        if recipe_dir is None:
+            return web.json_response({"success": False, "error": "Recipe not found"}, status=404)
+        meta = _scan_recipe_dir(recipe_dir, "custom" if recipe_dir.parent == CUSTOM_DIR else "preset")
+        if meta is None:
+            return web.json_response({"success": False, "error": "Recipe meta unreadable"}, status=500)
+
+        tmpdir = tempfile.mkdtemp(prefix="neo_recipe_export_")
+        try:
+            staged = Path(tmpdir) / meta["name"]
+            shutil.copytree(recipe_dir, staged)
+            (staged / "Readme.txt").write_text(_readme_text(meta), encoding="utf-8")
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in sorted(staged.rglob("*")):
+                    if f.is_file():
+                        zf.write(f, f.relative_to(tmpdir).as_posix())
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        return web.Response(
+            body=buf.getvalue(),
+            content_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{meta["name"]}.zip"'},
+        )
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/rs_recipes/import")
+async def rs_recipes_import(request):
+    """导入配方 zip（file 字段）：包内须含 recipe.json；重名自动 -copy/-2/…，落盘到 custom/。"""
+    try:
+        zip_bytes = None
+        reader = await request.multipart()
+        async for part in reader:
+            if part.name == "file" and part.filename:
+                zip_bytes = await part.read()
+        if zip_bytes is None:
+            return web.json_response({"success": False, "error": "No zip file"}, status=400)
+
+        tmpdir = tempfile.mkdtemp(prefix="neo_recipe_import_")
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                for info in zf.infolist():
+                    parts = [p for p in info.filename.replace("\\", "/").split("/") if p not in ("", ".")]
+                    if os.path.isabs(info.filename) or any(p == ".." for p in parts):
+                        return web.json_response({"success": False, "error": f"Unsafe path in zip: {info.filename}"}, status=400)
+                zf.extractall(tmpdir)
+
+            entries = [e for e in os.listdir(tmpdir) if not e.startswith("__MACOSX") and not e.startswith(".")]
+            root = Path(tmpdir)
+            if len(entries) == 1 and (root / entries[0]).is_dir():
+                root = root / entries[0]
+            meta_path = root / "recipe.json"
+            if not meta_path.is_file():
+                return web.json_response({"success": False, "error": "zip 内未找到 recipe.json"}, status=400)
+
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                return web.json_response({"success": False, "error": "Recipe meta unreadable"}, status=500)
+
+            raw_name = str(meta.get("name") or root.name).strip()
+            name = _sanitize_name_re.sub("", raw_name).strip().replace(" ", "-")
+            if not name:
+                return web.json_response({"success": False, "error": "Invalid recipe name"}, status=400)
+
+            # 与既有配方（custom / preset）重名时自动 -copy/-2/…，口径与 copy 端点一致
+            candidate = name
+            n = 2
+            while _find_recipe_dir(candidate) is not None:
+                candidate = f"{name}-{'copy' if n == 2 else n}"
+                n += 1
+
+            _ensure_dirs()
+            dest = CUSTOM_DIR / candidate
+            shutil.copytree(root, dest)
+            meta["name"] = candidate
+            with open(dest / "recipe.json", "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            return web.json_response({"success": True, "name": candidate})
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
