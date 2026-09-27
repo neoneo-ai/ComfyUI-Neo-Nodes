@@ -48,6 +48,9 @@ const STORYBOARD_LAYOUTS = {
 const STORYBOARD_GRID_LABELS = { 4: "2列×2行 四宫格", 6: "3列×2行 六宫格", 9: "3列×3行 九宫格" };
 // 小窗里的参考图预览尺寸（px，走 /neo_gallery/thumbnail 缓存，不为预览另存大图）
 const STORYBOARD_PREVIEW_SIZE = 480;
+// 参考图细节提取任务（skills/tasks/storyboard_ref_detail）：受限视觉调用，把参考图里的人物外形 + 服装
+// 提取成一两句文字注入生图提示词做文字锚定（只写 "<image1> 指代" 时模型拿不到具体细节）。
+const STORYBOARD_REF_DETAIL_SKILL_ID = "storyboard_ref_detail";
 
 function _normalizeGrids(count) {
     return STORYBOARD_GRID_OPTIONS.includes(Number(count)) ? Number(count) : STORYBOARD_DEFAULT_GRIDS;
@@ -83,30 +86,32 @@ async function _loadGridTemplate(skillId) {
 const STORY_WRITER_SECTION_RE = /<!--\s*@story-writer\s*-->[\s\S]*?<!--\s*@end\s*-->/g;
 
 /** 故事 → 宫格指令：从 skill（storyboard_grid_N）加载模板（去掉编剧区块）后替换 {story} 占位符。
+ * refDetail 是参考图人物与服装的文字细节（可空）：有则写在故事开头做文字锚定，模型才知道 <image1> 是谁、穿什么。
  * qwen_image21 分词器会为每张参考图插字面量 <imageN>，所以提示词里可以直接写 <image1>。 */
-export async function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRIDS, skillId) {
+export async function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRIDS, skillId, refDetail = "") {
     const n = _normalizeGrids(count);
     const layout = STORYBOARD_LAYOUTS[n];
     const sid = skillId || `storyboard_grid_${n}`;
     const raw = await _loadGridTemplate(sid);
     const tpl = raw ? raw.replace(STORY_WRITER_SECTION_RE, "").trim() : raw;
+    const body = refDetail ? `【参考图人物与服装细节】${refDetail}\n\n${story}` : story;
     if (tpl && tpl.includes("{story}")) {
-        return tpl.replace(/\{story\}/g, () => story);
+        return tpl.replace(/\{story\}/g, () => body);
     }
     // Fallback: 模板未加载成功时使用内联默认
     return `一张 ${STORYBOARD_GRID_LABELS[n]}分镜故事板（${n}-panel storyboard sheet），布局为 ${layout.cols} 列 × ${layout.rows} 行（每行 ${layout.cols} 格，共 ${layout.rows} 行），按阅读顺序（从左到右、从上到下，第 1 格到第 ${n} 格）讲述以下故事：\n`
-        + story + "\n"
+        + body + "\n"
         + `参考图 <image1> 里的人物就是故事主角：所有格子保持与参考图一致的五官脸型、发型发色、服装配饰与体型比例，场景与画风统一。\n`
         + `要求：布局严格为 ${layout.cols} 列 × ${layout.rows} 行的网格；每格一个镜头，叙事逐格推进；格子之间用均匀细白缝分隔，便于后续自动切分；格子内不出现任何文字、字幕或编号。`;
 }
 
-/** 一键宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 宫格指令；输出走独立 grid 目录 */
-export async function buildStoryboardGridRequest(refName, story, skillId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`) {
+/** 一键宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 宫格指令；输出走独立 StoryBoard 目录 */
+export async function buildStoryboardGridRequest(refName, story, skillId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`, refDetail = "") {
     const n = _gridCountFromSkillId(skillId);
     const layout = STORYBOARD_LAYOUTS[n];
     return {
         skill_id: QWEN_IMAGE_SKILL_ID,
-        prompt: await buildStoryboardGridPrompt(story, n, skillId),
+        prompt: await buildStoryboardGridPrompt(story, n, skillId, refDetail),
         width: layout.width,
         height: layout.height,
         references: [{ kind: "input", value: refName }],
@@ -316,6 +321,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
 
     let refName = null;          // copy_to_input 后的 input 文件名（生成故事与生图复用，不重复落盘）
+    let refDetail = null;        // 参考图人物与服装细节（生图前取一次；空串=取不到，不再重试）
     let running = false;         // 防重复提交（生图）
     let cancelId = null;         // 当前生图任务 id（取消用）
     let cancelRequested = false; // 用户点了「取消任务」
@@ -393,7 +399,25 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         actionToast({ severity: "error", summary: "九宫格分镜图生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(QWEN_IMAGE_SKILL_ID) });
     };
 
-    // 生图：卡片原图落 input/ 当参考图，按故事出 3×3 故事板；进度/结果都留在窗口内
+    // 参考图人物与服装细节：受限视觉调用（只出 1~2 句外形 + 服装），失败或没有视觉模型时返回空串，
+    // 生图照常走（只少一层文字锚定，退回只有 <image1> 指代）。
+    const loadRefDetail = async () => {
+        let buf = "";
+        try {
+            await invokePromptStream(
+                { text: "只看这张参考图，写它的人物外形与服装细节", skillId: STORYBOARD_REF_DETAIL_SKILL_ID, images: [{ kind: "input", value: refName }] },
+                {
+                    onChunk: (chunk) => { if (chunk && chunk.kind !== "thinking") buf += chunk.text || ""; },
+                    onError: (err) => console.warn("[Gallery] reference detail failed:", err),
+                }
+            );
+        } catch (e) {
+            console.warn("[Gallery] reference detail failed:", e);
+        }
+        return buf.trim();
+    };
+
+    // 生图：卡片原图落 input/ 当参考图，按故事 + 所选宫格技能出故事板；进度/结果都留在窗口内
     const start = async () => {
         if (running) return;
         running = true;
@@ -401,7 +425,12 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         renderRunning("排队中…");
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
-            const snap = await requestGeneration(await buildStoryboardGridRequest(refName, input.value.trim(), gridSel.value));
+            if (refDetail === null) {
+                renderRunning("读取参考图细节…");
+                refDetail = await loadRefDetail();
+            }
+            if (cancelRequested) { renderError("已取消"); return; }
+            const snap = await requestGeneration(await buildStoryboardGridRequest(refName, input.value.trim(), gridSel.value, refDetail));
             cancelId = snap.task_id;
             renderRunning("排队中…");
             const final = await watchTask(snap.task_id, (s) => {
@@ -430,8 +459,8 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         start();
     };
     // 宫格故事生成：把简要故事 / 想法交给**所选宫格技能**（它的正文既是编剧指令也是生图模板）写成逐格故事，
-    // 覆盖写入上面的故事框；**不带参考图**——人物设定图（三视图 / 四视图）会被模型当成"要描述的图"而反推，
-    // 人物外形改由生图那步的 <image1> 锚定，参考图到点「生成」时才落盘。
+    // 覆盖写入上面的故事框。**不给编剧看参考图**——人物设定图（三视图 / 四视图）会被它当成"要描述的图"而反推；
+    // 改把参考图的人物外形 + 服装先用 storyboard_ref_detail 提取成文字，连简要故事一起给它。
     const generateStoryFromIdea = async () => {
         if (llmRunning) return;
         llmRunning = true;
@@ -439,11 +468,14 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         llmBtn.textContent = "⏳ 生成中…";
         hint.classList.remove("neo-gallery-story-hint-error");
         try {
+            if (!refName) refName = await copyImageToInput(image, subfolder);
+            if (refDetail === null) refDetail = await loadRefDetail();
             let buf = "";
             const skillId = gridSel.value || `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
             const n = _gridCountFromSkillId(skillId);
             const idea = ideaInput.value.trim();
-            const storyText = idea ? `${idea}（按 ${n} 格分镜）` : `（按 ${n} 格分镜：自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作）`;
+            const brief = idea || "自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作";
+            const storyText = `${refDetail ? `参考图人物外形与服装：${refDetail}\n\n` : ""}${brief}（按 ${n} 格分镜）`;
             await invokePromptStream(
                 { text: storyText, skillId },
                 {

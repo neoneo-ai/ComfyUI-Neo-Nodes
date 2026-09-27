@@ -124,6 +124,13 @@ class TestScanSkills(unittest.TestCase):
             self.assertEqual(stripped.count("{story}"), 1,
                              f"{sid} 剔除编剧区块后应只剩一个 {{story}} 占位符")
 
+    def test_storyboard_ref_detail_task_registered(self):
+        """"参考图人物与服装细节" 任务：生图前做文字锚定用（前端按 id 调用），必须有参考图输入"""
+        by_id = {s["id"]: s for s in self._scan()}
+        s = by_id.get("storyboard_ref_detail")
+        self.assertIsNotNone(s, "storyboard_ref_detail 任务未被扫描到")
+        self.assertTrue(s["needs_image"], "storyboard_ref_detail 需要参考图")
+
     def test_internal_tasks_hidden(self):
         """内部任务不作为可选 skill 暴露"""
         ids = {s["id"] for s in self._scan()}

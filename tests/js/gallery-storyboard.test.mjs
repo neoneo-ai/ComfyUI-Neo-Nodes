@@ -134,6 +134,16 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(fetchLog.filter((c) => c.path === "/neo_image_gen/generate").length, 0);
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
+    // 生图前会用参考图细节提取技能跑一次受限视觉调用（人物外形 + 服装），注入提示词做文字锚定
+    let detailBody = null;
+    mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
+        detailBody = b;
+        return sseResponse([
+            'data: {"text":"黑长直发配红色流苏发绳，高挑纤细；","kind":"content"}',
+            'data: {"text":"红金渐变薄纱改良旗袍。","kind":"content"}',
+            "data: [DONE]",
+        ]);
+    });
     let body = null;
     mockRoute("/neo_image_gen/generate", (b) => {
         body = b;
@@ -155,6 +165,10 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(body.skill_id, "qwen_image_21");
     assert.equal(body.output_prefix, "StoryBoard");
     assert.deepEqual(body.references, [{ kind: "input", value: "shot.png" }]);
+    // 参考图细节（人物外形 + 服装）先提取出来注入提示词：模型才知道 <image1> 是谁、穿什么
+    assert.equal(detailBody?.skillId, "storyboard_ref_detail", "应先调参考图细节提取技能");
+    assert.deepEqual(detailBody?.images, [{ kind: "input", value: "shot.png" }]);
+    assert.match(body.prompt, /【参考图人物与服装细节】黑长直发配红色流苏发绳，高挑纤细；红金渐变薄纱改良旗袍。/);
 
     // 窗口保持打开并显示结果预览（走 thumbnail 缓存接口，size=640），不是点生成就关闭
     assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "生成过程中小窗不关闭");
@@ -284,8 +298,15 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事按所选宫格技能
     assert.equal(gridSel.value, "storyboard_grid_6", "默认 6 宫格技能");
     gridSel.value = "storyboard_grid_9";   // 选九宫格 → 编故事与生图都走这个技能
 
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
     mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
+        if (b.skillId === "storyboard_ref_detail") {
+            return sseResponse([
+                'data: {"text":"黑长直发配红色流苏发绳，高挑纤细；红金渐变薄纱改良旗袍。","kind":"content"}',
+                "data: [DONE]",
+            ]);
+        }
         llmBody = b;
         return sseResponse([
             'data: {"text":"雨夜的地铁口，她收起伞仰望。","kind":"content"}',
@@ -301,10 +322,10 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事按所选宫格技能
 
     assert.ok(llmBody, "应调用 /rs_prompts/stream_generate_prompt");
     assert.equal(llmBody.skillId, "storyboard_grid_9", "编故事用所选宫格技能（不再固定 storyboard_story）");
-    assert.equal(llmBody.text, "雨夜地铁口偶遇旧友（按 9 格分镜）", "简要故事 + 所选技能的格数一起带给 LLM");
-    // 不带参考图：人物设定图会被模型当成"要描述的图"而反推（输出多角度展示，没有剧情）
-    assert.equal(llmBody.images, undefined, "编故事不带参考图");
-    assert.equal(fetchLog.filter((c) => c.path === "/neo_gallery/copy_to_input").length, 0, "编故事不再为 LLM 落盘参考图");
+    // 先用 storyboard_ref_detail 取出参考图的人物外形 + 服装，作为**文字**一起交给编剧（不给图，避免反推多视图）
+    assert.equal(llmBody.text, "参考图人物外形与服装：黑长直发配红色流苏发绳，高挑纤细；红金渐变薄纱改良旗袍。\n\n雨夜地铁口偶遇旧友（按 9 格分镜）");
+    assert.equal(llmBody.images, undefined, "不把参考图交给编剧（只给文字描述）");
+    assert.equal(fetchLog.filter((c) => c.path === "/neo_gallery/copy_to_input").length, 1, "参考图落盘一次，供细节提取用");
 
     // 生成结果覆盖写入上方故事框（不是追加），供继续编辑后再「生成」
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "雨夜的地铁口，她收起伞仰望。\n他站在灯下，两人相望。");
@@ -313,7 +334,7 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事按所选宫格技能
     assert.equal(llmBtn.textContent, "✨ LLM 生成分镜故事");
 });
 
-test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按格数自行编故事（不带参考图）", async () => {
+test("小窗「✨ LLM 生成分镜故事」：简要故事留空则按格数自行编故事（细节提取为空时不给人物描述）", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const { gallery } = makeGallery([]);
     const card = new GalleryCard(gallery);
@@ -324,8 +345,11 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按格数
     const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
         .find((b) => b.textContent === "✨ LLM 生成分镜故事");
 
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
     mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
+        // 细节提取返回空（没有视觉模型 / 出错）：编剧只拿格数，照常编故事
+        if (b.skillId === "storyboard_ref_detail") return sseResponse(["data: [DONE]"]);
         llmBody = b;
         return sseResponse([
             'data: {"text":"她把伞收好，走向灯下。","kind":"content"}',
@@ -339,7 +363,7 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按格数
 
     assert.ok(llmBody, "留空也应调用 LLM");
     assert.equal(llmBody.skillId, "storyboard_grid_6", "技能列表拉不到时回退到默认宫格技能");
-    assert.equal(llmBody.text, "（按 6 格分镜：自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作）", "留空时只带格数 + 明确要编剧情");
+    assert.equal(llmBody.text, "自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作（按 6 格分镜）", "留空时只带格数 + 明确要编剧情");
     assert.equal(llmBody.images, undefined, "编故事不带参考图");
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "她把伞收好，走向灯下。");
 });
