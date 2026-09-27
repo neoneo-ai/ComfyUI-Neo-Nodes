@@ -28,25 +28,25 @@ _oss_index_cache: dict | None = None
 _oss_index_fetch_time: float = 0.0
 
 # OSS preset categories: the index may group remote directories under a top-level
-# "categories" mapping ({"grid": [...], "character": [...]}) for the plugin-owned
+# "categories" mapping ({"StoryBoard": [...], "CharacterSheet": [...]}) for the plugin-owned
 # main Gallery dirs. Directories not listed in any category stay "presets"
 # (the legacy Cloud Presets section), so old indexes keep working unchanged.
 OSS_CATEGORY_PRESETS = "presets"
-OSS_CATEGORY_GRID = "grid"
-OSS_CATEGORY_CHARACTER = "character"
+OSS_CATEGORY_GRID = "StoryBoard"
+OSS_CATEGORY_CHARACTER = "CharacterSheet"
 # Navigation prefix of the OSS preset cards per category. Presets are top-level
 # cards ("Cloud Presets/<dir>"); the Grid/Character caches live under a read-only
 # "presets" folder inside their main dir ("Grid/presets/<dir>").
 _OSS_CATEGORY_PATH_PREFIX = {
     OSS_CATEGORY_PRESETS: "Cloud Presets",
-    OSS_CATEGORY_GRID: "Grid/presets",
-    OSS_CATEGORY_CHARACTER: "Character/presets",
+    OSS_CATEGORY_GRID: "StoryBoard/presets",
+    OSS_CATEGORY_CHARACTER: "CharacterSheet/presets",
 }
 # Output main dirs that hold the grid/character content the 素材库 buttons browse.
 # The read-only OSS preset cache lives in their "presets/" subdir.
 OUTPUT_DIR = Path(folder_paths.output_directory).resolve()
-GRID_MAIN_DIR = OUTPUT_DIR / "grid"
-CHARACTER_MAIN_DIR = OUTPUT_DIR / "character"
+GRID_MAIN_DIR = OUTPUT_DIR / "StoryBoard"
+CHARACTER_MAIN_DIR = OUTPUT_DIR / "CharacterSheet"
 
 
 def _oss_index_categories(index: dict) -> dict[str, list[str]]:
@@ -102,8 +102,8 @@ def _is_oss_enabled() -> bool:
 def _get_oss_cache_dir(category: str | None = None) -> Path:
     """Local cache root for downloaded OSS files.
 
-    grid/character presets are cached under the output main dirs' read-only
-    "presets/" subdir (output/grid/presets, output/character/presets);
+    StoryBoard/CharacterSheet presets are cached under the output main dirs' read-only
+    "presets/" subdir (output/StoryBoard/presets, output/CharacterSheet/presets);
     everything else keeps the legacy oss_cache location.
     """
     if category == OSS_CATEGORY_GRID:
@@ -285,7 +285,7 @@ def _oss_directories_to_gallery_dirs(index: dict, category: str | None = OSS_CAT
     """Convert OSS index directories to gallery directory response format.
 
     `path_prefix` controls the navigation prefix ("Cloud Presets" for the legacy
-    section, "Grid"/"Character" for the main-dir preset cards).
+    section, "StoryBoard"/"CharacterSheet" for the main-dir preset cards).
     """
     path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
     result = []

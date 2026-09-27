@@ -105,6 +105,25 @@ class TestScanSkills(unittest.TestCase):
         self.assertIn("storyboard_story", getattr(llm_mod, "LLM_TASKS", {}),
                       "storyboard_story 未注册进 llm 的任务列表（task_names）")
 
+    def test_storyboard_grid_skills_carry_story_contract(self):
+        """storyboard_grid_* 技能：正文既是生图模板（{story} 占位），又含给 LLM 的编剧说明块。
+
+        前端按所选技能当编剧技能（正文即系统提示词），并把 <!-- @story-writer -->…<!-- @end -->
+        区块从生图提示词里剔除，所以这两部分都必须在正文里。"""
+        ids = {s["id"] for s in self._scan()}
+        for n in (4, 6, 9):
+            sid = f"storyboard_grid_{n}"
+            self.assertIn(sid, ids, f"{sid} 未被扫描到")
+            content = self.skill_mod.load_skill_content(sid) or ""
+            self.assertIn("{story}", content, f"{sid} 缺少 {{story}} 占位符（生图模板插入点）")
+            self.assertIn("<!-- @story-writer -->", content, f"{sid} 缺少编剧说明块")
+            self.assertIn("<!-- @end -->", content, f"{sid} 编剧说明块未闭合")
+            # 剔掉编剧区块后必须只剩一个 {story}：前端是全局替换，多一个会把故事注入说明里
+            import re
+            stripped = re.sub(r"<!--\s*@story-writer\s*-->[\s\S]*?<!--\s*@end\s*-->", "", content)
+            self.assertEqual(stripped.count("{story}"), 1,
+                             f"{sid} 剔除编剧区块后应只剩一个 {{story}} 占位符")
+
     def test_internal_tasks_hidden(self):
         """内部任务不作为可选 skill 暴露"""
         ids = {s["id"] for s in self._scan()}

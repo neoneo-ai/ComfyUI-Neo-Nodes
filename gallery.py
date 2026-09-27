@@ -40,12 +40,12 @@ CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 WAVEFORM_DIR = GALLERY_DIR / "waveform_cache"  # decoded audio waveform peaks (JSON)
-# Main dirs (Grid / Character): browsable output subdirs. Character images land
-# in output/character, storyboard/grid sheets in output/grid; each
+# Main dirs (StoryBoard / CharacterSheet): browsable output subdirs. Character images land
+# in output/CharacterSheet, storyboard sheets in output/StoryBoard; each
 # keeps a read-only "presets/" subfolder for the OSS preset cache.
 OUTPUT_DIR = Path(folder_paths.output_directory).resolve()
-GRID_DIR = OUTPUT_DIR / "grid"
-CHARACTER_DIR = OUTPUT_DIR / "character"
+GRID_DIR = OUTPUT_DIR / "StoryBoard"
+CHARACTER_DIR = OUTPUT_DIR / "CharacterSheet"
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -290,7 +290,7 @@ def _scan_directory_structure_only(directory: Path) -> dict:
 # character images). Their cards are ordered by the newest media they hold, so
 # what was just produced shows up first. Everything else (custom dirs, presets,
 # lora cache, input, OSS) keeps its scan order.
-_RECENT_DIR_KEYS = {"output", "grid", "character"}
+_RECENT_DIR_KEYS = {"output", "storyboard", "charactersheet"}
 
 
 def _is_recent_dir(dir_name: str) -> bool:
@@ -692,8 +692,8 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
 # (<date>/ subfolders) with a read-only OSS preset cache (presets/<oss-dir>/).
 # ---------------------------------------------------------------------------
 _MAIN_DIRS = {
-    "grid": (GRID_DIR, OSS_CATEGORY_GRID),
-    "character": (CHARACTER_DIR, OSS_CATEGORY_CHARACTER),
+    "StoryBoard": (GRID_DIR, OSS_CATEGORY_GRID),
+    "CharacterSheet": (CHARACTER_DIR, OSS_CATEGORY_CHARACTER),
 }
 
 
@@ -707,10 +707,11 @@ async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: 
     path=presets[/<oss-dir>] routes to the matching OSS category listing.
     """
     key = dir_name_param.lower()
-    # Deep links may carry the sub path in dir_name ("Grid/presets/<dir>"); names and
+    # Deep links may carry the sub path in dir_name ("StoryBoard/presets/<dir>"); names and
     # navigation prefixes are always built from the main dir label.
     main_label = dir_name_param.split("/", 1)[0]
-    oss_category = _MAIN_DIRS[key.split("/", 1)[0]][1]
+    _main_entry = next(((k, v) for k, v in _MAIN_DIRS.items() if k.lower() == key.split("/", 1)[0]), None)
+    oss_category = _main_entry[1][1] if _main_entry else OSS_CATEGORY_GRID
     rel_lower = rel_path_param.lower()
 
     if rel_lower == "presets":
@@ -863,13 +864,14 @@ async def get_gallery_list(request):
         base: Path | None = None
         dir_name_lower = dir_name_param.lower()
 
-        # Main dirs (Grid / Character): plugin-owned generated assets + OSS preset cache.
-        # dir_name may carry the sub path ("Grid/presets/26-06-25") for deep links.
+        # Main dirs (StoryBoard / CharacterSheet): plugin-owned generated assets + OSS preset cache.
+        # dir_name may carry the sub path ("StoryBoard/presets/26-06-25") for deep links.
         main_key = dir_name_lower.split("/", 1)[0]
-        if main_key in _MAIN_DIRS:
+        _main_dir_entry = next(((k, v) for k, v in _MAIN_DIRS.items() if k.lower() == main_key), None)
+        if _main_dir_entry:
             if not rel_path_param and "/" in dir_name_param:
                 rel_path_param = dir_name_param.split("/", 1)[1]
-            return await _handle_main_dir_list(dir_name_param, rel_path_param, _MAIN_DIRS[main_key][0],
+            return await _handle_main_dir_list(dir_name_param, rel_path_param, _main_dir_entry[1][0],
                                                include_dirs, include_items, include_covers)
 
         if dir_name_lower == "presets":
@@ -971,7 +973,7 @@ async def get_gallery_list(request):
             # anchored with a "Lora/" prefix (same prefix _find_source_media expects).
             lora_anchor = f"Lora/{rel_path_param}" if (is_lora and rel_path_param) else ("Lora" if is_lora else "")
             # Anchor the current level's covers to the dir root as well, so they resolve
-            # when browsing below the top level (e.g. Output/grid).
+            # when browsing below the top level (e.g. Output/StoryBoard).
             _collect_all_dir_covers(covers, target_dir, full_key, 2,
                                     base_subfolder=lora_anchor or rel_path_param)
             
@@ -1264,9 +1266,9 @@ async def copy_to_input(request):
                 candidate = candidate / filename
                 if candidate.exists():
                     source_path = candidate
-            elif dir_parts[0].lower() in ("grid", "character") and ".." not in dir_parts:
-                # Main dirs (Grid / Character): generated results + OSS preset cache
-                main_base = GRID_DIR if dir_parts[0].lower() == "grid" else CHARACTER_DIR
+            elif dir_parts[0].lower() in ("storyboard", "charactersheet") and ".." not in dir_parts:
+                # Main dirs (StoryBoard / CharacterSheet): generated results + OSS preset cache
+                main_base = GRID_DIR if dir_parts[0].lower() == "storyboard" else CHARACTER_DIR
                 candidate = main_base
                 for part in dir_parts[1:]:
                     candidate = candidate / part
@@ -1363,9 +1365,9 @@ async def copy_to_input(request):
                     cached = await _download_oss_file(oss_rel, OSS_CATEGORY_PRESETS)
                     if cached and cached.exists():
                         source_path = cached
-            elif subfolder_lower.startswith("grid/presets/") or subfolder_lower.startswith("character/presets/"):
+            elif subfolder_lower.startswith("storyboard/presets/") or subfolder_lower.startswith("charactersheet/presets/"):
                 # Main-dir OSS preset cache (not downloaded yet): fetch on demand
-                oss_category = OSS_CATEGORY_GRID if subfolder_lower.startswith("grid/") else OSS_CATEGORY_CHARACTER
+                oss_category = OSS_CATEGORY_GRID if subfolder_lower.startswith("storyboard/") else OSS_CATEGORY_CHARACTER
                 oss_subdir = subfolder_lower.split("/")[2]
                 oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
                 if not oss_rel:
@@ -1929,8 +1931,8 @@ def _find_source_media(filename: str, subfolder: str) -> Path | None:
     # ("Grid/2026-09-24"); only the matching main dir is searched for a prefix.
     if not source_path and ".." not in filename and ".." not in subfolder:
         main_parts = [p for p in (subfolder or "").split("/") if p]
-        if main_parts and main_parts[0].lower() in ("grid", "character"):
-            main_bases = (GRID_DIR if main_parts[0].lower() == "grid" else CHARACTER_DIR,)
+        if main_parts and main_parts[0].lower() in ("storyboard", "charactersheet"):
+            main_bases = (GRID_DIR if main_parts[0].lower() == "storyboard" else CHARACTER_DIR,)
             main_parts = main_parts[1:]
         else:
             main_bases = (GRID_DIR, CHARACTER_DIR)
@@ -2023,10 +2025,10 @@ async def get_thumbnail(request):
         subfolder_lower = subfolder.lower()
         if subfolder.startswith("Cloud Presets/"):
             oss_subdir = subfolder[len("Cloud Presets/"):]
-        elif subfolder_lower.startswith("grid/presets/"):
+        elif subfolder_lower.startswith("storyboard/presets/"):
             oss_category = OSS_CATEGORY_GRID
             oss_subdir = subfolder_lower.split("/")[2]
-        elif subfolder_lower.startswith("character/presets/"):
+        elif subfolder_lower.startswith("charactersheet/presets/"):
             oss_category = OSS_CATEGORY_CHARACTER
             oss_subdir = subfolder_lower.split("/")[2]
         if oss_subdir:
@@ -2432,10 +2434,10 @@ async def view_image(request):
     if subfolder_lower.startswith("cloud presets/"):
         oss_category = OSS_CATEGORY_PRESETS
         oss_subdir = subfolder_lower[len("cloud presets/"):]
-    elif subfolder_lower.startswith("grid/presets/"):
+    elif subfolder_lower.startswith("storyboard/presets/"):
         oss_category = OSS_CATEGORY_GRID
         oss_subdir = subfolder_lower.split("/", 2)[2]
-    elif subfolder_lower.startswith("character/presets/"):
+    elif subfolder_lower.startswith("charactersheet/presets/"):
         oss_category = OSS_CATEGORY_CHARACTER
         oss_subdir = subfolder_lower.split("/", 2)[2]
     if oss_subdir and _is_oss_enabled():
@@ -2659,7 +2661,7 @@ async def delete_gallery_item(request):
         if subfolder_lower == "presets" or subfolder_lower.startswith("presets/") \
                 or subfolder_lower == "lora" or subfolder_lower.startswith("lora/") \
                 or subfolder_lower == "civitai_bookmarks" or subfolder_lower.startswith("civitai_bookmarks/") \
-                or subfolder_lower.startswith("grid/presets") or subfolder_lower.startswith("character/presets"):
+                or subfolder_lower.startswith("storyboard/presets") or subfolder_lower.startswith("charactersheet/presets"):
             return web.json_response({"success": False, "error": "Cannot delete from read-only directory"}, status=403)
 
         # --- Resolve base directory and target path ---
@@ -2745,13 +2747,13 @@ async def delete_gallery_item(request):
                     break
 
         # Main dirs (Grid / Character): generated results are deletable; the OSS
-        # preset cache is blocked above. Prefixed ("Grid/2026-09-24") and bare
+        # preset cache is blocked above. Prefixed ("StoryBoard/2026-09-24") and bare
         # relative ("2026-09-24") subfolder forms, like system dirs. The prefix
-        # is the display name ("Grid"/"Character"), not the on-disk dir name.
+        # is the display name ("StoryBoard"/"CharacterSheet"), not the on-disk dir name.
         if not found_path and ".." not in filename and ".." not in subfolder:
             main_parts = [p for p in (subfolder or "").split("/") if p]
-            if main_parts and main_parts[0].lower() in ("grid", "character"):
-                main_bases = (GRID_DIR if main_parts[0].lower() == "grid" else CHARACTER_DIR,)
+            if main_parts and main_parts[0].lower() in ("storyboard", "charactersheet"):
+                main_bases = (GRID_DIR if main_parts[0].lower() == "storyboard" else CHARACTER_DIR,)
                 main_parts = main_parts[1:]
             else:
                 main_bases = (GRID_DIR, CHARACTER_DIR)

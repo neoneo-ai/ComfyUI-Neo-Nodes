@@ -1,4 +1,4 @@
-// Neo Gallery 卡片「生成九宫格分镜图」：原图当参考 + 九宫格指令，产物落独立 StoryBoard 目录，
+// Neo Gallery 卡片「生成九宫格分镜图」：原图当参考 + 宫格指令，产物落独立 grid 目录，
 // 供导演编辑器「🧩 宫格分镜图拆分」按行优先切成视频关键帧。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -7,6 +7,23 @@ import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click,
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 const STORY = "雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下。";
+
+// 各宫格 skill 模板内容（模拟 /rs_prompts/load_skill 返回）
+const GRID_TEMPLATES = {
+    storyboard_grid_4: "创建一张横向真人四宫格制作故事板，两行两列（2 columns × 2 rows），均匀细白缝分隔，外框干净。\n\n【身份锚定】<image1> 是唯一人物身份与身材来源。\n\n【格式要求】\n- 四格按阅读顺序编号 S01–S04。\n\n{story}\n\n【禁止事项】\n- 画面内不出现任何文字、字幕、水印、logo、编号。",
+    storyboard_grid_6: "<!-- @story-writer -->\n【故事编写】只输出 {story} 处应填入的正文。\n<!-- @end -->\n\n创建一张横向真人六宫格制作故事板，两行三列（3 columns × 2 rows），均匀细白缝分隔，外框干净；只能生成要求的两行三列数，不能多生成或少生成画面。\n\n【身份锚定】<image1> 是唯一人物身份与身材来源。\n\n【格式要求】\n- 六格按阅读顺序编号 S01–S06。\n\n<!-- @story-writer -->\n【编排模板】左上S01（使用 <image1>）：〔景别〕。〔画面描述〕\n<!-- @end -->\n\n{story}\n\n【禁止事项】\n- 画面内不出现任何文字、字幕、水印、logo、编号。",
+    storyboard_grid_9: "创建一张横向真人九宫格制作故事板，三行三列（3 columns × 3 rows），均匀细白缝分隔，外框干净。\n\n【身份锚定】<image1> 是唯一人物身份与身材来源。\n\n【格式要求】\n- 九格按阅读顺序编号 S01–S09。\n\n{story}\n\n【禁止事项】\n- 画面内不出现任何文字、字幕、水印、logo、编号。",
+};
+
+function mockGridSkillRoutes() {
+    mockRoute("/rs_prompts/load_skill", (b) => {
+        const id = b && b.id;
+        if (GRID_TEMPLATES[id]) {
+            return jsonResponse({ id, name: id, content: GRID_TEMPLATES[id], files: [], gen_image: false, requires_ref: false, multi_turn: false, tags: [], category: "task" });
+        }
+        return jsonResponse({ error: "not found" }, 404);
+    });
+}
 
 beforeEach(() => {
     resetEnv();
@@ -39,42 +56,54 @@ function openMenu(card, gallery) {
     card._showCollectMenu(gallery, { name: "shot", filename: "shot.png" }, "", "Output", anchor);
 }
 
-test("buildStoryboardGridRequest：默认 6 宫格（3列×2行），Qwen Image 2.1 + 原图参考 + StoryBoard 目录", async () => {
+test("buildStoryboardGridRequest：默认 6 宫格（3列×2行），Qwen Image 2.1 + 原图参考 + grid 目录", async () => {
     const { buildStoryboardGridRequest, buildStoryboardGridPrompt } = await import("../../web/gallery-gen.js");
-    const body = buildStoryboardGridRequest("NeoAgent/portrait.png", STORY);
+    mockGridSkillRoutes();
+    const body = await buildStoryboardGridRequest("NeoAgent/portrait.png", STORY);
     assert.equal(body.skill_id, "qwen_image_21");
     assert.equal(body.width, 2048);   // 每格约 683×384（16:9）
     assert.equal(body.height, 768);   // 默认 6 宫格（3列×2行）
     assert.deepEqual(body.references, [{ kind: "input", value: "NeoAgent/portrait.png" }]);
     assert.deepEqual(body.loras, []);
     assert.equal(body.skip_enhance, true);
-    assert.equal(body.output_prefix, "grid");
-    assert.match(body.prompt, /六宫格/);
-    assert.match(body.prompt, /3 列 × 2 行/);
-    assert.match(body.prompt, /第 1 格到第 6 格/);
+    assert.equal(body.output_prefix, "StoryBoard");
+    // 模板来自 skill（中文）
+    assert.match(body.prompt, /六宫格制作故事板/);
+    assert.match(body.prompt, /3 columns × 2 rows/);
+    assert.match(body.prompt, /<image1>/);
     assert.match(body.prompt, /雨夜的地铁口/);  // 故事原文进提示词
-    assert.match(body.prompt, /<image1>/);     // 身份锚定：qwen_image21 分词器为每张参考图插字面量 <imageN>
-    assert.match(body.prompt, /细白缝/);       // 便于「🧩 宫格分镜图拆分」自动切格
+    // 技能正文里两处 <!-- @story-writer --> 区块（编剧说明 + 编排模板）都不进生图提示词
+    assert.doesNotMatch(body.prompt, /@story-writer|【故事编写】|【编排模板】|〔/);
 });
 
 test("buildStoryboardGridRequest：4 / 9 宫格布局与提示词", async () => {
     const { buildStoryboardGridRequest } = await import("../../web/gallery-gen.js");
-    const b4 = buildStoryboardGridRequest("p.png", STORY, 4);
+    mockGridSkillRoutes();
+    const b4 = await buildStoryboardGridRequest("p.png", STORY, "storyboard_grid_4");
     assert.equal(b4.width, 2048);
     assert.equal(b4.height, 1152);   // 2列×2行，每格约 1024×576
-    assert.match(b4.prompt, /四宫格/);
-    assert.match(b4.prompt, /2 列 × 2 行/);
-    assert.match(b4.prompt, /第 1 格到第 4 格/);
-    const b9 = buildStoryboardGridRequest("p.png", STORY, 9);
+    assert.match(b4.prompt, /四宫格制作故事板/);
+    assert.match(b4.prompt, /2 columns × 2 rows/);
+    const b9 = await buildStoryboardGridRequest("p.png", STORY, "storyboard_grid_9");
     assert.equal(b9.width, 2048);
     assert.equal(b9.height, 1152);   // 3列×3行，每格约 683×384
-    assert.match(b9.prompt, /九宫格/);
-    assert.match(b9.prompt, /3 列 × 3 行/);
-    assert.match(b9.prompt, /第 1 格到第 9 格/);
+    assert.match(b9.prompt, /九宫格制作故事板/);
+    assert.match(b9.prompt, /3 columns × 3 rows/);
+});
+
+test("buildStoryboardGridPrompt：故事文本正确插入模板", async () => {
+    const { buildStoryboardGridPrompt } = await import("../../web/gallery-gen.js");
+    mockGridSkillRoutes();
+    const prompt = await buildStoryboardGridPrompt(STORY, 4);
+    assert.match(prompt, /雨夜的地铁口/);
+    assert.match(prompt, /四宫格制作故事板/);
+    // 模板中不应残留 {story} 占位符
+    assert.doesNotMatch(prompt, /\{story\}/);
 });
 
 test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求生图，窗内出结果预览，点「打开输出目录」跳转", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
+    mockGridSkillRoutes();
     const toasts = [];
     const { gallery, jumps } = makeGallery(toasts);
     const card = new GalleryCard(gallery);   // 与 gallery.js 的 new GalleryCard(this) 同构
@@ -124,9 +153,8 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(copy.query.get("filename"), "shot.png");
     assert.ok(body, "应发出 /neo_image_gen/generate 请求");
     assert.equal(body.skill_id, "qwen_image_21");
-    assert.equal(body.output_prefix, "grid");
+    assert.equal(body.output_prefix, "StoryBoard");
     assert.deepEqual(body.references, [{ kind: "input", value: "shot.png" }]);
-    assert.match(body.prompt, /雨夜的地铁口/);
 
     // 窗口保持打开并显示结果预览（走 thumbnail 缓存接口，size=640），不是点生成就关闭
     assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "生成过程中小窗不关闭");
@@ -134,13 +162,13 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.match(resultImg?.getAttribute("src") || "",
         /\/neo_gallery\/thumbnail\?filename=nine_panel_storyboard_sheet_00001_\.png&subfolder=StoryBoard%2F2026-09-24&size=640$/);
 
-    // 成功不自动跳目录，由「打开输出目录」触发（跳画廊 Grid 的日期子目录）并关窗
+    // 成功不自动跳目录，由「打开输出目录」触发（跳画廊 StoryBoard 的日期子目录）并关窗
     assert.deepEqual(jumps, [], "成功后不自动跳目录");
     const openDirBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "打开输出目录");
     assert.ok(openDirBtn, "成功后应有「打开输出目录」按钮");
     click(openDirBtn);
     await sleep(10);
-    assert.deepEqual(jumps, [["Grid", ["2026-09-24"]]], "打开归档后的日期子目录");
+    assert.deepEqual(jumps, [["StoryBoard", ["2026-09-24"]]], "打开归档后的日期子目录");
     assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), null, "跳转后关窗");
 });
 
@@ -154,6 +182,7 @@ test("⋯ 菜单「生成九宫格分镜图」：生成中窗内显示进度条�
     const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
     const genBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成");
 
+    mockGridSkillRoutes();
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "g2", status: "queued", images: [] }));
     mockRoute("/neo_image_gen/status/g2", () => jsonResponse({
@@ -223,16 +252,21 @@ test("⋯ 菜单「直达分镜目录」打开画廊 Grid 主目录", async () =
     assert.equal(item?.textContent, "\uD83D\uDCC2 直达分镜目录");
     click(item);
     await sleep(10);
-    assert.deepEqual(jumps, [["Grid", []]]);
+    assert.deepEqual(jumps, [["StoryBoard", []]]);
     assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
 });
 
-test("小窗「✨ LLM 生成分镜故事」：简要故事 + 参考图按所选宫格数生成逐格故事，覆盖写入上方故事框", async () => {
+test("小窗「✨ LLM 生成分镜故事」：简要故事按所选宫格技能生成逐格故事（不带参考图），覆盖写入上方故事框", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const toasts = [];
     const { gallery } = makeGallery(toasts);
     const card = new GalleryCard(gallery);
     openMenu(card, gallery);
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "storyboard_grid_4", name: "四宫格分镜提示词模板", category: "task" },
+        { id: "storyboard_grid_6", name: "六宫格分镜提示词模板", category: "task" },
+        { id: "storyboard_grid_9", name: "九宫格分镜提示词模板", category: "task" },
+    ]));
     click(itemByLabel("生成九宫格分镜图"));
 
     const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
@@ -243,12 +277,13 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事 + 参考图按所选
     // 现有输入框（九宫格故事）下面还要有个「简要故事 / 想法」输入框
     const ideaBox = overlay.querySelector(".neo-gallery-story-idea");
     assert.ok(ideaBox, "九宫格故事框下面应有简要故事输入框");
-    // 宫格数下拉：4 / 6 / 9，默认 6
+    // 宫格技能下拉：异步加载后默认 storyboard_grid_6
     const gridSel = overlay.querySelector(".neo-gallery-story-grid");
-    assert.ok(gridSel, "应有宫格数下拉");
-    assert.equal(gridSel.value, "6", "默认 6 宫格");
+    assert.ok(gridSel, "应有宫格技能下拉");
+    await sleep(10);
+    assert.equal(gridSel.value, "storyboard_grid_6", "默认 6 宫格技能");
+    gridSel.value = "storyboard_grid_9";   // 选九宫格 → 编故事与生图都走这个技能
 
-    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
     mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
         llmBody = b;
@@ -265,10 +300,11 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事 + 参考图按所选
     await sleep(50);
 
     assert.ok(llmBody, "应调用 /rs_prompts/stream_generate_prompt");
-    assert.equal(llmBody.skillId, "storyboard_story", "应走九宫格故事任务（不是反推）");
-    assert.equal(llmBody.text, "雨夜地铁口偶遇旧友（按 6 格分镜）", "简要故事 + 宫格数一起带给 LLM");
-    assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
-    assert.ok(fetchLog.find((c) => c.path === "/neo_gallery/copy_to_input"), "参考图应先经 copy_to_input 落到 input/ 再交给 LLM");
+    assert.equal(llmBody.skillId, "storyboard_grid_9", "编故事用所选宫格技能（不再固定 storyboard_story）");
+    assert.equal(llmBody.text, "雨夜地铁口偶遇旧友（按 9 格分镜）", "简要故事 + 所选技能的格数一起带给 LLM");
+    // 不带参考图：人物设定图会被模型当成"要描述的图"而反推（输出多角度展示，没有剧情）
+    assert.equal(llmBody.images, undefined, "编故事不带参考图");
+    assert.equal(fetchLog.filter((c) => c.path === "/neo_gallery/copy_to_input").length, 0, "编故事不再为 LLM 落盘参考图");
 
     // 生成结果覆盖写入上方故事框（不是追加），供继续编辑后再「生成」
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "雨夜的地铁口，她收起伞仰望。\n他站在灯下，两人相望。");
@@ -277,7 +313,7 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事 + 参考图按所选
     assert.equal(llmBtn.textContent, "✨ LLM 生成分镜故事");
 });
 
-test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按参考图生成", async () => {
+test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按格数自行编故事（不带参考图）", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const { gallery } = makeGallery([]);
     const card = new GalleryCard(gallery);
@@ -288,7 +324,6 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按参考
     const llmBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")]
         .find((b) => b.textContent === "✨ LLM 生成分镜故事");
 
-    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
     let llmBody = null;
     mockRoute("/rs_prompts/stream_generate_prompt", (b) => {
         llmBody = b;
@@ -303,7 +338,8 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事留空则只按参考
     await sleep(50);
 
     assert.ok(llmBody, "留空也应调用 LLM");
-    assert.equal(llmBody.text, "（按 6 格分镜，按参考图设计故事）", "留空时只带宫格数，按参考图生成");
-    assert.deepEqual(llmBody.images, [{ kind: "input", value: "shot.png" }]);
+    assert.equal(llmBody.skillId, "storyboard_grid_6", "技能列表拉不到时回退到默认宫格技能");
+    assert.equal(llmBody.text, "（按 6 格分镜：自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作）", "留空时只带格数 + 明确要编剧情");
+    assert.equal(llmBody.images, undefined, "编故事不带参考图");
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "她把伞收好，走向灯下。");
 });

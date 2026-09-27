@@ -1,6 +1,6 @@
 /**
  * Gallery 素材卡片「一键生成」：角色图（多视图）与九宫格分镜图的请求体、弹窗 UI 与生成流程。
- * 从 gallery-card.js 拆出，固定走 Qwen Image 2.1 预设；输出分别落 Output/character 与 Output/grid。
+ * 从 gallery-card.js 拆出，固定走 Qwen Image 2.1 预设；输出分别落 Output/CharacterSheet 与 Output/StoryBoard。
  */
 
 import { $el } from "../../../../scripts/ui.js";
@@ -17,8 +17,8 @@ import { invokePromptStream } from "./prompt-service.js";
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
 // 用所选人像作参考图生成四视图角色设定图，供拖入导演配方的 👤 角色参考图。
 const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人物，在一张横版画面中生成四个视图横向并排的角色设定图：第一格为大头特写（肩部以上，突出五官脸型），第二格为正面全身站立，第三格为侧面全身站立，第四格为背面全身站立。严格保持与参考图一致的五官脸型、发型发色、服装配饰和体型比例；全身视图中人物自然站立，双臂下垂，纯白背景，均匀柔光，写实摄影风格，高清细节，画面内不出现文字标注。";
-// 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/character 下。
-const CHARACTER_SHEET_DIR = "character";
+// 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
+const CHARACTER_SHEET_DIR = "CharacterSheet";
 
 /** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（输出尺寸按 16 对齐）；输出走独立 character 目录 */
 export function buildCharacterSheetRequest(refName) {
@@ -36,7 +36,7 @@ export function buildCharacterSheetRequest(refName) {
 
 // 一键宫格分镜图：原图当参考 + 宫格指令出 N 格故事板，供导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧。
 // 每格保持约 16:9（够拆完当视频首帧），按布局调整体宽高；默认 6 宫格（2×3）。
-const STORYBOARD_DIR = "grid";
+const STORYBOARD_DIR = "StoryBoard";
 const STORYBOARD_GRID_OPTIONS = [4, 6, 9];
 const STORYBOARD_DEFAULT_GRIDS = 6;
 // 各宫格数对应的布局与画布尺寸（每格约 16:9）：4=2列×2行、6=3列×2行、9=3列×3行。
@@ -48,18 +48,52 @@ const STORYBOARD_LAYOUTS = {
 const STORYBOARD_GRID_LABELS = { 4: "2列×2行 四宫格", 6: "3列×2行 六宫格", 9: "3列×3行 九宫格" };
 // 小窗里的参考图预览尺寸（px，走 /neo_gallery/thumbnail 缓存，不为预览另存大图）
 const STORYBOARD_PREVIEW_SIZE = 480;
-// 宫格故事生成任务（skills/tasks/storyboard_story）：简要故事 / 想法 + 参考图 → 逐格推进的故事
-const STORYBOARD_STORY_SKILL_ID = "storyboard_story";
 
 function _normalizeGrids(count) {
     return STORYBOARD_GRID_OPTIONS.includes(Number(count)) ? Number(count) : STORYBOARD_DEFAULT_GRIDS;
 }
 
-/** 故事 → 宫格指令（语义同预设技能 nine_grid_storyboard 的模板前缀，另加 <image1> 身份锚定）。
+/** 从 skill id（如 storyboard_grid_9）提取宫格数；无法识别时回退默认值 */
+function _gridCountFromSkillId(skillId) {
+    const m = /storyboard_grid_(\d+)/.exec(skillId || "");
+    return m ? _normalizeGrids(Number(m[1])) : STORYBOARD_DEFAULT_GRIDS;
+}
+
+const _gridTemplateCache = {};
+
+async function _loadGridTemplate(skillId) {
+    if (_gridTemplateCache[skillId]) return _gridTemplateCache[skillId];
+    try {
+        const res = await fetch("/rs_prompts/load_skill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: skillId }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const content = (data.content || "").trim();
+        if (content) _gridTemplateCache[skillId] = content;
+        return content || null;
+    } catch {
+        return null;
+    }
+}
+
+// 技能正文里 <!-- @story-writer -->…<!-- @end --> 是给 LLM 的编剧说明，进生图提示词前剔除
+const STORY_WRITER_SECTION_RE = /<!--\s*@story-writer\s*-->[\s\S]*?<!--\s*@end\s*-->/g;
+
+/** 故事 → 宫格指令：从 skill（storyboard_grid_N）加载模板（去掉编剧区块）后替换 {story} 占位符。
  * qwen_image21 分词器会为每张参考图插字面量 <imageN>，所以提示词里可以直接写 <image1>。 */
-export function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRIDS) {
+export async function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRIDS, skillId) {
     const n = _normalizeGrids(count);
     const layout = STORYBOARD_LAYOUTS[n];
+    const sid = skillId || `storyboard_grid_${n}`;
+    const raw = await _loadGridTemplate(sid);
+    const tpl = raw ? raw.replace(STORY_WRITER_SECTION_RE, "").trim() : raw;
+    if (tpl && tpl.includes("{story}")) {
+        return tpl.replace(/\{story\}/g, () => story);
+    }
+    // Fallback: 模板未加载成功时使用内联默认
     return `一张 ${STORYBOARD_GRID_LABELS[n]}分镜故事板（${n}-panel storyboard sheet），布局为 ${layout.cols} 列 × ${layout.rows} 行（每行 ${layout.cols} 格，共 ${layout.rows} 行），按阅读顺序（从左到右、从上到下，第 1 格到第 ${n} 格）讲述以下故事：\n`
         + story + "\n"
         + `参考图 <image1> 里的人物就是故事主角：所有格子保持与参考图一致的五官脸型、发型发色、服装配饰与体型比例，场景与画风统一。\n`
@@ -67,12 +101,12 @@ export function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRID
 }
 
 /** 一键宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 宫格指令；输出走独立 grid 目录 */
-export function buildStoryboardGridRequest(refName, story, count = STORYBOARD_DEFAULT_GRIDS) {
-    const n = _normalizeGrids(count);
+export async function buildStoryboardGridRequest(refName, story, skillId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`) {
+    const n = _gridCountFromSkillId(skillId);
     const layout = STORYBOARD_LAYOUTS[n];
     return {
         skill_id: QWEN_IMAGE_SKILL_ID,
-        prompt: buildStoryboardGridPrompt(story, n),
+        prompt: await buildStoryboardGridPrompt(story, n, skillId),
         width: layout.width,
         height: layout.height,
         references: [{ kind: "input", value: refName }],
@@ -118,7 +152,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "将基于这张人像生成头特写 / 正面 / 侧面 / 背面四视图，输出到 Output/character。" }));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "将基于这张人像生成头特写 / 正面 / 侧面 / 背面四视图，输出到 Output/CharacterSheet。" }));
         fill(actionsBox, btn("取消", close), btn("生成", start, true));
     };
 
@@ -154,7 +188,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
         }
         const size = final.width && final.height ? ` · ${final.width}×${final.height}` : "";
         fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: `已生成${size}，可拖入配方的 👤 角色参考图` }));
-        fill(actionsBox, btn("打开输出目录", () => gallery.showDirectoryStructure("Character", [])), btn("关闭", close, true));
+        fill(actionsBox, btn("打开输出目录", () => gallery.showDirectoryStructure(CHARACTER_SHEET_DIR, [])), btn("关闭", close, true));
     };
 
     const renderError = (message) => {
@@ -220,8 +254,8 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
     document.body.appendChild(overlay);
 }
 
-/** 九宫格分镜图的前置小窗（与角色图小窗同款）：上面是九宫格故事（可手写，或由下方「简要故事 / 想法」+ 参考图
- * 用 LLM 生成），下面是可选的简要故事 / 想法；点「生成」后窗口内显示排队/生图进度与结果预览。 */
+/** 九宫格分镜图的前置小窗（与角色图小窗同款）：上面是分镜故事（可手写，或点「✨ LLM 生成分镜故事」由所选宫格技能
+ * + 下方「简要故事 / 想法」+ 参考图流式生成），下面依次是宫格技能下拉与可选的简要故事 / 想法；点「生成」后窗口内显示排队/生图进度与结果预览。 */
 export function openStoryboardDialog(gallery, image, subfolder) {
     document.querySelector('.neo-gallery-story-modal-overlay')?.remove();
     // 预览按卡片图片的高度显示：小窗里的参考图和卡片里看到的一样大，方便确认用的就是这张
@@ -233,26 +267,49 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         rows: 6,
         placeholder: "例：雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下……"
     });
-    // 简要故事 / 想法：LLM 的输入，可留空（留空则只按参考图编故事）；生成结果覆盖写入上面的九宫格故事框
+    // 简要故事 / 想法：LLM 编故事的输入（这一步不带参考图），可留空（留空则只给格数，让 LLM 自己编）；生成结果覆盖写入上面的故事框
     const ideaInput = $el("textarea", {
         className: "neo-gallery-story-idea",
         rows: 3,
-        placeholder: "可选：一句话想法（如：雨夜地铁口偶遇旧友）。留空则直接按参考图编故事"
+        placeholder: "可选：一句话想法（如：雨夜地铁口偶遇旧友）。留空则只给格数，让 LLM 自行编故事"
     });
-    // 宫格数：4 / 6 / 9（默认 6），决定生图布局与 LLM 故事的格数
+    // 宫格技能：从后端加载 storyboard_grid_* 技能列表；选中技能同时充当编剧技能（写故事）与生图提示词模板 / 布局
     const gridSel = $el("select", { className: "neo-gallery-story-grid" }, [
-        $el("option", { value: "4", textContent: "4 宫格（2列×2行）" }),
-        $el("option", { value: "6", textContent: "6 宫格（3列×2行）" }),
-        $el("option", { value: "9", textContent: "9 宫格（3列×3行）" }),
+        $el("option", { value: "", textContent: "加载中…" }),
     ]);
-    gridSel.value = String(STORYBOARD_DEFAULT_GRIDS);
+    (async () => {
+        try {
+            const res = await fetch("/rs_prompts/skills");
+            const skills = await res.json();
+            const gridSkills = skills.filter(s => /^storyboard_grid_\d+$/.test(s.id));
+            if (gridSkills.length === 0) {
+                gridSel.innerHTML = "";
+                for (const n of STORYBOARD_GRID_OPTIONS) {
+                    gridSel.appendChild($el("option", { value: `storyboard_grid_${n}`, textContent: STORYBOARD_GRID_LABELS[n] }));
+                }
+            } else {
+                gridSel.innerHTML = "";
+                for (const s of gridSkills) {
+                    gridSel.appendChild($el("option", { value: s.id, textContent: s.name || s.id }));
+                }
+            }
+            const defaultId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
+            gridSel.value = [...gridSel.options].some(o => o.value === defaultId) ? defaultId : gridSel.options[0]?.value || "";
+        } catch {
+            gridSel.innerHTML = "";
+            for (const n of STORYBOARD_GRID_OPTIONS) {
+                gridSel.appendChild($el("option", { value: `storyboard_grid_${n}`, textContent: STORYBOARD_GRID_LABELS[n] }));
+            }
+            gridSel.value = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
+        }
+    })();
     // 表单整块（故事框 + 提示 + 宫格数 + 简要故事框）：生成中被下面的进度/结果区整块替换
     const formBox = $el("div", { className: "neo-gallery-story-form" }, [
         input,
         hint,
-        $el("div", { className: "neo-gallery-story-field-label", textContent: "宫格数" }),
+        $el("div", { className: "neo-gallery-story-field-label", textContent: "宫格技能" }),
         gridSel,
-        $el("div", { className: "neo-gallery-story-field-label", textContent: "简要故事 / 想法（可留空，留空则按参考图生成）" }),
+        $el("div", { className: "neo-gallery-story-field-label", textContent: "简要故事 / 想法（可留空，留空则让 LLM 自行编故事）" }),
         ideaInput
     ]);
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
@@ -274,13 +331,13 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     const openOutputDir = (final) => {
         const sub = (final.images || []).map(i => i.subfolder).find(Boolean);
         const date = sub ? sub.split("/").filter(Boolean).pop() : "";
-        gallery.showDirectoryStructure("Grid", date ? [date] : []);
+        gallery.showDirectoryStructure(STORYBOARD_DIR, date ? [date] : []);
     };
 
     // 表单态：故事框 + 简要故事框可编辑，右下有 LLM / 取消 / 生成
     const renderForm = () => {
         hint.classList.remove("neo-gallery-story-hint-error");
-        hint.textContent = "九宫格按 1→9 逐格推进，人物沿用这张图；可手写，或用下面的简要故事 / 想法让 LLM 生成。";
+        hint.textContent = "按所选宫格技能逐格推进，人物沿用这张图；故事可手写，也可用下面的简要故事 / 想法让 LLM 生成。";
         formBox.style.display = "";
         statusBox.style.display = "none";
         fill(actionsBox, llmBtn, btn("取消", close), btn("生成", onSubmit, true));
@@ -344,7 +401,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         renderRunning("排队中…");
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
-            const snap = await requestGeneration(buildStoryboardGridRequest(refName, input.value.trim(), _normalizeGrids(gridSel.value)));
+            const snap = await requestGeneration(await buildStoryboardGridRequest(refName, input.value.trim(), gridSel.value));
             cancelId = snap.task_id;
             renderRunning("排队中…");
             const final = await watchTask(snap.task_id, (s) => {
@@ -372,9 +429,9 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         }
         start();
     };
-    // 宫格故事生成：卡片原图经 copy_to_input 落到 input/，连同一句简要故事 / 想法（可空）+ 所选宫格数交给
-    // storyboard_story 任务流式产出逐格推进的故事（格数随「宫格数」下拉），覆盖写入上面的故事框，供编辑后再生成。
-    // refName 缓存避免重复落盘。
+    // 宫格故事生成：把简要故事 / 想法交给**所选宫格技能**（它的正文既是编剧指令也是生图模板）写成逐格故事，
+    // 覆盖写入上面的故事框；**不带参考图**——人物设定图（三视图 / 四视图）会被模型当成"要描述的图"而反推，
+    // 人物外形改由生图那步的 <image1> 锚定，参考图到点「生成」时才落盘。
     const generateStoryFromIdea = async () => {
         if (llmRunning) return;
         llmRunning = true;
@@ -382,13 +439,13 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         llmBtn.textContent = "⏳ 生成中…";
         hint.classList.remove("neo-gallery-story-hint-error");
         try {
-            if (!refName) refName = await copyImageToInput(image, subfolder);
             let buf = "";
-            const n = _normalizeGrids(gridSel.value);
+            const skillId = gridSel.value || `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
+            const n = _gridCountFromSkillId(skillId);
             const idea = ideaInput.value.trim();
-            const storyText = idea ? `${idea}（按 ${n} 格分镜）` : `（按 ${n} 格分镜，按参考图设计故事）`;
+            const storyText = idea ? `${idea}（按 ${n} 格分镜）` : `（按 ${n} 格分镜：自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作）`;
             await invokePromptStream(
-                { text: storyText, skillId: STORYBOARD_STORY_SKILL_ID, images: [{ kind: "input", value: refName }] },
+                { text: storyText, skillId },
                 {
                     onChunk: (chunk) => {
                         if (!chunk || chunk.kind === "thinking") return;
@@ -461,18 +518,18 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
         }, ["\uD83E\uDDAC 生成角色图（多视图）"]) : null,
         isImageFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
-            title: "以这张图为参考、按你填的故事生成 3×3 九宫格分镜图（每格一镜，可直接进导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧）",
+            title: "以这张图为参考、按所选宫格技能与故事生成分镜图（每格一镜，可直接进导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧）",
             onclick: () => { card._removeCollectMenu(); openStoryboardDialog(gallery, image, subfolder); }
         }, ["\uD83E\uDDE9 生成九宫格分镜图"]) : null,
         $el("div", {
             className: "neo-gallery-collect-item",
-            title: "在画廊中打开角色主目录（Character），生成结果已按日期归档",
-            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure("Character", []); }
+            title: "在画廊中打开角色主目录（CharacterSheet），生成结果已按日期归档",
+            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure(CHARACTER_SHEET_DIR, []); }
         }, ["\uD83D\uDCC2 直达角色目录"]),
         $el("div", {
             className: "neo-gallery-collect-item",
-            title: "在画廊中打开分镜主目录（Grid），生成结果已按日期归档",
-            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure("Grid", []); }
+            title: "在画廊中打开分镜主目录（StoryBoard），生成结果已按日期归档",
+            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure(STORYBOARD_DIR, []); }
         }, ["\uD83D\uDCC2 直达分镜目录"]),
     ];
 }

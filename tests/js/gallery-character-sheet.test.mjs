@@ -22,7 +22,7 @@ test("buildCharacterSheetRequest 固定走 qwen_image_21 且不带全局 LoRA", 
     assert.match(body.prompt, /背面全身/);
 });
 
-test("⋯ 菜单「直达角色目录」打开画廊 Character 主目录", async () => {
+test("⋯ 菜单「直达角色目录」打开画廊 CharacterSheet 主目录", async () => {
     resetEnv();
     clearRoutes();
     const { GalleryCard } = await import("../../web/gallery-card.js");
@@ -44,7 +44,7 @@ test("⋯ 菜单「直达角色目录」打开画廊 Character 主目录", async
 
     click(item);
     await flush();
-    assert.deepEqual(calls, [["Character", []]]);
+    assert.deepEqual(calls, [["CharacterSheet", []]]);
     assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
 });
 
@@ -107,10 +107,10 @@ test("⋯ 菜单「生成角色图」：小窗显示参考图，点生成后窗�
     const resultImg = overlay.querySelector(".neo-gallery-cs-result-img");
     assert.match(resultImg?.getAttribute("src") || "", /\/neo_gallery\/thumbnail\?filename=character_sheet_00001_\.png&subfolder=CharacterSheet%2F2026-09-24&size=640$/);
 
-    // 成功后有「打开输出目录」按钮，点击跳转画廊 Character 主目录
+    // 成功后有「打开输出目录」按钮，点击跳转画廊 CharacterSheet 主目录
     const openDirBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "打开输出目录");
     assert.ok(openDirBtn, "成功后应有「打开输出目录」按钮");
     click(openDirBtn);
     await sleep(10);
-    assert.deepEqual(jumps, [["Character", []]], "打开角色主目录");
+    assert.deepEqual(jumps, [["CharacterSheet", []]], "打开角色主目录");
 });

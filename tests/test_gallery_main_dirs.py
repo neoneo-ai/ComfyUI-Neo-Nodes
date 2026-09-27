@@ -99,13 +99,13 @@ if _prev_folder_paths is None:
 else:
     sys.modules["folder_paths"] = _prev_folder_paths
 
-GRID_DIR = Path(_OUTPUT) / "grid"
-CHARACTER_DIR = Path(_OUTPUT) / "character"
+GRID_DIR = Path(_OUTPUT) / "StoryBoard"
+CHARACTER_DIR = Path(_OUTPUT) / "CharacterSheet"
 gallery.GRID_DIR = GRID_DIR
 gallery.CHARACTER_DIR = CHARACTER_DIR
 gallery._MAIN_DIRS = {
-    "grid": (GRID_DIR, _oss.OSS_CATEGORY_GRID),
-    "character": (CHARACTER_DIR, _oss.OSS_CATEGORY_CHARACTER),
+    "StoryBoard": (GRID_DIR, _oss.OSS_CATEGORY_GRID),
+    "CharacterSheet": (CHARACTER_DIR, _oss.OSS_CATEGORY_CHARACTER),
 }
 
 
@@ -159,8 +159,8 @@ _LEGACY_INDEX = {
 
 _CATEGORY_INDEX = {
     "categories": {
-        "grid": ["已分类分镜"],
-        "character": ["已分类角色"],
+        "StoryBoard": ["已分类分镜"],
+        "CharacterSheet": ["已分类角色"],
         "presets": ["显式预设"],
     },
     "directories": {
@@ -190,9 +190,9 @@ class OssCategoryTests(unittest.TestCase):
 
     def test_cache_dir_per_category(self):
         self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_GRID),
-                         Path(_OUTPUT) / "grid" / "presets")
+                         Path(_OUTPUT) / "StoryBoard" / "presets")
         self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_CHARACTER),
-                         Path(_OUTPUT) / "character" / "presets")
+                         Path(_OUTPUT) / "CharacterSheet" / "presets")
 
     def test_legacy_presets_lookup_does_not_leak_other_categories(self):
         prev = _oss._oss_index_cache
@@ -233,9 +233,9 @@ class MainDirListingTests(unittest.TestCase):
 
     def test_root_listing_injects_cloud_presets_card(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Grid", "fields": "dirs"}))))
+            _GetRequest({"dir_name": "StoryBoard", "fields": "dirs"}))))
         resp_dir = out["directories"][0]
-        self.assertEqual(resp_dir["name"], "Grid")
+        self.assertEqual(resp_dir["name"], "StoryBoard")
         self.assertIn("2026-09-24", resp_dir["subdirs"])
         presets = resp_dir["subdirs"]["Cloud Presets"]
         self.assertEqual(presets["path"], "presets")
@@ -246,7 +246,7 @@ class MainDirListingTests(unittest.TestCase):
 
     def test_presets_branch_lists_category_dirs(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Grid", "path": "presets"}))))
+            _GetRequest({"dir_name": "StoryBoard", "path": "presets"}))))
         resp_dir = out["directories"][0]
         self.assertTrue(resp_dir["read_only"])
         self.assertEqual(resp_dir["source"], "oss")
@@ -254,17 +254,17 @@ class MainDirListingTests(unittest.TestCase):
 
     def test_presets_branch_items_carry_navigable_subfolder(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Character", "path": "presets/已分类角色"}))))
+            _GetRequest({"dir_name": "CharacterSheet", "path": "presets/已分类角色"}))))
         items = out["directories"][0]["items"]
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["subfolder"], "Character/presets/已分类角色")
+        self.assertEqual(items[0]["subfolder"], "CharacterSheet/presets/已分类角色")
         self.assertEqual(items[0]["source"], "oss")
 
     def test_deep_link_dir_name_with_sub_path(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Grid/presets/已分类分镜"}))))
+            _GetRequest({"dir_name": "StoryBoard/presets/已分类分镜"}))))
         items = out["directories"][0]["items"]
-        self.assertEqual(items[0]["subfolder"], "Grid/presets/已分类分镜")
+        self.assertEqual(items[0]["subfolder"], "StoryBoard/presets/已分类分镜")
 
 
 class MainDirDeleteTests(unittest.TestCase):
@@ -283,13 +283,13 @@ class MainDirDeleteTests(unittest.TestCase):
 
     def test_prefixed_subfolder_also_resolves(self):
         target = _write(CHARACTER_DIR / "2026-09-27" / "sheet.png", b"png")
-        resp = self._delete(filename="sheet.png", subfolder="Character/2026-09-27")
+        resp = self._delete(filename="sheet.png", subfolder="CharacterSheet/2026-09-27")
         self.assertEqual(resp.status, 200)
         self.assertFalse(target.exists())
 
     def test_preset_cache_is_read_only(self):
         cached = _write(GRID_DIR / "presets" / "风格" / "a.png", b"png")
-        resp = self._delete(filename="a.png", subfolder="Grid/presets/风格")
+        resp = self._delete(filename="a.png", subfolder="StoryBoard/presets/风格")
         self.assertEqual(resp.status, 403)
         self.assertTrue(cached.exists())
 
@@ -322,31 +322,31 @@ class MainDirCoverTests(unittest.TestCase):
 
     def test_child_dir_cards_get_covers_keyed_by_nav_path(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Character", "fields": "dirs,covers"}))))
+            _GetRequest({"dir_name": "CharacterSheet", "fields": "dirs,covers"}))))
         covers = out["covers"]
-        # 卡片 key 与导航路径一致（前端 subdirKey = "Character/<date>"）
-        self.assertEqual([c["filename"] for c in covers["Character/2026-09-24"]],
+        # 卡片 key 与导航路径一致（前端 subdirKey = "CharacterSheet/<date>"）
+        self.assertEqual([c["filename"] for c in covers["CharacterSheet/2026-09-24"]],
                          ["sheet.png", "take1.png"])  # 每个目录最多取 2 张，可下沉到子目录
-        self.assertEqual(covers["Character/2026-09-24"][0]["subfolder"], "Character/2026-09-24")
-        self.assertEqual(covers["Character/2026-09-24"][1]["subfolder"], "Character/2026-09-24/takes")
-        self.assertEqual([c["filename"] for c in covers["Character/2026-09-25"]], ["pose.png"])
+        self.assertEqual(covers["CharacterSheet/2026-09-24"][0]["subfolder"], "CharacterSheet/2026-09-24")
+        self.assertEqual(covers["CharacterSheet/2026-09-24"][1]["subfolder"], "CharacterSheet/2026-09-24/takes")
+        self.assertEqual([c["filename"] for c in covers["CharacterSheet/2026-09-25"]], ["pose.png"])
         # 当前目录自身（首页卡）也有封面，供返回上级时复用
-        self.assertIn("Character", covers)
+        self.assertIn("CharacterSheet", covers)
 
     def test_nested_level_covers_use_full_relative_path(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Character", "path": "2026-09-24", "fields": "dirs,covers"}))))
+            _GetRequest({"dir_name": "CharacterSheet", "path": "2026-09-24", "fields": "dirs,covers"}))))
         covers = out["covers"]
-        self.assertEqual([c["filename"] for c in covers["Character/2026-09-24/takes"]], ["take1.png"])
-        self.assertEqual(covers["Character/2026-09-24/takes"][0]["subfolder"],
-                         "Character/2026-09-24/takes")
+        self.assertEqual([c["filename"] for c in covers["CharacterSheet/2026-09-24/takes"]], ["take1.png"])
+        self.assertEqual(covers["CharacterSheet/2026-09-24/takes"][0]["subfolder"],
+                         "CharacterSheet/2026-09-24/takes")
 
     def test_aggregate_preset_card_borrows_a_cover(self):
         out = _payload(_call(gallery.get_gallery_list(
-            _GetRequest({"dir_name": "Grid", "fields": "dirs,covers"}))))
+            _GetRequest({"dir_name": "StoryBoard", "fields": "dirs,covers"}))))
         covers = out["covers"]
-        self.assertTrue(covers["Grid/presets"])
-        self.assertEqual(covers["Grid/presets"], covers["Grid/presets/已分类分镜"])
+        self.assertTrue(covers["StoryBoard/presets"])
+        self.assertEqual(covers["StoryBoard/presets"], covers["StoryBoard/presets/已分类分镜"])
 
 
 class RecentDirSortTests(unittest.TestCase):
@@ -520,7 +520,7 @@ class RecentDirSortTests(unittest.TestCase):
         self.assertEqual(entries[0]["filename"], "pic.png")
 
     def test_recent_dir_whitelist(self):
-        for name in ("Output", "output", "Grid", "grid/2026-09-25", "Character/2026-09-25"):
+        for name in ("Output", "output", "StoryBoard", "storyboard/2026-09-25", "CharacterSheet/2026-09-25"):
             self.assertTrue(gallery._is_recent_dir(name), name)
         for name in ("Input", "presets", "Lora", "stars", "civitai_bookmarks", ""):
             self.assertFalse(gallery._is_recent_dir(name), name)
