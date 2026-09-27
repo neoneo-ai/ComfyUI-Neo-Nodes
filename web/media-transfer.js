@@ -38,17 +38,17 @@ export async function copyGalleryToInput(raw) {
     }
 }
 
-/** 打开 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）；传入 source/path 时直接导航到对应目录。
- *  无 target 时保持原有开/关切换行为。 */
+/** 打开 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）；传入 source/path 时导航到对应目录。
+ *  已打开该面板时再点一次 → 收起（开/关切换，带目标与不带目标一致）；否则打开并在有 target 时导航。 */
 export function toggleGallerySidebar(source, path) {
     const em = app.extensionManager;
     if (!em || !em.sidebarTab) return;
-    if (!source) {
-        em.sidebarTab.activeSidebarTabId = em.sidebarTab.activeSidebarTabId === 'neo.gallery' ? null : 'neo.gallery';
+    if (em.sidebarTab.activeSidebarTabId === 'neo.gallery') {
+        em.sidebarTab.activeSidebarTabId = null;   // 已打开 → 收起
         return;
     }
     em.sidebarTab.activeSidebarTabId = 'neo.gallery';
-    if (app.neoGallery && typeof app.neoGallery.showDirectoryStructure === 'function') {
+    if (source && app.neoGallery && typeof app.neoGallery.showDirectoryStructure === 'function') {
         app.neoGallery.showDirectoryStructure(source, path || []);
     }
 }

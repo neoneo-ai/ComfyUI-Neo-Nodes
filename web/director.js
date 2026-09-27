@@ -12,6 +12,7 @@ import { Lightbox } from "./lightbox.js";
 import { grabDataType, copyGalleryToInput, toggleGallerySidebar, uploadLocalFiles } from "./media-transfer.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
+import { openStoryboardDialog } from "./gallery-gen.js";
 
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
@@ -1746,6 +1747,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let gridSrcFile = '';
     function setGridSrc(fname) {
         gridSrcFile = fname || '';
+        gridSrcDrop.classList.toggle('has-src', !!gridSrcFile);   // 有图：右下角操作条 hover 才显示
         setGridPrompts([]);   // 换图 / 清除：上一张宫格图提取到的提示词作废
         gridPanelShape = null;   // 行列随源图失效（需重新拆分才恢复）
         gridSrcBody.innerHTML = '';
@@ -1765,6 +1767,20 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 本地上传：隐藏 file input 挂在输入区（不随 innerHTML 重绘清除）；空区点击弹出文件选择器
     const gridSrcPicker = buildLocalFilePicker('image/*', (fname) => { setGridSrc(fname); markDirty(); });
     gridSrcDrop.appendChild(gridSrcPicker.input);
+    const gridSbBtn = $el('button', { className: 'neo-director-storyboard-btn', title: '基于角色图生成九宫格分镜图', textContent: '+' });
+    gridSbBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const c = charRefRow.getSelected();
+        if (!c.length) { actionToast({ severity: 'warning', summary: '请先上传角色参考图' }); return; }
+        openStoryboardDialog(app.neoGallery, { filename: c[0], name: c[0] }, '');
+    });
+    // 输入区右下角操作条：「宫格素材库」在前、「+」（基于角色图生成九宫格）在后
+    const gridSrcActions = $el('div', { className: 'neo-director-grid-src-actions' }, [
+        buildAssetLibButton('Grid'),
+        gridSbBtn,
+    ]);
+    gridSrcActions.addEventListener('click', (e) => e.stopPropagation());   // 操作条内点击不触发输入区「本地上传」
+    gridSrcDrop.appendChild(gridSrcActions);
     gridSrcDrop.onclick = (e) => { if (!gridSrcFile && e.target !== gridSrcPicker.input) gridSrcPicker.open(); };   // 已选图时点缩略图看大图、✕ 清除
     // 拖入：OS 本地图片 / 素材库（Neo Gallery）
     gridSrcDrop.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; gridSrcDrop.classList.add('neo-director-drop'); });
@@ -1868,11 +1884,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // 源图 + 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（切分方式已上移到卡标题行、紧邻「拆分到各段」）
         $el('div', { className: 'neo-director-grid-io' }, [
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-src' }, [
-                $el('div', { className: 'neo-director-row neo-director-shared' }, [
-                    $el('span', { className: 'neo-director-field-label', textContent: '分镜图' }),
-                    buildAssetLibButton('Grid'),   // 打开左侧素材面板（Grid），拖入下方输入区
-                ]),
-                gridSrcDrop,   // 图片输入区：点击本地上传 / 素材库·本地文件拖入
+                gridSrcDrop,   // 图片输入区：点击本地上传 / 素材库·本地文件拖入（右下角操作条含「宫格素材库」+「+」）
             ]),
             // 常显（不折叠）：拆分提取到提示词后直接就地显示；占满源图右侧剩余空间
             $el('div', { className: 'neo-director-grid-pt' }, [

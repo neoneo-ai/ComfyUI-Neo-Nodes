@@ -3426,6 +3426,26 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
     assert.ok(drop.querySelector(".neo-director-grid-src-hint"), "空区显示上传提示");
     assert.ok(drop.querySelector("input[type=file]"), "输入区内含隐藏 file input（点击本地上传）");
     assert.equal(card.querySelector(".neo-director-local-add"), null, "宫格卡片不再单列「本地」按钮");
+    assert.ok(!drop.classList.contains("has-src"), "无图时输入区无 has-src（操作条常显）");
+
+    // 右下角操作条：「宫格素材库」在前、「+」在后；点素材库只切换侧栏、不触发输入区「本地上传」
+    const actions = card.querySelector(".neo-director-grid-src-actions");
+    assert.ok(actions, "输入区右下角有操作条");
+    const kids = Array.from(actions.children);
+    const libBtn = actions.querySelector(".neo-director-ff-lib");
+    const plusBtn = actions.querySelector(".neo-director-storyboard-btn");
+    assert.equal(kids[0], libBtn, "操作条第一个是「宫格素材库」");
+    assert.equal(kids[1], plusBtn, "操作条第二个是「+」");
+
+    const fileInput = drop.querySelector("input[type=file]");
+    let fileClicks = 0;
+    const origClick = fileInput.click.bind(fileInput);
+    fileInput.click = () => { fileClicks++; };
+    const tab = app.extensionManager.sidebarTab;
+    libBtn.click();
+    assert.equal(fileClicks, 0, "点「宫格素材库」不触发本地上传");
+    assert.equal(tab.activeSidebarTabId, "neo.gallery", "点「宫格素材库」打开侧栏");
+    fileInput.click = origClick;
 
     // 源图与「原宫格提示词」同行，label 区分（单张分镜图不再独占整行）
     const ioRow = card.querySelector(".neo-director-grid-io");
@@ -3437,7 +3457,7 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
     assert.equal(promptBox.value, "", "未拆分时不展示提示词");
     assert.equal(promptBox.closest("details"), null, "提示词常显（不再折叠，拆分提取后自动就地显示）");
     const ioLabels = Array.from(ioRow.querySelectorAll(".neo-director-field-label")).map((el) => el.textContent);
-    assert.ok(ioLabels.includes("分镜图"), "源图列有「分镜图」label");
+    assert.ok(!ioLabels.includes("分镜图"), "源图列不再有「分镜图」label");
     assert.ok(ioLabels.includes("原宫格提示词"), "提示词列有「原宫格提示词」label");
     assert.equal(card.querySelector(".neo-director-grid-panels"), null, "格子缩略条已移除");
     assert.equal(card.querySelector(".neo-director-grid-pager"), null, "‹ / › 翻页按钮已随缩略条移除");
@@ -3457,6 +3477,7 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
     await sleep(40);
     assert.ok(drop.querySelector("img")?.src.includes("copied_g.png"), "素材库拖入回显");
     assert.equal(promptBox.value, "", "换图后提示词清空");
+    assert.ok(drop.classList.contains("has-src"), "有图时输入区带 has-src（操作条 hover 才显示）");
 
     // OS 本地文件拖入 → upload 后回显（覆盖原图）
     dropFiles(drop, [makeFile("local_drop.png", "image/png")]);

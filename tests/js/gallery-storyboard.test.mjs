@@ -176,6 +176,41 @@ test("⋯ 菜单「生成九宫格分镜图」：生成中窗内显示进度条�
     assert.ok([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "重试"), "可重试");
 });
 
+test("⋯ 菜单「生成九宫格分镜图」：生图失败弹 action toast 引导去技能详情，窗内留错误可重试", async () => {
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const { gallery } = makeGallery([]);
+    const card = new GalleryCard(gallery);
+    openMenu(card, gallery);
+    click(itemByLabel("生成九宫格分镜图"));
+
+    const overlay = document.querySelector(".neo-gallery-story-modal-overlay");
+    const genBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成");
+
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "shot.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "g3", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/g3", () => jsonResponse({ task_id: "g3", status: "running" }));
+
+    overlay.querySelector(".neo-gallery-story-input").value = STORY;
+    click(genBtn);
+    await sleep(50);
+
+    // 派发失败终态：缺模型（非 LLM 报文）
+    dispatchApiEvent("rs.image_gen.status", { task_id: "g3", status: "failed", error: "找不到模型 Qwen/qwen_image_2.1.safetensors（diffusion_models）" });
+    await sleep(10);
+
+    // 窗内留错误 + 可重试
+    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "失败后小窗仍在");
+    assert.match(overlay.querySelector(".neo-gallery-cs-status .neo-gallery-story-hint").textContent, /找不到模型/);
+    assert.ok([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "重试"), "可重试");
+
+    // 另弹 action toast：引导去技能详情修模型
+    const toast = [...document.querySelectorAll(".neo-at")].at(-1);
+    assert.ok(toast, "应弹 action toast");
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "九宫格分镜图生成失败");
+    assert.equal(toast.querySelector(".neo-at-detail").textContent, "找不到模型 Qwen/qwen_image_2.1.safetensors（diffusion_models）");
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开技能详情");
+});
+
 test("⋯ 菜单「直达分镜目录」打开画廊 Grid 主目录", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const { gallery, jumps } = makeGallery([]);

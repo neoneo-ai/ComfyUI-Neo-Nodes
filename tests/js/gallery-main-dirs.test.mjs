@@ -88,7 +88,14 @@ test("素材库按钮：带目标主目录时打开侧栏并导航", async () =>
     assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, "neo.gallery", "打开素材面板");
     assert.deepEqual(visits, [["Character", []]], "导航到 Character 主目录");
 
+    // 带目标再点一次 → 收起（开/关切换，不再重复导航）
+    toggleGallerySidebar("Character", []);
+    assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, null, "带目标再点一次收起面板");
+    assert.deepEqual(visits, [["Character", []]], "收起时不重复导航");
+
     // 无目标：保持原有开/关切换
+    toggleGallerySidebar();
+    assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, "neo.gallery", "重新打开");
     toggleGallerySidebar();
     assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, null, "再次点击收起面板");
 

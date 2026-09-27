@@ -8,6 +8,7 @@ import { api } from "../../../../scripts/api.js";
 import { getImageHeight, getThumbnailSrc, isImageFile } from "./gallery-utils.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
+import { openSkillDetailById } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask } from "./image-gen.js";
 import { invokePromptStream } from "./prompt-service.js";
@@ -220,7 +221,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
 
 /** 九宫格分镜图的前置小窗（与角色图小窗同款）：上面是九宫格故事（可手写，或由下方「简要故事 / 想法」+ 参考图
  * 用 LLM 生成），下面是可选的简要故事 / 想法；点「生成」后窗口内显示排队/生图进度与结果预览。 */
-function openStoryboardDialog(gallery, image, subfolder) {
+export function openStoryboardDialog(gallery, image, subfolder) {
     document.querySelector('.neo-gallery-story-modal-overlay')?.remove();
     // 预览按卡片图片的高度显示：小窗里的参考图和卡片里看到的一样大，方便确认用的就是这张
     const previewHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
@@ -328,6 +329,12 @@ function openStoryboardDialog(gallery, image, subfolder) {
         fill(actionsBox, btn("重试", onSubmit), btn("关闭", close));
     };
 
+    // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
+    const failGen = (message) => {
+        renderError(message);
+        actionToast({ severity: "error", summary: "九宫格分镜图生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(QWEN_IMAGE_SKILL_ID) });
+    };
+
     // 生图：卡片原图落 input/ 当参考图，按故事出 3×3 故事板；进度/结果都留在窗口内
     const start = async () => {
         if (running) return;
@@ -344,10 +351,10 @@ function openStoryboardDialog(gallery, image, subfolder) {
             }, () => cancelRequested);
             if (final.status === "succeeded") renderSuccess(final);
             else if (final.status === "cancelled") renderError("已取消");
-            else renderError(final.error || "生成失败");
+            else failGen(final.error || "生成失败");
         } catch (e) {
             console.error('[Gallery] storyboard generation failed:', e);
-            renderError(String(e?.message || e));
+            failGen(String(e?.message || e));
         } finally {
             running = false;
             cancelId = null;

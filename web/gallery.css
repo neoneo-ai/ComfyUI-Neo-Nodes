@@ -1879,7 +1879,7 @@ Accordion Section Buttons (Clear)
     left: 0;
     width: 100vw;
     height: 100vh;
-    z-index: 10001;
+    z-index: 2147483645;
     display: flex;
     align-items: center;
     justify-content: center;

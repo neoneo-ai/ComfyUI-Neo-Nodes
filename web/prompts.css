@@ -3473,7 +3473,8 @@
     right: 16px;
     /* 顶部菜单（工作流标签行）+ 工具栏（运行/活动任务行）下方 */
     top: 108px;
-    z-index: 2147483645;
+    /* 取最大层：需盖住所有弹窗遮罩（九宫格/角色图小窗等 dim，z-index: 2147483645），否则被遮罩压暗看不见 */
+    z-index: 2147483647;
     display: flex;
     flex-direction: column;
     gap: 8px;
