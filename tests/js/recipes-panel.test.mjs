@@ -32,7 +32,7 @@ test("配方列表：多段导演配方点缩略图直接打开编辑器，普�
     const panel = await createRecipesPanel();
     document.body.appendChild(panel);
 
-    const covers = Array.from(panel.querySelectorAll(".neo-recipes-card-cover"));
+    const covers = Array.from(panel.querySelectorAll(".neo-recipes-card-media"));
     assert.equal(covers.length, 2, "两个配方卡片");
 
     // 多段导演配方（第一个）：点缩略图 → 打开编辑器浮层，不打开详情
@@ -147,8 +147,8 @@ test("配方卡片：多段导演配方正文显示摘要行（代替无提示�
 
     const panel = await createRecipesPanel();
     document.body.appendChild(panel);
-    const meta = panel.querySelector(".neo-recipes-card-meta");
-    assert.equal(meta.textContent, "2 段 · 图生视频 · 技能 A ×2 · 960×544 · 总时长 10s", "多段导演卡片正文显示摘要行");
+    const meta = panel.querySelector(".neo-recipes-card-summary");
+    assert.equal(meta.textContent, "2 段 · 图生视频 · 技能 A ×2 · 960×544 · 总时长 10s", "多段导演卡片摘要行（折叠区）显示概览");
 });
 
 
@@ -266,11 +266,67 @@ test("卡片封面：图片走缩略图 URL，懒加载；无资源时占位符"
 
     const panel = await createRecipesPanel();
     document.body.appendChild(panel);
-    const covers = [...panel.querySelectorAll(".neo-recipes-card-cover")];
+    const covers = [...panel.querySelectorAll(".neo-recipes-card-media")];
     const img = covers[0].querySelector("img");
-    assert.match(img.src, /\/rs_recipes\/thumbnail\?recipe=[^&]*&file=cover\.png&size=112/, "封面用 112px 缩略图");
+    assert.match(img.src, /\/rs_recipes\/thumbnail\?recipe=[^&]*&file=cover\.png&size=256/, "封面用 256px 缩略图");
     assert.equal(img.getAttribute("loading"), "lazy", "封面懒加载");
     assert.ok(covers[1].querySelector(".neo-recipes-card-no-cover"), "无资源配方显示占位符");
+});
+
+
+test("卡片媒体区：导演配方显示各段首帧网格，普通配方多图示例", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        {
+            name: "dir-frames", type: "video_director", source: "custom", prompt: "", assets: [], samples: [],
+            segments: [
+                { skill_id: "s", first_frame: "f1.png" },
+                { skill_id: "s", first_frame: "f2.png" },
+                { skill_id: "s", first_frame: "f3.png" },
+            ],
+        },
+        {
+            name: "multi-sample", source: "custom", prompt: "", cover: null, assets: [],
+            samples: [{ kind: "image", file: "s1.png" }, { kind: "image", file: "s2.png" }],
+        },
+    ]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    const medias = [...panel.querySelectorAll(".neo-recipes-card-media")];
+    assert.equal(medias[0].querySelectorAll("img").length, 3, "导演配方显示 3 张首帧");
+    assert.match(medias[0].querySelector("img").src, /file=f1\.png&size=192/, "首帧用 192px 缩略图");
+    assert.equal(medias[1].querySelectorAll("img").length, 2, "多图示例显示 2 张");
+    assert.ok(!medias[1].classList.contains("single"), "多图不套用单张横幅样式");
+});
+
+test("卡片按钮：主操作直接展示，其余收进 ⋯ 更多菜单", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        { name: "normal-custom", source: "custom", prompt: "hello", assets: [], samples: [] },
+    ]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    const card = panel.querySelector(".neo-recipes-card");
+    assert.ok(card.querySelector(".neo-recipes-send"), "发送为直接按钮");
+    assert.ok(card.querySelector(".neo-recipes-copy"), "复制为直接按钮");
+    const directBtns = [...card.querySelectorAll(".neo-recipes-card-actions > button")];
+    assert.equal(directBtns.length, 2, "仅 2 个直接按钮 + ⋯");
+    const moreBtn = card.querySelector(".neo-recipes-more");
+    assert.ok(moreBtn, "有 ⋯ 更多按钮");
+    moreBtn.click();
+    await sleep(20);
+    const menu = card.querySelector(".neo-recipes-more-menu");
+    assert.ok(menu.classList.contains("open"), "点击 ⋯ 展开菜单");
+    const items = [...menu.querySelectorAll(".neo-recipes-more-item")].map(e => e.textContent);
+    assert.ok(items.some(t => t.includes("追加")), "菜单含「追加」");
+    assert.ok(items.some(t => t.includes("导出")), "菜单含「导出」");
+    assert.ok(items.some(t => t.includes("删除")), "菜单含「删除」");
 });
 
 
@@ -292,7 +348,7 @@ test("工具条：搜索/筛选/排序即时生效并持久化到 prefs", async 
 
     const panel = await createRecipesPanel();
     document.body.appendChild(panel);
-    const cardNames = () => [...panel.querySelectorAll(".neo-recipes-card-name")].map(e => e.textContent);
+    const cardNames = () => [...panel.querySelectorAll(".neo-recipes-card-name")].map(e => e.querySelector("span").textContent);
     const chip = (label) => [...panel.querySelectorAll(".neo-recipes-tools .neo-recipes-chip")].find(e => e.textContent === label);
     assert.deepEqual(cardNames(), ["alpha 普通", "beta 导演", "gamma 预设"], "默认全部显示");
 

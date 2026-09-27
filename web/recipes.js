@@ -896,6 +896,11 @@ export async function createRecipesPanel() {
     const listEl = $el('div', { className: 'neo-recipes-list' });
     root.appendChild(listEl);
 
+    // 卡片「⋯ 更多」菜单：点外部或 Esc 关闭（面板级，避免每卡各挂监听）
+    const closeMoreMenus = () => root.querySelectorAll('.neo-recipes-more-menu.open').forEach(m => m.classList.remove('open'));
+    document.addEventListener('click', (e) => { if (!root.contains(e.target)) closeMoreMenus(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMoreMenus(); });
+
     /** 详情浮层：完整标题 + 完整提示词 + 资源网格（视频可预览）+ 示例结果 + 发送入口。Esc 关闭，焦点管理。 */
     function openDetail(r, opener) {
         document.querySelector('.neo-recipes-detail')?.remove();
@@ -1128,151 +1133,97 @@ export async function createRecipesPanel() {
             onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r, card); } },
         });
 
-        // 多段导演配方：点缩略图直接进编辑器（跳过详情）；普通配方仍打开详情
-        const cover = $el('div', {
-            className: 'neo-recipes-card-cover',
-            title: r.type === 'video_director' ? '编辑多段导演配方' : '查看资源',
-            onclick: (e) => { e.stopPropagation(); if (r.type === 'video_director') openDirectorEditor(r, renderList); else openDetail(r, cover); }
+        // 媒体区：通栏。普通配方=封面/示例缩略图（单张横幅，多张网格）；导演配方=各段首帧网格
+        const isDirector = r.type === 'video_director';
+        const media = $el('div', {
+            className: 'neo-recipes-card-media',
+            title: isDirector ? '编辑多段导演配方' : '查看资源',
+            onclick: (e) => { e.stopPropagation(); if (isDirector) openDirectorEditor(r, renderList); else openDetail(r, card); }
         });
-        const coverFile = r.cover
-            || (r.samples || []).find(s => s.kind === 'image')?.file
-            || (r.assets || []).find(a => a.kind === 'image')?.file
-            || (r.assets || []).find(a => a.kind === 'video')?.file
-            || null;
-        if (coverFile) {
-            // 封面走缩略图（112px JPEG，懒加载）；生成失败回退原图
-            const img = $el('img', { src: thumbUrl(r.name, coverFile, '', 112), alt: r.name, loading: 'lazy' });
-            let fellBack = false;
-            img.addEventListener('error', () => { if (fellBack) return; fellBack = true; img.src = assetUrl(r.name, coverFile); });
-            cover.appendChild(img);
+        const mediaTiles = [];
+        const addTile = (file, dir) => {
+            const img = $el('img', { src: thumbUrl(r.name, file, dir, isDirector ? 192 : 256), alt: r.name, loading: 'lazy' });
+            let fb = false;
+            img.addEventListener('error', () => { if (fb) return; fb = true; img.src = assetUrl(r.name, file, dir); });
+            mediaTiles.push(img);
+        };
+        if (isDirector) {
+            const frames = (r.segments || []).map(s => s.first_frame).filter(Boolean);
+            for (const f of frames.slice(0, 9)) addTile(f, '');
+            if (!frames.length) mediaTiles.push($el('div', { className: 'neo-recipes-card-no-cover', textContent: '🎬' }));
         } else {
-            cover.appendChild($el('div', { className: 'neo-recipes-card-no-cover', textContent: r.assets?.length ? '🎬' : '📝' }));
+            const files = [];
+            if (r.cover) files.push([r.cover, '']);
+            for (const s of (r.samples || [])) if ((s.kind === 'image' || s.kind === 'video') && s.file !== r.cover) files.push([s.file, 'samples']);
+            if (!files.length) {
+                const a = (r.assets || []).find(a => a.kind === 'image') || (r.assets || []).find(a => a.kind === 'video');
+                if (a) files.push([a.file, '']);
+            }
+            for (const [f, dir] of files.slice(0, 4)) addTile(f, dir);
+            if (!files.length) mediaTiles.push($el('div', { className: 'neo-recipes-card-no-cover', textContent: r.assets?.length ? '🎬' : '📝' }));
         }
-        if (r.type === 'video_director') {
-            cover.appendChild($el('div', { className: 'neo-recipes-card-badge', textContent: '🎬 多段' }));
-        }
+        media.append(...mediaTiles);
+        if (mediaTiles.length === 1 && mediaTiles[0].tagName === 'IMG') media.classList.add('single');
 
-        // 正文：名称 + 信息 chips（预设/资源/示例/结果）+ 摘要行（导演配方）或提示词预览
-        const summary = r.type === 'video_director' && (r.segments || []).length ? directorMetaText(r, skills) : '';
+        // 标题在图片上方，导演配方带「🎬 导演」标签
+        const nameEl = $el('div', { className: 'neo-recipes-card-name' }, [
+            $el('span', { textContent: r.name }),
+            ...(isDirector ? [$el('span', { className: 'neo-recipes-card-badge', textContent: '🎬 导演' })] : [])
+        ]);
+        nameEl.title = '查看资源';
+        nameEl.onclick = (e) => { e.stopPropagation(); openDetail(r, card); };
+
+        // 正文：信息 chips（预设/资源/示例/结果）+ 摘要折叠（导演）或提示词预览
         const chips = [];
         if (r.source === 'preset') chips.push('预设');
-        if (r.asset_count) chips.push(`${r.asset_count} 个资源`);
         if (r.sample_count) chips.push(`${r.sample_count} 个示例`);
         if (r.result_count) chips.push(`${r.result_count} 个结果`);
+        let summaryWrap = null;
+        if (isDirector && (r.segments || []).length) {
+            summaryWrap = $el('div', { className: 'neo-recipes-card-summary', textContent: directorMetaText(r, skills) });
+        }
         const body = $el('div', { className: 'neo-recipes-card-body' }, [
-            $el('div', { className: 'neo-recipes-card-name', textContent: r.name, title: '查看资源', onclick: (e) => { e.stopPropagation(); openDetail(r, card); } }),
             ...(chips.length ? [$el('div', { className: 'neo-recipes-card-chips' }, chips.map(c => $el('span', { className: 'neo-recipes-chip', textContent: c })))] : []),
-            $el('div', { className: 'neo-recipes-card-meta', textContent: summary || (r.prompt || '').slice(0, 120) || '无提示词' })
+            summaryWrap || $el('div', { className: 'neo-recipes-card-meta', textContent: (r.prompt || '').slice(0, 120) || '无提示词' })
         ]);
-
-        const top = $el('div', { className: 'neo-recipes-card-top' }, [cover, body]);
-        const actions = $el('div', { className: 'neo-recipes-card-actions' });
-        const exportBtn = $el('button', {
-            className: 'rs-btn rs-action-btn neo-recipes-export',
-            title: '导出为 zip 包（含 Readme.txt）',
-            textContent: '⬇️',
-            onclick: async () => {
-                try {
-                    const res = await fetch(`/rs_recipes/export?name=${encodeURIComponent(r.name)}`);
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const url = URL.createObjectURL(await res.blob());
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${r.name}.zip`;
-                    a.click();
-                    setTimeout(() => URL.revokeObjectURL(url), 1000);
-                } catch (err) {
-                    app.extensionManager.toast.add({ severity: 'error', summary: '导出失败', detail: String(err), life: 4000 });
-                }
-            }
-        });
-        actions.append(exportBtn);
-        if (r.source !== 'preset') {
-            const appendBtn = $el('button', {
-                className: 'rs-btn rs-action-btn neo-recipes-append',
-                title: '把当前工作流最近一次执行的输出追加为示例结果',
-                textContent: '📥',
-                onclick: async (e) => {
-                    e.stopPropagation();
-                    appendBtn.disabled = true;
-                    const results = collectWorkflowResults();
-                    const res = await appendResultsToRecipe(r.name, results);
-                    appendBtn.disabled = false;
-                    if (res?.success) {
-                        app.extensionManager.toast.add({ severity: res.added ? 'success' : 'info', summary: '示例结果追加', detail: `${r.name}：新增 ${res.added}，跳过重复 ${res.skipped}`, life: 4000 });
-                        await renderList();
-                    } else {
-                        app.extensionManager.toast.add({ severity: 'error', summary: '追加失败', detail: res?.error || 'Unknown error', life: 4000 });
-                    }
-                }
-            });
-            actions.append(appendBtn);
-        }
-
-        // 多段导演配方由 NeoH3VideoDirector 节点按名称消费，无法走「发送到工作流」还原
+        // 操作：主操作（发送/编辑 + 复制）直接展示，其余收进 ⋯ 更多菜单
+        const direct = [];
+        const more = [];
         if (r.type !== 'video_director') {
-            const sendBtn = $el('button', {
-                className: 'rs-btn rs-action-btn neo-recipes-send',
-                title: '一键发送到工作流',
-                textContent: '✈️',
-                onclick: async (e) => {
-                    e.stopPropagation();
-                    sendBtn.disabled = true;
-                    const ok = await applyRecipeToWorkflow(r);
-                    sendBtn.disabled = false;
-                    if (ok) await renderList();
-                }
-            });
-            actions.append(sendBtn);
+            direct.push({ cls: 'neo-recipes-send', icon: '✈️', title: '一键发送到工作流', run: (b) => { b.disabled = true; applyRecipeToWorkflow(r).then(ok => { b.disabled = false; if (ok) renderList(); }); } });
+        } else {
+            direct.push({ cls: 'neo-recipes-edit-director', icon: '✎', title: '编辑多段导演配方', run: () => openDirectorEditor(r, renderList) });
         }
-
-        if (r.type === 'video_director') {
-            const editBtn = $el('button', {
-                className: 'rs-btn rs-action-btn neo-recipes-edit-director',
-                title: '编辑多段导演配方',
-                textContent: '✎',
-                onclick: (e) => { e.stopPropagation(); openDirectorEditor(r, renderList); }
-            });
-            actions.append(editBtn);
+        direct.push({ cls: 'neo-recipes-copy', icon: '⧉', title: '复制配方（生成副本）', run: (b) => { b.disabled = true; copyRecipe(r.name).then(res => { b.disabled = false; if (res?.success) { app.extensionManager.toast.add({ severity: 'success', summary: '配方已复制', detail: `已创建副本「${res.name}」`, life: 4000 }); renderList(); } else app.extensionManager.toast.add({ severity: 'error', summary: '复制失败', detail: res?.error || 'Unknown error', life: 4000 }); }); } });
+        if (r.type !== 'video_director') {
+            more.push({ cls: 'neo-recipes-append', icon: '📥', title: '追加当前输出为示例结果', run: (b) => { b.disabled = true; const results = collectWorkflowResults(); appendResultsToRecipe(r.name, results).then(res => { b.disabled = false; if (res?.success) { app.extensionManager.toast.add({ severity: res.added ? 'success' : 'info', summary: '示例结果追加', detail: `${r.name}：新增 ${res.added}，跳过重复 ${res.skipped}`, life: 4000 }); renderList(); } else app.extensionManager.toast.add({ severity: 'error', summary: '追加失败', detail: res?.error || 'Unknown error', life: 4000 }); }); } });
         }
-
+        more.push({ cls: 'neo-recipes-export', icon: '⬇️', title: '导出为 zip 包（含 Readme.txt）', run: () => { fetch(`/rs_recipes/export?name=${encodeURIComponent(r.name)}`).then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.blob(); }).then(blob => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${r.name}.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }).catch(err => app.extensionManager.toast.add({ severity: 'error', summary: '导出失败', detail: String(err), life: 4000 })); } });
         if (r.source !== 'preset') {
-            const delBtn = $el('button', {
-                className: 'rs-btn rs-action-btn neo-recipes-delete',
-                title: '删除配方',
-                textContent: '🗑',
-                onclick: async (e) => {
-                    e.stopPropagation();
-                    if (!confirm(`删除配方「${r.name}」？`)) return;
-                    delBtn.disabled = true;
-                    const res = await deleteRecipe(r.name);
-                    delBtn.disabled = false;
-                    if (res?.success) await renderList();
-                    else app.extensionManager.toast.add({ severity: 'error', summary: '删除失败', detail: res?.error || 'Unknown error', life: 4000 });
-                }
-            });
-            actions.append(delBtn);
+            more.push({ cls: 'neo-recipes-delete', icon: '🗑', title: '删除配方', run: (b) => { if (!confirm(`删除配方「${r.name}」？`)) return; b.disabled = true; deleteRecipe(r.name).then(res => { b.disabled = false; if (res?.success) renderList(); else app.extensionManager.toast.add({ severity: 'error', summary: '删除失败', detail: res?.error || 'Unknown error', life: 4000 }); }); } });
         }
 
-        const copyBtn = $el('button', {
-            className: 'rs-btn rs-action-btn neo-recipes-copy',
-            title: '复制配方（生成副本）',
-            textContent: '⧉',
-            onclick: async (e) => {
-                e.stopPropagation();
-                copyBtn.disabled = true;
-                const res = await copyRecipe(r.name);
-                copyBtn.disabled = false;
-                if (res?.success) {
-                    app.extensionManager.toast.add({ severity: 'success', summary: '配方已复制', detail: `已创建副本「${res.name}」`, life: 4000 });
-                    await renderList();
-                } else {
-                    app.extensionManager.toast.add({ severity: 'error', summary: '复制失败', detail: res?.error || 'Unknown error', life: 4000 });
-                }
+        const actions = $el('div', { className: 'neo-recipes-card-actions' });
+        for (const it of direct) {
+            const b = $el('button', { className: `rs-btn rs-action-btn ${it.cls}`, title: it.title, textContent: it.icon });
+            b.onclick = (e) => { e.stopPropagation(); it.run(b); };
+            actions.append(b);
+        }
+        if (more.length) {
+            const wrap = $el('span', { className: 'neo-recipes-more-wrap' });
+            const moreBtn = $el('button', { className: 'rs-btn rs-action-btn neo-recipes-more', title: '更多操作', textContent: '⋯', 'aria-expanded': 'false' });
+            const menu = $el('div', { className: 'neo-recipes-more-menu' });
+            for (const it of more) {
+                const row = $el('button', { className: 'neo-recipes-more-item' });
+                row.append($el('span', { className: 'neo-recipes-more-icon', textContent: it.icon }), $el('span', { textContent: it.title }));
+                row.onclick = (e) => { e.stopPropagation(); menu.classList.remove('open'); moreBtn.setAttribute('aria-expanded', 'false'); it.run(row); };
+                menu.append(row);
             }
-        });
-        actions.append(copyBtn);
-        card.append(top, actions);
+            moreBtn.onclick = (e) => { e.stopPropagation(); const open = menu.classList.toggle('open'); moreBtn.setAttribute('aria-expanded', String(open)); };
+            wrap.append(moreBtn, menu);
+            actions.append(wrap);
+        }
+        card.append(nameEl, media, body, actions);
         return card;
     }
 
@@ -1286,7 +1237,7 @@ export async function createRecipesPanel() {
     ]);
 
     function recipeSig(r) {
-        return [r.cover, r.type, r.asset_count, (r.assets || []).length, r.sample_count, (r.samples || []).length, (r.results || []).length, (r.segments || []).length, (r.prompt || '').slice(0, 200)].join('|');
+        return [r.cover, r.type, r.asset_count, (r.assets || []).length, r.sample_count, (r.samples || []).map(s => s.file).join(','), (r.results || []).length, (r.segments || []).map(s => s.first_frame || '').join(','), (r.prompt || '').slice(0, 200)].join('|');
     }
 
     function cardFor(r) {
