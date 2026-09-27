@@ -4,7 +4,7 @@ import { $el } from "../../../../scripts/ui.js";
 import { GalleryList } from './gallery-list.js';
 import { GalleryCard } from './gallery-card.js';
 import { GallerySetting } from './gallery-setting.js';
-import { createRecipesPanel } from './recipes.js';
+import { getRecipesPanel } from './recipes.js';
 import { attachGalleryNodeDrop } from './gallery-node-drop.js';
 import {
     THUMBNAIL_SIZE_DEFAULT,
@@ -1664,8 +1664,8 @@ app.registerExtension({
                 type: "custom",
                 render: async (el) => {
                     el.innerHTML = "";
-                    const panel = await createRecipesPanel();
-                    el.appendChild(panel);
+                    const panel = await getRecipesPanel();
+                    if (!el.contains(panel)) el.appendChild(panel);
                 },
             });
 

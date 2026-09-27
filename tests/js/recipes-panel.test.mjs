@@ -10,6 +10,14 @@ beforeEach(() => {
     clearRoutes();
 });
 
+function recipeFixture(over = {}) {
+    return {
+        name: "fx-recipe", source: "custom", prompt: "hello world",
+        assets: [{ kind: "image", file: "a.png" }], samples: [], results: [],
+        ...over,
+    };
+}
+
 test("配方列表：多段导演配方点缩略图直接打开编辑器，普通配方仍打开详情", async () => {
     const { createRecipesPanel } = await import("../../web/recipes.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 编辑器无媒体候选
@@ -163,7 +171,7 @@ test("配方详情：结果区按 output 路径渲染，点击打开 Lightbox，
 
     const panel = await createRecipesPanel();
     document.body.appendChild(panel);
-    assert.match(panel.querySelector(".neo-recipes-card-meta").textContent, /1 个结果/, "卡片元信息带结果数");
+    assert.match(panel.querySelector(".neo-recipes-card-chips").textContent, /1 个结果/, "卡片 chips 带结果数");
 
     panel.querySelector(".neo-recipes-card-name").click();
     await sleep(60);
@@ -217,3 +225,156 @@ test("配方详情：🗑 删除结果先 confirm；取消不删，确认后调 
     assert.equal(document.querySelectorAll(".neo-recipes-result-del").length, 0, "删除后详情重渲染，结果区消失");
 });
 
+
+
+
+test("详情浮层：Esc 关闭并移除 overlay", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([recipeFixture()]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    panel.querySelector(".neo-recipes-card-name").click();
+    await sleep(60);
+    assert.ok(document.querySelector(".neo-recipes-detail"), "详情已打开");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await sleep(30);
+    assert.equal(document.querySelector(".neo-recipes-detail"), null, "Esc 关闭详情浮层");
+});
+
+test("thumbUrl：生成 /rs_recipes/thumbnail 查询串（dir 可选）", async () => {
+    const { thumbUrl } = await import("../../web/recipes.js");
+    assert.match(thumbUrl("my recipe", "a b.png", "", 112),
+        /\/rs_recipes\/thumbnail\?recipe=my%20recipe&file=a%20b\.png&size=112$/,
+        "无 dir 时不带 dir 参数");
+    assert.match(thumbUrl("r", "f.jpg", "samples", 256),
+        /\/rs_recipes\/thumbnail\?recipe=r&file=f\.jpg&size=256&dir=samples$/,
+        "有 dir 时追加 dir 参数");
+});
+
+test("卡片封面：图片走缩略图 URL，懒加载；无资源时占位符", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        recipeFixture({ cover: "cover.png" }),
+        recipeFixture({ name: "no-asset", assets: [], samples: [], cover: null }),
+    ]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    const covers = [...panel.querySelectorAll(".neo-recipes-card-cover")];
+    const img = covers[0].querySelector("img");
+    assert.match(img.src, /\/rs_recipes\/thumbnail\?recipe=[^&]*&file=cover\.png&size=112/, "封面用 112px 缩略图");
+    assert.equal(img.getAttribute("loading"), "lazy", "封面懒加载");
+    assert.ok(covers[1].querySelector(".neo-recipes-card-no-cover"), "无资源配方显示占位符");
+});
+
+
+test("工具条：搜索/筛选/排序即时生效并持久化到 prefs", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    let savedPrefs = null;
+    mockRoute("/userdata/neo_recipes_data.json", (body, call) => {
+        if (call.method === "POST") savedPrefs = body;
+        return jsonResponse({ recipes_prefs: null });
+    });
+    const recipes = [
+        recipeFixture({ name: "alpha 普通" }),
+        recipeFixture({ name: "beta 导演", type: "video_director", segments: [{ desc: "海浪" }] }),
+        recipeFixture({ name: "gamma 预设", source: "preset" }),
+    ];
+    mockRoute("/rs_recipes/list", () => jsonResponse(recipes));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    const cardNames = () => [...panel.querySelectorAll(".neo-recipes-card-name")].map(e => e.textContent);
+    const chip = (label) => [...panel.querySelectorAll(".neo-recipes-tools .neo-recipes-chip")].find(e => e.textContent === label);
+    assert.deepEqual(cardNames(), ["alpha 普通", "beta 导演", "gamma 预设"], "默认全部显示");
+
+    // 筛选：仅多段
+    chip("多段").click();
+    await sleep(30);
+    assert.deepEqual(cardNames(), ["beta 导演"], "筛选「多段」只显示导演配方");
+
+    // 搜索（恢复全部后按名称过滤）
+    chip("全部").click();
+    await sleep(30);
+    const search = panel.querySelector(".neo-recipes-search");
+    search.value = "alpha";
+    search.dispatchEvent(new Event("input"));
+    await sleep(260);   // 搜索防抖 200ms
+    assert.deepEqual(cardNames(), ["alpha 普通"], "搜索按名称过滤");
+
+    // 排序：名称升序（清空搜索）
+    search.value = "";
+    search.dispatchEvent(new Event("input"));
+    await sleep(260);
+    const sortSel = panel.querySelector(".neo-recipes-sort");
+    sortSel.value = "name";
+    sortSel.dispatchEvent(new Event("change"));
+    await sleep(30);
+    assert.deepEqual(cardNames(), ["alpha 普通", "beta 导演", "gamma 预设"], "按名称排序（组内升序）");
+
+    // prefs 已防抖持久化
+    await sleep(360);
+    assert.ok(savedPrefs?.recipes_prefs, "prefs 已保存");
+    assert.equal(savedPrefs.recipes_prefs.sort, "name", "排序选择已持久化");
+});
+
+test("分组标题：点击折叠/展开，折叠时隐藏该组卡片", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        recipeFixture({ name: "a" }),
+        recipeFixture({ name: "b 预设", source: "preset" }),
+    ]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    assert.equal(panel.querySelectorAll(".neo-recipes-card").length, 2, "两组都展开");
+
+    const myTitle = [...panel.querySelectorAll(".neo-recipes-group-title")].find(e => e.textContent.includes("我的配方"));
+    myTitle.click();
+    await sleep(30);
+    assert.match(myTitle.textContent, /▸/, "折叠后显示 ▸");
+    assert.equal(panel.querySelectorAll(".neo-recipes-card").length, 1, "折叠「我的配方」后只剩预设组卡片");
+
+    myTitle.click();
+    await sleep(30);
+    assert.equal(panel.querySelectorAll(".neo-recipes-card").length, 2, "再次点击展开");
+});
+
+test("getRecipesPanel：单例复用同一 DOM，重复调用触发刷新", async () => {
+    const { getRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    let listCalls = 0;
+    mockRoute("/rs_recipes/list", () => { listCalls++; return jsonResponse([recipeFixture()]); });
+
+    const p1 = await getRecipesPanel();
+    const p2 = await getRecipesPanel();
+    assert.equal(p1, p2, "两次调用返回同一面板元素");
+    assert.ok(listCalls >= 2, "重复调用触发列表刷新");
+});
+
+test("详情浮层：底部有「复制提示词」按钮，无提示词时禁用", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([recipeFixture({ prompt: "" })]));
+
+    const panel = await createRecipesPanel();
+    document.body.appendChild(panel);
+    panel.querySelector(".neo-recipes-card-name").click();
+    await sleep(60);
+    const copyBtn = document.querySelector(".neo-recipes-detail-copy");
+    assert.ok(copyBtn, "详情底部有复制提示词按钮");
+    assert.equal(copyBtn.disabled, true, "无提示词时禁用");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+});

@@ -11,6 +11,7 @@ import json
 import shutil
 import asyncio
 import datetime
+import hashlib
 import mimetypes
 import tempfile
 import zipfile
@@ -37,12 +38,14 @@ CURRENT_DIR = Path(__file__).parent.resolve()
 RECIPES_DIR = CURRENT_DIR / "recipes"
 CUSTOM_DIR = RECIPES_DIR / "custom"      # 用户保存的配方
 PRESETS_DIR = RECIPES_DIR / "presets"    # 内置预设（只读）
+THUMB_DIR = RECIPES_DIR / ".thumbs"      # 封面/网格缩略图缓存（按内容哈希命名，可整目录删除重建）
+THUMB_SIZE = 256                         # 详情网格尺寸；卡片封面用 112
 
 _sanitize_name_re = re.compile(r"[^\w\- ]+")  # keep letters/digits/_/- and spaces
 
 
 def _ensure_dirs() -> None:
-    for d in (RECIPES_DIR, CUSTOM_DIR, PRESETS_DIR):
+    for d in (RECIPES_DIR, CUSTOM_DIR, PRESETS_DIR, THUMB_DIR):
         d.mkdir(parents=True, exist_ok=True)
     # 旧版直接放在 recipes/ 下的配方目录迁移到 custom/
     for p in RECIPES_DIR.iterdir():
@@ -64,6 +67,23 @@ def _find_recipe_dir(name: str) -> Path | None:
         if (base / name / "recipe.json").is_file():
             return base / name
     return None
+
+
+def _recipe_asset_path(recipe_dir: Path, file: str, dir_param: str) -> Path | None:
+    """配方资产的物理路径：dir=samples 只读示例结果；未指定时 assets 优先、samples 兜底。"""
+    search_dirs = [recipe_dir / "samples"] if dir_param == "samples" else [recipe_dir / "assets", recipe_dir / "samples"]
+    for base in search_dirs:
+        candidate = base / file
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _recipe_thumb_path(source_path: Path, size: int) -> Path:
+    """缩略图缓存路径：源文件绝对路径 + 大小 + mtime 参与哈希，覆盖写入后旧缓存自然失效。"""
+    stat = source_path.stat()
+    key = f"{source_path.resolve().as_posix()}|{stat.st_size}|{int(stat.st_mtime)}"
+    return THUMB_DIR / f"{hashlib.md5(key.encode()).hexdigest()[:12]}_{size}.jpg"
 
 
 def _kind_of(asset_file: Path) -> str:
@@ -228,7 +248,6 @@ def _copy_ref_into_dir(ref: dict, dest_dir: Path) -> str | None:
         return None
 
     import folder_paths as _folder_paths
-    import hashlib
 
     base_dir = _folder_paths.get_input_directory()
     ftype = ref.get("type", "input")
@@ -1151,15 +1170,7 @@ async def rs_recipes_asset(request):
 
     dir_param = request.rel_url.query.get("dir", "")
     recipe_dir = _find_recipe_dir(recipe)
-    asset_path = None
-    if recipe_dir is not None:
-        # dir=samples 读示例结果；未指定时先 assets 后 samples 兜底
-        search_dirs = [recipe_dir / "samples"] if dir_param == "samples" else [recipe_dir / "assets", recipe_dir / "samples"]
-        for base in search_dirs:
-            candidate = base / file
-            if candidate.is_file():
-                asset_path = candidate
-                break
+    asset_path = _recipe_asset_path(recipe_dir, file, dir_param) if recipe_dir is not None else None
     if asset_path is None:
         return web.Response(status=404)
 
@@ -1174,6 +1185,35 @@ async def rs_recipes_asset(request):
 
     with open(asset_path, "rb") as f:
         return web.Response(body=f.read(), content_type=content_type)
+
+
+@PromptServer.instance.routes.get("/rs_recipes/thumbnail")
+async def rs_recipes_thumbnail(request):
+    """配方封面/网格缩略图：命中缓存直接回 JPEG，未命中现生成（gallery 的 PIL / ffmpeg 通道）。"""
+    recipe = request.rel_url.query.get("recipe", "")
+    file = request.rel_url.query.get("file", "")
+    if not recipe or not file or ".." in recipe or ".." in file or "/" in file or "\\" in file:
+        return web.Response(status=400)
+
+    recipe_dir = _find_recipe_dir(recipe)
+    asset_path = _recipe_asset_path(recipe_dir, file, request.rel_url.query.get("dir", "")) if recipe_dir is not None else None
+    if asset_path is None:
+        return web.Response(status=404)
+
+    try:
+        size = max(32, min(int(request.rel_url.query.get("size", THUMB_SIZE)), 1024))
+    except ValueError:
+        size = THUMB_SIZE
+
+    thumb_path = _recipe_thumb_path(asset_path, size)
+    if not thumb_path.is_file():
+        from .gallery import _generate_thumbnail   # 循环导入约束：函数内延迟导入
+        if not _generate_thumbnail(asset_path, thumb_path, size):
+            return web.Response(status=404)
+
+    with open(thumb_path, "rb") as f:
+        return web.Response(body=f.read(), content_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @PromptServer.instance.routes.get("/rs_recipes/workflow")

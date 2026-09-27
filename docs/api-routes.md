@@ -58,6 +58,7 @@ grid/character 预设下载缓存在 `output/StoryBoard/presets/`、`output/Char
 | GET | `/rs_recipes/export` | 导出整个配方为 zip（顶层目录 = 配方名），包内附 `Readme.txt`（包内容 / 快速应用说明；中/英按远程配置 `readme_language`，缺省自动判断） |
 | POST | `/rs_recipes/import` | 导入配方 zip（`file` 字段 multipart）：包内须含 `recipe.json`（根目录或唯一顶层目录下），拒绝路径穿越条目；重名自动 `-copy/-2/…`，落盘 `recipes/custom/` |
 | GET | `/rs_recipes/asset` | 配方资源文件 |
+| GET | `/rs_recipes/thumbnail` | 封面/网格缩略图（`recipe`+`file`+可选 `dir`+`size`，钳到 [32,1024]）：命中 `recipes/.thumbs/` 缓存直接回 JPEG，未命中现生成；带 immutable 缓存头 |
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |
 | GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（每段首帧/尾帧与参考图·视频·音频均已解析为 input 名，并给出有效生成模式 `mode`）；配方有「角色参考图」且未关掉身份参考时另带 `identity_images[]`（≤4，视频段身份参考） |

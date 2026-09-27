@@ -12,9 +12,71 @@
 
 .neo-recipes-header {
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.neo-recipes-title-row {
+    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.neo-recipes-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #ddd;
+    background: #262626;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+}
+
+.neo-recipes-search::placeholder {
+    color: #777;
+}
+
+.neo-recipes-tools {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.neo-recipes-sort {
+    margin-left: auto;
+    padding: 2px 4px;
+    font-size: 11px;
+    color: #ccc;
+    background: #262626;
+    border: 1px solid #3a3a3a;
+    border-radius: 5px;
+}
+
+.neo-recipes-chip {
+    padding: 2px 8px;
+    font-size: 11px;
+    color: #9aa4b0;
+    background: #262626;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+}
+
+.neo-recipes-tools .neo-recipes-chip {
+    cursor: pointer;
+}
+
+.neo-recipes-tools .neo-recipes-chip:hover {
+    color: #ddd;
+    border-color: #555;
+}
+
+.neo-recipes-chip-active {
+    color: #fff;
+    background: #2f4358;
+    border-color: #3d6a9e;
 }
 
 .neo-recipes-title {
@@ -41,6 +103,12 @@
     border-radius: 8px;
 }
 
+.neo-recipes-empty-hint {
+    font-size: 10px;
+    color: #666;
+    margin-top: 4px;
+}
+
 .neo-recipes-card {
     display: flex;
     flex-direction: column;
@@ -49,6 +117,11 @@
     background: #1e1e1e;
     border: 1px solid #333;
     border-radius: 8px;
+}
+
+.neo-recipes-card:focus-visible {
+    outline: 2px solid #3d6a9e;
+    outline-offset: 1px;
 }
 
 .neo-recipes-card-top {
@@ -134,6 +207,12 @@
     word-break: break-all;
 }
 
+.neo-recipes-card-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
 .neo-recipes-send {
     cursor: pointer;
     flex-shrink: 0;
@@ -156,6 +235,12 @@
     color: #9aa4b0;
     margin: 10px 4px 6px;
     letter-spacing: .5px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--comfy-bg-color, #181818);
+    cursor: pointer;
+    user-select: none;
 }
 
 /* 侧边栏标题的配方立方体图标 */
@@ -227,6 +312,11 @@
     align-items: baseline;
     gap: 8px;
     flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #1e1e1e;
+    padding: 0 0 6px;
 }
 
 .neo-recipes-detail-name {
@@ -394,11 +484,17 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: #1e1e1e;
+    padding: 6px 0 0;
 }
 
 .neo-recipes-detail-send,
 .neo-recipes-detail-close,
-.neo-recipes-detail-edit {
+.neo-recipes-detail-edit,
+.neo-recipes-detail-copy {
     cursor: pointer;
 }
 
