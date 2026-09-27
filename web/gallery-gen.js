@@ -1,6 +1,6 @@
 /**
  * Gallery 素材卡片「一键生成」：角色图（多视图）与九宫格分镜图的请求体、弹窗 UI 与生成流程。
- * 从 gallery-card.js 拆出，固定走 Qwen Image 2.1 预设；输出分别落 Output/CharacterSheet 与 Output/StoryBoard。
+ * 从 gallery-card.js 拆出，固定走 Qwen Image 2.1 预设；输出分别落 Output/character 与 Output/grid。
  */
 
 import { $el } from "../../../../scripts/ui.js";
@@ -17,10 +17,10 @@ import { invokePromptStream } from "./prompt-service.js";
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
 // 用所选人像作参考图生成四视图角色设定图，供拖入导演配方的 👤 角色参考图。
 const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人物，在一张横版画面中生成四个视图横向并排的角色设定图：第一格为大头特写（肩部以上，突出五官脸型），第二格为正面全身站立，第三格为侧面全身站立，第四格为背面全身站立。严格保持与参考图一致的五官脸型、发型发色、服装配饰和体型比例；全身视图中人物自然站立，双臂下垂，纯白背景，均匀柔光，写实摄影风格，高清细节，画面内不出现文字标注。";
-// 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
-const CHARACTER_SHEET_DIR = "CharacterSheet";
+// 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/character 下。
+const CHARACTER_SHEET_DIR = "character";
 
-/** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（输出尺寸按 16 对齐）；输出走独立 CharacterSheet 目录 */
+/** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（输出尺寸按 16 对齐）；输出走独立 character 目录 */
 export function buildCharacterSheetRequest(refName) {
     return {
         skill_id: QWEN_IMAGE_SKILL_ID,
@@ -36,16 +36,16 @@ export function buildCharacterSheetRequest(refName) {
 
 // 一键宫格分镜图：原图当参考 + 宫格指令出 N 格故事板，供导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧。
 // 每格保持约 16:9（够拆完当视频首帧），按布局调整体宽高；默认 6 宫格（2×3）。
-const STORYBOARD_DIR = "StoryBoard";
+const STORYBOARD_DIR = "grid";
 const STORYBOARD_GRID_OPTIONS = [4, 6, 9];
 const STORYBOARD_DEFAULT_GRIDS = 6;
-// 各宫格数对应的布局与画布尺寸（每格约 16:9）：4=2×2、6=2×3、9=3×3。
+// 各宫格数对应的布局与画布尺寸（每格约 16:9）：4=2列×2行、6=3列×2行、9=3列×3行。
 const STORYBOARD_LAYOUTS = {
     4: { rows: 2, cols: 2, width: 2048, height: 1152 },   // 每格约 1024×576
     6: { rows: 2, cols: 3, width: 2048, height: 768 },    // 每格约 683×384
     9: { rows: 3, cols: 3, width: 2048, height: 1152 },   // 每格约 683×384
 };
-const STORYBOARD_GRID_LABELS = { 4: "2×2 四宫格", 6: "2×3 六宫格", 9: "3×3 九宫格" };
+const STORYBOARD_GRID_LABELS = { 4: "2列×2行 四宫格", 6: "3列×2行 六宫格", 9: "3列×3行 九宫格" };
 // 小窗里的参考图预览尺寸（px，走 /neo_gallery/thumbnail 缓存，不为预览另存大图）
 const STORYBOARD_PREVIEW_SIZE = 480;
 // 宫格故事生成任务（skills/tasks/storyboard_story）：简要故事 / 想法 + 参考图 → 逐格推进的故事
@@ -59,13 +59,14 @@ function _normalizeGrids(count) {
  * qwen_image21 分词器会为每张参考图插字面量 <imageN>，所以提示词里可以直接写 <image1>。 */
 export function buildStoryboardGridPrompt(story, count = STORYBOARD_DEFAULT_GRIDS) {
     const n = _normalizeGrids(count);
-    return `一张 ${STORYBOARD_GRID_LABELS[n]}分镜故事板（${n}-panel storyboard sheet），按阅读顺序（从左到右、从上到下，第 1 格到第 ${n} 格）讲述以下故事：\n`
+    const layout = STORYBOARD_LAYOUTS[n];
+    return `一张 ${STORYBOARD_GRID_LABELS[n]}分镜故事板（${n}-panel storyboard sheet），布局为 ${layout.cols} 列 × ${layout.rows} 行（每行 ${layout.cols} 格，共 ${layout.rows} 行），按阅读顺序（从左到右、从上到下，第 1 格到第 ${n} 格）讲述以下故事：\n`
         + story + "\n"
-        + "参考图 <image1> 里的人物就是故事主角：所有格子保持与参考图一致的五官脸型、发型发色、服装配饰与体型比例，场景与画风统一。\n"
-        + "要求：每格一个镜头，叙事逐格推进；格子之间用均匀细白缝分隔，便于后续自动切分；格子内不出现任何文字、字幕或编号。";
+        + `参考图 <image1> 里的人物就是故事主角：所有格子保持与参考图一致的五官脸型、发型发色、服装配饰与体型比例，场景与画风统一。\n`
+        + `要求：布局严格为 ${layout.cols} 列 × ${layout.rows} 行的网格；每格一个镜头，叙事逐格推进；格子之间用均匀细白缝分隔，便于后续自动切分；格子内不出现任何文字、字幕或编号。`;
 }
 
-/** 一键宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 宫格指令；输出走独立 StoryBoard 目录 */
+/** 一键宫格分镜图的生图请求体（/neo_image_gen/generate）：Qwen Image 2.1 + 卡片原图作参考图 + 宫格指令；输出走独立 grid 目录 */
 export function buildStoryboardGridRequest(refName, story, count = STORYBOARD_DEFAULT_GRIDS) {
     const n = _normalizeGrids(count);
     const layout = STORYBOARD_LAYOUTS[n];
@@ -117,7 +118,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "将基于这张人像生成头特写 / 正面 / 侧面 / 背面四视图，输出到 Output/CharacterSheet。" }));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "将基于这张人像生成头特写 / 正面 / 侧面 / 背面四视图，输出到 Output/character。" }));
         fill(actionsBox, btn("取消", close), btn("生成", start, true));
     };
 
@@ -240,9 +241,9 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     });
     // 宫格数：4 / 6 / 9（默认 6），决定生图布局与 LLM 故事的格数
     const gridSel = $el("select", { className: "neo-gallery-story-grid" }, [
-        $el("option", { value: "4", textContent: "4 宫格（2×2）" }),
-        $el("option", { value: "6", textContent: "6 宫格（2×3）" }),
-        $el("option", { value: "9", textContent: "9 宫格（3×3）" }),
+        $el("option", { value: "4", textContent: "4 宫格（2列×2行）" }),
+        $el("option", { value: "6", textContent: "6 宫格（3列×2行）" }),
+        $el("option", { value: "9", textContent: "9 宫格（3列×3行）" }),
     ]);
     gridSel.value = String(STORYBOARD_DEFAULT_GRIDS);
     // 表单整块（故事框 + 提示 + 宫格数 + 简要故事框）：生成中被下面的进度/结果区整块替换

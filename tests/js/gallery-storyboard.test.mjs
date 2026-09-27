@@ -39,18 +39,18 @@ function openMenu(card, gallery) {
     card._showCollectMenu(gallery, { name: "shot", filename: "shot.png" }, "", "Output", anchor);
 }
 
-test("buildStoryboardGridRequest：默认 6 宫格（2×3），Qwen Image 2.1 + 原图参考 + StoryBoard 目录", async () => {
+test("buildStoryboardGridRequest：默认 6 宫格（3列×2行），Qwen Image 2.1 + 原图参考 + StoryBoard 目录", async () => {
     const { buildStoryboardGridRequest, buildStoryboardGridPrompt } = await import("../../web/gallery-gen.js");
     const body = buildStoryboardGridRequest("NeoAgent/portrait.png", STORY);
     assert.equal(body.skill_id, "qwen_image_21");
     assert.equal(body.width, 2048);   // 每格约 683×384（16:9）
-    assert.equal(body.height, 768);   // 默认 6 宫格（2×3）
+    assert.equal(body.height, 768);   // 默认 6 宫格（3列×2行）
     assert.deepEqual(body.references, [{ kind: "input", value: "NeoAgent/portrait.png" }]);
     assert.deepEqual(body.loras, []);
     assert.equal(body.skip_enhance, true);
-    assert.equal(body.output_prefix, "StoryBoard");
-    assert.equal(body.prompt, buildStoryboardGridPrompt(STORY));   // 默认同 6 宫格
+    assert.equal(body.output_prefix, "grid");
     assert.match(body.prompt, /六宫格/);
+    assert.match(body.prompt, /3 列 × 2 行/);
     assert.match(body.prompt, /第 1 格到第 6 格/);
     assert.match(body.prompt, /雨夜的地铁口/);  // 故事原文进提示词
     assert.match(body.prompt, /<image1>/);     // 身份锚定：qwen_image21 分词器为每张参考图插字面量 <imageN>
@@ -61,13 +61,15 @@ test("buildStoryboardGridRequest：4 / 9 宫格布局与提示词", async () => 
     const { buildStoryboardGridRequest } = await import("../../web/gallery-gen.js");
     const b4 = buildStoryboardGridRequest("p.png", STORY, 4);
     assert.equal(b4.width, 2048);
-    assert.equal(b4.height, 1152);   // 2×2，每格约 1024×576
+    assert.equal(b4.height, 1152);   // 2列×2行，每格约 1024×576
     assert.match(b4.prompt, /四宫格/);
+    assert.match(b4.prompt, /2 列 × 2 行/);
     assert.match(b4.prompt, /第 1 格到第 4 格/);
     const b9 = buildStoryboardGridRequest("p.png", STORY, 9);
     assert.equal(b9.width, 2048);
-    assert.equal(b9.height, 1152);   // 3×3，每格约 683×384
+    assert.equal(b9.height, 1152);   // 3列×3行，每格约 683×384
     assert.match(b9.prompt, /九宫格/);
+    assert.match(b9.prompt, /3 列 × 3 行/);
     assert.match(b9.prompt, /第 1 格到第 9 格/);
 });
 
@@ -122,7 +124,7 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.equal(copy.query.get("filename"), "shot.png");
     assert.ok(body, "应发出 /neo_image_gen/generate 请求");
     assert.equal(body.skill_id, "qwen_image_21");
-    assert.equal(body.output_prefix, "StoryBoard");
+    assert.equal(body.output_prefix, "grid");
     assert.deepEqual(body.references, [{ kind: "input", value: "shot.png" }]);
     assert.match(body.prompt, /雨夜的地铁口/);
 

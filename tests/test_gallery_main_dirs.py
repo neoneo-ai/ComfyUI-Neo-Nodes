@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Grid / Character 主目录：OSS 预设分类与只读预设入口（离线单测）。
 
-主目录是 output 下的子目录（StoryBoard / CharacterSheet），把「可写的生成结果
+主目录是 output 下的子目录（grid / character），把「可写的生成结果
 （<日期>/）」与「只读的 OSS 预设缓存（presets/<远端目录>/）」放在同一棵树里；
 分类归属决定预设出现在哪个目录（旧的 Cloud Presets / Grid / Character），历史
 索引（没有 categories）必须继续按老行为工作。
@@ -99,8 +99,8 @@ if _prev_folder_paths is None:
 else:
     sys.modules["folder_paths"] = _prev_folder_paths
 
-GRID_DIR = Path(_OUTPUT) / "StoryBoard"
-CHARACTER_DIR = Path(_OUTPUT) / "CharacterSheet"
+GRID_DIR = Path(_OUTPUT) / "grid"
+CHARACTER_DIR = Path(_OUTPUT) / "character"
 gallery.GRID_DIR = GRID_DIR
 gallery.CHARACTER_DIR = CHARACTER_DIR
 gallery._MAIN_DIRS = {
@@ -190,9 +190,9 @@ class OssCategoryTests(unittest.TestCase):
 
     def test_cache_dir_per_category(self):
         self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_GRID),
-                         Path(_OUTPUT) / "StoryBoard" / "presets")
+                         Path(_OUTPUT) / "grid" / "presets")
         self.assertEqual(_oss._get_oss_cache_dir(_oss.OSS_CATEGORY_CHARACTER),
-                         Path(_OUTPUT) / "CharacterSheet" / "presets")
+                         Path(_OUTPUT) / "character" / "presets")
 
     def test_legacy_presets_lookup_does_not_leak_other_categories(self):
         prev = _oss._oss_index_cache
@@ -542,7 +542,7 @@ class RecentDirSortTests(unittest.TestCase):
         self.assertEqual(list(other["subdirs"]), ["2026-09-20", "2026-09-22", "2026-09-24", "2026-09-26"])
 
     def test_home_listing_has_no_main_dir_cards(self):
-        self._touch(Path(_OUTPUT) / "CharacterSheet" / "sheet.png", 2000)
+        self._touch(Path(_OUTPUT) / "character" / "sheet.png", 2000)
         self._touch(CHARACTER_DIR / "2026-09-25" / "newest.png", 3000)
         _write(GRID_DIR / "presets" / "风格" / "a.png")  # 只读缓存不算内容
 
@@ -556,12 +556,12 @@ class RecentDirSortTests(unittest.TestCase):
 
 
     def test_home_output_card_uses_the_newest_images_as_covers(self):
-        self._touch(Path(_OUTPUT) / "CharacterSheet" / "old.png", 1000)
-        self._touch(Path(_OUTPUT) / "StoryBoard" / "new.png", 3000)
+        self._touch(Path(_OUTPUT) / "character" / "old.png", 1000)
+        self._touch(Path(_OUTPUT) / "grid" / "new.png", 3000)
 
         out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs,covers"}))))
         covers = out["covers"]
 
         # 系统目录（Output）卡封面取最新两张，subfolder 保持相对 output 的既有约定
         self.assertEqual([c["filename"] for c in covers["Output"]], ["new.png", "old.png"])
-        self.assertEqual([c["subfolder"] for c in covers["Output"]], ["StoryBoard", "CharacterSheet"])
+        self.assertEqual([c["subfolder"] for c in covers["Output"]], ["grid", "character"])

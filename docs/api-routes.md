@@ -35,7 +35,7 @@
 
 `index.json` 顶层可选的 `categories`（`{"grid": [...], "character": [...]}`）把远端目录归到主目录的
 只读预设区；未归类的目录仍留在旧版 **Cloud Presets**（没有 `categories` 的旧索引行为不变）。
-grid/character 预设下载缓存在 `output/StoryBoard/presets/`、`output/CharacterSheet/presets/`。
+grid/character 预设下载缓存在 `output/grid/presets/`、`output/character/presets/`。
 
 | 方法 | 路由 | 说明 |
 |------|------|------|

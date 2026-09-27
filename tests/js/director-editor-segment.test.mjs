@@ -3437,6 +3437,16 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
     assert.equal(kids[0], libBtn, "操作条第一个是「宫格素材库」");
     assert.equal(kids[1], plusBtn, "操作条第二个是「+」");
 
+    // 「+」随角色参考图可用性联动：无图禁用，拖入角色图后启用
+    assert.equal(plusBtn.disabled, true, "无角色参考图时「+」禁用");
+    const charGrid = document.querySelector(".neo-director-story-refs .neo-director-refpick-grid");
+    const charDt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"char_a.png","subfolder":""}' : "") };
+    const charDropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(charDropEv, "dataTransfer", { value: charDt, configurable: true });
+    charGrid.dispatchEvent(charDropEv);
+    await sleep(40);
+    assert.equal(plusBtn.disabled, false, "有角色参考图时「+」可用");
+
     const fileInput = drop.querySelector("input[type=file]");
     let fileClicks = 0;
     const origClick = fileInput.click.bind(fileInput);

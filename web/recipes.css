@@ -1527,6 +1527,16 @@
     color: #fff;
 }
 
+.neo-director-storyboard-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.neo-director-storyboard-btn:disabled:hover {
+    background: rgba(0, 0, 0, 0.6);
+    color: #ccc;
+}
+
 /* 首帧候选网格：参照配方详情资产网格，缩略图单选（含「无」项） */
 .neo-director-ff-grid {
     display: grid;

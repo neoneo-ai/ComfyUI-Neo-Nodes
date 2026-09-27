@@ -45,8 +45,8 @@ _OSS_CATEGORY_PATH_PREFIX = {
 # Output main dirs that hold the grid/character content the 素材库 buttons browse.
 # The read-only OSS preset cache lives in their "presets/" subdir.
 OUTPUT_DIR = Path(folder_paths.output_directory).resolve()
-GRID_MAIN_DIR = OUTPUT_DIR / "StoryBoard"
-CHARACTER_MAIN_DIR = OUTPUT_DIR / "CharacterSheet"
+GRID_MAIN_DIR = OUTPUT_DIR / "grid"
+CHARACTER_MAIN_DIR = OUTPUT_DIR / "character"
 
 
 def _oss_index_categories(index: dict) -> dict[str, list[str]]:
@@ -103,7 +103,7 @@ def _get_oss_cache_dir(category: str | None = None) -> Path:
     """Local cache root for downloaded OSS files.
 
     grid/character presets are cached under the output main dirs' read-only
-    "presets/" subdir (output/StoryBoard/presets, output/CharacterSheet/presets);
+    "presets/" subdir (output/grid/presets, output/character/presets);
     everything else keeps the legacy oss_cache location.
     """
     if category == OSS_CATEGORY_GRID:

@@ -41,11 +41,11 @@ THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 WAVEFORM_DIR = GALLERY_DIR / "waveform_cache"  # decoded audio waveform peaks (JSON)
 # Main dirs (Grid / Character): browsable output subdirs. Character images land
-# in output/CharacterSheet, storyboard/grid sheets in output/StoryBoard; each
+# in output/character, storyboard/grid sheets in output/grid; each
 # keeps a read-only "presets/" subfolder for the OSS preset cache.
 OUTPUT_DIR = Path(folder_paths.output_directory).resolve()
-GRID_DIR = OUTPUT_DIR / "StoryBoard"
-CHARACTER_DIR = OUTPUT_DIR / "CharacterSheet"
+GRID_DIR = OUTPUT_DIR / "grid"
+CHARACTER_DIR = OUTPUT_DIR / "character"
 THUMBNAIL_SIZE = 320  # Fixed thumbnail size in pixels
 
 
@@ -971,7 +971,7 @@ async def get_gallery_list(request):
             # anchored with a "Lora/" prefix (same prefix _find_source_media expects).
             lora_anchor = f"Lora/{rel_path_param}" if (is_lora and rel_path_param) else ("Lora" if is_lora else "")
             # Anchor the current level's covers to the dir root as well, so they resolve
-            # when browsing below the top level (e.g. Output/StoryBoard).
+            # when browsing below the top level (e.g. Output/grid).
             _collect_all_dir_covers(covers, target_dir, full_key, 2,
                                     base_subfolder=lora_anchor or rel_path_param)
             

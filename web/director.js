@@ -1577,6 +1577,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         (exStory.characters || []).map(r => r.filename).filter(Boolean),
         null,
         () => {   // 生图模式默认随角色参考图：有图 r2i / 无图 t2i（手动改过后不再跟随）
+            gridSbBtn.disabled = !charRefRow.getSelected().length;   // 「+」宫格按钮随角色图可用性联动
             if (sbModeTouched) return;
             const v = charRefRow.getSelected().length ? 'r2i' : 't2i';
             if (v === sbModeSel.value) return;
@@ -1768,10 +1769,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const gridSrcPicker = buildLocalFilePicker('image/*', (fname) => { setGridSrc(fname); markDirty(); });
     gridSrcDrop.appendChild(gridSrcPicker.input);
     const gridSbBtn = $el('button', { className: 'neo-director-storyboard-btn', title: '基于角色图生成九宫格分镜图', textContent: '+' });
+    gridSbBtn.disabled = !charRefRow.getSelected().length;   // 无角色参考图时禁用（有图才可点）
     gridSbBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const c = charRefRow.getSelected();
-        if (!c.length) { actionToast({ severity: 'warning', summary: '请先上传角色参考图' }); return; }
         openStoryboardDialog(app.neoGallery, { filename: c[0], name: c[0] }, '');
     });
     // 输入区右下角操作条：「宫格素材库」在前、「+」（基于角色图生成九宫格）在后
