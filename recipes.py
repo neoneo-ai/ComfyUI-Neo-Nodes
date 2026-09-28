@@ -1562,7 +1562,7 @@ async def rs_recipes_director_generate_segments(request):
     char_names = [str(n).strip() for n in (data.get("characters") or []) if str(n or "").strip()]
     result = await asyncio.to_thread(
         llm.run_llm_task, "director_story", "\n".join(parts),
-        _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(char_names)]) or None)
+        images=_collect_ref_bytes([{"filename": n} for n in dict.fromkeys(char_names)]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     segments = _parse_segments(result.get("segments") or "")
@@ -1607,7 +1607,7 @@ async def rs_recipes_director_optimize_prompts(request):
         parts.append("\n".join(ref_lines) + "\n")
     parts.append("该段现有提示词（重写为一条成品提示词）：\n" + prompt)
 
-    result = await asyncio.to_thread(llm.run_llm_task, "director_optimize", "\n".join(parts), _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None)
+    result = await asyncio.to_thread(llm.run_llm_task, "director_optimize", "\n".join(parts), images=_collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     out = str(result.get("prompt") or "").strip()
@@ -1750,7 +1750,7 @@ async def rs_recipes_director_describe_panel(request):
         head = f"上一段（第 {idx - 1} 段）已生成的提示词" if idx else "上一段已生成的提示词"
         lines.append(f"{head}，本段需与之承接、避免重复：\n{prev}")
     text = "\n".join(lines)
-    result = await asyncio.to_thread(llm.run_llm_task, "director_panel_describe", text, _collect_ref_bytes([{"filename": name}]) or None)
+    result = await asyncio.to_thread(llm.run_llm_task, "director_panel_describe", text, images=_collect_ref_bytes([{"filename": name}]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
     prompt = str(result.get("prompt") or "").strip()

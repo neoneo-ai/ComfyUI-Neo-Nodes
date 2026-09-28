@@ -289,7 +289,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 配方 assets/ 里的文件名（含新生成的分镜关键帧）：缩略图走 /rs_recipes/asset，不经 input/
     const recipeAssetFiles = new Set(((existing && existing.assets) || [])
         .map(a => (typeof a === 'string' ? a : ((a || {}).file || ''))));
-    const assetThumbUrl = (fname) => `/rs_recipes/asset?recipe=${encodeURIComponent(requestedName)}&file=${encodeURIComponent(fname)}&t=${Date.now()}`;
+    // 当前配方名（与分镜落盘同名）：取输入框值，编辑已存配方回退 requestedName。
+    // _nameEl 指向配方名输入框（openDirectorEditor 后期才创建），早期渲染为 null → 安全降级
+    let _nameEl = null;
+    const currentRecipeName = () => {
+        const v = _nameEl ? (_nameEl.value || '') : '';
+        return v.trim() || requestedName || 'untitled';
+    };
+    const assetThumbUrl = (fname) => `/rs_recipes/asset?recipe=${encodeURIComponent(currentRecipeName())}&file=${encodeURIComponent(fname)}&t=${Date.now()}`;
     // 缩略图按来源解析：配方资产走 /rs_recipes/asset，其余（画布 LoadImage / 新拖入文件）走 /view
     const thumbSrc = (fname, subfolder = '') => recipeAssetFiles.has(fname)
         ? assetThumbUrl(fname)
@@ -1190,6 +1197,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 配方名称：钉在标题栏中间，默认以文本直接显示，点击进入行内编辑
     // （Enter / 失焦提交，Esc 还原为打开时的名称）
     const nameInp = $el('input', { className: 'neo-director-name', type: 'text', placeholder: '配方名称', value: (existing && existing.name) || '' });
+    _nameEl = nameInp;   // 供 currentRecipeName() 读取当前配方名（缩略图/尺寸查询与落盘同名）
     const nameView = $el('span', { className: 'neo-director-name-view', title: '点击编辑配方名称' });
     const nameWrap = $el('div', { className: 'neo-director-name-wrap' }, [nameView, nameInp]);
     const renderName = () => {
@@ -1358,7 +1366,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const ffNames = [...new Set(segments.map((s) => s.first_frame).filter(Boolean))];
         if (ffNames.length >= 2) {
             try {
-                const szRes = await fetch("/rs_recipes/image_sizes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filenames: ffNames, recipe: requestedName }) });
+                const szRes = await fetch("/rs_recipes/image_sizes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filenames: ffNames, recipe: currentRecipeName() }) });
                 const szData = await szRes.json();
                 if (szData && szData.success) {
                     const aspectMsg = firstFrameAspectWarning(segments, szData.sizes);
