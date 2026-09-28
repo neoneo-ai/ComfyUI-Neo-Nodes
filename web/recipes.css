@@ -2036,7 +2036,7 @@
     display: grid;
     grid-template-columns: 200px 1fr 1fr;   /* 第一列分镜图缩略图留足宽度（约 16:9） */
     gap: 8px;
-    align-items: start;
+    align-items: stretch;   /* 缩略图列随行高拉伸（行高由文本列决定），图片高度自适应 */
 }
 
 /* 宫格分镜图拆分：各段无「优化前」原文，对照表降为两栏（分镜图 / 提示词） */
@@ -2053,7 +2053,7 @@
 /* 对照表第一列的分镜图缩略（逐段关键帧或统一首帧）；未生成显示「无」占位 */
 .neo-director-setup-seg-thumb {
     position: relative;   /* 悬停 ✕ 以缩略图为定位基准 */
-    height: 112px;        /* 与 200px 列宽接近 16:9，关键帧看得清 */
+    min-height: 112px;    /* 与 200px 列宽接近 16:9 的下限；文本更高时随行拉伸，图片高度自适应 */
     border-radius: 6px;
     overflow: hidden;
     background: #1c1c1c;
@@ -2110,8 +2110,9 @@
     color: #6b7280;
 }
 
-/* 分镜图缩略位空态：可直接拖入 / 点击上传（跳过宫格拆分） */
+/* 分镜图缩略位空态：可直接拖入 / 点击上传（跳过宫格拆分）；固定高度不随行拉伸，避免长文本行出现巨大虚线盒 */
 .neo-director-setup-seg-thumb-empty {
+    height: 112px;
     cursor: pointer;
 }
 .neo-director-setup-seg-thumb-empty:hover {
