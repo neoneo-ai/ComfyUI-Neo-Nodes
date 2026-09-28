@@ -577,7 +577,7 @@
 }
 
 /* ==========================================
-   多段视频导演编辑器 */
+   分镜视频导演编辑器 */
 
 .neo-recipes-director,
 .neo-recipes-edit-director {
@@ -1020,11 +1020,8 @@
 /* 卡片内除提示词外的字段与资产区不让步缩水，挤压时由 segs 内部滚动承载 */
 .neo-director-seg-head,
 .neo-director-seg > .neo-director-field-label,
-.neo-director-fflf,
-.neo-director-ff-grid,
-.neo-director-ff-block,
-.neo-director-lf-grid,
-.neo-director-lf-block,
+.neo-director-frames-cols,
+.neo-director-lf-row,
 .neo-director-refs-block,
 .neo-director-segref-row,
 .neo-director-refpick-grid,
@@ -1032,7 +1029,7 @@
     flex-shrink: 0;
 }
 
-/* 本段模式行（仅混合模式显示）：label 左、文生/图生选择器右 */
+/* 本段模式行（仅混合模式显示）：label 左、分镜生视频/全参考选择器右 */
 .neo-director-segmode-row {
     display: flex;
     align-items: center;
@@ -1042,28 +1039,83 @@
     width: 120px;
 }
 
-/* 首帧区（标题行 + 候选网格）整体容器，按本段是否图生视频显隐 */
-.neo-director-ff-block {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
+/* 两栏帧行（与故事板分镜对照表同构）：左栏首帧槽位 / 右栏提示词；非 f2v 模式隐藏帧槽位，参考素材区接管左栏 */
+.neo-director-frames-cols {
+    display: grid;
+    grid-template-columns: 200px 1fr;   /* 左栏首帧槽位留足宽度（约 16:9） */
+    gap: 8px;
+    align-items: stretch;
+}
+.neo-director-frames-labels {
+    font-size: 11px;
+    color: #9a9a9a;
+    padding: 0 2px;
+}
+.neo-director-frames-cols.neo-director-frames-noframe {
+    grid-template-columns: 380px 1fr;   /* 左栏加宽容纳参考素材区 */
+}
+.neo-director-frames-cols.neo-director-frames-noframe .neo-director-frame-col > .neo-director-setup-seg-thumb,
+.neo-director-frames-cols.neo-director-frames-noframe .neo-director-lf-row {
+    display: none;   /* 非 f2v 无首/尾帧槽位 */
+}
+.neo-director-frames-cols textarea {
+    min-height: 112px;   /* 与首帧槽位下限对齐 */
+}
+/* 两栏帧行跟随卡片高度缩放：窗口拉高时提示词区随之填满（不缩低于内容下限，挤压时由 segs 内部滚动承载） */
+.neo-director-seg > .neo-director-frames-cols:not(.neo-director-frames-labels) {
+    flex-grow: 1;
+    grid-template-rows: 1fr;   /* 行高填满网格容器：提示词随行拉伸，左栏槽位随行拉伸（图片自适应） */
 }
 
-/* 首帧区 + 尾帧区容器：默认纵向堆叠；fl2v（两块都显示）时并排同一行，各占一半 */
-.neo-director-fflf {
+/* 左栏：首帧槽位填满剩余高度（图片自适应高度），尾帧扩展行居底 */
+.neo-director-frame-col {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-height: 0;
 }
-.neo-director-fflf-row {
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 12px;
+.neo-director-frame-col > .neo-director-setup-seg-thumb {
+    flex: 1 1 auto;   /* 首帧随行高拉伸（空态同样拉伸，成为大拖放区） */
 }
-.neo-director-fflf-row .neo-director-ff-block,
-.neo-director-fflf-row .neo-director-lf-block {
-    flex: 1 1 0;
-    min-width: 0;
+.neo-director-frame-col .neo-director-setup-seg-thumb img {
+    object-fit: cover;   /* 铺满左栏高度（超出部分裁切），图片下方不留空白 */
+}
+
+/* 尾帧扩展行（左栏底部）：按钮常驻（已设时带缩略指示）；展开后出现尾帧槽位 */
+.neo-director-lf-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+}
+.neo-director-lf-toggle {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 8px;
+    background: transparent;
+    border: 1px dashed #3a3a3a;
+    border-radius: 5px;
+    color: #9aa4b0;
+    font-size: 11px;
+    cursor: pointer;
+}
+.neo-director-lf-toggle:hover {
+    border-color: #4d8cba;
+    color: #c9d6e2;
+}
+.neo-director-lf-chip {
+    width: 28px;
+    height: 16px;
+    object-fit: cover;
+    border-radius: 3px;
+    display: block;
+}
+.neo-director-lf-slot-wrap {
+    width: 100%;
 }
 
 .neo-director-seg-head {
@@ -1148,7 +1200,7 @@
     flex: none;
 }
 
-/* 步骤徽标（故事分镜页四步）：序号表达先后关系——✓ = 已完成、序号高亮 = 轮到这一步、序号变淡 = 前置未满足 */
+/* 步骤徽标（故事板分镜页四步）：序号表达先后关系——✓ = 已完成、序号高亮 = 轮到这一步、序号变淡 = 前置未满足 */
 .neo-director-step-badge {
     flex: none;
     display: inline-flex;
@@ -1222,7 +1274,7 @@
     padding: 8px;
 }
 
-/* 📖 故事分镜页 band 1：来源卡（宫格图 / 文字，二选一）。
+/* 📖 故事板分镜页 band 1：来源卡（宫格图 / 文字，二选一）。
    来源 radio 在 band 1 顶部横排常驻，这里只显示选中来源的那张卡（另一张 display:none，不会两张同时亮着） */
 .neo-director-src-card {
     display: flex;
@@ -1494,8 +1546,6 @@
 .neo-director-prompt {
     width: 100%;
     min-height: 44px;
-    flex: 1;          /* 窗口拉高/拉低时提示词区随之伸缩，资产区保持贴底 */
-    flex-shrink: 1;
     background: #1e1e1e;
     color: #ddd;
     border: 1px solid #3a3a3a;
@@ -1535,86 +1585,6 @@
 .neo-director-storyboard-btn:disabled:hover {
     background: rgba(0, 0, 0, 0.6);
     color: #ccc;
-}
-
-/* 首帧候选网格：参照配方详情资产网格，缩略图单选（含「无」项） */
-.neo-director-ff-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-    gap: 8px;
-}
-
-.neo-director-ff-grid.neo-director-drop {
-    outline: 2px dashed #e6a23c;
-    outline-offset: 2px;
-}
-
-.neo-director-ff-item {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 3px;
-    background: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    cursor: pointer;
-    position: relative;
-}
-
-/* 素材格右上角删除 ✕（不拦截点击选中：stopPropagation 已在 JS 处理） */
-.neo-director-ff-del {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 17px;
-    height: 17px;
-    padding: 0;
-    cursor: pointer;
-    background: #2b2b2b;
-    color: #d8a03c;
-    border: 1px solid #5a5f6b;
-    border-radius: 50%;
-    font-size: 10px;
-    line-height: 1;
-    z-index: 2;
-}
-
-.neo-director-ff-item:hover .neo-director-ff-del {
-    background: #3a3a3a;
-}
-
-.neo-director-ff-item:hover {
-    border-color: rgba(255, 255, 255, 0.28);
-}
-
-.neo-director-ff-active {
-    border-color: #e6a23c;
-    box-shadow: 0 0 0 1px #e6a23c;
-}
-
-.neo-director-ff-thumb {
-    width: 100%;
-    height: 96px;
-    object-fit: contain;
-    display: block;
-    background: #111;
-    border-radius: 4px;
-}
-
-.neo-director-ff-thumb-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    color: #8a94a0;
-}
-
-.neo-director-ff-name {
-    font-size: 10px;
-    color: #9aa4b0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* 参考素材区（仅图生视频段显示）：参考图 / 参考视频 / 参考音频三组多选网格 */
@@ -1778,178 +1748,7 @@
     opacity: 1;
 }
 
-/* 尾帧区（仅首尾帧模式显示）：与首帧区同构，独立类名前缀以避免与首帧网格混淆 */
-.neo-director-lf-block {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.neo-director-lf-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-    gap: 8px;
-}
-
-.neo-director-lf-grid.neo-director-drop {
-    outline: 2px dashed #e6a23c;
-    outline-offset: 2px;
-}
-
-.neo-director-lf-item {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 3px;
-    background: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    cursor: pointer;
-    position: relative;
-}
-
-.neo-director-lf-item:hover {
-    border-color: rgba(255, 255, 255, 0.28);
-}
-
-.neo-director-lf-item:hover .neo-director-lf-del {
-    background: #3a3a3a;
-}
-
-.neo-director-lf-active {
-    border-color: #6f9ad4;
-    box-shadow: 0 0 0 1px #6f9ad4;
-}
-
-.neo-director-lf-thumb {
-    width: 100%;
-    height: 96px;
-    object-fit: contain;
-    display: block;
-    background: #111;
-    border-radius: 4px;
-}
-
-.neo-director-lf-thumb-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    color: #8a94a0;
-}
-
-.neo-director-lf-name {
-    font-size: 10px;
-    color: #9aa4b0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.neo-director-lf-del {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 17px;
-    height: 17px;
-    padding: 0;
-    cursor: pointer;
-    background: #2b2b2b;
-    color: #d8a03c;
-    border: 1px solid #5a5f6b;
-    border-radius: 50%;
-    font-size: 10px;
-    line-height: 1;
-    z-index: 2;
-}
-/* 源视频区（v2v/rv2v 显示）：与首/尾帧区同构，独立前缀避免与帧网格混淆 */
-.neo-director-sv-block {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.neo-director-sv-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-    gap: 8px;
-}
-
-.neo-director-sv-grid.neo-director-drop {
-    outline: 2px dashed #e6a23c;
-    outline-offset: 2px;
-}
-
-.neo-director-sv-item {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 3px;
-    background: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    border-radius: 6px;
-    cursor: pointer;
-    position: relative;
-}
-
-.neo-director-sv-item:hover {
-    border-color: rgba(255, 255, 255, 0.28);
-}
-
-.neo-director-sv-item:hover .neo-director-sv-del {
-    background: #3a3a3a;
-}
-
-.neo-director-sv-active {
-    border-color: #e6a23c;
-    box-shadow: 0 0 0 1px #e6a23c;
-}
-
-.neo-director-sv-thumb {
-    width: 100%;
-    height: 96px;
-    object-fit: contain;
-    display: block;
-    background: #111;
-    border-radius: 4px;
-}
-
-.neo-director-sv-thumb-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    color: #8a94a0;
-}
-
-.neo-director-sv-name {
-    font-size: 10px;
-    color: #9aa4b0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.neo-director-sv-del {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 17px;
-    height: 17px;
-    padding: 0;
-    cursor: pointer;
-    background: #2b2b2b;
-    color: #d8a03c;
-    border: 1px solid #5a5f6b;
-    border-radius: 50%;
-    font-size: 10px;
-    line-height: 1;
-    z-index: 2;
-}
-
-/* 页签栏：自动故事板 / 时间轴分段（位于标题栏内） */
-
-/* 页签栏：自动故事板 / 时间轴分段（位于标题栏内） */
+/* 页签栏：故事板分镜 / 分镜时间线（位于标题栏内） */
 .neo-director-tabs {
     display: flex;
     gap: 4px;
@@ -1978,7 +1777,7 @@
     border-color: #4a4d55;
 }
 
-/* 页签内容面板（📖 故事分镜 / 时间轴分段） */
+/* 页签内容面板（📖 故事板分镜 / 🎞️ 分镜时间线） */
 .neo-director-pane {
     display: flex;
     flex-direction: column;
@@ -1991,7 +1790,7 @@
     padding-top: 4px;
 }
 
-/* 📖 故事分镜页：band（第一行来源+角色参考 / 来源卡 / 各段对照） */
+/* 📖 故事板分镜页：band（第一行来源+角色参考 / 来源卡 / 各段对照） */
 .neo-director-band {
     display: flex;
     flex-direction: column;

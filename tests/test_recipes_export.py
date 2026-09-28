@@ -205,7 +205,7 @@ class ExportTests(unittest.TestCase):
         })
 
         readme = zf.read("导演导出测试/Readme.txt").decode("utf-8")
-        for token in ("导演导出测试", "多段视频导演配方", "2 段", "960×544", "总时长 12s",
+        for token in ("导演导出测试", "分镜视频导演配方", "2 段", "960×544", "总时长 12s",
                       "ComfyUI-Neo-Nodes", "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes",
                       "📦 导入", "NeoH3VideoDirector"):
             self.assertIn(token, readme)

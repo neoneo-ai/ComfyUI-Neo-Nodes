@@ -9,7 +9,7 @@ import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 import { Lightbox } from "./lightbox.js";
-import { openDirectorEditor, MODE_LABELS } from "./director.js";
+import { openDirectorEditor, MODE_LABELS, LEGACY_MODE_MAP } from "./director.js";
 
 const assetUrl = (recipe, file, dir) =>
     `${window.location.protocol}//${window.location.host}/rs_recipes/asset?recipe=${encodeURIComponent(recipe)}&file=${encodeURIComponent(file)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`;
@@ -425,7 +425,7 @@ export function directorMetaText(r, skills) {
     const shared = r.shared || {};
     const segs = r.segments || [];
     const nameOf = new Map(skills.map(s => [s.id, s.cn_name || s.name]));
-    const modeText = (shared.mode && MODE_LABELS.get(shared.mode)) || '自动';
+    const modeText = (shared.mode && MODE_LABELS.get(LEGACY_MODE_MAP.get(shared.mode) || shared.mode)) || '自动';
     const skillCounts = new Map();
     for (const s of segs) {
         const sid = s.skill_id || '';
@@ -853,7 +853,7 @@ export async function createRecipesPanel() {
     });
     const directorBtn = $el('button', {
         className: 'rs-btn rs-action-btn neo-recipes-director',
-        textContent: '🎬 新增导演配方', title: '新建多段视频导演配方',
+        textContent: '🎬 新增导演配方', title: '新建分镜视频导演配方',
         onclick: () => openDirectorEditor(null, renderList)
     });
     const refreshBtn = $el('button', {

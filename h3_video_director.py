@@ -10,7 +10,7 @@
 - 分镜首帧优先：i2v/fl2v 段自带首帧图（分镜格）时，首帧锚点用它（不再被连续性顶替），上段尾部改走
   context_mode="reference"——目标之前的参考视频，不改时长、不丢帧、不做接缝淡化。
 - 身份继承：首段（第一个带参考素材的段）的身份参考图领养到后续段，同走 NeoH3AddContext 的图片参考块。
-- 多帧单次分块（shared.chunk_sec，默认 15 秒；0 = 关闭）：连续兼容段（t2v/i2v/fl2v、无自带参考素材/源视频、
+- 多帧单次分块（shared.chunk_sec，默认 15 秒；0 = 关闭）：连续兼容段（t2v/i2v/fl2v、无自带参考素材、
   选中技能为多帧单次技能、总时长 ≤ chunk_sec）合并成一次 ref2va 运行（渲染该技能的 workflow.json + NeoH3AddGuides），
   各段分镜关键帧按累计起点钉在对应帧号；不兼容 / 超长的段自动退回逐段路径。块间上下文只走 reference 模式（目标之前的参考视频，不改时长、不丢帧）。
 - Tier A 回退（context_frames=0）：没自带首帧图的 i2v/fl2v 段用上段尾帧当首帧；丢下段第一帧避免边界重复。
@@ -620,16 +620,14 @@ def _seg_duration(seg: dict) -> float:
 
 
 def _chunk_compatible(seg: dict) -> bool:
-    """该段能否进多帧单次分块：选中技能为多帧单次技能，且（文生/图生/首尾帧、无自带参考素材）或 r2v
-    （须带参考集，块内再校验各段参考一致）。source_video 一律排除。"""
+    """该段能否进多帧单次分块：选中技能为多帧单次技能，且（文生/图生/尾帧/首尾帧、无自带参考素材）或 r2v
+    （须带参考集，块内再校验各段参考一致）。"""
     if not is_multiframe_skill(seg.get("skill_id")):
         return False
     mode = seg.get("mode") or "t2v"
-    if seg.get("source_video"):
-        return False
     if mode == "r2v":
         return bool(seg.get("refs") or {})
-    return mode in ("t2v", "i2v", "fl2v") and not (seg.get("refs") or {})
+    return mode in ("t2v", "i2v", "l2v", "fl2v") and not (seg.get("refs") or {})
 
 
 def _ref_signature(seg):
@@ -706,7 +704,7 @@ def _plan_multiframe_guides(segs, total_frames):
                 guides.append({"name": name, "frame_idx": idx})
             else:
                 skipped += 1
-        if (seg.get("mode") or "t2v") == "fl2v" and seg.get("last_input"):
+        if (seg.get("mode") or "t2v") in ("fl2v", "l2v") and seg.get("last_input"):
             idx = min(int(round((start + d) * H3_FPS)) - 1, total_frames - 1)
             if idx >= 0:
                 guides.append({"name": seg["last_input"], "frame_idx": idx})
@@ -856,7 +854,7 @@ class NeoH3VideoDirector:
     RETURN_NAMES = ("video",)
     FUNCTION = "generate"
     CATEGORY = "Neo-Nodes"
-    DESCRIPTION = "多段视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO（跨段上下文窗口保连续性）。"
+    DESCRIPTION = "分镜视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO（跨段上下文窗口保连续性）。"
 
     def _run_bundle_segment(self, payload, skill, seed, width, height, model, steps, vae=None, preview=True, node_id=None,
                            duration_sec=5):
@@ -928,7 +926,7 @@ class NeoH3VideoDirector:
         drops = []       # 与执行单元（每次 all_audio.append）对齐：该单元丢掉的头部帧数（窗口帧数 / Tier A 的 1 帧 / 0）
         prev_tail = None
         # 多帧单次分块：连续兼容段合并成一次 ref2va 运行、关键帧锚点钉在各段累计起点；
-        # 不兼容（自带参考素材 / 源视频 / 超长）或超预算的段退回逐段路径。整配方「多帧合并」开关关闭时强制逐段旧模式。
+        # 不兼容（自带参考素材 / 超长）或超预算的段退回逐段路径。整配方「多帧合并」开关关闭时强制逐段旧模式。
         units = _plan_chunks(segments, _chunk_budget(shared))
         multi_at, consumed = {}, set()   # 多帧块首段序号 → 块内段；块内其余段由 consumed 跳过
         offset = 0
@@ -1001,19 +999,11 @@ class NeoH3VideoDirector:
 
                 # 按段模式组装参考（T2V 段不带任何参考）：
                 #   i2v/fl2v 首帧：本段分镜首帧图优先；否则窗口第 0 帧 / Tier A 链入上段尾帧
-                #   r2v 仅参考素材（图/视频/音频）
-                #   v2v/rv2v 源视频（自动作为 ref_videos[0]，提示词自动加 <Video 1>）
+                #   l2v 只带尾帧锁收尾（不注首帧，节点侧保持 L2VA）
+                #   r2v 全参考：参考素材（图/视频/音频），第一个参考视频即源视频（提示词自动加 <Video 1>）
                 #   fl2v 另带尾帧锁收尾
                 refs = []
                 chained = False
-                
-                # v2v/rv2v: 源视频作为第一个参考视频
-                source_video = seg.get("source_video")
-                if source_video and mode in ("v2v", "rv2v"):
-                    refs.append({"kind": "input", "value": source_video, "media": "video"})
-                    # 提示词自动加 <Video 1> 标签（如果没有的话）
-                    if "<Video 1>" not in prompt:
-                        body["prompt"] = f"<Video 1> {prompt}"
                 
                 if mode in ("i2v", "fl2v"):
                     primary_input = None
@@ -1030,7 +1020,7 @@ class NeoH3VideoDirector:
                 elif mode == "r2v":
                     primary_input = None
                     chained = context_tail is not None
-                if mode in ("i2v", "fl2v", "r2v"):
+                if mode in ("i2v", "fl2v", "l2v", "r2v"):
                     seg_refs = seg.get("refs") or {}
                     for name in (seg_refs.get("images") or []):
                         if name != primary_input:
@@ -1039,25 +1029,25 @@ class NeoH3VideoDirector:
                         refs.append({"kind": "input", "value": name, "media": "video"})
                     for name in (seg_refs.get("audios") or []):
                         refs.append({"kind": "input", "value": name, "media": "audio"})
+                # r2v：第一个参考视频即源视频，提示词缺 <Video 1> 时自动补上
+                if mode == "r2v" and any(r.get("media") == "video" for r in refs):
+                    if "<Video 1>" not in body["prompt"]:
+                        body["prompt"] = f"<Video 1> {body['prompt']}"
                 # 身份参考：配方角色参考图 + 段自带参考，注入每个还没有这些图的段
                 # （首段也在内——分镜关键帧没脸时它是唯一的身份锚点；段自带的参考不重复注入）
                 sent = {r["value"] for r in refs if r.get("kind") == "input"}
                 inherited = [n for n in identity_names if n not in sent]
                 if refs:
                     body["references"] = refs
-                if mode == "fl2v":
+                if mode in ("fl2v", "l2v"):
                     if not seg.get("last_input"):
-                        raise ValueError(f"第 {i + 1} 段为首尾帧生视频但缺少尾帧：请为该段设置尾帧图")
+                        raise ValueError(f"第 {i + 1} 段为{'首尾帧' if mode == 'fl2v' else '尾帧'}生视频但缺少尾帧：请为该段设置尾帧图")
                     body["last_frame"] = {"kind": "input", "value": seg["last_input"]}
                 if mode in ("i2v", "fl2v") and not refs and context_tail is None:
                     raise ValueError(
                         f"第 {i + 1} 段为{'首尾帧' if mode == 'fl2v' else '图生视频'}但没有可用首帧：" +
                         ("请为该段设置首帧，或开启「连续性」以上段尾帧 / 上下文窗口链入"
                          if i > 0 else "首段需自带首帧"))
-                if mode == "r2v" and not refs and not inherited and context_tail is None:
-                    raise ValueError(f"第 {i + 1} 段为全参考生视频但没有参考素材：请挂参考图 / 视频 / 音频")
-                if mode in ("v2v", "rv2v") and not source_video:
-                    raise ValueError(f"第 {i + 1} 段为{'视频编辑' if mode == 'v2v' else '视频+参考图编辑'}但缺少源视频：请为该段设置 source_video")
 
                 video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：",
                                            vae, preview, unique_id, context_tail=context_tail,

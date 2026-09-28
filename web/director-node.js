@@ -647,7 +647,7 @@ app.registerExtension({
             const newBtn = document.createElement("button");
             newBtn.type = "button";
             newBtn.className = "neo-dtl-new";
-            newBtn.title = "新建多段视频导演配方";
+            newBtn.title = "新建分镜视频导演配方";
             newBtn.textContent = "＋ 新增导演配方";
             newBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
             newBtn.addEventListener("click", (e) => { e.stopPropagation(); openDirectorEditor(null); });

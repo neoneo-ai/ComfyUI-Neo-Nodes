@@ -66,7 +66,7 @@ if __package__ not in (None, ""):
             NODE_DISPLAY_NAME_MAPPINGS as H3_DIRECTOR_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] h3_video_director 节点注册失败（多段视频导演不可用）: {e}")
+        print(f"[NeoNodes] h3_video_director 节点注册失败（分镜视频导演不可用）: {e}")
 
     # 图片分镜（storyboard）：用生图技能逐段生成关键帧，注册 /neo_video_gen/storyboard_* 路由。
     # 独立于 director 节点运行时；依赖 image_gen/skill/image_gen_edit/recipes 已加载。导入失败时优雅降级。

@@ -95,7 +95,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 #### 基础配方：
 仅是把当前的提示词和图片资源保存下来，便于复用
 #### 导演配方：
-支持多段连续生成，由导演台进行编辑生成并保存，director节点运行时选择对应的配方。点击节点上timeline可以直接进入编辑。故事分镜页支持主题/脚本一键 LLM 生成分段分镜（角色参考图锁身份），也支持宫格图自动拆分（各格作分段首帧）与逐格 LLM 描述提示词。
+支持多段连续生成，由导演台进行编辑生成并保存，director节点运行时选择对应的配方。点击节点上timeline可以直接进入编辑。故事板分镜页支持主题/脚本一键 LLM 生成分段分镜（角色参考图锁身份），也支持宫格图自动拆分（各格作分段首帧）与逐格 LLM 描述提示词。
 
 ### model：
 虽然内置了模型，如果觉得常修改也可以直接接入加入的model和lora，可以覆盖掉skill内置的主模型配置
@@ -112,7 +112,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 | [docs/prompts.md](docs/prompts.md) | 提示词节点：Neo Prompt Encoder / Agent、节点界面与按钮、模板与技能管理、图片反推与 `@` 引用、`/` 技能菜单 |
 | [docs/llm.md](docs/llm.md) | LLM 模式（远程/本地）、思考模型、本地 GGUF 安装（预编译 wheel / 源码编译 / Windows 排障）、模型目录规范 |
 | [docs/image-gen.md](docs/image-gen.md) | 生图：聊天生图与 Neo Image Gen & Edit 节点（文生图 + 参考编辑，IMAGE 输出） |
-| [docs/recipes.md](docs/recipes.md) | 配方：保存、一键发送到工作流、示例结果、多段视频导演配方（video_director） |
+| [docs/recipes.md](docs/recipes.md) | 配方：保存、一键发送到工作流、示例结果、分镜视频导演配方（video_director） |
 | [docs/gallery.md](docs/gallery.md) | Neo Gallery：浏览、灯箱、文件管理、Civitai LORA 缓存、收藏（书签） |
 | [docs/workflow-repair.md](docs/workflow-repair.md) | 工作流模型路径修复 |
 

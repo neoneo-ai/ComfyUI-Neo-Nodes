@@ -616,26 +616,16 @@ class DirectorRecipeIOTests(unittest.TestCase):
         spec = recipes.load_director_spec("k")
         self.assertEqual([s["keyframe"] for s in spec["segments"]], ["f.png", "sb1.png", None])
 
-    def test_load_spec_global_i2v_forces_all_modes(self):
-        # 全局图生视频：所有段有效模式都是 i2v（后续段可无自带首帧，靠连续性链入）
+    def test_load_spec_legacy_global_frame_mode_derived_from_assets(self):
+        # 旧全局帧模式值（i2v/t2v）不再强制全体：按各段首/尾帧资产推导（有首帧=i2v，无=t2v）
         self._make_recipe("g", {"type": "video_director",
-                                "shared": {"mode": "i2v", "width": 8, "height": 8},
+                                "shared": {"mode": "t2v", "width": 8, "height": 8},
                                 "segments": [
                                     {"skill_id": "s0", "prompt": "a", "first_frame": "f.png"},
                                     {"skill_id": "s1", "prompt": "b"},
                                 ]}, assets=["f.png"])
         spec = recipes.load_director_spec("g")
-        self.assertEqual([s["mode"] for s in spec["segments"]], ["i2v", "i2v"])
-
-    def test_load_spec_global_t2v_forces_all_modes(self):
-        # 全局文生视频：即便段带首帧，有效模式仍统一为 t2v
-        self._make_recipe("g", {"type": "video_director",
-                                "shared": {"mode": "t2v", "width": 8, "height": 8},
-                                "segments": [
-                                    {"skill_id": "s0", "prompt": "a", "first_frame": "f.png"},
-                                ]}, assets=["f.png"])
-        spec = recipes.load_director_spec("g")
-        self.assertEqual(spec["segments"][0]["mode"], "t2v")
+        self.assertEqual([s["mode"] for s in spec["segments"]], ["i2v", "t2v"])
 
     def test_load_spec_mixed_respects_segment_mode(self):
         # 混合模式：逐段采用各自 seg.mode
@@ -682,6 +672,29 @@ class DirectorRecipeIOTests(unittest.TestCase):
         spec = recipes.load_director_spec("r")
         self.assertEqual(spec["segments"][0]["refs"], {"videos": ["v.mp4"]})
 
+    def test_load_spec_migrates_legacy_source_video(self):
+        # 旧 v2v/rv2v 配方的独立 source_video：并入参考视频首位（第一个参考视频即源视频），模式推得 r2v
+        self._make_recipe("sv", {"type": "video_director",
+                                 "shared": {"width": 8, "height": 8},
+                                 "segments": [{"skill_id": "s", "prompt": "p",
+                                               "source_video": "src.mp4"}]},
+                          assets=["src.mp4"])
+        seg = recipes.load_director_spec("sv")["segments"][0]
+        self.assertEqual(seg["refs"], {"videos": ["src.mp4"]})
+        self.assertEqual(seg["mode"], "r2v")
+        self.assertNotIn("source_video", seg)
+
+    def test_load_spec_legacy_source_video_joins_existing_refs(self):
+        # 旧 source_video 与已有参考视频同名：去重后置顶，顺序不变
+        self._make_recipe("sv2", {"type": "video_director",
+                                  "shared": {"width": 8, "height": 8},
+                                  "segments": [{"skill_id": "s", "prompt": "p",
+                                                "source_video": "src.mp4",
+                                                "refs": {"videos": ["src.mp4", "v.mp4"]}}]},
+                          assets=["src.mp4", "v.mp4"])
+        seg = recipes.load_director_spec("sv2")["segments"][0]
+        self.assertEqual(seg["refs"], {"videos": ["src.mp4", "v.mp4"]})
+
     def test_load_spec_resolves_last_frame(self):
         # 首尾帧模式：首帧 → ref_input，尾帧 → last_input，模式沿用配方 shared.mode
         self._make_recipe("f", {"type": "video_director",
@@ -694,16 +707,17 @@ class DirectorRecipeIOTests(unittest.TestCase):
         self.assertEqual(seg["last_input"], "z.png")
         self.assertEqual(seg["mode"], "fl2v")
 
-    def test_load_spec_storyboard_fills_missing_first_frame(self):
-        # 逐段图片分镜：i2v 段没设首帧时用配方 assets/ 里的分镜关键帧（节点只读时间轴与导演台缩略图同源）
+    def test_load_spec_storyboard_not_first_frame_without_assets(self):
+        # 无首帧段（推得 t2v）：分镜关键帧不回填为首帧，只作多帧分块锚点（keyframe）
         self._make_recipe("sb", {"type": "video_director",
                                  "shared": {"mode": "i2v", "width": 8, "height": 8},
                                  "segments": [{"skill_id": "s", "prompt": "p",
                                                "storyboard": "storyboard_sb_01.png"}]},
                           assets=["storyboard_sb_01.png"])
         seg = recipes.load_director_spec("sb")["segments"][0]
-        self.assertEqual(seg["ref_input"], "storyboard_sb_01.png")
-        self.assertEqual(seg["mode"], "i2v")
+        self.assertIsNone(seg["ref_input"])
+        self.assertEqual(seg["mode"], "t2v")
+        self.assertEqual(seg["keyframe"], "storyboard_sb_01.png")
 
     def test_load_spec_storyboard_ignored_when_file_gone(self):
         # 配方 assets/ 里的关键帧已被清理：跳过，不报错（与编辑器同样显示不出缩略图）
@@ -734,12 +748,12 @@ class DirectorRecipeIOTests(unittest.TestCase):
         seg = recipes.load_director_spec("sb2")["segments"][0]
         self.assertEqual(seg["ref_input"], "own.png")
 
-    def test_load_spec_infers_fl2v_from_last_frame(self):
-        # 旧配方无 mode：只挂尾帧也识别为首尾帧模式
+    def test_load_spec_infers_l2v_from_last_frame(self):
+        # 旧配方无 mode：只挂尾帧识别为 L2VA（尾帧生视频）
         self._make_recipe("f", {"type": "video_director", "shared": {"width": 8, "height": 8},
                                 "segments": [{"skill_id": "s", "prompt": "p", "last_frame": "z.png"}]},
                          assets=["z.png"])
-        self.assertEqual(recipes.load_director_spec("f")["segments"][0]["mode"], "fl2v")
+        self.assertEqual(recipes.load_director_spec("f")["segments"][0]["mode"], "l2v")
 
     def test_new_modes_kept_by_normalize(self):
         # 新段级模式（fl2v/r2v）与 last_frame 都要保留
@@ -1237,18 +1251,28 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertIn("尾帧", err or "")
 
     def test_r2v_segment_attaches_refs_without_first_frame(self):
-        # 全参考段：只挂参考素材即可，不需要首帧
+        # 全参考段：只挂参考素材即可，不需要首帧；第一个参考视频即源视频（提示词自动加 <Video 1>）
         bodies, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v",
                                         "ref_input": None,
                                         "refs": {"images": ["a.png"], "videos": ["v.mp4"], "audios": ["s.wav"]}})
         self.assertIsNone(err)
         self.assertEqual([(r["value"], r.get("media")) for r in bodies[0]["references"]],
                          [("a.png", None), ("v.mp4", "video"), ("s.wav", "audio")])
+        self.assertEqual(bodies[0]["prompt"], "<Video 1> p")
         self.assertNotIn("last_frame", bodies[0])
 
-    def test_r2v_segment_without_refs_raises(self):
-        _, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v"})
-        self.assertIn("参考", err or "")
+    def test_r2v_prompt_keeps_existing_video_tag(self):
+        # 提示词已含 <Video 1> 时不重复添加
+        bodies, err = self._run_single({"skill_id": "s", "prompt": "<Video 1> p", "duration_sec": 5, "mode": "r2v",
+                                        "ref_input": None, "refs": {"videos": ["v.mp4"]}})
+        self.assertIsNone(err)
+        self.assertEqual(bodies[0]["prompt"], "<Video 1> p")
+
+    def test_r2v_segment_without_refs_runs_as_t2v(self):
+        # 全参考段无参考素材：按文生执行（不硬报错，编辑器保存时已提示）
+        bodies, err = self._run_single({"skill_id": "s", "prompt": "p", "duration_sec": 5, "mode": "r2v"})
+        self.assertIsNone(err)
+        self.assertNotIn("references", bodies[0])
 
     def _r2v_template(self):
         """H3 r2v 形状的最小模板图（含可注入模型的 KSampler）。"""
@@ -1511,12 +1535,13 @@ class ChunkPlanTests(unittest.TestCase):
         self.assertEqual(self.kinds([self.seg(0, 6), self.seg(1, 6), self.seg(2, 6)], 15), ["multi", "legacy"])
 
     def test_incompatible_breaks_chain(self):
-        # v2v（非多帧兼容模式）夹在 t2v 之间 → 三段各自成块（单段归 legacy）
-        segs = [self.seg(0), self.seg(1, mode="v2v"), self.seg(2)]
+        # r2v 无参考集（非多帧兼容）夹在 t2v 之间 → 三段各自成块（单段归 legacy）
+        segs = [self.seg(0), self.seg(1, mode="r2v"), self.seg(2)]
         self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy", "legacy"])
 
-    def test_source_video_incompatible(self):
-        segs = [self.seg(0), self.seg(1, mode="v2v", source_video="v.mp4")]
+    def test_r2v_with_video_ref_incompatible(self):
+        # r2v 段带参考视频（源视频）→ 与 t2v 的参考签名不同，回退逐段
+        segs = [self.seg(0), self.seg(1, mode="r2v", refs={"videos": ["v.mp4"]})]
         self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
 
     def test_overlong_single_segment_legacy(self):
@@ -1576,10 +1601,10 @@ class ChunkPlanTests(unittest.TestCase):
                 self.seg(1, mode="r2v", refs={"images": ["b.png", "a.png"]})]
         self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
 
-    def test_r2v_source_video_fallback(self):
-        # r2v 段带 source_video → 一律不合并
-        segs = [self.seg(0, mode="r2v", refs={"images": ["a.png"]}, source_video="v.mp4"),
-                self.seg(1, mode="r2v", refs={"images": ["a.png"]})]
+    def test_r2v_video_ref_mismatch_fallback(self):
+        # r2v 参考视频（源视频）不同 → 无法统一，回退逐段
+        segs = [self.seg(0, mode="r2v", refs={"videos": ["a.mp4"]}),
+                self.seg(1, mode="r2v", refs={"videos": ["b.mp4"]})]
         self.assertEqual(self.kinds(segs, 15), ["legacy", "legacy"])
 
     def test_r2v_without_refs_incompatible(self):

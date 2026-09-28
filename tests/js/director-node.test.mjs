@@ -162,7 +162,7 @@ test("拖拽放大不受影响，且时间轴宽度随节点同步", async () =>
     assert.equal(tl.width, 500);
 });
 
-test("点击节点时间轴分段块直接打开配方编辑器", async () => {
+test("点击节点时间轴上的分段块直接打开配方编辑器", async () => {
     resetEnv();
     clearRoutes();
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 编辑器无媒体候选
@@ -216,7 +216,7 @@ test("recipe 选择窗预览卡：焦点配方显示概览行 + 只读时间轴�
     const preview = document.querySelector(".rs-skill-picker-preview");
     assert.ok(preview, "预览卡应渲染");
     const meta = preview.querySelector(".rs-skill-preview-meta");
-    assert.equal(meta?.textContent, "3 段 · 图生视频 · 技能 A ×3 · 960×544 · 总时长 20s", "预览卡显示概览行");
+    assert.equal(meta?.textContent, "3 段 · 分镜生视频 · 技能 A ×3 · 960×544 · 总时长 20s", "预览卡显示概览行（旧 i2v 显示为 f2v）");
     assert.ok(preview.querySelector(".neo-dtl-canvas"), "预览卡内嵌只读时间轴 canvas");
     assert.ok(!preview.textContent.includes("加载中"), "预览卡不应停留在加载态");
 
