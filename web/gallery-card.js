@@ -6,7 +6,7 @@ import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
 import { getReservedSpace, getImageHeight, getCardHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
-import { buildGenerationMenuItems } from "./gallery-gen.js";
+import { buildGenerationMenuItems, openReversePromptDialog } from "./gallery-gen.js";
 
 // 已解码波形峰值的会话缓存：同一文件在页面内只请求/解码一次，跨卡片复用。
 // 持久化到后端本地目录由 /neo_gallery/waveform 负责（见 gallery.py）。
@@ -496,6 +496,10 @@ export class GalleryCard {
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
             }, ["\u2B50 收藏本图"]),
             ...buildGenerationMenuItems({ card: this, gallery, image, subfolder }),
+            (isImageFile(image.filename) && canDelete) ? $el("div", {
+                className: "neo-gallery-collect-item",
+                onclick: () => { this._removeCollectMenu(); openReversePromptDialog(image, subfolder); }
+            }, ["🔍 图片反推"]) : null,
             ...(image.lora_path ? [
                 $el("div", {
                     className: "neo-gallery-collect-item",

@@ -16,7 +16,8 @@ export function $el(tag, options = null, children = null) {
                 el.textContent = value;
             } else if (key === "innerHTML" || key === "html") {
                 el.innerHTML = value;
-            } else if (key === "style" && typeof value === "object") {
+            } else if (key === "style") {
+                // 对齐真实 ComfyUI $el：style 必须是对象；传字符串会在 CSSStyleDeclaration 上报索引 setter 错误
                 Object.assign(el.style, value);
             } else if (key === "dataset" && typeof value === "object") {
                 Object.assign(el.dataset, value);

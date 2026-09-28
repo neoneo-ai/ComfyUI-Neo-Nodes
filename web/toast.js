@@ -1,11 +1,14 @@
 /**
  * toast.js — 统一「需用户处理」通知（action toast）。
- * 需要用户参与处理的错误用它：不自动关闭，卡片右侧给处理入口（action 按钮），
- * 点 action 执行回调后关闭，或 ✕ 手动关闭。普通信息类提示仍走 gallery-utils.showToast
- * （ComfyUI 内置 toast，5s 自动消失）。样式在 prompts.css（#neo-action-toast-stack / .neo-at-*）。
+ * 异常级别（error/warning）不自动关闭，卡片右侧给处理入口（action 按钮），
+ * 点 action 执行回调后关闭，或 ✕ 手动关闭。正常级别（success/info）超时自动消失。
+ * 普通信息类提示仍走 gallery-utils.showToast（ComfyUI 内置 toast，5s 自动消失）。
+ * 样式在 prompts.css（#neo-action-toast-stack / .neo-at-*）。
  */
 
 const ICONS = { error: "❌", warning: "⚠️", success: "✅", info: "ℹ️" };
+// 正常级别（success/info）自动消失时长，与 ComfyUI 内置 toast 一致；异常级别不自动关闭。
+const AUTO_DISMISS_MS = 5000;
 
 function ensureStack() {
     let stack = document.getElementById("neo-action-toast-stack");
@@ -46,7 +49,9 @@ export function actionToast(opts = {}) {
     }
     el.append(icon, body);
 
+    let autoTimer = null;
     const close = () => {
+        if (autoTimer) clearTimeout(autoTimer);
         if (!el.parentNode) return;
         el.classList.add("neo-at-out");
         setTimeout(() => el.remove(), 200);
@@ -68,5 +73,9 @@ export function actionToast(opts = {}) {
     el.appendChild(x);
 
     stack.appendChild(el);
+    // 正常级别（success/info）超时自动消失；异常级别（error/warning）需手动关闭
+    if (severity === "success" || severity === "info") {
+        autoTimer = setTimeout(close, AUTO_DISMISS_MS);
+    }
     return { el, close };
 }

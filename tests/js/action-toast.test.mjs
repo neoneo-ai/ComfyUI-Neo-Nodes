@@ -23,6 +23,26 @@ test("不自动关闭：等待后仍在 DOM", async () => {
     assert.ok(el.parentNode, "action toast 不自动消失");
 });
 
+test("success/info 超时自动消失", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { actionToast } = await import("../../web/toast.js");
+    const { el } = actionToast({ severity: "success", summary: "已保存" });
+    assert.ok(el.parentNode, "初始在 DOM");
+    t.mock.timers.tick(5000); // 触发自动消失 close()
+    t.mock.timers.tick(200);  // 触发淡出后 remove()
+    t.mock.timers.reset();
+    assert.ok(!el.parentNode, "success toast 超时后移除");
+});
+
+test("error/warning 不自动消失（等过自动消失时长仍在）", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { actionToast } = await import("../../web/toast.js");
+    const { el } = actionToast({ severity: "error", summary: "生图失败" });
+    t.mock.timers.tick(6000); // 超过自动消失时长
+    t.mock.timers.reset();
+    assert.ok(el.parentNode, "error toast 不自动消失");
+});
+
 test("点 action：执行 onAction 后关闭", async () => {
     const { actionToast } = await import("../../web/toast.js");
     let called = null;

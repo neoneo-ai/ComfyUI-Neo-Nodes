@@ -997,60 +997,81 @@ async def rs_prompts_smart_prompt(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+# 中文反推系统提示词：明确中文质量词示例，避免 skill.md 默认英文版里的英文质量词把输出带成英文
+_REVERSE_PROMPT_ZH_SYSTEM = (
+    "你是一个专业的图像反推提示词助手。请仔细观察给定的图像，反推出用于生成该图像的文生图提示词。要求：\n"
+    "1. 分析图像中的主体、场景、风格、光影、构图、材质、氛围等所有视觉元素\n"
+    "2. 使用中文生成详细的提示词，包含中文质量词（如：杰作、最佳画质、高分辨率、细节丰富、8k 等）\n"
+    "3. 提示词应适合文生图模型使用\n"
+    "4. 仅返回提示词内容，不要包含任何解释、说明、前言或后缀文字\n"
+    "5. 不要说'好的'、'这是反推的提示词'等任何多余内容，直接输出提示词本身"
+)
+
+
+def _reverse_system_prompt(language):
+    """按语言返回反推系统提示词：中文用明确中文版（含中文质量词），英文沿用 skill.md 默认。"""
+    if language == "en":
+        return LLM_TASKS["reverse_prompt"]["system"]
+    return _REVERSE_PROMPT_ZH_SYSTEM
+
+
+def _reverse_cache_hit(txt_path, lang_path, language):
+    """同名 .txt 存在且记录语言与请求一致时返回缓存文本，否则返回 None（需重新反推）。"""
+    if not txt_path.exists():
+        return None
+    cached = txt_path.read_text(encoding="utf-8").strip()
+    if not cached:
+        return None
+    cached_lang = lang_path.read_text(encoding="utf-8").strip() if lang_path.exists() else None
+    return cached if cached_lang == language else None
+
+
 @server.PromptServer.instance.routes.post("/rs_prompts/reverse_prompt")
 async def rs_prompts_reverse_prompt(request):
-    """从图像反推提示词，结果保存为同名 .txt 文件"""
+    """从图像反推提示词并流式返回，结果保存为同名 .txt 文件"""
     from aiohttp import web
-    import base64
     from pathlib import Path
+
+    def sse_error(msg):
+        return web.Response(text=f"data: [ERROR] {msg}\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+
+    def sse_frame(obj):
+        return ("data: " + json.dumps(obj) + "\n\n").encode()
+
     try:
         data = await request.json()
         filename = data.get("filename", "")
         subfolder = data.get("subfolder", "presets")
-        
+        language = str(data.get("language", "zh")).strip().lower()
+        if language not in ("zh", "en"):
+            language = "zh"
+
         if not filename:
-            return web.json_response({"error": "filename is required"}, status=400)
-        
-        # 确定图像所在目录
-        from .gallery import PRESETS_DIR, CUSTOM_DIR, _get_user_custom_dirs, IMG_EXTENSIONS
-        base: Path | None = None
-        
-        if subfolder == "presets" or subfolder == "":
-            base = PRESETS_DIR
-        elif subfolder == "custom":
-            base = CUSTOM_DIR
-        else:
-            user_custom_dirs = _get_user_custom_dirs()
-            dir_parts = [p for p in subfolder.split("/") if p]
-            if dir_parts[0] == "presets":
-                base = PRESETS_DIR / "/".join(dir_parts[1:])
-            else:
-                for dir_path in user_custom_dirs:
-                    d_name = dir_path.name if dir_path.name else str(dir_path)
-                    if dir_parts[0] == d_name:
-                        base = dir_path / "/".join(dir_parts[1:]) if len(dir_parts) > 1 else dir_path
-                        break
-        
-        if base is None or not base.exists():
-            return web.json_response({"error": "Directory not found"}, status=404)
-        
-        # 查找图像文件
-        image_path: Path | None = None
-        for ext in IMG_EXTENSIONS:
-            candidate = base / f"{filename}{ext}"
-            if candidate.exists():
-                image_path = candidate
-                break
-        
-        if image_path is None:
-            # 尝试不带扩展名
-            candidate = base / filename
-            if candidate.exists():
-                image_path = candidate
-        
-        if image_path is None:
-            return web.json_response({"error": "Image not found"}, status=404)
-        
+            return sse_error("filename is required")
+
+        # 用共享的媒体查找器定位图像（覆盖 presets/custom/输入输出/宫格/角色等全部来源）
+        from .gallery import _find_source_media
+        image_path = _find_source_media(filename, subfolder)
+        if image_path is None or not image_path.exists():
+            return sse_error("Image not found")
+
+        txt_path = image_path.with_suffix(".txt")
+        lang_path = image_path.with_suffix(".rp-lang")
+
+        # 同名 .txt 已存在且语言匹配时直接返回缓存，避免重复调用 LLM；
+        # 切换语言（或旧缓存无语言标记）则跳过缓存强制重新反推。
+        cached_prompt = _reverse_cache_hit(txt_path, lang_path, language)
+        if cached_prompt is not None:
+            logger.info(f"Reverse prompt cache hit: {txt_path} (lang={language})")
+
+            async def cached_stream():
+                yield sse_frame({"text": cached_prompt, "kind": "content"})
+                yield sse_frame({"meta": {"status": "success", "txt_file": txt_path.name, "language": language}})
+                yield b"data: [DONE]\n\n"
+
+            return web.Response(body=cached_stream(), content_type="text/event-stream",
+                                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
         # 读取图像，如果过大则缩放到最长边 1024px
         MAX_REVERSE_SIDE = 1024
         image_bytes: bytes = b""
@@ -1067,40 +1088,64 @@ async def rs_prompts_reverse_prompt(request):
                     buf = io.BytesIO()
                     img_resized.save(buf, format=img.format or "PNG")
                     image_bytes = buf.getvalue()
-                    logger.info(f"Reverse prompt: image={image_path.name}, resized {w}x{h} -> {new_w}x{new_h}")
                 else:
                     with open(image_path, "rb") as f:
                         image_bytes = f.read()
-                    logger.info(f"Reverse prompt: image={image_path.name}, size={len(image_bytes)} bytes")
         except Exception as resize_err:
             logger.warning(f"Failed to resize image, using original: {resize_err}")
             with open(image_path, "rb") as f:
                 image_bytes = f.read()
-        
-        # 调用 LLM 反推（同步阻塞，丢线程池避免卡事件循环）
-        result_data = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: run_llm_task("reverse_prompt", "", images=[image_bytes]))
-        
-        if "error" in result_data:
-            error_msg = result_data["error"]
-            logger.warning(f"Reverse prompt error: {error_msg}")
-            return web.json_response({"error": error_msg}, status=422)
-        
-        prompt_text = result_data.get("prompt", "")
-        if not prompt_text:
-            return web.json_response({"error": "Failed to generate prompt"}, status=500)
-        
-        # 保存为同名 .txt 文件
-        txt_path = image_path.with_suffix(".txt")
-        txt_path.write_text(prompt_text, encoding="utf-8")
-        logger.info(f"Reverse prompt saved to: {txt_path}")
-        
-        return web.json_response({"status": "success", "prompt": prompt_text, "txt_file": txt_path.name})
-        
+
+        # 按语言选择系统提示词：中文用明确中文版，英文沿用 skill.md 默认
+        system_prompt = _reverse_system_prompt(language)
+        from .llm import run_llm_task_stream
+        gen = run_llm_task_stream("reverse_prompt", "", images=[image_bytes], system_prompt=system_prompt)
+
+        async def llm_stream():
+            accumulated = ""
+            try:
+                loop = asyncio.get_running_loop()
+
+                def next_chunk():
+                    try:
+                        return next(gen)
+                    except StopIteration:
+                        return None
+
+                while True:
+                    chunk = await loop.run_in_executor(None, next_chunk)
+                    if chunk is None:
+                        break
+                    text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+                    kind = chunk.get("kind", "content") if isinstance(chunk, dict) else "content"
+                    if kind == "thinking":
+                        continue
+                    accumulated += text
+                    yield sse_frame({"text": text, "kind": "content"})
+
+                prompt_text = accumulated.strip()
+                if not prompt_text:
+                    yield b"data: [ERROR] Failed to generate prompt\n\n"
+                    yield b"data: [DONE]\n\n"
+                    return
+                # 保存为同名 .txt 文件，并记录生成语言（供缓存按语言失效）
+                txt_path.write_text(prompt_text, encoding="utf-8")
+                lang_path.write_text(language, encoding="utf-8")
+                logger.info(f"Reverse prompt saved to: {txt_path} (lang={language})")
+                yield sse_frame({"meta": {"status": "success", "txt_file": txt_path.name, "language": language}})
+                yield b"data: [DONE]\n\n"
+            except Exception as e:
+                logger.error(f"Reverse prompt stream error: {e}")
+                yield (f"data: [ERROR] {str(e)}\n\n").encode()
+                yield b"data: [DONE]\n\n"
+
+        return web.Response(body=llm_stream(), content_type="text/event-stream",
+                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     except Exception as e:
         logger.error(f"Error handling reverse prompt: {e}")
         logger.exception(e)
-        return web.json_response({"error": str(e)}, status=500)
+        return sse_error(str(e))
 
 
 # ==========================================

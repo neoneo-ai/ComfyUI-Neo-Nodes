@@ -540,6 +540,160 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     setTimeout(() => input.focus(), 0);
 }
 
+// 图片反推：弹窗展示参考图，调用 /rs_prompts/reverse_prompt 反推提示词。
+// 后端会把结果自动存成与图片同目录的 .txt（已存在则直接返回缓存）。
+export function openReversePromptDialog(image, subfolder) {
+    const filename = image.filename || image.name;
+    const previewSrc = getThumbnailSrc(image, subfolder);
+    const pathLabel = `${subfolder ? subfolder + "/" : ""}${filename}`;
+
+    const statusBox = $el("div", { className: "neo-gallery-cs-status" });
+    let busy = false;
+
+    function close() {
+        if (busy) return; // 反推中不允许关闭，避免误触丢失结果
+        document.removeEventListener("keydown", onKey);
+        overlay.remove();
+    }
+    function onKey(e) { if (e.key === "Escape") close(); }
+
+    function setStatus(state, text) {
+        statusBox.innerHTML = "";
+        if (state === "idle") {
+            statusBox.appendChild($el("span", { className: "neo-gallery-story-hint", textContent: text }));
+        } else if (state === "running") {
+            statusBox.appendChild($el("div", { className: "neo-gallery-cs-running" }, [
+                $el("span", { className: "neo-gallery-cs-spinner" }),
+                $el("span", { textContent: text }),
+            ]));
+        } else if (state === "success") {
+            statusBox.appendChild($el("div", { className: "neo-gallery-rp-result", textContent: text }));
+            const copyBtn = $el("button", {
+                className: "neo-gallery-story-btn neo-gallery-rp-copy",
+                textContent: "\u29C9 复制提示词",
+                onclick: () => copyPrompt(text, copyBtn),
+            });
+            statusBox.appendChild(copyBtn);
+        } else if (state === "error") {
+            statusBox.appendChild($el("span", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: text }));
+        }
+    }
+
+    async function copyPrompt(text, btn) {
+        try {
+            await navigator.clipboard.writeText(text);
+            btn.textContent = "\u2705 已复制";
+            setTimeout(() => { btn.textContent = "\u29C9 复制提示词"; }, 1500);
+        } catch (e) {
+            actionToast({ severity: "info", summary: "复制失败", detail: String(e) });
+        }
+    }
+
+    function renderStreaming(text) {
+        statusBox.innerHTML = "";
+        statusBox.appendChild($el("div", { className: "neo-gallery-cs-running" }, [
+            $el("span", { className: "neo-gallery-cs-spinner" }),
+            $el("div", { className: "neo-gallery-rp-result", textContent: text || "…" }),
+        ]));
+    }
+
+    async function run() {
+        busy = true;
+        let acc = "";
+        renderStreaming("");
+        try {
+            const language = (langRow.querySelector('input[name="rpLang"]:checked') || {}).value || "zh";
+            const resp = await fetch("/rs_prompts/reverse_prompt", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filename, subfolder, language }),
+            });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            // SSE 流式消费：逐帧解析，正文实时写入，meta 帧（status/txt_file/language）忽略
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
+                for (const line of lines) {
+                    if (!line.startsWith("data: ")) continue;
+                    const data = line.slice(6);
+                    if (data === "[DONE]") break;
+                    if (data.startsWith("[ERROR]")) throw new Error(data.slice("[ERROR]".length).trim());
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.meta) continue;
+                        if (typeof parsed.text === "string") {
+                            acc += parsed.text;
+                            renderStreaming(acc);
+                        }
+                    } catch { /* 非 JSON 帧忽略 */ }
+                }
+            }
+            const final = acc.trim() || "(空提示词)";
+            setStatus("success", final);
+            actionToast({ severity: "success", summary: "已保存反推结果到图片目录" });
+        } catch (err) {
+            setStatus("error", err.message || String(err));
+        } finally {
+            busy = false;
+        }
+    }
+
+    // 输出语言选择（默认中文）
+    const langRow = document.createElement("div");
+    langRow.className = "neo-gallery-rp-lang";
+    const mkLangOpt = (value, label, checked) => {
+        const wrap = document.createElement("label");
+        wrap.className = "neo-gallery-rp-lang-opt";
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = "rpLang";
+        input.value = value;
+        if (checked) input.checked = true;
+        wrap.append(input, document.createTextNode(label));
+        return wrap;
+    };
+    langRow.append(mkLangOpt("zh", "中文", true), mkLangOpt("en", "英文", false));
+
+    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay" });
+    const modal = $el("div", {
+        className: "neo-gallery-story-modal",
+        onclick: e => e.stopPropagation(),
+    }, [
+        $el("div", { className: "neo-gallery-story-titlebar" }, [
+            $el("span", { className: "neo-gallery-story-title", textContent: "图片反推" }),
+            $el("span", { className: "neo-gallery-story-close", textContent: "×", onclick: close }),
+        ]),
+        $el("div", { className: "neo-gallery-story-ref" }, [
+            $el("img", { className: "neo-gallery-story-ref-img", src: previewSrc, style: { height: `${getImageHeight(image) || 160}px` } }),
+            $el("div", { className: "neo-gallery-story-ref-info" }, [
+                $el("span", { className: "neo-gallery-story-ref-label", textContent: "参考图" }),
+                $el("span", { className: "neo-gallery-story-path", title: pathLabel, textContent: filename }),
+            ]),
+        ]),
+        langRow,
+        statusBox,
+        $el("div", { className: "neo-gallery-story-actions" }, [
+            $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close }),
+            $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "反推", onclick: run }),
+        ]),
+    ]);
+    overlay.onclick = () => close();
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    setStatus("idle", "点击「反推」生成提示词，结果将自动保存到图片所在目录");
+    document.addEventListener("keydown", onKey);
+}
+
 /** 素材卡片「⋯」菜单里的四个生成入口（角色图 / 九宫格分镜图 / 两个直达目录），由 gallery-card.js 展开使用。 */
 export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
     return [

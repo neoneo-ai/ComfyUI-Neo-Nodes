@@ -138,7 +138,7 @@ StoryBoard/CharacterSheet 预设下载缓存在 `output/StoryBoard/presets/`、`
 | POST | `/rs_prompts/enhance_prompt` | 提示词增强 |
 | POST | `/rs_prompts/translate_prompt` | 提示词翻译 |
 | POST | `/rs_prompts/smart_prompt` | 快捷描述生成 |
-| POST | `/rs_prompts/reverse_prompt` | 图片反推提示词（多模态） |
+| POST | `/rs_prompts/reverse_prompt` | 图片反推提示词（多模态，SSE 流式返回 + 同名 .txt 缓存） |
 | POST | `/rs_prompts/stream_{task_name}` | 按任务名动态注册的流式生成端点 |
 | POST | `/rs_prompts/stream_generate_prompt` | 流式生成 |
 | POST | `/rs_prompts/random_prompt` | 随机提示词 |
