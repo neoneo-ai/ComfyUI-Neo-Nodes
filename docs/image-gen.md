@@ -18,17 +18,17 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 **常用搭配 ⚡ Neo Prompt Agent**：由它生成 prompt 文本接入本节点。生图模型 / Text Encoder / VAE 默认「自动」按 skill 模板匹配，一般无需手配；未匹配到时再到生图设置里手动指定。
 
 - **进程内 mini-executor** - 在节点 execute 内拓扑执行所选 skill 的 workflow 模板（复用 `image_gen.render_template`），跳过 SaveImage/Preview 等落盘节点，取末端 IMAGE 输出
-- **skill_id 下拉** - 按生图 skill 的**名称**（frontmatter `name`，缺省回退 id）列出，仅含带 `workflow.json` 的生图 skill（`gen_image: true`）；节点内部把所选名称解析回 skill id 再取模板，旧工作流里存的 id 也能兼容；skill 增删/改名后需刷新 `/object_info`。**点击下拉弹出居中可搜索选择窗**（按 category 分组、📷 标记需图技能，底部 + New Skill / ⬆ ZIP / ⬆ Folder / 📋 From Canvas 管理入口、行内 ✎ Edit / 👁 查看），替代原生 combo 列表
+- **skill 下拉** - 按生图 skill 的**中文名**（frontmatter `cn_name`，缺省回退 `name`）列出，仅含带 `workflow.json` 的生图 skill（`gen_image: true`）；节点内部把所选名称解析回 skill id 再取模板，旧工作流里存的 id/名称也能兼容；skill 增删/改名后需刷新 `/object_info`。**点击下拉弹出居中可搜索选择窗**（按 category 分组、📷 标记需图技能，底部 + New Skill / ⬆ ZIP / ⬆ Folder / 📋 From Canvas 管理入口、行内 ✎ Edit / 👁 查看），替代原生 combo 列表
 - **prompt 可连线** - STRING 输入既可手填，也可连 Neo Prompt 节点的 PROMPT 输出
 - **参考图槽位（Autogrow，可选）** - `refs.image_1 ... image_10` 动态槽位，按需增删：不挂 = 文生图；挂上即参考/编辑模式，槽位顺序就是语义顺序。保留张数按 skill 模板的 `{{REF_IMAGE_n}}` 槽位自适应（Krea2 单路模板仍只取第一张并提示）
-- **bundle 输入（可选）** - 连 ⚡ Neo Prompt Agent 的 BUNDLE 输出：prompt 留空时取 bundle 里的、bundle 里的参考图优先于节点挂的参考图；生图 skill 始终用节点本地选择（bundle 只带 prompt/参考图，不携带 skill）；bundle 缺失/过期则回退本地。**前端渲染为纯连线槽**（节点体内不显示文本框，只留左侧 slot）。连上 BUNDLE 后仅 `prompt` 控件被禁用（以 bundle 为准），`skill_id` 保持可选
+- **bundle 输入（可选）** - 连 ⚡ Neo Prompt Agent 的 BUNDLE 输出：prompt 留空时取 bundle 里的、bundle 里的参考图优先于节点挂的参考图；生图 skill 始终用节点本地选择（bundle 只带 prompt/参考图，不携带 skill）；bundle 缺失/过期则回退本地。**前端渲染为纯连线槽**（节点体内不显示文本框，只留左侧 slot）。连上 BUNDLE 后仅 `prompt` 控件被禁用（以 bundle 为准），`skill` 保持可选
 - **需 GPU/显存** - execute 内加载 UNET+CLIP+VAE 并采样，执行期间阻塞主工作流
 
 ### 输入/输出
 
 | 输入 | 类型 | 说明 |
 |------|------|------|
-| skill_id | COMBO | 生图 skill 名称（仅含 workflow.json 的 gen_image skill；显示 name，内部解析为 id） |
+| skill | COMBO | 生图 skill 中文名（仅含 workflow.json 的 gen_image skill；显示 cn_name，内部解析为 id） |
 | prompt | STRING | 提示词（可手填或连 Neo Prompt 的 PROMPT） |
 | refs.image_1 … image_10 | IMAGE (可选，Autogrow) | 参考图槽位（按需增删）：不挂 = 文生图；挂上 = 参考/编辑模式，槽位顺序即语义顺序。Krea2 单路模板只用第一张 |
 | bundle | STRING (可选) | Neo Prompt Agent 的 BUNDLE id；前端为纯连线槽（无文本框）。连上后仅 `prompt` 控件禁用，参考图以 bundle 为准、prompt 留空时取 bundle；生图 skill 仍用节点本地选择 |

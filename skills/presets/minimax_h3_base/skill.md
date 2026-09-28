@@ -1,5 +1,6 @@
 ---
-name:  H3首尾帧或文生视频
+name: minimax_h3_base
+cn_name: H3首尾帧或文生视频
 tags:
 - MiniMax
 - H3

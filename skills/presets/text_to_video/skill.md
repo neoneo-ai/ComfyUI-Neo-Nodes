@@ -1,10 +1,11 @@
 ---
-category: video_enhance
-name: WAN文生视频
+name: text_to_video
+cn_name: WAN文生视频
 tags:
 - 文生
 - 视频
 - Video
+category: video_enhance
 created_at: '2026-08-09T05:58:39.954367+00:00'
 ---
 

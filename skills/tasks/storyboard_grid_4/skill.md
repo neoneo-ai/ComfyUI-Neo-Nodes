@@ -1,5 +1,6 @@
 ---
-name: 四宫格分镜提示词模板
+name: storyboard_grid_4
+cn_name: 四宫格分镜提示词模板
 tags:
 - 分镜
 - 四宫格

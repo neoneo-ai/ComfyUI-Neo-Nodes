@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 中国古风
+name: chinese_classical
+cn_name: 中国古风
 tags:
 - 风格
 - 国风
+category: image_enhance
 created_at: '2026-08-23T01:05:19.312568+00:00'
 ---
 

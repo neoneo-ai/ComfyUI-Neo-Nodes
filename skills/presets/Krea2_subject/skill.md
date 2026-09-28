@@ -1,11 +1,12 @@
 ---
-category: image_enhance
-name: Krea2 角色分镜设定
+name: Krea2_subject
+cn_name: Krea2 角色分镜设定
 tags:
 - Krea2
 inputs:
 - text
 max_tokens: 16384
+category: image_enhance
 created_at: '2026-08-27T05:58:39.954367+00:00'
 ---
 

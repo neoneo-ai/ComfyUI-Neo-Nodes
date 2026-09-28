@@ -1,5 +1,6 @@
 ---
-name: 参考图人物与服装细节
+name: storyboard_ref_detail
+cn_name: 参考图人物与服装细节
 tags:
 - 分镜
 - 参考图

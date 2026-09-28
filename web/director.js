@@ -618,7 +618,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const skillSel = $el('select', { className: 'neo-director-skill' });
         if (!skills.length) skillSel.appendChild($el('option', { value: '', textContent: '（无可用视频技能）' }));
         for (const s of skills) {
-            const opt = $el('option', { value: s.id, textContent: s.name || s.id });
+            const opt = $el('option', { value: s.id, textContent: s.cn_name || s.name || s.id });
             opt.dataset.source = s.source || 'custom'; // 详情弹窗按 source 区分预设只读/自定义可编辑
             opt.__skillMeta = s; // 选择窗浮动预览卡取 gen_config / 分类等元数据
             skillSel.appendChild(opt);
@@ -1021,7 +1021,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             return;
         }
         for (const s of pool) {
-            const opt = $el('option', { value: s.id, textContent: s.name || s.id });
+            const opt = $el('option', { value: s.id, textContent: s.cn_name || s.name || s.id });
             opt.dataset.source = s.source || 'custom'; // 详情弹窗按 source 区分预设只读/自定义可编辑
             opt.__skillMeta = s; // 选择窗浮动预览卡取 gen_config / 分类等元数据
             sel.appendChild(opt);
@@ -1569,7 +1569,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         sbSkillSel.innerHTML = '';
         // 只列生图技能（requires_ref 的四视图类不适合分镜）
         for (const s of sbImageSkills.filter(s => s.gen_image && !s.requires_ref)) {
-            sbSkillSel.appendChild($el('option', { value: s.id, textContent: s.name || s.id }));
+            sbSkillSel.appendChild($el('option', { value: s.id, textContent: s.cn_name || s.name || s.id }));
         }
         if (!sbSkillSel.value) sbSkillSel.appendChild($el('option', { value: 'qwen_image_21', textContent: 'Qwen Image 2.1 生图' }));
         // 回显优先：本模式记住的选择 > 配方落盘的 image_skill；否则 t2i 默认 Krea2、r2i 默认 Qwen Image 2.1

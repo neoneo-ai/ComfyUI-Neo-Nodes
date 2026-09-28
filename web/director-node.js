@@ -430,7 +430,7 @@ app.registerExtension({
             };
 
             const recipeWidget = node.widgets?.find(w => w.name === "recipe");
-            const skillIdWidget = node.widgets?.find(w => w.name === "skill_id");
+            const skillIdWidget = node.widgets?.find(w => w.name === "skill");
             const durationWidget = node.widgets?.find(w => w.name === "duration_sec");
             // 默认（无 bundle）：显示 recipe、隐藏视频 skill 选择器与时长（秒）；连上 BUNDLE 时由 _neoDtApplyBundleLock 互换。
             if (skillIdWidget) skillIdWidget.hidden = true;
@@ -454,7 +454,7 @@ app.registerExtension({
                 const repaired = repairDuration(); // 同步修复，fetch 前先保证值合法
                 const metas = await listSkills();
                 const skills = Array.isArray(metas) ? metas : []; // listSkills 对非 2xx 会把错误体当结果返回，这里兜住
-                const id = (skills.find((s) => s.name === name) || { id: name }).id; // combo 存的是 skill 名称；映射不到就按原值查（旧工作流可能存的是 id）
+                const id = (skills.find((s) => s.cn_name === name || s.name === name) || { id: name }).id; // combo 存的是 skill 中文名；映射不到就按原值查（旧工作流可能存的是 id/名称）
                 const cfg = await getSkillGenConfig(id);
                 if (initial && configured && !repaired) return; // 还原的工作流已存值优先；刚修复的继续按 skill config 精确化
                 const frames = Number(cfg && cfg.length);
@@ -492,8 +492,8 @@ app.registerExtension({
                 const w = node.widgets?.find((x) => x.name === nm);
                 if (w) w.hidden = true;
             }
-            // 点击 recipe / skill_id combo → 弹居中选择窗（替代原生下拉）。
-            // recipe：仅搜索、无底部工具栏，预览卡显示焦点配方只读时间轴（节点内嵌同款组件）；skill_id：默认技能列表（含管理工具栏）
+            // 点击 recipe / skill combo → 弹居中选择窗（替代原生下拉）。
+            // recipe：仅搜索、无底部工具栏，预览卡显示焦点配方只读时间轴（节点内嵌同款组件）；skill：默认技能列表（含管理工具栏）
             const recipeItemsProvider = async (w) => {
                 const recipes = (await listRecipes()).filter((r) => r.type === "video_director");
                 const allowed = Array.isArray(w?.options?.values) ? w.options.values : null;

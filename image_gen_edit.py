@@ -249,9 +249,15 @@ def _gen_image_skills():
 
 
 def _resolve_skill_id(value):
-    """skill_id 下拉显示 skill name；反查真实 id，找不到则按 id 直接用（兼容旧工作流存的 id）。"""
-    by_name = {s["name"]: s["id"] for s in _gen_image_skills()}
-    return by_name.get(value, value)
+    """skill 下拉显示 skill cn_name（中文名）；反查真实 id，找不到则按 id/name 直接用（兼容旧工作流存的 id / 名称）。"""
+    by_key = {}
+    for s in _gen_image_skills():
+        by_key[s["id"]] = s["id"]
+        if s.get("cn_name"):
+            by_key[s["cn_name"]] = s["id"]
+        if s.get("name") and s["name"] != s["id"]:
+            by_key[s["name"]] = s["id"]
+    return by_key.get(value, value)
 
 
 _REF_SLOT_SUFFIX_RE = re.compile(r"_(\d+)$")
@@ -274,7 +280,7 @@ class NeoImageGenEdit(io.ComfyNode):
 
     @classmethod
     def define_schema(cls):
-        names = [s["name"] for s in _gen_image_skills()]
+        names = [s.get("cn_name") or s["name"] for s in _gen_image_skills()]
         return io.Schema(
             node_id="NeoImageGenEdit",
             display_name="Neo Image Gen & Edit",
@@ -283,7 +289,7 @@ class NeoImageGenEdit(io.ComfyNode):
                         "不挂参考图为文生图；挂上参考图则按 skill 模板进入参考/编辑模式"
                         "（如 Qwen Image 2.1 编辑，第 1 张为编辑目标、其余为参考对象）。",
             inputs=[
-                io.Combo.Input("skill_id", options=names, default=names[0] if names else ""),
+                io.Combo.Input("skill", options=names, default=names[0] if names else ""),
                 io.String.Input("prompt", multiline=True, dynamic_prompts=True, default=""),
                 # 参考图槽位：不挂 = 文生图（min=0），挂上 = 参考/编辑模式；顺序即语义顺序
                 io.Autogrow.Input(
@@ -314,15 +320,15 @@ class NeoImageGenEdit(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, skill_id, prompt="", refs=None, bundle="", seed=0, count=1,
+    def execute(cls, skill, prompt="", refs=None, bundle="", seed=0, count=1,
                 width=-1, height=-1, steps=-1, model=None):
         payload = get_bundle(bundle) if bundle else None
 
         # skill 以节点本地选择为准：bundle 只带资源（prompt/参考图），不携带生图 skill
-        real_id = _resolve_skill_id(skill_id)
+        real_id = _resolve_skill_id(skill)
         template = load_skill_workflow(real_id)
         if template is None:
-            raise RuntimeError(f"[NeoNodes] skill '{skill_id}' 缺少 workflow.json，无法生成")
+            raise RuntimeError(f"[NeoNodes] skill '{skill}' 缺少 workflow.json，无法生成")
         settings = dict(get_settings())
         for key, value in get_skill_gen_config(real_id).items():
             if key in _SKILL_SETTING_KEYS and value not in (None, "", []):

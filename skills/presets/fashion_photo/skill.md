@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 时尚摄影
+name: fashion_photo
+cn_name: 时尚摄影
 tags:
 - 摄影
 - 时尚
+category: image_enhance
 created_at: '2026-08-09T05:58:39.954367+00:00'
 ---
 

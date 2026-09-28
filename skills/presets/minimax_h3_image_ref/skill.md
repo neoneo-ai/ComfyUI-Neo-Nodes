@@ -1,5 +1,6 @@
 ---
-name:  H3图像参考生成视频
+name: minimax_h3_image_ref
+cn_name: H3图像参考生成视频
 tags:
 - MiniMax
 - H3

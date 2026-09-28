@@ -198,13 +198,13 @@ class ImageGenEditBundleConsumeTests(unittest.TestCase):
 
     def test_bundle_prompt_used_when_node_prompt_empty(self):
         bid = bundles.create_bundle({"prompts": ["from bundle"], "references": [], "gen_type": ""})
-        self._run(skill_id=self._valid_image_skill(), prompt="", bundle=bid)
+        self._run(skill=self._valid_image_skill(), prompt="", bundle=bid)
         self.assertEqual(self._captured["body"]["prompt"], "from bundle")
 
     def test_bundle_references_override_node_refs(self):
         refs = [{"kind": "data", "data": "data:image/png;base64,AAAA"}]
         bid = bundles.create_bundle({"prompts": ["p"], "references": refs, "gen_type": ""})
-        self._run(skill_id=self._valid_image_skill(), prompt="p", bundle=bid,
+        self._run(skill=self._valid_image_skill(), prompt="p", bundle=bid,
                   refs={"image_1": torch.full((1, 2, 2, 3), 0.1)})
         self.assertEqual(self._captured["body"]["references"], refs)
 
@@ -212,7 +212,7 @@ class ImageGenEditBundleConsumeTests(unittest.TestCase):
         # bundle 只带资源（prompt/参考图），不携带生图 skill：本地选择的 skill 始终生效
         local = self._valid_image_skill()
         bid = bundles.create_bundle({"prompts": ["p"], "references": [], "gen_type": ""})
-        self._run(skill_id=local, prompt="p", bundle=bid)
+        self._run(skill=local, prompt="p", bundle=bid)
         self.assertEqual(self._captured["template"]["__skill_id"], image_gen_edit._resolve_skill_id(local))
 
 

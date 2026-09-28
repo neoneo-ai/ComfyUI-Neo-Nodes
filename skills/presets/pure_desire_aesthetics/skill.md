@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 纯欲美学
+name: pure_desire_aesthetics
+cn_name: 纯欲美学
 tags:
 - 风格
 - 纯欲
+category: image_enhance
 created_at: '2026-08-09T05:58:39.954021+00:00'
 ---
 

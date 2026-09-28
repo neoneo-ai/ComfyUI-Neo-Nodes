@@ -85,7 +85,7 @@ _SKILL_DEFAULT_INPUTS = {
 
 # frontmatter 序列化时的字段顺序（未列出的额外字段追加在末尾）
 _META_KEY_ORDER = (
-    "name", "tags", "inputs", "description", "max_tokens",
+    "name", "cn_name", "tags", "inputs", "description", "max_tokens",
     "result_key", "multi_result", "multi_turn", "category",
     "gen_image", "gen_video", "mode", "requires_ref", "audit", "created_at",
 )
@@ -784,9 +784,10 @@ def scan_skills() -> list:
             skill = {
                 "id": skill_id,
                 "name": meta.get("name", skill_id),
+                "cn_name": meta.get("cn_name") or meta.get("name") or skill_id,
                 "category": _skill_category(skill_id, {**meta, "inputs": inputs}),
                 "source": "tasks",
-                "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("name", skill_id)),
+                "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("cn_name") or meta.get("name", skill_id)),
                 "inputs": inputs,
                 "needs_image": "image" in inputs,
                 "multi_turn": bool(meta.get("multi_turn", False)),
@@ -815,9 +816,10 @@ def scan_skills() -> list:
                 skill = {
                     "id": skill_id,
                     "name": meta.get("name", skill_id),
+                    "cn_name": meta.get("cn_name") or meta.get("name") or skill_id,
                     "category": meta.get("category", "image_enhance"),
                     "source": source,
-                    "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("name", skill_id)),
+                    "tags": list(meta.get("tags", [])) + _skill_name_pinyin_tags(meta.get("cn_name") or meta.get("name", skill_id)),
                     "inputs": inputs,
                     "needs_image": "image" in inputs,
                     "multi_turn": bool(meta.get("multi_turn", False)),
@@ -865,18 +867,19 @@ def _safe_skill_file_path(skill_dir: str, filename: str) -> str | None:
 
 
 def _find_name_conflict(name: str, exclude_id: str):
-    """返回与 name 同名但 id 不同的 skill 的 id；无冲突返回 None。"""
+    """返回与 cn_name（中文名）同名但 id 不同的 skill 的 id；无冲突返回 None。"""
     target = (name or "").strip()
     if not target:
         return None
     for s in scan_skills():
-        if s["id"] != exclude_id and (s.get("name") or "").strip() == target:
+        if s["id"] != exclude_id and (s.get("cn_name") or "").strip() == target:
             return s["id"]
     return None
 
 
 def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: str = "custom", multi_turn=None,
-                    category=None, gen_image=None, gen_video=None, mode=None, requires_ref=None) -> bool:
+                    category=None, gen_image=None, gen_video=None, mode=None, requires_ref=None,
+                    cn_name=None) -> bool:
     """保存 skill 的主文件 skill.md（frontmatter + 正文），保留未编辑的既有字段。
 
     multi_turn/category/gen_image/gen_video/mode/requires_ref 为 None 时沿用 frontmatter 既有值；显式传入则写入（假值时移除该字段）。
@@ -895,8 +898,10 @@ def save_skill_main(skill_id: str, name: str, content: str, tags=None, source: s
         gv = meta.get("gen_video") if gen_video is None else bool(gen_video)
         md = meta.get("mode") if mode is None else (mode or "").strip()
         rr = meta.get("requires_ref") if requires_ref is None else bool(requires_ref)
+        dn = meta.get("cn_name") if cn_name is None else (cn_name or "").strip()
         new_meta = {
             "name": (name or "").strip() or sid,
+            "cn_name": dn or None,
             "tags": list(tags or []),
             "description": meta.get("description", ""),
             "inputs": meta.get("inputs"),
@@ -1354,8 +1359,10 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
     while os.path.isdir(os.path.join(SKILL_CUSTOM_DIR, sid)):
         sid = f"{base_id}-{i}"
         i += 1
+    title = str(name or "").strip()
     meta = {
-        "name": str(name or "").strip() or sid,
+        "name": sid,
+        "cn_name": title or None,
         "tags": [str(t) for t in (tags if isinstance(tags, list) else [])],
         "description": str(description or ""),
         # 视频 I2V 需要首帧参考图（对齐内置 minimax_h3_i2v preset）；生图四视图沿用既有 inputs=["text"]+requires_ref 行为
@@ -1542,6 +1549,7 @@ async def rs_prompts_load_skill(request):
         return web.json_response({
             "id": skill_id,
             "name": meta.get("name", skill_id),
+            "cn_name": meta.get("cn_name") or meta.get("name") or skill_id,
             "source": _skill_source(d),
             "tags": meta.get("tags", []),
             "description": meta.get("description", ""),
@@ -1577,9 +1585,10 @@ async def rs_prompts_save_skill(request):
         if existing_dir and _skill_source(existing_dir) == "presets" and source != "presets":
             return web.Response(status=403, text="Cannot modify preset skill")
         final_name = (data.get("name") or "").strip() or skill_id
-        conflict = _find_name_conflict(final_name, skill_id)
+        cn_name = (data.get("cn_name") or "").strip()
+        conflict = _find_name_conflict(cn_name, skill_id) if cn_name else None
         if conflict:
-            return web.Response(status=409, text=f"技能名称「{final_name}」已被 {conflict} 使用，请改用其他名称")
+            return web.Response(status=409, text=f"中文名称「{cn_name}」已被 {conflict} 使用，请改用其他名称")
         ok = save_skill_main(
             skill_id,
             data.get("name", ""),
@@ -1592,6 +1601,7 @@ async def rs_prompts_save_skill(request):
             gen_video=data.get("gen_video"),
             mode=data.get("mode"),
             requires_ref=data.get("requires_ref"),
+            cn_name=cn_name or None,
         )
         if not ok:
             return web.Response(status=500, text="Failed to save skill")

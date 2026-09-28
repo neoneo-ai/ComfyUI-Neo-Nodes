@@ -296,7 +296,7 @@ class GenerateTests(unittest.TestCase):
     def test_missing_workflow_raises(self):
         image_gen_edit.load_skill_workflow = lambda sid: None
         with self.assertRaises(RuntimeError):
-            self.run_node(skill_id="nope", prompt="hi")
+            self.run_node(skill="nope", prompt="hi")
 
     def test_happy_path_returns_image(self):
         graph = {
@@ -308,7 +308,7 @@ class GenerateTests(unittest.TestCase):
         image_gen_edit.get_skill_gen_config = lambda sid: {}
         image_gen_edit.resolve_request = lambda body, settings, **kw: {"p": 1}
         image_gen_edit.render_template = lambda tpl, params: (graph, [])
-        out = self.run_node(skill_id="ok", prompt="hi", seed=42, count=1)
+        out = self.run_node(skill="ok", prompt="hi", seed=42, count=1)
         self.assertTrue(torch.allclose(out, torch.ones(1, 2, 2, 3)))
 
     def test_generate_model_injection(self):
@@ -328,7 +328,7 @@ class GenerateTests(unittest.TestCase):
             lambda g, output_type="IMAGE", overrides=None: (captured.update(graph=g, overrides=overrides), "img")[1])
         try:
             ext = object()
-            out = self.run_node(skill_id="ok", prompt="hi", model=ext)
+            out = self.run_node(skill="ok", prompt="hi", model=ext)
         finally:
             image_gen_edit.execute_graph_inprocess = orig_exec
         self.assertEqual(out, "img")
@@ -352,7 +352,7 @@ class GenerateTests(unittest.TestCase):
         image_gen_edit.execute_graph_inprocess = (
             lambda g, output_type="IMAGE", overrides=None: (captured.update(graph=g, overrides=overrides), "img")[1])
         try:
-            self.run_node(skill_id="ok", prompt="hi")
+            self.run_node(skill="ok", prompt="hi")
         finally:
             image_gen_edit.execute_graph_inprocess = orig_exec
         self.assertIsNone(captured["overrides"])                          # 无外部模型 → 不注入
@@ -371,12 +371,12 @@ class GenerateTests(unittest.TestCase):
         image_gen_edit.resolve_request = lambda body, settings, **kw: (captured.update(body=body), {"p": 1})[1]
         image_gen_edit.render_template = lambda tpl, params: (graph, [])
         # 显式宽高 >0 → 写入 body（覆盖 skill/preset 比例）
-        self.run_node(skill_id="ok", prompt="hi", width=1024, height=768)
+        self.run_node(skill="ok", prompt="hi", width=1024, height=768)
         self.assertEqual(captured["body"].get("width"), 1024)
         self.assertEqual(captured["body"].get("height"), 768)
         # 默认 -1 → 不写入 body，交由 skill/preset 比例
         captured.clear()
-        self.run_node(skill_id="ok", prompt="hi")
+        self.run_node(skill="ok", prompt="hi")
         self.assertNotIn("width", captured["body"])
         self.assertNotIn("height", captured["body"])
 
@@ -392,11 +392,11 @@ class GenerateTests(unittest.TestCase):
         image_gen_edit.resolve_request = lambda body, settings, **kw: (captured.update(body=body), {"p": 1})[1]
         image_gen_edit.render_template = lambda tpl, params: (graph, [])
         # 显式 steps >0 → 写入 body（覆盖 skill config.json 默认值）
-        self.run_node(skill_id="ok", prompt="hi", steps=8)
+        self.run_node(skill="ok", prompt="hi", steps=8)
         self.assertEqual(captured["body"].get("steps"), 8)
         # 默认 -1 → 不写入 body，交由 skill config.json 的 steps（缺省 20）
         captured.clear()
-        self.run_node(skill_id="ok", prompt="hi")
+        self.run_node(skill="ok", prompt="hi")
         self.assertNotIn("steps", captured["body"])
 
     def _capture_request(self, template, **node_kwargs):
@@ -419,7 +419,7 @@ class GenerateTests(unittest.TestCase):
         # Autogrow 参考图 dict（乱序 + 空槽）→ body.references 按槽位序号排的 data URI 列表
         captured = self._capture_request(
             {"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}}},
-            skill_id="ok", prompt="hi",
+            skill="ok", prompt="hi",
             refs={"image_3": torch.zeros(1, 2, 2, 3), "image_1": torch.ones(1, 2, 2, 3)})
         refs = captured["body"]["references"]
         self.assertEqual([r["kind"] for r in refs], ["data", "data"])
@@ -429,14 +429,14 @@ class GenerateTests(unittest.TestCase):
 
     def test_no_refs_leaves_body_without_references(self):
         captured = self._capture_request({"1": {"class_type": "UNETLoader", "inputs": {}}},
-                                         skill_id="ok", prompt="hi", refs={})
+                                         skill="ok", prompt="hi", refs={})
         self.assertNotIn("references", captured["body"])
 
     def test_bundle_references_win_over_node_refs(self):
         bundle_refs = [{"kind": "data", "data": "data:image/png;base64,AAA"}]
         image_gen_edit.get_bundle = lambda bid: {"references": bundle_refs}
         captured = self._capture_request({"1": {"class_type": "UNETLoader", "inputs": {}}},
-                                         skill_id="ok", prompt="", bundle="b1",
+                                         skill="ok", prompt="", bundle="b1",
                                          refs={"image_1": torch.ones(1, 2, 2, 3)})
         self.assertEqual(captured["body"]["references"], bundle_refs)
 
@@ -444,13 +444,13 @@ class GenerateTests(unittest.TestCase):
         # 多路槽位模板（Qwen Image 2.1）：max_refs=槽位数、不自动挑选 Krea2 四视图 LoRA
         qwen = {"3": {"class_type": "TextEncodeQwenImage21",
                       "inputs": {"images.image_1": "{{REF_IMAGE_1}}", "images.image_4": "{{REF_IMAGE_4}}"}}}
-        captured = self._capture_request(qwen, skill_id="ok", prompt="hi")
+        captured = self._capture_request(qwen, skill="ok", prompt="hi")
         self.assertEqual(captured["max_refs"], 4)
         self.assertFalse(captured["auto_quadview"])
 
         # Krea2 单路编辑模板：max_refs=1、保留四视图 LoRA 自动挑选
         krea2 = {"2": {"class_type": "Krea2EditModelPatch", "inputs": {"image": "{{REF_IMAGE}}"}}}
-        captured = self._capture_request(krea2, skill_id="ok", prompt="hi")
+        captured = self._capture_request(krea2, skill="ok", prompt="hi")
         self.assertEqual(captured["max_refs"], 1)
         self.assertTrue(captured["auto_quadview"])
 
@@ -524,7 +524,7 @@ class ResolveSkillIdTests(unittest.TestCase):
         ]
         image_gen_edit.load_skill_workflow = lambda sid: {"t": True}
         it = image_gen_edit.NeoImageGenEdit.INPUT_TYPES()
-        io_type, opts = it["required"]["skill_id"]
+        io_type, opts = it["required"]["skill"]
         self.assertEqual(io_type, "COMBO")
         self.assertEqual(opts["options"], ["Alpha", "Beta"])
         self.assertEqual(opts["default"], "Alpha")
@@ -536,7 +536,29 @@ class ResolveSkillIdTests(unittest.TestCase):
         ]
         image_gen_edit.load_skill_workflow = lambda sid: {"t": True} if sid == "a" else None
         it = image_gen_edit.NeoImageGenEdit.INPUT_TYPES()
-        self.assertEqual(it["required"]["skill_id"][1]["options"], ["Alpha"])
+        self.assertEqual(it["required"]["skill"][1]["options"], ["Alpha"])
+
+    def test_input_types_uses_cn_name(self):
+        # combo 显示 cn_name（中文名）；无 cn_name 时回落 name
+        image_gen_edit.scan_skills = lambda: [
+            {"id": "a", "name": "krea2_t2i", "cn_name": "Krea2文生图", "gen_image": True},
+            {"id": "b", "name": "Beta", "gen_image": True},
+        ]
+        image_gen_edit.load_skill_workflow = lambda sid: {"t": True}
+        it = image_gen_edit.NeoImageGenEdit.INPUT_TYPES()
+        io_type, opts = it["required"]["skill"]
+        self.assertEqual(io_type, "COMBO")
+        self.assertEqual(opts["options"], ["Krea2文生图", "Beta"])
+        self.assertEqual(opts["default"], "Krea2文生图")
+
+    def test_resolve_cn_name_to_id(self):
+        # 下拉值（cn_name）与旧 name 都能反查到真实 id
+        image_gen_edit.scan_skills = lambda: [
+            {"id": "a", "name": "krea2_t2i", "cn_name": "Krea2文生图", "gen_image": True},
+        ]
+        image_gen_edit.load_skill_workflow = lambda sid: {"t": True}
+        self.assertEqual(image_gen_edit._resolve_skill_id("Krea2文生图"), "a")
+        self.assertEqual(image_gen_edit._resolve_skill_id("krea2_t2i"), "a")
 
     def test_refs_is_autogrow_with_optional_slots(self):
         # 参考图走 io.Autogrow（min=0）：展开后是 refs.image_1..refs.image_10 全部可选，
@@ -547,7 +569,7 @@ class ResolveSkillIdTests(unittest.TestCase):
         self.assertEqual(it["required"]["refs"][0], "COMFY_AUTOGROW_V3")
 
         expanded, _, v3_data = _comfy_io.get_finalized_class_inputs(
-            it, {"skill_id": "Alpha", "prompt": ""})
+            it, {"skill": "Alpha", "prompt": ""})
         self.assertNotIn("refs", expanded["required"])
         self.assertNotIn("refs", expanded.get("optional", {}))
         slots = [k for k in expanded.get("optional", {}) if k.startswith("refs.image_")]
@@ -557,7 +579,7 @@ class ResolveSkillIdTests(unittest.TestCase):
 
         # 挂了第 2 张：dynamic_paths 指向该槽位，主循环收成 {"refs": {"image_2": ...}}
         expanded2, _, v3_data2 = _comfy_io.get_finalized_class_inputs(
-            it, {"skill_id": "Alpha", "prompt": "", "refs.image_2": ["9", 0]})
+            it, {"skill": "Alpha", "prompt": "", "refs.image_2": ["9", 0]})
         self.assertIn("refs.image_2", expanded2.get("optional", {}))
         self.assertEqual(v3_data2["dynamic_paths"], {"refs.image_2": "refs.image_2"})
 

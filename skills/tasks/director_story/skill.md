@@ -1,5 +1,6 @@
 ---
-name: 导演故事板分段
+name: director_story
+cn_name: 导演故事板分段
 tags:
 - 导演
 - 分镜

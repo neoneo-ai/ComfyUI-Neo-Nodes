@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 写实摄影
+name: realistic_photo
+cn_name: 写实摄影
 tags:
 - 风格
 - 现实
+category: image_enhance
 created_at: '2026-08-09T05:58:39.954367+00:00'
 ---
 

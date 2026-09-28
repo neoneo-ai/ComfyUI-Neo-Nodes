@@ -1,5 +1,6 @@
 ---
-name: 反推提示词
+name: reverse_prompt
+cn_name: 反推提示词
 tags:
 - 反推
 - 图像

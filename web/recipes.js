@@ -424,7 +424,7 @@ export async function listVideoSkills() {
 export function directorMetaText(r, skills) {
     const shared = r.shared || {};
     const segs = r.segments || [];
-    const nameOf = new Map(skills.map(s => [s.id, s.name]));
+    const nameOf = new Map(skills.map(s => [s.id, s.cn_name || s.name]));
     const modeText = (shared.mode && MODE_LABELS.get(shared.mode)) || '自动';
     const skillCounts = new Map();
     for (const s of segs) {

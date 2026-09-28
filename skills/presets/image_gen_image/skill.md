@@ -1,5 +1,6 @@
 ---
-name: Krea2图生角色图
+name: image_gen_image
+cn_name: Krea2图生角色图
 tags:
 - 生图
 - Krea2

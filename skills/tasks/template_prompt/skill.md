@@ -1,5 +1,6 @@
 ---
-name: 自定义模版提示词
+name: template_prompt
+cn_name: 自定义模版提示词
 tags:
 - 模版
 - 自定义

@@ -419,6 +419,35 @@ test("previewRenderer 自定义预览卡：随焦点更新，点击触发 onPrev
     assert.equal(document.querySelector(".rs-skill-modal-overlay"), null, "点预览卡后选择窗应关闭");
 });
 
+// 回归：combo options.values 存 cn_name（中文名，见 image_gen_edit._gen_image_skills）时，
+// preset skill（name/id 为英文 id、带中文 cn_name）也必须能匹配出现；
+// 修复前 skillItemsFromMeta 只按 name/id 匹配 allowed，preset 全被过滤（下拉只剩 custom）。
+test("combo options 存 cn_name 时 preset 也能匹配显示", async () => {
+    const { attachSkillPickerToComboWidget } = await import("../../web/skill.js");
+    const PRESET_SKILLS = [
+        { id: "image_gen", name: "image_gen", cn_name: "Krea2文生图", source: "presets", category: "image_gen", gen_image: true, tags: [] },
+        { id: "qwen_image_21", name: "qwen_image_21", cn_name: "Qwen Image 2.1 生图/编辑", source: "presets", category: "image_gen", gen_image: true, tags: [] },
+        { id: "my-workflow", name: "my-workflow", source: "custom", category: "image_gen", gen_image: true, tags: [] },
+    ];
+    // 后端 combo options = cn_name || name（preset 存中文 cn_name，custom 无 cn_name 存 name）
+    const OPTIONS = ["Krea2文生图", "Qwen Image 2.1 生图/编辑", "my-workflow"];
+    mockRoute("/rs_prompts/skills", () => jsonResponse(PRESET_SKILLS));
+
+    const widget = { name: "skill", value: "Krea2文生图", options: { values: OPTIONS.slice() }, callback: () => {} };
+    attachSkillPickerToComboWidget(widget, { title: "选择 Skill（测试）" });
+    assert.equal(widget.onPointerDown({ clientX: 100, clientY: 200 }, makeNode(), null), true);
+    await sleep(30);
+
+    const overlay = document.querySelector(".rs-skill-modal-overlay");
+    assert.ok(overlay, "选择窗应打开");
+    const labels = Array.from(overlay.querySelectorAll(".rs-skill-picker-label")).map((el) => el.textContent);
+    assert.ok(labels.includes("Krea2文生图"), "preset（中文 cn_name）应出现，实际：" + labels.join(","));
+    assert.ok(labels.includes("Qwen Image 2.1 生图/编辑"), "第二个 preset 也应出现");
+    assert.ok(labels.includes("my-workflow"), "custom 也应出现");
+    keydown(overlay, "Escape"); // 关闭选择窗，清理 _skillPickerOpen（避免污染后续 openSkillPickerModal 测试）
+    await sleep(20);
+});
+
 // 回归：不传 previewRenderer 且条目无 skillId/genImage（纯 label 条目）时不渲染预览卡
 test("无 previewRenderer 的纯文本条目：不渲染预览卡", async () => {
     const { openSkillPickerModal } = await import("../../web/skill.js");

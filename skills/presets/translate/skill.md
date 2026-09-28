@@ -1,9 +1,10 @@
 ---
-category: task
-name: 翻译
+name: translate
+cn_name: 翻译
 tags:
 - 翻译
 - 工具
+category: task
 created_at: '2026-08-23T01:05:19.313568+00:00'
 ---
 

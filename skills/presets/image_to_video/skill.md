@@ -1,5 +1,6 @@
 ---
-name: 图生视频
+name: image_to_video
+cn_name: 图生视频
 tags:
 - MiniMax
 - H3

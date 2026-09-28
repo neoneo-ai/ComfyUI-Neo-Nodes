@@ -295,7 +295,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
             } else {
                 gridSel.innerHTML = "";
                 for (const s of gridSkills) {
-                    gridSel.appendChild($el("option", { value: s.id, textContent: s.name || s.id }));
+                    gridSel.appendChild($el("option", { value: s.id, textContent: s.cn_name || s.name || s.id }));
                 }
             }
             const defaultId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;

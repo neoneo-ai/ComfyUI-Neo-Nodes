@@ -832,7 +832,7 @@ class NeoH3VideoDirector:
                 "recipe": (names, {"default": names[0] if names else ""}),
             },
             "optional": {
-                "skill_id": ([s["name"] for s in vskills], {"default": vskills[0]["name"] if vskills else ""}),  # BUNDLE 单段用的视频 skill；recipe 多段模式忽略（各段自带）
+                "skill": ([s.get("cn_name") or s["name"] for s in vskills], {"default": (vskills[0].get("cn_name") or vskills[0]["name"]) if vskills else ""}),  # BUNDLE 单段用的视频 skill；recipe 多段模式忽略（各段自带）
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),   # -1 = 用配方 shared.seed
                 "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
                 "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
@@ -858,12 +858,12 @@ class NeoH3VideoDirector:
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "多段视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO（跨段上下文窗口保连续性）。"
 
-    def _run_bundle_segment(self, payload, skill_id, seed, width, height, model, steps, vae=None, preview=True, node_id=None,
+    def _run_bundle_segment(self, payload, skill, seed, width, height, model, steps, vae=None, preview=True, node_id=None,
                            duration_sec=5):
         """BUNDLE 单段生成：提示词/参考来自 NeoPromptAgent 的 BUNDLE（data URI），视频 skill / 时长（秒）用节点入参，忽略 recipe。"""
-        sid = _resolve_skill_id(skill_id)
+        sid = _resolve_skill_id(skill)
         if not any(s["id"] == sid for s in _gen_video_skills()):
-            raise ValueError(f"未选择有效的视频 skill：'{skill_id}'（需为含 workflow.json 的视频技能）")
+            raise ValueError(f"未选择有效的视频 skill：'{skill}'（需为含 workflow.json 的视频技能）")
         prompts = payload.get("prompts") or []
         prompt = str(prompts[0]).strip() if prompts else ""
         if not prompt:
@@ -887,11 +887,11 @@ class NeoH3VideoDirector:
             Types.VideoComponents(images=comp.images, audio=comp.audio, frame_rate=Fraction(H3_FPS))
         ),)
 
-    def generate(self, recipe, skill_id="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, duration_sec=5, bundle="", preview=True, unique_id=None):
+    def generate(self, recipe, skill="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, duration_sec=5, bundle="", preview=True, unique_id=None):
         payload = get_bundle(bundle) if bundle else None
         if payload:
             vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
-            return self._run_bundle_segment(payload, skill_id, seed, width, height, model, steps, vae, preview, unique_id,
+            return self._run_bundle_segment(payload, skill, seed, width, height, model, steps, vae, preview, unique_id,
                                             duration_sec=duration_sec)
         spec = load_director_spec(recipe)
         if not (spec.get("segments") or []):

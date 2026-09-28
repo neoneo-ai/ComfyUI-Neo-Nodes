@@ -1,10 +1,11 @@
 ---
-name: Krea2文生角色图
+name: image_gen_text_subject
+cn_name: Krea2文生角色图
 tags: []
 description: ''
+max_tokens: 8192
 category: image_gen
 gen_image: true
-max_tokens: 8192
 created_at: '2026-09-09T02:30:49.158408+00:00'
 ---
 

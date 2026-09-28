@@ -1,16 +1,17 @@
 ---
-name: H3 连续多段合成
+name: minimax_h3_multiframe
+cn_name: H3 连续多段合成
 tags:
 - MiniMax
 - H3
 - video
 - 多帧
-description: 'H3 连续多段合成：连续文生/图生/首尾帧段合并成一次 ref2va 运行，各段分镜关键帧钉在起点'
+description: H3 连续多段合成：连续文生/图生/首尾帧段合并成一次 ref2va 运行，各段分镜关键帧钉在起点
 category: video_gen
 gen_video: true
-multi_frame: true
 mode: t2v
 created_at: '2026-09-24T00:00:00+00:00'
+multi_frame: true
 ---
 
 # H3 连续多段合成（Continuous Multi-Segment Synthesis）

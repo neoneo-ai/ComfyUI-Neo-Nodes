@@ -1,5 +1,6 @@
 ---
-name: 九宫格分镜图（Qwen Image 2.1）
+name: nine_grid_storyboard
+cn_name: 九宫格分镜图（Qwen Image 2.1）
 tags:
 - 分镜
 - 九宫格

@@ -1,5 +1,6 @@
 ---
-name: 宫格分镜故事（简要故事 + 参考图）
+name: storyboard_story
+cn_name: 宫格分镜故事（简要故事 + 参考图）
 tags:
 - 分镜
 - 九宫格

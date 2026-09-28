@@ -1,5 +1,6 @@
 ---
-name: 宫格分镜逐格描述
+name: director_panel_describe
+cn_name: 宫格分镜逐格描述
 tags:
 - 导演
 - 分镜

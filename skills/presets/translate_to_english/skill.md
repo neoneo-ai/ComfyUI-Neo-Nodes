@@ -1,9 +1,10 @@
 ---
-category: task
-name: 翻译成英文
+name: translate_to_english
+cn_name: 翻译成英文
 tags:
 - 翻译
 - 工具
+category: task
 created_at: '2026-08-12T04:35:32.711146+00:00'
 ---
 

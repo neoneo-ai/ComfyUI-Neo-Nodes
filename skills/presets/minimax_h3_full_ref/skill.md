@@ -1,5 +1,6 @@
 ---
-name:  H3全参考生视频
+name: minimax_h3_full_ref
+cn_name: H3全参考生视频
 tags:
 - MiniMax
 - H3

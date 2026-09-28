@@ -310,6 +310,8 @@ class MainDirCoverTests(unittest.TestCase):
         os.utime(_write(CHARACTER_DIR / "2026-09-24" / "sheet.png"), (2000, 2000))
         os.utime(_write(CHARACTER_DIR / "2026-09-25" / "pose.png"), (3000, 3000))
         os.utime(_write(CHARACTER_DIR / "2026-09-24" / "takes" / "take1.png"), (1000, 1000))
+        # StoryBoard/presets/已分类分镜 需要真实目录+封面，聚合预设卡片才借得到封面
+        _write(GRID_DIR / "presets" / "已分类分镜" / "g.png")
         gallery._is_oss_enabled = lambda: True
         gallery._load_oss_index_from_disk = lambda: _CATEGORY_INDEX
         gallery._fetch_oss_index = _index

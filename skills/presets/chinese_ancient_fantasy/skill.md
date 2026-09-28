@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 中国古风玄幻
+name: chinese_ancient_fantasy
+cn_name: 中国古风玄幻
 tags:
 - 古风
 - 玄幻
+category: image_enhance
 created_at: '2026-08-09T05:58:39.954021+00:00'
 ---
 

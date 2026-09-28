@@ -1,5 +1,6 @@
 ---
-name: 导演提示词优化
+name: director_optimize
+cn_name: 导演提示词优化
 tags:
 - 导演
 - 提示词

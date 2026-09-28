@@ -1,5 +1,5 @@
 // NeoImageGenEdit 节点：width/height/steps 默认跟随所选 skill 预设（/neo_image_gen/skill_dims）。
-// 参考 web/director-node.js 的 applyDimDefaults：仅当仍为 -1 时填充，切换 skill_id 下拉强制重填。
+// 参考 web/director-node.js 的 applyDimDefaults：仅当仍为 -1 时填充，切换 skill 下拉强制重填。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, window } from "./setup.mjs";
@@ -11,7 +11,7 @@ function makeNode(skillId = "", width = -1, height = -1, steps = -1) {
         type: "NeoImageGenEdit",
         properties: {},
         widgets: [
-            { name: "skill_id", value: skillId },
+            { name: "skill", value: skillId },
             { name: "width", value: width },
             { name: "height", value: height },
             { name: "steps", value: steps },
@@ -61,7 +61,7 @@ test("已存实值（非 -1）在首次载入时不被覆盖", async () => {
     assert.equal(w(node, "steps").value, 8);
 });
 
-test("切换 skill_id 下拉强制重填预设宽高/步数", async () => {
+test("切换 skill 下拉强制重填预设宽高/步数", async () => {
     resetEnv();
     clearRoutes();
     let dims = { success: true, width: 1280, height: 720, steps: 25 };
@@ -76,14 +76,14 @@ test("切换 skill_id 下拉强制重填预设宽高/步数", async () => {
     w(node, "width").value = 999;
     w(node, "height").value = 888;
     w(node, "steps").value = 30;
-    w(node, "skill_id").callback?.("Beta");
+    w(node, "skill").callback?.("Beta");
     await sleep(40);
     assert.equal(w(node, "width").value, 768);
     assert.equal(w(node, "height").value, 1344);
     assert.equal(w(node, "steps").value, 8);
 });
 
-test("无 skill_id 时不请求也不填充", async () => {
+test("无 skill 时不请求也不填充", async () => {
     resetEnv();
     clearRoutes();
     let called = false;
@@ -102,7 +102,7 @@ function makeFullNode({ skillId = "", prompt = "", seed = 0, control = "fixed", 
         type: "NeoImageGenEdit",
         properties: {},
         widgets: [
-            { name: "skill_id", value: skillId },
+            { name: "skill", value: skillId },
             { name: "prompt", value: prompt },
             { name: "seed", value: seed },
             { name: "control_after_generate", value: control, options: { values: ["fixed", "randomize", "increment"] } },
@@ -234,8 +234,8 @@ test("节点底部挂 skill 状态条：缺模型时告警，切换 skill 后按
 
     // 换到工作流齐备的新技能 → 重检后收起告警
     workflow = WF_READY;
-    w(node, "skill_id").value = "krea_ready";
-    w(node, "skill_id").callback?.("krea_ready");
+    w(node, "skill").value = "krea_ready";
+    w(node, "skill").callback?.("krea_ready");
     await sleep(80);
     assert.equal(statusWidget.el.style.display, "none", "切换 skill 后应按新技能重检");
 });

@@ -1,5 +1,6 @@
 ---
-name: 六宫格分镜提示词模板
+name: storyboard_grid_6
+cn_name: 六宫格分镜提示词模板
 tags:
 - 分镜
 - 六宫格

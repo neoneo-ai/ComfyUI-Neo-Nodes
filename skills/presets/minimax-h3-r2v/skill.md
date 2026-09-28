@@ -1,5 +1,6 @@
 ---
-name: H3参考生视频
+name: minimax-h3-r2v
+cn_name: H3参考生视频
 tags:
 - MiniMax
 - H3
@@ -10,13 +11,13 @@ inputs:
 - video
 - audio
 - text
-description: 'H3参考生视频：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频'
+description: H3参考生视频：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频
 category: video_gen
 gen_video: true
-multi_frame: true
 mode: r2v
 requires_ref: true
 created_at: '2026-09-14T00:00:00+00:00'
+multi_frame: true
 ---
 
 # H3 参考生视频（Reference to Video）

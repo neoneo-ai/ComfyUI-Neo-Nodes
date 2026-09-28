@@ -1420,18 +1420,28 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertTrue(body["requires_ref"])
         self.assertEqual(self._scanned()["vid-m"]["mode"], "i2v")
 
-    def test_find_name_conflict(self):
-        self._write_skill("dup-a", ["name: Dup Name"])
-        self._write_skill("dup-b", ["name: Dup Name"])
-        self.assertEqual(self.skill_mod._find_name_conflict("Dup Name", "dup-a"), "dup-b")
-        self.assertEqual(self.skill_mod._find_name_conflict("Dup Name", "dup-b"), "dup-a")
-        self.assertIsNone(self.skill_mod._find_name_conflict("Unique Name", "dup-a"))
+    def test_find_cn_name_conflict(self):
+        self._write_skill("dup-a", ["name: dup-a", "cn_name: Dup Display"])
+        self._write_skill("dup-b", ["name: dup-b", "cn_name: Dup Display"])
+        self.assertEqual(self.skill_mod._find_name_conflict("Dup Display", "dup-a"), "dup-b")
+        self.assertEqual(self.skill_mod._find_name_conflict("Dup Display", "dup-b"), "dup-a")
+        self.assertIsNone(self.skill_mod._find_name_conflict("Unique Display", "dup-a"))
 
-    def test_save_skill_route_name_conflict_409(self):
-        self._write_skill("dup-a", ["name: Dup Name"])
-        self._write_skill("dup-b", ["name: Other Name"])
+    def test_scan_pinyin_tags_use_cn_name(self):
+        # 迁移后 name 为英文 id；拼音标签须基于中文 cn_name 生成，否则前端 / 菜单无法按中文名检索
+        self._write_skill("cn-dn", ["name: cn-dn", "cn_name: 动漫风格"])
+        s = self._scanned().get("cn-dn")
+        self.assertIsNotNone(s)
+        if self.skill_mod.lazy_pinyin is None:
+            self.assertNotIn("dongmanfengge", s["tags"])
+        else:
+            self.assertIn("dongmanfengge", s["tags"])
+
+    def test_save_skill_route_cn_name_conflict_409(self):
+        self._write_skill("dup-a", ["name: dup-a", "cn_name: Dup Display"])
+        self._write_skill("dup-b", ["name: dup-b", "cn_name: Other Display"])
         async def _json():
-            return {"id": "dup-b", "name": "Dup Name", "content": "body", "source": "custom"}
+            return {"id": "dup-b", "name": "dup-b", "cn_name": "Dup Display", "content": "body", "source": "custom"}
         resp = asyncio.run(self.skill_mod.rs_prompts_save_skill(
             types.SimpleNamespace(json=_json)))
         self.assertEqual(resp.status, 409)

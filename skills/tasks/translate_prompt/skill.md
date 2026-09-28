@@ -1,5 +1,6 @@
 ---
-name: 翻译提示词
+name: translate_prompt
+cn_name: 翻译提示词
 tags:
 - 翻译
 description: 翻译提示词

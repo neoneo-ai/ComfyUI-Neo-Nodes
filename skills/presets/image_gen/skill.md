@@ -1,5 +1,6 @@
 ---
-name: Krea2文生图
+name: image_gen
+cn_name: Krea2文生图
 tags:
 - 生图
 - Krea2

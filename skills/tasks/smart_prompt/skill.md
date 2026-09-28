@@ -1,5 +1,6 @@
 ---
-name: 智能提示词
+name: smart_prompt
+cn_name: 智能提示词
 tags:
 - 智能
 - 生成

@@ -104,7 +104,7 @@ function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
             currentItems.forEach((s, idx) => {
                 const row = mkEl("div", "rs-slash-picker-row rs-picker-row");
                 const name = mkEl("span", "rs-slash-picker-name");
-                name.textContent = (s.needs_image ? "📷 " : "") + (s.name || s.id);
+                name.textContent = (s.needs_image ? "📷 " : "") + (s.cn_name || s.name || s.id);
                 const meta = mkEl("span", "rs-slash-picker-meta");
                 const cat = CATEGORY_LABELS[s.category] ? s.category : "image_enhance";
                 meta.textContent = CATEGORY_LABELS[cat].label;

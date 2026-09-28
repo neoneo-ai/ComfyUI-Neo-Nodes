@@ -1,5 +1,6 @@
 ---
-name: 九宫格分镜提示词模板
+name: storyboard_grid_9
+cn_name: 九宫格分镜提示词模板
 tags:
 - 分镜
 - 九宫格

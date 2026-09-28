@@ -1,5 +1,6 @@
 ---
-name: 首尾帧生视频
+name: minimax_h3_fl2v
+cn_name: 首尾帧生视频
 tags:
 - MiniMax
 - H3
@@ -8,7 +9,7 @@ tags:
 inputs:
 - image
 - text
-description: 'H3 首尾帧生视频：首帧 + 尾帧锁定片段收尾'
+description: H3 首尾帧生视频：首帧 + 尾帧锁定片段收尾
 category: video_gen
 gen_video: true
 mode: fl2v

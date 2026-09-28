@@ -73,9 +73,9 @@ test("创建后节点高度与最小高度都包含时间轴", async () => {
 
 test("bundle 连接时隐藏 recipe、显示视频 skill 选择器与时长；断开恢复", async () => {
     resetEnv();
-    const node = await createDirectorNode("", [{ name: "skill_id", value: "minimax_h3_t2v" }, { name: "duration_sec", value: 5 }]);
+    const node = await createDirectorNode("", [{ name: "skill", value: "minimax_h3_t2v" }, { name: "duration_sec", value: 5 }]);
     const recipe = node.widgets.find((w) => w.name === "recipe");
-    const skillId = node.widgets.find((w) => w.name === "skill_id");
+    const skillId = node.widgets.find((w) => w.name === "skill");
     const duration = node.widgets.find((w) => w.name === "duration_sec");
     assert.ok(!recipe.hidden, "默认（无 bundle）显示 recipe");
     assert.equal(skillId.hidden, true, "默认隐藏视频 skill 选择器");
@@ -98,14 +98,14 @@ test("bundle 模式时长（秒）跟随所选 skill config 的 length", async (
     clearRoutes();
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "sk-a" }, { id: "sk-b", name: "sk-b" }]));
     mockRoute("/neo_image_gen/skill_config", () => jsonResponse({ length: 124, width: 512, height: 288 }));
-    const node = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
+    const node = await createDirectorNode("", [{ name: "skill", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
     const duration = node.widgets.find((w) => w.name === "duration_sec");
     await sleep(60); // 初始按 skill config 填充：124 帧 / 24fps → 5 秒
     assert.equal(duration.value, 5, "124 帧 → 5 秒");
 
     // bundle 模式里切换 skill：按新 skill config 重填（240 帧 → 10 秒）
     mockRoute("/neo_image_gen/skill_config", () => jsonResponse({ length: 240 }));
-    const skillId = node.widgets.find((w) => w.name === "skill_id");
+    const skillId = node.widgets.find((w) => w.name === "skill");
     skillId.value = "sk-b";
     skillId.callback?.("sk-b");
     await sleep(60);
@@ -116,7 +116,7 @@ test("bundle 模式时长（秒）跟随所选 skill config 的 length", async (
 test("旧工作流遗留的 duration_sec=-1 载入即修复为 5 秒（同步，不依赖请求）", async () => {
     resetEnv();
     clearRoutes(); // 不 mock 技能/配置接口：修复必须是同步的，不依赖任何请求结果
-    const node = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
+    const node = await createDirectorNode("", [{ name: "skill", value: "sk-a" }, { name: "duration_sec", value: 5 }]);
     const duration = node.widgets.find((w) => w.name === "duration_sec");
     duration.value = -1; // 模拟旧版默认写回 widgets_values
     node.onConfigure?.(); // 载入工作流：configure 后同步修复，不等任何请求
@@ -124,7 +124,7 @@ test("旧工作流遗留的 duration_sec=-1 载入即修复为 5 秒（同步，
     destroyNode(node);
 
     // 已存实值不被覆盖
-    const node2 = await createDirectorNode("", [{ name: "skill_id", value: "sk-a" }, { name: "duration_sec", value: 8 }]);
+    const node2 = await createDirectorNode("", [{ name: "skill", value: "sk-a" }, { name: "duration_sec", value: 8 }]);
     const duration2 = node2.widgets.find((w) => w.name === "duration_sec");
     node2.onConfigure?.();
     assert.equal(duration2.value, 8, "已存实值保持不变");
@@ -859,7 +859,7 @@ test("节点底部挂 skill 状态条：配方各段 skill 缺模型时告警，
     mockRoute("/object_info", () => jsonResponse({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } }));
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
 
-    const node = await createDirectorNode("dir-recipe", [{ name: "skill_id", value: "" }]);
+    const node = await createDirectorNode("dir-recipe", [{ name: "skill", value: "" }]);
     await sleep(80); // 等 loadSpec 把段（含 skill_id）填进来后重检
 
     const row = node._neoDtStatusRow;
@@ -896,7 +896,7 @@ test("bundle 模式：预选视频技能缺模型即告警，手动切换 skill 
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
     mockRoute("/object_info", () => jsonResponse({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } }));
 
-    const node = await createDirectorNode("", [{ name: "skill_id", value: "坏视频技能" }, { name: "duration_sec", value: 5 }]);
+    const node = await createDirectorNode("", [{ name: "skill", value: "坏视频技能" }, { name: "duration_sec", value: 5 }]);
     node._neoDtApplyBundleLock(true);
     await sleep(80); // 初始检测：预选的 skill 缺模型 → 告警
 
@@ -905,7 +905,7 @@ test("bundle 模式：预选视频技能缺模型即告警，手动切换 skill 
     assert.notEqual(row.el.style.display, "none", "预选技能缺模型应显示告警");
 
     // 手动切换到工作流齐备的技能 → widget callback 触发按新技能重检 → 收起告警
-    const skillId = node.widgets.find((w) => w.name === "skill_id");
+    const skillId = node.widgets.find((w) => w.name === "skill");
     skillId.value = "好视频技能";
     skillId.callback?.("好视频技能");
     await sleep(80);

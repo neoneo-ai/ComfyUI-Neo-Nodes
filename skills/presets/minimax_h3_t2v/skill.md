@@ -1,5 +1,6 @@
 ---
-name: H3 文生视频
+name: minimax_h3_t2v
+cn_name: H3 文生视频
 tags:
 - MiniMax
 - H3

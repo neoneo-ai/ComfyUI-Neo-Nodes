@@ -1,5 +1,6 @@
 ---
-name: 提取提示词标题
+name: extract_title
+cn_name: 提取提示词标题
 tags:
 - 提取
 - 标题

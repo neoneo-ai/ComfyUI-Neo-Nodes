@@ -305,7 +305,7 @@ function populateSkillOptions(selectEl, skills) {
             opt.dataset.tags = (s.tags || []).join(" ");
             opt.__skillMeta = s; // 完整元数据（gen_config / 分类 / 名称）供浮动预览卡读取
             const imgBadge = s.needs_image ? "📷 " : "";
-            opt.textContent = `${imgBadge}${s.name || s.id}`;
+            opt.textContent = `${imgBadge}${s.cn_name || s.name || s.id}`;
             optgroup.appendChild(opt);
         });
         selectEl.appendChild(optgroup);
@@ -344,7 +344,10 @@ async function resolveSkillId(skill, isVideo) {
         const list = await listSkills();
         const map = new Map();
         for (const s of Array.isArray(list) ? list : []) {
-            if (s && s.id && (isVideo ? s.gen_video : s.gen_image)) map.set(String(s.name || s.id), s.id);
+            if (!s || !s.id || !(isVideo ? s.gen_video : s.gen_image)) continue;
+            map.set(String(s.id), s.id);
+            if (s.cn_name) map.set(String(s.cn_name), s.id);
+            if (s.name && s.name !== s.id) map.set(String(s.name), s.id);
         }
         if (map.size) { entry.map = map; entry.t = Date.now(); }
     }
@@ -1602,13 +1605,18 @@ function skillItemsFromMeta(skills, allowed) {
     const items = [];
     for (const s of skills || []) {
         let value;
-        if (allowed) value = allowed.includes(s.name) ? s.name : (allowed.includes(s.id) ? s.id : null);
-        else value = s.name || s.id;
+        if (allowed) {
+            // combo 选项值 = cn_name || name（见 image_gen_edit._gen_image_skills）；按此优先级匹配，保证写回合法
+            const candidates = [s.cn_name, s.name, s.id].filter(Boolean);
+            value = candidates.find((c) => allowed.includes(c)) || null;
+        } else {
+            value = s.name || s.id;
+        }
         if (!value) continue;
         items.push({
             value,
             skillId: s.id, // 行内 Edit/查看需按 id 打开详情（value 可能是 name，仅用于写回 combo）
-            label: s.name || s.id,
+            label: s.cn_name || s.name || s.id,
             badge: s.needs_image ? "📷" : "",
             tags: (s.tags || []).join(" "),
             source: s.source || "custom",
@@ -2134,7 +2142,7 @@ function createSkillDropdown() {
         previewFocusItem = {
             value: val,
             skillId: meta.id || val,
-            label: meta.name || String(opt.textContent || val).trim(),
+            label: meta.cn_name || meta.name || String(opt.textContent || val).trim(),
             source: (opt.dataset && opt.dataset.source) || "custom",
             genImage: !!meta.gen_image,
             genVideo: !!meta.gen_video,

@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 中国古装影视写真
+name: chinese_ancient_movie
+cn_name: 中国古装影视写真
 tags:
 - 古装
 - 影视
+category: image_enhance
 created_at: '2026-08-09T05:58:39.954021+00:00'
 ---
 

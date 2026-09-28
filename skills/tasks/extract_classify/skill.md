@@ -1,5 +1,6 @@
 ---
-name: 提取提示词分类
+name: extract_classify
+cn_name: 提取提示词分类
 tags:
 - 提取
 - 分类

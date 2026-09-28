@@ -1932,7 +1932,7 @@ class DirectorBundleTests(unittest.TestCase):
         out = None
         try:
             (out,) = h3_video_director.NeoH3VideoDirector().generate(
-                "ignored_recipe", skill_id=skill_id, seed=seed, width=width, height=height, model=model, steps=steps,
+                "ignored_recipe", skill=skill_id, seed=seed, width=width, height=height, model=model, steps=steps,
                 duration_sec=duration_sec, bundle="B1")
         except Exception as e:
             err = str(e)
@@ -2019,6 +2019,13 @@ class DirectorBundleTests(unittest.TestCase):
         self.assertIn("bundle", opt)
         self.assertTrue(opt["bundle"][1].get("forceInput"))
         self.assertNotIn("hidden", opt["bundle"][1])
+
+    def test_skill_input_exposed_as_combo(self):
+        # BUNDLE 单段的视频 skill 是节点 widget（combo），显示 cn_name（缺省回退 name）；旧名 skill_id 已弃用
+        opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
+        self.assertIn("skill", opt)
+        self.assertNotIn("skill_id", opt)
+        self.assertIsInstance(opt["skill"][0], list)
 
 
 class DirectorSpecRouteTests(unittest.TestCase):

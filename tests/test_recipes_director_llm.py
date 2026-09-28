@@ -116,10 +116,24 @@ class _FakeRequest:
         return self._payload
 
 
+class _FPBase(unittest.TestCase):
+    # 全量跑时多个测试文件都在模块级覆盖 sys.modules["folder_paths"]，recipes 运行时
+    # import folder_paths 会取到最后一个覆盖者的目录；每个用例前钉回本文件的桩、结束还原。
+    def setUp(self):
+        self._prev_fp = sys.modules.get("folder_paths")
+        sys.modules["folder_paths"] = _folder_paths
+
+    def tearDown(self):
+        if self._prev_fp is None:
+            sys.modules.pop("folder_paths", None)
+        else:
+            sys.modules["folder_paths"] = self._prev_fp
+
+
 # ===========================================================================
 # 纯函数：_parse_segments / _read_input_image_bytes
 # ===========================================================================
-class ParseSegmentsTests(unittest.TestCase):
+class ParseSegmentsTests(_FPBase):
     def test_plain_json_array(self):
         raw = '[{"prompt": "a", "duration_sec": 5}, {"prompt": "b", "duration_sec": 10}]'
         out = recipes._parse_segments(raw)
@@ -146,7 +160,7 @@ class ParseSegmentsTests(unittest.TestCase):
         self.assertEqual(out, [{"prompt": "ok", "duration_sec": 0}])
 
 
-class RefHelpersTests(unittest.TestCase):
+class RefHelpersTests(_FPBase):
     def test_read_input_image_bytes_missing_returns_none(self):
         self.assertIsNone(recipes._read_input_image_bytes(""))
         self.assertIsNone(recipes._read_input_image_bytes("../evil.png"))
@@ -162,7 +176,7 @@ class RefHelpersTests(unittest.TestCase):
 # ===========================================================================
 # 端点：文字故事板 → 分段（director_generate_segments）
 # ===========================================================================
-class GenerateSegmentsEndpointTests(unittest.TestCase):
+class GenerateSegmentsEndpointTests(_FPBase):
     def test_success_parses_segments(self):
         req = _FakeRequest({"idea": "一只机器猫找家", "segment_seconds": 10})
         resp = _run_async(recipes.rs_recipes_director_generate_segments(req))
@@ -218,7 +232,7 @@ class GenerateSegmentsEndpointTests(unittest.TestCase):
             _llm.run_llm_task = original
 
 
-class OptimizePromptsEndpointTests(unittest.TestCase):
+class OptimizePromptsEndpointTests(_FPBase):
     def test_success_returns_single_prompt(self):
         req = _FakeRequest({"prompt": "段一", "duration_sec": 5, "mode": "r2v", "refs": {"images": ["a.png", "b.png"], "videos": ["v.mp4"]}})
         resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
@@ -271,7 +285,7 @@ class OptimizePromptsEndpointTests(unittest.TestCase):
 # ===========================================================================
 # 端点：宫格图拆分 / 逐格 LLM 描述
 # ===========================================================================
-class GridSplitEndpointTests(unittest.TestCase):
+class GridSplitEndpointTests(_FPBase):
     @staticmethod
     def _make_grid(path, rows=2, cols=3, cell=(160, 120), gap=8):
         from PIL import Image, ImageDraw
@@ -335,7 +349,7 @@ class GridSplitEndpointTests(unittest.TestCase):
         self.assertFalse(data["success"])
 
 
-class DescribePanelEndpointTests(unittest.TestCase):
+class DescribePanelEndpointTests(_FPBase):
     def test_success_returns_single_prompt_with_panel_image(self):
         """单格多模态调用：一张分镜图字节喂给 LLM，返回该格的 H3 i2v 提示词。"""
         original = _llm.run_llm_task

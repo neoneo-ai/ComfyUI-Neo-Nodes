@@ -1,6 +1,6 @@
 // NeoImageGenEdit 节点：width/height/steps 默认跟随所选 skill 预设（base_resolution + default_ratio + steps）。
 // 参考 NeoH3VideoDirector（web/director-node.js）的 applyDimDefaults：仅当仍为默认 -1 时填充，
-// 切换 skill_id 下拉强制重填；工作流已存的实值优先（首次载入不覆盖）。
+// 切换 skill 下拉强制重填；工作流已存的实值优先（首次载入不覆盖）。
 // 另修复旧版本工作流/复制粘贴导致的 widgets_values 串位：seed 之后会自动追加 control_after_generate
 // 下拉（吃一个位置），widget 集合变化后按位置还原会把它落到数字上。正常态它恒为模式串、seed 恒为非负整数，
 // 二者任一非法即判定 seed/count/width/height 整块错位 → 复位 control/seed/count 并强制按预设重填宽高。
@@ -18,13 +18,13 @@ app.registerExtension({
         nodeType.prototype.onNodeCreated = function() {
             const result = origOnNodeCreated?.apply(this, arguments);
             const node = this;
-            const skillWidget = node.widgets?.find((w) => w.name === "skill_id");
-            // 点击 skill_id combo → 弹居中技能选择窗（替代原生下拉）；选中写回 widget.value，
+            const skillWidget = node.widgets?.find((w) => w.name === "skill");
+            // 点击 skill combo → 弹居中技能选择窗（替代原生下拉）；选中写回 widget.value，
             // 其 callback 已被下方包装为 loadDims(true)，故尺寸预设自动刷新
             if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: "选择 Skill（生图/编辑）" });
 
             // 节点底部 Skill 有效性状态条：选完 skill 后台检测缺模型/缺节点，有缺失显示告警并可点开详情修复
-            // （skill_id 下拉存的是技能名称，状态条内部反查真实 skill 再校验）
+            // （skill 下拉存的是技能名称，状态条内部反查真实 skill 再校验）
             const statusRow = createSkillStatusRow({ getSkills: () => (skillWidget ? [String(skillWidget.value || "")] : []), isVideo: false });
             node.addDOMWidget("skill_status", "custom", statusRow.el);
             statusRow.refresh();
@@ -86,7 +86,7 @@ app.registerExtension({
 
             loadDims();
 
-            // 切换 skill_id 下拉时强制重填预设宽高/步数（本版本 combo widget 用 callback 触发变化，onchange 不存在）
+            // 切换 skill 下拉时强制重填预设宽高/步数（本版本 combo widget 用 callback 触发变化，onchange 不存在）
             if (skillWidget) {
                 const oc = skillWidget.callback;
                 skillWidget.callback = function() { oc?.apply(this, arguments); loadDims(true); statusRow.refresh(); };

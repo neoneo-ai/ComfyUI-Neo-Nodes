@@ -1,9 +1,10 @@
 ---
-category: image_enhance
-name: 通用增强
+name: general_enhance
+cn_name: 通用增强
 tags:
 - 增强
 - 普通
+category: image_enhance
 created_at: '2026-08-09T05:58:39.953303+00:00'
 ---
 

@@ -2,7 +2,7 @@
 
 供 NeoH3VideoDirector（配方多段 / BUNDLE 单段）复用；本模块不再注册节点。
 - resolve_video_params：把一次视频生成请求解析成模板参数（模型/编码器/VAE/音频 VAE/LoRA/参考媒体/尺寸/时长/seed）。
-- _gen_video_skills / _resolve_skill_id：列出带 workflow.json 的视频 skill、按 name 反查 id。
+- _gen_video_skills / _resolve_skill_id：列出带 workflow.json 的视频 skill、按 cn_name/name 反查 id。
 - _require_vdn_plugin：VDN 加速 skill 依赖可选插件 ComfyUI-VDN-H3，未装时给出明确报错。
 - 模板渲染与进程内执行复用 image_gen.render_template 与 image_gen_edit.execute_graph_inprocess（由调用方引入）。
 """
@@ -22,9 +22,15 @@ def _gen_video_skills():
 
 
 def _resolve_skill_id(value):
-    """skill_id 下拉显示 skill name；反查真实 id，找不到则按 id 直接用（兼容旧工作流存的 id）。"""
-    by_name = {s["name"]: s["id"] for s in _gen_video_skills()}
-    return by_name.get(value, value)
+    """skill 下拉显示 skill cn_name（中文名）；反查真实 id，找不到则按 id/name 直接用（兼容旧工作流存的 id / 名称）。"""
+    by_key = {}
+    for s in _gen_video_skills():
+        by_key[s["id"]] = s["id"]
+        if s.get("cn_name"):
+            by_key[s["cn_name"]] = s["id"]
+        if s.get("name") and s["name"] != s["id"]:
+            by_key[s["name"]] = s["id"]
+    return by_key.get(value, value)
 
 
 def is_multiframe_skill(value) -> bool:
