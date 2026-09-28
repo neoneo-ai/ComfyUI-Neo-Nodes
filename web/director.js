@@ -12,6 +12,7 @@ import { Lightbox } from "./lightbox.js";
 import { grabDataType, copyGalleryToInput, toggleGallerySidebar, uploadLocalFiles } from "./media-transfer.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
+import { sseStream } from "./prompt-service.js";
 import { openStoryboardDialog } from "./gallery-gen.js";
 
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
@@ -2169,38 +2170,41 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (!isGrid && segs.some(s => !s.prompt)) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '有分段未填提示词，请先补齐再生成', life: 4000 }); return; }
         if (isGrid && !segs.some(s => s.panel)) { app.extensionManager.toast.add({ severity: 'error', summary: '多段导演', detail: '宫格拆分后没有分镜图可描述，请重新拆分', life: 4000 }); return; }
         optBusy = true; refreshStepState();
-        let okCount = 0, failed = [], firstErr = '';
+        let okCount = 0, skipped = 0, failed = [], firstErr = '';
         const prompts = [];
         const prevOpt = optPrompts;
         optPrompts = prompts;   // 对照表右栏随生成逐段刷新，让用户看到进展
         for (let i = 0; i < segs.length; i++) {
+            if (!segs[i].panel && !segs[i].prompt) { skipped++; continue; }   // 无分镜图也无提示词：跳过（直接拖入的多图流程允许留空段）
             optStatus.textContent = `正在生成第 ${i + 1}/${segs.length} 段提示词…`;
             try {
-                let res;
-                if (segs[i].prompt) {   // 有原文 → 按 H3 格式重写（附参考图走多模态）
-                    res = await fetch('/rs_recipes/director_optimize_prompts', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: segs[i].prompt, duration_sec: segs[i].duration_sec, mode: modeSel.value, refs: segs[i].refs }),
-                    });
-                } else if (segs[i].panel) {   // 宫格空原文 → 按该段分镜图（首帧）逐格描述
-                    res = await fetch('/rs_recipes/director_describe_panel', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            panel: segs[i].panel, duration_sec: segs[i].duration_sec,
-                            panel_index: segs[i].panel_index, panel_total: segs[i].panel_total,
-                            rows: segs[i].rows, cols: segs[i].cols, grid_prompts: segs[i].grid_prompts,
-                            prev_prompt: prompts[i - 1] || '',   // 上一段本轮已生成提示词：承接上下文（第 1 段无）
-                        }),
-                    });
-                } else {
-                    throw new Error('该段无提示词也无分镜图');
-                }
-                const data = await res.json();
-                if (!data.success) throw new Error(data.error || `HTTP ${res.status}`);
                 const ta = rows[i].querySelector('.neo-director-prompt');
-                ta.value = data.prompt || '';
+                const acc = { text: '' };
+                let segErr = null;
+                // 有原文 → 按 H3 格式重写（附参考图走多模态）；宫格空原文 → 按该段分镜图（首帧）逐格描述。两者均 SSE 流式回传。
+                const url = segs[i].prompt ? '/rs_recipes/director_optimize_prompts' : '/rs_recipes/director_describe_panel';
+                const body = segs[i].prompt
+                    ? { prompt: segs[i].prompt, duration_sec: segs[i].duration_sec, mode: modeSel.value, refs: segs[i].refs }
+                    : {
+                        panel: segs[i].panel, duration_sec: segs[i].duration_sec,
+                        panel_index: segs[i].panel_index, panel_total: segs[i].panel_total,
+                        rows: segs[i].rows, cols: segs[i].cols, grid_prompts: segs[i].grid_prompts,
+                        prev_prompt: prompts[i - 1] || '',   // 上一段本轮已生成提示词：承接上下文（第 1 段无）
+                    };
+                await sseStream(url, {
+                    onChunk: (parsed) => {
+                        acc.text += parsed.text || '';
+                        ta.value = acc.text;
+                        _updateOptCell(i, acc.text);   // 逐 token 轻量刷新对照表右栏，让用户看到进展
+                    },
+                    onError: (msg) => { segErr = msg; },
+                }, body);
+                if (segErr) throw new Error(segErr);
+                const finalText = acc.text.trim();
+                if (!finalText) throw new Error('优化结果为空，请重试');
+                ta.value = finalText;
                 ta.dispatchEvent(new Event('input', { bubbles: true }));   // 触发自动命名 / 脏标记等既有逻辑
-                prompts[i] = data.prompt || '';
+                prompts[i] = finalText;
                 okCount++;
             } catch (e) {
                 console.error(`[Neo Recipes] Director generate segment ${i + 1} failed:`, e);
@@ -2215,8 +2219,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (failed.length) {
             optStatus.textContent = `第 ${failed.join('、')} 段生成失败，其余 ${okCount} 段已完成`;
             handleLLMError(`提示词生成（第 ${failed.join('、')} 段）`, firstErr);
+        } else if (skipped === segs.length) {
+            optStatus.textContent = '所有段都没有分镜图或提示词，未生成';
         } else {
-            optStatus.textContent = `已生成 ${okCount} 段提示词，可到时间轴页逐段微调`;
+            optStatus.textContent = `已生成 ${okCount} 段提示词${skipped ? `（跳过 ${skipped} 个无图段）` : ''}，可到时间轴页逐段微调`;
             app.extensionManager.toast.add({ severity: 'success', summary: '提示词生成完成', detail: `${okCount} 段已按 H3 官方格式生成`, life: 4000 });
         }
     };
@@ -2226,6 +2232,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 首次点优化前快照原文（origPrompts），之后重新点优化始终基于该原文再试、不叠加上一轮结果；
     // 两份快照随 setup 落盘，打开旧配方时回显。数据读时间轴分段行（唯一事实来源）。
     const setupSegPreview = $el('div', { className: 'neo-director-setup-segs' });
+    let segDragEl = null;      // band-2 对照表正在拖拽排序的项
+    let segReordering = false; // 内部段排序拖拽进行中（抑制分镜图位的上传拖放）
+    setupSegPreview.addEventListener('dragover', onSetupSegsDragOver);
     function segStoryboardFname(row) {
         return row.dataset.storyboard || '';
     }
@@ -2278,24 +2287,158 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     }
 
 
+    // 分镜图缩略位支持直接拖入 / 上传（跳过宫格拆分）：把已拆好的分镜图落到该段并同步为首帧；多张拖入自动补空段承接
+    function setSegStoryboard(row, fname) {
+        if (!imageRefs.some(r => r.filename === fname)) imageRefs.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
+        row.dataset.storyboard = fname;
+        row._addCandidate?.(fname);   // 分镜图同步为该段首帧（宫格模式：格子即首帧）
+        markDirty();
+    }
+    // 拖入分镜图：本地图片文件走 uploadLocalFiles，素材库图片卡走 copyGalleryToInput；返回落盘文件名列表（可能为空）
+    async function extractDroppedImageFnames(e) {
+        const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'));
+        let fnames = files.length ? await uploadLocalFiles(files) : [];
+        if (!fnames.length) { const g = await copyGalleryToInput(grabDataType(e)); if (g) fnames = [g]; }
+        return fnames;
+    }
+    function attachSegThumbUpload(thumb, row) {
+        thumb.addEventListener('dragover', (e) => { if (segReordering) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; thumb.classList.add('neo-director-drop'); });
+        thumb.addEventListener('dragleave', (e) => { if (!thumb.contains(e.relatedTarget)) thumb.classList.remove('neo-director-drop'); });
+        thumb.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            if (segReordering) return;
+            thumb.classList.remove('neo-director-drop');
+            const fnames = await extractDroppedImageFnames(e);
+            if (!fnames.length) return;
+            setSegStoryboard(row, fnames[0]);
+            const defaultSkill = currentSkillId() || (skills.length ? skills[0].id : '');
+            for (let k = 1; k < fnames.length; k++) {   // 多张拖入：自动补空段承接
+                const nr = buildSeg({ skill_id: defaultSkill, prompt: '', duration_sec: 5, mode: 'i2v' });
+                segsWrap.appendChild(nr);
+                setSegStoryboard(nr, fnames[k]);
+            }
+            renumberSegs();
+            renderSetupSegs();
+        });
+        if (thumb.classList.contains('neo-director-setup-seg-thumb-empty')) {   // 空位：点击本地上传（已填图时点缩略图看大图）
+            const picker = buildLocalFilePicker('image/*', (fname) => { setSegStoryboard(row, fname); renderSetupSegs(); });
+            thumb.appendChild(picker.input);
+            thumb.onclick = () => picker.open();
+        }
+    }
+    // band-2 末尾常驻空段的缩略位：拖入 / 点击上传分镜图才真实建段（每张图新建一段并设为其分镜图）
+    function attachGhostThumbUpload(thumb) {
+        const createWith = (fname) => {   // 新建一段并设为其分镜图
+            const defaultSkill = currentSkillId() || (skills.length ? skills[0].id : '');
+            const nr = buildSeg({ skill_id: defaultSkill, prompt: '', duration_sec: 5, mode: 'i2v' });
+            segsWrap.appendChild(nr);
+            setSegStoryboard(nr, fname);
+        };
+        thumb.addEventListener('dragover', (e) => { if (segReordering) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; thumb.classList.add('neo-director-drop'); });
+        thumb.addEventListener('dragleave', (e) => { if (!thumb.contains(e.relatedTarget)) thumb.classList.remove('neo-director-drop'); });
+        thumb.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            if (segReordering) return;
+            thumb.classList.remove('neo-director-drop');
+            const fnames = await extractDroppedImageFnames(e);
+            if (!fnames.length) return;
+            for (const fname of fnames) createWith(fname);   // 拖入即建段：每张图新建一段并设为其分镜图
+            renumberSegs();
+            renderSetupSegs();
+        });
+        const picker = buildLocalFilePicker('image/*', (fname) => { createWith(fname); renumberSegs(); renderSetupSegs(); });   // 点击本地上传（上传后真实建段）
+        thumb.appendChild(picker.input);
+        thumb.onclick = () => picker.open();
+    }
+    // band-2 对照表项拖拽排序：拖动头部手柄在预览项间实时换位，松手后把新顺序回写到 segsWrap（唯一事实来源）并刷新。
+    function attachSegReorder(item) {
+        const grip = item.querySelector('.neo-director-story-seg-grip');
+        if (!grip) return;
+        grip.addEventListener('mousedown', () => { item.draggable = true; });
+        item.addEventListener('dragstart', (e) => {
+            segDragEl = item;
+            segReordering = true;
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', ''); } catch (_) {}
+            requestAnimationFrame(() => item.classList.add('neo-director-seg-dragging'));
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('neo-director-seg-dragging');
+            item.draggable = false;
+            segDragEl = null;
+            segReordering = false;
+            commitSegReorder();
+        });
+    }
+    // 拖动经过时实时换位：指针落在某项上半部 → 插到它前面，否则移到末尾（保持在各预览项之间，不越过表头 / 添加行）
+    function onSetupSegsDragOver(e) {
+        if (!segDragEl) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const items = Array.from(setupSegPreview.querySelectorAll('.neo-director-story-seg-item')).filter(it => it !== segDragEl);
+        let target = null;
+        for (const it of items) {
+            const r = it.getBoundingClientRect();
+            if (e.clientY < r.top + r.height / 2) { target = it; break; }
+        }
+        if (target) setupSegPreview.insertBefore(segDragEl, target);
+        else if (items.length) setupSegPreview.insertBefore(segDragEl, items[items.length - 1].nextSibling);
+    }
+    // 松手后把预览项最终顺序（每项 _segIdx = 原 segsWrap 行号）映射成新顺序，交给 onReorderSegs 重排真实行
+    function commitSegReorder() {
+        const items = Array.from(setupSegPreview.querySelectorAll('.neo-director-story-seg-item'));
+        if (items.length < 2) return;
+        const order = items.map(it => it._segIdx);
+        if (order.every((v, k) => v === k)) return;   // 顺序未变 → 不触发 markDirty
+        onReorderSegs(order);
+        renderSetupSegs();
+    }
+
+    // band-2 末尾常驻空段（纯 UI，不进 segsWrap、不保存、不参与拖拽排序）：缩略图位看起来可拖入 / 上传分镜图，触发才真实新建一段
+    function buildGhostSeg(gridMode) {
+        const thumb = $el('div', { className: 'neo-director-setup-seg-thumb neo-director-setup-seg-thumb-empty neo-director-story-seg-ghost-thumb' }, [
+            $el('span', { className: 'neo-director-setup-seg-thumb-hint', textContent: '＋ 拖入 / 上传分镜图新增一段' }),
+        ]);
+        attachGhostThumbUpload(thumb);
+        const promptCells = gridMode
+            ? [$el('div', { className: 'neo-director-story-seg-prompt' })]
+            : [$el('div', { className: 'neo-director-story-seg-prompt' }), $el('div', { className: 'neo-director-story-seg-prompt' })];
+        return $el('div', { className: 'neo-director-story-seg-ghost' }, [
+            $el('div', { className: 'neo-director-story-seg-head' }, [$el('span', { textContent: '＋ 新增分镜段' })]),
+            $el('div', { className: 'neo-director-setup-seg-cols' }, [thumb, ...promptCells]),
+        ]);
+    }
+
+    // 流式生成时轻量刷新某段对照表右栏（优化后）单元格：只改 textContent，不整表重渲
+    function _updateOptCell(i, text) {
+        for (const item of setupSegPreview.querySelectorAll('.neo-director-story-seg-item')) {
+            if (item._segIdx === i) {
+                const cells = item.querySelectorAll('.neo-director-story-seg-prompt');
+                const last = cells[cells.length - 1];
+                if (last) last.textContent = text;
+                return;
+            }
+        }
+    }
+
     function renderSetupSegs() {
         refreshStepState();   // 各段内容 / 来源变化 → 重算四步徽标与各步动作可用性
         setupSegPreview.innerHTML = '';
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
-        if (!rows.length) {
-            setupSegPreview.appendChild($el('div', { className: 'neo-director-story-segs-empty', textContent: '（还没有分段，请先在故事板页拆分）' }));
-            return;
-        }
         // 各段分镜图汇总成一份 Lightbox 列表：点任一缩略图从该段开始，←/→ 在各段间切换；按文件名去重避免重复页
         const src = frameSourceSel ? frameSourceSel.value : 'storyboard';
         const gridMode = src === 'grid';   // 宫格分镜图拆分：各段无「优化前」原文，对照表降为两栏（分镜图 / 提示词）
         setupSegPreview.classList.toggle('neo-director-setup-segs-grid', gridMode);
-        setupSegPreview.appendChild($el('div', { className: 'neo-director-setup-seg-cols neo-director-setup-seg-labels' }, [
-            $el('span', { textContent: '分镜图' }),
-            ...(gridMode
-                ? [$el('span', { textContent: '提示词' })]
-                : [$el('span', { textContent: '优化前' }), $el('span', { textContent: '优化后' })]),
-        ]));
+        if (rows.length) {
+            setupSegPreview.appendChild($el('div', { className: 'neo-director-setup-seg-cols neo-director-setup-seg-labels' }, [
+                $el('span', { textContent: '分镜图' }),
+                ...(gridMode
+                    ? [$el('span', { textContent: '提示词' })]
+                    : [$el('span', { textContent: '优化前' }), $el('span', { textContent: '优化后' })]),
+            ]));
+        } else {
+            setupSegPreview.appendChild($el('div', { className: 'neo-director-story-segs-empty', textContent: '（还没有分段，把分镜图拖入下方空段即可新增）' }));
+        }
         const sbItems = [];
         const sbItemIdx = new Map();
         rows.forEach((row, i) => {
@@ -2322,22 +2465,29 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 }
                 fillSegThumb(thumb, sbFname, clearStoryboard, () => Lightbox.open({ items: sbItems, index: sbItemIdx.get(sbFname) }));
             } else {
-                thumb.appendChild($el('span', { textContent: '无' }));
+                thumb.classList.add('neo-director-setup-seg-thumb-empty');
+                thumb.appendChild($el('span', { className: 'neo-director-setup-seg-thumb-hint', textContent: '＋ 拖入 / 上传分镜图' }));
             }
+            attachSegThumbUpload(thumb, row);   // 分镜图位支持直接拖入 / 上传（跳过宫格拆分）
             const promptCells = gridMode
                 ? [$el('div', { className: 'neo-director-story-seg-prompt', textContent: row.querySelector('.neo-director-prompt').value || '（未生成）' })]
                 : [
                     $el('div', { className: 'neo-director-story-seg-prompt', textContent: before }),
                     $el('div', { className: 'neo-director-story-seg-prompt', textContent: after }),
                 ];
-            setupSegPreview.appendChild($el('div', { className: 'neo-director-story-seg-item' }, [
+            const item = $el('div', { className: 'neo-director-story-seg-item' }, [
                 $el('div', { className: 'neo-director-story-seg-head' }, [
+                    $el('span', { className: 'neo-director-story-seg-grip', textContent: '⠿', title: '拖拽排序' }),
                     $el('span', { textContent: `#${i + 1}` }),
                     $el('span', { textContent: dur ? `${dur}s` : '' }),
                 ]),
                 $el('div', { className: 'neo-director-setup-seg-cols' }, [thumb, ...promptCells]),
-            ]));
+            ]);
+            item._segIdx = i;
+            attachSegReorder(item);
+            setupSegPreview.appendChild(item);
         });
+        setupSegPreview.appendChild(buildGhostSeg(gridMode));   // 常驻空段：拖入分镜图才真实建段
     }
 
     // 身份参考开关（默认开）：配方「角色参考图」是否作为视频各段身份参考——关掉就能与旧行为对比。

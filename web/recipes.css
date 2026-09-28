@@ -2110,6 +2110,21 @@
     color: #6b7280;
 }
 
+/* 分镜图缩略位空态：可直接拖入 / 点击上传（跳过宫格拆分） */
+.neo-director-setup-seg-thumb-empty {
+    cursor: pointer;
+}
+.neo-director-setup-seg-thumb-empty:hover {
+    border-color: #4d8cba;
+}
+.neo-director-setup-seg-thumb.neo-director-drop {
+    border-color: #4d8cba;
+    background: #1e2a36;
+}
+.neo-director-setup-seg-thumb-hint {
+    pointer-events: none;   /* 点击穿透到缩略位的 onclick（本地上传） */
+}
+
 /* radio 组（分镜/首帧方式、生图模式、分镜来源）：选项横向展开，比下拉更直观；选中态靠字重区分而不是彩色高亮 */
 .neo-director-radios {
     display: inline-flex;
@@ -2227,9 +2242,38 @@
 .neo-director-story-seg-head {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     font-size: 11px;
     color: #e6a23c;
     margin-bottom: 4px;
+}
+
+.neo-director-story-seg-grip {
+    cursor: grab;
+    color: #6b7280;
+    padding: 0 4px;
+    user-select: none;
+}
+.neo-director-story-seg-grip:active {
+    cursor: grabbing;
+}
+.neo-director-story-seg-item.neo-director-seg-dragging {
+    opacity: 0.5;
+    border-color: #e6a23c;
+}
+
+/* band-2 末尾常驻空段：纯 UI 占位（不进 segsWrap、不保存），缩略图位拖入分镜图才真实新建一段 */
+.neo-director-story-seg-ghost {
+    background: transparent;
+    border: 1px dashed #3a3a3a;
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+.neo-director-story-seg-ghost:hover {
+    border-color: #4d8cba;
+}
+.neo-director-story-seg-ghost .neo-director-story-seg-head {
+    color: #6b7280;
 }
 
 .neo-director-story-seg-prompt {

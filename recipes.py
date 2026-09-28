@@ -1571,16 +1571,45 @@ async def rs_recipes_director_generate_segments(request):
     return web.json_response({"success": True, "segments": segments})
 
 
+def _llm_sse_response(gen, empty_msg):
+    """把 llm.run_llm_task_stream 生成器包成 SSE 响应：只推正文（过滤 thinking），空结果补 [ERROR]，末尾 [DONE]。"""
+    async def event_stream():
+        loop = asyncio.get_running_loop()
+
+        def next_chunk():
+            try:
+                return next(gen)
+            except StopIteration:
+                return None
+
+        acc = []
+        while True:
+            chunk = await loop.run_in_executor(None, next_chunk)
+            if chunk is None:
+                break
+            if chunk.get("kind", "content") == "thinking":
+                continue   # 思考过程不进提示词正文
+            text = chunk.get("text") or ""
+            acc.append(text)
+            yield ("data: " + json.dumps({"text": text}) + "\n\n").encode()
+        if not "".join(acc).strip():
+            yield ("data: " + json.dumps({"text": f"[ERROR] {empty_msg}"}) + "\n\n").encode()
+        yield b"data: [DONE]\n\n"
+
+    return web.Response(body=event_stream(), content_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @PromptServer.instance.routes.post("/rs_recipes/director_optimize_prompts")
 async def rs_recipes_director_optimize_prompts(request):
-    """把单段提示词按 H3 官方格式重写（段落结构 / 参考标签 / 时间戳）。前端逐段循环调用，一次一段。"""
+    """把单段提示词按 H3 官方格式重写（段落结构 / 参考标签 / 时间戳）。前端逐段循环调用，一次一段；SSE 流式回传正文。"""
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+        return web.Response(text="data: [ERROR] 请求体不是有效 JSON\n\ndata: [DONE]\n\n", content_type="text/event-stream")
     prompt = str(data.get("prompt") or "").strip()
     if not prompt:
-        return web.json_response({"success": False, "error": "没有提示词可优化"}, status=400)
+        return web.Response(text="data: [ERROR] 没有提示词可优化\n\ndata: [DONE]\n\n", content_type="text/event-stream")
     try:
         dur = int(round(float(data.get("duration_sec"))))
     except (TypeError, ValueError):
@@ -1606,14 +1635,8 @@ async def rs_recipes_director_optimize_prompts(request):
     if ref_lines:
         parts.append("\n".join(ref_lines) + "\n")
     parts.append("该段现有提示词（重写为一条成品提示词）：\n" + prompt)
-
-    result = await asyncio.to_thread(llm.run_llm_task, "director_optimize", "\n".join(parts), images=_collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None)
-    if "error" in result:
-        return web.json_response({"success": False, "error": result["error"]}, status=422)
-    out = str(result.get("prompt") or "").strip()
-    if not out:
-        return web.json_response({"success": False, "error": "优化结果为空，请重试"}, status=422)
-    return web.json_response({"success": True, "prompt": out})
+    images = _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None
+    return _llm_sse_response(llm.run_llm_task_stream("director_optimize", "\n".join(parts), images=images), "优化结果为空，请重试")
 
 
 @PromptServer.instance.routes.post("/rs_recipes/grid_split")
@@ -1716,10 +1739,10 @@ async def rs_recipes_director_describe_panel(request):
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"success": False, "error": "请求体不是有效 JSON"}, status=400)
+        return web.Response(text="data: [ERROR] 请求体不是有效 JSON\n\ndata: [DONE]\n\n", content_type="text/event-stream")
     name = str(data.get("panel") or "").strip()
     if not name:
-        return web.json_response({"success": False, "error": "缺少格子图"}, status=400)
+        return web.Response(text="data: [ERROR] 缺少格子图\n\ndata: [DONE]\n\n", content_type="text/event-stream")
     try:
         dur = int(round(float(data.get("duration_sec") or 5)))
     except (TypeError, ValueError):
@@ -1750,13 +1773,7 @@ async def rs_recipes_director_describe_panel(request):
         head = f"上一段（第 {idx - 1} 段）已生成的提示词" if idx else "上一段已生成的提示词"
         lines.append(f"{head}，本段需与之承接、避免重复：\n{prev}")
     text = "\n".join(lines)
-    result = await asyncio.to_thread(llm.run_llm_task, "director_panel_describe", text, images=_collect_ref_bytes([{"filename": name}]) or None)
-    if "error" in result:
-        return web.json_response({"success": False, "error": result["error"]}, status=422)
-    prompt = str(result.get("prompt") or "").strip()
-    if not prompt:
-        return web.json_response({"success": False, "error": "描述结果为空，请重试"}, status=422)
-    return web.json_response({"success": True, "prompt": prompt})
+    return _llm_sse_response(llm.run_llm_task_stream("director_panel_describe", text, images=_collect_ref_bytes([{"filename": name}]) or None), "描述结果为空，请重试")
 
 
 

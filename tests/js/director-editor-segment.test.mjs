@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, fetchLog, inputText, changeValue, dropFiles, makeFile } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, sleep, fetchLog, inputText, changeValue, dropFiles, makeFile } from "./setup.mjs";
 import { app, appState, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 beforeEach(async () => {
@@ -2033,7 +2033,9 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     let optMode = { success: false, error: "模拟生成失败" };
     mockRoute("/rs_recipes/director_optimize_prompts", (body) => {
         optBodies.push(body);
-        return jsonResponse(optMode);
+        return optMode.success
+            ? sseResponse(['data: ' + JSON.stringify({ text: optMode.prompt }), "data: [DONE]"])
+            : sseResponse(["data: [ERROR] " + optMode.error, "data: [DONE]"]);
     });
 
     await openDirectorEditor({
@@ -2081,7 +2083,7 @@ test("导演编辑器：「生成所有分段的提示词」逐段循环生成�
     assert.equal(setupItems.length, 2, "本页显示 2 段");
     let cells = setupItems[0].querySelectorAll(".neo-director-setup-seg-cols > div");
     assert.equal(cells.length, 3, "三列：分镜图 / 优化前 / 优化后");
-    assert.equal(cells[0].textContent, "无", "未生成分镜图时第一列为「无」");
+    assert.equal(cells[0].textContent, "＋ 拖入 / 上传分镜图", "未生成分镜图时第一列为上传占位");
     assert.equal(cells[1].textContent, "第一段原始", "中栏保留未优化提示词");
     assert.equal(cells[2].textContent, "integrated_multimodal_description: [Shot 1] 段一…", "右栏显示优化后提示词");
 
@@ -3178,7 +3180,7 @@ test("导演编辑器：打开带分镜图的旧配方 → 不报 TDZ，段行�
     const sThumb0 = setupItems[0].querySelector(".neo-director-setup-seg-thumb img");
     assert.ok(sThumb0, "对照表第 1 段回显分镜图");
     assert.match(String(sThumb0.src), /sb_0_ab12cd\.png/, "分镜图列指向已存分镜图文件");
-    assert.equal(setupItems[1].querySelector(".neo-director-setup-seg-thumb").textContent, "无", "第 2 段无分镜图显示「无」");
+    assert.equal(setupItems[1].querySelector(".neo-director-setup-seg-thumb").textContent, "＋ 拖入 / 上传分镜图", "第 2 段无分镜图显示上传占位");
 
     // 对照表第一列缩略图悬停 ✕：清除该段分镜图记录（第 2 段无记录 → 不给 ✕）
     const sbClear = setupItems[0].querySelector(".neo-director-setup-seg-sb-clear");
@@ -3192,7 +3194,60 @@ test("导演编辑器：打开带分镜图的旧配方 → 不报 TDZ，段行�
         .filter((it) => it.dataset.file);
     assert.equal(activeFf.length, 0, "首帧正是该分镜图 → ✕ 一并取消选中");
     const afterItems = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
-    assert.equal(afterItems[0].querySelector(".neo-director-setup-seg-thumb").textContent, "无", "清除后第一列回到「无」");
+    assert.equal(afterItems[0].querySelector(".neo-director-setup-seg-thumb").textContent, "＋ 拖入 / 上传分镜图", "清除后第一列回到上传占位");
+
+    document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：故事分镜对照表拖拽手柄重排各段（回写 segsWrap 并刷新）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const existing = {
+        name: "T-SB-REORDER",
+        shared: { width: 1344, height: 768 },
+        segments: [
+            { skill_id: "sk-a", prompt: "第一段", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "第二段", duration_sec: 5 },
+            { skill_id: "sk-a", prompt: "第三段", duration_sec: 5 },
+        ],
+    };
+    await openDirectorEditor(existing);
+    await sleep(60);
+
+    const tabSetup = Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜"));
+    tabSetup.click();
+    await sleep(20);
+
+    const container = document.querySelector(".neo-director-setup-segs");
+    let items = Array.from(container.querySelectorAll(".neo-director-story-seg-item"));
+    assert.equal(items.length, 3, "对照表显示 3 段");
+    items.forEach((it) => assert.ok(it.querySelector(".neo-director-story-seg-grip"), "每项带拖拽手柄"));
+
+    // 模拟把第 2 项拖到最前（实时换位后的 DOM 顺序），松手 → commitSegReorder
+    const moved = items[1];
+    container.insertBefore(moved, items[0]);
+    moved.dispatchEvent(new Event("dragend", { bubbles: true }));
+    await sleep(20);
+
+    // segsWrap（唯一事实来源）行顺序已变：原第 2 段排到第 1
+    const rows = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(rows[0].querySelector(".neo-director-prompt").value, "第二段", "重排后 segsWrap 首行是原第 2 段");
+    assert.equal(rows[1].querySelector(".neo-director-prompt").value, "第一段", "重排后 segsWrap 次行是原第 1 段");
+    assert.equal(rows[2].querySelector(".neo-director-prompt").value, "第三段", "重排后 segsWrap 末行是原第 3 段");
+
+    // band-2 重新渲染，顺序与 segsWrap 一致、序号刷新
+    items = Array.from(container.querySelectorAll(".neo-director-story-seg-item"));
+    assert.equal(items[0].querySelector(".neo-director-story-seg-head span:nth-child(2)").textContent, "#1", "重排后首项序号 #1");
+    const cols0 = Array.from(items[0].querySelectorAll(".neo-director-setup-seg-cols > div"));
+    assert.ok(cols0.some((c) => c.textContent.includes("第二段")), "重排后首项内容对应原第 2 段");
+
+    // 顺序未变时不触发重排（无位移的 dragend → 无副作用）
+    items[0].dispatchEvent(new Event("dragend", { bubbles: true }));
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-seg").length, 3, "无位移的 dragend 不改变段数");
 
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);
@@ -3314,7 +3369,7 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     const descBodies = [];
     mockRoute("/rs_recipes/director_describe_panel", (body) => {
         descBodies.push(body);
-        return jsonResponse({ success: true, prompt: `描述 ${body.panel}` });
+        return sseResponse(['data: ' + JSON.stringify({ text: `描述 ${body.panel}` }), "data: [DONE]"]);
     });
 
     await openDirectorEditor({
@@ -3405,6 +3460,113 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     assert.equal(gridCells[1].textContent, `描述 ${panelNames[0]}`, "第二列为该段提示词，无空「优化前」占位");
 
     document.querySelector(".neo-director-close")?.click();
+    await sleep(20);
+});
+
+test("导演编辑器：宫格分镜图可直接拖入/上传到各段（跳过拆分），多张自动建段，无图段生成提示词时跳过", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    let upCount = 0;
+    mockRoute("/upload/image", () => jsonResponse({ name: `frame_${upCount++}.png`, subfolder: "", type: "input" }));
+    const descBodies = [];
+    mockRoute("/rs_recipes/director_describe_panel", (body) => {
+        descBodies.push(body);
+        return sseResponse(['data: ' + JSON.stringify({ text: `描述 ${body.panel}` }), "data: [DONE]"]);
+    });
+
+    await openDirectorEditor(null); // 新建：1 个空段
+    await sleep(60);
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜")).click();
+    await sleep(20);
+
+    // 新建配方默认宫格来源：对照表两栏（分镜图 / 提示词）
+    const thumbs = Array.from(document.querySelectorAll(".neo-director-setup-seg-thumb"));
+    assert.ok(thumbs.length >= 1, "对照表有分镜图缩略位");
+    assert.ok(thumbs[0].classList.contains("neo-director-setup-seg-thumb-empty"), "空段显示上传占位");
+
+    // 拖入两张已拆分的分镜图到第 1 段 → 第 1 段绑定第 1 张，自动新增第 2 段绑定第 2 张
+    const dt = { files: [new File(["a"], "a.png", { type: "image/png" }), new File(["b"], "b.png", { type: "image/png" })], getData: () => "" };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    thumbs[0].dispatchEvent(dropEv);
+    await sleep(60);
+
+    const rows = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(rows.length, 2, "拖入两张 → 自动新增一段（共 2 段）");
+    assert.equal(rows[0].dataset.storyboard, "frame_0.png", "第 1 段分镜图 = 第 1 张");
+    assert.ok(Array.from(rows[0].querySelectorAll(".neo-director-ff-item"))
+        .some((it) => it.dataset.file === "frame_0.png" && it.classList.contains("neo-director-ff-active")), "第 1 张回填为首帧");
+    assert.equal(rows[1].dataset.storyboard, "frame_1.png", "自动新增段分镜图 = 第 2 张");
+
+    // 清除第 2 段分镜图（悬停 ✕）→ 该段无图，生成提示词时应被跳过
+    const items = Array.from(document.querySelectorAll(".neo-director-setup-segs .neo-director-story-seg-item"));
+    items[1].querySelector(".neo-director-setup-seg-sb-clear").click();
+    await sleep(40);
+    const rows2 = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.ok(!rows2[1].dataset.storyboard, "第 2 段分镜图已清除");
+
+    // 生成所有分段提示词：只对有分镜图的第 1 段逐格描述，跳过无图的第 2 段
+    document.querySelector(".neo-director-optimize").click();
+    await sleep(150);
+    assert.equal(descBodies.length, 1, "只对有分镜图的第 1 段发描述请求，跳过无图段");
+    rows2.forEach((row, i) => {
+        const p = row.querySelector(".neo-director-prompt").value;
+        if (i === 0) assert.equal(p, `描述 ${row.dataset.storyboard}`, "第 1 段提示词回填");
+        else assert.equal(p, "", "无图段提示词保持为空");
+    });
+
+    document.querySelector(".neo-director-close").click();
+    await sleep(20);
+});
+
+test("导演编辑器：band-2 末尾常驻空段（纯 UI、不保存），拖入分镜图才真实建段", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/upload/image", () => jsonResponse({ name: "ghost_drop.png", subfolder: "", type: "input" }));
+
+    await openDirectorEditor(null); // 新建：1 个空段
+    await sleep(60);
+    Array.from(document.querySelectorAll(".neo-director-tab")).find((t) => t.textContent.includes("故事分镜")).click();
+    await sleep(20);
+
+    const container = document.querySelector(".neo-director-setup-segs");
+    // 常驻空段存在，且不是真实段（不进 segsWrap、无拖拽手柄）
+    const ghost = container.querySelector(".neo-director-story-seg-ghost");
+    assert.ok(ghost, "band-2 末尾有常驻空段");
+    assert.equal(container.querySelectorAll(".neo-director-story-seg-ghost").length, 1, "只有一个常驻空段");
+    assert.ok(!ghost.classList.contains("neo-director-seg"), "空段不是真实分段");
+    assert.ok(!ghost.querySelector(".neo-director-story-seg-grip"), "空段无拖拽手柄（不参与排序）");
+    const ghostThumb = ghost.querySelector(".neo-director-setup-seg-thumb");
+    assert.ok(ghostThumb, "空段有分镜图缩略位（可拖入目标）");
+
+    // 拖入一张分镜图到空段 → 真实新建一段并绑定该图
+    const dt = { files: [new File(["a"], "a.png", { type: "image/png" })], getData: () => "" };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    ghostThumb.dispatchEvent(dropEv);
+    await sleep(60);
+
+    const rows = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(rows.length, 2, "拖入后真实段从 1 → 2");
+    assert.equal(rows[1].dataset.storyboard, "ghost_drop.png", "新建段分镜图 = 拖入的图");
+    // 刷新后空段仍在末尾，对照表只有 2 个真实段项
+    assert.ok(container.querySelector(".neo-director-story-seg-ghost"), "刷新后空段仍在末尾");
+    assert.equal(container.querySelectorAll(".neo-director-story-seg-item").length, 2, "对照表 2 个真实段项");
+
+    // 点击上传（本地文件选择器）同样真实建段：对刷新后新出现的空段缩略位模拟 file input 上传
+    const ghost2 = container.querySelector(".neo-director-story-seg-ghost");
+    const ghostFileInput = ghost2.querySelector("input[type=file]");
+    assert.ok(ghostFileInput, "空段缩略位含隐藏 file input（点击本地上传）");
+    Object.defineProperty(ghostFileInput, "files", { value: [new File(["b"], "b.png", { type: "image/png" })], configurable: true });
+    ghostFileInput.dispatchEvent(new Event("change"));
+    await sleep(60);
+    const rows2 = Array.from(document.querySelectorAll(".neo-director-seg"));
+    assert.equal(rows2.length, 3, "点击上传后真实段从 2 → 3");
+    assert.equal(rows2[2].dataset.storyboard, "ghost_drop.png", "上传新建段绑定该图（upload 桩固定返回 ghost_drop.png）");
+
+    document.querySelector(".neo-director-close").click();
     await sleep(20);
 });
 

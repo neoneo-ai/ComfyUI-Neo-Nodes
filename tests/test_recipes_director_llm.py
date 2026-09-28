@@ -90,8 +90,20 @@ def _default_run_llm_task(task_name, text, images=None, **kw):
     return {"status": "success", "segments": json.dumps([{"prompt": "p1", "duration_sec": 5}, {"prompt": "p2", "duration_sec": 5}])}
 
 
+def _default_run_llm_task_stream(task_name, text, images=None, **kw):
+    """run_llm_task_stream 桩：yield {text, kind}；记录调用参数。director_optimize / director_panel_describe 出正文。"""
+    _llm_calls.append({"task": task_name, "text": text, "images": images})
+    if task_name == "director_optimize":
+        yield {"text": "优化段", "kind": "content"}
+    elif task_name == "director_panel_describe":
+        yield {"text": "H3 i2v 提示词", "kind": "content"}
+    else:
+        yield {"text": "", "kind": "content"}
+
+
 _llm = types.ModuleType(f"{_PKG}.llm")
 _llm.run_llm_task = _default_run_llm_task
+_llm.run_llm_task_stream = _default_run_llm_task_stream
 sys.modules[f"{_PKG}.llm"] = _llm
 setattr(_pkg, "llm", _llm)
 
@@ -104,6 +116,51 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def _sse_text(resp):
+    """消费 SSE 响应体，拼成完整文本。兼容：纯 bytes/text（早期错误返回）与异步生成器（流式正文）。"""
+    async def _collect():
+        body = resp.body
+        if isinstance(body, (bytes, bytearray)):
+            return bytes(body).decode("utf-8")
+        if isinstance(body, str):
+            return body
+        # web.Response(body=<async gen>) 被 aiohttp 包成 AsyncIterablePayload，底层迭代器存于 _iter
+        iterable = getattr(body, "_iter", None) or body
+        out = b""
+        async for chunk in iterable:
+            out += chunk
+        return out.decode("utf-8")
+    return _run_async(_collect())
+
+
+def _parse_sse(text):
+    """解析 SSE 帧 → [(kind, payload)]；kind ∈ {'text','done','error'}。与前端 sseStream 一致：[ERROR] 前缀（裸文本或 JSON text）都算错误帧。"""
+    frames = []
+    for block in text.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        assert block.startswith("data: "), block
+        data = block[len("data: "):]
+        if data == "[DONE]":
+            frames.append(("done", None))
+        elif data.startswith("[ERROR]"):
+            frames.append(("error", data[len("[ERROR]"):].strip()))
+        else:
+            parsed = json.loads(data)
+            t = parsed.get("text")
+            if isinstance(t, str) and t.startswith("[ERROR]"):
+                frames.append(("error", t[len("[ERROR]"):].strip()))
+            else:
+                frames.append(("text", parsed))
+    return frames
+
+
+def _sse_content(frames):
+    """SSE 帧里所有正文块拼成的文本。"""
+    return "".join(f[1]["text"] for f in frames if f[0] == "text")
 
 
 class _FakeRequest:
@@ -236,9 +293,11 @@ class OptimizePromptsEndpointTests(_FPBase):
     def test_success_returns_single_prompt(self):
         req = _FakeRequest({"prompt": "段一", "duration_sec": 5, "mode": "r2v", "refs": {"images": ["a.png", "b.png"], "videos": ["v.mp4"]}})
         resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
-        data = json.loads(resp.body)
-        self.assertTrue(data["success"])
-        self.assertEqual(data["prompt"], "优化段")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.content_type, "text/event-stream")
+        frames = _parse_sse(_sse_text(resp))
+        self.assertEqual(_sse_content(frames), "优化段")
+        self.assertTrue(any(f[0] == "done" for f in frames))
         text = _llm_calls[-1]["text"]
         self.assertIn("生成模式：r2v", text)
         self.assertIn("<Picture 1>…<Picture 2>", text)
@@ -247,39 +306,41 @@ class OptimizePromptsEndpointTests(_FPBase):
 
     def test_missing_prompt_rejected(self):
         resp = _run_async(recipes.rs_recipes_director_optimize_prompts(_FakeRequest({"prompt": ""})))
-        self.assertEqual(resp.status, 400)
+        frames = _parse_sse(_sse_text(resp))
+        self.assertTrue(any(f[0] == "error" for f in frames), frames)
 
     def test_empty_llm_result_rejected(self):
-        original = _llm.run_llm_task
-        _llm.run_llm_task = lambda *a, **k: {"status": "success", "prompt": "   "}
+        """LLM 流无正文 → SSE 以 [ERROR] 帧上报（前端据此标记该段失败并继续下一段）。"""
+        original = _llm.run_llm_task_stream
+        _llm.run_llm_task_stream = lambda *a, **k: iter(())
         try:
             resp = _run_async(recipes.rs_recipes_director_optimize_prompts(_FakeRequest({"prompt": "a"})))
-            self.assertEqual(resp.status, 422)
+            frames = _parse_sse(_sse_text(resp))
+            self.assertTrue(any(f[0] == "error" for f in frames), frames)
         finally:
-            _llm.run_llm_task = original
+            _llm.run_llm_task_stream = original
 
     def test_multimodal_sends_image_bytes(self):
         """参考图存在于 input/ 时，LLM 调用应带上图片字节（多模态）。"""
-        original = _llm.run_llm_task
+        original = _llm.run_llm_task_stream
         calls = []
 
         def _one(task_name, text, images=None, **kw):
             calls.append(images)
-            return {"status": "success", "prompt": "优化后的段一"}
+            yield {"text": "优化后的段一", "kind": "content"}
 
-        _llm.run_llm_task = _one
+        _llm.run_llm_task_stream = _one
         try:
             p = os.path.join(_INPUT_DIR, "opt_ref.png")
             with open(p, "wb") as f:
                 f.write(b"opt-bytes")
             req = _FakeRequest({"prompt": "段一", "duration_sec": 5, "refs": {"images": ["opt_ref.png"]}})
             resp = _run_async(recipes.rs_recipes_director_optimize_prompts(req))
-            data = json.loads(resp.body)
-            self.assertTrue(data["success"])
-            self.assertEqual(data["prompt"], "优化后的段一")
+            frames = _parse_sse(_sse_text(resp))
+            self.assertEqual(_sse_content(frames), "优化后的段一")
             self.assertTrue(calls[0])   # 参考图存在 → LLM 调用带图片字节
         finally:
-            _llm.run_llm_task = original
+            _llm.run_llm_task_stream = original
 
 
 # ===========================================================================
@@ -351,54 +412,55 @@ class GridSplitEndpointTests(_FPBase):
 
 class DescribePanelEndpointTests(_FPBase):
     def test_success_returns_single_prompt_with_panel_image(self):
-        """单格多模态调用：一张分镜图字节喂给 LLM，返回该格的 H3 i2v 提示词。"""
-        original = _llm.run_llm_task
+        """单格多模态调用：一张分镜图字节喂给 LLM，流式返回该格的 H3 i2v 提示词。"""
+        original = _llm.run_llm_task_stream
         calls = []
 
         def _one(task_name, text, images=None, **kw):
             calls.append((task_name, text, images))
-            return {"status": "success", "prompt": "H3 i2v 提示词"}
+            yield {"text": "H3 i2v 提示词", "kind": "content"}
 
-        _llm.run_llm_task = _one
+        _llm.run_llm_task_stream = _one
         try:
             with open(os.path.join(_INPUT_DIR, "pa.png"), "wb") as f:
                 f.write(b"panel-bytes-pa")
             req = _FakeRequest({"panel": "pa.png", "duration_sec": 4})
             resp = _run_async(recipes.rs_recipes_director_describe_panel(req))
-            data = json.loads(resp.body)
-            self.assertTrue(data["success"], data)
-            self.assertEqual(data["prompt"], "H3 i2v 提示词")
+            frames = _parse_sse(_sse_text(resp))
+            self.assertEqual(_sse_content(frames), "H3 i2v 提示词")
             task, text, images = calls[0]
             self.assertEqual(task, "director_panel_describe")
             self.assertEqual(len(images), 1)   # 每次调用只带一张分镜图
             self.assertIn("约 4 秒", text)
         finally:
-            _llm.run_llm_task = original
+            _llm.run_llm_task_stream = original
 
     def test_empty_prompt_rejected(self):
-        """LLM 返回空提示词 → 422（前端据此标记该格失败并继续下一格）。"""
-        original = _llm.run_llm_task
-        _llm.run_llm_task = lambda *a, **k: {"status": "success", "prompt": "   "}
+        """LLM 流无正文 → SSE 以 [ERROR] 帧上报（前端据此标记该格失败并继续下一格）。"""
+        original = _llm.run_llm_task_stream
+        _llm.run_llm_task_stream = lambda *a, **k: iter(())
         try:
             resp = _run_async(recipes.rs_recipes_director_describe_panel(_FakeRequest({"panel": "a.png"})))
-            self.assertEqual(resp.status, 422)
+            frames = _parse_sse(_sse_text(resp))
+            self.assertTrue(any(f[0] == "error" for f in frames), frames)
         finally:
-            _llm.run_llm_task = original
+            _llm.run_llm_task_stream = original
 
     def test_missing_panel_rejected(self):
         resp = _run_async(recipes.rs_recipes_director_describe_panel(_FakeRequest({"panel": ""})))
-        self.assertEqual(resp.status, 400)
+        frames = _parse_sse(_sse_text(resp))
+        self.assertTrue(any(f[0] == "error" for f in frames), frames)
 
     def test_context_fields_appended_to_text(self):
         """宫格上下文：本格序号/行列、原宫格提示词、上一段结果都拼进 text，图仍只一张。"""
-        original = _llm.run_llm_task
+        original = _llm.run_llm_task_stream
         calls = []
 
         def _one(task_name, text, images=None, **kw):
             calls.append((task_name, text, images))
-            return {"status": "success", "prompt": "H3 i2v 提示词"}
+            yield {"text": "H3 i2v 提示词", "kind": "content"}
 
-        _llm.run_llm_task = _one
+        _llm.run_llm_task_stream = _one
         try:
             with open(os.path.join(_INPUT_DIR, "pb.png"), "wb") as f:
                 f.write(b"panel-bytes-pb")
@@ -409,8 +471,8 @@ class DescribePanelEndpointTests(_FPBase):
                 "prev_prompt": "上一段提示词XYZ",
             })
             resp = _run_async(recipes.rs_recipes_director_describe_panel(req))
-            data = json.loads(resp.body)
-            self.assertTrue(data["success"], data)
+            frames = _parse_sse(_sse_text(resp))
+            self.assertEqual(_sse_content(frames), "H3 i2v 提示词")
             task, text, images = calls[0]
             self.assertEqual(len(images), 1)   # 上下文全走文本，图仍只一张分镜图
             self.assertIn("第 4 段（共 9 段）", text)
@@ -421,18 +483,18 @@ class DescribePanelEndpointTests(_FPBase):
             self.assertIn("上一段（第 3 段）已生成的提示词", text)
             self.assertIn("上一段提示词XYZ", text)
         finally:
-            _llm.run_llm_task = original
+            _llm.run_llm_task_stream = original
 
     def test_context_missing_or_invalid_degrades(self):
         """上下文字段缺失/非法时静默降级：仍 200，text 只含图+时长，不报错。"""
-        original = _llm.run_llm_task
+        original = _llm.run_llm_task_stream
         calls = []
 
         def _one(task_name, text, images=None, **kw):
             calls.append((task_name, text, images))
-            return {"status": "success", "prompt": "H3 i2v 提示词"}
+            yield {"text": "H3 i2v 提示词", "kind": "content"}
 
-        _llm.run_llm_task = _one
+        _llm.run_llm_task_stream = _one
         try:
             with open(os.path.join(_INPUT_DIR, "pc.png"), "wb") as f:
                 f.write(b"panel-bytes-pc")
@@ -444,15 +506,15 @@ class DescribePanelEndpointTests(_FPBase):
                 "prev_prompt": "   ",                   # 空串 → 不加承接
             })
             resp = _run_async(recipes.rs_recipes_director_describe_panel(req))
-            data = json.loads(resp.body)
-            self.assertTrue(data["success"], data)
+            frames = _parse_sse(_sse_text(resp))
+            self.assertEqual(_sse_content(frames), "H3 i2v 提示词")
             text = calls[0][1]
             self.assertIn("约 6 秒", text)
             self.assertNotIn("第 10 段", text)
             self.assertNotIn("故事上下文", text)
             self.assertNotIn("上一段", text)
         finally:
-            _llm.run_llm_task = original
+            _llm.run_llm_task_stream = original
 
 
 if __name__ == "__main__":

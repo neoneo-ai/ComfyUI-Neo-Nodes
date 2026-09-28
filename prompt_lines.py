@@ -5,6 +5,7 @@
 #提示词集合，一行一条；其余位置的 .txt 仍按整篇处理（见 web 端判定与路由）。
 
 import os
+import re
 import threading
 
 _CACHE_MAX_ENTRIES = 8
@@ -21,6 +22,12 @@ _QUANTITY_WORDS = ("一位年轻的", "一名年轻的", "一个年轻的",
 _GENERIC_MODIFIERS = ("年轻",)
 _SUBJECT_NEXT_CHARS = ("的", "女", "男", "少", "美")
 
+# H3 提示词的字段头（integrated_multimodal_description: / overall_soundscape: 等）与时间戳（00:00.000 - 00:05.000），不进标题
+_H3_FIELD_HEAD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*")
+_H3_TIMESTAMP = re.compile(
+    r"(?<!\d)\d{2}:\d{2,3}(?:\.\d{1,3})?(?!\d)(?:\s*[-–—~]\s*(?<!\d)\d{2}:\d{2,3}(?:\.\d{1,3})?(?!\d))?"
+)
+
 
 def _read_text(filepath: str) -> str:
     with open(filepath, "rb") as f:
@@ -35,6 +42,8 @@ def _extract_title(line: str) -> str:
     comma_pos = [p for p in (line.find(","), line.find("，")) if p >= 0]
     head = line[:min(comma_pos)] if comma_pos else line
     head = head.strip().strip("「」『』\"'\u201c\u201d\u2018\u2019 ").strip()
+    # 去掉 H3 字段头与时间戳（如 integrated_multimodal_description: / 00:00.000 - 00:05.000），只留画面描述
+    head = re.sub(r"\s+", " ", _H3_TIMESTAMP.sub(" ", _H3_FIELD_HEAD.sub("", head))).strip()
 
     changed = True
     while changed:
