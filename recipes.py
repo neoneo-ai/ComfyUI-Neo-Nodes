@@ -1747,7 +1747,7 @@ async def rs_recipes_director_describe_panel(request):
         dur = int(round(float(data.get("duration_sec") or 5)))
     except (TypeError, ValueError):
         dur = 5
-    lines = [f"这是分镜图（该段首帧），本段约 {dur} 秒。请为这一格生成一条可直接提交的 H3 i2v 成品提示词。"]
+    lines = [f"这是分镜图（该段首帧），本段约 {dur} 秒。以画面锁定人物/场景/风格，重点写出这一段发生的故事情节与动作推进（不要复述画面内容），生成一条可直接提交的 H3 i2v 成品提示词。"]
     # 宫格拆分上下文（全部可选，缺失/非法时静默降级为仅图+时长）：本格序号、九宫格行列、原宫格提示词、上一段结果
     def _opt_int(v):
         try:

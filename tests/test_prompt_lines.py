@@ -40,6 +40,30 @@ class TestExtractTitle(unittest.TestCase):
         # 年份 / 普通数字不应被当作时间戳误删
         self.assertEqual(prompt_lines._extract_title("A photo from 2024, vintage style"), "A photo from 2024")
 
+    def test_h3_align_line_i2v_zh_no_title(self):
+        self.assertEqual(
+            prompt_lines._extract_title("对于目标视频，在目标视频第 0.00 秒处，<Picture 1>（来自 [Shot 1]）被完整引用。"),
+            "(未命名)",
+        )
+
+    def test_h3_align_line_i2v_en_no_title(self):
+        self.assertEqual(
+            prompt_lines._extract_title("For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."),
+            "(未命名)",
+        )
+
+    def test_h3_align_line_fl2v_zh_no_title(self):
+        self.assertEqual(
+            prompt_lines._extract_title("参考图与目标视频的对齐方式——Picture 1（来自 Shot 1）对齐目标视频第 0.00 秒处；Picture 2（来自 Shot 2）对齐目标视频第 10.00 秒处。"),
+            "(未命名)",
+        )
+
+    def test_h3_align_line_fl2v_en_no_title(self):
+        self.assertEqual(
+            prompt_lines._extract_title("How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 2) aligns with the 10.00-second mark of the target video."),
+            "(未命名)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

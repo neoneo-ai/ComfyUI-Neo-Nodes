@@ -27,6 +27,13 @@ _H3_FIELD_HEAD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*")
 _H3_TIMESTAMP = re.compile(
     r"(?<!\d)\d{2}:\d{2,3}(?:\.\d{1,3})?(?!\d)(?:\s*[-–—~]\s*(?<!\d)\d{2}:\d{2,3}(?:\.\d{1,3})?(?!\d))?"
 )
+# H3 首行对齐指令（I2VA / FL2VA，中英两种写法），整行不进标题；时长为 S.SS 格式（秒位可 1~2 位）
+_H3_ALIGN_LINE = re.compile(
+    r"^(?:For the target video, at \d+\.\d+ seconds into the target video"
+    r"|对于目标视频，在目标视频第 \d+\.\d+ 秒处"
+    r"|How the reference pictures align with the target video"
+    r"|参考图与目标视频的对齐方式)"
+)
 
 
 def _read_text(filepath: str) -> str:
@@ -39,6 +46,8 @@ def _read_text(filepath: str) -> str:
 
 
 def _extract_title(line: str) -> str:
+    if _H3_ALIGN_LINE.match(line):
+        return "(未命名)"
     comma_pos = [p for p in (line.find(","), line.find("，")) if p >= 0]
     head = line[:min(comma_pos)] if comma_pos else line
     head = head.strip().strip("「」『』\"'\u201c\u201d\u2018\u2019 ").strip()

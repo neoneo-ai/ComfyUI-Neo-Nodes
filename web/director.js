@@ -1505,11 +1505,20 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         }
         refreshStepState();   // 主题改动 → ①/② 徽标与「生成分镜分段」可用性
     });
-    // 新建配方：直接在时间轴输入段提示词时，若尚未手动命名则同样截取生成标题（与「主题/想法」一致）
+    // 新建配方：直接在时间轴输入段提示词时，若尚未手动命名则同样截取生成标题（与「主题/想法」一致）；
+    // 先剥掉 H3 结构前缀（首行对齐指令 / 字段头 / [Shot N] / 时间戳），固定语句不当作配方名
+    const stripH3Head = (v) => {
+        let s = v.trim();
+        s = s.replace(/^(?:For the target video, at \d+\.\d+ seconds into the target video|对于目标视频，在目标视频第 \d+\.\d+ 秒处|How the reference pictures align with the target video|参考图与目标视频的对齐方式)[^\n]*/, '').trim();
+        s = s.replace(/^[A-Za-z_][A-Za-z0-9_]*:\s*/, '').trim();
+        s = s.replace(/^\[Shot \d+\]\s*/i, '');
+        return s.replace(/^\d{2}:\d{2,3}(?:\.\d{1,3})?(?:\s*[-–—~]\s*\d{2}:\d{2,3}(?:\.\d{1,3})?)?\s*/, '').trim();
+    };
     segsWrap.addEventListener('input', (e) => {
         if (!e.target.classList.contains('neo-director-prompt')) return;
         if (existing || nameManuallySet) return;
-        const v = e.target.value.trim();
+        const v = stripH3Head(e.target.value);
+        if (!v) return;
         nameInp.value = v.length > 20 ? v.slice(0, 20) + '…' : v;
         renderName();
     });
