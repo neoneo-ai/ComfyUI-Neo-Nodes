@@ -162,6 +162,18 @@ function directorInferAspect(w, h) {
     return { label: row[0], mp: directorClampMp((w * h) / (1024 * 1024)) };
 }
 
+// 图片 W/H → 最接近的预设比例标签（相对误差最小，绝不回落「自定义」）。
+// 宽比宽、高比高，横竖两向都在预设里，所以横版图不会吸附到竖版比例（反之亦然）。
+function directorNearestAspect(w, h) {
+    const ratio = w / h;
+    let best = DIRECTOR_ASPECTS[0][0], bestErr = Infinity;
+    for (const [label, rw, rh] of DIRECTOR_ASPECTS) {
+        const err = Math.abs(ratio - rw / rh) / (rw / rh);
+        if (err < bestErr) { bestErr = err; best = label; }
+    }
+    return best;
+}
+
 // 多段首帧比例一致性检查：各段首帧就近归到预设比例（±3%），超过一组则返回提示。
 // 共享分辨率只能取一个比例，其余段会被拉伸变形——保存前据此给非阻塞告警。sizes 来自 /rs_recipes/image_sizes。
 export function firstFrameAspectWarning(segments, sizes) {
@@ -943,11 +955,23 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     // 按有效模式过滤视频技能（skill.mode 由后端 frontmatter 提供）；无匹配时回退全量，避免空下拉。
     const FRAME_SKILL_MODES = ['t2v', 'i2v', 'l2v', 'fl2v'];   // 分镜生视频（f2v）技能的模式值（全部进同一池，含多帧单次）
+    // 池内按步数从少到多排（skill config 未写 steps 的按后端缺省 20 计），同分偏好 H3 连续多段合成 (VDN)；
+    // 原生下拉与居中技能选择窗都按这个顺序显示，新建配方的默认技能就是池里第一个可用的（见 newDefaultSkill）。
+    const SKILL_PREF = ['minimax_h3_vdn_multiframe', 'minimax_h3_multiframe'];
+    const skillSteps = (s) => {
+        const n = Number(s.gen_config && s.gen_config.steps);
+        return Number.isFinite(n) && n > 0 ? n : 20;
+    };
+    const skillPrefRank = (s) => {
+        const i = SKILL_PREF.indexOf(s.id);
+        return i < 0 ? SKILL_PREF.length : i;
+    };
     function skillOptionPool(eff) {
         const pool = eff === 'f2v'
             ? skills.filter(s => FRAME_SKILL_MODES.includes(s.mode))
             : skills.filter(s => s.mode === eff);
-        return pool.length ? pool : skills;
+        return (pool.length ? pool : skills).slice()
+            .sort((a, b) => skillSteps(a) - skillSteps(b) || skillPrefRank(a) - skillPrefRank(b));
     }
 
     /** 填充技能下拉（统一技能框与各段技能框共用）；keep 仍在新池里时保持选中，否则落回第一个选项。 */
@@ -1178,24 +1202,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     mpInp.addEventListener('input', () => { resUserTouched = true; updateRes(); });
     updateRes();
 
-    // 把共享分辨率设成某张首帧图的比例：命中预设则用「比例+百万像素」，否则自定义 W/H（32 对齐）。
-    // 宫格拆分后调用——各格同比例，让默认分辨率跟随首帧、避免用户忘记改而拉伸。
-    const applySharedResolutionFromImage = (w, h) => {
+    // 把「宽高比」切到某张首帧图最接近的预设比例：只动比例下拉，百万像素与手输 W/H 都不碰
+    //（不改像素）。新建配方首帧预填 / 宫格拆分后调用——各段同比例，避免忘记改而拉伸。
+    const applyAspectFromImage = (w, h) => {
         if (!w || !h) return;
-        const inf = directorInferAspect(w, h);
-        if (inf.label === DIRECTOR_CUSTOM) {
-            aspectSel.value = DIRECTOR_CUSTOM;
-            cwInp.value = Math.max(16, Math.round(w / DIRECTOR_MULTIPLE) * DIRECTOR_MULTIPLE);
-            chInp.value = Math.max(16, Math.round(h / DIRECTOR_MULTIPLE) * DIRECTOR_MULTIPLE);
-        } else {
-            aspectSel.value = inf.label;
-            mpInp.value = inf.mp;
-        }
+        aspectSel.value = directorNearestAspect(w, h);
         updateRes();
     };
 
-    // 新建配方（未命名）：首帧已预填（图库多选新建）或画布连了 LoadImage 时，默认分辨率跟随首帧比例；
-    // 已有配方的落盘分辨率不动。尺寸查询异步到达，用户手动改过则不再覆盖。
+    // 新建配方（未命名）：首帧已预填（图库多选新建）或画布连了 LoadImage 时，宽高比默认吸附到
+    // 首帧图最接近的预设比例；百万像素仍是默认 0.5、已有配方的落盘分辨率不动。
+    // 尺寸查询异步到达，用户手动改过则不再覆盖。
     if (!requestedName) {
         const ff = (exSegs[0] && exSegs[0].first_frame) || (imageRefs[0] && imageRefs[0].filename);
         if (ff) {
@@ -1203,7 +1220,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 .then(r => r.json())
                 .then(d => {
                     const s = (d && d.success && Array.isArray(d.sizes) && d.sizes[0]) || null;
-                    if (s && s.width && s.height && !resUserTouched) applySharedResolutionFromImage(s.width, s.height);
+                    if (s && s.width && s.height && !resUserTouched) applyAspectFromImage(s.width, s.height);
                 })
                 .catch(() => {});
         }
@@ -1770,7 +1787,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         frameSourceSel.value = 'grid';   // 对照表按宫格各格显示（🧩 卡片）
         if (wasGrid) { refreshSetupRefs(); renderSetupSegs(); } else onFrameSourceChange();
         const p0 = panels[0] || {};
-        applySharedResolutionFromImage(p0.width, p0.height);   // 共享分辨率默认跟随首帧比例（各格同比例），避免忘记改而拉伸
+        applyAspectFromImage(p0.width, p0.height);   // 共享比例吸附到首帧最近预设（各格同比例），避免忘记改而拉伸
         markDirty();
     }
 
@@ -2002,15 +2019,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
 
     // 统一技能（非混合模式）：紧邻生成模式，一次选择应用到所有分段（各段行不再单独选技能）；混合模式整体隐藏（逐段各选）。
-    // 新建配方默认技能：分镜生视频模式优先 H3 连续多段合成 (VDN)（VDN 插件已装时），不可用回落非 VDN 版
+    // 新建配方默认技能：技能池第一个可用的——池已按步数从少到多排序（见 skillOptionPool），故步数少的优先，
+    // 不可用的（如 VDN 插件未装）跳过。编辑已有配方不动（沿用落盘的段技能）。
+    // 「新建」以配方名为准：图库「新建导演配方」传的是 { name: '' }，对象非 null 但仍是新建。
     const newDefaultSkill = (() => {
-        if (!existing && initMode === 'f2v') {
-            const vdn = skills.find(s => s.id === 'minimax_h3_vdn_multiframe' && s.available !== false);
-            if (vdn) return vdn.id;
-            const base = skills.find(s => s.id === 'minimax_h3_multiframe');
-            if (base) return base.id;
-        }
-        return skills.length ? skills[0].id : '';
+        if (requestedName || !skills.length) return skills.length ? skills[0].id : '';
+        const pool = skillOptionPool(initMode);
+        const usable = pool.filter(s => s.available !== false);
+        return (usable.length ? usable : pool)[0].id;
     })();
     const initSkillId = (exSegs[0] && exSegs[0].skill_id) || newDefaultSkill;
     const gSkillLabel = $el('label', { className: 'neo-director-global-skill-label', textContent: '技能' });

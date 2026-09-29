@@ -316,7 +316,7 @@ test("共享分辨率：新建配方初始为 16:9 @ 百万像素 0.5（默认 9
     await sleep(20);
 });
 
-test("共享分辨率：新建配方首帧预填时默认比例跟随首帧图（异步查询）", async () => {
+test("共享分辨率：新建配方首帧预填时宽高比吸附到首帧最近预设（异步查询，像素不动）", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
@@ -334,13 +334,39 @@ test("共享分辨率：新建配方首帧预填时默认比例跟随首帧图�
 
     assert.ok(sizesBody, "查了预填首帧的尺寸");
     assert.deepEqual(sizesBody.filenames, ["ff.png"]);
-    assert.equal(document.querySelector(".neo-director-aspect").value, "9:16 (竖屏)", "比例跟随首帧");
-    assert.equal(document.querySelector(".neo-director-mp").value, "1", "百万像素按首帧面积反推");
-    assert.equal(document.querySelector(".neo-director-res").textContent, "768×1376", "分辨率按新比例重算");
+    assert.equal(document.querySelector(".neo-director-aspect").value, "9:16 (竖屏)", "比例吸附到首帧（竖屏图不落到横版）");
+    assert.equal(document.querySelector(".neo-director-mp").value, "0.5", "百万像素保持默认，不按首帧面积改");
+    assert.equal(document.querySelector(".neo-director-res").textContent, "544×960", "分辨率按新比例重算");
 
     const closeBtn = document.querySelector(".neo-director-close");
     if (closeBtn) closeBtn.click();
     await sleep(20);
+});
+
+test("共享分辨率：非预设比例图片吸附到最近预设（1024×640 → 3:2，1000×1600 → 2:3）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+    const SIZES = { "wide.png": { width: 1024, height: 640 }, "tall.png": { width: 1000, height: 1600 } };
+    mockRoute("/rs_recipes/image_sizes", (body) => {
+        const s = SIZES[body.filenames[0]];
+        return jsonResponse({ success: true, sizes: [Object.assign({ filename: body.filenames[0] }, s)] });
+    });
+
+    for (const [file, label] of [["wide.png", "3:2 (横版照片)"], ["tall.png", "2:3 (竖版照片)"]]) {
+        await openDirectorEditor({ name: "", shared: { mode: "f2v" }, segments: [{ first_frame: file, duration_sec: 5 }] });
+        await sleep(60);
+        assert.equal(document.querySelector(".neo-director-aspect").value, label, `${file} 吸附到最近预设 ${label}`);
+        assert.equal(document.querySelector(".neo-director-mp").value, "0.5", `${file}：百万像素不动`);
+        // 切「自定义」行不出现：绝不回落到自定义像素
+        const customRow = Array.from(document.querySelectorAll(".neo-director-shared"))
+            .find(el => el.querySelector('input[placeholder="宽"]'));
+        assert.equal(customRow.style.display, "none", `${file}：仍在预设比例模式（未回落自定义）`);
+        document.querySelector(".neo-director-close").click();
+        await sleep(20);
+    }
 });
 
 
@@ -2021,6 +2047,61 @@ test("导演编辑器：混合模式隐藏统一技能框，技能回到逐段�
 
     document.querySelector(".neo-director-close").click();
     await sleep(20);
+});
+
+test("导演编辑器：技能下拉按步数排序，新建配方默认取步数最少的（图库卡片菜单路径同样生效）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    // 真实形状：presets 按目录名排序（'-' 在前），步数来自各自 config.json（未配置 = 后端缺省 20）
+    const REAL = [
+        { id: "minimax-h3-r2v", name: "全参考", gen_video: true, mode: "r2v", gen_config: { steps: 20 } },
+        { id: "minimax-h3-vdn-r2v", name: "全参考 VDN", gen_video: true, mode: "r2v", gen_config: { steps: 8 } },
+        { id: "minimax_h3_fl2v", name: "首尾帧", gen_video: true, mode: "fl2v", gen_config: { steps: 20 } },
+        { id: "minimax_h3_i2v", name: "图生", gen_video: true, mode: "i2v", gen_config: { steps: 20 } },
+        { id: "minimax_h3_multiframe", name: "连续多段合成", gen_video: true, mode: "t2v", multi_frame: true, gen_config: { steps: 20 } },
+        { id: "minimax_h3_nostep", name: "未配置步数", gen_video: true, mode: "t2v" },
+        { id: "minimax_h3_vdn_t2v", name: "文生 VDN", gen_video: true, mode: "t2v", gen_config: { steps: 8 } },
+        { id: "minimax_h3_vdn_multiframe", name: "连续多段合成 VDN", gen_video: true, mode: "t2v", multi_frame: true, gen_config: { steps: 8 } },
+    ];
+    let pool = REAL;
+    mockRoute("/rs_prompts/skills", () => jsonResponse(pool));
+    const gSel = () => document.querySelector(".neo-director-global-skill");
+    const openWith = async (arg) => {
+        await openDirectorEditor(arg);
+        await sleep(60);
+        const opts = Array.from(gSel().options).map((o) => o.value);
+        const steps = new Map(REAL.map((s) => [s.id, Number(s.gen_config && s.gen_config.steps) || 20]));
+        const out = { value: gSel().value, opts, stepOrder: opts.map((id) => steps.get(id)) };
+        document.querySelector(".neo-director-close").click();
+        await sleep(20);
+        return out;
+    };
+
+    // 新建配方（节点 ✎ 新建按钮路径）
+    const node = await openWith(null);
+    assert.deepEqual(node.stepOrder, node.stepOrder.slice().sort((a, b) => a - b), "下拉按步数从少到多排序");
+    assert.equal(node.opts[0], "minimax_h3_vdn_multiframe", "8 步的排在最前（同分偏好连续多段合成）");
+    assert.equal(node.opts[node.opts.length - 1], "minimax_h3_nostep", "未配置步数按缺省 20 计，排 8 步之后");
+    assert.equal(node.value, "minimax_h3_vdn_multiframe", "默认技能 = 步数最少的");
+
+    // 图库卡片菜单路径：传的是 { name: '' }（对象非 null），同样算新建 → 默认与排序都要生效
+    const card = await openWith({ name: "", shared: { mode: "f2v" }, segments: [{ first_frame: "a.png", duration_sec: 5 }] });
+    assert.equal(card.value, "minimax_h3_vdn_multiframe", "卡片「🎬 新建导演配方」默认也是步数最少的");
+    assert.equal(card.opts[0], card.value, "默认即列表首项");
+
+    // r2v 新建：池内只有两种 r2v，取 8 步的 VDN
+    const r2v = await openWith({ name: "", shared: { mode: "r2v" }, segments: [{ duration_sec: 5 }] });
+    assert.deepEqual(r2v.opts, ["minimax-h3-vdn-r2v", "minimax-h3-r2v"], "r2v 池按步数排序");
+    assert.equal(r2v.value, "minimax-h3-vdn-r2v");
+
+    // 编辑已有配方：沿用落盘的段技能，不被默认覆盖
+    const edit = await openWith({ name: "E", shared: { mode: "f2v" }, segments: [{ skill_id: "minimax_h3_i2v", duration_sec: 5 }] });
+    assert.equal(edit.value, "minimax_h3_i2v", "编辑已有配方不改技能");
+
+    // VDN 插件未装：8 步的 VDN 全部不可用 → 回落到 20 步里偏好优先的连续多段合成
+    pool = REAL.map((s) => (s.id.includes("_vdn_") ? Object.assign({}, s, { available: false }) : s));
+    const noVdn = await openWith({ name: "", shared: { mode: "f2v" }, segments: [{ first_frame: "a.png", duration_sec: 5 }] });
+    assert.equal(noVdn.value, "minimax_h3_multiframe", "VDN 不可用时不选它，仍取可用的最少步数");
 });
 
 test("导演编辑器：参考素材区标题行「素材库」按钮打开/收起左侧素材面板", async () => {
@@ -3858,7 +3939,7 @@ test("firstFrameAspectWarning：首帧比例一致返回 null，混用比例点�
     );
 });
 
-test("导演编辑器：宫格拆分后共享分辨率默认跟随首帧比例（160×120 面板 → 4:3）", async () => {
+test("导演编辑器：宫格拆分后共享比例吸附到首帧最近预设（160×120 面板 → 4:3）", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
@@ -3885,8 +3966,7 @@ test("导演编辑器：宫格拆分后共享分辨率默认跟随首帧比例�
     await sleep(60);
 
     assert.equal(aspectSel.value, "4:3 (标准)", "共享比例跟随 160×120 面板（4:3）");
-    const mp = Number(document.querySelector(".neo-director-mp").value);
-    assert.ok(mp >= 0.1 && mp <= 2, `百万像素在范围内：${mp}`);
+    assert.equal(document.querySelector(".neo-director-mp").value, "0.5", "百万像素不因拆分改动");
 
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);
