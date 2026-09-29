@@ -1184,8 +1184,7 @@ function createSkillDetailPopup() {
         if (full && full.error) { alert("Failed to load skill: " + full.error); close(); return; }
         const nm = (full && full.name) || id;
         nameInput.value = nm;
-        const roSuffix = !isCustom() ? "（只读）" : "";
-        titleSpan.textContent = "📝 " + nm + roSuffix;
+        titleSpan.textContent = "📝 " + nm;
         titleSpan.title = nm;
         multiTurnChk.checked = !!(full && full.multi_turn);
         configOverridden = !!(full && full.config_overridden);

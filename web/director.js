@@ -314,7 +314,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const v = _nameEl ? (_nameEl.value || '') : '';
         return v.trim() || requestedName || 'untitled';
     };
-    const assetThumbUrl = (fname) => `/rs_recipes/asset?recipe=${encodeURIComponent(currentRecipeName())}&file=${encodeURIComponent(fname)}&t=${Date.now()}`;
+    const assetThumbUrl = (fname) => `/rs_recipes/asset?recipe=${encodeURIComponent(currentRecipeName())}&file=${encodeURIComponent(fname)}`;
     // 缩略图按来源解析：配方资产走 /rs_recipes/asset，其余（画布 LoadImage / 新拖入文件）走 /view
     const thumbSrc = (fname, subfolder = '') => recipeAssetFiles.has(fname)
         ? assetThumbUrl(fname)
@@ -2432,6 +2432,54 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     renderSetupSegs();    // 打开旧配方时回显各段当前内容
 
 
+    // 单段提示词生成/修改：在时间线底部输入指令，对当前段按 H3 格式生成或修改（SSE 流式）
+    const modTa = $el('textarea', { className: 'neo-director-mod-ta', placeholder: '描述或修改当前段（如：俯拍城市夜景、加入雨声…）' });
+    const modBtn = $el('button', { className: 'rs-btn neo-director-mod-btn', type: 'button', textContent: '✦ 生成/修改' });
+    const modStatus = $el('span', { className: 'neo-director-mod-status' });
+    modBtn.disabled = true;
+    modTa.addEventListener('input', () => { modBtn.disabled = !modTa.value.trim(); });
+    modBtn.onclick = async () => {
+        const instruction = modTa.value.trim();
+        if (!instruction) return;
+        const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
+        if (!rows.length) { app.extensionManager.toast.add({ severity: 'error', summary: '提示词', detail: '还没有分段', life: 3000 }); return; }
+        const row = rows[currentSegIdx] || rows[0];
+        const ta = row.querySelector('.neo-director-prompt');
+        const curPrompt = (ta ? ta.value : '').trim();
+        const durInp = row.querySelector('.neo-director-dur');
+        const dur = Number(durInp && durInp.value) || 5;
+        const g = modeSel ? modeSel.value : 'f2v';
+        const segModeSel = row.querySelector('.neo-director-segmode');
+        const effMode = (g === 'mixed' && segModeSel) ? segModeSel.value : g;
+        const refs = {};
+        (segRefReaders.get(row) || []).forEach((read, gi) => { const picked = read() || []; if (picked.length) refs[SEG_REF_GROUPS[gi].key] = picked; });
+        modBtn.disabled = true; modStatus.textContent = curPrompt ? '正在修改…' : '正在生成…';
+        try {
+            let acc = '';
+            let segErr = null;
+            await sseStream('/rs_recipes/director_modify_segment', {
+                onChunk: (parsed) => { acc += parsed.text || ''; ta.value = acc; },
+                onError: (msg) => { segErr = msg; },
+            }, { prompt: curPrompt, instruction, duration_sec: dur, mode: effMode, refs: Object.keys(refs).length ? refs : undefined });
+            if (segErr) throw new Error(segErr);
+            const finalText = acc.trim();
+            if (!finalText) throw new Error('结果为空，请重试');
+            ta.value = finalText;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            modStatus.textContent = curPrompt ? '已修改' : '已生成';
+            app.extensionManager.toast.add({ severity: 'success', summary: curPrompt ? '提示词已修改' : '提示词已生成', detail: `第 ${currentSegIdx + 1} 段`, life: 3000 });
+            markDirty();
+        } catch (e) {
+            console.error('[Neo Recipes] Director modify segment failed:', e);
+            modStatus.textContent = '';
+            handleLLMError('提示词', e.message);
+        } finally { modBtn.disabled = !modTa.value.trim(); }
+    };
+    const modRow = $el('div', { className: 'neo-director-mod-row' }, [
+        modTa,
+        $el('div', { className: 'neo-director-mod-actions' }, [modBtn, modStatus]),
+    ]);
+
     const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
         // 生成模式 / 统一技能 / 分块秒数 + 分辨率：本页决定各段怎么生成（与故事板分镜来源无关）
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
@@ -2446,6 +2494,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         tlLabelRow,
         tlWrap,
         segsWrap,
+        modRow,
     ]);
     refreshChunkSecVisibility();   // 初始显隐：默认统一技能非多帧时隐藏「分块秒数」
 

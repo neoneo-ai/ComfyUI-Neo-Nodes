@@ -2252,14 +2252,14 @@ class H3PreviewTests(unittest.TestCase):
     def test_preview_payload_encodes_jpeg_frames(self):
         payload = self.h3p._preview_payload([Image.new("RGB", (600, 1200), (20, 40, 60)) for _ in range(2)])
         self.assertEqual(payload["fps"], self.h3p.PREVIEW_FPS)
-        self.assertEqual((payload["w"], payload["h"]), (256, 512))   # 等比缩到最长边 PREVIEW_SIDE
+        self.assertEqual((payload["w"], payload["h"]), (512, 1024))   # 等比缩到最长边 PREVIEW_SIDE
         self.assertEqual(len(payload["frames"]), 2)
         for frame in payload["frames"]:
             self.assertTrue(frame.startswith(self.h3p.JPEG_DATA_URL))   # 前端直接塞 <img>.src，必须是 data URL
             raw = base64.b64decode(frame[len(self.h3p.JPEG_DATA_URL):])
             self.assertEqual(raw[:3], b"\xff\xd8\xff")   # JPEG 魔数
             with Image.open(io.BytesIO(raw)) as im:
-                self.assertEqual(im.size, (256, 512))
+                self.assertEqual(im.size, (512, 1024))
                 for got, want in zip(im.convert("RGB").getpixel((128, 256)), (20, 40, 60)):
                     self.assertLessEqual(abs(got - want), 3)   # 画面内容存活，没被压成黑
 

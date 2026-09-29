@@ -986,6 +986,59 @@
     display: none;
 }
 
+/* 单段提示词修改区（时间线底部，弱化为辅助工具栏） */
+.neo-director-mod-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-top: 1px solid #2a2d33;
+}
+
+.neo-director-mod-ta {
+    flex: 1;
+    min-height: 0;
+    height: 28px;
+    resize: none;
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    color: #ddd;
+    font-size: 12px;
+    padding: 4px 8px;
+    font-family: inherit;
+}
+
+.neo-director-mod-ta:focus {
+    outline: none;
+    border-color: #555;
+    color: #e0e0e0;
+}
+
+.neo-director-mod-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.neo-director-mod-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.neo-director-mod-btn:not(:disabled) {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.neo-director-mod-status {
+    font-size: 11px;
+    color: #777;
+}
+
 .neo-director-seg {
     display: flex;
     flex-direction: column;

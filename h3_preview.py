@@ -33,7 +33,7 @@ TINY_VAE = "taeh3.safetensors"
 PREVIEW_EVENT = "rs.h3.preview"   # 插件自有预览通道：前端按 node_id 路由到节点内的动画面板
 PREVIEW_FRAMES = 8                # 每步沿时间轴均匀抽的帧数
 PREVIEW_FPS = 4                   # 面板播放帧率（随载荷带给前端）：8 帧一圈 2 秒，快了就像快放
-PREVIEW_SIDE = 512                # 预览最长边（动图比单图小一档：解码、传输、内存都省）
+PREVIEW_SIDE = 1024               # 预览最长边（动图比单图小一档：解码、传输、内存都省）
 JPEG_QUALITY = 85
 JPEG_DATA_URL = "data:image/jpeg;base64,"   # 前端拿帧直接塞 <img>.src，载荷里就带好 data URL
 

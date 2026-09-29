@@ -1464,6 +1464,7 @@ def _build_llm_tasks() -> Dict[str, Any]:
         "reverse_prompt",
         "director_story",
         "director_optimize",
+        "director_modify_segment",
         "director_panel_describe",
         "storyboard_story",
     ]

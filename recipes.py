@@ -1640,6 +1640,48 @@ async def rs_recipes_director_optimize_prompts(request):
     return _llm_sse_response(llm.run_llm_task_stream("director_optimize", "\n".join(parts), images=images), "优化结果为空，请重试")
 
 
+@PromptServer.instance.routes.post("/rs_recipes/director_modify_segment")
+async def rs_recipes_director_modify_segment(request):
+    """单段提示词修改：现有提示词 + 用户修改指令 → LLM 按 H3 格式输出修改后的成品提示词；SSE 流式回传。"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.Response(text="data: [ERROR] 请求体不是有效 JSON\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+    prompt = str(data.get("prompt") or "").strip()
+    instruction = str(data.get("instruction") or "").strip()
+    if not prompt and not instruction:
+        return web.Response(text="data: [ERROR] 没有提示词或修改指令\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+    try:
+        dur = int(round(float(data.get("duration_sec"))))
+    except (TypeError, ValueError):
+        dur = 0
+
+    mode = str(data.get("mode") or "t2v").strip()
+    ref_lines = []
+    image_names = []
+    seg_refs = data.get("refs") or {}
+    if not isinstance(seg_refs, dict):
+        seg_refs = {}
+    for key, label, tag in (("images", "参考图", "Picture"), ("videos", "参考视频", "Video"), ("audios", "参考音频", "Audio")):
+        names = [str(n).strip() for n in (seg_refs.get(key) or []) if str(n or "").strip()]
+        if not names:
+            continue
+        if key == "images":
+            image_names.extend(names)
+        ref_lines.append(f"{label}（在提示词中按顺序引用为 <{tag} 1>…<{tag} {len(names)}>）：")
+        ref_lines.extend(f"- {n}" for n in names)
+
+    parts = [f"生成模式：{mode}", f"本段时长：约 {dur} 秒", ""]
+    if ref_lines:
+        parts.append("\n".join(ref_lines) + "\n")
+    if prompt:
+        parts.append("该段现有提示词：\n" + prompt)
+    if instruction:
+        parts.append("修改指令：\n" + instruction)
+    images = _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None
+    return _llm_sse_response(llm.run_llm_task_stream("director_modify_segment", "\n".join(parts), images=images), "修改结果为空，请重试")
+
+
 @PromptServer.instance.routes.post("/rs_recipes/grid_split")
 async def rs_recipes_grid_split(request):
     """宫格图自动切分：均匀间隙检测（或手动行列）→ 各格落 input/，返回文件名与预览地址；

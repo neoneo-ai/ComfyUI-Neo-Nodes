@@ -182,6 +182,16 @@ class TestAuditTagsAndDialogue(unittest.TestCase):
         result = h3_prompt_audit.audit_h3_prompt(text)
         self.assertFalse(result["repair_required"], result["failures"])
 
+    def test_dialogue_in_soundscape_reported(self):
+        text = BASE_PROMPT.replace("Soft indoor room tone.", "Room tone. She says <d>[English] Hi.</d> (S1).")
+        result = h3_prompt_audit.audit_h3_prompt(text)
+        self.assertTrue(any("must not appear in overall_soundscape" in f for f in result["failures"]))
+
+    def test_dialogue_in_non_diegetic_music_reported(self):
+        text = REF_PROMPT.replace("N/A", "A score. He says <d>[English] Hi.</d> (S1).")
+        result = h3_prompt_audit.audit_h3_prompt(text)
+        self.assertTrue(any("must not appear in non_diegetic_music" in f for f in result["failures"]))
+
     def test_internal_terms_reported(self):
         text = BASE_PROMPT + "\n\nThe model sees a contact sheet of sampled frames."
         result = h3_prompt_audit.audit_h3_prompt(text)

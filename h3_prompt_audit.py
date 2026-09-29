@@ -162,6 +162,17 @@ def audit_h3_prompt(prompt: str, context: Optional[dict] = None) -> dict[str, An
     if internal_terms:
         failures.append("internal representation terms must not appear in the prompt: " + ", ".join(internal_terms))
 
+    # 台词只属于画面描述字段；overall_soundscape / non_diegetic_music 不得复述 <d> 台词（官方指南 4.6）
+    all_positions = {**ref_positions, **base_positions}
+    for section in ("overall_soundscape", "non_diegetic_music"):
+        match = all_positions.get(section)
+        if not match:
+            continue
+        following = [m.start() for m in all_positions.values() if m.start() > match.start()]
+        end = min(following) if following else len(prompt)
+        if DIALOGUE_RE.search(prompt[match.end():end]):
+            failures.append(f"dialogue <d>...</d> must not appear in {section}")
+
     if DIALOGUE_RE.search(prompt) and not SPEAKER_ID_RE.search(prompt):
         failures.append("dialogue <d>...</d> is missing a speaker ID like (S1)")
 
