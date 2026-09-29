@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neo Studio</title>
+<!-- 各 web/ 模块会自行注入所需 CSS（gallery.css / recipes.css / lightbox.css …）；
+     prompts.css 提供 action toast 与 rs-btn 基础样式，这里统一带上 -->
+<link rel="stylesheet" href="/extensions/ComfyUI-Neo-Nodes/prompts.css">
+<script type="importmap">
+{
+    "imports": {
+        "/scripts/app.js": "/extensions/ComfyUI-Neo-Nodes/studio/shim/app.js",
+        "/scripts/api.js": "/extensions/ComfyUI-Neo-Nodes/studio/shim/api.js",
+        "/scripts/ui.js": "/extensions/ComfyUI-Neo-Nodes/studio/shim/ui.js"
+    }
+}
+</script>
+<link rel="stylesheet" href="/extensions/ComfyUI-Neo-Nodes/studio/style.css">
+</head>
+<body>
+<header class="ns-header">
+    <div class="ns-logo">🎬 Neo Studio</div>
+    <nav class="ns-tabs">
+        <a href="#/gallery" data-tab="gallery">素材</a>
+        <a href="#/director" data-tab="director">导演</a>
+        <a href="#/settings" data-tab="settings">设置</a>
+    </nav>
+    <div class="ns-version" id="ns-version"></div>
+</header>
+<main id="ns-view" class="ns-view"></main>
+<script type="module" src="/extensions/ComfyUI-Neo-Nodes/studio/studio-app.js"></script>
+</body>
+</html>

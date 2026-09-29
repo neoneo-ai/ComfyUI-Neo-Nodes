@@ -74,6 +74,18 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 ---
 
+## Neo Studio（独立应用）
+
+不依赖画布的独立页面：运行插件目录下 `neo-studio.bat`（自动拉起 ComfyUI），或手动启动后打开 `http://127.0.0.1:8188/extensions/ComfyUI-Neo-Nodes/studio/index.html`。含三个页签：
+
+- **素材**：完整 Neo Gallery（浏览 / 灯箱 / 文件管理）
+- **导演**：配方列表 + 导演编辑器（与画布内一致）+ 整片生成面板（把 `NeoH3VideoDirector` 提交执行队列，带进度 / 取消；成片自动记进配方「结果」区）
+- **设置**：生图 / 生视频 / LLM 设置
+
+依赖画布的功能（如「发送到节点」）在 Studio 内自动降级为提示。
+
+---
+
 ## 示例工作流
 
 `example_workflows/` 下提供可直接加载的 UI 格式模板，ComfyUI 会自动将它们暴露在顶栏 **Templates（模板）** 面板中，选择后一键载入画布：

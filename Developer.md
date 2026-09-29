@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 |------|------|
 | [docs/architecture.md](docs/architecture.md) | 项目结构、后端/前端模块职责、节点注册、数据与配置目录 |
-| [docs/api-routes.md](docs/api-routes.md) | 后端 API 路由（`/neo_gallery/*` / `/rs_recipes/*` / `/neo_nodes/*` / `/neo_image_gen/*` / `/rs_prompts/*`） |
+| [docs/api-routes.md](docs/api-routes.md) | 后端 API 路由（`/neo_gallery/*` / `/rs_recipes/*` / `/neo_nodes/*` / `/neo_image_gen/*` / `/rs_prompts/*` / `/neo_studio/*`） |
 | [docs/testing.md](docs/testing.md) | pytest 单元测试 + JS 回归测试（golden 快照、run-tests.ps1 超时强杀） |
 | [docs/release.md](docs/release.md) | Registry 发布与离线工具（预设预处理 / OSS 部署） |
 | [docs/llm.md](docs/llm.md) | LLM 模式、本地 GGUF 安装（源码编译 / Windows 运行库排障）、模型目录规范 |

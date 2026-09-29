@@ -1,0 +1,106 @@
+/* Neo Studio 外壳样式：顶栏 + 视图容器。功能模块的样式由各自 CSS 注入（gallery.css / recipes.css …）。 */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+    margin: 0;
+    background: #17171b;
+    color: #ddd;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+}
+
+.ns-header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    height: 48px;
+    padding: 0 16px;
+    background: #202024;
+    border-bottom: 1px solid #333;
+    flex: none;
+}
+.ns-logo { font-weight: 700; font-size: 15px; color: #fff; white-space: nowrap; }
+.ns-tabs { display: flex; gap: 4px; height: 100%; }
+.ns-tabs a {
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    color: #aaa;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+}
+.ns-tabs a:hover { color: #fff; }
+.ns-tabs a.active { color: #fff; border-bottom-color: #7aa2ff; }
+.ns-version { margin-left: auto; font-size: 12px; color: #888; white-space: nowrap; }
+
+.ns-view { flex: 1; overflow: hidden; position: relative; }
+.ns-page { height: 100%; overflow: auto; padding: 16px; }
+.ns-hidden { display: none !important; }
+
+/* 素材页：NeoGallery 元素按侧栏设计，这里给它满幅容器 */
+.ns-gallery-host { height: 100%; }
+
+/* 导演页：整片生成面板 + 配方列表上下排布 */
+.ns-director { display: flex; flex-direction: column; gap: 14px; }
+.ns-gen-panel {
+    background: #202024;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.ns-gen-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ns-gen-row + .ns-gen-row { margin-top: 10px; }
+.ns-gen-row label { font-size: 12px; color: #999; white-space: nowrap; }
+.ns-gen-row select,
+.ns-gen-row input[type="number"] {
+    background: #2a2a2e;
+    border: 1px solid #444;
+    color: #ddd;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 13px;
+}
+.ns-gen-row select { min-width: 220px; }
+.ns-gen-row input[type="number"] { width: 76px; }
+.ns-gen-run { margin-left: auto; }
+.ns-gen-status { font-size: 12px; color: #999; margin-top: 8px; min-height: 16px; white-space: pre-wrap; }
+.ns-gen-progress {
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 8px;
+    display: none;
+}
+.ns-gen-progress > div { height: 100%; width: 0; background: #7aa2ff; transition: width .4s; }
+.ns-gen-result { margin-top: 10px; font-size: 13px; }
+.ns-gen-result a { color: #7aa2ff; text-decoration: none; }
+.ns-gen-result a:hover { text-decoration: underline; }
+
+/* .rs-btn 基础样式 flex:1（窄弹窗底部按钮行用）；满幅主区里不拉伸成长条。
+   浮层（配方详情/导演编辑器）挂在 body 上，不受此规则影响 */
+.ns-gen-panel .rs-btn,
+.neo-recipes-title-row .rs-btn,
+.neo-recipes-card-actions .rs-btn { flex: none; }
+
+/* 导演页配方列表：满幅主区里像素材一样多列排布（侧栏保持单列）；分组标题/空状态跨整行 */
+.ns-director .neo-recipes-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 10px;
+}
+.ns-director .neo-recipes-group-title,
+.ns-director .neo-recipes-empty { grid-column: 1 / -1; }
+
+/* 设置页 */
+.ns-settings { display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
+.ns-settings-section {
+    background: #202024;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+.ns-settings-section h3 { margin: 0 0 10px; font-size: 14px; color: #eee; }
