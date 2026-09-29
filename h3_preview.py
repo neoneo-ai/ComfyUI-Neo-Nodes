@@ -39,6 +39,23 @@ JPEG_DATA_URL = "data:image/jpeg;base64,"   # 前端拿帧直接塞 <img>.src，
 
 _warned = False
 
+_LATEST = {}   # node_id -> 最新预览载荷（前端轮询取帧兜底；_LATEST_CAP 限量，任务终态由调用方清掉）
+_LATEST_CAP = 8
+
+
+def _store_latest(node_id, payload):
+    _LATEST[node_id] = payload
+    while len(_LATEST) > _LATEST_CAP:
+        _LATEST.pop(next(iter(_LATEST)))
+
+
+def get_latest_preview(node_id):
+    return _LATEST.get(node_id)
+
+
+def clear_latest_preview(node_id):
+    _LATEST.pop(node_id, None)
+
 
 def _build_decoder(sd):
     """按扁平索引重建 TAE 解码器：缺号按位置补 Clamp(0)/ReLU(2)/Upsample，其余由权重形状定。"""
@@ -126,9 +143,9 @@ def _preview_payload(images):
 
 
 def _push_preview(node_id, payload):
-    """推给发起本次执行的客户端（前端按 node_id 找节点内的面板；别的节点/标签页不受影响）。"""
-    server = PromptServer.instance
-    server.send_sync(PREVIEW_EVENT, {"node_id": node_id, **payload}, server.client_id)
+    """广播给所有客户端（前端按 node_id 路由到对应面板；Studio 任务由后端回环提交，
+    server.client_id 是随机值，定向推永远到不了浏览器页面）。"""
+    PromptServer.instance.send_sync(PREVIEW_EVENT, {"node_id": node_id, **payload})
 
 
 class H3Previewer(latent_preview.LatentPreviewer):
@@ -154,7 +171,9 @@ class H3Previewer(latent_preview.LatentPreviewer):
             logging.warning(f"[Neo Nodes] H3 预览解码失败，本步跳过：{e}")
             return None
         if self.node_id:
-            _push_preview(self.node_id, _preview_payload(images))
+            payload = {**_preview_payload(images), "step": self._step_count}   # step 供前端按步号去重 / 排序（WS 与轮询兜底同源）
+            _store_latest(self.node_id, payload)
+            _push_preview(self.node_id, payload)
         return None
 
 

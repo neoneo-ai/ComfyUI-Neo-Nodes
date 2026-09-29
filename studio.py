@@ -20,6 +20,7 @@ from pathlib import Path
 from aiohttp import web
 from server import PromptServer
 
+from .h3_preview import clear_latest_preview, get_latest_preview
 from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
 from .recipes import add_recipe_results, is_preset_recipe, list_director_recipes, load_director_spec
 
@@ -40,9 +41,14 @@ def _safe_name(text) -> str:
 def _video_from_history(item: dict) -> tuple:
     """从 history 的 outputs 里找 SaveVideo 落盘的视频条目，返回 (filename, subfolder)。"""
     for outs in (item.get("outputs") or {}).values():
-        for entry in outs or []:
-            if isinstance(entry, dict) and str(entry.get("filename", "")).lower().endswith((".mp4", ".webm")):
-                return entry["filename"], str(entry.get("subfolder") or "")
+        if not isinstance(outs, dict):
+            continue
+        for entries in outs.values():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if isinstance(entry, dict) and str(entry.get("filename", "")).lower().endswith((".mp4", ".webm")):
+                    return entry["filename"], str(entry.get("subfolder") or "")
     return None, ""
 
 
@@ -99,6 +105,7 @@ async def _watch(task_id: str) -> None:
             task["progress"] = None
             task["updated"] = time.time()
             _WATCHERS.pop(task_id, None)
+            clear_latest_preview(task_id)   # 终态后轮询兜底不再需要最新帧
             if error and not cancelled:
                 logger.warning(f"[NeoNodes] studio director task {task_id} failed: {error}")
             _notify(task)
@@ -115,7 +122,7 @@ async def _watch(task_id: str) -> None:
                 _notify(task)
 
 
-def _run_prompt(data: dict) -> dict:
+def _run_prompt(data: dict, unique_id: str) -> dict:
     """校验请求并组装「NeoH3VideoDirector + SaveVideo」两节点图（真正执行交给队列）。"""
     recipe = str(data.get("recipe") or "").strip()
     if not recipe:
@@ -128,8 +135,10 @@ def _run_prompt(data: dict) -> dict:
     return {
         "recipe": recipe,
         "seed": int(data.get("seed", -1)),
+        # 节点 key = task_id：执行器注入 UNIQUE_ID 时自然等于 task_id，
+        # 预览广播载荷的 node_id 与 Studio 前端过滤条件一致。
         "graph": {
-            "1": {"class_type": "NeoH3VideoDirector", "inputs": {
+            unique_id: {"class_type": "NeoH3VideoDirector", "inputs": {
                 "recipe": recipe,
                 "seed": int(data.get("seed", -1)),
                 "width": int(data.get("width", -1)),
@@ -137,11 +146,12 @@ def _run_prompt(data: dict) -> dict:
                 "continuity": bool(data.get("continuity", True)),
                 "context_frames": int(data.get("context_frames", 22)),
                 "steps": int(data.get("steps", -1)),
-                "preview": False,   # Studio 无节点面板可路由预览事件，关掉 taeh3 预览省显存
+                "preview": True,
             }},
             "2": {"class_type": "SaveVideo", "inputs": {
-                "video": ["1", 0],
+                "video": [unique_id, 0],
                 "filename_prefix": f"NeoDirector/{_safe_name(recipe)}",
+                "format": "auto",   # 新版核心 SaveVideo 必填（无默认值）
             }},
         },
     }
@@ -154,8 +164,9 @@ async def director_generate_route(request):
         data = await request.json()
     except Exception:
         return web.json_response({"success": False, "error": "请求体不是 JSON"}, status=400)
+    task_id = str(uuid.uuid4())   # 先建：作为 unique_id 写进图，预览载荷按它路由回 Studio 页面
     try:
-        payload = _run_prompt(data)
+        payload = _run_prompt(data, task_id)
         prompt_id = await submit_graph(payload["graph"])
     except ValueError as e:
         return web.json_response({"success": False, "error": str(e)}, status=400)
@@ -163,7 +174,6 @@ async def director_generate_route(request):
         logger.error(f"[NeoNodes] studio director generate failed: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
-    task_id = str(uuid.uuid4())
     now = time.time()
     _TASKS[task_id] = {
         "task_id": task_id, "prompt_id": prompt_id, "status": "queued",
@@ -178,11 +188,16 @@ async def director_generate_route(request):
 
 @PromptServer.instance.routes.get("/neo_studio/director/{task_id}")
 async def director_status_route(request):
-    """整片任务快照：status（queued/running/succeeded/failed/cancelled）+ progress + filename + error。"""
+    """整片任务快照：status（queued/running/succeeded/failed/cancelled）+ progress + filename + error。
+    运行中附带 latest_preview（最新采样步帧载荷，前端轮询取预览帧的兜底通道）。"""
     task = _TASKS.get(request.match_info["task_id"])
     if task is None:
         return web.json_response({"success": False, "error": "任务不存在"}, status=404)
-    return web.json_response({"success": True, **_snapshot(task)})
+    snap = _snapshot(task)
+    latest = get_latest_preview(task["task_id"])
+    if latest is not None:
+        snap["latest_preview"] = latest
+    return web.json_response({"success": True, **snap})
 
 
 @PromptServer.instance.routes.post("/neo_studio/director/{task_id}/cancel")

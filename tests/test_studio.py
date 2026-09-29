@@ -94,33 +94,36 @@ class _RecipeCase(unittest.TestCase):
 class RunPromptTests(_RecipeCase):
     def test_graph_two_nodes(self):
         self.write_recipe("R")
-        payload = studio._run_prompt({"recipe": "R", "seed": 3, "width": 640, "height": 384})
+        payload = studio._run_prompt({"recipe": "R", "seed": 3, "width": 640, "height": 384}, "task-1")
         g = payload["graph"]
-        self.assertEqual(set(g), {"1", "2"})
-        self.assertEqual(g["1"]["class_type"], "NeoH3VideoDirector")
-        self.assertEqual(g["1"]["inputs"]["recipe"], "R")
-        self.assertEqual(g["1"]["inputs"]["seed"], 3)
-        self.assertEqual(g["1"]["inputs"]["width"], 640)
-        self.assertFalse(g["1"]["inputs"]["preview"])   # Studio 无节点面板，预览关掉
+        # 节点 key = task_id：执行器注入 UNIQUE_ID 时自然等于 task_id，预览路由一致
+        self.assertEqual(set(g), {"task-1", "2"})
+        self.assertEqual(g["task-1"]["class_type"], "NeoH3VideoDirector")
+        self.assertEqual(g["task-1"]["inputs"]["recipe"], "R")
+        self.assertEqual(g["task-1"]["inputs"]["seed"], 3)
+        self.assertEqual(g["task-1"]["inputs"]["width"], 640)
+        self.assertTrue(g["task-1"]["inputs"]["preview"])   # taeh3 实时预览：载荷按 unique_id 路由到 Studio 播放器
+        self.assertNotIn("unique_id", g["task-1"]["inputs"])  # 隐藏输入由执行器注入，不显式写
         self.assertEqual(g["2"]["class_type"], "SaveVideo")
-        self.assertEqual(g["2"]["inputs"]["video"], ["1", 0])
+        self.assertEqual(g["2"]["inputs"]["video"], ["task-1", 0])
         self.assertTrue(g["2"]["inputs"]["filename_prefix"].startswith("NeoDirector/"))
+        self.assertEqual(g["2"]["inputs"]["format"], "auto")   # 新版核心 SaveVideo 必填
 
     def test_missing_recipe(self):
         with self.assertRaises(ValueError):
-            studio._run_prompt({})
+            studio._run_prompt({}, "t")
 
     def test_preset_rejected(self):
         self.write_recipe("P", preset=True)
         with self.assertRaises(ValueError):
-            studio._run_prompt({"recipe": "P"})
+            studio._run_prompt({"recipe": "P"}, "t")
 
     def test_no_segments_rejected(self):
         d = self.write_recipe("E")
         (d / "recipe.json").write_text(
             json.dumps({"type": "video_director", "segments": []}), encoding="utf-8")
         with self.assertRaises(ValueError):
-            studio._run_prompt({"recipe": "E"})
+            studio._run_prompt({"recipe": "E"}, "t")
 
 
 class GenerateRouteTests(_RecipeCase):
@@ -205,7 +208,8 @@ class WatcherTests(_RecipeCase):
             sys.modules["folder_paths"] = _folder_paths
             try:
                 item = {"status": {"completed": True, "messages": []},
-                        "outputs": {"2": [{"filename": "R_1.mp4", "subfolder": "NeoDirector", "type": "output"}]}}
+                        "outputs": {"2": {"images": [{"filename": "R_1.mp4", "subfolder": "NeoDirector", "type": "output"}],
+                                          "animated": [True]}}}
                 data, task = self._drive({"recipe": "R"}, lookup=lambda pid: ("done", item))
                 self.assertEqual(task["status"], "succeeded")
                 self.assertEqual(task["filename"], "R_1.mp4")
@@ -238,7 +242,8 @@ class WatcherTests(_RecipeCase):
             calls["n"] += 1
             return ("running", None) if calls["n"] < 3 else (
                 "done", {"status": {"completed": True, "messages": []},
-                         "outputs": {"2": [{"filename": "x.mp4", "subfolder": "", "type": "output"}]}})
+                         "outputs": {"2": {"images": [{"filename": "x.mp4", "subfolder": "", "type": "output"}],
+                                           "animated": [True]}}})
 
         seen = {}
         orig = studio._notify
@@ -256,11 +261,14 @@ class WatcherTests(_RecipeCase):
 
 class VideoFromHistoryTests(unittest.TestCase):
     def test_finds_video_entry(self):
-        item = {"outputs": {"2": [{"filename": "a/b.mp4", "subfolder": "a", "type": "output"}]}}
+        item = {"outputs": {"2": {"images": [{"filename": "a/b.mp4", "subfolder": "a", "type": "output"}],
+                                  "animated": [True]}}}
         self.assertEqual(studio._video_from_history(item), ("a/b.mp4", "a"))
 
     def test_no_video(self):
-        self.assertEqual(studio._video_from_history({"outputs": {"2": [{"filename": "x.png"}]}}), (None, ""))
+        item = {"outputs": {"2": {"images": [{"filename": "x.png", "subfolder": "", "type": "output"}],
+                                  "animated": [True]}}}
+        self.assertEqual(studio._video_from_history(item), (None, ""))
 
 
 class VersionRouteTests(unittest.TestCase):
@@ -277,6 +285,57 @@ class VersionRouteTests(unittest.TestCase):
         self.assertEqual(data["plugin"], "ComfyUI-Neo-Nodes")
         self.assertIn("plugin_version", data)
         self.assertIn("comfyui_version", data)
+
+
+class LatestPreviewTests(_RecipeCase):
+    """status 路由的 latest_preview 兜底字段 + 终态清除 + 缓存限量。"""
+
+    @property
+    def h3p(self):
+        # studio 导入的同一份 h3_preview 模块实例（相对导入落在 _neo_h3director_pkg 包下）
+        return sys.modules[studio.__name__.rsplit(".", 1)[0] + ".h3_preview"]
+
+    def setUp(self):
+        super().setUp()
+        self.h3p._LATEST.clear()
+
+    def tearDown(self):
+        self.h3p._LATEST.clear()
+        super().tearDown()
+
+    def test_status_route_includes_latest_preview(self):
+        self.write_recipe("R")
+        data, _ = self._drive({"recipe": "R"})   # 默认 lookup 保持 queued
+        payload = {"frames": ["data:image/jpeg;base64,x"], "fps": 4, "w": 512, "h": 288, "step": 3}
+        self.h3p._store_latest(data["task_id"], payload)
+        req = types.SimpleNamespace(match_info={"task_id": data["task_id"]})
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(studio.director_status_route(req))
+        finally:
+            loop.close()
+        self.assertEqual(json.loads(r.body)["latest_preview"], payload)
+
+    def test_terminal_clears_latest_preview(self):
+        self.write_recipe("R")
+        item = {"status": {"completed": True, "messages": []}, "outputs": {}}
+
+        def _lookup(pid):
+            # 模拟采样期间推帧：任务终态前缓存里必须有最新帧
+            task_id = next(iter(studio._TASKS))
+            self.h3p._store_latest(task_id, {"frames": ["f"], "fps": 4, "w": 1, "h": 1, "step": 2})
+            return ("done", item)
+
+        data, task = self._drive({"recipe": "R"}, lookup=_lookup)
+        self.assertEqual(task["status"], "succeeded")
+        self.assertIsNone(self.h3p.get_latest_preview(data["task_id"]), "终态应清掉最新帧缓存")
+
+    def test_store_latest_cap_evicts_oldest(self):
+        for i in range(10):
+            self.h3p._store_latest(f"n{i}", {"step": i})
+        self.assertEqual(len(self.h3p._LATEST), 8)
+        self.assertNotIn("n0", self.h3p._LATEST)
+        self.assertIn("n9", self.h3p._LATEST)
 
 
 if __name__ == "__main__":

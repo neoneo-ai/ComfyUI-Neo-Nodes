@@ -76,9 +76,16 @@ body {
     display: none;
 }
 .ns-gen-progress > div { height: 100%; width: 0; background: #7aa2ff; transition: width .4s; }
-.ns-gen-result { margin-top: 10px; font-size: 13px; }
-.ns-gen-result a { color: #7aa2ff; text-decoration: none; }
-.ns-gen-result a:hover { text-decoration: underline; }
+/* 整块生成区两列：左 = 控制 + 时间轴（占满剩余宽度），右 = 实时预览 / 成片（限高 360px ≈ 16:9，居中） */
+.ns-gen-body { display: flex; gap: 14px; align-items: flex-start; }
+.ns-gen-left { flex: 1 1 420px; min-width: 360px; display: flex; flex-direction: column; gap: 10px; }
+.ns-gen-media-right { flex: 0 1 850px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+/* 成片就地替换实时预览：限宽限高（窗口再大不撑满右栏，按画面比例 letterbox） */
+.ns-gen-media-right .ns-gen-preview { width: 100%; max-width: 640px; max-height: 360px; background: #000; border-radius: 8px; }
+.ns-gen-media-right a.ns-gen-final { color: #7aa2ff; text-decoration: none; font-size: 13px; }
+.ns-gen-media-right a.ns-gen-final:hover { text-decoration: underline; }
+/* 实时预览面板：与成片同限宽；高度由 livePlayer 回调按固定值写入内联样式（首个载荷到达时显示） */
+.ns-gen-live { width: 100%; max-width: 640px; border-radius: 8px; overflow: hidden; }
 
 /* .rs-btn 基础样式 flex:1（窄弹窗底部按钮行用）；满幅主区里不拉伸成长条。
    浮层（配方详情/导演编辑器）挂在 body 上，不受此规则影响 */

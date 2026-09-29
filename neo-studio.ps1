@@ -7,7 +7,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 if (-not $Root) { $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
-if (-not $Python) { $Python = Join-Path $Root "python\python.exe" }
+# python 优先取 ComfyUI 同级目录（本工作区布局），再回退 ComfyUI 内部
+if (-not $Python) {
+    foreach ($cand in @((Join-Path $Root "..\python\python.exe"), (Join-Path $Root "python\python.exe"))) {
+        if (Test-Path $cand) { $Python = $cand; break }
+    }
+}
+if (-not $Python -or -not (Test-Path $Python)) {
+    Write-Error "未找到 python：请用 -Python <python.exe 路径> 指定"
+    exit 1
+}
 $url = "http://127.0.0.1:$Port/extensions/ComfyUI-Neo-Nodes/studio/index.html"
 
 function Test-Ready([int]$Seconds) {

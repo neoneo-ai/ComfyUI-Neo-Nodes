@@ -1273,12 +1273,17 @@ async def rs_recipes_send_to_workflow(request):
 
 
 def list_director_recipes() -> list:
-    """返回 type==video_director 的配方名列表（custom 与 presets 合并去重），供 director 节点下拉。"""
+    """返回 type==video_director 的配方名列表（custom 与 presets 合并去重），供 director 节点下拉。
+
+    顺序与配方面板侧栏一致：custom 在前、presets 在后，组内按最近修改时间倒序；
+    重名时 custom 优先（与 _find_recipe_dir 一致）。"""
     _ensure_dirs()
-    names = set()
+    names = []
+    seen = set()
     for base in (CUSTOM_DIR, PRESETS_DIR):
         if not base.exists():
             continue
+        metas = []
         for d in base.iterdir():
             meta_path = d / "recipe.json"
             if not meta_path.is_file():
@@ -1288,8 +1293,12 @@ def list_director_recipes() -> list:
             except Exception:
                 continue
             if meta.get("type") == "video_director":
-                names.add(d.name)
-    return sorted(names)
+                metas.append((meta_path.stat().st_mtime, d.name))
+        for _mtime, name in sorted(metas, key=lambda t: t[0], reverse=True):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
 
 
 def _director_identity_images(meta: dict, assets_dir: Path) -> list[str]:

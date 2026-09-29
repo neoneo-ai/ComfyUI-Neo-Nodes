@@ -48,6 +48,8 @@ test("Studio 页面：三视图加载、版本信息、导演生成面板", asyn
         await page.evaluate(() => { location.hash = "#/director"; });
         await page.waitForSelector(".ns-gen-panel .rs-btn.ns-gen-run", { timeout: 15000 });
         await page.waitForSelector(".neo-recipes-panel", { timeout: 15000 });
+        // 只读时间轴挂进生成面板（与画布节点内嵌同款组件）
+        await page.waitForSelector(".ns-gen-timeline .neo-dtl-canvas", { timeout: 5000 });
         // .rs-btn 基础样式 flex:1；满幅主区里不应拉伸成长条
         const runFlex = await page.evaluate(() =>
             getComputedStyle(document.querySelector(".ns-gen-panel .rs-btn.ns-gen-run")).flexGrow);
@@ -56,6 +58,25 @@ test("Studio 页面：三视图加载、版本信息、导演生成面板", asyn
         const listDisplay = await page.evaluate(() =>
             getComputedStyle(document.querySelector(".ns-director .neo-recipes-list")).display);
         assert.equal(listDisplay, "grid", "配方列表应为 grid 多列布局");
+
+        // 选中配方后 宽/高/步数 应按 director_spec 默认值填充（与画布节点同源）
+        const spec = await page.evaluate(async () => {
+            const v = await (await fetch("/neo_studio/version")).json();
+            const name = (v.recipes || [])[0];
+            if (!name) return null;
+            const s = await (await fetch(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`)).json();
+            return { name, defaults: s.defaults };
+        });
+        if (spec) {
+            await page.selectOption(".ns-gen-panel select", spec.name);
+            await page.waitForFunction((d) => {
+                const inputs = [...document.querySelectorAll(".ns-gen-panel input[type=number]")];
+                // 顺序：种子/宽/高/上下文帧/步数
+                return Number(inputs[1].value) === d.width
+                    && Number(inputs[2].value) === d.height
+                    && Number(inputs[4].value) === d.steps;
+            }, spec.defaults, { timeout: 5000 });
+        }
 
         // 设置视图：生图/生视频表单（.rs-gen-settings）+ LLM 入口，且无对象串渲染
         await page.evaluate(() => { location.hash = "#/settings"; });

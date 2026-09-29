@@ -576,6 +576,30 @@ class DirectorRecipeIOTests(unittest.TestCase):
             {"skill_id": "s", "prompt": "p"}]}, assets=["f.png"])
         self.assertEqual(recipes.list_director_recipes(), ["dir1"])
 
+    def _make_preset(self, name, meta):
+        d = os.path.join(self.presets, name)
+        os.makedirs(os.path.join(d, "assets"), exist_ok=True)
+        with open(os.path.join(d, "recipe.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+
+    def test_list_order_matches_sidebar(self):
+        # 与配方面板侧栏一致：custom 在前、presets 在后，组内按最近修改时间倒序
+        import time
+        self._make_recipe("c-old", {"type": "video_director", "shared": {}, "segments": []})
+        self._make_recipe("c-new", {"type": "video_director", "shared": {}, "segments": []})
+        self._make_preset("p-mid", {"type": "video_director", "shared": {}, "segments": []})
+        now = time.time()
+        os.utime(os.path.join(self.custom, "c-old", "recipe.json"), (now - 7200, now - 7200))
+        os.utime(os.path.join(self.custom, "c-new", "recipe.json"), (now, now))
+        os.utime(os.path.join(self.presets, "p-mid", "recipe.json"), (now - 3600, now - 3600))
+
+        self.assertEqual(recipes.list_director_recipes(), ["c-new", "c-old", "p-mid"])
+
+    def test_list_dedupes_custom_over_preset(self):
+        self._make_recipe("dup", {"type": "video_director", "shared": {}, "segments": []})
+        self._make_preset("dup", {"type": "video_director", "shared": {}, "segments": []})
+        self.assertEqual(recipes.list_director_recipes(), ["dup"])
+
     def test_list_sorted_by_mtime_descending(self):
         # /rs_recipes/list 组内按最近修改时间倒序：最新改动的配方排在最前
         import time
