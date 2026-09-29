@@ -904,8 +904,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let currentSegId = null; // 当前编辑段身份（dataset.segId，重排/删除后仍可追踪）
     let currentSegIdx = 0;   // 当前编辑段序号（首帧数据就绪后据此把该块滚入可视区）
     function renumberSegs() {
-        segsWrap.querySelectorAll('.neo-director-seg').forEach((row, i) => {
+        const rows = segsWrap.querySelectorAll('.neo-director-seg');
+        rows.forEach((row, i) => {
             row.querySelector('.neo-director-seg-title').textContent = `段 ${i + 1}`;
+            // 尾帧仅最后一段可添加
+            const lfRow = row.querySelector('.neo-director-lf-row');
+            if (lfRow) lfRow.style.display = (i === rows.length - 1) ? '' : 'none';
         });
     }
     // 只显示当前段（其余段保留 DOM，readSegData/保存仍读取全部数据）；时间轴同步把该块滚进可视区
@@ -1300,9 +1304,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const r = directorResolution(aspectSel.value, mpInp.value);
             outW = r.width; outH = r.height;
         }
-        // 统一设置区状态（统一尾帧）：随配方落盘，重新打开时回显；全空不写
+        // 统一设置区状态：随配方落盘，重新打开时回显；全空不写
         const setupPayload = {};
-        if (uniLfVal) setupPayload.last_frame = uniLfVal;
         if (origPrompts) setupPayload.orig_prompts = origPrompts;   // 优化前后提示词对照：随配方落盘，重开时回显两栏
         if (optPrompts) setupPayload.opt_prompts = optPrompts;
         saveBtn.disabled = true;
@@ -1327,6 +1330,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     image_mode: (sbModeSel && sbModeSel.value) || 't2i',       // 图片分镜生图模式（t2i/r2i）
                     image_skill: (sbSkillSel && sbSkillSel.value) || null,     // 当前模式所选生图技能
                     frame_source: frameSourceSel.value,           // grid|storyboard（分镜来源持久状态）
+                    grid_prompts: gridPromptsTa.value.trim() || null,   // 全局故事参考：默认原宫格提示词，可手动改写
                 }, storyRefsPayload()),
                 setup: Object.keys(setupPayload).length ? setupPayload : null,
             }, "video");
@@ -1619,14 +1623,13 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     sbGenBtn.onclick = () => generateAllStoryboards();
 
     // ---- 🧩 宫格分镜图拆分：一张宫格分镜图自动切分（均匀间隙检测 / 手动行列）→ 替换分段，各格作该段首帧与分镜图 ----
-    // 「原宫格提示词」：从原宫格图内嵌的 ComfyUI 元信息（PNG 里的 API 格式 prompt）自动提取到的提示词，
-    // 只读展示 + 复制。各格缩略图不再重复列（各段分镜图已在下方「各段对照」逐格显示）。
+    // 「全局故事参考（默认为原宫格提示词）」：默认是从原宫格图内嵌的 ComfyUI 元信息（PNG 里的 API 格式 prompt）自动提取到的提示词，
+    // 可手动改写；逐格 LLM 描述时作为全片故事上下文传给后端。各格缩略图不再重复列（各段分镜图已在下方「各段对照」逐格显示）。
     // 先声明：setGridSrc 换图 / 清除时要把上一张图提取到的提示词作废并一起清掉。
-    let gridPromptList = [];   // 原宫格提示词数组（setGridPrompts 时更新）：逐格 LLM 描述时作全片故事上下文传给后端
     let gridPanelShape = null; // {rows, cols}：拆分成功后记录，供逐格描述标注本格在九宫格中的位置
     const gridPromptsTa = $el('textarea', {
-        className: 'neo-director-grid-prompts', readOnly: true,
-        placeholder: '拆分后显示原宫格图元信息里的提示词',
+        className: 'neo-director-grid-prompts',
+        placeholder: '拆分后显示原宫格图元信息里的提示词（可手动改写为全局故事参考）',
     });
     const gridPromptCopy = $el('button', { className: 'neo-director-grid-pt-copy', type: 'button', title: '复制提示词', textContent: '⧉ 复制' });
     gridPromptCopy.onclick = () => {
@@ -1648,9 +1651,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
     function setGridPrompts(prompts) {
         const list = (prompts || []).map((t) => String(t || '').trim()).filter(Boolean);
-        gridPromptList = list;   // 保留数组：逐格描述时作为全片故事上下文（第 i/N 段）传给后端
-        gridPromptsTa.value = list.join('\n\n');
-        gridPromptsTa.placeholder = gridSrcFile ? '原宫格图元信息里没有提示词' : '拆分后显示原宫格图元信息里的提示词';
+        gridPromptsTa.value = list.join('\n\n');   // 默认原宫格提示词；用户可手动改写为全局故事参考
+        gridPromptsTa.placeholder = gridSrcFile ? '原宫格图元信息里没有提示词（可手写全局故事参考）' : '拆分后显示原宫格图元信息里的提示词（可手动改写为全局故事参考）';
     }
 
     // 图片输入区：更大的拖放区——点击=本地上传，支持素材库（Neo Gallery）/ 本地文件拖入
@@ -1677,6 +1679,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         refreshStepState();   // 换图 / 清除 → ①/② 徽标与「拆分到各段」可用性
     }
     setGridSrc('');
+    // 全局故事参考回显：编辑旧配方时恢复上次保存的文本（setGridSrc('') 已清空 textarea）
+    if (exStory.grid_prompts) gridPromptsTa.value = exStory.grid_prompts;
     // 本地上传：隐藏 file input 挂在输入区（不随 innerHTML 重绘清除）；空区点击弹出文件选择器
     const gridSrcPicker = buildLocalFilePicker('image/*', (fname) => { setGridSrc(fname); markDirty(); });
     gridSrcDrop.appendChild(gridSrcPicker.input);
@@ -1794,7 +1798,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
     const srcGridCard = $el('div', { className: 'neo-director-src-card neo-director-src-card-grid' }, [
         srcGridHead,
-        // 源图 + 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（切分方式已上移到卡标题行、紧邻「拆分到各段」）
+        // 源图 + 全局故事参考 内联同一行：label 靠值左侧，整行紧凑（切分方式已上移到卡标题行、紧邻「拆分到各段」）
         $el('div', { className: 'neo-director-grid-io' }, [
             $el('div', { className: 'neo-director-grid-io-col neo-director-grid-io-src' }, [
                 gridSrcDrop,   // 图片输入区：点击本地上传 / 素材库·本地文件拖入（右下角操作条含「宫格素材库」+「+」）
@@ -1804,12 +1808,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 $el('div', { className: 'neo-director-grid-pt-head' }, [
                     $el('span', {
                         className: 'neo-director-field-label',
-                        title: '拆分时从原宫格图内嵌的 ComfyUI 元信息（PNG 里的 prompt）自动提取的提示词，只读 + 可复制；各段分镜图见下方「各段对照」',
-                        textContent: '原宫格提示词',
+                        title: '默认是拆分时从原宫格图内嵌的 ComfyUI 元信息（PNG 里的 prompt）自动提取的提示词，可手动改写供逐格描述；各段分镜图见下方「各段对照」',
+                        textContent: '全局故事参考（默认为原宫格提示词）',
                     }),
                     gridPromptCopy,
                 ]),
-                gridPromptsTa,   // 只读展示提取到的提示词（各格缩略图已在「各段对照」逐段显示，此处不再重复）
+                gridPromptsTa,   // 全局故事参考：默认原宫格提示词、可手动改写（各格缩略图已在「各段对照」逐段显示，此处不再重复）
             ]),
         ]),
     ]);
@@ -1826,11 +1830,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         $el('span', { textContent: '📝 文字故事板' }),
         $el('span', { className: 'neo-director-src-desc', textContent: '填主题或完整脚本，一键生成各段提示词与关键帧提示词' }),
     ]);
-    // 文字卡右栏：🎨 图片分镜 / 统一尾帧等（下面挂 textStack）
+    // 文字卡右栏：🎨 图片分镜 / 模式提示等（下面挂 textStack）
     const srcTextSide = $el('div', { className: 'neo-director-idea-side' });
     const srcTextCard = $el('div', { className: 'neo-director-src-card neo-director-src-card-text' }, [
         srcTextHead,
-        // 一行两栏（整卡紧凑）：左 = 故事主题 / 脚本；右 = 🎨 图片分镜 / 统一尾帧
+        // 一行两栏（整卡紧凑）：左 = 故事主题 / 脚本；右 = 🎨 图片分镜 / 模式提示
         $el('div', { className: 'neo-director-idea-cols' }, [
             $el('div', { className: 'neo-director-idea-col' }, [
                 // 这一段的标题行：名字在左，本步唯一动作（分段粒度 + 生成分镜分段）靠左栏右上角
@@ -1986,40 +1990,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 参考素材没有「统一」入口：到时间轴页各段的参考素材区逐段设置（含「同步到所有分段」按钮）
     // ==========================================
 
-    // 统一尾帧：单槽位（拖入 / 点击上传，与段内槽位同款体验）；改动自动应用到所有分段（清除则清空各段对应帧）
-    let uniLfVal = exSetup.last_frame || '';
-    const applyUniLf = (fname) => {
-        for (const row of segsWrap.querySelectorAll('.neo-director-seg')) {
-            const setters = segFrameSetters.get(row);
-            if (!setters) continue;
-            setters.last(fname || '');
-        }
-    };
-    const uniLfSlot = $el('div', { className: 'neo-director-setup-seg-thumb' });
-    const renderUniLfSlot = () => {
-        Array.from(uniLfSlot.children).forEach((c) => { if (c.tagName !== 'INPUT') c.remove(); });   // 保留槽位内挂的隐藏 file input
-        if (uniLfVal) {
-            fillSegThumb(uniLfSlot, uniLfVal, () => { uniLfVal = ''; applyUniLf(''); renderUniLfSlot(); },
-                () => Lightbox.open({ items: [{ kind: 'image', url: thumbSrc(uniLfVal), title: `统一尾帧 · ${uniLfVal}` }] }), '清除统一尾帧');
-        } else {
-            uniLfSlot.classList.add('neo-director-setup-seg-thumb-empty');
-            uniLfSlot.appendChild($el('span', { className: 'neo-director-setup-seg-thumb-hint', textContent: '＋ 拖入 / 上传统一尾帧' }));
-        }
-    };
-    attachFrameSlotUpload(uniLfSlot, (fname) => { uniLfVal = fname; applyUniLf(fname); renderUniLfSlot(); });
-    renderUniLfSlot();
-    const uniFrameLabel = $el('span', { className: 'neo-director-field-label', textContent: '统一尾帧（锁住各段收尾画面；改动自动应用到所有分段）' });
-    const uniFrameBlock = $el('div', { className: 'neo-director-setup-frames' }, [
-        $el('div', { className: 'neo-director-refs-head' }, [uniFrameLabel]),
-        uniLfSlot,
-    ]);
-
     const uniR2vHint = $el('div', { className: 'neo-director-setup-hint', textContent: '全参考模式：各段的参考素材（图 / 视频 / 音频，第一个参考视频即源视频）请到「🎞️ 分镜时间线」页逐段设置；可用「🎨 图片分镜」生成关键帧自动加入各段参考图' });
     const uniMixedHint = $el('div', { className: 'neo-director-setup-hint', textContent: '混合模式：技能与首帧/尾帧 / 参考素材请到「🎞️ 分镜时间线」页逐段设置' });
 
     // 按全局模式 + 分镜来源切换 band 1 来源卡内容 / band 2 子设置（与各段有效模式的显隐规则一致）：
     // grid → 只展开宫格卡内容、band 2 收成一行说明；text → 文字卡内容 + 素材区。
-    // 统一尾帧区仍只由 fl2v 控制。
     // 注意：全局生成模式的选择在「🎞️ 分镜时间线」页首行（故事板分镜与生成模式无关），这里只跟随刷新。
     function refreshSetupRefs() {
         const m = modeSel.value;
@@ -2028,8 +2003,6 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         srcGridCard.style.display = (src === 'grid') ? '' : 'none';
         srcTextCard.style.display = (src === 'grid') ? 'none' : '';
         uniR2vHint.style.display = (m === 'r2v') ? '' : 'none';   // 参考素材到时间轴页逐段设置（本页无统一入口）
-        // 统一尾帧区：仅分镜生视频模式显示
-        uniFrameBlock.style.display = (m === 'f2v') ? '' : 'none';
         // 🎨 图片分镜：文字来源即显示（与生成模式解耦；关键帧按各段有效模式路由：图生/首尾帧作首帧、全参考进参考图池）
         sbCard.style.display = (src === 'storyboard') ? '' : 'none';
         uniMixedHint.style.display = (m === 'mixed') ? '' : 'none';
@@ -2051,14 +2024,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 duration_sec: Number(row.querySelector('.neo-director-dur').value) || null,
                 panel: isGrid ? segStoryboardFname(row) : '',   // 宫格方式：空原文时按该段分镜图（首帧）描述
             };
-            if (isGrid) {   // 宫格拆分：带全片位置 + 原宫格提示词作上下文，让 LLM 判断本格是第几段、承接哪一段
+            if (isGrid) {   // 宫格拆分：带全片位置 + 全局故事参考作上下文，让 LLM 判断本格是第几段、承接哪一段
                 s.panel_index = i + 1;
                 s.panel_total = rows.length;
                 if (gridPanelShape && gridPanelShape.rows && gridPanelShape.cols) {
                     s.rows = gridPanelShape.rows;
                     s.cols = gridPanelShape.cols;
                 }
-                if (gridPromptList.length) s.grid_prompts = gridPromptList;
+                const storyRef = gridPromptsTa.value.trim();   // 全局故事参考：默认原宫格提示词，可手动改写
+                if (storyRef) s.grid_prompts = [storyRef];
             }
             if (modeSel.value === 'r2v') {   // 参考素材仅全参考模式携带：取该段自己的参考素材区，其余模式不带
                 const refs = {};
@@ -2419,11 +2393,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
     identityRefsRow.style.marginLeft = 'auto';   // 本页右对齐（与角色参考图卡片同 band）
 
-    // 文字侧子设置（🎨 图片分镜 / 统一尾帧 / 模式提示）挂在文字故事板卡的右栏——与主题输入同一行，不再单独占 band；
+    // 文字侧子设置（🎨 图片分镜 / 模式提示）挂在文字故事板卡的右栏——与主题输入同一行，不再单独占 band；
     // 宫格来源时文字卡整体隐藏，这些也随之一并隐藏。
     const textStack = $el('div', { className: 'neo-director-idea-stack' }, [
         sbCard,         // 🎨 图片分镜（逐段关键帧；与生成模式解耦）
-        uniFrameBlock,   // 首尾帧 fl2v：统一尾帧
         uniR2vHint,      // 全参考：参考素材到时间轴页逐段设置
         uniMixedHint,    // 混合：逐段设置提示
     ]);
@@ -2440,7 +2413,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             ]),
             charCard,       // 👤 角色参考图：配方级常驻（宫格 / 文字两种来源下都在；视频各段身份参考 + 文字分镜 / r2i 图片分镜共用）
         ]),
-        // band 1：只显示选中来源的卡（另一张整体隐藏——不会两张同时亮着）；文字卡右栏内含图片分镜 / 统一尾帧
+        // band 1：只显示选中来源的卡（另一张整体隐藏——不会两张同时亮着）；文字卡右栏内含图片分镜 / 模式提示
         $el('div', { className: 'neo-director-band' }, [srcGridCard, srcTextCard]),
         // band 2：各段对照（文字来源三栏：分镜图 / 优化前 / 优化后；宫格来源两栏：分镜图 / 提示词）
         $el('div', { className: 'neo-director-band neo-director-band-segs' }, [

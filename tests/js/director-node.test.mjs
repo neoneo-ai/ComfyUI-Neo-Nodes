@@ -40,6 +40,10 @@ function makeDirectorNode(recipeValue = "", extraWidgets = []) {
             node.size = [...size];
             node.onResize?.(node.size);
         },
+        // 模拟 ComfyUI computeSize：基础高度 + DOM widget（TL_H）
+        computeSize() {
+            return [node.size[0], BASE_H + TL_H];
+        },
     };
     return node;
 }

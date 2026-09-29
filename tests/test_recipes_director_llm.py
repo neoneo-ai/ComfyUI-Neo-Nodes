@@ -379,7 +379,7 @@ class GridSplitEndpointTests(_FPBase):
         self.assertEqual(data["prompts"], [], "原图没有元信息 → 没有提示词")
 
     def test_split_returns_metadata_prompts(self):
-        """原宫格图元信息里的正向提示词随拆分结果返回（前端在「原宫格提示词」处只读展示）。"""
+        """原宫格图元信息里的正向提示词随拆分结果返回（前端作「全局故事参考（默认为原宫格提示词）」的默认值，可手动改写）。"""
         from PIL import Image
         from PIL.PngImagePlugin import PngInfo
         src = os.path.join(_INPUT_DIR, "grid_meta.png")

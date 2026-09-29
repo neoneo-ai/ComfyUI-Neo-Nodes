@@ -1749,7 +1749,7 @@ async def rs_recipes_director_describe_panel(request):
     except (TypeError, ValueError):
         dur = 5
     lines = [f"这是分镜图（该段首帧），本段约 {dur} 秒。以画面锁定人物/场景/风格，重点写出这一段发生的故事情节与动作推进（不要复述画面内容），生成一条可直接提交的 H3 i2v 成品提示词。"]
-    # 宫格拆分上下文（全部可选，缺失/非法时静默降级为仅图+时长）：本格序号、九宫格行列、原宫格提示词、上一段结果
+    # 宫格拆分上下文（全部可选，缺失/非法时静默降级为仅图+时长）：本格序号、九宫格行列、全局故事参考（原宫格提示词）、上一段结果
     def _opt_int(v):
         try:
             return int(round(float(v)))
@@ -1768,7 +1768,7 @@ async def rs_recipes_director_describe_panel(request):
     raw_prompts = data.get("grid_prompts")
     grid_prompts = [str(t).strip() for t in raw_prompts if str(t or "").strip()] if isinstance(raw_prompts, list) else []
     if grid_prompts:
-        lines.append("故事上下文（原宫格图生成提示词，仅供理解全片故事与风格，不要照抄进视频提示词）：\n" + "\n".join(grid_prompts))
+        lines.append("全局故事参考（仅供理解全片故事与风格，不要照抄进视频提示词）：\n" + "\n".join(grid_prompts))
     prev = str(data.get("prev_prompt") or "").strip()
     if prev:
         head = f"上一段（第 {idx - 1} 段）已生成的提示词" if idx else "上一段已生成的提示词"
