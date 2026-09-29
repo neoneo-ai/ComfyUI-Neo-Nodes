@@ -300,6 +300,8 @@ sys.modules["comfy_api.latest"] = _comfy_api_latest
 h3_video_director = _load("h3_video_director", "h3_video_director.py")
 # 多帧单次预设的工作流模板（从 skills/presets/minimax_h3_multiframe/workflow.json 读，供编排测试渲染桩用）
 _MULTIFRAME_WF = json.load(open(os.path.join(PLUGIN_DIR, "skills", "presets", "minimax_h3_multiframe", "workflow.json"), encoding="utf-8"))
+# VDN 版多帧模板（用户常选的那个）：多一层 ApplyVDNH3Advanced，图同样只经关键帧锚点注入
+_MULTIFRAME_VDN_WF = json.load(open(os.path.join(PLUGIN_DIR, "skills", "presets", "minimax_h3_vdn_multiframe", "workflow.json"), encoding="utf-8"))
 # comfy_execution.utils 加载真实实现（自包含，仅依赖 contextvars）：storyboard 的 CurrentNodeContext
 # 与进度钩子的 get_executing_context 都靠它，e2e 用例要验证真实的执行上下文传播。
 import importlib.util
@@ -1576,6 +1578,36 @@ class ChunkPlanTests(unittest.TestCase):
     def test_overlong_single_segment_legacy(self):
         self.assertEqual(self.kinds([self.seg(0, 20)], 15), ["legacy"])
 
+    def test_single_segment_without_anchor_stays_legacy(self):
+        # 单段无可钉的帧 → legacy（多帧模板没有收益）
+        self.assertEqual(self.kinds([self.seg(0)], 15), ["legacy"])
+
+    def test_single_segment_with_anchor_keeps_multi(self):
+        # 自带首帧锚点的单段：多帧技能模板不带图片入口，只有多帧路径能把首帧钉在段首 → 不退回 legacy
+        self.assertEqual(self.kinds([self.seg(0, keyframe="k.png")], 15), ["multi"])
+        self.assertEqual(self.kinds([self.seg(0, mode="i2v", ref_input="f.png")], 15), ["multi"])
+        # 关闭合并（chunk_sec=0）同样不丢锚点：仍逐段各跑一次，只是不再合并
+        self.assertEqual(self.kinds([self.seg(0, keyframe="k.png")], 0), ["multi"])
+
+    def test_single_segment_with_tail_anchor_stays_legacy(self):
+        # 只带尾帧的段保持逐段：逐段路径走窗口连续性、帧数与成片对得上；尾帧锚点只在多帧块内注入
+        self.assertEqual(self.kinds([self.seg(0, mode="l2v", last_input="t.png")], 15), ["legacy"])
+
+    def test_single_segment_with_ref_material_stays_legacy(self):
+        # 带自带参考素材的段按技能说明退回逐段执行（这类段不进多帧路径），即使还带首帧锚点
+        segs = [self.seg(0, mode="r2v", refs={"images": ["a.png"]}, keyframe="k.png")]
+        self.assertEqual(self.kinds(segs, 15), ["legacy"])
+
+    def test_non_multiframe_single_anchor_stays_legacy(self):
+        # 非多帧技能（模板自带图片入口）不需要关键帧锚点 → 仍归 legacy
+        orig = h3_video_director.is_multiframe_skill
+        h3_video_director.is_multiframe_skill = lambda v: False
+        try:
+            self.assertEqual(self.kinds([self.seg(0, keyframe="k.png")], 15), ["legacy"])
+            self.assertEqual(self.kinds([self.seg(0, keyframe="k.png")], 0), ["legacy"])
+        finally:
+            h3_video_director.is_multiframe_skill = orig
+
     def test_missing_duration_defaults_five(self):
         units = h3_video_director._plan_chunks([self.seg(0, None), self.seg(1, None)], 10)
         self.assertEqual([u["kind"] for u in units], ["multi"])
@@ -1725,7 +1757,7 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
     FPS = 24
     SPF = SR // FPS
 
-    def _patch(self, segments, frame_counts, chunk_sec=15, seed_base=100):
+    def _patch(self, segments, frame_counts, chunk_sec=15, seed_base=100, template=None):
         import copy as _copy
         h3d = h3_video_director
         orig = (h3d.load_director_spec, h3d._resolve_skill_id, h3d.get_skill_gen_config,
@@ -1751,7 +1783,7 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
             return {"prompt": body["prompt"]}
 
         h3d.resolve_video_params = _fake_resolve
-        h3d.render_template = lambda tpl, params: (_copy.deepcopy(_MULTIFRAME_WF), [])
+        h3d.render_template = lambda tpl, params: (_copy.deepcopy(template or _MULTIFRAME_WF), [])
         h3d._require_vdn_plugin = lambda graph: None
         h3d.execute_graph_inprocess = _fake_exec
         return orig, bodies, graphs
@@ -1815,6 +1847,73 @@ class MultiframeChunkOrchestrationTests(unittest.TestCase):
         comp = video.get_components()
         self.assertEqual(comp.images.shape[0], 243 + 124)
         self.assertEqual(comp.audio["waveform"].shape[-1], (243 + 124) * self.SPF)
+
+    def test_single_i2v_segment_pins_first_frame(self):
+        # 单段 i2v + 多帧技能：模板不带图片入口（图只经 minimax_keyframes 注入）→ 单段也走多帧路径，
+        # 首帧锚点钉在 0，段首就是用户给的图（此前单段归 legacy，首帧被模板静默丢掉）
+        segments = [{"skill_id": "mf", "prompt": "p0", "duration_sec": 5, "mode": "i2v", "ref_input": "f.png"}]
+        orig, bodies, graphs = self._patch(segments, [124])
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertEqual(len(bodies), 1)              # 仍是一次运行（没合并别的段）
+        self.assertEqual(bodies[0]["prompt"], "p0")
+        self.assertEqual(bodies[0]["length"], 124)    # 与逐段路径同一帧数（5s → 124）
+        self.assertEqual(video.get_components().images.shape[0], 124)
+        g = graphs[0]
+        gnode = next(n for n in g.values() if n.get("class_type") == "NeoH3AddGuides")
+        self.assertEqual(gnode["inputs"]["guide_0_frame"], 0)
+        load_names = [n["inputs"]["image"] for n in g.values() if n.get("class_type") == "LoadImage"]
+        self.assertEqual(load_names, ["f.png"])
+
+    def test_single_i2v_segment_pins_first_frame_on_vdn_template(self):
+        # 真实 VDN 多帧模板（「H3 连续多段合成 (VDN)」）：模板同样没有图片入口，首帧锚点照样注入，
+        # 采样器的 model 改指锚点节点（模板自带的 VDN 节点仍在链上）
+        segments = [{"skill_id": "minimax_h3_vdn_multiframe", "prompt": "p0", "duration_sec": 5,
+                     "mode": "i2v", "ref_input": "f.png"}]
+        orig, bodies, graphs = self._patch(segments, [124], template=_MULTIFRAME_VDN_WF)
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertEqual(video.get_components().images.shape[0], 124)
+        g = graphs[0]
+        gid = next(nid for nid, n in g.items() if n.get("class_type") == "NeoH3AddGuides")
+        self.assertEqual(g[gid]["inputs"]["guide_0_frame"], 0)
+        self.assertIn(g[gid]["inputs"]["guide_0_image"][0], g)
+        self.assertEqual([n["inputs"]["image"] for n in g.values() if n.get("class_type") == "LoadImage"], ["f.png"])
+        sampler = next(n for n in g.values() if n.get("class_type") == "KSampler")
+        self.assertEqual(sampler["inputs"]["model"], [gid, 0])
+        self.assertEqual(sampler["inputs"]["positive"], [gid, 1])
+        self.assertTrue(any(n.get("class_type") == "ApplyVDNH3Advanced" for n in g.values()))
+
+    def test_single_fl2v_segment_pins_first_and_last_frame(self):
+        # 首尾帧单段：首帧钉 0，尾帧按既有约定钉在该段名义末帧（5s × 24fps - 1 = 119，
+        # 对齐到 17k+5 网格后的 120–123 属补齐帧，不挪锚点）
+        segments = [{"skill_id": "mf", "prompt": "p0", "duration_sec": 5, "mode": "fl2v",
+                     "ref_input": "f.png", "last_input": "t.png"}]
+        orig, bodies, graphs = self._patch(segments, [124])
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        g = graphs[0]
+        gnode = next(n for n in g.values() if n.get("class_type") == "NeoH3AddGuides")
+        self.assertEqual(gnode["inputs"]["guide_0_frame"], 0)
+        self.assertEqual(gnode["inputs"]["guide_1_frame"], 119)
+        load_names = sorted(n["inputs"]["image"] for n in g.values() if n.get("class_type") == "LoadImage")
+        self.assertEqual(load_names, ["f.png", "t.png"])
+
+    def test_single_t2v_segment_without_anchor_stays_legacy(self):
+        # 无可钉的帧 → 仍逐段（不注入锚点节点）
+        segments = [{"skill_id": "mf", "prompt": "p0", "duration_sec": 5, "mode": "t2v"}]
+        orig, bodies, graphs = self._patch(segments, [124])
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+        finally:
+            self._restore(orig)
+        self.assertFalse(any(n.get("class_type") == "NeoH3AddGuides" for n in graphs[0].values()))
 
     def test_r2v_shared_refs_flow_into_multiframe_body(self):
         # r2v×2 参考一致 → 一次多帧运行，共享参考集按顺序写入 body.references（<Picture N> 据此编号）

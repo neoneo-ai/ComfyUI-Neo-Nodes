@@ -673,21 +673,36 @@ def _chunk_budget(shared: dict) -> float:
     return float(cs) if cs is not None else 15.0
 
 
+def _chunk_anchor(seg) -> bool:
+    """该段自带首帧锚点（自带首帧 / 分镜关键帧）吗？
+
+    多帧技能模板没有图片入口（图片只经 minimax_keyframes 注入），自带首帧的段即使单独成块也得走多帧
+    路径，否则模板会静默忽略这张图——段首就不是用户给的图。带自带参考素材的段按技能说明退回逐段执行
+    （那类段不进多帧路径）；只带尾帧的段不在内——逐段路径下它走窗口连续性，帧数与成片对得上，
+    尾帧锚点只在块内注入（见 _plan_multiframe_guides）。
+    """
+    if seg.get("refs"):
+        return False
+    return bool(seg.get("keyframe") or seg.get("ref_input"))
+
+
 def _plan_chunks(segments, chunk_sec):
     """把段规划成执行单元：连续兼容段（总时长 ≤ chunk_sec）合并成一个多帧单次块，其余各成 legacy 单元。
 
-    返回 [{"kind": "multi"/"legacy", "segs": [...]}]，顺序与输入一致、不丢段。chunk_sec <= 0 时全为
-    legacy 单元（逐段路径，行为与旧版完全一致）；单段的兼容块也归 legacy（无锚点可加，多帧模板没有收益）。
+    返回 [{"kind": "multi"/"legacy", "segs": [...]}]，顺序与输入一致、不丢段。chunk_sec <= 0 时不合并
+    （仍逐段各跑一次）；单段的兼容块一般归 legacy（无锚点可加，多帧模板没有收益），但**自带首帧锚点的单段
+    仍走多帧路径**（见 _chunk_anchor）——多帧技能模板没有图片入口，首帧只能靠关键帧锚点钉在段首。
     """
     budget = float(chunk_sec or 0)
     if budget <= 0:
-        return [{"kind": "legacy", "segs": [s]} for s in segments]
+        return [{"kind": "multi" if (_chunk_compatible(s) and _chunk_anchor(s)) else "legacy", "segs": [s]}
+                for s in segments]
     units, cur, cur_dur = [], [], 0.0
 
     def flush():
         if not cur:
             return
-        units.append({"kind": "multi" if len(cur) > 1 else "legacy", "segs": list(cur)})
+        units.append({"kind": "multi" if (len(cur) > 1 or _chunk_anchor(cur[0])) else "legacy", "segs": list(cur)})
         cur.clear()
 
     for seg in segments:
@@ -946,7 +961,8 @@ class NeoH3VideoDirector:
         drops = []       # 与执行单元（每次 all_audio.append）对齐：该单元丢掉的头部帧数（窗口帧数 / Tier A 的 1 帧 / 0）
         prev_tail = None
         # 多帧单次分块：连续兼容段合并成一次 ref2va 运行、关键帧锚点钉在各段累计起点；
-        # 不兼容（自带参考素材 / 超长）或超预算的段退回逐段路径。整配方「多帧合并」开关关闭时强制逐段旧模式。
+        # 不兼容（自带参考素材 / 超长）或超预算的段退回逐段路径。整配方「多帧合并」开关关闭时不再合并，
+        # 但自带锚点帧的段仍走多帧路径（多帧技能模板没有图片入口，首/尾帧只能在多帧路径里钉住，见 _chunk_anchor）。
         units = _plan_chunks(segments, _chunk_budget(shared))
         multi_at, consumed = {}, set()   # 多帧块首段序号 → 块内段；块内其余段由 consumed 跳过
         offset = 0
