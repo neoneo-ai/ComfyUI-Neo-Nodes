@@ -35,6 +35,13 @@ body {
 .ns-tabs a:hover { color: #fff; }
 .ns-tabs a.active { color: #fff; border-bottom-color: #7aa2ff; }
 .ns-version { margin-left: auto; font-size: 12px; color: #888; white-space: nowrap; }
+.ns-mem { display: flex; align-items: center; gap: 10px; font-size: 11px; color: #999; white-space: nowrap; margin-left: auto; }
+.ns-mem-item { background: #2a2a2e; padding: 2px 8px; border-radius: 3px; font-variant-numeric: tabular-nums; }
+.ns-mem-item.warn { color: #f0a050; }
+.ns-mem-item.crit { color: #f06060; }
+.ns-mem-clear { background: #2a2a2e; border: 1px solid #444; color: #aaa; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
+.ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
+.ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
 
 .ns-view { flex: 1; overflow: hidden; position: relative; }
 .ns-page { height: 100%; overflow: auto; padding: 16px; }

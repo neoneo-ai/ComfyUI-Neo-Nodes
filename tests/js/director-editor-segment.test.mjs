@@ -636,6 +636,40 @@ test("导演编辑器单例：同一配方重复点击忽略，另一配方重�
     assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "关闭后可重新打开");
 });
 
+test("导演编辑器单例：新建（未命名）编辑器开着时再开新配方要重载，不被同名校验静默吞掉", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+
+    // 首次新建（1 段）
+    await openDirectorEditor({ name: "", shared: { mode: "f2v" }, segments: [{ first_frame: "a.png", duration_sec: 5 }] });
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "首次打开创建浮层");
+
+    // 新建编辑器未关时再开另一个新配方（2 段）→ 重载为新内容，而不是被 name==='' 同名校验吞掉
+    await openDirectorEditor({ name: "", shared: { mode: "f2v" }, segments: [
+        { first_frame: "b.png", duration_sec: 5 },
+        { first_frame: "c.png", duration_sec: 5 },
+    ] });
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 1, "重载后仍只有一个浮层");
+    assert.equal(document.querySelectorAll(".neo-director-segs .neo-director-seg").length, 2, "重载为新配方的 2 段");
+
+    // 新建编辑器有未保存修改时再开新配方 → 出确认条拦截，不重载
+    const promptTa = document.querySelector(".neo-director-prompt");
+    promptTa.value = "未保存的改动";
+    promptTa.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await openDirectorEditor({ name: "", shared: { mode: "f2v" }, segments: [{ first_frame: "d.png", duration_sec: 5 }] });
+    await sleep(20);
+    assert.equal(document.querySelector(".neo-director-dirty-confirm").hidden, false, "脏的新建编辑器被确认条拦截");
+    assert.equal(document.querySelectorAll(".neo-director-segs .neo-director-seg").length, 2, "拦截后内容不变");
+
+    document.querySelector(".neo-director-dirty-discard").click();
+    await sleep(20);
+    assert.equal(document.querySelectorAll(".neo-director-overlay").length, 0, "放弃修改后关闭");
+});
+
 test("导演编辑器：文字故事板一键生成分段填充时间轴", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 参考图网格为空

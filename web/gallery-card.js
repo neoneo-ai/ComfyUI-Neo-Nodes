@@ -7,6 +7,8 @@ import { app } from "../../../../scripts/app.js";
 import { getReservedSpace, getImageHeight, getCardHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems, openReversePromptDialog } from "./gallery-gen.js";
+import { copyGalleryToInput } from "./media-transfer.js";
+import { openDirectorEditor } from "./director.js";
 
 // 已解码波形峰值的会话缓存：同一文件在页面内只请求/解码一次，跨卡片复用。
 // 持久化到后端本地目录由 /neo_gallery/waveform 负责（见 gallery.py）。
@@ -496,6 +498,23 @@ export class GalleryCard {
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
             }, ["\u2B50 收藏本图"]),
             ...buildGenerationMenuItems({ card: this, gallery, image, subfolder }),
+            isImageFile(image.filename) ? $el("div", {
+                className: "neo-gallery-collect-item",
+                title: "以此图为首帧，新建视频导演配方",
+                onclick: async () => {
+                    this._removeCollectMenu();
+                    try {
+                        // 导演编辑器帧一律走 input/ 根目录（/view?subfolder=）：子文件夹里的图先落盘再建配方
+                        const fname = subfolder
+                            ? await copyGalleryToInput(JSON.stringify({ filename: image.filename, subfolder }))
+                            : image.filename;
+                        if (!fname) throw new Error("无法读取该图片");
+                        openDirectorEditor({ name: '', shared: { mode: 'f2v' }, segments: [{ first_frame: fname, duration_sec: 5 }] });
+                    } catch (err) {
+                        showToast(gallery.app, "error", "新建导演配方失败", String(err.message || err));
+                    }
+                }
+            }, ["\uD83C\uDFAC 新建导演配方"]) : null,
             (isImageFile(image.filename) && canDelete) ? $el("div", {
                 className: "neo-gallery-collect-item",
                 onclick: () => { this._removeCollectMenu(); openReversePromptDialog(image, subfolder); }
@@ -619,7 +638,7 @@ export class GalleryCard {
             onchange: (e) => {
                 e.stopPropagation();
                 const checked = e.target.checked;
-                gallery.toggleSelection(image.name, subfolder);
+                gallery.toggleSelection(image.filename, subfolder);
                 container.classList.toggle('neo-gallery-thumb-selected', checked);
             }
         }) : null;

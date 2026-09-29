@@ -5,6 +5,8 @@ import { GalleryList } from './gallery-list.js';
 import { GalleryCard } from './gallery-card.js';
 import { GallerySetting } from './gallery-setting.js';
 import { getRecipesPanel } from './recipes.js';
+import { openDirectorEditor } from './director.js';
+import { copyGalleryToInput } from './media-transfer.js';
 import { attachGalleryNodeDrop } from './gallery-node-drop.js';
 import {
     THUMBNAIL_SIZE_DEFAULT,
@@ -17,7 +19,8 @@ import {
     showLoadingOverlay,
     showToast,
     showInlineFeedback,
-    isAudioFile
+    isAudioFile,
+    isImageFile
 } from './gallery-utils.js';
 
 // Load gallery CSS
@@ -1197,6 +1200,11 @@ export class NeoGallery {
                 title: "仅删除勾选的素材，不影响未选中文件",
                 onclick: () => this.deleteSelected()
             }, ["\uD83D\uDDD1\uFE0F 删除"]),
+            $el("div", {
+                className: "neo-gallery-selection-btn",
+                title: "将选中图片设为分镜图，新建视频导演配方",
+                onclick: () => this.createDirectorFromSelection()
+            }, ["\uD83C\uDFAC 新建导演配方"]),
             $el("div", { className: "neo-gallery-selection-btn", onclick: () => this.clearSelection() }, ["✕ 清空"])
         ]);
         this.element.appendChild(bar);
@@ -1234,6 +1242,37 @@ export class NeoGallery {
             await this.list.sortAndDisplayImages();
             this._syncSelectionDom();
         }
+    }
+
+    async createDirectorFromSelection() {
+        const images = [];   // [subfolder, name]
+        for (const key of this._selectedItems) {
+            const idx = key.indexOf('\u0000');
+            const subfolder = key.slice(0, idx);
+            const name = key.slice(idx + 1);
+            if (isImageFile(name)) images.push([subfolder, name]);
+        }
+        if (!images.length) {
+            showToast(this.app, 'warning', '无可用图片', '选中的素材中没有图片，无法创建导演配方');
+            return;
+        }
+        // 导演编辑器帧一律走 input/ 根目录（/view?subfolder=）：子文件夹里的图先经 copy_to_input 落盘再建配方
+        const segments = [];
+        for (const [subfolder, name] of images) {
+            const fname = subfolder ? await copyGalleryToInput(JSON.stringify({ filename: name, subfolder })) : name;
+            if (!fname) {
+                showToast(this.app, 'error', '新建导演配方失败', `无法读取 ${name}`);
+                return;
+            }
+            segments.push({ first_frame: fname, duration_sec: 5 });
+        }
+        try {
+            await openDirectorEditor({ name: '', shared: { mode: 'f2v' }, segments });
+        } catch (err) {
+            showToast(this.app, 'error', '新建导演配方失败', String(err.message || err));
+            return;
+        }
+        this.clearSelection();
     }
 
     async handleSearch(searchTerm) {

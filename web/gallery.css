@@ -1011,9 +1011,7 @@ Accordion Section Buttons (Clear)
 
 /* Batch action bar — pinned to the bottom of the gallery panel while items are selected */
 .neo-gallery-selection-bar {
-    position: absolute;
-    left: 8px;
-    right: 8px;
+    position: sticky;
     bottom: 8px;
     z-index: 20;
     display: flex;

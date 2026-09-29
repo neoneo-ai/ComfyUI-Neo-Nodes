@@ -119,7 +119,8 @@ test("卡片左上角勾选框：可删除来源显示，只读来源不显示�
         toggleSelection(name, subfolder) { toggled.push([name, subfolder]); },
     };
 
-    const writable = card.createImageElement(gallery, { name: "w.png", filename: "w.png" }, "Output", "Output");
+    // name 是 stem（无扩展名）、filename 才是真实文件名：勾选必须传 filename
+    const writable = card.createImageElement(gallery, { name: "w", filename: "w.png" }, "Output", "Output");
     assert.ok(writable.querySelector(".neo-gallery-select-check"), "可删除来源应显示勾选框");
 
     const preset = card.createImageElement(gallery, { name: "p.png", filename: "p.png" }, "presets/风格", "presets");

@@ -242,3 +242,16 @@ async def studio_version_route(request):
         "recipes": list_director_recipes(),
     })
 
+
+
+@PromptServer.instance.routes.post("/neo_studio/clear_memory")
+async def clear_memory_route(request):
+    """卸载所有已加载模型并清理显存缓存。"""
+    import comfy.model_management
+    device = comfy.model_management.get_torch_device()
+    vram_before = comfy.model_management.get_free_memory(device)
+    comfy.model_management.unload_all_models()
+    comfy.model_management.soft_empty_cache(force=True)
+    vram_after = comfy.model_management.get_free_memory(device)
+    return web.json_response({"success": True, "freed_bytes": max(0, vram_after - vram_before)})
+

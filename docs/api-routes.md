@@ -103,6 +103,7 @@ Neo Studio 独立页面（`web/studio/index.html`，走 `/extensions/` 静态路
 | GET | `/neo_studio/director/{task_id}` | 整片任务快照：`status` + `progress {value,max}` + `filename`/`subfolder` + `error`；运行中附带 `latest_preview`（最新采样步帧载荷，前端轮询取预览帧的兜底通道）；成功后成片记进配方 `results`（导演节点本身不记账） |
 | POST | `/neo_studio/director/{task_id}/cancel` | 取消整片任务：未执行则出队、执行中则中断；任务已结束 409 |
 | GET | `/neo_studio/version` | 插件 + ComfyUI 版本与导演配方名列表（Studio 顶栏展示；顺序与配方面板侧栏一致：custom 在前、presets 在后，组内最近修改在前） |
+| POST | `/neo_studio/clear_memory` | 卸载所有已加载模型并清理显存缓存（`unload_all_models` + `soft_empty_cache`），返回释放字节数 |
 
 任务跟踪与 `run_segment` 同一套做法：`submit_graph` 入队 + `_lookup`/`_progress_for` 轮询 + `rs.director.status` WS 事件按变化推送。
 

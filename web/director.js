@@ -264,9 +264,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const hostNode = opts?.node || null;   // 从节点打开时带上节点：重生成用它取连续性/窗口/节点 id
     const cur = currentDirectorEditor();
     if (cur) {
-        if (cur.name === requestedName) { cur.focusSeg?.(focusSeg); return; } // 同一配方重复点击 → 只切换当前段
+        // 「重复点击=切段」只对已命名配方成立；新建（name=''）每次携带的内容都不同，
+        // 命中同名校验会被静默吞掉（图库多选「新建导演配方」点不动的根因），一律走重载路径
+        if (requestedName && cur.name === requestedName) { cur.focusSeg?.(focusSeg); return; }
         if (cur.isDirty()) { cur.requestClose(); return; }   // 有未保存修改：先出确认条，本次不重载；用户选择后再点
-        cur.close();                            // 另一配方 → 关闭旧窗口，重载为该配方
+        cur.close();                            // 另一配方 / 新建 → 关闭旧窗口，重载为该配方
     } else if (document.querySelector('.neo-director-overlay')) {
         return; // 兜底：状态缺失但浮层仍在 → 忽略，避免叠加
     }

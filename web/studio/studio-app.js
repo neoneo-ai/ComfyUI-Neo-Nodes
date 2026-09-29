@@ -388,6 +388,62 @@ async function loadVersion() {
     } catch { /* ComfyUI 未就绪时保持空白 */ }
 }
 
+// ====== 显存/内存监控 ======
+function fmtBytes(n) {
+    if (!Number.isFinite(n) || n <= 0) return "--";
+    const gb = n / (1024 * 1024 * 1024);
+    return gb >= 1 ? `${gb.toFixed(1)}G` : `${Math.round(n / (1024 * 1024))}M`;
+}
+
+function setMemItem(el, used, total) {
+    if (!Number.isFinite(total) || total <= 0) { el.textContent = "--"; return; }
+    const pct = used / total;
+    el.textContent = `${fmtBytes(used)} / ${fmtBytes(total)}`;
+    el.classList.toggle("warn", pct >= 0.75 && pct < 0.9);
+    el.classList.toggle("crit", pct >= 0.9);
+}
+
+async function pollMemStats() {
+    try {
+        const r = await api.fetchApi("/system_stats");
+        const data = await r.json();
+        const vramEl = document.getElementById("ns-vram");
+        const ramEl = document.getElementById("ns-ram");
+        if (data?.devices?.length) {
+            const d = data.devices[0];
+            setMemItem(vramEl, (d.vram_total || 0) - (d.vram_free || 0), d.vram_total);
+        }
+        if (data?.system) {
+            setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total);
+        }
+    } catch { /* 网络抖动忽略 */ }
+}
+
+function initMemMonitor() {
+    pollMemStats();
+    setInterval(pollMemStats, 3000);
+    const btn = document.getElementById("ns-clear-mem");
+    if (btn) {
+        btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            btn.textContent = "清理中…";
+            try {
+                const r = await api.fetchApi("/neo_studio/clear_memory", { method: "POST" });
+                const data = await r.json().catch(() => null);
+                if (data?.success) {
+                    btn.textContent = `释放 ${fmtBytes(data.freed_bytes)} ✓`;
+                } else {
+                    btn.textContent = "清理失败";
+                }
+            } catch {
+                btn.textContent = "清理失败";
+            }
+            setTimeout(() => { btn.disabled = false; btn.textContent = "🧹 清理"; }, 2500);
+            pollMemStats();   // 立即刷新一次
+        });
+    }
+}
+
 function route() {
     const name = (location.hash || "#/gallery").replace(/^#\//, "").split("?")[0] || "gallery";
     if (name === "director") ensureView("director", buildDirector);
@@ -399,5 +455,6 @@ function route() {
 window.addEventListener("hashchange", route);
 initExtensions().then(() => {
     loadVersion();
+    initMemMonitor();
     route();
 });
