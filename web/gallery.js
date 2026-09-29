@@ -225,6 +225,7 @@ export class NeoGallery {
             maxThumbnailSize: this.maxThumbnailSize,
             displayLabels: this.displayLabels,
             scrollPositions: this._scrollPositions,
+            currentView: this.currentView,
             ...overrides
         };
         try {
@@ -248,6 +249,9 @@ export class NeoGallery {
                 this.maxThumbnailSize = data.maxThumbnailSize || THUMBNAIL_SIZE_DEFAULT;
                 this.displayLabels = data.displayLabels !== undefined ? data.displayLabels : true;
                 this._scrollPositions = data.scrollPositions || {};
+                if (data.currentView && data.currentView.mode) {
+                    this._savedView = { ...data.currentView };
+                }
             }
         } catch (error) {
             console.error('Error loading plugin data:', error);
@@ -391,6 +395,7 @@ export class NeoGallery {
         this._navStack.push(view);
         this._navPos = this._navStack.length - 1;
         this._updateNavButtons();
+        this.savePluginData({ currentView: this.currentView });
     }
 
     _updateNavButtons() {
@@ -1532,9 +1537,20 @@ export class NeoGallery {
         const loadingEl = showLoadingOverlay(this.accordion, this.maxThumbnailSize);
         
         // 直接加载（不额外增加延迟）
-        await this.loadGallery();
-        await this.list.sortAndDisplayImages();
-        this._recordNavState();
+        if (this._savedView && this._savedView.mode === 'directory' && this._savedView.source) {
+            const sv = this._savedView;
+            this._savedView = null;
+            // 并行加载顶层目录和保存的目录结构，避免串行等待
+            await Promise.all([
+                this.loadGallery(),
+                this.showDirectoryStructure(sv.source, sv.categoryPath || [])
+            ]);
+        } else {
+            this._savedView = null;
+            await this.loadGallery();
+            await this.list.sortAndDisplayImages();
+            this._recordNavState();
+        }
 
         if (loadingEl.parentNode) loadingEl.remove();
     }

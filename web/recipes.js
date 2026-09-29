@@ -795,18 +795,22 @@ export async function applyRecipeToWorkflow(recipe, { fillPrompt = true, anchorN
 // 侧边栏「配方」面板
 // ==========================================
 
-export async function createRecipesPanel() {
+export async function createRecipesPanel(options = {}) {
     const root = $el('div', { className: 'neo-recipes-panel' });
+    // directorOnly（Studio 导演页）：只列多段导演配方，隐藏筛选 chips；普通配方在那里无用
+    const directorOnly = !!options.directorOnly;
 
     // 面板状态（搜索/筛选/排序/分组折叠）：存 /userdata/neo_recipes_data.json，刷新后回显
-    const prefs = { query: '', filter: 'all', sort: 'mtime', collapsed: {} };
+    const prefs = { query: '', filter: directorOnly ? 'director' : 'all', sort: 'mtime', collapsed: {} };
     let prefTimer = null;
     function savePrefs() {
         clearTimeout(prefTimer);
         prefTimer = setTimeout(() => {
+            const payload = { ...prefs };
+            if (directorOnly) delete payload.filter;   // 固定 director，不写回共享 prefs（免得覆盖画布侧栏选的筛选）
             api.fetchApi('/userdata/neo_recipes_data.json?file_format=json&merge=true', {
                 method: 'POST',
-                body: JSON.stringify({ recipes_prefs: prefs }),
+                body: JSON.stringify({ recipes_prefs: payload }),
             }).catch(() => { });
         }, 300);
     }
@@ -817,7 +821,7 @@ export async function createRecipesPanel() {
             const p = (await res.json())?.recipes_prefs;
             if (!p) return;
             if (typeof p.query === 'string') prefs.query = p.query;
-            if (RECIPE_FILTERS.some(f => f.id === p.filter)) prefs.filter = p.filter;
+            if (!directorOnly && RECIPE_FILTERS.some(f => f.id === p.filter)) prefs.filter = p.filter;
             if (RECIPE_SORTS.some(s => s.id === p.sort)) prefs.sort = s.id;
             if (p.collapsed && typeof p.collapsed === 'object') Object.assign(prefs.collapsed, p.collapsed);
         } catch (e) { /* 无存档时用默认值 */ }
@@ -874,11 +878,12 @@ export async function createRecipesPanel() {
         clearTimeout(queryTimer);
         queryTimer = setTimeout(() => { prefs.query = searchInput.value; savePrefs(); paint(); }, 200);
     });
-    const chipEls = RECIPE_FILTERS.map(f => $el('button', { className: 'neo-recipes-chip', textContent: f.label, title: f.title }));
+    const filters = directorOnly ? [] : RECIPE_FILTERS;   // directorOnly 下固定多段筛选，chips 无意义
+    const chipEls = filters.map(f => $el('button', { className: 'neo-recipes-chip', textContent: f.label, title: f.title }));
     function syncChips() {
-        RECIPE_FILTERS.forEach((f, i) => chipEls[i].classList.toggle('neo-recipes-chip-active', prefs.filter === f.id));
+        filters.forEach((f, i) => chipEls[i].classList.toggle('neo-recipes-chip-active', prefs.filter === f.id));
     }
-    RECIPE_FILTERS.forEach((f, i) => chipEls[i].addEventListener('click', () => { prefs.filter = f.id; syncChips(); savePrefs(); paint(); }));
+    filters.forEach((f, i) => chipEls[i].addEventListener('click', () => { prefs.filter = f.id; syncChips(); savePrefs(); paint(); }));
     const sortSel = $el('select', { className: 'neo-recipes-sort' }, RECIPE_SORTS.map(s => $el('option', { value: s.id, textContent: s.label })));
     sortSel.value = prefs.sort;
     sortSel.addEventListener('change', () => { prefs.sort = sortSel.value; savePrefs(); paint(); });

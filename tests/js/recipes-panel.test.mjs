@@ -53,6 +53,23 @@ test("配方列表：多段导演配方点缩略图直接打开编辑器，普�
     assert.equal(document.querySelector(".neo-director-overlay"), null, "未打开编辑器");
 });
 
+test("配方面板：directorOnly 只列多段导演配方并隐藏筛选 chips", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([
+        { name: "dir-recipe", type: "video_director", source: "custom", prompt: "", assets: [], samples: [] },
+        { name: "normal-recipe", source: "custom", prompt: "hello", assets: [{ kind: "image", file: "a.png" }], samples: [] },
+    ]));
+
+    const panel = await createRecipesPanel({ directorOnly: true });
+    document.body.appendChild(panel);
+
+    const names = Array.from(panel.querySelectorAll(".neo-recipes-card-name span:first-child")).map(el => el.textContent);
+    assert.deepEqual(names, ["dir-recipe"], "只显示导演配方");
+    assert.equal(panel.querySelectorAll(".neo-recipes-chip").length, 0, "筛选 chips 隐藏");
+});
+
 test("配方卡片：每个配方都有复制按钮，点击调用 /rs_recipes/copy 传源名", async () => {
     const { createRecipesPanel } = await import("../../web/recipes.js");
     appState.graph = { _nodes: [] };

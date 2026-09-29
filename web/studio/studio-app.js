@@ -2,7 +2,7 @@
 // 功能全部复用 web/ 现有模块（import-map 把 scripts/* 指到 shim）：
 // - 素材：NeoGallery（gallery.js 注册的扩展，侧栏 tab 的 render 直接挂进主区）
 // - 导演：配方面板（recipes.js）+ 整片生成面板（POST /neo_studio/director/generate）
-// - 设置：生图/生视频设置表单 + LLM 设置弹窗
+// - 设置：生图/生视频/LLM 设置表单（内嵌，无弹窗）
 import { app, initExtensions, getSidebarTab } from "./shim/app.js";
 import { api } from "./shim/api.js";
 import { $el } from "./shim/ui.js";
@@ -13,7 +13,7 @@ import { DirectorTimeline } from "../director-timeline.js";
 import { createFramePlayer } from "../live-preview.js";
 import { createRecipesPanel, listRecipes } from "../recipes.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "../image-gen.js";
-import { openLLMSettingsModal } from "../llm-setting.js";
+import { createModelConfigForm } from "../llm-setting.js";
 
 const view = document.getElementById("ns-view");
 let directorRecipes = [];   // /neo_studio/version 返回的导演配方名
@@ -97,7 +97,7 @@ async function refreshRecipesPanel() {
     if (!recipesPanelEl) return;
     const parent = recipesPanelEl.parentNode;
     recipesPanelEl.remove();
-    recipesPanelEl = await createRecipesPanel();
+    recipesPanelEl = await createRecipesPanel({ directorOnly: true });   // 导演页只列多段导演配方
     parent.appendChild(recipesPanelEl);
 }
 
@@ -333,8 +333,8 @@ async function buildDirector(el) {
         barEl, statusEl,
     ]));
 
-    // --- 配方面板（卡片自带「编辑」→ openDirectorEditor 浮层） ---
-    recipesPanelEl = await createRecipesPanel();
+    // --- 配方面板（卡片自带「编辑」→ openDirectorEditor 浮层；只列多段导演配方） ---
+    recipesPanelEl = await createRecipesPanel({ directorOnly: true });
     page.appendChild(recipesPanelEl);
     onRecipesLoaded = () => { fillRecipeOptions(); applyRecipeDefaults(recipeSel.value); };
     onRecipesLoaded();
@@ -355,11 +355,10 @@ async function buildDirector(el) {
 
 // ====== 设置页 ======
 function buildSettings(el) {
-    const llmBtn = $el("button", { className: "rs-btn", type: "button", textContent: "LLM 设置…" });
-    llmBtn.addEventListener("click", () => openLLMSettingsModal());
-    // 两个表单工厂返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
+    // 三个表单工厂均返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
     const genForm = createImageGenSettingsForm();
     const videoForm = createVideoGenSettingsForm();
+    const llmForm = createModelConfigForm();
     el.appendChild($el("div", { className: "ns-settings" }, [
         $el("div", { className: "ns-settings-section" }, [
             $el("h3", { textContent: "生图设置" }), genForm.el,
@@ -367,9 +366,11 @@ function buildSettings(el) {
         $el("div", { className: "ns-settings-section" }, [
             $el("h3", { textContent: "生视频设置" }), videoForm.el,
         ]),
-        $el("div", { className: "ns-settings-section" }, [llmBtn]),
+        $el("div", { className: "ns-settings-section" }, [
+            $el("h3", { textContent: "LLM 设置" }), llmForm.el,
+        ]),
     ]));
-    Promise.all([genForm.load(), videoForm.load()])
+    Promise.all([genForm.load(), videoForm.load(), llmForm.load()])
         .catch(e => console.error("[Neo Studio] settings load failed:", e));
 }
 
