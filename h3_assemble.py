@@ -28,8 +28,10 @@ from .h3_segment import _film_entry, _safe_name, _video_frame_count, film_layout
 from .h3_video_director import SEAM_BLEND_FRAMES, _blend_seam, _concat_segment_audio, _resize_frames
 from .h3_video_gen import H3_FPS
 from .recipes import add_recipe_results, is_preset_recipe, list_recipe_results, load_director_spec
+from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 MERGE_DIR = "neo_director_merge"     # 拼接成片的输出目录（片段在 neo_director_regen）
 MERGE_CRF = 16                       # 拼接要重编码沿用段：用高码率压低代际损失（默认码率连续拼接会越拼越糊）
@@ -246,7 +248,7 @@ def _run_task(task_id: str) -> None:
     except ValueError as e:
         task.update({"status": "failed", "error": str(e), "progress": None, "stage": ""})
     except Exception as e:
-        logger.error(f"[NeoNodes] assemble task {task_id} failed: {e}")
+        logger.error(f"assemble task {task_id} failed: {e}")
         task.update({"status": "failed", "error": str(e), "progress": None, "stage": ""})
     task["updated"] = time.time()
 

@@ -30,6 +30,7 @@ import comfy.utils
 import nodes as comfy_nodes
 from aiohttp import web
 from comfy_api.latest import InputImpl, Types
+from comfy_execution.utils import get_executing_context
 from server import PromptServer
 
 from .bundles import get_bundle
@@ -43,7 +44,9 @@ from .recipes import list_director_recipes, load_director_spec
 # 当前 director 运行进度（进程内单例）。ComfyUI 串行执行 prompt，同一时刻只有一个活动 director。
 # segment_index：正在生成的段序号（-1 = 尚未开始/已结束）；total_segments：总段数。
 # step / total_steps：当前段已完成的采样步数 / 总步数（前端据此渲染段内进度条）。
-_DIRECTOR_PROGRESS = {"active": False, "segment_index": -1, "total_segments": 0, "step": 0, "total_steps": 0}
+# prompt_id：本次执行的队列 id（运行开始才可知），供「取消生成」中断/出队。
+_DIRECTOR_PROGRESS = {"active": False, "segment_index": -1, "total_segments": 0, "step": 0, "total_steps": 0,
+                      "prompt_id": None}
 
 
 def get_director_progress() -> dict:
@@ -54,6 +57,20 @@ def get_director_progress() -> dict:
 async def neo_video_gen_director_progress(request):
     """返回当前 director 运行进度，供节点内时间轴实时显示各段生成状态。"""
     return web.json_response(get_director_progress())
+
+
+@PromptServer.instance.routes.post("/neo_video_gen/director/cancel")
+async def neo_video_gen_director_cancel(request):
+    """取消进行中的 director 任务：执行中则中断（与单段/生图任务同一套做法）。"""
+    prompt_id = _DIRECTOR_PROGRESS.get("prompt_id")
+    if not _DIRECTOR_PROGRESS["active"] or not prompt_id:
+        return web.json_response({"success": False, "error": "没有进行中的导演任务"}, status=409)
+    queue = PromptServer.instance.prompt_queue
+    interrupted = queue.interrupt_if_running(prompt_id)
+    dequeued = queue.delete_queue_item(lambda entry: entry[1] == prompt_id)
+    if not interrupted and not dequeued:
+        return web.json_response({"success": False, "error": "任务已结束，无法取消"}, status=409)
+    return web.json_response({"success": True, "interrupted": interrupted, "dequeued": dequeued})
 
 
 def _concat_segment_audio(audios, frame_rate: int, drops):
@@ -919,9 +936,11 @@ class NeoH3VideoDirector:
         window = _align_context_frames(context_frames) if continuity and int(context_frames or 0) > 0 else 0
         identity_names = _identity_names(spec, segments) if continuity else []
 
+        ctx = get_executing_context()
         _DIRECTOR_PROGRESS.update(active=True, segment_index=progress_index - 1,
                                   total_segments=max(1, int(progress_total or len(segments))), step=0,
-                                  total_steps=max(1, int(steps)) if int(steps) > 0 else 0)
+                                  total_steps=max(1, int(steps)) if int(steps) > 0 else 0,
+                                  prompt_id=getattr(ctx, "prompt_id", None))
         all_frames = []
         all_audio = []
         drops = []       # 与执行单元（每次 all_audio.append）对齐：该单元丢掉的头部帧数（窗口帧数 / Tier A 的 1 帧 / 0）
@@ -1077,7 +1096,8 @@ class NeoH3VideoDirector:
                 Types.VideoComponents(images=final_frames, audio=final_audio, frame_rate=Fraction(H3_FPS))
             ),)
         finally:
-            _DIRECTOR_PROGRESS.update(active=False, segment_index=-1, total_segments=0, step=0, total_steps=0)
+            _DIRECTOR_PROGRESS.update(active=False, segment_index=-1, total_segments=0, step=0, total_steps=0,
+                                      prompt_id=None)
 
 
 # ===========================================================================

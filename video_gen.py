@@ -12,7 +12,10 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
+from .util import PrefixFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIGS_DIR = os.path.join(CURRENT_DIR, "configs")
@@ -38,7 +41,7 @@ def get_video_settings() -> dict:
             if isinstance(stored, dict):
                 settings.update({k: v for k, v in stored.items() if k in DEFAULT_VIDEO_SETTINGS})
     except Exception as e:
-        logger.warning(f"[NeoNodes] video_gen settings ignored ({e}); using defaults")
+        logger.warning(f"video_gen settings ignored ({e}); using defaults")
     return settings
 
 
@@ -69,7 +72,7 @@ def suggest_video_model(folder: str) -> str:
     try:
         files = sorted(folder_paths.get_filename_list(folder) or [])
     except Exception as e:
-        logger.warning(f"[NeoNodes] video_gen: scan {folder} failed: {e}")
+        logger.warning(f"video_gen: scan {folder} failed: {e}")
         return ""
     if not files:
         return ""
@@ -86,7 +89,7 @@ def suggest_audio_vae() -> str:
     try:
         files = sorted(folder_paths.get_filename_list("vae") or [])
     except Exception as e:
-        logger.warning(f"[NeoNodes] video_gen: scan vae failed: {e}")
+        logger.warning(f"video_gen: scan vae failed: {e}")
         return ""
     for f in files:
         low = f.lower()
@@ -107,7 +110,7 @@ def scan_video_models() -> dict:
         try:
             files = sorted(folder_paths.get_filename_list(folder) or [])
         except Exception as e:
-            logger.warning(f"[NeoNodes] video_gen: scan {folder} failed: {e}")
+            logger.warning(f"video_gen: scan {folder} failed: {e}")
             files = []
         out[folder] = _video_display_sort(files)
     return out

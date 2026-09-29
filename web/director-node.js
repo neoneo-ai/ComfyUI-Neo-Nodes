@@ -193,6 +193,27 @@ app.registerExtension({
             });
             node._neoDtLive = live; // 暴露给测试驱动（tick）
             node._neoDtPreviewBox = previewBox; // 暴露给测试定位面板元素
+            // 取消按钮：运行期间显示，点它 POST 后端中断当前 director 任务（进度为进程内单例）
+            const cancelBtn = document.createElement("button");
+            cancelBtn.type = "button";
+            cancelBtn.className = "neo-dtl-live-btn neo-dtl-live-cancel";
+            cancelBtn.textContent = "⏹";
+            cancelBtn.title = "取消生成";
+            cancelBtn.style.display = "none";
+            previewBox.appendChild(cancelBtn);
+            node._neoDtCancelBtn = cancelBtn; // 暴露给测试定位按钮
+            cancelBtn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                cancelBtn.disabled = true;
+                try {
+                    const r = await api.fetchApi("/neo_video_gen/director/cancel", { method: "POST" });
+                    const d = await r.json().catch(() => null);
+                    if (!r.ok) cancelBtn.title = `取消失败：${d?.error || r.status}`;
+                } catch (err) {
+                    cancelBtn.title = `取消失败：${err.message}`;
+                }
+                cancelBtn.disabled = false;
+            });
             livePreviews.add(live);
             let tl = null;
             try {
@@ -225,6 +246,7 @@ app.registerExtension({
                                  step: Number(p.step) || 0, total_steps: Number(p.total_steps) || 0 };
                     if (progress.active !== prev.active || progress.segment_index !== prev.segment_index || progress.total_segments !== prev.total_segments || progress.step !== prev.step) {
                         tl?.refresh();
+                        cancelBtn.style.display = progress.active ? "" : "none";   // 运行中才给取消入口
                         // 跟随运行：段切换时把正在生成的块横向滚动到可视区（段多/放大时才需要）
                         if (progress.active && progress.segment_index !== prev.segment_index) tl?.revealSeg(progress.segment_index);
                         // 换段 / 新一轮运行：清空重来（每段的采样步各自从第 1 步计数）；

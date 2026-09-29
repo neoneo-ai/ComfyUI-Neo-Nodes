@@ -18,7 +18,10 @@ import time
 import base64
 from server import PromptServer
 
+from .util import PrefixFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 from . import prompt_lines
 from . import skill

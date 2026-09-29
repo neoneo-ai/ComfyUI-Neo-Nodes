@@ -15,7 +15,10 @@ import logging
 import math
 import re
 
+from .util import PrefixFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 
 def _ratio(w, h):

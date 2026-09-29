@@ -22,8 +22,10 @@ from collections import OrderedDict
 from urllib.parse import urlparse
 
 from . import skill
+from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 # ==========================================
 # LLM Configuration & Management

@@ -82,23 +82,35 @@ sys.modules["folder_paths"] = _folder_paths
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
 
-import image_gen  # noqa: E402
-
-# image_gen 的路由处理器内惰性 `from . import skill`；把 skill.py 注册到虚拟包下，
-# 让单测里相对导入可解析（与 test_skills 的桩策略一致）
+# image_gen 含相对导入（from .util import ...），需先建虚拟包再加载
 _pkg = types.ModuleType("_neo_imgen_pkg")
 _pkg.__path__ = [PLUGIN_DIR]
 sys.modules["_neo_imgen_pkg"] = _pkg
+
+_util_mod = types.ModuleType("_neo_imgen_pkg.util")
+import logging as _logging
+class _PF(_logging.Filter):
+    def filter(self, record):
+        return True
+_util_mod.PrefixFilter = _PF
+sys.modules["_neo_imgen_pkg.util"] = _util_mod
+_pkg.util = _util_mod
+
+_spec = importlib.util.spec_from_file_location(
+    "_neo_imgen_pkg.image_gen", os.path.join(PLUGIN_DIR, "image_gen.py"))
+image_gen = importlib.util.module_from_spec(_spec)
+sys.modules["_neo_imgen_pkg.image_gen"] = image_gen
+_spec.loader.exec_module(image_gen)
+_pkg.image_gen = image_gen
+
+# image_gen 的路由处理器内惰性 `from . import skill`；把 skill.py 注册到虚拟包下，
+# 让单测里相对导入可解析（与 test_skills 的桩策略一致）
 _spec = importlib.util.spec_from_file_location(
     "_neo_imgen_pkg.skill", os.path.join(PLUGIN_DIR, "skill.py"))
 _skill_mod = importlib.util.module_from_spec(_spec)
 sys.modules["_neo_imgen_pkg.skill"] = _skill_mod
 _spec.loader.exec_module(_skill_mod)
 _pkg.skill = _skill_mod
-image_gen.__package__ = "_neo_imgen_pkg"
-# __spec__.parent 与 __package__ 保持一致，避免相对导入触发 DeprecationWarning
-image_gen.__spec__ = types.SimpleNamespace(name="_neo_imgen_pkg.image_gen",
-                                           parent="_neo_imgen_pkg")
 
 
 def base_settings():

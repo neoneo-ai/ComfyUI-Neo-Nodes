@@ -116,7 +116,7 @@ async function buildDirector(el) {
     const ctxInput = $el("input", { type: "number", value: "22" });
     const stepsInput = $el("input", { type: "number", value: "-1", title: "-1 = 用技能默认步数" });
     const runBtn = $el("button", { className: "rs-btn ns-gen-run", type: "button", textContent: "🎬 生成整片" });
-    const cancelBtn = $el("button", { className: "rs-btn", type: "button", textContent: "取消", style: { display: "none" } });
+    const cancelBtn = $el("button", { className: "rs-btn ns-gen-cancel", type: "button", textContent: "⏹ 取消", style: { display: "none" } });
     const statusEl = $el("div", { className: "ns-gen-status" });
     const barEl = $el("div", { className: "ns-gen-progress" }, [$el("div")]);
 

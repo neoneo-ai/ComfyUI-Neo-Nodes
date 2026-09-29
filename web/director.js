@@ -1173,8 +1173,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const r = directorResolution(aspectSel.value, mpInp.value);
         if (r) resOut.textContent = `${r.width}×${r.height}`;
     };
-    aspectSel.onchange = updateRes;
-    mpInp.addEventListener('input', updateRes);
+    let resUserTouched = false;   // 手动改过分辨率后不再被自动推断覆盖（新建配方的异步尺寸查询可能晚到）
+    aspectSel.onchange = () => { resUserTouched = true; updateRes(); };
+    mpInp.addEventListener('input', () => { resUserTouched = true; updateRes(); });
     updateRes();
 
     // 把共享分辨率设成某张首帧图的比例：命中预设则用「比例+百万像素」，否则自定义 W/H（32 对齐）。
@@ -1192,6 +1193,21 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         }
         updateRes();
     };
+
+    // 新建配方（未命名）：首帧已预填（图库多选新建）或画布连了 LoadImage 时，默认分辨率跟随首帧比例；
+    // 已有配方的落盘分辨率不动。尺寸查询异步到达，用户手动改过则不再覆盖。
+    if (!requestedName) {
+        const ff = (exSegs[0] && exSegs[0].first_frame) || (imageRefs[0] && imageRefs[0].filename);
+        if (ff) {
+            fetch("/rs_recipes/image_sizes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filenames: [ff] }) })
+                .then(r => r.json())
+                .then(d => {
+                    const s = (d && d.success && Array.isArray(d.sizes) && d.sizes[0]) || null;
+                    if (s && s.width && s.height && !resUserTouched) applySharedResolutionFromImage(s.width, s.height);
+                })
+                .catch(() => {});
+        }
+    }
 
     let overlay;
     const close = () => {   // 无条件关闭（保存成功 / 「放弃修改」后走这里）：清脏态并隐藏确认条
@@ -1282,6 +1298,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // 参考素材（图/视频/音频）都需进配方 assets 才能在 load_director_spec 里解析成 input 相对名
         const assets = imageRefs.slice();
         const assetNames = new Set(assets.map(r => r.filename));
+        // 首/尾帧：预填帧（图库多选新建、素材拖到时间轴块等）不在 imageRefs 也不在配方 assets → 一并登记，后端落盘后回写最终名
+        for (const seg of segments) {
+            for (const fname of [seg.first_frame, seg.last_frame]) {
+                if (!fname || assetNames.has(fname) || recipeAssetFiles.has(fname)) continue;
+                assetNames.add(fname);
+                assets.push({ filename: fname, subfolder: '', type: 'input', kind: 'image' });
+            }
+        }
         for (const seg of segments) {
             for (const [key, kind] of [['images', 'image'], ['videos', 'video'], ['audios', 'audio']]) {
                 for (const name of ((seg.refs || {})[key] || [])) {
@@ -2445,14 +2469,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
 
     // 单段提示词生成/修改：在时间线底部输入指令，对当前段按 H3 格式生成或修改（SSE 流式）
+    // 提示词为空 → 新生成（director_panel_describe，需首帧图）；有内容 → 修改（director_modify_segment）
     const modTa = $el('textarea', { className: 'neo-director-mod-ta', placeholder: '描述或修改当前段（如：俯拍城市夜景、加入雨声…）' });
     const modBtn = $el('button', { className: 'rs-btn neo-director-mod-btn', type: 'button', textContent: '✦ 生成/修改' });
     const modStatus = $el('span', { className: 'neo-director-mod-status' });
-    modBtn.disabled = true;
-    modTa.addEventListener('input', () => { modBtn.disabled = !modTa.value.trim(); });
     modBtn.onclick = async () => {
         const instruction = modTa.value.trim();
-        if (!instruction) return;
         const rows = Array.from(segsWrap.querySelectorAll('.neo-director-seg'));
         if (!rows.length) { app.extensionManager.toast.add({ severity: 'error', summary: '提示词', detail: '还没有分段', life: 3000 }); return; }
         const row = rows[currentSegIdx] || rows[0];
@@ -2463,16 +2485,28 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         const g = modeSel ? modeSel.value : 'f2v';
         const segModeSel = row.querySelector('.neo-director-segmode');
         const effMode = (g === 'mixed' && segModeSel) ? segModeSel.value : g;
-        const refs = {};
-        (segRefReaders.get(row) || []).forEach((read, gi) => { const picked = read() || []; if (picked.length) refs[SEG_REF_GROUPS[gi].key] = picked; });
         modBtn.disabled = true; modStatus.textContent = curPrompt ? '正在修改…' : '正在生成…';
         try {
             let acc = '';
             let segErr = null;
-            await sseStream('/rs_recipes/director_modify_segment', {
-                onChunk: (parsed) => { acc += parsed.text || ''; ta.value = acc; },
-                onError: (msg) => { segErr = msg; },
-            }, { prompt: curPrompt, instruction, duration_sec: dur, mode: effMode, refs: Object.keys(refs).length ? refs : undefined });
+            if (!curPrompt) {
+                // 新生成：提示词为空 → 用首帧图调 director_panel_describe
+                const ffReader = segFrameReaders.get(row);
+                const panel = ffReader ? (ffReader.first() || '') : '';
+                if (!panel) throw new Error('请为本段选择首帧图片');
+                await sseStream('/rs_recipes/director_describe_panel', {
+                    onChunk: (parsed) => { acc += parsed.text || ''; ta.value = acc; },
+                    onError: (msg) => { segErr = msg; },
+                }, { panel, duration_sec: dur, panel_index: currentSegIdx + 1, panel_total: rows.length });
+            } else {
+                // 修改：提示词有内容 → 调 director_modify_segment
+                const refs = {};
+                (segRefReaders.get(row) || []).forEach((read, gi) => { const picked = read() || []; if (picked.length) refs[SEG_REF_GROUPS[gi].key] = picked; });
+                await sseStream('/rs_recipes/director_modify_segment', {
+                    onChunk: (parsed) => { acc += parsed.text || ''; ta.value = acc; },
+                    onError: (msg) => { segErr = msg; },
+                }, { prompt: curPrompt, instruction, duration_sec: dur, mode: effMode, refs: Object.keys(refs).length ? refs : undefined });
+            }
             if (segErr) throw new Error(segErr);
             const finalText = acc.trim();
             if (!finalText) throw new Error('结果为空，请重试');
@@ -2485,7 +2519,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             console.error('[Neo Recipes] Director modify segment failed:', e);
             modStatus.textContent = '';
             handleLLMError('提示词', e.message);
-        } finally { modBtn.disabled = !modTa.value.trim(); }
+        } finally { modBtn.disabled = false; }
     };
     const modRow = $el('div', { className: 'neo-director-mod-row' }, [
         modTa,

@@ -23,8 +23,10 @@ from server import PromptServer
 from .h3_preview import clear_latest_preview, get_latest_preview
 from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
 from .recipes import add_recipe_results, is_preset_recipe, list_director_recipes, load_director_spec
+from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 TASK_TTL = 3600.0     # 任务记录保留时长（秒）
 POLL_INTERVAL = 1.0   # 轮询队列状态的间隔（秒）
@@ -97,7 +99,7 @@ async def _watch(task_id: str) -> None:
                             "kind": "video", "seed": task["seed"],
                         }])
                     except Exception as e:
-                        logger.warning(f"[NeoNodes] studio: record result failed: {e}")
+                        logger.warning(f"studio: record result failed: {e}")
             task["status"] = "cancelled" if cancelled else ("failed" if error else "succeeded")
             task["filename"] = filename
             task["subfolder"] = subfolder
@@ -107,7 +109,7 @@ async def _watch(task_id: str) -> None:
             _WATCHERS.pop(task_id, None)
             clear_latest_preview(task_id)   # 终态后轮询兜底不再需要最新帧
             if error and not cancelled:
-                logger.warning(f"[NeoNodes] studio director task {task_id} failed: {error}")
+                logger.warning(f"studio director task {task_id} failed: {error}")
             _notify(task)
             return
         if state == "running":
@@ -171,7 +173,7 @@ async def director_generate_route(request):
     except ValueError as e:
         return web.json_response({"success": False, "error": str(e)}, status=400)
     except Exception as e:
-        logger.error(f"[NeoNodes] studio director generate failed: {e}")
+        logger.error(f"studio director generate failed: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
     now = time.time()

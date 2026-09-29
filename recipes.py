@@ -12,6 +12,7 @@ import shutil
 import asyncio
 import datetime
 import hashlib
+import logging
 import mimetypes
 import tempfile
 import zipfile
@@ -19,6 +20,9 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 from server import PromptServer
+
+logger = logging.getLogger(__name__)
+
 
 from .gallery import (
     AUDIO_EXTENSIONS,
@@ -31,8 +35,10 @@ from .bookmark import (
     _media_ext_from_url_or_bytes,
 )
 from .gallery_lora import LORA_CACHE_DIR, _load_lora_index
-from .util import _extract_media_metadata, _json_safe
+from .util import PrefixFilter, _extract_media_metadata, _json_safe
 from . import llm
+
+logger.addFilter(PrefixFilter())
 
 CURRENT_DIR = Path(__file__).parent.resolve()
 RECIPES_DIR = CURRENT_DIR / "recipes"
@@ -1620,6 +1626,7 @@ async def rs_recipes_director_optimize_prompts(request):
     prompt = str(data.get("prompt") or "").strip()
     if not prompt:
         return web.Response(text="data: [ERROR] 没有提示词可优化\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+    logger.info("[Neo-Nodes] director_optimize_prompts: prompt_len=%d, duration_sec=%s", len(prompt), data.get("duration_sec"))
     try:
         dur = int(round(float(data.get("duration_sec"))))
     except (TypeError, ValueError):
@@ -1660,6 +1667,7 @@ async def rs_recipes_director_modify_segment(request):
     instruction = str(data.get("instruction") or "").strip()
     if not prompt and not instruction:
         return web.Response(text="data: [ERROR] 没有提示词或修改指令\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+    logger.info("[Neo-Nodes] director_modify_segment: prompt_len=%d, instruction='%s'", len(prompt), instruction[:80])
     try:
         dur = int(round(float(data.get("duration_sec"))))
     except (TypeError, ValueError):
@@ -1795,6 +1803,7 @@ async def rs_recipes_director_describe_panel(request):
     name = str(data.get("panel") or "").strip()
     if not name:
         return web.Response(text="data: [ERROR] 缺少格子图\n\ndata: [DONE]\n\n", content_type="text/event-stream")
+    logger.info("[Neo-Nodes] director_describe_panel: panel='%s', duration_sec=%s", name, data.get("duration_sec"))
     try:
         dur = int(round(float(data.get("duration_sec") or 5)))
     except (TypeError, ValueError):

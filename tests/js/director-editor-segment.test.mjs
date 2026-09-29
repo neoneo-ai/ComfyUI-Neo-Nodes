@@ -316,6 +316,33 @@ test("共享分辨率：新建配方初始为 16:9 @ 百万像素 0.5（默认 9
     await sleep(20);
 });
 
+test("共享分辨率：新建配方首帧预填时默认比例跟随首帧图（异步查询）", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "sk-a", name: "技能 A", gen_video: true },
+    ]));
+    let sizesBody = null;
+    mockRoute("/rs_recipes/image_sizes", (body) => {
+        sizesBody = body;
+        return jsonResponse({ success: true, sizes: [{ filename: "ff.png", width: 768, height: 1344 }] });
+    });
+
+    // 图库「新建导演配方」路径：未命名 + 首帧预填（竖屏 9:16）
+    await openDirectorEditor({ name: "", shared: { mode: "f2v" }, segments: [{ first_frame: "ff.png", duration_sec: 5 }] });
+    await sleep(80); // 等异步尺寸查询到达并应用
+
+    assert.ok(sizesBody, "查了预填首帧的尺寸");
+    assert.deepEqual(sizesBody.filenames, ["ff.png"]);
+    assert.equal(document.querySelector(".neo-director-aspect").value, "9:16 (竖屏)", "比例跟随首帧");
+    assert.equal(document.querySelector(".neo-director-mp").value, "1", "百万像素按首帧面积反推");
+    assert.equal(document.querySelector(".neo-director-res").textContent, "768×1376", "分辨率按新比例重算");
+
+    const closeBtn = document.querySelector(".neo-director-close");
+    if (closeBtn) closeBtn.click();
+    await sleep(20);
+});
+
 
 test("时间轴尾部 ＋ 直接添加新段并切换到该段", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
@@ -1484,6 +1511,42 @@ test("导演编辑器：f2v 显示首帧槽位+尾帧扩展，保存写入 last_
     assert.equal(saved.last_frame, "z.png");
     assert.equal(fetchLog.find((c) => c.path === "/rs_recipes/save").body.shared.mode, "f2v", "旧 fl2v 重映射为 f2v");
 });
+
+test("导演编辑器：预填首/尾帧（图库多选新建路径）保存时登记进 assets，不报「未保存的资产」", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "MS" }));
+
+    // 多选新建路径：existing 无 assets，帧为 input/ 根目录文件（copy_to_input 落盘名）；两段共用一帧验证去重
+    await openDirectorEditor({
+        name: "", shared: { mode: "f2v" },
+        segments: [
+            { first_frame: "photo_1.jpg", duration_sec: 5 },
+            { first_frame: "photo_2.jpg", last_frame: "photo_1.jpg", duration_sec: 5 },
+        ],
+    });
+    await sleep(60);
+
+    // 新建配方先命名（保存要求非空名）
+    const wrap = document.querySelector(".neo-director-name-wrap");
+    wrap.querySelector(".neo-director-name-view").click();
+    const inp = wrap.querySelector(".neo-director-name");
+    inp.value = "MS";
+    inp.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const body = fetchLog.find((c) => c.path === "/rs_recipes/save").body;
+    const assetNames = body.assets.map((a) => a.filename);
+    assert.ok(assetNames.includes("photo_1.jpg"), "首帧登记进 assets");
+    assert.ok(assetNames.includes("photo_2.jpg"), "第二段首帧登记进 assets");
+    assert.equal(assetNames.filter((n) => n === "photo_1.jpg").length, 1, "跨段共用帧只登记一次");
+    const a1 = body.assets.find((a) => a.filename === "photo_1.jpg");
+    assert.equal(a1.subfolder, "", "帧在 input/ 根目录，subfolder 为空");
+    assert.equal(a1.kind, "image");
+});
+
 
 test("导演编辑器：首帧槽位点 ✕ 只清除、不弹本地上传选择窗", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import os
 import re
@@ -16,6 +17,15 @@ from pathlib import Path
 CURRENT_DIR = Path(__file__).parent.resolve()
 CONFIGS_DIR = CURRENT_DIR / "configs"
 SETTINGS_FILE = CONFIGS_DIR / "gallery_settings.json"
+
+
+class PrefixFilter(logging.Filter):
+    """Auto-prepend '[Neo-Nodes] ' to log records that lack the prefix."""
+    def filter(self, record):
+        if not record.getMessage().startswith("[Neo-Nodes]"):
+            record.msg = "[Neo-Nodes] " + record.msg
+            record.args = ()
+        return True
 
 
 def _load_settings() -> dict:

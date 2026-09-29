@@ -255,6 +255,36 @@ test("轮询 /neo_video_gen/director_progress 后时间轴读到各段生成状�
     );
 });
 
+test("取消按钮：运行中显示、点击 POST /neo_video_gen/director/cancel，结束隐藏", async () => {
+    resetEnv();
+    clearRoutes();
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({ success: true, segments: [] }));
+    const state = { active: false, segment_index: -1, total_segments: 0 };
+    mockRoute("/neo_video_gen/director_progress", () => jsonResponse(state));
+
+    const node = await createDirectorNode("dir-recipe");
+    clearInterval(node._neoDtProgressTimer); // 手动驱动，停止自动轮询
+    const btn = node._neoDtCancelBtn;
+    assert.ok(btn, "实时预览面板带取消按钮");
+    assert.equal(btn.style.display, "none", "空闲时隐藏");
+
+    state.active = true; state.segment_index = 0; state.total_segments = 2;
+    const cancelBodies = [];
+    mockRoute("/neo_video_gen/director/cancel", (body) => { cancelBodies.push(body); return jsonResponse({ success: true, interrupted: true }); });
+    await node._neoDtProgressTick();
+    assert.equal(btn.style.display, "", "运行中显示");
+
+    btn.click();
+    await sleep(60); // 等 POST 落账
+    assert.equal(cancelBodies.length, 1, "点击后调了取消端点");
+
+    state.active = false; state.segment_index = -1;
+    await node._neoDtProgressTick();
+    assert.equal(btn.style.display, "none", "运行结束隐藏");
+    destroyNode(node);
+});
+
 test("运行时节点加高预留采样预览空间，没有预览内容时结束还原自然高度", async () => {
     resetEnv();
     clearRoutes();

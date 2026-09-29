@@ -65,13 +65,15 @@ StoryBoard/CharacterSheet 预设下载缓存在 `output/StoryBoard/presets/`、`
 | POST | `/rs_recipes/director_generate_segments` | 导演编辑器「📖 故事板分镜」文字故事板：主题（`idea`）或已写好的故事脚本（`script`）+ 分段粒度（`segment_seconds`）→ LLM（任务 `director_story`）**直接输出分段 JSON**，返回 `segments[]`（每段 `prompt` / `duration_sec` / `storyboard_prompt`）；角色参考图文件名列表（`characters`）以多模态附上锁身份 |
 | POST | `/rs_recipes/director_optimize_prompts` | 导演编辑器「统一设置」：单段优化前原文 + 时长 + 模式 + 该段参考清单 → LLM 按 H3 官方格式重写为一条成品提示词（附参考图走多模态），返回 `{prompt}`；前端逐段循环调用、逐段反馈进度 |
 | POST | `/rs_recipes/grid_split` | 导演编辑器「🧩 宫格分镜图拆分」：一张带分隔条/留白的分镜宫格图 → 纯像素均匀间隙检测（含只有 1~2px 的细白分隔条：条上压着字幕文字时按近白占比识别）+ 无意义细条剔除（整幅标题栏 / 页脚行 / 边缘窄条，或手动行×列，1~12）自动判行列，按行优先顺序把各格裁到 `input/`（各格内容在分隔条一侧再内缩 1px，并裁掉四边白框 / 黑框（含框外那 1~2px 接缝）与底部「白底 + 文字」字幕条，使格子可直接当视频首帧），返回 `{rows, cols, panels:[{filename,width,height,preview_url}], prompts[]}`（格子数超上限拒绝）；`prompts[]` 是从**原图内嵌的 ComfyUI 元信息**（PNG 的 API 格式 `prompt`）提取的正向提示词（文本输入键随工作流不同：`prompt` / `text` 等，按 negative 连线剔掉纯负向节点，切出的格子不带元信息所以只能从原图取），前端作「全局故事参考（默认为原宫格提示词）」的默认值、可手动改写 |
-| POST | `/rs_recipes/director_describe_panel` | 导演编辑器「🧩 宫格分镜图拆分」逐格描述（**单格**）：一张分镜图（该段首帧，多模态）+ 时长 +（可选）本格序号/总段数/九宫格行列、全局故事参考（默认原宫格提示词）、上一段已生成提示词 → LLM（任务 `director_panel_describe`）生成一条可直接提交的 MiniMax H3 i2v 成品提示词，返回 `{prompt}`；宫格方式下各段无原文，由「✨ 生成所有分段的提示词」按格子自动循环调用本端点、逐格反馈进度，单格失败不中断（上下文字段缺失/非法时静默降级为仅图+时长） |
+| POST | `/rs_recipes/director_describe_panel` | 导演编辑器逐格/单段描述（**单格**）：一张分镜图（该段首帧，多模态）+ 时长 +（可选）本格序号/总段数/九宫格行列、全局故事参考（默认原宫格提示词）、上一段已生成提示词 → LLM（任务 `director_panel_describe`）生成一条可直接提交的 MiniMax H3 i2v 成品提示词，返回 `{prompt}`；宫格方式下由「✨ 生成所有分段的提示词」按格子自动循环调用本端点、逐格反馈进度，单格失败不中断；时间轴页「✦ 生成/修改」在段提示词为空时（新生成）也调本端点（需该段已选首帧图），上下文字段缺失/非法时静默降级为仅图+时长 |
+| POST | `/rs_recipes/director_modify_segment` | 导演编辑器时间轴页「✦ 生成/修改」在段提示词**有内容**时（修改）调用：现有提示词 + 用户修改指令（可选）+ 时长 + 模式 + 参考清单 → LLM（任务 `director_modify_segment`）按 H3 格式输出修改后的成品提示词；SSE 流式回传 |
 
 ## h3_video_director.py / h3_segment.py / h3_assemble.py / video_gen.py — `/neo_video_gen/*`
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/neo_video_gen/director_progress` | 当前 director 运行进度（`active` / `segment_index` / `total_segments` / `step` / `total_steps`），节点内时间轴与预览面板按它显示每段状态 |
+| POST | `/neo_video_gen/director/cancel` | 取消进行中的 director 任务：执行中则中断（同单段/生图任务做法）；无进行中任务或已结束 409 |
 | POST | `/neo_video_gen/run_segment` | **单段生成/重生成入队**（`{recipe, segment, anchors, seed, film?, continuity?, context_frames?, steps?, preview?, node_id?}`）：校验 + 把「跑这一段」组装成单节点 prompt（`NeoH3SegmentRun`）提交到 ComfyUI 执行队列，返回任务快照。`film` 指定用哪个成片结果取锚点（文件名或 `subfolder/文件名`；空＝最新成片），不在配方 `results` 里则报错；**分辨率沿用该成片**（同尺寸才能无缝拼回，与配方共享分辨率不同时在提示里说明）；段序号越界 / 未知锚点 / 成片帧数与复算不一致 / 预设配方 一律 400 |
 | GET | `/neo_video_gen/run_segment/{task_id}` | 单段任务快照：`status`（queued/running/succeeded/failed/cancelled）+ `progress {value,max}` + `filename` + `film`（实际用作锚点来源的成片）+ `seed` + `warnings` + `error` |
 | POST | `/neo_video_gen/run_segment/{task_id}/cancel` | 取消单段任务：未执行则出队、执行中则中断（同生图任务做法）；任务已结束 409 |

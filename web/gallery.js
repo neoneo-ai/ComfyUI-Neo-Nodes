@@ -1162,6 +1162,12 @@ export class NeoGallery {
     clearSelection() {
         if (this._selectedItems.size === 0 && !this._selectionBar) return;
         this._selectedItems.clear();
+        // 勾选框/选中态同步回 DOM，否则清空后卡片仍显示为选中（且再点已勾的框会被当成新增）
+        document.querySelectorAll('.neo-gallery-thumb-container').forEach((el) => {
+            const cb = el.querySelector('.neo-gallery-select-check');
+            if (cb) cb.checked = false;
+            el.classList.remove('neo-gallery-thumb-selected');
+        });
         this._updateSelectionBar();
     }
 

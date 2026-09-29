@@ -31,7 +31,10 @@ from comfy.cli_args import args as cli_args
 from comfy_execution.progress import get_progress_state
 from server import PromptServer
 
+from .util import PrefixFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIGS_DIR = os.path.join(CURRENT_DIR, "configs")
@@ -113,7 +116,7 @@ def get_settings() -> dict:
             if isinstance(stored, dict):
                 settings.update({k: v for k, v in stored.items() if k in DEFAULT_SETTINGS})
     except Exception as e:
-        logger.warning(f"[NeoNodes] image_gen settings ignored ({e}); using defaults")
+        logger.warning(f"image_gen settings ignored ({e}); using defaults")
     return settings
 
 
@@ -138,7 +141,7 @@ def _folder_files(folder: str) -> list:
     try:
         return sorted(folder_paths.get_filename_list(folder) or [])
     except Exception as e:
-        logger.warning(f"[NeoNodes] image_gen: scan {folder} failed: {e}")
+        logger.warning(f"image_gen: scan {folder} failed: {e}")
         return []
 
 
@@ -311,7 +314,7 @@ def _reference_size(ref_name: str) -> tuple | None:
         with Image.open(path) as img:
             return img.size  # (w, h)
     except Exception as e:
-        logger.warning(f"[NeoNodes] image_gen: read reference size failed ({ref_name}): {e}")
+        logger.warning(f"image_gen: read reference size failed ({ref_name}): {e}")
         return None
 
 
@@ -336,7 +339,7 @@ def _reference_name(src: dict, media: str = "image") -> str | None:
         base = input_dir if tag != "output" else os.path.realpath(folder_paths.get_output_directory())
         real = os.path.realpath(os.path.join(base, *stem.split("/")))
         if not _within(real, base) or not os.path.isfile(real):
-            logger.warning(f"[NeoNodes] image_gen: reference {media} not found: {src.get('value')}")
+            logger.warning(f"image_gen: reference {media} not found: {src.get('value')}")
             return None
         if tag != "output":
             return stem
@@ -360,7 +363,7 @@ def _reference_name(src: dict, media: str = "image") -> str | None:
         try:
             raw = base64.b64decode(payload)
         except Exception as e:
-            logger.warning(f"[NeoNodes] image_gen: bad base64 reference: {e}")
+            logger.warning(f"image_gen: bad base64 reference: {e}")
             return None
         dest_dir = os.path.join(input_dir, "NeoAgent")
         os.makedirs(dest_dir, exist_ok=True)
@@ -929,7 +932,7 @@ def write_sidecar(image_path: str, params: dict) -> None:
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"{params['prompt']}\n{meta}\n")
     except OSError as e:
-        logger.warning(f"[NeoNodes] image_gen: sidecar write failed: {e}")
+        logger.warning(f"image_gen: sidecar write failed: {e}")
 
 
 # ===========================================================================
@@ -992,7 +995,7 @@ def _finish(task: dict, status: str, images: list, error: str) -> None:
     task["updated"] = time.time()
     _WATCHERS.pop(task["task_id"], None)
     if error:
-        logger.warning(f"[NeoNodes] image_gen task {task['task_id']} failed: {error}")
+        logger.warning(f"image_gen task {task['task_id']} failed: {error}")
     _notify(task)
 
 
@@ -1065,7 +1068,7 @@ async def _enhance_prompt(prompt_text: str, width: int, height: int, skill_id: s
             return prompt_text
         return enhanced
     except Exception as e:
-        logger.warning(f"[NeoNodes] prompt enhancement failed, using original: {e}")
+        logger.warning(f"prompt enhancement failed, using original: {e}")
         return prompt_text
 
 
@@ -1109,7 +1112,7 @@ def _enhance_prompt_stream(prompt_text: str, width: int, height: int, skill_id: 
             # 本地路径未返回生成器（不支持流式）：回退为整段输出
             yield result or prompt_text
     except Exception as e:
-        logger.warning(f"[NeoNodes] prompt enhancement stream failed: {e}")
+        logger.warning(f"prompt enhancement stream failed: {e}")
         yield f"[ERROR] {str(e)}"
 
 
@@ -1200,7 +1203,7 @@ async def generate_route(request):
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     except Exception as e:
-        logger.error(f"[NeoNodes] image_gen generate failed: {e}")
+        logger.error(f"image_gen generate failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 

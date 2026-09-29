@@ -7,6 +7,7 @@ recipes 的 gallery/bookmark/gallery_lora/util 依赖用假模块；`run_llm_tas
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -74,6 +75,10 @@ setattr(_pkg, "gallery_lora", _gallery_lora)
 _util = types.ModuleType(f"{_PKG}.util")
 _util._extract_media_metadata = lambda *a, **k: {}
 _util._json_safe = lambda v: v
+class _PF(logging.Filter):
+    def filter(self, record):
+        return True
+_util.PrefixFilter = _PF
 sys.modules[f"{_PKG}.util"] = _util
 setattr(_pkg, "util", _util)
 

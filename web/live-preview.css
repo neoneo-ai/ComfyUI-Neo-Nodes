@@ -47,6 +47,11 @@
 }
 .neo-dtl-live-btn:hover { border-color: #8cf; color: #fff; }
 
+/* 取消生成：红色描边，与播放控制区分开 */
+.neo-dtl-live-cancel { color: #f98; }
+.neo-dtl-live-cancel:hover { border-color: #f98; color: #fff; }
+.neo-dtl-live-cancel:disabled { opacity: 0.5; cursor: default; }
+
 .neo-dtl-live-label {
   flex: 0 0 auto;
   color: #9aa4b0;

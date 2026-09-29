@@ -431,6 +431,7 @@ def _recent_cover_entries(directory: Path, subfolder_prefix: str, count: int) ->
         "name": c["name"],
         "subfolder": "/".join(p for p in (subfolder_prefix, c["rel"]) if p),
         "kind": c["kind"],
+        "mtime": c["mtime"],
     } for c in candidates[:count]]
 
 
@@ -1421,6 +1422,7 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
                 "name": p.stem,
                 "subfolder": base_subfolder,
                 "kind": _cover_kind(p.name),
+                "mtime": p.stat().st_mtime,
             })
     result.extend(_order_covers_by_kind(root_files)[:sample_count])
     
@@ -1467,6 +1469,7 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
                     "name": f.stem,
                     "subfolder": new_subfolder,
                     "kind": _cover_kind(f.name),
+                    "mtime": f.stat().st_mtime,
                 })
         found_direct = _order_covers_by_kind(subdir_media)[:remaining]
         
@@ -2041,7 +2044,7 @@ async def get_thumbnail(request):
                     return web.Response(
                         body=content,
                         content_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=31536000, immutable"}
+                        headers={"Cache-Control": "public, max-age=86400"}
                     )
 
     if not source_path:
@@ -2070,7 +2073,7 @@ async def get_thumbnail(request):
             body=content, 
             content_type="image/jpeg",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": "public, max-age=86400",
                 "ETag": f'"{cache_path.stat().st_mtime}-{cache_path.stat().st_size}"'
             }
         )
@@ -2083,7 +2086,7 @@ async def get_thumbnail(request):
             body=content, 
             content_type="image/jpeg",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": "public, max-age=86400",
                 "ETag": f'"{cache_path.stat().st_mtime}-{cache_path.stat().st_size}"'
             }
         )

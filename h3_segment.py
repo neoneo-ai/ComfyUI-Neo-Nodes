@@ -44,8 +44,10 @@ from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
 from .recipes import (add_recipe_results, is_preset_recipe, list_director_recipes, list_recipe_results,
                       load_director_spec)
 from .skill import get_skill_gen_config, load_skill_workflow
+from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 # 锚点模式（节点下拉用中文标签，接口/内部用键）
 ANCHOR_LABELS = ("两端锚点", "只钉首帧", "不用锚点")
@@ -445,7 +447,7 @@ async def _watch(task_id: str) -> None:
             task["updated"] = time.time()
             _SEGMENT_WATCHERS.pop(task_id, None)
             if error and not cancelled:
-                logger.warning(f"[NeoNodes] segment task {task_id} failed: {error}")
+                logger.warning(f"segment task {task_id} failed: {error}")
             return
         if state == "running":
             task["status"] = "running"
@@ -517,7 +519,7 @@ async def run_segment_route(request):
     except ValueError as e:
         return web.json_response({"success": False, "error": str(e)}, status=400)
     except Exception as e:
-        logger.error(f"[NeoNodes] run_segment submit failed: {e}")
+        logger.error(f"run_segment submit failed: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
     task_id = str(uuid.uuid4())

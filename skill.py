@@ -50,8 +50,10 @@ import server
 from server import PromptServer
 import nodes as comfy_nodes
 from .minimax_h3 import _ratio, _filter_mode_sections, _h3_audit_and_repair, _h3_audit_events, _h3_grounding_check, _h3_mode, format_h3_context_lines
+from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SKILLS_DIR = os.path.join(CURRENT_DIR, "skills")

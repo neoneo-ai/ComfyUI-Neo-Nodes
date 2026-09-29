@@ -38,8 +38,10 @@ from .image_gen import (
 from .image_gen_edit import execute_graph_inprocess
 from .recipes import _copy_media_to_input, _find_recipe_dir
 from .skill import get_skill_gen_config, load_skill_workflow
+from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
+logger.addFilter(PrefixFilter())
 
 _STORYBOARD_MAX_REFS = 10  # 参考图总上限（角色 ≤6，前端已限）；Qwen Image 2.1 编辑最多 10 张（第 1 张为编辑目标，其余为参考对象），不再人为收紧
 _STORYBOARD_REF_SKILL = "qwen_image_21"   # 带参考图的段固定用它做参考编辑（Krea2 单路模板不支持多参考延续）；纯文生图用所选技能（默认 Krea2）
@@ -183,7 +185,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
             task.update(status="cancelled")
             break
         except Exception as e:
-            logger.warning(f"[NeoNodes] storyboard seg {i + 1} failed: {e}")
+            logger.warning(f"storyboard seg {i + 1} failed: {e}")
             entry.update(status="failed", error=str(e))
         task["processed"] += 1
 
@@ -267,7 +269,7 @@ async def neo_video_gen_storyboard_generate(request):
         exc = done_handle.exception()
         if exc is None:
             return
-        logger.warning(f"[NeoNodes] storyboard task {_tid} crashed: {exc}")
+        logger.warning(f"storyboard task {_tid} crashed: {exc}")
         t = _storyboard_tasks.get(_tid)
         if t and t["status"] == "running":
             t.update(status="failed", error=str(exc))

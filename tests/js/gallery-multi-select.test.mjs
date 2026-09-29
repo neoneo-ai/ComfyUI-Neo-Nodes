@@ -42,6 +42,35 @@ test("toggleSelection 增删选中项并同步底部操作条", async () => {
     assert.equal(document.querySelector(".neo-gallery-selection-bar"), null);
 });
 
+test("clearSelection 同步清掉勾选框与选中样式（不留视觉选中态）", async () => {
+    resetEnv();
+    clearRoutes();
+    await loadNeoGallery();
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const gallery = makeGallery();
+    const card = new GalleryCard({});
+    const el = card.createImageElement(gallery, { name: "a", filename: "a.png" }, "Output", "Output");
+    document.body.appendChild(el);
+
+    const check = el.querySelector(".neo-gallery-select-check");
+    check.checked = true;
+    check.dispatchEvent(new Event("change"));
+    await flush();
+    assert.equal(gallery._selectedItems.size, 1);
+    assert.ok(el.classList.contains("neo-gallery-thumb-selected"), "勾选后卡片带选中样式");
+
+    gallery.clearSelection();
+    assert.equal(gallery._selectedItems.size, 0);
+    assert.equal(check.checked, false, "清空后勾选框复位");
+    assert.ok(!el.classList.contains("neo-gallery-thumb-selected"), "清空后选中样式移除");
+
+    // 清空后再点同一个框 = 重新选中（状态与视觉一致）
+    check.checked = true;
+    check.dispatchEvent(new Event("change"));
+    await flush();
+    assert.equal(gallery._selectedItems.size, 1);
+});
+
 test("deleteSelected 只删除选中项（POST /neo_gallery/delete 逐项）", async () => {
     resetEnv();
     clearRoutes();
