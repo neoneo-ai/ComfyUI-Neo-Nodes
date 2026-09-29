@@ -67,12 +67,13 @@ test("From Canvas：画布无有效工作流时不发请求并 toast 提示", as
 });
 
 // 详情弹窗出图设置区：mock 一条 load_skill + skill_config（GET/POST 分流）+ models
-async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", mode = "", requiresRef = false, overridden = false, fileContent = "body" }) {
+async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", mode = "", requiresRef = false, overridden = false, fileContent = "body", available = undefined }) {
     const { createSkillDetailPopup } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
         id: b.id, name: "Gen Skill", content: fileContent, files: [{ name: "skill.md", size: 5 }],
         gen_image: genImage, gen_video: genVideo, requires_ref: requiresRef, multi_turn: false, tags: [], category, mode,
         config_overridden: overridden,
+        ...(available === undefined ? {} : { available }),
     }));
     mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: fileContent }));
     let saved = null;
@@ -87,8 +88,25 @@ async function openGenPopup({ id, source, genImage = true, genVideo = false, con
 
     const popup = createSkillDetailPopup();
     await popup.openExisting(id, source);
-    return { wrap: document.querySelector(".rs-skill-gen-settings"), get saved() { return saved; } };
+    return {
+        wrap: document.querySelector(".rs-skill-gen-settings"),
+        banner: popup.overlay.querySelector(".rs-skill-unavailable-banner"),
+        get saved() { return saved; },
+    };
 }
+
+test("详情弹窗：不可用视频技能（VDN 插件未装）顶部显示说明，可用/非视频技能不显示", async () => {
+    const r1 = await openGenPopup({ id: "vdn-off", source: "custom", genImage: false, genVideo: true, category: "video_gen", available: false });
+    assert.ok(r1.banner, "横幅元素应存在");
+    assert.equal(r1.banner.style.display, "block", "不可用视频技能应显示说明");
+    assert.ok(r1.banner.textContent.includes("VDN"), "说明应点明 VDN 依赖");
+
+    const r2 = await openGenPopup({ id: "vdn-on", source: "custom", genImage: false, genVideo: true, category: "video_gen", available: true });
+    assert.equal(r2.banner.style.display, "none", "可用视频技能不应显示说明");
+
+    const r3 = await openGenPopup({ id: "plain", source: "custom" });
+    assert.equal(r3.banner.style.display, "none", "非视频技能不应显示说明");
+});
 
 test("详情弹窗：gen_image 技能显示设置区，回填 config 并可保存覆盖", async () => {
     const r = await openGenPopup({

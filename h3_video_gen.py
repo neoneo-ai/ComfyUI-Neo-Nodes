@@ -21,8 +21,24 @@ def _gen_video_skills():
     return [s for s in scan_skills() if s.get("gen_video") and load_skill_workflow(s["id"])]
 
 
+def _skill_label(s):
+    """skill 下拉显示名：cn_name（中文名）优先；不可用的视频技能带「（不可用）」后缀。"""
+    label = s.get("cn_name") or s["name"]
+    if s.get("available") is False:
+        label += "（不可用）"
+    return label
+
+
+def _default_video_skill(vskills):
+    """默认 skill：可用技能里取采样步数最少者（gen_config 摘要缺省按运行时默认 20）；都不可用时在全列表里取步数最少者。"""
+    pool = [s for s in vskills if s.get("available") is not False] or vskills
+    if not pool:
+        return None
+    return min(pool, key=lambda s: int((s.get("gen_config") or {}).get("steps") or 20))
+
+
 def _resolve_skill_id(value):
-    """skill 下拉显示 skill cn_name（中文名）；反查真实 id，找不到则按 id/name 直接用（兼容旧工作流存的 id / 名称）。"""
+    """skill 下拉显示 skill cn_name（中文名，不可用带「（不可用）」后缀）；反查真实 id，找不到则按 id/name 直接用（兼容旧工作流存的 id / 名称）。"""
     by_key = {}
     for s in _gen_video_skills():
         by_key[s["id"]] = s["id"]
@@ -30,7 +46,11 @@ def _resolve_skill_id(value):
             by_key[s["cn_name"]] = s["id"]
         if s.get("name") and s["name"] != s["id"]:
             by_key[s["name"]] = s["id"]
-    return by_key.get(value, value)
+        by_key[_skill_label(s)] = s["id"]
+    v = str(value or "").strip()
+    if v.endswith("（不可用）"):
+        v = v[: -len("（不可用）")]
+    return by_key.get(v, v)
 
 
 def is_multiframe_skill(value) -> bool:

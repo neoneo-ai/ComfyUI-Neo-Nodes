@@ -316,6 +316,113 @@ class TestScanSkillsGenConfig(unittest.TestCase):
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestVideoSkillAvailable(unittest.TestCase):
+    """scan_skills：gen_video 技能附 available 标记（VDN 加速技能依赖 ComfyUI-VDN-H3 插件）；非视频技能不附"""
+
+    def setUp(self):
+        self.skill_mod = getattr(prompts_mod, "skill", None)
+        if self.skill_mod is None:
+            self.skipTest("prompts 未暴露 skill 模块")
+        self._tmp = tempfile.TemporaryDirectory()
+        root = self._tmp.name
+        self._orig_custom = self.skill_mod.SKILL_CUSTOM_DIR
+        self._orig_tasks = self.skill_mod.TASKS_DIR
+        self.skill_mod.SKILL_CUSTOM_DIR = os.path.join(root, "custom")
+        self.skill_mod.TASKS_DIR = os.path.join(root, "tasks")
+        # 真实环境可能装了 VDN 插件：测试期间摘除 ApplyVDNH3* 注册，tearDown 还原
+        self._mappings = self.skill_mod.comfy_nodes.NODE_CLASS_MAPPINGS
+        self._orig_mappings = dict(self._mappings)
+        for k in [k for k in self._mappings if k.startswith("ApplyVDNH3")]:
+            del self._mappings[k]
+
+    def tearDown(self):
+        self.skill_mod.SKILL_CUSTOM_DIR = self._orig_custom
+        self.skill_mod.TASKS_DIR = self._orig_tasks
+        self._mappings.clear()
+        self._mappings.update(self._orig_mappings)
+        self._tmp.cleanup()
+
+    def _make_video_skill(self, sid, workflow):
+        self.assertTrue(self.skill_mod.save_skill_main(
+            sid, sid, "body", None, "custom", False,
+            category="video_gen", gen_video=True))
+        d = os.path.join(self._tmp.name, "custom", sid)
+        if workflow is not None:
+            with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+                json.dump(workflow, f)
+        return d
+
+    def _by_id(self):
+        return {s["id"]: s for s in self.skill_mod.scan_skills()}
+
+    def test_vdn_skill_unavailable_without_plugin(self):
+        # workflow 引用 VDN 节点且插件未装 → available=False
+        self._make_video_skill("zz-test-vdn", {
+            "1": {"class_type": "UNETLoader", "inputs": {}},
+            "2": {"class_type": "ApplyVDNH3Advanced", "inputs": {"model": ["1", 0]}},
+        })
+        s = self._by_id().get("zz-test-vdn")
+        self.assertIsNotNone(s, "视频技能应被扫描到")
+        self.assertIs(s.get("available"), False)
+
+    def test_vdn_skill_available_with_plugin(self):
+        # VDN 节点已注册（插件已装）→ available=True
+        class _FakeVdn:
+            pass
+        self._mappings["ApplyVDNH3Advanced"] = _FakeVdn
+        self._make_video_skill("zz-test-vdn2", {
+            "2": {"class_type": "ApplyVDNH3Advanced", "inputs": {}},
+        })
+        s = self._by_id().get("zz-test-vdn2")
+        self.assertIsNotNone(s)
+        self.assertIs(s.get("available"), True)
+
+    def test_non_vdn_video_skill_available(self):
+        # workflow 不引用 VDN → 恒可用（与插件无关）
+        self._make_video_skill("zz-test-plain", {"1": {"class_type": "UNETLoader", "inputs": {}}})
+        s = self._by_id().get("zz-test-plain")
+        self.assertIsNotNone(s)
+        self.assertIs(s.get("available"), True)
+
+    def test_non_video_skill_no_available_field(self):
+        # 非视频技能不附 available 字段
+        sid = "zz-test-nonvideo"
+        self.assertTrue(self.skill_mod.save_skill_main(sid, "ZZ Test NonVideo", "body", None, "custom"))
+        s = self._by_id().get(sid)
+        self.assertIsNotNone(s)
+        self.assertNotIn("available", s)
+
+    def test_load_skill_route_returns_available(self):
+        # 详情弹窗顶部「不可用」说明靠 load_skill 响应的 available 字段
+        self._make_video_skill("zz-test-vdn-route", {
+            "2": {"class_type": "ApplyVDNH3Advanced", "inputs": {}},
+        })
+        async def _json():
+            return {"id": "zz-test-vdn-route"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json)))
+        body = json.loads(resp.body)
+        self.assertIs(body["available"], False)
+
+        self._make_video_skill("zz-test-plain-route", {"1": {"class_type": "UNETLoader", "inputs": {}}})
+        async def _json2():
+            return {"id": "zz-test-plain-route"}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json2)))
+        body = json.loads(resp.body)
+        self.assertIs(body["available"], True)
+
+        sid = "zz-test-nonvideo-route"
+        self.assertTrue(self.skill_mod.save_skill_main(sid, "ZZ Route", "body", None, "custom"))
+        async def _json3():
+            return {"id": sid}
+        resp = asyncio.run(self.skill_mod.rs_prompts_load_skill(
+            types.SimpleNamespace(json=_json3)))
+        body = json.loads(resp.body)
+        self.assertNotIn("available", body)
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestSaveSkillMultiTurn(unittest.TestCase):
     """save_skill_main 的 multi_turn 设置：显式写入 / 缺省沿用 / False 移除"""
 

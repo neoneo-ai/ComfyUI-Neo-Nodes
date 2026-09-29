@@ -2052,6 +2052,21 @@ class DirectorBundleTests(unittest.TestCase):
         self.assertNotIn("skill_id", opt)
         self.assertIsInstance(opt["skill"][0], list)
 
+    def test_skill_default_is_fewest_steps_available(self):
+        # 默认 skill = 可用技能里采样步数最少者；不可用项带「（不可用）」后缀且被跳过
+        orig = h3_video_director._gen_video_skills
+        h3_video_director._gen_video_skills = lambda: [
+            {"id": "a", "cn_name": "A", "name": "a", "gen_config": {"steps": 20}},
+            {"id": "b", "cn_name": "B", "name": "b", "available": False, "gen_config": {"steps": 4}},
+            {"id": "c", "cn_name": "C", "name": "c", "gen_config": {"steps": 8}},
+        ]
+        try:
+            opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
+            self.assertEqual(opt["skill"][0], ["A", "B（不可用）", "C"])
+            self.assertEqual(opt["skill"][1]["default"], "C")
+        finally:
+            h3_video_director._gen_video_skills = orig
+
 
 class DirectorSpecRouteTests(unittest.TestCase):
     """/rs_recipes/director_spec 请求解析与错误分支（load_director_spec 打桩）。"""

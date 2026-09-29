@@ -48,6 +48,7 @@ except ImportError:  # pypinyin 缺失时中文拼音匹配静默不可用，其
     lazy_pinyin = None
 import server
 from server import PromptServer
+import nodes as comfy_nodes
 from .minimax_h3 import _ratio, _filter_mode_sections, _h3_audit_and_repair, _h3_audit_events, _h3_grounding_check, _h3_mode, format_h3_context_lines
 
 logger = logging.getLogger(__name__)
@@ -762,6 +763,21 @@ def _attach_gen_config(skill: dict, skill_id: str) -> None:
         skill["gen_config"] = summary
 
 
+def _vdn_plugin_installed() -> bool:
+    """VDN 加速插件 ComfyUI-VDN-H3 是否已装（ApplyVDNH3* 节点已注册）。"""
+    return any(ct.startswith("ApplyVDNH3") for ct in comfy_nodes.NODE_CLASS_MAPPINGS)
+
+
+def _video_skill_available(d: str) -> bool:
+    """视频技能当前可用性：workflow 引用 VDN 加速节点时依赖可选插件 ComfyUI-VDN-H3，未装则不可用。"""
+    wf = os.path.join(d, "workflow.json")
+    if not os.path.isfile(wf):
+        return True
+    with open(wf, encoding="utf-8") as f:
+        needs_vdn = "ApplyVDNH3" in f.read()
+    return (not needs_vdn) or _vdn_plugin_installed()
+
+
 def scan_skills() -> list:
     """合并 tasks + presets/custom 为统一 skill 元数据列表。
 
@@ -799,6 +815,8 @@ def scan_skills() -> list:
                 "description": meta.get("description", ""),
             }
             _attach_gen_config(skill, skill_id)
+            if skill["gen_video"]:
+                skill["available"] = _video_skill_available(d)
             skills.append(skill)
 
     # 2) 预设 + 自定义 (presets/<id>/, custom/<id>/) -> category=frontmatter（缺省 image_enhance）
@@ -832,6 +850,8 @@ def scan_skills() -> list:
                     "description": meta.get("description", ""),
                 }
                 _attach_gen_config(skill, skill_id)
+                if skill["gen_video"]:
+                    skill["available"] = _video_skill_available(d)
                 skills.append(skill)
 
     return skills
@@ -1546,7 +1566,7 @@ async def rs_prompts_load_skill(request):
         for fn in _list_all_skill_files(d):
             fp = os.path.join(d, fn)
             files.append({"name": fn, "size": os.path.getsize(fp)})
-        return web.json_response({
+        resp = {
             "id": skill_id,
             "name": meta.get("name", skill_id),
             "cn_name": meta.get("cn_name") or meta.get("name") or skill_id,
@@ -1566,7 +1586,10 @@ async def rs_prompts_load_skill(request):
             "mode": str(meta.get("mode") or "").strip(),
             "requires_ref": bool(meta.get("requires_ref", False)),
             "config_overridden": has_skill_config_override(skill_id),
-        })
+        }
+        if resp["gen_video"]:
+            resp["available"] = _video_skill_available(d)   # 详情弹窗顶部「不可用」说明用
+        return web.json_response(resp)
     except Exception as e:
         logger.error(f"Error loading skill: {e}")
         return web.Response(status=500, text=str(e))

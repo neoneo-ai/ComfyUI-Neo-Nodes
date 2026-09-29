@@ -1976,7 +1976,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
 
     // 统一技能（非混合模式）：紧邻生成模式，一次选择应用到所有分段（各段行不再单独选技能）；混合模式整体隐藏（逐段各选）。
-    const initSkillId = (exSegs[0] && exSegs[0].skill_id) || (skills.length ? skills[0].id : '');
+    // 新建配方默认技能：分镜生视频模式优先 H3 连续多段合成 (VDN)（VDN 插件已装时），不可用回落非 VDN 版
+    const newDefaultSkill = (() => {
+        if (!existing && initMode === 'f2v') {
+            const vdn = skills.find(s => s.id === 'minimax_h3_vdn_multiframe' && s.available !== false);
+            if (vdn) return vdn.id;
+            const base = skills.find(s => s.id === 'minimax_h3_multiframe');
+            if (base) return base.id;
+        }
+        return skills.length ? skills[0].id : '';
+    })();
+    const initSkillId = (exSegs[0] && exSegs[0].skill_id) || newDefaultSkill;
     const gSkillLabel = $el('label', { className: 'neo-director-global-skill-label', textContent: '技能' });
     gSkillSel = $el('select', { className: 'neo-director-global-skill', title: '统一决定各段模板与模型；混合模式下改为逐段选择' });
     fillSkillOptions(gSkillSel, initMode, initSkillId);

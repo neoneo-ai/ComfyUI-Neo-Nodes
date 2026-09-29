@@ -35,7 +35,7 @@ from server import PromptServer
 from .bundles import get_bundle
 from .image_gen import render_template
 from .image_gen_edit import _image_to_data_uri, _model_injection_node, execute_graph_inprocess
-from .h3_video_gen import H3_FPS, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, is_multiframe_skill, resolve_video_params
+from .h3_video_gen import H3_FPS, _default_video_skill, _gen_video_skills, _resolve_skill_id, _require_vdn_plugin, _seconds_to_frames, _skill_label, is_multiframe_skill, resolve_video_params
 from .h3_preview import load_h3_tiny_vae, preview_override
 from .skill import get_skill_gen_config, load_skill_workflow
 from .recipes import list_director_recipes, load_director_spec
@@ -825,12 +825,13 @@ class NeoH3VideoDirector:
     def INPUT_TYPES(cls):
         names = list_director_recipes()
         vskills = _gen_video_skills()
+        default_skill = _default_video_skill(vskills)   # 可用技能里步数最少者；都不可用时在全列表里取步数最少者
         return {
             "required": {
                 "recipe": (names, {"default": names[0] if names else ""}),
             },
             "optional": {
-                "skill": ([s.get("cn_name") or s["name"] for s in vskills], {"default": (vskills[0].get("cn_name") or vskills[0]["name"]) if vskills else ""}),  # BUNDLE 单段用的视频 skill；recipe 多段模式忽略（各段自带）
+                "skill": ([_skill_label(s) for s in vskills], {"default": _skill_label(default_skill) if default_skill else ""}),  # BUNDLE 单段用的视频 skill（不可用带「（不可用）」后缀）；recipe 多段模式忽略（各段自带）
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),   # -1 = 用配方 shared.seed
                 "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
                 "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）

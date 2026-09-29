@@ -3177,6 +3177,19 @@
     overflow-y: auto;
 }
 
+/* 不可用说明（依赖 VDN 加速节点的视频技能在插件未装时）：内容区顶部提示条 */
+.rs-skill-unavailable-banner {
+    flex-shrink: 0;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border: 1px solid #7f1d1d;
+    border-radius: 6px;
+    background: #3a1e24;
+    color: #fca5a5;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 /* multi_turn 勾选行（名称行下方） */
 .rs-skill-multiturn-row {
     display: flex;

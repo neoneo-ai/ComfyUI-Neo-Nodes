@@ -454,6 +454,41 @@ class GenVideoSkillsTests(unittest.TestCase):
         ids = {s["id"] for s in h3_video_gen._gen_video_skills()}
         self.assertNotIn("image_gen", ids)
 
+    def test_skill_label_marks_unavailable(self):
+        self.assertEqual(h3_video_gen._skill_label({"cn_name": "H3 文生视频", "name": "t2v"}), "H3 文生视频")
+        self.assertEqual(
+            h3_video_gen._skill_label({"cn_name": "H3 连续多段合成 (VDN)", "name": "vdn", "available": False}),
+            "H3 连续多段合成 (VDN)（不可用）")
+
+    def test_default_video_skill_fewest_steps_among_available(self):
+        skills = [
+            {"id": "a", "cn_name": "A", "gen_config": {"steps": 20}},
+            {"id": "b", "cn_name": "B", "available": False, "gen_config": {"steps": 4}},   # 步数最少但不可用 → 跳过
+            {"id": "c", "cn_name": "C"},                                                 # 无 config → 按默认 20
+        ]
+        self.assertEqual(h3_video_gen._default_video_skill(skills)["id"], "a")
+
+    def test_default_video_skill_falls_back_when_none_available(self):
+        skills = [
+            {"id": "a", "cn_name": "A", "available": False},
+            {"id": "b", "cn_name": "B", "available": False, "gen_config": {"steps": 8}},
+        ]
+        self.assertEqual(h3_video_gen._default_video_skill(skills)["id"], "b")   # 全不可用 → 全列表里步数最少者
+
+    def test_default_video_skill_empty_list(self):
+        self.assertIsNone(h3_video_gen._default_video_skill([]))
+
+    def test_resolve_skill_id_accepts_marked_label_and_legacy_value(self):
+        orig = h3_video_gen._gen_video_skills
+        h3_video_gen._gen_video_skills = lambda: [
+            {"id": "vdn", "cn_name": "H3 连续多段合成 (VDN)", "name": "vdn", "available": False},
+        ]
+        try:
+            self.assertEqual(h3_video_gen._resolve_skill_id("H3 连续多段合成 (VDN)（不可用）"), "vdn")
+            self.assertEqual(h3_video_gen._resolve_skill_id("H3 连续多段合成 (VDN)"), "vdn")   # 旧工作流存的是无后缀值
+        finally:
+            h3_video_gen._gen_video_skills = orig
+
 
 # ---- 真实模板端到端：假节点替代 H3/加载器，跑 preset 里的真实 workflow.json ----
 class _F_UNETLoader:

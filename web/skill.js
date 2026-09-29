@@ -337,7 +337,7 @@ function dispatchSkillChanged(skillId) {
  *  与后端 _resolve_skill_id 同规则：只认带 workflow.json 的同类型技能（名称取列表最后一个同名项），
  *  下拉 value 就是技能名称，所以校验前必须先反查，否则 /neo_image_gen/skill_workflow 拿不到模板。 */
 async function resolveSkillId(skill, isVideo) {
-    const ref = String(skill || "").trim();
+    const ref = String(skill || "").trim().replace(/（不可用）$/, ""); // 下拉值可能带「（不可用）」后缀（h3_video_gen._skill_label），先剥掉再反查
     if (!ref) return "";
     const entry = _skillNameLookup[isVideo ? "video" : "image"];
     if (!entry.map || Date.now() - entry.t > SKILL_VALIDATION_TTL) {
@@ -512,6 +512,11 @@ function createSkillDetailPopup() {
 
     // ---- 内容：名称行 + 正文区（多文件下拉 + 预览/编辑切换）----
     const content = mkEl("div", "rs-skill-modal-content");
+
+    // 不可用说明：依赖 VDN 加速节点的视频技能在插件未装时顶部提示（不影响查看/编辑）
+    const unavailableBanner = mkEl("div", "rs-skill-unavailable-banner");
+    unavailableBanner.textContent = "⚠️ 该技能依赖 VDN 加速节点（ComfyUI-VDN-H3 插件），当前未注册，暂不能用于生成。可继续查看与编辑其设置。";
+    unavailableBanner.style.display = "none";
 
     const nameRow = mkEl("div", "rs-config-row");
     const nameLabel = mkEl("label", "rs-form-label");
@@ -1059,7 +1064,7 @@ function createSkillDetailPopup() {
     deleteBtn.textContent = "🗑 Delete";
     footerBtns.append(saveBtn, deleteBtn);
 
-    content.append(nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, workflowWrap, footerBtns);
+    content.append(unavailableBanner, nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, workflowWrap, footerBtns);
     modal.append(header, content);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -1188,6 +1193,8 @@ function createSkillDetailPopup() {
         titleSpan.title = nm;
         multiTurnChk.checked = !!(full && full.multi_turn);
         configOverridden = !!(full && full.config_overridden);
+        // 不可用视频技能（VDN 加速节点未装）：内容区顶部显示说明
+        unavailableBanner.style.display = (full && full.gen_video && full.available === false) ? "block" : "none";
         currentFiles = (full && full.files) || [];
         let mainName = null;
         for (const f of currentFiles) { if (isMainFile(f.name)) { mainName = f.name; break; } }
@@ -1283,6 +1290,7 @@ function createSkillDetailPopup() {
         multiTurnRow.style.display = "";
         enhancePromptWrap.style.display = "none";
         enhancePromptChk.checked = false;
+        unavailableBanner.style.display = "none";
         workflowWrap.style.display = "none";
         workflowShown = false;
         workflowBody.innerHTML = "";
@@ -1605,8 +1613,9 @@ function skillItemsFromMeta(skills, allowed) {
     for (const s of skills || []) {
         let value;
         if (allowed) {
-            // combo 选项值 = cn_name || name（见 image_gen_edit._gen_image_skills）；按此优先级匹配，保证写回合法
+            // combo 选项值 = cn_name || name（见 image_gen_edit._gen_image_skills）；不可用视频技能带「（不可用）」后缀（h3_video_gen._skill_label）；按此优先级匹配，保证写回合法
             const candidates = [s.cn_name, s.name, s.id].filter(Boolean);
+            if (s.available === false) candidates.unshift(`${s.cn_name || s.name || s.id}（不可用）`);
             value = candidates.find((c) => allowed.includes(c)) || null;
         } else {
             value = s.name || s.id;
@@ -1615,7 +1624,7 @@ function skillItemsFromMeta(skills, allowed) {
         items.push({
             value,
             skillId: s.id, // 行内 Edit/查看需按 id 打开详情（value 可能是 name，仅用于写回 combo）
-            label: s.cn_name || s.name || s.id,
+            label: String(value).endsWith("（不可用）") ? value : (s.cn_name || s.name || s.id),
             badge: s.needs_image ? "📷" : "",
             tags: (s.tags || []).join(" "),
             source: s.source || "custom",

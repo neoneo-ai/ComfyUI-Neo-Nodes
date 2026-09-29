@@ -452,7 +452,7 @@ app.registerExtension({
                 return true;
             };
             const applyDurationFromSkill = async (initial = false) => {
-                const name = skillIdWidget ? String(skillIdWidget.value || "") : "";
+                const name = skillIdWidget ? String(skillIdWidget.value || "").replace(/（不可用）$/, "") : ""; // 下拉值可能带「（不可用）」后缀，剥掉再按名反查
                 if (!name || !durationWidget) return;
                 const repaired = repairDuration(); // 同步修复，fetch 前先保证值合法
                 const metas = await listSkills();
