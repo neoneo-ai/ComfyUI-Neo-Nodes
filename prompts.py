@@ -16,6 +16,7 @@ import logging
 import random
 import time
 import base64
+from typing import Optional
 from server import PromptServer
 
 from .util import PrefixFilter
@@ -910,11 +911,127 @@ async def rs_prompts_get_llm_mode(request):
 
 @server.PromptServer.instance.routes.post("/rs_prompts/extract_title")
 async def rs_prompts_extract_title(request):
-    return await handle_llm_api_request("extract_title", request)
+    """提取标题：优先 LAYA 选段（33ms），不可用时回退规则 → LLM。"""
+    from aiohttp import web
+    try:
+        data = await request.json()
+        text = (data.get("text") or "").strip()
+        if not text:
+            return web.json_response({"error": "text content is empty"}, status=400)
+
+        # 1. 尝试 LAYA：拆段 → choice 选最佳标题段
+        from . import laya_router
+        from .prompt_lines import split_title_candidates
+        if laya_router.is_available():
+            segments = split_title_candidates(text)
+            if len(segments) >= 2:
+                questions = {
+                    "title": {
+                        "type": "choice",
+                        "instructions": "Which segment best represents the main subject and scene, suitable as a short title for this prompt?",
+                        "criteria": {s[:40]: s[:60] for s in segments},
+                    }
+                }
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(None, lambda: laya_router.classify(text, questions))
+                if result and "title" in result:
+                    val = result["title"].get("value", "")
+                    if val:
+                        # LAYA 返回的是 criteria key（截断到 40 字），还原为完整段
+                        best_seg = next((s for s in segments if s[:40] == val), val)
+                        title = best_seg.strip()[:50]
+                        if title:
+                            logger.info(f"extract_title → LAYA: {title}")
+                            return web.json_response({"status": "success", "title": title})
+
+        # 2. LAYA 不可用/无结果：规则提取
+        from .prompt_lines import _extract_title
+        rule_title = _extract_title(text)
+        if rule_title and rule_title != "(未命名)" and len(rule_title) >= 4:
+            logger.info(f"extract_title → Rule: {rule_title}")
+            return web.json_response({"status": "success", "title": rule_title})
+
+        # 3. 规则也不够好：fallback LLM
+        logger.info("extract_title → LLM fallback")
+        return await handle_llm_api_request("extract_title", request)
+    except Exception as e:
+        logger.error(f"Error in extract_title: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 @server.PromptServer.instance.routes.post("/rs_prompts/extract_classify")
 async def rs_prompts_extract_classify(request):
-    return await handle_llm_api_request("extract_classify", request)
+    """提示词分类：优先 LAYA（33ms），不可用时规则匹配，最后 fallback LLM。"""
+    from aiohttp import web
+    try:
+        data = await request.json()
+        text = (data.get("text") or "").strip()
+        if not text:
+            return web.json_response({"error": "text content is empty"}, status=400)
+
+        # 1. 尝试 LAYA 快速分类
+        from . import laya_router
+        if laya_router.is_available():
+            questions = {
+                "classify": {
+                    "type": "choice",
+                    "instructions": "Which style category does this prompt belong to?",
+                    "criteria": {
+                        "唯美": "aesthetic, ethereal, dreamy, beautiful scenery, 唯美",
+                        "特色": "unique, distinctive, special style, 特色",
+                        "写实": "realistic, photorealistic, natural, 写实",
+                        "古风": "ancient Chinese, classical, 古风, traditional Chinese",
+                        "动漫": "anime, manga, cartoon, illustration, 动漫",
+                        "油画": "oil painting, classical art, impressionist, 油画",
+                        "室内": "indoor, interior, room, house, 室内",
+                        "户外": "outdoor, landscape, nature, street, 户外",
+                    },
+                }
+            }
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, lambda: laya_router.classify(text, questions))
+            if result and "classify" in result:
+                val = result["classify"].get("value", "")
+                conf = result["classify"].get("confidence", 0)
+                if val:
+                    logger.info(f"extract_classify → LAYA: {val} (conf={conf:.2f})")
+                    return web.json_response({"status": "success", "classify": val})
+            logger.info("extract_classify → LAYA returned no result, fallback to rule")
+
+        # 2. LAYA 不可用/无结果：关键词规则匹配
+        rule_val = _rule_classify(text)
+        if rule_val:
+            logger.info(f"extract_classify → Rule: {rule_val}")
+            return web.json_response({"status": "success", "classify": rule_val})
+
+        # 3. 规则也没匹配到：fallback LLM
+        logger.info("extract_classify → LLM fallback")
+        return await handle_llm_api_request("extract_classify", request)
+    except Exception as e:
+        logger.error(f"Error in extract_classify: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# 分类关键词表（按优先级排列，先匹配先返回）
+_CLASSIFY_RULES = [
+    ("古风", ["古风", "水墨", "古典中国", "ancient chinese", "classical chinese", "traditional chinese", "唐宋", "汉服", "仙侠"]),
+    ("动漫", ["动漫", "二次元", "anime", "manga", "cartoon", "illustration", "日系", "赛璐珞"]),
+    ("油画", ["油画", "oil painting", "impressionist", "印象派", "古典油画", "renoir", "monet"]),
+    ("唯美", ["唯美", "梦幻", "ethereal", "dreamy", "aesthetic", "仙气", "飘逸"]),
+    ("写实", ["写实", "photorealistic", "realistic", "电影质感", "胶片", "35mm", "纪录片", "写实质感"]),
+    ("室内", ["室内", "interior", "indoor", "房间", "客厅", "卧室", "书房"]),
+    ("户外", ["户外", "outdoor", "landscape", "风景", "街拍", "自然光", "山间"]),
+    ("特色", ["赛博朋克", "蒸汽波", "cyberpunk", "vaporwave", "超现实主义", "surreal", "特色"]),
+]
+
+
+def _rule_classify(text: str) -> Optional[str]:
+    """关键词规则分类：返回第一个匹配的类别，无匹配返回 None。"""
+    lower = text.lower()
+    for category, keywords in _CLASSIFY_RULES:
+        for kw in keywords:
+            if kw.lower() in lower:
+                return category
+    return None
 
 @server.PromptServer.instance.routes.post("/rs_prompts/enhance_prompt")
 async def rs_prompts_enhance_prompt(request):
@@ -998,6 +1115,71 @@ async def rs_prompts_smart_prompt(request):
         logger.error(f"Error handling smart prompt: {e}")
         logger.exception(e)
         return web.json_response({"error": str(e)}, status=500)
+
+
+# ==========================================
+# LAYA 轻量分类 API（智能 skill 选择）
+# ==========================================
+
+@server.PromptServer.instance.routes.post("/rs_prompts/classify_skill")
+async def rs_prompts_classify_skill(request):
+    """根据用户文本推荐最匹配的增强 skill（LAYA 33ms 分类）。
+
+    请求: {"text": "用户描述"}
+    响应: {"skill": "chinese_ancient_fantasy", "confidence": 0.91}
+    LAYA 不可用时: {"skill": null}
+    """
+    try:
+        data = await request.json()
+        text = (data.get("text") or "").strip()
+        if not text:
+            return web.json_response({"skill": None})
+
+        from . import laya_router
+        if not laya_router.is_available():
+            return web.json_response({"skill": None})
+
+        # 从 scan_skills() 筛选 image_enhance 类候选
+        all_skills = skill.scan_skills()
+        candidates = [s for s in all_skills if s.get("category") == "image_enhance"]
+        if not candidates:
+            return web.json_response({"skill": None})
+
+        # 构造 LAYA choice questions：每个 skill 的 criteria 用 cn_name + tags + description
+        criteria = {}
+        for s in candidates:
+            parts = [s.get("cn_name") or s["id"]]
+            if s.get("tags"):
+                parts.append(", ".join(s["tags"][:4]))
+            if s.get("description"):
+                parts.append(s["description"][:60])
+            criteria[s["id"]] = " - ".join(parts)
+
+        questions = {
+            "skill": {
+                "type": "choice",
+                "instructions": "Which prompt enhancement style best matches this image description?",
+                "criteria": criteria,
+            }
+        }
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, lambda: laya_router.classify(text, questions))
+
+        if result and "skill" in result:
+            val = result["skill"]
+            skill_id = val.get("value", "")
+            conf = val.get("confidence", 0.0)
+            # 验证返回的 skill_id 确实在候选列表中
+            if skill_id in criteria:
+                logger.info(f"classify_skill → LAYA: {skill_id} (conf={conf:.2f})")
+                return web.json_response({"skill": skill_id, "confidence": conf})
+
+        logger.info("classify_skill → no match")
+        return web.json_response({"skill": None})
+    except Exception as e:
+        logger.error(f"Error in classify_skill: {e}")
+        return web.json_response({"skill": None})
 
 
 # 中文反推系统提示词：明确中文质量词示例，避免 skill.md 默认英文版里的英文质量词把输出带成英文

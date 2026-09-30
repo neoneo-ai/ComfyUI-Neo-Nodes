@@ -1394,6 +1394,17 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         }
     };
 
+    // 配方名自动提取：关键动作完成后，若名称为空则用 LAYA→规则→LLM 提取（非阻塞）
+    const autoFillName = (sourceText) => {
+        if (nameInp.value.trim() || nameManuallySet) return;
+        const text = (sourceText || '').trim();
+        if (!text) return;
+        fetch('/rs_prompts/extract_title', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
+            .then(r => r.json())
+            .then(d => { if (d.title && !nameInp.value.trim() && !nameManuallySet) { nameInp.value = d.title; renderName(); } })
+            .catch(() => {});
+    };
+
     // ==========================================
     // 📖 故事板分镜（两种来源）：宫格图拆分 / 文字故事板一键生成
     // ==========================================
@@ -1485,6 +1496,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             if (srcSel.value !== 'text') { srcSel.value = 'text'; onFrameSourceChange(); }
             else renderSetupSegs();   // 已在文字侧：只刷新各段对照
             storyStatus.textContent = `已生成 ${data.segments.length} 段，详见下方各段对照`;
+            autoFillName(idea);
             markDirty();
             app.extensionManager.toast.add({ severity: 'success', summary: '分镜已生成', detail: `${data.segments.length} 段`, life: 4000 });
         } catch (e) {
@@ -1811,6 +1823,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             setGridPrompts(data.prompts);   // 原宫格图元信息里的提示词：就地展示（不改动各段提示词）
             gridPanelShape = { rows: Number(data.rows) || 0, cols: Number(data.cols) || 0 };   // 记录行列，供逐格描述标注本格位置
             gridStatus.textContent = `${data.rows}×${data.cols} → ${data.panels.length}格`;
+            autoFillName(typeof data.prompts === 'string' ? data.prompts : (data.prompts || [])[0] || '');
             app.extensionManager.toast.add({ severity: 'success', summary: '宫格拆分', detail: `${data.rows}×${data.cols} → ${data.panels.length} 段（各格已作首帧）`, life: 4000 });
             if (data.panels.length > 9) app.extensionManager.toast.add({ severity: 'warning', summary: '宫格拆分', detail: `格子数 ${data.panels.length} 超过 H3 参考上限 9，保存时多余段不会被执行`, life: 6000 });
         } catch (e) {

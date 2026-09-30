@@ -96,6 +96,27 @@ def parse_entries(text: str) -> list[tuple[str, str]]:
     return entries
 
 
+def split_title_candidates(text: str, max_segments: int = 5) -> list[str]:
+    """按逗号/中文逗号拆分提示词，返回前 N 个有效段（去空、去纯质量词）。"""
+    parts = re.split(r'[,，]', text)
+    quality_only = re.compile(
+        r'^[\s,，]*(?:masterpiece|best quality|highres|8k|ultra detailed|finest details'
+        r'|incredible detail|sharp focus|professional|award winning'
+        r'|杰作|最佳质量|高清|超清|细节丰富|专业级)*[\s,，]*$', re.IGNORECASE
+    )
+    segments = []
+    for p in parts:
+        s = p.strip().strip('「」『』"\'')
+        if len(s) < 2:
+            continue
+        if quality_only.match(s):
+            continue
+        segments.append(s)
+        if len(segments) >= max_segments:
+            break
+    return segments
+
+
 def load_entries(filepath: str) -> list[tuple[str, str]]:
     """带缓存解析：以 (mtime_ns, size) 为失效依据，每文件只读盘解析一次。"""
     stat = os.stat(filepath)

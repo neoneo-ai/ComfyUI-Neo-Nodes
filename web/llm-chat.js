@@ -1013,6 +1013,28 @@ function createGenerateHandler(promptUI) {
             console.warn("collectWorkflowContext failed:", e);
         }
 
+        // LAYA 智能选 skill：有文字输入且当前未显式选择增强 skill 时，自动推荐最匹配的
+        if (messageToLLM && skillSelector && !skillSelector.value) {
+            try {
+                const resp = await Promise.race([
+                    fetch("/rs_prompts/classify_skill", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ text: messageToLLM }),
+                    }).then(r => r.json()),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 500)),
+                ]);
+                if (resp?.skill && resp.confidence > 0.6) {
+                    const opt = [...skillSelector.options].find(o => o.value === resp.skill);
+                    if (opt) {
+                        skillSelector.value = resp.skill;
+                        // 同步到 node properties（持久化）
+                        if (node.properties) node.properties.rs_selected_skill = resp.skill;
+                    }
+                }
+            } catch (e) { /* LAYA 不可用/超时：静默跳过，保持默认 */ }
+        }
+
         // 检查是否选择了 skill（任务/预设统一选择器，值为 skill id）
         const selectedSkillId = skillSelector?.value || "";
 
