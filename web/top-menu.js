@@ -13,10 +13,11 @@ import { openDirectorEditor } from "./director.js";
 import { createModelConfigForm } from "./llm-setting.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "./image-gen.js";
 import { runRepair, showRepairLogDialog, showRepairMappingsDialog } from "./workflow.js";
+import { openSkillManager } from "./skill.js";
 
 const STUDIO_URL = "/neo-studio";
 const REPO_URL = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes";
-const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 导演 / 建节点 / 设置 / 修复 / 关于）";
+const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 导演 / 建节点 / 设置 / 技能 / 修复 / 关于）";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
@@ -299,6 +300,7 @@ function openMenu(anchor) {
     menuEl.append(nodeRow, subEl);
 
     menuEl.appendChild(menuItem("⚙️ 设置", openSettingsModal));
+    menuEl.appendChild(menuItem("🗂 技能管理", openSkillManager));
 
     menuEl.appendChild(separator());
     const repairItem = menuItem("🔧 修复工作流", runRepair);

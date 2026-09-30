@@ -17,7 +17,7 @@
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频/音频素材浏览与管理：内置预设素材、自定义目录与 Civitai LORA 匹配；灯箱预览、一键发送到节点；Grid / Character 主目录（生成结果直达进入，按日期归档、远端预设只读） | [gallery](docs/gallery.md) |
 | ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） | [gallery](docs/gallery.md) |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 | [recipes](docs/recipes.md) |
-| 🅝 顶栏菜单 | 顶栏入口 | 插件统一入口（🅝 按钮下拉）：🎬 Neo Studio / 🎥 新建导演配方 / 🧩 创建节点 / ⚙️ 设置（LLM / 生图默认 / 生视频模型）/ 🔧 修复工作流 / 📜 修复记录 / ℹ️ 关于插件 | [workflow-repair](docs/workflow-repair.md) |
+| 🅝 顶栏菜单 | 顶栏入口 | 插件统一入口（🅝 按钮下拉）：🎬 Neo Studio / 🎥 新建导演配方 / 🧩 创建节点 / ⚙️ 设置（LLM / 生图默认 / 生视频模型）/ 🗂 技能管理（左列表 + 右详情统一窗口）/ 🔧 修复工作流 / 📜 修复记录 / ℹ️ 关于插件 | [workflow-repair](docs/workflow-repair.md) |
 | 🔧 工作流修复 | 🅝 菜单项 | 换机器 / 改目录后模型路径失效时，按文件名匹配磁盘真实文件一键修复；可手动改选、记住映射、载入前自动检查 | [workflow-repair](docs/workflow-repair.md) |
 
 ## 功能演示

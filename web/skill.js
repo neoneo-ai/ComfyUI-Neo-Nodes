@@ -267,7 +267,7 @@ function renderMarkdown(src) {
 // skill 选择列表：分类标签 + 把 skills 填充进原生 <select>（combo-box 数据源）
 // ==========================================
 // 提示词节点技能列表：图像/视频提示词增强排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
-// 反推 / 直接生图或编辑 / custom 依次跟随；video_gen（生视频）与 task 为内部使用技能，不在下拉与 / 快捷菜单显示（hidden）；未知分类回落 image_enhance
+// 反推 / 直接生图或编辑 / custom 依次跟随；video_gen（生视频）与 task 为内部使用技能，不在下拉与 / 快捷菜单显示（hidden），task 也不进技能管理窗口左列表（managerHidden）；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
     "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
     "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
@@ -275,7 +275,7 @@ const CATEGORY_LABELS = {
     "image_gen": { label: "🖼️ 直接生图或编辑", order: 3 },
     "custom": { label: "📝 自定义", order: 4 },
     "video_gen": { label: "🎬 生视频 (H3)", order: 5, hidden: true },
-    "task": { label: "⚙️ 任务", order: 6, hidden: true }
+    "task": { label: "⚙️ 任务", order: 6, hidden: true, managerHidden: true }
 };
 
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记 */
@@ -489,9 +489,11 @@ function createSkillStatusRow(opts) {
 // 返回 { overlay, openExisting(id, source), openNew(), close }。
 // ==========================================
 
-function createSkillDetailPopup() {
+function createSkillDetailPopup(host) {
+    const embedded = !!host;   // 内嵌模式：modal 挂到调用方容器（统一技能管理窗口右侧），不自建遮罩、不监听全局 Esc/点遮罩
     const overlay = mkEl("div", "rs-skill-modal-overlay");
     const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
+    const showDetail = () => { if (embedded) modal.style.display = ""; else overlay.style.display = "flex"; };
 
     // ---- 头部：标题 + 来源徽标 + Copy as custom + 关闭 ----
     const header = mkEl("div", "rs-skill-modal-header");
@@ -1066,8 +1068,8 @@ function createSkillDetailPopup() {
 
     content.append(unavailableBanner, nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, workflowWrap, footerBtns);
     modal.append(header, content);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
+    if (embedded) { modal.style.display = "none"; host.appendChild(modal); }
+    else { overlay.appendChild(modal); document.body.appendChild(overlay); }
 
     // ---- 状态 ----
     let currentSkillId = null;
@@ -1172,7 +1174,7 @@ function createSkillDetailPopup() {
 
     // ---- 打开：查看/编辑已有 skill ----
     async function openExisting(id, source) {
-        overlay.style.display = "flex";
+        showDetail();
         titleSpan.textContent = "📝 Skill";
         currentSkillId = id;
         currentSource = source || "custom";
@@ -1272,7 +1274,7 @@ function createSkillDetailPopup() {
 
     // ---- 打开：新建空表单 ----
     function openNew() {
-        overlay.style.display = "flex";
+        showDetail();
         titleSpan.textContent = "✨ New Skill";
         titleSpan.removeAttribute("title");
         currentSkillId = null;
@@ -1340,7 +1342,7 @@ function createSkillDetailPopup() {
     dirtyConfirm.append(dirtyText, dirtyActions);
     content.insertBefore(dirtyConfirm, footerBtns);
 
-    function close() { dirtyConfirm.hidden = true; overlay.style.display = "none"; }
+    function close() { dirtyConfirm.hidden = true; if (embedded) modal.style.display = "none"; else overlay.style.display = "none"; }
 
     // 用户主动关闭（✕ / 点遮罩 / Esc）：有未保存修改时暂停关闭，等用户在确认条里选择
     function requestClose() {
@@ -1387,11 +1389,11 @@ function createSkillDetailPopup() {
         }
         if (isMainFile(selectedFile)) {
             const result = await saveSkill({ id: currentSkillId, name, content: contentTextarea.value, tags: [], source: "custom", multi_turn: multiTurnChk.checked });
-            if (result.success) { await persistGenSettings(); document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
+            if (result.success) { contentBaseline = { name: nameInput.value, content: contentTextarea.value, multiTurn: multiTurnChk.checked }; await persistGenSettings(); document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (result.error || "Unknown error"));
         } else {
             const r = await saveSkillFile(currentSkillId, selectedFile, contentTextarea.value);
-            if (r.success) { await persistGenSettings(); document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
+            if (r.success) { contentBaseline = { name: nameInput.value, content: contentTextarea.value, multiTurn: multiTurnChk.checked }; await persistGenSettings(); document.dispatchEvent(new CustomEvent("rs.skills.updated")); close(); }
             else alert("Save failed: " + (r.error || ""));
         }
     }
@@ -1464,12 +1466,15 @@ function createSkillDetailPopup() {
     ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => {
         modal.addEventListener(t, (e) => e.stopPropagation());
     });
-    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) requestClose(); });
     closeBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); requestClose(); });
-    const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") requestClose(); };
-    document.addEventListener("keydown", onKey);
+    if (!embedded) {
+        // 独立弹窗：点遮罩 / Esc 关闭；内嵌模式由宿主窗口（统一技能管理）负责关闭与 Esc
+        overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) requestClose(); });
+        const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") requestClose(); };
+        document.addEventListener("keydown", onKey);
+    }
 
-    return { overlay, openExisting, openNew, close };
+    return { overlay, openExisting, openNew, close, isDirty: hasUnsavedChanges };
 }
 
 // ==========================================
@@ -2221,6 +2226,197 @@ function createSkillDropdown() {
 }
 
 // ==========================================
+// 统一技能管理窗口：左侧技能列表（搜索 + 分类分组）+ 右侧技能详情（内嵌 createSkillDetailPopup）
+// 顶栏 🅝 菜单「🗂 技能管理」入口；跨节点单例，重复打开不叠加。
+// 技能增删改/上传均广播 rs.skills.updated，左侧列表随之自动刷新。
+// ==========================================
+let _skillManagerOpen = false;
+
+function openSkillManager() {
+    if (_skillManagerOpen) return;
+    _skillManagerOpen = true;
+
+    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    overlay.style.display = "flex";   // .rs-skill-modal-overlay 默认 display:none，内嵌整窗需显式显示
+    const box = mkEl("div", "rs-skill-manager");
+
+    // 顶部标题栏：🗂 技能管理 + ✕（关闭整窗）
+    const head = mkEl("div", "rs-skill-manager-head");
+    const title = mkEl("span", "rs-skill-manager-title");
+    title.textContent = "🗂 技能管理";
+    const closeBtn = mkEl("button", "rs-skill-modal-close");
+    closeBtn.type = "button";
+    closeBtn.title = "关闭（Esc）";
+    closeBtn.textContent = "✕";
+    head.append(title, closeBtn);
+
+    // 主体：左列表 | 右详情
+    const body = mkEl("div", "rs-skill-manager-body");
+    const left = mkEl("div", "rs-skill-manager-left");
+    const right = mkEl("div", "rs-skill-manager-right");
+    body.append(left, right);
+    box.append(head, body);
+
+    // 左：搜索框 + 列表 + 管理工具栏（新建 / ZIP / 目录 / 从画布）
+    const search = document.createElement("input");
+    search.type = "text";
+    search.className = "rs-skill-picker-search";
+    search.placeholder = "🔍 搜索技能…";
+    search.addEventListener("input", () => renderList());
+    const list = mkEl("div", "rs-skill-picker-list");
+    const mgmt = mkEl("div", "rs-skill-dropdown-footer");
+    left.append(search, list, mgmt);
+
+    // 右：占位提示 + 内嵌详情弹窗（modal 挂到 right）
+    const placeholder = mkEl("div", "rs-skill-manager-empty");
+    placeholder.textContent = "从左侧选择技能查看详情";
+    right.appendChild(placeholder);
+    const popup = createSkillDetailPopup(right);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    let allItems = [];
+    let selectedId = null;
+    const collapsedGroups = new Set();   // 折叠的分组（分类头点击切换，仅本次会话）
+    const syncEmpty = () => {
+        const m = right.querySelector(".rs-skill-modal");
+        placeholder.hidden = !!(m && m.style.display !== "none");
+    };
+
+    // 渲染分组列表（搜索过滤）；分类头可点击折叠/展开；选中项高亮 is-selected
+    function renderList() {
+        list.textContent = "";
+        const q = search.value.trim().toLowerCase();
+        const items = allItems.filter((it) => !q || `${it.label} ${it.badge || ""}`.toLowerCase().includes(q));
+        if (!items.length) {
+            const empty = mkEl("div", "rs-skill-picker-empty");
+            empty.textContent = q ? "无匹配技能" : "暂无技能";
+            list.appendChild(empty);
+            return;
+        }
+        // 搜索时强制展开，保证匹配项可见
+        const searching = !!q;
+        // 按分组聚合（items 已按 group 排序，Map 保持原顺序；无分组项归入 ""）
+        const groups = new Map();
+        for (const it of items) {
+            const g = it.group || "";
+            if (!groups.has(g)) groups.set(g, []);
+            groups.get(g).push(it);
+        }
+        for (const [g, groupItems] of groups) {
+            if (g) {
+                const collapsed = !searching && collapsedGroups.has(g);
+                const gh = mkEl("div", "rs-combo-category rs-skill-manager-cat");
+                gh.dataset.group = g;
+                const caret = mkEl("span", "rs-skill-manager-cat-caret");
+                caret.textContent = collapsed ? "▸" : "▾";
+                const lbl = mkEl("span", "rs-skill-manager-cat-label");
+                lbl.textContent = g;
+                gh.append(caret, lbl);
+                gh.title = collapsed ? `展开「${g}」` : `折叠「${g}」`;
+                gh.addEventListener("click", () => toggleGroup(g));
+                list.appendChild(gh);
+                if (collapsed) continue;
+            }
+            for (const it of groupItems) {
+                const row = mkEl("div", "rs-skill-picker-item" + (it.value === selectedId ? " is-selected" : ""));
+                if (it.badge) { const b = mkEl("span", "rs-skill-picker-badge"); b.textContent = it.badge; row.appendChild(b); }
+                const lbl = mkEl("span", "rs-skill-picker-label");
+                lbl.textContent = it.label;
+                row.appendChild(lbl);
+                row.addEventListener("click", () => selectSkill(it));
+                list.appendChild(row);
+            }
+        }
+    }
+
+    // 分类头点击：切换该分组的折叠状态并重渲染
+    function toggleGroup(group) {
+        if (collapsedGroups.has(group)) collapsedGroups.delete(group);
+        else collapsedGroups.add(group);
+        renderList();
+    }
+
+    async function loadList() {
+        const skills = (await listSkills()).filter(s => !CATEGORY_LABELS[s.category]?.managerHidden);
+        allItems = skillItemsFromMeta(skills);
+        if (selectedId && !allItems.some((it) => it.value === selectedId)) selectedId = null;   // 删除后清选择
+        renderList();
+        syncEmpty();
+    }
+
+    // 选中技能：有未保存修改先确认，再加载详情到右侧
+    async function selectSkill(it) {
+        if (it.value === selectedId) return;
+        if (popup.isDirty() && !confirm("当前技能有未保存的修改，放弃并切换？")) return;
+        selectedId = it.value;
+        renderList();
+        await popup.openExisting(it.skillId || it.value, it.source);
+        syncEmpty();
+    }
+
+    // 管理工具栏按钮：新建进右侧内嵌详情；上传/导出广播 rs.skills.updated 自动刷新列表
+    const makeMgmtBtn = (label, tip) => {
+        const b = mkEl("button", "rs-btn rs-btn-local rs-skill-footer-btn");
+        b.type = "button";
+        b.textContent = label;
+        b.title = tip;
+        b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+        return b;
+    };
+    const newBtn = makeMgmtBtn("+ 新建", "新建自定义技能");
+    newBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (popup.isDirty() && !confirm("当前技能有未保存的修改，放弃并新建？")) return;
+        selectedId = null;
+        renderList();
+        await popup.openNew();
+        syncEmpty();
+    });
+    const zipBtn = makeMgmtBtn("⬆ ZIP", "上传 .zip 技能包");
+    zipBtn.addEventListener("click", (e) => { e.stopPropagation(); getSkillUploadInputs().zipInput.click(); });
+    const dirBtn = makeMgmtBtn("⬆ 目录", "上传技能目录（全部 .md）");
+    dirBtn.addEventListener("click", (e) => { e.stopPropagation(); getSkillUploadInputs().dirInput.click(); });
+    const canvasBtn = makeMgmtBtn("📋 从画布", "把当前画布工作流导出为技能");
+    canvasBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+            const { output, error } = (await app.graphToPrompt()) || {};
+            if (error || !output || !Object.keys(output).length) {
+                showToast(app, "warning", "无法导出", "画布上没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
+                return;
+            }
+            const name = await promptSkillTitle("my-workflow");
+            if (!name) return;
+            const r = await saveWorkflowSkill({ name, description: "", tags: [], workflow: output });
+            showToast(app, "success", `已保存${r.gen_video ? "生视频" : "生图"}技能 "${r.id}"`, (r.warnings || []).join("\n"));
+            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+        } catch (err) {
+            showToast(app, "error", "保存失败", err.message);
+        }
+    });
+    mgmt.append(newBtn, zipBtn, dirBtn, canvasBtn);
+
+    // 关闭整窗 + Esc；技能增删改（rs.skills.updated）自动刷新列表
+    const onSkillsUpdated = () => loadList();
+    document.addEventListener("rs.skills.updated", onSkillsUpdated);
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+    const close = () => {
+        _skillManagerOpen = false;
+        overlay.remove();
+        document.removeEventListener("rs.skills.updated", onSkillsUpdated);
+        document.removeEventListener("keydown", onKey, true);
+    };
+    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
+    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
+    document.addEventListener("keydown", onKey, true);
+
+    // 初始加载 + 默认选中第一项
+    loadList().then(() => { if (!selectedId && allItems.length) selectSkill(allItems[0]); });
+}
+
+// ==========================================
 // 导出（纯 ES 模块，无副作用）
 // ==========================================
 export {
@@ -2245,6 +2441,7 @@ export {
     createSkillDetailPopup,
     createSkillDropdown,
     openSkillPickerModal,
+    openSkillManager,
     attachSkillPickerToComboWidget,
     attachSkillPickerToSelect
 };

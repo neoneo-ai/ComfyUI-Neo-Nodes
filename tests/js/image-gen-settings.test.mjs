@@ -161,6 +161,28 @@ test("createVideoModelConfigSection：步数 load 回填 / 缺省 20 / collect �
     assert.equal(section.collect().steps, 32);
 });
 
+test("createGenSizeRows：步数 load 回填 / 缺省 20 / collect 返回 int", async () => {
+    const { createGenSizeRows } = await import("../../web/image-gen.js");
+    const section = createGenSizeRows();
+    document.body.appendChild(section.el);
+    // 显式 steps=35 → 回填输入框并 collect 出 35
+    section.load({ count: 2, base_resolution: "1024", default_ratio: "16:9", steps: 35 });
+    const stepsRow = [...section.el.querySelectorAll(".rs-config-row")]
+        .find((r) => r.querySelector("label")?.textContent === "步数");
+    assert.ok(stepsRow, "应有「步数」行");
+    const stepsInput = stepsRow.querySelector("input.rs-form-input");
+    assert.ok(stepsInput, "应有步数数字输入框");
+    assert.equal(parseInt(stepsInput.value, 10), 35, "load 应回填已保存步数");
+    assert.equal(section.collect().steps, 35);
+    // 未保存 steps → 缺省 20（与后端 resolve_request 默认一致）
+    section.load({});
+    assert.equal(parseInt(stepsInput.value, 10), 20, "缺省应为 20");
+    assert.equal(section.collect().steps, 20);
+    // 用户改值 → collect 反映新值
+    stepsInput.value = "32";
+    assert.equal(section.collect().steps, 32);
+});
+
 test("createVideoModelConfigSection：视频 LoRA 行 load/collect 往返，且无「依赖参考图」复选框", async () => {
     const { createVideoModelConfigSection } = await import("../../web/image-gen.js");
     const section = createVideoModelConfigSection();

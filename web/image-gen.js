@@ -598,6 +598,8 @@ export function createGenSizeRows() {
     };
     const sizeCtl = makeChoiceRow("长边尺寸");
     const ratioCtl = makeChoiceRow("默认比例");
+    // 采样步数：写 skill config.json 的 steps（模板 {{STEPS}}），缺省 20（与后端 resolve 一致）
+    const stepsCtl = numberRow("步数", { min: 1, max: 100, step: 1, value: 20 });
 
     // 输出前缀（可含子目录），写入模板 {{PREFIX}}；很少改动 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
     const prefixRow = mkEl("div", "rs-config-row rs-gen-adv-row");
@@ -635,13 +637,14 @@ export function createGenSizeRows() {
         }
     }
 
-    // 张数 / 长边 / 比例 / 前缀各占一行（标签 | 控件），与模型区两栏风格统一
-    section.append(countCtl.row, sizeCtl.row, ratioCtl.row, prefixRow);
+    // 张数 / 长边 / 比例 / 步数 / 前缀各占一行（标签 | 控件），与模型区两栏风格统一
+    section.append(countCtl.row, sizeCtl.row, ratioCtl.row, stepsCtl.row, prefixRow);
 
     function load(settings) {
         countCtl.input.value = settings.count ?? 1;
         fillChoiceSelect(sizeCtl.select, COMMON_EDGES, String(settings.base_resolution ?? ""), "1280");
         fillChoiceSelect(ratioCtl.select, COMMON_RATIOS, String(settings.default_ratio ?? ""), "1:1");
+        stepsCtl.input.value = settings.steps ?? 20;
         prefixInput.value = settings.output_prefix ?? "";
     }
 
@@ -650,6 +653,7 @@ export function createGenSizeRows() {
             count: parseInt(countCtl.input.value, 10) || 1,
             base_resolution: parseInt(sizeCtl.select.value, 10) || 1280,
             default_ratio: ratioCtl.select.value.trim(),
+            steps: parseInt(stepsCtl.input.value, 10) || 20,
             output_prefix: prefixInput.value.trim(),
         };
     }
