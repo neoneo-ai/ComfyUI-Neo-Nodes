@@ -22,32 +22,6 @@ test("buildCharacterSheetRequest 固定走 qwen_image_21 且不带全局 LoRA", 
     assert.match(body.prompt, /背面全身/);
 });
 
-test("⋯ 菜单「直达角色目录」打开画廊 CharacterSheet 主目录", async () => {
-    resetEnv();
-    clearRoutes();
-    const { GalleryCard } = await import("../../web/gallery-card.js");
-    const card = new GalleryCard({});
-    const calls = [];
-    const gallery = {
-        app: {},
-        currentView: { mode: "directory", source: "Output", categoryPath: ["CharacterSheet"] },
-        showDirectoryStructure(source, path) { calls.push([source, path]); return Promise.resolve(); },
-        deleteItem() {},
-    };
-    const anchor = document.createElement("div");
-    document.body.appendChild(anchor);
-    card._showCollectMenu(gallery, { name: "2026-09-24_00001_", filename: "2026-09-24_00001_.png" }, "CharacterSheet", "Output", anchor);
-
-    const item = [...document.querySelectorAll(".neo-gallery-collect-item")]
-        .find((el) => el.textContent.includes("直达角色目录"));
-    assert.equal(item?.textContent, "\uD83D\uDCC2 直达角色目录");
-
-    click(item);
-    await flush();
-    assert.deepEqual(calls, [["CharacterSheet", []]]);
-    assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
-});
-
 test("⋯ 菜单「生成角色图」：小窗显示参考图，点生成后窗口内出结果预览", async () => {
     resetEnv();
     clearRoutes();

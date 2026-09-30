@@ -1997,6 +1997,92 @@ Accordion Section Buttons (Clear)
     border-color: rgba(76, 154, 255, 0.6);
 }
 
+/* 图片编辑弹窗：技能选择行（label + select 横排） */
+.neo-gallery-story-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* 图片编辑弹窗：上方图片对比，下方表单 */
+.neo-gallery-story-modal.neo-gallery-edit-modal {
+    width: 95vw;
+    max-width: 1600px;
+    max-height: 90vh;
+    min-height: 400px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+/* 图片对比区（左右并排） */
+.neo-gallery-edit-compare {
+    display: flex;
+    gap: 12px;
+    flex: 0 0 auto;
+    min-height: 0;
+    max-height: 55vh;
+}
+
+.neo-gallery-edit-compare > div {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.neo-gallery-edit-compare-result {
+    position: relative;
+}
+
+.neo-gallery-edit-compare-label {
+    font-size: 11px;
+    color: #b8c2ce;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.neo-gallery-edit-compare-img {
+    width: 100%;
+    height: auto;
+    max-height: 50vh;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    cursor: zoom-in;
+    flex: 1;
+    min-height: 0;
+}
+
+/* 下方表单区 */
+.neo-gallery-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+/* 编辑弹窗内的输入框：取消自动右对齐 */
+.neo-gallery-edit-form .neo-recipes-sort {
+    margin-left: 0;
+}
+
+/* 分辨率输入框固定宽度 */
+.neo-gallery-edit-form #img-edit-width,
+.neo-gallery-edit-form #img-edit-height {
+    width: 80px;
+}
+
+/* 编辑弹窗顶部行：技能 + 分辨率并排 */
+.neo-gallery-edit-form-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
 /* 输入框上方的小标签（九宫格故事 / 简要故事 / 想法） */
 .neo-gallery-story-field-label {
     font-size: 11px;

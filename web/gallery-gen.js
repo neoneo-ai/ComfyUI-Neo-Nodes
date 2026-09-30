@@ -694,7 +694,216 @@ export function openReversePromptDialog(image, subfolder) {
     document.addEventListener("keydown", onKey);
 }
 
-/** 素材卡片「⋯」菜单里的四个生成入口（角色图 / 九宫格分镜图 / 两个直达目录），由 gallery-card.js 展开使用。 */
+/** 图片编辑弹窗：以卡片原图为参考，用所选生图/编辑技能 + 用户输入的编辑指令生成新图。
+ * 默认 Qwen Image 2.1，可在下拉中切换其他 image_gen 类技能。 */
+export function openImageEditDialog(gallery, image, subfolder) {
+    document.querySelector('.neo-gallery-edit-modal-overlay')?.remove();
+    const previewHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
+    const pathLabel = (subfolder ? `${subfolder}/` : "") + (image.filename || image.name || "");
+
+    const statusBox = $el("div", { className: "neo-gallery-cs-status" });
+    const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
+    const promptInput = $el("textarea", {
+        className: "neo-gallery-story-input",
+        rows: 4,
+        placeholder: "描述你想对这张图做的修改，例如：把背景换成海边日落、给角色加一顶帽子……"
+    });
+
+    let running = false;
+    let cancelId = null;
+    let cancelRequested = false;
+    let refName = null;
+
+    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-edit-modal-overlay" });
+    const close = () => overlay.remove();
+    const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
+    const btn = (label, onclick, primary = false) =>
+        $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
+
+    // 技能下拉：只列 image_gen 类（直接生图或编辑），默认 Qwen Image 2.1
+    const skillSel = $el("select", { className: "neo-recipes-sort" });
+    (async () => {
+        try {
+            const res = await fetch("/rs_prompts/skills");
+            const skills = await res.json();
+            const genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.category === "image_gen" && s.gen_image);
+            genSkills.forEach(s => {
+                const opt = $el("option", { value: s.id, textContent: s.cn_name || s.name || s.id });
+                if (s.id === QWEN_IMAGE_SKILL_ID) opt.selected = true;
+                skillSel.appendChild(opt);
+            });
+            if (!genSkills.some(s => s.id === QWEN_IMAGE_SKILL_ID)) {
+                skillSel.value = genSkills.length ? genSkills[0].id : "";
+            }
+        } catch {
+            skillSel.value = QWEN_IMAGE_SKILL_ID;
+        }
+    })();
+
+    const renderIdle = () => {
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "填写编辑指令后点「生成」，原图将作为参考图传入所选技能。" }));
+        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+    };
+
+    const renderRunning = (label, progress) => {
+        const hasSteps = !!(progress && progress.max > 0);
+        const fillEl = $el("div", { className: "neo-gallery-cs-progress-fill" });
+        if (hasSteps) {
+            fillEl.style.width = `${Math.max(0, Math.min(100, (progress.value / progress.max) * 100))}%`;
+        } else {
+            fillEl.classList.add("neo-gallery-cs-progress-indeterminate");
+        }
+        const bar = $el("div", { className: "neo-gallery-cs-progress" }, [fillEl]);
+        fill(statusBox,
+            $el("div", { className: "neo-gallery-cs-running" }, [
+                $el("span", { className: "neo-gallery-cs-spinner" }),
+                $el("span", { textContent: label })
+            ]),
+            bar);
+        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+    };
+
+    const renderSuccess = (final) => {
+        const images = final.images || [];
+        if (images.length > 0) {
+            const resultSrc = `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`;
+            resultImg.src = resultSrc;
+            resultImg.style.display = "block";
+            resultImg.title = "点击放大查看";
+            resultImg.onclick = () => Lightbox.open({ 
+                items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), 
+                index: 0 
+            });
+        }
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成编辑结果。" }));
+        fill(actionsBox, btn("关闭", close, true));
+    };
+
+    const renderError = (message) => {
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
+        fill(actionsBox, btn("重试", start), btn("关闭", close));
+    };
+
+    const start = async () => {
+        if (running) return;
+        const prompt = promptInput.value.trim();
+        if (!prompt) { promptInput.focus(); return; }
+        running = true;
+        cancelRequested = false;
+        renderRunning("排队中…");
+        try {
+            if (!refName) refName = await copyImageToInput(image, subfolder);
+            const snap = await requestGeneration({
+                skill_id: skillSel.value || QWEN_IMAGE_SKILL_ID,
+                prompt,
+                width: parseInt(widthInput.value, 10) || undefined,
+                height: parseInt(heightInput.value, 10) || undefined,
+                references: [{ kind: "input", value: refName }],
+                loras: [],
+                skip_enhance: true,
+            });
+            cancelId = snap.task_id;
+            renderRunning("排队中…");
+            const final = await watchTask(snap.task_id, (s) => {
+                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress);
+            }, () => cancelRequested);
+            if (final.status === "succeeded") renderSuccess(final);
+            else if (final.status === "cancelled") renderError("已取消");
+            else renderError(final.error || "生成失败");
+        } catch (e) {
+            console.error('[Gallery] image edit failed:', e);
+            renderError(String(e?.message || e));
+        } finally {
+            running = false;
+            cancelId = null;
+        }
+    };
+
+    const onKey = (e) => {
+        if (e.key === "Escape") close();
+        else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
+    };
+
+    // 图片对比区（左右并排）
+    const origFullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
+    const origImg = $el("img", {
+        className: "neo-gallery-edit-compare-img",
+        src: origFullUrl,
+        alt: image.name || image.filename,
+        title: "点击放大查看",
+        onclick: () => {
+            Lightbox.open({
+                items: [{ kind: "image", url: origFullUrl, title: pathLabel }],
+                index: 0
+            });
+        }
+    });
+    const resultImg = $el("img", {
+        className: "neo-gallery-edit-compare-img",
+        alt: "编辑结果",
+        style: { display: "none" }
+    });
+    const compareBox = $el("div", { className: "neo-gallery-edit-compare" }, [
+        $el("div", {}, [
+            $el("div", { className: "neo-gallery-edit-compare-label", textContent: "原图" }),
+            origImg
+        ]),
+        $el("div", { className: "neo-gallery-edit-compare-result" }, [
+            $el("div", { className: "neo-gallery-edit-compare-label", textContent: "编辑结果" }),
+            resultImg
+        ])
+    ]);
+
+    overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" }, [
+        $el("div", { className: "neo-gallery-story-titlebar" }, [
+            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 图片编辑" }),
+            $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
+        ]),
+        compareBox,
+        $el("div", { className: "neo-gallery-edit-form" }, [
+            $el("div", { className: "neo-gallery-edit-form-top-row" }, [
+                $el("div", { className: "neo-gallery-story-form-row" }, [
+                    $el("label", { className: "neo-director-field-label", textContent: "编辑技能" }),
+                    skillSel
+                ]),
+                $el("div", { className: "neo-gallery-story-form-row" }, [
+                    $el("label", { className: "neo-director-field-label", textContent: "目标分辨率" }),
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 16, placeholder: "宽" }),
+                    $el("span", { textContent: " × " }),
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 16, placeholder: "高" })
+                ])
+            ]),
+            promptInput,
+            statusBox,
+            actionsBox
+        ])
+    ]));
+
+    renderIdle();
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+    document.addEventListener("keydown", onKey);
+    const origRemove = overlay.remove.bind(overlay);
+    overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
+    document.body.appendChild(overlay);
+
+    // 加载原图获取实际尺寸，填入默认分辨率
+    const widthInput = overlay.querySelector("#img-edit-width");
+    const heightInput = overlay.querySelector("#img-edit-height");
+    const fullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
+    const dimProbe = new Image();
+    dimProbe.onload = () => {
+        if (dimProbe.naturalWidth && dimProbe.naturalHeight) {
+            widthInput.value = dimProbe.naturalWidth;
+            heightInput.value = dimProbe.naturalHeight;
+        }
+    };
+    dimProbe.src = fullUrl;
+
+    setTimeout(() => promptInput.focus(), 0);
+}
+
+
+/** 素材卡片「⋯」菜单里的生成入口（角色图 / 九宫格分镜图 / 图片编辑），由 gallery-card.js 展开使用。 */
 export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
     return [
         isImageFile(image.filename) ? $el("div", {
@@ -707,15 +916,10 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
             title: "以这张图为参考、按所选宫格技能与故事生成分镜图（每格一镜，可直接进导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧）",
             onclick: () => { card._removeCollectMenu(); openStoryboardDialog(gallery, image, subfolder); }
         }, ["\uD83E\uDDE9 生成九宫格分镜图"]) : null,
-        $el("div", {
+        isImageFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
-            title: "在画廊中打开角色主目录（CharacterSheet），生成结果已按日期归档",
-            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure(CHARACTER_SHEET_DIR, []); }
-        }, ["\uD83D\uDCC2 直达角色目录"]),
-        $el("div", {
-            className: "neo-gallery-collect-item",
-            title: "在画廊中打开分镜主目录（StoryBoard），生成结果已按日期归档",
-            onclick: () => { card._removeCollectMenu(); gallery.showDirectoryStructure(STORYBOARD_DIR, []); }
-        }, ["\uD83D\uDCC2 直达分镜目录"]),
+            title: "以这张图为参考进行 AI 编辑（默认 Qwen Image 2.1，可在弹窗内切换其他生图/编辑技能）",
+            onclick: () => { card._removeCollectMenu(); openImageEditDialog(gallery, image, subfolder); }
+        }, ["\uD83D\uDDBC\uFE0F 图片编辑"]) : null,
     ];
 }

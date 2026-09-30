@@ -256,20 +256,6 @@ test("⋯ 菜单「生成九宫格分镜图」：生图失败弹 action toast �
     assert.equal(toast.querySelector(".neo-at-action").textContent, "打开技能详情");
 });
 
-test("⋯ 菜单「直达分镜目录」打开画廊 Grid 主目录", async () => {
-    const { GalleryCard } = await import("../../web/gallery-card.js");
-    const { gallery, jumps } = makeGallery([]);
-    const card = new GalleryCard(gallery);
-    openMenu(card, gallery);
-
-    const item = itemByLabel("直达分镜目录");
-    assert.equal(item?.textContent, "\uD83D\uDCC2 直达分镜目录");
-    click(item);
-    await sleep(10);
-    assert.deepEqual(jumps, [["StoryBoard", []]]);
-    assert.equal(document.querySelector(".neo-gallery-collect-menu"), null);
-});
-
 test("小窗「✨ LLM 生成分镜故事」：简要故事按所选宫格技能生成逐格故事（不带参考图），覆盖写入上方故事框", async () => {
     const { GalleryCard } = await import("../../web/gallery-card.js");
     const toasts = [];
