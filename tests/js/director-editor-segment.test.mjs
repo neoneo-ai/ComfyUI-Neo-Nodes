@@ -761,7 +761,10 @@ test("导演编辑器：文字故事板一键生成分段填充时间轴", async
     assert.ok(srcGroup.parentElement.classList.contains("neo-director-row"), "分镜来源在第一行的行内横排");
     assert.equal(band0, document.querySelector(".neo-director-pane-story").children[0], "分镜来源所在 band 是故事板分镜页第一段");
     assert.ok(band0.querySelector(".neo-director-setup-char"), "角色参考图卡片在两种来源下都常驻（与来源同行 band）");
-    assert.ok(srcGroup.parentElement.querySelector(".neo-director-identity-refs"), "角色身份参考同第一行（靠右）");
+    assert.ok(band0.querySelector(".neo-director-setup-char .neo-director-identity-refs"), "角色身份参考集成在角色参考图盒标题行内");
+    assert.ok(band0.querySelector(".neo-director-setup-char.neo-director-setup-char-collapsed"), "新配方（无角色图）默认收起角色参考图盒");
+    band0.querySelector(".neo-director-char-title").click();
+    assert.ok(!band0.querySelector(".neo-director-setup-char").classList.contains("neo-director-setup-char-collapsed"), "点标题展开网格再添加");
     assert.equal(srcGridCard.style.display, "", "新配方默认显示宫格图来源卡");
     assert.equal(srcTextCard.style.display, "none", "默认隐藏文字卡（不同时显示两张）");
 
@@ -838,7 +841,7 @@ test("导演编辑器：故事板分镜页四步徽标（① 来源 → ② 分�
     assert.deepEqual(badges.map((b) => b.textContent), ["①", "②", "②", "③", "④"], "四步徽标齐全且按序号排布");
     assert.ok(document.querySelector(".neo-director-src").parentElement.querySelector(".neo-director-step-badge"), "① 在「分镜来源」这一行");
     assert.equal(story.querySelector(".neo-director-src-card-grid .neo-director-src-head .neo-director-step-badge"), badges[1], "② 在宫格卡标题行");
-    assert.equal(story.querySelector(".neo-director-src-card-text .neo-director-src-head .neo-director-step-badge"), badges[2], "② 在文字卡标题行");
+    assert.equal(story.querySelector(".neo-director-src-card-text .neo-director-idea-head .neo-director-step-badge"), badges[2], "② 在文字卡标题行");
     assert.equal(story.querySelector(".neo-director-setup-sb .neo-director-refs-head .neo-director-step-badge"), badges[3], "③ 在「🎨 图片分镜」标题行");
     assert.equal(story.querySelector(".neo-director-setup-opt > .neo-director-step-badge"), badges[4], "④ 在「各段对照」标题行");
 
@@ -3494,6 +3497,7 @@ test("导演编辑器：👤 角色参考图缩略点击打开 Lightbox（←/�
     tabStory.click();
     await sleep(20);
     const charCard = document.querySelector(".neo-director-setup-char");
+    assert.ok(!charCard.classList.contains("neo-director-setup-char-collapsed"), "已有角色图时默认展开");
     const tiles = Array.from(charCard.querySelectorAll(".neo-director-refpick-item"));
     assert.equal(tiles.length, 2, "两张角色参考图回显");
 
@@ -3595,7 +3599,7 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     assert.equal(card.style.display, "", "拆分后保持宫格图来源（各格已作首帧/分镜图）");
     assert.ok(!card.querySelector(".neo-director-grid-desc"), "独立的「逐格描述」按钮已移除（并入生成所有分段提示词）");
     // 卡标题行右上角是本步动作组：切分方式（先定怎么切）+ 状态 + 「拆分到各段」，切分方式排在拆分按钮之前
-    const ioRow2 = card.querySelector(".neo-director-grid-io");
+    const srcDrop2 = card.querySelector(".neo-director-grid-src");
     const gridAct = card.querySelector(".neo-director-src-head .neo-director-step-act");
     assert.ok(gridAct && gridAct.contains(card.querySelector(".neo-director-grid-split")),
         "拆分按钮在卡标题行右上角（本步唯一动作）");
@@ -3603,8 +3607,8 @@ test("导演编辑器：🧩 宫格分镜图拆分卡片——自动/手动行�
     assert.deepEqual(Array.from(gridAct.querySelectorAll(".neo-director-grid-mode, .neo-director-grid-split"))
         .map((el) => (el.classList.contains("neo-director-grid-mode") ? "切分方式" : "拆分按钮")),
         ["切分方式", "拆分按钮"], "切分方式排在拆分按钮之前");
-    assert.ok(!ioRow2.contains(card.querySelector(".neo-director-grid-mode")), "切分方式不再留在源图行");
-    assert.ok(!ioRow2.contains(card.querySelector(".neo-director-grid-split")), "拆分按钮不在源图行里重复");
+    assert.ok(!srcDrop2.contains(card.querySelector(".neo-director-grid-mode")), "切分方式不再留在源图区");
+    assert.ok(!srcDrop2.contains(card.querySelector(".neo-director-grid-split")), "拆分按钮不在源图区里重复");
     // 拆分结果缩略条已移除（各段分镜图在「各段对照」逐格显示）；改为在「全局故事参考」处展示元信息里的提示词
     assert.equal(card.querySelector(".neo-director-grid-panels"), null, "不再重复列格子缩略条");
     const promptBox = card.querySelector(".neo-director-grid-prompts");
@@ -3709,9 +3713,13 @@ test("导演编辑器：band-2 末尾常驻空段（纯 UI、不保存），拖�
     await sleep(20);
 
     const container = document.querySelector(".neo-director-setup-segs");
-    // 常驻空段存在，且不是真实段（不进 segsWrap、无拖拽手柄）
+    // 第一段还没有输入 → 不出现幻影行（常驻空段）
+    assert.equal(container.querySelector(".neo-director-story-seg-ghost"), null, "第一段未输入时无常驻空段");
+
+    // 给第一段输入提示词 → 常驻空段出现在末尾，且不是真实段（不进 segsWrap、无拖拽手柄）
+    inputText(document.querySelector(".neo-director-seg .neo-director-prompt"), "第一段画面描述");
     const ghost = container.querySelector(".neo-director-story-seg-ghost");
-    assert.ok(ghost, "band-2 末尾有常驻空段");
+    assert.ok(ghost, "第一段有输入后 band-2 末尾出现常驻空段");
     assert.equal(container.querySelectorAll(".neo-director-story-seg-ghost").length, 1, "只有一个常驻空段");
     assert.ok(!ghost.classList.contains("neo-director-seg"), "空段不是真实分段");
     assert.ok(!ghost.querySelector(".neo-director-story-seg-grip"), "空段无拖拽手柄（不参与排序）");
@@ -3796,21 +3804,22 @@ test("宫格分镜图拆分：图片输入区支持本地上传 + 素材库/本�
     assert.equal(tab.activeSidebarTabId, "neo.gallery", "点「宫格素材库」打开侧栏");
     fileInput.click = origClick;
 
-    // 源图与「原宫格提示词」同行，label 区分（单张分镜图不再独占整行）
-    const ioRow = card.querySelector(".neo-director-grid-io");
-    assert.ok(ioRow, "源图与提示词列共用一行容器");
-    assert.ok(ioRow.contains(drop), "宫格图片输入区在该行内");
+    // 源图（左列）与提示词 textarea（右列）是卡 grid 的同一行，与上方标题行共享两列
     const promptBox = card.querySelector(".neo-director-grid-prompts");
-    assert.ok(ioRow.contains(promptBox), "原宫格提示词文本框也在该行内");
+    assert.ok(promptBox, "原宫格提示词文本框存在");
+    assert.equal(drop.parentElement, card, "宫格图片输入区是卡 grid 左列");
     assert.equal(promptBox.readOnly, false, "可编辑为全局故事参考（默认原宫格提示词）");
     assert.equal(promptBox.value, "", "未拆分时不展示提示词");
     assert.equal(promptBox.closest("details"), null, "提示词常显（不再折叠，拆分提取后自动就地显示）");
-    const ioLabels = Array.from(ioRow.querySelectorAll(".neo-director-field-label")).map((el) => el.textContent);
-    assert.ok(!ioLabels.includes("分镜图"), "源图列不再有「分镜图」label");
-    assert.ok(ioLabels.includes("全局故事参考（默认为原宫格提示词）"), "提示词列有「全局故事参考（默认为原宫格提示词）」label");
+    const headLabels = Array.from(card.querySelectorAll(".neo-director-src-head .neo-director-field-label")).map((el) => el.textContent);
+    assert.ok(!headLabels.includes("分镜图"), "标题行不再有「分镜图」label");
+    const heads = Array.from(card.querySelectorAll(".neo-director-src-head"));
+    assert.equal(heads.length, 2, "标题行拆成两列");
+    assert.ok(heads[0].textContent.includes("拆成分镜，分镜作首帧"), "左列是说明文字");
+    assert.ok(heads[1].textContent.includes("全局故事参考（默认为原宫格提示词）"), "右列是「全局故事参考」label（与下方 textarea 同列对齐）");
     assert.equal(card.querySelector(".neo-director-grid-panels"), null, "格子缩略条已移除");
     assert.equal(card.querySelector(".neo-director-grid-pager"), null, "‹ / › 翻页按钮已随缩略条移除");
-    assert.ok(card.querySelector(".neo-director-grid-pt-head .neo-director-grid-pt-copy"), "提示词列 label 行有复制按钮");
+    assert.ok(card.querySelector(".neo-director-src-head .neo-director-grid-pt-copy"), "标题行 label 旁有复制按钮");
 
     // 换图（素材库拖入 / 本地拖入）后，上一张图提取到的提示词作废清空
     const copyBtn = card.querySelector(".neo-director-grid-pt-copy");

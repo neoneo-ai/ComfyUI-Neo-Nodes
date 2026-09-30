@@ -88,6 +88,7 @@ test("🎲 随机按钮：取 preset 列表并写入提示词", async () => {
 });
 
 test("快捷输入 Enter：无 skill 时走流式生成并回填", async () => {
+    mockRoute("/rs_prompts/classify_skill", () => jsonResponse({ skill: null }));   // LAYA 无匹配：保持默认（不选 skill）
     mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse(CHUNKS));
 
     const node = await makeNode(12);

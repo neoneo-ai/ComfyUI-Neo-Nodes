@@ -1131,6 +1131,8 @@
     flex: 1 1 auto;   /* 首帧随行高拉伸（空态同样拉伸，成为大拖放区） */
 }
 .neo-director-frame-col .neo-director-setup-seg-thumb img {
+    width: 100%;
+    height: 100%;
     object-fit: cover;   /* 铺满左栏高度（超出部分裁切），图片下方不留空白 */
 }
 
@@ -1316,7 +1318,7 @@
     padding: 8px;
 }
 
-/* 统一设置页：「👤 角色参考图」卡片（配方级常驻；视频各段身份参考 + r2i 图片分镜共用） */
+/* 故事板分镜页 band 0 右侧：「👤 角色参考图」紧凑盒（标题 / 身份参考 / 素材库 + 网格都集成在盒内，只占顶部右侧，不独占整行） */
 .neo-director-setup-char {
     display: flex;
     flex-direction: column;
@@ -1325,6 +1327,31 @@
     border: 1px solid #2a2d33;
     border-radius: 6px;
     padding: 8px;
+    flex: 1;          /* 占满 band 0 顶部右侧剩余宽度 */
+    min-width: 0;
+}
+
+/* 角色参考图紧凑：空态最小高度降到 64px（瓷砖同高，JS 内联设置），不压低来源卡 / 各段对照 */
+.neo-director-setup-char .neo-director-refpick-grid:not(.has-items) {
+    min-height: 64px;
+}
+
+/* 角色参考图盒默认收起：点标题展开再添加（收起时只留标题行，网格隐藏） */
+.neo-director-char-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.neo-director-char-caret {
+    color: #8a94a0;
+    font-size: 10px;
+}
+
+.neo-director-setup-char-collapsed .neo-director-story-refs {
+    display: none;
 }
 
 /* 📖 故事板分镜页 band 1：来源卡（宫格图 / 文字，二选一）。
@@ -1337,6 +1364,13 @@
     border: 1px solid #2a2d33;
     border-radius: 6px;
     padding: 8px;
+}
+
+/* 宫格来源卡：标题行拆两列，与下方源图 / 提示词列共享同一 grid——「全局故事参考」label 左缘对齐 textarea */
+.neo-director-src-card-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 12px;
 }
 
 /* 来源卡标题行：只说明这张卡是什么（来源 radio 在 band 0 第一行横排）；右侧是本步唯一的动作按钮组。
@@ -1355,26 +1389,6 @@
     font-size: 11px;
     font-weight: 400;
     color: #9aa4b0;
-}
-
-/* 「🧩 宫格图故事板」源图 + 原宫格提示词 内联同一行：label 靠值左侧，整行紧凑（单张分镜图不再独占整行）；
-   stretch 让提示词列占满整行高度与右侧剩余宽度 */
-.neo-director-grid-io {
-    display: flex;
-    align-items: stretch;
-    gap: 12px;
-    flex-wrap: nowrap;
-}
-
-.neo-director-grid-io-col {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-}
-
-.neo-director-grid-io-src {
-    flex: 0 0 auto;
 }
 
 /* 图片输入区：拖放框——点击本地上传 / 素材库·本地文件拖入；宫格图缩略够大才看得清每格构图 */
@@ -1493,13 +1507,6 @@
     gap: 6px;
     flex: 1 1 0;
     min-width: 0;
-}
-
-.neo-director-grid-pt-head {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 8px;
 }
 
 .neo-director-grid-pt-copy {
@@ -1850,6 +1857,23 @@
     gap: 8px;
 }
 
+/* band 0：左 = 分镜来源 radio 行（靠左），右 = 角色参考图盒（只占顶部右侧剩余宽度）；收起态两列按水平中线对齐 */
+.neo-director-band-top {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;   /* 角色参考盒展开时换行独占整行 */
+}
+
+/* 角色参考盒展开：换行落到来源行下方独占整行（与下面的来源卡 / 各段对照更相关）；收起时留在来源行右侧 */
+.neo-director-band-top > .neo-director-setup-char:not(.neo-director-setup-char-collapsed) {
+    flex-basis: 100%;
+}
+
+.neo-director-band-top > .neo-director-row {
+    flex: 0 0 auto;
+}
+
 /* band 3 各段对照：填满本页剩余高度，超出才内部滚动 */
 .neo-director-band-segs {
     flex: 1;
@@ -1905,7 +1929,11 @@
 /* 对照表第一列的分镜图缩略（逐段关键帧或统一首帧）；未生成显示「无」占位 */
 .neo-director-setup-seg-thumb {
     position: relative;   /* 悬停 ✕ 以缩略图为定位基准 */
-    min-height: 112px;    /* 与 200px 列宽接近 16:9 的下限；文本更高时随行拉伸，图片高度自适应 */
+    min-height: 112px;   /* 下限与空态一致；有长文本时随行高拉伸，图片按宽高比放大 */
+    align-self: stretch; /* 行高由文本列决定时，缩略图跟随拉伸填满 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 6px;
     overflow: hidden;
     background: #1c1c1c;
@@ -1942,14 +1970,18 @@
 }
 
 .neo-director-setup-seg-thumb a {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
     height: 100%;
 }
 
 .neo-director-setup-seg-thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;   /* 整图按比例完整可见（不裁切），适配各格真实宽高比 */
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
     display: block;
 }
 
@@ -2121,9 +2153,6 @@
     border: 1px dashed #3a3a3a;
     border-radius: 6px;
     padding: 6px 8px;
-}
-.neo-director-story-seg-ghost:hover {
-    border-color: #4d8cba;
 }
 .neo-director-story-seg-ghost .neo-director-story-seg-head {
     color: #6b7280;
