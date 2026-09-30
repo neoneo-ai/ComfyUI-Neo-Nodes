@@ -1,12 +1,13 @@
 """Neo Studio 独立应用后端：导演配方「整片生成」+ 版本信息。
 
-Studio 页面（web/studio/index.html）走 ComfyUI 的 /extensions/ 静态路由提供，前端直接复用
-web/ 现有模块；素材、生图、配方、单段、拼接、故事板、LLM 等功能全部复用已有路由，本模块只补
-两样东西：
+Studio 页面（web/studio/index.html）由 /neo-studio 短路径提供（同 /extensions/ 静态路由），
+前端直接复用 web/ 现有模块；素材、生图、配方、单段、拼接、故事板、LLM 等功能全部复用已有路由，
+本模块只补三样东西：
 
 - 整片生成：ComfyUI 里由画布上的 NeoH3VideoDirector 节点跑，Studio 没有画布，这里把
   「NeoH3VideoDirector + SaveVideo」两节点图提交进执行队列（显存/进度/取消都由执行器负责），
   任务跟踪与 h3_segment 同一套做法；导演节点本身不记账，成功后由这里把成片记进配方「结果」区。
+- /neo-studio：Studio 页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。
 - /neo_studio/version：插件 + ComfyUI 版本，供 Studio 首页展示升级信息。
 """
 
@@ -225,6 +226,12 @@ def _plugin_version() -> str:
     except OSError:
         pass
     return "unknown"
+
+
+@PromptServer.instance.routes.get("/neo-studio")
+async def studio_page_route(request):
+    """Neo Studio 独立页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。"""
+    return web.FileResponse(Path(__file__).parent / "web" / "studio" / "index.html")
 
 
 @PromptServer.instance.routes.get("/neo_studio/version")

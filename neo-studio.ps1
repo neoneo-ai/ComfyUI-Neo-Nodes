@@ -17,7 +17,7 @@ if (-not $Python -or -not (Test-Path $Python)) {
     Write-Error "未找到 python：请用 -Python <python.exe 路径> 指定"
     exit 1
 }
-$url = "http://127.0.0.1:$Port/extensions/ComfyUI-Neo-Nodes/studio/index.html"
+$url = "http://127.0.0.1:$Port/neo-studio"
 
 function Test-Ready([int]$Seconds) {
     # 探 /neo_studio/version：既确认 ComfyUI 在跑，也确认 Neo-Nodes 插件已加载

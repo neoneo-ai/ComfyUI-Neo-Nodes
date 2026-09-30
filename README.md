@@ -17,7 +17,8 @@
 | 🖼️ Neo Gallery | 侧边栏面板 | 图片/视频/音频素材浏览与管理：内置预设素材、自定义目录与 Civitai LORA 匹配；灯箱预览、一键发送到节点；Grid / Character 主目录（生成结果直达进入，按日期归档、远端预设只读） | [gallery](docs/gallery.md) |
 | ⭐ 收藏（书签） | 素材板块 | 本地收藏（路径记录）+ Civitai 收藏（边下边开、开关默认开启） | [gallery](docs/gallery.md) |
 | 🧊 Neo Recipes | 侧边栏面板 | 配方（提示词 + 图片/视频/音频资源）管理与一键发送 | [recipes](docs/recipes.md) |
-| 🔧 工作流修复 | 顶栏工具 | 换机器 / 改目录后模型路径失效时，按文件名匹配磁盘真实文件一键修复；可手动改选、记住映射、载入前自动检查 | [workflow-repair](docs/workflow-repair.md) |
+| 🅝 顶栏菜单 | 顶栏入口 | 插件统一入口（🅝 按钮下拉）：🎬 Neo Studio / 🎥 新建导演配方 / 🧩 创建节点 / 🔧 修复工作流 / 📜 修复记录 / ℹ️ 关于插件（来源说明） | [workflow-repair](docs/workflow-repair.md) |
+| 🔧 工作流修复 | 🅝 菜单项 | 换机器 / 改目录后模型路径失效时，按文件名匹配磁盘真实文件一键修复；可手动改选、记住映射、载入前自动检查 | [workflow-repair](docs/workflow-repair.md) |
 
 ## 功能演示
 
@@ -70,13 +71,13 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
    > 生图模型 / Text Encoder / VAE 默认「自动」按 skill 模板匹配，无需手配；未匹配到时再到节点生图设置里手动指定。
 
 5. **素材一键入节点**：打开右侧边栏「素材」面板 → 浏览/搜索到目标图片 → 点缩略图进灯箱 → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
-6. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏「🔧 修复工作流」→ 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
+6. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏 🅝 菜单「🔧 修复工作流」→ 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
 
 ---
 
 ## Neo Studio（独立应用）
 
-不依赖画布的独立页面：运行插件目录下 `neo-studio.bat`（自动拉起 ComfyUI），或手动启动后打开 `http://127.0.0.1:8188/extensions/ComfyUI-Neo-Nodes/studio/index.html`。含三个页签：
+不依赖画布的独立页面：运行插件目录下 `neo-studio.bat`（自动拉起 ComfyUI），或手动启动后打开 `http://127.0.0.1:8188/neo-studio`。含三个页签：
 
 - **素材**：完整 Neo Gallery（浏览 / 灯箱 / 文件管理）
 - **导演**：配方列表（只列多段导演配方）+ 导演编辑器（与画布内一致）+ 整片生成面板（把 `NeoH3VideoDirector` 提交执行队列，带进度 / 取消；只读时间轴显示配方分段，点分段块打开编辑器并跳到该段，采样中实时预览与节点同款，成片自动记进配方「结果」区）

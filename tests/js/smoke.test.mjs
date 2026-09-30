@@ -15,6 +15,7 @@ const EXPECTED_EXPORTS = {
     "director.js": ["openDirectorEditor"],
     "combo-box.js": ["attachComboBox"],
     "workflow-context.js": ["collectWorkflowContext"],
+    "top-menu.js": ["resetTopMenu"],
 };
 
 const modules = {};

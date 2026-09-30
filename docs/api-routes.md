@@ -97,10 +97,11 @@ StoryBoard/CharacterSheet 预设下载缓存在 `output/StoryBoard/presets/`、`
 
 ## studio.py — `/neo_studio/*`
 
-Neo Studio 独立页面（`web/studio/index.html`，走 `/extensions/` 静态路由）的后端。素材 / 生图 / 配方 / 单段等功能直接复用已有路由，这里只补整片生成与版本信息：
+Neo Studio 独立页面（`web/studio/index.html`，由 `/neo-studio` 短路径提供）的后端。素材 / 生图 / 配方 / 单段等功能直接复用已有路由，这里只补页面短路径、整片生成与版本信息：
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
+| GET | `/neo-studio` | Studio 独立页面（同 `/extensions/ComfyUI-Neo-Nodes/studio/index.html`） |
 | POST | `/neo_studio/director/generate` | **整片生成入队**（`{recipe, seed?, width?, height?, continuity?, context_frames?, steps?}`）：校验后把「`NeoH3VideoDirector` + `SaveVideo`」两节点图提交执行队列（`preview=True`、`unique_id`=task_id，采样期实时预览载荷按 task_id 路由到 Studio 页面播放器），返回任务快照。预设配方 / 无段配方 400 |
 | GET | `/neo_studio/director/{task_id}` | 整片任务快照：`status` + `progress {value,max}` + `filename`/`subfolder` + `error`；运行中附带 `latest_preview`（最新采样步帧载荷，前端轮询取预览帧的兜底通道）；成功后成片记进配方 `results`（导演节点本身不记账） |
 | POST | `/neo_studio/director/{task_id}/cancel` | 取消整片任务：未执行则出队、执行中则中断；任务已结束 409 |

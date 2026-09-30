@@ -7,8 +7,8 @@
  *    让用户选择「修复 / 取消」；自动匹配失败的项可在弹窗中手动选择替换文件，
  *    勾选「记住手动选择」后保存为服务端修复映射，之后相同失效路径自动替换；
  *    确认的每次修复按工作流关联写入本地修复日志（localStorage），供后续复查修改点。
- * 2. 顶栏操作按钮（actionBarButtons）：「修复工作流」一键按钮 + 「修复记录」表格，
- *    由前端渲染进 [data-testid="action-bar-buttons"]（与其他操作按钮同行）。
+ * 2. 顶栏 🅝 菜单（top-menu.js）：本模块提供 runRepair / showRepairLogDialog / showRepairMappingsDialog
+ *    与失效路径红点提示，按钮本体与下拉菜单归 top-menu.js。
  */
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
@@ -602,32 +602,28 @@ function installImportRepairHook() {
     }
 }
 
-// ===== 顶栏操作按钮（actionBarButtons） =====
+// ===== 顶栏 🅝 菜单（top-menu.js）=====
 
 // 修复期间防止重复触发（actionBarButtons 为声明式渲染，无法直接改按钮 disabled/opacity）
 let repairBusy = false;
 
-// 右键「修复工作流」按钮 → 修复映射管理；setup 可能多次触发，只绑定一次
-let _ctxMenuBound = false;
-
-// 顶部扳手按钮提示：检测到失效模型路径时给按钮加红框和右上角红点（不弹窗），点击按钮后清除。
+// 顶部 🅝 菜单按钮提示：检测到失效模型路径时给按钮加红框和右上角红点（不弹窗），点击按钮后清除。
 // actionBarButtons 为声明式渲染，切页/焦点模式等会重建按钮，故用 MutationObserver 同步提示
 // （与 LoRA Manager 一致）。观察器在首次需要提示时懒启动——此时画布已载入、操作栏已渲染。
 let _repairHintCount = 0;
 let _hintObserver = null;
-const REPAIR_BTN_BASE_LABEL = '修复工作流 — 检测并修复当前画布中的失效模型路径（右键管理修复映射）';
 
 function applyRepairHint() {
-    const btn = document.querySelector('.neo-repair-btn');
+    const btn = document.querySelector('.neo-n-menu-btn');   // 顶栏 🅝 菜单按钮（top-menu.js）
     if (!btn) return;
     if (_repairHintCount > 0) {
+        btn.dataset.origAria ??= btn.getAttribute('aria-label');
         btn.classList.add('neo-repair-hint');
         btn.setAttribute('aria-label', `修复工作流：检测到 ${_repairHintCount} 处失效模型路径，点击修复`);
     } else {
         btn.classList.remove('neo-repair-hint');
-        if (btn.getAttribute('aria-label') !== REPAIR_BTN_BASE_LABEL) {
-            btn.setAttribute('aria-label', REPAIR_BTN_BASE_LABEL);
-        }
+        const orig = btn.dataset.origAria;
+        if (orig && btn.getAttribute('aria-label') !== orig) btn.setAttribute('aria-label', orig);
     }
 }
 
@@ -665,7 +661,7 @@ function fitToContent() {
     });
 }
 
-async function runRepair() {
+export async function runRepair() {
     if (repairBusy) return;
     if (!app.graph?.nodes?.length) {
         showToast(app, 'info', '画布为空，无需修复');
@@ -703,7 +699,7 @@ async function runRepair() {
     }
 }
 
-function showRepairLogDialog() {
+export function showRepairLogDialog() {
     const existing = document.querySelector('.neo-repair-log-dialog');
     if (existing) existing.remove();
     const overlay = document.createElement('div');
@@ -779,7 +775,7 @@ function showRepairLogDialog() {
 
 // ===== 修复映射管理：查看 / 删除手动选择保存的「失效路径 → 替换文件」映射 =====
 
-async function showRepairMappingsDialog() {
+export async function showRepairMappingsDialog() {
     const existing = document.querySelector('.neo-repair-mappings-dialog');
     if (existing) existing.remove();
     let mappings = [];
@@ -888,52 +884,11 @@ async function showRepairMappingsDialog() {
 }
 
 app.registerExtension({
-    name: "comfy.neo.workflowRepairToolbar",
-    // ComfyUI 前端（≥1.33.9）将下列声明渲染进顶栏操作区 [data-testid="action-bar-buttons"]，
-    // 与系统操作按钮同行；切页/焦点模式等重建由前端托管，无需手动挂载。
-    // 「修复工作流」按钮套用前端主题高亮背景（--primary-bg，参考 LoRA Manager 的做法）使其突出：
-    // 前端为构建期 Tailwind，不保证打包自定义颜色 class，故用独立 <style> 规则 + 既有主题变量
-    // （--primary-bg/--primary-hover-bg，默认主题色 #60a5fa）保证高亮始终渲染且随主题切换。
+    name: "comfy.neo.workflowRepairHook",
+    // 导入工作流后自动检测失效模型路径并提示修复（挂载 loadGraphData / loadApiJson）。
+    // 顶栏 🅝 菜单按钮与下拉菜单归 top-menu.js（runRepair / showRepairLogDialog /
+    // showRepairMappingsDialog 由本模块导出供其调用）。
     setup() {
-        const styleId = "neo-repair-btn-style";
-        if (!document.getElementById(styleId)) {
-            const style = document.createElement("style");
-            style.id = styleId;
-            style.textContent =
-                ".neo-repair-btn{background-color:var(--primary-bg,#60a5fa);border-radius:6px;border:1px solid transparent;position:relative;color:#fff;transition:background-color .2s ease;}" +
-                ".neo-repair-btn:hover{background-color:var(--primary-hover-bg,var(--primary-bg,#60a5fa));}" +
-                ".neo-repair-btn svg{color:inherit;}" +
-                // 静态提示（同 ComfyUI 错误指示风格）：红框 + 右上角红点
-                ".neo-repair-btn.neo-repair-hint{border-color:var(--error-red,#f87171);box-shadow:0 0 0 1px rgba(248,113,113,.3);}" +
-                ".neo-repair-btn.neo-repair-hint::after{content:\"\";position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--error-red,#f87171);box-shadow:0 0 0 2px rgba(0,0,0,.25);}";
-            document.head.appendChild(style);
-        }
-        // 导入工作流后自动检测失效模型路径并提示修复（挂载 loadGraphData / loadApiJson）
         installImportRepairHook();
-        // 右键「修复工作流」按钮：打开修复映射管理（actionBarButtons 为声明式渲染，
-        // 无法在按钮对象上挂事件，用 document 级监听按按钮 class 拦截）
-        if (!_ctxMenuBound) {
-            _ctxMenuBound = true;
-            document.addEventListener('contextmenu', (e) => {
-                if (e.target instanceof Element && e.target.closest('.neo-repair-btn')) {
-                    e.preventDefault();
-                    showRepairMappingsDialog();
-                }
-            });
-        }
     },
-    actionBarButtons: [
-        {
-            icon: "icon-[lucide--wrench] size-5",
-            tooltip: "修复工作流 — 检测并修复当前画布中的失效模型路径（右键管理修复映射）",
-            onClick: runRepair,
-            class: "neo-repair-btn h-full",
-        },
-        {
-            icon: "icon-[lucide--history] size-5",
-            tooltip: "修复记录 — 查看当前工作流的本地修复日志",
-            onClick: showRepairLogDialog,
-            class: "h-full hover:bg-button-hover-surface",
-        },
-    ],
 });

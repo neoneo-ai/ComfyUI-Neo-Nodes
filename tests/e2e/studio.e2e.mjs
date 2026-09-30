@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
 const BASE = process.env.COMFY_BASE_URL || "http://127.0.0.1:8188";
-const STUDIO_URL = `${BASE}/extensions/ComfyUI-Neo-Nodes/studio/index.html`;
+const STUDIO_URL = `${BASE}/neo-studio`;
 
 let browser;
 let skipReason;

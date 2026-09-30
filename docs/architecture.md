@@ -70,7 +70,8 @@ ComfyUI-Neo-Nodes/
 │   ├── recipes.css
 │   ├── director.js         # 分镜视频导演编辑器（配方编辑窗口）：shared 分辨率 + 逐段 skill/提示词/首帧/时长 + 半自动故事生成/拆分；时间轴复用 director-timeline.js
 │   ├── director-node.js    # NeoH3VideoDirector 节点内嵌只读时间轴 + 采样实时预览面板（rs.h3.preview 载荷，自动循环/暂停/逐帧/逐步）；recipe combo 走技能选择窗（无工具栏），预览卡显示焦点配方只读时间轴（节点内嵌同款组件）
-│   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 顶栏按钮）
+│   ├── workflow.js         # 工作流修复（请求 + 确认弹窗 + 修复映射 + 红点提示；顶栏 🅝 菜单入口归 top-menu.js）
+│   ├── top-menu.js         # 顶栏 🅝 菜单（插件统一入口：Studio / 新建导演配方 / 创建节点 / 修复工作流 / 修复记录 / 关于插件）
 │   ├── prompts.js          # 提示词节点前端交互
 │   ├── prompts.css
 │   ├── prompt-manager.js   # 提示词管理器（预设列表 / 集合视图 / 保存与删除；聊天区由 llm-chat.js 提供）
@@ -129,7 +130,8 @@ ComfyUI-Neo-Nodes/
 | `media-transfer.js` | 素材 → input/ 目录共享搬运助手（自 director.js 拆出，ref-grid.js 共用）：`grabDataType`（拖放载荷提取）、`copyGalleryToInput`（`/neo_gallery/copy_to_input`）、`uploadLocalFiles`（`/upload/image` 批量）、`toggleGallerySidebar` |
 | `director.js` | 分镜视频导演编辑器（配方编辑窗口，从 recipes.js 拆出）：配方名钉在标题栏中间（默认纯文本直显、点击进入行内编辑）+ shared 分辨率（宽高比/百万像素或自定义 W/H）+ 生成模式（全局模式，mixed 逐段）+ 紧邻其后的**统一技能选择**（非混合模式各段共用、段内技能下拉隐藏；mixed 时隐藏、回到逐段选择；新建配方按技能步数从少到多取默认技能（= 技能列表首项；同分优先 H3 连续多段合成 (VDN)，VDN 插件未装时跳过不可用项））+ 逐段提示词/首帧/时长 + 半自动故事生成与拆分；标题栏右侧 🤖 按钮开 LLM 配置弹窗（llm-setting.js `openLLMSettingsModal`，全局单例、脏改动确认条）；LLM 依赖操作失败弹 action toast 带「打开 LLM 设置」入口（不自动弹弹窗挡界面）；时间轴复用 `director-timeline.js`，保存走 `recipes.js` 的 `saveRecipe` |
 | `director-node.js` | NeoH3VideoDirector 节点内嵌只读时间轴（复用 `director-timeline.js`，点击分段块打开编辑器并定位到该段）+ **采样实时预览面板**：消费后端每步推来的 `rs.h3.preview` 多帧载荷（按 `node_id` 路由到对应节点），自动循环播放该步动画，支持暂停/继续、逐帧、逐采样步回看（回看旧步时新载荷不改画面）；**运行中显示 ⏹ 取消按钮**（POST `/neo_video_gen/director/cancel` 中断当前任务）；采样期间面板占节点底部加高的 300px，换段或运行结束即清空复位。**recipe combo 选择窗**：走 `attachSkillPickerToComboWidget`（仅搜索、无管理工具栏），浮动预览卡经自定义 `previewRenderer` 显示焦点配方的只读时间轴——复用节点内嵌同款 `DirectorTimeline` 组件（秒级标尺 / 分段块 / 首帧缩略图，高度 112px，选择窗关闭时销毁实例）；spec 走 `/rs_recipes/director_spec` 并缓存，配方保存事件后清空；点预览卡经 `onPreviewClick` 直接打开该配方的导演编辑器 |
-| `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志、顶栏「修复工作流」/「修复记录」按钮 |
+| `workflow.js` | 工作流修复：`/neo_nodes/repair` 请求、确认弹窗（手动选择 + 记住映射）、修复记录日志；导出 `runRepair` / `showRepairLogDialog` / `showRepairMappingsDialog` 与失效路径红点提示（`.neo-n-menu-btn`）供顶栏 🅝 菜单调用 |
+| `top-menu.js` | 顶栏 🅝 菜单（插件统一入口，`actionBarButtons` 单按钮 + 下拉菜单）：🎬 Neo Studio（新标签页打开独立页面）、🎥 新建导演配方（`openDirectorEditor(null)`）、🧩 创建节点（手风琴子菜单列 8 个主节点，按 `LiteGraph.registeredNodes` 运行时过滤，点击往画布视口中心级联建节点）、🔧 修复工作流（右键 = 修复映射管理）、📜 修复记录、ℹ️ 关于插件（版本 / GitHub 源码 / 安装方式 / License）；🅝 图标经 CSS `::before` 渲染 emoji |
 | `prompts.js` / `prompts.css` | 提示词节点界面：状态栏、文本区、快捷输入栏、技能选择器、图片 chip；节点移除时统一注销 document/window/api 监听并销毁挂 body 的浮层菜单 |
 | `prompt-manager.js` | 提示词管理器：预设列表、集合视图、保存与删除（保存弹窗用 `/rs_prompts/extract_title`、`extract_classify` 自动填标题与标签，LLM 分析失败时状态行提示并弹 action toast 指向 LLM 设置，标题/标签仍可手填）；聊天域 DOM 由 `llm-chat.js` 的 `createStatusBars()` / `createPromptOutputArea()` 提供并经 `createPromptManagerUI()` 组装 |
 | `llm-chat.js` | LLM 聊天域：输入区 DOM（快捷输入框与提示语轮播、工具条、技能下拉、附加图片 chips、运行时随机菜单 DOM）+ 输出区 DOM（`createPromptOutputArea()`：textarea、Markdown 预览层与任务复选框回写、清空按钮、多轮技能提示、生图结果块控制器 + 节点最底部生图状态行 `rs-gen-status`（按 `state.phase` 切换形态：`enhance` 增强提示词流式阶段按已生成字符推进近似宽度并显示「已生成 N 字」、`sample` 采样阶段显示真实步数、`submit/queue` 排队用不定动画；运行中一行显示 状态/进度/取消，结束即隐藏，不随预览吸顶））+ `createGenerateHandler()` 生成流程（生图 skill 直连 `/neo_image_gen`（状态与进度在底部状态行更新；完成/取消/失败后状态行自动收起；缩略图走 `/neo_gallery/thumbnail` 缓存接口，点击经通用 `Lightbox` 打开原图；发送装配渲染在 Markdown 预览，生图前的 LLM 增强失败不阻断、改用原文并弹 action toast 指向 LLM 设置）/ skill 路由 / 选中模板 / LLM 智能判断，SSE 流式分支 rAF 合帧写回 textarea）+ `wireBackendStreamUpdate()` 后端执行期自动生成回写（按 `instance_uid` 过滤，写回 textarea/widget 后同帧刷新 Markdown 预览；载荷里出现生成器的 `[ERROR]` 失败文本时，除写回外另弹一次 action toast（按失败来源分流：`failAction(skillId, err)` — LLM 特征报文 → 打开 LLM 设置，否则选中 skill → 打开技能详情），同一失败只弹一次；返回注销函数） |

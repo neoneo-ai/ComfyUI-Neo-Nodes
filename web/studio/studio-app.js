@@ -452,9 +452,12 @@ function route() {
     showView(name);
 }
 
-window.addEventListener("hashchange", route);
-initExtensions().then(() => {
-    loadVersion();
-    initMemMonitor();
-    route();
-});
+// 仅 Studio 独立页启动：本文件也会作为扩展模块被主画布页加载（WEB_DIRECTORY），那里没有 #ns-view
+if (view) {
+    window.addEventListener("hashchange", route);
+    initExtensions().then(() => {
+        loadVersion();
+        initMemMonitor();
+        route();
+    });
+}

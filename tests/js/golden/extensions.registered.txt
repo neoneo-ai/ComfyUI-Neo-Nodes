@@ -1,2 +1,4 @@
 NeoPromptAgent
 NeoPromptEncoder
+comfy.neo.topMenu
+comfy.neo.workflowRepairHook
