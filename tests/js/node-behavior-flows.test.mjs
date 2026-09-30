@@ -173,12 +173,12 @@ test("输入 / 唤起 skill 快捷菜单：实时过滤 + Enter 提交写入下�
     const node = await makeNode(21);
     const el = parts(node);
 
-    // 打 / 打开弹层（全量 5 个 skill）
+    // 打 / 打开弹层（4 个 skill；task 分类已隐藏）
     inputText(el.quickInput, "/");
     await sleep(100);
     let picker = document.querySelector(".rs-slash-picker");
     assert.ok(picker, "应出现 slash 菜单");
-    assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 5, "全量 skill 5 行");
+    assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 4, "可见 skill 4 行（task 隐藏）");
 
     // 继续输入过滤：/ani → anime_style（id 命中）
     inputText(el.quickInput, "/ani");

@@ -266,16 +266,16 @@ function renderMarkdown(src) {
 // ==========================================
 // skill 选择列表：分类标签 + 把 skills 填充进原生 <select>（combo-box 数据源）
 // ==========================================
-// image_gen / video_gen 生成类排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
-// 图像/视频提示词增强紧随其后，vision/task/custom 依次跟随；未知分类回落 image_enhance
+// 提示词节点技能列表：图像/视频提示词增强排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
+// 反推 / 直接生图或编辑 / custom 依次跟随；video_gen（生视频）与 task 为内部使用技能，不在下拉与 / 快捷菜单显示（hidden）；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
-    "image_gen": { label: "🖼️ 生图 (Krea2)", order: 0 },
-    "video_gen": { label: "🎬 生视频 (H3)", order: 1 },
-    "image_enhance": { label: "🎨 图像提示词增强", order: 2 },
-    "video_enhance": { label: "🎬 视频提示词增强", order: 3 },
-    "vision": { label: "⚡ 图像 / 反推", order: 4 },
-    "task": { label: "⚙️ 任务", order: 5 },
-    "custom": { label: "📝 自定义", order: 6 }
+    "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
+    "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
+    "vision": { label: "⚡ 图像 / 反推", order: 2 },
+    "image_gen": { label: "🖼️ 直接生图或编辑", order: 3 },
+    "custom": { label: "📝 自定义", order: 4 },
+    "video_gen": { label: "🎬 生视频 (H3)", order: 5, hidden: true },
+    "task": { label: "⚙️ 任务", order: 6, hidden: true }
 };
 
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记 */
@@ -289,7 +289,7 @@ function populateSkillOptions(selectEl, skills) {
     });
     Object.keys(groups).sort((a, b) =>
         (CATEGORY_LABELS[a]?.order ?? 99) - (CATEGORY_LABELS[b]?.order ?? 99)
-    ).forEach(cat => {
+    ).filter(cat => !CATEGORY_LABELS[cat].hidden).forEach(cat => {
         const optgroup = mkEl("optgroup");
         optgroup.label = CATEGORY_LABELS[cat].label;
         groups[cat].forEach(s => {

@@ -88,3 +88,70 @@ test("关于插件弹窗显示源码与 License", async () => {
     assert.equal(document.querySelector(".neo-n-menu"), null, "点菜单项后菜单未收起");
 });
 
+test("⚙️ 设置打开统一设置弹窗（三 tab，切 tab 显隐同步）", async () => {
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    mockRoute("/neo_video_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    const settingsItem = [...document.querySelectorAll(".neo-n-menu-item")]
+        .find((el) => el.textContent.includes("设置"));
+    assert.ok(settingsItem, "菜单缺少 ⚙️ 设置条目");
+    settingsItem.click();
+    assert.equal(document.querySelector(".neo-n-menu"), null, "点菜单项后菜单未收起");
+
+    const overlay = document.querySelector(".neo-director-llm-overlay");
+    assert.ok(overlay, "设置弹窗未打开");
+    const tabs = [...overlay.querySelectorAll(".rs-auto-tab")].map((el) => el.textContent);
+    assert.deepEqual(tabs, ["🤖 LLM Settings", "🖼️ 生图默认设置", "🎬 生视频模型"], "tab 顺序/文案不符");
+    const panels = [...overlay.querySelectorAll(".neo-settings-panel")];
+    assert.equal(panels.length, 3, "三个设置面板缺失");
+    assert.equal(panels.filter((p) => p.style.display !== "none").length, 1, "默认只显示一个面板");
+    assert.ok(panels[0].style.display !== "none", "默认应显示 LLM tab");
+
+    // 切到生视频 tab：只有第三个面板可见
+    overlay.querySelectorAll(".rs-auto-tab")[2].click();
+    assert.equal(panels.filter((p) => p.style.display !== "none").length, 1, "切 tab 后应只有一个面板可见");
+    assert.ok(panels[2].style.display !== "none", "生视频面板未显示");
+    assert.ok(overlay.querySelectorAll(".rs-auto-tab")[2].classList.contains("rs-auto-tab-active"), "tab 高亮未跟随");
+
+    // 无改动：✕ 直接关
+    await flush();   // 等三个表单 load 落定（ready）
+    overlay.querySelector(".neo-director-llm-close").click();
+    assert.equal(document.querySelector(".neo-director-llm-overlay"), null, "无改动 ✕ 未直接关闭");
+});
+
+test("⚙️ 设置有未保存修改时先出确认条，放弃修改后关闭", async () => {
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["diffusion/krea2.safetensors"], text_encoders: [], vae: [] }));
+    mockRoute("/neo_video_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    [...document.querySelectorAll(".neo-n-menu-item")]
+        .find((el) => el.textContent.includes("设置")).click();
+    const overlay = document.querySelector(".neo-director-llm-overlay");
+    assert.ok(overlay, "设置弹窗未打开");
+    await flush();   // 等 load 落定，脏检查基线就绪
+
+    // 选中生图表单的生图模型 → 脏
+    const modelSelect = overlay.querySelector(".rs-gen-settings select");
+    modelSelect.value = "diffusion/krea2.safetensors";
+    overlay.querySelector(".neo-director-llm-close").click();
+    assert.ok(overlay, "有改动 ✕ 不应直接关");
+    const confirm = overlay.querySelector(".neo-director-llm-dirty");
+    assert.equal(confirm.hidden, false, "确认条未出现");
+
+    // 继续编辑：确认条收起、弹窗保留
+    overlay.querySelector(".neo-director-llm-btn-keep").click();
+    assert.equal(confirm.hidden, true, "继续编辑后确认条未收起");
+    assert.ok(overlay, "继续编辑不应关闭弹窗");
+
+    // 再点 ✕ → 确认条重现 → 放弃修改关闭
+    overlay.querySelector(".neo-director-llm-close").click();
+    assert.equal(confirm.hidden, false, "二次 ✕ 确认条未出现");
+    overlay.querySelector(".neo-director-llm-btn-discard").click();
+    assert.equal(document.querySelector(".neo-director-llm-overlay"), null, "放弃修改后未关闭");
+});
+

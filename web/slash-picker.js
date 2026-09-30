@@ -47,6 +47,7 @@ function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
         const filterSkills = (query) => {
             const q = (query || "").trim().toLowerCase();
             const matched = skills.filter(s => {
+                if (CATEGORY_LABELS[s.category]?.hidden) return false; // 生视频 / 任务为内部使用，不在快捷菜单显示
                 if (!q) return true;
                 if ((s.name || "").toLowerCase().includes(q)) return true;
                 if ((s.id || "").toLowerCase().includes(q)) return true;

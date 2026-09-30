@@ -2,27 +2,30 @@
  * top-menu.js — 顶栏 🅝 菜单（插件统一入口）
  * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），点击展开下拉菜单：
  *   🎬 Neo Studio / 🎥 新建导演配方 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
- *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录 / ℹ️ 关于插件（来源说明）。
+ *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）
+ *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录 / ℹ️ 关于插件。
  * 修复红点提示由 workflow.js 的 setRepairHint 驱动，本模块只提供 .neo-n-menu-btn 按钮与样式。
  */
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { showToast } from "./gallery-utils.js";
 import { openDirectorEditor } from "./director.js";
+import { createModelConfigForm } from "./llm-setting.js";
+import { createImageGenSettingsForm, createVideoGenSettingsForm } from "./image-gen.js";
 import { runRepair, showRepairLogDialog, showRepairMappingsDialog } from "./workflow.js";
 
 const STUDIO_URL = "/neo-studio";
 const REPO_URL = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes";
-const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 导演 / 建节点 / 修复 / 关于）";
+const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 导演 / 建节点 / 设置 / 修复 / 关于）";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
+// NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
 const NODE_ITEMS = [
-    { type: "NeoPromptAgent", label: "⚡ Neo Prompt Agent" },
-    { type: "NeoPromptEncoder", label: "📝 Neo Prompt Encoder" },
-    { type: "NeoImageGenEdit", label: "🎨 Neo Image Gen & Edit" },
-    { type: "NeoH3VideoDirector", label: "🎞️ Neo H3 Video Director" },
-    { type: "NeoH3SegmentRun", label: "🔁 Neo H3 Segment Run" },
-    { type: "NeoBundleExpand", label: "📦 Neo Bundle Expand" },
+    { type: "NeoPromptAgent", label: "⚡ Neo Prompt Agent（提示词智能体）" },
+    { type: "NeoPromptEncoder", label: "📝 Neo Prompt Encoder（提示词编码器）" },
+    { type: "NeoImageGenEdit", label: "🎨 Neo Image Gen & Edit（图像生成与编辑）" },
+    { type: "NeoH3VideoDirector", label: "🎞️ Neo H3 Video Director（视频导演）" },
+    { type: "NeoBundleExpand", label: "📦 Neo Bundle Expand（Bundle 展开）" },
     { type: "NeoRefGrid", label: "🔲 Neo Reference Grid（参考图宫格）" },
     { type: "NeoGridSplit", label: "🧩 Neo Grid Split（宫格图拆分）" },
 ];
@@ -154,6 +157,117 @@ function showAboutDialog() {
 }
 
 
+// ---- 统一设置弹窗（全局单例，与具体节点无关）：LLM / 生图默认 / 生视频模型三 tab。
+// 复用 .neo-director-llm-* 弹窗样式（recipes.css）与 .rs-auto-tabs tab 样式（prompts.css）。
+// 打开即三个表单后台 load、全部落定前关闭不判脏；有未保存修改时 ✕/点遮罩/Esc 先出确认条
+// （💾 保存并关闭 / 放弃修改 / 继续编辑）。幂等：已打开时重复调用不叠加。
+let _settingsModal = null;
+
+function openSettingsModal() {
+    if (_settingsModal && !_settingsModal.parentNode) _settingsModal = null;   // 浮层已被清除（外部/测试重置 body）→ 丢弃过期状态
+    if (_settingsModal) return;   // 已打开：忽略，避免叠加
+
+    const forms = [
+        { key: "llm", label: "🤖 LLM Settings", form: createModelConfigForm() },
+        { key: "gen", label: "🖼️ 生图默认设置", form: createImageGenSettingsForm() },
+        { key: "video", label: "🎬 生视频模型", form: createVideoGenSettingsForm() },
+    ];
+    const tabs = document.createElement("div");
+    tabs.className = "rs-auto-tabs";
+    for (const f of forms) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "rs-auto-tab";
+        btn.textContent = f.label;
+        const panel = document.createElement("div");
+        panel.className = "neo-settings-panel";
+        panel.appendChild(f.form.el);
+        f.btn = btn;
+        f.panel = panel;
+        tabs.appendChild(btn);
+    }
+    // 三张表单都常驻 DOM：切 tab 只切显隐，隐藏面板的输入值照常读写、不丢状态
+    const setTab = (key) => {
+        for (const f of forms) {
+            f.btn.classList.toggle("rs-auto-tab-active", f.key === key);
+            f.panel.style.display = f.key === key ? "" : "none";
+        }
+    };
+    forms.forEach((f) => { f.btn.onclick = () => setTab(f.key); });
+    setTab("llm");
+
+    const saveCloseBtn = document.createElement("button");
+    saveCloseBtn.type = "button";
+    saveCloseBtn.className = "neo-director-llm-btn-save";
+    saveCloseBtn.textContent = "💾 保存并关闭";
+    const discardBtn = document.createElement("button");
+    discardBtn.type = "button";
+    discardBtn.className = "neo-director-llm-btn-discard";
+    discardBtn.textContent = "放弃修改";
+    const keepBtn = document.createElement("button");
+    keepBtn.type = "button";
+    keepBtn.className = "neo-director-llm-btn-keep";
+    keepBtn.textContent = "继续编辑";
+    const dirtyConfirm = document.createElement("div");
+    dirtyConfirm.className = "neo-director-llm-dirty";
+    dirtyConfirm.hidden = true;
+    dirtyConfirm.append(
+        Object.assign(document.createElement("span"), { textContent: "⚠ 有未保存的修改" }),
+        (() => { const a = document.createElement("div"); a.className = "neo-director-llm-dirty-actions"; a.append(saveCloseBtn, discardBtn, keepBtn); return a; })(),
+    );
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "neo-director-llm-close";
+    closeBtn.title = "关闭（Esc）";
+    closeBtn.textContent = "✕";
+    const head = document.createElement("div");
+    head.className = "neo-director-llm-head";
+    head.append(Object.assign(document.createElement("span"), { textContent: "⚙️ 设置" }), closeBtn);
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "neo-director-llm-body";
+    bodyEl.append(tabs, ...forms.map((f) => f.panel));
+    const panel = document.createElement("div");
+    panel.className = "neo-director-llm-panel";
+    panel.append(head, bodyEl, dirtyConfirm);
+    const overlay = document.createElement("div");
+    overlay.className = "neo-director-llm-overlay";
+    overlay.appendChild(panel);
+
+    let ready = false;   // load 全部落定前关闭不判脏（初始化回填不算用户改动）
+    const hideConfirm = () => { dirtyConfirm.hidden = true; };
+    const performClose = () => {
+        hideConfirm();
+        overlay.remove();
+        document.removeEventListener("keydown", onKey, true);
+        _settingsModal = null;
+    };
+    const requestClose = () => {
+        if (!ready) { performClose(); return; }
+        if (forms.some((f) => f.form.isDirty())) { dirtyConfirm.hidden = false; return; }
+        performClose();
+    };
+    closeBtn.onclick = (e) => { e.stopPropagation(); requestClose(); };
+    overlay.onclick = (e) => { if (e.target === overlay) requestClose(); };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); requestClose(); } };
+
+    saveCloseBtn.onclick = async () => {
+        saveCloseBtn.disabled = true;
+        const results = await Promise.all(forms.map((f) => f.form.save()));   // 保存失败留在弹窗重试
+        saveCloseBtn.disabled = false;
+        if (results.every(Boolean)) performClose();
+    };
+    discardBtn.onclick = () => performClose();
+    keepBtn.onclick = () => hideConfirm();
+
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKey, true);
+    Promise.all(forms.map((f) => f.form.load()))
+        .catch(() => {})   // 单侧 load 失败不阻断就绪标记（表单内部已兜底记录）
+        .then(() => { ready = true; });
+    _settingsModal = overlay;
+}
+
 function openMenu(anchor) {
     if (menuEl) return;
     menuEl = document.createElement("div");
@@ -184,13 +298,15 @@ function openMenu(anchor) {
     };
     menuEl.append(nodeRow, subEl);
 
+    menuEl.appendChild(menuItem("⚙️ 设置", openSettingsModal));
+
     menuEl.appendChild(separator());
     const repairItem = menuItem("🔧 修复工作流", runRepair);
     repairItem.classList.add("neo-n-menu-item-repair");   // 右键 → 修复映射管理
     menuEl.appendChild(repairItem);
     menuEl.appendChild(menuItem("📜 修复记录", showRepairLogDialog));
     menuEl.appendChild(separator());
-    menuEl.appendChild(menuItem("ℹ️ 关于插件（来源说明）", showAboutDialog));
+    menuEl.appendChild(menuItem("ℹ️ 关于插件", showAboutDialog));
 
     document.body.appendChild(menuEl);
 

@@ -14,8 +14,8 @@ beforeEach(() => {
 
 // combo 的 options.values 存 name（与 Krea2/H3 skill_id 一致），而详情弹窗按 id 加载
 const SKILLS = [
-    { id: "skill-id-a", name: "Alpha Skill", source: "custom", category: "task", tags: [] },
-    { id: "skill-id-b", name: "Beta Skill", source: "preset", category: "task", tags: [] },
+    { id: "skill-id-a", name: "Alpha Skill", source: "custom", category: "image_enhance", tags: [] },
+    { id: "skill-id-b", name: "Beta Skill", source: "preset", category: "image_enhance", tags: [] },
 ];
 const NAMES = ["Alpha Skill", "Beta Skill"];
 
