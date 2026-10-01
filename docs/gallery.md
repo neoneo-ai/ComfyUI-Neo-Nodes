@@ -78,7 +78,9 @@ ComfyUI 右侧边栏中的图片/视频/音频浏览与管理面板：内置预�
   （需要代理）」与「API KEY 被拒绝 HTTP 401/403」两类问题。抓取队列遇到无法连接时会提前中止本批，
   并在状态栏显示网络错误提示
 - **Select LORA Directories** - 列出 `models/loras` 下的第一级子目录（含数量，可多选），
-  选择即保存；首页 Lora 区域**只展示**所选目录下的 LORA 示例，未勾选的 lora 不会出现在素材面板中
+  选择即保存；首页 Lora 区域**只展示**所选目录下的 LORA 示例，未勾选的 lora 不会出现在素材面板中。
+  目录名写错（例如写成 `Qwen`，实际是 `QwenImage2.1`）时该卡片会直接显示「同步目录里没有 Lora」
+  并给出提示，不会一直停在「Fetching from Civitai...」——按提示在弹窗里重选即可
 - **访问时自动缓存** - 打开「Lora」目录或其子目录时，按文件 SHA256 查询 Civitai
   （`model-versions/by-hash`），后台下载该版本的全部示例图并写入提示词 sidecar；
   每次访问最多处理 20 个 LORA，已缓存（size/mtime 未变）的 LORA 自动跳过，

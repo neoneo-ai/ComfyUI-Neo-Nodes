@@ -398,7 +398,11 @@ export class GalleryList {
         } else if (structure.pending) {
             const st = structure.civitai || {};
             let message, cls;
-            if (st.needs_api_key) {
+            if (st.status === 'empty') {
+                // 设置里的同步目录名对不上任何 Lora：这是配置问题，不是「还在抓取」
+                message = `${st.error || "同步目录里没有 Lora"} · 可在「Manage Directories」里重选同步目录。`;
+                cls = "pending-failed";
+            } else if (st.needs_api_key) {
                 message = "需要在「Manage Directories」中配置 C 站 API KEY 才能获取示例图。";
                 cls = "pending-warn";
             } else if (st.status === 'not_found') {

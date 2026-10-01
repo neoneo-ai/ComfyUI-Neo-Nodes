@@ -24,6 +24,10 @@ export function civitaiBadge(civitai) {
     if (civitai && civitai.needs_api_key) {
         return { text: "需要配置 C 站 API KEY", cls: "status-pending", title: "" };
     }
+    if (civitai && civitai.status === 'empty') {
+        // 设置里的同步目录名在 loras 目录里对不上：说清楚，不要一直转「Fetching」
+        return { text: "同步目录里没有 Lora", cls: "status-failed", title: civitai.error || "" };
+    }
     if (civitai && (civitai.status === 'failed' || civitai.status === 'not_found')) {
         const err = civitai.error || "";
         const offline = err.includes("无法连接") || err.includes("Civitai HTTP 0");

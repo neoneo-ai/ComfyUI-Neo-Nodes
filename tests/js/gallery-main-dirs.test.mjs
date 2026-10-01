@@ -101,3 +101,21 @@ test("素材库按钮：带目标主目录时打开侧栏并导航", async () =>
 
     delete app.neoGallery;
 });
+
+test("civitaiBadge：同步目录名匹配不到 Lora 时给出可行动提示，而不是一直 Fetching", async () => {
+    const { civitaiBadge } = await import("../../web/gallery-card.js");
+
+    // 设置里的目录名对不上（如写了 Qwen，实际是 QwenImage2.1）→ 说清楚，别一直转圈
+    const empty = civitaiBadge({ status: "empty", error: "同步目录 'Qwen' 下没有 Lora：请检查设置里的目录名" });
+    assert.equal(empty.text, "同步目录里没有 Lora");
+    assert.equal(empty.cls, "status-failed");
+    assert.match(empty.title, /Qwen/);
+
+    // 既有语义不变：缺 KEY / 连不上 / 未命中 / 仍在获取
+    assert.equal(civitaiBadge({ needs_api_key: true }).text, "需要配置 C 站 API KEY");
+    assert.equal(civitaiBadge({ status: "failed", error: "Civitai HTTP 0" }).text, "C 站无法连接");
+    assert.equal(civitaiBadge({ status: "not_found" }).text, "Not on Civitai");
+    assert.equal(civitaiBadge({}).text, "Fetching from Civitai...");
+    assert.equal(civitaiBadge({}).cls, "status-loading");
+});
+
