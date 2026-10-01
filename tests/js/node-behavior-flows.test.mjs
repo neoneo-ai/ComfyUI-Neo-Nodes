@@ -26,6 +26,7 @@ beforeEach(() => {
     resetEnv();
     clearRoutes();
     mockRoute("/rs_prompts/skills", () => jsonResponse(SKILLS));
+    localStorage.removeItem("neo.prompt_agent.quick_history");
 });
 
 function flowTrace() {
@@ -101,6 +102,27 @@ test("快捷输入 Enter：无 skill 时走流式生成并回填", async () => {
     // onDone 取消待执行的合并帧前先把 accumulated 写回 textarea，saveTextToStorage 才能读到最新文本。
     // golden 记录当前行为；若行为有意变化，需 npm run update-goldens。
     assertGolden("flow.generate-stream.state", state(node, el));
+});
+
+test("快捷输入历史：↑ 召回预置条目，Enter 生成后所发输入记入历史（localStorage 持久化）", async () => {
+    mockRoute("/rs_prompts/classify_skill", () => jsonResponse({ skill: null }));
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse(CHUNKS));
+
+    // 预置一条历史，验证节点快捷输入已接上共享历史模块
+    localStorage.setItem("neo.prompt_agent.quick_history", JSON.stringify(["seeded prompt"]));
+
+    const node = await makeNode(31);
+    const el = parts(node);
+    keydown(el.quickInput, "ArrowUp");
+    assert.equal(el.quickInput.value, "seeded prompt", "↑ 应召回预置历史条目");
+
+    inputText(el.quickInput, "a cat in the rain");
+    keydown(el.quickInput, "Enter");
+    await sleep(200);
+
+    const hist = JSON.parse(localStorage.getItem("neo.prompt_agent.quick_history"));
+    assert.equal(hist[0], "a cat in the rain", "真正发出的快捷输入应记入历史首位");
+    assert.equal(hist[1], "seeded prompt");
 });
 
 test("H3 审计事件：status 累计显示阶段、replace 整段替换正文、结束后保留结果", async () => {

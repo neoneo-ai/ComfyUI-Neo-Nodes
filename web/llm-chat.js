@@ -53,6 +53,7 @@ const QUICK_INPUT_TIPS = [
     "📷 输入场景描述，如：'夕阳下的海边日落'",
     "🔍 输入关键词搜索已有提示词",
     "🚀 输入描述后按 Enter 生成，Shift+Enter 换行",
+    "⬆️ 按 ↑/↓ 召回之前生成用过的输入",
     "🔄 输入修改指令，如：'增加细节描述'",
     "🎭 输入角色描述，如：'一个穿着汉服的女孩'",
     "🌅 输入时间场景，如：'清晨的森林，阳光穿透树叶'",
@@ -995,6 +996,9 @@ function createGenerateHandler(promptUI) {
             }
             return;
         }
+
+        // 记入快捷输入命令终端式历史（↑/↓ 可召回）：只记录真正发出的快捷输入
+        promptUI.recordQuickHistory?.(quickText);
 
         if (selectedOpt?.dataset.genImage === "1") {
             // 生图：output 区域已有提示词 + quick input 新输入，两者拼接

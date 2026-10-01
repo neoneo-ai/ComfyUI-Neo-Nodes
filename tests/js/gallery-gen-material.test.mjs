@@ -2,7 +2,7 @@
 // 成功后可打开 Output 下实际落盘的日期子目录。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, fetchLog, sleep, click, inputText, changeValue } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, fetchLog, sleep, click, keydown, inputText, changeValue } from "./setup.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目录", async () => {
@@ -195,6 +195,50 @@ test("生成素材弹窗：模型覆盖——自动不带覆盖，选主模型+L
     assert.equal(overlay2.querySelectorAll(".rs-gen-lora-row").length, 0, "重开后无 LoRA 行");
 });
 
+test("生成素材弹窗：切换生成技能后模型覆盖同步为该技能配置的主模型 / LoRA", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+        { id: "qwen_t2i", cn_name: "Qwen 文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({
+        diffusion_models: ["krea2.safetensors", "qwen_image_2.1.safetensors"],
+        loras: ["style_a.safetensors", "style_b.safetensors"],
+    }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(
+        call.query.get("skill_id") === "qwen_t2i"
+            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "style_b.safetensors", strength: 0.6 }] }
+            : {}));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50); // 等模型列表与技能配置应用
+
+    click(overlay.querySelector(".neo-gallery-gm-model-toggle"));
+    const modelSel = overlay.querySelector(".rs-gen-model-section select");
+    assert.equal(modelSel.value, "", "默认技能无配置 → 自动");
+    assert.equal(overlay.querySelectorAll(".rs-gen-lora-row").length, 0);
+
+    // 切到 Qwen 文生图 → 覆盖同步为其配置的主模型 + LoRA
+    const skillSel = overlay.querySelector(".neo-recipes-sort");
+    changeValue(skillSel, "qwen_t2i");
+    await sleep(30);
+    assert.equal(modelSel.value, "qwen_image_2.1.safetensors", "主模型同步为技能配置");
+    const loraRow = overlay.querySelector(".rs-gen-lora-row");
+    assert.ok(loraRow, "应出现技能配置的 LoRA 行");
+    assert.equal(loraRow.querySelector("select").value, "style_b.safetensors");
+    assert.equal(loraRow.querySelector(".rs-gen-lora-strength").value, "0.6");
+
+    // 切回 → 覆盖回到自动
+    changeValue(skillSel, "image_gen");
+    await sleep(30);
+    assert.equal(modelSel.value, "", "切回后回到自动");
+    assert.equal(overlay.querySelectorAll(".rs-gen-lora-row").length, 0);
+});
+
 test("生成素材弹窗：成功后可删除结果图并回到 idle", async () => {
     resetEnv();
     clearRoutes();
@@ -286,6 +330,11 @@ test("生成素材弹窗：选中的主模型+LoRA 组合可保存为新技能",
         vae: ["qwen_image_vae.safetensors"],
         loras: ["style_a.safetensors"],
     }));
+    // 新技能的 config.json = 保存的组合（与后端 save_combo_as_skill 一致），切到它后覆盖区重放不变
+    mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(
+        call.query.get("skill_id") === "qwen_image_21_style_a"
+            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "style_a.safetensors", strength: 0.8, ref_only: false }] }
+            : {}));
 
     openGenMaterialDialog({ showDirectoryStructure: () => {} });
     const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
@@ -446,4 +495,148 @@ test("生成素材弹窗：✨ 增强仿 agent quick input + output，支持选�
     const toasts = [...document.querySelectorAll(".neo-at")].map(t => t.textContent).join("|");
     assert.match(toasts, /提示词增强失败/, "失败应弹错误 toast");
     assert.equal(outputInput.value, "红色陶瓷杯，白底产品图，柔和布光。改为写实风格。", "失败时 output 保持原文");
+});
+
+test("快捷输入命令终端式历史：↑/↓ 召回之前生成的提示词（去重），关窗后持久", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.quick_history");
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "krea2-t2i", name: "Krea2 文生图" },
+        { id: "other-skill", name: "其他技能" },
+    ]));
+    let genCalls = 0;
+    const okStatus = (id) => jsonResponse({ task_id: id, status: "succeeded", width: 512, height: 512, images: [{ filename: "out.png", subfolder: "NeoAgent/2026-10-01", url: "/g.png" }] });
+    mockRoute("/neo_image_gen/generate", () => {
+        genCalls += 1;
+        return jsonResponse({ task_id: `t${genCalls}`, status: "queued", images: [] });
+    });
+    mockRoute("/neo_image_gen/status/t1", () => okStatus("t1"));
+    mockRoute("/neo_image_gen/status/t2", () => okStatus("t2"));
+
+    const g = { showDirectoryStructure: () => {} };
+    openGenMaterialDialog(g);
+    await sleep(50);
+    const quick = document.querySelector(".neo-gallery-gm-quick-input");
+    inputText(quick, "红色陶瓷杯白底产品图");
+    click([...document.querySelectorAll(".neo-gallery-story-actions button")].find((b) => b.textContent === "生成"));
+    await sleep(80);
+
+    // 清空后 ↑ 召回最近一条；↓ 回原草稿（空）
+    inputText(quick, "");
+    keydown(quick, "ArrowUp");
+    assert.equal(quick.value, "红色陶瓷杯白底产品图");
+    keydown(quick, "ArrowDown");
+    assert.equal(quick.value, "");
+
+    // 召回后改写再生成：新条目进历史顶部（同一条目不重复入史）
+    keydown(quick, "ArrowUp");
+    inputText(quick, "蓝色玻璃杯棚拍光");
+    const again = [...document.querySelectorAll(".neo-gallery-story-actions button")].find((b) => b.textContent === "再生成");
+    click(again);
+    await sleep(80);
+    assert.equal(genCalls, 2);
+
+    // ↑↑ 依次走过两条历史
+    inputText(quick, "");
+    keydown(quick, "ArrowUp");
+    assert.equal(quick.value, "蓝色玻璃杯棚拍光");
+    keydown(quick, "ArrowUp");
+    assert.equal(quick.value, "红色陶瓷杯白底产品图");
+
+    // 重开弹窗：历史持久（localStorage）
+    openGenMaterialDialog(g);
+    await sleep(50);
+    const quick2 = document.querySelector(".neo-gallery-gm-quick-input");
+    keydown(quick2, "ArrowUp");
+    assert.equal(quick2.value, "蓝色玻璃杯棚拍光");
+
+    localStorage.removeItem("neo.gallery.gen_material.quick_history");
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+
+test("快捷输入历史只记快捷输入：✨ 增强后入史的是快捷输入内容，不是增强的长文", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.quick_history");
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse([
+        'data: {"text":"红色陶瓷杯，白底产品图，柔和布光，高清细节。","kind":"content"}\n',
+        "data: [DONE]\n",
+    ]));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+    const quick = overlay.querySelector(".neo-gallery-gm-quick-input");
+    const output = overlay.querySelector(".neo-gallery-story-input");
+
+    inputText(quick, "红色陶瓷杯");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "✨ 增强"));
+    await sleep(80);
+    assert.equal(output.value, "红色陶瓷杯，白底产品图，柔和布光，高清细节。");
+    assert.equal(quick.value, "", "增强成功后 quick input 应被消费清空");
+
+    // ↑ 召回的是快捷输入内容（若误记了增强长文，这里会召回长文）
+    keydown(quick, "ArrowUp");
+    assert.equal(quick.value, "红色陶瓷杯", "历史里应是快捷输入内容，不是增强的长文");
+
+    localStorage.removeItem("neo.gallery.gen_material.quick_history");
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+
+test("output 框独立历史：增强+生成后 ↑ 在 output 召回最终提示词，quick 框不受影响", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.quick_history");
+    localStorage.removeItem("neo.gallery.gen_material.output_history");
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/rs_prompts/stream_generate_prompt", () => sseResponse([
+        'data: {"text":"红色陶瓷杯，白底产品图，柔和布光，高清细节。","kind":"content"}\n',
+        "data: [DONE]\n",
+    ]));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "gmh1", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/gmh1", () => jsonResponse({
+        task_id: "gmh1", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "krea2_00009_.png", subfolder: "NeoAgent/2026-10-01", url: "/g.png" }],
+    }));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+    const quick = overlay.querySelector(".neo-gallery-gm-quick-input");
+    const output = overlay.querySelector(".neo-gallery-story-input");
+
+    // 增强 → 用 output 的增强内容生成
+    inputText(quick, "红色陶瓷杯");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "✨ 增强"));
+    await sleep(80);
+    const finalPrompt = "红色陶瓷杯，白底产品图，柔和布光，高清细节。";
+    assert.equal(output.value, finalPrompt);
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "生成"));
+    await sleep(120);
+
+    // ↑ 在 output 框召回最终提示词（增强长文）
+    keydown(output, "ArrowUp");
+    assert.equal(output.value, finalPrompt, "↑ 在 output 框应召回生成用过的最终提示词");
+
+    // ↑ 在 quick 框不召回它（两份历史独立），快捷历史里只有快捷输入
+    keydown(quick, "ArrowUp");
+    assert.equal(quick.value, "红色陶瓷杯", "↑ 在 quick 框只召回快捷输入内容");
+
+    const outHist = JSON.parse(localStorage.getItem("neo.gallery.gen_material.output_history"));
+    const quickHist = JSON.parse(localStorage.getItem("neo.gallery.gen_material.quick_history"));
+    assert.deepEqual(outHist, [finalPrompt], "output 历史独立存储最终提示词");
+    assert.deepEqual(quickHist, ["红色陶瓷杯"], "快捷历史只含快捷输入内容");
+
+    localStorage.removeItem("neo.gallery.gen_material.quick_history");
+    localStorage.removeItem("neo.gallery.gen_material.output_history");
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
 });

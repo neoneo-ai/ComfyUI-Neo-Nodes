@@ -12,6 +12,7 @@ import { mkEl } from "./dom-utils.js";
 // 导入 NodeBehaviors
 import NodeBehaviors from "./node-behavior.js";
 import { createGenerateHandler, wireBackendStreamUpdate } from "./llm-chat.js";
+import { createQuickInputHistory } from "./quick-input-history.js";
 
 // ==========================================
 // 本地模型自动卸载由后端在生成完成时处理：
@@ -423,10 +424,13 @@ app.registerExtension({
             // ==========================================
             // Use shared button handlers (same as NeoPrompts)
             // ==========================================
+            // 快捷输入命令终端式历史：↑/↓ 召回之前生成用过的输入（localStorage 持久化，两类节点共用）
+            const quickHistory = createQuickInputHistory(quickInput, { storageKey: "neo.prompt_agent.quick_history" });
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, statusBar: null,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect, skillSelector
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect, skillSelector,
+                recordQuickHistory: quickHistory.record
             };
 
             const handleGeneratePrompt = createGenerateHandler(
@@ -958,10 +962,13 @@ app.registerExtension({
             // ==========================================
             // 使用共享的按钮处理器（与 NeoPromptAgent 相同）
             // ==========================================
+            // 快捷输入命令终端式历史：↑/↓ 召回之前生成用过的输入（localStorage 持久化，两类节点共用）
+            const quickHistory = createQuickInputHistory(quickInput, { storageKey: "neo.prompt_agent.quick_history" });
             const promptUIRef = {
                 generateBtn, randomBtn, quickInput,
                 customTextarea, textWidget, node, statusBar,
-                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect, skillSelector
+                attachedImages, clearImages, refreshMarkdownPreviewAuto, genResultsController, thinkingDepthSelect, skillSelector,
+                recordQuickHistory: quickHistory.record
             };
 
             const handleGeneratePrompt = createGenerateHandler(

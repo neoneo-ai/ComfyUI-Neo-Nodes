@@ -10,8 +10,9 @@ import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
 import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
-import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels } from "./image-gen.js";
+import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig } from "./image-gen.js";
 import { invokePromptStream, createStreamOutputHandlers } from "./prompt-service.js";
+import { createQuickInputHistory } from "./quick-input-history.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
@@ -943,13 +944,18 @@ export function openGenMaterialDialog(gallery) {
     const quickInput = $el("textarea", {
         className: "neo-gallery-gm-quick-input",
         rows: 2,
-        placeholder: "描述要生成的素材，例如：红色陶瓷杯的白底产品图……或输入修改指令"
+        placeholder: "描述要生成的素材，例如：红色陶瓷杯的白底产品图……或输入修改指令（↑/↓ 调出历史）"
     });
+
+    // 快捷输入命令终端式历史：↑/↓ 召回之前生成用过的提示词（localStorage 持久化，最新在前，上限 20）
+    const gmHistory = createQuickInputHistory(quickInput, { storageKey: "neo.gallery.gen_material.quick_history" });
     const outputInput = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 4,
-        placeholder: "增强后的提示词会显示在这里（不增强时可直接填写）"
+        placeholder: "增强后的提示词会显示在这里（不增强时可直接填写，↑/↓ 调出历史）"
     });
+    // output 框独立 ↑/↓ 历史：只记生成实际用过的最终提示词（增强长文 / 手填内容），与快捷输入历史互不相干
+    const gmOutputHistory = createQuickInputHistory(outputInput, { storageKey: "neo.gallery.gen_material.output_history" });
 
     let running = false;
     let cancelId = null;
@@ -981,11 +987,13 @@ export function openGenMaterialDialog(gallery) {
         } catch {
             skillSel.value = KREA2_T2I_SKILL_ID;
         }
+        applySkillModelConfig(skillSel.value); // 模型覆盖同步为该技能配置（模型列表未就绪时为空操作）
     };
     fillSkillOptions();
-    // 选中变化即写入 localStorage：下次打开沿用该技能（关窗不清除）
+    // 选中变化即写入 localStorage：下次打开沿用该技能（关窗不清除）；模型覆盖同步切到新技能
     skillSel.addEventListener("change", () => {
         try { localStorage.setItem(GM_LAST_SKILL_KEY, skillSel.value); } catch {}
+        applySkillModelConfig(skillSel.value);
     });
 
     // 增强 skill 下拉：与节点同源 populateSkillOptions（按分类分组），只列图像提示词增强技能
@@ -1057,10 +1065,18 @@ export function openGenMaterialDialog(gallery) {
     });
     // 每次打开都默认「自动」（跟随全局设置），不预填已配置值——否则关窗重开像上次选择没清除；
     // 模型列表拉取失败时覆盖区保持空下拉（等效跟随设置），不挡生成
+    let genModels = null; // 打开时拉取的模型列表，切换技能重放配置时复用
+    // 切换生成技能后把模型覆盖同步为该技能配置的主模型 / LoRA（无配置 = 自动跟随全局设置）
+    async function applySkillModelConfig(skillId) {
+        if (!genModels) return; // 模型列表未就绪：首次加载 / 技能列表回调稍后会应用
+        const cfg = await getSkillGenConfig(skillId);
+        modelCfg.load(cfg, genModels);
+    }
     (async () => {
         try {
-            const models = await listGenModels();
-            modelCfg.load({}, models);
+            genModels = await listGenModels();
+            modelCfg.load({}, genModels); // 先按「自动」渲染，避免下拉为空
+            applySkillModelConfig(skillSel.value); // 再覆盖为当前技能配置
         } catch {
             // 同上：静默保持「自动」
         }
@@ -1088,6 +1104,8 @@ export function openGenMaterialDialog(gallery) {
         const outputText = outputInput.value.trim();
         const text = quickText ? (outputText ? `${outputText}\n\n---\n\n${quickText}` : quickText) : outputText;
         if (!text) { quickInput.focus(); return; }
+        // 快捷输入内容记入历史（增强产物是 LLM 长文，不入史；与节点一致在提交时记录）
+        if (quickText) gmHistory.record(quickText);
         enhancing = true;
         enhanceBtn.textContent = "⏳ 增强中…";
         try {
@@ -1196,6 +1214,9 @@ export function openGenMaterialDialog(gallery) {
         // 生成用 output 内容作最终提示词（为空回退 quick input），固定 skip_enhance
         const prompt = outputInput.value.trim() || quickInput.value.trim();
         if (!prompt) { quickInput.focus(); return; }
+        // 两份历史各自独立：output 为空记快捷输入，非空记 output 的最终提示词
+        if (outputInput.value.trim()) gmOutputHistory.record(prompt);
+        else gmHistory.record(prompt);
         running = true;
         cancelRequested = false;
         renderRunning("排队中…");
