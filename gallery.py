@@ -7,6 +7,7 @@ import json
 import base64
 import asyncio
 import hashlib
+import random
 import shutil
 import time
 from pathlib import Path
@@ -1412,10 +1413,10 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
         return
 
     result: list[dict] = []
-    
-    # Level 1: Scan root level files first (image > video > audio)
+
+    # Level 1: Scan root level files (image > video > audio), randomly sampled
     root_files = []
-    for p in sorted(base_dir.iterdir()):
+    for p in base_dir.iterdir():
         if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
             root_files.append({
                 "filename": p.name,
@@ -1424,11 +1425,12 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
                 "kind": _cover_kind(p.name),
                 "mtime": p.stat().st_mtime,
             })
+    random.shuffle(root_files)
     result.extend(_order_covers_by_kind(root_files)[:sample_count])
-    
+
     # Level 2+: Recursively scan subdirectories if not enough at root level
     _collect_covers_recursive(base_dir, sample_count - len(result), result, sample_count, base_subfolder)
-    
+
     covers[f"{dir_name}"] = result
 
 
@@ -1444,25 +1446,25 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
     """
     if needed <= 0 or len(result) >= sample_count or not parent_dir.exists():
         return
-    
-    for subdir in sorted(parent_dir.iterdir()):
+
+    subdirs = [d for d in parent_dir.iterdir() if d.is_dir()]
+    random.shuffle(subdirs)
+
+    for subdir in subdirs:
         if len(result) >= sample_count:
             break
-        
-        if not subdir.is_dir():
-            continue
-        
+
         # Build full subfolder path by prepending base_subfolder
         if base_subfolder:
             new_subfolder = f"{base_subfolder}/{subdir.name}"
         else:
             new_subfolder = subdir.name
-        
+
         # Check direct media files at this subdirectory level (image > video > audio,
         # limited to what's still needed)
         remaining = sample_count - len(result)
         subdir_media = []
-        for f in sorted(subdir.iterdir()):
+        for f in subdir.iterdir():
             if f.is_file() and f.suffix.lower() in ALL_MEDIA_EXTENSIONS:
                 subdir_media.append({
                     "filename": f.name,
@@ -1471,8 +1473,9 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
                     "kind": _cover_kind(f.name),
                     "mtime": f.stat().st_mtime,
                 })
+        random.shuffle(subdir_media)
         found_direct = _order_covers_by_kind(subdir_media)[:remaining]
-        
+
         # If we found media at this level, add them and stop recursing deeper for this subdir
         if found_direct:
             result.extend(found_direct)

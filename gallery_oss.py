@@ -6,6 +6,7 @@
 # at import time; gallery.py imports this module to pick them up.
 
 import json
+import random
 from pathlib import Path
 import aiohttp
 from aiohttp import web
@@ -320,7 +321,8 @@ def _collect_oss_covers(covers: dict, index: dict, category: str | None = OSS_CA
     path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
     for dir_name in _oss_category_dirs(index, category):
         dir_data = index.get("directories", {}).get(dir_name, {})
-        items = dir_data.get("items", [])
+        items = list(dir_data.get("items", []))
+        random.shuffle(items)
         cover_items = []
         for item in items[:2]:
             kind = _oss_cover_kind(item["filename"])
