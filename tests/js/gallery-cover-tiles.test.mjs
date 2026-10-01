@@ -88,6 +88,64 @@ test("封面方向：首图为竖图/方形时并排+顶部锚定，横图保持
     p.w.remove(); p1.w.remove(); s.w.remove(); l.w.remove();
 });
 
+test("目录卡封面比例是两张瓦片的合成值（与单图素材卡不同）", async () => {
+    resetEnv();
+    const { renderCoverTiles } = await loadUtils();
+
+    // 比例只写在 .neo-gallery-category-card 的 cover wrapper 上，测试需挂真实卡片父级
+    function renderWith(sizes) {
+        const card = document.createElement("div");
+        card.className = "neo-gallery-category-card";
+        const w = wrapper();
+        card.appendChild(w);
+        document.body.appendChild(card);
+        const covers = sizes.map((_, i) => ({ filename: `${i}.png`, subfolder: "" }));
+        renderCoverTiles(w, covers, "");
+        const imgs = [...w.querySelectorAll("img")];
+        sizes.forEach(([nw, nh], i) => {
+            Object.defineProperty(imgs[i], "naturalWidth", { value: nw });
+            Object.defineProperty(imgs[i], "naturalHeight", { value: nh });
+        });
+        return { card, w, imgs };
+    }
+
+    // jsdom 把 aspect-ratio: 1.5 序列化成 "1.5 / 1"，断言前去掉分母
+    const ratioOf = (el) => el.style.aspectRatio.replace(" / 1", "");
+
+    // 两张竖图并排 → 合成 3:2 宽卡（每张瓦片恰好 3:4，不裁切）
+    const p = renderWith([[768, 1344], [768, 1344]]);
+    p.imgs[0].onload();
+    assert.equal(ratioOf(p.w), "1.5", "首图加载即按双竖图合成 3:2");
+    p.imgs[1].onload();
+    assert.equal(ratioOf(p.w), "1.5", "第二张确认后保持 3:2");
+
+    // 两张横图堆叠 → 合成 3:4 高卡（每张瓦片恰好 3:2）
+    const l = renderWith([[1344, 768], [1344, 768]]);
+    l.imgs[0].onload();
+    assert.equal(ratioOf(l.w), "0.75", "双横图合成 3:4");
+
+    // 单张竖图 → 自身 3:4，与素材卡一致
+    const s = renderWith([[768, 1344]]);
+    s.imgs[0].onload();
+    assert.equal(ratioOf(s.w), "0.75", "单图保持自身比例");
+
+    // 竖 + 横混合 → 首图加载时第二张未知（按同朝向计 1.5），确认后并排合成 0.75 + 1.5 = 2.25
+    const m = renderWith([[768, 1344], [1344, 768]]);
+    m.imgs[0].onload();
+    assert.equal(ratioOf(m.w), "1.5", "第二张未知时按同朝向合成");
+    m.imgs[1].onload();
+    assert.equal(ratioOf(m.w), "2.25", "混合朝向确认后按并排合成");
+
+    // 第二张加载失败 → 占位瓦片按方形计：0.75 + 1 = 1.75
+    const f = renderWith([[768, 1344], [768, 1344]]);
+    f.imgs[0].onload();
+    f.imgs[1].onerror();
+    assert.equal(ratioOf(f.w), "1.75", "失败瓦片按方形参与合成");
+    assert.ok(f.w.querySelector(".neo-gallery-card-placeholder"), "失败瓦片变占位");
+
+    for (const r of [p, l, s, m, f]) r.card.remove();
+});
+
 test("封面只取前 MAX_COVER_IMAGES 张，多余忽略", async () => {
     resetEnv();
     const { renderCoverTiles } = await loadUtils();

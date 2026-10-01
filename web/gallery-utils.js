@@ -206,11 +206,63 @@ export function buildAudioTile(seed) {
     return tile;
 }
 
+/** Map a loaded image's orientation to a display ratio: portrait 3:4, landscape 3:2, square 1:1. */
+function _orientationRatio(w, h) {
+    if (!w || !h) return null;
+    const r = w / h;
+    if (r < 0.92) return 3 / 4;      // portrait → tall card
+    if (r > 1.1) return 3 / 2;       // landscape → wide/short card
+    return 1;                        // square
+}
+
+/**
+ * Adapt a directory card's cover box to the composite orientation of its tiles:
+ * two portraits side-by-side read as one wide 3:2 image, two stacked landscapes
+ * as one tall 3:4 image — so directory cards differ from single-media cards.
+ * Tiles keep their own ratio (row adds widths, column adds heights), which means
+ * no crop when both covers share an orientation. Layout follows the first tile:
+ * portrait & square go side-by-side (top-anchored), landscape stacks. Unknown
+ * tiles are assumed to match the first, so the box is set on the first load and
+ * refined when the second arrives. Falls back to the default fixed height when
+ * no dimensions are available.
+ */
+function _applyAdaptiveCoverRatio(coverWrapper, grid, ratios) {
+    const r1 = ratios[0];
+    if (!r1) return;
+    const useRow = r1 !== 3 / 2;     // portrait & square side-by-side; landscape stacks
+    grid.classList.toggle("neo-gallery-card-cover-grid--row", useRow);
+    grid.classList.toggle("neo-gallery-card-cover-grid--portrait", useRow);
+    let ratio = r1;
+    if (ratios.length > 1) {
+        const r2 = ratios[1] || r1;  // unknown tile assumed same as the first
+        ratio = useRow ? r1 + r2 : 1 / (1 / r1 + 1 / r2);
+    }
+    const card = coverWrapper.parentElement;
+    if (card && card.classList.contains("neo-gallery-category-card")) {
+        coverWrapper.style.aspectRatio = String(Math.round(ratio * 1000) / 1000);
+        coverWrapper.style.flex = "0 0 auto";
+        card.style.height = "auto";
+    }
+}
+
+/**
+ * Adapt a single media card to its image's orientation: portrait gets a tall card,
+ * landscape a wide/short one, square stays square. The thumbnail box drives the
+ * card height (the grid is top-aligned so mixed heights don't stretch).
+ */
+export function applyMediaCardRatio(container, imgWrapper, w, h) {
+    const ratio = _orientationRatio(w, h);
+    if (!ratio) return;
+    imgWrapper.style.aspectRatio = String(ratio);
+    imgWrapper.style.flex = "0 0 auto";
+    container.style.height = "auto";
+}
+
 /**
  * Render a directory / bookmark cover into `coverWrapper`.
- * Multiple media covers default to vertical stacking; if the first loaded image
- * is square or portrait (height >= width) they switch to side-by-side row.
- * An audio-only set becomes one audio tile, and nothing usable becomes one placeholder.
+ * The first loaded image's orientation drives both the two-cover layout and the
+ * card's height (see _applyAdaptiveCoverRatio). An audio-only set becomes one
+ * audio tile, and nothing usable becomes one placeholder.
  */
 export function renderCoverTiles(coverWrapper, covers, alt = "") {
     coverWrapper.innerHTML = "";
@@ -219,23 +271,16 @@ export function renderCoverTiles(coverWrapper, covers, alt = "") {
 
     if (mediaCovers.length > 0) {
         const grid = $el("div", { className: "neo-gallery-card-cover-grid" });
-        let portraitChecked = false;
-        for (const c of mediaCovers) {
+        const ratios = new Array(mediaCovers.length).fill(null);
+        const settle = () => _applyAdaptiveCoverRatio(coverWrapper, grid, ratios);
+        mediaCovers.forEach((c, i) => {
             const itemEl = $el("div", { className: "neo-gallery-card-cover-grid-item" });
             const img = $el("img", { src: _coverImgSrc(c), alt, loading: "lazy" });
-            img.onerror = () => itemEl.replaceWith(buildPlaceholderTile());
-            if (!portraitChecked) {
-                img.onload = () => {
-                    portraitChecked = true;
-                    if (img.naturalHeight >= img.naturalWidth) {
-                        grid.classList.add("neo-gallery-card-cover-grid--row");
-                        grid.classList.add("neo-gallery-card-cover-grid--portrait");
-                    }
-                };
-            }
+            img.onerror = () => { ratios[i] = 1; itemEl.replaceWith(buildPlaceholderTile()); settle(); };
+            img.onload = () => { ratios[i] = _orientationRatio(img.naturalWidth, img.naturalHeight); settle(); };
             itemEl.appendChild(img);
             grid.appendChild(itemEl);
-        }
+        });
         coverWrapper.appendChild(grid);
     } else if (list.some(c => getCoverTileKind(c) === "audio")) {
         const firstAudio = list.find(c => getCoverTileKind(c) === "audio");

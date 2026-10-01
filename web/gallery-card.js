@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform, applyMediaCardRatio } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems, openReversePromptDialog } from "./gallery-gen.js";
 import { copyGalleryToInput } from "./media-transfer.js";
@@ -667,8 +667,10 @@ export class GalleryCard {
             // Pre-load for aspect ratio calculation AND set real src
             const preloaderImg = new Image();
             preloaderImg.onload = () => {
-                // Set the real thumbnail src now that we have dimensions
+                // Set the real thumbnail src now that we have dimensions, then size
+                // the card to the image's orientation (tall / wide / square).
                 mediaEl.src = thumbnailSrc;
+                applyMediaCardRatio(container, imgWrapper, preloaderImg.naturalWidth, preloaderImg.naturalHeight);
             };
             preloaderImg.src = thumbnailSrc;
         } else {

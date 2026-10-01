@@ -332,6 +332,9 @@
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     padding: 4px 0;
+    /* Cards adapt their height to content ratio (portrait/landscape/square),
+       so a row can mix heights — top-align them instead of stretching. */
+    align-items: start;
 }
 
 /* Category Card — clickable card for a directory/category */
