@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, getCardHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems, openReversePromptDialog } from "./gallery-gen.js";
 import { copyGalleryToInput } from "./media-transfer.js";
@@ -311,12 +311,9 @@ export class GalleryCard {
     }
 
     async createSubdirCard(gallery, subdirName, parentDir, fullPath, subdirData = null) {
-        const cardHeight = getCardHeight(gallery);
-
         const card = $el("div", {
             className: "neo-gallery-category-card",
-            onclick: () => gallery.showDirectoryStructure(parentDir, fullPath),
-            style: { width: `${gallery.maxThumbnailSize}px`, minHeight: `${cardHeight}px` }
+            onclick: () => gallery.showDirectoryStructure(parentDir, fullPath)
         });
 
         const isPending = !!(subdirData && subdirData.pending);
@@ -666,8 +663,6 @@ export class GalleryCard {
             // Pre-load for aspect ratio calculation AND set real src
             const preloaderImg = new Image();
             preloaderImg.onload = () => {
-                const aspectRatio = preloaderImg.height / preloaderImg.width;
-                container.style.width = `${Math.max(gallery.maxThumbnailSize * (1 / aspectRatio), 40)}px`;
                 // Set the real thumbnail src now that we have dimensions
                 mediaEl.src = thumbnailSrc;
             };

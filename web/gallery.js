@@ -13,6 +13,7 @@ import {
     THUMBNAIL_SIZE_MIN,
     THUMBNAIL_SIZE_MAX,
     THUMBNAIL_SIZE_STEP,
+    getCardHeight,
     renderCoverTiles,
     buildPlaceholderTile,
     showNoFilesMessage,
@@ -490,7 +491,7 @@ export class NeoGallery {
         }
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)` }
+            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this)}px` }
         });
         for (const item of items) {
             container.appendChild(this._createLocalBookmarkCard(item));
@@ -688,7 +689,7 @@ export class NeoGallery {
 
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)` }
+            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this)}px` }
         });
         for (const item of items) {
             container.appendChild(this._createCivitaiBookmarkCard(item));
@@ -1323,6 +1324,7 @@ export class NeoGallery {
         for (const grid of grids) {
             if (grid.offsetParent !== null) {
                 grid.style.gridTemplateColumns = `repeat(auto-fill, ${newSize}px)`;
+                grid.style.setProperty('--neo-card-h', `${getCardHeight(this)}px`);
             }
         }
         await this.list.sortAndDisplayImages();

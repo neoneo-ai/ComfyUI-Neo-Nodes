@@ -3,7 +3,7 @@
  */
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
-import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, createBreadcrumbItem, createBreadcrumbSeparator, createSpacer, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast } from './gallery-utils.js';
+import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, createBreadcrumbItem, createBreadcrumbSeparator, createSpacer, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast } from './gallery-utils.js';
 
 // Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
 const CIVITAI_DIR_KEY = "civitai_bookmarks";
@@ -313,7 +313,7 @@ export class GalleryList {
     async createCategoryCardGrid(dirGroups) {
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.gallery.maxThumbnailSize}px)` }
+            style: { gridTemplateColumns: `repeat(auto-fill, ${this.gallery.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this.gallery)}px` }
         });
 
         // Collect workflow-used loras once for the smart filter (only lora dirs are filtered).
@@ -459,7 +459,7 @@ export class GalleryList {
 
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.gallery.maxThumbnailSize}px)` }
+            style: { gridTemplateColumns: `repeat(auto-fill, ${this.gallery.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this.gallery)}px` }
         });
 
         if (isLoraView) {

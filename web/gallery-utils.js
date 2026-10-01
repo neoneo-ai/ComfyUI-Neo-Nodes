@@ -13,7 +13,7 @@ export const THUMBNAIL_SIZE_MIN = 150;
 export const THUMBNAIL_SIZE_MAX = 500;
 export const THUMBNAIL_SIZE_STEP = 25;
 export const THUMBNAIL_SIZE_DEFAULT = 320;
-export const THUMBNAIL_CACHE_SIZE = 320; // Fixed thumbnail cache size
+export const THUMBNAIL_CACHE_SIZE = 400; // Fixed thumbnail cache size
 
 /**
  * Get reserved space based on label display setting
@@ -219,17 +219,17 @@ export function renderCoverTiles(coverWrapper, covers, alt = "") {
 
     if (mediaCovers.length > 0) {
         const grid = $el("div", { className: "neo-gallery-card-cover-grid" });
-        let oriented = false;
+        let portraitChecked = false;
         for (const c of mediaCovers) {
             const itemEl = $el("div", { className: "neo-gallery-card-cover-grid-item" });
             const img = $el("img", { src: _coverImgSrc(c), alt, loading: "lazy" });
             img.onerror = () => itemEl.replaceWith(buildPlaceholderTile());
-            if (mediaCovers.length > 1) {
+            if (!portraitChecked) {
                 img.onload = () => {
-                    if (oriented) return;
-                    oriented = true;
-                    // 方形或竖图上下堆叠会让卡片过高，改为左右并排；横图保持竖排
-                    if (img.naturalHeight >= img.naturalWidth) grid.classList.add("neo-gallery-card-cover-grid-row");
+                    portraitChecked = true;
+                    if (img.naturalHeight >= img.naturalWidth) {
+                        grid.classList.add("neo-gallery-card-cover-grid--row");
+                    }
                 };
             }
             itemEl.appendChild(img);

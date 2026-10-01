@@ -251,6 +251,9 @@
     background-color: #1a1a1a;
     border: 1px solid #333;
     transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    height: var(--neo-card-h, 268px);
 }
 
 .neo-gallery-category-card:hover {
@@ -321,59 +324,49 @@
 /* Card cover image area */
 .neo-gallery-card-cover-wrapper {
     width: 100%;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     background-color: #111;
-    min-height: 80px;
     position: relative;
 }
 
 
-.neo-gallery-card-cover {
-    width: 100%;
-    display: block;
-    object-fit: contain;
-}
-
-/* Directory card covers: up to two images at natural ratio, stacked vertically */
+/* Directory card covers: up to two images, stacked vertically, filling the card */
 .neo-gallery-card-cover-grid {
     display: flex;
     flex-direction: column;
     width: 100%;
+    height: 100%;
     gap: 2px;
     padding: 2px;
     background-color: #111;
 }
 
-/* Portrait covers: laid out side by side (switched on after the first image loads) */
-.neo-gallery-card-cover-grid-row {
+/* Portrait covers switch to side-by-side to avoid excessive top/bottom crop */
+.neo-gallery-card-cover-grid--row {
     flex-direction: row;
-}
-
-.neo-gallery-card-cover-grid-row .neo-gallery-card-cover-grid-item,
-.neo-gallery-card-cover-grid-row .neo-gallery-card-placeholder {
-    width: auto;
-    flex: 1 1 0;
-    min-width: 0;
 }
 
 .neo-gallery-card-cover-grid-item {
     width: 100%;
-    flex: none;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     border-radius: 4px;
 }
 
 .neo-gallery-card-cover-grid-item img {
     width: 100%;
-    height: auto;
-    object-fit: contain;
+    height: 100%;
+    object-fit: cover;
     display: block;
 }
 
 /* Placeholder tile when a cover is empty or fails to load */
 .neo-gallery-card-placeholder {
     width: 100%;
-    aspect-ratio: 16 / 9;
+    height: 100%;
     box-sizing: border-box;
     display: flex;
     align-items: center;
@@ -401,8 +394,7 @@
 /* Audio cover tile: deep-blue gradient + note badge + decorative waveform */
 .neo-gallery-cover-audio-tile {
     width: 100%;
-    aspect-ratio: 16 / 9;
-    min-height: 80px;
+    height: 88px;
     box-sizing: border-box;
     display: flex;
     align-items: center;
@@ -433,6 +425,12 @@
     min-width: 0;
     height: 64%;
     display: block;
+}
+
+/* Center audio tile vertically in the cover wrapper */
+.neo-gallery-card-cover-wrapper:has(.neo-gallery-cover-audio-tile) {
+    display: flex;
+    align-items: center;
 }
 
 /* Skeleton screen for loading cards */
@@ -846,17 +844,18 @@ Accordion Section Buttons (Clear)
 .neo-gallery-thumb-img-wrapper {
     position: relative;
     width: 100%;
-    flex-shrink: 1;
+    flex: 1;
     display: block;
     overflow: hidden;
     border-radius: 5px;
 }
 
-/* Thumbnail image — fills wrapper maintaining aspect ratio */
+/* Thumbnail image — fills wrapper, crops to uniform card size */
 .neo-gallery-thumb-img {
-    object-fit: contain;
+    object-fit: cover;
     border-radius: 5px;
     width: 100%;
+    height: 100%;
     display: block;
     background-color: #1a1a1a;
 }
