@@ -151,6 +151,43 @@ test("分类头点击折叠/展开其下技能", async () => {
     assert.equal(list.querySelectorAll(".rs-skill-picker-item").length, 3, "展开后恢复 3 条");
     closeMgr(box);
 });
+test("分类手风琴：默认只展开「生图」，展开别的分类自动收起前一个", async () => {
+    skills = [
+        { id: "g1", name: "Gen 1", source: "preset", category: "image_gen" },
+        { id: "v1", name: "Vid 1", source: "preset", category: "video_gen" },
+        { id: "e1", name: "Enh 1", source: "preset", category: "image_enhance" },
+        { id: "c1", name: "C1", source: "custom", category: "" },
+    ];
+    const box = await openMgr();
+    const list = box.querySelector(".rs-skill-picker-list");
+    const labels = () => Array.from(list.querySelectorAll(".rs-skill-picker-item")).map((r) => r.textContent.trim());
+    const catOf = (text) => Array.from(list.querySelectorAll(".rs-combo-category")).find((c) => c.textContent.includes(text));
+    const openCats = () => Array.from(list.querySelectorAll(".rs-combo-category.is-open"));
+
+    assert.deepEqual(labels().sort(), ["C1", "Gen 1"], "首屏只展开「生图」，其余分类收起（未分组项无分类头，常显）");
+    assert.equal(openCats().length, 1, "同时只有一个分类被标记为展开态");
+    assert.ok(openCats()[0].textContent.includes("直接生图或编辑"), "展开态高亮在「生图」");
+
+    click(catOf("生视频 (H3)"));
+    await flush();
+    assert.deepEqual(labels().sort(), ["C1", "Vid 1"], "展开生视频后「生图」被收起");
+    assert.ok(openCats()[0].textContent.includes("生视频 (H3)"), "高亮随展开的分类一起切换");
+
+    click(catOf("直接生图或编辑"));
+    await flush();
+    assert.deepEqual(labels().sort(), ["C1", "Gen 1"], "回到生图，生视频被收起");
+
+    click(catOf("直接生图或编辑"));
+    await flush();
+    assert.deepEqual(labels().sort(), ["C1"], "点当前分类头收起它自己");
+    assert.equal(openCats().length, 0, "全部收起后没有分类处于高亮态");
+
+    click(catOf("图像提示词增强"));
+    await flush();
+    assert.deepEqual(labels().sort(), ["C1", "Enh 1"], "全部收起后点其它分类直接展开它");
+    closeMgr(box);
+});
+
 test("task 分类技能在管理窗口隐藏，video_gen / custom 保持可见", async () => {
     skills = [
         { id: "task_a", name: "Task A", source: "tasks", category: "task" },

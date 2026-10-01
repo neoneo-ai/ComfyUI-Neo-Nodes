@@ -229,6 +229,7 @@ export function renderCoverTiles(coverWrapper, covers, alt = "") {
                     portraitChecked = true;
                     if (img.naturalHeight >= img.naturalWidth) {
                         grid.classList.add("neo-gallery-card-cover-grid--row");
+                        grid.classList.add("neo-gallery-card-cover-grid--portrait");
                     }
                 };
             }

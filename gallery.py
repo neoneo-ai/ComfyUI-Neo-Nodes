@@ -2525,6 +2525,13 @@ async def view_image(request):
                     fullpath = p
                     break
 
+    if fullpath is None:
+        # 同名子目录可能同时存在于多个根（如 "NeoAgent" 在 input 与 output 各一份），
+        # base 只固定了其中一个；再走共享解析器兜底，避免另一个根里的文件 404。
+        source_path = _find_source_media(filename, subfolder)
+        if source_path and source_path.exists():
+            fullpath = source_path
+
     if fullpath and fullpath.exists():
         with open(fullpath, "rb") as f:
             content = f.read()

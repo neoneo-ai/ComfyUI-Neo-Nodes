@@ -2278,13 +2278,14 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
 
     let allItems = [];
     let selectedId = null;
-    const collapsedGroups = new Set();   // 折叠的分组（分类头点击切换，仅本次会话）
+    // 手风琴：同时只展开一个分类；undefined = 首屏尚未定位（首次加载后默认展开「生图」）
+    let openGroup;
     const syncEmpty = () => {
         const m = right.querySelector(".rs-skill-modal");
         placeholder.hidden = !!(m && m.style.display !== "none");
     };
 
-    // 渲染分组列表（搜索过滤）；分类头可点击折叠/展开；选中项高亮 is-selected
+    // 渲染分组列表（搜索过滤）；分类头可点击折叠/展开（手风琴：仅一个组展开，搜索时全展开）；展开组加粗高亮 is-open；选中项高亮 is-selected
     function renderList() {
         list.textContent = "";
         const q = search.value.trim().toLowerCase();
@@ -2306,8 +2307,8 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         }
         for (const [g, groupItems] of groups) {
             if (g) {
-                const collapsed = !searching && collapsedGroups.has(g);
-                const gh = mkEl("div", "rs-combo-category rs-skill-manager-cat");
+                const collapsed = !searching && g !== openGroup;
+                const gh = mkEl("div", "rs-combo-category rs-skill-manager-cat" + (collapsed ? "" : " is-open"));
                 gh.dataset.group = g;
                 const caret = mkEl("span", "rs-skill-manager-cat-caret");
                 caret.textContent = collapsed ? "▸" : "▾";
@@ -2331,16 +2332,21 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         }
     }
 
-    // 分类头点击：切换该分组的折叠状态并重渲染
+    // 分类头点击：手风琴——展开某组会收起其它组，再点当前组收起全部
     function toggleGroup(group) {
-        if (collapsedGroups.has(group)) collapsedGroups.delete(group);
-        else collapsedGroups.add(group);
+        openGroup = openGroup === group ? null : group;
         renderList();
     }
 
     async function loadList() {
         const skills = (await listSkills()).filter(s => !CATEGORY_LABELS[s.category]?.managerHidden);
         allItems = skillItemsFromMeta(skills);
+        // 首屏默认展开「生图」（没有生图技能时展开第一个分类），避免一屏铺满全部分类
+        if (openGroup === undefined) {
+            const labels = allItems.map((it) => it.group).filter(Boolean);
+            const gen = CATEGORY_LABELS.image_gen.label;
+            openGroup = labels.includes(gen) ? gen : (labels[0] ?? null);
+        }
         if (selectedId && !allItems.some((it) => it.value === selectedId)) selectedId = null;   // 删除后清选择
         renderList();
         syncEmpty();

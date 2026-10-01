@@ -48,48 +48,44 @@ test("目录封面：两张图竖排成单个网格，无内联高度", async ()
     assert.match(items[0].querySelector("img").src, /filename=a\.png/);
 });
 
-test("封面方向：多张图始终竖排，不切换横向并排", async () => {
+test("封面方向：首图为竖图/方形时并排+顶部锚定，横图保持竖排", async () => {
     resetEnv();
     const { renderCoverTiles } = await loadUtils();
 
-    // 两张方形图 → 保持竖排
-    const w = wrapper();
-    document.body.appendChild(w);
-    renderCoverTiles(w, [
-        { filename: "a.png", subfolder: "" },
-        { filename: "b.jpg", subfolder: "" },
-    ], "");
-    const grid = w.querySelector(".neo-gallery-card-cover-grid");
-    assert.ok(!grid.classList.contains("neo-gallery-card-cover-grid-row"), "方形图不切换为横向并排");
+    function renderWith(naturalWidth, naturalHeight, count = 2) {
+        const w = wrapper();
+        document.body.appendChild(w);
+        const covers = [];
+        for (let i = 0; i < count; i++) covers.push({ filename: `${i}.png`, subfolder: "" });
+        renderCoverTiles(w, covers, "");
+        const grid = w.querySelector(".neo-gallery-card-cover-grid");
+        const img = grid.querySelector("img");
+        Object.defineProperty(img, "naturalWidth", { value: naturalWidth });
+        Object.defineProperty(img, "naturalHeight", { value: naturalHeight });
+        img.onload();
+        return { w, grid };
+    }
 
-    // 两张竖图 → 保持竖排
-    const w3 = wrapper();
-    document.body.appendChild(w3);
-    renderCoverTiles(w3, [
-        { filename: "d.png", subfolder: "" },
-        { filename: "e.jpg", subfolder: "" },
-    ], "");
-    const grid3 = w3.querySelector(".neo-gallery-card-cover-grid");
-    assert.ok(!grid3.classList.contains("neo-gallery-card-cover-grid-row"), "竖图不切换为横向并排");
+    // 两张竖图 → 并排 + 顶部锚定（减少切头）
+    const p = renderWith(768, 1344);
+    assert.ok(p.grid.classList.contains("neo-gallery-card-cover-grid--row"), "竖图切换为横向并排");
+    assert.ok(p.grid.classList.contains("neo-gallery-card-cover-grid--portrait"), "竖图标记顶部锚定");
 
-    // 两张横图 → 保持竖排
-    const w2 = wrapper();
-    document.body.appendChild(w2);
-    renderCoverTiles(w2, [
-        { filename: "c.png", subfolder: "" },
-        { filename: "f.jpg", subfolder: "" },
-    ], "");
-    const grid2 = w2.querySelector(".neo-gallery-card-cover-grid");
-    assert.ok(!grid2.classList.contains("neo-gallery-card-cover-grid-row"), "横图保持竖排");
+    // 单张竖图 → 同样标记顶部锚定（单图时并排无效果，靠锚定减少切头）
+    const p1 = renderWith(768, 1344, 1);
+    assert.ok(p1.grid.classList.contains("neo-gallery-card-cover-grid--portrait"), "单张竖图也标记顶部锚定");
 
-    // 单张图始终竖排
-    const w4 = wrapper();
-    document.body.appendChild(w4);
-    renderCoverTiles(w4, [{ filename: "g.png", subfolder: "" }], "");
-    const grid4 = w4.querySelector(".neo-gallery-card-cover-grid");
-    assert.ok(!grid4.classList.contains("neo-gallery-card-cover-grid-row"), "单张图保持竖排");
+    // 方形图 → 与竖图同处理（height >= width）
+    const s = renderWith(1024, 1024);
+    assert.ok(s.grid.classList.contains("neo-gallery-card-cover-grid--row"), "方形图切换为横向并排");
+    assert.ok(s.grid.classList.contains("neo-gallery-card-cover-grid--portrait"), "方形图标记顶部锚定");
 
-    w.remove(); w2.remove(); w3.remove(); w4.remove();
+    // 横图 → 保持竖排，无并排/锚定类
+    const l = renderWith(1344, 768);
+    assert.ok(!l.grid.classList.contains("neo-gallery-card-cover-grid--row"), "横图保持竖排");
+    assert.ok(!l.grid.classList.contains("neo-gallery-card-cover-grid--portrait"), "横图不加顶部锚定");
+
+    p.w.remove(); p1.w.remove(); s.w.remove(); l.w.remove();
 });
 
 test("封面只取前 MAX_COVER_IMAGES 张，多余忽略", async () => {

@@ -348,6 +348,11 @@
     flex-direction: row;
 }
 
+/* Anchor portrait covers at the top so object-fit: cover crops the bottom, not the head */
+.neo-gallery-card-cover-grid--portrait .neo-gallery-card-cover-grid-item img {
+    object-position: center top;
+}
+
 .neo-gallery-card-cover-grid-item {
     width: 100%;
     flex: 1;
@@ -853,6 +858,8 @@ Accordion Section Buttons (Clear)
 /* Thumbnail image — fills wrapper, crops to uniform card size */
 .neo-gallery-thumb-img {
     object-fit: cover;
+    /* 顶部锚定：竖图裁掉底部而不是头部；横图在卡片内无垂直裁切，不受影响 */
+    object-position: center top;
     border-radius: 5px;
     width: 100%;
     height: 100%;

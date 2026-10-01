@@ -3304,6 +3304,9 @@
 /* 分类头可点击折叠/展开（技能管理窗口左侧列表） */
 .rs-skill-manager-cat { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
 .rs-skill-manager-cat:hover { color: #a9c6dd; }
+/* 展开中的分类：名称加粗高亮（手风琴一次只开一个，一眼看出当前开的是哪个） */
+.rs-skill-manager-cat.is-open { color: #cfe3f2; }
+.rs-skill-manager-cat.is-open .rs-skill-manager-cat-label { font-weight: 600; }
 .rs-skill-manager-cat-caret { flex-shrink: 0; width: 10px; font-size: 10px; line-height: 1; }
 
 /* 技能下拉底部管理工具栏（+ New Skill / ⬆ ZIP / ⬆ Folder） */
