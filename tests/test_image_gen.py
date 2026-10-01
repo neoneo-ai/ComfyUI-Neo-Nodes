@@ -256,7 +256,7 @@ class ResolveTests(unittest.TestCase):
                              {"name": "sub/style_b.safetensors", "strength": 1.0, "ref_only": True}]
         params = image_gen.resolve_request(
             {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]}, settings)
-        # 参考图模式：勾了「依赖参考图」的 style_b 即视为四视图 LoRA，直接沿用、不再追加
+        # 参考图模式：带 ref_only 的 style_b 即视为四视图 LoRA，直接沿用、不再追加
         self.assertEqual([l["name"] for l in params["loras"]],
                          ["style_a.safetensors", "sub/style_b.safetensors"])
 
@@ -319,7 +319,7 @@ class ReferenceTests(unittest.TestCase):
     def test_ref_only_lora_serves_as_quadview(self):
         write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
         settings = base_settings()
-        # 勾了「依赖参考图」的 LoRA（文件名不含线索）即视为四视图 LoRA：沿用、不追加、不报错
+        # 带 ref_only 的 LoRA（文件名不含线索）即视为四视图 LoRA：沿用、不追加、不报错
         settings["loras"] = [{"name": "sub/style_b.safetensors", "strength": 0.8, "ref_only": True}]
         params = image_gen.resolve_request(
             {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]}, settings)

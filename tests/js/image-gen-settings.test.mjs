@@ -1,6 +1,6 @@
 // 生图设置：全局「生图默认设置」表单含 生图模型区 + 生视频模型区（MiniMax H3）+ 输出前缀（LoRA/张数/比例只在每技能设置）；
-// 每技能模型区 createModelConfigSection 的四视图 LoRA（文件名含 quadview/四视图）「依赖参考图」默认勾选、
-// 普通 LoRA 不默认勾选、已显式保存的 ref_only 值被尊重、选中四视图 LoRA 时自动勾选、「自动」项显示建议名。
+// 每技能模型区 createModelConfigSection 的 LoRA 行不再有「依赖参考图」复选框：ref_only 由文件名线索自动判定
+// （含 quadview / 四视图 → true，普通 LoRA → false）；「自动」项显示后端建议的四视图 LoRA 名。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
@@ -13,51 +13,40 @@ beforeEach(() => {
     clearRoutes();
 });
 
-// 构造每技能模型区并 load（同步），返回所有 LoRA 行的「依赖参考图」复选框
+// 构造每技能模型区并 load（同步）；ref_only 由 collect() 的输出断言
 async function formLoras(settingsLoras, modelLoras) {
     const { createModelConfigSection } = await import("../../web/image-gen.js");
     const section = createModelConfigSection();
     document.body.appendChild(section.el);
     section.load({ loras: settingsLoras }, { loras: modelLoras });
-    return { el: section.el, chks: [...section.el.querySelectorAll(".rs-gen-lora-refonly")] };
+    return { el: section.el, collect: () => section.collect() };
 }
 
-test("四视图 LoRA（无显式 ref_only）默认勾选「依赖参考图」", async () => {
-    const { chks } = await formLoras([{ name: QV, strength: 1.0 }], [QV]);
-    assert.equal(chks.length, 1);
-    assert.equal(chks[0].checked, true, "四视图 LoRA 应默认勾选");
+test("四视图 LoRA（文件名含 quadview）collect 输出 ref_only=true", async () => {
+    const { collect } = await formLoras([{ name: QV, strength: 1.0 }], [QV]);
+    assert.deepEqual(collect().loras, [{ name: QV, strength: 1.0, ref_only: true }]);
 });
 
 test("中文四视图名称同样命中（大小写不敏感）", async () => {
     const name = "krea2/Edit/Krea2-四视图QuadView_v1.safetensors";
-    const { chks } = await formLoras([{ name, strength: 1.0 }], [name]);
-    assert.equal(chks[0].checked, true);
+    const { collect } = await formLoras([{ name, strength: 1.0 }], [name]);
+    assert.equal(collect().loras[0].ref_only, true);
 });
 
-test("普通 LoRA 不默认勾选；显式 ref_only=false 被尊重", async () => {
-    const { chks } = await formLoras(
-        [
-            { name: "krea2/Edit/SomeStyle.safetensors", strength: 1.0 },
-            { name: QV, strength: 1.0, ref_only: false },
-        ],
-        ["krea2/Edit/SomeStyle.safetensors", QV],
-    );
-    assert.equal(chks.length, 2);
-    assert.equal(chks[0].checked, false, "普通 LoRA 不默认勾选");
-    assert.equal(chks[1].checked, false, "显式 ref_only=false 应尊重（不强制勾选）");
+test("普通 LoRA collect 输出 ref_only=false", async () => {
+    const { collect } = await formLoras(
+        [{ name: "krea2/Edit/SomeStyle.safetensors", strength: 1.0 }],
+        ["krea2/Edit/SomeStyle.safetensors"]);
+    assert.deepEqual(collect().loras,
+        [{ name: "krea2/Edit/SomeStyle.safetensors", strength: 1.0, ref_only: false }]);
 });
 
-test("新建行选中四视图 LoRA 时自动勾选「依赖参考图」", async () => {
-    const { el } = await formLoras([], [QV]);
+test("新增 LoRA 行选中四视图 LoRA 后 collect 输出 ref_only=true", async () => {
+    const { el, collect } = await formLoras([], [QV]);
     assert.equal(el.querySelectorAll(".rs-gen-lora-row").length, 0, "空设置无 LoRA 行");
     el.querySelector(".rs-gen-lora-add").click();
-    const row = el.querySelector(".rs-gen-lora-row");
-    const select = row.querySelector("select");
-    const chk = row.querySelector(".rs-gen-lora-refonly");
-    assert.equal(chk.checked, false, "新建空行默认不勾选");
-    select.value = QV;
-    select.dispatchEvent(new Event("change"));
-    assert.equal(chk.checked, true, "选中四视图 LoRA 后应自动勾选");
+    el.querySelector(".rs-gen-lora-row select").value = QV;
+    assert.equal(collect().loras[0].ref_only, true);
 });
 
 test("LoRA「自动」选项显示后端建议的四视图 LoRA", async () => {
@@ -73,6 +62,69 @@ test("LoRA「自动」选项显示后端建议的四视图 LoRA", async () => {
     // suggested_lora 经 shortModelName（取末段去扩展名）后作为「自动」项文案
     assert.equal(select.options[0].textContent, "自动（Krea2-QuadView_krea2_v1）", "首项应为带建议名的「自动」");
 });
+// ============ LoRA 下拉排序：与当前主模型同级者靠前（Qwen 主模型不必在数百个 krea2 LoRA 里翻找）============
+
+const QWEN_MODEL = "QwenImage2.1\\qwen_image_2.1_int8_convrot.safetensors";
+// 后端 /neo_image_gen/models 顺序（krea2 靠前，其余按名称）：排序只调顺序、不改内容
+const LORA_FILES = [
+    "krea2/Character/krea2_杨幂.safetensors",
+    "SDXL/Style/xl_more_art-full_v1.safetensors",
+    "QwenImage2511/Anime2Real_V4-25.safetensors",
+    "QwenImage2.1/Qwen-Image-2.1-viggle-turbo-v0.2.1.safetensors",
+    "stars/girlslikeqweni_ym1_杨幂.safetensors",
+];
+const loraOptions = (el) =>
+    [...el.querySelector(".rs-gen-lora-row select").options].slice(1).map((o) => o.value);   // 首项是「自动」
+
+async function loraSection(settings, models) {
+    const { createModelConfigSection } = await import("../../web/image-gen.js");
+    const section = createModelConfigSection();
+    document.body.appendChild(section.el);
+    section.load(settings, models);
+    return section;
+}
+
+test("LoRA 下拉按主模型排序：同目录最前、同家族线索次之，其余保持后端顺序", async () => {
+    const section = await loraSection({ model: QWEN_MODEL, loras: [{ name: LORA_FILES[0], strength: 1.0 }] },
+        { diffusion_models: [QWEN_MODEL], loras: LORA_FILES, suggested_diffusion_models: QWEN_MODEL });
+    assert.deepEqual(loraOptions(section.el), [
+        "QwenImage2.1/Qwen-Image-2.1-viggle-turbo-v0.2.1.safetensors",   // 与主模型同目录
+        "QwenImage2511/Anime2Real_V4-25.safetensors",                     // 名字含 qwen → 次之（内部保持后端顺序）
+        "stars/girlslikeqweni_ym1_杨幂.safetensors",
+        "krea2/Character/krea2_杨幂.safetensors",                          // 其余保持后端顺序
+        "SDXL/Style/xl_more_art-full_v1.safetensors",
+    ]);
+});
+
+test("LoRA 下拉排序：Krea2 主模型 krea2 相关靠前，无线索的模型名保持后端顺序", async () => {
+    const krea = await loraSection({ model: "Krea2\\krea2_turbo_fp8.safetensors", loras: [{ name: LORA_FILES[1], strength: 1.0 }] },
+        { diffusion_models: ["Krea2\\krea2_turbo_fp8.safetensors"], loras: LORA_FILES });
+    assert.deepEqual(loraOptions(krea.el), [
+        "krea2/Character/krea2_杨幂.safetensors",
+        "SDXL/Style/xl_more_art-full_v1.safetensors",
+        "QwenImage2511/Anime2Real_V4-25.safetensors",
+        "QwenImage2.1/Qwen-Image-2.1-viggle-turbo-v0.2.1.safetensors",
+        "stars/girlslikeqweni_ym1_杨幂.safetensors",
+    ]);
+    const plain = await loraSection({ model: "some_model.safetensors", loras: [{ name: LORA_FILES[0], strength: 1.0 }] },
+        { diffusion_models: ["some_model.safetensors"], loras: LORA_FILES });
+    assert.deepEqual(loraOptions(plain.el), LORA_FILES, "无目录 / 无家族线索 → 原样");
+});
+
+test("切换主模型后 LoRA 下拉重排，各行已选值保留", async () => {
+    const section = await loraSection(
+        { model: QWEN_MODEL, loras: [{ name: "stars/girlslikeqweni_ym1_杨幂.safetensors", strength: 0.8 }] },
+        { diffusion_models: [QWEN_MODEL, "Krea2\\krea2_turbo_fp8.safetensors"], loras: LORA_FILES, suggested_diffusion_models: QWEN_MODEL });
+    const [modelSelect, loraSelect] = [section.el.querySelector("select"), section.el.querySelector(".rs-gen-lora-row select")];
+    assert.equal(loraOptions(section.el)[0], "QwenImage2.1/Qwen-Image-2.1-viggle-turbo-v0.2.1.safetensors", "Qwen 主模型 → Qwen LoRA 在最前");
+    modelSelect.value = "Krea2\\krea2_turbo_fp8.safetensors";
+    modelSelect.dispatchEvent(new Event("change"));
+    assert.equal(loraOptions(section.el)[0], "krea2/Character/krea2_杨幂.safetensors", "切到 Krea2 主模型 → krea2 LoRA 在最前");
+    assert.equal(loraSelect.value, "stars/girlslikeqweni_ym1_杨幂.safetensors", "各行已选值不受重排影响");
+    assert.equal(section.collect().loras[0].name, "stars/girlslikeqweni_ym1_杨幂.safetensors");
+});
+
+
 
 test("createModelConfigSection：config 反斜杠模型名匹配正斜杠列表（不回落自动）", async () => {
     const { createModelConfigSection } = await import("../../web/image-gen.js");
@@ -196,8 +248,8 @@ test("createVideoModelConfigSection：视频 LoRA 行 load/collect 往返，且�
             "h3/style_a.safetensors", "h3/style_b.safetensors" ] });
     const rows = section.el.querySelectorAll(".rs-gen-lora-row");
     assert.equal(rows.length, 2, "应有 2 个 LoRA 行");
-    // 视频区没有「依赖参考图」复选框（与生图区不同）
-    assert.equal(section.el.querySelector(".rs-gen-lora-refonly"), null, "视频 LoRA 不应有 ref_only 复选框");
+    // LoRA 行不再有「依赖参考图」复选框（ref_only 由文件名自动判定）
+    assert.equal(section.el.querySelector(".rs-gen-lora-refonly"), null, "LoRA 不应有 ref_only 复选框");
     const strengthInputs = [...section.el.querySelectorAll(".rs-gen-lora-strength")];
     assert.equal(parseFloat(strengthInputs[0].value), 0.8);
     assert.equal(parseFloat(strengthInputs[1].value), -0.5);

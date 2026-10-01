@@ -113,6 +113,8 @@ body {
 /* 技能页：统一技能管理直接挂满主区（无弹窗外壳，去掉独立窗口的尺寸/圆角/阴影） */
 .ns-skills { padding: 0; }
 .ns-skills .rs-skill-manager { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
+/* 技能详情底部操作条：基础 .rs-btn 是 flex:1（窄弹窗底部按钮行用），满幅主区里不拉伸成长条 */
+.ns-skills .rs-skill-detail-actions .rs-btn { flex: none; padding: 5px 16px; }
 
 /* 设置页：左侧 tab 切换 + 右侧内容区 */
 .ns-settings { display: flex; gap: 14px; align-items: flex-start; max-width: 860px; }

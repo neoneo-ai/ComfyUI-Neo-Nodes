@@ -2809,23 +2809,6 @@
     cursor: pointer;
 }
 .rs-gen-lora-add:hover { background: #333; }
-.rs-gen-lora-refonly-wrap {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 11px;
-    color: #9ec5e8;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.rs-gen-lora-refonly {
-    width: 13px;
-    height: 13px;
-    margin: 0;
-    accent-color: #9ec5e8;
-    cursor: pointer;
-}
 .rs-gen-save {
     width: 100%;
     padding: 6px 0;
@@ -2954,6 +2937,7 @@
 .rs-skill-video-gen-settings .rs-form-label {
     margin-bottom: 0;
     white-space: nowrap;
+    text-align: right;   /* 标签右对齐：紧贴右侧控件，避免短标签与值之间留大空隙 */
 }
 /* LoRA 行：标签 | 动态列表 | 「+ 添加」按钮右对齐（section 最后一个直接子元素） */
 .rs-skill-gen-settings .rs-gen-model-section > .rs-config-row:last-child,
@@ -3222,11 +3206,85 @@
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 10px;
+    /* 长内容滚动时贴面板底（复用 .rs-thinking-label 的 sticky + 负偏移对齐约定） */
+    position: sticky;
+    bottom: -12px;
+    margin-bottom: -12px;
+    padding: 8px 0 12px;
+    background: #1a1a2a;
+    border-top: 1px solid #333;
+    z-index: 1;
 }
 
 /* 技能详情弹窗按钮统一字号（基础 .rs-btn 为 9px，弹窗内偏小）；修复/记录弹窗同属本功能一并放大 */
 .rs-skill-detail .rs-btn,
 .rs-repair-overlay .rs-btn { font-size: 12px; }
+
+/* ---- 技能详情：主区两栏（左 = 生图/生视频设置，右 = 系统提示词内容）----
+   面板够宽（Studio 满幅）时并排：两栏各占一半；
+   窄面板（独立弹窗 860px）堆叠且系统提示词在上——顺序由 order 控制，不依赖 DOM 顺序 */
+.rs-skill-detail { container-type: inline-size; }
+.rs-skill-detail-main { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.rs-skill-detail-settings { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@container (min-width: 980px) {
+    /* 默认 align-items: stretch → 两栏等高 */
+    .rs-skill-detail-main { flex-direction: row; }
+    .rs-skill-detail-settings { flex: 1 1 50%; order: -1; }
+    .rs-skill-detail-main > .rs-config-row { flex: 1 1 50%; min-width: 0; }
+}
+/* 左栏设置卡片撑满栏高，与右侧正文卡片等高（内容仍顶对齐，多余高度留在卡片底部） */
+.rs-skill-detail .rs-skill-detail-settings > .rs-gen-settings { flex: 1 1 auto; }
+/* 尺寸行（长边尺寸 / 默认比例 / 步数）：空间够时并排一行（≥624px 三列，窄了自动换成两列 / 一列）
+   margin-top 在卡片统一 gap(12px) 之上再加 8px：LoRA 行与尺寸行之间留出明显间隔 */
+.rs-skill-detail .rs-skill-gen-settings .rs-gen-size-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    column-gap: 12px;
+    row-gap: 10px;
+    margin-top: 8px;
+}
+
+/* ---- 技能详情：分区卡片化（对齐 Studio .ns-settings-section 观感）---- */
+.rs-skill-detail .rs-gen-settings,
+.rs-skill-detail .rs-skill-workflow,
+.rs-skill-detail .rs-skill-detail-main > .rs-config-row {
+    background: #202024;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 12px;
+}
+/* 主区内卡片不各自加顶边距（间距由 .rs-skill-detail-main 的 gap 提供） */
+.rs-skill-detail .rs-skill-detail-settings > .rs-gen-settings,
+.rs-skill-detail .rs-skill-detail-main > .rs-config-row { margin-top: 0; }
+/* 卡片内区头不再叠加额外上边距（内边距已提供留白） */
+.rs-skill-detail .rs-gen-settings .rs-gen-settings-header,
+.rs-skill-detail .rs-skill-workflow .rs-gen-settings-header { margin-top: 0; }
+/* 区头标题提亮加粗，与正文字段标签拉开层级 */
+.rs-skill-detail .rs-gen-settings-header .rs-form-label { color: #e6e6e6; font-weight: 600; }
+
+/* ---- 技能详情：工作流区可折叠（点头部切换，默认折叠）---- */
+.rs-skill-workflow-head { cursor: pointer; user-select: none; }
+.rs-skill-workflow-head:hover .rs-form-label { color: #fff; }
+.rs-wf-caret { flex: none; width: 10px; font-size: 10px; line-height: 1; color: #8a9aa8; }
+.rs-skill-workflow.rs-wf-collapsed .rs-wf-body,
+.rs-skill-workflow.rs-wf-collapsed .rs-wf-summary { display: none; }
+
+/* ---- 技能详情：正文（系统提示词内容）可折叠（仅 workflow.json 驱动的技能；默认收起，点标题展开）----
+   正文仅在「提示词增强」开启（作为扩写指令）或参考图模式（作为提示词模板）时生效，故工作流技能默认收起 */
+.rs-content-title { display: inline-flex; align-items: center; gap: 4px; }
+.rs-content-caret { flex: none; width: 9px; font-size: 10px; line-height: 1; color: #8a9aa8; display: none; }
+.rs-content-row-collapsible .rs-content-caret { display: inline-block; }
+.rs-content-row-collapsible .rs-content-title { cursor: pointer; user-select: none; }
+.rs-content-row-collapsible .rs-content-title:hover .rs-form-label { color: #fff; }
+.rs-content-hint { flex: none; font-size: 11px; color: #8a9aa8; background: #2a2a30; border-radius: 3px; padding: 1px 6px; white-space: nowrap; }
+/* 折叠时隐藏正文：display 由 setEditorMode 写在内联样式上，故用 !important 覆盖 */
+.rs-skill-modal-content .rs-content-row-collapsed > .rs-tpl-content,
+.rs-skill-modal-content .rs-content-row-collapsed > .rs-md-preview { display: none !important; }
+/* 并排两栏时折叠的正文卡片贴顶（否则会被 stretch 撑成空白高卡片） */
+@container (min-width: 980px) {
+    .rs-skill-detail-main > .rs-config-row.rs-content-row-collapsed { align-self: flex-start; }
+}
 
 /* ==========================================
    统一技能管理窗口：左列表 + 右详情（内嵌 .rs-skill-modal）

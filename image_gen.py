@@ -425,7 +425,7 @@ def _quadview_lora(user_loras: list) -> tuple:
 
     用户在 LoRA 列表里配了名称含线索的则沿用（强度不变，返回 (entry, True)）；否则按
     名称线索扫描 loras 目录并追加到链尾（返回 (entry, False)）。找不到时抛 ValueError ——
-    没有该 LoRA 只会退化成普通重绘，不如明确报错。勾了「依赖参考图」的 LoRA 由
+    没有该 LoRA 只会退化成普通重绘，不如明确报错。名称含线索的 LoRA 由
     resolve_request 直接沿用，不会走到这里。
     """
     for entry in user_loras:
@@ -436,7 +436,7 @@ def _quadview_lora(user_loras: list) -> tuple:
     if name:
         return {"name": name, "strength": 1.0}, False
     raise ValueError(
-        "缺少 Krea2 四视图 LoRA：请在生图设置的 LoRA 列表里添加它并勾选「依赖参考图」，"
+        "缺少 Krea2 四视图 LoRA：请在生图设置的 LoRA 列表里添加它，"
         "或在 models/loras 放一个文件名含 quadview / 四视图 的 LoRA（如 Krea2-QuadView_*.safetensors）后重试")
 
 
@@ -508,7 +508,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
         names = names[:max_refs]
     ref_name = names[0] if names else None
 
-    # 参考图模式：LoRA 列表里没有勾「依赖参考图」的则按名称线索自动挑选四视图 LoRA 追加到
+    # 参考图模式：LoRA 列表里没有 ref_only（四视图）的则按名称线索自动挑选四视图 LoRA 追加到
     # 链尾（用于填模板 LoRA 槽位）；文生图模式跳过 ref_only 的 LoRA（只在有参考图时才有意义）。
     if ref_name:
         if auto_quadview and not any(l.get("ref_only") for l in loras):

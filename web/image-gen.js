@@ -420,9 +420,28 @@ export function videoVideoVaeSuggestion(files) {
     return (files || []).find((n) => /h3_video/i.test(String(n))) || "";
 }
 
-// 四视图 LoRA 名称线索（与后端 _QUADVIEW_HINTS 对齐，大小写不敏感）；命中则「依赖参考图」默认勾选
+// 四视图 LoRA 名称线索（与后端 _QUADVIEW_HINTS 对齐，大小写不敏感）；命中即视为四视图 LoRA（collect 输出 ref_only=true）
 function isQuadviewName(name) {
     return /quadview|四视图/i.test(String(name || ""));
+}
+
+// 主模型家族名称线索（与后端 _MODEL_HINTS 同风格）：命中则同家族 LoRA 在 LoRA 下拉里靠前
+const LORA_FAMILY_HINTS = ["qwen", "krea2"];
+
+/** LoRA 下拉排序：与当前主模型同级者靠前（同目录 → 同家族关键词），其余保持后端顺序（排序稳定，只改顺序不改内容）。
+ *  例：主模型 QwenImage2.1\qwen_image_2.1_int8_convrot → QwenImage2.1 目录的 LoRA 最前，其次名字含 qwen 的。 */
+function sortLorasForModel(files, model) {
+    if (!files || !files.length) return files || [];
+    const path = String(model || "").replace(/\\/g, "/").toLowerCase();
+    if (!path) return files;
+    const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+    const family = LORA_FAMILY_HINTS.find((h) => path.includes(h)) || "";
+    const tier = (f) => {
+        const p = String(f).replace(/\\/g, "/").toLowerCase();
+        if (dir && p.startsWith(dir)) return 0;
+        return family && p.includes(family) ? 1 : 2;
+    };
+    return [...files].sort((a, b) => tier(a) - tier(b));
 }
 
 function fillComboSelect(select, files, suggested, current) {
@@ -505,19 +524,11 @@ export function createModelConfigSection() {
     let loraFiles = [];
     let suggestedLora = "";
 
-    function addLoraRow(name = "", strength = 1.0, refOnly = false) {
+    // LoRA 行：动态增删，每行 = 模型选择 + 强度；是否「仅参考图加载」（ref_only）由文件名线索自动判定
+    function addLoraRow(name = "", strength = 1.0) {
         const line = mkEl("div", "rs-gen-lora-row");
         const select = document.createElement("select");
         const combo = attachComboBox(select).box;
-        // 「依赖参考图」复选框：勾选 = 仅参考图模式加载（四视图 LoRA 即勾此项者），不勾 = 文生图也加载
-        const refOnlyWrap = mkEl("label", "rs-gen-lora-refonly-wrap");
-        const refOnlyChk = mkEl("input", "rs-gen-lora-refonly");
-        refOnlyChk.type = "checkbox";
-        refOnlyChk.checked = !!refOnly;
-        const refOnlyTxt = mkEl("span", "rs-gen-lora-refonly-txt");
-        refOnlyTxt.textContent = "依赖参考图";
-        refOnlyWrap.append(refOnlyChk, refOnlyTxt);
-        refOnlyWrap.setAttribute("data-rs-tooltip", "编辑 LoRA（依赖参考图）：勾选 = 仅参考图模式加载，不勾 = 文生图也无条件加载");
         const strengthInput = mkEl("input", "rs-gen-lora-strength");
         strengthInput.type = "number";
         strengthInput.min = -10;
@@ -529,31 +540,41 @@ export function createModelConfigSection() {
         delBtn.textContent = "✕";
         delBtn.setAttribute("data-rs-tooltip", "移除此 LoRA");
         delBtn.addEventListener("click", () => line.remove());
-        select.addEventListener("change", () => {
-            if (isQuadviewName(select.value)) refOnlyChk.checked = true;
-        });
-        line.append(combo, strengthInput, refOnlyWrap, delBtn);
+        line.append(combo, strengthInput, delBtn);
         fillComboSelect(select, loraFiles, suggestedLora, name);
         loraList.appendChild(line);
     }
 
     loraAddBtn.addEventListener("click", () => addLoraRow());
 
+    /** 重建所有 LoRA 行的下拉（保留各行已选值）：模型切换 / 「自动」建议名变化时复用 */
+    function refreshLoraRows() {
+        for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
+            const select = line.querySelector("select");
+            if (select) fillComboSelect(select, loraFiles, suggestedLora, select.value);
+        }
+    }
+
+    // 切换主模型 → 按新模型家族重排 LoRA 列表（只改下拉顺序，不动已选值）
+    modelCtl.select.addEventListener("change", () => {
+        loraFiles = sortLorasForModel(loraFiles, modelCtl.select.value);
+        refreshLoraRows();
+    });
+
     function load(settings, models) {
-        loraFiles = models.loras || [];
         suggestedLora = models.suggested_lora || "";
         fillComboSelect(modelCtl.select, models.diffusion_models || [],
             models.suggested_diffusion_models || "", settings.model || "");
+        // LoRA 列表按当前主模型家族排序：Qwen Image 2.1 主模型 → QwenImage2.1 目录 / 名字含 qwen 的 LoRA 靠前
+        loraFiles = sortLorasForModel(models.loras || [], modelCtl.select.value);
         fillComboSelect(encoderCtl.select, models.text_encoders || [],
             models.suggested_text_encoders || "", settings.text_encoder || "");
         fillComboSelect(vaeCtl.select, models.vae || [],
             models.suggested_vae || "", settings.vae || "");
         loraList.innerHTML = "";
         for (const entry of settings.loras || []) {
-            if (typeof entry === "string") addLoraRow(entry, 1.0, isQuadviewName(entry));
-            else if (entry && typeof entry === "object")
-                addLoraRow(entry.name || "", entry.strength ?? 1.0,
-                    "ref_only" in entry ? !!entry.ref_only : isQuadviewName(entry.name || ""));
+            if (typeof entry === "string") addLoraRow(entry, 1.0);
+            else if (entry && typeof entry === "object") addLoraRow(entry.name || "", entry.strength ?? 1.0);
         }
     }
 
@@ -562,11 +583,10 @@ export function createModelConfigSection() {
         for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
             const select = line.querySelector("select");
             const strength = line.querySelector(".rs-gen-lora-strength");
-            const refOnly = line.querySelector(".rs-gen-lora-refonly");
             const name = select ? select.value : "";
             if (!name) continue;
             loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0,
-                         ref_only: !!(refOnly && refOnly.checked) });
+                         ref_only: isQuadviewName(name) });
         }
         return {
             model: modelCtl.select.value,
@@ -576,7 +596,13 @@ export function createModelConfigSection() {
         };
     }
 
-    return { el: section, load, collect };
+    /** 更新「自动」项显示的建议 LoRA 名（模板拿到后调用：非 Krea2 编辑链传空 → 只显示「自动」） */
+    function setLoraSuggestion(name) {
+        suggestedLora = name || "";
+        refreshLoraRows();
+    }
+
+    return { el: section, load, collect, setLoraSuggestion };
 }
 
 /** 生图张数 / 长边尺寸 / 默认比例 / 输出前缀 控件区（每技能生图设置用）。 */
@@ -683,7 +709,7 @@ export function createVideoModelConfigSection() {
     // 采样步数：写 skill config.json 的 steps（模板 {{STEPS}}），缺省 20；放可见区，不收进高级折叠
     const stepsCtl = numberRow("步数", { min: 1, max: 100, step: 1, value: 20 });
 
-    // LoRA 行：动态增删，每行 = 模型选择 + 强度。视频无「依赖参考图」概念，故不设复选框（与生图区不同）。
+    // LoRA 行：动态增删，每行 = 模型选择 + 强度（视频无参考图依赖概念，ref_only 仅生图区按文件名判定）
     const loraRow = mkEl("div", "rs-config-row");
     const loraLabel = mkEl("label", "rs-form-label");
     loraLabel.textContent = "LoRA";

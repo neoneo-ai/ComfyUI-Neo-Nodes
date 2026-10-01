@@ -5,6 +5,8 @@
  * - applyWorkflowParams：按已知参数（设置 + 自动建议模型）预替换模板变量，运行时变量保留
  * - injectRuntimeLoras：配置 LoRA 超出模板槽位时镜像后端 _apply_loras 动态插入 LoraLoaderModelOnly，
  *   使流程图与运行时实际提交的图一致；未配置或槽位够用时原样返回
+ * - templateUsesKrea2Edit：模板是否走 Krea2 单路编辑链（同后端 template_uses_krea2_edit）——
+ *   只有它需要四视图 LoRA，其他模型（如 Qwen Image）不该被推荐 Krea2 LoRA
  * - validateWorkflow / checkWorkflow：对照 /object_info 与 /models/{folder}
  *   标记 节点未安装 / 模型未找到 / {{模板变量}}（请求失败时跳过对应检查，不误报）
  * - renderWorkflowGraph：画 SVG（节点框 + 参数行 + 贝塞尔连线 + 徽标 + tooltip）+ 问题摘要到容器
@@ -266,6 +268,11 @@ function _anyModelConsumer(wf, srcId) {
         }
     }
     return best;
+}
+
+/** 模板是否走 Krea2 单路编辑链（含 Krea2EditModelPatch）：只有它需要四视图 LoRA（同后端 template_uses_krea2_edit）。 */
+export function templateUsesKrea2Edit(workflow) {
+    return Object.values(workflow || {}).some(n => n && n.class_type === "Krea2EditModelPatch");
 }
 
 export function injectRuntimeLoras(workflow, loras) {

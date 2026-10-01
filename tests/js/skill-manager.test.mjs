@@ -39,7 +39,7 @@ function closeMgr(box) {
     click(box.querySelector(".rs-skill-manager-head .rs-skill-modal-close"));
 }
 
-test("打开技能管理窗口：左侧列表按分类分组，右侧内嵌详情并默认选中第一项", async () => {
+test("打开技能管理窗口：左侧列表按分类分组，右侧内嵌详情并默认选中默认展开分类的第一项", async () => {
     const box = await openMgr();
     assert.ok(box, "应创建 .rs-skill-manager 窗口");
     // 左侧列表：两条技能行 + 分类分组头
@@ -51,7 +51,11 @@ test("打开技能管理窗口：左侧列表按分类分组，右侧内嵌详�
     const modal = right.querySelector(".rs-skill-modal");
     assert.ok(modal, "右侧应内嵌 .rs-skill-modal");
     assert.notEqual(modal.style.display, "none", "详情应可见（默认选中第一项）");
-    assert.ok(box.querySelector(".rs-skill-picker-item.is-selected"), "应有选中高亮行");
+    // 默认选中「🖼️ 直接生图或编辑」分类（默认展开）的第一项，而非按分组名排序的列表首项
+    const sel = box.querySelector(".rs-skill-picker-item.is-selected");
+    assert.ok(sel && sel.textContent.includes("预设生图"), "默认应选中展开分类的第一项（预设生图）");
+    const openCat = box.querySelector(".rs-skill-manager-cat.is-open");
+    assert.ok(openCat && openCat.textContent.includes("直接生图或编辑"), "默认展开「直接生图或编辑」分类");
     closeMgr(box);
     await flush();
     assert.equal(document.querySelector(".rs-skill-manager"), null, "关闭后窗口移除");

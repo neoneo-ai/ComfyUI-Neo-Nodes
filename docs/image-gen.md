@@ -4,7 +4,7 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 
 ## 聊天生图（节点内置）
 
-选生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板，LoRA 可选（依赖参考图模式），底部状态行实时显示进度/取消，结果 Markdown 预览并一键装配回 LoadImage。
+选生图 skill 后 ✨ 直接生成：文生图 / 参考图四视图角色板，LoRA 可选（文件名含 quadview / 四视图 的仅在参考图模式加载），底部状态行实时显示进度/取消，结果 Markdown 预览并一键装配回 LoadImage。
 
 > 生图需 GPU/显存，且所选 skill 必须声明 `gen_image: true` 并附 `workflow.json`。
 > 生图模型 / Text Encoder / VAE 默认「自动」按 skill 模板匹配，无需手配；未匹配到时再到节点生图设置里手动指定。

@@ -4,6 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, inputText, click } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
@@ -67,7 +70,7 @@ test("From Canvas：画布无有效工作流时不发请求并 toast 提示", as
 });
 
 // 详情弹窗出图设置区：mock 一条 load_skill + skill_config（GET/POST 分流）+ models
-async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", mode = "", requiresRef = false, overridden = false, fileContent = "body", available = undefined }) {
+async function openGenPopup({ id, source, genImage = true, genVideo = false, config = {}, category = "", mode = "", requiresRef = false, overridden = false, fileContent = "body", available = undefined, models = null }) {
     const { createSkillDetailPopup } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
         id: b.id, name: "Gen Skill", content: fileContent, files: [{ name: "skill.md", size: 5 }],
@@ -82,7 +85,7 @@ async function openGenPopup({ id, source, genImage = true, genVideo = false, con
         saved = b;
         return jsonResponse({ success: true });
     });
-    mockRoute("/neo_image_gen/models", () => jsonResponse({
+    mockRoute("/neo_image_gen/models", () => jsonResponse(models || {
         diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: ["q.safetensors"],
     }));
 
@@ -164,7 +167,7 @@ test("详情弹窗：预设 gen_image 技能设置区可编辑（本地覆盖保
     // 设置区头部：独立 💾 Save（底部主 Save 仍隐藏）；无覆盖时不显示「↺ 恢复默认」
     const cfgBtns = wrap.querySelector(".rs-gen-cfg-btns");
     assert.ok(cfgBtns && cfgBtns.style.display === "flex", "预设设置区应显示保存按钮行");
-    const sectionSave = Array.from(cfgBtns.querySelectorAll("button")).find((b) => b.textContent === "💾 Save");
+    const sectionSave = Array.from(cfgBtns.querySelectorAll("button")).find((b) => b.textContent === "💾 保存");
     assert.ok(sectionSave, "设置区应有独立保存按钮");
     let restoreBtn = Array.from(cfgBtns.querySelectorAll("button")).find((b) => b.textContent.includes("恢复默认"));
     assert.ok(restoreBtn && restoreBtn.style.display === "none", "无覆盖时不应显示「恢复默认」");
@@ -203,7 +206,7 @@ test("复制为自定义：出图技能保留 category/gen_image/requires_ref", 
     await openGenPopup({ id: "image_gen", source: "presets", category: "image_gen" });
 
     const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail button"))
-        .find((b) => b.textContent.includes("Copy as custom"));
+        .find((b) => b.textContent.includes("复制为自定义"));
     assert.ok(copyBtn, "预设技能应显示复制按钮");
     copyBtn.click();
     await sleep(60);
@@ -226,7 +229,7 @@ test("复制为自定义：视频技能保留 mode（导演分段技能下拉按
     });
 
     const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail button"))
-        .find((b) => b.textContent.includes("Copy as custom"));
+        .find((b) => b.textContent.includes("复制为自定义"));
     assert.ok(copyBtn, "预设技能应显示复制按钮");
     copyBtn.click();
     await sleep(60);
@@ -250,7 +253,7 @@ test("复制为自定义：name 与已有 skill 冲突时递增序号", async ()
     await openGenPopup({ id: "image_gen", source: "presets", category: "image_gen" });
 
     const copyBtn = Array.from(document.querySelectorAll(".rs-skill-detail button"))
-        .find((b) => b.textContent.includes("Copy as custom"));
+        .find((b) => b.textContent.includes("复制为自定义"));
     assert.ok(copyBtn, "预设技能应显示复制按钮");
     copyBtn.click();
     await sleep(60);
@@ -408,12 +411,81 @@ test("详情弹窗：非生图技能不渲染工作流区、不发请求", async
     assert.equal(wfCalled, false, "不应请求 workflow.json");
 });
 
+test("详情弹窗：带工作流的技能正文默认收起（点标题展开），标题带用途说明", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
+    mockRoute("/object_info", () => jsonResponse({}));
+    await openGenPopup({ id: "image_gen_text", source: "custom" });
+
+    const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
+    assert.ok(row.classList.contains("rs-content-row-collapsible"), "带工作流的技能正文应可折叠");
+    assert.ok(row.classList.contains("rs-content-row-collapsed"), "默认收起");
+    assert.equal(row.querySelector(".rs-content-caret").textContent, "▸");
+    assert.notEqual(row.querySelector(".rs-content-hint").style.display, "none", "应显示「工作流驱动」提示");
+    assert.ok(row.querySelector(".rs-content-title .rs-form-label").title.includes("workflow.json"), "标题应带正文用途说明");
+
+    click(row.querySelector(".rs-content-title"));
+    assert.equal(row.classList.contains("rs-content-row-collapsed"), false, "点标题应展开正文");
+    assert.equal(row.querySelector(".rs-content-caret").textContent, "▾");
+
+    // 折叠态类名必须与 prompts.css 选择器一致（曾因 -row- 命名漂移导致规则不生效）
+    const css = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/prompts.css"), "utf8");
+    for (const cls of ["rs-content-row-collapsible", "rs-content-row-collapsed"]) {
+        assert.ok(css.includes("." + cls), `prompts.css 应含 .${cls} 选择器`);
+    }
+});
+
+test("详情弹窗：非工作流技能正文保持展开、不显示折叠提示", async () => {
+    await openGenPopup({ id: "text_skill", source: "custom", genImage: false });
+    const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
+    assert.ok(!row.classList.contains("rs-content-row-collapsible"), "无 workflow.json 时不可折叠");
+    assert.ok(!row.classList.contains("rs-content-row-collapsed"), "正文保持展开");
+    assert.equal(row.querySelector(".rs-content-hint").style.display, "none", "不显示工作流驱动提示");
+});
+
 test("详情弹窗：生图技能无 workflow.json 时隐藏流程图", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ error: "missing" }, 404));
     await openGenPopup({ id: "image_gen_text", source: "custom" });
     assert.equal(document.querySelector(".rs-skill-workflow").style.display, "none");
     assert.equal(document.querySelector(".rs-content-row-compact"), null, "无工作流时正文区保持常规高度");
 });
+// ============ 四视图 LoRA 建议名只对 Krea2 编辑链显示（避免给 Qwen Image 等链推荐 Krea2 LoRA）============
+
+test("templateUsesKrea2Edit：仅含 Krea2EditModelPatch 的模板为真", async () => {
+    const { templateUsesKrea2Edit } = await import("../../web/workflow-graph.js");
+    assert.equal(templateUsesKrea2Edit({ "1": { class_type: "Krea2EditModelPatch" } }), true);
+    assert.equal(templateUsesKrea2Edit({ "1": { class_type: "UNETLoader" }, "2": { class_type: "Krea2EditModelPatch" } }), true);
+    assert.equal(templateUsesKrea2Edit({ "1": { class_type: "TextEncodeQwenImage21" } }), false);
+    assert.equal(templateUsesKrea2Edit(null), false);
+});
+
+test("详情弹窗：LoRA「自动」建议名按模板链判定（Qwen 多参考链不推荐 Krea2 LoRA）", async () => {
+    const QV = "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors";
+    const models = { diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [QV], suggested_lora: QV };
+    const openCase = async (id, workflow, status = 200) => {
+        mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow }, status));
+        document.querySelector(".rs-skill-modal-overlay")?.remove();   // 同测试内多次打开：先清上一个弹窗，避免选到旧 DOM
+        return openGenPopup({ id, source: "custom", models, config: { model: "m.safetensors", loras: [{ name: QV, strength: 1 }] } });
+    };
+    const autoText = (r) => r.wrap.querySelector(".rs-gen-lora-row select").options[0].textContent;
+
+    const r1 = await openCase("krea_skill", {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+        "2": { class_type: "Krea2EditModelPatch", inputs: { model: ["1", 0] } },
+        "3": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{PROMPT}}" } },
+    });
+    assert.equal(autoText(r1), "自动（Krea2-四视图QuadView_krea2_v1）", "Krea2 单路编辑链：显示自动挑选的四视图 LoRA");
+
+    const r2 = await openCase("qwen_skill", {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+        "2": { class_type: "TextEncodeQwenImage21", inputs: { prompt: "{{PROMPT}}" } },
+    });
+    assert.equal(autoText(r2), "自动", "Qwen 链（无 Krea2EditModelPatch）：不显示 Krea2 LoRA 建议名");
+
+    const r3 = await openCase("plain_skill", { error: "missing" }, 404);
+    assert.equal(autoText(r3), "自动", "无 workflow.json：同样不显示建议名");
+});
+
+
 
 // ============ 模板变量按已有参数预渲染（设置值 / 自动建议模型替换，运行时变量保留）============
 
@@ -548,7 +620,7 @@ test("详情弹窗：生图工作流模板变量按 config 预替换，缺失模
     assert.equal(wfWrap.querySelectorAll(".rs-wf-node-tpl").length, 1, "仅 {{PROMPT}} 节点保留模板变量标记");
     assert.ok(summary.includes("模板变量运行时填入"), "摘要应说明剩余变量运行时填入：" + summary);
     // 有工作流 → 正文区高度减半（.rs-content-row-workflow）；正文非空不进一步压缩，为空时压缩（见下条用例）
-    assert.ok(document.querySelector(".rs-content-row-workflow"), "有工作流时正文区应减半高度");
+    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "工作流默认折叠，正文区不减半");
     assert.equal(document.querySelector(".rs-content-row-compact"), null, "正文非空时不进一步压缩");
     // tooltip 显示渲染后的输入值：替换后的模型名 / 连线来源 / 运行时变量原样
     const nodeTitles = Array.from(wfWrap.querySelectorAll(".rs-wf-node title")).map(t => t.textContent);
@@ -565,8 +637,39 @@ test("详情弹窗：有工作流且正文为空时压缩 System Prompt Content 
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
     }));
     await openGenPopup({ id: "image_gen_text", source: "custom", fileContent: "" });
-    assert.ok(document.querySelector(".rs-skill-workflow") && document.querySelector(".rs-skill-workflow").style.display !== "none");
-    assert.ok(document.querySelector(".rs-skill-modal-content .rs-content-row-compact"), "正文为空且渲染了工作流时应压缩正文区");
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wfWrap && wfWrap.style.display !== "none");
+    assert.equal(document.querySelector(".rs-content-row-compact"), null, "工作流默认折叠时正文区不压缩");
+    click(wfWrap.querySelector(".rs-skill-workflow-head"));   // 展开工作流
+    assert.ok(document.querySelector(".rs-skill-modal-content .rs-content-row-compact"), "展开且正文为空时应压缩正文区");
+});
+
+test("详情弹窗：工作流区默认折叠，点头部展开时正文区让位", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
+    mockRoute("/object_info", () => jsonResponse({
+        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
+        LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: { strength_model: ["FLOAT"] } } },
+        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
+    }));
+    mockRoute("/models/diffusion_models", () => jsonResponse(["m.safetensors"]));
+    mockRoute("/models/loras", () => jsonResponse(["q.safetensors"]));
+
+    await openGenPopup({ id: "image_gen_text", source: "custom", config: { model: "m.safetensors" } });
+    const wfWrap = document.querySelector(".rs-skill-workflow");
+    assert.ok(wfWrap && wfWrap.style.display !== "none", "应渲染工作流区");
+    assert.equal(wfWrap.classList.contains("rs-wf-collapsed"), true, "默认折叠");
+    assert.equal(wfWrap.querySelector(".rs-wf-caret").textContent, "▸");
+    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "默认折叠时正文区不减半");
+
+    // 点头部 → 展开：流程图为正文让位
+    click(wfWrap.querySelector(".rs-skill-workflow-head"));
+    assert.equal(wfWrap.classList.contains("rs-wf-collapsed"), false, "点头部应展开工作流区");
+    assert.ok(document.querySelector(".rs-content-row-workflow"), "展开后正文区减半让位");
+
+    // 再点一次 → 折叠，正文恢复完整高度
+    click(wfWrap.querySelector(".rs-skill-workflow-head"));
+    assert.equal(wfWrap.classList.contains("rs-wf-collapsed"), true);
+    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "折叠后正文区恢复完整高度");
 });
 
 const WF_VIDEO = {
@@ -686,7 +789,7 @@ test("工作流图：滚动区内拖拽平移 scrollLeft/Top（同画布体验�
     assert.equal(body.scrollLeft, 40, "松开后不再跟随拖动");
 });
 
-test("详情弹窗：工作流区先骨架占位（正文同步让位），加载完成后原地渲染不跳布局", async () => {
+test("详情弹窗：工作流区先骨架占位（默认折叠），加载完成后原地渲染不跳布局", async () => {
     const { createSkillDetailPopup } = await import("../../web/skill.js");
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
         id: b.id, name: "Gen Skill", content: "body", files: [{ name: "skill.md", size: 5 }],
@@ -710,7 +813,7 @@ test("详情弹窗：工作流区先骨架占位（正文同步让位），加�
     const wrap = document.querySelector(".rs-skill-workflow");
     assert.ok(wrap && wrap.style.display !== "none", "加载中工作流区应先显示占位");
     assert.ok(document.querySelector(".rs-wf-skeleton"), "应显示骨架占位（加载提示）");
-    assert.ok(document.querySelector(".rs-content-row-workflow"), "正文区应同步压缩让位");
+    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "工作流默认折叠，正文区不让位");
 
     resolveWf();
     await opened;

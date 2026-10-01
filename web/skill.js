@@ -12,7 +12,7 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
-import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras } from "./workflow-graph.js";
+import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras, templateUsesKrea2Edit } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
@@ -495,17 +495,17 @@ function createSkillDetailPopup(host) {
     const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
     const showDetail = () => { if (embedded) modal.style.display = ""; else overlay.style.display = "flex"; };
 
-    // ---- 头部：标题 + 来源徽标 + Copy as custom + 关闭 ----
+    // ---- 头部：标题 + 来源徽标 + 复制为自定义 + 关闭 ----
     const header = mkEl("div", "rs-skill-modal-header");
     const titleSpan = mkEl("span", "rs-skill-modal-title");
-    titleSpan.textContent = "📝 Skill";
+    titleSpan.textContent = "📝 技能";
     const sourceBadge = mkEl("span", "rs-source-badge rs-skill-detail-badge");
     header.append(titleSpan, sourceBadge);
-    // Copy as custom 放标题栏（仅预设/任务技能显示），在 ✕ 左侧
+    // 「复制为自定义」放标题栏（仅预设/任务技能显示），在 ✕ 左侧
     const copyBtn = mkEl("button", "rs-btn rs-btn-local");
     copyBtn.type = "button";
-    copyBtn.textContent = "⧉ Copy as custom";
-    copyBtn.title = "Copy this built-in skill into a new editable custom skill";
+    copyBtn.textContent = "⧉ 复制为自定义";
+    copyBtn.title = "把这个内置技能复制为可编辑的自定义技能";
     copyBtn.style.display = "none";
     const closeBtn = mkEl("button", "rs-skill-modal-close");
     closeBtn.textContent = "✕";
@@ -522,9 +522,9 @@ function createSkillDetailPopup(host) {
 
     const nameRow = mkEl("div", "rs-config-row");
     const nameLabel = mkEl("label", "rs-form-label");
-    nameLabel.textContent = "Skill Name";
+    nameLabel.textContent = "技能名称";
     const nameInput = mkEl("input", "rs-form-input rs-tpl-name");
-    nameInput.placeholder = "Enter skill name...";
+    nameInput.placeholder = "输入技能名称…";
     nameRow.append(nameLabel, nameInput);
 
     // multi_turn 勾选：每次生成仅推进一个阶段（节点底部会显示多轮提示）
@@ -540,9 +540,28 @@ function createSkillDetailPopup(host) {
     const contentRow = mkEl("div", "rs-config-row");
     const contentHeader = mkEl("div", "rs-content-header");
     const contentLeft = mkEl("div", "rs-content-left");
+    // 正文用途说明（tooltip / 标题提示）：带工作流的技能由 workflow.json 决定出图，正文一般无需修改
+    const CONTENT_HINT = "技能正文（skill.md）：仅在开启「提示词增强」时作为扩写指令，或在参考图模式下作为提示词模板；出图流程由 workflow.json 决定。";
+    // 标题 = caret + 文字：带工作流的技能可点标题折叠正文（默认收起）
+    const contentTitle = mkEl("span", "rs-content-title");
+    const contentCaret = mkEl("span", "rs-content-caret");
+    contentCaret.textContent = "▾";
     const contentLabel = mkEl("label", "rs-form-label");
-    contentLabel.textContent = "System Prompt Content";
-    contentLeft.appendChild(contentLabel);
+    contentLabel.textContent = "系统提示词内容";
+    contentLabel.title = CONTENT_HINT;
+    contentTitle.append(contentCaret, contentLabel);
+    contentTitle.addEventListener("click", () => {
+        if (!contentRow.classList.contains("rs-content-row-collapsible")) return;
+        contentCollapsed = !contentCollapsed;
+        updateContentCompact();
+    });
+    contentLeft.appendChild(contentTitle);
+    // 工作流驱动的技能：标题旁提示（默认收起，点标题展开编辑）
+    const contentHint = mkEl("span", "rs-content-hint");
+    contentHint.textContent = "工作流驱动";
+    contentHint.title = CONTENT_HINT;
+    contentHint.style.display = "none";
+    contentLeft.appendChild(contentHint);
     // Enhance Prompt 开关（仅生图技能显示）：LLM 提示词增强，指令即上方正文；放在标题右侧便于就近理解
     const enhancePromptWrap = mkEl("div", "rs-content-enhance");
     enhancePromptWrap.style.display = "none";
@@ -550,7 +569,7 @@ function createSkillDetailPopup(host) {
     enhancePromptChk.type = "checkbox";
     enhancePromptChk.className = "rs-gen-enhance-chk";
     const enhancePromptLabel = mkEl("label", "rs-form-label");
-    enhancePromptLabel.textContent = "Enhance Prompt";
+    enhancePromptLabel.textContent = "提示词增强";
     enhancePromptLabel.title = "使用 LLM 自动扩写生图提示词（指令即上方正文，需已配置 LLM）";
     enhancePromptWrap.append(enhancePromptChk, enhancePromptLabel);
     contentLeft.appendChild(enhancePromptWrap);
@@ -563,7 +582,7 @@ function createSkillDetailPopup(host) {
     const fileTools = mkEl("div", "rs-content-mode");
     const addFileBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     addFileBtn.type = "button";
-    addFileBtn.textContent = "+ File";
+    addFileBtn.textContent = "+ 文件";
     addFileBtn.title = "Add a .md file to this skill";
     const delFileBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-content-mode-btn");
     delFileBtn.type = "button";
@@ -574,17 +593,17 @@ function createSkillDetailPopup(host) {
     const modeBtns = mkEl("div", "rs-content-mode");
     const previewBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     previewBtn.type = "button";
-    previewBtn.textContent = "👁 Preview";
+    previewBtn.textContent = "👁 预览";
     const editBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     editBtn.type = "button";
-    editBtn.textContent = "✎ Edit";
+    editBtn.textContent = "✎ 编辑";
     modeBtns.append(previewBtn, editBtn);
     contentHeader.appendChild(contentLeft);
     contentHeader.appendChild(modeBtns);
     const contentTextarea = document.createElement("textarea");
     contentTextarea.className = "rs-form-input rs-tpl-content";
     contentTextarea.style.resize = "vertical";
-    contentTextarea.placeholder = "Enter the system prompt content...";
+    contentTextarea.placeholder = "输入系统提示词内容…";
     const contentPreview = mkEl("div", "rs-md-preview");
     contentPreview.style.display = "none";
     contentRow.append(contentHeader, contentTextarea, contentPreview);
@@ -594,7 +613,7 @@ function createSkillDetailPopup(host) {
     genSettingsWrap.style.display = "none";
     const genSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const genSettingsTitle = mkEl("label", "rs-form-label");
-    genSettingsTitle.textContent = "🖼️ 生图设置（优先于默认设置）";
+    genSettingsTitle.textContent = "🖼️ 生图设置";
     genSettingsTitle.title = "仅对本技能生效，未填项回落全局生图设置";
     const genLocalHint = mkEl("span", "rs-gen-readonly-hint");
     genLocalHint.textContent = "预设的设置改动保存为本地覆盖，不修改预设文件";
@@ -602,7 +621,7 @@ function createSkillDetailPopup(host) {
     genLocalHint.style.display = "none";
     const genSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
     genSaveCfgBtn.type = "button";
-    genSaveCfgBtn.textContent = "💾 Save";
+    genSaveCfgBtn.textContent = "💾 保存";
     genSaveCfgBtn.title = "保存本技能生图设置（预设技能存为本地覆盖）";
     genSaveCfgBtn.style.display = "none";
     const genRestoreCfgBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
@@ -648,7 +667,7 @@ function createSkillDetailPopup(host) {
     videoGenSettingsWrap.style.display = "none";
     const videoGenSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const videoGenSettingsTitle = mkEl("label", "rs-form-label");
-    videoGenSettingsTitle.textContent = "🎬 生视频设置（优先于默认设置）";
+    videoGenSettingsTitle.textContent = "🎬 生视频设置";
     videoGenSettingsTitle.title = "仅对本技能生效，未填项回落全局「生视频模型」设置";
     const videoLocalHint = mkEl("span", "rs-gen-readonly-hint");
     videoLocalHint.textContent = "预设的设置改动保存为本地覆盖，不修改预设文件";
@@ -656,7 +675,7 @@ function createSkillDetailPopup(host) {
     videoLocalHint.style.display = "none";
     const videoSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
     videoSaveCfgBtn.type = "button";
-    videoSaveCfgBtn.textContent = "💾 Save";
+    videoSaveCfgBtn.textContent = "💾 保存";
     videoSaveCfgBtn.title = "保存本技能生视频设置（预设技能存为本地覆盖）";
     videoSaveCfgBtn.style.display = "none";
     const videoRestoreCfgBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
@@ -685,13 +704,17 @@ function createSkillDetailPopup(host) {
     //      红框 = 节点未安装/模型缺失，蓝框 = 含 {{模板变量}}；无 workflow.json 时隐藏
     const workflowWrap = mkEl("div", "rs-skill-workflow");
     workflowWrap.style.display = "none";
-    const workflowHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
+    const workflowHeader = mkEl("div", "rs-config-row rs-gen-settings-header rs-skill-workflow-head");
+    const workflowCaret = mkEl("span", "rs-wf-caret");
+    workflowCaret.textContent = "▾";
     const workflowTitle = mkEl("label", "rs-form-label");
     workflowTitle.textContent = "🔀 工作流（节点流程图）";
     workflowTitle.title = "技能 workflow.json 模板的自动布局；红框 = 节点未安装/模型缺失，蓝框 = 含待替换模板变量";
     const workflowBody = mkEl("div", "rs-wf-body");
     const workflowSummary = mkEl("div", "rs-wf-summary");
-    workflowHeader.appendChild(workflowTitle);
+    workflowHeader.append(workflowCaret, workflowTitle);
+    workflowHeader.title = "点击折叠 / 展开流程图";
+    workflowHeader.addEventListener("click", () => setWorkflowCollapsed(!workflowWrap.classList.contains("rs-wf-collapsed")));
     workflowWrap.append(workflowHeader, workflowBody, workflowSummary);
 
     // 失效模型路径修复：复用后端 /neo_nodes/skill_model_suggest（与工作流修复同款 match_model_file），
@@ -859,12 +882,19 @@ function createSkillDetailPopup(host) {
     }
 
     // config.json 恒可编辑（模型路径因机器而异、无统一预设）→ 设置区不置灰；config 缺失按空对象回落默认。
+    // 四视图 LoRA 建议名只对 Krea2 单路编辑链有意义（同后端 auto_quadview 判定）：其他链（Qwen Image 等）
+    // 清掉 suggested_lora，避免误推荐 Krea2 LoRA；模板未就绪时同样按空处理（就绪后由 setLoraSuggestion 补上）
+    function genModelsForUi(models) {
+        models = models || {};
+        return templateUsesKrea2Edit(skillWorkflowRaw) ? models : { ...models, suggested_lora: "" };
+    }
+
     async function loadGenSettings() {
         if (!currentSkillId) return null;
         const config = await getSkillGenConfig(currentSkillId);
         let models = {};
         try { models = await listGenModels(); } catch (e) { console.warn("Failed to load gen models:", e); }
-        genModelSection.load(config || {}, models);
+        genModelSection.load(config || {}, genModelsForUi(models));
         genSizeSection.load(config || {});
         enhancePromptChk.checked = !!(config && config.enhance_prompt);
         updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint);
@@ -906,7 +936,7 @@ function createSkillDetailPopup(host) {
                 return fix ? Object.assign({}, e, { name: fix.to }) : e;
             });
         }
-        section.load(merged, models);
+        section.load(merged, isGen ? genModelsForUi(models) : models);
         refreshWorkflowGraph();   // 设置区已回填 → 重渲染工作流图并重新校验，清掉已修好的红框
     }
 
@@ -1058,15 +1088,26 @@ function createSkillDetailPopup(host) {
     genRestoreCfgBtn.addEventListener("click", (e) => { e.stopPropagation(); restorePresetGenSettings(); });
     videoRestoreCfgBtn.addEventListener("click", (e) => { e.stopPropagation(); restorePresetGenSettings(); });
 
-    // ---- 底部按钮：随状态显隐（Save / Delete）；关闭走标题栏 ✕，复制走标题栏 Copy as custom ----
+    // ---- 底部按钮：随状态显隐（保存 / 删除）；关闭走标题栏 ✕，复制走标题栏「复制为自定义」----
     const footerBtns = mkEl("div", "rs-modal-btns rs-skill-detail-actions");
     const saveBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-save-btn");
-    saveBtn.textContent = "💾 Save";
+    saveBtn.textContent = "💾 保存";
     const deleteBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
-    deleteBtn.textContent = "🗑 Delete";
+    deleteBtn.textContent = "🗑 删除";
     footerBtns.append(saveBtn, deleteBtn);
 
-    content.append(unavailableBanner, nameRow, multiTurnRow, contentRow, genSettingsWrap, videoGenSettingsWrap, workflowWrap, footerBtns);
+    // 主区两栏：左 = 生图/生视频设置，右 = 系统提示词内容（面板够宽时并排；窄面板堆叠且系统提示词在上，顺序由 CSS 控制）
+    const mainRow = mkEl("div", "rs-skill-detail-main");
+    const settingsCol = mkEl("div", "rs-skill-detail-settings");
+    settingsCol.append(genSettingsWrap, videoGenSettingsWrap);
+    mainRow.append(contentRow, settingsCol);
+    // 普通技能（无生图/生视频设置区）隐藏左栏，正文占满整行
+    const syncSettingsColumn = () => {
+        const on = genSettingsWrap.style.display !== "none" || videoGenSettingsWrap.style.display !== "none";
+        settingsCol.style.display = on ? "" : "none";
+    };
+
+    content.append(unavailableBanner, nameRow, multiTurnRow, mainRow, workflowWrap, footerBtns);
     modal.append(header, content);
     if (embedded) { modal.style.display = "none"; host.appendChild(modal); }
     else { overlay.appendChild(modal); document.body.appendChild(overlay); }
@@ -1081,15 +1122,35 @@ function createSkillDetailPopup(host) {
     const isCustom = () => currentSource === "custom";
     const isMainFile = (name) => String(name || "").toLowerCase() === "skill.md";
     let workflowShown = false;   // 是否渲染了工作流流程图（正文区高度减半，为空时进一步压缩）
+    let contentCollapsed = true; // 正文是否收起（仅带 workflow.json 的技能可折叠；默认收起）
+    let workflowExpanded = false; // 工作流区是否展开（默认折叠；展开时流程图占据高度、正文区减半让位）
     let contentBaseline = null;   // { name, content, multiTurn } 加载/新建后的快照，关闭时判断正文有无未保存修改
     let genSettingsBaseline = null;   // 生图/生视频设置区 collect() 的 JSON 快照（load/save 后刷新）；null = 无设置区
     let loadedGenInfo = null;         // 最近一次 loadGenSettings/loadVideoGenSettings 返回的 { config, models }，供「修复失效路径」回填复用
     let skillWorkflowRaw = null;     // 最近加载的技能 workflow.json 原始模板（「修复失效路径」后重渲染复用，避免重新拉取）
 
-    // 有工作流的技能：正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
+    // 折叠/展开工作流区：折叠时隐藏流程图与摘要，正文区恢复完整高度
+    function setWorkflowCollapsed(collapsed) {
+        workflowExpanded = !collapsed;
+        workflowWrap.classList.toggle("rs-wf-collapsed", collapsed);
+        workflowCaret.textContent = collapsed ? "▸" : "▾";
+        updateContentCompact();
+    }
+    function resetWorkflowCollapse() {
+        setWorkflowCollapsed(true);   // 每次打开技能：工作流区默认折叠
+    }
+
+    // 有工作流的技能：正文默认收起（点标题展开）；正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
     function updateContentCompact() {
-        contentRow.classList.toggle("rs-content-row-workflow", workflowShown);
-        contentRow.classList.toggle("rs-content-row-compact", workflowShown && !contentTextarea.value.trim());
+        const active = workflowShown && workflowExpanded;
+        contentRow.classList.toggle("rs-content-row-workflow", active);
+        contentRow.classList.toggle("rs-content-row-compact", active && !contentTextarea.value.trim());
+        const collapsible = workflowShown;      // 由 workflow.json 驱动的技能才可折叠
+        const collapsed = collapsible && contentCollapsed;
+        contentRow.classList.toggle("rs-content-row-collapsible", collapsible);
+        contentRow.classList.toggle("rs-content-row-collapsed", collapsed);
+        contentCaret.textContent = collapsed ? "▸" : "▾";
+        contentHint.style.display = collapsible ? "" : "none";
     }
 
     // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）
@@ -1175,7 +1236,7 @@ function createSkillDetailPopup(host) {
     // ---- 打开：查看/编辑已有 skill ----
     async function openExisting(id, source) {
         showDetail();
-        titleSpan.textContent = "📝 Skill";
+        titleSpan.textContent = "📝 技能";
         currentSkillId = id;
         currentSource = source || "custom";
         setBadge();
@@ -1230,6 +1291,7 @@ function createSkillDetailPopup(host) {
             multiTurnRow.style.display = "";
             enhancePromptWrap.style.display = "none";
         }
+        syncSettingsColumn();
         loadedGenInfo = genInfo || null;                  // 「修复失效路径」用：保存 { config, models }
         genSettingsBaseline = collectGenSettingsJson();   // 设置区回填完成 → 脏检查基线就绪
         // 工作流流程图：仅生图/生视频技能。先显示骨架占位并同步压缩正文区（预留位置），加载完成后原地替换 → 打开时布局不跳；无 workflow.json 时隐藏。
@@ -1240,6 +1302,8 @@ function createSkillDetailPopup(host) {
         workflowWrap.style.display = "none";
         workflowShown = false;
         skillWorkflowRaw = null;
+        contentCollapsed = true;   // 每次打开技能：带工作流的正文默认收起
+        resetWorkflowCollapse();   // 每次打开技能：工作流区默认展开
         if (wfPromise) {
             const skel = mkEl("div", "rs-wf-skeleton");
             skel.textContent = "加载工作流图中…";
@@ -1266,8 +1330,9 @@ function createSkillDetailPopup(host) {
                 workflowBody.innerHTML = "";
             }
         }
+        // 模板就绪后定稿「自动」建议名（设置区 load 时模板可能还没到 → 按同一规则补/清一次）
+        genModelSection.setLoraSuggestion(genModelsForUi((genInfo || {}).models).suggested_lora || "");
         updateContentCompact();
-        // 紧凑类在正文填充之后才确定 → 重设一次模式，让预览框高度与（可能已压缩的）编辑框一致
         setEditorMode(editorMode);
         updateControls();
     }
@@ -1275,7 +1340,7 @@ function createSkillDetailPopup(host) {
     // ---- 打开：新建空表单 ----
     function openNew() {
         showDetail();
-        titleSpan.textContent = "✨ New Skill";
+        titleSpan.textContent = "✨ 新建技能";
         titleSpan.removeAttribute("title");
         currentSkillId = null;
         currentFiles = [];
@@ -1292,9 +1357,15 @@ function createSkillDetailPopup(host) {
         multiTurnRow.style.display = "";
         enhancePromptWrap.style.display = "none";
         enhancePromptChk.checked = false;
+        genSettingsWrap.style.display = "none";
+        videoGenSettingsWrap.style.display = "none";
+        syncSettingsColumn();
         unavailableBanner.style.display = "none";
         workflowWrap.style.display = "none";
         workflowShown = false;
+        contentCollapsed = true;
+        resetWorkflowCollapse();
+        updateContentCompact();   // 清掉上一个技能残留的工作流 / 正文折叠类
         workflowBody.innerHTML = "";
         workflowSummary.textContent = "";
         contentBaseline = { name: "", content: "", multiTurn: false };
@@ -2415,8 +2486,11 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         box.remove();
     };
 
-    // 初始加载 + 默认选中第一项
-    loadList().then(() => { if (!selectedId && allItems.length) selectSkill(allItems[0]); });
+    // 初始加载 + 默认选中「默认展开分类」的第一项（与左侧展开的分类一致，而非按分组排序的列表首项）
+    loadList().then(() => {
+        if (selectedId || !allItems.length) return;
+        selectSkill(allItems.find((it) => it.group === openGroup) || allItems[0]);
+    });
 
     return { el: box, closeBtn, close };
 }
