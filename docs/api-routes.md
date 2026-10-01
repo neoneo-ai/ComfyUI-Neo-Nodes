@@ -125,8 +125,8 @@ Neo Studio 独立页面（`web/studio/index.html`，由 `/neo-studio` 短路径�
 | GET | `/neo_image_gen/settings` | 读取内置生图默认参数（`configs/image_gen.json`，缺失时回落内置值） |
 | POST | `/neo_image_gen/settings` | 保存默认参数（仅接受 `DEFAULT_SETTINGS` 里的键） |
 | GET | `/neo_image_gen/models` | 扫描 `diffusion_models` / `text_encoders` / `vae` / `loras`（各列表按 krea2 相关靠前排序供展示）并给出自动挑选结果（含 `suggested_lora` = 建议的四视图 LoRA） |
-| POST | `/neo_image_gen/generate` | 解析请求 → 构建 Krea2 API 图 → 提交执行队列，返回任务快照（含 `task_id`）；参数错误 400。body 可带单次覆盖 `model` / `text_encoder` / `vae` / `loras`（空/省略 = 跟随全局设置；「生成素材」弹窗的模型覆盖区只发 `model` / `loras`） |
-| GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`、实时预览图 `preview`（data URL；仅运行中且采样按步推预览时非空，依赖 ComfyUI `--preview-method` 非 none）、错误、告警 |
+| POST | `/neo_image_gen/generate` | 解析请求 → 构建 Krea2 API 图 → 提交执行队列，返回任务快照（含 `task_id`）；参数错误 400。body 可带单次覆盖 `model` / `text_encoder` / `vae` / `loras`（空/省略 = 跟随全局设置；「生成素材」弹窗的模型覆盖区只发 `model` / `loras`）；用户未显式配置 `--preview-method` 时提交附 `extra_data.preview_method=latent2rgb`（内置 latent→RGB 映射，实时预览无需额外 vae_approx 模型） |
+| GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`、实时预览图 `preview`（data URL；仅运行中且采样按步推预览时非空）、错误、告警 |
 | GET | `/neo_image_gen/tasks` | 最近任务列表（按创建时间倒序，最多 32 条） |
 | POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
 | GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`）与 `steps`（skill config，缺省 20；与节点 `width`/`height`/`steps=-1` 时一致），供 NeoImageGenEdit widget 填充默认值（定义于 image_gen_edit.py） |

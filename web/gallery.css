@@ -1987,7 +1987,7 @@ Accordion Section Buttons (Clear)
     display: flex;
     flex-direction: column;
     gap: 8px;
-    width: 480px;
+    width: 560px;
     max-width: 90vw;
     padding: 12px;
     background: rgba(24, 26, 32, 0.98);
@@ -2322,11 +2322,12 @@ Accordion Section Buttons (Clear)
     display: flex;
     flex-direction: column;
     gap: 6px;
+    min-height: 220px;
 }
 
 .neo-gallery-cs-result-img {
     width: 100%;
-    max-height: 320px;
+    max-height: 420px;
     display: block;
     object-fit: contain;
     background: rgba(0, 0, 0, 0.5);
@@ -2349,13 +2350,13 @@ Accordion Section Buttons (Clear)
 }
 
 .neo-gallery-gm-preview .neo-gallery-cs-progress {
-    width: 70%;
+    width: 100%;
 }
 
-/* 采样中的实时预览图（后端按步推送，替换 spinner） */
+/* 采样中的实时预览图（后端按步推送，替换 spinner）；与结果图同上限，成品原位替换不跳 */
 .neo-gallery-gm-preview-img {
-    max-width: 100%;
-    max-height: 320px;
+    width: 100%;
+    max-height: 420px;
     display: block;
     object-fit: contain;
     border-radius: 4px;

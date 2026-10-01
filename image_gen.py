@@ -28,7 +28,7 @@ from urllib.parse import quote, unquote
 import aiohttp
 from aiohttp import web
 import folder_paths
-from comfy.cli_args import args as cli_args
+from comfy.cli_args import args as cli_args, LatentPreviewMethod
 from comfy_execution.progress import ProgressHandler, add_progress_handler, get_progress_state
 from server import PromptServer
 
@@ -826,10 +826,14 @@ async def submit_graph(graph: dict) -> str:
     url = _api_url("/prompt")
     # TLS 模式下服务端多为自签证书，跳过校验（只是本机内部回环调用）
     connector = aiohttp.TCPConnector(ssl=False) if _is_tls() else None
+    body = {"prompt": graph, "client_id": CLIENT_ID}
+    # 按 prompt 指定预览方法：CLI 默认 none（不生成任何预览图），本插件实时预览依赖它；
+    # 用户未显式配置 --preview-method 时用 latent2rgb（内置 latent→RGB 映射，无需额外 vae_approx 模型）
+    if cli_args.preview_method is LatentPreviewMethod.NoPreviews:
+        body["extra_data"] = {"preview_method": "latent2rgb"}
     try:
         async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.post(url, json={"prompt": graph, "client_id": CLIENT_ID},
-                                    timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.post(url, json=body, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 payload = await resp.json()
                 if resp.status == 200:
                     return payload["prompt_id"]
@@ -981,6 +985,13 @@ _PREVIEW_CAPTURE = _PreviewCapture()
 add_progress_handler(_PREVIEW_CAPTURE)
 
 
+def _ensure_preview_handler() -> None:
+    """核心 reset_progress_state 每次 prompt 执行都新建空 registry，import 时注册的 handler 会被丢弃；轮询 tick 上补注册。"""
+    registry = get_progress_state()
+    if _PREVIEW_CAPTURE.name not in registry.handlers:
+        add_progress_handler(_PREVIEW_CAPTURE)
+
+
 def _public_image(entry: dict) -> dict:
     return {"filename": entry["filename"], "subfolder": entry["subfolder"], "url": entry["url"]}
 
@@ -1050,6 +1061,7 @@ async def _watch(task_id: str) -> None:
         task = TASKS.get(task_id)
         if task is None or task["status"] not in ("queued", "running"):
             return
+        _ensure_preview_handler()
         state, item = _lookup(prompt_id)
         if state == "done":
             error, cancelled = _error_from_history(item)

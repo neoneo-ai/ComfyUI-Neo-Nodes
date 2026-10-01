@@ -1173,7 +1173,9 @@ export function openGenMaterialDialog(gallery) {
             img.addEventListener("click", () => Lightbox.open({ items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), index: 0 }));
             previewBox.appendChild(img);
         }
-        fill(statusBox, previewBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。" }));
+        const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
+        if (oldHint) oldHint.remove();
+        statusBox.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。" }));
         // 打开输出目录：跳到 Output 下实际落盘的日期子目录
         const openOutputDir = () => {
             const sub = images.map(i => i.subfolder).find(Boolean);

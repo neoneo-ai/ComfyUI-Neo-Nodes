@@ -6,6 +6,7 @@
 
 import asyncio
 import base64
+import enum
 import hashlib
 import importlib.util
 import json
@@ -43,8 +44,19 @@ sys.modules["server"] = _server
 
 _comfy = types.ModuleType("comfy")
 _comfy_cli = types.ModuleType("comfy.cli_args")
+
+
+class _LatentPreviewMethod(enum.Enum):
+    NoPreviews = "none"
+    Auto = "auto"
+    Latent2RGB = "latent2rgb"
+    TAESD = "taesd"
+
+
+_comfy_cli.LatentPreviewMethod = _LatentPreviewMethod
 _comfy_cli.args = types.SimpleNamespace(listen="127.0.0.1", port=8188,
-                                        tls_keyfile=None, tls_certfile=None)
+                                        tls_keyfile=None, tls_certfile=None,
+                                        preview_method=_LatentPreviewMethod.NoPreviews)
 sys.modules["comfy"] = _comfy
 sys.modules["comfy.cli_args"] = _comfy_cli
 
@@ -66,10 +78,11 @@ for _name in ("comfy.ldm", "comfy.ldm.flux"):
 sys.modules["comfy.ldm.flux.layers"] = _comfy_flux_layers
 
 # image_gen 顶部 import get_progress_state；桩掉 comfy_execution.progress，
-# 单测里直接改 image_gen.get_progress_state 控制返回值
+# 单测里换 _progress_registry_holder["registry"] 模拟核心每次执行重建 registry
 _comfy_exec = types.ModuleType("comfy_execution")
 _comfy_exec_prog = types.ModuleType("comfy_execution.progress")
-_comfy_exec_prog.get_progress_state = lambda: types.SimpleNamespace(prompt_id="", nodes={})
+_progress_registry_holder = {"registry": types.SimpleNamespace(prompt_id="", nodes={}, handlers={})}
+_comfy_exec_prog.get_progress_state = lambda: _progress_registry_holder["registry"]
 
 
 class _ProgressHandlerStub:
@@ -77,8 +90,12 @@ class _ProgressHandlerStub:
         self.name = name
 
 
+def _add_progress_handler_stub(handler):
+    _progress_registry_holder["registry"].handlers[handler.name] = handler
+
+
 _comfy_exec_prog.ProgressHandler = _ProgressHandlerStub
-_comfy_exec_prog.add_progress_handler = lambda handler: None
+_comfy_exec_prog.add_progress_handler = _add_progress_handler_stub
 sys.modules["comfy_execution"] = _comfy_exec
 sys.modules["comfy_execution.progress"] = _comfy_exec_prog
 
@@ -1212,6 +1229,85 @@ class PreviewCaptureTests(unittest.TestCase):
         self.assertEqual([p["preview"] for p in pushes], [url, url, None],
                          "运行中随快照推预览图，终态清空")
         self.assertNotIn("p1", image_gen._PREVIEWS)
+
+    def test_watch_re_registers_handler_after_registry_reset(self):
+        """核心每次执行重建空 registry；_watch 须把捕获 handler 补注册回去。"""
+        self._orig_poll = image_gen.POLL_INTERVAL
+        self._orig_lookup = image_gen._lookup
+        image_gen.POLL_INTERVAL = 0.001
+        # 模拟核心 reset_progress_state：新 registry，handlers 只剩 webui
+        fresh = types.SimpleNamespace(prompt_id="p2", nodes={}, handlers={"webui": object()})
+        orig_registry = _progress_registry_holder["registry"]
+        _progress_registry_holder["registry"] = fresh
+        self.addCleanup(setattr, image_gen, "POLL_INTERVAL", self._orig_poll)
+        self.addCleanup(setattr, image_gen, "_lookup", self._orig_lookup)
+        self.addCleanup(_progress_registry_holder.__setitem__, "registry", orig_registry)
+
+        states = iter([("running", None)]
+                      + [("done", {"status": {"completed": True}, "outputs": {}})])
+        image_gen._lookup = lambda pid: next(states)
+        task = {
+            "task_id": "tr", "prompt_id": "p2", "status": "queued",
+            "created": 0.0, "updated": 0.0,
+            "params": {"prompt": "x", "ref_name": "", "width": 8, "height": 8,
+                       "model": "m", "seed": 1},
+            "images": [], "progress": None, "preview": None, "error": "", "warnings": [],
+        }
+        image_gen.TASKS[task["task_id"]] = task
+        self.addCleanup(image_gen.TASKS.pop, task["task_id"], None)
+
+        asyncio.run(image_gen._watch(task["task_id"]))
+
+        self.assertIn("neo_image_gen_preview", fresh.handlers,
+                      "registry 被核心重建后，_watch 须补注册捕获 handler")
+
+
+class SubmitGraphPreviewTests(unittest.TestCase):
+    """submit_graph：未显式配置预览方法时按 prompt 附 extra_data.preview_method=latent2rgb。"""
+
+    def _run(self, preview_method):
+        import contextlib
+        captured = {}
+
+        class _Resp:
+            status = 200
+
+            async def json(self):
+                return {"prompt_id": "pid1"}
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def post(self, url, json=None, timeout=None):
+                @contextlib.asynccontextmanager
+                async def _post():
+                    captured["payload"] = json
+                    yield _Resp()
+                return _post()
+
+        orig_session = image_gen.aiohttp.ClientSession
+        image_gen.aiohttp.ClientSession = lambda *a, **k: _Session()
+        self.addCleanup(setattr, image_gen.aiohttp, "ClientSession", orig_session)
+        orig_pm = image_gen.cli_args.preview_method
+        image_gen.cli_args.preview_method = preview_method
+        self.addCleanup(setattr, image_gen.cli_args, "preview_method", orig_pm)
+
+        pid = asyncio.run(image_gen.submit_graph({"1": {"class_type": "X"}}))
+        self.assertEqual(pid, "pid1")
+        return captured["payload"]
+
+    def test_default_none_sends_latent2rgb(self):
+        payload = self._run(image_gen.LatentPreviewMethod.NoPreviews)
+        self.assertEqual(payload.get("extra_data"), {"preview_method": "latent2rgb"},
+                         "CLI 默认不生成预览图，需按 prompt 附 latent2rgb")
+
+    def test_explicit_method_not_overridden(self):
+        payload = self._run(image_gen.LatentPreviewMethod.TAESD)
+        self.assertNotIn("extra_data", payload, "用户显式配置过预览方法时沿用其设置")
 
 
 if __name__ == "__main__":
