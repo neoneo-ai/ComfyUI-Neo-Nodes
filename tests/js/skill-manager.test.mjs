@@ -165,3 +165,30 @@ test("task 分类技能在管理窗口隐藏，video_gen / custom 保持可见",
     closeMgr(box);
 });
 
+test("内嵌模式（Studio 技能页）：无 ✕ / 无「从画布」按钮，close() 移除根节点并清监听", async () => {
+    const { createSkillManager } = await import("../../web/skill.js");
+    mockSkills();
+    mockLoadSkill();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const mgr = createSkillManager(host, { showClose: false, showCanvasBtn: false });
+    await flush();
+    await sleep(50);
+
+    assert.ok(mgr.el.classList.contains("rs-skill-manager"), "根节点应为 .rs-skill-manager");
+    assert.equal(mgr.closeBtn, null, "内嵌模式不应有 ✕");
+    const btns = Array.from(mgr.el.querySelectorAll(".rs-skill-footer-btn")).map((b) => b.textContent);
+    assert.ok(btns.some((t) => t.includes("新建")), "应保留「新建」按钮");
+    assert.ok(!btns.some((t) => t.includes("从画布")), "内嵌模式不应有「从画布」按钮");
+    assert.equal(mgr.el.querySelectorAll(".rs-skill-picker-item").length, 2, "列表应加载");
+
+    // rs.skills.updated 仍刷新列表；close() 后清监听并移除根节点
+    skills.push({ id: "custom_b", name: "Custom B", source: "custom", category: "" });
+    document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+    await flush();
+    await sleep(50);
+    assert.equal(mgr.el.querySelectorAll(".rs-skill-picker-item").length, 3, "广播后列表应刷新为 3 条");
+    mgr.close();
+    assert.equal(host.querySelector(".rs-skill-manager"), null, "close() 应移除根节点");
+});
+

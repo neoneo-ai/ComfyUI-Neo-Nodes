@@ -111,6 +111,10 @@ body {
 .ns-director .neo-recipes-group-title,
 .ns-director .neo-recipes-empty { grid-column: 1 / -1; }
 
+/* 技能页：统一技能管理直接挂满主区（无弹窗外壳，去掉独立窗口的尺寸/圆角/阴影） */
+.ns-skills { padding: 0; }
+.ns-skills .rs-skill-manager { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
+
 /* 设置页 */
 .ns-settings { display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
 .ns-settings-section {

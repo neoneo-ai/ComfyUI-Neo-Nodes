@@ -31,7 +31,7 @@ function guard(t) {
     return true;
 }
 
-test("Studio 页面：三视图加载、版本信息、导演生成面板", async (t) => {
+test("Studio 页面：四视图加载、版本信息、导演生成面板", async (t) => {
     if (!guard(t)) return;
     const page = await browser.newPage();
     try {
@@ -77,6 +77,14 @@ test("Studio 页面：三视图加载、版本信息、导演生成面板", asyn
                     && Number(inputs[4].value) === d.steps;
             }, spec.defaults, { timeout: 5000 });
         }
+
+        // 技能视图：统一技能管理直接挂满主区（无弹窗外壳，无 ✕ / 无「从画布」）
+        await page.evaluate(() => { location.hash = "#/skills"; });
+        await page.waitForSelector(".ns-skills .rs-skill-manager", { timeout: 15000 });
+        await page.waitForSelector(".ns-skills .rs-skill-picker-item", { timeout: 15000 });
+        assert.equal(await page.locator(".ns-skills .rs-skill-manager-head .rs-skill-modal-close").count(), 0, "技能页不应有 ✕");
+        const footerBtns = await page.locator(".ns-skills .rs-skill-footer-btn").allTextContents();
+        assert.ok(!footerBtns.some((t) => t.includes("从画布")), "技能页不应有「从画布」按钮");
 
         // 设置视图：生图/生视频表单（.rs-gen-settings）+ LLM 入口，且无对象串渲染
         await page.evaluate(() => { location.hash = "#/settings"; });

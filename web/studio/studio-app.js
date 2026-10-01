@@ -1,7 +1,8 @@
-// Neo Studio 外壳：hash 路由（#/gallery #/director #/settings）+ 各视图挂载。
+// Neo Studio 外壳：hash 路由（#/gallery #/director #/skills #/settings）+ 各视图挂载。
 // 功能全部复用 web/ 现有模块（import-map 把 scripts/* 指到 shim）：
 // - 素材：NeoGallery（gallery.js 注册的扩展，侧栏 tab 的 render 直接挂进主区）
 // - 导演：配方面板（recipes.js）+ 整片生成面板（POST /neo_studio/director/generate）
+// - 技能：统一技能管理（skill.js createSkillManager，与顶栏「🗂 技能管理」同组件，直接展开无弹窗）
 // - 设置：生图/生视频/LLM 设置表单（内嵌，无弹窗）
 import { app, initExtensions, getSidebarTab } from "./shim/app.js";
 import { api } from "./shim/api.js";
@@ -14,6 +15,7 @@ import { createFramePlayer } from "../live-preview.js";
 import { createRecipesPanel, listRecipes } from "../recipes.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "../image-gen.js";
 import { createModelConfigForm } from "../llm-setting.js";
+import { createSkillManager } from "../skill.js";
 
 const view = document.getElementById("ns-view");
 let directorRecipes = [];   // /neo_studio/version 返回的导演配方名
@@ -353,6 +355,13 @@ async function buildDirector(el) {
 
 
 
+// ====== 技能页：统一技能管理（与顶栏「🗂 技能管理」同组件）直接挂满主区，无弹窗外壳 ======
+function buildSkills(el) {
+    el.classList.add("ns-skills");
+    // Studio 无画布：不显示 ✕ 与「从画布」导出按钮
+    createSkillManager(el, { showClose: false, showCanvasBtn: false });
+}
+
 // ====== 设置页 ======
 function buildSettings(el) {
     // 三个表单工厂均返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
@@ -447,6 +456,7 @@ function initMemMonitor() {
 function route() {
     const name = (location.hash || "#/gallery").replace(/^#\//, "").split("?")[0] || "gallery";
     if (name === "director") ensureView("director", buildDirector);
+    else if (name === "skills") ensureView("skills", buildSkills);
     else if (name === "settings") ensureView("settings", buildSettings);
     else ensureView("gallery", buildGallery);
     showView(name);

@@ -2226,29 +2226,30 @@ function createSkillDropdown() {
 }
 
 // ==========================================
-// 统一技能管理窗口：左侧技能列表（搜索 + 分类分组）+ 右侧技能详情（内嵌 createSkillDetailPopup）
-// 顶栏 🅝 菜单「🗂 技能管理」入口；跨节点单例，重复打开不叠加。
+// 统一技能管理 UI：左侧技能列表（搜索 + 分类分组）+ 右侧技能详情（内嵌 createSkillDetailPopup）
+// createSkillManager(host, opts) 直接挂进给定容器，返回 { el, closeBtn, close }；
+// openSkillManager() 包一层模态遮罩作顶栏 🅝 菜单「🗂 技能管理」入口（跨节点单例，重复打开不叠加）；
+// Neo Studio「技能」页签直接挂主区（无弹窗外壳）。
 // 技能增删改/上传均广播 rs.skills.updated，左侧列表随之自动刷新。
 // ==========================================
 let _skillManagerOpen = false;
 
-function openSkillManager() {
-    if (_skillManagerOpen) return;
-    _skillManagerOpen = true;
-
-    const overlay = mkEl("div", "rs-skill-modal-overlay");
-    overlay.style.display = "flex";   // .rs-skill-modal-overlay 默认 display:none，内嵌整窗需显式显示
+function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {}) {
     const box = mkEl("div", "rs-skill-manager");
 
-    // 顶部标题栏：🗂 技能管理 + ✕（关闭整窗）
+    // 顶部标题栏：🗂 技能管理 + ✕（关闭整窗；内嵌模式无 ✕）
     const head = mkEl("div", "rs-skill-manager-head");
     const title = mkEl("span", "rs-skill-manager-title");
     title.textContent = "🗂 技能管理";
-    const closeBtn = mkEl("button", "rs-skill-modal-close");
-    closeBtn.type = "button";
-    closeBtn.title = "关闭（Esc）";
-    closeBtn.textContent = "✕";
-    head.append(title, closeBtn);
+    head.appendChild(title);
+    let closeBtn = null;
+    if (showClose) {
+        closeBtn = mkEl("button", "rs-skill-modal-close");
+        closeBtn.type = "button";
+        closeBtn.title = "关闭（Esc）";
+        closeBtn.textContent = "✕";
+        head.appendChild(closeBtn);
+    }
 
     // 主体：左列表 | 右详情
     const body = mkEl("div", "rs-skill-manager-body");
@@ -2273,8 +2274,7 @@ function openSkillManager() {
     right.appendChild(placeholder);
     const popup = createSkillDetailPopup(right);
 
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
+    host.appendChild(box);
 
     let allItems = [];
     let selectedId = null;
@@ -2378,42 +2378,61 @@ function openSkillManager() {
     zipBtn.addEventListener("click", (e) => { e.stopPropagation(); getSkillUploadInputs().zipInput.click(); });
     const dirBtn = makeMgmtBtn("⬆ 目录", "上传技能目录（全部 .md）");
     dirBtn.addEventListener("click", (e) => { e.stopPropagation(); getSkillUploadInputs().dirInput.click(); });
-    const canvasBtn = makeMgmtBtn("📋 从画布", "把当前画布工作流导出为技能");
-    canvasBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        try {
-            const { output, error } = (await app.graphToPrompt()) || {};
-            if (error || !output || !Object.keys(output).length) {
-                showToast(app, "warning", "无法导出", "画布上没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
-                return;
+    mgmt.append(newBtn, zipBtn, dirBtn);
+    if (showCanvasBtn) {
+        const canvasBtn = makeMgmtBtn("📋 从画布", "把当前画布工作流导出为技能");
+        canvasBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            try {
+                const { output, error } = (await app.graphToPrompt()) || {};
+                if (error || !output || !Object.keys(output).length) {
+                    showToast(app, "warning", "无法导出", "画布上没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
+                    return;
+                }
+                const name = await promptSkillTitle("my-workflow");
+                if (!name) return;
+                const r = await saveWorkflowSkill({ name, description: "", tags: [], workflow: output });
+                showToast(app, "success", `已保存${r.gen_video ? "生视频" : "生图"}技能 "${r.id}"`, (r.warnings || []).join("\n"));
+                document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+            } catch (err) {
+                showToast(app, "error", "保存失败", err.message);
             }
-            const name = await promptSkillTitle("my-workflow");
-            if (!name) return;
-            const r = await saveWorkflowSkill({ name, description: "", tags: [], workflow: output });
-            showToast(app, "success", `已保存${r.gen_video ? "生视频" : "生图"}技能 "${r.id}"`, (r.warnings || []).join("\n"));
-            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
-        } catch (err) {
-            showToast(app, "error", "保存失败", err.message);
-        }
-    });
-    mgmt.append(newBtn, zipBtn, dirBtn, canvasBtn);
+        });
+        mgmt.appendChild(canvasBtn);
+    }
 
-    // 关闭整窗 + Esc；技能增删改（rs.skills.updated）自动刷新列表
+    // 技能增删改（rs.skills.updated）自动刷新列表；close() 清监听并移除根节点
     const onSkillsUpdated = () => loadList();
     document.addEventListener("rs.skills.updated", onSkillsUpdated);
+    const close = () => {
+        document.removeEventListener("rs.skills.updated", onSkillsUpdated);
+        box.remove();
+    };
+
+    // 初始加载 + 默认选中第一项
+    loadList().then(() => { if (!selectedId && allItems.length) selectSkill(allItems[0]); });
+
+    return { el: box, closeBtn, close };
+}
+
+function openSkillManager() {
+    if (_skillManagerOpen) return;
+    _skillManagerOpen = true;
+    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    overlay.style.display = "flex";   // .rs-skill-modal-overlay 默认 display:none，内嵌整窗需显式显示
+    document.body.appendChild(overlay);
+
+    const mgr = createSkillManager(overlay);
     const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
     const close = () => {
         _skillManagerOpen = false;
         overlay.remove();
-        document.removeEventListener("rs.skills.updated", onSkillsUpdated);
         document.removeEventListener("keydown", onKey, true);
+        mgr.close();
     };
-    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
+    mgr.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
     overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
     document.addEventListener("keydown", onKey, true);
-
-    // 初始加载 + 默认选中第一项
-    loadList().then(() => { if (!selectedId && allItems.length) selectSkill(allItems[0]); });
 }
 
 // ==========================================
@@ -2441,6 +2460,7 @@ export {
     createSkillDetailPopup,
     createSkillDropdown,
     openSkillPickerModal,
+    createSkillManager,
     openSkillManager,
     attachSkillPickerToComboWidget,
     attachSkillPickerToSelect
