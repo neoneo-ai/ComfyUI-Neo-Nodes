@@ -13,6 +13,7 @@ import base64
 import copy
 import difflib
 import hashlib
+import io
 import json
 import logging
 import os
@@ -28,7 +29,7 @@ import aiohttp
 from aiohttp import web
 import folder_paths
 from comfy.cli_args import args as cli_args
-from comfy_execution.progress import get_progress_state
+from comfy_execution.progress import ProgressHandler, add_progress_handler, get_progress_state
 from server import PromptServer
 
 from .util import PrefixFilter
@@ -942,6 +943,43 @@ def write_sidecar(image_path: str, params: dict) -> None:
 TASKS: dict = {}
 _WATCHERS: dict = {}
 
+# 每个 prompt 的最新采样预览图（data URL）：由进度 handler 捕获，随任务快照推送；终态清空
+_PREVIEWS: dict = {}
+
+
+def _preview_data_url(image) -> str | None:
+    """ComfyUI 推来的预览图元组 ("JPEG"/"PNG", PIL.Image, max_res) 编码为 data URL。"""
+    try:
+        fmt, pil_image, _max_res = image
+        buf = io.BytesIO()
+        pil_image.save(buf, format=fmt, quality=95, compress_level=1)
+        mime = "image/png" if fmt == "PNG" else "image/jpeg"
+        return f"data:{mime};base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
+class _PreviewCapture(ProgressHandler):
+    """捕获每步预览图（与节点实时预览同源）；只留活跃任务的最新一张。"""
+
+    def __init__(self):
+        super().__init__("neo_image_gen_preview")
+
+    def update_handler(self, node_id, value, max_value, state, prompt_id, image=None):
+        if image is None:
+            return
+        url = _preview_data_url(image)
+        if url is None:
+            return
+        for task in TASKS.values():
+            if task["prompt_id"] == prompt_id and task["status"] in ("queued", "running"):
+                _PREVIEWS[prompt_id] = url
+                return
+
+
+_PREVIEW_CAPTURE = _PreviewCapture()
+add_progress_handler(_PREVIEW_CAPTURE)
+
 
 def _public_image(entry: dict) -> dict:
     return {"filename": entry["filename"], "subfolder": entry["subfolder"], "url": entry["url"]}
@@ -962,6 +1000,7 @@ def _snapshot(task: dict) -> dict:
         "seed": task["params"]["seed"],
         "images": [_public_image(e) for e in task["images"]],
         "progress": task.get("progress"),
+        "preview": task.get("preview"),
         "error": task["error"],
         "warnings": task.get("warnings") or [],
     }
@@ -974,12 +1013,14 @@ def _prune_tasks() -> None:
             continue
         if now - task["updated"] > TASK_TTL:
             TASKS.pop(task_id, None)
+            _PREVIEWS.pop(task["prompt_id"], None)
     while len(TASKS) > MAX_TASKS:
         oldest = min((t for t in TASKS.values() if t["status"] not in ("queued", "running")),
                      key=lambda t: t["updated"], default=None)
         if oldest is None:
             break
         TASKS.pop(oldest["task_id"], None)
+        _PREVIEWS.pop(oldest["prompt_id"], None)
 
 
 def _notify(task: dict) -> None:
@@ -992,6 +1033,8 @@ def _finish(task: dict, status: str, images: list, error: str) -> None:
     task["images"] = images
     task["error"] = error
     task["progress"] = None
+    task["preview"] = None
+    _PREVIEWS.pop(task["prompt_id"], None)
     task["updated"] = time.time()
     _WATCHERS.pop(task["task_id"], None)
     if error:
@@ -1022,6 +1065,10 @@ async def _watch(task_id: str) -> None:
             prog = _progress_for(prompt_id)
             if prog is not None and task.get("progress") != prog:
                 task["progress"] = prog
+                changed = True
+            url = _PREVIEWS.get(prompt_id)
+            if url is not None and task.get("preview") != url:
+                task["preview"] = url
                 changed = True
             task["updated"] = time.time()
             if changed:
@@ -1156,6 +1203,7 @@ async def start_generation(body: dict) -> dict:
         "params": params,
         "images": [],
         "progress": None,
+        "preview": None,
         "error": "",
         "warnings": list(params.get("warnings") or []),
     }
@@ -1367,4 +1415,21 @@ async def copy_skill_files_route(request):
     if not ok:
         return web.json_response({"error": message}, status=400)
     return web.json_response({"success": True})
+
+
+@routes.post("/neo_image_gen/save_combo_skill")
+async def save_combo_skill_route(request):
+    """「生成素材」弹窗把选中的"主模型 + LoRA"组合存为新技能（名称自动生成，其余设置沿用源技能）。"""
+    from . import skill as _skill
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是 JSON"}, status=400)
+    body = body if isinstance(body, dict) else {}
+    result = _skill.save_combo_as_skill(
+        str(body.get("skill_id") or ""), body.get("model", ""), body.get("loras", []))
+    if not result.get("success"):
+        return web.json_response({"error": result.get("message")}, status=400)
+    return web.json_response(result)
 

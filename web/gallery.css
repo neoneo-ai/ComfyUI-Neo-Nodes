@@ -214,6 +214,68 @@
     min-width: 0;
 }
 
+/* 「生成素材」按钮：图标+文字，与头部「+」添加素材目录按钮区分开 */
+.neo-gallery-gm-btn {
+    flex-shrink: 0;
+    height: 30px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #ccc;
+    background-color: transparent;
+    border: 1px solid #555;
+    border-radius: 15px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-gm-btn:hover {
+    background-color: rgba(255, 106, 0, 0.2);
+    border-color: #FF6A00;
+    color: #FF9944;
+}
+
+/* 「生成素材」弹窗内「模型覆盖」折叠行：展开后显示主模型 / LoRA 临时选择区 */
+.neo-gallery-gm-model-toggle {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 4px 0;
+    font-size: 12px;
+    color: #9aa4b2;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.neo-gallery-gm-model-toggle:hover {
+    color: #FF9944;
+}
+
+.neo-gallery-gm-model-box {
+    margin: 4px 0 8px;
+}
+
+/* 「生成素材」弹窗：💾 保存为新技能（选中主模型 / LoRA 后才显示） */
+.neo-gallery-gm-save-skill {
+    margin-top: 6px;
+    padding: 2px 10px;
+    font-size: 12px;
+    color: #9aa4b2;
+    background: none;
+    border: 1px solid #555;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.neo-gallery-gm-save-skill:hover {
+    color: #FF9944;
+    border-color: #FF6A00;
+}
+
 /* Thumbnail size control row */
 .neo-gallery-size-control {
     display: flex;
@@ -2240,6 +2302,33 @@ Accordion Section Buttons (Clear)
     background: rgba(0, 0, 0, 0.5);
     border-radius: 4px;
     cursor: zoom-in;
+}
+
+/* 「生成素材」弹窗：生成中预览区（spinner + 进度条），成功后由结果图原位替换（容器换 .neo-gallery-cs-result） */
+.neo-gallery-gm-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 220px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+}
+
+.neo-gallery-gm-preview .neo-gallery-cs-progress {
+    width: 70%;
+}
+
+/* 采样中的实时预览图（后端按步推送，替换 spinner） */
+.neo-gallery-gm-preview-img {
+    max-width: 100%;
+    max-height: 320px;
+    display: block;
+    object-fit: contain;
+    border-radius: 4px;
 }
 
 /* Gallery 卡片拖放到 LoadImage 节点时的命中高亮 */

@@ -70,6 +70,15 @@ sys.modules["comfy.ldm.flux.layers"] = _comfy_flux_layers
 _comfy_exec = types.ModuleType("comfy_execution")
 _comfy_exec_prog = types.ModuleType("comfy_execution.progress")
 _comfy_exec_prog.get_progress_state = lambda: types.SimpleNamespace(prompt_id="", nodes={})
+
+
+class _ProgressHandlerStub:
+    def __init__(self, name):
+        self.name = name
+
+
+_comfy_exec_prog.ProgressHandler = _ProgressHandlerStub
+_comfy_exec_prog.add_progress_handler = lambda handler: None
 sys.modules["comfy_execution"] = _comfy_exec
 sys.modules["comfy_execution.progress"] = _comfy_exec_prog
 
@@ -78,6 +87,11 @@ _folder_paths.get_filename_list = lambda folder: list(_MODELS.get(folder, []))
 _folder_paths.get_input_directory = lambda: _INPUT_DIR
 _folder_paths.get_output_directory = lambda: _OUTPUT_DIR
 sys.modules["folder_paths"] = _folder_paths
+
+# skill.py 顶层 import nodes（运行期才读 NODE_CLASS_MAPPINGS）：桩掉避免拉起真实 ComfyUI
+_nodes = types.ModuleType("nodes")
+_nodes.NODE_CLASS_MAPPINGS = {}
+sys.modules["nodes"] = _nodes
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_DIR)
@@ -1118,6 +1132,86 @@ class WatchPushTests(unittest.TestCase):
                          ["running", "running", "succeeded"])
         self.assertEqual([p[1]["progress"] for p in self.pushes],
                          [{"value": 1, "max": 8}, {"value": 2, "max": 8}, None])
+
+
+class PreviewCaptureTests(unittest.TestCase):
+    """采样预览图捕获：进度 handler 按 prompt 存最新一张，_watch 随快照推送，终态清空。"""
+
+    def setUp(self):
+        self._prev = dict(image_gen._PREVIEWS)
+        image_gen._PREVIEWS.clear()
+        self.addCleanup(self._restore_prev)
+
+    def _restore_prev(self):
+        image_gen._PREVIEWS.clear()
+        image_gen._PREVIEWS.update(self._prev)
+
+    @staticmethod
+    def _image():
+        from PIL import Image
+        return ("JPEG", Image.new("RGB", (64, 64), (200, 30, 30)), 512)
+
+    def test_preview_data_url(self):
+        url = image_gen._preview_data_url(self._image())
+        self.assertTrue(url.startswith("data:image/jpeg;base64,"))
+        raw = base64.b64decode(url.split(",", 1)[1])
+        self.assertEqual(raw[:3], b"\xff\xd8\xff", "应为 JPEG")
+
+    def test_capture_stores_latest_for_active_task(self):
+        task = {
+            "task_id": "tc", "prompt_id": "p9", "status": "running",
+            "created": 0.0, "updated": 0.0,
+            "params": {"prompt": "x", "ref_name": "", "width": 8, "height": 8,
+                       "model": "m", "seed": 1},
+            "images": [], "progress": None, "preview": None, "error": "", "warnings": [],
+        }
+        image_gen.TASKS[task["task_id"]] = task
+        self.addCleanup(image_gen.TASKS.pop, task["task_id"], None)
+
+        image_gen._PREVIEW_CAPTURE.update_handler("n", 1, 8, {}, "p9", self._image())
+        self.assertTrue(image_gen._PREVIEWS["p9"].startswith("data:image/jpeg;base64,"))
+        # 无图 / 未知 prompt：不写入
+        image_gen._PREVIEW_CAPTURE.update_handler("n", 2, 8, {}, "p9", None)
+        image_gen._PREVIEW_CAPTURE.update_handler("n", 2, 8, {}, "p10", self._image())
+        self.assertEqual(list(image_gen._PREVIEWS), ["p9"])
+
+    def test_watch_pushes_preview_and_clears_on_finish(self):
+        self._orig_poll = image_gen.POLL_INTERVAL
+        self._orig_lookup = image_gen._lookup
+        self._orig_prog = image_gen._progress_for
+        self._orig_send = image_gen.PromptServer.instance.send_sync
+        image_gen.POLL_INTERVAL = 0.001
+        pushes = []
+        image_gen.PromptServer.instance.send_sync = \
+            lambda event, data, sid=None: pushes.append(data)
+        self.addCleanup(setattr, image_gen, "POLL_INTERVAL", self._orig_poll)
+        self.addCleanup(setattr, image_gen, "_lookup", self._orig_lookup)
+        self.addCleanup(setattr, image_gen, "_progress_for", self._orig_prog)
+        self.addCleanup(setattr, image_gen.PromptServer.instance, "send_sync", self._orig_send)
+
+        states = iter([("running", None)] * 2
+                      + [("done", {"status": {"completed": True}, "outputs": {}})])
+        progs = iter([{"value": 1, "max": 8}, {"value": 2, "max": 8}])
+        image_gen._lookup = lambda pid: next(states)
+        image_gen._progress_for = lambda pid: next(progs)
+        task = {
+            "task_id": "tp", "prompt_id": "p1", "status": "queued",
+            "created": 0.0, "updated": 0.0,
+            "params": {"prompt": "x", "ref_name": "", "width": 8, "height": 8,
+                       "model": "m", "seed": 1},
+            "images": [], "progress": None, "preview": None, "error": "", "warnings": [],
+        }
+        image_gen.TASKS[task["task_id"]] = task
+        self.addCleanup(image_gen.TASKS.pop, task["task_id"], None)
+        url = image_gen._preview_data_url(self._image())
+        image_gen._PREVIEWS["p1"] = url
+
+        asyncio.run(image_gen._watch(task["task_id"]))
+
+        self.assertEqual([p["status"] for p in pushes], ["running", "running", "succeeded"])
+        self.assertEqual([p["preview"] for p in pushes], [url, url, None],
+                         "运行中随快照推预览图，终态清空")
+        self.assertNotIn("p1", image_gen._PREVIEWS)
 
 
 if __name__ == "__main__":

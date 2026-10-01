@@ -1073,6 +1073,22 @@ def reset_skill_gen_config(skill_id: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _clean_lora_entries(loras) -> list:
+    """LoRA 条目规范化为 [{name, strength, ref_only}]：空名跳过，强度夹到 [-10, 10]。"""
+    out = []
+    for entry in loras or []:
+        name = str((entry or {}).get("name") or "").strip() if isinstance(entry, dict) else str(entry or "").strip()
+        if not name:
+            continue
+        try:
+            strength = float((entry or {}).get("strength", 1.0))
+        except (TypeError, ValueError):
+            strength = 1.0
+        out.append({"name": name[:256], "strength": max(-10.0, min(10.0, strength)),
+                    "ref_only": bool((entry or {}).get("ref_only"))})
+    return out
+
+
 def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
     """写 skill 的生图/生视频设置：自定义写自身 config.json，预设写本地覆盖文件（不改预设文件）。返回 (success, message)。"""
     sid = _normalize_skill_id(str(skill_id or ""))
@@ -1086,18 +1102,7 @@ def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
         value = str(cfg.get(key) or "").strip()
         if value:
             clean[key] = value[:256]
-    loras = []
-    for entry in cfg.get("loras") or []:
-        name = str((entry or {}).get("name") or "").strip() if isinstance(entry, dict) else str(entry or "").strip()
-        if not name:
-            continue
-        try:
-            strength = float((entry or {}).get("strength", 1.0))
-        except (TypeError, ValueError):
-            strength = 1.0
-        loras.append({"name": name[:256], "strength": max(-10.0, min(10.0, strength)),
-                      "ref_only": bool((entry or {}).get("ref_only"))})
-    clean["loras"] = loras
+    clean["loras"] = _clean_lora_entries(cfg.get("loras"))
     for key in ("base_resolution", "count"):
         try:
             clean[key] = max(1, int(cfg.get(key)))
@@ -1436,6 +1441,67 @@ def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:
             shutil.copy2(cs, os.path.join(dst, "config.json"))
             copied += 1
     return True, f"copied {copied} file(s)"
+
+
+def _model_base_name(name: str) -> str:
+    """模型/LoRA 文件名 → 技能命名用名：取路径末段并去扩展名。"""
+    n = str(name or "").strip().replace("\\", "/").split("/")[-1]
+    return n.rsplit(".", 1)[0] if "." in n else n
+
+
+def save_combo_as_skill(source_id: str, model: str, loras) -> dict:
+    """把「生成素材」弹窗选中的"主模型 + LoRA"组合存为新自定义技能：
+    工作流模板按源技能原样复制；其余生图设置沿用源技能有效 config（预设含本地覆盖），仅覆盖 model/loras。
+    技能名自动生成 = 主模型名 + LoRA 名以 "-" 连接（未选 LoRA 时只有主模型名）。返回 {"success", "id", "name"}。
+    """
+    src = _skill_dir(str(source_id or ""))
+    if not src:
+        return {"success": False, "message": "源技能不存在"}
+    ws = os.path.join(src, "workflow.json")
+    if not os.path.isfile(ws):
+        return {"success": False, "message": "源技能没有工作流模板，无法保存为新技能"}
+
+    model = str(model or "").strip()
+    clean_loras = _clean_lora_entries(loras)
+    if not model and not clean_loras:
+        return {"success": False, "message": "请先选择主模型或 LoRA"}
+
+    title = "-".join(p for p in ([_model_base_name(model)] if model else [])
+                     + [_model_base_name(l["name"]) for l in clean_loras] if p)
+    base_id = _normalize_skill_id(title) or "combo-skill"
+    src_meta, _ = _read_skill_md(src)
+    desc = f"由「{src_meta.get('cn_name') or str(source_id)}」保存的模型组合：{title}"
+    with _skills_lock:
+        sid, i = base_id, 2
+        while os.path.isdir(os.path.join(SKILL_CUSTOM_DIR, sid)):
+            sid = f"{base_id}-{i}"
+            i += 1
+        d = os.path.join(SKILL_CUSTOM_DIR, sid)
+        os.makedirs(d, exist_ok=True)
+        meta = {
+            "name": sid,
+            "cn_name": title or None,
+            "tags": [str(t) for t in (src_meta.get("tags") or [])],
+            "description": desc,
+            "inputs": ["text"],
+            "category": "image_gen",
+            "gen_image": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        tmp = os.path.join(d, "skill.md.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(serialize_frontmatter(meta, desc))
+        os.replace(tmp, os.path.join(d, "skill.md"))
+        shutil.copy2(ws, os.path.join(d, "workflow.json"))
+        cfg = get_skill_gen_config(_normalize_skill_id(str(source_id)))
+        if model:
+            cfg["model"] = model
+        cfg["loras"] = clean_loras
+        tmp = os.path.join(d, "config.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, os.path.join(d, "config.json"))
+    return {"success": True, "id": sid, "name": title}
 
 
 # ==========================================

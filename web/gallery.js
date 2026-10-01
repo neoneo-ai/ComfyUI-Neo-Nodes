@@ -7,6 +7,7 @@ import { GallerySetting } from './gallery-setting.js';
 import { getRecipesPanel } from './recipes.js';
 import { openDirectorEditor } from './director.js';
 import { copyGalleryToInput } from './media-transfer.js';
+import { openGenMaterialDialog } from './gallery-gen.js';
 import { attachGalleryNodeDrop } from './gallery-node-drop.js';
 import {
     THUMBNAIL_SIZE_DEFAULT,
@@ -139,7 +140,13 @@ export class NeoGallery {
                 $el("div", { style: { display: 'flex', gap: '12px', alignItems: 'center' } }, [customDirBtn])
             ]),
             $el("div", { className: "neo-gallery-search-row" }, [
-                $el("div", { className: "neo-gallery-search-container" }, [this.searchInput])
+                $el("div", { className: "neo-gallery-search-container" }, [this.searchInput]),
+                $el("button", {
+                    className: "neo-gallery-gm-btn",
+                    title: "生成新素材（默认 Krea2 文生图，产物保存到 Output 目录）",
+                    textContent: "✨ 生成素材",
+                    onclick: () => openGenMaterialDialog(this)
+                })
             ]),
             $el("div", { 
                 id: "neo-gallery-breadcrumb",

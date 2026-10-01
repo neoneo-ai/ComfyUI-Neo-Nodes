@@ -125,14 +125,15 @@ Neo Studio 独立页面（`web/studio/index.html`，由 `/neo-studio` 短路径�
 | GET | `/neo_image_gen/settings` | 读取内置生图默认参数（`configs/image_gen.json`，缺失时回落内置值） |
 | POST | `/neo_image_gen/settings` | 保存默认参数（仅接受 `DEFAULT_SETTINGS` 里的键） |
 | GET | `/neo_image_gen/models` | 扫描 `diffusion_models` / `text_encoders` / `vae` / `loras`（各列表按 krea2 相关靠前排序供展示）并给出自动挑选结果（含 `suggested_lora` = 建议的四视图 LoRA） |
-| POST | `/neo_image_gen/generate` | 解析请求 → 构建 Krea2 API 图 → 提交执行队列，返回任务快照（含 `task_id`）；参数错误 400 |
-| GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`（仅运行中且全局 registry 命中本 prompt 时非空）、错误、告警 |
+| POST | `/neo_image_gen/generate` | 解析请求 → 构建 Krea2 API 图 → 提交执行队列，返回任务快照（含 `task_id`）；参数错误 400。body 可带单次覆盖 `model` / `text_encoder` / `vae` / `loras`（空/省略 = 跟随全局设置；「生成素材」弹窗的模型覆盖区只发 `model` / `loras`） |
+| GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`、实时预览图 `preview`（data URL；仅运行中且采样按步推预览时非空，依赖 ComfyUI `--preview-method` 非 none）、错误、告警 |
 | GET | `/neo_image_gen/tasks` | 最近任务列表（按创建时间倒序，最多 32 条） |
 | POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
 | GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`）与 `steps`（skill config，缺省 20；与节点 `width`/`height`/`steps=-1` 时一致），供 NeoImageGenEdit widget 填充默认值（定义于 image_gen_edit.py） |
 | GET | `/neo_image_gen/skill_config?skill_id=` | 读取技能生图/生视频设置：预设 = 自身 `config.json` ⊕ 本地覆盖文件（`configs/skill_overrides/<id>.json`），其余直接读 `config.json` |
 | GET | `/neo_image_gen/skill_workflow?skill_id=` | 返回技能 `workflow.json`（API prompt 模板，只读），供详情弹窗渲染节点流程图；缺失/非法 404 |
 | POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length`/`steps` 保留既有有效值（非模型设置区管理，视频技能「步数」由此落盘） |
+| POST | `/neo_image_gen/save_combo_skill` | 「生成素材」弹窗把选中的"主模型 + LoRA"组合存为新自定义技能（`{skill_id, model, loras}`）：源技能 `workflow.json` 原样复制，config 沿用源技能有效设置仅覆盖 `model`/`loras`；技能名自动生成 = 主模型名 + LoRA 名（id 冲突追加 `-2/-3`），返回 `{success, id, name}` |
 
 任务状态不走 HTTP 轮询：`_watch` 协程按变化经 WebSocket 事件 `rs.image_gen.status` 推送任务快照（广播，前端 `watchTask` 按 `task_id` 过滤）；`/status` 仅作订阅前兜底首拉与断线重连补漏，取消时后端也主动推送 `cancelled` 快照。
 

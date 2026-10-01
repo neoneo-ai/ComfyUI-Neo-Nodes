@@ -10,11 +10,15 @@ import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
 import { openSkillDetailById } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
-import { requestGeneration, watchTask, cancelTask } from "./image-gen.js";
+import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels } from "./image-gen.js";
 import { invokePromptStream } from "./prompt-service.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
+// 「生成素材」弹窗默认技能：Krea2 文生图（纯提示词出图，产物落 Output/NeoAgent/<日期>）
+const KREA2_T2I_SKILL_ID = "image_gen";
+// 「生成素材」弹窗上次选中的技能（localStorage，关窗不清除）
+const GM_LAST_SKILL_KEY = "neo.gallery.gen_material.skill";
 // 用所选人像作参考图生成四视图角色设定图，供拖入导演配方的 👤 角色参考图。
 const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人物，在一张横版画面中生成四个视图横向并排的角色设定图：第一格为大头特写（肩部以上，突出五官脸型），第二格为正面全身站立，第三格为侧面全身站立，第四格为背面全身站立。严格保持与参考图一致的五官脸型、发型发色、服装配饰和体型比例；全身视图中人物自然站立，双臂下垂，纯白背景，均匀柔光，写实摄影风格，高清细节，画面内不出现文字标注。";
 // 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
@@ -923,4 +927,272 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
             onclick: () => { card._removeCollectMenu(); openImageEditDialog(gallery, image, subfolder); }
         }, ["\uD83D\uDDBC\uFE0F 图片编辑"]) : null,
     ];
+}
+
+
+/** 画廊搜索行「✨ 生成素材」：纯提示词一键生成新素材（默认 Krea2 文生图），产物落 Output/NeoAgent/<日期>，素材面板可直接浏览。 */
+export function openGenMaterialDialog(gallery) {
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+
+    const statusBox = $el("div", { className: "neo-gallery-cs-status" });
+    const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
+    const promptInput = $el("textarea", {
+        className: "neo-gallery-story-input",
+        rows: 4,
+        placeholder: "描述要生成的素材，例如：红色陶瓷杯的白底产品图、黄昏下的海边灯塔……"
+    });
+
+    let running = false;
+    let cancelId = null;
+    let cancelRequested = false;
+    let deleting = false;
+
+    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-gm-modal-overlay" });
+    const close = () => overlay.remove();
+    const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
+    const btn = (label, onclick, primary = false) =>
+        $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
+
+    // 技能下拉：只列纯文生图技能（不需要参考图）；记住上次选中的技能（localStorage），失效时回 Krea2 文生图
+    const skillSel = $el("select", { className: "neo-recipes-sort" });
+    let rememberedSkill = "";
+    try { rememberedSkill = localStorage.getItem(GM_LAST_SKILL_KEY) || ""; } catch {}
+    // 拉技能列表重建下拉（打开时与保存新技能后调用）；preferId 优先选中（刚保存的新技能）
+    const fillSkillOptions = async (preferId) => {
+        try {
+            const res = await fetch("/rs_prompts/skills");
+            const skills = await res.json();
+            const genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.gen_image && !s.requires_ref);
+            skillSel.textContent = "";
+            genSkills.forEach(s => skillSel.appendChild($el("option", { value: s.id, textContent: s.cn_name || s.name || s.id })));
+            const ids = genSkills.map(s => s.id);
+            if (preferId && ids.includes(preferId)) skillSel.value = preferId;
+            else if (rememberedSkill && ids.includes(rememberedSkill)) skillSel.value = rememberedSkill;
+            else skillSel.value = ids.includes(KREA2_T2I_SKILL_ID) ? KREA2_T2I_SKILL_ID : (ids[0] || "");
+        } catch {
+            skillSel.value = KREA2_T2I_SKILL_ID;
+        }
+    };
+    fillSkillOptions();
+    // 选中变化即写入 localStorage：下次打开沿用该技能（关窗不清除）
+    skillSel.addEventListener("change", () => {
+        try { localStorage.setItem(GM_LAST_SKILL_KEY, skillSel.value); } catch {}
+    });
+
+    // 模型覆盖：本次临时选主模型 / LoRA（类似节点上接模型），空值 = 跟随全局生图设置；
+    // Text Encoder / VAE 很少变，弹窗里不露出（共享组件保留行，这里裁掉）
+    const modelCfg = createModelConfigSection();
+    for (const row of modelCfg.el.querySelectorAll(".rs-gen-adv-row")) row.remove();
+    const modelBox = $el("div", { className: "neo-gallery-gm-model-box", style: { display: "none" } });
+    modelBox.appendChild(modelCfg.el);
+    // 💾 保存为新技能：把当前选的「主模型 + LoRA」组合存成新技能（名称自动生成 = 主模型名+LoRA 名，其余设置沿用当前技能）
+    const saveSkillBtn = $el("button", {
+        className: "neo-gallery-gm-save-skill",
+        type: "button",
+        textContent: "💾 保存为新技能",
+        style: { display: "none" },
+    });
+    modelBox.appendChild(saveSkillBtn);
+    // 选中了主模型或 LoRA 才显示（委托：覆盖区内任意下拉 / 强度输入变化）
+    const refreshSaveSkillBtn = () => {
+        const ov = modelCfg.collect();
+        saveSkillBtn.style.display = (ov.model || ov.loras.length) ? "" : "none";
+    };
+    modelBox.addEventListener("change", refreshSaveSkillBtn);
+    let savingSkill = false;
+    saveSkillBtn.addEventListener("click", async () => {
+        if (savingSkill) return;
+        const ov = modelCfg.collect();
+        if (!ov.model && !ov.loras.length) return;
+        savingSkill = true;
+        saveSkillBtn.textContent = "💾 保存中…";
+        try {
+            const res = await fetch("/neo_image_gen/save_combo_skill", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ skill_id: skillSel.value || KREA2_T2I_SKILL_ID, model: ov.model, loras: ov.loras }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            // 新技能已进列表 → 直接选中并记住（下次打开沿用该组合）
+            await fillSkillOptions(data.id);
+            try { localStorage.setItem(GM_LAST_SKILL_KEY, data.id); } catch {}
+            actionToast({ severity: "success", summary: `已保存为新技能「${data.name}」` });
+        } catch (e) {
+            console.error("[Gallery] save combo skill failed:", e);
+            actionToast({ severity: "error", summary: "保存为新技能失败", detail: String(e?.message || e) });
+        } finally {
+            savingSkill = false;
+            saveSkillBtn.textContent = "💾 保存为新技能";
+            refreshSaveSkillBtn();
+        }
+    });
+    // 每次打开都默认「自动」（跟随全局设置），不预填已配置值——否则关窗重开像上次选择没清除；
+    // 模型列表拉取失败时覆盖区保持空下拉（等效跟随设置），不挡生成
+    (async () => {
+        try {
+            const models = await listGenModels();
+            modelCfg.load({}, models);
+        } catch {
+            // 同上：静默保持「自动」
+        }
+    })();
+    const modelToggle = $el("button", {
+        className: "neo-gallery-gm-model-toggle",
+        type: "button",
+        textContent: "⚙️ 模型覆盖 ▸",
+    });
+    modelToggle.addEventListener("click", () => {
+        const open = modelBox.style.display === "none";
+        modelBox.style.display = open ? "" : "none";
+        modelToggle.textContent = `⚙️ 模型覆盖 ${open ? "▾" : "▸"}`;
+    });
+
+    const renderIdle = () => {
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "填写素材描述后点「生成」，图片保存到 Output 目录（NeoAgent/<日期>），可在素材面板浏览。" }));
+        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+    };
+
+    // 预览区：生成中显示占位（spinner + 进度条），成功后结果图原位替换它（同一容器复用，布局不跳）
+    const previewBox = $el("div", { className: "neo-gallery-gm-preview" });
+
+    const renderRunning = (label, progress, preview) => {
+        previewBox.className = "neo-gallery-gm-preview";
+        const hasSteps = !!(progress && progress.max > 0);
+        const fillEl = $el("div", { className: "neo-gallery-cs-progress-fill" });
+        if (hasSteps) {
+            fillEl.style.width = `${Math.max(0, Math.min(100, (progress.value / progress.max) * 100))}%`;
+        } else {
+            fillEl.classList.add("neo-gallery-cs-progress-indeterminate");
+        }
+        // 采样中拿到实时预览图（与节点预览同源）时替换 spinner，否则显示占位
+        const runningRow = preview
+            ? $el("img", { className: "neo-gallery-gm-preview-img", src: preview, alt: label })
+            : $el("div", { className: "neo-gallery-cs-running" }, [
+                $el("span", { className: "neo-gallery-cs-spinner" }),
+                $el("span", { textContent: label })
+            ]);
+        fill(previewBox,
+            runningRow,
+            $el("div", { className: "neo-gallery-cs-progress" }, [fillEl]));
+        fill(statusBox, previewBox);
+        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+    };
+
+
+    const renderSuccess = (final) => {
+        const images = final.images || [];
+        // 结果图原位替换预览区：复用同一容器，只换类名与内容
+        previewBox.className = "neo-gallery-cs-result";
+        fill(previewBox);
+        if (images.length > 0) {
+            const img = $el("img", {
+                className: "neo-gallery-cs-result-img",
+                src: `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`,
+                alt: images[0].filename
+            });
+            img.addEventListener("click", () => Lightbox.open({ items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), index: 0 }));
+            previewBox.appendChild(img);
+        }
+        fill(statusBox, previewBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。" }));
+        // 打开输出目录：跳到 Output 下实际落盘的日期子目录
+        const openOutputDir = () => {
+            const sub = images.map(i => i.subfolder).find(Boolean);
+            gallery.showDirectoryStructure("Output", sub ? sub.split("/").filter(Boolean) : []);
+            close();
+        };
+        // 删除：结果不满意 → 直接删掉落盘文件（含 .txt 与缩略图缓存），删完回 idle 原地再生成
+        const deleteResult = async () => {
+            if (!images.length || deleting) return;
+            deleting = true;
+            try {
+                const ok = await gallery.deleteItem(images[0].filename, images[0].subfolder || "", { silent: true });
+                if (ok) renderIdle();
+                else actionToast({ severity: "error", summary: "删除失败", detail: `无法删除 ${images[0].filename}` });
+            } catch (e) {
+                console.error("[Gallery] gen material delete failed:", e);
+                actionToast({ severity: "error", summary: "删除失败", detail: String(e?.message || e) });
+            } finally {
+                deleting = false;
+            }
+        };
+        fill(actionsBox, btn("打开输出目录", openOutputDir), btn("再生成", start), btn("删除", deleteResult), btn("关闭", close, true));
+    };
+
+    const renderError = (message) => {
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
+        fill(actionsBox, btn("重试", start), btn("关闭", close));
+    };
+
+    // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
+    const failGen = (message) => {
+        renderError(message);
+        actionToast({ severity: "error", summary: "素材生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillSel.value || KREA2_T2I_SKILL_ID) });
+    };
+
+    const start = async () => {
+        if (running) return;
+        const prompt = promptInput.value.trim();
+        if (!prompt) { promptInput.focus(); return; }
+        running = true;
+        cancelRequested = false;
+        renderRunning("排队中…");
+        try {
+            // 模型覆盖只带非空值：空串 / 空数组会覆盖掉全局设置里的显式配置（TE / VAE 不在弹窗露出，不随请求发）
+            const payload = {
+                skill_id: skillSel.value || KREA2_T2I_SKILL_ID,
+                prompt,
+                skip_enhance: true,
+            };
+            const ov = modelCfg.collect();
+            if (ov.model) payload.model = ov.model;
+            if (ov.loras.length) payload.loras = ov.loras;
+            const snap = await requestGeneration(payload);
+            cancelId = snap.task_id;
+            renderRunning("排队中…");
+            const final = await watchTask(snap.task_id, (s) => {
+                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress, s.preview);
+            }, () => cancelRequested);
+            if (final.status === "succeeded") renderSuccess(final);
+            else if (final.status === "cancelled") renderError("已取消");
+            else failGen(final.error || "生成失败");
+        } catch (e) {
+            console.error('[Gallery] gen material failed:', e);
+            failGen(String(e?.message || e));
+        } finally {
+            running = false;
+            cancelId = null;
+        }
+    };
+
+    const onKey = (e) => {
+        if (e.key === "Escape") close();
+        else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
+    };
+
+    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 模型覆盖 / 提示词），操作按钮收尾
+    overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
+        $el("div", { className: "neo-gallery-story-titlebar" }, [
+            $el("span", { className: "neo-gallery-story-title", textContent: "\u2728 生成素材" }),
+            $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
+        ]),
+        statusBox,
+        $el("div", { className: "neo-gallery-story-form-row" }, [
+            $el("label", { className: "neo-director-field-label", textContent: "生成技能" }),
+            skillSel
+        ]),
+        modelToggle,
+        modelBox,
+        promptInput,
+        actionsBox
+    ]));
+
+    renderIdle();
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+    document.addEventListener("keydown", onKey);
+    const origRemove = overlay.remove.bind(overlay);
+    overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
+    document.body.appendChild(overlay);
+
+    setTimeout(() => promptInput.focus(), 0);
 }

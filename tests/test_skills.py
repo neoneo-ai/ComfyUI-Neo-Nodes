@@ -550,6 +550,103 @@ class TestSaveSkillGenFields(unittest.TestCase):
 
 
 @unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestSaveComboSkill(unittest.TestCase):
+    """save_combo_as_skill：把"主模型 + LoRA"组合存为新技能（名称自动生成，其余设置沿用源技能）"""
+
+    def setUp(self):
+        self.skill_mod = getattr(prompts_mod, "skill", None)
+        if self.skill_mod is None:
+            self.skipTest("prompts 未暴露 skill 模块")
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_dir = self.skill_mod.SKILL_CUSTOM_DIR
+        self.skill_mod.SKILL_CUSTOM_DIR = self._tmp.name
+
+    def tearDown(self):
+        self.skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
+        self._tmp.cleanup()
+
+    def _make_source(self, sid="src-t2i", model="krea2.safetensors", with_workflow=True):
+        d = os.path.join(self._tmp.name, sid)
+        os.makedirs(d)
+        with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+            f.write(self.skill_mod.serialize_frontmatter({
+                "name": sid, "cn_name": "源文生图", "tags": ["test"],
+                "inputs": ["text"], "category": "image_gen", "gen_image": True,
+            }, "body"))
+        if with_workflow:
+            wf = {"1": {"class_type": "KSampler", "inputs": {}},
+                  "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{PROMPT}}"}}}
+            with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+                json.dump(wf, f)
+        cfg = {"model": model, "text_encoder": "t5.safetensors", "steps": 25, "loras": []}
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+        return d
+
+    def _read_files(self, sid):
+        d = os.path.join(self._tmp.name, sid)
+        with open(os.path.join(d, "skill.md"), encoding="utf-8") as f:
+            meta, _ = self.skill_mod.split_frontmatter(f.read())
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            wf = json.load(f)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        return meta, wf, cfg
+
+    def test_model_and_lora_combo(self):
+        self._make_source()
+        res = self.skill_mod.save_combo_as_skill(
+            "src-t2i", "qwen_image_2.1.safetensors",
+            [{"name": "cute_style.safetensors", "strength": 0.8}])
+        self.assertTrue(res["success"])
+        self.assertEqual(res["name"], "qwen_image_2.1-cute_style")
+        meta, wf, cfg = self._read_files(res["id"])
+        # skill.md：纯文生图技能，名称自动生成
+        self.assertEqual(meta.get("cn_name"), "qwen_image_2.1-cute_style")
+        self.assertEqual(meta.get("category"), "image_gen")
+        self.assertIs(meta.get("gen_image"), True)
+        self.assertEqual(meta.get("inputs"), ["text"])
+        # workflow.json 原样复制自源技能
+        self.assertEqual(wf, {"1": {"class_type": "KSampler", "inputs": {}},
+                              "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{PROMPT}}"}}})
+        # config：只覆盖 model/loras，其余设置沿用源技能
+        self.assertEqual(cfg["model"], "qwen_image_2.1.safetensors")
+        self.assertEqual(cfg["loras"], [{"name": "cute_style.safetensors", "strength": 0.8, "ref_only": False}])
+        self.assertEqual(cfg["text_encoder"], "t5.safetensors")
+        self.assertEqual(cfg["steps"], 25)
+
+    def test_lora_only_keeps_source_model(self):
+        self._make_source()
+        res = self.skill_mod.save_combo_as_skill("src-t2i", "", [{"name": "lora_a.safetensors"}])
+        self.assertTrue(res["success"])
+        self.assertEqual(res["name"], "lora_a")
+        _, _, cfg = self._read_files(res["id"])
+        self.assertEqual(cfg["model"], "krea2.safetensors", "未选主模型时沿用源技能模型")
+        self.assertEqual(cfg["loras"], [{"name": "lora_a.safetensors", "strength": 1.0, "ref_only": False}])
+
+    def test_id_conflict_gets_suffix(self):
+        self._make_source()
+        r1 = self.skill_mod.save_combo_as_skill("src-t2i", "m.safetensors", [])
+        r2 = self.skill_mod.save_combo_as_skill("src-t2i", "m.safetensors", [])
+        self.assertTrue(r1["success"] and r2["success"])
+        self.assertEqual(r2["id"], f"{r1['id']}-2")
+
+    def test_empty_selection_fails(self):
+        self._make_source()
+        res = self.skill_mod.save_combo_as_skill("src-t2i", "", [])
+        self.assertFalse(res["success"])
+
+    def test_missing_source_fails(self):
+        res = self.skill_mod.save_combo_as_skill("nope", "m.safetensors", [])
+        self.assertFalse(res["success"])
+
+    def test_source_without_workflow_fails(self):
+        self._make_source(sid="nowf", with_workflow=False)
+        res = self.skill_mod.save_combo_as_skill("nowf", "m.safetensors", [])
+        self.assertFalse(res["success"])
+
+
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
 class TestResolveImageBytes(unittest.TestCase):
     """测试前端图片源解析（base64 -> PNG bytes + 缩放）"""
 
