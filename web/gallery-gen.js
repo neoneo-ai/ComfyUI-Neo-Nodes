@@ -776,7 +776,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
             });
         }
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成编辑结果。" }));
-        fill(actionsBox, btn("关闭", close, true));
+        // 保留「再生成」入口：编辑支持连续重复生成，不必关窗重开（与 renderError 的「重试」一致）
+        fill(actionsBox, btn("再生成", start), btn("关闭", close, true));
     };
 
     const renderError = (message) => {

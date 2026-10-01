@@ -18,8 +18,7 @@ import { createModelConfigForm } from "../llm-setting.js";
 import { createSkillManager } from "../skill.js";
 
 const view = document.getElementById("ns-view");
-let directorRecipes = [];   // /neo_studio/version 返回的导演配方名
-let onRecipesLoaded = null; // 导演页注册的回调：配方列表就绪后刷新下拉并填默认值（version 与视图构建有先后竞态）
+let directorPanelOpts = null;   // 导演页配方面板选项（buildDirector 设置；含 onSelect 回传选中配方）
 const NS_LIVE_H = 360;       // 实时预览面板在 Studio 里的固定高度（px；与成片同高，节点上下文按画面比例加高，这里不需要）
 
 // ====== 视图缓存：每个 tab 只挂载一次，切换时显隐（保留画廊滚动/编辑状态） ======
@@ -96,10 +95,10 @@ function updateGenStatus(task) {
 
 let recipesPanelEl = null;
 async function refreshRecipesPanel() {
-    if (!recipesPanelEl) return;
+    if (!recipesPanelEl || !directorPanelOpts) return;
     const parent = recipesPanelEl.parentNode;
     recipesPanelEl.remove();
-    recipesPanelEl = await createRecipesPanel({ directorOnly: true });   // 导演页只列多段导演配方
+    recipesPanelEl = await createRecipesPanel(directorPanelOpts());   // 导演页只列多段导演配方；点选回传 onSelect
     parent.appendChild(recipesPanelEl);
 }
 
@@ -107,9 +106,16 @@ async function refreshRecipesPanel() {
 async function buildDirector(el) {
     const page = $el("div", { className: "ns-director" });
     el.appendChild(page);
+    let currentRecipeName = null;   // 当前选中的导演配方（由下方配方面板点选回传，直接喂给整片生成区）
+
+    const onSelect = (r) => {
+        currentRecipeName = r.name;
+        applyRecipeDefaults(r.name);   // 填 宽/高/步数 + 同步只读时间轴分段
+    };
+    const panelOpts = () => ({ directorOnly: true, autoSelectFirst: true, initialSelection: currentRecipeName, onSelect });
+    directorPanelOpts = panelOpts;
 
     // --- 整片生成面板 ---
-    const recipeSel = $el("select", {}, []);
     const seedInput = $el("input", { type: "number", value: "-1", title: "-1 = 用配方里的种子" });
     const widthInput = $el("input", { type: "number", value: "-1", title: "-1 = 用配方分辨率" });
     const heightInput = $el("input", { type: "number", value: "-1", title: "-1 = 用配方分辨率" });
@@ -152,16 +158,6 @@ async function buildDirector(el) {
     const livePlayer = createFramePlayer(liveBox, () => { liveBox.style.height = NS_LIVE_H + "px"; });
     mediaRight.appendChild(liveBox);
 
-    function fillRecipeOptions() {
-        recipeSel.innerHTML = "";
-        for (const name of directorRecipes) {
-            recipeSel.appendChild($el("option", { value: name, textContent: name }));
-        }
-        if (!directorRecipes.length) {
-            recipeSel.appendChild($el("option", { value: "", textContent: "（暂无导演配方）" }));
-        }
-    }
-
     // 配方默认值：选中配方后从 director_spec 填 宽/高/步数（与画布节点 widget 填充同源；
     // 每个配方有自己的硬性要求，切换时一律重新初始化，不保留手改值）
     const specCache = new Map();
@@ -185,12 +181,11 @@ async function buildDirector(el) {
             if (Number.isFinite(val)) input.value = val;
         }
     }
-    recipeSel.addEventListener("change", () => applyRecipeDefaults(recipeSel.value));
 
     // 点时间轴分段块 → 打开导演编辑器并定位到该段（与画布节点 ✎ / 块点击同源）；
     // 保存后由 DIRECTOR_RECIPE_SAVED_EVENT 统一刷新下拉、默认值与时间轴分段
     async function openRecipeEditor(segIndex = -1) {
-        const name = String(recipeSel.value || "").trim();
+        const name = String(currentRecipeName || "").trim();
         if (!name) { statusEl.textContent = "请先选择配方"; return; }
         try {
             const metas = await listRecipes();
@@ -220,8 +215,8 @@ async function buildDirector(el) {
     }
 
     runBtn.addEventListener("click", async () => {
-        const recipe = recipeSel.value;
-        if (!recipe) { statusEl.textContent = "请先新建导演配方"; return; }
+        const recipe = currentRecipeName;
+        if (!recipe) { statusEl.textContent = "请先在下方选择一个配方"; return; }
         // 空输入归一为 -1（用配方默认），避免 Number("") === 0 被后端当成显式 0
         const num = (input, fallback) => input.value.trim() === "" ? fallback : Number(input.value);
         const body = {
@@ -318,7 +313,6 @@ async function buildDirector(el) {
     // 整块面板两列：左 = 控制 + 时间轴，右 = 实时预览 / 成片（更大区域）
     const genLeft = $el("div", { className: "ns-gen-left" }, [
         $el("div", { className: "ns-gen-row" }, [
-            $el("label", { textContent: "配方" }), recipeSel,
             $el("label", { textContent: "种子" }), seedInput,
             $el("label", { textContent: "宽×高" }), widthInput, heightInput,
         ]),
@@ -335,20 +329,14 @@ async function buildDirector(el) {
         barEl, statusEl,
     ]));
 
-    // --- 配方面板（卡片自带「编辑」→ openDirectorEditor 浮层；只列多段导演配方） ---
-    recipesPanelEl = await createRecipesPanel({ directorOnly: true });
+    // --- 配方面板（点卡片直接选中并喂给上方整片生成区；只列多段导演配方） ---
+    recipesPanelEl = await createRecipesPanel(panelOpts());
     page.appendChild(recipesPanelEl);
-    onRecipesLoaded = () => { fillRecipeOptions(); applyRecipeDefaults(recipeSel.value); };
-    onRecipesLoaded();
-    // 编辑器保存后：刷新配方列表（新建的进下拉）、清 spec 缓存、同步默认值与时间轴分段
-    window.addEventListener(DIRECTOR_RECIPE_SAVED_EVENT, async () => {
+    // 编辑器保存后：刷新配方列表、清 spec 缓存、同步默认值与时间轴分段（新建配方直接选中，其余保持当前选中）
+    window.addEventListener(DIRECTOR_RECIPE_SAVED_EVENT, async (e) => {
         specCache.clear();
-        try {
-            const r = await api.fetchApi("/neo_studio/version");
-            const data = await r.json();
-            if (data?.success) directorRecipes = data.recipes || [];
-        } catch { /* 网络抖动保持旧列表 */ }
-        onRecipesLoaded();
+        if (e?.detail?.created) currentRecipeName = e.detail.name;
+        await refreshRecipesPanel();
     });
 }
 
@@ -362,23 +350,36 @@ function buildSkills(el) {
     createSkillManager(el, { showClose: false, showCanvasBtn: false });
 }
 
-// ====== 设置页 ======
+// ====== 设置页：左侧 tab 切换（LLM / 生图 / 生视频），默认 LLM ======
 function buildSettings(el) {
     // 三个表单工厂均返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
     const genForm = createImageGenSettingsForm();
     const videoForm = createVideoGenSettingsForm();
     const llmForm = createModelConfigForm();
-    el.appendChild($el("div", { className: "ns-settings" }, [
-        $el("div", { className: "ns-settings-section" }, [
-            $el("h3", { textContent: "生图设置" }), genForm.el,
-        ]),
-        $el("div", { className: "ns-settings-section" }, [
-            $el("h3", { textContent: "生视频设置" }), videoForm.el,
-        ]),
-        $el("div", { className: "ns-settings-section" }, [
-            $el("h3", { textContent: "LLM 设置" }), llmForm.el,
-        ]),
-    ]));
+
+    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置；每个 tab 只显示对应设置区
+    const sections = [
+        { key: "llm", label: "LLM 设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "LLM 设置" }), llmForm.el]) },
+        { key: "gen", label: "生图设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生图设置" }), genForm.el]) },
+        { key: "video", label: "生视频设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生视频设置" }), videoForm.el]) },
+    ];
+
+    const tabs = $el("div", { className: "ns-settings-tabs" });
+    const content = $el("div", { className: "ns-settings-content" });
+    const showSection = (key) => {
+        for (const s of sections) s.body.style.display = s.key === key ? "" : "none";
+        for (const btn of tabs.children) btn.classList.toggle("active", btn.dataset.key === key);
+    };
+    for (const s of sections) {
+        const btn = $el("button", { className: "ns-settings-tab", textContent: s.label });
+        btn.dataset.key = s.key;
+        btn.addEventListener("click", () => showSection(s.key));
+        tabs.appendChild(btn);
+        content.appendChild(s.body);
+    }
+
+    el.appendChild($el("div", { className: "ns-settings" }, [tabs, content]));
+    showSection("llm");  // 默认 LLM 设置
     Promise.all([genForm.load(), videoForm.load(), llmForm.load()])
         .catch(e => console.error("[Neo Studio] settings load failed:", e));
 }
@@ -391,8 +392,6 @@ async function loadVersion() {
         const data = await r.json();
         if (data?.success) {
             verEl.textContent = `Neo-Nodes ${data.plugin_version} · ComfyUI ${data.comfyui_version}`;
-            directorRecipes = data.recipes || [];
-            if (onRecipesLoaded) onRecipesLoaded();
         }
     } catch { /* ComfyUI 未就绪时保持空白 */ }
 }

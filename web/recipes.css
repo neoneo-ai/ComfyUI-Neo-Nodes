@@ -124,6 +124,12 @@
     outline-offset: 1px;
 }
 
+/* 选中态（Studio 导演页：点卡片喂给整片生成区） */
+.neo-recipes-card-selected {
+    border-color: #4a7bd0;
+    background: #212531;
+}
+
 .neo-recipes-card-media {
     position: relative;
     display: grid;

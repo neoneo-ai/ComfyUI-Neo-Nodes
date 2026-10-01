@@ -799,6 +799,10 @@ export async function createRecipesPanel(options = {}) {
     const root = $el('div', { className: 'neo-recipes-panel' });
     // directorOnly（Studio 导演页）：只列多段导演配方，隐藏筛选 chips；普通配方在那里无用
     const directorOnly = !!options.directorOnly;
+    // selectable（Studio 导演页）：点卡片即选中并回传 onSelect，直接喂给上方整片生成区（不再用顶部下拉选配方）
+    const selectable = typeof options.onSelect === 'function';
+    const autoSelectFirst = !!options.autoSelectFirst;
+    let selectedName = null;
 
     // 面板状态（搜索/筛选/排序/分组折叠）：存 /userdata/neo_recipes_data.json，刷新后回显
     const prefs = { query: '', filter: directorOnly ? 'director' : 'all', sort: 'mtime', collapsed: {} };
@@ -1134,17 +1138,24 @@ export async function createRecipesPanel(options = {}) {
             tabindex: '0',
             role: 'button',
             'aria-label': r.name,
-            onclick: () => openDetail(r, card),
-            onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r, card); } },
         });
+        card.dataset.name = r.name;
+        if (selectable) {
+            // 点卡片即选中并回传 onSelect（Studio 导演页：直接喂给上方整片生成区）
+            card.addEventListener('click', () => selectRecipe(r));
+            card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRecipe(r); } });
+        } else {
+            card.onclick = () => openDetail(r, card);
+            card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r, card); } };
+        }
 
         // 媒体区：通栏。普通配方=封面/示例缩略图（单张横幅，多张网格）；导演配方=各段首帧网格
         const isDirector = r.type === 'video_director';
         const media = $el('div', {
             className: 'neo-recipes-card-media',
             title: isDirector ? '编辑多段导演配方' : '查看资源',
-            onclick: (e) => { e.stopPropagation(); if (isDirector) openDirectorEditor(r, renderList); else openDetail(r, card); }
         });
+        if (!selectable) media.onclick = (e) => { e.stopPropagation(); if (isDirector) openDirectorEditor(r, renderList); else openDetail(r, card); };
         const mediaTiles = [];
         const addTile = (file, dir) => {
             const img = $el('img', { src: thumbUrl(r.name, file, dir, isDirector ? 192 : 256), alt: r.name, loading: 'lazy' });
@@ -1176,7 +1187,7 @@ export async function createRecipesPanel(options = {}) {
             ...(isDirector ? [$el('span', { className: 'neo-recipes-card-badge', textContent: '🎬 导演' })] : [])
         ]);
         nameEl.title = '查看资源';
-        nameEl.onclick = (e) => { e.stopPropagation(); openDetail(r, card); };
+        if (!selectable) nameEl.onclick = (e) => { e.stopPropagation(); openDetail(r, card); };
 
         // 正文：信息 chips（预设/资源/示例/结果）+ 摘要折叠（导演）或提示词预览
         const chips = [];
@@ -1194,6 +1205,7 @@ export async function createRecipesPanel(options = {}) {
         // 操作：主操作（发送/编辑 + 复制）直接展示，其余收进 ⋯ 更多菜单
         const direct = [];
         const more = [];
+        if (selectable) direct.push({ cls: 'neo-recipes-detail-open', icon: '👁', title: '查看资源', run: (b) => openDetail(r, b) });
         if (r.type !== 'video_director') {
             direct.push({ cls: 'neo-recipes-send', icon: '✈️', title: '一键发送到工作流', run: (b) => { b.disabled = true; applyRecipeToWorkflow(r).then(ok => { b.disabled = false; if (ok) renderList(); }); } });
         } else {
@@ -1280,6 +1292,16 @@ export async function createRecipesPanel(options = {}) {
         return el;
     }
 
+    // 选中高亮（selectable 模式）：只改 class，不重复触发 onSelect
+    function applySelectionHighlight(name) {
+        for (const [n, entry] of cardIndex) entry.card.classList.toggle('neo-recipes-card-selected', n === name);
+    }
+    function selectRecipe(r, fire = true) {
+        selectedName = r.name;
+        applySelectionHighlight(selectedName);
+        if (fire) options.onSelect?.(r);
+    }
+
     function paint() {
         const list = visibleRecipes(state.recipes);
         const wanted = [];
@@ -1304,6 +1326,17 @@ export async function createRecipesPanel(options = {}) {
         while (cursor) { const next = cursor.nextSibling; listEl.removeChild(cursor); cursor = next; }
         const alive = new Set(state.recipes.map(r => r.name));
         for (const name of [...cardIndex.keys()]) if (!alive.has(name)) cardIndex.delete(name);
+        // 恢复选中高亮（不重复触发 onSelect）；首次按 initialSelection / autoSelectFirst 自动选中
+        if (selectedName) {
+            applySelectionHighlight(selectedName);
+        } else if (autoSelectFirst) {
+            const list = visibleRecipes(state.recipes);
+            if (list.length) {
+                const name = (options.initialSelection && list.some(x => x.name === options.initialSelection))
+                    ? options.initialSelection : list[0].name;
+                selectRecipe(list.find(x => x.name === name));
+            }
+        }
     }
 
     async function renderList() {

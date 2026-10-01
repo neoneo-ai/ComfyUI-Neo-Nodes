@@ -70,7 +70,6 @@ body {
     padding: 5px 8px;
     font-size: 13px;
 }
-.ns-gen-row select { min-width: 220px; }
 .ns-gen-row input[type="number"] { width: 76px; }
 /* 取消生成：仅排队/运行中显示；红描边与蓝色「生成整片」区分开 */
 .ns-gen-cancel { border-color: #9a3a3a; background: #5a1a1a; color: #f87171; }
@@ -115,8 +114,22 @@ body {
 .ns-skills { padding: 0; }
 .ns-skills .rs-skill-manager { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
 
-/* 设置页 */
-.ns-settings { display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
+/* 设置页：左侧 tab 切换 + 右侧内容区 */
+.ns-settings { display: flex; gap: 14px; align-items: flex-start; max-width: 860px; }
+.ns-settings-tabs { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.ns-settings-tab {
+    text-align: left;
+    padding: 8px 14px;
+    background: #202024;
+    border: 1px solid #333;
+    border-radius: 8px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+}
+.ns-settings-tab:hover { background: #2a2a30; }
+.ns-settings-tab.active { background: rgba(47, 111, 237, 0.15); border-color: #2f6fed; color: #fff; }
+.ns-settings-content { flex: 1; min-width: 0; }
 .ns-settings-section {
     background: #202024;
     border: 1px solid #333;

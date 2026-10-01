@@ -59,7 +59,7 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
             getComputedStyle(document.querySelector(".ns-director .neo-recipes-list")).display);
         assert.equal(listDisplay, "grid", "配方列表应为 grid 多列布局");
 
-        // 选中配方后 宽/高/步数 应按 director_spec 默认值填充（与画布节点同源）
+        // 首个配方自动选中：对应卡片高亮，且 宽/高/步数 按 director_spec 默认值填充（与画布节点同源）
         const spec = await page.evaluate(async () => {
             const v = await (await fetch("/neo_studio/version")).json();
             const name = (v.recipes || [])[0];
@@ -68,7 +68,9 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
             return { name, defaults: s.defaults };
         });
         if (spec) {
-            await page.selectOption(".ns-gen-panel select", spec.name);
+            const selectedName = await page.evaluate(() =>
+                document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span")?.textContent);
+            assert.equal(selectedName, spec.name, "首个配方应被自动选中");
             await page.waitForFunction((d) => {
                 const inputs = [...document.querySelectorAll(".ns-gen-panel input[type=number]")];
                 // 顺序：种子/宽/高/上下文帧/步数
@@ -76,6 +78,19 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
                     && Number(inputs[2].value) === d.height
                     && Number(inputs[4].value) === d.steps;
             }, spec.defaults, { timeout: 5000 });
+
+            // 点另一张卡片 → 高亮切换（选中直接喂生成区，不再用顶部下拉）
+            const cardCount = await page.locator(".neo-recipes-card").count();
+            if (cardCount >= 2) {
+                await page.evaluate(() => {
+                    const cards = [...document.querySelectorAll(".neo-recipes-card")];
+                    cards.find(c => !c.classList.contains("neo-recipes-card-selected")).click();
+                });
+                await page.waitForFunction((first) => {
+                    const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
+                    return sel && sel.textContent !== first;
+                }, spec.name, { timeout: 5000 });
+            }
         }
 
         // 技能视图：统一技能管理直接挂满主区（无弹窗外壳，无 ✕ / 无「从画布」）

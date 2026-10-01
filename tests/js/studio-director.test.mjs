@@ -74,11 +74,11 @@ test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
     // 只读时间轴已挂进生成面板（与画布节点内嵌同款组件）
     assert.ok(document.querySelector(".ns-gen-timeline .neo-dtl-canvas"), "只读时间轴 canvas 应存在");
 
-    // 选中配方：默认值填充 + 拉取 director_spec 刷新时间轴分段
-    const sel = document.querySelector(".ns-gen-panel select");
-    await until(() => [...sel.options].some((o) => o.value === "R1"), "配方下拉就绪");
-    sel.value = "R1";
-    sel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // 首个配方自动选中（下方配方面板）：默认值填充 + 拉取 director_spec 刷新时间轴分段
+    await until(() => {
+        const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
+        return sel && sel.textContent === "R1";
+    }, "配方自动选中");
     const inputs = () => [...document.querySelectorAll(".ns-gen-panel input[type=number]")];
     await until(() => Number(inputs()[1].value) === 640 && Number(inputs()[2].value) === 384, "默认值填充");
     assert.ok(fetchLog.some((c) => c.path === "/rs_recipes/director_spec"), "应拉取配方 spec");
@@ -115,10 +115,11 @@ test("Studio 导演页：点时间轴分段块打开配方编辑器并定位到�
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
 
-    const sel = document.querySelector(".ns-gen-panel select");
-    await until(() => [...sel.options].some((o) => o.value === "R1"), "配方下拉就绪");
-    sel.value = "R1";
-    sel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // 首个配方自动选中（下方配方面板）
+    await until(() => {
+        const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
+        return sel && sel.textContent === "R1";
+    }, "配方自动选中");
 
     // canvas 桩：W=320，段 3s+4s → 块1 ≈ [138,312]，点 x=200 命中第 2 块
     const canvas = document.querySelector(".ns-gen-timeline .neo-dtl-canvas");
@@ -142,10 +143,11 @@ test("Studio 导演页：轮询拿到终态 → 停轮询 + 成片只替换一�
     await import("../../web/studio/studio-app.js");
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
-    const sel = document.querySelector(".ns-gen-panel select");
-    await until(() => [...sel.options].some((o) => o.value === "R1"), "配方下拉就绪");
-    sel.value = "R1";
-    sel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // 首个配方自动选中（下方配方面板）
+    await until(() => {
+        const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
+        return sel && sel.textContent === "R1";
+    }, "配方自动选中");
 
     // 快照路由先返回 running，再返回 succeeded（模拟 WS 终态事件丢失，只能靠轮询拿到）
     statusState.status = "running";
@@ -171,10 +173,11 @@ test("Studio 导演页：WS 断档期间轮询 latest_preview 补帧（旧步号
     await import("../../web/studio/studio-app.js");
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
-    const sel = document.querySelector(".ns-gen-panel select");
-    await until(() => [...sel.options].some((o) => o.value === "R1"), "配方下拉就绪");
-    sel.value = "R1";
-    sel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    // 首个配方自动选中（下方配方面板）
+    await until(() => {
+        const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
+        return sel && sel.textContent === "R1";
+    }, "配方自动选中");
 
     statusState.status = "running";
     statusState.progress = null;

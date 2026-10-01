@@ -451,3 +451,81 @@ test("详情浮层：底部有「复制提示词」按钮，无提示词时禁�
     assert.equal(copyBtn.disabled, true, "无提示词时禁用");
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
 });
+
+// ====== selectable 模式（Studio 导演页：点卡片选中并回传 onSelect，直接喂整片生成区） ======
+function directorRecipe(name) {
+    return { name, type: "video_director", source: "custom", prompt: "", assets: [], samples: [], results: [] };
+}
+
+test("配方面板：selectable 点卡片选中并回传 onSelect，高亮对应卡片（不打开详情/编辑器）", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([directorRecipe("dir-a"), directorRecipe("dir-b")]));
+
+    const selected = [];
+    const panel = await createRecipesPanel({ directorOnly: true, onSelect: (r) => selected.push(r.name) });
+    document.body.appendChild(panel);
+    await sleep(80);
+
+    const cards = [...panel.querySelectorAll(".neo-recipes-card")];
+    assert.equal(cards.length, 2, "两个导演配方卡片");
+    cards[1].click();
+    await sleep(30);
+    assert.deepEqual(selected, ["dir-b"], "onSelect 收到被点配方");
+    assert.ok(cards[1].classList.contains("neo-recipes-card-selected"), "被点卡片高亮");
+    assert.ok(!cards[0].classList.contains("neo-recipes-card-selected"), "其它卡片不高亮");
+    assert.equal(document.querySelector(".neo-recipes-detail"), null, "选中不打开详情浮层");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "选中不打开编辑器");
+});
+
+test("配方面板：autoSelectFirst 首次加载自动选中首个配方", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([directorRecipe("dir-a"), directorRecipe("dir-b")]));
+
+    const selected = [];
+    const panel = await createRecipesPanel({ directorOnly: true, autoSelectFirst: true, onSelect: (r) => selected.push(r.name) });
+    document.body.appendChild(panel);
+    await sleep(80);
+
+    assert.deepEqual(selected, ["dir-a"], "自动选中首个配方");
+    assert.ok(panel.querySelector(".neo-recipes-card").classList.contains("neo-recipes-card-selected"), "首个卡片高亮");
+});
+
+test("配方面板：initialSelection 恢复指定配方选中（刷新后保持）", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([directorRecipe("dir-a"), directorRecipe("dir-b")]));
+
+    const selected = [];
+    const panel = await createRecipesPanel({ directorOnly: true, autoSelectFirst: true, initialSelection: "dir-b", onSelect: (r) => selected.push(r.name) });
+    document.body.appendChild(panel);
+    await sleep(80);
+
+    assert.deepEqual(selected, ["dir-b"], "恢复指定配方");
+    const cards = [...panel.querySelectorAll(".neo-recipes-card")];
+    assert.ok(cards[1].classList.contains("neo-recipes-card-selected"), "dir-b 高亮");
+});
+
+test("配方面板：selectable 卡片带「详情」按钮，点它打开详情浮层（不触发选中回传）", async () => {
+    const { createRecipesPanel } = await import("../../web/recipes.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    mockRoute("/rs_recipes/list", () => jsonResponse([directorRecipe("dir-a")]));
+
+    const selected = [];
+    const panel = await createRecipesPanel({ directorOnly: true, onSelect: (r) => selected.push(r.name) });
+    document.body.appendChild(panel);
+    await sleep(80);
+
+    const detailBtn = panel.querySelector(".neo-recipes-detail-open");
+    assert.ok(detailBtn, "selectable 卡片有「详情」按钮");
+    detailBtn.click();
+    await sleep(60);
+    assert.ok(document.querySelector(".neo-recipes-detail"), "点详情按钮打开详情浮层");
+    assert.deepEqual(selected, [], "点详情按钮不触发选中回传");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+});
