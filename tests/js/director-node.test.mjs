@@ -193,6 +193,50 @@ test("点击节点时间轴上的分段块直接打开配方编辑器", async ()
     assert.ok(document.querySelector(".neo-director-overlay"), "点击时间轴块打开编辑器");
 });
 
+test("节点时间轴勾选段 → 写入隐藏输入 only_segments；重载配方后清空", async () => {
+    resetEnv();
+    clearRoutes();
+    mockRoute("/rs_recipes/director_spec", () => jsonResponse({
+        success: true,
+        segments: [{ prompt: "第一段", duration_sec: 5 }, { prompt: "第二段", duration_sec: 5 }],
+    }));
+    mockRoute("/rs_recipes/list", () => jsonResponse([{ name: "dir-recipe", type: "video_director" }]));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+
+    const node = await createDirectorNode("dir-recipe", [{ name: "only_segments", value: "" }]);
+    await sleep(60); // 等 loadSpec 把段数据填进时间轴
+    const widget = node.widgets.find((w) => w.name === "only_segments");
+    const hint = () => node.domWidgets.find((w) => w.name === "director_timeline").el.querySelector(".neo-dtl-runhint");
+    assert.equal(widget.hidden, true, "运行期参数输入不占节点版面");
+    assert.equal(widget.value, "", "默认空 = 跑整条配方");
+    assert.match(hint().textContent, /未勾选/);
+
+    // 点第 2 段块左上角勾选框（块序 [8,160]/[160,312]；勾选框中心 = x+5+6 / 刻度尺18+间距4+偏移4+半高6）
+    const canvas = node._neoDtTimeline.canvas;
+    Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 112, width: 320, height: 112 };
+    const clickAt = (x, y = 32) => {
+        canvas.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+        canvas.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+    };
+    clickAt(160 + 11);   // 第 2 段（块 x=160）
+    assert.equal(widget.value, "2", "勾选写回 1 基段号文本（供执行时读取）");
+    assert.equal(hint().textContent, "仅运行勾选的 1 段：[2]");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "点勾选不应打开编辑器");
+    clickAt(8 + 11);     // 第 1 段（块 x=8）
+    assert.equal(widget.value, "1,2");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "点勾选不应打开编辑器");
+    assert.deepEqual(node._neoDtTimeline.getChecked(), [0, 1]);
+
+    // 换配方 / 工作流还原 / 配方保存后重载 → 勾选是运行期临时状态，不保留
+    node.widgets.find((w) => w.name === "recipe").callback?.();
+    await sleep(60);
+    assert.equal(widget.value, "", "重载后勾选清空");
+    assert.deepEqual(node._neoDtTimeline.getChecked(), []);
+    assert.match(hint().textContent, /未勾选/);
+    destroyNode(node);
+});
+
 test("recipe 选择窗预览卡：焦点配方显示概览行 + 只读时间轴（节点内嵌同款组件）", async () => {
     resetEnv();
     clearRoutes();

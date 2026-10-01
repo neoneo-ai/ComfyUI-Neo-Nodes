@@ -417,19 +417,22 @@ test("详情弹窗：带工作流的技能正文默认收起（点标题展开�
     await openGenPopup({ id: "image_gen_text", source: "custom" });
 
     const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
+    const main = document.querySelector(".rs-skill-detail-main");
     assert.ok(row.classList.contains("rs-content-row-collapsible"), "带工作流的技能正文应可折叠");
     assert.ok(row.classList.contains("rs-content-row-collapsed"), "默认收起");
     assert.equal(row.querySelector(".rs-content-caret").textContent, "▸");
     assert.notEqual(row.querySelector(".rs-content-hint").style.display, "none", "应显示「工作流驱动」提示");
     assert.ok(row.querySelector(".rs-content-title .rs-form-label").title.includes("workflow.json"), "标题应带正文用途说明");
+    assert.ok(main.classList.contains("rs-main-content-collapsed"), "正文收起 → 主区单列，设置区独占整行（不再为右栏留空）");
 
     click(row.querySelector(".rs-content-title"));
     assert.equal(row.classList.contains("rs-content-row-collapsed"), false, "点标题应展开正文");
     assert.equal(row.querySelector(".rs-content-caret").textContent, "▾");
+    assert.equal(main.classList.contains("rs-main-content-collapsed"), false, "展开后恢复两栏");
 
     // 折叠态类名必须与 prompts.css 选择器一致（曾因 -row- 命名漂移导致规则不生效）
     const css = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/prompts.css"), "utf8");
-    for (const cls of ["rs-content-row-collapsible", "rs-content-row-collapsed"]) {
+    for (const cls of ["rs-content-row-collapsible", "rs-content-row-collapsed", "rs-main-content-collapsed"]) {
         assert.ok(css.includes("." + cls), `prompts.css 应含 .${cls} 选择器`);
     }
 });
@@ -439,6 +442,8 @@ test("详情弹窗：非工作流技能正文保持展开、不显示折叠提�
     const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
     assert.ok(!row.classList.contains("rs-content-row-collapsible"), "无 workflow.json 时不可折叠");
     assert.ok(!row.classList.contains("rs-content-row-collapsed"), "正文保持展开");
+    assert.ok(!document.querySelector(".rs-skill-detail-main").classList.contains("rs-main-content-collapsed"),
+        "不可折叠时不改主区列数");
     assert.equal(row.querySelector(".rs-content-hint").style.display, "none", "不显示工作流驱动提示");
 });
 

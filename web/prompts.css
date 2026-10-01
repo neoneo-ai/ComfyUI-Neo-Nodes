@@ -3221,8 +3221,8 @@
 .rs-repair-overlay .rs-btn { font-size: 12px; }
 
 /* ---- 技能详情：主区两栏（左 = 生图/生视频设置，右 = 系统提示词内容）----
-   面板够宽（Studio 满幅）时并排：两栏各占一半；
-   窄面板（独立弹窗 860px）堆叠且系统提示词在上——顺序由 order 控制，不依赖 DOM 顺序 */
+   面板够宽（Studio 满幅）时并排：两栏各占一半；窄面板（独立弹窗 860px）堆叠且系统提示词在上——顺序由 order 控制，不依赖 DOM 顺序。
+   正文收起（rs-main-content-collapsed）时右栏失去意义 → 改单列让设置区独占整行 */
 .rs-skill-detail { container-type: inline-size; }
 .rs-skill-detail-main { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .rs-skill-detail-settings { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
@@ -3284,6 +3284,10 @@
 /* 并排两栏时折叠的正文卡片贴顶（否则会被 stretch 撑成空白高卡片） */
 @container (min-width: 980px) {
     .rs-skill-detail-main > .rs-config-row.rs-content-row-collapsed { align-self: flex-start; }
+    /* 正文收起时不再占右侧半栏：主区改单列，设置区独占整行；收起卡片只剩一行标题条（排在设置之后，与工作流折叠条相邻） */
+    .rs-skill-detail-main.rs-main-content-collapsed { flex-direction: column; }
+    .rs-skill-detail-main.rs-main-content-collapsed > .rs-skill-detail-settings { order: 0; flex: none; }
+    .rs-skill-detail-main.rs-main-content-collapsed > .rs-config-row { order: 1; flex: none; align-self: stretch; }
 }
 
 /* ==========================================

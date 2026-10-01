@@ -1151,6 +1151,8 @@ function createSkillDetailPopup(host) {
         contentRow.classList.toggle("rs-content-row-collapsed", collapsed);
         contentCaret.textContent = collapsed ? "▸" : "▾";
         contentHint.style.display = collapsible ? "" : "none";
+        // 正文收起 → 主区改单列（设置区独占整行），不再为右栏留空
+        mainRow.classList.toggle("rs-main-content-collapsed", collapsed);
     }
 
     // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）

@@ -48,6 +48,9 @@ sys.modules["comfy.patcher_extension"] = _comfy_pe
 _comfy_utils = types.ModuleType("comfy.utils")
 _comfy_utils.common_upscale = lambda *a, **k: None
 sys.modules["comfy.utils"] = _comfy_utils
+# comfy_api.latest._ui 导入期会 `import comfy.audio`（新版核心）；comfy 是上面的普通模块桩，
+# 子模块必须显式占位，否则 "comfy is not a package"
+sys.modules["comfy.audio"] = types.ModuleType("comfy.audio")
 _comfy_common_dit = types.ModuleType("comfy.ldm.common_dit")
 _comfy_common_dit.pad_to_patch_size = lambda *a, **k: None
 sys.modules["comfy.ldm.common_dit"] = _comfy_common_dit

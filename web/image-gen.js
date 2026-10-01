@@ -425,12 +425,13 @@ function isQuadviewName(name) {
     return /quadview|四视图/i.test(String(name || ""));
 }
 
-// 主模型家族名称线索（与后端 _MODEL_HINTS 同风格）：命中则同家族 LoRA 在 LoRA 下拉里靠前
+// 主模型家族名称线索（与后端 _MODEL_HINTS 同风格）：命中则同家族条目在模型下拉里靠前
 const LORA_FAMILY_HINTS = ["qwen", "krea2"];
 
-/** LoRA 下拉排序：与当前主模型同级者靠前（同目录 → 同家族关键词），其余保持后端顺序（排序稳定，只改顺序不改内容）。
- *  例：主模型 QwenImage2.1\qwen_image_2.1_int8_convrot → QwenImage2.1 目录的 LoRA 最前，其次名字含 qwen 的。 */
-function sortLorasForModel(files, model) {
+/** 模型类下拉排序：与当前主模型同级者靠前（同目录 → 同家族关键词），其余保持后端顺序（排序稳定，只改顺序不改内容）。
+ *  例：主模型 QwenImage2.1\qwen_image_2.1_int8_convrot → QwenImage2.1 目录的模型与 LoRA 最前，其次名字含 qwen 的。
+ *  用于 生图模型 / Text Encoder / VAE / LoRA 四个下拉（后端统一 krea2 优先，Qwen 主模型会被埋在几百条之后）。 */
+function sortByModelFamily(files, model) {
     if (!files || !files.length) return files || [];
     const path = String(model || "").replace(/\\/g, "/").toLowerCase();
     if (!path) return files;
@@ -523,6 +524,7 @@ export function createModelConfigSection() {
 
     let loraFiles = [];
     let suggestedLora = "";
+    let loadedModels = {};   // 最近一次 load 的 models（切换主模型后按新家族重排四个下拉）
 
     // LoRA 行：动态增删，每行 = 模型选择 + 强度；是否「仅参考图加载」（ref_only）由文件名线索自动判定
     function addLoraRow(name = "", strength = 1.0) {
@@ -555,22 +557,29 @@ export function createModelConfigSection() {
         }
     }
 
-    // 切换主模型 → 按新模型家族重排 LoRA 列表（只改下拉顺序，不动已选值）
-    modelCtl.select.addEventListener("change", () => {
-        loraFiles = sortLorasForModel(loraFiles, modelCtl.select.value);
+    // 切换主模型 → 模型 / Encoder / VAE / LoRA 四个下拉按新模型家族重排（只改顺序，不动各自已选值）
+    modelCtl.select.addEventListener("change", () => fillModelSelects(modelCtl.select.value));
+
+    /** 四个下拉统一按「当前主模型家族」排序填充（生图模型 / Text Encoder / VAE / LoRA）：
+     *  同目录最前 → 同家族线索（qwen / krea2）次之 → 其余保持后端顺序。
+     *  cfg 提供首次 load 的目标值（空 = 自动）；不传 cfg 表示切换主模型后重排 → 各下拉保留当前选中值。 */
+    function fillModelSelects(anchor, cfg) {
+        const models = loadedModels;
+        fillComboSelect(modelCtl.select, sortByModelFamily(models.diffusion_models || [], anchor),
+            models.suggested_diffusion_models || "", cfg ? cfg.model || "" : modelCtl.select.value);
+        fillComboSelect(encoderCtl.select, sortByModelFamily(models.text_encoders || [], anchor),
+            models.suggested_text_encoders || "", cfg ? cfg.text_encoder || "" : encoderCtl.select.value);
+        fillComboSelect(vaeCtl.select, sortByModelFamily(models.vae || [], anchor),
+            models.suggested_vae || "", cfg ? cfg.vae || "" : vaeCtl.select.value);
+        loraFiles = sortByModelFamily(models.loras || [], anchor);
         refreshLoraRows();
-    });
+    }
 
     function load(settings, models) {
+        loadedModels = models || {};
         suggestedLora = models.suggested_lora || "";
-        fillComboSelect(modelCtl.select, models.diffusion_models || [],
-            models.suggested_diffusion_models || "", settings.model || "");
-        // LoRA 列表按当前主模型家族排序：Qwen Image 2.1 主模型 → QwenImage2.1 目录 / 名字含 qwen 的 LoRA 靠前
-        loraFiles = sortLorasForModel(models.loras || [], modelCtl.select.value);
-        fillComboSelect(encoderCtl.select, models.text_encoders || [],
-            models.suggested_text_encoders || "", settings.text_encoder || "");
-        fillComboSelect(vaeCtl.select, models.vae || [],
-            models.suggested_vae || "", settings.vae || "");
+        // 按 config 里的主模型定位家族：Qwen Image 2.1 主模型 → 同目录 / 名字含 qwen 的模型与 LoRA 靠前
+        fillModelSelects(settings.model || models.suggested_diffusion_models || "", settings);
         loraList.innerHTML = "";
         for (const entry of settings.loras || []) {
             if (typeof entry === "string") addLoraRow(entry, 1.0);

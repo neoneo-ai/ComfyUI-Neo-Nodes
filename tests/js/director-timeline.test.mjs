@@ -598,3 +598,112 @@ test("revealSeg：内容溢出时把目标段滚进可视区，已可见则不�
     tl2.destroy();
 });
 
+
+// ---- 「仅运行勾选的段」（checkable）：点段块左上角勾选框切换、不触发选中；数据变短时丢弃越界勾选 ----
+
+// 勾选框中心：块 x + 5(偏移) + 6(半宽) / 刻度尺 18 + 间距 4 + 偏移 4 + 半高 6
+const CHK_OFF_X = 11;
+const CHK_Y = 32;
+const mouseAt = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+
+test("checkable：点勾选框切换该段并回报宿主（不触发 onSelect）", async () => {
+    resetEnv();
+    const seen = [];
+    const { tl, calls } = makeTimeline([{ duration: 5 }, { duration: 5 }],
+        { checkable: true, onCheckChange: (list) => seen.push(list) });
+    await sleep(40);
+    const tap = (x) => {
+        tl.canvas.dispatchEvent(mouseAt("mousedown", x, CHK_Y));
+        tl.canvas.dispatchEvent(mouseAt("mouseup", x, CHK_Y));
+    };
+
+    tap(8 + CHK_OFF_X);                 // 第 1 块勾选框
+    assert.deepEqual(tl.getChecked(), [0]);
+    assert.deepEqual(seen, [[0]], "变化时把勾选列表回报宿主");
+    assert.deepEqual(calls.select, [], "点勾选框不触发选中（不会打开编辑器）");
+
+    tap(160 + CHK_OFF_X);               // 第 2 块勾选框
+    assert.deepEqual(tl.getChecked(), [0, 1], "多段累积勾选");
+
+    tap(8 + CHK_OFF_X);                 // 再点一次 = 取消
+    assert.deepEqual(tl.getChecked(), [1]);
+
+    tap(60);                            // 块内其它位置仍是选中
+    assert.deepEqual(calls.select, [0]);
+    assert.deepEqual(tl.getChecked(), [1], "普通点击不动勾选");
+
+    tl.clearChecked();
+    assert.deepEqual(tl.getChecked(), []);
+    assert.deepEqual(seen[seen.length - 1], [], "清空后回报宿主");
+    tl.destroy();
+});
+
+test("checkable：非 checkable 时间轴不画勾选框（点块只选中）", async () => {
+    resetEnv();
+    const { tl, calls } = makeTimeline([{ duration: 5 }]);
+    await sleep(40);
+    tl.canvas.dispatchEvent(mouseAt("mousedown", 8 + CHK_OFF_X, CHK_Y));
+    tl.canvas.dispatchEvent(mouseAt("mouseup", 8 + CHK_OFF_X, CHK_Y));
+    assert.deepEqual(tl.getChecked(), [], "未开 checkable 时不产生勾选");
+    assert.deepEqual(calls.select, [0]);
+    tl.destroy();
+});
+
+test("checkable：勾选框只在悬停 / 已勾选时出现，命中区比视觉框大一圈", async () => {
+    resetEnv();
+    const { tl, calls } = makeTimeline([{ duration: 5 }], { checkable: true });
+    await sleep(40);
+    assert.equal(tl._checkVisible(0, false), false, "未悬停不画勾选框");
+    tl._hover = 0;
+    assert.equal(tl._checkVisible(0, false), true, "悬停该块时才出现");
+    tl._hover = null;
+    assert.equal(tl._checkVisible(0, true), true, "已勾选的常显（一眼看到会跑哪些段）");
+
+    const tap = (x, y) => {
+        tl.canvas.dispatchEvent(mouseAt("mousedown", x, y));
+        tl.canvas.dispatchEvent(mouseAt("mouseup", x, y));
+    };
+    // 视觉框 = (13..26, 26..39)：点框左侧 5px（命中区外扩 7px 内）→ 仍按勾选处理，不落到「点块选中」
+    tap(13 - 5, 28);
+    assert.deepEqual(tl.getChecked(), [0]);
+    assert.deepEqual(calls.select, [], "命中区内不触发选中");
+    // 块中部（远离勾选框命中区）→ 仍是选中
+    tap(120, 60);
+    assert.deepEqual(calls.select, [0]);
+    tl.destroy();
+});
+
+test("checkable：节点被画布缩放时坐标归一，点勾选仍命中（不会误开编辑器）", async () => {
+    resetEnv();
+    const { tl, calls } = makeTimeline([{ duration: 5 }], { checkable: true });
+    await sleep(40);
+    // 画布局部宽 320，但屏幕宽只有 160（节点 zoom 0.5）→ 事件坐标要 ×2 才能回到本地像素
+    Object.defineProperty(tl.canvas, "clientWidth", { value: 320, configurable: true });
+    tl.canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 160, bottom: 46, width: 160, height: 46 };
+    assert.deepEqual(tl._localPoint({ clientX: 13, clientY: 16 }), { x: 26, y: 32 });
+
+    tl.canvas.dispatchEvent(mouseAt("mousedown", 13, 16));   // 屏幕上勾选框中心 ≈ (13,16)
+    tl.canvas.dispatchEvent(mouseAt("mouseup", 13, 16));
+    assert.deepEqual(tl.getChecked(), [0], "缩放下也能点中勾选框");
+    assert.deepEqual(calls.select, [], "不落到「点块选中（打开编辑器）」分支");
+    tl.destroy();
+});
+
+test("checkable：分段变少（换配方/删段）时丢弃越界勾选并回报宿主", async () => {
+    resetEnv();
+    const seen = [];
+    const segs = [{ duration: 5 }, { duration: 5 }];
+    const { tl } = makeTimeline(segs, { checkable: true, onCheckChange: (list) => seen.push(list) });
+    await sleep(40);
+    tl._toggleChecked(0);
+    tl._toggleChecked(1);
+    assert.deepEqual(tl.getChecked(), [0, 1]);
+
+    segs.pop();       // 只剩 1 段
+    tl.refresh();
+    await sleep(40);
+    assert.deepEqual(tl.getChecked(), [0], "越界勾选被丢弃");
+    assert.deepEqual(seen[seen.length - 1], [0], "丢弃后回报宿主（提示行同步）");
+    tl.destroy();
+});
+

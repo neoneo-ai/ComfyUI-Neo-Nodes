@@ -40,11 +40,23 @@
   gap: 4px;
 }
 
-/* 时间轴下方操作条：右对齐放「＋ 新增导演配方」按钮 */
+/* 时间轴下方操作条：右对齐放「＋ 新增导演配方」按钮；左侧是「仅运行勾选的段」提示 */
 .neo-dtl-actbar {
   width: 100%;
   display: flex;
+  align-items: center;
+  gap: 6px;
   justify-content: flex-end;
+}
+
+/* 「仅运行勾选的段」提示：靠左（margin-right: auto 把它推离右侧按钮组） */
+.neo-dtl-runhint {
+  margin-right: auto;
+  font-size: 11px;
+  color: #8a9aa8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 「✎」编辑按钮：打开当前配方的导演编辑器 */

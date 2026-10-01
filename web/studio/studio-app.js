@@ -133,10 +133,22 @@ async function buildDirector(el) {
     let tlSegments = [];
     let tlProgress = { active: false, segment_index: -1, total_segments: 0 };
     let timeline = null;
+    // 「仅运行勾选的段」：时间轴段块左上角勾选 → 整片生成只提交这些段（运行期临时状态，不写进配方；换配方即清空）
+    let checkedSegments = [];
+    const onlyHint = $el("div", { className: "ns-gen-hint" });
+    const setChecked = (list) => {
+        checkedSegments = list || [];
+        onlyHint.textContent = checkedSegments.length
+            ? `仅运行勾选的 ${checkedSegments.length} 段：[${checkedSegments.map((i) => i + 1).join(",")}]`
+            : "未勾选 = 生成整片（在时间轴段块左上角勾选可只跑其中几段）";
+    };
+    setChecked([]);
     try {
         timeline = new DirectorTimeline(tlBox, {
             height: 122,   // 默认 92 加高约 1/3，段块内容更宽裕
             readOnly: true,
+            checkable: true,          // 段块左上角勾选框：只跑勾选的段
+            onCheckChange: setChecked,
             getSegments: () => tlSegments.map(s => ({
                 // 内容派生身份：与节点内嵌时间轴同配色规则
                 id: `${s.prompt || ''}|${Number(s.duration_sec) || 0}|${s.ref_input || ''}`,
@@ -174,6 +186,9 @@ async function buildDirector(el) {
             if (spec) specCache.set(name, spec);
         }
         tlSegments = spec?.segments || [];
+        // 分段已换（切配方/配方内容变更）→ 勾选作废（运行期临时状态，不跨配方保留）
+        timeline?.clearChecked();
+        setChecked(timeline ? timeline.getChecked() : []);
         timeline?.refresh();   // 只读时间轴同步到所选配方的分段
         const d = spec?.defaults;
         if (!d) return;
@@ -227,6 +242,7 @@ async function buildDirector(el) {
             continuity: continuityChk.checked,
             context_frames: num(ctxInput, 22),
             steps: num(stepsInput, -1),
+            only_segments: checkedSegments.map((i) => i + 1).join(","),   // 勾选的段（空 = 整片）
         };
 
         stopPolling();
@@ -323,6 +339,7 @@ async function buildDirector(el) {
             cancelBtn, runBtn,
         ]),
         tlBox,
+        onlyHint,
     ]);
     page.appendChild($el("div", { className: "ns-gen-panel" }, [
         $el("div", { className: "ns-gen-body" }, [genLeft, mediaRight]),

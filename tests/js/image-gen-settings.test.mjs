@@ -123,6 +123,55 @@ test("切换主模型后 LoRA 下拉重排，各行已选值保留", async () =>
     assert.equal(loraSelect.value, "stars/girlslikeqweni_ym1_杨幂.safetensors", "各行已选值不受重排影响");
     assert.equal(section.collect().loras[0].name, "stars/girlslikeqweni_ym1_杨幂.safetensors");
 });
+// ============ 生图模型 / Text Encoder / VAE 下拉同样按主模型家族排序（后端统一 krea2 优先，Qwen 主模型会埋到很后面）============
+
+const MODEL_FIXTURE = {
+    diffusion_models: [
+        "Krea2\\krea2_turbo_fp8.safetensors",
+        "QwenImage2511\\qwen_image_edit_2511_fp8.safetensors",
+        "QwenImage2.1\\qwen_image_2.1_int8_convrot.safetensors",
+        "SDXL\\anima-base-v1.0.safetensors",
+    ],
+    text_encoders: ["t5xxl_fp8_e4m3fn_scaled.safetensors", "qwen3vl_8b_int8_convrot.safetensors", "clip_l.safetensors"],
+    vae: ["Krea2-HD-vae.safetensors", "qwen_image_2.1_vae_bf16.safetensors", "wan2.1_vae.safetensors"],
+    loras: LORA_FILES,
+    suggested_diffusion_models: "Krea2\\krea2_turbo_fp8.safetensors",
+    suggested_text_encoders: "qwen3vl_4b_fp8_scaled.safetensors",
+    suggested_vae: "qwen_image_vae.safetensors",
+};
+const selectOptions = (sel) => [...sel.options].slice(1).map((o) => o.value);   // 首项是「自动」
+const sectionSelects = (el) => el.querySelectorAll("select");                   // 主模型 / Encoder / VAE / LoRA
+
+test("生图模型 / Encoder / VAE 下拉按主模型家族排序：同目录最前、同家族线索次之", async () => {
+    const section = await loraSection({ model: QWEN_MODEL, loras: [{ name: LORA_FILES[0], strength: 1.0 }] }, MODEL_FIXTURE);
+    const [model, encoder, vae] = sectionSelects(section.el);
+    assert.deepEqual(selectOptions(model), [
+        "QwenImage2.1\\qwen_image_2.1_int8_convrot.safetensors",   // 与主模型同目录
+        "QwenImage2511\\qwen_image_edit_2511_fp8.safetensors",     // 名字含 qwen → 次之
+        "Krea2\\krea2_turbo_fp8.safetensors",                      // 其余保持后端顺序
+        "SDXL\\anima-base-v1.0.safetensors",
+    ]);
+    assert.deepEqual(selectOptions(encoder),
+        ["qwen3vl_8b_int8_convrot.safetensors", "t5xxl_fp8_e4m3fn_scaled.safetensors", "clip_l.safetensors"]);
+    assert.deepEqual(selectOptions(vae),
+        ["qwen_image_2.1_vae_bf16.safetensors", "Krea2-HD-vae.safetensors", "wan2.1_vae.safetensors"]);
+    assert.equal(model.value, QWEN_MODEL, "排序不影响 config 值的回填");
+});
+
+test("切换主模型后三个模型下拉也重排（选中值保留，切回 Krea2 恢复后端顺序）", async () => {
+    const section = await loraSection({ model: QWEN_MODEL, loras: [] }, MODEL_FIXTURE);
+    const [model, encoder] = sectionSelects(section.el);
+    assert.equal(selectOptions(model)[0], "QwenImage2.1\\qwen_image_2.1_int8_convrot.safetensors");
+    assert.equal(selectOptions(encoder)[0], "qwen3vl_8b_int8_convrot.safetensors");
+
+    model.value = "Krea2\\krea2_turbo_fp8.safetensors";
+    model.dispatchEvent(new Event("change"));
+    assert.equal(selectOptions(model)[0], "Krea2\\krea2_turbo_fp8.safetensors", "Krea2 主模型 → Krea2 组最前");
+    assert.equal(model.value, "Krea2\\krea2_turbo_fp8.safetensors", "重排后选中值保留");
+    assert.deepEqual(selectOptions(encoder), MODEL_FIXTURE.text_encoders, "Krea2 主模型 → Encoder 回到后端顺序");
+});
+
+
 
 
 

@@ -58,6 +58,9 @@ _comfy_utils = types.ModuleType("comfy.utils")
 _comfy_utils.common_upscale = lambda *a, **k: None
 _comfy_utils.PROGRESS_BAR_HOOK = None   # 进度钩子：e2e 用例装 hijack_progress 等价物，验证 last_prompt_id 回退
 sys.modules["comfy.utils"] = _comfy_utils
+# comfy_api.latest._ui 导入期会 `import comfy.audio`（新版核心）；comfy 是上面的普通模块桩，
+# 子模块必须显式占位，否则 "comfy is not a package"
+sys.modules["comfy.audio"] = types.ModuleType("comfy.audio")
 _comfy_common_dit = types.ModuleType("comfy.ldm.common_dit")
 _comfy_common_dit.pad_to_patch_size = lambda *a, **k: None
 sys.modules["comfy.ldm.common_dit"] = _comfy_common_dit
@@ -1030,6 +1033,38 @@ class _FakeVideo:
         return _FakeComp(self._images, self._audio)
 
 
+class SegmentSelectionTests(unittest.TestCase):
+    """「仅运行勾选的段」：段号解析（parse_segment_selection）+ 节点输入暴露。"""
+
+    def test_empty_text_means_all_segments(self):
+        self.assertIsNone(h3_video_director.parse_segment_selection("", 3))
+        self.assertIsNone(h3_video_director.parse_segment_selection("   ", 3))
+        self.assertIsNone(h3_video_director.parse_segment_selection(None, 3))
+
+    def test_mixed_separators_dedupe_and_sort(self):
+        self.assertEqual(h3_video_director.parse_segment_selection("3,1", 3), [0, 2])
+        self.assertEqual(h3_video_director.parse_segment_selection("1 2，3、2", 3), [0, 1, 2])
+
+    def test_out_of_range_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            h3_video_director.parse_segment_selection("0", 3)
+        self.assertIn("段号越界：第 0 段（配方共 3 段）", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            h3_video_director.parse_segment_selection("4", 3)
+
+    def test_non_numeric_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            h3_video_director.parse_segment_selection("1,x", 3)
+        self.assertIn("只接受段号", str(ctx.exception))
+
+    def test_input_types_exposes_only_segments_widget(self):
+        opt = h3_video_director.NeoH3VideoDirector.INPUT_TYPES()["optional"]
+        self.assertIn("only_segments", opt)
+        self.assertEqual(opt["only_segments"][0], "STRING")
+        self.assertEqual(opt["only_segments"][1]["default"], "")
+        self.assertNotIn("forceInput", opt["only_segments"][1])   # 是 widget（非连线槽），仅隐藏显示
+
+
 class DirectorOrchestrationTests(unittest.TestCase):
     SR = 48000
     FPS = 24
@@ -1239,9 +1274,10 @@ class DirectorOrchestrationTests(unittest.TestCase):
         self.assertEqual([s["total_segments"] for s in seen], [3, 3, 3])
         self.assertEqual([s["segment_index"] for s in seen], [0, 1, 2])
         self.assertEqual([s["total_steps"] for s in seen], [12, 12, 12])
-        # 结束后复位为 inactive
+        # 结束后复位为 inactive（快照含 prompt_id 键：运行时按执行上下文写入）
         self.assertEqual(h3d.get_director_progress(),
-                         {"active": False, "segment_index": -1, "total_segments": 0, "step": 0, "total_steps": 0})
+                         {"active": False, "segment_index": -1, "total_segments": 0, "step": 0, "total_steps": 0,
+                          "prompt_id": None})
 
     def _run_single(self, seg, continuity=False):
         """用单个自定义段跑一次 generate；返回 (bodies, 错误文本)。"""
@@ -1522,6 +1558,46 @@ class DirectorOrchestrationTests(unittest.TestCase):
         _, bodies, videos, _ = self._run_r2v_chain(mode="i2v", context_frames=0, frame_counts=(124, 124, 124))
         self.assertEqual(bodies[1]["references"][0]["data"],
                          h3_video_director._image_to_data_uri(videos[0]._images[-1:]))
+
+    # ---- 仅运行勾选的段：只生成选中的段（跳过段不出现也不占帧），seed / 文案仍按原始段序号 ----
+
+    def test_only_segments_runs_selected_subset_in_recipe_order(self):
+        orig, bodies = self._patch(4, [124, 124], seed_base=100)
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False, only_segments="2,4")
+        finally:
+            self._restore(orig)
+        self.assertEqual([b["prompt"] for b in bodies], ["p1", "p3"])       # 只跑第 2 / 4 段，顺序按配方
+        self.assertEqual([b["seed"] for b in bodies], [101, 103])            # seed 用原始段序号（与整片运行一致）
+        self.assertEqual(video.get_components().images.shape[0], 124 * 2)    # 跳过段不占帧
+
+    def test_only_segments_empty_runs_all(self):
+        orig, bodies = self._patch(3, [124, 124, 124], seed_base=100)
+        try:
+            (video,) = h3_video_director.NeoH3VideoDirector().generate("r", continuity=False, only_segments="")
+        finally:
+            self._restore(orig)
+        self.assertEqual([b["prompt"] for b in bodies], ["p0", "p1", "p2"])
+        self.assertEqual(video.get_components().images.shape[0], 124 * 3)
+
+    def test_only_segments_out_of_range_raises(self):
+        orig, bodies = self._patch(2, [124])
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                h3_video_director.NeoH3VideoDirector().generate("r", only_segments="3")
+        finally:
+            self._restore(orig)
+        self.assertIn("段号越界：第 3 段（配方共 2 段）", str(ctx.exception))
+        self.assertEqual(bodies, [])   # 未进入执行链
+
+    def test_only_segments_rejects_non_numeric(self):
+        orig, _ = self._patch(2, [124])
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                h3_video_director.NeoH3VideoDirector().generate("r", only_segments="1,a")
+        finally:
+            self._restore(orig)
+        self.assertIn("只接受段号", str(ctx.exception))
 
     def _restore(self, orig):
         (h3_video_director.load_director_spec, h3_video_director._resolve_skill_id,
@@ -2314,7 +2390,8 @@ class DirectorProgressRouteTests(unittest.TestCase):
             h3d._DIRECTOR_PROGRESS.update(orig)
         self.assertEqual(resp.status, 200)
         body = json.loads(resp.body)
-        self.assertEqual(body, {"active": True, "segment_index": 1, "total_segments": 4, "step": 0, "total_steps": 0})
+        self.assertEqual(body, {"active": True, "segment_index": 1, "total_segments": 4, "step": 0, "total_steps": 0,
+                                "prompt_id": None})
 
 
 class H3PreviewTests(unittest.TestCase):

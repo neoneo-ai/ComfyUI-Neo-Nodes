@@ -75,6 +75,8 @@ body {
 .ns-gen-cancel { border-color: #9a3a3a; background: #5a1a1a; color: #f87171; }
 .ns-gen-cancel:hover { background: #6a2a2a; color: #fff; }
 .ns-gen-status { font-size: 12px; color: #999; margin-top: 8px; min-height: 16px; white-space: pre-wrap; }
+/* 「仅运行勾选的段」提示：时间轴下方一行（未勾选 = 生成整片；勾选后只提交勾选的段） */
+.ns-gen-hint { font-size: 12px; color: #8a9aa8; }
 .ns-gen-progress {
     height: 6px;
     background: #333;

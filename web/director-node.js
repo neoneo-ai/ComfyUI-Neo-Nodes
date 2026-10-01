@@ -216,10 +216,30 @@ app.registerExtension({
             });
             livePreviews.add(live);
             let tl = null;
+            // 「仅运行勾选的段」：时间轴段块左上角勾选框 → 写入隐藏输入 only_segments（1 基段号文本，
+            // 空 = 全部段）。勾选是运行期临时状态，不写进配方；换配方 / 加载工作流 / 配方内容变更时清空。
+            const onlySegWidget = node.widgets?.find(w => w.name === "only_segments");
+            if (onlySegWidget) onlySegWidget.hidden = true;
+            let runHint = null;   // 操作条上的提示行（runHint 之后创建，未就绪时只同步输入值）
+            const syncOnlySegments = (checked) => {
+                const list = checked || [];
+                const text = list.map(i => i + 1).join(",");
+                if (onlySegWidget) {
+                    onlySegWidget.value = text;
+                    onlySegWidget.callback?.(text);
+                }
+                if (!runHint) return;
+                runHint.textContent = text ? `仅运行勾选的 ${list.length} 段：[${text}]` : "未勾选 = 整条配方";
+                runHint.title = text
+                    ? "本次只生成勾选的段（其余段不出现在输出里）；勾选只在当前画布会话有效，不写进配方"
+                    : "在时间轴段块左上角勾选要单独运行的段；未勾选时按整条配方从头生成";
+            };
             try {
                 tl = new DirectorTimeline(tlRow, {
                     height: TL_H - 8,
                     readOnly: true,
+                    checkable: true,               // 段块左上角勾选框：只跑勾选的段
+                    onCheckChange: syncOnlySegments,
                     onSelect: (i) => openEditor(i), // 点击分段块直接打开编辑器，并定位到该段
                     getProgress: () => progress,   // 各段顶部实时显示生成状态（done/current）
                     getSegments: () => (tlData.segments || []).map(s => ({
@@ -234,6 +254,9 @@ app.registerExtension({
                 console.error("[Neo Nodes] director timeline init failed", e);
             }
             node._neoDtTimeline = tl;
+
+            // 分段列表可能已变（换配方 / 加载工作流 / 配方保存）→ 勾选作废：清空时间轴勾选并同步隐藏输入
+            const resetChecks = () => { tl?.clearChecked(); syncOnlySegments(tl ? tl.getChecked() : []); };
 
             // 轮询 director 运行进度，状态变化时刷新时间轴（节点存活期间每 500ms 一次；端点为 O(1) dict 读）
             const pollProgress = async () => {
@@ -421,6 +444,7 @@ app.registerExtension({
             const loadSpec = async (force = false) => {
                 const seq = ++specSeq;
                 const name = recipeWidget ? String(recipeWidget.value || "") : "";
+                resetChecks();   // 分段可能已变 → 勾选（运行期临时状态）不跨配方保留
                 if (!name) { tlData = { segments: [] }; if (tl) tl.refresh(); if (node._neoDtStatusRow) node._neoDtStatusRow.refresh(); return; }
                 try {
                     const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
@@ -544,6 +568,11 @@ app.registerExtension({
             newBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
             newBtn.addEventListener("click", (e) => { e.stopPropagation(); openDirectorEditor(null); });
             actBar.appendChild(newBtn);
+            // 勾选提示行：未勾选 = 整条配方；勾选后只跑这些段（勾选不落盘、不跨配方）
+            runHint = document.createElement("span");
+            runHint.className = "neo-dtl-runhint";
+            actBar.insertBefore(runHint, newBtn);   // 靠左（CSS margin-right: auto），「＋」仍在右侧
+            syncOnlySegments(tl ? tl.getChecked() : []);
             root.appendChild(actBar);
             root.appendChild(previewBox);
 

@@ -8,6 +8,10 @@
 // 回调：onSelect(index)、onReorder(order)（原始索引的新排列）、
 //       onResize(index, durationSec)（拖块右缘调时长，吸附 0.5s、最小 1s；仅非 readOnly）、
 //       onAdd()（点击时间轴尾部「＋」按钮添加段；仅非 readOnly 且提供时显示）。
+// checkable：块左上角画勾选框，点击勾选框切换「本次运行是否包含该段」（不触发 onSelect），
+//            宿主用 getChecked() 取结果；勾选是运行期临时状态，组件不保存也不落盘。
+//            勾选框只在悬停该块时出现（已勾选的常显），命中区比视觉框大一圈，避免误触成「点块打开编辑器」。
+// 回调：onCheckChange(checkedIndices)
 
 const DT_CSS_HREF = "/extensions/ComfyUI-Neo-Nodes/director-timeline.css";
 const DT_MIN_ZOOM = 0.25;    // 时间轴最小缩放（缩小看更多段）
@@ -15,12 +19,15 @@ const DT_MAX_ZOOM = 4;       // 时间轴最大缩放倍数
 const DT_RULER_H = 18;       // 顶部秒刻度尺高度
 const DT_TOP_GAP = 4;        // 刻度尺与块之间的间距
 const DT_BOTTOM_PAD = 6;     // 块底部留白（横向滚动条与悬停时间提示占这一带）
+const DT_CHECK_S = 13;       // 「仅运行勾选的段」勾选框边长（checkable 时间轴）
+const DT_CHECK_PAD = 7;      // 勾选框命中区外扩（点得更稳，避免误触成「点块打开编辑器」）
 
 export class DirectorTimeline {
   constructor(container, options) {
     this.container = container;
-    this.opts = Object.assign({ height: 92, getSegments: () => [], onSelect: null, onReorder: null, onDropImage: null, onAdd: null, readOnly: false, getProgress: () => ({ active: false, segment_index: -1, total_segments: 0 }) }, options);
+    this.opts = Object.assign({ height: 92, getSegments: () => [], onSelect: null, onReorder: null, onDropImage: null, onAdd: null, checkable: false, onCheckChange: null, readOnly: false, getProgress: () => ({ active: false, segment_index: -1, total_segments: 0 }) }, options);
     this._segs = [];
+    this._checked = new Set(); // 勾选的段索引（0 基；仅 checkable）：本次运行只跑这些段
     this._progress = null; // 当前 director 运行进度（宿主经 getProgress() 提供）
     this._thumbs = new Map(); // url -> HTMLImageElement
     this._selected = -1;
@@ -88,6 +95,14 @@ export class DirectorTimeline {
   _doRefresh() {
     const segs = (this.opts.getSegments && this.opts.getSegments()) || [];
     this._segs = segs;
+    // 段数变化（换配方 / 删段）→ 越界勾选失效，丢弃并回报宿主（勾选不落盘，仅当前会话有效）
+    if (this._checked.size) {
+      let dropped = false;
+      for (const i of Array.from(this._checked)) {
+        if (i >= segs.length) { this._checked.delete(i); dropped = true; }
+      }
+      if (dropped && this.opts.onCheckChange) this.opts.onCheckChange(this.getChecked());
+    }
     this._progress = (this.opts.getProgress && this.opts.getProgress()) || null;
     for (const s of segs) {
       const urls = [s.thumbUrl].concat(Array.isArray(s.matThumbs) ? s.matThumbs : []);
@@ -106,6 +121,59 @@ export class DirectorTimeline {
     this._selected = i;
     if (this.opts.onSelect) this.opts.onSelect(i);
     this.refresh();
+  }
+
+  /** 勾选的段索引（0 基升序）：只读数组拷贝，宿主在点运行/生成时取用。 */
+  getChecked() {
+    return Array.from(this._checked).sort((a, b) => a - b);
+  }
+
+  /** 清空勾选（换配方 / 工作流加载时调用；有变化才回报宿主）。 */
+  clearChecked() {
+    if (!this._checked.size) return;
+    this._checked.clear();
+    this.refresh();
+    if (this.opts.onCheckChange) this.opts.onCheckChange(this.getChecked());
+  }
+
+  // 勾选框（仅 checkable）：块左上角，序号徽标随之右移
+  _checkRect(x, top) {
+    return { x: x + 5, y: top + 4, s: DT_CHECK_S };
+  }
+
+  // 勾选框是否显示：已勾选的常显（一眼看到哪些段会跑），未勾选只在悬停该块时出现
+  _checkVisible(idx, checked) {
+    return !!this.opts.checkable && (!!checked || this._hover === idx);
+  }
+
+  // 勾选框命中区：视觉框外扩一圈，点得更稳
+  _checkHitRect(x, top) {
+    const c = this._checkRect(x, top);
+    return { x: c.x - DT_CHECK_PAD, y: c.y - DT_CHECK_PAD, s: c.s + DT_CHECK_PAD * 2 };
+  }
+
+  // 事件坐标 → 画布本地坐标。画布被画布缩放（节点 zoom）时 getBoundingClientRect() 是屏幕尺寸，
+  // 与布局用的本地像素差一个比例；不归一的话勾选框 / 分段块命中会整体偏移（点勾选变点块）。
+  _localPoint(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const layoutW = this.canvas.clientWidth || rect.width || 1;
+    const k = rect.width > 0 ? layoutW / rect.width : 1;
+    return { x: (e.clientX - rect.left) * k, y: (e.clientY - rect.top) * k };
+  }
+
+  // 点击点是否落在第 i 块的勾选框命中区内（拖动重排只在编辑器里，checkable 时间轴不重排，下标即块序）
+  _hitsCheck(x, y, i) {
+    const b = this._layout().blocks.find((bb) => bb.i === i);
+    if (!b) return false;
+    const c = this._checkHitRect(b.x, DT_RULER_H + DT_TOP_GAP);
+    return x >= c.x && x <= c.x + c.s && y >= c.y && y <= c.y + c.s;
+  }
+
+  _toggleChecked(i) {
+    if (this._checked.has(i)) this._checked.delete(i);
+    else this._checked.add(i);
+    this.refresh();
+    if (this.opts.onCheckChange) this.opts.onCheckChange(this.getChecked());
   }
 
   destroy() {
@@ -165,9 +233,7 @@ export class DirectorTimeline {
 
   _hoverAt(e) {
     if (this._drag) return; // 拖动中不更新悬停
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = this._localPoint(e);
     const chip = this._addChipRect();
     const overAdd = !!chip && x >= chip.x && x <= chip.x + chip.w && y >= chip.y && y <= chip.y + chip.h;
     const i = this._blockAt(x);
@@ -283,9 +349,7 @@ export class DirectorTimeline {
 
   _onDown(e) {
     if (e.button !== 0) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = this._localPoint(e);
     const chip = this._addChipRect();
     if (chip && x >= chip.x && x <= chip.x + chip.w && y >= chip.y && y <= chip.y + chip.h) {
         e.preventDefault();
@@ -295,6 +359,7 @@ export class DirectorTimeline {
     const i = this._blockAt(x);
     if (i < 0) return;
     e.preventDefault();
+    if (this.opts.checkable && this._hitsCheck(x, y, i)) { this._toggleChecked(i); return; }
     if (this.opts.readOnly) { this.select(i); return; }
     if (this._resizeZoneAt(x, i)) {
       this._drag = { src: i, resize: true, moved: false, startX: x };
@@ -492,7 +557,7 @@ export class DirectorTimeline {
       // 重排拖动：按新顺序定位，色相/序号随落位槽变化；源块本身改成跟随光标的幽灵（见下方落位框），此处只留槽
       const posIdx = reorderDrag ? reorderDrag.order.indexOf(b.i) : b.i;
       if (reorderDrag && reorderDrag.src === b.i) continue;
-      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(posIdx + 1), this._segHue(posIdx), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i);
+      this._paintSeg(ctx, b.x, b.w, top, bh, seg, String(posIdx + 1), this._segHue(posIdx), false, b.i === this._selected || b.i === this._hover, this._dropOver === b.i, b.i);
     }
 
     // 重排拖动中：非源块整体压暗，让被"拿起"的幽灵块一眼突出（源块不遮）
@@ -519,7 +584,7 @@ export class DirectorTimeline {
       }
       const srcSeg = this._segs[reorderDrag.src];
       if (srcSeg && reorderDrag.w > 0) {
-        this._paintSeg(ctx, this._ghostX(reorderDrag, L), reorderDrag.w, top, bh, srcSeg, String(posIdx + 1), this._segHue(posIdx), true, false, false);
+        this._paintSeg(ctx, this._ghostX(reorderDrag, L), reorderDrag.w, top, bh, srcSeg, String(posIdx + 1), this._segHue(posIdx), true, false, false, -1);
       }
     }
 
@@ -662,13 +727,16 @@ export class DirectorTimeline {
   }
 
   // 绘制单个分段块（普通/幽灵共用）：浅色身份底（重排不变色）；有首帧图则平铺满块宽，文字白字描边，否则浅底深字
-  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop) {
+  // idx 用于 checkable 时间轴：未勾选的块压暗、勾选框悬停时出现（已勾选常显）；幽灵块传 -1
+  _paintSeg(ctx, x, w, top, bh, seg, numLabel, hue, ghost, sel, drop, idx) {
     const iw = Math.max(2, w - 2);
+    const checked = this._checked.has(idx);
+    const dim = this.opts.checkable && !checked;
     this._rr(ctx, x + 1, top, iw, bh, 4);
     // 半透明块底色：静止淡、选中加深；拖动中的幽灵块另加醒目强调
     // 拖动中的块（幽灵）更醒目：填充更实更亮、描边更粗且用更亮的色，并加轻微投影营造“拿起/悬浮”感；静止与选中态配色不变
     if (ghost) { ctx.shadowColor = "rgba(120,205,255,0.85)"; ctx.shadowBlur = 8; }
-    ctx.fillStyle = "hsla(" + hue + ",55%," + (ghost ? 70 : sel ? 70 : 58) + "%," + (ghost ? 0.8 : sel ? 0.75 : 0.45) + ")";
+    ctx.fillStyle = "hsla(" + hue + ",55%," + (ghost ? 70 : sel ? 70 : 58) + "%," + (ghost ? 0.8 : sel ? 0.75 : dim ? 0.14 : 0.45) + ")";
     ctx.fill();
     ctx.lineWidth = ghost ? 2.5 : (sel || drop ? 1.5 : 1);
     ctx.strokeStyle = ghost ? "#bfe6ff" : sel ? "#8cf" : drop ? "#e6a23c" : "rgba(255,255,255,0.16)";
@@ -714,10 +782,31 @@ export class DirectorTimeline {
     // 参考素材展示（r2v）：参考图平铺满块 + 视频/音频数量徽标（先画图片，文字再覆盖其上保证可读）
     this._paintMat(ctx, x, w, top, bh, seg);
 
+    // 勾选框（仅 checkable，悬停 / 已勾选才画）：勾选 = 本次运行包含该段；未勾选的块底色已压暗
+    if (this._checkVisible(idx, checked)) {
+      const c = this._checkRect(x, top);
+      this._rr(ctx, c.x, c.y, c.s, c.s, 3);
+      ctx.fillStyle = checked ? "rgba(140,204,255,0.92)" : "rgba(0,0,0,0.42)";
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = checked ? "#bfe6ff" : "rgba(255,255,255,0.55)";
+      ctx.stroke();
+      if (checked) {
+        ctx.beginPath();
+        ctx.moveTo(c.x + 3, c.y + 7);
+        ctx.lineTo(c.x + 5.5, c.y + 9.5);
+        ctx.lineTo(c.x + 10, c.y + 3.5);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#08111c";
+        ctx.stroke();
+      }
+    }
+
     // 序号（左上）+ 时长（右上）：块顶部一行；半透明背景 + 白字深色描边，画在图片之上
+    const numX = this.opts.checkable ? x + 6 + DT_CHECK_S + 4 : x + 6;
     ctx.textBaseline = "top";
-    textBg(numLabel, x + 6, top + 4, "bold 10px sans-serif");
-    put(numLabel, x + 6, top + 4, "bold 10px sans-serif", "#fff");
+    textBg(numLabel, numX, top + 4, "bold 10px sans-serif");
+    put(numLabel, numX, top + 4, "bold 10px sans-serif", "#fff");
     if (seg.duration) {
       const d = String(seg.duration) + "s";
       ctx.font = "9px sans-serif";

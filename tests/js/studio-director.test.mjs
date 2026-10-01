@@ -205,3 +205,32 @@ test("Studio 导演页：WS 断档期间轮询 latest_preview 补帧（旧步号
     statusState.status = "cancelled";
     await untilMs(() => (document.querySelector(".ns-gen-status").textContent || "").includes("已取消"), "轮询驱动已取消状态", 5000);
 });
+
+test("Studio 导演页：勾选段后只提交勾选的段（运行期临时状态）", async () => {
+    await import("../../web/studio/studio-app.js");
+    location.hash = "#/director";
+    await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
+    await until(() => document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span")?.textContent === "R1", "配方自动选中");
+    await sleep(60);   // 等 director_spec 填好时间轴分段（2 段）
+
+    const hint = () => document.querySelector(".ns-gen-hint").textContent;
+    assert.match(hint(), /未勾选/, "默认未勾选 = 整片");
+
+    // canvas 桩：W=320，段 3s+4s → 块0 [8,138]、块1 [138,312]；勾选框中心 = 块x + 11, y = 32
+    const canvas = document.querySelector(".ns-gen-timeline .neo-dtl-canvas");
+    Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
+    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
+    const mouse = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+    canvas.dispatchEvent(mouse("mousedown", 8 + 11, 32));
+    canvas.dispatchEvent(mouse("mouseup", 8 + 11, 32));
+    await until(() => hint().includes("勾选"), "提示反映勾选");
+    assert.equal(hint(), "仅运行勾选的 1 段：[1]");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "点勾选不应打开编辑器");
+
+    const before = fetchLog.length;
+    click(document.querySelector(".ns-gen-run"));
+    await until(() => fetchLog.slice(before).some((c) => c.path === "/neo_studio/director/generate"), "提交生成");
+    const call = fetchLog.slice(before).find((c) => c.path === "/neo_studio/director/generate");
+    assert.equal(call.body.only_segments, "1", "只提交勾选的段");
+    assert.equal(call.body.recipe, "R1");
+});

@@ -22,6 +22,7 @@ from aiohttp import web
 from server import PromptServer
 
 from .h3_preview import clear_latest_preview, get_latest_preview
+from .h3_video_director import parse_segment_selection
 from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
 from .recipes import add_recipe_results, is_preset_recipe, list_director_recipes, load_director_spec
 from .util import PrefixFilter
@@ -133,8 +134,12 @@ def _run_prompt(data: dict, unique_id: str) -> dict:
     if is_preset_recipe(recipe):
         raise ValueError("内置预设配方只读：请先「复制配方」再生成整片")
     spec = load_director_spec(recipe)
-    if not (spec.get("segments") or []):
+    segments = spec.get("segments") or []
+    if not segments:
         raise ValueError(f"配方 '{recipe}' 没有可执行的段")
+    # 只跑勾选的段（Studio 时间轴勾选，运行期临时状态不入库）；段号非法/越界在这里提前报错（400）
+    only_segments = str(data.get("only_segments") or "").strip()
+    parse_segment_selection(only_segments, len(segments))
     return {
         "recipe": recipe,
         "seed": int(data.get("seed", -1)),
@@ -150,6 +155,7 @@ def _run_prompt(data: dict, unique_id: str) -> dict:
                 "context_frames": int(data.get("context_frames", 22)),
                 "steps": int(data.get("steps", -1)),
                 "preview": True,
+                "only_segments": only_segments,
             }},
             "2": {"class_type": "SaveVideo", "inputs": {
                 "video": [unique_id, 0],

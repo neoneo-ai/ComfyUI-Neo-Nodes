@@ -22,6 +22,7 @@
 """
 
 import math
+import re
 
 import torch
 from fractions import Fraction
@@ -850,6 +851,29 @@ def _run_multiframe_unit(body, skill_id, model, steps, label="", vae=None, previ
         return execute_graph_inprocess(graph, output_type="VIDEO", overrides=overrides)
 
 
+def parse_segment_selection(text, total: int):
+    """解析「仅运行勾选的段」（节点时间轴勾选 / Studio 时间轴勾选写入的段号文本）。
+
+    1 基段号，逗号 / 空格 / 顿号分隔（如 "1,3,5"）；空 = 全部段（返回 None）。
+    返回 0 基段序号升序列表；段号非法或越界抛 ValueError（消息可直接回前端）。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    picked = []
+    for token in re.split(r"[,，、\s]+", raw):
+        if not token.isdigit():
+            raise ValueError(f"「仅运行勾选的段」只接受段号（1 基，如 1,3,5），收到：{raw}")
+        n = int(token)
+        if n < 1 or n > total:
+            raise ValueError(f"段号越界：第 {n} 段（配方共 {total} 段）")
+        if n not in picked:
+            picked.append(n)
+    if not picked:
+        return None
+    return sorted(n - 1 for n in picked)
+
+
 class NeoH3VideoDirector:
     """以 video_director 配方为参数逐段生成并拼接成单个含音频 VIDEO；连 NeoPromptAgent 的 BUNDLE 时按单片段生成（忽略配方）。"""
 
@@ -877,6 +901,10 @@ class NeoH3VideoDirector:
                 "duration_sec": ("INT", {"default": 5, "min": 1, "max": 150,
                                          "tooltip": "BUNDLE 单段时长（秒）：按 24fps 换算成 H3 帧数并对齐 17k+5 网格（5 秒 → 124 帧）；切换视频 skill 时按该 skill config 的 length 自动填"}),
                 "bundle": ("STRING", {"forceInput": True}),   # NeoPromptAgent BUNDLE；提供时忽略 recipe，按单段生成
+                # 仅运行勾选的段：节点/Studio 时间轴上勾选后写入（1 基段号，空 = 全部）。勾选是运行期临时状态，
+                # 不写进配方；工作流加载时前端会重置为空，避免旧选择在下次运行里生效。
+                "only_segments": ("STRING", {"default": "",
+                                             "tooltip": "只运行勾选的段：填段号（1 基，逗号分隔，如 1,3,5）；空 = 全部段（由时间轴上的勾选自动写入）"}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",   # 预览事件按节点 id 路由回节点内的动画面板
@@ -918,29 +946,40 @@ class NeoH3VideoDirector:
             Types.VideoComponents(images=comp.images, audio=comp.audio, frame_rate=Fraction(H3_FPS))
         ),)
 
-    def generate(self, recipe, skill="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, duration_sec=5, bundle="", preview=True, unique_id=None):
+    def generate(self, recipe, skill="", seed=-1, width=-1, height=-1, continuity=True, context_frames=22, model=None, steps=-1, duration_sec=5, bundle="", preview=True, unique_id=None, only_segments=""):
         payload = get_bundle(bundle) if bundle else None
         if payload:
             vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
             return self._run_bundle_segment(payload, skill, seed, width, height, model, steps, vae, preview, unique_id,
                                             duration_sec=duration_sec)
         spec = load_director_spec(recipe)
-        if not (spec.get("segments") or []):
+        segments = spec.get("segments") or []
+        if not segments:
             raise ValueError(f"配方 '{recipe}' 没有可执行的段")
-        return self._run_spec(spec, seed, width, height, continuity, context_frames, model, steps, preview, unique_id)
+        # 只跑勾选的段（空 = 全部）；段号非法/越界在这里报错，消息可直接回前端
+        keep = parse_segment_selection(only_segments, len(segments))
+        return self._run_spec(spec, seed, width, height, continuity, context_frames, model, steps, preview, unique_id,
+                              keep=keep)
 
     def _run_spec(self, spec, seed, width, height, continuity, context_frames, model, steps, preview, unique_id,
-                  progress_index=0, progress_total=None):
+                  progress_index=0, progress_total=None, keep=None):
         """按 spec 逐段生成并拼接成单个含音频 VIDEO；配方多段运行与「单段重生成」共用同一条执行链。
 
         progress_index / progress_total：单段重生成时把进度映射回配方里的真实段序号与总段数
         （默认从 0 开始，即整条配方从头跑）。
+        keep：只跑这些段（0 基原始段序号；None = 全部段）。跳过段不生成也不进成片，但 seed / 进度 /
+        报错文案仍按原始段序号，同一段在整片运行与部分运行里结果一致。
         首帧锚点：i2v/fl2v 段自带首帧图（分镜格）时用它，上段尾部只作为「目标之前」的参考视频；
         没自带首帧图时才由连续性接手（窗口第 0 帧 / Tier A 上段尾帧）。
         """
         vae = load_h3_tiny_vae() if preview else None   # 预览解码器：一次生成内复用；关闭时不加载
         shared = spec.get("shared") or {}
-        segments = spec.get("segments") or []
+        all_segments = spec.get("segments") or []
+        runs = [(i, seg) for i, seg in enumerate(all_segments) if keep is None or i in keep]
+        if not runs:
+            raise ValueError("没有勾选任何段：请在时间轴上勾选要运行的段")
+        segments = [seg for _, seg in runs]   # 实际执行的子序列（分块/循环都基于它）
+        orig = [i for i, _ in runs]           # 子序列各段的原始段序号
 
         base_seed = int(seed) if int(seed) >= 0 else (int(shared.get("seed", 0)) if shared.get("seed") is not None else 0)
         # width/height：节点入参 > 0 时覆盖全部段；-1 时优先配方 shared 分辨率，缺省再回退各段 skill config 默认。
@@ -953,7 +992,7 @@ class NeoH3VideoDirector:
 
         ctx = get_executing_context()
         _DIRECTOR_PROGRESS.update(active=True, segment_index=progress_index - 1,
-                                  total_segments=max(1, int(progress_total or len(segments))), step=0,
+                                  total_segments=max(1, int(progress_total or len(all_segments))), step=0,
                                   total_steps=max(1, int(steps)) if int(steps) > 0 else 0,
                                   prompt_id=getattr(ctx, "prompt_id", None))
         all_frames = []
@@ -964,7 +1003,7 @@ class NeoH3VideoDirector:
         # 不兼容（自带参考素材 / 超长）或超预算的段退回逐段路径。整配方「多帧合并」开关关闭时不再合并，
         # 但自带锚点帧的段仍走多帧路径（多帧技能模板没有图片入口，首/尾帧只能在多帧路径里钉住，见 _chunk_anchor）。
         units = _plan_chunks(segments, _chunk_budget(shared))
-        multi_at, consumed = {}, set()   # 多帧块首段序号 → 块内段；块内其余段由 consumed 跳过
+        multi_at, consumed = {}, set()   # 多帧块首段在子序列里的下标 → 块内段；块内其余段由 consumed 跳过
         offset = 0
         for unit in units:
             if unit["kind"] == "multi":
@@ -972,19 +1011,21 @@ class NeoH3VideoDirector:
                 consumed.update(range(offset + 1, offset + len(unit["segs"])))
             offset += len(unit["segs"])
         try:
-            for i, seg in enumerate(segments):
+            # pos = 子序列下标（跨段衔接只看它：首个执行单元没有上文）；i = 原始段序号（seed / 进度 / 文案用）
+            for pos, (i, seg) in enumerate(runs):
                 _DIRECTOR_PROGRESS["segment_index"] = progress_index + i
                 _DIRECTOR_PROGRESS["step"] = 0
-                m_segs = multi_at.get(i)
+                m_segs = multi_at.get(pos)
                 if m_segs is not None:
                     # 多帧单次：整块一次 ref2va；跨块上下文只走 reference（不改时长、不丢帧、不做接缝淡化）
                     total_sec = sum(_seg_duration(s) for s in m_segs)
                     total_frames = _align_frame_count(int(round(total_sec * H3_FPS)))
                     guides, n_skipped = _plan_multiframe_guides(m_segs, total_frames)
+                    label = f"第 {orig[pos] + 1}–{orig[pos + len(m_segs) - 1] + 1} 段"
                     if n_skipped:
-                        print(f"[NeoNodes] 多帧单次块（第 {i + 1}–{i + len(m_segs)} 段）：{n_skipped} 个关键帧锚点超出帧预算，已跳过")
+                        print(f"[NeoNodes] 多帧单次块（{label}）：{n_skipped} 个关键帧锚点超出帧预算，已跳过")
                     prompt = _merge_chunk_prompt(m_segs)
-                    body = {"prompt": prompt, "seed": (base_seed + i) % (2**63), "length": total_frames}
+                    body = {"prompt": prompt, "seed": (base_seed + orig[pos]) % (2**63), "length": total_frames}
                     if in_w > 0:
                         body["width"] = in_w
                     if in_h > 0:
@@ -996,7 +1037,7 @@ class NeoH3VideoDirector:
                     if window > 0 and prev_tail is not None and prev_tail.shape[0] >= window:
                         context_tail = prev_tail
                     video = _run_multiframe_unit(body, m_segs[0].get("skill_id") or "", model, steps,
-                                                 f"多帧块（第 {i + 1}–{i + len(m_segs)} 段）：", vae, preview, unique_id,
+                                                 f"多帧块（{label}）：", vae, preview, unique_id,
                                                  guides=guides, context_tail=context_tail, context_frames=window,
                                                  identity_names=identity_names,
                                                  on_step=lambda s: _DIRECTOR_PROGRESS.__setitem__("step", s),
@@ -1007,7 +1048,7 @@ class NeoH3VideoDirector:
                     all_audio.append(comp.audio)
                     prev_tail = comp.images[-window:] if window > 0 else comp.images[-1:]
                     continue
-                if i in consumed:
+                if pos in consumed:
                     continue   # 已并入上面的多帧块
                 prompt = seg.get("prompt", "")
                 body = {
@@ -1050,7 +1091,7 @@ class NeoH3VideoDirector:
                         # 窗口的第 0 帧就是目标第 0 帧：拿它当首帧（与窗口行同内容）
                         refs.append({"kind": "data", "data": _image_to_data_uri(context_tail[:1])})
                         chained = True
-                    elif continuity and i > 0 and prev_tail is not None:
+                    elif continuity and pos > 0 and prev_tail is not None:
                         refs.append({"kind": "data", "data": _image_to_data_uri(prev_tail[-1:])})
                         chained = True
                 elif mode == "r2v":
@@ -1083,7 +1124,7 @@ class NeoH3VideoDirector:
                     raise ValueError(
                         f"第 {i + 1} 段为{'首尾帧' if mode == 'fl2v' else '图生视频'}但没有可用首帧：" +
                         ("请为该段设置首帧，或开启「连续性」以上段尾帧 / 上下文窗口链入"
-                         if i > 0 else "首段需自带首帧"))
+                         if pos > 0 else "首段需自带首帧"))
 
                 video = _run_segment_graph(body, seg.get("skill_id") or "", model, steps, f"第 {i + 1} 段：",
                                            vae, preview, unique_id, context_tail=context_tail,
@@ -1098,7 +1139,7 @@ class NeoH3VideoDirector:
                 # 分镜首帧段两者都不丢（段首就是本段分镜图）。窗口模式丢帧前先把重合区与上一段真实尾帧
                 # 交叉淡化（帧数不变），接缝不再硬切。
                 drop = window if (context_tail is not None and segment_context == CONTEXT_MODES[0]) \
-                    else (1 if (i > 0 and chained) else 0)
+                    else (1 if (pos > 0 and chained) else 0)
                 if context_tail is not None and segment_context == CONTEXT_MODES[0] and all_frames:
                     all_frames[-1] = _blend_seam(all_frames[-1], frames, drop, SEAM_BLEND_FRAMES)
                 all_frames.append(frames[drop:] if drop and frames.shape[0] > drop else frames)
