@@ -3,6 +3,8 @@
  * API 调用和数据处理模块
  */
 
+import { mkEl } from "./dom-utils.js";
+
 // ==========================================
 // 远程 LLM 配置缓存
 // ==========================================
@@ -456,6 +458,119 @@ async function invokePromptStream(payload, options = {}) {
     return sseStream("/rs_prompts/stream_generate_prompt", options, payload);
 }
 
+/**
+ * 创建 SSE 流 → textarea「输出框」处理器（NeoPromptAgent 节点与画廊弹窗共用）：
+ * - 正文先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排
+ * - thinking 块实时显示在 textarea 上方临时面板（跟随滚底），正文出现/流结束时清除，不写入提示词
+ * - status 块显示为流程状态行（技能生成 / H3 自检等阶段），保留到流结束供回看，仅出错时清除
+ * - replace 块整段替换已透传的正文
+ * @param {Object} opts - { textarea, refreshPreview?, onDone?(accumulated), onError?(err) }
+ * @returns {{onChunk: Function, onDone: Function, onError: Function, flush: Function}}
+ *         前三个直接传给 sseStream/invokePromptStream；flush 供调用方在收尾块补落正文
+ */
+function createStreamOutputHandlers({ textarea, refreshPreview, onDone, onError }) {
+    let rafId = null;
+    let accumulated = "";
+    const wrapper = textarea.parentElement;
+    function flush() {
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        if (accumulated) {
+            textarea.value = accumulated;
+            textarea.scrollTop = textarea.scrollHeight;
+            refreshPreview?.();
+        }
+    }
+    // 思考过程（reasoning_content）：临时面板只用于展示，不写入提示词
+    let thinkingEl = null;
+    let thinkingBuf = "";
+    let thinkingRaf = null;
+    function ensureThinkingEl() {
+        if (thinkingEl) return thinkingEl;
+        thinkingEl = mkEl("div", "rs-thinking");
+        const label = mkEl("div", "rs-thinking-label");
+        label.textContent = "💭 思考中…";
+        thinkingEl.appendChild(label);
+        thinkingEl.appendChild(mkEl("div", "rs-thinking-body"));
+        wrapper.insertBefore(thinkingEl, textarea);
+        return thinkingEl;
+    }
+    function clearThinking() {
+        if (thinkingRaf) { cancelAnimationFrame(thinkingRaf); thinkingRaf = null; }
+        if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+    }
+    // 流程状态（技能生成 / H3 格式自检等阶段）：复用思考面板样式，逐条累计展示
+    let statusEl = null;
+    function showStatus(msg) {
+        if (!statusEl) {
+            statusEl = mkEl("div", "rs-thinking");
+            const label = mkEl("div", "rs-thinking-label");
+            label.textContent = "📋 处理流程";
+            statusEl.appendChild(label);
+            statusEl.appendChild(mkEl("div", "rs-thinking-body"));
+            wrapper.insertBefore(statusEl, textarea);
+        }
+        const body = statusEl.querySelector(".rs-thinking-body");
+        body.textContent += (body.textContent ? "\n" : "") + msg;
+        // 内联 display 必须显式设为可见值（同思考面板：设 "" 会回落到 .rs-thinking{display:none}）
+        statusEl.style.display = "block";
+        statusEl.scrollTop = statusEl.scrollHeight;
+    }
+    function clearStatus() {
+        if (statusEl) { statusEl.remove(); statusEl = null; }
+    }
+    return {
+        onChunk: (chunk) => {
+            if (!chunk || !chunk.text) return;
+            if (chunk.kind === "status") {
+                // 流程阶段上报：只显示状态行，不写入提示词
+                showStatus(chunk.text);
+                return;
+            }
+            if (chunk.kind === "replace") {
+                // H3 窄修复采纳后整段替换已透传的正文
+                if (thinkingEl) clearThinking();
+                accumulated = chunk.text;
+                if (!rafId) rafId = requestAnimationFrame(flush);
+                return;
+            }
+            if (chunk.kind === "thinking") {
+                thinkingBuf += chunk.text;
+                // 内联 display 必须显式设为可见值：设成 "" 会移除内联样式、回落到 .rs-thinking{display:none}，面板就永远不可见
+                ensureThinkingEl().style.display = "block";
+                if (!thinkingRaf) {
+                    thinkingRaf = requestAnimationFrame(() => {
+                        thinkingRaf = null;
+                        if (thinkingEl) {
+                            thinkingEl.querySelector(".rs-thinking-body").textContent = thinkingBuf;
+                            // 面板 max-height:40% + overflow-y:auto，思考增长后必须跟随滚到底部，否则停在顶部看不到打字效果
+                            thinkingEl.scrollTop = thinkingEl.scrollHeight;
+                        }
+                    });
+                }
+                return;
+            }
+            // 正文开始：思考完成，清除思考面板（状态行保留到流结束，供回看自检/修复结果）
+            if (thinkingEl) clearThinking();
+            accumulated += chunk.text;
+            if (!rafId) rafId = requestAnimationFrame(flush);
+        },
+        // 取消尚未执行的合并帧后把 accumulated 落进 textarea，再交给调用方做收尾（如持久化 widget）
+        onDone: () => {
+            flush();
+            clearThinking();
+            onDone?.(accumulated);
+        },
+        onError: (err) => {
+            // 取消未执行的合并帧，避免出错后部分正文被刷进 textarea（失败时输入框保持原文）
+            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+            clearThinking();
+            clearStatus();
+            onError?.(err);
+        },
+        flush,
+    };
+}
+
 // ==========================================
 // 提示词服务包装器 - 为节点行为模块提供统一的 API 调用接口
 // ==========================================
@@ -550,7 +665,8 @@ export {
     getLLMMode,
     fileToBase64,
     imagesFromClipboard,
-    invokePromptStream
+    invokePromptStream,
+    createStreamOutputHandlers
 };
 
 export default promptService;

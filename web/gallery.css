@@ -276,6 +276,36 @@
     border-color: #FF6A00;
 }
 
+/* 「生成素材」弹窗：agent 式增强区——quick input（矮框，描述 / 修改指令）+ [增强技能 + ✨] 行 */
+.neo-gallery-gm-quick-input {
+    min-height: 48px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    resize: vertical;
+}
+
+.neo-gallery-gm-quick-input:focus {
+    outline: none;
+    border-color: rgba(76, 154, 255, 0.6);
+}
+
+.neo-gallery-gm-enhance-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.neo-gallery-gm-enhance-row select {
+    flex: 1;
+    min-width: 0;
+}
+
 /* Thumbnail size control row */
 .neo-gallery-size-control {
     display: flex;

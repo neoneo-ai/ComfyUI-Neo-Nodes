@@ -6,7 +6,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { fileToBase64, imagesFromClipboard, sseStream, invokePromptStream } from "./prompt-service.js";
+import { fileToBase64, imagesFromClipboard, sseStream, invokePromptStream, createStreamOutputHandlers } from "./prompt-service.js";
 import { listSkills, populateSkillOptions, createSkillDropdown, renderMarkdown, resolveSkillId, openSkillDetailById } from "./skill.js";
 import { createModelConfigForm, openLLMSettingsModal } from "./llm-setting.js";
 import { mkEl } from "./dom-utils.js";
@@ -1041,113 +1041,17 @@ function createGenerateHandler(promptUI) {
         generateBtn.disabled = true;
         generateBtn.textContent = "⏳";
 
-        let rafId = null;
-        let accumulated = "";
-        // 思考过程（reasoning_content）：实时显示在提示词框上方的临时面板，正文出现/结束时自动清除，不写入提示词
-        let thinkingEl = null;
-        let thinkingBuf = "";
-        let thinkingRaf = null;
-        const wrapper = customTextarea.parentElement;
-        function ensureThinkingEl() {
-            if (thinkingEl) return thinkingEl;
-            thinkingEl = mkEl("div", "rs-thinking");
-            const label = mkEl("div", "rs-thinking-label");
-            label.textContent = "💭 思考中…";
-            const body = mkEl("div", "rs-thinking-body");
-            thinkingEl.appendChild(label);
-            thinkingEl.appendChild(body);
-            wrapper.insertBefore(thinkingEl, customTextarea);
-            return thinkingEl;
-        }
-        function clearThinking() {
-            if (thinkingRaf) { cancelAnimationFrame(thinkingRaf); thinkingRaf = null; }
-            if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
-        }
-        // 流程状态（H3 格式自检/自动修复等阶段）：复用思考面板样式，逐条累计展示；
-        // 流结束后保留，供用户回看最终自检/修复结果（仅出错时清除）
-        let statusEl = null;
-        function showStatus(msg) {
-            if (!statusEl) {
-                statusEl = mkEl("div", "rs-thinking");
-                const label = mkEl("div", "rs-thinking-label");
-                label.textContent = "📋 H3 流程";
-                statusEl.appendChild(label);
-                statusEl.appendChild(mkEl("div", "rs-thinking-body"));
-                wrapper.insertBefore(statusEl, customTextarea);
-            }
-            const body = statusEl.querySelector(".rs-thinking-body");
-            body.textContent += (body.textContent ? "\n" : "") + msg;
-            // 内联 display 必须显式设为可见值（同思考面板：设 "" 会回落到 .rs-thinking{display:none}）
-            statusEl.style.display = "block";
-            statusEl.scrollTop = statusEl.scrollHeight;
-        }
-        function clearStatus() {
-            if (statusEl) { statusEl.remove(); statusEl = null; }
-        }
-        // 三条流式分支共用的 SSE 处理：正文先攒进 accumulated，rAF 到点才刷 UI，避免逐 token 重排；
-        // 思考块（kind=thinking）实时显示在临时面板，正文出现时清除，最终只保留正文。
-        // failOpts = (err) => ({ summary, actionLabel, onAction })：失败时按错误来源给处理入口
-        const streamHandlers = (errorLabel, failOpts) => ({
-            onChunk: (chunk) => {
-                if (!chunk || !chunk.text) return;
-                if (chunk.kind === "status") {
-                    // 流程阶段上报（格式自检/自动修复）：只显示状态行，不写入提示词
-                    showStatus(chunk.text);
-                    return;
-                }
-                if (chunk.kind === "replace") {
-                    // H3 窄修复采纳后整段替换已透传的正文
-                    if (thinkingEl) clearThinking();
-                    accumulated = chunk.text;
-                    if (!rafId) rafId = requestAnimationFrame(() => {
-                        rafId = null;
-                        customTextarea.value = accumulated;
-                        customTextarea.scrollTop = customTextarea.scrollHeight;
-                        refreshMarkdownPreviewAuto?.();
-                    });
-                    return;
-                }
-                if (chunk.kind === "thinking") {
-                    thinkingBuf += chunk.text;
-                    // 内联 display 必须显式设为可见值：设成 "" 会移除内联样式、回落到 .rs-thinking{display:none}，面板就永远不可见
-                    ensureThinkingEl().style.display = "block";
-                    if (!thinkingRaf) {
-                        thinkingRaf = requestAnimationFrame(() => {
-                            thinkingRaf = null;
-                            if (thinkingEl) {
-                                thinkingEl.querySelector(".rs-thinking-body").textContent = thinkingBuf;
-                                // 面板 max-height:40% + overflow-y:auto，思考增长后必须跟随滚到底部，否则停在顶部看不到打字效果
-                                thinkingEl.scrollTop = thinkingEl.scrollHeight;
-                            }
-                        });
-                    }
-                    return;
-                }
-                // 正文开始：思考完成，清除思考面板（状态行保留到流结束，供回看自检/修复结果）
-                if (thinkingEl) clearThinking();
-                accumulated += chunk.text;
-                if (rafId) return;
-                rafId = requestAnimationFrame(() => {
-                    rafId = null;
-                    customTextarea.value = accumulated;
-                    customTextarea.scrollTop = customTextarea.scrollHeight;
-                    refreshMarkdownPreviewAuto?.();
-                });
-            },
-            // onDone 取消了尚未执行的合并帧，必须先把 accumulated 落进 textarea，
-            // 否则 saveTextToStorage 读到旧的空 textarea，会把 widget 里的提示词冲掉；
-            // 状态行（H3 自检/修复结果）不清除，保留供用户回看
+        // 三条流式分支共用的 SSE 输出框处理器（正文 rAF 批量写回 / 思考面板 / 状态行，见 prompt-service）：
+        // onDone 先把正文落进 textarea 再持久化 widget；failOpts = (err) => ({ summary, actionLabel, onAction })，失败时按错误来源给处理入口
+        const streamHandlers = (errorLabel, failOpts) => createStreamOutputHandlers({
+            textarea: customTextarea,
+            refreshPreview: refreshMarkdownPreviewAuto,
             onDone: () => {
-                if (rafId) cancelAnimationFrame(rafId);
-                clearThinking();
-                if (accumulated) customTextarea.value = accumulated;
                 saveTextToStorage(node, textWidget, customTextarea, true);
                 markQuickInputConsumed(node);
             },
             onError: (err) => {
                 console.error(errorLabel, err);
-                clearThinking();
-                clearStatus();
                 const opts = failOpts?.(err);
                 if (opts?.actionLabel) {
                     actionToast({ severity: "error", detail: String(err), ...opts });
@@ -1156,6 +1060,7 @@ function createGenerateHandler(promptUI) {
                 }
             }
         });
+        let handlers = null;
         try {
             if (hasImages) {
                 // 图片 -> skill 路由（反推等 vision skill，流式）
@@ -1173,7 +1078,8 @@ function createGenerateHandler(promptUI) {
                     context: workflowContext,
                     ...enableThinkingField
                 };
-                await invokePromptStream(payload, streamHandlers("Skill invoke error:", (err) => failAction(selectedSkillId, err)));
+                handlers = streamHandlers("Skill invoke error:", (err) => failAction(selectedSkillId, err));
+                await invokePromptStream(payload, handlers);
             } else if (selectedSkillId) {
                 // 使用选中的模板进行生成（流式）
                 generateBtn.textContent = "⏳"; // 统一短反馈
@@ -1182,7 +1088,8 @@ function createGenerateHandler(promptUI) {
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
 
                 // 使用流式API，传入skillId
-                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Skill stream error:", (err) => failAction(selectedSkillId, err)), { 
+                handlers = streamHandlers("Skill stream error:", (err) => failAction(selectedSkillId, err));
+                await sseStream("/rs_prompts/stream_generate_prompt", handlers, { 
                     text: userPrompt, 
                     skillId: selectedSkillId,
                     description: quickText || currentPrompt,
@@ -1194,7 +1101,8 @@ function createGenerateHandler(promptUI) {
                 generateBtn.textContent = "⏳"; // 统一短反馈
                 // 拼接 currentPrompt 和 quickText（与选择了模版时保持一致）
                 const userPrompt = quickText ? (currentPrompt ? `${currentPrompt}\n\n---\n\n${quickText}` : quickText) : currentPrompt;
-                await sseStream("/rs_prompts/stream_generate_prompt", streamHandlers("Smart prompt stream error:", (err) => failAction("", err)), {
+                handlers = streamHandlers("Smart prompt stream error:", (err) => failAction("", err));
+                await sseStream("/rs_prompts/stream_generate_prompt", handlers, {
                     text: userPrompt,
                     description: quickText || currentPrompt,
                     context: workflowContext,
@@ -1207,10 +1115,8 @@ function createGenerateHandler(promptUI) {
         } finally {
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
-            if (accumulated) {
-                customTextarea.value = accumulated;
-                refreshMarkdownPreviewAuto?.();
-            }
+            // 补落尚未执行的合并帧（正常路径 onDone 已落过，幂等）
+            handlers?.flush();
         }
     };
 }

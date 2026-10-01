@@ -29,12 +29,27 @@ test("点击按钮展开菜单且包含全部条目", async () => {
     const menu = document.querySelector(".neo-n-menu");
     assert.ok(menu, "菜单未展开");
     const labels = [...menu.querySelectorAll(".neo-n-menu-item")].map((el) => el.textContent);
-    for (const want of ["🎬 Neo Studio", "🎥 新建导演配方", "🧩 创建节点", "🔧 修复工作流", "📜 修复记录", "ℹ️ 关于插件"]) {
+    for (const want of ["🎬 Neo Studio", "🖼️ 生成素材", "🎥 新建导演配方", "🧩 创建节点", "🔧 修复工作流", "📜 修复记录", "ℹ️ 关于插件"]) {
         assert.ok(labels.some((l) => l.includes(want)), `缺少条目: ${want}`);
     }
     // 再点一次收起
     ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
     assert.equal(document.querySelector(".neo-n-menu"), null, "菜单未收起");
+});
+
+test("🖼️ 生成素材：点击打开生成素材弹窗", async () => {
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    const item = [...document.querySelectorAll(".neo-n-menu-item")]
+        .find((el) => el.textContent.includes("生成素材"));
+    assert.ok(item, "菜单缺少 🖼️ 生成素材条目");
+    item.click();
+    assert.equal(document.querySelector(".neo-n-menu"), null, "点菜单项后菜单未收起");
+    assert.ok(document.querySelector(".neo-gallery-gm-modal-overlay"), "生成素材弹窗未打开");
 });
 
 test("创建节点子菜单按 LiteGraph.registeredNodes 过滤", async () => {

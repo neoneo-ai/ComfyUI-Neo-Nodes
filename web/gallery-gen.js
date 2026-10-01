@@ -8,10 +8,10 @@ import { api } from "../../../../scripts/api.js";
 import { getImageHeight, getThumbnailSrc, isImageFile } from "./gallery-utils.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
-import { openSkillDetailById } from "./skill.js";
+import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels } from "./image-gen.js";
-import { invokePromptStream } from "./prompt-service.js";
+import { invokePromptStream, createStreamOutputHandlers } from "./prompt-service.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
@@ -19,6 +19,8 @@ const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
 const KREA2_T2I_SKILL_ID = "image_gen";
 // 「生成素材」弹窗上次选中的技能（localStorage，关窗不清除）
 const GM_LAST_SKILL_KEY = "neo.gallery.gen_material.skill";
+// 「生成素材」弹窗上次选中的「增强 skill」（localStorage，关窗不清除；空 = 默认自动路由）
+const GM_ENHANCE_SKILL_KEY = "neo.gallery.gen_material.enhance_skill";
 // 用所选人像作参考图生成四视图角色设定图，供拖入导演配方的 👤 角色参考图。
 const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人物，在一张横版画面中生成四个视图横向并排的角色设定图：第一格为大头特写（肩部以上，突出五官脸型），第二格为正面全身站立，第三格为侧面全身站立，第四格为背面全身站立。严格保持与参考图一致的五官脸型、发型发色、服装配饰和体型比例；全身视图中人物自然站立，双臂下垂，纯白背景，均匀柔光，写实摄影风格，高清细节，画面内不出现文字标注。";
 // 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
@@ -930,16 +932,23 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
 }
 
 
-/** 画廊搜索行「✨ 生成素材」：纯提示词一键生成新素材（默认 Krea2 文生图），产物落 Output/NeoAgent/<日期>，素材面板可直接浏览。 */
+/** 画廊搜索行「🖼️ 生成素材」：纯提示词一键生成新素材（默认 Krea2 文生图），产物落 Output/NeoAgent/<日期>，素材面板可直接浏览。 */
 export function openGenMaterialDialog(gallery) {
     document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
 
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
     const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
-    const promptInput = $el("textarea", {
+    // agent 式双框（chat 习惯）：output 在上（增强提示词，作最终生成提示词；为空时回退 quick input）
+    // + quick input 在下（描述 / 修改指令，增强成功后被消费清空），与 NeoPromptAgent 节点的输入/输出结构一致
+    const quickInput = $el("textarea", {
+        className: "neo-gallery-gm-quick-input",
+        rows: 2,
+        placeholder: "描述要生成的素材，例如：红色陶瓷杯的白底产品图……或输入修改指令"
+    });
+    const outputInput = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 4,
-        placeholder: "描述要生成的素材，例如：红色陶瓷杯的白底产品图、黄昏下的海边灯塔……"
+        placeholder: "增强后的提示词会显示在这里（不增强时可直接填写）"
     });
 
     let running = false;
@@ -977,6 +986,25 @@ export function openGenMaterialDialog(gallery) {
     // 选中变化即写入 localStorage：下次打开沿用该技能（关窗不清除）
     skillSel.addEventListener("change", () => {
         try { localStorage.setItem(GM_LAST_SKILL_KEY, skillSel.value); } catch {}
+    });
+
+    // 增强 skill 下拉：与节点同源 populateSkillOptions（按分类分组），只列图像提示词增强技能
+    // （category=image_enhance）；「默认」空值 = 后端 smart_prompt 自动路由；记住上次选择
+    const enhanceSel = $el("select", { className: "neo-recipes-sort neo-gallery-gm-enhance-skill" });
+    let rememberedEnhanceSkill = "";
+    try { rememberedEnhanceSkill = localStorage.getItem(GM_ENHANCE_SKILL_KEY) || ""; } catch {}
+    (async () => {
+        try {
+            const skills = await listSkills();
+            enhanceSel.textContent = "";
+            enhanceSel.appendChild($el("option", { value: "", textContent: "默认" }));
+            populateSkillOptions(enhanceSel, skills.filter(s => s.category === "image_enhance"));
+            const ids = [...enhanceSel.options].map(o => o.value);
+            if (rememberedEnhanceSkill && ids.includes(rememberedEnhanceSkill)) enhanceSel.value = rememberedEnhanceSkill;
+        } catch { /* 拉取失败保持「默认」 */ }
+    })();
+    enhanceSel.addEventListener("change", () => {
+        try { localStorage.setItem(GM_ENHANCE_SKILL_KEY, enhanceSel.value); } catch {}
     });
 
     // 模型覆盖：本次临时选主模型 / LoRA（类似节点上接模型），空值 = 跟随全局生图设置；
@@ -1046,6 +1074,39 @@ export function openGenMaterialDialog(gallery) {
         const open = modelBox.style.display === "none";
         modelBox.style.display = open ? "" : "none";
         modelToggle.textContent = `⚙️ 模型覆盖 ${open ? "▾" : "▸"}`;
+    });
+
+    // ✨ 增强：仿 NeoPromptAgent 节点——quick input + output 双框，复用节点 agent 逻辑
+    // （所选增强 skill 的 skill.md 作系统提示词 + 按需读引用文件）直调 /rs_prompts/stream_generate_prompt；
+    // 输出框行为与节点共用（思考面板 / 流程状态行 / rAF 批量写回）；quick input 有内容时与
+    // output 已有提示词按 \n\n---\n\n 拼接（同节点），成功后 quick input 被消费清空
+    const enhanceBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ 增强" });
+    let enhancing = false;
+    enhanceBtn.addEventListener("click", async () => {
+        if (enhancing || running) return;
+        const quickText = quickInput.value.trim();
+        const outputText = outputInput.value.trim();
+        const text = quickText ? (outputText ? `${outputText}\n\n---\n\n${quickText}` : quickText) : outputText;
+        if (!text) { quickInput.focus(); return; }
+        enhancing = true;
+        enhanceBtn.textContent = "⏳ 增强中…";
+        try {
+            await invokePromptStream({ text, skillId: enhanceSel.value }, createStreamOutputHandlers({
+                textarea: outputInput,
+                onDone: (acc) => {
+                    if (acc.trim()) quickInput.value = ""; // 已消费
+                    else actionToast({ severity: "warning", summary: "增强失败", detail: "LLM 未返回内容" });
+                    outputInput.focus();
+                },
+                onError: (e) => {
+                    console.error("[Gallery] gen material enhance failed:", e);
+                    actionToast({ severity: "error", summary: "提示词增强失败", detail: String(e?.message || e), actionLabel: "打开 LLM 设置", onAction: openLLMSettingsModal });
+                }
+            }));
+        } finally {
+            enhancing = false;
+            enhanceBtn.textContent = "✨ 增强";
+        }
     });
 
     const renderIdle = () => {
@@ -1132,8 +1193,9 @@ export function openGenMaterialDialog(gallery) {
 
     const start = async () => {
         if (running) return;
-        const prompt = promptInput.value.trim();
-        if (!prompt) { promptInput.focus(); return; }
+        // 生成用 output 内容作最终提示词（为空回退 quick input），固定 skip_enhance
+        const prompt = outputInput.value.trim() || quickInput.value.trim();
+        if (!prompt) { quickInput.focus(); return; }
         running = true;
         cancelRequested = false;
         renderRunning("排队中…");
@@ -1170,10 +1232,10 @@ export function openGenMaterialDialog(gallery) {
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
     };
 
-    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 模型覆盖 / 提示词），操作按钮收尾
+    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 模型覆盖 / agent 式增强双框：output 上、quick input 下），操作按钮收尾
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "\u2728 生成素材" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 生成素材" }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
         statusBox,
@@ -1183,7 +1245,13 @@ export function openGenMaterialDialog(gallery) {
         ]),
         modelToggle,
         modelBox,
-        promptInput,
+        outputInput,
+        quickInput,
+        $el("div", { className: "neo-gallery-gm-enhance-row" }, [
+            $el("label", { className: "neo-director-field-label", textContent: "增强技能" }),
+            enhanceSel,
+            enhanceBtn
+        ]),
         actionsBox
     ]));
 
@@ -1194,5 +1262,5 @@ export function openGenMaterialDialog(gallery) {
     overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
     document.body.appendChild(overlay);
 
-    setTimeout(() => promptInput.focus(), 0);
+    setTimeout(() => quickInput.focus(), 0);
 }

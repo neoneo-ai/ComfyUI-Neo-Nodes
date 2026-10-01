@@ -278,8 +278,9 @@ const CATEGORY_LABELS = {
     "task": { label: "⚙️ 任务", order: 6, hidden: true, managerHidden: true }
 };
 
-/** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记 */
-function populateSkillOptions(selectEl, skills) {
+/** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记；
+ *  includeHidden=true 时连 hidden 分类（task / video_gen）一起列出 */
+function populateSkillOptions(selectEl, skills, { includeHidden = false } = {}) {
     if (!skills || !skills.length) return;
     const groups = {};
     skills.forEach(s => {
@@ -289,7 +290,7 @@ function populateSkillOptions(selectEl, skills) {
     });
     Object.keys(groups).sort((a, b) =>
         (CATEGORY_LABELS[a]?.order ?? 99) - (CATEGORY_LABELS[b]?.order ?? 99)
-    ).filter(cat => !CATEGORY_LABELS[cat].hidden).forEach(cat => {
+    ).filter(cat => includeHidden || !CATEGORY_LABELS[cat].hidden).forEach(cat => {
         const optgroup = mkEl("optgroup");
         optgroup.label = CATEGORY_LABELS[cat].label;
         groups[cat].forEach(s => {

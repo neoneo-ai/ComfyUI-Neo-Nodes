@@ -54,6 +54,10 @@ function makeResponse({ status, bodyText, sseLines }) {
 }
 
 function normalize(spec) {
+    // 原始 Response 样对象（自定义 reader，供测试断言流中状态）直通
+    if (spec && typeof spec === "object" && !spec.__spec && spec.body != null && typeof spec.body.getReader === "function") {
+        return { raw: spec };
+    }
     const resolved = spec && typeof spec === "object" && !spec.__spec ? jsonResponse(spec) : spec;
     if (!resolved) return { status: 204, bodyText: "" };
     const status = resolved.status ?? 200;
@@ -88,7 +92,9 @@ export async function handleFetch(input, init = {}) {
         return makeResponse({ status: 501, bodyText: JSON.stringify({ error: `no mock for ${url.pathname}` }) });
     }
     const spec = typeof responder === "function" ? await responder(body, call) : responder;
-    const { status, bodyText, sseLines } = normalize(spec);
+    const norm = normalize(spec);
+    if (norm.raw) return norm.raw;
+    const { status, bodyText, sseLines } = norm;
     return makeResponse({ status, bodyText, sseLines });
 }
 

@@ -144,7 +144,7 @@ export class NeoGallery {
                 $el("button", {
                     className: "neo-gallery-gm-btn",
                     title: "生成新素材（默认 Krea2 文生图，产物保存到 Output 目录）",
-                    textContent: "✨ 生成素材",
+                    textContent: "🖼️ 生成素材",
                     onclick: () => openGenMaterialDialog(this)
                 })
             ]),
