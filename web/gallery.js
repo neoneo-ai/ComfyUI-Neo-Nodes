@@ -9,6 +9,7 @@ import { openDirectorEditor } from './director.js';
 import { copyGalleryToInput } from './media-transfer.js';
 import { openGenMaterialDialog } from './gallery-gen.js';
 import { attachGalleryNodeDrop } from './gallery-node-drop.js';
+import { attachMasonry, setMasonryColumnWidth } from './gallery-masonry.js';
 import {
     THUMBNAIL_SIZE_DEFAULT,
     THUMBNAIL_SIZE_MIN,
@@ -498,8 +499,9 @@ export class NeoGallery {
         }
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this)}px` }
+            style: { '--neo-card-h': `${getCardHeight(this)}px` }
         });
+        attachMasonry(container, this.maxThumbnailSize);
         for (const item of items) {
             container.appendChild(this._createLocalBookmarkCard(item));
         }
@@ -696,8 +698,9 @@ export class NeoGallery {
 
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this)}px` }
+            style: { '--neo-card-h': `${getCardHeight(this)}px` }
         });
+        attachMasonry(container, this.maxThumbnailSize);
         for (const item of items) {
             container.appendChild(this._createCivitaiBookmarkCard(item));
         }
@@ -1330,7 +1333,7 @@ export class NeoGallery {
         const grids = document.querySelectorAll('.neo-gallery-category-grid');
         for (const grid of grids) {
             if (grid.offsetParent !== null) {
-                grid.style.gridTemplateColumns = `repeat(auto-fill, ${newSize}px)`;
+                setMasonryColumnWidth(grid, newSize);
                 grid.style.setProperty('--neo-card-h', `${getCardHeight(this)}px`);
             }
         }

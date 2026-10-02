@@ -29,7 +29,7 @@ test("点击按钮展开菜单且包含全部条目", async () => {
     const menu = document.querySelector(".neo-n-menu");
     assert.ok(menu, "菜单未展开");
     const labels = [...menu.querySelectorAll(".neo-n-menu-item")].map((el) => el.textContent);
-    for (const want of ["🎬 Neo Studio", "🖼️ 生成素材", "🎥 新建导演配方", "🧩 创建节点", "🔧 修复工作流", "📜 修复记录", "ℹ️ 关于插件"]) {
+    for (const want of ["🎬 新影工坊", "🖼️ 生成素材", "🎥 新建导演配方", "🧩 创建节点", "🔧 修复工作流", "📜 修复记录", "ℹ️ 关于插件"]) {
         assert.ok(labels.some((l) => l.includes(want)), `缺少条目: ${want}`);
     }
     // 再点一次收起

@@ -1,7 +1,7 @@
 /**
  * top-menu.js — 顶栏 🅝 菜单（插件统一入口）
  * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），点击展开下拉菜单：
- *   🎬 Neo Studio / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
+ *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
  *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）
  *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录 / ℹ️ 关于插件。
  * 修复红点提示由 workflow.js 的 setRepairHint 驱动，本模块只提供 .neo-n-menu-btn 按钮与样式。
@@ -275,7 +275,7 @@ function openMenu(anchor) {
     menuEl = document.createElement("div");
     menuEl.className = "neo-n-menu";
 
-    menuEl.appendChild(menuItem("🎬 Neo Studio", () => window.open(STUDIO_URL, "_blank")));
+    menuEl.appendChild(menuItem("🎬 新影工坊", () => window.open(STUDIO_URL, "_blank")));
     // 生成素材：纯提示词一键出图（与画廊搜索行同一弹窗），app.neoGallery 由 gallery.js setup 挂全局
     menuEl.appendChild(menuItem("🖼️ 生成素材", () => openGenMaterialDialog(app.neoGallery)));
     menuEl.appendChild(menuItem("🎥 新建导演配方", () => openDirectorEditor(null)));

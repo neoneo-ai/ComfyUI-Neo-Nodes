@@ -327,14 +327,32 @@
    Category Card Grid Layout
    ============================================ */
 
+/* Fallback layout when the masonry script is not applied: plain auto-fill grid
+   with top-aligned adaptive-height cards. */
 .neo-gallery-category-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     padding: 4px 0;
-    /* Cards adapt their height to content ratio (portrait/landscape/square),
-       so a row can mix heights — top-align them instead of stretching. */
     align-items: start;
+}
+
+/* Waterfall layout is applied by web/gallery-masonry.js: cards keep DOM order and
+   are packed into the shortest column, so adaptive card heights never leave a
+   whole column blank. CSS multi-column was tried first and could not do this.
+   Both classes are needed on every selector: .neo-gallery-category-card and
+   .neo-gallery-thumb-container set position: relative themselves. */
+.neo-gallery-category-grid.neo-gallery-masonry,
+.neo-gallery-image-grid.neo-gallery-masonry {
+    position: relative;
+    display: block;
+}
+
+.neo-gallery-category-grid.neo-gallery-masonry > *,
+.neo-gallery-image-grid.neo-gallery-masonry > * {
+    position: absolute;
+    top: 0;
+    left: 0;
 }
 
 /* Category Card — clickable card for a directory/category */

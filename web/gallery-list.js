@@ -4,6 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, createBreadcrumbItem, createBreadcrumbSeparator, createSpacer, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast } from './gallery-utils.js';
+import { attachMasonry } from './gallery-masonry.js';
 
 // Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
 const CIVITAI_DIR_KEY = "civitai_bookmarks";
@@ -313,8 +314,9 @@ export class GalleryList {
     async createCategoryCardGrid(dirGroups) {
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.gallery.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this.gallery)}px` }
+            style: { '--neo-card-h': `${getCardHeight(this.gallery)}px` }
         });
+        attachMasonry(container, this.gallery.maxThumbnailSize);
 
         // Collect workflow-used loras once for the smart filter (only lora dirs are filtered).
         const usedLoras = this.gallery.workflowMatchActive ? this.gallery.collectUsedLoras() : null;
@@ -463,8 +465,9 @@ export class GalleryList {
 
         const container = $el("div", {
             className: "neo-gallery-category-grid",
-            style: { gridTemplateColumns: `repeat(auto-fill, ${this.gallery.maxThumbnailSize}px)`, '--neo-card-h': `${getCardHeight(this.gallery)}px` }
+            style: { '--neo-card-h': `${getCardHeight(this.gallery)}px` }
         });
+        attachMasonry(container, this.gallery.maxThumbnailSize);
 
         if (isLoraView) {
             const usedCount = this.gallery.collectUsedLoras().size;
@@ -507,6 +510,7 @@ export class GalleryList {
         if (items && items.length > 0) {
             
             const imageGrid = $el("div", { className: "neo-gallery-image-grid" });
+            attachMasonry(imageGrid, this.gallery.maxThumbnailSize);
             
             let currentSubfolder;
             if (pathSegments.length > 0) {
@@ -564,6 +568,7 @@ export class GalleryList {
         this.gallery._renderedCount = 0;
         
         const imageGrid = $el("div", { className: "neo-gallery-image-grid neo-gallery-expanded-images" });
+        attachMasonry(imageGrid, this.gallery.maxThumbnailSize);
         
         const renderPage = (count) => {
             for (let i = 0; i < count && this.gallery._renderQueue.length > 0; i++) {
@@ -627,6 +632,7 @@ export class GalleryList {
         this.gallery._renderedCount = 0;
         
         const imageGrid = $el("div", { className: "neo-gallery-image-grid neo-gallery-expanded-images" });
+        attachMasonry(imageGrid, this.gallery.maxThumbnailSize);
         
         const renderPage = (count) => {
             for (let i = 0; i < count && this.gallery._renderQueue.length > 0; i++) {
