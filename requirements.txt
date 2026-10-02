@@ -4,3 +4,5 @@ PyYAML
 pypinyin
 # 可选：轻量文本分类器（智能 skill 选择 / 提示词分类），未安装时自动降级
 laya
+# 可选：HEIC/HEIF 图片读取与转换（LoRA 打标目录标准化），未安装时跳过 HEIC 文件
+pillow-heif

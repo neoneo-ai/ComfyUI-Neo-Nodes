@@ -703,6 +703,171 @@ export function openReversePromptDialog(image, subfolder) {
     document.addEventListener("keydown", onKey);
 }
 
+/** LoRA 打标弹窗：为叶子图片目录批量生成标准化标签 .txt（触发词 + 可选先自动标准化目录）。 */
+export function openLoraTagDialog(gallery, dirPath) {
+    document.querySelector(".neo-gallery-lt-modal-overlay")?.remove();
+
+    const statusBox = $el("div", { className: "neo-gallery-cs-status" });
+    let busy = false;
+
+    function close() {
+        if (busy) return; // 打标中不允许关闭，避免误触丢失结果
+        document.removeEventListener("keydown", onKey);
+        overlay.remove();
+    }
+    function onKey(e) { if (e.key === "Escape") close(); }
+
+    const triggerInput = $el("input", {
+        className: "neo-gallery-story-input neo-gallery-lt-trigger",
+        type: "text",
+        placeholder: "触发词（如 gtx）",
+    });
+    const stdCheck = $el("input", { type: "checkbox" });
+    stdCheck.checked = true;
+    const stdRow = $el("label", { className: "neo-gallery-lt-std-row" }, [
+        stdCheck,
+        document.createTextNode("先自动标准化目录（HEIC→PNG + 001.png... 顺序编号）"),
+    ]);
+
+    // 当前打标图片 + 标签结果实时预览：SSE 帧按顺序到达，自然逐张切换
+    const previewImg = $el("img", { className: "neo-gallery-lt-preview-img" });
+    const previewCaption = $el("div", { className: "neo-gallery-lt-preview-caption" });
+    const previewBox = $el("div", { className: "neo-gallery-lt-preview" }, [previewImg, previewCaption]);
+    previewBox.style.display = "none";
+
+    function setStatus(state, text) {
+        statusBox.innerHTML = "";
+        if (state === "idle") {
+            statusBox.appendChild($el("span", { className: "neo-gallery-story-hint", textContent: text }));
+        } else if (state === "running") {
+            statusBox.appendChild($el("div", { className: "neo-gallery-cs-running" }, [
+                $el("span", { className: "neo-gallery-cs-spinner" }),
+                $el("span", { textContent: text }),
+            ]));
+        } else if (state === "success") {
+            statusBox.appendChild($el("div", { className: "neo-gallery-rp-result", textContent: text }));
+        } else if (state === "error") {
+            statusBox.appendChild($el("span", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: text }));
+        }
+    }
+
+    async function run() {
+        const trigger = triggerInput.value.trim();
+        if (!trigger) { setStatus("error", "请输入触发词"); return; }
+        busy = true;
+        let lastMeta = null;
+        try {
+            const resp = await fetch("/neo_gallery/tag_dir", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dir: dirPath, trigger_word: trigger, standardize: stdCheck.checked }),
+            });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.error || `HTTP ${resp.status}`);
+            }
+            // SSE 流式消费：progress 帧更新状态行，meta 帧定最终状态
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
+                for (const line of lines) {
+                    if (!line.startsWith("data: ")) continue;
+                    const data = line.slice(6);
+                    if (data === "[DONE]") break;
+                    if (data.startsWith("[ERROR]")) throw new Error(data.slice("[ERROR]".length).trim());
+                    let parsed;
+                    try { parsed = JSON.parse(data); } catch { continue; }
+                    if (parsed.meta) { lastMeta = parsed.meta; continue; }
+                    const p = parsed.progress;
+                    if (!p) continue;
+                    if (p.phase === "standardize") {
+                        const n = (p.converted || []).length + (p.renamed || []).length;
+                        setStatus("running", `标准化目录：已处理 ${n} 个文件` + (p.backup ? `，原件已备份到 ${p.backup}` : ""));
+                    } else {
+                        const mark = p.status === "ok" ? "✓" : "✗";
+                        setStatus("running", `打标 ${p.index}/${p.total} · ${p.file} ${mark}`);
+                        // 实时预览当前图片与标签，随下一帧自动切换
+                        previewBox.style.display = "";
+                        previewImg.src = `/neo_gallery/thumbnail?filename=${encodeURIComponent(p.file)}&subfolder=${encodeURIComponent(dirPath)}&size=400`;
+                        previewCaption.textContent = p.status === "ok" ? (p.caption || "") : `打标失败：${p.error || ""}`;
+                    }
+                }
+            }
+            if (lastMeta && lastMeta.status === "error") throw new Error(lastMeta.error);
+            if (lastMeta) {
+                const failed = lastMeta.failed || [];
+                setStatus(failed.length ? "error" : "success",
+                    `打标完成 ${lastMeta.done}/${lastMeta.total}` +
+                    (failed.length ? `，${failed.length} 张失败：${failed.map((f) => f.file).join("、")}` : ""));
+                if (!failed.length) {
+                    actionToast({ severity: "success", summary: "LoRA 打标完成", detail: `已写入 ${lastMeta.done} 个标签文件` });
+                } else {
+                    actionToast({ severity: "warning", summary: "部分图片打标失败", detail: `${failed.length}/${lastMeta.total} 失败` });
+                }
+            }
+            // 重显当前目录，让重命名后的文件与新 .txt 立即可见
+            const [source, ...segs] = dirPath.split("/");
+            if (typeof gallery.showDirectoryStructure === "function") {
+                await gallery.showDirectoryStructure(source, segs);
+            }
+        } catch (err) {
+            setStatus("error", err.message || String(err));
+        } finally {
+            busy = false;
+        }
+    }
+    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-lt-modal-overlay" });
+    const modal = $el("div", {
+        className: "neo-gallery-story-modal",
+        onclick: e => e.stopPropagation(),
+    }, [
+        $el("div", { className: "neo-gallery-story-titlebar" }, [
+            $el("span", { className: "neo-gallery-story-title", textContent: "LoRA 打标" }),
+            $el("span", { className: "neo-gallery-story-close", textContent: "×", onclick: close }),
+        ]),
+        $el("div", { className: "neo-gallery-lt-dir", title: dirPath, textContent: dirPath }),
+        $el("div", { className: "neo-gallery-lt-trigger-row" }, [
+            $el("span", { className: "neo-gallery-lt-label", textContent: "触发词" }),
+            triggerInput,
+        ]),
+        stdRow,
+        previewBox,
+        statusBox,
+        $el("div", { className: "neo-gallery-story-actions" }, [
+            $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close }),
+            $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "开始打标", onclick: run }),
+        ]),
+    ]);
+    overlay.onclick = () => close();
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    setStatus("idle", "输入触发词后点「开始打标」，每张图片会写入标准化标签 .txt");
+    // preflight：图片数 + 建议触发词（文件夹名拼音首字母），失败不阻塞
+    fetch(`/neo_gallery/tag_preflight?dir=${encodeURIComponent(dirPath)}`)
+        .then((r) => r.json())
+        .then((data) => {
+            if (typeof data.image_count === "number") {
+                setStatus("idle", `${data.image_count} 张图片 · 输入触发词后点「开始打标」`);
+            }
+            if (data.suggested_trigger && !triggerInput.value.trim()) {
+                triggerInput.value = data.suggested_trigger;
+            }
+        })
+        .catch(() => {});
+
+    document.addEventListener("keydown", onKey);
+}
+
+
+
+
 /** 图片编辑弹窗：以卡片原图为参考，用所选生图/编辑技能 + 用户输入的编辑指令生成新图。
  * 默认 Qwen Image 2.1，可在下拉中切换其他 image_gen 类技能。 */
 export function openImageEditDialog(gallery, image, subfolder) {

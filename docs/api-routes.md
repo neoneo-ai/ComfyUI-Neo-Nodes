@@ -22,6 +22,16 @@
 | POST | `/neo_gallery/delete` | 删除素材（presets 只读保护） |
 | POST | `/neo_gallery/clear_thumbnails` | 清空缩略图缓存 |
 
+## lora_tag.py — LoRA 打标
+
+仅可写来源（Input / 用户自定义目录）的叶子图片目录可用；HEIC/HEIF 转换依赖可选的 `pillow-heif`。
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/neo_gallery/tag_preflight` | 目录校验 + 图片数 + 建议触发词（文件夹名全拼连写，过短时随机非词兜底） |
+| POST | `/neo_gallery/tag_dir` | 批量打标（SSE 进度）：可选先标准化目录（整目录备份到 `<目录>.bak` + HEIC→PNG + `001<ext>`... 顺序编号），逐张调 `lora_tag` 任务 skill 写同名 `.txt` |
+
+
 ## gallery_lora.py — Civitai LORA
 
 | 方法 | 路由 | 说明 |

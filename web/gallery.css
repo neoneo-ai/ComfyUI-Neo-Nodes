@@ -1923,6 +1923,98 @@ Accordion Section Buttons (Clear)
     background: rgba(255, 193, 7, 1);
 }
 
+/* LoRA tagging ⋯ button on writable leaf dir cards */
+.neo-gallery-card-dir-menu-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 4;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(100, 116, 139, 0.85);
+    color: #fff;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.neo-gallery-category-card:hover .neo-gallery-card-dir-menu-btn {
+    opacity: 1;
+}
+
+.neo-gallery-card-dir-menu-btn:hover {
+    background: rgba(100, 116, 139, 1);
+}
+
+/* LoRA tagging dialog */
+.neo-gallery-lt-dir {
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 4px 16px 0;
+    word-break: break-all;
+}
+
+.neo-gallery-lt-trigger-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px 0;
+}
+
+.neo-gallery-lt-label {
+    font-size: 13px;
+    color: #cbd5e1;
+    white-space: nowrap;
+}
+
+.neo-gallery-lt-trigger {
+    flex: 1;
+    min-height: auto;
+    height: 34px;
+}
+
+.neo-gallery-lt-std-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px 0;
+    font-size: 13px;
+    color: #cbd5e1;
+    cursor: pointer;
+}
+
+.neo-gallery-lt-preview {
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px 0;
+}
+
+.neo-gallery-lt-preview-img {
+    width: 140px;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #1e293b;
+    flex-shrink: 0;
+}
+
+.neo-gallery-lt-preview-caption {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: #cbd5e1;
+    line-height: 1.5;
+    word-break: break-all;
+    overflow-y: auto;
+    max-height: 140px;
+}
+
 /* Civitai bookmark card: remote cover image at natural ratio */
 .neo-gallery-civitai-card .neo-gallery-card-cover-wrapper img {
     width: 100%;

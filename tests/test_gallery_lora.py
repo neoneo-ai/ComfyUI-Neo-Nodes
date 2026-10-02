@@ -44,7 +44,7 @@ gallery_lora = _load("gallery_lora")
 
 
 class PendingSubdirTests(unittest.TestCase):
-    """待同步目录卡片：目录名对不上 / 有待同步 Lora / 全部失败 / 已缓存 / 主开关关。"""
+    """待同步目录卡片：目录不存在（忽略）/ 有待同步 Lora / 全部失败 / 已缓存 / 主开关关。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="neo_lora_pending_")
@@ -67,13 +67,10 @@ class PendingSubdirTests(unittest.TestCase):
         self._setup({"civitai_lora_enabled": False, "lora_sync_dirs": ["Qwen"], "civitai_api_key": "k"}, {})
         self.assertEqual(gallery_lora._lora_pending_subdirs(), {})
 
-    def test_dir_name_matching_no_lora_reports_empty(self):
-        # 设置写 "Qwen"，loras 目录里只有 QwenImage2.1 → 不能说「正在获取」，要说清楚
+    def test_dir_matching_no_lora_is_ignored(self):
+        # 设置写 "Qwen"，loras 目录里只有 QwenImage2.1（被改名/写错）→ 忽略，不生成状态卡
         self._setup({"civitai_lora_enabled": True, "lora_sync_dirs": ["Qwen"], "civitai_api_key": "k"}, {})
-        out = gallery_lora._lora_pending_subdirs()
-        self.assertEqual(list(out), ["Qwen"])
-        self.assertEqual(out["Qwen"]["civitai"]["status"], "empty")
-        self.assertIn("Qwen", out["Qwen"]["civitai"]["error"])
+        self.assertEqual(gallery_lora._lora_pending_subdirs(), {})
 
     def test_pending_dir_keeps_loading_state(self):
         self._setup({"civitai_lora_enabled": True, "lora_sync_dirs": ["QwenImage2.1"], "civitai_api_key": "k"},

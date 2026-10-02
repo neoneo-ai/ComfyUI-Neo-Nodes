@@ -6,7 +6,7 @@ import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
 import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform, applyMediaCardRatio } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
-import { buildGenerationMenuItems, openReversePromptDialog } from "./gallery-gen.js";
+import { buildGenerationMenuItems, openReversePromptDialog, openLoraTagDialog } from "./gallery-gen.js";
 import { copyGalleryToInput } from "./media-transfer.js";
 import { openDirectorEditor } from "./director.js";
 
@@ -23,10 +23,6 @@ function _waveformKey(filename, subfolder) {
 export function civitaiBadge(civitai) {
     if (civitai && civitai.needs_api_key) {
         return { text: "需要配置 C 站 API KEY", cls: "status-pending", title: "" };
-    }
-    if (civitai && civitai.status === 'empty') {
-        // 设置里的同步目录名在 loras 目录里对不上：说清楚，不要一直转「Fetching」
-        return { text: "同步目录里没有 Lora", cls: "status-failed", title: civitai.error || "" };
     }
     if (civitai && (civitai.status === 'failed' || civitai.status === 'not_found')) {
         const err = civitai.error || "";
@@ -359,6 +355,20 @@ export class GalleryCard {
             card.appendChild(loraBtn);
         }
 
+        // LoRA 打标：可写的叶子图片目录（含图片）显示 ⋯ 扩展按钮。
+        const dirPath = [parentDir, ...fullPath].join("/");
+        if (subdirData && subdirData.image_count > 0 && !this._isReadOnlySource(fullPath.join("/"), subdirData.source)) {
+            const tagBtn = $el("div", {
+                className: "neo-gallery-card-dir-menu-btn",
+                title: "LoRA 打标 / 目录标准化",
+                onclick: (e) => {
+                    e.stopPropagation();
+                    this._showDirMenu(gallery, subdirName, dirPath, tagBtn);
+                }
+            }, ["⋯"]);
+            card.appendChild(tagBtn);
+        }
+
         card.appendChild(typeBadge);
         card.appendChild(coverWrapper);
         card.appendChild(info);
@@ -550,6 +560,11 @@ export class GalleryCard {
             }, [selectedCount > 0 ? `\uD83D\uDDD1\uFE0F 删除已选素材（${selectedCount}）` : "\uD83D\uDDD1\uFE0F 删除"]) : null
         ].filter(Boolean));
 
+        this._attachPopupMenu(menu, anchor);
+    }
+
+    /** 弹出菜单定位（优先锚点右侧、放不下回退下方）+ 点击外部 / Esc 关闭。 */
+    _attachPopupMenu(menu, anchor) {
         document.body.appendChild(menu);
         const rect = (anchor && anchor.getBoundingClientRect()) || { right: 0, bottom: 0 };
         const mRect = menu.getBoundingClientRect();
@@ -581,6 +596,27 @@ export class GalleryCard {
         };
         const origRemove = menu.remove.bind(menu);
         menu.remove = () => { if (menu._cleanup) menu._cleanup(); origRemove(); };
+    }
+
+    /** 目录卡 ⋯ 菜单：LoRA 打标（批量生成标签 .txt，可选先自动标准化目录）。 */
+    _showDirMenu(gallery, dirName, dirPath, anchor) {
+        this._removeCollectMenu();
+        const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
+            $el("div", { className: "neo-gallery-collect-title" }, [
+                $el("span", { className: "neo-gallery-collect-name", textContent: dirName })
+            ]),
+            $el("div", {
+                className: "neo-gallery-collect-path",
+                title: dirPath,
+                textContent: dirPath
+            }),
+            $el("div", {
+                className: "neo-gallery-collect-item",
+                title: "为目录内每张图片生成标准化标签 .txt，可选先转 HEIC 为 PNG 并顺序编号",
+                onclick: () => { this._removeCollectMenu(); openLoraTagDialog(gallery, dirPath); }
+            }, ["🏷️ LoRA 打标"])
+        ]);
+        this._attachPopupMenu(menu, anchor);
     }
 
     // ====== Image Element ======

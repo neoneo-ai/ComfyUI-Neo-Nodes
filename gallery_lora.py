@@ -260,9 +260,9 @@ def _lora_pending_subdirs() -> dict:
 
     The gallery UI shows these as status cards even before the auto-cache worker
     writes the first example, so a configured dir is never silently missing from
-    the Lora section. The card must tell the truth: a dir name that matches no
-    registered lora (typo in settings) or a dir whose loras all failed must not
-    keep showing "Fetching from Civitai...".
+    the Lora section. A configured dir that matches no lora on disk (renamed or
+    mistyped in settings) is ignored — it gets no card. A dir whose loras failed
+    must not keep showing "Fetching from Civitai...".
     """
     settings = _load_settings()
     if not settings.get("civitai_lora_enabled"):
@@ -274,16 +274,13 @@ def _lora_pending_subdirs() -> dict:
     for d in selected:
         if not d:
             continue
+        loras = _collect_selected_loras([d])
+        if not loras:
+            # 目录在 loras 里已不存在（被改名 / 设置里写错）：忽略，不生成状态卡
+            continue
         first = d.split("/")[0]
         target = LORA_CACHE_DIR / first
         if target.exists() and _has_media_recursive(target):
-            continue
-        loras = _collect_selected_loras([d])
-        if not loras:
-            # 目录名在 loras 目录里对不上（多半是设置里写错）：不是「正在获取」，直接说明问题
-            pending[first] = {"pending": True,
-                              "civitai": {"status": "empty",
-                                          "error": f"同步目录 '{d}' 下没有 Lora：请检查设置里的目录名"}}
             continue
         failed = next((index.get(rel) or {} for rel in loras
                        if (index.get(rel) or {}).get("status") == "failed"), None)

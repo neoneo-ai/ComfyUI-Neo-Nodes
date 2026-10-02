@@ -123,14 +123,8 @@ test("openGallerySidebar：总是打开侧栏并导航，已打开时不收起",
     delete app.neoGallery;
 });
 
-test("civitaiBadge：同步目录名匹配不到 Lora 时给出可行动提示，而不是一直 Fetching", async () => {
+test("civitaiBadge：缺 KEY / 连不上 / 未命中 / 仍在获取", async () => {
     const { civitaiBadge } = await import("../../web/gallery-card.js");
-
-    // 设置里的目录名对不上（如写了 Qwen，实际是 QwenImage2.1）→ 说清楚，别一直转圈
-    const empty = civitaiBadge({ status: "empty", error: "同步目录 'Qwen' 下没有 Lora：请检查设置里的目录名" });
-    assert.equal(empty.text, "同步目录里没有 Lora");
-    assert.equal(empty.cls, "status-failed");
-    assert.match(empty.title, /Qwen/);
 
     // 既有语义不变：缺 KEY / 连不上 / 未命中 / 仍在获取
     assert.equal(civitaiBadge({ needs_api_key: true }).text, "需要配置 C 站 API KEY");

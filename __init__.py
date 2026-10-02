@@ -7,6 +7,9 @@ if __package__ not in (None, ""):
     # Import gallery module to register routes (must be imported for route registration)
     from . import gallery
 
+    # Import LoRA tagging module (gallery leaf-dir batch captioning; depends on gallery + llm)
+    from . import lora_tag
+
     # Import bookmark module (local / Civitai bookmark routes; depends on gallery helpers)
     from . import bookmark
 
