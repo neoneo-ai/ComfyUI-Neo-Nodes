@@ -3,12 +3,23 @@
 总入口见 [../Developer.md](../Developer.md)。
 
 ## 发布
-
+### git action 方式
 - Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）
 - `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，通过 `comfy-org/publish-node-action` 发布至 ComfyUI Registry（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）
 
-或
-comfy node publish  输入API TOKEN
+1. 改版本号（比如改成 1.0.1）
+#    编辑 pyproject.toml: version = "1.0.1"
+2. 提交
+git add pyproject.toml
+git commit -m "Bump version to 1.0.1"
+3. 打 tag（指向这个新 commit）
+git tag v1.0.1
+4. 推送代码 + tag
+git push origin main v1.0.1
+
+
+### comfy cli方式
+ comfy node publish  输入API TOKEN
 
 ## 离线工具
 
