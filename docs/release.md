@@ -7,6 +7,9 @@
 - Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）
 - `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，通过 `comfy-org/publish-node-action` 发布至 ComfyUI Registry（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）
 
+或
+comfy node publish  输入API TOKEN
+
 ## 离线工具
 
 `tools/` 下的脚本用于构建/部署素材预设，不在 ComfyUI 运行时加载：
