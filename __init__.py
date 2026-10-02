@@ -124,6 +124,13 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] studio 路由注册失败（Neo Studio 整片生成不可用）: {e}")
 
+    # Neo Studio Backyard：/neo_backyard/* 路由（Gallery 预处理 + OSS 上传管理）；
+    # 独立页面 /neo-studio-backyard，配置存 configs/backyard_oss.json。
+    try:
+        from . import backyard  # noqa: F401
+    except Exception as e:
+        print(f"[NeoNodes] backyard 路由注册失败（Backyard 管理不可用）: {e}")
+
     # Neo Grid Split：宫格图拆分节点，一张分镜宫格图 → 各格 IMAGE（行优先）+ 原图内嵌提示词。
     # 复用 grid_split.py 纯像素核心；导入失败时优雅降级。
     GRID_SPLIT_MAPPINGS = {}

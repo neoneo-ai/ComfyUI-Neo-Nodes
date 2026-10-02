@@ -21,5 +21,6 @@ recipes/custom/
 recipes/.thumbs/
 skills/custom/
 configs/skill_overrides/
+configs/backyard_oss.json
 tools/output/
 node_modules/
