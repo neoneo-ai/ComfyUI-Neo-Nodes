@@ -48,6 +48,16 @@ sys.modules["server"] = _server
 _comfy = types.ModuleType("comfy")
 _comfy_cli = types.ModuleType("comfy.cli_args")
 _comfy_cli.args = types.SimpleNamespace(listen="127.0.0.1", port=8188, tls_keyfile=None, tls_certfile=None)
+
+
+class _LatentPreviewMethod:
+    NoPreviews = "none"
+    Auto = "auto"
+    Latent2RGB = "latent2rgb"
+    TAESD = "taesd"
+
+
+_comfy_cli.LatentPreviewMethod = _LatentPreviewMethod
 sys.modules["comfy"] = _comfy
 sys.modules["comfy.cli_args"] = _comfy_cli
 _comfy_pe = types.ModuleType("comfy.patcher_extension")
@@ -72,7 +82,24 @@ sys.modules["comfy.ldm.flux.layers"] = _comfy_flux_layers
 
 _comfy_exec = types.ModuleType("comfy_execution")
 _comfy_exec_prog = types.ModuleType("comfy_execution.progress")
-_comfy_exec_prog.get_progress_state = lambda: types.SimpleNamespace(prompt_id="", nodes={})
+
+
+class _ProgressHandler:
+    def __init__(self, name):
+        self.name = name
+        self.enabled = True
+
+
+class _ProgressRegistry:
+    prompt_id = ""
+    nodes = {}
+    handlers = {}
+
+
+_progress_registry = _ProgressRegistry()
+_comfy_exec_prog.ProgressHandler = _ProgressHandler
+_comfy_exec_prog.get_progress_state = lambda: _progress_registry
+_comfy_exec_prog.add_progress_handler = lambda h: _progress_registry.handlers.__setitem__(h.name, h)
 sys.modules["comfy_execution"] = _comfy_exec
 sys.modules["comfy_execution.progress"] = _comfy_exec_prog
 
@@ -176,6 +203,7 @@ _folder_paths.get_full_path = lambda folder, name: None
 _comfy_mm = types.ModuleType("comfy.model_management")
 _comfy_mm.vae_device = lambda *a, **k: torch.device("cpu")
 _comfy_mm.vae_dtype = lambda device, allowed=None: torch.float32
+_comfy_mm.get_torch_device = lambda: torch.device("cuda")
 _comfy_mm.unload_all_models = lambda: None      # 重生成前先卸载驻留模型（用例里只验证调用与顺序）
 _comfy_mm.soft_empty_cache = lambda force=False: None
 

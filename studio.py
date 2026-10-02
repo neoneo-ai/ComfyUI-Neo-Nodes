@@ -36,6 +36,7 @@ STATUS_EVENT = "rs.director.status"
 
 _TASKS: dict = {}
 _WATCHERS: dict = {}
+_NVML_READY = False
 
 
 def _safe_name(text) -> str:
@@ -259,14 +260,49 @@ async def studio_version_route(request):
 
 
 
+@PromptServer.instance.routes.get("/neo_studio/mem_stats")
+async def mem_stats_route(request):
+    """驱动级显存占用（含全部进程）。/system_stats 的 vram_free 把 torch reserved 空闲重复计入，不能用。"""
+    import comfy.model_management
+    stats = _driver_vram(comfy.model_management.get_torch_device())
+    if stats is None:
+        return web.json_response({"success": False})
+    free, total = stats
+    return web.json_response({"success": True, "vram_total": total, "vram_used": total - free})
+
+
+def _driver_vram(device):
+    """驱动级 (free, total)：GPU 真实空闲/总量，含所有进程占用；非 CUDA 设备返回 None。
+
+    优先 NVML（与 nvidia-smi 同源）：实测 Blackwell 上 torch.cuda.mem_get_info 会少报十几 GB。
+    """
+    global _NVML_READY
+    try:
+        import pynvml
+        if not _NVML_READY:
+            pynvml.nvmlInit()
+            _NVML_READY = True
+        index = getattr(device, "index", None)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(index if index is not None else 0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        return info.total - info.used, info.total
+    except Exception:
+        import torch
+        try:
+            return torch.cuda.mem_get_info(device)
+        except Exception:
+            return None
+
+
 @PromptServer.instance.routes.post("/neo_studio/clear_memory")
 async def clear_memory_route(request):
     """卸载所有已加载模型并清理显存缓存。"""
     import comfy.model_management
     device = comfy.model_management.get_torch_device()
-    vram_before = comfy.model_management.get_free_memory(device)
+    before = _driver_vram(device)
     comfy.model_management.unload_all_models()
     comfy.model_management.soft_empty_cache(force=True)
-    vram_after = comfy.model_management.get_free_memory(device)
-    return web.json_response({"success": True, "freed_bytes": max(0, vram_after - vram_before)})
+    after = _driver_vram(device)
+    freed = max(0, after[0] - before[0]) if before is not None and after is not None else 0
+    return web.json_response({"success": True, "freed_bytes": freed})
 

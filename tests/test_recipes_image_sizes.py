@@ -196,6 +196,10 @@ _util.PrefixFilter = _PF
 sys.modules[f"{_PKG}.util"] = _util
 setattr(_pkg, "util", _util)
 
+_llm = types.ModuleType(f"{_PKG}.llm")
+sys.modules[f"{_PKG}.llm"] = _llm
+setattr(_pkg, "llm", _llm)
+
 recipes = _load("recipes", "recipes.py")
 
 

@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from test_h3_video_director import (   # noqa: E402  —— 复用同一套桩与工具
     _OUTPUT_DIR,
+    _comfy_mm,
     _folder_paths,
     _load,
     _server,
@@ -336,6 +337,72 @@ class LatestPreviewTests(_RecipeCase):
         self.assertEqual(len(self.h3p._LATEST), 8)
         self.assertNotIn("n0", self.h3p._LATEST)
         self.assertIn("n9", self.h3p._LATEST)
+
+
+class MemStatsTests(unittest.TestCase):
+    """mem_stats / clear_memory 走驱动级显存（含全部进程），不依赖 torch 真实设备。"""
+
+    GB = 1024 ** 3
+
+    def _run(self, fn, vram):
+        loop = asyncio.new_event_loop()
+        try:
+            with patch.object(studio, "_driver_vram", lambda device: vram):
+                return loop.run_until_complete(fn(None))
+        finally:
+            loop.close()
+
+    def test_mem_stats(self):
+        r = self._run(studio.mem_stats_route, (4 * self.GB, 16 * self.GB))
+        self.assertEqual(json.loads(r.body), {"success": True, "vram_total": 16 * self.GB, "vram_used": 12 * self.GB})
+
+    def test_mem_stats_unavailable(self):
+        r = self._run(studio.mem_stats_route, vram=None)
+        self.assertEqual(json.loads(r.body), {"success": False})
+
+    def test_clear_memory_reports_driver_freed(self):
+        seq = iter([(4 * self.GB, 16 * self.GB), (10 * self.GB, 16 * self.GB)])
+        loop = asyncio.new_event_loop()
+        try:
+            with patch.object(studio, "_driver_vram", lambda device: next(seq)), \
+                 patch.object(_comfy_mm, "unload_all_models") as unload, \
+                 patch.object(_comfy_mm, "soft_empty_cache") as empty:
+                r = loop.run_until_complete(studio.clear_memory_route(None))
+        finally:
+            loop.close()
+        data = json.loads(r.body)
+        self.assertEqual(data["freed_bytes"], 6 * self.GB)
+        unload.assert_called_once_with()
+        empty.assert_called_once_with(force=True)
+
+    def test_clear_memory_no_driver_stats(self):
+        r = self._run(studio.clear_memory_route, vram=None)
+        self.assertEqual(json.loads(r.body), {"success": True, "freed_bytes": 0})
+
+
+class DriverVramTests(unittest.TestCase):
+    """_driver_vram：优先 NVML（与 nvidia-smi 同源），不可用时回退 torch。"""
+
+    GB = 1024 ** 3
+
+    def test_prefers_nvml(self):
+        fake = types.ModuleType("pynvml")
+        fake.nvmlInit = lambda: None
+        fake.nvmlDeviceGetHandleByIndex = lambda i: ("handle", i)
+        fake.nvmlDeviceGetMemoryInfo = lambda h: types.SimpleNamespace(used=4 * self.GB, total=16 * self.GB)
+        with patch.dict(sys.modules, {"pynvml": fake}), \
+             patch.object(studio, "_NVML_READY", False):
+            self.assertEqual(studio._driver_vram("cuda:0"), (12 * self.GB, 16 * self.GB))
+
+    def test_falls_back_to_torch(self):
+        with patch.dict(sys.modules, {"pynvml": None}), \
+             patch("torch.cuda.mem_get_info", return_value=(8 * self.GB, 16 * self.GB)):
+            self.assertEqual(studio._driver_vram("cuda:0"), (8 * self.GB, 16 * self.GB))
+
+    def test_unavailable_returns_none(self):
+        with patch.dict(sys.modules, {"pynvml": None}), \
+             patch("torch.cuda.mem_get_info", side_effect=RuntimeError("no cuda")):
+            self.assertIsNone(studio._driver_vram("cuda:0"))
 
 
 if __name__ == "__main__":

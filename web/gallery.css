@@ -1547,11 +1547,19 @@ Accordion Section Buttons (Clear)
     gap: 6px;
 }
 
+.neo-gallery-dir-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #999;
+    margin-bottom: 8px;
+}
+
 .neo-gallery-dir-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
+    gap: 8px;
+    padding: 6px 10px;
     background-color: #1a1a1a;
     border-radius: 4px;
     border: 1px solid #333;
@@ -1560,11 +1568,58 @@ Accordion Section Buttons (Clear)
 .neo-gallery-dir-path {
     color: #ccc;
     font-size: 12px;
+    font-family: "Cascadia Mono", Consolas, monospace;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
-    margin-right: 8px;
+    min-width: 0;
+}
+
+.neo-gallery-dir-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.neo-gallery-dir-ctl-btn {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #aaa;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 7px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-dir-ctl-btn:hover:not(:disabled) {
+    background-color: rgba(255, 106, 0, 0.25);
+    color: #FF9944;
+}
+
+.neo-gallery-dir-ctl-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.neo-gallery-dir-item.is-hidden {
+    opacity: 0.55;
+}
+
+.neo-gallery-dir-item.is-hidden .neo-gallery-dir-path {
+    color: #888;
+    text-decoration: line-through;
+}
+
+.neo-gallery-dir-hidden-badge {
+    font-size: 11px;
+    color: #FF9944;
+    background-color: rgba(255, 106, 0, 0.12);
+    border-radius: 3px;
+    padding: 1px 6px;
+    flex-shrink: 0;
 }
 
 .neo-gallery-dir-remove-btn {
@@ -1623,29 +1678,7 @@ Accordion Section Buttons (Clear)
     background-color: rgba(255, 106, 0, 0.3);
 }
 
-/* Bulk add area */
-.neo-gallery-dir-bulk-area {
-    padding: 12px 16px;
-}
-
-.neo-gallery-dir-textarea {
-    width: 100%;
-    padding: 8px 10px;
-    background-color: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 4px;
-    color: white;
-    font-size: 12px;
-    font-family: monospace;
-    resize: vertical;
-    outline: none;
-    box-sizing: border-box;
-}
-
-.neo-gallery-dir-textarea:focus {
-    border-color: #FF6A00;
-}
-
+/* Bulk action button (Civitai section) */
 .neo-gallery-dir-bulk-btn {
     margin-top: 8px;
     padding: 6px 14px;
@@ -1705,8 +1738,7 @@ Accordion Section Buttons (Clear)
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
+    padding: 12px 16px;
     border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 

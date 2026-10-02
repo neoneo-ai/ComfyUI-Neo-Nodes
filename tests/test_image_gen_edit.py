@@ -39,8 +39,10 @@ sys.modules["server"] = _server
 _comfy = types.ModuleType("comfy")
 _comfy_cli = types.ModuleType("comfy.cli_args")
 _comfy_cli.args = types.SimpleNamespace(listen="127.0.0.1", port=8188, tls_keyfile=None, tls_certfile=None)
+_comfy_cli.LatentPreviewMethod = types.SimpleNamespace(NoPreviews="none", Auto="auto", Latent2RGB="latent2rgb", TAESD="taesd")
 sys.modules["comfy"] = _comfy
 sys.modules["comfy.cli_args"] = _comfy_cli
+sys.modules["comfy.audio"] = types.ModuleType("comfy.audio")
 
 _comfy_pe = types.ModuleType("comfy.patcher_extension")
 _comfy_pe.WrappersMP = types.SimpleNamespace(DIFFUSION_MODEL="DIFFUSION_MODEL")
@@ -60,6 +62,24 @@ sys.modules["comfy.ldm.flux.layers"] = _comfy_flux_layers
 
 _comfy_exec = types.ModuleType("comfy_execution")
 _comfy_exec_prog = types.ModuleType("comfy_execution.progress")
+
+
+class _ProgressHandler:
+    def __init__(self, name):
+        self.name = name
+        self.enabled = True
+
+
+class _ProgressRegistry:
+    prompt_id = ""
+    nodes = {}
+    handlers = {}
+
+
+_progress_registry = _ProgressRegistry()
+_comfy_exec_prog.ProgressHandler = _ProgressHandler
+_comfy_exec_prog.get_progress_state = lambda: _progress_registry
+_comfy_exec_prog.add_progress_handler = lambda h: _progress_registry.handlers.__setitem__(h.name, h)
 _comfy_exec_prog.get_progress_state = lambda: types.SimpleNamespace(prompt_id="", nodes={})
 _comfy_exec_prog.PreviewImageTuple = tuple
 sys.modules["comfy_execution"] = _comfy_exec

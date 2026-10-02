@@ -93,15 +93,27 @@ def _get_user_custom_dirs():
     """Get all user-configured custom directory paths from settings.
 
     Input/Output dirs are auto-provided by ComfyUI, so configured duplicates
-    of them are skipped to avoid double-listing.
+    of them are skipped to avoid double-listing. Dirs hidden in the Manage
+    Directories modal stay in the config but are not listed.
     """
     dirs = []
+    hidden = set()
     try:
         settings_path = CONFIGS_DIR / "gallery_settings.json"
         if settings_path.exists():
             with open(settings_path, "r") as f:
                 settings = json.load(f)
                 user_dirs = settings.get("custom_directories", [])
+                hidden_raw = settings.get("hidden_directories", [])
+                if isinstance(hidden_raw, list):
+                    for h in hidden_raw:
+                        if not h:
+                            continue
+                        hidden.add(str(h).lower())
+                        try:
+                            hidden.add(str(Path(h).resolve()).lower())
+                        except OSError:
+                            pass
                 if isinstance(user_dirs, list):
                     for d in user_dirs:
                         if d and Path(d).exists():
@@ -112,9 +124,19 @@ def _get_user_custom_dirs():
                         dirs.append(p)
     except Exception:
         pass
+
+    def _listed(d):
+        s = str(d).lower()
+        try:
+            return s not in hidden and str(d.resolve()).lower() not in hidden
+        except OSError:
+            return s not in hidden
+
     system_paths = {str(info["path"]).lower() for info in _get_system_dirs()}
     if system_paths:
         dirs = [d for d in dirs if str(d.resolve()).lower() not in system_paths]
+    if hidden:
+        dirs = [d for d in dirs if _listed(d)]
     return dirs
 
 
@@ -2585,6 +2607,35 @@ async def save_gallery_settings(request):
             if remove_path in dirs:
                 dirs.remove(remove_path)
             current_settings["custom_directories"] = dirs
+            hidden_dirs = current_settings.get("hidden_directories", [])
+            if isinstance(hidden_dirs, list) and remove_path in hidden_dirs:
+                hidden_dirs.remove(remove_path)
+                current_settings["hidden_directories"] = hidden_dirs
+
+        elif action == "move":
+            move_path = data.get("path", "").strip()
+            direction = data.get("direction", "")
+            dirs = current_settings.get("custom_directories", [])
+            if move_path in dirs and direction in ("up", "down"):
+                i = dirs.index(move_path)
+                j = i - 1 if direction == "up" else i + 1
+                if 0 <= j < len(dirs):
+                    dirs[i], dirs[j] = dirs[j], dirs[i]
+            current_settings["custom_directories"] = dirs
+
+        elif action == "set_hidden":
+            hide_path = data.get("path", "").strip()
+            hidden = bool(data.get("hidden"))
+            dirs = current_settings.get("custom_directories", [])
+            if hide_path in dirs:
+                hidden_dirs = current_settings.get("hidden_directories", [])
+                if not isinstance(hidden_dirs, list):
+                    hidden_dirs = []
+                if hidden and hide_path not in hidden_dirs:
+                    hidden_dirs.append(hide_path)
+                elif not hidden and hide_path in hidden_dirs:
+                    hidden_dirs.remove(hide_path)
+                current_settings["hidden_directories"] = hidden_dirs
 
         elif action == "list":
             pass
@@ -2614,6 +2665,7 @@ async def save_gallery_settings(request):
                     )
                 current_settings["custom_directories"] = [custom_dir]
                 current_settings.pop("custom_directory", None)
+                current_settings["hidden_directories"] = []
 
         _save_settings(current_settings)
         if action == "save_civitai":

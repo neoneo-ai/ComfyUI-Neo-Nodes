@@ -483,15 +483,17 @@ function setMemItem(el, used, total) {
 }
 
 async function pollMemStats() {
+    const vramEl = document.getElementById("ns-vram");
+    const ramEl = document.getElementById("ns-ram");
+    try {
+        // 驱动级显存占用（含全部进程）；/system_stats 的 vram_free 把 torch reserved 空闲重复计入，不准
+        const r = await api.fetchApi("/neo_studio/mem_stats");
+        const data = await r.json();
+        if (data?.success) setMemItem(vramEl, data.vram_used, data.vram_total);
+    } catch { /* 网络抖动忽略 */ }
     try {
         const r = await api.fetchApi("/system_stats");
         const data = await r.json();
-        const vramEl = document.getElementById("ns-vram");
-        const ramEl = document.getElementById("ns-ram");
-        if (data?.devices?.length) {
-            const d = data.devices[0];
-            setMemItem(vramEl, (d.vram_total || 0) - (d.vram_free || 0), d.vram_total);
-        }
         if (data?.system) {
             setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total);
         }
