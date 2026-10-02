@@ -1,5 +1,7 @@
 # ComfyUI-Neo-Nodes
 
+> 📄 English: [README_EN.md](README_EN.md)
+
 一个 ComfyUI 自定义节点插件：提示词管理与 AI 增强（支持推理/thinking 模型），内置 Krea2 生图（文生图 / 参考图四视图）、素材浏览与图片或提示词一键发送、图片反推、配方保存和一键还原，以及工作流路径自动修复。
 
 
