@@ -578,7 +578,8 @@ class TestSaveComboSkill(unittest.TestCase):
                   "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{PROMPT}}"}}}
             with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
                 json.dump(wf, f)
-        cfg = {"model": model, "text_encoder": "t5.safetensors", "steps": 25, "loras": []}
+        cfg = {"model": model, "text_encoder": "t5.safetensors", "steps": 25, "loras": [],
+               "default_ratio": "1:1", "base_resolution": 1280}
         with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
             json.dump(cfg, f)
         return d
@@ -623,6 +624,23 @@ class TestSaveComboSkill(unittest.TestCase):
         _, _, cfg = self._read_files(res["id"])
         self.assertEqual(cfg["model"], "krea2.safetensors", "未选主模型时沿用源技能模型")
         self.assertEqual(cfg["loras"], [{"name": "lora_a.safetensors", "strength": 1.0, "ref_only": False}])
+
+    def test_ratio_and_edge_saved_when_selected(self):
+        self._make_source()
+        res = self.skill_mod.save_combo_as_skill(
+            "src-t2i", "m.safetensors", [], ratio="16:9", base_resolution=2048)
+        self.assertTrue(res["success"])
+        _, _, cfg = self._read_files(res["id"])
+        self.assertEqual(cfg["default_ratio"], "16:9")
+        self.assertEqual(cfg["base_resolution"], 2048)
+
+    def test_empty_ratio_edge_keeps_source(self):
+        self._make_source()
+        res = self.skill_mod.save_combo_as_skill("src-t2i", "m.safetensors", [])
+        self.assertTrue(res["success"])
+        _, _, cfg = self._read_files(res["id"])
+        self.assertEqual(cfg.get("default_ratio"), "1:1", "未选比例时沿用源技能")
+        self.assertEqual(cfg.get("base_resolution"), 1280, "未选最长边时沿用源技能")
 
     def test_id_conflict_gets_suffix(self):
         self._make_source()

@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, fetchLog, sleep, click, keydown, inputText, changeValue, fire } from "./setup.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
+import { app, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目录", async () => {
     resetEnv();
@@ -11,7 +12,8 @@ test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目�
     const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
 
     const dirCalls = [];
-    const gallery = { showDirectoryStructure: (source, segs) => dirCalls.push([source, segs]) };
+    resetSidebarTab();
+    app.neoGallery = { showDirectoryStructure: (source, segs) => dirCalls.push([source, segs]) };
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
@@ -27,7 +29,7 @@ test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目�
         images: [{ filename: "krea2_00001_.png", subfolder: "NeoAgent/2026-10-01", url: "/g.png" }],
     }));
 
-    openGenMaterialDialog(gallery);
+    openGenMaterialDialog({ deleteItem: () => Promise.resolve(true) });
     const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
     assert.ok(overlay, "应弹出生成素材弹窗");
 
@@ -59,10 +61,13 @@ test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目�
     assert.ok(btns().includes("打开输出目录"), "成功后应有「打开输出目录」按钮");
     assert.ok(btns().includes("再生成"), "成功后应保留「再生成」按钮");
 
-    // 点「打开输出目录」→ 跳到 Output/NeoAgent/<日期>
+    // 点「打开输出目录」→ 打开左侧素材栏并跳到 Output/NeoAgent/<日期>，窗口保持打开
     click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "打开输出目录"));
+    assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, "neo.gallery", "打开左侧素材面板");
     assert.deepEqual(dirCalls, [["Output", ["NeoAgent", "2026-10-01"]]]);
+    assert.equal(document.querySelector(".neo-gallery-gm-modal-overlay"), overlay, "打开输出目录后窗口不关闭");
     assert.equal(genCount, 1);
+    delete app.neoGallery;
 });
 
 test("生成素材弹窗：生成中显示预览区与进度条，成功后结果图原位替换", async () => {
@@ -125,7 +130,7 @@ test("生成素材弹窗：提示词为空时不发请求", async () => {
     assert.equal(fetchLog.filter(c => c.path === "/neo_image_gen/generate").length, 0, "空提示词不应发请求");
 });
 
-test("生成素材弹窗：模型覆盖——自动不带覆盖，选主模型+LoRA 后请求体带上", async () => {
+test("生成素材弹窗：自定参数——自动不带覆盖，选主模型+LoRA 后请求体带上", async () => {
     resetEnv();
     clearRoutes();
     const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
@@ -151,9 +156,9 @@ test("生成素材弹窗：模型覆盖——自动不带覆盖，选主模型+L
     const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
     await sleep(50); // 等模型列表填充
 
-    // 默认折叠；展开后显示模型覆盖区（主模型下拉预填「自动」= 跟随设置）
+    // 默认折叠；展开后显示自定参数区（主模型下拉预填「自动」= 跟随设置）
     const toggle = overlay.querySelector(".neo-gallery-gm-model-toggle");
-    assert.ok(toggle, "应有「模型覆盖」折叠行");
+    assert.ok(toggle, "应有「自定参数」折叠行");
     click(toggle);
     const modelBox = overlay.querySelector(".neo-gallery-gm-model-box");
     assert.notEqual(modelBox.style.display, "none", "点击后应展开");
@@ -195,7 +200,64 @@ test("生成素材弹窗：模型覆盖——自动不带覆盖，选主模型+L
     assert.equal(overlay2.querySelectorAll(".rs-gen-lora-row").length, 0, "重开后无 LoRA 行");
 });
 
-test("生成素材弹窗：切换生成技能后模型覆盖同步为该技能配置的主模型 / LoRA", async () => {
+test("生成素材弹窗：自定参数——宽高比与最长边可选并写入请求体", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({
+        diffusion_models: ["krea2.safetensors"],
+        text_encoders: ["qwen3vl_4b.safetensors"],
+        vae: ["qwen_image_vae.safetensors"],
+        loras: [],
+    }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "gm_ratio", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/gm_ratio", () => jsonResponse({
+        task_id: "gm_ratio", status: "succeeded", width: 1344, height: 768,
+        images: [{ filename: "krea2_r_.png", subfolder: "NeoAgent/2026-10-01", url: "/r.png" }],
+    }));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+
+    // 展开自定参数区，验证比例与最长边下拉存在（同行）
+    click(overlay.querySelector(".neo-gallery-gm-model-toggle"));
+    const modelBox = overlay.querySelector(".neo-gallery-gm-model-box");
+    assert.notEqual(modelBox.style.display, "none", "应展开");
+    const sizeRow = modelBox.querySelector(".neo-gallery-gm-size-row");
+    const [ratioSel, edgeSel] = sizeRow.querySelectorAll("select");
+    assert.ok(ratioSel, "应有「宽高比」下拉");
+    assert.ok(edgeSel, "应有「最长边」下拉");
+    assert.equal(ratioSel.value, "", "默认态为空（跟随设置）");
+    assert.equal(edgeSel.value, "", "默认态为空（跟随设置）");
+    // 比例选项与导演编辑页同源：值纯比例、显示带中文备注
+    const ratioTexts = [...ratioSel.options].map(o => o.textContent);
+    assert.ok(ratioTexts.includes("1:1 (方形)"), "比例选项应带中文备注");
+    assert.ok(ratioTexts.includes("16:9 (宽屏)"), "比例选项应带中文备注");
+
+    // 默认态：请求体不带 ratio / edge 覆盖
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "测试图");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "生成"));
+    await sleep(80);
+    let req = fetchLog.filter(c => c.path === "/neo_image_gen/generate").at(-1);
+    assert.ok(!("default_ratio" in (req.body || {})), "默认态不应带 default_ratio");
+    assert.ok(!("base_resolution" in (req.body || {})), "默认态不应带 base_resolution");
+
+    // 选择 16:9 + 2048 → 请求体带上覆盖
+    ratioSel.value = "16:9";
+    edgeSel.value = "2048";
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "再生成"));
+    await sleep(80);
+    req = fetchLog.filter(c => c.path === "/neo_image_gen/generate").at(-1);
+    assert.equal(req.body.default_ratio, "16:9", "请求体应带所选比例");
+    assert.equal(req.body.base_resolution, 2048, "请求体应带所选最长边");
+});
+
+test("生成素材弹窗：切换生成技能后自定参数同步为该技能配置的主模型 / LoRA / 比例 / 最长边", async () => {
     resetEnv();
     clearRoutes();
     const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
@@ -210,7 +272,7 @@ test("生成素材弹窗：切换生成技能后模型覆盖同步为该技能�
     }));
     mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(
         call.query.get("skill_id") === "qwen_t2i"
-            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "style_b.safetensors", strength: 0.6 }] }
+            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "style_b.safetensors", strength: 0.6 }], default_ratio: "16:9", base_resolution: 2048 }
             : {}));
 
     openGenMaterialDialog({ showDirectoryStructure: () => {} });
@@ -222,7 +284,7 @@ test("生成素材弹窗：切换生成技能后模型覆盖同步为该技能�
     assert.equal(modelSel.value, "", "默认技能无配置 → 自动");
     assert.equal(overlay.querySelectorAll(".rs-gen-lora-row").length, 0);
 
-    // 切到 Qwen 文生图 → 覆盖同步为其配置的主模型 + LoRA
+    // 切到 Qwen 文生图 → 覆盖同步为其配置的主模型 + LoRA + 比例 + 最长边
     const skillSel = overlay.querySelector(".neo-recipes-sort");
     changeValue(skillSel, "qwen_t2i");
     await sleep(30);
@@ -231,12 +293,22 @@ test("生成素材弹窗：切换生成技能后模型覆盖同步为该技能�
     assert.ok(loraRow, "应出现技能配置的 LoRA 行");
     assert.equal(loraRow.querySelector("select").value, "style_b.safetensors");
     assert.equal(loraRow.querySelector(".rs-gen-lora-strength").value, "0.6");
+    const sizeRow = overlay.querySelector(".neo-gallery-gm-size-row");
+    const [ratioSel, edgeSel] = sizeRow.querySelectorAll("select");
+    assert.equal(ratioSel.value, "16:9", "比例同步为技能配置");
+    assert.equal(edgeSel.value, "2048", "最长边同步为技能配置");
+    assert.equal(ratioSel.options[0].textContent, "默认 (16:9 宽屏)", "「默认」选项显示技能配置的比例（带备注）");
+    assert.equal(edgeSel.options[0].textContent, "默认 (2048)", "「默认」选项显示技能配置的最长边");
 
     // 切回 → 覆盖回到自动
     changeValue(skillSel, "image_gen");
     await sleep(30);
     assert.equal(modelSel.value, "", "切回后回到自动");
     assert.equal(overlay.querySelectorAll(".rs-gen-lora-row").length, 0);
+    assert.equal(ratioSel.value, "", "切回后比例回到默认");
+    assert.equal(edgeSel.value, "", "切回后最长边回到默认");
+    assert.equal(ratioSel.options[0].textContent, "默认", "无配置时「默认」选项不带值");
+    assert.equal(edgeSel.options[0].textContent, "默认");
 });
 
 test("生成素材弹窗：成功后可删除结果图并回到 idle", async () => {
@@ -354,7 +426,13 @@ test("生成素材弹窗：选中的主模型+LoRA 组合可保存为新技能",
     loraRow.querySelector(".rs-gen-lora-strength").value = "0.8";
     assert.notEqual(saveBtn.style.display, "none", "选中主模型 + LoRA 后保存按钮应出现");
 
-    // 点保存 → 请求体带当前技能 + 主模型 + LoRA；成功后下拉选中新技能并记住
+    // 选宽高比 + 最长边 → 一并写入保存请求体
+    const sizeRow = overlay.querySelector(".neo-gallery-gm-size-row");
+    const [ratioSel, edgeSel] = sizeRow.querySelectorAll("select");
+    ratioSel.value = "16:9";
+    edgeSel.value = "2048";
+
+    // 点保存 → 请求体带当前技能 + 主模型 + LoRA + 比例 + 最长边；成功后下拉选中新技能并记住
     mockRoute("/neo_image_gen/save_combo_skill", () => jsonResponse({
         success: true, id: "qwen_image_21_style_a", name: "qwen_image_2.1-style_a",
     }));
@@ -364,6 +442,8 @@ test("生成素材弹窗：选中的主模型+LoRA 组合可保存为新技能",
     assert.equal(saveReq?.body.skill_id, "image_gen", "请求体应带当前技能");
     assert.equal(saveReq?.body.model, "qwen_image_2.1.safetensors");
     assert.deepEqual(saveReq?.body.loras, [{ name: "style_a.safetensors", strength: 0.8, ref_only: false }]);
+    assert.equal(saveReq?.body.ratio, "16:9", "请求体应带所选宽高比");
+    assert.equal(saveReq?.body.edge, "2048", "请求体应带所选最长边");
 
     const skillSel = overlay.querySelector(".neo-recipes-sort");
     assert.ok([...skillSel.options].some(o => o.value === "qwen_image_21_style_a"), "新技能应出现在下拉里");
@@ -469,7 +549,7 @@ test("生成素材弹窗：✨ 增强仿 agent quick input + output，支持选�
     assert.match(panels[0].querySelector(".rs-thinking-body").textContent, /分析主体/, "思考面板应显示 reasoning_content");
     assert.match(panels[1].querySelector(".rs-thinking-body").textContent, /生成中/, "状态行应显示流程阶段");
 
-    // 正文出现：思考面板清除、状态行保留到流结束，正文完整写入 output，quick input 被消费清空
+    // 正文出现：思考面板清除、状态行保留到流结束，正文完整写入 output，quick input 保留不自动清空
     releaseContent();
     await sleep(80);
     const remain = [...overlay.querySelectorAll(".rs-thinking")];
@@ -477,7 +557,7 @@ test("生成素材弹窗：✨ 增强仿 agent quick input + output，支持选�
     assert.ok(!outputInput.value.includes("分析主体"), "thinking 不应写入 output");
     assert.ok(!outputInput.value.includes("生成中"), "status 不应写入 output");
     assert.equal(outputInput.value, "红色陶瓷杯，白底产品图，柔和布光。");
-    assert.equal(quickInput.value, "", "增强成功后 quick input 应被消费清空");
+    assert.equal(quickInput.value, "红色陶瓷杯", "增强成功后 quick input 保留不自动清空");
     assert.equal(enhanceBtn.textContent, "✨ 增强", "完成后按钮应恢复");
 
     // 第二轮：output 已有提示词 + quick input 新指令 → 按 \n\n---\n\n 拼接（同节点）；所选增强 skill 随请求发出并被记住
@@ -495,7 +575,7 @@ test("生成素材弹窗：✨ 增强仿 agent quick input + output，支持选�
     assert.equal(enhanceBody.text, "红色陶瓷杯，白底产品图，柔和布光。\n\n---\n\n改成写实风格", "quick 新指令应与 output 已有提示词拼接");
     assert.equal(enhanceBody.skillId, "general_enhance", "skillId 取所选增强 skill");
     assert.equal(outputInput.value, "红色陶瓷杯，白底产品图，柔和布光。改为写实风格。");
-    assert.equal(quickInput.value, "", "第二轮 quick input 也应被消费");
+    assert.equal(quickInput.value, "改成写实风格", "第二轮 quick input 同样保留");
     assert.equal(localStorage.getItem("neo.gallery.gen_material.enhance_skill"), "general_enhance", "增强 skill 选择应被记住");
 
     // 失败：错误 toast（带 LLM 设置入口），output 保持原文
@@ -590,7 +670,7 @@ test("快捷输入历史只记快捷输入：✨ 增强后入史的是快捷输�
     click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "✨ 增强"));
     await sleep(80);
     assert.equal(output.value, "红色陶瓷杯，白底产品图，柔和布光，高清细节。");
-    assert.equal(quick.value, "", "增强成功后 quick input 应被消费清空");
+    assert.equal(quick.value, "红色陶瓷杯", "增强成功后 quick input 保留不自动清空");
 
     // ↑ 召回的是快捷输入内容（若误记了增强长文，这里会召回长文）
     keydown(quick, "ArrowUp");

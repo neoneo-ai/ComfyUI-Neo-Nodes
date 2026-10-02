@@ -71,6 +71,27 @@ test("clearSelection 同步清掉勾选框与选中样式（不留视觉选中�
     assert.equal(gallery._selectedItems.size, 1);
 });
 
+test("⋯ 更多操作按钮在缩略图右上角（wrapper 直接子元素），点击弹出收藏菜单", async () => {
+    resetEnv();
+    clearRoutes();
+    await loadNeoGallery();
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const gallery = makeGallery();
+    const card = new GalleryCard({});
+    const el = card.createImageElement(gallery, { name: "a", filename: "a.png" }, "Output", "Output");
+    document.body.appendChild(el);
+
+    const btn = el.querySelector(".neo-gallery-thumb-bookmark-btn");
+    assert.ok(btn, "⋯ 按钮应存在");
+    assert.equal(btn.parentElement.className, "neo-gallery-thumb-img-wrapper", "⋯ 按钮应是缩略图 wrapper 直接子元素（右上角覆盖层）");
+    assert.equal(el.querySelector(".neo-gallery-thumb-btn-bar"), null, "无 Lora 发送按钮 → 底部浮动栏不创建");
+
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    assert.ok(document.querySelector(".neo-gallery-collect-menu"), "点 ⋯ 应弹出收藏菜单");
+    card._removeCollectMenu();   // 清理监听
+});
+
 test("deleteSelected 只删除选中项（POST /neo_gallery/delete 逐项）", async () => {
     resetEnv();
     clearRoutes();

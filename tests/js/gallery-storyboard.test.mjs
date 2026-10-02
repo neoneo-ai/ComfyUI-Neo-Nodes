@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click, sseResponse } from "./setup.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
+import { app, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 const STORY = "雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下。";
 
@@ -106,6 +107,8 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     mockGridSkillRoutes();
     const toasts = [];
     const { gallery, jumps } = makeGallery(toasts);
+    resetSidebarTab();
+    app.neoGallery = gallery;   // 「打开输出目录」经侧栏助手走全局画廊实例
     const card = new GalleryCard(gallery);   // 与 gallery.js 的 new GalleryCard(this) 同构
     openMenu(card, gallery);
 
@@ -176,14 +179,16 @@ test("⋯ 菜单「生成九宫格分镜图」：填故事后带参考图请求�
     assert.match(resultImg?.getAttribute("src") || "",
         /\/neo_gallery\/thumbnail\?filename=nine_panel_storyboard_sheet_00001_\.png&subfolder=StoryBoard%2F2026-09-24&size=640$/);
 
-    // 成功不自动跳目录，由「打开输出目录」触发（跳画廊 StoryBoard 的日期子目录）并关窗
+    // 成功不自动跳目录，由「打开输出目录」触发（打开左侧素材栏并跳画廊 StoryBoard 的日期子目录），窗口保持打开
     assert.deepEqual(jumps, [], "成功后不自动跳目录");
     const openDirBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "打开输出目录");
     assert.ok(openDirBtn, "成功后应有「打开输出目录」按钮");
     click(openDirBtn);
     await sleep(10);
+    assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, "neo.gallery", "打开左侧素材面板");
     assert.deepEqual(jumps, [["StoryBoard", ["2026-09-24"]]], "打开归档后的日期子目录");
-    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), null, "跳转后关窗");
+    assert.equal(document.querySelector(".neo-gallery-story-modal-overlay"), overlay, "打开输出目录后窗口不关闭");
+    delete app.neoGallery;
 });
 
 test("⋯ 菜单「生成九宫格分镜图」：生成中窗内显示进度条与「取消任务」，故事表单让位", async () => {
@@ -352,4 +357,63 @@ test("小窗「✨ LLM 生成分镜故事」：简要故事留空则按格数自
     assert.equal(llmBody.text, "自行编一个完整故事——有开端、发展、结尾，每格不同场景与不同动作（按 6 格分镜）", "留空时只带格数 + 明确要编剧情");
     assert.equal(llmBody.images, undefined, "编故事不带参考图");
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "她把伞收好，走向灯下。");
+});
+
+test("⋯ 菜单：点外部 pointerdown（画布点击）收起，单独 mousedown 不收", async () => {
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const { gallery } = makeGallery([]);
+    const card = new GalleryCard(gallery);
+    openMenu(card, gallery);
+    await sleep(10);   // 等外部点击监听注册（setTimeout 0）
+    assert.ok(document.querySelector(".neo-gallery-collect-menu"), "菜单应显示");
+
+    // 模拟画布点击：LiteGraph 在 pointerdown 上 preventDefault，兼容 mousedown 被抑制到不了 document
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+    await sleep(10);
+    assert.equal(document.querySelector(".neo-gallery-collect-menu"), null, "外部 pointerdown 应收起菜单");
+
+    // 回归：旧的 mousedown 监听已移除——单独的外部 mousedown 不再关菜单
+    openMenu(card, gallery);
+    await sleep(10);
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await sleep(10);
+    assert.ok(document.querySelector(".neo-gallery-collect-menu"), "外部 mousedown 不应收起菜单");
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));   // 清理
+});
+
+test("⋯ 菜单定位：优先按钮右侧不挡缩略图，右侧放不下回退到按钮下方", async () => {
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const { gallery } = makeGallery([]);
+    const card = new GalleryCard(gallery);
+    const anchor = document.createElement("div");
+    document.body.appendChild(anchor);
+
+    const origRect = Element.prototype.getBoundingClientRect;
+    try {
+        // jsdom 无布局，给菜单一个假定尺寸（240×300）；窗口默认 1024 宽
+        Element.prototype.getBoundingClientRect = function () {
+            if (this.classList && this.classList.contains("neo-gallery-collect-menu")) {
+                return { left: 0, top: 0, right: 240, bottom: 300, width: 240, height: 300 };
+            }
+            return origRect.call(this);
+        };
+
+        // 情况 1：右侧有空间 → 菜单在按钮右侧，顶部与按钮对齐
+        anchor.getBoundingClientRect = () => ({ left: 68, right: 100, top: 20, bottom: 48, width: 32, height: 28 });
+        card._showCollectMenu(gallery, { name: "shot", filename: "shot.png" }, "", "Output", anchor);
+        let menu = document.querySelector(".neo-gallery-collect-menu");
+        assert.equal(menu.style.left, "106px", "菜单左缘 = 按钮右缘 + 6");
+        assert.equal(menu.style.top, "20px", "菜单顶部与按钮对齐");
+        card._removeCollectMenu();
+
+        // 情况 2：右侧放不下（900+6+240 > 1024-8）→ 回退到按钮下方右对齐
+        anchor.getBoundingClientRect = () => ({ left: 868, right: 900, top: 20, bottom: 48, width: 32, height: 28 });
+        card._showCollectMenu(gallery, { name: "shot", filename: "shot.png" }, "", "Output", anchor);
+        menu = document.querySelector(".neo-gallery-collect-menu");
+        assert.equal(menu.style.left, "660px", "回退：右对齐于按钮");
+        assert.equal(menu.style.top, "52px", "回退：顶缘 = 按钮底缘 + 4");
+        card._removeCollectMenu();
+    } finally {
+        Element.prototype.getBoundingClientRect = origRect;
+    }
 });

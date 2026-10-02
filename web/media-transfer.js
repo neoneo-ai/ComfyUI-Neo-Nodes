@@ -3,6 +3,7 @@
  * - grabDataType：从拖放 dataTransfer 提取 Neo Gallery 素材标识（自定义 MIME，回退 text/plain）
  * - copyGalleryToInput：画廊素材落盘 input/（/neo_gallery/copy_to_input）
  * - uploadLocalFiles：本地文件上传 input/（/upload/image），支持批量
+ * - openGallerySidebar：打开左侧 Neo Gallery 侧栏并导航到目标目录（不切换）
  * - toggleGallerySidebar：开/关左侧 Neo Gallery 侧栏
  */
 import { app } from "../../../../scripts/app.js";
@@ -38,8 +39,17 @@ export async function copyGalleryToInput(raw) {
     }
 }
 
-/** 打开 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）；传入 source/path 时导航到对应目录。
- *  已打开该面板时再点一次 → 收起（开/关切换，带目标与不带目标一致）；否则打开并在有 target 时导航。 */
+/** 打开 ComfyUI 左侧素材面板（Neo Gallery 侧栏 tab）并导航到 source/path；已打开时仅导航。 */
+export function openGallerySidebar(source, path) {
+    const em = app.extensionManager;
+    if (!em || !em.sidebarTab) return;
+    em.sidebarTab.activeSidebarTabId = 'neo.gallery';
+    if (source && app.neoGallery && typeof app.neoGallery.showDirectoryStructure === 'function') {
+        app.neoGallery.showDirectoryStructure(source, path || []);
+    }
+}
+
+/** 开/关左侧 Neo Gallery 侧栏；传入 source/path 时打开并导航到对应目录。 */
 export function toggleGallerySidebar(source, path) {
     const em = app.extensionManager;
     if (!em || !em.sidebarTab) return;
@@ -47,10 +57,7 @@ export function toggleGallerySidebar(source, path) {
         em.sidebarTab.activeSidebarTabId = null;   // 已打开 → 收起
         return;
     }
-    em.sidebarTab.activeSidebarTabId = 'neo.gallery';
-    if (source && app.neoGallery && typeof app.neoGallery.showDirectoryStructure === 'function') {
-        app.neoGallery.showDirectoryStructure(source, path || []);
-    }
+    openGallerySidebar(source, path);
 }
 
 /** 上传本地文件到 ComfyUI input 目录（复用 /upload/image 端点，实际接受任意文件）。

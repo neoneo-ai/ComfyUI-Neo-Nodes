@@ -217,23 +217,25 @@ function _orientationRatio(w, h) {
 
 /**
  * Adapt a directory card's cover box to the composite orientation of its tiles:
- * two portraits side-by-side read as one wide 3:2 image, two stacked landscapes
- * as one tall 3:4 image — so directory cards differ from single-media cards.
+ * two portraits side-by-side read as one wide 3:2 image; a landscape lead tile
+ * shows on its own (two stacked landscapes read as too tall) — so directory
+ * cards differ from single-media cards.
  * Tiles keep their own ratio (row adds widths, column adds heights), which means
  * no crop when both covers share an orientation. Layout follows the first tile:
- * portrait & square go side-by-side (top-anchored), landscape stacks. Unknown
- * tiles are assumed to match the first, so the box is set on the first load and
- * refined when the second arrives. Falls back to the default fixed height when
+ * portrait & square go side-by-side (top-anchored), landscape keeps one tile.
+ * Unknown tiles are assumed to match the first, so the box is set on the first load
+ * and refined when the second arrives. Falls back to the default fixed height when
  * no dimensions are available.
  */
 function _applyAdaptiveCoverRatio(coverWrapper, grid, ratios) {
     const r1 = ratios[0];
     if (!r1) return;
-    const useRow = r1 !== 3 / 2;     // portrait & square side-by-side; landscape stacks
+    const useRow = r1 !== 3 / 2;     // portrait & square side-by-side; landscape single
+    while (grid.children.length > 1 && !useRow) grid.lastChild.remove();
     grid.classList.toggle("neo-gallery-card-cover-grid--row", useRow);
     grid.classList.toggle("neo-gallery-card-cover-grid--portrait", useRow);
     let ratio = r1;
-    if (ratios.length > 1) {
+    if (grid.children.length > 1) {
         const r2 = ratios[1] || r1;  // unknown tile assumed same as the first
         ratio = useRow ? r1 + r2 : 1 / (1 / r1 + 1 / r2);
     }
@@ -260,8 +262,9 @@ export function applyMediaCardRatio(container, imgWrapper, w, h) {
 
 /**
  * Render a directory / bookmark cover into `coverWrapper`.
- * The first loaded image's orientation drives both the two-cover layout and the
- * card's height (see _applyAdaptiveCoverRatio). An audio-only set becomes one
+ * The first loaded image's orientation drives both the cover layout and the
+ * card's height (see _applyAdaptiveCoverRatio): portrait & square pair up
+ * side-by-side, landscape keeps a single tile. An audio-only set becomes one
  * audio tile, and nothing usable becomes one placeholder.
  */
 export function renderCoverTiles(coverWrapper, covers, alt = "") {

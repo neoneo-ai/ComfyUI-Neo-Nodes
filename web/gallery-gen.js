@@ -6,6 +6,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { getImageHeight, getThumbnailSrc, isImageFile } from "./gallery-utils.js";
+import { DIRECTOR_ASPECTS } from "./director.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
 import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
@@ -13,6 +14,7 @@ import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig } from "./image-gen.js";
 import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listPrompts, loadPrompt } from "./prompt-service.js";
 import { createQuickInputHistory } from "./quick-input-history.js";
+import { openGallerySidebar } from "./media-transfer.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
@@ -200,7 +202,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
         }
         const size = final.width && final.height ? ` · ${final.width}×${final.height}` : "";
         fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: `已生成${size}，可拖入配方的 👤 角色参考图` }));
-        fill(actionsBox, btn("打开输出目录", () => gallery.showDirectoryStructure(CHARACTER_SHEET_DIR, [])), btn("关闭", close, true));
+        fill(actionsBox, btn("打开输出目录", () => openGallerySidebar(CHARACTER_SHEET_DIR, [])), btn("关闭", close, true));
     };
 
     const renderError = (message) => {
@@ -344,7 +346,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     const openOutputDir = (final) => {
         const sub = (final.images || []).map(i => i.subfolder).find(Boolean);
         const date = sub ? sub.split("/").filter(Boolean).pop() : "";
-        gallery.showDirectoryStructure(STORYBOARD_DIR, date ? [date] : []);
+        openGallerySidebar(STORYBOARD_DIR, date ? [date] : []);
     };
 
     // 表单态：故事框 + 简要故事框可编辑，右下有 LLM / 取消 / 生成
@@ -390,7 +392,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         formBox.style.display = "none";
         statusBox.style.display = "";
         fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成九宫格分镜图，可拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧。" }));
-        fill(actionsBox, btn("打开输出目录", () => { openOutputDir(final); close(); }, true), btn("关闭", close));
+        fill(actionsBox, btn("打开输出目录", () => openOutputDir(final), true), btn("关闭", close));
     };
 
     const renderError = (message) => {
@@ -940,7 +942,7 @@ export function openGenMaterialDialog(gallery) {
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
     const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
     // agent 式双框（chat 习惯）：output 在上（增强提示词，作最终生成提示词；为空时回退 quick input）
-    // + quick input 在下（描述 / 修改指令，增强成功后被消费清空），与 NeoPromptAgent 节点的输入/输出结构一致
+    // + quick input 在下（描述 / 修改指令，增强后保留不自动清空），与 NeoPromptAgent 节点的输入/输出结构一致
     const quickInput = $el("textarea", {
         className: "neo-gallery-gm-quick-input",
         rows: 2,
@@ -1109,10 +1111,10 @@ export function openGenMaterialDialog(gallery) {
         } catch {
             skillSel.value = KREA2_T2I_SKILL_ID;
         }
-        applySkillModelConfig(skillSel.value); // 模型覆盖同步为该技能配置（模型列表未就绪时为空操作）
+        applySkillModelConfig(skillSel.value); // 自定参数同步为该技能配置（模型列表未就绪时为空操作）
     };
     fillSkillOptions();
-    // 选中变化即写入 localStorage：下次打开沿用该技能（关窗不清除）；模型覆盖同步切到新技能
+    // 选中变化即写入 localStorage：下次打开沿用该技能（关窗不清除）；自定参数同步切到新技能
     skillSel.addEventListener("change", () => {
         try { localStorage.setItem(GM_LAST_SKILL_KEY, skillSel.value); } catch {}
         applySkillModelConfig(skillSel.value);
@@ -1137,13 +1139,48 @@ export function openGenMaterialDialog(gallery) {
         try { localStorage.setItem(GM_ENHANCE_SKILL_KEY, enhanceSel.value); } catch {}
     });
 
-    // 模型覆盖：本次临时选主模型 / LoRA（类似节点上接模型），空值 = 跟随全局生图设置；
+    // 自定参数：本次临时选主模型 / LoRA / 比例 / 最长边（类似节点上接模型），空值 = 跟随全局生图设置；
     // Text Encoder / VAE 很少变，弹窗里不露出（共享组件保留行，这里裁掉）
     const modelCfg = createModelConfigSection();
     for (const row of modelCfg.el.querySelectorAll(".rs-gen-adv-row")) row.remove();
     const modelBox = $el("div", { className: "neo-gallery-gm-model-box", style: { display: "none" } });
     modelBox.appendChild(modelCfg.el);
-    // 💾 保存为新技能：把当前选的「主模型 + LoRA」组合存成新技能（名称自动生成 = 主模型名+LoRA 名，其余设置沿用当前技能）
+    // 宽高比 / 最长边：本次临时覆盖（空值 = 跟随技能配置 / 全局设置），同行紧凑布局
+    // 宽高比选项与导演编辑页同源（DIRECTOR_ASPECTS）：值保持纯比例，显示带中文备注
+    const GM_RATIO_OPTIONS = DIRECTOR_ASPECTS.map(([label]) => [label.split(" ")[0], label]);
+    const GM_RATIOS = GM_RATIO_OPTIONS.map(([v]) => v);
+    // 「默认」选项跟随值用无括号备注：16:9 (宽屏) → 16:9 宽屏，避免嵌套括号
+    const GM_RATIO_AUTO_TEXT = Object.fromEntries(DIRECTOR_ASPECTS.map(([label]) => {
+        const [v, note] = label.split(" ");
+        return [v, `${v} ${note.replace(/[()]/g, "")}`];
+    }));
+    const GM_EDGES = ["1024", "1152", "1280", "1536", "1792", "2048", "2560", "3072"];
+    const makeGmSelect = (options) => {
+        const select = document.createElement("select");
+        const auto = document.createElement("option");
+        auto.value = "";
+        auto.textContent = "默认"; // 技能配置就绪后由 setGmAutoLabel 补上跟随值
+        select.appendChild(auto);
+        for (const opt of options) {
+            const [value, text] = Array.isArray(opt) ? opt : [opt, opt];
+            const el = document.createElement("option");
+            el.value = value;
+            el.textContent = text;
+            select.appendChild(el);
+        }
+        return select;
+    };
+    // 「默认」选项显示当前技能配置跟随的值（切换技能时更新）
+    const setGmAutoLabel = (sel, v) => { sel.options[0].textContent = v ? `默认 (${v})` : "默认"; };
+    const sizeRow = $el("div", { className: "rs-config-row neo-gallery-gm-size-row" });
+    sizeRow.appendChild($el("label", { className: "rs-form-label", textContent: "宽高比" }));
+    const ratioSel = makeGmSelect(GM_RATIO_OPTIONS);
+    sizeRow.appendChild(ratioSel);
+    sizeRow.appendChild($el("label", { className: "rs-form-label", textContent: "最长边" }));
+    const edgeSel = makeGmSelect(GM_EDGES);
+    sizeRow.appendChild(edgeSel);
+    modelBox.appendChild(sizeRow);
+    // 💾 保存为新技能：把当前选的「主模型 + LoRA + 宽高比 + 最长边」存成新技能（名称自动生成 = 主模型名+LoRA 名，其余设置沿用当前技能）
     const saveSkillBtn = $el("button", {
         className: "neo-gallery-gm-save-skill",
         type: "button",
@@ -1168,7 +1205,7 @@ export function openGenMaterialDialog(gallery) {
             const res = await fetch("/neo_image_gen/save_combo_skill", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ skill_id: skillSel.value || KREA2_T2I_SKILL_ID, model: ov.model, loras: ov.loras }),
+                body: JSON.stringify({ skill_id: skillSel.value || KREA2_T2I_SKILL_ID, model: ov.model, loras: ov.loras, ratio: ratioSel.value, edge: edgeSel.value }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -1188,11 +1225,15 @@ export function openGenMaterialDialog(gallery) {
     // 每次打开都默认「自动」（跟随全局设置），不预填已配置值——否则关窗重开像上次选择没清除；
     // 模型列表拉取失败时覆盖区保持空下拉（等效跟随设置），不挡生成
     let genModels = null; // 打开时拉取的模型列表，切换技能重放配置时复用
-    // 切换生成技能后把模型覆盖同步为该技能配置的主模型 / LoRA（无配置 = 自动跟随全局设置）
+    // 切换生成技能后把自定参数同步为该技能配置的主模型 / LoRA / 比例 / 最长边（无配置 = 自动跟随全局设置）
     async function applySkillModelConfig(skillId) {
         if (!genModels) return; // 模型列表未就绪：首次加载 / 技能列表回调稍后会应用
         const cfg = await getSkillGenConfig(skillId);
         modelCfg.load(cfg, genModels);
+        ratioSel.value = GM_RATIOS.includes(cfg.default_ratio) ? cfg.default_ratio : "";
+        edgeSel.value = GM_EDGES.includes(String(cfg.base_resolution)) ? String(cfg.base_resolution) : "";
+        setGmAutoLabel(ratioSel, cfg.default_ratio ? (GM_RATIO_AUTO_TEXT[cfg.default_ratio] || cfg.default_ratio) : "");
+        setGmAutoLabel(edgeSel, cfg.base_resolution);
     }
     (async () => {
         try {
@@ -1206,18 +1247,18 @@ export function openGenMaterialDialog(gallery) {
     const modelToggle = $el("button", {
         className: "neo-gallery-gm-model-toggle",
         type: "button",
-        textContent: "⚙️ 模型覆盖 ▸",
+        textContent: "⚙️ 自定参数 ▸",
     });
     modelToggle.addEventListener("click", () => {
         const open = modelBox.style.display === "none";
         modelBox.style.display = open ? "" : "none";
-        modelToggle.textContent = `⚙️ 模型覆盖 ${open ? "▾" : "▸"}`;
+        modelToggle.textContent = `⚙️ 自定参数 ${open ? "▾" : "▸"}`;
     });
 
     // ✨ 增强：仿 NeoPromptAgent 节点——quick input + output 双框，复用节点 agent 逻辑
     // （所选增强 skill 的 skill.md 作系统提示词 + 按需读引用文件）直调 /rs_prompts/stream_generate_prompt；
     // 输出框行为与节点共用（思考面板 / 流程状态行 / rAF 批量写回）；quick input 有内容时与
-    // output 已有提示词按 \n\n---\n\n 拼接（同节点），成功后 quick input 被消费清空
+    // output 已有提示词按 \n\n---\n\n 拼接（同节点），增强结束后 quick input 保留不自动清空
     const enhanceBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ 增强" });
     // quick input 内部底边工具栏（参考 llm-chat rs-input-toolbar）：增强技能下拉在左（flex）+ ✨ 增强在右
     const gmInputToolbar = $el("div", { className: "neo-gallery-gm-input-toolbar" }, [enhanceSel, enhanceBtn]);
@@ -1237,8 +1278,7 @@ export function openGenMaterialDialog(gallery) {
             await invokePromptStream({ text, skillId: enhanceSel.value }, createStreamOutputHandlers({
                 textarea: outputInput,
                 onDone: (acc) => {
-                    if (acc.trim()) quickInput.value = ""; // 已消费
-                    else actionToast({ severity: "warning", summary: "增强失败", detail: "LLM 未返回内容" });
+                    if (!acc.trim()) actionToast({ severity: "warning", summary: "增强失败", detail: "LLM 未返回内容" });
                     outputInput.focus();
                 },
                 onError: (e) => {
@@ -1289,11 +1329,10 @@ export function openGenMaterialDialog(gallery) {
         const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
         if (oldHint) oldHint.remove();
         statusBox.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: hint }));
-        // 打开输出目录：跳到 Output 下实际落盘的日期子目录
+        // 打开输出目录：跳到 Output 下实际落盘的日期子目录（窗口保留，可继续再生成/删除）
         const openOutputDir = () => {
             const sub = images.map(i => i.subfolder).find(Boolean);
-            gallery.showDirectoryStructure("Output", sub ? sub.split("/").filter(Boolean) : []);
-            close();
+            openGallerySidebar("Output", sub ? sub.split("/").filter(Boolean) : []);
         };
         // 删除：结果不满意 → 直接删掉落盘文件（含 .txt 与缩略图缓存），删完回 idle 原地再生成
         const deleteResult = async () => {
@@ -1334,7 +1373,7 @@ export function openGenMaterialDialog(gallery) {
 
     // 提交一次生图任务并等终态；render(snap) 随快照推送刷新 UI（单张=整个预览区 / 批量=当前行原位更新）
     const runOnePrompt = async (promptText, render) => {
-        // 模型覆盖只带非空值：空串 / 空数组会覆盖掉全局设置里的显式配置
+        // 自定参数只带非空值：空串 / 空数组会覆盖掉全局设置里的显式配置
         const payload = {
             skill_id: skillSel.value || KREA2_T2I_SKILL_ID,
             prompt: promptText,
@@ -1343,6 +1382,8 @@ export function openGenMaterialDialog(gallery) {
         const ov = modelCfg.collect();
         if (ov.model) payload.model = ov.model;
         if (ov.loras.length) payload.loras = ov.loras;
+        if (ratioSel.value) payload.default_ratio = ratioSel.value;
+        if (edgeSel.value) payload.base_resolution = parseInt(edgeSel.value, 10);
         const snap = await requestGeneration(payload);
         cancelId = snap.task_id;
         return await watchTask(snap.task_id, render, () => cancelRequested);
@@ -1518,8 +1559,8 @@ export function openGenMaterialDialog(gallery) {
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
     };
 
-    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 模型覆盖 / agent 式增强双框：output 上带 🎲☰ 浮出组、quick input 下内嵌 ✨ 工具栏），操作按钮收尾
-    overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
+    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 自定参数 / agent 式增强双框：output 上带 🎲☰ 浮出组、quick input 下内嵌 ✨ 工具栏），操作按钮收尾
+    const modal = $el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
             $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 生成素材" }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
@@ -1534,12 +1575,47 @@ export function openGenMaterialDialog(gallery) {
         outputWrap,
         quickWrap,
         actionsBox
-    ]));
+    ]);
+    overlay.appendChild(modal);
     // 浮层挂在 overlay 上（z-index 高于弹窗，随窗移除）
     overlay.append(runtimeMenu, presetOverlay);
 
+    // 标题栏拖动：同导演编辑器模式——首次按下从居中切到绝对定位并记录起点，之后按鼠标位移更新 left/top；
+    // 钳制保证窗口不会被拖出视口（始终留一条可点到的标题栏 / ✕）。
+    const titlebar = modal.querySelector(".neo-gallery-story-titlebar");
+    let dragging = false;
+    let startMX = 0, startMY = 0, startL = 0, startT = 0;
+    const onTitleMove = (e) => {
+        if (!dragging) return;
+        let left = startL + (e.clientX - startMX);
+        let top = startT + (e.clientY - startMY);
+        const w = modal.offsetWidth;
+        left = Math.max(-w + 80, Math.min(left, window.innerWidth - 80));
+        top = Math.max(0, Math.min(top, window.innerHeight - 44));
+        modal.style.left = left + "px";
+        modal.style.top = top + "px";
+    };
+    const onTitleUp = () => {
+        dragging = false;
+        window.removeEventListener("mousemove", onTitleMove);
+        window.removeEventListener("mouseup", onTitleUp);
+    };
+    titlebar.addEventListener("mousedown", (e) => {
+        if (e.button !== 0 || e.target.closest("button, .neo-gallery-story-close")) return; // 关闭钮不触发拖动，标题栏其余空白可拖窗口
+        const r = modal.getBoundingClientRect();
+        if (!modal.style.left) { // 首次：从居中切到绝对定位，无跳变
+            modal.style.position = "absolute";
+            modal.style.left = r.left + "px";
+            modal.style.top = r.top + "px";
+        }
+        startMX = e.clientX; startMY = e.clientY;
+        startL = parseFloat(modal.style.left); startT = parseFloat(modal.style.top);
+        dragging = true;
+        window.addEventListener("mousemove", onTitleMove);
+        window.addEventListener("mouseup", onTitleUp);
+    });
+
     renderIdle();
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
     document.addEventListener("keydown", onKey);
     const origRemove = overlay.remove.bind(overlay);
     overlay.remove = () => { stopQuickTips(); document.removeEventListener("keydown", onKey); document.removeEventListener("click", onDocClick); origRemove(); };

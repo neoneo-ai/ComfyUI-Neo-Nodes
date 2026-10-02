@@ -1440,7 +1440,8 @@ async def save_combo_skill_route(request):
         return web.json_response({"error": "请求体不是 JSON"}, status=400)
     body = body if isinstance(body, dict) else {}
     result = _skill.save_combo_as_skill(
-        str(body.get("skill_id") or ""), body.get("model", ""), body.get("loras", []))
+        str(body.get("skill_id") or ""), body.get("model", ""), body.get("loras", []),
+        body.get("ratio", ""), body.get("edge", ""))
     if not result.get("success"):
         return web.json_response({"error": result.get("message")}, status=400)
     return web.json_response(result)

@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click, flush } from "./setup.mjs";
+import { app, resetSidebarTab } from "./mocks/comfy-app.mjs";
 
 test("buildCharacterSheetRequest 固定走 qwen_image_21 且不带全局 LoRA", async () => {
     resetEnv();
@@ -34,6 +35,8 @@ test("⋯ 菜单「生成角色图」：小窗显示参考图，点生成后窗�
         deleteItem() {},
         showDirectoryStructure(source, path) { jumps.push([source, path]); return Promise.resolve(); },
     };
+    resetSidebarTab();
+    app.neoGallery = gallery;   // 「打开输出目录」经侧栏助手走全局画廊实例
     const card = new GalleryCard(gallery);
     const anchor = document.createElement("div");
     document.body.appendChild(anchor);

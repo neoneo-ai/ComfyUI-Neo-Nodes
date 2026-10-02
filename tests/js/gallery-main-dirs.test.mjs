@@ -102,6 +102,27 @@ test("素材库按钮：带目标主目录时打开侧栏并导航", async () =>
     delete app.neoGallery;
 });
 
+test("openGallerySidebar：总是打开侧栏并导航，已打开时不收起", async () => {
+    resetEnv();
+    clearRoutes();
+    resetSidebarTab();
+    const { openGallerySidebar } = await import("../../web/media-transfer.js");
+
+    const visits = [];
+    app.neoGallery = { showDirectoryStructure: (source, path) => { visits.push([source, path]); } };
+
+    openGallerySidebar("Output", ["NeoAgent"]);
+    assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, "neo.gallery", "打开素材面板");
+    assert.deepEqual(visits, [["Output", ["NeoAgent"]]], "导航到目标目录");
+
+    // 已打开时再调一次 → 保持打开并再次导航（不像 toggle 那样收起）
+    openGallerySidebar("Output", []);
+    assert.equal(app.extensionManager.sidebarTab.activeSidebarTabId, "neo.gallery", "保持打开");
+    assert.deepEqual(visits, [["Output", ["NeoAgent"]], ["Output", []]], "再次导航");
+
+    delete app.neoGallery;
+});
+
 test("civitaiBadge：同步目录名匹配不到 Lora 时给出可行动提示，而不是一直 Fetching", async () => {
     const { civitaiBadge } = await import("../../web/gallery-card.js");
 

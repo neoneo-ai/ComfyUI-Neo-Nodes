@@ -238,7 +238,7 @@
     color: #FF9944;
 }
 
-/* 「生成素材」弹窗内「模型覆盖」折叠行：展开后显示主模型 / LoRA 临时选择区 */
+/* 「生成素材」弹窗内「自定参数」折叠行：展开后显示主模型 / LoRA / 比例 / 最长边临时选择区 */
 .neo-gallery-gm-model-toggle {
     flex-shrink: 0;
     white-space: nowrap;
@@ -256,6 +256,41 @@
 
 .neo-gallery-gm-model-box {
     margin: 4px 0 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* 自定参数区紧凑布局：标签与控件同行（覆盖 .rs-config-row 默认纵向堆叠） */
+.neo-gallery-gm-model-box .rs-gen-model-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.neo-gallery-gm-model-box .rs-config-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+.neo-gallery-gm-model-box .rs-config-row > .rs-form-label {
+    flex-shrink: 0;
+    margin-bottom: 0;
+}
+.neo-gallery-gm-model-box .rs-config-row .rs-model-select-box {
+    flex: 1;
+    min-width: 0;
+}
+.neo-gallery-gm-model-box .rs-gen-lora-list {
+    flex: 1;
+    min-width: 0;
+}
+.neo-gallery-gm-size-row select {
+    flex-shrink: 0;
+    width: 90px;
+}
+/* 「最长边」组与「图形比例」组拉开间距 */
+.neo-gallery-gm-size-row > .rs-form-label:nth-of-type(2) {
+    margin-left: 8px;
 }
 
 /* 「生成素材」弹窗：💾 保存为新技能（选中主模型 / LoRA 后才显示） */
@@ -532,7 +567,8 @@
 }
 
 
-/* Directory card covers: up to two images, stacked vertically, filling the card */
+/* Directory card covers: up to two images (portrait/square side-by-side,
+   landscape single), filling the card */
 .neo-gallery-card-cover-grid {
     display: flex;
     flex-direction: column;
@@ -1110,9 +1146,8 @@ Accordion Section Buttons (Clear)
     padding: 6px 4px 2px;
 }
 
-/* Thumbnail action buttons (Lora Send, Bookmark) */
-.neo-gallery-thumb-img-send-btn,
-.neo-gallery-thumb-bookmark-btn {
+/* Thumbnail action button — Lora 发送（底部浮动栏内） */
+.neo-gallery-thumb-img-send-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1129,7 +1164,38 @@ Accordion Section Buttons (Clear)
     line-height: 1;
 }
 
-.neo-gallery-thumb-img-send-btn:hover,
+.neo-gallery-thumb-img-send-btn:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+    transform: scale(1.1);
+}
+
+/* ⋯ 更多操作按钮 — 缩略图右上角覆盖层，悬停卡片时显示 */
+.neo-gallery-thumb-bookmark-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    opacity: 0;
+    transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+    line-height: 1;
+    z-index: 6;
+}
+
+.neo-gallery-thumb-container:hover .neo-gallery-thumb-bookmark-btn {
+    opacity: 1;
+}
+
 .neo-gallery-thumb-bookmark-btn:hover {
     background-color: rgba(0, 0, 0, 0.8);
     transform: scale(1.1);
@@ -2108,6 +2174,25 @@ Accordion Section Buttons (Clear)
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+
+/* 生成素材窗：同导演编辑器——不加背景遮罩（点击穿透到画廊/画布），标题栏可拖窗口 */
+.neo-gallery-gm-modal-overlay {
+    background: none;
+    backdrop-filter: none;
+    pointer-events: none;
+}
+
+.neo-gallery-gm-modal-overlay .neo-gallery-story-modal,
+/* 窗内浮层（随机菜单 / 预设列表）在穿透的 overlay 下仍需可交互 */
+.neo-gallery-gm-modal-overlay .rs-preset-list-overlay,
+.neo-gallery-gm-modal-overlay .rs-runtime-menu {
+    pointer-events: auto;
+}
+
+.neo-gallery-gm-modal-overlay .neo-gallery-story-titlebar {
+    cursor: move;
+    user-select: none;
 }
 
 .neo-gallery-story-title {

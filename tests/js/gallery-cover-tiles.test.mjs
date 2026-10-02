@@ -48,7 +48,7 @@ test("目录封面：两张图竖排成单个网格，无内联高度", async ()
     assert.match(items[0].querySelector("img").src, /filename=a\.png/);
 });
 
-test("封面方向：首图为竖图/方形时并排+顶部锚定，横图保持竖排", async () => {
+test("封面方向：首图为竖图/方形时并排+顶部锚定，横图只留一张", async () => {
     resetEnv();
     const { renderCoverTiles } = await loadUtils();
 
@@ -80,15 +80,16 @@ test("封面方向：首图为竖图/方形时并排+顶部锚定，横图保持
     assert.ok(s.grid.classList.contains("neo-gallery-card-cover-grid--row"), "方形图切换为横向并排");
     assert.ok(s.grid.classList.contains("neo-gallery-card-cover-grid--portrait"), "方形图标记顶部锚定");
 
-    // 横图 → 保持竖排，无并排/锚定类
+    // 横图 → 双图堆叠太高，只保留首图，无并排/锚定类
     const l = renderWith(1344, 768);
-    assert.ok(!l.grid.classList.contains("neo-gallery-card-cover-grid--row"), "横图保持竖排");
+    assert.ok(!l.grid.classList.contains("neo-gallery-card-cover-grid--row"), "横图不并排");
     assert.ok(!l.grid.classList.contains("neo-gallery-card-cover-grid--portrait"), "横图不加顶部锚定");
+    assert.equal(l.grid.querySelectorAll(".neo-gallery-card-cover-grid-item").length, 1, "横图只留一张");
 
     p.w.remove(); p1.w.remove(); s.w.remove(); l.w.remove();
 });
 
-test("目录卡封面比例是两张瓦片的合成值（与单图素材卡不同）", async () => {
+test("目录卡封面比例随首图方向：竖图双拼合成，横图单张（与单图素材卡不同）", async () => {
     resetEnv();
     const { renderCoverTiles } = await loadUtils();
 
@@ -119,10 +120,17 @@ test("目录卡封面比例是两张瓦片的合成值（与单图素材卡不�
     p.imgs[1].onload();
     assert.equal(ratioOf(p.w), "1.5", "第二张确认后保持 3:2");
 
-    // 两张横图堆叠 → 合成 3:4 高卡（每张瓦片恰好 3:2）
+    // 首图为横图 → 双图堆叠太高，只留单张自身 3:2
     const l = renderWith([[1344, 768], [1344, 768]]);
     l.imgs[0].onload();
-    assert.equal(ratioOf(l.w), "0.75", "双横图合成 3:4");
+    assert.equal(ratioOf(l.w), "1.5", "横图只留单张，比例即自身 3:2");
+    assert.equal(l.w.querySelectorAll(".neo-gallery-card-cover-grid-item").length, 1, "第二张被移除");
+
+    // 横 + 竖混合 → 首图为横图时第二张同样移除
+    const lm = renderWith([[1344, 768], [768, 1344]]);
+    lm.imgs[0].onload();
+    assert.equal(ratioOf(lm.w), "1.5", "横图首图时保持单张");
+    assert.equal(lm.w.querySelectorAll(".neo-gallery-card-cover-grid-item").length, 1, "混合朝向也移除第二张");
 
     // 单张竖图 → 自身 3:4，与素材卡一致
     const s = renderWith([[768, 1344]]);
@@ -143,7 +151,7 @@ test("目录卡封面比例是两张瓦片的合成值（与单图素材卡不�
     assert.equal(ratioOf(f.w), "1.75", "失败瓦片按方形参与合成");
     assert.ok(f.w.querySelector(".neo-gallery-card-placeholder"), "失败瓦片变占位");
 
-    for (const r of [p, l, s, m, f]) r.card.remove();
+    for (const r of [p, l, lm, s, m, f]) r.card.remove();
 });
 
 test("封面只取前 MAX_COVER_IMAGES 张，多余忽略", async () => {

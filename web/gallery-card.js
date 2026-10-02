@@ -553,22 +553,30 @@ export class GalleryCard {
         document.body.appendChild(menu);
         const rect = (anchor && anchor.getBoundingClientRect()) || { right: 0, bottom: 0 };
         const mRect = menu.getBoundingClientRect();
-        menu.style.left = Math.max(8, Math.min(rect.right - mRect.width, window.innerWidth - mRect.width - 8)) + 'px';
-        menu.style.top = (rect.bottom + 4) + 'px';
-        if (rect.bottom + mRect.height > window.innerHeight) {
-            menu.style.top = Math.max(8, rect.top - mRect.height - 4) + 'px';
+        // 优先放按钮右侧（⋯ 在卡片右上角，菜单浮在画布上不挡缩略图）；右侧放不下才回退到按钮下方
+        if (rect.right + 6 + mRect.width <= window.innerWidth - 8) {
+            menu.style.left = (rect.right + 6) + 'px';
+            menu.style.top = Math.max(8, Math.min(rect.top, window.innerHeight - mRect.height - 8)) + 'px';
+        } else {
+            menu.style.left = Math.max(8, Math.min(rect.right - mRect.width, window.innerWidth - mRect.width - 8)) + 'px';
+            menu.style.top = (rect.bottom + 4) + 'px';
+            if (rect.bottom + mRect.height > window.innerHeight) {
+                menu.style.top = Math.max(8, rect.top - mRect.height - 4) + 'px';
+            }
         }
 
         const closeOnOutside = (e) => {
             if (!menu.contains(e.target)) this._removeCollectMenu();
         };
         const closeOnEsc = (e) => { if (e.key === 'Escape') this._removeCollectMenu(); };
+        // 用 pointerdown 而非 mousedown：LiteGraph 画布 touch-action:none，pointerdown 上
+        // preventDefault 会按规范抑制后续兼容鼠标事件，画布点击的 mousedown 到不了 document
         setTimeout(() => {
-            document.addEventListener('mousedown', closeOnOutside);
+            document.addEventListener('pointerdown', closeOnOutside, true);
             document.addEventListener('keydown', closeOnEsc);
         }, 0);
         menu._cleanup = () => {
-            document.removeEventListener('mousedown', closeOnOutside);
+            document.removeEventListener('pointerdown', closeOnOutside, true);
             document.removeEventListener('keydown', closeOnEsc);
         };
         const origRemove = menu.remove.bind(menu);
@@ -620,7 +628,7 @@ export class GalleryCard {
             }, ["\uD83D\uDCE4"]);
         }
 
-        // 右下角信息扩展按钮：点击弹出扩展菜单（收藏 / Lora 发送 / 提示词预览 / 导入工作流 / 删除）。
+        // 右上角信息扩展按钮：点击弹出扩展菜单（收藏 / Lora 发送 / 提示词预览 / 导入工作流 / 删除）。
         const bookmarkBtn = $el("div", {
             className: "neo-gallery-thumb-bookmark-btn",
             title: "更多操作",
@@ -686,9 +694,10 @@ export class GalleryCard {
             className: "neo-gallery-thumb-video-badge"
         }, ["\u25B6"]) : null;
 
-        const btnBar = $el("div", { className: "neo-gallery-thumb-btn-bar" }, [imgSendBtn, bookmarkBtn].filter(Boolean));
+        // ⋯ 按钮是右上角独立覆盖层；底部浮动栏只留给 Lora 发送按钮（无则不建）
+        const btnBar = imgSendBtn ? $el("div", { className: "neo-gallery-thumb-btn-bar" }, [imgSendBtn]) : null;
 
-        const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar, selectCheck].filter(Boolean));
+        const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar, bookmarkBtn, selectCheck].filter(Boolean));
 
         const labelEl = gallery.displayLabels ? $el("span", {
             className: "neo-gallery-image-label",
@@ -700,7 +709,7 @@ export class GalleryCard {
 
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
         const fullPath = [loc.dir, loc.subfolder, image.filename || image.name].filter(Boolean).join("/");
-        container.title = `${fullPath}\n点击打开大图，右下角 ⋯ 更多操作`;
+        container.title = `${fullPath}\n点击打开大图，右上角 ⋯ 更多操作`;
 
         return container;
     }

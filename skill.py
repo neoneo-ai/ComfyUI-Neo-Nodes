@@ -1449,9 +1449,10 @@ def _model_base_name(name: str) -> str:
     return n.rsplit(".", 1)[0] if "." in n else n
 
 
-def save_combo_as_skill(source_id: str, model: str, loras) -> dict:
+def save_combo_as_skill(source_id: str, model: str, loras, ratio: str = "", base_resolution=None) -> dict:
     """把「生成素材」弹窗选中的"主模型 + LoRA"组合存为新自定义技能：
-    工作流模板按源技能原样复制；其余生图设置沿用源技能有效 config（预设含本地覆盖），仅覆盖 model/loras。
+    工作流模板按源技能原样复制；其余生图设置沿用源技能有效 config（预设含本地覆盖），仅覆盖 model/loras，
+    弹窗里选定了比例 / 最长边时一并覆盖（未选定沿用源技能）。
     技能名自动生成 = 主模型名 + LoRA 名以 "-" 连接（未选 LoRA 时只有主模型名）。返回 {"success", "id", "name"}。
     """
     src = _skill_dir(str(source_id or ""))
@@ -1497,6 +1498,16 @@ def save_combo_as_skill(source_id: str, model: str, loras) -> dict:
         if model:
             cfg["model"] = model
         cfg["loras"] = clean_loras
+        # 弹窗里选定了比例 / 最长边时一并覆盖（未选定沿用源技能有效 config）
+        ratio = str(ratio or "").strip()
+        if ratio:
+            cfg["default_ratio"] = ratio[:32]
+        try:
+            base = int(base_resolution)
+            if base > 0:
+                cfg["base_resolution"] = base
+        except (TypeError, ValueError):
+            pass
         tmp = os.path.join(d, "config.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
