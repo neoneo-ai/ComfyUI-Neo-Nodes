@@ -502,15 +502,12 @@ export class GalleryList {
             container.appendChild(card);
         }
         
-        if (subdirArray.length > 0) {
-            this.gallery.accordion.appendChild(container);
-        }
+        // 目录卡与图片卡共用同一个瀑布流容器：DOM 顺序保证目录卡在前，
+        // 最短列装箱让图片卡接着填满目录卡参差不齐的底边，衔接处不留空。
+        this.gallery.accordion.appendChild(container);
         
         // Only show images section if we have actual image data (not lazy-loaded)
         if (items && items.length > 0) {
-            
-            const imageGrid = $el("div", { className: "neo-gallery-image-grid" });
-            attachMasonry(imageGrid, this.gallery.maxThumbnailSize);
             
             let currentSubfolder;
             if (pathSegments.length > 0) {
@@ -529,19 +526,17 @@ export class GalleryList {
                     const itemSubfolder = item.subfolder || currentSubfolder;
                     const itemWithSubfolder = {...item, subfolder: itemSubfolder};
                     const imgEl = this.gallery.card.createImageElement(this.gallery, itemWithSubfolder, itemSubfolder, (dir && dir.source) || "");
-                    imageGrid.appendChild(imgEl);
+                    container.appendChild(imgEl);
                 }
                 this.gallery._renderedCount += count;
             };
             
             // Render first page
             renderPage(PAGE_SIZE);
-            this.gallery.accordion.appendChild(imageGrid);
             
             // Setup auto-load if there are more images
             if (this.gallery._renderQueue.length > 0) {
-                console.log('[Neo Gallery] Setting up auto-load in renderSubdirCards, remaining:', this.gallery._renderQueue.length);
-                this._setupAutoLoad(imageGrid, renderPage);
+                this._setupAutoLoad(container, renderPage);
             }
             
             // Save images for lightbox navigation (lazy mode fallback)

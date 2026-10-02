@@ -285,6 +285,12 @@ export function renderCoverTiles(coverWrapper, covers, alt = "") {
     } else if (list.some(c => getCoverTileKind(c) === "audio")) {
         const firstAudio = list.find(c => getCoverTileKind(c) === "audio");
         coverWrapper.appendChild(buildAudioTile(firstAudio && (firstAudio.filename || firstAudio.name)));
+        // 音频瓦片高度固定，收缩卡片避免方形留白（与 _applyAdaptiveCoverRatio 同模式）
+        const card = coverWrapper.parentElement;
+        if (card && card.classList.contains("neo-gallery-category-card")) {
+            coverWrapper.style.flex = "0 0 auto";
+            card.style.height = "auto";
+        }
     } else {
         coverWrapper.appendChild(buildPlaceholderTile());
     }

@@ -119,3 +119,25 @@ test("civitaiBadge：同步目录名匹配不到 Lora 时给出可行动提示�
     assert.equal(civitaiBadge({}).cls, "status-loading");
 });
 
+test("子目录卡与图片卡共用同一瀑布流容器：目录卡在前，衔接处不留空", async () => {
+    resetEnv();
+    clearRoutes();
+    await loadNeoGallery();
+    const gallery = makeGallery();
+    gallery.maxThumbnailSize = 240;
+    gallery.accordion.innerHTML = "";
+    const structure = {
+        subdirs: { "2026-09-24": { image_count: 1 } },
+        items: [{ filename: "a.png", name: "a.png" }],
+    };
+    await gallery.list.renderSubdirCards(structure, "Character", [], [{ name: "2026-09-24", image_count: 1 }]);
+
+    const dirCard = document.querySelector(".neo-gallery-category-card");
+    const imgCard = document.querySelector(".neo-gallery-thumb-container");
+    assert.ok(dirCard, "应渲染子目录卡片");
+    assert.ok(imgCard, "应渲染图片卡片");
+    assert.equal(dirCard.parentElement, imgCard.parentElement, "目录卡与图片卡应共用同一瀑布流容器");
+    assert.ok(dirCard.parentElement.classList.contains("neo-gallery-category-grid"));
+    assert.equal(document.querySelector(".neo-gallery-image-grid"), null, "不应再创建独立图片网格容器");
+});
+
