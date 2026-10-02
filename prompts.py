@@ -403,7 +403,8 @@ def _iter_random_candidates() -> list[str]:
             pool.extend(text for _, text in prompt_lines.load_entries(filepath))
         except OSError:
             pass
-    return [p for p in pool if p.strip()]
+    # 去重（同一段提示词可能存于多个文件）：保序，保证批量抽样不重复
+    return list(dict.fromkeys(p for p in pool if p.strip()))
 
 
 def _sample_runtime_prompts(count: int) -> list[str]:
@@ -1384,6 +1385,19 @@ async def rs_prompts_random_prompt(request):
     except Exception as e:
         logger.error(f"Error in random prompt: {e}")
         return web.json_response({"status": "error", "prompt": "", "error": str(e)})
+
+
+@server.PromptServer.instance.routes.post("/rs_prompts/random_prompts")
+async def rs_prompts_random_prompts(request):
+    """运行时随机：从混合池不重复抽取 count 条（与 NeoPromptAgent 同池，供批量生成使用）"""
+    try:
+        data = await request.json()
+        count = max(1, min(int(data.get("count", 1) or 1), 16))
+        return web.json_response({"texts": _sample_runtime_prompts(count)})
+    except Exception as e:
+        logger.error(f"Error sampling random prompts: {e}")
+        return web.Response(status=500, text=str(e))
+
 
 # ==========================================
 # Proxy API for fetching remote models (CORS workaround)

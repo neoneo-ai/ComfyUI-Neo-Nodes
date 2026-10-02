@@ -367,6 +367,21 @@ async function randomPrompt() {
     };
 }
 
+
+/**
+ * 运行时随机：从混合池不重复抽取 count 条（与 Prompt Agent 节点同池，供批量生成使用）。
+ * @returns {Promise<{texts: string[]}>}
+ */
+async function randomPrompts(count) {
+    const res = await fetch("/rs_prompts/random_prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count })
+    });
+    return await res.json();
+}
+
+
 /**
  * 获取可用模型列表
  * @returns {Promise<{current_model: string, models: Array<{key: string, name: string, filename: string, model_dir: string}>}>}
@@ -652,6 +667,7 @@ export {
     extractTitle,
     extractClassify,
     randomPrompt,
+    randomPrompts,
     smartPrompt,
     smartPromptStream,
     sseStream,

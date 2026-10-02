@@ -11,7 +11,7 @@ import { actionToast } from "./toast.js";
 import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig } from "./image-gen.js";
-import { invokePromptStream, createStreamOutputHandlers } from "./prompt-service.js";
+import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listPrompts, loadPrompt } from "./prompt-service.js";
 import { createQuickInputHistory } from "./quick-input-history.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
@@ -949,6 +949,20 @@ export function openGenMaterialDialog(gallery) {
 
     // 快捷输入命令终端式历史：↑/↓ 召回之前生成用过的提示词（localStorage 持久化，最新在前，上限 20）
     const gmHistory = createQuickInputHistory(quickInput, { storageKey: "neo.gallery.gen_material.quick_history" });
+    // 占位符提示轮播（参考 llm-chat QUICK_INPUT_TIPS）：聚焦且为空时每 5s 换一条
+    const GM_QUICK_TIPS = [
+        "📷 描述要生成的素材，例如：红色陶瓷杯的白底产品图",
+        "✏️ 输入修改指令，例如：去掉动漫风格，改成写实",
+        "🎨 加风格要求，例如：改成赛博朋克风格",
+        "✨ 输入描述后点「增强」，LLM 帮你扩写成详细提示词",
+        "🎲 点 🎲 随机填入一条提示词（配方不入池）",
+        "⬆️ 按 ↑/↓ 召回之前生成用过的提示词"
+    ];
+    let tipTimer = null;
+    const setQuickTip = () => { if (!quickInput.value.trim()) quickInput.placeholder = GM_QUICK_TIPS[Math.floor(Math.random() * GM_QUICK_TIPS.length)]; };
+    const stopQuickTips = () => { if (tipTimer) { clearInterval(tipTimer); tipTimer = null; } };
+    quickInput.addEventListener("focus", () => { setQuickTip(); stopQuickTips(); tipTimer = setInterval(setQuickTip, 5000); });
+    quickInput.addEventListener("blur", () => { stopQuickTips(); setQuickTip(); });
     const outputInput = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 4,
@@ -957,10 +971,118 @@ export function openGenMaterialDialog(gallery) {
     // output 框独立 ↑/↓ 历史：只记生成实际用过的最终提示词（增强长文 / 手填内容），与快捷输入历史互不相干
     const gmOutputHistory = createQuickInputHistory(outputInput, { storageKey: "neo.gallery.gen_material.output_history" });
 
+    // ── llm-chat 式布局：🎲 随机填入 / ▾ 运行时随机设置 / ☰ 预设列表（无配方条目）浮出在 output 框右下角；增强技能下拉 + ✨ 增强集成在 quick input 内部底边 ──
+    const GM_RANDOM_KEY = "neo.gallery.gen_material.runtime_random";
+    let gmRandom = { enabled: false, count: 1 };
+    try {
+        const saved = JSON.parse(localStorage.getItem(GM_RANDOM_KEY) || "null");
+        if (saved && typeof saved === "object") {
+            gmRandom = { enabled: !!saved.enabled, count: Math.max(1, Math.min(parseInt(saved.count, 10) || 1, 16)) };
+        }
+    } catch {}
+    const saveGmRandom = () => { try { localStorage.setItem(GM_RANDOM_KEY, JSON.stringify(gmRandom)); } catch {} };
+
+    const randomBtn = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "🎲", title: "随机填入一条提示词" });
+    const randomCaret = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "▾", title: "运行时随机设置" });
+    const presetBtn = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "☰", title: "预设列表" });
+    // 浮出按钮组（参考 llm-chat rs-button-group）：output 框右下角，半透明、hover 变实
+    const randomWrap = $el("div", { className: "neo-gallery-gm-random-wrap" }, [randomBtn, randomCaret]);
+    const floatGroup = $el("div", { className: "neo-gallery-gm-float-group" }, [randomWrap, presetBtn]);
+    const outputWrap = $el("div", { className: "neo-gallery-gm-output-wrap" }, [outputInput, floatGroup]);
+
+    // 运行时随机设置菜单（复用 Prompt Agent 节点的运行时菜单样式；状态 localStorage 持久化）
+    const runtimeMenu = $el("div", { className: "rs-runtime-menu" });
+    const runtimeCheck = $el("input", { type: "checkbox" });
+    runtimeCheck.checked = gmRandom.enabled;
+    const countValEl = $el("span", { className: "rs-runtime-count-val", textContent: String(gmRandom.count) });
+    const mkCountBtn = (delta) => {
+        const b = $el("button", { className: "rs-runtime-count-btn", type: "button" });
+        b.textContent = delta > 0 ? "+" : "−";
+        b.addEventListener("click", () => {
+            gmRandom.count = Math.max(1, Math.min(gmRandom.count + delta, 16));
+            countValEl.textContent = String(gmRandom.count);
+            saveGmRandom();
+        });
+        return b;
+    };
+    runtimeMenu.append(
+        $el("label", { className: "rs-runtime-row rs-runtime-toggle" }, [
+            runtimeCheck,
+            $el("span", { className: "rs-runtime-row-text", textContent: "运行时随机抽取提示词" })
+        ]),
+        $el("div", { className: "rs-runtime-row" }, [
+            mkCountBtn(-1), countValEl, mkCountBtn(1),
+            $el("span", { className: "rs-runtime-row-text", textContent: "张（批量生成）" })
+        ])
+    );
+    const syncRandomState = () => {
+        randomBtn.classList.toggle("neo-gallery-gm-tool-on", gmRandom.enabled);
+        randomCaret.classList.toggle("neo-gallery-gm-tool-on", gmRandom.enabled);
+    };
+    runtimeCheck.addEventListener("change", () => {
+        gmRandom.enabled = runtimeCheck.checked;
+        saveGmRandom();
+        syncRandomState();
+    });
+    syncRandomState();
+
+    // 预设列表浮层（复用预设列表样式；配方不入池，点击填入提示词框）
+    const presetOverlay = $el("div", { className: "rs-preset-list-overlay" });
+    const presetHeader = $el("div", { className: "rs-preset-header" }, [
+        $el("input", { className: "rs-preset-search-input", type: "text", placeholder: "🔍 搜索预设…" }),
+        $el("button", { className: "rs-preset-close", type: "button", textContent: "×" })
+    ]);
+    const presetSearch = presetHeader.querySelector("input");
+    presetHeader.querySelector("button").addEventListener("click", () => { presetOverlay.style.display = "none"; outputInput.focus(); });
+    const presetBody = $el("div", { className: "rs-preset-list-body" });
+    presetOverlay.append(presetHeader, presetBody);
+
+    let presetItems = null; // 本次弹窗会话缓存
+    const renderPresetList = (query) => {
+        presetBody.textContent = "";
+        const q = (query || "").trim().toLowerCase();
+        const items = (presetItems || []).filter(it => !q || it.name.toLowerCase().includes(q));
+        if (!items.length) {
+            presetBody.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: q ? "无匹配预设" : "暂无预设" }));
+            return;
+        }
+        items.forEach(it => {
+            const row = $el("div", { className: "rs-preset-item" }, [
+                $el("span", { className: "rs-preset-content", textContent: it.name }),
+                $el("span", { className: "rs-source-badge", textContent: it.source === "presets" ? "预设" : "自定义" })
+            ]);
+            row.addEventListener("click", async () => {
+                try {
+                    const data = await loadPrompt(it.name);
+                    outputInput.value = data.text || "";
+                    presetOverlay.style.display = "none";
+                    outputInput.focus();
+                } catch (e) {
+                    console.error("[Gallery] load preset failed:", e);
+                    actionToast({ severity: "error", summary: "加载预设失败", detail: String(e?.message || e) });
+                }
+            });
+            presetBody.appendChild(row);
+        });
+    };
+    const openPresetList = async () => {
+        presetOverlay.style.display = "flex";
+        presetSearch.value = "";
+        if (!presetItems) {
+            presetBody.textContent = "加载中…";
+            try { presetItems = await listPrompts(); } catch (e) { console.error("[Gallery] list prompts failed:", e); presetItems = []; }
+        }
+        renderPresetList("");
+        presetSearch.focus();
+    };
+    presetSearch.addEventListener("input", () => renderPresetList(presetSearch.value));
+
+
     let running = false;
     let cancelId = null;
     let cancelRequested = false;
     let deleting = false;
+    let randomPicking = false;
 
     const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-gm-modal-overlay" });
     const close = () => overlay.remove();
@@ -1097,6 +1219,9 @@ export function openGenMaterialDialog(gallery) {
     // 输出框行为与节点共用（思考面板 / 流程状态行 / rAF 批量写回）；quick input 有内容时与
     // output 已有提示词按 \n\n---\n\n 拼接（同节点），成功后 quick input 被消费清空
     const enhanceBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ 增强" });
+    // quick input 内部底边工具栏（参考 llm-chat rs-input-toolbar）：增强技能下拉在左（flex）+ ✨ 增强在右
+    const gmInputToolbar = $el("div", { className: "neo-gallery-gm-input-toolbar" }, [enhanceSel, enhanceBtn]);
+    const quickWrap = $el("div", { className: "neo-gallery-gm-quick-wrap" }, [quickInput, gmInputToolbar]);
     let enhancing = false;
     enhanceBtn.addEventListener("click", async () => {
         if (enhancing || running) return;
@@ -1159,6 +1284,37 @@ export function openGenMaterialDialog(gallery) {
     };
 
 
+    // 成功后：结果图已在位（单张=1 图 / 批量=网格图），这里只补提示 + 操作按钮
+    const renderGenDone = (images, hint) => {
+        const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
+        if (oldHint) oldHint.remove();
+        statusBox.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: hint }));
+        // 打开输出目录：跳到 Output 下实际落盘的日期子目录
+        const openOutputDir = () => {
+            const sub = images.map(i => i.subfolder).find(Boolean);
+            gallery.showDirectoryStructure("Output", sub ? sub.split("/").filter(Boolean) : []);
+            close();
+        };
+        // 删除：结果不满意 → 直接删掉落盘文件（含 .txt 与缩略图缓存），删完回 idle 原地再生成
+        const deleteResult = async () => {
+            if (!images.length || deleting) return;
+            deleting = true;
+            try {
+                for (const im of images) {
+                    const ok = await gallery.deleteItem(im.filename, im.subfolder || "", { silent: true });
+                    if (!ok) { actionToast({ severity: "error", summary: "删除失败", detail: `无法删除 ${im.filename}` }); break; }
+                }
+                renderIdle();
+            } catch (e) {
+                console.error("[Gallery] gen material delete failed:", e);
+                actionToast({ severity: "error", summary: "删除失败", detail: String(e?.message || e) });
+            } finally {
+                deleting = false;
+            }
+        };
+        fill(actionsBox, btn("打开输出目录", openOutputDir), btn("再生成", start), btn("删除", deleteResult), btn("关闭", close, true));
+    };
+
     const renderSuccess = (final) => {
         const images = final.images || [];
         // 结果图原位替换预览区：复用同一容器，只换类名与内容
@@ -1173,31 +1329,75 @@ export function openGenMaterialDialog(gallery) {
             img.addEventListener("click", () => Lightbox.open({ items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), index: 0 }));
             previewBox.appendChild(img);
         }
-        const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
-        if (oldHint) oldHint.remove();
-        statusBox.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。" }));
-        // 打开输出目录：跳到 Output 下实际落盘的日期子目录
-        const openOutputDir = () => {
-            const sub = images.map(i => i.subfolder).find(Boolean);
-            gallery.showDirectoryStructure("Output", sub ? sub.split("/").filter(Boolean) : []);
-            close();
+        renderGenDone(images, "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。");
+    };
+
+    // 提交一次生图任务并等终态；render(snap) 随快照推送刷新 UI（单张=整个预览区 / 批量=当前行原位更新）
+    const runOnePrompt = async (promptText, render) => {
+        // 模型覆盖只带非空值：空串 / 空数组会覆盖掉全局设置里的显式配置
+        const payload = {
+            skill_id: skillSel.value || KREA2_T2I_SKILL_ID,
+            prompt: promptText,
+            skip_enhance: true,
         };
-        // 删除：结果不满意 → 直接删掉落盘文件（含 .txt 与缩略图缓存），删完回 idle 原地再生成
-        const deleteResult = async () => {
-            if (!images.length || deleting) return;
-            deleting = true;
+        const ov = modelCfg.collect();
+        if (ov.model) payload.model = ov.model;
+        if (ov.loras.length) payload.loras = ov.loras;
+        const snap = await requestGeneration(payload);
+        cancelId = snap.task_id;
+        return await watchTask(snap.task_id, render, () => cancelRequested);
+    };
+
+    // 运行时随机批量：逐张生成，成功即把结果图追加进网格；取消时保留已生成的
+    const runBatch = async (prompts) => {
+        const total = prompts.length;
+        const results = [];
+        fill(statusBox, previewBox); // 结果区挂到上方区域（与单张模式复用同一容器）
+        previewBox.className = "neo-gallery-cs-result";
+        fill(previewBox);
+        for (let i = 0; i < total; i++) {
+            if (cancelRequested) break;
+            const runningRow = $el("div", { className: "neo-gallery-gm-batch-item" }, [
+                $el("span", { className: "neo-gallery-cs-spinner" }),
+                $el("span", { textContent: `生成 ${i + 1}/${total}（排队中…）` })
+            ]);
+            previewBox.appendChild(runningRow);
+            fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+            let final;
             try {
-                const ok = await gallery.deleteItem(images[0].filename, images[0].subfolder || "", { silent: true });
-                if (ok) renderIdle();
-                else actionToast({ severity: "error", summary: "删除失败", detail: `无法删除 ${images[0].filename}` });
+                final = await runOnePrompt(prompts[i], s => {
+                    runningRow.lastChild.textContent = `生成 ${i + 1}/${total}（${s.status === "running" ? "生图中" : "排队中"}…）`;
+                });
             } catch (e) {
-                console.error("[Gallery] gen material delete failed:", e);
-                actionToast({ severity: "error", summary: "删除失败", detail: String(e?.message || e) });
-            } finally {
-                deleting = false;
+                runningRow.remove();
+                throw e;
             }
-        };
-        fill(actionsBox, btn("打开输出目录", openOutputDir), btn("再生成", start), btn("删除", deleteResult), btn("关闭", close, true));
+            runningRow.remove();
+            if (final.status === "succeeded") {
+                results.push(final);
+                const images = final.images || [];
+                if (images.length > 0) {
+                    const img = $el("img", {
+                        className: "neo-gallery-cs-result-img",
+                        src: `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`,
+                        alt: images[0].filename
+                    });
+                    img.addEventListener("click", () => Lightbox.open({ items: results.flatMap(f => (f.images || []).map(im => ({ kind: "image", url: im.url, title: im.filename }))), index: 0 }));
+                    previewBox.appendChild(img);
+                }
+            } else if (final.status === "cancelled") {
+                break;
+            } else {
+                // 中途失败：保留已生成的图，错误显示在其下方
+                const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
+                if (oldHint) oldHint.remove();
+                statusBox.appendChild($el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: `第 ${i + 1}/${total} 张生成失败：${final.error || "未知错误"}` }));
+                fill(actionsBox, btn("再生成", start), btn("关闭", close, true));
+                return;
+            }
+        }
+        if (!results.length) { renderError("已取消"); return; }
+        renderGenDone(results.flatMap(f => f.images || []), `已生成 ${results.length}/${total} 张，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。`);
     };
 
     const renderError = (message) => {
@@ -1211,36 +1411,94 @@ export function openGenMaterialDialog(gallery) {
         actionToast({ severity: "error", summary: "素材生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillSel.value || KREA2_T2I_SKILL_ID) });
     };
 
+    // 🎲 随机填入（与批量同池抽一条，配方不入池）
+    randomBtn.addEventListener("click", async () => {
+        if (randomPicking || running) return;
+        randomPicking = true;
+        randomBtn.textContent = "⏳";
+        try {
+            const data = await randomPrompts(1);
+            const text = (data.texts || [])[0] || "";
+            if (text.trim()) {
+                outputInput.value = text;
+                outputInput.focus();
+            } else {
+                actionToast({ severity: "error", summary: "随机提示词失败", detail: "提示词库为空" });
+            }
+        } catch (e) {
+            console.error("[Gallery] random prompt failed:", e);
+            actionToast({ severity: "error", summary: "随机提示词失败", detail: String(e?.message || e) });
+        } finally {
+            randomPicking = false;
+            randomBtn.textContent = "🎲";
+        }
+    });
+
+    // ▾ 运行时随机设置菜单（挂在弹窗 overlay 上，随窗移除）
+    let runtimeMenuOpen = false;
+    const closeRuntimeMenu = () => { runtimeMenuOpen = false; runtimeMenu.style.display = "none"; };
+    randomCaret.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (runtimeMenuOpen) { closeRuntimeMenu(); return; }
+        runtimeMenuOpen = true;
+        runtimeMenu.style.display = "block";
+        const r = randomCaret.getBoundingClientRect();
+        runtimeMenu.style.left = `${r.left}px`;
+        runtimeMenu.style.top = `${r.bottom + 6}px`;
+    });
+    const onDocClick = (e) => {
+        if (runtimeMenuOpen && !runtimeMenu.contains(e.target)) closeRuntimeMenu();
+    };
+    document.addEventListener("click", onDocClick);
+
+    // ☰ 预设列表（无配方条目，点击填入提示词框）
+    presetBtn.addEventListener("click", () => {
+        closeRuntimeMenu();
+        openPresetList();
+    });
+
+
     const start = async () => {
         if (running) return;
-        // 生成用 output 内容作最终提示词（为空回退 quick input），固定 skip_enhance
-        const prompt = outputInput.value.trim() || quickInput.value.trim();
-        if (!prompt) { quickInput.focus(); return; }
-        // 两份历史各自独立：output 为空记快捷输入，非空记 output 的最终提示词
-        if (outputInput.value.trim()) gmOutputHistory.record(prompt);
-        else gmHistory.record(prompt);
+        let prompts;
+        if (gmRandom.enabled) {
+            // 运行时随机：从节点同池抽 N 条不重复提示词，逐张批量生成（配方不入池）
+            const n = Math.max(1, Math.min(gmRandom.count || 1, 16));
+            renderRunning(`抽取 ${n} 条随机提示词…`);
+            let res;
+            try {
+                res = await randomPrompts(n);
+            } catch (e) {
+                console.error("[Gallery] random prompts failed:", e);
+                failGen(String(e?.message || e));
+                return;
+            }
+            prompts = (res.texts || []).filter(t => t && t.trim());
+            if (!prompts.length) { failGen("提示词库为空，抽不到随机提示词"); return; }
+        } else {
+            // 生成用 output 内容作最终提示词（为空回退 quick input），固定 skip_enhance
+            const prompt = outputInput.value.trim() || quickInput.value.trim();
+            if (!prompt) { quickInput.focus(); return; }
+            prompts = [prompt];
+        }
+        const batch = prompts.length > 1;
+        // 两份历史各自独立：output 为空记快捷输入，非空记 output 的最终提示词（批量模式不记）
+        if (!batch) {
+            if (outputInput.value.trim()) gmOutputHistory.record(prompts[0]);
+            else gmHistory.record(prompts[0]);
+        }
         running = true;
         cancelRequested = false;
-        renderRunning("排队中…");
         try {
-            // 模型覆盖只带非空值：空串 / 空数组会覆盖掉全局设置里的显式配置（TE / VAE 不在弹窗露出，不随请求发）
-            const payload = {
-                skill_id: skillSel.value || KREA2_T2I_SKILL_ID,
-                prompt,
-                skip_enhance: true,
-            };
-            const ov = modelCfg.collect();
-            if (ov.model) payload.model = ov.model;
-            if (ov.loras.length) payload.loras = ov.loras;
-            const snap = await requestGeneration(payload);
-            cancelId = snap.task_id;
-            renderRunning("排队中…");
-            const final = await watchTask(snap.task_id, (s) => {
-                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress, s.preview);
-            }, () => cancelRequested);
-            if (final.status === "succeeded") renderSuccess(final);
-            else if (final.status === "cancelled") renderError("已取消");
-            else failGen(final.error || "生成失败");
+            if (!batch) {
+                renderRunning("排队中…");
+                const final = await runOnePrompt(prompts[0], s => renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress, s.preview));
+                if (final.status === "succeeded") renderSuccess(final);
+                else if (final.status === "cancelled") renderError("已取消");
+                else failGen(final.error || "生成失败");
+            } else {
+                await runBatch(prompts);
+            }
         } catch (e) {
             console.error('[Gallery] gen material failed:', e);
             failGen(String(e?.message || e));
@@ -1251,11 +1509,16 @@ export function openGenMaterialDialog(gallery) {
     };
 
     const onKey = (e) => {
-        if (e.key === "Escape") close();
+        if (e.key === "Escape") {
+            // 有浮层先关浮层，无浮层才关窗
+            if (runtimeMenuOpen) closeRuntimeMenu();
+            else if (presetOverlay.style.display === "flex") presetOverlay.style.display = "none";
+            else close();
+        }
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
     };
 
-    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 模型覆盖 / agent 式增强双框：output 上、quick input 下），操作按钮收尾
+    // 结果区在上（预览/成品原位替换），输入区在下（技能 / 模型覆盖 / agent 式增强双框：output 上带 🎲☰ 浮出组、quick input 下内嵌 ✨ 工具栏），操作按钮收尾
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
             $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 生成素材" }),
@@ -1264,25 +1527,22 @@ export function openGenMaterialDialog(gallery) {
         statusBox,
         $el("div", { className: "neo-gallery-story-form-row" }, [
             $el("label", { className: "neo-director-field-label", textContent: "生成技能" }),
-            skillSel
+            skillSel,
+            modelToggle
         ]),
-        modelToggle,
         modelBox,
-        outputInput,
-        quickInput,
-        $el("div", { className: "neo-gallery-gm-enhance-row" }, [
-            $el("label", { className: "neo-director-field-label", textContent: "增强技能" }),
-            enhanceSel,
-            enhanceBtn
-        ]),
+        outputWrap,
+        quickWrap,
         actionsBox
     ]));
+    // 浮层挂在 overlay 上（z-index 高于弹窗，随窗移除）
+    overlay.append(runtimeMenu, presetOverlay);
 
     renderIdle();
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
     document.addEventListener("keydown", onKey);
     const origRemove = overlay.remove.bind(overlay);
-    overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
+    overlay.remove = () => { stopQuickTips(); document.removeEventListener("keydown", onKey); document.removeEventListener("click", onDocClick); origRemove(); };
     document.body.appendChild(overlay);
 
     setTimeout(() => quickInput.focus(), 0);

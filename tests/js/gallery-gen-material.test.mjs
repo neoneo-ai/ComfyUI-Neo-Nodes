@@ -2,7 +2,7 @@
 // 成功后可打开 Output 下实际落盘的日期子目录。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, fetchLog, sleep, click, keydown, inputText, changeValue } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, fetchLog, sleep, click, keydown, inputText, changeValue, fire } from "./setup.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目录", async () => {
@@ -433,11 +433,22 @@ test("生成素材弹窗：✨ 增强仿 agent quick input + output，支持选�
     const enhanceSel = overlay.querySelector(".neo-gallery-gm-enhance-skill");
     assert.ok(quickInput && outputInput, "应有 quick input 与 output 双框");
     const modalChildren = [...overlay.querySelector(".neo-gallery-story-modal").children];
-    assert.ok(modalChildren.indexOf(outputInput) < modalChildren.indexOf(quickInput), "output 应在 quick input 上方（chat 习惯）");
+    const outputWrap = overlay.querySelector(".neo-gallery-gm-output-wrap");
+    const quickWrap = overlay.querySelector(".neo-gallery-gm-quick-wrap");
+    assert.ok(modalChildren.indexOf(outputWrap) < modalChildren.indexOf(quickWrap), "output 框应在 quick input 上方（chat 习惯）");
     assert.equal([...enhanceSel.options].map(o => o.value).join(","), ",general_enhance", "增强下拉只列图像增强技能（顶部默认空选项，task / 生图类排除）");
 
     const enhanceBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "✨ 增强");
     assert.ok(enhanceBtn, "应有「✨ 增强」按钮");
+
+    // llm-chat 式布局：增强下拉 + ✨ 集成在 quick input 内部底边工具栏；🎲/▾/☰ 浮出在 output 框右下角
+    const inputToolbar = overlay.querySelector(".neo-gallery-gm-input-toolbar");
+    assert.ok(quickWrap && inputToolbar && quickWrap.contains(inputToolbar), "增强工具栏应在 quick input 包装内");
+    assert.equal(inputToolbar.querySelector(".neo-gallery-gm-enhance-skill"), enhanceSel, "增强下拉应在工具栏内");
+    assert.ok(inputToolbar.contains(enhanceBtn), "✨ 增强应在工具栏内");
+    const floatGroup = overlay.querySelector(".neo-gallery-gm-float-group");
+    assert.ok(outputWrap && outputWrap.contains(floatGroup), "浮出按钮组应在 output 框包装内");
+    assert.equal(floatGroup.querySelectorAll(".neo-gallery-gm-tool-btn").length, 3, "浮出组应有 🎲/▾/☰ 三个按钮");
 
     // 双框皆空：不发请求
     click(enhanceBtn);
@@ -640,3 +651,170 @@ test("output 框独立历史：增强+生成后 ↑ 在 output 召回最终提�
     localStorage.removeItem("neo.gallery.gen_material.output_history");
     document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
 });
+
+test("🎲 随机填入：从运行时混合池抽一条填入 output 框", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.runtime_random");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/rs_prompts/random_prompts", () => jsonResponse({ texts: ["混合池里的一条随机提示词"] }));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+
+    click([...overlay.querySelectorAll(".neo-gallery-gm-tool-btn")].find(b => b.textContent === "🎲"));
+    await sleep(80);
+
+    assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "混合池里的一条随机提示词", "随机抽到的提示词应填入 output 框");
+    const req = fetchLog.filter(c => c.path === "/rs_prompts/random_prompts").at(-1);
+    assert.deepEqual(req?.body, { count: 1 }, "随机填入应向混合池请求 1 条");
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+
+test("运行时随机批量：启用后逐张生成 N 张，状态持久化到 localStorage", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.runtime_random");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/rs_prompts/random_prompts", () => jsonResponse({ texts: ["随机提示词A", "随机提示词B"] }));
+    let genCount = 0;
+    mockRoute("/neo_image_gen/generate", () => {
+        genCount += 1;
+        return jsonResponse({ task_id: `gmb${genCount}`, status: "queued", images: [] });
+    });
+    mockRoute("/neo_image_gen/status/gmb1", () => jsonResponse({
+        task_id: "gmb1", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "krea2_b1_.png", subfolder: "NeoAgent/2026-10-01", url: "/b1.png" }],
+    }));
+    mockRoute("/neo_image_gen/status/gmb2", () => jsonResponse({
+        task_id: "gmb2", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "krea2_b2_.png", subfolder: "NeoAgent/2026-10-01", url: "/b2.png" }],
+    }));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+
+    // ▾ 打开运行时随机设置菜单：启用 + 数量调为 2
+    const caret = [...overlay.querySelectorAll(".neo-gallery-gm-tool-btn")].find(b => b.textContent === "▾");
+    click(caret);
+    const menu = overlay.querySelector(".rs-runtime-menu");
+    assert.equal(menu.style.display, "block", "设置菜单应打开");
+    const runtimeCheck = menu.querySelector("input[type=checkbox]");
+    runtimeCheck.checked = true;
+    fire(runtimeCheck, "change");
+    click([...menu.querySelectorAll(".rs-runtime-count-btn")].find(b => b.textContent === "+"));
+    assert.equal(menu.querySelector(".rs-runtime-count-val").textContent, "2", "数量应设为 2");
+    click(caret); // 关菜单
+
+    // 生成 → 批量：抽 2 条逐张生成
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "生成"));
+    await sleep(200);
+
+    const randReq = fetchLog.filter(c => c.path === "/rs_prompts/random_prompts").at(-1);
+    assert.deepEqual(randReq?.body, { count: 2 }, "批量应向混合池请求 2 条");
+    const genReqs = fetchLog.filter(c => c.path === "/neo_image_gen/generate");
+    assert.equal(genReqs.length, 2, "应逐张生成 2 次");
+    assert.deepEqual(genReqs.map(r => r.body.prompt), ["随机提示词A", "随机提示词B"], "按抽到的提示词顺序生成");
+
+    // 两张都成功：结果图在位 + 完成提示
+    const previewBox = overlay.querySelector(".neo-gallery-cs-result");
+    assert.equal(previewBox.querySelectorAll(".neo-gallery-cs-result-img").length, 2, "两张结果图应在位");
+    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已生成 2\/2/);
+
+    // 状态持久化
+    assert.deepEqual(JSON.parse(localStorage.getItem("neo.gallery.gen_material.runtime_random")), { enabled: true, count: 2 });
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+
+test("运行时随机批量：取消保留已生成的图", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.runtime_random");
+    localStorage.setItem("neo.gallery.gen_material.runtime_random", JSON.stringify({ enabled: true, count: 2 }));
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/rs_prompts/random_prompts", () => jsonResponse({ texts: ["随机提示词A", "随机提示词B"] }));
+    let genCount = 0;
+    mockRoute("/neo_image_gen/generate", () => {
+        genCount += 1;
+        return jsonResponse({ task_id: `gmc${genCount}`, status: "queued", images: [] });
+    });
+    mockRoute("/neo_image_gen/status/gmc1", () => jsonResponse({
+        task_id: "gmc1", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "krea2_c1_.png", subfolder: "NeoAgent/2026-10-01", url: "/c1.png" }],
+    }));
+    mockRoute("/neo_image_gen/status/gmc2", () => jsonResponse({ task_id: "gmc2", status: "running", progress: { value: 1, max: 8 }, images: [] }));
+    mockRoute("/neo_image_gen/cancel/gmc2", () => jsonResponse({}));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "生成"));
+    await sleep(150); // 第一张完成，第二张运行中
+
+    const cancelBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find(b => b.textContent === "取消任务");
+    assert.ok(cancelBtn, "批量运行中应有「取消任务」按钮");
+    click(cancelBtn);
+    dispatchApiEvent("rs.image_gen.status", { task_id: "gmc2", status: "running" });
+    await sleep(100);
+
+    // 已取消：保留第一张，提示 1/2
+    const previewBox = overlay.querySelector(".neo-gallery-cs-result");
+    assert.equal(previewBox.querySelectorAll(".neo-gallery-cs-result-img").length, 1, "应保留已生成的图");
+    assert.match(overlay.querySelector(".neo-gallery-story-hint").textContent, /已生成 1\/2/);
+    assert.ok(fetchLog.some(c => c.path === "/neo_image_gen/cancel/gmc2"), "应发出取消请求");
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+
+test("☰ 预设列表：搜索 + 点击填入 output 框（无配方条目）", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+    localStorage.removeItem("neo.gallery.gen_material.runtime_random");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/rs_prompts/list_prompts", () => jsonResponse([
+        { name: "红色陶瓷杯", source: "presets" },
+        { name: "白底产品图", source: "custom" },
+    ]));
+    mockRoute("/rs_prompts/load_prompt", () => jsonResponse({ text: "RED CERAMIC CUP, white background, soft lighting" }));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+
+    click([...overlay.querySelectorAll(".neo-gallery-gm-tool-btn")].find(b => b.textContent === "☰"));
+    await sleep(80);
+
+    const presetOverlay = overlay.querySelector(".rs-preset-list-overlay");
+    assert.equal(presetOverlay.style.display, "flex", "预设列表浮层应打开");
+    assert.equal(presetOverlay.querySelectorAll(".rs-preset-item").length, 2, "应列出 2 条预设");
+
+    // 搜索过滤
+    inputText(presetOverlay.querySelector(".rs-preset-search-input"), "陶瓷");
+    assert.equal(presetOverlay.querySelectorAll(".rs-preset-item").length, 1, "搜索后应只剩 1 条");
+
+    // 点击填入 output 框并关闭浮层
+    click(presetOverlay.querySelector(".rs-preset-item"));
+    await sleep(80);
+    assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "RED CERAMIC CUP, white background, soft lighting", "点击预设应填入 output 框");
+    assert.equal(presetOverlay.style.display, "none", "填入后浮层应关闭");
+    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+

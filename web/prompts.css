@@ -79,9 +79,38 @@
     overflow: hidden;
 }
 
+.rs-preset-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding-right: 6px;
+}
+
+.rs-preset-close {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #888;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rs-preset-close:hover {
+    color: #eee;
+    background: rgba(255, 255, 255, .1);
+}
+
 /* Search input at top of preset list panel */
 .rs-preset-search-input {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 8px 12px;
     background: #1a1a1a;
     color: #ccc;

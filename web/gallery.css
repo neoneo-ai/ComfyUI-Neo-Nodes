@@ -240,9 +240,8 @@
 
 /* 「生成素材」弹窗内「模型覆盖」折叠行：展开后显示主模型 / LoRA 临时选择区 */
 .neo-gallery-gm-model-toggle {
-    display: block;
-    width: 100%;
-    text-align: left;
+    flex-shrink: 0;
+    white-space: nowrap;
     padding: 4px 0;
     font-size: 12px;
     color: #9aa4b2;
@@ -278,8 +277,10 @@
 
 /* 「生成素材」弹窗：agent 式增强区——quick input（矮框，描述 / 修改指令）+ [增强技能 + ✨] 行 */
 .neo-gallery-gm-quick-input {
+    width: 100%;
+    box-sizing: border-box;
     min-height: 48px;
-    padding: 8px;
+    padding: 8px 8px 34px;
     font-family: inherit;
     font-size: 12px;
     line-height: 1.5;
@@ -295,16 +296,102 @@
     border-color: rgba(76, 154, 255, 0.6);
 }
 
-.neo-gallery-gm-enhance-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+/* llm-chat 式双框：output 框右下角浮出按钮组（🎲 ▾ ☰，半透明、hover 变实）+ quick input 内部底边工具栏（增强技能 + ✨） */
+.neo-gallery-gm-output-wrap {
+    position: relative;
 }
 
-.neo-gallery-gm-enhance-row select {
+.neo-gallery-gm-float-group {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    z-index: 10;
+    display: flex;
+    border-radius: 6px;
+    overflow: hidden;
+    background: rgba(15, 15, 22, .55);
+    opacity: .55;
+    transition: opacity .2s;
+}
+
+.neo-gallery-gm-float-group:hover {
+    opacity: 1;
+}
+
+.neo-gallery-gm-float-group .neo-gallery-gm-tool-btn {
+    width: 26px;
+    height: 24px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+.neo-gallery-gm-float-group .neo-gallery-gm-tool-btn:hover {
+    background: rgba(124, 108, 240, .18);
+}
+
+.neo-gallery-gm-quick-wrap {
+    position: relative;
+}
+
+.neo-gallery-gm-input-toolbar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+}
+
+.neo-gallery-gm-input-toolbar .neo-gallery-gm-enhance-skill {
     flex: 1;
     min-width: 0;
 }
+
+.neo-gallery-gm-input-toolbar .neo-gallery-story-btn {
+    flex-shrink: 0;
+}
+
+.neo-gallery-gm-tool-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-color, #3a3a4a);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color .15s, background .15s;
+}
+
+.neo-gallery-gm-tool-btn:hover {
+    border-color: var(--accent-color, #7c6cf0);
+    background: rgba(124, 108, 240, .08);
+}
+
+.neo-gallery-gm-tool-on {
+    border-color: var(--accent-color, #7c6cf0);
+    background: rgba(124, 108, 240, .15);
+}
+
+/* 运行时随机批量：结果网格中的“生成中”行 */
+.neo-gallery-gm-batch-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border-color, #3a3a4a);
+    border-radius: 8px;
+    color: var(--text-secondary, #9a9ab0);
+    font-size: 13px;
+}
+
 
 /* Thumbnail size control row */
 .neo-gallery-size-control {
@@ -2093,6 +2180,8 @@ Accordion Section Buttons (Clear)
 
 .neo-gallery-story-input,
 .neo-gallery-story-idea {
+    width: 100%;
+    box-sizing: border-box;
     min-height: 110px;
     padding: 8px;
     font-family: inherit;
@@ -2121,6 +2210,16 @@ Accordion Section Buttons (Clear)
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.neo-gallery-story-form-row .neo-director-field-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.neo-gallery-story-form-row select {
+    flex: 1;
+    min-width: 0;
 }
 
 /* 图片编辑弹窗：上方图片对比，下方表单 */

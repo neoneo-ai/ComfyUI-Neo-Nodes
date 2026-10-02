@@ -122,7 +122,7 @@ function buildLocalAddButton(accept, onUploaded) {
 // 宽高比 + 百万像素 → 宽/高（按 32 对齐）；「自定义」时手输 W/H。
 // ==========================================
 
-const DIRECTOR_ASPECTS = [
+export const DIRECTOR_ASPECTS = [
     ["1:1 (方形)", 1, 1],
     ["2:3 (竖版照片)", 2, 3],
     ["3:2 (横版照片)", 3, 2],
@@ -132,18 +132,18 @@ const DIRECTOR_ASPECTS = [
     ["16:9 (宽屏)", 16, 9],
     ["21:9 (超宽)", 21, 9],
 ];
-const DIRECTOR_CUSTOM = "自定义";
+export const DIRECTOR_CUSTOM = "自定义";
 const DIRECTOR_MULTIPLE = 32;   // MiniMax H3 画布对齐步长
-const MP_MIN = 0.1, MP_MAX = 2, MP_DEFAULT = 0.5;   // 百万像素，取一位小数
+export const MP_MIN = 0.1, MP_MAX = 2, MP_DEFAULT = 0.5;   // 百万像素，取一位小数
 
-function directorClampMp(v) {
+export function directorClampMp(v) {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) return MP_DEFAULT;
     return Math.round(Math.min(MP_MAX, Math.max(MP_MIN, n)) * 10) / 10;
 }
 
 // aspect + 百万像素 → {width,height}（32 对齐）；「自定义」返回 null
-function directorResolution(label, mp) {
+export function directorResolution(label, mp) {
     const row = DIRECTOR_ASPECTS.find(([l]) => l === label);
     if (!row) return null;
     const [, rw, rh] = row;
@@ -156,7 +156,7 @@ function directorResolution(label, mp) {
 }
 
 // 编辑旧配方（只存了 W/H）时：比例命中预设（±2%）则反推 aspect + 百万像素，否则按自定义处理
-function directorInferAspect(w, h) {
+export function directorInferAspect(w, h) {
     const row = DIRECTOR_ASPECTS.find(([, rw, rh]) => Math.abs(w / h - rw / rh) / (rw / rh) < 0.02);
     if (!row) return { label: DIRECTOR_CUSTOM, mp: MP_DEFAULT };
     return { label: row[0], mp: directorClampMp((w * h) / (1024 * 1024)) };

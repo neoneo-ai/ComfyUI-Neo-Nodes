@@ -1129,8 +1129,9 @@ export class NeoGallery {
                     }
                 }
                 
-                // If no elements remain, show empty state
-                const remaining = document.querySelectorAll('.neo-gallery-thumb-container');
+                // If no elements remain, show empty state. Subdir cards count as content:
+                // a folder that only lost its root images must not show the empty message.
+                const remaining = this.accordion.querySelectorAll('.neo-gallery-thumb-container, .neo-gallery-category-card');
                 if (remaining.length === 0 && !this.isSearchActive) {
                     this.displayNoFilesMessage();
                 }

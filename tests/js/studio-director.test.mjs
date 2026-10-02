@@ -79,8 +79,12 @@ test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
         const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
         return sel && sel.textContent === "R1";
     }, "配方自动选中");
-    const inputs = () => [...document.querySelectorAll(".ns-gen-panel input[type=number]")];
-    await until(() => Number(inputs()[1].value) === 640 && Number(inputs()[2].value) === 384, "默认值填充");
+    // 分辨率回填（mock spec 无 shared → 自定义模式按默认 W/H 手输），步数用默认值
+    await until(() =>
+        document.querySelector(".ns-gen-cw").value === "640"
+        && document.querySelector(".ns-gen-ch").value === "384"
+        && Number(document.querySelector(".ns-gen-steps").value) === 20, "默认值填充");
+    assert.ok(!document.querySelector(".ns-gen-row.rs-gen-advanced").classList.contains("rs-adv-open"), "高级（种子/连续性）默认收起");
     assert.ok(fetchLog.some((c) => c.path === "/rs_recipes/director_spec"), "应拉取配方 spec");
 
     // 提交生成：排队中状态 + 实时预览面板初始隐藏

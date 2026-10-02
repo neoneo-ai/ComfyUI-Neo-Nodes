@@ -54,12 +54,18 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         const runFlex = await page.evaluate(() =>
             getComputedStyle(document.querySelector(".ns-gen-panel .rs-btn.ns-gen-run")).flexGrow);
         assert.equal(runFlex, "0", "生成整片按钮不应被 flex 拉伸");
+        // 控制行属于配方列（配方区 = 控制行 + 时间轴；结果区 = 预览/成片），行尾按钮右端应与时间轴右端对齐
+        const edges = await page.evaluate(() => {
+            const right = (sel) => document.querySelector(sel).getBoundingClientRect().right;
+            return { btn: right(".ns-gen-panel .ns-gen-run-group"), tl: right(".ns-gen-timeline") };
+        });
+        assert.ok(Math.abs(edges.btn - edges.tl) <= 1, `生成按钮右端应与时间轴右端对齐（差 ${Math.round(edges.btn - edges.tl)}px）`);
         // 满幅主区里配方列表应像素材一样多列排布
         const listDisplay = await page.evaluate(() =>
             getComputedStyle(document.querySelector(".ns-director .neo-recipes-list")).display);
         assert.equal(listDisplay, "grid", "配方列表应为 grid 多列布局");
 
-        // 首个配方自动选中：对应卡片高亮，且 宽/高/步数 按 director_spec 默认值填充（与画布节点同源）
+        // 首个配方自动选中：对应卡片高亮，且 分辨率/步数 按 director_spec 默认值填充（与画布节点同源）
         const spec = await page.evaluate(async () => {
             const v = await (await fetch("/neo_studio/version")).json();
             const name = (v.recipes || [])[0];
@@ -71,12 +77,14 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
             const selectedName = await page.evaluate(() =>
                 document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span")?.textContent);
             assert.equal(selectedName, spec.name, "首个配方应被自动选中");
+            // 分辨率两种形态都算回填成功：预设比例 → W×H 回显；自定义/旧配方 → 手输 W/H 精确值
             await page.waitForFunction((d) => {
-                const inputs = [...document.querySelectorAll(".ns-gen-panel input[type=number]")];
-                // 顺序：种子/宽/高/上下文帧/步数
-                return Number(inputs[1].value) === d.width
-                    && Number(inputs[2].value) === d.height
-                    && Number(inputs[4].value) === d.steps;
+                const panel = document.querySelector(".ns-gen-panel");
+                const out = (panel.querySelector(".ns-gen-res-out")?.textContent || "").replace(/\s/g, "");
+                const cw = panel.querySelector(".ns-gen-cw"), ch = panel.querySelector(".ns-gen-ch");
+                const custom = cw.style.display !== "none" && Number(cw.value) === d.width && Number(ch.value) === d.height;
+                return Number(panel.querySelector(".ns-gen-steps").value) === d.steps
+                    && (out === `${d.width}×${d.height}` || custom);
             }, spec.defaults, { timeout: 5000 });
 
             // 点另一张卡片 → 高亮切换（选中直接喂生成区，不再用顶部下拉）
