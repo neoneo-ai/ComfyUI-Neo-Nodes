@@ -527,6 +527,7 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
     QWEN_TEMPLATE = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "{{TEXT_ENCODER}}"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "{{VAE}}"}},
         "4": {"class_type": "TextEncodeQwenImage21",
               "inputs": {"prompt": "{{PROMPT}}",
                          "images.image_1": ["10", 0], "images.image_2": ["12", 0]}},
@@ -535,8 +536,10 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         "6": {"class_type": "KSampler",
               "inputs": {"model": ["1", 0], "seed": "{{SEED}}", "steps": "{{STEPS}}",
                          "positive": ["4", 0], "negative": ["4", 1], "latent_image": ["5", 0]}},
+        "7": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
         "8": {"class_type": "SaveImage",
-              "inputs": {"images": ["6", 0], "filename_prefix": "{{PREFIX}}"}},
+              "inputs": {"images": ["7", 0], "filename_prefix": "{{PREFIX}}"}},
         "10": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_1}}"}},
         "12": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_2}}"}},
     }
@@ -681,6 +684,29 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
              "outpaint": {"left": 64}})
         self.assertEqual(snap["prompt"], image_gen.OUTPAINT_DEFAULT_PROMPT)
 
+    def test_local_edit_prompt_appends_red_constraint(self):
+        from PIL import Image
+        buf = os.path.join(_INPUT_DIR, "_loc_mask_small.png")
+        with Image.new("L", (16, 16), 255) as img:
+            img.save(buf, format="PNG")
+        with open(buf, "rb") as f:
+            data_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+        snap, _ = self._run(
+            self.QWEN_TEMPLATE,
+            {"skill_id": "qwen_image_21", "prompt": "fix the scratch",
+             "local_edit": True,
+             "references": [{"kind": "input", "value": "portrait.png"},
+                            {"kind": "data", "data": data_url}]})
+        self.assertTrue(snap["prompt"].endswith(image_gen.LOCAL_EDIT_PROMPT_SUFFIX))
+
+    def test_local_edit_unsupported_template_raises(self):
+        with self.assertRaises(ValueError):
+            self._run(
+                self.KREA2_TEMPLATE,
+                {"skill_id": "image_gen_image", "prompt": "fix",
+                 "local_edit": True,
+                 "references": [{"kind": "input", "value": "portrait.png"}]})
+
 
 class OutpaintParseTests(unittest.TestCase):
     """扩图参数解析：四边留白钳制、目标像素（MP）范围、非法值报错。"""
@@ -787,6 +813,113 @@ class OutpaintRenderTests(unittest.TestCase):
                          {n.get("class_type") for n in graph.values() if isinstance(n, dict)})
         self.assertEqual(graph["4"]["inputs"]["resolution"], 1024)
         self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 0])
+
+
+class LocalEditTests(unittest.TestCase):
+    """高分局部编辑：遮罩自动定位区域、红色高亮/羽化遮罩落盘、图变换。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
+                  encoding="utf-8") as f:
+            cls.template = json.load(f)
+
+    def _make(self, mask_rect=None):
+        from PIL import Image, ImageDraw
+        orig_path = os.path.join(_INPUT_DIR, "loc_ref.png")
+        with Image.new("RGB", (200, 300), (10, 120, 200)) as img:
+            img.save(orig_path, format="PNG")
+        mask = Image.new("L", (200, 300), 0)
+        if mask_rect:
+            ImageDraw.Draw(mask).rectangle(mask_rect, fill=255)
+        mask_path = os.path.join(_INPUT_DIR, "_loc_mask_tmp.png")
+        mask.save(mask_path, format="PNG")
+        with open(mask_path, "rb") as f:
+            return "data:image/png;base64," + base64.b64encode(f.read()).decode()
+
+    def test_prepare_box_padding_alignment_and_files(self):
+        data_url = self._make((50, 80, 120, 200))
+        local = image_gen._prepare_local_edit("loc_ref.png", {"kind": "data", "data": data_url})
+        # 包围盒(50,80,120,200) + padding：框包住涂抹区、对齐 8、不越界
+        self.assertLessEqual(local["x"], 50)
+        self.assertLessEqual(local["y"], 80)
+        self.assertGreaterEqual(local["x"] + local["w"], 120)
+        self.assertGreaterEqual(local["y"] + local["h"], 200)
+        for key in ("x", "y", "w", "h"):
+            self.assertEqual(local[key] % 8, 0)
+        # 编辑区放大到约 1MP（原涂抹区仅 ~70×120）
+        self.assertGreater(local["w2"] * local["h2"], 4e5)
+        self.assertLess(local["w2"] * local["h2"], 2.5e6)
+        from PIL import Image
+        hl = Image.open(os.path.join(_INPUT_DIR, local["hl_name"]))
+        fm = Image.open(os.path.join(_INPUT_DIR, local["mask_name"]))
+        cx, cy = 85 - local["x"], 140 - local["y"]
+        self.assertEqual(hl.getpixel((cx, cy)), (255, 0, 0))   # 涂抹区标红
+        self.assertEqual(fm.size, (local["w"], local["h"]))
+        self.assertEqual(fm.getpixel((cx, cy)), 255)           # 羽化遮罩内部保持实色
+
+    def test_prepare_empty_mask_raises(self):
+        data_url = self._make(None)
+        with self.assertRaises(ValueError):
+            image_gen._prepare_local_edit("loc_ref.png", {"kind": "data", "data": data_url})
+
+    def test_resolve_extracts_mask_from_refs(self):
+        data_url = self._make((50, 80, 120, 200))
+        params = image_gen.resolve_request(
+            {"prompt": "fix the scratch", "seed": 3, "local_edit": True,
+             "references": [{"kind": "input", "value": "loc_ref.png"},
+                            {"kind": "data", "data": data_url}]},
+            base_settings())
+        self.assertIsNotNone(params["local_edit"])
+        self.assertEqual(params["ref_images"], ["loc_ref.png"])   # 遮罩不进模型参考槽
+
+    def test_local_edit_requires_mask(self):
+        write_png(os.path.join(_INPUT_DIR, "loc_ref.png"), 200, 300)
+        with self.assertRaises(ValueError):
+            image_gen.resolve_request(
+                {"prompt": "fix", "seed": 3, "local_edit": True,
+                 "references": [{"kind": "input", "value": "loc_ref.png"}]},
+                base_settings())
+
+    def test_graph_transform(self):
+        data_url = self._make((50, 80, 120, 200))
+        params = image_gen.resolve_request(
+            {"prompt": "fix the scratch", "seed": 3, "local_edit": True,
+             "references": [{"kind": "input", "value": "loc_ref.png"},
+                            {"kind": "data", "data": data_url}]},
+            base_settings())
+        local = params["local_edit"]
+        graph, _ = image_gen.render_template(self.template, params)
+
+        def find(ct):
+            ids = [nid for nid, n in graph.items()
+                   if isinstance(n, dict) and n.get("class_type") == ct]
+            assert len(ids) == 1, f"{ct} 应恰好 1 个，实际 {ids}"
+            return ids[0]
+
+        hl_id = next(nid for nid, n in graph.items()
+                    if isinstance(n, dict) and n.get("class_type") == "LoadImage"
+                    and (n.get("inputs") or {}).get("image") == local["hl_name"])
+        mask_id = find("LoadImageMask")
+        scales = [nid for nid, n in graph.items()
+                  if isinstance(n, dict) and n.get("class_type") == "ImageScale"]
+        up_id = next(nid for nid in scales if graph[nid]["inputs"]["width"] == local["w2"])
+        down_id = next(nid for nid in scales if graph[nid]["inputs"]["width"] == local["w"])
+        comp_id = find("ImageCompositeMasked")
+        self.assertEqual(graph[up_id]["inputs"]["image"], [hl_id, 0])
+        self.assertEqual((graph[up_id]["inputs"]["width"], graph[up_id]["inputs"]["height"]),
+                         (local["w2"], local["h2"]))
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [up_id, 0])
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["4", 2])
+        self.assertEqual(graph[down_id]["inputs"]["image"], ["7", 0])
+        comp = graph[comp_id]["inputs"]
+        self.assertEqual(comp["destination"], ["10", 0])
+        self.assertEqual(comp["source"], [down_id, 0])
+        self.assertEqual((comp["x"], comp["y"]), (local["x"], local["y"]))
+        self.assertEqual(comp["mask"], [mask_id, 0])
+        self.assertEqual(graph[find("SaveImage")]["inputs"]["images"], [comp_id, 0])
+        self.assertNotIn("5", graph)   # EmptyLatentImage 不再被引用，移除
 
 
 class Krea2EditHelperTests(unittest.TestCase):

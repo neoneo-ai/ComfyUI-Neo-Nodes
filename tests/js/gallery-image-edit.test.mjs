@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click, inputText, window } from "./setup.mjs";
+import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
 test("图片编辑弹窗：idle 有「生成」，成功后保留「再生成」可连续重复生成", async () => {
     resetEnv();
@@ -273,5 +274,143 @@ test("图片编辑弹窗：扩图拖框体是平移留白，不会把框缩回�
 
     // 留白总量不变（右 208 变成左 208）
     assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1008×728 → 1184×864");
+});
+
+test("图片编辑弹窗：局部开关切到局部技能、涂抹画布出现，未涂抹禁止生成", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_local_edit", cn_name: "Qwen Image 2.1 高分局部编辑", category: "image_gen", gen_image: true },
+    ]));
+
+    const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
+    openImageEditDialog(gallery, { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    const origImg = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImg, key, { value, configurable: true });
+    }
+
+    const localBtn = overlay.querySelector(".neo-gallery-edit-outpaint-btn:nth-of-type(2)");
+    assert.ok(localBtn && localBtn.textContent.includes("局部"), "应有「局部」按钮");
+    click(localBtn);
+    await sleep(10);
+
+    const skillSel = overlay.querySelector(".neo-gallery-story-form-row select");
+    assert.equal(skillSel.value, "qwen_image_21_local_edit", "开局部应切到局部技能");
+    const localRow = [...overlay.querySelectorAll(".neo-gallery-edit-outpaint-row")]
+        .find((r) => r.contains(overlay.querySelector(".neo-gallery-edit-brush")));
+    assert.ok(localRow && localRow.style.display !== "none", "应出现局部控制行（画笔/橡皮）");
+    assert.ok(overlay.querySelector(".neo-gallery-edit-paint-canvas"), "应出现涂抹画布");
+    assert.equal(overlay.querySelector("#img-edit-width").style.display, "none", "局部模式隐藏宽高输入");
+
+    // 未涂抹直接生成 → 报错、不发请求
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    let genCount = 0;
+    mockRoute("/neo_image_gen/generate", () => { genCount += 1; return jsonResponse({ task_id: "ie3", status: "queued", images: [] }); });
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "把划痕去掉");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(40);
+    assert.equal(genCount, 0, "未涂抹不应发出请求");
+    assert.match(overlay.querySelector(".neo-gallery-story-hint-error")?.textContent || "", /涂抹/);
+
+    // 关闭局部：技能切回、画布移除
+    click(localBtn);
+    await sleep(10);
+    assert.equal(skillSel.value, "qwen_image_21");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-paint-canvas"), null);
+});
+
+test("图片编辑弹窗：第二参考图拖放选中后随请求发送，扩图/局部模式下不可用", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "body_b.png" }));
+
+    const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
+    openImageEditDialog(gallery, { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    const refDropZone = overlay.querySelector(".neo-gallery-edit-refdrop");
+    assert.ok(refDropZone, "应有参考图拖放区");
+
+    // 模拟从素材库拖放（application/x-neo-gallery MIME）
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"body_b.png","subfolder":"people"}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    refDropZone.dispatchEvent(dropEv);
+    await sleep(30);
+
+    const chipImg = overlay.querySelector(".neo-gallery-edit-refchip-img");
+    assert.ok(chipImg, "拖放后应显示参考图缩略图");
+    assert.match(chipImg.getAttribute("src"), /filename=body_b\.png/);
+
+    // 生成请求携带第二张参考图
+    let genBody = null;
+    mockRoute("/neo_image_gen/generate", (body) => { genBody = body; return jsonResponse({ task_id: "ie4", status: "queued", images: [] }); });
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "把脸换成参考图的脸");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(60);
+    assert.ok(genBody, "应发出生成请求");
+    assert.equal(genBody.references.length, 2);
+    assert.deepEqual(genBody.references[1], { kind: "input", value: "body_b.png" });
+
+    // 开扩图：第二参考不可用且被清除
+    const outpaintBtn = overlay.querySelector(".neo-gallery-edit-outpaint-btn");
+    click(outpaintBtn);
+    await sleep(10);
+    assert.ok(refDropZone.classList.contains("disabled"), "扩图模式下拖放区应禁用");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-refchip-img"), null, "扩图模式应清除已选第二参考");
+});
+
+test("图片编辑弹窗：生成失败（缺模型）弹 action toast 引导去技能详情", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+    ]));
+
+    const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
+    openImageEditDialog(gallery, { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie5", status: "queued", images: [] }));
+    // 非终态：resync 不结算（getJson 遇 error 字段会抛并被吞），失败终态由 WS 事件推送
+    mockRoute("/neo_image_gen/status/ie5", () => jsonResponse({ task_id: "ie5", status: "running" }));
+
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "把背景换成海边日落");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(50);
+
+    // 派发失败终态：缺模型（非 LLM 报文），带候选提示
+    dispatchApiEvent("rs.image_gen.status", { task_id: "ie5", status: "failed", error: "找不到模型 Qwen/qwen_image_2.1_int8_convrot.safetensors（diffusion_models）；候选: QwenImage2.1\\qwen_image_2.1_int8_convrot.safetensors" });
+    await sleep(10);
+
+    // 窗内留错误 + 可重试
+    assert.match(overlay.querySelector(".neo-gallery-story-hint-error")?.textContent || "", /找不到模型/);
+    assert.ok([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "重试"), "可重试");
+
+    // 弹 action toast：summary/detail + 「打开技能详情」入口（而非仅提示）
+    const toast = [...document.querySelectorAll(".neo-at")].at(-1);
+    assert.ok(toast, "应弹 action toast");
+    assert.equal(toast.querySelector(".neo-at-summary").textContent, "图片编辑生成失败");
+    assert.match(toast.querySelector(".neo-at-detail").textContent, /找不到模型/);
+    assert.equal(toast.querySelector(".neo-at-action").textContent, "打开技能详情");
 });
 

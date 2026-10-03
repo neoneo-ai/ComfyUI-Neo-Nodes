@@ -901,3 +901,140 @@ async def rs_delete_repair_mappings(request):
     elif not delete_repair_mapping(key):
         return web.json_response({"success": False, "error": "Unknown mapping"}, status=404)
     return web.json_response({"success": True})
+
+
+# ---------------------------------------------------------------------------
+# Civitai LoRA search & download (for skill repair dialog)
+# ---------------------------------------------------------------------------
+
+import aiohttp
+from pathlib import Path as _Path
+
+_CIVITAI_API = "https://civitai.com/api/v1"
+
+
+def _civitai_headers() -> dict:
+    from .util import _load_settings
+    key = str(_load_settings().get("civitai_api_key") or "").strip()
+    h = {"User-Agent": "ComfyUI-Neo-Nodes"}
+    if key:
+        h["Authorization"] = f"Bearer {key}"
+    return h
+
+
+@PromptServer.instance.routes.post("/neo_nodes/civitai_search_lora")
+async def rs_civitai_search_lora(request):
+    """Search Civitai for LoRAs by name. Body: {"query": "..."}.
+
+    Returns matching models with their first version's file info so the
+    frontend can offer a download button.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+    query = str((data or {}).get("query") or "").strip()
+    if not query:
+        return web.json_response({"success": False, "error": "Empty query"}, status=400)
+
+    headers = _civitai_headers()
+    params = {"query": query, "types": "LORA", "limit": "12", "sort": "HighestRating"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_CIVITAI_API}/models", params=params, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                if resp.status != 200:
+                    return web.json_response({"success": False, "error": f"Civitai HTTP {resp.status}"}, status=502)
+                body = await resp.json()
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=502)
+
+    items = []
+    for m in (body.get("items") or []):
+        versions = m.get("modelVersions") or []
+        if not versions:
+            continue
+        v = versions[0]
+        files = v.get("files") or []
+        # Prefer .safetensors
+        file_info = None
+        for f in files:
+            if str(f.get("name", "")).lower().endswith(".safetensors"):
+                file_info = f
+                break
+        if file_info is None and files:
+            file_info = files[0]
+        items.append({
+            "model_id": m.get("id"),
+            "name": m.get("name", ""),
+            "author": (m.get("userName") or m.get("username") or ""),
+            "version_name": v.get("name", ""),
+            "version_id": v.get("id"),
+            "file_name": file_info.get("name", "") if file_info else "",
+            "file_size": file_info.get("size", 0) if file_info else 0,
+            "download_url": file_info.get("downloadUrl", "") if file_info else "",
+        })
+    return web.json_response({"success": True, "items": items})
+
+
+@PromptServer.instance.routes.post("/neo_nodes/civitai_download_lora")
+async def rs_civitai_download_lora(request):
+    """Download a LoRA file from Civitai to models/loras/.
+
+    Body: {"url": "https://civitai.com/api/download/...", "filename": "model.safetensors"}
+    Returns {"success": true, "filename": "model.safetensors"} on completion.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+    url = str((data or {}).get("url") or "").strip()
+    filename = str((data or {}).get("filename") or "").strip()
+    if not url or not url.startswith("http"):
+        return web.json_response({"success": False, "error": "Invalid URL"}, status=400)
+    if not filename:
+        # Derive from URL path
+        from urllib.parse import urlparse
+        parts = urlparse(url).path.split("/")
+        filename = parts[-1] if parts and parts[-1] else "model.safetensors"
+
+    # Resolve target directory
+    import folder_paths
+    lora_dirs = folder_paths.get_folder_paths("loras")
+    if not lora_dirs:
+        return web.json_response({"success": False, "error": "No loras directory configured"}, status=500)
+    save_dir = _Path(lora_dirs[0])
+    save_dir.mkdir(parents=True, exist_ok=True)
+    dest = save_dir / filename
+
+    # If file already exists, skip download
+    if dest.exists():
+        return web.json_response({"success": True, "filename": filename, "skipped": True})
+
+    headers = _civitai_headers()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=600, sock_read=300),
+            ) as resp:
+                if resp.status != 200:
+                    return web.json_response({"success": False, "error": f"HTTP {resp.status}"}, status=502)
+                tmp = dest.with_suffix(dest.suffix + ".part")
+                with open(tmp, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(4 * 1024 * 1024):
+                        f.write(chunk)
+                tmp.replace(dest)
+    except Exception as e:
+        # Clean up partial file
+        try:
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        return web.json_response({"success": False, "error": str(e)}, status=502)
+
+    return web.json_response({"success": True, "filename": filename})

@@ -2300,8 +2300,9 @@ Accordion Section Buttons (Clear)
     justify-content: space-between;
 }
 
-/* 生成素材窗：同导演编辑器——不加背景遮罩（点击穿透到画廊/画布），标题栏可拖窗口 */
-.neo-gallery-gm-modal-overlay {
+/* 生成素材窗 / 图片编辑窗：同导演编辑器——不加背景遮罩（点击穿透到画廊/画布），标题栏可拖窗口 */
+.neo-gallery-gm-modal-overlay,
+.neo-gallery-edit-modal-overlay {
     background: none;
     backdrop-filter: none;
     pointer-events: none;
@@ -2310,11 +2311,13 @@ Accordion Section Buttons (Clear)
 .neo-gallery-gm-modal-overlay .neo-gallery-story-modal,
 /* 窗内浮层（随机菜单 / 预设列表）在穿透的 overlay 下仍需可交互 */
 .neo-gallery-gm-modal-overlay .rs-preset-list-overlay,
-.neo-gallery-gm-modal-overlay .rs-runtime-menu {
+.neo-gallery-gm-modal-overlay .rs-runtime-menu,
+.neo-gallery-edit-modal-overlay .neo-gallery-story-modal {
     pointer-events: auto;
 }
 
-.neo-gallery-gm-modal-overlay .neo-gallery-story-titlebar {
+.neo-gallery-gm-modal-overlay .neo-gallery-story-titlebar,
+.neo-gallery-edit-modal-overlay .neo-gallery-story-titlebar {
     cursor: move;
     user-select: none;
 }
@@ -2545,9 +2548,87 @@ Accordion Section Buttons (Clear)
     white-space: nowrap;
 }
 
+/* 局部编辑：涂抹叠加画布（对齐原图 contain 显示盒） */
+.neo-gallery-edit-paint-canvas {
+    position: absolute;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.neo-gallery-edit-brush {
+    width: 120px;
+}
+
+/* 第二张参考图拖放区（空态=虚线框+图标；有图=缩略图+×） */
+.neo-gallery-edit-refdrop {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.neo-gallery-edit-refdrop:hover,
+.neo-gallery-edit-refdrop.drop-active {
+    border-color: #4fc3f7;
+    background: rgba(79, 195, 247, 0.08);
+}
+
+.neo-gallery-edit-refdrop.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.neo-gallery-edit-refdrop.has-img {
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.neo-gallery-edit-refdrop-icon {
+    font-size: 16px;
+    opacity: 0.7;
+}
+
+.neo-gallery-edit-refchip-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 5px;
+    position: absolute;
+    inset: 0;
+}
+
+.neo-gallery-edit-refchip-x {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #333;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    color: #eee;
+}
+
 /* 扩图：imgwrap 变为中心舞台，画布（原图+留白）超出时整体等比缩小 */
 .neo-gallery-edit-compare-imgwrap {
     position: relative;
+}
+
+.neo-gallery-edit-compare-imgwrap.drop-active {
+    outline: 2px dashed var(--accent, #60a5fa);
+    outline-offset: -2px;
+    border-radius: 8px;
 }
 
 .neo-gallery-edit-compare-imgwrap.neo-gallery-edit-outpaint {

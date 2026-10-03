@@ -2931,6 +2931,16 @@
 .rs-repair-label { width: 92px; flex: none; font-size: 12px; color: #bbb; }
 .rs-repair-cur { flex: 1; min-width: 0; font-size: 11px; color: #f87171; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rs-repair-sel { width: 210px; flex: none; }
+.rs-repair-civitai-btn { flex: none; font-size: 11px; padding: 3px 8px; background: #2d2d35; color: #aaa; border: 1px solid #444; border-radius: 4px; cursor: pointer; }
+.rs-repair-civitai-btn:hover { background: #3a3a44; color: #fff; border-color: #666; }
+.rs-repair-civitai-panel { padding: 6px 0 8px 100px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid #2a2a2e; }
+.rs-civ-item { display: flex; align-items: center; gap: 8px; }
+.rs-civ-info { flex: 1; min-width: 0; font-size: 11px; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-civ-dl-btn { flex: none; font-size: 11px; padding: 2px 8px; background: #3b82f6; color: #fff; border: none; border-radius: 3px; cursor: pointer; }
+.rs-civ-dl-btn:hover { background: #2563eb; }
+.rs-civ-dl-btn:disabled { background: #555; color: #999; cursor: default; }
+.rs-civ-loading, .rs-civ-empty, .rs-civ-err { font-size: 11px; color: #888; padding: 4px 0; }
+.rs-civ-err { color: #f87171; }
 .rs-repair-foot { padding: 10px 14px; border-top: 1px solid #333; display: flex; align-items: center; gap: 8px; }
 .rs-repair-hint { flex: 1; font-size: 11px; color: #888; }
 /* 修复记录弹窗：按次分组（时间·类型）+ 每处 from→to */

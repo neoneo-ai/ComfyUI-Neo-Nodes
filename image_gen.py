@@ -88,6 +88,9 @@ _QUADVIEW_HINTS = ("quadview", "四视图")
 OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation "
                            "of the scene, keeping the existing picture unchanged.")
 
+# 局部编辑追加的区域约束（模型看到的是涂抹区标红的裁剪图）
+LOCAL_EDIT_PROMPT_SUFFIX = ("Only modify the red highlighted area; keep all other parts of the image exactly unchanged.")
+
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac"}
@@ -498,6 +501,57 @@ def _parse_outpaint(value) -> dict | None:
             "total_pixels": max(0.0, min(16.0, total_pixels))}
 
 
+def _prepare_local_edit(ref_name: str, mask_src: dict) -> dict:
+    """高分局部编辑预处理：解码涂抹遮罩，自动定位编辑区（非零像素包围盒 + 25% 边距），
+    生成红色高亮裁剪图（模型据此识别编辑目标）与羽化遮罩（合并回原图用），返回裁剪框与临时文件名。"""
+    from PIL import Image, ImageFilter
+    mask_name = _reference_name(mask_src)
+    if not mask_name:
+        raise ValueError("涂抹区域（遮罩）无法读取，请重新涂抹后再生成")
+    input_dir = folder_paths.get_input_directory()
+    try:
+        with Image.open(os.path.join(input_dir, *ref_name.split("/"))) as orig:
+            orig = orig.convert("RGB")
+        with Image.open(os.path.join(input_dir, *mask_name.split("/"))) as mask:
+            mask = mask.convert("L")
+    except Exception as e:
+        raise ValueError(f"读取原图/遮罩失败：{e}")
+    if mask.size != orig.size:
+        mask = mask.resize(orig.size)
+    bbox = mask.getbbox()
+    if not bbox:
+        raise ValueError("请先涂抹要编辑的区域")
+    W, H = orig.size
+    bx0, by0, bx1, by1 = bbox
+    pad_x = max(32, int((bx1 - bx0) * 0.25))
+    pad_y = max(32, int((by1 - by0) * 0.25))
+    x0 = (max(0, bx0 - pad_x) // 8) * 8
+    y0 = (max(0, by0 - pad_y) // 8) * 8
+    x1 = min(W, ((bx1 + pad_x) + 7) // 8 * 8)
+    y1 = min(H, ((by1 + pad_y) + 7) // 8 * 8)
+    w, h = x1 - x0, y1 - y0
+    crop = orig.crop((x0, y0, x1, y1))
+    mask_crop = mask.crop((x0, y0, x1, y1))
+    red = Image.new("RGB", crop.size, (255, 0, 0))
+    hl = Image.composite(red, crop, mask_crop)
+    # 羽化：高斯模糊 + 电平拉伸（内部保持实色，边缘平滑过渡）
+    radius = max(4, min(w, h) // 32)
+    feathered = mask_crop.filter(ImageFilter.GaussianBlur(radius)).point(
+        lambda v: max(0, min(255, int((v - 38) / 176 * 255))))
+    tag = time.strftime("%Y%m%d-%H%M%S") + "_" + uuid.uuid4().hex[:6]
+    hl_name = f"NeoAgent/_neo_local_hl_{tag}.png"
+    mask_out_name = f"NeoAgent/_neo_local_mask_{tag}.png"
+    os.makedirs(os.path.join(input_dir, "NeoAgent"), exist_ok=True)
+    hl.save(os.path.join(input_dir, *hl_name.split("/")))
+    feathered.save(os.path.join(input_dir, *mask_out_name.split("/")))
+    # 编辑区放大到约 1MP 高分重绘（对齐参考工作流的 ImageScaleToTotalPixels）
+    scale = (1e6 / (w * h)) ** 0.5
+    w2 = max(64, int(w * scale + 0.5) // 8 * 8)
+    h2 = max(64, int(h * scale + 0.5) // 8 * 8)
+    return {"x": x0, "y": y0, "w": w, "h": h, "w2": w2, "h2": h2,
+            "hl_name": hl_name, "mask_name": mask_out_name}
+
+
 def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
                     auto_quadview: bool = True) -> dict:
     """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。
@@ -532,6 +586,11 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
 
     refs = body.get("references")
     refs = refs if isinstance(refs, list) else ([refs] if refs else [])
+    # 局部编辑：第二张参考是涂抹遮罩（kind=data），不作为模型参考图
+    local_edit_on = bool(body.get("local_edit"))
+    mask_src = None
+    if local_edit_on and len(refs) >= 2:
+        mask_src, refs = refs[1], refs[:1]
     names = []
     for src in refs:
         name = _reference_name(src)
@@ -546,6 +605,15 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
 
     # 扩图：四边留白像素 + 目标总像素（MP）；None = 未开扩图模式
     outpaint = _parse_outpaint(body.get("outpaint"))
+
+    # 高分局部编辑：解码遮罩、自动定位编辑区并落盘高亮裁剪图/羽化遮罩
+    local_edit = None
+    if local_edit_on:
+        if not ref_name:
+            raise ValueError("局部编辑需要参考图")
+        if not mask_src:
+            raise ValueError("局部编辑需要涂抹区域（遮罩）")
+        local_edit = _prepare_local_edit(ref_name, mask_src)
 
     # 参考图模式：LoRA 列表里没有 ref_only（四视图）的则按名称线索自动挑选四视图 LoRA 追加到
     # 链尾（用于填模板 LoRA 槽位）；文生图模式跳过 ref_only 的 LoRA（只在有参考图时才有意义）。
@@ -605,6 +673,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
         "ref_images": names,
         "ref_scale": ref_scale if ref_name else None,
         "outpaint": outpaint,
+        "local_edit": local_edit,
         "prefix": prefix,
         "warnings": warnings,
     }
@@ -863,6 +932,56 @@ def _apply_outpaint(graph: dict, outpaint: dict) -> None:
             graph.pop(nid)
 
 
+def _apply_local_edit(graph: dict, local: dict) -> None:
+    """高分局部编辑图变换（Qwen Image 2.1）：首张参考图换成红色高亮裁剪图并放大到高分；
+    解码后缩回裁剪尺寸，按羽化遮罩原位合并回原图。"""
+    te_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
+                 if isinstance(n, dict) and n.get("class_type") == "TextEncodeQwenImage21"), None)
+    if te_id is None:
+        raise ValueError("该技能不支持局部编辑（模板没有 Qwen Image 2.1 编码器）")
+    te = graph[te_id]
+    src = (te.get("inputs") or {}).get("images.image_1")
+    if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
+        raise ValueError("局部编辑需要参考图，请添加参考图后再生成")
+    decode_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
+                      if isinstance(n, dict) and n.get("class_type") == "VAEDecode"), None)
+    save_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
+                    if isinstance(n, dict) and n.get("class_type") == "SaveImage"), None)
+    if decode_id is None or save_id is None:
+        raise ValueError("该技能不支持局部编辑（模板没有解码/保存节点）")
+    hl_id = _next_graph_id(graph)
+    graph[hl_id] = {"class_type": "LoadImage", "inputs": {"image": local["hl_name"]}}
+    up_id = _next_graph_id(graph)
+    graph[up_id] = {"class_type": "ImageScale",
+                    "inputs": {"image": [hl_id, 0], "upscale_method": "lanczos",
+                               "width": local["w2"], "height": local["h2"], "crop": "disabled"}}
+    te["inputs"]["images.image_1"] = [up_id, 0]
+    te["inputs"]["resolution"] = 0   # 保持裁剪高分尺寸（画布=编辑区）
+    sampler_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
+                       if isinstance(n, dict) and n.get("class_type") == "KSampler"), None)
+    if sampler_id is not None:
+        graph[sampler_id]["inputs"]["latent_image"] = [te_id, 2]
+    mask_id = _next_graph_id(graph)
+    graph[mask_id] = {"class_type": "LoadImageMask", "inputs": {"image": local["mask_name"], "channel": "red"}}
+    down_id = _next_graph_id(graph)
+    graph[down_id] = {"class_type": "ImageScale",
+                      "inputs": {"image": [decode_id, 0], "upscale_method": "lanczos",
+                                 "width": local["w"], "height": local["h"], "crop": "disabled"}}
+    comp_id = _next_graph_id(graph)
+    graph[comp_id] = {"class_type": "ImageCompositeMasked",
+                      "inputs": {"destination": [str(src[0]), int(src[1])], "source": [down_id, 0],
+                                 "x": local["x"], "y": local["y"], "resize_source": False,
+                                 "mask": [mask_id, 0]}}
+    graph[save_id]["inputs"]["images"] = [comp_id, 0]
+    # 移除不再被任何节点引用的 EmptyLatentImage
+    for nid, node in list(graph.items()):
+        if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage" and not any(
+                isinstance(v, list) and len(v) == 2 and v[0] == str(nid)
+                for m in graph.values() if isinstance(m, dict)
+                for v in (m.get("inputs") or {}).values()):
+            graph.pop(nid)
+
+
 def render_template(template: dict, params: dict) -> tuple[dict, list]:
     """把 workflow.json 模板渲染成可提交队列的 API prompt。返回 (graph, warnings)。
 
@@ -891,6 +1010,8 @@ def render_template(template: dict, params: dict) -> tuple[dict, list]:
     _apply_loras(graph, params.get("loras") or [], warnings)
     if params.get("outpaint"):
         _apply_outpaint(graph, params["outpaint"])
+    if params.get("local_edit"):
+        _apply_local_edit(graph, params["local_edit"])
     return graph, warnings
 
 
@@ -1289,6 +1410,14 @@ async def start_generation(body: dict) -> dict:
         if not str(body.get("prompt") or "").strip():
             body["prompt"] = OUTPAINT_DEFAULT_PROMPT
 
+    # 局部编辑仅支持 Qwen Image 2.1 模板；提示词追加红色区域约束
+    if body.get("local_edit"):
+        if not template_supports_outpaint(template):
+            raise ValueError("该技能不支持局部编辑，请切换到 Qwen Image 2.1 高分局部编辑后重试")
+        p = str(body.get("prompt") or "").strip()
+        if "red" not in p.lower():
+            body["prompt"] = (p + " " + LOCAL_EDIT_PROMPT_SUFFIX).strip()
+
     settings = get_settings()
     cfg = _skill.get_skill_gen_config(skill_id)
     for key, value in cfg.items():
@@ -1352,6 +1481,28 @@ async def post_settings_route(request):
 @routes.get("/neo_image_gen/models")
 async def models_route(request):
     return web.json_response(scan_models())
+
+
+@routes.get("/neo_image_gen/input_images")
+async def input_images_route(request):
+    """Input 目录图片列表（编辑弹窗「参考图」选择器用）；按修改时间倒序，上限 500。"""
+    items = []
+    input_dir = folder_paths.get_input_directory()
+    for root, _dirs, files in os.walk(input_dir):
+        for f in files:
+            if os.path.splitext(f)[1].lower() in _IMAGE_SUFFIXES:
+                full = os.path.join(root, f)
+                try:
+                    items.append((os.path.getmtime(full),
+                                  os.path.relpath(full, input_dir).replace("\\", "/")))
+                except OSError:
+                    continue
+    items.sort(reverse=True)
+    out = []
+    for _mtime, rel in items[:500]:
+        name, _, sub = rel.rpartition("/")
+        out.append({"filename": name, "subfolder": sub})
+    return web.json_response({"items": out})
 
 
 @routes.post("/neo_image_gen/generate")

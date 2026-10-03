@@ -14,12 +14,14 @@ import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig } from "./image-gen.js";
 import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listPrompts, loadPrompt } from "./prompt-service.js";
 import { createQuickInputHistory } from "./quick-input-history.js";
-import { openGallerySidebar } from "./media-transfer.js";
+import { openGallerySidebar, grabDataType, copyGalleryToInput, uploadLocalFiles } from "./media-transfer.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
 // 扩图专用技能：LoRA 固定在其 config.json（缺失时后端提示并跳过）
 const QWEN_OUTPAINT_SKILL_ID = "qwen_image_21_outpaint";
+// 高分局部编辑技能：涂抹区域自动裁剪-高分重绘-羽化合并（无额外 LoRA）
+const QWEN_LOCAL_EDIT_SKILL_ID = "qwen_image_21_local_edit";
 
 // 扩图目标比例预设（free=自由拖框；其余按 w:h 锁定拖框长宽比）
 const OUTPAINT_RATIOS = [
@@ -915,23 +917,30 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     // 技能下拉：只列 image_gen 类（直接生图或编辑），默认 Qwen Image 2.1
     const skillSel = $el("select", { className: "neo-recipes-sort" });
+    let _genSkills = [];
     (async () => {
         try {
             const res = await fetch("/rs_prompts/skills");
             const skills = await res.json();
-            const genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.category === "image_gen" && s.gen_image);
-            genSkills.forEach(s => {
+            _genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.category === "image_gen" && s.gen_image);
+            _genSkills.forEach(s => {
                 const opt = $el("option", { value: s.id, textContent: s.cn_name || s.name || s.id });
                 if (s.id === QWEN_IMAGE_SKILL_ID) opt.selected = true;
                 skillSel.appendChild(opt);
             });
-            if (!genSkills.some(s => s.id === QWEN_IMAGE_SKILL_ID)) {
-                skillSel.value = genSkills.length ? genSkills[0].id : "";
+            if (!_genSkills.some(s => s.id === QWEN_IMAGE_SKILL_ID)) {
+                skillSel.value = _genSkills.length ? _genSkills[0].id : "";
             }
         } catch {
             skillSel.value = QWEN_IMAGE_SKILL_ID;
         }
     })();
+    // 切换技能时自动填入默认提示词（如换脸触发词）
+    skillSel.onchange = () => {
+        const sk = _genSkills.find(s => s.id === skillSel.value);
+        const dp = sk?.gen_config?.default_prompt;
+        if (dp) promptInput.value = dp;
+    };
 
     const renderIdle = () => {
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "填写编辑指令后点「生成」，原图将作为参考图传入所选技能。" }));
@@ -979,8 +988,15 @@ export function openImageEditDialog(gallery, image, subfolder) {
         fill(actionsBox, btn("重试", start), btn("关闭", close));
     };
 
+    // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
+    const failGen = (message) => {
+        renderError(message);
+        actionToast({ severity: "error", summary: "图片编辑生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillSel.value || QWEN_IMAGE_SKILL_ID) });
+    };
+
     const start = async () => {
         if (running) return;
+        if (localOn && !painted) { renderError("请先涂抹要编辑的区域"); return; }
         let prompt = promptInput.value.trim();
         if (outpaintOn && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
         if (!prompt) { promptInput.focus(); return; }
@@ -1010,19 +1026,24 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     outpaintPayload = { ...p, total_pixels: mp > 0 ? mp : 0 };
                 }
             }
+            const refs = [{ kind: "input", value: refName }];
+            // 第二张参考图（换脸/换身源图）；局部编辑的涂抹遮罩走 data 通道
+            if (extraRef && !outpaintOn && !localOn) {
+                refs.push({ kind: "input", value: extraRef.subfolder ? `${extraRef.subfolder}/${extraRef.filename}` : extraRef.filename });
+            }
+            if (localOn) refs.push({ kind: "data", data: maskCanvas.toDataURL("image/png") });
             const payload = {
                 skill_id: skillSel.value || QWEN_IMAGE_SKILL_ID,
                 prompt,
                 width: metaWidth,
                 height: metaHeight,
-                references: [{ kind: "input", value: refName }],
-                loras: [],
+                references: refs,
                 skip_enhance: true,
             };
             if (outpaintPayload) {
                 payload.outpaint = outpaintPayload;
-                delete payload.loras;
             }
+            if (localOn) payload.local_edit = true;
             const snap = await requestGeneration(payload);
             cancelId = snap.task_id;
             renderRunning("排队中…");
@@ -1031,10 +1052,10 @@ export function openImageEditDialog(gallery, image, subfolder) {
             }, () => cancelRequested);
             if (final.status === "succeeded") renderSuccess(final);
             else if (final.status === "cancelled") renderError("已取消");
-            else renderError(final.error || "生成失败");
+            else failGen(final.error || "生成失败");
         } catch (e) {
             console.error('[Gallery] image edit failed:', e);
-            renderError(String(e?.message || e));
+            failGen(String(e?.message || e));
         } finally {
             running = false;
             cancelId = null;
@@ -1066,6 +1087,32 @@ export function openImageEditDialog(gallery, image, subfolder) {
         $el("span", { className: "neo-director-field-label", textContent: "MP" })
     ]);
     outpaintRow.style.display = "none";
+
+    // 局部编辑控件：画笔大小 / 橡皮 / 清空（涂抹画布叠加在原图上）
+    const localBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "✏️ 局部" });
+    localBtn.title = "高分局部编辑：涂抹要修改的区域，自动裁剪放大重绘后合并回原图";
+    const brushInput = $el("input", { type: "range", className: "neo-gallery-edit-brush", min: 8, max: 200, step: 4, value: "48" });
+    brushInput.title = "画笔大小（显示像素）";
+    const eraserChk = $el("input", { type: "checkbox" });
+    const eraserLbl = $el("label", { className: "neo-director-field-label", title: "勾选后涂抹变为擦除", textContent: "橡皮" });
+    const clearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: "清空" });
+    const localRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
+        $el("label", { className: "neo-director-field-label", textContent: "画笔" }),
+        brushInput,
+        eraserLbl,
+        eraserChk,
+        clearBtn
+    ]);
+    localRow.style.display = "none";
+
+    // 第二张参考图（换脸/换身：源脸/源身体）：拖放素材库图片 / 点击上传本地图片，选中后显示缩略图
+    const refDropZone = $el("div", { className: "neo-gallery-edit-refdrop" });
+    refDropZone.title = "加第二张参考图（换脸=源脸、换身=源身体）：拖放素材库图片或点击上传";
+    const refFileInput = document.createElement("input");
+    refFileInput.type = "file";
+    refFileInput.accept = "image/*";
+    refFileInput.style.display = "none";
+    refDropZone.appendChild(refFileInput);
 
     // 图片对比区（左右并排）
     const origFullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
@@ -1111,7 +1158,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 $el("div", { className: "neo-gallery-story-form-row" }, [
                     $el("label", { className: "neo-director-field-label", textContent: "编辑技能" }),
                     skillSel,
-                    outpaintBtn
+                    outpaintBtn,
+                    localBtn,
+                    refDropZone
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
                     resLabelEl,
@@ -1122,6 +1171,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 ])
             ]),
             outpaintRow,
+            localRow,
             promptInput,
             statusBox,
             actionsBox
@@ -1129,11 +1179,74 @@ export function openImageEditDialog(gallery, image, subfolder) {
     ]));
 
     renderIdle();
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
     document.addEventListener("keydown", onKey);
     const origRemove = overlay.remove.bind(overlay);
     overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
     document.body.appendChild(overlay);
+
+    // 标题栏拖动 + 双击最大化/还原（同导演编辑器 / 生成素材窗模式）
+    const modal = overlay.querySelector(".neo-gallery-edit-modal");
+    const titlebar = modal.querySelector(".neo-gallery-story-titlebar");
+    let dragging = false;
+    let startMX = 0, startMY = 0, startL = 0, startT = 0;
+    const onTitleMove = (e) => {
+        if (!dragging) return;
+        let left = startL + (e.clientX - startMX);
+        let top = startT + (e.clientY - startMY);
+        const w = modal.offsetWidth;
+        left = Math.max(-w + 80, Math.min(left, window.innerWidth - 80));
+        top = Math.max(0, Math.min(top, window.innerHeight - 44));
+        modal.style.left = left + "px";
+        modal.style.top = top + "px";
+    };
+    const onTitleUp = () => {
+        dragging = false;
+        window.removeEventListener("mousemove", onTitleMove);
+        window.removeEventListener("mouseup", onTitleUp);
+    };
+    titlebar.addEventListener("mousedown", (e) => {
+        if (e.button !== 0 || e.target.closest("button, .neo-gallery-story-close")) return;
+        const r = modal.getBoundingClientRect();
+        if (!modal.style.left) {
+            modal.style.position = "absolute";
+            modal.style.left = r.left + "px";
+            modal.style.top = r.top + "px";
+        }
+        startMX = e.clientX; startMY = e.clientY;
+        startL = parseFloat(modal.style.left); startT = parseFloat(modal.style.top);
+        dragging = true;
+        window.addEventListener("mousemove", onTitleMove);
+        window.addEventListener("mouseup", onTitleUp);
+    });
+    let maximized = false;
+    let prevRect = null;
+    const toggleMaximize = () => {
+        if (!maximized) {
+            const r = modal.getBoundingClientRect();
+            prevRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+            if (!modal.style.left) modal.style.position = "absolute";
+            modal.style.left = "8px";
+            modal.style.top = "8px";
+            modal.style.width = (window.innerWidth - 16) + "px";
+            modal.style.height = (window.innerHeight - 16) + "px";
+            modal.style.maxWidth = "none";
+            modal.style.maxHeight = "none";
+            maximized = true;
+        } else {
+            modal.style.left = prevRect.left + "px";
+            modal.style.top = prevRect.top + "px";
+            modal.style.width = prevRect.width + "px";
+            modal.style.height = prevRect.height + "px";
+            modal.style.maxWidth = "";
+            modal.style.maxHeight = "";
+            maximized = false;
+            prevRect = null;
+        }
+    };
+    titlebar.addEventListener("dblclick", (e) => {
+        if (e.target.closest("button, .neo-gallery-story-close")) return;
+        toggleMaximize();
+    });
 
     // 加载原图获取实际尺寸，填入默认分辨率
     const widthInput = overlay.querySelector("#img-edit-width");
@@ -1341,6 +1454,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const setOutpaintMode = (on) => {
         outpaintOn = on;
         outpaintBtn.classList.toggle("on", on);
+        if (on && localOn) setLocalMode(false);
         resultCol.style.display = on ? "none" : "";   // 扩图时画布占满整行，出结果后再显示对比列
         outpaintRow.style.display = on ? "" : "none";
         widthInput.style.display = on ? "none" : "";
@@ -1355,12 +1469,211 @@ export function openImageEditDialog(gallery, image, subfolder) {
         } else {
             teardownOutpaintBox();
         }
+        syncRefBtn();
         updateSizeLabel();
     };
 
     outpaintBtn.addEventListener("click", () => setOutpaintMode(!outpaintOn));
     ratioSel.addEventListener("change", snapBoxToRatio);
     mpInput.addEventListener("input", updateSizeLabel);
+
+    // ---- 局部编辑：涂抹画布叠加在原图上（遮罩存自然分辨率，红色高亮层仅显示用） ----
+    let localOn = false;
+    let maskCanvas = null;   // 遮罩（灰度，自然分辨率）——payload 传这张
+    let tintCanvas = null;   // 红色高亮层（自然分辨率）
+    let paintCanvas = null;  // 叠加在原图上的显示画布
+    let painted = false;
+
+    const ensureImgLoaded = () => new Promise((res) => {
+        if (origImg.naturalWidth && origImg.naturalHeight) res();
+        else origImg.onload = () => res();
+    });
+    // 显示画布对齐原图 contain 显示盒（元素盒含留黑，需算偏移）
+    const syncPaintView = () => {
+        if (!paintCanvas) return;
+        const nw = origImg.naturalWidth, nh = origImg.naturalHeight;
+        const bw = imgWrap.clientWidth, bh = imgWrap.clientHeight;
+        if (!nw || !nh || !bw || !bh) return;
+        const k = Math.min(bw / nw, bh / nh);
+        paintCanvas.style.left = `${(bw - nw * k) / 2}px`;
+        paintCanvas.style.top = `${(bh - nh * k) / 2}px`;
+        paintCanvas.width = Math.max(1, Math.round(nw * k));
+        paintCanvas.height = Math.max(1, Math.round(nh * k));
+        redrawPaintOverlay();
+    };
+    const redrawPaintOverlay = () => {
+        if (!paintCanvas || !tintCanvas) return;
+        const ctx = paintCanvas.getContext("2d");
+        ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+        if (painted) ctx.drawImage(tintCanvas, 0, 0, paintCanvas.width, paintCanvas.height);
+    };
+    // 画笔半径（自然像素）：滑杆是显示像素，按显示缩放换算
+    const brushRadius = () => {
+        const nw = origImg.naturalWidth || 1;
+        const dw = paintCanvas ? paintCanvas.width : nw;
+        return Math.max(2, (parseInt(brushInput.value, 10) / 2) * (nw / dw));
+    };
+    const stroke = (x0, y0, x1, y1, erase) => {
+        if (!maskCanvas || !tintCanvas) return;
+        const r = brushRadius();
+        for (const [cv, style] of [[maskCanvas, "#ffffff"], [tintCanvas, "rgba(255,0,0,0.9)"]]) {
+            const ctx = cv.getContext("2d");
+            ctx.save();
+            ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
+            ctx.strokeStyle = style;
+            ctx.fillStyle = style;
+            ctx.lineWidth = r * 2;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y1);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x1, y1, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+        painted = true;
+        redrawPaintOverlay();
+    };
+    const attachPaintEvents = () => {
+        let last = null;
+        const toNatural = (ev) => {
+            const rect = paintCanvas.getBoundingClientRect();
+            return { x: (ev.clientX - rect.left) / rect.width * origImg.naturalWidth,
+                     y: (ev.clientY - rect.top) / rect.height * origImg.naturalHeight };
+        };
+        paintCanvas.addEventListener("pointerdown", (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            paintCanvas.setPointerCapture(ev.pointerId);
+            last = toNatural(ev);
+            stroke(last.x, last.y, last.x, last.y, eraserChk.checked);
+        });
+        paintCanvas.addEventListener("pointermove", (ev) => {
+            if (!last) return;
+            const p = toNatural(ev);
+            stroke(last.x, last.y, p.x, p.y, eraserChk.checked);
+            last = p;
+        });
+        const endPaint = () => { last = null; };
+        paintCanvas.addEventListener("pointerup", endPaint);
+        paintCanvas.addEventListener("pointercancel", endPaint);
+    };
+
+    const setupPaint = async () => {
+        teardownPaint();
+        await ensureImgLoaded();
+        const nw = origImg.naturalWidth, nh = origImg.naturalHeight;
+        maskCanvas = document.createElement("canvas");
+        maskCanvas.width = nw; maskCanvas.height = nh;
+        tintCanvas = document.createElement("canvas");
+        tintCanvas.width = nw; tintCanvas.height = nh;
+        painted = false;
+        paintCanvas = $el("canvas", { className: "neo-gallery-edit-paint-canvas" });
+        imgWrap.appendChild(paintCanvas);
+        attachPaintEvents();
+        window.addEventListener("resize", syncPaintView);
+        syncPaintView();
+    };
+    const teardownPaint = () => {
+        if (paintCanvas) paintCanvas.remove();
+        paintCanvas = null;
+        maskCanvas = tintCanvas = null;
+        painted = false;
+        window.removeEventListener("resize", syncPaintView);
+    };
+    clearBtn.addEventListener("click", () => {
+        if (!maskCanvas || !tintCanvas) return;
+        maskCanvas.getContext("2d").clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+        tintCanvas.getContext("2d").clearRect(0, 0, tintCanvas.width, tintCanvas.height);
+        painted = false;
+        redrawPaintOverlay();
+    });
+
+    const setLocalMode = async (on) => {
+        localOn = on;
+        localBtn.classList.toggle("on", on);
+        if (on && outpaintOn) setOutpaintMode(false);
+        localRow.style.display = on ? "" : "none";
+        widthInput.style.display = on ? "none" : "";
+        heightInput.style.display = on ? "none" : "";
+        resLabelEl.textContent = on ? "编辑区（自动）" : "目标分辨率";
+        sizeLabel.style.display = "none";
+        skillSel.value = on ? QWEN_LOCAL_EDIT_SKILL_ID : (outpaintOn ? QWEN_OUTPAINT_SKILL_ID : QWEN_IMAGE_SKILL_ID);
+        if (on) await setupPaint();
+        else teardownPaint();
+        syncRefBtn();
+    };
+    localBtn.addEventListener("click", () => setLocalMode(!localOn));
+
+    // ---- 第二张参考图（拖放素材库 / 本地上传；换脸/换身的源图） ----
+    let extraRef = null;   // {filename, subfolder}
+    const refThumbUrl = (it, size) =>
+        `/neo_gallery/thumbnail?filename=${encodeURIComponent(it.filename)}&subfolder=${encodeURIComponent(it.subfolder ? `input/${it.subfolder}` : "input")}&size=${size}`;
+    const renderRefChip = () => {
+        refDropZone.replaceChildren(refFileInput);
+        if (!extraRef) {
+            refDropZone.classList.remove("has-img");
+            refDropZone.appendChild($el("span", { className: "neo-gallery-edit-refdrop-icon", textContent: "🖼" }));
+            return;
+        }
+        refDropZone.classList.add("has-img");
+        refDropZone.appendChild($el("img", { className: "neo-gallery-edit-refchip-img", src: refThumbUrl(extraRef, 96), alt: extraRef.filename, title: extraRef.filename }));
+        refDropZone.appendChild($el("span", { className: "neo-gallery-edit-refchip-x", textContent: "×", onclick: (e) => { e.stopPropagation(); extraRef = null; renderRefChip(); } }));
+    };
+    renderRefChip();
+    // 拖放：本地图片文件走 uploadLocalFiles，素材库图片卡走 copyGalleryToInput
+    refDropZone.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; refDropZone.classList.add("drop-active"); });
+    refDropZone.addEventListener("dragleave", (e) => { if (!refDropZone.contains(e.relatedTarget)) refDropZone.classList.remove("drop-active"); });
+    refDropZone.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        refDropZone.classList.remove("drop-active");
+        const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith("image/"));
+        let fname = null;
+        if (files.length) { [fname] = await uploadLocalFiles(files); }
+        else { fname = await copyGalleryToInput(grabDataType(e)); }
+        if (fname) { extraRef = { filename: fname, subfolder: "" }; renderRefChip(); }
+    });
+    // 点击上传本地文件（已有图时不触发，用 × 清除）
+    refDropZone.addEventListener("click", () => { if (!extraRef) refFileInput.click(); });
+    refFileInput.onchange = async () => {
+        const file = refFileInput.files && refFileInput.files[0];
+        if (!file) return;
+        const [fname] = await uploadLocalFiles([file]);
+        refFileInput.value = "";
+        if (fname) { extraRef = { filename: fname, subfolder: "" }; renderRefChip(); }
+    };
+    // 扩图/局部模式只用首张参考，第二张参考不可用
+    const syncRefBtn = () => {
+        const disabled = outpaintOn || localOn;
+        refDropZone.classList.toggle("disabled", disabled);
+        if (disabled && extraRef) { extraRef = null; renderRefChip(); }
+    };
+
+    // 原图区拖放替换：支持素材库拖入和本地文件上传
+    imgWrap.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; imgWrap.classList.add("drop-active"); });
+    imgWrap.addEventListener("dragleave", (e) => { if (!imgWrap.contains(e.relatedTarget)) imgWrap.classList.remove("drop-active"); });
+    imgWrap.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        imgWrap.classList.remove("drop-active");
+        const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith("image/"));
+        let fname = null;
+        if (files.length) { [fname] = await uploadLocalFiles(files); }
+        else { fname = await copyGalleryToInput(grabDataType(e)); }
+        if (!fname) return;
+        // 重置扩图/涂抹状态
+        if (outpaintOn) setOutpaintMode(false);
+        if (localOn) setLocalMode(false);
+        refName = fname;
+        const newUrl = `/neo_gallery/image?filename=${encodeURIComponent(fname)}&subfolder=`;
+        origImg.src = newUrl;
+        origImg.onload = () => {
+            widthInput.value = origImg.naturalWidth || "";
+            heightInput.value = origImg.naturalHeight || "";
+        };
+    });
 
     setTimeout(() => promptInput.focus(), 0);
 }

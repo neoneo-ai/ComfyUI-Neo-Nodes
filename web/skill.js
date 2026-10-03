@@ -1008,13 +1008,82 @@ function createSkillDetailPopup(host) {
             }
             if (r.suggestion) sel.value = r.suggestion;   // 高置信默认选中推荐项
             row.append(label, cur, sel);
-            body.appendChild(row);
+
+            // LoRA 无本地候选时，提供 C站搜索下载按钮
+            if (r.kind === "lora" && !r.suggestion && !(r.candidates && r.candidates.length)) {
+                const civBtn = mkEl("button", "rs-repair-civitai-btn");
+                civBtn.type = "button";
+                civBtn.textContent = "🔍 C站";
+                civBtn.title = "从 Civitai 搜索并下载此 LoRA";
+                const subPanel = mkEl("div", "rs-repair-civitai-panel");
+                subPanel.style.display = "none";
+                civBtn.addEventListener("click", async () => {
+                    if (subPanel.style.display !== "none") { subPanel.style.display = "none"; return; }
+                    subPanel.innerHTML = '<span class="rs-civ-loading">搜索中…</span>';
+                    subPanel.style.display = "block";
+                    try {
+                        const resp = await fetch("/neo_nodes/civitai_search_lora", {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ query: r.value }),
+                        });
+                        const data = await resp.json();
+                        if (!data.success) throw new Error(data.error || "搜索失败");
+                        subPanel.innerHTML = "";
+                        const items = data.items || [];
+                        if (!items.length) {
+                            subPanel.innerHTML = '<span class="rs-civ-empty">未找到匹配的 LoRA</span>';
+                            return;
+                        }
+                        for (const it of items.slice(0, 6)) {
+                            const itemRow = mkEl("div", "rs-civ-item");
+                            const info = mkEl("span", "rs-civ-info");
+                            const sizeStr = it.file_size ? ` (${(it.file_size / 1024 / 1024).toFixed(1)} MB)` : "";
+                            info.textContent = `${it.name} — ${it.author || "?"}${sizeStr}`;
+                            info.title = it.file_name || "";
+                            const dlBtn = mkEl("button", "rs-civ-dl-btn");
+                            dlBtn.type = "button";
+                            dlBtn.textContent = "下载";
+                            dlBtn.addEventListener("click", async () => {
+                                dlBtn.disabled = true;
+                                dlBtn.textContent = "下载中…";
+                                try {
+                                    const dResp = await fetch("/neo_nodes/civitai_download_lora", {
+                                        method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ url: it.download_url, filename: it.file_name }),
+                                    });
+                                    const dData = await dResp.json();
+                                    if (!dData.success) throw new Error(dData.error || "下载失败");
+                                    // 下载成功：把文件名加入 select 并选中
+                                    const fname = dData.filename;
+                                    addOpt(fname, `${shortModelName(fname)}（已下载）`);
+                                    sel.value = fname;
+                                    subPanel.style.display = "none";
+                                    showToast(app, "success", `LoRA 已下载: ${fname}`);
+                                } catch (e) {
+                                    dlBtn.disabled = false;
+                                    dlBtn.textContent = "重试";
+                                    showToast(app, "error", "下载失败", String(e.message || e));
+                                }
+                            });
+                            itemRow.append(info, dlBtn);
+                            subPanel.appendChild(itemRow);
+                        }
+                    } catch (e) {
+                        subPanel.innerHTML = `<span class="rs-civ-err">${e.message || "搜索出错"}</span>`;
+                    }
+                });
+                row.appendChild(civBtn);
+                body.appendChild(row);
+                body.appendChild(subPanel);
+            } else {
+                body.appendChild(row);
+            }
             selects.push(sel);
         }
 
         const foot = mkEl("div", "rs-repair-foot");
         const hint = mkEl("span", "rs-repair-hint");
-        hint.textContent = "套用后需点 Save 才写入 config.json";
+        hint.textContent = "套用后自动保存到 config.json";
         const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
         cancelBtn.type = "button";
         cancelBtn.textContent = "取消";
@@ -1032,7 +1101,7 @@ function createSkillDetailPopup(host) {
         cancelBtn.addEventListener("click", closeDialog);
         overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeDialog(); });
 
-        applyBtn.addEventListener("click", () => {
+        applyBtn.addEventListener("click", async () => {
             const fixes = {};
             const changes = [];   // 写入本技能修复记录：{ field, from, to }
             let n = 0;
@@ -1048,7 +1117,17 @@ function createSkillDetailPopup(host) {
             recordSkillRepair(currentSkillId, changes, kind);   // 记录到本技能修复历史（localStorage）
             checkRepairStatus();                                 // 重新检测：无缺失则清除红框/红点
             closeDialog();
-            showToast(app, "success", `已填入 ${n} 项，请点 Save 保存到 config.json`);
+            // 直接保存设置区到 config.json
+            try {
+                if (isCustom()) {
+                    await persistGenSettings();
+                } else {
+                    await savePresetGenSettings();
+                }
+                showToast(app, "success", `已修复 ${n} 项并保存`);
+            } catch (err) {
+                showToast(app, "error", "保存失败", String(err.message || err));
+            }
         });
     }
 

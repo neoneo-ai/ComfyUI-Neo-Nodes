@@ -753,6 +753,9 @@ def _gen_config_summary(cfg: dict) -> dict | None:
             out["steps"] = steps
     except (TypeError, ValueError):
         pass
+    default_prompt = str(cfg.get("default_prompt") or "").strip()
+    if default_prompt:
+        out["default_prompt"] = default_prompt
     return out or None
 
 
@@ -1102,7 +1105,9 @@ def save_skill_gen_config(skill_id: str, cfg: dict) -> tuple[bool, str]:
         value = str(cfg.get(key) or "").strip()
         if value:
             clean[key] = value[:256]
-    clean["loras"] = _clean_lora_entries(cfg.get("loras"))
+    loras = _clean_lora_entries(cfg.get("loras"))
+    if loras:
+        clean["loras"] = loras
     for key in ("base_resolution", "count"):
         try:
             clean[key] = max(1, int(cfg.get(key)))
