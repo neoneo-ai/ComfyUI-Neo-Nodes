@@ -48,14 +48,24 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 - **旧工作流 / 复制粘贴串位自动修复**：本节点 `seed` 之后会自动追加「生成后控制」（`control_after_generate`）下拉，占一个 `widgets_values` 位置。widget 集合变化（新增 width/height）后，载入旧工作流或复制粘贴可能按位置错一位、把数字写进该下拉或 `seed`。前端在 `onConfigure` 检测到「生成后控制」不是模式串时，自动复位为 `fixed`、`count` 归 1，并按所选 skill 预设强制重填 width/height；同时若 `seed` 落到非有限数或负数（如 `-1`/NaN），一并复位为默认 `0`（串位块无法可靠恢复原值）。旧格式（`widgets_values` 少于当前控件数）载入也会强制按预设重填宽高。
 - **Skill 有效性状态条**：节点底部按所选 skill 后台校验其 `workflow.json`（对照 `/object_info` 与 `/models/*`，与技能详情页流程图同一套检查），缺模型/缺节点时显示「⚠️ N 个模型缺失 · M 个节点未安装 → 查看详情/修复」；点按钮直接打开该 skill 详情弹窗修复（保存后即时重检）。无缺失、无 `workflow.json` 或校验接口不可用时整条隐藏（不占高、不误报）；同一 skill 的检测结果会话内缓存 60s。
 
+## 尺寸（Qwen Image 2.1）
+
+Qwen2.1 的 latent 一格 = 32px（VAE 16x 下采样 + 2x2 patchify）：
+
+- **目标尺寸强制 32 对齐**：走 Qwen2.1 模板的请求，显式宽高先对齐到 32，比例 / 设置默认值那条路再兜一次。画廊图片编辑窗的目标分辨率默认取原图尺寸并对齐到 32；原图超过「模型工作分辨率」时按它等比封顶（只封顶不放大，小图保持原尺寸），输入框 32 步进、失焦即对齐。
+- **模型工作分辨率** = 设置项 `target_megapixels`（默认 1.5，可在「⚙️ 设置 → 🖼️ 生图默认设置 → 目标像素数 (MP)」里改，skill 的 `config.json` 也可覆盖）：扩图补边画布归一化到它，编辑的目标超过它时封顶。
+- **常规编辑**（带参考图、非扩图 / 非局部编辑）：链路写在模板 `workflow.json` 里——`LoadImage → ImageScale({{CANVAS_WIDTH}}, {{CANVAS_HEIGHT}}) → TextEncodeQwenImage21(resolution=0) → KSampler`，空 latent 仍是 `EmptyLatentImage({{WIDTH}}, {{HEIGHT}})`。参考图与 latent 同尺寸、同在 32 网格上，画面位置才不偏（参考工作流「图像编辑」组用 `ImageScaleToTotalPixels(steps=32)` + `ResolutionSelector(multiple=32)` 表达同一件事）。画廊对比窗左侧也换成这张缩放图（后端随任务返回 `canvas`），两侧同尺寸才能真正逐像素对比。
+- **画布尺寸 `{{CANVAS_WIDTH}}/{{CANVAS_HEIGHT}}`**：比例与原图一致时就是目标分辨率；差超过半格（换画幅重画，例如角色设定图拿竖图参考出横版）时只把原图对齐到 32，不拉变形参考图。无参考图（文生图）时该节点连同 `LoadImage` 一起被裁掉，latent 走模板里的 `EmptyLatentImage`。
+
 ## 扩图（Qwen Image 2.1）
 
-画廊「图片编辑」弹窗的扩图开关（见 `gallery.md`）向 `/neo_image_gen/generate` 发 `outpaint: {left, top, right, bottom, total_pixels}`，要求技能是 Qwen Image 2.1 模板（含 `TextEncodeQwenImage21` + `KSampler`），否则报「该技能不支持扩图」。渲染时：
+画廊「图片编辑」弹窗的扩图开关（见 `gallery.md`）向 `/neo_image_gen/generate` 发 `outpaint: {left, top, right, bottom, total_pixels}`；扩图请求只能发给带扩图链的技能（模板含 `ImagePadForOutpaint`），否则报「该技能不支持扩图」。链路写在 `qwen_image_21_outpaint/workflow.json` 里，与参考工作流 `▶▷Qwen-image21-功能流` 的「图像扩展」分支一致：
 
-- 首张参考图后按参考工作流 `▶▷Qwen-image21-功能流` 的「图像扩展」分支补齐链路：`ImageScaleToTotalPixels(1MP)` → `ImagePadForOutpaint(四边留白, feathering=0)` → `ImageScaleToTotalPixels(total_pixels)`
-- 两次缩放都带 `resolution_steps=32`：编码器按 `round(尺寸/32)*32` 重建参考图并据此建空 latent，尺寸不整就会缩放参考图、出图尺寸与内容一起错位
-- 四边留白以「原图按 1MP 归一化后」那一层的像素计（前端按同一比例换算，拖出来的比例不变）；`total_pixels` 默认 1.5MP，0/缺失也按 1.5MP 处理
-- `TextEncodeQwenImage21.resolution` 置 0、缩放后的画布接 `images.image_1`；`KSampler.latent_image` 改接编码器空 latent 输出（output 2），移除 `EmptyLatentImage`
+`LoadImage → ImageScaleToTotalPixels({{OUTPAINT_REF_MP}}, 32) → ImagePadForOutpaint({{PAD_*}}, feathering=0) → ImageScaleToTotalPixels({{TARGET_MP}}, 32) → TextEncodeQwenImage21(resolution=0) → KSampler(latent = 编码器空 latent)`
+
+- `{{OUTPAINT_REF_MP}}` 固定 1.0；`{{TARGET_MP}}` = 请求的 `total_pixels`（0/缺失用设置项 `target_megapixels`，默认 1.5）；`{{PAD_*}}` 是四边留白
+- 四边留白以「原图按 1MP 归一化后」那一层的像素计（前端按同一比例换算，拖出来的比例不变）；两次缩放都带 `resolution_steps=32`：编码器按 `round(尺寸/32)*32` 重建参考图并据此建空 latent，尺寸不整就会缩放参考图、出图尺寸与内容一起错位
+- 没开扩图 / 没参考图时这些占位符判「未填」，整条扩图链被裁掉
 - 提示词为空时填默认触发词（`OUTPAINT_DEFAULT_PROMPT`）
 
 预设技能 `qwen_image_21_outpaint` 在 `config.json` 固定扩图 LoRA（文件缺失时跳过并警告，不阻断生成）。

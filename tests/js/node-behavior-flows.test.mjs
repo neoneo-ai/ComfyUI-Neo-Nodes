@@ -471,7 +471,8 @@ test("自动增强菜单：右上角 ✕ 关闭；有未保存修改时先出确
     click(caret); // 重开并改生图设置输出前缀 → 脏
     await sleep(300);
     const genPanel = menu.querySelectorAll(".rs-auto-panel")[1];
-    genPanel.querySelector("input.rs-form-input:not(.rs-combo-input)").value = "out-";
+    // 输出前缀是文本输入框（目标像素数是 number，不看它）：改它让表单变脏
+    genPanel.querySelector("input[type=text].rs-form-input:not(.rs-combo-input)").value = "out-";
     click(closeBtn); // 有未保存修改：不关，出确认条
     assert.equal(menu.style.display, "block");
     assert.equal(menu.querySelector(".rs-gen-dirty-confirm").hidden, false);

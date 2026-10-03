@@ -32,9 +32,9 @@
         "3",
         0
       ],
-      "resolution": 1024,
+      "resolution": 0,
       "images.image_1": [
-        "10",
+        "30",
         0
       ],
       "images.image_2": [
@@ -191,6 +191,19 @@
     "class_type": "LoadImage",
     "inputs": {
       "image": "{{REF_IMAGE_10}}"
+    }
+  },
+  "30": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "10",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": "{{CANVAS_WIDTH}}",
+      "height": "{{CANVAS_HEIGHT}}",
+      "crop": "disabled"
     }
   }
 }

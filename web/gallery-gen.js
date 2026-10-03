@@ -11,7 +11,7 @@ import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
 import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
-import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig } from "./image-gen.js";
+import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig, getGenSettings } from "./image-gen.js";
 import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listPrompts, loadPrompt } from "./prompt-service.js";
 import { createQuickInputHistory } from "./quick-input-history.js";
 import { openGallerySidebar, grabDataType, copyGalleryToInput, uploadLocalFiles } from "./media-transfer.js";
@@ -37,10 +37,11 @@ const OUTPAINT_RATIOS = [
 // 扩图默认触发词（与后端 OUTPAINT_DEFAULT_PROMPT 一致）
 const OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation " +
     "of the scene, keeping the existing picture unchanged.");
-// 扩图链两次缩放的目标（与后端 OUTPAINT_REF_MP / OUTPAINT_CANVAS_MP、参考工作流
-// ▶▷Qwen-image21-功能流 的「图像扩展」一致）：原图先归一化到 1MP，补灰边后画布再归一化到 1.5MP
+// 扩图链两次缩放的目标（与后端 OUTPAINT_REF_MP + 设置项 target_megapixels、参考工作流
+// ▶▷Qwen-image21-功能流 的「图像扩展」一致）：原图先归一化到 1MP，补灰边后画布再归一化到目标 MP
 const OUTPAINT_REF_MP = 1.0;
-const OUTPAINT_DEFAULT_MP = 1.5;
+// 目标像素数（MP）出厂默认：全局设置在「生图默认设置 → 目标像素数 (MP)」，读不到设置时用这个
+const DEFAULT_TARGET_MP = 1.5;
 // Python round()：四舍六入五取偶。后端 ImageScaleToTotalPixels 用的就是它，而 JS Math.round 会把 .5
 // 进位，碰上尺寸正好差半格（如 720/32=22.5）就会算出差 32px 的目标，必须对齐
 const pyRound = (v) => {
@@ -52,8 +53,18 @@ const scaleToMp = (w, h, mp) => {
     const k = Math.sqrt(mp * 1024 * 1024 / (w * h));
     return { w: pyRound(w * k / 32) * 32, h: pyRound(h * k / 32) * 32 };
 };
-// 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（默认 1.5，与参考工作流一致）
-const targetMp = (mp) => mp > 0 ? mp : OUTPAINT_DEFAULT_MP;
+// 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（0/空 = 用出厂默认）
+const targetMp = (mp) => mp > 0 ? mp : DEFAULT_TARGET_MP;
+// Qwen Image 2.1 的目标尺寸必须 32 对齐（latent 一格 = 32px），否则模型自己补/裁一格 → 出图尺寸和内容一起偏
+const round32 = (v) => Math.max(32, Math.round(v / 32) * 32);
+// 常规编辑的目标分辨率默认值：原图尺寸对齐到 32；原图太大时按目标像素数（MP）等比封顶
+// （模型在 ~1.5MP 以内最稳，超大原图直接按原尺寸跑会拖慢/爆显存；只封顶不放大，小图保持原尺寸）
+const editDefaultTargetSize = (w, h, mp) => {
+    const capped = w * h > mp * 1024 * 1024 ? scaleToMp(w, h, mp) : { w, h };
+    return { w: round32(capped.w), h: round32(capped.h) };
+};
+// 对比窗标题：常规编辑换成缩放图后写明尺寸，切换模式/重新生成前还原
+const COMPARE_LABEL = "原图 / 编辑结果（拖拽分割线对比）";
 // 扩图画布边长上限（×原图显示尺寸）：拖框换算随缩放指数增长，封顶防失控与后端显存爆炸
 const OUTPAINT_MAX_EXTEND = 4;
 // 「生成素材」弹窗默认技能：Krea2 文生图（纯提示词出图，产物落 Output/NeoAgent/<日期>）
@@ -67,7 +78,7 @@ const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人
 // 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
 const CHARACTER_SHEET_DIR = "CharacterSheet";
 
-/** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（输出尺寸按 16 对齐）；输出走独立 character 目录 */
+/** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（后端按 Qwen2.1 规则对齐到 32 → 1920×1088）；输出走独立 character 目录 */
 export function buildCharacterSheetRequest(refName) {
     return {
         skill_id: QWEN_IMAGE_SKILL_ID,
@@ -993,6 +1004,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 index: 0 
             });
             showResultOverlay();
+            showEditedCanvas(final.canvas);
         }
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成编辑结果。" }));
         // 保留「再生成」入口：编辑支持连续重复生成，不必关窗重开（与 renderError 的「重试」一致）
@@ -1013,6 +1025,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const start = async () => {
         if (running) return;
         if (localOn && !painted) { renderError("请先涂抹要编辑的区域"); return; }
+        restoreOrigImage();   // 上一轮换过的缩放图先还原，避免扩图/局部的基准尺寸跟着变
         let prompt = promptInput.value.trim();
         if (outpaintOn && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
         if (!prompt) { promptInput.focus(); return; }
@@ -1025,6 +1038,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
             let outpaintPayload = null;
             let metaWidth = parseInt(widthInput.value, 10) || undefined;
             let metaHeight = parseInt(heightInput.value, 10) || undefined;
+            // 常规编辑的目标尺寸：模板会据此把原图缩放后送进编码器，对比窗左侧同步换成缩放图；
+            // 扩图/局部编辑走各自的画布（基准要用原图自然尺寸），这里必须清掉，免得沿用上一轮
+            plainEdit = !outpaintOn && !localOn && !!metaWidth && !!metaHeight;
             if (outpaintOn && box) {
                 const p = paddings();
                 if (p.left || p.top || p.right || p.bottom) {
@@ -1087,9 +1103,10 @@ export function openImageEditDialog(gallery, image, subfolder) {
     OUTPAINT_RATIOS.forEach(([value, label]) => {
         ratioSel.appendChild($el("option", { value, textContent: label }));
     });
-    // 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（默认 1.5，与参考工作流一致）
-    const mpInput = $el("input", { type: "number", className: "neo-recipes-sort neo-gallery-edit-mp", min: 0.5, max: 8, step: 0.5, value: String(OUTPAINT_DEFAULT_MP) });
-    mpInput.title = "补边画布缩放到多少像素数后出图（默认 1.5，与参考工作流 ▶▷Qwen-image21-功能流 一致）";
+    // 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（默认取全局设置，见「生图默认设置」）
+    let globalTargetMp = DEFAULT_TARGET_MP;
+    const mpInput = $el("input", { type: "number", className: "neo-recipes-sort neo-gallery-edit-mp", min: 0.5, max: 8, step: 0.5, value: String(globalTargetMp) });
+    mpInput.title = "补边画布缩放到多少像素数后出图（默认取「生图默认设置 → 目标像素数 (MP)」，出厂 1.5）";
     const resLabelEl = $el("label", { className: "neo-director-field-label", textContent: "目标分辨率" });
     const outpaintRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
         $el("label", { className: "neo-director-field-label", textContent: "目标比例" }),
@@ -1151,13 +1168,11 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const resultClip = $el("div", { className: "neo-gallery-edit-result-clip", style: { display: "none" } }, [resultImg]);
     const divider = $el("div", { className: "neo-gallery-edit-divider", style: { display: "none" } });
     imgWrap.append(origImg, resultClip, divider);
+    const compareLabel = $el("div", { className: "neo-gallery-edit-compare-label", textContent: COMPARE_LABEL });
     // 舞台：只负责把图片盒水平居中
     const compareStage = $el("div", { className: "neo-gallery-edit-compare-stage" }, [imgWrap]);
     const compareBox = $el("div", { className: "neo-gallery-edit-compare" }, [
-        $el("div", {}, [
-            $el("div", { className: "neo-gallery-edit-compare-label", textContent: "原图 / 编辑结果（拖拽分割线对比）" }),
-            compareStage
-        ])
+        $el("div", {}, [compareLabel, compareStage])
     ]);
 
     // 窗帘拖拽逻辑：分割线左侧露出原图、右侧露出结果图（结果图层整幅不缩放，只裁掉左侧 pct%）
@@ -1187,6 +1202,31 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (e.target === imgWrap || e.target === origImg) posFromClientX(e.clientX);
     });
 
+    // 常规编辑：模板里的 ImageScale 把原图缩放到画布尺寸后才送进编码器（参考工作流「图像编辑」同款链路），
+    // 对比窗左侧也换成这张缩放图——两侧同尺寸才能逐像素对比（否则 contain 会把结果图挤进「原图盒」，
+    // 比例不同 → 越靠上下边缘错位越明显）。画布尺寸随任务返回（final.canvas），前端不重复计算。
+    let plainEdit = false;      // 本次是否为常规编辑（扩图/局部编辑各有自己的画布，不参与替换）
+    let scaledInputSrc = "";    // 缩放后的原图（dataURL）；非空即表示左侧已替换
+    const restoreOrigImage = () => {
+        if (!scaledInputSrc) return;
+        scaledInputSrc = "";
+        origImg.src = origFullUrl;
+        compareLabel.textContent = COMPARE_LABEL;
+    };
+    const showEditedCanvas = (canvas) => {
+        if (!plainEdit || scaledInputSrc || !canvas) return;
+        const [cw, ch] = canvas;
+        if (!cw || !ch) return;
+        const c = document.createElement("canvas");
+        c.width = cw;
+        c.height = ch;
+        // 用尺寸探针（同一张原图、已解码）作源，不受可见图元素加载时机影响
+        c.getContext("2d").drawImage(dimProbe, 0, 0, cw, ch);
+        scaledInputSrc = c.toDataURL("image/png");
+        origImg.src = scaledInputSrc;
+        compareLabel.textContent = `原图（缩放到 ${cw}×${ch}）/ 编辑结果（拖拽分割线对比）`;
+    };
+
     const showResultOverlay = () => {
         resultClip.style.display = "";
         divider.style.display = "";
@@ -1212,9 +1252,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
                     resLabelEl,
-                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 16, placeholder: "宽" }),
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 32, placeholder: "宽" }),
                     $el("span", { textContent: " × " }),
-                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 16, placeholder: "高" }),
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 32, placeholder: "高" }),
                     sizeLabel
                 ])
             ]),
@@ -1303,18 +1343,40 @@ export function openImageEditDialog(gallery, image, subfolder) {
         toggleMaximize();
     });
 
-    // 加载原图获取实际尺寸，填入默认分辨率
+    // 加载原图获取实际尺寸，填入默认分辨率（32 对齐：Qwen2.1 latent 一格 = 32px，错开会让模型自己补/裁一格）
     const widthInput = overlay.querySelector("#img-edit-width");
     const heightInput = overlay.querySelector("#img-edit-height");
+    for (const el of [widthInput, heightInput]) {
+        el.addEventListener("change", () => {
+            const v = parseInt(el.value, 10);
+            if (v > 0) el.value = String(round32(v));
+        });
+    }
     const fullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
     const dimProbe = new Image();
     dimProbe.onload = () => {
         if (dimProbe.naturalWidth && dimProbe.naturalHeight) {
-            widthInput.value = dimProbe.naturalWidth;
-            heightInput.value = dimProbe.naturalHeight;
+            const t = editDefaultTargetSize(dimProbe.naturalWidth, dimProbe.naturalHeight, globalTargetMp);
+            widthInput.value = t.w;
+            heightInput.value = t.h;
         }
     };
-    dimProbe.src = fullUrl;
+    // 先读全局设置里的目标像素数（MP，出厂 1.5）再探测原图尺寸，保证默认目标用的是配置值
+    (async () => {
+        try {
+            const cfg = await getGenSettings();
+            const v = parseFloat(cfg?.target_megapixels);
+            if (v > 0) {
+                // 用户已经改过输入框就别覆盖
+                if (mpInput.value === String(globalTargetMp)) mpInput.value = String(v);
+                globalTargetMp = v;
+                updateSizeLabel();
+            }
+        } catch (e) {
+            console.warn("[Gallery] image gen settings unavailable, using default target MP:", e);
+        }
+        dimProbe.src = fullUrl;
+    })();
 
     // ---- 扩图：原图上拖框定四边留白量（只向外扩；比例模式锁长宽比） ----
     let outpaintOn = false;
@@ -1518,6 +1580,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
     const setOutpaintMode = (on) => {
         outpaintOn = on;
+        restoreOrigImage();   // 扩图基准要用原图自然尺寸，先把上一轮的缩放图还原
         outpaintBtn.classList.toggle("on", on);
         if (on && localOn) setLocalMode(false);
         outpaintRow.style.display = on ? "" : "none";
@@ -1658,6 +1721,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     const setLocalMode = async (on) => {
         localOn = on;
+        restoreOrigImage();   // 涂抹画布按原图自然尺寸建，先把上一轮的缩放图还原
         localBtn.classList.toggle("on", on);
         if (on && outpaintOn) setOutpaintMode(false);
         localRow.style.display = on ? "" : "none";

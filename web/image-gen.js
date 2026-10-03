@@ -781,7 +781,7 @@ export function createVideoModelConfigSection() {
     return { el: section, load, collect };
 }
 
-/** 全局生图默认设置表单（「自动增强」菜单内）：核心模型 / Text Encoder / VAE / 输出前缀 + 保存按钮。
+/** 全局生图默认设置表单（「自动增强」菜单内）：核心模型 / Text Encoder / VAE / 目标像素数（MP）/ 输出前缀 + 保存按钮。
  *  独立实现，不复用每技能设置的 createModelConfigSection / createGenSizeRows；
  *  张数 / 长边尺寸 / 默认比例 / LoRA 只在每技能设置里配置，Enhance Prompt 开关在技能正文（System Prompt Content）旁。 */
 export function createImageGenSettingsForm() {
@@ -800,6 +800,9 @@ export function createImageGenSettingsForm() {
     const modelCtl = makeComboRow("生图模型");
     const encoderCtl = makeComboRow("Text Encoder");
     const vaeCtl = makeComboRow("VAE");
+    // 模型工作分辨率（MP）：扩图补边画布归一化到此像素数；画廊编辑的目标默认超过它时等比封顶
+    const mpCtl = numberRow("目标像素数 (MP)", { min: 0.1, max: 16, step: 0.1, value: 1.5 });
+    mpCtl.input.title = "Qwen Image 2.1 的工作分辨率：扩图补边画布缩放到该像素数；画廊编辑目标超过它时等比封顶";
 
     // 输出前缀（可含子目录），写入模板 {{PREFIX}}
     const prefixRow = mkEl("div", "rs-config-row");
@@ -826,7 +829,7 @@ export function createImageGenSettingsForm() {
     const saveRow = mkEl("div", "rs-config-row");
     saveRow.appendChild(saveBtn);
 
-    form.append(modelCtl.row, encoderCtl.row, vaeCtl.row, prefixRow, saveRow);
+    form.append(modelCtl.row, encoderCtl.row, vaeCtl.row, mpCtl.row, prefixRow, saveRow);
 
     // 加载窗口标记：load() 异步回填期间（await 网络请求）不算 dirty，避免初始化误判
     let loading = false;
@@ -842,6 +845,7 @@ export function createImageGenSettingsForm() {
             fillComboSelect(vaeCtl.select, models.vae || [],
                 models.suggested_vae || "", settings.vae || "");
             prefixInput.value = settings.output_prefix ?? "";
+            mpCtl.input.value = settings.target_megapixels ?? 1.5;
             snapshot = collect();
         } catch (e) {
             console.warn("Failed to load image gen settings:", e);
@@ -856,6 +860,7 @@ export function createImageGenSettingsForm() {
             model: modelCtl.select.value,
             text_encoder: encoderCtl.select.value,
             vae: vaeCtl.select.value,
+            target_megapixels: parseFloat(mpCtl.input.value) || 1.5,
             output_prefix: prefixInput.value.trim(),
         };
     }

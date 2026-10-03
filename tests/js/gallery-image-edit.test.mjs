@@ -5,6 +5,30 @@ import assert from "node:assert/strict";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, fetchLog, sleep, click, inputText, window } from "./setup.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
+test("图片编辑弹窗：目标分辨率默认取原图尺寸（32 对齐），原图过大按设置的 MP 等比封顶", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+    const realImage = globalThis.Image;
+    // 尺寸探针（new Image()）立刻回尺寸；目标像素数（MP）来自「生图默认设置」
+    const withImageSize = async (w, h) => {
+        globalThis.Image = class {
+            set src(_v) { this.naturalWidth = w; this.naturalHeight = h; this.onload?.(); }
+        };
+        openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                            { name: "p", filename: "p.png" }, "");
+        const overlay = [...document.querySelectorAll(".neo-gallery-edit-modal-overlay")].pop();
+        await sleep(20);   // 设置请求 → 探针
+        return [overlay.querySelector("#img-edit-width").value, overlay.querySelector("#img-edit-height").value];
+    };
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
+    assert.deepEqual(await withImageSize(800, 600), ["800", "608"]);        // 小图：保持原尺寸（32 对齐）
+    assert.deepEqual(await withImageSize(4000, 3000), ["1440", "1088"]);   // 大图：按 1.5MP 等比封顶
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 2.0 }));
+    assert.deepEqual(await withImageSize(4000, 3000), ["1664", "1248"]);   // MP 改成 2.0 后封顶值随之变化
+    globalThis.Image = realImage;
+});
+
 test("图片编辑弹窗：idle 有「生成」，成功后保留「再生成」可连续重复生成", async () => {
     resetEnv();
     clearRoutes();
@@ -23,10 +47,18 @@ test("图片编辑弹窗：idle 有「生成」，成功后保留「再生成」
     assert.ok(idleGenBtn, "idle 应有「生成」按钮");
     assert.equal(fetchLog.filter((c) => c.path === "/neo_image_gen/generate").length, 0);
 
+    // 目标分辨率 32 对齐：手输非 32 倍数会在 change 时纠正（Qwen2.1 latent 一格 = 32px，错开会偏）
+    const wIn = overlay.querySelector("#img-edit-width");
+    wIn.value = "1000";
+    wIn.dispatchEvent(new window.Event("change", { bubbles: true }));
+    assert.equal(wIn.value, "992");
+    assert.equal(overlay.querySelector("#img-edit-height").step, "32");
+
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
     let genCount = 0;
     mockRoute("/neo_image_gen/generate", () => {
         genCount += 1;
@@ -503,5 +535,79 @@ test("图片编辑弹窗：窗帘对比——结果层挂在图片盒内，拖�
     document.dispatchEvent(mouse("mousemove", 300));
     document.dispatchEvent(mouse("mouseup", 300));
     assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "关窗后 document 监听应已移除");
+});
+
+test("图片编辑弹窗：常规编辑成功后左侧换成缩放后的原图，两侧同尺寸才能逐像素对比", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie7", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/ie7", () => jsonResponse({
+        task_id: "ie7", status: "succeeded", width: 32, height: 32, canvas: [32, 32],
+        images: [{ filename: "edit_00001_.png", subfolder: "Output/2026-09-30", url: "/e.png" }],
+    }));
+    // 尺寸探针（桩为 8×6）回值 → 默认目标分辨率 32×32（32 对齐）
+    await sleep(20);
+    assert.equal(overlay.querySelector("#img-edit-width").value, "32");
+
+    const origImg = () => overlay.querySelector(".neo-gallery-edit-compare-img:not(.neo-gallery-edit-result-img)");
+    const label = () => overlay.querySelector(".neo-gallery-edit-compare-label");
+    assert.equal(label().textContent, "原图 / 编辑结果（拖拽分割线对比）");
+
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "去掉头上的花");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(80);
+
+    // 后端把原图缩放到目标尺寸后才送进模型，左侧也换成同一张（两侧同尺寸，窗帘才能逐像素对齐）
+    assert.match(origImg().getAttribute("src"), /^data:image\/png/, "左侧应换成缩放后的原图");
+    assert.match(label().textContent, /原图（缩放到 32×32）/, "标题应写明缩放尺寸");
+
+    // 切到扩图：基准要用原图自然尺寸，左侧必须还原成原图
+    click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));
+    assert.match(origImg().getAttribute("src"), /filename=portrait\.png/, "扩图模式下左侧应还原成原图");
+    assert.equal(label().textContent, "原图 / 编辑结果（拖拽分割线对比）");
+});
+
+test("图片编辑弹窗：扩图模式不替换左侧原图（扩图基准要用原图自然尺寸）", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+    ]));
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+    const origImgEl = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImgEl, key, { value, configurable: true });
+    }
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie9", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/ie9", () => jsonResponse({
+        task_id: "ie9", status: "succeeded", width: 1024, height: 1024, canvas: [1024, 1024],
+        images: [{ filename: "outp_00001_.png", subfolder: "Output/2026-10-03", url: "/o.png" }],
+    }));
+
+    click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));   // 开扩图
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(80);
+
+    const origImg = overlay.querySelector(".neo-gallery-edit-compare-img:not(.neo-gallery-edit-result-img)");
+    assert.match(origImg.getAttribute("src"), /filename=portrait\.png/, "扩图模式不应替换左侧原图");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-compare-label").textContent,
+                 "原图 / 编辑结果（拖拽分割线对比）");
 });
 

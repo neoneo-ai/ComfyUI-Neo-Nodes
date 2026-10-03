@@ -57,6 +57,7 @@ DEFAULT_SETTINGS = {
     "loras": [],              # [{name, strength}]，LoraLoaderModelOnly
     "base_resolution": 1280,  # 按比例算尺寸时的长边
     "default_ratio": "1:1",
+    "target_megapixels": 1.5,  # 模型工作分辨率（MP）：扩图补边画布归一化到此像素数；常规编辑目标超过它时等比封顶
     "count": 1,               # 单次生图张数（1-8，写入模板 {{COUNT}}）
     "output_prefix": "NeoAgent",
     "enhance_prompt": False,           # 是否启用 LLM 提示词增强（指令即技能 skill.md 正文）
@@ -85,9 +86,12 @@ _MODEL_HINTS = {
 OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation "
                            "of the scene, keeping the existing picture unchanged.")
 # 扩图链两次缩放的目标像素数（对齐参考工作流 ▶▷Qwen-image21-功能流 的「图像扩展」分支）：
-# 原图先归一化到 1MP，补灰边后整幅画布再归一化到 1.5MP，两次都按 32 对齐（编码器只吃 32 的倍数）
+# 原图先归一化到 1MP，补灰边后整幅画布再归一化到 target_megapixels（默认 1.5，见 DEFAULT_SETTINGS），
+# 两次都按 32 对齐（编码器只吃 32 的倍数）
 OUTPAINT_REF_MP = 1.0
-OUTPAINT_CANVAS_MP = 1.5
+# 扩图链的四边留白占位符（模板 ImagePadForOutpaint 用，值来自请求里的 outpaint 参数）
+_PAD_TOKENS = {"{{PAD_LEFT}}": "left", "{{PAD_TOP}}": "top",
+               "{{PAD_RIGHT}}": "right", "{{PAD_BOTTOM}}": "bottom"}
 
 # 局部编辑追加的区域约束（模型看到的是涂抹区标红的裁剪图）
 LOCAL_EDIT_PROMPT_SUFFIX = ("Only modify the red highlighted area; keep all other parts of the image exactly unchanged.")
@@ -315,6 +319,21 @@ def _reference_size(ref_name: str) -> tuple | None:
         return None
 
 
+def _edit_canvas_size(ref_size: tuple | None, width: int, height: int) -> tuple | None:
+    """常规编辑送进编码器的参考画布尺寸（模板里 ImageScale 的目标 = {{CANVAS_WIDTH}}/{{CANVAS_HEIGHT}}）。
+
+    与参考工作流一致：参考图缩放到与空 latent 相同的尺寸（编码器 resolution=0 不再二次缩放），
+    画面位置才不偏。比例与原图差超过半格时按「换画幅重画」只对齐到 32，让编码器按模板自带的
+    resolution 语义处理，避免把参考图硬拉变形。无参考图（文生图）返回 None → 模板里该节点被裁。"""
+    if not ref_size or min(ref_size) <= 0:
+        return None
+    w, h = _round_multiple(width, 32), _round_multiple(height, 32)
+    k = min(w / ref_size[0], h / ref_size[1])   # 原图等比放进目标框
+    if abs(ref_size[0] * k - w) > 16 or abs(ref_size[1] * k - h) > 16:
+        return _round_multiple(ref_size[0], 32), _round_multiple(ref_size[1], 32)
+    return w, h
+
+
 def _reference_name(src: dict, media: str = "image") -> str | None:
     """把参考媒体落到 input 目录，返回对应加载节点（LoadImage/LoadVideo/LoadAudio）可用的相对名。
 
@@ -432,10 +451,18 @@ def template_max_refs(template: dict) -> int:
     return found or 1
 
 
-def template_supports_outpaint(template: dict) -> bool:
-    """模板是否支持扩图：须含 Qwen Image 2.1 编码器 + 采样器（latent 取自编码器的空 latent 输出）。"""
+def template_is_qwen21(template: dict) -> bool:
+    """是否 Qwen Image 2.1 模板：含 Qwen Image 2.1 编码器 + 采样器。
+
+    扩图 / 局部编辑 / 目标尺寸 32 对齐都按它判定（Qwen2.1 的 latent 一格 = 32px）。"""
     types = {n.get("class_type") for n in (template or {}).values() if isinstance(n, dict)}
     return "TextEncodeQwenImage21" in types and "KSampler" in types
+
+
+def template_supports_outpaint(template: dict) -> bool:
+    """模板是否自带扩图链（ImagePadForOutpaint）——扩图请求只能发给扩图技能。"""
+    types = {n.get("class_type") for n in (template or {}).values() if isinstance(n, dict)}
+    return "ImagePadForOutpaint" in types
 
 
 def _parse_outpaint(value) -> dict | None:
@@ -566,6 +593,8 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
 
     # 扩图：四边留白像素 + 目标总像素（MP）；None = 未开扩图模式
     outpaint = _parse_outpaint(body.get("outpaint"))
+    if outpaint and not ref_name:
+        raise ValueError("扩图需要参考图，请添加参考图后再生成")
 
     # 高分局部编辑：解码遮罩、自动定位编辑区并落盘高亮裁剪图/羽化遮罩
     local_edit = None
@@ -583,6 +612,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
     steps = max(1, _int(merged.get("steps"), 20))
 
     ref_scale = None
+    src_size = None
     if ref_name:
         # 参考图长边限到 1024px（VAE encode + Qwen3-VL 接地的输入尺度），两侧取 8 的倍数
         src_size = _reference_size(ref_name)
@@ -592,6 +622,8 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
                          max(8, int(src_size[1] * scale + 0.5)) // 8 * 8)
         else:
             ref_scale = (1024, 1024)
+    # 画布尺寸（模板里参考图缩放节点的目标）：无参考图时为 None → 该节点被裁
+    canvas = _edit_canvas_size(src_size, width, height)
 
     seed = body.get("seed")
     seed = random.randint(0, 2**63 - 1) if seed is None else max(0, _int(seed, 0))
@@ -619,8 +651,10 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
         "ref_name": ref_name,
         "ref_images": names,
         "ref_scale": ref_scale if ref_name else None,
+        "canvas": canvas,
         "outpaint": outpaint,
         "local_edit": local_edit,
+        "target_mp": _float(merged.get("target_megapixels"), DEFAULT_SETTINGS["target_megapixels"]),
         "prefix": prefix,
         "warnings": warnings,
     }
@@ -632,7 +666,9 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
 
 _PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{STEPS}}", "{{WIDTH}}", "{{HEIGHT}}",
                        "{{LENGTH}}", "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
-                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_IMAGE_LAST}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}")
+                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_IMAGE_LAST}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}",
+                       "{{CANVAS_WIDTH}}", "{{CANVAS_HEIGHT}}", "{{OUTPAINT_REF_MP}}", "{{TARGET_MP}}",
+                       "{{PAD_LEFT}}", "{{PAD_TOP}}", "{{PAD_RIGHT}}", "{{PAD_BOTTOM}}")
 
 # 单帧占位符（首帧 {{REF_IMAGE}} / 尾帧 {{REF_IMAGE_LAST}}）：未挂该帧时整值判未填，
 # 所在 LoadImage 节点会被裁掉 —— 首尾帧技能因此可只给一边（仅首帧=I2VA、仅尾帧=L2VA）。
@@ -686,6 +722,22 @@ def _typed_value(token: str, params: dict):
         return scale[0]
     if token == "{{REF_HEIGHT}}":
         return scale[1]
+    # 画布尺寸（模板里参考图缩放节点的目标）：无参考图时为未填 → 该节点被剪掉
+    canvas = params.get("canvas")
+    if token == "{{CANVAS_WIDTH}}":
+        return canvas[0] if canvas else _UNFILLED
+    if token == "{{CANVAS_HEIGHT}}":
+        return canvas[1] if canvas else _UNFILLED
+    # 扩图链（模板里 1MP 归一化 → 补灰边 → 目标像素归一化）：没开扩图 / 没参考图时不填 → 整链被裁
+    if token in _PAD_TOKENS or token in ("{{OUTPAINT_REF_MP}}", "{{TARGET_MP}}"):
+        outpaint = params.get("outpaint") if params.get("ref_name") else None
+        if not outpaint:
+            return _UNFILLED
+        if token == "{{OUTPAINT_REF_MP}}":
+            return OUTPAINT_REF_MP
+        if token == "{{TARGET_MP}}":
+            return outpaint.get("total_pixels") or params["target_mp"]
+        return outpaint[_PAD_TOKENS[token]]
     raise ValueError(f"未知占位符 {token}")
 
 
@@ -712,6 +764,23 @@ def _substitute_value(value: str, params: dict):
     for t in tokens:
         out = out.replace(t, str(_typed_value(t, params)))
     return out
+
+
+_UNKNOWN_TOKEN_RE = re.compile(r"\{\{[A-Za-z0-9_]+\}\}")
+# LoRA 槽位（{{LORA_i_NAME}} / {{LORA_i_STRENGTH}}）由 _apply_loras 负责填，不算未知占位符
+_LORA_SLOT_TOKEN_RE = re.compile(r"^\{\{LORA_\d+_(?:NAME|STRENGTH)\}\}$")
+
+
+def _reject_unknown_tokens(graph: dict) -> None:
+    """模板里残留的 {{XXX}}：占位符名写错，或插件代码没重启（旧代码不认识新占位符）。
+
+    静默提交的话，ComfyUI 只会报「could not convert string to float: '{{...}}'」，所以这里
+    提前给出明确错误。只认 ASCII 名字的 token，模板里的中文正文不受影响。"""
+    for m in _UNKNOWN_TOKEN_RE.finditer(json.dumps(graph, ensure_ascii=False)):
+        if _LORA_SLOT_TOKEN_RE.match(m.group(0)):
+            continue
+        raise ValueError(f"技能模板里有未知占位符 {m.group(0)}：检查占位符名，"
+                         f"或重启 ComfyUI（更新插件后旧代码不认识新占位符）")
 
 
 def _node_sort_key(nid):
@@ -836,52 +905,8 @@ def _next_graph_id(graph: dict) -> str:
         return "9999"
 
 
-def _apply_outpaint(graph: dict, outpaint: dict) -> None:
-    """扩图图变换（Qwen Image 2.1），链路与参考工作流 `▶▷Qwen-image21-功能流` 的「图像扩展」一致：
-
-    LoadImage → ImageScaleToTotalPixels(1MP, 32) → ImagePadForOutpaint(灰边) →
-    ImageScaleToTotalPixels(目标MP, 32) → 编码器（resolution=0，latent 取编码器空 latent 输出）
-
-    两次缩放都按 32 对齐：编码器按 round(尺寸/32)*32 重建参考图并据此建空 latent，尺寸对不上就会
-    缩放参考图、出图尺寸和内容一起错位。最后移除不再引用的 EmptyLatentImage。"""
-    te_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
-                 if isinstance(n, dict) and n.get("class_type") == "TextEncodeQwenImage21"), None)
-    if te_id is None:
-        raise ValueError("该技能不支持扩图（模板没有 Qwen Image 2.1 编码器）")
-    te = graph[te_id]
-    src = (te.get("inputs") or {}).get("images.image_1")
-    if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
-        raise ValueError("扩图需要参考图，请添加参考图后再生成")
-    # 原图先归一化到 1MP（32 对齐）：留白按这一层的像素计（前端已按同一比例换算）
-    ref_id = _next_graph_id(graph)
-    graph[ref_id] = {
-        "class_type": "ImageScaleToTotalPixels",
-        "inputs": {"image": [str(src[0]), int(src[1])], "upscale_method": "lanczos",
-                   "megapixels": OUTPAINT_REF_MP, "resolution_steps": 32},
-    }
-    pad_id = _next_graph_id(graph)
-    graph[pad_id] = {
-        "class_type": "ImagePadForOutpaint",
-        "inputs": {"image": [ref_id, 0],
-                   "left": outpaint["left"], "top": outpaint["top"],
-                   "right": outpaint["right"], "bottom": outpaint["bottom"],
-                   "feathering": 0},
-    }
-    # 补边画布整幅归一化到目标像素数（32 对齐），编码器就不再自己缩放参考图
-    canvas_mp = outpaint.get("total_pixels") or OUTPAINT_CANVAS_MP
-    canvas_id = _next_graph_id(graph)
-    graph[canvas_id] = {
-        "class_type": "ImageScaleToTotalPixels",
-        "inputs": {"image": [pad_id, 0], "upscale_method": "lanczos",
-                   "megapixels": canvas_mp, "resolution_steps": 32},
-    }
-    te["inputs"]["images.image_1"] = [canvas_id, 0]
-    te["inputs"]["resolution"] = 0   # 保持画布尺寸（画布=补边后按 32 对齐的尺寸）
-    sampler_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
-                      if isinstance(n, dict) and n.get("class_type") == "KSampler"), None)
-    if sampler_id is not None:
-        graph[sampler_id]["inputs"]["latent_image"] = [te_id, 2]
-    # 移除不再被任何节点引用的 EmptyLatentImage
+def _drop_unused_empty_latent(graph: dict) -> None:
+    """移除不再被任何节点引用的 EmptyLatentImage（尺寸改由编码器空 latent 决定）。"""
     for nid, node in list(graph.items()):
         if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage" and not any(
                 isinstance(v, list) and len(v) == 2 and v[0] == str(nid)
@@ -931,13 +956,7 @@ def _apply_local_edit(graph: dict, local: dict) -> None:
                                  "x": local["x"], "y": local["y"], "resize_source": False,
                                  "mask": [mask_id, 0]}}
     graph[save_id]["inputs"]["images"] = [comp_id, 0]
-    # 移除不再被任何节点引用的 EmptyLatentImage
-    for nid, node in list(graph.items()):
-        if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage" and not any(
-                isinstance(v, list) and len(v) == 2 and v[0] == str(nid)
-                for m in graph.values() if isinstance(m, dict)
-                for v in (m.get("inputs") or {}).values()):
-            graph.pop(nid)
+    _drop_unused_empty_latent(graph)
 
 
 def render_template(template: dict, params: dict) -> tuple[dict, list]:
@@ -966,10 +985,9 @@ def render_template(template: dict, params: dict) -> tuple[dict, list]:
         _prune_unfilled(graph, unfilled)
     warnings = []
     _apply_loras(graph, params.get("loras") or [], warnings)
-    if params.get("outpaint"):
-        _apply_outpaint(graph, params["outpaint"])
     if params.get("local_edit"):
         _apply_local_edit(graph, params["local_edit"])
+    _reject_unknown_tokens(graph)
     return graph, warnings
 
 
@@ -1181,6 +1199,8 @@ def _snapshot(task: dict) -> dict:
         "mode": "redraw" if task["params"]["ref_name"] else "t2i",
         "width": task["params"]["width"],
         "height": task["params"]["height"],
+        # 送进编码器的参考画布尺寸（模板里的 ImageScale 目标）；无参考图时为 None
+        "canvas": task["params"].get("canvas"),
         "model": task["params"]["model"],
         "seed": task["params"]["seed"],
         "images": [_public_image(e) for e in task["images"]],
@@ -1370,7 +1390,7 @@ async def start_generation(body: dict) -> dict:
 
     # 局部编辑仅支持 Qwen Image 2.1 模板；提示词追加红色区域约束
     if body.get("local_edit"):
-        if not template_supports_outpaint(template):
+        if not template_is_qwen21(template):
             raise ValueError("该技能不支持局部编辑，请切换到 Qwen Image 2.1 高分局部编辑后重试")
         p = str(body.get("prompt") or "").strip()
         if "red" not in p.lower():
@@ -1382,7 +1402,19 @@ async def start_generation(body: dict) -> dict:
         if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
             settings[key] = value
 
+    # Qwen Image 2.1 的 latent 一格 = 32px（VAE 16x 下采样 + 2x2 patchify）：目标尺寸必须 32 对齐，
+    # 否则模型要自己补/裁一格 → 出图尺寸和内容一起偏（参考工作流的 ResolutionSelector 用 multiple=32）。
+    # 显式宽高先对齐（避免 resolve_dimensions 先对到 16：1000→1008→再对 32 变成 1024，多偏一格），
+    # 比例/设置默认值那条路再兜一次。
+    if template_is_qwen21(template):
+        w, h = _int(body.get("width"), 0), _int(body.get("height"), 0)
+        if w > 0 and h > 0:
+            body["width"], body["height"] = _round_multiple(w, 32), _round_multiple(h, 32)
+
     params = resolve_request(body or {}, settings, max_refs=template_max_refs(template))
+    if template_is_qwen21(template):
+        params["width"] = _round_multiple(params["width"], 32)
+        params["height"] = _round_multiple(params["height"], 32)
     if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance"):
         params["prompt"] = await _enhance_prompt(
             params["prompt"], params["width"], params["height"], skill_id)

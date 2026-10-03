@@ -148,6 +148,13 @@ def base_settings():
     return dict(image_gen.DEFAULT_SETTINGS)
 
 
+def load_preset_template(skill: str) -> dict:
+    """读预设技能的 workflow.json（模板链路已写进文件，测试直接按它渲染）。"""
+    with open(os.path.join(PLUGIN_DIR, "skills", "presets", skill, "workflow.json"),
+              encoding="utf-8") as f:
+        return json.load(f)
+
+
 def write_png(path: str, width: int, height: int) -> bytes:
     from PIL import Image
     with Image.new("RGB", (width, height), (200, 30, 30)) as img:
@@ -417,6 +424,12 @@ class RenderTemplateTests(unittest.TestCase):
         self.assertEqual(graph["10"]["inputs"]["seed"], 3)
         self.assertTrue(str(graph["12"]["inputs"]["filename_prefix"]).startswith("NeoAgent/"))
 
+    def test_unknown_placeholder_raises(self):
+        """模板里有后端不认识的占位符：直接报错，别把 {{XXX}} 原样提交（ComfyUI 只会报 float 转换失败）。"""
+        template = {"1": {"class_type": "LoadImage", "inputs": {"image": "{{NOPE_TOKEN}}"}}}
+        with self.assertRaises(ValueError):
+            image_gen.render_template(template, self.params())
+
     def test_lora_dynamic_insertion_after_unet(self):
         # 文生图模板没有 LoRA 槽位：两个用户 LoRA 在主链末端动态串联
         graph, _ = image_gen.render_template(self.text_template, self.params())
@@ -629,16 +642,94 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
             _MODELS.update(orig_models)
         self.assertEqual(snap["status"], "queued")
         graph = captured["graph"]
-        self.assertEqual(graph["4"]["inputs"]["resolution"], 1024)
-        # 显式 1920×1080 按全局规则对齐到 16 → 1920×1088
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
+        # 参考图是 3:4 竖图、目标是 16:9 横版：属「换画幅重画」，画布缩放只把原图对齐到 32
+        # （不拉成目标比例），latent 仍按目标尺寸（Qwen2.1 规则对齐到 32 → 1920×1088）
+        self.assertEqual((graph["30"]["inputs"]["width"], graph["30"]["inputs"]["height"]), (768, 1024))
         self.assertEqual((graph["5"]["inputs"]["width"], graph["5"]["inputs"]["height"]), (1920, 1088))
         loads = [v for v in graph.values() if v.get("class_type") == "LoadImage"]
         self.assertEqual(len(loads), 1)  # 其余 9 个空槽连同 LoadImage 裁掉
 
-    def test_outpaint_rewires_qwen_template(self):
+    def test_outpaint_canvas_mp_from_skill_config(self):
+        """扩图补边画布的目标像素数可被 skill config 覆盖（target_megapixels，默认 1.5）。"""
+        _, captured = self._run(
+            load_preset_template("qwen_image_21_outpaint"),
+            {"skill_id": "qwen_image_21_outpaint", "prompt": "extend the sky",
+             "references": [{"kind": "input", "value": "portrait.png"}],
+             "outpaint": {"left": 128, "top": 64, "right": 128, "bottom": 64}},
+            cfg={"target_megapixels": 2.0})
+        graph = captured["graph"]
+        pad_id = next(nid for nid, n in graph.items()
+                      if isinstance(n, dict) and n.get("class_type") == "ImagePadForOutpaint")
+        canvas_scale = next(nid for nid, n in graph.items()
+                            if isinstance(n, dict) and n.get("class_type") == "ImageScaleToTotalPixels"
+                            and n["inputs"]["image"] == [pad_id, 0])
+        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], 2.0)
+
+    def test_qwen_target_aligned_to_32(self):
+        """Qwen2.1 模板的目标尺寸必须 32 对齐（latent 一格 = 32px），否则模型自己补/裁一格 → 尺寸和内容一起偏。"""
         snap, captured = self._run(
             self.QWEN_TEMPLATE,
-            {"skill_id": "qwen_image_21", "prompt": "extend the sky",
+            {"skill_id": "qwen_image_21", "prompt": "把衣服换成蓝色",
+             "width": 1000, "height": 1080,
+             "references": [{"kind": "input", "value": "portrait.png"}]})
+        self.assertEqual((snap["width"], snap["height"]), (992, 1088))
+
+    def test_edit_scales_reference_to_target(self):
+        """常规编辑：模板把参考图缩放到与空 latent 同尺寸（画布尺寸 = 编辑窗目标尺寸）。
+
+        模板里的 ImageScale → TextEncodeQwenImage21(resolution=0) → EmptyLatentImage 就是参考工作流
+        「图像编辑」组那条链：参考图与 latent 同尺寸、同在 32 网格上，画面位置才不偏。"""
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
+                  encoding="utf-8") as f:
+            template = json.load(f)
+        _, captured = self._run(
+            template,
+            {"skill_id": "qwen_image_21", "prompt": "把衣服换成蓝色",
+             "width": 1152, "height": 1536,          # 与原图 768×1024 同比例（3:4）
+             "references": [{"kind": "input", "value": "portrait.png"}]})
+        graph = captured["graph"]
+        scale = graph["30"]
+        self.assertEqual(scale["class_type"], "ImageScale")
+        self.assertEqual(scale["inputs"]["image"], ["10", 0])          # 原图先缩放
+        self.assertEqual((scale["inputs"]["width"], scale["inputs"]["height"]), (1152, 1536))
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], ["30", 0])
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)                  # 编码器不再二次缩放
+        self.assertEqual((graph["5"]["inputs"]["width"], graph["5"]["inputs"]["height"]), (1152, 1536))
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 0])         # 空 latent 与参考图同尺寸
+
+    def test_edit_canvas_scale_pruned_without_reference(self):
+        """文生图（无参考图）：模板里的画布缩放节点随 LoadImage 一并被裁，latent 走空 latent。"""
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
+                  encoding="utf-8") as f:
+            template = json.load(f)
+        params = image_gen.resolve_request({"prompt": "a red fox", "seed": 3,
+                                            "width": 1024, "height": 1024}, base_settings())
+        graph, _ = image_gen.render_template(template, params)
+        self.assertNotIn("30", graph)
+        self.assertNotIn("10", graph)
+        self.assertNotIn("images.image_1", graph["4"]["inputs"])
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 0])
+
+    def test_edit_keeps_reference_unstretched_when_aspect_differs(self):
+        """换画幅（参考图 3:4、目标 1:1）：画布缩放只把原图对齐到 32，不拉成目标比例。"""
+        _, captured = self._run(
+            load_preset_template("qwen_image_21"),
+            {"skill_id": "qwen_image_21", "prompt": "改成方形构图",
+             "width": 1024, "height": 1024,
+             "references": [{"kind": "input", "value": "portrait.png"}]})
+        graph = captured["graph"]
+        self.assertEqual((graph["30"]["inputs"]["width"], graph["30"]["inputs"]["height"]), (768, 1024))
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 0])
+        self.assertEqual((graph["5"]["inputs"]["width"], graph["5"]["inputs"]["height"]), (1024, 1024))
+
+    def test_outpaint_chain_from_template(self):
+        """扩图链写在模板里：原图 →1MP 归一化 → 补灰边 → 画布归一化到目标像素 → 编码器空 latent。"""
+        snap, captured = self._run(
+            load_preset_template("qwen_image_21_outpaint"),
+            {"skill_id": "qwen_image_21_outpaint", "prompt": "extend the sky",
              "references": [{"kind": "input", "value": "portrait.png"}],
              "outpaint": {"left": 128, "top": 64, "right": 128, "bottom": 64}})
         self.assertEqual(snap["status"], "queued")
@@ -651,7 +742,9 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         ref_scale = next(i for i in scales if graph[i]["inputs"]["image"] == ["10", 0])
         canvas_scale = next(i for i in scales if graph[i]["inputs"]["image"] == [pad_id, 0])
         self.assertAlmostEqual(graph[ref_scale]["inputs"]["megapixels"], image_gen.OUTPAINT_REF_MP)
-        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], image_gen.OUTPAINT_CANVAS_MP)
+        # 画布目标像素数取设置项 target_megapixels（默认 1.5，可被 skill config / 请求覆盖）
+        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"],
+                               image_gen.DEFAULT_SETTINGS["target_megapixels"])
         for i in scales:
             self.assertEqual(graph[i]["inputs"]["resolution_steps"], 32)
         pad = graph[pad_id]["inputs"]
@@ -663,10 +756,11 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         self.assertEqual(graph["6"]["inputs"]["latent_image"], ["4", 2])
         self.assertNotIn("5", graph)   # EmptyLatentImage 移除
 
-    def test_outpaint_total_pixels_inserts_scale(self):
-        snap, captured = self._run(
-            self.QWEN_TEMPLATE,
-            {"skill_id": "qwen_image_21", "prompt": "extend the sky",
+    def test_outpaint_total_pixels_from_request(self):
+        """请求里的 total_pixels（目标 MP）覆盖设置项：画布缩放的 megapixels 随之为 2.0。"""
+        _, captured = self._run(
+            load_preset_template("qwen_image_21_outpaint"),
+            {"skill_id": "qwen_image_21_outpaint", "prompt": "extend the sky",
              "references": [{"kind": "input", "value": "portrait.png"}],
              "outpaint": {"left": 128, "top": 64, "right": 128, "bottom": 64, "total_pixels": 2.0}})
         graph = captured["graph"]
@@ -675,8 +769,16 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         scales = [nid for nid, n in graph.items()
                   if isinstance(n, dict) and n.get("class_type") == "ImageScaleToTotalPixels"]
         canvas_scale = next(i for i in scales if graph[i]["inputs"]["image"] == [pad_id, 0])
-        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], 2.0)
+        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], 2.0)   # 请求显式值优先
         self.assertEqual(graph["4"]["inputs"]["images.image_1"], [canvas_scale, 0])
+
+    def test_settings_expose_target_megapixels(self):
+        """模型工作分辨率作为设置项开放：默认 1.5，随 get_settings 返回，可由请求/技能覆盖。"""
+        self.assertAlmostEqual(image_gen.DEFAULT_SETTINGS["target_megapixels"], 1.5)
+        settings = base_settings()
+        settings["target_megapixels"] = 2.5
+        params = image_gen.resolve_request({"prompt": "x", "seed": 1}, settings)
+        self.assertAlmostEqual(params["target_mp"], 2.5)
 
     def test_outpaint_unsupported_template_raises(self):
         with self.assertRaises(ValueError):
@@ -688,8 +790,8 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
 
     def test_outpaint_empty_prompt_uses_default_trigger(self):
         snap, _ = self._run(
-            self.QWEN_TEMPLATE,
-            {"skill_id": "qwen_image_21", "prompt": "",
+            load_preset_template("qwen_image_21_outpaint"),
+            {"skill_id": "qwen_image_21_outpaint", "prompt": "",
              "references": [{"kind": "input", "value": "portrait.png"}],
              "outpaint": {"left": 64}})
         self.assertEqual(snap["prompt"], image_gen.OUTPAINT_DEFAULT_PROMPT)
@@ -756,23 +858,21 @@ class OutpaintParseTests(unittest.TestCase):
         out = params["outpaint"]
         self.assertEqual((out["left"], out["top"], out["right"], out["bottom"]), (16, 16, 16, 16))
 
-    def test_template_supports_outpaint(self):
+    def test_template_is_qwen21(self):
         with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
                   encoding="utf-8") as f:
             qwen = json.load(f)
-        self.assertTrue(image_gen.template_supports_outpaint(qwen))
-        self.assertFalse(image_gen.template_supports_outpaint({
+        self.assertTrue(image_gen.template_is_qwen21(qwen))
+        self.assertFalse(image_gen.template_is_qwen21({
             "1": {"class_type": "UNETLoader", "inputs": {}}}))
 
 
 class OutpaintRenderTests(unittest.TestCase):
-    """扩图图变换：pad/scale 插入、latent 改接编码器空 latent 输出、EmptyLatentImage 移除。"""
+    """扩图链：写在模板里（原图→1MP 归一化→补灰边→画布→目标MP 归一化→编码器空 latent）。"""
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
-                  encoding="utf-8") as f:
-            cls.template = json.load(f)
+        cls.template = load_preset_template("qwen_image_21_outpaint")
 
     def params(self, **overrides):
         write_png(os.path.join(_INPUT_DIR, "outp_ref.png"), 768, 1024)
@@ -820,18 +920,9 @@ class OutpaintRenderTests(unittest.TestCase):
         self.assertEqual(graph["4"]["inputs"]["images.image_1"], [canvas_scale, 0])
 
     def test_outpaint_requires_reference(self):
-        params = image_gen.resolve_request({"prompt": "a red fox", "seed": 3,
-                                            "outpaint": {"left": 64}}, base_settings())
         with self.assertRaises(ValueError):
-            image_gen.render_template(self.template, params)
-
-    def test_no_outpaint_keeps_template_unchanged(self):
-        params = self.params()
-        graph, _ = image_gen.render_template(self.template, params)
-        self.assertNotIn("ImagePadForOutpaint",
-                         {n.get("class_type") for n in graph.values() if isinstance(n, dict)})
-        self.assertEqual(graph["4"]["inputs"]["resolution"], 1024)
-        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 0])
+            image_gen.resolve_request({"prompt": "a red fox", "seed": 3,
+                                       "outpaint": {"left": 64}}, base_settings())
 
 
 class LocalEditTests(unittest.TestCase):
@@ -839,9 +930,7 @@ class LocalEditTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
-                  encoding="utf-8") as f:
-            cls.template = json.load(f)
+        cls.template = load_preset_template("qwen_image_21_local_edit")
 
     def _make(self, mask_rect=None):
         from PIL import Image, ImageDraw

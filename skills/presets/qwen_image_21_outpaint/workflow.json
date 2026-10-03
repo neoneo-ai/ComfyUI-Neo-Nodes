@@ -32,9 +32,9 @@
         "3",
         0
       ],
-      "resolution": 1024,
+      "resolution": 0,
       "images.image_1": [
-        "10",
+        "32",
         0
       ],
       "images.image_2": [
@@ -75,14 +75,6 @@
       ]
     }
   },
-  "5": {
-    "class_type": "EmptyLatentImage",
-    "inputs": {
-      "width": "{{WIDTH}}",
-      "height": "{{HEIGHT}}",
-      "batch_size": 1
-    }
-  },
   "6": {
     "class_type": "KSampler",
     "inputs": {
@@ -104,8 +96,8 @@
         1
       ],
       "latent_image": [
-        "5",
-        0
+        "4",
+        2
       ],
       "denoise": 1.0
     }
@@ -191,6 +183,44 @@
     "class_type": "LoadImage",
     "inputs": {
       "image": "{{REF_IMAGE_10}}"
+    }
+  },
+  "30": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "10",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": "{{OUTPAINT_REF_MP}}",
+      "resolution_steps": 32
+    }
+  },
+  "31": {
+    "class_type": "ImagePadForOutpaint",
+    "inputs": {
+      "image": [
+        "30",
+        0
+      ],
+      "left": "{{PAD_LEFT}}",
+      "top": "{{PAD_TOP}}",
+      "right": "{{PAD_RIGHT}}",
+      "bottom": "{{PAD_BOTTOM}}",
+      "feathering": 0
+    }
+  },
+  "32": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "31",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": "{{TARGET_MP}}",
+      "resolution_steps": 32
     }
   }
 }

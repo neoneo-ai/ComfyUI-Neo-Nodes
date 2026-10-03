@@ -19,6 +19,29 @@ async function formLoras(settingsLoras, modelLoras) {
     return { el: section.el, collect: () => section.collect() };
 }
 
+// ============ 全局「生图默认设置」：目标像素数（MP）读写 ============
+
+test("全局生图默认设置：目标像素数 (MP) 读到表单并随保存提交（默认 1.5）", async () => {
+    const patches = [];
+    mockRoute("/neo_image_gen/settings", (body) => {
+        if (body) patches.push(body);
+        return jsonResponse({
+            target_megapixels: 2.5, model: "", text_encoder: "", vae: "", output_prefix: "NeoAgent",
+        });
+    });
+    mockRoute("/neo_image_gen/models", () => jsonResponse({
+        diffusion_models: [], text_encoders: [], vae: [] }));
+    const { createImageGenSettingsForm } = await import("../../web/image-gen.js");
+    const form = createImageGenSettingsForm();
+    document.body.appendChild(form.el);
+    await form.load();
+    const mp = form.el.querySelector("input[type=number]");
+    assert.equal(mp.value, "2.5", "设置里的 MP 应回填到表单");
+    mp.value = "2";
+    await form.save();
+    assert.equal(patches.pop().target_megapixels, 2, "保存时带上 MP");
+});
+
 test("LoRA collect 输出 {name, strength}", async () => {
     const name = "krea2/Edit/SomeStyle.safetensors";
     const { collect } = await formLoras([{ name, strength: 0.8 }], [name]);
@@ -166,7 +189,7 @@ test("createModelConfigSection：config 反斜杠模型名匹配正斜杠列表�
     assert.equal(section.collect().model, "Krea2\\nonexistent.safetensors", "未匹配值应如实保留原值（标缺失），不回落自动");
 });
 
-test("全局生图默认设置表单只含 生图模型区 + 输出前缀（不含 LoRA/张数/比例/视频）", async () => {
+test("全局生图默认设置表单只含 生图模型区 + 目标像素数 + 输出前缀（不含 LoRA/张数/比例/视频）", async () => {
     const { createImageGenSettingsForm } = await import("../../web/image-gen.js");
     mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
@@ -174,9 +197,12 @@ test("全局生图默认设置表单只含 生图模型区 + 输出前缀（不�
     document.body.appendChild(form.el);
     await form.load();
     const labels = [...form.el.querySelectorAll(".rs-form-label")].map((el) => el.textContent);
-    assert.deepEqual(labels, ["生图模型", "Text Encoder", "VAE", "输出前缀"]);
+    assert.deepEqual(labels, ["生图模型", "Text Encoder", "VAE", "目标像素数 (MP)", "输出前缀"]);
     assert.equal(form.el.querySelector(".rs-gen-lora-list"), null, "全局表单不应有 LoRA 列表");
-    assert.equal(form.el.querySelector("input[type=number]"), null, "全局表单不应有张数/强度数字框");
+    // 唯一的数字框是「目标像素数 (MP)」；张数/步数/强度等仍在每技能设置里
+    const numbers = [...form.el.querySelectorAll("input[type=number]")];
+    assert.equal(numbers.length, 1, "全局表单只应有目标像素数一个数字框");
+    assert.equal(numbers[0].value, "1.5", "目标像素数默认 1.5");
     assert.ok(form.el.querySelector(".rs-gen-save"), "应保留保存按钮");
 });
 
