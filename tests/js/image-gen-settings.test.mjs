@@ -1,19 +1,16 @@
 // 生图设置：全局「生图默认设置」表单含 生图模型区 + 生视频模型区（MiniMax H3）+ 输出前缀（LoRA/张数/比例只在每技能设置）；
-// 每技能模型区 createModelConfigSection 的 LoRA 行不再有「依赖参考图」复选框：ref_only 由文件名线索自动判定
-// （含 quadview / 四视图 → true，普通 LoRA → false）；「自动」项显示后端建议的四视图 LoRA 名。
+// 每技能模型区 createModelConfigSection 的 LoRA 行：名称 + 强度，collect 输出 {name, strength}。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse } from "./setup.mjs";
-
-const QV = "krea2/Edit/Krea2-QuadView_krea2_v1.safetensors";
 
 beforeEach(() => {
     resetEnv();
     clearRoutes();
 });
 
-// 构造每技能模型区并 load（同步）；ref_only 由 collect() 的输出断言
+// 构造每技能模型区并 load（同步）；LoRA 由 collect() 的输出断言
 async function formLoras(settingsLoras, modelLoras) {
     const { createModelConfigSection } = await import("../../web/image-gen.js");
     const section = createModelConfigSection();
@@ -22,45 +19,19 @@ async function formLoras(settingsLoras, modelLoras) {
     return { el: section.el, collect: () => section.collect() };
 }
 
-test("四视图 LoRA（文件名含 quadview）collect 输出 ref_only=true", async () => {
-    const { collect } = await formLoras([{ name: QV, strength: 1.0 }], [QV]);
-    assert.deepEqual(collect().loras, [{ name: QV, strength: 1.0, ref_only: true }]);
+test("LoRA collect 输出 {name, strength}", async () => {
+    const name = "krea2/Edit/SomeStyle.safetensors";
+    const { collect } = await formLoras([{ name, strength: 0.8 }], [name]);
+    assert.deepEqual(collect().loras, [{ name, strength: 0.8 }]);
 });
 
-test("中文四视图名称同样命中（大小写不敏感）", async () => {
-    const name = "krea2/Edit/Krea2-四视图QuadView_v1.safetensors";
-    const { collect } = await formLoras([{ name, strength: 1.0 }], [name]);
-    assert.equal(collect().loras[0].ref_only, true);
-});
-
-test("普通 LoRA collect 输出 ref_only=false", async () => {
-    const { collect } = await formLoras(
-        [{ name: "krea2/Edit/SomeStyle.safetensors", strength: 1.0 }],
-        ["krea2/Edit/SomeStyle.safetensors"]);
-    assert.deepEqual(collect().loras,
-        [{ name: "krea2/Edit/SomeStyle.safetensors", strength: 1.0, ref_only: false }]);
-});
-
-test("新增 LoRA 行选中四视图 LoRA 后 collect 输出 ref_only=true", async () => {
+test("新增 LoRA 行后 collect 收集（空名跳过）", async () => {
+    const QV = "krea2/Edit/Krea2-QuadView_krea2_v1.safetensors";
     const { el, collect } = await formLoras([], [QV]);
     assert.equal(el.querySelectorAll(".rs-gen-lora-row").length, 0, "空设置无 LoRA 行");
     el.querySelector(".rs-gen-lora-add").click();
     el.querySelector(".rs-gen-lora-row select").value = QV;
-    assert.equal(collect().loras[0].ref_only, true);
-});
-
-test("LoRA「自动」选项显示后端建议的四视图 LoRA", async () => {
-    const { createModelConfigSection } = await import("../../web/image-gen.js");
-    const section = createModelConfigSection();
-    document.body.appendChild(section.el);
-    section.load({ loras: [{ name: QV, strength: 1.0 }] },
-        { loras: [QV, "style_a.safetensors"], suggested_lora: QV });
-    const row = section.el.querySelector(".rs-gen-lora-row");
-    assert.ok(row, "应有 LoRA 行");
-    const select = row.querySelector("select");
-    assert.ok(select, "应有 LoRA 下拉");
-    // suggested_lora 经 shortModelName（取末段去扩展名）后作为「自动」项文案
-    assert.equal(select.options[0].textContent, "自动（Krea2-QuadView_krea2_v1）", "首项应为带建议名的「自动」");
+    assert.deepEqual(collect().loras, [{ name: QV, strength: 1.0 }]);
 });
 // ============ LoRA 下拉排序：与当前主模型同级者靠前（Qwen 主模型不必在数百个 krea2 LoRA 里翻找）============
 

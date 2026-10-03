@@ -2475,7 +2475,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "image_gen", name: "Krea2 文生图", gen_image: true },
         { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true },
-        { id: "quad-view", name: "四视图", gen_image: true, requires_ref: true },   // 应被过滤
+        { id: "quad-view", name: "参考编辑", gen_image: true, requires_ref: true },   // 应被过滤
         { id: "sk-v", name: "视频技能", gen_video: true },                          // 非生图，应被过滤
     ]));
 
@@ -2503,7 +2503,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     await sleep(30);   // 等技能列表异步填充
     assert.equal(sbModeSel.tagName, "SELECT", "生图模式用下拉选择");
     assert.equal(sbModeSel.value, "t2i", "无角色参考图 → 默认 t2i 文生图");
-    assert.deepEqual(Array.from(sbSkillSel.options).map((o) => o.value), ["image_gen", "qwen_image_21"], "只列生图技能（排除四视图/视频）");
+    assert.deepEqual(Array.from(sbSkillSel.options).map((o) => o.value), ["image_gen", "qwen_image_21"], "只列生图技能（排除参考编辑/视频）");
     assert.equal(sbSkillSel.value, "image_gen", "t2i 默认 Krea2");
     assert.ok(!sbCard.querySelector(".neo-director-sb-r2i"), "无 r2i 专属控件行（背景参考图已移除）");
     assert.equal(sbCard.querySelector(".neo-director-sb-gen").closest(".neo-director-step-act"),

@@ -16,8 +16,8 @@ import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 import { makeGraph, makeNode, addNode, connect, agentWidgets, slot, outSlot } from "./helpers/fake-graph.mjs";
 
 const SKILL_WITH_IMAGE_GEN = [
-    { id: "image_gen", name: "出图 Krea2 四视图", category: "image_gen", source: "preset", gen_image: true, requires_ref: true },
-    { id: "image_gen_text", name: "出图 Krea2 文生图", category: "image_gen", source: "preset", gen_image: true },
+    { id: "image_gen", name: "出图 参考编辑", category: "image_gen", source: "preset", gen_image: true, requires_ref: true },
+    { id: "image_gen_text", name: "出图 文生图", category: "image_gen", source: "preset", gen_image: true },
 ];
 
 beforeEach(() => {
@@ -129,7 +129,7 @@ test("纯文生图 skill：无参考图，请求不携带参考图，比例由�
     assert.equal(body.prompt, "一只猫", "跳过增强时应直接提交原文");
 });
 
-test("四视图 skill 缺参考图：预览区底部报错，不发 /neo_image_gen/generate", async () => {
+test("参考编辑 skill 缺参考图：预览区底部报错，不发 /neo_image_gen/generate", async () => {
     const graph = makeGraph();
     const agent = await attachAgent(makeNode({
         id: 2, type: "NeoPromptAgent", widgets: agentWidgets(),

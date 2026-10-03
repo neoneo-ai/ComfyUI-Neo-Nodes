@@ -168,7 +168,7 @@ async def _run_storyboard_task(task_id: str, name: str, segments: list, skill_id
             "loras": settings.get("loras") or [],
         }
         try:
-            params = resolve_request(body, settings, max_refs=_STORYBOARD_MAX_REFS, auto_quadview=False)
+            params = resolve_request(body, settings, max_refs=_STORYBOARD_MAX_REFS)
             graph, warns = render_template(template, params)
             entry["warnings"] = fallback_warnings + list(warns) + (["该段带参考图，已切 Qwen Image 2.1 参考编辑"] if eff_skill != skill_id else [])
             # 进程内执行不走 ComfyUI 队列，没有 last_prompt_id；显式给一个执行上下文（prompt_id=task_id），

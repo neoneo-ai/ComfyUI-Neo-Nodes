@@ -54,7 +54,7 @@ DEFAULT_SETTINGS = {
     "model": "",              # diffusion_models 相对名；空 = 自动挑选 Krea2 模型
     "text_encoder": "",       # text_encoders 相对名
     "vae": "",                # vae 相对名
-    "loras": [],              # [{name, strength, ref_only}]，LoraLoaderModelOnly；ref_only=true 仅参考图模式加载（四视图 LoRA 即勾此项者）
+    "loras": [],              # [{name, strength}]，LoraLoaderModelOnly
     "base_resolution": 1280,  # 按比例算尺寸时的长边
     "default_ratio": "1:1",
     "count": 1,               # 单次生图张数（1-8，写入模板 {{COUNT}}）
@@ -80,9 +80,6 @@ _MODEL_HINTS = {
     # Krea2 沿用 Qwen-Image 的 VAE；社区 Krea2-* VAE 只在缺官方文件时兜底
     "vae": ("qwen_image", "krea2"),
 }
-
-# 四视图 LoRA 名称线索（参考图模式必需，缺失时报错不降级）
-_QUADVIEW_HINTS = ("quadview", "四视图")
 
 # 扩图默认触发词（与 Qwen2.1 扩图 LoRA 的训练触发词一致）；扩图模式提示词为空时填入
 OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation "
@@ -166,15 +163,6 @@ def suggest_model(folder: str) -> str:
     return ""
 
 
-def _first_quadview(files: list) -> str:
-    """按名称线索挑第一个四视图 LoRA（与参考图模式自动挑选一致）；无命中返回空串。"""
-    for hint in _QUADVIEW_HINTS:
-        matches = [f for f in files if hint in f.lower()]
-        if matches:
-            return matches[0]
-    return ""
-
-
 def resolve_model(folder: str, wanted: str) -> tuple:
     """把设置里的模型名解析成 folder_paths 可用的相对名。
 
@@ -214,10 +202,7 @@ def scan_models() -> dict:
     for folder in ("diffusion_models", "text_encoders", "vae", "loras"):
         files = _folder_files(folder)
         out[folder] = _display_sort(files)
-        if folder == "loras":
-            out["suggested_lora"] = _first_quadview(files)
-        else:
-            out["suggested_" + folder] = suggest_model(folder)
+        out["suggested_" + folder] = suggest_model(folder)
     return out
 
 
@@ -403,7 +388,7 @@ def _float(value, default: float) -> float:
 
 
 def _resolve_loras(settings: dict) -> tuple:
-    """解析设置里的 LoRA 列表，返回 ([{name, strength, ref_only}], warnings)。"""
+    """解析设置里的 LoRA 列表，返回 ([{name, strength}], warnings)。"""
     entries = settings.get("loras") or []
     if not isinstance(entries, list):
         return [], ["loras 配置不是列表，已忽略"]
@@ -411,11 +396,10 @@ def _resolve_loras(settings: dict) -> tuple:
     warnings = []
     for entry in entries:
         if isinstance(entry, str):
-            name, strength, ref_only = entry, 1.0, False
+            name, strength = entry, 1.0
         elif isinstance(entry, dict):
             name = str(entry.get("name", "")).strip()
             strength = _float(entry.get("strength"), 1.0)
-            ref_only = bool(entry.get("ref_only", False))
         else:
             continue
         if not name:
@@ -424,28 +408,8 @@ def _resolve_loras(settings: dict) -> tuple:
         if err:
             warnings.append(err)
             continue
-        resolved.append({"name": hit, "strength": min(10.0, max(-10.0, strength)), "ref_only": ref_only})
+        resolved.append({"name": hit, "strength": min(10.0, max(-10.0, strength))})
     return resolved, warnings
-
-
-def _quadview_lora(user_loras: list) -> tuple:
-    """参考图模式必需的 Krea2 四视图 LoRA。
-
-    用户在 LoRA 列表里配了名称含线索的则沿用（强度不变，返回 (entry, True)）；否则按
-    名称线索扫描 loras 目录并追加到链尾（返回 (entry, False)）。找不到时抛 ValueError ——
-    没有该 LoRA 只会退化成普通重绘，不如明确报错。名称含线索的 LoRA 由
-    resolve_request 直接沿用，不会走到这里。
-    """
-    for entry in user_loras:
-        if any(hint in str(entry.get("name", "")).lower() or hint in str(entry.get("name", ""))
-               for hint in _QUADVIEW_HINTS):
-            return dict(entry), True
-    name = _first_quadview(_folder_files("loras"))
-    if name:
-        return {"name": name, "strength": 1.0}, False
-    raise ValueError(
-        "缺少 Krea2 四视图 LoRA：请在生图设置的 LoRA 列表里添加它，"
-        "或在 models/loras 放一个文件名含 quadview / 四视图 的 LoRA（如 Krea2-QuadView_*.safetensors）后重试")
 
 
 _REF_IMAGE_SLOT_RE = re.compile(r"\{\{REF_IMAGE_(\d+)\}\}")
@@ -462,12 +426,6 @@ def template_max_refs(template: dict) -> int:
                 for m in _REF_IMAGE_SLOT_RE.finditer(value):
                     found = max(found, int(m.group(1)))
     return found or 1
-
-
-def template_uses_krea2_edit(template: dict) -> bool:
-    """模板是否走 Krea2 单路编辑链（含 Krea2EditModelPatch）：只有它需要自动挑选四视图 LoRA。"""
-    return any(isinstance(node, dict) and node.get("class_type") == "Krea2EditModelPatch"
-               for node in (template or {}).values())
 
 
 def template_supports_outpaint(template: dict) -> bool:
@@ -552,13 +510,11 @@ def _prepare_local_edit(ref_name: str, mask_src: dict) -> dict:
             "hl_name": hl_name, "mask_name": mask_out_name}
 
 
-def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
-                    auto_quadview: bool = True) -> dict:
+def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1) -> dict:
     """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。
 
-    max_refs：保留的参考图张数上限（默认 1，Krea2 单路模板）；多参考技能（如 Qwen Image 2.1
-    分镜）传更大值，超出部分截断并提示。auto_quadview=False 时跳过 Krea2 四视图 LoRA 的
-    自动挑选（其它模型没有这个概念），ref_only 过滤规则不变。"""
+    max_refs：保留的参考图张数上限（默认 1）；多参考技能（如 Qwen Image 2.1
+    分镜）传更大值，超出部分截断并提示。"""
     body = body if isinstance(body, dict) else {}
     settings = settings or get_settings()
     merged = dict(settings)
@@ -614,16 +570,6 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
         if not mask_src:
             raise ValueError("局部编辑需要涂抹区域（遮罩）")
         local_edit = _prepare_local_edit(ref_name, mask_src)
-
-    # 参考图模式：LoRA 列表里没有 ref_only（四视图）的则按名称线索自动挑选四视图 LoRA 追加到
-    # 链尾（用于填模板 LoRA 槽位）；文生图模式跳过 ref_only 的 LoRA（只在有参考图时才有意义）。
-    if ref_name:
-        if auto_quadview and not any(l.get("ref_only") for l in loras):
-            quadview, already = _quadview_lora(loras)
-            if not already:
-                loras.append(quadview)
-    else:
-        loras = [l for l in loras if not l.get("ref_only")]
 
     count = max(1, min(MAX_IMAGES, _int(body.get("count"), _int(merged.get("count"), 1))))
     width, height = resolve_dimensions(merged, ratio=body.get("ratio"),
@@ -1424,11 +1370,7 @@ async def start_generation(body: dict) -> dict:
         if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
             settings[key] = value
 
-    # 参考槽位数与四视图 LoRA 自动挑选按模板决定（与 ImageGenEditNode 一致）：
-    # Qwen Image 2.1 等多路槽位模板不走 Krea2 单路编辑链，不能强挑四视图 LoRA
-    params = resolve_request(body or {}, settings,
-                             max_refs=template_max_refs(template),
-                             auto_quadview=template_uses_krea2_edit(template))
+    params = resolve_request(body or {}, settings, max_refs=template_max_refs(template))
     if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance"):
         params["prompt"] = await _enhance_prompt(
             params["prompt"], params["width"], params["height"], skill_id)

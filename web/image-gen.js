@@ -1,6 +1,6 @@
 /**
  * image-gen.js
- * 生图（Krea2）客户端：/neo_image_gen/* API 包装、任务事件等待、四视图模板拼装、
+ * 生图客户端：/neo_image_gen/* API 包装、任务事件等待、
  * 结果发送到 LoadImage 节点（复用 /neo_gallery/copy_to_input）与生图设置表单。
  * 设置表单挂在「自动增强」菜单内，接口形态与 llm-setting.js 一致：{ el, load, save }。
  */
@@ -420,11 +420,6 @@ export function videoVideoVaeSuggestion(files) {
     return (files || []).find((n) => /h3_video/i.test(String(n))) || "";
 }
 
-// 四视图 LoRA 名称线索（与后端 _QUADVIEW_HINTS 对齐，大小写不敏感）；命中即视为四视图 LoRA（collect 输出 ref_only=true）
-function isQuadviewName(name) {
-    return /quadview|四视图/i.test(String(name || ""));
-}
-
 // 主模型家族名称线索（与后端 _MODEL_HINTS 同风格）：命中则同家族条目在模型下拉里靠前
 const LORA_FAMILY_HINTS = ["qwen", "krea2"];
 
@@ -523,10 +518,9 @@ export function createModelConfigSection() {
     section.append(modelCtl.row, encoderCtl.row, vaeCtl.row, loraRow);
 
     let loraFiles = [];
-    let suggestedLora = "";
     let loadedModels = {};   // 最近一次 load 的 models（切换主模型后按新家族重排四个下拉）
 
-    // LoRA 行：动态增删，每行 = 模型选择 + 强度；是否「仅参考图加载」（ref_only）由文件名线索自动判定
+    // LoRA 行：动态增删，每行 = 模型选择 + 强度
     function addLoraRow(name = "", strength = 1.0) {
         const line = mkEl("div", "rs-gen-lora-row");
         const select = document.createElement("select");
@@ -543,7 +537,7 @@ export function createModelConfigSection() {
         delBtn.setAttribute("data-rs-tooltip", "移除此 LoRA");
         delBtn.addEventListener("click", () => line.remove());
         line.append(combo, strengthInput, delBtn);
-        fillComboSelect(select, loraFiles, suggestedLora, name);
+        fillComboSelect(select, loraFiles, "", name);
         loraList.appendChild(line);
     }
 
@@ -553,7 +547,7 @@ export function createModelConfigSection() {
     function refreshLoraRows() {
         for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
             const select = line.querySelector("select");
-            if (select) fillComboSelect(select, loraFiles, suggestedLora, select.value);
+            if (select) fillComboSelect(select, loraFiles, "", select.value);
         }
     }
 
@@ -577,7 +571,6 @@ export function createModelConfigSection() {
 
     function load(settings, models) {
         loadedModels = models || {};
-        suggestedLora = models.suggested_lora || "";
         // 按 config 里的主模型定位家族：Qwen Image 2.1 主模型 → 同目录 / 名字含 qwen 的模型与 LoRA 靠前
         fillModelSelects(settings.model || models.suggested_diffusion_models || "", settings);
         loraList.innerHTML = "";
@@ -594,8 +587,7 @@ export function createModelConfigSection() {
             const strength = line.querySelector(".rs-gen-lora-strength");
             const name = select ? select.value : "";
             if (!name) continue;
-            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0,
-                         ref_only: isQuadviewName(name) });
+            loras.push({ name, strength: parseFloat(strength?.value ?? "1") || 1.0 });
         }
         return {
             model: modelCtl.select.value,
@@ -605,13 +597,7 @@ export function createModelConfigSection() {
         };
     }
 
-    /** 更新「自动」项显示的建议 LoRA 名（模板拿到后调用：非 Krea2 编辑链传空 → 只显示「自动」） */
-    function setLoraSuggestion(name) {
-        suggestedLora = name || "";
-        refreshLoraRows();
-    }
-
-    return { el: section, load, collect, setLoraSuggestion };
+    return { el: section, load, collect };
 }
 
 /** 生图张数 / 长边尺寸 / 默认比例 / 输出前缀 控件区（每技能生图设置用）。 */
@@ -718,7 +704,7 @@ export function createVideoModelConfigSection() {
     // 采样步数：写 skill config.json 的 steps（模板 {{STEPS}}），缺省 20；放可见区，不收进高级折叠
     const stepsCtl = numberRow("步数", { min: 1, max: 100, step: 1, value: 20 });
 
-    // LoRA 行：动态增删，每行 = 模型选择 + 强度（视频无参考图依赖概念，ref_only 仅生图区按文件名判定）
+    // LoRA 行：动态增删，每行 = 模型选择 + 强度
     const loraRow = mkEl("div", "rs-config-row");
     const loraLabel = mkEl("label", "rs-form-label");
     loraLabel.textContent = "LoRA";

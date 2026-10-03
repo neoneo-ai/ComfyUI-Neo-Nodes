@@ -142,9 +142,8 @@ test("生成素材弹窗：自定参数——自动不带覆盖，选主模型+L
         diffusion_models: ["krea2.safetensors", "qwen_image_2.1.safetensors"],
         text_encoders: ["qwen3vl_4b.safetensors"],
         vae: ["qwen_image_vae.safetensors"],
-        loras: ["style_a.safetensors", "Krea2-QuadView.safetensors"],
+        loras: ["style_a.safetensors"],
         suggested_diffusion_models: "krea2.safetensors",
-        suggested_lora: "Krea2-QuadView.safetensors",
     }));
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "gm3", status: "queued", images: [] }));
     mockRoute("/neo_image_gen/status/gm3", () => jsonResponse({
@@ -187,7 +186,7 @@ test("生成素材弹窗：自定参数——自动不带覆盖，选主模型+L
     await sleep(80);
     req = fetchLog.filter(c => c.path === "/neo_image_gen/generate").at(-1);
     assert.equal(req.body.model, "qwen_image_2.1.safetensors", "请求体应带所选主模型");
-    assert.deepEqual(req.body.loras, [{ name: "style_a.safetensors", strength: 0.8, ref_only: false }], "请求体应带所选 LoRA 与强度");
+    assert.deepEqual(req.body.loras, [{ name: "style_a.safetensors", strength: 0.8 }], "请求体应带所选 LoRA 与强度");
 
     // 关窗重开：覆盖清除，回到「自动」且无 LoRA 行
     click(overlay.querySelector(".neo-gallery-story-close"));
@@ -405,7 +404,7 @@ test("生成素材弹窗：选中的主模型+LoRA 组合可保存为新技能",
     // 新技能的 config.json = 保存的组合（与后端 save_combo_as_skill 一致），切到它后覆盖区重放不变
     mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(
         call.query.get("skill_id") === "qwen_image_21_style_a"
-            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "style_a.safetensors", strength: 0.8, ref_only: false }] }
+            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "style_a.safetensors", strength: 0.8 }] }
             : {}));
 
     openGenMaterialDialog({ showDirectoryStructure: () => {} });
@@ -441,7 +440,7 @@ test("生成素材弹窗：选中的主模型+LoRA 组合可保存为新技能",
     const saveReq = fetchLog.filter(c => c.path === "/neo_image_gen/save_combo_skill").at(-1);
     assert.equal(saveReq?.body.skill_id, "image_gen", "请求体应带当前技能");
     assert.equal(saveReq?.body.model, "qwen_image_2.1.safetensors");
-    assert.deepEqual(saveReq?.body.loras, [{ name: "style_a.safetensors", strength: 0.8, ref_only: false }]);
+    assert.deepEqual(saveReq?.body.loras, [{ name: "style_a.safetensors", strength: 0.8 }]);
     assert.equal(saveReq?.body.ratio, "16:9", "请求体应带所选宽高比");
     assert.equal(saveReq?.body.edge, "2048", "请求体应带所选最长边");
 

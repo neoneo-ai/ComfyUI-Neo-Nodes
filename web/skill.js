@@ -12,7 +12,7 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
-import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras, templateUsesKrea2Edit } from "./workflow-graph.js";
+import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
@@ -883,19 +883,12 @@ function createSkillDetailPopup(host) {
     }
 
     // config.json 恒可编辑（模型路径因机器而异、无统一预设）→ 设置区不置灰；config 缺失按空对象回落默认。
-    // 四视图 LoRA 建议名只对 Krea2 单路编辑链有意义（同后端 auto_quadview 判定）：其他链（Qwen Image 等）
-    // 清掉 suggested_lora，避免误推荐 Krea2 LoRA；模板未就绪时同样按空处理（就绪后由 setLoraSuggestion 补上）
-    function genModelsForUi(models) {
-        models = models || {};
-        return templateUsesKrea2Edit(skillWorkflowRaw) ? models : { ...models, suggested_lora: "" };
-    }
-
     async function loadGenSettings() {
         if (!currentSkillId) return null;
         const config = await getSkillGenConfig(currentSkillId);
         let models = {};
         try { models = await listGenModels(); } catch (e) { console.warn("Failed to load gen models:", e); }
-        genModelSection.load(config || {}, genModelsForUi(models));
+        genModelSection.load(config || {}, models);
         genSizeSection.load(config || {});
         enhancePromptChk.checked = !!(config && config.enhance_prompt);
         updateCfgButtons(genCfgBtns, genSaveCfgBtn, genRestoreCfgBtn, genLocalHint);
@@ -937,7 +930,7 @@ function createSkillDetailPopup(host) {
                 return fix ? Object.assign({}, e, { name: fix.to }) : e;
             });
         }
-        section.load(merged, isGen ? genModelsForUi(models) : models);
+        section.load(merged, models);
         refreshWorkflowGraph();   // 设置区已回填 → 重渲染工作流图并重新校验，清掉已修好的红框
     }
 
@@ -1412,8 +1405,6 @@ function createSkillDetailPopup(host) {
                 workflowBody.innerHTML = "";
             }
         }
-        // 模板就绪后定稿「自动」建议名（设置区 load 时模板可能还没到 → 按同一规则补/清一次）
-        genModelSection.setLoraSuggestion(genModelsForUi((genInfo || {}).models).suggested_lora || "");
         updateContentCompact();
         setEditorMode(editorMode);
         updateControls();

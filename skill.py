@@ -1077,7 +1077,7 @@ def reset_skill_gen_config(skill_id: str) -> tuple[bool, str]:
 
 
 def _clean_lora_entries(loras) -> list:
-    """LoRA 条目规范化为 [{name, strength, ref_only}]：空名跳过，强度夹到 [-10, 10]。"""
+    """LoRA 条目规范化为 [{name, strength}]：空名跳过，强度夹到 [-10, 10]。"""
     out = []
     for entry in loras or []:
         name = str((entry or {}).get("name") or "").strip() if isinstance(entry, dict) else str(entry or "").strip()
@@ -1087,8 +1087,7 @@ def _clean_lora_entries(loras) -> list:
             strength = float((entry or {}).get("strength", 1.0))
         except (TypeError, ValueError):
             strength = 1.0
-        out.append({"name": name[:256], "strength": max(-10.0, min(10.0, strength)),
-                    "ref_only": bool((entry or {}).get("ref_only"))})
+        out.append({"name": name[:256], "strength": max(-10.0, min(10.0, strength))})
     return out
 
 

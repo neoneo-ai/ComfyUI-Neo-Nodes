@@ -7,7 +7,7 @@
 - 跳过 SaveImage/Preview 等落盘输出节点；遇到未知或异步节点明确报错，不静默降级。
 - 参考图走 io.Autogrow（image_1..image_10，min=0）：不挂参考图为文生图；挂上则按 skill 模板
   进入参考/编辑模式（Qwen Image 2.1 编辑即此路径，第 1 张是编辑目标）。保留张数按模板的
-  {{REF_IMAGE_n}} 槽位自适应，Krea2 单路模板自然为 1。
+  {{REF_IMAGE_n}} 槽位自适应。
 """
 
 import base64
@@ -23,7 +23,7 @@ import nodes as comfy_nodes
 from comfy_api.latest import io
 from server import PromptServer
 from .image_gen import (MAX_IMAGES, _SKILL_SETTING_KEYS, get_settings, render_template,
-                        resolve_dimensions, resolve_request, template_max_refs, template_uses_krea2_edit)
+                        resolve_dimensions, resolve_request, template_max_refs)
 from .skill import get_skill_gen_config, load_skill_workflow, scan_skills
 from .bundles import get_bundle
 
@@ -358,9 +358,8 @@ class NeoImageGenEdit(io.ComfyNode):
             bindings = [{"kind": "data", "data": _image_to_data_uri(img)} for img in _ordered_refs(refs)]
             if bindings:
                 body["references"] = bindings
-        # 保留张数看模板槽位（Krea2 单路模板 = 1）；四视图 LoRA 自动挑选只适用于 Krea2 编辑模板
-        params = resolve_request(body, settings, max_refs=template_max_refs(template),
-                                 auto_quadview=template_uses_krea2_edit(template))
+        # 保留张数看模板槽位
+        params = resolve_request(body, settings, max_refs=template_max_refs(template))
         graph, _render_warnings = render_template(template, params)
         overrides = None
         if model is not None:
