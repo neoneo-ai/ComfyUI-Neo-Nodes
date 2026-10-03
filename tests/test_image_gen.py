@@ -645,10 +645,20 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         graph = captured["graph"]
         pad_id = next(nid for nid, n in graph.items()
                       if isinstance(n, dict) and n.get("class_type") == "ImagePadForOutpaint")
+        scales = [nid for nid, n in graph.items()
+                  if isinstance(n, dict) and n.get("class_type") == "ImageScaleToTotalPixels"]
+        self.assertEqual(len(scales), 2, "扩图链应有两次 32 对齐缩放（原图→1MP、画布→1.5MP）")
+        ref_scale = next(i for i in scales if graph[i]["inputs"]["image"] == ["10", 0])
+        canvas_scale = next(i for i in scales if graph[i]["inputs"]["image"] == [pad_id, 0])
+        self.assertAlmostEqual(graph[ref_scale]["inputs"]["megapixels"], image_gen.OUTPAINT_REF_MP)
+        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], image_gen.OUTPAINT_CANVAS_MP)
+        for i in scales:
+            self.assertEqual(graph[i]["inputs"]["resolution_steps"], 32)
         pad = graph[pad_id]["inputs"]
-        self.assertEqual(pad["image"], ["10", 0])
+        self.assertEqual(pad["image"], [ref_scale, 0])
         self.assertEqual((pad["left"], pad["top"], pad["right"], pad["bottom"]), (128, 64, 128, 64))
-        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [pad_id, 0])
+        self.assertEqual(pad["feathering"], 0)
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [canvas_scale, 0])
         self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
         self.assertEqual(graph["6"]["inputs"]["latent_image"], ["4", 2])
         self.assertNotIn("5", graph)   # EmptyLatentImage 移除
@@ -660,13 +670,13 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
              "references": [{"kind": "input", "value": "portrait.png"}],
              "outpaint": {"left": 128, "top": 64, "right": 128, "bottom": 64, "total_pixels": 2.0}})
         graph = captured["graph"]
-        scale_id = next(nid for nid, n in graph.items()
-                        if isinstance(n, dict) and n.get("class_type") == "ImageScaleToTotalPixels")
         pad_id = next(nid for nid, n in graph.items()
                       if isinstance(n, dict) and n.get("class_type") == "ImagePadForOutpaint")
-        self.assertEqual(graph[scale_id]["inputs"]["image"], [pad_id, 0])
-        self.assertAlmostEqual(graph[scale_id]["inputs"]["megapixels"], 2.0)
-        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [scale_id, 0])
+        scales = [nid for nid, n in graph.items()
+                  if isinstance(n, dict) and n.get("class_type") == "ImageScaleToTotalPixels"]
+        canvas_scale = next(i for i in scales if graph[i]["inputs"]["image"] == [pad_id, 0])
+        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], 2.0)
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [canvas_scale, 0])
 
     def test_outpaint_unsupported_template_raises(self):
         with self.assertRaises(ValueError):
@@ -737,14 +747,14 @@ class OutpaintParseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             image_gen._parse_outpaint({"left": "abc"})
 
-    def test_canvas_aligned_to_16(self):
-        # 原图 1000×750：画布 1032×782 → right/bottom 补到 16 的倍数（1040×784）
+    def test_pads_pass_through_unchanged(self):
+        """留白原样透传：不在没拖的轴上凑数，画布对齐交给扩图链的两次缩放。"""
         write_png(os.path.join(_INPUT_DIR, "outp_align.png"), 1000, 750)
         params = image_gen.resolve_request(
             {"prompt": "a cat", "references": [{"kind": "input", "value": "outp_align.png"}],
              "outpaint": {"left": 16, "top": 16, "right": 16, "bottom": 16}}, base_settings())
-        self.assertEqual(params["outpaint"]["right"], 24)
-        self.assertEqual(params["outpaint"]["bottom"], 18)
+        out = params["outpaint"]
+        self.assertEqual((out["left"], out["top"], out["right"], out["bottom"]), (16, 16, 16, 16))
 
     def test_template_supports_outpaint(self):
         with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
@@ -777,15 +787,23 @@ class OutpaintRenderTests(unittest.TestCase):
         assert len(ids) == 1, f"{class_type} 应恰好 1 个，实际 {ids}"
         return ids[0]
 
+    def _find_all(self, graph, class_type):
+        return [nid for nid, n in graph.items()
+                if isinstance(n, dict) and n.get("class_type") == class_type]
+
     def test_pad_inserted_and_latent_rewired(self):
         params = self.params(outpaint={"left": 128, "top": 64, "right": 128, "bottom": 64})
         graph, _ = image_gen.render_template(self.template, params)
         pad_id = self._find(graph, "ImagePadForOutpaint")
         pad = graph[pad_id]["inputs"]
-        self.assertEqual(pad["image"], ["10", 0])
+        scales = self._find_all(graph, "ImageScaleToTotalPixels")
+        ref_scale = next(i for i in scales if graph[i]["inputs"]["image"] == ["10", 0])
+        canvas_scale = next(i for i in scales if graph[i]["inputs"]["image"] == [pad_id, 0])
+        self.assertEqual(pad["image"], [ref_scale, 0])          # 先归一化到 1MP，再补灰边
         self.assertEqual((pad["left"], pad["top"], pad["right"], pad["bottom"]), (128, 64, 128, 64))
-        self.assertEqual(pad["feathering"], 40)
-        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [pad_id, 0])
+        self.assertEqual(pad["feathering"], 0)
+        self.assertAlmostEqual(graph[ref_scale]["inputs"]["megapixels"], image_gen.OUTPAINT_REF_MP)
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [canvas_scale, 0])
         self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
         self.assertEqual(graph["6"]["inputs"]["latent_image"], ["4", 2])
         self.assertNotIn("5", graph)   # EmptyLatentImage 不再被引用，移除
@@ -794,11 +812,12 @@ class OutpaintRenderTests(unittest.TestCase):
         params = self.params(outpaint={"left": 128, "top": 64, "right": 128, "bottom": 64,
                                        "total_pixels": 2.0})
         graph, _ = image_gen.render_template(self.template, params)
-        scale_id = self._find(graph, "ImageScaleToTotalPixels")
         pad_id = self._find(graph, "ImagePadForOutpaint")
-        self.assertEqual(graph[scale_id]["inputs"]["image"], [pad_id, 0])
-        self.assertAlmostEqual(graph[scale_id]["inputs"]["megapixels"], 2.0)
-        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [scale_id, 0])
+        scales = self._find_all(graph, "ImageScaleToTotalPixels")
+        canvas_scale = next(i for i in scales if graph[i]["inputs"]["image"] == [pad_id, 0])
+        self.assertAlmostEqual(graph[canvas_scale]["inputs"]["megapixels"], 2.0)
+        self.assertEqual(graph[canvas_scale]["inputs"]["resolution_steps"], 32)   # 32 对齐，编码器不再二次缩放
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [canvas_scale, 0])
 
     def test_outpaint_requires_reference(self):
         params = image_gen.resolve_request({"prompt": "a red fox", "seed": 3,

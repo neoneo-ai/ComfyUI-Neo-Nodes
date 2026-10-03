@@ -37,6 +37,23 @@ const OUTPAINT_RATIOS = [
 // 扩图默认触发词（与后端 OUTPAINT_DEFAULT_PROMPT 一致）
 const OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation " +
     "of the scene, keeping the existing picture unchanged.");
+// 扩图链两次缩放的目标（与后端 OUTPAINT_REF_MP / OUTPAINT_CANVAS_MP、参考工作流
+// ▶▷Qwen-image21-功能流 的「图像扩展」一致）：原图先归一化到 1MP，补灰边后画布再归一化到 1.5MP
+const OUTPAINT_REF_MP = 1.0;
+const OUTPAINT_DEFAULT_MP = 1.5;
+// Python round()：四舍六入五取偶。后端 ImageScaleToTotalPixels 用的就是它，而 JS Math.round 会把 .5
+// 进位，碰上尺寸正好差半格（如 720/32=22.5）就会算出差 32px 的目标，必须对齐
+const pyRound = (v) => {
+    const f = Math.floor(v), d = v - f;
+    return d > 0.5 ? f + 1 : d < 0.5 ? f : (f % 2 ? f + 1 : f);
+};
+// 与后端 ImageScaleToTotalPixels(megapixels, resolution_steps=32) 同算法：整幅等比缩放到目标像素后 32 对齐
+const scaleToMp = (w, h, mp) => {
+    const k = Math.sqrt(mp * 1024 * 1024 / (w * h));
+    return { w: pyRound(w * k / 32) * 32, h: pyRound(h * k / 32) * 32 };
+};
+// 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（默认 1.5，与参考工作流一致）
+const targetMp = (mp) => mp > 0 ? mp : OUTPAINT_DEFAULT_MP;
 // 扩图画布边长上限（×原图显示尺寸）：拖框换算随缩放指数增长，封顶防失控与后端显存爆炸
 const OUTPAINT_MAX_EXTEND = 4;
 // 「生成素材」弹窗默认技能：Krea2 文生图（纯提示词出图，产物落 Output/NeoAgent/<日期>）
@@ -968,15 +985,14 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const renderSuccess = (final) => {
         const images = final.images || [];
         if (images.length > 0) {
-            if (outpaintOn) resultCol.style.display = "";   // 出结果后恢复左右对比
             const resultSrc = `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`;
             resultImg.src = resultSrc;
-            resultImg.style.display = "block";
             resultImg.title = "点击放大查看";
             resultImg.onclick = () => Lightbox.open({ 
                 items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), 
                 index: 0 
             });
+            showResultOverlay();
         }
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成编辑结果。" }));
         // 保留「再生成」入口：编辑支持连续重复生成，不必关窗重开（与 renderError 的「重试」一致）
@@ -1011,25 +1027,20 @@ export function openImageEditDialog(gallery, image, subfolder) {
             let metaHeight = parseInt(heightInput.value, 10) || undefined;
             if (outpaintOn && box) {
                 const p = paddings();
-                const W = origImg.naturalWidth + p.left + p.right;
-                const H = origImg.naturalHeight + p.top + p.bottom;
-                const mp = parseFloat(mpInput.value);
-                if (mp > 0) {
-                    const ratio = W / H, target = mp * 1e6;
-                    metaWidth = Math.round(Math.sqrt(target * ratio) / 32) * 32;
-                    metaHeight = Math.round(Math.sqrt(target / ratio) / 32) * 32;
-                } else {
-                    metaWidth = W;
-                    metaHeight = H;
-                }
                 if (p.left || p.top || p.right || p.bottom) {
-                    outpaintPayload = { ...p, total_pixels: mp > 0 ? mp : 0 };
+                    // 出图尺寸 = 补边画布（1MP 层 + 留白）整幅缩放到目标像素（与后端同算法）
+                    const s = outputSize();
+                    metaWidth = s.w;
+                    metaHeight = s.h;
+                    outpaintPayload = { ...p, total_pixels: targetMp(parseFloat(mpInput.value)) };
                 }
             }
             const refs = [{ kind: "input", value: refName }];
-            // 第二张参考图（换脸/换身源图）；局部编辑的涂抹遮罩走 data 通道
-            if (extraRef && !outpaintOn && !localOn) {
-                refs.push({ kind: "input", value: extraRef.subfolder ? `${extraRef.subfolder}/${extraRef.filename}` : extraRef.filename });
+            // 额外参考图（换脸/换身源图、多张融合）；局部编辑的涂抹遮罩走 data 通道
+            if (!outpaintOn && !localOn) {
+                for (const r of extraRefs) {
+                    refs.push({ kind: "input", value: r.subfolder ? `${r.subfolder}/${r.filename}` : r.filename });
+                }
             }
             if (localOn) refs.push({ kind: "data", data: maskCanvas.toDataURL("image/png") });
             const payload = {
@@ -1076,8 +1087,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
     OUTPAINT_RATIOS.forEach(([value, label]) => {
         ratioSel.appendChild($el("option", { value, textContent: label }));
     });
-    const mpInput = $el("input", { type: "number", className: "neo-recipes-sort neo-gallery-edit-mp", min: 0.5, max: 8, step: 0.5, value: "1" });
-    mpInput.title = "目标总像素数（MP）；0 = 保持补边后尺寸";
+    // 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（默认 1.5，与参考工作流一致）
+    const mpInput = $el("input", { type: "number", className: "neo-recipes-sort neo-gallery-edit-mp", min: 0.5, max: 8, step: 0.5, value: String(OUTPAINT_DEFAULT_MP) });
+    mpInput.title = "补边画布缩放到多少像素数后出图（默认 1.5，与参考工作流 ▶▷Qwen-image21-功能流 一致）";
     const resLabelEl = $el("label", { className: "neo-director-field-label", textContent: "目标分辨率" });
     const outpaintRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
         $el("label", { className: "neo-director-field-label", textContent: "目标比例" }),
@@ -1105,53 +1117,89 @@ export function openImageEditDialog(gallery, image, subfolder) {
     ]);
     localRow.style.display = "none";
 
-    // 第二张参考图（换脸/换身：源脸/源身体）：拖放素材库图片 / 点击上传本地图片，选中后显示缩略图
-    const refDropZone = $el("div", { className: "neo-gallery-edit-refdrop" });
-    refDropZone.title = "加第二张参考图（换脸=源脸、换身=源身体）：拖放素材库图片或点击上传";
+    // 参考图区（autogrow）：拖入一张追加新空槽，最多 9 张（Qwen Image 2.1 上限）
+    const MAX_EXTRA_REFS = 9;
+    const refDropContainer = $el("div", { className: "neo-gallery-edit-refdrop-row" });
     const refFileInput = document.createElement("input");
     refFileInput.type = "file";
     refFileInput.accept = "image/*";
     refFileInput.style.display = "none";
-    refDropZone.appendChild(refFileInput);
+    refDropContainer.appendChild(refFileInput);
 
-    // 图片对比区（左右并排）
+    // 图片对比区（前后叠加 + 拖拽窗帘）
     const origFullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
+    const refFullUrl = (it) => `/neo_gallery/image?filename=${encodeURIComponent(it.filename)}&subfolder=${encodeURIComponent(it.subfolder ? `input/${it.subfolder}` : "input")}`;
+    // Lightbox 统一列表：原图 + 所有参考图，支持 ←/→ 切换
+    const buildLightboxItems = () => [
+        { kind: "image", url: origFullUrl, title: pathLabel },
+        ...extraRefs.map((r) => ({ kind: "image", url: refFullUrl(r), title: r.filename }))
+    ];
     const origImg = $el("img", {
         className: "neo-gallery-edit-compare-img",
         src: origFullUrl,
         alt: image.name || image.filename,
         title: "点击放大查看",
-        onclick: () => {
-            Lightbox.open({
-                items: [{ kind: "image", url: origFullUrl, title: pathLabel }],
-                index: 0
-            });
-        }
+        onclick: () => Lightbox.open({ items: buildLightboxItems(), index: 0 })
     });
     const resultImg = $el("img", {
-        className: "neo-gallery-edit-compare-img",
-        alt: "编辑结果",
-        style: { display: "none" }
+        className: "neo-gallery-edit-compare-img neo-gallery-edit-result-img",
+        alt: "编辑结果"
     });
-    // imgwrap：非扩图时是普通图片容器；开扩图后变为中心舞台（画布超出时整体等比缩小）
-    const imgWrap = $el("div", { className: "neo-gallery-edit-compare-imgwrap" }, [origImg]);
-    const resultCol = $el("div", { className: "neo-gallery-edit-compare-result" }, [
-        $el("div", { className: "neo-gallery-edit-compare-label", textContent: "编辑结果" }),
-        resultImg
-    ]);
+    // imgwrap：非扩图时收缩到原图显示尺寸；开扩图后变为中心舞台（画布超出时整体等比缩小）
+    const imgWrap = $el("div", { className: "neo-gallery-edit-compare-imgwrap" });
+    // 结果图裁剪层 + 拖拽分割线（窗帘效果）：与原图同盒，覆盖区域才能逐像素对齐
+    const resultClip = $el("div", { className: "neo-gallery-edit-result-clip", style: { display: "none" } }, [resultImg]);
+    const divider = $el("div", { className: "neo-gallery-edit-divider", style: { display: "none" } });
+    imgWrap.append(origImg, resultClip, divider);
+    // 舞台：只负责把图片盒水平居中
+    const compareStage = $el("div", { className: "neo-gallery-edit-compare-stage" }, [imgWrap]);
     const compareBox = $el("div", { className: "neo-gallery-edit-compare" }, [
         $el("div", {}, [
-            $el("div", { className: "neo-gallery-edit-compare-label", textContent: "原图" }),
-            imgWrap
-        ]),
-        resultCol
+            $el("div", { className: "neo-gallery-edit-compare-label", textContent: "原图 / 编辑结果（拖拽分割线对比）" }),
+            compareStage
+        ])
     ]);
+
+    // 窗帘拖拽逻辑：分割线左侧露出原图、右侧露出结果图（结果图层整幅不缩放，只裁掉左侧 pct%）
+    let dividerDragging = false;
+    const setDividerPos = (pct) => {
+        pct = Math.max(0, Math.min(100, pct));
+        resultClip.style.clipPath = `inset(0 0 0 ${pct}%)`;
+        divider.style.left = pct + "%";
+    };
+    divider.addEventListener("mousedown", (e) => { e.preventDefault(); dividerDragging = true; });
+    // 分割线挂在原图盒/扩图画布内，位置按所在容器宽算百分比（舞台/画布可能比原图宽）
+    const posFromClientX = (clientX) => {
+        const rect = divider.parentElement.getBoundingClientRect();
+        setDividerPos(((clientX - rect.left) / rect.width) * 100);
+    };
+    const onDividerMove = (e) => { if (dividerDragging) posFromClientX(e.clientX); };
+    const onDividerTouchMove = (e) => { if (dividerDragging) posFromClientX(e.touches[0].clientX); };
+    const onDividerEnd = () => { dividerDragging = false; };
+    document.addEventListener("mousemove", onDividerMove);
+    document.addEventListener("mouseup", onDividerEnd);
+    // 触摸支持
+    divider.addEventListener("touchstart", (e) => { e.preventDefault(); dividerDragging = true; });
+    document.addEventListener("touchmove", onDividerTouchMove);
+    document.addEventListener("touchend", onDividerEnd);
+    // 点击图片快速定位
+    imgWrap.addEventListener("mousedown", (e) => {
+        if (e.target === imgWrap || e.target === origImg) posFromClientX(e.clientX);
+    });
+
+    const showResultOverlay = () => {
+        resultClip.style.display = "";
+        divider.style.display = "";
+        // 初始半开：左半原图 / 右半结果图，一眼可见对比（拖分割线看全幅）
+        setDividerPos(50);
+    };
 
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
             $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 图片编辑" }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
+        // 图片在上、操作在下：对比区（原图 | 编辑结果 + 分割线滑块）固定在窗内上方
         compareBox,
         $el("div", { className: "neo-gallery-edit-form" }, [
             $el("div", { className: "neo-gallery-edit-form-top-row" }, [
@@ -1160,7 +1208,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     skillSel,
                     outpaintBtn,
                     localBtn,
-                    refDropZone
+                    refDropContainer
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
                     resLabelEl,
@@ -1181,7 +1229,14 @@ export function openImageEditDialog(gallery, image, subfolder) {
     renderIdle();
     document.addEventListener("keydown", onKey);
     const origRemove = overlay.remove.bind(overlay);
-    overlay.remove = () => { document.removeEventListener("keydown", onKey); origRemove(); };
+    overlay.remove = () => {
+        document.removeEventListener("keydown", onKey);
+        document.removeEventListener("mousemove", onDividerMove);
+        document.removeEventListener("mouseup", onDividerEnd);
+        document.removeEventListener("touchmove", onDividerTouchMove);
+        document.removeEventListener("touchend", onDividerEnd);
+        origRemove();
+    };
     document.body.appendChild(overlay);
 
     // 标题栏拖动 + 双击最大化/还原（同导演编辑器 / 生成素材窗模式）
@@ -1307,25 +1362,33 @@ export function openImageEditDialog(gallery, image, subfolder) {
         canvasEl.style.transform = `scale(${s})`;
         canvasEl.style.setProperty("--op-inv", s > 0 ? (1 / s).toFixed(4) : "1");
     };
+    // 四边留白：以「原图按 1MP 归一化后那一层」的像素计（后端 ImagePadForOutpaint 就补在这一层），
+    // 所以拖动量先按显示→原图换算、再乘 1MP 归一化的缩放比，扩出来的比例才和拖出来的一致
     const paddings = () => {
         const { dw, dh } = imgSize();
-        const s = (origImg.naturalWidth || dw) / dw;
-        const r16 = (v) => Math.max(0, Math.round(v * s / 16) * 16);
-        return { left: r16(-box.x), top: r16(-box.y),
-                 right: r16(box.x + box.w - dw), bottom: r16(box.y + box.h - dh) };
+        const nw = origImg.naturalWidth || dw, nh = origImg.naturalHeight || dh;
+        const ref = scaleToMp(nw, nh, OUTPAINT_REF_MP);
+        const s = nw / dw;
+        const kx = ref.w / nw * s, ky = ref.h / nh * s;
+        return { left: Math.max(0, Math.round(-box.x * kx)),
+                 top: Math.max(0, Math.round(-box.y * ky)),
+                 right: Math.max(0, Math.round((box.x + box.w - dw) * kx)),
+                 bottom: Math.max(0, Math.round((box.y + box.h - dh) * ky)) };
+    };
+    // 最终出图尺寸：补边画布（1MP 层）再加留白，整幅缩放到目标像素（32 对齐）——与后端同算法
+    const outputSize = () => {
+        const p = paddings();
+        const ref = scaleToMp(origImg.naturalWidth, origImg.naturalHeight, OUTPAINT_REF_MP);
+        return scaleToMp(ref.w + p.left + p.right, ref.h + p.top + p.bottom,
+                         targetMp(parseFloat(mpInput.value)));
     };
     const updateSizeLabel = () => {
         if (!outpaintOn || !box) { sizeLabel.textContent = ""; return; }
         const p = paddings();
-        const W = origImg.naturalWidth + p.left + p.right;
-        const H = origImg.naturalHeight + p.top + p.bottom;
-        const mp = parseFloat(mpInput.value);
-        let text = `目标 ${W}×${H}`;
-        if (mp > 0) {
-            const ratio = W / H, target = mp * 1e6;
-            text += ` → ${Math.round(Math.sqrt(target * ratio) / 32) * 32}×${Math.round(Math.sqrt(target / ratio) / 32) * 32}`;
-        }
-        sizeLabel.textContent = text;
+        // 没拖框时就是原图尺寸；拖了就显示出图尺寸（补边画布整幅缩放到目标像素后的尺寸）
+        sizeLabel.textContent = (p.left || p.top || p.right || p.bottom)
+            ? `目标 ${outputSize().w}×${outputSize().h}`
+            : `目标 ${origImg.naturalWidth}×${origImg.naturalHeight}`;
     };
     const dragResize = (mode, dx, dy, b0, dw, dh, R) => {
         const b = { ...b0 };
@@ -1412,7 +1475,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         window.removeEventListener("resize", onStageResize);
         if (boxEl) boxEl.remove();
         if (canvasEl) {
-            imgWrap.appendChild(origImg);   // 原图归位，恢复 CSS 自适应尺寸
+            imgWrap.append(origImg, resultClip, divider);   // 原图/结果层/分割线归位，恢复 CSS 自适应尺寸
             origImg.style.cssText = "";
             canvasEl.remove();
         }
@@ -1432,7 +1495,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
         for (const pos of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
             boxEl.appendChild($el("div", { className: `neo-gallery-edit-outpaint-handle neo-gallery-edit-outpaint-handle-${pos}`, dataset: { handle: pos } }));
         }
-        canvasEl.append(origImg, boxEl);   // 原图移入画布，随整体等比缩放
+        // 原图/结果层/分割线都进画布：结果=补边画布整幅，落在这里才和原图区域逐像素对齐
+        // （挂在图片盒上会被 contain 缩放 → 扩图结果看起来整体错位）
+        canvasEl.append(origImg, resultClip, boxEl, divider);
         imgWrap.append(canvasEl);
         syncOutpaintView();
         attachBoxEvents();
@@ -1455,7 +1520,6 @@ export function openImageEditDialog(gallery, image, subfolder) {
         outpaintOn = on;
         outpaintBtn.classList.toggle("on", on);
         if (on && localOn) setLocalMode(false);
-        resultCol.style.display = on ? "none" : "";   // 扩图时画布占满整行，出结果后再显示对比列
         outpaintRow.style.display = on ? "" : "none";
         widthInput.style.display = on ? "none" : "";
         heightInput.style.display = on ? "none" : "";
@@ -1608,48 +1672,63 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
     localBtn.addEventListener("click", () => setLocalMode(!localOn));
 
-    // ---- 第二张参考图（拖放素材库 / 本地上传；换脸/换身的源图） ----
-    let extraRef = null;   // {filename, subfolder}
+    // ---- 参考图区（autogrow：拖入一张追加新空槽，最多 9 张） ----
+    let extraRefs = [];   // [{filename, subfolder}]
     const refThumbUrl = (it, size) =>
         `/neo_gallery/thumbnail?filename=${encodeURIComponent(it.filename)}&subfolder=${encodeURIComponent(it.subfolder ? `input/${it.subfolder}` : "input")}&size=${size}`;
-    const renderRefChip = () => {
-        refDropZone.replaceChildren(refFileInput);
-        if (!extraRef) {
-            refDropZone.classList.remove("has-img");
-            refDropZone.appendChild($el("span", { className: "neo-gallery-edit-refdrop-icon", textContent: "🖼" }));
-            return;
+
+    function makeRefSlot(index) {
+        const slot = $el("div", { className: "neo-gallery-edit-refdrop" });
+        slot.title = "拖放素材库图片或点击上传";
+        const ref = extraRefs[index];
+        if (ref) {
+            slot.classList.add("has-img");
+            slot.appendChild($el("img", { className: "neo-gallery-edit-refchip-img", src: refThumbUrl(ref, 128), alt: ref.filename, title: "点击放大查看", onclick: () => Lightbox.open({ items: buildLightboxItems(), index: index + 1 }) }));
+            slot.appendChild($el("span", { className: "neo-gallery-edit-refchip-x", textContent: "×", onclick: (e) => { e.stopPropagation(); extraRefs.splice(index, 1); renderRefSlots(); } }));
+        } else {
+            slot.appendChild($el("span", { className: "neo-gallery-edit-refdrop-icon", textContent: "🖼" }));
         }
-        refDropZone.classList.add("has-img");
-        refDropZone.appendChild($el("img", { className: "neo-gallery-edit-refchip-img", src: refThumbUrl(extraRef, 96), alt: extraRef.filename, title: extraRef.filename }));
-        refDropZone.appendChild($el("span", { className: "neo-gallery-edit-refchip-x", textContent: "×", onclick: (e) => { e.stopPropagation(); extraRef = null; renderRefChip(); } }));
-    };
-    renderRefChip();
-    // 拖放：本地图片文件走 uploadLocalFiles，素材库图片卡走 copyGalleryToInput
-    refDropZone.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; refDropZone.classList.add("drop-active"); });
-    refDropZone.addEventListener("dragleave", (e) => { if (!refDropZone.contains(e.relatedTarget)) refDropZone.classList.remove("drop-active"); });
-    refDropZone.addEventListener("drop", async (e) => {
-        e.preventDefault();
-        refDropZone.classList.remove("drop-active");
-        const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith("image/"));
-        let fname = null;
-        if (files.length) { [fname] = await uploadLocalFiles(files); }
-        else { fname = await copyGalleryToInput(grabDataType(e)); }
-        if (fname) { extraRef = { filename: fname, subfolder: "" }; renderRefChip(); }
-    });
-    // 点击上传本地文件（已有图时不触发，用 × 清除）
-    refDropZone.addEventListener("click", () => { if (!extraRef) refFileInput.click(); });
+        // 拖放
+        slot.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; slot.classList.add("drop-active"); });
+        slot.addEventListener("dragleave", (e) => { if (!slot.contains(e.relatedTarget)) slot.classList.remove("drop-active"); });
+        slot.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            slot.classList.remove("drop-active");
+            const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith("image/"));
+            let fname = null;
+            if (files.length) { [fname] = await uploadLocalFiles(files); }
+            else { fname = await copyGalleryToInput(grabDataType(e)); }
+            if (fname) { extraRefs[index] = { filename: fname, subfolder: "" }; renderRefSlots(); }
+        });
+        // 点击上传（空槽才触发）
+        slot.addEventListener("click", () => { if (!extraRefs[index]) { refFileInput._targetIndex = index; refFileInput.click(); } });
+        return slot;
+    }
+
+    function renderRefSlots() {
+        // 保留 file input，清除其余子节点
+        while (refDropContainer.children.length > 1) refDropContainer.lastChild.remove();
+        const count = Math.max(1, extraRefs.length + (extraRefs.length < MAX_EXTRA_REFS ? 1 : 0));
+        for (let i = 0; i < count; i++) {
+            refDropContainer.appendChild(makeRefSlot(i));
+        }
+    }
+    renderRefSlots();
+
     refFileInput.onchange = async () => {
         const file = refFileInput.files && refFileInput.files[0];
         if (!file) return;
         const [fname] = await uploadLocalFiles([file]);
         refFileInput.value = "";
-        if (fname) { extraRef = { filename: fname, subfolder: "" }; renderRefChip(); }
+        const idx = refFileInput._targetIndex ?? extraRefs.length;
+        if (fname) { extraRefs[idx] = { filename: fname, subfolder: "" }; renderRefSlots(); }
     };
-    // 扩图/局部模式只用首张参考，第二张参考不可用
+
+    // 扩图/局部模式只用首张参考，额外参考不可用
     const syncRefBtn = () => {
         const disabled = outpaintOn || localOn;
-        refDropZone.classList.toggle("disabled", disabled);
-        if (disabled && extraRef) { extraRef = null; renderRefChip(); }
+        refDropContainer.classList.toggle("disabled", disabled);
+        if (disabled && extraRefs.length) { extraRefs = []; renderRefSlots(); }
     };
 
     // 原图区拖放替换：支持素材库拖入和本地文件上传

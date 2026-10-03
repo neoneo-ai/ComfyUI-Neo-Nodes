@@ -88,6 +88,11 @@ test("图片编辑弹窗：扩图开关切到扩图技能，拖框后请求带 o
     assert.equal(overlay.querySelector("#img-edit-width").style.display, "none");
     assert.match(overlay.querySelector(".neo-gallery-story-input").value, /Outpaint the image/);
 
+    // 默认跟随原图：未拖框时目标尺寸 = 原图自然尺寸（不套目标像素、不缩放）
+    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 800×600",
+        "开扩图应先按原图尺寸，扩图大小要由拖框决定");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-mp").value, "1.5", "默认目标像素 1.5MP（与参考工作流一致）");
+
     // 拖 se 手柄：显示 400×300 → 500×360（自然像素 right=208 bottom=128）
     const pointerAt = (el, type, x, y) => {
         const ev = new window.Event(type, { bubbles: true, cancelable: true });
@@ -106,8 +111,9 @@ test("图片编辑弹窗：扩图开关切到扩图技能，拖框后请求带 o
     assert.equal(canvasEl.style.transform, "scale(0.8)");
     assert.equal(canvasEl.style.getPropertyValue("--op-inv"), "1.2500");
 
-    // 结果尺寸标签：画布 1008×728 → 1MP 目标 1184×864
-    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1008×728 → 1184×864");
+    // 结果尺寸标签：补边画布（1MP 层 1184×896 + 留白 296/179）整幅缩放到 1.5MP → 1472×1056
+    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1472×1056",
+        "目标尺寸 = 补边画布缩放到目标像素后的出图尺寸");
 
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
     let genBody = null;
@@ -116,7 +122,7 @@ test("图片编辑弹窗：扩图开关切到扩图技能，拖框后请求带 o
         return jsonResponse({ task_id: "ie2", status: "queued", images: [] });
     });
     mockRoute("/neo_image_gen/status/ie2", () => jsonResponse({
-        task_id: "ie2", status: "succeeded", width: 1184, height: 864,
+        task_id: "ie2", status: "succeeded", width: 1008, height: 728,
         images: [{ filename: "outp_00001_.png", subfolder: "Output/2026-10-03", url: "/o.png" }],
     }));
 
@@ -125,15 +131,40 @@ test("图片编辑弹窗：扩图开关切到扩图技能，拖框后请求带 o
 
     assert.ok(genBody, "应发出扩图生成请求");
     assert.equal(genBody.skill_id, "qwen_image_21_outpaint");
-    assert.deepEqual(genBody.outpaint, { left: 0, top: 0, right: 208, bottom: 128, total_pixels: 1 });
+    // 留白按「1MP 归一化层」的像素算（拖出来的比例不变），出图尺寸 = 画布缩放到 1.5MP
+    assert.deepEqual(genBody.outpaint, { left: 0, top: 0, right: 296, bottom: 179, total_pixels: 1.5 });
     assert.equal(genBody.loras, undefined, "扩图模式不应传 loras（由技能 config 固定）");
-    assert.equal(genBody.width, 1184);
-    assert.equal(genBody.height, 864);
+    assert.equal(genBody.width, 1472, "出图尺寸 = 补边画布缩放到 1.5MP（32 对齐）");
+    assert.equal(genBody.height, 1056);
+    assert.equal(genBody.width % 32, 0, "画布宽应 32 对齐（编码器才不会二次缩放参考图）");
+    assert.equal(genBody.height % 32, 0, "画布高应 32 对齐");
+    assert.equal(genBody.outpaint.top, 0, "没拖上边就不该有上留白");
+    assert.equal(genBody.outpaint.left, 0, "没拖左边就不该有左留白");
+
+    // MP 是可选旋钮：改了就按新目标像素重算出图尺寸
+    const mpInput = overlay.querySelector(".neo-gallery-edit-mp");
+    mpInput.value = "2";
+    mpInput.dispatchEvent(new window.Event("input", { bubbles: true }));
+    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1696×1248");
+    mpInput.value = "1.5";
+    mpInput.dispatchEvent(new window.Event("input", { bubbles: true }));
+    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1472×1056");
+
+    // 扩图结果层挂进画布：结果就是整幅补边画布，落在画布里才和原图区域逐像素对齐
+    // （挂图片盒会被 contain 缩放到原图尺寸 → 对比时看着整体偏移）
+    assert.equal(overlay.querySelector(".neo-gallery-edit-result-clip").parentElement, canvasEl,
+        "扩图结果层应挂在画布内（与补边画布同盒）");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-divider").parentElement, canvasEl,
+        "扩图分割线应挂在画布内（百分比按画布宽算）");
 
     // 关闭扩图：技能切回、拖框移除
     click(outpaintBtn);
     assert.equal(skillSel.value, "qwen_image_21");
     assert.equal(overlay.querySelector(".neo-gallery-edit-outpaint-box"), null);
+    const imgWrapEl = overlay.querySelector(".neo-gallery-edit-compare-imgwrap");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-result-clip").parentElement, imgWrapEl,
+        "关掉扩图后结果层应回到图片盒");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-divider").parentElement, imgWrapEl);
 });
 
 test("图片编辑弹窗：扩图拖框画布边长封顶 4× 原图，超出舞台整体缩小", async () => {
@@ -215,8 +246,8 @@ test("图片编辑弹窗：扩图基准取 contain 后的可见图片尺寸，�
     assert.equal(origImg.style.width, "400px");
     assert.equal(origImg.style.height, "300px");
     assert.equal(canvasEl.style.transform, "scale(1)");
-    // 无留白 → 目标尺寸就是原图自然尺寸
-    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 800×600 → 1152×864");
+    // 无留白 → 目标尺寸就是原图自然尺寸（默认不套 MP 目标）
+    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 800×600");
 });
 
 test("图片编辑弹窗：扩图拖框体是平移留白，不会把框缩回原图", async () => {
@@ -272,8 +303,8 @@ test("图片编辑弹窗：扩图拖框体是平移留白，不会把框缩回�
     pointerAt(window, "pointerup", 0, 300);
     assert.equal(origImg.style.left, "100px");
 
-    // 留白总量不变（右 208 变成左 208）
-    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1008×728 → 1184×864");
+    // 留白只是从右边换到左边，画布尺寸不变 → 出图尺寸也不变
+    assert.equal(overlay.querySelector(".neo-gallery-edit-size-label").textContent, "目标 1472×1056");
 });
 
 test("图片编辑弹窗：局部开关切到局部技能、涂抹画布出现，未涂抹禁止生成", async () => {
@@ -371,7 +402,7 @@ test("图片编辑弹窗：第二参考图拖放选中后随请求发送，扩�
     const outpaintBtn = overlay.querySelector(".neo-gallery-edit-outpaint-btn");
     click(outpaintBtn);
     await sleep(10);
-    assert.ok(refDropZone.classList.contains("disabled"), "扩图模式下拖放区应禁用");
+    assert.ok(overlay.querySelector(".neo-gallery-edit-refdrop-row").classList.contains("disabled"), "扩图模式下拖放区应禁用");
     assert.equal(overlay.querySelector(".neo-gallery-edit-refchip-img"), null, "扩图模式应清除已选第二参考");
 });
 
@@ -412,5 +443,65 @@ test("图片编辑弹窗：生成失败（缺模型）弹 action toast 引导去
     assert.equal(toast.querySelector(".neo-at-summary").textContent, "图片编辑生成失败");
     assert.match(toast.querySelector(".neo-at-detail").textContent, /找不到模型/);
     assert.equal(toast.querySelector(".neo-at-action").textContent, "打开技能详情");
+});
+
+
+test("图片编辑弹窗：窗帘对比——结果层挂在图片盒内，拖分割线只裁切结果图（不缩放/不移位原图）", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
+    openImageEditDialog(gallery, { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie6", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/ie6", () => jsonResponse({
+        task_id: "ie6", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "edit_00001_.png", subfolder: "Output/2026-09-30", url: "/e.png" }],
+    }));
+
+    const wrap = overlay.querySelector(".neo-gallery-edit-compare-imgwrap");
+    const clip = overlay.querySelector(".neo-gallery-edit-result-clip");
+    const divider = overlay.querySelector(".neo-gallery-edit-divider");
+    // 结果层/分割线必须挂在图片盒内：只有同盒才能和原图逐像素对齐
+    assert.equal(clip?.parentElement, wrap, "结果裁剪层应挂在图片盒内");
+    assert.equal(divider?.parentElement, wrap, "分割线应挂在图片盒内");
+    assert.equal(overlay.querySelector(".neo-gallery-edit-compare-stage")?.firstElementChild, wrap);
+    assert.equal(clip.style.display, "none", "未生成时不应显示结果层");
+
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "把背景换成海边日落");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(80);
+
+    // 成功后：半开窗帘——左侧原图、右侧结果图
+    assert.notEqual(clip.style.display, "none", "生成成功后应显示结果层");
+    assert.notEqual(divider.style.display, "none", "生成成功后应显示分割线");
+    assert.equal(clip.style.clipPath, "inset(0 0 0 50%)", "窗帘应由 clip-path 裁掉左侧 50%");
+    assert.equal(divider.style.left, "50%");
+    assert.equal(clip.style.width, "", "结果层宽度不得跟随分割线（否则结果图会被压扁）");
+
+    // 拖分割线到 25%：只改裁切位置
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 400, top: 0, bottom: 300, width: 400, height: 300 });
+    const mouse = (type, x) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x });
+    divider.dispatchEvent(mouse("mousedown", 200));
+    document.dispatchEvent(mouse("mousemove", 100));
+    assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "拖动应把裁切位置换成分割线百分比");
+    assert.equal(divider.style.left, "25%");
+    assert.equal(clip.style.width, "", "拖动过程中结果层宽度始终不变");
+
+    // 松手后继续移动不再改变窗帘；关窗后 document 上的监听要一并移除
+    document.dispatchEvent(mouse("mouseup", 100));
+    document.dispatchEvent(mouse("mousemove", 300));
+    assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "松手后不应再跟随鼠标");
+    divider.dispatchEvent(mouse("mousedown", 100));
+    overlay.remove();
+    document.dispatchEvent(mouse("mousemove", 300));
+    document.dispatchEvent(mouse("mouseup", 300));
+    assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "关窗后 document 监听应已移除");
 });
 

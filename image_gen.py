@@ -84,6 +84,10 @@ _MODEL_HINTS = {
 # 扩图默认触发词（与 Qwen2.1 扩图 LoRA 的训练触发词一致）；扩图模式提示词为空时填入
 OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation "
                            "of the scene, keeping the existing picture unchanged.")
+# 扩图链两次缩放的目标像素数（对齐参考工作流 ▶▷Qwen-image21-功能流 的「图像扩展」分支）：
+# 原图先归一化到 1MP，补灰边后整幅画布再归一化到 1.5MP，两次都按 32 对齐（编码器只吃 32 的倍数）
+OUTPAINT_REF_MP = 1.0
+OUTPAINT_CANVAS_MP = 1.5
 
 # 局部编辑追加的区域约束（模型看到的是涂抹区标红的裁剪图）
 LOCAL_EDIT_PROMPT_SUFFIX = ("Only modify the red highlighted area; keep all other parts of the image exactly unchanged.")
@@ -437,8 +441,8 @@ def template_supports_outpaint(template: dict) -> bool:
 def _parse_outpaint(value) -> dict | None:
     """解析扩图参数 {left, top, right, bottom, total_pixels}；未提供时返回 None。
 
-    四边留白以原图像素计（非负整数，单边上限 8192）；total_pixels 是目标总像素（MP），
-    0/缺失 = 不缩放；四边全 0 视为未开扩图。"""
+    四边留白以「原图按 1MP 归一化后」的像素计（非负整数，单边上限 8192）；total_pixels 是补边画布
+    归一化的目标总像素（MP），0/缺失 = 用默认 1.5MP；四边全 0 视为未开扩图。"""
     if not isinstance(value, dict):
         return None
     pads = {}
@@ -502,10 +506,11 @@ def _prepare_local_edit(ref_name: str, mask_src: dict) -> dict:
     os.makedirs(os.path.join(input_dir, "NeoAgent"), exist_ok=True)
     hl.save(os.path.join(input_dir, *hl_name.split("/")))
     feathered.save(os.path.join(input_dir, *mask_out_name.split("/")))
-    # 编辑区放大到约 1MP 高分重绘（对齐参考工作流的 ImageScaleToTotalPixels）
+    # 编辑区放大到约 1MP 高分重绘（对齐参考工作流的 ImageScaleToTotalPixels）；32 对齐：
+    # Qwen 编码器按 32 取整参考图尺寸并据此建空 latent，尺寸不整时高分裁剪图会被缩放、内容错位
     scale = (1e6 / (w * h)) ** 0.5
-    w2 = max(64, int(w * scale + 0.5) // 8 * 8)
-    h2 = max(64, int(h * scale + 0.5) // 8 * 8)
+    w2 = max(64, int(w * scale + 0.5) // 32 * 32)
+    h2 = max(64, int(h * scale + 0.5) // 32 * 32)
     return {"x": x0, "y": y0, "w": w, "h": h, "w2": w2, "h2": h2,
             "hl_name": hl_name, "mask_name": mask_out_name}
 
@@ -587,10 +592,6 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
                          max(8, int(src_size[1] * scale + 0.5)) // 8 * 8)
         else:
             ref_scale = (1024, 1024)
-        if outpaint and src_size and min(src_size) > 0:
-            # 补边后的画布对齐到 16 的倍数，避免 VAE latent 向下取整丢像素
-            outpaint["right"] += (16 - (src_size[0] + outpaint["left"] + outpaint["right"]) % 16) % 16
-            outpaint["bottom"] += (16 - (src_size[1] + outpaint["top"] + outpaint["bottom"]) % 16) % 16
 
     seed = body.get("seed")
     seed = random.randint(0, 2**63 - 1) if seed is None else max(0, _int(seed, 0))
@@ -836,8 +837,13 @@ def _next_graph_id(graph: dict) -> str:
 
 
 def _apply_outpaint(graph: dict, outpaint: dict) -> None:
-    """扩图图变换（Qwen Image 2.1）：首张参考图后插灰边补全节点、可选总像素缩放；
-    latent 改取编码器空 latent 输出（尺寸=补边画布），并移除不再引用的 EmptyLatentImage。"""
+    """扩图图变换（Qwen Image 2.1），链路与参考工作流 `▶▷Qwen-image21-功能流` 的「图像扩展」一致：
+
+    LoadImage → ImageScaleToTotalPixels(1MP, 32) → ImagePadForOutpaint(灰边) →
+    ImageScaleToTotalPixels(目标MP, 32) → 编码器（resolution=0，latent 取编码器空 latent 输出）
+
+    两次缩放都按 32 对齐：编码器按 round(尺寸/32)*32 重建参考图并据此建空 latent，尺寸对不上就会
+    缩放参考图、出图尺寸和内容一起错位。最后移除不再引用的 EmptyLatentImage。"""
     te_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
                  if isinstance(n, dict) and n.get("class_type") == "TextEncodeQwenImage21"), None)
     if te_id is None:
@@ -846,25 +852,31 @@ def _apply_outpaint(graph: dict, outpaint: dict) -> None:
     src = (te.get("inputs") or {}).get("images.image_1")
     if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
         raise ValueError("扩图需要参考图，请添加参考图后再生成")
+    # 原图先归一化到 1MP（32 对齐）：留白按这一层的像素计（前端已按同一比例换算）
+    ref_id = _next_graph_id(graph)
+    graph[ref_id] = {
+        "class_type": "ImageScaleToTotalPixels",
+        "inputs": {"image": [str(src[0]), int(src[1])], "upscale_method": "lanczos",
+                   "megapixels": OUTPAINT_REF_MP, "resolution_steps": 32},
+    }
     pad_id = _next_graph_id(graph)
     graph[pad_id] = {
         "class_type": "ImagePadForOutpaint",
-        "inputs": {"image": [str(src[0]), int(src[1])],
+        "inputs": {"image": [ref_id, 0],
                    "left": outpaint["left"], "top": outpaint["top"],
                    "right": outpaint["right"], "bottom": outpaint["bottom"],
-                   "feathering": 40},
+                   "feathering": 0},
     }
-    last_id = pad_id
-    if outpaint.get("total_pixels"):
-        scale_id = _next_graph_id(graph)
-        graph[scale_id] = {
-            "class_type": "ImageScaleToTotalPixels",
-            "inputs": {"image": [pad_id, 0], "upscale_method": "lanczos",
-                       "megapixels": outpaint["total_pixels"], "resolution_steps": 1},
-        }
-        last_id = scale_id
-    te["inputs"]["images.image_1"] = [last_id, 0]
-    te["inputs"]["resolution"] = 0   # 保持补边后原尺寸（画布=补边尺寸）
+    # 补边画布整幅归一化到目标像素数（32 对齐），编码器就不再自己缩放参考图
+    canvas_mp = outpaint.get("total_pixels") or OUTPAINT_CANVAS_MP
+    canvas_id = _next_graph_id(graph)
+    graph[canvas_id] = {
+        "class_type": "ImageScaleToTotalPixels",
+        "inputs": {"image": [pad_id, 0], "upscale_method": "lanczos",
+                   "megapixels": canvas_mp, "resolution_steps": 32},
+    }
+    te["inputs"]["images.image_1"] = [canvas_id, 0]
+    te["inputs"]["resolution"] = 0   # 保持画布尺寸（画布=补边后按 32 对齐的尺寸）
     sampler_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
                       if isinstance(n, dict) and n.get("class_type") == "KSampler"), None)
     if sampler_id is not None:

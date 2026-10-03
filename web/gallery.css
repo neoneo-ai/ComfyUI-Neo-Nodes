@@ -2446,25 +2446,20 @@ Accordion Section Buttons (Clear)
     overflow-y: auto;
 }
 
-/* 图片对比区（左右并排） */
+/* 图片对比区（标签 + 居中舞台） */
 .neo-gallery-edit-compare {
     display: flex;
-    gap: 12px;
+    flex-direction: column;
     flex: 0 0 auto;
-    min-height: 0;
-    max-height: 55vh;
+    gap: 6px;
 }
 
 .neo-gallery-edit-compare > div {
-    flex: 1;
+    flex: 0 0 auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
-}
-
-.neo-gallery-edit-compare-result {
-    position: relative;
 }
 
 .neo-gallery-edit-compare-label {
@@ -2474,16 +2469,80 @@ Accordion Section Buttons (Clear)
     flex-shrink: 0;
 }
 
-.neo-gallery-edit-compare-img {
+/* 叠加舞台：把图片盒水平居中；高度随图片盒（≤50vh）自适应，不参与 55vh 限高 */
+.neo-gallery-edit-compare-stage {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+    max-width: 100%;
+    max-height: 50vh;
+    border-radius: 4px;
+}
+
+/* 图片盒：收缩到图片实际显示尺寸，结果图层/分割线因此与原图逐像素对齐（窗帘对比） */
+.neo-gallery-edit-compare-stage .neo-gallery-edit-compare-imgwrap {
+    position: relative;
+    z-index: 1;
+    width: fit-content;
+    max-width: 100%;
+    min-width: 0;
+}
+
+/* 窗帘：结果图层与原图同盒（inset:0），整幅不缩放/不位移，只由 clip-path 裁掉左侧（JS 设置） */
+.neo-gallery-edit-result-clip {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.neo-gallery-edit-result-clip .neo-gallery-edit-result-img {
+    position: absolute;
+    inset: 0;
     width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.neo-gallery-edit-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #4fc3f7;
+    z-index: 3;
+    cursor: col-resize;
+    border-radius: 1.5px;
+}
+
+.neo-gallery-edit-divider::after {
+    content: "⟷";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 24px;
+    height: 24px;
+    background: #4fc3f7;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.neo-gallery-edit-compare-img {
+    display: block;
+    width: auto;
     height: auto;
+    max-width: 100%;
     max-height: 50vh;
     object-fit: contain;
     background: rgba(0, 0, 0, 0.5);
     border-radius: 4px;
     cursor: zoom-in;
-    flex: 1;
-    min-height: 0;
 }
 
 /* 下方表单区 */
@@ -2559,15 +2618,27 @@ Accordion Section Buttons (Clear)
     width: 120px;
 }
 
-/* 第二张参考图拖放区（空态=虚线框+图标；有图=缩略图+×） */
+/* 参考图区（autogrow 多槽位） */
+.neo-gallery-edit-refdrop-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-edit-refdrop-row.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
 .neo-gallery-edit-refdrop {
-    width: 48px;
-    height: 48px;
+    width: 64px;
+    height: 64px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 1.5px dashed rgba(255, 255, 255, 0.3);
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     position: relative;
     flex-shrink: 0;
@@ -2579,18 +2650,13 @@ Accordion Section Buttons (Clear)
     background: rgba(79, 195, 247, 0.08);
 }
 
-.neo-gallery-edit-refdrop.disabled {
-    opacity: 0.4;
-    pointer-events: none;
-}
-
 .neo-gallery-edit-refdrop.has-img {
     border-style: solid;
     border-color: rgba(255, 255, 255, 0.25);
 }
 
 .neo-gallery-edit-refdrop-icon {
-    font-size: 16px;
+    font-size: 20px;
     opacity: 0.7;
 }
 
@@ -2631,7 +2697,9 @@ Accordion Section Buttons (Clear)
     border-radius: 8px;
 }
 
+/* 开扩图：图片盒改回满宽舞台（拖框/原图归位都按舞台盒量尺寸），画布居中 */
 .neo-gallery-edit-compare-imgwrap.neo-gallery-edit-outpaint {
+    width: 100%;
     height: 50vh;
     display: flex;
     align-items: center;
@@ -2650,6 +2718,21 @@ Accordion Section Buttons (Clear)
 .neo-gallery-edit-outpaint-canvas .neo-gallery-edit-compare-img {
     position: absolute;
     max-height: none;
+}
+
+/* 扩图画布里的结果层：结果就是整幅补边画布，铺满画布才和原图区域逐像素对齐
+   （contain 会把更宽的结果缩进原图盒 → 对比时看着整体错位） */
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-result-clip .neo-gallery-edit-result-img {
+    object-fit: fill;
+}
+
+/* 画布内层级：结果层(2) < 拖框/手柄(4) < 分割线(5) */
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-outpaint-box {
+    z-index: 4;
+}
+
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-divider {
+    z-index: 5;
 }
 
 .neo-gallery-edit-outpaint-box {

@@ -52,8 +52,10 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 
 画廊「图片编辑」弹窗的扩图开关（见 `gallery.md`）向 `/neo_image_gen/generate` 发 `outpaint: {left, top, right, bottom, total_pixels}`，要求技能是 Qwen Image 2.1 模板（含 `TextEncodeQwenImage21` + `KSampler`），否则报「该技能不支持扩图」。渲染时：
 
-- 首张参考图后插入 `ImagePadForOutpaint`（灰边 + feathering）；`total_pixels > 0` 时再插 `ImageScaleToTotalPixels`
-- `TextEncodeQwenImage21.resolution` 置 0、补边画布接 `images.image_1`；`KSampler.latent_image` 改接编码器空 latent 输出（output 2），移除 `EmptyLatentImage`
-- 四边留白按原图尺寸对齐到 16 的倍数；提示词为空时填默认触发词（`OUTPAINT_DEFAULT_PROMPT`）
+- 首张参考图后按参考工作流 `▶▷Qwen-image21-功能流` 的「图像扩展」分支补齐链路：`ImageScaleToTotalPixels(1MP)` → `ImagePadForOutpaint(四边留白, feathering=0)` → `ImageScaleToTotalPixels(total_pixels)`
+- 两次缩放都带 `resolution_steps=32`：编码器按 `round(尺寸/32)*32` 重建参考图并据此建空 latent，尺寸不整就会缩放参考图、出图尺寸与内容一起错位
+- 四边留白以「原图按 1MP 归一化后」那一层的像素计（前端按同一比例换算，拖出来的比例不变）；`total_pixels` 默认 1.5MP，0/缺失也按 1.5MP 处理
+- `TextEncodeQwenImage21.resolution` 置 0、缩放后的画布接 `images.image_1`；`KSampler.latent_image` 改接编码器空 latent 输出（output 2），移除 `EmptyLatentImage`
+- 提示词为空时填默认触发词（`OUTPAINT_DEFAULT_PROMPT`）
 
 预设技能 `qwen_image_21_outpaint` 在 `config.json` 固定扩图 LoRA（文件缺失时跳过并警告，不阻断生成）。
