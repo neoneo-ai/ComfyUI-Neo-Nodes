@@ -632,6 +632,162 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         loads = [v for v in graph.values() if v.get("class_type") == "LoadImage"]
         self.assertEqual(len(loads), 1)  # 其余 9 个空槽连同 LoadImage 裁掉
 
+    def test_outpaint_rewires_qwen_template(self):
+        snap, captured = self._run(
+            self.QWEN_TEMPLATE,
+            {"skill_id": "qwen_image_21", "prompt": "extend the sky",
+             "references": [{"kind": "input", "value": "portrait.png"}],
+             "outpaint": {"left": 128, "top": 64, "right": 128, "bottom": 64}})
+        self.assertEqual(snap["status"], "queued")
+        graph = captured["graph"]
+        pad_id = next(nid for nid, n in graph.items()
+                      if isinstance(n, dict) and n.get("class_type") == "ImagePadForOutpaint")
+        pad = graph[pad_id]["inputs"]
+        self.assertEqual(pad["image"], ["10", 0])
+        self.assertEqual((pad["left"], pad["top"], pad["right"], pad["bottom"]), (128, 64, 128, 64))
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [pad_id, 0])
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["4", 2])
+        self.assertNotIn("5", graph)   # EmptyLatentImage 移除
+
+    def test_outpaint_total_pixels_inserts_scale(self):
+        snap, captured = self._run(
+            self.QWEN_TEMPLATE,
+            {"skill_id": "qwen_image_21", "prompt": "extend the sky",
+             "references": [{"kind": "input", "value": "portrait.png"}],
+             "outpaint": {"left": 128, "top": 64, "right": 128, "bottom": 64, "total_pixels": 2.0}})
+        graph = captured["graph"]
+        scale_id = next(nid for nid, n in graph.items()
+                        if isinstance(n, dict) and n.get("class_type") == "ImageScaleToTotalPixels")
+        pad_id = next(nid for nid, n in graph.items()
+                      if isinstance(n, dict) and n.get("class_type") == "ImagePadForOutpaint")
+        self.assertEqual(graph[scale_id]["inputs"]["image"], [pad_id, 0])
+        self.assertAlmostEqual(graph[scale_id]["inputs"]["megapixels"], 2.0)
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [scale_id, 0])
+
+    def test_outpaint_unsupported_template_raises(self):
+        with self.assertRaises(ValueError):
+            self._run(
+                self.KREA2_TEMPLATE,
+                {"skill_id": "image_gen_image", "prompt": "extend",
+                 "references": [{"kind": "input", "value": "portrait.png"}],
+                 "outpaint": {"left": 64}})
+
+    def test_outpaint_empty_prompt_uses_default_trigger(self):
+        snap, _ = self._run(
+            self.QWEN_TEMPLATE,
+            {"skill_id": "qwen_image_21", "prompt": "",
+             "references": [{"kind": "input", "value": "portrait.png"}],
+             "outpaint": {"left": 64}})
+        self.assertEqual(snap["prompt"], image_gen.OUTPAINT_DEFAULT_PROMPT)
+
+
+class OutpaintParseTests(unittest.TestCase):
+    """扩图参数解析：四边留白钳制、目标像素（MP）范围、非法值报错。"""
+
+    def test_missing_returns_none(self):
+        self.assertIsNone(image_gen._parse_outpaint(None))
+        self.assertIsNone(image_gen._parse_outpaint("bad"))
+
+    def test_all_zero_returns_none(self):
+        self.assertIsNone(image_gen._parse_outpaint({"left": 0, "top": 0, "right": 0, "bottom": 0}))
+
+    def test_clamped_and_typed(self):
+        out = image_gen._parse_outpaint({"left": -5, "top": "64", "right": 99999, "bottom": 128,
+                                        "total_pixels": 2.5})
+        self.assertEqual(out["left"], 0)
+        self.assertEqual(out["top"], 64)
+        self.assertEqual(out["right"], 8192)
+        self.assertEqual(out["bottom"], 128)
+        self.assertAlmostEqual(out["total_pixels"], 2.5)
+
+    def test_total_pixels_clamped(self):
+        out = image_gen._parse_outpaint({"left": 16, "total_pixels": 99})
+        self.assertAlmostEqual(out["total_pixels"], 16.0)
+        out = image_gen._parse_outpaint({"left": 16, "total_pixels": -3})
+        self.assertAlmostEqual(out["total_pixels"], 0.0)
+
+    def test_bad_value_raises(self):
+        with self.assertRaises(ValueError):
+            image_gen._parse_outpaint({"left": "abc"})
+
+    def test_canvas_aligned_to_16(self):
+        # 原图 1000×750：画布 1032×782 → right/bottom 补到 16 的倍数（1040×784）
+        write_png(os.path.join(_INPUT_DIR, "outp_align.png"), 1000, 750)
+        params = image_gen.resolve_request(
+            {"prompt": "a cat", "references": [{"kind": "input", "value": "outp_align.png"}],
+             "outpaint": {"left": 16, "top": 16, "right": 16, "bottom": 16}}, base_settings())
+        self.assertEqual(params["outpaint"]["right"], 24)
+        self.assertEqual(params["outpaint"]["bottom"], 18)
+
+    def test_template_supports_outpaint(self):
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
+                  encoding="utf-8") as f:
+            qwen = json.load(f)
+        self.assertTrue(image_gen.template_supports_outpaint(qwen))
+        self.assertFalse(image_gen.template_supports_outpaint({
+            "1": {"class_type": "UNETLoader", "inputs": {}}}))
+
+
+class OutpaintRenderTests(unittest.TestCase):
+    """扩图图变换：pad/scale 插入、latent 改接编码器空 latent 输出、EmptyLatentImage 移除。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "workflow.json"),
+                  encoding="utf-8") as f:
+            cls.template = json.load(f)
+
+    def params(self, **overrides):
+        write_png(os.path.join(_INPUT_DIR, "outp_ref.png"), 768, 1024)
+        return image_gen.resolve_request(
+            {"prompt": "a red fox", "seed": 3,
+             "references": [{"kind": "input", "value": "outp_ref.png"}], **overrides},
+            base_settings())
+
+    def _find(self, graph, class_type):
+        ids = [nid for nid, n in graph.items()
+               if isinstance(n, dict) and n.get("class_type") == class_type]
+        assert len(ids) == 1, f"{class_type} 应恰好 1 个，实际 {ids}"
+        return ids[0]
+
+    def test_pad_inserted_and_latent_rewired(self):
+        params = self.params(outpaint={"left": 128, "top": 64, "right": 128, "bottom": 64})
+        graph, _ = image_gen.render_template(self.template, params)
+        pad_id = self._find(graph, "ImagePadForOutpaint")
+        pad = graph[pad_id]["inputs"]
+        self.assertEqual(pad["image"], ["10", 0])
+        self.assertEqual((pad["left"], pad["top"], pad["right"], pad["bottom"]), (128, 64, 128, 64))
+        self.assertEqual(pad["feathering"], 40)
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [pad_id, 0])
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 0)
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["4", 2])
+        self.assertNotIn("5", graph)   # EmptyLatentImage 不再被引用，移除
+
+    def test_scale_inserted_when_total_pixels(self):
+        params = self.params(outpaint={"left": 128, "top": 64, "right": 128, "bottom": 64,
+                                       "total_pixels": 2.0})
+        graph, _ = image_gen.render_template(self.template, params)
+        scale_id = self._find(graph, "ImageScaleToTotalPixels")
+        pad_id = self._find(graph, "ImagePadForOutpaint")
+        self.assertEqual(graph[scale_id]["inputs"]["image"], [pad_id, 0])
+        self.assertAlmostEqual(graph[scale_id]["inputs"]["megapixels"], 2.0)
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], [scale_id, 0])
+
+    def test_outpaint_requires_reference(self):
+        params = image_gen.resolve_request({"prompt": "a red fox", "seed": 3,
+                                            "outpaint": {"left": 64}}, base_settings())
+        with self.assertRaises(ValueError):
+            image_gen.render_template(self.template, params)
+
+    def test_no_outpaint_keeps_template_unchanged(self):
+        params = self.params()
+        graph, _ = image_gen.render_template(self.template, params)
+        self.assertNotIn("ImagePadForOutpaint",
+                         {n.get("class_type") for n in graph.values() if isinstance(n, dict)})
+        self.assertEqual(graph["4"]["inputs"]["resolution"], 1024)
+        self.assertEqual(graph["6"]["inputs"]["latent_image"], ["5", 0])
+
 
 class Krea2EditHelperTests(unittest.TestCase):
     """vendor 的 krea2_edit.py 纯函数单测（CPU 可跑，不加载模型）。"""

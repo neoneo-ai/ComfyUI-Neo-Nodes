@@ -1,0 +1,11 @@
+{
+  "model": "Qwen/qwen_image_2.1_int8_convrot.safetensors",
+  "text_encoder": "qwen3vl_8b_int8_convrot.safetensors",
+  "vae": "qwen_image_2.1_vae_bf16.safetensors",
+  "base_resolution": 1024,
+  "default_ratio": "16:9",
+  "steps": 30,
+  "loras": [
+    {"name": "Qwen-功能2.1/Qwen21-图像扩展qwen-image-2.1-outpaint-v2.safetensors", "strength": 1}
+  ]
+}

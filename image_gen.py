@@ -84,6 +84,10 @@ _MODEL_HINTS = {
 # 四视图 LoRA 名称线索（参考图模式必需，缺失时报错不降级）
 _QUADVIEW_HINTS = ("quadview", "四视图")
 
+# 扩图默认触发词（与 Qwen2.1 扩图 LoRA 的训练触发词一致）；扩图模式提示词为空时填入
+OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation "
+                           "of the scene, keeping the existing picture unchanged.")
+
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 _AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac"}
@@ -463,6 +467,37 @@ def template_uses_krea2_edit(template: dict) -> bool:
                for node in (template or {}).values())
 
 
+def template_supports_outpaint(template: dict) -> bool:
+    """模板是否支持扩图：须含 Qwen Image 2.1 编码器 + 采样器（latent 取自编码器的空 latent 输出）。"""
+    types = {n.get("class_type") for n in (template or {}).values() if isinstance(n, dict)}
+    return "TextEncodeQwenImage21" in types and "KSampler" in types
+
+
+def _parse_outpaint(value) -> dict | None:
+    """解析扩图参数 {left, top, right, bottom, total_pixels}；未提供时返回 None。
+
+    四边留白以原图像素计（非负整数，单边上限 8192）；total_pixels 是目标总像素（MP），
+    0/缺失 = 不缩放；四边全 0 视为未开扩图。"""
+    if not isinstance(value, dict):
+        return None
+    pads = {}
+    for key in ("left", "top", "right", "bottom"):
+        raw = value.get(key)
+        if raw is None:
+            pads[key] = 0
+            continue
+        try:
+            pads[key] = max(0, min(8192, int(raw)))
+        except (TypeError, ValueError):
+            raise ValueError(f"outpaint.{key} 需为非负整数")
+    if not any(pads.values()):
+        return None
+    total_pixels = _float(value.get("total_pixels"), 0.0)
+    return {"left": pads["left"], "top": pads["top"], "right": pads["right"],
+            "bottom": pads["bottom"],
+            "total_pixels": max(0.0, min(16.0, total_pixels))}
+
+
 def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
                     auto_quadview: bool = True) -> dict:
     """把一次生图请求解析成模板参数（占位符取值）；非法时抛 ValueError（消息可直接回前端）。
@@ -509,6 +544,9 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
         names = names[:max_refs]
     ref_name = names[0] if names else None
 
+    # 扩图：四边留白像素 + 目标总像素（MP）；None = 未开扩图模式
+    outpaint = _parse_outpaint(body.get("outpaint"))
+
     # 参考图模式：LoRA 列表里没有 ref_only（四视图）的则按名称线索自动挑选四视图 LoRA 追加到
     # 链尾（用于填模板 LoRA 槽位）；文生图模式跳过 ref_only 的 LoRA（只在有参考图时才有意义）。
     if ref_name:
@@ -535,6 +573,10 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
                          max(8, int(src_size[1] * scale + 0.5)) // 8 * 8)
         else:
             ref_scale = (1024, 1024)
+        if outpaint and src_size and min(src_size) > 0:
+            # 补边后的画布对齐到 16 的倍数，避免 VAE latent 向下取整丢像素
+            outpaint["right"] += (16 - (src_size[0] + outpaint["left"] + outpaint["right"]) % 16) % 16
+            outpaint["bottom"] += (16 - (src_size[1] + outpaint["top"] + outpaint["bottom"]) % 16) % 16
 
     seed = body.get("seed")
     seed = random.randint(0, 2**63 - 1) if seed is None else max(0, _int(seed, 0))
@@ -562,6 +604,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1,
         "ref_name": ref_name,
         "ref_images": names,
         "ref_scale": ref_scale if ref_name else None,
+        "outpaint": outpaint,
         "prefix": prefix,
         "warnings": warnings,
     }
@@ -770,6 +813,56 @@ def _prune_unfilled(graph: dict, unfilled: set) -> None:
                 dead.add(nid)         # 纯连线节点被裁空 → 该中转节点也失效
 
 
+def _next_graph_id(graph: dict) -> str:
+    try:
+        return str(max(int(nid) for nid in graph if str(nid).isdigit()) + 1)
+    except ValueError:
+        return "9999"
+
+
+def _apply_outpaint(graph: dict, outpaint: dict) -> None:
+    """扩图图变换（Qwen Image 2.1）：首张参考图后插灰边补全节点、可选总像素缩放；
+    latent 改取编码器空 latent 输出（尺寸=补边画布），并移除不再引用的 EmptyLatentImage。"""
+    te_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
+                 if isinstance(n, dict) and n.get("class_type") == "TextEncodeQwenImage21"), None)
+    if te_id is None:
+        raise ValueError("该技能不支持扩图（模板没有 Qwen Image 2.1 编码器）")
+    te = graph[te_id]
+    src = (te.get("inputs") or {}).get("images.image_1")
+    if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
+        raise ValueError("扩图需要参考图，请添加参考图后再生成")
+    pad_id = _next_graph_id(graph)
+    graph[pad_id] = {
+        "class_type": "ImagePadForOutpaint",
+        "inputs": {"image": [str(src[0]), int(src[1])],
+                   "left": outpaint["left"], "top": outpaint["top"],
+                   "right": outpaint["right"], "bottom": outpaint["bottom"],
+                   "feathering": 40},
+    }
+    last_id = pad_id
+    if outpaint.get("total_pixels"):
+        scale_id = _next_graph_id(graph)
+        graph[scale_id] = {
+            "class_type": "ImageScaleToTotalPixels",
+            "inputs": {"image": [pad_id, 0], "upscale_method": "lanczos",
+                       "megapixels": outpaint["total_pixels"], "resolution_steps": 1},
+        }
+        last_id = scale_id
+    te["inputs"]["images.image_1"] = [last_id, 0]
+    te["inputs"]["resolution"] = 0   # 保持补边后原尺寸（画布=补边尺寸）
+    sampler_id = next((nid for nid, n in sorted(graph.items(), key=lambda kv: _node_sort_key(kv[0]))
+                      if isinstance(n, dict) and n.get("class_type") == "KSampler"), None)
+    if sampler_id is not None:
+        graph[sampler_id]["inputs"]["latent_image"] = [te_id, 2]
+    # 移除不再被任何节点引用的 EmptyLatentImage
+    for nid, node in list(graph.items()):
+        if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage" and not any(
+                isinstance(v, list) and len(v) == 2 and v[0] == str(nid)
+                for m in graph.values() if isinstance(m, dict)
+                for v in (m.get("inputs") or {}).values()):
+            graph.pop(nid)
+
+
 def render_template(template: dict, params: dict) -> tuple[dict, list]:
     """把 workflow.json 模板渲染成可提交队列的 API prompt。返回 (graph, warnings)。
 
@@ -796,6 +889,8 @@ def render_template(template: dict, params: dict) -> tuple[dict, list]:
         _prune_unfilled(graph, unfilled)
     warnings = []
     _apply_loras(graph, params.get("loras") or [], warnings)
+    if params.get("outpaint"):
+        _apply_outpaint(graph, params["outpaint"])
     return graph, warnings
 
 
@@ -1179,13 +1274,20 @@ async def start_generation(body: dict) -> dict:
     """按所选技能的 workflow.json 模板渲染并提交生图任务。"""
     from . import skill as _skill
 
-    skill_id = str((body or {}).get("skill_id") or "").strip()
+    body = dict(body or {})
+    skill_id = str(body.get("skill_id") or "").strip()
     if not skill_id:
         raise ValueError("请先在技能下拉里选择一个生图技能（带工作流模板）")
     template = _skill.load_skill_workflow(skill_id)
     if template is None:
         raise ValueError(f"技能 {skill_id} 没有工作流模板（workflow.json），"
                          f"可在技能下拉的「保存当前工作流」里从画布导出一个")
+    # 扩图仅支持 Qwen Image 2.1 模板；扩图模式提示词为空时填默认触发词
+    if isinstance(body.get("outpaint"), dict):
+        if not template_supports_outpaint(template):
+            raise ValueError("该技能不支持扩图，请切换到 Qwen Image 2.1 扩图后重试")
+        if not str(body.get("prompt") or "").strip():
+            body["prompt"] = OUTPAINT_DEFAULT_PROMPT
 
     settings = get_settings()
     cfg = _skill.get_skill_gen_config(skill_id)

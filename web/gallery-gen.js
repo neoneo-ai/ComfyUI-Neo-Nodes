@@ -18,6 +18,25 @@ import { openGallerySidebar } from "./media-transfer.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
+// 扩图专用技能：LoRA 固定在其 config.json（缺失时后端提示并跳过）
+const QWEN_OUTPAINT_SKILL_ID = "qwen_image_21_outpaint";
+
+// 扩图目标比例预设（free=自由拖框；其余按 w:h 锁定拖框长宽比）
+const OUTPAINT_RATIOS = [
+    ["free", "自由"],
+    ["1:1", "1:1"],
+    ["4:3", "4:3"],
+    ["3:4", "3:4"],
+    ["16:9", "16:9"],
+    ["9:16", "9:16"],
+    ["21:9", "21:9"],
+    ["2.35:1", "2.35:1"],
+];
+// 扩图默认触发词（与后端 OUTPAINT_DEFAULT_PROMPT 一致）
+const OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation " +
+    "of the scene, keeping the existing picture unchanged.");
+// 扩图画布边长上限（×原图显示尺寸）：拖框换算随缩放指数增长，封顶防失控与后端显存爆炸
+const OUTPAINT_MAX_EXTEND = 4;
 // 「生成素材」弹窗默认技能：Krea2 文生图（纯提示词出图，产物落 Output/NeoAgent/<日期>）
 const KREA2_T2I_SKILL_ID = "image_gen";
 // 「生成素材」弹窗上次选中的技能（localStorage，关窗不清除）
@@ -940,6 +959,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const renderSuccess = (final) => {
         const images = final.images || [];
         if (images.length > 0) {
+            if (outpaintOn) resultCol.style.display = "";   // 出结果后恢复左右对比
             const resultSrc = `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`;
             resultImg.src = resultSrc;
             resultImg.style.display = "block";
@@ -961,22 +981,49 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     const start = async () => {
         if (running) return;
-        const prompt = promptInput.value.trim();
+        let prompt = promptInput.value.trim();
+        if (outpaintOn && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
         if (!prompt) { promptInput.focus(); return; }
         running = true;
         cancelRequested = false;
         renderRunning("排队中…");
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
-            const snap = await requestGeneration({
+            // 扩图模式：带四边留白量 + 目标像素数；LoRA 由扩图技能 config 固定，不随请求传
+            let outpaintPayload = null;
+            let metaWidth = parseInt(widthInput.value, 10) || undefined;
+            let metaHeight = parseInt(heightInput.value, 10) || undefined;
+            if (outpaintOn && box) {
+                const p = paddings();
+                const W = origImg.naturalWidth + p.left + p.right;
+                const H = origImg.naturalHeight + p.top + p.bottom;
+                const mp = parseFloat(mpInput.value);
+                if (mp > 0) {
+                    const ratio = W / H, target = mp * 1e6;
+                    metaWidth = Math.round(Math.sqrt(target * ratio) / 32) * 32;
+                    metaHeight = Math.round(Math.sqrt(target / ratio) / 32) * 32;
+                } else {
+                    metaWidth = W;
+                    metaHeight = H;
+                }
+                if (p.left || p.top || p.right || p.bottom) {
+                    outpaintPayload = { ...p, total_pixels: mp > 0 ? mp : 0 };
+                }
+            }
+            const payload = {
                 skill_id: skillSel.value || QWEN_IMAGE_SKILL_ID,
                 prompt,
-                width: parseInt(widthInput.value, 10) || undefined,
-                height: parseInt(heightInput.value, 10) || undefined,
+                width: metaWidth,
+                height: metaHeight,
                 references: [{ kind: "input", value: refName }],
                 loras: [],
                 skip_enhance: true,
-            });
+            };
+            if (outpaintPayload) {
+                payload.outpaint = outpaintPayload;
+                delete payload.loras;
+            }
+            const snap = await requestGeneration(payload);
             cancelId = snap.task_id;
             renderRunning("排队中…");
             const final = await watchTask(snap.task_id, (s) => {
@@ -999,6 +1046,27 @@ export function openImageEditDialog(gallery, image, subfolder) {
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
     };
 
+    // 扩图控件：开关按钮、目标比例、目标像素数（MP）、结果尺寸标签
+    const outpaintBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "⬛ 扩图" });
+    outpaintBtn.title = "扩图：在原图上拖框定四边留白量，由模型补全周边场景";
+    const sizeLabel = $el("span", { className: "neo-gallery-edit-size-label" });
+    sizeLabel.style.display = "none";
+    const ratioSel = $el("select", { className: "neo-recipes-sort neo-gallery-edit-ratio" });
+    OUTPAINT_RATIOS.forEach(([value, label]) => {
+        ratioSel.appendChild($el("option", { value, textContent: label }));
+    });
+    const mpInput = $el("input", { type: "number", className: "neo-recipes-sort neo-gallery-edit-mp", min: 0.5, max: 8, step: 0.5, value: "1" });
+    mpInput.title = "目标总像素数（MP）；0 = 保持补边后尺寸";
+    const resLabelEl = $el("label", { className: "neo-director-field-label", textContent: "目标分辨率" });
+    const outpaintRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
+        $el("label", { className: "neo-director-field-label", textContent: "目标比例" }),
+        ratioSel,
+        $el("label", { className: "neo-director-field-label", textContent: "目标像素" }),
+        mpInput,
+        $el("span", { className: "neo-director-field-label", textContent: "MP" })
+    ]);
+    outpaintRow.style.display = "none";
+
     // 图片对比区（左右并排）
     const origFullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
     const origImg = $el("img", {
@@ -1018,15 +1086,18 @@ export function openImageEditDialog(gallery, image, subfolder) {
         alt: "编辑结果",
         style: { display: "none" }
     });
+    // imgwrap：非扩图时是普通图片容器；开扩图后变为中心舞台（画布超出时整体等比缩小）
+    const imgWrap = $el("div", { className: "neo-gallery-edit-compare-imgwrap" }, [origImg]);
+    const resultCol = $el("div", { className: "neo-gallery-edit-compare-result" }, [
+        $el("div", { className: "neo-gallery-edit-compare-label", textContent: "编辑结果" }),
+        resultImg
+    ]);
     const compareBox = $el("div", { className: "neo-gallery-edit-compare" }, [
         $el("div", {}, [
             $el("div", { className: "neo-gallery-edit-compare-label", textContent: "原图" }),
-            origImg
+            imgWrap
         ]),
-        $el("div", { className: "neo-gallery-edit-compare-result" }, [
-            $el("div", { className: "neo-gallery-edit-compare-label", textContent: "编辑结果" }),
-            resultImg
-        ])
+        resultCol
     ]);
 
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" }, [
@@ -1039,15 +1110,18 @@ export function openImageEditDialog(gallery, image, subfolder) {
             $el("div", { className: "neo-gallery-edit-form-top-row" }, [
                 $el("div", { className: "neo-gallery-story-form-row" }, [
                     $el("label", { className: "neo-director-field-label", textContent: "编辑技能" }),
-                    skillSel
+                    skillSel,
+                    outpaintBtn
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
-                    $el("label", { className: "neo-director-field-label", textContent: "目标分辨率" }),
+                    resLabelEl,
                     $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 16, placeholder: "宽" }),
                     $el("span", { textContent: " × " }),
-                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 16, placeholder: "高" })
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 16, placeholder: "高" }),
+                    sizeLabel
                 ])
             ]),
+            outpaintRow,
             promptInput,
             statusBox,
             actionsBox
@@ -1073,6 +1147,220 @@ export function openImageEditDialog(gallery, image, subfolder) {
         }
     };
     dimProbe.src = fullUrl;
+
+    // ---- 扩图：原图上拖框定四边留白量（只向外扩；比例模式锁长宽比） ----
+    let outpaintOn = false;
+    let box = null;        // {x, y, w, h} 画布坐标（基准像素），原点为原图左上角
+    let base = null;       // 基准尺寸：原图 contain 进舞台后的可见图片尺寸；开扩图时定一次后冻结
+    let canvasEl = null;   // 原图+留白整体，超出舞台时 transform 等比缩小
+    let boxEl = null;
+
+    // 原图元素带 object-fit:contain，元素盒含左右留黑，量元素盒会把留黑算进画布；开扩图后原图已
+    // 移进画布（量它为 0），所以按「自然尺寸 + 舞台盒」算 contain 结果。无布局时退回元素盒/自然尺寸。
+    const fitSize = () => {
+        const nw = origImg.naturalWidth, nh = origImg.naturalHeight;
+        const bw = imgWrap.clientWidth, bh = imgWrap.clientHeight;
+        if (!nw || !nh || !bw || !bh) {
+            return { dw: origImg.clientWidth || nw, dh: origImg.clientHeight || nh };
+        }
+        const k = Math.min(bw / nw, bh / nh);
+        return { dw: nw * k, dh: nh * k };
+    };
+    const imgSize = () => base;
+    const ratioValue = () => {
+        if (ratioSel.value === "free") return null;
+        const [a, b] = ratioSel.value.split(":").map(Number);
+        return a / b;
+    };
+    // 画布超出舞台时的显示缩放（jsdom 无布局时退化为 1）
+    const viewScale = () => {
+        if (!box) return 1;
+        const { dw, dh } = imgSize();
+        const aw = imgWrap.clientWidth || dw;
+        const ah = imgWrap.clientHeight || dh;
+        return Math.min(1, aw / box.w, ah / box.h);
+    };
+    // 画布尺寸/原图偏移/整体缩放同步到 DOM（拖框铺满画布，由 CSS 定位）
+    const syncOutpaintView = () => {
+        if (!canvasEl || !box) return;
+        const { dw, dh } = imgSize();
+        canvasEl.style.width = `${box.w}px`;
+        canvasEl.style.height = `${box.h}px`;
+        origImg.style.left = `${-box.x}px`;
+        origImg.style.top = `${-box.y}px`;
+        origImg.style.width = `${dw}px`;
+        origImg.style.height = `${dh}px`;
+        const s = viewScale();
+        canvasEl.style.transform = `scale(${s})`;
+        canvasEl.style.setProperty("--op-inv", s > 0 ? (1 / s).toFixed(4) : "1");
+    };
+    const paddings = () => {
+        const { dw, dh } = imgSize();
+        const s = (origImg.naturalWidth || dw) / dw;
+        const r16 = (v) => Math.max(0, Math.round(v * s / 16) * 16);
+        return { left: r16(-box.x), top: r16(-box.y),
+                 right: r16(box.x + box.w - dw), bottom: r16(box.y + box.h - dh) };
+    };
+    const updateSizeLabel = () => {
+        if (!outpaintOn || !box) { sizeLabel.textContent = ""; return; }
+        const p = paddings();
+        const W = origImg.naturalWidth + p.left + p.right;
+        const H = origImg.naturalHeight + p.top + p.bottom;
+        const mp = parseFloat(mpInput.value);
+        let text = `目标 ${W}×${H}`;
+        if (mp > 0) {
+            const ratio = W / H, target = mp * 1e6;
+            text += ` → ${Math.round(Math.sqrt(target * ratio) / 32) * 32}×${Math.round(Math.sqrt(target / ratio) / 32) * 32}`;
+        }
+        sizeLabel.textContent = text;
+    };
+    const dragResize = (mode, dx, dy, b0, dw, dh, R) => {
+        const b = { ...b0 };
+        if (mode === "move") {
+            // 平移：只挪留白分布，框必须仍包住原图（x ≤ 0 且 x + w ≥ dw）
+            b.x = Math.min(0, Math.max(dw - b0.w, b0.x + dx));
+            b.y = Math.min(0, Math.max(dh - b0.h, b0.y + dy));
+            return b;
+        }
+        if (!R) {
+            // 自由：只向外扩（框必须包住原图）
+            if (mode.includes("e")) b.w = Math.max(dw, b0.x + b0.w + dx);
+            if (mode.includes("w")) { const nx = Math.min(0, b0.x + dx); b.x = nx; b.w = b0.x + b0.w - nx; }
+            if (mode.includes("s")) b.h = Math.max(dh, b0.y + b0.h + dy);
+            if (mode.includes("n")) { const ny = Math.min(0, b0.y + dy); b.y = ny; b.h = b0.y + b0.h - ny; }
+            b.w = Math.min(b.w, dw * OUTPAINT_MAX_EXTEND);
+            b.h = Math.min(b.h, dh * OUTPAINT_MAX_EXTEND);
+            return b;
+        }
+        // 比例锁定：等比缩放，锚定对边/对角
+        let s;
+        if (mode === "n" || mode === "s") s = (b0.h + (mode === "s" ? dy : -dy)) / b0.h;
+        else if (mode === "e" || mode === "w") s = (b0.w + (mode === "e" ? dx : -dx)) / b0.w;
+        else s = Math.max((b0.w + (mode.includes("e") ? dx : -dx)) / b0.w,
+                          (b0.h + (mode.includes("s") ? dy : -dy)) / b0.h);
+        let w = b0.w * s, h = b0.h * s;
+        if (w < dw || h < dh) { const k = Math.max(dw / w, dh / h); w *= k; h *= k; }
+        if (w > dw * OUTPAINT_MAX_EXTEND || h > dh * OUTPAINT_MAX_EXTEND) {
+            const k = Math.min(dw * OUTPAINT_MAX_EXTEND / w, dh * OUTPAINT_MAX_EXTEND / h);
+            w *= k; h *= k;
+        }
+        const left0 = b0.x, right0 = b0.x + b0.w, top0 = b0.y, bottom0 = b0.y + b0.h;
+        if (mode.includes("e")) b.x = left0;
+        else if (mode.includes("w")) b.x = right0 - w;
+        else b.x = (left0 + right0) / 2 - w / 2;   // n/s：水平居中不动
+        if (mode.includes("s")) b.y = top0;
+        else if (mode.includes("n")) b.y = bottom0 - h;
+        else b.y = (top0 + bottom0) / 2 - h / 2;   // e/w：垂直居中不动
+        b.w = w; b.h = h;
+        b.x = Math.min(b.x, 0); b.y = Math.min(b.y, 0);
+        b.w = Math.max(b.w, dw - b.x); b.h = Math.max(b.h, dh - b.y);
+        return b;
+    };
+    const attachBoxEvents = () => {
+        let drag = null;
+        const onMove = (ev) => {
+            if (!drag) return;
+            const { dw, dh } = imgSize();
+            // 指针位移按按下时的显示缩放换算；拖动中画布变大、缩放会变小，若每帧重算会让框成倍暴涨
+            box = dragResize(drag.mode, (ev.clientX - drag.sx) * drag.k, (ev.clientY - drag.sy) * drag.k,
+                             drag.b0, dw, dh, ratioValue());
+            syncOutpaintView();
+            updateSizeLabel();
+        };
+        const onUp = () => {
+            drag = null;
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+        };
+        boxEl.addEventListener("pointerdown", (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            const handleEl = ev.target.closest(".neo-gallery-edit-outpaint-handle");
+            const s = viewScale();
+            drag = { mode: handleEl ? handleEl.dataset.handle : "move",
+                     sx: ev.clientX, sy: ev.clientY, b0: { ...box }, k: s > 0 ? 1 / s : 1 };
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onUp);
+        });
+    };
+    // 窗口变化后舞台尺寸变了：基准尺寸跟着重算，框按同一比例缩放，留白量保持不变
+    const onStageResize = () => {
+        if (!base) return;
+        const next = fitSize();
+        if (next.dw > 0 && next.dh > 0 && next.dw !== base.dw) {
+            const k = next.dw / base.dw;
+            box = { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k };
+            base = next;
+        }
+        syncOutpaintView();
+        updateSizeLabel();
+    };
+    const teardownOutpaintBox = () => {
+        window.removeEventListener("resize", onStageResize);
+        if (boxEl) boxEl.remove();
+        if (canvasEl) {
+            imgWrap.appendChild(origImg);   // 原图归位，恢复 CSS 自适应尺寸
+            origImg.style.cssText = "";
+            canvasEl.remove();
+        }
+        canvasEl = null;
+        boxEl = null;
+        box = null;
+        base = null;
+        imgWrap.classList.remove("neo-gallery-edit-outpaint");
+    };
+    const setupOutpaintBox = () => {
+        teardownOutpaintBox();
+        imgWrap.classList.add("neo-gallery-edit-outpaint");
+        base = fitSize();
+        box = { x: 0, y: 0, w: base.dw, h: base.dh };
+        canvasEl = $el("div", { className: "neo-gallery-edit-outpaint-canvas" });
+        boxEl = $el("div", { className: "neo-gallery-edit-outpaint-box" });
+        for (const pos of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+            boxEl.appendChild($el("div", { className: `neo-gallery-edit-outpaint-handle neo-gallery-edit-outpaint-handle-${pos}`, dataset: { handle: pos } }));
+        }
+        canvasEl.append(origImg, boxEl);   // 原图移入画布，随整体等比缩放
+        imgWrap.append(canvasEl);
+        syncOutpaintView();
+        attachBoxEvents();
+        window.addEventListener("resize", onStageResize);
+    };
+    const snapBoxToRatio = () => {
+        if (!box) return;
+        const R = ratioValue();
+        if (!R) return;
+        const { dw, dh } = imgSize();
+        const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+        let w = box.w, h = w / R;
+        if (h < dh) { h = dh; w = h * R; }
+        if (w < dw) { w = dw; h = w / R; }
+        box = { x: cx - w / 2, y: cy - h / 2, w, h };
+        syncOutpaintView();
+        updateSizeLabel();
+    };
+    const setOutpaintMode = (on) => {
+        outpaintOn = on;
+        outpaintBtn.classList.toggle("on", on);
+        resultCol.style.display = on ? "none" : "";   // 扩图时画布占满整行，出结果后再显示对比列
+        outpaintRow.style.display = on ? "" : "none";
+        widthInput.style.display = on ? "none" : "";
+        heightInput.style.display = on ? "none" : "";
+        resLabelEl.textContent = on ? "目标尺寸" : "目标分辨率";
+        sizeLabel.style.display = on ? "" : "none";
+        skillSel.value = on ? QWEN_OUTPAINT_SKILL_ID : QWEN_IMAGE_SKILL_ID;
+        if (on) {
+            setupOutpaintBox();
+            snapBoxToRatio();
+            if (!promptInput.value.trim()) promptInput.value = OUTPAINT_DEFAULT_PROMPT;
+        } else {
+            teardownOutpaintBox();
+        }
+        updateSizeLabel();
+    };
+
+    outpaintBtn.addEventListener("click", () => setOutpaintMode(!outpaintOn));
+    ratioSel.addEventListener("change", snapBoxToRatio);
+    mpInput.addEventListener("input", updateSizeLabel);
 
     setTimeout(() => promptInput.focus(), 0);
 }

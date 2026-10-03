@@ -47,3 +47,13 @@ Krea2 生图有两个入口：提示词节点内置的**聊天生图**，以及�
 
 - **旧工作流 / 复制粘贴串位自动修复**：本节点 `seed` 之后会自动追加「生成后控制」（`control_after_generate`）下拉，占一个 `widgets_values` 位置。widget 集合变化（新增 width/height）后，载入旧工作流或复制粘贴可能按位置错一位、把数字写进该下拉或 `seed`。前端在 `onConfigure` 检测到「生成后控制」不是模式串时，自动复位为 `fixed`、`count` 归 1，并按所选 skill 预设强制重填 width/height；同时若 `seed` 落到非有限数或负数（如 `-1`/NaN），一并复位为默认 `0`（串位块无法可靠恢复原值）。旧格式（`widgets_values` 少于当前控件数）载入也会强制按预设重填宽高。
 - **Skill 有效性状态条**：节点底部按所选 skill 后台校验其 `workflow.json`（对照 `/object_info` 与 `/models/*`，与技能详情页流程图同一套检查），缺模型/缺节点时显示「⚠️ N 个模型缺失 · M 个节点未安装 → 查看详情/修复」；点按钮直接打开该 skill 详情弹窗修复（保存后即时重检）。无缺失、无 `workflow.json` 或校验接口不可用时整条隐藏（不占高、不误报）；同一 skill 的检测结果会话内缓存 60s。
+
+## 扩图（Qwen Image 2.1）
+
+画廊「图片编辑」弹窗的扩图开关（见 `gallery.md`）向 `/neo_image_gen/generate` 发 `outpaint: {left, top, right, bottom, total_pixels}`，要求技能是 Qwen Image 2.1 模板（含 `TextEncodeQwenImage21` + `KSampler`），否则报「该技能不支持扩图」。渲染时：
+
+- 首张参考图后插入 `ImagePadForOutpaint`（灰边 + feathering）；`total_pixels > 0` 时再插 `ImageScaleToTotalPixels`
+- `TextEncodeQwenImage21.resolution` 置 0、补边画布接 `images.image_1`；`KSampler.latent_image` 改接编码器空 latent 输出（output 2），移除 `EmptyLatentImage`
+- 四边留白按原图尺寸对齐到 16 的倍数；提示词为空时填默认触发词（`OUTPAINT_DEFAULT_PROMPT`）
+
+预设技能 `qwen_image_21_outpaint` 在 `config.json` 固定扩图 LoRA（文件缺失时跳过并警告，不阻断生成）。
