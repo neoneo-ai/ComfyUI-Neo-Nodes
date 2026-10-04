@@ -142,6 +142,7 @@ Neo Studio 独立页面（`web/studio/index.html`，由 `/neo-studio` 短路径�
 | GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`）与 `steps`（skill config，缺省 20；与节点 `width`/`height`/`steps=-1` 时一致），供 NeoImageGenEdit widget 填充默认值（定义于 image_gen_edit.py） |
 | GET | `/neo_image_gen/skill_config?skill_id=` | 读取技能生图/生视频设置：预设 = 自身 `config.json` ⊕ 本地覆盖文件（`configs/skill_overrides/<id>.json`），其余直接读 `config.json` |
 | GET | `/neo_image_gen/skill_workflow?skill_id=` | 返回技能 `workflow.json`（API prompt 模板，只读），供详情弹窗渲染节点流程图；缺失/非法 404 |
+| POST | `/neo_image_gen/update_workflow_skill` | 把画布工作流（API prompt）回写入 existing custom skill（`{skill_id, workflow}`）：按 `save_workflow_skill` 同款模板化（`_template_from_workflow` / `_template_video_from_workflow`）后原子替换该技能 `workflow.json`，skill.md 正文保留（`requires_ref` 按模板里的 `{{REF_IMAGE}}` 回填）、config 按 seed_cfg 合并；预设 403；返回 `{success, id, warnings, gen_video}` |
 | POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length`/`steps` 保留既有有效值（非模型设置区管理，视频技能「步数」由此落盘） |
 | POST | `/neo_image_gen/save_combo_skill` | 「生成素材」弹窗把选中的"主模型 + LoRA"组合存为新自定义技能（`{skill_id, model, loras}`）：源技能 `workflow.json` 原样复制，config 沿用源技能有效设置仅覆盖 `model`/`loras`；技能名自动生成 = 主模型名 + LoRA 名（id 冲突追加 `-2/-3`），返回 `{success, id, name}` |
 

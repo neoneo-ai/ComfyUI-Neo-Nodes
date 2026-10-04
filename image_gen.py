@@ -1680,6 +1680,23 @@ async def save_workflow_skill_route(request):
     return web.json_response(result)
 
 
+@routes.post("/neo_image_gen/update_workflow_skill")
+async def update_workflow_skill_route(request):
+    """把画布工作流（API prompt）回写入 existing custom skill。"""
+    from . import skill as _skill
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是 JSON"}, status=400)
+    body = body if isinstance(body, dict) else {}
+    result = _skill.update_workflow_skill(str(body.get("skill_id") or ""), body.get("workflow"))
+    if not result.get("success"):
+        status = 403 if "preset" in str(result.get("message") or "").lower() else 400
+        return web.json_response({"error": result.get("message")}, status=status)
+    return web.json_response(result)
+
+
 @routes.get("/neo_image_gen/skill_workflow")
 async def get_skill_workflow_route(request):
     """返回技能 workflow.json（API prompt 模板），供详情弹窗渲染节点流程图；缺失/非法 404。"""

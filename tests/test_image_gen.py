@@ -1300,6 +1300,115 @@ class SkillWorkflowRouteTests(unittest.TestCase):
                                self._req({"name": "x", "workflow": {}}))
         self.assertEqual(status, 400)
 
+    def test_update_workflow_skill_route(self):
+        # 画布 API prompt 回写入 existing custom skill：workflow.json 落盘模板、skill.md 正文保留、config.json 初值
+        d = self._make_custom_skill("upd_wf")
+        with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+            json.dump({"1": {"class_type": "UNETLoader", "inputs": {}}}, f)
+        workflow = {
+            "1": {"class_type": "UNETLoader",
+                  "inputs": {"unet_name": "krea2/krea2_turbo_fp16.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0], "text": "canvas prompt"}},
+            "3": {"class_type": "EmptyLatentImage",
+                  "inputs": {"width": 1280, "height": 720, "batch_size": 2}},
+            "4": {"class_type": "SaveImage",
+                  "inputs": {"images": ["3", 0], "filename_prefix": "MyWf"}},
+        }
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "upd_wf", "workflow": workflow}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        self.assertEqual(body["id"], "upd_wf")
+        self.assertFalse(body["gen_video"])
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["2"]["inputs"]["text"], "{{PROMPT}}")
+        self.assertEqual(tpl["1"]["inputs"]["unet_name"], "{{MODEL}}")
+        self.assertEqual(tpl["3"]["inputs"]["width"], "{{WIDTH}}")
+        self.assertEqual(tpl["4"]["inputs"]["filename_prefix"], "{{PREFIX}}")
+        with open(os.path.join(d, "skill.md"), encoding="utf-8") as f:
+            meta, md_body = _skill_mod.split_frontmatter(f.read())
+        self.assertEqual(md_body, "body")
+        self.assertNotIn("requires_ref", meta)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["model"], "krea2/krea2_turbo_fp16.safetensors")
+        self.assertEqual(cfg["default_ratio"], "16:9")
+        self.assertEqual(cfg["output_prefix"], "MyWf")
+
+    def test_update_workflow_skill_ref(self):
+        # 画带参考图 → skill.md 里 requires_ref 归真（正文保留），模板留 {{REF_IMAGE}} 占串
+        d = self._make_custom_skill("upd_ref")
+        workflow = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0], "text": "a cat"}},
+            "9": {"class_type": "LoadImage", "inputs": {"image": "first.png"}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "P"}},
+        }
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "upd_ref", "workflow": workflow}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["9"]["inputs"]["image"], "{{REF_IMAGE}}")
+        with open(os.path.join(d, "skill.md"), encoding="utf-8") as f:
+            meta, md_body = _skill_mod.split_frontmatter(f.read())
+        self.assertIs(meta["requires_ref"], True)
+        self.assertEqual(md_body, "body")
+
+    def test_update_workflow_skill_video(self):
+        # H3 画布 → 视频模板落盘（gen_video 真）
+        d = self._make_custom_skill("upd_vid")
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "upd_vid", "workflow": self._h3_video_workflow(i2v=True)}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        self.assertTrue(body["gen_video"])
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["1"]["inputs"]["unet_name"], "{{MODEL}}")
+        self.assertEqual(tpl["11"]["inputs"]["vae_name"], "{{AUDIO_VAE}}")
+        self.assertEqual(tpl["12"]["inputs"]["image"], "{{REF_IMAGE}}")
+        self.assertEqual(tpl["4"]["inputs"]["first_frame"], ["12", 0])
+        self.assertEqual(tpl["13"]["inputs"]["lora_name"], "{{LORA_1_NAME}}")
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["loras"], [{"name": "h3_style.safetensors", "strength": 0.8}])
+        self.assertEqual((cfg["width"], cfg["height"], cfg["length"]), (1344, 768, 124))
+
+    def test_update_workflow_skill_guards(self):
+        workflow = {"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}}}
+        # 预设技能只读 → 403
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "image_gen", "workflow": workflow}))
+        self.assertEqual(status, 403)
+        self.assertIn("read-only", body["error"])
+        # 技能不存在 → 400
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "nope", "workflow": workflow}))
+        self.assertEqual(status, 400)
+        self.assertIn("not found", body["error"].lower())
+        # 空 / 非法节点结构 workflow → 400
+        d = self._make_custom_skill("upd_bad")
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "upd_bad", "workflow": {}}))
+        self.assertEqual(status, 400)
+        self.assertIn("API prompt", body["error"])
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "upd_bad", "workflow": {"1": {"inputs": {}}}}))
+        self.assertEqual(status, 400)
+        self.assertIn("class_type", body["error"])
+        # 失败时不落盘
+        self.assertFalse(os.path.isfile(os.path.join(d, "workflow.json")))
+
     def test_get_skill_config(self):
         # 预设 image_gen 的 config.json（default_ratio: 16:9）
         status, body = self._call(image_gen.get_skill_config_route,

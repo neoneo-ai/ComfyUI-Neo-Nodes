@@ -14,7 +14,7 @@ import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
 import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
-import { copySkillFiles, saveWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
+import { copySkillFiles, saveWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
 
 // ==========================================
@@ -95,6 +95,9 @@ function workflowParamValues(isVideo, genInfo) {
     }
     return values;
 }
+
+// 画布 import 的 number widget 的 keys：模板预渲染把纯数字串归 number（与后端 render_template typed values 一致）
+const NUMERIC_WIDGET_KEYS = new Set(["width", "height", "batch_size", "seed", "steps", "length"]);
 
 // 默认宽高：长边 base_resolution、比例 default_ratio（与后端 resolve_dimensions 一致，对齐 16）
 function defaultSizeFromConfig(cfg) {
@@ -487,10 +490,10 @@ function createSkillStatusRow(opts) {
 // ==========================================
 // UI：createSkillDetailPopup() —— 单技能详情弹窗（查看 / 编辑 / 删除 / 复制为自定义 / 新建）
 // 由技能下拉的行内操作与底部工具栏打开；overlay 挂到 document.body，跨节点共享一个实例。
-// 返回 { overlay, openExisting(id, source), openNew(), close }。
+// 返回 { overlay, openExisting(id, source), openNew(), close }。canvasBtns=false（Studio 内嵌，无画布）时工作流区画布按钮不挂。
 // ==========================================
 
-function createSkillDetailPopup(host) {
+function createSkillDetailPopup(host, canvasBtns = true) {
     const embedded = !!host;   // 内嵌模式：modal 挂到调用方容器（统一技能管理窗口右侧），不自建遮罩、不监听全局 Esc/点遮罩
     const overlay = mkEl("div", "rs-skill-modal-overlay");
     const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
@@ -716,6 +719,23 @@ function createSkillDetailPopup(host) {
     workflowHeader.append(workflowCaret, workflowTitle);
     workflowHeader.title = "点击折叠 / 展开流程图";
     workflowHeader.addEventListener("click", () => setWorkflowCollapsed(!workflowWrap.classList.contains("rs-wf-collapsed")));
+    // 画布 ⇄ 技能（Studio 内嵌无画布时 canvasBtns=false 时不挂）：导入把模板按当前设置预渲染、运行时占串归 concrete values
+    //      后 loadApiJson 载入画布；回写把整画布 API prompt 落盘该技能 workflow.json（skill.md 保留，预设不可回写）
+    if (canvasBtns) {
+        const wfCanvasBtns = mkEl("div", "rs-wf-canvas-btns");
+        const wfImportBtn = mkEl("button", "rs-btn rs-wf-canvas-import-btn");
+        wfImportBtn.type = "button";
+        wfImportBtn.textContent = "⤒ 导入到画布";
+        wfImportBtn.title = "把本技能 workflow.json 载入画布（模板变量按当前设置预渲染，参考图槽位留占串），画里后点「💾 回写入技能」落盘";
+        wfImportBtn.addEventListener("click", (e) => { e.stopPropagation(); importWorkflowToCanvas(); });
+        const wfWriteBtn = mkEl("button", "rs-btn rs-wf-canvas-write-btn");
+        wfWriteBtn.type = "button";
+        wfWriteBtn.textContent = "💾 回写入技能";
+        wfWriteBtn.title = "把整画布工作流落盘本技能 workflow.json（skill.md 正文保留；预设技能不可回写）";
+        wfWriteBtn.addEventListener("click", (e) => { e.stopPropagation(); writeWorkflowBackToSkill(); });
+        wfCanvasBtns.append(wfImportBtn, wfWriteBtn);
+        workflowHeader.append(wfCanvasBtns);
+    }
     workflowWrap.append(workflowHeader, workflowBody, workflowSummary);
 
     // 失效模型路径修复：复用后端 /neo_nodes/skill_model_suggest（与工作流修复同款 match_model_file），
@@ -913,6 +933,62 @@ function createSkillDetailPopup(host) {
             renderWorkflowGraph(workflowBody, rendered, validation, workflowSummary);
             workflowBody.scrollLeft = sl;
             workflowBody.scrollTop = st;
+        }
+    }
+
+    // ---- 画布 ⇄ 技能：把技能模板归画布可 load 的 API prompt（已知参数按设置预渲染、运行时占串归 concrete values
+    //      与后端 render_template 的 typed values 一致：number widget 的纯数字串归 number；参考图槽位留 {{REF_IMAGE}} 占串）
+    function canvasWorkflow() {
+        if (!skillWorkflowRaw) return null;
+        const isVideo = videoGenSettingsWrap.style.display !== "none";
+        const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
+        const values = workflowParamValues(isVideo, { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} });
+        values.SEED = 0;
+        values.REF_WIDTH = values.WIDTH;
+        values.REF_HEIGHT = values.HEIGHT;
+        const wf = applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), values);
+        for (const node of Object.values(wf)) {
+            const inputs = (node || {}).inputs;
+            if (!inputs) continue;
+            for (const [k, v] of Object.entries(inputs)) {
+                if (typeof v !== "string") continue;
+                const s = v.split("{{PROMPT}}").join("").split("{{NEGATIVE}}").join("");
+                inputs[k] = NUMERIC_WIDGET_KEYS.has(k) && /^\d+$/.test(s) ? Number(s) : s;
+            }
+        }
+        return wf;
+    }
+
+    async function importWorkflowToCanvas() {
+        if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return; }
+        if (typeof app.loadApiJson !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，导入不可用"); return; }
+        const wf = canvasWorkflow();
+        if (!wf) return;
+        try {
+            await app.loadApiJson(wf, currentSkillId);
+        } catch (e) {
+            showToast(app, "error", "导入失败", String(e.message || e));
+            return;
+        }
+        showToast(app, "success", "已导入到画布",
+            `点「💾 回写入技能」把整画布落盘 "${currentSkillId}" 的 workflow.json（画布布局/节点标题不保留，skill.md 正文保留）`);
+    }
+
+    async function writeWorkflowBackToSkill() {
+        if (!currentSkillId) { showToast(app, "warning", "回写入技能", "当前技能未保存，先「+ 新建」并保存"); return; }
+        if (currentSource === "presets") { showToast(app, "warning", "预设不可回写", "先「复制为自定义」后编辑"); return; }
+        if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，回写不可用"); return; }
+        try {
+            const { output, error } = (await app.graphToPrompt()) || {};
+            if (error || !output || !Object.keys(output).length) {
+                showToast(app, "warning", "无法回写", "画布没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
+                return;
+            }
+            const r = await updateWorkflowSkill(currentSkillId, output);
+            showToast(app, "success", `已回写入技能 "${r.id}"`, (r.warnings || []).join("\n"));
+            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+        } catch (err) {
+            showToast(app, "error", "回写入失败", err.message);
         }
     }
 
@@ -2416,7 +2492,7 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
     const placeholder = mkEl("div", "rs-skill-manager-empty");
     placeholder.textContent = "从左侧选择技能查看详情";
     right.appendChild(placeholder);
-    const popup = createSkillDetailPopup(right);
+    const popup = createSkillDetailPopup(right, showCanvasBtn);
 
     host.appendChild(box);
 

@@ -123,6 +123,18 @@ export async function saveWorkflowSkill({ name, description, tags, workflow }) {
     return data;
 }
 
+/** 把当前画布工作流（API prompt）回写入 existing custom skill；返回 { id, warnings } */
+export async function updateWorkflowSkill(skillId, workflow) {
+    const resp = await fetch(`${GEN_API}/update_workflow_skill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill_id: skillId, workflow })
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || data.error) throw new Error(data?.error || `HTTP ${resp.status}`);
+    return data;
+}
+
 /** 读技能的生图设置覆盖（config.json；缺失返回 {}） */
 export async function getSkillGenConfig(skillId) {
     try {

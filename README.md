@@ -101,6 +101,8 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 这里的Skill不仅仅是提示词模板，而是包含了内置模型配置信息（model，vae，clip等），内置工作流程和默认基础参数，Skill选择列表可以进入详情页查看，系统预设的不可编辑，复制之后可自定义编辑
 
+生图/生视频技能详情页工作流区带「⤒ 导入到画布」（把技能 `workflow.json` 按当前设置预渲染后载入画布）与「💾 回写入技能」（把整画布工作流落盘该技能 `workflow.json`，`skill.md` 正文保留）；预设技能不可回写，先「复制为自定义」
+
 ### bundle：
 
 包含了运行时需要的参数：提示词和图片（可选）

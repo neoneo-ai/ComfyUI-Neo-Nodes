@@ -1422,6 +1422,55 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
     return {"success": True, "id": sid, "warnings": warnings, "gen_video": is_video}
 
 
+def update_workflow_skill(skill_id: str, workflow: dict) -> dict:
+    """把画布工作流（API prompt）回写入 existing custom skill：workflow.json 落盘，skill.md 正文保留。"""
+    sid = _normalize_skill_id(str(skill_id or ""))
+    d = _skill_dir(sid) if sid else None
+    if not d:
+        return {"success": False, "message": "Skill not found"}
+    if _skill_source(d) == "presets":
+        return {"success": False, "message": "Preset skill is read-only"}
+    if not isinstance(workflow, dict) or not workflow:
+        return {"success": False, "message": "workflow 不是合法的 API prompt"}
+    for nid, node in workflow.items():
+        if not isinstance(node, dict) or not node.get("class_type") or not isinstance(node.get("inputs"), dict):
+            return {"success": False, "message": f"节点 {nid} 缺少 class_type/inputs"}
+    is_video = _is_h3_video_workflow(workflow)
+    if is_video:
+        template, warnings, seed_cfg = _template_video_from_workflow(workflow)
+    else:
+        template, warnings, seed_cfg = _template_from_workflow(workflow)
+    has_ref = any(isinstance(v, str) and "{{REF_IMAGE}}" in v
+                  for n in template.values() if isinstance(n, dict)
+                  for v in (n.get("inputs") or {}).values())
+
+    meta, body = _read_skill_md(d)
+    want_cat = "video_gen" if is_video else "image_gen"
+    if meta.get("category") and meta["category"] != want_cat:
+        warnings.append("技能分类与画布工作流类型不一致")
+    rewrite_md = bool(meta) and bool(meta.get("requires_ref")) != has_ref
+    if rewrite_md:
+        if has_ref:
+            meta["requires_ref"] = True
+        else:
+            meta.pop("requires_ref", None)
+    with _skills_lock:
+        tmp = os.path.join(d, "workflow.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(template, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, os.path.join(d, "workflow.json"))
+        if rewrite_md:
+            main = _main_md_name(d)
+            tmp = os.path.join(d, main + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(serialize_frontmatter(meta, body))
+            os.replace(tmp, os.path.join(d, main))
+    if seed_cfg:
+        # 与生图/生视频设置区共用写路径：自定义写自身 config.json，保留既有 width/height/length/steps
+        save_skill_gen_config(sid, seed_cfg)
+    return {"success": True, "id": sid, "warnings": warnings, "gen_video": is_video}
+
+
 def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:
     """把 from 技能的 workflow.json / config.json 复制到 to（供「复制为自定义」补全生图模板）；预设源写合并后的有效 config（含本地覆盖）。"""
     src = _skill_dir(str(from_id or ""))
