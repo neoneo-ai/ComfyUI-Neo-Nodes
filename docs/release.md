@@ -3,27 +3,34 @@
 总入口见 [../Developer.md](../Developer.md)。
 
 ## 发布
-### git action 方式
-- Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）
-- `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，通过 `comfy-org/publish-node-action` 发布至 ComfyUI Registry（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）
 
-1. 改版本号（比如改成 1.0.1）
-#    编辑 pyproject.toml: version = "1.0.1"
-2. 提交
+### Git Action 方式
+
+- Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）。
+- `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，
+  通过 `comfy-org/publish-node-action` 发布至 ComfyUI Registry（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）。
+
+```bash
+# 1. 改版本号（例如改成 1.0.1）：编辑 pyproject.toml 里的 version = "1.0.1"
 git add pyproject.toml
 git commit -m "Bump version to 1.0.1"
-3. 打 tag（指向这个新 commit）
+
+# 2. 打 tag（指向这个新 commit）
 git tag v1.0.1
-4. 推送代码 + tag
+
+# 3. 推送代码 + tag，触发发布
 git push origin main v1.0.1
+```
 
+### comfy cli 方式
 
-### comfy cli方式
- comfy node publish  输入API TOKEN
+```bash
+comfy node publish    # 按提示输入 API TOKEN
+```
 
 ## 离线工具
 
-`tools/` 下的脚本用于构建/部署素材预设，不在 ComfyUI 运行时加载：
+`tools/` 下的脚本用于构建 / 部署素材预设，不在 ComfyUI 运行时加载：
 
 ```bash
 # 1. 预处理：扫描预设目录，生成缩略图与 index.json（需要 ffmpeg 生成视频缩略图）
@@ -31,8 +38,7 @@ python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir>
 
 # 增量模式：只新增/更新指定子目录（源目录中已删除的文件会同步清理），
 # 自动从 OSS 拉取最新 index.json（configs/oss_presets.json -> index_url）作为合并基准，
-# 其余目录保持不变；--no-fetch-index 改为与本地 index.json 合并，
-# --fetch-index <url> 可显式指定其它来源。
+# 其余目录保持不变；--no-fetch-index 改为与本地 index.json 合并，--fetch-index <url> 显式指定来源。
 # --presets 可省略：默认使用当前工作目录（把新增/更新的目录放在该目录下即可）
 cd <dir_with_new_dirs> && python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
 

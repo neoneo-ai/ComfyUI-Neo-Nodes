@@ -8,29 +8,45 @@ pytest 配置见 `pytest.ini`（`testpaths = tests`，无需启动 ComfyUI 即�
 python -m pytest tests -v
 ```
 
-- `tests/test_llm.py` — 远程配置加载/迁移、模型下载（ModelScope / HuggingFace 回退）、翻译缓存、语言检测、文本规范化
-- `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析（分隔符 / JSON 数组）、skill 代理（语言互斥主文件选择、引用列表、安全读取越界拒绝、工具调用循环按需读引用、本地模式回退）、`gen_image` / `requires_ref` 元数据透传与编辑保存保留
-- `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确/归一化匹配、量化变体替换、歧义拒绝、扩展名约束
-- `tests/test_image_gen.py` — 内置生图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选（Krea2 只精确匹配 Qwen3-VL-4B，8B/32B 不参与；VAE 优先 Qwen-Image）、下拉展示排序（krea2 靠前）与自动挑选结果、LoRA 缺失告警、参考图（input / data URI）落地、多路槽位空槽裁剪、生图张数（设置默认 / 单次覆盖）、扩图/局部编辑仅 Qwen Image 2.1 模板、工作流图结构与 sidecar 写入
-- `tests/test_image_gen_edit.py` — mini-executor 单测：拓扑排序与环检测、引用解析与输出归一化（单/多输出）、末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量→base64 PNG 编码往返、`NeoImageGenEdit` 请求组装（缺 workflow.json 报错 / happy path 返回 IMAGE / Autogrow 参考图按槽位排序成 references / bundle 参考图优先 / 按模板自适应 `max_refs`）、V3 schema 与 Autogrow 槽位展开
+## Python 单测
+
+- `tests/test_llm.py` — 远程配置加载 / 迁移、模型下载（ModelScope / HuggingFace 回退）、翻译缓存、
+  语言检测、文本规范化。
+- `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析、
+  技能代理（语言互斥主文件选择、引用列表、越界读取拒绝、工具循环按需读引用、本地模式回退）、
+  `gen_image` / `requires_ref` 元数据透传与编辑保存保留。
+- `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确 / 归一化匹配、量化变体替换、歧义拒绝、
+  扩展名约束。
+- `tests/test_image_gen.py` — 内置生图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选、
+  下拉展示排序与自动挑选结果、LoRA 缺失告警、参考图落地、多路槽位空槽裁剪、生图张数覆盖、
+  扩图 / 局部编辑仅 Qwen Image 2.1 模板、工作流图结构与 sidecar 写入。
+- `tests/test_image_gen_edit.py` — mini-executor：拓扑排序与环检测、引用解析与输出归一化、
+  末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量 → base64 PNG 往返、请求组装
+  （缺 `workflow.json` 报错 / 参考图按槽位排序 / bundle 参考图优先 / 按模板自适应 `max_refs`）。
 
 ## 前端回归测试（tests/js）
 
-前端模块在 jsdom + ComfyUI `api`/`app` 替身下加载，用 golden 快照锁定 UI 结构、隐藏控件状态与请求轨迹；重构 `prompt-manager.js` / `node-behavior.js` 前先跑一遍，确认行为有意变化后再重写 golden。
+前端模块在 jsdom + ComfyUI `api` / `app` 替身下加载，用 golden 快照锁定 UI 结构、隐藏控件状态与请求轨迹。
+重构 `prompt-manager.js` / `node-behavior.js` 前先跑一遍，确认行为有意变化后再重写 golden。
 
 ```bash
 npm test                 # 比对 tests/js/golden/*.txt
 npm run update-goldens   # NEO_UPDATE_GOLDENS=1，写入新 golden
 ```
 
-- `smoke.test.mjs` — 模块可导入、节点扩展注册项
-- `prompt-manager-dom.test.mjs` — NeoPromptAgent / NeoPrompts 创建后的 UI 结构、body 弹层、隐藏控件状态
-- `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、skill 路由请求体、@ 图片选择器、运行时随机菜单
-- `llm-setting-advanced.test.mjs` — 有预设 Base URL 的供应商默认收起「自定义端点」（云端/hybrid 同规则），展开后改写仍能落盘；无预设的 OpenAI Compatible 常显且无收起入口，Local GGUF 整体隐藏
+- `smoke.test.mjs` — 模块可导入、节点扩展注册项。
+- `prompt-manager-dom.test.mjs` — 节点创建后的 UI 结构、body 弹层、隐藏控件状态。
+- `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、技能路由请求体、@ 图片选择器、运行时随机菜单。
+- `llm-setting-advanced.test.mjs` — 有预设 Base URL 的供应商默认收起「自定义端点」，展开后改写仍能落盘；
+  无预设的 OpenAI Compatible 常显，Local GGUF 整体隐藏。
 
 ## JS 测试运行器（带超时强制终止）
 
-**跑 JS 测试必须带 `--test-force-exit`。** 节点创建会启动未清理的 `setInterval`（如 `prompts.js` 的 enforcementInterval），若不带该参数，`node --test` 子进程因 pending timer 使 event loop 永不空闲而无法自然退出——表现为测试已全部通过却卡到超时。因此**不要裸跑 `node --test tests/js/*.test.mjs`**。两个入口都已内置该参数：`npm test`（package.json）与 `pwsh tests/run-tests.ps1`（后者额外提供超时强杀 node 进程树、文件名模糊匹配）。
+**跑 JS 测试必须带 `--test-force-exit`。** 节点创建会启动未清理的 `setInterval`，
+不带该参数时 `node --test` 子进程因 pending timer 使 event loop 永不空闲而无法自然退出——
+表现为测试已全部通过却卡到超时。因此**不要裸跑 `node --test tests/js/*.test.mjs`**。
+两个入口都已内置该参数：`npm test`（package.json）与 `tests/run-tests.ps1`
+（后者额外提供超时强杀 node 进程树、文件名模糊匹配）。
 
 ```powershell
 # 跑全部 JS 测试（默认超时 120s）

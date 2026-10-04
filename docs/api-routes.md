@@ -1,12 +1,13 @@
 # 后端 API 路由
 
-路由通过 `PromptServer.instance.routes` 注册。总入口见 [../Developer.md](../Developer.md)。
+路由通过 `PromptServer.instance.routes` 注册，总入口见 [../Developer.md](../Developer.md)。
+下表只列路由与用途；请求体字段与返回结构以源码为准。
 
 ## gallery.py — `/neo_gallery/*`
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/neo_gallery/list` | 目录内容列表（预设/自定义/系统目录聚合）；`dir_name=Grid\|Character` 走主目录（本地生成结果 + 只读 `path=presets[/<远端目录>]` 预设），首页不注入这两张卡 |
+| GET | `/neo_gallery/list` | 目录内容列表（预设 / 自定义 / 系统聚合） |
 | GET | `/neo_gallery/css` | 内置素材 CSS 资源 |
 | GET | `/neo_gallery/placeholder.png` | 占位图 |
 | GET | `/neo_gallery/subdirs` | 子目录列表 |
@@ -22,15 +23,16 @@
 | POST | `/neo_gallery/delete` | 删除素材（presets 只读保护） |
 | POST | `/neo_gallery/clear_thumbnails` | 清空缩略图缓存 |
 
+- `dir_name=Grid|Character` 走主目录（本地生成结果 + 只读远端预设），首页不注入这两张卡。
+
 ## lora_tag.py — LoRA 打标
 
-仅可写来源（Input / 用户自定义目录）的叶子图片目录可用；HEIC/HEIF 转换依赖可选的 `pillow-heif`。
+仅可写来源（Input / 用户自定义目录）的叶子图片目录可用；HEIC / HEIF 转换依赖可选的 `pillow-heif`。
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/neo_gallery/tag_preflight` | 目录校验 + 图片数 + 建议触发词（文件夹名全拼连写，过短时随机非词兜底） |
-| POST | `/neo_gallery/tag_dir` | 批量打标（SSE 进度）：可选先标准化目录（整目录备份到 `<目录>.bak` + HEIC→PNG + `001<ext>`... 顺序编号），逐张调 `lora_tag` 任务 skill 写同名 `.txt` |
-
+| GET | `/neo_gallery/tag_preflight` | 目录校验 + 图片数 + 建议触发词 |
+| POST | `/neo_gallery/tag_dir` | 批量打标（SSE 进度，可选先标准化目录） |
 
 ## gallery_lora.py — Civitai LORA
 
@@ -43,9 +45,9 @@
 
 ## gallery_oss.py — 云端预设
 
-`index.json` 顶层可选的 `categories`（`{"StoryBoard": [...], "CharacterSheet": [...]}`）把远端目录归到主目录的
-只读预设区；未归类的目录仍留在旧版 **Cloud Presets**（没有 `categories` 的旧索引行为不变）。
-StoryBoard/CharacterSheet 预设下载缓存在 `output/StoryBoard/presets/`、`output/CharacterSheet/presets/`。
+`index.json` 顶层可选的 `categories` 把远端目录归到 StoryBoard / CharacterSheet 主目录的只读预设区；
+未归类的目录仍留在旧版 **Cloud Presets**（没有 `categories` 的旧索引行为不变）。
+预设下载缓存在 `output/StoryBoard/presets/`、`output/CharacterSheet/presets/`。
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
@@ -56,97 +58,103 @@ StoryBoard/CharacterSheet 预设下载缓存在 `output/StoryBoard/presets/`、`
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/rs_recipes/list` | 配方列表（custom / presets，组内按最近修改时间倒序） |
+| POST | `/rs_recipes/list` | 配方列表（custom / presets，按最近修改倒序） |
 | POST | `/rs_recipes/load` | 读取单个配方 |
 | POST | `/rs_recipes/save` | 保存配方（含 assets 收集） |
 | POST | `/rs_recipes/append_results` | 追加示例结果（含工作流备份） |
-| POST | `/rs_recipes/add_results` | 记录执行产物**路径**到 `results`（只记路径不复制文件，按 filename+subfolder 去重；预设 403） |
-| POST | `/rs_recipes/delete_result` | 从 `results` 摘掉一条并**删除 output 目录里的真实文件**（连同同名 `.txt` 旁车；非法路径 400，预设 403） |
+| POST | `/rs_recipes/add_results` | 记录产物路径到 `results`（不复制文件） |
+| POST | `/rs_recipes/delete_result` | 摘掉结果并删除 output 里的真实文件 |
 | POST | `/rs_recipes/delete_sample` | 删除示例结果 |
 | POST | `/rs_recipes/delete` | 删除配方（仅 custom） |
-| POST | `/rs_recipes/copy` | 复制配方为新的 custom 副本（自动生成不冲突名 `<原名>-copy/-2/…`，含资源/示例/director 分段；preset 亦可复制成 custom） |
-| GET | `/rs_recipes/export` | 导出整个配方为 zip（顶层目录 = 配方名），包内附 `Readme.txt`（包内容 / 快速应用说明；中/英按远程配置 `readme_language`，缺省自动判断） |
-| POST | `/rs_recipes/import` | 导入配方 zip（`file` 字段 multipart）：包内须含 `recipe.json`（根目录或唯一顶层目录下），拒绝路径穿越条目；重名自动 `-copy/-2/…`，落盘 `recipes/custom/` |
+| POST | `/rs_recipes/copy` | 复制为新 custom 副本（自动改名） |
+| GET | `/rs_recipes/export` | 导出配方 zip（包内附 Readme.txt） |
+| POST | `/rs_recipes/import` | 导入配方 zip（重名自动改名） |
 | GET | `/rs_recipes/asset` | 配方资源文件 |
-| GET | `/rs_recipes/thumbnail` | 封面/网格缩略图（`recipe`+`file`+可选 `dir`+`size`，钳到 [32,1024]）：命中 `recipes/.thumbs/` 缓存直接回 JPEG，未命中现生成；带 immutable 缓存头 |
+| GET | `/rs_recipes/thumbnail` | 封面 / 网格缩略图（带缓存） |
 | GET | `/rs_recipes/workflow` | 示例对应的工作流快照 |
 | POST | `/rs_recipes/send_to_workflow` | 资源复制进 `input/` 供一键还原 |
-| GET | `/rs_recipes/director_spec` | 读取 `video_director` 配方的 `{shared, segments}`（每段首帧/尾帧与参考图·视频·音频均已解析为 input 名，并给出有效生成模式 `mode`）；配方有「角色参考图」且未关掉身份参考时另带 `identity_images[]`（≤4，视频段身份参考） |
-| POST | `/rs_recipes/director_generate_segments` | 导演编辑器「📖 故事板分镜」文字故事板：主题（`idea`）或已写好的故事脚本（`script`）+ 分段粒度（`segment_seconds`）→ LLM（任务 `director_story`）**直接输出分段 JSON**，返回 `segments[]`（每段 `prompt` / `duration_sec` / `storyboard_prompt`）；角色参考图文件名列表（`characters`）以多模态附上锁身份 |
-| POST | `/rs_recipes/director_optimize_prompts` | 导演编辑器「统一设置」：单段优化前原文 + 时长 + 模式 + 该段参考清单 → LLM 按 H3 官方格式重写为一条成品提示词（附参考图走多模态），返回 `{prompt}`；前端逐段循环调用、逐段反馈进度 |
-| POST | `/rs_recipes/grid_split` | 导演编辑器「🧩 宫格分镜图拆分」：一张带分隔条/留白的分镜宫格图 → 纯像素均匀间隙检测（含只有 1~2px 的细白分隔条：条上压着字幕文字时按近白占比识别）+ 无意义细条剔除（整幅标题栏 / 页脚行 / 边缘窄条，或手动行×列，1~12）自动判行列，按行优先顺序把各格裁到 `input/`（各格内容在分隔条一侧再内缩 1px，并裁掉四边白框 / 黑框（含框外那 1~2px 接缝）与底部「白底 + 文字」字幕条，使格子可直接当视频首帧），返回 `{rows, cols, panels:[{filename,width,height,preview_url}], prompts[]}`（格子数超上限拒绝）；`prompts[]` 是从**原图内嵌的 ComfyUI 元信息**（PNG 的 API 格式 `prompt`）提取的正向提示词（文本输入键随工作流不同：`prompt` / `text` 等，按 negative 连线剔掉纯负向节点，切出的格子不带元信息所以只能从原图取），前端作「全局故事参考（默认为原宫格提示词）」的默认值、可手动改写 |
-| POST | `/rs_recipes/director_describe_panel` | 导演编辑器逐格/单段描述（**单格**）：一张分镜图（该段首帧，多模态）+ 时长 +（可选）本格序号/总段数/九宫格行列、全局故事参考（默认原宫格提示词）、上一段已生成提示词 → LLM（任务 `director_panel_describe`）生成一条可直接提交的 MiniMax H3 i2v 成品提示词，返回 `{prompt}`；宫格方式下由「✨ 生成所有分段的提示词」按格子自动循环调用本端点、逐格反馈进度，单格失败不中断；时间轴页「✦ 生成/修改」在段提示词为空时（新生成）也调本端点（需该段已选首帧图），上下文字段缺失/非法时静默降级为仅图+时长 |
-| POST | `/rs_recipes/director_modify_segment` | 导演编辑器时间轴页「✦ 生成/修改」在段提示词**有内容**时（修改）调用：现有提示词 + 用户修改指令（可选）+ 时长 + 模式 + 参考清单 → LLM（任务 `director_modify_segment`）按 H3 格式输出修改后的成品提示词；SSE 流式回传 |
+| GET | `/rs_recipes/director_spec` | 导演配方 `{shared, segments}` 与身份参考图 |
+| POST | `/rs_recipes/director_generate_segments` | 文字故事板 → 分段 JSON |
+| POST | `/rs_recipes/director_optimize_prompts` | 单段提示词按 H3 格式重写 |
+| POST | `/rs_recipes/grid_split` | 宫格分镜图拆分为各段首帧 |
+| POST | `/rs_recipes/director_describe_panel` | 逐格描述生成单段成品提示词 |
+| POST | `/rs_recipes/director_modify_segment` | 按修改指令重写段提示词（SSE） |
 
-## h3_video_director.py / h3_segment.py / h3_assemble.py / video_gen.py — `/neo_video_gen/*`
+## h3_video_director.py / h3_segment.py / h3_assemble.py — `/neo_video_gen/*`
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/neo_video_gen/director_progress` | 当前 director 运行进度（`active` / `segment_index` / `total_segments` / `step` / `total_steps`），节点内时间轴与预览面板按它显示每段状态 |
-| POST | `/neo_video_gen/director/cancel` | 取消进行中的 director 任务：执行中则中断（同单段/生图任务做法）；无进行中任务或已结束 409 |
-| POST | `/neo_video_gen/run_segment` | **单段生成/重生成入队**（`{recipe, segment, anchors, seed, film?, continuity?, context_frames?, steps?, preview?, node_id?}`）：校验 + 把「跑这一段」组装成单节点 prompt（`NeoH3SegmentRun`）提交到 ComfyUI 执行队列，返回任务快照。`film` 指定用哪个成片结果取锚点（文件名或 `subfolder/文件名`；空＝最新成片），不在配方 `results` 里则报错；**分辨率沿用该成片**（同尺寸才能无缝拼回，与配方共享分辨率不同时在提示里说明）；段序号越界 / 未知锚点 / 成片帧数与复算不一致 / 预设配方 一律 400 |
-| GET | `/neo_video_gen/run_segment/{task_id}` | 单段任务快照：`status`（queued/running/succeeded/failed/cancelled）+ `progress {value,max}` + `filename` + `film`（实际用作锚点来源的成片）+ `seed` + `warnings` + `error` |
-| POST | `/neo_video_gen/run_segment/{task_id}/cancel` | 取消单段任务：未执行则出队、执行中则中断（同生图任务做法）；任务已结束 409 |
-| POST | `/neo_video_gen/assemble_segments` | **拼回成片**（`{recipe, use:[段序号], film?, blend?, continuity?, context_frames?}`）：把勾选的段换成对应的单段产物、**其余段沿用原成片**（解码→拼接→再编码），产出新的完整成片；返回任务快照。片段缺 / 段序号越界 / 没勾任何段 / 预设配方 一律 400 |
-| GET | `/neo_video_gen/assemble_segments/{task_id}` | 拼接任务快照：`status`（queued/running/succeeded/failed/cancelled）+ `progress {value,max}` + `stage`（中文阶段）+ `filename` + `frames` + `clips` + `warnings` + `error` |
-| POST | `/neo_video_gen/assemble_segments/{task_id}/cancel` | 取消拼接（协作式：当前片段处理完后生效）；任务已结束 409 |
-| GET | `/neo_video_gen/settings` | 读取「生视频模型」独立设置（`configs/video_gen.json`） |
+| GET | `/neo_video_gen/director_progress` | director 运行进度（段 / 步） |
+| POST | `/neo_video_gen/director/cancel` | 取消进行中的 director 任务 |
+| POST | `/neo_video_gen/run_segment` | 单段生成 / 重生成入队 |
+| GET | `/neo_video_gen/run_segment/{task_id}` | 单段任务快照 |
+| POST | `/neo_video_gen/run_segment/{task_id}/cancel` | 取消单段任务 |
+| POST | `/neo_video_gen/assemble_segments` | 把勾选的段拼回完整成片 |
+| GET | `/neo_video_gen/assemble_segments/{task_id}` | 拼接任务快照 |
+| POST | `/neo_video_gen/assemble_segments/{task_id}/cancel` | 取消拼接 |
+| GET | `/neo_video_gen/settings` | 读取「生视频模型」设置 |
 | POST | `/neo_video_gen/settings` | 保存「生视频模型」设置 |
-| GET | `/neo_video_gen/models` | 扫描 H3 相关模型列表（diffusion_models / text_encoders / vae）并给出自动挑选结果 |
+| GET | `/neo_video_gen/models` | 扫描 H3 模型并给出自动挑选结果 |
 
-`run_segment` 只做「校验 + 组装 prompt + 入队」，真正的生成跑在 ComfyUI 执行器里（`h3_segment.py` 的 `NeoH3SegmentRun` 节点）：
-显存（模型装载/卸载、OOM 腾挪）、进度条、`interrupt` 取消全部由执行器负责，插件只轮询任务快照。采样期间的实时预览仍走
-插件自己的 taeh3 通道（`rs.h3.preview`）：带 `node_id` 时把预览推回该编号的节点面板（编辑器里点 ♻ 即导演节点），
-不带则回落到该节点自己的 `unique_id`。产物写 `output/neo_director_regen/<配方>_s<N>_<时间戳>.mp4` 并记进配方 `results`（带 `segment`/`seed`）。
-
-`assemble_segments`（`h3_assemble.py`）是「单段生成」的**后续步骤**（不是独立入口）：只把勾选的那几段换成单段产物，
-其余段直接沿用原成片对应帧与音频。它只做「解码 → 拼接 → 再编码」，不用模型、不占执行队列，所以在后台线程里跑：
-进度按「已拼帧数 / 总帧数」上报（`stage` 是中文阶段，如「沿用原成片第 1..1 段（124 帧）」），取消是协作式的（当前来源处理完生效）。
-新成片写 `output/neo_director_merge/<配方>_merged_<时间戳>.mp4`，并记进配方 `results` 时带 **`layout`**（逐段的真实保留帧数）——
-后续「单段重生成」按这个 `layout` 定位该成片的段边界（没有 `layout` 的成片按配方复算并要求总帧数吻合）。
+- `run_segment` 只做校验 + 组装 prompt + 入队，真正生成跑在 ComfyUI 执行器里（`NeoH3SegmentRun` 节点）：
+  显存、进度、取消由执行器负责，插件只轮询任务快照。产物写 `output/neo_director_regen/` 并记进配方 `results`。
+- 锚点来源由 `film` 指定（空 = 最新成片），**分辨率沿用该成片**（同尺寸才能无缝拼回）。
+  段序号越界 / 未知锚点 / 成片帧数与复算不一致 / 预设配方一律 400。
+- `assemble_segments` 是单段生成的后续步骤：只把勾选的段换成单段产物，其余段沿用原成片对应帧与音频。
+  它只做解码 → 拼接 → 再编码，不用模型、不占执行队列，在后台线程跑，取消为协作式。
+  新成片写 `output/neo_director_merge/`，记进 `results` 时带逐段真实帧数 `layout`，
+  后续单段重生成按它定位段边界。
+- 采样期间的实时预览走插件自己的 taeh3 通道（WS 事件 `rs.h3.preview`），按 `node_id` 推回对应节点面板。
 
 ## studio.py — `/neo_studio/*`
 
-Neo Studio 独立页面（`web/studio/index.html`，由 `/neo-studio` 短路径提供）的后端。素材 / 生图 / 配方 / 单段等功能直接复用已有路由，这里只补页面短路径、整片生成与版本信息：
+Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 / 配方 / 单段直接复用已有路由，
+这里只补页面短路径、整片生成与版本信息：
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/neo-studio` | Studio 独立页面（同 `/extensions/ComfyUI-Neo-Nodes/studio/index.html`） |
-| POST | `/neo_studio/director/generate` | **整片生成入队**（`{recipe, seed?, width?, height?, continuity?, context_frames?, steps?, only_segments?}`）：校验后把「`NeoH3VideoDirector` + `SaveVideo`」两节点图提交执行队列（`preview=True`、`unique_id`=task_id，采样期实时预览载荷按 task_id 路由到 Studio 页面播放器），返回任务快照。`only_segments` 为 Studio 只读时间轴上勾选的段号文本（1 基、逗号分隔，空 = 整片；段号非法/越界 400），勾选是运行期临时状态、不写进配方。预设配方 / 无段配方 400 |
-| GET | `/neo_studio/director/{task_id}` | 整片任务快照：`status` + `progress {value,max}` + `filename`/`subfolder` + `error`；运行中附带 `latest_preview`（最新采样步帧载荷，前端轮询取预览帧的兜底通道）；成功后成片记进配方 `results`（导演节点本身不记账） |
-| POST | `/neo_studio/director/{task_id}/cancel` | 取消整片任务：未执行则出队、执行中则中断；任务已结束 409 |
-| GET | `/neo_studio/version` | 插件 + ComfyUI 版本与导演配方名列表（Studio 顶栏展示；顺序与配方面板侧栏一致：custom 在前、presets 在后，组内最近修改在前） |
-| POST | `/neo_studio/clear_memory` | 卸载所有已加载模型并清理显存缓存（`unload_all_models` + `soft_empty_cache`），返回释放字节数 |
+| GET | `/neo-studio` | Studio 独立页面 |
+| POST | `/neo_studio/director/generate` | 整片生成入队（可只跑勾选的段） |
+| GET | `/neo_studio/director/{task_id}` | 整片任务快照 |
+| POST | `/neo_studio/director/{task_id}/cancel` | 取消整片任务 |
+| GET | `/neo_studio/version` | 插件 / ComfyUI 版本与导演配方列表 |
+| POST | `/neo_studio/clear_memory` | 卸载模型并清理显存缓存 |
 
-任务跟踪与 `run_segment` 同一套做法：`submit_graph` 入队 + `_lookup`/`_progress_for` 轮询 + `rs.director.status` WS 事件按变化推送。
+- `only_segments` 为只读时间轴上勾选的段号文本（1 基、逗号分隔，空 = 整片）；勾选是运行期临时状态，不写进配方。
+- 任务跟踪与 `run_segment` 同一套做法：入队 + 轮询快照 + WS 事件按变化推送。
 
 ## workflow.py — `/neo_nodes/*`
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/neo_nodes/repair` | 工作流模型路径修复（高置信度匹配 + 阈值档位 `threshold` + 动态 widget 引用 `widget_refs` + 手动决策（含 `skip`）+ 映射） |
+| POST | `/neo_nodes/repair` | 工作流模型路径修复 |
 | GET | `/neo_nodes/repair_mappings` | 读取已保存的修复映射 |
 | DELETE | `/neo_nodes/repair_mappings` | 删除修复映射 |
+
+修复细节见 [workflow-repair.md](workflow-repair.md)。
 
 ## image_gen.py — `/neo_image_gen/*`
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/neo_image_gen/settings` | 读取内置生图默认参数（`configs/image_gen.json`，缺失时回落内置值） |
-| POST | `/neo_image_gen/settings` | 保存默认参数（仅接受 `DEFAULT_SETTINGS` 里的键） |
-| GET | `/neo_image_gen/models` | 扫描 `diffusion_models` / `text_encoders` / `vae` / `loras`（各列表按 krea2 相关靠前排序供展示）并给出各目录自动挑选结果（`suggested_<目录>`；LoRA 无名称线索，恒为空） |
-| POST | `/neo_image_gen/generate` | 解析请求 → 构建 Krea2 API 图 → 提交执行队列，返回任务快照（含 `task_id`）；参数错误 400。body 可带单次覆盖 `model` / `text_encoder` / `vae` / `loras`（空/省略 = 跟随全局设置；「生成素材」弹窗的自定参数区只发 `model` / `loras` / `default_ratio` / `base_resolution`）；用户未显式配置 `--preview-method` 时提交附 `extra_data.preview_method=latent2rgb`（内置 latent→RGB 映射，实时预览无需额外 vae_approx 模型） |
-| GET | `/neo_image_gen/status/{task_id}` | 任务快照（兜底拉取）：`queued` / `running` / `succeeded` / `failed` / `cancelled` + 图片列表、采样进度 `progress`、实时预览图 `preview`（data URL；仅运行中且采样按步推预览时非空）、错误、告警 |
-| GET | `/neo_image_gen/tasks` | 最近任务列表（按创建时间倒序，最多 32 条） |
-| POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断该任务 |
-| GET | `/neo_image_gen/skill_dims` | 返回 gen_image skill 的预设宽高（`base_resolution` + `default_ratio`）与 `steps`（skill config，缺省 20；与节点 `width`/`height`/`steps=-1` 时一致），供 NeoImageGenEdit widget 填充默认值（定义于 image_gen_edit.py） |
-| GET | `/neo_image_gen/skill_config?skill_id=` | 读取技能生图/生视频设置：预设 = 自身 `config.json` ⊕ 本地覆盖文件（`configs/skill_overrides/<id>.json`），其余直接读 `config.json` |
-| GET | `/neo_image_gen/skill_workflow?skill_id=` | 返回技能 `workflow.json`（API prompt 模板，只读），供详情弹窗渲染节点流程图；缺失/非法 404 |
-| POST | `/neo_image_gen/update_workflow_skill` | 把画布工作流（API prompt）回写入 existing custom skill（`{skill_id, workflow}`）：按 `save_workflow_skill` 同款模板化（`_template_from_workflow` / `_template_video_from_workflow`）后原子替换该技能 `workflow.json`，skill.md 正文保留（`requires_ref` 按模板里的 `{{REF_IMAGE}}` 回填）、config 按 seed_cfg 合并；预设 403；返回 `{success, id, warnings, gen_video}` |
-| POST | `/neo_image_gen/skill_config` | 写技能生图/生视频设置（`{skill_id, config}`）：自定义写自身 `config.json`，预设写本地覆盖文件（不改预设文件）；保存时 `width`/`height`/`length`/`steps` 保留既有有效值（非模型设置区管理，视频技能「步数」由此落盘） |
-| POST | `/neo_image_gen/save_combo_skill` | 「生成素材」弹窗把选中的"主模型 + LoRA"组合存为新自定义技能（`{skill_id, model, loras}`）：源技能 `workflow.json` 原样复制，config 沿用源技能有效设置仅覆盖 `model`/`loras`；技能名自动生成 = 主模型名 + LoRA 名（id 冲突追加 `-2/-3`），返回 `{success, id, name}` |
+| GET | `/neo_image_gen/settings` | 读取内置生图默认参数 |
+| POST | `/neo_image_gen/settings` | 保存默认参数 |
+| GET | `/neo_image_gen/models` | 扫描模型目录并给出自动挑选结果 |
+| POST | `/neo_image_gen/generate` | 生图入队（可带单次覆盖参数 / 扩图） |
+| GET | `/neo_image_gen/status/{task_id}` | 任务快照（进度 / 图片 / 实时预览） |
+| GET | `/neo_image_gen/tasks` | 最近任务列表（最多 32 条） |
+| POST | `/neo_image_gen/cancel/{task_id}` | 出队并在运行中时中断 |
+| GET | `/neo_image_gen/skill_dims` | 技能预设宽高与步数（填默认值用） |
+| GET | `/neo_image_gen/skill_config` | 读取技能生图 / 生视频设置 |
+| POST | `/neo_image_gen/skill_config` | 写技能设置（预设写本地覆盖文件） |
+| GET | `/neo_image_gen/skill_workflow` | 技能 `workflow.json` 模板（只读） |
+| POST | `/neo_image_gen/update_workflow_skill` | 把画布工作流回写为技能模板 |
+| POST | `/neo_image_gen/save_combo_skill` | 主模型 + LoRA 组合存为新技能 |
 
-任务状态不走 HTTP 轮询：`_watch` 协程按变化经 WebSocket 事件 `rs.image_gen.status` 推送任务快照（广播，前端 `watchTask` 按 `task_id` 过滤）；`/status` 仅作订阅前兜底首拉与断线重连补漏，取消时后端也主动推送 `cancelled` 快照。
+- `generate` 的 body 可带单次覆盖 `model` / `text_encoder` / `vae` / `loras`（空 = 跟随全局设置）；
+  扩图请求带 `outpaint` 字段，见 [image-gen.md](image-gen.md)。
+- 任务状态不走 HTTP 轮询：按变化经 WS 事件 `rs.image_gen.status` 推送任务快照，
+  `/status` 仅作订阅前首拉与断线重连补漏，取消时后端也主动推送 `cancelled` 快照。
 
 ## prompts.py — `/rs_prompts/*`
 
@@ -160,22 +168,31 @@ Neo Studio 独立页面（`web/studio/index.html`，由 `/neo-studio` 短路径�
 | GET | `/rs_prompts/get_models` | 可用 LLM 模型列表（远程 + 本地） |
 | POST | `/rs_prompts/set_model` | 切换当前 LLM 模型 |
 | GET/POST | `/rs_prompts/remote_llm_config` | 远程 LLM 配置读取 / 保存 |
-| POST | `/rs_prompts/llm_connection_test` | 连接测试：用当前表单值发送「你好」，成功返回回复摘要 |
+| POST | `/rs_prompts/llm_connection_test` | 连接测试（用当前表单值发送「你好」） |
 | GET | `/rs_prompts/llm_mode` | 当前 LLM 模式 |
 | POST | `/rs_prompts/extract_title` | AI 提取标题 |
 | POST | `/rs_prompts/extract_classify` | AI 提取分类 |
 | POST | `/rs_prompts/enhance_prompt` | 提示词增强 |
 | POST | `/rs_prompts/translate_prompt` | 提示词翻译 |
 | POST | `/rs_prompts/smart_prompt` | 快捷描述生成 |
-| POST | `/rs_prompts/reverse_prompt` | 图片反推提示词（多模态，SSE 流式返回 + 同名 .txt 缓存） |
-| POST | `/rs_prompts/stream_{task_name}` | 按任务名动态注册的流式生成端点 |
+| POST | `/rs_prompts/reverse_prompt` | 图片反推（SSE + 同名 .txt 缓存） |
+| POST | `/rs_prompts/stream_{task_name}` | 按任务名注册的流式生成端点 |
 | POST | `/rs_prompts/stream_generate_prompt` | 流式生成 |
 | POST | `/rs_prompts/random_prompt` | 随机提示词 |
-| POST | `/rs_prompts/random_prompts` | 运行时随机批量：从混合池（与 NeoPromptAgent 同池，配方不入池）不重复抽 `count` 条（钳制 1–16），返回 `{texts: [...]}`；供「生成素材」弹窗批量生成使用 |
-| POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表（请求带 `provider`；`api_key` 留空时回退该 provider 已存密钥）。本地 / 局域网端点先依次尝试 LM Studio `/api/v1/models`、Ollama `/api/tags`+`/api/ps` 原生端点，没有结果再按 `append_v1` 规则试 OpenAI 兼容 `/v1/models`（Unsloth Studio 的列表带 `loaded` 字段）；云端端点行为不变。返回 `models: [{id, name, size?, vision?, loaded?}]` 与来源端点类型 |
-| GET | `/rs_prompts/skills` | 技能列表（预设 + 任务 + 自定义分组）；生图/生视频技能另带可选 `gen_config` 摘要对象（有效 config.json 的非空子集：`model` 主模型、`loras` LoRA 名列表、`base_resolution` 长边尺寸、`default_ratio` 默认比例、`steps` 采样步数），全空时不附该字段 |
-| POST | `/rs_prompts/load_skill` | 读取单个技能（正文、附属 .md 文件清单、max_tokens、gen_image 生图标记、gen_video 生视频标记、mode 视频模式、requires_ref 参考图要求、config_overridden 预设是否存在本地配置覆盖） |
-| POST | `/rs_prompts/save_skill` | 新建/更新技能主文件 skill.md（预设只读）；可选 `multi_turn` / `category` / `gen_image` / `gen_video` / `mode` / `requires_ref` 字段，缺省沿用 frontmatter 既有值，显式假值移除该字段（「复制为自定义」靠这些字段保留生图/生视频分类、视频模式与设置区）；**名称唯一性校验**：name 与其它 skill 重复时返回 409 |
+| POST | `/rs_prompts/random_prompts` | 运行时随机批量抽条（1–16） |
+| POST | `/rs_prompts/fetch_remote_models` | 拉取远程服务端模型列表 |
+| GET | `/rs_prompts/skills` | 技能列表（预设 / 任务 / 自定义分组） |
+| POST | `/rs_prompts/load_skill` | 读取单个技能 |
+| POST | `/rs_prompts/save_skill` | 新建 / 更新技能主文件（预设只读） |
 | POST | `/rs_prompts/delete_skill` | 删除整个技能目录（仅 USR） |
-| POST | `/rs_prompts/reset_skill_config` | 预设技能生图/生视频设置恢复默认：删除本地覆盖文件 `configs/skill_overrides/<id>.json`（幂等，无覆盖也成功） |
+| POST | `/rs_prompts/reset_skill_config` | 技能设置恢复默认（删本地覆盖文件） |
 
+- `fetch_remote_models` 请求带 `provider`，`api_key` 留空时回退该 provider 已存密钥。
+  本地 / 局域网端点先依次尝试 LM Studio、Ollama 原生端点，没有结果再按 OpenAI 兼容 `/v1/models` 尝试。
+- `skills` 里的生图 / 生视频技能另带可选 `gen_config` 摘要（主模型、LoRA 名列表、长边尺寸、默认比例、步数），
+  全空时不附该字段。
+- `load_skill` 返回正文、附属 `.md` 清单、`max_tokens`、生图 / 生视频标记、视频模式、参考图要求、
+  是否存在本地配置覆盖。
+- `save_skill` 校验名称唯一性（与其它技能重名返回 409）；可选字段缺省沿用 frontmatter 既有值，显式假值移除该字段。
+
+LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [prompts.md](prompts.md)。

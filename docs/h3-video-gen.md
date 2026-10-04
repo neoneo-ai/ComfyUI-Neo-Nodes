@@ -1,85 +1,174 @@
 # H3 Video（MiniMax H3 视频生成）
 
-`NeoH3VideoDirector` 节点：MiniMax H3 视频生成的唯一入口，直接输出含原生音频的 `VIDEO`（可接 SaveVideo）到下游。复用 Neo Image Gen & Edit 的进程内 mini-executor（已支持 V3 API 节点），无需聊天界面、不嵌套官方 PromptExecutor。两种用法：**配方多段**（以 `video_director` 配方逐段生成并拼接成单个长视频）与 **BUNDLE 单段**（连 ⚡ Neo Prompt Agent 的 BUNDLE，按单片段生成）。
+MiniMax H3 视频生成：单段 BUNDLE 与多段导演配方。配方编辑见 [recipes.md](recipes.md)，生图见 [image-gen.md](image-gen.md)。
 
 ## 用法
+
 ### 配方多段（video_director）
-1. 添加 🎞️ H3 Video Director 节点，`recipe` 选一个 `video_director` 配方（下拉自动列出；编辑器可增删/重排段、半自动故事生成）。
-2. 配方的每段自带 `skill_id` + prompt + 时长 + 首/尾帧 + 参考素材。视频 skill 需带 `gen_video: true` + `workflow.json`（内置：`H3 文生视频`(t2v)、`H3 图生视频`(i2v)、`首尾帧生视频`(fl2v)、`H3参考生视频`(r2v：最多 9 张参考图 / 3 个参考视频 / 3 个参考音频)；另有同名带 `(VDN)` 的 4 个加速变体，依赖 ComfyUI-VDN-H3 插件、8 步，见「VDN 加速」节）。
-3. 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 优先配方 `shared` 分辨率，缺省回退各段 skill config 默认）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值），见「运行时加速」节。跨段连续性参数（`continuity` / `context_frames`）仍是后端入参，但节点上已隐藏、暂不开放设置（见「输入」）。
-4. 执行后输出单个拼接好的 `VIDEO`（含音频），接 SaveVideo 等节点导出。
+
+- 节点选 `recipe`（导演配方）→ 逐段生成 → 拼接为单个含音频 `VIDEO`。
+- 节点内嵌只读时间轴：点分段块打开编辑器并定位到该段，右上角 ✎ 打开编辑器。
+- 悬停段块出现勾选框：只跑勾选的段（运行期临时状态，不写进配方）。
+- 生成中时间轴显示进度：当前段琥珀色、已完成绿色、待处理无条。
 
 ### BUNDLE 单段
-把 ⚡ Neo Prompt Agent 的 **BUNDLE** 输出连到 `bundle` 输入（纯连线槽，无文本框）：提示词 / 参考图（data URI）取自 bundle，视频 skill 与**时长（秒）**用节点上**隐藏的单段控件**（连上 BUNDLE 时自动显示 `skill_id` + `duration_sec`，同时隐藏 `recipe`），按单个片段生成、**忽略 `recipe`**。需在节点上选择一个有效视频 skill（含 workflow.json），否则报错；`seed`/`width`/`height` 仍可用节点入参覆盖（-1 = 随机 / 用 skill config 默认）。**`duration_sec`**（INT 秒，默认 5 = 内置 H3 skill config 的 `length` 折算秒）按 24fps 换算成 H3 帧数并向上对齐模型的 `17k+5` 网格（5 秒 → 124 帧、10 秒 → 243 帧），写入 `body["length"]`（模板 `{{LENGTH}}`）；前端新建节点时按所选 skill config 的 `length` 自动填秒数、bundle 模式里切换 skill 时重填；旧工作流里遗留的 -1/0（本功能早期默认）载入时自动改回 5 秒。配方多段模式下该控件隐藏、被忽略（各段自带 `duration_sec`）。参考图 data URI 原样透传，按 media 分图/视频/音频三组并各按上限裁剪（槽位语义见「模板占位符」节）。
+
+- 连入 `BUNDLE`（`NeoPromptAgent` 出队生成）→ 跑单段，`bundle_skill` 选视频技能。
+- `bundle_text` 非空时作为片段级提示词追加到技能提示词之后。
 
 ## NeoH3VideoDirector（多段导演）
 
-`NeoH3VideoDirector` 的多段模式：以 **video_director 配方**为参数，把多段 H3 视频按序逐段生成并拼接成单个含音频 `VIDEO`。每段复用共享的单段解析/执行链 `_run_segment_graph`（`resolve_video_params` + `render_template` + `execute_graph_inprocess`），参数来自配方。
+- 输入：`recipe`（必填）、`seed`、`MODEL`、`steps`、`BUNDLE`（可选）、`bundle_skill`、`bundle_text`。
+- 输出：`VIDEO`，接 SaveVideo。
+- 每段 `seed = 基础 seed + 段序号`，可复现且各段不同。
+- 段数上限 99；单段重生成见下文「单段生成与拼回成片」。
+- 采样期间节点内预览面板实时显示画面（自动循环 / 暂停 / 逐帧 / 逐步）。
 
-![🎞️ NeoH3VideoDirector 节点](assets/images/neo-h3-video-director.png)
+## 执行规则
 
-- **输入**：`recipe`（video_director 配方名，下拉自动列出；点击弹出居中可搜索选择窗，仅搜索、无管理入口）+ 可选覆盖 `seed`（-1 = 用配方 `shared.seed`）/ `width` / `height`（-1 = 优先配方 `shared` 分辨率，缺省回退各段 skill config 默认值）/ `model`（MODEL，外部加速模型）/ `steps`（INT，-1 = 用 preset/config 值）/ `preview`（BOOLEAN，默认开，见下）。**`continuity`（跨段连续性总开关，默认开）与 `context_frames`（跨段上下文窗口帧数，默认 22，0 = 关闭并退回 Tier A）仍是节点入参，但节点上已隐藏、暂不开放给用户设置**：新节点按后端默认值跑（连续性开、窗口 22 帧），旧工作流里已保存的值照旧生效（隐藏只影响显示，值仍随工作流保存、随 prompt 发给后端）。`model` / `steps` 与单段节点同款「运行时加速」语义、**逐段生效**：提供 `model` 时每段跳过内部主模型解析、剪掉该段纯模型链并注入外部模型（无需 VDN 插件）；`steps > 0` 覆盖每段采样步数。选中配方后节点会自动把 `width` / `height` / `steps` 填成默认值——`width` / `height` 优先配方 `shared` 分辨率、缺省回退**首段** skill config，`steps` 取**首段** skill config（仅当当前值为 -1 时，尊重已保存/手动设置）。BUNDLE 单段模式另有个 `duration_sec`（INT 秒，默认 5，跟随所选 skill config 的 `length`）控制单段时长：`recipe` 模式下隐藏、被忽略（多段的时长由各段自带的 `duration_sec` 决定），见「BUNDLE 单段」节。
-- **实时预览**：节点内时间轴左侧的「👁」开关（对应节点输入 `preview`，随工作流保存）控制采样期间的实时预览——**开**（默认）时每步沿潜空间时间轴均匀抽 8 帧，用 `models/vae_approx/taeh3.safetensors` 解成真彩 JPEG 序列（最长边 1024px，替代核心对 H3 只能给的 Latent2RGB 粗色预览），经插件自有 WS 事件 `rs.h3.preview` 推给节点底部的**动画面板**：按 4 fps 自动循环播放该步的动作（8 帧一圈 2 秒；想调快慢改后端 `h3_preview.PREVIEW_FPS`，前端跟载荷里的 `fps` 走），可暂停/继续（点画面同样切换）、`⏪/⏩` 逐帧（自动暂停）、`◀/▶` 回看之前的采样步（回看时不被新载荷拽走）。面板高度按载荷画面比例定：横向最低 300px，竖屏按节点宽度放大（上限 560px）；手动拉高节点时面板吃满多出来的高度，下方不留空白。运行结束停在最后一帧并暂停（面板保留、节点保持加高，便于逐帧回看），下一轮运行或换段时才清空复位（每段的采样步各自从第 1 步计数）。缺文件或加载失败时自动回退 Latent2RGB（走核心通道），不影响出片。**关**则本次生成完全不出预览。该开关是最终决定：开就一定有预览，关就一定没有，与 ComfyUI 全局预览设置无关。代价：每步多解码/编码 8 帧，实测约 +0.2s/步（GPU fp16、8 帧 1024px）。
-- **Skill 有效性状态条**：节点底部对当前选择的视频 skill（BUNDLE 单段）或配方各段的 `skill_id` 后台校验各自 `workflow.json`（对照 `/object_info` 与 `/models/*`），缺模型/缺节点时显示「⚠️ N 个模型缺失 · M 个节点未安装 → 查看详情/修复」（多段共用同一缺失项只计一次），点按钮打开首个有问题的 skill 详情弹窗修复，保存后即时重检；无缺失或技能无 `workflow.json` 时整条隐藏。
-- **逐段执行**：第 i 段用其 `skill_id` 解析模板与 config，提示词/时长/首帧取该段字段；`seed = base_seed + i`（base 优先节点覆盖、否则配方 `shared.seed`），保证可复现且各段不同。
-- **多帧单次分块**：把连续**兼容段**总时长 ≤ `shared.chunk_sec`（缺省 15；`0` = 关闭纯逐段）时合并成**一次** ref2va 运行。兼容段须选中**多帧单次技能**（frontmatter `multi_frame: true`：预设 `minimax_h3_multiframe` / `(VDN)`，及 r2v 的 `H3参考生视频` / `(VDN)`），且——`t2v`/`i2v`/`fl2v` 无自带参考素材；`r2v` 允许共享参考集，但**块内各段参考须完全一致（图/视频/音频的内容与顺序都相同）**，据此整块用同一组参考、`<Picture N>` 编号天然一致，参考不一致（或顺序不同）的相邻 r2v 段断开回退逐段。合并时渲染该技能 `workflow.json`，各段分镜关键帧钉在起点、`fl2v` 尾帧钉终点；多段提示词按 `[Shot N] At <时间戳> cut... <原文>` **机械拼接**（确定性、无 LLM）。未选多帧技能 / 超预算的段回退逐段；**自带首帧的段即使单独成块也走多帧路径**（多帧技能模板没有图片入口，首帧只能靠关键帧锚点注入——回退逐段会被模板静默丢掉），`0` 关闭合并时同样如此（不合并 ≠ 丢锚点）。编辑器「🎞️ 分镜时间线」页选中多帧技能后，被合并段显示 `⚡Ns` 徽标 + 紫色左边框预览（「分块秒数」控制预算，仅选中多帧技能时显示该字段）。
-- **生成模式**：配方可选 `shared.mode`（`f2v` / `r2v` / `mixed`，与 ComfyUI_MiniMaxH3_Director 的任务模式对齐；旧值 t2v/i2v/fl2v/v2v/rv2v 载入时静默重映射为 f2v/r2v）决定各段携带哪些帧与参考：具体模式全体统一，`mixed` 时逐段 `seg.mode` 生效；缺省（旧配方）按该段是否有尾帧/首帧/参考推断（尾帧→`fl2v`、首帧→`i2v`、仅有视频/音频参考→`r2v`、否则 `t2v`）。段级语义与编辑器显隐：
+- **逐段执行**：每段使用自己的技能模板与配置，提示词 / 时长 / 首帧取该段字段。
+- **多帧单次分块**：连续兼容段总时长 ≤ `shared.chunk_sec`（默认 15 秒，`0` = 关闭）时合并为一次运行。
+  - 兼容段须选中多帧单次技能（frontmatter `multi_frame: true`）。
+  - `t2v` / `i2v` / `fl2v` 段无自带参考素材；`r2v` 段允许共享参考集，块内各段参考须完全一致（内容与顺序都相同），否则断开回退逐段。
+  - 合并时各段分镜关键帧钉在起点、`fl2v` 尾帧钉终点；多段提示词按 `[Shot N] At <时间戳> cut... <原文>` 机械拼接，不调用 LLM。
+  - 自带首帧的段即使单独成块也走多帧路径（首帧只能靠关键帧锚点注入）。
+  - 编辑器「🎞️ 分镜时间线」选中多帧技能后，被合并段显示 `⚡Ns` 徽标 + 紫色左边框预览。
+- **生成模式**：`shared.mode`（`f2v` / `r2v` / `mixed`）决定各段携带哪些帧与参考；`mixed` 时逐段 `seg.mode` 生效。
+  旧配方无该字段时按该段内容推断（尾帧→`fl2v`、首帧→`i2v`、仅有视频/音频参考→`r2v`、否则 `t2v`）。
 
   | 模式 | 携带 | 编辑器显示 |
-  | --- | --- | --- |
-  | `f2v` 分镜生视频 | 行为由首/尾帧槽位决定：无帧=文生、仅首帧=图生（额外参考素材**不会生效**，保存时提示）、仅尾帧=L2VA、两者=首尾帧生视频 | 首帧区 + 尾帧区 |
-  | `r2v` 全参考生视频 | 参考图 ≤9 / 参考视频 ≤3（第一个即源视频，提示词自动加 `<Video 1>`）/ 参考音频 ≤3 | 参考素材区 |
+  |------|------|-----------|
+  | `f2v` 分镜生视频 | 由首/尾帧槽位决定：无帧=文生、仅首帧=图生、仅尾帧=L2VA、两者=首尾帧 | 首帧区 + 尾帧区 |
+  | `r2v` 全参考生视频 | 参考图 ≤9 / 参考视频 ≤3（第一个即源视频）/ 参考音频 ≤3 | 参考素材区 |
 
-  校验：`f2v` 的图生/首尾帧段需首帧（或可链入上段尾帧）、尾帧生成需尾帧；**保存前仅提示、不阻止**（可先存草稿再补），执行时仍给明确报错；r2v 段无参考素材时按文生视频执行。新增段、拆分、切换全局/段级模式后即时刷新各分区显隐。
-  - **参考素材（逐段设置）**：「🎞️ 分镜时间线」页各段的参考素材区在 `r2v` 和 `mixed` 模式下可见，从左侧 Neo Gallery 拖入或点击空区上传（只收本组类型：图片不能进参考视频 / 音频组，类型不符提示并忽略）；标题行「📋 同步到所有分段」可把当前段素材一键覆盖式复制到其余各段（仅 r2v 段执行时生效）。混合模式下用它铺角色身份图可保证各 r2v 段的 `<Picture N>` 编号一致；i2v/fl2v 段保存时若携带额外参考素材会收到提示。
-- **跨段上下文窗口（连续性的主路径）**：`continuity` 开时（默认），上段**交付帧**的尾部 `context_frames` 帧（默认 22；节点上已隐藏，暂不开放设置）作为下一段开头的**视频参考**注入，下一段先重生成这 22 帧、再在拼接时**丢掉头部 22 帧**——接缝不再有重复帧，新段带着上段的真实像素开场（与 H3-Continuum 的 context window 同思路）。窗口帧数就近对齐到模型要求的 `17k+5` 网格（22 / 39 正在网格上），目标总帧数 = 该段时长帧数 + 窗口帧数后再就近对齐（124+22=146 → 141，交付 119 帧），裁剪与音频丢弃同一帧数保 A/V 对齐。`t2v` 段也链入窗口（那是它唯一的连续性来源）。**接缝交叉淡化**：丢掉窗口帧前，先用本段重生成的那几帧与上段已入片的真实尾帧按 0→1 的权重融合 `SEAM_BLEND_FRAMES`（默认 6）帧替换回上段尾部——帧数/时长不变，硬切的瞬时跳变被摊成渐变（`_blend_seam`；两段分辨率不同或没有重合区时原样跳过）。**分镜首帧优先**：i2v/fl2v 段**自带首帧图**（宫格/逐段分镜格、或编辑器里为该段选的首帧）时，该段首帧锚点**用它**——文字编码器也拿到同一张图，提示词描述的与模型看到的首帧一致；上段尾部随之改走 `context_mode=reference`：作为**目标之前**的参考视频注入，不改时长、不丢帧、不做接缝淡化，段首就是该段分镜图，段间为硬切。只有**没自带首帧图**的段才由窗口 / 上段尾帧链入接手。
-- **身份参考（第一来源：配方角色参考图）**：`video_director` 配方里 `story.characters`（「📖 故事板分镜」页 band 0 的 **👤 角色参考图**卡片，配方级常驻、不随分镜来源 / 生图模式隐藏；上限 4 张）在 `load_director_spec` 里解析成 `identity_images`，`continuity` 开时注入**每一个**段（含第 1 段）——i2v/fl2v/t2v 段（模板没有多路参考槽位）直接注入参考图片块，不占用该段的首帧槽位。这是分镜关键帧不含面部（背影 / 局部特写）时唯一的身份锚点。**开关**：同页 band 0 的**角色身份参考**复选框默认开；取消勾选后保存即写 `shared.identity_refs=false`，该配方不再解析/注入身份参考（旧配方无该键 = 开），便于与旧行为做对比测试。**身份继承**：配方里**第一个带参考素材的段**的参考图（上限 4 张）作为身份参考的补充来源领养到之后所有段——r2v 段转成自己的参考图进 conditioning，其余段走同一注入路径。本段已经送出的图不重复注入；`continuity` 关时不注入。单段重生成（♻）走同一条通路，与整条配方一致。
-- **宫格分镜图拆分**：「📖 故事板分镜」页 band 1 的「🧩 宫格图故事板」来源卡（与「📝 文字故事板」**二选一**，`story.frame_source` = `grid` 随配方落盘回显；新配方默认宫格图，已有文字拆分段时回落「逐段生成图片分镜」）。在图片输入区选一张带分隔条/留白的分镜宫格图（在外部生成；点击本地上传，或从左侧素材库 / 本地文件拖入），`POST /rs_recipes/grid_split` 用 `grid_split.py` 做均匀间隙检测并剔除无意义细条（整幅标题栏 / 底部文字行 / 边缘窄条，或手动指定行×列，1~12；检不出时回退整幅一格或等分），按行优先顺序把各格裁到 `input/`（格子不带分隔条）；拆分时同时从**原宫格图内嵌的 ComfyUI 元信息**（PNG 里的 API 格式 `prompt`）提取该图「包含的提示词」，作为卡片「全局故事参考（默认为原宫格提示词）」的默认值（可手动改写；常显于源图右侧、拆分提取后自动就地显示，可一键复制；文本输入键随工作流不同——`prompt` / `text` 等，负向节点按 negative 连线剔除；提不到就留空提示。各格缩略图不再重复列，各段分镜图已在下方「各段对照」逐格显示）。拆分即**替换现有分段**（旧段有内容时先确认）并把来源切到 `grid`：每格成为该段的**首帧与分镜图**（i2v），对照表「分镜图」列逐格显示；共享分辨率的宽高比随面板比例自动设定（各格同比例，避免忘记改而拉伸）。宫格方式下各段无原文，点「✨ 生成所有分段的提示词」由前端**按格子自动循环**调用单格端点 `/rs_recipes/director_describe_panel`（`director_panel_describe` 任务，一次只喂一张分镜图作该段首帧 + 时长，并附本格序号/总段数/九宫格行列、全局故事参考（默认原宫格提示词）与上一段已生成提示词作全片故事与承接上下文；上下文字段缺省时静默降级为仅图+时长），每格单独生成一条可直接提交的 **MiniMax H3 i2v 成品提示词**写回对应段；逐格反馈「第 i/N 段」进度、单格失败不中断其余。面板随 `first_frame` / `storyboard` 在保存时落进配方 `assets/`，重开回显。
-- **独立节点 `NeoGridSplit`（宫格图拆分）**：同一套切分逻辑也做成工作流节点——input/ 选一张带分隔条/留白的宫格图（素材栏图片卡可直接拖到节点上，自动复制到 input/ 并写入 filename 输入）→ 行优先把各格拼成一个 `IMAGE` 批次 `[N,H,W,C]`（统一到最大宽高，trim 清四边白/黑框与底部字幕条）+ 原图内嵌提示词 `prompt`；可选手动指定行×列（auto = 自动检测）。
-- **注入实现（`NeoH3AddContext`）**：注入节点串在 H3 conditioning 节点与采样器之间（采样器的 `model` / `positive` / `negative` 改由注入链提供），每加一条参考 append 一次 `minimax_refs`：先身份图、后窗口。窗口帧用虚拟 `LoadImage` + mini-executor override 直接喂张量（不写临时文件），身份图用 input 目录里的真实 `LoadImage`。**i2v/fl2v 段的首帧锚点：本段自带首帧图时用它，否则取窗口的第 0 帧**（与窗口行同内容），没有窗口时才是上段尾帧；该段自己挂的素材仍照常写进 `references`（i2v/fl2v 模板只有首帧槽位，额外素材不生效）。`context_mode` 原样透传给注入节点：`window`（默认）= 目标开头重生成、调用方丢头帧；`reference`（自带分镜首帧的段）= 目标之前的参考视频、不搬时间轴也不丢帧。窗口的 `latent_t` 与帧数在节点里校验（对不上说明 vae 不是 H3 视频 VAE，直接报错）。
-- **Tier A 回退（`context_frames=0`，节点上已隐藏，仅当旧工作流里存了该值时才可达）**：**没自带首帧图的** i2v/fl2v 段用上段尾帧当首帧（data-URI 走单段同款参考路径），并丢该段第一帧避免边界重复；`t2v` 段不链入、不丢帧。r2v 段在 Tier A 下不再注入任何连续性锚点（旧的首帧 keyframe 锚点已由窗口取代），要 r2v 连续性请把 `context_frames` 设为 ≥5。
-- **锚点与窗口的时间轴对齐**：core 的 `PackedLayout` 让 refs 先占目标之前的时间轴，keyframe 锚点从目标时间轴原点起算，因此锚点行**不需要动**（早期版本会再平移一个「refs 推进量」，现 core 已改正，插件不再平移——否则锚点会被推到目标第 22 帧左右）。窗口行则整段错开一个窗口，连续性 wrapper（`WrappersMP.APPLY_MODEL`，key `neo_h3_continuity.apply_model.v1`，同 key 先清再挂）在模型调用前一次性修正：keyframes 与 refs 并存时把两者合回一条 `cond_video_latents`（core 只留 refs），并把窗口行拷到目标视频开头的行上（保持 `position_ids` 张量本体，Sol-Attn 的 span 注册认它）；reference 模式的窗口行不带上下文标记，保持在目标之前的参考位。不改 core、不与其它插件的 `extra_conds` 补丁抢所有权。手动搭图时把 `NeoH3AddContext`（或做单帧锚点的 `NeoH3AddKeyframe`）串在 `MiniMaxH3*ToVideo` 与采样器之间即可；`tools/check_h3_context_layout.py` 用真机 core 的 `PackedLayout` 复核这套对齐。
-- **音频对齐**：各段 `AudioInput`（`{waveform:[B,C,T], sample_rate}`）按序拼接，每个接缝丢弃被丢帧对应的采样数（`round(sample_rate/fps)`），使总音频长度恰好等于拼接后帧数对应的时长（A/V 对齐）。
-- **输出**：`InputImpl.VideoFromComponents(VideoComponents(images, audio, frame_rate=24))`，单个 `VIDEO` 接 SaveVideo。
-- **单段生成 / 重生成（♻，`POST /neo_video_gen/run_segment`，后端 `h3_segment.py`）**：在导演编辑器里对某一段点 **♻**（段标题行右侧）→ 选种子（🎲 换种子 / 沿用节点种子）与锚点（两端 / 只钉首帧 / 不用）→ 后端按**段帧区间复算**（`film_layout`，成片带 `layout` 时按它、否则按配方复算并校验总数）从成片取前后**真实帧**：首锚点 = 上一段最后一帧（首段用本段自己的首帧），尾锚点 = 下一段第一帧，落成 `input/NeoAgent/<成片名>_s<N>_{first,last}_<时间戳>.png`（名字带成片名，一眼能看出帧取自哪个结果）；**分辨率沿用被重做的那张成片**（锚点帧就是它的帧，同尺寸才能无缝拼回；若配方的共享分辨率与该成片不同会明确提示「按成片尺寸 W×H 生成（配方共享分辨率是 W2×H2）」）；该段被改写成 **fl2v**（只有首锚点则 i2v，不用锚点则保持原模式）并使用新种子**只跑这一段**——技能默认沿用本段技能（模板缺 `{{REF_IMAGE_LAST}}` 时回退到第一个支持首尾帧的视频技能），身份参考图按原运行规则补进参考槽位，steps 仍按各段 skill config。产物写 `output/neo_director_regen/<配方>_s<N>_<时间戳>.mp4` 并记进配方 `results`（带段号与种子，面板里可播/可删），**不改动原成片**（「重生成 + 重拼整片」属后续计划）。**锚点来源（多个结果时）**：配方 `results` 里有多个成片时，面板给出「锚点来源」下拉（默认「自动：最新的成片」，其余结果可切换），面板提示写明当前会基于哪个文件取帧；提交后任务快照回传实际使用的 `film`，完成提示里也写明「锚点自 xxx.mp4」；指定的文件不在该配方结果里时明确报错而不是悄悄换一个。帧数不一致（段时长/宽高/步数改过，或 `continuity`/`context_frames` 与生成时不同）时报错并点名是哪个成片；**配方还没有成片**（没跑过整条配方）时锚点自动降级为「不用锚点」，可直接按该段自身模式单段直出——这一条同时就是**单段调试**路径：画布上放一个 `Neo H3 Segment Run` 节点（选配方 + 段号 + 锚点 + 种子，`film` 留空即用最新成片）跑一次即可，产物默认也记进配方 `results`（`record` 关掉则只出 `VIDEO`，自己接 SaveVideo）。<br>**执行方式：交给 ComfyUI 执行器**。`run_segment` 只做校验与组装，生成跑在队列里的 `NeoH3SegmentRun` 节点上，于是**显存**（模型装载/卸载、OOM 前的腾挪，含画布上驻留副本）、**进度条**、**取消**（`interrupt`，前端面板的「取消任务」调 `…/cancel`）全部由执行器负责，前端只按 1s 轮询 `/neo_video_gen/run_segment/{task_id}` 显示 `排队中…/生成中… x%`；采样期间的实时预览仍走插件自己的 taeh3 通道（`rs.h3.preview`），提交时带 `node_id` 就把画面推到该编号节点（点 ♻ 的那次即导演节点）的预览面板——不再需要自加载权重前先 `unload_all_models()` 或自开 `torch.inference_mode()`（执行器已包住整次 prompt 执行）。
-- **拼回成片（单段生成的后续步骤，后端 `h3_assemble.py`）**：♻ 面板里生成/重生成某一段后（或该段已有片段时）出现 **「拼回成片」**——把**这一段**换成新片段、**其余段沿用原成片**拼成新的完整成片：没换的段直接取原成片对应帧与音频（解码 → 拼接 → 再编码，内容不变），各接缝硬切（不做交叉淡化），音频按各段帧数裁齐后拼接保 A/V 对齐（有片段缺音频轨则输出无声成片并提示）；各段分辨率不一致、片段/成片取到的帧数与段边界不符都会明确报错而不是硬拼。所以**只重做一段也只需要生成这一段**，不用把后面所有段都重生成。产物写 `output/neo_director_merge/<配方>_merged_<时间戳>.mp4`，记进 `results` 时带 **`layout`**（逐段真实帧数）→ 它成为**最新的成片**，后续重生成默认基于它取锚点（段边界按 `layout`，所以能连续重做多段）。拼接不用模型、不占执行队列（后台线程 + 任务快照），进度按帧数上报、取消在当前来源处理完生效；**原成片与各段片段都不改动**。
-- **交互**：节点内嵌只读时间轴（`web/director-timeline.js` 复用）显示各段块；**点击某块**直接打开该配方的导演编辑器并**定位到该段**（窗口已打开时再点别的块只切换当前段、不重建窗口），右上角 **✎** 打开编辑器（不带段索引，保持当前段）。工作流还原后时间轴按还原出的 `recipe` 值自动重拉更新（LiteGraph configure 直写 widget 值、不触发下拉回调，onConfigure 里补一次拉取），分段块始终与选中的配方对应。**任意入口**（节点「＋/✎」或侧栏新建/编辑）保存导演配方后广播 `neo-director-recipe-saved`，所有 Director 节点的 `recipe` 下拉即时刷新候选并重载时间轴：新建配方自动选中，当前值失效（如重命名）时回落到第一个有效项。
-- **参考素材区（r2v）**：编辑器内每段「参考素材」是**已用素材列表**（非候选池）——只显示当前挂上的图/视频/音频；从左侧素材库**拖入**或点「本地」上传即**直接插入**。瓷砖按画面比例自适应宽度、紧密平铺不留空白（与时间轴一致），不显示文件名、✕ 于 hover 时显示，可**鼠标拖放调整顺序**，数量受上限约束（图 ≤9 / 视频 ≤3 / 音频 ≤3，达上限提示并拒绝）。**列表顺序即参考槽位编号**（对应模板 `{{REF_IMAGE_1..n}}` 与提示词 `<Picture i>` / `<Video k>` / `<Audio j>`），保存按此顺序写入段 `refs`。时间轴块内把参考图**逐张横排平铺满块高**（能放几张放几张、顺序即槽位编号，画在首帧同区域之上），视频/音频无缩略图、右上角以数量徽标显示，增删改即时刷新。
-- **运行时进度**：正在生成的段顶部为琥珀色条、已完成段为绿色条、待处理段无条（条画在**块顶部**：块底紧邻横向滚动条，画底部会被滚动条盖住）；段切换时时间轴**自动把当前段横向滚动到可视区**（段数多/放大过、内容宽于可视区时才滚动；已整体可见则不动）。前端每 500ms 轮询 `/neo_video_gen/director_progress`（返回 `{active, segment_index, total_segments}`），后端在 `generate()` 逐段推进时更新该状态，并在结束/异常时复位为 inactive。
-- **参考范围**：每段可挂首帧、尾帧（各一张）与参考图（≤9）/ 参考视频（≤3）/ 参考音频（≤3），后三者写入段 `refs.images/videos/audios`。执行时首帧（或 continuity 链入的上段尾帧）作为第一个图像参考，尾帧单独走 `body["last_frame"]`，其余参考按 `media` 分流交给技能模板。首尾帧技能据此填 `first_frame`/`last_frame`（只给一边即退化为 I2VA/L2VA），参考生视频技能据此填 `ref_images`/`ref_videos`/`ref_audios`；文生段不带任何参考。
+  校验：图生 / 首尾帧段需首帧（或可链入上段尾帧）、尾帧生成需尾帧；保存前仅提示不阻止，执行时报错。
+- **跨段连续性**：`continuity` 开时（默认），上段交付帧尾部 `context_frames` 帧（默认 22）作为下段开头的视频参考注入，
+  下段先重生成这些帧、拼接时丢掉头部同数帧，接缝不再有重复帧。
+  - 窗口帧数就近对齐模型要求的 `17k+5` 网格；目标总帧数 = 该段时长帧数 + 窗口帧数后再就近对齐。
+  - 接缝交叉淡化：丢窗口帧前，先用本段重生成的帧与上段已入片的尾帧按 0→1 权重融合 6 帧，硬切摊成渐变。
+  - 分镜首帧优先：段自带首帧图时该段锚点用它；上段尾部改走「目标之前」的参考视频，不改时长、不丢帧、不做淡化，段间硬切。
+- **身份参考**：配方「👤 角色参考图」（≤4 张）注入每一段（含第 1 段），是分镜关键帧不含面部时唯一的身份锚点。
+  - 「角色身份参考」复选框默认开；取消后保存写 `shared.identity_refs=false`，该配方不再注入。
+  - 身份继承：第一个带参考素材的段的参考图（≤4）作为补充来源领养到之后所有段；本段已送出的图不重复注入。
+- **参考素材上限**：每段首帧、尾帧各一张，参考图 ≤9 / 参考视频 ≤3 / 参考音频 ≤3；素材列表顺序即参考槽位编号。
+- **音频对齐**：各段音频按序拼接，每个接缝丢弃被丢帧对应的采样数，总音频长度等于拼接后帧数对应的时长。
+
+## 单段生成与拼回成片
+
+- **单段重生成（♻）**：导演编辑器段标题行右侧点 ♻ → 选种子（🎲 换种子 / 沿用节点种子）与锚点（两端 / 只钉首帧 / 不用）。
+  - 后端按段帧区间从成片取前后真实帧：首锚点 = 上一段最后一帧（首段用本段首帧），尾锚点 = 下一段第一帧。
+  - 该段被改写成 `fl2v`（只有首锚点则 `i2v`，不用锚点则保持原模式），使用新种子只跑这一段。
+  - 分辨率沿用被重做的那张成片；配方共享分辨率与成片不同时会明确提示。
+  - 产物写 `output/neo_director_regen/<配方>_s<段号>_<时间戳>.mp4` 并记进配方 `results`，不改动原成片。
+- **锚点来源**：配方有多个成片时面板给出「锚点来源」下拉（默认最新成片）；指定文件不在该配方结果里会明确报错。
+  帧数与段边界不符时报错并点名是哪个成片；配方还没有成片时锚点自动降级为「不用锚点」，即单段调试路径。
+- **单段调试节点 `NeoH3SegmentRun`**：选配方 + 段号 + 锚点 + 种子，`film` 留空即用最新成片；
+  `record` 关掉则只出 `VIDEO`，自己接 SaveVideo。
+- **执行方式**：生成跑在 ComfyUI 执行队列的节点上，显存、进度、取消由执行器负责；
+  前端按 1s 轮询任务状态显示「排队中… / 生成中… x%」，采样预览走插件自己的预览通道。
+- **拼回成片**：把这一段换成新片段、其余段沿用原成片拼成新的完整成片。
+  - 未替换的段直接取原成片对应帧与音频，接缝硬切，音频按各段帧数裁齐保 A/V 对齐。
+  - 各段分辨率不一致、帧数与段边界不符都会明确报错而不是硬拼。
+  - 产物写 `output/neo_director_merge/<配方>_merged_<时间戳>.mp4`，记进 `results` 时带逐段真实帧数，
+    后续重生成默认基于它取锚点，可连续重做多段。原成片与各段片段都不改动。
+  - 拼接不调用模型、不占执行队列，进度按帧数上报。
+
+## 宫格分镜拆分
+
+- **节点 `NeoGridSplit`**：选一张带分隔条/留白的分镜宫格图，自动检测行列切分，按行优先输出各格 `IMAGE` 批次 + 原图内嵌提示词。
+  可选手动指定行×列；检测失败时回退整幅一格或等分。宫格图在外部生成，素材栏图片卡可直接拖到节点上。
+- **编辑器入口**：「📖 故事板分镜」页「🧩 宫格图故事板」卡片，见 [recipes.md](recipes.md)。
+  拆分即替换现有分段，每格成为该段首帧与分镜图（`i2v`），共享宽高比随面板比例自动设定。
+
+## 时间轴与交互
+
+- 节点内嵌只读时间轴复用编辑器同款组件；点击段块打开编辑器并定位到该段（窗口已打开时只切换当前段）。
+- 右上角 ✎ 打开编辑器（保持当前段）。工作流还原后时间轴按还原出的配方自动重拉。
+- 任意入口保存导演配方后广播更新，所有 Director 节点的 `recipe` 下拉即时刷新候选并重载时间轴。
+- 段块内把参考图逐张横排平铺满块高（顺序即槽位编号）；视频 / 音频以数量徽标显示。
+- 当前段在段数多或放大时自动横向滚动到可视区。
 
 ## 模板与配置
-- 每个视频 skill 目录含：`skill.md`（frontmatter 带 `gen_video: true`）、`workflow.json`（H3 采样链模板）、`config.json`（尺寸/时长/步数默认值）。
-- 模型解析优先级：**skill `config.json` 的 `model` / `text_encoder` / `vae` → 「出图设置」页面的『生视频模型』区（全局 `video_model` / `video_text_encoder` / `video_vae`）→ 仍缺则报错**。音频 VAE 单独解析：skill `config.json` 的 `audio_vae` → 「生视频模型」设置的 `video_audio_vae`（VAE(音频) 下拉）→ 按文件名线索（同时含 `h3` 与 `audio`）自动挑选，找不到才报错。内置 preset 不写死模型名：请在「自动增强 → 出图设置」的生视频模型区选本地实际安装的 H3 模型；音频 VAE 一般无需手填（自动挑 `minimax_h3_audio_vae_fp32.safetensors` 之类）。`config.json` 的 `width` / `height` / `length`(帧) 为默认值（`duration`=-1 时按此帧数），可被节点入参覆盖。
-- **每技能覆盖（同生图）**：在技能详情弹窗里，视频技能（`gen_video: true`）显示「🎬 生视频设置」区，可对该 skill 单独设 生视频模型 / 步数 / Text Encoder / VAE(视频) / VAE(音频)，写入其 `config.json`（键 `model`/`steps`/`text_encoder`/`vae`/`audio_vae`），优先于全局「生视频模型」设置；留空则回落全局。**预设技能设置也可编辑**：改动存到本地覆盖文件 `configs/skill_overrides/<id>.json`（预设 `config.json` 保持不变，运行期合并为有效 config），设置区头部「↺ 恢复默认」一键清除覆盖回到预设值；「⧉ Copy as custom」复制后可编辑（复制保留 `gen_video` 与 `category: video_gen`，且带出合并后的有效 config）。
-- **LoRA（同生图）**：在「🎬 生视频设置」区可对该 skill 添加多个 LoRA（模型 + 强度），写入其 `config.json` 的 `loras`；生成时经 `image_gen._resolve_loras` 校验后由 `render_template` 动态串入主链——模板无 LoRA 槽位时在 `UNETLoader → MiniMaxH3SigmaShift` 之间插入 `LoraLoaderModelOnly`。视频无参考图依赖概念，配置的 LoRA 全部无条件加载（LoRA 行不设生图区那样的「依赖参考图」复选框；该标记由文件名自动判定，与视频无关）；LoRA 下拉由 `/neo_video_gen/models` 的 `loras` 提供。
-- 模板链：`UNETLoader + CLIPLoader(type=minimax) + VAELoader(视频) + VAELoader(音频) → MiniMaxH3ImageToVideo → [cond, AV latent] → MiniMaxH3SigmaShift + KSampler(cfg=1.0) → LTXVSeparateAVLatent → {VAEDecode(视频 VAE)→帧, VAEDecodeAudio(音频 VAE)→音频} → CreateVideo(fps=24) → VIDEO`。**H3 音频是独立 VAE（MiniMaxH3AudioVAE），`VAEDecodeAudio` 必须接单独的音频 `VAELoader`，不能复用视频 VAE**（否则视频 VAE 按 5D 解码 4D 音频 latent 会报 `IndexError`）。i2v 额外 `LoadImage({{REF_IMAGE}}) → first_frame`；r2v 用 `MiniMaxH3ReferenceToVideo`（取代 ImageToVideo）并接下面三组参考槽位。
-- 占位符：`{{PROMPT}} {{MODEL}} {{TEXT_ENCODER}} {{VAE}} {{AUDIO_VAE}} {{WIDTH}} {{HEIGHT}} {{LENGTH}} {{SEED}} {{STEPS}}`；单帧：`{{REF_IMAGE}}`（首帧）、`{{REF_IMAGE_LAST}}`（尾帧，fl2v 用）。**单帧占位符未挂时，所在 `LoadImage` 节点连同连线一并裁掉**——首尾帧模板因此可只给一边（仅首帧=I2VA、仅尾帧=L2VA），都不给则报「该技能需要参考图」。
-- **多路参考槽位（r2v）**：`{{REF_IMAGE_1..9}}` / `{{REF_VIDEO_1..3}}` / `{{REF_AUDIO_1..3}}`，序号按类型各自 1 基编号，与官方 `MiniMaxH3ReferenceToVideo` 的 autogrow 槽位一致：
 
-  | 类型 | 上限 | 模板占位符 | 加载链 |
-  | --- | --- | --- | --- |
-  | 参考图 | 9 | `{{REF_IMAGE_1..9}}` | `LoadImage → ref_images.ref_image_0..8` |
-  | 参考视频 | 3 | `{{REF_VIDEO_1..3}}` | `LoadVideo → GetVideoComponents → ref_videos.ref_video_0..2` |
-  | 参考音频 | 3 | `{{REF_AUDIO_1..3}}` | `LoadAudio → ref_audios.ref_audio_0..2` |
+每个视频技能目录包含：
 
-  参考以 `references` 列表传入，每项可用 `media` 标类型（`image` 缺省 / `video` / `audio`）；`resolve_video_params` 按类型分流并各自按上限截断，`render_template` 把**未挂的槽位连同加载节点一并裁掉**（模板可同时声明全部上限槽位，只挂 1 张图也能跑）。mini-executor 会把 `ref_images.ref_image_0` 这类点号输入收成嵌套 dict（与 ComfyUI 主循环的 `build_nested_inputs` 一致）后再调节点。提示词用 `<Picture i>` / `<Video k>` / `<Audio j>` 指代对应序号的参考（写法见 `minimax_h3_full_ref` 技能正文）。
-- **从画布导出（📋 From Canvas）**：技能下拉底部「📋 From Canvas」把当前画布 API prompt 导出为技能。检测到 H3 视频工作流（含 `MiniMaxH3*ToVideo` 入口，或 `CreateVideo`+`VAEDecodeAudio`）时自动存为 `gen_video: true` / `category: video_gen` 的视频 skill，并按上表占位符模板化（模型/编码器/视频 VAE/音频 VAE/prompt/尺寸/时长/seed/主链 LoRA；I2V 的 `LoadImage` → `{{REF_IMAGE}}`、首帧连线保留），否则仍存为出图 skill。只弹一个标题对话框输入名称（不再问描述/标签），成功/失败用 toast 提示。导出的模板会保留画布上的 `SaveVideo`/`ResolutionSelector`/数学表达式等旁支节点，改用内置 preset 风格（`{{WIDTH}}`/`{{HEIGHT}}`/`{{LENGTH}}`/`{{SEED}}`/`{{STEPS}}`）才能让节点入参与逐段 seed 真正生效。
+- `skill.md`：frontmatter 带 `gen_video: true`，正文为提示词模板
+- `workflow.json`：H3 采样链模板
+- `config.json`：模型 / 尺寸 / 时长 / 步数默认值
+
+模型解析优先级：技能 `config.json` → 全局「生视频模型」设置 → 按名称线索自动挑选 → 报错。
+音频 VAE 单独解析，必须与视频 VAE 分开。`width` / `height` / `length` 为默认值，可被节点入参覆盖。
+
+模板变量：
+
+| 变量 | 含义 |
+|------|------|
+| `{{MODEL}}` | 扩散模型 |
+| `{{TEXT_ENCODER}}` | 文本编码器 |
+| `{{VAE}}` | 视频 VAE |
+| `{{AUDIO_VAE}}` | 音频 VAE（必须独立于视频 VAE） |
+| `{{WIDTH}}` / `{{HEIGHT}}` | 输出宽高 |
+| `{{LENGTH}}` | 输出帧数 |
+| `{{SEED}}` / `{{STEPS}}` | 种子 / 采样步数 |
+| `{{PROMPT}}` / `{{NEGATIVE}}` | 正向 / 负向提示词 |
+| `{{REF_IMAGE}}` | 首帧图像 |
+| `{{REF_IMAGE_LAST}}` | 尾帧图像 |
+| `{{REF_IMAGE_1}}`…`{{REF_IMAGE_9}}` | 参考图 |
+| `{{REF_VIDEO_1}}`…`{{REF_VIDEO_3}}` | 参考视频 |
+| `{{REF_AUDIO_1}}`…`{{REF_AUDIO_3}}` | 参考音频 |
+| `{{LORA_1_NAME}}`…`{{LORA_5_STRENGTH}}` | LoRA 槽位 |
+
+- 未挂上的参考占位符连同其加载节点一并裁掉，模板可声明全部上限槽位。
+- 首尾帧模板只给一边时退化为 I2VA / L2VA；都不给则报「该技能需要参考图」。
+- 提示词用 `<Picture i>` / `<Video k>` / `<Audio j>` 指代对应序号的参考。
+
+运行时注入（模板无对应槽位时）：
+
+| 注入 | 用途 | 注入节点 |
+|------|------|---------|
+| 上下文窗口 | 跨段连续性 + 身份参考图 | `NeoH3AddContext` |
+| 多帧关键帧 | 多帧单次技能各段关键帧 | `NeoH3AddGuides` |
+| 单帧锚点 | 首 / 尾帧锚点（手动搭图与旧工作流） | `NeoH3AddKeyframe` |
+| LoRA | 配置的全部 LoRA | `LoraLoaderModelOnly` |
+
+- 注入节点串在 H3 conditioning 节点与采样器之间，采样器的 `model` / `positive` / `negative` 由注入链提供。
+- 注入不改动输出帧数与帧率；只作用于本次执行，不改 core、不抢其它插件的补丁所有权。
+- 手动搭图时把 `NeoH3AddContext`（或单帧锚点 `NeoH3AddKeyframe`）串在 `MiniMaxH3*ToVideo` 与采样器之间。
+
+## 每技能设置与从画布导出
+
+- 技能详情弹窗「🎬 生视频设置」区可单独设生视频模型 / 步数 / Text Encoder / VAE(视频) / VAE(音频) / LoRA。
+- 预设技能的改动存到本地覆盖文件，预设文件保持不变；「↺ 恢复默认」一键清除覆盖。
+- 「⧉ Copy as custom」复制为可编辑的自定义技能，保留 `gen_video` 与 `category: video_gen`。
+- 技能下拉「📋 From Canvas」把当前画布 API prompt 导出为技能；检测到 H3 视频工作流时自动存为视频技能并按占位符模板化。
 
 ## VDN 加速（可选插件 ComfyUI-VDN-H3）
-内置 5 个 VDN 变体 preset：`H3 文生视频 (VDN)` / `H3 图生视频 (VDN)` / `首尾帧生视频 (VDN)` / `H3参考生视频 (VDN)` / `H3 连续多段合成 (VDN)`（id `minimax_h3_vdn_t2v` / `_i2v` / `_fl2v` / `minimax-h3-vdn-r2v` / `minimax_h3_vdn_multiframe`）。它们与对应非 VDN preset **完全同构**，只在 `UNETLoader → MiniMaxH3SigmaShift` 之间多插一个 `ApplyVDNH3Advanced` 节点（来自可选插件 **ComfyUI-VDN-H3**），并把 `config.json` 的 `steps` 设为 **8**（对齐 8 步 DMD 蒸馏 checkpoint）。
-- **参数默认值**（按发布模型原样，模板里写死）：`vdn_checkpoint: stage-dmd-step-250`、`apply_turbo_adapter: true`、`stage_b_strength/turbo_strength: 1.0`、`lora_mode: merge`、`branch_weights: auto`、`retain_buffers: auto`、`attention_backend: grouped`、`window_radius: 1` / `window_chunk: 5` / `anchor_frames: both`、`text_state/linear_branch: true`、`fast_kernels: false`。
-- **依赖插件**：VDN preset 需要安装 `ComfyUI-VDN-H3`（提供 `ApplyVDNH3Advanced`）并把 8 步 stage 放到 `models/vdn/stage-dmd-step-250/`。**未安装该插件时**，执行会在渲染后、采样前抛出明确报错「需要 VDN 加速插件 ComfyUI-VDN-H3（节点 ApplyVDNH3Advanced 未注册）」，提示安装并重启、或改用非 VDN 的 H3 skill——而不是通用的「未知节点」错误。
-- 模型/编码器/视频 VAE/音频 VAE 解析与非 VDN preset 一致（见上）；`vdn_checkpoint` 目前写死为 `stage-dmd-step-250`，需要其它 stage 时请「⧉ Copy as custom」后改模板里的 `vdn_checkpoint`。
 
-## 运行时加速：外部 `MODEL` / `steps`（可选）
-`NeoImageGenEdit` 与 `NeoH3VideoDirector`（视频，**逐段/单段**应用下述规则）都支持外部 `MODEL` 输入，用于不改 skill 模板就临时换模型：
-- **`model`（MODEL，连线槽）**：提供时把外部加速模型注入到最终消费扩散模型的位置——视频为 `MiniMaxH3SigmaShift.model` 的来源、生图为 `KSampler`/`KSamplerAdvanced.model` 的来源。节点**只沿 `model` 输入边向上剪掉纯模型链**（UNETLoader / LoRA / VDN 等只出 MODEL 的节点），保留文本编码器 / 视频 VAE / 音频 VAE / 采样器等共享节点，并把注入点输出直接替换为外部模型（mini-executor 跳过该节点执行）。
-- **`steps`（INT，默认 -1，仅视频节点）**：`-1` = 用 preset/config 值；`>0` = 覆盖渲染后的 `{{STEPS}}`。
+- 内置 5 个 VDN 变体 preset：文生 / 图生 / 首尾帧 / 参考生 / 连续多段合成（`(VDN)` 后缀）。
+- 与非 VDN preset 同构，只在 `UNETLoader → MiniMaxH3SigmaShift` 之间多插一个 `ApplyVDNH3Advanced`，
+  并把 `steps` 设为 8（对齐 8 步 DMD 蒸馏 checkpoint）。
+- 需要安装 ComfyUI-VDN-H3 并把 8 步 stage 放到 `models/vdn/stage-dmd-step-250/`。
+- 未安装该插件时执行会在采样前明确报错「需要 VDN 加速插件 ComfyUI-VDN-H3」，提示安装并重启或改用非 VDN 技能；
+  技能下拉同时显示「（不可用）」，新建配方的默认技能会跳过不可用技能。
+- 需要其它 stage 时「⧉ Copy as custom」后改模板里的 `vdn_checkpoint`。
 
-典型用法：把 ComfyUI-VDN-H3 的 `ApplyVDNH3Advanced`（或量化/蒸馏后的模型）输出连到本节点 `model`，即可**不依赖 VDN preset、甚至无需安装该插件**跑加速——因为内部 UNETLoader 与 VDN 节点都被剪掉、注入点被外部模型覆盖，此时不再触发「需要 ComfyUI-VDN-H3」的校验（该校验只在未提供 `model` 时执行）。
+## 运行时加速：外部 `MODEL` / `steps`
+
+- `NeoImageGenEdit` 与 `NeoH3VideoDirector` 支持外部 `MODEL` 输入，不改技能模板即可临时换模型（视频逐段 / 单段生效）。
+- 提供 `MODEL` 时只沿 `model` 输入边剪掉纯模型链（UNETLoader / LoRA / VDN 节点），
+  保留文本编码器 / 视频 VAE / 音频 VAE / 采样器等共享节点，并把注入点输出替换为外部模型。
+- `steps`（默认 `-1`）：`-1` = 用技能配置值；`>0` = 覆盖渲染后的 `{{STEPS}}`。
+- 典型用法：把 `ApplyVDNH3Advanced` 或量化 / 蒸馏后的模型输出连到 `model`，即可不依赖 VDN preset 跑加速。
+
+## 实时预览
+
+- 采样期间每步沿潜空间时间轴均匀抽 8 帧解成真彩图，缩到最长边 1024 后推给发起本次执行的客户端。
+- 载荷带节点编号，前端路由到对应节点内的动画面板。
+- 缺 taeh3 权重或解码失败时回退核心默认预览，不影响出片。
 
 ## 说明
+
 - 末端 `CreateVideo` 把视频帧 + 音频打包成原生 `VIDEO`（fps=24），不直接落盘；接 SaveVideo 即可导出带声音的视频。
-- 采样步数 `steps` 由 skill `config.json` 的 `steps` 配置（模板占位符 `{{STEPS}}`），缺省默认 **20**——在技能详情「🎬 生视频设置」区的「步数」输入框填写；cfg/sampler/scheduler 仍写在各 skill 的 `workflow.json` 中，按需调整。
-- 「出图设置 → 生视频模型」区的模型下拉由 `/neo_video_gen/models` 提供：H3 相关（文件名含 `h3`）排前面、其余按名称排序（与生图的 krea2-first 独立），方便快速定位 H3 模型。
+- 采样步数由技能 `config.json` 的 `steps` 决定，缺省 20；cfg / sampler / scheduler 写在各技能的 `workflow.json`。
+- 「出图设置 → 生视频模型」的模型下拉把 H3 相关排前面，方便定位本地模型。
+- 视频没有「依赖参考图」概念，配置的 LoRA 全部无条件加载。
