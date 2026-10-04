@@ -1,7 +1,8 @@
 /**
  * workflow-graph.js
  * 技能工作流模板（API prompt 格式）的只读 SVG 流程图渲染：
- * - layoutWorkflow：拓扑分层 → 从左到右自动布局（节点高度随参数行数自适应；纯函数，无 DOM 依赖）
+ * - layoutWorkflow：拓扑分层 → 从左到右自动布局（列宽按内容自适应、同层按上游重心排序、
+ *   每列垂直居中；节点高度随参数行数自适应；纯函数，无 DOM 依赖）
  * - applyWorkflowParams：按已知参数（设置 + 自动建议模型）预替换模板变量，运行时变量保留
  * - injectRuntimeLoras：配置 LoRA 超出模板槽位时镜像后端 _apply_loras 动态插入 LoraLoaderModelOnly，
  *   使流程图与运行时实际提交的图一致；未配置或槽位够用时原样返回
@@ -11,12 +12,12 @@
  *   （摘要含缺失节点/模型的名称芯片与复制按钮，方便一键复制去安装/下载）
  */
 
-const NODE_W = 150, NODE_H = 46, GAP_X = 64, GAP_Y = 18, PAD = 12;
-// 第一列（加载器）更宽，便于显示更长的模型名
-const NODE_W_SOURCE = 196;
-function nodeW(layerIdx) { return layerIdx === 0 ? NODE_W_SOURCE : NODE_W; }
-// 参数行宽度上限按框宽推导（10px 字号约 5.5px/字符）
-function lineMaxChars(w) { return Math.floor((w - 20) / 5.5); }
+const GAP_X = 36, GAP_Y = 12, PAD = 12;
+// 列宽按该列节点实际内容推导：短列收窄省横向空间，长列最多 NODE_W_MAX 减少截断
+const NODE_W_MIN = 108, NODE_W_MAX = 205;
+// 字符宽度估算：参数行 10px 字号约 5.5px/字符，类名 11px 加粗约 6.2px/字符
+const TYPE_CHAR_W = 6.2, LINE_CHAR_W = 5.5, NODE_PAD_X = 20;
+function lineMaxChars(w) { return Math.floor((w - NODE_PAD_X) / LINE_CHAR_W); }
 const TEMPLATE_RE = /\{\{.*?\}\}/;
 
 // combo 输入类型 → /models/{folder} 目录；未知类型跳过（宁缺勿误报）
@@ -75,30 +76,62 @@ export function layoutWorkflow(workflow) {
     const byLayer = {};
     for (const id of ids) (byLayer[layer[id]] ||= []).push(id);
     const layers = Object.keys(byLayer).map(Number).sort((a, b) => a - b);
-    const lines = {};
-    for (const id of ids) lines[id] = nodeInputLines(wf, id, lineMaxChars(nodeW(layer[id])));
-    const pos = {};
-    let maxRowH = 0, x = PAD;
+
+    // 列宽按该列节点实际内容推导（先取不截断的原始行宽），再按列宽截断参数行
+    const colW = {};
     for (const L of layers) {
-        const w = nodeW(L);
-        const group = byLayer[L].slice().sort(_sortNodeIds);
-        let y = PAD, rowH = 0;
-        for (const id of group) {
-            pos[id] = { x, y };
-            const h = nodeH(lines[id].length);
-            y += h + GAP_Y;
-            rowH += h;
+        let need = 0;
+        for (const id of byLayer[L]) {
+            const cls = (wf[id] && wf[id].class_type) || "?";
+            need = Math.max(need, cls.length * TYPE_CHAR_W + NODE_PAD_X);
+            for (const line of nodeInputLines(wf, id, Infinity))
+                need = Math.max(need, line.length * LINE_CHAR_W + NODE_PAD_X);
         }
-        maxRowH = Math.max(maxRowH, rowH + Math.max(0, group.length - 1) * GAP_Y);
-        x += w + GAP_X;
+        colW[L] = Math.min(NODE_W_MAX, Math.max(NODE_W_MIN, Math.ceil(need)));
+    }
+    const lines = {};
+    for (const id of ids) lines[id] = nodeInputLines(wf, id, lineMaxChars(colW[layer[id]]));
+
+    // 同层节点按上游重心排序（多轮收敛），减少连线交叉；无上游的节点保持 id 序
+    const order = {};
+    for (const L of layers) order[L] = byLayer[L].slice().sort(_sortNodeIds);
+    for (let pass = 0; pass < 3; pass++) {
+        const rank = {};
+        for (const L of layers) order[L].forEach((id, i) => { rank[id] = i; });
+        for (const L of layers) {
+            const bary = {};
+            for (const id of order[L]) {
+                const ps = preds[id];
+                bary[id] = ps.length ? ps.reduce((s, p) => s + rank[p], 0) / ps.length : rank[id];
+            }
+            order[L].sort((a, b) => (bary[a] - bary[b]) || _sortNodeIds(a, b));
+        }
+    }
+
+    // 每列以最高列为基准垂直居中：短列不再顶对齐，连线更平、斜穿更少
+    const colH = {};
+    for (const L of layers) {
+        colH[L] = order[L].reduce((s, id) => s + nodeH(lines[id].length, id), 0)
+            + Math.max(0, order[L].length - 1) * GAP_Y;
+    }
+    const totalH = Math.max(0, ...layers.map(L => colH[L]));
+    const pos = {};
+    let x = PAD;
+    for (const L of layers) {
+        let y = PAD + Math.floor((totalH - colH[L]) / 2);
+        for (const id of order[L]) {
+            pos[id] = { x, y };
+            y += nodeH(lines[id].length, id) + GAP_Y;
+        }
+        x += colW[L] + GAP_X;
     }
     const width = layers.length ? x - GAP_X + PAD : PAD * 2;
-    const height = PAD * 2 + maxRowH;
+    const height = PAD * 2 + totalH;
 
     const nodes = ids.map(id => ({
         id,
         classType: (wf[id] && wf[id].class_type) || "?",
-        x: pos[id].x, y: pos[id].y, w: nodeW(layer[id]), h: nodeH(lines[id].length), layer: layer[id],
+        x: pos[id].x, y: pos[id].y, w: colW[layer[id]], h: nodeH(lines[id].length, id), layer: layer[id],
         lines: lines[id],
     }));
     const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
@@ -110,7 +143,7 @@ export function layoutWorkflow(workflow) {
                 const t = nodeById[id];
                 // 连线精确指向目标节点上对应参数行的文字中心（text y 是基线，字高 10px → 中心在基线上方约 3.5px）；该行被折叠时退回节点垂直中心
                 const idx = t.lines.indexOf(k);
-                edges.push({ from: v[0], to: id, targetY: idx >= 0 ? t.y + INPUT_FIRST_Y + idx * INPUT_LINE_H - 3.5 : t.y + t.h / 2 });
+                edges.push({ from: v[0], to: id, targetY: idx >= 0 ? t.y + inputFirstY(id) + idx * INPUT_LINE_H - 3.5 : t.y + t.h / 2 });
             }
         }
     }
@@ -450,16 +483,34 @@ function nodeInputLines(workflow, id, maxChars) {
     return all;
 }
 
-// 节点高度：头部（类型+#id）固定，参数行每行 INPUT_LINE_H
-function nodeH(nLines) {
-    return nLines === 0 ? NODE_H : INPUT_FIRST_Y + (nLines - 1) * INPUT_LINE_H + 6;
+// 节点高度：头部（类型，可选 #id）固定，参数行每行 INPUT_LINE_H
+function inputFirstY(id) { return INPUT_FIRST_Y - (nodeIdLabel(id) ? 0 : INPUT_LINE_H); }
+
+function nodeH(nLines, id) {
+    const firstY = inputFirstY(id);
+    return nLines === 0 ? firstY - 1 : firstY + (nLines - 1) * INPUT_LINE_H + 6;
+}
+
+// 合成节点（autogrow 槽位合并）没有真实节点 id，图上与 tooltip 不显示内部 "#__grp_…"
+function nodeIdLabel(id) { return String(id).startsWith("__grp") ? "" : `#${id}`; }
+
+// tooltip 里引用上游：合成节点没有真实 id，用 "ClassName ×N" 代替内部 "__grp_…"
+function nodeRefLabel(id, workflow) {
+    const label = nodeIdLabel(id);
+    return label || ((workflow[id] && workflow[id].class_type) || "?");
 }
 
 function nodeTooltip(id, workflow, issues) {
-    const injected = workflow[id] && workflow[id].runtime_injected ? "（运行时动态注入）" : "";
-    const lines = [`${(workflow[id] && workflow[id].class_type) || "?"} #${id}${injected}`];
-    const inputs = (workflow[id] && workflow[id].inputs) || {};
-    for (const [k, v] of Object.entries(inputs)) lines.push(`${k}: ${_fmtVal(v)}`);
+    const node = workflow[id];
+    const injected = node && node.runtime_injected ? "（运行时动态注入）" : "";
+    const label = (node && node.class_type) || "?";
+    const idLabel = nodeIdLabel(id);
+    const lines = [label + (idLabel ? ` ${idLabel}` : "") + injected];
+    const inputs = (node && node.inputs) || {};
+    for (const [k, v] of Object.entries(inputs)) {
+        if (Array.isArray(v) && typeof v[0] === "string") lines.push(`${k}: ← ${nodeRefLabel(v[0], workflow)}`);
+        else lines.push(`${k}: ${_fmtVal(v)}`);
+    }
     for (const i of issues || []) lines.push(i.message);
     return lines.join("\n");
 }
@@ -512,7 +563,9 @@ function copyName(text, btn) {
 /** 把流程图画进 container（先清空旧内容）；summaryTarget 提供时摘要行画到滚动区外。返回 { svg, summary }。 */
 export function renderWorkflowGraph(container, workflow, validation, summaryTarget) {
     container.innerHTML = "";
-    const layout = layoutWorkflow(workflow);
+    // 合成节点（autogrow 合并）不在原始 workflow 里，tooltip 需要合并后的图
+    const wf = collapseRefLoaders(workflow || {});
+    const layout = layoutWorkflow(wf);
     const issues = (validation && validation.issues) || {};
 
     const svg = svgEl("svg", {
@@ -545,18 +598,22 @@ export function renderWorkflowGraph(container, workflow, validation, summaryTarg
         const g = svgEl("g", { class: cls.join(" "), transform: `translate(${n.x} ${n.y})` });
         // tooltip：渲染后的输入值（连线/模板变量/问题行）
         const title = svgEl("title");
-        title.textContent = nodeTooltip(n.id, workflow, list);
+        title.textContent = nodeTooltip(n.id, wf, list);
         g.appendChild(title);
         g.appendChild(svgEl("rect", { class: "rs-wf-node-box", width: n.w, height: n.h, rx: 8 }));
-        const labelMax = n.w > NODE_W ? 28 : 21;
+        const labelMax = Math.floor((n.w - NODE_PAD_X) / TYPE_CHAR_W);
         const label = n.classType.length > labelMax ? n.classType.slice(0, labelMax - 1) + "…" : n.classType;
         const t1 = svgEl("text", { class: "rs-wf-node-type", x: 10, y: 19 });
         t1.textContent = label;
-        const t2 = svgEl("text", { class: "rs-wf-node-id", x: 10, y: 35 });
-        t2.textContent = `#${n.id}`;
-        g.append(t1, t2);
+        g.appendChild(t1);
+        const idLabel = nodeIdLabel(n.id);
+        if (idLabel) {
+            const t2 = svgEl("text", { class: "rs-wf-node-id", x: 10, y: 35 });
+            t2.textContent = idLabel;
+            g.appendChild(t2);
+        }
         // 参数行直接画在节点上（截断/折叠），完整值由 tooltip 补全
-        let ty = INPUT_FIRST_Y;
+        let ty = inputFirstY(n.id);
         for (const line of n.lines) {
             const ti = svgEl("text", { class: "rs-wf-node-input", x: 10, y: ty });
             ti.textContent = line;

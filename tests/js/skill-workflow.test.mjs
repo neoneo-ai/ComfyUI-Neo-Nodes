@@ -668,7 +668,7 @@ test("详情弹窗：生视频工作流模板变量按 config + H3 缺省预替�
     assert.ok(unet.textContent.includes("unet_name: h3.safetensors"), "替换后的模型名直接显示在节点上");
 });
 
-test("工作流图：参数行直接画在节点上，第一列加载器更宽显示更多字符，超 6 行折叠「+N 项」、高度随行数增长", async () => {
+test("工作流图：参数行直接画在节点上，列宽按内容自适应（短列收窄、长列封顶），超 6 行折叠「+N 项」、高度随行数增长", async () => {
     const { layoutWorkflow } = await import("../../web/workflow-graph.js");
     const inputs = { long: "x".repeat(80) };
     for (let i = 0; i < 8; i++) inputs[`k${i}`] = `v${i}`;
@@ -677,19 +677,22 @@ test("工作流图：参数行直接画在节点上，第一列加载器更宽�
         "2": { class_type: "Next", inputs: { a: ["1", 0], long: "y".repeat(80) } },
     });
     const byId = Object.fromEntries(lay.nodes.map(n => [n.id, n]));
-    assert.equal(byId["1"].w, 196, "第一列（加载器）更宽");
-    assert.equal(byId["2"].w, 150, "其余列保持常规宽度");
+    assert.equal(byId["1"].w, 205, "长内容列宽到上限 205（不再固定 196/150）");
+    assert.equal(byId["2"].w, 205, "同列内容长则同宽");
     assert.ok(byId["2"].x > byId["1"].x + byId["1"].w, "后续列按第一列实际宽度偏移");
     assert.equal(byId["1"].lines.length, 7, "9 个输入 → 6 行 + 1 行「+N 项」");
     assert.ok(byId["1"].lines[6].includes("+3 项"), "折叠行应标注剩余数量：" + byId["1"].lines[6]);
-    assert.ok(byId["1"].lines.every(l => l.length <= 32), "第一列单行上限 32 字符");
+    assert.ok(byId["1"].lines.every(l => l.length <= 33), "单行上限按列宽推导（205 → 33 字符）");
     assert.ok(byId["1"].lines.find(l => l.startsWith("long")).endsWith("…"), "超长值截断并以省略号结尾");
-    assert.ok(byId["2"].lines.find(l => l.startsWith("long")).length <= 23, "其余列单行上限 23 字符");
+    assert.ok(byId["2"].lines.find(l => l.startsWith("long")).length <= 33, "其余列单行上限按列宽推导");
     assert.ok(byId["2"].lines.includes("a"), "连线输入只显示参数名（不再显示 ← #N）");
     assert.ok(!byId["2"].lines.some(l => l.includes("←")), "节点上不再出现 ← 编号");
     const aIdx = byId["2"].lines.indexOf("a");
     assert.equal(lay.edges[0].targetY, byId["2"].y + 47 + aIdx * 13 - 3.5, "连线终点对准对应参数行文字中心（INPUT_FIRST_Y=47、LINE_H=13、基线上方 3.5px）");
     assert.ok(byId["1"].h > 46, "高度随参数行数增长");
+    // 内容短（类名 + 短参数）→ 列宽收窄到下限，省横向空间
+    const narrow = layoutWorkflow({ "1": { class_type: "KSampler", inputs: { seed: 1 } } });
+    assert.equal(narrow.nodes[0].w, 108, "短内容列收窄到下限 108");
     // 同层两节点：无输入 vs 多输入 → 高度不同、y 依次堆叠
     const lay2 = layoutWorkflow({
         "1": { class_type: "A", inputs: {} },
@@ -699,6 +702,28 @@ test("工作流图：参数行直接画在节点上，第一列加载器更宽�
     assert.equal(byId2["1"].h, 46);
     assert.ok(byId2["2"].h > 46);
     assert.ok(byId2["2"].y >= byId2["1"].y + byId2["1"].h, "同层节点按各自高度堆叠不重叠");
+});
+
+test("工作流图排版：同层按上游重心排序减少交叉，短列相对最高列垂直居中", async () => {
+    const { layoutWorkflow } = await import("../../web/workflow-graph.js");
+    // 上游 1→4、2→3：按 id 序 [3,4] 会让两条连线交叉，重心排序应排成 [4,3]
+    const lay = layoutWorkflow({
+        "1": { class_type: "A", inputs: {} },
+        "2": { class_type: "B", inputs: {} },
+        "3": { class_type: "C", inputs: { m: ["2", 0] } },
+        "4": { class_type: "D", inputs: { m: ["1", 0] } },
+    });
+    const col = lay.nodes.filter(n => n.layer === 1).sort((a, b) => a.y - b.y).map(n => n.id);
+    assert.deepEqual(col, ["4", "3"], "同层按上游重心排序（上游 1 在前 → 4 在前）");
+    // 单节点列相对两节点列居中：y 大于 PAD（不再顶对齐）
+    const lay2 = layoutWorkflow({
+        "1": { class_type: "A", inputs: {} },
+        "2": { class_type: "B", inputs: {} },
+        "3": { class_type: "C", inputs: { a: ["1", 0], b: ["2", 0] } },
+    });
+    const byId = Object.fromEntries(lay2.nodes.map(n => [n.id, n]));
+    assert.ok(byId["3"].y > 12, "短列垂直居中，连线更平");
+    assert.ok(byId["3"].y + byId["3"].h <= lay2.height - 12 + 1, "居中后仍落在图高范围内");
 });
 
 test("工作流图：autogrow 同类输入合并为一行摘要（ref_images.ref_image ×9）", async () => {
@@ -737,6 +762,28 @@ test("工作流图：autogrow 同类输入合并为一行摘要（ref_images.ref
     assert.ok(h3.lines.includes("ref_images.ref_image ×9"), "H3 节点应显示 ref_images 组合并");
     assert.ok(h3.lines.includes("ref_videos.ref_video ×3"), "H3 节点应显示 ref_videos 组合并");
     assert.ok(h3.lines.includes("ref_audios.ref_audio ×3"), "H3 节点应显示 ref_audios 组合并");
+    // 合成节点没有真实节点 id，图上不显示 "#__grp_…" 行，因此更矮
+    assert.equal(byType["LoadImage ×9"].h, 33, "合成节点无 #id 行，高度比真实节点矮 13");
+});
+
+test("工作流图：合成节点图上与 tooltip 不显示内部 #__grp_… id", async () => {
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({
+        skill_id: "x",
+        workflow: {
+            "1": { class_type: "KSampler", inputs: { "images.image_0": ["2", 0], "images.image_1": ["3", 0] } },
+            "2": { class_type: "LoadImage", inputs: { image: "a.png" } },
+            "3": { class_type: "LoadImage", inputs: { image: "b.png" } },
+        },
+    }));
+    mockRoute("/object_info", () => jsonResponse({}));
+    await openGenPopup({ id: "image_gen_text", source: "custom" });
+    const svg = document.querySelector(".rs-wf-body svg.rs-wf-svg");
+    assert.ok(svg.textContent.includes("LoadImage ×2"), "两个 LoadImage 应合并为合成节点");
+    assert.ok(!svg.textContent.includes("__grp"), "图上与 tooltip 不应出现内部合成 id");
+    const synthTitle = [...svg.querySelectorAll("g.rs-wf-node title")].map(t => t.textContent).find(t => t.startsWith("LoadImage ×2"));
+    assert.ok(synthTitle, "合成节点应有 tooltip");
+    assert.ok(!synthTitle.includes("__grp"), "tooltip 首行不带内部 id：" + synthTitle);
+    assert.ok(![...svg.querySelectorAll(".rs-wf-node-id")].some(t => t.textContent.includes("__grp")), "图上不显示合成节点内部 id");
 });
 
 test("工作流图：滚动区内拖拽平移 scrollLeft/Top（同画布体验），松开后停止", async () => {
