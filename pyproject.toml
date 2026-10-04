@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-neo-nodes"
-version = "1.0.1"
+version = "1.1.0"
 description = "LLM 提示词增强/生成/反推、Krea2 生图、H3 视频导演、素材库与配方一键发送。Prompt + image gen + video director + asset/recipe library for ComfyUI."
 readme = "README.md"
 license = { text = "Apache-2.0" }
