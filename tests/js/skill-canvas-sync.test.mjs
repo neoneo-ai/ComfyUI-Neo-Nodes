@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
-import { appState } from "./mocks/comfy-app.mjs";
+import { app, appState } from "./mocks/comfy-app.mjs";
 
 const WF_TEMPLATE = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
@@ -80,6 +80,42 @@ test("导入到画布：按设置预渲染后 app.loadApiJson（number widget �
     assert.equal(wf["5"].inputs.filename_prefix, "NeoAgent", "非 number widget 保持字符串");
     assert.equal(wf["9"].inputs.image, "{{REF_IMAGE}}", "参考图槽位留占串（画布里选图后回写）");
     assert.ok(appState.toasts.slice(toastAt).some((t) => (t.summary || "").includes("已导入到画布")), "应 toast 导入成功");
+});
+
+test("导入到画布：按流程图同一套布局重排画布节点（分层左到右、列内堆叠、短列居中、适配视图）", async () => {
+    const heights = { 1: 120, 2: 100, 3: 80, 4: 100, 5: 100, 9: 60 };
+    const nodes = Object.keys(WF_TEMPLATE).map((id) => ({
+        id: Number(id),
+        size: [240, heights[id]],
+        pos: [0, 0],
+        setPos(x, y) { this.pos = [x, y]; },
+    }));
+    let dirty = 0, fitted = 0;
+    appState.graph = { _nodes: nodes, setDirtyCanvas() { dirty++; } };
+    app.canvas = { fitViewToSelectionAnimated() { fitted++; } };
+    try {
+        await openPopup({ id: "custom_a", source: "custom" });
+        click(importBtn());
+        await sleep(80);
+
+        const at = (id) => nodes.find((n) => String(n.id) === id).pos;
+        assert.deepEqual(at("1"), [60, 60], "首列首节点落在边距起点");
+        assert.ok(at("2")[0] > at("1")[0] && at("4")[0] > at("2")[0] && at("5")[0] > at("4")[0],
+            "依赖链 UNETLoader → CLIPTextEncode → KSampler → SaveImage 逐列右移");
+        // 无下游的 9 与 UNETLoader 同列，按各自高度依次下移：60 → 60+120+48
+        assert.deepEqual(at("9"), [60, 228], "同列节点按各自高度依次下移");
+        // 同列（2/3）按连线落在 KSampler 的参数行顺序排布：positive 行（第 2 行）在 latent_image 行（第 3 行）之上
+        assert.ok(at("2")[1] < at("3")[1], "列内按目标参数行位置上下排布，连线不交叉");
+        assert.deepEqual(at("2"), [396, 106], "列间距按节点宽度、列内按重心排布");
+        assert.deepEqual(at("3"), [396, 254], "latent_image 行靠下，EmptyLatent 排其后");
+        assert.deepEqual(at("4"), [732, 177], "KSampler 列按上游重心垂直位置");
+        assert.ok(at("5")[1] > 100, "末列相对最高列垂直居中");
+        assert.ok(dirty >= 1, "重排后应 setDirtyCanvas");
+        assert.equal(fitted, 1, "重排后适配视图");
+    } finally {
+        appState.graph = null;
+        app.canvas = null;
+    }
 });
 
 test("回写入技能：画布 API prompt 落盘该技能（POST update_workflow_skill）+ 后端 warnings toast", async () => {

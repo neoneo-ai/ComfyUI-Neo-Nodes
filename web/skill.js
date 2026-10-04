@@ -12,7 +12,7 @@ import "./purify.min.js";
 import { app } from "../../scripts/app.js";
 import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
-import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras } from "./workflow-graph.js";
+import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras, canvasLayout } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
@@ -993,6 +993,19 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         return wf;
     }
 
+    // 载入画布后按流程图同一套布局重排：拓扑分层 → 左到右排布、列内按上游重心堆叠、短列垂直居中，最后适配视图
+    function arrangeCanvasNodes(wf) {
+        const nodes = app.graph && app.graph._nodes;
+        if (!nodes || !nodes.length) return;
+        const byId = new Map(nodes.map(n => [String(n.id), n]));
+        for (const cell of canvasLayout(wf, (id) => (byId.get(id) || {}).size)) {
+            const node = byId.get(cell.id);
+            if (node) node.setPos(cell.x, cell.y);
+        }
+        app.graph.setDirtyCanvas(true, true);
+        if (typeof app.canvas?.fitViewToSelectionAnimated === "function") app.canvas.fitViewToSelectionAnimated();
+    }
+
     async function importWorkflowToCanvas() {
         if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return; }
         if (typeof app.loadApiJson !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，导入不可用"); return; }
@@ -1000,12 +1013,13 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         if (!wf) return;
         try {
             await app.loadApiJson(wf, currentSkillId);
+            arrangeCanvasNodes(wf);
         } catch (e) {
             showToast(app, "error", "导入失败", String(e.message || e));
             return;
         }
         showToast(app, "success", "已导入到画布",
-            `点「💾 回写入技能」把整画布落盘 "${currentSkillId}" 的 workflow.json（画布布局/节点标题不保留，skill.md 正文保留）`);
+            `点「💾 回写入技能」把整画布落盘 "${currentSkillId}" 的 workflow.json（节点已按流程图布局自动排列，skill.md 正文保留）`);
     }
 
     async function writeWorkflowBackToSkill() {

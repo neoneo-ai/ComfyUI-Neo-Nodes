@@ -24,3 +24,4 @@ configs/skill_overrides/
 configs/backyard_oss.json
 tools/output/
 node_modules/
+tmp/

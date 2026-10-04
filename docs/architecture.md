@@ -141,7 +141,7 @@ ComfyUI-Neo-Nodes/
 | `bundle-lock.js` | bundle 锁定与自动增强 |
 | `ref-grid.js` | 参考图宫格前端 |
 | `workflow.js` | 工作流修复交互 |
-| `workflow-graph.js` | 技能工作流只读流程图（autogrow 槽位合并为合成节点，图上与 tooltip 不显示内部 id） |
+| `workflow-graph.js` | 技能工作流只读流程图（autogrow 槽位合并为合成节点，图上与 tooltip 不显示内部 id）；`canvasLayout` 按同一套分层与同层排序重排「导入到画布」后的画布节点 |
 | `workflow-context.js` | 工作流上下文采集 |
 | `top-menu.js` | 顶栏 🅝 菜单 |
 | `node-behavior.js` | 节点拖拽、粘贴等交互行为 |

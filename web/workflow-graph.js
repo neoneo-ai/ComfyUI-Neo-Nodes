@@ -1,8 +1,9 @@
 /**
  * workflow-graph.js
  * 技能工作流模板（API prompt 格式）的只读 SVG 流程图渲染：
- * - layoutWorkflow：拓扑分层 → 从左到右自动布局（列宽按内容自适应、同层按上游重心排序、
- *   每列垂直居中；节点高度随参数行数自适应；纯函数，无 DOM 依赖）
+ * - layoutWorkflow：拓扑分层 → 从左到右自动布局（列号取最右可行、列宽按内容自适应、
+ *   每列内按上下游重心迭代排布并按连线交叉数局部改进；节点高度随参数行数自适应；纯函数，无 DOM 依赖）
+ * - canvasLayout：同一套列号与重心排布，位置按画布节点真实尺寸推导，供「导入到画布」后重排画布
  * - applyWorkflowParams：按已知参数（设置 + 自动建议模型）预替换模板变量，运行时变量保留
  * - injectRuntimeLoras：配置 LoRA 超出模板槽位时镜像后端 _apply_loras 动态插入 LoraLoaderModelOnly，
  *   使流程图与运行时实际提交的图一致；未配置或槽位够用时原样返回
@@ -42,23 +43,22 @@ function _sortNodeIds(a, b) {
     return String(a).localeCompare(String(b));
 }
 
-/** API prompt → { nodes, edges, width, height }。inputs 里 ["srcId", slot] 视为连线；环安全（回边忽略）。 */
-export function layoutWorkflow(workflow) {
-    const wf = collapseRefLoaders(workflow || {});
+/** 拓扑分层（最长路径，环回边忽略）+ 同层按上游重心排序（3 轮收敛，无上游的保持 id 序）。 */
+function graphOrdering(wf) {
     const ids = Object.keys(wf);
     const idSet = new Set(ids);
-    const preds = {};
-    for (const id of ids) preds[id] = [];
+    const preds = {}, succ = {};
+    for (const id of ids) { preds[id] = []; succ[id] = []; }
     for (const id of ids) {
         const inputs = (wf[id] && wf[id].inputs) || {};
         for (const v of Object.values(inputs)) {
             if (Array.isArray(v) && typeof v[0] === "string" && v[0] !== id && idSet.has(v[0])) {
                 preds[id].push(v[0]);
+                succ[v[0]].push(id);
             }
         }
     }
 
-    // 最长路径分层；visiting 标记断环
     const layer = {};
     const state = {}; // 1=进行中 2=完成
     function assign(id) {
@@ -77,22 +77,6 @@ export function layoutWorkflow(workflow) {
     for (const id of ids) (byLayer[layer[id]] ||= []).push(id);
     const layers = Object.keys(byLayer).map(Number).sort((a, b) => a - b);
 
-    // 列宽按该列节点实际内容推导（先取不截断的原始行宽），再按列宽截断参数行
-    const colW = {};
-    for (const L of layers) {
-        let need = 0;
-        for (const id of byLayer[L]) {
-            const cls = (wf[id] && wf[id].class_type) || "?";
-            need = Math.max(need, cls.length * TYPE_CHAR_W + NODE_PAD_X);
-            for (const line of nodeInputLines(wf, id, Infinity))
-                need = Math.max(need, line.length * LINE_CHAR_W + NODE_PAD_X);
-        }
-        colW[L] = Math.min(NODE_W_MAX, Math.max(NODE_W_MIN, Math.ceil(need)));
-    }
-    const lines = {};
-    for (const id of ids) lines[id] = nodeInputLines(wf, id, lineMaxChars(colW[layer[id]]));
-
-    // 同层节点按上游重心排序（多轮收敛），减少连线交叉；无上游的节点保持 id 序
     const order = {};
     for (const L of layers) order[L] = byLayer[L].slice().sort(_sortNodeIds);
     for (let pass = 0; pass < 3; pass++) {
@@ -107,47 +91,272 @@ export function layoutWorkflow(workflow) {
             order[L].sort((a, b) => (bary[a] - bary[b]) || _sortNodeIds(a, b));
         }
     }
+    return { ids, layer, layers, order, preds, succ };
+}
 
-    // 每列以最高列为基准垂直居中：短列不再顶对齐，连线更平、斜穿更少
-    const colH = {};
-    for (const L of layers) {
-        colH[L] = order[L].reduce((s, id) => s + nodeH(lines[id].length, id), 0)
-            + Math.max(0, order[L].length - 1) * GAP_Y;
-    }
-    const totalH = Math.max(0, ...layers.map(L => colH[L]));
-    const pos = {};
-    let x = PAD;
-    for (const L of layers) {
-        let y = PAD + Math.floor((totalH - colH[L]) / 2);
-        for (const id of order[L]) {
-            pos[id] = { x, y };
-            y += nodeH(lines[id].length, id) + GAP_Y;
+/**
+ * 列号取「最右可行」：节点紧贴其下游，源节点不再挤在首列，图更紧凑、连线更短。
+ * 按层从右到左处理（下游列已确定），环回边忽略；没有下游的节点保持自身层号。
+ * 每条连线都满足 col[上游] < col[下游]，所以列内不会出现左右反向的连线。
+ */
+function columnOf(layer, layers, order, succ) {
+    const col = {};
+    for (let i = layers.length - 1; i >= 0; i--) {
+        for (const id of order[layers[i]]) {
+            let c = -1;
+            for (const s of succ[id]) {
+                if (layer[s] <= layer[id]) continue; // 环回边
+                const sc = col[s] - 1;
+                if (c < 0 || sc < c) c = sc;
+            }
+            col[id] = c < 0 ? layer[id] : c;
         }
-        x += colW[L] + GAP_X;
     }
-    const width = layers.length ? x - GAP_X + PAD : PAD * 2;
-    const height = PAD * 2 + totalH;
+    return col;
+}
+
+/**
+ * 每列内的垂直位置按上下游重心迭代收敛：同列顺序按当前重心，间距不小于 gapY，
+ * 用加权等距回归（PAV）求最贴近重心的解 — 连线平直、同列不重叠。
+ * nbr[id] = [[邻居, 连线在 id 一侧的理想中心偏移]]，偏移来自目标节点的参数行位置。
+ */
+function packColumn(ids, h, gapY, center, nbr) {
+    // base[i] = 第 i 个节点在「刚好紧贴上一个」时的中心偏移，t[i] = center - base[i] 需非递减
+    const base = [0];
+    for (let i = 1; i < ids.length; i++)
+        base.push(base[i - 1] + (h[ids[i]] + h[ids[i - 1]]) / 2 + gapY);
+    const blocks = []; // [权重和, 加权重心和, 起, 止]
+    for (let i = 0; i < ids.length; i++) {
+        const id = ids[i], nb = nbr[id];
+        const w = nb.length || 1;
+        const d = nb.length ? nb.reduce((s, p) => s + center[p[0]] + p[1], 0) / nb.length : center[id];
+        blocks.push([w, w * (d - base[i]), i, i]);
+        while (blocks.length > 1) {
+            const a = blocks[blocks.length - 2], b = blocks[blocks.length - 1];
+            if (a[1] / a[0] <= b[1] / b[0]) break;
+            blocks.pop(); blocks.pop();
+            blocks.push([a[0] + b[0], a[1] + b[1], a[2], b[3]]);
+        }
+    }
+    for (const [sw, sv, a, b] of blocks) {
+        const t = sv / sw;
+        for (let i = a; i <= b; i++) center[ids[i]] = t + base[i];
+    }
+}
+
+/**
+ * 重心排布是局部最优，仍可能留下交叉：在每列内尝试相邻两节点上下交换，
+ * 全局交叉数下降（或相同但连线更平直）就接受，扫描到不再改进为止。
+ * 位置仍由 PAV 重算，同列不重叠。
+ * 连线为 [源, 目标, 源端偏移, 目标端偏移]，偏移相对各自节点中心（画布上端点是参数行中心）。
+ */
+function reduceCrossings(colNodes, cols, h, gapY, nbr, center, edges, colX, colW) {
+    const colOf = {};
+    for (const c of cols) for (const id of colNodes[c]) colOf[id] = c;
+    // 连线按跨越的列间隙分组：只有 x 区间重叠的连线才可能交叉
+    const gapEdges = {};
+    for (const e of edges)
+        for (let k = colOf[e[0]]; k < colOf[e[1]]; k++) (gapEdges[k] ||= []).push(e);
+    // 连线在列间隙内是直线，用间隙两端的 y 判断交叉，与渲染几何一致
+    const yAt = (e, x) => {
+        const a = e[0], b = e[1], ca = colOf[a], cb = colOf[b];
+        const x1 = colX[ca] + colW[ca], y1 = center[a] + (e[2] || 0);
+        const y2 = center[b] + (e[3] || 0);
+        return y1 + (y2 - y1) * (x - x1) / (colX[cb] - x1);
+    };
+    const gapCross = (k) => {
+        const es = gapEdges[k];
+        if (!es || es.length < 2) return 0;
+        const xl = colX[k] + colW[k], xr = colX[k + 1];
+        const ys = es.map(e => [yAt(e, xl), yAt(e, xr)]);
+        ys.sort((p, q) => (p[0] - q[0]) || (p[1] - q[1]));
+        let n = 0;
+        for (let i = 0; i < ys.length; i++)
+            for (let j = i + 1; j < ys.length; j++) if (ys[i][1] > ys[j][1]) n++;
+        return n;
+    };
+    const gapKeys = Object.keys(gapEdges);
+    // 重心迭代逐列进行，跨列重心可能漂移；先结算一轮再优化
+    for (let i = 0; i < 3; i++)
+        for (const c of cols) packColumn(colNodes[c], h, gapY, center, nbr);
+    // 交换会重排本列节点，邻居列的中心也随之变化，所以每次都按全局交叉/平直度判定
+    const totalCross = () => gapKeys.reduce((s, k) => s + gapCross(Number(k)), 0);
+    const totalBend = () => edges.reduce((s, e) => s + Math.abs(center[e[1]] + (e[3] || 0) - center[e[0]] - (e[2] || 0)), 0);
+
+    for (let pass = 0; pass < 6; pass++) {
+        let improved = false;
+        for (const c of cols) {
+            const ids = colNodes[c];
+            if (ids.length < 2) continue;
+            let cross = totalCross(), bend = totalBend();
+            for (let i = 0; i + 1 < ids.length; i++) {
+                const a = ids[i], b = ids[i + 1];
+                ids[i] = b; ids[i + 1] = a;
+                packColumn(ids, h, gapY, center, nbr);
+                const nc = totalCross(), nb = totalBend();
+                if (nc < cross || (nc === cross && nb < bend)) {
+                    cross = nc; bend = nb; improved = true;
+                    // 本列重排会漂移邻居列的重心，结算后再评估下一个交换
+                    for (const c2 of cols) packColumn(colNodes[c2], h, gapY, center, nbr);
+                } else {
+                    ids[i] = a; ids[i + 1] = b;
+                    packColumn(ids, h, gapY, center, nbr); // 邻居中心未变，重算即回到原位置
+                }
+            }
+        }
+        if (!improved) break;
+    }
+}
+
+function barycenterCenters(colNodes, cols, h, gapY, preds, succ, edges, colX, colW) {
+    const center = {};
+    for (const c of cols) {
+        let y = 0;
+        for (const id of colNodes[c]) { center[id] = y + h[id] / 2; y += h[id] + gapY; }
+    }
+    const linkEdges = edges || Object.values(colNodes).flatMap(ids =>
+        ids.flatMap(id => preds[id].map(p => [p, id])));
+    // 理想中心偏移按连线两端的参数行位置：端点落在第 i 行文字中心，所以源端理想 center =
+    // 目标中心 + 目标行偏移 - 源行偏移，目标端对称
+    const nbr = {};
+    for (const c of cols) for (const id of colNodes[c]) nbr[id] = [];
+    for (const [a, b, so, to] of linkEdges) {
+        const o = (to || 0) - (so || 0);
+        nbr[a].push([b, o]);
+        nbr[b].push([a, -o]);
+    }
+    for (let pass = 0; pass < 4; pass++) {
+        const seq = pass % 2 ? cols.slice().reverse() : cols;
+        for (const c of seq) {
+            const ids = colNodes[c].sort((a, b) => (center[a] - center[b]) || _sortNodeIds(a, b));
+            packColumn(ids, h, gapY, center, nbr);
+            colNodes[c] = ids;
+        }
+    }
+    reduceCrossings(colNodes, cols, h, gapY, nbr, center, linkEdges, colX, colW);
+    return center;
+}
+
+/** API prompt → { nodes, edges, width, height }。inputs 里 ["srcId", slot] 视为连线；环安全（回边忽略）。 */
+export function layoutWorkflow(workflow) {
+    const wf = collapseRefLoaders(workflow || {});
+    const { ids, layer, layers, order, preds, succ } = graphOrdering(wf);
+    const col = columnOf(layer, layers, order, succ);
+    const colNodes = {};
+    for (const L of layers) for (const id of order[L]) (colNodes[col[id]] ||= []).push(id);
+    const cols = Object.keys(colNodes).map(Number).sort((a, b) => a - b);
+
+    // 列宽按该列节点实际内容推导（先取不截断的原始行宽），再按列宽截断参数行
+    const colW = {};
+    for (const c of cols) {
+        let need = 0;
+        for (const id of colNodes[c]) {
+            const cls = (wf[id] && wf[id].class_type) || "?";
+            need = Math.max(need, cls.length * TYPE_CHAR_W + NODE_PAD_X);
+            for (const line of nodeInputLines(wf, id, Infinity))
+                need = Math.max(need, line.length * LINE_CHAR_W + NODE_PAD_X);
+        }
+        colW[c] = Math.min(NODE_W_MAX, Math.max(NODE_W_MIN, Math.ceil(need)));
+    }
+    const lines = {}, h = {};
+    for (const id of ids) {
+        lines[id] = nodeInputLines(wf, id, lineMaxChars(colW[col[id]]));
+        h[id] = nodeH(lines[id].length, id);
+    }
+
+    // 连线终点 = 目标节点对应参数行的文字中心（相对节点中心，行被折叠时为 0）；排布时按真实端点算交叉
+    const linkEdges = [];
+    for (const id of ids) {
+        const inputs = (wf[id] && wf[id].inputs) || {};
+        for (const [k, v] of Object.entries(inputs)) {
+            if (Array.isArray(v) && typeof v[0] === "string" && wf[v[0]] && v[0] !== id) {
+                const idx = lines[id].indexOf(k);
+                linkEdges.push([v[0], id, 0, idx >= 0 ? inputFirstY(id) + idx * INPUT_LINE_H - 3.5 - h[id] / 2 : 0]);
+            }
+        }
+    }
+
+    const colX = {};
+    let x = PAD;
+    for (const c of cols) { colX[c] = x; x += colW[c] + GAP_X; }
+
+    // 每列内的垂直位置按上下游重心迭代排布，再按连线交叉数局部改进（同列不重叠）
+    const center = barycenterCenters(colNodes, cols, h, GAP_Y, preds, succ, linkEdges, colX, colW);
+    const top = ids.length ? Math.min(...ids.map(id => center[id] - h[id] / 2)) : 0;
+    const bottom = ids.length ? Math.max(...ids.map(id => center[id] + h[id] / 2)) : 0;
+    const pos = {};
+    for (const id of ids) pos[id] = { x: colX[col[id]], y: Math.round(PAD + center[id] - h[id] / 2 - top) };
+    const width = cols.length ? x - GAP_X + PAD : PAD * 2;
+    const height = PAD * 2 + Math.round(bottom - top);
 
     const nodes = ids.map(id => ({
         id,
         classType: (wf[id] && wf[id].class_type) || "?",
-        x: pos[id].x, y: pos[id].y, w: colW[layer[id]], h: nodeH(lines[id].length, id), layer: layer[id],
+        x: pos[id].x, y: pos[id].y, w: colW[col[id]], h: h[id], layer: layer[id],
         lines: lines[id],
     }));
-    const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
-    const edges = [];
+    // 连线精确指向目标节点上对应参数行的文字中心（text y 是基线，字高 10px → 中心在基线上方约 3.5px）；该行被折叠时退回节点垂直中心
+    const edges = linkEdges.map(([from, to, , tgtOff]) => ({ from, to, targetY: pos[to].y + h[to] / 2 + tgtOff }));
+    return { nodes, edges, width, height };
+}
+
+// 画布重排（「导入到画布」后）用的间距与兜底尺寸：画布节点宽度由前端算好，取不到时按常见尺寸兜底
+const CANVAS_PAD = 60, CANVAS_GAP_X = 96, CANVAS_GAP_Y = 48;
+const CANVAS_NODE_W = 240, CANVAS_NODE_H = 120;
+// 画布节点：头部之下每行一个参数（连线行先于 widget 行），连线端点落在第 i 行中心
+const CANVAS_HEADER = 40, CANVAS_ROW = 24;
+function canvasRowOff(id, i, h, rows) {
+    const body = Math.max(CANVAS_ROW, h[id] - CANVAS_HEADER);
+    return CANVAS_HEADER + (i + 0.5) * body / Math.max(1, rows[id]) - h[id] / 2;
+}
+
+/**
+ * 与预览同一套列号与重心排布，位置按画布节点真实尺寸推导：拓扑分层 → 列号取最右可行 →
+ * 每列内按上下游重心迭代排布（同列不重叠、连线尽量平直）。sizeOf(id) 返回画布节点 [w, h]
+ * （拿不到用兜底尺寸）。返回 [{ id, x, y }]，id 为 workflow 的键。
+ */
+export function canvasLayout(workflow, sizeOf) {
+    const wf = workflow || {};
+    const { ids, layer, layers, order, preds, succ } = graphOrdering(wf);
+    const w = {}, h = {};
+    for (const id of ids) {
+        const s = sizeOf(id) || null;
+        w[id] = s && s[0] > 0 ? s[0] : CANVAS_NODE_W;
+        h[id] = s && s[1] > 0 ? s[1] : CANVAS_NODE_H;
+    }
+    const col = columnOf(layer, layers, order, succ);
+    const colNodes = {};
+    for (const L of layers) for (const id of order[L]) (colNodes[col[id]] ||= []).push(id);
+    const cols = Object.keys(colNodes).map(Number).sort((a, b) => a - b);
+    const colW = {};
+    for (const c of cols) colW[c] = colNodes[c].reduce((m, id) => Math.max(m, w[id]), 0);
+
+    const colX = {};
+    let x = CANVAS_PAD;
+    for (const c of cols) { colX[c] = x; x += colW[c] + CANVAS_GAP_X; }
+
+    // 连线端点按画布参数行位置：源端是输出槽位行，目标端是第 i 个连线行（widget 行在其后）
+    const rows = {};
+    for (const id of ids) rows[id] = Math.max(1, Object.keys((wf[id] && wf[id].inputs) || {}).length);
+    const linkEdges = [];
     for (const id of ids) {
         const inputs = (wf[id] && wf[id].inputs) || {};
-        for (const [k, v] of Object.entries(inputs)) {
-            if (Array.isArray(v) && typeof v[0] === "string" && nodeById[v[0]] && v[0] !== id) {
-                const t = nodeById[id];
-                // 连线精确指向目标节点上对应参数行的文字中心（text y 是基线，字高 10px → 中心在基线上方约 3.5px）；该行被折叠时退回节点垂直中心
-                const idx = t.lines.indexOf(k);
-                edges.push({ from: v[0], to: id, targetY: idx >= 0 ? t.y + inputFirstY(id) + idx * INPUT_LINE_H - 3.5 : t.y + t.h / 2 });
+        let i = 0;
+        for (const v of Object.values(inputs)) {
+            if (Array.isArray(v) && typeof v[0] === "string" && wf[v[0]] && v[0] !== id) {
+                linkEdges.push([v[0], id, canvasRowOff(v[0], Number(v[1]) || 0, h, rows), canvasRowOff(id, i, h, rows)]);
+                i++;
             }
         }
     }
-    return { nodes, edges, width, height };
+
+    const center = barycenterCenters(colNodes, cols, h, CANVAS_GAP_Y, preds, succ, linkEdges, colX, colW);
+    const top = ids.length ? Math.min(...ids.map(id => center[id] - h[id] / 2)) : 0;
+    const out = [];
+    for (const c of cols)
+        for (const id of colNodes[c])
+            out.push({ id, x: colX[c], y: Math.round(CANVAS_PAD + center[id] - h[id] / 2 - top) });
+    return out;
 }
 
 // 合并同类参考加载器：autogrow 槽位（ref_images.ref_image_0..8）的专属源节点（LoadImage/LoadVideo/LoadAudio 等）

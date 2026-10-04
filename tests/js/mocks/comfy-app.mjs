@@ -1,5 +1,5 @@
 // ComfyUI `app` 单体的测试替身。只实现 Neo-Nodes 前端真正用到的成员：
-// graph / nodeOutputs / graphToPrompt / loadGraphData / loadApiJson / extensionManager(toast, renderMarkdownToHtml)
+// graph / nodeOutputs / canvas / graphToPrompt / loadGraphData / loadApiJson / extensionManager(toast, renderMarkdownToHtml)
 export const appState = {
     extensions: [],
     graph: null,
@@ -30,6 +30,7 @@ export const app = {
     get nodeOutputs() {
         return appState.nodeOutputs;
     },
+    canvas: null, // 画布（LGraphCanvas）替身：测试里按需挂 fitViewToSelectionAnimated 等成员
     async graphToPrompt() {
         return appState.promptGraph ?? { output: {}, workflow: null };
     },
@@ -75,6 +76,7 @@ export function resetAppState() {
     appState.extensions.length = 0;
     appState.graph = null;
     appState.nodeOutputs = {};
+    app.canvas = null;
     appState.toasts.length = 0;
     appState.loaded.length = 0;
     appState.promptGraph = null;
