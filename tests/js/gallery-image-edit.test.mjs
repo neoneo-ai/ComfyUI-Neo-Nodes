@@ -510,11 +510,11 @@ test("图片编辑弹窗：窗帘对比——结果层挂在图片盒内，拖�
     click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
     await sleep(80);
 
-    // 成功后：半开窗帘——左侧原图、右侧结果图
+    // 成功后：分割线贴左边界（整幅结果图），往右拖才露出原图
     assert.notEqual(clip.style.display, "none", "生成成功后应显示结果层");
     assert.notEqual(divider.style.display, "none", "生成成功后应显示分割线");
-    assert.equal(clip.style.clipPath, "inset(0 0 0 50%)", "窗帘应由 clip-path 裁掉左侧 50%");
-    assert.equal(divider.style.left, "50%");
+    assert.equal(clip.style.clipPath, "inset(0 0 0 0%)", "默认贴左边界：整幅显示结果图");
+    assert.equal(divider.style.left, "0%");
     assert.equal(clip.style.width, "", "结果层宽度不得跟随分割线（否则结果图会被压扁）");
 
     // 拖分割线到 25%：只改裁切位置

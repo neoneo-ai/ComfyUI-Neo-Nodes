@@ -1230,8 +1230,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const showResultOverlay = () => {
         resultClip.style.display = "";
         divider.style.display = "";
-        // 初始半开：左半原图 / 右半结果图，一眼可见对比（拖分割线看全幅）
-        setDividerPos(50);
+        // 初始贴左边界：整幅显示结果图，往右拖分割线才逐渐露出原图对比
+        setDividerPos(0);
     };
 
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" }, [

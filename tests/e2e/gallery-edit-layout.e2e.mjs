@@ -74,7 +74,7 @@ const measure = () => {
     };
 };
 
-// 模拟 gallery-gen.js 的 showResultOverlay + setDividerPos(50)
+// 模拟 gallery-gen.js 的窗帘：取 50% 中间态，方便一次检查左右两侧各露出哪张图
 const revealHalf = () => {
     const clip = document.querySelector(".neo-gallery-edit-result-clip");
     const divider = document.querySelector(".neo-gallery-edit-divider");
@@ -134,6 +134,38 @@ for (const [w, h] of [[848, 1280], [1280, 848], [4000, 1000], [300, 200]]) {
         assert.ok(reveal.rightShown.includes("neo-gallery-edit-result-img"), `分割线右侧应露出结果图，实为 ${reveal.rightShown}`);
     });
 }
+
+test("图片编辑对比区：分割线默认贴左边界（整幅结果图），手柄仍可抓取", { timeout: 60000 }, async () => {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    await page.setContent(html(848, 1280, false));
+    await page.waitForTimeout(80);
+    const m = await page.evaluate(() => {
+        const clip = document.querySelector(".neo-gallery-edit-result-clip");
+        const divider = document.querySelector(".neo-gallery-edit-divider");
+        clip.style.display = "";
+        divider.style.display = "";
+        // 与 gallery-gen.js showResultOverlay 的默认位置一致：贴左边界
+        clip.style.clipPath = "inset(0 0 0 0%)";
+        divider.style.left = "0%";
+        const d = divider.getBoundingClientRect();
+        const modal = document.querySelector(".neo-gallery-edit-modal").getBoundingClientRect();
+        const hit = document.elementFromPoint(d.left + d.width / 2, d.top + d.height / 2)?.className || "";
+        return {
+            divider: { x: Math.round(d.x), y: Math.round(d.y), h: Math.round(d.height) },
+            modal: { x: Math.round(modal.x), y: Math.round(modal.y), h: Math.round(modal.height) },
+            clipPath: getComputedStyle(clip).clipPath,
+            hit,
+        };
+    });
+    await page.close();
+
+    assert.equal(m.clipPath, "inset(0px 0px 0px 0%)", "默认不裁切：整幅显示结果图");
+    assert.ok(m.divider.y >= m.modal.y && m.divider.y + m.divider.h <= m.modal.y + m.modal.h,
+        `分割线应落在弹窗纵向范围内：divider=${JSON.stringify(m.divider)} modal=${JSON.stringify(m.modal)}`);
+    assert.ok(m.divider.x >= m.modal.x - 1,
+        `贴左边界时不应越出弹窗左侧：divider=${JSON.stringify(m.divider)} modal=${JSON.stringify(m.modal)}`);
+    assert.ok(m.hit.includes("neo-gallery-edit-divider"), `分割线应能抓取（命中自身），实为 ${m.hit}`);
+});
 
 test("图片编辑对比区：开扩图后图片盒仍是满宽 50vh 舞台（拖框/原图归位按舞台盒量尺寸）", { timeout: 60000 }, async () => {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
