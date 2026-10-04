@@ -3,7 +3,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, click, inputText, setConfirmAnswer, dialogs } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, click, inputText, fire, setConfirmAnswer, dialogs, window } from "./setup.mjs";
+
+const LEFT_W_KEY = "neo.skillManagerLeftWidth";
 
 let skills;
 beforeEach(() => {
@@ -21,7 +23,8 @@ function mockSkills() {
 function mockLoadSkill() {
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
         id: b.id, name: "Preset Image", content: "body", files: [{ name: "skill.md", size: 5 }],
-        gen_image: false, gen_video: false, multi_turn: false, tags: [], category: "",
+        gen_image: false, gen_video: false, multi_turn: false, tags: [],
+        category: skills.find((s) => s.id === b.id)?.category || "",
     }));
     mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
 }
@@ -164,7 +167,7 @@ test("分类手风琴：默认只展开「生图」，展开别的分类自动�
     ];
     const box = await openMgr();
     const list = box.querySelector(".rs-skill-picker-list");
-    const labels = () => Array.from(list.querySelectorAll(".rs-skill-picker-item")).map((r) => r.textContent.trim());
+    const labels = () => Array.from(list.querySelectorAll(".rs-skill-picker-item .rs-skill-picker-label")).map((r) => r.textContent.trim());
     const catOf = (text) => Array.from(list.querySelectorAll(".rs-combo-category")).find((c) => c.textContent.includes(text));
     const openCats = () => Array.from(list.querySelectorAll(".rs-combo-category.is-open"));
 
@@ -206,6 +209,91 @@ test("task 分类技能在管理窗口隐藏，video_gen / custom 保持可见",
     closeMgr(box);
 });
 
+test("左侧列表行内操作：预设行只有 ⧉ 复制，自定义行有 ⧉ + 🗑", async () => {
+    const box = await openMgr();
+    const rowOf = (text) => Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => r.textContent.includes(text));
+    const presetRow = rowOf("预设生图");
+    const customRow = rowOf("Custom A");
+    assert.equal(presetRow.querySelectorAll(".rs-skill-row-btn").length, 1, "预设行只给复制按钮（预设不可删）");
+    assert.equal(customRow.querySelectorAll(".rs-skill-row-btn").length, 2, "自定义行给复制 + 删除");
+    assert.ok(customRow.querySelector(".rs-skill-row-del"), "删除按钮带 .rs-skill-row-del（hover 淡入样式）");
+    closeMgr(box);
+});
+
+test("行内 ⧉ 复制：写为自定义副本并刷新列表、切到副本详情", async () => {
+    const box = await openMgr();
+    let saved = null;
+    mockRoute("/rs_prompts/save_skill", (b) => {
+        saved = b;
+        skills.push({ id: b.id, name: b.name, source: "custom", category: "" });
+        return jsonResponse({ success: true, id: b.id });
+    });
+    mockRoute("/neo_image_gen/copy_skill_files", () => jsonResponse({ success: true }));
+    const row = Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => r.textContent.includes("预设生图"));
+    click(row.querySelector(".rs-skill-row-btn"));
+    await flush();
+    await sleep(50);
+
+    assert.equal(saved.source, "custom", "副本写为自定义技能");
+    assert.equal(saved.category, "image_gen", "保留源技能分类");
+    assert.ok(saved.name.includes("(Copy)"), "副本名称加 (Copy) 后缀");
+    const items = box.querySelectorAll(".rs-skill-picker-item");
+    assert.equal(items.length, 3, "广播后列表刷新为 3 条");
+    assert.ok(box.querySelector(".rs-skill-picker-item.is-selected").textContent.includes("(Copy)"), "右侧详情切到副本");
+    closeMgr(box);
+});
+
+test("行内 🗑 删除：确认后删除自定义技能并刷新列表", async () => {
+    const box = await openMgr();
+    let deleted = null;
+    mockRoute("/rs_prompts/delete_skill", (b) => {
+        deleted = b.id;
+        skills = skills.filter((s) => s.id !== b.id);
+        return jsonResponse({ success: true });
+    });
+    const row = Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => r.textContent.includes("Custom A"));
+    click(row.querySelector(".rs-skill-row-del"));
+    await flush();
+    await sleep(50);
+
+    assert.equal(deleted, "custom_a", "按 skill id 删除");
+    assert.equal(box.querySelectorAll(".rs-skill-picker-item").length, 1, "列表刷新为 1 条");
+    closeMgr(box);
+});
+
+test("行内 🗑 删除当前选中技能：右侧详情收起为占位提示", async () => {
+    const box = await openMgr();
+    mockRoute("/rs_prompts/delete_skill", (b) => {
+        skills = skills.filter((s) => s.id !== b.id);
+        return jsonResponse({ success: true });
+    });
+    const row = Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => r.textContent.includes("Custom A"));
+    click(row);                       // 先选中 Custom A，右侧显示其详情
+    await flush();
+    await sleep(50);
+    assert.notEqual(box.querySelector(".rs-skill-manager-right .rs-skill-modal").style.display, "none", "详情已打开");
+
+    click(row.querySelector(".rs-skill-row-del"));
+    await flush();
+    await sleep(50);
+    assert.equal(box.querySelector(".rs-skill-manager-right .rs-skill-modal").style.display, "none", "被删技能的详情收起");
+    assert.ok(!box.querySelector(".rs-skill-manager-empty").hidden, "占位提示恢复显示");
+    closeMgr(box);
+});
+
+test("行内 🗑 删除取消确认时不发请求", async () => {
+    const box = await openMgr();
+    setConfirmAnswer(false);
+    mockRoute("/rs_prompts/delete_skill", () => jsonResponse({ success: true }));
+    const row = Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => r.textContent.includes("Custom A"));
+    click(row.querySelector(".rs-skill-row-del"));
+    await flush();
+    await sleep(50);
+    assert.ok(dialogs.confirms.some((m) => m.includes("Custom A")), "应弹出删除确认");
+    assert.equal(box.querySelectorAll(".rs-skill-picker-item").length, 2, "取消后列表不变");
+    closeMgr(box);
+});
+
 test("内嵌模式（Studio 技能页）：无 ✕ / 无「从画布」按钮，close() 移除根节点并清监听", async () => {
     const { createSkillManager } = await import("../../web/skill.js");
     mockSkills();
@@ -231,5 +319,52 @@ test("内嵌模式（Studio 技能页）：无 ✕ / 无「从画布」按钮，
     assert.equal(mgr.el.querySelectorAll(".rs-skill-picker-item").length, 3, "广播后列表应刷新为 3 条");
     mgr.close();
     assert.equal(host.querySelector(".rs-skill-manager"), null, "close() 应移除根节点");
+});
+
+// 拖拽分隔条改左栏宽度：jsdom 无布局，用 __rect 给出主体/左栏的可预测宽度
+function dragSplit(split, fromX, toX, { bodyW = 1200, leftW = 300 } = {}) {
+    const rect = (w) => ({ x: 0, y: 0, top: 0, left: 0, right: w, bottom: 800, width: w, height: 800 });
+    split.parentElement.__rect = rect(bodyW);
+    split.parentElement.querySelector(".rs-skill-manager-left").__rect = rect(leftW);
+    split.dispatchEvent(new window.MouseEvent("mousedown", { button: 0, clientX: fromX, bubbles: true, cancelable: true }));
+    document.dispatchEvent(new window.MouseEvent("mousemove", { clientX: toX, bubbles: true }));
+    document.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+}
+
+test("左栏分隔条：拖拽调整宽度，松手记忆到 localStorage 并在重开窗口时沿用", async () => {
+    localStorage.removeItem(LEFT_W_KEY);
+    const box = await openMgr();
+    const split = box.querySelector(".rs-skill-manager-split");
+    const left = box.querySelector(".rs-skill-manager-left");
+    assert.ok(split, "左右面板之间应有可拖拽分隔条");
+    assert.equal(left.style.width, "", "首次开窗使用 CSS 默认宽度");
+
+    dragSplit(split, 300, 420);
+    assert.equal(left.style.width, "420px", "拖拽后左栏宽度跟随光标");
+    assert.equal(localStorage.getItem(LEFT_W_KEY), "420px", "松手写入宽度记忆");
+
+    closeMgr(box);
+    const box2 = await openMgr();
+    assert.equal(box2.querySelector(".rs-skill-manager-left").style.width, "420px", "重开窗口沿用上次宽度");
+    closeMgr(box2);
+    localStorage.removeItem(LEFT_W_KEY);
+});
+
+test("左栏宽度钳制在上下限之间；双击分隔条清除记忆回到默认宽度", async () => {
+    localStorage.removeItem(LEFT_W_KEY);
+    const box = await openMgr();
+    const split = box.querySelector(".rs-skill-manager-split");
+    const left = box.querySelector(".rs-skill-manager-left");
+
+    dragSplit(split, 300, 40);
+    assert.equal(left.style.width, "180px", "向左拖到底钳到左栏下限");
+    dragSplit(split, 300, 1200, { bodyW: 1200, leftW: 180 });
+    assert.equal(left.style.width, "880px", "向右拖到底钳到主体宽 - 右栏下限");
+    assert.equal(localStorage.getItem(LEFT_W_KEY), "880px", "两次拖拽均落盘");
+
+    fire(split, "dblclick");
+    assert.equal(left.style.width, "", "双击回到 CSS 默认宽度");
+    assert.equal(localStorage.getItem(LEFT_W_KEY), null, "双击清除宽度记忆");
+    closeMgr(box);
 });
 

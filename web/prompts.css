@@ -3367,16 +3367,39 @@
     min-height: 0;
     display: flex;
 }
-/* 左：列表面板（搜索 + 分组列表 + 管理工具栏） */
+/* 左：列表面板（搜索 + 分组列表 + 管理工具栏）；宽度可拖拽，JS 写 inline width，max-width 兜底保证右栏不被挤没 */
 .rs-skill-manager-left {
     width: 300px;
+    max-width: 60%;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid #3a3a3a;
     background: #16161f;
 }
 .rs-skill-manager-left .rs-skill-picker-search { margin: 10px 10px 8px; }
+/* 左右分隔条：压在两栏交界线上（净占 1px，同原 border-right），拖动改左栏宽度、双击回默认 */
+.rs-skill-manager-split {
+    flex: 0 0 5px;
+    margin: 0 -2px;
+    position: relative;
+    z-index: 1;
+    cursor: col-resize;
+    touch-action: none;
+}
+.rs-skill-manager-split::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 1px;
+    background: #3a3a3a;
+    transition: background .12s ease;
+}
+.rs-skill-manager-split:hover::after,
+.rs-skill-manager-split.is-dragging::after { background: #5090cc; }
+/* 拖动期间整页保持横向拖拽光标并禁选字（光标移出分隔条也不丢） */
+body.rs-skill-resizing { cursor: col-resize; user-select: none; }
 /* 右：详情面板（内嵌 .rs-skill-modal 填满） */
 .rs-skill-manager-right {
     flex: 1;
@@ -3493,6 +3516,23 @@
 .rs-skill-picker-item.is-selected { background: #1f3a5c; box-shadow: inset 0 0 0 1px #5090cc; color: #fff; }
 .rs-skill-picker-badge { flex-shrink: 0; font-size: 12px; }
 .rs-skill-picker-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 技能管理左侧列表的行内操作（⧉ 复制 / 🗑 删除）：默认隐藏，hover 技能行时淡入 */
+.rs-skill-picker-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.rs-skill-row-btn {
+    opacity: 0;
+    pointer-events: none;
+    padding: 1px 4px;
+    background: none;
+    border: none;
+    color: #9db4c9;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: opacity .12s ease, color .12s ease;
+}
+.rs-skill-picker-item:hover .rs-skill-row-btn { opacity: 1; pointer-events: auto; }
+.rs-skill-row-btn:hover { color: #e6edf3; }
+.rs-skill-row-del:hover { color: #ff7b72; }
 /* 技能浮动预览卡：选择窗内 absolute 挂 overlay、agent 技能下拉内 fixed 挂 body（--fixed），均以焦点行为锚点贴其右侧（JS 计算坐标）；随行焦点（键盘高亮 / hover）跟随 */
 .rs-skill-picker-preview {
     position: absolute;

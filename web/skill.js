@@ -487,6 +487,40 @@ function createSkillStatusRow(opts) {
     return { el, refresh, destroy };
 }
 
+/**
+ * 复制技能为自定义副本（客户端 loadSkill + saveSkill，无专用后端接口）：连同 workflow.json / config.json 一起复制。
+ * 详情弹窗「⧉ 复制为自定义」与技能管理列表行内「⧉」共用。成功返回 { id, name }，失败提示后返回 null。
+ */
+async function copySkillAsCustom(skillId, fallbackName = "") {
+    const full = await loadSkill(skillId);
+    if (full && full.error) { showToast(app, "error", "复制失败", full.error); return null; }
+    const newId = `${skillId}_copy_${Date.now()}`;
+    // 复制产生的 name 需与已有 skill 不重名（后端 save_skill 会 409），冲突时递增序号
+    const baseName = ((full && full.name) || fallbackName || skillId) + " (Copy)";
+    const takenNames = new Set((await listSkills()).map(s => (s.name || "").trim()));
+    let copyName = baseName;
+    for (let n = 2; takenNames.has(copyName); n++) copyName = `${baseName} ${n}`;
+    const result = await saveSkill({
+        id: newId,
+        name: copyName,
+        content: (full && full.content) || "",
+        tags: [...((full && full.tags) || [])],
+        source: "custom",
+        multi_turn: !!(full && full.multi_turn),
+        // 保留 frontmatter 元数据：生图/生视频技能复制后仍是原分类且设置区可见
+        category: (full && full.category) || "",
+        gen_image: !!(full && full.gen_image),
+        gen_video: !!(full && full.gen_video),
+        // 视频模式（t2v/i2v/fl2v/r2v）：导演编辑器的分段技能下拉按 skill.mode 过滤，复制后必须保留
+        mode: (full && full.mode) || "",
+        requires_ref: !!(full && full.requires_ref)
+    });
+    if (!result.success) { showToast(app, "error", "复制失败", result.error || "Unknown error"); return null; }
+    await copySkillFiles(skillId, newId);
+    document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+    return { id: newId, name: copyName };
+}
+
 // ==========================================
 // UI：createSkillDetailPopup() —— 单技能详情弹窗（查看 / 编辑 / 删除 / 复制为自定义 / 新建）
 // 由技能下拉的行内操作与底部工具栏打开；overlay 挂到 document.body，跨节点共享一个实例。
@@ -1630,36 +1664,12 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         else alert(`Delete failed: ${result.error || "Unknown error"}`);
     });
 
-    // ---- 复制为自定义（仅内置；客户端 loadSkill + saveSkill，无后端接口）----
+    // ---- 复制为自定义（仅内置）----
     copyBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (!currentSkillId || isCustom()) return;
-        const full = await loadSkill(currentSkillId);
-        if (full && full.error) { alert("Failed to load skill: " + full.error); return; }
-        const newId = currentSkillId + "_copy_" + Date.now();
-        // 复制产生的 name 需与已有 skill 不重名（后端 save_skill 会 409），冲突时递增序号
-        const baseName = ((full && full.name) || nameInput.value.trim() || currentSkillId) + " (Copy)";
-        const takenNames = new Set((await listSkills()).map(s => (s.name || "").trim()));
-        let copyName = baseName;
-        for (let n = 2; takenNames.has(copyName); n++) copyName = `${baseName} ${n}`;
-        await saveSkill({
-            id: newId,
-            name: copyName,
-            content: (full && full.content) || "",
-            tags: [...((full && full.tags) || [])],
-            source: "custom",
-            multi_turn: !!(full && full.multi_turn),
-            // 保留 frontmatter 元数据：生图/生视频技能复制后仍是原分类且设置区可见
-            category: (full && full.category) || "",
-            gen_image: !!(full && full.gen_image),
-            gen_video: !!(full && full.gen_video),
-            // 视频模式（t2v/i2v/fl2v/r2v）：导演编辑器的分段技能下拉按 skill.mode 过滤，复制后必须保留
-            mode: (full && full.mode) || "",
-            requires_ref: !!(full && full.requires_ref)
-        });
-        await copySkillFiles(currentSkillId, newId); // 生图技能连同 workflow.json / config.json 一起复制（失败静默）
-        document.dispatchEvent(new CustomEvent("rs.skills.updated"));
-        await openExisting(newId, "custom"); // 立即切换到复制后的 skill 详情
+        const copy = await copySkillAsCustom(currentSkillId, nameInput.value.trim());
+        if (copy) await openExisting(copy.id, "custom"); // 立即切换到复制后的 skill 详情
     });
 
     // ---- 附属 .md：新增 / 删除（仅自定义）----
@@ -2454,6 +2464,11 @@ function createSkillDropdown() {
 // ==========================================
 let _skillManagerOpen = false;
 
+// 左栏宽度拖拽：下限保证列表可读，右栏下限保证详情不被挤没；宽度记忆到 localStorage，双击分隔条清除
+const SKILL_LEFT_W_KEY = "neo.skillManagerLeftWidth";
+const SKILL_LEFT_MIN_W = 180;
+const SKILL_RIGHT_MIN_W = 320;
+
 function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {}) {
     const box = mkEl("div", "rs-skill-manager");
 
@@ -2471,11 +2486,12 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         head.appendChild(closeBtn);
     }
 
-    // 主体：左列表 | 右详情
+    // 主体：左列表 | 分隔条 | 右详情
     const body = mkEl("div", "rs-skill-manager-body");
     const left = mkEl("div", "rs-skill-manager-left");
+    const split = mkEl("div", "rs-skill-manager-split");
     const right = mkEl("div", "rs-skill-manager-right");
-    body.append(left, right);
+    body.append(left, split, right);
     box.append(head, body);
 
     // 左：搜索框 + 列表 + 管理工具栏（新建 / ZIP / 目录 / 从画布）
@@ -2496,6 +2512,39 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
 
     host.appendChild(box);
 
+    // 左栏宽度拖拽：分隔条跟随光标，钳制在 [左栏下限, 主体宽 - 右栏下限]；松手记忆到 localStorage（开窗沿用，
+    // 上限由 CSS .rs-skill-manager-left max-width 兜底），双击分隔条清除记忆回到默认宽度。
+    const setLeftWidth = (w) => {
+        const max = Math.max(SKILL_LEFT_MIN_W, body.getBoundingClientRect().width - SKILL_RIGHT_MIN_W);
+        left.style.width = `${Math.round(Math.max(SKILL_LEFT_MIN_W, Math.min(w, max)))}px`;
+    };
+    split.title = "拖动调整列表宽度（双击恢复默认）";
+    let savedLeftW = NaN;
+    try { savedLeftW = parseInt(localStorage.getItem(SKILL_LEFT_W_KEY), 10); } catch { /* 隐私模式下 localStorage 不可用 */ }
+    if (Number.isFinite(savedLeftW)) left.style.width = `${Math.max(SKILL_LEFT_MIN_W, savedLeftW)}px`;
+    split.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();   // 避免拖动时选中文字
+        const startX = e.clientX;
+        const startW = left.getBoundingClientRect().width;
+        split.classList.add("is-dragging");
+        document.body.classList.add("rs-skill-resizing");
+        const onMove = (ev) => setLeftWidth(startW + ev.clientX - startX);
+        const onUp = () => {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            split.classList.remove("is-dragging");
+            document.body.classList.remove("rs-skill-resizing");
+            try { localStorage.setItem(SKILL_LEFT_W_KEY, left.style.width); } catch { /* 同上 */ }
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+    });
+    split.addEventListener("dblclick", () => {
+        try { localStorage.removeItem(SKILL_LEFT_W_KEY); } catch { /* 同上 */ }
+        left.style.width = "";
+    });
+
     let allItems = [];
     let selectedId = null;
     // 手风琴：同时只展开一个分类；undefined = 首屏尚未定位（首次加载后默认展开「生图」）
@@ -2503,6 +2552,16 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
     const syncEmpty = () => {
         const m = right.querySelector(".rs-skill-modal");
         placeholder.hidden = !!(m && m.style.display !== "none");
+    };
+
+    // 行内操作按钮（⧉ 复制 / 🗑 删除）：默认透明，hover 行时淡入（见 prompts.css .rs-skill-row-btn）
+    const mkRowBtn = (glyph, tip, extraCls = "") => {
+        const b = mkEl("button", "rs-skill-row-btn" + (extraCls ? ` ${extraCls}` : ""));
+        b.type = "button";
+        b.textContent = glyph;
+        b.title = tip;
+        b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+        return b;
     };
 
     // 渲染分组列表（搜索过滤）；分类头可点击折叠/展开（手风琴：仅一个组展开，搜索时全展开）；展开组加粗高亮 is-open；选中项高亮 is-selected
@@ -2546,6 +2605,28 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
                 const lbl = mkEl("span", "rs-skill-picker-label");
                 lbl.textContent = it.label;
                 row.appendChild(lbl);
+                const actions = mkEl("div", "rs-skill-picker-actions");
+                const copyBtn = mkRowBtn("⧉", it.source === "custom" ? "复制为副本" : "复制为自定义技能");
+                copyBtn.addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    const copy = await copySkillAsCustom(it.skillId || it.value, it.label);
+                    if (copy) await selectSkill({ value: copy.name, skillId: copy.id, source: "custom" });
+                });
+                actions.appendChild(copyBtn);
+                if (it.source === "custom") {
+                    const delBtn = mkRowBtn("🗑", "删除该自定义技能", "rs-skill-row-del");
+                    delBtn.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        const id = it.skillId || it.value;
+                        if (!confirm(`删除技能 "${it.label}"？`)) return;
+                        const r = await deleteSkill(id);
+                        if (!r.success) { showToast(app, "error", "删除失败", r.error || "Unknown error"); return; }
+                        if (it.value === selectedId) { popup.close(); selectedId = null; }   // 删的正是右侧正在显示的详情
+                        document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+                    });
+                    actions.appendChild(delBtn);
+                }
+                row.appendChild(actions);
                 row.addEventListener("click", () => selectSkill(it));
                 list.appendChild(row);
             }
