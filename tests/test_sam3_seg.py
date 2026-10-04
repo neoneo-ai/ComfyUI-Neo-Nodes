@@ -100,6 +100,16 @@ class TestSam3SegmentPoints(unittest.TestCase):
         fake.nodes_sam3 = fake_nodes
         sys.modules["comfy_extras"] = fake
         sys.modules["comfy_extras.nodes_sam3"] = fake_nodes
+        # comfy.utils 桩（进度条 hook）
+        _comfy_utils = types.ModuleType("comfy.utils")
+        _comfy_utils.PROGRESS_BAR_HOOK = None
+        sys.modules["comfy.utils"] = _comfy_utils
+        if "comfy" not in sys.modules:
+            _comfy = types.ModuleType("comfy")
+            _comfy.utils = _comfy_utils
+            sys.modules["comfy"] = _comfy
+        else:
+            sys.modules["comfy"].utils = _comfy_utils
         return calls
 
     def test_segment_saves_binary_mask(self):
@@ -116,6 +126,8 @@ class TestSam3SegmentPoints(unittest.TestCase):
         finally:
             sys.modules.pop("comfy_extras", None)
             sys.modules.pop("comfy_extras.nodes_sam3", None)
+            sys.modules.pop("comfy", None)
+            sys.modules.pop("comfy.utils", None)
         self.assertTrue(name.startswith("NeoAgent/_neo_sam3_mask_"))
         full = os.path.join(_INPUT_DIR, *name.split("/"))
         self.assertTrue(os.path.isfile(full))
@@ -123,8 +135,48 @@ class TestSam3SegmentPoints(unittest.TestCase):
         with Image.open(full) as m:
             self.assertEqual(m.mode, "L")
             self.assertEqual(m.size, (64, 64))
-            self.assertGreater(m.getbbox()[2], 10)   # 遮罩非空
+            # 中心仍完全覆盖
+            self.assertEqual(m.getpixel((15, 15)), 255)
+            # 原始外 5px（膨胀 10px 范围内）→ 仍为 255
+            self.assertEqual(m.getpixel((5, 15)), 255)
+            # 原始外 15px（膨胀边缘 + 羽化区）→ 中间值，证明羽化生效
+            edge_val = m.getpixel((35, 15))
+            self.assertGreater(edge_val, 0)
+            self.assertLess(edge_val, 255)
+            # 远离物体 → 接近 0
+            self.assertLessEqual(m.getpixel((55, 15)), 5)
         self.assertEqual(json.loads(calls[0]), [{"x": 15, "y": 15}])
+
+    def test_segment_adaptive_dilation_highres(self):
+        """高分辨率图像使用更大的膨胀和羽化半径（1024 → dilate_r=16, feather_r=8）。"""
+        import torch
+        mask = torch.zeros(1, 1024, 1024)
+        mask[0, 256:384, 256:384] = 1.0
+        self._stub_detect(mask)
+        sam3_seg._MODEL_CACHE.clear()
+        sam3_seg._MODEL_CACHE["sam3.1_multiplex_fp16.safetensors"] = object()
+        write_png(os.path.join(_INPUT_DIR, "scene_1024.png"), 1024, 1024)
+        try:
+            name = sam3_seg.segment_points("scene_1024.png", [{"x": 512, "y": 512}])
+        finally:
+            sys.modules.pop("comfy_extras", None)
+            sys.modules.pop("comfy_extras.nodes_sam3", None)
+            sys.modules.pop("comfy", None)
+            sys.modules.pop("comfy.utils", None)
+        full = os.path.join(_INPUT_DIR, *name.split("/"))
+        from PIL import Image
+        with Image.open(full) as m:
+            self.assertEqual(m.size, (1024, 1024))
+            # dilate_r=16 → 原始左边缘 x=256 延伸到 x=240
+            self.assertEqual(m.getpixel((320, 320)), 255)
+            # 膨胀内部深处（x=270，距膨胀边缘 30px）→ 仍为 255
+            self.assertGreaterEqual(m.getpixel((270, 320)), 250)
+            # 膨胀外 + 羽化区（x=235，距原始边缘 21px > 16px）→ 中间值
+            edge_val = m.getpixel((235, 320))
+            self.assertGreater(edge_val, 0)
+            self.assertLess(edge_val, 255)
+            # 远离物体（x=200，距原始边缘 56px）→ 接近 0
+            self.assertLessEqual(m.getpixel((200, 320)), 5)
 
     def test_empty_mask_raises(self):
         import torch
@@ -139,6 +191,8 @@ class TestSam3SegmentPoints(unittest.TestCase):
         finally:
             sys.modules.pop("comfy_extras", None)
             sys.modules.pop("comfy_extras.nodes_sam3", None)
+            sys.modules.pop("comfy", None)
+            sys.modules.pop("comfy.utils", None)
 
 
 if __name__ == "__main__":

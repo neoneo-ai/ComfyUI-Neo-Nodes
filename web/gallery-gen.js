@@ -37,6 +37,14 @@ const OUTPAINT_RATIOS = [
 // 扩图默认触发词（与后端 OUTPAINT_DEFAULT_PROMPT 一致）
 const OUTPAINT_DEFAULT_PROMPT = ("Outpaint the image: replace the solid gray areas with a seamless continuation " +
     "of the scene, keeping the existing picture unchanged.");
+// 点选删除默认提示词（与后端 REMOVE_DEFAULT_PROMPT 一致）
+const REMOVE_DEFAULT_PROMPT = ("Remove the object in the red highlighted area and fill it with the surrounding background. " +
+    "The filled area seamlessly continues the scene's lighting, perspective, and surface textures. " +
+    "All other parts of the image remain exactly unchanged.");
+// 多图融合默认提示词（以原图为目标场景，将额外参考图中的人物/物体自然融入）
+const BLEND_DEFAULT_PROMPT = ("Using the first image as the base scene, naturally insert the subjects from the additional reference images into the scene. " +
+    "Match their scale, lighting direction, color temperature, and perspective to the environment. " +
+    "The result reads as a single photograph where all subjects belong to the same moment.");
 // 扩图链两次缩放的目标（与后端 OUTPAINT_REF_MP + 设置项 target_megapixels、参考工作流
 // ▶▷Qwen-image21-功能流 的「图像扩展」一致）：原图先归一化到 1MP，补灰边后画布再归一化到目标 MP
 const OUTPAINT_REF_MP = 1.0;
@@ -1024,13 +1032,14 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     const start = async () => {
         if (running) return;
-        if (localOn && !painted) { renderError("请先涂抹要编辑的区域"); return; }
-        if (removeOn && !removePoints.length) { renderError("请先点击原图标记要删除的物体"); return; }
+        if (editMode === "local" && !painted) { renderError("请先涂抹要编辑的区域"); return; }
+        if (editMode === "remove" && !removePoints.length) { renderError("请先点击原图标记要删除的物体"); return; }
         restoreOrigImage();   // 上一轮换过的缩放图先还原，避免扩图/局部的基准尺寸跟着变
         let prompt = promptInput.value.trim();
-        if (outpaintOn && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
-        // 点选删除允许空提示词：后端用 SAM3 分割标记物体后走局部编辑管线移除
-        if (!prompt && !removeOn) { promptInput.focus(); return; }
+        if (editMode === "outpaint" && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
+        if (editMode === "remove" && !prompt) prompt = REMOVE_DEFAULT_PROMPT;
+        if (editMode === "blend" && !prompt) prompt = BLEND_DEFAULT_PROMPT;
+        if (!prompt) { promptInput.focus(); return; }
         running = true;
         cancelRequested = false;
         renderRunning("排队中…");
@@ -1042,8 +1051,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
             let metaHeight = parseInt(heightInput.value, 10) || undefined;
             // 常规编辑的目标尺寸：模板会据此把原图缩放后送进编码器，对比窗左侧同步换成缩放图；
             // 扩图/局部编辑走各自的画布（基准要用原图自然尺寸），这里必须清掉，免得沿用上一轮
-            plainEdit = !outpaintOn && !localOn && !!metaWidth && !!metaHeight;
-            if (outpaintOn && box) {
+            plainEdit = editMode === "normal" && !!metaWidth && !!metaHeight;
+            if (editMode === "outpaint" && box) {
                 const p = paddings();
                 if (p.left || p.top || p.right || p.bottom) {
                     // 出图尺寸 = 补边画布（1MP 层 + 留白）整幅缩放到目标像素（与后端同算法）
@@ -1055,12 +1064,12 @@ export function openImageEditDialog(gallery, image, subfolder) {
             }
             const refs = [{ kind: "input", value: refName }];
             // 额外参考图（换脸/换身源图、多张融合）；局部编辑的涂抹遮罩走 data 通道
-            if (!outpaintOn && !localOn) {
+            if (editMode !== "outpaint" && editMode !== "local") {
                 for (const r of extraRefs) {
                     refs.push({ kind: "input", value: r.subfolder ? `${r.subfolder}/${r.filename}` : r.filename });
                 }
             }
-            if (localOn) refs.push({ kind: "data", data: maskCanvas.toDataURL("image/png") });
+            if (editMode === "local") refs.push({ kind: "data", data: maskCanvas.toDataURL("image/png") });
             const payload = {
                 skill_id: skillSel.value || QWEN_IMAGE_SKILL_ID,
                 prompt,
@@ -1072,8 +1081,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
             if (outpaintPayload) {
                 payload.outpaint = outpaintPayload;
             }
-            if (localOn) payload.local_edit = true;
-            if (removeOn) payload.remove_points = removePoints;
+            if (editMode === "local") payload.local_edit = true;
+            if (editMode === "remove") payload.remove_points = removePoints;
             const snap = await requestGeneration(payload);
             cancelId = snap.task_id;
             renderRunning("排队中…");
@@ -1148,6 +1157,10 @@ export function openImageEditDialog(gallery, image, subfolder) {
         removeClearBtn
     ]);
     removeRow.style.display = "none";
+
+    // 多图融合控件：添加多张参考图，模型自动融合为一张
+    const blendBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🔀 融合" });
+    blendBtn.title = "多图融合：添加多张参考图，由模型自动融合为一张连贯画面";
 
     // 参考图区（autogrow）：拖入一张追加新空槽，最多 9 张（Qwen Image 2.1 上限）
     const MAX_EXTRA_REFS = 9;
@@ -1264,6 +1277,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     outpaintBtn,
                     localBtn,
                     removeBtn,
+                    blendBtn,
                     refDropContainer
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
@@ -1395,8 +1409,10 @@ export function openImageEditDialog(gallery, image, subfolder) {
         dimProbe.src = fullUrl;
     })();
 
+    // ---- 编辑模式统一管理（normal / outpaint / local / remove / blend） ----
+    let editMode = "normal";
+
     // ---- 扩图：原图上拖框定四边留白量（只向外扩；比例模式锁长宽比） ----
-    let outpaintOn = false;
     let box = null;        // {x, y, w, h} 画布坐标（基准像素），原点为原图左上角
     let base = null;       // 基准尺寸：原图 contain 进舞台后的可见图片尺寸；开扩图时定一次后冻结
     let canvasEl = null;   // 原图+留白整体，超出舞台时 transform 等比缩小
@@ -1462,7 +1478,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                          targetMp(parseFloat(mpInput.value)));
     };
     const updateSizeLabel = () => {
-        if (!outpaintOn || !box) { sizeLabel.textContent = ""; return; }
+        if (editMode !== "outpaint" || !box) { sizeLabel.textContent = ""; return; }
         const p = paddings();
         // 没拖框时就是原图尺寸；拖了就显示出图尺寸（补边画布整幅缩放到目标像素后的尺寸）
         sizeLabel.textContent = (p.left || p.top || p.right || p.bottom)
@@ -1595,35 +1611,69 @@ export function openImageEditDialog(gallery, image, subfolder) {
         syncOutpaintView();
         updateSizeLabel();
     };
-    const setOutpaintMode = (on) => {
-        outpaintOn = on;
-        restoreOrigImage();   // 扩图基准要用原图自然尺寸，先把上一轮的缩放图还原
-        outpaintBtn.classList.toggle("on", on);
-        if (on && localOn) setLocalMode(false);
-        if (on && removeOn) setRemoveMode(false);
-        outpaintRow.style.display = on ? "" : "none";
-        widthInput.style.display = on ? "none" : "";
-        heightInput.style.display = on ? "none" : "";
-        resLabelEl.textContent = on ? "目标尺寸" : "目标分辨率";
-        sizeLabel.style.display = on ? "" : "none";
-        skillSel.value = on ? QWEN_OUTPAINT_SKILL_ID : QWEN_IMAGE_SKILL_ID;
-        if (on) {
+    // ---- 统一编辑模式切换（新增模式只需在此加一个 case） ----
+    const setEditMode = async (mode) => {
+        if (mode === editMode) return;
+        const prev = editMode;
+        editMode = mode;
+
+        // teardown 旧模式
+        if (prev === "outpaint") teardownOutpaintBox();
+        if (prev === "local") teardownPaint();
+        if (prev === "remove") teardownRemove();
+
+        restoreOrigImage();
+
+        // 按钮状态
+        outpaintBtn.classList.toggle("on", mode === "outpaint");
+        localBtn.classList.toggle("on", mode === "local");
+        removeBtn.classList.toggle("on", mode === "remove");
+        blendBtn.classList.toggle("on", mode === "blend");
+
+        // 模式专属行
+        outpaintRow.style.display = mode === "outpaint" ? "" : "none";
+        localRow.style.display = mode === "local" ? "" : "none";
+        removeRow.style.display = mode === "remove" ? "" : "none";
+
+        // 宽高输入可见性（扩图/局部/删除隐藏）
+        const hideWH = (mode === "outpaint" || mode === "local" || mode === "remove");
+        widthInput.style.display = hideWH ? "none" : "";
+        heightInput.style.display = hideWH ? "none" : "";
+        resLabelEl.textContent = { outpaint: "目标尺寸", local: "编辑区（自动）", remove: "同原图" }[mode] || "目标分辨率";
+        sizeLabel.style.display = mode === "outpaint" ? "" : "none";
+
+        // 技能选择
+        skillSel.value = { outpaint: QWEN_OUTPAINT_SKILL_ID, local: QWEN_LOCAL_EDIT_SKILL_ID }[mode] || QWEN_IMAGE_SKILL_ID;
+
+        // 模式专属 setup
+        if (mode === "outpaint") {
             setupOutpaintBox();
             snapBoxToRatio();
             if (!promptInput.value.trim()) promptInput.value = OUTPAINT_DEFAULT_PROMPT;
-        } else {
-            teardownOutpaintBox();
+        } else if (mode === "local") {
+            await setupPaint();
+        } else if (mode === "remove") {
+            widthInput.value = origImg.naturalWidth || "";
+            heightInput.value = origImg.naturalHeight || "";
+            await setupRemoveClicks();
+            if (!promptInput.value.trim()) promptInput.value = REMOVE_DEFAULT_PROMPT;
+            if (!refName) {
+                try { refName = await copyImageToInput(image, subfolder); }
+                catch (e) { removeHint.textContent = `原图读取失败：${e.message}`; }
+            }
+        } else if (mode === "blend") {
+            if (!promptInput.value.trim()) promptInput.value = BLEND_DEFAULT_PROMPT;
         }
+
         syncRefBtn();
         updateSizeLabel();
     };
 
-    outpaintBtn.addEventListener("click", () => setOutpaintMode(!outpaintOn));
+    outpaintBtn.addEventListener("click", () => setEditMode(editMode === "outpaint" ? "normal" : "outpaint"));
     ratioSel.addEventListener("change", snapBoxToRatio);
     mpInput.addEventListener("input", updateSizeLabel);
 
     // ---- 局部编辑：涂抹画布叠加在原图上（遮罩存自然分辨率，红色高亮层仅显示用） ----
-    let localOn = false;
     let maskCanvas = null;   // 遮罩（灰度，自然分辨率）——payload 传这张
     let tintCanvas = null;   // 红色高亮层（自然分辨率）
     let paintCanvas = null;  // 叠加在原图上的显示画布
@@ -1737,26 +1787,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
         redrawPaintOverlay();
     });
 
-    const setLocalMode = async (on) => {
-        localOn = on;
-        restoreOrigImage();   // 涂抹画布按原图自然尺寸建，先把上一轮的缩放图还原
-        localBtn.classList.toggle("on", on);
-        if (on && outpaintOn) setOutpaintMode(false);
-        if (on && removeOn) setRemoveMode(false);
-        localRow.style.display = on ? "" : "none";
-        widthInput.style.display = on ? "none" : "";
-        heightInput.style.display = on ? "none" : "";
-        resLabelEl.textContent = on ? "编辑区（自动）" : "目标分辨率";
-        sizeLabel.style.display = "none";
-        skillSel.value = on ? QWEN_LOCAL_EDIT_SKILL_ID : (outpaintOn ? QWEN_OUTPAINT_SKILL_ID : QWEN_IMAGE_SKILL_ID);
-        if (on) await setupPaint();
-        else teardownPaint();
-        syncRefBtn();
-    };
-    localBtn.addEventListener("click", () => setLocalMode(!localOn));
+    localBtn.addEventListener("click", () => setEditMode(editMode === "local" ? "normal" : "local"));
 
     // ---- 点选删除：透明点击层对齐原图 contain 显示盒，标记点存自然像素坐标 ----
-    let removeOn = false;
     let removePoints = [];   // [{x, y}] 原图像素坐标
     let removeCanvas = null; // 叠加在原图上的透明点击/标记画布
     let removeMaskImg = null; // 当前 SAM3 遮罩预览图（红色叠加 = 将被删除的区域）
@@ -1768,7 +1801,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (removeSegTimer) clearTimeout(removeSegTimer);
         removeSegTimer = setTimeout(async () => {
             removeSegTimer = null;
-            if (!removeOn || !removePoints.length || running) return;
+            if (editMode !== "remove" || !removePoints.length || running) return;
             const seq = ++removeSegSeq;
             removeMaskImg = null;
             redrawRemoveOverlay();
@@ -1780,19 +1813,19 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     body: JSON.stringify({ image: refName, points: removePoints }),
                 });
                 const data = await res.json().catch(() => null);
-                if (seq !== removeSegSeq || !removeOn) return;   // 分割期间已重新标记/关模式，丢弃过期结果
+                if (seq !== removeSegSeq || editMode !== "remove") return;   // 分割期间已重新标记/关模式，丢弃过期结果
                 if (!res.ok || !data || !data.mask) throw new Error((data && data.error) || "分割失败");
                 const parts = data.mask.split("/");
                 const maskFile = parts.pop();
                 const img = new Image();
                 img.src = `/neo_gallery/image?filename=${encodeURIComponent(maskFile)}&subfolder=${encodeURIComponent(`input/${parts.join("/")}`)}`;
                 await img.decode?.().catch(() => {});
-                if (seq !== removeSegSeq || !removeOn) return;
+                if (seq !== removeSegSeq || editMode !== "remove") return;
                 removeMaskImg = img;
                 removeHint.textContent = "";
                 redrawRemoveOverlay();
             } catch (e) {
-                if (seq === removeSegSeq && removeOn) removeHint.textContent = `分割失败：${e.message}`;
+                if (seq === removeSegSeq && editMode === "remove") removeHint.textContent = `分割失败：${e.message}`;
             }
         }, 600);
     };
@@ -1892,35 +1925,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
         redrawRemoveOverlay();
     });
 
-    const setRemoveMode = async (on) => {
-        removeOn = on;
-        restoreOrigImage();   // 标记按原图自然尺寸建，先把上一轮的缩放图还原
-        removeBtn.classList.toggle("on", on);
-        if (on && outpaintOn) setOutpaintMode(false);
-        if (on && localOn) setLocalMode(false);
-        removeRow.style.display = on ? "" : "none";
-        widthInput.style.display = on ? "none" : "";
-        heightInput.style.display = on ? "none" : "";
-        resLabelEl.textContent = on ? "同原图" : "目标分辨率";
-        sizeLabel.style.display = "none";
-        skillSel.value = on ? QWEN_IMAGE_SKILL_ID
-            : (outpaintOn ? QWEN_OUTPAINT_SKILL_ID : (localOn ? QWEN_LOCAL_EDIT_SKILL_ID : QWEN_IMAGE_SKILL_ID));
-        if (on) {
-            // 出图对齐原图尺寸（后端会做 32 对齐）
-            widthInput.value = origImg.naturalWidth || "";
-            heightInput.value = origImg.naturalHeight || "";
-            await setupRemoveClicks();
-            // 提前拷入 Input：点选自动识别与生成共用该文件名（已拷则复用，不重复落盘）
-            if (!refName) {
-                try { refName = await copyImageToInput(image, subfolder); }
-                catch (e) { removeHint.textContent = `原图读取失败：${e.message}`; }
-            }
-        } else {
-            teardownRemove();
-        }
-        syncRefBtn();
-    };
-    removeBtn.addEventListener("click", () => setRemoveMode(!removeOn));
+    removeBtn.addEventListener("click", () => setEditMode(editMode === "remove" ? "normal" : "remove"));
+    blendBtn.addEventListener("click", () => setEditMode(editMode === "blend" ? "normal" : "blend"));
 
     // ---- 参考图区（autogrow：拖入一张追加新空槽，最多 9 张） ----
     let extraRefs = [];   // [{filename, subfolder}]
@@ -1974,9 +1980,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (fname) { extraRefs[idx] = { filename: fname, subfolder: "" }; renderRefSlots(); }
     };
 
-    // 扩图/局部/点选模式只用首张参考，额外参考不可用
+    // 扩图/局部/点选模式只用首张参考，额外参考不可用（融合模式允许多张）
     const syncRefBtn = () => {
-        const disabled = outpaintOn || localOn || removeOn;
+        const disabled = editMode === "outpaint" || editMode === "local" || editMode === "remove";
         refDropContainer.classList.toggle("disabled", disabled);
         if (disabled && extraRefs.length) { extraRefs = []; renderRefSlots(); }
     };
@@ -1992,10 +1998,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (files.length) { [fname] = await uploadLocalFiles(files); }
         else { fname = await copyGalleryToInput(grabDataType(e)); }
         if (!fname) return;
-        // 重置扩图/涂抹/点选状态
-        if (outpaintOn) setOutpaintMode(false);
-        if (localOn) setLocalMode(false);
-        if (removeOn) setRemoveMode(false);
+        // 重置编辑模式
+        if (editMode !== "normal") setEditMode("normal");
         refName = fname;
         const newUrl = `/neo_gallery/image?filename=${encodeURIComponent(fname)}&subfolder=`;
         origImg.src = newUrl;

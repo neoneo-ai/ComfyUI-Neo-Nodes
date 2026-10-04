@@ -96,8 +96,9 @@ _PAD_TOKENS = {"{{PAD_LEFT}}": "left", "{{PAD_TOP}}": "top",
 # 局部编辑追加的区域约束（模型看到的是涂抹区标红的裁剪图）
 LOCAL_EDIT_PROMPT_SUFFIX = ("Only modify the red highlighted area; keep all other parts of the image exactly unchanged.")
 # 点选删除默认提示词（SAM3 遮罩标红后，模型移除红色区域物体并自然填充背景）
-REMOVE_DEFAULT_PROMPT = ("Remove the object in the red highlighted area from the image. Naturally fill the removed "
-                         "area with the surrounding background, keeping all other parts of the image unchanged.")
+REMOVE_DEFAULT_PROMPT = ("Remove the object in the red highlighted area and fill it with the surrounding background. "
+                         "The filled area seamlessly continues the scene's lighting, perspective, and surface textures. "
+                         "All other parts of the image remain exactly unchanged.")
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}

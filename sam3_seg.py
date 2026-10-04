@@ -108,7 +108,13 @@ def segment_points(ref_name: str, points: list) -> str:
     mask = out.args[0]                            # [1, H, W] float 0/1 union mask
     if not bool(mask.any()):
         raise ValueError("SAM3 未在标记点检测到物体，请重新标记后重试")
-    mask_img = Image.fromarray((mask[0].detach().cpu().numpy() * 255).astype("uint8"))
+    # 自适应膨胀 + 羽化：高分辨率图需要更大边缘覆盖，避免合成残影
+    from PIL import ImageFilter
+    mask_arr = (mask[0].detach().cpu().numpy() > 0.5).astype("uint8") * 255
+    short_side = min(mask.shape[1], mask.shape[2])
+    dilate_r = max(10, short_side // 64)
+    feather_r = max(4, short_side // 128)
+    mask_img = Image.fromarray(mask_arr).filter(ImageFilter.MaxFilter(2 * dilate_r + 1)).filter(ImageFilter.GaussianBlur(feather_r))
     tag = time.strftime("%Y%m%d-%H%M%S") + "_" + uuid.uuid4().hex[:6]
     mask_name = f"NeoAgent/_neo_sam3_mask_{tag}.png"
     os.makedirs(os.path.join(input_dir, "NeoAgent"), exist_ok=True)
