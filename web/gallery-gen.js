@@ -1148,7 +1148,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     // 点选删除控件：在原图上点击标记要删的物体（最多 5 点），SAM3 分割后走局部编辑管线移除
     const removeBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🎯 点选删除" });
-    removeBtn.title = "点选删除：在原图上点击要删除的物体，SAM3 自动分割并叠加红色遮罩预览，确认后移除（无需写提示词）";
+    removeBtn.title = "点选删除：在原图上点击要删除的物体，SAM3 自动分割并叠加红色遮罩预览，确认后移除（已预填默认删除指令，可修改）";
     const removeHint = $el("span", { className: "neo-gallery-edit-size-label" });
     const removeClearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: "清空标记" });
     const removeRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
@@ -1796,7 +1796,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     let removeSegTimer = null; // 点选后防抖：延迟调 SAM3 分割生成遮罩预览
     let removeSegSeq = 0;    // 序列号：丢弃过期的异步分割结果
 
-    // 最后一次点击后延迟 600ms，SAM3 点提示分割并把遮罩红色叠加到原图上（所见即所得）；无需写提示词
+    // 最后一次点击后延迟 600ms，SAM3 点提示分割并把遮罩红色叠加到原图上（所见即所得）；提示词框已预填默认删除指令，可改
     const scheduleRemoveMask = () => {
         if (removeSegTimer) clearTimeout(removeSegTimer);
         removeSegTimer = setTimeout(async () => {

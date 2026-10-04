@@ -390,7 +390,7 @@ test("图片编辑弹窗：局部开关切到局部技能、涂抹画布出现�
     assert.equal(overlay.querySelector(".neo-gallery-edit-paint-canvas"), null);
 });
 
-test("图片编辑弹窗：点选删除——点击后 SAM3 分割出遮罩预览（不预填提示词），请求带 remove_points", async () => {
+test("图片编辑弹窗：点选删除——点击后 SAM3 分割出遮罩预览（预填删除提示词、可改），请求带 remove_points", async () => {
     resetEnv();
     clearRoutes();
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
@@ -472,15 +472,17 @@ test("图片编辑弹窗：点选删除——点击后 SAM3 分割出遮罩预�
     assert.equal(segCount, 1, "标记后应调一次分割");
     assert.deepEqual(segBodies[0], { image: "portrait.png", points: [{ x: 267, y: 300 }, { x: 533, y: 400 }] },
         "分割请求应带原图名与原图像素坐标");
-    assert.equal(promptInput.value, "", "不再由 LLM 预填提示词（留空走默认删除指令）");
+    assert.match(promptInput.value, /Remove the object in the red highlighted area/,
+        "开点选删除应预填默认删除提示词（用户可见可改）");
 
-    // 生成：请求带 remove_points、空提示词（后端用默认删除指令 + SAM3 遮罩）
+    // 生成：预填只是默认值、用户可改；请求带 remove_points 与输入框里的提示词
+    inputText(promptInput, "只删掉左边那把椅子");
     click(genBtn());
     await sleep(80);
     assert.equal(genCount, 1, "已标记应发出请求");
     assert.deepEqual(genBody.remove_points, [{ x: 267, y: 300 }, { x: 533, y: 400 }],
         "remove_points 应为原图像素坐标");
-    assert.equal(genBody.prompt, "", "空提示词随请求发送（后端补默认删除指令）");
+    assert.equal(genBody.prompt, "只删掉左边那把椅子", "请求应带用户改过的提示词");
     assert.equal(genBody.skill_id, "qwen_image_21");
 
     // 点已有标记取消一个 → 防抖后重新分割
@@ -494,11 +496,11 @@ test("图片编辑弹窗：点选删除——点击后 SAM3 分割出遮罩预�
     await sleep(800);
     assert.equal(segCount, 2, "清空后不应再发分割请求");
 
-    // 重新标记 → 再次分割（提示词仍留空）
+    // 重新标记 → 再次分割（不覆盖用户改过的提示词）
     pointerAt(removeCanvas, "pointerdown", 300, 120);
     await sleep(800);
     assert.equal(segCount, 3, "重新标记后应再次分割");
-    assert.equal(promptInput.value, "", "手动输入框不受影响（无自动预填）");
+    assert.equal(promptInput.value, "只删掉左边那把椅子", "重新分割不应覆盖用户改过的提示词");
 
     // 无标记生成 → 报错、不发新请求
     click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "清空标记"));
