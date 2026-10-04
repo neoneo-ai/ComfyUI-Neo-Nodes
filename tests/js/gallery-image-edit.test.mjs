@@ -390,6 +390,128 @@ test("图片编辑弹窗：局部开关切到局部技能、涂抹画布出现�
     assert.equal(overlay.querySelector(".neo-gallery-edit-paint-canvas"), null);
 });
 
+test("图片编辑弹窗：点选删除——点击后 SAM3 分割出遮罩预览（不预填提示词），请求带 remove_points", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+    ]));
+
+    const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
+    openImageEditDialog(gallery, { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    // jsdom 无布局：给原图自然尺寸（800×600）；点击层默认 300×150 → 显示/自然比例 0.375 / 0.25
+    const origImg = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImg, key, { value, configurable: true });
+    }
+
+    const promptInput = overlay.querySelector(".neo-gallery-story-input");
+    const genBtn = () => [...overlay.querySelectorAll(".neo-gallery-story-btn")]
+        .find((b) => ["生成", "再生成", "重试"].includes(b.textContent));
+    let genBody = null;
+    let genCount = 0;
+    let segCount = 0;
+    let segBodies = [];
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/segment_points", (body) => {
+        segCount += 1;
+        segBodies.push(body);
+        return jsonResponse({ mask: `NeoAgent/_neo_sam3_mask_t${segCount}.png` });
+    });
+    mockRoute("/neo_image_gen/generate", (body) => {
+        genCount += 1;
+        genBody = body;
+        return jsonResponse({ task_id: "ie4", status: "queued", images: [] });
+    });
+    mockRoute("/neo_image_gen/status/ie4", () => jsonResponse({
+        task_id: "ie4", status: "succeeded", width: 800, height: 600,
+        images: [{ filename: "rm_00001_.png", subfolder: "Output/2026-10-03", url: "/o.png" }],
+    }));
+
+    // 开点选删除：控制行出现、宽高输入隐藏、透明点击层出现，技能保持 Qwen Image 2.1
+    const removeBtn = [...overlay.querySelectorAll(".neo-gallery-edit-outpaint-btn")]
+        .find((b) => b.textContent.includes("点选删除"));
+    assert.ok(removeBtn, "应有「点选删除」按钮");
+    click(removeBtn);
+    await sleep(30);   // 含 copy_to_input 请求
+    const skillSel = overlay.querySelector(".neo-gallery-story-form-row select");
+    assert.equal(skillSel.value, "qwen_image_21", "点选删除应走 Qwen Image 2.1 编辑链");
+    const removeRow = [...overlay.querySelectorAll(".neo-gallery-edit-outpaint-row")]
+        .find((r) => r.textContent.includes("清空标记"));
+    assert.ok(removeRow && removeRow.style.display !== "none", "应出现点选控制行");
+    assert.equal(overlay.querySelector("#img-edit-width").style.display, "none", "点选模式隐藏宽高输入（出图同原图）");
+    const removeCanvas = overlay.querySelector(".neo-gallery-edit-remove-canvas");
+    assert.ok(removeCanvas, "应出现透明点击层");
+    assert.ok(overlay.querySelector(".neo-gallery-edit-refdrop-row").classList.contains("disabled"),
+        "点选模式只用首张参考，额外参考应禁用");
+
+    // 未标记直接生成 → 报错、不发请求
+    click(genBtn());
+    await sleep(40);
+    assert.equal(genCount, 0, "未标记不应发出请求");
+    assert.match(overlay.querySelector(".neo-gallery-story-hint-error")?.textContent || "", /标记/);
+
+    const pointerAt = (el, type, x, y) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        ev.clientX = x;
+        ev.clientY = y;
+        ev.button = 0;
+        el.dispatchEvent(ev);
+    };
+
+    // 点击标记两个物体（显示坐标 → 自然像素：100/0.375≈267、75/0.25=300；200/0.375≈533、100/0.25=400）
+    pointerAt(removeCanvas, "pointerdown", 100, 75);
+    pointerAt(removeCanvas, "pointerdown", 200, 100);
+    await sleep(800);   // 防抖 600ms → SAM3 分割出遮罩预览
+    assert.equal(segCount, 1, "标记后应调一次分割");
+    assert.deepEqual(segBodies[0], { image: "portrait.png", points: [{ x: 267, y: 300 }, { x: 533, y: 400 }] },
+        "分割请求应带原图名与原图像素坐标");
+    assert.equal(promptInput.value, "", "不再由 LLM 预填提示词（留空走默认删除指令）");
+
+    // 生成：请求带 remove_points、空提示词（后端用默认删除指令 + SAM3 遮罩）
+    click(genBtn());
+    await sleep(80);
+    assert.equal(genCount, 1, "已标记应发出请求");
+    assert.deepEqual(genBody.remove_points, [{ x: 267, y: 300 }, { x: 533, y: 400 }],
+        "remove_points 应为原图像素坐标");
+    assert.equal(genBody.prompt, "", "空提示词随请求发送（后端补默认删除指令）");
+    assert.equal(genBody.skill_id, "qwen_image_21");
+
+    // 点已有标记取消一个 → 防抖后重新分割
+    pointerAt(removeCanvas, "pointerdown", 100, 75);
+    await sleep(800);
+    assert.equal(segCount, 2, "标记变化应重新分割");
+    assert.deepEqual(segBodies[1].points, [{ x: 533, y: 400 }], "重新分割只带剩余标记点");
+
+    // 清空标记：遮罩预览清除、不再发分割请求
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "清空标记"));
+    await sleep(800);
+    assert.equal(segCount, 2, "清空后不应再发分割请求");
+
+    // 重新标记 → 再次分割（提示词仍留空）
+    pointerAt(removeCanvas, "pointerdown", 300, 120);
+    await sleep(800);
+    assert.equal(segCount, 3, "重新标记后应再次分割");
+    assert.equal(promptInput.value, "", "手动输入框不受影响（无自动预填）");
+
+    // 无标记生成 → 报错、不发新请求
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "清空标记"));
+    click(genBtn());
+    await sleep(40);
+    assert.equal(genCount, 1, "无标记不应发出请求");
+
+    // 关闭点选：点击层移除
+    click(removeBtn);
+    await sleep(10);
+    assert.equal(overlay.querySelector(".neo-gallery-edit-remove-canvas"), null, "关闭后点击层应移除");
+});
+
 test("图片编辑弹窗：第二参考图拖放选中后随请求发送，扩图/局部模式下不可用", async () => {
     resetEnv();
     clearRoutes();

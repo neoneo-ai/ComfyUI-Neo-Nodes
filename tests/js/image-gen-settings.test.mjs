@@ -281,7 +281,7 @@ test("createGenSizeRows：步数 load 回填 / 缺省 20 / collect 返回 int", 
     assert.equal(section.collect().steps, 32);
 });
 
-test("createVideoModelConfigSection：视频 LoRA 行 load/collect 往返，且无「依赖参考图」复选框", async () => {
+test("createVideoModelConfigSection：视频 LoRA 行 load/collect 往返", async () => {
     const { createVideoModelConfigSection } = await import("../../web/image-gen.js");
     const section = createVideoModelConfigSection();
     document.body.appendChild(section.el);
@@ -294,8 +294,6 @@ test("createVideoModelConfigSection：视频 LoRA 行 load/collect 往返，且�
             "h3/style_a.safetensors", "h3/style_b.safetensors" ] });
     const rows = section.el.querySelectorAll(".rs-gen-lora-row");
     assert.equal(rows.length, 2, "应有 2 个 LoRA 行");
-    // LoRA 行不再有「依赖参考图」复选框（ref_only 由文件名自动判定）
-    assert.equal(section.el.querySelector(".rs-gen-lora-refonly"), null, "LoRA 不应有 ref_only 复选框");
     const strengthInputs = [...section.el.querySelectorAll(".rs-gen-lora-strength")];
     assert.equal(parseFloat(strengthInputs[0].value), 0.8);
     assert.equal(parseFloat(strengthInputs[1].value), -0.5);

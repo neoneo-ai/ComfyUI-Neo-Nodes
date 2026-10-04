@@ -1025,10 +1025,12 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const start = async () => {
         if (running) return;
         if (localOn && !painted) { renderError("请先涂抹要编辑的区域"); return; }
+        if (removeOn && !removePoints.length) { renderError("请先点击原图标记要删除的物体"); return; }
         restoreOrigImage();   // 上一轮换过的缩放图先还原，避免扩图/局部的基准尺寸跟着变
         let prompt = promptInput.value.trim();
         if (outpaintOn && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
-        if (!prompt) { promptInput.focus(); return; }
+        // 点选删除允许空提示词：后端用 SAM3 分割标记物体后走局部编辑管线移除
+        if (!prompt && !removeOn) { promptInput.focus(); return; }
         running = true;
         cancelRequested = false;
         renderRunning("排队中…");
@@ -1071,6 +1073,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 payload.outpaint = outpaintPayload;
             }
             if (localOn) payload.local_edit = true;
+            if (removeOn) payload.remove_points = removePoints;
             const snap = await requestGeneration(payload);
             cancelId = snap.task_id;
             renderRunning("排队中…");
@@ -1133,6 +1136,18 @@ export function openImageEditDialog(gallery, image, subfolder) {
         clearBtn
     ]);
     localRow.style.display = "none";
+
+    // 点选删除控件：在原图上点击标记要删的物体（最多 5 点），SAM3 分割后走局部编辑管线移除
+    const removeBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🎯 点选删除" });
+    removeBtn.title = "点选删除：在原图上点击要删除的物体，SAM3 自动分割并叠加红色遮罩预览，确认后移除（无需写提示词）";
+    const removeHint = $el("span", { className: "neo-gallery-edit-size-label" });
+    const removeClearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: "清空标记" });
+    const removeRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
+        $el("label", { className: "neo-director-field-label", textContent: "点击原图上的物体标记（最多 5 点，点标记可取消）" }),
+        removeHint,
+        removeClearBtn
+    ]);
+    removeRow.style.display = "none";
 
     // 参考图区（autogrow）：拖入一张追加新空槽，最多 9 张（Qwen Image 2.1 上限）
     const MAX_EXTRA_REFS = 9;
@@ -1248,6 +1263,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     skillSel,
                     outpaintBtn,
                     localBtn,
+                    removeBtn,
                     refDropContainer
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
@@ -1260,6 +1276,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
             ]),
             outpaintRow,
             localRow,
+            removeRow,
             promptInput,
             statusBox,
             actionsBox
@@ -1583,6 +1600,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         restoreOrigImage();   // 扩图基准要用原图自然尺寸，先把上一轮的缩放图还原
         outpaintBtn.classList.toggle("on", on);
         if (on && localOn) setLocalMode(false);
+        if (on && removeOn) setRemoveMode(false);
         outpaintRow.style.display = on ? "" : "none";
         widthInput.style.display = on ? "none" : "";
         heightInput.style.display = on ? "none" : "";
@@ -1724,6 +1742,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         restoreOrigImage();   // 涂抹画布按原图自然尺寸建，先把上一轮的缩放图还原
         localBtn.classList.toggle("on", on);
         if (on && outpaintOn) setOutpaintMode(false);
+        if (on && removeOn) setRemoveMode(false);
         localRow.style.display = on ? "" : "none";
         widthInput.style.display = on ? "none" : "";
         heightInput.style.display = on ? "none" : "";
@@ -1735,6 +1754,173 @@ export function openImageEditDialog(gallery, image, subfolder) {
         syncRefBtn();
     };
     localBtn.addEventListener("click", () => setLocalMode(!localOn));
+
+    // ---- 点选删除：透明点击层对齐原图 contain 显示盒，标记点存自然像素坐标 ----
+    let removeOn = false;
+    let removePoints = [];   // [{x, y}] 原图像素坐标
+    let removeCanvas = null; // 叠加在原图上的透明点击/标记画布
+    let removeMaskImg = null; // 当前 SAM3 遮罩预览图（红色叠加 = 将被删除的区域）
+    let removeSegTimer = null; // 点选后防抖：延迟调 SAM3 分割生成遮罩预览
+    let removeSegSeq = 0;    // 序列号：丢弃过期的异步分割结果
+
+    // 最后一次点击后延迟 600ms，SAM3 点提示分割并把遮罩红色叠加到原图上（所见即所得）；无需写提示词
+    const scheduleRemoveMask = () => {
+        if (removeSegTimer) clearTimeout(removeSegTimer);
+        removeSegTimer = setTimeout(async () => {
+            removeSegTimer = null;
+            if (!removeOn || !removePoints.length || running) return;
+            const seq = ++removeSegSeq;
+            removeMaskImg = null;
+            redrawRemoveOverlay();
+            removeHint.textContent = "分割中…";
+            try {
+                const res = await fetch("/neo_image_gen/segment_points", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ image: refName, points: removePoints }),
+                });
+                const data = await res.json().catch(() => null);
+                if (seq !== removeSegSeq || !removeOn) return;   // 分割期间已重新标记/关模式，丢弃过期结果
+                if (!res.ok || !data || !data.mask) throw new Error((data && data.error) || "分割失败");
+                const parts = data.mask.split("/");
+                const maskFile = parts.pop();
+                const img = new Image();
+                img.src = `/neo_gallery/image?filename=${encodeURIComponent(maskFile)}&subfolder=${encodeURIComponent(`input/${parts.join("/")}`)}`;
+                await img.decode?.().catch(() => {});
+                if (seq !== removeSegSeq || !removeOn) return;
+                removeMaskImg = img;
+                removeHint.textContent = "";
+                redrawRemoveOverlay();
+            } catch (e) {
+                if (seq === removeSegSeq && removeOn) removeHint.textContent = `分割失败：${e.message}`;
+            }
+        }, 600);
+    };
+
+    const syncRemoveView = () => {
+        if (!removeCanvas) return;
+        const nw = origImg.naturalWidth, nh = origImg.naturalHeight;
+        const bw = imgWrap.clientWidth, bh = imgWrap.clientHeight;
+        if (!nw || !nh || !bw || !bh) return;
+        const k = Math.min(bw / nw, bh / nh);
+        removeCanvas.style.left = `${(bw - nw * k) / 2}px`;
+        removeCanvas.style.top = `${(bh - nh * k) / 2}px`;
+        removeCanvas.width = Math.max(1, Math.round(nw * k));
+        removeCanvas.height = Math.max(1, Math.round(nh * k));
+        redrawRemoveOverlay();
+    };
+    const redrawRemoveOverlay = () => {
+        if (!removeCanvas) return;
+        const ctx = removeCanvas.getContext("2d");
+        ctx.clearRect(0, 0, removeCanvas.width, removeCanvas.height);
+        // SAM3 遮罩预览：将被删除的区域半透明红填充（所见即所得）；遮罩是灰度图（白=删除区），按亮度取 alpha
+        if (removeMaskImg && removeMaskImg.naturalWidth) {
+            const tint = document.createElement("canvas");
+            tint.width = removeCanvas.width; tint.height = removeCanvas.height;
+            const tctx = tint.getContext("2d", { willReadFrequently: true });
+            tctx.drawImage(removeMaskImg, 0, 0, tint.width, tint.height);
+            const imgData = tctx.getImageData(0, 0, tint.width, tint.height);
+            const d = imgData.data;
+            for (let i = 0; i < d.length; i += 4) {
+                const on = d[i] > 127;
+                d[i] = 255; d[i + 1] = 82; d[i + 2] = 82;
+                d[i + 3] = on ? 115 : 0;
+            }
+            tctx.putImageData(imgData, 0, 0);
+            ctx.drawImage(tint, 0, 0);
+        }
+        const nw = origImg.naturalWidth || 1, nh = origImg.naturalHeight || 1;
+        const kx = removeCanvas.width / nw, ky = removeCanvas.height / nh;
+        removePoints.forEach((p, i) => {
+            const x = p.x * kx, y = p.y * ky;
+            ctx.beginPath();
+            ctx.arc(x, y, 12, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255, 82, 82, 0.35)";
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#ff5252";
+            ctx.stroke();
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 14px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(String(i + 1), x, y);
+        });
+    };
+    const setupRemoveClicks = async () => {
+        teardownRemove();
+        await ensureImgLoaded();
+        removeCanvas = $el("canvas", { className: "neo-gallery-edit-remove-canvas" });
+        imgWrap.appendChild(removeCanvas);
+        syncRemoveView();
+        window.addEventListener("resize", syncRemoveView);
+        removeCanvas.addEventListener("pointerdown", (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            const rect = removeCanvas.getBoundingClientRect();
+            const dx = ev.clientX - rect.left, dy = ev.clientY - rect.top;
+            const nw = origImg.naturalWidth || 1, nh = origImg.naturalHeight || 1;
+            const kx = removeCanvas.width / nw, ky = removeCanvas.height / nh;
+            // 点在已有标记上 → 取消该标记
+            for (let i = 0; i < removePoints.length; i++) {
+                if (Math.hypot(dx - removePoints[i].x * kx, dy - removePoints[i].y * ky) <= 14) {
+                    removePoints.splice(i, 1);
+                    redrawRemoveOverlay();
+                    scheduleRemoveMask();
+                    return;
+                }
+            }
+            if (removePoints.length >= 5) { removeHint.textContent = "最多标记 5 个点，请先清空部分"; return; }
+            removePoints.push({ x: Math.round(dx / kx), y: Math.round(dy / ky) });
+            redrawRemoveOverlay();
+            scheduleRemoveMask();
+        });
+    };
+    const teardownRemove = () => {
+        if (removeCanvas) removeCanvas.remove();
+        removeCanvas = null;
+        removePoints = [];
+        removeMaskImg = null;
+        removeSegSeq++;   // 让在途的分割结果作废
+        removeHint.textContent = "";
+        window.removeEventListener("resize", syncRemoveView);
+    };
+    removeClearBtn.addEventListener("click", () => {
+        removePoints = [];
+        removeMaskImg = null;
+        removeSegSeq++;
+        redrawRemoveOverlay();
+    });
+
+    const setRemoveMode = async (on) => {
+        removeOn = on;
+        restoreOrigImage();   // 标记按原图自然尺寸建，先把上一轮的缩放图还原
+        removeBtn.classList.toggle("on", on);
+        if (on && outpaintOn) setOutpaintMode(false);
+        if (on && localOn) setLocalMode(false);
+        removeRow.style.display = on ? "" : "none";
+        widthInput.style.display = on ? "none" : "";
+        heightInput.style.display = on ? "none" : "";
+        resLabelEl.textContent = on ? "同原图" : "目标分辨率";
+        sizeLabel.style.display = "none";
+        skillSel.value = on ? QWEN_IMAGE_SKILL_ID
+            : (outpaintOn ? QWEN_OUTPAINT_SKILL_ID : (localOn ? QWEN_LOCAL_EDIT_SKILL_ID : QWEN_IMAGE_SKILL_ID));
+        if (on) {
+            // 出图对齐原图尺寸（后端会做 32 对齐）
+            widthInput.value = origImg.naturalWidth || "";
+            heightInput.value = origImg.naturalHeight || "";
+            await setupRemoveClicks();
+            // 提前拷入 Input：点选自动识别与生成共用该文件名（已拷则复用，不重复落盘）
+            if (!refName) {
+                try { refName = await copyImageToInput(image, subfolder); }
+                catch (e) { removeHint.textContent = `原图读取失败：${e.message}`; }
+            }
+        } else {
+            teardownRemove();
+        }
+        syncRefBtn();
+    };
+    removeBtn.addEventListener("click", () => setRemoveMode(!removeOn));
 
     // ---- 参考图区（autogrow：拖入一张追加新空槽，最多 9 张） ----
     let extraRefs = [];   // [{filename, subfolder}]
@@ -1788,9 +1974,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (fname) { extraRefs[idx] = { filename: fname, subfolder: "" }; renderRefSlots(); }
     };
 
-    // 扩图/局部模式只用首张参考，额外参考不可用
+    // 扩图/局部/点选模式只用首张参考，额外参考不可用
     const syncRefBtn = () => {
-        const disabled = outpaintOn || localOn;
+        const disabled = outpaintOn || localOn || removeOn;
         refDropContainer.classList.toggle("disabled", disabled);
         if (disabled && extraRefs.length) { extraRefs = []; renderRefSlots(); }
     };
@@ -1806,9 +1992,10 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (files.length) { [fname] = await uploadLocalFiles(files); }
         else { fname = await copyGalleryToInput(grabDataType(e)); }
         if (!fname) return;
-        // 重置扩图/涂抹状态
+        // 重置扩图/涂抹/点选状态
         if (outpaintOn) setOutpaintMode(false);
         if (localOn) setLocalMode(false);
+        if (removeOn) setRemoveMode(false);
         refName = fname;
         const newUrl = `/neo_gallery/image?filename=${encodeURIComponent(fname)}&subfolder=`;
         origImg.src = newUrl;

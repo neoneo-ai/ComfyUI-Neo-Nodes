@@ -3833,7 +3833,7 @@ class StoryboardInProcessProgressTests(unittest.TestCase):
 
 
 class StoryboardMultiRefTests(unittest.TestCase):
-    """resolve_request 多参考：保留列表 / 去重 / 按上限截断 / Krea2 单参考行为不变。"""
+    """resolve_request 多参考：保留列表 / 去重 / 按上限截断（max_refs 缺省 1）。"""
 
     def setUp(self):
         self.names = []
@@ -3846,14 +3846,14 @@ class StoryboardMultiRefTests(unittest.TestCase):
         settings = dict(image_gen.DEFAULT_SETTINGS)
         params = image_gen.resolve_request(
             {"prompt": "p", "references": [{"kind": "input", "value": n} for n in self.names]},
-            settings, max_refs=10, auto_quadview=False)
+            settings, max_refs=10)
         self.assertEqual(params["ref_images"], self.names[:10])
         self.assertEqual(params["ref_name"], self.names[0])
         self.assertTrue(any("只使用前 10 张参考图" in w for w in params["warnings"]))
 
     def test_single_ref_default_unchanged(self):
         settings = dict(image_gen.DEFAULT_SETTINGS)
-        # Krea2 路径：max_refs 缺省 1，第二张被截断并提示（原有行为）
+        # max_refs 缺省 1：第二张被截断并提示
         params = image_gen.resolve_request(
             {"prompt": "p", "references": [{"kind": "input", "value": self.names[0]},
                                            {"kind": "input", "value": self.names[1]}]},
@@ -3874,7 +3874,7 @@ class Qwen21TemplateTests(unittest.TestCase):
         params = image_gen.resolve_request(
             {"prompt": "p", "width": 1024, "height": 576,
              "references": [{"kind": "input", "value": f"q_ref_{i}.png"} for i in range(ref_count)]},
-            settings, max_refs=max_refs, auto_quadview=False)
+            settings, max_refs=max_refs)
         graph, warns = image_gen.render_template(template, params)
         return graph
 

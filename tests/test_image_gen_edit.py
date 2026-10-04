@@ -222,12 +222,12 @@ class ModelInjectionTests(unittest.TestCase):
         self.assertEqual(pruned, {"1"})
 
     def test_shared_inputs_not_pruned(self):
-        # Krea2EditModelPatch 除 model 外还吃 vae/latent：只追 model 边，共享节点不被误删
+        # 补丁节点除 model 外还吃 vae/latent：只追 model 边，共享节点不被误删
         graph = {
             "1": {"class_type": "UNETLoader", "inputs": {}},
             "3": {"class_type": "VAELoader", "inputs": {}},
             "9": {"class_type": "EmptySD3LatentImage", "inputs": {}},
-            "14": {"class_type": "Krea2EditModelPatch",
+            "14": {"class_type": "ModelPatch",
                    "inputs": {"model": ["1", 0], "vae": ["3", 0], "target_latent": ["9", 0]}},
             "10": {"class_type": "KSampler", "inputs": {"model": ["14", 0], "steps": 8}},
         }
@@ -460,19 +460,17 @@ class GenerateTests(unittest.TestCase):
                                          refs={"image_1": torch.ones(1, 2, 2, 3)})
         self.assertEqual(captured["body"]["references"], bundle_refs)
 
-    def test_max_refs_and_quadview_follow_template(self):
-        # 多路槽位模板（Qwen Image 2.1）：max_refs=槽位数、不自动挑选 Krea2 四视图 LoRA
+    def test_max_refs_follows_template(self):
+        # 多路槽位模板（Qwen Image 2.1）：max_refs=槽位数；单路单帧模板：max_refs=1
         qwen = {"3": {"class_type": "TextEncodeQwenImage21",
                       "inputs": {"images.image_1": "{{REF_IMAGE_1}}", "images.image_4": "{{REF_IMAGE_4}}"}}}
         captured = self._capture_request(qwen, skill="ok", prompt="hi")
         self.assertEqual(captured["max_refs"], 4)
-        self.assertFalse(captured["auto_quadview"])
 
-        # Krea2 单路编辑模板：max_refs=1、保留四视图 LoRA 自动挑选
-        krea2 = {"2": {"class_type": "Krea2EditModelPatch", "inputs": {"image": "{{REF_IMAGE}}"}}}
-        captured = self._capture_request(krea2, skill="ok", prompt="hi")
+        # 单路单帧模板：max_refs=1
+        single = {"1": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE}}"}}}
+        captured = self._capture_request(single, skill="ok", prompt="hi")
         self.assertEqual(captured["max_refs"], 1)
-        self.assertTrue(captured["auto_quadview"])
 
 
 class OrderedRefsTests(unittest.TestCase):

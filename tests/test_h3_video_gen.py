@@ -295,11 +295,11 @@ class ResolveVideoParamsTests(unittest.TestCase):
 
 
     def test_loras_resolved_from_cfg(self):
-        # LoRA 复用生图解析：校验存在性 + 强度裁剪；视频无 ref_only，默认 False
+        # LoRA 复用生图解析：校验存在性 + 强度裁剪
         cfg = self._cfg()
         cfg["loras"] = [{"name": "h3/style_lora.safetensors", "strength": 0.8}]
         p = h3_video_gen.resolve_video_params({"prompt": "x"}, cfg)
-        self.assertEqual(p["loras"], [{"name": "h3/style_lora.safetensors", "strength": 0.8, "ref_only": False}])
+        self.assertEqual(p["loras"], [{"name": "h3/style_lora.safetensors", "strength": 0.8}])
 
     def test_no_loras_configured_defaults_empty(self):
         p = h3_video_gen.resolve_video_params({"prompt": "x"}, self._cfg())

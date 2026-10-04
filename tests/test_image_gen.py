@@ -60,23 +60,6 @@ _comfy_cli.args = types.SimpleNamespace(listen="127.0.0.1", port=8188,
 sys.modules["comfy"] = _comfy
 sys.modules["comfy.cli_args"] = _comfy_cli
 
-# krea2_edit（vendor）的 import 依赖：只补模块占位，不执行真实 ComfyUI 加载逻辑
-_comfy_pe = types.ModuleType("comfy.patcher_extension")
-_comfy_pe.WrappersMP = types.SimpleNamespace(DIFFUSION_MODEL="DIFFUSION_MODEL")
-_comfy_pe.add_wrapper_with_key = lambda *a, **k: None
-sys.modules["comfy.patcher_extension"] = _comfy_pe
-_comfy_utils = types.ModuleType("comfy.utils")
-_comfy_utils.common_upscale = lambda *a, **k: None
-sys.modules["comfy.utils"] = _comfy_utils
-_comfy_common_dit = types.ModuleType("comfy.ldm.common_dit")
-_comfy_common_dit.pad_to_patch_size = lambda *a, **k: None
-sys.modules["comfy.ldm.common_dit"] = _comfy_common_dit
-_comfy_flux_layers = types.ModuleType("comfy.ldm.flux.layers")
-_comfy_flux_layers.timestep_embedding = lambda *a, **k: None
-for _name in ("comfy.ldm", "comfy.ldm.flux"):
-    sys.modules.setdefault(_name, types.ModuleType(_name))
-sys.modules["comfy.ldm.flux.layers"] = _comfy_flux_layers
-
 # image_gen 顶部 import get_progress_state；桩掉 comfy_execution.progress，
 # 单测里换 _progress_registry_holder["registry"] 模拟核心每次执行重建 registry
 _comfy_exec = types.ModuleType("comfy_execution")
@@ -157,6 +140,7 @@ def load_preset_template(skill: str) -> dict:
 
 def write_png(path: str, width: int, height: int) -> bytes:
     from PIL import Image
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with Image.new("RGB", (width, height), (200, 30, 30)) as img:
         img.save(path, format="PNG")
     with open(path, "rb") as f:
@@ -222,16 +206,16 @@ class SuggestTests(unittest.TestCase):
 
 
 class ScanModelsTests(unittest.TestCase):
-    """下拉展示：krea2 相关靠前，且 LoRA「自动」给出后端建议的四视图 LoRA。"""
+    """下拉展示：krea2 相关靠前；各目录自动挑选结果（LoRA 无名称线索，不给出建议）。"""
 
     def test_scan_models_sorts_krea2_first(self):
         out = image_gen.scan_models()
         self.assertEqual(out["loras"][0], "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
         self.assertEqual(out["vae"][0], "krea2/diffusion_pytorch_model.safetensors")
 
-    def test_scan_models_suggests_quadview_lora(self):
+    def test_scan_models_no_lora_suggestion(self):
         out = image_gen.scan_models()
-        self.assertEqual(out["suggested_lora"], "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
+        self.assertEqual(out["suggested_loras"], "")
 
     def test_display_sort_prefers_krea2_then_name(self):
         files = ["zeta.safetensors", "Krea2/base.safetensors", "alpha.safetensors"]
@@ -276,27 +260,8 @@ class ResolveTests(unittest.TestCase):
                              {"name": "nope.safetensors", "strength": 1.0}]
         params = image_gen.resolve_request({"prompt": "a cat"}, settings)
         self.assertEqual(params["loras"],
-                         [{"name": "style_a.safetensors", "strength": 0.5, "ref_only": False}])
+                         [{"name": "style_a.safetensors", "strength": 0.5}])
         self.assertTrue(params["warnings"])
-
-    def test_ref_only_lora_skipped_in_text_to_image(self):
-        settings = base_settings()
-        settings["loras"] = [{"name": "style_a.safetensors", "strength": 0.5},
-                             {"name": "sub/style_b.safetensors", "strength": 1.0, "ref_only": True}]
-        params = image_gen.resolve_request({"prompt": "a cat"}, settings)
-        # 文生图：ref_only 的 LoRA 被跳过，仅保留无条件加载的 style_a
-        self.assertEqual([l["name"] for l in params["loras"]], ["style_a.safetensors"])
-
-    def test_ref_only_lora_kept_in_reference_mode(self):
-        write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
-        settings = base_settings()
-        settings["loras"] = [{"name": "style_a.safetensors", "strength": 0.5},
-                             {"name": "sub/style_b.safetensors", "strength": 1.0, "ref_only": True}]
-        params = image_gen.resolve_request(
-            {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]}, settings)
-        # 参考图模式：带 ref_only 的 style_b 即视为四视图 LoRA，直接沿用、不再追加
-        self.assertEqual([l["name"] for l in params["loras"]],
-                         ["style_a.safetensors", "sub/style_b.safetensors"])
 
     def test_count_from_settings_and_body(self):
         settings = base_settings()
@@ -339,44 +304,6 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(params["prompt"], "redraw")
         # 参考图长边限到 1024：768×1024 → 768×1024
         self.assertEqual(params["ref_scale"], (768, 1024))
-        # 四视图 LoRA 自动追加且位于用户 LoRA 之后
-        self.assertEqual(params["loras"][-1]["name"],
-                         "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
-
-    def test_quadview_lora_not_duplicated_when_user_configured(self):
-        write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
-        settings = base_settings()
-        settings["loras"] = [{"name": "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors",
-                              "strength": 0.9}]
-        params = image_gen.resolve_request(
-            {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]},
-            settings)
-        self.assertEqual(len(params["loras"]), 1)
-        self.assertAlmostEqual(params["loras"][0]["strength"], 0.9)
-
-    def test_ref_only_lora_serves_as_quadview(self):
-        write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
-        settings = base_settings()
-        # 带 ref_only 的 LoRA（文件名不含线索）即视为四视图 LoRA：沿用、不追加、不报错
-        settings["loras"] = [{"name": "sub/style_b.safetensors", "strength": 0.8, "ref_only": True}]
-        params = image_gen.resolve_request(
-            {"prompt": "a cat", "references": [{"kind": "input", "value": "ref.png"}]}, settings)
-        self.assertEqual([l["name"] for l in params["loras"]], ["sub/style_b.safetensors"])
-
-    def test_missing_quadview_lora_raises(self):
-        saved = _MODELS["loras"]
-        try:
-            _MODELS["loras"] = [f for f in saved if "quadview" not in f.lower()
-                                and "四视图" not in f]
-            write_png(os.path.join(_INPUT_DIR, "ref.png"), 768, 1024)
-            with self.assertRaises(ValueError) as ctx:
-                image_gen.resolve_request(
-                    {"prompt": "a cat",
-                     "references": [{"kind": "input", "value": "ref.png"}]},
-                    base_settings())
-            self.assertIn("四视图 LoRA", str(ctx.exception))
-        finally:
-            _MODELS["loras"] = saved
 
     def test_data_uri_reference_copied_to_input(self):
         raw = write_png(os.path.join(_TMP, "seed.png"), 32, 32)
@@ -449,14 +376,12 @@ class RenderTemplateTests(unittest.TestCase):
         self.assertEqual((scale["width"], scale["height"]), (768, 1024))
         self.assertEqual(scale["crop"], "disabled")
         self.assertEqual(graph["4"]["inputs"]["prompt"], "a red fox")
-        # 单槽位填第一个 LoRA；其余（含自动四视图）在槽位后动态串联到 model patch
+        # 单槽位填第一个 LoRA；其余在槽位后动态串联到 model patch
         self.assertEqual(graph["20"]["inputs"]["lora_name"], "style_a.safetensors")
         self.assertAlmostEqual(graph["20"]["inputs"]["strength_model"], 0.5)
         self.assertEqual(graph["21"]["inputs"], {"model": ["20", 0], "lora_name": "sub/style_b.safetensors",
                                                  "strength_model": 1.0})
-        self.assertEqual(graph["22"]["inputs"]["lora_name"],
-                         "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
-        self.assertEqual(graph["14"]["inputs"]["model"], ["22", 0])   # model patch 吃链尾
+        self.assertEqual(graph["14"]["inputs"]["model"], ["21", 0])   # model patch 吃链尾
         self.assertAlmostEqual(graph["10"]["inputs"]["denoise"], 1.0)  # 采样参数写死在模板
 
     def test_ref_template_requires_reference(self):
@@ -511,7 +436,7 @@ class RenderTemplateTests(unittest.TestCase):
 
 
 class TemplateRefSlotTests(unittest.TestCase):
-    """模板探测：{{REF_IMAGE_n}} 槽位数（可保留的参考图张数）与 Krea2 编辑链识别（四视图 LoRA 开关）。"""
+    """模板探测：{{REF_IMAGE_n}} 槽位数（可保留的参考图张数）。"""
 
     def test_max_refs_counts_highest_slot(self):
         template = {
@@ -526,16 +451,9 @@ class TemplateRefSlotTests(unittest.TestCase):
             {"1": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE}}"}}}), 1)
         self.assertEqual(image_gen.template_max_refs({}), 1)
 
-    def test_uses_krea2_edit(self):
-        self.assertTrue(image_gen.template_uses_krea2_edit(
-            {"2": {"class_type": "Krea2EditModelPatch", "inputs": {}}}))
-        self.assertFalse(image_gen.template_uses_krea2_edit(
-            {"2": {"class_type": "KSampler", "inputs": {}}}))
-        self.assertFalse(image_gen.template_uses_krea2_edit({}))
-
 
 class StartGenerationTemplateRouteTests(unittest.TestCase):
-    """start_generation 按模板决定参考槽位数与四视图 LoRA 自动挑选（与 ImageGenEditNode 一致）。"""
+    """start_generation 按模板决定参考槽位数（与 ImageGenEditNode 一致）。"""
 
     QWEN_TEMPLATE = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}},
@@ -557,11 +475,9 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         "12": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_2}}"}},
     }
 
-    KREA2_TEMPLATE = {
+    PLAIN_TEMPLATE = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "{{MODEL}}"}},
-        "2": {"class_type": "Krea2EditModelPatch",
-              "inputs": {"model": ["1", 0], "image": "{{REF_IMAGE}}"}},
-        "8": {"class_type": "SaveImage", "inputs": {"images": ["3", 0]}},
+        "8": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}},
     }
 
     def _run(self, template, body, cfg=None):
@@ -590,8 +506,8 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
              _skill_mod.load_skill_workflow, _skill_mod.get_skill_gen_config) = orig
         return snap, captured
 
-    def test_multi_ref_template_skips_quadview_lora(self):
-        # Qwen Image 2.1 多路槽位模板：参考槽正常填充，不自动挑 Krea2 四视图 LoRA
+    def test_multi_ref_template_prunes_empty_slots(self):
+        # Qwen Image 2.1 多路槽位模板：首张参考填槽 1，空槽连同 LoadImage 与连线裁掉
         snap, captured = self._run(
             self.QWEN_TEMPLATE,
             {"skill_id": "qwen_image_21", "prompt": "角色设定图",
@@ -601,22 +517,124 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
         self.assertEqual(graph["10"]["inputs"]["image"], "portrait.png")
         self.assertNotIn("12", graph)  # 第二槽无参考 → LoadImage 与连线一并裁掉
         self.assertNotIn("images.image_2", graph["4"]["inputs"])
-        loras = [n for n in graph.values() if isinstance(n, dict)
-                 and n.get("class_type") == "LoraLoaderModelOnly"]
-        self.assertEqual(loras, [])
 
-    def test_krea2_template_keeps_quadview_lora(self):
-        # Krea2 单路编辑模板：保留四视图 LoRA 自动挑选（动态注入 LoraLoaderModelOnly）
-        snap, captured = self._run(
-            self.KREA2_TEMPLATE,
-            {"skill_id": "image_gen_image", "prompt": "角色设定图",
-             "references": [{"kind": "input", "value": "portrait.png"}]})
+    def test_remove_points_uses_sam3_local_edit(self):
+        # 点选删除：SAM3 分割 → 遮罩，走局部编辑管线（标红裁剪 + 羽化合并），空提示词填默认删除指令
+        seg_calls = {}
+
+        async def fake_seg(ref_name, points):
+            seg_calls["ref"] = ref_name
+            seg_calls["points"] = points
+            write_png(os.path.join(_INPUT_DIR, "NeoAgent", "_neo_sam3_mask_test.png"), 768, 1024)
+            return "NeoAgent/_neo_sam3_mask_test.png"
+
+        orig = image_gen._sam3_segment
+        try:
+            image_gen._sam3_segment = fake_seg
+            snap, captured = self._run(
+                self.QWEN_TEMPLATE,
+                {"skill_id": "qwen_image_21", "prompt": "",
+                 "remove_points": [{"x": 100, "y": 200}],
+                 "references": [{"kind": "input", "value": "portrait.png"}]})
+        finally:
+            image_gen._sam3_segment = orig
+        self.assertEqual(snap["status"], "queued")
+        self.assertEqual(seg_calls["ref"], "portrait.png")
+        self.assertEqual(seg_calls["points"], [{"x": 100, "y": 200}])
+        self.assertIn("red highlighted area", snap["prompt"])
+        # 遮罩走局部编辑管线：红色高亮裁剪图注入编码器参考槽
         graph = captured["graph"]
-        loras = [n for n in graph.values() if isinstance(n, dict)
-                 and n.get("class_type") == "LoraLoaderModelOnly"]
-        self.assertEqual(len(loras), 1)
-        self.assertEqual(loras[0]["inputs"]["lora_name"],
-                         "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors")
+        hl_nodes = [n for n in graph.values() if isinstance(n, dict)
+                    and n.get("class_type") == "LoadImage"
+                    and str(n["inputs"]["image"]).startswith("NeoAgent/_neo_local_hl_")]
+        self.assertEqual(len(hl_nodes), 1)
+
+    def test_remove_points_requires_reference(self):
+        with self.assertRaises(ValueError):
+            self._run(
+                self.QWEN_TEMPLATE,
+                {"skill_id": "qwen_image_21", "prompt": "",
+                 "remove_points": [{"x": 100, "y": 200}]})
+
+    def test_remove_points_user_prompt_used_as_is(self):
+        # 非空用户提示词原样使用；SAM3 分割照常执行
+        async def fake_seg(ref_name, points):
+            write_png(os.path.join(_INPUT_DIR, "NeoAgent", "_neo_sam3_mask_test.png"), 768, 1024)
+            return "NeoAgent/_neo_sam3_mask_test.png"
+
+        orig = image_gen._sam3_segment
+        try:
+            image_gen._sam3_segment = fake_seg
+            snap, _ = self._run(
+                self.QWEN_TEMPLATE,
+                {"skill_id": "qwen_image_21",
+                 "prompt": "Remove the red cup, keep the table",
+                 "remove_points": [{"x": 100, "y": 200}],
+                 "references": [{"kind": "input", "value": "portrait.png"}]})
+        finally:
+            image_gen._sam3_segment = orig
+        self.assertEqual(snap["prompt"], "Remove the red cup, keep the table")
+
+    def test_remove_points_sam3_error_propagates(self):
+        # SAM3 分割失败（如缺模型）：错误直接回前端
+        async def fake_seg(ref_name, points):
+            raise ValueError("未找到 SAM3 模型")
+
+        orig = image_gen._sam3_segment
+        try:
+            image_gen._sam3_segment = fake_seg
+            with self.assertRaises(ValueError) as ctx:
+                self._run(
+                    self.QWEN_TEMPLATE,
+                    {"skill_id": "qwen_image_21", "prompt": "",
+                     "remove_points": [{"x": 100, "y": 200}],
+                     "references": [{"kind": "input", "value": "portrait.png"}]})
+            self.assertIn("未找到 SAM3 模型", str(ctx.exception))
+        finally:
+            image_gen._sam3_segment = orig
+
+    def test_segment_points_route(self):
+        class Req:
+            def __init__(self, payload):
+                self._payload = payload
+
+            async def json(self):
+                return self._payload
+
+        orig = image_gen._sam3_segment
+
+        async def fake_seg(ref_name, points):
+            write_png(os.path.join(_INPUT_DIR, "NeoAgent", "_neo_sam3_mask_route.png"), 64, 64)
+            return "NeoAgent/_neo_sam3_mask_route.png"
+
+        try:
+            image_gen._sam3_segment = fake_seg
+            write_png(os.path.join(_INPUT_DIR, "portrait.png"), 64, 64)
+            resp = asyncio.run(image_gen.segment_points_route(Req({
+                "image": "portrait.png", "points": [{"x": 10, "y": 20}]})))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(json.loads(resp.text)["mask"], "NeoAgent/_neo_sam3_mask_route.png")
+        finally:
+            image_gen._sam3_segment = orig
+
+        # 缺图 / 缺点 / 路径越界 → 400；分割失败（如缺模型）→ 500
+        for payload in ({"points": [{"x": 1, "y": 2}]},
+                        {"image": "portrait.png"},
+                        {"image": "../secret.png", "points": [{"x": 1, "y": 2}]}):
+            resp = asyncio.run(image_gen.segment_points_route(Req(payload)))
+            self.assertEqual(resp.status, 400)
+
+        async def failing_seg(ref_name, points):
+            raise ValueError("未找到 SAM3 模型")
+
+        orig = image_gen._sam3_segment
+        try:
+            image_gen._sam3_segment = failing_seg
+            resp = asyncio.run(image_gen.segment_points_route(Req({
+                "image": "portrait.png", "points": [{"x": 10, "y": 20}]})))
+            self.assertEqual(resp.status, 500)
+        finally:
+            image_gen._sam3_segment = orig
 
     def test_real_qwen_preset_renders_with_required_inputs(self):
         # 真实预设模板必须带 TextEncodeQwenImage21 的必填 resolution 输入，
@@ -783,7 +801,7 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
     def test_outpaint_unsupported_template_raises(self):
         with self.assertRaises(ValueError):
             self._run(
-                self.KREA2_TEMPLATE,
+                self.PLAIN_TEMPLATE,
                 {"skill_id": "image_gen_image", "prompt": "extend",
                  "references": [{"kind": "input", "value": "portrait.png"}],
                  "outpaint": {"left": 64}})
@@ -814,7 +832,7 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
     def test_local_edit_unsupported_template_raises(self):
         with self.assertRaises(ValueError):
             self._run(
-                self.KREA2_TEMPLATE,
+                self.PLAIN_TEMPLATE,
                 {"skill_id": "image_gen_image", "prompt": "fix",
                  "local_edit": True,
                  "references": [{"kind": "input", "value": "portrait.png"}]})
@@ -865,6 +883,29 @@ class OutpaintParseTests(unittest.TestCase):
         self.assertTrue(image_gen.template_is_qwen21(qwen))
         self.assertFalse(image_gen.template_is_qwen21({
             "1": {"class_type": "UNETLoader", "inputs": {}}}))
+
+
+class RemovePointsTests(unittest.TestCase):
+    """点选删除：点击坐标解析（钳制/上限/非法值）。"""
+
+    def test_missing_returns_none(self):
+        self.assertIsNone(image_gen._parse_remove_points(None))
+        self.assertIsNone(image_gen._parse_remove_points("bad"))
+        self.assertIsNone(image_gen._parse_remove_points([]))
+
+    def test_parsed_and_clamped(self):
+        pts = image_gen._parse_remove_points([{"x": -3, "y": "120"}, {"x": 99999, "y": 4}])
+        self.assertEqual(pts, [{"x": 0, "y": 120}, {"x": 8192, "y": 4}])
+
+    def test_capped_at_five(self):
+        pts = image_gen._parse_remove_points([{"x": i, "y": i} for i in range(8)])
+        self.assertEqual(len(pts), 5)
+
+    def test_bad_value_raises(self):
+        with self.assertRaises(ValueError):
+            image_gen._parse_remove_points([{"x": "abc", "y": 1}])
+        with self.assertRaises(ValueError):
+            image_gen._parse_remove_points(["not-a-dict"])
 
 
 class OutpaintRenderTests(unittest.TestCase):
@@ -1028,51 +1069,6 @@ class LocalEditTests(unittest.TestCase):
         self.assertEqual(comp["mask"], [mask_id, 0])
         self.assertEqual(graph[find("SaveImage")]["inputs"]["images"], [comp_id, 0])
         self.assertNotIn("5", graph)   # EmptyLatentImage 不再被引用，移除
-
-
-class Krea2EditHelperTests(unittest.TestCase):
-    """vendor 的 krea2_edit.py 纯函数单测（CPU 可跑，不加载模型）。"""
-
-    @classmethod
-    def setUpClass(cls):
-        import importlib.util
-        root = os.path.dirname(os.path.dirname(PLUGIN_DIR))  # ComfyUI 根目录
-        if root not in sys.path:
-            sys.path.insert(0, root)
-        spec = importlib.util.spec_from_file_location(
-            "krea2_edit_vendored", os.path.join(PLUGIN_DIR, "krea2_edit.py"))
-        cls.mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.mod)
-
-    def test_imgids_offset_centers_reference(self):
-        ids = self.mod._imgids_offset(1, 1, 4, 6, 8, 10, "cpu")
-        self.assertEqual(tuple(ids.shape), (1, 24, 3))
-        self.assertTrue((ids[..., 0] == 1).all())          # frame=1
-        self.assertAlmostEqual(float(ids[0, 0, 1]), 2.0)   # off_h = (8-4)/2
-        self.assertAlmostEqual(float(ids[0, 0, 2]), 2.0)   # off_w = (10-6)/2
-        self.assertAlmostEqual(float(ids[0, 5, 2]), 7.0)   # 第 5 列: 2 + 5
-
-    def test_imgids_offset_no_negative_when_ref_larger(self):
-        ids = self.mod._imgids_offset(1, 1, 8, 8, 4, 4, "cpu")
-        self.assertTrue((ids[..., 1] >= 0).all())
-        self.assertTrue((ids[..., 2] >= 0).all())
-
-    def test_fit_src_passthrough_on_match(self):
-        import torch
-        src = torch.zeros(1, 4, 8, 8)
-        self.assertIs(self.mod._fit_src(src, 8, 8), src)
-
-    def test_fit_src_crops_to_target_ar_then_resizes(self):
-        import torch
-        src = torch.zeros(1, 4, 6, 4)   # portrait latent -> landscape target
-        out = self.mod._fit_src(src, 4, 8)
-        self.assertEqual(tuple(out.shape), (1, 4, 4, 8))
-
-    def test_to_4d_flattens_temporal(self):
-        import torch
-        v = torch.zeros(2, 3, 2, 5, 6)
-        out = self.mod._to_4d(v)
-        self.assertEqual(tuple(out.shape), (4, 3, 5, 6))
 
 
 class SidecarTests(unittest.TestCase):
@@ -1325,8 +1321,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
             cfg = json.load(f)
         self.assertEqual(cfg["count"], 4)
         self.assertEqual(cfg["default_ratio"], "2:3")
-        self.assertEqual(cfg["loras"], [{"name": "style_a.safetensors", "strength": 0.7,
-                                         "ref_only": False}])
+        self.assertEqual(cfg["loras"], [{"name": "style_a.safetensors", "strength": 0.7}])
 
         # 预设设置可编辑：写本地覆盖文件（configs/skill_overrides/<id>.json），不改预设文件
         status, body = self._call(image_gen.post_skill_config_route,

@@ -453,43 +453,6 @@ test("详情弹窗：生图技能无 workflow.json 时隐藏流程图", async ()
     assert.equal(document.querySelector(".rs-skill-workflow").style.display, "none");
     assert.equal(document.querySelector(".rs-content-row-compact"), null, "无工作流时正文区保持常规高度");
 });
-// ============ 四视图 LoRA 建议名只对 Krea2 编辑链显示（避免给 Qwen Image 等链推荐 Krea2 LoRA）============
-
-test("templateUsesKrea2Edit：仅含 Krea2EditModelPatch 的模板为真", async () => {
-    const { templateUsesKrea2Edit } = await import("../../web/workflow-graph.js");
-    assert.equal(templateUsesKrea2Edit({ "1": { class_type: "Krea2EditModelPatch" } }), true);
-    assert.equal(templateUsesKrea2Edit({ "1": { class_type: "UNETLoader" }, "2": { class_type: "Krea2EditModelPatch" } }), true);
-    assert.equal(templateUsesKrea2Edit({ "1": { class_type: "TextEncodeQwenImage21" } }), false);
-    assert.equal(templateUsesKrea2Edit(null), false);
-});
-
-test("详情弹窗：LoRA「自动」建议名按模板链判定（Qwen 多参考链不推荐 Krea2 LoRA）", async () => {
-    const QV = "krea2/Edit/Krea2-四视图QuadView_krea2_v1.safetensors";
-    const models = { diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [QV], suggested_lora: QV };
-    const openCase = async (id, workflow, status = 200) => {
-        mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow }, status));
-        document.querySelector(".rs-skill-modal-overlay")?.remove();   // 同测试内多次打开：先清上一个弹窗，避免选到旧 DOM
-        return openGenPopup({ id, source: "custom", models, config: { model: "m.safetensors", loras: [{ name: QV, strength: 1 }] } });
-    };
-    const autoText = (r) => r.wrap.querySelector(".rs-gen-lora-row select").options[0].textContent;
-
-    const r1 = await openCase("krea_skill", {
-        "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
-        "2": { class_type: "Krea2EditModelPatch", inputs: { model: ["1", 0] } },
-        "3": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{PROMPT}}" } },
-    });
-    assert.equal(autoText(r1), "自动（Krea2-四视图QuadView_krea2_v1）", "Krea2 单路编辑链：显示自动挑选的四视图 LoRA");
-
-    const r2 = await openCase("qwen_skill", {
-        "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
-        "2": { class_type: "TextEncodeQwenImage21", inputs: { prompt: "{{PROMPT}}" } },
-    });
-    assert.equal(autoText(r2), "自动", "Qwen 链（无 Krea2EditModelPatch）：不显示 Krea2 LoRA 建议名");
-
-    const r3 = await openCase("plain_skill", { error: "missing" }, 404);
-    assert.equal(autoText(r3), "自动", "无 workflow.json：同样不显示建议名");
-});
-
 
 
 // ============ 模板变量按已有参数预渲染（设置值 / 自动建议模型替换，运行时变量保留）============

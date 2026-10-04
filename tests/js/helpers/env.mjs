@@ -126,6 +126,8 @@ export function installMediaStub(win) {
                 textBaseline: "top",
                 canvas: null,
                 measureText: () => ({ width: 0 }),
+                // 像素读回：遮罩预览等路径按亮度取 alpha，全零数据即"无遮罩"
+                getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }),
             },
             {
                 get(t, k) {

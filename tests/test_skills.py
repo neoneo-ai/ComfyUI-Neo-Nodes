@@ -612,7 +612,7 @@ class TestSaveComboSkill(unittest.TestCase):
                               "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{PROMPT}}"}}})
         # config：只覆盖 model/loras，其余设置沿用源技能
         self.assertEqual(cfg["model"], "qwen_image_2.1.safetensors")
-        self.assertEqual(cfg["loras"], [{"name": "cute_style.safetensors", "strength": 0.8, "ref_only": False}])
+        self.assertEqual(cfg["loras"], [{"name": "cute_style.safetensors", "strength": 0.8}])
         self.assertEqual(cfg["text_encoder"], "t5.safetensors")
         self.assertEqual(cfg["steps"], 25)
 
@@ -623,7 +623,7 @@ class TestSaveComboSkill(unittest.TestCase):
         self.assertEqual(res["name"], "lora_a")
         _, _, cfg = self._read_files(res["id"])
         self.assertEqual(cfg["model"], "krea2.safetensors", "未选主模型时沿用源技能模型")
-        self.assertEqual(cfg["loras"], [{"name": "lora_a.safetensors", "strength": 1.0, "ref_only": False}])
+        self.assertEqual(cfg["loras"], [{"name": "lora_a.safetensors", "strength": 1.0}])
 
     def test_ratio_and_edge_saved_when_selected(self):
         self._make_source()
@@ -1569,7 +1569,7 @@ class TestGenImageSkill(unittest.TestCase):
         s = self._scanned().get("image_gen_image")
         self.assertIsNotNone(s)
         self.assertTrue(s["gen_image"])
-        self.assertTrue(s["requires_ref"], "四视图 skill 必须声明 requires_ref")
+        self.assertTrue(s["requires_ref"], "参考图 skill 必须声明 requires_ref")
         self.assertEqual(s["category"], "image_gen")
 
     def test_save_skill_main_preserves_gen_meta(self):

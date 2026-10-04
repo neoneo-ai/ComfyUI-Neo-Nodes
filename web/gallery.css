@@ -2614,6 +2614,13 @@ Accordion Section Buttons (Clear)
     touch-action: none;
 }
 
+/* 点选删除：透明点击/标记层（对齐原图 contain 显示盒） */
+.neo-gallery-edit-remove-canvas {
+    position: absolute;
+    cursor: crosshair;
+    touch-action: none;
+}
+
 .neo-gallery-edit-brush {
     width: 120px;
 }

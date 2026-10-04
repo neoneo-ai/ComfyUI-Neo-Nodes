@@ -95,6 +95,9 @@ _PAD_TOKENS = {"{{PAD_LEFT}}": "left", "{{PAD_TOP}}": "top",
 
 # 局部编辑追加的区域约束（模型看到的是涂抹区标红的裁剪图）
 LOCAL_EDIT_PROMPT_SUFFIX = ("Only modify the red highlighted area; keep all other parts of the image exactly unchanged.")
+# 点选删除默认提示词（SAM3 遮罩标红后，模型移除红色区域物体并自然填充背景）
+REMOVE_DEFAULT_PROMPT = ("Remove the object in the red highlighted area from the image. Naturally fill the removed "
+                         "area with the surrounding background, keeping all other parts of the image unchanged.")
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
@@ -490,6 +493,25 @@ def _parse_outpaint(value) -> dict | None:
             "total_pixels": max(0.0, min(16.0, total_pixels))}
 
 
+def _parse_remove_points(value) -> list | None:
+    """解析点选删除的点击坐标 [{x, y}]（原图像素）；未提供时返回 None。
+
+    最多 5 个点；坐标为非负整数，单边上限 8192。"""
+    if not isinstance(value, (list, tuple)) or not value:
+        return None
+    pts = []
+    for p in list(value)[:5]:
+        if not isinstance(p, dict):
+            raise ValueError("remove_points 每项需为 {x, y} 对象")
+        try:
+            x = max(0, min(8192, int(p["x"])))
+            y = max(0, min(8192, int(p["y"])))
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("remove_points 每项需含数值 x/y")
+        pts.append({"x": x, "y": y})
+    return pts or None
+
+
 def _prepare_local_edit(ref_name: str, mask_src: dict) -> dict:
     """高分局部编辑预处理：解码涂抹遮罩，自动定位编辑区（非零像素包围盒 + 25% 边距），
     生成红色高亮裁剪图（模型据此识别编辑目标）与羽化遮罩（合并回原图用），返回裁剪框与临时文件名。"""
@@ -540,6 +562,13 @@ def _prepare_local_edit(ref_name: str, mask_src: dict) -> dict:
     h2 = max(64, int(h * scale + 0.5) // 32 * 32)
     return {"x": x0, "y": y0, "w": w, "h": h, "w2": w2, "h2": h2,
             "hl_name": hl_name, "mask_name": mask_out_name}
+
+
+async def _sam3_segment(ref_name: str, points: list) -> str:
+    """SAM3 点选分割（阻塞推理放线程池），返回 Input/NeoAgent 下的遮罩文件名。"""
+    from . import sam3_seg
+    return await asyncio.get_running_loop().run_in_executor(
+        None, sam3_seg.segment_points, ref_name, points)
 
 
 def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1) -> dict:
@@ -1411,11 +1440,26 @@ async def start_generation(body: dict) -> dict:
         if w > 0 and h > 0:
             body["width"], body["height"] = _round_multiple(w, 32), _round_multiple(h, 32)
 
+    # 点选删除：SAM3 点选分割 → 遮罩，走局部编辑管线（标红裁剪 + 羽化合并）；
+    # 空提示词填默认删除指令，非空用户提示词原样使用（VLM 描述仅用于可选预填建议）
+    remove_points = _parse_remove_points(body.get("remove_points"))
+    if remove_points:
+        refs = body.get("references")
+        refs = refs if isinstance(refs, list) else ([refs] if refs else [])
+        ref_name = _reference_name(refs[0]) if refs else None
+        if not ref_name:
+            raise ValueError("点选删除需要原图（参考图）")
+        mask_name = await _sam3_segment(ref_name, remove_points)
+        body["local_edit"] = True
+        body["references"] = refs + [{"kind": "input", "value": mask_name}]
+        if not str(body.get("prompt") or "").strip():
+            body["prompt"] = REMOVE_DEFAULT_PROMPT
+
     params = resolve_request(body or {}, settings, max_refs=template_max_refs(template))
     if template_is_qwen21(template):
         params["width"] = _round_multiple(params["width"], 32)
         params["height"] = _round_multiple(params["height"], 32)
-    if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance"):
+    if settings.get("enhance_prompt") and not (body or {}).get("skip_enhance") and not remove_points:
         params["prompt"] = await _enhance_prompt(
             params["prompt"], params["width"], params["height"], skill_id)
     graph, template_warns = render_template(template, params)
@@ -1504,6 +1548,31 @@ async def generate_route(request):
     except Exception as e:
         logger.error(f"image_gen generate failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+@routes.post("/neo_image_gen/segment_points")
+async def segment_points_route(request):
+    """点选删除预览：原图 + 点击坐标走 SAM3 点提示分割，返回遮罩文件名（前端叠加到原图上做所见即所得预览）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是 JSON"}, status=400)
+    ref_name = str((body or {}).get("image") or "").strip().replace("\\", "/")
+    try:
+        points = _parse_remove_points((body or {}).get("points"))
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not ref_name or not points:
+        return web.json_response({"error": "需要原图与标记点"}, status=400)
+    input_dir = os.path.abspath(folder_paths.get_input_directory())
+    full = os.path.abspath(os.path.join(input_dir, *ref_name.split("/")))
+    if not full.startswith(input_dir + os.sep) or not os.path.isfile(full):
+        return web.json_response({"error": "原图无法读取"}, status=400)
+    try:
+        mask_name = await _sam3_segment(ref_name, points)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"mask": mask_name})
 
 
 @routes.post("/neo_image_gen/enhance")

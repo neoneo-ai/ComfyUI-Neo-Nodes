@@ -31,22 +31,6 @@ if __package__ not in (None, ""):
         NODE_DISPLAY_NAME_MAPPINGS as PROMPT_DISPLAY_NAME_MAPPINGS,
     )
 
-    # Krea2 以图生图核心节点（vendor 自 comfyui-krea2edit）。若用户已单独安装该插件，
-    # 同名节点已在注册表中，跳过以避免重复注册告警。
-    KREA2_EDIT_MAPPINGS = {}
-    KREA2_EDIT_DISPLAY_MAPPINGS = {}
-    try:
-        import nodes as _nodes_registry
-        if "Krea2EditModelPatch" in _nodes_registry.NODE_CLASS_MAPPINGS:
-            print("[NeoNodes] krea2_edit: comfyui-krea2edit 已安装，跳过内置节点注册")
-        else:
-            from .krea2_edit import (
-                NODE_CLASS_MAPPINGS as KREA2_EDIT_MAPPINGS,
-                NODE_DISPLAY_NAME_MAPPINGS as KREA2_EDIT_DISPLAY_MAPPINGS,
-            )
-    except Exception as e:
-        print(f"[NeoNodes] krea2_edit 节点注册失败（以图生图不可用）: {e}")
-
     # 生图/编辑节点（NeoImageGenEdit，方案 A mini-executor）：按 skill workflow.json 同步生成
     # IMAGE 输出。依赖 image_gen/skill 已加载；导入失败时优雅降级，不阻断其它节点。
     IMAGE_GEN_EDIT_MAPPINGS = {}
@@ -146,7 +130,6 @@ if __package__ not in (None, ""):
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
         **PROMPT_CLASS_MAPPINGS,
-        **KREA2_EDIT_MAPPINGS,
         **IMAGE_GEN_EDIT_MAPPINGS,
         **H3_DIRECTOR_MAPPINGS,
         **H3_SEGMENT_MAPPINGS,
@@ -157,7 +140,6 @@ if __package__ not in (None, ""):
 
     NODE_DISPLAY_NAME_MAPPINGS = {
         **PROMPT_DISPLAY_NAME_MAPPINGS,
-        **KREA2_EDIT_DISPLAY_MAPPINGS,
         **IMAGE_GEN_EDIT_DISPLAY_MAPPINGS,
         **H3_DIRECTOR_DISPLAY_MAPPINGS,
         **H3_SEGMENT_DISPLAY_MAPPINGS,
