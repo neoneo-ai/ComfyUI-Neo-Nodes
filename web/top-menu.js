@@ -1,9 +1,11 @@
 /**
  * top-menu.js — 顶栏 🅝 菜单（插件统一入口）
- * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），悬停约 0.3 秒或点击展开下拉菜单：
- *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 📥 模型库 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
- *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）
- *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录 / ℹ️ 关于插件。
+ * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），悬停约 0.3 秒或点击展开下拉菜单
+ * （悬停刚展开 0.5 秒内的点击算同一次手势、不收起，之后点击正常收起）：
+ *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（子菜单，往画布当前可见区的空白处添加 Neo 节点）
+ *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录
+ *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）/ 📥 模型库 / 🗂 技能管理
+ *   ℹ️ 关于插件。
  * 修复红点提示由 workflow.js 的 setRepairHint 驱动，本模块只提供 .neo-n-menu-btn 按钮与样式。
  */
 import { app } from "../../../../scripts/app.js";
@@ -19,7 +21,6 @@ import { openModelHub } from "./model-hub.js";
 
 const STUDIO_URL = "/neo-studio";
 const REPO_URL = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes";
-const TOOLTIP = "Neo Nodes — 🅝 菜单（悬停或点击展开）：Studio / 生成素材 / 导演 / 模型库 / 建节点 / 设置 / 技能 / 修复 / 关于";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
@@ -38,15 +39,16 @@ let _outsideHandler = null;
 let _escHandler = null;
 let _ctxMenuBound = false;
 let _hoverBound = false;
-let _nodeCascade = 0;   // 连续建节点时的级联偏移，防重叠
 
 // 悬停展开 / 移出收起：actionBarButtons 是声明式渲染，按钮 DOM 由前端重建，
 // 一律在 document 层按类名委托，不绑定到具体元素
 const HOVER_OPEN_MS = 300;    // 悬停 🅝 按钮多久后自动展开
 const HOVER_CLOSE_MS = 500;   // 指针离开按钮与菜单多久后自动收起
 const SUBMENU_OPEN_MS = 150;  // 「创建节点」行悬停多久后展开子菜单
+const HOVER_CLICK_GRACE_MS = 500;   // 悬停刚展开后的宽限期：期内点击算同一次手势，不收起
 let _hoverOpenTimer = 0;
 let _hoverCloseTimer = 0;
+let _hoverOpenedAt = 0;   // 本次菜单由悬停展开的时刻（点击展开为 0）
 
 function clearHoverTimers() {
     clearTimeout(_hoverOpenTimer);
@@ -81,7 +83,7 @@ function onHoverOver(e) {
     if (btn && !menuEl && !_hoverOpenTimer) {
         _hoverOpenTimer = setTimeout(() => {
             _hoverOpenTimer = 0;
-            openMenu(btn);
+            openMenu(btn, true);
         }, HOVER_OPEN_MS);
     }
 }
@@ -97,6 +99,7 @@ function onHoverOut(e) {
 function closeMenu() {
     if (!menuEl) return;
     clearHoverTimers();
+    _hoverOpenedAt = 0;
     menuEl.remove();
     menuEl = null;
     document.removeEventListener("pointerdown", _outsideHandler, true);
@@ -121,23 +124,68 @@ function separator() {
     return sep;
 }
 
-// 往画布创建节点：视口中心定位 + 级联偏移（canvasPosToGraph 换算同 image-gen.js）
+// 当前可见区对应的图坐标矩形（LiteGraph 屏幕变换 screen=(graph+offset)*scale）
+function visibleGraphRect(cv) {
+    const s = cv?.ds?.scale;
+    const rect = cv?.canvas?.getBoundingClientRect?.();
+    if (!s || !rect?.width || !rect?.height) return null;
+    const ox = cv.ds.offset?.[0] ?? 0;
+    const oy = cv.ds.offset?.[1] ?? 0;
+    return [-ox, -oy, rect.width / s - ox, rect.height / s - oy];
+}
+
+// 从可见区中心一圈圈往外找：第一个不与已有节点重叠、且整块落在可见区内的落点
+function freeSpotInVisible(rect, node) {
+    const [nw, nh] = node.size || [200, 100];
+    const gap = 24;
+    const blocked = (x, y) => (app.graph.nodes || []).some((n) => {
+        if (n === node) return false;
+        const [sw, sh] = n.size || [200, 100];
+        return x < n.pos[0] + sw + gap && x + nw + gap > n.pos[0] &&
+            y < n.pos[1] + sh + gap && y + nh + gap > n.pos[1];
+    });
+    const cx = (rect[0] + rect[2]) / 2 - nw / 2;
+    const cy = (rect[1] + rect[3]) / 2 - nh / 2;
+    const step = Math.max(40, Math.round(Math.min(rect[2] - rect[0], rect[3] - rect[1]) / 6));
+    for (let ring = 0; ring < 12; ring++) {
+        for (let i = -ring; i <= ring; i++) {
+            for (let j = -ring; j <= ring; j++) {
+                if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
+                const x = cx + i * step;
+                const y = cy + j * step;
+                if (x < rect[0] || y < rect[1] || x + nw > rect[2] || y + nh > rect[3]) continue;
+                if (!blocked(x, y)) return [x, y];
+            }
+        }
+    }
+    return null;
+}
+
+// 往画布创建节点：落点取当前可见区的空白处，节点不会跑到视野外找不到
 function addNodeToCanvas(type) {
     const L = globalThis.LiteGraph;
     if (!L?.createNode) { showToast(app, "error", "无法创建节点", "LiteGraph 未就绪"); return; }
     if (!app.graph) { showToast(app, "info", "画布为空", "请先打开一个工作流"); return; }
     const node = L.createNode(type);
     app.graph.add(node);
-    try {
-        const cv = app.canvas;
-        const cRect = cv?.canvas?.getBoundingClientRect?.() || { width: 0, height: 0 };
-        const localX = cRect.width / 2 - (node.size?.[0] || 200) / 2 + _nodeCascade;
-        const localY = cRect.height / 2 - 60 + _nodeCascade;
-        node.pos = cv?.canvasPosToGraph ? cv.canvasPosToGraph([localX, localY]) : [localX, localY];
-    } catch {
-        node.pos = [200, 200];
+    const cv = app.canvas;
+    const rect = visibleGraphRect(cv);
+    const spot = rect && freeSpotInVisible(rect, node);
+    if (spot) {
+        node.pos = spot;
+    } else {
+        const [nw, nh] = node.size || [200, 100];
+        if (rect) {
+            node.pos = [(rect[0] + rect[2]) / 2 - nw / 2, (rect[1] + rect[3]) / 2 - nh / 2];
+        } else if (cv?.canvasPosToGraph) {
+            const r = cv.canvas.getBoundingClientRect();
+            node.pos = cv.canvasPosToGraph([r.width / 2, r.height / 2]);
+        } else {
+            node.pos = [200, 200];
+        }
+        cv?.focusNode?.(node);   // 可见区里挤不出空位：把视图挪到节点上
     }
-    _nodeCascade = (_nodeCascade + 24) % 240;
+    cv?.select?.(node);
     app.graph.setDirtyCanvas(true);
 }
 
@@ -327,8 +375,9 @@ function openSettingsModal() {
     _settingsModal = overlay;
 }
 
-function openMenu(anchor) {
+function openMenu(anchor, byHover = false) {
     if (menuEl) return;
+    _hoverOpenedAt = byHover ? performance.now() : 0;
     menuEl = document.createElement("div");
     menuEl.className = "neo-n-menu";
 
@@ -336,7 +385,6 @@ function openMenu(anchor) {
     // 生成素材：纯提示词一键出图（与画廊搜索行同一弹窗），app.neoGallery 由 gallery.js setup 挂全局
     menuEl.appendChild(menuItem("🖼️ 生成素材", () => openGenMaterialDialog(app.neoGallery)));
     menuEl.appendChild(menuItem("🎥 新建导演配方", () => openDirectorEditor(null)));
-    menuEl.appendChild(menuItem("📥 模型库", () => openModelHub()));
 
     // 创建节点：手风琴子菜单（悬停行自动展开，点击行展开/收起）
     const nodeRow = document.createElement("button");
@@ -352,22 +400,26 @@ function openMenu(anchor) {
     subEl.className = "neo-n-submenu";
     subEl.style.display = "none";
     buildNodeSubmenu(subEl);
-    const setSub = (open) => {
+    let subTimer = 0;
+    let subOpenedAt = 0;   // 子菜单由悬停展开的时刻（点击展开为 0）
+    const setSub = (open, byHover = false) => {
         subEl.style.display = open ? "" : "none";
         nodeRow.classList.toggle("open", open);
+        subOpenedAt = open && byHover ? performance.now() : 0;
     };
-    let subTimer = 0;
     nodeRow.onclick = (e) => {
         e.stopPropagation();
         clearTimeout(subTimer);
         subTimer = 0;
+        // 悬停刚展开的宽限期内：这次点击算同一次手势，不收起
+        if (subOpenedAt && subEl.style.display !== "none" && performance.now() - subOpenedAt < HOVER_CLICK_GRACE_MS) return;
         setSub(subEl.style.display === "none");
     };
     nodeRow.addEventListener("pointerover", () => {
         if (subEl.style.display !== "none" || subTimer) return;
         subTimer = setTimeout(() => {
             subTimer = 0;
-            setSub(true);
+            setSub(true, true);
         }, SUBMENU_OPEN_MS);
     });
     nodeRow.addEventListener("pointerout", (e) => {
@@ -378,14 +430,17 @@ function openMenu(anchor) {
     });
     menuEl.append(nodeRow, subEl);
 
-    menuEl.appendChild(menuItem("⚙️ 设置", openSettingsModal));
-    menuEl.appendChild(menuItem("🗂 技能管理", openSkillManager));
-
     menuEl.appendChild(separator());
     const repairItem = menuItem("🔧 修复工作流", runRepair);
     repairItem.classList.add("neo-n-menu-item-repair");   // 右键 → 修复映射管理
     menuEl.appendChild(repairItem);
     menuEl.appendChild(menuItem("📜 修复记录", showRepairLogDialog));
+
+    menuEl.appendChild(separator());
+    menuEl.appendChild(menuItem("⚙️ 设置", openSettingsModal));
+    menuEl.appendChild(menuItem("📥 模型库", openModelHub));
+    menuEl.appendChild(menuItem("🗂 技能管理", openSkillManager));
+
     menuEl.appendChild(separator());
     menuEl.appendChild(menuItem("ℹ️ 关于插件", showAboutDialog));
 
@@ -455,8 +510,12 @@ app.registerExtension({
     actionBarButtons: [
         {
             icon: "neo-n-menu-icon size-5",
-            tooltip: TOOLTIP,
-            onClick: (e) => (menuEl ? closeMenu() : openMenu(e.currentTarget)),
+            onClick: (e) => {
+                if (!menuEl) { openMenu(e.currentTarget); return; }
+                // 悬停刚展开的宽限期内：这次点击算同一次手势（手指已停在按钮上），不收起
+                if (_hoverOpenedAt && performance.now() - _hoverOpenedAt < HOVER_CLICK_GRACE_MS) return;
+                closeMenu();
+            },
             class: "neo-n-menu-btn",
         },
     ],

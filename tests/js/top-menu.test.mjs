@@ -2,7 +2,8 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { clearBody, mockRoute, jsonResponse, flush, sleep } from "./setup.mjs";
-import { getExtension } from "./mocks/comfy-app.mjs";
+import { app, appState, getExtension } from "./mocks/comfy-app.mjs";
+import { makeGraph, makeNode } from "./helpers/fake-graph.mjs";
 
 const topMenu = await import("../../web/top-menu.js");   // setup.mjs 副作用先行，再导入被测模块
 
@@ -35,6 +36,25 @@ test("点击按钮展开菜单且包含全部条目", async () => {
     // 再点一次收起
     ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
     assert.equal(document.querySelector(".neo-n-menu"), null, "菜单未收起");
+});
+
+test("菜单条目顺序：设置 / 模型库 / 技能管理 分割在修复工具之后", () => {
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    const menu = document.querySelector(".neo-n-menu");
+    assert.ok(menu, "菜单未展开");
+    const kids = [...menu.children];
+    const labels = kids
+        .filter((el) => !el.classList.contains("neo-n-menu-sep") && !el.classList.contains("neo-n-submenu"))
+        .map((el) => el.textContent.trim());
+    assert.deepEqual(labels, [
+        "🎬 新影工坊", "🖼️ 生成素材", "🎥 新建导演配方",
+        "🧩 创建节点▸",
+        "🔧 修复工作流", "📜 修复记录",
+        "⚙️ 设置", "📥 模型库", "🗂 技能管理",
+        "ℹ️ 关于插件",
+    ], "条目顺序不符");
+    assert.equal(kids.filter((el) => el.classList.contains("neo-n-menu-sep")).length, 3, "分组分隔线数量不符");
 });
 
 test("🖼️ 生成素材：点击打开生成素材弹窗", async () => {
@@ -221,6 +241,155 @@ test("创建节点行悬停自动展开子菜单", async () => {
     } finally {
         delete globalThis.LiteGraph;
         topMenu.resetTopMenu();
+    }
+});
+
+
+test("悬停刚展开的宽限期内点击不收起，宽限期过后点击收起", async () => {
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.setup();
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+
+    btn.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    await sleep(360);
+    assert.ok(document.querySelector(".neo-n-menu"), "悬停未自动展开菜单");
+
+    // 宽限期内（悬停刚展开 0.5 秒内）：点击算同一次手势，菜单保持展开
+    ext.actionBarButtons[0].onClick({ currentTarget: btn });
+    assert.ok(document.querySelector(".neo-n-menu"), "宽限期内的点击不应收起");
+
+    // 宽限期过后：点击就是正常收起，一次生效
+    await sleep(600);
+    ext.actionBarButtons[0].onClick({ currentTarget: btn });
+    assert.equal(document.querySelector(".neo-n-menu"), null, "宽限期过后点击应收起菜单");
+});
+
+test("子菜单悬停刚展开的宽限期内点击行不收起，宽限期过后点击收起", async () => {
+    globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
+    try {
+        const ext = getExtension("comfy.neo.topMenu");
+        ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+        const row = document.querySelector(".neo-n-node-row");
+        const sub = row.nextElementSibling;
+        row.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+        await sleep(200);
+        assert.notEqual(sub.style.display, "none", "悬停未展开子菜单");
+
+        row.click();
+        assert.notEqual(sub.style.display, "none", "宽限期内的行点击不应收起");
+        assert.ok(row.classList.contains("open"), "宽限期内的点击后子菜单应保持展开");
+
+        await sleep(600);
+        row.click();
+        assert.equal(sub.style.display, "none", "宽限期过后点击行应收起子菜单");
+    } finally {
+        delete globalThis.LiteGraph;
+        topMenu.resetTopMenu();
+    }
+});
+
+
+// ── 创建节点落点 ─────────────────────────────────────────────
+// 画布替身：screen=(graph+offset)*scale，可见区 = 图坐标 [200,100] ~ [700,461.1]
+const SCALE = 1.8, OX = -200, OY = -100;
+const CANVAS_RECT = { left: 100, top: 50, width: 900, height: 650 };
+const VIS = [-OX, -OY, CANVAS_RECT.width / SCALE - OX, CANVAS_RECT.height / SCALE - OY];
+
+function setupCanvas(nodeSize) {
+    const focused = [];
+    app.canvas = {
+        canvas: { getBoundingClientRect: () => CANVAS_RECT },
+        ds: { scale: SCALE, offset: [OX, OY] },
+        canvasPosToGraph: ([x, y]) => [x / SCALE - OX, y / SCALE - OY],
+        focusNode: (n) => focused.push(n.id),
+        select: () => {},
+    };
+    const graph = makeGraph();
+    graph.nodes = graph._nodes;
+    appState.graph = graph;
+    globalThis.LiteGraph = {
+        registeredNodes: { NeoPromptAgent: true },
+        createNode: (type) => Object.assign(makeNode({ id: 91, type }), { pos: [0, 0], size: nodeSize }),
+    };
+    return { graph, focused };
+}
+
+function cleanupCanvas() {
+    delete globalThis.LiteGraph;
+    app.canvas = null;
+    appState.graph = null;
+    topMenu.resetTopMenu();
+}
+
+function clickCreateNodeItem() {
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    document.querySelector(".neo-n-node-row").click();
+    document.querySelector(".neo-n-submenu .neo-n-menu-item").click();
+}
+
+test("创建节点：空画布落在当前可见区正中", () => {
+    const { graph } = setupCanvas([200, 100]);
+    try {
+        clickCreateNodeItem();
+        const node = graph._nodes[0];
+        assert.ok(node, "节点未加入画布");
+        const cx = (VIS[0] + VIS[2]) / 2 - 100;
+        const cy = (VIS[1] + VIS[3]) / 2 - 50;
+        assert.ok(Math.abs(node.pos[0] - cx) < 1e-6, `落点 x 应为可见区中心 ${cx.toFixed(1)}，实际 ${node.pos[0].toFixed(1)}`);
+        assert.ok(Math.abs(node.pos[1] - cy) < 1e-6, `落点 y 应为可见区中心 ${cy.toFixed(1)}，实际 ${node.pos[1].toFixed(1)}`);
+    } finally {
+        cleanupCanvas();
+    }
+});
+
+test("创建节点：中心被已有节点占据时落在可见区内空位", () => {
+    const { graph } = setupCanvas([200, 100]);
+    const blocker = makeNode({ id: 5, type: "KSampler" });
+    blocker.pos = [300, 200];
+    blocker.size = [200, 100];
+    graph.add(blocker);
+    try {
+        clickCreateNodeItem();
+        const node = graph._nodes.find((n) => n.id === 91);
+        const [x, y] = node.pos;
+        const fmt = `${x.toFixed(1)},${y.toFixed(1)}`;
+        assert.ok(
+            x >= VIS[0] - 1e-9 && y >= VIS[1] - 1e-9 && x + 200 <= VIS[2] + 1e-9 && y + 100 <= VIS[3] + 1e-9,
+            `落点 ${fmt} 应完整落在可见区 [${VIS.map((v) => v.toFixed(0)).join(",")}] 内`
+        );
+        assert.ok(!(x < 500 && x + 200 > 300 && y < 300 && y + 100 > 200), `落点 ${fmt} 不应与已有节点重叠`);
+    } finally {
+        cleanupCanvas();
+    }
+});
+
+test("创建节点：可见区里挤不下时落在中心并把视图挪到节点上", () => {
+    const { graph, focused } = setupCanvas([900, 500]);
+    try {
+        clickCreateNodeItem();
+        const node = graph._nodes[0];
+        const cx = (VIS[0] + VIS[2]) / 2 - 450;
+        const cy = (VIS[1] + VIS[3]) / 2 - 250;
+        assert.ok(Math.abs(node.pos[0] - cx) < 1e-6 && Math.abs(node.pos[1] - cy) < 1e-6,
+            `挤不下时应落在可见区中心，实际 ${node.pos.map((v) => v.toFixed(1))}`);
+        assert.deepEqual(focused, [91], "应调用 focusNode 把视图挪到新节点");
+    } finally {
+        cleanupCanvas();
+    }
+});
+
+test("创建节点：无画布缩放信息时兜底落点不抛异常", () => {
+    const { graph } = setupCanvas([200, 100]);
+    app.canvas = null;
+    try {
+        clickCreateNodeItem();
+        assert.equal(graph._nodes.length, 1, "节点应加入画布");
+        assert.deepEqual(graph._nodes[0].pos, [200, 200]);
+    } finally {
+        cleanupCanvas();
     }
 });
 
