@@ -183,6 +183,23 @@ ComfyUI 右侧边栏中的图片 / 视频 / 音频浏览与管理面板：内置
     并把遮罩红色叠加到原图上预览；确认后走高分局部编辑管线移除，出图同原图尺寸。
     提示词框预填默认删除指令（可见可改，留空时后端兜底补同一默认指令）。
 
+## 🏷️ LoRA 打标（目录批量打标）
+
+目录卡片「⋯」菜单的 **🏷️ LoRA 打标** 把整个目录的图片批量送视觉 LLM 打标，逐张写同名 `.txt`
+（LoRA 训练用）：
+
+- **触发词** - 弹窗预填按目录名生成的建议触发词（ASCII 部分清洗，中文目录名回退目录名），可改；
+  触发词强制写在标签最前，标签之间统一以「, 」分隔。
+- **复用 LLM 配置** - 走「LLM 设置」里的视觉模型与提示词模板（`configs/llm.json` 的 `tagging`
+  模板，占位符 `{trigger_word}` / `{standardize}`）；未配置视觉模型时弹窗直接报错。
+- **跳过已打标** - 已有同名 `.txt` 的图片自动跳过，只补空缺。
+- **标准描述开关** - 勾选后要求模型输出标准化标签描述。
+- **不遮罩、可拖动** - 打标窗与导演编辑器一样不带遮罩，标题栏可拖动、双击最大化/还原，
+  打标期间可继续浏览画廊、操作画布。
+- **随时中止** - 打标中「取消」变成「中止打标」，点 ✕ / Esc / 中止都会断开请求；后端在当前这张
+  图跑完后停止，已写入的 `.txt` 保留，未打标的不再处理。
+- **结果汇总** - 完成后显示成功数与失败张的文件名，单张失败不影响其余图片。
+
 ## 实现细节（开发者）
 
 ### Civitai LORA 抓取与缓存
@@ -192,5 +209,9 @@ ComfyUI 右侧边栏中的图片 / 视频 / 音频浏览与管理面板：内置
 已缓存（size/mtime 未变）的自动跳过，被删除 / 更换的缓存自动清理。
 缓存落在 `gallery/lora_cache/`：一个 LORA 一个目录，内含多张 `example_NN` 示例图 + 同名 `.txt` 提示词。
 
-后端实现见 [architecture.md](architecture.md)（`gallery.py` / `gallery_lora.py` / `gallery_oss.py`），
-API 见 [api-routes.md](api-routes.md)。
+后端打标实现见 `lora_tag.py`。已生成好的旧标签可用离线脚本统一格式化：
+`python tools/format_tags.py <目录> [--trigger 触发词] [--dry-run]`，按「, 」重排每个 tag、
+把触发词从首个标签里拆出独立置顶，原 `.txt` 备份到 `<目录>.txtbak`。
+
+后端实现见 [architecture.md](architecture.md)（`gallery.py` / `gallery_lora.py` / `gallery_oss.py` /
+`lora_tag.py`），API 见 [api-routes.md](api-routes.md)。

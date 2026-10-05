@@ -85,6 +85,75 @@ const GM_ENHANCE_SKILL_KEY = "neo.gallery.gen_material.enhance_skill";
 const CHARACTER_SHEET_PROMPT = "角色设定多视图：根据参考图中的人物，在一张横版画面中生成四个视图横向并排的角色设定图：第一格为大头特写（肩部以上，突出五官脸型），第二格为正面全身站立，第三格为侧面全身站立，第四格为背面全身站立。严格保持与参考图一致的五官脸型、发型发色、服装配饰和体型比例；全身视图中人物自然站立，双臂下垂，纯白背景，均匀柔光，写实摄影风格，高清细节，画面内不出现文字标注。";
 // 角色图输出目录：保存路径的日期段会变成文件名前缀，成品直接落在 Output/CharacterSheet 下。
 const CHARACTER_SHEET_DIR = "CharacterSheet";
+/** 小窗标题栏拖动 + 双击最大化/还原（同导演编辑器）：首次按下从居中切到绝对定位并记录起点，
+ *  之后按鼠标位移更新 left/top；钳制保证窗口不会被拖出视口（始终留一条可点到的标题栏 / ✕）。
+ *  配合 overlay 的 pointer-events:none（gallery.css 的 *-modal-overlay 规则）= 不遮罩、可移动、窗户外照常浏览。 */
+function makeStoryWindowDraggable(modal) {
+    const titlebar = modal.querySelector(".neo-gallery-story-titlebar");
+    if (!titlebar) return;
+    let dragging = false;
+    let startMX = 0, startMY = 0, startL = 0, startT = 0;
+    const onTitleMove = (e) => {
+        if (!dragging) return;
+        let left = startL + (e.clientX - startMX);
+        let top = startT + (e.clientY - startMY);
+        const w = modal.offsetWidth;
+        left = Math.max(-w + 80, Math.min(left, window.innerWidth - 80));
+        top = Math.max(0, Math.min(top, window.innerHeight - 44));
+        modal.style.left = left + "px";
+        modal.style.top = top + "px";
+    };
+    const onTitleUp = () => {
+        dragging = false;
+        window.removeEventListener("mousemove", onTitleMove);
+        window.removeEventListener("mouseup", onTitleUp);
+    };
+    titlebar.addEventListener("mousedown", (e) => {
+        if (e.button !== 0 || e.target.closest("button, .neo-gallery-story-close")) return; // 按钮/关闭钮不触发拖动，标题栏其余空白可拖窗口
+        const r = modal.getBoundingClientRect();
+        if (!modal.style.left) { // 首次：从居中切到绝对定位，无跳变
+            modal.style.position = "absolute";
+            modal.style.left = r.left + "px";
+            modal.style.top = r.top + "px";
+        }
+        startMX = e.clientX; startMY = e.clientY;
+        startL = parseFloat(modal.style.left); startT = parseFloat(modal.style.top);
+        dragging = true;
+        window.addEventListener("mousemove", onTitleMove);
+        window.addEventListener("mouseup", onTitleUp);
+    });
+    let maximized = false;
+    let prevRect = null;
+    const toggleMaximize = () => {
+        if (!maximized) {
+            const r = modal.getBoundingClientRect();
+            prevRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+            if (!modal.style.left) modal.style.position = "absolute";
+            modal.style.left = "8px";
+            modal.style.top = "8px";
+            modal.style.width = (window.innerWidth - 16) + "px";
+            modal.style.height = (window.innerHeight - 16) + "px";
+            modal.style.maxWidth = "none";
+            modal.style.maxHeight = "none";
+            maximized = true;
+        } else {
+            modal.style.left = prevRect.left + "px";
+            modal.style.top = prevRect.top + "px";
+            modal.style.width = prevRect.width + "px";
+            modal.style.height = prevRect.height + "px";
+            modal.style.maxWidth = "";
+            modal.style.maxHeight = "";
+            maximized = false;
+            prevRect = null;
+        }
+    };
+    titlebar.addEventListener("dblclick", (e) => {
+        if (e.target.closest("button, .neo-gallery-story-close")) return;
+        toggleMaximize();
+    });
+}
+
+
 
 /** 一键角色图的生图请求体（/neo_image_gen/generate）：固定 Qwen Image 2.1 + 头特写/正/侧/背提示词 + 1920×1080 请求（后端按 Qwen2.1 规则对齐到 32 → 1920×1088）；输出走独立 character 目录 */
 export function buildCharacterSheetRequest(refName) {
@@ -766,9 +835,13 @@ export function openLoraTagDialog(gallery, dirPath) {
 
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
     let busy = false;
+    let controller = null;
+    let aborted = false;
 
     function close() {
-        if (busy) return; // 打标中不允许关闭，避免误触丢失结果
+        // 打标中点关闭 = 中止：断开 SSE，后端流结束后置位取消标志
+        if (busy && controller) { aborted = true; controller.abort(); }
+        busy = false;
         document.removeEventListener("keydown", onKey);
         overlay.remove();
     }
@@ -812,12 +885,16 @@ export function openLoraTagDialog(gallery, dirPath) {
         const trigger = triggerInput.value.trim();
         if (!trigger) { setStatus("error", "请输入触发词"); return; }
         busy = true;
+        cancelBtn.textContent = "中止打标";
+        runBtn.disabled = true;
+        controller = new AbortController();
         let lastMeta = null;
         try {
             const resp = await fetch("/neo_gallery/tag_dir", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ dir: dirPath, trigger_word: trigger, standardize: stdCheck.checked }),
+                signal: controller.signal,
             });
             if (!resp.ok) {
                 const data = await resp.json().catch(() => ({}));
@@ -874,11 +951,17 @@ export function openLoraTagDialog(gallery, dirPath) {
                 await gallery.showDirectoryStructure(source, segs);
             }
         } catch (err) {
+            if (aborted) return; // 用户中止：窗已关，静默
             setStatus("error", err.message || String(err));
         } finally {
             busy = false;
+            controller = null;
+            cancelBtn.textContent = "取消";
+            runBtn.disabled = false;
         }
     }
+    const cancelBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close });
+    const runBtn = $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "开始打标", onclick: run });
     const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-lt-modal-overlay" });
     const modal = $el("div", {
         className: "neo-gallery-story-modal",
@@ -896,14 +979,11 @@ export function openLoraTagDialog(gallery, dirPath) {
         stdRow,
         previewBox,
         statusBox,
-        $el("div", { className: "neo-gallery-story-actions" }, [
-            $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close }),
-            $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "开始打标", onclick: run }),
-        ]),
+        $el("div", { className: "neo-gallery-story-actions" }, [cancelBtn, runBtn]),
     ]);
-    overlay.onclick = () => close();
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    makeStoryWindowDraggable(modal);
 
     setStatus("idle", "输入触发词后点「开始打标」，每张图片会写入标准化标签 .txt");
     // preflight：图片数 + 建议触发词（文件夹名拼音首字母），失败不阻塞
@@ -1311,68 +1391,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     document.body.appendChild(overlay);
 
     // 标题栏拖动 + 双击最大化/还原（同导演编辑器 / 生成素材窗模式）
-    const modal = overlay.querySelector(".neo-gallery-edit-modal");
-    const titlebar = modal.querySelector(".neo-gallery-story-titlebar");
-    let dragging = false;
-    let startMX = 0, startMY = 0, startL = 0, startT = 0;
-    const onTitleMove = (e) => {
-        if (!dragging) return;
-        let left = startL + (e.clientX - startMX);
-        let top = startT + (e.clientY - startMY);
-        const w = modal.offsetWidth;
-        left = Math.max(-w + 80, Math.min(left, window.innerWidth - 80));
-        top = Math.max(0, Math.min(top, window.innerHeight - 44));
-        modal.style.left = left + "px";
-        modal.style.top = top + "px";
-    };
-    const onTitleUp = () => {
-        dragging = false;
-        window.removeEventListener("mousemove", onTitleMove);
-        window.removeEventListener("mouseup", onTitleUp);
-    };
-    titlebar.addEventListener("mousedown", (e) => {
-        if (e.button !== 0 || e.target.closest("button, .neo-gallery-story-close")) return;
-        const r = modal.getBoundingClientRect();
-        if (!modal.style.left) {
-            modal.style.position = "absolute";
-            modal.style.left = r.left + "px";
-            modal.style.top = r.top + "px";
-        }
-        startMX = e.clientX; startMY = e.clientY;
-        startL = parseFloat(modal.style.left); startT = parseFloat(modal.style.top);
-        dragging = true;
-        window.addEventListener("mousemove", onTitleMove);
-        window.addEventListener("mouseup", onTitleUp);
-    });
-    let maximized = false;
-    let prevRect = null;
-    const toggleMaximize = () => {
-        if (!maximized) {
-            const r = modal.getBoundingClientRect();
-            prevRect = { left: r.left, top: r.top, width: r.width, height: r.height };
-            if (!modal.style.left) modal.style.position = "absolute";
-            modal.style.left = "8px";
-            modal.style.top = "8px";
-            modal.style.width = (window.innerWidth - 16) + "px";
-            modal.style.height = (window.innerHeight - 16) + "px";
-            modal.style.maxWidth = "none";
-            modal.style.maxHeight = "none";
-            maximized = true;
-        } else {
-            modal.style.left = prevRect.left + "px";
-            modal.style.top = prevRect.top + "px";
-            modal.style.width = prevRect.width + "px";
-            modal.style.height = prevRect.height + "px";
-            modal.style.maxWidth = "";
-            modal.style.maxHeight = "";
-            maximized = false;
-            prevRect = null;
-        }
-    };
-    titlebar.addEventListener("dblclick", (e) => {
-        if (e.target.closest("button, .neo-gallery-story-close")) return;
-        toggleMaximize();
-    });
+    makeStoryWindowDraggable(overlay.querySelector(".neo-gallery-edit-modal"));
 
     // 加载原图获取实际尺寸，填入默认分辨率（32 对齐：Qwen2.1 latent 一格 = 32px，错开会让模型自己补/裁一格）
     const widthInput = overlay.querySelector("#img-edit-width");
@@ -2680,40 +2699,8 @@ export function openGenMaterialDialog(gallery) {
     // 浮层挂在 overlay 上（z-index 高于弹窗，随窗移除）
     overlay.append(runtimeMenu, presetOverlay);
 
-    // 标题栏拖动：同导演编辑器模式——首次按下从居中切到绝对定位并记录起点，之后按鼠标位移更新 left/top；
-    // 钳制保证窗口不会被拖出视口（始终留一条可点到的标题栏 / ✕）。
-    const titlebar = modal.querySelector(".neo-gallery-story-titlebar");
-    let dragging = false;
-    let startMX = 0, startMY = 0, startL = 0, startT = 0;
-    const onTitleMove = (e) => {
-        if (!dragging) return;
-        let left = startL + (e.clientX - startMX);
-        let top = startT + (e.clientY - startMY);
-        const w = modal.offsetWidth;
-        left = Math.max(-w + 80, Math.min(left, window.innerWidth - 80));
-        top = Math.max(0, Math.min(top, window.innerHeight - 44));
-        modal.style.left = left + "px";
-        modal.style.top = top + "px";
-    };
-    const onTitleUp = () => {
-        dragging = false;
-        window.removeEventListener("mousemove", onTitleMove);
-        window.removeEventListener("mouseup", onTitleUp);
-    };
-    titlebar.addEventListener("mousedown", (e) => {
-        if (e.button !== 0 || e.target.closest("button, .neo-gallery-story-close")) return; // 关闭钮不触发拖动，标题栏其余空白可拖窗口
-        const r = modal.getBoundingClientRect();
-        if (!modal.style.left) { // 首次：从居中切到绝对定位，无跳变
-            modal.style.position = "absolute";
-            modal.style.left = r.left + "px";
-            modal.style.top = r.top + "px";
-        }
-        startMX = e.clientX; startMY = e.clientY;
-        startL = parseFloat(modal.style.left); startT = parseFloat(modal.style.top);
-        dragging = true;
-        window.addEventListener("mousemove", onTitleMove);
-        window.addEventListener("mouseup", onTitleUp);
-    });
+    // 标题栏拖动 + 双击最大化/还原（同导演编辑器模式）
+    makeStoryWindowDraggable(modal);
 
     renderIdle();
     document.addEventListener("keydown", onKey);

@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -81,6 +82,18 @@ def _load(name):
 
 
 lora_tag = _load("lora_tag")
+
+
+def _load_tool(name):
+    import importlib.util as iu
+    spec = iu.spec_from_file_location(name, os.path.join(PLUGIN_DIR, "tools", f"{name}.py"))
+    mod = iu.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+format_tags = _load_tool("format_tags")
 
 
 def _mk_png(path: Path, color="red"):
@@ -187,11 +200,32 @@ class StandardizeTests(unittest.TestCase):
 
 class CleanCaptionTests(unittest.TestCase):
     def test_strips_fences_and_quotes(self):
-        self.assertEqual(lora_tag._clean_caption("```\ngxt，单人，白色T恤\n```"), "gxt，单人，白色T恤")
-        self.assertEqual(lora_tag._clean_caption('"gxt，单人"'), "gxt，单人")
+        self.assertEqual(lora_tag._clean_caption("```\ngxt，单人，白色T恤\n```"), "gxt, 单人, 白色T恤")
+        self.assertEqual(lora_tag._clean_caption('"gxt，单人"'), "gxt, 单人")
 
     def test_joins_lines(self):
-        self.assertEqual(lora_tag._clean_caption("第一行\n第二行"), "第一行，第二行")
+        self.assertEqual(lora_tag._clean_caption("第一行\n第二行"), "第一行, 第二行")
+
+    def test_trigger_word_first_with_space(self):
+        # LLM 漏写触发词时补在最前；已有触发词不重复
+        self.assertEqual(lora_tag._clean_caption("单人，白色T恤", "gxt"), "gxt, 单人, 白色T恤")
+        self.assertEqual(lora_tag._clean_caption("gxt，单人", "gxt"), "gxt, 单人")
+
+
+class FormatTagsTests(unittest.TestCase):
+    def test_glued_trigger_split_out(self):
+        trig, out = format_tags.format_caption("baitaohua单人，深蓝西装，红色领带")
+        self.assertEqual(trig, "baitaohua")
+        self.assertEqual(out, "baitaohua, 单人, 深蓝西装, 红色领带")
+
+    def test_mixed_separators(self):
+        _, out = format_tags.format_caption("gxt单人,服装：白衬衫；黑发。", "gxt")
+        self.assertEqual(out, "gxt, 单人, 服装：白衬衫, 黑发。")
+
+    def test_no_ascii_trigger_keeps_content(self):
+        trig, out = format_tags.format_caption("单人，白色T恤")
+        self.assertEqual(trig, "")
+        self.assertEqual(out, "单人, 白色T恤")
 
 
 class TagBatchTests(unittest.TestCase):
@@ -221,7 +255,7 @@ class TagBatchTests(unittest.TestCase):
 
         self.assertEqual(len(calls), 2)
         self.assertIn("触发词: gxt", calls[0])
-        self.assertEqual((self.dir / "001.txt").read_text(encoding="utf-8"), "gxt，单人，白色T恤")
+        self.assertEqual((self.dir / "001.txt").read_text(encoding="utf-8"), "gxt, 单人, 白色T恤")
         self.assertFalse((self.dir / "002.txt").exists())
         progress = [f["progress"] for f in frames if "progress" in f]
         self.assertEqual([p["status"] for p in progress], ["ok", "error"])
@@ -230,6 +264,20 @@ class TagBatchTests(unittest.TestCase):
         self.assertEqual(meta["done"], 1)
         self.assertEqual(meta["total"], 2)
         self.assertEqual(meta["failed"][0]["file"], "002.jpg")
+
+    def test_cancel_stops_before_next_image(self):
+        _mk_png(self.dir / "001.png")
+        _mk_png(self.dir / "002.jpg")
+        calls = []
+        lora_tag.run_llm_task = lambda *a, **k: calls.append(a) or {"status": "success", "prompt": "gxt，单人"}
+
+        cancel = threading.Event()
+        cancel.set()
+        frames = list(lora_tag._tag_batch(self.dir, "gxt", cancel))
+        self.assertEqual(calls, [], "已取消时不应再调用 LLM")
+        self.assertEqual(frames[-1]["meta"]["status"], "cancelled")
+        self.assertEqual(frames[-1]["meta"]["done"], 0)
+        self.assertFalse((self.dir / "001.txt").exists())
 
 
 class RouteTests(unittest.TestCase):
@@ -274,7 +322,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn('"status": "ok"', text)
         self.assertIn('"done": 2', text)
         self.assertTrue(text.rstrip().endswith("data: [DONE]"))
-        self.assertEqual((self.dir / "001.txt").read_text(encoding="utf-8"), "gxt，单人，白色T恤")
+        self.assertEqual((self.dir / "001.txt").read_text(encoding="utf-8"), "gxt, 单人, 白色T恤")
 
     def test_tag_dir_standardize_backs_up_first(self):
         lora_tag.run_llm_task = lambda *a, **k: {"status": "success", "prompt": "gxt，单人"}

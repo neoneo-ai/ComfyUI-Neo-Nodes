@@ -11,6 +11,8 @@ Routes:
 import asyncio
 import json
 import logging
+import re
+import threading
 from pathlib import Path
 
 from aiohttp import web
@@ -178,30 +180,36 @@ def _standardize_dir(dir_path: Path) -> dict:
     return {"converted": converted, "renamed": renamed, "skipped": skipped}
 
 
-def _clean_caption(text: str) -> str:
-    """清洗 LLM 输出：去代码围栏/引号，多行合并为单行逗号分隔。"""
+def _clean_caption(text: str, trigger_word: str = "") -> str:
+    """清洗 LLM 输出：去代码围栏/引号，多行合并，标签统一为「, 」分隔（触发词开头）。"""
     text = (text or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
         if "\n" in text:
             text = text.split("\n", 1)[1]
     text = text.strip().strip('"').strip("'").strip()
-    return "，".join(line.strip(" ，,") for line in text.splitlines() if line.strip())
+    parts = [p.strip() for p in re.split(r"[,，;；\n]", text) if p.strip()]
+    if trigger_word and (not parts or parts[0].lower() != trigger_word.lower()):
+        parts.insert(0, trigger_word)
+    return ", ".join(parts)
 
 
-def _tag_batch(dir_path: Path, trigger_word: str):
-    """逐张打标并写同名 .txt（覆盖）；单张失败不中断整批。yield 进度帧。"""
+def _tag_batch(dir_path: Path, trigger_word: str, cancel: threading.Event | None = None):
+    """逐张打标并写同名 .txt（覆盖）；单张失败不中断整批，cancel 置位后跑完当前张即停。yield 进度帧。"""
     images = _iter_tag_images(dir_path)
     total = len(images)
     done, failed = 0, []
     for i, f in enumerate(images, start=1):
+        if cancel is not None and cancel.is_set():
+            yield {"meta": {"status": "cancelled", "done": done, "total": total, "failed": failed}}
+            return
         try:
             image_bytes = _load_image_bytes(f)
             result = run_llm_task("lora_tag", f"触发词: {trigger_word}", images=[image_bytes])
             if not isinstance(result, dict) or result.get("error"):
                 err = (result or {}).get("error") if isinstance(result, dict) else "LLM 返回空结果"
                 raise RuntimeError(str(err))
-            text = _clean_caption(str(result.get("prompt") or ""))
+            text = _clean_caption(str(result.get("prompt") or ""), trigger_word)
             if not text:
                 raise RuntimeError("LLM 返回空标签")
             f.with_suffix(".txt").write_text(text, encoding="utf-8")
@@ -248,6 +256,8 @@ async def neo_gallery_tag_dir(request):
     if not _iter_tag_images(target):
         return _sse_error("该目录没有可打标的图片")
 
+    cancel = threading.Event()
+
     def gen():
         if standardize:
             try:
@@ -258,7 +268,7 @@ async def neo_gallery_tag_dir(request):
                 yield {"meta": {"status": "error", "error": f"标准化目录失败: {e}"}}
                 return
             yield {"progress": {"phase": "standardize", "backup": backup, **summary}}
-        yield from _tag_batch(target, trigger_word)
+        yield from _tag_batch(target, trigger_word, cancel)
 
     async def stream():
         g = gen()
@@ -270,17 +280,21 @@ async def neo_gallery_tag_dir(request):
             except StopIteration:
                 return None
 
-        while True:
-            try:
-                chunk = await loop.run_in_executor(None, next_chunk)
-            except Exception as e:
-                logger.error(f"打标流错误: {e}")
-                yield _sse_error_body(str(e))
-                break
-            if chunk is None:
-                break
-            yield _sse_frame(chunk)
-        yield b"data: [DONE]\n\n"
+        try:
+            while True:
+                try:
+                    chunk = await loop.run_in_executor(None, next_chunk)
+                except Exception as e:
+                    logger.error(f"打标流错误: {e}")
+                    yield _sse_error_body(str(e))
+                    break
+                if chunk is None:
+                    break
+                yield _sse_frame(chunk)
+            yield b"data: [DONE]\n\n"
+        finally:
+            # 客户端中止（断开 / 取消）会取消本流：置位让执行器线程跑完当前这张就收工
+            cancel.set()
 
     return web.Response(body=stream(), content_type="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

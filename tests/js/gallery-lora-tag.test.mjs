@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, sleep, click } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, sseResponse, sleep, click, window } from "./setup.mjs";
 
 beforeEach(() => {
     resetEnv();
@@ -158,5 +158,47 @@ test("打标失败：弹窗显示错误信息", async () => {
     await sleep(100);
 
     assert.match(overlay.querySelector(".neo-gallery-story-hint-error").textContent, /LLM 未配置/);
+});
+
+test("打标窗不遮罩：overlay 不吞点击，标题栏可拖窗口", async () => {
+    const { gallery } = makeGallery();
+    const card = await makeCard(gallery, "关晓彤", "Input", ["stars", "关晓彤"], { image_count: 12 });
+    mockRoute("/neo_gallery/tag_preflight", () => jsonResponse({ image_count: 12, suggested_trigger: "gxt" }));
+    click(card.querySelector(".neo-gallery-card-dir-menu-btn"));
+    click(itemByLabel("LoRA 打标"));
+    const overlay = document.querySelector(".neo-gallery-lt-modal-overlay");
+    const modal = overlay.querySelector(".neo-gallery-story-modal");
+
+    assert.equal(overlay.onclick, null, "不应整屏点击关闭（窗口外可继续浏览画廊）");
+    const titlebar = modal.querySelector(".neo-gallery-story-titlebar");
+    titlebar.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    assert.equal(modal.style.position, "absolute", "标题栏按下应切到绝对定位以便拖动");
+});
+
+test("打标中可中止：按钮变「中止打标」，点击后关窗", async () => {
+    const { gallery } = makeGallery();
+    const card = await makeCard(gallery, "关晓彤", "Input", ["stars", "关晓彤"], { image_count: 12 });
+    mockRoute("/neo_gallery/tag_preflight", () => jsonResponse({ image_count: 12, suggested_trigger: "gxt" }));
+    click(card.querySelector(".neo-gallery-card-dir-menu-btn"));
+    click(itemByLabel("LoRA 打标"));
+    const overlay = document.querySelector(".neo-gallery-lt-modal-overlay");
+    await sleep(50);
+
+    // 只挂起不结束的流：模拟打标进行中
+    mockRoute("/neo_gallery/tag_dir", () => ({
+        ok: true,
+        status: 200,
+        body: { getReader: () => ({ read: () => new Promise(() => {}), releaseLock() {} }) },
+    }));
+
+    const runBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "开始打标");
+    click(runBtn);
+    await sleep(50);
+
+    const cancelBtn = [...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "中止打标");
+    assert.ok(cancelBtn, "打标中「取消」应变成「中止打标」");
+    assert.equal(runBtn.disabled, true, "打标中禁止重复开始");
+    click(cancelBtn);
+    assert.equal(document.querySelector(".neo-gallery-lt-modal-overlay"), null, "中止后应关闭打标窗");
 });
 

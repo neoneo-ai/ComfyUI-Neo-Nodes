@@ -2300,9 +2300,10 @@ Accordion Section Buttons (Clear)
     justify-content: space-between;
 }
 
-/* 生成素材窗 / 图片编辑窗：同导演编辑器——不加背景遮罩（点击穿透到画廊/画布），标题栏可拖窗口 */
+/* 生成素材窗 / 图片编辑窗 / LoRA 打标窗：同导演编辑器——不加背景遮罩（点击穿透到画廊/画布），标题栏可拖窗口 */
 .neo-gallery-gm-modal-overlay,
-.neo-gallery-edit-modal-overlay {
+.neo-gallery-edit-modal-overlay,
+.neo-gallery-lt-modal-overlay {
     background: none;
     backdrop-filter: none;
     pointer-events: none;
@@ -2312,12 +2313,14 @@ Accordion Section Buttons (Clear)
 /* 窗内浮层（随机菜单 / 预设列表）在穿透的 overlay 下仍需可交互 */
 .neo-gallery-gm-modal-overlay .rs-preset-list-overlay,
 .neo-gallery-gm-modal-overlay .rs-runtime-menu,
-.neo-gallery-edit-modal-overlay .neo-gallery-story-modal {
+.neo-gallery-edit-modal-overlay .neo-gallery-story-modal,
+.neo-gallery-lt-modal-overlay .neo-gallery-story-modal {
     pointer-events: auto;
 }
 
 .neo-gallery-gm-modal-overlay .neo-gallery-story-titlebar,
-.neo-gallery-edit-modal-overlay .neo-gallery-story-titlebar {
+.neo-gallery-edit-modal-overlay .neo-gallery-story-titlebar,
+.neo-gallery-lt-modal-overlay .neo-gallery-story-titlebar {
     cursor: move;
     user-select: none;
 }
