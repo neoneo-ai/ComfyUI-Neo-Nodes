@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes - 模型库（model_hub.py）单元测试
-# 覆盖：文件名/子目录清洗、类别推断、落盘路径与越界拒绝、断点续传起点、双源仓库与文件归一化、
-#       仓库并集与搜索、设置读写、注册表、路由级异步流程（仓库列表 / 文件清单 / 下载 + 取消 + 续传）
+# 覆盖：文件名/子目录清洗、类别推断、落盘路径与越界拒绝、已有子目录探查与默认子目录、断点续传起点、
+#       双源仓库与文件归一化、仓库并集与搜索、设置读写、注册表、
+#       路由级异步流程（仓库列表 / 文件清单 / 子目录列表 / 下载 + 取消 + 续传）
 import asyncio
 import importlib
 import json
@@ -118,7 +119,14 @@ class FakeSession:
         self.requests = []
 
     def get(self, url, headers=None, params=None, timeout=None):
-        self.requests.append({"url": url, "headers": dict(headers or {}), "params": dict(params or {})})
+        return self._call("GET", url, headers, params)
+
+    def request(self, method, url, params=None, json=None, headers=None, timeout=None):
+        return self._call(method, url, headers, params, json)
+
+    def _call(self, method, url, headers, params, json_payload=None):
+        self.requests.append({"method": method, "url": url, "headers": dict(headers or {}),
+                              "params": dict(params or {}), "json": json_payload})
         status, body, resp_headers, chunks = self.handler(url, dict(headers or {}), dict(params or {}))
         return FakeResp(status, body, resp_headers, chunks)
 
@@ -234,6 +242,119 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(model_hub.find_existing("vae", "vae.pt", self.settings), "sub/vae.pt")
         self.assertEqual(model_hub.find_existing("vae", "missing.pt", self.settings), "")
 
+    def test_find_existing_scans_all_registered_dirs(self):
+        """extra_model_paths 的外部注册目录也要查到（含子目录）。"""
+        extra = self.root / "ext/loras"
+        sys.modules["folder_paths"].folder_names_and_paths["loras"] = (
+            [str(extra), str(self.root / "models/loras")], set())
+        target = extra / "sub/a.safetensors"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"x")
+        self.assertEqual(model_hub.find_existing("loras", "a.safetensors", self.settings), "sub/a.safetensors")
+
+    def test_find_existing_escapes_glob_chars(self):
+        base = self.root / "models/loras"
+        base.mkdir(parents=True)
+        (base / "a [1].safetensors").write_bytes(b"x")
+        self.assertEqual(model_hub.find_existing("loras", "a [1].safetensors", self.settings),
+                         "a [1].safetensors")
+
+    def test_category_root_prefers_dir_named_like_category(self):
+        """unet 与 diffusion_models 同组注册时，落盘根目录取类别同名者。"""
+        sys.modules["folder_paths"].folder_names_and_paths["diffusion_models"] = (
+            [str(self.root / "models/unet"), str(self.root / "models/diffusion_models")], set())
+        (self.root / "models/unet").mkdir(parents=True)
+        (self.root / "models/diffusion_models").mkdir(parents=True)
+        self.assertEqual(model_hub.category_root("diffusion_models", self.settings),
+                         self.root / "models/diffusion_models")
+
+    def test_target_uses_external_registered_dir(self):
+        ext = self.root / "ext/diffusion_models"
+        ext.mkdir(parents=True)
+        sys.modules["folder_paths"].folder_names_and_paths["diffusion_models"] = (
+            [str(self.root / "models/unet"), str(ext)], set())
+        dest = model_hub.resolve_target("diffusion_models", "z", "m.safetensors", self.settings)
+        self.assertEqual(dest, ext / "z" / "m.safetensors")
+
+    def test_llm_root_follows_registered_llm_dir(self):
+        ext = self.root / "ext/LLM"
+        ext.mkdir(parents=True)
+        sys.modules["folder_paths"].folder_names_and_paths[model_hub.LLM_CATEGORY] = ([str(ext)], set())
+        self.assertEqual(model_hub.category_root(model_hub.LLM_CATEGORY, self.settings), ext)
+        self.settings["llm_subdir"] = "LLM2"
+        self.assertEqual(model_hub.category_root(model_hub.LLM_CATEGORY, self.settings),
+                         self.root / "ext/LLM2")
+
+    def test_enrich_files_reports_existing_subfolder(self):
+        base = self.root / "models/diffusion_models/Flux2-Klein"
+        base.mkdir(parents=True)
+        (base / "m.safetensors").write_bytes(b"x")
+        (self.root / "models/diffusion_models/root.safetensors").write_bytes(b"x")
+        files = model_hub.enrich_files(
+            [{"path": "split_files/diffusion_models/m.safetensors", "size": 10},
+             {"path": "split_files/diffusion_models/root.safetensors", "size": 10},
+             {"path": "split_files/diffusion_models/new.safetensors", "size": 10}], self.settings)
+        by_name = {f["filename"]: f for f in files}
+        self.assertEqual((by_name["m.safetensors"]["exists"], by_name["m.safetensors"]["exists_sub"]),
+                         (True, "Flux2-Klein"))
+        self.assertEqual((by_name["root.safetensors"]["exists"], by_name["root.safetensors"]["exists_sub"]),
+                         (True, ""))
+        self.assertEqual((by_name["new.safetensors"]["exists"], by_name["new.safetensors"]["exists_sub"]),
+                         (False, ""))
+
+
+# ---------------------------------------------------------------------------
+# 已有子目录探查与默认子目录
+# ---------------------------------------------------------------------------
+
+class SubfolderTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self._prev_fp = sys.modules.get("folder_paths")
+        sys.modules["folder_paths"] = FakeFolderPaths(self.root)
+        self.settings = make_settings(self.root)
+
+    def tearDown(self):
+        restore_folder_paths(self._prev_fp)
+        self.tmp.cleanup()
+
+    def test_list_subfolders(self):
+        base = self.root / "models/loras"
+        for rel in ("Qwen", "Qwen/v2", "Flux", ".cache", "Z-Image"):
+            (base / rel).mkdir(parents=True)
+        (base / "loose.safetensors").write_bytes(b"x")
+        self.assertEqual(model_hub.list_subfolders("loras", self.settings),
+                         ["Flux", "Qwen", "Z-Image", "Qwen/v2"])
+
+    def test_list_subfolders_missing_root(self):
+        self.assertEqual(model_hub.list_subfolders("vae", self.settings), [])
+
+    def test_default_subfolder_matches_repo_name(self):
+        base = self.root / "models/loras"
+        (base / "Qwen3").mkdir(parents=True)
+        (base / "Flux/nested").mkdir(parents=True)
+        self.assertEqual(model_hub.default_subfolder("loras", self.settings, "x/Qwen3"), "Qwen3")
+        self.assertEqual(model_hub.default_subfolder("loras", self.settings, "x/Flux"), "Flux")
+        self.assertEqual(model_hub.default_subfolder("loras", self.settings, "x/none"), "")
+
+    def test_default_subfolder_matches_repo_name_prefix(self):
+        base = self.root / "models/diffusion_models"
+        (base / "qwen").mkdir(parents=True)
+        (base / "z_image").mkdir(parents=True)
+        self.assertEqual(model_hub.default_subfolder("diffusion_models", self.settings,
+                                                     "Comfy-Org/Qwen3-8B-GGUF"), "qwen")
+        self.assertEqual(model_hub.default_subfolder("diffusion_models", self.settings,
+                                                     "Comfy-Org/z_image_repackaged"), "z_image")
+
+    def test_default_subfolder_ignores_unrelated_dir(self):
+        (self.root / "models/vae/recipes").mkdir(parents=True)
+        self.assertEqual(model_hub.default_subfolder("vae", self.settings, "Comfy-Org/flux2-dev"), "")
+
+    def test_default_subfolder_llm_stays_at_root(self):
+        (self.root / "models/LLM/Qwen3-8B-GGUF").mkdir(parents=True)
+        self.assertEqual(model_hub.default_subfolder("llm", self.settings, "Q/Qwen3-8B-GGUF"), "")
+
 
 # ---------------------------------------------------------------------------
 # 断点续传起点
@@ -275,6 +396,10 @@ class NormalizeTests(unittest.TestCase):
         ]}})
         self.assertEqual(items, [{"repo": "Comfy-Org/a", "downloads": 7, "likes": 3},
                                  {"repo": "Comfy-Org/b", "downloads": 5, "likes": 0}])
+        # dolphin 接口把列表包在 Data.Model.Models 里
+        nested = model_hub.normalize_ms_repos({"Data": {"Model": {
+            "Models": [{"Name": "c", "Path": "Comfy-Org", "Downloads": 11}], "TotalCount": 1}}})
+        self.assertEqual(nested, [{"repo": "Comfy-Org/c", "downloads": 11, "likes": 0}])
 
     def test_normalize_files(self):
         hf = model_hub.normalize_hf_files({"siblings": [
@@ -405,23 +530,32 @@ class RepoFlowTests(unittest.TestCase):
         self.assertFalse(by["Comfy-Org/Real-ESRGAN_repackaged"]["on_ms"])
         self.assertIn("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", by)
 
-    def test_ms_org_repos_requires_token(self):
-        calls = []
-
+    def test_ms_org_repos_composite_sort(self):
+        """组织列表走 dolphin 接口：匿名可用、综合排序，失败时退回逐仓库探测。"""
         def handler(url, headers, params):
-            calls.append(params)
-            return 200, {"Data": {"Models": [{"Name": "x", "Path": "Comfy-Org", "Downloads": 3}]}}, {}, None
+            if "/api/v1/dolphin/models" in url:
+                return 200, {"Data": {"Model": {"Models": [
+                    {"Name": "x", "Path": "Comfy-Org", "Downloads": 3},
+                    {"Name": "y", "Path": "Comfy-Org", "Downloads": 9}]}}}, {}, None
+            return 404, {}, {}, None
 
         settings = make_settings(self.root)
-        self.assertEqual(asyncio.run(model_hub.ms_org_repos(FakeSession(handler), settings, True)), [])
-        self.assertEqual(calls, [], "无 Token 不应发起组织列表请求")
-        settings["ms_token"] = "tok"
-        items = asyncio.run(model_hub.ms_org_repos(FakeSession(handler), settings, True))
-        self.assertEqual(items, [{"repo": "Comfy-Org/x", "downloads": 3, "likes": 0}])
-        self.assertEqual(calls[0]["Organization"], "Comfy-Org")
+        session = FakeSession(handler)
+        items = asyncio.run(model_hub.ms_org_repos(session, settings, True))
+        self.assertEqual(items, [{"repo": "Comfy-Org/x", "downloads": 3, "likes": 0},
+                                 {"repo": "Comfy-Org/y", "downloads": 9, "likes": 0}])
+        payload = session.requests[0]["json"]
+        self.assertEqual(payload["SortBy"], "Default")
+        self.assertEqual(payload["Criterion"][0]["values"], ["Comfy-Org"])
+
+        self.assertEqual(asyncio.run(model_hub.ms_org_repos(
+            FakeSession(lambda u, h, p: (502, {}, {}, None)), settings, True)), [])
 
     def test_global_search_repos(self):
         def handler(url, headers, params):
+            if "/api/v1/dolphin/models" in url:
+                return 200, {"Data": {"Model": {"Models": [
+                    {"Name": "Qwen3-8B-GGUF", "Path": "Qwen", "Downloads": 7}]}}}, {}, None
             if "/api/models" in url:
                 return 200, [{"id": "QuantFactory/Qwen3-8B-GGUF", "downloads": 99}], {}, None
             return 404, {}, {}, None
@@ -430,8 +564,16 @@ class RepoFlowTests(unittest.TestCase):
         hf = asyncio.run(model_hub.global_search_repos(FakeSession(handler), "huggingface", "qwen3", settings))
         self.assertEqual(hf[0]["repo"], "QuantFactory/Qwen3-8B-GGUF")
         self.assertTrue(hf[0]["on_hf"])
-        self.assertEqual(asyncio.run(
-            model_hub.global_search_repos(FakeSession(handler), "modelscope", "qwen3", settings)), [])
+
+        session = FakeSession(handler)
+        ms = asyncio.run(model_hub.global_search_repos(session, "modelscope", "qwen3", settings))
+        self.assertEqual([it["repo"] for it in ms], ["Qwen/Qwen3-8B-GGUF"])
+        self.assertTrue(ms[0]["on_ms"])
+        payload = session.requests[0]["json"]
+        self.assertEqual(payload["Name"], "qwen3")
+        self.assertNotIn("Criterion", payload)
+        self.assertEqual(asyncio.run(model_hub.global_search_repos(
+            FakeSession(lambda u, h, p: (502, {}, {}, None)), "modelscope", "qwen3", settings)), [])
 
     def test_repo_files_hf_enrich(self):
         def handler(url, headers, params):
@@ -688,7 +830,20 @@ class RouteTests(unittest.TestCase):
         repos = {r["repo"] for r in body["repos"]}
         self.assertIn("QuantFactory/Qwen3-8B-GGUF", repos)
         self.assertNotIn("Comfy-Org/flux2-dev", repos)
-        self.assertFalse(body["ms_live"])
+
+    def test_repos_route_modelscope_needs_no_token(self):
+        """ModelScope 侧接口全挂时，带 Token 的仓库列表请求仍成功（退回注册表探测）。"""
+        def handler(url, headers, params):
+            if "/api/models" in url:
+                return 200, [{"id": "Comfy-Org/flux2-dev", "downloads": 100}], {}, None
+            return 404, {}, {}, None
+
+        install_session(handler)
+        model_hub.save_hub_settings({"source": "modelscope", "ms_token": "tok"})
+        body = payload(asyncio.run(model_hub.rs_hub_repos(FakeRequest(
+            {"source": "modelscope", "query": "qwen3", "refresh": True}))))
+        self.assertTrue(body["success"])
+        self.assertTrue(body["repos"])
 
     def test_files_route_rejects_bad_input(self):
         self.assertEqual(asyncio.run(model_hub.rs_hub_files(
@@ -697,6 +852,17 @@ class RouteTests(unittest.TestCase):
             FakeRequest({"source": "bogus", "repo": "Comfy-Org/a"}))).status, 400)
         self.assertEqual(asyncio.run(model_hub.rs_hub_files(
             FakeRequest({"source": "huggingface", "repo": ""}))).status, 400)
+
+    def test_subfolders_route(self):
+        (self.root / "models/loras/Qwen3").mkdir(parents=True)
+        body = payload(asyncio.run(model_hub.rs_hub_subfolders(
+            FakeRequest({"category": "loras", "repo": "Comfy-Org/Qwen3"}))))
+        self.assertTrue(body["success"])
+        self.assertEqual(body["subfolders"], ["Qwen3"])
+        self.assertEqual(body["default"], "Qwen3")
+        resp = asyncio.run(model_hub.rs_hub_subfolders(FakeRequest({"category": "bogus"})))
+        self.assertEqual(resp.status, 400)
+        self.assertFalse(payload(resp)["success"])
 
     def test_progress_and_cancel_when_idle(self):
         self.assertEqual(payload(asyncio.run(model_hub.rs_hub_progress(None)))["download"], {"state": "idle"})

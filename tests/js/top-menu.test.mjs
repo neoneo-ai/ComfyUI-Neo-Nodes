@@ -1,7 +1,7 @@
 // 顶栏 🅝 菜单（top-menu.js）：单按钮注册、下拉条目、节点子菜单过滤、关于弹窗
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { clearBody, mockRoute, jsonResponse, flush } from "./setup.mjs";
+import { clearBody, mockRoute, jsonResponse, flush, sleep } from "./setup.mjs";
 import { getExtension } from "./mocks/comfy-app.mjs";
 
 const topMenu = await import("../../web/top-menu.js");   // setup.mjs 副作用先行，再导入被测模块
@@ -168,5 +168,59 @@ test("⚙️ 设置有未保存修改时先出确认条，放弃修改后关闭"
     assert.equal(confirm.hidden, false, "二次 ✕ 确认条未出现");
     overlay.querySelector(".neo-director-llm-btn-discard").click();
     assert.equal(document.querySelector(".neo-director-llm-overlay"), null, "放弃修改后未关闭");
+});
+
+
+test("悬停 🅝 按钮自动展开，指针在菜单内不收起，离开热区自动收起", async () => {
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.setup();
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+
+    btn.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    assert.equal(document.querySelector(".neo-n-menu"), null, "未达悬停时长不应展开");
+    await sleep(360);
+    const menu = document.querySelector(".neo-n-menu");
+    assert.ok(menu, "悬停未自动展开菜单");
+
+    menu.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    await sleep(560);
+    assert.ok(document.querySelector(".neo-n-menu"), "指针在菜单内时不应收起");
+
+    menu.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    await sleep(560);
+    assert.equal(document.querySelector(".neo-n-menu"), null, "离开热区后未自动收起");
+});
+
+test("悬停时长内离开按钮不展开菜单", async () => {
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.setup();
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+    btn.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    btn.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    await sleep(400);
+    assert.equal(document.querySelector(".neo-n-menu"), null, "扫过按钮不应展开菜单");
+});
+
+test("创建节点行悬停自动展开子菜单", async () => {
+    globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
+    try {
+        const ext = getExtension("comfy.neo.topMenu");
+        ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+        const row = document.querySelector(".neo-n-node-row");
+        assert.ok(row, "创建节点行缺失");
+        const sub = row.nextElementSibling;
+        assert.equal(sub.style.display, "none", "子菜单默认应收起");
+        row.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+        await sleep(200);
+        assert.notEqual(sub.style.display, "none", "悬停未展开子菜单");
+        assert.ok(row.classList.contains("open"), "展开标记未同步");
+    } finally {
+        delete globalThis.LiteGraph;
+        topMenu.resetTopMenu();
+    }
 });
 

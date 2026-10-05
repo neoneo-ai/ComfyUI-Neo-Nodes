@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import re
 import time
@@ -255,16 +256,41 @@ def download_timeout(settings: dict) -> aiohttp.ClientTimeout:
 # 落盘目录
 # ---------------------------------------------------------------------------
 
-def category_root(category: str, settings: dict) -> Path:
-    """类别 → 落盘根目录：llm 走 models/<llm_subdir>，其余走 folder_paths 注册目录。"""
+def registered_dirs(folder_paths, category: str) -> list:
+    """类别的注册目录。folder_paths.get_folder_paths 对未知键抛 KeyError，
+    这里容忍未注册键与大小写差异（llm / LLM）。"""
+    known = getattr(folder_paths, "folder_names_and_paths", {})
+    for key in (category, category.upper(), category.lower()):
+        if key in known:
+            return [Path(d) for d in folder_paths.get_folder_paths(key)]
+    return []
+
+
+def category_dirs(category: str, settings: dict) -> list:
+    """类别的全部落盘目录：folder_paths 注册目录，含 extra_model_paths.yaml 指向的外部目录。"""
     import folder_paths
+    dirs = registered_dirs(folder_paths, category)
     if category == LLM_CATEGORY:
         subdir = sanitize_subfolder(settings.get("llm_subdir")) or "LLM"
-        return Path(getattr(folder_paths, "base_path", "") or "") / "models" / subdir
-    dirs = folder_paths.get_folder_paths(category)
+        out = [d.parent / subdir for d in dirs]
+        fallback = Path(getattr(folder_paths, "base_path", "") or "") / "models" / subdir
+        if fallback not in out:
+            out.append(fallback)
+        return [d for d in out if d.is_dir()] or out[:1]
+    return dirs
+
+
+def category_root(category: str, settings: dict) -> Path:
+    """类别 → 落盘根目录：注册目录里类别同名者优先（unet / diffusion_models 同组时选对），
+    其次第一个已存在的目录。"""
+    dirs = category_dirs(category, settings)
     if not dirs:
         raise ValueError(f"未配置的模型类别目录: {category}")
-    return Path(dirs[0])
+    candidates = [d for d in dirs if d.name.lower() == category.lower()] or dirs
+    for d in candidates:
+        if d.is_dir():
+            return d
+    return candidates[0]
 
 
 def resolve_target(category, subfolder, filename, settings, repo="") -> Path:
@@ -285,17 +311,64 @@ def resolve_target(category, subfolder, filename, settings, repo="") -> Path:
 
 
 def find_existing(category, filename, settings) -> str:
-    """类别目录内是否已有同名文件（含子目录），返回相对路径或空串。"""
+    """全部注册类别目录内是否已有同名文件（含子目录），返回相对该目录的路径或空串。"""
     try:
-        root = category_root(category, settings)
+        roots = category_dirs(category, settings)
     except Exception:
         return ""
     name = sanitize_filename(filename)
-    if not name or not root.is_dir():
+    if not name:
         return ""
-    for candidate in root.rglob(name):
-        if candidate.is_file():
-            return candidate.relative_to(root).as_posix()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for candidate in root.rglob(glob.escape(name)):
+            if candidate.is_file():
+                return candidate.relative_to(root).as_posix()
+    return ""
+
+
+SUBFOLDER_MAX_DEPTH = 3
+SUBFOLDER_MAX_ENTRIES = 200
+
+
+def list_subfolders(category: str, settings: dict) -> list:
+    """类别落盘目录下已存在的子目录（相对 posix 路径），供子目录下拉列表。"""
+    try:
+        root = category_root(category, settings)
+    except Exception:
+        return []
+    if not root.is_dir():
+        return []
+    out = []
+    stack = [("", root, 0)]
+    while stack and len(out) < SUBFOLDER_MAX_ENTRIES:
+        rel, base, depth = stack.pop()
+        for child in sorted(base.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            sub = f"{rel}/{child.name}" if rel else child.name
+            out.append(sub)
+            if depth + 1 < SUBFOLDER_MAX_DEPTH:
+                stack.append((sub, child, depth + 1))
+    return sorted(out, key=lambda s: (s.count("/"), s))[:SUBFOLDER_MAX_ENTRIES]
+
+
+def default_subfolder(category: str, settings: dict, repo: str = "", subfolders: list = None) -> str:
+    """默认子目录自动探查：与仓库名对得上的已有目录（同名，或目录名是仓库名前缀）> 根目录。
+
+    LLM 类别落盘已强制按仓库名建子目录，默认落 `models/<LLM 子目录>` 根。
+    """
+    subs = list_subfolders(category, settings) if subfolders is None else subfolders
+    if category == LLM_CATEGORY:
+        return ""
+    repo_part = (sanitize_filename(str(repo).replace("\\", "/").split("/")[-1]) if repo else "").lower()
+    if len(repo_part) < 4:
+        return ""
+    for sub in subs:
+        name = sub.split("/")[-1].lower()
+        if repo_part == name or (len(name) >= 4 and repo_part.startswith(name)):
+            return sub
     return ""
 
 
@@ -329,7 +402,8 @@ def normalize_hf_repos(body) -> list:
 
 def normalize_ms_repos(body) -> list:
     data = (body or {}).get("Data") or {}
-    items = data.get("Models") or data.get("Model") or data.get("Items") or (data if isinstance(data, list) else [])
+    inner = data.get("Model") if isinstance(data.get("Model"), dict) else data
+    items = inner.get("Models") or inner.get("Model") or inner.get("Items") or (inner if isinstance(inner, list) else [])
     out = []
     for it in items:
         name = str((it or {}).get("Name") or "").strip()
@@ -375,10 +449,11 @@ def merge_repo_lists(hf_items: list, ms_items: list, extra_repos: list = None) -
     return merge_entries(entries)
 
 
-async def _get_json(session, url, headers, params=None, timeout=40) -> dict:
+async def _get_json(session, url, headers, params=None, timeout=40, json_payload=None) -> dict:
     try:
-        async with session.get(url, params=params, headers=headers,
-                               timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+        async with session.request("PUT" if json_payload is not None else "GET", url,
+                                   params=params, json=json_payload, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
             if resp.status == 404:
                 raise HubError("仓库在该源不存在", 404, "not_found")
             if resp.status == 401:
@@ -402,17 +477,30 @@ async def hf_org_repos(session, settings, refresh=False) -> list:
     return items
 
 
+def ms_query_payload(name: str = "", page_size: int = 50, criterion: list = None) -> dict:
+    """dolphin/models 请求体：综合排序（SortBy=Default），Name 为名字过滤，站点同款口径。"""
+    payload = {"PageSize": page_size, "PageNumber": 1, "SortBy": "Default", "Name": name,
+               "IncludePrePublish": True}
+    if criterion:
+        payload["Criterion"] = criterion
+    return payload
+
+
 async def ms_org_repos(session, settings, refresh=False) -> list:
-    """ModelScope 组织列表需 Token（匿名 401）；无 Token 返回空，由逐仓库探测补齐。"""
-    if not str(settings.get("ms_token") or "").strip():
-        return []
+    """ModelScope 组织列表走站点同款 dolphin 接口，综合排序（与注册表顺序一致，匿名可用）。"""
     cached = _repo_cache.get("modelscope")
     if cached and not refresh and time.time() - cached[0] < REPO_CACHE_TTL:
         return cached[1]
-    body = await _get_json(session, f"{MS_BASE}/api/v1/models", source_headers("modelscope", settings),
-                           {"Organization": ORG, "SortBy": "Downloads", "PageNumber": "1", "PageSize": "200"})
+    try:
+        body = await _get_json(session, f"{MS_BASE}/api/v1/dolphin/models",
+                               source_headers("modelscope", settings), timeout=25,
+                               json_payload=ms_query_payload(page_size=200, criterion=[
+                                   {"category": "organizations", "predicate": "contains", "values": [ORG]}]))
+    except HubError:
+        return []
     items = normalize_ms_repos(body)
-    _repo_cache["modelscope"] = (time.time(), items)
+    if items:
+        _repo_cache["modelscope"] = (time.time(), items)
     return items
 
 
@@ -430,7 +518,7 @@ async def ms_repo_exists(session, settings, repo: str) -> bool:
 
 
 async def list_repos(source: str, settings: dict, refresh=False) -> list:
-    """Comfy-Org 仓库并集。ModelScope 侧无 Token 时并发探测存在性（缓存 1 天）。"""
+    """Comfy-Org 仓库并集。ModelScope 列表未收录的仓库并发探测存在性（缓存 1 天）。"""
     async with aiohttp.ClientSession() as session:
         hf_items = await hf_org_repos(session, settings, refresh)
         ms_items = await ms_org_repos(session, settings, refresh)
@@ -456,15 +544,17 @@ def search_repos(repos: list, query: str) -> list:
 
 
 async def global_search_repos(session, source: str, query: str, settings: dict) -> list:
-    """跨组织搜索（GGUF 等 LLM 仓库不在 Comfy-Org 下）；ModelScope 搜索需 Token。"""
+    """跨组织搜索（GGUF 等 LLM 仓库不在 Comfy-Org 下）；ModelScope 走 dolphin 接口，匿名可用。"""
     query = str(query or "").strip()
     if not query:
         return []
     if source == "modelscope":
-        if not str(settings.get("ms_token") or "").strip():
+        try:
+            body = await _get_json(session, f"{MS_BASE}/api/v1/dolphin/models",
+                                   source_headers(source, settings), timeout=25,
+                                   json_payload=ms_query_payload(query))
+        except HubError:
             return []
-        body = await _get_json(session, f"{MS_BASE}/api/v1/models", source_headers(source, settings),
-                               {"Query": query, "SortBy": "Downloads", "PageNumber": "1", "PageSize": "50"})
         return [dict(it, on_ms=True) for it in normalize_ms_repos(body)]
     body = await _get_json(session, hf_list_url(settings["hf_endpoint"]),
                            source_headers(source, settings), {"search": query, "limit": "50"})
@@ -499,7 +589,7 @@ def normalize_ms_files(files, prefix: str = "") -> list:
 
 
 def enrich_files(files: list, settings: dict) -> list:
-    """过滤非模型文件 + 附类别 / 文件名 / 已存在标记。"""
+    """过滤非模型文件 + 附类别 / 文件名 / 已存在标记（含所在子目录）。"""
     out = []
     for f in files:
         path = f["path"]
@@ -507,8 +597,10 @@ def enrich_files(files: list, settings: dict) -> list:
             continue
         category = infer_category(path)
         filename = path.split("/")[-1]
+        rel = find_existing(category, filename, settings)
         out.append({"path": path, "size": int(f.get("size") or 0), "category": category,
-                    "filename": filename, "exists": bool(find_existing(category, filename, settings))})
+                    "filename": filename, "exists": bool(rel),
+                    "exists_sub": rel.rsplit("/", 1)[0] if "/" in rel else ""})
     return sorted(out, key=lambda e: e["path"])
 
 
@@ -806,10 +898,7 @@ async def rs_hub_repos(request):
             repos = merge_entries(search_repos(repos, query) + extra)
     except Exception as e:
         return _error(e, source)
-    return web.json_response({
-        "success": True, "source": source, "repos": repos,
-        "ms_live": bool(str(load_hub_settings().get("ms_token") or "").strip()),
-    })
+    return web.json_response({"success": True, "source": source, "repos": repos})
 
 
 @PromptServer.instance.routes.post("/neo_model_hub/files")
@@ -832,6 +921,23 @@ async def rs_hub_files(request):
         return _error(e, source)
     return web.json_response({"success": True, "source": source, "repo": repo, "files": files,
                               "categories": ui_categories(settings)})
+
+
+@PromptServer.instance.routes.post("/neo_model_hub/subfolders")
+async def rs_hub_subfolders(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+    body = data if isinstance(data, dict) else {}
+    settings = load_hub_settings()
+    category = str(body.get("category") or "").strip()
+    if category not in ui_categories(settings):
+        return web.json_response({"success": False, "error": f"未知落盘类别: {category}"}, status=400)
+    subs = list_subfolders(category, settings)
+    return web.json_response({"success": True, "category": category, "subfolders": subs,
+                              "default": default_subfolder(category, settings,
+                                                            str(body.get("repo") or ""), subs)})
 
 
 @PromptServer.instance.routes.post("/neo_model_hub/download")

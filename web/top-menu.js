@@ -1,6 +1,6 @@
 /**
  * top-menu.js — 顶栏 🅝 菜单（插件统一入口）
- * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），点击展开下拉菜单：
+ * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），悬停约 0.3 秒或点击展开下拉菜单：
  *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 📥 模型库 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
  *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）
  *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录 / ℹ️ 关于插件。
@@ -19,7 +19,7 @@ import { openModelHub } from "./model-hub.js";
 
 const STUDIO_URL = "/neo-studio";
 const REPO_URL = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes";
-const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 生成素材 / 导演 / 模型库 / 建节点 / 设置 / 技能 / 修复 / 关于）";
+const TOOLTIP = "Neo Nodes — 🅝 菜单（悬停或点击展开）：Studio / 生成素材 / 导演 / 模型库 / 建节点 / 设置 / 技能 / 修复 / 关于";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
@@ -37,10 +37,66 @@ let menuEl = null;
 let _outsideHandler = null;
 let _escHandler = null;
 let _ctxMenuBound = false;
+let _hoverBound = false;
 let _nodeCascade = 0;   // 连续建节点时的级联偏移，防重叠
+
+// 悬停展开 / 移出收起：actionBarButtons 是声明式渲染，按钮 DOM 由前端重建，
+// 一律在 document 层按类名委托，不绑定到具体元素
+const HOVER_OPEN_MS = 300;    // 悬停 🅝 按钮多久后自动展开
+const HOVER_CLOSE_MS = 500;   // 指针离开按钮与菜单多久后自动收起
+const SUBMENU_OPEN_MS = 150;  // 「创建节点」行悬停多久后展开子菜单
+let _hoverOpenTimer = 0;
+let _hoverCloseTimer = 0;
+
+function clearHoverTimers() {
+    clearTimeout(_hoverOpenTimer);
+    _hoverOpenTimer = 0;
+    clearTimeout(_hoverCloseTimer);
+    _hoverCloseTimer = 0;
+}
+
+// 热区 = 🅝 按钮本体 + 已展开的菜单
+function inMenuZone(target) {
+    if (!(target instanceof Element)) return false;
+    return !!target.closest(".neo-n-menu-btn") || !!(menuEl && menuEl.contains(target));
+}
+
+function scheduleHoverClose() {
+    if (!menuEl || _hoverCloseTimer) return;
+    _hoverCloseTimer = setTimeout(() => {
+        _hoverCloseTimer = 0;
+        closeMenu();
+    }, HOVER_CLOSE_MS);
+}
+
+function onHoverOver(e) {
+    if (e.pointerType && e.pointerType !== "mouse") return;   // 触屏点按会补发 pointerover，忽略
+    if (!inMenuZone(e.target)) {
+        scheduleHoverClose();
+        return;
+    }
+    clearTimeout(_hoverCloseTimer);
+    _hoverCloseTimer = 0;
+    const btn = e.target.closest(".neo-n-menu-btn");
+    if (btn && !menuEl && !_hoverOpenTimer) {
+        _hoverOpenTimer = setTimeout(() => {
+            _hoverOpenTimer = 0;
+            openMenu(btn);
+        }, HOVER_OPEN_MS);
+    }
+}
+
+function onHoverOut(e) {
+    if (e.pointerType && e.pointerType !== "mouse") return;
+    if (inMenuZone(e.relatedTarget)) return;   // 按钮与菜单之间来回移动不算离开
+    clearTimeout(_hoverOpenTimer);
+    _hoverOpenTimer = 0;
+    scheduleHoverClose();
+}
 
 function closeMenu() {
     if (!menuEl) return;
+    clearHoverTimers();
     menuEl.remove();
     menuEl = null;
     document.removeEventListener("pointerdown", _outsideHandler, true);
@@ -282,7 +338,7 @@ function openMenu(anchor) {
     menuEl.appendChild(menuItem("🎥 新建导演配方", () => openDirectorEditor(null)));
     menuEl.appendChild(menuItem("📥 模型库", () => openModelHub()));
 
-    // 创建节点：手风琴子菜单（点击行展开/收起）
+    // 创建节点：手风琴子菜单（悬停行自动展开，点击行展开/收起）
     const nodeRow = document.createElement("button");
     nodeRow.type = "button";
     nodeRow.className = "neo-n-menu-item neo-n-node-row";
@@ -296,12 +352,30 @@ function openMenu(anchor) {
     subEl.className = "neo-n-submenu";
     subEl.style.display = "none";
     buildNodeSubmenu(subEl);
+    const setSub = (open) => {
+        subEl.style.display = open ? "" : "none";
+        nodeRow.classList.toggle("open", open);
+    };
+    let subTimer = 0;
     nodeRow.onclick = (e) => {
         e.stopPropagation();
-        const open = subEl.style.display !== "none";
-        subEl.style.display = open ? "none" : "";
-        nodeRow.classList.toggle("open", !open);
+        clearTimeout(subTimer);
+        subTimer = 0;
+        setSub(subEl.style.display === "none");
     };
+    nodeRow.addEventListener("pointerover", () => {
+        if (subEl.style.display !== "none" || subTimer) return;
+        subTimer = setTimeout(() => {
+            subTimer = 0;
+            setSub(true);
+        }, SUBMENU_OPEN_MS);
+    });
+    nodeRow.addEventListener("pointerout", (e) => {
+        const to = e.relatedTarget;
+        if (to instanceof Element && (nodeRow.contains(to) || subEl.contains(to))) return;
+        clearTimeout(subTimer);
+        subTimer = 0;
+    });
     menuEl.append(nodeRow, subEl);
 
     menuEl.appendChild(menuItem("⚙️ 设置", openSettingsModal));
@@ -360,6 +434,12 @@ app.registerExtension({
                 ".neo-n-submenu{padding:2px 0 2px 14px;}" +
                 ".neo-n-menu-sep{height:1px;background:#3a3a3a;margin:5px 8px;}";
             document.head.appendChild(style);
+        }
+        // 悬停展开 / 移出收起（document 层委托，按钮由前端声明式渲染）
+        if (!_hoverBound) {
+            _hoverBound = true;
+            document.addEventListener("pointerover", onHoverOver);
+            document.addEventListener("pointerout", onHoverOut);
         }
         // 右键「🔧 修复工作流」菜单项 → 修复映射管理（actionBarButtons 是声明式渲染，按类名在 document 层拦截）
         if (!_ctxMenuBound) {

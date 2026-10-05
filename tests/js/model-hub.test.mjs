@@ -1,4 +1,4 @@
-// 模型库弹窗（model-hub.js）：仓库分组 / 文件清单归类 / 落盘目标预览 /
+// 模型库弹窗（model-hub.js）：仓库分组 / 文件清单归类 / 落盘子目录列表与默认探查 /
 // 下载启动与进度轮询（running → done）/ 取消保留断点 / 设置保存 / 源切换 / 失败提示。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,9 +21,9 @@ const REPOS = [
 ];
 const REGISTRY = { groups: [{ name: "生图", repos: ["Comfy-Org/z_image"] }], bundles: [] };
 const FILES = [
-    { path: "split_files/diffusion_models/z_image_bfp.safetensors", filename: "z_image_bfp.safetensors", category: "diffusion_models", size: 12 * 1024 ** 3, exists: true },
+    { path: "split_files/diffusion_models/z_image_bfp.safetensors", filename: "z_image_bfp.safetensors", category: "diffusion_models", size: 12 * 1024 ** 3, exists: true, exists_sub: "Flux2-Klein" },
     { path: "split_files/text_encoders/qwen3_8b.safetensors", filename: "qwen3_8b.safetensors", category: "text_encoders", size: 8.2 * 1024 ** 3, exists: false },
-    { path: "qwen3_8b_q4_k_m.gguf", filename: "qwen3_8b_q4_k_m.gguf", category: "llm", size: 5 * 1024 ** 3, exists: false },
+    { path: "qwen3_8b_q4_k_m.gguf", filename: "qwen3_8b_q4_k_m.gguf", category: "llm", size: 5 * 1024 ** 3, exists: true, exists_sub: "z_image" },
 ];
 
 function mockHub(progress = () => jsonResponse({ download: { state: "idle" } })) {
@@ -31,8 +31,12 @@ function mockHub(progress = () => jsonResponse({ download: { state: "idle" } }))
         call.method === "GET"
             ? { settings: SETTINGS, registry: REGISTRY, categories: ["diffusion_models", "text_encoders", "llm"], sources: ["modelscope", "huggingface"] }
             : { success: true, settings: { ...SETTINGS, ...body } }));
-    mockRoute("/neo_model_hub/repos", () => jsonResponse({ repos: REPOS, ms_live: true }));
+    mockRoute("/neo_model_hub/repos", () => jsonResponse({ repos: REPOS }));
     mockRoute("/neo_model_hub/files", () => jsonResponse({ files: FILES, categories: ["diffusion_models", "text_encoders", "llm"] }));
+    mockRoute("/neo_model_hub/subfolders", (body) => jsonResponse({
+        subfolders: body.category === "llm" ? ["Qwen", "Flux"] : [],
+        default: body.category === "llm" ? "Qwen" : "",
+    }));
     mockRoute("/neo_model_hub/download", () => jsonResponse({ success: true, download: { state: "running" } }));
     mockRoute("/neo_model_hub/cancel", () => jsonResponse({ success: true, download: { state: "cancelling" } }));
     mockRoute("/neo_model_hub/progress", progress);
@@ -80,17 +84,18 @@ test("模型库：文件清单归类与已存在标记，选文件带出落盘�
 
     const opts = [...overlay.querySelectorAll(".neo-hub-files option")];
     assert.deepEqual(opts.map((o) => o.textContent), [
-        "z_image_bfp.safetensors  [diffusion_models]  12.00 GB  ✓ 已存在",
+        "z_image_bfp.safetensors  [diffusion_models]  12.00 GB  ✓ 已存在 (Flux2-Klein)",
         "qwen3_8b.safetensors  [text_encoders]  8.20 GB",
-        "qwen3_8b_q4_k_m.gguf  [llm]  5.00 GB",
+        "qwen3_8b_q4_k_m.gguf  [llm]  5.00 GB  ✓ 已存在 (z_image)",
     ], "文件清单条目不符");
 
-    // 选 GGUF → 落盘类别自动带出，子目录参与目标预览
+    // 选 GGUF → 落盘类别自动带出，子目录按已有目录重拉并自动探查默认，LLM 预览含强制仓库目录
     changeValue(overlay.querySelector(".neo-hub-files"), "qwen3_8b_q4_k_m.gguf");
-    inputText(overlay.querySelector(".neo-hub-sub"), "Qwen");
+    await sleep(40);
     assert.equal(overlay.querySelector(".neo-hub-cat").value, "llm", "类别未随文件带出");
+    assert.equal(overlay.querySelector(".neo-hub-sub").value, "Qwen", "默认子目录未自动探查");
     assert.equal(overlay.querySelector(".neo-hub-dest").textContent,
-        "→ models/llm/Qwen/qwen3_8b_q4_k_m.gguf", "落盘目标预览不符");
+        "→ models/llm/Qwen/z_image/qwen3_8b_q4_k_m.gguf", "落盘目标预览不符");
 
     // 搜索：回车按当前源带 query 拉仓库
     inputText(overlay.querySelector(".neo-hub-search"), "z_image");
@@ -101,6 +106,71 @@ test("模型库：文件清单归类与已存在标记，选文件带出落盘�
     assert.equal(repoReq.body.source, "modelscope", "仓库请求未带当前源");
     hub.closeModelHub();
 });
+
+test("模型库：子目录成列表且默认自动探查，可选新建子目录落盘", async () => {
+    resetEnv();
+    clearRoutes();
+    mockHub();
+    const overlay = await openHub();
+
+    const subSel = overlay.querySelector(".neo-hub-sub");
+    assert.deepEqual([...subSel.querySelectorAll("option")].map((o) => o.textContent),
+        ["（根目录）", "＋ 新建子目录…"], "无已有子目录时应只有根目录与新建两项");
+    assert.equal(subSel.value, "", "无已有子目录时默认落根目录");
+    assert.equal(overlay.querySelector(".neo-hub-sub-new").style.display, "none", "新建输入框应隐藏");
+
+    // 切类别 → 按新类别重拉子目录，默认自动探查选中
+    changeValue(overlay.querySelector(".neo-hub-cat"), "llm");
+    await sleep(40);
+    assert.deepEqual([...subSel.querySelectorAll("option")].map((o) => o.textContent),
+        ["（根目录）", "Qwen", "Flux", "＋ 新建子目录…"], "已有子目录未成列表");
+    assert.equal(subSel.value, "Qwen", "默认子目录未自动探查");
+
+    // 新建子目录 → 出现输入框，输入参与目标预览与下载请求
+    changeValue(subSel, "__new__");
+    const subNew = overlay.querySelector(".neo-hub-sub-new");
+    assert.equal(subNew.style.display, "", "新建子目录输入框未出现");
+    inputText(subNew, "My/Team");
+    changeValue(overlay.querySelector(".neo-hub-files"), "qwen3_8b_q4_k_m.gguf");
+    assert.equal(overlay.querySelector(".neo-hub-dest").textContent,
+        "→ models/llm/My/Team/z_image/qwen3_8b_q4_k_m.gguf", "新建子目录未参与预览");
+
+    click(overlay.querySelector(".neo-hub-dl"));
+    await sleep(40);
+    const dlReq = fetchLog.filter((c) => c.path === "/neo_model_hub/download").at(-1);
+    assert.equal(dlReq.body.subfolder, "My/Team", "新建子目录未提交");
+    hub.closeModelHub();
+});
+
+test("模型库：点已存在文件自动跟随其所在子目录并用于落盘", async () => {
+    resetEnv();
+    clearRoutes();
+    mockHub();
+    const overlay = await openHub();
+    const subSel = overlay.querySelector(".neo-hub-sub");
+    assert.equal(subSel.value, "", "初始应落根目录");
+
+    // 已存在文件位于 Flux2-Klein 子目录 → 点文件即跟随（该目录不在服务端列表里也要补上）
+    changeValue(overlay.querySelector(".neo-hub-files"), "split_files/diffusion_models/z_image_bfp.safetensors");
+    await sleep(40);
+    assert.ok([...subSel.querySelectorAll("option")].some((o) => o.value === "Flux2-Klein"), "已存在子目录未进下拉");
+    assert.equal(subSel.value, "Flux2-Klein", "未跟随已存在文件所在子目录");
+    assert.equal(overlay.querySelector(".neo-hub-dest").textContent,
+        "→ models/diffusion_models/Flux2-Klein/z_image_bfp.safetensors", "落盘目标未跟随子目录");
+
+    click(overlay.querySelector(".neo-hub-dl"));
+    await sleep(40);
+    const dlReq = fetchLog.filter((c) => c.path === "/neo_model_hub/download").at(-1);
+    assert.equal(dlReq.body.subfolder, "Flux2-Klein", "已存在子目录未提交");
+
+    // LLM：已存在位置就是强制的仓库目录时不重复叠加，回落到探查默认
+    changeValue(overlay.querySelector(".neo-hub-files"), "qwen3_8b_q4_k_m.gguf");
+    await sleep(40);
+    assert.equal(overlay.querySelector(".neo-hub-dest").textContent,
+        "→ models/llm/Qwen/z_image/qwen3_8b_q4_k_m.gguf", "LLM 已存在位置不应叠加仓库目录");
+    hub.closeModelHub();
+});
+
 
 test("模型库：下载启动后轮询进度，完成时提示并刷新文件清单", async () => {
     resetEnv();
@@ -182,13 +252,13 @@ test("模型库：接口失败给出可读提示且弹窗保持可用", async ()
     resetEnv();
     clearRoutes();
     mockRoute("/neo_model_hub/settings", () => jsonResponse({ settings: SETTINGS, registry: REGISTRY, categories: ["diffusion_models"] }));
-    mockRoute("/neo_model_hub/repos", () => jsonResponse({ repos: REPOS, ms_live: false }));
+    mockRoute("/neo_model_hub/repos", () => jsonResponse({ repos: REPOS }));
     mockRoute("/neo_model_hub/files", () => jsonResponse({ error: "仓库不存在该文件" }, 404));
     const overlay = await openHub();
 
     assert.match(overlay.querySelector(".neo-hub-files").textContent, /文件清单加载失败：仓库不存在该文件/, "清单失败未提示");
     assert.ok(appState.toasts.some((t) => t.summary === "文件清单加载失败"), "清单失败未 toast");
-    assert.match(overlay.querySelector(".neo-hub-repo").nextSibling.textContent, /MS 组织列表需 Token/, "无 Token 提示缺失");
+    assert.match(overlay.querySelector(".neo-hub-repo").nextSibling.textContent, /个仓库/, "仓库计数未显示");
 
     click(overlay.querySelector(".neo-hub-head .neo-hub-icon-btn:last-of-type"));
     assert.equal(document.querySelector(".neo-hub-overlay"), null, "关闭后弹窗未移除");

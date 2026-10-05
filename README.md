@@ -34,7 +34,7 @@
   → [gallery.md](docs/gallery.md)
 - **🧊 Neo Recipes** — 侧边栏配方（提示词 + 图片 / 视频 / 音频资源）管理与一键发送
   → [recipes.md](docs/recipes.md)
-- **🅝 顶栏菜单** — 插件统一入口：新影工坊 / 生成素材 / 新建导演配方 / 创建节点 / 设置 / 技能管理 / 修复工作流
+- **🅝 顶栏菜单** — 插件统一入口（悬停约 0.3 秒或点击展开）：新影工坊 / 生成素材 / 新建导演配方 / 创建节点 / 设置 / 技能管理 / 修复工作流
   → [workflow-repair.md](docs/workflow-repair.md)
 - **🔧 工作流修复** — 模型路径失效时按文件名匹配磁盘真实文件一键修复，可手动改选与记住映射
   → [workflow-repair.md](docs/workflow-repair.md)

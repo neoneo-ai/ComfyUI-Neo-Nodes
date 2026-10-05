@@ -1,7 +1,8 @@
 /**
  * model-hub.js — 模型库（Comfy-Org 专区 · Hugging Face / ModelScope 双源）
  * 顶栏 🅝 → 📥 模型库：搜索仓库 → 文件清单（按 split_files 前缀自动归类 + 已存在标记）
- * → 流式下载（进度 / 速度 / 取消，.part 断点续传）。⚙ 面板管理默认源、HF 端点、两侧 Token、
+ * → 流式下载（进度 / 速度 / 取消，.part 断点续传）。落盘子目录取类别目录下已有子目录成下拉
+ * （默认自动探查，可选「＋ 新建子目录…」现填）。⚙ 面板管理默认源、HF 端点、两侧 Token、
  * LLM 子目录与超时。技能修复弹窗可用 openModelHub({ query, category }) 预填并定位下载目标。
  */
 import { app } from "../../../../scripts/app.js";
@@ -103,9 +104,10 @@ function fillFiles(h) {
     for (const f of h.files) {
         const o = document.createElement("option");
         o.value = f.path;
-        o.textContent = `${f.filename}  [${f.category}]  ${fmtSize(f.size)}${f.exists ? "  ✓ 已存在" : ""}`;
         o.dataset.category = f.category;
         o.dataset.filename = f.filename;
+        o.dataset.existsSub = f.exists_sub || "";
+        o.textContent = `${f.filename}  [${f.category}]  ${fmtSize(f.size)}${f.exists ? `  ✓ 已存在${f.exists_sub ? ` (${f.exists_sub})` : ""}` : ""}`;
         sel.appendChild(o);
     }
     updateTarget(h);
@@ -114,15 +116,89 @@ function fillFiles(h) {
 function selectedFile(h) {
     const opt = h.ui.fileList.selectedOptions[0];
     if (!opt || !opt.value) return null;
-    return { path: opt.value, category: opt.dataset.category, filename: opt.dataset.filename };
+    return { path: opt.value, category: opt.dataset.category, filename: opt.dataset.filename,
+             existsSub: opt.dataset.existsSub || "" };
 }
 
 function updateTarget(h) {
     const file = selectedFile(h);
     if (!file) { h.ui.destText.textContent = ""; return; }
     if (h.categories.includes(file.category)) h.ui.catSel.value = file.category;
-    const sub = h.ui.subInput.value.trim().replace(/^\/+|\/+$/g, "");
-    h.ui.destText.textContent = `→ models/${h.ui.catSel.value}/${sub ? `${sub}/` : ""}${file.filename}`;
+    const sub = currentSubfolder(h).replace(/^\/+|\/+$/g, "");
+    const repoPart = file.category === "llm" ? `${repoBaseName(h.ui.repoSel.value)}/` : "";
+    h.ui.destText.textContent = `→ models/${h.ui.catSel.value}/${sub ? `${sub}/` : ""}${repoPart}${file.filename}`;
+}
+
+// ---------------------------------------------------------------------------
+// 落盘子目录：已有目录成列表 + 默认自动探查 + 新建子目录
+// ---------------------------------------------------------------------------
+
+const NEW_SUB = "__new__";
+
+function repoBaseName(repo) {
+    const name = String(repo || "").replace(/\\/g, "/").split("/").pop();
+    return name === "." || name === ".." ? "" : name;
+}
+
+function currentSubfolder(h) {
+    return h.ui.subSel.value === NEW_SUB ? h.ui.subNew.value.trim() : h.ui.subSel.value;
+}
+
+function syncNewSub(h) {
+    const isNew = h.ui.subSel.value === NEW_SUB;
+    h.ui.subNew.style.display = isNew ? "" : "none";
+    if (isNew) h.ui.subNew.focus();
+}
+
+function fillSubfolders(h, subs, def, prefer) {
+    const sel = h.ui.subSel;
+    sel.innerHTML = "";
+    const add = (value, text) => {
+        const o = document.createElement("option");
+        o.value = value;
+        o.textContent = text;
+        sel.appendChild(o);
+    };
+    add("", "（根目录）");
+    for (const s of subs) add(s, s);
+    add(NEW_SUB, "＋ 新建子目录…");
+    // 已存在文件所在子目录 > 探查默认 > 根目录
+    if (prefer && !subs.includes(prefer)) add(prefer, prefer);
+    sel.value = prefer && subs.includes(prefer) ? prefer : (subs.includes(def) ? def : "");
+    syncNewSub(h);
+}
+
+async function loadSubfolders(h, prefer) {
+    try {
+        const data = await req("/subfolders", { category: h.ui.catSel.value, repo: h.ui.repoSel.value });
+        fillSubfolders(h, data.subfolders || [], data.default || "", prefer || "");
+    } catch (e) {
+        fillSubfolders(h, [], "", prefer || "");
+    }
+    updateTarget(h);
+}
+
+/** 已存在文件所在的子目录：同模型同类别的文件通常同目录，点文件即跟随。 */
+function selectedSub(h) {
+    const file = selectedFile(h);
+    if (!file || !file.existsSub) return "";
+    let sub = file.existsSub;
+    if (file.category === "llm") {
+        const repo = repoBaseName(h.ui.repoSel.value);
+        if (repo && (sub === repo || sub.startsWith(`${repo}/`))) sub = sub.slice(repo.length + 1);
+    }
+    return sub;
+}
+
+function applySubfolder(h, sub) {
+    if (!sub) return;
+    const sel = h.ui.subSel;
+    if (![...sel.querySelectorAll("option")].some((o) => o.value === sub)) {
+        const o = el("option", "", sub);
+        o.value = sub;
+        sel.appendChild(o);
+    }
+    sel.value = sub;
 }
 
 
@@ -187,12 +263,14 @@ function buildUI(h) {
 
     const targetRow = el("div", "neo-hub-row");
     const catSel = el("select", "neo-hub-input neo-hub-cat");
-    const subInput = el("input", "neo-hub-input neo-hub-sub");
-    subInput.type = "text";
-    subInput.placeholder = "子目录（可选）";
+    const subSel = el("select", "neo-hub-input neo-hub-sub");
+    const subNew = el("input", "neo-hub-input neo-hub-sub-new");
+    subNew.type = "text";
+    subNew.placeholder = "新建子目录名（可含 / 分层）";
+    subNew.style.display = "none";
     const destText = el("span", "neo-hub-info neo-hub-dest", "");
     targetRow.append(el("span", "neo-hub-label", "落盘类别"), catSel,
-        el("span", "neo-hub-label", "子目录"), subInput, destText);
+        el("span", "neo-hub-label", "子目录"), subSel, subNew, destText);
 
     const actRow = el("div", "neo-hub-row");
     const dlBtn = el("button", "neo-hub-btn neo-hub-dl", "⬇ 下载");
@@ -228,7 +306,7 @@ function buildUI(h) {
     panel.appendChild(field("默认下载源", srcSel));
     mkInput("hf_endpoint", "HF 端点（镜像站根地址）");
     mkInput("hf_token", "HF Token（受限仓库需要）", "password");
-    mkInput("ms_token", "ModelScope Token（组织列表与搜索必需）", "password");
+    mkInput("ms_token", "ModelScope Token（受限仓库下载用，可留空）", "password");
     mkInput("llm_subdir", "LLM 子目录（models/ 下，GGUF 落此处）");
     mkInput("timeout_total", "下载总超时（秒）", "number");
     mkInput("sock_read", "读超时（秒）", "number");
@@ -240,7 +318,7 @@ function buildUI(h) {
     overlay.appendChild(box);
 
     h.ui = {
-        srcBtns, repoSel, repoInfo, fileList, catSel, subInput, destText, dlBtn, cancelBtn,
+        srcBtns, repoSel, repoInfo, fileList, catSel, subSel, subNew, destText, dlBtn, cancelBtn,
         statusText, barFill, progText, panel, inputs, searchInput, settingsBtn, closeBtn,
     };
     return overlay;
@@ -273,10 +351,8 @@ async function loadRepos(h, refresh) {
             source: h.source, query: h.ui.searchInput.value.trim(), refresh: !!refresh,
         });
         h.repos = data.repos || [];
-        h.msLive = !!data.ms_live;
         fillRepos(h);
-        h.ui.repoInfo.textContent = `${h.repos.length} 个仓库`
-            + (h.source === "modelscope" && !h.msLive ? "（MS 组织列表需 Token，按注册表探测补齐）" : "");
+        h.ui.repoInfo.textContent = `${h.repos.length} 个仓库`;
         await loadFiles(h, !!refresh);
     } catch (e) {
         h.ui.repoInfo.textContent = "仓库列表加载失败";
@@ -296,6 +372,7 @@ async function loadFiles(h, refresh) {
         h.files = data.files || [];
         if (data.categories && data.categories.length) { h.categories = data.categories; fillCategories(h); }
         fillFiles(h);
+        await loadSubfolders(h);
     } catch (e) {
         const opt = document.createElement("option");
         opt.textContent = `文件清单加载失败：${e.message || e}`;
@@ -380,7 +457,7 @@ function bindActions(h) {
                 repo: h.ui.repoSel.value,
                 path: file.path,
                 category: h.ui.catSel.value,
-                subfolder: h.ui.subInput.value.trim(),
+                subfolder: currentSubfolder(h),
                 filename: file.filename,
             });
             startPoll(h);
@@ -398,8 +475,17 @@ function bindActions(h) {
         }
     });
     h.ui.repoSel.addEventListener("change", () => loadFiles(h, false));
-    h.ui.fileList.addEventListener("change", () => updateTarget(h));
-    h.ui.subInput.addEventListener("input", () => updateTarget(h));
+    h.ui.catSel.addEventListener("change", () => loadSubfolders(h));
+    h.ui.fileList.addEventListener("change", () => {
+        const prevCat = h.ui.catSel.value;
+        updateTarget(h);
+        const prefer = selectedSub(h);
+        if (h.ui.catSel.value !== prevCat) { loadSubfolders(h, prefer); return; }
+        applySubfolder(h, prefer);
+        updateTarget(h);
+    });
+    h.ui.subSel.addEventListener("change", () => { syncNewSub(h); updateTarget(h); });
+    h.ui.subNew.addEventListener("input", () => updateTarget(h));
     h.ui.settingsBtn.addEventListener("click", () => {
         h.ui.panel.style.display = h.ui.panel.style.display === "none" ? "block" : "none";
     });
@@ -431,7 +517,7 @@ export function openModelHub(opts = {}) {
     const h = {
         source: opts.source || "modelscope", repos: [], files: [], registry: {}, categories: [],
         timer: null, ui: {}, wantCategory: opts.category || "", wantRepo: opts.repo || "",
-        wantSource: opts.source || "", msLive: false,
+        wantSource: opts.source || "",
     };
     const overlay = buildUI(h);
     h.overlay = overlay;
