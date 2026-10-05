@@ -13,6 +13,50 @@
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
 import { showToast } from './gallery-utils.js';
+import { openModelHub } from './model-hub.js';
+
+// 修复行输入名 → 模型库落盘类别（与后端 workflow.py 的 _MODEL_FOLDER_BY_INPUT 同源）。
+// 模型没装时本地无候选可替换，只能去模型库下载，这里按输入名推断该落到哪个目录。
+const HUB_CATEGORY_BY_INPUT = {
+    ckpt_name: 'checkpoints',
+    checkpoint_name: 'checkpoints',
+    unet_name: 'diffusion_models',
+    diffusion_model_name: 'diffusion_models',
+    lora_name: 'loras',
+    vae_name: 'vae',
+    clip_name: 'text_encoders',
+    clip_name1: 'text_encoders',
+    clip_name2: 'text_encoders',
+    clip_name3: 'text_encoders',
+    clip_name4: 'text_encoders',
+    clip_vision_name: 'clip_vision',
+    control_net_name: 'controlnet',
+    control_net_name1: 'controlnet',
+    control_net_name2: 'controlnet',
+    style_model_name: 'style_models',
+    latent_upscale_model_name: 'latent_upscale_models',
+    model_name: 'upscale_models',
+};
+
+// 输入名猜不出类别时的兜底：按子串判定，与后端 _MODEL_FOLDER_HINTS 保持一致
+const HUB_CATEGORY_HINTS = [
+    ['lora', 'loras'], ['vae', 'vae'], ['ckpt', 'checkpoints'], ['checkpoint', 'checkpoints'],
+    ['unet', 'diffusion_models'], ['control', 'controlnet'], ['clip_vision', 'clip_vision'],
+    ['clip', 'text_encoders'], ['upscal', 'upscale_models'], ['embedding', 'embeddings'],
+];
+
+function hubCategoryFor(inputName) {
+    if (HUB_CATEGORY_BY_INPUT[inputName]) return HUB_CATEGORY_BY_INPUT[inputName];
+    for (const [hint, folder] of HUB_CATEGORY_HINTS) {
+        if (String(inputName || '').includes(hint)) return folder;
+    }
+    return '';
+}
+
+/** 失效文件名 → 模型库搜索词：去掉子目录与后缀，保留可搜的模型名 */
+function hubQueryFor(value) {
+    return String(value || '').split(/[\\/]/).pop().replace(/\.(safetensors|bin|pth|pt|ckpt|gguf|onnx|npz)$/i, '');
+}
 
 /**
  * 调用修复 API。返回 { ok, data, error }：
@@ -212,6 +256,23 @@ function buildPickSelect(c, onPick) {
     return select;
 }
 
+/**
+ * 「📥 模型库」按钮：本地没有可用文件时（模型压根没装，如空的 text_encoders 目录），
+ * 手动选择下拉是空的、无法修复——给一条去模型库搜索下载的出路。
+ */
+function buildHubBtn(c) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '📥 模型库';
+    btn.title = '本地没有可用文件，去模型库搜索并下载此模型';
+    btn.style.cssText = 'flex:none;padding:2px 8px;background:#2a3a4a;color:#9ab;border:1px solid #445;border-radius:4px;cursor:pointer;font-size:11.5px;';
+    btn.onclick = (e) => {
+        e.stopPropagation();
+        openModelHub({ query: hubQueryFor(c.old), category: hubCategoryFor(c.input) });
+    };
+    return btn;
+}
+
 export function buildChangesTable(changes, onPick, onSkip) {
     const table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px;';
@@ -247,8 +308,13 @@ export function buildChangesTable(changes, onPick, onSkip) {
         const tr = document.createElement('tr');
         tr.appendChild(cell(nodeLabel(c)));
         tr.appendChild(cell(oldPathEl(c.old)));
-        if (onPick && !c.new && Array.isArray(c.candidates) && c.candidates.length) {
-            tr.appendChild(cell(buildPickSelect(c, onPick)));
+        const canPick = !c.new && Array.isArray(c.candidates) && c.candidates.length;
+        if (onPick && canPick) {
+            const pickWrap = document.createElement('div');
+            pickWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+            pickWrap.appendChild(buildPickSelect(c, onPick));
+            pickWrap.appendChild(buildHubBtn(c));
+            tr.appendChild(cell(pickWrap));
         } else {
             const wrap = document.createElement('span');
             wrap.style.cssText = 'display:flex;align-items:center;gap:6px;overflow:hidden;';
@@ -277,6 +343,8 @@ export function buildChangesTable(changes, onPick, onSkip) {
                     wrap.appendChild(label);
                 }
             }
+            // 匹配不上且本地无候选：模型没装，只能去模型库下载
+            if (!c.new && !canPick) wrap.appendChild(buildHubBtn(c));
             tr.appendChild(cell(wrap));
         }
         table.appendChild(tr);

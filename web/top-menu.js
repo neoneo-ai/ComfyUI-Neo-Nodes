@@ -2,7 +2,7 @@
  * top-menu.js — 顶栏 🅝 菜单（插件统一入口）
  * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），悬停约 0.3 秒或点击展开下拉菜单
  * （悬停刚展开 0.5 秒内的点击算同一次手势、不收起，之后点击正常收起）：
- *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（子菜单，往画布当前可见区的空白处添加 Neo 节点）
+ *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（二级菜单，往画布当前可见区的空白处添加 Neo 节点）
  *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录
  *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）/ 📥 模型库 / 🗂 技能管理
  *   ℹ️ 关于插件。
@@ -44,7 +44,6 @@ let _hoverBound = false;
 // 一律在 document 层按类名委托，不绑定到具体元素
 const HOVER_OPEN_MS = 300;    // 悬停 🅝 按钮多久后自动展开
 const HOVER_CLOSE_MS = 500;   // 指针离开按钮与菜单多久后自动收起
-const SUBMENU_OPEN_MS = 150;  // 「创建节点」行悬停多久后展开子菜单
 const HOVER_CLICK_GRACE_MS = 500;   // 悬停刚展开后的宽限期：期内点击算同一次手势，不收起
 let _hoverOpenTimer = 0;
 let _hoverCloseTimer = 0;
@@ -386,7 +385,7 @@ function openMenu(anchor, byHover = false) {
     menuEl.appendChild(menuItem("🖼️ 生成素材", () => openGenMaterialDialog(app.neoGallery)));
     menuEl.appendChild(menuItem("🎥 新建导演配方", () => openDirectorEditor(null)));
 
-    // 创建节点：手风琴子菜单（悬停行自动展开，点击行展开/收起）
+    // 创建节点：飞出式二级菜单（仅点击行展开/收起，悬停不弹）
     const nodeRow = document.createElement("button");
     nodeRow.type = "button";
     nodeRow.className = "neo-n-menu-item neo-n-node-row";
@@ -400,34 +399,29 @@ function openMenu(anchor, byHover = false) {
     subEl.className = "neo-n-submenu";
     subEl.style.display = "none";
     buildNodeSubmenu(subEl);
-    let subTimer = 0;
-    let subOpenedAt = 0;   // 子菜单由悬停展开的时刻（点击展开为 0）
-    const setSub = (open, byHover = false) => {
-        subEl.style.display = open ? "" : "none";
+    // 贴在「创建节点」行右侧纵向对齐；右侧放不下翻到左侧，再夹进视口
+    const placeSubmenu = () => {
+        subEl.style.display = "";
+        const rowRect = nodeRow.getBoundingClientRect();
+        const { width, height } = subEl.getBoundingClientRect();
+        const gap = 4;
+        let left = rowRect.right + gap;
+        if (left + width > window.innerWidth - 8) left = rowRect.left - width - gap;
+        left = Math.max(8, left);
+        let top = rowRect.top;
+        if (top + height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8 - height);
+        subEl.style.left = left + "px";
+        subEl.style.top = top + "px";
+    };
+    const setSub = (open) => {
         nodeRow.classList.toggle("open", open);
-        subOpenedAt = open && byHover ? performance.now() : 0;
+        if (open) placeSubmenu();
+        else subEl.style.display = "none";
     };
     nodeRow.onclick = (e) => {
         e.stopPropagation();
-        clearTimeout(subTimer);
-        subTimer = 0;
-        // 悬停刚展开的宽限期内：这次点击算同一次手势，不收起
-        if (subOpenedAt && subEl.style.display !== "none" && performance.now() - subOpenedAt < HOVER_CLICK_GRACE_MS) return;
         setSub(subEl.style.display === "none");
     };
-    nodeRow.addEventListener("pointerover", () => {
-        if (subEl.style.display !== "none" || subTimer) return;
-        subTimer = setTimeout(() => {
-            subTimer = 0;
-            setSub(true, true);
-        }, SUBMENU_OPEN_MS);
-    });
-    nodeRow.addEventListener("pointerout", (e) => {
-        const to = e.relatedTarget;
-        if (to instanceof Element && (nodeRow.contains(to) || subEl.contains(to))) return;
-        clearTimeout(subTimer);
-        subTimer = 0;
-    });
     menuEl.append(nodeRow, subEl);
 
     menuEl.appendChild(separator());
@@ -486,7 +480,8 @@ app.registerExtension({
                 ".neo-n-menu-item:hover{background:#2a2a2a;color:#fff;}" +
                 ".neo-n-caret{margin-left:auto;font-size:10px;color:#888;transition:transform .15s;}" +
                 ".neo-n-node-row.open .neo-n-caret{transform:rotate(90deg);}" +
-                ".neo-n-submenu{padding:2px 0 2px 14px;}" +
+                // 飞出式二级菜单：fixed 脱离父菜单，贴「创建节点」行右侧弹出（定位在 JS 里算）
+                ".neo-n-submenu{position:fixed;z-index:10003;min-width:250px;padding:6px;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);}" +
                 ".neo-n-menu-sep{height:1px;background:#3a3a3a;margin:5px 8px;}";
             document.head.appendChild(style);
         }

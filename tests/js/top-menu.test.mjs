@@ -225,7 +225,7 @@ test("悬停时长内离开按钮不展开菜单", async () => {
     assert.equal(document.querySelector(".neo-n-menu"), null, "扫过按钮不应展开菜单");
 });
 
-test("创建节点行悬停自动展开子菜单", async () => {
+test("创建节点行悬停不展开子菜单，点击才展开", async () => {
     globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
     try {
         const ext = getExtension("comfy.neo.topMenu");
@@ -234,10 +234,63 @@ test("创建节点行悬停自动展开子菜单", async () => {
         assert.ok(row, "创建节点行缺失");
         const sub = row.nextElementSibling;
         assert.equal(sub.style.display, "none", "子菜单默认应收起");
+
         row.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
-        await sleep(200);
-        assert.notEqual(sub.style.display, "none", "悬停未展开子菜单");
+        await sleep(300);
+        assert.equal(sub.style.display, "none", "悬停不应展开子菜单");
+        assert.equal(row.classList.contains("open"), false, "悬停不应点亮展开标记");
+
+        row.click();
+        assert.notEqual(sub.style.display, "none", "点击未展开子菜单");
         assert.ok(row.classList.contains("open"), "展开标记未同步");
+    } finally {
+        delete globalThis.LiteGraph;
+        topMenu.resetTopMenu();
+    }
+});
+
+
+test("创建节点二级菜单飞出到行右侧，不在原位撑开父菜单", async () => {
+    globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
+    try {
+        const ext = getExtension("comfy.neo.topMenu");
+        ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+        const row = document.querySelector(".neo-n-node-row");
+        const sub = document.querySelector(".neo-n-submenu");
+
+        // 父菜单撑不开：子菜单 fixed 脱离文档流，父菜单高度只由主条目决定
+        const menuHeightBefore = document.querySelector(".neo-n-menu").offsetHeight;
+        row.__rect = { top: 200, left: 100, right: 340, bottom: 228, width: 240, height: 28 };
+        sub.__rect = { top: 0, left: 0, right: 250, bottom: 200, width: 250, height: 200 };
+
+        row.click();
+
+        assert.notEqual(sub.style.display, "none", "点击未展开子菜单");
+        assert.equal(sub.style.left, "344px", "应贴在行右缘外侧（right 340 + 4 间距）");
+        assert.equal(sub.style.top, "200px", "应与行顶对齐");
+        assert.equal(document.querySelector(".neo-n-menu").offsetHeight, menuHeightBefore, "展开子菜单不应撑高父菜单");
+    } finally {
+        delete globalThis.LiteGraph;
+        topMenu.resetTopMenu();
+    }
+});
+
+test("二级菜单右侧空间不足时翻到左侧", async () => {
+    globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
+    try {
+        const ext = getExtension("comfy.neo.topMenu");
+        ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+        const row = document.querySelector(".neo-n-node-row");
+        const sub = document.querySelector(".neo-n-submenu");
+
+        // 菜单贴近视口右缘：行右侧放不下 250px 宽的子菜单
+        const rowLeft = window.innerWidth - 250;
+        row.__rect = { top: 200, left: rowLeft, right: window.innerWidth - 10, bottom: 228, width: 240, height: 28 };
+        sub.__rect = { top: 0, left: 0, right: 250, bottom: 200, width: 250, height: 200 };
+
+        row.click();
+
+        assert.equal(sub.style.left, `${rowLeft - 250 - 4}px`, "右侧放不下应翻到行左侧");
     } finally {
         delete globalThis.LiteGraph;
         topMenu.resetTopMenu();
@@ -266,24 +319,24 @@ test("悬停刚展开的宽限期内点击不收起，宽限期过后点击收�
     assert.equal(document.querySelector(".neo-n-menu"), null, "宽限期过后点击应收起菜单");
 });
 
-test("子菜单悬停刚展开的宽限期内点击行不收起，宽限期过后点击收起", async () => {
+test("二级菜单点击行切换展开 / 收起", async () => {
     globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
     try {
         const ext = getExtension("comfy.neo.topMenu");
         ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
         const row = document.querySelector(".neo-n-node-row");
         const sub = row.nextElementSibling;
-        row.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
-        await sleep(200);
-        assert.notEqual(sub.style.display, "none", "悬停未展开子菜单");
 
         row.click();
-        assert.notEqual(sub.style.display, "none", "宽限期内的行点击不应收起");
-        assert.ok(row.classList.contains("open"), "宽限期内的点击后子菜单应保持展开");
+        assert.notEqual(sub.style.display, "none", "首次点击应展开");
+        assert.ok(row.classList.contains("open"), "展开标记未同步");
 
-        await sleep(600);
         row.click();
-        assert.equal(sub.style.display, "none", "宽限期过后点击行应收起子菜单");
+        assert.equal(sub.style.display, "none", "再次点击应收起");
+        assert.equal(row.classList.contains("open"), false, "收起后标记应清掉");
+
+        row.click();
+        assert.notEqual(sub.style.display, "none", "收起后可再次展开");
     } finally {
         delete globalThis.LiteGraph;
         topMenu.resetTopMenu();
