@@ -771,7 +771,39 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         wfCanvasBtns.append(wfImportBtn, wfWriteBtn);
         workflowHeader.append(wfCanvasBtns);
     }
-    workflowWrap.append(workflowHeader, workflowBody, workflowSummary);
+    // 工作流区两模式：只读流程图 ⇄ 内嵌 litegraph 编辑（前端未暴露 LiteGraph 的视图不提供编辑模式）
+    const wfEditorSupported = !!window.LGraph && !!window.LGraphCanvas && !!window.LiteGraph;
+    const wfModeBtns = mkEl("div", "rs-content-mode rs-wf-mode-btns");
+    const wfViewBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
+    wfViewBtn.type = "button";
+    wfViewBtn.textContent = "👁 流程图";
+    wfViewBtn.title = "只读流程图：workflow.json 模板自动布局 + 校验标注";
+    const wfEditBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
+    wfEditBtn.type = "button";
+    wfEditBtn.textContent = "🧩 编辑";
+    wfEditBtn.title = "在窗口内编辑 workflow.json 模板（保留 {{模板变量}}，保存后写回本技能）";
+    if (!wfEditorSupported) wfEditBtn.style.display = "none";
+    wfModeBtns.append(wfViewBtn, wfEditBtn);
+    workflowHeader.append(wfModeBtns);
+
+    const wfEditWrap = mkEl("div", "rs-wf-editor");
+    wfEditWrap.style.display = "none";
+    const wfEditBar = mkEl("div", "rs-wf-editor-bar");
+    const wfSaveBtn = mkEl("button", "rs-btn rs-btn-local");
+    wfSaveBtn.type = "button";
+    wfSaveBtn.textContent = "💾 保存工作流";
+    wfSaveBtn.title = "把画布上的工作流写回本技能 workflow.json（模板变量原样保留）";
+    const wfReloadBtn = mkEl("button", "rs-btn rs-btn-local");
+    wfReloadBtn.type = "button";
+    wfReloadBtn.textContent = "↺ 重新载入";
+    wfReloadBtn.title = "丢弃画布上的改动，按技能当前 workflow.json 重载";
+    const wfFitBtn = mkEl("button", "rs-btn rs-btn-local");
+    wfFitBtn.type = "button";
+    wfFitBtn.textContent = "🧭 适配视图";
+    wfEditBar.append(wfSaveBtn, wfReloadBtn, wfFitBtn);
+    const wfCanvasBox = mkEl("div", "rs-wf-editor-canvas-box");
+    wfEditWrap.append(wfEditBar, wfCanvasBox);
+    workflowWrap.append(workflowHeader, workflowBody, workflowSummary, wfEditWrap);
 
     // 失效模型路径修复：复用后端 /neo_nodes/skill_model_suggest（与工作流修复同款 match_model_file），
     // 弹窗列出 config 里所有失效字段与候选/置信度，批量套用后回填对应设置区，用户再点 Save 写入 config.json。
@@ -962,16 +994,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         if (!workflowShown || !currentSkillId || !skillWorkflowRaw) return;
         const isVideo = videoGenSettingsWrap.style.display !== "none";
         const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
-        const genInfo = { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} };
-        const rendered = applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), workflowParamValues(isVideo, genInfo));
-        renderWorkflowGraph(workflowBody, rendered, validateWorkflow(rendered, null, {}), workflowSummary);   // 先同步预检（蓝框）
-        const validation = await checkWorkflow(rendered);   // /object_info + /models/*，失败内部按跳过处理
-        if (currentSkillId && workflowShown) {               // 等待期间切了技能/关区 → 丢弃过期结果
-            const sl = workflowBody.scrollLeft, st = workflowBody.scrollTop;
-            renderWorkflowGraph(workflowBody, rendered, validation, workflowSummary);
-            workflowBody.scrollLeft = sl;
-            workflowBody.scrollTop = st;
-        }
+        await renderWorkflowPreview(skillWorkflowRaw, { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} }, isVideo, currentSkillId);
     }
 
     // ---- 画布 ⇄ 技能：把技能模板归画布可 load 的 API prompt（已知参数按设置预渲染、运行时占串归 concrete values
@@ -1343,17 +1366,203 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     let genSettingsBaseline = null;   // 生图/生视频设置区 collect() 的 JSON 快照（load/save 后刷新）；null = 无设置区
     let loadedGenInfo = null;         // 最近一次 loadGenSettings/loadVideoGenSettings 返回的 { config, models }，供「修复失效路径」回填复用
     let skillWorkflowRaw = null;     // 最近加载的技能 workflow.json 原始模板（「修复失效路径」后重渲染复用，避免重新拉取）
+    let currentIsVideo = false;      // 当前技能是否生视频（内嵌编辑保存后重渲染流程图取对应设置）
+    let wfGraph = null, wfCanvas = null;   // 内嵌编辑模式的子图与画布（null = 未挂载）
 
     // 折叠/展开工作流区：折叠时隐藏流程图与摘要，正文区恢复完整高度
     function setWorkflowCollapsed(collapsed) {
         workflowExpanded = !collapsed;
         workflowWrap.classList.toggle("rs-wf-collapsed", collapsed);
         workflowCaret.textContent = collapsed ? "▸" : "▾";
+        if (collapsed && wfCanvas) setWfMode("view");   // 折叠 → 卸载内嵌画布，回到只读流程图
         updateContentCompact();
     }
     function resetWorkflowCollapse() {
         setWorkflowCollapsed(true);   // 每次打开技能：工作流区默认折叠
     }
+
+    // ---- 内嵌 litegraph 编辑（workflow.json 模板）----
+    // 编辑模式把原始模板灌进独立 LGraph + LGraphCanvas，保存走 app.graphToPrompt(子图) →
+    // updateWorkflowSkill 写回本技能，{{模板变量}} 原样保留。
+    // LiteGraph.configure 只认 litegraph 序列化，API prompt 必须先转换：节点按注册模板实例化取
+    // 真实 widget 顺序与槽位顺序，widget 值按名对齐，连线按 API 的 [id, slot] 落到目标槽位名。
+    function apiPromptToLitegraph(api) {
+        const LiteGraph = window.LiteGraph;
+        const infos = Object.entries(api).map(([id, def]) => ({ id: Number(id), def: def || {}, node: LiteGraph.createNode((def || {}).class_type) }));
+        const byId = new Map(infos.filter((i) => i.node).map((i) => [i.id, i]));
+        const missing = infos.filter((i) => !i.node).map((i) => (i.def || {}).class_type);
+        const nodes = [], links = [];
+        for (const info of infos) {
+            if (!info.node) continue;
+            const inputs = info.def.inputs || {};
+            const widgets = info.node.widgets || [];
+            info.out = {
+                id: info.id, type: info.node.type, pos: [0, 0], size: [info.node.size[0], info.node.size[1]],
+                flags: info.node.flags || {}, mode: info.node.mode || 0, order: (info.def._meta || {}).order || 0,
+                properties: {},
+                widgets_values: (info.node.widgets_values || []).map((v, i) => (widgets[i] && Object.prototype.hasOwnProperty.call(inputs, widgets[i].name) ? inputs[widgets[i].name] : v)),
+                inputs: (info.node.inputs || []).map((s) => ({ name: s.name, type: s.type, link: null })),
+                outputs: (info.node.outputs || []).map((s) => ({ name: s.name, type: s.type, links: null })),
+            };
+            nodes.push(info.out);
+        }
+        for (const info of infos) {
+            if (!info.out) continue;
+            for (const [name, ref] of Object.entries(info.def.inputs || {})) {
+                if (!Array.isArray(ref)) continue;
+                const origin = byId.get(Number(ref[0]));
+                const slot = info.out.inputs.findIndex((s) => s.name === name);
+                if (!origin || !origin.out || slot < 0 || !origin.out.outputs[ref[1]]) continue;
+                const linkId = links.length + 1;
+                links.push([linkId, origin.id, ref[1], info.id, slot, ref.length >= 5 ? ref[4] : ref[2] || "COMBO"]);
+                info.out.inputs[slot].link = linkId;
+                (origin.out.outputs[ref[1]].links || (origin.out.outputs[ref[1]].links = [])).push(linkId);
+            }
+        }
+        const lite = {
+            id: 1, version: 0.4, nodes, links, groups: [], config: {},
+            last_node_id: nodes.reduce((m, n) => Math.max(m, n.id), 0), last_link_id: links.length, last_group_id: 0,
+        };
+        return { lite, missing };
+    }
+
+    function refitWfCanvas() {
+        if (!wfCanvas) return;
+        const w = wfCanvasBox.clientWidth || 800, h = wfCanvasBox.clientHeight || 420;
+        // litegraph 约定后备缓冲 = CSS 尺寸 × dpr、前层 ctx 按 dpr 缩放（同前端 resizeCanvas）：
+        // 只按 CSS 像素下发会让背景层只铺满 1/dpr 的画布（125% 缩放下画布看着只剩 80% 大小）
+        const dpr = Math.max(window.devicePixelRatio || 1, 1);
+        wfCanvas.resize(Math.round(w * dpr), Math.round(h * dpr));
+        wfCanvas.ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);   // canvas.width 赋值会重置 ctx 变换
+        const nodes = (wfCanvas.graph && wfCanvas.graph._nodes) || [];
+        if (nodes.length) {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const n of nodes) {
+                x0 = Math.min(x0, n.pos[0]); y0 = Math.min(y0, n.pos[1]);
+                x1 = Math.max(x1, n.pos[0] + n.size[0]); y1 = Math.max(y1, n.pos[1] + n.size[1]);
+            }
+            const sc = Math.min(1, w / (x1 - x0 + 160), h / (y1 - y0 + 160));
+            wfCanvas.ds.scale = sc;
+            wfCanvas.ds.offset = [w / (2 * sc) - (x0 + x1) / 2, h / (2 * sc) - (y0 + y1) / 2];
+        }
+        wfCanvas.setDirty(true, true);
+        wfCanvas.draw(true, true);
+    }
+
+    // 盒子尺寸变化（窗口缩放 / ⛶ 放大还原 / 把手拉伸 / 左栏分隔条拖动）后重适配内嵌画布
+    const wfBoxResize = new ResizeObserver(() => refitWfCanvas());
+
+    function destroyWfEditor() {
+        if (wfCanvas) {
+            wfCanvas.stopRendering();
+            wfCanvas.unbindEvents();
+            wfCanvas = null;
+        }
+        if (wfGraph) {
+            for (const n of [...wfGraph._nodes]) wfGraph.removeNode(n);   // 逐节点走 litegraph 生命周期（断线、DOM widget 清理）
+            wfGraph.clear();
+            wfGraph = null;
+        }
+        wfBoxResize.disconnect();
+        wfCanvasBox.innerHTML = "";
+    }
+
+    function mountWfEditor() {
+        if (wfCanvas) return true;
+        if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return false; }
+        const LGraph = window.LGraph, LGraphCanvas = window.LGraphCanvas;
+        if (!LGraph || !LGraphCanvas) { showToast(app, "warning", "无内嵌画布", "当前视图没有 LiteGraph，请用「⤒ 导入到画布」编辑"); return false; }
+        const { lite, missing } = apiPromptToLitegraph(skillWorkflowRaw);
+        // 未注册节点直接进编辑会在保存时把该节点从 workflow.json 里丢掉，拒绝并退回只读预览
+        if (missing.length) { showToast(app, "warning", "无法内嵌编辑", `节点类型未注册：${missing.join("、")}，请用「⤒ 导入到画布」编辑`); return false; }
+        const g = new LGraph();
+        g.configure(lite);
+        // 自动布局：与「导入到画布」同一套列号与重心排布，位置按节点真实尺寸推导
+        for (const cell of canvasLayout(skillWorkflowRaw, (id) => (g.getNodeById(id) || {}).size)) {
+            const n = g.getNodeById(cell.id);
+            if (n) n.pos = [cell.x, cell.y];
+        }
+        g.start();
+        wfGraph = g;
+        const canvasEl = mkEl("canvas", "rs-wf-editor-canvas");
+        wfCanvasBox.appendChild(canvasEl);
+        wfCanvas = new LGraphCanvas(canvasEl, g);
+        // litegraph 的 widget 弹窗按「clientX - canvas.getBoundingClientRect().left」定位：主画布左上角
+        // 就是视口原点所以看不出问题，内嵌画布在窗口里偏移几百像素，弹窗会飞到鼠标左上方。
+        // 前端 CSS 里 .graphdialog 是 position:fixed，落点直接按视口坐标下发。
+        const basePrompt = wfCanvas.prompt;
+        wfCanvas.prompt = function (name, value, callback, event, multiline) {
+            const r = basePrompt.call(this, name, value, callback, event, multiline);
+            const dlg = this.prompt_box;
+            if (!dlg) return r;
+            const rect = canvasEl.getBoundingClientRect();
+            dlg.style.left = `${(event ? event.clientX : rect.left + rect.width / 2) - 20}px`;
+            dlg.style.top = `${(event ? event.clientY : rect.top + rect.height / 2) - 20}px`;
+            return r;
+        };
+        wfBoxResize.observe(wfCanvasBox);
+        return true;
+    }
+
+    function setWfMode(mode) {
+        if (mode === "edit") {
+            if (!mountWfEditor()) return;
+            if (!workflowExpanded) setWorkflowCollapsed(false);
+        }
+        const editing = mode === "edit";
+        workflowBody.style.display = editing ? "none" : "";
+        workflowSummary.style.display = editing ? "none" : "";
+        wfEditWrap.style.display = editing ? "flex" : "none";
+        wfViewBtn.classList.toggle("rs-content-mode-active", !editing);
+        wfEditBtn.classList.toggle("rs-content-mode-active", editing);
+        wfSaveBtn.style.display = isCustom() ? "" : "none";
+        modal.classList.toggle("rs-wf-editing", editing);   // 编辑态：卡片吃满内容区剩余高度，设置区让位给画布
+        if (editing) requestAnimationFrame(refitWfCanvas);   // 显示后画布才有尺寸，此时再适配
+        else destroyWfEditor();
+    }
+
+    // 只读流程图：先按模板变量画蓝框预检，/object_info·/models/* 校验在后台完成后原地补红框
+    async function renderWorkflowPreview(wf, genInfo, isVideo, seqId) {
+        // 超出模板槽位的 LoRA 运行时动态插入（同后端 _apply_loras：在 render_template 之后、LoRA 槽位填充之前执行，流程图与真实提交一致）
+        const rendered = applyWorkflowParams(injectRuntimeLoras(wf, ((genInfo || {}).config || {}).loras), workflowParamValues(isVideo, genInfo));
+        renderWorkflowGraph(workflowBody, rendered, validateWorkflow(rendered, null, {}), workflowSummary);   // 内部先清空占位再画
+        const validation = await checkWorkflow(rendered);   // /object_info + /models/*，失败内部按跳过处理
+        if (currentSkillId === seqId && workflowShown) {   // 等待期间切了技能/关区 → 丢弃过期结果
+            const sl = workflowBody.scrollLeft, st = workflowBody.scrollTop;
+            renderWorkflowGraph(workflowBody, rendered, validation, workflowSummary);
+            workflowBody.scrollLeft = sl;
+            workflowBody.scrollTop = st;
+        }
+    }
+
+    async function saveWorkflowFromEditor() {
+        if (!currentSkillId) { showToast(app, "warning", "保存工作流", "请先保存技能本体"); return; }
+        if (currentSource === "presets") { showToast(app, "warning", "预设不可回写", "先「复制为自定义」再编辑工作流"); return; }
+        if (!wfGraph) return;
+        if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布序列化", "当前视图没有画布，保存不可用"); return; }
+        try {
+            const { output, error } = (await app.graphToPrompt(wfGraph)) || {};
+            if (error || !output || !Object.keys(output).length) { showToast(app, "warning", "无法保存", "画布上没有有效工作流" + (error && error.message ? `（${error.message}）` : "")); return; }
+            const r = await updateWorkflowSkill(currentSkillId, output);
+            showToast(app, "success", `已保存工作流 "${r.id}"`, (r.warnings || []).join("\n"));
+            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+            skillWorkflowRaw = output;   // 只读流程图按新模板重画
+            setWfMode("view");
+            await renderWorkflowPreview(output, loadedGenInfo, currentIsVideo, currentSkillId);
+        } catch (err) {
+            showToast(app, "error", "保存工作流失败", err.message);
+        }
+    }
+
+    wfViewBtn.addEventListener("click", (e) => { e.stopPropagation(); setWfMode("view"); });
+    wfEditBtn.addEventListener("click", (e) => { e.stopPropagation(); setWfMode("edit"); });
+    wfSaveBtn.addEventListener("click", (e) => { e.stopPropagation(); saveWorkflowFromEditor(); });
+    wfReloadBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        destroyWfEditor();
+        if (mountWfEditor()) requestAnimationFrame(refitWfCanvas);
+    });
+    wfFitBtn.addEventListener("click", (e) => { e.stopPropagation(); refitWfCanvas(); });
 
     // 有工作流的技能：正文默认收起（点标题展开）；正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
     function updateContentCompact() {
@@ -1472,6 +1681,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         titleSpan.textContent = "📝 " + nm;
         titleSpan.title = nm;
         multiTurnChk.checked = !!(full && full.multi_turn);
+        currentIsVideo = !!(full && full.gen_video);
         configOverridden = !!(full && full.config_overridden);
         // 不可用视频技能（VDN 加速节点未装）：内容区顶部显示说明
         unavailableBanner.style.display = (full && full.gen_video && full.available === false) ? "block" : "none";
@@ -1519,29 +1729,20 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         workflowWrap.style.display = "none";
         workflowShown = false;
         skillWorkflowRaw = null;
+        setWfMode("view");   // 切技能回到只读流程图（顺带卸载上一个技能的内嵌画布）
         contentCollapsed = true;   // 每次打开技能：带工作流的正文默认收起
         resetWorkflowCollapse();   // 每次打开技能：工作流区默认展开
         if (wfPromise) {
             const skel = mkEl("div", "rs-wf-skeleton");
             skel.textContent = "加载工作流图中…";
             workflowBody.appendChild(skel);
-            workflowWrap.style.display = "block";
+            workflowWrap.style.display = "flex";   // 卡片是 flex 列（见 .rs-skill-workflow）：写 block 会让内嵌画布的 flex:1 失效
             workflowShown = true;
             updateContentCompact();   // 先占位：正文区立即让位，避免加载完成后整体下移
             const wf = await wfPromise;
-            if (currentSkillId === id && wf) skillWorkflowRaw = wf;   // 存原始模板：「修复失效路径」后重渲染复用（apply/inject 返回新对象不改原模板）
-            if (wf) {
-                // 超出模板槽位的 LoRA 运行时动态插入（同后端 _apply_loras：在 render_template 之后、LoRA 槽位填充之前执行，流程图与真实提交一致）；配置了才注入
-                const rendered = applyWorkflowParams(injectRuntimeLoras(wf, ((genInfo || {}).config || {}).loras), workflowParamValues(full.gen_video, genInfo));
-                renderWorkflowGraph(workflowBody, rendered, validateWorkflow(rendered, null, {}), workflowSummary); // 内部先清空占位再画
-                const validation = await checkWorkflow(rendered);   // /object_info + /models/*，失败内部按跳过处理
-                if (currentSkillId === id && workflowShown) {       // 等待期间切了技能/关区 → 丢弃过期结果
-                    const sl = workflowBody.scrollLeft, st = workflowBody.scrollTop;
-                    renderWorkflowGraph(workflowBody, rendered, validation, workflowSummary);
-                    workflowBody.scrollLeft = sl;
-                    workflowBody.scrollTop = st;
-                }
-            } else {
+            if (currentSkillId === id && wf) skillWorkflowRaw = wf;   // 存原始模板：内嵌编辑与「修复失效路径」后重渲染复用
+            if (wf) await renderWorkflowPreview(wf, genInfo, full.gen_video, id);
+            else {
                 workflowWrap.style.display = "none";
                 workflowShown = false;
                 workflowBody.innerHTML = "";
@@ -1578,6 +1779,9 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         unavailableBanner.style.display = "none";
         workflowWrap.style.display = "none";
         workflowShown = false;
+        skillWorkflowRaw = null;
+        currentIsVideo = false;
+        setWfMode("view");
         contentCollapsed = true;
         resetWorkflowCollapse();
         updateContentCompact();   // 清掉上一个技能残留的工作流 / 正文折叠类
@@ -1628,7 +1832,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     dirtyConfirm.append(dirtyText, dirtyActions);
     content.insertBefore(dirtyConfirm, footerBtns);
 
-    function close() { dirtyConfirm.hidden = true; if (embedded) modal.style.display = "none"; else overlay.style.display = "none"; }
+    function close() { dirtyConfirm.hidden = true; destroyWfEditor(); if (embedded) modal.style.display = "none"; else overlay.style.display = "none"; }
 
     // 用户主动关闭（✕ / 点遮罩 / Esc）：有未保存修改时暂停关闭，等用户在确认条里选择
     function requestClose() {
@@ -2554,23 +2758,30 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
     let savedLeftW = NaN;
     try { savedLeftW = parseInt(localStorage.getItem(SKILL_LEFT_W_KEY), 10); } catch { /* 隐私模式下 localStorage 不可用 */ }
     if (Number.isFinite(savedLeftW)) left.style.width = `${Math.max(SKILL_LEFT_MIN_W, savedLeftW)}px`;
-    split.addEventListener("mousedown", (e) => {
-        if (e.button !== 0) return;
-        e.preventDefault();   // 避免拖动时选中文字
+    // 捕获指针 + 闸门：手势取消或在页面外松手时页面收不到 mouseup/pointerup，
+    // 不捕获就会留下 move 监听器，左栏宽度会一直跟着鼠标跑
+    let splitDrag = false;
+    split.addEventListener("pointerdown", (e) => {
+        if (splitDrag || e.button !== 0) return;
         const startX = e.clientX;
         const startW = left.getBoundingClientRect().width;
+        splitDrag = true;
         split.classList.add("is-dragging");
         document.body.classList.add("rs-skill-resizing");
-        const onMove = (ev) => setLeftWidth(startW + ev.clientX - startX);
+        split.setPointerCapture?.(e.pointerId);
+        const onMove = (ev) => { if (splitDrag) setLeftWidth(startW + ev.clientX - startX); };
         const onUp = () => {
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
+            splitDrag = false;
+            document.removeEventListener("pointermove", onMove);
+            document.removeEventListener("pointerup", onUp);
+            document.removeEventListener("pointercancel", onUp);
             split.classList.remove("is-dragging");
             document.body.classList.remove("rs-skill-resizing");
             try { localStorage.setItem(SKILL_LEFT_W_KEY, left.style.width); } catch { /* 同上 */ }
         };
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
     });
     split.addEventListener("dblclick", () => {
         try { localStorage.removeItem(SKILL_LEFT_W_KEY); } catch { /* 同上 */ }
@@ -2754,17 +2965,109 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         selectSkill(allItems.find((it) => it.group === openGroup) || allItems[0]);
     });
 
-    return { el: box, closeBtn, close };
+    return { el: box, head, closeBtn, close };
 }
 
 function openSkillManager() {
     if (_skillManagerOpen) return;
     _skillManagerOpen = true;
-    const overlay = mkEl("div", "rs-skill-modal-overlay");
+    // 独立窗口（同导演编辑器）：无遮罩 —— 背景透明且指针穿透，画布保持可操作；
+    // 标题栏拖动 / 双击放大还原 / ⛶ 放大还原 / 右下角拉伸；关闭只走 ✕ 与 Esc
+    const overlay = mkEl("div", "rs-skill-modal-overlay rs-skill-manager-overlay");
     overlay.style.display = "flex";   // .rs-skill-modal-overlay 默认 display:none，内嵌整窗需显式显示
     document.body.appendChild(overlay);
 
     const mgr = createSkillManager(overlay);
+    const box = mgr.el;
+    overlay.appendChild(box);
+
+    // ⛶ 放大/还原：铺满视口（留 8px 边距），还原回到放大前的几何
+    let maximized = false, prevRect = null;
+    const maxBtn = mkEl("button", "rs-skill-manager-maximize");
+    maxBtn.type = "button";
+    maxBtn.title = "放大到最大";
+    maxBtn.textContent = "⛶";
+    const toggleMaximize = () => {
+        if (maximized) {
+            Object.assign(box.style, prevRect || { left: "", top: "", width: "", height: "" });
+            maximized = false;
+            maxBtn.textContent = "⛶";
+            maxBtn.title = "放大到最大";
+        } else {
+            prevRect = { left: box.style.left, top: box.style.top, width: box.style.width, height: box.style.height };
+            Object.assign(box.style, { position: "absolute", left: "8px", top: "8px", width: "calc(100vw - 16px)", height: "calc(100vh - 16px)" });
+            maximized = true;
+            maxBtn.textContent = "🗗";
+            maxBtn.title = "还原窗口";
+        }
+    };
+    maxBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleMaximize(); });
+    mgr.head.insertBefore(maxBtn, mgr.closeBtn);
+
+    // 标题栏拖动：位移后夹回视口，保证标题栏始终够得到（放大态铺满，拖动无意义）
+    // 拖拽期间捕获指针并在 onMove 上设闸门：手势被取消（pointercancel）或在页面外松手时
+    // 页面收不到 pointerup，不捕获就会留下 pointermove 监听器，松手后窗口继续跟着鼠标跑
+    let headDrag = false;
+    mgr.head.addEventListener("pointerdown", (e) => {
+        if (maximized || headDrag || e.button !== 0 || e.target.closest("button, input")) return;
+        const startL = parseFloat(box.style.left) || box.offsetLeft;
+        const startT = parseFloat(box.style.top) || box.offsetTop;
+        const startX = e.clientX, startY = e.clientY;
+        box.style.position = "absolute";
+        box.style.left = startL + "px";
+        box.style.top = startT + "px";
+        headDrag = true;
+        mgr.head.setPointerCapture?.(e.pointerId);
+        const onMove = (ev) => {
+            if (!headDrag) return;
+            const w = box.offsetWidth, h = box.offsetHeight;
+            box.style.left = Math.max(-w + 80, Math.min(startL + ev.clientX - startX, window.innerWidth - 80)) + "px";
+            box.style.top = Math.max(0, Math.min(startT + ev.clientY - startY, window.innerHeight - 44)) + "px";
+        };
+        const onUp = () => {
+            headDrag = false;
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+    });
+    mgr.head.addEventListener("dblclick", (e) => {
+        if (e.target.closest("button, input")) return;
+        toggleMaximize();
+    });
+
+    // 右下角拖拽改尺寸
+    const grip = mkEl("div", "rs-skill-manager-resize");
+    grip.title = "拖拽调整窗口大小";
+    box.appendChild(grip);
+    // 右下角拖拽改尺寸（同标题栏拖动：捕获指针 + 闸门，松手/取消手势后不再跟随鼠标）
+    let resizing = false;
+    grip.addEventListener("pointerdown", (e) => {
+        if (resizing || e.button !== 0) return;
+        e.preventDefault();
+        const sw = box.offsetWidth, sh = box.offsetHeight;
+        const startX = e.clientX, startY = e.clientY;
+        resizing = true;
+        grip.setPointerCapture?.(e.pointerId);
+        const onMove = (ev) => {
+            if (!resizing) return;
+            box.style.width = Math.max(640, sw + ev.clientX - startX) + "px";
+            box.style.height = Math.max(420, sh + ev.clientY - startY) + "px";
+        };
+        const onUp = () => {
+            resizing = false;
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+    });
+
     const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
     const close = () => {
         _skillManagerOpen = false;
@@ -2773,7 +3076,6 @@ function openSkillManager() {
         mgr.close();
     };
     mgr.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
-    overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) close(); });
     document.addEventListener("keydown", onKey, true);
 }
 

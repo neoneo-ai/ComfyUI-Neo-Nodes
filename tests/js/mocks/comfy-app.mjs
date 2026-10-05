@@ -7,6 +7,7 @@ export const appState = {
     toasts: [],
     loaded: [],
     promptGraph: null, // graphToPrompt() 的返回值
+    promptGraphArg: null, // graphToPrompt(graph) 收到的子图（内嵌工作流编辑器保存路径）
 };
 
 function escapeHtml(s) {
@@ -31,7 +32,8 @@ export const app = {
         return appState.nodeOutputs;
     },
     canvas: null, // 画布（LGraphCanvas）替身：测试里按需挂 fitViewToSelectionAnimated 等成员
-    async graphToPrompt() {
+    async graphToPrompt(graph) {
+        appState.promptGraphArg = graph ?? null;
         return appState.promptGraph ?? { output: {}, workflow: null };
     },
     async loadGraphData(data, ...rest) {
@@ -80,5 +82,6 @@ export function resetAppState() {
     appState.toasts.length = 0;
     appState.loaded.length = 0;
     appState.promptGraph = null;
+    appState.promptGraphArg = null;
     appState._sidebarTab = null;
 }

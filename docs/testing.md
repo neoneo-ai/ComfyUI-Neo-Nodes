@@ -61,3 +61,19 @@ pwsh tests/run-tests.ps1 -Timeout 60
 ```
 
 退出码：`0` = 全部通过，`1` = 有测试失败 / 无匹配文件，`2` = 超时强制终止。
+
+## 浏览器端到端测试（tests/e2e）
+
+Playwright 驱动真实 ComfyUI 前端，验证窗口控制、内嵌 LiteGraph 画布等 jsdom 覆盖不了的行为。
+**需要本机已启动 ComfyUI（默认 `http://127.0.0.1:8188`，可用环境变量 `COMFY_BASE_URL` 覆盖）**；
+服务不可达时用例自动 skip 而不是失败。
+
+```bash
+npm run e2e                       # tests/e2e/*.e2e.mjs
+node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.mjs
+```
+
+- `skill-manager.e2e.mjs` — 技能管理窗口：overlay 指针穿透、⛶ 放大还原、标题栏双击放大、Esc 关闭、
+  标题栏拖动、右下角把手拉伸；工作流区只读流程图 ⇄ 内嵌编辑画布（canvas 铺满盒子、随窗口缩放跟随、
+  切回只读卸载画布、预设技能隐藏保存按钮、125% 缩放下 widget 弹窗贴着鼠标落点）。
+  截图落 `tmp/skill-wf-editor.png`、`tmp/skill-wf-prompt.png`。

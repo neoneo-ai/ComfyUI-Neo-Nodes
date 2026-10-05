@@ -136,6 +136,8 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 并按流程图同一套布局重排画布节点：拓扑分层左到右、同列按上游重心堆叠、短列垂直居中、自动适配视图）
 与「💾 回写入技能」（把整画布工作流落盘该技能 `workflow.json`，`skill.md` 正文保留）；
 预设技能不可回写，先「复制为自定义」。
+技能详情页工作流区还可「🧩 编辑」：把 `workflow.json` 直接挂进内嵌画布改连线与参数，「💾 保存工作流」写回该技能
+（预设只读）；「👁 流程图」切回只读预览。
 
 ### bundle
 

@@ -3347,6 +3347,20 @@
 .rs-wf-canvas-btns .rs-btn { flex: none; padding: 4px 10px; font-size: 12px; }
 .rs-wf-canvas-import-btn, .rs-wf-canvas-write-btn { color: #9ecff0; }
 .rs-wf-canvas-import-btn:hover, .rs-wf-canvas-write-btn:hover { color: #fff; background: #2c3a48; }
+/* 工作流区模式切换：只读流程图 ⇄ 内嵌 litegraph 编辑 */
+.rs-wf-mode-btns { margin-left: auto; display: flex; gap: 6px; flex: none; cursor: default; }
+.rs-wf-canvas-btns + .rs-wf-mode-btns { margin-left: 10px; }
+/* 内嵌编辑：工具条 + 画布（盒子吃满卡片剩余高度，画布后备缓冲由 JS 按盒子实测尺寸下发） */
+.rs-wf-editor { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 420px; }
+.rs-wf-editor-bar { display: flex; gap: 6px; flex: none; }
+.rs-wf-editor-bar .rs-btn { flex: none; padding: 4px 10px; font-size: 12px; }
+.rs-wf-editor-canvas-box { flex: 1; min-height: 0; position: relative; }
+/* 画布脱离文档流：canvas 的位图固有高会反过来撑大 flex 盒子（自增强循环），绝对定位后盒子高度只由 flex 决定 */
+.rs-wf-editor-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; background: #202020; border: 1px solid #444; border-radius: 6px; }
+/* 编辑态（rs-wf-editing 由 setWfMode 挂在详情根）：工作流卡片吃满内容区剩余高度，
+   上方设置卡片收成区头把高度让给画布；切回只读流程图即恢复 */
+.rs-skill-detail.rs-wf-editing .rs-skill-workflow { flex: 1 1 auto; min-height: 0; }
+.rs-skill-detail.rs-wf-editing .rs-skill-detail-settings > .rs-gen-settings > :not(.rs-gen-settings-header) { display: none; }
 
 /* ---- 技能详情：正文（系统提示词内容）可折叠（仅 workflow.json 驱动的技能；默认收起，点标题展开）----
    正文仅在「提示词增强」开启（作为扩写指令）或参考图模式（作为提示词模板）时生效，故工作流技能默认收起 */
@@ -3376,12 +3390,19 @@
     flex-direction: column;
     width: min(1480px, calc(100vw - 48px));
     height: min(900px, calc(100vh - 48px));
+    min-width: 640px;
+    min-height: 420px;
     background: #1a1a2a;
     border: 1px solid #444;
     border-radius: 8px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
     overflow: hidden;
+    /* 独立窗口：遮罩层指针穿透，窗口本体自己接管事件 */
+    pointer-events: auto;
+    position: relative;
 }
+/* 独立技能管理窗口（同导演编辑器）：无遮罩 —— 背景透明、指针穿透，画布保持可操作 */
+.rs-skill-modal-overlay.rs-skill-manager-overlay { background: transparent; pointer-events: none; }
 .rs-skill-manager-head {
     display: flex;
     align-items: center;
@@ -3389,6 +3410,40 @@
     padding: 10px 14px;
     background: #1a2a3a;
     border-bottom: 1px solid #3a4a5a;
+    cursor: move;
+    user-select: none;
+}
+/* ⛶ 放大 / 还原（标题栏，✕ 左侧） */
+.rs-skill-manager-maximize {
+    flex: none;
+    border: none;
+    background: transparent;
+    color: #8a9aa8;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    cursor: pointer;
+}
+.rs-skill-manager-maximize:hover { color: #fff; }
+/* 右下角拉伸把手 */
+.rs-skill-manager-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    z-index: 2;
+}
+.rs-skill-manager-resize::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 9px;
+    height: 9px;
+    border-right: 2px solid #6a7a8a;
+    border-bottom: 2px solid #6a7a8a;
 }
 .rs-skill-manager-title {
     flex: 1;
