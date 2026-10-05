@@ -39,6 +39,37 @@ function detectGenType(graph) {
     return "";
 }
 
+// 预设列表的过滤便签：图像（默认）/ 视频（presets 下 video/ 目录的提示词）/ 配方（普通配方）。
+// 用户选择写入 localStorage，下次打开沿用。
+const FILTER_TABS = [
+    { key: "image", label: "图像" },
+    { key: "video", label: "视频" },
+    { key: "recipe", label: "配方" },
+];
+const FILTER_TAB_KEY = "rs.preset_filter";
+
+function loadFilterTab() {
+    try {
+        const saved = localStorage.getItem(FILTER_TAB_KEY);
+        return FILTER_TABS.some(t => t.key === saved) ? saved : "image";
+    } catch (e) {
+        return "image";
+    }
+}
+
+function saveFilterTab(key) {
+    try { localStorage.setItem(FILTER_TAB_KEY, key); } catch (err) { /* 隐私模式下 localStorage 可能不可用 */ }
+}
+
+function matchFilterTab(item, tab) {
+    const name = typeof item === "string" ? item : item.name;
+    if (item.isRecipe) return tab === "recipe";
+    if (tab === "recipe") return false;
+    // 提示词扫描带目录前缀，presets 下 video/ 及其子目录算视频提示词，其余归图像
+    const isVideo = name.startsWith("video/");
+    return tab === "video" ? isVideo : !isVideo;
+}
+
 // ==========================================
 // UI 组件创建 (内部使用)
 // ==========================================
@@ -49,10 +80,12 @@ function createOverlayWithSearch() {
     const searchBar = mkEl("input", "rs-preset-search-input");
     searchBar.type = "text";
     searchBar.placeholder = "🔍 Search presets...";
+    const tabBar = mkEl("div", "rs-preset-tabs");
     const body = mkEl("div", "rs-preset-list-body");
     overlay.appendChild(searchBar);
+    overlay.appendChild(tabBar);
     overlay.appendChild(body);
-    return { overlay, body, searchBar };
+    return { overlay, body, searchBar, tabBar };
 }
 
 function createInputModal() {
@@ -139,7 +172,7 @@ function createDeleteModal() {
 
 function createPromptManagerUI() {
     const { statusBar, quickInputWrapper, randomBtn, randomWrap, listBtn, quickInput, generateBtn, customTextarea, buttonsWrapper, saveBtn, toggleSwitch, localTab, externalTab, skillSelector, populateSkillSelector, actionRow, autoGenerateCheckbox, thinkingDepthSelect, attachedImages, addImageFile, clearImages, attachBtn, imageChipsRow, setAttachedChangeListener } = createStatusBars();
-    const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar } = createOverlayWithSearch();
+    const { overlay: presetListOverlay, body: presetListBody, searchBar: presetSearchBar, tabBar: presetTabBar } = createOverlayWithSearch();
     const { modal: presetNameInput, aiStatus, label, field: inputField, tagsLabel, tagsContainer, selectedTags, okBtn: inputOk, recipeOkBtn: inputRecipeOk, cancelBtn: inputCancel, recipeHint, saveResultsRow: recipeResultsRow, saveResultsCheck: recipeResultsCheck } = createInputModal();
     const { modal: deleteConfirmOverlay, textDiv: deleteText, okBtn: deleteOk, cancelBtn: deleteCancel } = createDeleteModal();
 
@@ -255,6 +288,10 @@ function createPromptManagerUI() {
         if (presetListOverlay.style.display !== "flex") return;
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         const target = e.target;
+        // 便签按钮：Enter/空格交给按钮自身的 click，不当作「激活当前行」；
+        // 仅方向键与 Esc 仍交给列表导航
+        if (target.closest?.(".rs-preset-tabs")
+            && e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Escape") return;
         // 浮层内的输入控件（搜索框）允许普通字符编辑；
         // 只在方向键/Home/End/PageUp/PageDown/Enter/Esc/← 时才切换列表焦点
         const inSearch = target === presetSearchBar;
@@ -384,6 +421,22 @@ function createPromptManagerUI() {
     let context = null;
     let isLoading = false;
     let isListOpen = false;
+
+    // 过滤便签（图像 / 视频 / 配方）：默认「图像」，选择持久化在 localStorage
+    let filterTab = loadFilterTab();
+
+    function renderFilterTabs() {
+        presetTabBar.innerHTML = "";
+        FILTER_TABS.forEach(({ key, label }) => {
+            const tab = mkEl("button", "rs-preset-tab");
+            tab.type = "button";
+            tab.textContent = label;
+            tab.dataset.key = key;
+            if (key === filterTab) tab.classList.add("rs-preset-tab-active");
+            presetTabBar.appendChild(tab);
+        });
+    }
+    renderFilterTabs();
 
     // 图片增删即时推送暂存（按节点 id）：使 @引用/本地上传图不依赖点击生成即进入 bundle.references
     function pushBundleRefs(nodeId, images) {
@@ -536,7 +589,10 @@ function createPromptManagerUI() {
                 }));
                 const merged = [...list, ...recipeItems];
 
-                if (!merged.length) {
+                // 按当前便签分类过滤：图像 / 视频 / 配方
+                const filtered = merged.filter(item => matchFilterTab(item, filterTab));
+
+                if (!filtered.length) {
                     presetListBody.textContent = "No presets found";
                     isLoading = false;
                     return;
@@ -547,9 +603,9 @@ function createPromptManagerUI() {
                 const isCollection = item => isCollectionName(typeof item === 'string' ? item : item.name);
                 const byMtime = (a, b) => (b._mtime || 0) - (a._mtime || 0);
                 const ordered = [
-                    ...merged.filter(isCollection),
-                    ...merged.filter(item => !isCollection(item) && item.source !== "presets").sort(byMtime),
-                    ...merged.filter(item => !isCollection(item) && item.source === "presets").sort(byMtime),
+                    ...filtered.filter(isCollection),
+                    ...filtered.filter(item => !isCollection(item) && item.source !== "presets").sort(byMtime),
+                    ...filtered.filter(item => !isCollection(item) && item.source === "presets").sort(byMtime),
                 ];
 
                 // 配方行悬停浮出预览图：showPresetPreview / hidePresetPreview 由外层 createPromptManagerUI 提供。
@@ -815,6 +871,18 @@ function createPromptManagerUI() {
             e.stopPropagation();
             handleSaveClick();
         }, true);
+
+        // 过滤便签：切换后回到文件级列表并按新分类重载（集合视图与搜索词一并清空）
+        presetTabBar.addEventListener("click", (e) => {
+            const tab = e.target.closest(".rs-preset-tab");
+            if (!tab || tab.dataset.key === filterTab) return;
+            filterTab = tab.dataset.key;
+            saveFilterTab(filterTab);
+            renderFilterTabs();
+            presetSearchBar.value = "";
+            clearCollectionViewState();
+            loadPresetDropdown();
+        });
 
         // Preset list search bar - 文件级列表本地过滤；集合视图改为服务端标题检索（防抖）
         presetSearchBar.addEventListener("input", () => {

@@ -159,6 +159,10 @@ body
   div.rs-combo-list <display=none>
   div.rs-preset-list-overlay
     input.rs-preset-search-input <type=text placeholder=🔍 Search presets...>
+    div.rs-preset-tabs
+      button.rs-preset-tab.rs-preset-tab-active <type=button> "图像"
+      button.rs-preset-tab <type=button> "视频"
+      button.rs-preset-tab <type=button> "配方"
     div.rs-preset-list-body
   div.rs-preset-name-input
     div.rs-ai-status.processing "⏳ AI 正在分析提示词..."

@@ -130,6 +130,38 @@
     border-bottom-color: #5090cc;
 }
 
+/* Filter tabs under the preset list search input (image / video / recipe) */
+.rs-preset-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #3a5a7a;
+}
+
+.rs-preset-tab {
+    flex: 1;
+    padding: 4px 0;
+    font-size: 11px;
+    border: 1px solid #444;
+    background: #1a1a1a;
+    color: #888;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.rs-preset-tab:hover {
+    border-color: #5090cc;
+    background: #333;
+    color: #ccc;
+}
+
+.rs-preset-tab.rs-preset-tab-active {
+    background: #5090cc;
+    border-color: #5090cc;
+    color: #fff;
+    font-weight: 600;
+}
+
 .rs-preset-list-body {
     max-height: 40vh;
     overflow-y: auto;
