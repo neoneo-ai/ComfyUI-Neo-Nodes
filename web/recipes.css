@@ -354,7 +354,7 @@
 .neo-recipes-detail {
     position: fixed;
     inset: 0;
-    z-index: 10000;
+    z-index: 9000;
     background: rgba(0, 0, 0, 0.55);
     display: flex;
     align-items: center;
@@ -593,7 +593,7 @@
 .neo-director-overlay {
     position: fixed;
     inset: 0;
-    z-index: 2147483000;
+    z-index: 9700;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -747,12 +747,12 @@
     color: #fff;
 }
 
-/* LLM 配置弹窗：标题栏 🤖 打开，居中模态。z-index 高于编辑器浮层（2147483000），
-   低于 combo 下拉最大值（2147483647）与技能选择窗（2147483646）：弹窗内模型/LoRA 下拉须可见。 */
+/* LLM 配置弹窗：标题栏 🤖 打开，居中模态。z-index 高于编辑器浮层（9700），
+   低于 combo 下拉（9847）与技能选择窗（9846）：弹窗内模型/LoRA 下拉须可见。 */
 .neo-director-llm-overlay {
     position: fixed;
     inset: 0;
-    z-index: 2147483644;
+    z-index: 9844;
     display: flex;
     align-items: center;
     justify-content: center;

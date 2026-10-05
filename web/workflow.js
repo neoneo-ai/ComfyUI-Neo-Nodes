@@ -367,7 +367,7 @@ export function showRepairConfirmDialog(changes, opts = {}) {
         if (existing) existing.remove();
         const overlay = document.createElement('div');
         overlay.className = 'neo-repair-dialog';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;display:flex;align-items:center;justify-content:center;';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9001;display:flex;align-items:center;justify-content:center;';
         const box = document.createElement('div');
         box.style.cssText = 'background:#1e1e1e;color:#ddd;border-radius:8px;padding:16px 20px;width:900px;max-width:90vw;max-height:70vh;display:flex;flex-direction:column;gap:8px;font-size:13px;';
         const close = (result) => {
@@ -772,7 +772,7 @@ export function showRepairLogDialog() {
     if (existing) existing.remove();
     const overlay = document.createElement('div');
     overlay.className = 'neo-repair-log-dialog';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;display:flex;align-items:center;justify-content:center;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9001;display:flex;align-items:center;justify-content:center;';
     const box = document.createElement('div');
     box.style.cssText = 'background:#1e1e1e;color:#ddd;border-radius:8px;padding:16px 20px;width:1080px;max-width:92vw;max-height:75vh;display:flex;flex-direction:column;gap:10px;font-size:13px;';
     const close = () => {
@@ -859,7 +859,7 @@ export async function showRepairMappingsDialog() {
 
     const overlay = document.createElement('div');
     overlay.className = 'neo-repair-mappings-dialog';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;display:flex;align-items:center;justify-content:center;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9001;display:flex;align-items:center;justify-content:center;';
     const box = document.createElement('div');
     box.style.cssText = 'background:#1e1e1e;color:#ddd;border-radius:8px;padding:16px 20px;width:820px;max-width:90vw;max-height:70vh;display:flex;flex-direction:column;gap:10px;font-size:13px;';
     const close = () => {

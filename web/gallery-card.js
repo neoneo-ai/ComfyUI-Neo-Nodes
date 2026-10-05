@@ -108,7 +108,7 @@ export class GalleryCard {
         const rect = button.getBoundingClientRect();
         dropdown.style.position = 'fixed';
         dropdown.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
-        dropdown.style.zIndex = '10001';
+        dropdown.style.zIndex = '9001';
         document.body.appendChild(dropdown);
         requestAnimationFrame(() => {
             dropdown.style.top = (rect.top - dropdown.offsetHeight - 8) + 'px';

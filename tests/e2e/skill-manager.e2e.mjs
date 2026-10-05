@@ -302,3 +302,61 @@ test("内嵌工作流编辑：widget 数值弹窗贴着鼠标落点（125% 缩�
     }
 });
 
+
+test("内嵌工作流编辑：combo 下拉浮在技能弹窗之上并可点选（125% 缩放）", async (t) => {
+    if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
+    const { page, errors } = await openManagerPage(1.25);
+    const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
+    if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
+    try {
+        await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
+        await page.waitForSelector(".rs-skill-workflow .rs-content-mode-btn", { timeout: 20000 });
+        await page.click(".rs-skill-workflow-head .rs-form-label");
+        await page.locator(".rs-skill-workflow .rs-content-mode-btn", { hasText: "编辑" }).click();
+        await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
+        await page.waitForTimeout(1200);
+
+        const target = await page.evaluate(() => {
+            const c = document.querySelector("canvas.rs-wf-editor-canvas");
+            const inst = c.data;
+            const cr = c.getBoundingClientRect();
+            for (const n of inst.graph._nodes) {
+                for (const w of n.widgets || []) {
+                    if (w.type !== "combo") continue;
+                    const x = (n.pos[0] + 60 + inst.ds.offset[0]) * inst.ds.scale + cr.left;
+                    const y = (n.pos[1] + (w.y ?? w.last_y) + inst.ds.offset[1]) * inst.ds.scale + cr.top;
+                    if (x < cr.left + 8 || x > cr.right - 8 || y < cr.top + 8 || y > cr.bottom - 8) continue;
+                    return { name: w.name, x, y };
+                }
+            }
+            return null;
+        });
+        assert.ok(target, "画布上应有可视的 combo widget");
+
+        await page.mouse.click(target.x, target.y);
+        await page.waitForSelector(".litecontextmenu", { timeout: 5000 });
+        const menu = await page.evaluate(() => {
+            const el = document.querySelector(".litecontextmenu");
+            const r = el.getBoundingClientRect();
+            const overlay = document.querySelector(".rs-skill-manager-overlay");
+            const top = document.elementFromPoint(r.x + Math.min(40, r.width / 2), r.y + Math.min(16, r.height / 2));
+            return {
+                z: Number(getComputedStyle(el).zIndex),
+                overlayZ: Number(getComputedStyle(overlay).zIndex),
+                items: el.querySelectorAll(".litemenu-entry").length,
+                inViewport: r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+                hitInMenu: !!top && el.contains(top),
+                hit: top ? top.tagName + "." + (top.className || "") : null,
+            };
+        });
+        assert.ok(menu.items > 0, "combo 下拉应有条目");
+        assert.ok(menu.inViewport, `下拉应完整落在视口内，实际 ${JSON.stringify(menu)}`);
+        assert.ok(menu.z > menu.overlayZ, `LiteGraph 弹层应高于技能弹窗：${menu.z} vs ${menu.overlayZ}`);
+        assert.ok(menu.hitInMenu, `落点应命中下拉自身而非技能弹窗，实际 ${menu.hit}`);
+        await page.screenshot({ path: "tmp/skill-wf-combo-menu.png" });
+        assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
+    } finally {
+        await page.close();
+    }
+});
+

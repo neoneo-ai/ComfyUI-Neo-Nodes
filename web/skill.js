@@ -1498,6 +1498,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
             const rect = canvasEl.getBoundingClientRect();
             dlg.style.left = `${(event ? event.clientX : rect.left + rect.width / 2) - 20}px`;
             dlg.style.top = `${(event ? event.clientY : rect.top + rect.height / 2) - 20}px`;
+            dlg.style.zIndex = "10000";   // .graphdialog 基础层只有 1000，会被技能弹窗（9846）盖住
             return r;
         };
         wfBoxResize.observe(wfCanvasBox);

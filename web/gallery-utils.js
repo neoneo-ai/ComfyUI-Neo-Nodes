@@ -410,7 +410,7 @@ export function showInlineFeedback(button, message, type) {
     feedback.style.top = (top - 32) + 'px';
     feedback.style.left = left + 'px';
     feedback.style.transform = 'translateX(-50%)';
-    feedback.style.zIndex = '2147483646';
+    feedback.style.zIndex = '9846';
     feedback.style.pointerEvents = 'none';
 
     setTimeout(() => {

@@ -1481,7 +1481,7 @@ Accordion Section Buttons (Clear)
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 2147483645;
+    z-index: 9845;
 }
 
 .neo-gallery-dir-modal {
@@ -2129,7 +2129,7 @@ Accordion Section Buttons (Clear)
 
 .neo-gallery-collect-menu {
     position: fixed;
-    z-index: 10000;
+    z-index: 9000;
     min-width: 200px;
     max-width: 320px;
     background: rgba(24, 26, 32, 0.98);
@@ -2273,7 +2273,7 @@ Accordion Section Buttons (Clear)
     left: 0;
     width: 100vw;
     height: 100vh;
-    z-index: 2147483645;
+    z-index: 9845;
     display: flex;
     align-items: center;
     justify-content: center;

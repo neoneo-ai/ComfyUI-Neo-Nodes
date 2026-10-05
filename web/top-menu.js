@@ -201,7 +201,7 @@ function showAboutDialog() {
     if (existing) existing.remove();
     const overlay = document.createElement("div");
     overlay.className = "neo-n-about-dialog";
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10003;display:flex;align-items:center;justify-content:center;";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9003;display:flex;align-items:center;justify-content:center;";
     const box = document.createElement("div");
     box.style.cssText = "background:#1e1e1e;color:#ddd;border-radius:8px;padding:16px 20px;width:480px;max-width:92vw;display:flex;flex-direction:column;gap:10px;font-size:13px;";
     const close = () => {
@@ -475,13 +475,13 @@ app.registerExtension({
                 // 修复红点提示（workflow.js setRepairHint 驱动）：红框 + 右上角红点
                 ".neo-n-menu-btn.neo-repair-hint{border-color:var(--error-red,#f87171);box-shadow:0 0 0 1px rgba(248,113,113,.3);}" +
                 ".neo-n-menu-btn.neo-repair-hint::after{content:\"\";position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--error-red,#f87171);box-shadow:0 0 0 2px rgba(0,0,0,.25);}" +
-                ".neo-n-menu{position:fixed;z-index:10002;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;padding:6px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.5);}" +
+                ".neo-n-menu{position:fixed;z-index:9002;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;padding:6px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.5);}" +
                 ".neo-n-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border:none;background:transparent;color:#ddd;font-size:13px;text-align:left;border-radius:6px;cursor:pointer;}" +
                 ".neo-n-menu-item:hover{background:#2a2a2a;color:#fff;}" +
                 ".neo-n-caret{margin-left:auto;font-size:10px;color:#888;transition:transform .15s;}" +
                 ".neo-n-node-row.open .neo-n-caret{transform:rotate(90deg);}" +
                 // 飞出式二级菜单：fixed 脱离父菜单，贴「创建节点」行右侧弹出（定位在 JS 里算）
-                ".neo-n-submenu{position:fixed;z-index:10003;min-width:250px;padding:6px;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);}" +
+                ".neo-n-submenu{position:fixed;z-index:9003;min-width:250px;padding:6px;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);}" +
                 ".neo-n-menu-sep{height:1px;background:#3a3a3a;margin:5px 8px;}";
             document.head.appendChild(style);
         }

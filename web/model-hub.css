@@ -1,5 +1,5 @@
 /* model-hub.css — 模型库弹窗（Comfy-Org 专区 · HF / ModelScope 双源下载） */
-.neo-hub-overlay{position:fixed;inset:0;z-index:10003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}
+.neo-hub-overlay{position:fixed;inset:0;z-index:9003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}
 .neo-hub-box{width:min(880px,94vw);max-height:88vh;overflow:auto;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px rgba(0,0,0,.6);color:#ddd;font-size:13px;}
 .neo-hub-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
 .neo-hub-title{font-size:14px;font-weight:600;margin-right:auto;}

@@ -66,14 +66,15 @@ export function attachComboBox(selectEl, opts = {}) {
     inputEl.style.paddingRight = "24px"; // 右缘常显 caret 预留位
 
     // 列表挂在 body 上用 fixed 定位：不被弹窗 overflow 裁剪，下方空间不足时自动向上翻。
-    // z-index 取最大值：高于 .rs-skill-modal-overlay（2147483646），技能详情等弹窗内打开的列表不被盖住。
+    // z-index 高于 .rs-skill-modal-overlay（9846），技能详情等弹窗内打开的列表不被盖住；
+    // 整条 Neo 阶梯都压在 LiteGraph 弹层（9999）之下，内嵌画布的 combo 弹窗才浮得住。
     // opts.footerEl 存在时改为 flex 列布局（滚动区 itemsHost + 固定底部工具栏），否则保持原样
     // （整个 listEl 自身滚动）——模型下拉等未传 footer 的既有行为完全不变。
     const hasFooter = !!opts.footerEl;
     const listOpenDisplay = hasFooter ? "flex" : "block";
     const listEl = el("div", "rs-combo-list", hasFooter
-        ? "position:fixed;display:none;max-height:400px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
-        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:2147483647;box-shadow:0 4px 12px rgba(0,0,0,.5);");
+        ? "position:fixed;display:none;max-height:400px;overflow:hidden;background:#222;border:1px solid #555;border-radius:4px;z-index:9847;box-shadow:0 4px 12px rgba(0,0,0,.5);flex-direction:column;"
+        : "position:fixed;display:none;max-height:220px;overflow-y:auto;background:#222;border:1px solid #555;border-radius:4px;z-index:9847;box-shadow:0 4px 12px rgba(0,0,0,.5);");
     document.body.appendChild(listEl);
 
     // 行容器：有 footer 时为内部滚动区，无 footer 时即 listEl 自身（保持既有行为）

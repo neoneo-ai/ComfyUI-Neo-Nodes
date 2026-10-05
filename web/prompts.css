@@ -47,7 +47,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    z-index: 9000;
     border-radius: 8px;
 }
 
@@ -70,7 +70,7 @@
     background: #2a2a2a;
     border: 1px solid #5090cc;
     border-radius: 8px;
-    z-index: 100000;
+    z-index: 9300;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
     width: 400px;
     max-width: 500px;
@@ -270,7 +270,7 @@
 /* 配方行悬停浮出预览图 */
 .rs-preset-preview-pop {
     position: fixed;
-    z-index: 10000;
+    z-index: 9000;
     max-width: 240px;
     max-height: 240px;
     padding: 4px;
@@ -429,7 +429,7 @@
     padding: 10px;
     border: 1px solid #5090cc;
     border-radius: 6px;
-    z-index: 100001; /* 高于 presets list (100000)，确认框需盖在列表上 */
+    z-index: 9301; /* 高于 presets list (9000)，确认框需盖在列表上 */
     width: 220px;
     text-align: center;
 }
@@ -1042,7 +1042,7 @@
     background: #2a2a2a;
     border: 1px solid #5090cc;
     border-radius: 8px;
-    z-index: 10000;
+    z-index: 9000;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.9);
     width: 320px;
     overflow: hidden;
@@ -1195,7 +1195,7 @@
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.6);
-    z-index: 99998;
+    z-index: 9200;
     display: none;
     /* 确保遮罩层捕获所有点击事件，防止穿透到下方元素 */
     pointer-events: auto !important;
@@ -2318,7 +2318,7 @@
 /* 悬停缩略图时的放大预览 */
 .rs-image-hover-preview {
     position: fixed;
-    z-index: 999999;
+    z-index: 9600;
     max-width: 320px;
     max-height: 320px;
     object-fit: contain;
@@ -2392,7 +2392,7 @@
     background: #222;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
-    z-index: 120000;
+    z-index: 9500;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
@@ -2528,7 +2528,7 @@
     background: #222;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
-    z-index: 20000;
+    z-index: 9100;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
@@ -2607,7 +2607,7 @@
 .rs-runtime-menu {
     display: none;
     position: fixed;
-    z-index: 110000;
+    z-index: 9400;
     background: #2a2a2a;
     border: 1px solid #5090cc;
     border-radius: 6px;
@@ -2953,7 +2953,7 @@
 .neo-skill-status-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .neo-skill-status-open { flex: 0 0 auto; cursor: pointer; border: 1px solid #f87171; background: transparent; color: #fca5a5; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
 .neo-skill-status-open:hover { background: #4a262e; color: #fff; }
-.rs-repair-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 2147483647; display: flex; align-items: center; justify-content: center; }
+.rs-repair-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 9847; display: flex; align-items: center; justify-content: center; }
 .rs-repair-box { width: 540px; max-width: 92vw; max-height: 72vh; background: #1b1b1f; border: 1px solid #444; border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); }
 .rs-repair-head { padding: 10px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }
 .rs-repair-close { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 2px 6px; }
@@ -3160,9 +3160,11 @@
     align-items: center;
     justify-content: center;
     background: rgba(0, 0, 0, 0.55);
-    /* 高于 .neo-director-overlay（2147483000）与画廊灯箱（2147483645）：从导演编辑器内打开技能选择窗时必须盖在面板之上；
-       低于 combo 列表最大值（2147483647）：弹窗内打开的模型/LoRA 下拉必须可见 */
-    z-index: 2147483646;
+    /* 高于 .neo-director-overlay（9700）与画廊灯箱（9845）：从导演编辑器内打开技能选择窗时必须盖在面板之上；
+       低于 combo 列表（9847）：弹窗内打开的模型/LoRA 下拉必须可见。
+       整条 Neo 阶梯压在 LiteGraph 弹层（.litecontextmenu = 9999）之下，内嵌 LiteGraph 画布的
+       combo / 文件选择弹窗才能浮在技能弹窗之上 */
+    z-index: 9846;
 }
 /* 锚定浮层模式：去掉遮罩，仅保留点击外部关闭的透明层（面板由 JS 定位到控件附近） */
 .rs-skill-modal-overlay.rs-skill-picker--anchored { background: transparent; }
@@ -3644,7 +3646,7 @@ body.rs-skill-resizing { cursor: col-resize; user-select: none; }
 }
 .rs-skill-picker-preview:hover { border-color: #5090cc; }
 /* agent 技能下拉的预览卡挂 body（fixed），与 combo 列表同层叠、不被弹窗裁剪 */
-.rs-skill-picker-preview--fixed { position: fixed; z-index: 2147483647; }
+.rs-skill-picker-preview--fixed { position: fixed; z-index: 9847; }
 .rs-skill-preview-name {
     font-size: 12px;
     font-weight: 600;
@@ -3724,7 +3726,7 @@ body.rs-skill-resizing { cursor: col-resize; user-select: none; }
 /* runtime-random pick feedback bubble (transient) */
 .rs-random-pick-toast {
     position: fixed;
-    z-index: 120000;
+    z-index: 9500;
     background: #2a2a2a;
     border: 1px solid #5090cc;
     color: #ddd;
@@ -3802,8 +3804,8 @@ body.rs-skill-resizing { cursor: col-resize; user-select: none; }
     right: 16px;
     /* 顶部菜单（工作流标签行）+ 工具栏（运行/活动任务行）下方 */
     top: 108px;
-    /* 取最大层：需盖住所有弹窗遮罩（九宫格/角色图小窗等 dim，z-index: 2147483645），否则被遮罩压暗看不见 */
-    z-index: 2147483647;
+    /* 取最大层：需盖住所有弹窗遮罩（九宫格/角色图小窗等 dim，z-index: 9845），否则被遮罩压暗看不见 */
+    z-index: 9847;
     display: flex;
     flex-direction: column;
     gap: 8px;
