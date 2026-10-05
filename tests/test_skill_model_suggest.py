@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # ComfyUI-Neo-Nodes - skill config 失效模型路径建议单元测试
 # 覆盖：可解析字段判 ok / 失效字段给出候选与置信度 / 歧义不给 suggestion / LoRA 失效上报 / 空值跳过
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import os
 import sys
 import types
@@ -111,3 +115,5 @@ class TestSuggestSkillModelFixes(_SuggestTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)

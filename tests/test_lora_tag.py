@@ -293,6 +293,16 @@ class RouteTests(unittest.TestCase):
         self.assertIn("[ERROR]", text)
 
 
+if _prev_server is None:
+    sys.modules.pop("server", None)
+else:
+    sys.modules["server"] = _prev_server
+if _prev_folder_paths is None:
+    sys.modules.pop("folder_paths", None)
+else:
+    sys.modules["folder_paths"] = _prev_folder_paths
+
+
 if __name__ == "__main__":
     unittest.main()
 

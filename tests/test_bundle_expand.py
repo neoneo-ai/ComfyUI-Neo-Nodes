@@ -5,6 +5,10 @@
 复用 prompts._read_image_raw 解析 data URI 参考图，验证接口形状、prompt 回退、
 参考图还原成 IMAGE 张量、无参考图/无效 bundle 的降级行为。"""
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import base64
 import importlib.util
 import io as _io
@@ -206,3 +210,5 @@ class NeoBundleExpandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

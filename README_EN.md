@@ -17,6 +17,7 @@ A ComfyUI custom node pack for prompt management, AI-enhanced prompting (with re
 | Bookmarks | Asset panel | Local bookmarks (path-based) + Civitai bookmarks (download-on-open). |
 | Neo Recipes | Sidebar | Recipe (prompt + media assets) management with one-click send to workflow. |
 | Workflow Repair | Menu item | One-click fix for broken model paths after moving machines or changing directories. |
+| Model Hub | Menu item | Search Comfy-Org repos on ModelScope / Hugging Face and download models into the right model folders, with resumable downloads. |
 
 ## Installation
 
@@ -65,6 +66,7 @@ A canvas-independent page at `http://127.0.0.1:8188/neo-studio` (or run `neo-stu
 | [docs/recipes.md](docs/recipes.md) | Recipe management, one-click send, director recipes |
 | [docs/gallery.md](docs/gallery.md) | Gallery browser, lightbox, file management, bookmarks |
 | [docs/workflow-repair.md](docs/workflow-repair.md) | Workflow model path repair |
+| [docs/model-hub.md](docs/model-hub.md) | Model Hub: dual-source repo search, category placement, resumable downloads |
 
 ## License
 

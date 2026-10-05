@@ -4,6 +4,10 @@
 不依赖 ComfyUI 运行中的服务器：folder_paths / comfy_extras 用桩模块替换。
 """
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import importlib.util
 import os
 import sys
@@ -87,6 +91,9 @@ class TestSam3SegmentPoints(unittest.TestCase):
     def _stub_detect(self, mask):
         """注入桩 comfy_extras.nodes_sam3，execute 返回给定 union mask；返回调用记录。"""
         calls = []
+        self._saved_comfy = {n: sys.modules.get(n) for n in
+                             ("comfy", "comfy.utils", "comfy_extras", "comfy_extras.nodes_sam3")}
+        self._saved_comfy_utils = getattr(sys.modules.get("comfy"), "utils", None)
         fake = types.ModuleType("comfy_extras")
         fake_nodes = types.ModuleType("comfy_extras.nodes_sam3")
 
@@ -112,6 +119,17 @@ class TestSam3SegmentPoints(unittest.TestCase):
             sys.modules["comfy"].utils = _comfy_utils
         return calls
 
+    def _restore_comfy(self):
+        """归还 _stub_detect 换掉的 comfy / comfy_extras 模块，真实模块不能被 pop 掉。"""
+        for name, mod in self._saved_comfy.items():
+            if mod is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = mod
+        comfy = sys.modules.get("comfy")
+        if comfy is not None and self._saved_comfy_utils is not None:
+            comfy.utils = self._saved_comfy_utils
+
     def test_segment_saves_binary_mask(self):
         import json
         import torch
@@ -124,10 +142,7 @@ class TestSam3SegmentPoints(unittest.TestCase):
         try:
             name = sam3_seg.segment_points("scene.png", [{"x": 15, "y": 15}])
         finally:
-            sys.modules.pop("comfy_extras", None)
-            sys.modules.pop("comfy_extras.nodes_sam3", None)
-            sys.modules.pop("comfy", None)
-            sys.modules.pop("comfy.utils", None)
+            self._restore_comfy()
         self.assertTrue(name.startswith("NeoAgent/_neo_sam3_mask_"))
         full = os.path.join(_INPUT_DIR, *name.split("/"))
         self.assertTrue(os.path.isfile(full))
@@ -159,10 +174,7 @@ class TestSam3SegmentPoints(unittest.TestCase):
         try:
             name = sam3_seg.segment_points("scene_1024.png", [{"x": 512, "y": 512}])
         finally:
-            sys.modules.pop("comfy_extras", None)
-            sys.modules.pop("comfy_extras.nodes_sam3", None)
-            sys.modules.pop("comfy", None)
-            sys.modules.pop("comfy.utils", None)
+            self._restore_comfy()
         full = os.path.join(_INPUT_DIR, *name.split("/"))
         from PIL import Image
         with Image.open(full) as m:
@@ -189,11 +201,10 @@ class TestSam3SegmentPoints(unittest.TestCase):
                 sam3_seg.segment_points("empty.png", [{"x": 5, "y": 5}])
             self.assertIn("检测到物体", str(ctx.exception))
         finally:
-            sys.modules.pop("comfy_extras", None)
-            sys.modules.pop("comfy_extras.nodes_sam3", None)
-            sys.modules.pop("comfy", None)
-            sys.modules.pop("comfy.utils", None)
+            self._restore_comfy()
 
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

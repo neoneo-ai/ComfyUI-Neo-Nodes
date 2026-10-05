@@ -5,6 +5,10 @@
 data URI / input 文件名解析、取出即删、节点 id 类型归一化、与连线张量合并后的上限裁剪。
 桩模块复用 test_bundles.py 的方式（server/comfy/folder_paths/nodes 用假模块替换）。"""
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import base64
 import importlib.util
 import io
@@ -234,3 +238,5 @@ class BundleRefsMergeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

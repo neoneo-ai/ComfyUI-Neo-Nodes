@@ -4,6 +4,10 @@
 不依赖 ComfyUI 运行中的服务器与真实模型：server/comfy/folder_paths/nodes 用桩模块替换，
 comfy_api（V3 io）从 ComfyUI 根目录真实导入，mini-executor 用注入的纯张量假节点验证执行逻辑。"""
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import asyncio
 import base64
 import importlib.util
@@ -642,3 +646,5 @@ class SkillDimsRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

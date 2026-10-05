@@ -1,0 +1,9 @@
+{
+  "source": "modelscope",
+  "hf_endpoint": "https://huggingface.co",
+  "hf_token": "",
+  "ms_token": "",
+  "llm_subdir": "LLM",
+  "timeout_total": 3600,
+  "sock_read": 180
+}

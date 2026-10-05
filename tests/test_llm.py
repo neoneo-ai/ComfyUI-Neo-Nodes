@@ -2,6 +2,10 @@
 # ComfyUI-Neo-Nodes - LLM Unit Tests
 # 测试模型下载、配置加载等功能
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import os
 import sys
 import json
@@ -1436,3 +1440,5 @@ class TestLocalServiceModels(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)

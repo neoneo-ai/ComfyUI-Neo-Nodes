@@ -16,6 +16,7 @@ import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkfl
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
+import { openModelHub } from "./model-hub.js";
 
 // ==========================================
 // Skill API
@@ -952,6 +953,9 @@ function createSkillDetailPopup(host, canvasBtns = true) {
 
     // ---- 失效模型路径修复：检测 config 里失效字段，弹窗批量套用候选后回填设置区 ----
     const REPAIR_FIELD_LABELS = { model: "主模型", text_encoder: "Text Encoder", vae: "VAE", audio_vae: "音频 VAE" };
+    // 修复项 → 模型库落盘类别；失效文件名去目录与扩展名后作为模型库搜索词
+    const REPAIR_FIELD_CATEGORY = { model: "diffusion_models", text_encoder: "text_encoders", vae: "vae", audio_vae: "audio_vae", lora: "loras" };
+    const repairHubQuery = (value) => String(value || "").split(/[\\/]/).pop().replace(/\.(safetensors|bin|pth|pt|ckpt|gguf|onnx|npz)$/i, "");
 
     // 「修复失效路径」应用后重渲染工作流图：用当前设置区值重新预渲染模板并重新校验，清掉已修好的红框（复用已加载的原始模板，不重新拉 workflow.json）
     async function refreshWorkflowGraph() {
@@ -1125,6 +1129,20 @@ function createSkillDetailPopup(host, canvasBtns = true) {
             }
             if (r.suggestion) sel.value = r.suggestion;   // 高置信默认选中推荐项
             row.append(label, cur, sel);
+
+            // 本地缺这个模型 → 直接进模型库搜索下载（预填失效文件名 + 对应落盘类别）
+            const hubBtn = mkEl("button", "rs-repair-hub-btn");
+            hubBtn.type = "button";
+            hubBtn.textContent = "📥 模型库";
+            hubBtn.title = "在模型库（Comfy-Org · Hugging Face / ModelScope）搜索并下载此模型";
+            hubBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                openModelHub({
+                    query: repairHubQuery(r.value),
+                    category: REPAIR_FIELD_CATEGORY[r.kind === "lora" ? "lora" : r.key] || "",
+                });
+            });
+            row.appendChild(hubBtn);
 
             // LoRA 无本地候选时，提供 C站搜索下载按钮
             if (r.kind === "lora" && !r.suggestion && !(r.candidates && r.candidates.length)) {

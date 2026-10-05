@@ -6,6 +6,10 @@ gallery._generate_thumbnail，以及 size 参数钳制到 [32, 1024]。server/fo
 gallery/bookmark/gallery_lora/util 用桩模块替换，RECIPES_DIR/CUSTOM_DIR/PRESETS_DIR/
 THUMB_DIR 指向临时目录。"""
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import asyncio
 import json
 import logging
@@ -207,3 +211,5 @@ class ThumbnailRoutesTests(StubFolderPathsMixin, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)

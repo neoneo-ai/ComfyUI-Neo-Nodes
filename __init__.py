@@ -115,6 +115,14 @@ if __package__ not in (None, ""):
     except Exception as e:
         print(f"[NeoNodes] backyard 路由注册失败（Backyard 管理不可用）: {e}")
 
+    # 模型库（Comfy-Org 专区，HF / ModelScope 双源）：/neo_model_hub/* 路由（搜索 / 文件清单 / 断点续传下载）。
+    # 纯路由模块，无节点；配置 configs/model_hub.json，策展注册表 configs/model_registry.json。
+    try:
+        from . import model_hub  # noqa: F401
+    except Exception as e:
+        print(f"[Neo Model Hub] 模型库路由注册失败（模型搜索下载不可用）: {e}")
+
+
     # Neo Grid Split：宫格图拆分节点，一张分镜宫格图 → 各格 IMAGE（行优先）+ 原图内嵌提示词。
     # 复用 grid_split.py 纯像素核心；导入失败时优雅降级。
     GRID_SPLIT_MAPPINGS = {}

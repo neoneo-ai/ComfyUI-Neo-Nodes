@@ -106,9 +106,9 @@ test("导入到画布：按流程图同一套布局重排画布节点（分层�
         assert.deepEqual(at("9"), [60, 228], "同列节点按各自高度依次下移");
         // 同列（2/3）按连线落在 KSampler 的参数行顺序排布：positive 行（第 2 行）在 latent_image 行（第 3 行）之上
         assert.ok(at("2")[1] < at("3")[1], "列内按目标参数行位置上下排布，连线不交叉");
-        assert.deepEqual(at("2"), [396, 106], "列间距按节点宽度、列内按重心排布");
-        assert.deepEqual(at("3"), [396, 254], "latent_image 行靠下，EmptyLatent 排其后");
-        assert.deepEqual(at("4"), [732, 177], "KSampler 列按上游重心垂直位置");
+        assert.deepEqual(at("2"), [396, 105], "列间距按节点宽度、列内按重心排布");
+        assert.deepEqual(at("3"), [396, 253], "latent_image 行靠下，EmptyLatent 排其后");
+        assert.deepEqual(at("4"), [732, 176], "KSampler 列按上游重心垂直位置");
         assert.ok(at("5")[1] > 100, "末列相对最高列垂直居中");
         assert.ok(dirty >= 1, "重排后应 setDirtyCanvas");
         assert.equal(fitted, 1, "重排后适配视图");

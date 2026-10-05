@@ -4,6 +4,10 @@
 不依赖 ComfyUI 运行中的服务器与真实模型：server/comfy/folder_paths/nodes 用桩模块替换（同 test_bundle_expand）；
 验证接口形状、宫格按槽位还原（坏文件保位空缺）、上限 12 裁剪、提示词取节点内 prompt_text。"""
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import importlib.util
 import json
 import os
@@ -130,12 +134,18 @@ class NeoRefGridTests(unittest.TestCase):
     def setUp(self):
         bundles._registry.clear()
         # 临时把目录桩指向本文件的临时目录（其他测试文件运行时不受影响）
+        self._saved_fp = sys.modules.get("folder_paths")
+        sys.modules["folder_paths"] = _folder_paths
         _folder_paths.get_input_directory = lambda: _INPUT_DIR
         _folder_paths.get_output_directory = lambda: _OUTPUT_DIR
 
     def tearDown(self):
         _folder_paths.get_input_directory = _orig_input_dir
         _folder_paths.get_output_directory = _orig_output_dir
+        if self._saved_fp is None:
+            sys.modules.pop("folder_paths", None)
+        else:
+            sys.modules["folder_paths"] = self._saved_fp
 
     def _pack(self, **kw):
         args = {"refs": "", "prompt_text": ""}
@@ -209,3 +219,5 @@ class NeoRefGridTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

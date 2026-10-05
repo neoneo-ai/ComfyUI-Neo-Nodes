@@ -4,6 +4,10 @@
 不依赖 ComfyUI 运行中的服务器：server / folder_paths 用桩模块替换。
 """
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import asyncio
 import base64
 import enum
@@ -1813,3 +1817,5 @@ class SubmitGraphPreviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

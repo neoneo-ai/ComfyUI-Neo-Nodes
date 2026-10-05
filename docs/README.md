@@ -14,6 +14,7 @@
 | [recipes.md](recipes.md) | 配方：保存、发送到工作流、导演配方编辑器 |
 | [gallery.md](gallery.md) | 素材库：浏览、灯箱、文件管理、Civitai LORA、收藏 |
 | [workflow-repair.md](workflow-repair.md) | 工作流模型路径修复 |
+| [model-hub.md](model-hub.md) | 模型库：Comfy-Org 专区双源搜索与断点续传下载 |
 
 ## 开发者文档
 

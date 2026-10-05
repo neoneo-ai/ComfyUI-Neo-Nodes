@@ -196,3 +196,22 @@ Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 
 - `save_skill` 校验名称唯一性（与其它技能重名返回 409）；可选字段缺省沿用 frontmatter 既有值，显式假值移除该字段。
 
 LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [prompts.md](prompts.md)。
+
+## model_hub.py — `/neo_model_hub/*`
+
+模型库（Comfy-Org 专区 · ModelScope / Hugging Face 双源搜索与断点续传下载），细节见 [model-hub.md](model-hub.md)。
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/neo_model_hub/settings` | 设置 + 策展注册表 + 落盘类别 + 可用源 |
+| POST | `/neo_model_hub/settings` | 保存设置（源 / 端点 / Token / LLM 子目录 / 超时，写入前清洗） |
+| POST | `/neo_model_hub/repos` | 仓库列表（双源并集 + 注册表补齐，带 `query` 时叠加跨组织搜索） |
+| POST | `/neo_model_hub/files` | 仓库文件清单（过滤非模型文件，附类别 / 文件名 / 已存在标记） |
+| POST | `/neo_model_hub/download` | 启动下载（单任务，`.part` + HTTP Range 续传） |
+| GET | `/neo_model_hub/progress` | 当前下载快照（进度 / 速度 / 状态） |
+| POST | `/neo_model_hub/cancel` | 取消进行中的下载（保留断点） |
+
+- 仓库列表与文件清单走服务端缓存（15 / 10 分钟），请求带 `refresh: true` 跳过缓存。
+- ModelScope 组织列表与跨组织搜索需 Token；无 Token 时按注册表逐仓库探测存在性（缓存 1 天）。
+- 源侧失败返回带 `code` 的错误：`need_token`（401）、`busy`（409）、`not_on_source`（404，附 `other_source` 建议换源）。
+

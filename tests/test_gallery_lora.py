@@ -4,6 +4,10 @@
 设置里的同步目录名对不上任何 Lora（目录名写错）时不能显示成一直在获取；
 该目录下的 Lora 全部失败时要把真实错误透出给卡片。
 """
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import os
 import sys
 import tempfile
@@ -102,3 +106,5 @@ class PendingSubdirTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)

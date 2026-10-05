@@ -5,6 +5,10 @@
 验证接口形状、自动检测切 3×3=9 格、手动行列、原图 PNG 元信息里「包含的提示词」提取（负向节点剔除）、
 坏文件 / 目录穿越报错。像素核心复用 grid_split.py（其单测见 test_grid_split.py）。"""
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import importlib.util
 import json
 import os
@@ -141,3 +145,5 @@ class NeoGridSplitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)

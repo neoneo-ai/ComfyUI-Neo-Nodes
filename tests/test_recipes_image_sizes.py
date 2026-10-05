@@ -5,6 +5,10 @@ server/folder_paths/gallery/bookmark/gallery_lora/util 用桩模块替换，CUST
 指向临时目录，验证批量读图尺寸：input/ 优先、配方 assets 兜底、越界名与缺失跳过、
 filenames 非数组报错。"""
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import asyncio
 import json
 import logging
@@ -205,3 +209,5 @@ recipes = _load("recipes", "recipes.py")
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)

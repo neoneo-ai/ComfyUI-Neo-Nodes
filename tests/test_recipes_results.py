@@ -7,6 +7,10 @@ gallery/bookmark/gallery_lora/util 用假模块，CUSTOM_DIR/PRESETS_DIR/RECIPES
 指向临时目录，验证 _norm_result / _result_path 的校验、add_results / delete_result
 端点、列表回读过滤、以及重存配方不丢结果。"""
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import asyncio
 import json
 import logging
@@ -325,6 +329,8 @@ class ResultRoutesTests(StubFolderPathsMixin, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)
 
 
 

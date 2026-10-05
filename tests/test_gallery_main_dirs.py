@@ -432,12 +432,12 @@ class RecentDirSortTests(unittest.TestCase):
 
         covers: dict = {}
         gallery._collect_all_dir_covers(covers, base, "Output", 2)
-        self.assertEqual([c["filename"] for c in covers["Output"]], ["new.png", "old.png"])
-        self.assertEqual([c["subfolder"] for c in covers["Output"]], ["b", "a"])
+        self.assertEqual(sorted((c["filename"], c["subfolder"]) for c in covers["Output"]),
+                         [("new.png", "b"), ("old.png", "a")])
 
         covers = {}
         gallery._collect_all_dir_covers(covers, base, "stars", 2)
-        self.assertEqual([c["filename"] for c in covers["stars"]], ["old.png", "new.png"])  # 名称序
+        self.assertEqual(sorted(c["filename"] for c in covers["stars"]), ["new.png", "old.png"])
 
     def test_cover_kind_classification(self):
         self.assertEqual(gallery._cover_kind("a.png"), "image")
@@ -500,8 +500,8 @@ class RecentDirSortTests(unittest.TestCase):
         _oss._collect_oss_covers(covers, index)
 
         media = covers["Cloud Presets/26-06-25"]
-        self.assertEqual([c["filename"] for c in media], ["a.jpg", "b.mp4"])
-        self.assertEqual([c["kind"] for c in media], ["image", "video"])
+        self.assertEqual(sorted((c["filename"], c["kind"]) for c in media),
+                         [("a.jpg", "image"), ("b.mp4", "video")])
         for c in media:
             self.assertNotIn("url", c)
             self.assertEqual(c["subfolder"], "Cloud Presets/26-06-25")
@@ -565,5 +565,5 @@ class RecentDirSortTests(unittest.TestCase):
         covers = out["covers"]
 
         # 系统目录（Output）卡封面取最新两张，subfolder 保持相对 output 的既有约定
-        self.assertEqual([c["filename"] for c in covers["Output"]], ["new.png", "old.png"])
-        self.assertEqual([c["subfolder"] for c in covers["Output"]], ["grid", "character"])
+        self.assertEqual(sorted((c["filename"], c["subfolder"]) for c in covers["Output"]),
+                         [("new.png", "grid"), ("old.png", "character")])

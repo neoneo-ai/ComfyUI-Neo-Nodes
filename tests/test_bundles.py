@@ -5,6 +5,10 @@
 H3 / 生图节点的 resolve/render/execute/load_skill_workflow 用捕获型假函数，
 验证 prompt 回退、references 覆盖、bundle 不携带 skill（本地选择始终生效）这几条流向。"""
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import importlib.util
 import os
 import sys
@@ -240,4 +244,6 @@ class ImageGenEditBundleConsumeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)
 

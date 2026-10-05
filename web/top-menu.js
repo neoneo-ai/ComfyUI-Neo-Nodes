@@ -1,7 +1,7 @@
 /**
  * top-menu.js — 顶栏 🅝 菜单（插件统一入口）
  * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），点击展开下拉菜单：
- *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
+ *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 📥 模型库 / 🧩 创建节点（子菜单，往画布添加各 Neo 节点）
  *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）
  *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录 / ℹ️ 关于插件。
  * 修复红点提示由 workflow.js 的 setRepairHint 驱动，本模块只提供 .neo-n-menu-btn 按钮与样式。
@@ -15,10 +15,11 @@ import { createImageGenSettingsForm, createVideoGenSettingsForm } from "./image-
 import { runRepair, showRepairLogDialog, showRepairMappingsDialog } from "./workflow.js";
 import { openSkillManager } from "./skill.js";
 import { openGenMaterialDialog } from "./gallery-gen.js";
+import { openModelHub } from "./model-hub.js";
 
 const STUDIO_URL = "/neo-studio";
 const REPO_URL = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes";
-const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 生成素材 / 导演 / 建节点 / 设置 / 技能 / 修复 / 关于）";
+const TOOLTIP = "Neo Nodes — 🅝 菜单（Studio / 生成素材 / 导演 / 模型库 / 建节点 / 设置 / 技能 / 修复 / 关于）";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
@@ -279,6 +280,7 @@ function openMenu(anchor) {
     // 生成素材：纯提示词一键出图（与画廊搜索行同一弹窗），app.neoGallery 由 gallery.js setup 挂全局
     menuEl.appendChild(menuItem("🖼️ 生成素材", () => openGenMaterialDialog(app.neoGallery)));
     menuEl.appendChild(menuItem("🎥 新建导演配方", () => openDirectorEditor(null)));
+    menuEl.appendChild(menuItem("📥 模型库", () => openModelHub()));
 
     // 创建节点：手风琴子菜单（点击行展开/收起）
     const nodeRow = document.createElement("button");

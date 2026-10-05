@@ -5,6 +5,10 @@
 不依赖 ComfyUI 运行中的服务器与真实 H3 模型：server/comfy/folder_paths/nodes 用桩模块替换，
 API 节点分支用带 define_schema + classmethod execute（返回 NodeOutput(.args)）的假节点验证。"""
 
+from stub_env import NODE_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(NODE_STUB_PREFIXES)
+
 import base64
 import importlib.util
 import io
@@ -855,3 +859,5 @@ class VdnSkillTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(NODE_STUB_PREFIXES, _STUB_SAVED)

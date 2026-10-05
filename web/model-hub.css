@@ -1,0 +1,36 @@
+/* model-hub.css — 模型库弹窗（Comfy-Org 专区 · HF / ModelScope 双源下载） */
+.neo-hub-overlay{position:fixed;inset:0;z-index:10003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}
+.neo-hub-box{width:min(880px,94vw);max-height:88vh;overflow:auto;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px rgba(0,0,0,.6);color:#ddd;font-size:13px;}
+.neo-hub-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.neo-hub-title{font-size:14px;font-weight:600;margin-right:auto;}
+.neo-hub-src{display:flex;gap:4px;}
+.neo-hub-src-btn{padding:4px 10px;border:1px solid #3a3a3a;border-radius:6px;background:#262626;color:#bbb;cursor:pointer;font-size:12px;}
+.neo-hub-src-btn:hover{background:#2e2e2e;color:#fff;}
+.neo-hub-src-btn.neo-hub-src-active{background:#2b6cb0;border-color:#3b82c4;color:#fff;}
+.neo-hub-icon-btn{width:26px;height:26px;border:1px solid #3a3a3a;border-radius:6px;background:#262626;color:#bbb;cursor:pointer;}
+.neo-hub-icon-btn:hover{background:#2e2e2e;color:#fff;}
+.neo-hub-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+.neo-hub-input{background:#262626;border:1px solid #3a3a3a;border-radius:6px;color:#ddd;padding:5px 8px;font-size:12px;}
+.neo-hub-search{flex:1;min-width:220px;}
+.neo-hub-repo{flex:1;min-width:260px;}
+.neo-hub-files{width:100%;height:auto;min-height:150px;}
+.neo-hub-files option{padding:3px 4px;}
+.neo-hub-cat{min-width:170px;}
+.neo-hub-sub{flex:1;min-width:140px;}
+.neo-hub-label{color:#999;font-size:12px;}
+.neo-hub-info{color:#8f8f8f;font-size:12px;}
+.neo-hub-dest{color:#9bd18a;}
+.neo-hub-btn{padding:5px 12px;border:1px solid #3a3a3a;border-radius:6px;background:#262626;color:#ddd;cursor:pointer;font-size:12px;}
+.neo-hub-btn:hover:not(:disabled){background:#2e2e2e;border-color:#4a4a4a;}
+.neo-hub-btn:disabled{opacity:.45;cursor:default;}
+.neo-hub-dl{background:#2b6cb0;border-color:#3b82c4;color:#fff;}
+.neo-hub-dl:hover:not(:disabled){background:#357ab8;}
+.neo-hub-status{color:#bbb;font-size:12px;margin-left:auto;}
+.neo-hub-bar{height:8px;border-radius:4px;background:#262626;border:1px solid #3a3a3a;overflow:hidden;margin-top:4px;}
+.neo-hub-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2b6cb0,#5aa9e6);transition:width .3s;}
+.neo-hub-prog{margin-top:4px;color:#9bd18a;font-size:12px;}
+.neo-hub-settings{margin-top:10px;padding-top:10px;border-top:1px solid #3a3a3a;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;}
+.neo-hub-field{display:flex;align-items:center;gap:8px;}
+.neo-hub-field-label{min-width:150px;color:#999;font-size:12px;}
+.neo-hub-field .neo-hub-input{flex:1;}
+.neo-hub-save{grid-column:1/-1;justify-self:end;}

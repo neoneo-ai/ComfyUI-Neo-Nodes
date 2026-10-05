@@ -38,6 +38,8 @@
   → [workflow-repair.md](docs/workflow-repair.md)
 - **🔧 工作流修复** — 模型路径失效时按文件名匹配磁盘真实文件一键修复，可手动改选与记住映射
   → [workflow-repair.md](docs/workflow-repair.md)
+- **📥 模型库** — Comfy-Org 专区双源（ModelScope / Hugging Face）搜索与断点续传下载，按仓库内路径自动归类落盘
+  → [model-hub.md](docs/model-hub.md)
 
 ## 功能演示
 
@@ -165,6 +167,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 | [docs/recipes.md](docs/recipes.md) | 配方：保存、发送到工作流、导演配方编辑器 |
 | [docs/gallery.md](docs/gallery.md) | 素材库：浏览、灯箱、文件管理、Civitai LORA、收藏 |
 | [docs/workflow-repair.md](docs/workflow-repair.md) | 工作流模型路径修复 |
+| [docs/model-hub.md](docs/model-hub.md) | 模型库：双源搜索、自动归类落盘、断点续传下载 |
 
 ---
 

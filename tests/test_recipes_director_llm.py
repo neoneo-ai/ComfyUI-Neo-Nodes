@@ -5,6 +5,10 @@
 recipes 的 gallery/bookmark/gallery_lora/util 依赖用假模块；`run_llm_task` 通过
 桩 `_PKG.llm.run_llm_task` 注入可控返回，验证端点组装、JSON 解析容错与多模态调用。"""
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import asyncio
 import json
 import logging
@@ -524,4 +528,6 @@ class DescribePanelEndpointTests(_FPBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)
 

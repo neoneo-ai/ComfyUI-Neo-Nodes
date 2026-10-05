@@ -6,6 +6,10 @@ server/folder_paths 用桩模块替换，recipes 的 gallery/bookmark/gallery_lo
 （顶层目录 + Readme.txt）、Readme 内容（包内容/来源/快速应用）、导入往返、
 重名自动改名、无 recipe.json / 路径穿越拒绝。"""
 
+from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
+
+_STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
+
 import asyncio
 import io
 import json
@@ -318,5 +322,7 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(resp.status, 200)
 
 
-if __name__ == "main":
+if __name__ == "__main__":
     unittest.main()
+
+restore(GALLERY_STUB_PREFIXES, _STUB_SAVED)
