@@ -1,0 +1,194 @@
+{
+  "481": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "482",
+        0
+      ],
+      "vae": [
+        "479",
+        0
+      ]
+    }
+  },
+  "482": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "484",
+        0
+      ],
+      "positive": [
+        "485",
+        0
+      ],
+      "negative": [
+        "485",
+        1
+      ],
+      "latent_image": [
+        "485",
+        2
+      ],
+      "seed": "{{SEED}}",
+      "steps": 50,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "484": {
+    "class_type": "QwenImage21Cache",
+    "inputs": {
+      "model": [
+        "477",
+        0
+      ],
+      "device": "auto",
+      "dtype": "default"
+    }
+  },
+  "502": {
+    "class_type": "TextGenerateLTX2Prompt",
+    "inputs": {
+      "clip": [
+        "500",
+        0
+      ],
+      "image": [
+        "505",
+        0
+      ],
+      "prompt": "{{PROMPT}}",
+      "max_length": 512,
+      "sampling_mode": "on",
+      "sampling_mode.temperature": 0.7,
+      "sampling_mode.top_k": 64,
+      "sampling_mode.top_p": 0.95,
+      "sampling_mode.min_p": 0.05,
+      "sampling_mode.repetition_penalty": 1.05,
+      "sampling_mode.seed": 666,
+      "sampling_mode.presence_penalty": 0,
+      "thinking": false,
+      "use_default_template": false,
+      "mtp": "auto"
+    }
+  },
+  "485": {
+    "class_type": "TextEncodeQwenImage21",
+    "inputs": {
+      "clip": [
+        "478",
+        0
+      ],
+      "images.image_1": [
+        "470",
+        0
+      ],
+      "vae": [
+        "479",
+        0
+      ],
+      "prompt": [
+        "502",
+        0
+      ],
+      "negative_prompt": "{{NEGATIVE}}",
+      "resolution": 1280,
+      "images.image_12": [
+        "510",
+        0
+      ]
+    }
+  },
+  "477": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "{{MODEL}}",
+      "weight_dtype": "default"
+    }
+  },
+  "505": {
+    "class_type": "BatchImagesNode",
+    "inputs": {
+      "images.image0": [
+        "470",
+        0
+      ],
+      "images.image1": [
+        "510",
+        0
+      ]
+    }
+  },
+  "478": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "{{TEXT_ENCODER}}",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "479": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "{{VAE}}"
+    }
+  },
+  "480": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": [
+        "13",
+        0
+      ],
+      "height": [
+        "13",
+        1
+      ],
+      "batch_size": "{{COUNT}}"
+    }
+  },
+  "13": {
+    "class_type": "ResolutionSelector",
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 2,
+      "multiple": 32
+    }
+  },
+  "518": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "481",
+        0
+      ],
+      "filename_prefix": "{{PREFIX}}"
+    }
+  },
+  "500": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "510": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{REF_IMAGE_2}}",
+      "upload": "image"
+    }
+  },
+  "470": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{REF_IMAGE_1}}",
+      "upload": "image"
+    }
+  }
+}
