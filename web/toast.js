@@ -20,12 +20,14 @@ function ensureStack() {
 }
 
 /**
- * @param {object} opts - { severity='error', summary, detail='', actionLabel='', onAction=null }
+ * @param {object} opts - { severity='error', summary, detail='', actionLabel='', onAction=null, onClose=null }
  *   actionLabel 非空时渲染 action 按钮；点击先执行 onAction() 再关闭。
- * @returns {{ el: HTMLElement, close: Function }}
+ *   onClose：卡片关闭时回调（解绑外部监听）。
+ * @returns {{ el: HTMLElement, close: Function, setHidden: Function }}
+ *   setHidden(true/false) 收起/恢复卡片（画布 tab 不在场时收起，见 skill.js 交接回写）。
  */
 export function actionToast(opts = {}) {
-    const { severity = "error", summary, detail = "", actionLabel = "", onAction = null } = opts;
+    const { severity = "error", summary, detail = "", actionLabel = "", onAction = null, onClose = null } = opts;
     const stack = ensureStack();
 
     const el = document.createElement("div");
@@ -53,6 +55,7 @@ export function actionToast(opts = {}) {
     const close = () => {
         if (autoTimer) clearTimeout(autoTimer);
         if (!el.parentNode) return;
+        onClose?.();
         el.classList.add("neo-at-out");
         setTimeout(() => el.remove(), 200);
     };
@@ -77,5 +80,9 @@ export function actionToast(opts = {}) {
     if (!actionLabel && (severity === "success" || severity === "info")) {
         autoTimer = setTimeout(close, AUTO_DISMISS_MS);
     }
-    return { el, close };
+    return {
+        el,
+        close,
+        setHidden: (hidden) => el.classList.toggle("neo-at-hidden", !!hidden),
+    };
 }

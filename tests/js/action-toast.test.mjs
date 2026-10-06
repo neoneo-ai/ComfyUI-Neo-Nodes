@@ -78,3 +78,22 @@ test("无 actionLabel：不渲染 action 按钮", async () => {
     const { el } = actionToast({ summary: "普通提示" });
     assert.equal(el.querySelector(".neo-at-action"), null);
 });
+
+test("setHidden：收起加 neo-at-hidden、恢复去掉", async () => {
+    const { actionToast } = await import("../../web/toast.js");
+    const { el, setHidden } = actionToast({ severity: "success", summary: "已导入到画布", actionLabel: "💾 回写入技能" });
+    setHidden(true);
+    assert.ok(el.classList.contains("neo-at-hidden"), "收起应加 neo-at-hidden");
+    setHidden(false);
+    assert.ok(!el.classList.contains("neo-at-hidden"), "恢复应去掉 neo-at-hidden");
+});
+
+test("onClose：action / ✕ 关闭时回调", async () => {
+    const { actionToast } = await import("../../web/toast.js");
+    const closed = [];
+    const a = actionToast({ summary: "带 action", actionLabel: "处理", onClose: () => closed.push("action") });
+    const b = actionToast({ summary: "✕ 关闭", onClose: () => closed.push("close") });
+    a.el.querySelector(".neo-at-action").click();
+    b.el.querySelector(".neo-at-close").click();
+    assert.deepEqual(closed, ["action", "close"], "两条关闭各触发一次 onClose");
+});

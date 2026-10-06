@@ -209,6 +209,8 @@ async function writeWorkflowToSkill(id, source) {
 // Studio 没有 LiteGraph，工作流编辑交回主界面：技能详情「⤒ 主画布编辑」开 /?neo_wf_edit=<skill_id>，
 // 主界面扩展 setup 消费该参数灌画布，toast 给「💾 回写入技能」入口（技能详情弹窗不在场也能落盘）。
 const WF_EDIT_PARAM = "neo_wf_edit";
+// 交接回写卡片：绑定灌入技能时那张画布（graph 实例），切走 tab 收起、切回恢复；同画布后导入的顶掉前一张
+let handoffCard = null;
 
 function openSkillWorkflowInMainUi(id) {
     if (!id) { showToast(app, "warning", "主画布编辑", "技能未保存，先保存技能本体"); return; }
@@ -237,15 +239,29 @@ async function openSkillWorkflowOnCanvas(id) {
         return;
     }
     const source = full.source || "custom";
+    handoffCard?.close();   // 同画布只认最后打开的技能
     // 内置 toast 不认 actionLabel / onAction（前端无此契约，按钮不渲染、5s 就消失）
     // → 走插件 action toast，「💾 回写入技能」入口才可见且留在屏上
-    actionToast({
+    let unwatch = null;
+    const card = actionToast({
         severity: "success",
         summary: "已导入到画布",
         detail: `技能 "${id}" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」落盘，skill.md 正文保留`,
         actionLabel: "💾 回写入技能",
         onAction: () => writeWorkflowToSkill(id, source),
+        onClose: () => {
+            if (handoffCard === card) handoffCard = null;
+            unwatch?.();
+        },
     });
+    handoffCard = card;
+    // 卡片绑定灌入技能时的工作流 tab：切走收起、切回恢复（换 tab 只改 store 的 activeWorkflow，
+    // 画布 DOM 上没有 litegraph:set-graph 可听）
+    const wfStore = app.extensionManager?.workflow;
+    const boundWf = wfStore?.activeWorkflow;
+    if (wfStore && boundWf && typeof wfStore.$subscribe === "function") {
+        unwatch = wfStore.$subscribe(() => card.setHidden(wfStore.activeWorkflow !== boundWf));
+    }
 }
 
 /** 主界面启动时消费 ?neo_wf_edit=<skill_id>：清掉参数（刷新不重复导入）后灌画布。
@@ -1541,7 +1557,9 @@ function createSkillDetailPopup(host, canvasBtns = true) {
                 id: info.id, type: info.node.type, pos: [0, 0], size: [info.node.size[0], info.node.size[1]],
                 flags: info.node.flags || {}, mode: info.node.mode || 0, order: (info.def._meta || {}).order || 0,
                 properties: {},
-                widgets_values: (info.node.widgets_values || []).map((v, i) => (widgets[i] && Object.prototype.hasOwnProperty.call(inputs, widgets[i].name) ? inputs[widgets[i].name] : v)),
+                // 按节点自身 widget 顺序取值：createNode 出来的节点只有带默认值的 widgets，
+                // widgets_values 要 configure / serialize 才填 → 从它取会整批丢值，画布只剩节点默认值
+                widgets_values: widgets.map((w) => (Object.prototype.hasOwnProperty.call(inputs, w.name) ? inputs[w.name] : w.value)),
                 inputs: (info.node.inputs || []).map((s) => ({ name: s.name, type: s.type, link: null })),
                 outputs: (info.node.outputs || []).map((s) => ({ name: s.name, type: s.type, links: null })),
             };

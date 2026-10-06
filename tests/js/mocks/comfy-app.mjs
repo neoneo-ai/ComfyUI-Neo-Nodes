@@ -70,6 +70,30 @@ Object.defineProperty(app.extensionManager, "sidebarTab", {
     set(v) { appState._sidebarTab = v; },
 });
 
+// extensionManager.workflow：工作流 tab store 替身（activeWorkflow + $subscribe → unsubscribe）
+export function installWorkflowStore(activeWorkflow) {
+    const listeners = new Set();
+    const store = {
+        activeWorkflow,
+        $subscribe(cb) {
+            listeners.add(cb);
+            return () => listeners.delete(cb);
+        },
+    };
+    app.extensionManager.workflow = store;
+    return {
+        store,
+        setActive(wf) {
+            store.activeWorkflow = wf;
+            for (const cb of Array.from(listeners)) cb();
+        },
+        listenerCount: () => listeners.size,
+    };
+}
+export function clearWorkflowStore() {
+    app.extensionManager.workflow = null;
+}
+
 export function getExtension(name) {
     return appState.extensions.find((e) => e?.name === name) ?? null;
 }
@@ -84,4 +108,5 @@ export function resetAppState() {
     appState.promptGraph = null;
     appState.promptGraphArg = null;
     appState._sidebarTab = null;
+    app.extensionManager.workflow = null;
 }

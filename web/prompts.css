@@ -3859,6 +3859,8 @@ body.rs-skill-resizing { cursor: col-resize; user-select: none; }
 }
 .neo-at-close:hover { color: #fff; }
 .neo-at-out { opacity: 0; transform: translateX(12px); transition: all .2s ease; }
+/* 画布 tab 不在场时收起（skill.js 交接回写卡片只跟灌入技能的那张画布） */
+.neo-at-hidden { display: none; }
 @keyframes neo-at-in {
     from { opacity: 0; transform: translateX(16px); }
     to   { opacity: 1; transform: none; }

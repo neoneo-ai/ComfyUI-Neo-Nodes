@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
-import { app, appState } from "./mocks/comfy-app.mjs";
+import { app, appState, installWorkflowStore, clearWorkflowStore } from "./mocks/comfy-app.mjs";
 
 const WF_TEMPLATE = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
@@ -49,9 +49,14 @@ function writeBtn() {
     const all = document.querySelectorAll(".rs-wf-canvas-btns button.rs-wf-canvas-write-btn");
     return all.length ? all[all.length - 1] : null;
 }
-// 交接导入 toast 的「💾 回写入技能」按钮（插件 action toast 渲染在 #neo-action-toast-stack）
+// 交接导入 toast 的卡片与「💾 回写入技能」按钮（插件 action toast 渲染在 #neo-action-toast-stack，最新一张在最后）
+function handoffCardEl() {
+    const cards = document.querySelectorAll("#neo-action-toast-stack .neo-at");
+    return cards.length ? cards[cards.length - 1] : null;
+}
 function handoffWriteBtn() {
-    return document.querySelector("#neo-action-toast-stack .neo-at-action");
+    const card = handoffCardEl();
+    return card ? card.querySelector(".neo-at-action") : null;
 }
 
 test("详情弹窗：带 workflow 技能挂「⤒ 导入到画布」「💾 回写入技能」在工作流区头部", async () => {
@@ -220,7 +225,7 @@ test("交接导入：按技能 config.json 预渲染灌画布，toast 带「💾
     assert.equal(api.data["4"].inputs.seed, 0, "SEED 归 0");
     assert.equal(api.data["9"].inputs.image, "{{REF_IMAGE}}", "参考图槽位留占串");
 
-    const card = document.querySelector("#neo-action-toast-stack .neo-at");
+    const card = handoffCardEl();
     assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"), "导入提示应可见");
     const btn = handoffWriteBtn();
     assert.ok(btn && btn.textContent === "💾 回写入技能", "导入 toast 应渲染「💾 回写入技能」按钮");
@@ -248,6 +253,58 @@ test("交接回写：预设技能点「💾 回写入技能」不发请求并提
     await sleep(80);
     assert.equal(called, false, "预设技能不应回写");
     assert.ok(appState.toasts.some((t) => (t.summary || "").includes("预设不可回写")), "应 toast 预设只读");
+});
+
+test("交接回写卡片绑定灌入的工作流 tab：切走 tab 收起、切回来恢复", async () => {
+    mockSkillRoutes();
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false }));
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const skillWf = { path: "workflows/skill.json" };
+    const otherWf = { path: "workflows/other.json" };
+    const { setActive, listenerCount } = installWorkflowStore(skillWf);
+    try {
+        const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+        await openSkillWorkflowOnCanvas("custom_a");
+        await sleep(80);
+
+        const card = handoffCardEl();
+        assert.ok(card && !card.classList.contains("neo-at-hidden"), "技能 tab 在场时回写卡片可见");
+        setActive(otherWf);
+        assert.ok(card.classList.contains("neo-at-hidden"), "切到其他画布 tab 应收起");
+        setActive(skillWf);
+        assert.ok(!card.classList.contains("neo-at-hidden"), "切回技能 tab 应恢复");
+
+        click(handoffWriteBtn());
+        await sleep(300);
+        assert.equal(listenerCount(), 0, "卡片关闭后应解绑 tab 监听");
+    } finally {
+        clearWorkflowStore();
+    }
+});
+
+test("交接回写卡片只认最后打开的技能：同画布再导入顶掉前一张", async () => {
+    let posted = null;
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted = b;
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false });
+    });
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    mockSkillRoutes({ id: "custom_a" });
+    await openSkillWorkflowOnCanvas("custom_a");
+    await sleep(80);
+    const first = handoffCardEl();
+    mockSkillRoutes({ id: "custom_b" });
+    await openSkillWorkflowOnCanvas("custom_b");
+    await sleep(80);
+
+    assert.ok(first.classList.contains("neo-at-out"), "前一张卡片应关闭");
+    const card = handoffCardEl();
+    assert.ok(card !== first, "新导入渲染新卡片");
+    assert.ok(card.querySelector(".neo-at-detail").textContent.includes("custom_b"), "最新卡片属于后导入的技能");
+    click(handoffWriteBtn());
+    await sleep(80);
+    assert.equal(posted && posted.skill_id, "custom_b", "回写落最后打开的技能");
 });
 
 test("主界面启动消费 ?neo_wf_edit：清掉参数后灌画布（等 litegraph:set-graph，避开初始工作流覆盖）", async () => {

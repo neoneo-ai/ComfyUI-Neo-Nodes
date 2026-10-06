@@ -140,7 +140,8 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 预设技能不可回写，先「复制为自定义」。
 Studio 内嵌没有画布，技能详情工作流区改挂「⤒ 主画布编辑」：打开主界面 `/?neo_wf_edit=<技能 id>`，
 主界面按技能 `config.json` 预渲染灌入画布（同样按流程图布局排列、widget 按已保存配置覆盖旧值），
-toast 内「💾 回写入技能」落盘该技能（走插件 action toast，带按钮的卡片不自动关闭）。
+toast 内「💾 回写入技能」落盘该技能（走插件 action toast，带按钮的卡片不自动关闭，且只认灌入技能的那张画布：
+切到其他画布 tab 时收起、切回来恢复，同画布后导入的技能顶掉前一张）。
 技能详情页工作流区还可「🧩 编辑」：把 `workflow.json` 按技能 `config.json` 初始化 widget（含超出模板槽位的 LoRA 注入）
 后挂进内嵌画布改连线与参数（提示词 / 种子等运行时变量保留），「💾 保存工作流」写回该技能 `workflow.json` 并同步
 `config.json`、设置区按新配置重载（预设只读）；「👁 流程图」切回只读预览。

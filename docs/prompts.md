@@ -163,7 +163,8 @@ LLM 模式与本地安装见 [llm.md](llm.md)。
   与自动建议模型预渲染灌入画布，节点 widget 按技能已保存配置初始化（覆盖 `workflow.json` 里写死的
   steps / seed / 尺寸等旧值，非技能控制的值原样保留），action toast 内「💾 回写入技能」把整画布落盘该技能
   `workflow.json`（内置 toast 不渲染动作按钮，带 action 的卡片不自动关闭），并把画布上的模型 / LoRA / 尺寸 / 张数（`batch_size` → `count`）/ 前缀同步进
-  `config.json`，设置区的底图分辨率 / 提示词增强等键保留（预设只读）。
+  `config.json`，设置区的底图分辨率 / 提示词增强等键保留（预设只读）。回写卡片绑定灌入技能时那张画布：
+  切到其他画布 tab 时收起、切回来恢复，同画布后导入的技能顶掉前一张。
 
 一个技能是一个或多个 Markdown 文件（主文件 `skill.md`），头部为 YAML frontmatter
 （含 `name`、`tags`、`max_tokens`、`multi_turn`、`audit` 等字段），正文即 System Prompt 内容：

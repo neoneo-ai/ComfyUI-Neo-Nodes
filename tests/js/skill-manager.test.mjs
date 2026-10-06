@@ -596,10 +596,12 @@ function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
         createNode(type) {
             if (unregistered.includes(type)) return null;
             const tpl = byType[type] || {};
+            const defaults = tpl.widgets_values || ["", 0];
             return {
                 type, size: [210, 90], mode: 0, flags: {},
-                widgets: tpl.widgets || [{ name: "prompt" }, { name: "seed" }],
-                widgets_values: tpl.widgets_values || ["", 0],
+                // 真实 litegraph：createNode 只给出带默认值的 widgets，widgets_values 要 configure / serialize 才填
+                widgets: (tpl.widgets || [{ name: "prompt" }, { name: "seed" }]).map((w, i) => ({ ...w, value: defaults[i] })),
+                widgets_values: [],
                 inputs: tpl.inputs || [{ name: "prompt", type: "STRING" }, { name: "seed", type: "INT" }],
                 outputs: tpl.outputs || [{ name: "MODEL", type: "MODEL" }],
             };
