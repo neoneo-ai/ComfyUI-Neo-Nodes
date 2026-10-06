@@ -5,6 +5,7 @@
   "base_resolution": 1024,
   "default_ratio": "16:9",
   "steps": 30,
+  "max_refs": 10,
   "loras": [
     {"name": "QwenImage2.1/qwen-image-2.1-outpaint-v2.safetensors", "strength": 1}
   ]

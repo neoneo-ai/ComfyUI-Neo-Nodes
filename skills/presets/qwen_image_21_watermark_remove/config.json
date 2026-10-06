@@ -4,5 +4,6 @@
   "vae": "qwen_image_2.1_vae_bf16.safetensors",
   "base_resolution": 1024,
   "default_ratio": "16:9",
-  "steps": 30
+  "steps": 30,
+  "max_refs": 10
 }

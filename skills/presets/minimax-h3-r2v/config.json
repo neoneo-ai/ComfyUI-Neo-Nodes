@@ -2,5 +2,6 @@
   "width": 960,
   "height": 544,
   "length": 124,
-  "steps": 20
+  "steps": 20,
+  "max_refs": 9
 }

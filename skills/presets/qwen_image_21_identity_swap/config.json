@@ -5,6 +5,7 @@
   "base_resolution": 1344,
   "default_ratio": "16:9",
   "steps": 50,
+  "max_refs": 2,
   "count": 1,
   "output_prefix": "NeoAgent/q21_identity_swap",
   "default_prompt": "Replace the head of the woman in Image 1 with the head of the person in Image 2."

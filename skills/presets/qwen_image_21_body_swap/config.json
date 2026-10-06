@@ -5,6 +5,7 @@
   "base_resolution": 1024,
   "default_ratio": "16:9",
   "steps": 30,
+  "max_refs": 10,
   "loras": [
     {"name": "QwenImage2.1/Qwen21-换身bfs_body_swap_v1.0_qwen_2.1.safetensors", "strength": 1}
   ],

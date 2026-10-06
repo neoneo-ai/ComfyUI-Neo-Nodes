@@ -40,38 +40,6 @@
       "images.image_2": [
         "12",
         0
-      ],
-      "images.image_3": [
-        "14",
-        0
-      ],
-      "images.image_4": [
-        "16",
-        0
-      ],
-      "images.image_5": [
-        "18",
-        0
-      ],
-      "images.image_6": [
-        "20",
-        0
-      ],
-      "images.image_7": [
-        "22",
-        0
-      ],
-      "images.image_8": [
-        "24",
-        0
-      ],
-      "images.image_9": [
-        "26",
-        0
-      ],
-      "images.image_10": [
-        "28",
-        0
       ]
     }
   },
@@ -135,54 +103,6 @@
     "class_type": "LoadImage",
     "inputs": {
       "image": "{{REF_IMAGE_2}}"
-    }
-  },
-  "14": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_3}}"
-    }
-  },
-  "16": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_4}}"
-    }
-  },
-  "18": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_5}}"
-    }
-  },
-  "20": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_6}}"
-    }
-  },
-  "22": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_7}}"
-    }
-  },
-  "24": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_8}}"
-    }
-  },
-  "26": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_9}}"
-    }
-  },
-  "28": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "{{REF_IMAGE_10}}"
     }
   },
   "30": {
