@@ -14,7 +14,7 @@ import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
 import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkflow, injectRuntimeLoras, canvasLayout } from "./workflow-graph.js";
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
-import { copySkillFiles, saveWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
+import { copySkillFiles, saveWorkflowSkill, updateWorkflowSkill, previewWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
 import { actionToast } from "./toast.js";
 import { openModelHub } from "./model-hub.js";
@@ -184,8 +184,207 @@ function arrangeCanvasNodes(wf) {
     if (typeof app.canvas?.fitViewToSelectionAnimated === "function") app.canvas.fitViewToSelectionAnimated();
 }
 
-// 整画布 API prompt 落盘指定技能 workflow.json（skill.md 正文保留；预设只读）
-async function writeWorkflowToSkill(id, source) {
+// ---- 回写变更记录（localStorage，按技能 id 关联，新→旧，每技能上限 SKILL_WRITE_LOG_LIMIT 条）----
+const SKILL_WRITE_LOG_KEY = "neo.skillWriteLog";
+const SKILL_WRITE_LOG_LIMIT = 50;
+const WRITE_SOURCE_LABELS = { canvas: "画布回写", editor: "内嵌编辑" };
+// 节点位置 / 颜色 / 分组 / 折叠只存在于 LiteGraph 序列化，API prompt 不携带 → 回写不保存界面布局
+const WRITE_API_ONLY_NOTE = "仅保存 API 工作流（节点、连线、widget 值）：画布上的节点位置、颜色、分组、折叠状态等界面布局不写入，skill.md 正文保留";
+
+function readWriteLog() {
+    try { const l = JSON.parse(localStorage.getItem(SKILL_WRITE_LOG_KEY) || "[]"); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+}
+function writeWriteLog(log) {
+    try { localStorage.setItem(SKILL_WRITE_LOG_KEY, JSON.stringify(log)); } catch (e) { console.warn("[Neo Skill] 变更记录写入失败:", e); }
+}
+// 记录一次回写：{ skillId, time, source, kind, changes, warnings }
+function recordSkillWrite(skillId, source, kind, changes, warnings) {
+    const log = readWriteLog();
+    const mine = log.filter((e) => e.skillId === skillId);
+    const others = log.filter((e) => e.skillId !== skillId);
+    mine.unshift({ skillId, time: new Date().toISOString(), source: source || "canvas", kind: kind || "gen_image", changes: changes || [], warnings: warnings || [] });
+    writeWriteLog([...mine.slice(0, SKILL_WRITE_LOG_LIMIT), ...others]);
+}
+function getSkillWriteLog(skillId) {
+    const log = readWriteLog();
+    return skillId ? log.filter((e) => e.skillId === skillId) : log;
+}
+function clearSkillWriteLog(skillId) {
+    writeWriteLog(skillId ? readWriteLog().filter((e) => e.skillId !== skillId) : []);
+}
+
+/** 变更清单表格（项 / 原值 删除线 / 新值）：回写确认弹窗与变更记录共用 */
+function buildWriteChangesTable(changes) {
+    const table = document.createElement("table");
+    table.style.cssText = "width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px;";
+    const cell = (txt, style) => {
+        const td = document.createElement("td");
+        td.textContent = txt === 0 || txt ? String(txt) : "";
+        td.title = td.textContent;
+        td.style.cssText = "padding:5px 8px;border-bottom:1px solid #333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" + (style || "color:#ccc;");
+        return td;
+    };
+    const headRow = document.createElement("tr");
+    for (const h of ["项", "原值", "新值"]) {
+        const th = document.createElement("th");
+        th.textContent = h;
+        th.style.cssText = "position:sticky;top:0;background:#2a2a2a;color:#9ab;text-align:left;padding:6px 8px;border-bottom:1px solid #444;";
+        headRow.appendChild(th);
+    }
+    table.appendChild(headRow);
+    for (const c of changes) {
+        const tr = document.createElement("tr");
+        tr.append(cell(c.field), cell(c.from, "color:#e88;text-decoration:line-through;"), cell(c.to, "color:#7d7;"));
+        table.appendChild(tr);
+    }
+    return table;
+}
+
+/** 变更记录弹窗：skillId 省略 = 全部技能（按技能分组，新→旧）；纯本地记录，可清空 */
+export function showSkillWriteLogDialog(skillId) {
+    const existing = document.querySelector(".rs-skill-write-log-overlay");
+    if (existing) existing.remove();
+    const log = getSkillWriteLog(skillId);
+    const overlay = mkEl("div", "rs-repair-overlay rs-skill-write-log-overlay");
+    const box = mkEl("div", "rs-repair-box");
+    const head = mkEl("div", "rs-repair-head");
+    const title = mkEl("span", "");
+    title.textContent = skillId ? `变更记录 · ${skillId}（${log.length}）` : `变更记录（${log.length}）`;
+    const closeBtn = mkEl("button", "rs-repair-close");
+    closeBtn.type = "button";
+    closeBtn.textContent = "✕";
+    head.append(title, closeBtn);
+
+    const body = mkEl("div", "rs-repair-body");
+    if (!log.length) {
+        const empty = mkEl("div", "rs-repair-log-empty");
+        empty.textContent = "暂无回写记录 — 画布改完点「💾 回写入技能」并确认后，每次变更会按技能记录在这里。";
+        body.appendChild(empty);
+    } else {
+        for (const entry of log) {
+            const group = mkEl("div", "rs-repair-log-group");
+            const t = mkEl("div", "rs-repair-log-time");
+            t.textContent = [
+                new Date(entry.time).toLocaleString("zh-CN", { hour12: false }),
+                entry.kind === "gen_video" ? "生视频" : "生图",
+                WRITE_SOURCE_LABELS[entry.source] || "其他",
+                skillId ? null : entry.skillId,
+            ].filter(Boolean).join(" · ");
+            group.appendChild(t);
+            const changes = entry.changes || [];
+            if (changes.length) {
+                group.appendChild(buildWriteChangesTable(changes));
+            } else {
+                const none = mkEl("div", "rs-repair-hint");
+                none.textContent = "无键值变更 — 按当前画布重写 workflow.json";
+                group.appendChild(none);
+            }
+            if ((entry.warnings || []).length) {
+                const w = mkEl("div", "rs-repair-hint");
+                w.style.color = "#da6";
+                w.textContent = entry.warnings.join(" / ");
+                group.appendChild(w);
+            }
+            body.appendChild(group);
+        }
+    }
+    const foot = mkEl("div", "rs-repair-foot");
+    const hint = mkEl("span", "rs-repair-hint");
+    hint.textContent = `仅本机本地记录（每技能最近 ${SKILL_WRITE_LOG_LIMIT} 次），不影响技能文件`;
+    const clearBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+    clearBtn.type = "button";
+    clearBtn.textContent = "清空记录";
+    foot.append(hint, clearBtn);
+    box.append(head, body, foot);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const closeDialog = () => overlay.remove();
+    closeBtn.addEventListener("click", closeDialog);
+    clearBtn.addEventListener("click", () => {
+        clearSkillWriteLog(skillId);
+        closeDialog();
+        showToast(app, "info", skillId ? "本技能变更记录已清空" : "全部变更记录已清空");
+    });
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeDialog(); });
+}
+
+
+/** 回写确认弹窗：先预览变更清单与 warnings，点「💾 确认保存」才落盘；返回是否已保存 */
+function confirmWorkflowWrite(id, source, workflow, onSaved) {
+    return previewWorkflowSkill(id, workflow).then((preview) => new Promise((resolve) => {
+        const changes = preview.changes || [];
+        const warnings = preview.warnings || [];
+        const overlay = mkEl("div", "rs-repair-overlay rs-wf-write-confirm");
+        const box = mkEl("div", "rs-repair-box");
+        const head = mkEl("div", "rs-repair-head");
+        const title = mkEl("span", "");
+        title.textContent = `回写入技能 · ${id}（${changes.length} 处变更）`;
+        const closeBtn = mkEl("button", "rs-repair-close");
+        closeBtn.type = "button";
+        closeBtn.textContent = "✕";
+        head.append(title, closeBtn);
+
+        const body = mkEl("div", "rs-repair-body");
+        if (changes.length) {
+            body.appendChild(buildWriteChangesTable(changes));
+        } else {
+            const empty = mkEl("div", "rs-repair-log-empty");
+            empty.textContent = "画布内容与技能已保存的工作流一致 — 保存只会按当前画布重写 workflow.json / config.json。";
+            body.appendChild(empty);
+        }
+        if (warnings.length) {
+            const warn = mkEl("div", "rs-repair-hint");
+            warn.style.color = "#da6";
+            warn.textContent = warnings.join(" / ");
+            body.appendChild(warn);
+        }
+        const foot = mkEl("div", "rs-repair-foot");
+        const hint = mkEl("span", "rs-repair-hint");
+        hint.textContent = WRITE_API_ONLY_NOTE;
+        const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
+        cancelBtn.type = "button";
+        cancelBtn.textContent = "取消";
+        const saveBtn = mkEl("button", "rs-btn");
+        saveBtn.type = "button";
+        saveBtn.textContent = "💾 确认保存";
+        foot.append(hint, cancelBtn, saveBtn);
+        box.append(head, body, foot);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        const close = () => {
+            document.removeEventListener("keydown", onKey);
+            overlay.remove();
+            resolve(false);
+        };
+        const onKey = (e) => { if (e.key === "Escape") close(); };
+        document.addEventListener("keydown", onKey);
+        closeBtn.addEventListener("click", close);
+        cancelBtn.addEventListener("click", close);
+        overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+        saveBtn.addEventListener("click", async () => {
+            saveBtn.disabled = true;
+            try {
+                const r = await updateWorkflowSkill(id, workflow);
+                document.removeEventListener("keydown", onKey);
+                overlay.remove();
+                recordSkillWrite(id, source, preview.gen_video ? "gen_video" : "gen_image", changes, warnings);
+                showToast(app, "success", `已回写入技能 "${r.id}"`, (r.warnings || []).join("\n"));
+                document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+                if (onSaved) await onSaved(r);
+                resolve(true);
+            } catch (err) {
+                saveBtn.disabled = false;
+                showToast(app, "error", "回写入失败", err.message);
+                resolve(false);
+            }
+        });
+    }));
+}
+
+
+// 整画布 API prompt 回写指定技能：先弹变更确认，确认后才落盘（skill.md 正文保留；预设只读）
+async function writeWorkflowToSkill(id, source, origin) {
     if (!id) { showToast(app, "warning", "回写入技能", "技能未保存，先保存技能本体"); return false; }
     if (source === "presets") { showToast(app, "warning", "预设不可回写", "先「复制为自定义」后编辑"); return false; }
     if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，回写不可用"); return false; }
@@ -195,22 +394,115 @@ async function writeWorkflowToSkill(id, source) {
             showToast(app, "warning", "无法回写", "画布没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
             return false;
         }
-        const r = await updateWorkflowSkill(id, output);
-        showToast(app, "success", `已回写入技能 "${r.id}"`, (r.warnings || []).join("\n"));
-        document.dispatchEvent(new CustomEvent("rs.skills.updated"));
-        return true;
+        const saved = await confirmWorkflowWrite(id, origin || "canvas", output);
+        if (saved) clearPendingWriteback(id);
+        return saved;
     } catch (err) {
         showToast(app, "error", "回写入失败", err.message);
         return false;
     }
 }
 
+// 导入画布后的常驻回写卡片：Studio 交接与技能管理「⤒ 导入到画布」共用同一套行为。
+// 内置 toast 不认 actionLabel / onAction（前端无此契约，按钮不渲染、5s 就消失）
+// → 走插件 action toast，「💾 回写入技能」入口才可见且留在屏上。
+// 卡片绑定灌入时那张画布（graph 实例）：切走 tab 收起、切回恢复；同画布后导入的顶掉前一张。
+// 卡片被 ✕ 关掉后待办状态留在 pendingWriteback：顶菜单「💾 回写入技能」入口与 🅝 绿点靠它落盘。
+let handoffCard = null;
+let pendingWriteback = null;   // { id, source, wf } —— 灌入技能的那张画布
+let _wbUnwatchTab = null;
+let _wbHintObserver = null;
+
+function writebackCanvasActive() {
+    const wfStore = app.extensionManager?.workflow;
+    if (!pendingWriteback?.wf || !wfStore) return true;   // 无工作流 tab store → 单画布
+    return wfStore.activeWorkflow === pendingWriteback.wf;
+}
+
+// 🅝 顶菜单按钮绿点（workflow.js 修复红点同款机制）：绿色 = 当前画布有技能待回写
+function applyWritebackHint() {
+    const btn = document.querySelector(".neo-n-menu-btn");
+    if (!btn) return;
+    const on = !!pendingWriteback && pendingWriteback.source !== "presets" && writebackCanvasActive();
+    btn.classList.toggle("neo-writeback-hint", on);
+    if (on) {
+        btn.dataset.wbOrigAria ??= btn.getAttribute("aria-label");
+        btn.setAttribute("aria-label", `回写入技能：技能 "${pendingWriteback.id}" 待保存`);
+    } else if (btn.dataset.wbOrigAria !== undefined) {
+        btn.setAttribute("aria-label", btn.dataset.wbOrigAria);
+        delete btn.dataset.wbOrigAria;
+    }
+}
+
+// 顶栏按钮 DOM 由前端声明式重建，重建后补挂绿点
+function startWritebackHintObserver() {
+    if (_wbHintObserver || typeof MutationObserver === "undefined") return;
+    _wbHintObserver = new MutationObserver(() => applyWritebackHint());
+    const watchNode = document.querySelector('[data-testid="action-bar-buttons"]')
+        || document.querySelector(".actionbar-container")
+        || document.body;
+    _wbHintObserver.observe(watchNode, { childList: true, subtree: true });
+}
+
+// 换 tab 只改 store 的 activeWorkflow，画布 DOM 上没有 litegraph:set-graph 可听
+function watchWritebackTab(onTab) {
+    _wbUnwatchTab?.();
+    const wfStore = app.extensionManager?.workflow;
+    if (!wfStore || !pendingWriteback?.wf || typeof wfStore.$subscribe !== "function") return;
+    const off = wfStore.$subscribe(() => onTab(wfStore.activeWorkflow === pendingWriteback.wf));
+    _wbUnwatchTab = () => { _wbUnwatchTab = null; off?.(); };
+}
+
+function setPendingWriteback(id, source) {
+    pendingWriteback = { id, source, wf: app.extensionManager?.workflow?.activeWorkflow ?? null };
+    startWritebackHintObserver();
+    applyWritebackHint();
+}
+
+function clearPendingWriteback(id) {
+    if (id && pendingWriteback && pendingWriteback.id !== id) return;
+    pendingWriteback = null;
+    _wbUnwatchTab?.();
+    applyWritebackHint();
+}
+
+/** 当前画布上待回写的技能（切走 tab → null）：顶菜单入口与绿点的可用性据此决定 */
+function getPendingWriteback() {
+    if (!pendingWriteback || !writebackCanvasActive()) return null;
+    return { id: pendingWriteback.id, source: pendingWriteback.source };
+}
+
+/** 顶菜单「💾 回写入技能」：回写卡片关掉后仍可从这里落盘当前画布的技能 */
+async function runCanvasSkillWriteback() {
+    if (!pendingWriteback) {
+        showToast(app, "info", "回写入技能", "当前画布没有待回写的技能：技能管理「⤒ 导入到画布」后此入口可用");
+        return false;
+    }
+    return await writeWorkflowToSkill(pendingWriteback.id, pendingWriteback.source, "canvas");
+}
+
+function showCanvasWriteCard(id, source) {
+    handoffCard?.close();   // 同画布只认最后打开的技能
+    setPendingWriteback(id, source);
+    const card = actionToast({
+        severity: "success",
+        summary: "已导入到画布",
+        detail: `技能 "${id}" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」确认变更落盘；仅保存 API 工作流，画布上的节点位置等界面布局不写入`,
+        actionLabel: "💾 回写入技能",
+        onAction: () => runCanvasSkillWriteback(),
+        onClose: () => { if (handoffCard === card) handoffCard = null; },
+    });
+    handoffCard = card;
+    watchWritebackTab((same) => {
+        card.setHidden(!same);
+        applyWritebackHint();
+    });
+}
+
 // ---- Studio ⇄ 主画布交接 ----
 // Studio 没有 LiteGraph，工作流编辑交回主界面：技能详情「⤒ 主画布编辑」开 /?neo_wf_edit=<skill_id>，
 // 主界面扩展 setup 消费该参数灌画布，toast 给「💾 回写入技能」入口（技能详情弹窗不在场也能落盘）。
 const WF_EDIT_PARAM = "neo_wf_edit";
-// 交接回写卡片：绑定灌入技能时那张画布（graph 实例），切走 tab 收起、切回恢复；同画布后导入的顶掉前一张
-let handoffCard = null;
 
 function openSkillWorkflowInMainUi(id) {
     if (!id) { showToast(app, "warning", "主画布编辑", "技能未保存，先保存技能本体"); return; }
@@ -239,29 +531,7 @@ async function openSkillWorkflowOnCanvas(id) {
         return;
     }
     const source = full.source || "custom";
-    handoffCard?.close();   // 同画布只认最后打开的技能
-    // 内置 toast 不认 actionLabel / onAction（前端无此契约，按钮不渲染、5s 就消失）
-    // → 走插件 action toast，「💾 回写入技能」入口才可见且留在屏上
-    let unwatch = null;
-    const card = actionToast({
-        severity: "success",
-        summary: "已导入到画布",
-        detail: `技能 "${id}" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」落盘，skill.md 正文保留`,
-        actionLabel: "💾 回写入技能",
-        onAction: () => writeWorkflowToSkill(id, source),
-        onClose: () => {
-            if (handoffCard === card) handoffCard = null;
-            unwatch?.();
-        },
-    });
-    handoffCard = card;
-    // 卡片绑定灌入技能时的工作流 tab：切走收起、切回恢复（换 tab 只改 store 的 activeWorkflow，
-    // 画布 DOM 上没有 litegraph:set-graph 可听）
-    const wfStore = app.extensionManager?.workflow;
-    const boundWf = wfStore?.activeWorkflow;
-    if (wfStore && boundWf && typeof wfStore.$subscribe === "function") {
-        unwatch = wfStore.$subscribe(() => card.setHidden(wfStore.activeWorkflow !== boundWf));
-    }
+    showCanvasWriteCard(id, source);
 }
 
 /** 主界面启动时消费 ?neo_wf_edit=<skill_id>：清掉参数（刷新不重复导入）后灌画布。
@@ -702,8 +972,9 @@ async function copySkillAsCustom(skillId, fallbackName = "") {
 // 返回 { overlay, openExisting(id, source), openNew(), close }。canvasBtns=false（Studio 内嵌，无画布）时工作流区画布按钮不挂。
 // ==========================================
 
-function createSkillDetailPopup(host, canvasBtns = true) {
+function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const embedded = !!host;   // 内嵌模式：modal 挂到调用方容器（统一技能管理窗口右侧），不自建遮罩、不监听全局 Esc/点遮罩
+    const onCloseWindow = opts.onCloseWindow;   // 内嵌宿主（技能管理整窗）注入：导入到画布后收起整窗，避免遮挡画布
     const overlay = mkEl("div", "rs-skill-modal-overlay");
     const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
     const showDetail = () => { if (embedded) modal.style.display = ""; else overlay.style.display = "flex"; };
@@ -941,7 +1212,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         const wfWriteBtn = mkEl("button", "rs-btn rs-wf-canvas-write-btn");
         wfWriteBtn.type = "button";
         wfWriteBtn.textContent = "💾 回写入技能";
-        wfWriteBtn.title = "把整画布工作流落盘本技能 workflow.json（skill.md 正文保留；预设技能不可回写）";
+        wfWriteBtn.title = "把整画布工作流落盘本技能 workflow.json（先列出变更、确认后写入；仅 API 工作流，画布节点位置等界面布局不写入；预设技能不可回写）";
         wfWriteBtn.addEventListener("click", (e) => { e.stopPropagation(); writeWorkflowBackToSkill(); });
         wfCanvasBtns.append(wfImportBtn, wfWriteBtn);
     } else {
@@ -952,6 +1223,12 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         wfOpenBtn.addEventListener("click", (e) => { e.stopPropagation(); openSkillWorkflowInMainUi(currentSkillId); });
         wfCanvasBtns.append(wfOpenBtn);
     }
+    const wfLogBtn = mkEl("button", "rs-btn rs-wf-write-log-btn");
+    wfLogBtn.type = "button";
+    wfLogBtn.textContent = "🕘 变更记录";
+    wfLogBtn.title = "查看本技能的回写历史（每次确认保存的变更清单，本机本地记录）";
+    wfLogBtn.addEventListener("click", (e) => { e.stopPropagation(); showSkillWriteLogDialog(currentSkillId); });
+    wfCanvasBtns.appendChild(wfLogBtn);
     workflowHeader.append(wfCanvasBtns);
     // 工作流区两模式：只读流程图 ⇄ 内嵌 litegraph 编辑（前端未暴露 LiteGraph 的视图不提供编辑模式）
     const wfEditorSupported = !!window.LGraph && !!window.LGraphCanvas && !!window.LiteGraph;
@@ -1215,8 +1492,9 @@ function createSkillDetailPopup(host, canvasBtns = true) {
             showToast(app, "error", "导入失败", String(e.message || e));
             return;
         }
-        showToast(app, "success", "已导入到画布",
-            `点「💾 回写入技能」把整画布落盘 "${currentSkillId}" 的 workflow.json（节点已按流程图布局自动排列，skill.md 正文保留）`);
+        showCanvasWriteCard(currentSkillId, currentSource);
+        // 导入成功即收起技能窗口：内嵌宿主（技能管理整窗）走 onCloseWindow 关整窗，独立详情弹窗走 requestClose
+        if (onCloseWindow) onCloseWindow(); else requestClose();
     }
 
     async function writeWorkflowBackToSkill() {
@@ -1704,15 +1982,14 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         try {
             const { output, error } = (await app.graphToPrompt(wfGraph)) || {};
             if (error || !output || !Object.keys(output).length) { showToast(app, "warning", "无法保存", "画布上没有有效工作流" + (error && error.message ? `（${error.message}）` : "")); return; }
-            const r = await updateWorkflowSkill(currentSkillId, output);
-            showToast(app, "success", `已保存工作流 "${r.id}"`, (r.warnings || []).join("\n"));
-            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
-            skillWorkflowRaw = output;   // 只读流程图按新模板重画
-            setWfMode("view");
-            const genInfo = currentIsVideo ? await loadVideoGenSettings() : await loadGenSettings();   // 回写后的 config 灌回设置区
-            loadedGenInfo = genInfo || null;
-            genSettingsBaseline = collectGenSettingsJson();   // 设置区已按新 config 重载 → 脏检查基线同步
-            await renderWorkflowPreview(output, genInfo, currentIsVideo, currentSkillId);
+            await confirmWorkflowWrite(currentSkillId, "editor", output, async () => {
+                skillWorkflowRaw = output;   // 只读流程图按新模板重画
+                setWfMode("view");
+                const genInfo = currentIsVideo ? await loadVideoGenSettings() : await loadGenSettings();   // 回写后的 config 灌回设置区
+                loadedGenInfo = genInfo || null;
+                genSettingsBaseline = collectGenSettingsJson();   // 设置区已按新 config 重载 → 脏检查基线同步
+                await renderWorkflowPreview(output, genInfo, currentIsVideo, currentSkillId);
+            });
         } catch (err) {
             showToast(app, "error", "保存工作流失败", err.message);
         }
@@ -2908,7 +3185,7 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
     const placeholder = mkEl("div", "rs-skill-manager-empty");
     placeholder.textContent = "从左侧选择技能查看详情";
     right.appendChild(placeholder);
-    const popup = createSkillDetailPopup(right, showCanvasBtn);
+    const popup = createSkillDetailPopup(right, showCanvasBtn, { onCloseWindow: () => closeBtn && closeBtn.click() });
 
     host.appendChild(box);
 
@@ -3273,6 +3550,8 @@ export {
     openSkillWorkflowInMainUi,
     openSkillWorkflowOnCanvas,
     runSkillWorkflowHandoff,
+    getPendingWriteback,
+    runCanvasSkillWriteback,
     attachSkillPickerToComboWidget,
     attachSkillPickerToSelect
 };

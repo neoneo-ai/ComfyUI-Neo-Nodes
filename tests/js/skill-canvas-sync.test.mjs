@@ -58,6 +58,21 @@ function handoffWriteBtn() {
     const card = handoffCardEl();
     return card ? card.querySelector(".neo-at-action") : null;
 }
+// 回写确认弹窗（后端预览的变更清单 + 「💾 确认保存」）
+function writeConfirmDialog() {
+    return document.querySelector(".rs-wf-write-confirm");
+}
+function footBtn(dialog, label) {
+    return dialog ? [...dialog.querySelectorAll(".rs-repair-foot button")].find((b) => b.textContent.includes(label)) : null;
+}
+function logBtn() {
+    const all = document.querySelectorAll(".rs-wf-write-log-btn");
+    return all.length ? all[all.length - 1] : null;
+}
+function mockPreview(changes = [], warnings = [], genVideo = false) {
+    mockRoute("/neo_image_gen/update_workflow_skill_preview", () =>
+        jsonResponse({ success: true, id: "custom_a", changes, warnings, gen_video: genVideo }));
+}
 
 test("详情弹窗：带 workflow 技能挂「⤒ 导入到画布」「💾 回写入技能」在工作流区头部", async () => {
     await openPopup({ id: "custom_a", source: "custom" });
@@ -65,13 +80,12 @@ test("详情弹窗：带 workflow 技能挂「⤒ 导入到画布」「💾 回�
     assert.ok(btns, "工作流区头部应挂画布按钮行");
     assert.ok(btns.parentElement.classList.contains("rs-skill-workflow-head"), "按钮应在工作流区头部");
     assert.deepEqual(Array.from(btns.querySelectorAll("button")).map((b) => b.textContent),
-        ["⤒ 导入到画布", "💾 回写入技能"]);
+        ["⤒ 导入到画布", "💾 回写入技能", "🕘 变更记录"]);
 });
 
 test("导入到画布：按设置预渲染后 app.loadApiJson（number widget 归 number、参考图留占串）", async () => {
     await openPopup({ id: "custom_a", source: "custom" });
     const loadedAt = appState.loaded.length;
-    const toastAt = appState.toasts.length;
     click(importBtn());
     await sleep(80);
 
@@ -88,7 +102,20 @@ test("导入到画布：按设置预渲染后 app.loadApiJson（number widget �
     assert.strictEqual(wf["4"].inputs.steps, 20);
     assert.equal(wf["5"].inputs.filename_prefix, "NeoAgent", "非 number widget 保持字符串");
     assert.equal(wf["9"].inputs.image, "{{REF_IMAGE}}", "参考图槽位留占串（画布里选图后回写）");
-    assert.ok(appState.toasts.slice(toastAt).some((t) => (t.summary || "").includes("已导入到画布")), "应 toast 导入成功");
+    const card = handoffCardEl();
+    assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"),
+        "导入应出常驻回写卡片（同 Studio 交接，不 5s 消失）");
+});
+
+test("导入到画布：成功后自动收起技能窗口，回写入口留在常驻卡片", async () => {
+    const popup = await openPopup({ id: "custom_a", source: "custom" });
+    assert.notEqual(popup.overlay.style.display, "none", "导入前技能窗口应在场");
+    click(importBtn());
+    await sleep(80);
+    assert.equal(popup.overlay.style.display, "none", "导入成功后技能窗口应自动关闭");
+    const card = handoffCardEl();
+    assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"),
+        "技能窗口关闭后常驻回写卡片仍在（回写入口不丢）");
 });
 
 test("导入到画布：按流程图同一套布局重排画布节点（分层左到右、列内堆叠、短列居中、适配视图）", async () => {
@@ -127,8 +154,75 @@ test("导入到画布：按流程图同一套布局重排画布节点（分层�
     }
 });
 
-test("回写入技能：画布 API prompt 落盘该技能（POST update_workflow_skill）+ 后端 warnings toast", async () => {
+test("导入到画布：常驻卡片给「💾 回写入技能」入口，确认变更后把画布落盘该技能", async () => {
     let posted = null;
+    mockPreview([{ field: "model", from: "old.safetensors", to: "m.safetensors" }]);
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted = b;
+        return jsonResponse({ success: true, id: "custom_a", warnings: ["工作流没有 CLIPTextEncode 节点，运行时无法注入提示词"], gen_video: false });
+    });
+    appState.promptGraph = {
+        output: { "10": { class_type: "KSampler", inputs: { model: ["1", 0] } }, "11": { class_type: "SaveImage", inputs: { images: ["10", 0] } } },
+        workflow: "{\"nodes\":[]}",
+    };
+    await openPopup({ id: "custom_a", source: "custom" });
+    click(importBtn());
+    await sleep(80);
+
+    const card = handoffCardEl();
+    assert.ok(card, "导入应出插件 action toast 卡片");
+    assert.ok(!card.classList.contains("neo-at-out"), "带 action 的卡片不自动消失");
+    const btn = handoffWriteBtn();
+    assert.ok(btn && btn.textContent === "💾 回写入技能", "卡片应给「💾 回写入技能」入口");
+    appState.toasts.length = 0;
+    click(btn);
+    await sleep(80);
+
+    assert.equal(posted, null, "未确认前不应落盘");
+    const dlg = writeConfirmDialog();
+    assert.ok(dlg, "点回写应出变更确认弹窗");
+    assert.ok(dlg.textContent.includes("model"), "弹窗应列出预览的变更项");
+    assert.ok(dlg.textContent.includes("仅保存 API 工作流"), "弹窗应提示仅保存 API 工作流");
+    click(footBtn(dlg, "确认保存"));
+    await sleep(80);
+    assert.equal(posted && posted.skill_id, "custom_a", "确认后应把画布落盘该技能");
+    assert.deepEqual(Object.keys(posted.workflow), ["10", "11"], "画布 output 原样落盘");
+    assert.ok(appState.toasts.some((t) => (t.detail || "").includes("CLIPTextEncode")), "后端 warnings 应 toast 落");
+});
+
+test("导入到画布：回写卡片绑定灌入的工作流 tab，切走收起、切回恢复", async () => {
+    mockPreview([]);
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false }));
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const skillWf = { path: "workflows/skill.json" };
+    const otherWf = { path: "workflows/other.json" };
+    const { setActive, listenerCount } = installWorkflowStore(skillWf);
+    try {
+        await openPopup({ id: "custom_a", source: "custom" });
+        click(importBtn());
+        await sleep(80);
+
+        const card = handoffCardEl();
+        assert.ok(card && !card.classList.contains("neo-at-hidden"), "技能 tab 在场时回写卡片可见");
+        setActive(otherWf);
+        assert.ok(card.classList.contains("neo-at-hidden"), "切到其他画布 tab 应收起");
+        setActive(skillWf);
+        assert.ok(!card.classList.contains("neo-at-hidden"), "切回技能 tab 应恢复");
+
+        click(handoffWriteBtn());
+        await sleep(80);
+        assert.equal(listenerCount(), 1, "卡片关掉但未落盘：待回写状态在，tab 监听应保持");
+        click(footBtn(writeConfirmDialog(), "确认保存"));
+        await sleep(80);
+        assert.equal(listenerCount(), 0, "落盘后应解绑 tab 监听");
+    } finally {
+        clearWorkflowStore();
+    }
+});
+
+test("回写入技能：先弹变更确认，确认后 POST update_workflow_skill 落盘 + 后端 warnings toast", async () => {
+    let posted = null;
+    mockPreview([{ field: "count", from: 1, to: 2 }]);
     mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
         posted = b;
         return jsonResponse({ success: true, id: "custom_a", warnings: ["工作流没有 CLIPTextEncode 节点，运行时无法注入提示词"], gen_video: false });
@@ -140,6 +234,12 @@ test("回写入技能：画布 API prompt 落盘该技能（POST update_workflow
     await openPopup({ id: "custom_a", source: "custom" });
     const toastAt = appState.toasts.length;
     click(writeBtn());
+    await sleep(80);
+
+    const dlg = writeConfirmDialog();
+    assert.ok(dlg, "点回写应出变更确认弹窗");
+    assert.ok(dlg.textContent.includes("1 处变更"), "标题应给出变更条数");
+    click(footBtn(dlg, "确认保存"));
     await sleep(80);
 
     assert.ok(posted, "应发出 /neo_image_gen/update_workflow_skill");
@@ -175,7 +275,7 @@ test("Studio 内嵌详情（无画布）：工作流区只挂「⤒ 主画布编
         await openPopup({ id: "custom_a", source: "custom", canvasBtns: false });
         assert.ok(document.querySelector(".rs-skill-workflow"), "工作流区仍渲染");
         const btns = document.querySelectorAll(".rs-wf-canvas-btns button");
-        assert.deepEqual(Array.from(btns).map((b) => b.textContent), ["⤒ 主画布编辑"], "内嵌只挂交接按钮");
+        assert.deepEqual(Array.from(btns).map((b) => b.textContent), ["⤒ 主画布编辑", "🕘 变更记录"], "内嵌只挂交接与记录按钮");
         click(btns[0]);
         await sleep(20);
         assert.deepEqual(opened, [{ url: "/?neo_wf_edit=custom_a", target: "_blank" }], "应带技能 id 打开主界面");
@@ -201,6 +301,7 @@ function mockSkillRoutes({ id = "custom_a", source = "custom", workflow = WF_TEM
 
 test("交接导入：按技能 config.json 预渲染灌画布，toast 带「💾 回写入技能」动作落盘该技能", async () => {
     mockSkillRoutes();
+    mockPreview([{ field: "model", from: "old.safetensors", to: "m.safetensors" }]);
     let posted = null;
     mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
         posted = b;
@@ -232,7 +333,10 @@ test("交接导入：按技能 config.json 预渲染灌画布，toast 带「💾
     appState.toasts.length = 0;
     click(btn);
     await sleep(80);
-    assert.equal(posted && posted.skill_id, "custom_a", "动作应把画布落盘该技能");
+    assert.equal(posted, null, "未确认前不应落盘");
+    click(footBtn(writeConfirmDialog(), "确认保存"));
+    await sleep(80);
+    assert.equal(posted && posted.skill_id, "custom_a", "确认后应把画布落盘该技能");
     assert.deepEqual(Object.keys(posted.workflow), ["10", "11"]);
     assert.ok(appState.toasts.some((t) => (t.detail || "").includes("CLIPTextEncode")), "后端 warnings 应 toast 落");
 });
@@ -257,6 +361,7 @@ test("交接回写：预设技能点「💾 回写入技能」不发请求并提
 
 test("交接回写卡片绑定灌入的工作流 tab：切走 tab 收起、切回来恢复", async () => {
     mockSkillRoutes();
+    mockPreview([]);
     mockRoute("/neo_image_gen/update_workflow_skill", (b) => jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false }));
     appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
     const skillWf = { path: "workflows/skill.json" };
@@ -275,8 +380,11 @@ test("交接回写卡片绑定灌入的工作流 tab：切走 tab 收起、切�
         assert.ok(!card.classList.contains("neo-at-hidden"), "切回技能 tab 应恢复");
 
         click(handoffWriteBtn());
-        await sleep(300);
-        assert.equal(listenerCount(), 0, "卡片关闭后应解绑 tab 监听");
+        await sleep(80);
+        assert.equal(listenerCount(), 1, "卡片关掉但未落盘：待回写状态在，tab 监听应保持");
+        click(footBtn(writeConfirmDialog(), "确认保存"));
+        await sleep(80);
+        assert.equal(listenerCount(), 0, "落盘后应解绑 tab 监听");
     } finally {
         clearWorkflowStore();
     }
@@ -284,6 +392,7 @@ test("交接回写卡片绑定灌入的工作流 tab：切走 tab 收起、切�
 
 test("交接回写卡片只认最后打开的技能：同画布再导入顶掉前一张", async () => {
     let posted = null;
+    mockPreview();
     mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
         posted = b;
         return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false });
@@ -303,6 +412,8 @@ test("交接回写卡片只认最后打开的技能：同画布再导入顶掉�
     assert.ok(card !== first, "新导入渲染新卡片");
     assert.ok(card.querySelector(".neo-at-detail").textContent.includes("custom_b"), "最新卡片属于后导入的技能");
     click(handoffWriteBtn());
+    await sleep(80);
+    click(footBtn(writeConfirmDialog(), "确认保存"));
     await sleep(80);
     assert.equal(posted && posted.skill_id, "custom_b", "回写落最后打开的技能");
 });
@@ -394,3 +505,164 @@ test("交接导入（生视频）：MiniMaxH3 写死尺寸/时长与 steps 按 c
     assert.equal(wf["4"].inputs.vae_name, "a.safetensors", "音频 VAE 不灌视频 VAE");
     assert.equal(wf["2"].inputs.prompt, "old prompt", "提示词交接期不注入，原样保留");
 });
+
+// ---- 回写变更确认与变更记录 ----
+
+test("回写确认：取消不发回写请求、不写变更记录", async () => {
+    localStorage.removeItem("neo.skillWriteLog");
+    let posted = false;
+    mockPreview([{ field: "count", from: 1, to: 2 }]);
+    mockRoute("/neo_image_gen/update_workflow_skill", () => { posted = true; return jsonResponse({ success: true, id: "custom_a" }); });
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    await openPopup({ id: "custom_a", source: "custom" });
+    click(writeBtn());
+    await sleep(80);
+
+    const dlg = writeConfirmDialog();
+    assert.ok(dlg, "应出变更确认弹窗");
+    click(footBtn(dlg, "取消"));
+    await sleep(60);
+    assert.equal(posted, false, "取消不应发回写请求");
+    assert.equal(document.querySelector(".rs-wf-write-confirm"), null, "取消后弹窗应关闭");
+    assert.equal(localStorage.getItem("neo.skillWriteLog"), null, "取消不应写变更记录");
+});
+
+test("回写确认：预览失败时不发回写请求并 toast 提示", async () => {
+    let posted = false;
+    mockRoute("/neo_image_gen/update_workflow_skill_preview", () => jsonResponse({ error: "Preset skill is read-only" }, 403));
+    mockRoute("/neo_image_gen/update_workflow_skill", () => { posted = true; return jsonResponse({ success: true, id: "custom_a" }); });
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    await openPopup({ id: "custom_a", source: "custom" });
+    const toastAt = appState.toasts.length;
+    click(writeBtn());
+    await sleep(80);
+    assert.equal(posted, false, "预览失败不应回写");
+    assert.equal(writeConfirmDialog(), null, "预览失败不应出确认弹窗");
+    assert.ok(appState.toasts.slice(toastAt).some((t) => (t.summary || "").includes("回写入失败")), "应 toast 预览失败");
+});
+
+
+// ---- 回写卡片关掉后的待回写状态：顶菜单入口与 🅝 绿点（状态在 skill.js，卡片只是视图）----
+function menuBtnEl() {
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+    return btn;
+}
+
+test("回写卡片关掉后待办保留：绿点在场，切走 tab 收起、切回恢复", async () => {
+    mockSkillRoutes();
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const skillWf = { path: "workflows/skill.json" };
+    const otherWf = { path: "workflows/other.json" };
+    const { setActive, listenerCount } = installWorkflowStore(skillWf);
+    const btn = menuBtnEl();
+    try {
+        const { openSkillWorkflowOnCanvas, getPendingWriteback } = await import("../../web/skill.js");
+        await openSkillWorkflowOnCanvas("custom_a");
+        await sleep(80);
+        click(handoffCardEl().querySelector(".neo-at-close"));
+        await sleep(30);
+        assert.ok(handoffCardEl().classList.contains("neo-at-out"), "卡片应已关闭");
+        const pending = getPendingWriteback();
+        assert.ok(pending && pending.id === "custom_a", "关掉卡片后待回写状态应保留（顶菜单入口靠它）");
+        assert.ok(btn.classList.contains("neo-writeback-hint"), "待回写时 🅝 按钮应挂绿点");
+
+        setActive(otherWf);
+        assert.equal(btn.classList.contains("neo-writeback-hint"), false, "切走技能 tab 应收起绿点");
+        assert.equal(getPendingWriteback(), null, "切走后当前画布无待回写");
+        setActive(skillWf);
+        assert.ok(btn.classList.contains("neo-writeback-hint"), "切回应恢复绿点");
+        assert.equal(listenerCount(), 1, "待回写期间应保持一个 tab 监听");
+    } finally {
+        clearWorkflowStore();
+    }
+});
+
+test("回写卡片关掉后仍可落盘：确认后清待回写、清绿点并解绑 tab 监听", async () => {
+    mockSkillRoutes();
+    mockPreview([{ field: "model", from: "old.safetensors", to: "m.safetensors" }]);
+    let posted = null;
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted = b;
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false });
+    });
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const { listenerCount } = installWorkflowStore({ path: "workflows/skill.json" });
+    const btn = menuBtnEl();
+    try {
+        const { openSkillWorkflowOnCanvas, getPendingWriteback, runCanvasSkillWriteback } = await import("../../web/skill.js");
+        await openSkillWorkflowOnCanvas("custom_a");
+        await sleep(80);
+        click(handoffCardEl().querySelector(".neo-at-close"));
+        await sleep(30);
+
+        const savedP = runCanvasSkillWriteback();
+        await sleep(80);
+        const dlg = writeConfirmDialog();
+        assert.ok(dlg, "关掉卡片后仍应能出变更确认弹窗");
+        click(footBtn(dlg, "确认保存"));
+        const saved = await savedP;
+        await sleep(80);
+
+        assert.equal(saved, true, "确认保存后应返回已保存");
+        assert.equal(posted && posted.skill_id, "custom_a", "应落盘该技能");
+        assert.equal(getPendingWriteback(), null, "落盘后待回写应清空");
+        assert.equal(btn.classList.contains("neo-writeback-hint"), false, "落盘后应清绿点");
+        assert.equal(listenerCount(), 0, "落盘后应解绑 tab 监听");
+    } finally {
+        clearWorkflowStore();
+    }
+});
+
+test("变更记录：确认回写后按技能记录变更清单，详情弹窗「🕘 变更记录」可查并可清空", async () => {
+    localStorage.removeItem("neo.skillWriteLog");
+    mockPreview([
+        { field: "model", from: "old.safetensors", to: "m.safetensors" },
+        { field: "节点 LoadImage", from: "0 个", to: "1 个" },
+    ], ["工作流没有 SaveImage 节点，将无法收集输出图片"]);
+    mockRoute("/neo_image_gen/update_workflow_skill", () => jsonResponse({ success: true, id: "custom_a", warnings: ["工作流没有 SaveImage 节点，将无法收集输出图片"], gen_video: false }));
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    await openPopup({ id: "custom_a", source: "custom" });
+    click(writeBtn());
+    await sleep(80);
+    click(footBtn(writeConfirmDialog(), "确认保存"));
+    await sleep(80);
+
+    const log = JSON.parse(localStorage.getItem("neo.skillWriteLog"));
+    assert.equal(log.length, 1, "应写入 1 条变更记录");
+    assert.equal(log[0].skillId, "custom_a", "记录按技能关联");
+    assert.equal(log[0].source, "canvas", "记录标出画布回写来源");
+    assert.deepEqual(log[0].changes.map((c) => c.field), ["model", "节点 LoadImage"], "记录保存后端预览的变更清单");
+
+    click(logBtn());
+    await sleep(40);
+    const dlg = document.querySelector(".rs-skill-write-log-overlay");
+    assert.ok(dlg, "应出变更记录弹窗");
+    assert.ok(dlg.textContent.includes("变更记录 · custom_a（1）"), "标题应带技能与条数");
+    assert.ok(dlg.textContent.includes("m.safetensors"), "应列出变更新值");
+    assert.ok(dlg.textContent.includes("画布回写"), "应标出回写来源");
+    assert.ok(dlg.textContent.includes("SaveImage"), "应带出当次 warnings");
+
+    [...dlg.querySelectorAll(".rs-repair-foot button")].find((b) => b.textContent.includes("清空记录")).click();
+    await sleep(40);
+    assert.equal(localStorage.getItem("neo.skillWriteLog"), "[]", "清空记录应清掉本技能记录");
+    assert.equal(document.querySelector(".rs-skill-write-log-overlay"), null, "清空后弹窗应关闭");
+});
+
+test("变更记录：每技能上限 50 条，超出后丢最旧", async () => {
+    localStorage.removeItem("neo.skillWriteLog");
+    mockPreview([{ field: "count", from: 1, to: 2 }]);
+    mockRoute("/neo_image_gen/update_workflow_skill", () => jsonResponse({ success: true, id: "custom_a", warnings: [], gen_video: false }));
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    await openPopup({ id: "custom_a", source: "custom" });
+    for (let i = 0; i < 52; i++) {
+        click(writeBtn());
+        await sleep(20);
+        click(footBtn(writeConfirmDialog(), "确认保存"));
+        await sleep(20);
+    }
+    const log = JSON.parse(localStorage.getItem("neo.skillWriteLog"));
+    assert.equal(log.length, 50, "每技能最多保留 50 条");
+});
+

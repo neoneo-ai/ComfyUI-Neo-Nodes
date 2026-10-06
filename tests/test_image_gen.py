@@ -1117,11 +1117,15 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         with open(os.path.join(pdir, "workflow.json"), "w", encoding="utf-8") as f:
             json.dump({"1": {"class_type": "UNETLoader", "inputs": {}}}, f)
         _skill_mod.SKILL_PRESETS_DIR = os.path.join(self._tmp.name, "presets")
+        # 全局生图设置隔离到临时目录：回写基线只由 DEFAULT_SETTINGS 推导，不依赖本机 settings
+        self._orig_settings = image_gen.SETTINGS_FILE
+        image_gen.SETTINGS_FILE = os.path.join(self._tmp.name, "image_gen.json")
 
     def tearDown(self):
         _skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
         _skill_mod.SKILL_OVERRIDES_DIR = self._orig_ovr
         _skill_mod.SKILL_PRESETS_DIR = self._orig_presets
+        image_gen.SETTINGS_FILE = self._orig_settings
         self._tmp.cleanup()
 
     @staticmethod
@@ -1367,6 +1371,168 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["base_resolution"], 1536)
         self.assertIs(cfg["enhance_prompt"], True)
         self.assertEqual(cfg["steps"], 25)
+
+    def _seeded_canvas(self, model, settings=None):
+        """「导入到画布」灌出来的画布：编码器/VAE 是自动建议名，前缀/张数/尺寸是全局默认
+        （这些都不落 config.json），尺寸按有效 base_resolution + default_ratio 推。"""
+        st = dict(image_gen.DEFAULT_SETTINGS)
+        st.update(settings or {})
+        w, h = image_gen.resolve_dimensions(st)
+        return {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": model}},
+            "2": {"class_type": "CLIPLoader",
+                  "inputs": {"clip_name": image_gen.suggest_model("text_encoders"), "type": "krea2"}},
+            "3": {"class_type": "VAELoader", "inputs": {"vae_name": image_gen.suggest_model("vae")}},
+            "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "p"}},
+            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+            "6": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["4", 0],
+                                                        "latent_image": ["5", 0], "seed": 0, "steps": 20}},
+            "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0],
+                                                        "filename_prefix": st["output_prefix"]}},
+        }
+
+    def _preview(self, sid, workflow):
+        return self._call(image_gen.preview_workflow_skill_route,
+                          self._req({"skill_id": sid, "workflow": workflow}))
+
+    def test_preview_changes_ignore_effective_defaults(self):
+        # 基线 = 画布打开时的有效配置：只换主模型时，编码器/VAE/前缀/张数/尺寸这些默认值不报变更；
+        # 1296x736（base_resolution 1296 + 16:9）与技能里的 16:9 同比例，也不算变更
+        d = self._make_custom_skill("upd_base")
+        seeded = {"default_ratio": "16:9", "base_resolution": 1296}
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": "krea2/krea2_turbo_fp16.safetensors", "default_ratio": "16:9"}, f)
+        status, body = self._preview("upd_base", self._seeded_canvas(
+            "krea2/krea2_turbo_fp16.safetensors", seeded))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["changes"], [])
+
+        status, body = self._preview("upd_base", self._seeded_canvas(
+            "krea2/krea2_full_bf16.safetensors", seeded))
+        self.assertEqual([c["field"] for c in body["changes"]], ["model"])
+        self.assertEqual(body["changes"][0]["from"], "krea2/krea2_turbo_fp16.safetensors")
+        self.assertEqual(body["changes"][0]["to"], "krea2/krea2_full_bf16.safetensors")
+
+        # 真换比例（16:9 → 1:1）必须报出来
+        status, body = self._preview("upd_base", self._seeded_canvas(
+            "krea2/krea2_turbo_fp16.safetensors", {"default_ratio": "1:1", "base_resolution": 1296}))
+        self.assertEqual([c["field"] for c in body["changes"]], ["default_ratio"])
+
+    def test_preview_changes_auto_suggested_models_not_a_change(self):
+        # 无 config.json：主模型/编码器/VAE 全走自动建议，画布灌的就是建议名 → 无变更
+        self._make_custom_skill("upd_sug")
+        status, body = self._preview("upd_sug", self._seeded_canvas(
+            image_gen.suggest_model("diffusion_models")))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["changes"], [])
+
+    def test_preview_strips_runtime_injected_loras(self):
+        # 模板 0 个 LoRA、config 1 个 LoRA：画布导入注入的具体名 LoRA 节点回写时剥离，
+        # 不报「节点 LoraLoaderModelOnly 0→1」「连线数」假变更
+        d = self._make_custom_skill("upd_lora")
+        model = image_gen.suggest_model("diffusion_models")
+        canvas = self._seeded_canvas(model)
+        # 基线模板 = 画布结构（无 LoRA 节点），回写剥离注入节点后应与基线完全一致
+        with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+            json.dump(canvas, f)
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": model, "loras": [{"name": "cfg_lora.safetensors", "strength": 1.0}]}, f)
+        canvas["13"] = {"class_type": "LoraLoaderModelOnly",
+                        "inputs": {"model": ["1", 0], "lora_name": "cfg_lora.safetensors", "strength_model": 1.0}}
+        canvas["6"]["inputs"]["model"] = ["13", 0]
+        status, body = self._preview("upd_lora", canvas)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["changes"], [])
+
+    def test_preview_lora_value_change_only_reports_loras(self):
+        # 技能 0 个 LoRA 节点 + config 1 个 LoRA：画布上那个注入节点被改了 LoRA 文件（只改值、没加连线），
+        # 剥离判据是数量不是名字 → 只报 loras 变更，不报「节点 0→1」「连线数」假变更
+        d = self._make_custom_skill("upd_lora2")
+        model = image_gen.suggest_model("diffusion_models")
+        canvas = self._seeded_canvas(model)
+        with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+            json.dump(canvas, f)
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": model, "loras": [{"name": "lora_a.safetensors", "strength": 1.0}]}, f)
+        canvas["13"] = {"class_type": "LoraLoaderModelOnly",
+                        "inputs": {"model": ["1", 0], "lora_name": "lora_b.safetensors", "strength_model": 0.8}}
+        canvas["6"]["inputs"]["model"] = ["13", 0]
+        status, body = self._preview("upd_lora2", canvas)
+        self.assertEqual(status, 200)
+        self.assertEqual([c["field"] for c in body["changes"]], ["loras"])
+        self.assertEqual(body["changes"][0]["from"], "lora_a.safetensors×1.0")
+        self.assertEqual(body["changes"][0]["to"], "lora_b.safetensors×0.8")
+        # 落盘：模板不带 LoRA 节点（结构不变），画布上的新 LoRA 值写进 config.loras
+        status, body = self._call(image_gen.update_workflow_skill_route,
+                                  self._req({"skill_id": "upd_lora2", "workflow": canvas}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual([n for n in tpl.values() if n["class_type"] == "LoraLoaderModelOnly"], [])
+        self.assertEqual(tpl["6"]["inputs"]["model"], ["1", 0])
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["loras"], [{"name": "lora_b.safetensors", "strength": 0.8}])
+
+    def test_preview_keeps_template_lora_slots(self):
+        # 模板自带 {{LORA_1_NAME}} 槽位、config 1 个 LoRA：画布灌的就是那一个槽位节点，
+        # 注入数 = len(config.loras) - 槽位数 = 0 → 槽位不被删、无变更
+        d = self._make_custom_skill("upd_slot")
+        model = image_gen.suggest_model("diffusion_models")
+        canvas = self._seeded_canvas(model)
+        canvas["13"] = {"class_type": "LoraLoaderModelOnly",
+                        "inputs": {"model": ["1", 0], "lora_name": "{{LORA_1_NAME}}",
+                                   "strength_model": "{{LORA_1_STRENGTH}}"}}
+        canvas["6"]["inputs"]["model"] = ["13", 0]
+        with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+            json.dump(canvas, f)
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": model, "loras": [{"name": "lora_a.safetensors", "strength": 1.0}]}, f)
+        filled = json.loads(json.dumps(canvas)
+                            .replace("{{LORA_1_NAME}}", "lora_a.safetensors")
+                            .replace("{{LORA_1_STRENGTH}}", "1.0"))
+        status, body = self._preview("upd_slot", filled)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["changes"], [])
+        status, body = self._call(image_gen.update_workflow_skill_route,
+                                  self._req({"skill_id": "upd_slot", "workflow": filled}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
+            tpl = json.load(f)
+        self.assertEqual(tpl["13"]["inputs"]["lora_name"], "{{LORA_1_NAME}}")
+        self.assertEqual(tpl["13"]["inputs"]["strength_model"], "{{LORA_1_STRENGTH}}")
+
+    def test_preview_reports_real_added_lora_node(self):
+        # 画布链上 2 个 LoRA 节点、config 只 1 个：剥 1 个注入的，多出来的那个是真结构变更
+        d = self._make_custom_skill("upd_lora3")
+        model = image_gen.suggest_model("diffusion_models")
+        canvas = self._seeded_canvas(model)
+        with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
+            json.dump(canvas, f)
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": model, "loras": [{"name": "lora_a.safetensors", "strength": 1.0}]}, f)
+        canvas["13"] = {"class_type": "LoraLoaderModelOnly",
+                        "inputs": {"model": ["1", 0], "lora_name": "lora_a.safetensors", "strength_model": 1.0}}
+        canvas["14"] = {"class_type": "LoraLoaderModelOnly",
+                        "inputs": {"model": ["13", 0], "lora_name": "lora_b.safetensors", "strength_model": 0.5}}
+        canvas["6"]["inputs"]["model"] = ["14", 0]
+        status, body = self._preview("upd_lora3", canvas)
+        self.assertEqual(status, 200)
+        fields = [c["field"] for c in body["changes"]]
+        self.assertIn("节点 LoraLoaderModelOnly", fields)
+        self.assertIn("loras", fields)
+        self.assertEqual([c for c in body["changes"] if c["field"] == "loras"][0]["to"],
+                         "lora_a.safetensors×1.0、lora_b.safetensors×0.5")
+
+    def test_preview_changes_video_size_defaults(self):
+        # 视频技能 config.json 无 width/height/length：画布灌的 1344/768/124 是默认值，不进变更清单；
+        # 模型/编码器/VAE 与自动建议基线不同 → 仍是真变更
+        self._make_custom_skill("upd_vbase")
+        status, body = self._preview("upd_vbase", self._h3_video_workflow(i2v=False))
+        self.assertEqual(status, 200)
+        fields = [c["field"] for c in body["changes"]]
+        self.assertFalse([f for f in fields if f in ("width", "height", "length")])
+        self.assertIn("model", fields)
 
     def test_update_workflow_skill_ref(self):
         # 画带参考图 → skill.md 里 requires_ref 归真（正文保留），模板留 {{REF_IMAGE}} 占串

@@ -135,6 +135,18 @@ export async function updateWorkflowSkill(skillId, workflow) {
     return data;
 }
 
+/** 回写前预览：后端同一套计算给出变更清单与 warnings（只算不写）；返回 { id, changes, warnings, gen_video } */
+export async function previewWorkflowSkill(skillId, workflow) {
+    const resp = await fetch(`${GEN_API}/update_workflow_skill_preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill_id: skillId, workflow })
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || data.error) throw new Error(data?.error || `HTTP ${resp.status}`);
+    return data;
+}
+
 /** 读技能的生图设置覆盖（config.json；缺失返回 {}） */
 export async function getSkillGenConfig(skillId) {
     try {

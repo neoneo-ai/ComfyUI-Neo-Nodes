@@ -648,6 +648,17 @@ async function openMgrWf(opts) {
 
 const modeBtn = (wf, text) => Array.from(wf.querySelectorAll(".rs-content-mode-btn")).find((b) => b.textContent.includes(text));
 const wfBarBtn = (wf, text) => Array.from(wf.querySelectorAll(".rs-wf-editor-bar button")).find((b) => b.textContent.includes(text));
+// 保存工作流走「变更确认弹窗」：预览 mock + 点「💾 确认保存」
+function mockWfPreview() {
+    mockRoute("/neo_image_gen/update_workflow_skill_preview", () =>
+        jsonResponse({ success: true, id: "wf_demo", changes: [], warnings: [], gen_video: false }));
+}
+function clickWriteConfirm() {
+    const dlg = document.querySelector(".rs-wf-write-confirm");
+    const btn = dlg ? [...dlg.querySelectorAll(".rs-repair-foot button")].find((b) => b.textContent.includes("确认保存")) : null;
+    if (btn) click(btn);
+    return !!btn;
+}
 
 test("工作流区：渲染只读/编辑模式切换；前端无 LiteGraph 时隐藏「编辑」", async () => {
     const { box, wf } = await openMgrWf();
@@ -746,6 +757,7 @@ test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → �
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf();
     let saved = null;
+    mockWfPreview();
     mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
         saved = b;
         return jsonResponse({ success: true, id: "wf_demo", warnings: [] });
@@ -756,6 +768,12 @@ test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → �
     await flush();
     await sleep(50);
     click(wfBarBtn(wf, "保存工作流"));
+    await flush();
+    await sleep(120);
+    await flush();
+
+    assert.equal(saved, null, "确认前不应落盘");
+    assert.ok(clickWriteConfirm(), "保存工作流应弹变更确认弹窗");
     await flush();
     await sleep(120);
     await flush();
@@ -830,6 +848,7 @@ test("内嵌编辑保存：回写后按新 config 重载设置区", async () => 
     // 模拟后端回写：保存工作流后 config.json 变成画布落盘的新值，之后的读取返回新 config
     let cfg = { model: "a.safetensors", steps: 20 };
     mockRoute("/neo_image_gen/skill_config", () => jsonResponse(cfg));
+    mockWfPreview();
     mockRoute("/neo_image_gen/update_workflow_skill", () => {
         cfg = { model: "b.safetensors", steps: 44 };
         return jsonResponse({ success: true, id: "wf_demo", warnings: [] });
@@ -841,6 +860,10 @@ test("内嵌编辑保存：回写后按新 config 重载设置区", async () => 
     await sleep(50);
     assert.equal(created.graphs.length, 1, "编辑模式应已挂载子图");
     click(wfBarBtn(wf, "保存工作流"));
+    await flush();
+    await sleep(120);
+    await flush();
+    assert.ok(clickWriteConfirm(), "保存工作流应弹变更确认弹窗");
     await flush();
     await sleep(120);
     await flush();
@@ -902,5 +925,21 @@ test("内嵌编辑：折叠工作流区 / 切换技能 / 关闭窗口均卸载�
 
     closeMgr(box);
     assert.ok(!document.querySelector(".rs-skill-manager-overlay"), "关闭窗口应移除整窗");
+});
+
+test("导入到画布：成功后关闭整个技能管理窗口（不遮挡画布），回写入口留在常驻卡片", async () => {
+    const { box, wf } = await openMgrWf();
+    assert.ok(document.querySelector(".rs-skill-manager-overlay"), "导入前整窗应在场");
+    const importBtn = wf.querySelector(".rs-wf-canvas-import-btn");
+    assert.ok(importBtn, "内嵌详情应挂「⤒ 导入到画布」");
+    click(importBtn);
+    await flush();
+    await sleep(120);
+    await flush();
+    assert.ok(!document.querySelector(".rs-skill-manager-overlay"), "导入成功后应关闭整个技能管理窗口");
+    const cards = document.querySelectorAll("#neo-action-toast-stack .neo-at");
+    const card = cards.length ? cards[cards.length - 1] : null;
+    assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"),
+        "整窗关闭后常驻回写卡片仍在（回写入口不丢）");
 });
 

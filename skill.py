@@ -1056,6 +1056,28 @@ def get_skill_gen_config(skill_id: str) -> dict:
     return cfg
 
 
+def _effective_gen_config(skill_id: str, is_video: bool) -> dict:
+    """技能的有效生图/生视频设置 = 全局默认 ⊕ 技能 config（含预设本地覆盖）⊕ 空模型名的自动挑选。
+
+    「导入到画布」灌 widget 用的就是这套值（web/skill.js 的 workflowParamValues + listGenModels 的
+    suggested_*），所以它同时是画布打开时的基线：回写比对以它为基准，编码器 / VAE / 输出前缀 /
+    张数 / 视频尺寸这些不落 config.json 的默认值才不会被报成「空 → 值」的假变更。
+    image_gen 惰性导入：单测单独加载 skill.py 时不拉起 comfy 依赖。"""
+    from .image_gen import get_settings, resolve_model
+    eff = get_settings()
+    eff.update(get_skill_gen_config(skill_id))
+    for key, folder in (("model", "diffusion_models"), ("text_encoder", "text_encoders"), ("vae", "vae")):
+        resolved, err = resolve_model(folder, eff.get(key))
+        if not err and resolved:
+            eff[key] = resolved
+    if is_video:
+        # 视频尺寸/时长默认值与前端导入回落值一致：config.json 没有这三键时画布灌的就是它们
+        for key, default in (("width", 1344), ("height", 768), ("length", 124)):
+            if not isinstance(eff.get(key), int) or eff[key] < 1:
+                eff[key] = default
+    return eff
+
+
 def has_skill_config_override(skill_id: str) -> bool:
     """预设技能是否存在本地配置覆盖（UI 的「已修改」标记 / 恢复默认按钮）。"""
     sid = _normalize_skill_id(str(skill_id or ""))
@@ -1157,6 +1179,67 @@ def _model_consumer(workflow: dict, src_id: str):
             if best is None or _node_sort_key(nid) < _node_sort_key(best):
                 best = nid
     return best
+
+
+def _main_lora_chain(workflow: dict) -> list:
+    """主链 LoRA 节点 id（UNETLoader → LoraLoaderModelOnly* 串联），按链序。"""
+    chain = []
+    for unet_id in sorted((nid for nid, n in workflow.items()
+                           if isinstance(n, dict) and n.get("class_type") == "UNETLoader"),
+                          key=_node_sort_key):
+        cur = unet_id
+        while True:
+            nxt = _model_consumer(workflow, cur)
+            if not nxt:
+                break
+            chain.append(nxt)
+            cur = nxt
+    return chain
+
+
+def _lora_slot_count(template) -> int:
+    """技能已存模板自带的 LoRA 槽位数：画布导入时先灌这些槽位，多出来的 config.loras 才是注入的。"""
+    if not isinstance(template, dict):
+        return 0
+    return len(_main_lora_chain(template))
+
+
+def _strip_runtime_loras(workflow: dict, cfg_loras, slots: int = 0) -> tuple[dict, list]:
+    """剥离画布里运行时注入的主链 LoRA 节点，返回 (剥离后的 workflow, 注入节点的 lora 条目)。
+
+    前端「导入到画布」按 config.loras 灌 LoRA：先填模板自带的 {{LORA_i_NAME}} 槽位，超出槽位的
+    部分在主链末端注入（web injectRuntimeLoras / image_gen._apply_loras 同一套）。所以链上槽位
+    之后的 len(config.loras) - slots 个节点就是程序注入的 —— 判据是数量，widget 里被改过的具体
+    名一样算（按名字匹配会让「只改 LoRA 值」报成新增节点，也会把模板自带槽位整条删掉）。
+    剥离是注入的逆操作：下游 model 输入接回它的 model 来源；剥下来的 name/strength 交回
+    config.loras，改 LoRA 值只报 loras 变更，不报「节点 0→1」「连线数」假变更。"""
+    n_cfg = sum(1 for l in (cfg_loras or []) if isinstance(l, dict) and l.get("name"))
+    chain = _main_lora_chain(workflow)
+    n_strip = min(max(n_cfg - slots, 0), max(len(chain) - slots, 0))
+    targets = [nid for nid in chain[len(chain) - n_strip:]
+               if "{{" not in str((workflow[nid].get("inputs") or {}).get("lora_name") or "")]
+    if not targets:
+        return workflow, []
+    wf = copy.deepcopy(workflow)
+    entries = []
+    for nid in reversed(targets):
+        inputs = wf[nid].get("inputs") or {}
+        src = inputs.get("model")
+        if isinstance(src, list) and len(src) == 2:
+            for n in wf.values():
+                if not isinstance(n, dict):
+                    continue
+                for k, v in (n.get("inputs") or {}).items():
+                    if isinstance(v, list) and len(v) == 2 and v[0] == nid:
+                        n["inputs"][k] = [src[0], v[1]]
+        try:
+            strength = float(inputs.get("strength_model", 1.0))
+        except (TypeError, ValueError):
+            strength = 1.0
+        entries.append({"name": str(inputs.get("lora_name") or ""), "strength": strength})
+        del wf[nid]
+    entries.reverse()
+    return wf, [e for e in entries if e["name"]]
 
 
 def _reaches_load_image(workflow: dict, node_id: str) -> bool:
@@ -1424,24 +1507,96 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
     return {"success": True, "id": sid, "warnings": warnings, "gen_video": is_video}
 
 
-def update_workflow_skill(skill_id: str, workflow: dict) -> dict:
-    """把画布工作流（API prompt）回写入 existing custom skill：workflow.json 落盘，skill.md 正文保留。"""
+def _workflow_update_guard(skill_id: str, workflow: dict) -> tuple[str, str, str]:
+    """回写/预览共用守卫：返回 (skill_id, 技能目录, 拒绝消息)；消息非空即不可回写。"""
     sid = _normalize_skill_id(str(skill_id or ""))
     d = _skill_dir(sid) if sid else None
     if not d:
-        return {"success": False, "message": "Skill not found"}
+        return "", "", "Skill not found"
     if _skill_source(d) == "presets":
-        return {"success": False, "message": "Preset skill is read-only"}
+        return "", "", "Preset skill is read-only"
     if not isinstance(workflow, dict) or not workflow:
-        return {"success": False, "message": "workflow 不是合法的 API prompt"}
+        return "", "", "workflow 不是合法的 API prompt"
     for nid, node in workflow.items():
         if not isinstance(node, dict) or not node.get("class_type") or not isinstance(node.get("inputs"), dict):
-            return {"success": False, "message": f"节点 {nid} 缺少 class_type/inputs"}
+            return "", "", f"节点 {nid} 缺少 class_type/inputs"
+    return sid, d, ""
+
+
+def _lora_label(loras) -> str:
+    if not isinstance(loras, list) or not loras:
+        return "（无）"
+    return "、".join(f"{l.get('name')}×{l.get('strength', 1)}"
+                     for l in loras if isinstance(l, dict))
+
+
+def _same_ratio(old, new) -> bool:
+    """比例按数值判等（容差 1%，与 _ratio_label 一致）：画布 1296:736 与技能里的 16:9 是同一比例。"""
+    from .image_gen import parse_ratio
+    a, b = parse_ratio(old), parse_ratio(new)
+    if a is None or b is None:
+        return str(old or "").strip() == str(new or "").strip()
+    return abs(a - b) <= 0.01 * max(a, b)
+
+
+def _config_changes(base_cfg: dict, new_cfg: dict) -> list:
+    """画布提取值相对基线（_effective_gen_config）的键变更清单：只列画布提供的键，值没变不记。"""
+    changes = []
+    for key, new in new_cfg.items():
+        old = base_cfg.get(key)
+        if key == "loras":
+            old_label, new_label = _lora_label(old), _lora_label(new)
+            if old_label != new_label:
+                changes.append({"field": "loras", "from": old_label, "to": new_label})
+        elif key == "default_ratio":
+            if not _same_ratio(old, new):
+                changes.append({"field": key, "from": "" if old is None else old, "to": new})
+        elif old != new:
+            changes.append({"field": key, "from": "" if old is None else old, "to": new})
+    return changes
+
+
+def _node_changes(old_wf: dict, new_wf: dict) -> list:
+    """旧模板 ⇄ 新模板的结构差异：按 class_type 计数 + 连线数（widget 值差异由 config 变更覆盖）。"""
+    def counts(wf):
+        c = {}
+        for n in wf.values():
+            if not isinstance(n, dict):
+                continue
+            ct = str(n.get("class_type") or "")
+            if ct:
+                c[ct] = c.get(ct, 0) + 1
+        return c
+
+    def links(wf):
+        return sum(1 for n in wf.values() if isinstance(n, dict)
+                   for v in (n.get("inputs") or {}).values()
+                   if isinstance(v, list) and len(v) == 2)
+
+    old_c, new_c = counts(old_wf), counts(new_wf)
+    changes = [{"field": f"节点 {ct}", "from": f"{old_c.get(ct, 0)} 个", "to": f"{new_c.get(ct, 0)} 个"}
+               for ct in sorted(set(old_c) | set(new_c))
+               if old_c.get(ct, 0) != new_c.get(ct, 0)]
+    old_l, new_l = links(old_wf), links(new_wf)
+    if old_l != new_l:
+        changes.append({"field": "连线数", "from": old_l, "to": new_l})
+    return changes
+
+
+def _plan_workflow_update(sid: str, d: str, workflow: dict) -> dict:
+    """画布 API prompt → 落盘计划：模板、warnings、合并后的 config、变更清单、skill.md 元数据。"""
     is_video = _is_h3_video_workflow(workflow)
+    old_wf = load_skill_workflow(sid)
+    # 画布主链里模板槽位之后的 config.loras 个节点是导入时程序注入的，剥离后不计入模板结构；
+    # 剥下来的 name/strength 并回 seed_cfg["loras"]，改 LoRA 值只落 config.json、只报 loras 变更
+    workflow, injected_loras = _strip_runtime_loras(
+        workflow, (_effective_gen_config(sid, is_video) or {}).get("loras"), _lora_slot_count(old_wf))
     if is_video:
         template, warnings, seed_cfg = _template_video_from_workflow(workflow)
     else:
         template, warnings, seed_cfg = _template_from_workflow(workflow)
+    if injected_loras:
+        seed_cfg["loras"] = list(seed_cfg.get("loras") or []) + injected_loras
     has_ref = any(isinstance(v, str) and "{{REF_IMAGE}}" in v
                   for n in template.values() if isinstance(n, dict)
                   for v in (n.get("inputs") or {}).values())
@@ -1450,28 +1605,65 @@ def update_workflow_skill(skill_id: str, workflow: dict) -> dict:
     want_cat = "video_gen" if is_video else "image_gen"
     if meta.get("category") and meta["category"] != want_cat:
         warnings.append("技能分类与画布工作流类型不一致")
+
+    changes = []
+    merged_cfg = None
+    if seed_cfg:
+        old_cfg = _read_config_file(d)
+        merged_cfg = {**old_cfg, **seed_cfg}
+        # 基线 = 画布打开时的有效配置，不是 config.json 原文：默认值/自动建议模型不算变更
+        changes = _config_changes(_effective_gen_config(sid, is_video), seed_cfg)
+    if old_wf:
+        changes += _node_changes(old_wf, template)
+
     rewrite_md = bool(meta) and bool(meta.get("requires_ref")) != has_ref
     if rewrite_md:
+        changes.append({"field": "requires_ref",
+                        "from": "真" if meta.get("requires_ref") else "假",
+                        "to": "真" if has_ref else "假"})
         if has_ref:
             meta["requires_ref"] = True
         else:
             meta.pop("requires_ref", None)
+
+    return {"template": template, "warnings": warnings, "meta": meta, "body": body,
+            "merged_cfg": merged_cfg, "rewrite_md": rewrite_md,
+            "is_video": is_video, "changes": changes}
+
+
+def preview_workflow_skill(skill_id: str, workflow: dict) -> dict:
+    """回写前预览：与 update_workflow_skill 同一套守卫与变更计算，只算不写。"""
+    sid, d, err = _workflow_update_guard(skill_id, workflow)
+    if err:
+        return {"success": False, "message": err}
+    plan = _plan_workflow_update(sid, d, workflow)
+    return {"success": True, "id": sid, "warnings": plan["warnings"],
+            "gen_video": plan["is_video"], "changes": plan["changes"]}
+
+
+def update_workflow_skill(skill_id: str, workflow: dict) -> dict:
+    """把画布工作流（API prompt）回写入 existing custom skill：workflow.json 落盘，skill.md 正文保留。"""
+    sid, d, err = _workflow_update_guard(skill_id, workflow)
+    if err:
+        return {"success": False, "message": err}
+    plan = _plan_workflow_update(sid, d, workflow)
     with _skills_lock:
         tmp = os.path.join(d, "workflow.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(template, f, indent=2, ensure_ascii=False)
+            json.dump(plan["template"], f, indent=2, ensure_ascii=False)
         os.replace(tmp, os.path.join(d, "workflow.json"))
-        if rewrite_md:
+        if plan["rewrite_md"]:
             main = _main_md_name(d)
             tmp = os.path.join(d, main + ".tmp")
             with open(tmp, "w", encoding="utf-8") as f:
-                f.write(serialize_frontmatter(meta, body))
+                f.write(serialize_frontmatter(plan["meta"], plan["body"]))
             os.replace(tmp, os.path.join(d, main))
-    if seed_cfg:
+    if plan["merged_cfg"]:
         # 与生图/生视频设置区共用写路径（整文件重写）：先垫既有 config.json 再覆盖画布提取值，
         # 保住设置区的 base_resolution / enhance_prompt 等画布不提供的键
-        save_skill_gen_config(sid, {**_read_config_file(d), **seed_cfg})
-    return {"success": True, "id": sid, "warnings": warnings, "gen_video": is_video}
+        save_skill_gen_config(sid, plan["merged_cfg"])
+    return {"success": True, "id": sid, "warnings": plan["warnings"],
+            "gen_video": plan["is_video"], "changes": plan["changes"]}
 
 
 def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:

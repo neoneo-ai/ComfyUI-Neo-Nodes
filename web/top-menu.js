@@ -3,10 +3,11 @@
  * 把插件入口收敛为顶栏一个动作按钮（🅝 图标），悬停约 0.3 秒或点击展开下拉菜单
  * （悬停刚展开 0.5 秒内的点击算同一次手势、不收起，之后点击正常收起）：
  *   🎬 新影工坊 / 🖼️ 生成素材 / 🎥 新建导演配方 / 🧩 创建节点（二级菜单，往画布当前可见区的空白处添加 Neo 节点）
- *   🔧 修复工作流（右键 = 修复映射管理）/ 📜 修复记录
+ *   🔧 修复工作流（右键 = 修复映射管理）/ 💾 回写入技能（画布上有技能待回写时可用）/ 📜 修复记录 / 📜 变更记录（技能回写历史）
  *   ⚙️ 设置（统一设置弹窗：LLM / 生图默认 / 生视频模型三 tab）/ 📥 模型库 / 🗂 技能管理
  *   ℹ️ 关于插件。
- * 修复红点提示由 workflow.js 的 setRepairHint 驱动，本模块只提供 .neo-n-menu-btn 按钮与样式。
+ * 提示点由外部状态驱动、本模块只提供 .neo-n-menu-btn 按钮与样式：
+ * 红点 = workflow.js 的 setRepairHint（失效模型路径），绿点 = skill.js 的画布技能待回写。
  */
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
@@ -15,7 +16,7 @@ import { openDirectorEditor } from "./director.js";
 import { createModelConfigForm } from "./llm-setting.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "./image-gen.js";
 import { runRepair, showRepairLogDialog, showRepairMappingsDialog } from "./workflow.js";
-import { openSkillManager, runSkillWorkflowHandoff } from "./skill.js";
+import { openSkillManager, runSkillWorkflowHandoff, showSkillWriteLogDialog, getPendingWriteback, runCanvasSkillWriteback } from "./skill.js";
 import { openGenMaterialDialog } from "./gallery-gen.js";
 import { openModelHub } from "./model-hub.js";
 
@@ -115,6 +116,13 @@ function menuItem(label, onClick) {
     btn.textContent = label;
     btn.onclick = (e) => { e.stopPropagation(); closeMenu(); onClick(); };
     return btn;
+}
+
+// 菜单项右侧引导点：与 🅝 按钮上的提示点同步（红=待修复，绿=待回写）
+function menuDot(item, cls) {
+    const dot = document.createElement("span");
+    dot.className = `neo-n-menu-dot ${cls}`;
+    item.appendChild(dot);
 }
 
 function separator() {
@@ -427,8 +435,24 @@ function openMenu(anchor, byHover = false) {
     menuEl.appendChild(separator());
     const repairItem = menuItem("🔧 修复工作流", runRepair);
     repairItem.classList.add("neo-n-menu-item-repair");   // 右键 → 修复映射管理
+    if (anchor.classList.contains("neo-repair-hint")) menuDot(repairItem, "neo-n-menu-dot-red");   // 按钮红点 → 引导修复
     menuEl.appendChild(repairItem);
+    // 画布上有技能待回写（「⤒ 导入到画布」后）：回写卡片被关掉也能从这里落盘；无待回写时置灰
+    const writebackItem = menuItem("💾 回写入技能", () => runCanvasSkillWriteback());
+    const pendingWb = getPendingWriteback();
+    if (!pendingWb) {
+        writebackItem.disabled = true;
+        writebackItem.title = "当前画布没有待回写的技能：技能管理「⤒ 导入到画布」后此入口可用";
+    } else if (pendingWb.source === "presets") {
+        writebackItem.disabled = true;
+        writebackItem.title = `技能 "${pendingWb.id}" 是预设，不可回写：先「复制为自定义」`;
+    } else {
+        writebackItem.title = `把当前画布落盘技能 "${pendingWb.id}"（先列出变更、确认后写入）`;
+    }
+    if (anchor.classList.contains("neo-writeback-hint")) menuDot(writebackItem, "neo-n-menu-dot-green");   // 按钮绿点 → 引导回写
+    menuEl.appendChild(writebackItem);
     menuEl.appendChild(menuItem("📜 修复记录", showRepairLogDialog));
+    menuEl.appendChild(menuItem("📜 变更记录", () => showSkillWriteLogDialog()));
 
     menuEl.appendChild(separator());
     menuEl.appendChild(menuItem("⚙️ 设置", openSettingsModal));
@@ -472,12 +496,20 @@ app.registerExtension({
                 ".neo-n-menu-icon::after{content:\"Neo\";margin-left:6px;font-weight:600;letter-spacing:.3px;}" +
                 ".neo-n-menu-btn{position:relative;display:flex;align-items:center;padding:4px 12px;border-radius:999px;background:#262626;border:1px solid #3a3a3a;transition:background .2s,border-color .2s,box-shadow .2s;}" +
                 ".neo-n-menu-btn:hover{background:#2e2e2e;border-color:#4a4a4a;}" +
+                // 技能回写绿点提示（skill.js 待回写状态驱动）：绿框 + 右上角绿点，写在红点之前 → 同时命中时红点优先
+                ".neo-n-menu-btn.neo-writeback-hint{border-color:var(--success-green,#4ade80);box-shadow:0 0 0 1px rgba(74,222,128,.3);}" +
+                ".neo-n-menu-btn.neo-writeback-hint::after{content:\"\";position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--success-green,#4ade80);box-shadow:0 0 0 2px rgba(0,0,0,.25);}" +
                 // 修复红点提示（workflow.js setRepairHint 驱动）：红框 + 右上角红点
                 ".neo-n-menu-btn.neo-repair-hint{border-color:var(--error-red,#f87171);box-shadow:0 0 0 1px rgba(248,113,113,.3);}" +
                 ".neo-n-menu-btn.neo-repair-hint::after{content:\"\";position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--error-red,#f87171);box-shadow:0 0 0 2px rgba(0,0,0,.25);}" +
                 ".neo-n-menu{position:fixed;z-index:9002;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;padding:6px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.5);}" +
                 ".neo-n-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border:none;background:transparent;color:#ddd;font-size:13px;text-align:left;border-radius:6px;cursor:pointer;}" +
                 ".neo-n-menu-item:hover{background:#2a2a2a;color:#fff;}" +
+                ".neo-n-menu-item:disabled{opacity:.45;cursor:default;}" +
+                // 菜单项右侧引导点：与 🅝 按钮提示点同步（红=待修复，绿=待回写）
+                ".neo-n-menu-dot{width:7px;height:7px;border-radius:50%;margin-left:auto;box-shadow:0 0 0 2px rgba(0,0,0,.25);}" +
+                ".neo-n-menu-dot-red{background:var(--error-red,#f87171);}" +
+                ".neo-n-menu-dot-green{background:var(--success-green,#4ade80);}" +
                 ".neo-n-caret{margin-left:auto;font-size:10px;color:#888;transition:transform .15s;}" +
                 ".neo-n-node-row.open .neo-n-caret{transform:rotate(90deg);}" +
                 // 飞出式二级菜单：fixed 脱离父菜单，贴「创建节点」行右侧弹出（定位在 JS 里算）

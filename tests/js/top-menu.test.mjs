@@ -30,7 +30,7 @@ test("点击按钮展开菜单且包含全部条目", async () => {
     const menu = document.querySelector(".neo-n-menu");
     assert.ok(menu, "菜单未展开");
     const labels = [...menu.querySelectorAll(".neo-n-menu-item")].map((el) => el.textContent);
-    for (const want of ["🎬 新影工坊", "🖼️ 生成素材", "🎥 新建导演配方", "🧩 创建节点", "🔧 修复工作流", "📜 修复记录", "ℹ️ 关于插件"]) {
+    for (const want of ["🎬 新影工坊", "🖼️ 生成素材", "🎥 新建导演配方", "🧩 创建节点", "🔧 修复工作流", "💾 回写入技能", "📜 修复记录", "📜 变更记录", "ℹ️ 关于插件"]) {
         assert.ok(labels.some((l) => l.includes(want)), `缺少条目: ${want}`);
     }
     // 再点一次收起
@@ -50,7 +50,7 @@ test("菜单条目顺序：设置 / 模型库 / 技能管理 分割在修复工�
     assert.deepEqual(labels, [
         "🎬 新影工坊", "🖼️ 生成素材", "🎥 新建导演配方",
         "🧩 创建节点▸",
-        "🔧 修复工作流", "📜 修复记录",
+        "🔧 修复工作流", "💾 回写入技能", "📜 修复记录", "📜 变更记录",
         "⚙️ 设置", "📥 模型库", "🗂 技能管理",
         "ℹ️ 关于插件",
     ], "条目顺序不符");
@@ -391,6 +391,114 @@ test("创建节点：空画布落在当前可见区正中", () => {
         assert.ok(node, "节点未加入画布");
         const cx = (VIS[0] + VIS[2]) / 2 - 100;
         const cy = (VIS[1] + VIS[3]) / 2 - 50;
+
+// ---- 画布技能待回写：顶菜单「💾 回写入技能」入口 + 🅝 绿点（状态由 skill.js 持有）----
+const WF_MIN = { "1": { class_type: "SaveImage", inputs: { images: ["2", 0] } } };
+
+function mockHandoffRoutes(id = "custom_a", source = "custom") {
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id, name: "Gen Skill", source, content: "body", files: [{ name: "skill.md", size: 5 }],
+        gen_image: true, gen_video: false, requires_ref: false, multi_turn: false, tags: [], category: "image_gen",
+    }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow: WF_MIN }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse({ model: "m.safetensors" }) : jsonResponse({ success: true }));
+    mockRoute("/neo_image_gen/update_workflow_skill_preview", () =>
+        jsonResponse({ success: true, id, changes: [{ field: "model", from: "old.safetensors", to: "m.safetensors" }], warnings: [], gen_video: false }));
+    mockRoute("/object_info", () => jsonResponse({}));
+}
+
+function writebackItem() {
+    return [...document.querySelectorAll(".neo-n-menu-item")].find((el) => el.textContent.includes("回写入技能"));
+}
+
+test("顶菜单「💾 回写入技能」：画布无待回写技能时置灰", () => {
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    const item = writebackItem();
+    assert.ok(item, "菜单缺少「💾 回写入技能」条目");
+    assert.equal(item.disabled, true, "无待回写技能应置灰");
+    assert.match(item.title, /导入到画布/);
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+});
+
+test("顶菜单「💾 回写入技能」：导入到画布后绿点亮、条目可用，确认后落盘并清绿点", async () => {
+    mockHandoffRoutes();
+    let posted = null;
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted = b;
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false });
+    });
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    await openSkillWorkflowOnCanvas("custom_a");
+    await sleep(80);
+    assert.ok(btn.classList.contains("neo-writeback-hint"), "导入后 🅝 按钮应挂绿点（绿色 = 有可保存的变更）");
+
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: btn });
+    const item = writebackItem();
+    assert.equal(item.disabled, false, "有技能待回写时条目应可用");
+    assert.match(item.title, /custom_a/, "条目 title 应给出目标技能");
+    assert.ok(item.querySelector(".neo-n-menu-dot-green"), "按钮绿点 → 「回写入技能」条目应带绿点引导");
+    item.click();
+    await sleep(80);
+
+    const dlg = document.querySelector(".rs-wf-write-confirm");
+    assert.ok(dlg, "点顶菜单回写应出变更确认弹窗");
+    assert.ok(dlg.textContent.includes("model"), "弹窗应列出预览的变更项");
+    [...dlg.querySelectorAll(".rs-repair-foot button")].find((b) => b.textContent.includes("确认保存")).click();
+    await sleep(80);
+    assert.equal(posted && posted.skill_id, "custom_a", "确认后应把画布落盘该技能");
+    assert.equal(btn.classList.contains("neo-writeback-hint"), false, "落盘后应清绿点");
+});
+
+test("顶菜单「💾 回写入技能」：预设技能待回写时置灰并提示只读", async () => {
+    mockHandoffRoutes("image_gen", "presets");
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    await openSkillWorkflowOnCanvas("image_gen");
+    await sleep(80);
+    assert.equal(btn.classList.contains("neo-writeback-hint"), false, "预设不可回写不应点亮绿点");
+
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    const item = writebackItem();
+    assert.equal(item.disabled, true, "预设技能应置灰");
+    assert.match(item.title, /预设/);
+});
+
+function repairItem() {
+    return [...document.querySelectorAll(".neo-n-menu-item")].find((el) => el.textContent.includes("修复工作流"));
+}
+
+test("顶菜单引导点：按钮红点 →「修复工作流」带红点、「回写入技能」无绿点", () => {
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn neo-repair-hint";
+    document.body.appendChild(btn);
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: btn });
+    assert.ok(repairItem().querySelector(".neo-n-menu-dot-red"), "按钮红点 →「修复工作流」应带红点引导");
+    assert.equal(writebackItem().querySelector(".neo-n-menu-dot-green"), null, "无绿点时回写条目不应带绿点");
+});
+
+test("顶菜单引导点：无提示点时菜单条目不带引导点", () => {
+    const btn = document.createElement("button");
+    btn.className = "neo-n-menu-btn";
+    document.body.appendChild(btn);
+    const ext = getExtension("comfy.neo.topMenu");
+    ext.actionBarButtons[0].onClick({ currentTarget: btn });
+    assert.equal(repairItem().querySelector(".neo-n-menu-dot-red"), null, "无红点时修复条目不应带红点");
+    assert.equal(writebackItem().querySelector(".neo-n-menu-dot-green"), null, "无绿点时回写条目不应带绿点");
+});
+
         assert.ok(Math.abs(node.pos[0] - cx) < 1e-6, `落点 x 应为可见区中心 ${cx.toFixed(1)}，实际 ${node.pos[0].toFixed(1)}`);
         assert.ok(Math.abs(node.pos[1] - cy) < 1e-6, `落点 y 应为可见区中心 ${cy.toFixed(1)}，实际 ${node.pos[1].toFixed(1)}`);
     } finally {
