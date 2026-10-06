@@ -34,6 +34,15 @@ test("success/info 超时自动消失", async (t) => {
     assert.ok(!el.parentNode, "success toast 超时后移除");
 });
 
+test("带 action 的 success 不自动消失（等用户点处理入口）", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { actionToast } = await import("../../web/toast.js");
+    const { el } = actionToast({ severity: "success", summary: "已导入到画布", actionLabel: "💾 回写入技能" });
+    t.mock.timers.tick(6000); // 超过自动消失时长
+    t.mock.timers.reset();
+    assert.ok(el.parentNode, "带 action 的卡片不自动消失");
+});
+
 test("error/warning 不自动消失（等过自动消失时长仍在）", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { actionToast } = await import("../../web/toast.js");

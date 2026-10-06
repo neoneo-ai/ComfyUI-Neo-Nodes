@@ -15,7 +15,7 @@ import { openDirectorEditor } from "./director.js";
 import { createModelConfigForm } from "./llm-setting.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "./image-gen.js";
 import { runRepair, showRepairLogDialog, showRepairMappingsDialog } from "./workflow.js";
-import { openSkillManager } from "./skill.js";
+import { openSkillManager, runSkillWorkflowHandoff } from "./skill.js";
 import { openGenMaterialDialog } from "./gallery-gen.js";
 import { openModelHub } from "./model-hub.js";
 
@@ -501,6 +501,7 @@ app.registerExtension({
                 }
             });
         }
+        runSkillWorkflowHandoff();   // Studio「⤒ 主画布编辑」交接：?neo_wf_edit=<id> → 灌画布 + 回写入口
     },
     actionBarButtons: [
         {

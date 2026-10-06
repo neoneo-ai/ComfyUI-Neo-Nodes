@@ -1174,6 +1174,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["model"], "krea2/krea2_turbo_fp16.safetensors")
         self.assertEqual(cfg["default_ratio"], "16:9")
         self.assertEqual(cfg["output_prefix"], "MyWf")
+        self.assertEqual(cfg["count"], 2)
 
         # 同名重复导出自动加后缀
         status, body2 = self._call(
@@ -1340,6 +1341,32 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["model"], "krea2/krea2_turbo_fp16.safetensors")
         self.assertEqual(cfg["default_ratio"], "16:9")
         self.assertEqual(cfg["output_prefix"], "MyWf")
+
+    def test_update_workflow_skill_keeps_settings_cfg(self):
+        # 回写整文件重写 config.json：画布 batch_size → count，设置区其余键垫底保留
+        d = self._make_custom_skill("upd_cfg")
+        with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": "old.safetensors", "base_resolution": 1536, "count": 3,
+                       "default_ratio": "4:3", "enhance_prompt": True, "steps": 25}, f)
+        workflow = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "new.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0], "text": "p"}},
+            "3": {"class_type": "EmptyLatentImage",
+                  "inputs": {"width": 1024, "height": 1024, "batch_size": 4}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": "P"}},
+        }
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "upd_cfg", "workflow": workflow}))
+        self.assertEqual(status, 200)
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        self.assertEqual(cfg["model"], "new.safetensors")
+        self.assertEqual(cfg["count"], 4)
+        self.assertEqual(cfg["default_ratio"], "1:1")
+        self.assertEqual(cfg["base_resolution"], 1536)
+        self.assertIs(cfg["enhance_prompt"], True)
+        self.assertEqual(cfg["steps"], 25)
 
     def test_update_workflow_skill_ref(self):
         # 画带参考图 → skill.md 里 requires_ref 归真（正文保留），模板留 {{REF_IMAGE}} 占串

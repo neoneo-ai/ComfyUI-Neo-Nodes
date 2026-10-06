@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { readFileSync } from "node:fs";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, click, inputText, fire, keydown, setConfirmAnswer, dialogs, window } from "./setup.mjs";
+import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, click, inputText, fire, keydown, setConfirmAnswer, dialogs, window, fetchLog } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 const LEFT_W_KEY = "neo.skillManagerLeftWidth";
@@ -555,7 +555,7 @@ const WF_TEMPLATE = {
 
 // 内嵌编辑走真实 litegraph 加载路径（API prompt → litegraph 序列化 → configure / start / LGraphCanvas），
 // 这里给最小可断言桩：LiteGraph.createNode 返回带 widget/槽位顺序的节点模板
-function stubLiteGraph({ unregistered = [] } = {}) {
+function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
     const created = { graphs: [], canvases: [], lite: [] };
     class FakeGraph {
         constructor() { this._nodes = []; created.graphs.push(this); }
@@ -595,11 +595,13 @@ function stubLiteGraph({ unregistered = [] } = {}) {
     const LiteGraph = {
         createNode(type) {
             if (unregistered.includes(type)) return null;
+            const tpl = byType[type] || {};
             return {
                 type, size: [210, 90], mode: 0, flags: {},
-                widgets: [{ name: "prompt" }, { name: "seed" }], widgets_values: ["", 0],
-                inputs: [{ name: "prompt", type: "STRING" }, { name: "seed", type: "INT" }],
-                outputs: [{ name: "MODEL", type: "MODEL" }],
+                widgets: tpl.widgets || [{ name: "prompt" }, { name: "seed" }],
+                widgets_values: tpl.widgets_values || ["", 0],
+                inputs: tpl.inputs || [{ name: "prompt", type: "STRING" }, { name: "seed", type: "INT" }],
+                outputs: tpl.outputs || [{ name: "MODEL", type: "MODEL" }],
             };
         },
     };
@@ -612,7 +614,7 @@ function stubLiteGraph({ unregistered = [] } = {}) {
     return created;
 }
 
-function mockWfSkill({ id = "wf_demo", source = "custom", workflow = WF_TEMPLATE } = {}) {
+function mockWfSkill({ id = "wf_demo", source = "custom", workflow = WF_TEMPLATE, config = {} } = {}) {
     skills = [{ id, name: "WF Skill", source, category: "image_gen", gen_image: true, gen_video: false }];
     mockRoute("/rs_prompts/skills", () => jsonResponse(skills));
     mockRoute("/rs_prompts/load_skill", () => jsonResponse({
@@ -622,7 +624,7 @@ function mockWfSkill({ id = "wf_demo", source = "custom", workflow = WF_TEMPLATE
     }));
     mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "正文" }));
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ workflow }));
-    mockRoute("/neo_image_gen/skill_config", () => jsonResponse({}));
+    mockRoute("/neo_image_gen/skill_config", () => jsonResponse(config));
     mockRoute("/neo_image_gen/models", () => jsonResponse({
         diffusion_models: ["m.safetensors"], suggested_diffusion_models: "m.safetensors",
         text_encoders: ["t.safetensors"], suggested_text_encoders: "t.safetensors",
@@ -766,6 +768,86 @@ test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → �
     assert.equal(created.graphs[0]._nodes.length, 0, "子图节点应逐个 removeNode 卸载");
     assert.equal(created.graphs[0].cleared, true, "子图应 clear()");
     assert.equal(wf.querySelector(".rs-wf-editor-canvas-box").children.length, 0, "画布 DOM 应清空");
+    closeMgr(box);
+});
+
+// 内嵌编辑按 config 初始化：模板里写死的旧值 / {{STEPS}} 由技能 config 覆盖，运行时变量不动，
+// 超出模板槽位的 LoRA 按 config 动态注入
+const WF_CFG_TEMPLATE = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "old.safetensors", weight_dtype: "default" }, _meta: { title: "M" } },
+    "5": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0, "MODEL"], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" }, _meta: { title: "LoRA" } },
+    "2": { class_type: "EmptyLatentImage", inputs: { width: "1024", height: "1024", batch_size: "1" }, _meta: { title: "Latent" } },
+    "3": { class_type: "KSampler", inputs: { model: ["5", 0, "MODEL"], seed: "{{SEED}}", steps: "{{STEPS}}", cfg: 7.0 }, _meta: { title: "Sampler" } },
+    "4": { class_type: "SaveImage", inputs: { filename_prefix: "old_prefix" }, _meta: { title: "Save" } },
+};
+const WF_CFG_WIDGETS = {
+    UNETLoader: { widgets: [{ name: "unet_name" }, { name: "weight_dtype" }], widgets_values: ["", "default"], outputs: [{ name: "MODEL", type: "MODEL" }] },
+    LoraLoaderModelOnly: {
+        widgets: [{ name: "lora_name" }, { name: "strength_model" }], widgets_values: ["", 1.0],
+        inputs: [{ name: "model", type: "MODEL" }, { name: "lora_name", type: "STRING" }], outputs: [{ name: "MODEL", type: "MODEL" }],
+    },
+    EmptyLatentImage: { widgets: [{ name: "width" }, { name: "height" }, { name: "batch_size" }], widgets_values: [0, 0, 1] },
+    KSampler: {
+        widgets: [{ name: "seed" }, { name: "steps" }, { name: "cfg" }], widgets_values: [0, 20, 7],
+        inputs: [{ name: "model", type: "MODEL" }, { name: "seed", type: "INT" }, { name: "steps", type: "INT" }, { name: "cfg", type: "FLOAT" }],
+    },
+    SaveImage: { widgets: [{ name: "filename_prefix" }], widgets_values: [""] },
+};
+
+test("内嵌编辑：widget 按技能 config 初始化（模型 / 尺寸 / 张数 / 步数 / 前缀），运行时 {{变量}} 保留、超槽位 LoRA 注入", async () => {
+    const created = stubLiteGraph({ byType: WF_CFG_WIDGETS });
+    const { box, wf } = await openMgrWf({
+        workflow: WF_CFG_TEMPLATE,
+        config: {
+            model: "new.safetensors", steps: 30, count: 4, output_prefix: "neo_x",
+            base_resolution: 1280, default_ratio: "1:1",
+            loras: [{ name: "l1.safetensors", strength: 0.8 }, { name: "l2.safetensors", strength: 0.5 }],
+        },
+    });
+    click(modeBtn(wf, "编辑"));
+    await flush();
+    await sleep(50);
+
+    const nodes = created.lite[0].nodes;
+    const [model, latent, sampler, save, slot, extra] = nodes.map((n) => n.widgets_values);
+    assert.equal(nodes.length, 6, "config 里超出模板槽位的 LoRA 应注入画布");
+    assert.deepEqual(model, ["new.safetensors", "default"], "主模型灌 config.model，非 config 键位保持模板值");
+    assert.deepEqual(latent, [1296, 1296, 4], "宽高按 base_resolution + 比例对齐 16，batch_size 灌 config.count");
+    assert.deepEqual(sampler, ["{{SEED}}", 30, 7], "seed 属运行时变量保留，steps 灌 config.steps");
+    assert.deepEqual(save, ["neo_x"], "输出前缀灌 config.output_prefix");
+    assert.deepEqual(slot, ["{{LORA_1_NAME}}", "{{LORA_1_STRENGTH}}"], "模板 LoRA 槽位保持运行时变量");
+    assert.deepEqual(extra, ["l2.safetensors", 0.5], "注入节点带 config 里超出槽位的 LoRA 名与强度");
+    const samplerModelLink = created.lite[0].links.find((l) => l[3] === 3);
+    assert.equal(samplerModelLink[1], 6, "KSampler 的 model 应改接到注入的 LoRA 节点");
+    closeMgr(box);
+});
+
+test("内嵌编辑保存：回写后按新 config 重载设置区", async () => {
+    const created = stubLiteGraph();
+    const { box, wf } = await openMgrWf();
+    // 模拟后端回写：保存工作流后 config.json 变成画布落盘的新值，之后的读取返回新 config
+    let cfg = { model: "a.safetensors", steps: 20 };
+    mockRoute("/neo_image_gen/skill_config", () => jsonResponse(cfg));
+    mockRoute("/neo_image_gen/update_workflow_skill", () => {
+        cfg = { model: "b.safetensors", steps: 44 };
+        return jsonResponse({ success: true, id: "wf_demo", warnings: [] });
+    });
+    appState.promptGraph = { output: { "1": { class_type: "KSampler", inputs: { seed: 7 } } }, workflow: { "1": {} } };
+
+    click(modeBtn(wf, "编辑"));
+    await flush();
+    await sleep(50);
+    assert.equal(created.graphs.length, 1, "编辑模式应已挂载子图");
+    click(wfBarBtn(wf, "保存工作流"));
+    await flush();
+    await sleep(120);
+    await flush();
+
+    const cfgCalls = fetchLog.filter((c) => c.path === "/neo_image_gen/skill_config").length;
+    assert.ok(cfgCalls >= 2, `保存后应重新拉取 config.json（实际 ${cfgCalls} 次）`);
+    const modal = box.querySelector(".rs-skill-modal");
+    assert.equal(modal.querySelector(".rs-gen-model-section select").value, "b.safetensors", "主模型下拉应显示回写后的 config.model");
+    assert.equal(modal.querySelector(".rs-gen-size-section input[type=number]").value, "44", "步数应显示回写后的 config.steps");
     closeMgr(box);
 });
 

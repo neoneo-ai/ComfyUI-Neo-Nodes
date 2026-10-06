@@ -16,6 +16,7 @@ import { checkWorkflow, renderWorkflowGraph, applyWorkflowParams, validateWorkfl
 // 仅事件回调内调用（复制补带 workflow/config、画布导出为生图技能、每技能生图设置、选择窗预览卡自动默认值）；与 image-gen.js 的循环导入均为延迟使用，安全
 import { copySkillFiles, saveWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, saveSkillGenConfig, listGenModels, createModelConfigSection, createGenSizeRows, createVideoModelConfigSection, listVideoGenModels, shortModelName, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "./image-gen.js";
 import { showToast } from "./gallery-utils.js";
+import { actionToast } from "./toast.js";
 import { openModelHub } from "./model-hub.js";
 
 // ==========================================
@@ -110,6 +111,163 @@ function defaultSizeFromConfig(cfg) {
     if (m && parseFloat(m[2]) > 0) ratio = parseFloat(m[1]) / parseFloat(m[2]);
     else { const f = parseFloat(text); if (f > 0) ratio = f; }
     return ratio >= 1.0 ? [round16(longSide), round16(longSide / ratio)] : [round16(longSide * ratio), round16(longSide)];
+}
+
+// 画布 widget 值归一：number widget 的纯数字串归 number、提示词占串清空（与后端 render_template 的 typed values 一致）
+function toCanvasTypedValues(wf) {
+    for (const node of Object.values(wf)) {
+        const inputs = (node || {}).inputs;
+        if (!inputs) continue;
+        for (const [k, v] of Object.entries(inputs)) {
+            if (typeof v !== "string") continue;
+            const s = v.split("{{PROMPT}}").join("").split("{{NEGATIVE}}").join("");
+            inputs[k] = NUMERIC_WIDGET_KEYS.has(k) && /^\d+$/.test(s) ? Number(s) : s;
+        }
+    }
+    return wf;
+}
+
+// 画布导入按技能已保存配置灌 widget：画布导出成技能时只有主链值被占位符化（生图 steps、SeedNode.seed
+// 等保持写死），只替换 {{TOKEN}} 会让画布显示导出时的旧值。这里按后端 _template_from_workflow /
+// _template_video_from_workflow 的同一套键位，把技能 config 推出的值覆盖进图里已存在的 widget；
+// 连线输入不动，模板里没有的槽位不加。
+const CONFIG_WIDGET_TARGETS = {
+    UNETLoader: { unet_name: "MODEL" },
+    CLIPLoader: { clip_name: "TEXT_ENCODER" },
+    KSampler: { seed: "SEED", steps: "STEPS" },
+    KSamplerAdvanced: { seed: "SEED", steps: "STEPS" },
+    SeedNode: { seed: "SEED" },
+    EmptyLatentImage: { width: "WIDTH", height: "HEIGHT", batch_size: "COUNT" },
+    EmptySD3LatentImage: { width: "WIDTH", height: "HEIGHT", batch_size: "COUNT" },
+    SaveImage: { filename_prefix: "PREFIX" },
+};
+const MINIMAX_H3_TARGETS = { width: "WIDTH", height: "HEIGHT", length: "LENGTH" };
+const NUMERIC_WIDGET_FIELDS = new Set(["seed", "steps", "width", "height", "batch_size", "length"]);
+
+function forceCanvasConfigValues(wf, values, isVideo) {
+    // 与后端一致：喂 VAEDecodeAudio 的 VAELoader 是音频 VAE，灌 AUDIO_VAE 而不是视频 VAE
+    const audioVaeIds = new Set();
+    for (const node of Object.values(wf)) {
+        const vae = node && node.class_type === "VAEDecodeAudio" ? (node.inputs || {}).vae : null;
+        if (Array.isArray(vae)) audioVaeIds.add(String(vae[0]));
+    }
+    for (const [id, node] of Object.entries(wf)) {
+        const ct = (node || {}).class_type;
+        if (!ct) continue;
+        const targets = ct.startsWith("MiniMaxH3") ? MINIMAX_H3_TARGETS
+            : ct === "VAELoader" ? { vae_name: isVideo && audioVaeIds.has(id) ? "AUDIO_VAE" : "VAE" }
+                : CONFIG_WIDGET_TARGETS[ct];
+        if (!targets) continue;
+        const inputs = node.inputs || {};
+        for (const [key, valueKey] of Object.entries(targets)) {
+            if (!(key in inputs) || Array.isArray(inputs[key])) continue;
+            const raw = values[valueKey];
+            if (raw === undefined || raw === null || raw === "") continue;
+            if (!NUMERIC_WIDGET_FIELDS.has(key)) { inputs[key] = String(raw); continue; }
+            const num = Number(raw);
+            if (Number.isFinite(num)) inputs[key] = num;
+        }
+    }
+    return wf;
+}
+
+// 载入画布后按流程图同一套布局重排：拓扑分层 → 左到右排布、列内按上游重心堆叠、短列垂直居中，最后适配视图
+function arrangeCanvasNodes(wf) {
+    const nodes = app.graph && app.graph._nodes;
+    if (!nodes || !nodes.length) return;
+    const byId = new Map(nodes.map(n => [String(n.id), n]));
+    for (const cell of canvasLayout(wf, (id) => (byId.get(id) || {}).size)) {
+        const node = byId.get(cell.id);
+        if (node) node.setPos(cell.x, cell.y);
+    }
+    app.graph.setDirtyCanvas(true, true);
+    if (typeof app.canvas?.fitViewToSelectionAnimated === "function") app.canvas.fitViewToSelectionAnimated();
+}
+
+// 整画布 API prompt 落盘指定技能 workflow.json（skill.md 正文保留；预设只读）
+async function writeWorkflowToSkill(id, source) {
+    if (!id) { showToast(app, "warning", "回写入技能", "技能未保存，先保存技能本体"); return false; }
+    if (source === "presets") { showToast(app, "warning", "预设不可回写", "先「复制为自定义」后编辑"); return false; }
+    if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，回写不可用"); return false; }
+    try {
+        const { output, error } = (await app.graphToPrompt()) || {};
+        if (error || !output || !Object.keys(output).length) {
+            showToast(app, "warning", "无法回写", "画布没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
+            return false;
+        }
+        const r = await updateWorkflowSkill(id, output);
+        showToast(app, "success", `已回写入技能 "${r.id}"`, (r.warnings || []).join("\n"));
+        document.dispatchEvent(new CustomEvent("rs.skills.updated"));
+        return true;
+    } catch (err) {
+        showToast(app, "error", "回写入失败", err.message);
+        return false;
+    }
+}
+
+// ---- Studio ⇄ 主画布交接 ----
+// Studio 没有 LiteGraph，工作流编辑交回主界面：技能详情「⤒ 主画布编辑」开 /?neo_wf_edit=<skill_id>，
+// 主界面扩展 setup 消费该参数灌画布，toast 给「💾 回写入技能」入口（技能详情弹窗不在场也能落盘）。
+const WF_EDIT_PARAM = "neo_wf_edit";
+
+function openSkillWorkflowInMainUi(id) {
+    if (!id) { showToast(app, "warning", "主画布编辑", "技能未保存，先保存技能本体"); return; }
+    window.open(`/?${WF_EDIT_PARAM}=${encodeURIComponent(id)}`, "_blank");
+}
+
+/** 技能 workflow.json 灌进主画布：设置区不在场 → 按技能 config.json + 自动建议模型预渲染（同「导入到画布」） */
+async function openSkillWorkflowOnCanvas(id) {
+    const [full, wf] = await Promise.all([loadSkill(id), loadSkillWorkflow(id)]);
+    if (!full || full.error) { showToast(app, "warning", "主画布编辑", `技能 "${id}" 不存在`); return; }
+    if (!wf) { showToast(app, "warning", "无工作流", `技能 "${full.name || id}" 没有 workflow.json`); return; }
+    if (typeof app.loadApiJson !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，导入不可用"); return; }
+    const isVideo = !!full.gen_video;
+    const models = isVideo ? await listVideoGenModels().catch(() => ({})) : await listGenModels().catch(() => ({}));
+    const cfg = (await getSkillGenConfig(id)) || {};
+    const values = workflowParamValues(isVideo, { config: cfg, models });
+    values.SEED = 0;
+    values.REF_WIDTH = values.WIDTH;
+    values.REF_HEIGHT = values.HEIGHT;
+    const canvasWf = forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(wf, cfg.loras), values)), values, isVideo);
+    try {
+        await app.loadApiJson(canvasWf, id);
+        arrangeCanvasNodes(canvasWf);
+    } catch (e) {
+        showToast(app, "error", "导入失败", String(e.message || e));
+        return;
+    }
+    const source = full.source || "custom";
+    // 内置 toast 不认 actionLabel / onAction（前端无此契约，按钮不渲染、5s 就消失）
+    // → 走插件 action toast，「💾 回写入技能」入口才可见且留在屏上
+    actionToast({
+        severity: "success",
+        summary: "已导入到画布",
+        detail: `技能 "${id}" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」落盘，skill.md 正文保留`,
+        actionLabel: "💾 回写入技能",
+        onAction: () => writeWorkflowToSkill(id, source),
+    });
+}
+
+/** 主界面启动时消费 ?neo_wf_edit=<skill_id>：清掉参数（刷新不重复导入）后灌画布。
+ *  主界面自身的初始工作流加载排在扩展 setup 之后，抢先灌图会被它覆盖 →
+ *  等前端换图事件（画布 DOM 上的 litegraph:set-graph）落地，超时兜底。 */
+function runSkillWorkflowHandoff() {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get(WF_EDIT_PARAM);
+    if (!id) return;
+    params.delete(WF_EDIT_PARAM);
+    const q = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (q ? `?${q}` : "") + window.location.hash);
+    const canvasEl = app.canvas?.canvas;
+    let fired = false;
+    const run = () => {
+        if (fired) return;
+        fired = true;
+        if (canvasEl) canvasEl.removeEventListener("litegraph:set-graph", run);
+        openSkillWorkflowOnCanvas(id);
+    };
+    if (canvasEl) canvasEl.addEventListener("litegraph:set-graph", run);
+    setTimeout(run, 2000);
 }
 
 /** 保存/更新 skill 主文件 skill.md（预设只读） */
@@ -754,10 +912,11 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     workflowHeader.append(workflowCaret, workflowTitle);
     workflowHeader.title = "点击折叠 / 展开流程图";
     workflowHeader.addEventListener("click", () => setWorkflowCollapsed(!workflowWrap.classList.contains("rs-wf-collapsed")));
-    // 画布 ⇄ 技能（Studio 内嵌无画布时 canvasBtns=false 时不挂）：导入把模板按当前设置预渲染、运行时占串归 concrete values
-    //      后 loadApiJson 载入画布；回写把整画布 API prompt 落盘该技能 workflow.json（skill.md 保留，预设不可回写）
+    // 画布 ⇄ 技能：导入把模板按当前设置预渲染、运行时占串归 concrete values 后 loadApiJson 载入画布；
+    //      回写把整画布 API prompt 落盘该技能 workflow.json（skill.md 保留，预设不可回写）。
+    //      Studio 内嵌无画布（canvasBtns=false）→ 只挂「⤒ 主画布编辑」，开主界面 ?neo_wf_edit=<id> 交接编辑。
+    const wfCanvasBtns = mkEl("div", "rs-wf-canvas-btns");
     if (canvasBtns) {
-        const wfCanvasBtns = mkEl("div", "rs-wf-canvas-btns");
         const wfImportBtn = mkEl("button", "rs-btn rs-wf-canvas-import-btn");
         wfImportBtn.type = "button";
         wfImportBtn.textContent = "⤒ 导入到画布";
@@ -769,8 +928,15 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         wfWriteBtn.title = "把整画布工作流落盘本技能 workflow.json（skill.md 正文保留；预设技能不可回写）";
         wfWriteBtn.addEventListener("click", (e) => { e.stopPropagation(); writeWorkflowBackToSkill(); });
         wfCanvasBtns.append(wfImportBtn, wfWriteBtn);
-        workflowHeader.append(wfCanvasBtns);
+    } else {
+        const wfOpenBtn = mkEl("button", "rs-btn rs-wf-canvas-import-btn");
+        wfOpenBtn.type = "button";
+        wfOpenBtn.textContent = "⤒ 主画布编辑";
+        wfOpenBtn.title = "在主 ComfyUI 界面打开本技能 workflow.json 编辑（按技能设置预渲染），改完点「💾 回写入技能」落盘本技能";
+        wfOpenBtn.addEventListener("click", (e) => { e.stopPropagation(); openSkillWorkflowInMainUi(currentSkillId); });
+        wfCanvasBtns.append(wfOpenBtn);
     }
+    workflowHeader.append(wfCanvasBtns);
     // 工作流区两模式：只读流程图 ⇄ 内嵌 litegraph 编辑（前端未暴露 LiteGraph 的视图不提供编辑模式）
     const wfEditorSupported = !!window.LGraph && !!window.LGraphCanvas && !!window.LiteGraph;
     const wfModeBtns = mkEl("div", "rs-content-mode rs-wf-mode-btns");
@@ -781,7 +947,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     const wfEditBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     wfEditBtn.type = "button";
     wfEditBtn.textContent = "🧩 编辑";
-    wfEditBtn.title = "在窗口内编辑 workflow.json 模板（保留 {{模板变量}}，保存后写回本技能）";
+    wfEditBtn.title = "在窗口内编辑 workflow.json 模板（widget 按本技能 config 初始化，保存写回 workflow.json 与 config.json）";
     if (!wfEditorSupported) wfEditBtn.style.display = "none";
     wfModeBtns.append(wfViewBtn, wfEditBtn);
     workflowHeader.append(wfModeBtns);
@@ -792,11 +958,11 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     const wfSaveBtn = mkEl("button", "rs-btn rs-btn-local");
     wfSaveBtn.type = "button";
     wfSaveBtn.textContent = "💾 保存工作流";
-    wfSaveBtn.title = "把画布上的工作流写回本技能 workflow.json（模板变量原样保留）";
+    wfSaveBtn.title = "把画布上的工作流写回本技能 workflow.json，并把画布上的模型 / 尺寸 / 张数 / 前缀同步进 config.json（提示词等运行时变量原样保留）";
     const wfReloadBtn = mkEl("button", "rs-btn rs-btn-local");
     wfReloadBtn.type = "button";
     wfReloadBtn.textContent = "↺ 重新载入";
-    wfReloadBtn.title = "丢弃画布上的改动，按技能当前 workflow.json 重载";
+    wfReloadBtn.title = "丢弃画布上的改动，按技能当前 workflow.json 与 config 重载";
     const wfFitBtn = mkEl("button", "rs-btn rs-btn-local");
     wfFitBtn.type = "button";
     wfFitBtn.textContent = "🧭 适配视图";
@@ -1007,30 +1173,18 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         values.SEED = 0;
         values.REF_WIDTH = values.WIDTH;
         values.REF_HEIGHT = values.HEIGHT;
-        const wf = applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), values);
-        for (const node of Object.values(wf)) {
-            const inputs = (node || {}).inputs;
-            if (!inputs) continue;
-            for (const [k, v] of Object.entries(inputs)) {
-                if (typeof v !== "string") continue;
-                const s = v.split("{{PROMPT}}").join("").split("{{NEGATIVE}}").join("");
-                inputs[k] = NUMERIC_WIDGET_KEYS.has(k) && /^\d+$/.test(s) ? Number(s) : s;
-            }
-        }
-        return wf;
+        return forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), values)), values, isVideo);
     }
 
-    // 载入画布后按流程图同一套布局重排：拓扑分层 → 左到右排布、列内按上游重心堆叠、短列垂直居中，最后适配视图
-    function arrangeCanvasNodes(wf) {
-        const nodes = app.graph && app.graph._nodes;
-        if (!nodes || !nodes.length) return;
-        const byId = new Map(nodes.map(n => [String(n.id), n]));
-        for (const cell of canvasLayout(wf, (id) => (byId.get(id) || {}).size)) {
-            const node = byId.get(cell.id);
-            if (node) node.setPos(cell.x, cell.y);
-        }
-        app.graph.setDirtyCanvas(true, true);
-        if (typeof app.canvas?.fitViewToSelectionAnimated === "function") app.canvas.fitViewToSelectionAnimated();
+    // 内嵌编辑的初始图：模板按技能已保存 config 灌 widget（模型 / 尺寸 / 张数 / 前缀 / 步数 / 视频宽高时长），
+    // 超出模板槽位的 LoRA 同运行时一样动态注入；提示词 / 种子 / 参考图 / LoRA 槽位等运行时 {{变量}} 原样保留
+    // → 保存时后端按同一套键位重新占位符化并回写 config。
+    function editorTemplateWorkflow() {
+        const isVideo = videoGenSettingsWrap.style.display !== "none";
+        const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
+        const values = workflowParamValues(isVideo, { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} });
+        const wf = JSON.parse(JSON.stringify(skillWorkflowRaw));
+        return forceCanvasConfigValues(injectRuntimeLoras(wf, cfg.loras), values, isVideo);
     }
 
     async function importWorkflowToCanvas() {
@@ -1050,21 +1204,7 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     }
 
     async function writeWorkflowBackToSkill() {
-        if (!currentSkillId) { showToast(app, "warning", "回写入技能", "当前技能未保存，先「+ 新建」并保存"); return; }
-        if (currentSource === "presets") { showToast(app, "warning", "预设不可回写", "先「复制为自定义」后编辑"); return; }
-        if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，回写不可用"); return; }
-        try {
-            const { output, error } = (await app.graphToPrompt()) || {};
-            if (error || !output || !Object.keys(output).length) {
-                showToast(app, "warning", "无法回写", "画布没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
-                return;
-            }
-            const r = await updateWorkflowSkill(currentSkillId, output);
-            showToast(app, "success", `已回写入技能 "${r.id}"`, (r.warnings || []).join("\n"));
-            document.dispatchEvent(new CustomEvent("rs.skills.updated"));
-        } catch (err) {
-            showToast(app, "error", "回写入失败", err.message);
-        }
+        await writeWorkflowToSkill(currentSkillId, currentSource);
     }
 
     // 把接受的修复项回填到当前活动的设置区（生图/生视频）：合并进 collect() 后重新 load，
@@ -1382,8 +1522,9 @@ function createSkillDetailPopup(host, canvasBtns = true) {
     }
 
     // ---- 内嵌 litegraph 编辑（workflow.json 模板）----
-    // 编辑模式把原始模板灌进独立 LGraph + LGraphCanvas，保存走 app.graphToPrompt(子图) →
-    // updateWorkflowSkill 写回本技能，{{模板变量}} 原样保留。
+    // 编辑模式把模板按技能 config 初始化后灌进独立 LGraph + LGraphCanvas（与「导入到画布」同一套
+    // widget 键位），保存走 app.graphToPrompt(子图) → updateWorkflowSkill 写回本技能 workflow.json
+    // 并同步 config.json，提示词 / 种子 / 参考图等 {{运行时变量}} 原样保留。
     // LiteGraph.configure 只认 litegraph 序列化，API prompt 必须先转换：节点按注册模板实例化取
     // 真实 widget 顺序与槽位顺序，widget 值按名对齐，连线按 API 的 [id, slot] 落到目标槽位名。
     function apiPromptToLitegraph(api) {
@@ -1472,13 +1613,14 @@ function createSkillDetailPopup(host, canvasBtns = true) {
         if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return false; }
         const LGraph = window.LGraph, LGraphCanvas = window.LGraphCanvas;
         if (!LGraph || !LGraphCanvas) { showToast(app, "warning", "无内嵌画布", "当前视图没有 LiteGraph，请用「⤒ 导入到画布」编辑"); return false; }
-        const { lite, missing } = apiPromptToLitegraph(skillWorkflowRaw);
+        const wf = editorTemplateWorkflow();
+        const { lite, missing } = apiPromptToLitegraph(wf);
         // 未注册节点直接进编辑会在保存时把该节点从 workflow.json 里丢掉，拒绝并退回只读预览
         if (missing.length) { showToast(app, "warning", "无法内嵌编辑", `节点类型未注册：${missing.join("、")}，请用「⤒ 导入到画布」编辑`); return false; }
         const g = new LGraph();
         g.configure(lite);
         // 自动布局：与「导入到画布」同一套列号与重心排布，位置按节点真实尺寸推导
-        for (const cell of canvasLayout(skillWorkflowRaw, (id) => (g.getNodeById(id) || {}).size)) {
+        for (const cell of canvasLayout(wf, (id) => (g.getNodeById(id) || {}).size)) {
             const n = g.getNodeById(cell.id);
             if (n) n.pos = [cell.x, cell.y];
         }
@@ -1549,7 +1691,10 @@ function createSkillDetailPopup(host, canvasBtns = true) {
             document.dispatchEvent(new CustomEvent("rs.skills.updated"));
             skillWorkflowRaw = output;   // 只读流程图按新模板重画
             setWfMode("view");
-            await renderWorkflowPreview(output, loadedGenInfo, currentIsVideo, currentSkillId);
+            const genInfo = currentIsVideo ? await loadVideoGenSettings() : await loadGenSettings();   // 回写后的 config 灌回设置区
+            loadedGenInfo = genInfo || null;
+            genSettingsBaseline = collectGenSettingsJson();   // 设置区已按新 config 重载 → 脏检查基线同步
+            await renderWorkflowPreview(output, genInfo, currentIsVideo, currentSkillId);
         } catch (err) {
             showToast(app, "error", "保存工作流失败", err.message);
         }
@@ -3107,6 +3252,9 @@ export {
     openSkillPickerModal,
     createSkillManager,
     openSkillManager,
+    openSkillWorkflowInMainUi,
+    openSkillWorkflowOnCanvas,
+    runSkillWorkflowHandoff,
     attachSkillPickerToComboWidget,
     attachSkillPickerToSelect
 };

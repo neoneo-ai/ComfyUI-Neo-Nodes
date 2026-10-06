@@ -49,6 +49,10 @@ function writeBtn() {
     const all = document.querySelectorAll(".rs-wf-canvas-btns button.rs-wf-canvas-write-btn");
     return all.length ? all[all.length - 1] : null;
 }
+// 交接导入 toast 的「💾 回写入技能」按钮（插件 action toast 渲染在 #neo-action-toast-stack）
+function handoffWriteBtn() {
+    return document.querySelector("#neo-action-toast-stack .neo-at-action");
+}
 
 test("详情弹窗：带 workflow 技能挂「⤒ 导入到画布」「💾 回写入技能」在工作流区头部", async () => {
     await openPopup({ id: "custom_a", source: "custom" });
@@ -159,9 +163,177 @@ test("回写入技能：预设技能 / 空画布时不发请求并 toast 提示"
     assert.ok(appState.toasts.slice(toastAt).some((t) => (t.summary || "").includes("无法回写")), "应 toast 无有效工作流");
 });
 
-test("内嵌详情（无画布）时工作流区不挂画布按钮", async () => {
-    await openPopup({ id: "custom_a", source: "custom", canvasBtns: false });
-    const wfWrap = document.querySelector(".rs-skill-workflow");
-    assert.ok(wfWrap && wfWrap.style.display !== "none", "工作流区仍渲染");
-    assert.equal(document.querySelector(".rs-wf-canvas-btns"), null, "无画布时不挂导入/回写按钮");
+test("Studio 内嵌详情（无画布）：工作流区只挂「⤒ 主画布编辑」，点击带技能 id 开主界面", async () => {
+    const opened = [];
+    window.open = (url, target) => { opened.push({ url, target }); return null; };
+    try {
+        await openPopup({ id: "custom_a", source: "custom", canvasBtns: false });
+        assert.ok(document.querySelector(".rs-skill-workflow"), "工作流区仍渲染");
+        const btns = document.querySelectorAll(".rs-wf-canvas-btns button");
+        assert.deepEqual(Array.from(btns).map((b) => b.textContent), ["⤒ 主画布编辑"], "内嵌只挂交接按钮");
+        click(btns[0]);
+        await sleep(20);
+        assert.deepEqual(opened, [{ url: "/?neo_wf_edit=custom_a", target: "_blank" }], "应带技能 id 打开主界面");
+    } finally {
+        delete window.open;
+    }
+});
+
+// Studio 交接：主界面侧灌画布 + toast 动作回写（技能详情弹窗不在场）
+function mockSkillRoutes({ id = "custom_a", source = "custom", workflow = WF_TEMPLATE, genVideo = false, config = { model: "m.safetensors", default_ratio: "16:9" } } = {}) {
+    // 本文件的 beforeEach 只 resetEnv()：appState 跨用例累积、neo 设置模块级缓存 → 交接用例自己清态、钉死基准尺寸
+    appState.toasts.length = 0;
+    appState.loaded.length = 0;
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id, name: "Gen Skill", source, content: "body", files: [{ name: "skill.md", size: 5 }],
+        gen_image: !genVideo, gen_video: genVideo, requires_ref: false, multi_turn: false, tags: [], category: "image_gen",
+    }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse(config) : jsonResponse({ success: true }));
+    mockRoute("/object_info", () => jsonResponse({}));
+}
+
+test("交接导入：按技能 config.json 预渲染灌画布，toast 带「💾 回写入技能」动作落盘该技能", async () => {
+    mockSkillRoutes();
+    let posted = null;
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted = b;
+        return jsonResponse({ success: true, id: "custom_a", warnings: ["工作流没有 CLIPTextEncode 节点，运行时无法注入提示词"], gen_video: false });
+    });
+    appState.promptGraph = {
+        output: { "10": { class_type: "KSampler", inputs: { model: ["1", 0] } }, "11": { class_type: "SaveImage", inputs: { images: ["10", 0] } } },
+        workflow: "{\"nodes\":[]}",
+    };
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    await openSkillWorkflowOnCanvas("custom_a");
+    await sleep(80);
+
+    const api = appState.loaded.filter((l) => l.kind === "api").pop();
+    assert.ok(api, "应 app.loadApiJson 灌画布");
+    assert.equal(api.name, "custom_a", "loadApiJson 带技能名");
+    assert.equal(api.data["1"].inputs.unet_name, "m.safetensors", "MODEL 按 config 预渲染");
+    const { width, height, batch_size } = api.data["3"].inputs;
+    assert.ok(Number.isInteger(width) && Number.isInteger(height), `WIDTH/HEIGHT 归 number（${width}x${height}）`);
+    assert.ok(Math.abs(width / height - 16 / 9) < 0.02, `按技能 default_ratio 16:9 预渲染（${width}x${height}）`);
+    assert.equal(batch_size, 1, "COUNT 归 number");
+    assert.equal(api.data["4"].inputs.seed, 0, "SEED 归 0");
+    assert.equal(api.data["9"].inputs.image, "{{REF_IMAGE}}", "参考图槽位留占串");
+
+    const card = document.querySelector("#neo-action-toast-stack .neo-at");
+    assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"), "导入提示应可见");
+    const btn = handoffWriteBtn();
+    assert.ok(btn && btn.textContent === "💾 回写入技能", "导入 toast 应渲染「💾 回写入技能」按钮");
+    appState.toasts.length = 0;
+    click(btn);
+    await sleep(80);
+    assert.equal(posted && posted.skill_id, "custom_a", "动作应把画布落盘该技能");
+    assert.deepEqual(Object.keys(posted.workflow), ["10", "11"]);
+    assert.ok(appState.toasts.some((t) => (t.detail || "").includes("CLIPTextEncode")), "后端 warnings 应 toast 落");
+});
+
+test("交接回写：预设技能点「💾 回写入技能」不发请求并提示只读", async () => {
+    mockSkillRoutes({ id: "image_gen", source: "presets" });
+    let called = false;
+    mockRoute("/neo_image_gen/update_workflow_skill", () => { called = true; return jsonResponse({ success: true, id: "image_gen" }); });
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    await openSkillWorkflowOnCanvas("image_gen");
+    await sleep(80);
+
+    const btn = handoffWriteBtn();
+    assert.ok(btn, "预设技能导入 toast 同样给回写按钮");
+    appState.toasts.length = 0;
+    click(btn);
+    await sleep(80);
+    assert.equal(called, false, "预设技能不应回写");
+    assert.ok(appState.toasts.some((t) => (t.summary || "").includes("预设不可回写")), "应 toast 预设只读");
+});
+
+test("主界面启动消费 ?neo_wf_edit：清掉参数后灌画布（等 litegraph:set-graph，避开初始工作流覆盖）", async () => {
+    mockSkillRoutes();
+    const { runSkillWorkflowHandoff } = await import("../../web/skill.js");
+    const canvasEl = document.createElement("canvas");
+    app.canvas = { canvas: canvasEl, fitViewToSelectionAnimated() {} };
+    window.history.replaceState(null, "", "/?neo_wf_edit=custom_a");
+    try {
+        runSkillWorkflowHandoff();
+        assert.ok(!window.location.search.includes("neo_wf_edit"), "参数应被清掉，刷新不重复导入");
+        const loadedAt = appState.loaded.length;
+        canvasEl.dispatchEvent(new window.CustomEvent("litegraph:set-graph"));
+        await sleep(80);
+        assert.ok(appState.loaded.slice(loadedAt).some((l) => l.kind === "api" && l.name === "custom_a"),
+            "前端换图落地后灌入技能工作流");
+    } finally {
+        app.canvas = null;
+        window.history.replaceState(null, "", "/");
+    }
+});
+
+// 画布导出成技能时只有主链值被占位符化，steps / SeedNode.seed / 尺寸等写死留在 workflow.json 里
+const BAKED_IMAGE_WF = {
+    "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "old.safetensors" } },
+    "2": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: "baked prompt" } },
+    "3": { class_type: "EmptyLatentImage", inputs: { width: 512, height: 512, batch_size: 4 } },
+    "4": { class_type: "KSampler", inputs: { model: ["1", 0], positive: ["2", 0], negative: ["2", 0], latent_image: ["3", 0], seed: 1234567, steps: 8, cfg: 3.5, sampler_name: "euler", scheduler: "normal" } },
+    "5": { class_type: "SaveImage", inputs: { images: ["4", 0], filename_prefix: "old_prefix" } },
+    "6": { class_type: "SeedNode", inputs: { seed: 1062097207049416 } },
+};
+
+test("交接导入：workflow.json 里写死的 widget 按技能 config.json 覆盖，非技能 widget 原样保留", async () => {
+    mockSkillRoutes({
+        workflow: BAKED_IMAGE_WF,
+        config: { model: "m.safetensors", default_ratio: "16:9", steps: 12, count: 2, output_prefix: "SkillPrefix" },
+    });
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    await openSkillWorkflowOnCanvas("custom_a");
+    await sleep(80);
+
+    const api = appState.loaded.filter((l) => l.kind === "api").pop();
+    assert.ok(api, "应 app.loadApiJson 灌画布");
+    const wf = api.data;
+    assert.strictEqual(wf["4"].inputs.steps, 12, "写死的 steps 按技能 config 覆盖");
+    assert.strictEqual(wf["4"].inputs.seed, 0, "写死的 seed 归 0");
+    assert.strictEqual(wf["6"].inputs.seed, 0, "SeedNode.seed 同样覆盖");
+    assert.strictEqual(wf["3"].inputs.width, 1296, "写死 512 按 default_ratio 16:9 重算");
+    assert.strictEqual(wf["3"].inputs.height, 736);
+    assert.strictEqual(wf["3"].inputs.batch_size, 2, "COUNT 按 config.count");
+    assert.equal(wf["5"].inputs.filename_prefix, "SkillPrefix", "PREFIX 按 config.output_prefix");
+    assert.equal(wf["1"].inputs.ckpt_name, "old.safetensors", "checkpoint 名非技能 widget，不动");
+    assert.equal(wf["2"].inputs.text, "baked prompt", "提示词节点原样保留");
+    assert.strictEqual(wf["4"].inputs.cfg, 3.5, "cfg / sampler_name / scheduler 保留");
+    assert.equal(wf["4"].inputs.sampler_name, "euler");
+});
+
+const BAKED_VIDEO_WF = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "old_dit.safetensors" } },
+    "2": { class_type: "MiniMaxH3Video", inputs: { model: ["1", 0], prompt: "old prompt", width: 640, height: 640, length: 30 } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "old_video_vae.safetensors" } },
+    "4": { class_type: "VAELoader", inputs: { vae_name: "old_audio_vae.safetensors" } },
+    "5": { class_type: "VAEDecodeAudio", inputs: { samples: ["2", 1], vae: ["4", 0] } },
+    "6": { class_type: "KSampler", inputs: { model: ["1", 0], seed: 999, steps: 4 } },
+};
+
+test("交接导入（生视频）：MiniMaxH3 写死尺寸/时长与 steps 按 config 覆盖，喂 VAEDecodeAudio 的 VAELoader 灌 AUDIO_VAE", async () => {
+    mockSkillRoutes({
+        workflow: BAKED_VIDEO_WF, genVideo: true,
+        config: { model: "d.safetensors", text_encoder: "t.safetensors", vae: "v.safetensors", audio_vae: "a.safetensors", steps: 30, width: 1024, height: 576, length: 8 },
+    });
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: ["d.safetensors"], text_encoders: ["t.safetensors"], vae: ["v.safetensors", "a.safetensors"] }));
+    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    await openSkillWorkflowOnCanvas("custom_a");
+    await sleep(80);
+
+    const api = appState.loaded.filter((l) => l.kind === "api").pop();
+    assert.ok(api, "应 app.loadApiJson 灌画布");
+    const wf = api.data;
+    assert.equal(wf["1"].inputs.unet_name, "d.safetensors", "MODEL 覆盖写死值");
+    assert.strictEqual(wf["2"].inputs.width, 1024, "MiniMaxH3 写死 width 覆盖");
+    assert.strictEqual(wf["2"].inputs.height, 576);
+    assert.strictEqual(wf["2"].inputs.length, 8, "LENGTH 覆盖写死时长");
+    assert.strictEqual(wf["6"].inputs.steps, 30, "steps 覆盖");
+    assert.strictEqual(wf["6"].inputs.seed, 0);
+    assert.equal(wf["3"].inputs.vae_name, "v.safetensors", "视频 VAE");
+    assert.equal(wf["4"].inputs.vae_name, "a.safetensors", "音频 VAE 不灌视频 VAE");
+    assert.equal(wf["2"].inputs.prompt, "old prompt", "提示词交接期不注入，原样保留");
 });

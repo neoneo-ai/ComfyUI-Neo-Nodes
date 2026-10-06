@@ -1227,6 +1227,8 @@ def _template_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
         elif ct in ("EmptyLatentImage", "EmptySD3LatentImage"):
             if isinstance(inputs.get("width"), int) and isinstance(inputs.get("height"), int):
                 seed_cfg.setdefault("default_ratio", _ratio_label(inputs["width"], inputs["height"]))
+            if isinstance(inputs.get("batch_size"), int):
+                seed_cfg.setdefault("count", inputs["batch_size"])
             for key, token in (("width", "{{WIDTH}}"), ("height", "{{HEIGHT}}"), ("batch_size", "{{COUNT}}")):
                 if isinstance(inputs.get(key), int):
                     inputs[key] = token
@@ -1466,8 +1468,9 @@ def update_workflow_skill(skill_id: str, workflow: dict) -> dict:
                 f.write(serialize_frontmatter(meta, body))
             os.replace(tmp, os.path.join(d, main))
     if seed_cfg:
-        # 与生图/生视频设置区共用写路径：自定义写自身 config.json，保留既有 width/height/length/steps
-        save_skill_gen_config(sid, seed_cfg)
+        # 与生图/生视频设置区共用写路径（整文件重写）：先垫既有 config.json 再覆盖画布提取值，
+        # 保住设置区的 base_resolution / enhance_prompt 等画布不提供的键
+        save_skill_gen_config(sid, {**_read_config_file(d), **seed_cfg})
     return {"success": True, "id": sid, "warnings": warnings, "gen_video": is_video}
 
 
