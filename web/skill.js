@@ -88,6 +88,10 @@ function workflowParamValues(isVideo, genInfo) {
         const [w, h] = defaultSizeFromConfig(cfg);
         values.WIDTH = w;
         values.HEIGHT = h;
+        // 参考槽预处理里的 ImageScale 目标：后端 _edit_canvas_size 按 32 对齐，number widget 必须是数字
+        const round32 = (v) => Math.max(32, Math.floor(v / 32 + 0.5) * 32);
+        values.CANVAS_WIDTH = round32(w);
+        values.CANVAS_HEIGHT = round32(h);
     }
     for (const [i, entry] of (cfg.loras || []).entries()) {
         const name = typeof entry === "string" ? entry : (entry && entry.name);
@@ -167,6 +171,26 @@ function forceCanvasConfigValues(wf, values, isVideo) {
             const num = Number(raw);
             if (Number.isFinite(num)) inputs[key] = num;
         }
+    }
+    return wf;
+}
+
+// 画布导入时把 LoadImage 节点的 {{REF_IMAGE_N}} 占位符替换为 combo 列表对应位置的图片，避免红框
+const REF_IMAGE_SLOT_RE = /^\{\{REF_IMAGE_(\d+)\}\}$/;
+async function replaceRefImagePlaceholders(wf) {
+    let objectInfo = null;
+    try {
+        const res = await fetch("/object_info");
+        if (res.ok) objectInfo = await res.json();
+    } catch (e) { /* 跳过替换 */ }
+    const combo = objectInfo?.LoadImage?.input?.required?.image?.[0];
+    if (!Array.isArray(combo) || !combo.length) return wf;
+    for (const node of Object.values(wf)) {
+        if (!node || node.class_type !== "LoadImage") continue;
+        const img = (node.inputs || {}).image;
+        if (typeof img !== "string") continue;
+        const m = REF_IMAGE_SLOT_RE.exec(img);
+        if (m) node.inputs.image = combo[(Number(m[1]) - 1) % combo.length];
     }
     return wf;
 }
@@ -522,7 +546,7 @@ async function openSkillWorkflowOnCanvas(id) {
     values.SEED = 0;
     values.REF_WIDTH = values.WIDTH;
     values.REF_HEIGHT = values.HEIGHT;
-    const canvasWf = forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(wf, cfg.loras), values)), values, isVideo);
+    const canvasWf = await replaceRefImagePlaceholders(forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(wf, cfg.loras), values)), values, isVideo));
     try {
         await app.loadApiJson(canvasWf, id);
         arrangeCanvasNodes(canvasWf);
@@ -1458,7 +1482,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
 
     // ---- 画布 ⇄ 技能：把技能模板归画布可 load 的 API prompt（已知参数按设置预渲染、运行时占串归 concrete values
     //      与后端 render_template 的 typed values 一致：number widget 的纯数字串归 number；参考图槽位留 {{REF_IMAGE}} 占串）
-    function canvasWorkflow() {
+    async function canvasWorkflow() {
         if (!skillWorkflowRaw) return null;
         const isVideo = videoGenSettingsWrap.style.display !== "none";
         const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
@@ -1466,24 +1490,24 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         values.SEED = 0;
         values.REF_WIDTH = values.WIDTH;
         values.REF_HEIGHT = values.HEIGHT;
-        return forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), values)), values, isVideo);
+        return await replaceRefImagePlaceholders(forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), values)), values, isVideo));
     }
 
     // 内嵌编辑的初始图：模板按技能已保存 config 灌 widget（模型 / 尺寸 / 张数 / 前缀 / 步数 / 视频宽高时长），
     // 超出模板槽位的 LoRA 同运行时一样动态注入；提示词 / 种子 / 参考图 / LoRA 槽位等运行时 {{变量}} 原样保留
     // → 保存时后端按同一套键位重新占位符化并回写 config。
-    function editorTemplateWorkflow() {
+    async function editorTemplateWorkflow() {
         const isVideo = videoGenSettingsWrap.style.display !== "none";
         const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
         const values = workflowParamValues(isVideo, { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} });
         const wf = JSON.parse(JSON.stringify(skillWorkflowRaw));
-        return forceCanvasConfigValues(injectRuntimeLoras(wf, cfg.loras), values, isVideo);
+        return await replaceRefImagePlaceholders(forceCanvasConfigValues(injectRuntimeLoras(wf, cfg.loras), values, isVideo));
     }
 
     async function importWorkflowToCanvas() {
         if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return; }
         if (typeof app.loadApiJson !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，导入不可用"); return; }
-        const wf = canvasWorkflow();
+        const wf = await canvasWorkflow();
         if (!wf) return;
         try {
             await app.loadApiJson(wf, currentSkillId);
@@ -1904,12 +1928,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         wfCanvasBox.innerHTML = "";
     }
 
-    function mountWfEditor() {
+    async function mountWfEditor() {
         if (wfCanvas) return true;
         if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return false; }
         const LGraph = window.LGraph, LGraphCanvas = window.LGraphCanvas;
         if (!LGraph || !LGraphCanvas) { showToast(app, "warning", "无内嵌画布", "当前视图没有 LiteGraph，请用「⤒ 导入到画布」编辑"); return false; }
-        const wf = editorTemplateWorkflow();
+        const wf = await editorTemplateWorkflow();
         const { lite, missing } = apiPromptToLitegraph(wf);
         // 未注册节点直接进编辑会在保存时把该节点从 workflow.json 里丢掉，拒绝并退回只读预览
         if (missing.length) { showToast(app, "warning", "无法内嵌编辑", `节点类型未注册：${missing.join("、")}，请用「⤒ 导入到画布」编辑`); return false; }
@@ -1943,9 +1967,9 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         return true;
     }
 
-    function setWfMode(mode) {
+    async function setWfMode(mode) {
         if (mode === "edit") {
-            if (!mountWfEditor()) return;
+            if (!(await mountWfEditor())) return;
             if (!workflowExpanded) setWorkflowCollapsed(false);
         }
         const editing = mode === "edit";
@@ -1998,10 +2022,10 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     wfViewBtn.addEventListener("click", (e) => { e.stopPropagation(); setWfMode("view"); });
     wfEditBtn.addEventListener("click", (e) => { e.stopPropagation(); setWfMode("edit"); });
     wfSaveBtn.addEventListener("click", (e) => { e.stopPropagation(); saveWorkflowFromEditor(); });
-    wfReloadBtn.addEventListener("click", (e) => {
+    wfReloadBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         destroyWfEditor();
-        if (mountWfEditor()) requestAnimationFrame(refitWfCanvas);
+        if (await mountWfEditor()) requestAnimationFrame(refitWfCanvas);
     });
     wfFitBtn.addEventListener("click", (e) => { e.stopPropagation(); refitWfCanvas(); });
 

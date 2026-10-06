@@ -8,6 +8,7 @@ export const appState = {
     loaded: [],
     promptGraph: null, // graphToPrompt() 的返回值
     promptGraphArg: null, // graphToPrompt(graph) 收到的子图（内嵌工作流编辑器保存路径）
+    nodeDefs: {}, // /object_info 缓存：{ type: def }
 };
 
 function escapeHtml(s) {
@@ -43,6 +44,9 @@ export const app = {
     async loadApiJson(data, name) {
         appState.loaded.push({ kind: "api", data, name });
         return data;
+    },
+    getNodeDef(type) {
+        return appState.nodeDefs[type] ?? null;
     },
     extensionManager: {
         toast: {
@@ -108,5 +112,6 @@ export function resetAppState() {
     appState.promptGraph = null;
     appState.promptGraphArg = null;
     appState._sidebarTab = null;
+    appState.nodeDefs = {};
     app.extensionManager.workflow = null;
 }

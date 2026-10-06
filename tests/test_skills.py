@@ -1673,6 +1673,55 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertEqual(resp.status, 409)
 
 
+@unittest.skipUnless(PROMPTS_AVAILABLE, _reason)
+class TestRefSlotWriteback(unittest.TestCase):
+    """画布 → 技能回写：多路参考槽按 Autogrow 槽位序号编号，往返不塌成单槽。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill_mod = importlib.import_module(f"{_PKG_NAME}.skill")
+
+    def graph(self, n):
+        wf = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0], "text": "p"}},
+            "3": {"class_type": "TextEncodeQwenImage21", "inputs": {"clip": ["1", 0], "prompt": "p"}},
+            "4": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["2", 0], "seed": 1}},
+            "5": {"class_type": "SaveImage", "inputs": {"images": ["4", 0], "filename_prefix": "x"}},
+        }
+        for k in range(1, n + 1):
+            nid = str(10 + 2 * (k - 1))
+            wf[nid] = {"class_type": "LoadImage", "inputs": {"image": f"{k}.png"}}
+            wf["3"]["inputs"][f"images.image_{k}"] = [nid, 0]
+        return wf
+
+    def test_multi_ref_slots_keep_numbers(self):
+        template, _, _ = self.skill_mod._template_from_workflow(self.graph(3))
+        self.assertEqual([template[str(10 + 2 * i)]["inputs"]["image"] for i in range(3)],
+                         ["{{REF_IMAGE_1}}", "{{REF_IMAGE_2}}", "{{REF_IMAGE_3}}"])
+
+    def test_single_ref_keeps_plain_token(self):
+        template, _, _ = self.skill_mod._template_from_workflow(self.graph(1))
+        self.assertEqual(template["10"]["inputs"]["image"], "{{REF_IMAGE}}")
+
+    def test_numbering_follows_slot_not_node_id(self):
+        wf = self.graph(2)
+        del wf["12"]
+        wf["3"]["inputs"]["images.image_1"] = ["20", 0]
+        wf["3"]["inputs"]["images.image_2"] = ["10", 0]
+        wf["20"] = {"class_type": "LoadImage", "inputs": {"image": "first.png"}}
+        template, _, _ = self.skill_mod._template_from_workflow(wf)
+        self.assertEqual(template["20"]["inputs"]["image"], "{{REF_IMAGE_1}}")
+        self.assertEqual(template["10"]["inputs"]["image"], "{{REF_IMAGE_2}}")
+
+    def test_unslotted_load_image_not_numbered(self):
+        wf = self.graph(1)
+        wf["20"] = {"class_type": "LoadImage", "inputs": {"image": "base.png"}}
+        template, _, _ = self.skill_mod._template_from_workflow(wf)
+        self.assertEqual(template["10"]["inputs"]["image"], "{{REF_IMAGE}}")
+        self.assertEqual(template["20"]["inputs"]["image"], "{{REF_IMAGE}}")
+
+
 if __name__ == '__main__':
     unittest.main()
 

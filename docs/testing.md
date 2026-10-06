@@ -22,7 +22,7 @@ python -m pytest tests -v
   扩图 / 局部编辑仅 Qwen Image 2.1 模板、工作流图结构与 sidecar 写入。
 - `tests/test_image_gen_edit.py` — mini-executor：拓扑排序与环检测、引用解析与输出归一化、
   末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量 → base64 PNG 往返、请求组装
-  （缺 `workflow.json` 报错 / 参考图按槽位排序 / bundle 参考图优先 / 按模板自适应 `max_refs`）。
+  （缺 `workflow.json` 报错 / 参考图按槽位排序 / bundle 参考图优先 / 按 `config.json` 的 `max_refs` 限张数）。
 
 ## 前端回归测试（tests/js）
 

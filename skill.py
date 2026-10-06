@@ -1261,6 +1261,29 @@ def _reaches_load_image(workflow: dict, node_id: str) -> bool:
     return False
 
 
+_AUTOGROW_IMAGE_KEY_RE = re.compile(r"^[a-z_]+\.image_(\d+)$")
+
+
+def _ref_slot_tokens(workflow: dict) -> dict:
+    """LoadImage 节点 → 参考占位符：按 Autogrow 消费者的 image_k 槽位序号编号，
+    画布 ⇄ 技能往返保住槽位序号；单张参考（含无槽位消费者的混合情况）沿用 {{REF_IMAGE}}。"""
+    refs = [nid for nid, n in workflow.items()
+            if isinstance(n, dict) and n.get("class_type") == "LoadImage"
+            and isinstance((n.get("inputs") or {}).get("image"), str)]
+    slot_of = {}
+    for node in workflow.values():
+        if not isinstance(node, dict):
+            continue
+        for key, value in (node.get("inputs") or {}).items():
+            m = _AUTOGROW_IMAGE_KEY_RE.match(key)
+            if m and isinstance(value, list) and len(value) == 2:
+                slot_of.setdefault(str(value[0]), int(m.group(1)))
+    if len(refs) < 2 or any(nid not in slot_of for nid in refs):
+        return {nid: "{{REF_IMAGE}}" for nid in refs}
+    order = sorted(refs, key=lambda nid: (slot_of[nid], _node_sort_key(nid)))
+    return {nid: f"{{{{REF_IMAGE_{i + 1}}}}}" for i, nid in enumerate(order)}
+
+
 _COMMON_RATIOS = (("1:1", 1.0), ("16:9", 16 / 9), ("9:16", 9 / 16),
                   ("4:3", 4 / 3), ("3:4", 3 / 4), ("3:2", 3 / 2), ("2:3", 2 / 3))
 
@@ -1283,6 +1306,7 @@ def _template_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
     template = copy.deepcopy(workflow)
     warnings = []
     seed_cfg = {}
+    ref_tokens = _ref_slot_tokens(workflow)
 
     clip_nodes = [nid for nid, n in workflow.items()
                   if isinstance(n, dict) and n.get("class_type") == "CLIPTextEncode"]
@@ -1319,7 +1343,7 @@ def _template_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
             seed_cfg.setdefault("output_prefix", inputs["filename_prefix"])
             inputs["filename_prefix"] = "{{PREFIX}}"
         elif ct == "LoadImage" and isinstance(inputs.get("image"), str):
-            inputs["image"] = "{{REF_IMAGE}}"
+            inputs["image"] = ref_tokens[nid]
 
     if not any(isinstance(n, dict) and n.get("class_type") == "SaveImage" for n in workflow.values()):
         warnings.append("工作流没有 SaveImage 节点，将无法收集输出图片")
@@ -1370,12 +1394,13 @@ def _is_h3_video_workflow(workflow: dict) -> bool:
 def _template_video_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
     """H3 视频工作流 → 模板：UNETLoader→{{MODEL}}、CLIPLoader→{{TEXT_ENCODER}}、
     VAELoader（喂 VAEDecodeAudio 的→{{AUDIO_VAE}}，其余→{{VAE}}）、MiniMaxH3* 入口 prompt/width/height/length
-    →占位符、KSampler seed→{{SEED}}、LoadImage→{{REF_IMAGE}}、主链 LoRA→{{LORA_i_*}} 槽位。
+    →占位符、KSampler seed→{{SEED}}、LoadImage→{{REF_IMAGE}} / {{REF_IMAGE_n}} 槽位、主链 LoRA→{{LORA_i_*}} 槽位。
 
     返回 (template, warnings, seed_cfg)；约定与 _template_from_workflow 一致（seed_cfg 只含非空项）。"""
     template = copy.deepcopy(workflow)
     warnings = []
     seed_cfg = {}
+    ref_tokens = _ref_slot_tokens(workflow)
 
     # H3 音频是独立 VAE：喂给 VAEDecodeAudio.vae 的 VAELoader 才是音频 VAE，不能复用视频 VAE
     audio_vae_ids = set()
@@ -1417,7 +1442,7 @@ def _template_video_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
         elif ct in ("KSampler", "KSamplerAdvanced") and "seed" in inputs:
             inputs["seed"] = "{{SEED}}"
         elif ct == "LoadImage" and isinstance(inputs.get("image"), str):
-            inputs["image"] = "{{REF_IMAGE}}"
+            inputs["image"] = ref_tokens[nid]
 
     if not seed_cfg.get("model"):
         warnings.append("工作流没有 UNETLoader，运行时无法注入视频模型")
@@ -1466,7 +1491,7 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
         template, warnings, seed_cfg = _template_video_from_workflow(workflow)
     else:
         template, warnings, seed_cfg = _template_from_workflow(workflow)
-    has_ref = any(isinstance(v, str) and "{{REF_IMAGE}}" in v
+    has_ref = any(isinstance(v, str) and "{{REF_IMAGE" in v
                   for n in template.values() if isinstance(n, dict)
                   for v in (n.get("inputs") or {}).values())
 
@@ -1597,7 +1622,7 @@ def _plan_workflow_update(sid: str, d: str, workflow: dict) -> dict:
         template, warnings, seed_cfg = _template_from_workflow(workflow)
     if injected_loras:
         seed_cfg["loras"] = list(seed_cfg.get("loras") or []) + injected_loras
-    has_ref = any(isinstance(v, str) and "{{REF_IMAGE}}" in v
+    has_ref = any(isinstance(v, str) and "{{REF_IMAGE" in v
                   for n in template.values() if isinstance(n, dict)
                   for v in (n.get("inputs") or {}).values())
 

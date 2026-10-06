@@ -359,7 +359,7 @@ class NeoImageGenEdit(io.ComfyNode):
             if bindings:
                 body["references"] = bindings
         # 保留张数看模板槽位
-        params = resolve_request(body, settings, max_refs=template_max_refs(template))
+        params = resolve_request(body, settings, max_refs=template_max_refs(template, settings))
         graph, _render_warnings = render_template(template, params)
         overrides = None
         if model is not None:

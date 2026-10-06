@@ -70,7 +70,7 @@ _OVERRIDE_KEYS = ("model", "text_encoder", "vae", "loras",
                   "base_resolution", "default_ratio", "output_prefix", "steps")
 
 # skill config.json 里可覆盖全局生图设置的键（steps 为采样步数默认值，非模型设置区管理）
-_SKILL_SETTING_KEYS = tuple(DEFAULT_SETTINGS) + ("steps",)
+_SKILL_SETTING_KEYS = tuple(DEFAULT_SETTINGS) + ("steps", "max_refs")
 
 # 自动挑选默认模型时的名称线索（按优先级）
 _MODEL_HINTS = {
@@ -442,8 +442,15 @@ def _resolve_loras(settings: dict) -> tuple:
 _REF_IMAGE_SLOT_RE = re.compile(r"\{\{REF_IMAGE_(\d+)\}\}")
 
 
-def template_max_refs(template: dict) -> int:
-    """模板 {{REF_IMAGE_n}} 多路参考槽位的最大序号（= 可保留的参考图张数）；无多路槽位时为 1。"""
+def template_max_refs(template: dict, settings: dict | None = None) -> int:
+    """技能可保留的参考图张数上限：config.json 的 max_refs 优先，
+    缺省回退模板 {{REF_IMAGE_n}} 多路槽位的最大序号（无多路槽位时为 1）。"""
+    try:
+        cfg_max = int((settings or {}).get("max_refs") or 0)
+    except (TypeError, ValueError):
+        cfg_max = 0
+    if cfg_max > 0:
+        return cfg_max
     found = 0
     for node in (template or {}).values():
         if not isinstance(node, dict):
@@ -928,6 +935,81 @@ def _prune_unfilled(graph: dict, unfilled: set) -> None:
                 dead.add(nid)         # 纯连线节点被裁空 → 该中转节点也失效
 
 
+_AUTOGROW_SLOT_KEY_RE = re.compile(r"^[a-z_]+\.image_(\d+)$")
+_REF_SLOT_LIMIT = 17   # TextEncodeQwenImage21 的 images Autogrow 名字数（image_1..17）
+
+
+def _autogrow_slot_keys(graph: dict, nid: str) -> dict:
+    """节点自身的 Autogrow 图片输入键：槽序号 -> 输入键名。"""
+    keys = {}
+    for key in (graph[nid].get("inputs") or {}):
+        m = _AUTOGROW_SLOT_KEY_RE.match(key)
+        if m:
+            keys[int(m.group(1))] = key
+    return keys
+
+
+def _ref_slot_chain(graph: dict, start_id: str):
+    """槽位上游的独占参考链：LoadImage → 只喂它一家的中间节点，止于槽位直连源。
+
+    上游不是 LoadImage（链头多入口 / 非图片源）时返回 None，该槽不作为克隆原型。"""
+    head = start_id
+    while graph.get(head, {}).get("class_type") != "LoadImage":
+        links = [v[0] for v in (graph.get(head, {}).get("inputs") or {}).values()
+                 if isinstance(v, list) and len(v) == 2]
+        if len(links) != 1:
+            return None
+        head = links[0]
+    chain = [head]
+    cur = head
+    while cur != start_id:
+        consumers = [nid for nid, node in graph.items()
+                     if isinstance(node, dict)
+                     for v in (node.get("inputs") or {}).values()
+                     if isinstance(v, list) and len(v) == 2 and v[0] == cur]
+        if len(consumers) != 1:
+            return None
+        cur = consumers[0]
+        chain.append(cur)
+    return chain
+
+
+def _expand_ref_slots(graph: dict, params: dict) -> None:
+    """参考图张数超过模板已有槽位时，克隆最高已有槽的链补到 Autogrow 的 images.image_k。
+
+    模板只写演示用的前几槽，容量由 config.json 的 max_refs 声明（resolve_request 已按它截断）。"""
+    names = params.get("ref_images") or []
+    consumers = [(nid, _autogrow_slot_keys(graph, nid))
+                 for nid in graph if isinstance(graph[nid], dict)]
+    consumers = [(nid, keys) for nid, keys in consumers if keys]
+    if len(names) < 2 or not consumers:
+        return
+    nid, keys = max(consumers, key=lambda kv: max(kv[1]))
+    if len(keys) >= len(names):
+        return
+    top = max(keys)
+    src = (graph[nid].get("inputs") or {}).get(keys[top])
+    if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
+        return
+    chain = _ref_slot_chain(graph, src[0])
+    if not chain:
+        return
+    prefix = keys[top].rsplit(".image_", 1)[0]
+    next_id = max((int(nid) for nid in graph if str(nid).isdigit()), default=0) + 1
+    for k in range(top + 1, min(len(names), _REF_SLOT_LIMIT) + 1):
+        new_ids = [str(next_id + i) for i in range(len(chain))]
+        next_id += len(chain)
+        mapping = dict(zip(chain, new_ids))
+        for old, new in mapping.items():
+            node = copy.deepcopy(graph[old])
+            for key, value in list(node["inputs"].items()):
+                if isinstance(value, list) and len(value) == 2 and value[0] in mapping:
+                    node["inputs"][key] = [mapping[value[0]], value[1]]
+            graph[new] = node
+        graph[new_ids[0]]["inputs"]["image"] = names[k - 1]
+        graph[nid]["inputs"][f"{prefix}.image_{k}"] = [new_ids[0], 0]
+
+
 def _next_graph_id(graph: dict) -> str:
     try:
         return str(max(int(nid) for nid in graph if str(nid).isdigit()) + 1)
@@ -993,7 +1075,8 @@ def render_template(template: dict, params: dict) -> tuple[dict, list]:
     """把 workflow.json 模板渲染成可提交队列的 API prompt。返回 (graph, warnings)。
 
     模板用 {{REF_IMAGE}}（单路首帧）或 {{REF_IMAGE_n}} / {{REF_VIDEO_n}} / {{REF_AUDIO_n}}
-    声明参考槽位；未提供对应序号的槽位整条裁掉，模板可同时容纳多种参考的上限槽位。"""
+    声明参考槽位；未提供对应序号的槽位整条裁掉，参考图张数超过模板槽位时按
+    config.json 的 max_refs 克隆槽链补齐 Autogrow 输入。"""
     text = json.dumps(template, ensure_ascii=False)
     if _SINGLE_REF_TOKEN_RE.search(text) and not (
             params.get("ref_images") or params.get("ref_name") or params.get("ref_last")):
@@ -1013,6 +1096,7 @@ def render_template(template: dict, params: dict) -> tuple[dict, list]:
                 inputs[key] = resolved
     if unfilled:
         _prune_unfilled(graph, unfilled)
+    _expand_ref_slots(graph, params)
     warnings = []
     _apply_loras(graph, params.get("loras") or [], warnings)
     if params.get("local_edit"):
@@ -1456,7 +1540,7 @@ async def start_generation(body: dict) -> dict:
         if not str(body.get("prompt") or "").strip():
             body["prompt"] = REMOVE_DEFAULT_PROMPT
 
-    params = resolve_request(body or {}, settings, max_refs=template_max_refs(template))
+    params = resolve_request(body or {}, settings, max_refs=template_max_refs(template, settings))
     if template_is_qwen21(template):
         params["width"] = _round_multiple(params["width"], 32)
         params["height"] = _round_multiple(params["height"], 32)

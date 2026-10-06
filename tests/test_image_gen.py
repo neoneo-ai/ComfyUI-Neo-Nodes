@@ -456,6 +456,79 @@ class TemplateRefSlotTests(unittest.TestCase):
         self.assertEqual(image_gen.template_max_refs({}), 1)
 
 
+class RefSlotExpansionTests(unittest.TestCase):
+    """参考槽位运行时扩展：模板只写演示用的前几槽，张数上限由 config.json 的 max_refs 声明。"""
+
+    TWO_SLOTS = load_preset_template("qwen_image_21")
+
+    ONE_SLOT = {
+        "4": {"class_type": "TextEncodeQwenImage21",
+              "inputs": {"prompt": "{{PROMPT}}", "images.image_1": ["30", 0]}},
+        "10": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_1}}"}},
+        "30": {"class_type": "ImageScale",
+               "inputs": {"image": ["10", 0], "width": "{{CANVAS_WIDTH}}",
+                          "height": "{{CANVAS_HEIGHT}}", "crop": "disabled"}},
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        for i in range(1, 21):
+            write_png(os.path.join(_INPUT_DIR, f"exp_ref_{i}.png"), 512, 512)
+
+    def params(self, n, max_refs=10):
+        refs = [{"kind": "input", "value": f"exp_ref_{i}.png"} for i in range(1, n + 1)]
+        return image_gen.resolve_request({"prompt": "分镜", "seed": 1, "references": refs},
+                                         base_settings(), max_refs=max_refs)
+
+    def slot_images(self, graph, node="4"):
+        """消费者各槽位实际吃的图片名（按槽序号，沿预处理链回溯到 LoadImage）。"""
+        inputs = graph[node]["inputs"]
+        out, k = [], 1
+        while f"images.image_{k}" in inputs:
+            nid = inputs[f"images.image_{k}"][0]
+            while graph[nid]["class_type"] != "LoadImage":
+                nid = graph[nid]["inputs"]["image"][0]
+            out.append(graph[nid]["inputs"]["image"])
+            k += 1
+        return out
+
+    def test_preset_template_keeps_two_demo_slots(self):
+        loads = [n for n in self.TWO_SLOTS.values() if n.get("class_type") == "LoadImage"]
+        self.assertEqual(len(loads), 2, "模板只留演示槽，容量在 config.json")
+        with open(os.path.join(PLUGIN_DIR, "skills", "presets", "qwen_image_21", "config.json"),
+                  encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["max_refs"], 10)
+
+    def test_extra_refs_clone_the_bare_slot(self):
+        graph, _ = image_gen.render_template(self.TWO_SLOTS, self.params(4))
+        self.assertEqual(self.slot_images(graph), [f"exp_ref_{i}.png" for i in range(1, 5)])
+        scales = [n for n in graph.values() if n.get("class_type") == "ImageScale"]
+        self.assertEqual(len(scales), 1, "克隆裸 LoadImage 原型，不复制槽 1 的缩放链")
+
+    def test_unfilled_slots_pruned(self):
+        graph, _ = image_gen.render_template(self.TWO_SLOTS, self.params(1))
+        self.assertEqual(self.slot_images(graph), ["exp_ref_1.png"])
+        graph, _ = image_gen.render_template(self.TWO_SLOTS, self.params(0))
+        self.assertEqual(self.slot_images(graph), [])
+        self.assertFalse([n for n in graph.values() if n.get("class_type") == "ImageScale"])
+
+    def test_slot_chain_cloned_with_its_scale(self):
+        graph, _ = image_gen.render_template(self.ONE_SLOT, self.params(3, max_refs=3))
+        self.assertEqual(self.slot_images(graph), [f"exp_ref_{i}.png" for i in range(1, 4)])
+        scales = [n for n in graph.values() if n.get("class_type") == "ImageScale"]
+        self.assertEqual(len(scales), 3, "单槽模板的原型含 ImageScale，整条链一起克隆")
+
+    def test_expansion_capped_at_autogrow_names(self):
+        graph, _ = image_gen.render_template(self.TWO_SLOTS, self.params(20, max_refs=20))
+        self.assertEqual(len(self.slot_images(graph)), 17)
+
+    def test_max_refs_prefers_config(self):
+        template = {"1": {"class_type": "LoadImage", "inputs": {"image": "{{REF_IMAGE_3}}"}}}
+        self.assertEqual(image_gen.template_max_refs(template), 3)
+        self.assertEqual(image_gen.template_max_refs(template, {"max_refs": 10}), 10)
+        self.assertEqual(image_gen.template_max_refs(template, {"max_refs": "0"}), 3)
+
+
 class StartGenerationTemplateRouteTests(unittest.TestCase):
     """start_generation 按模板决定参考槽位数（与 ImageGenEditNode 一致）。"""
 

@@ -3878,24 +3878,35 @@ class Qwen21TemplateTests(unittest.TestCase):
         graph, warns = image_gen.render_template(template, params)
         return graph
 
+    def _ref_images(self, graph):
+        """按 images.image_N 槽序取回每张参考图文件名（穿过 ImageScale 包装）。"""
+        inputs = graph["4"]["inputs"]
+        out, k = [], 1
+        while f"images.image_{k}" in inputs:
+            nid = inputs[f"images.image_{k}"][0]
+            while graph[nid]["class_type"] != "LoadImage":
+                nid = graph[nid]["inputs"]["image"][0]
+            out.append(graph[nid]["inputs"]["image"])
+            k += 1
+        return out
+
     def test_no_refs_prunes_all_load_images(self):
         graph = self._render(0)
-        for node_id in ("10", "12", "14", "16", "18", "20", "22", "24", "26", "28"):
-            self.assertNotIn(node_id, graph, f"无参考时 LoadImage {node_id} 应被裁掉")
+        self.assertEqual([n for n in graph.values() if n.get("class_type") == "LoadImage"], [],
+                         "无参考时参考槽连同 LoadImage 应被裁掉")
         self.assertIn("4", graph)   # TextEncodeQwenImage21 保留
 
     def test_partial_refs_prune_unused_slots(self):
+        # 模板只画 2 个演示槽，运行时按参考数扩槽：3 张 → image_1..image_3，第 4 槽不出现
         graph = self._render(3)
-        for node_id in ("10", "12", "14"):
-            self.assertIn(node_id, graph)
-        self.assertNotIn("16", graph, "第 4 个未挂的参考槽应被裁掉")
+        self.assertEqual(self._ref_images(graph), ["q_ref_0.png", "q_ref_1.png", "q_ref_2.png"])
+        self.assertNotIn("images.image_4", graph["4"]["inputs"], "第 4 个未挂的参考槽应被裁掉")
 
     def test_many_refs_fill_high_slots_and_prune_rest(self):
-        # 上限提到 10：前 5 张占满 image_1..image_5（node 10..18），第 6 张起仍未挂 → 裁掉
+        # 上限 10：模板外的参考靠扩槽补齐，第 6 张起未挂 → 不出现 image_6
         graph = self._render(5)
-        for node_id in ("10", "12", "14", "16", "18"):
-            self.assertIn(node_id, graph)
-        self.assertNotIn("20", graph, "第 6 个未挂的参考槽应被裁掉")
+        self.assertEqual(self._ref_images(graph), [f"q_ref_{i}.png" for i in range(5)])
+        self.assertNotIn("images.image_6", graph["4"]["inputs"], "第 6 个未挂的参考槽应被裁掉")
 
     def test_rendered_refs_use_dotted_autogrow_keys(self):
         # TextEncodeQwenImage21 的 autogrow 容器是 images，模板必须用点号键 images.image_N；
