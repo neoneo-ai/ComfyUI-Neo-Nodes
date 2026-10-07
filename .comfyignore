@@ -1,0 +1,29 @@
+# comfy-cli 发布时留在 Registry 包外面的文件（gitignore 语法：打包器取
+# git 已跟踪文件减去这里的条目，所以未跟踪的本地文件不用写条目——
+# node_modules/、tmp/、gallery 缓存、configs/backyard_oss.json 等都已在
+# .gitignore 里，不会进包）。
+#
+# 留在包里的：全部运行时 .py、web/ 前端、skills/ prompts/ recipes/ locals/
+# 内置数据、configs/ 默认配置、example_workflows/、docs/（README 与
+# Developer.md 直接链到里面的模块文档）、README/README_EN/Developer/LICENSE/
+# pyproject.toml/requirements.txt、neo-studio 启动脚本。
+#
+# 下面这些只服务于开发，用户装了没有任何用处。
+
+# 测试与离线工具
+tests/
+tools/
+_hub_check.py
+pytest.ini
+package.json
+package-lock.json
+
+# 测试产物与编辑器 / CI 设置
+test-results/
+.pytest_cache/
+.vscode/
+.github/
+
+# 仓库文件
+.gitignore
+.comfyignore

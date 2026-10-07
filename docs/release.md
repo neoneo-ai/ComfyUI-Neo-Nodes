@@ -4,6 +4,17 @@
 
 ## 发布
 
+### 打包范围
+
+`.comfyignore`（gitignore 语法）决定 Registry 包里有什么：comfy-cli 取 git 已跟踪文件减去这里的条目。
+`tests/`、`tools/`、`.github/`、`.vscode/`、`test-results/`、`pytest.ini`、`package.json` 等开发文件被排除；
+运行时 `.py`、`web/`、`configs/`、`skills/`、`prompts/`、`locals/`、`example_workflows/`、`docs/` 与
+README/LICENSE/pyproject/requirements 留在包里。未跟踪的本地文件（`node_modules/`、`tmp/`、
+gallery 缓存、`configs/backyard_oss.json`）已被 `.gitignore` 排除，无需在此重复。
+
+Registry 安装只读 `pyproject.toml` 的 `dependencies`，`requirements.txt` 供 ComfyUI-Manager 与开发环境使用，
+两边需保持一致；可选增强（`laya` / `pillow-heif` / `oss2`）写在 `[project.optional-dependencies]`。
+
 ### Git Action 方式
 
 - Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）。

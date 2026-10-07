@@ -1,22 +1,57 @@
 [project]
 name = "comfyui-neo-nodes"
 version = "1.1.0"
-description = "LLM 提示词增强/生成/反推、Krea2 生图、H3 视频导演、素材库与配方一键发送。Prompt + image gen + video director + asset/recipe library for ComfyUI."
+# comfy-cli 把这段文本原样写进 Registry 列表，Manager 与前端搜索都靠它匹配，
+# 所以这里列真实节点名，不写抽象介绍。
+description = "ComfyUI-Neo-Nodes (Neo nodes): Neo Prompt Encoder and Neo Prompt Agent (LLM prompt enhance, generate, reverse, translate, classify), Neo Image Gen & Edit (skill-template text-to-image, editing and outpaint with Autogrow reference images), Neo Reference Grid, Neo Grid Split, Neo Bundle Expand, Neo H3 Video Director with Neo H3 Add Keyframe, Add Context and Add Guides, Neo H3 Segment Run, plus built-in image and video generation settings, Gallery asset library with LoRA tagging, Recipes one-click send, Model Hub downloads, workflow repair, and the Neo Studio and Backyard pages."
 readme = "README.md"
 license = { text = "Apache-2.0" }
+keywords = [
+    "comfyui", "comfyui-neo-nodes", "neo-nodes", "neo nodes", "nodes",
+    "llm", "prompt", "prompt enhancement", "prompt reverse", "prompt agent",
+    "image generation", "image edit", "outpaint", "reference image", "grid",
+    "storyboard", "video", "video director", "minimax", "minimax h3", "h3",
+    "lora", "lora tag", "caption", "gallery", "asset library", "recipes",
+    "workflow", "workflow repair", "model hub", "modelscope", "huggingface",
+    "studio", "skills", "chinese",
+]
+# 包内没有平台相关代码。加速器声明（Environment :: GPU :: ...）故意不写：
+# 节点跑在 ComfyUI 自带的 torch 上，写出来等于声称做过没做过的验证。
 classifiers = [
     "Operating System :: OS Independent",
 ]
+# Registry 安装读这里，requirements.txt 给 ComfyUI-Manager 与开发环境用，两边对齐。
+# PyYAML 解析 skill / recipe 的 frontmatter；openai 是远程 LLM 客户端；
+# pypinyin 供中文技能名拼音检索与 LoRA 触发词建议。
+# Pillow 由 ComfyUI 核心自带，不在此声明。
 dependencies = [
-    "requests",
-    "Pillow",
     "PyYAML",
+    "openai",
+    "pypinyin",
 ]
 
+# 可选增强：缺包时对应功能自行降级，不影响插件加载。
+[project.optional-dependencies]
+# 智能 skill 选择 / 提示词分类（不可用时跳过推荐）
+laya = ["laya"]
+# LoRA 打标目录的 HEIC / HEIF 读取（缺失时跳过 HEIC 文件）
+heif = ["pillow-heif"]
+# Backyard 页面的阿里云 OSS 上传
+oss = ["oss2"]
+
 [project.urls]
+Homepage = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes"
 Repository = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes"
+Documentation = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes#readme"
+Issues = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes/issues"
 
 [tool.comfy]
 PublisherId = "neoneo-ai"
 DisplayName = "Neo Nodes"
 Icon = ""
+# Manager 用来拒绝把包装到不兼容核心上的版本下限。Neo Image Gen & Edit 需要
+# V3 io API（io.Node / io.Autogrow），下限取实际验证过的核心版本。
+#
+# 键名必须是 requires-comfyui：comfy-cli 只从 [tool.comfy] 里读这个名字，
+# 写成 supported_comfyui_version 会被静默忽略，Registry 存下空的版本下限。
+requires-comfyui = ">=0.37.0"

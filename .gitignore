@@ -25,3 +25,5 @@ configs/backyard_oss.json
 tools/output/
 node_modules/
 tmp/
+test-results/
+.pytest_cache/
