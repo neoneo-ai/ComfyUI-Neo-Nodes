@@ -7,6 +7,7 @@
 | 模式 | 说明 | 要求 |
 |------|------|------|
 | Remote (远程) | 通过 API 调用云端大模型 | 在节点 Settings 配置 API Key 与端点 |
+| Native (原生) | ComfyUI 进程内直接跑 safetensors 文本生成模型 | 模型放入 `models/text_encoders/`，Provider 选「Native」 |
 | Local (本地) | 使用 llama.cpp 在本地推理 | GGUF 模型放入目录并选「Local GGUF」 |
 
 ![节点 Settings 中的 LLM Provider / API Key 配置](assets/images/llm-settings.png)
@@ -15,14 +16,52 @@
 - **思考模型**：接入会输出推理过程的模型（推理内容放在 `reasoning_content`）时，
   生成期间会在提示词框上方实时显示「💭 思考中…」面板，正文出现或结束时自动清除，
   最终只保留正文结果（思考文本不写入提示词）。
-- 流式生成（远程 / 本地）会自动为推理预留 token 预算，避免推理耗尽预算导致没有正文。
+- 流式生成（远程 / 本地 / 原生）会自动为推理预留 token 预算，避免推理耗尽预算导致没有正文。
 - ✨ 按钮旁的 ▾ 菜单提供「关闭思考」开关：勾选后让服务端跳过推理直接输出（更快更稳，
   适合 Krea2 等只需最终提示词的场景）；不支持该字段的服务端会忽略此参数，无副作用。
+
+## 原生引擎（Native：ComfyUI safetensors）
+
+Settings → Provider 选 **`Native (ComfyUI safetensors)`**（下拉默认项）：复用 ComfyUI 原生文本生成路径
+（`clip.tokenize` → `clip.generate` → `clip.decode`），在 ComfyUI 进程内直接跑 `models/text_encoders/`
+下的 safetensors 文本生成模型（如 `qwen3.5_4b_bf16.safetensors`）。**无需安装 `llama-cpp-python`**，
+该 Provider 下 API Key / Base URL / Models Dir 各行隐藏。
+
+### 模型与连接测试
+
+- **模型列表** - 下拉扫描 `models/text_encoders/` 下所有 `.safetensors`（`GET /rs_prompts/native_models`），
+  排序为 qwen3.5 系列 → qwen3 系列 → 其余；无已存选择时自动选中第一项，目录为空时下拉提示放模型文件。
+- **连接测试** - 「🔌 测试连接」不打 HTTP，而是用当前表单模型实跑一次短推理（发「你好」），
+  成功返回回复摘要，可验证模型能加载、能出字。
+- 模型类型由权重形状自动识别（`detect_te_model`），无需指定 clip 类型；纯编码器（如 `clip_l`）
+  不具备文本生成能力，加载会失败。
+
+### 生成行为
+
+- **默认贪心** - `do_sample=False`，结果确定可复现；采样参数（temperature / top_k / top_p / min_p /
+  repetition_penalty / presence_penalty / seed）由后端调用传入，界面不暴露。
+- **思考模式** - 走原生 `tokenize(thinking=...)`；非流式返回前剥离思考块只留正文，思考文本不写入提示词。
+- **伪流式** - 原生引擎整段生成、无法逐 token。流式请求跑完整段后按思考 / 正文拆块透传，
+  前端「💭 思考中…」面板与正文照常工作，只是没有逐字打字动画。
+- **图片输入** - 图片反推只取第一张图转成 IMAGE 张量喂给编码器，模型需自带视觉能力。
+- **工具对话回退** - 多轮 / 工具调用（`chat_turn` + `tools`）原生路径解析不了 `tool_calls`，
+  该路径自动回退 llama.cpp 本地后端。
+
+### 显存与自动卸载
+
+- 模型加载后按文件名缓存为进程内 CLIP 单例并驻留，首次调用会有一次加载耗时。
+- **自动卸载** - 勾选「本节点执行完自动卸载原生模型」（配置项 `auto_unload_native`）后，
+  工作流运行时该节点执行完即卸载模型并释放显存。
+- 保存时切到其它 Provider、或在 Native 槽位换模型，旧模型都会自动卸载释放显存。
+- 原生 clip 单例不可并发（`generate` 会改写共享 clip options 与 KV 缓冲）：引擎内串行执行，
+  队列外调用自带锁串行化。
 
 ## 国产云供应商（开箱可选）
 
 Settings → Provider 下拉里已内置以下云端入口，选好后填 API Key（**云厂商必填**，留空会 401）即可用
 （模型名能自动列出就直接选，列不出可手输）：
+
+### 内置供应商
 
 - **`DeepSeek 深度求索`** — `https://api.deepseek.com/v1`
   申请：[platform.deepseek.com](https://platform.deepseek.com)，示例模型 `deepseek-flash`
@@ -37,6 +76,8 @@ Settings → Provider 下拉里已内置以下云端入口，选好后填 API Ke
 - **`硅基流动 SiliconFlow`** — `https://api.siliconflow.cn/v1`
   申请：[cloud.siliconflow.cn](https://cloud.siliconflow.cn)，示例模型 `deepseek-ai/DeepSeek-V3`
 
+### 端点与密钥
+
 - 模型名以各家控制台当前列表为准（上表只是示例）：下拉会自动请求模型列表端点，
   鉴权厂商在 API Key 输入框留空时复用已存密钥，填入 / 修改密钥后自动重拉；拉不到时回退为手动输入。
 - 智谱端点是 `/api/paas/v4`，所以 `configs/llm_providers.json` 里该家 `append_v1: false`；
@@ -49,14 +90,17 @@ Settings → Provider 下拉里已内置以下云端入口，选好后填 API Ke
 - API Key：标记 `requires_api_key` 的云厂商为**必填**（留空保存会告警 401）；
   已存过密钥时输入框以星号显示，未改动 / 清空都沿用旧值。LM Studio / Ollama / vLLM / Unsloth
   与 OpenAI Compatible 可留空。
+
+### 阿里云三套通道
+
 - 阿里云三套通道互相隔离，API Key 与 Base URL 必须配套，混用会产生意外扣费或返回 401/403：
   按量付费（`sk-` + `dashscope.aliyuncs.com/compatible-mode/v1`）、
   Token Plan（`sk-sp-` + `token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，目前仅华北 2（北京））、
   Coding Plan（`sk-sp-` + `coding.dashscope.aliyuncs.com/v1`）。
 - 下拉里**没有** Coding Plan：其条款仅允许在编程工具内交互使用，禁止以 API 形式用于自动化脚本 /
   应用后端 / 非交互式批量调用，违规可能导致订阅暂停或 Key 被封。
-- 供应商清单定义在 `configs/llm_providers.json`，增删改（含接入自建服务）直接编辑该文件，
-  重启 ComfyUI 后下拉即生效。
+供应商清单定义在 `configs/llm_providers.json`，增删改（含接入自建服务）直接编辑该文件，
+重启 ComfyUI 后下拉即生效。
 
 ## 本地 LLM 推理服务（LM Studio / Ollama / vLLM / Unsloth）
 
@@ -78,7 +122,7 @@ Settings → Provider 下拉里已内置以下云端入口，选好后填 API Ke
 
 ## 本地 LLM 推理安装（可选）
 
-本地 GGUF 模式依赖 `llama-cpp-python`。它默认从源码编译（需要 C 编译器 / CUDA 工具链），
+本地 GGUF 模式依赖 `llama-cpp-python`（原生引擎与远程 API 不需要）。它默认从源码编译（需要 C 编译器 / CUDA 工具链），
 Windows 上很容易失败，**推荐直接安装预编译 wheel**。
 
 ### 方式一：预编译 wheel（推荐）
@@ -87,6 +131,7 @@ Windows 上很容易失败，**推荐直接安装预编译 wheel**。
 下载与你的 **Python 版本 + 系统 + CUDA 版本** 匹配的 wheel 并安装：
 
 ```bash
+
 # 示例：Python 3.12 + Windows + CUDA 12.4（文件名以 releases 页实际资产为准）
 python -m pip install llama_cpp_python-<版本>+cu124-cp312-cp312-win_amd64.whl
 ```
@@ -100,6 +145,7 @@ python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.
 ### 方式二：源码编译
 
 ```bash
+
 # CPU
 python -m pip install llama-cpp-python
 

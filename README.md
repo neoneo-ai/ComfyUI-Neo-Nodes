@@ -36,6 +36,9 @@
   → [recipes.md](docs/recipes.md)
 - **🅝 顶栏菜单** — 插件统一入口（悬停约 0.3 秒或点击展开，指针离开自动收起）：新影工坊 / 生成素材 / 新建导演配方 / 创建节点（新节点落在当前可见区的空白处）/ 修复工作流 / 回写入技能 / 设置 / 模型库 / 技能管理
   → [workflow-repair.md](docs/workflow-repair.md)
+- **🗂 技能管理** — 技能详情页（设置区 + 提示词 + 工作流区）：「⤒ 导入到画布」/「💾 回写入技能」/「🧩 编辑」，
+  落盘前弹变更确认并记本机变更历史；预设只读，复制为自定义后可编辑
+  → [skills.md](docs/skills.md)
 - **🔧 工作流修复** — 模型路径失效时按文件名匹配磁盘真实文件一键修复，可手动改选与记住映射
   → [workflow-repair.md](docs/workflow-repair.md)
 - **📥 模型库** — Comfy-Org 专区双源（ModelScope / Hugging Face）搜索与断点续传下载，按仓库内路径自动归类落盘
@@ -76,14 +79,17 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 ## 依赖
 
 - `requests`、`Pillow`、`PyYAML`（随 `requirements.txt` 自动安装）
-- `llama_cpp_python`（**可选**，仅本地 LLM 推理需要，见 [docs/llm.md](docs/llm.md)；只用远程 API 可跳过）
+- `llama_cpp_python`（**可选**，仅 Local GGUF 本地推理需要，见 [docs/llm.md](docs/llm.md)；原生引擎与远程 API 可跳过）
 
 ---
 
 ## 快速上手
 
 1. **安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（或见上方手动安装），重启 ComfyUI。
-2. **配置 LLM（二选一）**
+2. **配置 LLM（三选一）**
+   - **原生**：把 safetensors 文本生成模型（如 `qwen3.5_4b_bf16.safetensors`）放入 `models/text_encoders/`，
+     Settings → Provider 选「Native (ComfyUI safetensors)」并选择模型后点 💾 保存，在 ComfyUI 进程内直接推理，
+     无需额外依赖。说明见 [docs/llm.md](docs/llm.md)。
    - **远程**：节点 Settings 里选 Provider（内置 DeepSeek、阿里云百炼、Kimi、智谱 GLM、硅基流动，
      以及 OpenAI 兼容 / LM Studio / Ollama / OpenRouter 等），填 API Key 与端点；
      表单底部「🔌 测试连接」用当前填写值发送「你好」验证连通（无需先保存）。
@@ -132,32 +138,6 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 技能不只是提示词模板，还包含内置模型配置（model / vae / clip）、内置工作流与默认基础参数。
 技能列表可进入详情页查看；系统预设不可编辑，复制为自定义后即可编辑。
 
-生图 / 生视频技能详情页工作流区带「⤒ 导入到画布」（把技能 `workflow.json` 按当前设置预渲染后载入画布，
-节点 widget 按技能已保存配置初始化、覆盖 `workflow.json` 里写死的旧值，并按流程图同一套布局重排画布节点：
-拓扑分层左到右、同列按上游重心堆叠、短列垂直居中、自动适配视图；导入成功后自动收起技能窗口——技能管理整窗关闭、独立详情弹窗收起，不再遮挡画布）
-与「💾 回写入技能」（把整画布工作流落盘该技能 `workflow.json`，画布上的模型 / LoRA / 尺寸 / 张数 / 前缀同步进
-`config.json`，设置区的底图分辨率 / 提示词增强等键保留，`skill.md` 正文保留）；
-预设技能不可回写，先「复制为自定义」。导入后弹常驻 action toast 卡片提醒保存回写（与 Studio 交接共用同一张
-卡片：带「💾 回写入技能」按钮、不自动关闭，只认灌入技能的那张画布——切到其他画布 tab 时收起、切回来恢复，
-同画布后导入的技能顶掉前一张）。卡片关掉后待回写状态不丢：🅝 顶菜单「💾 回写入技能」仍可落盘同一张画布的技能，
-待回写期间 🅝 按钮亮绿点（绿色 = 有可保存的变更，切走该画布 tab 时熄灭，落盘后清除；打开菜单时「💾 回写入技能」条目右侧带绿点引导）。
-Studio 内嵌没有画布，技能详情工作流区改挂「⤒ 主画布编辑」：打开主界面 `/?neo_wf_edit=<技能 id>`，
-主界面按技能 `config.json` 预渲染灌入画布（同样按流程图布局排列、widget 按已保存配置覆盖旧值），
-同一张卡片内「💾 回写入技能」落盘该技能。
-技能详情页工作流区还可「🧩 编辑」：把 `workflow.json` 按技能 `config.json` 初始化 widget（含超出模板槽位的 LoRA 注入）
-后挂进内嵌画布改连线与参数（提示词 / 种子等运行时变量保留），「💾 保存工作流」写回该技能 `workflow.json` 并同步
-`config.json`、设置区按新配置重载（预设只读）；「👁 流程图」切回只读预览。
-
-回写与内嵌保存落盘前先弹「回写确认」预览：列出相对技能的变更清单（`config.json` 键值、LoRA、节点数量、连线数、
-`requires_ref`）与后端 warnings，点「💾 确认保存」才落盘，取消 / 预览失败均不发回写请求。变更基线是画布打开时的
-有效配置（全局默认 ⊕ 技能 `config.json` ⊕ 空模型名的自动建议），所以灌进 widget 的默认值与自动建议模型不算变更；
-导入时按 `config.loras` 注入的主链 LoRA 节点（数量 = LoRA 条数 − 模板槽位数）不计入模板结构：改 LoRA 值只报
-`loras` 一行并把值写进 `config.json`，不报「节点 0→1」「连线数」，模板自带的 `{{LORA_i_NAME}}` 槽位原样保留。
-比例按数值判等（`1296:736` 与 `16:9` 视为同一比例）。回写只保存 API 工作流
-（节点、连线、widget 值），画布上的节点位置 / 颜色 / 分组 / 折叠等界面布局不写入，`skill.md` 正文保留。
-每次确认保存按技能记一条本机本地变更历史（`localStorage`，每技能最近 50 条）：技能详情工作流区「🕘 变更记录」
-查本技能，🅝 顶菜单「📜 变更记录」查全部技能，均可清空。
-
 ### bundle
 
 包含运行时需要的参数：提示词和图片（可选）。
@@ -181,8 +161,9 @@ Studio 内嵌没有画布，技能详情工作流区改挂「⤒ 主画布编辑
 
 | 文档 | 内容 |
 |------|------|
-| [docs/prompts.md](docs/prompts.md) | 提示词节点、界面按钮、技能管理、图片反推 |
-| [docs/llm.md](docs/llm.md) | LLM 模式、云供应商、本地 GGUF 安装与目录规范 |
+| [docs/prompts.md](docs/prompts.md) | 提示词节点、界面按钮、图片反推 |
+| [docs/skills.md](docs/skills.md) | 技能管理：管理窗口、工作流区编辑、画布导入与回写 |
+| [docs/llm.md](docs/llm.md) | LLM 模式、云供应商、原生 safetensors 引擎、本地 GGUF 安装与目录规范 |
 | [docs/image-gen.md](docs/image-gen.md) | 生图：聊天生图、Image Gen & Edit、尺寸与扩图 |
 | [docs/h3-video-gen.md](docs/h3-video-gen.md) | 生视频：导演配方执行、单段重生成、宫格拆分 |
 | [docs/recipes.md](docs/recipes.md) | 配方：保存、发送到工作流、导演配方编辑器 |

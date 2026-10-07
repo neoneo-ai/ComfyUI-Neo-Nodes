@@ -10,7 +10,7 @@ ComfyUI-Neo-Nodes/
 ├── prompts.py                 # 提示词节点 + /rs_prompts/* 路由
 ├── prompt_lines.py            # 多行提示词集合解析
 ├── skill.py                   # 技能系统 + 技能路由
-├── llm.py                     # LLM 推理：远程 API 与本地 GGUF
+├── llm.py                     # LLM 推理：远程 API / 原生 safetensors / 本地 GGUF
 ├── laya_router.py             # 本地轻量文本分类
 ├── minimax_h3.py              # MiniMax H3 生成模式与 grounding
 ├── h3_prompt_audit.py         # H3 提示词格式审计
@@ -63,7 +63,7 @@ ComfyUI-Neo-Nodes/
 | `prompts.py` | 提示词节点 + 预设 CRUD + 图片解析 |
 | `prompt_lines.py` | `collections/` 多行提示词集合的解析与随机选取 |
 | `skill.py` | 技能扫描加载、多结果契约、引用文件工具循环、技能路由 |
-| `llm.py` | 远程 OpenAI 兼容调用、国产云供应商、本地 GGUF 推理 |
+| `llm.py` | 远程 OpenAI 兼容调用、国产云供应商、原生 safetensors 文本生成、本地 GGUF 推理 |
 | `laya_router.py` | 轻量文本分类：增强技能选择与意图预路由 |
 
 ### 生图

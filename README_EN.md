@@ -18,6 +18,7 @@ A ComfyUI custom node pack for prompt management, AI-enhanced prompting (with re
 | Neo Recipes | Sidebar | Recipe (prompt + media assets) management with one-click send to workflow. |
 | Workflow Repair | Menu item | One-click fix for broken model paths after moving machines or changing directories. |
 | Model Hub | Menu item | Search Comfy-Org repos on ModelScope / Hugging Face and download models into the right model folders, with resumable downloads. |
+| Skill Management | Menu item | Skill detail page (settings + prompt + workflow area): import to canvas, write back to skill, inline workflow editing — each save shows a change preview first and records a local history. Presets are read-only; copy to customize. |
 
 ## Installation
 
@@ -60,7 +61,8 @@ A canvas-independent page at `http://127.0.0.1:8188/neo-studio` (or run `neo-stu
 
 | Doc | Content |
 |-----|---------|
-| [docs/prompts.md](docs/prompts.md) | Prompt nodes, UI buttons, skill management, image captioning, `@` references |
+| [docs/prompts.md](docs/prompts.md) | Prompt nodes, UI buttons, image captioning, `@` references |
+| [docs/skills.md](docs/skills.md) | Skill management: manager window, workflow editing, canvas import & writeback |
 | [docs/llm.md](docs/llm.md) | LLM modes (remote/local), thinking models, GGUF setup |
 | [docs/image-gen.md](docs/image-gen.md) | Image generation & editing nodes |
 | [docs/recipes.md](docs/recipes.md) | Recipe management, one-click send, director recipes |

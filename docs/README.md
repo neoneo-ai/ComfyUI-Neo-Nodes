@@ -7,7 +7,8 @@
 
 | 文档 | 内容 |
 |------|------|
-| [prompts.md](prompts.md) | 提示词节点、界面按钮、技能管理、图片反推与 `@` / `/` 菜单 |
+| [prompts.md](prompts.md) | 提示词节点、界面按钮、图片反推与 `@` / `/` 菜单 |
+| [skills.md](skills.md) | 技能管理：技能文件、管理窗口、工作流区编辑、画布导入与回写 |
 | [llm.md](llm.md) | LLM 模式、云供应商、本地 GGUF 安装与模型目录规范 |
 | [image-gen.md](image-gen.md) | 生图：聊天生图、Image Gen & Edit 节点、尺寸与扩图 |
 | [h3-video-gen.md](h3-video-gen.md) | 生视频：导演配方执行、单段重生成、宫格拆分、模板 |

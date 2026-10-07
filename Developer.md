@@ -14,7 +14,7 @@
 | [docs/llm.md](docs/llm.md) | LLM 模式、本地 GGUF 安装、模型目录规范 |
 
 功能模块文档（用户说明 + 实现细节）：
-[prompts](docs/prompts.md) · [image-gen](docs/image-gen.md) · [h3-video-gen](docs/h3-video-gen.md) ·
+[prompts](docs/prompts.md) · [skills](docs/skills.md) · [image-gen](docs/image-gen.md) · [h3-video-gen](docs/h3-video-gen.md) ·
 [recipes](docs/recipes.md) · [gallery](docs/gallery.md) · [workflow-repair](docs/workflow-repair.md)
 
 ## 速览

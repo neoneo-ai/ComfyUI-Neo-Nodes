@@ -166,9 +166,10 @@ Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 
 | POST | `/rs_prompts/list_prompt_lines` | 提示词行级列表 |
 | POST | `/rs_prompts/delete_prompt` | 删除提示词 |
 | GET | `/rs_prompts/get_models` | 可用 LLM 模型列表（远程 + 本地） |
+| GET | `/rs_prompts/native_models` | 原生文本生成模型列表（扫描 `models/text_encoders/` 下 `.safetensors`） |
 | POST | `/rs_prompts/set_model` | 切换当前 LLM 模型 |
 | GET/POST | `/rs_prompts/remote_llm_config` | 远程 LLM 配置读取 / 保存 |
-| POST | `/rs_prompts/llm_connection_test` | 连接测试（用当前表单值发送「你好」） |
+| POST | `/rs_prompts/llm_connection_test` | 连接测试（远程用当前表单值发送「你好」；Native 实跑一次本地推理） |
 | GET | `/rs_prompts/llm_mode` | 当前 LLM 模式 |
 | POST | `/rs_prompts/extract_title` | AI 提取标题 |
 | POST | `/rs_prompts/extract_classify` | AI 提取分类 |
@@ -195,7 +196,7 @@ Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 
   是否存在本地配置覆盖。
 - `save_skill` 校验名称唯一性（与其它技能重名返回 409）；可选字段缺省沿用 frontmatter 既有值，显式假值移除该字段。
 
-LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [prompts.md](prompts.md)。
+LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)。
 
 ## model_hub.py — `/neo_model_hub/*`
 
@@ -215,4 +216,3 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [prompts.md](prompts.m
 - 仓库列表与文件清单走服务端缓存（15 / 10 分钟），请求带 `refresh: true` 跳过缓存。
 - ModelScope 组织列表与跨组织搜索走匿名 `dolphin/models` 接口；接口失败时按注册表逐仓库探测存在性（缓存 1 天）。
 - 源侧失败返回带 `code` 的错误：`need_token`（401）、`busy`（409）、`not_on_source`（404，附 `other_source` 建议换源）。
-
