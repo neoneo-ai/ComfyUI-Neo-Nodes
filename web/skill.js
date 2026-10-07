@@ -195,14 +195,17 @@ async function replaceRefImagePlaceholders(wf) {
     return wf;
 }
 
-// 载入画布后按流程图同一套布局重排：拓扑分层 → 左到右排布、列内按上游重心堆叠、短列垂直居中，最后适配视图
+// 载入画布后按流程图同一套布局重排：拓扑分层 → 左到右排布、列内按上游重心堆叠、短列垂直居中，
+// 同列宽度拉齐到最宽节点（模型加载节点按模型名加长），最后适配视图
 function arrangeCanvasNodes(wf) {
     const nodes = app.graph && app.graph._nodes;
     if (!nodes || !nodes.length) return;
     const byId = new Map(nodes.map(n => [String(n.id), n]));
     for (const cell of canvasLayout(wf, (id) => (byId.get(id) || {}).size)) {
         const node = byId.get(cell.id);
-        if (node) node.setPos(cell.x, cell.y);
+        if (!node) continue;
+        if (cell.w > node.size[0]) node.setSize([cell.w, node.size[1]]);
+        node.setPos(cell.x, cell.y);
     }
     app.graph.setDirtyCanvas(true, true);
     if (typeof app.canvas?.fitViewToSelectionAnimated === "function") app.canvas.fitViewToSelectionAnimated();
@@ -1939,10 +1942,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         if (missing.length) { showToast(app, "warning", "无法内嵌编辑", `节点类型未注册：${missing.join("、")}，请用「⤒ 导入到画布」编辑`); return false; }
         const g = new LGraph();
         g.configure(lite);
-        // 自动布局：与「导入到画布」同一套列号与重心排布，位置按节点真实尺寸推导
+        // 自动布局：与「导入到画布」同一套列号与重心排布，位置按节点真实尺寸推导、同列宽度拉齐
         for (const cell of canvasLayout(wf, (id) => (g.getNodeById(id) || {}).size)) {
             const n = g.getNodeById(cell.id);
-            if (n) n.pos = [cell.x, cell.y];
+            if (!n) continue;
+            if (cell.w > n.size[0]) n.size[0] = cell.w;
+            n.pos = [cell.x, cell.y];
         }
         g.start();
         wfGraph = g;

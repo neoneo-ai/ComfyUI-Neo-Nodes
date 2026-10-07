@@ -704,6 +704,37 @@ test("工作流图：参数行直接画在节点上，列宽按内容自适应�
     assert.ok(byId2["2"].y >= byId2["1"].y + byId2["1"].h, "同层节点按各自高度堆叠不重叠");
 });
 
+test("工作流图：同列同宽，模型加载类节点列放宽到 360 以显示模型名", async () => {
+    const { layoutWorkflow } = await import("../../web/workflow-graph.js");
+    const lay = layoutWorkflow({
+        "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "Krea2-MuseByStable_v15Turbo_fp8-krea2_.safetensors" } },
+        "2": { class_type: "KSampler", inputs: { seed: 1 } },
+        "3": { class_type: "CLIPTextEncode", inputs: { clip: ["1", 0], text: "a prompt" } },
+    });
+    const byId = Object.fromEntries(lay.nodes.map(n => [n.id, n]));
+    assert.ok(byId["1"].w > 205, `模型加载节点列应超过普通上限 205（实际 ${byId["1"].w}）`);
+    assert.ok(byId["1"].w <= 360, `放宽后仍封顶 360（实际 ${byId["1"].w}）`);
+    assert.equal(byId["2"].w, byId["1"].w, "同列拉齐到最宽节点");
+    assert.ok(byId["3"].w < byId["1"].w, "无加载节点的下游列不受影响");
+    const line = byId["1"].lines.find(l => l.startsWith("ckpt_name:"));
+    assert.ok(!line.endsWith("…"), `模型名应完整显示不被截断：${line}`);
+});
+
+test("画布重排：返回同列统一宽度，模型加载节点按模型名加长", async () => {
+    const { canvasLayout } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "Krea2-MuseByStable_v15Turbo_fp8-krea2_.safetensors" } },
+        "2": { class_type: "CLIPLoader", inputs: { clip_name: "clip.safetensors" } },
+        "3": { class_type: "KSampler", inputs: { model: ["1", 0], clip: ["2", 0] } },
+    };
+    const byId = Object.fromEntries(canvasLayout(wf, () => [240, 120]).map(c => [c.id, c]));
+    assert.ok(byId["1"].w > 240, `模型名长的加载节点应加长（实际 ${byId["1"].w}）`);
+    assert.ok(byId["1"].w <= 420, `加长封顶 420（实际 ${byId["1"].w}）`);
+    assert.equal(byId["2"].w, byId["1"].w, "同列拉齐到最宽节点");
+    assert.equal(byId["3"].w, 240, "无加载节点的列保持原宽");
+    assert.ok(byId["3"].x > byId["1"].x + byId["1"].w, "后续列按拉齐后的列宽偏移");
+});
+
 test("工作流图排版：同层按上游重心排序减少交叉，短列相对最高列垂直居中", async () => {
     const { layoutWorkflow } = await import("../../web/workflow-graph.js");
     // 上游 1→4、2→3：按 id 序 [3,4] 会让两条连线交叉，重心排序应排成 [4,3]

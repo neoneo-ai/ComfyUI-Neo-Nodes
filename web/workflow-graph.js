@@ -3,7 +3,8 @@
  * 技能工作流模板（API prompt 格式）的只读 SVG 流程图渲染：
  * - layoutWorkflow：拓扑分层 → 从左到右自动布局（列号取最右可行、列宽按内容自适应、
  *   每列内按上下游重心迭代排布并按连线交叉数局部改进；节点高度随参数行数自适应；纯函数，无 DOM 依赖）
- * - canvasLayout：同一套列号与重心排布，位置按画布节点真实尺寸推导，供「导入到画布」后重排画布
+ * - canvasLayout：同一套列号与重心排布，位置按画布节点真实尺寸推导，同列宽度拉齐、模型加载
+ *   节点按模型名加长（返回应设宽度），供「导入到画布」后重排画布
  * - applyWorkflowParams：按已知参数（设置 + 自动建议模型）预替换模板变量，运行时变量保留
  * - injectRuntimeLoras：配置 LoRA 超出模板槽位时镜像后端 _apply_loras 动态插入 LoraLoaderModelOnly，
  *   使流程图与运行时实际提交的图一致；未配置或槽位够用时原样返回
@@ -14,8 +15,17 @@
  */
 
 const GAP_X = 36, GAP_Y = 12, PAD = 12;
-// 列宽按该列节点实际内容推导：短列收窄省横向空间，长列最多 NODE_W_MAX 减少截断
-const NODE_W_MIN = 108, NODE_W_MAX = 205;
+// 列宽按该列节点实际内容推导：短列收窄省横向空间，长列最多 NODE_W_MAX 减少截断；
+// 含模型加载类节点的列放宽到 NODE_W_MODEL_MAX，让模型名尽量完整显示
+const NODE_W_MIN = 108, NODE_W_MAX = 205, NODE_W_MODEL_MAX = 360;
+// 模型加载类节点：widget 上显示模型名，宽度按模型名放宽
+const MODEL_LOADER_CLASSES = new Set([
+    "CheckpointLoader", "CheckpointLoaderSimple", "CheckpointLoaderAdvanced",
+    "UNETLoader", "CLIPLoader", "DualCLIPLoader", "TripleCLIPLoader",
+    "VAELoader", "CLIPVisionLoader", "LoraLoader", "LoraLoaderModelOnly",
+    "ControlNetLoader", "StyleModelLoader", "T2IAdapterLoader", "GLIGENLoader",
+    "UpscaleModelLoader", "InstantIDModelLoader", "IpAdapterModelLoader",
+]);
 // 字符宽度估算：参数行 10px 字号约 5.5px/字符，类名 11px 加粗约 6.2px/字符
 const TYPE_CHAR_W = 6.2, LINE_CHAR_W = 5.5, NODE_PAD_X = 20;
 function lineMaxChars(w) { return Math.floor((w - NODE_PAD_X) / LINE_CHAR_W); }
@@ -246,17 +256,19 @@ export function layoutWorkflow(workflow) {
     for (const L of layers) for (const id of order[L]) (colNodes[col[id]] ||= []).push(id);
     const cols = Object.keys(colNodes).map(Number).sort((a, b) => a - b);
 
-    // 列宽按该列节点实际内容推导（先取不截断的原始行宽），再按列宽截断参数行
+    // 列宽按该列节点实际内容推导（先取不截断的原始行宽），再按列宽截断参数行；
+    // 同列节点统一取列宽，含模型加载类节点的列上限放宽以显示模型名
     const colW = {};
     for (const c of cols) {
-        let need = 0;
+        let need = 0, cap = NODE_W_MAX;
         for (const id of colNodes[c]) {
             const cls = (wf[id] && wf[id].class_type) || "?";
             need = Math.max(need, cls.length * TYPE_CHAR_W + NODE_PAD_X);
+            if (MODEL_LOADER_CLASSES.has(cls)) cap = NODE_W_MODEL_MAX;
             for (const line of nodeInputLines(wf, id, Infinity))
                 need = Math.max(need, line.length * LINE_CHAR_W + NODE_PAD_X);
         }
-        colW[c] = Math.min(NODE_W_MAX, Math.max(NODE_W_MIN, Math.ceil(need)));
+        colW[c] = Math.min(cap, Math.max(NODE_W_MIN, Math.ceil(need)));
     }
     const lines = {}, h = {};
     for (const id of ids) {
@@ -303,8 +315,21 @@ export function layoutWorkflow(workflow) {
 // 画布重排（「导入到画布」后）用的间距与兜底尺寸：画布节点宽度由前端算好，取不到时按常见尺寸兜底
 const CANVAS_PAD = 60, CANVAS_GAP_X = 96, CANVAS_GAP_Y = 48;
 const CANVAS_NODE_W = 240, CANVAS_NODE_H = 120;
+// 画布 widget 文字「key: value」约 7px/字符；模型加载类节点按模型名加长的上限
+const CANVAS_CHAR_W = 7, CANVAS_W_MAX = 420;
 // 画布节点：头部之下每行一个参数（连线行先于 widget 行），连线端点落在第 i 行中心
 const CANVAS_HEADER = 40, CANVAS_ROW = 24;
+
+/** 模型加载类节点显示完整模型名所需的画布宽度；非加载类返回 0。 */
+function modelLoaderW(node) {
+    if (!node || !MODEL_LOADER_CLASSES.has(node.class_type)) return 0;
+    let need = 0;
+    for (const [k, v] of Object.entries(node.inputs || {})) {
+        if (typeof v === "string") need = Math.max(need, (k.length + 2 + v.length) * CANVAS_CHAR_W + CANVAS_PAD);
+    }
+    return Math.min(CANVAS_W_MAX, need);
+}
+
 function canvasRowOff(id, i, h, rows) {
     const body = Math.max(CANVAS_ROW, h[id] - CANVAS_HEADER);
     return CANVAS_HEADER + (i + 0.5) * body / Math.max(1, rows[id]) - h[id] / 2;
@@ -313,7 +338,8 @@ function canvasRowOff(id, i, h, rows) {
 /**
  * 与预览同一套列号与重心排布，位置按画布节点真实尺寸推导：拓扑分层 → 列号取最右可行 →
  * 每列内按上下游重心迭代排布（同列不重叠、连线尽量平直）。sizeOf(id) 返回画布节点 [w, h]
- * （拿不到用兜底尺寸）。返回 [{ id, x, y }]，id 为 workflow 的键。
+ * （拿不到用兜底尺寸）。同列宽度拉齐到该列最宽节点，模型加载类节点按模型名加长。
+ * 返回 [{ id, x, y, w }]，id 为 workflow 的键，w 为该节点应设的宽度（调用方 setSize 应用）。
  */
 export function canvasLayout(workflow, sizeOf) {
     const wf = workflow || {};
@@ -321,7 +347,7 @@ export function canvasLayout(workflow, sizeOf) {
     const w = {}, h = {};
     for (const id of ids) {
         const s = sizeOf(id) || null;
-        w[id] = s && s[0] > 0 ? s[0] : CANVAS_NODE_W;
+        w[id] = Math.max(s && s[0] > 0 ? s[0] : CANVAS_NODE_W, modelLoaderW(wf[id]));
         h[id] = s && s[1] > 0 ? s[1] : CANVAS_NODE_H;
     }
     const col = columnOf(layer, layers, order, succ);
@@ -355,7 +381,7 @@ export function canvasLayout(workflow, sizeOf) {
     const out = [];
     for (const c of cols)
         for (const id of colNodes[c])
-            out.push({ id, x: colX[c], y: Math.round(CANVAS_PAD + center[id] - h[id] / 2 - top) });
+            out.push({ id, x: colX[c], y: Math.round(CANVAS_PAD + center[id] - h[id] / 2 - top), w: colW[c] });
     return out;
 }
 

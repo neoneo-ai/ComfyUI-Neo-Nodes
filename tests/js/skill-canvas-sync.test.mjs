@@ -125,6 +125,7 @@ test("导入到画布：按流程图同一套布局重排画布节点（分层�
         size: [240, heights[id]],
         pos: [0, 0],
         setPos(x, y) { this.pos = [x, y]; },
+        setSize(s) { this.size = s; },
     }));
     let dirty = 0, fitted = 0;
     appState.graph = { _nodes: nodes, setDirtyCanvas() { dirty++; } };
@@ -146,6 +147,9 @@ test("导入到画布：按流程图同一套布局重排画布节点（分层�
         assert.deepEqual(at("3"), [396, 253], "latent_image 行靠下，EmptyLatent 排其后");
         assert.deepEqual(at("4"), [732, 176], "KSampler 列按上游重心垂直位置");
         assert.ok(at("5")[1] > 100, "末列相对最高列垂直居中");
+        const sz = (id) => nodes.find((n) => String(n.id) === id).size[0];
+        assert.equal(sz("1"), 240, "短模型名（m.safetensors）不足原宽，加载节点不加长");
+        assert.equal(sz("9"), 240, "同列最宽即原宽，非加载节点不被拉齐缩小");
         assert.ok(dirty >= 1, "重排后应 setDirtyCanvas");
         assert.equal(fitted, 1, "重排后适配视图");
     } finally {
