@@ -15,6 +15,9 @@ gallery 缓存、`configs/backyard_oss.json`）已被 `.gitignore` 排除，无�
 Registry 安装只读 `pyproject.toml` 的 `dependencies`，`requirements.txt` 供 ComfyUI-Manager 与开发环境使用，
 两边需保持一致；可选增强（`laya` / `pillow-heif` / `oss2`）写在 `[project.optional-dependencies]`。
 
+Registry 与前端搜索的命中靠 `pyproject.toml` 的 `description` / `keywords`，以及节点自身的
+`SEARCH_ALIASES`（约定见 [architecture.md](architecture.md) 的「节点元数据」，由 `tests/test_node_metadata.py` 校验）。
+
 ### Git Action 方式
 
 - Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）。

@@ -62,7 +62,8 @@ class NeoBundleExpand:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "bundle": ("STRING", {"forceInput": True}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）
+                "bundle": ("STRING", {"forceInput": True,
+                                      "tooltip": "NeoPromptAgent / NeoRefGrid 的 BUNDLE 输出（纯连线槽）。"}),  # NeoPromptAgent BUNDLE 输出（纯连线槽）
             },
         }
 
@@ -72,6 +73,13 @@ class NeoBundleExpand:
     FUNCTION = "expand"
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "把 Neo Prompt Agent 的 BUNDLE 展开成 prompt + image_1..image_9，对接官方 MiniMax H3 Reference to Video。"
+    SEARCH_ALIASES = [
+        "bundle expand", "unpack bundle", "ref2v", "reference to video", "minimax h3",
+        "ref images", "unbundle", "展开", "解包", "参考图展开", "官方视频节点", "宫格转参考",
+    ]
+    OUTPUT_TOOLTIPS = ("bundle 里的主提示词（prompts[0]），接官方 H3 Ref2V 的 prompt。",) + (
+        "bundle 参考图按槽位顺序还原的 IMAGE [1,H,W,C]；未连接的槽位为空批次占位。",
+    ) * MAX_BUNDLE_REFERENCES
 
     def expand(self, bundle):
         payload = get_bundle(bundle) or {}

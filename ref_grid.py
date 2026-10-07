@@ -64,6 +64,15 @@ class NeoRefGrid:
     FUNCTION = "pack"
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "参考图宫格节点：宫格槽位（1~12，运行时可调）→ prompt + BUNDLE + image_1..image_12。"
+    SEARCH_ALIASES = [
+        "ref grid", "reference grid", "grid", "character sheet", "turnaround", "slots",
+        "pack", "bundle", "参考图", "宫格", "九宫格", "参考图宫格", "角色设定图",
+        "槽位", "打包", "分镜参考",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "宫格节点内的提示词文本，可直接接官方节点的 prompt。",
+        "本次运行时包 id（提示词 + 参考图），接 NeoImageGenEdit / NeoH3VideoDirector / NeoBundleExpand 的 bundle。",
+    ) + ("宫格该槽位的参考图 IMAGE [1,H,W,C]（行优先）；空槽为空批次占位。",) * GRID_MAX
 
     def pack(self, refs="", prompt_text=""):
         prompt = str(prompt_text or "")

@@ -437,7 +437,7 @@ class NeoPrompts:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "clip": ("CLIP",),
+                "clip": ("CLIP", {"tooltip": "用于把提示词编码成 conditioning 的 CLIP。"}),
                 "text": ("STRING", {"multiline": True, "default": "", "hidden": True}),
                 "disable_text_input": ("BOOLEAN", {"default": False, "hidden": True}),
                 "auto_generate": ("BOOLEAN", {"default": False, "hidden": True}),
@@ -448,8 +448,9 @@ class NeoPrompts:
                 "random_count": ("INT", {"default": 1, "min": 1, "max": 16, "step": 1, "hidden": True}),
             },
             "optional": {
-                "text_input": ("STRING", {"forceInput": True}),
-                "image": ("IMAGE",),
+                "text_input": ("STRING", {"forceInput": True,
+                                          "tooltip": "外部提示词接入：接上后忽略节点内文本框、自动增强与随机抽取。"}),
+                "image": ("IMAGE", {"tooltip": "接图像时走图生文（反推提示词）流程，需同时开启自动生成。"}),
                 "instance_uid": ("STRING", {"default": "", "hidden": True}),
             },
             "hidden": {
@@ -462,6 +463,16 @@ class NeoPrompts:
     FUNCTION = "encode_prompts"
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "AI-powered text encoder supports save/select prompt, LLM-based prompt enhancement, translation, classification, title extraction, intelligent caching, and auto-generate."
+    SEARCH_ALIASES = [
+        "prompt encoder", "text encode", "clip text encode", "positive", "conditioning",
+        "llm", "auto generate", "reverse prompt", "image to prompt", "random prompt",
+        "提示词", "提示词编码", "文本编码", "提示词增强", "反推提示词", "图生文",
+        "翻译", "分类", "标题", "随机提示词", "自动增强", "neo",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "编码后的正样本 conditioning，接采样器的 positive。",
+        "本次实际使用的提示词文本（增强 / 随机 / 反推后的最终结果）。",
+    )
 
     def encode_prompts(self, clip, disable_text_input=False, auto_generate=False, quick_input="",
                        text="", text_input=None, unique_id=None, instance_uid="", skill_id="", image=None,
@@ -1525,8 +1536,9 @@ class NeoPromptAgent:
                 "random_count": ("INT", {"default": 1, "min": 1, "max": 16, "step": 1, "hidden": True}),
             },
             "optional": {
-                "text_input": ("STRING", {"forceInput": True}),
-                "image": ("IMAGE",),
+                "text_input": ("STRING", {"forceInput": True,
+                                          "tooltip": "外部提示词接入：接上后忽略节点内文本框、自动增强与随机抽取。"}),
+                "image": ("IMAGE", {"tooltip": "接图像时走图生文（反推提示词）流程，需同时开启自动生成。"}),
                 "instance_uid": ("STRING", {"default": "", "hidden": True}),
             },
             "hidden": {
@@ -1542,6 +1554,16 @@ class NeoPromptAgent:
     CATEGORY = "Neo-Nodes"
     OUTPUT_NODE = True
     DESCRIPTION = "Simple prompt generator node with settings button. Supports external/internal input toggle and auto-generate. No clip encoder binding."
+    SEARCH_ALIASES = [
+        "prompt agent", "prompt generator", "prompt list", "bundle", "llm",
+        "auto generate", "reverse prompt", "image to prompt", "random prompt", "skill",
+        "提示词", "提示词生成", "提示词代理", "提示词增强", "反推提示词", "图生文",
+        "随机提示词", "多段提示词", "参考包", "运行时包", "neo",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "本次生成的提示词；多结果 skill 时按条目成列表输出（OUTPUT_IS_LIST）。",
+        "本次生成的运行时包 id（提示词 + 参考图），接 NeoImageGenEdit / NeoH3VideoDirector / NeoBundleExpand 的 bundle。",
+    )
 
     def get_prompt(self, prompt="", disable_text_input=False, auto_generate=False, quick_input="", text_input=None, instance_uid="", unique_id=None, skill_id="", image=None, quick_input_used=False, random_enabled=False, random_count=1):
         """Returns the prompt text as output.

@@ -243,8 +243,9 @@ class NeoH3AddKeyframe:
                 "model": ("MODEL",),
                 "conditioning": ("CONDITIONING",),
                 "vae": ("VAE",),
-                "image": ("IMAGE",),
-                "frame_count": ("INT", {"default": 124, "min": 5, "max": 3600}),
+                "image": ("IMAGE", {"tooltip": "首帧锚点图：只取批次第 1 张，编码成 latent 钉在时间轴第 0 帧。"}),
+                "frame_count": ("INT", {"default": 124, "min": 5, "max": 3600,
+                                        "tooltip": "本段总帧数（24fps，124 帧 ≈ 5 秒），需与采样段长度一致。"}),
             },
         }
 
@@ -252,6 +253,15 @@ class NeoH3AddKeyframe:
     RETURN_NAMES = ("model", "conditioning")
     FUNCTION = "add_keyframe"
     CATEGORY = "Neo-Nodes"
+    DESCRIPTION = "首帧锚点：把图像编码成 latent 写入 H3 conditioning 的第 0 帧 keyframe（手动搭图与旧画布工作流用）。"
+    SEARCH_ALIASES = [
+        "h3 keyframe", "add keyframe", "first frame", "keyframe anchor", "frame 0",
+        "首帧", "首帧锚点", "关键帧", "锚点", "h3 首帧", "画布首帧",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "挂了连续性 wrapper 的 MODEL：keyframes 与 refs 并存时时间轴对齐。",
+        "写入首帧 keyframe 后的 conditioning，接采样器 positive。",
+    )
 
     def add_keyframe(self, model, conditioning, vae, image, frame_count):
         import node_helpers
@@ -292,7 +302,7 @@ class NeoH3AddGuides:
         for i in range(8):   # 画布用槽位；director 运行时经 kwargs 可传满 _MAX_GUIDES 对
             optional[f"guide_{i}_image"] = ("IMAGE",)
             optional[f"guide_{i}_frame"] = ("INT", {"default": 0, "min": -3600, "max": 3600})
-        optional["latent"] = ("LATENT",)   # 可选：接上=关键帧对齐目标画布（新）；不接=按原图分辨率编码（旧，兼容老工作流）
+        optional["latent"] = ("LATENT", {"tooltip": "接上目标 AV latent = 关键帧先缩放到该画布再编码（分镜图分辨率≠配方画布时不 patchify 报错）；不接 = 按原图分辨率编码。"})   # 可选：接上=关键帧对齐目标画布（新）；不接=按原图分辨率编码（旧，兼容老工作流）
         return {
             "required": {
                 "model": ("MODEL",),
@@ -306,6 +316,15 @@ class NeoH3AddGuides:
     RETURN_NAMES = ("model", "conditioning")
     FUNCTION = "add_guides"
     CATEGORY = "Neo-Nodes"
+    DESCRIPTION = "多帧关键帧锚点：把多组「图像 + 帧号」批量写入 H3 conditioning 的 minimax_keyframes（等价多个 MiniMaxH3AddGuide）。"
+    SEARCH_ALIASES = [
+        "h3 guides", "add guides", "keyframes batch", "multi keyframe", "timeline anchor",
+        "多帧锚点", "关键帧批量", "时间轴锚点", "分镜关键帧", "h3 关键帧",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "挂了连续性 wrapper 的 MODEL：锚点与参考同时生效、时间轴对齐。",
+        "写入全部关键帧锚点后的 conditioning，接采样器 positive。",
+    )
 
     def add_guides(self, model, conditioning, vae, latent=None, **kwargs):
         import node_helpers
@@ -485,10 +504,12 @@ class NeoH3AddContext:
                 "height": ("INT", {"default": 768, "min": 0, "max": comfy_nodes.MAX_RESOLUTION}),
             },
             "optional": {
-                "context_image": ("IMAGE",),   # 上段尾部 window 帧
-                "identity_image": ("IMAGE",),  # 身份参考图（可批量，逐张成块）
-                "context_frames": ("INT", {"default": 22, "min": 0, "max": 362}),   # 0 = 不注入上下文窗口
-                "context_mode": (list(CONTEXT_MODES), {"default": CONTEXT_MODES[0]}),
+                "context_image": ("IMAGE", {"tooltip": "上段尾部窗口帧（接 NeoH3VideoDirector / NeoH3SegmentRun 的成片输出）；空 = 不注入上下文。"}),
+                "identity_image": ("IMAGE", {"tooltip": "身份参考图，可批量逐张成块：保角色/物体外观跨段一致。"}),
+                "context_frames": ("INT", {"default": 22, "min": 0, "max": 362,
+                                           "tooltip": "取上段尾部多少帧做上下文（自动就近对齐 17k+5 网格）；0 = 不注入。"}),   # 0 = 不注入上下文窗口
+                "context_mode": (list(CONTEXT_MODES), {"default": CONTEXT_MODES[0],
+                                                       "tooltip": "window = 本段开头重生成这些帧（调用方丢头帧）；reference = 作为目标之前的参考视频，不搬时间轴不丢帧。"}),
             },
         }
 
@@ -497,6 +518,15 @@ class NeoH3AddContext:
     FUNCTION = "add_context"
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "跨段连续性：上段尾部若干帧作为 H3 视频参考（window=开头重生成 / reference=目标之前的参考）注入 conditioning。"
+    SEARCH_ALIASES = [
+        "h3 context", "continuity", "cross segment", "video reference", "identity reference",
+        "window", "reference mode", "尾帧", "跨段连续性", "上下文窗口", "身份参考",
+        "段间衔接", "连续性",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "挂了连续性 wrapper 的 MODEL（链式多段调用只保留一份 wrapper）。",
+        "注入上下文/身份参考后的 conditioning，接采样器 positive。",
+    )
 
     def add_context(self, model, conditioning, vae, width, height, context_image=None, identity_image=None,
                     context_frames=22, context_mode=CONTEXT_MODES[0]):
@@ -884,18 +914,27 @@ class NeoH3VideoDirector:
         default_skill = _default_video_skill(vskills)   # 可用技能里步数最少者；都不可用时在全列表里取步数最少者
         return {
             "required": {
-                "recipe": (names, {"default": names[0] if names else ""}),
+                "recipe": (names, {"default": names[0] if names else "",
+                                   "tooltip": "video_director 配方名：多段整片模式的分镜来源；接了 BUNDLE 时忽略配方。"}),
             },
             "optional": {
-                "skill": ([_skill_label(s) for s in vskills], {"default": _skill_label(default_skill) if default_skill else ""}),  # BUNDLE 单段用的视频 skill（不可用带「（不可用）」后缀）；recipe 多段模式忽略（各段自带）
-                "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1}),   # -1 = 用配方 shared.seed
-                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
-                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
-                "continuity": ("BOOLEAN", {"default": True}),   # 跨段连续性总开关：开 = 上下文窗口 + 身份继承
-                "context_frames": ("INT", {"default": 22, "min": 0, "max": 362}),  # 上下文窗口帧数；0 = 退回 Tier A 尾帧链入
-                "model": ("MODEL",),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
-                "steps": ("INT", {"default": -1, "min": -1, "max": 100}),  # -1 = 用 preset/config 值
-                "preview": ("BOOLEAN", {"default": True}),   # 节点内实时预览：开 = taeh3 真彩动作预览，关 = 完全不出
+                "skill": ([_skill_label(s) for s in vskills], {"default": _skill_label(default_skill) if default_skill else "",
+                                                               "tooltip": "仅 BUNDLE 单段模式用的视频 skill；配方多段模式忽略（各段自带 skill）。"}),  # BUNDLE 单段用的视频 skill（不可用带「（不可用）」后缀）；recipe 多段模式忽略（各段自带）
+                "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1,
+                                 "tooltip": "-1 = 用配方 shared.seed；≥0 = 本次整片覆盖该种子。"}),   # -1 = 用配方 shared.seed
+                "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION,
+                                  "tooltip": "-1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选配方时前端自动填）。"}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
+                "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION,
+                                   "tooltip": "-1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选配方时前端自动填）。"}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
+                "continuity": ("BOOLEAN", {"default": True,
+                                           "tooltip": "跨段连续性总开关：开 = 上下文窗口 + 身份继承。"}),   # 跨段连续性总开关：开 = 上下文窗口 + 身份继承
+                "context_frames": ("INT", {"default": 22, "min": 0, "max": 362,
+                                           "tooltip": "上下文窗口帧数；0 = 退回尾帧链入（只带上一段尾帧）。"}),  # 上下文窗口帧数；0 = 退回 Tier A 尾帧链入
+                "model": ("MODEL", {"tooltip": "外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）。"}),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
+                "steps": ("INT", {"default": -1, "min": -1, "max": 100,
+                                  "tooltip": "-1 = 用各段 preset/config 的 steps。"}),  # -1 = 用 preset/config 值
+                "preview": ("BOOLEAN", {"default": True,
+                                        "tooltip": "节点内实时预览：开 = taeh3 真彩动作预览，关 = 完全不出（省显存）。"}),   # 节点内实时预览：开 = taeh3 真彩动作预览，关 = 完全不出
                 # 仅 BUNDLE 单段模式用（配方多段时各段自带 duration_sec）：秒 → 帧（24fps，向上对齐 17k+5 网格）
                 # 默认 5 秒 = 内置 H3 skill config 的 length（124 帧）；前端选中 skill 后按该 skill 的 length 自动填秒数
                 "duration_sec": ("INT", {"default": 5, "min": 1, "max": 150,
@@ -916,6 +955,14 @@ class NeoH3VideoDirector:
     FUNCTION = "generate"
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "分镜视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO（跨段上下文窗口保连续性）。"
+    SEARCH_ALIASES = [
+        "h3 director", "video director", "storyboard", "recipe", "segments", "multi segment",
+        "h3 video", "bundle segment", "full film", "分镜", "分镜导演", "导演配方",
+        "整片生成", "配方生成", "视频配方", "分段生成", "含音频视频", "单段生成",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "整片拼接后的 VIDEO（含音频，24fps），接 SaveVideo / 预览；接 NeoH3SegmentRun 的 film 可做单段重生成锚点。",
+    )
 
     def _run_bundle_segment(self, payload, skill, seed, width, height, model, steps, vae=None, preview=True, node_id=None,
                            duration_sec=5):

@@ -167,9 +167,22 @@ NODE_CLASS_MAPPINGS = {
 - `NeoPrompts`（Neo Prompt Encoder）：输出 `CONDITIONING` + `STRING`
 - `NeoPromptAgent`（Neo Prompt Agent）：无 CLIP 输入，输出 `STRING`
 - `NeoRefGrid`（Neo Reference Grid）：输出 `STRING`×2 + `IMAGE`×12
-- `NeoBundleExpand` / `NeoImageGenEdit` / `NeoH3VideoDirector` / `NeoGridSplit` 在各自模块注册
+- `NeoBundleExpand` / `NeoImageGenEdit` / `NeoH3VideoDirector` / `NeoH3SegmentRun` / `NeoGridSplit`
+  与 H3 锚点节点（`NeoH3AddKeyframe` / `NeoH3AddGuides` / `NeoH3AddContext`）在各自模块注册
 
 前端扩展目录由 `WEB_DIRECTORY = "./web"` 声明。
+
+### 节点元数据
+
+节点必须自带搜索与悬停信息，`server.py` 原样透传进 `/object_info`，由 `tests/test_node_metadata.py` 逐个校验：
+
+- `SEARCH_ALIASES`：前端搜索别名，中英混合、小写，含同义词与旧名。
+- `DESCRIPTION`：节点悬停描述。
+- `OUTPUT_TOOLTIPS`：输出提示词，与 `RETURN_TYPES` 一一对应（多槽位节点用元组拼接保证对齐）。
+- widget 的 `{"tooltip": ...}`：非 hidden 输入的含义，`-1`、模式开关这类语义必须写出来。
+
+V3 节点（`NeoImageGenEdit`）走 `io.Schema(description=..., search_aliases=[...])` 与
+`io.Image.Output(tooltip=...)`，由同一测试校验。
 
 ## 数据与配置目录
 

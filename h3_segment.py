@@ -349,17 +349,22 @@ class NeoH3SegmentRun:
         return {
             "required": {
                 "recipe": (recipes or [""], {"default": recipes[0] if recipes else ""}),
-                "segment": ("INT", {"default": 1, "min": 1, "max": 999, "step": 1}),
-                "anchors": (list(ANCHOR_LABELS), {"default": ANCHOR_LABELS[0]}),
-                "seed": ("INT", {"default": -1, "min": -1, "max": 2 ** 63 - 1}),
-                "record": ("BOOLEAN", {"default": True}),
+                "segment": ("INT", {"default": 1, "min": 1, "max": 999, "step": 1,
+                                    "tooltip": "配方里的段号（1 基）。"}),
+                "anchors": (list(ANCHOR_LABELS), {"default": ANCHOR_LABELS[0],
+                                                  "tooltip": "用成片里的哪些真实帧当锚点；配方还没有成片时自动降级为不用锚点。"}),
+                "seed": ("INT", {"default": -1, "min": -1, "max": 2 ** 63 - 1,
+                                 "tooltip": "-1 = 用配方该段的 seed；换种子重生成时填 ≥0。"}),
+                "record": ("BOOLEAN", {"default": True,
+                                       "tooltip": "开 = 产物同时写进配方「结果」区；关 = 只出 VIDEO，自己接 SaveVideo。"}),
             },
             "optional": {
                 "steps": ("INT", {"default": -1, "min": -1, "max": 200}),
                 "preview": ("BOOLEAN", {"default": True}),
                 "continuity": ("BOOLEAN", {"default": True}),
                 "context_frames": ("INT", {"default": 22, "min": 0, "max": 362}),
-                "film": ("STRING", {"default": ""}),
+                "film": ("STRING", {"default": "",
+                                    "tooltip": "成片文件名（配方「结果」区里的名字）：取其中的前后真实帧当锚点；空 = 用当前记录的最新成片。"}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -373,6 +378,14 @@ class NeoH3SegmentRun:
     # 画布上不接 SaveVideo 也不会执行。
     OUTPUT_NODE = True
     DESCRIPTION = "单段生成/重生成：跑配方里的某一段，可选用成片结果里的前后真实帧当锚点（换种子重生成）。"
+    SEARCH_ALIASES = [
+        "h3 segment", "segment run", "single segment", "regenerate", "reroll segment",
+        "segment anchor", "film anchor", "h3 debug", "单段", "单段生成", "单段重生成",
+        "分段生成", "重生成", "换种子", "锚点", "段调试",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "本段生成的 VIDEO（含音频）。record 开着时同时写进配方「结果」区，可接 SaveVideo 单独存。",
+    )
 
     def run_segment(self, recipe, segment, anchors, seed, record=True, steps=-1, preview=True,
                     continuity=True, context_frames=22, film="", unique_id=None):

@@ -134,11 +134,15 @@ class NeoBundleExpandTests(unittest.TestCase):
 
     def test_input_and_return_types(self):
         spec = bundle_expand.NeoBundleExpand.INPUT_TYPES()
-        self.assertEqual(spec["required"]["bundle"], ("STRING", {"forceInput": True}))
+        decl = spec["required"]["bundle"]
+        self.assertEqual(decl[0], "STRING")
+        self.assertTrue(decl[1]["forceInput"])
+        self.assertTrue(decl[1]["tooltip"].strip())   # BUNDLE 连线槽带输入提示词
         n = bundle_expand.MAX_BUNDLE_REFERENCES
         self.assertEqual(n, 9)
         self.assertEqual(bundle_expand.NeoBundleExpand.RETURN_TYPES, ("STRING",) + ("IMAGE",) * n)
         self.assertEqual(bundle_expand.NeoBundleExpand.RETURN_NAMES, ("prompt",) + tuple(f"image_{i}" for i in range(1, n + 1)))
+        self.assertEqual(len(bundle_expand.NeoBundleExpand.OUTPUT_TOOLTIPS), n + 1)
 
     def test_expands_prompt_and_reference_image(self):
         bid = bundles.create_bundle({

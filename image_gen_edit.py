@@ -288,9 +288,16 @@ class NeoImageGenEdit(io.ComfyNode):
             description="按所选 skill 的 workflow.json 模板同步生成，输出 IMAGE 张量到下游。"
                         "不挂参考图为文生图；挂上参考图则按 skill 模板进入参考/编辑模式"
                         "（如 Qwen Image 2.1 编辑，第 1 张为编辑目标、其余为参考对象）。",
+            search_aliases=[
+                "image gen", "gen image", "text to image", "t2i", "image edit",
+                "qwen image edit", "reference image", "skill", "mini executor",
+                "生图", "文生图", "图像编辑", "参考图编辑", "技能生图", "内置生图",
+            ],
             inputs=[
-                io.Combo.Input("skill", options=names, default=names[0] if names else ""),
-                io.String.Input("prompt", multiline=True, dynamic_prompts=True, default=""),
+                io.Combo.Input("skill", options=names, default=names[0] if names else "",
+                               tooltip="选哪个生图/编辑技能：决定内部 workflow.json 模板与默认模型链。"),
+                io.String.Input("prompt", multiline=True, dynamic_prompts=True, default="",
+                                tooltip="提示词；为空且接了 BUNDLE 时用 bundle 里的第一条。"),
                 # 参考图槽位：不挂 = 文生图（min=0），挂上 = 参考/编辑模式；顺序即语义顺序
                 io.Autogrow.Input(
                     "refs",
@@ -303,7 +310,8 @@ class NeoImageGenEdit(io.ComfyNode):
                             "第 1 张是编辑目标）。",
                 ),
                 # NeoPromptAgent BUNDLE 输出（纯连线槽）；提供时覆盖 prompt/refs
-                io.String.Input("bundle", force_input=True, optional=True),
+                io.String.Input("bundle", force_input=True, optional=True,
+                                tooltip="NeoPromptAgent / NeoRefGrid 的 BUNDLE 输出：提供时其参考图覆盖节点上挂的 refs。"),
                 io.Int.Input("seed", default=0, min=0, max=2**63 - 1,
                              control_after_generate=True),  # 默认固定，随机走「生成后控制」
                 io.Int.Input("count", default=1, min=1, max=MAX_IMAGES),
@@ -316,7 +324,10 @@ class NeoImageGenEdit(io.ComfyNode):
                 io.Model.Input("model", optional=True,
                                tooltip="外部加速模型；提供时覆盖内部主模型链（UNETLoader/LoRA 等）"),
             ],
-            outputs=[io.Image.Output(display_name="images")],
+            outputs=[io.Image.Output(
+                display_name="images",
+                tooltip="生成结果批次 [count,H,W,C]，接 SaveImage / PreviewImage 或下游编辑节点。",
+            )],
         )
 
     @classmethod

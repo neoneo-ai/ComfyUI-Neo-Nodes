@@ -72,11 +72,12 @@ class NeoGridSplit:
         axis = ["auto"] + [str(i) for i in range(1, GRID_MAX + 1)]
         return {
             "required": {
-                "filename": (files or ["(无图片，请先把宫格图放进 input/)"], {"image_upload": True}),
+                "filename": (files or ["(无图片，请先把宫格图放进 input/)"], {"image_upload": True,
+                                                                            "tooltip": "input/ 里的宫格图（选一张）；提示词从这张图的 PNG 元信息提取。"}),
             },
             "optional": {
-                "rows": (axis,),
-                "cols": (axis,),
+                "rows": (axis, {"tooltip": "行数：auto = 自动检测（含细白条回退与大小一致性校验）。"}),
+                "cols": (axis, {"tooltip": "列数：auto = 自动检测；检测不准时手动指定。"}),
             },
         }
 
@@ -86,6 +87,15 @@ class NeoGridSplit:
     FUNCTION = "split"
     CATEGORY = "Neo-Nodes"
     DESCRIPTION = "宫格图拆分：一张分镜宫格图 → 各格（行优先，清边框/字幕条）+ 原图内嵌提示词。"
+    SEARCH_ALIASES = [
+        "grid split", "split grid", "unpack grid", "cells", "storyboard split",
+        "crop cells", "宫格拆分", "宫格切分", "切格", "分镜拆分", "九宫格拆分",
+        "字幕条清理", "内嵌提示词",
+    ]
+    OUTPUT_TOOLTIPS = (
+        "各格清理后按行优先拼成的 IMAGE 批次 [N,H,W,C]（统一到最大宽高），接多图/多帧下游。",
+        "原宫格图 PNG 元信息里的 ComfyUI 提示词（换行分隔），接 NeoPromptAgent / NeoImageGenEdit 的 prompt。",
+    )
 
     def split(self, filename="", rows="auto", cols="auto"):
         from .grid_split import detect_grid, metadata_prompts, split_image, trim_cell

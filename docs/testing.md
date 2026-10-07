@@ -23,6 +23,8 @@ python -m pytest tests -v
 - `tests/test_image_gen_edit.py` — mini-executor：拓扑排序与环检测、引用解析与输出归一化、
   末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量 → base64 PNG 往返、请求组装
   （缺 `workflow.json` 报错 / 参考图按槽位排序 / bundle 参考图优先 / 按 `config.json` 的 `max_refs` 限张数）。
+- `tests/test_node_metadata.py` — 节点元数据契约：注册表键清单、`SEARCH_ALIASES`（小写、去重、含中文别名）、
+  `DESCRIPTION`、`OUTPUT_TOOLTIPS` 与 `RETURN_TYPES` 数量对齐、可见 widget 的输入提示词、V3 节点 schema 元数据。
 
 ## 前端回归测试（tests/js）
 
