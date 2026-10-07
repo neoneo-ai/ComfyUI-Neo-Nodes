@@ -44,8 +44,10 @@ Then restart ComfyUI.
    - *Local*: Place a GGUF model in `models/LLM/`, select "Local GGUF" in Settings, and save.
 3. **First prompt**: Add a **Neo Prompt Agent** node → type a short description → click ✨ → get AI-generated prompt text (no CLIP needed).
 4. **First image**: Add a **Neo Image Gen & Edit** node → select an image-gen skill → connect prompt (from Agent or manual) and optional reference images → queue → IMAGE output.
-5. **Send asset to node**: Open the Gallery sidebar → browse to an image → click thumbnail for lightbox → click Send → choose target node.
-6. **Repair workflow paths**: After moving machines, click the 🅝 menu → "Repair Workflow" → confirm candidate paths → apply.
+5. **First director recipe**: Open the 🅝 menu → "New Director Recipe" → on the **Storyboard** tab create segments (theme/script + ✨, or split a storyboard grid image with ✂️) → on the **Timeline** tab set shared resolution and skill → Save.
+6. **First video**: Add a **H3 Video Director** node → select the saved `recipe` → queue → segments are generated in order and stitched into a single `VIDEO` with audio (connect SaveVideo). Hover a timeline block to run only checked segments; ♻ regenerates one segment and stitches it back into a new film. Requires MiniMax H3 models (separate video and audio VAE) and a skill with `gen_video: true`.
+7. **Send asset to node**: Open the Gallery sidebar → browse to an image → click thumbnail for lightbox → click Send → choose target node.
+8. **Repair workflow paths**: After moving machines, click the 🅝 menu → "Repair Workflow" → confirm candidate paths → apply.
 
 ## Key Concepts
 
