@@ -42,6 +42,7 @@
 | POST | `/neo_gallery/civitai_test` | Civitai 连通性 / API KEY 探测 |
 | GET | `/neo_gallery/lora_cache_status` | LORA 缓存队列状态 |
 | POST | `/neo_gallery/lora_retry_failed` | 重试失败项 |
+| POST | `/neo_gallery/lora_refresh_dir` | 重读目录内 LORA 的 safetensors 头部元数据（本地，不重新下载示例图） |
 
 ## gallery_oss.py — 云端预设
 

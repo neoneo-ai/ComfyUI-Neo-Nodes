@@ -10,6 +10,8 @@ _STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
 
 import os
 import sys
+import json
+import struct
 import tempfile
 import types
 import unittest
@@ -102,6 +104,103 @@ class PendingSubdirTests(unittest.TestCase):
         (self.cache / "krea2").mkdir()
         (self.cache / "krea2" / "example_00.png").write_bytes(b"x")
         self.assertEqual(gallery_lora._lora_pending_subdirs(), {})
+
+
+def _make_safetensors(path, metadata, tensors):
+    """Write a minimal valid safetensors file (header + zero blob) for tests."""
+    header = dict(tensors)
+    if metadata:
+        header["__metadata__"] = metadata
+    header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    max_end = max((t["data_offsets"][1] for t in tensors.values()), default=0)
+    with open(path, "wb") as f:
+        f.write(struct.pack("<Q", len(header_bytes)))
+        f.write(header_bytes)
+        f.write(b"\x00" * max_end)
+
+
+class HeaderMetaTests(unittest.TestCase):
+    """safetensors header 轻量读取：基座 / 触发词 / 精度，以及写 _meta.json 与回填字段。"""
+
+    def setUp(self):
+        self._comfy_saved = {k: sys.modules.get(k) for k in ("comfy", "comfy.utils")}
+        comfy = types.ModuleType("comfy")
+        comfy_utils = types.ModuleType("comfy.utils")
+
+        def safetensors_header(path, max_size=100 * 1024 * 1024):
+            with open(path, "rb") as f:
+                n = struct.unpack("<Q", f.read(8))[0]
+                if n > max_size:
+                    return None
+                return f.read(n)
+
+        comfy_utils.safetensors_header = safetensors_header
+        comfy.utils = comfy_utils
+        sys.modules["comfy"] = comfy
+        sys.modules["comfy.utils"] = comfy_utils
+        self.tmp = tempfile.TemporaryDirectory(prefix="neo_lora_meta_")
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        for k, v in self._comfy_saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+        self.tmp.cleanup()
+
+    def test_reads_base_model_triggers_dtype(self):
+        p = self.dir / "a.safetensors"
+        _make_safetensors(p, {
+            "ss_base_model_version": "sdxl_base_v1-0",
+            "ss_tag_frequency": json.dumps({"ds": {"abc": 5, "xyz": 2}}),
+        }, {"lora_unet_0.rank": {"dtype": "F16", "shape": [4, 8], "data_offsets": [0, 64]}})
+        meta = gallery_lora._read_lora_header_meta(p)
+        self.assertEqual(meta["base_model"], "sdxl_base_v1-0")
+        self.assertEqual(meta["trigger_words"], ["abc", "xyz"])
+        self.assertEqual(meta["dtype"], "F16")
+
+    def test_trained_words_string_fallback(self):
+        p = self.dir / "b.safetensors"
+        _make_safetensors(p, {"trained_words": "a, b, c"},
+                          {"w": {"dtype": "BF16", "shape": [2], "data_offsets": [0, 4]}})
+        meta = gallery_lora._read_lora_header_meta(p)
+        self.assertEqual(meta["trigger_words"], ["a", "b", "c"])
+        self.assertEqual(meta["dtype"], "BF16")
+
+    def test_no_metadata_only_dtype(self):
+        p = self.dir / "c.safetensors"
+        _make_safetensors(p, None, {"w": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}})
+        self.assertEqual(gallery_lora._read_lora_header_meta(p), {"dtype": "F32"})
+
+    def test_write_lora_meta_writes_file_and_compact_fields(self):
+        cache = self.dir / "cache"
+        cache.mkdir()
+        meta_doc = {"base_model": "flux", "trigger_words": ["x", "y"], "dtype": "F16", "source": "header"}
+        compact = gallery_lora._write_lora_meta(cache, meta_doc)
+        written = json.loads((cache / "_meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(written["base_model"], "flux")
+        self.assertEqual(written["source"], "header")
+        self.assertEqual(compact, {"base_model": "flux", "trigger_words": ["x", "y"], "dtype": "F16"})
+
+    def test_attach_lora_meta_surfaces_badges(self):
+        orig = gallery_lora._load_lora_index
+        gallery_lora._load_lora_index = lambda: {
+            "SDXL/mylora.safetensors": {
+                "cache_dir": "SDXL/mylora", "base_model": "SDXL 1.0",
+                "trigger_words": ["abc"], "dtype": "F16",
+            }
+        }
+        try:
+            resp = {"items": [{"filename": "example_00.jpg"}]}
+            gallery_lora._attach_lora_meta(resp, "SDXL/mylora")
+            item = resp["items"][0]
+            self.assertEqual(item["lora_path"], "SDXL/mylora.safetensors")
+            self.assertEqual(item["base_model"], "SDXL 1.0")
+            self.assertEqual(item["trigger_words"], ["abc"])
+            self.assertEqual(item["dtype"], "F16")
+        finally:
+            gallery_lora._load_lora_index = orig
 
 
 if __name__ == "__main__":

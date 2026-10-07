@@ -2225,6 +2225,73 @@ Accordion Section Buttons (Clear)
     border-bottom: none;
 }
 
+/* LoRA header 元数据徽章（base_model / dtype） */
+.neo-gallery-collect-lora-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 10px 6px;
+}
+
+.neo-gallery-collect-lora-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 15px;
+    color: #9fb6d6;
+    background: rgba(76, 154, 255, 0.16);
+    border: 1px solid rgba(76, 154, 255, 0.25);
+}
+
+/* 触发词区：逐词可复制 chip + 全量复制 */
+.neo-gallery-collect-triggers {
+    margin: 2px 6px 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    color: #b9c2ce;
+}
+
+.neo-gallery-collect-triggers-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 5px;
+}
+
+.neo-gallery-collect-triggers-label {
+    color: #8a93a0;
+}
+
+.neo-gallery-collect-triggers-copyall {
+    cursor: pointer;
+    color: #7aa2ff;
+    white-space: nowrap;
+}
+
+.neo-gallery-collect-triggers-copyall:hover {
+    color: #fff;
+}
+
+.neo-gallery-collect-trigger-chip {
+    display: inline-block;
+    margin: 2px 3px 2px 0;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #d6dde6;
+    cursor: pointer;
+    user-select: none;
+}
+
+.neo-gallery-collect-trigger-chip:hover {
+    background: rgba(76, 154, 255, 0.28);
+    color: #fff;
+}
+
 /* Source badge on a bookmark card (本地 / C 站 / OSS 预设) */
 .neo-gallery-card-source-badge {
     display: inline-block;

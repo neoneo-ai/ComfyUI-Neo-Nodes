@@ -369,6 +369,19 @@ export class GalleryCard {
             card.appendChild(tagBtn);
         }
 
+        // LoRA 目录刷新：重读 safetensors 头部元数据（本地，不重新下载示例图）。
+        if (String(parentDir).toLowerCase().startsWith("lora")) {
+            const refreshBtn = $el("div", {
+                className: "neo-gallery-card-dir-menu-btn",
+                title: "刷新元数据（重读 safetensors 头部，不重新下载示例图）",
+                onclick: (e) => {
+                    e.stopPropagation();
+                    this._showLoraRefreshMenu(gallery, subdirName, fullPath.join("/"), refreshBtn);
+                }
+            }, ["⋯"]);
+            card.appendChild(refreshBtn);
+        }
+
         card.appendChild(typeBadge);
         card.appendChild(coverWrapper);
         card.appendChild(info);
@@ -540,8 +553,31 @@ export class GalleryCard {
                     className: "neo-gallery-collect-path neo-gallery-collect-lora-path",
                     title: image.lora_path,
                     textContent: image.lora_path
-                })
-            ] : []),
+                }),
+                // LoRA header 元数据徽章：base_model / dtype（有值才显示）
+                (image.base_model || image.dtype) ? $el("div", { className: "neo-gallery-collect-lora-badges" }, [
+                    image.base_model ? $el("span", { className: "neo-gallery-collect-lora-badge", title: "Base model", textContent: image.base_model }) : null,
+                    image.dtype ? $el("span", { className: "neo-gallery-collect-lora-badge", title: "Dtype", textContent: image.dtype }) : null
+                ].filter(Boolean)) : null,
+                // 触发词：逐词点击复制 + 全量复制
+                (image.trigger_words && image.trigger_words.length) ? $el("div", { className: "neo-gallery-collect-triggers" }, [
+                    $el("div", { className: "neo-gallery-collect-triggers-head" }, [
+                        $el("span", { className: "neo-gallery-collect-triggers-label", textContent: `触发词（${image.trigger_words.length}）` }),
+                        $el("span", {
+                            className: "neo-gallery-collect-triggers-copyall",
+                            title: "复制全部触发词",
+                            textContent: "\u29C9 复制全部",
+                            onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, image.trigger_words.join(", ")); }
+                        })
+                    ]),
+                    ...image.trigger_words.map((w) => $el("span", {
+                        className: "neo-gallery-collect-trigger-chip",
+                        title: "点击复制该触发词",
+                        textContent: w,
+                        onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, w); }
+                    }))
+                ]) : null
+            ].filter(Boolean) : []),
             image.txt_content ? $el("div", {
                 className: "neo-gallery-collect-prompt-preview",
                 title: "提示词（可全选复制）"
@@ -617,6 +653,44 @@ export class GalleryCard {
             }, ["🏷️ LoRA 打标"])
         ]);
         this._attachPopupMenu(menu, anchor);
+    }
+
+    /** LoRA 目录卡 ⋯ 菜单：刷新元数据（重读 safetensors 头部，本地，不重新下载示例图）。 */
+    _showLoraRefreshMenu(gallery, dirName, dirPath, anchor) {
+        this._removeCollectMenu();
+        const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
+            $el("div", { className: "neo-gallery-collect-title" }, [
+                $el("span", { className: "neo-gallery-collect-name", textContent: dirName })
+            ]),
+            $el("div", {
+                className: "neo-gallery-collect-path",
+                title: dirPath,
+                textContent: dirPath
+            }),
+            $el("div", {
+                className: "neo-gallery-collect-item",
+                title: "重读目录内每个 LORA 的 safetensors 头部元数据（base_model / 触发词 / dtype），不重新下载示例图",
+                onclick: () => { this._removeCollectMenu(); this._refreshLoraDirMeta(gallery, dirPath); }
+            }, ["🔄 刷新元数据"])
+        ]);
+        this._attachPopupMenu(menu, anchor);
+    }
+
+    async _refreshLoraDirMeta(gallery, dirPath) {
+        try {
+            const resp = await api.fetchApi("/neo_gallery/lora_refresh_dir", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dir: dirPath }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) throw new Error(data.error || "刷新失败");
+            showToast(gallery.app, "success", "元数据已刷新", `已更新 ${data.updated} 个 LORA`);
+            const view = gallery.currentView || {};
+            await gallery.showDirectoryStructure(view.source, view.categoryPath || []);
+        } catch (e) {
+            showToast(gallery.app, "error", "刷新元数据失败", String(e.message || e));
+        }
     }
 
     // ====== Image Element ======

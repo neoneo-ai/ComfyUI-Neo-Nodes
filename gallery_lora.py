@@ -11,6 +11,7 @@ import time
 import asyncio
 import shutil
 import hashlib
+from collections import Counter
 from pathlib import Path
 import aiohttp
 from aiohttp import web
@@ -103,6 +104,138 @@ def _sha256_file(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_lora_header_meta(path: Path) -> dict:
+    """Read a LoRA's safetensors header (no tensors loaded) for gallery badges.
+
+    Pulls base model, trigger words and the dominant tensor dtype out of the
+    header's __metadata__ block. That block is untrusted author data: the values
+    are kept for display only and never used as filesystem paths or URLs.
+    """
+    try:
+        from comfy.utils import safetensors_header
+        raw = safetensors_header(str(path))
+        if not raw:
+            return {}
+        header = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(header, dict):
+        return {}
+    meta = header.get("__metadata__")
+    if not isinstance(meta, dict):
+        meta = {}
+
+    out: dict = {}
+    base_model = (meta.get("ss_base_model_version")
+                  or meta.get("modelspec.base_model")
+                  or meta.get("base_model"))
+    if base_model:
+        out["base_model"] = str(base_model)
+
+    triggers: list[str] = []
+    tag_freq = meta.get("ss_tag_frequency")
+    if isinstance(tag_freq, str):
+        try:
+            tag_freq = json.loads(tag_freq)
+        except json.JSONDecodeError:
+            tag_freq = None
+    if isinstance(tag_freq, dict):
+        seen = set()
+        for dataset_tags in tag_freq.values():
+            if not isinstance(dataset_tags, dict):
+                continue
+            for word in dataset_tags:
+                word = str(word).strip()
+                if word and word.lower() not in seen:
+                    seen.add(word.lower())
+                    triggers.append(word)
+    elif not triggers:
+        tw = meta.get("trained_words")
+        if isinstance(tw, str):
+            triggers = [w.strip() for w in tw.split(",") if w.strip()]
+        elif isinstance(tw, list):
+            triggers = [str(w).strip() for w in tw if str(w).strip()]
+    if triggers:
+        out["trigger_words"] = triggers[:100]
+
+    dtypes = Counter(info.get("dtype") for name, info in header.items()
+                     if name != "__metadata__" and isinstance(info, dict) and info.get("dtype"))
+    if dtypes:
+        out["dtype"] = dtypes.most_common(1)[0][0]
+
+    return out
+
+
+def _write_lora_meta(cache_dir: Path, meta_doc: dict) -> dict:
+    """Persist a LoRA's header metadata as _meta.json in its cache dir.
+
+    Returns the compact fields to backfill into the index entry so the list
+    page can show badges without opening each cache dir.
+    """
+    try:
+        (cache_dir / "_meta.json").write_text(
+            json.dumps(meta_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:
+        print(f"[Neo Gallery] Failed to write lora meta: {e}")
+    return {
+        "base_model": meta_doc.get("base_model", ""),
+        "trigger_words": (meta_doc.get("trigger_words") or [])[:20],
+        "dtype": meta_doc.get("dtype", ""),
+    }
+
+
+def _refresh_lora_dir_meta(dir_rel: str) -> int:
+    """Re-read safetensors header metadata for every lora under a directory.
+
+    Local-only: no Civitai request, no example image download. Trigger words
+    already merged from Civitai are preserved by appending the ones the header
+    does not list. Updates each lora's cache _meta.json and the compact index
+    badges in place. Returns the number of loras updated.
+    """
+    index = _load_lora_index()
+    rels = _collect_selected_loras([dir_rel])
+    if not rels:
+        # Leaf lora card: its directory is a cache dir representing one lora.
+        rels = [rel for rel, info in index.items() if info.get("cache_dir") == dir_rel]
+    updated = 0
+    for rel in rels:
+        full = folder_paths.get_full_path("loras", rel)
+        if not full:
+            continue
+        header_meta = _read_lora_header_meta(Path(full))
+        cache_dir = _cache_dir_for_lora(rel, index)
+        meta_file = cache_dir / "_meta.json"
+        old_doc = {}
+        if meta_file.is_file():
+            try:
+                old_doc = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                old_doc = {}
+        triggers = list(header_meta.get("trigger_words") or [])
+        seen = {t.lower() for t in triggers}
+        for word in (old_doc.get("trigger_words") or []):
+            word = str(word).strip()
+            if word and word.lower() not in seen:
+                seen.add(word.lower())
+                triggers.append(word)
+        has_civitai = "civitai" in str(old_doc.get("source", ""))
+        meta_doc = dict(header_meta, source="header+civitai" if has_civitai else "header")
+        if triggers:
+            meta_doc["trigger_words"] = triggers[:100]
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        meta = _write_lora_meta(cache_dir, meta_doc)
+        entry = index.get(rel)
+        if entry is None:
+            entry = {"status": "ok",
+                     "cache_dir": cache_dir.relative_to(LORA_CACHE_DIR).as_posix()}
+            index[rel] = entry
+        entry.update(meta)
+        updated += 1
+    if updated:
+        _save_lora_index(index)
+    return updated
 
 
 def _collect_selected_loras(selected_dirs: list) -> list:
@@ -298,6 +431,7 @@ async def _cache_one_lora(session, sem, index, rel, full, api_key, state) -> boo
     in the index so the retry endpoint can re-queue them).
     """
     full = Path(full)
+    header_meta = _read_lora_header_meta(full)
     sha = _sha256_file(full)
     status, version = await _civitai_by_hash(session, sha, api_key)
     if status in (401, 403):
@@ -305,10 +439,15 @@ async def _cache_one_lora(session, sem, index, rel, full, api_key, state) -> boo
         state["failed"] += 1
         return False
     if status == 404:
-        # Not on Civitai (or hash unknown): record so future runs skip it
+        # Not on Civitai (or hash unknown): record so future runs skip it.
+        # Header metadata is local, so cache it even without a Civitai match.
+        cache_dir = _cache_dir_for_lora(rel, index)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        meta = _write_lora_meta(cache_dir, dict(header_meta, source="header"))
         index[rel] = {"status": "not_found", "sha256": sha,
                       "size": full.stat().st_size, "mtime": int(full.stat().st_mtime),
-                      "synced_at": int(time.time())}
+                      "cache_dir": cache_dir.relative_to(LORA_CACHE_DIR).as_posix(),
+                      "synced_at": int(time.time()), **meta}
         _save_lora_index(index)
         state["failed"] += 1
         return False
@@ -350,13 +489,25 @@ async def _cache_one_lora(session, sem, index, rel, full, api_key, state) -> boo
         downloaded += 1
 
     model_info = version.get("model") or {}
+    # Merge header trigger words with Civitai's trainedWords (header first).
+    triggers = list(header_meta.get("trigger_words") or [])
+    seen = {t.lower() for t in triggers}
+    for word in (version.get("trainedWords") or []):
+        word = str(word).strip()
+        if word and word.lower() not in seen:
+            seen.add(word.lower())
+            triggers.append(word)
+    meta_doc = dict(header_meta, source="header+civitai")
+    if triggers:
+        meta_doc["trigger_words"] = triggers[:100]
+    meta = _write_lora_meta(cache_dir, meta_doc)
     index[rel] = {
         "status": "ok", "sha256": sha,
         "size": full.stat().st_size, "mtime": int(full.stat().st_mtime),
         "cache_dir": cache_dir.relative_to(LORA_CACHE_DIR).as_posix(),
         "model_name": model_info.get("name") or "",
         "version_name": version.get("name") or "",
-        "images": downloaded, "synced_at": int(time.time()),
+        "images": downloaded, "synced_at": int(time.time()), **meta,
     }
     _save_lora_index(index)
     state["ok"] += 1
@@ -391,7 +542,8 @@ def _prune_lora_caches() -> None:
 def _attach_lora_meta(resp_dir: dict, rel_path: str) -> None:
     """Attach lora cache metadata to scanned items: rewrite subfolder to the
     unambiguous "Lora/..." prefix (resolved by image/thumbnail/copy_to_input)
-    and add lora_path (relative to models/loras) for send-to-LoraLoader."""
+    and add lora_path (relative to models/loras) for send-to-LoraLoader, plus
+    the compact header badges (base_model / trigger_words / dtype) for display."""
     index = _load_lora_index()
     by_dir = {}
     for lora_rel, info in index.items():
@@ -400,10 +552,15 @@ def _attach_lora_meta(resp_dir: dict, rel_path: str) -> None:
             by_dir[cache_dir] = lora_rel
     prefix = f"Lora/{rel_path}" if rel_path else "Lora"
     lora_rel = by_dir.get(rel_path)
+    info = index.get(lora_rel) if lora_rel else None
     for entry in resp_dir.get("items", []):
         entry["subfolder"] = prefix
         if lora_rel:
             entry["lora_path"] = lora_rel
+        if info:
+            entry["base_model"] = info.get("base_model", "")
+            entry["trigger_words"] = info.get("trigger_words", [])
+            entry["dtype"] = info.get("dtype", "")
 
 
 def _attach_lora_subdir_paths(resp_dir: dict, rel_path: str) -> None:
@@ -428,6 +585,10 @@ def _attach_lora_subdir_paths(resp_dir: dict, rel_path: str) -> None:
         lora_rel = by_cache_dir.get(f"{base}{sub_name}")
         if lora_rel:
             meta["lora_path"] = lora_rel
+            info = index.get(lora_rel) or {}
+            meta["base_model"] = info.get("base_model", "")
+            meta["trigger_words"] = info.get("trigger_words", [])
+            meta["dtype"] = info.get("dtype", "")
 
 
 async def _ensure_auto_cache() -> None:
@@ -589,3 +750,12 @@ async def lora_retry_failed(request):
         _save_lora_index(index)
     await _ensure_auto_cache()
     return web.json_response({"success": True, "count": len(failed)})
+
+
+@PromptServer.instance.routes.post("/neo_gallery/lora_refresh_dir")
+async def lora_refresh_dir(request):
+    """Re-read safetensors header metadata for a lora directory (local, no download)."""
+    data = await request.json()
+    dir_rel = str(data.get("dir") or "").replace("\\", "/").strip("/")
+    updated = _refresh_lora_dir_meta(dir_rel)
+    return web.json_response({"success": True, "updated": updated})
