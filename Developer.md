@@ -19,7 +19,8 @@
 
 ## 速览
 
-- **插件入口** `__init__.py`：导入后端模块注册 API 路由，合并节点映射，声明 `WEB_DIRECTORY = "./web"`。
+- **插件入口** `__init__.py`：导入后端模块注册 API 路由，按 `NEO_NODES` 清单合并节点映射并打印版本 banner，
+  声明 `WEB_DIRECTORY = "./web"`。
 - **节点注册**：`prompts.py` 底部 `NODE_CLASS_MAPPINGS`（NeoPromptEncoder / NeoPromptAgent），
   另含 `image_gen_edit.py` 的 NeoImageGenEdit（V3 节点 + Autogrow 参考图）。
 - **API 路由**：通过 `PromptServer.instance.routes` 注册，清单见 [docs/api-routes.md](docs/api-routes.md)。

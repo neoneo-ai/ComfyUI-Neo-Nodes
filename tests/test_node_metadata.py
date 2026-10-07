@@ -7,8 +7,10 @@ search_aliases / description / Output(tooltip=)。本测试不依赖运行中的
 test_h3_video_director 的桩环境加载全部节点模块，逐个校验元数据的形状、数量对齐与中文别名。
 """
 
+import ast
 import sys
 import unittest
+from pathlib import Path
 
 from test_h3_video_director import (   # noqa: E402  —— 复用同一套桩与 _load
     _PKG,
@@ -43,6 +45,17 @@ def _has_cjk(text):
     return any(ord(ch) > 127 for ch in text)
 
 
+INIT_PY = Path(__file__).resolve().parent.parent / "__init__.py"
+
+
+def _manifest_from_init():
+    """静态读取 __init__.py 的 NEO_NODES 清单：导入插件包会触发全部路由注册。"""
+    for node in ast.walk(ast.parse(INIT_PY.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "NEO_NODES" for t in node.targets):
+            return {k.value: v.value for k, v in zip(node.value.keys, node.value.values)}
+    raise AssertionError("__init__.py 缺少 NEO_NODES 节点清单")
+
+
 def _visible_widgets(spec):
     """INPUT_TYPES 里非 hidden 的 widget（hidden widget 由插件自己的前端渲染，tooltip 无意义）。"""
     for group in ("required", "optional"):
@@ -65,6 +78,14 @@ class NodeMetadataTests(unittest.TestCase):
     def test_registry_keys(self):
         """注册表键固定为这 11 个节点：新增/改名节点必须同步元数据与显示名。"""
         self.assertEqual(set(self.nodes), EXPECTED_NODES)
+
+    def test_entry_manifest_matches_registry(self):
+        """__init__.py 的清单必须与注册表一致，且每个节点登记在真正注册它的模块。"""
+        manifest = _manifest_from_init()
+        self.assertEqual(set(manifest), EXPECTED_NODES)
+        module_keys = {mod.__name__.split(".")[-1]: set(mod.NODE_CLASS_MAPPINGS) for mod in NODE_MODULES}
+        for key, mod_name in manifest.items():
+            self.assertIn(key, module_keys.get(mod_name, set()), f"{key} 登记在 {mod_name}")
 
     def test_legacy_description_and_aliases(self):
         for key, cls in self.legacy.items():

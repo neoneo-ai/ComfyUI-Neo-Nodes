@@ -172,6 +172,10 @@ NODE_CLASS_MAPPINGS = {
 
 前端扩展目录由 `WEB_DIRECTORY = "./web"` 声明。
 
+`__init__.py` 用 `NEO_NODES` 登记 11 个节点及各自所属模块：模块导入失败时节点会静默消失，所以加载结束时按清单核对，
+打印 `[NeoNodes] v<版本> 已注册 N/11 个节点`，缺失项点名节点与模块。版本号单一来源 `util.plugin_version()`（读 `pyproject.toml`，
+Studio 版本页共用）。清单与注册表的一致性由 `tests/test_node_metadata.py` 校验。
+
 ### 节点元数据
 
 节点必须自带搜索与悬停信息，`server.py` 原样透传进 `/object_info`，由 `tests/test_node_metadata.py` 逐个校验：

@@ -25,7 +25,7 @@ from .h3_preview import clear_latest_preview, get_latest_preview
 from .h3_video_director import parse_segment_selection
 from .image_gen import _error_from_history, _lookup, _progress_for, submit_graph
 from .recipes import add_recipe_results, is_preset_recipe, list_director_recipes, load_director_spec
-from .util import PrefixFilter
+from .util import PrefixFilter, plugin_version
 
 logger = logging.getLogger(__name__)
 logger.addFilter(PrefixFilter())
@@ -224,17 +224,6 @@ async def director_cancel_route(request):
     return web.json_response({"success": True, "dequeued": dequeued, "interrupted": interrupted})
 
 
-def _plugin_version() -> str:
-    pyproject = Path(__file__).parent / "pyproject.toml"
-    try:
-        m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"), re.M)
-        if m:
-            return m.group(1)
-    except OSError:
-        pass
-    return "unknown"
-
-
 @PromptServer.instance.routes.get("/neo-studio")
 async def studio_page_route(request):
     """Neo Studio 独立页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。"""
@@ -253,7 +242,7 @@ async def studio_version_route(request):
     return web.json_response({
         "success": True,
         "plugin": "ComfyUI-Neo-Nodes",
-        "plugin_version": _plugin_version(),
+        "plugin_version": plugin_version(),
         "comfyui_version": comfy_version,
         "recipes": list_director_recipes(),
     })

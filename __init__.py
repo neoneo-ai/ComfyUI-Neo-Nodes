@@ -4,6 +4,23 @@
 # pytest 收集 tests/ 时会把含连字符目录名的 __init__.py 当作顶层 __init__ 模块
 # 导入（此时 __package__ 为空），跳过注册即可；ComfyUI 实际加载始终按包导入。
 if __package__ not in (None, ""):
+    from .util import plugin_version
+
+    # 入口登记的节点清单：模块导入失败时节点会静默消失，加载结束时按清单核对并打印。
+    NEO_NODES = {
+        "NeoPromptEncoder": "prompts",
+        "NeoPromptAgent": "prompts",
+        "NeoImageGenEdit": "image_gen_edit",
+        "NeoH3VideoDirector": "h3_video_director",
+        "NeoH3AddKeyframe": "h3_video_director",
+        "NeoH3AddGuides": "h3_video_director",
+        "NeoH3AddContext": "h3_video_director",
+        "NeoH3SegmentRun": "h3_segment",
+        "NeoBundleExpand": "bundle_expand",
+        "NeoRefGrid": "ref_grid",
+        "NeoGridSplit": "grid_split_node",
+    }
+
     # Import gallery module to register routes (must be imported for route registration)
     from . import gallery
 
@@ -155,6 +172,15 @@ if __package__ not in (None, ""):
         **REF_GRID_DISPLAY_MAPPINGS,
         **GRID_SPLIT_DISPLAY_MAPPINGS,
     }
+
+    _missing = [f"{name}({NEO_NODES[name]})" for name in NEO_NODES if name not in NODE_CLASS_MAPPINGS]
+    _no_display = sorted(set(NODE_CLASS_MAPPINGS) - set(NODE_DISPLAY_NAME_MAPPINGS))
+    _status = f"[NeoNodes] v{plugin_version()} 已注册 {len(NODE_CLASS_MAPPINGS)}/{len(NEO_NODES)} 个节点"
+    if _missing:
+        _status += f"，缺失: {', '.join(_missing)}"
+    if _no_display:
+        _status += f"，缺显示名: {', '.join(_no_display)}"
+    print(_status)
 
 # Web directory for frontend extensions
 WEB_DIRECTORY = "./web"

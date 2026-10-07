@@ -193,6 +193,7 @@ class _PF(logging.Filter):
     def filter(self, record):
         return True
 _util.PrefixFilter = _PF
+_util.plugin_version = lambda: "0.0.0-stub"   # studio.py 的版本 banner / 版本页共用
 sys.modules[f"{_PKG}.util"] = _util
 setattr(_pkg, "util", _util)
 

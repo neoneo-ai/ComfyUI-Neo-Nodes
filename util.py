@@ -28,6 +28,18 @@ class PrefixFilter(logging.Filter):
         return True
 
 
+def plugin_version() -> str:
+    """pyproject.toml 里的版本号：Studio 版本页与插件加载 banner 共用同一来源。"""
+    pyproject = CURRENT_DIR / "pyproject.toml"
+    try:
+        m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(encoding="utf-8"), re.M)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "unknown"
+
+
 def _load_settings() -> dict:
     try:
         if SETTINGS_FILE.exists():
