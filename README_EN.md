@@ -20,6 +20,8 @@ A ComfyUI custom node pack for prompt management, AI-enhanced prompting (with re
 | Model Hub | Menu item | Search Comfy-Org repos on ModelScope / Hugging Face and download models into the right model folders, with resumable downloads. |
 | Skill Management | Menu item | Skill detail page (settings + prompt + workflow area): import to canvas, write back to skill, inline workflow editing — each save shows a change preview first and records a local history. Presets are read-only; copy to customize. |
 
+![Neo nodes on the canvas, grouped by purpose: image generation/editing · image processing · video generation](docs/assets/images/nodes.png)
+
 ## Installation
 
 - **ComfyUI Manager (recommended)**: Search `Neo Nodes` in the Manager and install.
@@ -40,14 +42,17 @@ Then restart ComfyUI.
 
 1. **Install** the plugin and restart ComfyUI.
 2. **Configure LLM** (pick one):
-   - *Remote*: Settings → select Provider (DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OpenAI-compatible, Ollama, etc.) → enter API Key + endpoint. Click "Test Connection" to verify.
-   - *Local*: Place a GGUF model in `models/LLM/`, select "Local GGUF" in Settings, and save.
+   - *Native*: Place a safetensors text-generation model (e.g. `qwen3.5_4b_bf16.safetensors`) in `models/text_encoders/`, select "Native (ComfyUI safetensors)" in Settings → Provider, pick the model and click 💾 Save. Inference runs inside the ComfyUI process, so no extra dependency is needed. Details: [docs/llm.md](docs/llm.md).
+   - *Remote*: Settings → select Provider (DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OpenAI-compatible, LM Studio, Ollama, OpenRouter, etc.) → enter API Key + endpoint. "🔌 Test Connection" sends "hello" with the values currently in the form (no need to save first). Endpoints and sign-up links: [docs/llm.md](docs/llm.md).
+   - *Local*: Place a GGUF model in `models/LLM/`, select "Local GGUF" in Settings, pick the model and click 💾 Save (skip the selection when the folder holds a single model — it is used automatically). Install and folder rules: [docs/llm.md](docs/llm.md).
 3. **First prompt**: Add a **Neo Prompt Agent** node → type a short description → click ✨ → get AI-generated prompt text (no CLIP needed).
 4. **First image**: Add a **Neo Image Gen & Edit** node → select an image-gen skill → connect prompt (from Agent or manual) and optional reference images → queue → IMAGE output.
-5. **First director recipe**: Open the 🅝 menu → "New Director Recipe" → on the **Storyboard** tab create segments (theme/script + ✨, or split a storyboard grid image with ✂️) → on the **Timeline** tab set shared resolution and skill → Save.
-6. **First video**: Add a **H3 Video Director** node → select the saved `recipe` → queue → segments are generated in order and stitched into a single `VIDEO` with audio (connect SaveVideo). Hover a timeline block to run only checked segments; ♻ regenerates one segment and stitches it back into a new film. Requires MiniMax H3 models (separate video and audio VAE) and a skill with `gen_video: true`.
-7. **Send asset to node**: Open the Gallery sidebar → browse to an image → click thumbnail for lightbox → click Send → choose target node.
-8. **Repair workflow paths**: After moving machines, click the 🅝 menu → "Repair Workflow" → confirm candidate paths → apply.
+
+   > Image generation needs a GPU / VRAM, and the selected skill must declare `gen_image: true` and ship a `workflow.json`.
+   > Generation model / Text Encoder / VAE default to "Auto", matched against the skill template; set them manually only when nothing matches.
+
+5. **Send asset to node**: Open the Gallery sidebar → browse to an image → click thumbnail for lightbox → click Send → choose target node.
+6. **Repair workflow paths**: After moving machines, click the 🅝 menu → "Repair Workflow" → confirm candidate paths → apply.
 
 ## Key Concepts
 
@@ -65,8 +70,9 @@ A canvas-independent page at `http://127.0.0.1:8188/neo-studio` (or run `neo-stu
 |-----|---------|
 | [docs/prompts.md](docs/prompts.md) | Prompt nodes, UI buttons, image captioning, `@` references |
 | [docs/skills.md](docs/skills.md) | Skill management: manager window, workflow editing, canvas import & writeback |
-| [docs/llm.md](docs/llm.md) | LLM modes (remote/local), thinking models, GGUF setup |
+| [docs/llm.md](docs/llm.md) | LLM modes (native / remote / local), thinking models, GGUF setup |
 | [docs/image-gen.md](docs/image-gen.md) | Image generation & editing nodes |
+| [docs/h3-video-gen.md](docs/h3-video-gen.md) | Video generation: director recipe execution, single-segment regeneration, grid split |
 | [docs/recipes.md](docs/recipes.md) | Recipe management, one-click send, director recipes |
 | [docs/gallery.md](docs/gallery.md) | Gallery browser, lightbox, file management, bookmarks |
 | [docs/workflow-repair.md](docs/workflow-repair.md) | Workflow model path repair |

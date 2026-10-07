@@ -9,6 +9,8 @@
 
 **节点**
 
+![Neo 节点在画布上的分组总览：图片生成/编辑 · 图片处理 · 视频生成](docs/assets/images/nodes.png)
+
 - **📝 Neo Prompt Encoder** — 提示词管理 + AI 增强（预设 / 搜索 / LLM 增强），输出 CLIP 编码与文本
   → [prompts.md](docs/prompts.md)
 - **⚡ Neo Prompt Agent** — 无需连 CLIP 的提示词生成，输出 PROMPT 文本与 BUNDLE 运行时包
@@ -103,21 +105,9 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
    > 生图需 GPU / 显存，且所选技能必须声明 `gen_image: true` 并附 `workflow.json`。
    > 生图模型 / Text Encoder / VAE 默认「自动」按技能模板匹配，未匹配到时再手动指定。
 
-5. **第一次新建导演配方**：顶栏 🅝 菜单「🎥 新建导演配方」（或侧边栏「配方」页头部 🎬 新增导演配方，
-   或 🎞️ 节点时间轴区右下角 ＋）→ 「📖 故事板分镜」页选分镜来源：📝 文字故事板填主题 / 脚本 + ✨ 生成分镜分段
-   （可先放 👤 角色参考图锁身份），或 🧩 宫格图故事板选一张分镜宫格图 ✂️ 拆分到各段
-   → 「🎞️ 分镜时间线」页设共享分辨率与技能 → 点「保存」。
-6. **第一次生视频**：添加 🎞️ Neo H3 Video Director 节点 → `recipe` 选刚保存的导演配方 → 排队执行
-   → 逐段生成并拼接为单个含音频 `VIDEO`，接 SaveVideo 导出成片。悬停时间轴段块出现勾选框可只跑指定段；
-   段标题行 ♻ 单段重生成后自动拼回新成片；单段调试用 Neo H3 Segment Run 节点。
-
-   > 生视频需 MiniMax H3 模型链（视频 VAE 与音频 VAE 必须分开），所选技能必须声明 `gen_video: true` 并附 `workflow.json`。
-   > 模型解析优先级：技能 `config.json` → 全局「生视频模型」设置 → 按名称线索自动挑选。
-   > 逐段执行规则与宫格拆分见 [docs/h3-video-gen.md](docs/h3-video-gen.md)，编辑器操作见 [docs/recipes.md](docs/recipes.md)。
-
-7. **素材一键入节点**：打开右侧边栏「素材」面板 → 浏览 / 搜索到目标图片 → 点缩略图进灯箱
+5. **素材一键入节点**：打开右侧边栏「素材」面板 → 浏览 / 搜索到目标图片 → 点缩略图进灯箱
    → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
-8. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏 🅝 菜单「🔧 修复工作流」
+6. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏 🅝 菜单「🔧 修复工作流」
    → 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
 
 ---
