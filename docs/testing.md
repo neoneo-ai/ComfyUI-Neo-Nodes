@@ -83,3 +83,6 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   截图落 `tmp/skill-wf-editor.png`、`tmp/skill-wf-prompt.png`。
 - `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md` 可取、
   节点上不再有 `neo_help` 徽标 widget、属性面板「信息」页渲染出文档正文（会话未注册属性面板时 skip）。
+- `prompt-width.e2e.mjs` — prompt 节点面板宽度：创建、`setSize`、工作流 `configure` 还原宽度后，
+  `prompt_ui` DOM widget 宽度都等于 `node.size[0]`（LiteGraph 的 size setter 不触发 `onResize`，
+  插件在 `onConfigure` 补同步）。

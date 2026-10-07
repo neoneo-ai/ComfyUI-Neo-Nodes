@@ -101,6 +101,7 @@ app.registerExtension({
         nodeType.prototype.onConfigure = function(data) {
             const result = _origOnConfigure.apply(this, arguments);
             restoreHiddenWidgets(this);
+            this._neoSyncPromptWidth?.();
             setTimeout(() => {
                 if (this.restoreFromProperties) this.restoreFromProperties();
             }, 100);
@@ -151,11 +152,14 @@ app.registerExtension({
             root.style.maxWidth = "none";
 
             // Function to update widget width
+            // DOM widget 宽度必须跟节点宽度一致：setSize 会触发 onResize，
+            // 但 configure 还原 size、外部直接写 size[0] 都不会，故在 onConfigure 里补一次。
             const updateWidgetWidth = () => {
                 if (widget && node.size) {
                     widget.width = node.size[0];
                 }
             };
+            node._neoSyncPromptWidth = updateWidgetWidth;
 
             // Update width on resize (LiteGraph 拖拽缩放不检查 min_width/min_height，这里钳制)
             node.onResize = node.onResize || function() {};
@@ -167,12 +171,10 @@ app.registerExtension({
                 originalOnResize.apply(this, arguments);
             };
 
-            // Initial width update
-            updateWidgetWidth();
-
             node.setSize([300, 280]);
             node.minWidth = 300;
             node.minHeight = 260;
+            updateWidgetWidth();
 
             // Initialize prompt manager - get UI elements
             // Pass textWidget so save handler can read current prompt text for AI extraction
@@ -601,6 +603,7 @@ app.registerExtension({
         nodeType.prototype.onConfigure = function(data) {
             const result = _origOnConfigure.apply(this, arguments);
             restoreHiddenWidgets(this);
+            this._neoSyncPromptWidth?.();
             setTimeout(() => {
                 if (this.restoreFromProperties) this.restoreFromProperties();
             }, 100);
@@ -664,11 +667,13 @@ app.registerExtension({
             root.style.maxWidth = "none";
 
             // Function to update widget width
+            // 同 NeoPromptAgent：configure 还原 size 不触发 onResize，宽度同步在 onConfigure 补
             const updateWidgetWidth = () => {
                 if (widget && node.size) {
                     widget.width = node.size[0];
                 }
             };
+            node._neoSyncPromptWidth = updateWidgetWidth;
 
             // Update width on resize (LiteGraph 拖拽缩放不检查 min_width/min_height，这里钳制)
             node.onResize = node.onResize || function() {};
@@ -680,11 +685,10 @@ app.registerExtension({
                 originalOnResize.apply(this, arguments);
             };
 
-            // Initial width update
-            updateWidgetWidth();
             node.setSize([300, 280]);
             node.minWidth = 300;
             node.minHeight = 260;
+            updateWidgetWidth();
 
             // 初始化提示词管理器
             const {
