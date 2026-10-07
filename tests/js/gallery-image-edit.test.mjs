@@ -735,3 +735,187 @@ test("图片编辑弹窗：扩图模式不替换左侧原图（扩图基准要�
                  "原图 / 编辑结果（拖拽分割线对比）");
 });
 
+test("图片编辑弹窗：扩图比例预设按原图取最小覆盖框，反复切换不累积变大", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+    ]));
+
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    // jsdom 无布局：显示 400×300（4:3），自然 800×600
+    const origImgEl = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImgEl, key, { value, configurable: true });
+    }
+    click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));
+
+    const canvasEl = overlay.querySelector(".neo-gallery-edit-outpaint-canvas");
+    // 拖框由 CSS 铺满画布，几何要从画布盒 + 原图在画布内的偏移反读（+0 归一化 -0）
+    const boxRect = () => [-parseFloat(origImgEl.style.left || "0") + 0, -parseFloat(origImgEl.style.top || "0") + 0,
+                           parseFloat(canvasEl.style.width), parseFloat(canvasEl.style.height)];
+    const ratioSel = overlay.querySelector(".neo-gallery-edit-ratio");
+    const pickRatio = (r) => {
+        ratioSel.value = r;
+        ratioSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    // 锁住目标比例 + 盖住原图 + 主导方向贴满（= 该比例的最小覆盖框，原图不会被缩成一小块）
+    const checkMin = (label, R) => {
+        const [x, y, w, h] = boxRect();
+        assert.ok(Math.abs(w / h - R) < 1e-6, `${label}: 框比例 ${w / h} 应锁在 ${R}`);
+        assert.ok(x <= 1e-6 && y <= 1e-6 && x + w >= 400 - 1e-6 && y + h >= 300 - 1e-6,
+                  `${label}: 框 ${JSON.stringify([x, y, w, h])} 应盖住原图 400×300`);
+        assert.ok(Math.abs(Math.max(400 / w, 300 / h) - 1) < 1e-6,
+                  `${label}: 框 ${w}×${h} 不是最小覆盖框，原图在框里被缩小了`);
+        return [x, y, w, h];
+    };
+
+    pickRatio("1:1");
+    const sq1 = checkMin("1:1", 1);
+    assert.deepEqual(sq1, [0, -50, 400, 400]);
+    pickRatio("16:9"); checkMin("16:9", 16 / 9);
+    pickRatio("9:16"); checkMin("9:16", 9 / 16);
+    pickRatio("3:4");  checkMin("3:4", 3 / 4);
+    pickRatio("21:9"); checkMin("21:9", 21 / 9);
+    // 旧实现以「当前框」为基准只放大不缩回，切几轮框就累积变大、原图缩成一小块
+    pickRatio("1:1");
+    assert.deepEqual(checkMin("切回 1:1", 1), sq1, "反复切换比例不应累积变大");
+    pickRatio("16:9"); pickRatio("9:16"); pickRatio("21:9"); pickRatio("1:1");
+    assert.deepEqual(checkMin("再切四轮 1:1", 1), sq1);
+});
+
+test("图片编辑弹窗：扩图锁定比例拖拽只等比缩放，不变形、不缩回原图内、不超封顶", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+    ]));
+
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    const origImgEl = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImgEl, key, { value, configurable: true });
+    }
+    click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));
+
+    const canvasEl = overlay.querySelector(".neo-gallery-edit-outpaint-canvas");
+    const boxRect = () => [-parseFloat(origImgEl.style.left || "0") + 0, -parseFloat(origImgEl.style.top || "0") + 0,
+                           parseFloat(canvasEl.style.width), parseFloat(canvasEl.style.height)];
+    const ratioSel = overlay.querySelector(".neo-gallery-edit-ratio");
+    const pickRatio = (r) => {
+        ratioSel.value = r;
+        ratioSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    };
+    const pointerAt = (el, type, x, y) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        ev.clientX = x;
+        ev.clientY = y;
+        ev.button = 0;
+        el.dispatchEvent(ev);
+    };
+    const drag = (sel, x0, y0, x1, y1) => {
+        pointerAt(overlay.querySelector(sel), "pointerdown", x0, y0);
+        pointerAt(window, "pointermove", x1, y1);
+        pointerAt(window, "pointerup", x1, y1);
+    };
+    const checkLock = (label, R) => {
+        const [x, y, w, h] = boxRect();
+        assert.ok(Math.abs(w / h - R) < 1e-6, `${label}: 框被拖成 ${w}×${h}（比例 ${w / h}），应锁在 ${R}`);
+        assert.ok(x <= 1e-6 && y <= 1e-6 && x + w >= 400 - 1e-6 && y + h >= 300 - 1e-6,
+                  `${label}: 框 ${JSON.stringify([x, y, w, h])} 应盖住原图 400×300`);
+        return [x, y, w, h];
+    };
+
+    // 自由模式：手柄按边伸缩，不锁比例
+    drag(".neo-gallery-edit-outpaint-handle-se", 400, 300, 500, 360);
+    assert.deepEqual(boxRect(), [0, 0, 500, 360]);
+
+    pickRatio("1:1");
+    checkLock("1:1 预设", 1);
+    drag(".neo-gallery-edit-outpaint-handle-se", 400, 350, 500, 450);
+    checkLock("1:1 拖 se 放大", 1);
+    drag(".neo-gallery-edit-outpaint-handle-n", 200, -45, 200, -345);
+    checkLock("1:1 拖 n 放大", 1);
+    // 把手拖过对边：缩放系数会掉到 0 甚至负数，下限必须锁在「仍盖住原图」
+    drag(".neo-gallery-edit-outpaint-handle-n", 200, -420, 200, 900);
+    checkLock("1:1 拖 n 拖过对边", 1);
+    // 封顶：拖再远也不超过原图 4 倍，封顶后仍是 1:1
+    drag(".neo-gallery-edit-outpaint-handle-se", 400, 400, 9000, 9000);
+    const [x, y, w, h] = checkLock("1:1 封顶", 1);
+    assert.ok(w <= 1600 + 1e-6 && h <= 1200 + 1e-6, `封顶失效：${w}×${h}`);
+});
+
+test("图片编辑弹窗：看大图——扩图模式点框体（未拖动）进灯箱，拖动/按手柄不进；🔍 按钮各模式通用", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+    ]));
+
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    const origImgEl = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImgEl, key, { value, configurable: true });
+    }
+
+    const pointerAt = (el, type, x, y) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        ev.clientX = x;
+        ev.clientY = y;
+        ev.button = 0;
+        el.dispatchEvent(ev);
+    };
+    const lightbox = () => document.querySelector(".neo-lightbox");
+    const closeLightbox = () => document.querySelector(".neo-lightbox-close")?.click();
+
+    // 标签行的「看大图」：局部/点选模式点图是涂抹/打点，灯箱只能从这里进
+    const zoomBtn = overlay.querySelector(".neo-gallery-edit-zoom-btn");
+    assert.ok(zoomBtn, "标签行应有「看大图」按钮");
+    click(zoomBtn);
+    assert.ok(lightbox(), "「看大图」应打开灯箱");
+    closeLightbox();
+
+    // 开扩图：拖框铺满画布，原图点不到 → 框体上按下即抬起就是点图
+    click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));
+    await sleep(10);
+    const boxEl = overlay.querySelector(".neo-gallery-edit-outpaint-box");
+
+    pointerAt(boxEl, "pointerdown", 200, 150);
+    pointerAt(window, "pointerup", 200, 150);
+    assert.ok(lightbox(), "扩图模式点框体（未拖动）应打开灯箱");
+    closeLightbox();
+
+    pointerAt(boxEl, "pointerdown", 200, 150);
+    pointerAt(window, "pointermove", 120, 150);
+    pointerAt(window, "pointerup", 120, 150);
+    assert.equal(lightbox(), null, "拖动框体只挪留白，不应打开灯箱");
+
+    pointerAt(overlay.querySelector(".neo-gallery-edit-outpaint-handle-se"), "pointerdown", 400, 300);
+    pointerAt(window, "pointerup", 400, 300);
+    assert.equal(lightbox(), null, "按手柄（含原地抬起）是抓取，不应打开灯箱");
+});
+

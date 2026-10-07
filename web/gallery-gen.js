@@ -1276,11 +1276,18 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const resultClip = $el("div", { className: "neo-gallery-edit-result-clip", style: { display: "none" } }, [resultImg]);
     const divider = $el("div", { className: "neo-gallery-edit-divider", style: { display: "none" } });
     imgWrap.append(origImg, resultClip, divider);
-    const compareLabel = $el("div", { className: "neo-gallery-edit-compare-label", textContent: COMPARE_LABEL });
+    const compareLabel = $el("span", { className: "neo-gallery-edit-compare-label", textContent: COMPARE_LABEL });
+    // 灯箱入口：局部/点选模式点图是涂抹/打点，扩图模式点图走拖框，都吃不到 img 的 onclick
+    const zoomBtn = $el("button", {
+        className: "neo-gallery-edit-zoom-btn", type: "button", textContent: "🔍 看大图",
+        title: "灯箱查看原图与参考图",
+        onclick: () => Lightbox.open({ items: buildLightboxItems(), index: 0 })
+    });
+    const compareLabelRow = $el("div", { className: "neo-gallery-edit-compare-label-row" }, [compareLabel, zoomBtn]);
     // 舞台：只负责把图片盒水平居中
     const compareStage = $el("div", { className: "neo-gallery-edit-compare-stage" }, [imgWrap]);
     const compareBox = $el("div", { className: "neo-gallery-edit-compare" }, [
-        $el("div", {}, [compareLabel, compareStage])
+        $el("div", {}, [compareLabelRow, compareStage])
     ]);
 
     // 窗帘拖拽逻辑：分割线左侧露出原图、右侧露出结果图（结果图层整幅不缩放，只裁掉左侧 pct%）
@@ -1528,10 +1535,13 @@ export function openImageEditDialog(gallery, image, subfolder) {
         else if (mode === "e" || mode === "w") s = (b0.w + (mode === "e" ? dx : -dx)) / b0.w;
         else s = Math.max((b0.w + (mode.includes("e") ? dx : -dx)) / b0.w,
                           (b0.h + (mode.includes("s") ? dy : -dy)) / b0.h);
+        // 把手拖过对边时 s 会掉到 0 甚至负数：下限锁在「仍盖住原图」上
+        s = Math.max(s, dw / b0.w, dh / b0.h);
         let w = b0.w * s, h = b0.h * s;
-        if (w < dw || h < dh) { const k = Math.max(dw / w, dh / h); w *= k; h *= k; }
         if (w > dw * OUTPAINT_MAX_EXTEND || h > dh * OUTPAINT_MAX_EXTEND) {
-            const k = Math.min(dw * OUTPAINT_MAX_EXTEND / w, dh * OUTPAINT_MAX_EXTEND / h);
+            // 封顶不许把框缩到包不住原图：缩一半时以「仍盖住原图」为准
+            const cap = Math.min(dw * OUTPAINT_MAX_EXTEND / w, dh * OUTPAINT_MAX_EXTEND / h);
+            const k = Math.max(cap, Math.max(dw / w, dh / h));
             w *= k; h *= k;
         }
         const left0 = b0.x, right0 = b0.x + b0.w, top0 = b0.y, bottom0 = b0.y + b0.h;
@@ -1541,15 +1551,18 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (mode.includes("s")) b.y = top0;
         else if (mode.includes("n")) b.y = bottom0 - h;
         else b.y = (top0 + bottom0) / 2 - h / 2;   // e/w：垂直居中不动
+        // 锚点后只钳位置、不动尺寸：框必须盖住原图，且长宽比保持锁定
+        // （旧写法补宽不补高，1:1 会被拉成矩形，原图在框里跟着偏）
+        b.x = Math.min(0, Math.max(dw - w, b.x));
+        b.y = Math.min(0, Math.max(dh - h, b.y));
         b.w = w; b.h = h;
-        b.x = Math.min(b.x, 0); b.y = Math.min(b.y, 0);
-        b.w = Math.max(b.w, dw - b.x); b.h = Math.max(b.h, dh - b.y);
         return b;
     };
     const attachBoxEvents = () => {
         let drag = null;
         const onMove = (ev) => {
             if (!drag) return;
+            drag.moved = Math.max(drag.moved, Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy));
             const { dw, dh } = imgSize();
             // 指针位移按按下时的显示缩放换算；拖动中画布变大、缩放会变小，若每帧重算会让框成倍暴涨
             box = dragResize(drag.mode, (ev.clientX - drag.sx) * drag.k, (ev.clientY - drag.sy) * drag.k,
@@ -1558,9 +1571,12 @@ export function openImageEditDialog(gallery, image, subfolder) {
             updateSizeLabel();
         };
         const onUp = () => {
+            const d = drag;
             drag = null;
             window.removeEventListener("pointermove", onMove);
             window.removeEventListener("pointerup", onUp);
+            // 拖框铺满画布，原图点不到：框体上按下即抬起（没拖动）就是点图，进灯箱看大图
+            if (d && d.mode === "move" && d.moved <= 3) Lightbox.open({ items: buildLightboxItems(), index: 0 });
         };
         boxEl.addEventListener("pointerdown", (ev) => {
             if (ev.button !== 0) return;
@@ -1568,7 +1584,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
             const handleEl = ev.target.closest(".neo-gallery-edit-outpaint-handle");
             const s = viewScale();
             drag = { mode: handleEl ? handleEl.dataset.handle : "move",
-                     sx: ev.clientX, sy: ev.clientY, b0: { ...box }, k: s > 0 ? 1 / s : 1 };
+                     sx: ev.clientX, sy: ev.clientY, b0: { ...box }, k: s > 0 ? 1 / s : 1, moved: 0 };
             window.addEventListener("pointermove", onMove);
             window.addEventListener("pointerup", onUp);
         });
@@ -1622,10 +1638,12 @@ export function openImageEditDialog(gallery, image, subfolder) {
         const R = ratioValue();
         if (!R) return;
         const { dw, dh } = imgSize();
-        const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
-        let w = box.w, h = w / R;
-        if (h < dh) { h = dh; w = h * R; }
-        if (w < dw) { w = dw; h = w / R; }
+        // 框尺寸只由「原图显示尺寸 + 目标比例」定：换预设要回到该比例包住原图的最小框。
+        // 旧写法从上一个比例的框接着算，只放大不缩回，连换几次后原图在框里只剩一小格
+        const w = Math.max(dw, dh * R), h = w / R;
+        // 中心尽量沿用现框中心（保住用户拖出来的留白分布），越界就贴回能包住原图的边界
+        const cx = Math.min(w / 2, Math.max(dw - w / 2, box.x + box.w / 2));
+        const cy = Math.min(h / 2, Math.max(dh - h / 2, box.y + box.h / 2));
         box = { x: cx - w / 2, y: cy - h / 2, w, h };
         syncOutpaintView();
         updateSizeLabel();

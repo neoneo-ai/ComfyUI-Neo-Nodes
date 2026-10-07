@@ -2439,8 +2439,7 @@ Accordion Section Buttons (Clear)
 
 /* 图片编辑弹窗：上方图片对比，下方表单 */
 .neo-gallery-story-modal.neo-gallery-edit-modal {
-    width: 95vw;
-    max-width: 1600px;
+    width: min(92vw, 980px);
     max-height: 90vh;
     min-height: 400px;
     padding: 16px;
@@ -2465,11 +2464,34 @@ Accordion Section Buttons (Clear)
     gap: 6px;
 }
 
+.neo-gallery-edit-compare-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 .neo-gallery-edit-compare-label {
     font-size: 11px;
     color: #b8c2ce;
     text-align: center;
-    flex-shrink: 0;
+}
+
+/* 看大图：局部/点选模式下点图是涂抹/打点，灯箱只能从这里进（扩图/纯提示词模式点图直接进） */
+.neo-gallery-edit-zoom-btn {
+    padding: 1px 6px;
+    font-size: 11px;
+    color: #b8c2ce;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.neo-gallery-edit-zoom-btn:hover {
+    color: #fff;
+    border-color: #4fc3f7;
 }
 
 /* 叠加舞台：把图片盒水平居中；高度随图片盒（≤50vh）自适应，不参与 55vh 限高 */
