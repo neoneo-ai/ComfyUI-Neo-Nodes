@@ -9,7 +9,9 @@
 
 **节点**
 
-![Neo 节点在画布上的分组总览：图片生成/编辑 · 图片处理 · 视频生成](docs/assets/images/nodes.png)
+![图片生成/编辑节点](docs/assets/images/image-gen-edit.png)
+![图片处理节点](docs/assets/images/image-process.png)
+![视频生成节点](docs/assets/images/vide-gen.png)
 
 - **📝 Neo Prompt Encoder** — 提示词管理 + AI 增强（预设 / 搜索 / LLM 增强），输出 CLIP 编码与文本
   → [prompts.md](docs/prompts.md)

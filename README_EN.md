@@ -20,7 +20,9 @@ A ComfyUI custom node pack for prompt management, AI-enhanced prompting (with re
 | Model Hub | Menu item | Search Comfy-Org repos on ModelScope / Hugging Face and download models into the right model folders, with resumable downloads. |
 | Skill Management | Menu item | Skill detail page (settings + prompt + workflow area): import to canvas, write back to skill, inline workflow editing — each save shows a change preview first and records a local history. Presets are read-only; copy to customize. |
 
-![Neo nodes on the canvas, grouped by purpose: image generation/editing · image processing · video generation](docs/assets/images/nodes.png)
+![Neo image generation and editing nodes on the canvas](docs/assets/images/image-gen-edit.png)
+![Neo image processing nodes on the canvas](docs/assets/images/image-process.png)
+![Neo video generation nodes on the canvas](docs/assets/images/vide-gen.png)
 
 ## Installation
 
