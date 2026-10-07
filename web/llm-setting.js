@@ -145,6 +145,20 @@ export function createModelConfigForm() {
 
     localUnloadRow.style.display = 'none';
 
+    // 原生自动卸载复选框（工作流运行时本节点执行完成后可用）
+    const nativeUnloadCheckbox = mkEl("input", "rs-form-checkbox");
+    nativeUnloadCheckbox.type = "checkbox";
+    nativeUnloadCheckbox.id = "rs-native-auto-unload";
+    const nativeUnloadLabel = mkEl("label", "rs-form-label");
+    nativeUnloadLabel.htmlFor = "rs-native-auto-unload";
+    nativeUnloadLabel.textContent = "本节点执行完自动卸载原生模型";
+    const nativeUnloadRow = mkEl("div", "rs-config-row rs-local-unload");
+    const nativeUnloadLine = mkEl("div", "rs-local-unload-line");
+    nativeUnloadLine.appendChild(nativeUnloadCheckbox);
+    nativeUnloadLine.appendChild(nativeUnloadLabel);
+    nativeUnloadRow.appendChild(nativeUnloadLine);
+    nativeUnloadRow.style.display = 'none';
+
     // Model row - contains text input, remote select, and local select
     const modelRowWrapper = mkEl("div", "rs-config-row");
     modelRowWrapper.id = "rs-model-input-wrapper";
@@ -175,8 +189,9 @@ export function createModelConfigForm() {
     advancedDetails.style.display = "none";
 
     remoteForm.append(remoteInfoText, providerRow, apiKeyRow, localDirRow, modelRowWrapper, advancedDetails, providerSaveStatusText);
-    // 自动卸载本地模型设置放在设置页最底部
+    // 自动卸载本地/原生模型设置放在设置页最底部
     remoteForm.appendChild(localUnloadRow);
+    remoteForm.appendChild(nativeUnloadRow);
 
     // 显式保存按钮：替代防抖自动保存（单模型下拉不触发 change、blur 时序难排查，落盘时机不可靠）
     const saveBtn = mkEl("button", "rs-gen-save");
@@ -483,6 +498,7 @@ export function createModelConfigForm() {
         const saved = (fullConfig.providers && fullConfig.providers[provider]) || {};
         applyAdvancedSection(def, saved);
         applyApiKeyHint(def, saved);
+        nativeUnloadRow.style.display = "none";
         
         if (def.type === 'native') {
             // Native safetensors：复用本地模型下拉，扫描 text_encoders，隐藏 base_url / api_key / 目录
@@ -491,6 +507,9 @@ export function createModelConfigForm() {
             localModelSelectEl.style.setProperty('display', 'block', 'important');
             localDirRow.style.display = "none";
             localUnloadRow.style.display = "none";
+            // 恢复/显示原生自动卸载复选框（配置顶层字段）
+            nativeUnloadCheckbox.checked = !!fullConfig.auto_unload_native;
+            nativeUnloadRow.style.display = "flex";
             await fetchNativeModels(saved.model);
         } else if (def.type === 'local') {
             // Local GGUF: show dir input + local model select, hide everything else
@@ -548,6 +567,7 @@ export function createModelConfigForm() {
         base_url: baseUrlInput.value,
         models_dir: localDirInput.value.trim(),
         auto_unload_local: localUnloadCheckbox.checked,
+        auto_unload_native: nativeUnloadCheckbox.checked,
     });
 
     const saveForm = async () => {
@@ -570,6 +590,7 @@ export function createModelConfigForm() {
         } else {
             config.api_key = effectiveApiKey();
             config.base_url = baseUrlInput.value;
+            if (def.type === 'native') config.auto_unload_native = nativeUnloadCheckbox.checked;
             const modelValue = getModelValue();
             // 远程模型下拉为空（加载失败或未选择）时不覆盖已保存的 model；
             // hybrid 模式仅在在线列表模式下走同样的保护，手动输入模式始终保存

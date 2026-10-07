@@ -422,6 +422,7 @@ def _default_remote_config() -> Dict[str, Any]:
         "enabled": False,
         "active_provider": "openai",
         "auto_unload_local": False,
+        "auto_unload_native": False,
         "providers": {key: dict(defaults) for key, defaults in _REMOTE_PROVIDER_DEFAULTS.items()},
     }
 
@@ -435,6 +436,7 @@ def _migrate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
             providers.setdefault(key, dict(defaults))
         config.setdefault("enabled", False)
         config.setdefault("auto_unload_local", False)
+        config.setdefault("auto_unload_native", False)
         active = config.get("active_provider") or "openai"
         if active not in _REMOTE_PROVIDER_DEFAULTS:
             active = "openai"
@@ -444,6 +446,7 @@ def _migrate_remote_config(config: Dict[str, Any]) -> Dict[str, Any]:
     # 旧格式：单 provider 扁平结构
     new = _default_remote_config()
     new["auto_unload_local"] = bool(config.get("auto_unload_local", False))
+    new["auto_unload_native"] = bool(config.get("auto_unload_native", False))
     new["enabled"] = bool(config.get("enabled", False))
     provider = config.get("provider", "openai")
     if provider not in _REMOTE_PROVIDER_DEFAULTS:
@@ -559,6 +562,7 @@ def set_remote_llm_config(config: Dict[str, Any]):
     if isinstance(config.get("providers"), dict):
         # 完整结构：合并保存
         merged = _load_remote_config()
+        prev_native_model = merged.get("providers", {}).get("native", {}).get("model", "")
         merged.update(config)
         saved = _migrate_remote_config(merged)
         _save_remote_config(saved)
@@ -566,6 +570,9 @@ def set_remote_llm_config(config: Dict[str, Any]):
             _unload_local_if_inactive()
         if saved.get("active_provider") != "native":
             _unload_native_if_inactive()
+        elif saved.get("providers", {}).get("native", {}).get("model", "") != prev_native_model:
+            # native 槽位换了模型：旧模型不会再被使用，释放其显存
+            unload_native_model()
         return
 
     # 扁平结构：只更新对应 provider 的槽位，不影响其它 provider
@@ -573,6 +580,7 @@ def set_remote_llm_config(config: Dict[str, Any]):
     provider = config.get("provider")
     if provider in current.get("providers", {}):
         slot = current["providers"][provider]
+        prev_model = slot.get("model", "")
         for key in ("base_url", "model", "models_dir", "max_tokens", "timeout"):
             if key in config:
                 slot[key] = config[key]
@@ -585,12 +593,17 @@ def set_remote_llm_config(config: Dict[str, Any]):
         current["active_provider"] = provider
         if "auto_unload_local" in config:
             current["auto_unload_local"] = bool(config["auto_unload_local"])
+        if "auto_unload_native" in config:
+            current["auto_unload_native"] = bool(config["auto_unload_native"])
         _save_remote_config(current)
         logger.info(f"Remote LLM provider '{provider}' config updated")
         if provider != "local":
             _unload_local_if_inactive()
         if provider != "native":
             _unload_native_if_inactive()
+        elif slot.get("model", "") != prev_model:
+            # native 槽位换了模型：旧模型不会再被使用，释放其显存
+            unload_native_model()
         return
 
     # 未知 provider：只更新启用状态
@@ -1363,9 +1376,20 @@ def _build_native_clip(name: str):
 
 
 def unload_native_model():
-    """释放原生文本生成模型缓存（显存）。"""
+    """卸载原生文本生成模型：从显存释放并清缓存（只卸这些模型，保留其它已加载模型）。"""
+    if not _NATIVE_CLIP_CACHE:
+        return
+    import comfy.model_management
+    for clip in list(_NATIVE_CLIP_CACHE.values()):
+        patcher = getattr(clip, "patcher", None)
+        if patcher is None:
+            continue
+        try:
+            comfy.model_management.unload_model_and_clones(patcher)
+        except Exception as e:
+            logger.warning(f"Failed to unload native model from VRAM: {e}")
     _NATIVE_CLIP_CACHE.clear()
-    logger.info("Native text-gen models unloaded")
+    logger.info("Native text-gen model unloaded, VRAM freed")
 
 
 def _pil_to_comfy_image(img) -> Any:

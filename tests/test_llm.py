@@ -1326,6 +1326,21 @@ class TestProviderDefinitions(unittest.TestCase):
         self.assertEqual(out["providers"]["lmstudio"]["model"], "local-model")
         self.assertEqual(out["providers"]["deepseek"]["base_url"], "https://api.deepseek.com/v1")
 
+    def test_auto_unload_native_config_roundtrip(self):
+        # 默认配置含 auto_unload_native；迁移补齐缺失字段；扁平保存能写入
+        self.assertIn("auto_unload_native", llm_mod._default_remote_config())
+        self.assertFalse(llm_mod._migrate_remote_config({"providers": {}})["auto_unload_native"])
+        saved = {}
+        orig_load, orig_save = llm_mod._load_remote_config, llm_mod._save_remote_config
+        llm_mod._load_remote_config = lambda: {"providers": {"native": {}}, "active_provider": "native"}
+        llm_mod._save_remote_config = lambda c: saved.update(c)
+        try:
+            llm_mod.set_remote_llm_config({"provider": "native", "model": "x.safetensors",
+                                           "auto_unload_native": True})
+        finally:
+            llm_mod._load_remote_config, llm_mod._save_remote_config = orig_load, orig_save
+        self.assertTrue(saved["auto_unload_native"])
+
     def test_build_remote_models_url(self):
         # 模型列表端点须与聊天请求的 /v1 追加规则一致；智谱 /v4 端点不能再叠 /v1
         cases = (
@@ -1618,6 +1633,44 @@ class TestNativeBackend(unittest.TestCase):
             a.disable_cuda_graphs = old_dcg
             a.disable_comfy_compiler = old_dcc
         self.assertEqual(out, "ok")
+
+    def test_unload_native_model_frees_vram_and_clears_cache(self):
+        # 卸载必须真正调用核心 unload_model_and_clones（释放显存），而不只是丢缓存引用
+        import comfy.model_management
+        calls = []
+
+        class FakeClip:
+            patcher = object()
+
+        llm_mod._NATIVE_CLIP_CACHE["m.safetensors"] = FakeClip()
+        orig = comfy.model_management.unload_model_and_clones
+        comfy.model_management.unload_model_and_clones = lambda p: calls.append(p)
+        try:
+            llm_mod.unload_native_model()
+        finally:
+            comfy.model_management.unload_model_and_clones = orig
+            llm_mod._NATIVE_CLIP_CACHE.clear()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(llm_mod._NATIVE_CLIP_CACHE, {})
+
+    def test_native_model_change_unloads_old_model(self):
+        # 切换 native 模型（native→native，模型名变了）→ 卸载旧模型显存；同模型保存不卸载
+        cur = {"providers": {"native": {"model": "a.safetensors"}}, "active_provider": "native", "enabled": True}
+        calls = {"n": 0}
+        orig_load, orig_save, orig_unload = (llm_mod._load_remote_config,
+                                             llm_mod._save_remote_config, llm_mod.unload_native_model)
+        llm_mod._load_remote_config = lambda: json.loads(json.dumps(cur))
+        llm_mod._save_remote_config = lambda c: None
+        llm_mod.unload_native_model = lambda: calls.__setitem__("n", calls["n"] + 1)
+        try:
+            llm_mod.set_remote_llm_config({"provider": "native", "model": "b.safetensors"})
+            self.assertEqual(calls["n"], 1, "换模型应卸载旧模型")
+            calls["n"] = 0
+            llm_mod.set_remote_llm_config({"provider": "native", "model": "a.safetensors"})
+            self.assertEqual(calls["n"], 0, "同模型不应卸载")
+        finally:
+            llm_mod._load_remote_config, llm_mod._save_remote_config, llm_mod.unload_native_model = (
+                orig_load, orig_save, orig_unload)
 
     def test_run_native_inference_serializes_concurrent_calls(self):
         # 单例 clip 不可并发：多线程进入 _run_native_inference 必须被锁串行化，

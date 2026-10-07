@@ -58,11 +58,13 @@ from .llm import (
     get_available_models,
     set_current_model,
     unload_local_model,
+    unload_native_model,
     scan_native_models,
     get_remote_llm_config,
     set_remote_llm_config,
     get_current_mode,
     LLM_MODE_LOCAL,
+    LLM_MODE_NATIVE,
     LLM_MODE_REMOTE,
     run_llm_task,
     LLM_TASKS,
@@ -72,18 +74,21 @@ from .llm import (
 )
 
 
-def _auto_unload_local_after_generate():
-    """local 模式且开启 auto_unload_local 时，自动生成完成后卸载本地模型"""
-    if get_current_mode() != LLM_MODE_LOCAL:
-        return
-    if not get_remote_llm_config().get("auto_unload_local", False):
-        return
+def _auto_unload_after_generate():
+    """节点执行结束：当前模式对应开关开启时，卸载驻留的本地 / 原生模型。"""
+    mode = get_current_mode()
+    cfg = get_remote_llm_config()
     try:
-        result = unload_local_model()
-        logger.info(f"Auto-unloaded local model after auto-generate: {result}")
-        print(f"[NeoNodes] Auto-unloaded local model: {result}")
+        if mode == LLM_MODE_LOCAL and cfg.get("auto_unload_local", False):
+            result = unload_local_model()
+            logger.info(f"Auto-unloaded local model after auto-generate: {result}")
+            print(f"[NeoNodes] Auto-unloaded local model: {result}")
+        elif mode == LLM_MODE_NATIVE and cfg.get("auto_unload_native", False):
+            unload_native_model()
+            logger.info("Auto-unloaded native model after auto-generate")
+            print("[NeoNodes] Auto-unloaded native model")
     except Exception as e:
-        msg = f"Failed to auto-unload local model: {e}"
+        msg = f"Failed to auto-unload model: {e}"
         logger.warning(msg)
         print(f"[NeoNodes] {msg}")
 
@@ -596,8 +601,8 @@ class NeoPrompts:
                 NeoPrompts._encode_cache.clear()
             NeoPrompts._encode_cache[cache_key] = (pos_cond, neg_cond)
 
-        # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
-        _auto_unload_local_after_generate()
+        # 节点执行结束：勾选自动卸载时释放本地/原生模型（手动 ✨ 生成不走节点执行，不受影响）
+        _auto_unload_after_generate()
         return {
             "ui": {"text": [current_text]},
             "result": (pos_cond, neg_cond, current_text)
@@ -1676,8 +1681,8 @@ class NeoPromptAgent:
             prompts_list = list(random_picked)
             current_text = prompts_list[0]
 
-        # 节点执行结束：勾选自动卸载时释放本地模型（手动 ✨ 生成不走节点执行，不受影响）
-        _auto_unload_local_after_generate()
+        # 节点执行结束：勾选自动卸载时释放本地/原生模型（手动 ✨ 生成不走节点执行，不受影响）
+        _auto_unload_after_generate()
         # 运行时 bundle：把本次 prompt/连接图/skill 打包成临时 id，供下游 H3/Krea2 按 id 消费
         # references = 连线张量 + 前端采集的 @引用/本地上传图（按节点 id 暂存，取出即删）
         references = (_bundle_references(image) + take_bundle_refs(unique_id))[:MAX_BUNDLE_REFERENCES]
