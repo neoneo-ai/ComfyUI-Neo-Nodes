@@ -150,6 +150,29 @@ class _FakeStringModel:
         return {"required": {"model_path": ("STRING", {"default": ""})}}
 
 
+class _AnyTypeStr(str):
+    """pythongosssss 风格通配类型：定义 __eq__ 后不可哈希（Crystools / layerstyle 等）"""
+
+    def __eq__(self, other):
+        return True
+
+    def __ne__(self, other):
+        return False
+
+
+class _FakeAnyTypeHeadNode:
+    """spec 头部是 AnyType("*") 实例的节点：不可哈希，必须被跳过而不是抛异常"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "any_in": (_AnyTypeStr("*"), {"forceInput": True}),
+                "ckpt_name": (list(CKPT_FILES),),
+            },
+        }
+
+
 class _FakeV1Node:
     """新 io.Schema 节点在 server 侧的 v1 归一化形状。"""
 
@@ -307,6 +330,10 @@ class TestWidgetSpecs(_RepairTestBase):
 
     def test_unknown_class(self):
         self.assertEqual(workflow.widget_specs(None), [])
+
+    def test_unhashable_str_subclass_head_skipped(self):
+        specs = workflow.widget_specs(_FakeAnyTypeHeadNode)
+        self.assertEqual(specs, [("ckpt_name", "COMBO", CKPT_FILES)])
 
 
 class TestUiFormat(_RepairTestBase):

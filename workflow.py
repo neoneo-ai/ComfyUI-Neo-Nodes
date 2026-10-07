@@ -431,7 +431,10 @@ def widget_specs(node_class):
                 # classic combo form: (["a.safetensors", ...], {...})
                 specs.append((name, "COMBO", head))
                 continue
-            if not isinstance(head, str) or head not in _WIDGET_INPUT_TYPES:
+            # 只接受纯 str 头部：第三方插件常用 AnyType(str) 通配类型作头部，
+            # 该类定义了 __eq__ 因而不可哈希，isinstance 通过后进集合查找会抛
+            # TypeError（unhashable type）；这类头部不是 widget 类型，跳过即可
+            if type(head) is not str or head not in _WIDGET_INPUT_TYPES:
                 continue
             if head == "COMBO":
                 opts = spec[1] if len(spec) > 1 else None
