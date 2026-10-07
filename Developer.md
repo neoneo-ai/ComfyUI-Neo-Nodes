@@ -24,7 +24,8 @@
 - **节点注册**：`prompts.py` 底部 `NODE_CLASS_MAPPINGS`（NeoPromptEncoder / NeoPromptAgent），
   另含 `image_gen_edit.py` 的 NeoImageGenEdit（V3 节点 + Autogrow 参考图）。
 - **API 路由**：通过 `PromptServer.instance.routes` 注册，清单见 [docs/api-routes.md](docs/api-routes.md)。
-- **前端资源**：`web/` 下的模块由 ComfyUI 扩展机制加载，Studio 独立页面在 `web/studio/`。
+- **前端资源**：`web/` 下的模块由 ComfyUI 扩展机制加载（只认 `.js`），Studio 独立页面在 `web/studio/`，
+  跨节点共享工具在 `web/js/core/`，节点帮助文档在 `web/docs/<节点键>.md`（ComfyUI 原生约定路径，属性面板「信息」页直接加载）。
 
 ## 常用命令
 

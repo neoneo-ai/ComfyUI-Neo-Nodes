@@ -170,7 +170,14 @@ NODE_CLASS_MAPPINGS = {
 - `NeoBundleExpand` / `NeoImageGenEdit` / `NeoH3VideoDirector` / `NeoH3SegmentRun` / `NeoGridSplit`
   与 H3 锚点节点（`NeoH3AddKeyframe` / `NeoH3AddGuides` / `NeoH3AddContext`）在各自模块注册
 
-前端扩展目录由 `WEB_DIRECTORY = "./web"` 声明。
+前端扩展目录由 `WEB_DIRECTORY = "./web"` 声明。ComfyUI 以 `extensions/**/*.js` 递归加载，**只认 `.js`**：
+子目录可用，改名成 `.mjs` 会让前端全部加载不到。
+
+- `web/js/core/`：跨节点共享工具。`cache.js` 是带 TTL 的缓存守卫——配方 spec、技能模板这类会被用户改掉的
+  拉取结果统一走它（保存事件显式清空 + TTL 兜底）。
+- `web/docs/<节点键>.md`：节点帮助文档。ComfyUI 前端按 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md`
+  自动取用并渲染在节点属性面板的「信息」页（先试 `<节点键>/<语言>.md`，取不到才回退 `DESCRIPTION`），
+  插件侧不需要任何加载代码。
 
 `__init__.py` 用 `NEO_NODES` 登记 11 个节点及各自所属模块：模块导入失败时节点会静默消失，所以加载结束时按清单核对，
 打印 `[NeoNodes] v<版本> 已注册 N/11 个节点`，缺失项点名节点与模块。版本号单一来源 `util.plugin_version()`（读 `pyproject.toml`，

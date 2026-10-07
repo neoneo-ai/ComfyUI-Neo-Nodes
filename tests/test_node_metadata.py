@@ -46,6 +46,7 @@ def _has_cjk(text):
 
 
 INIT_PY = Path(__file__).resolve().parent.parent / "__init__.py"
+HELP_DOCS_DIR = INIT_PY.parent / "web" / "docs"
 
 
 def _manifest_from_init():
@@ -86,6 +87,11 @@ class NodeMetadataTests(unittest.TestCase):
         module_keys = {mod.__name__.split(".")[-1]: set(mod.NODE_CLASS_MAPPINGS) for mod in NODE_MODULES}
         for key, mod_name in manifest.items():
             self.assertIn(key, module_keys.get(mod_name, set()), f"{key} 登记在 {mod_name}")
+
+    def test_help_docs_cover_nodes(self):
+        """每个登记节点都要有一份帮助文档：web/docs/<节点键>.md 是 ComfyUI 前端「信息」页的取用路径。"""
+        missing = [key for key in EXPECTED_NODES if not (HELP_DOCS_DIR / f"{key}.md").is_file()]
+        self.assertEqual(missing, [], f"缺少帮助文档: {missing}")
 
     def test_legacy_description_and_aliases(self):
         for key, cls in self.legacy.items():

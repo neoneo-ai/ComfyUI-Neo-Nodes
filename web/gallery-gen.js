@@ -15,6 +15,7 @@ import { requestGeneration, watchTask, cancelTask, createModelConfigSection, lis
 import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listPrompts, loadPrompt } from "./prompt-service.js";
 import { createQuickInputHistory } from "./quick-input-history.js";
 import { openGallerySidebar, grabDataType, copyGalleryToInput, uploadLocalFiles } from "./media-transfer.js";
+import { ttlCache } from "./js/core/cache.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
@@ -197,10 +198,12 @@ function _gridCountFromSkillId(skillId) {
     return m ? _normalizeGrids(Number(m[1])) : STORYBOARD_DEFAULT_GRIDS;
 }
 
-const _gridTemplateCache = {};
+// 分镜宫格模板正文缓存：skillId -> 模板；TTL 兜底（技能正文被编辑后不必刷新页面才生效）
+const _gridTemplateCache = ttlCache();
 
 async function _loadGridTemplate(skillId) {
-    if (_gridTemplateCache[skillId]) return _gridTemplateCache[skillId];
+    const hit = _gridTemplateCache.get(skillId);
+    if (hit !== undefined) return hit;
     try {
         const res = await fetch("/rs_prompts/load_skill", {
             method: "POST",
@@ -210,7 +213,7 @@ async function _loadGridTemplate(skillId) {
         if (!res.ok) return null;
         const data = await res.json();
         const content = (data.content || "").trim();
-        if (content) _gridTemplateCache[skillId] = content;
+        if (content) _gridTemplateCache.set(skillId, content);
         return content || null;
     } catch {
         return null;

@@ -24,8 +24,8 @@ python -m pytest tests -v
   末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量 → base64 PNG 往返、请求组装
   （缺 `workflow.json` 报错 / 参考图按槽位排序 / bundle 参考图优先 / 按 `config.json` 的 `max_refs` 限张数）。
 - `tests/test_node_metadata.py` — 节点元数据契约：注册表键清单、`__init__.py` 的 `NEO_NODES` 清单与注册表一致、
-  `SEARCH_ALIASES`（小写、去重、含中文别名）、`DESCRIPTION`、`OUTPUT_TOOLTIPS` 与 `RETURN_TYPES` 数量对齐、
-  可见 widget 的输入提示词、V3 节点 schema 元数据。
+  每个节点都有 `web/docs/<节点键>.md` 帮助文档（ComfyUI 原生「信息」页的取用路径）、`SEARCH_ALIASES`（小写、去重、含中文别名）、
+  `DESCRIPTION`、`OUTPUT_TOOLTIPS` 与 `RETURN_TYPES` 数量对齐、可见 widget 的输入提示词、V3 节点 schema 元数据。
 
 ## 前端回归测试（tests/js）
 
@@ -39,6 +39,7 @@ npm run update-goldens   # NEO_UPDATE_GOLDENS=1，写入新 golden
 
 - `smoke.test.mjs` — 模块可导入、节点扩展注册项。
 - `prompt-manager-dom.test.mjs` — 节点创建后的 UI 结构、body 弹层、隐藏控件状态。
+- `cache-guard.test.mjs` — 共享 TTL 缓存守卫：命中、过期失效、显式清空。
 - `node-behavior-flows.test.mjs` — 随机取词、Enter 流式生成、技能路由请求体、@ 图片选择器、运行时随机菜单。
 - `llm-setting-advanced.test.mjs` — 有预设 Base URL 的供应商默认收起「自定义端点」，展开后改写仍能落盘；
   无预设的 OpenAI Compatible 常显，Local GGUF 整体隐藏。
@@ -80,3 +81,5 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   标题栏拖动、右下角把手拉伸；工作流区只读流程图 ⇄ 内嵌编辑画布（canvas 铺满盒子、随窗口缩放跟随、
   切回只读卸载画布、预设技能隐藏保存按钮、125% 缩放下 widget 弹窗贴着鼠标落点）。
   截图落 `tmp/skill-wf-editor.png`、`tmp/skill-wf-prompt.png`。
+- `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md` 可取、
+  节点上不再有 `neo_help` 徽标 widget、属性面板「信息」页渲染出文档正文（会话未注册属性面板时 skip）。

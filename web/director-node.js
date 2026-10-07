@@ -11,6 +11,7 @@ import { listRecipes, listVideoSkills, directorMetaText, collectWorkflowResults,
 import { showToast } from "./gallery-utils.js";
 import { attachSkillPickerToComboWidget, listSkills, createSkillStatusRow } from "./skill.js";
 import { getSkillGenConfig } from "./image-gen.js";
+import { ttlCache } from "./js/core/cache.js";
 
 const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
@@ -35,10 +36,12 @@ function onPreviewEvent(e) {
 
 api.addEventListener(PREVIEW_EVENT, onPreviewEvent);
 
-// 选择窗预览卡的配方 spec 缓存：name -> {shared, segments}；配方保存（新建/编辑/重命名）后清空，避免显示旧分段
-const _recipeSpecCache = new Map();
+// 选择窗预览卡的配方 spec 缓存：name -> {shared, segments}；配方保存（新建/编辑/重命名）后清空，
+// 避免显示旧分段；TTL 兜底外部改过配方文件的情况
+const _recipeSpecCache = ttlCache();
 async function fetchRecipeSpec(name) {
-    if (_recipeSpecCache.has(name)) return _recipeSpecCache.get(name);
+    const hit = _recipeSpecCache.get(name);
+    if (hit !== undefined) return hit;
     const resp = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
     const data = resp.ok ? await resp.json() : null;
     if (data && data.success) { _recipeSpecCache.set(name, data); return data; }
