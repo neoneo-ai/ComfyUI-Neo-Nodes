@@ -1,6 +1,12 @@
 {
   "providers": [
     {
+      "id": "native",
+      "name": "Native (ComfyUI safetensors)",
+      "type": "native",
+      "model_mode": "dropdown"
+    },
+    {
       "id": "local",
       "name": "Local GGUF (llama.cpp)",
       "type": "local"

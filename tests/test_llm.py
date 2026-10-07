@@ -720,6 +720,50 @@ class TestRemoteConnection(unittest.TestCase):
         self.assertEqual(result["error"], "本地模型无需连接测试")
         self.assertNotIn("config", captured)  # 未构造客户端
 
+    def test_native_provider_runs_inference(self):
+        # native 非 HTTP provider：连接测试实跑一次原生推理，不构造远程客户端
+        called = {}
+
+        def fake_native(system_prompt, user_text, max_tokens, **kw):
+            called["user_text"] = user_text
+            called["model"] = kw.get("model")
+            return "你好！很高兴见到你。"
+
+        orig = llm_mod._run_native_inference
+        llm_mod._run_native_inference = fake_native
+        try:
+            result = llm_mod.test_remote_connection(
+                provider="native", model="qwen3.5_4b_bf16.safetensors")
+        finally:
+            llm_mod._run_native_inference = orig
+        self.assertTrue(result["success"])
+        self.assertIn("你好", result["reply"])
+        self.assertEqual(called["user_text"], "你好")
+        self.assertEqual(called["model"], "qwen3.5_4b_bf16.safetensors")
+
+    def test_native_provider_inference_error(self):
+        def boom(*a, **k):
+            raise RuntimeError("Native model not selected")
+
+        orig = llm_mod._run_native_inference
+        llm_mod._run_native_inference = boom
+        try:
+            result = llm_mod.test_remote_connection(provider="native", model="x.safetensors")
+        finally:
+            llm_mod._run_native_inference = orig
+        self.assertFalse(result["success"])
+        self.assertIn("Native model not selected", result["error"])
+
+    def test_native_provider_empty_reply(self):
+        orig = llm_mod._run_native_inference
+        llm_mod._run_native_inference = lambda *a, **k: "   "
+        try:
+            result = llm_mod.test_remote_connection(provider="native", model="x.safetensors")
+        finally:
+            llm_mod._run_native_inference = orig
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error"], "模型返回为空")
+
     def test_missing_model_reports_hint(self):
         result, _ = self._run(provider="openai")  # 无表单 model，也无已存 model
         self.assertFalse(result["success"])
@@ -1213,7 +1257,7 @@ class TestProviderDefinitions(unittest.TestCase):
         ids = []
         for p in llm_mod.get_provider_list():
             self.assertTrue(p.get("id"), p)
-            self.assertIn(p.get("type"), ("local", "remote"), p)
+            self.assertIn(p.get("type"), ("local", "remote", "native"), p)
             ids.append(p["id"])
             if p["type"] == "remote":
                 self.assertIn(p.get("model_mode"), ("hybrid", "dropdown"), p)
@@ -1437,6 +1481,233 @@ class TestLocalServiceModels(unittest.TestCase):
 
         asyncio.run(main())
 
+
+
+
+@unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
+class TestNativeBackend(unittest.TestCase):
+    """原生 ComfyUI 文本生成后端：扫描、模式分发、stub CLIP 推理、缓存"""
+
+    def test_scan_native_models_filters_safetensors(self):
+        files = ["qwen3.5_4b_bf16.safetensors", "clip_l.safetensors", "readme.txt", "model.safetensors"]
+        with patch.object(llm_mod.folder_paths, "get_filename_list", lambda cat: files):
+            out = llm_mod.scan_native_models()
+        keys = [m["key"] for m in out]
+        self.assertIn("qwen3.5_4b_bf16.safetensors", keys)
+        self.assertIn("model.safetensors", keys)
+        self.assertNotIn("readme.txt", keys)
+
+    def test_scan_native_models_prioritizes_qwen3_series(self):
+        # 下拉排序：qwen3.5 系列最前 → qwen3 系列 → 其余（前端默认选第一个）
+        files = ["clip_l.safetensors", "qwen3_4b.safetensors", "gemma_2b.safetensors",
+                 "qwen3.5_4b_bf16.safetensors", "qwen2_7b.safetensors"]
+        with patch.object(llm_mod.folder_paths, "get_filename_list", lambda cat: files):
+            keys = [m["key"] for m in llm_mod.scan_native_models()]
+        self.assertEqual(keys[0], "qwen3.5_4b_bf16.safetensors")
+        self.assertEqual(keys[1], "qwen3_4b.safetensors")
+        self.assertLess(keys.index("qwen3_4b.safetensors"), keys.index("gemma_2b.safetensors"))
+        self.assertLess(keys.index("qwen3_4b.safetensors"), keys.index("qwen2_7b.safetensors"))
+
+    def test_get_current_mode_native(self):
+        cfg = {"enabled": True, "active_provider": "native", "providers": {"native": {"model": "x.safetensors"}}}
+        with patch.object(llm_mod, "_load_remote_config", lambda: cfg):
+            self.assertEqual(llm_mod.get_current_mode(), llm_mod.LLM_MODE_NATIVE)
+
+    def test_get_current_mode_native_not_remote(self):
+        # native 不在 _REMOTE_PROVIDERS，enabled 也不会被判为 remote
+        cfg = {"enabled": True, "active_provider": "native", "providers": {}}
+        with patch.object(llm_mod, "_load_remote_config", lambda: cfg):
+            self.assertEqual(llm_mod.get_current_mode(), llm_mod.LLM_MODE_NATIVE)
+
+    def test_run_native_inference_stub_clip(self):
+        calls = {}
+
+        class StubClip:
+            def tokenize(self, text, image=None, system_prompt="", thinking=False, min_length=1):
+                calls["tokenize"] = {"text": text, "image": image, "system_prompt": system_prompt,
+                                     "thinking": thinking, "min_length": min_length}
+                return {"tokens": [[(1, 1.0), (2, 1.0)]]}
+            def generate(self, tokens, do_sample, max_length, temperature, top_k, top_p, min_p,
+                         repetition_penalty, presence_penalty, seed, mtp):
+                calls["generate"] = {"do_sample": do_sample, "max_length": max_length, "mtp": mtp}
+                return [1, 2, 3]
+            def decode(self, ids, skip_special_tokens=True):
+                return "  hello world  "
+
+        with patch.object(llm_mod, "_build_native_clip", lambda name: StubClip()), \
+             patch.object(llm_mod, "_get_native_model_name", lambda: "qwen3.5_4b_bf16.safetensors"):
+            out = llm_mod._run_native_inference("SYS", "USER", 128)
+        self.assertEqual(out, "hello world")
+        self.assertEqual(calls["tokenize"]["system_prompt"], "SYS")
+        self.assertEqual(calls["tokenize"]["text"], "USER")
+        self.assertEqual(calls["generate"]["max_length"], 128)
+        self.assertFalse(calls["generate"]["do_sample"])
+        self.assertFalse(calls["generate"]["mtp"])
+
+    def test_run_native_inference_strips_think(self):
+        class StubClip:
+            def tokenize(self, text, **kw):
+                return {"tokens": [[(1, 1.0)]]}
+            def generate(self, tokens, **kw):
+                return [1]
+            def decode(self, ids, skip_special_tokens=True):
+                return "<think>reasoning here</think>final answer"
+
+        with patch.object(llm_mod, "_build_native_clip", lambda name: StubClip()), \
+             patch.object(llm_mod, "_get_native_model_name", lambda: "m.safetensors"):
+            out = llm_mod._run_native_inference("SYS", "USER", 64)
+        self.assertEqual(out, "final answer")
+
+    def test_run_native_inference_suppresses_progress_hook(self):
+        # 队列外执行：原生 generate 的进度条不得触发全局 hook（否则回退读 last_prompt_id 崩溃），
+        # 调用结束后必须恢复原 hook。
+        import comfy.utils
+        observed = {}
+
+        class StubClip:
+            def tokenize(self, text, **kw):
+                return {"tokens": [[(1, 1.0)]]}
+            def generate(self, tokens, **kw):
+                observed["hook_during"] = comfy.utils.PROGRESS_BAR_HOOK
+                return [1]
+            def decode(self, ids, skip_special_tokens=True):
+                return "ok"
+
+        sentinel = object()
+        orig = comfy.utils.PROGRESS_BAR_HOOK
+        comfy.utils.PROGRESS_BAR_HOOK = sentinel
+        try:
+            with patch.object(llm_mod, "_build_native_clip", lambda name: StubClip()), \
+                 patch.object(llm_mod, "_get_native_model_name", lambda: "m.safetensors"):
+                out = llm_mod._run_native_inference("SYS", "USER", 16)
+            self.assertIsNone(observed["hook_during"])
+            self.assertIs(comfy.utils.PROGRESS_BAR_HOOK, sentinel)
+        finally:
+            comfy.utils.PROGRESS_BAR_HOOK = orig
+        self.assertEqual(out, "ok")
+
+    def test_run_native_inference_forces_eager_path(self):
+        # 队列外禁用 CUDA-graph / comfy 编译器（DynamicVRAM 图复用会把 KV 写坏 → device assert），
+        # 生成期间两标志置 True，结束后恢复。
+        import comfy.cli_args
+        observed = {}
+
+        class StubClip:
+            def tokenize(self, text, **kw):
+                return {"tokens": [[(1, 1.0)]]}
+            def generate(self, tokens, **kw):
+                observed["dcg"] = comfy.cli_args.args.disable_cuda_graphs
+                observed["dcc"] = comfy.cli_args.args.disable_comfy_compiler
+                return [1]
+            def decode(self, ids, skip_special_tokens=True):
+                return "ok"
+
+        a = comfy.cli_args.args
+        old_dcg, old_dcc = a.disable_cuda_graphs, a.disable_comfy_compiler
+        a.disable_cuda_graphs = False
+        a.disable_comfy_compiler = False
+        try:
+            with patch.object(llm_mod, "_build_native_clip", lambda name: StubClip()), \
+                 patch.object(llm_mod, "_get_native_model_name", lambda: "m.safetensors"):
+                out = llm_mod._run_native_inference("S", "U", 8)
+            self.assertTrue(observed["dcg"])
+            self.assertTrue(observed["dcc"])
+            self.assertFalse(a.disable_cuda_graphs)
+            self.assertFalse(a.disable_comfy_compiler)
+        finally:
+            a.disable_cuda_graphs = old_dcg
+            a.disable_comfy_compiler = old_dcc
+        self.assertEqual(out, "ok")
+
+    def test_run_native_inference_serializes_concurrent_calls(self):
+        # 单例 clip 不可并发：多线程进入 _run_native_inference 必须被锁串行化，
+        # 否则 clip.generate 会改写共享状态而互相踩踏（复读/崩溃）。
+        import threading as _th
+        import time as _time
+        inside = []
+        overlapped = {"hit": False}
+
+        class StubClip:
+            def tokenize(self, text, **kw):
+                return {"tokens": [[(1, 1.0)]]}
+            def generate(self, tokens, **kw):
+                inside.append(1)
+                if len(inside) > 1:
+                    overlapped["hit"] = True
+                _time.sleep(0.03)
+                inside.pop()
+                return [1]
+            def decode(self, ids, skip_special_tokens=True):
+                return "ok"
+
+        with patch.object(llm_mod, "_build_native_clip", lambda name: StubClip()), \
+             patch.object(llm_mod, "_get_native_model_name", lambda: "m.safetensors"):
+            threads = [_th.Thread(target=lambda: llm_mod._run_native_inference("S", "U", 8))
+                       for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertFalse(overlapped["hit"], "并发调用未被串行化")
+
+    def test_build_native_clip_caches(self):
+        load_calls = []
+
+        class FakeSD:
+            @staticmethod
+            def load_clip(ckpt_paths, model_options):
+                load_calls.append((ckpt_paths, model_options))
+                return object()
+
+        import comfy
+        llm_mod._NATIVE_CLIP_CACHE.clear()
+        with patch.object(comfy, "sd", FakeSD), \
+             patch.object(llm_mod.folder_paths, "get_full_path_or_raise", lambda c, n: "/p/" + n):
+            c1 = llm_mod._build_native_clip("qwen3.5_4b_bf16.safetensors")
+            c2 = llm_mod._build_native_clip("qwen3.5_4b_bf16.safetensors")
+        self.assertIs(c1, c2)
+        self.assertEqual(len(load_calls), 1)
+        self.assertEqual(load_calls[0][1].get("clip_name"), "qwen3.5_4b_bf16.safetensors")
+        llm_mod._NATIVE_CLIP_CACHE.clear()
+
+    def test_run_native_inference_keeps_think_when_not_stripped(self):
+        # 伪流式路径 strip_thinking=False：保留原文，交由拆块生成器分离思考/正文
+        class StubClip:
+            def tokenize(self, text, **kw):
+                return {"tokens": [[(1, 1.0)]]}
+            def generate(self, tokens, **kw):
+                return [1]
+            def decode(self, ids, skip_special_tokens=True):
+                return "<think>reasoning here</think>final answer"
+
+        with patch.object(llm_mod, "_build_native_clip", lambda name: StubClip()), \
+             patch.object(llm_mod, "_get_native_model_name", lambda: "m.safetensors"):
+            out = llm_mod._run_native_inference("SYS", "USER", 64, strip_thinking=False)
+        self.assertEqual(out, "<think>reasoning here</think>final answer")
+
+    def test_native_stream_chunks_splits_think(self):
+        chunks = list(llm_mod._native_stream_chunks("<think>why</think>the answer"))
+        self.assertIn({"text": "why", "kind": "thinking"}, chunks)
+        self.assertIn({"text": "the answer", "kind": "content"}, chunks)
+
+    def test_native_stream_chunks_plain_content(self):
+        chunks = list(llm_mod._native_stream_chunks("just text"))
+        self.assertEqual(chunks, [{"text": "just text", "kind": "content"}])
+
+    def test_run_llm_inference_routes_native(self):
+        with patch.object(llm_mod, "get_current_mode", lambda: llm_mod.LLM_MODE_NATIVE), \
+             patch.object(llm_mod, "_run_native_inference", lambda *a, **k: "NATIVE"), \
+             patch.object(llm_mod, "_run_local_inference", lambda *a, **k: "LOCAL"):
+            self.assertEqual(llm_mod._run_llm_inference("S", "U", 100), "NATIVE")
+
+    def test_run_llm_inference_native_stream_pseudo_stream(self):
+        # 原生流式走伪流式：整段结果拆块透传，不回退 llama.cpp
+        with patch.object(llm_mod, "get_current_mode", lambda: llm_mod.LLM_MODE_NATIVE), \
+             patch.object(llm_mod, "_run_native_inference", lambda *a, **k: "<think>r</think>answer"), \
+             patch.object(llm_mod, "_run_local_inference", lambda *a, **k: "LOCAL"):
+            out = list(llm_mod._run_llm_inference("S", "U", 100, stream=True))
+        self.assertIn({"text": "r", "kind": "thinking"}, out)
+        self.assertIn({"text": "answer", "kind": "content"}, out)
 
 if __name__ == '__main__':
     unittest.main()

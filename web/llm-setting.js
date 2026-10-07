@@ -325,7 +325,7 @@ export function createModelConfigForm() {
     const getModelValue = () => {
         const provider = providerSelect.value;
         const def = getProviderDef(provider);
-        if (def.type === 'local') {
+        if (def.type === 'local' || def.type === 'native') {
             return localModelSelectEl.value || '';
         } else if (def.model_mode === 'hybrid') {
             // 在线列表拉取成功时以下拉为准，否则以手动输入框为准
@@ -398,6 +398,43 @@ export function createModelConfigForm() {
         }
     };
 
+    // Native 后端：扫描 text_encoders 下的 safetensors，复用本地模型下拉展示
+    const fetchNativeModels = async (savedModel) => {
+        localModelSelectEl.innerHTML = '';
+        const loadingOpt = document.createElement('option');
+        loadingOpt.value = '__loading__';
+        loadingOpt.textContent = '⏳ Loading models...';
+        localModelSelectEl.appendChild(loadingOpt);
+        localModelSelectEl.disabled = true;
+
+        try {
+            const resp = await fetch('/rs_prompts/native_models');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const result = await resp.json();
+            localModelSelectEl.innerHTML = '';
+            if (result.models && result.models.length > 0) {
+                result.models.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.key;
+                    opt.textContent = m.name || m.key;
+                    if (m.key === savedModel) opt.selected = true;
+                    localModelSelectEl.appendChild(opt);
+                });
+                if (!savedModel) localModelSelectEl.value = result.models[0].key;
+            } else {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No models found (place .safetensors in models/text_encoders/)';
+                localModelSelectEl.appendChild(opt);
+            }
+        } catch (e) {
+            console.warn('Failed to fetch native models:', e);
+            localModelSelectEl.innerHTML = '<option value="">❌ Failed to load</option>';
+        } finally {
+            localModelSelectEl.disabled = false;
+        }
+    };
+
     // provider 元数据从后端 /rs_prompts/remote_llm_config 的 provider_list 字段获取
     let providerDefs = [];  // [{id, name, type, default_base_url, append_v1, show_api_key, model_mode}]
     const getProviderDef = (id) => providerDefs.find(p => p.id === id) || {};
@@ -407,7 +444,7 @@ export function createModelConfigForm() {
     // 折叠区显隐：有预设 Base URL 的供应商默认收起（可展开改写）；无预设的常显且不给收起入口；
     // 已存端点与预设不一致（用户改过，如百炼业务空间专属域名）时自动展开，避免自定义端点被藏起来
     const applyAdvancedSection = (def, saved) => {
-        if (def.type === 'local') {
+        if (def.type === 'local' || def.type === 'native') {
             advancedDetails.style.display = 'none';
             return;
         }
@@ -447,7 +484,15 @@ export function createModelConfigForm() {
         applyAdvancedSection(def, saved);
         applyApiKeyHint(def, saved);
         
-        if (def.type === 'local') {
+        if (def.type === 'native') {
+            // Native safetensors：复用本地模型下拉，扫描 text_encoders，隐藏 base_url / api_key / 目录
+            modelInput.style.setProperty('display', 'none', 'important');
+            modelSelectEl.style.setProperty('display', 'none', 'important');
+            localModelSelectEl.style.setProperty('display', 'block', 'important');
+            localDirRow.style.display = "none";
+            localUnloadRow.style.display = "none";
+            await fetchNativeModels(saved.model);
+        } else if (def.type === 'local') {
             // Local GGUF: show dir input + local model select, hide everything else
             modelInput.style.setProperty('display', 'none', 'important');
             modelSelectEl.style.setProperty('display', 'none', 'important');
@@ -626,10 +671,10 @@ export function createModelConfigForm() {
                     providerSelect.appendChild(opt);
                 });
             }
-            let providerValue = config.active_provider || 'local';
+            let providerValue = config.active_provider || 'native';
             const validIds = providerDefs.map(p => p.id);
             if (!validIds.includes(providerValue)) {
-                providerValue = validIds.includes('openai') ? 'openai' : (validIds[0] || 'local');
+                providerValue = validIds[0] || 'native';
             }
             if (config.enabled === false) {
                 providerValue = 'local';

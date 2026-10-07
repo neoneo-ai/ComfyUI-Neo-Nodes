@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Generator
 from pathlib import Path
+from PIL import Image
 import folder_paths
 from collections import OrderedDict
 from urllib.parse import urlparse
@@ -36,6 +37,7 @@ _PROVIDERS_CONFIG_PATH = os.path.join(_CONFIGS_DIR, "llm_providers.json")
 
 # 内置兜底（llm_providers.json 缺失时使用），内容与 configs/llm_providers.json 保持一致
 _BUILTIN_PROVIDER_DEFS = [
+    {"id": "native", "name": "Native (ComfyUI safetensors)", "type": "native", "model_mode": "dropdown"},
     {"id": "local", "name": "Local GGUF (llama.cpp)", "type": "local"},
     {"id": "deepseek", "name": "DeepSeek 深度求索", "type": "remote",
      "default_base_url": "https://api.deepseek.com/v1", "append_v1": True, "show_api_key": True, "requires_api_key": True, "model_mode": "hybrid"},
@@ -483,6 +485,9 @@ def test_remote_connection(provider: str, api_key: str = "", base_url: str = "",
 
     空值回退到该 provider 已存配置（前端掩码未改动时 api_key 传空，此处沿用已存明文密钥）。
     """
+    if provider == "native":
+        # 原生后端本地生成、非 HTTP provider：实跑一次推理即为连接测试
+        return test_native_connection((model or "").strip())
     if not provider or provider == "local":
         return {"success": False, "error": "本地模型无需连接测试"}
     saved = _load_remote_config().get("providers", {}).get(provider) or {}
@@ -559,6 +564,8 @@ def set_remote_llm_config(config: Dict[str, Any]):
         _save_remote_config(saved)
         if saved.get("active_provider") != "local":
             _unload_local_if_inactive()
+        if saved.get("active_provider") != "native":
+            _unload_native_if_inactive()
         return
 
     # 扁平结构：只更新对应 provider 的槽位，不影响其它 provider
@@ -582,6 +589,8 @@ def set_remote_llm_config(config: Dict[str, Any]):
         logger.info(f"Remote LLM provider '{provider}' config updated")
         if provider != "local":
             _unload_local_if_inactive()
+        if provider != "native":
+            _unload_native_if_inactive()
         return
 
     # 未知 provider：只更新启用状态
@@ -591,6 +600,7 @@ def set_remote_llm_config(config: Dict[str, Any]):
 # 远程 LLM 模式常量
 LLM_MODE_LOCAL = "local"
 LLM_MODE_REMOTE = "remote"
+LLM_MODE_NATIVE = "native"
 
 # 流式的最小 max_tokens（远程/本地通用）：思考模型（如 qwen3.6-35b-a3b）会先把预算花在 reasoning_content，
 # 任务模板默认值（~500）常被推理耗尽导致正文为空。给一个下限保证思考后仍有空间输出最终答案；
@@ -598,10 +608,13 @@ LLM_MODE_REMOTE = "remote"
 STREAM_MIN_MAX_TOKENS = 4096
 
 def get_current_mode() -> str:
-    """获取当前 LLM 模式：local 或 remote（基于 provider 值判断）"""
+    """获取当前 LLM 模式：local / remote / native（基于 provider 值判断）"""
     config = _load_remote_config()
-    if config.get("enabled") and config.get("active_provider") in _REMOTE_PROVIDERS:
+    active = config.get("active_provider")
+    if config.get("enabled") and active in _REMOTE_PROVIDERS:
         return LLM_MODE_REMOTE
+    if active == "native":
+        return LLM_MODE_NATIVE
     return LLM_MODE_LOCAL
 
 
@@ -726,6 +739,12 @@ def _unload_local_if_inactive():
     """激活 provider 已不是 local 时，驻留的本地模型不会再被使用，直接释放显存"""
     if LLMSingleton._instance is not None:
         unload_local_model()
+
+
+def _unload_native_if_inactive():
+    """激活 provider 已不是 native 时，驻留的原生文本生成模型不会再被使用，释放显存"""
+    if _NATIVE_CLIP_CACHE:
+        unload_native_model()
 
 
 def __reload_llm_singleton():
@@ -1275,6 +1294,177 @@ def get_llm_instance():
 
 
 # ==========================================
+# Native Backend (ComfyUI safetensors text generation)
+# ==========================================
+# 复用 ComfyUI 原生文本生成路径（clip.tokenize -> clip.generate -> clip.decode），
+# 直接吃 models/text_encoders 下的 safetensors（如 Qwen3.5-4B BF16），无需 llama.cpp wheel。
+# 原生引擎整段生成：非流式直接返回整段；流式走伪流式（整段拆块透传，无逐字动画）。
+# 多轮/工具对话（chat_turn+tools）无法解析 tool_calls，回退 llama.cpp。
+
+_NATIVE_CLIP_CACHE: Dict[str, Any] = {}
+# 原生 clip 单例不可并发：clip.generate 内部会改写 cond_stage_model 的 clip options 与
+# KV/position 缓冲，多线程同时进入会互相踩踏 → 复读乱码，甚至 index_copy_ 越界触发
+# CUDA device-side assert 崩溃。引擎内是串行执行，队列外调用（run_in_executor 线程池）需自己加锁。
+_NATIVE_LOCK = threading.Lock()
+
+
+def scan_native_models() -> List[Dict[str, Any]]:
+    """扫描 text_encoders 目录下的 safetensors 文本生成模型，供前端下拉选择。
+
+    qwen3.5 / qwen3 系列排到最前（前端无已存选择时默认取第一个，故首选即常用模型）。
+    """
+    def rank(name: str) -> int:
+        key = re.sub(r"[^a-z0-9]", "", name.lower())
+        if "qwen35" in key:
+            return 0
+        if "qwen3" in key:
+            return 1
+        return 2
+
+    models: List[Dict[str, Any]] = []
+    try:
+        for name in folder_paths.get_filename_list("text_encoders"):
+            if name.lower().endswith(".safetensors"):
+                models.append({"key": name, "name": name})
+        models.sort(key=lambda m: (rank(m["key"]), m["key"].lower()))
+    except Exception as e:
+        logger.warning(f"Failed to scan native text_encoders models: {e}")
+    return models
+
+
+def _get_native_model_name() -> str:
+    """读取 native provider 槽位保存的模型文件名。"""
+    slot = _load_remote_config().get("providers", {}).get("native", {})
+    return str(slot.get("model", "") or "")
+
+
+def _build_native_clip(name: str):
+    """按文件名从 text_encoders 加载并缓存 ComfyUI CLIP 单例（Qwen3.5 等 safetensors 文本生成模型）。"""
+    if not name:
+        raise RuntimeError(
+            "Native model not selected. Open Settings → Neo LLM → Native and pick a model.\n"
+            "Place a Qwen3.5 safetensors file in models/text_encoders/ first."
+        )
+    cached = _NATIVE_CLIP_CACHE.get(name)
+    if cached is not None:
+        return cached
+    import comfy.sd
+    path = folder_paths.get_full_path_or_raise("text_encoders", name)
+    logger.info(f"Loading native text-gen model: {path}")
+    # Qwen3.5 由 detect_te_model 按权重形状自动识别，无需指定 clip_type
+    clip = comfy.sd.load_clip(
+        ckpt_paths=[path],
+        model_options={"clip_name": name},
+    )
+    _NATIVE_CLIP_CACHE[name] = clip
+    logger.info(f"Native text-gen model loaded: {name}")
+    print(f"[NeoNodes] Native text-gen model loaded: {name}")
+    return clip
+
+
+def unload_native_model():
+    """释放原生文本生成模型缓存（显存）。"""
+    _NATIVE_CLIP_CACHE.clear()
+    logger.info("Native text-gen models unloaded")
+
+
+def _pil_to_comfy_image(img) -> Any:
+    """PIL Image / 字节 → ComfyUI IMAGE 张量 [1,H,W,3] float 0-1。"""
+    import numpy as np
+    import torch
+    if not isinstance(img, Image.Image):
+        img = Image.open(io.BytesIO(img))
+    arr = np.array(img.convert("RGB"), dtype="float32") / 255.0
+    return torch.from_numpy(arr).unsqueeze(0)
+
+
+def _run_native_inference(system_prompt: str, user_text: str, max_tokens: int,
+                          images: Optional[Any] = None, do_sample: bool = False,
+                          temperature: float = 1.0, top_k: int = 50, top_p: float = 0.95,
+                          min_p: float = 0.0, repetition_penalty: float = 1.0,
+                          presence_penalty: float = 0.0, seed: Optional[int] = None,
+                          thinking: bool = False, strip_thinking: bool = True,
+                          model: Optional[str] = None) -> str:
+    """原生 ComfyUI 文本生成后端：tokenize -> generate -> decode，整段生成。
+
+    默认贪心（do_sample=False）保证确定性与可复现；传入采样参数时按参数采样。
+    strip_thinking=True 剥离思考块只留正文（非流式）；伪流式传 False 保留原文，
+    交由 _native_stream_chunks 按思考/正文拆块透传前端。
+    model 覆盖本次调用的模型（连接测试用当前表单值，缺省读已保存槽位）。
+    """
+    import comfy.utils
+    import comfy.cli_args
+    # 单例 clip 串行化：并发进入会让 clip.generate 改写共享的 clip options / KV 缓冲而互相踩踏。
+    with _NATIVE_LOCK:
+        # 队列外执行：原生解码在有 comfy-aimdo(DynamicVRAM) 的服务器里走 graph_dynamic_vbar_blocks +
+        # CUDA-graph 复用（prefetch_queue_pop 的 enable_graph）。队列外第二次复用会把 KV 写坏 →
+        # index_copy_ 越界 → device-side assert 崩溃（首次全新加载正常）。强制 eager 路径即稳定，
+        # 与首次加载行为一致。生成结束恢复全局标志。
+        args = comfy.cli_args.args
+        old_dcg, old_dcc = args.disable_cuda_graphs, args.disable_comfy_compiler
+        args.disable_cuda_graphs = True
+        args.disable_comfy_compiler = True
+        # 队列外执行：原生 generate 内部用 comfy.utils.ProgressBar 逐 token 上报，进度钩子取不到
+        # prompt_id/node_id 时会回退读 server_instance.last_prompt_id（首次入队前该属性不存在）→
+        # AttributeError。这里临时禁用全局 hook 后恢复（同 sam3_seg 队列外调用范式）。
+        old_hook = comfy.utils.PROGRESS_BAR_HOOK
+        comfy.utils.PROGRESS_BAR_HOOK = None
+        try:
+            clip = _build_native_clip((model or "").strip() or _get_native_model_name())
+            image_tensor = None
+            if images is not None and len(images) > 0:
+                image_tensor = _pil_to_comfy_image(images[0])
+            tokens = clip.tokenize(user_text, image=image_tensor, system_prompt=system_prompt,
+                                   thinking=thinking, min_length=1)
+            gen = clip.generate(tokens, do_sample=do_sample, max_length=max_tokens,
+                                temperature=temperature, top_k=top_k, top_p=top_p, min_p=min_p,
+                                repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
+                                seed=seed, mtp=False)
+            text = clip.decode(gen)
+        finally:
+            comfy.utils.PROGRESS_BAR_HOOK = old_hook
+            args.disable_cuda_graphs = old_dcg
+            args.disable_comfy_compiler = old_dcc
+    # 剥离思考块，仅保留正文（与 TextGenerate 节点一致）
+    if strip_thinking:
+        reasoning, sep, body = text.partition("</think>")
+        if sep and (reasoning.lstrip().startswith("<think>") or user_text.rstrip().endswith("<think>")):
+            text = body
+    return text.strip()
+
+
+def _native_stream_chunks(text: str) -> Generator[Dict[str, Any], None, None]:
+    """原生整段文本 → 伪流式块：按 <think> 拆成 thinking/content，逐块 yield {"text","kind"}。
+
+    原生引擎整段生成、无法逐 token，这里把整段结果拆块喂给流式接口，
+    前端思考面板与正文照常工作（无逐字打字动画）。
+    """
+    splitter = _InlineThinkSplitter()
+    for kind, part in list(splitter.feed(text)) + splitter.flush():
+        if part:
+            yield {"text": part, "kind": kind}
+
+
+def test_native_connection(model: str = "") -> Dict[str, Any]:
+    """原生后端连接测试：真正加载模型并跑一次短推理，返回 {success, reply}｜{success, error}。
+
+    远程 provider 的连接测试打 HTTP；原生后端本地生成，故此处实跑一次推理，
+    用当前表单模型（缺省读已保存槽位）验证模型可加载、可出字。
+    """
+    try:
+        text = _run_native_inference("You are a helpful assistant. Reply briefly.",
+                                     "你好", 32, model=(model or "").strip() or None)
+    except Exception as e:
+        logger.warning(f"Native LLM connection test failed: {e}")
+        return {"success": False, "error": str(e)}
+    reply = (text or "").strip()
+    if not reply:
+        return {"success": False, "error": "模型返回为空"}
+    preview = reply[:80] + ("…" if len(reply) > 80 else "")
+    return {"success": True, "reply": preview}
+
+
+# ==========================================
 # Unified LLM Inference Engine
 # ==========================================
 
@@ -1305,8 +1495,15 @@ def _run_llm_inference(system_prompt: str, user_text: str, max_tokens: int,
         # 远程模式不再回退本地：请求成功返回结果，不能访问则直接抛错由上层上报
         return _run_remote_inference(system_prompt, user_text, max_tokens, images, stream=stream,
                                      enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
-    else:
-        return _run_local_inference(system_prompt, user_text, max_tokens, images, stream=stream)
+    if get_current_mode() == LLM_MODE_NATIVE:
+        # 原生引擎整段生成、无法逐 token。流式请求走伪流式：跑完整段后按思考/正文拆块透传，
+        # 前端流式接口照常工作（无逐字打字动画）。工具循环（chat_turn+tools）仍回退 llama.cpp。
+        text = _run_native_inference(system_prompt, user_text, max_tokens, images=images,
+                                     thinking=bool(enable_thinking), strip_thinking=not stream)
+        if stream:
+            return _native_stream_chunks(text)
+        return text
+    return _run_local_inference(system_prompt, user_text, max_tokens, images, stream=stream)
 
 
 def _run_local_inference(system_prompt: str, user_text: str, max_tokens: int,
@@ -1554,6 +1751,8 @@ def chat_turn(messages: List[Dict[str, Any]], max_tokens: Optional[int] = None,
         response = client.chat_completion(messages=messages, max_tokens=max_tokens, tools=tools,
                                           enable_thinking=enable_thinking, reasoning_effort=reasoning_effort)
     else:
+        if get_current_mode() == LLM_MODE_NATIVE:
+            logger.info("Native backend does not support multi-turn/tool chat; falling back to llama.cpp local backend.")
         llm = get_llm_instance()
         response = llm.create_chat_completion(
             messages=messages,

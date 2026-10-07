@@ -58,6 +58,7 @@ from .llm import (
     get_available_models,
     set_current_model,
     unload_local_model,
+    scan_native_models,
     get_remote_llm_config,
     set_remote_llm_config,
     get_current_mode,
@@ -812,6 +813,16 @@ async def rs_prompts_get_models(request):
     except Exception as e:
         logger.error(f"Error getting models: {e}")
         return web.Response(status=500, text=str(e))
+
+@server.PromptServer.instance.routes.get("/rs_prompts/native_models")
+async def rs_prompts_get_native_models(request):
+    """原生文本生成模型列表（扫描 text_encoders 下的 safetensors）。"""
+    try:
+        models = scan_native_models()
+        return web.json_response({"models": models})
+    except Exception as e:
+        logger.error(f"Error getting native models: {e}")
+        return web.json_response({"models": []})
 
 @server.PromptServer.instance.routes.post("/rs_prompts/set_model")
 async def rs_prompts_set_model(request):
