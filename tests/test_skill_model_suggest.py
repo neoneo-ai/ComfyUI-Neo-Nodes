@@ -36,7 +36,16 @@ _fake_server = types.ModuleType("server")
 _fake_server.PromptServer = _FakePromptServer
 sys.modules["server"] = _fake_server
 
-import workflow  # noqa: E402
+# workflow 用相对导入（.civitai），测试里造一个包壳让它可导入
+import importlib  # noqa: E402
+
+_PKG = "neo_skill_model_suggest_test_pkg"
+if _PKG not in sys.modules:
+    _pkg = types.ModuleType(_PKG)
+    _pkg.__path__ = [_NODE_DIR]
+    sys.modules[_PKG] = _pkg
+
+workflow = importlib.import_module(f"{_PKG}.workflow")
 
 
 class _FakeFolderPaths:

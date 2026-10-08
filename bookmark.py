@@ -17,6 +17,7 @@ import aiohttp
 from aiohttp import web
 from server import PromptServer
 
+from . import civitai
 from .util import (
     IMG_EXTENSIONS,
     VIDEO_EXTENSIONS,
@@ -32,8 +33,6 @@ CIVITAI_BOOKMARK_DIR = GALLERY_DIR / "civitai_bookmarks"  # cached example image
 CIVITAI_DIR_KEY = "civitai_bookmarks"  # stable dir_name key for the bookmarked C-site models virtual dir (display name is frontend-only)
 BOOKMARKS_FILE = CONFIGS_DIR / "bookmarks.json"  # local bookmarks: path info only
 
-CIVITAI_API_BASE = "https://civitai.com/api/v1"
-
 # 当前 bookmark 示例图缓存进度（前端轮询，与后端 Lora auto-cache 用法一致）
 _bookmark_cache_state: dict = {"running": False, "total": 0, "done": 0, "current": "", "error": ""}
 
@@ -47,7 +46,7 @@ def _is_civitai_bookmark_enabled() -> bool:
 
 
 def _civitai_api_key() -> str:
-    return str(_load_settings().get("civitai_api_key") or "").strip()
+    return civitai.api_key()
 
 
 # ---------------------------------------------------------------------------
@@ -157,24 +156,9 @@ def _dedupe_local_bookmark(item: dict, items: list) -> bool:
 # example media locally so the standard gallery grid + lightbox can browse them.
 # ---------------------------------------------------------------------------
 
-def _civitai_headers(api_key: str) -> dict:
-    headers = {"User-Agent": "ComfyUI-Neo-Nodes"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
 async def _civitai_get(session, path: str, params: dict, api_key: str):
     """GET a Civitai API path. Returns (http_status, parsed_json)."""
-    url = f"{CIVITAI_API_BASE}{path}"
-    try:
-        async with session.get(url, params=params, headers=_civitai_headers(api_key),
-                               timeout=aiohttp.ClientTimeout(total=25)) as resp:
-            if resp.status != 200:
-                return resp.status, None
-            return resp.status, await resp.json()
-    except Exception:
-        return 0, None
+    return await civitai.api_get(session, path, params, api_key, timeout=25)
 
 
 def _parse_civitai_model_id(url: str) -> int | None:
@@ -330,7 +314,7 @@ def _media_ext_from_url_or_bytes(url: str, data: bytes) -> str:
 async def _download_bytes(session, url: str, max_bytes: int | None = None) -> bytes | None:
     try:
         timeout = aiohttp.ClientTimeout(total=300 if max_bytes else 30)
-        async with session.get(url, timeout=timeout) as resp:
+        async with session.get(url, timeout=timeout, **civitai.proxy_kwargs()) as resp:
             if resp.status != 200:
                 return None
             data = await resp.read()
@@ -480,51 +464,75 @@ async def neo_bookmark_civitai_list(request):
     refresh = bool(data.get("refresh"))
     limit = 24
     cache = _load_bookmark_list_cache()
-    entry = (cache.get("pages") or {}).get(str(page))
-    if not refresh and entry and time.time() - float(cache.get("ts", 0)) < BOOKMARK_LIST_TTL:
-        # 命中缓存也刷新一次本地封面：后台刚缓存/新下载示例时列表立即可见双图。
+    pages = cache.get("pages") or {}
+    fresh = bool(cache.get("ts")) and time.time() - float(cache.get("ts", 0)) < BOOKMARK_LIST_TTL
+
+    def cached(p):
+        """缓存命中的那一页；顺带刷新本地封面（后台刚缓存示例时立即可见双图）。
+        旧缓存没有游标链，按未命中处理重走一遍。"""
+        entry = pages.get(str(p))
+        if not (fresh and entry and entry.get("next_cursor") is not None):
+            return None
         items = list(entry["items"])
         for it in items:
             if it.get("id") is not None:
                 lc = _civitai_local_covers(it.get("id"), it.get("name") or "")
                 if lc:
                     it["covers"] = lc
-        return web.json_response({"success": True, "items": items, "page": page,
-                                  "has_more": entry["has_more"]})
+        return items
+
+    if not refresh:
+        items = cached(page)
+        if items is not None:
+            return web.json_response({"success": True, "items": items, "page": page,
+                                      "has_more": pages[str(page)]["has_more"]})
+    # 收藏列表只认 cursor 翻页（page / skip 会被 C 站忽略并重复返回第一页），
+    # 所以按缓存里的游标链逐页走到目标页。
     async with aiohttp.ClientSession() as session:
-        status, body = await _civitai_get(session, "/models", {
-            "favorites": "true", "type": "Model", "limit": str(limit), "skip": str(page * limit),
-        }, api_key)
-    if status in (401, 403):
-        return web.json_response({"success": False, "error": "Civitai API KEY 无效"}, status=401)
-    if status != 200 or not isinstance(body, dict):
-        if entry:  # network failure: fall back to the stale cache
-            return web.json_response({"success": True, "items": entry["items"], "page": page,
-                                      "has_more": entry["has_more"]})
-        return web.json_response({"success": False, "error": f"Civitai HTTP {status or 'error'}"}, status=502)
-    items = []
-    for it in body.get("items") or []:
-        if not isinstance(it, dict):
-            continue
-        mid = it.get("id")
-        mname = it.get("name") or ""
-        covers = _civitai_local_covers(mid, mname)
-        if not covers:
-            remote = _civitai_cover_from_model(it)
-            covers = [{"url": remote}] if remote else []
-        items.append({
-            "id": mid,
-            "name": mname,
-            "type": it.get("type") or "",
-            "baseModel": it.get("baseModel") or "",
-            "nsfw": bool(it.get("nsfw")),
-            "covers": covers,
-        })
-    pages = cache.get("pages") or {}
-    pages[str(page)] = {"items": items, "has_more": len(items) >= limit}
-    _save_bookmark_list_cache({"ts": time.time(), "pages": pages})
-    return web.json_response({"success": True, "items": items, "page": page,
-                              "has_more": len(items) >= limit})
+        cursor = ""
+        for p in range(page + 1):
+            if cached(p) is not None:
+                cursor = pages[str(p)].get("next_cursor") or ""
+                continue
+            params = {"favorites": "true", "limit": str(limit)}
+            if cursor:
+                params["cursor"] = cursor
+            status, body = await _civitai_get(session, "/models", params, api_key)
+            if status in (401, 403):
+                return web.json_response({"success": False, "error": "Civitai API KEY 无效"}, status=401)
+            if status != 200 or not isinstance(body, dict):
+                entry = pages.get(str(p))
+                if entry:  # network failure: fall back to the stale cache
+                    return web.json_response({"success": True, "items": entry["items"],
+                                              "page": p, "has_more": entry["has_more"]})
+                return web.json_response({"success": False, "error": civitai.error_message(
+                    status, civitai.error_detail(body))}, status=502)
+            items = []
+            for it in body.get("items") or []:
+                if not isinstance(it, dict):
+                    continue
+                mid = it.get("id")
+                mname = it.get("name") or ""
+                covers = _civitai_local_covers(mid, mname)
+                if not covers:
+                    remote = _civitai_cover_from_model(it)
+                    covers = [{"url": remote}] if remote else []
+                items.append({
+                    "id": mid,
+                    "name": mname,
+                    "type": it.get("type") or "",
+                    "baseModel": it.get("baseModel") or "",
+                    "nsfw": bool(it.get("nsfw")),
+                    "covers": covers,
+                })
+            cursor = str(((body.get("metadata") or {}).get("nextCursor")) or "")
+            pages[str(p)] = {"items": items, "has_more": len(items) >= limit,
+                             "next_cursor": cursor}
+            _save_bookmark_list_cache({"ts": time.time(), "pages": pages})
+            fresh = True
+    entry = pages[str(page)]
+    return web.json_response({"success": True, "items": entry["items"], "page": page,
+                              "has_more": entry["has_more"]})
 @PromptServer.instance.routes.post("/neo_bookmark/civitai/cover")
 async def neo_bookmark_civitai_cover(request):
     """Return a preview image URL for one Civitai model (cached in memory), used as the

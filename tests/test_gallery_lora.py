@@ -11,6 +11,7 @@ _STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
 import os
 import sys
 import json
+import asyncio
 import struct
 import tempfile
 import types
@@ -201,6 +202,66 @@ class HeaderMetaTests(unittest.TestCase):
             self.assertEqual(item["dtype"], "F16")
         finally:
             gallery_lora._load_lora_index = orig
+
+
+class CivitaiProbeTests(unittest.TestCase):
+    """连通性测试：走 GET /me 校验 KEY，返回给设置页的 reachable / key_ok / message。
+
+    桩的 api_get 签名与 civitai.api_get 一致，调用方式写错（关键字名对不上）会直接炸。
+    """
+
+    def setUp(self):
+        self._orig = (gallery_lora.civitai.api_key, gallery_lora.civitai.api_get,
+                      gallery_lora.aiohttp.ClientSession)
+        self.calls = []
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        gallery_lora.aiohttp.ClientSession = lambda *a, **k: _Session()
+
+    def tearDown(self):
+        (gallery_lora.civitai.api_key, gallery_lora.civitai.api_get,
+         gallery_lora.aiohttp.ClientSession) = self._orig
+
+    def _probe(self, key, status, body):
+        async def fake_api_get(session, path, params=None, key=None, timeout=25):
+            self.calls.append({"path": path, "key": key})
+            return status, body
+
+        gallery_lora.civitai.api_key = lambda: key
+        gallery_lora.civitai.api_get = fake_api_get
+        resp = asyncio.run(gallery_lora.civitai_test(object()))
+        return resp.status, json.loads(resp.body)
+
+    def test_valid_key_reports_username(self):
+        code, out = self._probe("k", 200, {"username": "dreamboy"})
+        self.assertEqual(code, 200)
+        self.assertTrue(out["reachable"])
+        self.assertTrue(out["key_ok"])
+        self.assertIn("dreamboy", out["message"])
+        self.assertEqual(self.calls, [{"path": "/me", "key": "k"}])
+
+    def test_missing_key_skips_request(self):
+        code, out = self._probe("", 200, {})
+        self.assertFalse(out["success"])
+        self.assertFalse(out["key_ok"])
+        self.assertEqual(self.calls, [], "没有 KEY 不应请求 C 站")
+
+    def test_unreachable_reports_not_reachable(self):
+        code, out = self._probe("k", 0, None)
+        self.assertFalse(out["reachable"])
+        self.assertFalse(out["key_ok"])
+
+    def test_bad_key_marks_key_ok_false(self):
+        code, out = self._probe("k", 401, None)
+        self.assertTrue(out["reachable"])
+        self.assertFalse(out["key_ok"])
+        self.assertEqual(out["http_status"], 401)
 
 
 if __name__ == "__main__":

@@ -265,3 +265,192 @@ test("模型库：接口失败给出可读提示且弹窗保持可用", async ()
     hub.closeModelHub();
     clearBody();
 });
+
+// ---------------------------------------------------------------------------
+// Civitai 第三源：过滤行 / 搜索参数 / 底模下拉 / 权重清单 / 签名端点下载 / 设置回显
+// ---------------------------------------------------------------------------
+
+const CIVI_SETTINGS = {
+    source: "civitai", hf_endpoint: "", hf_token: "", ms_token: "",
+    llm_subdir: "LLM", timeout_total: 3600, sock_read: 120,
+};
+const CIVI_MODELS = {
+    items: [
+        { id: 123, name: "MyLoRA", base_models: ["SDXL"], type: "LORA", downloads: 4200, creator: "Tom" },
+        { id: 456, name: "Dark", base_models: [], type: "LoCon", downloads: 12, nsfw: true },
+    ],
+    page: 1,
+    base_models: ["SDXL", "Pony"],
+};
+const CIVI_FILES = {
+    files: [{
+        path: "/api/download/models/1?token=t", filename: "mylora.safetensors", category: "loras",
+        size: 140 * 1024 * 1024, version_name: "v2", base_model: "SDXL", trained_words: ["kw"], exists: false,
+    }],
+};
+
+function mockCivitai(source = "civitai") {
+    mockRoute("/neo_model_hub/settings", () => jsonResponse({
+        settings: { ...CIVI_SETTINGS, source }, registry: { groups: [], bundles: [] },
+        categories: ["loras", "diffusion_models"],
+        sources: ["modelscope", "huggingface", "civitai"],
+        civitai: { api_key_set: true, proxy: "http://127.0.0.1:7890" },
+    }));
+    mockRoute("/neo_model_hub/repos", () => jsonResponse({ repos: [] }));
+    mockRoute("/neo_model_hub/files", () => jsonResponse({ files: [] }));
+    mockRoute("/neo_model_hub/civitai/search", () => jsonResponse(CIVI_MODELS));
+    mockRoute("/neo_model_hub/civitai/files", () => jsonResponse(CIVI_FILES));
+    mockRoute("/neo_model_hub/subfolders", () => jsonResponse({ subfolders: [], default: "" }));
+    mockRoute("/neo_model_hub/download", () => jsonResponse({ success: true, download: { state: "running" } }));
+    mockRoute("/neo_model_hub/progress", () => jsonResponse({ download: { state: "idle" } }));
+}
+
+test("模型库：C 站源显示过滤行，搜索参数与模型/权重清单按 C 站结构渲染", async () => {
+    resetEnv();
+    clearRoutes();
+    mockCivitai();
+    const overlay = await openHub({ source: "civitai" });
+
+    // 源按钮 / 过滤行 / 搜索提示随源切换
+    const active = [...overlay.querySelectorAll(".neo-hub-src-btn")]
+        .filter((b) => b.classList.contains("neo-hub-src-active")).map((b) => b.dataset.source);
+    assert.deepEqual(active, ["civitai"], "C 站源未激活");
+    assert.equal(overlay.querySelector(".neo-hub-civi").style.display, "", "C 站过滤行未显示");
+    assert.match(overlay.querySelector(".neo-hub-search").placeholder, /C 站/, "搜索提示未随源切换");
+    assert.deepEqual(missingRoutes.filter((r) => r.includes("/neo_model_hub/")), [], "有未覆盖的模型库请求");
+
+    // 搜索请求：类型 / 底模 / 排序 / NSFW / 页码 / 关键词 / 游标
+    assert.deepEqual(fetchLog.filter((c) => c.path === "/neo_model_hub/civitai/search").at(-1).body, {
+        query: "", types: ["LORA"], base_models: [], sort: "Most Downloaded", nsfw: false,
+        page: 1, cursor: "",
+    }, "C 站搜索参数不符");
+
+    // 底模下拉：保留「全部底模」再补响应里的底模
+    assert.deepEqual([...overlay.querySelectorAll(".neo-hub-civi-base option")].map((o) => o.value),
+        ["", "SDXL", "Pony"], "底模下拉未由响应填充");
+
+    // 模型下拉：名称 · 底模（缺则类型）· 下载数 · NSFW · 作者
+    assert.deepEqual([...overlay.querySelectorAll(".neo-hub-repo option")].map((o) => o.textContent),
+        ["MyLoRA · SDXL · 4200 · Tom", "Dark · LoCon · 12 · NSFW"], "C 站模型条目不符");
+    assert.equal(overlay.querySelector(".neo-hub-info").textContent, "2 个模型 · 第 1 页", "模型计数不符");
+
+    // 权重清单带版本名；点文件后落盘预览用 C 站类别
+    assert.deepEqual([...overlay.querySelectorAll(".neo-hub-files option")].map((o) => o.textContent),
+        ["mylora.safetensors  [loras]  140.0 MB  〈v2〉"], "C 站文件清单不符");
+    changeValue(overlay.querySelector(".neo-hub-files"), "/api/download/models/1?token=t");
+    await sleep(40);
+    assert.equal(overlay.querySelector(".neo-hub-dest").textContent,
+        "→ models/loras/mylora.safetensors", "C 站落盘预览不符");
+    hub.closeModelHub();
+    clearBody();
+});
+
+
+test("模型库：C 站下载走签名端点，设置面板回显 KEY 状态与代理", async () => {
+    resetEnv();
+    clearRoutes();
+    mockCivitai();
+    const overlay = await openHub({ source: "civitai" });
+
+    // 设置回显：只报 KEY 是否已设置与代理地址，不回明文
+    const note = overlay.querySelector(".neo-hub-civi-note").textContent;
+    assert.match(note, /API KEY 已设置/, "C 站 KEY 状态未回显");
+    assert.match(note, /http:\/\/127\.0\.0\.1:7890/, "C 站代理未回显");
+
+    // 类别与表单由设置响应填充，C 站源不被默认源覆盖
+    assert.deepEqual([...overlay.querySelectorAll(".neo-hub-cat option")].map((o) => o.value),
+        ["loras", "diffusion_models"], "类别未按设置填充");
+    assert.equal(overlay.querySelector(".neo-hub-settings").style.display, "none", "设置面板应默认收起");
+
+    changeValue(overlay.querySelector(".neo-hub-files"), "/api/download/models/1?token=t");
+    await sleep(40);
+    click(overlay.querySelector(".neo-hub-dl"));
+    await sleep(40);
+    assert.deepEqual(fetchLog.filter((c) => c.path === "/neo_model_hub/download").at(-1).body, {
+        source: "civitai", repo: "civitai/123", path: "/api/download/models/1?token=t",
+        category: "loras", subfolder: "", filename: "mylora.safetensors",
+    }, "C 站下载请求体不符");
+    hub.closeModelHub();
+    clearBody();
+});
+
+test("模型库：切到 C 站源后按过滤条件重搜，不拉 HF/MS 仓库列表", async () => {
+    resetEnv();
+    clearRoutes();
+    mockCivitai("modelscope");
+    const overlay = await openHub();
+    assert.equal(overlay.querySelector(".neo-hub-civi").style.display, "none", "非 C 站源不应显示过滤行");
+
+    const civiBtn = [...overlay.querySelectorAll(".neo-hub-src-btn")].find((b) => b.dataset.source === "civitai");
+    click(civiBtn);
+    await sleep(60);
+    assert.equal(overlay.querySelector(".neo-hub-civi").style.display, "", "切源后过滤行未显示");
+    assert.equal(fetchLog.filter((c) => c.path === "/neo_model_hub/repos").length, 1, "C 站源不应拉仓库列表");
+
+    // 类型变更 → 按新类型重搜（refresh 保持当前页）
+    inputText(overlay.querySelector(".neo-hub-search"), "anime");
+    changeValue(overlay.querySelector(".neo-hub-civi-type"), "LoCon");
+    await sleep(60);
+    assert.deepEqual(fetchLog.filter((c) => c.path === "/neo_model_hub/civitai/search").at(-1).body, {
+        query: "anime", types: ["LoCon"], base_models: [], sort: "Most Downloaded", nsfw: false,
+        page: 1, cursor: "",
+    }, "类型变更未重搜");
+
+    // 底模 + NSFW → 进参数
+    changeValue(overlay.querySelector(".neo-hub-civi-base"), "Pony");
+    const nsfwInput = overlay.querySelector(".neo-hub-civi input[type=\"checkbox\"]");
+    nsfwInput.checked = true;
+    changeValue(nsfwInput, "on");
+    await sleep(60);
+    const last = fetchLog.filter((c) => c.path === "/neo_model_hub/civitai/search").at(-1).body;
+    assert.deepEqual([last.base_models, last.nsfw], [["Pony"], true], "底模 / NSFW 未进参数");
+
+    // 搜索框回车 → 回到第 1 页
+    keydown(overlay.querySelector(".neo-hub-search"), "Enter");
+    await sleep(60);
+    assert.equal(fetchLog.filter((c) => c.path === "/neo_model_hub/civitai/search").at(-1).body.page, 1,
+        "回车搜索应回到第 1 页");
+    hub.closeModelHub();
+    clearBody();
+});
+
+test("模型库：C 站下一页按 next_cursor 翻页，上一页回退，过滤变更作废游标", async () => {
+    resetEnv();
+    clearRoutes();
+    mockCivitai();
+    const searchBodies = [];
+    mockRoute("/neo_model_hub/civitai/search", (body) => {
+        searchBodies.push(body);
+        return jsonResponse(body.page === 2
+            ? { ...CIVI_MODELS, page: 2, items: [CIVI_MODELS.items[0]] }
+            : { ...CIVI_MODELS, next_cursor: "CURSOR-2" });
+    });
+    const overlay = await openHub({ source: "civitai" });
+
+    const nextBtn = overlay.querySelector(".neo-hub-civi-next");
+    const prevBtn = overlay.querySelector(".neo-hub-civi-prev");
+    assert.equal(prevBtn.disabled, true, "第 1 页上一页应禁用");
+    assert.equal(nextBtn.disabled, false, "有 next_cursor 时下一页应可用");
+
+    click(nextBtn);
+    await sleep(60);
+    assert.deepEqual([searchBodies.at(-1).page, searchBodies.at(-1).cursor], [2, "CURSOR-2"],
+        "下一页未按游标请求");
+    assert.equal(overlay.querySelector(".neo-hub-info").textContent, "1 个模型 · 第 2 页", "翻页计数不符");
+    assert.equal(prevBtn.disabled, false, "第 2 页上一页应可用");
+    assert.equal(nextBtn.disabled, true, "无 next_cursor 时下一页应禁用");
+
+    click(prevBtn);
+    await sleep(60);
+    assert.deepEqual([searchBodies.at(-1).page, searchBodies.at(-1).cursor], [1, ""],
+        "上一页未回到第 1 页");
+
+    // 排序变更 → 旧游标作废，回到第 1 页
+    changeValue(overlay.querySelector(".neo-hub-civi-sort"), "Newest");
+    await sleep(60);
+    assert.deepEqual([searchBodies.at(-1).page, searchBodies.at(-1).cursor, searchBodies.at(-1).sort],
+        [1, "", "Newest"], "过滤变更未回到第 1 页");
+    hub.closeModelHub();
+    clearBody();
+});
+

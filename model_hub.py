@@ -16,6 +16,7 @@ import aiohttp
 from aiohttp import web
 from server import PromptServer
 
+from . import civitai
 from .util import CONFIGS_DIR
 
 ORG = "Comfy-Org"
@@ -24,7 +25,7 @@ DEFAULT_HF_ENDPOINT = "https://huggingface.co"
 HUB_FILE = CONFIGS_DIR / "model_hub.json"
 REGISTRY_FILE = CONFIGS_DIR / "model_registry.json"
 
-SOURCES = ("modelscope", "huggingface")
+SOURCES = ("modelscope", "huggingface", "civitai")
 REPO_CACHE_TTL = 900.0
 FILE_CACHE_TTL = 600.0
 MS_PROBE_CONCURRENCY = 8
@@ -233,10 +234,14 @@ def ms_resolve_url(repo: str, path: str) -> str:
 def resolve_url(source: str, repo: str, path: str, settings: dict) -> str:
     if source == "modelscope":
         return ms_resolve_url(repo, path)
+    if source == "civitai":
+        return f"{civitai.API_HOST}{path}"
     return hf_resolve_url(settings["hf_endpoint"], repo, path)
 
 
 def source_headers(source: str, settings: dict) -> dict:
+    if source == "civitai":
+        return civitai.headers()
     headers = {"User-Agent": USER_AGENT}
     token = str((settings.get("ms_token") if source == "modelscope" else settings.get("hf_token")) or "").strip()
     if token:
@@ -717,6 +722,21 @@ def validate_path(path: str) -> str:
     return path
 
 
+def validate_civitai_path(path: str) -> str:
+    """C 站下载只允许签名端点 /api/download/models/<id>?…（挡 SSRF 与任意主机）。"""
+    validated = civitai.download_path(f"{civitai.API_HOST}{str(path or '')}")
+    if not validated:
+        raise HubError(f"非法 C 站下载地址: {path}", 400)
+    return validated
+
+
+def validate_civitai_id(value) -> str:
+    model_id = str(value if value is not None else "").strip()
+    if not model_id.isdigit():
+        raise HubError("非法 C 站模型 id", 400)
+    return model_id
+
+
 async def start_download(payload: dict, settings: dict) -> dict:
     global _download, _download_task
     if _download and _download.get("state") == "running":
@@ -725,9 +745,14 @@ async def start_download(payload: dict, settings: dict) -> dict:
     if source not in SOURCES:
         raise HubError(f"未知下载源: {source}", 400)
     repo = validate_repo(payload.get("repo"))
-    path = validate_path(payload.get("path"))
-    filename = str(payload.get("filename") or path.split("/")[-1])
-    category = str(payload.get("category") or infer_category(path))
+    if source == "civitai":
+        path = validate_civitai_path(payload.get("path"))
+        filename = str(payload.get("filename") or "")
+        category = str(payload.get("category") or "loras")
+    else:
+        path = validate_path(payload.get("path"))
+        filename = str(payload.get("filename") or path.split("/")[-1])
+        category = str(payload.get("category") or infer_category(path))
     dest = resolve_target(category, payload.get("subfolder"), filename, settings, repo)
     _download = {
         "source": source, "repo": repo, "path": path, "category": category,
@@ -773,13 +798,17 @@ async def _run_download(state: dict, settings: dict) -> None:
     if start:
         headers["Range"] = f"bytes={start}-"
     url = resolve_url(state["source"], state["repo"], state["path"], settings)
+    # C 站签名地址短时效：续传每次重新请求签名端点，代理只对 C 站请求生效
+    civitai_kwargs = civitai.proxy_kwargs() if state["source"] == "civitai" else {}
     state["done"] = start
     tick, tick_bytes = time.time(), 0
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=download_timeout(settings)) as resp:
+            async with session.get(url, headers=headers, timeout=download_timeout(settings),
+                                   **civitai_kwargs) as resp:
                 if resp.status == 401:
-                    raise HubError("该源需要有效 Token（受限仓库）", 401, "need_token")
+                    raise HubError(civitai.error_message(401) if state["source"] == "civitai"
+                                   else "该源需要有效 Token（受限仓库）", 401, "need_token")
                 if resp.status == 403:
                     raise HubError("该源拒绝访问（需登录 / 协议限制）", 403)
                 if resp.status == 404:
@@ -848,7 +877,7 @@ def _error(e: Exception, source: str = "") -> "web.json_response":
         payload = {"success": False, "error": str(e)}
         if e.code:
             payload["code"] = e.code
-        if e.status == 404 and source:
+        if e.status == 404 and source in ("modelscope", "huggingface"):
             payload["code"] = "not_on_source"
             payload["other_source"] = other_source(source)
         return web.json_response(payload, status=e.status)
@@ -864,6 +893,7 @@ async def rs_hub_settings(request):
         "registry": load_registry(),
         "categories": ui_categories(settings),
         "sources": list(SOURCES),
+        "civitai": {"api_key_set": bool(civitai.api_key()), "proxy": civitai.proxy()},
     })
 
 
@@ -963,6 +993,103 @@ async def rs_hub_progress(request):
 @PromptServer.instance.routes.post("/neo_model_hub/cancel")
 async def rs_hub_cancel(request):
     return web.json_response({"success": cancel_download()})
+
+
+# ---------------------------------------------------------------------------
+# C 站（Civitai）源：LoRA 搜索 → 版本/文件清单 → 复用同一套断点续传下载
+# API KEY 与代理读画廊设置（configs/gallery_settings.json），见 civitai.py
+# ---------------------------------------------------------------------------
+
+CIVITAI_PAGE_SIZE = 24
+CIVITAI_CATEGORY = "loras"
+
+
+async def civitai_search(payload: dict) -> tuple:
+    """C 站 LoRA 搜索：返回 (模型列表, 页码, 下一页游标, 底模取值)。"""
+    async with aiohttp.ClientSession() as session:
+        base_models = await civitai.fetch_enums(session)
+        params = civitai.search_params(
+            query=str(payload.get("query") or "").strip(),
+            types=payload.get("types"),
+            base_models=payload.get("base_models"),
+            nsfw=bool(payload.get("nsfw")),
+            sort=str(payload.get("sort") or civitai.SORTS[0]),
+            limit=CIVITAI_PAGE_SIZE,
+            cursor=str(payload.get("cursor") or ""),
+        )
+        status, body = await civitai.api_get(session, "/models", params)
+    if status != 200:
+        raise HubError(civitai.error_message(status, civitai.error_detail(body)), 502)
+    items = [civitai.normalize_model(m) for m in (body.get("items") or [])]
+    next_cursor = str(((body.get("metadata") or {}).get("nextCursor")) or "")
+    # C 站只按 cursor 翻页，页码是前端翻页记账，按请求回显
+    try:
+        page = max(1, int(payload.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    return items, page, next_cursor, base_models
+
+
+async def civitai_files(model_id: str, settings: dict) -> list:
+    """模型详情 → 可下载权重清单（版本 / 触发词 / 已存在标记），落盘固定 loras。"""
+    async with aiohttp.ClientSession() as session:
+        status, body = await civitai.api_get(session, f"/models/{model_id}")
+    if status != 200:
+        raise HubError(civitai.error_message(status, civitai.error_detail(body)),
+                       404 if status == 404 else 502)
+    files = []
+    for v in (body.get("modelVersions") or []):
+        version_name = str(v.get("name") or "")
+        base_model = str(v.get("baseModel") or "")
+        words = [str(w) for w in (v.get("trainedWords") or [])]
+        for f in civitai.model_files(v):
+            filename = sanitize_filename(f["name"])
+            if not f["download_path"] or not filename:
+                continue
+            rel = find_existing(CIVITAI_CATEGORY, filename, settings)
+            files.append({"path": f["download_path"], "size": f["size"],
+                          "category": CIVITAI_CATEGORY, "filename": filename,
+                          "exists": bool(rel),
+                          "exists_sub": rel.rsplit("/", 1)[0] if "/" in rel else "",
+                          "version_id": v.get("id"), "version_name": version_name,
+                          "base_model": base_model, "trained_words": words,
+                          "format": f["format"], "primary": f["primary"]})
+    return files
+
+
+@PromptServer.instance.routes.post("/neo_model_hub/civitai/search")
+async def rs_hub_civitai_search(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+    body = data if isinstance(data, dict) else {}
+    try:
+        items, page, next_cursor, base_models = await civitai_search(body)
+    except Exception as e:
+        return _error(e, "civitai")
+    return web.json_response({"success": True, "source": "civitai", "items": items,
+                              "page": page, "page_size": CIVITAI_PAGE_SIZE,
+                              "next_cursor": next_cursor,
+                              "types": list(civitai.LORA_TYPES),
+                              "base_models": base_models,
+                              "sorts": list(civitai.SORTS)})
+
+
+@PromptServer.instance.routes.post("/neo_model_hub/civitai/files")
+async def rs_hub_civitai_files(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+    body = data if isinstance(data, dict) else {}
+    try:
+        model_id = validate_civitai_id(body.get("model_id"))
+        files = await civitai_files(model_id, load_hub_settings())
+    except Exception as e:
+        return _error(e, "civitai")
+    return web.json_response({"success": True, "source": "civitai", "model_id": model_id,
+                              "files": files, "categories": ui_categories(load_hub_settings())})
 
 
 

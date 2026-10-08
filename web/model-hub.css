@@ -1,4 +1,4 @@
-/* model-hub.css — 模型库弹窗（Comfy-Org 专区 · HF / ModelScope 双源下载） */
+/* model-hub.css — 模型库弹窗（Comfy-Org 专区 · HF / ModelScope / Civitai 三源下载） */
 .neo-hub-overlay{position:fixed;inset:0;z-index:9003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;}
 .neo-hub-box{width:min(880px,94vw);max-height:88vh;overflow:auto;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px rgba(0,0,0,.6);color:#ddd;font-size:13px;}
 .neo-hub-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
@@ -35,3 +35,7 @@
 .neo-hub-field-label{min-width:150px;color:#999;font-size:12px;}
 .neo-hub-field .neo-hub-input{flex:1;}
 .neo-hub-save{grid-column:1/-1;justify-self:end;}
+.neo-hub-civi{padding:5px 8px;border:1px dashed #3a3a3a;border-radius:6px;background:#232323;}
+.neo-hub-civi select{min-width:104px;}
+.neo-hub-check{display:flex;align-items:center;gap:4px;color:#999;font-size:12px;cursor:pointer;}
+.neo-hub-civi-note{grid-column:1/-1;color:#8f8f8f;font-size:12px;}

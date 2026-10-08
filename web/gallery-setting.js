@@ -24,6 +24,7 @@ export class GallerySetting {
         let hiddenDirs = new Set();
         let civitaiKeySet = false;
         let civitaiKeyHint = "";
+        let civitaiProxy = "";
         let loraSyncDirs = [];
         let civitaiEnabled = false;
         let civitaiBookmarkEnabled = true;
@@ -39,6 +40,7 @@ export class GallerySetting {
                 }
                 civitaiKeySet = !!settings.civitai_api_key_set;
                 civitaiKeyHint = settings.civitai_api_key_hint || "";
+                civitaiProxy = settings.civitai_proxy || "";
                 civitaiEnabled = !!settings.civitai_lora_enabled;
                 civitaiBookmarkEnabled = settings.civitai_bookmark_enabled !== false;
                 if (Array.isArray(settings.lora_sync_dirs)) loraSyncDirs = [...settings.lora_sync_dirs];
@@ -258,6 +260,37 @@ export class GallerySetting {
             }
         };
 
+        // C 站代理：多数网络直连 civitai.com 不通，代理在这里统一配置，
+        // 画廊同步 / C 站收藏 / 技能修复 LoRA 下载 / 模型库 C 站源共用。
+        const civitaiProxyInput = $el("input", {
+            type: "text",
+            className: "neo-gallery-dir-input",
+            placeholder: "C 站代理（如 http://127.0.0.1:7890，留空直连）",
+            value: civitaiProxy,
+            onkeydown: (e) => { if (e.key === "Enter") saveCivitaiProxy(); },
+        });
+
+        const saveCivitaiProxy = async () => {
+            const value = civitaiProxyInput.value.trim();
+            try {
+                const resp = await api.fetchApi('/neo_gallery/save_settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "save_civitai", proxy: value })
+                });
+                const result = await resp.json();
+                if (resp.ok && result.success) {
+                    civitaiProxy = value;
+                    showToast(gallery.app, 'success', '已保存',
+                        value ? `C 站代理已设为 ${value}` : 'C 站已改为直连');
+                } else {
+                    showToast(gallery.app, 'error', '保存失败', result.error || '后端未确认写入');
+                }
+            } catch (e) {
+                showToast(gallery.app, 'error', '保存失败', String(e));
+            }
+        };
+
         modal.appendChild(titleBar);
         modal.appendChild(dirListContainer);
 
@@ -456,6 +489,14 @@ export class GallerySetting {
                     className: "neo-gallery-dir-bulk-btn neo-gallery-civitai-save-btn",
                     textContent: "保存",
                     onclick: saveCivitaiKey,
+                }),
+            ]),
+            $el("div", { className: "neo-gallery-civitai-key-row" }, [
+                civitaiProxyInput,
+                $el("button", {
+                    className: "neo-gallery-dir-bulk-btn neo-gallery-civitai-save-btn",
+                    textContent: "保存代理",
+                    onclick: saveCivitaiProxy,
                 }),
             ]),
             $el("div", { className: "neo-gallery-civitai-actions" }, [testNetBtn]),

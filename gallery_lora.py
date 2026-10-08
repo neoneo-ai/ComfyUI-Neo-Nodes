@@ -18,6 +18,7 @@ from aiohttp import web
 from server import PromptServer
 import folder_paths
 
+from . import civitai
 from .util import _load_settings, _has_media_recursive
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,6 @@ LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 # ---------------------------------------------------------------------------
 # Constants / state
 # ---------------------------------------------------------------------------
-CIVITAI_API_BASE = "https://civitai.com/api/v1"
 LORA_SYNC_BATCH = 20  # max loras fetched per auto-cache run
 LORA_FILE_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin", ".sft"}
 LORA_INDEX_FILE = LORA_CACHE_DIR / "_index.json"
@@ -264,10 +264,11 @@ def _collect_selected_loras(selected_dirs: list) -> list:
 
 async def _civitai_by_hash(session, sha256: str, api_key: str):
     """Fetch the Civitai model version for a file hash. Returns (http_status, json)."""
-    url = f"{CIVITAI_API_BASE}/model-versions/by-hash/{sha256}"
-    headers = {"Authorization": f"Bearer {api_key}", "User-Agent": "ComfyUI-Neo-Nodes"}
+    url = f"{civitai.API_BASE}/model-versions/by-hash/{sha256}"
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        async with session.get(url, headers=civitai.headers(api_key),
+                               timeout=aiohttp.ClientTimeout(total=30),
+                               **civitai.proxy_kwargs()) as resp:
             if resp.status != 200:
                 return resp.status, None
             return 200, await resp.json()
@@ -297,7 +298,8 @@ async def _download_example_image(session, sem: asyncio.Semaphore, url: str, des
     """Download a Civitai example image or video into the cache dir."""
     try:
         async with sem:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120),
+                                   **civitai.proxy_kwargs()) as resp:
                 if resp.status != 200:
                     return False
                 data = await resp.read()
@@ -691,39 +693,28 @@ async def lora_dirs(request):
 
 @PromptServer.instance.routes.post("/neo_gallery/civitai_test")
 async def civitai_test(request):
-    """Probe Civitai reachability and validate the configured API key."""
-    settings = _load_settings()
-    api_key = str(settings.get("civitai_api_key") or "").strip()
+    """Probe Civitai reachability and validate the configured API key via GET /me."""
+    api_key = civitai.api_key()
     if not api_key:
         return web.json_response({"success": False, "reachable": False,
                                   "key_ok": False, "http_status": 0,
                                   "message": "未配置 Civitai API KEY"})
-    url = f"{CIVITAI_API_BASE}/model-versions/by-hash/0000000000000000000000000000000000000000000000000000000000000000"
-    headers = {"Authorization": f"Bearer {api_key}", "User-Agent": "ComfyUI-Neo-Nodes"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers,
-                                   timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                status = resp.status
-        reachable = True
-        key_ok = status not in (401, 403)
-        if status in (401, 403):
-            message = "已连通 civitai.com，但 API KEY 无效 (401/403)"
-        elif status == 200:
-            message = "连通正常，API KEY 有效"
-        else:
-            message = f"已连通 civitai.com（HTTP {status}）"
-        return web.json_response({"success": True, "reachable": reachable,
-                                  "key_ok": key_ok, "http_status": status,
-                                  "message": message})
-    except asyncio.TimeoutError:
+    async with aiohttp.ClientSession() as session:
+        status, body = await civitai.api_get(session, "/me", key=api_key, timeout=20)
+    if status == 0:
         return web.json_response({"success": False, "reachable": False,
                                   "key_ok": False, "http_status": 0,
-                                  "message": "连接 civitai.com 超时（20 秒）"})
-    except Exception as e:
-        return web.json_response({"success": False, "reachable": False,
-                                  "key_ok": False, "http_status": 0,
-                                  "message": f"连接失败: {e}"})
+                                  "message": civitai.error_message(0)})
+    key_ok = status == 200
+    if key_ok:
+        user = str((body or {}).get("username") or "").strip()
+        message = f"连通正常，API KEY 有效{f'（{user}）' if user else ''}"
+    elif status in (401, 403):
+        message = civitai.error_message(status)
+    else:
+        message = f"已连通 civitai.com（HTTP {status}）"
+    return web.json_response({"success": True, "reachable": True, "key_ok": key_ok,
+                              "http_status": status, "message": message})
 
 
 @PromptServer.instance.routes.get("/neo_gallery/lora_cache_status")

@@ -808,7 +808,9 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(body["settings"]["source"], "modelscope")
         self.assertTrue(body["registry"].get("groups"))
         self.assertEqual(body["categories"][-1], model_hub.LLM_CATEGORY)
-        self.assertEqual(body["sources"], ["modelscope", "huggingface"])
+        self.assertEqual(body["sources"], ["modelscope", "huggingface", "civitai"])
+        self.assertEqual(set(body["civitai"]), {"api_key_set", "proxy"})
+        self.assertIsInstance(body["civitai"]["api_key_set"], bool)
         saved = payload(asyncio.run(model_hub.rs_hub_save_settings(
             FakeRequest({"source": "bogus", "llm_subdir": "LLM", "junk": 1}))))["settings"]
         self.assertEqual(saved["source"], "modelscope")
@@ -893,6 +895,190 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(body["code"], "not_on_source")
         self.assertEqual(body["other_source"], "huggingface")
         self.assertEqual(model_hub._error(ValueError("bad"), "").status, 500)
+
+
+class CivitaiSourceTests(unittest.TestCase):
+    """C 站作为第三源：地址与鉴权走共享 helper，下载只认签名端点，清单只列权重。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self._prev_fp = sys.modules.get("folder_paths")
+        sys.modules["folder_paths"] = FakeFolderPaths(self.root)
+        self._session_cls = model_hub.aiohttp.ClientSession
+        self._load_settings = model_hub.civitai._load_settings
+        self._system_proxy = model_hub.civitai.system_proxy
+        # 系统代理探测读真实注册表，测试结果会随本机代理客户端状态漂
+        model_hub.civitai.system_proxy = lambda: ""
+        self.settings = make_settings(self.root)
+        model_hub._download = None
+        model_hub._download_task = None
+        (self.root / "models" / "loras").mkdir(parents=True)
+
+    def tearDown(self):
+        restore_folder_paths(self._prev_fp)
+        model_hub.aiohttp.ClientSession = self._session_cls
+        model_hub.civitai._load_settings = self._load_settings
+        model_hub.civitai.system_proxy = self._system_proxy
+        model_hub._download = None
+        model_hub._download_task = None
+        self.tmp.cleanup()
+
+    @staticmethod
+    def set_civitai(**kwargs):
+        model_hub.civitai._load_settings = lambda: dict(kwargs)
+
+    def test_civitai_is_a_source(self):
+        self.assertIn("civitai", model_hub.SOURCES)
+
+    def test_resolve_url_and_headers(self):
+        self.assertEqual(
+            model_hub.resolve_url("civitai", "civitai/123", "/api/download/models/9?token=t",
+                                  self.settings),
+            "https://civitai.com/api/download/models/9?token=t")
+        self.set_civitai(civitai_api_key="k9")
+        self.assertEqual(model_hub.source_headers("civitai", self.settings)["Authorization"],
+                         "Bearer k9")
+        self.set_civitai(civitai_api_key="")
+        self.assertNotIn("Authorization", model_hub.source_headers("civitai", self.settings))
+
+    def test_validate_civitai_id(self):
+        self.assertEqual(model_hub.validate_civitai_id(" 12345 "), "12345")
+        self.assertEqual(model_hub.validate_civitai_id(77), "77")
+        for bad in ("", None, "abc", "1;rm", "../2", "1 2"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(model_hub.HubError):
+                    model_hub.validate_civitai_id(bad)
+
+    def test_validate_civitai_path(self):
+        self.assertEqual(model_hub.validate_civitai_path("/api/download/models/9?token=t"),
+                         "/api/download/models/9?token=t")
+        for bad in ("", "/api/v1/models/9", "/api/download/models/x",
+                    "//evil.com/api/download/models/1"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(model_hub.HubError):
+                    model_hub.validate_civitai_path(bad)
+
+    async def _run(self, payload):
+        await model_hub.start_download(payload, self.settings)
+        await model_hub._download_task
+        return model_hub.download_snapshot()
+
+    def test_download_civitai_signed_endpoint(self):
+        data = b"Z" * 4096
+        session = install_session(lambda url, headers, params:
+                                  (200, {}, {"Content-Length": str(len(data))}, [data]))
+        snap = asyncio.run(self._run({
+            "source": "civitai", "repo": "civitai/123",
+            "path": "/api/download/models/9?token=t",
+            "filename": "a.safetensors", "category": "loras"}))
+        self.assertEqual(snap["state"], "done")
+        dest = Path(snap["dest"])
+        self.assertEqual(dest, self.root / "models/loras/a.safetensors")
+        self.assertEqual(dest.read_bytes(), data)
+        self.assertEqual(session.requests[0]["url"],
+                         "https://civitai.com/api/download/models/9?token=t")
+
+    def test_download_rejects_other_endpoint(self):
+        install_session(lambda url, headers, params: (200, {}, {}, [b"x"]))
+        with self.assertRaises(model_hub.HubError):
+            asyncio.run(self._run({"source": "civitai", "repo": "civitai/123",
+                                   "path": "/api/v1/models/9"}))
+
+    VERSIONS = {"modelVersions": [{
+        "id": 3, "name": "v2", "baseModel": "SDXL", "trainedWords": ["kw"],
+        "files": [
+            {"id": 1, "name": "a.safetensors", "format": "SafeTensor", "sizeKB": 10,
+             "type": "Model", "primary": True,
+             "downloadUrl": "https://civitai.com/api/download/models/1?token=t"},
+            {"id": 2, "name": "preview.png", "type": "Image", "sizeKB": 1,
+             "downloadUrl": "https://civitai.com/api/download/models/2?token=t"},
+        ],
+    }]}
+
+    def test_civitai_files_lists_weights(self):
+        install_session(lambda url, headers, params: (200, self.VERSIONS, {}, []))
+        files = asyncio.run(model_hub.civitai_files("123", self.settings))
+        self.assertEqual(len(files), 1)
+        f = files[0]
+        self.assertEqual(f["filename"], "a.safetensors")
+        self.assertEqual(f["category"], model_hub.CIVITAI_CATEGORY)
+        self.assertEqual(f["path"], "/api/download/models/1?token=t")
+        self.assertEqual(f["version_name"], "v2")
+        self.assertEqual(f["base_model"], "SDXL")
+        self.assertEqual(f["trained_words"], ["kw"])
+        self.assertEqual(f["size"], 10240)
+        self.assertFalse(f["exists"])
+
+    def test_civitai_files_marks_existing(self):
+        (self.root / "models/loras/a.safetensors").write_bytes(b"x")
+        install_session(lambda url, headers, params: (200, self.VERSIONS, {}, []))
+        files = asyncio.run(model_hub.civitai_files("123", self.settings))
+        self.assertTrue(files[0]["exists"])
+
+    def test_civitai_files_error(self):
+        install_session(lambda url, headers, params: (404, None, {}, []))
+        with self.assertRaises(model_hub.HubError) as ctx:
+            asyncio.run(model_hub.civitai_files("123", self.settings))
+        self.assertIn("404", str(ctx.exception))
+
+    def test_civitai_search_params_and_items(self):
+        session = install_session(lambda url, headers, params:
+                                  (200, {"items": [{"id": 1, "name": "A", "modelVersions": []}],
+                                          "metadata": {"nextCursor": "24"}}, {}, []))
+        items, page, cursor, bases = asyncio.run(model_hub.civitai_search(
+            {"query": "anime", "page": 2, "nsfw": True, "types": ["LORA", "Bogus"]}))
+        self.assertEqual(items[0]["name"], "A")
+        # query 搜索按 cursor 翻页，页码回显请求值供前端维护游标
+        self.assertEqual(page, 2)
+        self.assertEqual(cursor, "24")
+        self.assertIn("SDXL 1.0", bases)
+        req = [r for r in session.requests if r["url"].endswith("/models")][0]
+        self.assertEqual(req["url"], "https://civitai.com/api/v1/models")
+        self.assertEqual(req["params"]["types"], ["LORA"])
+        self.assertEqual(req["params"]["nsfw"], "True")
+        self.assertEqual(req["params"]["query"], "anime")
+        self.assertEqual(req["params"]["sort"], "Most Downloaded")
+        # query 搜索不能带 page，C 站直接 400
+        self.assertNotIn("page", req["params"])
+
+    def test_civitai_search_browse_pages(self):
+        # 浏览（无 query）同样按 cursor 链翻页，page 只是前端记账，不进请求
+        session = install_session(lambda url, headers, params:
+                                  (200, {"items": [], "metadata": {"nextCursor": "164425|20774"}}, {}, []))
+        items, page, cursor, bases = asyncio.run(model_hub.civitai_search(
+            {"page": 2, "cursor": "261069|5828|42903"}))
+        self.assertEqual(page, 2)
+        self.assertEqual(cursor, "164425|20774")
+        req = [r for r in session.requests if r["url"].endswith("/models")][0]
+        self.assertEqual(req["params"]["cursor"], "261069|5828|42903")
+        self.assertNotIn("page", req["params"])
+
+    def test_civitai_search_error(self):
+        install_session(lambda url, headers, params: (401, None, {}, []))
+        with self.assertRaises(model_hub.HubError) as ctx:
+            asyncio.run(model_hub.civitai_search({"query": "x"}))
+        self.assertIn("401", str(ctx.exception))
+
+    def test_civitai_search_error_carries_civitai_detail(self):
+        install_session(lambda url, headers, params:
+                        (400, {"error": "Cannot use page param with query search."}, {}, []))
+        with self.assertRaises(model_hub.HubError) as ctx:
+            asyncio.run(model_hub.civitai_search({"query": "x"}))
+        self.assertIn("page param", str(ctx.exception))
+
+    def test_settings_route_echoes_civitai_status(self):
+        self.set_civitai(civitai_api_key="secret-key", civitai_proxy="127.0.0.1:7890")
+        body = payload(asyncio.run(model_hub.rs_hub_settings(None)))
+        self.assertIn("civitai", body["sources"])
+        self.assertEqual(body["civitai"]["proxy"], "http://127.0.0.1:7890")
+        self.assertTrue(body["civitai"]["api_key_set"])
+        # KEY 只回状态，不回明文
+        self.assertNotIn("secret-key", json.dumps(body))
+        self.set_civitai(civitai_api_key="", civitai_proxy="")
+        body = payload(asyncio.run(model_hub.rs_hub_settings(None)))
+        self.assertEqual(body["civitai"]["proxy"], "")
+        self.assertFalse(body["civitai"]["api_key_set"])
 
 
 if _prev_server is None:

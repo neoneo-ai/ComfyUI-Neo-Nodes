@@ -1,9 +1,11 @@
 /**
- * model-hub.js — 模型库（Comfy-Org 专区 · Hugging Face / ModelScope 双源）
+ * model-hub.js — 模型库（Comfy-Org 专区 · Hugging Face / ModelScope / Civitai 三源）
  * 顶栏 🅝 → 📥 模型库：搜索仓库 → 文件清单（按 split_files 前缀自动归类 + 已存在标记）
  * → 流式下载（进度 / 速度 / 取消，.part 断点续传）。落盘子目录取类别目录下已有子目录成下拉
  * （默认自动探查，可选「＋ 新建子目录…」现填）。⚙ 面板管理默认源、HF 端点、两侧 Token、
- * LLM 子目录与超时。技能修复弹窗可用 openModelHub({ query, category }) 预填并定位下载目标。
+ * LLM 子目录与超时。Civitai 源走 LoRA 搜索（类型 / 底模 / 排序 / NSFW）→ 版本权重清单，
+ * API KEY 与代理沿用画廊设置里的 C 站配置。技能修复弹窗可用 openModelHub({ query, category })
+ * 预填并定位下载目标。
  */
 import { app } from "../../../../scripts/app.js";
 import { showToast } from "./gallery-utils.js";
@@ -17,7 +19,12 @@ if (!document.getElementById("neo-hub-css")) {
 }
 
 const API = "/neo_model_hub";
-const SOURCE_NAMES = { modelscope: "ModelScope", huggingface: "Hugging Face" };
+const SOURCE_NAMES = { modelscope: "ModelScope", huggingface: "Hugging Face", civitai: "Civitai" };
+const CIVITAI_TYPE_NAMES = { LORA: "LoRA", LoCon: "LoCon", DoRA: "DoRA" };
+const CIVITAI_SORT_NAMES = {
+    "Most Downloaded": "下载量", "Highest Rated": "评分", "Most Liked": "最多点赞",
+    "Most Collected": "最多收藏", "Newest": "最新", "Recently Added": "最近收录",
+};
 
 let hub = null;
 
@@ -107,7 +114,9 @@ function fillFiles(h) {
         o.dataset.category = f.category;
         o.dataset.filename = f.filename;
         o.dataset.existsSub = f.exists_sub || "";
-        o.textContent = `${f.filename}  [${f.category}]  ${fmtSize(f.size)}${f.exists ? `  ✓ 已存在${f.exists_sub ? ` (${f.exists_sub})` : ""}` : ""}`;
+        o.textContent = `${f.filename}  [${f.category}]  ${fmtSize(f.size)}` +
+            `${f.version_name ? `  〈${f.version_name}〉` : ""}` +
+            `${f.exists ? `  ✓ 已存在${f.exists_sub ? ` (${f.exists_sub})` : ""}` : ""}`;
         sel.appendChild(o);
     }
     updateTarget(h);
@@ -253,6 +262,53 @@ function buildUI(h) {
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") loadRepos(h, false); });
     searchRow.append(searchInput, searchBtn);
 
+    // Civitai 过滤行：类型 / 底模 / 排序 / NSFW，仅 C 站源显示
+    const civiRow = el("div", "neo-hub-row neo-hub-civi");
+    const civiTypeSel = el("select", "neo-hub-input neo-hub-civi-type");
+    for (const [key, label] of Object.entries(CIVITAI_TYPE_NAMES)) {
+        const o = document.createElement("option");
+        o.value = key;
+        o.textContent = label;
+        civiTypeSel.appendChild(o);
+    }
+    const civiBaseSel = el("select", "neo-hub-input neo-hub-civi-base");
+    const civiBaseAll = document.createElement("option");
+    civiBaseAll.value = "";
+    civiBaseAll.textContent = "全部底模";
+    civiBaseSel.appendChild(civiBaseAll);
+    const civiSortSel = el("select", "neo-hub-input neo-hub-civi-sort");
+    for (const [key, label] of Object.entries(CIVITAI_SORT_NAMES)) {
+        const o = document.createElement("option");
+        o.value = key;
+        o.textContent = label;
+        civiSortSel.appendChild(o);
+    }
+    const civiNsfw = el("label", "neo-hub-check");
+    const civiNsfwInput = el("input");
+    civiNsfwInput.type = "checkbox";
+    civiNsfw.append(civiNsfwInput, el("span", "", "NSFW"));
+    civiRow.append(el("span", "neo-hub-label", "类型"), civiTypeSel,
+        el("span", "neo-hub-label", "底模"), civiBaseSel,
+        el("span", "neo-hub-label", "排序"), civiSortSel, civiNsfw);
+    const civiPrevBtn = el("button", "neo-hub-btn neo-hub-civi-prev", "上一页");
+    civiPrevBtn.type = "button";
+    civiPrevBtn.disabled = true;
+    civiPrevBtn.addEventListener("click", () => {
+        if (h.civiPage > 1) { h.civiPage -= 1; loadCivitaiModels(h, true); }
+    });
+    const civiNextBtn = el("button", "neo-hub-btn neo-hub-civi-next", "下一页");
+    civiNextBtn.type = "button";
+    civiNextBtn.disabled = true;
+    civiNextBtn.addEventListener("click", () => {
+        if (h.civiCursors[h.civiPage]) { h.civiPage += 1; loadCivitaiModels(h, true); }
+    });
+    civiRow.append(civiPrevBtn, civiNextBtn);
+    civiRow.style.display = "none";
+    // 过滤条件一变，旧 cursor 作废，回到第 1 页
+    for (const c of [civiTypeSel, civiBaseSel, civiSortSel, civiNsfwInput]) {
+        c.addEventListener("change", () => loadRepos(h, false));
+    }
+
     const repoRow = el("div", "neo-hub-row");
     const repoSel = el("select", "neo-hub-input neo-hub-repo");
     const repoInfo = el("span", "neo-hub-info", "");
@@ -310,16 +366,21 @@ function buildUI(h) {
     mkInput("llm_subdir", "LLM 子目录（models/ 下，GGUF 落此处）");
     mkInput("timeout_total", "下载总超时（秒）", "number");
     mkInput("sock_read", "读超时（秒）", "number");
+    const civiNote = el("div", "neo-hub-info neo-hub-civi-note",
+        "C 站 API KEY 与代理在画廊设置的「Civitai（C 站）」区配置，模型库共用同一份。");
+    panel.appendChild(civiNote);
     const saveBtn = el("button", "neo-hub-btn neo-hub-save", "保存设置");
     saveBtn.type = "button";
     panel.appendChild(saveBtn);
 
-    box.append(head, searchRow, repoRow, fileList, targetRow, actRow, bar, progText, panel);
+    box.append(head, searchRow, civiRow, repoRow, fileList, targetRow, actRow, bar, progText, panel);
     overlay.appendChild(box);
 
     h.ui = {
         srcBtns, repoSel, repoInfo, fileList, catSel, subSel, subNew, destText, dlBtn, cancelBtn,
         statusText, barFill, progText, panel, inputs, searchInput, settingsBtn, closeBtn,
+        civiRow, civiTypeSel, civiBaseSel, civiSortSel, civiNsfwInput, civiNote,
+        civiPrevBtn, civiNextBtn,
     };
     return overlay;
 }
@@ -328,6 +389,11 @@ function syncSource(h) {
     for (const [key, btn] of Object.entries(h.ui.srcBtns)) {
         btn.classList.toggle("neo-hub-src-active", key === h.source);
     }
+    const civi = h.source === "civitai";
+    h.ui.civiRow.style.display = civi ? "" : "none";
+    h.ui.searchInput.placeholder = civi
+        ? "搜索 C 站 LoRA 名称 / 触发词"
+        : "搜索仓库名（Comfy-Org 内子串匹配 + 跨组织搜索）";
 }
 
 function renderProgress(h, d) {
@@ -344,7 +410,81 @@ function renderProgress(h, d) {
 // 数据流
 // ---------------------------------------------------------------------------
 
+function fillCivitaiModels(h) {
+    const sel = h.ui.repoSel;
+    sel.innerHTML = "";
+    for (const m of h.models) {
+        const o = document.createElement("option");
+        o.value = String(m.id);
+        o.textContent = `${m.name} · ${m.base_models.join("/") || m.type} · ${m.downloads}` +
+            `${m.nsfw ? " · NSFW" : ""}${m.creator ? ` · ${m.creator}` : ""}`;
+        sel.appendChild(o);
+    }
+    if (h.wantRepo) sel.value = String(h.wantRepo);
+}
+
+async function loadCivitaiModels(h, refresh) {
+    if (!refresh) { h.civiPage = 1; h.civiCursors = [""]; }
+    h.ui.repoInfo.textContent = "C 站搜索中…";
+    h.ui.fileList.innerHTML = "";
+    h.ui.destText.textContent = "";
+    try {
+        const data = await req("/civitai/search", {
+            query: h.ui.searchInput.value.trim(),
+            types: [h.ui.civiTypeSel.value],
+            base_models: h.ui.civiBaseSel.value ? [h.ui.civiBaseSel.value] : [],
+            sort: h.ui.civiSortSel.value,
+            nsfw: !!h.ui.civiNsfwInput.checked,
+            page: h.civiPage,
+            cursor: h.civiCursors[h.civiPage - 1] || "",
+        });
+        h.models = data.items || [];
+        h.civiPage = data.page || 1;
+        h.civiCursors[h.civiPage] = data.next_cursor || "";
+        if (data.base_models && h.ui.civiBaseSel.options.length <= 1) fillCivitaiBases(h, data.base_models);
+        fillCivitaiModels(h);
+        h.ui.repoInfo.textContent = `${h.models.length} 个模型 · 第 ${h.civiPage} 页`;
+        h.ui.civiPrevBtn.disabled = h.civiPage <= 1;
+        h.ui.civiNextBtn.disabled = !data.next_cursor;
+        await loadFiles(h, false);
+    } catch (e) {
+        h.ui.repoInfo.textContent = "C 站搜索失败";
+        showToast(app, "error", "C 站搜索失败", String(e.message || e));
+    }
+}
+
+function fillCivitaiBases(h, bases) {
+    for (const b of bases) {
+        const o = document.createElement("option");
+        o.value = b;
+        o.textContent = b;
+        h.ui.civiBaseSel.appendChild(o);
+    }
+}
+
+async function loadCivitaiFiles(h) {
+    const modelId = h.ui.repoSel.value;
+    h.ui.fileList.innerHTML = "";
+    h.ui.destText.textContent = "";
+    if (!modelId) return;
+    h.ui.fileList.disabled = true;
+    try {
+        const data = await req("/civitai/files", { model_id: modelId });
+        h.files = data.files || [];
+        fillFiles(h);
+        await loadSubfolders(h);
+    } catch (e) {
+        const opt = document.createElement("option");
+        opt.textContent = `C 站文件清单加载失败：${e.message || e}`;
+        h.ui.fileList.appendChild(opt);
+        showToast(app, "error", "C 站文件清单加载失败", String(e.message || e));
+    } finally {
+        h.ui.fileList.disabled = false;
+    }
+}
+
 async function loadRepos(h, refresh) {
+    if (h.source === "civitai") return loadCivitaiModels(h, refresh);
     h.ui.repoInfo.textContent = "仓库列表加载中…";
     try {
         const data = await req("/repos", {
@@ -362,6 +502,7 @@ async function loadRepos(h, refresh) {
 }
 
 async function loadFiles(h, refresh) {
+    if (h.source === "civitai") return loadCivitaiFiles(h);
     const repo = h.ui.repoSel.value;
     h.ui.fileList.innerHTML = "";
     h.ui.destText.textContent = "";
@@ -454,7 +595,7 @@ function bindActions(h) {
         try {
             await req("/download", {
                 source: h.source,
-                repo: h.ui.repoSel.value,
+                repo: h.source === "civitai" ? `civitai/${h.ui.repoSel.value}` : h.ui.repoSel.value,
                 path: file.path,
                 category: h.ui.catSel.value,
                 subfolder: currentSubfolder(h),
@@ -498,6 +639,9 @@ async function loadSettings(h) {
         const data = await req("/settings");
         h.registry = data.registry || {};
         h.categories = data.categories || [];
+        const civi = data.civitai || {};
+        h.ui.civiNote.textContent = `C 站配置：API KEY ${civi.api_key_set ? "已设置" : "未设置"}` +
+            ` · 代理 ${civi.proxy ? civi.proxy : "未设置"}（在画廊设置的 Civitai 区修改）`;
         fillCategories(h);
         fillSettingsForm(h, data.settings || {});
         if (!h.wantSource) h.source = (data.settings && data.settings.source) || h.source;
@@ -516,8 +660,8 @@ export function openModelHub(opts = {}) {
     closeModelHub();
     const h = {
         source: opts.source || "modelscope", repos: [], files: [], registry: {}, categories: [],
-        timer: null, ui: {}, wantCategory: opts.category || "", wantRepo: opts.repo || "",
-        wantSource: opts.source || "",
+        models: [], civiPage: 1, civiCursors: [""], timer: null, ui: {}, wantCategory: opts.category || "",
+        wantRepo: opts.repo || "", wantSource: opts.source || "",
     };
     const overlay = buildUI(h);
     h.overlay = overlay;

@@ -913,16 +913,7 @@ async def rs_delete_repair_mappings(request):
 import aiohttp
 from pathlib import Path as _Path
 
-_CIVITAI_API = "https://civitai.com/api/v1"
-
-
-def _civitai_headers() -> dict:
-    from .util import _load_settings
-    key = str(_load_settings().get("civitai_api_key") or "").strip()
-    h = {"User-Agent": "ComfyUI-Neo-Nodes"}
-    if key:
-        h["Authorization"] = f"Bearer {key}"
-    return h
+from . import civitai
 
 
 @PromptServer.instance.routes.post("/neo_nodes/civitai_search_lora")
@@ -940,45 +931,33 @@ async def rs_civitai_search_lora(request):
     if not query:
         return web.json_response({"success": False, "error": "Empty query"}, status=400)
 
-    headers = _civitai_headers()
-    params = {"query": query, "types": "LORA", "limit": "12", "sort": "HighestRating"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{_CIVITAI_API}/models", params=params, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                if resp.status != 200:
-                    return web.json_response({"success": False, "error": f"Civitai HTTP {resp.status}"}, status=502)
-                body = await resp.json()
-    except Exception as e:
-        return web.json_response({"success": False, "error": str(e)}, status=502)
+    params = civitai.search_params(query=query, types=["LORA"], sort="Highest Rated", limit=12)
+    async with aiohttp.ClientSession() as session:
+        status, body = await civitai.api_get(session, "/models", params)
+    if status != 200:
+        return web.json_response({"success": False,
+                                  "error": civitai.error_message(status,
+                                                                  civitai.error_detail(body))},
+                                 status=502)
 
     items = []
     for m in (body.get("items") or []):
-        versions = m.get("modelVersions") or []
-        if not versions:
-            continue
-        v = versions[0]
-        files = v.get("files") or []
-        # Prefer .safetensors
-        file_info = None
-        for f in files:
-            if str(f.get("name", "")).lower().endswith(".safetensors"):
-                file_info = f
-                break
-        if file_info is None and files:
-            file_info = files[0]
-        items.append({
-            "model_id": m.get("id"),
-            "name": m.get("name", ""),
-            "author": (m.get("userName") or m.get("username") or ""),
-            "version_name": v.get("name", ""),
-            "version_id": v.get("id"),
-            "file_name": file_info.get("name", "") if file_info else "",
-            "file_size": file_info.get("size", 0) if file_info else 0,
-            "download_url": file_info.get("downloadUrl", "") if file_info else "",
-        })
+        for v in (m.get("modelVersions") or []):
+            file_info = civitai.pick_file(civitai.model_files(v))
+            if not file_info.get("download_path"):
+                continue
+            items.append({
+                "model_id": m.get("id"),
+                "name": m.get("name", ""),
+                "author": str(((m.get("creator") or {}).get("username")) or m.get("userName") or ""),
+                "version_name": v.get("name", ""),
+                "version_id": v.get("id"),
+                "base_model": v.get("baseModel", ""),
+                "file_name": file_info["name"],
+                "file_size": file_info["size"],
+                "download_url": f"{civitai.API_HOST}{file_info['download_path']}",
+            })
+            break
     return web.json_response({"success": True, "items": items})
 
 
@@ -994,14 +973,12 @@ async def rs_civitai_download_lora(request):
     except Exception:
         return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
     url = str((data or {}).get("url") or "").strip()
-    filename = str((data or {}).get("filename") or "").strip()
-    if not url or not url.startswith("http"):
-        return web.json_response({"success": False, "error": "Invalid URL"}, status=400)
+    filename = str((data or {}).get("filename") or "").strip().replace("\\", "/").split("/")[-1]
+    path = civitai.download_path(url)
+    if not path:
+        return web.json_response({"success": False, "error": "非法 C 站下载地址"}, status=400)
     if not filename:
-        # Derive from URL path
-        from urllib.parse import urlparse
-        parts = urlparse(url).path.split("/")
-        filename = parts[-1] if parts and parts[-1] else "model.safetensors"
+        filename = f"civitai_{path.split('?')[0].rsplit('/', 1)[-1]}.safetensors"
 
     # Resolve target directory
     import folder_paths
@@ -1016,12 +993,13 @@ async def rs_civitai_download_lora(request):
     if dest.exists():
         return web.json_response({"success": True, "filename": filename, "skipped": True})
 
-    headers = _civitai_headers()
+    headers = civitai.headers()
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                url, headers=headers,
+                f"{civitai.API_HOST}{path}", headers=headers,
                 timeout=aiohttp.ClientTimeout(total=600, sock_read=300),
+                **civitai.proxy_kwargs(),
             ) as resp:
                 if resp.status != 200:
                     return web.json_response({"success": False, "error": f"HTTP {resp.status}"}, status=502)

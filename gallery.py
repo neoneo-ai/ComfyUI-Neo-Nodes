@@ -24,6 +24,7 @@ from .util import (
 )
 # 收藏相关常量统一由 bookmark 模块提供（收藏后端逻辑收敛到 bookmark.py）。
 # bookmark 不反向导入本模块，避免循环导入。
+from . import civitai
 from .bookmark import (
     CIVITAI_BOOKMARK_DIR,
     CIVITAI_DIR_KEY,
@@ -2647,6 +2648,8 @@ async def save_gallery_settings(request):
                 current_settings["civitai_bookmark_enabled"] = bool(data.get("bookmark_enabled"))
             if "api_key" in data:
                 current_settings["civitai_api_key"] = str(data.get("api_key") or "").strip()
+            if "proxy" in data:
+                current_settings["civitai_proxy"] = civitai.clean_proxy(data.get("proxy"))
             if isinstance(data.get("dirs"), list):
                 current_settings["lora_sync_dirs"] = _normalize_lora_dir({"lora_sync_dirs": data["dirs"]})
 
@@ -2683,6 +2686,7 @@ async def get_gallery_settings(request):
     settings["civitai_api_key"] = ""
     settings["civitai_api_key_set"] = bool(key)
     settings["civitai_api_key_hint"] = f"****{key[-4:]}" if len(key) >= 4 else ("****" if key else "")
+    settings["civitai_proxy"] = civitai.clean_proxy(settings.get("civitai_proxy"))
     return web.json_response(settings)
 
 
