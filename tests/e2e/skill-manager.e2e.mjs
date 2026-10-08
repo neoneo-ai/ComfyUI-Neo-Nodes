@@ -1,7 +1,7 @@
 // E2E：技能管理独立窗口（Director 风格控件）+ 内嵌 litegraph 工作流编辑（需 ComfyUI 运行中）。
 // 用法：npm run e2e   或   node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.mjs
 // 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo-Nodes 插件。
-// 只保留必须真浏览器才能验的核心用例（overlay 穿透与放大、内嵌画布挂载 + LoRA 灌值、combo 弹层层级）；
+// 只保留必须真浏览器才能验的核心用例（overlay 穿透与放大、内嵌画布挂载 + LoRA 灌值、combo 弹层层级、搜索框扛中文 IME 指针离开）；
 // 标题栏拖动 / 把手拉伸 / 拖拽手势取消 / widget 弹窗落点由 tests/js/skill-manager.test.mjs 覆盖。
 // 只读校验：预设技能「保存工作流」仅值覆盖，结构变更自动复制为自定义技能；测试全程不点保存，不写用户数据。
 import test from "node:test";
@@ -53,12 +53,13 @@ const rect = (page, sel) => page.evaluate((s) => {
     return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
 }, sel);
 
-const closeWithEsc = async (page) => {
-    await page.keyboard.press("Escape");
+// 整窗关闭只走「✕」：Esc 在窗口内被就地吞掉（内嵌画布 / 输入框 / 浮窗各管各的事），不会关掉整个窗口
+const closeWithX = async (page) => {
+    await page.click(".rs-skill-manager .rs-skill-modal-close");
     await page.waitForSelector(".rs-skill-manager", { state: "detached", timeout: 5000 });
 };
 
-test("技能管理窗口：透明穿透 overlay、⛶ 放大还原、标题栏双击放大、点窗口外不关闭、Esc 关闭", async (t) => {
+test("技能管理窗口：透明穿透 overlay、⛶ 放大还原、标题栏双击放大、点窗口外不关闭、✕ 关闭", async (t) => {
     if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
     const { page, errors } = await openManagerPage();
     try {
@@ -94,7 +95,7 @@ test("技能管理窗口：透明穿透 overlay、⛶ 放大还原、标题栏�
         await page.mouse.click(4, 4);
         assert.equal(await page.locator(".rs-skill-manager").count(), 1, "点窗口外不应关闭");
 
-        await closeWithEsc(page);
+        await closeWithX(page);
         assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
     } finally {
         await page.close();
@@ -276,6 +277,73 @@ test("内嵌工作流编辑：combo 下拉浮在技能弹窗之上并可点选�
         assert.ok(menu.z > menu.overlayZ, `LiteGraph 弹层应高于技能弹窗：${menu.z} vs ${menu.overlayZ}`);
         assert.ok(menu.hitInMenu, `落点应命中下拉自身而非技能弹窗，实际 ${menu.hit}`);
         await page.screenshot({ path: "tmp/skill-wf-combo-menu.png" });
+        assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
+    } finally {
+        await page.close();
+    }
+});
+
+
+test("内嵌工作流编辑：双击空白开搜索框，中文输入 + IME 指针离开后搜索框保持打开，Enter 落进内嵌子图，Esc 关闭", async (t) => {
+    if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
+    const { page, errors } = await openManagerPage();
+    const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
+    if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
+    try {
+        await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
+        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+        await page.click(".rs-skill-workflow-head .rs-form-label");
+        await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
+        await page.waitForTimeout(1200);
+
+        const spot = await page.evaluate(() => {
+            const c = document.querySelector("canvas.rs-wf-editor-canvas");
+            const inst = c.data;
+            const cr = c.getBoundingClientRect();
+            const taken = inst.graph._nodes.map((n) => ({
+                x: (n.pos[0] + n.size[0] + inst.ds.offset[0]) * inst.ds.scale + cr.left,
+                y: (n.pos[1] + n.size[1] + inst.ds.offset[1]) * inst.ds.scale + cr.top,
+            }));
+            for (let y = cr.top + 20; y < cr.bottom - 20; y += 20) {
+                for (let x = cr.left + 20; x < cr.right - 20; x += 20) {
+                    if (document.elementFromPoint(x, y) === c && !taken.some((p) => x < p.x + 4 && y < p.y + 4)) return { x, y };
+                }
+            }
+            return null;
+        });
+        assert.ok(spot, "内嵌画布应有可双击的空白处");
+        const before = await page.evaluate(() => document.querySelector("canvas.rs-wf-editor-canvas").data.graph._nodes.length);
+
+        await page.mouse.move(spot.x, spot.y);
+        await page.mouse.click(spot.x, spot.y);
+        await page.mouse.dblclick(spot.x, spot.y);
+        await page.waitForSelector(".litegraph.litesearchbox", { timeout: 5000 });
+
+        // 中文 IME 候选窗是原生浮层：聚焦搜索框后输入中文，再模拟候选窗造成的指针离开（原行为 500ms 后自动关闭）
+        await page.keyboard.type("K采样器");
+        await page.evaluate(() => document.querySelector(".litegraph.litesearchbox")
+            .dispatchEvent(new PointerEvent("pointerleave", { bubbles: false })));
+        await page.waitForTimeout(600);
+
+        const box = await page.evaluate(() => {
+            const el = document.querySelector(".litegraph.litesearchbox");
+            return {
+                open: !!el,
+                value: el ? el.querySelector("input[type=text]").value : null,
+                results: el ? el.querySelectorAll(".litegraph.lite-search-item").length : 0,
+            };
+        });
+        assert.ok(box.open, "中文输入 + 指针离开后搜索框应保持打开");
+        assert.equal(box.value, "K采样器", "搜索框应收到中文输入");
+        assert.ok(box.results > 0, `中文搜索应有候选结果，实际 ${box.results}`);
+
+        await page.keyboard.press("Enter");
+        const after = await page.evaluate(() => document.querySelector("canvas.rs-wf-editor-canvas").data.graph._nodes.length);
+        assert.equal(after, before + 1, "新增节点应落进内嵌子图而非主画布");
+
+        await page.keyboard.press("Escape");
+        await page.waitForSelector(".litegraph.litesearchbox", { state: "detached", timeout: 5000 });
+        await page.screenshot({ path: "tmp/skill-wf-searchbox.png" });
         assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
     } finally {
         await page.close();

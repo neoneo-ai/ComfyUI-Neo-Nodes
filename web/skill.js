@@ -934,7 +934,7 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
     if (showClose) {
         closeBtn = mkEl("button", "rs-skill-modal-close");
         closeBtn.type = "button";
-        closeBtn.title = "关闭（Esc）";
+        closeBtn.title = "关闭";
         closeBtn.textContent = "✕";
         head.appendChild(closeBtn);
     }
@@ -1190,7 +1190,7 @@ function openSkillManager() {
     if (_skillManagerOpen) return;
     _skillManagerOpen = true;
     // 独立窗口（同导演编辑器）：无遮罩 —— 背景透明且指针穿透，画布保持可操作；
-    // 标题栏拖动 / 双击放大还原 / ⛶ 放大还原 / 右下角拉伸；关闭只走 ✕ 与 Esc
+    // 标题栏拖动 / 双击放大还原 / ⛶ 放大还原 / 右下角拉伸；关闭只走 ✕（Esc 不关整窗）
     const overlay = mkEl("div", "rs-skill-modal-overlay rs-skill-manager-overlay");
     overlay.style.display = "flex";   // .rs-skill-modal-overlay 默认 display:none，内嵌整窗需显式显示
     document.body.appendChild(overlay);
@@ -1286,22 +1286,16 @@ function openSkillManager() {
         window.addEventListener("pointercancel", onUp);
     });
 
-    // Esc 关整窗（捕获阶段，先于弹窗内输入框）：名称 / 搜索 / 正文等输入区内的 Esc 归输入框自己处理
-    const onKey = (e) => {
-        if (e.key !== "Escape") return;
-        const t = e.target;
-        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-        e.preventDefault();
-        close();
-    };
+    // Esc 不关整窗，也不让它打到主画布的退出子图：窗口内的 Esc 就地吞掉（内嵌画布 / 输入框的先处理自己的事）
+    box.addEventListener("keydown", (e) => { if (e.key === "Escape") e.stopPropagation(); });
+
+    // 关闭只走「✕」：Esc 不关整窗——内嵌画布、输入框、浮窗里的 Esc 各管各的事，不至于顺手关掉整个窗口
     const close = () => {
         _skillManagerOpen = false;
         overlay.remove();
-        document.removeEventListener("keydown", onKey, true);
         mgr.close();
     };
     mgr.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); close(); });
-    document.addEventListener("keydown", onKey, true);
 }
 
 // ==========================================

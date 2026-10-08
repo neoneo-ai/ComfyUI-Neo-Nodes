@@ -395,14 +395,23 @@ async function openMgrWindow() {
     };
 }
 
-test("独立窗口无遮罩：overlay 透明穿透，点窗口外不关闭；Esc 关闭", async () => {
+test("独立窗口无遮罩：overlay 透明穿透，点窗口外不关闭；Esc 不关整窗，✕ 才关闭", async () => {
     const { overlay, box } = await openMgrWindow();
     assert.ok(overlay.classList.contains("rs-skill-manager-overlay"), "整窗 overlay 带独立窗口类");
     assert.ok(box, "窗口挂在 overlay 内");
     mouseAt(overlay, "pointerdown");
     assert.ok(document.body.contains(overlay), "点窗口外不应关闭");
-    keydown(document, "Escape");
-    assert.ok(!document.body.contains(overlay), "Esc 应关闭整窗");
+
+    const seen = [];
+    const keybind = (e) => seen.push(e.key);   // 模拟挂在 window 冒泡的 ComfyUI keybindHandler
+    window.addEventListener("keydown", keybind);
+    keydown(box, "Escape");
+    assert.ok(document.body.contains(overlay), "Esc 不应关闭整窗");
+    assert.deepEqual(seen, [], "窗口内的 Esc 不应打到主画布的退出子图");
+    window.removeEventListener("keydown", keybind);
+
+    closeMgr(box);
+    assert.ok(!document.body.contains(overlay), "「✕」关闭整窗");
 });
 
 test("技能管理窗口 CSS：透明穿透 overlay、最小尺寸、标题栏与把手样式齐备", () => {
@@ -556,7 +565,7 @@ const WF_TEMPLATE = {
 // 内嵌编辑走真实 litegraph 加载路径（API prompt → litegraph 序列化 → configure / start / LGraphCanvas），
 // 这里给最小可断言桩：LiteGraph.createNode 返回带 widget/槽位顺序的节点模板
 function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
-    const created = { graphs: [], canvases: [], lite: [] };
+    const created = { graphs: [], canvases: [], lite: [], searchBoxes: [] };
     class FakeGraph {
         constructor() { this._nodes = []; created.graphs.push(this); }
         configure(lite) {
@@ -597,6 +606,11 @@ function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
         }
         fitViewToSelectionAnimated() { this.fitted = (this.fitted || 0) + 1; }
         pasteFromClipboard() { this.pasted = (this.pasted || 0) + 1; }
+        // 同前端 litegraph：showSearchBox(e, options)，选项由调用方传入，记录以断言内嵌画布的覆盖
+        showSearchBox(e, options) {
+            this.search_options = options;
+            created.searchBoxes.push({ canvas: this, options });
+        }
         // 同前端 litegraph：弹窗挂 canvas.parentNode，按「clientX - canvas 左上角」定位
         prompt(name, value, callback, event) {
             const dlg = document.createElement("div");
@@ -1253,5 +1267,23 @@ test("弹窗打开时拦住会打到主画布的全局快捷键，画布类命�
     assert.equal(popup.overlay.style.display, "none", "Esc 关闭详情弹窗");
 
     window.removeEventListener("keydown", keybind);
+});
+
+
+test("内嵌编辑：搜索框关掉鼠标离开自动关闭（中文 IME 候选窗触发 pointerleave 会误关），主画布保持原设置", async () => {
+    const created = stubLiteGraph();
+    const { box } = await openMgrWf();
+    const wfCanvas = created.canvases[0];
+
+    // 前端 litegraph 把设置项合进选项交给 showSearchBox(e, options)：内嵌画布必须压掉鼠标离开自动关闭
+    wfCanvas.showSearchBox(null, { hide_on_mouse_leave: true, show_all_on_open: true });
+    assert.equal(wfCanvas.search_options.hide_on_mouse_leave, false, "内嵌画布搜索框不应因鼠标离开自动关闭");
+    assert.equal(wfCanvas.search_options.show_all_on_open, true, "其余搜索框选项应原样保留");
+
+    const mainCanvas = new window.LGraphCanvas(document.createElement("canvas"), new window.LGraph());
+    mainCanvas.showSearchBox(null, { hide_on_mouse_leave: true });
+    assert.equal(mainCanvas.search_options.hide_on_mouse_leave, true, "主画布搜索框的鼠标离开自动关闭不应被改动");
+
+    closeMgr(box);
 });
 

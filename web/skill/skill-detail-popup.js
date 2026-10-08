@@ -1012,6 +1012,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             dlg.style.zIndex = "10000";   // .graphdialog 基础层只有 1000，会被技能弹窗（9846）盖住
             return r;
         };
+        // litegraph 搜索框（双击空白加节点）默认 hide_on_mouse_leave：指针离开 500ms 就自动关。
+        // 打中文时输入法候选窗是原生窗口，盖在搜索框上会让页面收到 pointerleave → 输入中文即关窗
+        // （输入英文无候选窗，不会触发）。内嵌编辑里关掉这个行为。
+        const baseSearchBox = wfCanvas.showSearchBox;
+        wfCanvas.showSearchBox = function (event, options) {
+            return baseSearchBox.call(this, event, { ...options, hide_on_mouse_leave: false });
+        };
         wfBoxResize.observe(wfCanvasBox);
         return true;
     }
