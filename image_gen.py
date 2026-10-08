@@ -1421,20 +1421,26 @@ _ENHANCE_DEFAULT_SYSTEM_PROMPT = (
 )
 
 
+def _enhance_system_prompt(skill_id: str, prompt_text: str) -> str:
+    """带 workflow.json 的技能由工作流驱动，正文只作帮助文档 → 增强用内置默认；其余技能用正文作扩写指令。"""
+    if skill_id:
+        from . import skill as _skill
+        try:
+            if _skill.load_skill_workflow(skill_id) is None:
+                language = _skill._resolve_skill_language(prompt_text)
+                body = (_skill.load_skill_content(skill_id, language=language) or "").strip()
+                if body:
+                    return body
+        except Exception:
+            pass
+    return _ENHANCE_DEFAULT_SYSTEM_PROMPT
+
+
 async def _enhance_prompt(prompt_text: str, width: int, height: int, skill_id: str = "") -> str:
     """调用 LLM 增强生图提示词；用技能 skill.md 正文作为系统提示词，缺失时用内置默认；失败时返回原文。"""
     from . import llm as _llm
 
-    sys_prompt = ""
-    if skill_id:
-        from . import skill as _skill
-        try:
-            language = _skill._resolve_skill_language(prompt_text)
-            sys_prompt = (_skill.load_skill_content(skill_id, language=language) or "").strip()
-        except Exception:
-            pass
-    if not sys_prompt:
-        sys_prompt = _ENHANCE_DEFAULT_SYSTEM_PROMPT
+    sys_prompt = _enhance_system_prompt(skill_id, prompt_text)
 
     user_msg = f"Target resolution: {width}x{height}\nUser prompt: {prompt_text}"
     try:
@@ -1457,16 +1463,7 @@ def _enhance_prompt_stream(prompt_text: str, width: int, height: int, skill_id: 
     """流式增强生图提示词，逐 chunk yield 文本；失败时 yield '[ERROR] ...'。"""
     from . import llm as _llm
 
-    sys_prompt = ""
-    if skill_id:
-        from . import skill as _skill
-        try:
-            language = _skill._resolve_skill_language(prompt_text)
-            sys_prompt = (_skill.load_skill_content(skill_id, language=language) or "").strip()
-        except Exception:
-            pass
-    if not sys_prompt:
-        sys_prompt = _ENHANCE_DEFAULT_SYSTEM_PROMPT
+    sys_prompt = _enhance_system_prompt(skill_id, prompt_text)
 
     user_msg = f"Target resolution: {width}x{height}\nUser prompt: {prompt_text}"
     try:

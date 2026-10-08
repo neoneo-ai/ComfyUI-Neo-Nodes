@@ -1168,11 +1168,12 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         mgmt.appendChild(canvasBtn);
     }
 
-    // 技能增删改（rs.skills.updated）自动刷新列表；close() 清监听并移除根节点
+    // 技能增删改（rs.skills.updated）自动刷新列表；close() 清监听、卸载内嵌画布并移除根节点
     const onSkillsUpdated = () => loadList();
     document.addEventListener("rs.skills.updated", onSkillsUpdated);
     const close = () => {
         document.removeEventListener("rs.skills.updated", onSkillsUpdated);
+        popup.close();   // 关整窗要卸载内嵌画布：active_canvas 留在已死的子图上会让主画布的右键加节点 / 对齐打空
         box.remove();
     };
 
@@ -1285,7 +1286,14 @@ function openSkillManager() {
         window.addEventListener("pointercancel", onUp);
     });
 
-    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+    // Esc 关整窗（捕获阶段，先于弹窗内输入框）：名称 / 搜索 / 正文等输入区内的 Esc 归输入框自己处理
+    const onKey = (e) => {
+        if (e.key !== "Escape") return;
+        const t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+        e.preventDefault();
+        close();
+    };
     const close = () => {
         _skillManagerOpen = false;
         overlay.remove();

@@ -1926,11 +1926,9 @@
     resize: vertical;
 }
 
-/* 有工作流的技能：正文区高度减半给流程图让位（min-height 360→180, max-height 520→240）；正文为空时进一步压缩 */
-.rs-skill-modal-content .rs-content-row-workflow > .rs-tpl-content { min-height: 180px; max-height: 240px; }
-.rs-skill-modal-content .rs-content-row-workflow > .rs-md-preview { min-height: 180px; max-height: 240px; }
-.rs-skill-modal-content .rs-content-row-compact > .rs-tpl-content { min-height: 42px; }
-.rs-skill-modal-content .rs-content-row-compact > .rs-md-preview { min-height: 0; }
+/* 带工作流的技能：正文区整体在 ? 文档浮窗内，编辑框与预览占满浮窗高度 */
+.rs-skill-doc-body > .rs-tpl-content { min-height: 300px; max-height: 46vh; }
+.rs-skill-doc-body > .rs-md-preview { min-height: 300px; max-height: 46vh; }
 
 /* Skill content header: label + view/edit mode toggle */
 .rs-content-header {
@@ -3205,6 +3203,60 @@
     text-overflow: ellipsis;
 }
 
+/* 技能名称集成在详情弹窗标题栏（同导演编辑器配方名）：默认显示文本，点击进入行内编辑
+   （Enter / 失焦提交，Esc 还原为已保存名）；标题让位给名称占满剩余宽度 */
+.rs-skill-detail .rs-skill-modal-title { flex: 0 0 auto; }
+
+.rs-skill-name-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+}
+
+.rs-skill-name-view {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 3px 10px;
+    border: 1px dashed transparent;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #ddd;
+    cursor: text;
+}
+
+.rs-skill-name-view:hover {
+    border-color: #4a4d55;
+    background: #262626;
+}
+
+.rs-skill-name-view.rs-skill-name-empty {
+    color: #6b7686;
+    font-weight: 400;
+}
+
+.rs-skill-name-input {
+    width: 100%;
+    max-width: 320px;
+    margin-bottom: 0;
+    background: #1e1e1e;
+    color: #ddd;
+    border: 1px solid #5090cc;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 13px;
+    font-weight: 400;
+    cursor: text;
+    user-select: text;
+}
+
+.rs-skill-name-wrap:not(.rs-skill-name-editing) .rs-skill-name-input,
+.rs-skill-name-wrap.rs-skill-name-editing .rs-skill-name-view {
+    display: none;
+}
+
 .rs-skill-modal-close {
     background: none;
     border: none;
@@ -3356,29 +3408,52 @@
 .rs-wf-editor-canvas-box { flex: 1; min-height: 0; position: relative; }
 /* 画布脱离文档流：canvas 的位图固有高会反过来撑大 flex 盒子（自增强循环），绝对定位后盒子高度只由 flex 决定 */
 .rs-wf-editor-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; background: #202020; border: 1px solid #444; border-radius: 6px; }
+.rs-wf-editor-canvas:focus { outline: none; }   /* tabindex=1 后画布可聚焦收快捷键，不要浏览器默认焦点框 */
 /* 内嵌编辑态（rs-wf-editing 由 mountWorkflowEditor 挂在详情根）：工作流卡片吃满内容区剩余高度，
    上方设置卡片收成区头把高度让给画布；折叠工作流区即恢复 */
 .rs-skill-detail.rs-wf-editing .rs-skill-workflow { flex: 1 1 auto; min-height: 0; }
 .rs-skill-detail.rs-wf-editing .rs-skill-detail-settings > .rs-gen-settings > :not(.rs-gen-settings-header) { display: none; }
 
-/* ---- 技能详情：正文（系统提示词内容）可折叠（仅 workflow.json 驱动的技能；默认收起，点标题展开）----
-   正文仅在「提示词增强」开启（作为扩写指令）或参考图模式（作为提示词模板）时生效，故工作流技能默认收起 */
-.rs-content-title { display: inline-flex; align-items: center; gap: 4px; }
-.rs-content-caret { flex: none; width: 9px; font-size: 10px; line-height: 1; color: #8a9aa8; display: none; }
-.rs-content-row-collapsible .rs-content-caret { display: inline-block; }
-.rs-content-row-collapsible .rs-content-title { cursor: pointer; user-select: none; }
-.rs-content-row-collapsible .rs-content-title:hover .rs-form-label { color: #fff; }
-.rs-content-hint { flex: none; font-size: 11px; color: #8a9aa8; background: #2a2a30; border-radius: 3px; padding: 1px 6px; white-space: nowrap; }
-/* 折叠时隐藏正文：display 由 setEditorMode 写在内联样式上，故用 !important 覆盖 */
-.rs-skill-modal-content .rs-content-row-collapsed > .rs-tpl-content,
-.rs-skill-modal-content .rs-content-row-collapsed > .rs-md-preview { display: none !important; }
-/* 并排两栏时折叠的正文卡片贴顶（否则会被 stretch 撑成空白高卡片） */
-@container (min-width: 980px) {
-    .rs-skill-detail-main > .rs-config-row.rs-content-row-collapsed { align-self: flex-start; }
-    /* 正文收起时不再占右侧半栏：主区改单列，设置区独占整行；收起卡片只剩一行标题条（排在设置之后，与工作流折叠条相邻） */
-    .rs-skill-detail-main.rs-main-content-collapsed { flex-direction: column; }
-    .rs-skill-detail-main.rs-main-content-collapsed > .rs-skill-detail-settings { order: 0; flex: none; }
-    .rs-skill-detail-main.rs-main-content-collapsed > .rs-config-row { order: 1; flex: none; align-self: stretch; }
+/* ---- 技能详情：? 徽标弹出的文档浮窗（带 workflow.json 的技能正文只作帮助文档，不参与生成）----
+   高于技能详情弹窗（9846）：浮窗从弹窗内打开，必须盖在弹窗之上 */
+.rs-skill-doc-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 9850;
+}
+.rs-skill-doc-modal { width: min(720px, calc(100vw - 48px)); }
+.rs-skill-doc-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 12px 14px;
+}
+/* 正文区卡片化（与主弹窗正文卡片同一观感） */
+.rs-skill-doc-body > .rs-config-row {
+    background: #202024;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+/* ? 徽标：标题栏内的圆形小按钮（选择器要压过 .rs-skill-modal-header .rs-btn 的 padding 与
+   .rs-skill-detail .rs-btn 的 font-size，否则 ? 会被挤到圆框右侧） */
+.rs-skill-modal-header .rs-skill-doc-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 13px;
+    line-height: 1;
 }
 
 /* ==========================================

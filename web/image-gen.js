@@ -245,9 +245,10 @@ async function loadGenTemplate(skillId) {
 /**
  * 拼装生图提示词：无参考图直接用用户文本；有参考图套 skill 正文模板。
  * 模板含占位符则全部替换为用户文本，否则把文本附在模板前。
+ * 带 workflow.json 的技能正文只作帮助文档（不参与生成），直接返回用户文本。
  */
-export async function buildGenPrompt(skillId, text, hasRefs) {
-    if (!hasRefs) return text;
+export async function buildGenPrompt(skillId, text, hasRefs, hasWorkflow) {
+    if (!hasRefs || hasWorkflow) return text;
     const body = await loadGenTemplate(skillId);
     if (!body) return text;
     if (body.includes(GEN_PLACEHOLDER)) {

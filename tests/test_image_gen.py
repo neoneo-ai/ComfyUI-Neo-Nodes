@@ -1965,6 +1965,49 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(status, 400)
 
 
+class EnhanceSystemPromptTests(unittest.TestCase):
+    """带 workflow.json 的技能正文只作帮助文档 → 增强用内置默认；无工作流的技能仍用正文作扩写指令。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_custom = _skill_mod.SKILL_CUSTOM_DIR
+        self._orig_presets = _skill_mod.SKILL_PRESETS_DIR
+        self._orig_lang = _skill_mod._resolve_skill_language
+        # 语言检测依赖 llm/folder_paths（本套桩环境没有）→ 固定按英文取主文件
+        _skill_mod._resolve_skill_language = lambda text: "en"
+        _skill_mod.SKILL_CUSTOM_DIR = os.path.join(self._tmp.name, "custom")
+        _skill_mod.SKILL_PRESETS_DIR = os.path.join(self._tmp.name, "presets")
+        for base, sid in ((_skill_mod.SKILL_CUSTOM_DIR, "wf_skill"),
+                          (_skill_mod.SKILL_PRESETS_DIR, "plain_skill")):
+            d = os.path.join(base, sid)
+            os.makedirs(d)
+            with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: %s\n---\n正文扩写指令" % sid)
+        wf = os.path.join(_skill_mod.SKILL_CUSTOM_DIR, "wf_skill", "workflow.json")
+        with open(wf, "w", encoding="utf-8") as f:
+            json.dump({"1": {"class_type": "UNETLoader", "inputs": {}}}, f)
+
+    def tearDown(self):
+        _skill_mod.SKILL_CUSTOM_DIR = self._orig_custom
+        _skill_mod.SKILL_PRESETS_DIR = self._orig_presets
+        _skill_mod._resolve_skill_language = self._orig_lang
+        self._tmp.cleanup()
+
+    def test_workflow_skill_uses_builtin_default(self):
+        out = image_gen._enhance_system_prompt("wf_skill", "一只猫")
+        self.assertNotIn("正文扩写指令", out, "带 workflow.json 的技能不应把正文当扩写指令")
+        self.assertIn("prompt enhancer", out, "应回落到内置默认扩写指令")
+
+    def test_skill_without_workflow_uses_body(self):
+        out = image_gen._enhance_system_prompt("plain_skill", "一只猫")
+        self.assertIn("正文扩写指令", out, "无工作流的技能仍用正文作扩写指令")
+
+    def test_missing_skill_falls_back_to_default(self):
+        out = image_gen._enhance_system_prompt("no_such_skill", "一只猫")
+        self.assertIn("prompt enhancer", out)
+        self.assertNotIn("正文扩写指令", out)
+
+
 class ProgressTests(unittest.TestCase):
     """采样进度读取：仅当全局 registry 属于本 prompt 且存在步数节点时返回 value/max。"""
 

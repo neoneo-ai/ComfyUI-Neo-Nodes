@@ -411,47 +411,44 @@ test("详情弹窗：非生图技能不渲染工作流区、不发请求", async
     assert.equal(wfCalled, false, "不应请求 workflow.json");
 });
 
-test("详情弹窗：带工作流的技能正文默认收起（点标题展开），标题带用途说明", async () => {
+test("详情弹窗：带工作流的技能正文区搬进 ? 徽标弹出的文档浮窗", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
     mockObjectInfo({});
     await openGenPopup({ id: "image_gen_text", source: "custom" });
 
     const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
-    const main = document.querySelector(".rs-skill-detail-main");
-    assert.ok(row.classList.contains("rs-content-row-collapsible"), "带工作流的技能正文应可折叠");
-    assert.ok(row.classList.contains("rs-content-row-collapsed"), "默认收起");
-    assert.equal(row.querySelector(".rs-content-caret").textContent, "▸");
-    assert.notEqual(row.querySelector(".rs-content-hint").style.display, "none", "应显示「工作流驱动」提示");
-    assert.ok(row.querySelector(".rs-content-title .rs-form-label").title.includes("workflow.json"), "标题应带正文用途说明");
-    assert.ok(main.classList.contains("rs-main-content-collapsed"), "正文收起 → 主区单列，设置区独占整行（不再为右栏留空）");
+    const docBody = document.querySelector(".rs-skill-doc-body");
+    const docOverlay = document.querySelector(".rs-skill-doc-overlay");
+    const docBtn = document.querySelector(".rs-skill-doc-btn");
+    assert.ok(docBtn, "标题栏应有 ? 徽标");
+    assert.notEqual(docBtn.style.display, "none", "带工作流的技能应显示 ? 徽标");
+    assert.equal(docOverlay.style.display, "none", "默认不弹出文档浮窗");
+    assert.equal(row.parentElement, docBody, "正文区应搬进文档浮窗（不在主区）");
 
-    click(row.querySelector(".rs-content-title"));
-    assert.equal(row.classList.contains("rs-content-row-collapsed"), false, "点标题应展开正文");
-    assert.equal(row.querySelector(".rs-content-caret").textContent, "▾");
-    assert.equal(main.classList.contains("rs-main-content-collapsed"), false, "展开后恢复两栏");
+    click(docBtn);
+    assert.equal(docOverlay.style.display, "flex", "点 ? 应弹出文档浮窗");
 
-    // 折叠态类名必须与 prompts.css 选择器一致（曾因 -row- 命名漂移导致规则不生效）
+    click(docOverlay.querySelector(".rs-skill-modal-close"));
+    assert.equal(docOverlay.style.display, "none", "点 ✕ 应收起浮窗");
+
+    // 徽标与浮窗类名必须与 prompts.css 选择器一致（曾因命名漂移导致规则不生效）
     const css = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/prompts.css"), "utf8");
-    for (const cls of ["rs-content-row-collapsible", "rs-content-row-collapsed", "rs-main-content-collapsed"]) {
+    for (const cls of ["rs-skill-doc-overlay", "rs-skill-doc-modal", "rs-skill-doc-body", "rs-skill-doc-btn"]) {
         assert.ok(css.includes("." + cls), `prompts.css 应含 .${cls} 选择器`);
     }
 });
 
-test("详情弹窗：非工作流技能正文保持展开、不显示折叠提示", async () => {
+test("详情弹窗：无工作流的技能不显示 ? 徽标，正文区留在主区", async () => {
     await openGenPopup({ id: "text_skill", source: "custom", genImage: false });
     const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
-    assert.ok(!row.classList.contains("rs-content-row-collapsible"), "无 workflow.json 时不可折叠");
-    assert.ok(!row.classList.contains("rs-content-row-collapsed"), "正文保持展开");
-    assert.ok(!document.querySelector(".rs-skill-detail-main").classList.contains("rs-main-content-collapsed"),
-        "不可折叠时不改主区列数");
-    assert.equal(row.querySelector(".rs-content-hint").style.display, "none", "不显示工作流驱动提示");
+    assert.equal(document.querySelector(".rs-skill-doc-btn").style.display, "none", "无 workflow.json 时不显示 ? 徽标");
+    assert.equal(row.parentElement, document.querySelector(".rs-skill-detail-main"), "正文区留在主区（参与生成）");
 });
 
 test("详情弹窗：生图技能无 workflow.json 时隐藏流程图", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ error: "missing" }, 404));
     await openGenPopup({ id: "image_gen_text", source: "custom" });
     assert.equal(document.querySelector(".rs-skill-workflow").style.display, "none");
-    assert.equal(document.querySelector(".rs-content-row-compact"), null, "无工作流时正文区保持常规高度");
 });
 
 
@@ -587,9 +584,6 @@ test("详情弹窗：生图工作流模板变量按 config 预替换，缺失模
     assert.ok(!summary.includes("模型缺失"), "config 里的模型/LoRA 都在列表中，不应报缺失：" + summary);
     assert.equal(wfWrap.querySelectorAll(".rs-wf-node-tpl").length, 1, "仅 {{PROMPT}} 节点保留模板变量标记");
     assert.ok(summary.includes("模板变量运行时填入"), "摘要应说明剩余变量运行时填入：" + summary);
-    // 有工作流 → 正文区高度减半（.rs-content-row-workflow）；正文非空不进一步压缩，为空时压缩（见下条用例）
-    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "工作流默认折叠，正文区不减半");
-    assert.equal(document.querySelector(".rs-content-row-compact"), null, "正文非空时不进一步压缩");
     // tooltip 显示渲染后的输入值：替换后的模型名 / 连线来源 / 运行时变量原样
     const nodeTitles = Array.from(wfWrap.querySelectorAll(".rs-wf-node title")).map(t => t.textContent);
     assert.ok(nodeTitles.some(t => t.includes("unet_name: m.safetensors")), "UNETLoader tooltip 应显示替换后模型名");
@@ -597,22 +591,7 @@ test("详情弹窗：生图工作流模板变量按 config 预替换，缺失模
     assert.ok(nodeTitles.some(t => t.includes("text: {{PROMPT}}")), "运行时变量在 tooltip 中原样显示");
 });
 
-test("详情弹窗：有工作流且正文为空时压缩 System Prompt Content 区", async () => {
-    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
-    mockObjectInfo({
-        UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
-        LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: {} } },
-        CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
-    });
-    await openGenPopup({ id: "image_gen_text", source: "custom", fileContent: "" });
-    const wfWrap = document.querySelector(".rs-skill-workflow");
-    assert.ok(wfWrap && wfWrap.style.display !== "none");
-    assert.equal(document.querySelector(".rs-content-row-compact"), null, "工作流默认折叠时正文区不压缩");
-    click(wfWrap.querySelector(".rs-skill-workflow-head"));   // 展开工作流
-    assert.ok(document.querySelector(".rs-skill-modal-content .rs-content-row-compact"), "展开且正文为空时应压缩正文区");
-});
-
-test("详情弹窗：工作流区默认折叠，点头部展开时正文区让位", async () => {
+test("详情弹窗：工作流区默认折叠，点头部展开、再点折叠", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
     mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
@@ -627,17 +606,12 @@ test("详情弹窗：工作流区默认折叠，点头部展开时正文区让�
     assert.ok(wfWrap && wfWrap.style.display !== "none", "应渲染工作流区");
     assert.equal(wfWrap.classList.contains("rs-wf-collapsed"), true, "默认折叠");
     assert.equal(wfWrap.querySelector(".rs-wf-caret").textContent, "▸");
-    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "默认折叠时正文区不减半");
 
-    // 点头部 → 展开：流程图为正文让位
+    // 点头部 → 展开，再点一次 → 折叠
     click(wfWrap.querySelector(".rs-skill-workflow-head"));
     assert.equal(wfWrap.classList.contains("rs-wf-collapsed"), false, "点头部应展开工作流区");
-    assert.ok(document.querySelector(".rs-content-row-workflow"), "展开后正文区减半让位");
-
-    // 再点一次 → 折叠，正文恢复完整高度
     click(wfWrap.querySelector(".rs-skill-workflow-head"));
     assert.equal(wfWrap.classList.contains("rs-wf-collapsed"), true);
-    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "折叠后正文区恢复完整高度");
 });
 
 const WF_VIDEO = {
@@ -855,11 +829,10 @@ test("详情弹窗：工作流区先骨架占位（默认折叠），加载完�
     const opened = popup.openExisting("image_gen_text", "custom");
     await sleep(80);
 
-    // 占位态：工作流区已显示 + 骨架 + 正文区已压缩让位
+    // 占位态：工作流区已显示 + 骨架
     const wrap = document.querySelector(".rs-skill-workflow");
     assert.ok(wrap && wrap.style.display !== "none", "加载中工作流区应先显示占位");
     assert.ok(document.querySelector(".rs-wf-skeleton"), "应显示骨架占位（加载提示）");
-    assert.equal(document.querySelector(".rs-content-row-workflow"), null, "工作流默认折叠，正文区不让位");
 
     resolveWf();
     await opened;

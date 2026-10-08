@@ -38,6 +38,7 @@ LLM 模式与本地安装见 [llm.md](llm.md)。
 - **无状态栏 / 切换开关** - 界面更简洁。
 - **输出 PROMPT + BUNDLE** - PROMPT 为提示词文本；BUNDLE 为本次生成的运行时包 id，
   供 🎨 Krea2 / 🎬 H3 按 id 消费（只携带 prompt 与参考图，不携带技能）。
+- **技能下拉只列无 `workflow.json` 的技能** - 带工作流的技能由 `workflow.json` 驱动出图、正文不参与本节点，故不出现在这里。
 
 ![⚡ Neo Prompt Agent 节点](assets/images/neo-prompt-agent.png)
 

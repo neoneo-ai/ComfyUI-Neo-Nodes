@@ -275,7 +275,8 @@ function createStatusBars() {
         defaultOpt.textContent = "默认";
         skillSelector.appendChild(defaultOpt);
 
-        populateSkillOptions(skillSelector, skills);
+        // 带 workflow.json 的技能由工作流驱动、正文不参与本节点 → 不出现在提示词代理下拉里
+        populateSkillOptions(skillSelector, skills.filter(s => !s.has_workflow));
 
         if (currentVal && [...skillSelector.options].some(o => o.value === currentVal)) {
             skillSelector.value = currentVal;
@@ -840,7 +841,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
     controller.set(state);
     try {
         const [promptText, enhanceEnabled] = await Promise.all([
-            buildGenPrompt(opt.value, text, useRefs),
+            buildGenPrompt(opt.value, text, useRefs, opt.__skillMeta?.has_workflow),
             resolveImageEnhance(opt.value || ""),
         ]);
 

@@ -125,3 +125,63 @@ test("技能弹窗出图设置：各配置行标签左|控件右（模型/LoRA/�
         if (browser) await browser.close();
     }
 });
+
+// 标题栏 ? 徽标：基础 .rs-btn 在标题栏里有 padding 4px 10px、在 .rs-skill-detail 里 font-size 12px，
+// 徽标选择器必须压过这两条，否则 22px 圆框里只剩 2px 内容宽，? 被挤到圆的右侧、看起来偏离。
+const headerDom = `
+<div class="rs-skill-modal rs-skill-detail" style="width:640px">
+  <div class="rs-skill-modal-header">
+    <span class="rs-skill-modal-title">📝 技能</span>
+    <div class="rs-skill-name-wrap"><span class="rs-skill-name-view">技能名</span></div>
+    <span class="rs-source-badge rs-skill-detail-badge">SYS</span>
+    <button type="button" class="rs-btn rs-btn-local rs-skill-doc-btn">?</button>
+    <button type="button" class="rs-btn rs-btn-local">⧉ 复制为自定义</button>
+    <button class="rs-skill-modal-close">✕</button>
+  </div>
+</div>`;
+
+test("技能弹窗标题栏：? 徽标居圆框正中、与相邻按钮同一中线", async (t) => {
+    let browser;
+    try {
+        browser = await chromium.launch();
+    } catch (e) {
+        t.skip("chromium 未安装：先运行 npx playwright install chromium");
+        return;
+    }
+    try {
+        const page = await browser.newPage({ viewport: { width: 900, height: 300 } });
+        await page.setContent(
+            `<html><head><meta charset="utf-8"><style>${css}</style></head><body>${headerDom}</body></html>`,
+            { waitUntil: "load" },
+        );
+        const m = await page.evaluate(() => {
+            const el = document.querySelector(".rs-skill-doc-btn");
+            const cs = getComputedStyle(el);
+            const center = (b) => ({ cx: b.x + b.width / 2, cy: b.y + b.height / 2, w: b.width, h: b.height });
+            const rng = document.createRange();
+            rng.selectNodeContents(el);
+            return {
+                badge: center(el.getBoundingClientRect()),
+                glyph: center(rng.getBoundingClientRect()),
+                copy: center(document.querySelector(".rs-btn-local:not(.rs-skill-doc-btn)").getBoundingClientRect()),
+                pad: cs.padding,
+                fs: cs.fontSize,
+                grow: cs.flexGrow,
+                ai: cs.alignItems,
+                jc: cs.justifyContent,
+                br: cs.borderRadius,
+            };
+        });
+        assert.equal(m.pad, "0px", `徽标 padding 应被压过标题栏 .rs-btn 的 4px 10px，实际 ${m.pad}`);
+        assert.equal(m.fs, "13px", `徽标字号应压过 .rs-skill-detail .rs-btn 的 12px，实际 ${m.fs}`);
+        assert.equal(m.grow, "0", "徽标不应被 flex:1 拉伸");
+        assert.equal(m.ai, "center", "徽标内容应水平居中");
+        assert.equal(m.jc, "center", "徽标内容应垂直居中");
+        assert.equal(m.br, "50%", "徽标应为圆框");
+        assert.ok(Math.abs(m.glyph.cx - m.badge.cx) <= 1.5, `? 应落在圆框水平正中，偏差 ${(m.glyph.cx - m.badge.cx).toFixed(1)}px`);
+        assert.ok(Math.abs(m.glyph.cy - m.badge.cy) <= 1.5, `? 应落在圆框垂直正中，偏差 ${(m.glyph.cy - m.badge.cy).toFixed(1)}px`);
+        assert.ok(Math.abs(m.badge.cy - m.copy.cy) <= 1, `徽标应与「⧉ 复制为自定义」同一中线，偏差 ${(m.badge.cy - m.copy.cy).toFixed(1)}px`);
+    } finally {
+        if (browser) await browser.close();
+    }
+});

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { readFileSync } from "node:fs";
 import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, flush, sleep, click, inputText, fire, keydown, setConfirmAnswer, dialogs, window, fetchLog } from "./setup.mjs";
-import { appState } from "./mocks/comfy-app.mjs";
+import { appState, app } from "./mocks/comfy-app.mjs";
 
 const LEFT_W_KEY = "neo.skillManagerLeftWidth";
 
@@ -571,9 +571,15 @@ function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
     class FakeCanvas {
         constructor(el, graph) {
             this.el = el;
+            this.canvas = el;   // 真实 litegraph：canvas 元素挂在 .canvas 上
             this.graph = graph;
             this.ds = { scale: 1, offset: [0, 0] };
             this.ctx = { setTransform: (a) => { this.transform = a; } };
+            this.selected_nodes = {};
+            this.selectedItems = new Set();
+            this.empty = false;
+            this.viewport = [0, 0, 800, 600];
+            FakeCanvas.active_canvas = this;   // 真实 litegraph 在 pointerdown 时抢 active_canvas
             created.canvases.push(this);
         }
         resize(w, h) { this.size = [w, h]; }
@@ -581,6 +587,16 @@ function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
         draw() { this.drawn = (this.drawn || 0) + 1; }
         stopRendering() { this.stopped = true; }
         unbindEvents() { this.unbound = true; }
+        deleteSelected() {
+            for (const n of [...this.selectedItems]) this.graph.removeNode(n);
+            this.selectedItems.clear();
+            this.selected_nodes = {};
+        }
+        selectItems() {
+            for (const n of this.graph._nodes) { this.selectedItems.add(n); this.selected_nodes[n.id] = n; }
+        }
+        fitViewToSelectionAnimated() { this.fitted = (this.fitted || 0) + 1; }
+        pasteFromClipboard() { this.pasted = (this.pasted || 0) + 1; }
         // 同前端 litegraph：弹窗挂 canvas.parentNode，按「clientX - canvas 左上角」定位
         prompt(name, value, callback, event) {
             const dlg = document.createElement("div");
@@ -593,6 +609,7 @@ function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
         }
     }
     const LiteGraph = {
+        NEVER: 2, ALWAYS: 0,
         createNode(type) {
             if (unregistered.includes(type)) return null;
             const tpl = byType[type] || {};
@@ -1077,5 +1094,164 @@ test("导入到画布：成功后关闭整个技能管理窗口（不遮挡画�
     const card = cards.length ? cards[cards.length - 1] : null;
     assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"),
         "整窗关闭后常驻回写卡片仍在（回写入口不丢）");
+});
+
+test("技能名称在标题栏内行内编辑：点文字进入编辑，Enter 提交、Esc 还原为已保存名，只读技能不可改名", async () => {
+    const { openSkillManager } = await import("../../web/skill.js");
+    mockSkills();
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id,
+        name: skills.find((s) => s.id === b.id)?.name || b.id,
+        content: "body",
+        files: [{ name: "skill.md", size: 5 }],
+        gen_image: false, gen_video: false, multi_turn: false, tags: [],
+        category: skills.find((s) => s.id === b.id)?.category || "",
+    }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    openSkillManager();
+    await flush();
+    await sleep(50);
+
+    const box = document.querySelector(".rs-skill-manager");
+    const wrap = box.querySelector(".rs-skill-modal .rs-skill-modal-header .rs-skill-name-wrap");
+    assert.ok(wrap, "技能名称应在标题栏内（同导演编辑器配方名）");
+    assert.equal(box.querySelectorAll(".rs-skill-modal .rs-tpl-name").length, 1, "名称输入框唯一（内容区不再单独一行）");
+    const view = wrap.querySelector(".rs-skill-name-view");
+    const inp = wrap.querySelector(".rs-skill-name-input");
+    assert.equal(view.textContent, "Preset Image", "显示态回显当前技能名");
+    assert.ok(!wrap.classList.contains("rs-skill-name-editing"), "默认非编辑态");
+
+    // 预设（SYS）只读：点击不进入编辑
+    click(view);
+    assert.ok(!wrap.classList.contains("rs-skill-name-editing"), "只读技能不应进入编辑态");
+
+    // 自定义技能：点文字进入编辑，Enter 提交
+    const row = Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => r.textContent.includes("Custom A"));
+    click(row);
+    await flush();
+    await sleep(50);
+    assert.equal(view.textContent, "Custom A", "切换后回显新技能名");
+    click(view);
+    assert.ok(wrap.classList.contains("rs-skill-name-editing"), "点击进入编辑态");
+    inputText(inp, "Custom A2");
+    keydown(inp, "Enter");
+    assert.ok(!wrap.classList.contains("rs-skill-name-editing"), "Enter 提交后退出编辑态");
+    assert.equal(view.textContent, "Custom A2", "提交后显示态更新为改名");
+
+    // 未保存改名算脏：切换技能先出确认
+    setConfirmAnswer(false);
+    const other = Array.from(box.querySelectorAll(".rs-skill-picker-item")).find((r) => !r.classList.contains("is-selected"));
+    click(other);
+    await flush();
+    await sleep(50);
+    assert.ok(dialogs.confirms.length > 0, "改名未保存 → 切换先出确认");
+    assert.ok(box.querySelector(".rs-skill-picker-item.is-selected").textContent.includes("Custom A"), "取消后仍停在改名中的技能");
+
+    // Esc：还原为已保存名，且不顺带关闭整窗
+    click(view);
+    inputText(inp, "临时名");
+    keydown(inp, "Escape");
+    await flush();
+    assert.ok(!wrap.classList.contains("rs-skill-name-editing"), "Esc 退出编辑态");
+    assert.equal(view.textContent, "Custom A", "Esc 还原为已保存名");
+    assert.ok(document.querySelector(".rs-skill-manager"), "名称输入框内的 Esc 不应关闭整窗");
+
+    closeMgr(box);
+});
+
+// ================= 内嵌编辑键盘：复用主画布快捷键 + 拦住打到主画布的全局键 =================
+
+test("内嵌编辑：canvas 可聚焦（tabindex=1），挂载后拿到焦点；关整窗后 active_canvas 还原给主画布", async () => {
+    const created = stubLiteGraph();
+    const mainCanvas = { name: "main-canvas" };
+    app.canvas = mainCanvas;
+    const { box, wf } = await openMgrWf(undefined, false);
+
+    click(wf.querySelector(".rs-skill-workflow-head"));
+    await flush();
+    await sleep(50);
+
+    const canvasEl = wf.querySelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas");
+    assert.equal(canvasEl.tabIndex, 1, "litegraph 把 keydown 绑在 canvas 元素上，canvas 必须可聚焦");
+    assert.equal(document.activeElement, canvasEl, "挂载后内嵌画布应拿到焦点");
+    assert.equal(window.LGraphCanvas.active_canvas, created.canvases[0], "内嵌画布挂载后是 active_canvas");
+
+    closeMgr(box);
+    await flush();
+    await sleep(50);
+    assert.equal(window.LGraphCanvas.active_canvas, mainCanvas, "关整窗必须卸载内嵌画布并还原 active_canvas");
+    app.canvas = null;
+});
+
+test("内嵌编辑：画布快捷键作用在内嵌子图上，不打到主画布", async () => {
+    const created = stubLiteGraph();
+    const mainGraph = {
+        _nodes: [{ id: 11, type: "LoadImage" }, { id: 12, type: "KSampler" }],
+        removeNode(n) { this._nodes = this._nodes.filter((x) => x !== n); },
+    };
+    app.canvas = { graph: mainGraph, name: "main-canvas" };
+    const { box, wf } = await openMgrWf(undefined, false);
+    click(wf.querySelector(".rs-skill-workflow-head"));
+    await flush();
+    await sleep(50);
+
+    const canvasEl = wf.querySelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas");
+    const wfCanvas = created.canvases[0];
+    const wfGraph = created.graphs[created.graphs.length - 1];
+    const target = wfGraph._nodes[0];
+
+    // 选中内嵌图的节点后按 Delete：删的是内嵌子图，不是主画布（走全局命令会打到空主画布并提示「未选中任何内容」）
+    wfCanvas.selectedItems.add(target);
+    wfCanvas.selected_nodes[target.id] = target;
+    keydown(canvasEl, "Delete");
+    assert(!wfGraph._nodes.includes(target), "Delete 应删掉内嵌子图选中的节点");
+    assert.equal(mainGraph._nodes.length, 2, "主画布节点不受影响");
+
+    wfCanvas.selectItems();
+    keydown(canvasEl, "m", { ctrlKey: true });
+    assert.ok(wfGraph._nodes.every((n) => n.mode === window.LiteGraph.NEVER), "Ctrl+M 静音内嵌子图全部节点");
+    keydown(canvasEl, "b", { ctrlKey: true });
+    assert.ok(wfGraph._nodes.every((n) => n.mode === 4), "Ctrl+B 跳过内嵌子图全部节点");
+
+    closeMgr(box);
+    app.canvas = null;
+});
+
+test("弹窗打开时拦住会打到主画布的全局快捷键，画布类命令放行给内嵌画布", async () => {
+    stubLiteGraph();
+    const { createSkillDetailPopup } = await import("../../web/skill.js");
+    mockWfSkill();
+    const popup = createSkillDetailPopup();
+    await popup.openExisting("wf_demo", "custom");
+    await flush();
+    await sleep(120);
+
+    const modal = popup.overlay.querySelector(".rs-skill-detail");
+    click(modal.querySelector(".rs-skill-workflow-head"));
+    await flush();
+    await sleep(50);
+    const canvasEl = modal.querySelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas");
+    const ta = document.querySelector("textarea");   // 带 workflow.json 的技能正文区整体搬进文档浮窗，textarea 不在 modal 里
+
+    const seen = [];
+    const keybind = (e) => seen.push((e.ctrlKey ? "C" : "") + (e.altKey ? "A" : "") + e.key);   // 模拟挂在 window 冒泡的 ComfyUI keybindHandler
+    window.addEventListener("keydown", keybind);
+
+    for (const [key, init] of [["Enter", { ctrlKey: true }], ["s", { ctrlKey: true }], ["r", {}], ["w", {}], ["m", { altKey: true }]]) {
+        keydown(modal, key, init);
+    }
+    assert.equal(seen.length, 0, "Ctrl+Enter / Ctrl+S / r / w / Alt+M 不应到达 window 上的 keybindHandler");
+
+    for (const [key, init] of [["m", { ctrlKey: true }], ["Delete", {}], [".", {}], ["Escape", {}]]) {
+        keydown(canvasEl, key, init);
+    }
+    keydown(ta, "Enter", { ctrlKey: true });
+    assert.deepEqual(seen, ["Escape", "CEnter"], "画布类命令由内嵌画布就地消费，不应到达 window；画布上的 Esc 与输入框里的 Ctrl+Enter 必须放行");
+
+    keydown(modal, "Escape");
+    assert.deepEqual(seen, ["Escape", "CEnter"], "弹窗里的 Esc 不应打到主画布的退出子图");
+    assert.equal(popup.overlay.style.display, "none", "Esc 关闭详情弹窗");
+
+    window.removeEventListener("keydown", keybind);
 });
 

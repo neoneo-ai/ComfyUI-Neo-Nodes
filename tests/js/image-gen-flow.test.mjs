@@ -18,6 +18,7 @@ import { makeGraph, makeNode, addNode, connect, agentWidgets, slot, outSlot } fr
 const SKILL_WITH_IMAGE_GEN = [
     { id: "image_gen", name: "出图 参考编辑", category: "image_gen", source: "preset", gen_image: true, requires_ref: true },
     { id: "image_gen_text", name: "出图 文生图", category: "image_gen", source: "preset", gen_image: true },
+    { id: "image_gen_wf", name: "出图 工作流", category: "image_gen", source: "preset", gen_image: true, requires_ref: true, has_workflow: true },
 ];
 
 beforeEach(() => {
@@ -507,4 +508,34 @@ test("旧 rs_selected_template：迁移到 rs_selected_skill 并清除旧键", a
     assert.equal(el.selector.value, "image_gen", "选择器应显示迁移后的 skill");
     assert.equal(gen.properties.rs_selected_skill, "image_gen", "应迁移到 rs_selected_skill");
     assert.equal(gen.properties.rs_selected_template, undefined, "旧键应被清除");
+});
+
+test("NeoPromptAgent 技能下拉：带 workflow.json 的技能不出现（正文不参与本节点）", async () => {
+    const graph = makeGraph();
+    const agent = await attachAgent(makeNode({
+        id: 32, type: "NeoPromptAgent", widgets: agentWidgets(),
+        inputs: [slot("text_input", "STRING"), slot("image", "IMAGE")],
+        outputs: [outSlot("PROMPT", "STRING")], graph,
+    }));
+    const el = parts(agent);
+    await sleep(200);
+    const vals = Array.from(el.selector.options).map((o) => o.value);
+    assert.ok(!vals.includes("image_gen_wf"), "工作流技能不应出现在提示词代理下拉");
+    assert.ok(vals.includes("image_gen_text"), "无工作流的技能照常出现");
+});
+
+test("buildGenPrompt：带 workflow.json 的技能直接返回用户文本，不套正文模板", async () => {
+    const { buildGenPrompt } = await import("../../web/image-gen.js");
+    mockRoute("/rs_prompts/load_skill", () => jsonResponse({ id: "image_gen_wf", content: "把描述写成 {prompt} 的画面" }));
+    assert.equal(await buildGenPrompt("image_gen_wf", "一只猫", true, true), "一只猫", "工作流技能不套正文模板");
+    assert.equal(await buildGenPrompt("image_gen_wf", "一只猫", false, true), "一只猫");
+    assert.equal(await buildGenPrompt("image_gen_text", "一只猫", false, false), "一只猫", "无参考图时返回原文");
+});
+
+test("buildGenPrompt：无工作流的参考图技能仍套 skill 正文模板", async () => {
+    const { buildGenPrompt } = await import("../../web/image-gen.js");
+    mockRoute("/rs_prompts/load_skill", () => jsonResponse({ id: "image_gen_ref_tpl", content: "把「{prompt}」画进参考图" }));
+    const out = await buildGenPrompt("image_gen_ref_tpl", "一只猫", true, false);
+    assert.ok(out.includes("画进参考图"), "应套用正文模板");
+    assert.ok(out.includes("一只猫"), "模板占位符应替换为用户文本");
 });

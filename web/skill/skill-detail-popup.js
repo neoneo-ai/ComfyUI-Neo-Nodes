@@ -31,22 +31,64 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const modal = mkEl("div", "rs-skill-modal rs-skill-detail");
     const showDetail = () => { if (embedded) modal.style.display = ""; else overlay.style.display = "flex"; };
 
-    // ---- 头部：标题 + 来源徽标 + 复制为自定义 + 关闭 ----
+    // ---- 头部：标题 + 技能名称（点击进入行内编辑）+ 来源徽标 + 复制为自定义 + 关闭 ----
     const header = mkEl("div", "rs-skill-modal-header");
     const titleSpan = mkEl("span", "rs-skill-modal-title");
     titleSpan.textContent = "📝 技能";
+    const nameView = mkEl("span", "rs-skill-name-view");
+    nameView.title = "点击编辑技能名称（Enter / 失焦提交，Esc 还原）";
+    const nameInput = mkEl("input", "rs-form-input rs-tpl-name rs-skill-name-input");
+    nameInput.placeholder = "输入技能名称…";
+    const nameWrap = mkEl("div", "rs-skill-name-wrap");
+    nameWrap.append(nameView, nameInput);
     const sourceBadge = mkEl("span", "rs-source-badge rs-skill-detail-badge");
-    header.append(titleSpan, sourceBadge);
+    header.append(titleSpan, nameWrap, sourceBadge);
     // 「复制为自定义」放标题栏（仅预设/任务技能显示），在 ✕ 左侧
     const copyBtn = mkEl("button", "rs-btn rs-btn-local");
     copyBtn.type = "button";
     copyBtn.textContent = "⧉ 复制为自定义";
     copyBtn.title = "把这个内置技能复制为可编辑的自定义技能";
     copyBtn.style.display = "none";
+    // 带工作流的技能：正文只作帮助文档，标题栏 ? 徽标弹出文档浮窗（正文区整体搬进浮窗，编辑也在浮窗内）
+    const docBtn = mkEl("button", "rs-btn rs-btn-local rs-skill-doc-btn");
+    docBtn.type = "button";
+    docBtn.textContent = "?";
+    docBtn.title = "查看技能说明（skill.md 正文）";
+    docBtn.style.display = "none";
     const closeBtn = mkEl("button", "rs-skill-modal-close");
     closeBtn.textContent = "✕";
     closeBtn.setAttribute("aria-label", "Close");
-    header.append(copyBtn, closeBtn);
+    header.append(docBtn, copyBtn, closeBtn);
+
+    // 技能名称行内编辑（同导演编辑器配方名）：显示态点文字进入编辑，Enter / 失焦提交，Esc 还原为已保存名
+    const renderName = () => {
+        const v = nameInput.value.trim();
+        nameView.textContent = v || "未命名技能";
+        nameView.classList.toggle("rs-skill-name-empty", !v);
+        nameInput.title = v;
+    };
+    const stopNameEdit = () => {
+        nameWrap.classList.remove("rs-skill-name-editing");
+        renderName();
+    };
+    const startNameEdit = () => {
+        if (nameInput.disabled) return;   // 只读技能（SYS / TASK）不可改名
+        nameWrap.classList.add("rs-skill-name-editing");
+        nameInput.focus();
+        nameInput.select();
+        nameInput.scrollLeft = 0;   // 全选后回到开头，长名称不至于只显示尾部
+    };
+    nameView.addEventListener("click", startNameEdit);
+    nameInput.addEventListener("blur", stopNameEdit);
+    nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); stopNameEdit(); }
+        else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();   // 别让 Esc 顺带关掉整窗
+            nameInput.value = contentBaseline ? contentBaseline.name : "";
+            stopNameEdit();
+        }
+    });
 
     // ---- 内容：名称行 + 正文区（多文件下拉 + 预览/编辑切换）----
     const content = mkEl("div", "rs-skill-modal-content");
@@ -55,13 +97,6 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const unavailableBanner = mkEl("div", "rs-skill-unavailable-banner");
     unavailableBanner.textContent = "⚠️ 该技能依赖 VDN 加速节点（ComfyUI-VDN-H3 插件），当前未注册，暂不能用于生成。可继续查看与编辑其设置。";
     unavailableBanner.style.display = "none";
-
-    const nameRow = mkEl("div", "rs-config-row");
-    const nameLabel = mkEl("label", "rs-form-label");
-    nameLabel.textContent = "技能名称";
-    const nameInput = mkEl("input", "rs-form-input rs-tpl-name");
-    nameInput.placeholder = "输入技能名称…";
-    nameRow.append(nameLabel, nameInput);
 
     // multi_turn 勾选：每次生成仅推进一个阶段（节点底部会显示多轮提示）
     const multiTurnRow = mkEl("div", "rs-skill-multiturn-row");
@@ -76,28 +111,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const contentRow = mkEl("div", "rs-config-row");
     const contentHeader = mkEl("div", "rs-content-header");
     const contentLeft = mkEl("div", "rs-content-left");
-    // 正文用途说明（tooltip / 标题提示）：带工作流的技能由 workflow.json 决定出图，正文一般无需修改
-    const CONTENT_HINT = "技能正文（skill.md）：仅在开启「提示词增强」时作为扩写指令，或在参考图模式下作为提示词模板；出图流程由 workflow.json 决定。";
-    // 标题 = caret + 文字：带工作流的技能可点标题折叠正文（默认收起）
-    const contentTitle = mkEl("span", "rs-content-title");
-    const contentCaret = mkEl("span", "rs-content-caret");
-    contentCaret.textContent = "▾";
+    // 正文用途说明（tooltip）：无工作流时正文参与生成，带 workflow.json 的技能正文只作帮助文档
+    const CONTENT_HINT = "技能正文（skill.md）：无工作流时作为提示词增强的扩写指令或参考图模式的提示词模板；带 workflow.json 的技能正文只作帮助文档，不参与生成（点标题栏 ? 查看/编辑）。";
     const contentLabel = mkEl("label", "rs-form-label");
     contentLabel.textContent = "系统提示词内容";
     contentLabel.title = CONTENT_HINT;
-    contentTitle.append(contentCaret, contentLabel);
-    contentTitle.addEventListener("click", () => {
-        if (!contentRow.classList.contains("rs-content-row-collapsible")) return;
-        contentCollapsed = !contentCollapsed;
-        updateContentCompact();
-    });
-    contentLeft.appendChild(contentTitle);
-    // 工作流驱动的技能：标题旁提示（默认收起，点标题展开编辑）
-    const contentHint = mkEl("span", "rs-content-hint");
-    contentHint.textContent = "工作流驱动";
-    contentHint.title = CONTENT_HINT;
-    contentHint.style.display = "none";
-    contentLeft.appendChild(contentHint);
+    contentLeft.appendChild(contentLabel);
     // Enhance Prompt 开关（仅生图技能显示）：LLM 提示词增强，指令即上方正文；放在标题右侧便于就近理解
     const enhancePromptWrap = mkEl("div", "rs-content-enhance");
     enhancePromptWrap.style.display = "none";
@@ -778,10 +797,33 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         settingsCol.style.display = on ? "" : "none";
     };
 
-    content.append(unavailableBanner, nameRow, multiTurnRow, mainRow, workflowWrap, footerBtns);
+    content.append(unavailableBanner, multiTurnRow, mainRow, workflowWrap, footerBtns);
     modal.append(header, content);
     if (embedded) { modal.style.display = "none"; host.appendChild(modal); }
     else { overlay.appendChild(modal); document.body.appendChild(overlay); }
+
+    // 带工作流的技能：正文区整体搬进这个文档浮窗（只读技能只能看，自定义技能在浮窗里编辑）
+    const docOverlay = mkEl("div", "rs-skill-doc-overlay");
+    const docModal = mkEl("div", "rs-skill-modal rs-skill-doc-modal");
+    const docHeader = mkEl("div", "rs-skill-modal-header");
+    const docTitle = mkEl("span", "rs-skill-modal-title");
+    docTitle.textContent = "📖 技能说明（skill.md）";
+    const docClose = mkEl("button", "rs-skill-modal-close");
+    docClose.textContent = "✕";
+    docClose.setAttribute("aria-label", "Close");
+    docHeader.append(docTitle, docClose);
+    const docBody = mkEl("div", "rs-skill-doc-body");
+    docModal.append(docHeader, docBody);
+    docOverlay.appendChild(docModal);
+    document.body.appendChild(docOverlay);
+    const closeDoc = () => { docOverlay.style.display = "none"; };
+    docClose.addEventListener("click", closeDoc);
+    docOverlay.addEventListener("click", (e) => { if (e.target === docOverlay) closeDoc(); });
+    docBtn.addEventListener("click", () => {
+        docBody.appendChild(contentRow);   // 正文区（多文件下拉 + 预览/编辑 + 增删文件）整体搬进浮窗
+        setEditorMode("preview");
+        docOverlay.style.display = "flex";
+    });
 
     // ---- 状态 ----
     let currentSkillId = null;
@@ -793,9 +835,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     let editorMode = "preview";
     const isCustom = () => currentSource === "custom";
     const isMainFile = (name) => String(name || "").toLowerCase() === "skill.md";
-    let workflowShown = false;   // 是否渲染了工作流流程图（正文区高度减半，为空时进一步压缩）
-    let contentCollapsed = true; // 正文是否收起（仅带 workflow.json 的技能可折叠；默认收起）
-    let workflowExpanded = false; // 工作流区是否展开（默认折叠；展开时流程图占据高度、正文区减半让位）
+    let workflowShown = false;   // 是否渲染了工作流流程图（正文区随之搬进 ? 文档浮窗）
     let contentBaseline = null;   // { name, content, multiTurn } 加载/新建后的快照，关闭时判断正文有无未保存修改
     let genSettingsBaseline = null;   // 生图/生视频设置区 collect() 的 JSON 快照（load/save 后刷新）；null = 无设置区
     let loadedGenInfo = null;         // 最近一次 loadGenSettings/loadVideoGenSettings 返回的 { config, models }，供「修复失效路径」回填复用
@@ -805,11 +845,9 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
 
     // 折叠/展开工作流区：折叠时隐藏流程图与摘要，正文区恢复完整高度
     function setWorkflowCollapsed(collapsed) {
-        workflowExpanded = !collapsed;
         workflowWrap.classList.toggle("rs-wf-collapsed", collapsed);
         workflowCaret.textContent = collapsed ? "▸" : "▾";
         if (collapsed) unmountWorkflowEditor();   // 折叠 → 卸载内嵌画布
-        updateContentCompact();
     }
     function resetWorkflowCollapse() {
         setWorkflowCollapsed(true);   // 每次打开技能：工作流区默认折叠
@@ -906,6 +944,10 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         if (wfCanvas) {
             wfCanvas.stopRendering();
             wfCanvas.unbindEvents();
+            // litegraph 在 pointerdown 时把 active_canvas 抢给内嵌画布；卸载后必须还原给主画布，
+            // 否则主画布上依赖 active_canvas 的静态入口（右键加节点 / 对齐 / 分布 / 节点面板）会打到已死的子图
+            const LG = window.LGraphCanvas;
+            if (LG && LG.active_canvas === wfCanvas) LG.active_canvas = app.canvas;
             wfCanvas = null;
         }
         if (wfGraph) {
@@ -931,8 +973,31 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         g.start();
         wfGraph = g;
         const canvasEl = mkEl("canvas", "rs-wf-editor-canvas");
+        canvasEl.tabIndex = 1;   // litegraph 把 keydown 绑在 canvas 元素上（主画布靠 tabindex=1），没有焦点就收不到快捷键
         wfCanvasBox.appendChild(canvasEl);
+        // ComfyUI 给 litegraph 打的补丁把「画布快捷键」执行在 app.canvas（主画布）上：内嵌画布选中
+        // 节点后按 Delete 会打到空的主画布，提示「未选中任何内容」。这里在 litegraph 绑定事件之前抢一个
+        // capture 监听，把这些命令作用在内嵌子图上。
+        canvasEl.addEventListener("keydown", (e) => {
+            const k = e.key.toLowerCase(), ctrl = e.ctrlKey || e.metaKey, alt = e.altKey;
+            const nodes = Object.values(wfCanvas.selected_nodes);
+            if (!ctrl && !alt && (k === "delete" || k === "backspace")) {
+                if (wfCanvas.selectedItems.size) wfCanvas.deleteSelected();
+            } else if (ctrl && !e.shiftKey && k === "a") wfCanvas.selectItems();
+            else if (ctrl && k === "m") for (const n of nodes) n.mode = n.mode === LiteGraph.NEVER ? LiteGraph.ALWAYS : LiteGraph.NEVER;
+            else if (ctrl && k === "b") for (const n of nodes) n.mode = n.mode === 4 ? LiteGraph.ALWAYS : 4;   // BYPASS = 4
+            else if (alt && k === "c") for (const n of nodes) n.collapse();
+            else if (ctrl && e.shiftKey && k === "v") wfCanvas.pasteFromClipboard({ connectInputs: true });
+            else if (k === "." && !ctrl && !alt) {
+                if (wfCanvas.empty) return;
+                wfCanvas.fitViewToSelectionAnimated({ viewport: wfCanvas.viewport });
+            } else return;
+            e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+            wfCanvas.setDirty(true, true);
+        }, true);
         wfCanvas = new LGraphCanvas(canvasEl, g);
+        canvasEl.addEventListener("pointerdown", () => canvasEl.focus());
+        canvasEl.focus();
         // litegraph 的 widget 弹窗按「clientX - canvas.getBoundingClientRect().left」定位：主画布左上角
         // 就是视口原点所以看不出问题，内嵌画布在窗口里偏移几百像素，弹窗会飞到鼠标左上方。
         // 前端 CSS 里 .graphdialog 是 position:fixed，落点直接按视口坐标下发。
@@ -1016,19 +1081,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     });
     wfFitBtn.addEventListener("click", (e) => { e.stopPropagation(); refitWfCanvas(); });
 
-    // 有工作流的技能：正文默认收起（点标题展开）；正文区高度减半给流程图让位；正文为空时进一步压缩（输入内容后自动恢复）
-    function updateContentCompact() {
-        const active = workflowShown && workflowExpanded;
-        contentRow.classList.toggle("rs-content-row-workflow", active);
-        contentRow.classList.toggle("rs-content-row-compact", active && !contentTextarea.value.trim());
-        const collapsible = workflowShown;      // 由 workflow.json 驱动的技能才可折叠
-        const collapsed = collapsible && contentCollapsed;
-        contentRow.classList.toggle("rs-content-row-collapsible", collapsible);
-        contentRow.classList.toggle("rs-content-row-collapsed", collapsed);
-        contentCaret.textContent = collapsed ? "▸" : "▾";
-        contentHint.style.display = collapsible ? "" : "none";
-        // 正文收起 → 主区改单列（设置区独占整行），不再为右栏留空
-        mainRow.classList.toggle("rs-main-content-collapsed", collapsed);
+    // 带工作流的技能：正文不参与生成 → 正文区整体搬进 ? 文档浮窗，主弹窗只留设置区；
+    // 无工作流的技能正文区留在主区（参与生成）。
+    function syncContentVisibility() {
+        if (workflowShown) docBody.appendChild(contentRow);
+        else mainRow.insertBefore(contentRow, settingsCol);
+        docBtn.style.display = workflowShown ? "" : "none";
     }
 
     // 客户端剥离 skill.md 的 YAML frontmatter（与后端对标准 --- 块的解析一致）
@@ -1058,7 +1116,6 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     }
     previewBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("preview"); });
     editBtn.addEventListener("click", (e) => { e.stopPropagation(); setEditorMode("edit"); });
-    contentTextarea.addEventListener("input", updateContentCompact);
 
     function populateFileSelect(defaultName) {
         fileSelect.innerHTML = "";
@@ -1107,7 +1164,6 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         contentBaseline = { name: nameInput.value, content: text, multiTurn: multiTurnChk.checked };
         setEditorMode(/\.md$/i.test(name) ? editorMode : "edit");
         updateControls();
-        updateContentCompact();
     }
     fileSelect.addEventListener("change", () => selectFile(fileSelect.value));
 
@@ -1119,6 +1175,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         currentSource = source || "custom";
         setBadge();
         nameInput.value = "";
+        renderName();   // 加载先清掉上一个技能的名称显示
         contentTextarea.value = "";
         contentPreview.innerHTML = "";
         fileSelect.innerHTML = "";
@@ -1131,8 +1188,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         currentCnName = full.cn_name || null;
         const nm = (full && full.name) || id;
         nameInput.value = nm;
-        titleSpan.textContent = "📝 " + nm;
-        titleSpan.title = nm;
+        stopNameEdit();   // 切技能：退出上一个技能的编辑态并回显新名称
         multiTurnChk.checked = !!(full && full.multi_turn);
         currentIsVideo = !!(full && full.gen_video);
         configOverridden = !!(full && full.config_overridden);
@@ -1183,7 +1239,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         workflowShown = false;
         skillWorkflowRaw = null;
         unmountWorkflowEditor();   // 切技能先卸载上一个技能的内嵌画布
-        contentCollapsed = true;   // 每次打开技能：带工作流的正文默认收起
+        closeDoc();                // 切技能收起上一个技能的文档浮窗
         resetWorkflowCollapse();   // 每次打开技能：工作流区默认折叠
         if (wfPromise) {
             const skel = mkEl("div", "rs-wf-skeleton");
@@ -1202,7 +1258,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                 workflowBody.innerHTML = "";
             }
         }
-        updateContentCompact();
+        syncContentVisibility();
         setEditorMode(editorMode);
         updateControls();
     }
@@ -1211,7 +1267,6 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     function openNew() {
         showDetail();
         titleSpan.textContent = "✨ 新建技能";
-        titleSpan.removeAttribute("title");
         currentSkillId = null;
         currentFiles = [];
         currentSource = "custom";
@@ -1236,9 +1291,9 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         skillWorkflowRaw = null;
         currentIsVideo = false;
         unmountWorkflowEditor();
-        contentCollapsed = true;
+        closeDoc();
         resetWorkflowCollapse();
-        updateContentCompact();   // 清掉上一个技能残留的工作流 / 正文折叠类
+        syncContentVisibility();   // 新建：正文区回到主区
         workflowBody.innerHTML = "";
         workflowSummary.textContent = "";
         contentBaseline = { name: "", content: "", multiTurn: false };
@@ -1248,7 +1303,8 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         contentTextarea.disabled = false;
         setEditorMode("edit");
         updateControls();
-        nameInput.focus();
+        renderName();
+        startNameEdit();   // 新建技能直接进编辑态，名称就是标题
     }
 
     // ---- 关闭保护：有未保存修改先出确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）----
@@ -1286,7 +1342,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     dirtyConfirm.append(dirtyText, dirtyActions);
     content.insertBefore(dirtyConfirm, footerBtns);
 
-    function close() { dirtyConfirm.hidden = true; destroyWfEditor(); if (embedded) modal.style.display = "none"; else overlay.style.display = "none"; }
+    function close() { dirtyConfirm.hidden = true; destroyWfEditor(); closeDoc(); if (embedded) modal.style.display = "none"; else overlay.style.display = "none"; }
 
     // 用户主动关闭（✕ / 点遮罩 / Esc）：有未保存修改时暂停关闭，等用户在确认条里选择
     function requestClose() {
@@ -1384,13 +1440,43 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
 
     // 拦截弹窗内部指针事件向外冒泡，避免触发画布选节点等副作用（同预设列表浮层）
     stopPointerBubble(modal);
+    stopPointerBubble(docModal);
     closeBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); requestClose(); });
+    // 文档浮窗在弹窗之上：Esc 先收起浮窗，再走主弹窗的关闭保护
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && docOverlay.style.display !== "none") { e.stopImmediatePropagation(); closeDoc(); }
+    });
     if (!embedded) {
         // 独立弹窗：点遮罩 / Esc 关闭；内嵌模式由宿主窗口（统一技能管理）负责关闭与 Esc
         overlay.addEventListener("pointerdown", (e) => { if (e.target === overlay) requestClose(); });
         const onKey = (e) => { if (e.key === "Escape" && overlay.style.display !== "none") requestClose(); };
         document.addEventListener("keydown", onKey);
     }
+
+    // 拦住会打到主画布的全局快捷键。ComfyUI 的 keybindHandler 挂在 window 冒泡，对没有 targetElementId
+    // 的绑定（Ctrl+Enter 排队 / Ctrl+S 保存 / Ctrl+O 打开 / Ctrl+G 成组 / Ctrl+, 设置 / Ctrl+` 日志 /
+    // Ctrl+Shift+K 快捷键 / Esc 退出子图 / r 刷新 / w n m a 侧栏 / Alt+M）会无条件执行。
+    // 本监听在 document 冒泡、注册晚于 Neo 自己的所有 Esc 监听（技能管理 / 文档浮窗 / 选择器都是 capture 或更早），
+    // 只把事件截断在 window 之前，Neo 浮层与内嵌画布的按键照常处理。
+    // 带 targetElementId 的画布命令（Delete / Ctrl+A / Ctrl+M / Ctrl+B / Alt+C / Ctrl+Shift+V / .）由内嵌画布
+    // 自己的 capture 监听就地执行——ComfyUI 的补丁会把这类命令打到 app.canvas，见 mountWfEditor。
+    const ctrlBlock = new Set(["enter", "s", "o", "g", ",", "v", "`", "k"]);
+    const singleBlock = new Set(["r", "w", "n", "m", "a"]);
+    document.addEventListener("keydown", (e) => {
+        if (!modal.isConnected || !modal.contains(e.target)) return;   // 弹窗内的按键才归本弹窗管（先关窗的 Esc 监听也要拦住）
+        const tag = e.target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;   // 输入框里的键归输入框
+        const onWfCanvas = !!wfCanvas && e.target === wfCanvas.canvas;
+        if (e.key === "Escape") {
+            if (onWfCanvas) return;   // 内嵌画布上的 Esc 交给 litegraph 收节点面板 / 断连线
+            e.stopPropagation();
+            return;
+        }
+        const k = e.key.toLowerCase();
+        if (e.ctrlKey || e.metaKey) { if (ctrlBlock.has(k)) e.stopPropagation(); return; }
+        if (e.altKey) { if (k === "m") e.stopPropagation(); return; }
+        if (singleBlock.has(k) && !onWfCanvas) e.stopPropagation();
+    });
 
     return { overlay, openExisting, openNew, close, isDirty: hasUnsavedChanges };
 }
