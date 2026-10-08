@@ -562,6 +562,80 @@ test("图片编辑弹窗：第二参考图拖放选中后随请求发送，扩�
     assert.equal(overlay.querySelector(".neo-gallery-edit-refchip-img"), null, "扩图模式应清除已选第二参考");
 });
 
+test("图片编辑弹窗：姿势开关切到姿势编辑技能并预填默认触发词，第二参考图作姿势参考随请求发送", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_pose_edit", cn_name: "Qwen Image 2.1 姿势编辑", category: "image_gen", gen_image: true,
+          gen_config: { default_prompt: "Change the pose of the person in <image1> to [describe the new pose], keeping the face unchanged" } },
+    ]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "pose_b.png" }));
+
+    const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
+    openImageEditDialog(gallery, { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    const poseBtn = [...overlay.querySelectorAll(".neo-gallery-edit-outpaint-btn")].find((b) => b.textContent.includes("姿势"));
+    assert.ok(poseBtn, "应有「姿势」开关");
+    click(poseBtn);
+    await sleep(10);
+
+    const skillSel = overlay.querySelector(".neo-gallery-story-form-row select");
+    assert.equal(skillSel.value, "qwen_image_21_pose_edit", "开姿势应切到姿势编辑技能");
+    assert.ok(poseBtn.classList.contains("on"), "姿势开关应高亮");
+    const promptInput = overlay.querySelector(".neo-gallery-story-input");
+    assert.match(promptInput.value, /Change the pose of the person in <image1>/,
+        "无参考图时应预填技能 config.json 的默认姿势触发词");
+    // 姿势编辑走常规画布：目标分辨率保持可见，参考图区可用（第 2 张 = 姿势参考）
+    assert.notEqual(overlay.querySelector("#img-edit-width").style.display, "none", "姿势模式应保留目标分辨率输入");
+    assert.ok(!overlay.querySelector(".neo-gallery-edit-refdrop-row").classList.contains("disabled"), "姿势模式参考图区应可用");
+
+    // 从素材库拖入姿势参考 → 触发词自动换成迁移姿势的默认词
+    const refDropZone = overlay.querySelector(".neo-gallery-edit-refdrop");
+    const dt = { getData: (m) => (m === "application/x-neo-gallery" ? '{"filename":"pose_b.png","subfolder":""}' : "") };
+    const dropEv = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt, configurable: true });
+    refDropZone.dispatchEvent(dropEv);
+    await sleep(30);
+    assert.match(promptInput.value, /Adopt the pose of the person in <image2>/,
+        "拖入姿势参考后应自动换成迁移姿势的默认触发词");
+
+    let genBody = null;
+    mockRoute("/neo_image_gen/generate", (body) => { genBody = body; return jsonResponse({ task_id: "ie5", status: "queued", images: [] }); });
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(60);
+    assert.ok(genBody, "应发出生成请求");
+    assert.equal(genBody.skill_id, "qwen_image_21_pose_edit");
+    assert.equal(genBody.references.length, 2);
+    assert.deepEqual(genBody.references[1], { kind: "input", value: "pose_b.png" }, "姿势参考应进第 2 槽");
+    assert.match(genBody.prompt, /Adopt the pose of the person in <image2>/, "请求应带迁移触发词");
+
+    // 删掉姿势参考 → 触发词换回按提示词改姿势的默认词
+    click(overlay.querySelector(".neo-gallery-edit-refchip-x"));
+    await sleep(10);
+    assert.match(promptInput.value, /Change the pose of the person in <image1>/,
+        "移除姿势参考后应换回技能默认触发词");
+
+    // 用户自己写过的提示词不被自动替换
+    promptInput.value = "自定义姿势指令";
+    const dropEv2 = new window.Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv2, "dataTransfer", { value: dt, configurable: true });
+    overlay.querySelector(".neo-gallery-edit-refdrop").dispatchEvent(dropEv2);
+    await sleep(30);
+    assert.equal(promptInput.value, "自定义姿势指令", "已有自定义提示词时不应被默认词覆盖");
+
+    // 关姿势 → 回常规编辑技能，已选姿势参考保留
+    click(poseBtn);
+    await sleep(10);
+    assert.equal(skillSel.value, "qwen_image_21", "关姿势应回到常规编辑技能");
+    assert.ok(!poseBtn.classList.contains("on"), "关姿势后开关应熄灭");
+    assert.ok(overlay.querySelector(".neo-gallery-edit-refchip-img"), "关姿势后已选参考图应保留");
+});
+
 test("图片编辑弹窗：生成失败（缺模型）弹 action toast 引导去技能详情", async () => {
     resetEnv();
     clearRoutes();
@@ -641,23 +715,57 @@ test("图片编辑弹窗：窗帘对比——结果层挂在图片盒内，拖�
     assert.equal(divider.style.left, "0%");
     assert.equal(clip.style.width, "", "结果层宽度不得跟随分割线（否则结果图会被压扁）");
 
-    // 拖分割线到 25%：只改裁切位置
+    // 拖分割线：按下后必须拖过阈值才算拖窗帘，原地按下即抬起是「点图」
     wrap.getBoundingClientRect = () => ({ left: 0, right: 400, top: 0, bottom: 300, width: 400, height: 300 });
-    const mouse = (type, x) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x });
-    divider.dispatchEvent(mouse("mousedown", 200));
-    document.dispatchEvent(mouse("mousemove", 100));
+    const pointer = (type, x) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        ev.clientX = x;
+        ev.clientY = 150;
+        ev.button = 0;
+        return ev;
+    };
+    const lightbox = () => document.querySelector(".neo-lightbox");
+    const closeLightbox = () => document.querySelector(".neo-lightbox-close").click();
+
+    // 点分割线把手（未拖动）：窗帘不动，进灯箱看大图
+    divider.dispatchEvent(pointer("pointerdown", 200));
+    document.dispatchEvent(pointer("pointerup", 200));
+    assert.equal(clip.style.clipPath, "inset(0 0 0 0%)", "点分割线不该动窗帘");
+    assert.ok(lightbox(), "点分割线（未拖动）应打开灯箱看大图");
+    closeLightbox();
+
+    // 拖不到阈值（3px）：仍算点击，窗帘不动
+    divider.dispatchEvent(pointer("pointerdown", 200));
+    document.dispatchEvent(pointer("pointermove", 203));
+    document.dispatchEvent(pointer("pointerup", 203));
+    assert.equal(clip.style.clipPath, "inset(0 0 0 0%)", "拖不到阈值不该动窗帘");
+    assert.ok(lightbox(), "拖不到阈值应算点击，打开灯箱");
+    closeLightbox();
+
+    // 点原图（未拖动）：看大图，窗帘不动
+    const origEl = overlay.querySelector(".neo-gallery-edit-compare-img:not(.neo-gallery-edit-result-img)");
+    origEl.dispatchEvent(pointer("pointerdown", 260));
+    document.dispatchEvent(pointer("pointerup", 260));
+    assert.equal(clip.style.clipPath, "inset(0 0 0 0%)", "点原图不该动窗帘");
+    assert.ok(lightbox(), "点原图（未拖动）应打开灯箱看大图");
+    closeLightbox();
+
+    // 拖过阈值到 25%：只改裁切位置，不打开灯箱
+    divider.dispatchEvent(pointer("pointerdown", 200));
+    document.dispatchEvent(pointer("pointermove", 100));
     assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "拖动应把裁切位置换成分割线百分比");
     assert.equal(divider.style.left, "25%");
     assert.equal(clip.style.width, "", "拖动过程中结果层宽度始终不变");
+    assert.equal(lightbox(), null, "拖窗帘不应打开灯箱");
 
     // 松手后继续移动不再改变窗帘；关窗后 document 上的监听要一并移除
-    document.dispatchEvent(mouse("mouseup", 100));
-    document.dispatchEvent(mouse("mousemove", 300));
+    document.dispatchEvent(pointer("pointerup", 100));
+    document.dispatchEvent(pointer("pointermove", 300));
     assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "松手后不应再跟随鼠标");
-    divider.dispatchEvent(mouse("mousedown", 100));
+    divider.dispatchEvent(pointer("pointerdown", 100));
     overlay.remove();
-    document.dispatchEvent(mouse("mousemove", 300));
-    document.dispatchEvent(mouse("mouseup", 300));
+    document.dispatchEvent(pointer("pointermove", 300));
+    document.dispatchEvent(pointer("pointerup", 300));
     assert.equal(clip.style.clipPath, "inset(0 0 0 25%)", "关窗后 document 监听应已移除");
 });
 
@@ -861,7 +969,7 @@ test("图片编辑弹窗：扩图锁定比例拖拽只等比缩放，不变形�
     assert.ok(w <= 1600 + 1e-6 && h <= 1200 + 1e-6, `封顶失效：${w}×${h}`);
 });
 
-test("图片编辑弹窗：看大图——扩图模式点框体（未拖动）进灯箱，拖动/按手柄不进；🔍 按钮各模式通用", async () => {
+test("图片编辑弹窗：看大图——点原图/点分割线（未拖动）进灯箱，拖过阈值才算拖窗帘；🔍 按钮各模式通用", async () => {
     resetEnv();
     clearRoutes();
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
@@ -898,6 +1006,19 @@ test("图片编辑弹窗：看大图——扩图模式点框体（未拖动）�
     click(zoomBtn);
     assert.ok(lightbox(), "「看大图」应打开灯箱");
     closeLightbox();
+
+    // 常规模式：点原图（未拖动）看大图；在原图上拖过阈值是拖窗帘，不进灯箱
+    const wrap = overlay.querySelector(".neo-gallery-edit-compare-imgwrap");
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 400, top: 0, bottom: 300, width: 400, height: 300 });
+    pointerAt(origImgEl, "pointerdown", 200, 150);
+    pointerAt(document, "pointerup", 200, 150);
+    assert.ok(lightbox(), "常规模式点原图（未拖动）应打开灯箱");
+    closeLightbox();
+
+    pointerAt(origImgEl, "pointerdown", 200, 150);
+    pointerAt(document, "pointermove", 100, 150);
+    pointerAt(document, "pointerup", 100, 150);
+    assert.equal(lightbox(), null, "在原图上拖过阈值是拖窗帘，不应打开灯箱");
 
     // 开扩图：拖框铺满画布，原图点不到 → 框体上按下即抬起就是点图
     click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));

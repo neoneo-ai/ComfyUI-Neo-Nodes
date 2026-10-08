@@ -142,6 +142,13 @@ def load_preset_template(skill: str) -> dict:
         return json.load(f)
 
 
+def load_preset_config(skill: str) -> dict:
+    """读预设技能的 config.json（min_refs / max_refs 等渲染约束按文件里的真实值测）。"""
+    with open(os.path.join(PLUGIN_DIR, "skills", "presets", skill, "config.json"),
+              encoding="utf-8") as f:
+        return json.load(f)
+
+
 def write_png(path: str, width: int, height: int) -> bytes:
     from PIL import Image
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -529,6 +536,79 @@ class RefSlotExpansionTests(unittest.TestCase):
         self.assertEqual(image_gen.template_max_refs(template, {"max_refs": "0"}), 3)
 
 
+class ControlNetPresetRenderTests(unittest.TestCase):
+    """qwen_image_21_controlnet 模板渲染：姿势图只进模型补丁，内容与长相只进编码器。"""
+
+    TEMPLATE = load_preset_template("qwen_image_21_controlnet")
+    CFG = load_preset_config("qwen_image_21_controlnet")
+
+    @classmethod
+    def setUpClass(cls):
+        for i in range(1, 5):
+            write_png(os.path.join(_INPUT_DIR, f"cn_ref_{i}.png"), 512, 512)
+
+    def params(self, n, min_refs=None):
+        refs = [{"kind": "input", "value": f"cn_ref_{i}.png"} for i in range(1, n + 1)]
+        settings = base_settings()
+        settings["min_refs"] = self.CFG.get("min_refs", 0) if min_refs is None else min_refs
+        settings["control_ref"] = self.CFG.get("control_ref", 0)
+        return image_gen.resolve_request({"prompt": "a dancer", "seed": 1, "references": refs},
+                                         settings, max_refs=4)
+
+    def encoder_images(self, graph):
+        enc = next(n for n in graph.values() if n["class_type"] == "TextEncodeQwenImage21")
+        out, k = [], 1
+        while f"images.image_{k}" in enc["inputs"]:
+            out.append(graph[enc["inputs"][f"images.image_{k}"][0]]["inputs"]["image"])
+            k += 1
+        return out
+
+    def cnet_node(self, graph):
+        return next(n for n in graph.values() if n["class_type"] == "ZImageFunControlnet")
+
+    def test_control_ref_feeds_the_model_patch_only(self):
+        """姿势图 → Openpose 骨架 → 模型补丁；编码器里没有它，否则模型直接复刻姿势照片。"""
+        graph, _ = image_gen.render_template(self.TEMPLATE, self.params(2))
+        cnet = self.cnet_node(graph)
+        pre = graph[cnet["inputs"]["image"][0]]
+        self.assertEqual(pre["class_type"], "AIO_Preprocessor")
+        self.assertEqual(pre["inputs"]["preprocessor"], "OpenposePreprocessor")
+        self.assertIsInstance(pre["inputs"]["resolution"], int)
+        self.assertGreater(pre["inputs"]["resolution"], 0)
+        self.assertEqual(graph[pre["inputs"]["image"][0]]["inputs"]["image"], "cn_ref_2.png")
+        self.assertEqual(self.encoder_images(graph), ["cn_ref_1.png"])
+        sampler = next(n for n in graph.values() if n["class_type"] == "KSampler")
+        cnet_id = next(k for k, n in graph.items() if n["class_type"] == "ZImageFunControlnet")
+        self.assertEqual(sampler["inputs"]["model"][0], cnet_id)
+
+    def test_control_ref_leaves_the_encoder_ref_list(self):
+        self.assertIn("control_ref", image_gen._SKILL_SETTING_KEYS)
+        p = self.params(3)
+        self.assertEqual(p["control_image"], "cn_ref_2.png")
+        self.assertEqual(p["ref_images"], ["cn_ref_1.png", "cn_ref_3.png"])
+
+    def test_extra_refs_expand_encoder_slots_in_order(self):
+        """附加内容参考顺位补进编码器槽，控制图不占槽。"""
+        graph, _ = image_gen.render_template(self.TEMPLATE, self.params(4))
+        self.assertEqual(self.encoder_images(graph),
+                         ["cn_ref_1.png", "cn_ref_3.png", "cn_ref_4.png"])
+
+    def test_fewer_refs_than_min_raises(self):
+        """姿势槽（第 2 张）空时控制链会渲染成缺输入的图：张数不足必须在解析期拦住。"""
+        self.assertIn("min_refs", image_gen._SKILL_SETTING_KEYS)
+        self.assertGreaterEqual(self.CFG.get("min_refs", 0), 2)
+        with self.assertRaises(ValueError) as ctx:
+            self.params(1)
+        self.assertIn("参考图", str(ctx.exception))
+
+    def test_no_reference_prunes_control_chain(self):
+        graph, _ = image_gen.render_template(self.TEMPLATE, self.params(0, min_refs=0))
+        self.assertEqual(self.encoder_images(graph), [])
+        self.assertFalse([n for n in graph.values()
+                          if n["class_type"] in ("AIO_Preprocessor", "LoadImage")])
+        self.assertNotIn("image", self.cnet_node(graph)["inputs"])
+
+
 class StartGenerationTemplateRouteTests(unittest.TestCase):
     """start_generation 按模板决定参考槽位数（与 ImageGenEditNode 一致）。"""
 
@@ -913,6 +993,33 @@ class StartGenerationTemplateRouteTests(unittest.TestCase):
                 {"skill_id": "image_gen_image", "prompt": "fix",
                  "local_edit": True,
                  "references": [{"kind": "input", "value": "portrait.png"}]})
+
+    def test_pose_edit_single_ref_fills_first_slot(self):
+        """姿势编辑（1 张）：编辑目标走画布缩放链，第 2 槽随空参考一并裁掉。"""
+        snap, captured = self._run(
+            load_preset_template("qwen_image_21_pose_edit"),
+            {"skill_id": "qwen_image_21_pose_edit",
+             "prompt": "Change the pose of the person in <image1> to standing by the window",
+             "references": [{"kind": "input", "value": "portrait.png"}]})
+        self.assertEqual(snap["status"], "queued")
+        graph = captured["graph"]
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], ["30", 0])
+        self.assertNotIn("12", graph)
+        self.assertNotIn("images.image_2", graph["4"]["inputs"])
+
+    def test_pose_edit_second_ref_is_pose_reference(self):
+        """姿势迁移（2 张）：第 2 张参考图直连编码器第 2 槽，不进画布缩放链。"""
+        write_png(os.path.join(_INPUT_DIR, "pose_ref.png"), 640, 960)
+        _, captured = self._run(
+            load_preset_template("qwen_image_21_pose_edit"),
+            {"skill_id": "qwen_image_21_pose_edit",
+             "prompt": "Adopt the pose of the person in <image2>, keep the face of <image1>",
+             "references": [{"kind": "input", "value": "portrait.png"},
+                            {"kind": "input", "value": "pose_ref.png"}]})
+        graph = captured["graph"]
+        self.assertEqual(graph["12"]["inputs"]["image"], "pose_ref.png")
+        self.assertEqual(graph["4"]["inputs"]["images.image_2"], ["12", 0])
+        self.assertEqual(graph["4"]["inputs"]["images.image_1"], ["30", 0])
 
 
 class OutpaintParseTests(unittest.TestCase):

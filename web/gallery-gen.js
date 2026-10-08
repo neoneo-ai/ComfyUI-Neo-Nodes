@@ -23,6 +23,8 @@ const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
 const QWEN_OUTPAINT_SKILL_ID = "qwen_image_21_outpaint";
 // 高分局部编辑技能：涂抹区域自动裁剪-高分重绘-羽化合并（无额外 LoRA）
 const QWEN_LOCAL_EDIT_SKILL_ID = "qwen_image_21_local_edit";
+// 姿势编辑技能：只挂原图时按提示词改姿势，拖入第 2 张参考时把它的姿势搬到原图人物上
+const QWEN_POSE_EDIT_SKILL_ID = "qwen_image_21_pose_edit";
 
 // 扩图目标比例预设（free=自由拖框；其余按 w:h 锁定拖框长宽比）
 const OUTPAINT_RATIOS = [
@@ -46,6 +48,9 @@ const REMOVE_DEFAULT_PROMPT = ("Remove the object in the red highlighted area an
 const BLEND_DEFAULT_PROMPT = ("Using the first image as the base scene, naturally insert the subjects from the additional reference images into the scene. " +
     "Match their scale, lighting direction, color temperature, and perspective to the environment. " +
     "The result reads as a single photograph where all subjects belong to the same moment.");
+// 姿势迁移默认触发词（姿势模式拖入姿势参考图时自动换上，与技能 skill.md 的「姿势迁移」用法一致）
+const POSE_REF_DEFAULT_PROMPT = ("Adopt the pose of the person in <image2>, keeping the face, hair, clothing, " +
+    "lighting, background and camera framing of <image1> unchanged, high quality, sharp details, 4k");
 // 扩图链两次缩放的目标（与后端 OUTPAINT_REF_MP + 设置项 target_megapixels、参考工作流
 // ▶▷Qwen-image21-功能流 的「图像扩展」一致）：原图先归一化到 1MP，补灰边后画布再归一化到目标 MP
 const OUTPAINT_REF_MP = 1.0;
@@ -1122,6 +1127,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (editMode === "outpaint" && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
         if (editMode === "remove" && !prompt) prompt = REMOVE_DEFAULT_PROMPT;
         if (editMode === "blend" && !prompt) prompt = BLEND_DEFAULT_PROMPT;
+        if (editMode === "pose" && !prompt) prompt = extraRefs.length ? POSE_REF_DEFAULT_PROMPT : poseBasePrompt();
         if (!prompt) { promptInput.focus(); return; }
         running = true;
         cancelRequested = false;
@@ -1134,7 +1140,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
             let metaHeight = parseInt(heightInput.value, 10) || undefined;
             // 常规编辑的目标尺寸：模板会据此把原图缩放后送进编码器，对比窗左侧同步换成缩放图；
             // 扩图/局部编辑走各自的画布（基准要用原图自然尺寸），这里必须清掉，免得沿用上一轮
-            plainEdit = editMode === "normal" && !!metaWidth && !!metaHeight;
+            plainEdit = (editMode === "normal" || editMode === "pose") && !!metaWidth && !!metaHeight;
             if (editMode === "outpaint" && box) {
                 const p = paddings();
                 if (p.left || p.top || p.right || p.bottom) {
@@ -1146,7 +1152,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 }
             }
             const refs = [{ kind: "input", value: refName }];
-            // 额外参考图（换脸/换身源图、多张融合）；局部编辑的涂抹遮罩走 data 通道
+            // 额外参考图（换脸/换身源图、多张融合、姿势参考）；局部编辑的涂抹遮罩走 data 通道
             if (editMode !== "outpaint" && editMode !== "local") {
                 for (const r of extraRefs) {
                     refs.push({ kind: "input", value: r.subfolder ? `${r.subfolder}/${r.filename}` : r.filename });
@@ -1245,6 +1251,10 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const blendBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🔀 融合" });
     blendBtn.title = "多图融合：添加多张参考图，由模型自动融合为一张连贯画面";
 
+    // 姿势编辑控件：切到姿势编辑技能，提示词预填该技能 config.json 的默认触发词
+    const poseBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🕺 姿势" });
+    poseBtn.title = "姿势编辑：按提示词改原图人物的姿势；在参考图区拖入第 2 张图（人物图或骨架图）则把它的姿势搬到原图人物上，触发词自动切换";
+
     // 参考图区（autogrow）：拖入一张追加新空槽，最多 9 张（Qwen Image 2.1 上限）
     const MAX_EXTRA_REFS = 9;
     const refDropContainer = $el("div", { className: "neo-gallery-edit-refdrop-row" });
@@ -1266,8 +1276,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         className: "neo-gallery-edit-compare-img",
         src: origFullUrl,
         alt: image.name || image.filename,
-        title: "点击放大查看",
-        onclick: () => Lightbox.open({ items: buildLightboxItems(), index: 0 })
+        title: "点击放大查看"
     });
     const resultImg = $el("img", {
         className: "neo-gallery-edit-compare-img neo-gallery-edit-result-img",
@@ -1280,7 +1289,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const divider = $el("div", { className: "neo-gallery-edit-divider", style: { display: "none" } });
     imgWrap.append(origImg, resultClip, divider);
     const compareLabel = $el("span", { className: "neo-gallery-edit-compare-label", textContent: COMPARE_LABEL });
-    // 灯箱入口：局部/点选模式点图是涂抹/打点，扩图模式点图走拖框，都吃不到 img 的 onclick
+    // 灯箱按钮入口：局部/点选模式点图是涂抹/打点，扩图模式点图落在拖框框体上，都只能从这里进
     const zoomBtn = $el("button", {
         className: "neo-gallery-edit-zoom-btn", type: "button", textContent: "🔍 看大图",
         title: "灯箱查看原图与参考图",
@@ -1294,31 +1303,38 @@ export function openImageEditDialog(gallery, image, subfolder) {
     ]);
 
     // 窗帘拖拽逻辑：分割线左侧露出原图、右侧露出结果图（结果图层整幅不缩放，只裁掉左侧 pct%）
-    let dividerDragging = false;
+    // 按下后必须拖过阈值才算拖窗帘：原地按下即抬起是「点图」，交给灯箱看大图（点分割线把手同理）
+    const DIVIDER_DRAG_PX = 6;
+    let dividerDrag = null;
     const setDividerPos = (pct) => {
         pct = Math.max(0, Math.min(100, pct));
         resultClip.style.clipPath = `inset(0 0 0 ${pct}%)`;
         divider.style.left = pct + "%";
     };
-    divider.addEventListener("mousedown", (e) => { e.preventDefault(); dividerDragging = true; });
     // 分割线挂在原图盒/扩图画布内，位置按所在容器宽算百分比（舞台/画布可能比原图宽）
     const posFromClientX = (clientX) => {
         const rect = divider.parentElement.getBoundingClientRect();
         setDividerPos(((clientX - rect.left) / rect.width) * 100);
     };
-    const onDividerMove = (e) => { if (dividerDragging) posFromClientX(e.clientX); };
-    const onDividerTouchMove = (e) => { if (dividerDragging) posFromClientX(e.touches[0].clientX); };
-    const onDividerEnd = () => { dividerDragging = false; };
-    document.addEventListener("mousemove", onDividerMove);
-    document.addEventListener("mouseup", onDividerEnd);
-    // 触摸支持
-    divider.addEventListener("touchstart", (e) => { e.preventDefault(); dividerDragging = true; });
-    document.addEventListener("touchmove", onDividerTouchMove);
-    document.addEventListener("touchend", onDividerEnd);
-    // 点击图片快速定位
-    imgWrap.addEventListener("mousedown", (e) => {
-        if (e.target === imgWrap || e.target === origImg) posFromClientX(e.clientX);
+    const onDividerMove = (e) => {
+        if (!dividerDrag) return;
+        dividerDrag.moved = Math.max(dividerDrag.moved, Math.abs(e.clientX - dividerDrag.sx));
+        if (dividerDrag.moved >= DIVIDER_DRAG_PX) posFromClientX(e.clientX);
+    };
+    const onDividerEnd = () => {
+        const d = dividerDrag;
+        dividerDrag = null;
+        if (d && d.moved < DIVIDER_DRAG_PX) Lightbox.open({ items: buildLightboxItems(), index: 0 });
+    };
+    // 只吃原图与分割线：局部/点选模式的涂抹画布、扩图框体各有自己的按下语义（扩图框体自己判点图）
+    imgWrap.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        if (e.target !== origImg && e.target !== divider) return;
+        e.preventDefault();
+        dividerDrag = { sx: e.clientX, moved: 0 };
     });
+    document.addEventListener("pointermove", onDividerMove);
+    document.addEventListener("pointerup", onDividerEnd);
 
     // 常规编辑：模板里的 ImageScale 把原图缩放到画布尺寸后才送进编码器（参考工作流「图像编辑」同款链路），
     // 对比窗左侧也换成这张缩放图——两侧同尺寸才能逐像素对比（否则 contain 会把结果图挤进「原图盒」，
@@ -1368,6 +1384,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     localBtn,
                     removeBtn,
                     blendBtn,
+                    poseBtn,
                     refDropContainer
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
@@ -1392,10 +1409,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const origRemove = overlay.remove.bind(overlay);
     overlay.remove = () => {
         document.removeEventListener("keydown", onKey);
-        document.removeEventListener("mousemove", onDividerMove);
-        document.removeEventListener("mouseup", onDividerEnd);
-        document.removeEventListener("touchmove", onDividerTouchMove);
-        document.removeEventListener("touchend", onDividerEnd);
+        document.removeEventListener("pointermove", onDividerMove);
+        document.removeEventListener("pointerup", onDividerEnd);
         origRemove();
     };
     document.body.appendChild(overlay);
@@ -1438,7 +1453,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         dimProbe.src = fullUrl;
     })();
 
-    // ---- 编辑模式统一管理（normal / outpaint / local / remove / blend） ----
+    // ---- 编辑模式统一管理（normal / outpaint / local / remove / blend / pose） ----
     let editMode = "normal";
 
     // ---- 扩图：原图上拖框定四边留白量（只向外扩；比例模式锁长宽比） ----
@@ -1652,6 +1667,17 @@ export function openImageEditDialog(gallery, image, subfolder) {
         updateSizeLabel();
     };
     // ---- 统一编辑模式切换（新增模式只需在此加一个 case） ----
+    // 姿势模式触发词随参考图切换：没参考图 = 按提示词改姿势（技能 config 的 default_prompt），
+    // 拖入姿势参考 = 换成迁移触发词。只替换「空 / 仍是默认词」的提示词，用户写过的不动。
+    const poseBasePrompt = () => String(_genSkills.find(s => s.id === QWEN_POSE_EDIT_SKILL_ID)?.gen_config?.default_prompt || "").trim();
+    const syncPosePrompt = () => {
+        if (editMode !== "pose") return;
+        const base = poseBasePrompt();
+        const cur = promptInput.value.trim();
+        if (cur && cur !== base && cur !== POSE_REF_DEFAULT_PROMPT) return;
+        const want = extraRefs.length ? POSE_REF_DEFAULT_PROMPT : base;
+        if (want) promptInput.value = want;
+    };
     const setEditMode = async (mode) => {
         if (mode === editMode) return;
         const prev = editMode;
@@ -1669,6 +1695,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         localBtn.classList.toggle("on", mode === "local");
         removeBtn.classList.toggle("on", mode === "remove");
         blendBtn.classList.toggle("on", mode === "blend");
+        poseBtn.classList.toggle("on", mode === "pose");
 
         // 模式专属行
         outpaintRow.style.display = mode === "outpaint" ? "" : "none";
@@ -1683,7 +1710,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         sizeLabel.style.display = mode === "outpaint" ? "" : "none";
 
         // 技能选择
-        skillSel.value = { outpaint: QWEN_OUTPAINT_SKILL_ID, local: QWEN_LOCAL_EDIT_SKILL_ID }[mode] || QWEN_IMAGE_SKILL_ID;
+        skillSel.value = { outpaint: QWEN_OUTPAINT_SKILL_ID, local: QWEN_LOCAL_EDIT_SKILL_ID, pose: QWEN_POSE_EDIT_SKILL_ID }[mode] || QWEN_IMAGE_SKILL_ID;
 
         // 模式专属 setup
         if (mode === "outpaint") {
@@ -1703,6 +1730,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
             }
         } else if (mode === "blend") {
             if (!promptInput.value.trim()) promptInput.value = BLEND_DEFAULT_PROMPT;
+        } else if (mode === "pose") {
+            syncPosePrompt();
         }
 
         syncRefBtn();
@@ -1967,6 +1996,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     removeBtn.addEventListener("click", () => setEditMode(editMode === "remove" ? "normal" : "remove"));
     blendBtn.addEventListener("click", () => setEditMode(editMode === "blend" ? "normal" : "blend"));
+    poseBtn.addEventListener("click", () => setEditMode(editMode === "pose" ? "normal" : "pose"));
 
     // ---- 参考图区（autogrow：拖入一张追加新空槽，最多 9 张） ----
     let extraRefs = [];   // [{filename, subfolder}]
@@ -2008,6 +2038,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         for (let i = 0; i < count; i++) {
             refDropContainer.appendChild(makeRefSlot(i));
         }
+        syncPosePrompt();
     }
     renderRefSlots();
 

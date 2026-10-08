@@ -15,11 +15,14 @@ python -m pytest tests -v
 - `tests/test_skills.py` — 技能扫描与分组、内置任务技能存在性、图片解码缩放、多结果解析、
   技能代理（语言互斥主文件选择、引用列表、越界读取拒绝、工具循环按需读引用、本地模式回退）、
   `gen_image` / `requires_ref` 元数据透传与编辑保存保留。
+- `tests/test_skill_pose_edit.py` / `tests/test_skill_controlnet.py` — 姿势编辑与 ControlNet 预设技能：
+  扫描与去重、`default_prompt` 透出、模板占位符、控制链（预处理 → 模型补丁 → 采样器）接线、
+  控制图不占编码器参考槽（`control_ref`）。
 - `tests/test_workflow_repair.py` — 模型路径修复匹配算法：精确 / 归一化匹配、量化变体替换、歧义拒绝、
   扩展名约束。
 - `tests/test_image_gen.py` — 内置生图参数解析：比例与尺寸取整、输出前缀消毒、模型自动挑选、
   下拉展示排序与自动挑选结果、LoRA 缺失告警、参考图落地、多路槽位空槽裁剪、生图张数覆盖、
-  扩图 / 局部编辑仅 Qwen Image 2.1 模板、工作流图结构与 sidecar 写入。
+  扩图 / 局部编辑仅 Qwen Image 2.1 模板、ControlNet 模板槽位展开与参考张数下限拦截、工作流图结构与 sidecar 写入。
 - `tests/test_image_gen_edit.py` — mini-executor：拓扑排序与环检测、引用解析与输出归一化、
   末端 IMAGE 收集与 SaveImage 跳过、未知节点报错、张量 → base64 PNG 往返、请求组装
   （缺 `workflow.json` 报错 / 参考图按槽位排序 / bundle 参考图优先 / 按 `config.json` 的 `max_refs` 限张数）。

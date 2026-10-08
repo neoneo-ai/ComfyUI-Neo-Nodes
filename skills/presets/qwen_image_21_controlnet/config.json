@@ -1,0 +1,12 @@
+{
+  "model": "QwenImage2.1/qwen_image_2.1_int8_convrot.safetensors",
+  "text_encoder": "qwen3vl_8b_int8_convrot.safetensors",
+  "vae": "qwen_image_2.1_vae_bf16.safetensors",
+  "base_resolution": 1024,
+  "default_ratio": "16:9",
+  "steps": 30,
+  "max_refs": 4,
+  "min_refs": 2,
+  "control_ref": 2,
+  "default_prompt": "Adopt the pose and composition of the ControlNet pose reference, keeping the face, hair, clothing, lighting and background of <image1>, high quality, sharp details, 4k"
+}

@@ -2579,6 +2579,8 @@ Accordion Section Buttons (Clear)
     width: fit-content;
     max-width: 100%;
     min-width: 0;
+    /* 窗帘只吃横向手势：纵向留给页面滚动 */
+    touch-action: pan-y;
 }
 
 /* 窗帘：结果图层与原图同盒（inset:0），整幅不缩放/不位移，只由 clip-path 裁掉左侧（JS 设置） */
@@ -2606,6 +2608,7 @@ Accordion Section Buttons (Clear)
     z-index: 3;
     cursor: col-resize;
     border-radius: 1.5px;
+    touch-action: none;
 }
 
 .neo-gallery-edit-divider::after {

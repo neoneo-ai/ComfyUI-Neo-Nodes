@@ -70,7 +70,7 @@ _OVERRIDE_KEYS = ("model", "text_encoder", "vae", "loras",
                   "base_resolution", "default_ratio", "output_prefix", "steps")
 
 # skill config.json 里可覆盖全局生图设置的键（steps 为采样步数默认值，非模型设置区管理）
-_SKILL_SETTING_KEYS = tuple(DEFAULT_SETTINGS) + ("steps", "max_refs")
+_SKILL_SETTING_KEYS = tuple(DEFAULT_SETTINGS) + ("steps", "max_refs", "min_refs", "control_ref")
 
 # 自动挑选默认模型时的名称线索（按优先级）
 _MODEL_HINTS = {
@@ -626,6 +626,17 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
     if len(names) > max_refs:
         warnings.append("只使用第一张参考图" if max_refs == 1 else f"只使用前 {max_refs} 张参考图")
         names = names[:max_refs]
+    # 少图技能（如 ControlNet：第 1 张内容、第 2 张姿势）：张数不足时模板会渲染出缺输入的图，这里先拦住
+    min_refs = _int(merged.get("min_refs"), 0)
+    if min_refs and len(names) < min_refs:
+        raise ValueError(f"该技能需要至少 {min_refs} 张参考图")
+    # 控制图（config.json 的 control_ref 指定第几张）只进模型补丁：Fun ControlNet 由补丁自己
+    # VAE 编码它。它不能同时占编码器参考槽，否则编码器把姿势照片当内容参考直接复刻。
+    control_ref = _int(merged.get("control_ref"), 0)
+    control_image = None
+    if control_ref and len(names) >= control_ref:
+        control_image = names[control_ref - 1]
+        names = names[:control_ref - 1] + names[control_ref:]
     ref_name = names[0] if names else None
 
     # 扩图：四边留白像素 + 目标总像素（MP）；None = 未开扩图模式
@@ -687,6 +698,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
         "steps": steps,
         "ref_name": ref_name,
         "ref_images": names,
+        "control_image": control_image,
         "ref_scale": ref_scale if ref_name else None,
         "canvas": canvas,
         "outpaint": outpaint,
@@ -703,7 +715,7 @@ def resolve_request(body: dict, settings: dict | None = None, max_refs: int = 1)
 
 _PLACEHOLDER_TOKENS = ("{{PROMPT}}", "{{NEGATIVE}}", "{{SEED}}", "{{STEPS}}", "{{WIDTH}}", "{{HEIGHT}}",
                        "{{LENGTH}}", "{{COUNT}}", "{{PREFIX}}", "{{MODEL}}", "{{TEXT_ENCODER}}", "{{VAE}}",
-                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_IMAGE_LAST}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}",
+                       "{{AUDIO_VAE}}", "{{REF_IMAGE}}", "{{REF_IMAGE_LAST}}", "{{CONTROL_IMAGE}}", "{{REF_WIDTH}}", "{{REF_HEIGHT}}",
                        "{{CANVAS_WIDTH}}", "{{CANVAS_HEIGHT}}", "{{OUTPAINT_REF_MP}}", "{{TARGET_MP}}",
                        "{{PAD_LEFT}}", "{{PAD_TOP}}", "{{PAD_RIGHT}}", "{{PAD_BOTTOM}}")
 
@@ -754,6 +766,8 @@ def _typed_value(token: str, params: dict):
         return params["ref_name"]
     if token == "{{REF_IMAGE_LAST}}":
         return params.get("ref_last")
+    if token == "{{CONTROL_IMAGE}}":
+        return params.get("control_image") or _UNFILLED
     scale = params.get("ref_scale") or (0, 0)
     if token == "{{REF_WIDTH}}":
         return scale[0]
