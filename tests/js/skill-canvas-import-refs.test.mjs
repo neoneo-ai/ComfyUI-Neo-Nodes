@@ -49,6 +49,34 @@ async function openPopup() {
     return popup;
 }
 
+const CONTROL_TEMPLATE = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+    "2": { class_type: "ModelPatchLoader", inputs: { name: "fun_controlnet.safetensors" } },
+    "3": { class_type: "AIO_Preprocessor", inputs: { image: ["12", 0], preprocessor: "OpenposePreprocessor", resolution: "{{CANVAS_HEIGHT}}" } },
+    "4": { class_type: "ZImageFunControlnet", inputs: { model: ["1", 0], model_patch: ["2", 0], image: ["3", 0] } },
+    "10": { class_type: "LoadImage", inputs: { image: "{{REF_IMAGE_1}}" } },
+    "12": { class_type: "LoadImage", inputs: { image: "{{CONTROL_IMAGE}}" } },
+};
+const CONTROL_CONFIG = { model: "m.safetensors", default_ratio: "16:9", base_resolution: 1024, steps: 30, min_refs: 2, control_ref: 2 };
+
+async function openControlPopup() {
+    const { createSkillDetailPopup } = await import("../../web/skill.js");
+    mockRoute("/rs_prompts/load_skill", () => jsonResponse({
+        id: "qwen_image_21_controlnet", name: "Qwen ControlNet", content: "body",
+        files: [{ name: "skill.md", size: 5 }], gen_image: true, gen_video: false,
+        requires_ref: true, multi_turn: false, tags: [], category: "image_gen",
+    }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "qwen_image_21_controlnet", workflow: CONTROL_TEMPLATE }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse(CONTROL_CONFIG) : jsonResponse({ success: true }));
+    mockObjectInfo({ LoadImage: { input: { required: { image: [["example.png", "other.png"], { image_upload: true }] } } } });
+    const popup = createSkillDetailPopup();
+    await popup.openExisting("qwen_image_21_controlnet", "preset");
+    await sleep(80);
+    return popup;
+}
+
 function importBtn() {
     const all = document.querySelectorAll(".rs-wf-canvas-btns button.rs-wf-canvas-import-btn");
     return all.length ? all[all.length - 1] : null;
@@ -83,4 +111,15 @@ test("导入到画布：参考槽位只留模板声明的槽（占串替换为�
         "槽位 N 取 combo[N-1]，两槽不共用同一张图");
     assert.ok(!Object.keys(wf["4"].inputs).some((k) => /^images\.image_[3-9]$/.test(k)),
         "导入不预造空槽位连线");
+});
+
+test("导入到画布：{{CONTROL_IMAGE}} 按 config 的 control_ref 换成实际图片（不残留占串）", async () => {
+    await openControlPopup();
+    const wf = await importToCanvas();
+    assert.equal(wf["10"].inputs.image, "example.png", "内容参考取 combo 第 1 张");
+    assert.equal(wf["12"].inputs.image, "other.png", "control_ref=2 → 控制图取 combo 第 2 张");
+    for (const node of Object.values(wf)) {
+        const v = node.inputs.image;
+        assert.ok(typeof v !== "string" || !v.includes("{{"), "LoadImage 不应残留 {{占位符}}");
+    }
 });

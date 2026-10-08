@@ -106,12 +106,23 @@ function graphOrdering(wf) {
     return { ids, layer, layers, order, preds, succ };
 }
 
+/** 参考加载器源节点（LoadImage/LoadVideo/LoadAudio，含流程图里合并出的 ×N 合成节点）。 */
+const REF_LOADER_RE = /^(LoadImage|LoadVideo|LoadAudio)( ×\d+)?$/;
+function isRefLoader(node) {
+    if (!node || !REF_LOADER_RE.test(String(node.class_type || ""))) return false;
+    for (const v of Object.values(node.inputs || {})) {
+        if (Array.isArray(v) && typeof v[0] === "string") return false; // 有上游连线的不算参考源
+    }
+    return true;
+}
+
 /**
  * 列号取「最右可行」：节点紧贴其下游，源节点不再挤在首列，图更紧凑、连线更短。
  * 按层从右到左处理（下游列已确定），环回边忽略；没有下游的节点保持自身层号。
- * 每条连线都满足 col[上游] < col[下游]，所以列内不会出现左右反向的连线。
+ * 参考加载器统一钉到最左列（所有参考图/视频/音频在同一列自上而下），再沿连线把下游
+ * 推到上游右侧，保证每条连线都满足 col[上游] < col[下游]。
  */
-function columnOf(layer, layers, order, succ) {
+function columnOf(layer, layers, order, preds, succ, wf) {
     const col = {};
     for (let i = layers.length - 1; i >= 0; i--) {
         for (const id of order[layers[i]]) {
@@ -122,6 +133,12 @@ function columnOf(layer, layers, order, succ) {
                 if (c < 0 || sc < c) c = sc;
             }
             col[id] = c < 0 ? layer[id] : c;
+        }
+    }
+    for (const L of layers) {
+        for (const id of order[L]) {
+            if (isRefLoader(wf[id])) col[id] = 0;
+            for (const p of preds[id]) if (layer[p] < layer[id]) col[id] = Math.max(col[id], col[p] + 1);
         }
     }
     return col;
@@ -253,7 +270,7 @@ function barycenterCenters(colNodes, cols, h, gapY, preds, succ, edges, colX, co
 export function layoutWorkflow(workflow) {
     const wf = collapseRefLoaders(workflow || {});
     const { ids, layer, layers, order, preds, succ } = graphOrdering(wf);
-    const col = columnOf(layer, layers, order, succ);
+    const col = columnOf(layer, layers, order, preds, succ, wf);
     const colNodes = {};
     for (const L of layers) for (const id of order[L]) (colNodes[col[id]] ||= []).push(id);
     const cols = Object.keys(colNodes).map(Number).sort((a, b) => a - b);
@@ -317,6 +334,9 @@ export function layoutWorkflow(workflow) {
 // 画布重排（「导入到画布」后）用的间距与兜底尺寸：画布节点宽度由前端算好，取不到时按常见尺寸兜底
 const CANVAS_PAD = 60, CANVAS_GAP_X = 96, CANVAS_GAP_Y = 48;
 const CANVAS_NODE_W = 240, CANVAS_NODE_H = 120;
+// 带图像/视频预览 widget 的节点：兜底高度需包含预览区（默认 preview_size 128 + header 40 + 1 行 24）
+const PREVIEW_CLASSES = new Set(["LoadImage", "LoadVideo", "LoadAudio"]);
+const CANVAS_PREVIEW_H = 192;
 // 画布 widget 文字「key: value」约 7px/字符；模型加载类节点按模型名加长的上限
 const CANVAS_CHAR_W = 7, CANVAS_W_MAX = 420;
 // 画布节点：头部之下每行一个参数（连线行先于 widget 行），连线端点落在第 i 行中心
@@ -350,9 +370,9 @@ export function canvasLayout(workflow, sizeOf) {
     for (const id of ids) {
         const s = sizeOf(id) || null;
         w[id] = Math.max(s && s[0] > 0 ? s[0] : CANVAS_NODE_W, modelLoaderW(wf[id]));
-        h[id] = s && s[1] > 0 ? s[1] : CANVAS_NODE_H;
+        h[id] = s && s[1] > 0 ? s[1] : (PREVIEW_CLASSES.has((wf[id] || {}).class_type) ? CANVAS_PREVIEW_H : CANVAS_NODE_H);
     }
-    const col = columnOf(layer, layers, order, succ);
+    const col = columnOf(layer, layers, order, preds, succ, wf);
     const colNodes = {};
     for (const L of layers) for (const id of order[L]) (colNodes[col[id]] ||= []).push(id);
     const cols = Object.keys(colNodes).map(Number).sort((a, b) => a - b);

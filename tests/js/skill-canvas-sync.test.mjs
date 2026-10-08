@@ -287,7 +287,7 @@ function mockSkillRoutes({ id = "custom_a", source = "custom", workflow = WF_TEM
     appState.toasts.length = 0;
     appState.loaded.length = 0;
     mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
-        id: b.id, name: "Gen Skill", source, content: "body", files: [{ name: "skill.md", size: 5 }],
+        id: b.id, name: "Gen Skill", cn_name: b.id, source, content: "body", files: [{ name: "skill.md", size: 5 }],
         gen_image: !genVideo, gen_video: genVideo, requires_ref: false, multi_turn: false, tags: [], category: "image_gen",
     }));
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow }));
@@ -668,7 +668,7 @@ test("变更记录：确认回写后按技能记录变更清单，详情弹窗�
     const log = JSON.parse(localStorage.getItem("neo.skillWriteLog"));
     assert.equal(log.length, 1, "应写入 1 条变更记录");
     assert.equal(log[0].skillId, "custom_a", "记录按技能关联");
-    assert.equal(log[0].source, "canvas", "记录标出画布回写来源");
+    assert.equal(log[0].source, "editor", "记录标出回写来源（内嵌编辑）");
     assert.deepEqual(log[0].changes.map((c) => c.field), ["model", "节点 LoadImage"], "记录保存后端预览的变更清单");
 
     click(logBtn());
@@ -677,7 +677,7 @@ test("变更记录：确认回写后按技能记录变更清单，详情弹窗�
     assert.ok(dlg, "应出变更记录弹窗");
     assert.ok(dlg.textContent.includes("变更记录 · custom_a（1）"), "标题应带技能与条数");
     assert.ok(dlg.textContent.includes("m.safetensors"), "应列出变更新值");
-    assert.ok(dlg.textContent.includes("画布回写"), "应标出回写来源");
+    assert.ok(dlg.textContent.includes("内嵌编辑"), "应标出回写来源");
     assert.ok(dlg.textContent.includes("SaveImage"), "应带出当次 warnings");
 
     [...dlg.querySelectorAll(".rs-repair-foot button")].find((b) => b.textContent.includes("清空记录")).click();
@@ -700,5 +700,47 @@ test("变更记录：每技能上限 50 条，超出后丢最旧", async () => {
     }
     const log = JSON.parse(localStorage.getItem("neo.skillWriteLog"));
     assert.equal(log.length, 50, "每技能最多保留 50 条");
+});
+
+test("canvasLayout：LoadImage 兜底高度包含预览区（192 > 120）", async () => {
+    const { canvasLayout } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "m.safetensors" } },
+        "2": { class_type: "LoadImage", inputs: { image: "example.png" } },
+        "3": { class_type: "KSampler", inputs: { model: ["1", 0], image: ["2", 0] } },
+    };
+    // sizeOf 返回 null → 兜底：LoadImage 用 CANVAS_PREVIEW_H(192)，其余用 CANVAS_NODE_H(120)
+    const layout = canvasLayout(wf, () => null);
+    const byId = Object.fromEntries(layout.map(c => [c.id, c]));
+    // LoadImage 在首列（无上游），UNETLoader 也在首列；LoadImage 高度 192 应把 KSampler 推得更远
+    // 同列按高度堆叠：UNETLoader y=60, LoadImage y=60+120+48=228（UNETLoader 高 120）
+    // KSampler 在第二列，重心按上游（UNETLoader center=120, LoadImage center=324）
+    assert.ok(byId["2"].y > byId["1"].y, "LoadImage 排在 UNETLoader 之后");
+    // LoadImage 兜底高度 192：同列堆叠间距 = 120/2 + 192/2 + 48 = 156（中心距）
+    const gap = byId["2"].y - byId["1"].y;
+    assert.ok(gap >= 156, `LoadImage 预览高度应拉大同列间距（实际 ${gap}）`);
+});
+
+test("canvasLayout：参考加载器统一排到最左列，不挤进模型加载列", async () => {
+    const { canvasLayout } = await import("../../web/workflow-graph.js");
+    const wf = {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: "QwenImage2.1/qwen_image_2.1_int8_convrot.safetensors" } },
+        "2": { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_int8_convrot.safetensors" } },
+        "3": { class_type: "TextEncodeQwenImage21", inputs: { clip: ["2", 0], "images.image_1": ["10", 0] } },
+        "4": { class_type: "AIO_Preprocessor", inputs: { image: ["11", 0], preprocessor: "OpenposePreprocessor" } },
+        "5": { class_type: "ZImageFunControlnet", inputs: { model: ["1", 0], image: ["4", 0] } },
+        "6": { class_type: "KSampler", inputs: { model: ["5", 0], positive: ["3", 0] } },
+        "10": { class_type: "LoadImage", inputs: { image: "a.png" } },
+        "11": { class_type: "LoadImage", inputs: { image: "b.png" } },
+    };
+    const H = { 1: 120, 2: 120, 3: 150, 4: 120, 5: 130, 6: 170, 10: 192, 11: 192 };
+    const layout = canvasLayout(wf, (id) => [210, H[id]]);
+    const byId = Object.fromEntries(layout.map(c => [c.id, c]));
+    const minX = Math.min(...layout.map(c => c.x));
+    assert.equal(byId["10"].x, minX, "参考图 1 在最左列");
+    assert.equal(byId["11"].x, minX, "参考图 2 与参考图 1 同列（不挤进模型加载列）");
+    const gap = Math.abs(byId["10"].y - byId["11"].y);
+    assert.ok(gap >= 192 + 48, `同列两张参考图必须不重叠（实际间距 ${gap}）`);
+    assert.ok(byId["1"].x > minX, "模型加载列排在参考列右侧");
 });
 
