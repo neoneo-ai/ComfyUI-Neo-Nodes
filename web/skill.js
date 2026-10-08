@@ -1238,13 +1238,24 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const workflowCaret = mkEl("span", "rs-wf-caret");
     workflowCaret.textContent = "▾";
     const workflowTitle = mkEl("label", "rs-form-label");
-    workflowTitle.textContent = "🔀 工作流（节点流程图）";
-    workflowTitle.title = "技能 workflow.json 模板的自动布局；红框 = 节点未安装/模型缺失，蓝框 = 含待替换模板变量";
+    workflowTitle.textContent = "🔀 工作流（内嵌编辑）";
+    workflowTitle.title = "技能 workflow.json 模板按本技能 config 初始化后直接内嵌编辑；无 LiteGraph 的视图回落只读流程图";
     const workflowBody = mkEl("div", "rs-wf-body");
     const workflowSummary = mkEl("div", "rs-wf-summary");
     workflowHeader.append(workflowCaret, workflowTitle);
-    workflowHeader.title = "点击折叠 / 展开流程图";
-    workflowHeader.addEventListener("click", () => setWorkflowCollapsed(!workflowWrap.classList.contains("rs-wf-collapsed")));
+    workflowHeader.title = "点击折叠 / 展开工作流图";
+    // 折叠时画布已卸载；展开重挂内嵌编辑画布，挂不上（无 LiteGraph 的视图 / 含未注册节点）回落只读流程图
+    workflowHeader.addEventListener("click", () => {
+        const collapse = !workflowWrap.classList.contains("rs-wf-collapsed");
+        setWorkflowCollapsed(collapse);
+        if (collapse || !workflowShown) return;
+        workflowBody.style.display = "";
+        workflowSummary.style.display = "";
+        if (wfCanvas) return;
+        mountWorkflowEditor().then((ok) => {
+            if (!ok && workflowShown) renderWorkflowPreview(skillWorkflowRaw, loadedGenInfo, currentIsVideo, currentSkillId);
+        });
+    });
     // 画布 ⇄ 技能：导入把模板按当前设置预渲染、运行时占串归 concrete values 后 loadApiJson 载入画布；
     //      回写把整画布 API prompt 落盘该技能 workflow.json（skill.md 保留；预设只写模型值到本地覆盖，结构变更自动复制为自定义技能）。
     //      Studio 内嵌无画布（canvasBtns=false）→ 只挂「⤒ 主画布编辑」，开主界面 ?neo_wf_edit=<id> 交接编辑。
@@ -1276,20 +1287,8 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     wfLogBtn.addEventListener("click", (e) => { e.stopPropagation(); showSkillWriteLogDialog(currentSkillId); });
     wfCanvasBtns.appendChild(wfLogBtn);
     workflowHeader.append(wfCanvasBtns);
-    // 工作流区两模式：只读流程图 ⇄ 内嵌 litegraph 编辑（前端未暴露 LiteGraph 的视图不提供编辑模式）
+    // 工作流区直接内嵌 litegraph 编辑（前端未暴露 LiteGraph 的视图回落只读流程图预览）
     const wfEditorSupported = !!window.LGraph && !!window.LGraphCanvas && !!window.LiteGraph;
-    const wfModeBtns = mkEl("div", "rs-content-mode rs-wf-mode-btns");
-    const wfViewBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
-    wfViewBtn.type = "button";
-    wfViewBtn.textContent = "👁 流程图";
-    wfViewBtn.title = "只读流程图：workflow.json 模板自动布局 + 校验标注";
-    const wfEditBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
-    wfEditBtn.type = "button";
-    wfEditBtn.textContent = "🧩 编辑";
-    wfEditBtn.title = "在窗口内编辑 workflow.json 模板（widget 按本技能 config 初始化，保存写回 workflow.json 与 config.json）";
-    if (!wfEditorSupported) wfEditBtn.style.display = "none";
-    wfModeBtns.append(wfViewBtn, wfEditBtn);
-    workflowHeader.append(wfModeBtns);
 
     const wfEditWrap = mkEl("div", "rs-wf-editor");
     wfEditWrap.style.display = "none";
@@ -1493,11 +1492,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const REPAIR_FIELD_CATEGORY = { model: "diffusion_models", text_encoder: "text_encoders", vae: "vae", audio_vae: "audio_vae", lora: "loras" };
     const repairHubQuery = (value) => String(value || "").split(/[\\/]/).pop().replace(/\.(safetensors|bin|pth|pt|ckpt|gguf|onnx|npz)$/i, "");
 
-    // 「修复失效路径」应用后重渲染工作流图：用当前设置区值重新预渲染模板并重新校验，清掉已修好的红框（复用已加载的原始模板，不重新拉 workflow.json）
+    // 「修复失效路径」应用后刷新工作流图：内嵌编辑按修复后的 config 重挂画布；只读预览则用当前设置区值
+    // 重新预渲染模板并重新校验，清掉已修好的红框（复用已加载的原始模板，不重新拉 workflow.json）
     async function refreshWorkflowGraph() {
         if (!workflowShown || !currentSkillId || !skillWorkflowRaw) return;
         const isVideo = videoGenSettingsWrap.style.display !== "none";
         const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
+        if (wfCanvas) { await mountWorkflowEditor(); return; }
         await renderWorkflowPreview(skillWorkflowRaw, { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} }, isVideo, currentSkillId);
     }
 
@@ -1853,7 +1854,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         workflowExpanded = !collapsed;
         workflowWrap.classList.toggle("rs-wf-collapsed", collapsed);
         workflowCaret.textContent = collapsed ? "▸" : "▾";
-        if (collapsed && wfCanvas) setWfMode("view");   // 折叠 → 卸载内嵌画布，回到只读流程图
+        if (collapsed) unmountWorkflowEditor();   // 折叠 → 卸载内嵌画布
         updateContentCompact();
     }
     function resetWorkflowCollapse() {
@@ -1868,7 +1869,11 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // 真实 widget 顺序与槽位顺序，widget 值按名对齐，连线按 API 的 [id, slot] 落到目标槽位名。
     function apiPromptToLitegraph(api) {
         const LiteGraph = window.LiteGraph;
-        const infos = Object.entries(api).map(([id, def]) => ({ id: Number(id), def: def || {}, node: LiteGraph.createNode((def || {}).class_type) }));
+        // 模板节点 id 允许是 "193_82" 这类非数字串（画布导出 / 回写会产生）。LiteGraph 节点 id 必须是数字：
+        // Number("193_82") = NaN 会把所有节点挤成同一个 id（连线全接错），且 last_node_id = NaN 会让
+        // LGraph.configure 死循环卡死整页 → 先把模板 id 映射成连续整数
+        const ids = new Map(Object.keys(api).map((id, i) => [id, i + 1]));
+        const infos = Object.entries(api).map(([id, def]) => ({ id: ids.get(id), def: def || {}, node: LiteGraph.createNode((def || {}).class_type) }));
         const byId = new Map(infos.filter((i) => i.node).map((i) => [i.id, i]));
         const missing = infos.filter((i) => !i.node).map((i) => (i.def || {}).class_type);
         const nodes = [], links = [];
@@ -1892,7 +1897,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             if (!info.out) continue;
             for (const [name, ref] of Object.entries(info.def.inputs || {})) {
                 if (!Array.isArray(ref)) continue;
-                const origin = byId.get(Number(ref[0]));
+                const origin = byId.get(ids.get(String(ref[0])));
                 const slot = info.out.inputs.findIndex((s) => s.name === name);
                 if (!origin || !origin.out || slot < 0 || !origin.out.outputs[ref[1]]) continue;
                 const linkId = links.length + 1;
@@ -1901,9 +1906,18 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                 (origin.out.outputs[ref[1]].links || (origin.out.outputs[ref[1]].links = [])).push(linkId);
             }
         }
+        // 与导入主画布同一套布局（arrangeCanvasNodes → canvasLayout）：拓扑分层左到右、列内按上游重心堆叠、
+        // 列宽拉齐到该列最宽节点。上面每个节点都写 pos [0,0]，不排布就会全叠在原点上
+        const byKey = new Map(Object.keys(api).map((key) => [key, byId.get(ids.get(key))]));
+        for (const cell of canvasLayout(api, (key) => (byKey.get(key) || {}).out?.size)) {
+            const info = byKey.get(cell.id);
+            if (!info || !info.out) continue;
+            if (cell.w > info.out.size[0]) info.out.size = [cell.w, info.out.size[1]];
+            info.out.pos = [cell.x, cell.y];
+        }
         const lite = {
             id: 1, version: 0.4, nodes, links, groups: [], config: {},
-            last_node_id: nodes.reduce((m, n) => Math.max(m, n.id), 0), last_link_id: links.length, last_group_id: 0,
+            last_node_id: ids.size, last_link_id: links.length, last_group_id: 0,
         };
         return { lite, missing };
     }
@@ -1959,14 +1973,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         // 未注册节点直接进编辑会在保存时把该节点从 workflow.json 里丢掉，拒绝并退回只读预览
         if (missing.length) { showToast(app, "warning", "无法内嵌编辑", `节点类型未注册：${missing.join("、")}，请用「⤒ 导入到画布」编辑`); return false; }
         const g = new LGraph();
-        g.configure(lite);
-        // 自动布局：与「导入到画布」同一套列号与重心排布，位置按节点真实尺寸推导、同列宽度拉齐
-        for (const cell of canvasLayout(wf, (id) => (g.getNodeById(id) || {}).size)) {
-            const n = g.getNodeById(cell.id);
-            if (!n) continue;
-            if (cell.w > n.size[0]) n.size[0] = cell.w;
-            n.pos = [cell.x, cell.y];
-        }
+        g.configure(lite);   // 节点位置 / 列宽由 converter 里的 canvasLayout 排好
         g.start();
         wfGraph = g;
         const canvasEl = mkEl("canvas", "rs-wf-editor-canvas");
@@ -1990,24 +1997,28 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         return true;
     }
 
-    async function setWfMode(mode) {
-        if (mode === "edit") {
-            if (!(await mountWfEditor())) return;
-            if (!workflowExpanded) setWorkflowCollapsed(false);
-        }
-        const editing = mode === "edit";
-        workflowBody.style.display = editing ? "none" : "";
-        workflowSummary.style.display = editing ? "none" : "";
-        wfEditWrap.style.display = editing ? "flex" : "none";
-        wfViewBtn.classList.toggle("rs-content-mode-active", !editing);
-        wfEditBtn.classList.toggle("rs-content-mode-active", editing);
-        wfSaveBtn.style.display = "";
+    // 展开工作流区时挂内嵌编辑画布（折叠态调用会先展开，画布盒子才有尺寸）。无 LiteGraph 的视图 /
+    // 技能含未注册节点时返回 false，调用方回落只读流程图预览。
+    async function mountWorkflowEditor() {
+        if (!workflowShown || !skillWorkflowRaw || !wfEditorSupported) return false;
+        if (workflowWrap.classList.contains("rs-wf-collapsed")) setWorkflowCollapsed(false);   // 展开：画布才有盒子尺寸
+        destroyWfEditor();
+        if (!(await mountWfEditor())) return false;
+        workflowBody.style.display = "none";
+        workflowSummary.style.display = "none";
+        wfEditWrap.style.display = "flex";
         wfSaveBtn.title = isCustom()
             ? "把画布上的工作流写回本技能 workflow.json，并把画布上的模型 / 尺寸 / 张数 / 前缀同步进 config.json（提示词等运行时变量原样保留）"
             : "预设技能：模型 / 尺寸 / 张数 / 前缀等值写入本地覆盖；工作流结构有变更时自动复制为自定义技能写入";
-        modal.classList.toggle("rs-wf-editing", editing);   // 编辑态：卡片吃满内容区剩余高度，设置区让位给画布
-        if (editing) requestAnimationFrame(refitWfCanvas);   // 显示后画布才有尺寸，此时再适配
-        else destroyWfEditor();
+        modal.classList.add("rs-wf-editing");   // 卡片吃满内容区剩余高度，设置区收成区头让位给画布
+        requestAnimationFrame(refitWfCanvas);
+        return true;
+    }
+
+    function unmountWorkflowEditor() {
+        destroyWfEditor();
+        wfEditWrap.style.display = "none";
+        modal.classList.remove("rs-wf-editing");
     }
 
     // 只读流程图：先按模板变量画蓝框预检，/object_info·/models/* 校验在后台完成后原地补红框
@@ -2033,25 +2044,21 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             if (error || !output || !Object.keys(output).length) { showToast(app, "warning", "无法保存", "画布上没有有效工作流" + (error && error.message ? `（${error.message}）` : "")); return; }
             await confirmWorkflowWrite(currentSkillId, currentSource, output, async (r, copy) => {
                 if (copy) { await openExisting(copy.id, "custom"); return; }   // 预设结构变更 → 详情切到新建副本继续编辑
-                skillWorkflowRaw = output;   // 只读流程图按新模板重画
-                setWfMode("view");
+                skillWorkflowRaw = output;   // 按新模板重挂内嵌编辑画布
                 const genInfo = currentIsVideo ? await loadVideoGenSettings() : await loadGenSettings();   // 回写后的 config 灌回设置区
                 loadedGenInfo = genInfo || null;
                 genSettingsBaseline = collectGenSettingsJson();   // 设置区已按新 config 重载 → 脏检查基线同步
-                await renderWorkflowPreview(output, genInfo, currentIsVideo, currentSkillId);
+                if (!(await mountWorkflowEditor())) await renderWorkflowPreview(output, genInfo, currentIsVideo, currentSkillId);
             });
         } catch (err) {
             showToast(app, "error", "保存工作流失败", err.message);
         }
     }
 
-    wfViewBtn.addEventListener("click", (e) => { e.stopPropagation(); setWfMode("view"); });
-    wfEditBtn.addEventListener("click", (e) => { e.stopPropagation(); setWfMode("edit"); });
     wfSaveBtn.addEventListener("click", (e) => { e.stopPropagation(); saveWorkflowFromEditor(); });
     wfReloadBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        destroyWfEditor();
-        if (await mountWfEditor()) requestAnimationFrame(refitWfCanvas);
+        if (!(await mountWorkflowEditor())) await renderWorkflowPreview(skillWorkflowRaw, loadedGenInfo, currentIsVideo, currentSkillId);
     });
     wfFitBtn.addEventListener("click", (e) => { e.stopPropagation(); refitWfCanvas(); });
 
@@ -2212,28 +2219,29 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         syncSettingsColumn();
         loadedGenInfo = genInfo || null;                  // 「修复失效路径」用：保存 { config, models }
         genSettingsBaseline = collectGenSettingsJson();   // 设置区回填完成 → 脏检查基线就绪
-        // 工作流流程图：仅生图/生视频技能。先显示骨架占位并同步压缩正文区（预留位置），加载完成后原地替换 → 打开时布局不跳；无 workflow.json 时隐藏。
-        // 分步渲染：workflow.json + 设置就绪后先用同步预检（仅模板变量蓝框）画出流程图，
-        // /object_info·/models/* 校验在后台进行，完成后原地重画补红框与摘要 → 图不必等最慢的请求。
+        // 工作流区：仅生图/生视频技能，默认折叠。先显示骨架占位；无 workflow.json 时隐藏。
+        // 无 LiteGraph 的视图（Studio 内嵌）没有画布可挂，加载完直接出只读流程图；
+        // 有 LiteGraph 的视图展开头部时才挂内嵌编辑画布（见 workflowHeader click），挂不上回落只读流程图。
         workflowBody.innerHTML = "";
         workflowSummary.textContent = "";
         workflowWrap.style.display = "none";
         workflowShown = false;
         skillWorkflowRaw = null;
-        setWfMode("view");   // 切技能回到只读流程图（顺带卸载上一个技能的内嵌画布）
+        unmountWorkflowEditor();   // 切技能先卸载上一个技能的内嵌画布
         contentCollapsed = true;   // 每次打开技能：带工作流的正文默认收起
-        resetWorkflowCollapse();   // 每次打开技能：工作流区默认展开
+        resetWorkflowCollapse();   // 每次打开技能：工作流区默认折叠
         if (wfPromise) {
             const skel = mkEl("div", "rs-wf-skeleton");
             skel.textContent = "加载工作流图中…";
             workflowBody.appendChild(skel);
             workflowWrap.style.display = "flex";   // 卡片是 flex 列（见 .rs-skill-workflow）：写 block 会让内嵌画布的 flex:1 失效
             workflowShown = true;
-            updateContentCompact();   // 先占位：正文区立即让位，避免加载完成后整体下移
             const wf = await wfPromise;
             if (currentSkillId === id && wf) skillWorkflowRaw = wf;   // 存原始模板：内嵌编辑与「修复失效路径」后重渲染复用
-            if (wf) await renderWorkflowPreview(wf, genInfo, full.gen_video, id);
-            else {
+            if (wf) {
+                // 折叠态不预挂画布（展开头部时才挂，画布盒子要有尺寸）；只读视图没有画布可挂 → 直接出流程图
+                if (!wfEditorSupported) await renderWorkflowPreview(wf, genInfo, full.gen_video, id);
+            } else {
                 workflowWrap.style.display = "none";
                 workflowShown = false;
                 workflowBody.innerHTML = "";
@@ -2272,7 +2280,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         workflowShown = false;
         skillWorkflowRaw = null;
         currentIsVideo = false;
-        setWfMode("view");
+        unmountWorkflowEditor();
         contentCollapsed = true;
         resetWorkflowCollapse();
         updateContentCompact();   // 清掉上一个技能残留的工作流 / 正文折叠类

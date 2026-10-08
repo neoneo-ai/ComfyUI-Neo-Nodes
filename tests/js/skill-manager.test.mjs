@@ -547,7 +547,7 @@ test("Studio 内嵌模式：不加放大按钮 / 把手 / 拖动，保持内嵌�
 });
 
 
-// ================= 工作流区：只读流程图 ⇄ 内嵌 litegraph 编辑 =================
+// ================= 工作流区：内嵌 litegraph 编辑（无 LiteGraph 回落只读流程图） =================
 const WF_TEMPLATE = {
     "1": { class_type: "NeoPromptAgent", inputs: { prompt: "{{PROMPT}}" }, _meta: { title: "Prompt" } },
     "2": { class_type: "KSampler", inputs: { seed: "{{SEED}}" }, _meta: { title: "Sampler" } },
@@ -635,7 +635,8 @@ function mockWfSkill({ id = "wf_demo", source = "custom", workflow = WF_TEMPLATE
     mockObjectInfo({});
 }
 
-async function openMgrWf(opts) {
+// 工作流区默认折叠：expand=true 时点头部展开（内嵌画布只在展开后挂载）
+async function openMgrWf(opts, expand = true) {
     const { openSkillManager } = await import("../../web/skill.js");
     mockWfSkill(opts);
     openSkillManager();
@@ -643,10 +644,15 @@ async function openMgrWf(opts) {
     await sleep(120);
     await flush();
     const box = document.querySelector(".rs-skill-manager");
-    return { box, wf: box.querySelector(".rs-skill-workflow") };
+    const wf = box.querySelector(".rs-skill-workflow");
+    if (expand) {
+        click(wf.querySelector(".rs-skill-workflow-head"));
+        await flush();
+        await sleep(50);
+    }
+    return { box, wf };
 }
 
-const modeBtn = (wf, text) => Array.from(wf.querySelectorAll(".rs-content-mode-btn")).find((b) => b.textContent.includes(text));
 const wfBarBtn = (wf, text) => Array.from(wf.querySelectorAll(".rs-wf-editor-bar button")).find((b) => b.textContent.includes(text));
 // 保存工作流走「变更确认弹窗」：预览 mock + 点「💾 确认保存」
 function mockWfPreview({ preset = false, structural = false } = {}) {
@@ -660,34 +666,60 @@ function clickWriteConfirm() {
     return !!btn;
 }
 
-test("工作流区：渲染只读/编辑模式切换；前端无 LiteGraph 时隐藏「编辑」", async () => {
+test("工作流区：无 LiteGraph 时回落只读流程图，无流程图/编辑切换按钮", async () => {
     const { box, wf } = await openMgrWf();
     assert.ok(wf, "带 workflow.json 的技能应渲染工作流区");
-    assert.ok(modeBtn(wf, "流程图"), "应有只读流程图模式按钮");
-    assert.ok(modeBtn(wf, "流程图").classList.contains("rs-content-mode-active"), "默认只读模式");
-    assert.equal(modeBtn(wf, "编辑").style.display, "none", "无 LiteGraph 时应隐藏编辑按钮");
-    assert.equal(wf.querySelector(".rs-wf-editor").style.display, "none", "编辑区默认隐藏");
+    assert.equal(wf.querySelectorAll(".rs-wf-mode-btns").length, 0, "不应有流程图 / 编辑切换按钮");
+    assert.equal(wf.querySelector(".rs-wf-editor").style.display, "none", "无 LiteGraph 应回落只读流程图");
     closeMgr(box);
 });
 
-test("内嵌编辑：灌入 workflow.json 模板挂 LGraphCanvas，只读流程图收起", async () => {
+test("无 LiteGraph：默认折叠，展开回落只读流程图，折叠再展开重绘", async () => {
+    const { box, wf } = await openMgrWf(undefined, false);
+    const head = wf.querySelector(".rs-skill-workflow-head");
+    assert.ok(wf.classList.contains("rs-wf-collapsed"), "无 LiteGraph 挂不上画布 → 工作流区应默认折叠");
+
+    click(head);
+    await flush();
+    await sleep(50);
+    assert.ok(!wf.classList.contains("rs-wf-collapsed"), "点标题应展开工作流区");
+    assert.equal(wf.querySelector(".rs-wf-editor").style.display, "none", "无 LiteGraph 不应进编辑");
+    assert.notEqual(wf.querySelector(".rs-wf-body").style.display, "none", "只读流程图区应可见");
+
+    click(head);
+    await flush();
+    await sleep(50);
+    assert.ok(wf.classList.contains("rs-wf-collapsed"), "再点标题应折叠工作流区");
+
+    click(head);
+    await flush();
+    await sleep(50);
+    assert.ok(wf.querySelector(".rs-wf-body").children.length > 0, "重新展开应重绘只读流程图");
+
+    closeMgr(box);
+});
+
+test("内嵌编辑：打开默认折叠不挂画布，展开头部才挂 LGraphCanvas 并收起只读流程图", async () => {
     const created = stubLiteGraph();
-    const { box, wf } = await openMgrWf();
-    click(modeBtn(wf, "编辑"));
+    const { box, wf } = await openMgrWf(undefined, false);
+    assert.ok(wf.classList.contains("rs-wf-collapsed"), "打开技能不应展开工作流区");
+    assert.equal(created.graphs.length, 0, "折叠态不应预挂内嵌画布");
+
+    click(wf.querySelector(".rs-skill-workflow-head"));
     await flush();
     await sleep(50);
 
-    assert.equal(created.graphs.length, 1, "应创建独立 LGraph 子图");
+    assert.equal(created.graphs.length, 1, "展开应创建独立 LGraph 子图");
     assert.equal(created.canvases.length, 1, "应创建 LGraphCanvas");
     const lite = created.lite[0];
     assert.equal(lite.nodes.length, 2, "API prompt 应转成 litegraph 节点");
     assert.deepEqual(lite.nodes.map((n) => n.widgets_values), [["{{PROMPT}}", 0], ["", "{{SEED}}"]], "widget 值按名对齐模板顺序");
+    // converter 默认把每个节点写成 pos [0,0]，必须按 canvasLayout 排开，否则内嵌画布上全叠在原点
+    assert.equal(new Set(lite.nodes.map((n) => n.pos.join(","))).size, lite.nodes.length, "节点应按布局排开，不叠在同一位置");
     assert.equal(created.graphs[0].started, true, "子图应 start()");
     assert.equal(wf.querySelector(".rs-wf-editor").style.display, "flex", "编辑区应显示");
     assert.ok(wf.querySelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas"), "canvas 应挂进盒子");
-    assert.equal(modeBtn(wf, "编辑").classList.contains("rs-content-mode-active"), true);
-    assert.equal(modeBtn(wf, "流程图").classList.contains("rs-content-mode-active"), false);
-    assert.equal(wf.querySelector(".rs-wf-body").style.display, "none", "编辑模式收起只读流程图");
+    assert.equal(wf.querySelector(".rs-wf-body").style.display, "none", "内嵌编辑收起只读流程图");
     assert.notEqual(wfBarBtn(wf, "保存工作流").style.display, "none", "自定义技能应显示保存按钮");
     closeMgr(box);
 });
@@ -696,7 +728,6 @@ test("内嵌编辑：按 dpr 下发后备缓冲并重设前层变换（高分屏
     window.devicePixelRatio = 1.25;
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf();
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     // jsdom 无布局：盒子 clientWidth/Height 为 0，refit 走 800x420 兜底尺寸
@@ -709,7 +740,6 @@ test("内嵌编辑：按 dpr 下发后备缓冲并重设前层变换（高分屏
 test("内嵌编辑：widget 弹窗按视口坐标落点（画布在窗口里偏移时不飞到左上角）", async () => {
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf();
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     const canvas = created.canvases[0];
@@ -731,7 +761,6 @@ const WF_LINK_TEMPLATE = {
 test("内嵌编辑：API 连线按槽位名转成 litegraph links", async () => {
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf({ workflow: WF_LINK_TEMPLATE });
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     const lite = created.lite[0];
@@ -740,11 +769,46 @@ test("内嵌编辑：API 连线按槽位名转成 litegraph links", async () => 
     assert.deepEqual(lite.nodes[0].outputs[0].links, [1], "源输出槽应登记 link");
     closeMgr(box);
 });
+// 画布导出 / 回写的模板节点 id 是 "193_82" 这类非数字串：Number() 出 NaN 会把所有节点挤成同一个 id
+// （连线全接错），last_node_id = NaN 更会让 LiteGraph.configure 死循环卡死整页
+const WF_TEXT_ID_TEMPLATE = {
+    "193_16": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+    "193_18": { class_type: "CLIPLoader", inputs: { clip_name: "{{TEXT_ENCODER}}" } },
+    "193_51": { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}", clip: ["193_18", 0] } },
+    "193_7": { class_type: "CLIPTextEncode", inputs: { text: "{{NEGATIVE}}", clip: ["193_18", 0] } },
+    "193_86": { class_type: "KSampler", inputs: { seed: 1, model: ["193_16", 0], positive: ["193_51", 0], negative: ["193_7", 0] } },
+};
+const WF_TEXT_ID_SLOTS = {
+    UNETLoader: { widgets: [{ name: "unet_name" }], inputs: [], outputs: [{ name: "MODEL", type: "MODEL" }] },
+    CLIPLoader: { widgets: [{ name: "clip_name" }], inputs: [], outputs: [{ name: "CLIP", type: "CLIP" }] },
+    CLIPTextEncode: { widgets: [{ name: "text" }], inputs: [{ name: "clip", type: "CLIP" }], outputs: [{ name: "CONDITIONING", type: "CONDITIONING" }] },
+    KSampler: { widgets: [{ name: "seed" }], inputs: [{ name: "model", type: "MODEL" }, { name: "positive", type: "CONDITIONING" }, { name: "negative", type: "CONDITIONING" }], outputs: [{ name: "LATENT", type: "LATENT" }] },
+};
+
+test("内嵌编辑：非数字节点 id 模板映射成有限整数，连线按真实节点落位", async () => {
+    const created = stubLiteGraph({ byType: WF_TEXT_ID_SLOTS });
+    const { box, wf } = await openMgrWf({ workflow: WF_TEXT_ID_TEMPLATE });
+    await flush();
+    await sleep(50);
+    const lite = created.lite[0];
+    assert.ok(Number.isFinite(lite.last_node_id), "last_node_id 必须是有限数（NaN 会让 LiteGraph.configure 死循环）");
+    const ids = lite.nodes.map((n) => n.id);
+    assert.ok(ids.every((i) => Number.isInteger(i) && i > 0), "LiteGraph 节点 id 必须是正整数");
+    assert.equal(new Set(ids).size, ids.length, "非数字模板 id 不能挤成同一个 id");
+    assert.equal(lite.links.length, 5, "5 条连线应全部建立");
+    const idSet = new Set(ids);
+    assert.ok(lite.links.every((l) => idSet.has(l[1]) && idSet.has(l[3])), "连线两端必须指向真实节点");
+    const sampler = lite.nodes.find((n) => n.type === "KSampler");
+    const originOf = (name) => lite.links.find((l) => l[3] === sampler.id && l[4] === sampler.inputs.findIndex((s) => s.name === name))[1];
+    assert.notEqual(originOf("positive"), originOf("negative"), "positive / negative 不能都接到同一个节点");
+    closeMgr(box);
+});
+
+
 
 test("内嵌编辑：节点类型未注册时拒绝进编辑（保存会丢节点）", async () => {
     const created = stubLiteGraph({ unregistered: ["KSampler"] });
     const { box, wf } = await openMgrWf();
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     assert.equal(created.graphs.length, 0, "未注册节点不应挂载子图");
@@ -753,7 +817,7 @@ test("内嵌编辑：节点类型未注册时拒绝进编辑（保存会丢节�
 });
 
 
-test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → 回只读并卸载画布", async () => {
+test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → 按新模板重挂画布", async () => {
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf();
     let saved = null;
@@ -764,7 +828,6 @@ test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → �
     });
     appState.promptGraph = { output: { "1": { class_type: "KSampler", inputs: { seed: 7 } } }, workflow: { "1": {} } };
 
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     click(wfBarBtn(wf, "保存工作流"));
@@ -782,12 +845,13 @@ test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → �
     assert.equal(saved.skill_id, "wf_demo");
     assert.deepEqual(saved.workflow, appState.promptGraph.output);
     assert.equal(appState.promptGraphArg, created.graphs[0], "graphToPrompt 应收到内嵌子图");
-    assert.equal(wf.querySelector(".rs-wf-editor").style.display, "none", "保存后回到只读模式");
-    assert.equal(created.canvases[0].stopped, true, "内嵌画布应停止渲染并解绑事件");
-    assert.equal(created.canvases[0].unbound, true, "内嵌画布应解绑事件");
-    assert.equal(created.graphs[0]._nodes.length, 0, "子图节点应逐个 removeNode 卸载");
-    assert.equal(created.graphs[0].cleared, true, "子图应 clear()");
-    assert.equal(wf.querySelector(".rs-wf-editor-canvas-box").children.length, 0, "画布 DOM 应清空");
+    assert.equal(created.canvases[0].stopped, true, "旧画布应停止渲染并解绑事件");
+    assert.equal(created.canvases[0].unbound, true, "旧画布应解绑事件");
+    assert.equal(created.graphs[0]._nodes.length, 0, "旧子图节点应逐个 removeNode 卸载");
+    assert.equal(created.graphs[0].cleared, true, "旧子图应 clear()");
+    assert.equal(created.canvases.length, 2, "保存后应按新模板重挂画布");
+    assert.equal(wf.querySelector(".rs-wf-editor").style.display, "flex", "保存后仍是内嵌编辑");
+    assert.ok(wf.querySelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas"), "新画布应挂进盒子");
     closeMgr(box);
 });
 
@@ -824,7 +888,6 @@ test("内嵌编辑：widget 按技能 config 初始化（模型 / 尺寸 / 张�
             loras: [{ name: "l1.safetensors", strength: 0.8 }, { name: "l2.safetensors", strength: 0.5 }],
         },
     });
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
 
@@ -855,7 +918,6 @@ test("内嵌编辑保存：回写后按新 config 重载设置区", async () => 
     });
     appState.promptGraph = { output: { "1": { class_type: "KSampler", inputs: { seed: 7 } } }, workflow: { "1": {} } };
 
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     assert.equal(created.graphs.length, 1, "编辑模式应已挂载子图");
@@ -889,7 +951,6 @@ test("内嵌编辑保存：预设结构变更自动复制为自定义技能并�
     mockRoute("/rs_prompts/save_skill", (b) => jsonResponse({ success: true, id: b.id }));
     appState.promptGraph = { output: { "1": { class_type: "KSampler", inputs: { seed: 7 } } }, workflow: { "1": {} } };
 
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     click(wfBarBtn(wf, "保存工作流"));
@@ -911,7 +972,6 @@ test("内嵌编辑保存：预设结构变更自动复制为自定义技能并�
 test("内嵌编辑：预设技能保存按钮可用（结构变更自动复制）；重新载入重建子图；适配视图重绘画布", async () => {
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf({ id: "preset_wf", source: "presets" });
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     const saveBtn = wfBarBtn(wf, "保存工作流");
@@ -933,7 +993,6 @@ test("内嵌编辑：预设技能保存按钮可用（结构变更自动复制�
 test("内嵌编辑：折叠工作流区 / 切换技能 / 关闭窗口均卸载画布", async () => {
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf();
-    click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
     assert.equal(created.canvases.length, 1);
@@ -959,6 +1018,27 @@ test("内嵌编辑：折叠工作流区 / 切换技能 / 关闭窗口均卸载�
 
     closeMgr(box);
     assert.ok(!document.querySelector(".rs-skill-manager-overlay"), "关闭窗口应移除整窗");
+});
+test("内嵌编辑：折叠后展开重挂画布（卸载旧画布 → 新画布进编辑区）", async () => {
+    const created = stubLiteGraph();
+    const { box, wf } = await openMgrWf();
+    await flush();
+    await sleep(50);
+    const head = wf.querySelector(".rs-skill-workflow-head");
+
+    click(head);
+    await flush();
+    await sleep(50);
+    assert.equal(created.canvases[0].stopped, true, "折叠应卸载画布");
+
+    click(head);
+    await flush();
+    await sleep(50);
+    assert.equal(created.canvases.length, 2, "展开应重挂画布");
+    assert.equal(wf.querySelector(".rs-wf-editor").style.display, "flex", "展开应回到内嵌编辑");
+    assert.equal(wf.querySelector(".rs-wf-body").style.display, "none", "重挂后收起只读流程图");
+
+    closeMgr(box);
 });
 
 test("导入到画布：成功后关闭整个技能管理窗口（不遮挡画布），回写入口留在常驻卡片", async () => {

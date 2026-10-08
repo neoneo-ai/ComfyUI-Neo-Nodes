@@ -175,27 +175,26 @@ test("技能管理窗口：拖拽手势被取消后不再跟随鼠标", async (t
 });
 
 
-test("内嵌工作流编辑：只读流程图 ⇄ 编辑画布（预设技能隐藏保存）", async (t) => {
+test("内嵌工作流编辑：展开工作流区直接挂画布（预设技能保存按钮说明自动复制）", async (t) => {
     if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
     const { page, errors } = await openManagerPage(1.25);
     const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
-    if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
+    if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，内嵌编辑不可用"); return; }
     try {
         await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
-        await page.waitForSelector(".rs-skill-workflow .rs-content-mode-btn", { timeout: 20000 });
+        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+        assert.equal(await page.locator(".rs-skill-workflow .rs-content-mode-btn").count(), 0, "不应再有流程图/编辑切换按钮");
 
-        const modeTexts = await page.locator(".rs-skill-workflow .rs-content-mode-btn").evaluateAll((els) => els.map((e) => e.textContent.trim()));
-        assert.ok(modeTexts.some((x) => x.includes("流程图")), "应有只读流程图模式按钮");
-        const editBtn = page.locator(".rs-skill-workflow .rs-content-mode-btn", { hasText: "编辑" });
-        assert.notEqual(await editBtn.evaluate((el) => getComputedStyle(el).display), "none", "前端有 LiteGraph 时「编辑」应可见");
-
-        // 展开折叠的工作流区 → 只读流程图渲染
+        // 打开技能默认折叠、不预挂画布；点头部展开才挂内嵌编辑画布（只读流程图退为回落路径）
+        assert.ok(await page.locator(".rs-skill-workflow").evaluate((el) => el.classList.contains("rs-wf-collapsed")), "工作流区应默认折叠");
+        assert.equal(await page.locator("canvas.rs-wf-editor-canvas").count(), 0, "折叠态不应预挂画布");
+        // 内嵌画布实例只在构造时拿得到（canvas 元素上不挂 __litegraph）：展开前拦下 LGraphCanvas 取子图
+        await page.evaluate(() => {
+            window.__neoWfCanvases = [];
+            const C = window.LGraphCanvas;
+            window.LGraphCanvas = new Proxy(C, { construct: (T, a) => { const i = new T(...a); window.__neoWfCanvases.push(i); return i; } });
+        });
         await page.click(".rs-skill-workflow-head .rs-form-label");
-        await page.waitForSelector(".rs-skill-workflow .rs-wf-body", { state: "visible", timeout: 20000 });
-        await page.waitForFunction(() => document.querySelectorAll(".rs-skill-workflow .rs-wf-body svg.rs-wf-svg").length > 0, null, { timeout: 20000 });
-
-        // 切编辑：内嵌画布获得真实尺寸
-        await editBtn.click();
         await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
         await page.waitForTimeout(300);   // 挂载后 refit 在下一帧执行，等它把后备缓冲铺满盒子
         const layout = await page.evaluate(() => {
@@ -209,6 +208,14 @@ test("内嵌工作流编辑：只读流程图 ⇄ 编辑画布（预设技能隐
         assert.ok(layout.boxW > 200 && layout.boxH > 200, `画布盒子应有尺寸：${layout.boxW}x${layout.boxH}`);
         assert.ok(layout.cw >= layout.boxW - 4 && layout.ch >= layout.boxH - 4, `canvas 后备缓冲应铺满盒子：${layout.cw}x${layout.ch} vs ${layout.boxW}x${layout.boxH}`);
         assert.ok(Math.abs(layout.sx - layout.dpr) < 0.01, `前层 ctx 变换应等于 dpr（否则背景层只铺满 1/dpr 画布）：${layout.sx} vs ${layout.dpr}`);
+
+        // converter 默认把每个节点写成 pos [0,0]，必须按 canvasLayout 排开；全叠在原点就是布局没跑
+        const nodeLayout = await page.evaluate(() => {
+            const nodes = window.__neoWfCanvases.at(-1).graph._nodes;
+            return { nodes: nodes.length, spots: new Set(nodes.map((n) => `${Math.round(n.pos[0])},${Math.round(n.pos[1])}`)).size };
+        });
+        assert.ok(nodeLayout.nodes > 3, `内嵌画布应挂出多个节点：${nodeLayout.nodes}`);
+        assert.ok(nodeLayout.spots === nodeLayout.nodes, `节点应排开不叠块：${nodeLayout.nodes} 节点 / ${nodeLayout.spots} 个位置`);
 
         const bar = await page.locator(".rs-wf-editor-bar").evaluateAll((els) => els.map((e) => e.textContent.trim()));
         assert.ok(bar.some((x) => x.includes("适配视图")), "应有适配视图按钮");
@@ -245,9 +252,11 @@ test("内嵌工作流编辑：只读流程图 ⇄ 编辑画布（预设技能隐
         await page.locator(".rs-skill-manager-maximize").click();   // 还原
         await page.waitForTimeout(400);
 
-        // 切回只读 → 画布卸载
-        await page.locator(".rs-skill-workflow .rs-content-mode-btn", { hasText: "流程图" }).click();
-        assert.equal(await page.locator("canvas.rs-wf-editor-canvas").count(), 0, "切回只读应卸载画布");
+        // 折叠工作流区 → 画布卸载；再展开 → 重挂内嵌画布
+        await page.click(".rs-skill-workflow-head .rs-form-label");
+        assert.equal(await page.locator("canvas.rs-wf-editor-canvas").count(), 0, "折叠应卸载画布");
+        await page.click(".rs-skill-workflow-head .rs-form-label");
+        await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
         assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
     } finally {
         await page.close();
@@ -261,9 +270,8 @@ test("内嵌工作流编辑：widget 数值弹窗贴着鼠标落点（125% 缩�
     if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
     try {
         await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
-        await page.waitForSelector(".rs-skill-workflow .rs-content-mode-btn", { timeout: 20000 });
-        await page.click(".rs-skill-workflow-head .rs-form-label");
-        await page.locator(".rs-skill-workflow .rs-content-mode-btn", { hasText: "编辑" }).click();
+        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+        await page.click(".rs-skill-workflow-head .rs-form-label");   // 默认折叠：展开才挂画布
         await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
         await page.waitForTimeout(400);
 
@@ -313,9 +321,8 @@ test("内嵌工作流编辑：combo 下拉浮在技能弹窗之上并可点选�
     if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
     try {
         await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
-        await page.waitForSelector(".rs-skill-workflow .rs-content-mode-btn", { timeout: 20000 });
-        await page.click(".rs-skill-workflow-head .rs-form-label");
-        await page.locator(".rs-skill-workflow .rs-content-mode-btn", { hasText: "编辑" }).click();
+        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+        await page.click(".rs-skill-workflow-head .rs-form-label");   // 默认折叠：展开才挂画布
         await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
         await page.waitForTimeout(1200);
 

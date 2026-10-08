@@ -81,8 +81,9 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
 ```
 
 - `skill-manager.e2e.mjs` — 技能管理窗口：overlay 指针穿透、⛶ 放大还原、标题栏双击放大、Esc 关闭、
-  标题栏拖动、右下角把手拉伸；工作流区只读流程图 ⇄ 内嵌编辑画布（canvas 铺满盒子、随窗口缩放跟随、
-  切回只读卸载画布、预设技能隐藏保存按钮、125% 缩放下 widget 弹窗贴着鼠标落点）。
+  标题栏拖动、右下角把手拉伸；工作流区默认展开直接挂内嵌编辑画布（canvas 铺满盒子、随窗口缩放与 ⛶ 放大跟随、
+  折叠卸载画布、再展开重挂、预设技能保存按钮说明结构变更自动复制、125% 缩放下 widget 弹窗贴着鼠标落点、
+  combo 下拉浮在技能弹窗之上）。
   截图落 `tmp/skill-wf-editor.png`、`tmp/skill-wf-prompt.png`。
 - `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md` 可取、
   节点上不再有 `neo_help` 徽标 widget、属性面板「信息」页渲染出文档正文（会话未注册属性面板时 skip）。
