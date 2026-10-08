@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
+import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 const QWEN_TEMPLATE = {
@@ -42,7 +42,7 @@ async function openPopup() {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "qwen_image_21", workflow: QWEN_TEMPLATE }));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
     mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse(CONFIG) : jsonResponse({ success: true }));
-    mockRoute("/object_info", () => jsonResponse({ LoadImage: { input: { required: { image: [["example.png", "other.png"], { image_upload: true }] } } } }));
+    mockObjectInfo({ LoadImage: { input: { required: { image: [["example.png", "other.png"], { image_upload: true }] } } } });
     const popup = createSkillDetailPopup();
     await popup.openExisting("qwen_image_21", "preset");
     await sleep(80);

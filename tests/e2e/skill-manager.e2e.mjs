@@ -1,7 +1,7 @@
 // E2E：技能管理独立窗口（Director 风格控件）+ 内嵌 litegraph 工作流编辑（需 ComfyUI 运行中）。
 // 用法：npm run e2e   或   node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.mjs
 // 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo-Nodes 插件。
-// 只读校验：预设技能隐藏「保存工作流」，全程不写用户数据。
+// 只读校验：预设技能「保存工作流」仅值覆盖，结构变更自动复制为自定义技能；测试全程不点保存，不写用户数据。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
@@ -213,8 +213,10 @@ test("内嵌工作流编辑：只读流程图 ⇄ 编辑画布（预设技能隐
         const bar = await page.locator(".rs-wf-editor-bar").evaluateAll((els) => els.map((e) => e.textContent.trim()));
         assert.ok(bar.some((x) => x.includes("适配视图")), "应有适配视图按钮");
         assert.ok(bar.some((x) => x.includes("重新载入")), "应有重新载入按钮");
-        assert.equal(await page.locator(".rs-wf-editor-bar button", { hasText: "保存工作流" }).evaluate((el) => getComputedStyle(el).display),
-            "none", "预设技能应隐藏保存按钮");
+        const saveBtn = page.locator(".rs-wf-editor-bar button", { hasText: "保存工作流" });
+        assert.notEqual(await saveBtn.evaluate((el) => getComputedStyle(el).display), "none", "预设技能应显示保存按钮（结构变更自动复制为自定义技能）");
+        assert.ok((await saveBtn.evaluate((el) => el.title)).includes("自动复制为自定义技能"),
+            "预设保存按钮应说明结构变更自动复制");
 
         // 适配视图 + 窗口缩放后跟随
         await page.locator(".rs-wf-editor-bar button", { hasText: "适配视图" }).click();
@@ -266,6 +268,7 @@ test("内嵌工作流编辑：widget 数值弹窗贴着鼠标落点（125% 缩�
         await page.waitForTimeout(400);
 
         // 首个可视数值 widget 的视口坐标（graph 坐标 → ds 变换 → canvas 矩形）
+        // 取行中心：litegraph 的 widget 命中区不含行左右边缘（贴边点会被当成节点空白）
         const target = await page.evaluate(() => {
             const c = document.querySelector("canvas.rs-wf-editor-canvas");
             const inst = c.data;
@@ -273,8 +276,8 @@ test("内嵌工作流编辑：widget 数值弹窗贴着鼠标落点（125% 缩�
             for (const n of inst.graph._nodes) {
                 for (const w of n.widgets || []) {
                     if (w.type !== "number" && w.type !== "slider") continue;
-                    const x = (n.pos[0] + 40 + inst.ds.offset[0]) * inst.ds.scale + cr.left;
-                    const y = (n.pos[1] + w.last_y + inst.ds.offset[1]) * inst.ds.scale + cr.top;
+                    const x = (n.pos[0] + (w.width || 200) / 2 + inst.ds.offset[0]) * inst.ds.scale + cr.left;
+                    const y = (n.pos[1] + (w.last_y || 0) + (w.height || 20) / 2 + inst.ds.offset[1]) * inst.ds.scale + cr.top;
                     if (x < cr.left + 8 || x > cr.right - 8 || y < cr.top + 8 || y > cr.bottom - 8) continue;
                     return { name: w.name, x, y, canvasTop: cr.top, canvasLeft: cr.left };
                 }

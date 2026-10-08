@@ -3,7 +3,7 @@
 // 拖拽缩小节点会把固定高度的时间轴裁掉——扩展必须在 onResize 里补钳制（最小高度含时间轴）。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
+import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
 import { getExtension, appState } from "./mocks/comfy-app.mjs";
 import { dispatchApiEvent } from "./mocks/comfy-api.mjs";
 
@@ -934,7 +934,7 @@ test("节点底部挂 skill 状态条：配方各段 skill 缺模型时告警，
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ workflow }));
     mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
     mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));
-    mockRoute("/object_info", () => jsonResponse({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } }));
+    mockObjectInfo({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } });
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
 
     const node = await createDirectorNode("dir-recipe", [{ name: "skill", value: "" }]);
@@ -972,7 +972,7 @@ test("bundle 模式：预选视频技能缺模型即告警，手动切换 skill 
     mockRoute("/neo_image_gen/skill_config", () => jsonResponse({}));
     mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
-    mockRoute("/object_info", () => jsonResponse({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } }));
+    mockObjectInfo({ UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } } });
 
     const node = await createDirectorNode("", [{ name: "skill", value: "坏视频技能" }, { name: "duration_sec", value: 5 }]);
     node._neoDtApplyBundleLock(true);

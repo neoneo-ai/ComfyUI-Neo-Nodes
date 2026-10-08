@@ -1533,13 +1533,14 @@ def save_workflow_skill(name: str, description: str, tags, workflow: dict) -> di
 
 
 def _workflow_update_guard(skill_id: str, workflow: dict) -> tuple[str, str, str]:
-    """回写/预览共用守卫：返回 (skill_id, 技能目录, 拒绝消息)；消息非空即不可回写。"""
+    """回写/预览共用守卫：返回 (skill_id, 技能目录, 拒绝消息)；消息非空即不可回写。
+
+    预设技能可回写模型值（写 configs/skill_overrides/），结构由调用方按 structural 决定去向。
+    """
     sid = _normalize_skill_id(str(skill_id or ""))
     d = _skill_dir(sid) if sid else None
     if not d:
         return "", "", "Skill not found"
-    if _skill_source(d) == "presets":
-        return "", "", "Preset skill is read-only"
     if not isinstance(workflow, dict) or not workflow:
         return "", "", "workflow 不是合法的 API prompt"
     for nid, node in workflow.items():
@@ -1611,6 +1612,7 @@ def _node_changes(old_wf: dict, new_wf: dict) -> list:
 def _plan_workflow_update(sid: str, d: str, workflow: dict) -> dict:
     """画布 API prompt → 落盘计划：模板、warnings、合并后的 config、变更清单、skill.md 元数据。"""
     is_video = _is_h3_video_workflow(workflow)
+    is_preset = _skill_source(d) == "presets"
     old_wf = load_skill_workflow(sid)
     # 画布主链里模板槽位之后的 config.loras 个节点是导入时程序注入的，剥离后不计入模板结构；
     # 剥下来的 name/strength 并回 seed_cfg["loras"]，改 LoRA 值只落 config.json、只报 loras 变更
@@ -1638,10 +1640,10 @@ def _plan_workflow_update(sid: str, d: str, workflow: dict) -> dict:
         merged_cfg = {**old_cfg, **seed_cfg}
         # 基线 = 画布打开时的有效配置，不是 config.json 原文：默认值/自动建议模型不算变更
         changes = _config_changes(_effective_gen_config(sid, is_video), seed_cfg)
-    if old_wf:
-        changes += _node_changes(old_wf, template)
+    node_changes = _node_changes(old_wf, template) if old_wf else []
+    changes += node_changes
 
-    rewrite_md = bool(meta) and bool(meta.get("requires_ref")) != has_ref
+    rewrite_md = (not is_preset) and bool(meta) and bool(meta.get("requires_ref")) != has_ref
     if rewrite_md:
         changes.append({"field": "requires_ref",
                         "from": "真" if meta.get("requires_ref") else "假",
@@ -1653,7 +1655,7 @@ def _plan_workflow_update(sid: str, d: str, workflow: dict) -> dict:
 
     return {"template": template, "warnings": warnings, "meta": meta, "body": body,
             "merged_cfg": merged_cfg, "rewrite_md": rewrite_md,
-            "is_video": is_video, "changes": changes}
+            "is_video": is_video, "changes": changes, "structural": bool(node_changes)}
 
 
 def preview_workflow_skill(skill_id: str, workflow: dict) -> dict:
@@ -1663,32 +1665,37 @@ def preview_workflow_skill(skill_id: str, workflow: dict) -> dict:
         return {"success": False, "message": err}
     plan = _plan_workflow_update(sid, d, workflow)
     return {"success": True, "id": sid, "warnings": plan["warnings"],
-            "gen_video": plan["is_video"], "changes": plan["changes"]}
+            "gen_video": plan["is_video"], "changes": plan["changes"],
+            "preset": _skill_source(d) == "presets", "structural": plan["structural"]}
 
 
 def update_workflow_skill(skill_id: str, workflow: dict) -> dict:
-    """把画布工作流（API prompt）回写入 existing custom skill：workflow.json 落盘，skill.md 正文保留。"""
+    """把画布工作流回写入 existing skill：custom 落 workflow.json（skill.md 正文保留）；
+    预设只把画布上的模型值写 configs/skill_overrides/，结构变更由前端复制为自定义副本后写入。"""
     sid, d, err = _workflow_update_guard(skill_id, workflow)
     if err:
         return {"success": False, "message": err}
+    is_preset = _skill_source(d) == "presets"
     plan = _plan_workflow_update(sid, d, workflow)
-    with _skills_lock:
-        tmp = os.path.join(d, "workflow.json.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(plan["template"], f, indent=2, ensure_ascii=False)
-        os.replace(tmp, os.path.join(d, "workflow.json"))
-        if plan["rewrite_md"]:
-            main = _main_md_name(d)
-            tmp = os.path.join(d, main + ".tmp")
+    if not is_preset:
+        with _skills_lock:
+            tmp = os.path.join(d, "workflow.json.tmp")
             with open(tmp, "w", encoding="utf-8") as f:
-                f.write(serialize_frontmatter(plan["meta"], plan["body"]))
-            os.replace(tmp, os.path.join(d, main))
+                json.dump(plan["template"], f, indent=2, ensure_ascii=False)
+            os.replace(tmp, os.path.join(d, "workflow.json"))
+            if plan["rewrite_md"]:
+                main = _main_md_name(d)
+                tmp = os.path.join(d, main + ".tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(serialize_frontmatter(plan["meta"], plan["body"]))
+                os.replace(tmp, os.path.join(d, main))
     if plan["merged_cfg"]:
         # 与生图/生视频设置区共用写路径（整文件重写）：先垫既有 config.json 再覆盖画布提取值，
-        # 保住设置区的 base_resolution / enhance_prompt 等画布不提供的键
+        # 保住设置区的 base_resolution / enhance_prompt 等画布不提供的键；预设写本地覆盖文件
         save_skill_gen_config(sid, plan["merged_cfg"])
     return {"success": True, "id": sid, "warnings": plan["warnings"],
-            "gen_video": plan["is_video"], "changes": plan["changes"]}
+            "gen_video": plan["is_video"], "changes": plan["changes"],
+            "preset": is_preset, "structural": plan["structural"]}
 
 
 def copy_skill_files(from_id: str, to_id: str) -> tuple[bool, str]:

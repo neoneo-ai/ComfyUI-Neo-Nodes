@@ -444,8 +444,7 @@ function openMenu(anchor, byHover = false) {
         writebackItem.disabled = true;
         writebackItem.title = "当前画布没有待回写的技能：技能管理「⤒ 导入到画布」后此入口可用";
     } else if (pendingWb.source === "presets") {
-        writebackItem.disabled = true;
-        writebackItem.title = `技能 "${pendingWb.id}" 是预设，不可回写：先「复制为自定义」`;
+        writebackItem.title = `技能 "${pendingWb.id}" 是预设：模型值写本地覆盖，结构变更自动复制为自定义技能`;
     } else {
         writebackItem.title = `把当前画布落盘技能 "${pendingWb.id}"（先列出变更、确认后写入）`;
     }

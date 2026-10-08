@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { readFileSync } from "node:fs";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, click, inputText, fire, keydown, setConfirmAnswer, dialogs, window, fetchLog } from "./setup.mjs";
+import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, flush, sleep, click, inputText, fire, keydown, setConfirmAnswer, dialogs, window, fetchLog } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 const LEFT_W_KEY = "neo.skillManagerLeftWidth";
@@ -619,8 +619,8 @@ function stubLiteGraph({ unregistered = [], byType = {} } = {}) {
 function mockWfSkill({ id = "wf_demo", source = "custom", workflow = WF_TEMPLATE, config = {} } = {}) {
     skills = [{ id, name: "WF Skill", source, category: "image_gen", gen_image: true, gen_video: false }];
     mockRoute("/rs_prompts/skills", () => jsonResponse(skills));
-    mockRoute("/rs_prompts/load_skill", () => jsonResponse({
-        id, name: "WF Skill", content: "正文", source,
+    mockRoute("/rs_prompts/load_skill", (b) => jsonResponse({
+        id: b.id, name: "WF Skill", content: "正文", source: b.source || source,
         files: [{ name: "skill.md", size: 4 }, ...(workflow ? [{ name: "workflow.json", size: 9 }] : [])],
         gen_image: true, gen_video: false, requires_ref: false, multi_turn: false, tags: [], category: "image_gen",
     }));
@@ -632,7 +632,7 @@ function mockWfSkill({ id = "wf_demo", source = "custom", workflow = WF_TEMPLATE
         text_encoders: ["t.safetensors"], suggested_text_encoders: "t.safetensors",
         vae: ["v.safetensors"], suggested_vae: "v.safetensors", loras: [],
     }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
 }
 
 async function openMgrWf(opts) {
@@ -649,9 +649,9 @@ async function openMgrWf(opts) {
 const modeBtn = (wf, text) => Array.from(wf.querySelectorAll(".rs-content-mode-btn")).find((b) => b.textContent.includes(text));
 const wfBarBtn = (wf, text) => Array.from(wf.querySelectorAll(".rs-wf-editor-bar button")).find((b) => b.textContent.includes(text));
 // 保存工作流走「变更确认弹窗」：预览 mock + 点「💾 确认保存」
-function mockWfPreview() {
+function mockWfPreview({ preset = false, structural = false } = {}) {
     mockRoute("/neo_image_gen/update_workflow_skill_preview", () =>
-        jsonResponse({ success: true, id: "wf_demo", changes: [], warnings: [], gen_video: false }));
+        jsonResponse({ success: true, id: "wf_demo", changes: [], warnings: [], gen_video: false, preset, structural }));
 }
 function clickWriteConfirm() {
     const dlg = document.querySelector(".rs-wf-write-confirm");
@@ -876,13 +876,47 @@ test("内嵌编辑保存：回写后按新 config 重载设置区", async () => 
     closeMgr(box);
 });
 
-test("内嵌编辑：预设技能隐藏保存按钮；重新载入重建子图；适配视图重绘画布", async () => {
+// 预设技能不可写 workflow.json：内嵌编辑改了结构 → 自动复制成自定义技能，工作流写进副本，详情切到副本
+test("内嵌编辑保存：预设结构变更自动复制为自定义技能并切到副本", async () => {
+    const created = stubLiteGraph();
+    const { box, wf } = await openMgrWf({ id: "preset_wf", source: "presets" });
+    mockWfPreview({ preset: true, structural: true });
+    const savedIds = [];
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        savedIds.push(b.skill_id);
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [] });
+    });
+    mockRoute("/rs_prompts/save_skill", (b) => jsonResponse({ success: true, id: b.id }));
+    appState.promptGraph = { output: { "1": { class_type: "KSampler", inputs: { seed: 7 } } }, workflow: { "1": {} } };
+
+    click(modeBtn(wf, "编辑"));
+    await flush();
+    await sleep(50);
+    click(wfBarBtn(wf, "保存工作流"));
+    await flush();
+    await sleep(120);
+    assert.ok(clickWriteConfirm(), "保存工作流应弹变更确认弹窗");
+    await flush();
+    await sleep(200);
+    await flush();
+
+    assert.equal(savedIds.length, 2, `预设值写本地覆盖 + 结构写副本，共两次写入（实际 ${savedIds.length}）`);
+    assert.equal(savedIds[0], "preset_wf", "第一写为预设的值覆盖");
+    assert.ok(/^preset_wf_copy_\d+$/.test(savedIds[1]), `结构应写进新建副本：${savedIds[1]}`);
+    assert.equal(box.querySelector(".rs-skill-modal .rs-skill-detail-badge").textContent, "USR", "详情应切到新建的自定义副本");
+    assert.equal(created.canvases[0].stopped, true, "切到副本后应卸载内嵌画布");
+    closeMgr(box);
+});
+
+test("内嵌编辑：预设技能保存按钮可用（结构变更自动复制）；重新载入重建子图；适配视图重绘画布", async () => {
     const created = stubLiteGraph();
     const { box, wf } = await openMgrWf({ id: "preset_wf", source: "presets" });
     click(modeBtn(wf, "编辑"));
     await flush();
     await sleep(50);
-    assert.equal(wfBarBtn(wf, "保存工作流").style.display, "none", "预设技能不应显示保存按钮");
+    const saveBtn = wfBarBtn(wf, "保存工作流");
+    assert.notEqual(saveBtn.style.display, "none", "预设技能应显示保存按钮");
+    assert.ok(saveBtn.title.includes("自动复制为自定义技能"), `预设保存按钮应说明结构变更自动复制：${saveBtn.title}`);
 
     click(wfBarBtn(wf, "重新载入"));
     await flush();

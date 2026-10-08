@@ -12,6 +12,18 @@ export function clearRoutes() {
     routes.clear();
 }
 
+/** 精确路由优先；`/a/b/*` 前缀路由命中时把剩余路径段作为 params.rest 交给 responder。 */
+function matchRoute(pathname) {
+    const exact = routes.get(pathname);
+    if (exact) return { responder: exact, params: { rest: "" } };
+    for (const [pattern, responder] of routes) {
+        if (!pattern.endsWith("*")) continue;
+        const prefix = pattern.slice(0, -1);
+        if (pathname.startsWith(prefix)) return { responder, params: { rest: decodeURIComponent(pathname.slice(prefix.length)) } };
+    }
+    return null;
+}
+
 export function resetFetchLog() {
     fetchLog.length = 0;
     missingRoutes.length = 0;
@@ -86,12 +98,14 @@ export async function handleFetch(input, init = {}) {
     const call = { path: url.pathname, query: url.searchParams, method, body };
     fetchLog.push(call);
 
-    const responder = routes.get(url.pathname);
-    if (!responder) {
+    const match = matchRoute(url.pathname);
+    if (!match) {
         missingRoutes.push(`${method} ${url.pathname}`);
         return makeResponse({ status: 501, bodyText: JSON.stringify({ error: `no mock for ${url.pathname}` }) });
     }
-    const spec = typeof responder === "function" ? await responder(body, call) : responder;
+    const spec = typeof match.responder === "function"
+        ? await match.responder(body, call, match.params)
+        : match.responder;
     const norm = normalize(spec);
     if (norm.raw) return norm.raw;
     const { status, bodyText, sseLines } = norm;

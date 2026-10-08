@@ -1,7 +1,7 @@
 // 顶栏 🅝 菜单（top-menu.js）：单按钮注册、下拉条目、节点子菜单过滤、关于弹窗
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { clearBody, mockRoute, jsonResponse, flush, sleep } from "./setup.mjs";
+import { clearBody, mockRoute, mockObjectInfo, jsonResponse, flush, sleep } from "./setup.mjs";
 import { app, appState, getExtension } from "./mocks/comfy-app.mjs";
 import { makeGraph, makeNode } from "./helpers/fake-graph.mjs";
 
@@ -405,7 +405,7 @@ function mockHandoffRoutes(id = "custom_a", source = "custom") {
     mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse({ model: "m.safetensors" }) : jsonResponse({ success: true }));
     mockRoute("/neo_image_gen/update_workflow_skill_preview", () =>
         jsonResponse({ success: true, id, changes: [{ field: "model", from: "old.safetensors", to: "m.safetensors" }], warnings: [], gen_video: false }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
 }
 
 function writebackItem() {
@@ -457,7 +457,7 @@ test("顶菜单「💾 回写入技能」：导入到画布后绿点亮、条目
     assert.equal(btn.classList.contains("neo-writeback-hint"), false, "落盘后应清绿点");
 });
 
-test("顶菜单「💾 回写入技能」：预设技能待回写时置灰并提示只读", async () => {
+test("顶菜单「💾 回写入技能」：预设技能待回写时点亮绿点、条目可用", async () => {
     mockHandoffRoutes("image_gen", "presets");
     appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
     const btn = document.createElement("button");
@@ -466,13 +466,14 @@ test("顶菜单「💾 回写入技能」：预设技能待回写时置灰并提
     const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
     await openSkillWorkflowOnCanvas("image_gen");
     await sleep(80);
-    assert.equal(btn.classList.contains("neo-writeback-hint"), false, "预设不可回写不应点亮绿点");
+    assert.ok(btn.classList.contains("neo-writeback-hint"), "预设导入后应点亮绿点（模型值可写本地覆盖）");
 
     const ext = getExtension("comfy.neo.topMenu");
-    ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+    ext.actionBarButtons[0].onClick({ currentTarget: btn });
     const item = writebackItem();
-    assert.equal(item.disabled, true, "预设技能应置灰");
+    assert.equal(item.disabled, false, "预设技能条目应可用（值写本地覆盖，结构自动复制副本）");
     assert.match(item.title, /预设/);
+    assert.ok(item.querySelector(".neo-n-menu-dot-green"), "预设待回写同样带绿点引导");
 });
 
 function repairItem() {

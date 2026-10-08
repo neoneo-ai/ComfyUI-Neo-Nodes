@@ -7,7 +7,7 @@ import { beforeEach } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, flush, sleep, inputText, click } from "./setup.mjs";
+import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, flush, sleep, inputText, click } from "./setup.mjs";
 import { appState } from "./mocks/comfy-app.mjs";
 
 beforeEach(() => {
@@ -351,11 +351,11 @@ test("validateWorkflow：object_info 内联解析后的 combo 列表时也能判
 
 test("详情弹窗：gen_image 技能渲染工作流流程图，高亮缺节点/缺模型/模板变量", async () => {
     mockRoute("/neo_image_gen/skill_workflow", (b, call) => jsonResponse({ skill_id: "x", workflow: WF_SAMPLE }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
         KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
-    }));
+    });
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
 
     await openGenPopup({ id: "image_gen_text", source: "custom" });
@@ -380,11 +380,11 @@ test("详情弹窗：缺失节点/模型摘要给出名称芯片与复制按钮�
         "6": { class_type: "UNETLoader", inputs: { unet_name: "no_such_model.safetensors" } },
     };
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_DUP }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
         KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
-    }));
+    });
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
     const copied = [];
     navigator.clipboard = { writeText: async (t) => { copied.push(t); } };
@@ -413,7 +413,7 @@ test("详情弹窗：非生图技能不渲染工作流区、不发请求", async
 
 test("详情弹窗：带工作流的技能正文默认收起（点标题展开），标题带用途说明", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
     await openGenPopup({ id: "image_gen_text", source: "custom" });
 
     const row = document.querySelector(".rs-tpl-content").closest(".rs-config-row");
@@ -538,11 +538,11 @@ test("详情弹窗：超出模板槽位的 LoRA 动态注入流程图（与运�
         "3": { class_type: "KSampler", inputs: { model: ["2", 0], seed: 1 } },
     };
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_INJECT }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: { strength_model: ["FLOAT"] } } },
         KSampler: { input: { required: { model: ["MODEL"], seed: ["INT"] }, optional: {} } },
-    }));
+    });
     mockRoute("/models/diffusion_models", () => jsonResponse(["m.safetensors"]));
     mockRoute("/models/loras", () => jsonResponse(["q.safetensors", "r.safetensors"]));
 
@@ -569,11 +569,11 @@ const WF_RENDER = {
 
 test("详情弹窗：生图工作流模板变量按 config 预替换，缺失模型按真实文件名判定", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: { strength_model: ["FLOAT"] } } },
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
-    }));
+    });
     mockRoute("/models/diffusion_models", () => jsonResponse(["m.safetensors"]));
     mockRoute("/models/loras", () => jsonResponse(["q.safetensors"]));
 
@@ -599,11 +599,11 @@ test("详情弹窗：生图工作流模板变量按 config 预替换，缺失模
 
 test("详情弹窗：有工作流且正文为空时压缩 System Prompt Content 区", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: {} } },
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
-    }));
+    });
     await openGenPopup({ id: "image_gen_text", source: "custom", fileContent: "" });
     const wfWrap = document.querySelector(".rs-skill-workflow");
     assert.ok(wfWrap && wfWrap.style.display !== "none");
@@ -614,11 +614,11 @@ test("详情弹窗：有工作流且正文为空时压缩 System Prompt Content 
 
 test("详情弹窗：工作流区默认折叠，点头部展开时正文区让位", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         LoraLoaderModelOnly: { input: { required: { model: ["MODEL"], lora_name: ["LORA_NAME"] }, optional: { strength_model: ["FLOAT"] } } },
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
-    }));
+    });
     mockRoute("/models/diffusion_models", () => jsonResponse(["m.safetensors"]));
     mockRoute("/models/loras", () => jsonResponse(["q.safetensors"]));
 
@@ -648,11 +648,11 @@ const WF_VIDEO = {
 
 test("详情弹窗：生视频工作流模板变量按 config + H3 缺省预替换", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "v", workflow: WF_VIDEO }));
-    mockRoute("/object_info", () => jsonResponse({
+    mockObjectInfo({
         UNETLoader: { input: { required: { unet_name: ["UNET_NAME"] }, optional: {} } },
         CLIPTextEncode: { input: { required: { clip: ["CLIP"], text: ["STRING"] }, optional: {} } },
         KSampler: { input: { required: { model: ["MODEL"], steps: ["INT"], width: ["INT"], height: ["INT"] }, optional: {} } },
-    }));
+    });
     mockRoute("/models/diffusion_models", () => jsonResponse(["h3.safetensors"]));
 
     await openGenPopup({
@@ -806,7 +806,7 @@ test("工作流图：合成节点图上与 tooltip 不显示内部 #__grp_… id
             "3": { class_type: "LoadImage", inputs: { image: "b.png" } },
         },
     }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
     await openGenPopup({ id: "image_gen_text", source: "custom" });
     const svg = document.querySelector(".rs-wf-body svg.rs-wf-svg");
     assert.ok(svg.textContent.includes("LoadImage ×2"), "两个 LoadImage 应合并为合成节点");
@@ -819,7 +819,7 @@ test("工作流图：合成节点图上与 tooltip 不显示内部 #__grp_… id
 
 test("工作流图：滚动区内拖拽平移 scrollLeft/Top（同画布体验），松开后停止", async () => {
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_RENDER }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
     await openGenPopup({ id: "image_gen_text", source: "custom" });
     const body = document.querySelector(".rs-wf-body");
     const svg = body.querySelector("svg.rs-wf-svg");
@@ -878,11 +878,10 @@ test("工作流图分步渲染：校验请求未回先出图（蓝框），/obje
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [], loras: [] }));
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "x", workflow: WF_SAMPLE }));
 
-    // /object_info 延迟响应 → 可断言「图已画出但校验未完成」的中间态；返回空对象 → 全部节点判为未安装
-    let resolveInfo;
-    mockRoute("/object_info", () => new Promise((res) => {
-        resolveInfo = () => res(jsonResponse({}));
-    }));
+    // 节点定义延迟响应 → 可断言「图已画出但校验未完成」的中间态；返回未注册 → 全部节点判为未安装
+    const pendingInfo = [];
+    mockRoute("/object_info/*", () => new Promise((res) => { pendingInfo.push(() => res(jsonResponse({}))); }));
+    const resolveInfo = () => pendingInfo.forEach((resolve) => resolve());
 
     const popup = createSkillDetailPopup();
     const opened = popup.openExisting("image_gen_text", "custom");

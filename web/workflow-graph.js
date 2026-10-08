@@ -8,11 +8,13 @@
  * - applyWorkflowParams：按已知参数（设置 + 自动建议模型）预替换模板变量，运行时变量保留
  * - injectRuntimeLoras：配置 LoRA 超出模板槽位时镜像后端 _apply_loras 动态插入 LoraLoaderModelOnly，
  *   使流程图与运行时实际提交的图一致；未配置或槽位够用时原样返回
- * - validateWorkflow / checkWorkflow：对照 /object_info 与 /models/{folder}
+ * - validateWorkflow / checkWorkflow：对照节点定义与 /models/{folder}
  *   标记 节点未安装 / 模型未找到 / {{模板变量}}（请求失败时跳过对应检查，不误报）
+ *   checkWorkflow 只按工作流用到的 class 拉 /object_info/{class}（走 js/core/object-info.js 缓存）
  * - renderWorkflowGraph：画 SVG（节点框 + 参数行 + 贝塞尔连线 + 徽标 + tooltip）+ 问题摘要到容器
  *   （摘要含缺失节点/模型的名称芯片与复制按钮，方便一键复制去安装/下载）
  */
+import { getNodeDefs, getModelList } from "./js/core/object-info.js";
 
 const GAP_X = 36, GAP_Y = 12, PAD = 12;
 // 列宽按该列节点实际内容推导：短列收窄省横向空间，长列最多 NODE_W_MAX 减少截断；
@@ -637,20 +639,24 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
     return { issues, counts };
 }
 
-/** 拉 /object_info + 本工作流用到的 /models/{folder} 后执行校验；请求失败按「跳过检查」处理。 */
+/** 只拉本工作流用到的 class 定义 + /models/{folder} 后执行校验；请求失败按「跳过检查」处理。
+ *  全量 /object_info 十几 MB、服务端逐节点构建近 1 秒，逐次拉会把开图 / 内嵌编辑 / 导入画布卡成秒级。 */
 export async function checkWorkflow(workflow) {
-    let objectInfo = null;
-    try {
-        const res = await fetch("/object_info");
-        if (res.ok) objectInfo = await res.json();
-    } catch (e) { /* 跳过节点存在性检查 */ }
+    const classes = [...new Set(Object.values(workflow || {}).map((n) => n && n.class_type).filter(Boolean))];
+    const defs = await getNodeDefs(classes);
+    // 未注册（定义为空对象）= 缺节点（不进表，由 validateWorkflow 报出）；
+    // 拉取失败（null）进空壳表按「跳过检查」处理，不把网络失败当成缺节点
+    const objectInfo = {};
+    for (const [cls, def] of Object.entries(defs)) {
+        if (def === null) objectInfo[cls] = { input: {} };
+        else if (Object.keys(def).length) objectInfo[cls] = def;
+    }
 
     const folders = new Set();
-    for (const node of Object.values(workflow || {})) {
-        const cls = node && node.class_type;
-        const def = objectInfo && cls ? (objectInfo[cls] || {}).input : null;
-        if (!def) continue;
-        for (const group of [def.required || {}, def.optional || {}]) {
+    for (const cls of classes) {
+        const input = (defs[cls] || {}).input;
+        if (!input) continue;
+        for (const group of [input.required || {}, input.optional || {}]) {
             for (const t of Object.values(group)) {
                 const typeList = Array.isArray(t) ? t : [t];
                 const folder = MODEL_INPUT_TYPE_TO_FOLDER[typeList[0]];
@@ -659,12 +665,7 @@ export async function checkWorkflow(workflow) {
         }
     }
     const modelLists = {};
-    await Promise.all([...folders].map(async (f) => {
-        try {
-            const res = await fetch(`/models/${f}`);
-            if (res.ok) modelLists[f] = await res.json();
-        } catch (e) { /* 跳过该目录检查 */ }
-    }));
+    await Promise.all([...folders].map(async (f) => { const list = await getModelList(f); if (list) modelLists[f] = list; }));
     return validateWorkflow(workflow, objectInfo, modelLists);
 }
 

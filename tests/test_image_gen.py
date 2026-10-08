@@ -1759,12 +1759,6 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
     def test_update_workflow_skill_guards(self):
         workflow = {"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}}}
-        # 预设技能只读 → 403
-        status, body = self._call(
-            image_gen.update_workflow_skill_route,
-            self._req({"skill_id": "image_gen", "workflow": workflow}))
-        self.assertEqual(status, 403)
-        self.assertIn("read-only", body["error"])
         # 技能不存在 → 400
         status, body = self._call(
             image_gen.update_workflow_skill_route,
@@ -1785,6 +1779,37 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertIn("class_type", body["error"])
         # 失败时不落盘
         self.assertFalse(os.path.isfile(os.path.join(d, "workflow.json")))
+
+    def test_update_workflow_skill_preset(self):
+        # 预设技能：画布模型值写 configs/skill_overrides/，预设 workflow.json 不动；结构变更只回报
+        preset_wf = os.path.join(_skill_mod.SKILL_PRESETS_DIR, "image_gen", "workflow.json")
+        with open(preset_wf, encoding="utf-8") as f:
+            before = json.load(f)
+        canvas = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 0], "text": "a cat"}},
+            "3": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 576, "batch_size": 2}},
+            "4": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "P"}},
+        }
+        status, body = self._preview("image_gen", canvas)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["preset"])
+        self.assertTrue(body["structural"])
+
+        status, body = self._call(
+            image_gen.update_workflow_skill_route,
+            self._req({"skill_id": "image_gen", "workflow": canvas}))
+        self.assertEqual(status, 200)
+        self.assertTrue(body["success"])
+        self.assertTrue(body["structural"])
+        with open(preset_wf, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), before)
+        with open(os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json"), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["model"], "m.safetensors")
+        eff = _skill_mod.get_skill_gen_config("image_gen")
+        self.assertEqual(eff["model"], "m.safetensors")
+        self.assertEqual(eff["default_ratio"], "16:9")
 
     def test_get_skill_config(self):
         # 预设 image_gen 的 config.json（default_ratio: 16:9）

@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
+import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
 import { app, appState, installWorkflowStore, clearWorkflowStore } from "./mocks/comfy-app.mjs";
 
 const WF_TEMPLATE = {
@@ -32,7 +32,7 @@ async function openPopup({ id = "custom_a", source = "custom", canvasBtns = true
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow: WF_TEMPLATE }));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
     mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse(config) : jsonResponse({ success: true }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
     const popup = canvasBtns === false
         ? createSkillDetailPopup(document.body.appendChild(document.createElement("div")), false)
         : createSkillDetailPopup();
@@ -69,9 +69,9 @@ function logBtn() {
     const all = document.querySelectorAll(".rs-wf-write-log-btn");
     return all.length ? all[all.length - 1] : null;
 }
-function mockPreview(changes = [], warnings = [], genVideo = false) {
+function mockPreview(changes = [], warnings = [], genVideo = false, extra = {}) {
     mockRoute("/neo_image_gen/update_workflow_skill_preview", () =>
-        jsonResponse({ success: true, id: "custom_a", changes, warnings, gen_video: genVideo }));
+        jsonResponse({ success: true, id: "custom_a", changes, warnings, gen_video: genVideo, ...extra }));
 }
 
 test("详情弹窗：带 workflow 技能挂「⤒ 导入到画布」「💾 回写入技能」在工作流区头部", async () => {
@@ -252,20 +252,13 @@ test("回写入技能：先弹变更确认，确认后 POST update_workflow_skil
     assert.ok(appState.toasts.slice(toastAt).some((t) => (t.detail || "").includes("CLIPTextEncode")), "后端 warnings 应 toast 落");
 });
 
-test("回写入技能：预设技能 / 空画布时不发请求并 toast 提示", async () => {
+test("回写入技能：空画布时不发请求并 toast 提示", async () => {
     let called = false;
     mockRoute("/neo_image_gen/update_workflow_skill", (b) => { called = true; return jsonResponse({ success: true, id: "x" }); });
 
-    await openPopup({ id: "image_gen", source: "presets" });
-    let toastAt = appState.toasts.length;
-    click(writeBtn());
-    await sleep(60);
-    assert.equal(called, false, "预设技能不应回写");
-    assert.ok(appState.toasts.slice(toastAt).some((t) => (t.summary || "").includes("预设不可回写")), "应 toast 预设只读");
-
     appState.promptGraph = null; // mock 回落 { output: {}, workflow: null }
     await openPopup({ id: "custom_a", source: "custom" });
-    toastAt = appState.toasts.length;
+    const toastAt = appState.toasts.length;
     click(writeBtn());
     await sleep(60);
     assert.equal(called, false, "空画布不应回写");
@@ -300,7 +293,7 @@ function mockSkillRoutes({ id = "custom_a", source = "custom", workflow = WF_TEM
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: id, workflow }));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
     mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse(config) : jsonResponse({ success: true }));
-    mockRoute("/object_info", () => jsonResponse({}));
+    mockObjectInfo({});
 }
 
 test("交接导入：按技能 config.json 预渲染灌画布，toast 带「💾 回写入技能」动作落盘该技能", async () => {
@@ -345,22 +338,61 @@ test("交接导入：按技能 config.json 预渲染灌画布，toast 带「💾
     assert.ok(appState.toasts.some((t) => (t.detail || "").includes("CLIPTextEncode")), "后端 warnings 应 toast 落");
 });
 
-test("交接回写：预设技能点「💾 回写入技能」不发请求并提示只读", async () => {
+test("交接回写：预设技能只写模型值到本地覆盖，不改 workflow.json、不复制副本", async () => {
     mockSkillRoutes({ id: "image_gen", source: "presets" });
-    let called = false;
-    mockRoute("/neo_image_gen/update_workflow_skill", () => { called = true; return jsonResponse({ success: true, id: "image_gen" }); });
+    mockPreview([{ field: "model", from: "old.safetensors", to: "m.safetensors" }], [], false,
+        { preset: true, structural: false });
+    const posted = [];
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted.push(b.skill_id);
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false, preset: true, structural: false });
+    });
     appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
-    const { openSkillWorkflowOnCanvas } = await import("../../web/skill.js");
+    const { openSkillWorkflowOnCanvas, getPendingWriteback } = await import("../../web/skill.js");
+    const btn = menuBtnEl();
+    await openSkillWorkflowOnCanvas("image_gen");
+    await sleep(80);
+    assert.ok(btn.classList.contains("neo-writeback-hint"), "预设导入后同样点亮绿点");
+
+    click(handoffWriteBtn());
+    await sleep(80);
+    const dlg = writeConfirmDialog();
+    assert.ok(dlg.textContent.includes("预设技能：模型值写入预设本地覆盖"), "弹窗应说明预设只写本地覆盖");
+    click(footBtn(dlg, "确认保存"));
+    await sleep(80);
+    assert.deepEqual(posted, ["image_gen"], "只写预设一次，不应触发复制");
+    assert.equal(getPendingWriteback(), null, "落盘后清绿点");
+});
+
+test("交接回写：预设结构变更自动复制为自定义技能写入，绿点跟着搬到副本", async () => {
+    mockSkillRoutes({ id: "image_gen", source: "presets" });
+    mockPreview([{ field: "model", from: "old.safetensors", to: "m.safetensors" }], [], false,
+        { preset: true, structural: true });
+    const posted = [];
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted.push(b.skill_id);
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false });
+    });
+    mockRoute("/rs_prompts/copy_skill_files", () => jsonResponse({ success: true }));
+    mockRoute("/rs_prompts/save_skill", (b) => jsonResponse({ success: true, id: b.id }));
+    mockRoute("/rs_prompts/skills", () => jsonResponse([]));
+    appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+    const { openSkillWorkflowOnCanvas, getPendingWriteback } = await import("../../web/skill.js");
     await openSkillWorkflowOnCanvas("image_gen");
     await sleep(80);
 
-    const btn = handoffWriteBtn();
-    assert.ok(btn, "预设技能导入 toast 同样给回写按钮");
-    appState.toasts.length = 0;
-    click(btn);
+    click(handoffWriteBtn());
     await sleep(80);
-    assert.equal(called, false, "预设技能不应回写");
-    assert.ok(appState.toasts.some((t) => (t.summary || "").includes("预设不可回写")), "应 toast 预设只读");
+    const dlg = writeConfirmDialog();
+    assert.ok(dlg.textContent.includes("结构变更会自动复制为自定义技能"), "弹窗应说明结构变更的去向");
+    click(footBtn(dlg, "确认保存"));
+    await sleep(400);
+
+    assert.equal(posted.length, 2, "先写预设本地覆盖，再把结构写进新建副本");
+    assert.equal(posted[0], "image_gen");
+    assert.match(posted[1], /^image_gen_copy_/, "第二笔写的是自动新建的自定义副本");
+    assert.ok(appState.toasts.some((t) => (t.summary || "").includes("复制为自定义技能")), "应 toast 新副本名");
+    assert.equal(getPendingWriteback().id, posted[1], "待回写状态搬到副本（绿点跟着走）");
 });
 
 test("交接回写卡片绑定灌入的工作流 tab：切走 tab 收起、切回来恢复", async () => {

@@ -2,7 +2,7 @@
 // 参考 web/director-node.js 的 applyDimDefaults：仅当仍为 -1 时填充，切换 skill 下拉强制重填。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resetEnv, mockRoute, clearRoutes, jsonResponse, sleep, window } from "./setup.mjs";
+import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, sleep, window } from "./setup.mjs";
 import { getExtension } from "./mocks/comfy-app.mjs";
 
 function makeNode(skillId = "", width = -1, height = -1, steps = -1) {
@@ -212,7 +212,7 @@ const WF_READY = { "1": { class_type: "UNETLoader", inputs: { unet_name: "real.s
 function mockStatusRoutes(getWorkflow) {
     mockRoute("/neo_image_gen/skill_dims", () => jsonResponse({ success: true, width: 1024, height: 1024 }));
     mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ workflow: getWorkflow() }));
-    mockRoute("/object_info", () => jsonResponse(OBJ_INFO));
+    mockObjectInfo(OBJ_INFO);
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
     mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));

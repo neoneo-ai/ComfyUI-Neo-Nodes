@@ -34,7 +34,9 @@ function installRoutes({ skills = [], workflows = {}, objectInfo = OBJ_INFO } = 
         state.requested.push(id);
         return state.workflows[id] ? jsonResponse({ workflow: state.workflows[id] }) : jsonResponse({ error: "missing" }, 404);
     });
+    const countInfo = (b, call, params) => { state.objectInfoCalls++; return jsonResponse({ [params.rest]: state.objectInfo[params.rest] }); };
     mockRoute("/object_info", () => { state.objectInfoCalls++; return jsonResponse(state.objectInfo); });
+    mockRoute("/object_info/*", countInfo);
     mockRoute("/models/diffusion_models", () => jsonResponse(["real.safetensors"]));
     mockRoute("/neo_image_gen/skill_config", (b, call) => jsonResponse(call.method === "GET" ? {} : { success: true }));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["real.safetensors"], text_encoders: [], vae: [], loras: [] }));
@@ -148,7 +150,7 @@ test("状态条：/object_info 不可用时按「跳过检查」处理，不误�
 
     const row = mountRow(createSkillStatusRow, ["缺模型的图技能"]);
     await row.refresh();
-    assert.equal(row.el.style.display, "none", "校验接口不可用不应把缺失误报成告警");
+    assert.equal(row.el.style.display, "none", "校验接口不可用不应把缺失误报成告警：" + row.el.querySelector(".neo-skill-status-label")?.textContent);
     row.destroy();
 });
 
