@@ -129,7 +129,10 @@ ComfyUI-Neo-Nodes/
 | `llm-setting.js` | LLM 配置表单 |
 | `at-picker.js` | `@` 图片选择器 |
 | `slash-picker.js` | `/` 技能快捷菜单 |
-| `skill.js` | 技能详情弹窗、技能下拉、技能管理窗口 |
+| `skill.js` | 技能模块门面：组装下列子模块并统一对外导出 |
+| `skill/skill-core.js` | 技能 API、Markdown 渲染、分类标签、工作流模板预渲染、回写变更记录 |
+| `skill/skill-writeback.js` | 工作流回写确认、变更记录弹窗、画布导入与回写卡片 |
+| `skill/skill-detail-popup.js` | 单技能详情弹窗与跨节点单例 |
 | `image-gen.js` | 生图客户端与生图设置表单 |
 | `image-gen-edit-node.js` | 生图/编辑节点前端 |
 | `live-preview.js` | 采样实时预览面板 |
