@@ -10,6 +10,7 @@ import {
     installMediaStub,
     installObserverStub,
     installRectStub,
+    installPollSpeedup,
     resetDeterminism,
 } from "./helpers/env.mjs";
 import { installDialogs, resetDialogs, setConfirmAnswer, dialogs } from "./helpers/dialogs.mjs";
@@ -27,6 +28,7 @@ installDeterminism(dom.window);
 installMediaStub(dom.window);
 installObserverStub(dom.window);
 installRectStub(dom.window);
+installPollSpeedup(dom.window);
 installDialogs(dom.window);
 installFetch();
 

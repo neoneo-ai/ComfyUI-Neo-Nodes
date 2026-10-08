@@ -16,10 +16,12 @@ test("渲染：severity 色条类、summary/detail、action 与 ✕ 按钮", asy
     assert.ok(el.querySelector(".neo-at-close"), "✕ 关闭按钮");
 });
 
-test("不自动关闭：等待后仍在 DOM", async () => {
+test("不自动关闭：等待后仍在 DOM", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     const { actionToast } = await import("../../web/toast.js");
     const { el } = actionToast({ summary: "生图失败", detail: "模型缺失", actionLabel: "打开技能详情" });
-    await sleep(80); // 内置 toast 5s 才消失；这里只验证没有更短的自动关闭逻辑
+    t.mock.timers.tick(6000); // 超过自动消失时长
+    t.mock.timers.reset();
     assert.ok(el.parentNode, "action toast 不自动消失");
 });
 

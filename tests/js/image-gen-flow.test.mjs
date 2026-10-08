@@ -85,7 +85,7 @@ test("节点 image 连接 LoadImage：出图请求携带参考图，走重绘", 
     await attachAgent(gen);
 
     const el = parts(gen);
-    await sleep(400); // 等待 populateTemplateSelector 异步拉取 skills 并填充 option
+    await sleep(200);
     setSkill(el.selector, "image_gen");
 
     let body = null;
@@ -110,7 +110,7 @@ test("纯文生图 skill：无参考图，请求不携带参考图，比例由�
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     let body = null;
@@ -137,7 +137,7 @@ test("参考编辑 skill 缺参考图：预览区底部报错，不发 /neo_imag
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen");
 
     el.root.querySelector(".rs-quick-input").value = "重绘";
@@ -165,7 +165,7 @@ test("image 已连接但上游无文件名：出图明确报错，不发 /neo_im
     await attachAgent(gen);
 
     const el = parts(gen);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen");
 
     el.root.querySelector(".rs-quick-input").value = "重绘";
@@ -185,7 +185,7 @@ test("出图成功：预览区渲染缩略图，点击用灯箱打开原图", as
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t3", status: "queued", images: [], width: 0, height: 0 }));
@@ -197,7 +197,7 @@ test("出图成功：预览区渲染缩略图，点击用灯箱打开原图", as
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(1800); // 轮询间隔 1.5s，等首次 status 返回 succeeded
+    await sleep(150); // 轮询间隔已压到 40ms，等首次 status 返回 succeeded
 
     const thumb = el.preview.querySelector(".rs-gen-thumb img");
     assert.ok(thumb, "出图结果块应渲染缩略图");
@@ -226,7 +226,7 @@ test("出图成功：单个 LoadImage 目标 → 点击发送直接写入，不�
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t4", status: "queued", images: [], width: 0, height: 0 }));
@@ -240,12 +240,12 @@ test("出图成功：单个 LoadImage 目标 → 点击发送直接写入，不�
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(1800);
+    await sleep(150);
 
     const sendBtn = el.preview.querySelector(".rs-gen-send");
     assert.ok(sendBtn, "应渲染发送到节点按钮");
     sendBtn.click();
-    await sleep(100);
+    await sleep(200);
     assert.equal(document.querySelector(".rs-gen-send-menu"), null, "单目标不应弹出菜单，直接写入");
     assert.ok(copyQuery, "应请求 /neo_gallery/copy_to_input");
     assert.equal(loadImg.widgets[0].value, "b.png", "LoadImage widget 值应更新为新图");
@@ -270,7 +270,7 @@ test("出图成功：多个 LoadImage 目标 → 弹菜单，选中写入对应�
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t5", status: "queued", images: [], width: 0, height: 0 }));
@@ -283,7 +283,7 @@ test("出图成功：多个 LoadImage 目标 → 弹菜单，选中写入对应�
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(1800);
+    await sleep(150);
 
     document.body.appendChild(el.root); // 菜单现内联插入按钮下方，anchor 需在 document 中
     el.preview.querySelector(".rs-gen-send").click();
@@ -293,7 +293,7 @@ test("出图成功：多个 LoadImage 目标 → 弹菜单，选中写入对应�
     const items = menu.querySelectorAll(".rs-gen-send-menu-item");
     assert.equal(items.length, 2, "菜单应列出两个 LoadImage 节点");
     items[0].click(); // 排序后第一个（画布 y→x）
-    await sleep(100);
+    await sleep(200);
     assert.ok(a.widgets[0].value === "c.png" || b.widgets[0].value === "c.png", "选中的节点应写入新图");
 });
 
@@ -317,7 +317,7 @@ test("出图成功：无 LoadImage 目标 → 自动新建并写入", async () =
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t6", status: "queued", images: [], width: 0, height: 0 }));
@@ -330,7 +330,7 @@ test("出图成功：无 LoadImage 目标 → 自动新建并写入", async () =
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(1800);
+    await sleep(150);
 
     el.preview.querySelector(".rs-gen-send").click();
     await sleep(150);
@@ -348,7 +348,7 @@ test("出图运行中：进度条按采样步数推进", async () => {
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t7", status: "queued", images: [], width: 0, height: 0 }));
@@ -357,7 +357,7 @@ test("出图运行中：进度条按采样步数推进", async () => {
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(100); // 等兜底首拉建立 running 基线
+    await sleep(200); // 等兜底首拉建立 running 基线
 
     // 状态/进度/取消一行固定在节点底部（不吸顶）：display:flex 内联覆盖 .rs-gen-status 的 display:none 基类
     assert.equal(el.status.style.display, "flex", "运行中底部状态行应显示");
@@ -393,7 +393,7 @@ test("出图增强提示词阶段：底部状态行显示已生成字数进度",
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     // 开启该 skill 的 LLM 增强（全局出图设置 enhance_prompt=true），进入增强阶段
@@ -427,7 +427,7 @@ test("清空输出：运行中的出图块被清除，后续推送不再回写",
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "t8", status: "queued", images: [], width: 0, height: 0 }));
@@ -436,7 +436,7 @@ test("清空输出：运行中的出图块被清除，后续推送不再回写",
 
     el.root.querySelector(".rs-quick-input").value = "一只猫";
     el.generateBtn.click();
-    await sleep(100); // 兜底首拉后处于 running：进度在底部状态行，出图块只承载结果内容
+    await sleep(200); // 兜底首拉后处于 running：进度在底部状态行，出图块只承载结果内容
     assert.equal(el.status.style.display, "flex", "运行中底部状态行显示");
     assert.ok(el.status.querySelector(".rs-gen-progress"), "状态行内显示进度条");
     assert.equal(el.preview.querySelector(".rs-gen-block"), null, "仅运行中（无结果内容）不渲染出图块");
@@ -466,12 +466,12 @@ test("文生图 skill 无文字：提示只针对画面描述，不提附加图�
         outputs: [outSlot("PROMPT", "STRING")], graph,
     }));
     const el = parts(agent);
-    await sleep(400);
+    await sleep(200);
     setSkill(el.selector, "image_gen_text");
 
     el.root.querySelector(".rs-quick-input").value = "";
     el.generateBtn.click();
-    await sleep(100);
+    await sleep(200);
 
     assert.equal(genCalls().length, 0, "无文字不应发出出图请求");
     assert.equal(el.preview.querySelector(".rs-gen-error")?.textContent,
@@ -488,7 +488,7 @@ test("已保存的 skill id：延迟填充后仍保留到节点属性并显示�
     }));
     await attachAgent(gen);
     const el = parts(gen);
-    await sleep(400); // 等待 populateSkillSelector 异步填充 option 并恢复选择
+    await sleep(200);
     assert.equal(el.selector.value, "image_gen", "选择器应显示已保存的 skill");
     assert.equal(gen.properties.rs_selected_skill, "image_gen", "属性不应被 doPopulate 的 change 冲掉");
 });
@@ -503,7 +503,7 @@ test("旧 rs_selected_template：迁移到 rs_selected_skill 并清除旧键", a
     }));
     await attachAgent(gen);
     const el = parts(gen);
-    await sleep(400);
+    await sleep(200);
     assert.equal(el.selector.value, "image_gen", "选择器应显示迁移后的 skill");
     assert.equal(gen.properties.rs_selected_skill, "image_gen", "应迁移到 rs_selected_skill");
     assert.equal(gen.properties.rs_selected_template, undefined, "旧键应被清除");

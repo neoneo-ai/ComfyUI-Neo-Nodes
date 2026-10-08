@@ -191,7 +191,7 @@ test("模型库：下载启动后轮询进度，完成时提示并刷新文件�
     }, "下载请求体不符");
     assert.equal(overlay.querySelector(".neo-hub-dl").disabled, true, "下载中应禁用下载按钮");
 
-    await sleep(900);
+    await sleep(200);
     assert.equal(overlay.querySelector(".neo-hub-cancel").disabled, false, "running 后取消按钮应可用");
     assert.equal(overlay.querySelector(".neo-hub-bar i").style.width, "25%", "进度条宽度不符");
     assert.equal(overlay.querySelector(".neo-hub-prog").textContent,
@@ -199,7 +199,7 @@ test("模型库：下载启动后轮询进度，完成时提示并刷新文件�
 
     prog = { state: "done", total: 1000, done: 1000, speed: 0, filename: "qwen3_8b.safetensors", category: "text_encoders" };
     const filesBefore = fetchLog.filter((c) => c.path === "/neo_model_hub/files").length;
-    await sleep(900);
+    await sleep(200);
     assert.ok(appState.toasts.some((t) => t.summary === "下载完成"), "完成未提示");
     assert.equal(overlay.querySelector(".neo-hub-dl").disabled, false, "完成后应恢复下载按钮");
     assert.ok(fetchLog.filter((c) => c.path === "/neo_model_hub/files").length > filesBefore, "完成后未刷新文件清单");
@@ -216,13 +216,13 @@ test("模型库：取消保留断点，切源与保存设置后重拉仓库", as
 
     changeValue(overlay.querySelector(".neo-hub-files"), "split_files/diffusion_models/z_image_bfp.safetensors");
     click(overlay.querySelector(".neo-hub-dl"));
-    await sleep(900);
+    await sleep(200);
     click(overlay.querySelector(".neo-hub-cancel"));
     await sleep(40);
     assert.equal(fetchLog.filter((c) => c.path === "/neo_model_hub/cancel").length, 1, "取消未发请求");
 
     prog = { state: "paused", total: 1000, done: 100, speed: 0, error: "已取消（断点保留）" };
-    await sleep(900);
+    await sleep(200);
     assert.equal(overlay.querySelector(".neo-hub-status").textContent, "已取消（断点保留）", "断点提示不符");
     assert.ok(appState.toasts.some((t) => t.summary === "已取消"), "取消未提示");
     assert.equal(overlay.querySelector(".neo-hub-cancel").disabled, true, "取消后应禁用取消按钮");

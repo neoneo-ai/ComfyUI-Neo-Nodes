@@ -724,6 +724,28 @@ test("内嵌编辑：打开默认折叠不挂画布，展开头部才挂 LGraphC
     closeMgr(box);
 });
 
+const WF_LORA_TEMPLATE = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" }, _meta: { title: "UNet" } },
+    "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" }, _meta: { title: "LoRA" } },
+    "3": { class_type: "KSampler", inputs: { model: ["2", 0], seed: "{{SEED}}" }, _meta: { title: "Sampler" } },
+};
+
+test("内嵌编辑：LoRA 槽位 widget 按 config.loras 灌入（与只读预览 / 导入到画布同一套预渲染）", async () => {
+    const created = stubLiteGraph({
+        byType: { LoraLoaderModelOnly: { widgets: [{ name: "lora_name" }, { name: "strength_model" }], widgets_values: ["", 1] } },
+    });
+    const { box, wf } = await openMgrWf({
+        workflow: WF_LORA_TEMPLATE,
+        config: { model: "m.safetensors", loras: [{ name: "sub\\a.safetensors", strength: 0.66 }] },
+    });
+    const lora = created.lite[0].nodes.find((n) => n.type === "LoraLoaderModelOnly");
+    assert.deepEqual(lora.widgets_values, ["sub\\a.safetensors", "0.66"],
+        "LoRA 槽位应显示 config 里的路径与强度，不能留 {{LORA_i_*}} 原串");
+    assert.equal(created.lite[0].nodes.find((n) => n.type === "KSampler").widgets_values[1], "{{SEED}}",
+        "运行时变量仍原样保留（回写时后端重新占位符化）");
+    closeMgr(box);
+});
+
 test("内嵌编辑：按 dpr 下发后备缓冲并重设前层变换（高分屏画布不被缩成一小块）", async () => {
     window.devicePixelRatio = 1.25;
     const created = stubLiteGraph();
@@ -855,8 +877,8 @@ test("内嵌编辑保存：graphToPrompt(子图) → update_workflow_skill → �
     closeMgr(box);
 });
 
-// 内嵌编辑按 config 初始化：模板里写死的旧值 / {{STEPS}} 由技能 config 覆盖，运行时变量不动，
-// 超出模板槽位的 LoRA 按 config 动态注入
+// 内嵌编辑按 config 初始化：模板里写死的旧值 / {{STEPS}} 由技能 config 覆盖，seed 等运行时变量不动，
+// LoRA 槽位按 config.loras 灌路径与强度，超出模板槽位的 LoRA 动态注入
 const WF_CFG_TEMPLATE = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: "old.safetensors", weight_dtype: "default" }, _meta: { title: "M" } },
     "5": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0, "MODEL"], lora_name: "{{LORA_1_NAME}}", strength_model: "{{LORA_1_STRENGTH}}" }, _meta: { title: "LoRA" } },
@@ -898,7 +920,7 @@ test("内嵌编辑：widget 按技能 config 初始化（模型 / 尺寸 / 张�
     assert.deepEqual(latent, [1296, 1296, 4], "宽高按 base_resolution + 比例对齐 16，batch_size 灌 config.count");
     assert.deepEqual(sampler, ["{{SEED}}", 30, 7], "seed 属运行时变量保留，steps 灌 config.steps");
     assert.deepEqual(save, ["neo_x"], "输出前缀灌 config.output_prefix");
-    assert.deepEqual(slot, ["{{LORA_1_NAME}}", "{{LORA_1_STRENGTH}}"], "模板 LoRA 槽位保持运行时变量");
+    assert.deepEqual(slot, ["l1.safetensors", "0.8"], "模板 LoRA 槽位灌 config.loras 的路径与强度");
     assert.deepEqual(extra, ["l2.safetensors", 0.5], "注入节点带 config 里超出槽位的 LoRA 名与强度");
     const samplerModelLink = created.lite[0].links.find((l) => l[3] === 3);
     assert.equal(samplerModelLink[1], 6, "KSampler 的 model 应改接到注入的 LoRA 节点");

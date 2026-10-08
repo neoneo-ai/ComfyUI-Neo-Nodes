@@ -1,6 +1,8 @@
 // E2E：技能管理独立窗口（Director 风格控件）+ 内嵌 litegraph 工作流编辑（需 ComfyUI 运行中）。
 // 用法：npm run e2e   或   node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.mjs
 // 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo-Nodes 插件。
+// 只保留必须真浏览器才能验的核心用例（overlay 穿透与放大、内嵌画布挂载 + LoRA 灌值、combo 弹层层级）；
+// 标题栏拖动 / 把手拉伸 / 拖拽手势取消 / widget 弹窗落点由 tests/js/skill-manager.test.mjs 覆盖。
 // 只读校验：预设技能「保存工作流」仅值覆盖，结构变更自动复制为自定义技能；测试全程不点保存，不写用户数据。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -30,8 +32,14 @@ async function openManagerPage(deviceScaleFactor = 1) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900, deviceScaleFactor } });
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));
-    await page.goto(BASE, { waitUntil: "networkidle", timeout: 60000 });
+    // domcontentloaded + 显式选择器等待：ComfyUI 前端常驻轮询，networkidle 会白等十几秒
+    await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForSelector("#graph-canvas, .litegraph-canvas", { timeout: 30000 });
+    // Neo 的 prompts.css 由插件异步注入（带 ?v= 时间戳）：不等它就读到无样式的 overlay，断言全飘
+    await page.waitForFunction(
+        () => [...document.styleSheets].some((s) => (s.href || "").includes("ComfyUI-Neo-Nodes/prompts.css")),
+        { timeout: 20000 }
+    );
     await page.evaluate(async () => {
         const m = await import("/extensions/ComfyUI-Neo-Nodes/skill.js");
         m.openSkillManager();
@@ -93,95 +101,32 @@ test("技能管理窗口：透明穿透 overlay、⛶ 放大还原、标题栏�
     }
 });
 
-test("技能管理窗口：标题栏拖动移动窗口、右下角把手拉伸尺寸", async (t) => {
-    if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
-    const { page, errors } = await openManagerPage();
-    try {
-        const before = await rect(page, ".rs-skill-manager");
-        const head = await page.locator(".rs-skill-manager-head").boundingBox();
-        // 往左上拖：窗口保持完整在视口内，右下角把手才可点
-        await page.mouse.move(head.x + head.width / 2, head.y + head.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(head.x + head.width / 2 - 20, head.y + head.height / 2 - 20, { steps: 6 });
-        await page.mouse.up();
-        const moved = await rect(page, ".rs-skill-manager");
-        assert.ok(moved.x < before.x - 10 && moved.y < before.y - 10,
-            `标题栏拖动应移动窗口：${before.x},${before.y} → ${moved.x},${moved.y}`);
-
-        const preSize = await rect(page, ".rs-skill-manager");
-        const grip = await page.locator(".rs-skill-manager-resize").boundingBox();
-        await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(grip.x + grip.width / 2 - 160, grip.y + grip.height / 2 - 140, { steps: 6 });
-        await page.mouse.up();
-        const shrunk = await rect(page, ".rs-skill-manager");
-        assert.ok(shrunk.w < preSize.w - 100 && shrunk.h < preSize.h - 100,
-            `把手向内拖拽应缩小窗口：${preSize.w}x${preSize.h} → ${shrunk.w}x${shrunk.h}`);
-
-        const grip2 = await page.locator(".rs-skill-manager-resize").boundingBox();
-        await page.mouse.move(grip2.x + grip2.width / 2, grip2.y + grip2.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(grip2.x + grip2.width / 2 + 120, grip2.y + grip2.height / 2 + 100, { steps: 6 });
-        await page.mouse.up();
-        const grown = await rect(page, ".rs-skill-manager");
-        assert.ok(grown.w > shrunk.w + 80 && grown.h > shrunk.h + 80,
-            `把手向外拖拽应放大窗口：${shrunk.w}x${shrunk.h} → ${grown.w}x${grown.h}`);
-
-        await closeWithEsc(page);
-        assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
-    } finally {
-        await page.close();
-    }
-});
-
-// 浏览器取消拖拽手势（pointercancel，无 pointerup）时，拖拽监听器必须失效：
-// 否则松手后窗口继续跟随鼠标（右下角把手 / 标题栏同一缺陷）
-test("技能管理窗口：拖拽手势被取消后不再跟随鼠标", async (t) => {
-    if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
-    const { page, errors } = await openManagerPage();
-    try {
-        const cancel = (sel) => page.locator(sel).evaluate((el) => {
-            el.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true, cancelable: true }));
-        });
-
-        const grip = await page.locator(".rs-skill-manager-resize").boundingBox();
-        const gx = grip.x + grip.width / 2, gy = grip.y + grip.height / 2;
-        await page.mouse.move(gx, gy);
-        await page.mouse.down();
-        await page.mouse.move(gx - 120, gy - 100, { steps: 6 });
-        const dragged = await rect(page, ".rs-skill-manager");
-        await cancel(".rs-skill-manager-resize");
-        await page.mouse.move(gx - 300, gy - 260, { steps: 8 });
-        await page.mouse.move(gx - 320, gy - 280, { steps: 4 });
-        assert.deepEqual(await rect(page, ".rs-skill-manager"), dragged, "把手手势取消后尺寸应冻结");
-        await page.mouse.up();
-
-        const head = await page.locator(".rs-skill-manager-head").boundingBox();
-        const hx = head.x + head.width / 2, hy = head.y + head.height / 2;
-        await page.mouse.move(hx, hy);
-        await page.mouse.down();
-        await page.mouse.move(hx - 60, hy - 40, { steps: 6 });
-        const moved = await rect(page, ".rs-skill-manager");
-        await cancel(".rs-skill-manager-head");
-        await page.mouse.move(hx - 200, hy - 150, { steps: 8 });
-        assert.deepEqual(await rect(page, ".rs-skill-manager"), moved, "标题栏手势取消后位置应冻结");
-        await page.mouse.up();
-
-        await closeWithEsc(page);
-        assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
-    } finally {
-        await page.close();
-    }
-});
-
-
-test("内嵌工作流编辑：展开工作流区直接挂画布（预设技能保存按钮说明自动复制）", async (t) => {
+test("内嵌工作流编辑：展开工作流区直接挂画布（LoRA 槽位按 config.loras 灌值）", async (t) => {
     if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
     const { page, errors } = await openManagerPage(1.25);
     const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
     if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，内嵌编辑不可用"); return; }
     try {
-        await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
+        // 选一个「模板带 {{LORA_i_*}} 槽位且 config.loras 非空」的技能：预设 workflow.json 把 LoRA 路径写死的
+        // 技能验不到槽位灌值这条路径。左列表是手风琴，首屏只展开「生图」组，折叠组不渲染行 → 只在
+        // image_gen 里挑；行文本是 cn_name。
+        const loraSkill = await page.evaluate(async () => {
+            const get = async (url) => (await (await fetch(url)).json());
+            const list = await get("/api/rs_prompts/skills");
+            for (const s of list) {
+                if (!s.gen_image || s.category !== "image_gen") continue;
+                const cfg = await get(`/api/neo_image_gen/skill_config?skill_id=${encodeURIComponent(s.id)}`);
+                if (!(cfg.loras || []).length) continue;
+                const wf = await get(`/api/neo_image_gen/skill_workflow?skill_id=${encodeURIComponent(s.id)}`);
+                if (!/\{\{LORA_1_NAME\}\}/.test(JSON.stringify(wf))) continue;
+                return { label: s.cn_name || s.name || s.id, source: s.source, loras: cfg.loras };
+            }
+            return null;
+        });
+        const row = loraSkill
+            ? page.locator(".rs-skill-manager .rs-skill-picker-item", { hasText: loraSkill.label }).first()
+            : page.locator(".rs-skill-manager .rs-skill-picker-item").first();
+        await row.click();
         await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
         assert.equal(await page.locator(".rs-skill-workflow .rs-content-mode-btn").count(), 0, "不应再有流程图/编辑切换按钮");
 
@@ -217,13 +162,31 @@ test("内嵌工作流编辑：展开工作流区直接挂画布（预设技能�
         assert.ok(nodeLayout.nodes > 3, `内嵌画布应挂出多个节点：${nodeLayout.nodes}`);
         assert.ok(nodeLayout.spots === nodeLayout.nodes, `节点应排开不叠块：${nodeLayout.nodes} 节点 / ${nodeLayout.spots} 个位置`);
 
+        // LoRA 槽位：画布 widget 必须显示 config.loras 的路径与强度，不能留 {{LORA_i_*}} 原串
+        if (!loraSkill) t.diagnostic("无 config.loras 非空的生图技能，LoRA 灌值断言跳过");
+        if (loraSkill) {
+            t.diagnostic(`LoRA 灌值校验技能：${loraSkill.label} / ${loraSkill.loras.map((l) => l.name).join(", ")}`);
+            const slots = await page.evaluate(() => window.__neoWfCanvases.at(-1).graph._nodes
+                .filter((n) => n.type.startsWith("LoraLoader"))
+                .map((n) => n.widgets.map((w) => w.value)));
+            assert.ok(slots.length >= loraSkill.loras.length,
+                `画布 LoRA 节点应覆盖 config.loras：${slots.length} vs ${loraSkill.loras.length}`);
+            loraSkill.loras.forEach((entry, i) => {
+                const [name, strength] = slots[i] || [];
+                assert.equal(name, entry.name, `第 ${i + 1} 个 LoRA 槽位应显示 config 里的路径`);
+                assert.equal(Number(strength), Number(entry.strength ?? 1), `第 ${i + 1} 个 LoRA 强度应等于 config`);
+            });
+        }
+
         const bar = await page.locator(".rs-wf-editor-bar").evaluateAll((els) => els.map((e) => e.textContent.trim()));
         assert.ok(bar.some((x) => x.includes("适配视图")), "应有适配视图按钮");
         assert.ok(bar.some((x) => x.includes("重新载入")), "应有重新载入按钮");
         const saveBtn = page.locator(".rs-wf-editor-bar button", { hasText: "保存工作流" });
-        assert.notEqual(await saveBtn.evaluate((el) => getComputedStyle(el).display), "none", "预设技能应显示保存按钮（结构变更自动复制为自定义技能）");
-        assert.ok((await saveBtn.evaluate((el) => el.title)).includes("自动复制为自定义技能"),
-            "预设保存按钮应说明结构变更自动复制");
+        assert.notEqual(await saveBtn.evaluate((el) => getComputedStyle(el).display), "none", "应显示保存工作流按钮");
+        if (loraSkill && loraSkill.source === "presets") {
+            assert.ok((await saveBtn.evaluate((el) => el.title)).includes("自动复制为自定义技能"),
+                "预设保存按钮应说明结构变更自动复制");
+        }
 
         // 适配视图 + 窗口缩放后跟随
         await page.locator(".rs-wf-editor-bar button", { hasText: "适配视图" }).click();
@@ -262,57 +225,6 @@ test("内嵌工作流编辑：展开工作流区直接挂画布（预设技能�
         await page.close();
     }
 });
-
-test("内嵌工作流编辑：widget 数值弹窗贴着鼠标落点（125% 缩放，画布偏移在窗口内）", async (t) => {
-    if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
-    const { page, errors } = await openManagerPage(1.25);
-    const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
-    if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
-    try {
-        await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
-        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
-        await page.click(".rs-skill-workflow-head .rs-form-label");   // 默认折叠：展开才挂画布
-        await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
-        await page.waitForTimeout(400);
-
-        // 首个可视数值 widget 的视口坐标（graph 坐标 → ds 变换 → canvas 矩形）
-        // 取行中心：litegraph 的 widget 命中区不含行左右边缘（贴边点会被当成节点空白）
-        const target = await page.evaluate(() => {
-            const c = document.querySelector("canvas.rs-wf-editor-canvas");
-            const inst = c.data;
-            const cr = c.getBoundingClientRect();
-            for (const n of inst.graph._nodes) {
-                for (const w of n.widgets || []) {
-                    if (w.type !== "number" && w.type !== "slider") continue;
-                    const x = (n.pos[0] + (w.width || 200) / 2 + inst.ds.offset[0]) * inst.ds.scale + cr.left;
-                    const y = (n.pos[1] + (w.last_y || 0) + (w.height || 20) / 2 + inst.ds.offset[1]) * inst.ds.scale + cr.top;
-                    if (x < cr.left + 8 || x > cr.right - 8 || y < cr.top + 8 || y > cr.bottom - 8) continue;
-                    return { name: w.name, x, y, canvasTop: cr.top, canvasLeft: cr.left };
-                }
-            }
-            return null;
-        });
-        assert.ok(target, "画布上应有可视的数值 widget");
-
-        await page.mouse.click(target.x, target.y);
-        await page.waitForSelector(".graphdialog", { timeout: 5000 });
-        const dlg = await page.evaluate(() => {
-            const d = document.querySelector(".graphdialog");
-            const r = d.getBoundingClientRect();
-            return { left: r.left, top: r.top, pos: getComputedStyle(d).position };
-        });
-        assert.equal(dlg.pos, "fixed", "弹窗在前端 CSS 里是 fixed，落点即视口坐标");
-        assert.ok(Math.abs(dlg.left - (target.x - 20)) <= 2,
-            `弹窗应贴着鼠标：left=${dlg.left.toFixed(1)} 期望≈${(target.x - 20).toFixed(1)}（画布左上角 ${target.canvasLeft.toFixed(0)},${target.canvasTop.toFixed(0)}）`);
-        assert.ok(Math.abs(dlg.top - (target.y - 20)) <= 2,
-            `弹窗应贴着鼠标：top=${dlg.top.toFixed(1)} 期望≈${(target.y - 20).toFixed(1)}`);
-        await page.screenshot({ path: "tmp/skill-wf-prompt.png" });
-        assert.equal(errors.length, 0, `页面不应报错：${errors.join(" / ")}`);
-    } finally {
-        await page.close();
-    }
-});
-
 
 test("内嵌工作流编辑：combo 下拉浮在技能弹窗之上并可点选（125% 缩放）", async (t) => {
     if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }

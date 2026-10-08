@@ -1515,15 +1515,15 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         return await replaceRefImagePlaceholders(forceCanvasConfigValues(toCanvasTypedValues(applyWorkflowParams(injectRuntimeLoras(skillWorkflowRaw, cfg.loras), values)), values, isVideo));
     }
 
-    // 内嵌编辑的初始图：模板按技能已保存 config 灌 widget（模型 / 尺寸 / 张数 / 前缀 / 步数 / 视频宽高时长），
-    // 超出模板槽位的 LoRA 同运行时一样动态注入；提示词 / 种子 / 参考图 / LoRA 槽位等运行时 {{变量}} 原样保留
-    // → 保存时后端按同一套键位重新占位符化并回写 config。
+    // 内嵌编辑的初始图：模板按技能已保存 config 灌 widget（模型 / 尺寸 / 张数 / 前缀 / 步数 / 视频宽高时长
+    // 与 LoRA 槽位），超出模板槽位的 LoRA 同运行时一样动态注入；提示词 / 种子 / 参考图等运行时 {{变量}}
+    // 原样保留 → 保存时后端按同一套键位重新占位符化并回写 config。
     async function editorTemplateWorkflow() {
         const isVideo = videoGenSettingsWrap.style.display !== "none";
         const cfg = isVideo ? videoModelSection.collect() : { ...genModelSection.collect(), ...genSizeSection.collect() };
         const values = workflowParamValues(isVideo, { config: cfg, models: (loadedGenInfo && loadedGenInfo.models) || {} });
         const wf = JSON.parse(JSON.stringify(skillWorkflowRaw));
-        return await replaceRefImagePlaceholders(forceCanvasConfigValues(injectRuntimeLoras(wf, cfg.loras), values, isVideo));
+        return await replaceRefImagePlaceholders(forceCanvasConfigValues(applyWorkflowParams(injectRuntimeLoras(wf, cfg.loras), values), values, isVideo));
     }
 
     async function importWorkflowToCanvas() {
@@ -1869,7 +1869,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // 真实 widget 顺序与槽位顺序，widget 值按名对齐，连线按 API 的 [id, slot] 落到目标槽位名。
     function apiPromptToLitegraph(api) {
         const LiteGraph = window.LiteGraph;
-        // 模板节点 id 允许是 "193_82" 这类非数字串（画布导出 / 回写会产生）。LiteGraph 节点 id 必须是数字：
+        // 模板节点 id 允许是 "193_82" 这类非数字串（子图展开后是「子图id_子图内节点id」）。LiteGraph 节点 id 必须是数字：
         // Number("193_82") = NaN 会把所有节点挤成同一个 id（连线全接错），且 last_node_id = NaN 会让
         // LGraph.configure 死循环卡死整页 → 先把模板 id 映射成连续整数
         const ids = new Map(Object.keys(api).map((id, i) => [id, i + 1]));

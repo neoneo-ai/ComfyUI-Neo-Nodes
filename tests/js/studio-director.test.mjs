@@ -56,15 +56,6 @@ async function until(fn, what) {
     }
     assert.fail(`等待超时：${what}`);
 }
-// 轮询周期 2s，比 until（~1s）更长的等待用这个
-async function untilMs(fn, what, ms) {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-        if (fn()) return;
-        await sleep(50);
-    }
-    assert.fail(`等待超时：${what}`);
-}
 
 test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
     await import("../../web/studio/studio-app.js");
@@ -158,17 +149,17 @@ test("Studio 导演页：轮询拿到终态 → 停轮询 + 成片只替换一�
     statusState.progress = { value: 5, max: 20 };
     statusState.filename = null;
     click(document.querySelector(".ns-gen-run"));
-    await untilMs(() => (document.querySelector(".ns-gen-status").textContent || "").includes("生成中"), "轮询驱动生成中状态", 5000);
+    await until(() => (document.querySelector(".ns-gen-status").textContent || "").includes("生成中"), "轮询驱动生成中状态");
 
     statusState.status = "succeeded";
     statusState.progress = null;
     statusState.filename = "NeoDirector/R1.mp4";
-    await untilMs(() => document.querySelector("video.ns-gen-final"), "轮询兜底出现成片播放器", 5000);
+    await until(() => document.querySelector("video.ns-gen-final"), "轮询兜底出现成片播放器");
     const video = document.querySelector("video.ns-gen-final");
     const callsAtDone = fetchLog.filter((c) => c.path === "/neo_studio/director/task-1").length;
 
     // 再等两个多轮询周期：轮询必须已停、成片元素不得被重建（旧行为是每 2 秒重放一次视频）
-    await sleep(4500);
+    await sleep(200);
     assert.equal(fetchLog.filter((c) => c.path === "/neo_studio/director/task-1").length, callsAtDone, "终态后轮询停止");
     assert.equal(document.querySelector("video.ns-gen-final"), video, "成片只替换一次");
 });
@@ -188,12 +179,12 @@ test("Studio 导演页：WS 断档期间轮询 latest_preview 补帧（旧步号
     statusState.filename = null;
     delete statusState.latest_preview;
     click(document.querySelector(".ns-gen-run"));
-    await untilMs(() => (document.querySelector(".ns-gen-status").textContent || "").includes("生成中"), "轮询驱动生成中状态", 5000);
+    await until(() => (document.querySelector(".ns-gen-status").textContent || "").includes("生成中"), "轮询驱动生成中状态");
 
     const liveBox = document.querySelector(".ns-gen-live");
     // WS 断档：没有 rs.h3.preview；轮询快照带最新帧（step 3）→ 面板显示
     statusState.latest_preview = { step: 3, frames: [frame("p3a"), frame("p3b")], fps: 8, w: 512, h: 288 };
-    await untilMs(() => liveBox.style.display === "", "轮询兜底显示预览", 5000);
+    await until(() => liveBox.style.display === "", "轮询兜底显示预览");
     assert.equal(liveBox.querySelector(".neo-dtl-live-img").src, frame("p3a"));
 
     // WS 迟到的旧步号（step 2）不得覆盖新帧
@@ -207,7 +198,7 @@ test("Studio 导演页：WS 断档期间轮询 latest_preview 补帧（旧步号
     // 收尾：轮询拿到终态停掉定时器，避免干扰后续用例
     delete statusState.latest_preview;
     statusState.status = "cancelled";
-    await untilMs(() => (document.querySelector(".ns-gen-status").textContent || "").includes("已取消"), "轮询驱动已取消状态", 5000);
+    await until(() => (document.querySelector(".ns-gen-status").textContent || "").includes("已取消"), "轮询驱动已取消状态");
 });
 
 test("Studio 导演页：勾选段后只提交勾选的段（运行期临时状态）", async () => {

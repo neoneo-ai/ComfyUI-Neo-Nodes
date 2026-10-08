@@ -191,3 +191,24 @@ export function installRectStub(win) {
         writable: true,
     });
 }
+
+// 轮询类 setInterval（生产 0.5~3s 一轮）是套件最大的时间黑洞：用例只能按真实墙钟等周期。
+// 压到 40ms 后轮询逻辑、停止条件、计数语义全不变，等待只等条件不等周期。
+// 下限取 600ms：悬停开合（300/500）、防抖（200/600）、淡出（200）这些真实时长语义必须保留，
+// 用例靠它们断言"某事还没发生"。需要断言真实长延时的用例走 t.mock.timers。
+// 只动 setInterval：setTimeout 里混着 1500ms 轮询与 2200/2500/5000/2400000ms 的超时守卫
+// （watchTask 40 分钟、toast 自动消失、图片探测探针），量级无法区分，压它会把守卫提前触发。
+// 必须绑到 window：jsdom 按 window 的事件循环调度，绑 globalThis 会注册后永不触发。
+export function installPollSpeedup(win, capMs = 40, floorMs = 600) {
+    const rawInterval = win.setInterval.bind(win);
+    Object.defineProperty(globalThis, "setInterval", {
+        value: (fn, ms, ...rest) => rawInterval(fn, Number.isFinite(ms) && ms >= floorMs ? capMs : ms, ...rest),
+        configurable: true,
+        writable: true,
+    });
+    Object.defineProperty(globalThis, "clearInterval", {
+        value: win.clearInterval.bind(win),
+        configurable: true,
+        writable: true,
+    });
+}

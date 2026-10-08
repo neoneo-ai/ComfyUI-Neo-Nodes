@@ -81,7 +81,7 @@ test("🎲 随机按钮：取 preset 列表并写入提示词", async () => {
     const node = await makeNode(11);
     const el = parts(node);
     click(el.randomBtn);
-    await sleep(200);
+    await sleep(60);
 
     assertGolden("flow.random", flowTrace());
     assert.equal(el.promptArea.value, "preset-text:cats");
@@ -96,7 +96,7 @@ test("快捷输入 Enter：无 skill 时走流式生成并回填", async () => {
     const el = parts(node);
     inputText(el.quickInput, "a cat");
     keydown(el.quickInput, "Enter");
-    await sleep(200);
+    await sleep(60);
 
     assertGolden("flow.generate-stream", flowTrace());
     // onDone 取消待执行的合并帧前先把 accumulated 写回 textarea，saveTextToStorage 才能读到最新文本。
@@ -118,7 +118,7 @@ test("快捷输入历史：↑ 召回预置条目，Enter 生成后所发输入�
 
     inputText(el.quickInput, "a cat in the rain");
     keydown(el.quickInput, "Enter");
-    await sleep(200);
+    await sleep(60);
 
     const hist = JSON.parse(localStorage.getItem("neo.prompt_agent.quick_history"));
     assert.equal(hist[0], "a cat in the rain", "真正发出的快捷输入应记入历史首位");
@@ -142,7 +142,7 @@ test("H3 审计事件：status 累计显示阶段、replace 整段替换正文�
     const el = parts(node);
     inputText(el.quickInput, "h3 video");
     keydown(el.quickInput, "Enter");
-    await sleep(200);
+    await sleep(60);
 
     // replace 事件整段替换已透传的草稿，最终落盘的是修复后文本
     assert.equal(el.promptArea.value, "repaired final prompt");
@@ -162,7 +162,7 @@ test("选中 skill：请求体带 skillId 与拼接后的 text", async () => {
     el.selector.value = "anime_style";
     inputText(el.quickInput, "more detail");
     click(el.generateBtn);
-    await sleep(200);
+    await sleep(60);
 
     assertGolden("flow.skill-generate", flowTrace());
 });
@@ -172,14 +172,14 @@ test("@ 图片选择器：无可用图片时给占位提示，不叠加弹层且
     const el = parts(node);
 
     inputText(el.quickInput, "@");
-    await sleep(100);
+    await sleep(60);
     const picker = document.querySelector(".rs-at-picker");
     assert.ok(picker);
     assert.ok(picker.textContent.includes("没有可用的 Load Image"));
 
     // 已有弹层时再输入 @ 不再叠加第二个
     inputText(el.quickInput, "@@");
-    await sleep(100);
+    await sleep(60);
     assert.equal(document.querySelectorAll(".rs-at-picker").length, 1);
 
     keydown(picker, "Escape");
@@ -188,7 +188,7 @@ test("@ 图片选择器：无可用图片时给占位提示，不叠加弹层且
 
     // 关闭后同一节点仍可再次打开
     inputText(el.quickInput, "x@");
-    await sleep(100);
+    await sleep(60);
     assert.equal(document.querySelectorAll(".rs-at-picker").length, 1);
 });
 
@@ -198,14 +198,14 @@ test("输入 / 唤起 skill 快捷菜单：实时过滤 + Enter 提交写入下�
 
     // 打 / 打开弹层（4 个 skill；task 分类已隐藏）
     inputText(el.quickInput, "/");
-    await sleep(100);
+    await sleep(60);
     let picker = document.querySelector(".rs-slash-picker");
     assert.ok(picker, "应出现 slash 菜单");
     assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 4, "可见 skill 4 行（task 隐藏）");
 
     // 继续输入过滤：/ani → anime_style（id 命中）
     inputText(el.quickInput, "/ani");
-    await sleep(100);
+    await sleep(60);
     picker = document.querySelector(".rs-slash-picker");
     assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 1, "过滤后剩 1 行");
     // 副标题显示类别名称（image_enhance → 🎨 图像提示词增强），不再是 id
@@ -224,7 +224,7 @@ test("输入 / 后 Esc 关闭菜单且不改变 skill 选择", async () => {
     const el = parts(node);
 
     inputText(el.quickInput, "/");
-    await sleep(100);
+    await sleep(60);
     const picker = document.querySelector(".rs-slash-picker");
     assert.ok(picker, "应出现 slash 菜单");
     keydown(picker, "Escape");
@@ -238,10 +238,10 @@ test("输入 / 后按中文拼音（tags）匹配 skill", async () => {
     const el = parts(node);
 
     inputText(el.quickInput, "/");
-    await sleep(100);
+    await sleep(60);
     // 首字母缩写 dmfg 命中「动漫风格」的拼音标签
     inputText(el.quickInput, "/dm");
-    await sleep(100);
+    await sleep(60);
     const picker = document.querySelector(".rs-slash-picker");
     assert.ok(picker, "应出现 slash 菜单");
     assert.strictEqual(picker.querySelectorAll(".rs-slash-picker-row").length, 1, "拼音 dm 命中 1 行");
@@ -360,7 +360,7 @@ test("流式 [ERROR] 帧：按错误上报并弹 action toast，错误文本不�
     const el = parts(node);
     inputText(el.quickInput, "a cat");
     keydown(el.quickInput, "Enter");
-    await sleep(200);
+    await sleep(60);
 
     assert.ok(!el.promptArea.value.includes("[ERROR]"), "错误文本不进提示词输入框");
     const toast = [...document.querySelectorAll(".neo-at")].find((t) =>
@@ -383,7 +383,7 @@ test("选中 skill 时失败按来源分流：LLM 异常 → LLM 设置，skill 
     llmEl.selector.value = "anime_style";
     inputText(llmEl.quickInput, "more detail");
     click(llmEl.generateBtn);
-    await sleep(200);
+    await sleep(60);
 
     let toast = [...document.querySelectorAll(".neo-at")].at(-1);
     assert.equal(toast.querySelector(".neo-at-summary").textContent, "LLM 处理失败");
@@ -401,7 +401,7 @@ test("选中 skill 时失败按来源分流：LLM 异常 → LLM 设置，skill 
     skillEl.selector.value = "anime_style";
     inputText(skillEl.quickInput, "more detail");
     click(skillEl.generateBtn);
-    await sleep(200);
+    await sleep(60);
 
     toast = [...document.querySelectorAll(".neo-at")].at(-1);
     assert.equal(toast.querySelector(".neo-at-summary").textContent, "技能执行失败");
@@ -420,7 +420,7 @@ test("流式正文块 [ERROR]（JSON 帧）：按错误上报并弹 toast，错�
     const el = parts(node);
     inputText(el.quickInput, "a cat");
     keydown(el.quickInput, "Enter");
-    await sleep(200);
+    await sleep(60);
 
     assert.ok(!el.promptArea.value.includes("[ERROR]"), "错误文本不进提示词输入框");
     const toast = [...document.querySelectorAll(".neo-at")].find((t) =>
