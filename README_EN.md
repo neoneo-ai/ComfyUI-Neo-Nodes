@@ -126,6 +126,10 @@ A canvas-independent page at `http://127.0.0.1:8188/neo-studio` (or run `neo-stu
 | [docs/workflow-repair.md](docs/workflow-repair.md) | Workflow model path repair |
 | [docs/model-hub.md](docs/model-hub.md) | Model Hub: dual-source repo search, category placement, resumable downloads |
 
+## Changelog
+
+Version history: [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 SPDX-License-Identifier: Apache-2.0

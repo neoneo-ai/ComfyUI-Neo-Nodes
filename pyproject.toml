@@ -9,11 +9,13 @@ license = { text = "Apache-2.0" }
 keywords = [
     "comfyui", "comfyui-neo-nodes", "neo-nodes", "neo nodes", "nodes",
     "llm", "prompt", "prompt enhancement", "prompt reverse", "prompt agent",
+    "prompt translation", "text generation", "qwen", "safetensors",
     "image generation", "image edit", "outpaint", "reference image", "grid",
-    "storyboard", "video", "video director", "minimax", "minimax h3", "h3",
-    "lora", "lora tag", "caption", "gallery", "asset library", "recipes",
-    "workflow", "workflow repair", "model hub", "modelscope", "huggingface",
-    "studio", "skills", "chinese",
+    "storyboard", "identity swap", "pose editing", "controlnet",
+    "video", "video director", "minimax", "minimax h3", "h3",
+    "lora", "lora tag", "caption", "gallery", "asset library", "lightbox",
+    "recipes", "workflow", "workflow repair", "model hub", "modelscope",
+    "huggingface", "civitai", "studio", "skills", "chinese",
 ]
 # 包内没有平台相关代码。加速器声明（Environment :: GPU :: ...）故意不写：
 # 节点跑在 ComfyUI 自带的 torch 上，写出来等于声称做过没做过的验证。
@@ -48,7 +50,8 @@ Issues = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes/issues"
 [tool.comfy]
 PublisherId = "neoneo-ai"
 DisplayName = "Neo Nodes"
-Icon = ""
+# Registry 列表图标：与顶栏菜单同款字形（README 里的 🅝）。
+Icon = "🅝"
 # Manager 用来拒绝把包装到不兼容核心上的版本下限。Neo Image Gen & Edit 需要
 # V3 io API（io.Node / io.Autogrow），下限取实际验证过的核心版本。
 #

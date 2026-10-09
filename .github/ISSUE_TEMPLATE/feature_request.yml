@@ -1,0 +1,46 @@
+name: Feature Request / 功能建议
+description: Suggest a feature for Neo Nodes（提出新功能）
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: 模块 / Module
+      options:
+        - Neo Prompt Encoder / Agent
+        - Neo Image Gen & Edit
+        - H3 Video Director
+        - Neo Gallery / Bookmarks
+        - Neo Recipes
+        - Skill Management
+        - Model Hub
+        - Workflow Repair
+        - Neo Studio
+        - LLM settings
+        - Top menu (🅝)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 现有痛点 / The problem
+      placeholder: 现在做某件事要绕哪些弯
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的做法 / Proposed solution
+      placeholder: 希望界面/节点怎么工作（按钮位置、交互流程、输出形态）
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案 / Alternatives considered
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息 / Additional context
+      placeholder: 相关配方、技能、示例工作流或截图（可直接拖图）

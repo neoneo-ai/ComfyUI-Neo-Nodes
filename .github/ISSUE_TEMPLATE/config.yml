@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 模块文档 / Module docs
+    url: https://github.com/neoneo-ai/ComfyUI-Neo-Nodes/tree/main/docs
+    about: LLM 三模式配置、生图、导演配方、模型库、工作流修复先查这里 / Check LLM setup, image generation, director recipes, model hub and workflow repair docs first
+  - name: ComfyUI 核心问题 / ComfyUI core issues
+    url: https://github.com/comfyanonymous/ComfyUI/issues
+    about: 与插件无关的 ComfyUI 核心问题请去 ComfyUI 仓库 / For ComfyUI core issues use the ComfyUI repository

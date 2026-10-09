@@ -232,3 +232,7 @@ collections portrait 10000+ 精美提示词来源：
 ## 开发者文档
 
 开发相关内容（项目结构、后端模块、API 路由、节点注册、测试等）见 [Developer.md](Developer.md)。
+
+## 版本变更记录
+
+每个发布版本的改动清单见 [CHANGELOG.md](CHANGELOG.md)（随标签发布至 ComfyUI Registry）。
