@@ -37,6 +37,6 @@
 以表格展示每处修改点：时间 · 来源 · 节点 / 输入 · 原路径 · 修复结果（未匹配项显示候选），可一键清空。
 记录仅存于本机，不上传。
 
-![🅝 菜单「修复记录」日志表格](assets/images/workflow-repair-records.png)
+![🅝 菜单「修复记录」日志表格](assets/images/workflow-repair-records-sm.jpg)
 
 后端实现见 [architecture.md](architecture.md)（`workflow.py`），API 见 [api-routes.md](api-routes.md)。

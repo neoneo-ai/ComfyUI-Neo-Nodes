@@ -2,20 +2,45 @@
 
 > 📄 English: [README_EN.md](README_EN.md)
 
-一个 ComfyUI 自定义节点插件：提示词管理与 AI 增强（支持推理 / thinking 模型），内置生图与生视频，
-素材浏览与一键发送、图片反推、配方保存与还原、工作流路径自动修复。
+**「一句话 → 提示词 → 成图 → 成片」**：提示词 AI 增强、生图与参考编辑、MiniMax H3 多段导演，全在一个插件里；
+LLM 可在 ComfyUI 进程内零依赖运行。
+
+![配方一键发送到工作流](docs/assets/images/hero-recipes-send.gif)
+
+**安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（已发布至 ComfyUI Registry），详见 [安装](#安装)。
+
+## 为什么选 Neo Nodes
+
+| 能力 | 常见做法 | Neo Nodes |
+|------|----------|-----------|
+| 本地 LLM | 需要 `llama-cpp-python`（Windows 上常编译失败） | **Native**：safetensors 文本生成模型在 ComfyUI 进程内推理，零额外依赖 |
+| 云端 LLM | 手填端点与模型名 | 内置 DeepSeek / 阿里云百炼 / Kimi / 智谱 GLM / 硅基流动，填 Key 即用，🔌 测试连接当场验证 |
+| 模型下载 | 手动下载再拖进模型目录 | ModelScope + Hugging Face 双源搜索，按仓库内路径自动归类落盘，断点续传 |
+| 中文检索 | 只按英文 / 文件名匹配 | 中文技能名全拼 + 首字母缩写检索，LoRA 触发词拼音建议 |
+| 生图 / 生视频 | 自己搭几十个节点 | 选技能即生成（技能自带 `workflow.json` 模板），H3 多段导演时间轴拖拽重排 |
+| 换机器 / 改目录后 | 满屏红节点逐个改路径 | 顶栏 🅝「🔧 修复工作流」按文件名匹配磁盘真实文件一键修复 |
+| 素材复用 | 手动 LoadImage 逐张挑 | 素材库灯箱 + ✈️ 一键写入指定节点，配方一键发送到画布 |
+
+## 零配置可用（不配 LLM 也能用）
+
+安装重启后即可直接使用，不需要任何模型或 API Key：
+
+- **🖼️ Neo Gallery** — 素材浏览 / 灯箱 / 文件管理 / ✈️ 一键写入节点；Civitai LORA 匹配与收藏；LoRA 目录批量打标
+- **🧊 Neo Recipes** — 提示词 + 素材保存为配方，一键发送到工作流（含导演配方编辑器）
+- **🔧 工作流修复** — 模型路径失效时按文件名匹配磁盘真实文件一键修复
+- **📥 模型库** — ModelScope / Hugging Face 双源搜索与断点续传下载（ModelScope 列表与搜索匿名可用）
+- **🔲 Neo Reference Grid / 🧩 Neo Grid Split** — 参考图宫格管理、分镜宫格图自动切格
+- **🧊 Neo Studio** — 独立页面（`neo-studio.bat` 或 `http://127.0.0.1:8188/neo-studio`）：素材 / 导演 / 技能 / 设置
+
+LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，三模式配置见 [docs/llm.md](docs/llm.md)。
 
 ## 模块一览
 
 **节点**
 
-![图片生成/编辑节点](docs/assets/images/image-gen-edit.png)
-![图片处理节点](docs/assets/images/image-process.png)
-![视频生成节点](docs/assets/images/vide-gen.png)
-
 - **📝 Neo Prompt Encoder** — 提示词管理 + AI 增强（预设 / 搜索 / LLM 增强），输出 CLIP 编码与文本
   → [prompts.md](docs/prompts.md)
-- **⚡ Neo Prompt Agent** — 无需连 CLIP 的提示词生成，输出 PROMPT 文本与 BUNDLE 运行时包
+- **⚡ Neo Prompt Agent** — 无需连 CLIP 的提示词生成，输出 PROMPT 文本与 BUNDLE 运行时包（可直接接 Krea2 / H3 视频节点）
   → [prompts.md](docs/prompts.md)
 - **🖌️ 聊天生图** — 节点内置：选生图技能后 ✨ 直接生成（文生图 / 参考图编辑），实时进度与取消
   → [image-gen.md](docs/image-gen.md)
@@ -49,16 +74,24 @@
 - **📥 模型库** — Comfy-Org 专区双源（ModelScope / Hugging Face）搜索与断点续传下载，按仓库内路径自动归类落盘
   → [model-hub.md](docs/model-hub.md)
 
+节点外观：
+
+![图片生成/编辑节点](docs/assets/images/image-gen-edit.png)
+![图片处理节点](docs/assets/images/image-process.png)
+![视频生成节点](docs/assets/images/vide-gen.png)
+
 ## 功能演示
 
 主要模块的交互实录（点击缩略图进入对应文档）：
 
-- [![配方一键发送到工作流](docs/assets/images/neo-recipes-send.gif)](docs/recipes.md) — 🧊 Neo Recipes · 一键发送
-- [![多段导演时间轴拖拽重排](docs/assets/images/neo-video-director-timeline.gif)](docs/h3-video-gen.md)
+- [![多段导演时间轴拖拽重排](docs/assets/images/hero-director-timeline.gif)](docs/h3-video-gen.md)
   — 🎞️ H3 Video Director · 时间轴重排
+- [![配方一键发送到工作流](docs/assets/images/neo-recipes-send.gif)](docs/recipes.md) — 🧊 Neo Recipes · 一键发送
 
 ## 目录
 
+- [为什么选 Neo Nodes](#为什么选-neo-nodes)
+- [零配置可用](#零配置可用不配-llm-也能用)
 - [模块一览](#模块一览)
 - [功能演示](#功能演示)
 - [安装](#安装)
@@ -90,7 +123,14 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 ## 快速上手
 
 1. **安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（或见上方手动安装），重启 ComfyUI。
-2. **配置 LLM（三选一）**
+2. **先玩零配置功能**（不需要 LLM 与任何模型配置）
+   - **素材一键入节点**：右侧边栏「素材」面板 → 浏览 / 搜索到目标图片 → 点缩略图进灯箱
+     → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
+   - **模型库下载**：顶栏 🅝「📥 模型库」→ 选源（ModelScope / Hugging Face）→ 搜索 → 选文件
+     → 自动带出落盘类别与子目录 → ⬇ 下载，可断点续传。
+   - **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏 🅝「🔧 修复工作流」
+     → 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
+3. **配置 LLM（三选一，✨ 增强 / 图片反推 / 翻译分类需要）**
    - **原生**：把 safetensors 文本生成模型（如 `qwen3.5_4b_bf16.safetensors`）放入 `models/text_encoders/`，
      Settings → Provider 选「Native (ComfyUI safetensors)」并选择模型后点 💾 保存，在 ComfyUI 进程内直接推理，
      无需额外依赖。说明见 [docs/llm.md](docs/llm.md)。
@@ -100,18 +140,16 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
      各家端点与申请入口见 [docs/llm.md](docs/llm.md)。
    - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型后点 💾 保存
      （目录只有一个模型时可跳过，运行时自动使用）。安装与目录规范见 [docs/llm.md](docs/llm.md)。
-3. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨
+4. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨
    → 得到 AI 生成的提示词文本（无需连 CLIP，可直接接下游如 🎨 Krea2）。
-4. **第一次生图**：添加 🎨 Neo Image Gen & Edit 节点 → 选一个带 `workflow.json` 的生图技能
+5. **第一次生图**：添加 🎨 Neo Image Gen & Edit 节点 → 选一个带 `workflow.json` 的生图技能
    → prompt 接 ⚡ Neo Prompt Agent 或手填，参考编辑类再连参考图槽位 → 排队执行 → 直接输出 IMAGE 张量。
 
    > 生图需 GPU / 显存，且所选技能必须声明 `gen_image: true` 并附 `workflow.json`。
    > 生图模型 / Text Encoder / VAE 默认「自动」按技能模板匹配，未匹配到时再手动指定。
 
-5. **素材一键入节点**：打开右侧边栏「素材」面板 → 浏览 / 搜索到目标图片 → 点缩略图进灯箱
-   → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
-6. **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏 🅝 菜单「🔧 修复工作流」
-   → 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
+6. **第一次多段视频**：添加 🎞️ H3 Video Director 节点 → 选 `video_director` 配方
+   → 时间轴拖拽重排 / 单段重生成 → 逐段生成并拼接为单个含音频 `VIDEO`。
 
 ---
 

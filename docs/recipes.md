@@ -54,7 +54,7 @@ recipes/
   提示词写入 Neo Prompt，子图没有 Neo Prompt 时兜底写入宫格提示词框。
 - 在 Neo Prompt 节点上直接选择配方发送时，以该节点所在子图为目标，同样自动对齐，全程不弹窗。
 
-![配方详情浮层（提示词 / 资源 / 示例结果）](assets/images/recipes-detail.png)
+![配方详情浮层（提示词 / 资源 / 示例结果）](assets/images/recipes-detail-sm.jpg)
 
 ### 示例结果与产物记录
 

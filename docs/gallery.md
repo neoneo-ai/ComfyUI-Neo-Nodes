@@ -2,7 +2,7 @@
 
 ComfyUI 右侧边栏中的图片 / 视频 / 音频浏览与管理面板：内置预设库 + 多个用户自定义目录。
 
-![Neo Gallery 素材面板](assets/images/neo-gallery.png)
+![Neo Gallery 素材面板](assets/images/neo-gallery-sm.jpg)
 
 ## 浏览与导航
 
@@ -29,7 +29,7 @@ ComfyUI 右侧边栏中的图片 / 视频 / 音频浏览与管理面板：内置
 - 纯音频目录显示音频瓦片，空 / 失效封面显示通用占位瓦片。
 - 卡片内竖图（高 ≥ 宽）顶部锚定，裁掉底部而不是头部。
 
-![Neo Gallery 侧边栏浏览](assets/images/gallery-sidebar.png)
+![Neo Gallery 侧边栏浏览](assets/images/gallery-sidebar-sm.jpg)
 
 ## 媒体与搜索
 
@@ -75,7 +75,7 @@ ComfyUI 右侧边栏中的图片 / 视频 / 音频浏览与管理面板：内置
 右侧提示词侧栏展示图片的提示词与参数（无内容时不显示，进入全屏时自动隐藏）。
 配方详情中的示例结果与素材共用同一灯箱组件。
 
-![灯箱查看器（缩放/平移 + 提示词侧栏）](assets/images/gallery-lightbox.png)
+![灯箱查看器（缩放/平移 + 提示词侧栏）](assets/images/gallery-lightbox-sm.jpg)
 
 | 按钮 | 功能 |
 |------|------|
