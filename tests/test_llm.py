@@ -6,6 +6,22 @@ from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot
 
 _STUB_SAVED = snapshot(GALLERY_STUB_PREFIXES)
 
+# 其它测试文件在 import 期会留下假 comfy / folder_paths 桩（types.ModuleType，无 __file__ 与 __path__）。
+# native 后端测试要 import comfy.sd / comfy.cli_args / comfy.model_management，并用真实
+# folder_paths 的 get_full_path_or_raise，所以先把桩丢掉，让 ComfyUI 根目录下的真实模块可导入。
+_COMFY_PREFIX = ("comfy",)
+_FP_PREFIX = ("folder_paths",)
+
+
+def _drop_stubs(prefixes):
+    saved = snapshot(prefixes)
+    for k in list(sys.modules):
+        if k in prefixes or any(k.startswith(p + ".") for p in prefixes):
+            mod = sys.modules[k]
+            if getattr(mod, "__file__", None) is None and getattr(mod, "__path__", None) is None:
+                del sys.modules[k]
+    return saved
+
 import os
 import sys
 import json
@@ -1502,6 +1518,23 @@ class TestLocalServiceModels(unittest.TestCase):
 @unittest.skipUnless(LLM_AVAILABLE, _llm_reason)
 class TestNativeBackend(unittest.TestCase):
     """原生 ComfyUI 文本生成后端：扫描、模式分发、stub CLIP 推理、缓存"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._comfy_saved = _drop_stubs(_COMFY_PREFIX)
+        cls._fp_saved = _drop_stubs(_FP_PREFIX)
+        # llm_mod.folder_paths 是 import 期绑定的（可能是别的测试文件留下的桩），
+        # 丢桩后必须重绑到真实模块；patch.object(comfy, "sd", FakeSD)
+        # 也要求 sys.modules 里已有 comfy.sd。
+        cls._llm_fp = llm_mod.folder_paths
+        import comfy.sd, folder_paths
+        llm_mod.folder_paths = folder_paths
+
+    @classmethod
+    def tearDownClass(cls):
+        restore(_COMFY_PREFIX, cls._comfy_saved)
+        restore(_FP_PREFIX, cls._fp_saved)
+        llm_mod.folder_paths = cls._llm_fp
 
     def test_scan_native_models_filters_safetensors(self):
         files = ["qwen3.5_4b_bf16.safetensors", "clip_l.safetensors", "readme.txt", "model.safetensors"]
