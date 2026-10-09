@@ -744,3 +744,36 @@ test("canvasLayout：参考加载器统一排到最左列，不挤进模型加�
     assert.ok(byId["1"].x > minX, "模型加载列排在参考列右侧");
 });
 
+test("回写入技能：默认跳过（bypass）的参考视频/音频槽位取 prompt 时临时启用，取完还原（槽位不丢）", async () => {
+    mockPreview([]);
+    let posted = null;
+    mockRoute("/neo_image_gen/update_workflow_skill", (b) => {
+        posted = b;
+        return jsonResponse({ success: true, id: b.skill_id, warnings: [], gen_video: false });
+    });
+    const slots = [{ id: 31, type: "LoadVideo", mode: 4 }, { id: 51, type: "LoadAudio", mode: 4 }];
+    const nodes = [...slots, { id: 10, type: "SaveImage", mode: 0 }];
+    appState.graph = { _nodes: nodes, setDirtyCanvas() {} };
+    const modesAtSerialize = [];
+    const orig = app.graphToPrompt;
+    app.graphToPrompt = async () => {
+        modesAtSerialize.push(nodes.map((n) => n.mode));
+        return appState.promptGraph;
+    };
+    try {
+        appState.promptGraph = { output: { "10": { class_type: "SaveImage", inputs: {} } }, workflow: "{}" };
+        await openPopup({ id: "custom_a", source: "custom" });
+        click(writeBtn());
+        await sleep(80);
+        click(footBtn(writeConfirmDialog(), "确认保存"));
+        await sleep(80);
+
+        assert.deepEqual(modesAtSerialize[0], [0, 0, 0], "graphToPrompt 跳过 mode 4 节点 → 取 prompt 前槽位应临时启用");
+        assert.deepEqual(nodes.map((n) => n.mode), [4, 4, 0], "取完 prompt 后槽位还原跳过");
+        assert.ok(posted, "确认后应落盘该技能");
+    } finally {
+        app.graphToPrompt = orig;
+        appState.graph = null;
+    }
+});
+

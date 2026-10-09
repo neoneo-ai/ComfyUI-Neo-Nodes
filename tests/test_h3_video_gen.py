@@ -796,6 +796,61 @@ class RealTemplateExecutionTests(unittest.TestCase):
         self.assertNotIn("ref_audios.ref_audio_0", graph["5"]["inputs"])
         self.assertEqual(image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
 
+    def test_r2v_template_keeps_demo_slots(self):
+        # 模板只写演示槽（2 图 / 1 视频 / 1 音频），其余槽位靠运行时克隆补齐
+        wf = self._r2v_template()
+        for cls, n in (("LoadImage", 2), ("LoadVideo", 1), ("LoadAudio", 1)):
+            self.assertEqual(len([node for node in wf.values() if node.get("class_type") == cls]), n)
+        # 参考视频/音频槽位导出即默认跳过（bypass mode 4，占位文件不在 input 目录 → 灌画布不红框）
+        for cls in ("LoadVideo", "LoadAudio"):
+            for node in wf.values():
+                if node.get("class_type") == cls:
+                    self.assertEqual(node.get("mode"), 4, f"{cls} 参考槽应默认跳过")
+        for node in wf.values():
+            if node.get("class_type") == "LoadImage":
+                self.assertIsNone(node.get("mode"), "LoadImage 参考槽不跳过")
+
+    def test_r2v_expands_extra_image_slots(self):
+        # 5 张参考图 → 克隆补齐 0 基槽位 ref_image_2..4
+        body = {"prompt": "x", "references": [
+            {"kind": "data", "data": _data_uri("image/png", bytes([i]))} for i in range(5)]}
+        params = h3_video_gen.resolve_video_params(body, self._fl2v_cfg())
+        graph, _ = h3_video_gen.render_template(self._r2v_template(), params)
+        ref_in = graph["5"]["inputs"]
+        self.assertEqual(sorted(int(k.rsplit("_", 1)[1]) for k in ref_in if k.startswith("ref_images.")),
+                         [0, 1, 2, 3, 4])
+        for i in range(5):
+            src = ref_in[f"ref_images.ref_image_{i}"][0]
+            self.assertEqual(graph[src]["inputs"]["image"], params["ref_images"][i])
+        self.assertEqual(image_gen_edit.execute_graph_inprocess(graph, output_type="VIDEO")[0], "video")
+
+    def test_r2v_expands_video_and_audio_chains(self):
+        # 2 段参考视频克隆整条 LoadVideo + GetVideoComponents 链，2 段参考音频克隆 LoadAudio
+        body = {"prompt": "x", "references":
+                [{"kind": "data", "data": _data_uri("video/mp4", bytes([i])), "media": "video"} for i in range(2)]
+                + [{"kind": "data", "data": _data_uri("audio/wav", bytes([i])), "media": "audio"} for i in range(2)]}
+        params = h3_video_gen.resolve_video_params(body, self._fl2v_cfg())
+        graph, _ = h3_video_gen.render_template(self._r2v_template(), params)
+        ref_in = graph["5"]["inputs"]
+        videos = self._nodes_of(graph, "LoadVideo")
+        self.assertEqual(len(videos), 2)
+        self.assertEqual(len(self._nodes_of(graph, "GetVideoComponents")), 2)
+        self.assertEqual(len(self._nodes_of(graph, "LoadAudio")), 2)
+        for i in range(2):
+            comp = ref_in[f"ref_videos.ref_video_{i}"][0]
+            self.assertEqual(graph[comp]["inputs"]["video"], [videos[i], 0])
+            aud = ref_in[f"ref_audios.ref_audio_{i}"][0]
+            self.assertEqual(graph[aud]["inputs"]["audio"], params["ref_audios"][i])
+
+    def test_r2v_expansion_capped_at_max_refs(self):
+        # 12 张图 → 按 config.json 的 max_refs=9 截断，槽位补齐到 0..8
+        body = {"prompt": "x", "references": [
+            {"kind": "data", "data": _data_uri("image/png", bytes([i]))} for i in range(12)]}
+        params = h3_video_gen.resolve_video_params(body, self._fl2v_cfg())
+        graph, _ = h3_video_gen.render_template(self._r2v_template(), params)
+        self.assertEqual(sorted(int(k.rsplit("_", 1)[1]) for k in graph["5"]["inputs"]
+                                if k.startswith("ref_images.")), list(range(9)))
+
 
 class VideoModelsSortTests(unittest.TestCase):
     """/neo_video_gen/models 下拉展示：H3 相关靠前（与生图 krea2-first 独立）。"""

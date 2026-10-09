@@ -1261,12 +1261,13 @@ def _reaches_load_image(workflow: dict, node_id: str) -> bool:
     return False
 
 
-_AUTOGROW_IMAGE_KEY_RE = re.compile(r"^[a-z_]+\.image_(\d+)$")
+_AUTOGROW_SLOT_KEY_RE = re.compile(r"^([a-z_]+)\.([a-z_]+)_(\d+)$")
 
 
 def _ref_slot_tokens(workflow: dict) -> dict:
-    """LoadImage 节点 → 参考占位符：按 Autogrow 消费者的 image_k 槽位序号编号，
-    画布 ⇄ 技能往返保住槽位序号；单张参考（含无槽位消费者的混合情况）沿用 {{REF_IMAGE}}。"""
+    """LoadImage 节点 → 参考占位符：按 Autogrow 消费者的槽位序号编号，
+    画布 ⇄ 技能往返保住槽位序号（槽基址随模板：Qwen 1 基 images.image_1，minimax 0 基 ref_images.ref_image_0）；
+    单张参考（含无槽位消费者的混合情况）沿用 {{REF_IMAGE}}。"""
     refs = [nid for nid, n in workflow.items()
             if isinstance(n, dict) and n.get("class_type") == "LoadImage"
             and isinstance((n.get("inputs") or {}).get("image"), str)]
@@ -1275,9 +1276,9 @@ def _ref_slot_tokens(workflow: dict) -> dict:
         if not isinstance(node, dict):
             continue
         for key, value in (node.get("inputs") or {}).items():
-            m = _AUTOGROW_IMAGE_KEY_RE.match(key)
+            m = _AUTOGROW_SLOT_KEY_RE.match(key)
             if m and isinstance(value, list) and len(value) == 2:
-                slot_of.setdefault(str(value[0]), int(m.group(1)))
+                slot_of.setdefault(str(value[0]), int(m.group(3)))
     if len(refs) < 2 or any(nid not in slot_of for nid in refs):
         return {nid: "{{REF_IMAGE}}" for nid in refs}
     order = sorted(refs, key=lambda nid: (slot_of[nid], _node_sort_key(nid)))
@@ -1443,6 +1444,9 @@ def _template_video_from_workflow(workflow: dict) -> tuple[dict, list, dict]:
             inputs["seed"] = "{{SEED}}"
         elif ct == "LoadImage" and isinstance(inputs.get("image"), str):
             inputs["image"] = ref_tokens[nid]
+        elif ct in ("LoadVideo", "LoadAudio"):
+            # 参考视频/音频槽位：占位文件通常不在 input 目录里，灌画布会整节点红框 → 导出即默认跳过（bypass）
+            template[nid]["mode"] = 4
 
     if not seed_cfg.get("model"):
         warnings.append("工作流没有 UNETLoader，运行时无法注入视频模型")

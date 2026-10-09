@@ -875,7 +875,8 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             const widgets = info.node.widgets || [];
             info.out = {
                 id: info.id, type: info.node.type, pos: [0, 0], size: [info.node.size[0], info.node.size[1]],
-                flags: info.node.flags || {}, mode: info.node.mode || 0, order: (info.def._meta || {}).order || 0,
+                flags: info.node.flags || {}, mode: Number.isInteger(info.def.mode) ? info.def.mode : (info.node.mode || 0),
+                order: (info.def._meta || {}).order || 0,
                 properties: {},
                 // 按节点自身 widget 顺序取值：createNode 出来的节点只有带默认值的 widgets，
                 // widgets_values 要 configure / serialize 才填 → 从它取会整批丢值，画布只剩节点默认值

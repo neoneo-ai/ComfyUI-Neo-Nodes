@@ -32,7 +32,7 @@ multi_frame: true
 | 参考视频 | 3 | `{{REF_VIDEO_1..3}}` | `LoadVideo → GetVideoComponents → ref_videos.ref_video_0..2` |
 | 参考音频 | 3 | `{{REF_AUDIO_1..3}}` | `LoadAudio → ref_audios.ref_audio_0..2` |
 
-未挂的槽位在渲染模板时会连同加载节点一起裁掉，所以只挂一两张图也能正常执行。
+模板只写演示槽（2 图 / 1 视频 / 1 音频）：参考数超过模板槽位时，运行时克隆加载链补齐槽位（上限 9 / 3 / 3）；未挂的槽位在渲染模板时连同加载节点一起裁掉，所以只挂一两张图也能正常执行。
 
 ## 提示词写法
 

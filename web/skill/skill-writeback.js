@@ -11,7 +11,7 @@ import { actionToast } from "../toast.js";
 import { previewWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, listGenModels, listVideoGenModels } from "../image-gen.js";
 import {
     dispatchSkillsUpdated, makeRepairDialog, loadSkill, loadSkillWorkflow,
-    buildCanvasWorkflow, arrangeCanvasNodes, copySkillAsCustom,
+    buildCanvasWorkflow, arrangeCanvasNodes, serializeCanvasPrompt, copySkillAsCustom,
     writeLog, SKILL_WRITE_LOG_LIMIT, WRITE_SOURCE_LABELS, WRITE_API_ONLY_NOTE, buildWriteChangesTable,
 } from "./skill-core.js";
 
@@ -146,7 +146,7 @@ async function writeWorkflowToSkill(id, origin, displayName) {
     if (!id) { showToast(app, "warning", "回写入技能", "技能未保存，先保存技能本体"); return false; }
     if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，回写不可用"); return false; }
     try {
-        const { output, error } = (await app.graphToPrompt()) || {};
+        const { output, error } = await serializeCanvasPrompt();
         if (error || !output || !Object.keys(output).length) {
             showToast(app, "warning", "无法回写", "画布没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
             return false;

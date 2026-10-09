@@ -252,6 +252,11 @@ function arrangeCanvasNodes(wf) {
     if (!nodes || !nodes.length) return;
     const byId = new Map(nodes.map(n => [String(n.id), n]));
     const sizeOf = (id) => (byId.get(id) || {}).size;
+    // 模板的 mode（参考视频/音频槽位默认跳过 bypass）：loadApiJson 不读 API prompt 里的 mode，灌完画布补上
+    for (const [id, node] of Object.entries(wf)) {
+        const n = byId.get(id);
+        if (n && Number.isInteger(node?.mode)) n.mode = node.mode;
+    }
     for (const cell of canvasLayout(wf, sizeOf)) {
         const node = byId.get(cell.id);
         if (node && cell.w > node.size[0]) node.setSize([cell.w, node.size[1]]);
@@ -263,6 +268,17 @@ function arrangeCanvasNodes(wf) {
     }
     app.graph.setDirtyCanvas(true, true);
     if (typeof app.canvas?.fitViewToSelectionAnimated === "function") app.canvas.fitViewToSelectionAnimated();
+}
+
+// 画布 → API prompt：graphToPrompt 跳过 mode 2（NEVER）与 mode 4（BYPASS）的节点，参考视频/音频槽位默认跳过 → 取前临时启用，取完还原
+async function serializeCanvasPrompt() {
+    const slots = (app.graph?._nodes || []).filter((n) => (n.type === "LoadVideo" || n.type === "LoadAudio") && n.mode === 4);
+    try {
+        for (const n of slots) n.mode = 0;
+        return (await app.graphToPrompt()) || {};
+    } finally {
+        for (const n of slots) n.mode = 4;
+    }
 }
 
 /** localStorage 按技能 id 关联的追加式记录（新→旧，每技能上限 limit 条） */
@@ -501,7 +517,7 @@ export {
     dispatchSkillsUpdated, stopPointerBubble, makeRepairDialog,
     listSkills, loadSkill, loadSkillWorkflow, saveSkill, deleteSkill, uploadSkill,
     listSkillFiles, loadSkillFile, saveSkillFile, deleteSkillFile, resetSkillGenConfig,
-    workflowParamValues, buildCanvasWorkflow, arrangeCanvasNodes,
+    workflowParamValues, buildCanvasWorkflow, arrangeCanvasNodes, serializeCanvasPrompt,
     makeSkillLog, SKILL_WRITE_LOG_LIMIT, WRITE_SOURCE_LABELS, WRITE_API_ONLY_NOTE,
     writeLog, buildWriteChangesTable,
     escapeHtml, renderMarkdown, CATEGORY_LABELS, populateSkillOptions,

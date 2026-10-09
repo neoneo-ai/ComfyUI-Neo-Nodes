@@ -1721,6 +1721,49 @@ class TestRefSlotWriteback(unittest.TestCase):
         self.assertEqual(template["10"]["inputs"]["image"], "{{REF_IMAGE}}")
         self.assertEqual(template["20"]["inputs"]["image"], "{{REF_IMAGE}}")
 
+    def minimax_graph(self, n):
+        wf = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+            "2": {"class_type": "MiniMaxH3ReferenceToVideo",
+                  "inputs": {"clip": ["1", 0], "prompt": "p", "width": 512, "height": 512, "length": 24}},
+        }
+        for k in range(n):
+            nid = str(21 + k)
+            wf[nid] = {"class_type": "LoadImage", "inputs": {"image": f"{k + 1}.png"}}
+            wf["2"]["inputs"][f"ref_images.ref_image_{k}"] = [nid, 0]
+        return wf
+
+    def test_zero_based_slots_keep_numbers(self):
+        # minimax 0 基槽位：ref_image_0..2 → 占位符仍按 1 基编号
+        template, _, _ = self.skill_mod._template_from_workflow(self.minimax_graph(3))
+        self.assertEqual([template[str(21 + i)]["inputs"]["image"] for i in range(3)],
+                         ["{{REF_IMAGE_1}}", "{{REF_IMAGE_2}}", "{{REF_IMAGE_3}}"])
+
+    def video_graph(self):
+        wf = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}},
+            "2": {"class_type": "MiniMaxH3ReferenceToVideo",
+                  "inputs": {"clip": ["1", 0], "prompt": "p", "width": 512, "height": 512, "length": 24}},
+            "21": {"class_type": "LoadImage", "inputs": {"image": "1.png"}},
+            "22": {"class_type": "LoadImage", "inputs": {"image": "2.png"}},
+            "31": {"class_type": "LoadVideo", "inputs": {"file": "v.mp4"}},
+            "41": {"class_type": "GetVideoComponents", "inputs": {"video": ["31", 0]}},
+            "51": {"class_type": "LoadAudio", "inputs": {"audio": "a.wav"}},
+        }
+        wf["2"]["inputs"]["ref_images.ref_image_0"] = ["21", 0]
+        wf["2"]["inputs"]["ref_images.ref_image_1"] = ["22", 0]
+        wf["2"]["inputs"]["ref_videos.ref_video_0"] = ["41", 0]
+        wf["2"]["inputs"]["ref_audios.ref_audio_0"] = ["51", 0]
+        return wf
+
+    def test_video_and_audio_slots_export_disabled(self):
+        # 参考视频/音频槽位导出即默认跳过（bypass mode 4，洋红底比 mute 醒目；灌画布时占位文件不存在 → 红框）；LoadImage 不受影响
+        template, _, _ = self.skill_mod._template_video_from_workflow(self.video_graph())
+        self.assertEqual(template["31"].get("mode"), 4)
+        self.assertEqual(template["51"].get("mode"), 4)
+        self.assertIsNone(template["21"].get("mode"))
+        self.assertEqual(template["41"].get("mode"), None)
+
 
 if __name__ == '__main__':
     unittest.main()

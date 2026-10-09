@@ -949,26 +949,32 @@ def _prune_unfilled(graph: dict, unfilled: set) -> None:
                 dead.add(nid)         # 纯连线节点被裁空 → 该中转节点也失效
 
 
-_AUTOGROW_SLOT_KEY_RE = re.compile(r"^[a-z_]+\.image_(\d+)$")
-_REF_SLOT_LIMIT = 17   # TextEncodeQwenImage21 的 images Autogrow 名字数（image_1..17）
+_AUTOGROW_SLOT_KEY_RE = re.compile(r"^([a-z_]+)\.([a-z_]+)_(\d+)$")
+_REF_SLOT_LIMIT = 17   # Autogrow 名字数上限（TextEncodeQwenImage21 的 images.image_1..17）
+
+# Autogrow 槽位词干 → 参考列表键；参考加载节点 → 写素材名的 widget
+_SLOT_STEMS = {"image": "ref_images", "ref_image": "ref_images",
+               "video": "ref_videos", "ref_video": "ref_videos",
+               "audio": "ref_audios", "ref_audio": "ref_audios"}
+_LOADER_WIDGETS = {"LoadImage": "image", "LoadVideo": "file", "LoadAudio": "audio"}
 
 
-def _autogrow_slot_keys(graph: dict, nid: str) -> dict:
-    """节点自身的 Autogrow 图片输入键：槽序号 -> 输入键名。"""
-    keys = {}
+def _slot_groups(graph: dict, nid: str) -> dict:
+    """节点自身的 Autogrow 参考输入：槽位词干 -> {槽序号: 输入键名}。"""
+    groups = {}
     for key in (graph[nid].get("inputs") or {}):
         m = _AUTOGROW_SLOT_KEY_RE.match(key)
-        if m:
-            keys[int(m.group(1))] = key
-    return keys
+        if m and m.group(2) in _SLOT_STEMS:
+            groups.setdefault(m.group(2), {})[int(m.group(3))] = key
+    return groups
 
 
 def _ref_slot_chain(graph: dict, start_id: str):
-    """槽位上游的独占参考链：LoadImage → 只喂它一家的中间节点，止于槽位直连源。
+    """槽位上游的独占参考链：加载节点（LoadImage/LoadVideo/LoadAudio）→ 只喂它一家的中间节点，止于槽位直连源。
 
-    上游不是 LoadImage（链头多入口 / 非图片源）时返回 None，该槽不作为克隆原型。"""
+    上游不是加载节点（链头多入口 / 非参考源）时返回 None，该槽不作为克隆原型。"""
     head = start_id
-    while graph.get(head, {}).get("class_type") != "LoadImage":
+    while graph.get(head, {}).get("class_type") not in _LOADER_WIDGETS:
         links = [v[0] for v in (graph.get(head, {}).get("inputs") or {}).values()
                  if isinstance(v, list) and len(v) == 2]
         if len(links) != 1:
@@ -989,39 +995,40 @@ def _ref_slot_chain(graph: dict, start_id: str):
 
 
 def _expand_ref_slots(graph: dict, params: dict) -> None:
-    """参考图张数超过模板已有槽位时，克隆最高已有槽的链补到 Autogrow 的 images.image_k。
+    """参考数超过模板已有槽位时，克隆最高已有槽的链补到 Autogrow 的 prefix.stem_k。
 
-    模板只写演示用的前几槽，容量由 config.json 的 max_refs 声明（resolve_request 已按它截断）。"""
-    names = params.get("ref_images") or []
-    consumers = [(nid, _autogrow_slot_keys(graph, nid))
-                 for nid in graph if isinstance(graph[nid], dict)]
-    consumers = [(nid, keys) for nid, keys in consumers if keys]
-    if len(names) < 2 or not consumers:
-        return
-    nid, keys = max(consumers, key=lambda kv: max(kv[1]))
-    if len(keys) >= len(names):
-        return
-    top = max(keys)
-    src = (graph[nid].get("inputs") or {}).get(keys[top])
-    if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
-        return
-    chain = _ref_slot_chain(graph, src[0])
-    if not chain:
-        return
-    prefix = keys[top].rsplit(".image_", 1)[0]
+    模板只写演示用的前几槽，容量由 config.json 的 max_refs 声明（resolve_request 已按它截断）。
+    槽基址取模板已有最小序号：Qwen 1 基（image_1），minimax 0 基（ref_image_0）。"""
     next_id = max((int(nid) for nid in graph if str(nid).isdigit()), default=0) + 1
-    for k in range(top + 1, min(len(names), _REF_SLOT_LIMIT) + 1):
-        new_ids = [str(next_id + i) for i in range(len(chain))]
-        next_id += len(chain)
-        mapping = dict(zip(chain, new_ids))
-        for old, new in mapping.items():
-            node = copy.deepcopy(graph[old])
-            for key, value in list(node["inputs"].items()):
-                if isinstance(value, list) and len(value) == 2 and value[0] in mapping:
-                    node["inputs"][key] = [mapping[value[0]], value[1]]
-            graph[new] = node
-        graph[new_ids[0]]["inputs"]["image"] = names[k - 1]
-        graph[nid]["inputs"][f"{prefix}.image_{k}"] = [new_ids[0], 0]
+    for nid in list(graph):
+        if not isinstance(graph[nid], dict):
+            continue
+        for stem, keys in _slot_groups(graph, nid).items():
+            names = params.get(_SLOT_STEMS[stem]) or []
+            if len(names) <= len(keys):
+                continue
+            top_key = keys[max(keys)]
+            src = (graph[nid].get("inputs") or {}).get(top_key)
+            if not (isinstance(src, list) and len(src) == 2 and src[0] in graph):
+                continue
+            chain = _ref_slot_chain(graph, src[0])
+            if not chain:
+                continue
+            base = min(keys)
+            prefix = top_key.rsplit(".", 1)[0]
+            for i in range(base + len(keys), base + min(len(names), _REF_SLOT_LIMIT)):
+                new_ids = [str(next_id + j) for j in range(len(chain))]
+                next_id += len(chain)
+                mapping = dict(zip(chain, new_ids))
+                for old, new in mapping.items():
+                    node = copy.deepcopy(graph[old])
+                    for key, value in list(node["inputs"].items()):
+                        if isinstance(value, list) and len(value) == 2 and value[0] in mapping:
+                            node["inputs"][key] = [mapping[value[0]], value[1]]
+                    graph[new] = node
+                head = graph[new_ids[0]]
+                head["inputs"][_LOADER_WIDGETS[head["class_type"]]] = names[i - base]
+                graph[nid]["inputs"][f"{prefix}.{stem}_{i}"] = [mapping[src[0]], 0]
 
 
 def _next_graph_id(graph: dict) -> str:

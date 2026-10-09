@@ -15,7 +15,7 @@ import {
     dispatchSkillsUpdated, stopPointerBubble, listSkills, loadSkill, saveSkill, deleteSkill,
     uploadSkill, listSkillFiles, loadSkillFile, saveSkillFile, deleteSkillFile,
     loadSkillWorkflow, workflowParamValues, populateSkillOptions, CATEGORY_LABELS,
-    renderMarkdown, SKILL_CHANGED_EVENT, copySkillAsCustom,
+    renderMarkdown, SKILL_CHANGED_EVENT, copySkillAsCustom, serializeCanvasPrompt,
 } from "./skill/skill-core.js";
 import {
     showSkillWriteLogDialog, openSkillWorkflowInMainUi, openSkillWorkflowOnCanvas,
@@ -361,7 +361,7 @@ function buildSkillManagementButtons(onClose) {
         e.stopPropagation();
         onClose();
         try {
-            const { output, error } = (await app.graphToPrompt()) || {};
+            const { output, error } = await serializeCanvasPrompt();
             if (error || !output || !Object.keys(output).length) {
                 showToast(app, "warning", "无法导出", "画布上没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
                 return;
@@ -1151,7 +1151,7 @@ function createSkillManager(host, { showClose = true, showCanvasBtn = true } = {
         canvasBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
             try {
-                const { output, error } = (await app.graphToPrompt()) || {};
+                const { output, error } = await serializeCanvasPrompt();
                 if (error || !output || !Object.keys(output).length) {
                     showToast(app, "warning", "无法导出", "画布上没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
                     return;

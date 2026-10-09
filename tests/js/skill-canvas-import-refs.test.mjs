@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beforeEach } from "node:test";
 import { resetEnv, mockRoute, mockObjectInfo, clearRoutes, jsonResponse, sleep, click } from "./setup.mjs";
-import { appState } from "./mocks/comfy-app.mjs";
+import { app, appState } from "./mocks/comfy-app.mjs";
 
 const QWEN_TEMPLATE = {
     "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
@@ -121,5 +121,83 @@ test("导入到画布：{{CONTROL_IMAGE}} 按 config 的 control_ref 换成实�
     for (const node of Object.values(wf)) {
         const v = node.inputs.image;
         assert.ok(typeof v !== "string" || !v.includes("{{"), "LoadImage 不应残留 {{占位符}}");
+    }
+});
+
+// minimax r2v 演示模板：2 图 / 1 视频 / 1 音频槽，视频与音频槽导出即默认禁用（mode 2 = NEVER）
+const MINIMAX_TEMPLATE = {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: "{{MODEL}}" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: "{{TEXT_ENCODER}}" } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "{{VAE}}" } },
+    "4": { class_type: "VAELoader", inputs: { vae_name: "{{AUDIO_VAE}}" } },
+    "5": { class_type: "MiniMaxH3ReferenceToVideo", inputs: {
+        clip: ["2", 0], vae: ["3", 0], audio_vae: ["4", 0], prompt: "{{PROMPT}}",
+        width: "{{WIDTH}}", height: "{{HEIGHT}}", length: "{{LENGTH}}",
+        "ref_images.ref_image_0": ["21", 0], "ref_images.ref_image_1": ["22", 0],
+        "ref_videos.ref_video_0": ["41", 0], "ref_audios.ref_audio_0": ["51", 0] } },
+    "7": { class_type: "KSampler", inputs: { model: ["1", 0], seed: "{{SEED}}", steps: "{{STEPS}}",
+        positive: ["5", 0], negative: ["5", 0], latent_image: ["5", 1] } },
+    "8": { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["7", 0] } },
+    "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+    "10": { class_type: "VAEDecodeAudio", inputs: { samples: ["8", 1], vae: ["4", 0] } },
+    "11": { class_type: "CreateVideo", inputs: { images: ["9", 0], fps: 24, audio: ["10", 0] } },
+    "21": { class_type: "LoadImage", inputs: { image: "{{REF_IMAGE_1}}" } },
+    "22": { class_type: "LoadImage", inputs: { image: "{{REF_IMAGE_2}}" } },
+    "31": { class_type: "LoadVideo", mode: 4, inputs: { file: "{{REF_VIDEO_1}}" } },
+    "41": { class_type: "GetVideoComponents", inputs: { video: ["31", 0] } },
+    "51": { class_type: "LoadAudio", mode: 4, inputs: { audio: "{{REF_AUDIO_1}}" } },
+};
+const MINIMAX_CONFIG = { model: "m.safetensors", text_encoder: "clip.safetensors",
+    vae: "vvae.safetensors", audio_vae: "avae.safetensors",
+    default_ratio: "16:9", base_resolution: 1024, steps: 20, max_refs: 9 };
+
+async function openVideoPopup() {
+    const { createSkillDetailPopup } = await import("../../web/skill.js");
+    mockRoute("/rs_prompts/load_skill", () => jsonResponse({
+        id: "minimax_h3_r2v", name: "MiniMax H3 R2V", content: "body",
+        files: [{ name: "skill.md", size: 5 }], gen_image: false, gen_video: true,
+        requires_ref: true, multi_turn: false, tags: [], category: "video_gen",
+    }));
+    mockRoute("/rs_prompts/load_skill_file", () => jsonResponse({ file: "skill.md", content: "body" }));
+    mockRoute("/neo_image_gen/skill_workflow", () => jsonResponse({ skill_id: "minimax_h3_r2v", workflow: MINIMAX_TEMPLATE }));
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: ["clip.safetensors"], vae: ["vvae.safetensors"], loras: [] }));
+    mockRoute("/neo_video_gen/settings", () => jsonResponse({ video_model: "m.safetensors", video_text_encoder: "clip.safetensors", video_vae: "vvae.safetensors" }));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: ["m.safetensors"], text_encoders: [], vae: [], loras: [] }));
+    mockRoute("/neo_image_gen/skill_config", (b, call) => call.method === "GET" ? jsonResponse(MINIMAX_CONFIG) : jsonResponse({ success: true }));
+    mockObjectInfo({ LoadImage: { input: { required: { image: [["example.png", "other.png"], { image_upload: true }] } } } });
+    const popup = createSkillDetailPopup();
+    await popup.openExisting("minimax_h3_r2v", "preset");
+    await sleep(80);
+    return popup;
+}
+
+test("导入到画布：参考视频/音频槽位带 mode 4（bypass 跳过，占位文件缺失不红框）", async () => {
+    await openVideoPopup();
+    const wf = await importToCanvas();
+    assert.equal(wf["31"].mode, 4, "LoadVideo 参考槽应默认跳过");
+    assert.equal(wf["51"].mode, 4, "LoadAudio 参考槽应默认跳过");
+    assert.equal(wf["21"].mode, undefined, "LoadImage 参考槽不跳过（已换成实际图片）");
+    assert.equal(wf["31"].inputs.file, "{{REF_VIDEO_1}}", "跳过节点保留占位串，回写时还原槽位");
+});
+
+test("导入到画布：模板的 mode 灌上画布节点（loadApiJson 不读 mode，重排前补上）", async () => {
+    const nodes = Object.keys(MINIMAX_TEMPLATE).map((id) => ({
+        id: Number(id), type: MINIMAX_TEMPLATE[id].class_type, mode: 0,
+        size: [240, 120], pos: [0, 0],
+        setPos(x, y) { this.pos = [x, y]; },
+        setSize(s) { this.size = s; },
+    }));
+    appState.graph = { _nodes: nodes, setDirtyCanvas() {} };
+    app.canvas = { fitViewToSelectionAnimated() {} };
+    try {
+        await openVideoPopup();
+        await importToCanvas();
+        const modeOf = (id) => nodes.find((n) => String(n.id) === id).mode;
+        assert.equal(modeOf("31"), 4, "LoadVideo 槽位灌成跳过（不渲染红框）");
+        assert.equal(modeOf("51"), 4, "LoadAudio 槽位灌成跳过");
+        assert.equal(modeOf("21"), 0, "模板无 mode 的节点保持启用");
+    } finally {
+        appState.graph = null;
+        app.canvas = null;
     }
 });
