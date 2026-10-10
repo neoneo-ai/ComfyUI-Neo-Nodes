@@ -5,13 +5,14 @@
 
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
-import { getImageHeight, getThumbnailSrc, isImageFile } from "./gallery-utils.js";
+import { getImageHeight, getThumbnailSrc, isImageFile, isAudioFile, getAudioSrc, renderWaveform, decorativeHeights } from "./gallery-utils.js";
 import { DIRECTOR_ASPECTS } from "./director.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
 import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig, getGenSettings } from "./image-gen.js";
+import { requestVoiceGeneration, watchVoiceTask, cancelVoiceTask, buildVoiceRequest, VOICE_SKILL_ID } from "./voice-gen.js";
 import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listPrompts, loadPrompt } from "./prompt-service.js";
 import { createQuickInputHistory } from "./quick-input-history.js";
 import { openGallerySidebar, grabDataType, copyGalleryToInput, uploadLocalFiles } from "./media-transfer.js";
@@ -2084,9 +2085,192 @@ export function openImageEditDialog(gallery, image, subfolder) {
 }
 
 
-/** 素材卡片「⋯」菜单里的生成入口（角色图 / 九宫格分镜图 / 图片编辑），由 gallery-card.js 展开使用。 */
+/** 解码音频真实峰值重绘波形（一次性开销，失败保留装饰波形）。 */
+async function decodeAudioPeaks(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const actx = new AC();
+    if (actx.state === "suspended") await actx.resume().catch(() => {});
+    const audioBuf = await actx.decodeAudioData(buf);
+    const data = audioBuf.getChannelData(0);
+    const n = 60, step = Math.max(1, Math.floor(data.length / n));
+    const peaks = new Array(n);
+    for (let i = 0; i < n; i++) {
+        let peak = 0; const s = i * step;
+        for (let j = s; j < s + step && j < data.length; j += 8) {
+            const v = Math.abs(data[j]);
+            if (v > peak) peak = v;
+        }
+        peaks[i] = Math.min(1, peak);
+    }
+    actx.close();
+    return peaks;
+}
+
+/** 波形 + 播放控件（参考音频 / 结果音频共用）：装饰波形起步，首次播放解码真实峰值重绘，
+ *  播放时按进度填充；自带独立 Audio 播放器，不干扰画廊卡片的共享播放器。 */
+function voiceAudioWidget(url, seedStr) {
+    const wrap = $el("div", { className: "neo-gallery-voice-audio" });
+    const playBtn = $el("div", { className: "neo-gallery-audio-play-btn", title: "播放 / 暂停" }, ["\u25B6"]);
+    const canvas = $el("canvas", { className: "neo-gallery-audio-waveform" });
+    wrap.appendChild(playBtn);
+    wrap.appendChild(canvas);
+    const bars = decorativeHeights(seedStr);
+    const draw = (progress) => renderWaveform(canvas, bars, progress);
+    draw(0);
+    let player = null;
+    wrap._stop = () => { if (player) player.pause(); };
+    playBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (!player) {
+            player = new Audio(url);
+            player.preload = "metadata";
+            player.addEventListener("timeupdate", () => {
+                const dur = isFinite(player.duration) ? player.duration : 0;
+                draw(dur > 0 ? Math.min(1, player.currentTime / dur) : 0);
+            });
+            player.addEventListener("ended", () => { playBtn.textContent = "\u25B6"; draw(1); });
+        }
+        if (!player.paused) { player.pause(); playBtn.textContent = "\u25B6"; return; }
+        playBtn.textContent = "\u23F8";
+        player.play().catch(() => { playBtn.textContent = "\u25B6"; });
+        if (!canvas.dataset.decoded) {
+            decodeAudioPeaks(url).then((peaks) => {
+                bars.length = 0; bars.push(...peaks);
+                canvas.dataset.decoded = "1";
+                const dur = isFinite(player.duration) ? player.duration : 0;
+                draw(dur > 0 ? Math.min(1, player.currentTime / dur) : 0);
+            }).catch(() => {});
+        }
+    };
+    return wrap;
+}
+
+/** 音频卡片「🔊 生成语音」弹窗：用参考音频的音色（CosyVoice 零样本克隆）朗读目标文字，
+ *  窗口内显示排队/合成进度，完成后显示结果波形并可直接播放试听。参考音频经 copy_to_input
+ *  落 input/ 作为 {{REF_AUDIO_1}}，目标文字走 {{PROMPT}}，产物落 Output/Voice。 */
+function openVoiceDialog(gallery, image, subfolder) {
+    document.querySelector('.neo-gallery-voice-modal-overlay')?.remove();
+    const pathLabel = (subfolder ? `${subfolder}/` : "") + (image.filename || image.name || "");
+
+    const statusBox = $el("div", { className: "neo-gallery-cs-status" });
+    const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
+    const targetInput = $el("textarea", {
+        className: "neo-gallery-story-input",
+        rows: 4,
+        placeholder: "要说的文字（用参考音频的音色朗读）……"
+    });
+
+    let running = false, cancelId = null, cancelRequested = false, refName = null;
+    const widgets = [];
+    const stopVoiceAudio = () => { widgets.forEach((w) => w._stop()); };
+
+    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-voice-modal-overlay" });
+    const close = () => { overlay.remove(); stopVoiceAudio(); };
+    const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
+    const btn = (label, onclick, primary = false) =>
+        $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
+
+    const renderIdle = () => {
+        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+    };
+    const renderRunning = (label, progress) => {
+        const hasSteps = !!(progress && progress.max > 0);
+        const fillEl = $el("div", { className: "neo-gallery-cs-progress-fill" });
+        if (hasSteps) fillEl.style.width = `${Math.max(0, Math.min(100, (progress.value / progress.max) * 100))}%`;
+        else fillEl.classList.add("neo-gallery-cs-progress-indeterminate");
+        const bar = $el("div", { className: "neo-gallery-cs-progress" }, [fillEl]);
+        fill(statusBox, $el("div", { className: "neo-gallery-cs-running" }, [
+            $el("span", { className: "neo-gallery-cs-spinner" }),
+            $el("span", { textContent: label })]), bar);
+        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelVoiceTask(cancelId); }));
+    };
+    const renderSuccess = (final) => {
+        const audios = final.audios || [];
+        const box = $el("div", { className: "neo-gallery-voice-result" });
+        if (audios.length) {
+            const w = voiceAudioWidget(audios[0].url, audios[0].filename);
+            widgets.push(w);
+            box.appendChild(w);
+        }
+        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成语音，点波形播放试听；产物在 Output/Voice。" }));
+        fill(actionsBox, btn("打开输出目录", () => openGallerySidebar("Voice", [])), btn("关闭", close, true));
+    };
+    const renderError = (message) => {
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
+        fill(actionsBox, btn("重试", start), btn("关闭", close));
+    };
+
+    const start = async () => {
+        if (running) return;
+        const text = targetInput.value.trim();
+        if (!text) { renderError("请先输入要说的文字"); return; }
+        running = true; cancelRequested = false;
+        renderRunning("排队中…");
+        try {
+            if (!refName) refName = await copyImageToInput(image, subfolder);
+            const snap = await requestVoiceGeneration(buildVoiceRequest(refName, text));
+            cancelId = snap.task_id;
+            renderRunning("排队中…");
+            const final = await watchVoiceTask(snap.task_id, (s) => {
+                renderRunning(s.status === "running" ? "合成中…" : "排队中…", s.progress);
+            }, () => cancelRequested);
+            if (final.status === "succeeded") renderSuccess(final);
+            else if (final.status === "cancelled") renderError("已取消");
+            else renderError(final.error || "生成失败");
+        } catch (e) {
+            renderError(String(e?.message || e));
+        } finally {
+            running = false; cancelId = null;
+        }
+    };
+
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+
+    const refWidget = voiceAudioWidget(getAudioSrc(image, subfolder), image.filename);
+    widgets.push(refWidget);
+
+    overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
+        $el("div", { className: "neo-gallery-story-titlebar" }, [
+            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDD0A 生成语音（CosyVoice 克隆）" }),
+            $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
+        ]),
+        $el("div", { className: "neo-gallery-story-ref" }, [
+            refWidget,
+            $el("div", { className: "neo-gallery-story-ref-info" }, [
+                $el("div", { className: "neo-gallery-story-ref-label", textContent: "参考音源 · 用它的音色朗读" }),
+                $el("div", { className: "neo-gallery-story-path", title: pathLabel, textContent: pathLabel })
+            ])
+        ]),
+        $el("div", { className: "neo-gallery-story-field-label", textContent: "要说的文字" }),
+        targetInput,
+        statusBox,
+        actionsBox
+    ]));
+
+    renderIdle();
+    // 预填默认提示词（config.json 的 default_prompt），方便直接测试；用户已输入时不覆盖
+    getSkillGenConfig(VOICE_SKILL_ID).then((cfg) => {
+        const def = typeof cfg?.default_prompt === "string" ? cfg.default_prompt.trim() : "";
+        if (def && !targetInput.value.trim()) targetInput.value = def;
+    });
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+    document.addEventListener("keydown", onKey);
+    const origRemove = overlay.remove.bind(overlay);
+    overlay.remove = () => { document.removeEventListener("keydown", onKey); stopVoiceAudio(); origRemove(); };
+    document.body.appendChild(overlay);
+}
+
+/** 素材卡片「⋯」菜单里的生成入口（角色图 / 九宫格分镜图 / 图片编辑 / 语音克隆），由 gallery-card.js 展开使用。 */
 export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
     return [
+        isAudioFile(image.filename) ? $el("div", {
+            className: "neo-gallery-collect-item",
+            title: "用这段音频的音色（CosyVoice 零样本克隆）朗读你输入的文字，弹窗内试听结果波形",
+            onclick: () => { card._removeCollectMenu(); openVoiceDialog(gallery, image, subfolder); }
+        }, ["\uD83D\uDD0A 生成语音"]) : null,
         isImageFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
             title: "用 Qwen Image 2.1 基于这张人像生成头特写+正/侧/背四视图角色设定图；窗口内可看进度与结果预览，完成后拖入配方的 👤 角色参考图",

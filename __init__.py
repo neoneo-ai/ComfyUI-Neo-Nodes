@@ -42,6 +42,9 @@ if __package__ not in (None, ""):
     # Import video generation settings module (registers /neo_video_gen/* routes; 独立于生图设置文件)
     from . import video_gen
 
+    # Import voice generation module (CosyVoice 零样本克隆，独立 /neo_voice/* 路由与任务表)
+    from . import voice_gen
+
     # Import from prompts module
     from .prompts import (
         NODE_CLASS_MAPPINGS as PROMPT_CLASS_MAPPINGS,

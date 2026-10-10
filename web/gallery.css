@@ -2874,6 +2874,24 @@ Accordion Section Buttons (Clear)
     color: #b8c2ce;
 }
 
+/* 语音弹窗的波形 + 播放控件（参考音源 / 结果音频共用），复用音频卡片的播放按钮与波形类 */
+.neo-gallery-voice-audio {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 10px;
+    background: linear-gradient(160deg, rgba(30, 45, 70, 0.92), rgba(15, 22, 38, 0.96));
+    border: 1px solid rgba(120, 200, 255, 0.25);
+    border-radius: 6px;
+}
+.neo-gallery-voice-audio .neo-gallery-audio-waveform {
+    height: 100%;
+}
+.neo-gallery-voice-result {
+    margin-bottom: 8px;
+}
+
 /* 宫格数下拉：与故事框同款底色/边框，窄一些 */
 .neo-gallery-story-grid {
     padding: 6px 8px;
