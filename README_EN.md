@@ -29,7 +29,7 @@ Available right after install and restart, with no model or API key configured:
 - **🔧 Workflow Repair** — one-click fix for broken model paths
 - **📥 Model Hub** — ModelScope / Hugging Face dual-source search with resumable downloads (ModelScope listing and search work anonymously)
 - **🔲 Neo Reference Grid / 🧩 Neo Grid Split** — reference-image grid management, automatic storyboard grid splitting
-- **🧊 Neo Studio** — standalone page (`neo-studio.bat` or `http://127.0.0.1:8188/neo-studio`): Assets, Director, Skills, Settings
+- **🧊 Neo Studio** — standalone page (`neo-studio.bat` or `http://127.0.0.1:8188/neo-studio`; `neo-studio-app.bat` opens it in its own window): Assets, Director, Skills, Settings
 
 LLM enhancement (✨ generate / image captioning / translate & classify) is the optional second step;
 the three modes are documented in [docs/llm.md](docs/llm.md).
@@ -110,7 +110,13 @@ Then restart ComfyUI.
 
 ## Neo Studio (Standalone App)
 
-A canvas-independent page at `http://127.0.0.1:8188/neo-studio` (or run `neo-studio.bat`). Tabs: Assets (full Gallery), Director (recipe list + editor + full-film generation), Skills, Settings.
+A canvas-independent page at `http://127.0.0.1:8188/neo-studio` (or run `neo-studio.bat`). Tabs: Assets (full Gallery), Director (recipe list + editor + full-film generation), Skills, Settings (image / video / LLM / log).
+
+For a standalone window, double-click `neo-studio-app.vbs`: the same page runs in a WebView2 window with
+no console window, geometry is remembered, and Studio state survives restarts. Needs `pywebview`
+(`pip install pywebview`); the Windows WebView2 Runtime is already installed on most systems.
+ComfyUI's backend log is shown under Settings → Log, the shell's own startup trace goes to
+`tmp/studio_shell.log`; `neo-studio-app.bat` is the debug entry with a console.
 
 ## Documentation
 

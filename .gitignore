@@ -22,6 +22,7 @@ recipes/.thumbs/
 skills/custom/
 configs/skill_overrides/
 configs/backyard_oss.json
+configs/studio_window.json
 tools/output/
 node_modules/
 tmp/

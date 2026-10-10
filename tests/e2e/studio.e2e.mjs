@@ -109,14 +109,27 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         const footerBtns = await page.locator(".ns-skills .rs-skill-footer-btn").allTextContents();
         assert.ok(!footerBtns.some((t) => t.includes("从画布")), "技能页不应有「从画布」按钮");
 
-        // 设置视图：生图/生视频表单（.rs-gen-settings）+ LLM 入口，且无对象串渲染
+        // 设置视图：默认停在 LLM tab，切到生图 tab 后表单（.rs-gen-settings）才可见
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-section .rs-btn, .ns-settings-section button", { timeout: 15000 });
         const sections = await page.locator(".ns-settings-section").count();
-        assert.equal(sections, 3);
+        assert.equal(sections, 4);
+        await page.click(".ns-settings-tab[data-key='gen']");
         await page.waitForSelector(".ns-settings .rs-gen-settings", { timeout: 15000 });
         assert.equal(await page.locator(".ns-settings .rs-gen-settings").count(), 2);
         assert.ok(!((await page.locator(".ns-settings").textContent()) || "").includes("[object Object]"));
+
+        // 日志 tab：轮询 /neo_studio/log 渲染 ComfyUI 控制台，ANSI 色码应被剥掉
+        await page.click(".ns-settings-tab[data-key='log']");
+        await page.waitForFunction(() => document.querySelector(".ns-log").textContent.trim().length > 0,
+            null, { timeout: 15000 });
+        assert.ok(!(await page.locator(".ns-log").textContent()).includes("\x1b["), "日志不应带 ANSI 色码");
+
+        // 手动往上翻看时，2 秒轮询不应把滚动条拉回底部
+        await page.evaluate(() => { document.querySelector(".ns-log").scrollTop = 0; });
+        await page.waitForTimeout(2500);
+        assert.ok((await page.evaluate(() => document.querySelector(".ns-log").scrollTop)) < 40,
+            "翻看时不应被轮询拉回底部");
 
         // 切回素材：视图缓存保留
         await page.evaluate(() => { location.hash = "#/gallery"; });

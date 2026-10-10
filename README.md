@@ -30,7 +30,7 @@ LLM 可在 ComfyUI 进程内零依赖运行。
 - **🔧 工作流修复** — 模型路径失效时按文件名匹配磁盘真实文件一键修复
 - **📥 模型库** — ModelScope / Hugging Face 双源搜索与断点续传下载（ModelScope 列表与搜索匿名可用）
 - **🔲 Neo Reference Grid / 🧩 Neo Grid Split** — 参考图宫格管理、分镜宫格图自动切格
-- **🧊 Neo Studio** — 独立页面（`neo-studio.bat` 或 `http://127.0.0.1:8188/neo-studio`）：素材 / 导演 / 技能 / 设置
+- **🧊 Neo Studio** — 独立页面（`neo-studio.bat` 或 `http://127.0.0.1:8188/neo-studio`；`neo-studio-app.bat` 是独立窗口版）：素材 / 导演 / 技能 / 设置
 
 LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，三模式配置见 [docs/llm.md](docs/llm.md)。
 
@@ -162,9 +162,14 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 - **导演**：配方列表（只列多段导演配方）+ 导演编辑器（与画布内一致）+ 整片生成面板
   （带进度 / 取消；只读时间轴上勾选段块后只生成勾选的段，采样中实时预览，成片自动记进配方「结果」区）
 - **技能**：统一技能管理（与顶栏「🗂 技能管理」同组件，左列表 + 右详情直接展开）
-- **设置**：生图 / 生视频 / LLM 设置
+- **设置**：生图 / 生视频 / LLM 设置 / 日志（ComfyUI 控制台）
 
 依赖画布的功能（如「发送到节点」）在 Studio 内自动降级为提示。
+
+想要独立窗口（不占浏览器标签页），双击 `neo-studio-app.vbs`：同一个页面跑在 WebView2 窗口里，
+没有控制台黑窗，窗口大小位置会记住，设置与素材库状态在重开后保留。需要 `pywebview`（`pip install pywebview`），
+Windows 自带 WebView2 Runtime 即可。ComfyUI 的后台日志在「设置 → 日志」里看，壳自己的启动过程落在
+`tmp/studio_shell.log`；`neo-studio-app.bat` 是带控制台的调试入口。
 
 ---
 

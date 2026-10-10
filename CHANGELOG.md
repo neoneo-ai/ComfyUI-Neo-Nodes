@@ -4,6 +4,16 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
 
 ## [Unreleased]
 
+- Neo Studio desktop shell: `neo-studio-app.vbs` opens the Studio page in a WebView2 window with no console
+  window (`neo_studio_app.py`, optional `pywebview` extra); the shell runs under `pythonw`, its startup trace
+  goes to `tmp/studio_shell.log` (which also keeps the pywebview logger off the missing `stderr` that aborts
+  window creation); messages go to a system dialog, ComfyUI is spawned
+  without a child console, window geometry is persisted in `configs/studio_window.json`, Studio `localStorage`
+  survives restarts, external links go to the system browser, blob downloads are allowed, and a second launch
+  exits instead of opening a second window.
+- Studio Settings gains a Log tab (`GET /neo_studio/log` reads the `app.logger` ring buffer), so the ComfyUI
+  console is visible without a console window. The panel fills the main area, and auto-scrolls only while pinned
+  to the bottom, so scrolling up to read survives the 2s poll.
 - Skills support video and audio reference slots.
 - Qwen Image 2.1 pose editing with ControlNet.
 - Skill manager: `workflow.json` is edited directly in the canvas; preset writeback through overrides with auto-copy; workflow skills are excluded from prompt enhancement; skill detail UI reworked.

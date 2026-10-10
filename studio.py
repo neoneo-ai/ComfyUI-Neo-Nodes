@@ -9,6 +9,7 @@ Studio 页面（web/studio/index.html）由 /neo-studio 短路径提供（同 /e
   任务跟踪与 h3_segment 同一套做法；导演节点本身不记账，成功后由这里把成片记进配方「结果」区。
 - /neo-studio：Studio 页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。
 - /neo_studio/version：插件 + ComfyUI 版本，供 Studio 首页展示升级信息。
+- /neo_studio/log：ComfyUI 控制台日志（app.logger 环形缓冲），Studio「设置 → 日志」轮询用。
 """
 
 import asyncio
@@ -247,6 +248,13 @@ async def studio_version_route(request):
         "recipes": list_director_recipes(),
     })
 
+
+
+@PromptServer.instance.routes.get("/neo_studio/log")
+async def studio_log_route(request):
+    """ComfyUI 控制台日志：app.logger 的环形缓冲（300 条，拦截 stdout/stderr 与 logging）。"""
+    import app.logger
+    return web.json_response({"success": True, "entries": list(app.logger.get_logs())})
 
 
 @PromptServer.instance.routes.get("/neo_studio/mem_stats")

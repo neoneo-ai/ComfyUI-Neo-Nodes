@@ -15,7 +15,7 @@ keywords = [
     "video", "video director", "minimax", "minimax h3", "h3",
     "lora", "lora tag", "caption", "gallery", "asset library", "lightbox",
     "recipes", "workflow", "workflow repair", "model hub", "modelscope",
-    "huggingface", "civitai", "studio", "skills", "chinese",
+    "huggingface", "civitai", "studio", "skills", "chinese", "desktop",
 ]
 # 包内没有平台相关代码。加速器声明（Environment :: GPU :: ...）故意不写：
 # 节点跑在 ComfyUI 自带的 torch 上，写出来等于声称做过没做过的验证。
@@ -40,6 +40,8 @@ laya = ["laya"]
 heif = ["pillow-heif"]
 # Backyard 页面的阿里云 OSS 上传
 oss = ["oss2"]
+# 桌面壳 neo_studio_app.py（pywebview + WebView2）；普通用户走浏览器，不进 requirements.txt
+desktop = ["pywebview"]
 
 [project.urls]
 Homepage = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes"

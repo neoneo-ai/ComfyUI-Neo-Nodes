@@ -119,6 +119,7 @@ Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 
 | GET | `/neo_studio/director/{task_id}` | 整片任务快照 |
 | POST | `/neo_studio/director/{task_id}/cancel` | 取消整片任务 |
 | GET | `/neo_studio/version` | 插件 / ComfyUI 版本与导演配方列表 |
+| GET | `/neo_studio/log` | ComfyUI 控制台日志（`app.logger` 环形缓冲 300 条），Studio「设置 → 日志」轮询 |
 | POST | `/neo_studio/clear_memory` | 卸载模型并清理显存缓存 |
 
 - `only_segments` 为只读时间轴上勾选的段号文本（1 基、逗号分隔，空 = 整片）；勾选是运行期临时状态，不写进配方。

@@ -37,6 +37,9 @@ ComfyUI-Neo-Nodes/
 ├── backyard.py                # Backyard 预处理与 OSS 上传页
 ├── recipes.py                 # 配方后端 + /rs_recipes/* 路由
 ├── studio.py                  # 新影工坊后端 + /neo_studio/* 路由
+├── neo_studio_app.py          # 桌面壳（pywebview + WebView2）：拉起 ComfyUI 并托管窗口
+├── neo-studio-app.bat         # 桌面壳调试入口（带控制台）
+├── neo-studio-app.vbs         # 桌面壳双击入口（pythonw，无控制台窗口）
 ├── workflow.py                # 工作流修复 + /neo_nodes/* 路由
 ├── util.py                    # 媒体常量与共享工具
 ├── requirements.txt           # Python 依赖
@@ -105,6 +108,7 @@ ComfyUI-Neo-Nodes/
 | `backyard.py` | Backyard 页面：Gallery 预处理与 OSS 上传管理 |
 | `recipes.py` | 配方 CRUD、一键发送、导演配方与故事板、导入导出 |
 | `studio.py` | 新影工坊后端：独立页面入口与整片生成任务 |
+| `neo_studio_app.py` | 桌面壳：拉起 ComfyUI 并托管 WebView2 窗口（几何 / localStorage 持久化） |
 | `workflow.py` | 工作流模型路径修复、修复映射、技能模型建议 |
 | `util.py` | 媒体扩展名常量、媒体探测、元数据与提示词收集 |
 
@@ -223,5 +227,6 @@ V3 节点（`NeoImageGenEdit`）走 `io.Schema(description=..., search_aliases=[
 | `configs/oss_presets.json` | OSS 预设素材源配置 |
 | `configs/backyard_oss.json` | Backyard 的 OSS 配置 |
 | `configs/laya_config.json` | Laya 分类器配置 |
+| `configs/studio_window.json` | 桌面壳窗口几何（`neo_studio_app.py` 关窗时写入） |
 | `user/neo_repair_mappings.json` | 工作流修复的手动映射 |
 | `locals/zh_CN.json` | 本地化资源 |

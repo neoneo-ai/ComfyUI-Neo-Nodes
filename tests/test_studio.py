@@ -288,6 +288,23 @@ class VersionRouteTests(unittest.TestCase):
         self.assertIn("comfyui_version", data)
 
 
+class LogRouteTests(unittest.TestCase):
+    def test_log_entries(self):
+        entries = [{"t": "2026-10-10T10:00:00", "m": "Starting ComfyUI\n"}]
+        logger_mod = types.SimpleNamespace(get_logs=lambda: entries)
+        with patch.dict(sys.modules, {"app": types.SimpleNamespace(logger=logger_mod),
+                                      "app.logger": logger_mod}):
+            loop = asyncio.new_event_loop()
+            try:
+                r = loop.run_until_complete(studio.studio_log_route(types.SimpleNamespace()))
+            finally:
+                loop.close()
+        data = json.loads(r.body)
+        self.assertEqual(r.status, 200)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["entries"], entries)
+
+
 class LatestPreviewTests(_RecipeCase):
     """status 路由的 latest_preview 兜底字段 + 终态清除 + 缓存限量。"""
 

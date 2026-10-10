@@ -128,8 +128,8 @@ body {
 /* 技能详情底部操作条：基础 .rs-btn 是 flex:1（窄弹窗底部按钮行用），满幅主区里不拉伸成长条 */
 .ns-skills .rs-skill-detail-actions .rs-btn { flex: none; padding: 5px 16px; }
 
-/* 设置页：左侧 tab 切换 + 右侧内容区 */
-.ns-settings { display: flex; gap: 14px; align-items: flex-start; max-width: 860px; }
+/* 设置页：左侧 tab 切换 + 右侧内容区（占满主区高度） */
+.ns-settings { display: flex; gap: 14px; align-items: stretch; height: 100%; }
 .ns-settings-tabs { display: flex; flex-direction: column; gap: 6px; flex: none; }
 .ns-settings-tab {
     text-align: left;
@@ -143,7 +143,7 @@ body {
 }
 .ns-settings-tab:hover { background: #2a2a30; }
 .ns-settings-tab.active { background: rgba(47, 111, 237, 0.15); border-color: #2f6fed; color: #fff; }
-.ns-settings-content { flex: 1; min-width: 0; }
+.ns-settings-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .ns-settings-section {
     background: #202024;
     border: 1px solid #333;
@@ -151,3 +151,19 @@ body {
     padding: 14px 16px;
 }
 .ns-settings-section h3 { margin: 0 0 10px; font-size: 14px; color: #eee; }
+
+/* 日志页：ComfyUI 控制台环形缓冲，tab 激活时轮询 /neo_studio/log；日志区占满主区剩余空间 */
+.ns-log-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ns-log {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    background: #111214;
+    border: 1px solid #2a2a30;
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: #cfcfcf;
+    font: 12px/1.5 Consolas, Menlo, monospace;
+    white-space: pre-wrap;
+}

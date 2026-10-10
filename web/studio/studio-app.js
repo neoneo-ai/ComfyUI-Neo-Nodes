@@ -421,18 +421,37 @@ function buildSkills(el) {
     createSkillManager(el, { showClose: false, showCanvasBtn: false });
 }
 
-// ====== 设置页：左侧 tab 切换（LLM / 生图 / 生视频），默认 LLM ======
+// ====== 设置页：左侧 tab 切换（LLM / 生图 / 生视频 / 日志），默认 LLM ======
 function buildSettings(el) {
     // 三个表单工厂均返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
     const genForm = createImageGenSettingsForm();
     const videoForm = createVideoGenSettingsForm();
     const llmForm = createModelConfigForm();
 
-    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置；每个 tab 只显示对应设置区
+    // 日志面板：ComfyUI 控制台环形缓冲（app.logger 300 条），tab 激活时轮询
+    const logBody = $el("pre", { className: "ns-log" });
+    let logTimer = null;
+    let logStick = true;   // 贴底才自动滚；用户往上翻看时停住，翻回底部恢复
+
+    const logAtBottom = () =>
+        logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight <= 40;
+    logBody.addEventListener("scroll", () => { logStick = logAtBottom(); });
+
+    async function refreshLog() {
+        try {
+            const data = await (await api.fetchApi("/neo_studio/log")).json();
+            // 条目是原始 stdout，自带换行与 ANSI 色码；色码在网页里是乱码，剥掉
+            logBody.textContent = (data.entries || []).map(e => String(e.m).replace(/\x1b\[[0-9;]*m/g, "")).join("");
+            if (logStick) logBody.scrollTop = logBody.scrollHeight;
+        } catch { /* ComfyUI 未就绪时保留上次内容 */ }
+    }
+
+    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 日志；每个 tab 只显示对应设置区
     const sections = [
         { key: "llm", label: "LLM 设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "LLM 设置" }), llmForm.el]) },
         { key: "gen", label: "生图设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生图设置" }), genForm.el]) },
         { key: "video", label: "生视频设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生视频设置" }), videoForm.el]) },
+        { key: "log", label: "日志", body: $el("div", { className: "ns-settings-section ns-log-section" }, [$el("h3", { textContent: "日志" }), logBody]) },
     ];
 
     const tabs = $el("div", { className: "ns-settings-tabs" });
@@ -440,6 +459,14 @@ function buildSettings(el) {
     const showSection = (key) => {
         for (const s of sections) s.body.style.display = s.key === key ? "" : "none";
         for (const btn of tabs.children) btn.classList.toggle("active", btn.dataset.key === key);
+        if (key === "log") {
+            logStick = true;   // 重新进 tab 回到最新，之后按用户滚动位置决定
+            refreshLog();
+            logTimer = setInterval(refreshLog, 2000);
+        } else if (logTimer) {
+            clearInterval(logTimer);
+            logTimer = null;
+        }
     };
     for (const s of sections) {
         const btn = $el("button", { className: "ns-settings-tab", textContent: s.label });
