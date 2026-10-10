@@ -141,6 +141,72 @@ def _get_user_custom_dirs():
     return dirs
 
 
+# Home grid entries: built-in cards share one sort/hide list with the custom dirs.
+HOME_BUILTINS = ("Output", "Input", "local_bookmarks", "civitai_bookmarks", "Lora")
+DEFAULT_HOME_ORDER = ("Output", "Input", "local_bookmarks", "civitai_bookmarks")
+
+
+def _get_hidden_entries() -> set:
+    """Lowercased hidden entries: custom dir paths and built-in home keys."""
+    hidden = set()
+    raw = _load_settings().get("hidden_directories", [])
+    if isinstance(raw, list):
+        for h in raw:
+            if not h:
+                continue
+            hidden.add(str(h).lower())
+            try:
+                hidden.add(str(Path(h).resolve()).lower())
+            except OSError:
+                pass
+    return hidden
+
+
+def _is_home_entry_hidden(key, hidden: set) -> bool:
+    return str(key).lower() in hidden
+
+
+def _get_home_order() -> list:
+    """Unified home order: built-in cards and custom dirs in one list."""
+    settings = _load_settings()
+    dirs = settings.get("custom_directories", [])
+    if not isinstance(dirs, list):
+        dirs = [dirs] if isinstance(dirs, str) else []
+    dirs = [d for d in dirs if d]
+    stored = settings.get("home_order")
+    if not isinstance(stored, list):
+        return list(DEFAULT_HOME_ORDER) + dirs + ["Lora"]
+    order = [t for t in stored if t]
+    for d in dirs:
+        if d not in order:
+            order.append(d)
+    for b in HOME_BUILTINS:
+        if b not in order:
+            order.append(b)
+    return order
+
+
+def _order_home_dirs(directories: list, home_order: list) -> list:
+    """Sort the home listing by the unified order; entries outside the list keep their place."""
+    remaining = list(directories)
+    ordered = []
+    for token in home_order:
+        key = str(token).lower()
+        if key in ("local_bookmarks", "civitai_bookmarks"):
+            continue
+        if key == "lora":
+            group = [d for d in remaining if d["name"].lower() == "lora"
+                     or d["name"].lower().startswith("lora/")]
+        else:
+            name = Path(str(token)).name.lower()
+            group = [d for d in remaining if d["name"].lower() == name]
+        ordered.extend(group)
+        for d in group:
+            remaining.remove(d)
+    ordered.extend(remaining)
+    return ordered
+
+
 def _ensure_dirs() -> None:
     for d in (GALLERY_DIR, PRESETS_DIR, CUSTOM_DIR, THUMBNAIL_DIR, LORA_CACHE_DIR,
               CIVITAI_BOOKMARK_DIR):
@@ -906,17 +972,21 @@ async def get_gallery_list(request):
             if not rel_path_param:
                 rel_path_param = dir_name_lower[len("presets/"):]
         elif dir_name_lower == "lora" or dir_name_lower.startswith("lora/"):
+            if not _load_settings().get("civitai_lora_enabled") or _is_home_entry_hidden("Lora", _get_hidden_entries()):
+                return web.json_response({"directories": [], "total": 0})
             base = LORA_CACHE_DIR
             if not rel_path_param:
                 rel_path_param = dir_name_param[len("lora/"):]
             await _ensure_auto_cache()
         elif dir_name_lower == CIVITAI_DIR_KEY.lower() or dir_name_lower.startswith(CIVITAI_DIR_KEY.lower() + "/"):
-            if not _is_civitai_bookmark_enabled():
+            if not _is_civitai_bookmark_enabled() or _is_home_entry_hidden(CIVITAI_DIR_KEY, _get_hidden_entries()):
                 return web.json_response({"directories": [], "total": 0})
             base = CIVITAI_BOOKMARK_DIR
             if not rel_path_param and dir_name_lower != CIVITAI_DIR_KEY.lower():
                 rel_path_param = dir_name_param[len(CIVITAI_DIR_KEY) + 1:]
         else:
+            if _is_home_entry_hidden(dir_name_lower.split("/", 1)[0], _get_hidden_entries()):
+                return web.json_response({"directories": [], "total": 0})
             system = _resolve_system_dir(dir_name_param)
             if system:
                 base = system[0]
@@ -1030,9 +1100,12 @@ async def get_gallery_list(request):
         })
     
     # Original behavior: full listing (no dir_name) - process all directories using unified function
+    hidden_entries = _get_hidden_entries()
 
     # System dirs (input/output) — auto-provided by ComfyUI, read-only
     for info in _get_system_dirs():
+        if _is_home_entry_hidden(info["name"], hidden_entries):
+            continue
         resp_dir = _process_single_directory(info["path"], info["name"], "", True,
                                               include_dirs, include_items, search_mode)
         directories.append(resp_dir)
@@ -1081,7 +1154,9 @@ async def get_gallery_list(request):
                 directories.append(resp_dir)
 
     # Lora example cache (read-only; one directory per lora, mirrors the presets model)
-    if LORA_CACHE_DIR.exists():
+    # 关闭「启用 C 站 LORA」或在排序列表里隐藏 Lora 时，整个 Lora 板块不出现（已缓存目录、状态卡、封面都不加载）。
+    lora_home = bool(_load_settings().get("civitai_lora_enabled")) and not _is_home_entry_hidden("Lora", hidden_entries)
+    if lora_home and LORA_CACHE_DIR.exists():
         if include_items:
             lora_structure = _scan_gallery_entries_with_subdirs(LORA_CACHE_DIR)
         else:
@@ -1134,6 +1209,8 @@ async def get_gallery_list(request):
             oss_dirs = _oss_directories_to_gallery_dirs(oss_index)
             directories.extend(oss_dirs)
 
+    directories = _order_home_dirs(directories, _get_home_order())
+
     total = sum(len(d.get("items", [])) for d in directories)
 
     # Build response with covers if requested
@@ -1144,7 +1221,7 @@ async def get_gallery_list(request):
         # Collect cover images for all directories (max 2 per directory).
         # _collect_all_dir_covers scans root level first, then first subdir with media.
         _collect_all_dir_covers(covers, PRESETS_DIR, "presets", 2)
-        if LORA_CACHE_DIR.exists():
+        if lora_home and LORA_CACHE_DIR.exists():
             _collect_all_dir_covers(covers, LORA_CACHE_DIR, "Lora", 2, base_subfolder="Lora")
             # Each first-level lora subdir gets its own directory card with a cover
             # (first example image; pure dirs fall back to the next level, like custom dirs).
@@ -1161,6 +1238,8 @@ async def get_gallery_list(request):
             _collect_all_dir_covers(covers, dir_path, dir_name, 2)
         # System dirs (input/output) covers
         for info in _get_system_dirs():
+            if _is_home_entry_hidden(info["name"], hidden_entries):
+                continue
             _collect_all_dir_covers(covers, info["path"], info["name"], 2)
         # Collect covers from OSS directories
         if _is_oss_enabled():
@@ -2612,23 +2691,31 @@ async def save_gallery_settings(request):
             if isinstance(hidden_dirs, list) and remove_path in hidden_dirs:
                 hidden_dirs.remove(remove_path)
                 current_settings["hidden_directories"] = hidden_dirs
+            home = current_settings.get("home_order", [])
+            if isinstance(home, list) and remove_path in home:
+                home.remove(remove_path)
+                current_settings["home_order"] = home
 
-        elif action == "move":
-            move_path = data.get("path", "").strip()
-            direction = data.get("direction", "")
+        elif action == "reorder":
             dirs = current_settings.get("custom_directories", [])
-            if move_path in dirs and direction in ("up", "down"):
-                i = dirs.index(move_path)
-                j = i - 1 if direction == "up" else i + 1
-                if 0 <= j < len(dirs):
-                    dirs[i], dirs[j] = dirs[j], dirs[i]
-            current_settings["custom_directories"] = dirs
+            paths = data.get("paths") if isinstance(data.get("paths"), list) else []
+            ordered = [p for p in paths if p in dirs]
+            ordered += [d for d in dirs if d not in ordered]
+            current_settings["custom_directories"] = ordered
+            # 统一顺序表：内置卡（Output/Input/收藏/Lora）与自定义目录排在同一个列表里
+            home = []
+            for t in paths:
+                if (t in dirs or t in HOME_BUILTINS) and t not in home:
+                    home.append(t)
+            home += [d for d in ordered if d not in home]
+            home += [b for b in HOME_BUILTINS if b not in home]
+            current_settings["home_order"] = home
 
         elif action == "set_hidden":
             hide_path = data.get("path", "").strip()
             hidden = bool(data.get("hidden"))
             dirs = current_settings.get("custom_directories", [])
-            if hide_path in dirs:
+            if hide_path in dirs or hide_path in HOME_BUILTINS:
                 hidden_dirs = current_settings.get("hidden_directories", [])
                 if not isinstance(hidden_dirs, list):
                     hidden_dirs = []
@@ -2687,6 +2774,7 @@ async def get_gallery_settings(request):
     settings["civitai_api_key_set"] = bool(key)
     settings["civitai_api_key_hint"] = f"****{key[-4:]}" if len(key) >= 4 else ("****" if key else "")
     settings["civitai_proxy"] = civitai.clean_proxy(settings.get("civitai_proxy"))
+    settings["home_order"] = _get_home_order()
     return web.json_response(settings)
 
 

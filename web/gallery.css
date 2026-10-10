@@ -742,6 +742,9 @@
 .neo-gallery-card-info {
     padding: 8px;
     text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .neo-gallery-card-name {
@@ -1201,6 +1204,11 @@ Accordion Section Buttons (Clear)
     transform: scale(1.1);
 }
 
+/* ⋯ 按钮在收藏卡片上悬停显示（收藏卡片不是 thumb-container） */
+.neo-gallery-local-card:hover .neo-gallery-thumb-bookmark-btn {
+    opacity: 1;
+}
+
 /* Feedback positioning - fixed to viewport, will be set dynamically by JS */
 .neo-gallery-thumb-img-send-btn .neo-gallery-feedback {
     position: fixed;
@@ -1375,14 +1383,13 @@ Accordion Section Buttons (Clear)
     font-variant-numeric: tabular-nums;
 }
 
-/* Audio card inside bookmark cover fills the wrapper */
-.neo-gallery-local-card-audio .neo-gallery-card-cover-wrapper {
-    display: flex;
-    align-items: center;
+/* Audio bookmark card follows the original audio thumb rule: fixed 56px waveform
+   strip, card collapses to auto height instead of the directory card's fixed --neo-card-h. */
+.neo-gallery-local-card-audio {
+    height: auto;
 }
-.neo-gallery-local-card-audio .neo-gallery-audio-card {
-    height: 100%;
-    min-height: 48px;
+.neo-gallery-local-card-audio .neo-gallery-card-cover-wrapper {
+    flex: 0 0 auto;
 }
 
 /* Image label */
@@ -1470,14 +1477,15 @@ Accordion Section Buttons (Clear)
    Directory Management Modal
    ============================================ */
 
+/* 目录管理弹窗与统一设置弹窗（neo-director-llm-*）同一套外观：0.5 遮罩、
+   #1e1e1e 面板 + #3a3a3a 边框 + 10px 圆角。 */
 .neo-gallery-dir-modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1485,14 +1493,31 @@ Accordion Section Buttons (Clear)
 }
 
 .neo-gallery-dir-modal {
-    background-color: #2a2a2a;
-    border-radius: 8px;
-    width: 480px;
+    background-color: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    width: 780px;
     max-width: 90vw;
-    max-height: 80vh;
+    min-height: min(720px, 86vh);
+    max-height: min(720px, 86vh);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* 弹窗主体：左侧目录列表，右侧 C 站设置 */
+.neo-gallery-dir-modal-body {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    min-height: 0;
+}
+
+.neo-gallery-dir-modal-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Title bar */
@@ -1500,36 +1525,43 @@ Accordion Section Buttons (Clear)
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 600;
     border-bottom: 1px solid #333;
 }
 
 .neo-gallery-dir-modal-title {
     color: #eee;
-    font-size: 14px;
-    font-weight: 500;
 }
 
 .neo-gallery-dir-modal-close {
-    color: #888;
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
-    font-size: 18px;
+    background: transparent;
+    border-radius: 6px;
+    color: #9aa4b0;
+    font-size: 13px;
     line-height: 1;
-    padding: 2px 6px;
-    border-radius: 4px;
-    transition: all 0.2s ease;
 }
 
 .neo-gallery-dir-modal-close:hover {
-    color: #FF9944;
-    background-color: rgba(255, 106, 0, 0.1);
+    background: #2c2f36;
+    color: #fff;
 }
 
 /* Directory list area */
 .neo-gallery-dir-list-container {
-    padding: 12px 16px;
+    flex: 1;
+    min-height: 0;
+    padding: 6px 10px;
     border-bottom: 1px solid #333;
-    max-height: 200px;
     overflow-y: auto;
 }
 
@@ -1560,9 +1592,11 @@ Accordion Section Buttons (Clear)
     justify-content: space-between;
     gap: 8px;
     padding: 6px 10px;
-    background-color: #1a1a1a;
+    background-color: #2a2a2a;
     border-radius: 4px;
-    border: 1px solid #333;
+    border: 1px solid #444;
+    cursor: grab;
+    user-select: none;
 }
 
 .neo-gallery-dir-path {
@@ -1582,26 +1616,31 @@ Accordion Section Buttons (Clear)
     flex-shrink: 0;
 }
 
+/* 排序列表里的隐藏 / 删除 / 设置按钮只在 hover 该行时出现 */
+.neo-gallery-dir-item-actions > button {
+    opacity: 0;
+    transition: opacity 0.15s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.neo-gallery-dir-item:hover .neo-gallery-dir-item-actions > button,
+.neo-gallery-dir-item-actions > button:focus-visible {
+    opacity: 1;
+}
+
 .neo-gallery-dir-ctl-btn {
-    background-color: rgba(255, 255, 255, 0.06);
-    color: #aaa;
-    border: none;
-    border-radius: 4px;
-    padding: 4px 7px;
+    background-color: #2c2f36;
+    color: #9aa4b0;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
+    padding: 3px 8px;
     cursor: pointer;
     font-size: 12px;
     line-height: 1;
-    transition: all 0.2s ease;
 }
 
 .neo-gallery-dir-ctl-btn:hover:not(:disabled) {
-    background-color: rgba(255, 106, 0, 0.25);
-    color: #FF9944;
-}
-
-.neo-gallery-dir-ctl-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
+    background-color: #383b43;
+    color: #fff;
 }
 
 .neo-gallery-dir-item.is-hidden {
@@ -1615,84 +1654,120 @@ Accordion Section Buttons (Clear)
 
 .neo-gallery-dir-hidden-badge {
     font-size: 11px;
-    color: #FF9944;
-    background-color: rgba(255, 106, 0, 0.12);
-    border-radius: 3px;
+    color: #9aa4b0;
+    background-color: rgba(154, 164, 176, 0.14);
+    border-radius: 4px;
     padding: 1px 6px;
     flex-shrink: 0;
 }
 
+.neo-gallery-dir-drag-handle {
+    color: #666;
+    font-size: 14px;
+    line-height: 1;
+    flex-shrink: 0;
+    cursor: grab;
+}
+
+.neo-gallery-dir-item.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
+.neo-gallery-dir-item.drop-above {
+    box-shadow: 0 -3px 0 0 #5090cc;
+}
+
+.neo-gallery-dir-item.drop-below {
+    box-shadow: 0 3px 0 0 #5090cc;
+}
+
 .neo-gallery-dir-remove-btn {
-    background-color: rgba(244, 67, 54, 0.2);
-    color: #f44336;
-    border: none;
-    border-radius: 4px;
-    padding: 4px 8px;
+    background-color: rgba(218, 54, 51, 0.18);
+    color: #ff8a8a;
+    border: 1px solid rgba(218, 54, 51, 0.45);
+    border-radius: 6px;
+    padding: 3px 8px;
     cursor: pointer;
     font-size: 12px;
-    transition: all 0.2s ease;
     flex-shrink: 0;
 }
 
 .neo-gallery-dir-remove-btn:hover {
-    background-color: rgba(244, 67, 54, 0.4);
-    color: #ff8888;
+    background-color: rgba(218, 54, 51, 0.35);
+    color: #ffb3b3;
 }
 
 /* Add new directory area */
 .neo-gallery-dir-add-area {
     display: flex;
-    gap: 8px;
-    padding: 12px 16px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
     border-bottom: 1px solid #333;
+}
+
+.neo-gallery-dir-add-row {
+    display: flex;
+    gap: 8px;
+}
+
+.neo-gallery-dir-label {
+    font-size: 12px;
+    color: #ccc;
 }
 
 .neo-gallery-dir-input {
     flex: 1;
-    padding: 8px 10px;
-    background-color: #1a1a1a;
+    padding: 6px 8px;
+    background-color: #2a2a2a;
     border: 1px solid #444;
     border-radius: 4px;
-    color: white;
-    font-size: 13px;
+    color: #ccc;
+    font-size: 12px;
     outline: none;
+    box-sizing: border-box;
 }
 
 .neo-gallery-dir-input:focus {
-    border-color: #FF6A00;
+    border-color: #5090cc;
+}
+
+.neo-gallery-dir-input::placeholder {
+    color: #666;
 }
 
 .neo-gallery-dir-add-btn {
-    padding: 8px 12px;
-    background-color: rgba(255, 106, 0, 0.2);
-    color: #FF9944;
-    border: 1px solid #FF6A00;
-    border-radius: 4px;
+    padding: 4px 10px;
+    background-color: #2c2f36;
+    color: #ddd;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s ease;
+    font-size: 12px;
     flex-shrink: 0;
 }
 
 .neo-gallery-dir-add-btn:hover {
-    background-color: rgba(255, 106, 0, 0.3);
+    background-color: #383b43;
+    color: #fff;
 }
 
 /* Bulk action button (Civitai section) */
 .neo-gallery-dir-bulk-btn {
     margin-top: 8px;
-    padding: 6px 14px;
-    background-color: rgba(255, 106, 0, 0.15);
-    color: #FF9944;
-    border: 1px solid #FF6A00;
-    border-radius: 4px;
+    padding: 4px 10px;
+    background-color: #2c2f36;
+    color: #ddd;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
     cursor: pointer;
     font-size: 12px;
-    transition: all 0.2s ease;
 }
 
 .neo-gallery-dir-bulk-btn:hover {
-    background-color: rgba(255, 106, 0, 0.25);
+    background-color: #383b43;
+    color: #fff;
 }
 
 /* Send menu dropdown */
@@ -1733,20 +1808,22 @@ Accordion Section Buttons (Clear)
     color: #FFB84D;
 }
 
-/* Manage Directories 弹窗内的 Civitai LORA 同步分区 */
+/* Manage Directories 弹窗右侧的 Civitai LORA 同步分区 */
 .neo-gallery-civitai-area {
+    flex: 0 0 300px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 12px 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    gap: 6px;
+    padding: 6px 10px;
+    border-left: 1px solid #333;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .neo-gallery-civitai-title {
     font-size: 12px;
     font-weight: 600;
     color: #ccc;
-    letter-spacing: 0.3px;
 }
 
 .neo-gallery-lora-dirs {
@@ -1755,8 +1832,9 @@ Accordion Section Buttons (Clear)
     display: flex;
     flex-direction: column;
     gap: 2px;
-    background: #1e1e1e;
-    border-radius: 6px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
     padding: 6px;
 }
 
@@ -1791,13 +1869,13 @@ Accordion Section Buttons (Clear)
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: #ddd;
+    color: #ccc;
     cursor: pointer;
     user-select: none;
 }
 
 .neo-gallery-civitai-toggle input[type="checkbox"] {
-    accent-color: #FF6A00;
+    accent-color: #5090cc;
     width: 14px;
     height: 14px;
     cursor: pointer;
@@ -1815,6 +1893,7 @@ Accordion Section Buttons (Clear)
 
 .neo-gallery-civitai-save-btn {
     flex: 0 0 auto;
+    margin-top: 0;
 }
 
 .neo-gallery-civitai-actions {

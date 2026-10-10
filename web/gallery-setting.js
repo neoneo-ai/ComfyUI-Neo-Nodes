@@ -21,6 +21,7 @@ export class GallerySetting {
         if (existingOverlay) existingOverlay.remove();
 
         let currentDirs = [];
+        let homeOrder = [];
         let hiddenDirs = new Set();
         let civitaiKeySet = false;
         let civitaiKeyHint = "";
@@ -38,13 +39,14 @@ export class GallerySetting {
                 } else if (settings.custom_directory) {
                     currentDirs = [settings.custom_directory];
                 }
+                if (Array.isArray(settings.home_order)) homeOrder = [...settings.home_order];
                 civitaiKeySet = !!settings.civitai_api_key_set;
                 civitaiKeyHint = settings.civitai_api_key_hint || "";
                 civitaiProxy = settings.civitai_proxy || "";
                 civitaiEnabled = !!settings.civitai_lora_enabled;
                 civitaiBookmarkEnabled = settings.civitai_bookmark_enabled !== false;
                 if (Array.isArray(settings.lora_sync_dirs)) loraSyncDirs = [...settings.lora_sync_dirs];
-                if (Array.isArray(settings.hidden_directories)) hiddenDirs = new Set(settings.hidden_directories);
+                if (Array.isArray(settings.hidden_directories)) hiddenDirs = new Set(settings.hidden_directories.map((h) => String(h).toLowerCase()));
             }
         } catch (e) { }
 
@@ -83,12 +85,32 @@ export class GallerySetting {
         };
 
         const refreshGallery = async () => {
-            try { await gallery.loadGallery(); gallery.list.sortAndDisplayImages(); } catch (e) { }
+            try { await gallery.refreshAfterSettingsChange(); } catch (e) { }
+        };
+
+        // 内置板块与自定义目录共用同一张顺序表
+        const BUILTIN_LABELS = { Output: "Output", Input: "Input", local_bookmarks: "本地收藏", civitai_bookmarks: "C站收藏", Lora: "Lora" };
+        const entries = homeOrder.length ? homeOrder
+            : ["Output", "Input", "local_bookmarks", "civitai_bookmarks", ...currentDirs, "Lora"];
+        const isBuiltin = (t) => Object.prototype.hasOwnProperty.call(BUILTIN_LABELS, t);
+        const isHidden = (t) => hiddenDirs.has(String(t).toLowerCase());
+
+        let dragToken = null;
+
+        const clearDropMarks = () => {
+            dirItemsWrap.querySelectorAll(".drop-above, .drop-below").forEach((el) => {
+                el.classList.remove("drop-above", "drop-below");
+            });
+        };
+
+        const isAboveMid = (e, item) => {
+            const rect = item.getBoundingClientRect();
+            return e.clientY < rect.top + rect.height / 2;
         };
 
         const renderDirList = () => {
             dirItemsWrap.innerHTML = "";
-            if (currentDirs.length === 0) {
+            if (entries.length === 0) {
                 dirItemsWrap.appendChild($el("div", {
                     className: "neo-gallery-dir-empty",
                     textContent: "No directories configured yet."
@@ -96,83 +118,108 @@ export class GallerySetting {
                 return;
             }
             const dirItems = $el("div", { className: "neo-gallery-dir-items" });
-            currentDirs.forEach((dirPath, idx) => {
-                const isHidden = hiddenDirs.has(dirPath);
+            entries.forEach((token) => {
+                const builtin = isBuiltin(token);
+                const hidden = isHidden(token);
                 const children = [
                     $el("span", {
+                        className: "neo-gallery-dir-drag-handle",
+                        textContent: "\u283F",
+                        title: "拖拽排序"
+                    }),
+                    $el("span", {
                         className: "neo-gallery-dir-path",
-                        textContent: dirPath,
-                        title: dirPath
+                        textContent: builtin ? BUILTIN_LABELS[token] : token,
+                        title: builtin ? "内置板块" : token
                     })
                 ];
-                if (isHidden) {
+                if (hidden) {
                     children.push($el("span", { className: "neo-gallery-dir-hidden-badge", textContent: "已隐藏" }));
                 }
-                children.push($el("div", { className: "neo-gallery-dir-item-actions" }, [
-                    $el("button", {
-                        className: "neo-gallery-dir-ctl-btn",
-                        title: "上移",
-                        disabled: idx === 0,
-                        onclick: () => moveDir(dirPath, "up"),
-                        textContent: "\u2191"
-                    }),
-                    $el("button", {
-                        className: "neo-gallery-dir-ctl-btn",
-                        title: "下移",
-                        disabled: idx === currentDirs.length - 1,
-                        onclick: () => moveDir(dirPath, "down"),
-                        textContent: "\u2193"
-                    }),
-                    $el("button", {
-                        className: "neo-gallery-dir-ctl-btn",
-                        title: isHidden ? "显示" : "隐藏（不在素材库中列出）",
-                        onclick: () => toggleDirHidden(dirPath),
-                        textContent: isHidden ? "\uD83D\uDC41" : "\uD83D\uDEAB"
-                    }),
-                    $el("button", {
+                const actions = [];
+                if (token === "Lora" || token === "civitai_bookmarks") {
+                    actions.push($el("button", {
+                        className: "neo-gallery-dir-ctl-btn neo-gallery-dir-settings-btn",
+                        title: "C 站设置（API KEY / 代理 / 同步目录）",
+                        onclick: (e) => {
+                            e.stopPropagation();
+                            toggleCivitaiSettings(token === "civitai_bookmarks" ? civitaiKeyInput : null);
+                        },
+                        textContent: "\u2699"
+                    }));
+                }
+                actions.push($el("button", {
+                    className: "neo-gallery-dir-ctl-btn",
+                    title: hidden ? "显示" : "隐藏（不在素材库中列出）",
+                    onclick: () => toggleDirHidden(token),
+                    textContent: "\uD83D\uDC41"
+                }));
+                if (!builtin) {
+                    actions.push($el("button", {
                         className: "neo-gallery-dir-remove-btn",
-                        title: "删除",
+                        title: "移除（仅从列表移除，不删除磁盘文件）",
                         onclick: async (e) => {
                             e.stopPropagation();
-                            await gallery.removeCustomDir(dirPath);
-                            currentDirs = currentDirs.filter(p => p !== dirPath);
-                            hiddenDirs.delete(dirPath);
+                            if (!await gallery.removeCustomDir(token)) return;
+                            currentDirs = currentDirs.filter(p => p !== token);
+                            entries.splice(entries.indexOf(token), 1);
+                            hiddenDirs.delete(String(token).toLowerCase());
                             renderDirList();
-                            setTimeout(() => gallery.promptAndSetCustomDir(), 300);
                             refreshGallery();
                         },
                         textContent: "\u2715"
-                    })
-                ]));
-                dirItems.appendChild($el("div", {
-                    className: "neo-gallery-dir-item" + (isHidden ? " is-hidden" : "")
-                }, children));
+                    }));
+                }
+                children.push($el("div", { className: "neo-gallery-dir-item-actions" }, actions));
+                const item = $el("div", {
+                    className: "neo-gallery-dir-item" + (hidden ? " is-hidden" : ""),
+                    draggable: "true",
+                    ondragstart: (e) => {
+                        dragToken = token;
+                        item.classList.add("dragging");
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", token);
+                    },
+                    ondragover: (e) => {
+                        if (!dragToken || dragToken === token) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        clearDropMarks();
+                        item.classList.add(isAboveMid(e, item) ? "drop-above" : "drop-below");
+                    },
+                    ondrop: async (e) => {
+                        e.preventDefault();
+                        if (!dragToken || dragToken === token) return;
+                        const before = isAboveMid(e, item);
+                        entries.splice(entries.indexOf(dragToken), 1);
+                        const target = entries.indexOf(token);
+                        entries.splice(before ? target : target + 1, 0, dragToken);
+                        dragToken = null;
+                        clearDropMarks();
+                        renderDirList();
+                        try { await saveDirAction({ action: "reorder", paths: [...entries] }); } catch (e) { }
+                        refreshGallery();
+                    },
+                    ondragend: () => {
+                        dragToken = null;
+                        item.classList.remove("dragging");
+                        clearDropMarks();
+                    }
+                }, children);
+                dirItems.appendChild(item);
             });
             dirItemsWrap.appendChild(dirItems);
         };
 
-        const moveDir = async (dirPath, direction) => {
+        const toggleDirHidden = async (token) => {
+            const key = String(token).toLowerCase();
             try {
-                const result = await saveDirAction({ action: "move", path: dirPath, direction });
+                const hidden = !hiddenDirs.has(key);
+                const result = await saveDirAction({ action: "set_hidden", path: token, hidden });
                 if (!result.success) return;
-                const i = currentDirs.indexOf(dirPath);
-                const j = direction === "up" ? i - 1 : i + 1;
-                [currentDirs[i], currentDirs[j]] = [currentDirs[j], currentDirs[i]];
+                if (hidden) hiddenDirs.add(key); else hiddenDirs.delete(key);
                 renderDirList();
-                refreshGallery();
-            } catch (e) {
-                console.error('[Neo Gallery] Error moving directory:', e);
-            }
-        };
-
-        const toggleDirHidden = async (dirPath) => {
-            try {
-                const hidden = !hiddenDirs.has(dirPath);
-                const result = await saveDirAction({ action: "set_hidden", path: dirPath, hidden });
-                if (!result.success) return;
-                if (hidden) hiddenDirs.add(dirPath); else hiddenDirs.delete(dirPath);
-                renderDirList();
-                refreshGallery();
+                await refreshGallery();
             } catch (e) {
                 console.error('[Neo Gallery] Error toggling directory visibility:', e);
             }
@@ -182,45 +229,48 @@ export class GallerySetting {
 
         // Add new directory input area
         const addArea = $el("div", { className: "neo-gallery-dir-add-area" }, [
-            $el("input", {
-                type: "text",
-                id: "neo-gallery-new-dir-input",
-                className: "neo-gallery-dir-input",
-                placeholder: "Enter directory path...",
-                title: "Paste or type a full directory path here"
-            }),
-            $el("button", {
-                className: "neo-gallery-dir-add-btn",
-                onclick: async () => {
-                    const input = document.getElementById('neo-gallery-new-dir-input');
-                    const dirPath = input.value.trim();
+            $el("label", { className: "neo-gallery-dir-label", textContent: "新目录路径" }),
+            $el("div", { className: "neo-gallery-dir-add-row" }, [
+                $el("input", {
+                    type: "text",
+                    id: "neo-gallery-new-dir-input",
+                    className: "neo-gallery-dir-input",
+                    placeholder: "粘贴或输入完整目录路径...",
+                    title: "Paste or type a full directory path here"
+                }),
+                $el("button", {
+                    className: "neo-gallery-dir-add-btn",
+                    onclick: async () => {
+                        const input = document.getElementById('neo-gallery-new-dir-input');
+                        const dirPath = input.value.trim();
 
-                    if (!dirPath) return;
+                        if (!dirPath) return;
 
-                    try {
-                        const resp = await api.fetchApi('/neo_gallery/save_settings', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: "add", path: dirPath })
-                        });
-                        const result = await resp.json();
+                        try {
+                            const resp = await api.fetchApi('/neo_gallery/save_settings', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: "add", path: dirPath })
+                            });
+                            const result = await resp.json();
 
-                        if (resp.ok && result.success) {
-                            input.value = '';
-                            if (!currentDirs.includes(dirPath)) currentDirs.push(dirPath);
-                            renderDirList();
-                            setTimeout(() => gallery.promptAndSetCustomDir(), 300);
-                            refreshGallery();
-                        } else {
-                            alert('Failed: ' + (result.error || 'Unknown error'));
+                            if (resp.ok && result.success) {
+                                input.value = '';
+                                if (!currentDirs.includes(dirPath)) currentDirs.push(dirPath);
+                                if (!entries.includes(dirPath)) entries.push(dirPath);
+                                renderDirList();
+                                refreshGallery();
+                            } else {
+                                alert('Failed: ' + (result.error || 'Unknown error'));
+                            }
+                        } catch (e) {
+                            console.error('[Neo Gallery] Error adding directory:', e);
+                            alert('Error adding directory');
                         }
-                    } catch (e) {
-                        console.error('[Neo Gallery] Error adding directory:', e);
-                        alert('Error adding directory');
-                    }
-                },
-                textContent: "\u27A4"
-            })
+                    },
+                    textContent: "\u27A4"
+                })
+            ])
         ]);
 
 
@@ -265,7 +315,7 @@ export class GallerySetting {
         const civitaiProxyInput = $el("input", {
             type: "text",
             className: "neo-gallery-dir-input",
-            placeholder: "C 站代理（如 http://127.0.0.1:7890，留空直连）",
+            placeholder: "如 http://127.0.0.1:7890，留空直连",
             value: civitaiProxy,
             onkeydown: (e) => { if (e.key === "Enter") saveCivitaiProxy(); },
         });
@@ -291,8 +341,12 @@ export class GallerySetting {
             }
         };
 
+        const modalBody = $el("div", { className: "neo-gallery-dir-modal-body" });
+        const leftPane = $el("div", { className: "neo-gallery-dir-modal-left" });
         modal.appendChild(titleBar);
-        modal.appendChild(dirListContainer);
+        modal.appendChild(modalBody);
+        modalBody.appendChild(leftPane);
+        leftPane.appendChild(dirListContainer);
 
         // Civitai connectivity probe: the API is often unreachable without a proxy,
         // so let the user test it explicitly instead of guessing from failed fetches.
@@ -388,6 +442,24 @@ export class GallerySetting {
             }
         });
 
+        // Lora / C站收藏行的 ⚙：展开（默认隐藏）或收起 C 站设置区
+        const toggleCivitaiSettings = (focusInput) => {
+            if (civitaiArea.style.display !== "none") {
+                civitaiArea.style.display = "none";
+                return;
+            }
+            civitaiArea.style.display = "";
+            const target = focusInput || civitaiArea;
+            if (typeof target.scrollIntoView === "function") {
+                target.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+            if (focusInput) focusInput.focus();
+            if (loraDirsList.style.display === "none") {
+                loraDirsList.style.display = "";
+                if (!loraDirsLoaded) { loraDirsLoaded = true; loadLoraDirs(); }
+            }
+        };
+
         const loraProgress = $el("div", { className: "neo-gallery-lora-progress", textContent: "" });
         const retryBtn = $el("button", {
             className: "neo-gallery-dir-bulk-btn",
@@ -440,7 +512,7 @@ export class GallerySetting {
             tick();
         };
 
-        const civitaiArea = $el("div", { className: "neo-gallery-civitai-area" }, [
+        const civitaiArea = $el("div", { className: "neo-gallery-civitai-area", style: { display: "none" } }, [
             $el("div", { className: "neo-gallery-civitai-title", textContent: "Civitai（C 站同步）" }),
             $el("label", { className: "neo-gallery-civitai-toggle" }, [
                 $el("input", {
@@ -455,6 +527,7 @@ export class GallerySetting {
                                 body: JSON.stringify({ action: "save_civitai", enabled: civitaiEnabled })
                             });
                             showToast(gallery.app, 'success', civitaiEnabled ? '已启用' : '已停用', civitaiEnabled ? 'C 站 LORA 示例获取已开启。' : 'C 站 LORA 示例获取已关闭。');
+                            await gallery.refreshAfterSettingsChange();
                         } catch (err) {
                             showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the Civitai LORA switch.');
                         }
@@ -476,6 +549,7 @@ export class GallerySetting {
                             });
                             showToast(gallery.app, 'success', civitaiBookmarkEnabled ? '已启用' : '已停用',
                                 civitaiBookmarkEnabled ? 'C 站收藏已开启。' : 'C 站收藏已关闭。');
+                            await gallery.refreshAfterSettingsChange();
                         } catch (err) {
                             showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the C 站收藏 switch.');
                         }
@@ -483,6 +557,7 @@ export class GallerySetting {
                 }),
                 $el("span", { textContent: "启用 C 站收藏（默认开启）" })
             ]),
+            $el("label", { className: "neo-gallery-dir-label", textContent: "Civitai API KEY" }),
             $el("div", { className: "neo-gallery-civitai-key-row" }, [
                 civitaiKeyInput,
                 $el("button", {
@@ -491,6 +566,7 @@ export class GallerySetting {
                     onclick: saveCivitaiKey,
                 }),
             ]),
+            $el("label", { className: "neo-gallery-dir-label", textContent: "C 站代理" }),
             $el("div", { className: "neo-gallery-civitai-key-row" }, [
                 civitaiProxyInput,
                 $el("button", {
@@ -508,8 +584,8 @@ export class GallerySetting {
             loraProgress,
         ]);
 
-        modal.appendChild(addArea);
-        modal.appendChild(civitaiArea);
+        leftPane.appendChild(addArea);
+        modalBody.appendChild(civitaiArea);
         modalOverlay.appendChild(modal);
         document.body.appendChild(modalOverlay);
 

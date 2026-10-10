@@ -74,6 +74,10 @@ export class NeoGallery {
             categoryPath: [],
         };
         this.workflowMatchActive = false;   // smart filter: show only loras used in the workflow
+        this.civitaiLoraEnabled = false;     // 「启用 C 站 LORA」总开关（首页 Lora 板块）
+        this.civitaiBookmarkEnabled = true;  // 「启用 C 站收藏」开关（首页 C站收藏卡）
+        this.homeOrder = [];                // 统一顺序表：内置卡 + 自定义目录
+        this.hiddenHomeEntries = new Set();  // 排序列表里被隐藏的条目（小写键）
         this._loraRefreshTimer = null;       // auto-refresh polling for the Lora section
         this.placeholderImageUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/placeholder.png`;
         this.sectionStates = {};
@@ -168,6 +172,11 @@ export class NeoGallery {
             const resp = await api.fetchApi('/neo_gallery/get_settings');
             if (resp.ok) {
                 const settings = await resp.json();
+                this.civitaiLoraEnabled = !!settings.civitai_lora_enabled;
+                this.civitaiBookmarkEnabled = settings.civitai_bookmark_enabled !== false;
+                this.homeOrder = Array.isArray(settings.home_order) ? [...settings.home_order] : [];
+                const hidden = settings.hidden_directories;
+                this.hiddenHomeEntries = new Set(Array.isArray(hidden) ? hidden.map((h) => String(h).toLowerCase()) : []);
                 const customDir = settings.custom_directory || "";
                 this.customDirInput.value = customDir;
                 
@@ -191,6 +200,14 @@ export class NeoGallery {
         }
     }
 
+    /** 设置变更后重读并重绘首页：关闭的板块与隐藏的条目立即消失。 */
+    async refreshAfterSettingsChange() {
+        this.stopLoraRefresh();
+        await this.loadGallerySettings();
+        await this.loadGallery();
+        if (this.currentView.mode === 'categories') await this.list.sortAndDisplayImages();
+    }
+
     async promptAndSetCustomDir() {
         await this.settings.buildDirModal(this);
     }
@@ -201,31 +218,31 @@ export class NeoGallery {
     }
 
     async removeCustomDir(dirPath) {
-    if (!confirm(`Remove directory "${dirPath}" from gallery?`)) return;
+        if (!confirm(`Remove directory "${dirPath}" from gallery?`)) return false;
 
-    const saveResp = await api.fetchApi('/neo_gallery/save_settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: "remove", path: dirPath })
-    });
-    const result = await saveResp.json();
+        const saveResp = await api.fetchApi('/neo_gallery/save_settings', {
+            method: "POST",
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: "remove", path: dirPath })
+        });
+        const result = await saveResp.json();
 
-    if (saveResp.ok && result.success) {
-    // Clear thumbnails for this directory
-    try {
-            await api.fetchApi('/neo_gallery/clear_thumbnails', {
-            method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ subfolder: dirPath })
-                });
-            } catch (e) {
-                console.warn('[Neo Gallery] Failed to clear thumbnails:', e);
-            }
-            await this.loadGallery();
-            await this.list.sortAndDisplayImages();
-        } else {
+        if (!(saveResp.ok && result.success)) {
             alert('Failed to remove directory: ' + (result.error || ''));
+            return false;
         }
+
+        // Clear thumbnails for this directory
+        try {
+            await api.fetchApi('/neo_gallery/clear_thumbnails', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subfolder: dirPath })
+            });
+        } catch (e) {
+            console.warn('[Neo Gallery] Failed to clear thumbnails:', e);
+        }
+        return true;
     }
 
     // ====== State / Persistence ======
@@ -545,16 +562,24 @@ export class NeoGallery {
             className: `neo-gallery-card-type-badge ${isAudio ? "type-audio" : (isFile ? "type-image" : "type-directory")}`,
             title: `${sourceLabel}收藏 · ${[item.dir, item.subfolder, item.filename].filter(Boolean).join("/")}`
         }, [isAudio ? "\u266A" : (item.source === "oss" ? "\u2601\uFE0F" : (isFile ? "\uD83D\uDDBC\uFE0F" : "\uD83D\uDCCD"))]);
-        const delBtn = $el("div", {
-            className: "neo-gallery-card-civitai-save-btn",
-            title: "取消收藏",
-            onclick: (e) => { e.stopPropagation(); this._removeLocalBookmark(item, card); }
-        }, ["\u2716"]);
+        const menuBtn = $el("div", {
+            className: "neo-gallery-thumb-bookmark-btn",
+            title: "更多操作",
+            onclick: (e) => {
+                e.stopPropagation();
+                const unfavorite = () => this._removeLocalBookmark(item, card);
+                if (isFile) {
+                    this.card._showCollectMenu(this, { filename: item.filename, name: item.name }, this._resolveBookmarkSubfolder(item), item.source, menuBtn, unfavorite);
+                } else {
+                    this.card._showBookmarkMenu(this, item, menuBtn, unfavorite);
+                }
+            }
+        }, ["\u22EF"]);
 
         card.appendChild(typeBadge);
         card.appendChild(coverWrapper);
         card.appendChild(info);
-        card.appendChild(delBtn);
+        card.appendChild(menuBtn);
         return card;
     }
 

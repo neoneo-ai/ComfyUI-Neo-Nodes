@@ -471,7 +471,7 @@ export class GalleryCard {
             source === "oss";
     }
 
-    _showCollectMenu(gallery, image, subfolder, source, anchor) {
+    _showCollectMenu(gallery, image, subfolder, source, anchor, unfavorite = null) {
         this._removeCollectMenu();
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
         const displayName = (image.name || image.filename || '').replace(/\.\w+$/, '') || "素材";
@@ -593,7 +593,12 @@ export class GalleryCard {
                 className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
                 title: selectedCount > 0 ? `删除已勾选的 ${selectedCount} 个素材，不影响未选中文件` : "仅删除当前素材",
                 onclick: () => { this._removeCollectMenu(); selectedCount > 0 ? gallery.deleteSelected() : gallery.deleteItem(image.name, subfolder); }
-            }, [selectedCount > 0 ? `\uD83D\uDDD1\uFE0F 删除已选素材（${selectedCount}）` : "\uD83D\uDDD1\uFE0F 删除"]) : null
+            }, [selectedCount > 0 ? `\uD83D\uDDD1\uFE0F 删除已选素材（${selectedCount}）` : "\uD83D\uDDD1\uFE0F 删除"]) : null,
+            unfavorite ? $el("div", {
+                className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
+                title: "取消收藏（仅移除收藏记录，不删除源文件）",
+                onclick: () => { this._removeCollectMenu(); unfavorite(); }
+            }, ["\u2716 取消收藏"]) : null
         ].filter(Boolean));
 
         this._attachPopupMenu(menu, anchor);
@@ -672,6 +677,25 @@ export class GalleryCard {
                 title: "重读目录内每个 LORA 的 safetensors 头部元数据（base_model / 触发词 / dtype），不重新下载示例图",
                 onclick: () => { this._removeCollectMenu(); this._refreshLoraDirMeta(gallery, dirPath); }
             }, ["🔄 刷新元数据"])
+        ]);
+        this._attachPopupMenu(menu, anchor);
+    }
+
+    /** 目录收藏卡 ⋯ 菜单：仅取消收藏（移除收藏记录，不删除源文件）。 */
+    _showBookmarkMenu(gallery, item, anchor, unfavorite) {
+        this._removeCollectMenu();
+        const displayName = (item.name || item.filename || "收藏").replace(/\.\w+$/, "") || "收藏";
+        const pathLabel = [item.dir, item.subfolder, item.filename].filter(Boolean).join("/");
+        const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
+            $el("div", { className: "neo-gallery-collect-title" }, [
+                $el("span", { className: "neo-gallery-collect-name", textContent: displayName })
+            ]),
+            $el("div", { className: "neo-gallery-collect-path", title: pathLabel, textContent: pathLabel }),
+            $el("div", {
+                className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
+                title: "取消收藏（仅移除收藏记录，不删除源文件）",
+                onclick: () => { this._removeCollectMenu(); unfavorite(); }
+            }, ["\u2716 取消收藏"])
         ]);
         this._attachPopupMenu(menu, anchor);
     }

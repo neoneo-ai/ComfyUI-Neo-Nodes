@@ -2,7 +2,7 @@
 """Manage Directories：自定义目录的隐藏与排序（离线单测）。
 
 隐藏的目录保留在配置里，但 _get_user_custom_dirs 不再返回它；
-move 只在相邻条目间交换且越界不动；set_hidden 对不存在的目录无效；
+reorder 按提交的完整顺序回写（未知路径剔除、未列出的目录追加末尾）；set_hidden 对不存在的目录无效；
 删除目录时同步清掉它的隐藏标记。
 """
 
@@ -134,6 +134,11 @@ def _post(payload):
     return json.loads(resp.body.decode())
 
 
+def _get_settings():
+    resp = _call(gallery.get_gallery_settings(None))
+    return json.loads(resp.body.decode())
+
+
 class DirManageBase(unittest.TestCase):
     """三个真实素材目录 + 可写 settings JSON（_get_user_custom_dirs 直接读文件）。"""
 
@@ -191,35 +196,37 @@ class HiddenDirTests(DirManageBase):
 
 
 
-class MoveDirTests(DirManageBase):
+class ReorderTests(DirManageBase):
 
     def _three_dirs(self):
         _SETTINGS["custom_directories"] = [str(self.dir_a), str(self.dir_b), str(self.dir_c)]
 
-    def test_move_down_swaps_with_next(self):
+    def test_reorder_applies_submitted_order(self):
         self._three_dirs()
-        result = _post({"action": "move", "path": str(self.dir_a), "direction": "down"})
+        result = _post({"action": "reorder",
+                        "paths": [str(self.dir_c), str(self.dir_a), str(self.dir_b)]})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["custom_directories"],
+                         [str(self.dir_c), str(self.dir_a), str(self.dir_b)])
+
+    def test_reorder_drops_unknown_paths(self):
+        self._three_dirs()
+        result = _post({"action": "reorder",
+                        "paths": [str(self.dir_c), "F:\\nope", str(self.dir_a)]})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["custom_directories"],
+                         [str(self.dir_c), str(self.dir_a), str(self.dir_b)])
+
+    def test_reorder_appends_missing_dirs(self):
+        self._three_dirs()
+        result = _post({"action": "reorder", "paths": [str(self.dir_b)]})
         self.assertTrue(result["success"])
         self.assertEqual(_SETTINGS["custom_directories"],
                          [str(self.dir_b), str(self.dir_a), str(self.dir_c)])
 
-    def test_move_up_swaps_with_prev(self):
+    def test_reorder_non_list_is_noop(self):
         self._three_dirs()
-        result = _post({"action": "move", "path": str(self.dir_c), "direction": "up"})
-        self.assertTrue(result["success"])
-        self.assertEqual(_SETTINGS["custom_directories"],
-                         [str(self.dir_a), str(self.dir_c), str(self.dir_b)])
-
-    def test_move_at_boundaries_is_noop(self):
-        self._three_dirs()
-        _post({"action": "move", "path": str(self.dir_a), "direction": "up"})
-        _post({"action": "move", "path": str(self.dir_c), "direction": "down"})
-        self.assertEqual(_SETTINGS["custom_directories"],
-                         [str(self.dir_a), str(self.dir_b), str(self.dir_c)])
-
-    def test_move_unknown_path_is_noop(self):
-        self._three_dirs()
-        result = _post({"action": "move", "path": "F:\\nope", "direction": "up"})
+        result = _post({"action": "reorder", "paths": None})
         self.assertTrue(result["success"])
         self.assertEqual(_SETTINGS["custom_directories"],
                          [str(self.dir_a), str(self.dir_b), str(self.dir_c)])
@@ -233,6 +240,15 @@ class SetHiddenTests(DirManageBase):
         self.assertTrue(result["success"])
         self.assertEqual(_SETTINGS["hidden_directories"], [str(self.dir_a)])
         result = _post({"action": "set_hidden", "path": str(self.dir_a), "hidden": False})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["hidden_directories"], [])
+
+    def test_set_hidden_builtin_key(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a)]
+        result = _post({"action": "set_hidden", "path": "Lora", "hidden": True})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["hidden_directories"], ["Lora"])
+        result = _post({"action": "set_hidden", "path": "Lora", "hidden": False})
         self.assertTrue(result["success"])
         self.assertEqual(_SETTINGS["hidden_directories"], [])
 
@@ -256,6 +272,41 @@ class SetHiddenTests(DirManageBase):
         result = self._post_and_sync_file({"action": "set_hidden", "path": str(self.dir_b), "hidden": True})
         self.assertTrue(result["success"])
         self.assertEqual(gallery._get_user_custom_dirs(), [self.dir_a])
+
+
+class HomeOrderTests(DirManageBase):
+    """统一顺序表：内置板块与自定义目录同表排序，删除目录时同步清掉表里的条目。"""
+
+    def test_default_order_is_builtins_dirs_lora(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a), str(self.dir_b)]
+        self.assertEqual(gallery._get_home_order(),
+                         ["Output", "Input", "local_bookmarks", "civitai_bookmarks",
+                          str(self.dir_a), str(self.dir_b), "Lora"])
+
+    def test_reorder_writes_unified_order(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a), str(self.dir_b), str(self.dir_c)]
+        paths = ["Lora", str(self.dir_c), "Output", "Input", "local_bookmarks",
+                 "civitai_bookmarks", str(self.dir_a)]
+        result = _post({"action": "reorder", "paths": paths})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["custom_directories"],
+                         [str(self.dir_c), str(self.dir_a), str(self.dir_b)])
+        self.assertEqual(_SETTINGS["home_order"],
+                         ["Lora", str(self.dir_c), "Output", "Input", "local_bookmarks",
+                          "civitai_bookmarks", str(self.dir_a), str(self.dir_b)])
+
+    def test_get_settings_returns_home_order(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a)]
+        self.assertEqual(_get_settings()["home_order"],
+                         ["Output", "Input", "local_bookmarks", "civitai_bookmarks",
+                          str(self.dir_a), "Lora"])
+
+    def test_remove_cleans_home_order_entry(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a), str(self.dir_b)]
+        _SETTINGS["home_order"] = ["Output", str(self.dir_b), "Lora"]
+        result = _post({"action": "remove", "path": str(self.dir_b)})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["home_order"], ["Output", "Lora"])
 
 
 if __name__ == "__main__":

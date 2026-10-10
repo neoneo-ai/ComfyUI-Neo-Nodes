@@ -567,3 +567,117 @@ class RecentDirSortTests(unittest.TestCase):
         # 系统目录（Output）卡封面取最新两张，subfolder 保持相对 output 的既有约定
         self.assertEqual(sorted((c["filename"], c["subfolder"]) for c in covers["Output"]),
                          [("new.png", "grid"), ("old.png", "character")])
+
+
+class LoraSwitchListingTests(unittest.TestCase):
+    """「启用 C 站 LORA」总开关关闭时，首页列表不出现任何 Lora 目录卡（已缓存的也不加载）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._cache = Path(_TMP) / "lora_cache"
+        _write(cls._cache / "krea2" / "example_00.png")
+        cls._prev_cache_dir = gallery.LORA_CACHE_DIR
+        cls._prev_oss_enabled = gallery._is_oss_enabled
+        cls._prev_system_dirs = gallery._get_system_dirs
+        cls._prev_custom_dirs = gallery._get_user_custom_dirs
+        cls._prev_load_settings = gallery._load_settings
+        gallery.LORA_CACHE_DIR = cls._cache
+        gallery._is_oss_enabled = lambda: False
+        gallery._get_system_dirs = lambda: [{"path": Path(_OUTPUT), "name": "Output", "read_only": True}]
+        gallery._get_user_custom_dirs = lambda: []
+
+    @classmethod
+    def tearDownClass(cls):
+        gallery.LORA_CACHE_DIR = cls._prev_cache_dir
+        gallery._is_oss_enabled = cls._prev_oss_enabled
+        gallery._get_system_dirs = cls._prev_system_dirs
+        gallery._get_user_custom_dirs = cls._prev_custom_dirs
+        gallery._load_settings = cls._prev_load_settings
+
+    def _home_names(self, settings):
+        gallery._load_settings = lambda: settings
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs"}))))
+        return [d["name"] for d in out["directories"]]
+
+    def test_switch_off_hides_cached_lora_dirs(self):
+        names = self._home_names({"civitai_lora_enabled": False})
+        self.assertEqual([n for n in names if n.startswith("Lora")], [])
+
+    def test_switch_on_shows_lora_root_card(self):
+        names = self._home_names({"civitai_lora_enabled": True})
+        self.assertIn("Lora", names)
+
+    def test_switch_off_deep_link_returns_nothing(self):
+        gallery._load_settings = lambda: {"civitai_lora_enabled": False}
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"dir_name": "Lora"}))))
+        self.assertEqual(out["directories"], [])
+
+
+class HomeOrderListingTests(unittest.TestCase):
+    """首页顺序表：内置板块（Output/Input/Lora）与自定义目录按同一张表排序，隐藏项不列出。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._cache = Path(_TMP) / "order_lora_cache"
+        _write(cls._cache / "krea2" / "example_00.png")
+        cls._stars = Path(_TMP) / "stars"
+        cls._beauty = Path(_TMP) / "beauty"
+        for d in (cls._stars, cls._beauty):
+            d.mkdir(parents=True, exist_ok=True)
+        cls._prev_cache_dir = gallery.LORA_CACHE_DIR
+        cls._prev_oss_enabled = gallery._is_oss_enabled
+        cls._prev_system_dirs = gallery._get_system_dirs
+        cls._prev_custom_dirs = gallery._get_user_custom_dirs
+        cls._prev_load_settings = gallery._load_settings
+        gallery.LORA_CACHE_DIR = cls._cache
+        gallery._is_oss_enabled = lambda: False
+        gallery._get_system_dirs = lambda: [
+            {"path": Path(_OUTPUT), "name": "Output", "read_only": True},
+            {"path": Path(_INPUT), "name": "Input", "read_only": True},
+        ]
+        gallery._get_user_custom_dirs = lambda: [cls._stars, cls._beauty]
+
+    @classmethod
+    def tearDownClass(cls):
+        gallery.LORA_CACHE_DIR = cls._prev_cache_dir
+        gallery._is_oss_enabled = cls._prev_oss_enabled
+        gallery._get_system_dirs = cls._prev_system_dirs
+        gallery._get_user_custom_dirs = cls._prev_custom_dirs
+        gallery._load_settings = cls._prev_load_settings
+
+    def _home_order(self, settings):
+        gallery._load_settings = lambda: settings
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs"}))))
+        keys = {"Output", "Input", "Lora", "stars", "beauty"}
+        return [d["name"] for d in out["directories"] if d["name"] in keys]
+
+    def test_default_order_puts_dirs_before_lora(self):
+        settings = {"civitai_lora_enabled": True,
+                    "custom_directories": [str(self._stars), str(self._beauty)]}
+        self.assertEqual(self._home_order(settings),
+                         ["Output", "Input", "stars", "beauty", "Lora"])
+
+    def test_stored_order_moves_lora_first(self):
+        settings = {"civitai_lora_enabled": True,
+                    "custom_directories": [str(self._stars), str(self._beauty)],
+                    "home_order": ["Lora", "Output", "Input", "local_bookmarks",
+                                    "civitai_bookmarks", str(self._beauty), str(self._stars)]}
+        self.assertEqual(self._home_order(settings),
+                         ["Lora", "Output", "Input", "beauty", "stars"])
+
+    def test_hidden_output_is_not_listed(self):
+        settings = {"civitai_lora_enabled": True, "hidden_directories": ["Output"],
+                    "custom_directories": [str(self._stars), str(self._beauty)]}
+        self.assertEqual(self._home_order(settings),
+                         ["Input", "stars", "beauty", "Lora"])
+
+    def test_hidden_lora_is_not_listed(self):
+        settings = {"civitai_lora_enabled": True, "hidden_directories": ["Lora"],
+                    "custom_directories": [str(self._stars), str(self._beauty)]}
+        self.assertEqual(self._home_order(settings),
+                         ["Output", "Input", "stars", "beauty"])
+
+    def test_hidden_output_deep_link_returns_nothing(self):
+        gallery._load_settings = lambda: {"hidden_directories": ["Output"]}
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"dir_name": "Output"}))))
+        self.assertEqual(out["directories"], [])

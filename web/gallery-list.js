@@ -288,8 +288,7 @@ export class GalleryList {
             (d.subdirs && Object.keys(d.subdirs).length > 0) || (d.root_count && d.root_count > 0) || d.pending
         ).length;
 
-        // The "Civitai 收藏" home card is always present (like Lora), so a non-search
-        // view never renders empty — only a search with no matches does.
+        // 非搜索视图总有「本地收藏」首页卡，所以只有搜索无命中时才提示空结果。
         if (totalDirs === 0 && this.gallery.isSearchActive) {
             showNoFilesMessage(this.gallery.accordion, "No matching images found");
             return;
@@ -338,23 +337,48 @@ export class GalleryList {
             container.appendChild(card);
         };
 
-        // System dirs (Output/Input) first
+        // 统一顺序表渲染：内置卡（Output / Input / 收藏 / Lora）与自定义目录同表排序。
+        const order = this.gallery.homeOrder.length ? this.gallery.homeOrder
+            : ["Output", "Input", "local_bookmarks", "civitai_bookmarks", ...dirGroups.map((d) => d.name), "Lora"];
+        const hidden = this.gallery.hiddenHomeEntries;
+        const byName = new Map();
         for (const dir of dirGroups) {
-            if (dir.name === "Output" || dir.name === "Input") {
-                await _renderDirCard(dir);
+            const key = dir.name.toLowerCase();
+            if (!byName.has(key)) byName.set(key, dir);
+        }
+        const slots = [];
+        const usedDirs = new Set();
+        const pushDir = (dir) => {
+            if (dir && !usedDirs.has(dir)) { usedDirs.add(dir); slots.push({ dir }); }
+        };
+
+        for (const token of order) {
+            const key = String(token).toLowerCase();
+            if (hidden.has(key)) continue;
+            if (key === "local_bookmarks") {
+                if (!this.gallery.isSearchActive) slots.push({ local: true });
+                continue;
             }
+            if (key === "civitai_bookmarks") {
+                if (this.gallery.civitaiBookmarkEnabled && !this.gallery.isSearchActive) slots.push({ civitai: true });
+                continue;
+            }
+            if (key === "lora") {
+                for (const dir of dirGroups) {
+                    const n = dir.name.toLowerCase();
+                    if (n === "lora" || n.startsWith("lora/")) pushDir(dir);
+                }
+                continue;
+            }
+            pushDir(byName.get(String(token).split(/[\\/]/).pop().toLowerCase()));
         }
+        // 顺序表之外的条目（presets 子目录、OSS 目录等）保持原顺序
+        for (const dir of dirGroups) pushDir(dir);
 
-        // 收藏入口 — 首页卡片（本地收藏 / C 站收藏），插在系统目录和自定义目录之间。
-        if (!this.gallery.isSearchActive) {
-            container.appendChild(this.gallery._createLocalHomeCard());
-            container.appendChild(this.gallery._createCivitaiHomeCard());
-        }
-
-        // Remaining dirs (custom, presets, lora, oss, etc.)
-        for (const dir of dirGroups) {
-            if (dir.name === "Output" || dir.name === "Input") continue;
-            await _renderDirCard(dir);
+        for (const slot of slots) {
+            if (slot.local) container.appendChild(this.gallery._createLocalHomeCard());
+            else if (slot.civitai) container.appendChild(this.gallery._createCivitaiHomeCard());
+            else await _renderDirCard(slot.dir);
         }
 
         return container;
