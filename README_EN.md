@@ -116,7 +116,10 @@ For a standalone window, double-click `neo-studio-app.vbs`: the same page runs i
 no console window, geometry is remembered, and Studio state survives restarts. Needs `pywebview`
 (`pip install pywebview`); the Windows WebView2 Runtime is already installed on most systems.
 ComfyUI's backend log is shown under Settings → Log, the shell's own startup trace goes to
-`tmp/studio_shell.log`; `neo-studio-app.bat` is the debug entry with a console.
+`tmp/studio_shell.log`; `neo-studio-app.bat` is the debug entry with a console. When ComfyUI is not
+running, double-clicking shows a "Starting ComfyUI" splash first, then jumps to Studio once it's
+ready — no blank window to stare at. Closing this window also stops the ComfyUI the shell spawned
+(a ComfyUI you started yourself is left running); that's the way to shut it down.
 
 ## Documentation
 

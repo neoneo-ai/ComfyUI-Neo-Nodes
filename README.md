@@ -169,7 +169,9 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 想要独立窗口（不占浏览器标签页），双击 `neo-studio-app.vbs`：同一个页面跑在 WebView2 窗口里，
 没有控制台黑窗，窗口大小位置会记住，设置与素材库状态在重开后保留。需要 `pywebview`（`pip install pywebview`），
 Windows 自带 WebView2 Runtime 即可。ComfyUI 的后台日志在「设置 → 日志」里看，壳自己的启动过程落在
-`tmp/studio_shell.log`；`neo-studio-app.bat` 是带控制台的调试入口。
+`tmp/studio_shell.log`；`neo-studio-app.bat` 是带控制台的调试入口。ComfyUI 未启动时双击会先弹出
+「正在启动 ComfyUI」的启动页，就绪后自动跳到 Studio，不用对着空白窗口干等。关闭这个窗口会顺带停掉
+由壳拉起的 ComfyUI（用户自己启动的 ComfyUI 不受影响），这就是关闭入口。
 
 ---
 

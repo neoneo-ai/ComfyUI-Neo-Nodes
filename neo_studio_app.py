@@ -5,9 +5,11 @@
 （private_mode=False），_blank 链接交系统浏览器，blob 下载放行。
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
 tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲）。
+ComfyUI 冷启动时窗口先显示启动页，后台探活就绪后跳到 Studio，双击后立刻能看到窗口。
 
 用法：python neo_studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
-                              [--quit-comfy] [--cdp <port>] [--debug]
+                              [--no-quit-comfy] [--cdp <port>] [--debug]
+关闭壳窗口默认顺带停掉由壳拉起的 ComfyUI（--no-quit-comfy 保留）；用户自己启动的 ComfyUI 不受影响。
 """
 
 import argparse
@@ -17,6 +19,7 @@ import logging
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -108,6 +111,15 @@ def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
                             creationflags=NO_WINDOW)
 
 
+def splash_html() -> str:
+    """冷启动时先出窗口显示的启动页：ComfyUI 就绪前不让用户对着空白干等。"""
+    return ('<!doctype html><meta charset=utf-8>'
+            '<style>html,body{height:100%;margin:0;background:#1e1e1e;color:#d7dae0;'
+            'font-family:system-ui;display:grid;place-items:center}'
+            'h1{font-size:20px;font-weight:600}p{font-size:13px;color:#8a8f98}</style>'
+            '<div><h1>新影工坊 · Neo Studio</h1><p>正在启动 ComfyUI，请稍候…</p></div>')
+
+
 def singleton() -> socket.socket:
     """已有壳窗口则返回 None：第二个实例直接退出，避免多窗口抢显存。"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -125,7 +137,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--python", default="")
     ap.add_argument("--root", default="")
-    ap.add_argument("--quit-comfy", action="store_true", help="壳退出时顺带停掉由壳拉起的 ComfyUI")
+    ap.add_argument("--quit-comfy", action=argparse.BooleanOptionalAction, default=True,
+                    help="壳退出时顺带停掉由壳拉起的 ComfyUI（默认开；--no-quit-comfy 保留）")
     ap.add_argument("--cdp", type=int, default=0, help="WebView2 远程调试端口（E2E 用）")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
@@ -142,24 +155,31 @@ def main() -> int:
         return 0
 
     root = resolve_root(args.root)
+    url = f"http://127.0.0.1:{args.port}/neo-studio"
     comfy = None
     if not probe(args.port):
         python = resolve_python(root, args.python)
         comfy = start_comfy(python, root, args.port)
         log_line(f"comfy spawn pid={comfy.pid}")
-        if not wait_ready(args.port, READY_TIMEOUT):
-            log_line("comfy not ready")
-            alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，日志见 Studio「设置 → 日志」")
-            comfy.terminate()
-            return 1
 
     geo = load_geometry()
-    window = webview.create_window("新影工坊 · Neo Studio", f"http://127.0.0.1:{args.port}/neo-studio",
-                                   width=geo.get("width", 1440), height=geo.get("height", 900),
-                                   x=geo.get("x"), y=geo.get("y"), min_size=(900, 600))
+    # 冷启动先出启动页（html），就绪后由后台线程跳到 Studio；已就绪则直接加载
+    kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
+             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600))
+    window = webview.create_window("新影工坊 · Neo Studio", url, **kw) if comfy is None \
+        else webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
     window.events.closing += lambda: save_geometry(window)
     if comfy is not None and args.quit_comfy:
         window.events.closing += lambda: comfy.terminate()
+
+    def spawn_ready():
+        if wait_ready(args.port, READY_TIMEOUT):
+            window.load_url(url)
+        else:
+            log_line("comfy not ready")
+            alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，日志见 Studio「设置 → 日志」")
+            comfy.terminate()
+            window.destroy()
 
     # 配方导出 / 模型库的 blob 下载要放行；「在主画布编辑」这类 _blank 链接交系统浏览器
     webview.settings["ALLOW_DOWNLOADS"] = True
@@ -167,7 +187,8 @@ def main() -> int:
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
     log_line(f"webview start geo={geo}")
-    webview.start(private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium", debug=args.debug)
+    on_start = (lambda: threading.Thread(target=spawn_ready, daemon=True).start()) if comfy is not None else None
+    webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium", debug=args.debug)
     log_line("webview end")
     return 0
 

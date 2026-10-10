@@ -10,7 +10,10 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   window creation); messages go to a system dialog, ComfyUI is spawned
   without a child console, window geometry is persisted in `configs/studio_window.json`, Studio `localStorage`
   survives restarts, external links go to the system browser, blob downloads are allowed, and a second launch
-  exits instead of opening a second window.
+  exits instead of opening a second window. When ComfyUI is not running, the window opens on a splash page
+  first and jumps to Studio once the shell's readiness poll succeeds, so the window appears immediately
+  instead of after the cold-start wait. Closing the shell window stops the ComfyUI the shell spawned
+  (`--quit-comfy` default on, `--no-quit-comfy` to keep it); a ComfyUI the user started is left running.
 - Studio Settings gains a Log tab (`GET /neo_studio/log` reads the `app.logger` ring buffer), so the ComfyUI
   console is visible without a console window. The panel fills the main area, and auto-scrolls only while pinned
   to the bottom, so scrolling up to read survives the 2s poll.

@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 _PLUGIN_DIR = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PLUGIN_DIR))
@@ -174,6 +174,81 @@ class SingletonTests(unittest.TestCase):
         self.assertIsNotNone(second)
         second.close()
 
+
+class _Event:
+    """pywebview 的 events.closing 支持 `+= callable`；mock 里用同样的 += 语义。"""
+    def __init__(self):
+        self.handlers = []
+
+    def __iadd__(self, fn):
+        self.handlers.append(fn)
+        return self
+
+
+def _fake_window():
+    return SimpleNamespace(events=SimpleNamespace(closing=_Event()))
+
+
+def _fake_webview(create_window):
+    return SimpleNamespace(create_window=create_window, settings={}, start=lambda *a, **k: None)
+
+
+class MainWindowTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._log = app.SHELL_LOG
+        app.SHELL_LOG = pathlib.Path(self._tmp.name) / "studio_shell.log"
+
+    def tearDown(self):
+        app.SHELL_LOG = self._log
+        self._tmp.cleanup()
+
+    def test_warm_start_loads_url_directly(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 已就绪：create_window 直接加载 url，不弹启动页；用户自己的 ComfyUI 不被壳接管
+        self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8188/neo-studio")
+        self.assertNotIn("html", cw.call_args.kwargs)
+        self.assertEqual(len(window.events.closing.handlers), 1)  # 只有 save_geometry
+
+    def test_cold_start_shows_splash_then_loads(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 冷启动：先出启动页（html），就绪后由后台线程 load_url，不直接加载 url
+        self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
+        self.assertNotIn("url", cw.call_args.kwargs)
+        # 关闭壳窗口顺带停掉壳拉起的 ComfyUI（默认开）：closing 挂 save_geometry + terminate
+        self.assertEqual(len(window.events.closing.handlers), 2)
+        window.events.closing.handlers[1]()
+        comfy.terminate.assert_called_once()
+
+    def test_no_quit_comfy_keeps_shell_spawned_comfy(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(sys, "argv", ["neo_studio_app.py", "--no-quit-comfy"]):
+            self.assertEqual(app.main(), 0)
+        # --no-quit-comfy：关闭壳窗口不停 ComfyUI，只挂 save_geometry
+        self.assertEqual(len(window.events.closing.handlers), 1)
+        comfy.terminate.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
