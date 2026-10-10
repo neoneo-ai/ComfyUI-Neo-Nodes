@@ -172,7 +172,9 @@ Windows 自带 WebView2 Runtime 即可。ComfyUI 的后台日志在「设置 →
 `tmp/studio_shell.log`；`neo-studio-app.bat` 是带控制台的调试入口。ComfyUI 未启动时双击会先弹出
 「正在启动 ComfyUI」的启动页，就绪后自动跳到 Studio，不用对着空白窗口干等。关闭这个窗口会顺带停掉
 由壳拉起的 ComfyUI（用户自己启动的 ComfyUI 不受影响），这就是关闭入口。窗口与任务栏图标是拍板造型的
-`web/neo-studio.ico`（`tools/make_studio_icon.py` 生成）。
+`web/neo-studio.ico`（`tools/make_studio_icon.py` 生成）。要 Explorer 与快捷方式也显示同款图标，用
+`tools\build_studio_exe.ps1` 打包单文件启动器 `tools/neo-studio.exe`（构建期依赖 pyinstaller，
+产物是本地产物，不进 Registry 分发）。
 
 ---
 

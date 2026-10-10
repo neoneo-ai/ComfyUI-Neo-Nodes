@@ -30,7 +30,12 @@ python -m pytest tests -v
   `/neo_studio/version` 探活与轮询、窗口几何读写（缺文件 / 坏 JSON / 部分字段）、单实例端口占用判定、
   提示走系统消息框（pythonw 无控制台）、拉起 ComfyUI 时压制子控制台窗口、壳日志落盘
   `tmp/studio_shell.log` 与 pywebview 日志 handler（pythonw 的 `stderr` 是 None，控制台 handler 会打断窗口创建）、
-  窗口图标路径传给 `webview.start(icon=...)` 与 AppUserModelID（缺 `.ico` 时传 None）。
+  窗口图标路径传给 `webview.start(icon=...)` 与 AppUserModelID（缺 `.ico` 时传 None）、frozen 下 `base_dirs()`
+  向上找到插件目录（产物在 `tools` 下）且随包资源走 `_MEIPASS`。
+- 打包后的 exe（`tools\build_studio_exe.ps1` 产出 `tools/neo-studio.exe`）：起桩服务让壳认为已就绪，启动 exe 后
+  `ExtractIconExW` 确认内嵌图标资源数为 1，`FindWindowW` 找到窗口，`WM_GETICON` 取到 24x24 图标（我们的 `.ico`；
+  无 AppUserModelID 且不传 icon 的 pythonw 基线是 48x48 通用图标），`WM_CLOSE` 后退出码 0，
+  `configs/studio_window.json` 与 `tmp/studio_profile` 落在插件目录而不是临时解包目录。
 - `tests/test_studio.py` — 整片生成路由与任务 watcher、版本路由、日志路由（`/neo_studio/log` 读 `app.logger` 环形缓冲）。
 - `tests/test_node_metadata.py` — 节点元数据契约：注册表键清单、`__init__.py` 的 `NEO_NODES` 清单与注册表一致、
   每个节点都有 `web/docs/<节点键>.md` 帮助文档（ComfyUI 原生「信息」页的取用路径）、`SEARCH_ALIASES`（小写、去重、含中文别名）、

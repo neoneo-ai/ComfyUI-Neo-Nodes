@@ -15,6 +15,35 @@ sys.path.insert(0, str(_PLUGIN_DIR))
 import neo_studio_app as app
 
 
+class FrozenPathTests(unittest.TestCase):
+    def test_source_layout(self):
+        # 源码运行：持久化与随包资源都在插件目录里
+        self.assertEqual(app.PLUGIN_DIR, _PLUGIN_DIR)
+        self.assertEqual(app.RES_DIR, _PLUGIN_DIR)
+
+    def test_frozen_layout(self):
+        # 打包后 __file__ 指向临时解包目录：持久化按插件目录算，随包资源走 _MEIPASS
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = pathlib.Path(tmp) / "ComfyUI" / "custom_nodes" / "ComfyUI-Neo-Nodes"
+            meipass = pathlib.Path(tmp) / "_MEIPASS"
+            with patch.object(sys, "frozen", True, create=True), \
+                 patch.object(sys, "_MEIPASS", str(meipass), create=True):
+                # 产物在 tools 下：向上找到插件目录
+                exe = plugin / "tools" / "neo-studio.exe"
+                with patch.object(sys, "executable", str(exe)):
+                    plugin_dir, res = app.base_dirs()
+                self.assertEqual(plugin_dir, plugin)
+                self.assertEqual(res, meipass)
+                # exe 直接放在插件目录里：parents 里没有插件目录，回退 exe_dir
+                exe = plugin / "neo-studio.exe"
+                with patch.object(sys, "executable", str(exe)):
+                    plugin_dir, res = app.base_dirs()
+                self.assertEqual(plugin_dir, plugin)
+
+    def test_studio_icon_is_a_bundled_resource(self):
+        self.assertEqual(app.STUDIO_ICON, app.RES_DIR / "web" / "neo-studio.ico")
+
+
 class ResolveTests(unittest.TestCase):
     def test_root_default_is_comfyui(self):
         self.assertEqual(app.resolve_root(""), _PLUGIN_DIR.parent.parent)

@@ -25,7 +25,17 @@ import time
 import urllib.request
 from pathlib import Path
 
-PLUGIN_DIR = Path(__file__).parent
+def base_dirs():
+    """打包后 __file__ 指向临时解包目录：持久化按插件目录算，随包资源走 _MEIPASS。"""
+    if getattr(sys, "frozen", False):
+        # 产物在 tools 下，向上找到插件目录；exe 直接放在插件目录时 parents 找不到，回退 exe_dir
+        exe_dir = Path(sys.executable).parent
+        plugin = next((p for p in exe_dir.parents if p.name == "ComfyUI-Neo-Nodes"), exe_dir)
+        return plugin, Path(sys._MEIPASS)
+    return Path(__file__).parent, Path(__file__).parent
+
+
+PLUGIN_DIR, RES_DIR = base_dirs()
 SHELL_LOG = PLUGIN_DIR / "tmp" / "studio_shell.log"
 SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
 
@@ -46,7 +56,7 @@ READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 POLL_INTERVAL = 2.0
 GEOMETRY_FILE = PLUGIN_DIR / "configs" / "studio_window.json"
 PROFILE_DIR = PLUGIN_DIR / "tmp" / "studio_profile"
-STUDIO_ICON = PLUGIN_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
+STUDIO_ICON = RES_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
 APP_ID = "Neo.Studio"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
 

@@ -24,6 +24,9 @@ configs/skill_overrides/
 configs/backyard_oss.json
 configs/studio_window.json
 tools/output/
+tools/neo-studio.exe
+build/
+dist/
 node_modules/
 tmp/
 test-results/

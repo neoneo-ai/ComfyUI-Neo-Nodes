@@ -16,7 +16,11 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   (`--quit-comfy` default on, `--no-quit-comfy` to keep it); a ComfyUI the user started is left running.
   The window and taskbar icon is the clapperboard `web/neo-studio.ico` (`tools/make_studio_icon.py`), passed to
   `webview.start(icon=...)` with an explicit `AppUserModelID` so the taskbar button is not merged into the generic
-  Python icon that `pythonw` falls back to.
+  Python icon that `pythonw` falls back to. `tools/build_studio_exe.ps1` packages the shell as a single-file
+  `tools/neo-studio.exe` with an embedded icon, so Explorer and shortcuts show it too; under a frozen
+  build `base_dirs()` walks up to the plugin folder, so `configs/studio_window.json` and `tmp/studio_profile`
+  stay in the plugin folder. The exe is a local build artifact (`pyinstaller` is a build-time dep, not in
+  `requirements.txt`) and never ships in the Registry; `neo-studio-app.vbs` stays the plugin entry point.
 - Studio Settings gains a Log tab (`GET /neo_studio/log` reads the `app.logger` ring buffer), so the ComfyUI
   console is visible without a console window. The panel fills the main area, and auto-scrolls only while pinned
   to the bottom, so scrolling up to read survives the 2s poll.

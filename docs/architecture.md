@@ -51,7 +51,7 @@ ComfyUI-Neo-Nodes/
 ├── skills/                    # 技能目录（presets / tasks / custom）
 ├── gallery/                   # 素材媒体与缓存
 ├── recipes/                   # 配方目录（presets / custom）
-├── tools/                     # 离线工具脚本
+├── tools/                     # 离线工具脚本（make_studio_icon.py / build_studio_exe.ps1）
 ├── tests/                     # pytest 单元测试 + JS/E2E 测试
 ├── web/                       # 前端资源（WEB_DIRECTORY）
 └── .github/workflows/         # Registry 发布 Action
