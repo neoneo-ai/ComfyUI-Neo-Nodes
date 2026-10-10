@@ -189,8 +189,9 @@ def _fake_window():
     return SimpleNamespace(events=SimpleNamespace(closing=_Event()))
 
 
-def _fake_webview(create_window):
-    return SimpleNamespace(create_window=create_window, settings={}, start=lambda *a, **k: None)
+def _fake_webview(create_window, start=None):
+    return SimpleNamespace(create_window=create_window, settings={},
+                           start=start or (lambda *a, **k: None))
 
 
 class MainWindowTests(unittest.TestCase):
@@ -249,6 +250,39 @@ class MainWindowTests(unittest.TestCase):
         # --no-quit-comfy：关闭壳窗口不停 ComfyUI，只挂 save_geometry
         self.assertEqual(len(window.events.closing.handlers), 1)
         comfy.terminate.assert_not_called()
+
+    def test_start_passes_studio_icon(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        start = MagicMock()
+        set_id = MagicMock()
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 图标走 pywebview 的 start(icon=...)：create_window 没有 icon 参数，
+        # edgechromium 后端（winforms）读 _state['icon'] 设 Form.Icon
+        self.assertEqual(start.call_args.kwargs["icon"], str(app.STUDIO_ICON))
+        # 不设 AppUserModelID 时任务栏按钮会与其他 pythonw 窗口合并成通用 Python 图标
+        set_id.assert_called_once_with(app.APP_ID)
+
+    def test_missing_icon_passes_none(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        start = MagicMock()
+        set_id = MagicMock()
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "STUDIO_ICON", pathlib.Path("D:/nope/neo-studio.ico")), \
+             patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 缺 .ico 时传 None，让 pywebview 回退到 pythonw 自己的图标，也不设 AppUserModelID
+        self.assertIsNone(start.call_args.kwargs["icon"])
+        set_id.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

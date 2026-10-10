@@ -6,6 +6,7 @@
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
 tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲）。
 ComfyUI 冷启动时窗口先显示启动页，后台探活就绪后跳到 Studio，双击后立刻能看到窗口。
+窗口与任务栏图标用 web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
 用法：python neo_studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
                               [--no-quit-comfy] [--cdp <port>] [--debug]
@@ -45,6 +46,8 @@ READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 POLL_INTERVAL = 2.0
 GEOMETRY_FILE = PLUGIN_DIR / "configs" / "studio_window.json"
 PROFILE_DIR = PLUGIN_DIR / "tmp" / "studio_profile"
+STUDIO_ICON = PLUGIN_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
+APP_ID = "Neo.Studio"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
 
 
@@ -181,6 +184,12 @@ def main() -> int:
             comfy.terminate()
             window.destroy()
 
+    # 任务栏图标：pythonw 没有 AppUserModelID，任务栏按钮会与其他 pythonw 窗口合并成通用 Python 图标；
+    # 显式设 ID 后 start(icon=...) 才落到壳自己的图标（edgechromium 后端读 _state['icon']）
+    icon = str(STUDIO_ICON) if STUDIO_ICON.exists() else None
+    if icon:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+
     # 配方导出 / 模型库的 blob 下载要放行；「在主画布编辑」这类 _blank 链接交系统浏览器
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
@@ -188,7 +197,8 @@ def main() -> int:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
     log_line(f"webview start geo={geo}")
     on_start = (lambda: threading.Thread(target=spawn_ready, daemon=True).start()) if comfy is not None else None
-    webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium", debug=args.debug)
+    webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium",
+                  debug=args.debug, icon=icon)
     log_line("webview end")
     return 0
 
