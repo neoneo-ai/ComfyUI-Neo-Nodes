@@ -12,9 +12,11 @@ import soundfile as sf
 import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGIN = r"f:\comfy\Comfyui-WF-2026.8.8\ComfyUI\custom_nodes\comfyui_fl-cosyvoice3"
-MODEL_DIR = r"f:\comfy\Comfyui-WF-2026.8.8\ComfyUI\models\cosyvoice\Fun-CosyVoice3-0.5B\FunAudioLLM\Fun-CosyVoice3-0___5B-2512"
-REF_WAV = r"f:\comfy\Comfyui-WF-2026.8.8\ComfyUI\input\女中音、严厉、强势.wav"
+COMFY = os.path.dirname(os.path.dirname(ROOT))
+PLUGIN = os.environ.get("COSYVOICE_PLUGIN", os.path.join(os.path.dirname(ROOT), "comfyui_fl-cosyvoice3"))
+MODEL_DIR = os.environ.get("COSYVOICE_MODEL", os.path.join(COMFY, "models", "cosyvoice",
+                        "Fun-CosyVoice3-0.5B", "FunAudioLLM", "Fun-CosyVoice3-0___5B-2512"))
+REF_WAV = os.environ.get("COSYVOICE_REF_WAV", os.path.join(COMFY, "input", "女中音、严厉、强势.wav"))
 sys.path.insert(0, PLUGIN)
 
 from cosyvoice.cli.cosyvoice import CosyVoice3  # noqa: E402
@@ -38,7 +40,7 @@ SEGMENTS = {
         (42, 55, "保存配方时宫格作为主图片资产收集，还原时优先填回宫格。一句话加十二张图，就是一个可复用的配方。装 Neo Nodes，重启即用。"),
     ],
     "script3": [
-        (0, 6, "换台机器，工作流满屏红节点。一键，全修好；缺的模型，直接下。"),
+        (0, 6, "从论坛下的 MiniMax H3 全能参考工作流，模型名是作者机器上的。导入画布，满屏红节点。一键，全修好；缺的模型，直接下。"),
         (6, 20, "顶栏菜单亮起红点，点修复工作流。确认框里，原路径红色删除线，候选新路径绿色，带置信度百分比。阈值三档。点修复，画布原地更新，节点位置不动。"),
         (20, 34, "匹配不上的，在修复为那一列手动选文件；勾上记住手动选择，下次同样的失效路径自动替换。模型压根没装，失效行直接给模型库按钮，预填类别和搜索词。"),
         (34, 48, "模型库里选源，双源都能搜，仓库里的模型文件列出来，每条带落盘类别和大小，磁盘已有的标已存在。选文件自动带出类别，子目录是下拉。"),

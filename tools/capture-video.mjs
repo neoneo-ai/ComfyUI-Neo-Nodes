@@ -22,8 +22,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const FFMPEG = 'F:\\comfy\\Comfyui-WF-2026.8.8\\python\\Lib\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe';
-const PYTHON = 'F:\\comfy\\Comfyui-WF-2026.8.8\\python\\python.exe';
+const FFMPEG = process.env.FFMPEG || 'F:\\comfy\\Comfyui-WF-2026.8.8\\python\\Lib\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe';
+const PYTHON = process.env.PYTHON || 'F:\\comfy\\Comfyui-WF-2026.8.8\\python\\python.exe';
 
 const argv = process.argv.slice(2);
 const getOpt = (name, def) => {
@@ -56,7 +56,7 @@ const CAPTIONS = {
     '配方保存 → 宫格优先填回',
   ],
   script3: [
-    '换机器 = 满屏红节点',
+    '社区/网盘工作流 = 满屏红节点',
     '🅝 → 🔧 修复工作流 置信度百分比 · 三档阈值',
     '手动改选 · 记住映射 缺模型 → 📥 模型库',
     '📥 模型库 双源搜索 · 自动归类落盘',
@@ -88,6 +88,13 @@ function makeHelpers(page, segments) {
     run: (fn) => page.evaluate(fn),
     click(sel) { return page.locator(sel).first().click(); },
     clickText(sel, text) { return page.locator(sel).filter({ hasText: text }).first().click(); },
+    async openMenu() {
+      for (let i = 0; i < 3; i++) {
+        await h.click('.neo-n-menu-btn');
+        await h.wait(500);
+        if (await h.count('.neo-n-menu') > 0) return;
+      }
+    },
     dragTo(srcSel, dstSel) { return page.locator(srcSel).first().dragTo(page.locator(dstSel).first()); },
     typeInto(sel, value) {
       return page.evaluate(({ s, v }) => {
@@ -222,6 +229,9 @@ async function main() {
   });
   const page = await context.newPage();
   const h = makeHelpers(page, segments);
+  // recordVideo 从建页那一刻就开始录，h.init() 的 goto 白屏在录制头部，
+  // 记下录制起点，第一拍实测起点减它就是片头白屏长度，成片用 -ss 切掉
+  const recStart = Date.now();
 
   const video = page.video();
   try {
@@ -234,22 +244,23 @@ async function main() {
   fs.copyFileSync(webm, keepWebm);
   await browser.close();
 
-  // 旁白按实测节拍起点补静音，音轨铺满整条录制，最后一拍不会被 -shortest 裁掉
+  const lead = (h.runStart - recStart) / 1000;
+  // 旁白按实测节拍起点补静音，音轨铺满切掉片头后的整条视频，最后一拍不会被 -shortest 裁掉
   const d = spawnSync(FFMPEG, ['-i', keepWebm], { encoding: 'utf8' }).stderr.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
   const webmDur = +d[1] * 3600 + +d[2] * 60 + +d[3] + +d[4] / 100;
   const timingsPath = path.join(outDir, scenarioName, 'beat-timings.json');
   fs.mkdirSync(path.dirname(timingsPath), { recursive: true });
   fs.writeFileSync(timingsPath, JSON.stringify(h.timings, null, 1));
   const wav = path.join(ROOT, 'tmp', 'narration', scenarioName, 'narration_sync.wav');
-  execFileSync(PYTHON, [path.join(ROOT, 'tools', 'pad-narration.py'), scenarioName, timingsPath, String(webmDur)], { stdio: 'inherit' });
+  execFileSync(PYTHON, [path.join(ROOT, 'tools', 'pad-narration.py'), scenarioName, timingsPath, String(webmDur), String(lead)], { stdio: 'inherit' });
 
   execFileSync(FFMPEG, [
-    '-y', '-i', keepWebm, '-i', wav,
+    '-y', '-ss', String(lead), '-i', keepWebm, '-i', wav,
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '192k', '-shortest', outPath,
   ], { stdio: 'inherit' });
 
-  console.log('wrote', outPath, 'raw webm at', keepWebm);
+  console.log('wrote', outPath, 'lead', lead.toFixed(2), 's raw webm at', keepWebm);
 }
 
 // ---- scenarios ----------------------------------------------------------
@@ -415,37 +426,35 @@ SCENARIOS.script1 = async (h) => {
 };
 
 SCENARIOS.script3 = async (h) => {
-  const BROKEN = [
-    'minimax_h3_turbo_4STEPS_comfy.safetensors',
-    'z_image_neon_agent_lora_v2.safetensors',
-    'neo_qq_missing_lora_9x7.safetensors',
-    'neo_qq_missing_lora_8y6.safetensors',
-  ];
+  const COMMUNITY = 'minimax-h3-community.png';   // input/ 里内嵌工作流的社区图（tools/make-community-workflow.py 生成）
 
   await h.init();
 
-  // 0 载入失效工作流：满屏红节点，顶栏 🅝 亮红点
+  // 0 素材库导入社区工作流：满屏红节点，顶栏 🅝 亮红点
   await h.beat(0, async () => {
-    await h.page.evaluate((names) => {
-      app.graph.clear();
-      for (let i = 0; i < names.length; i++) {
-        const n = LiteGraph.createNode('LoraLoader');
-        n.pos = [200 + i * 420, 120 + (i % 2) * 180];
-        app.graph.add(n);
-        const w = n.widgets.find((x) => x.name === 'lora_name');
-        if (w) w.value = names[i];
-        n.color = '#421';
-        n.bgcolor = '#822';
-      }
-      app.canvas.setZoom(0.8);
-    }, BROKEN);
+    await h.clearGraph();
+    // 清掉上次录制留下的修复映射，保证每次录制都从「全部失效」开始
+    await h.page.evaluate(async () => {
+      for (const k of ['text_encoders|qwen3vl_32b_minimax_h3_fp16',
+                       'diffusion_models|minimax_h3_fl2va_fp8_convrot'])
+        await fetch(`/neo_nodes/repair_mappings?key=${encodeURIComponent(k)}`, { method: 'DELETE' });
+    });
+    await h.navGallery(['Input', 'NeoDemo'], 5);
+    const card = h.page.locator(`.neo-gallery-thumb-container[data-filename="${COMMUNITY}"]`).first();
+    await card.waitFor({ state: 'visible', timeout: 20000 });
+    await card.click();
+    const imp = h.page.locator('.neo-lightbox-panel-btn').filter({ hasText: '导入工作流' }).first();
+    await imp.waitFor({ state: 'visible', timeout: 20000 });
+    await imp.click();
+    await h.page.locator('.neo-n-menu-btn.neo-repair-hint').first().waitFor({ state: 'visible', timeout: 20000 });
+    await h.page.evaluate(() => { app.canvas.setZoom(0.5); });
+    console.log('graph nodes', await h.page.evaluate(() => app.graph.nodes.length));
     await h.wait(2200);
   });
 
   // 1 🅝 → 🔧 修复工作流：删除线 / 绿色候选 / 置信度 / 三档阈值
   await h.beat(1, async () => {
-    await h.click('.neo-n-menu-btn');
-    await h.wait(600);
+    await h.openMenu();
     await h.clickText('.neo-n-menu-item', '修复工作流');
     await h.page.locator('.neo-repair-dialog').waitFor({ state: 'visible', timeout: 20000 });
     await h.wait(1800);
@@ -459,6 +468,10 @@ SCENARIOS.script3 = async (h) => {
 
   // 2 手动改选 + 记住映射 + 缺模型行 → 📥 模型库
   await h.beat(2, async () => {
+    // 严格档：UNET 行掉成手动选择，VAE 行保持「📥 模型库」按钮
+    const thr = h.page.locator('.neo-repair-dialog select').first();
+    await thr.selectOption('strict');
+    await h.wait(1200);
     const pick = h.page.locator('.neo-repair-dialog select').filter({ hasText: '手动选择' }).first();
     const opts = await pick.locator('option').allTextContents();
     if (opts.length > 1) {
@@ -481,12 +494,11 @@ SCENARIOS.script3 = async (h) => {
 
   // 3 模型库：选源、搜仓库、文件清单带类别与大小、已存在标记
   await h.beat(3, async () => {
-    await h.click('.neo-n-menu-btn');
-    await h.wait(600);
+    await h.openMenu();
     await h.clickText('.neo-n-menu-item', '模型库');
     await h.page.locator('.neo-hub-overlay').waitFor({ state: 'visible', timeout: 15000 });
     await h.clickText('.neo-hub-src-btn', 'ModelScope');
-    await h.typeInto('.neo-hub-search', 'Z-Image');
+    await h.typeInto('.neo-hub-search', 'MiniMax H3');
     await h.clickText('.neo-hub-btn', '搜索');
     for (let i = 0; i < 25; i++) {
       const n = await h.count('.neo-hub-repo option');
@@ -547,8 +559,7 @@ SCENARIOS.script3 = async (h) => {
       await h.page.locator('.neo-hub-head .neo-hub-icon-btn').last().click();
       await h.page.locator('.neo-hub-overlay').first().waitFor({ state: 'hidden', timeout: 10000 });
     }
-    await h.click('.neo-n-menu-btn');
-    await h.wait(600);
+    await h.openMenu();
     await h.clickText('.neo-n-menu-item', '修复记录');
     await h.page.locator('.neo-repair-log-dialog').waitFor({ state: 'visible', timeout: 15000 });
     await h.wait(2500);
