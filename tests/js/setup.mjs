@@ -49,5 +49,6 @@ export function resetEnv() {
     resetDialogs();
     resetFetchLog();
     clearObjectInfoCache();   // 节点定义/模型目录缓存是模块级，清掉避免跨用例串味
+    delete window.pywebview;  // 壳的 js_api 桩：用例各自声明，留着会让后面的「浏览器标签页」用例当壳窗口
     document.body.innerHTML = "";
 }

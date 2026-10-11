@@ -108,13 +108,16 @@ async def view_file(request):
 
 
 async def studio_version(request):
-    """离线快照：页面靠它完成初始化，并拿到壳侧能力表决定哪些功能可用。"""
+    """离线快照：页面靠它完成初始化，并拿到壳侧能力表决定哪些功能可用。
+    starting 一并下发：pywebview 的 js_api 注入晚于页面加载，冷启动那几秒前端只有这份快照
+    知道「壳已拉起、端口未就绪」，不会先闪「未运行」与「需要 ComfyUI」提示。"""
     return web.json_response({
         "success": True,
         "plugin": "ComfyUI-Neo-Nodes",
         "plugin_version": request.app["plugin_version"],
         "comfyui_version": OFFLINE_ERROR,
         "offline": True,
+        "starting": bool(request.app["flags"].get("starting")),
         "caps": caps.features(),
         "recipes": [],
     })
@@ -148,8 +151,9 @@ async def offline(request):
     return web.Response(status=404)
 
 
-def build_app(root: Path, plugin_dir: Path) -> web.Application:
-    """壳侧 app：Studio 页面 + 前端静态文件 + 能力清单里归壳的全部路由。"""
+def build_app(root: Path, plugin_dir: Path, flags: dict = None) -> web.Application:
+    """壳侧 app：Studio 页面 + 前端静态文件 + 能力清单里归壳的全部路由。
+    flags 是壳的启动中标记（与 StudioShell 共用同一份 dict），随版本快照下发给页面。"""
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
@@ -170,6 +174,7 @@ def build_app(root: Path, plugin_dir: Path) -> web.Application:
     routes.get("/ws")(studio_ws)
 
     app = web.Application()
+    app["flags"] = flags if flags is not None else {}
     app["studio_index"] = plugin_dir / "web" / "studio" / "index.html"
     app["userdata"] = Path(folder_paths.get_user_directory()) / "default" / "neo_gallery_data.json"
     app["comfy_log"] = plugin_dir / "tmp" / "comfy_run.log"
@@ -191,6 +196,7 @@ class ShellServer:
         self.loop = None
         self.thread = None
         self.bound = 0
+        self.error = None   # 装配失败的原因（缺依赖 / 目录不可读）：start() 只回 0，原因交给壳记日志
         self.ready = threading.Event()
 
     def _run(self):
@@ -198,8 +204,9 @@ class ShellServer:
         asyncio.set_event_loop(self.loop)
         try:
             self.loop.run_until_complete(self._serve())
-        except Exception:
-            self.ready.set()   # app 装配失败（缺依赖 / 目录不可读）：让 start() 立刻拿到 0
+        except Exception as e:
+            self.error = e
+            self.ready.set()   # app 装配失败：让 start() 立刻拿到 0
 
 
     async def _serve(self):

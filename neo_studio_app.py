@@ -9,6 +9,9 @@ tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo
 ComfyUI 起不来时看 tmp/comfy_run.log（壳拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
 ComfyUI 冷启动时窗口直接进壳侧只读服务（neo_studio_server）的离线素材库，探活就绪后整页跳到
 完整 Studio；ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由壳回 409 offline。
+壳拉起 ComfyUI 的这段时间 starting 为真（comfy_state 与壳侧 /neo_studio/version 共用同一份标记，
+js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启动中…」，收起未运行横幅、
+启动按钮与「需要 ComfyUI」提示。
 窗口与任务栏图标用 web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
 用法：python neo_studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
@@ -47,6 +50,8 @@ def base_dirs():
 PLUGIN_DIR, RES_DIR = base_dirs()
 SHELL_LOG = PLUGIN_DIR / "tmp" / "studio_shell.log"
 COMFY_LOG = PLUGIN_DIR / "tmp" / "comfy_run.log"   # 壳拉起 ComfyUI 的完整 stdout/stderr
+LOG_MAX = 200_000   # 壳日志上限：反复开关机只增不减，写入前裁到尾部
+LOG_LOCK = threading.Lock()   # js_api 调用各在自己的线程里跑，读全文再写回必须串行
 SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
 
 # pythonw 的 sys.stderr 是 None：pywebview 的 _setup_logger 挂的控制台 handler 会在写日志时抛异常，
@@ -88,10 +93,16 @@ def alert(text: str) -> None:
 
 
 def log_line(text: str) -> None:
-    """壳自己的落盘日志：双击启动没有控制台，排查全靠它。"""
-    SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
-    prev = SHELL_LOG.read_text(encoding="utf-8") + "\n" if SHELL_LOG.exists() else ""
-    SHELL_LOG.write_text(prev + f"[{time.strftime('%H:%M:%S')}] {text}", encoding="utf-8")
+    """壳自己的落盘日志：双击启动没有控制台，排查全靠它。只留尾部，别让它无限长。
+    pywebview 把每个 js_api 调用丢进自己的线程，日志又是读全文再写回：不加锁并发写会丢行。"""
+    line = f"[{time.strftime('%H:%M:%S')}] {text}"
+    with LOG_LOCK:
+        SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        prev = SHELL_LOG.read_text(encoding="utf-8") + "\n" if SHELL_LOG.exists() else ""
+        if len(prev) > LOG_MAX:
+            prev = prev[-LOG_MAX:]
+            prev = prev[prev.index("\n") + 1:] if "\n" in prev else prev   # 从整行开头截，别留半行
+        SHELL_LOG.write_text(prev + line, encoding="utf-8")
 
 
 def resolve_root(root: str) -> Path:
@@ -245,7 +256,7 @@ class StudioShell:
     create_proxy 递归遍历 window.native.AccessibilityObject... 爆栈。"""
 
     def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = "", offline_url: str = "",
-                 shell_port: int = 0):
+                 shell_port: int = 0, flags: dict = None):
         self.url = url
         self.offline_url = offline_url
         self.shell_port = shell_port
@@ -254,43 +265,66 @@ class StudioShell:
         self.root = root
         self.python_arg = python_arg
         self.pid = comfy.pid if comfy is not None else 0
+        # 启动中标记与壳侧只读服务共用同一份：js_api 注入之前页面就能从版本快照拿到「启动中」
+        self.flags = flags if flags is not None else {"starting": False}
+        self.starting = comfy is not None
         self.loader = None
         self.rearm = None
 
+    @property
+    def starting(self) -> bool:
+        return self.flags["starting"]
+
+    @starting.setter
+    def starting(self, value: bool) -> None:
+        self.flags["starting"] = bool(value)
+
     def go_studio(self) -> None:
-        # load_url 会清空 events.loaded，跳完必须重新挂注入
-        self.loader(self.url)
-        self.rearm()
+        self._goto(self.url)
 
     def _goto(self, target: str) -> None:
-        if target and self.loader is not None:
-            self.loader(target)
-            self.rearm()
+        if not target or self.loader is None:
+            return
+        log_line(f"goto {target}")
+        self.loader(target)
+        self.rearm()
+
+    def log(self, message: str) -> None:
+        """页面把前端未捕获错误与启动失败写进壳日志：白屏只有 DevTools 能看太晚，
+        折成一行便于 grep（tmp/studio_shell.log）。"""
+        log_line("[web] " + " ".join(message.split()))
 
     def _jump_when_ready(self) -> None:
         """离线页里点「重新拉起」：就绪后整页跳到 ComfyUI 的完整 Studio。"""
         if wait_ready(self.port, READY_TIMEOUT):
+            self.starting = False
             self._goto(self.url)
         else:
+            self.starting = False   # 没起来：离线横幅回到「未运行 + 启动」，别卡在启动中
             log_line("comfy restart not ready")
 
 
     def comfy_state(self) -> dict:
         """顶栏胶囊要的运行状态：外部启动的 ComfyUI 没有 Popen 句柄，按端口找 PID 并缓存。
         壳拉起的那路以端口探活为准 —— TerminateProcess 是异步的，进程还在收尾时端口已关，
-        报「进程活着」会让胶囊显示运行中而服务其实已经没了。"""
+        报「进程活着」会让胶囊显示运行中而服务其实已经没了。
+        starting：壳拉起的进程还活着、端口还没就绪 —— 这段时间前端只出「启动中」，收起其余离线提示。"""
         ready = probe(self.port, 1.0)
         if self.comfy is not None:
+            if ready:
+                self.starting = False
             return {"port": self.port, "pid": self.comfy.pid, "mine": True,
-                    "running": ready, "ready": ready}
+                    "running": ready, "ready": ready,
+                    "starting": self.starting and self.comfy.poll() is None}
         if not self.pid or not pid_alive(self.pid):
             self.pid = port_owner(self.port)
         return {"port": self.port, "pid": self.pid, "mine": False,
-                "running": bool(self.pid), "ready": ready}
+                "running": bool(self.pid), "ready": ready, "starting": False}
 
     def comfy_stop(self) -> dict:
         if self.comfy is not None:
             self.comfy.terminate()
+            self.starting = False
         # 监听端口的未必是壳的 Popen（子进程、端口被占时的残留）：按端口反复杀到没人监听
         for _ in range(10):
             pid = port_owner(self.port)
@@ -309,6 +343,23 @@ class StudioShell:
             self._goto(self.offline_url)   # 窗口退回壳的只读素材库，不对着死页面干等
         return st
 
+    def comfy_close(self) -> None:
+        """关窗时带走壳自己拉起的 ComfyUI。
+
+        只认自己那份 Popen 句柄：terminate 后等它退出，等不到就按自己的 PID 兜底终止。
+        不做 comfy_stop 的按端口扫荡 —— 关窗路上重扫监听者会误杀抢端口的残留进程；
+        用户自己启动的那路没有句柄（self.comfy 是 None），这里完全不碰。"""
+        if self.comfy is None:
+            return
+        self.starting = False
+        self.comfy.terminate()
+        try:
+            self.comfy.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            kill_pid(self.comfy.pid)
+            log_line(f"comfy close kill pid={self.comfy.pid}")
+        log_line("comfy closed with shell")
+
     def comfy_start(self) -> dict:
         """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后整页跳回完整 Studio。"""
         if self.comfy is not None:
@@ -321,6 +372,7 @@ class StudioShell:
         self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port)
         self.url = f"http://127.0.0.1:{self.port}/neo-studio"
         self.pid = self.comfy.pid
+        self.starting = True
         log_line(f"comfy spawn pid={self.comfy.pid} port={self.port}")
         threading.Thread(target=self._jump_when_ready, daemon=True).start()
         return self.comfy_state()
@@ -370,10 +422,13 @@ def main() -> int:
 
     root = resolve_root(args.root)
     # 壳侧只读素材服务先起来：ComfyUI 没在跑时窗口里也是可浏览的 Neo Gallery
-    server = ShellServer(lambda: build_app(root, PLUGIN_DIR), args.port + SHELL_PORT_OFFSET)
+    # flags 由壳侧服务与 js_api 共用：拉起 ComfyUI 的那一刻起，页面的版本快照就是「启动中」
+    flags = {"starting": False}
+    server = ShellServer(lambda: build_app(root, PLUGIN_DIR, flags), args.port + SHELL_PORT_OFFSET)
     shell_port = server.start()
     offline_url = f"http://127.0.0.1:{shell_port}/neo-studio" if shell_port else ""
-    log_line(f"shell service port={shell_port}")
+    # 起不来（端口被占 / 装配报错）只回 0，原因只能靠这行日志
+    log_line(f"shell service port={shell_port}" if shell_port else f"shell service failed: {server.error!r}")
 
     comfy = None
     comfy_port = args.port
@@ -386,7 +441,7 @@ def main() -> int:
 
     geo = load_geometry()
     # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后由后台线程跳过去
-    shell = StudioShell(url, comfy, comfy_port, root, args.python, offline_url, shell_port)
+    shell = StudioShell(url, comfy, comfy_port, root, args.python, offline_url, shell_port, flags)
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
     start_url = url if comfy is None else offline_url
@@ -396,19 +451,31 @@ def main() -> int:
 
 
     def arm_pill() -> None:
-        # 主画布是整页刷新，返回入口只能由壳在每次页面加载后重新挂上
-        window.events.loaded += lambda: window.evaluate_js(BACK_JS)
+        def on_loaded() -> None:
+            # 每次整页加载记一行：窗口停在离线页还是完整 Studio，事后看日志就知道
+            log_line(f"page loaded {window.get_current_url()}")
+            # 主画布是整页刷新，返回入口只能由壳在每次页面加载后重新挂上
+            window.evaluate_js(BACK_JS)
+        window.events.loaded += on_loaded
 
     shell.rearm = arm_pill
     arm_pill()
-    # 壳是启动器：关窗只存几何并收掉壳侧服务，ComfyUI 的去留由顶栏胶囊决定
-    window.events.closing += lambda: (save_geometry(window), server.stop())
+    # 关窗：存几何、收壳侧服务；壳自己拉起的 ComfyUI 跟着窗口一起走，用户自己起的那路不动
+    def on_closing() -> None:
+        save_geometry(window)
+        server.stop()
+        shell.comfy_close()
+
+    window.events.closing += on_closing
 
 
     def spawn_ready():
         if wait_ready(comfy_port, READY_TIMEOUT):
+            shell.starting = False   # 跳页前收掉「启动中」，新页面直接是完整 Studio
+            log_line(f"comfy ready jump {url}")
             window.load_url(url)
         else:
+            shell.starting = False
             log_line("comfy not ready")
             alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，启动输出见 {COMFY_LOG}")
             comfy.terminate()
@@ -426,7 +493,7 @@ def main() -> int:
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
-    log_line(f"webview start geo={geo}")
+    log_line(f"webview start geo={geo} url={start_url or 'splash'}")
     on_start = (lambda: threading.Thread(target=spawn_ready, daemon=True).start()) if comfy is not None else None
     webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium",
                   debug=args.debug, icon=icon)

@@ -486,7 +486,9 @@ function buildSettings(el) {
 
 // ====== 启动：版本信息 + 扩展初始化 + 路由 ======
 let offline = false;   // 页面跑在壳的服务上：文件类功能可用，生成类请求由壳回 409
+let starting = false;  // 壳已拉起 ComfyUI 还没就绪：这段时间只出「启动中」，其余离线提示一律收起
 let caps = {};         // 壳侧能力表（/neo_studio/version 下发）；ComfyUI 页里缺省即全可用
+let pluginVersion = "";
 
 function can(feature) { return caps[feature] !== false; }
 
@@ -502,7 +504,24 @@ function toast(text) {
     toast._timer = setTimeout(() => el.classList.remove("show"), 4200);
 }
 
+// 前端错误上报壳日志（tmp/studio_shell.log）：白屏这类问题只有 DevTools 能看太晚。
+// pywebview 桥脚本注入晚于页面加载，报错正撞在这个空档 —— 没就绪就重试几轮，别把消息丢了；
+// 浏览器标签页里永远没有壳 api，重试完静默放弃。
+function shellLog(text) {
+    let tries = 0;
+    const send = () => {
+        const api = window.pywebview?.api;
+        if (api?.log) {
+            api.log(text);
+            return;
+        }
+        if (tries++ < 10) setTimeout(send, 300);
+    };
+    send();
+}
+
 function startComfy() {
+    if (starting) return;   // 启动中：不重复拉起，也不出提示
     const shell = window.pywebview?.api;
     if (!shell?.comfy_start) {
         toast("请在 Neo Studio 窗口里启动 ComfyUI");
@@ -514,6 +533,7 @@ function startComfy() {
 
 // 生成类请求打到壳上必 409：统一提示并指向顶栏胶囊，不给前端假成功
 window.addEventListener("neo-offline-request", () => {
+    if (starting) return;   // 启动中不提示：就绪后壳整页跳回完整 Studio
     toast("该功能需要 ComfyUI · 点顶栏 ComfyUI 胶囊启动");
     document.getElementById("ns-comfy")?.classList.add("ns-comfy-hint");
 });
@@ -532,7 +552,7 @@ const RUN_GATES = [
 // 生成按钮改写成「需要 ComfyUI」：不发请求，点一下引导启动（须在原 handler 之前注册）
 function gateRunButton(btn, feature, label) {
     if (can(feature)) return;
-    btn.textContent = "需要 ComfyUI";
+    btn.textContent = runLabel();
     btn.title = `${label} 需要 ComfyUI 执行队列 · 点一下启动`;
     btn.classList.add("ns-gen-off");
     btn.addEventListener("click", (e) => {
@@ -540,6 +560,8 @@ function gateRunButton(btn, feature, label) {
         startComfy();
     });
 }
+
+function runLabel() { return starting ? "ComfyUI 启动中" : "需要 ComfyUI"; }
 
 // 共享模块（gallery / director / voice）大量直接用原生 fetch 打接口，不经 api shim：
 // 离线时同样广播 409 offline，让各生成路径统一出「需要 ComfyUI」提示，不静默吞掉。
@@ -571,17 +593,41 @@ function initOfflineGate() {
     }, true);
 }
 
+// 离线横幅：启动中只说「启动中」，不提可离线编辑那套、也不给启动按钮。
+// 状态在 loadVersion 里就从壳的快照拿到了 —— js_api 注入晚于页面加载，冷启动不能等它，
+// 否则横幅会先闪「ComfyUI 未运行」再改口。
 function showOfflineBanner() {
     if (document.getElementById("ns-offline")) return;
     document.body.classList.add("ns-offline");
     const btn = $el("button", { className: "ns-offline-start", type: "button", textContent: "🚀 启动 ComfyUI" });
     btn.addEventListener("click", startComfy);
-    document.querySelector(".ns-header").after($el("div", {
-        id: "ns-offline", className: "ns-offline-bar",
-    }, [
-        $el("span", { textContent: "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI" }),
+    const bar = $el("div", { id: "ns-offline", className: "ns-offline-bar" }, [
+        $el("span", { className: "ns-offline-msg" }),
         btn,
-    ]));
+    ]);
+    document.querySelector(".ns-header").after(bar);
+    renderShellState();
+}
+
+function renderShellState() {
+    const bar = document.getElementById("ns-offline");
+    if (!bar) return;
+    bar.style.display = "";
+    bar.querySelector(".ns-offline-msg").textContent = starting
+        ? "ComfyUI 启动中…就绪后自动进入完整 Studio"
+        : "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI";
+    bar.querySelector(".ns-offline-start").style.display = starting ? "none" : "";
+    for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();
+}
+
+function setStarting(on) {
+    if (starting === on) return;
+    starting = on;
+    const verEl = document.getElementById("ns-version");
+    if (offline && verEl) {
+        verEl.textContent = `Neo-Nodes ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`;
+    }
+    renderShellState();
 }
 
 async function loadVersion() {
@@ -591,9 +637,11 @@ async function loadVersion() {
         const data = await r.json();
         if (data?.success) {
             offline = !!data.offline;
+            starting = !!data.starting;   // 壳已拉起 ComfyUI：页面第一份状态就是「启动中」
             caps = data.caps || {};
-            verEl.textContent = offline ? `Neo-Nodes ${data.plugin_version} · 离线模式`
-                : `Neo-Nodes ${data.plugin_version} · ComfyUI ${data.comfyui_version}`;
+            pluginVersion = data.plugin_version || "";
+            verEl.textContent = offline ? `Neo-Nodes ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`
+                : `Neo-Nodes ${pluginVersion} · ComfyUI ${data.comfyui_version}`;
             if (offline) showOfflineBanner();
         }
     } catch { /* ComfyUI 未就绪时保持空白 */ }
@@ -665,10 +713,11 @@ function initMemMonitor() {
 function initComfyPill() {
     const btn = document.getElementById("ns-comfy");
     if (!btn) return;
-    let starting = false;   // 已点下重新拉起，等端口就绪
+    let userStarting = false;   // 已点下重新拉起，等端口就绪
     let reloaded = false;   // 刷新只发一次，轮询到就绪后不再重复
     const render = (s) => {
-        if (starting) {
+        setStarting(!!s.starting);   // 壳拉起的启动中：横幅与生成按钮文案跟着收
+        if (userStarting || s.starting) {
             if (s.ready) {
                 if (offline) return;   // 离线页由壳整页跳回完整 Studio，自己刷新只会回到离线页
                 if (!reloaded) { reloaded = true; location.reload(); }
@@ -677,6 +726,7 @@ function initComfyPill() {
             btn.textContent = "🚀 启动中…";
             btn.disabled = true;
             btn.classList.remove("off");
+            btn.title = "ComfyUI 启动中…就绪后自动回到完整 Studio";
             return;
         }
         btn.classList.toggle("off", !s.running);
@@ -687,12 +737,14 @@ function initComfyPill() {
             : "ComfyUI 已停止：素材仍可浏览，点一下重新拉起，就绪后自动回到完整 Studio";
     };
 
-    // pywebview 的 api 注入晚于页面加载（壳的「返回 Studio」胶囊同样靠重试）：重试几轮再放弃，
+    // pywebview 的桥脚本在导航完成之后才注入，且分两步：window.pywebview 先出现，方法由 finish.js 调
+    // _createApi 后填。只判断 api 对象存在就接管，第一次 poll 会抛 TypeError 打断整条启动链（route 再也
+    // 不执行，窗口停在只出顶栏的空白页）。等真正要用的方法出现再接管：重试几轮再放弃，
     // 浏览器标签页里永远没有 api，胶囊保持隐藏
     let tries = 0;
     const attach = () => {
         const api = window.pywebview?.api;
-        if (!api) {
+        if (!api?.comfy_state) {
             if (tries++ < 10) setTimeout(attach, 300);
             return;
         }
@@ -704,10 +756,10 @@ function initComfyPill() {
             if (btn.disabled) return;   // 启动中不响应
             api.comfy_state().then((s) => {
                 if (!s.running) {
-                    starting = true;
+                    userStarting = true;
                     btn.textContent = "🚀 启动中…";
                     btn.disabled = true;
-                    api.comfy_start().then(render).catch(() => { starting = false; });
+                    api.comfy_start().then(render).catch(() => { userStarting = false; });
                     return;
                 }
                 btn.textContent = "退出中…";
@@ -729,12 +781,18 @@ function route() {
 
 // 仅 Studio 独立页启动：本文件也会作为扩展模块被主画布页加载（WEB_DIRECTORY），那里没有 #ns-view
 if (view) {
+    // 未捕获错误与启动失败一并写进壳日志：窗口白屏时日志里至少留下证据
+    window.addEventListener("error", (e) => shellLog(`ERROR ${e.message} @ ${e.filename}:${e.lineno}`));
+    window.addEventListener("unhandledrejection", (e) => shellLog(`REJECT ${e.reason?.stack || String(e.reason)}`));
     window.addEventListener("hashchange", route);
     initExtensions().then(async () => {
         await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
         initOfflineGate();
         initMemMonitor();
+        route();   // 视图先挂上：壳侧附件（胶囊）失败不能连坐，窗口不至于停在只出顶栏的空白页
         initComfyPill();
-        route();
+    }).catch(e => {
+        console.error("[Neo Studio] startup failed:", e);
+        shellLog(`STARTUP FAILED ${e?.stack || e}`);
     });
 }

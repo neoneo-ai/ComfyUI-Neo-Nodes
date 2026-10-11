@@ -200,21 +200,29 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
         const page = await findPage(browser);
         page.on("pageerror", (e) => errors.push(String(e)));
 
-        // 冷启动窗口直接进壳的离线素材页：ComfyUI 还没起来就能翻素材
+        // 冷启动窗口直接进壳的离线素材页：ComfyUI 还在拉起，界面只出「启动中」，不出未运行提示
         await page.waitForSelector("#ns-offline", { timeout: 60000 });
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 60000 });
         const offline = await page.evaluate(async () => ({
             banner: document.getElementById("ns-offline").textContent,
             version: document.getElementById("ns-version").textContent,
+            start: getComputedStyle(document.querySelector("#ns-offline .ns-offline-start")).display,
             mem: getComputedStyle(document.getElementById("ns-mem")).display,
-            thumbs: document.querySelectorAll("#ns-view .neo-gallery-panel img").length,
-            del: (await fetch("/neo_gallery/delete", { method: "POST", body: "{}" })).status,
+            toast: !!document.getElementById("ns-toast"),
+            // 必须 ComfyUI 运行时的写接口：壳不认，明确 409（/neo_gallery/delete 归壳服务，不在这里）
+            del: (await fetch("/neo_image_gen/generate", { method: "POST", body: "{}" })).status,
         }));
-        assert.match(offline.banner, /ComfyUI 未运行/);
-        assert.match(offline.version, /离线浏览/);
+        assert.match(offline.banner, /ComfyUI 启动中/);
+        assert.ok(!/ComfyUI 未运行/.test(offline.banner), "启动中不该出「未运行」");
+        assert.match(offline.version, /ComfyUI 启动中/);
+        assert.equal(offline.start, "none", "启动中不该出「🚀 启动 ComfyUI」按钮");
         assert.equal(offline.mem, "none", "离线页应收起显存块");
-        assert.ok(offline.thumbs > 0, "离线页应出缩略图");
+        assert.equal(offline.toast, false, "启动中不出「需要 ComfyUI」提示条");
         assert.equal(offline.del, 409, "写操作必须回 409 offline");
+        // 目录结构要扫全部素材目录，缩略图是逐卡懒加载：出页面不等于出图，等到出图为止
+        assert.ok(await waitFor(() => page.evaluate(() =>
+            document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0), 60),
+            "离线页应出缩略图");
 
         // ComfyUI 就绪 → 壳整页跳到完整 Studio
         assert.ok(await waitFor(() => probe(port), 180), "壳拉起的 ComfyUI 未就绪");
@@ -227,9 +235,12 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
         await page.click("#ns-comfy");
         await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${offlinePort}/neo-studio`), { timeout: 120000 });
         await page.waitForSelector("#ns-offline", { timeout: 30000 });
-        assert.ok(await page.evaluate(() =>
-            document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0),
+        assert.ok(await waitFor(() => page.evaluate(() =>
+            document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0), 60),
             "回到离线页仍应出缩略图");
+        // 停止后启动中标记要收掉：横幅回到「未运行 + 启动入口」，不卡在启动中
+        assert.match(await page.evaluate(() => document.getElementById("ns-offline").textContent),
+            /ComfyUI 未运行/);
         assert.deepEqual(errors, [], "离线页不应有未捕获错误");
 
         await browser.close();

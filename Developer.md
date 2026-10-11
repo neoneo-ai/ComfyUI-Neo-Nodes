@@ -28,7 +28,15 @@
   桌面壳在 ComfyUI 端口 +3 复用同一批 handler 跑离线 Studio（`neo_studio_server.py`）：归壳服务的路由由
   `neo_studio_caps.py` 一张表划定（文件读写 / 本地检索 / 远程下载 / 8080 LLM），表外一律 `409 offline`；
   功能开关表随 `/neo_studio/version` 下发，Studio 只门控运行类按钮（生成 / 跑段 / 拼接），
-  配方编辑、技能编辑、设置、LLM 配置都不需要 ComfyUI 运行时。
+  配方编辑、技能编辑、设置、LLM 配置都不需要 ComfyUI 运行时。壳拉起 ComfyUI 期间的 `starting` 是
+  `StudioShell` 与壳侧服务共用的一份 dict，`comfy_state` 与 `/neo_studio/version` 同时下发
+  （pywebview 的 js_api 注入晚于页面加载，且 window.pywebview 先出现、方法由 finish.js 后填：壳侧 api
+  一律等到要用的方法出现才接管，前端只靠版本快照就知道在启动中），这段时间只出
+  「ComfyUI 启动中…」，收起未运行横幅与启动入口。关窗（`events.closing`）只带走壳自己 `Popen`
+  拉起的那路：`terminate` 后等它退出，等不到按自己的 PID 兜底，不做顶栏胶囊那套按端口扫荡；
+  用户自己启动的 ComfyUI 没有句柄，完全不碰。壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗，以及页面
+  上报的前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB；壳拉起 ComfyUI 的完整
+  输出在 `tmp/comfy_run.log`（Studio「设置 → 日志」读它）。
 
 - **前端资源**：`web/` 下的模块由 ComfyUI 扩展机制加载（只认 `.js`），Studio 独立页面在 `web/studio/`，
   跨节点共享工具在 `web/js/core/`，节点帮助文档在 `web/docs/<节点键>.md`（ComfyUI 原生约定路径，属性面板「信息」页直接加载）。

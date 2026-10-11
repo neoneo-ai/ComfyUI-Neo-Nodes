@@ -168,15 +168,19 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 想要独立窗口（不占浏览器标签页），双击 `neo-studio-app.vbs`：同一个页面跑在 WebView2 窗口里，
 没有控制台黑窗，窗口大小位置会记住（最小化时保存的屏幕外位置自动丢弃，回退默认），设置与素材库状态在重开后保留。需要 `pywebview`（`pip install pywebview`），
-Windows 自带 WebView2 Runtime 即可。ComfyUI 的后台日志在「设置 → 日志」里看，壳自己的启动过程落在
-`tmp/studio_shell.log`；`neo-studio-app.bat` 是带控制台的调试入口。壳自带一个离线服务
+Windows 自带 WebView2 Runtime 即可。ComfyUI 的后台日志在「设置 → 日志」里看，壳自己的启动过程、每次整页
+跳转与页面的未捕获错误都落在 `tmp/studio_shell.log`（只留尾部 200KB）；`neo-studio-app.bat` 是带控制台的
+调试入口（加 `--debug` 会开 DevTools）。壳自带一个离线服务
 （`neo_studio_server.py`，跑在 ComfyUI 端口 +3，默认 `8191`）：ComfyUI 没在跑时窗口直接开在 Studio 上，
 素材浏览 / 技能编辑 / 配方编辑 / 设置（含 LLM 配置）/ 模型库 / 收藏 / LoRA 打标照常可用（哪些接口归壳服务由
 `neo_studio_caps.py` 一张表划定），顶栏出「ComfyUI 未运行」横幅和「🚀 启动 ComfyUI」按钮；生成 / 队列 / 显存
 这类需要 ComfyUI 运行时的请求由壳回 `409 offline`（不假装成功），前端提示「需要 ComfyUI」并把运行按钮
-（生成素材 / 生成整片 / 生成这一段 / 拼回成片 / 生成图片分镜）直接变成启动入口；ComfyUI
-就绪后窗口整页跳到 `http://127.0.0.1:8188/neo-studio`
-的完整 Studio，停掉 ComfyUI 后窗口再拉回离线 Studio，不用对着空白窗口干等。壳是启动器：关窗只关窗口。
+（生成素材 / 生成整片 / 生成这一段 / 拼回成片 / 生成图片分镜）直接变成启动入口。壳拉起 ComfyUI 的这段时间
+（`starting` 由壳侧 `/neo_studio/version` 与 `comfy_state` 共用同一份标记，页面第一份状态就是启动中）
+界面只出「ComfyUI 启动中…」，未运行横幅、启动按钮与「需要 ComfyUI」提示一律收起；
+ComfyUI 就绪后窗口整页跳到 `http://127.0.0.1:8188/neo-studio`
+的完整 Studio，停掉 ComfyUI 后窗口再拉回离线 Studio，不用对着空白窗口干等。壳是启动器：关窗时壳自己
+拉起的 ComfyUI 随窗口一起退出，用户自己启动的那路不动（没有句柄就不碰，避免误杀）。
 顶栏「● ComfyUI :8188」胶囊报运行状态（端口 / PID / 谁启动 / 就绪）：运行中点一下退出（壳拉起的直接
 `terminate()`，并按端口找监听者 PID 一并终止），已停止点一下重新拉起，就绪后窗口自动跳回完整 Studio；窗口留着。
 

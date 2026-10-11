@@ -94,12 +94,12 @@ class _ServerCase(_RealFolderPaths):
     @classmethod
     def setUpClass(cls):
         cls._pin_real()
-        app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR)
+        cls.app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR, {"starting": False})
         cls.tmpdir = Path(tempfile.mkdtemp(prefix="neo_studio_server_"))
-        app["userdata"] = cls.tmpdir / "neo_gallery_data.json"
-        app["comfy_log"] = cls.tmpdir / "comfy_run.log"
-        app["comfy_log"].write_text("shell log line 1\nshell log line 2\n", encoding="utf-8")
-        cls.server = ns.ShellServer(lambda: app, TEST_PORT)
+        cls.app["userdata"] = cls.tmpdir / "neo_gallery_data.json"
+        cls.app["comfy_log"] = cls.tmpdir / "comfy_run.log"
+        cls.app["comfy_log"].write_text("shell log line 1\nshell log line 2\n", encoding="utf-8")
+        cls.server = ns.ShellServer(lambda: cls.app, TEST_PORT)
         cls.port = cls.server.start()
 
     @classmethod
@@ -134,6 +134,15 @@ class OfflineServiceTests(_ServerCase):
         self.assertFalse(data["caps"]["director"])
         self.assertFalse(data["caps"]["memory"])
         self.assertTrue(data["caps"]["grid_split"])
+
+    def test_version_reports_shell_starting_flag(self):
+        # 冷启动那几秒 js_api 还没注入，页面靠这份快照知道「壳已拉起、端口未就绪」
+        self.app["flags"]["starting"] = True
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertTrue(data["starting"], "壳拉起 ComfyUI 期间快照要报启动中")
+        self.app["flags"]["starting"] = False
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertFalse(data["starting"], "没在拉起时不报启动中")
 
     def test_extension_static_files_served(self):
         for path in ("/extensions/ComfyUI-Neo-Nodes/studio/studio-app.js",

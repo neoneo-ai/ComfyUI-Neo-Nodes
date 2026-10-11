@@ -109,6 +109,42 @@ test("浏览器标签页里没有壳：ComfyUI 胶囊不显示", async () => {
     assert.equal(btn.hidden, true, "没有 pywebview api 时胶囊应保持隐藏");
 });
 
+test("桥对象先到、方法后填：不打断启动链，胶囊等齐了再接管", async () => {
+    const btn = mountStudio();
+    // pywebview 的桥脚本分两步注入：window.pywebview（含空 api）先到，方法由 finish.js 调 _createApi 后填。
+    // 只判断 api 对象存在就 poll，会抛 TypeError 打断启动链 —— 视图再也不挂载，窗口停在只出顶栏的空白页。
+    window.pywebview = { api: {} };
+    await import("../../web/studio/studio-app.js?bridgeLate=1");
+    await flush();
+
+    assert.ok(document.querySelector("#ns-view .ns-page"), "方法未就绪也不该打断启动链，视图要照常挂载");
+    assert.equal(btn.hidden, true, "方法未就绪先不接管胶囊");
+
+    const state = { port: 8188, pid: 4321, mine: true, running: true, ready: true };
+    window.pywebview.api.comfy_state = async () => ({ ...state });
+    await sleep(400);   // 300ms 一轮重试（setTimeout 不参与轮询加速）
+    assert.equal(btn.hidden, false, "方法齐了就该接管");
+    assert.match(btn.textContent, /● ComfyUI :8188/);
+});
+
+test("前端错误上报：桥没就绪先等，方法齐了再补进壳日志", async () => {
+    mountStudio();
+    window.pywebview = { api: {} };   // 报错正撞在桥脚本注入的空档上：api 对象在、log 方法还没填
+    await import("../../web/studio/studio-app.js?webLog=1");
+    await flush();
+
+    const logged = [];
+    const ev = new window.Event("error");
+    Object.assign(ev, { message: "api.comfy_state is not a function", filename: "studio-app.js", lineno: 748 });
+    window.dispatchEvent(ev);
+    window.pywebview.api.log = (t) => logged.push(t);
+    await sleep(400);   // 300ms 一轮重试
+
+    // 同一进程里前面几个用例也导入了 studio-app.js（各有一份错误监听），消息会重复，只断言内容
+    assert.ok(logged.includes("ERROR api.comfy_state is not a function @ studio-app.js:748"),
+        `未捕获错误应补进壳日志（实际 ${logged.join(" | ")}）`);
+});
+
 test("壳里显示 ComfyUI 状态，点一下即停", async () => {
     const btn = mountStudio();
     const stops = [];

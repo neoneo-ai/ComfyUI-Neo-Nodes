@@ -247,7 +247,7 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
 | GET/POST | `/rs_prompts/get_models` `native_models` `set_model` `remote_llm_config` `llm_connection_test` `llm_mode` `extract_title` `fetch_remote_models` | LLM 配置与标题提取（只读 `configs/` 与 8080 服务） |
 | GET/POST | `/neo_model_hub/*` `/neo_backyard/*` | 模型库与 Backyard |
 | GET/POST | `/userdata/neo_gallery_data.json` | 素材库状态文件（`user/default/`，写入走 `.tmp` + replace） |
-| GET | `/neo_studio/version` | 能力快照：`offline: true` + `caps`，前端据此门控 |
+| GET | `/neo_studio/version` | 能力快照：`offline: true` + `caps` + `starting`，前端据此门控 |
 | GET | `/neo_studio/log` `/view` `/ws` | 启动日志 / 图片只读 / WS 桩 |
 | ANY | 其余 `/neo_*` `/rs_*` `/userdata/*` `/api/*` | `409 {"success": false, "offline": true}` |
 
