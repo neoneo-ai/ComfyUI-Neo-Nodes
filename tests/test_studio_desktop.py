@@ -297,6 +297,29 @@ class ShellLogTests(unittest.TestCase):
         self.assertTrue(any(isinstance(h, logging.FileHandler) for h in handlers))
 
 
+class WebCacheTests(unittest.TestCase):
+    """WebView2 的 HTTP 缓存跨会话留着：缓存里的旧插件 JS 会被直接端出来用（不发请求），
+    与新拉到的模块拼进同一张 ES 模块图，一个链接错误就让整页只剩顶栏。开窗口前必须清掉。"""
+
+    def test_purge_removes_cached_extension_scripts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = pathlib.Path(tmp) / "EBWebView" / "Default" / "Cache" / "Cache_Data"
+            data.mkdir(parents=True)
+            (data / "f_001ed1").write_text("old gallery-utils.js", encoding="utf-8")
+            with patch.object(app, "WEBVIEW_CACHE", data.parent):
+                app.purge_web_cache()
+            self.assertFalse((data.parent).exists(), "历史缓存要整份清掉")
+
+    def test_purge_tolerates_missing_cache(self):
+        # 首次启动没有缓存目录：清缓存不能抛，也不能碰 profile 里的 localStorage
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = pathlib.Path(tmp) / "studio_profile"
+            (profile / "EBWebView" / "Default" / "Local Storage").mkdir(parents=True)
+            with patch.object(app, "WEBVIEW_CACHE", profile / "EBWebView" / "Default" / "Cache"):
+                app.purge_web_cache()
+            self.assertTrue((profile / "EBWebView" / "Default" / "Local Storage").exists())
+
+
 class SingletonTests(unittest.TestCase):
     """单实例锁是命名互斥体：句柄活着 = 锁被占，CloseHandle = 释放。测试用假 kernel32。"""
     class _K32:

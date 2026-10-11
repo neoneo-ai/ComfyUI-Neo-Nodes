@@ -42,6 +42,10 @@
   顶栏「启动」按钮同样只附着。单实例锁是命名互斥体 `Local\Neo.Studio.SingleInstance`（已存在的信号问
   `kernel32.GetLastError()`，`ctypes.get_last_error()` 在这条调用上拿不到 183），不占端口：占 8189 监听
   在 netstat 里像第二路 ComfyUI，会被读成「起了 8188 和 8189 两个端口，关窗只掉一个」。
+  壳侧 `/extensions/` 静态响应带 `no-store`（与 ComfyUI 的 `/extensions` 一致），并在开窗口前清掉
+  `tmp/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），
+  和新模块拼进同一张 ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，
+  整页只剩顶栏 —— 视图不挂、离线横幅不出、顶栏胶囊永远 `hidden`。
   壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗，以及页面
   上报的前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB；壳拉起 ComfyUI 的完整
   输出在 `tmp/comfy_run.log`（Studio「设置 → 日志」读它）。

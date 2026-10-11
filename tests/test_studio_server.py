@@ -150,6 +150,14 @@ class OfflineServiceTests(_ServerCase):
                      "/extensions/ComfyUI-Neo-Nodes/gallery.js"):
             self.assertEqual(self.get(path)[0], 200, path)
 
+    def test_extension_static_files_not_cacheable(self):
+        """壳窗口开着时改了插件 JS：缓存里的旧模块和新模块拼进同一张模块图，
+        一个 ES 模块链接错误就把整页打回只出顶栏（视图不挂、胶囊永远 hidden）。"""
+        path = "/extensions/ComfyUI-Neo-Nodes/gallery-utils.js"
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=30) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get("Cache-Control"), "no-store", path)
+
     def test_gallery_browsing_routes_served(self):
         status, body = self.get("/neo_gallery/list?fields=dirs,items,covers&dir_name=output&path=")
         data = json.loads(body)

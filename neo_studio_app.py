@@ -27,6 +27,7 @@ import ctypes
 from ctypes import wintypes
 import json
 import logging
+import shutil
 import socket
 import subprocess
 import sys
@@ -74,6 +75,7 @@ READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 POLL_INTERVAL = 2.0
 GEOMETRY_FILE = PLUGIN_DIR / "configs" / "studio_window.json"
 PROFILE_DIR = PLUGIN_DIR / "tmp" / "studio_profile"
+WEBVIEW_CACHE = PROFILE_DIR / "EBWebView" / "Default" / "Cache"   # WebView2 的 HTTP 缓存，跨会话留着
 STUDIO_ICON = RES_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
 APP_ID = "Neo.Studio"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
@@ -400,6 +402,16 @@ class StudioShell:
 
 
 
+def purge_web_cache() -> None:
+    """开窗口前清掉 WebView2 的 HTTP 缓存。
+
+    壳侧静态文件已经 no-store，但历史缓存里的旧插件 JS 会被直接端出来用（不发请求）：
+    改了 web/*.js 之后，旧模块和新拉到的模块拼进同一张 ES 模块图，一个链接错误
+    （旧 gallery-utils.js 没有新导出）就让 studio-app.js 整份不执行 —— 视图不挂、
+    离线横幅不出、顶栏胶囊永远 hidden，窗口只剩顶栏，连重新拉起 ComfyUI 的按钮都没有。"""
+    shutil.rmtree(WEBVIEW_CACHE, ignore_errors=True)
+
+
 def splash_html() -> str:
     """冷启动时先出窗口显示的启动页：ComfyUI 就绪前不让用户对着空白干等。"""
     return ('<!doctype html><meta charset=utf-8>'
@@ -522,6 +534,7 @@ def main() -> int:
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
     log_line(f"webview start geo={geo} url={start_url or 'splash'}")
+    purge_web_cache()   # 历史缓存里的旧插件 JS 会把模块图撕开，开窗口前清掉
     if comfy is not None:
         on_start = lambda: threading.Thread(target=spawn_ready, daemon=True).start()
     elif not studio_ready:

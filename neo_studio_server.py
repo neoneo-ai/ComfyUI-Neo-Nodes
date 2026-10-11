@@ -58,6 +58,20 @@ def load_shell_modules(plugin_dir: Path) -> list:
 
 
 
+@web.middleware
+async def no_store(request, handler):
+    """插件静态文件一律 no-store，与 ComfyUI 的 /extensions 同一套。
+
+    不带 Cache-Control 时 WebView2 按启发式策略缓存 JS：壳窗口开着的时候改了 web/*.js，
+    回离线页就会把缓存里的旧模块和新拉到的模块拼进同一张模块图 —— 一个 ES 模块链接错误
+    （旧 gallery-utils.js 没有新导出）发生在 studio-app.js 执行之前，JS 自己捕获不到，
+    整页只剩顶栏：视图不挂、离线横幅不出、顶栏胶囊永远 hidden，连重新拉起的按钮都没有。"""
+    resp = await handler(request)
+    if request.path.startswith("/extensions/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 async def studio_page(request):
     resp = web.FileResponse(request.app["studio_index"])
     resp.headers["Cache-Control"] = "no-cache"
@@ -173,7 +187,7 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None) -> web.Applicati
     routes.get("/view")(view_file)
     routes.get("/ws")(studio_ws)
 
-    app = web.Application()
+    app = web.Application(middlewares=[no_store])
     app["flags"] = flags if flags is not None else {}
     app["studio_index"] = plugin_dir / "web" / "studio" / "index.html"
     app["userdata"] = Path(folder_paths.get_user_directory()) / "default" / "neo_gallery_data.json"
