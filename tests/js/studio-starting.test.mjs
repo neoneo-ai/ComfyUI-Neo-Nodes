@@ -49,7 +49,7 @@ test("壳拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅�
     assert.ok(!/ComfyUI 未运行/.test(bar.textContent), "启动中不出「未运行」");
     assert.equal(bar.querySelector(".ns-offline-start").style.display, "none", "启动中不给启动按钮");
     assert.match(document.getElementById("ns-version").textContent, /ComfyUI 启动中/);
-    assert.ok(document.getElementById("ns-comfy").hidden, "js_api 未注入前顶栏胶囊不出");
+    assert.ok(document.getElementById("ns-comfy").hidden, "js_api 未注入前顶栏启停控件不出");
     const run = document.querySelector(".ns-gen-run");
     assert.ok(run, "导演页应已挂载");
     assert.match(run.textContent, /ComfyUI 启动中/);

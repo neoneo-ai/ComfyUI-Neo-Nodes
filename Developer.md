@@ -40,8 +40,8 @@
   各兜一次（`destroy` 路径可能根本没有 `closing`），退出前 join 收尾线程，不等完就退进程等于留孤儿。
   判活按 PID 问 `OpenProcess`，不用 `Popen.poll()`（子进程句柄被回收后它会谎报「已退出」）；
   `terminate` 之后必须 `reap`（`Popen.wait`）回收子进程 —— 不回收的话进程只剩一个内核对象，
-  `pid_alive` 永远报「还活着」：关窗固定睡满等待上限（就是那几秒卡顿），按 PID 的兜底强杀与胶囊
-  停止的端口扫荡也必然失败（那行「没有权限终止该进程」）。回收超时才兜底强杀，不做顶栏胶囊那套按端口扫荡；
+  `pid_alive` 永远报「还活着」：关窗固定睡满等待上限（就是那几秒卡顿），按 PID 的兜底强杀与顶栏停止
+  的端口扫荡也必然失败（那行「没有权限终止该进程」）。回收超时才兜底强杀，不做顶栏停止那套按端口扫荡；
   用户自己启动的 ComfyUI 没有句柄，完全不碰。起壳时「有没有 ComfyUI」只看端口有没有人监听：
   `/neo_studio/version` 探不到（那路插件没加载、还在导入自定义节点）也只附着，不在旁边端口拉第二路，
   顶栏「启动」按钮同样只附着。单实例锁是命名互斥体 `Local\Neo.Studio.SingleInstance`（已存在的信号问
@@ -50,7 +50,7 @@
   壳侧 `/extensions/` 静态响应带 `no-store`（与 ComfyUI 的 `/extensions` 一致），并在开窗口前清掉
   `tmp/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），
   和新模块拼进同一张 ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，
-  整页只剩顶栏 —— 视图不挂、离线横幅不出、顶栏胶囊永远 `hidden`。
+  整页只剩顶栏 —— 视图不挂、离线横幅不出、顶栏启停控件永远 `hidden`。
   壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗，以及页面
   上报的前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB；壳拉起 ComfyUI 的完整
   输出在 `tmp/comfy_run.log`（Studio「设置 → 日志」读它）。

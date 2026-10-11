@@ -27,7 +27,10 @@
         <a href="#/skills" data-tab="skills">技能</a>
         <a href="#/settings" data-tab="settings">设置</a>
     </nav>
-    <button class="ns-comfy" id="ns-comfy" hidden title="ComfyUI 运行状态"></button>
+    <span class="ns-comfy-box" id="ns-comfy-box" hidden>
+        <button class="ns-comfy" id="ns-comfy" hidden title="ComfyUI 运行状态"></button>
+        <span class="ns-comfy-pid" id="ns-comfy-pid" title="ComfyUI 进程号" hidden># PID:</span>
+    </span>
     <div class="ns-mem" id="ns-mem">
         <span class="ns-mem-item" id="ns-vram" title="GPU 显存">VRAM --</span>
         <span class="ns-mem-item" id="ns-ram" title="系统内存">RAM --</span>

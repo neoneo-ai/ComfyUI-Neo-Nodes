@@ -102,14 +102,14 @@ function mountStudio() {
     return document.getElementById("ns-comfy");
 }
 
-test("浏览器标签页里没有壳：ComfyUI 胶囊不显示", async () => {
+test("浏览器标签页里没有壳：ComfyUI 启停控件不显示", async () => {
     const btn = mountStudio();
     await import("../../web/studio/studio-app.js?browser=1");
     await flush();
-    assert.equal(btn.hidden, true, "没有 pywebview api 时胶囊应保持隐藏");
+    assert.equal(btn.hidden, true, "没有 pywebview api 时启停控件应保持隐藏");
 });
 
-test("桥对象先到、方法后填：不打断启动链，胶囊等齐了再接管", async () => {
+test("桥对象先到、方法后填：不打断启动链，启停控件等齐了再接管", async () => {
     const btn = mountStudio();
     // pywebview 的桥脚本分两步注入：window.pywebview（含空 api）先到，方法由 finish.js 调 _createApi 后填。
     // 只判断 api 对象存在就 poll，会抛 TypeError 打断启动链 —— 视图再也不挂载，窗口停在只出顶栏的空白页。
@@ -118,13 +118,13 @@ test("桥对象先到、方法后填：不打断启动链，胶囊等齐了再�
     await flush();
 
     assert.ok(document.querySelector("#ns-view .ns-page"), "方法未就绪也不该打断启动链，视图要照常挂载");
-    assert.equal(btn.hidden, true, "方法未就绪先不接管胶囊");
+    assert.equal(btn.hidden, true, "方法未就绪先不接管启停控件");
 
     const state = { port: 8188, pid: 4321, mine: true, running: true, ready: true };
     window.pywebview.api.comfy_state = async () => ({ ...state });
     await sleep(400);   // 300ms 一轮重试（setTimeout 不参与轮询加速）
     assert.equal(btn.hidden, false, "方法齐了就该接管");
-    assert.match(btn.textContent, /● ComfyUI :8188/);
+    assert.match(btn.textContent, /■停止内核/);
 });
 
 test("前端错误上报：桥没就绪先等，方法齐了再补进壳日志", async () => {
@@ -163,21 +163,66 @@ test("壳里显示 ComfyUI 状态，点一下即停", async () => {
     await import("../../web/studio/studio-app.js?shell=1");
     await flush();
 
-    assert.equal(btn.hidden, false, "壳里应显示胶囊");
-    assert.match(btn.textContent, /● ComfyUI :8188/);
-    assert.match(btn.title, /PID 4321/);
+    assert.equal(btn.hidden, false, "壳里应显示启停控件");
+    assert.match(btn.textContent, /■停止内核/);
+    assert.ok(btn.classList.contains("stop"), "运行中带红色停止图标");
     assert.match(btn.title, /外部启动/);
-    assert.ok(!btn.classList.contains("off"), "运行中不是灰态");
+    assert.match(btn.title, /点一下停止内核/);
+    assert.match(document.getElementById("ns-comfy-pid").textContent, /4321/, "PID 徽标报进程号");
 
-    // 点一下真停：状态变灰，且仍可点（壳是启动器，点一下能重新拉起）
+    // 点一下真停：换成「启动内核」，且仍可点（壳是启动器，点一下能重新拉起）
     click(btn);
     await flush();
     assert.deepEqual(stops, [1], "点一下就该停，不要二次确认");
-    assert.match(btn.textContent, /○ ComfyUI 已停止/);
-    assert.ok(btn.classList.contains("off"));
-    assert.equal(btn.disabled, false, "停止态应可点重启");
-    assert.match(btn.title, /点一下重新拉起/);
+    assert.match(btn.textContent, /▶启动内核/);
+    assert.ok(!btn.classList.contains("stop"), "停止后换成启动按钮");
+    assert.equal(btn.disabled, false, "停止态应可点启动");
+    assert.match(btn.title, /点一下启动内核/);
+    assert.equal(document.getElementById("ns-comfy-pid").hidden, true, "没有进程就不出 PID 徽标");
 });
+// 状态与动作分两块：按钮只写动作，进程号交给旁边的 PID 徽标 —— 一行「● ComfyUI :8188」
+// 读不出「点它是退出还是启动」，这里按三种状态逐个钉住文案。
+test("启停控件的文案就是动作本身：停止内核 / 启动内核 / 启动中", async () => {
+    const btn = mountStudio();
+    const pid = () => document.getElementById("ns-comfy-pid");
+    const state = { port: 8188, pid: 4321, mine: true, running: true, ready: true };
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ ...state }),
+            comfy_start: async () => {
+                state.running = true;
+                state.ready = false;   // 进程已拉起，端口还没就绪
+                state.pid = 5678;      // 壳回报的是新进程的号
+                return { ...state };
+            },
+            comfy_stop: async () => {
+                state.running = false;
+                state.pid = 0;
+                return { ...state };
+            },
+        },
+    };
+    await import("../../web/studio/studio-app.js?actionLabel=1");
+    await flush();
+
+    assert.equal(btn.textContent, "■停止内核", "运行中要点的是停止");
+    assert.equal(pid().hidden, false, "运行中徽标在场");
+    assert.equal(pid().textContent, "# PID: 4321", "运行中徽标报进程号");
+
+    click(btn);
+    await flush();
+    assert.equal(btn.textContent, "▶启动内核", "停止后要点的是启动");
+    assert.equal(pid().hidden, true, "没进程就没有徽标");
+
+    click(btn);
+    await flush();
+    assert.equal(btn.textContent, "🚀启动中…", "启动中不写动作，只报在启动");
+    assert.equal(btn.disabled, true, "启动中不响应点击");
+    assert.equal(pid().hidden, false, "启动中徽标在场");
+    assert.equal(pid().textContent, "# PID: 5678", "启动中徽标报刚拉起的进程号");
+    await sleep(120);
+});
+
 
 test("ComfyUI 在跑时生成入口不受门控：点它不该去启动 ComfyUI", async () => {
     mountStudio();
@@ -249,8 +294,8 @@ test("离线页里点重新拉起：不刷新页面，交给壳整页跳回完�
     try {
         await import("../../web/studio/studio-app.js?offlineStart=1");
         await flush();
-        assert.match(btn.textContent, /○ ComfyUI 已停止/);
-        assert.match(btn.title, /素材仍可浏览/);
+        assert.match(btn.textContent, /▶启动内核/);
+        assert.match(btn.title, /点一下启动内核/);
 
         click(btn);
         await flush();

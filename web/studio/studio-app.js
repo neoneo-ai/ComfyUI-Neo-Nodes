@@ -531,10 +531,10 @@ function startComfy() {
     toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
 }
 
-// 生成类请求打到壳上必 409：统一提示并指向顶栏胶囊，不给前端假成功
+// 生成类请求打到壳上必 409：统一提示并指向顶栏「启动内核」，不给前端假成功
 window.addEventListener("neo-offline-request", () => {
     if (starting) return;   // 启动中不提示：就绪后壳整页跳回完整 Studio
-    toast("该功能需要 ComfyUI · 点顶栏 ComfyUI 胶囊启动");
+    toast("该功能需要 ComfyUI · 点顶栏「启动内核」");
     document.getElementById("ns-comfy")?.classList.add("ns-comfy-hint");
 });
 
@@ -707,40 +707,46 @@ function initMemMonitor() {
     }
 }
 
-// ====== ComfyUI 运行状态胶囊（只有壳窗口里有：pywebview api 由壳提供） ======
-// 双向：运行中点一下退出，已停止点一下重新拉起 —— 页面是 ComfyUI 提供的，
-// 停止后 DOM 还在、胶囊仍可点，重新拉起就绪后刷新页面就能用。
+// ====== ComfyUI 启停控件（只有壳窗口里有：pywebview api 由壳提供） ======
+// 双向，按钮文案直接写清点下去要干什么：运行中「■ 停止内核」，已停止「▶ 启动内核」，
+// 状态与动作分在两块（按钮 + PID 徽标）；按钮本体一个色，红色只落在停止图标上，徽标只在有进程时出现。
+// 页面是 ComfyUI 提供的，停止后 DOM 还在、按钮仍可点，重新拉起就绪后刷新页面就能用。
 function initComfyPill() {
     const btn = document.getElementById("ns-comfy");
     if (!btn) return;
+    const box = document.getElementById("ns-comfy-box");
+    const pidEl = document.getElementById("ns-comfy-pid");
     let userStarting = false;   // 已点下重新拉起，等端口就绪
     let reloaded = false;   // 刷新只发一次，轮询到就绪后不再重复
+    const setBtn = (ico, text) => { btn.innerHTML = `<span class="ns-comfy-ico">${ico}</span>${text}`; };
     const render = (s) => {
         setStarting(!!s.starting);   // 壳拉起的启动中：横幅与生成按钮文案跟着收
+        if (pidEl && s.pid) { pidEl.textContent = `# PID: ${s.pid}`; pidEl.hidden = false; }
+        if (pidEl && !s.pid) pidEl.hidden = true;   // 没有进程就没有徽标
         if (userStarting || s.starting) {
             if (s.ready) {
                 if (offline) return;   // 离线页由壳整页跳回完整 Studio，自己刷新只会回到离线页
                 if (!reloaded) { reloaded = true; location.reload(); }
                 return;
             }
-            btn.textContent = "🚀 启动中…";
+            setBtn("🚀", "启动中…");
             btn.disabled = true;
-            btn.classList.remove("off");
+            btn.classList.remove("stop");
             btn.title = "ComfyUI 启动中…就绪后自动回到完整 Studio";
             return;
         }
-        btn.classList.toggle("off", !s.running);
-        btn.disabled = false;   // 停止态可点：点一下重新拉起
-        btn.textContent = s.running ? `● ComfyUI :${s.port}` : "○ ComfyUI 已停止";
+        btn.disabled = false;   // 停止态可点：点一下启动内核
+        btn.classList.toggle("stop", s.running);
+        setBtn(s.running ? "■" : "▶", s.running ? "停止内核" : "启动内核");
         btn.title = s.running
-            ? `ComfyUI 运行中（端口 ${s.port}，PID ${s.pid}，${s.mine ? "壳启动" : "外部启动"}）· 点一下退出`
-            : "ComfyUI 已停止：素材仍可浏览，点一下重新拉起，就绪后自动回到完整 Studio";
+            ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "壳启动" : "外部启动"} · 点一下停止内核`
+            : "ComfyUI 已停止 · 点一下启动内核，就绪后自动回到完整 Studio";
     };
 
     // pywebview 的桥脚本在导航完成之后才注入，且分两步：window.pywebview 先出现，方法由 finish.js 调
     // _createApi 后填。只判断 api 对象存在就接管，第一次 poll 会抛 TypeError 打断整条启动链（route 再也
     // 不执行，窗口停在只出顶栏的空白页）。等真正要用的方法出现再接管：重试几轮再放弃，
-    // 浏览器标签页里永远没有 api，胶囊保持隐藏
+    // 浏览器标签页里永远没有 api，启停控件保持隐藏
     let tries = 0;
     const attach = () => {
         const api = window.pywebview?.api;
@@ -749,6 +755,7 @@ function initComfyPill() {
             return;
         }
         btn.hidden = false;
+        if (box) box.hidden = false;
         const poll = () => api.comfy_state().then(render).catch(() => {});
         poll();
         setInterval(poll, 5000);
@@ -757,12 +764,12 @@ function initComfyPill() {
             api.comfy_state().then((s) => {
                 if (!s.running) {
                     userStarting = true;
-                    btn.textContent = "🚀 启动中…";
+                    setBtn("🚀", "启动中…");
                     btn.disabled = true;
                     api.comfy_start().then(render).catch(() => { userStarting = false; });
                     return;
                 }
-                btn.textContent = "退出中…";
+                setBtn("■", "停止中…");
                 api.comfy_stop().then(render);
             });
         });
@@ -789,7 +796,7 @@ if (view) {
         await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
         initOfflineGate();
         initMemMonitor();
-        route();   // 视图先挂上：壳侧附件（胶囊）失败不能连坐，窗口不至于停在只出顶栏的空白页
+        route();   // 视图先挂上：壳侧附件（启停控件）失败不能连坐，窗口不至于停在只出顶栏的空白页
         initComfyPill();
     }).catch(e => {
         console.error("[Neo Studio] startup failed:", e);
