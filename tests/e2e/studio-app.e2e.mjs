@@ -8,7 +8,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
+const execFileAsync = promisify(execFile);
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,14 +22,39 @@ const GEOMETRY = join(PLUGIN_DIR, "configs", "studio_window.json");
 const PORT = Number(process.env.NEO_STUDIO_PORT || 8188);
 const CDP_PORT = Number(process.env.NEO_STUDIO_CDP || 9223);
 const PYTHON = process.env.NEO_STUDIO_PYTHON || "F:/comfy/Comfyui-WF-2026.8.8/python/python.exe";
+// 用打包产物跑（复现用户双击的实际环境）：设 NEO_STUDIO_EXE 后壳由 exe 起
+const EXE = process.env.NEO_STUDIO_EXE || "";
 
-async function probe() {
+function shell(port) {
+    const args = ["--port", String(port), "--cdp", String(CDP_PORT)];
+    return EXE ? spawn(EXE, args, { stdio: "inherit" }) : spawn(PYTHON, [APP_PY, ...args], { stdio: "inherit" });
+}
+
+// 单实例锁由内核在进程退出后释放，exit 事件早于它；PyInstaller onefile 里 spawn 到的是引导器，
+// 真壳是它的子进程。必须先按引导器 PID 杀树（proc.kill() 会让该 PID 消失，之后 /T 就找不到树了）
+async function killShell(proc) {
+    const exited = new Promise((r) => proc.once("exit", r));
+    await execFileAsync("taskkill", ["/F", "/T", "/PID", String(proc.pid)]).catch(() => {});
+    await exited;
+    await new Promise((r) => setTimeout(r, 3000));
+}
+
+async function probe(port = PORT) {
     try {
-        const res = await fetch(`http://127.0.0.1:${PORT}/neo_studio/version`);
+        const res = await fetch(`http://127.0.0.1:${port}/neo_studio/version`);
         return res.ok;
     } catch {
         return false;
     }
+}
+
+async function portOwner(port = PORT) {
+    const { stdout } = await execFileAsync("netstat", ["-ano", "-p", "TCP"]);
+    for (const line of stdout.split("\n")) {
+        const f = line.trim().split(/\s+/);   // 行首空格会让索引右移，先 trim
+        if (f[3] === "LISTENING" && f[1].split(":").pop() === String(port)) return f[4];
+    }
+    return "0";
 }
 
 async function cdpReady() {
@@ -48,6 +75,33 @@ async function waitFor(fn, seconds) {
     return false;
 }
 
+// 上一个壳被杀后 WebView2 的 CDP 端点会残留一小段时间，连上就 socket hang up：重试到连上为止
+async function connectCDP(seconds = 30) {
+    const deadline = Date.now() + seconds * 1000;
+    for (;;) {
+        try {
+            return await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
+        } catch {
+            if (Date.now() > deadline) return null;
+            await new Promise((r) => setTimeout(r, 1000));
+        }
+    }
+}
+
+// 冷启动时窗口先挂启动页（html=splash），就绪后壳才 load_url：连上 CDP 时页面常是 about:blank，重试到出现
+async function findPage(browser, seconds = 40) {
+    const deadline = Date.now() + seconds * 1000;
+    for (;;) {
+        const pages = browser.contexts().flatMap((c) => c.pages());
+        const page = pages.find((p) => p.url().includes("/neo-studio"));
+        if (page) return page;
+        if (Date.now() > deadline) {
+            assert.ok(false, `CDP 里找不到 Studio 页面（当前 ${pages.map((p) => p.url()).join(", ") || "无页面"}）`);
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+    }
+}
+
 test("桌面壳窗口加载 Neo Studio 四视图", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
         console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
@@ -59,17 +113,27 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
     }
     // 几何持久化：预置存档尺寸，窗口应按存档打开
     writeFileSync(GEOMETRY, JSON.stringify({ width: 1200, height: 800, x: 120, y: 60 }));
-    const shell = spawn(PYTHON, [APP_PY, "--port", String(PORT), "--cdp", String(CDP_PORT)], { stdio: "inherit" });
+    const proc = shell(PORT);
     try {
         assert.ok(await waitFor(cdpReady, 120), "WebView2 远程调试端口未就绪");
-        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
-        const pages = browser.contexts().flatMap((c) => c.pages());
-        const page = pages.find((p) => p.url().includes("/neo-studio"));
-        assert.ok(page, `CDP 里找不到 Studio 页面（当前 ${pages.map((p) => p.url()).join(", ") || "无页面"}）`);
+        const browser = await connectCDP();
+        assert.ok(browser, "连不上 WebView2 CDP");
+        const page = await findPage(browser);
 
         await page.waitForSelector("#ns-version", { timeout: 20000 });
         assert.match(await page.evaluate(() => document.querySelector("#ns-version").textContent),
             /Neo-Nodes\s+\d+\.\d+\.\d+/, "窗口标题栏应显示插件版本");
+
+        // 顶栏 ComfyUI 胶囊：壳里可见并报运行状态（关窗不停 ComfyUI，去留由胶囊控制）
+        await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 20000 });
+        await page.waitForFunction(() => /● ComfyUI :\d+/.test(document.querySelector("#ns-comfy").textContent),
+            null, { timeout: 20000 });
+        const pill = await page.evaluate(() => {
+            const b = document.querySelector("#ns-comfy");
+            return { text: b.textContent, title: b.title, off: b.classList.contains("off"), disabled: b.disabled };
+        });
+        assert.match(pill.title, /运行中（端口 \d+，PID \d+/, "tooltip 应说明端口与 PID");
+        assert.ok(!pill.off && !pill.disabled, "运行中不该是灰态或禁用");
 
         // 四视图渲染（与浏览器版 studio.e2e.mjs 同一组断言的桌面壳子集）
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 15000 });
@@ -112,6 +176,62 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
 
         await browser.close();
     } finally {
-        shell.kill();
+        await killShell(proc);
+    }
+});
+
+test("顶栏胶囊点一下停掉壳拉起的 ComfyUI，再点一下重新拉起后刷新页面", async () => {
+    if (process.env.NEO_STUDIO_APP !== "1") {
+        console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
+        return;
+    }
+    // 冷启动专用端口：8188 上用户自己的 ComfyUI 绝不动
+    const port = Number(process.env.NEO_STUDIO_STOP_PORT || 8190);
+    if (await probe(port)) {
+        console.log(`跳过：${port} 上已有 ComfyUI，不杀用户的服务`);
+        return;
+    }
+    const proc = shell(port);
+    try {
+        assert.ok(await waitFor(() => probe(port), 120),
+            "壳拉起的 ComfyUI 未就绪（壳秒退多半是 singleton busy，看 tmp/studio_shell.log）");
+        assert.ok(await waitFor(cdpReady, 30), "WebView2 远程调试端口未就绪");
+        const browser = await connectCDP();
+        assert.ok(browser, "连不上 WebView2 CDP");
+        const page = await findPage(browser);
+
+        await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 60000 });
+        await page.waitForFunction(() => /● ComfyUI :/.test(document.querySelector("#ns-comfy").textContent),
+            null, { timeout: 60000 });
+
+        // 点一下真停：胶囊变灰，端口探活失败，仍可点（壳是启动器）
+        await page.click("#ns-comfy");
+        const t0 = Date.now();
+        let down = false;
+        while (Date.now() - t0 < 120000) {
+            const up = await probe(port);
+            console.log(`t=${((Date.now() - t0) / 1000).toFixed(1)} probe=${up} owner=${await portOwner(port)} `
+                + `pill=${(await page.evaluate(() => document.querySelector("#ns-comfy").textContent)).trim()}`);
+            if (!up) { down = true; break; }
+            await new Promise((r) => setTimeout(r, 5000));
+        }
+        assert.ok(down, `壳拉起的 ComfyUI 应被停掉（端口仍被 PID ${await portOwner(port)} 占着）`);
+        await page.waitForFunction(() => /已停止/.test(document.querySelector("#ns-comfy").textContent),
+            null, { timeout: 20000 });
+        assert.ok(await page.evaluate(() => !document.querySelector("#ns-comfy").disabled),
+            "停止后胶囊应可点（点一下重新拉起）");
+
+        // 点一下重新拉起：显示启动中，端口就绪后页面自动刷新（刷新后标记 __e2e_reload 消失）
+        await page.evaluate(() => { window.__e2e_reload = 1; });
+        await page.click("#ns-comfy");
+        await page.waitForFunction(() => /启动中/.test(document.querySelector("#ns-comfy").textContent),
+            null, { timeout: 10000 });
+        assert.ok(await waitFor(() => probe(port), 150), "重新拉起的 ComfyUI 未就绪");
+        await page.waitForFunction(() => window.__e2e_reload === undefined
+            && /● ComfyUI :/.test(document.querySelector("#ns-comfy").textContent), null, { timeout: 30000 });
+
+        await browser.close();
+    } finally {
+        await killShell(proc);
     }
 });

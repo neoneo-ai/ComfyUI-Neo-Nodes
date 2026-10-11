@@ -31,7 +31,10 @@ python -m pytest tests -v
   提示走系统消息框（pythonw 无控制台）、拉起 ComfyUI 时压制子控制台窗口、壳日志落盘
   `tmp/studio_shell.log` 与 pywebview 日志 handler（pythonw 的 `stderr` 是 None，控制台 handler 会打断窗口创建）、
   窗口图标路径传给 `webview.start(icon=...)` 与 AppUserModelID（缺 `.ico` 时传 None）、frozen 下 `base_dirs()`
-  向上找到插件目录（产物在 `tools` 下）且随包资源走 `_MEIPASS`。
+  向上找到插件目录（产物在 `tools` 下）且随包资源走 `_MEIPASS`；顶栏胶囊的 `comfy_state()`（壳拉起那路以端口
+  探活为准 / 外部按端口 `netstat` 找 PID / 无监听者）、`comfy_stop()`（`terminate()` 后按端口反复 `kill_pid()`
+  到没人监听；`kill_pid()` 用 `PROCESS_TERMINATE` 并显式声明 `OpenProcess` 的 `restype`，否则 64 位句柄被截断、
+  杀不动还静默失败）、`comfy_start()`（等旧进程退出再 `start_comfy`）、`pid_alive()`、关窗只存几何。
 - 打包后的 exe（`tools\build_studio_exe.ps1` 产出 `tools/neo-studio.exe`）：起桩服务让壳认为已就绪，启动 exe 后
   `ExtractIconExW` 确认内嵌图标资源数为 1，`FindWindowW` 找到窗口，`WM_GETICON` 取到 24x24 图标（我们的 `.ico`；
   无 AppUserModelID 且不传 icon 的 pythonw 基线是 48x48 通用图标），`WM_CLOSE` 后退出码 0，
@@ -99,7 +102,10 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
 - `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md` 可取、
   节点上不再有 `neo_help` 徽标 widget、属性面板「信息」页渲染出文档正文（会话未注册属性面板时 skip）。
 - `studio-app.e2e.mjs` — 桌面壳窗口：壳自行拉起 ComfyUI，经 WebView2 远程调试端口连 CDP，断言窗口按
-  `configs/studio_window.json` 的存档尺寸打开、四视图渲染、日志 tab 读到控制台内容、重开页面后 localStorage 保留。
+  `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏胶囊可见并报运行状态（端口 + PID）、日志 tab 读到控制台内容、
+  重开页面后 localStorage 保留；第二条用例在冷启动专用端口（`NEO_STUDIO_STOP_PORT`，默认 8190；设 `NEO_STUDIO_EXE`
+  则改跑打包的 exe）上点一下胶囊停掉壳拉起的 ComfyUI（端口探活失败），再点一下重新拉起，断言显示「启动中…」且端口就绪后
+  页面自动刷新（8188 上用户自己的服务绝不动）。
   **会弹真实窗口，默认 skip；启用：`NEO_STUDIO_APP=1`（前置：整合包 python 已装 `pywebview`）。**
 - `prompt-width.e2e.mjs` — prompt 节点面板宽度：创建、`setSize`、工作流 `configure` 还原宽度后，
   `prompt_ui` DOM widget 宽度都等于 `node.size[0]`（LiteGraph 的 size setter 不触发 `onResize`，

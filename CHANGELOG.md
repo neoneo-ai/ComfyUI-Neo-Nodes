@@ -14,8 +14,13 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   skill canvas handoff and the top-menu Studio link stay in-window), blob downloads are allowed, and a second launch
   exits instead of opening a second window. When ComfyUI is not running, the window opens on a splash page
   first and jumps to Studio once the shell's readiness poll succeeds, so the window appears immediately
-  instead of after the cold-start wait. Closing the shell window stops the ComfyUI the shell spawned
-  (`--quit-comfy` default on, `--no-quit-comfy` to keep it); a ComfyUI the user started is left running.
+  instead of after the cold-start wait. The shell is a launcher: closing the window saves geometry only and leaves
+  ComfyUI running. A top-bar `#ns-comfy` pill (shell `js_api` methods `comfy_state` / `comfy_stop` / `comfy_start`,
+  polled every 5s) shows port, PID, who started ComfyUI and readiness: one click stops it (`terminate()`, then
+  `port_owner()` + `kill_pid()` repeated until nobody listens — `kill_pid()` needs `PROCESS_TERMINATE` and an
+  explicit `OpenProcess` restype, otherwise the 64-bit handle is truncated and nothing is killed), one click
+  restarts it and the page reloads once the port answers again. The pill stays
+  hidden in a browser tab (no `pywebview.api`) and goes grey when ComfyUI is down.
   The window and taskbar icon is the clapperboard `web/neo-studio.ico` (`tools/make_studio_icon.py`), passed to
   `webview.start(icon=...)` with an explicit `AppUserModelID` so the taskbar button is not merged into the generic
   Python icon that `pythonw` falls back to. `tools/build_studio_exe.ps1` packages the shell as a single-file

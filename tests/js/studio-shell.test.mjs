@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resetEnv, flush } from "./setup.mjs";
+import { resetEnv, flush, sleep, mockRoute, jsonResponse, click } from "./setup.mjs";
 
 const webDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web");
 
@@ -87,5 +87,105 @@ test("顶栏标题是回主画布的链接（壳窗口内跳转，不弹标签�
     const css = fs.readFileSync(path.join(webDir, "studio", "style.css"), "utf8");
     assert.match(css, /\.ns-logo \{[^}]*text-decoration: none/, "链接不应带下划线");
     assert.match(css, /\.ns-logo:hover/, "应有 hover 反馈");
+});
+
+// 顶栏 ComfyUI 胶囊：壳窗口（有 pywebview api）里才出现，浏览器标签页里不显示。
+// studio-app.js 的启动体只在导入时跑一次，两个用例用不同 query 取同一模块的两份实例。
+const studioBody = fs.readFileSync(path.join(webDir, "studio", "index.html"), "utf8").match(/<body>([\s\S]*?)<\/body>/)[1];
+
+function mountStudio() {
+    resetEnv();
+    document.body.innerHTML = studioBody;
+    mockRoute("/neo_studio/version", jsonResponse({
+        success: true, plugin_version: "9.9.9", comfyui_version: "0.1", recipes: [],
+    }));
+    return document.getElementById("ns-comfy");
+}
+
+test("浏览器标签页里没有壳：ComfyUI 胶囊不显示", async () => {
+    const btn = mountStudio();
+    await import("../../web/studio/studio-app.js?browser=1");
+    await flush();
+    assert.equal(btn.hidden, true, "没有 pywebview api 时胶囊应保持隐藏");
+});
+
+test("壳里显示 ComfyUI 状态，点一下即停", async () => {
+    const btn = mountStudio();
+    const stops = [];
+    const state = { port: 8188, pid: 4321, mine: false, running: true, ready: true };
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ ...state }),
+            comfy_stop: async () => {
+                stops.push(1);
+                state.running = false;
+                state.pid = 0;
+                return { ...state };
+            },
+        },
+    };
+    await import("../../web/studio/studio-app.js?shell=1");
+    await flush();
+
+    assert.equal(btn.hidden, false, "壳里应显示胶囊");
+    assert.match(btn.textContent, /● ComfyUI :8188/);
+    assert.match(btn.title, /PID 4321/);
+    assert.match(btn.title, /外部启动/);
+    assert.ok(!btn.classList.contains("off"), "运行中不是灰态");
+
+    // 点一下真停：状态变灰，且仍可点（壳是启动器，点一下能重新拉起）
+    click(btn);
+    await flush();
+    assert.deepEqual(stops, [1], "点一下就该停，不要二次确认");
+    assert.match(btn.textContent, /○ ComfyUI 已停止/);
+    assert.ok(btn.classList.contains("off"));
+    assert.equal(btn.disabled, false, "停止态应可点重启");
+    assert.match(btn.title, /点一下重新拉起/);
+});
+
+test("已停止后点一下重新拉起，就绪后刷新页面", async () => {
+    const btn = mountStudio();
+    const starts = [];
+    const reloads = [];
+    const state = { port: 8190, pid: 0, mine: true, running: false, ready: false };
+    // jsdom 的 location.reload 不可重定义（且真导航会炸），整块换成桩：刷新动作可观测
+    const realLocation = globalThis.location;
+    Object.defineProperty(globalThis, "location", {
+        value: { hash: "#/gallery", reload: () => reloads.push(1) },
+        configurable: true, writable: true,
+    });
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ ...state }),
+            comfy_start: async () => {
+                starts.push(1);
+                state.running = true;   // 进程已拉起，端口还没就绪
+                return { ...state };
+            },
+        },
+    };
+    try {
+        await import("../../web/studio/studio-app.js?start=1");
+        await flush();
+
+        click(btn);
+        await flush();
+        assert.deepEqual(starts, [1], "已停止时点一下直接拉起，不需要二次确认");
+        assert.match(btn.textContent, /启动中/);
+        assert.equal(btn.disabled, true, "启动中不响应点击");
+
+        // 进程活着但端口未就绪：继续显示启动中，不重复拉起
+        await sleep(120);
+        assert.deepEqual(starts, [1], "启动中不该重复拉起");
+        assert.match(btn.textContent, /启动中/);
+        assert.equal(reloads.length, 0, "未就绪不该刷新");
+
+        // 端口就绪（5s 轮询被压到 40ms）→ 刷新页面
+        state.ready = true;
+        await sleep(120);
+        assert.deepEqual(reloads, [1], "就绪后应刷新页面");
+    } finally {
+        Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
+    }
 });
 

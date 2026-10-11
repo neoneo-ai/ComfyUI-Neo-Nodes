@@ -170,8 +170,10 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 没有控制台黑窗，窗口大小位置会记住（最小化时保存的屏幕外位置自动丢弃，回退默认），设置与素材库状态在重开后保留。需要 `pywebview`（`pip install pywebview`），
 Windows 自带 WebView2 Runtime 即可。ComfyUI 的后台日志在「设置 → 日志」里看，壳自己的启动过程落在
 `tmp/studio_shell.log`；`neo-studio-app.bat` 是带控制台的调试入口。ComfyUI 未启动时双击会先弹出
-「正在启动 ComfyUI」的启动页，就绪后自动跳到 Studio，不用对着空白窗口干等。关闭这个窗口会顺带停掉
-由壳拉起的 ComfyUI（用户自己启动的 ComfyUI 不受影响），这就是关闭入口。窗口与任务栏图标是拍板造型的
+「正在启动 ComfyUI」的启动页，就绪后自动跳到 Studio，不用对着空白窗口干等。壳是启动器：关窗只关窗口。
+顶栏「● ComfyUI :8188」胶囊报运行状态（端口 / PID / 谁启动 / 就绪）：运行中点一下退出（壳拉起的直接
+`terminate()`，并按端口找监听者 PID 一并终止），已停止点一下重新拉起，就绪后页面自动刷新就能用；窗口留着。
+窗口与任务栏图标是拍板造型的
 `web/neo-studio.ico`（`tools/make_studio_icon.py` 生成）。要 Explorer 与快捷方式也显示同款图标，用
 `tools\build_studio_exe.ps1` 打包单文件启动器 `tools/neo-studio.exe`（构建期依赖 pyinstaller，
 产物是本地产物，不进 Registry 分发）。技能里的「⤒ 主画布编辑」与顶栏「🎬 新影工坊」都在这个窗口里跳转：

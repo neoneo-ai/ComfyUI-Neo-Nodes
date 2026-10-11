@@ -552,6 +552,63 @@ function initMemMonitor() {
     }
 }
 
+// ====== ComfyUI 运行状态胶囊（只有壳窗口里有：pywebview api 由壳提供） ======
+// 双向：运行中点一下退出，已停止点一下重新拉起 —— 页面是 ComfyUI 提供的，
+// 停止后 DOM 还在、胶囊仍可点，重新拉起就绪后刷新页面就能用。
+function initComfyPill() {
+    const btn = document.getElementById("ns-comfy");
+    if (!btn) return;
+    let starting = false;   // 已点下重新拉起，等端口就绪
+    let reloaded = false;   // 刷新只发一次，轮询到就绪后不再重复
+    const render = (s) => {
+        if (starting) {
+            if (s.ready) {
+                if (!reloaded) { reloaded = true; location.reload(); }
+                return;
+            }
+            btn.textContent = "🚀 启动中…";
+            btn.disabled = true;
+            btn.classList.remove("off");
+            return;
+        }
+        btn.classList.toggle("off", !s.running);
+        btn.disabled = false;   // 停止态可点：点一下重新拉起
+        btn.textContent = s.running ? `● ComfyUI :${s.port}` : "○ ComfyUI 已停止";
+        btn.title = s.running
+            ? `ComfyUI 运行中（端口 ${s.port}，PID ${s.pid}，${s.mine ? "壳启动" : "外部启动"}）· 点一下退出`
+            : "ComfyUI 已停止：点一下重新拉起，就绪后页面自动刷新";
+    };
+    // pywebview 的 api 注入晚于页面加载（壳的「返回 Studio」胶囊同样靠重试）：重试几轮再放弃，
+    // 浏览器标签页里永远没有 api，胶囊保持隐藏
+    let tries = 0;
+    const attach = () => {
+        const api = window.pywebview?.api;
+        if (!api) {
+            if (tries++ < 10) setTimeout(attach, 300);
+            return;
+        }
+        btn.hidden = false;
+        const poll = () => api.comfy_state().then(render).catch(() => {});
+        poll();
+        setInterval(poll, 5000);
+        btn.addEventListener("click", () => {
+            if (btn.disabled) return;   // 启动中不响应
+            api.comfy_state().then((s) => {
+                if (!s.running) {
+                    starting = true;
+                    btn.textContent = "🚀 启动中…";
+                    btn.disabled = true;
+                    api.comfy_start().then(render).catch(() => { starting = false; });
+                    return;
+                }
+                btn.textContent = "退出中…";
+                api.comfy_stop().then(render);
+            });
+        });
+    };
+    attach();
+}
+
 function route() {
     const name = (location.hash || "#/gallery").replace(/^#\//, "").split("?")[0] || "gallery";
     if (name === "director") ensureView("director", buildDirector);
@@ -567,6 +624,7 @@ if (view) {
     initExtensions().then(() => {
         loadVersion();
         initMemMonitor();
+        initComfyPill();
         route();
     });
 }

@@ -10,12 +10,15 @@ ComfyUI 冷启动时窗口先显示启动页，后台探活就绪后跳到 Studi
 窗口与任务栏图标用 web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
 用法：python neo_studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
-                              [--no-quit-comfy] [--cdp <port>] [--debug]
-关闭壳窗口默认顺带停掉由壳拉起的 ComfyUI（--no-quit-comfy 保留）；用户自己启动的 ComfyUI 不受影响。
+                              [--cdp <port>] [--debug]
+ 壳是启动器：关窗只关窗口。顶栏「● ComfyUI :8188」胶囊由壳的 js_api 报状态（端口 / PID / 谁启动 / 就绪）：
+ 运行中点一下退出（壳拉起的 terminate，并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口留着、状态变灰；
+ 已停止点一下重新拉起，显示「启动中…」，端口就绪后页面自动刷新就能用。
 """
 
 import argparse
 import ctypes
+from ctypes import wintypes
 import json
 import logging
 import socket
@@ -60,6 +63,15 @@ PROFILE_DIR = PLUGIN_DIR / "tmp" / "studio_profile"
 STUDIO_ICON = RES_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
 APP_ID = "Neo.Studio"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
+PROCESS_TERMINATE = 0x0001
+PROCESS_QUERY_LIMITED = 0x1000
+# restype 默认是 c_int，64 位句柄会被截断，TerminateProcess 拿到无效句柄静默失败
+k32 = ctypes.windll.kernel32
+k32.OpenProcess.restype = wintypes.HANDLE
+k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+k32.TerminateProcess.restype = wintypes.BOOL
+k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+k32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 
 def alert(text: str) -> None:
@@ -141,6 +153,35 @@ def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
                             creationflags=NO_WINDOW)
 
 
+def port_owner(port: int) -> int:
+    """按监听端口找进程 PID（netstat -ano）；没有监听者返回 0。"""
+    out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+                         creationflags=NO_WINDOW)
+    for line in out.stdout.splitlines():
+        f = line.split()
+        if len(f) >= 5 and f[3] == "LISTENING" and f[1].split(":")[-1] == str(port):
+            return int(f[4])
+    return 0
+
+
+def kill_pid(pid: int) -> bool:
+    """按 PID 终止进程：用户自己启动的 ComfyUI 没有壳的 Popen 句柄。"""
+    h = k32.OpenProcess(PROCESS_TERMINATE, False, pid)
+    if not h:
+        return False
+    ok = k32.TerminateProcess(h, 0)
+    k32.CloseHandle(h)
+    return bool(ok)
+
+
+def pid_alive(pid: int) -> bool:
+    """进程是否还活着（OpenProcess 拿到句柄即活着）：比每次重跑 netstat 便宜。"""
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED, False, pid)
+    if h:
+        k32.CloseHandle(h)
+    return bool(h)
+
+
 BACK_JS = """
 (() => {
     const inject = () => {
@@ -169,13 +210,18 @@ BACK_JS = """
 """
 
 
-class StudioBack:
-    """壳注入页面的「返回 Studio」胶囊：主画布整页刷新后由 loaded 事件重新挂上。
-    js_api 对象只挂 url 和 load_url 绑定方法；挂窗口对象会让 pywebview 的 create_proxy
-    递归遍历 window.native.AccessibilityObject... 爆栈。"""
+class StudioShell:
+    """壳的 js_api：顶栏「返回 Studio」胶囊、ComfyUI 运行状态与退出。
+    js_api 对象只挂 url、load_url 绑定方法与壳自己的进程状态；挂窗口对象会让 pywebview 的
+    create_proxy 递归遍历 window.native.AccessibilityObject... 爆栈。"""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = ""):
         self.url = url
+        self.comfy = comfy
+        self.port = port
+        self.root = root
+        self.python_arg = python_arg
+        self.pid = comfy.pid if comfy is not None else 0
         self.loader = None
         self.rearm = None
 
@@ -183,6 +229,51 @@ class StudioBack:
         # load_url 会清空 events.loaded，跳完必须重新挂注入
         self.loader(self.url)
         self.rearm()
+
+    def comfy_state(self) -> dict:
+        """顶栏胶囊要的运行状态：外部启动的 ComfyUI 没有 Popen 句柄，按端口找 PID 并缓存。
+        壳拉起的那路以端口探活为准 —— TerminateProcess 是异步的，进程还在收尾时端口已关，
+        报「进程活着」会让胶囊显示运行中而服务其实已经没了。"""
+        ready = probe(self.port, 1.0)
+        if self.comfy is not None:
+            return {"port": self.port, "pid": self.comfy.pid, "mine": True,
+                    "running": ready, "ready": ready}
+        if not self.pid or not pid_alive(self.pid):
+            self.pid = port_owner(self.port)
+        return {"port": self.port, "pid": self.pid, "mine": False,
+                "running": bool(self.pid), "ready": ready}
+
+    def comfy_stop(self) -> dict:
+        if self.comfy is not None:
+            self.comfy.terminate()
+        # 监听端口的未必是壳的 Popen（子进程、端口被占时的残留）：按端口反复杀到没人监听
+        for _ in range(10):
+            pid = port_owner(self.port)
+            if not pid:
+                break
+            if not pid_alive(pid):
+                break   # 正在收尾，端口马上空
+            if not kill_pid(pid):
+                log_line(f"comfy kill {pid} 失败：没有权限终止该进程")
+                break
+            time.sleep(0.5)
+        self.pid = 0
+        st = self.comfy_state()
+        log_line(f"comfy stop {st}")
+        return st
+
+    def comfy_start(self) -> dict:
+        """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后前端刷新页面。"""
+        if self.comfy is not None:
+            # 刚停止的进程可能还在收尾（TerminateProcess 异步），等它退出再拉起，避免端口冲突
+            for _ in range(60):
+                if self.comfy.poll() is not None:
+                    break
+                time.sleep(0.5)
+        self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port)
+        self.pid = self.comfy.pid
+        log_line(f"comfy spawn pid={self.comfy.pid}")
+        return self.comfy_state()
 
 
 def splash_html() -> str:
@@ -211,8 +302,6 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--python", default="")
     ap.add_argument("--root", default="")
-    ap.add_argument("--quit-comfy", action=argparse.BooleanOptionalAction, default=True,
-                    help="壳退出时顺带停掉由壳拉起的 ComfyUI（默认开；--no-quit-comfy 保留）")
     ap.add_argument("--cdp", type=int, default=0, help="WebView2 远程调试端口（E2E 用）")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
@@ -238,22 +327,21 @@ def main() -> int:
 
     geo = load_geometry()
     # 冷启动先出启动页（html），就绪后由后台线程跳到 Studio；已就绪则直接加载
-    back = StudioBack(url)
+    shell = StudioShell(url, comfy, args.port, root, args.python)
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
-             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=back)
+             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
     window = webview.create_window("新影工坊 · Neo Studio", url, **kw) if comfy is None \
         else webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
-    back.loader = window.load_url
+    shell.loader = window.load_url
 
     def arm_pill() -> None:
         # 主画布是整页刷新，返回入口只能由壳在每次页面加载后重新挂上
         window.events.loaded += lambda: window.evaluate_js(BACK_JS)
 
-    back.rearm = arm_pill
+    shell.rearm = arm_pill
     arm_pill()
+    # 壳是启动器：关窗只存几何，ComfyUI 的去留由顶栏胶囊决定
     window.events.closing += lambda: save_geometry(window)
-    if comfy is not None and args.quit_comfy:
-        window.events.closing += lambda: comfy.terminate()
 
     def spawn_ready():
         if wait_ready(args.port, READY_TIMEOUT):

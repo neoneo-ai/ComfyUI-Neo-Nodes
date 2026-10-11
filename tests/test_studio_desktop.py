@@ -119,6 +119,48 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(popen.call_args.kwargs["creationflags"], app.NO_WINDOW)
 
 
+class PortOwnerTests(unittest.TestCase):
+    NETSTAT = ("  Proto  Local Address          Foreign Address        State           PID\n"
+               "  TCP    127.0.0.1:8188         0.0.0.0:0              LISTENING       12345\n"
+               "  TCP    [::1]:8188             [::]:0                 LISTENING       12345\n"
+               "  TCP    127.0.0.1:8189         127.0.0.1:52000        ESTABLISHED   999\n")
+
+    def test_port_owner_from_netstat(self):
+        with patch.object(app.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=self.NETSTAT)):
+            self.assertEqual(app.port_owner(8188), 12345)
+
+    def test_port_owner_missing_is_zero(self):
+        with patch.object(app.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=self.NETSTAT)):
+            self.assertEqual(app.port_owner(8187), 0)
+
+    def test_kill_pid_uses_kernel32(self):
+        # 必须用 PROCESS_TERMINATE(0x0001)：0x1000 拿到的句柄没有终止权，TerminateProcess 会失败
+        calls = []
+        kernel32 = SimpleNamespace(OpenProcess=lambda *a: calls.append(("open", a)) or 7,
+                                   TerminateProcess=lambda h, c: calls.append(("term", h)) or 1,
+                                   CloseHandle=lambda h: calls.append(("close", h)))
+        with patch.object(app, "k32", kernel32):
+            self.assertTrue(app.kill_pid(4321))
+        self.assertEqual(calls, [("open", (0x0001, False, 4321)), ("term", 7), ("close", 7)])
+
+    def test_kill_pid_without_handle_reports_failure(self):
+        # 没有权限时 OpenProcess 返回 0，必须报失败让壳日志说清原因
+        kernel32 = SimpleNamespace(OpenProcess=lambda *a: 0)
+        with patch.object(app, "k32", kernel32):
+            self.assertFalse(app.kill_pid(4321))
+
+    def test_pid_alive_checks_openprocess(self):
+        calls = []
+        kernel32 = SimpleNamespace(OpenProcess=lambda *a: calls.append(a) or 7,
+                                   CloseHandle=lambda h: calls.append(("close", h)))
+        with patch.object(app, "k32", kernel32):
+            self.assertTrue(app.pid_alive(4321))
+        self.assertEqual(calls, [(0x1000, False, 4321), ("close", 7)])
+        dead = SimpleNamespace(OpenProcess=lambda *a: 0)
+        with patch.object(app, "k32", dead):
+            self.assertFalse(app.pid_alive(4321))
+
+
 class GeometryTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -239,14 +281,15 @@ def _fake_webview(create_window, start=None):
     return SimpleNamespace(create_window=create_window, settings={},
                            start=start or (lambda *a, **k: None))
 
-class StudioBackTests(unittest.TestCase):
+
+class StudioShellTests(unittest.TestCase):
     def test_go_studio_loads_studio_url(self):
         loader = MagicMock()
         rearm = MagicMock()
-        back = app.StudioBack("http://127.0.0.1:8188/neo-studio")
-        back.loader = loader
-        back.rearm = rearm
-        back.go_studio()
+        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", None, 8188, pathlib.Path("root"))
+        shell.loader = loader
+        shell.rearm = rearm
+        shell.go_studio()
         loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
         rearm.assert_called_once_with()
 
@@ -255,6 +298,94 @@ class StudioBackTests(unittest.TestCase):
         self.assertIn("neo-studio-back", app.BACK_JS)
         self.assertIn("go_studio", app.BACK_JS)
         self.assertIn("/neo-studio", app.BACK_JS)
+
+    def test_state_of_shell_spawned_comfy(self):
+        # 壳拉起的那路以端口探活为准：TerminateProcess 是异步的，进程还在收尾时端口已关
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "probe", lambda port, timeout=3.0: True):
+            self.assertEqual(shell.comfy_state(),
+                             {"port": 8188, "pid": 1234, "mine": True, "running": True, "ready": True})
+        with patch.object(app, "probe", lambda port, timeout=3.0: False):
+            self.assertFalse(shell.comfy_state()["running"])
+
+    def test_state_of_external_comfy_by_port(self):
+        # 外部启动的 ComfyUI 没有 Popen 句柄：按端口找 PID，缓存后只用 OpenProcess 复查
+        runs = []
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        with patch.object(app, "port_owner", lambda port: runs.append(port) or 4321), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True):
+            state = {"port": 8188, "pid": 4321, "mine": False, "running": True, "ready": True}
+            self.assertEqual(shell.comfy_state(), state)
+            self.assertEqual(shell.comfy_state(), state)
+        self.assertEqual(runs, [8188], "缓存的 PID 还活着时不该重跑 netstat")
+
+    def test_state_when_nothing_listens(self):
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        with patch.object(app, "port_owner", lambda port: 0), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False):
+            self.assertFalse(shell.comfy_state()["running"])
+
+    def test_stop_terminates_shell_comfy(self):
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: 0):
+            shell.comfy_stop()
+        comfy.terminate.assert_called_once()
+
+    def test_stop_kills_port_owner_that_is_not_the_popen(self):
+        # 监听者未必是壳的 Popen：terminate 后按端口反复杀到没人监听
+        kills, owners = [], iter([4321, 0])
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: next(owners)), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True):
+            shell.comfy_stop()
+        comfy.terminate.assert_called_once()
+        self.assertEqual(kills, [4321])
+
+    def test_stop_reports_kill_without_permission(self):
+        # OpenProcess 拿不到句柄（权限不足）：报失败并停下，不无限循环杀同一个 PID
+        kills, owners, logs = [], iter([4321, 4321, 4321]), []
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        with patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "port_owner", lambda port: next(owners)), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "kill_pid", lambda pid: kills.append(pid) or False), \
+             patch.object(app, "log_line", lambda text: logs.append(text)):
+            shell.comfy_stop()
+        self.assertEqual(kills, [4321], "杀不动就不该反复重试")
+        self.assertIn("权限", logs[0])
+
+    def test_stop_skips_owner_that_is_already_exiting(self):
+        # terminate 后 netstat 可能还列着正在收尾的进程：它已死，不该报「没有权限」
+        kills, logs = [], []
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: 4321), \
+             patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
+             patch.object(app, "log_line", lambda text: logs.append(text)):
+            shell.comfy_stop()
+        self.assertEqual(kills, [], "收尾中的进程不该再去杀")
+        self.assertNotIn("权限", "".join(logs))
+
+    def test_start_respawns_after_stop(self):
+        comfy = SimpleNamespace(pid=1234, poll=lambda: 1, terminate=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        spawned = SimpleNamespace(pid=9999, poll=lambda: None)
+        with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
+             patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "log_line", lambda text: None):
+            state = shell.comfy_start()
+        self.assertIs(shell.comfy, spawned)
+        self.assertEqual((state["pid"], state["running"], state["ready"]), (9999, False, False))
 
     def test_pill_is_reinjected_after_every_page_load(self):
         window = _fake_window()
@@ -296,10 +427,12 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
+            # 壳是启动器：关窗只挂 save_geometry，不停 ComfyUI
+            self.assertEqual(len(window.events.closing.handlers), 1)
         # 已就绪：create_window 直接加载 url，不弹启动页；用户自己的 ComfyUI 不被壳接管
         self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8188/neo-studio")
         self.assertNotIn("html", cw.call_args.kwargs)
-        self.assertEqual(len(window.events.closing.handlers), 1)  # 只有 save_geometry
+        self.assertIsNone(cw.call_args.kwargs["js_api"].comfy)
 
     def test_links_stay_in_shell_window(self):
         window = _fake_window()
@@ -328,25 +461,10 @@ class MainWindowTests(unittest.TestCase):
         # 冷启动：先出启动页（html），就绪后由后台线程 load_url，不直接加载 url
         self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
         self.assertNotIn("url", cw.call_args.kwargs)
-        # 关闭壳窗口顺带停掉壳拉起的 ComfyUI（默认开）：closing 挂 save_geometry + terminate
-        self.assertEqual(len(window.events.closing.handlers), 2)
-        window.events.closing.handlers[1]()
-        comfy.terminate.assert_called_once()
-
-    def test_no_quit_comfy_keeps_shell_spawned_comfy(self):
-        window = _fake_window()
-        cw = MagicMock(return_value=window)
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
-        with patch.object(app, "webview", _fake_webview(cw)), \
-             patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
-             patch.object(sys, "argv", ["neo_studio_app.py", "--no-quit-comfy"]):
-            self.assertEqual(app.main(), 0)
-        # --no-quit-comfy：关闭壳窗口不停 ComfyUI，只挂 save_geometry
+        # 关窗只存几何：壳拉起的 ComfyUI 不停，去留由顶栏胶囊决定
         self.assertEqual(len(window.events.closing.handlers), 1)
         comfy.terminate.assert_not_called()
+        self.assertIs(cw.call_args.kwargs["js_api"].comfy, comfy)
 
     def test_start_passes_studio_icon(self):
         window = _fake_window()
