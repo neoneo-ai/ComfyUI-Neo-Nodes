@@ -202,6 +202,16 @@ def free_comfy_port(preferred: int, shell_port: int) -> int:
     return preferred
 
 
+def reap(proc: subprocess.Popen, timeout: float) -> None:
+    """回收子进程。TerminateProcess 之后进程只剩一个内核对象，不 reap 就一直能被 OpenProcess 打开，
+    pid_alive 永远报「还活着」：关窗因此固定睡满等待上限（用户读成卡死），胶囊停止也因此在僵尸 PID 上
+    强杀失败（「没有权限终止该进程」）。"""
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def port_owner(port: int) -> int:
     """按监听端口找进程 PID（netstat -ano）；没有监听者返回 0。"""
     out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
@@ -255,6 +265,17 @@ BACK_JS = """
         else if (tries++ < 10) setTimeout(tick, 300);
     };
     tick();
+})();
+"""
+
+
+CLOSING_JS = """
+(() => {
+    const o = document.createElement('div');
+    o.style.cssText = 'position:fixed;inset:0;z-index:100002;display:grid;place-items:center;'
+        + 'background:rgba(20,20,24,.94);color:#d7dae0;font:15px system-ui;pointer-events:none';
+    o.textContent = '正在停止 ComfyUI…';
+    document.documentElement.appendChild(o);
 })();
 """
 
@@ -334,6 +355,7 @@ class StudioShell:
     def comfy_stop(self) -> dict:
         if self.comfy is not None:
             self.comfy.terminate()
+            reap(self.comfy, 2)   # 不 reap 的话下面按 PID 判活会一直「活着」，强杀必然失败
             self.starting = False
         # 监听端口的未必是壳的 Popen（子进程、端口被占时的残留）：按端口反复杀到没人监听
         for _ in range(10):
@@ -356,8 +378,9 @@ class StudioShell:
     def comfy_close(self) -> None:
         """关窗时带走壳自己拉起的 ComfyUI。
 
-        只认自己那份 PID：terminate 后按进程真实存活状态等它退出，等不到就按 PID 兜底强杀。
-        不用 Popen.poll() 判活 —— 子进程句柄被回收后 poll 会谎报「已退出」，兜底整条会失效。
+        只认自己那份 PID：terminate 之后回收子进程，回收超时（真没退出）才按 PID 兜底强杀。
+        必须回收 —— 不回收的话进程只剩内核对象，pid_alive 会一直报「还活着」，关窗固定睡满
+        等待上限、兜底强杀也必然失败；回收刚成功时进程对象也还会残留几毫秒，判活会读到假活。
         不做 comfy_stop 的按端口扫荡 —— 关窗路上重扫监听者会误杀抢端口的残留进程；
         用户自己启动的那路没有句柄（self.comfy 是 None），这里完全不碰。"""
         if self.comfy is None or self._closed:
@@ -366,11 +389,9 @@ class StudioShell:
         self.starting = False
         pid = self.comfy.pid
         self.comfy.terminate()
-        for _ in range(30):
-            if not pid_alive(pid):
-                break
-            time.sleep(0.1)
-        if pid_alive(pid):
+        try:
+            self.comfy.wait(timeout=3)
+        except subprocess.TimeoutExpired:
             kill_pid(pid)
             log_line(f"comfy close kill pid={pid}")
         log_line(f"comfy closed with shell pid={pid}")
@@ -498,12 +519,30 @@ def main() -> int:
 
     shell.rearm = arm_pill
     arm_pill()
-    # 关窗：先带走壳自己拉起的 ComfyUI，再存几何、收壳侧服务。顺序反过来的话，窗口销毁后
-    # 读几何抛异常就会把这条收尾整截断，ComfyUI 变孤儿（closing 没走到时 closed 兜底）
+    # 关窗：存几何 → 挂「正在停止 ComfyUI」→ 带走壳自己拉起的 ComfyUI → 收壳侧服务 → 销毁窗口。
+    # 几何必须在 UI 线程上先读（窗口销毁后读属性会抛，收尾链断在半路、进程变孤儿）。
+    # 收尾不在 UI 线程做：FormClosing 里睡多久窗口就冻多久（壳侧服务正忙时 join 能吃满 5 秒），
+    # 用户读成卡死。evaluate_js 也是等 UI 线程回消息循环才执行的，在 closing 里调直接死锁 ——
+    # 所以第一次 closing 只放行关闭，提示与收尾在后台线程走完，最后 destroy 触发第二次 closing 放行。
+    closing = {"vetoed": False, "thread": None}
+
+    def close_out() -> None:
+        try:
+            if shell.comfy is not None:
+                window.evaluate_js(CLOSING_JS)   # 窗口停在提示上，直到收尾走完
+            shell.comfy_close()
+            server.stop()
+        finally:
+            window.destroy()   # 收尾出异常也不能把窗口留成关不掉
+
     def on_closing() -> None:
-        shell.comfy_close()
+        if closing["vetoed"]:
+            return   # 后台收尾走完后的第二次 FormClosing：放行
+        closing["vetoed"] = True
         save_geometry(window)
-        server.stop()
+        closing["thread"] = threading.Thread(target=close_out, daemon=True)
+        closing["thread"].start()
+        return False
 
     window.events.closing += on_closing
     window.events.closed += lambda: shell.comfy_close()
@@ -545,6 +584,8 @@ def main() -> int:
     webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium",
                   debug=args.debug, icon=icon)
     log_line("webview end")
+    if closing["thread"] is not None:
+        closing["thread"].join(10)   # 收尾线程还在跑就退进程 = 留孤儿
     shell.comfy_close()   # 窗口循环结束就是要退进程：壳拉起的 ComfyUI 必须跟着走，别留孤儿
     return 0
 

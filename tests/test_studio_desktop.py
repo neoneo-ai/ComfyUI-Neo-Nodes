@@ -381,8 +381,9 @@ class _Event:
 
 def _fake_window():
     # 带几何值：关窗处理器里的 save_geometry 要读 width/height/x/y；loaded 处理器要记当前页面
+    # destroy：收尾线程最后一步要销毁窗口（真实 pywebview 的 Window 有这个方法）
     return SimpleNamespace(events=SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event()),
-                           evaluate_js=MagicMock(), load_url=MagicMock(),
+                           evaluate_js=MagicMock(), load_url=MagicMock(), destroy=MagicMock(),
                            get_current_url=lambda: "http://127.0.0.1:8188/neo-studio",
                            width=1200, height=800, x=100, y=100)
 
@@ -394,6 +395,7 @@ class _DeadWindow:
         self.events = SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event())
         self.evaluate_js = MagicMock()
         self.load_url = MagicMock()
+        self.destroy = MagicMock()
         self.get_current_url = lambda: "http://127.0.0.1:8188/neo-studio"
 
     @property
@@ -449,7 +451,7 @@ class StudioShellTests(unittest.TestCase):
     def test_starting_flag_is_shared_with_shell_service(self):
         # 启动中标记由壳侧服务与 js_api 共用同一份 dict：js_api 注入之前页面也能拿到
         flags = {"starting": False}
-        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
         self.assertTrue(flags["starting"], "壳拉起 ComfyUI 即置启动中")
         shell.starting = False
@@ -457,7 +459,7 @@ class StudioShellTests(unittest.TestCase):
 
     def test_state_of_shell_spawned_comfy(self):
         # 壳拉起的那路以端口探活为准：TerminateProcess 是异步的，进程还在收尾时端口已关
-        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False):
             self.assertTrue(shell.comfy_state()["starting"], "壳拉起且端口未就绪要报启动中")
@@ -489,7 +491,7 @@ class StudioShellTests(unittest.TestCase):
             self.assertFalse(shell.comfy_state()["running"])
 
     def test_stop_terminates_shell_comfy(self):
-        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 0):
@@ -499,7 +501,7 @@ class StudioShellTests(unittest.TestCase):
     def test_stop_kills_port_owner_that_is_not_the_popen(self):
         # 监听者未必是壳的 Popen：terminate 后按端口反复杀到没人监听
         kills, owners = [], iter([4321, 0])
-        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: next(owners)), \
@@ -525,7 +527,7 @@ class StudioShellTests(unittest.TestCase):
     def test_stop_skips_owner_that_is_already_exiting(self):
         # terminate 后 netstat 可能还列着正在收尾的进程：它已死，不该报「没有权限」
         kills, logs = [], []
-        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
@@ -539,7 +541,7 @@ class StudioShellTests(unittest.TestCase):
     def test_close_kills_only_the_shell_spawned_process(self):
         # 关窗只认自己那份 PID：不扫端口，扫监听者会在关窗路上误杀抢端口的残留进程
         touched, flags = [], {"starting": True}
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
         with patch.object(app, "port_owner", lambda port: touched.append(port) or 4321), \
              patch.object(app, "kill_pid", lambda pid: touched.append(pid) or True), \
@@ -551,21 +553,49 @@ class StudioShellTests(unittest.TestCase):
         self.assertFalse(flags["starting"], "关窗收掉启动中")
 
     def test_close_falls_back_to_its_own_pid_when_the_child_wont_exit(self):
-        # TerminateProcess 是异步的：按 PID 等不到退出就兜底强杀，范围不外扩。
+        # 回收超时（进程真没退出）：按 PID 兜底强杀，范围不外扩。
         # 判活不能用 Popen.poll() —— 子进程句柄被回收后它会谎报「已退出」，兜底整条失效
         kills = []
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), poll=lambda: 0)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(),
+                                wait=MagicMock(side_effect=subprocess.TimeoutExpired("comfy", 3)))
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "pid_alive", lambda pid: True), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
-             patch.object(app.time, "sleep", lambda s: None), \
              patch.object(app, "log_line", lambda text: None):
             shell.comfy_close()
         self.assertEqual(kills, [1234])
 
+    def test_close_reaps_the_child_it_terminated(self):
+        # TerminateProcess 之后进程只剩一个内核对象：不 reap 就一直能被 OpenProcess 打开，
+        # pid_alive 永远报「还活着」—— 关窗固定睡满等待上限（用户读成卡死），兜底强杀也必然失败
+        logs, kills = [], []
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
+             patch.object(app, "log_line", lambda text: logs.append(text)):
+            shell.comfy_close()
+        comfy.wait.assert_called_once()
+        self.assertEqual(kills, [], "回收到位就不需要兜底强杀")
+        self.assertNotIn("kill", "".join(logs), "不该再报那行误导的「close kill」")
+
+    def test_stop_reaps_before_sweeping_the_port(self):
+        # 僵尸 PID 上 OpenProcess 拿得到句柄、TerminateProcess 必失败：
+        # 停止路径那行「没有权限终止该进程」就是这么来的
+        kills, logs = [], []
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: 0), \
+             patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
+             patch.object(app, "log_line", lambda text: logs.append(text)):
+            shell.comfy_stop()
+        comfy.wait.assert_called_once()
+        self.assertNotIn("权限", "".join(logs))
+
     def test_close_is_idempotent(self):
         # closing、closed、退出兜底三处都会调它：只带走一次
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(app, "log_line", lambda text: None):
@@ -752,7 +782,7 @@ class MainWindowTests(unittest.TestCase):
     def test_cold_start_loads_offline_gallery(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         # webview.start 阻塞到窗口关闭：这里在 start 里触发关窗事件，顺带记下开窗时的标记
         opened = {}
 
@@ -786,7 +816,7 @@ class MainWindowTests(unittest.TestCase):
         # 否则这条链在第一步就断，进程变孤儿占着端口
         window = _DeadWindow()
         cw = MagicMock(return_value=window)
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         start = lambda *a, **k: window.events.closing.handlers[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
@@ -800,11 +830,67 @@ class MainWindowTests(unittest.TestCase):
         comfy.terminate.assert_called_once()
         self.assertFalse(app.GEOMETRY_FILE.exists(), "读不到几何就不写文件")
 
+    def test_close_shows_stopping_hint_before_killing(self):
+        # 壳拉起的 ComfyUI：terminate 到进程真退出要等，窗口不能对着冻结的页面干等
+        window = _fake_window()
+        order = []
+        window.evaluate_js = lambda script: order.append("hint") if script is app.CLOSING_JS else None
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=lambda: order.append("kill"), wait=lambda *a, **k: None)
+        start = lambda *a, **k: window.events.closing.handlers[0]()
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(order, ["hint", "kill"], "先出「正在停止 ComfyUI」，再带走进程")
+        self.assertTrue(window.destroy.called, "收尾走完要由收尾线程销毁窗口")
+
+    def test_close_hint_skipped_for_external_comfy(self):
+        # 用户自己启动的那路壳不杀：提示不能写「正在停止 ComfyUI」
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        self.port_busy = True
+        start = lambda *a, **k: window.events.closing.handlers[0]()
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        self.assertNotIn(app.CLOSING_JS, [c[0][0] for c in window.evaluate_js.call_args_list])
+
+    def test_closing_handler_defers_teardown_off_the_ui_thread(self):
+        # closing 同步跑在 UI 线程：evaluate_js 要等这个线程回消息循环才执行，在处理器里调直接死锁；
+        # 收尾睡多久窗口就冻多久。所以处理器只放行关闭（返回 False），提示与收尾都归后台线程。
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        handler = window.events.closing.handlers[0]
+        src = inspect.getsource(handler)
+        self.assertIs(handler(), False, "第一次 closing 要放行关闭，窗口才画得出提示")
+        for banned in ("evaluate_js", "comfy_close", "server.stop"):
+            self.assertNotIn(banned, src, f"收尾不能留在 UI 线程上：{banned}")
+        self.assertIn("save_geometry", src, "几何要在窗口销毁前读走")
+
     def test_exit_kills_comfy_when_no_close_event_fires(self):
         # destroy / 后端直接销毁窗口时 closing 可能根本不触发：进程退出前必须收掉壳拉起的 ComfyUI
         window = _fake_window()
         cw = MagicMock(return_value=window)
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
@@ -820,7 +906,7 @@ class MainWindowTests(unittest.TestCase):
     def test_cold_start_without_shell_service_falls_back_to_splash(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", lambda factory, port: SimpleNamespace(start=lambda: 0, stop=lambda: None, error=None)), \
