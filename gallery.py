@@ -300,6 +300,22 @@ def _scandir_dirs(directory: Path) -> list[os.DirEntry]:
         return []
 
 
+def _scandir_split(directory: Path) -> tuple[list[os.DirEntry], list[os.DirEntry]]:
+    """Files and first-level subdirs of a directory from a single enumeration."""
+    files: list[os.DirEntry] = []
+    dirs: list[os.DirEntry] = []
+    try:
+        with os.scandir(directory) as it:
+            for entry in it:
+                if entry.is_file(follow_symlinks=False):
+                    files.append(entry)
+                elif entry.is_dir(follow_symlinks=False):
+                    dirs.append(entry)
+    except OSError:
+        return [], []
+    return files, sorted(dirs, key=lambda entry: entry.name)
+
+
 def _entry_stem(entry: os.DirEntry) -> str:
     return Path(entry.name).stem
 
@@ -308,14 +324,35 @@ def _entry_ext(entry: os.DirEntry) -> str:
     return Path(entry.name).suffix.lower()
 
 
-def _pick_media_entries(directory: Path) -> list[tuple[os.DirEntry, str, os.DirEntry | None]]:
+def _parallel_map(fn, items: list, threshold: int = 8) -> list:
+    """Map over items on a small pool once the count justifies one.
+
+    A network share charges a round trip per file open, so the per-file
+    header and sidecar reads are the part of a gallery scan that parallelizes.
+    Sixteen requests is where the share stops pipelining any further.
+    """
+    if len(items) <= threshold:
+        return [fn(item) for item in items]
+    with ThreadPoolExecutor(16) as pool:
+        return list(pool.map(fn, items))
+
+
+def _read_text_file(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as tf:
+            return tf.read()
+    except OSError:
+        return ""
+
+
+def _pick_media_entries(directory: Path, files: list[os.DirEntry] | None = None) -> list[tuple[os.DirEntry, str, os.DirEntry | None]]:
     """Reduce a directory to (media entry, media type, paired txt entry) triples.
 
     Media and .txt files are grouped by stem and sorted by stem, the same
     order the old Path-based scan produced.
     """
     stems: dict[str, list[os.DirEntry]] = {}
-    for entry in _scandir_files(directory):
+    for entry in _scandir_files(directory) if files is None else files:
         ext = _entry_ext(entry)
         if ext not in ALL_MEDIA_EXTENSIONS and ext != ".txt":
             continue
@@ -346,23 +383,16 @@ def _pick_media_entries(directory: Path) -> list[tuple[os.DirEntry, str, os.DirE
     return picked
 
 
-def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
+def _scan_gallery_entries_lightweight(directory: Path, files: list[os.DirEntry] | None = None) -> list[dict]:
     """Lightweight gallery entry scan - only filename + name + style + content for search.
     
     Minimal txt parsing (only first 2 lines), no full field extraction.
     Used by /neo_gallery/list when search_mode=1 to avoid heavy txt parsing.
     """
     entries: list[dict] = []
-    for media_file, media_type, txt_file in _pick_media_entries(directory):
-        # Minimal txt parsing - only first 2 lines for style + content
-        raw_txt = ""
-        if txt_file is not None:
-            try:
-                with open(txt_file.path, "r", encoding="utf-8") as tf:
-                    raw_txt = tf.read(500)  # Only read first ~500 chars
-            except Exception:
-                pass
-
+    picked = _pick_media_entries(directory, files)
+    raw_txts = _parallel_map(lambda pair: _read_text_file(pair[2].path)[:500] if pair[2] is not None else "", picked)
+    for (media_file, media_type, txt_file), raw_txt in zip(picked, raw_txts):
         entry: dict[str, object] = {
             "name": _entry_stem(media_file),
             "filename": media_file.name,
@@ -391,7 +421,7 @@ def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
     return entries
 
 
-def _scan_directory_structure_only(directory: Path) -> dict:
+def _scan_directory_structure_only(directory: Path, dirs: list[os.DirEntry] | None = None) -> dict:
     """Scan directory and return only first-level subdirectory structure with image counts.
 
     Each subdirectory's image_count is a simple 0/1 flag indicating whether any media
@@ -404,17 +434,12 @@ def _scan_directory_structure_only(directory: Path) -> dict:
             "subdirs": [{name: str, image_count: int(0|1), path: str}]
         }
     """
-    result = {"subdirs": []}
-
-    # Scan only first-level subdirectories (recursive presence check per subdir for nesting)
-    for entry in _scandir_dirs(directory):
-        result["subdirs"].append({
-            "name": entry.name,
-            "image_count": 1 if _has_media_recursive(Path(entry.path)) else 0,
-            "path": entry.name
-        })
-
-    return result
+    subdirs = _scandir_dirs(directory) if dirs is None else dirs
+    has_media = _parallel_map(lambda entry: _has_media_recursive(Path(entry.path)), subdirs)
+    return {"subdirs": [{"name": entry.name,
+                         "image_count": 1 if flag else 0,
+                         "path": entry.name}
+                        for entry, flag in zip(subdirs, has_media)]}
 
 
 # Grid / Character are output subdirs this plugin browses (storyboard sheets /
@@ -580,6 +605,41 @@ def _sort_subdirs_by_recency(subdirs: dict, directory: Path):
 
 _DIM_CACHE: dict[tuple[str, int, int], tuple[int, int]] = {}
 _DIM_CACHE_LIMIT = 6000
+_DIM_CACHE_LOADED = False
+
+
+def _dim_cache_file() -> Path:
+    return CONFIGS_DIR / "gallery_dim_cache.json"
+
+
+def _load_dim_cache() -> None:
+    global _DIM_CACHE_LOADED
+    _DIM_CACHE_LOADED = True
+    try:
+        with open(_dim_cache_file(), "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return
+    for key, size in raw.items():
+        path, _, rest = key.partition("\u001f")
+        mtime, _, sz = rest.partition("\u001f")
+        try:
+            _DIM_CACHE[(path, int(mtime), int(sz))] = (size[0], size[1])
+        except (TypeError, IndexError, ValueError):
+            continue
+
+
+def _save_dim_cache() -> None:
+    path = _dim_cache_file()
+    raw = {f"{key[0]}{key[1]}{key[2]}": list(size) for key, size in _DIM_CACHE.items()}
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(raw, f)
+        tmp.replace(path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
 
 
 def _media_dimensions(path: Path) -> tuple[int, int] | None:
@@ -596,10 +656,13 @@ def _media_dimensions_batch(items: list[tuple[Path, os.stat_result]]) -> dict[Pa
 
     Each header is a separate open on the share, so serial reads cost one
     round trip per card; they run on a small pool instead. Sizes are memoized
-    by (path, mtime_ns, size) so re-opening a directory reads nothing.
+    by (path, mtime_ns, size) in a file, so re-opening a directory - even
+    after a restart, when the share's own cache is cold - reads nothing.
     """
     sizes: dict[Path, tuple[int, int] | None] = {}
     todo: list[tuple[Path, tuple[str, int, int]]] = []
+    if not _DIM_CACHE_LOADED:
+        _load_dim_cache()
     for path, st in items:
         key = (str(path), st.st_mtime_ns, st.st_size)
         cached = _DIM_CACHE.get(key)
@@ -608,23 +671,23 @@ def _media_dimensions_batch(items: list[tuple[Path, os.stat_result]]) -> dict[Pa
         sizes[path] = cached
 
     if todo:
-        paths = [path for path, _ in todo]
-        if len(paths) > 8:
-            with ThreadPoolExecutor(8) as pool:
-                found = list(pool.map(_media_dimensions, paths))
-        else:
-            found = [_media_dimensions(path) for path in paths]
+        found = _parallel_map(_media_dimensions, [path for path, _ in todo])
+        added = False
         for (path, key), size in zip(todo, found):
             sizes[path] = size
             if size:
                 _DIM_CACHE[key] = size
-
-    if len(_DIM_CACHE) > _DIM_CACHE_LIMIT:
-        _DIM_CACHE.clear()
+                added = True
+        if added:
+            if len(_DIM_CACHE) > _DIM_CACHE_LIMIT:
+                for stale in list(_DIM_CACHE)[:_DIM_CACHE_LIMIT // 2]:
+                    del _DIM_CACHE[stale]
+            _save_dim_cache()
     return sizes
 
 
-def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
+def _scan_gallery_entries(directory: Path, subfolder: str = "",
+                          files: list[os.DirEntry] | None = None) -> list[dict]:
     """Scan directory (non-recursive) and return gallery entries.
     
     Supports both image and video files, paired with .txt by same stem.
@@ -646,7 +709,7 @@ def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
     category = ""
 
     rows: list[tuple[os.DirEntry, str, os.DirEntry | None, os.stat_result]] = []
-    for media_file, media_type, txt_file in _pick_media_entries(directory):
+    for media_file, media_type, txt_file in _pick_media_entries(directory, files):
         try:
             rows.append((media_file, media_type, txt_file, media_file.stat(follow_symlinks=False)))
         except OSError:
@@ -657,15 +720,14 @@ def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
     dims = _media_dimensions_batch([(Path(media_file.path), st)
                                    for media_file, media_type, _, st in rows if media_type == "image"])
 
-    for media_file, media_type, txt_file, st in rows:
+    txt_rows = [i for i, row in enumerate(rows) if row[2] is not None]
+    raw_txts: list[str] = [""] * len(rows)
+    for i, raw in zip(txt_rows, _parallel_map(_read_text_file, [rows[i][2].path for i in txt_rows])):
+        raw_txts[i] = raw
+
+    for idx, (media_file, media_type, txt_file, st) in enumerate(rows):
         # Parse .txt file for lightbox display (only when txt exists)
-        raw_txt = ""
-        if txt_file is not None:
-            try:
-                with open(txt_file.path, "r", encoding="utf-8") as tf:
-                    raw_txt = tf.read()
-            except Exception:
-                pass
+        raw_txt = raw_txts[idx]
 
         # Build entry with txt_content when available
         entry: dict[str, object] = {
@@ -771,27 +833,29 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
     # Scan based on fields requested
     scan_result = {}
     if include_dirs or include_items:
+        # One enumeration feeds the item scan, the subdir structure and the root count.
+        file_entries, dir_entries = _scandir_split(target_dir)
         if search_mode and include_items:
-            entries = _scan_gallery_entries_lightweight(target_dir)
+            entries = _scan_gallery_entries_lightweight(target_dir, file_entries)
             scan_result["root"] = entries
             scan_result["subdirs"] = {}
         elif include_items:
             # Use non-recursive scan for current directory only
-            entries = _scan_gallery_entries(target_dir, rel_path)
+            entries = _scan_gallery_entries(target_dir, rel_path, file_entries)
             scan_result["root"] = entries
             # Only get subdirs structure if requested (not needed when include_dirs=False)
             if include_dirs:
-                structure = _scan_directory_structure_only(target_dir)
+                structure = _scan_directory_structure_only(target_dir, dir_entries)
                 scan_result["subdirs"] = {s["name"]: {"image_count": s["image_count"]} for s in structure.get("subdirs", [])}
             else:
                 scan_result["subdirs"] = {}
         else:
             # Only dirs needed, use lightweight scan
-            structure = _scan_directory_structure_only(target_dir)
+            structure = _scan_directory_structure_only(target_dir, dir_entries)
             scan_result["subdirs"] = {s["name"]: {"image_count": s["image_count"]} for s in structure.get("subdirs", [])}
             scan_result["root"] = []
             scan_result["root_count"] = sum(
-                1 for entry in _scandir_files(target_dir)
+                1 for entry in file_entries
                 if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS
             )
 
@@ -1644,13 +1708,12 @@ def _collect_subdirs_with_media(directory: Path, prefix: str = "") -> list[str]:
     Only returns immediate children directories, does NOT recurse into nested dirs.
     This ensures the home page only shows one level of subdirectories.
     """
+    subdirs = _scandir_dirs(directory)
+    has_media = _parallel_map(lambda entry: _has_media_in_dir_any(Path(entry.path)), subdirs)
     result = []
-
-    for entry in _scandir_dirs(directory):
-        subdir_name = entry.name
-        if _has_media_in_dir_any(Path(entry.path)):
-            full_path = prefix + "/" + subdir_name if prefix else subdir_name
-            result.append(full_path)
+    for entry, flag in zip(subdirs, has_media):
+        if flag:
+            result.append(prefix + "/" + entry.name if prefix else entry.name)
 
     return result
 

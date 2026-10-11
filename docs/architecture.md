@@ -223,6 +223,7 @@ V3 节点（`NeoImageGenEdit`）走 `io.Schema(description=..., search_aliases=[
 | `configs/image_gen.json` | 生图默认参数 |
 | `configs/video_gen.json` | 生视频默认参数 |
 | `configs/gallery_settings.json` | 自定义目录与 Civitai 设置 |
+| `configs/gallery_dim_cache.json` | 卡片宽高缓存（路径+mtime+大小 为键，可删除重建） |
 | `configs/bookmarks.json` | 本地收藏（仅路径信息） |
 | `configs/oss_presets.json` | OSS 预设素材源配置 |
 | `configs/backyard_oss.json` | Backyard 的 OSS 配置 |

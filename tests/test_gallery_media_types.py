@@ -15,6 +15,7 @@ import types
 import unittest
 from pathlib import Path
 from urllib.parse import quote
+from PIL import Image
 
 _TMP = tempfile.mkdtemp(prefix="neo_gallery_media_")
 _INPUT = os.path.join(_TMP, "input")
@@ -104,6 +105,7 @@ else:
     sys.modules["folder_paths"] = _prev_folder_paths
 
 gallery._get_user_custom_dirs = lambda: []
+gallery.CONFIGS_DIR = Path(_TMP) / "configs"
 
 
 class _Query:
@@ -222,6 +224,51 @@ class MediaContentTypeTests(unittest.TestCase):
         gallery.THUMBNAIL_DIR = Path(_TMP) / "thumbs"
         resp = _run(gallery.get_thumbnail(_Request({"filename": "ghost.png", "subfolder": "nope"})))
         self.assertEqual(resp.status, 404)
+
+
+class DimCacheTests(unittest.TestCase):
+    """尺寸缓存持久化：重启后重开同一目录不再读图片头（NAS 上每张卡一次往返）。"""
+
+    BASE = Path(_TMP) / "dimcache"
+    SIZES = {"a.png": (40, 30), "b.png": (20, 10)}
+
+    def setUp(self):
+        self.BASE.mkdir(parents=True, exist_ok=True)
+        for name, size in self.SIZES.items():
+            Image.new("RGB", size).save(self.BASE / name)
+        gallery._DIM_CACHE.clear()
+        gallery._DIM_CACHE_LOADED = False
+
+    def tearDown(self):
+        gallery._DIM_CACHE.clear()
+        gallery._DIM_CACHE_LOADED = False
+
+    def _sizes(self, entries):
+        return {e["filename"]: (e.get("w"), e.get("h")) for e in entries}
+
+    def test_sizes_survive_cache_reload(self):
+        self.assertEqual(self._sizes(gallery._scan_gallery_entries(self.BASE, "")), self.SIZES)
+        self.assertTrue((gallery.CONFIGS_DIR / "gallery_dim_cache.json").exists())
+
+        gallery._DIM_CACHE.clear()
+        gallery._DIM_CACHE_LOADED = False
+        real = gallery._media_dimensions
+        gallery._media_dimensions = lambda path: self.fail("header re-read after reload")
+        try:
+            entries = gallery._scan_gallery_entries(self.BASE, "")
+        finally:
+            gallery._media_dimensions = real
+        self.assertEqual(self._sizes(entries), self.SIZES)
+
+    def test_changed_file_is_reread(self):
+        entries = gallery._scan_gallery_entries(self.BASE, "")
+        self.assertEqual(self._sizes(entries), self.SIZES)
+
+        Image.new("RGB", (11, 7)).save(self.BASE / "a.png")
+        gallery._DIM_CACHE.clear()
+        gallery._DIM_CACHE_LOADED = False
+        entries = gallery._scan_gallery_entries(self.BASE, "")
+        self.assertEqual(self._sizes(entries), {"a.png": (11, 7), "b.png": (20, 10)})
 
 
 if __name__ == "__main__":

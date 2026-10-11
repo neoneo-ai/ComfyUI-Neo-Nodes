@@ -88,6 +88,8 @@ _stub("bookmark", CIVITAI_BOOKMARK_DIR=Path(_TMP) / "civitai_bookmarks",
       CIVITAI_DIR_KEY="civitai_bookmarks", _is_civitai_bookmark_enabled=lambda: False)
 
 gallery = _load("gallery")
+# 尺寸缓存等运行期写入落在临时 configs，不污染插件真实配置
+gallery.CONFIGS_DIR = Path(_TMP) / "configs"
 
 # 桩只在导入期占用全局名，避免影响其它测试文件。
 if _prev_server is None:

@@ -21,6 +21,7 @@ recipes/custom/
 recipes/.thumbs/
 skills/custom/
 configs/skill_overrides/
+configs/gallery_dim_cache.json
 configs/backyard_oss.json
 configs/studio_window.json
 tools/output/
