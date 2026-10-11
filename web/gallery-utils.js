@@ -89,6 +89,106 @@ export function getThumbnailSrc(image, subfolder, size = THUMBNAIL_CACHE_SIZE) {
     const mtimeParam = image.mtime ? `&t=${image.mtime}` : '';
     return `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(image.filename)}&subfolder=${encodeURIComponent(subfolder)}&size=${size}${categoryParam}${mtimeParam}`;
 }
+/**
+ * 缩略图懒加载：卡片进入视口才请求，且同时最多 6 个请求。
+ * 首页上千张卡片如果各自 new Image() 会瞬间打满浏览器并发上限，
+ * 排队在后面的缩略图要等很久才拿到数据；这里用共享 IntersectionObserver
+ * 触发 + 显式并发队列，视口外的卡片完全不产生请求。
+ */
+const THUMB_CONCURRENCY = 6;
+const _thumbQueue = [];
+let _thumbActive = 0;
+let _thumbObserver = null;
+const _thumbCallbacks = new WeakMap();
+
+function _pumpThumbQueue() {
+    while (_thumbActive < THUMB_CONCURRENCY && _thumbQueue.length > 0) {
+        const task = _thumbQueue.shift();
+        _thumbActive++;
+        const loader = new Image();
+        task.img._thumbLoader = loader;
+        loader.onload = () => {
+            _finishThumbTask(task);
+            if (task.img.isConnected) {
+                task.img.src = task.src;
+                if (task.onLoaded) task.onLoaded(task.img, loader.naturalWidth, loader.naturalHeight);
+            }
+        };
+        loader.onerror = () => {
+            _finishThumbTask(task);
+            if (task.img.isConnected && task.onFailed) task.onFailed(task.img);
+        };
+        loader.src = task.src;
+    }
+}
+
+function _finishThumbTask(task) {
+    _thumbActive--;
+    task.img._thumbLoader = null;
+    _pumpThumbQueue();
+}
+
+/** 请求一张缩略图；同一元素重复入队时只更新目标地址，元素被移除后任务自动作废。 */
+export function enqueueThumbnail(img, src, callbacks) {
+    if (!src) return;
+    for (const task of _thumbQueue) {
+        if (task.img === img) { task.src = src; return; }
+    }
+    _thumbQueue.push({ img, src, onLoaded: callbacks && callbacks.onLoaded, onFailed: callbacks && callbacks.onFailed });
+    _pumpThumbQueue();
+}
+
+export function cancelThumbnail(img) {
+    const idx = _thumbQueue.findIndex(task => task.img === img);
+    if (idx >= 0) _thumbQueue.splice(idx, 1);
+    if (img._thumbLoader) {
+        img._thumbLoader.onload = null;
+        img._thumbLoader.onerror = null;
+        img._thumbLoader = null;
+        _thumbActive = Math.max(0, _thumbActive - 1);
+        _pumpThumbQueue();
+    }
+}
+
+function _startLazyThumbnail(img) {
+    enqueueThumbnail(img, img.dataset.thumbnailSrc, _thumbCallbacks.get(img));
+}
+
+/**
+ * 注册懒加载缩略图：img 先显示占位图，滚动到视口附近（提前 300px）才排队请求。
+ * callbacks: { onLoaded(img, naturalWidth, naturalHeight), onFailed(img) }
+ */
+export function registerLazyThumbnail(img, src, callbacks) {
+    img.dataset.thumbnailSrc = src;
+    if (callbacks) _thumbCallbacks.set(img, callbacks);
+    if (typeof IntersectionObserver === "undefined") {
+        _startLazyThumbnail(img);
+        return;
+    }
+    if (!_thumbObserver) {
+        _thumbObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                _thumbObserver.unobserve(entry.target);
+                _startLazyThumbnail(entry.target);
+            }
+        }, { rootMargin: "300px 0px" });
+    }
+    _thumbObserver.observe(img);
+}
+
+export function releaseLazyThumbnail(img) {
+    if (_thumbObserver) _thumbObserver.unobserve(img);
+    cancelThumbnail(img);
+}
+
+/** 容器清空前调用：释放容器内所有待加载缩略图，避免队列堆积已移除的卡片。 */
+export function releaseLazyThumbnails(container) {
+    if (!container) return;
+    for (const img of container.querySelectorAll("img[data-thumbnail-src]")) releaseLazyThumbnail(img);
+}
+
+
 
 /**
  * Debounce function
@@ -188,6 +288,7 @@ function _coverImgSrc(cover) {
     if (cover && cover.url) return cover.url;
     return getThumbnailSrc(cover, (cover && cover.subfolder) || "");
 }
+export { _coverImgSrc as coverImgSrc };
 
 /** Generic placeholder tile for an empty or failed non-audio cover. */
 export function buildPlaceholderTile() {
@@ -278,12 +379,15 @@ export function renderCoverTiles(coverWrapper, covers, alt = "") {
         const settle = () => _applyAdaptiveCoverRatio(coverWrapper, grid, ratios);
         mediaCovers.forEach((c, i) => {
             const itemEl = $el("div", { className: "neo-gallery-card-cover-grid-item" });
+            // 封面尺寸随列表数据下发（w/h）：比例先定好，图片到位只是补内容
+            ratios[i] = _orientationRatio(c.w, c.h);
             const img = $el("img", { src: _coverImgSrc(c), alt, loading: "lazy" });
             img.onerror = () => { ratios[i] = 1; itemEl.replaceWith(buildPlaceholderTile()); settle(); };
             img.onload = () => { ratios[i] = _orientationRatio(img.naturalWidth, img.naturalHeight); settle(); };
             itemEl.appendChild(img);
             grid.appendChild(itemEl);
         });
+        settle();
         coverWrapper.appendChild(grid);
     } else if (list.some(c => getCoverTileKind(c) === "audio")) {
         const firstAudio = list.find(c => getCoverTileKind(c) === "audio");

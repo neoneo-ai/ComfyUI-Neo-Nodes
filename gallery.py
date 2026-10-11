@@ -9,13 +9,16 @@ import asyncio
 import hashlib
 import random
 import shutil
+import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import aiohttp
 from aiohttp import web
 routes = web.RouteTableDef()
 import folder_paths
 import mimetypes
+from PIL import Image
 
 from .util import (
     IMG_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, ALL_MEDIA_EXTENSIONS,
@@ -268,6 +271,81 @@ from .gallery_lora import (
     _normalize_lora_dir,
 )
 
+# ---------------------------------------------------------------------------
+# Directory enumeration
+#
+# Every gallery scan below runs through these helpers. os.scandir hands over
+# the entry type and the stat data of one directory enumeration for free;
+# Path.is_file() / Path.stat() re-query per entry, which on a network share
+# (\\NAS\...) is a round trip per file and dominated the cost of opening a
+# gallery directory.
+# ---------------------------------------------------------------------------
+
+def _scandir_files(directory: Path) -> list[os.DirEntry]:
+    """Files of a directory, from a single enumeration."""
+    try:
+        with os.scandir(directory) as it:
+            return [entry for entry in it if entry.is_file(follow_symlinks=False)]
+    except OSError:
+        return []
+
+
+def _scandir_dirs(directory: Path) -> list[os.DirEntry]:
+    """First-level subdirectories of a directory, in name order."""
+    try:
+        with os.scandir(directory) as it:
+            return sorted((entry for entry in it if entry.is_dir(follow_symlinks=False)),
+                          key=lambda entry: entry.name)
+    except OSError:
+        return []
+
+
+def _entry_stem(entry: os.DirEntry) -> str:
+    return Path(entry.name).stem
+
+
+def _entry_ext(entry: os.DirEntry) -> str:
+    return Path(entry.name).suffix.lower()
+
+
+def _pick_media_entries(directory: Path) -> list[tuple[os.DirEntry, str, os.DirEntry | None]]:
+    """Reduce a directory to (media entry, media type, paired txt entry) triples.
+
+    Media and .txt files are grouped by stem and sorted by stem, the same
+    order the old Path-based scan produced.
+    """
+    stems: dict[str, list[os.DirEntry]] = {}
+    for entry in _scandir_files(directory):
+        ext = _entry_ext(entry)
+        if ext not in ALL_MEDIA_EXTENSIONS and ext != ".txt":
+            continue
+        stems.setdefault(_entry_stem(entry), []).append(entry)
+
+    picked: list[tuple[os.DirEntry, str, os.DirEntry | None]] = []
+    for stem in sorted(stems):
+        media_file = None
+        media_type = None
+        txt_file = None
+        for entry in stems[stem]:
+            ext = _entry_ext(entry)
+            if ext in VIDEO_EXTENSIONS:
+                media_file = entry
+                media_type = "video"
+            elif ext in IMG_EXTENSIONS:
+                if media_file is None:
+                    media_file = entry
+                    media_type = "image"
+            elif ext in AUDIO_EXTENSIONS:
+                if media_file is None:
+                    media_file = entry
+                    media_type = "audio"
+            elif ext == ".txt":
+                txt_file = entry
+        if media_file is not None:
+            picked.append((media_file, media_type, txt_file))
+    return picked
+
+
 def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
     """Lightweight gallery entry scan - only filename + name + style + content for search.
     
@@ -275,56 +353,23 @@ def _scan_gallery_entries_lightweight(directory: Path) -> list[dict]:
     Used by /neo_gallery/list when search_mode=1 to avoid heavy txt parsing.
     """
     entries: list[dict] = []
-    if not directory.exists():
-        return entries
-
-    stems: dict[str, list[Path]] = {}
-    for p in directory.iterdir():
-        if not p.is_file():
-            continue
-        lower = p.suffix.lower()
-        if lower not in ALL_MEDIA_EXTENSIONS and lower != ".txt":
-            continue
-        stems.setdefault(p.stem, []).append(p)
-
-    for stem, files in sorted(stems.items()):
-        media_file = None
-        txt_file = None
-        media_type = None
-        for f in files:
-            if f.suffix.lower() in VIDEO_EXTENSIONS:
-                media_file = f
-                media_type = "video"
-            elif f.suffix.lower() in IMG_EXTENSIONS:
-                if media_file is None:
-                    media_file = f
-                    media_type = "image"
-            elif f.suffix.lower() in AUDIO_EXTENSIONS:
-                if media_file is None:
-                    media_file = f
-                    media_type = "audio"
-            elif f.suffix.lower() == ".txt":
-                txt_file = f
-
-        if not media_file:
-            continue
-
+    for media_file, media_type, txt_file in _pick_media_entries(directory):
         # Minimal txt parsing - only first 2 lines for style + content
         raw_txt = ""
-        if txt_file and txt_file.exists():
+        if txt_file is not None:
             try:
-                with open(txt_file, "r", encoding="utf-8") as tf:
+                with open(txt_file.path, "r", encoding="utf-8") as tf:
                     raw_txt = tf.read(500)  # Only read first ~500 chars
             except Exception:
                 pass
 
         entry: dict[str, object] = {
-            "name": media_file.stem,
+            "name": _entry_stem(media_file),
             "filename": media_file.name,
-            "type": media_type or "image",
+            "type": media_type,
             "style": "",
             "content": "",
-            "mtime": media_file.stat().st_mtime,
+            "mtime": media_file.stat(follow_symlinks=False).st_mtime,
         }
 
         # Extract style and content from first 2 lines only
@@ -353,24 +398,20 @@ def _scan_directory_structure_only(directory: Path) -> dict:
     file exists within its subtree (including nested subdirectories), so deeply nested
     trees stay navigable without a full recursive file enumeration.
 
-    This is the fastest possible scan - one os.listdir() call per level, no full txt parsing.
+    This is the fastest possible scan - one scandir pass per level, no full txt parsing.
     Returns:
         {
             "subdirs": [{name: str, image_count: int(0|1), path: str}]
         }
     """
     result = {"subdirs": []}
-    if not directory.exists():
-        return result
 
     # Scan only first-level subdirectories (recursive presence check per subdir for nesting)
-    for p in sorted(directory.iterdir()):
-        if not p.is_dir():
-            continue
+    for entry in _scandir_dirs(directory):
         result["subdirs"].append({
-            "name": p.name,
-            "image_count": 1 if _has_media_recursive(p) else 0,
-            "path": p.name
+            "name": entry.name,
+            "image_count": 1 if _has_media_recursive(Path(entry.path)) else 0,
+            "path": entry.name
         })
 
     return result
@@ -537,6 +578,52 @@ def _sort_subdirs_by_recency(subdirs: dict, directory: Path):
     subdirs.update(ordered)
 
 
+_DIM_CACHE: dict[tuple[str, int, int], tuple[int, int]] = {}
+_DIM_CACHE_LIMIT = 6000
+
+
+def _media_dimensions(path: Path) -> tuple[int, int] | None:
+    """Pixel size of an image, read from the file header without decoding it."""
+    try:
+        with Image.open(path) as im:
+            return im.size
+    except Exception:
+        return None
+
+
+def _media_dimensions_batch(items: list[tuple[Path, os.stat_result]]) -> dict[Path, tuple[int, int] | None]:
+    """Header sizes of many images at once, keyed by path.
+
+    Each header is a separate open on the share, so serial reads cost one
+    round trip per card; they run on a small pool instead. Sizes are memoized
+    by (path, mtime_ns, size) so re-opening a directory reads nothing.
+    """
+    sizes: dict[Path, tuple[int, int] | None] = {}
+    todo: list[tuple[Path, tuple[str, int, int]]] = []
+    for path, st in items:
+        key = (str(path), st.st_mtime_ns, st.st_size)
+        cached = _DIM_CACHE.get(key)
+        if cached is None:
+            todo.append((path, key))
+        sizes[path] = cached
+
+    if todo:
+        paths = [path for path, _ in todo]
+        if len(paths) > 8:
+            with ThreadPoolExecutor(8) as pool:
+                found = list(pool.map(_media_dimensions, paths))
+        else:
+            found = [_media_dimensions(path) for path in paths]
+        for (path, key), size in zip(todo, found):
+            sizes[path] = size
+            if size:
+                _DIM_CACHE[key] = size
+
+    if len(_DIM_CACHE) > _DIM_CACHE_LIMIT:
+        _DIM_CACHE.clear()
+    return sizes
+
+
 def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
     """Scan directory (non-recursive) and return gallery entries.
     
@@ -552,65 +639,46 @@ def _scan_gallery_entries(directory: Path, subfolder: str = "") -> list[dict]:
             Used to set the 'subfolder' field for correct thumbnail URL resolution.
     """
     entries: list[dict] = []
-    if not directory.exists():
-        return entries
 
     # Determine category and subfolder from the subfolder parameter
     # When subfolder is provided, we're scanning a specific subdirectory,
     # so don't use subfolder name as category (that would group all entries under it)
     category = ""
 
-    stems: dict[str, list[Path]] = {}
-    for p in directory.iterdir():
-        if not p.is_file():
-            continue
-        lower = p.suffix.lower()
-        # Track media files and .txt files by stem
-        if lower not in ALL_MEDIA_EXTENSIONS and lower != ".txt":
-            continue
-        stems.setdefault(p.stem, []).append(p)
-
-    for stem, files in sorted(stems.items()):
-        media_file = None
-        media_type = None
-        txt_file = None
-        for f in files:
-            if f.suffix.lower() in VIDEO_EXTENSIONS:
-                media_file = f
-                media_type = "video"
-            elif f.suffix.lower() in IMG_EXTENSIONS:
-                if media_file is None:
-                    media_file = f
-                    media_type = "image"
-            elif f.suffix.lower() in AUDIO_EXTENSIONS:
-                if media_file is None:
-                    media_file = f
-                    media_type = "audio"
-            elif f.suffix.lower() == ".txt":
-                txt_file = f
-
-        # Only create entry if we found a media file
-        if not media_file:
+    rows: list[tuple[os.DirEntry, str, os.DirEntry | None, os.stat_result]] = []
+    for media_file, media_type, txt_file in _pick_media_entries(directory):
+        try:
+            rows.append((media_file, media_type, txt_file, media_file.stat(follow_symlinks=False)))
+        except OSError:
             continue
 
+    # Card aspect ratio straight from the header: the frontend lays the grid out
+    # before any thumbnail is fetched.
+    dims = _media_dimensions_batch([(Path(media_file.path), st)
+                                   for media_file, media_type, _, st in rows if media_type == "image"])
+
+    for media_file, media_type, txt_file, st in rows:
         # Parse .txt file for lightbox display (only when txt exists)
         raw_txt = ""
-        if txt_file and txt_file.exists():
+        if txt_file is not None:
             try:
-                with open(txt_file, "r", encoding="utf-8") as tf:
+                with open(txt_file.path, "r", encoding="utf-8") as tf:
                     raw_txt = tf.read()
             except Exception:
                 pass
 
         # Build entry with txt_content when available
         entry: dict[str, object] = {
-            "name": media_file.stem,
+            "name": _entry_stem(media_file),
             "filename": media_file.name,
             "type": media_type,
             "category": category,
             "subfolder": subfolder,
-            "mtime": media_file.stat().st_mtime,
+            "mtime": st.st_mtime,
         }
+        size = dims.get(Path(media_file.path))
+        if size:
+            entry["w"], entry["h"] = size
         if raw_txt:
             cleaned_lines = [""] * 8
             try:
@@ -642,51 +710,23 @@ def _scan_gallery_entries_with_subdirs(directory: Path, subfolder: str = "") -> 
     Supports both image and video files.
     """
     result = {"root": [], "subdirs": {}}
-    if not directory.exists():
-        return result
 
-    root_stems: dict[str, list[Path]] = {}
-    for p in directory.iterdir():
-        if p.is_file():
-            lower = p.suffix.lower()
-            if lower in ALL_MEDIA_EXTENSIONS or lower == ".txt":
-                root_stems.setdefault(p.stem, []).append(p)
-
-    for stem, files in sorted(root_stems.items()):
-        media_file = None
-        media_type = None
-        for f in files:
-            if f.suffix.lower() in VIDEO_EXTENSIONS:
-                media_file = f
-                media_type = "video"
-            elif f.suffix.lower() in IMG_EXTENSIONS:
-                if media_file is None:
-                    media_file = f
-                    media_type = "image"
-            elif f.suffix.lower() in AUDIO_EXTENSIONS:
-                if media_file is None:
-                    media_file = f
-                    media_type = "audio"
-
-        if not media_file:
-            continue
-
-        # Lightweight entry - no txt parsing for performance
+    # Lightweight entry - no txt parsing for performance
+    for media_file, media_type, _txt_file in _pick_media_entries(directory):
         result["root"].append({
-            "name": media_file.stem,
+            "name": _entry_stem(media_file),
             "filename": media_file.name,
             "type": media_type,
             "category": "",
             "subfolder": "",
-            "mtime": media_file.stat().st_mtime,
+            "mtime": media_file.stat(follow_symlinks=False).st_mtime,
         })
 
     # Only scan FIRST-LEVEL subdirectories (no recursion)
-    for p in directory.iterdir():
-        if p.is_dir():
-            subdir_entries = _scan_gallery_entries(p, p.name)
-            if subdir_entries:
-                result["subdirs"][p.name] = subdir_entries
+    for entry in _scandir_dirs(directory):
+        subdir_entries = _scan_gallery_entries(Path(entry.path), entry.name)
+        if subdir_entries:
+            result["subdirs"][entry.name] = subdir_entries
 
     return result
 
@@ -751,8 +791,8 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
             scan_result["subdirs"] = {s["name"]: {"image_count": s["image_count"]} for s in structure.get("subdirs", [])}
             scan_result["root"] = []
             scan_result["root_count"] = sum(
-                1 for p in target_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS
+                1 for entry in _scandir_files(target_dir)
+                if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS
             )
 
     # Plugin-updated dirs (Output / Grid / Character) show the most recently written
@@ -847,8 +887,8 @@ async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: 
             response_data["covers"] = covers
         return web.json_response(response_data)
 
-    resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, False,
-                                         include_dirs, include_items, False)
+    resp_dir = await asyncio.to_thread(_process_single_directory, base, dir_name_param, rel_path_param, False,
+                                       include_dirs, include_items, False)
     if "subdirs" in resp_dir:
         resp_dir["subdirs"].pop("presets", None)  # read-only cache is surfaced via the injected card
     if not rel_path_param and _is_oss_enabled():
@@ -873,15 +913,20 @@ async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: 
         # ("Character/2026-09-24"), with subfolders carrying the same main-dir
         # anchored prefix so the thumbnail route picks the right main dir.
         full_key = f"{main_label}/{rel_path_param}" if rel_path_param else main_label
-        _collect_all_dir_covers(covers, target_dir, full_key, 2, base_subfolder=full_key)
-        # Immediate child subdirs need covers of their own, otherwise their cards
-        # render as bare folder placeholders when this level is displayed.
-        for subdir_name in resp_dir.get("subdirs", {}):
-            if subdir_name == "Cloud Presets":
-                continue
-            child_key = f"{full_key}/{subdir_name}"
-            _collect_all_dir_covers(covers, target_dir / subdir_name, child_key, 2,
-                                    base_subfolder=child_key)
+
+        def _collect_dir_covers():
+            _collect_all_dir_covers(covers, target_dir, full_key, 2, base_subfolder=full_key)
+            # Immediate child subdirs need covers of their own, otherwise their cards
+            # render as bare folder placeholders when this level is displayed.
+            for subdir_name in resp_dir.get("subdirs", {}):
+                if subdir_name == "Cloud Presets":
+                    continue
+                child_key = f"{full_key}/{subdir_name}"
+                _collect_all_dir_covers(covers, target_dir / subdir_name, child_key, 2,
+                                        base_subfolder=child_key)
+
+        await asyncio.to_thread(_collect_dir_covers)
+
         oss_index = _load_oss_index_from_disk() or await _fetch_oss_index()
         if oss_index:
             _collect_oss_covers(covers, oss_index, oss_category)
@@ -1019,13 +1064,13 @@ async def get_gallery_list(request):
         # Process single directory using unified function
         if is_presets_subdir:
             # For presets subdirs, only return items (no subdirs structure)
-            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, True, 
+            resp_dir = await asyncio.to_thread(_process_single_directory, base, dir_name_param, rel_path_param, True, 
                                                   include_dirs=False, include_items=True, search_mode=search_mode)
             # Override to ensure no subdirs are shown
             if "subdirs" not in resp_dir:
                 resp_dir["subdirs"] = {}
         else:
-            resp_dir = _process_single_directory(base, dir_name_param, rel_path_param, is_presets or is_lora or is_system or is_civitai, 
+            resp_dir = await asyncio.to_thread(_process_single_directory, base, dir_name_param, rel_path_param, is_presets or is_lora or is_system or is_civitai, 
                                                   include_dirs, include_items, search_mode)
         
         # Civitai bookmark example cache: anchor item subfolders to the stable
@@ -1035,17 +1080,17 @@ async def get_gallery_list(request):
                 it["subfolder"] = f"civitai_bookmarks/{rel_path_param}"
 
         if is_lora and include_items:
-            _attach_lora_meta(resp_dir, rel_path_param)
+            await asyncio.to_thread(_attach_lora_meta, resp_dir, rel_path_param)
 
         # Give leaf lora subdir cards their exact lora_path so the workflow filter
         # ("工作流已用") can match them against loras on the canvas.
         if is_lora:
-            _attach_lora_subdir_paths(resp_dir, rel_path_param)
+            await asyncio.to_thread(_attach_lora_subdir_paths, resp_dir, rel_path_param)
 
         # Show configured lora dirs with no cached examples yet as pending cards
         # (empty subdirs are otherwise filtered out by the UI).
         if is_lora and not rel_path_param:
-            for sub_name, meta in _lora_pending_subdirs().items():
+            for sub_name, meta in (await asyncio.to_thread(_lora_pending_subdirs)).items():
                 subdirs = resp_dir.setdefault("subdirs", {})
                 entry = subdirs.setdefault(sub_name, {"image_count": 0, "path": sub_name})
                 entry.update(meta)
@@ -1069,8 +1114,8 @@ async def get_gallery_list(request):
             lora_anchor = f"Lora/{rel_path_param}" if (is_lora and rel_path_param) else ("Lora" if is_lora else "")
             # Anchor the current level's covers to the dir root as well, so they resolve
             # when browsing below the top level (e.g. Output/StoryBoard).
-            _collect_all_dir_covers(covers, target_dir, full_key, 2,
-                                    base_subfolder=lora_anchor or rel_path_param)
+            await asyncio.to_thread(_collect_all_dir_covers, covers, target_dir, full_key, 2,
+                                    lora_anchor or rel_path_param)
             
             # Also collect covers for immediate child subdirectories (like homepage does)
             # This ensures subdir cards show cover images when entering a directory
@@ -1086,7 +1131,7 @@ async def get_gallery_list(request):
                         child_base_subfolder = (
                             f"{rel_path_param}/{subdir_name}" if rel_path_param else subdir_name
                         )
-                    _collect_all_dir_covers(covers, subdir_path, child_key, 2, base_subfolder=child_base_subfolder)
+                    await asyncio.to_thread(_collect_all_dir_covers, covers, subdir_path, child_key, 2, child_base_subfolder)
             
             return web.json_response({
                 "directories": [resp_dir],
@@ -1106,14 +1151,14 @@ async def get_gallery_list(request):
     for info in _get_system_dirs():
         if _is_home_entry_hidden(info["name"], hidden_entries):
             continue
-        resp_dir = _process_single_directory(info["path"], info["name"], "", True,
+        resp_dir = await asyncio.to_thread(_process_single_directory, info["path"], info["name"], "", True,
                                               include_dirs, include_items, search_mode)
         directories.append(resp_dir)
 
     # Custom dirs (writable)
     for dir_path in user_custom_dirs:
         dir_name = dir_path.name if dir_path.name else str(dir_path)
-        resp_dir = _process_single_directory(dir_path, dir_name, "", False, 
+        resp_dir = await asyncio.to_thread(_process_single_directory, dir_path, dir_name, "", False, 
                                               include_dirs, include_items, search_mode)
         directories.append(resp_dir)
 
@@ -1122,7 +1167,7 @@ async def get_gallery_list(request):
         # PERFORMANCE: When lazy-loaded (no items), use lightweight scan that only returns structure + counts.
         # This avoids scanning all .txt files on home page load.
         if include_items:
-            presets_structure = _scan_gallery_entries_with_subdirs(PRESETS_DIR)
+            presets_structure = await asyncio.to_thread(_scan_gallery_entries_with_subdirs, PRESETS_DIR)
         else:
             # Lightweight mode: only directory names and image counts, no txt parsing
             lightweight_result = _scan_directory_structure_only(PRESETS_DIR)
@@ -1134,7 +1179,7 @@ async def get_gallery_list(request):
         presets_subdirs = presets_structure.get("subdirs", {})
 
         # Root-level presets items go into a "Presets" read-only directory (lazy-loaded too when no items requested)
-        resp_dir = _process_single_directory(PRESETS_DIR, "Presets", "", True, 
+        resp_dir = await asyncio.to_thread(_process_single_directory, PRESETS_DIR, "Presets", "", True, 
                                               include_dirs, include_items, search_mode)
         directories.append(resp_dir)
 
@@ -1145,7 +1190,7 @@ async def get_gallery_list(request):
             subdir_items = presets_subdirs[subdir_name]
             if subdir_items or include_items:
                 # For presets subdirectories, only return items when requested
-                resp_dir = _process_single_directory(PRESETS_DIR, 
+                resp_dir = await asyncio.to_thread(_process_single_directory, PRESETS_DIR, 
                                                       f"Presets/{subdir_name}", subdir_name, True,
                                                       include_dirs=False, include_items=include_items, search_mode=search_mode)
                 # Ensure no subdirs are shown for presets children
@@ -1158,35 +1203,35 @@ async def get_gallery_list(request):
     lora_home = bool(_load_settings().get("civitai_lora_enabled")) and not _is_home_entry_hidden("Lora", hidden_entries)
     if lora_home and LORA_CACHE_DIR.exists():
         if include_items:
-            lora_structure = _scan_gallery_entries_with_subdirs(LORA_CACHE_DIR)
+            lora_structure = await asyncio.to_thread(_scan_gallery_entries_with_subdirs, LORA_CACHE_DIR)
         else:
-            lora_lightweight = _scan_directory_structure_only(LORA_CACHE_DIR)
+            lora_lightweight = await asyncio.to_thread(_scan_directory_structure_only, LORA_CACHE_DIR)
             lora_structure = {"root": [], "subdirs": {}}
             for sd in lora_lightweight.get("subdirs", []):
                 lora_structure["subdirs"][sd["name"]] = []
 
-        resp_dir = _process_single_directory(LORA_CACHE_DIR, "Lora", "", True,
+        resp_dir = await asyncio.to_thread(_process_single_directory, LORA_CACHE_DIR, "Lora", "", True,
                                               include_dirs, include_items, search_mode)
         if include_items:
-            _attach_lora_meta(resp_dir, "")
+            await asyncio.to_thread(_attach_lora_meta, resp_dir, "")
         directories.append(resp_dir)
 
         for subdir_name in sorted(lora_structure.get("subdirs", {}).keys()):
             subdir_items = lora_structure["subdirs"][subdir_name]
             if subdir_items or include_items:
-                resp_dir = _process_single_directory(LORA_CACHE_DIR,
+                resp_dir = await asyncio.to_thread(_process_single_directory, LORA_CACHE_DIR,
                                                       f"Lora/{subdir_name}", subdir_name, True,
                                                       include_dirs=False, include_items=include_items, search_mode=search_mode)
                 # Ensure no subdirs are shown for lora children (navigation goes through dir_name=lora&path=...)
                 if "subdirs" not in resp_dir:
                     resp_dir["subdirs"] = {}
                 if include_items:
-                    _attach_lora_meta(resp_dir, subdir_name)
+                    await asyncio.to_thread(_attach_lora_meta, resp_dir, subdir_name)
                 directories.append(resp_dir)
 
         # Configured lora dirs with no cached examples yet show up as pending cards,
         # so the full listing matches the sync selection instead of hiding empty dirs.
-        for sub_name, meta in sorted(_lora_pending_subdirs().items()):
+        for sub_name, meta in sorted((await asyncio.to_thread(_lora_pending_subdirs)).items()):
             if sub_name in lora_structure.get("subdirs", {}):
                 continue
             resp_dir = {
@@ -1201,6 +1246,7 @@ async def get_gallery_list(request):
             directories.append(resp_dir)
 
     # OSS remote directories
+    oss_index = None
     if _is_oss_enabled():
         oss_index = _load_oss_index_from_disk()
         if oss_index is None:
@@ -1218,35 +1264,7 @@ async def get_gallery_list(request):
 
     if include_covers:
         covers: dict[str, list[dict]] = {}
-        # Collect cover images for all directories (max 2 per directory).
-        # _collect_all_dir_covers scans root level first, then first subdir with media.
-        _collect_all_dir_covers(covers, PRESETS_DIR, "presets", 2)
-        if lora_home and LORA_CACHE_DIR.exists():
-            _collect_all_dir_covers(covers, LORA_CACHE_DIR, "Lora", 2, base_subfolder="Lora")
-            # Each first-level lora subdir gets its own directory card with a cover
-            # (first example image; pure dirs fall back to the next level, like custom dirs).
-            try:
-                lora_subdirs = sorted(p.name for p in LORA_CACHE_DIR.iterdir() if p.is_dir())
-            except OSError:
-                lora_subdirs = []
-            for subdir_name in lora_subdirs:
-                _collect_all_dir_covers(covers, LORA_CACHE_DIR / subdir_name,
-                                        f"Lora/{subdir_name}", 2,
-                                        base_subfolder=f"Lora/{subdir_name}")
-        for dir_path in user_custom_dirs:
-            dir_name = dir_path.name if dir_path.name else str(dir_path)
-            _collect_all_dir_covers(covers, dir_path, dir_name, 2)
-        # System dirs (input/output) covers
-        for info in _get_system_dirs():
-            if _is_home_entry_hidden(info["name"], hidden_entries):
-                continue
-            _collect_all_dir_covers(covers, info["path"], info["name"], 2)
-        # Collect covers from OSS directories
-        if _is_oss_enabled():
-            if oss_index is None:
-                oss_index = _load_oss_index_from_disk()
-            if oss_index:
-                _collect_oss_covers(covers, oss_index)
+        await asyncio.to_thread(_collect_home_covers, covers, user_custom_dirs, hidden_entries, lora_home, oss_index)
         response_data["covers"] = covers
 
     return web.json_response(response_data)
@@ -1485,7 +1503,7 @@ async def copy_to_input(request):
         if not source_path:
             return web.json_response({"success": False, "error": "Image not found"}, status=404)
 
-        resolved_filename, _ = _copy_media_to_input(source_path, filename)
+        resolved_filename, _ = await asyncio.to_thread(_copy_media_to_input, source_path, filename)
         return web.json_response({"success": True, "filename": resolved_filename})
     except Exception as e:
         print(f"[Neo Gallery] Error copying to input: {e}")
@@ -1507,9 +1525,6 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
         sample_count: Number of samples per directory (max cover images)
         base_subfolder: Base subfolder prefix for correct thumbnail URL resolution
     """
-    if not base_dir.exists():
-        return
-
     if _is_recent_dir(dir_name):
         covers[dir_name] = _recent_cover_entries(base_dir, base_subfolder, sample_count)
         return
@@ -1518,14 +1533,14 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
 
     # Level 1: Scan root level files (image > video > audio), randomly sampled
     root_files = []
-    for p in base_dir.iterdir():
-        if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+    for entry in _scandir_files(base_dir):
+        if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS:
             root_files.append({
-                "filename": p.name,
-                "name": p.stem,
+                "filename": entry.name,
+                "name": _entry_stem(entry),
                 "subfolder": base_subfolder,
-                "kind": _cover_kind(p.name),
-                "mtime": p.stat().st_mtime,
+                "kind": _cover_kind(entry.name),
+                "mtime": entry.stat(follow_symlinks=False).st_mtime,
             })
     random.shuffle(root_files)
     result.extend(_order_covers_by_kind(root_files)[:sample_count])
@@ -1534,6 +1549,35 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
     _collect_covers_recursive(base_dir, sample_count - len(result), result, sample_count, base_subfolder)
 
     covers[f"{dir_name}"] = result
+
+
+def _collect_home_covers(covers: dict, user_custom_dirs: list, hidden_entries: set, lora_home: bool, oss_index: dict | None):
+    """Collect cover images for every home entry (max 2 per directory).
+    
+    Root level first, then the first subdir with media. Runs off the event loop.
+    """
+    _collect_all_dir_covers(covers, PRESETS_DIR, "presets", 2)
+    if lora_home and LORA_CACHE_DIR.exists():
+        _collect_all_dir_covers(covers, LORA_CACHE_DIR, "Lora", 2, base_subfolder="Lora")
+        # Each first-level lora subdir gets its own directory card with a cover
+        # (first example image; pure dirs fall back to the next level, like custom dirs).
+        try:
+            lora_subdirs = sorted(p.name for p in LORA_CACHE_DIR.iterdir() if p.is_dir())
+        except OSError:
+            lora_subdirs = []
+        for subdir_name in lora_subdirs:
+            _collect_all_dir_covers(covers, LORA_CACHE_DIR / subdir_name,
+                                    f"Lora/{subdir_name}", 2,
+                                    base_subfolder=f"Lora/{subdir_name}")
+    for dir_path in user_custom_dirs:
+        dir_name = dir_path.name if dir_path.name else str(dir_path)
+        _collect_all_dir_covers(covers, dir_path, dir_name, 2)
+    for info in _get_system_dirs():
+        if _is_home_entry_hidden(info["name"], hidden_entries):
+            continue
+        _collect_all_dir_covers(covers, info["path"], info["name"], 2)
+    if oss_index:
+        _collect_oss_covers(covers, oss_index)
 
 
 def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict], sample_count: int, base_subfolder: str = ""):
@@ -1546,10 +1590,10 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
         sample_count: Maximum number of samples total (CONSTANT, never changes during recursion)
         base_subfolder: Base subfolder prefix for correct thumbnail URL resolution
     """
-    if needed <= 0 or len(result) >= sample_count or not parent_dir.exists():
+    if needed <= 0 or len(result) >= sample_count:
         return
 
-    subdirs = [d for d in parent_dir.iterdir() if d.is_dir()]
+    subdirs = _scandir_dirs(parent_dir)
     random.shuffle(subdirs)
 
     for subdir in subdirs:
@@ -1566,14 +1610,14 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
         # limited to what's still needed)
         remaining = sample_count - len(result)
         subdir_media = []
-        for f in subdir.iterdir():
-            if f.is_file() and f.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+        for entry in _scandir_files(Path(subdir.path)):
+            if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS:
                 subdir_media.append({
-                    "filename": f.name,
-                    "name": f.stem,
+                    "filename": entry.name,
+                    "name": _entry_stem(entry),
                     "subfolder": new_subfolder,
-                    "kind": _cover_kind(f.name),
-                    "mtime": f.stat().st_mtime,
+                    "kind": _cover_kind(entry.name),
+                    "mtime": entry.stat(follow_symlinks=False).st_mtime,
                 })
         random.shuffle(subdir_media)
         found_direct = _order_covers_by_kind(subdir_media)[:remaining]
@@ -1586,7 +1630,7 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
             # (so returned subfolder paths stay anchored to the custom-dir root that
             # /neo_gallery/image can resolve) and keep `needed` so the search is
             # bounded only by sample_count, not by recursion depth.
-            _collect_covers_recursive(subdir, needed, result, sample_count, new_subfolder)
+            _collect_covers_recursive(Path(subdir.path), needed, result, sample_count, new_subfolder)
 
         # Check if we've collected enough after processing this subdir
         if len(result) >= sample_count:
@@ -1602,15 +1646,9 @@ def _collect_subdirs_with_media(directory: Path, prefix: str = "") -> list[str]:
     """
     result = []
 
-    if not directory.exists():
-        return result
-
-    for p in sorted(directory.iterdir()):
-        if not p.is_dir():
-            continue
-
-        subdir_name = p.name
-        if _has_media_in_dir_any(p):
+    for entry in _scandir_dirs(directory):
+        subdir_name = entry.name
+        if _has_media_in_dir_any(Path(entry.path)):
             full_path = prefix + "/" + subdir_name if prefix else subdir_name
             result.append(full_path)
 
@@ -1634,40 +1672,45 @@ def _collect_sample_images_recursive(directory: Path, prefix: str, max_samples: 
     """
     if len(result) >= max_samples:
         return
-    
-    if not directory.exists():
-        return
-    
+
     # Collect lightweight entries (filename + subfolder only, no txt parsing)
-    for p in sorted(directory.iterdir()):
+    try:
+        with os.scandir(directory) as it:
+            entries = sorted(it, key=lambda entry: entry.name)
+    except OSError:
+        return
+
+    for entry in entries:
         if len(result) >= max_samples:
             return
-        
-        if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-            result.append({
-                "filename": p.name,
-                "name": p.stem,
-                "subfolder": prefix,
-            })
-        
-        elif p.is_dir():
-            subdir_name = p.name
+
+        if entry.is_file(follow_symlinks=False):
+            if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS:
+                result.append({
+                    "filename": entry.name,
+                    "name": _entry_stem(entry),
+                    "subfolder": prefix,
+                })
+
+        elif entry.is_dir(follow_symlinks=False):
+            subdir = Path(entry.path)
+            subdir_name = entry.name
             new_prefix = prefix + "/" + subdir_name if prefix else subdir_name
-            
+
             # If this subdir has direct media, collect them as samples
-            if _has_media_in_dir_any(p):
-                for sub_p in sorted(p.iterdir()):
+            if _has_media_in_dir_any(subdir):
+                for sub in _scandir_files(subdir):
                     if len(result) >= max_samples:
                         return
-                    if sub_p.is_file() and sub_p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+                    if _entry_ext(sub) in ALL_MEDIA_EXTENSIONS:
                         result.append({
-                            "filename": sub_p.name,
-                            "name": sub_p.stem,
+                            "filename": sub.name,
+                            "name": _entry_stem(sub),
                             "subfolder": new_prefix,
                         })
             else:
                 # Recurse into nested subdirs (empty intermediate dir)
-                _collect_sample_images_recursive(p, new_prefix, max_samples, result)
+                _collect_sample_images_recursive(subdir, new_prefix, max_samples, result)
 
 
 @routes.post("/neo_gallery/dir_cover_images")
@@ -1685,24 +1728,27 @@ async def get_directory_cover_images(request):
         sample_count = int(data.get("samples", 2))
         
         covers: dict[str, list[dict]] = {}
-        
-        # Collect from presets (use real path name consistently)
-        _collect_all_dir_covers(covers, PRESETS_DIR, "presets", sample_count)
-        
-        # Collect from the Lora example cache (subfolder anchored with "Lora/" so
-        # the thumbnail endpoint can resolve it inside LORA_CACHE_DIR)
-        if LORA_CACHE_DIR.exists():
-            _collect_all_dir_covers(covers, LORA_CACHE_DIR, "Lora", sample_count, base_subfolder="Lora")
-        
-        # Collect from all custom directories (use real path names, no case conversion)
-        for dir_path in _get_user_custom_dirs():
-            dir_name = dir_path.name if dir_path.name else str(dir_path)
-            _collect_all_dir_covers(covers, dir_path, dir_name, sample_count)
-        
-        # Collect from system directories (input/output), matching the home listing
-        for info in _get_system_dirs():
-            _collect_all_dir_covers(covers, info["path"], info["name"], sample_count)
-        
+
+        def _collect_all():
+            # Collect from presets (use real path name consistently)
+            _collect_all_dir_covers(covers, PRESETS_DIR, "presets", sample_count)
+
+            # Collect from the Lora example cache (subfolder anchored with "Lora/" so
+            # the thumbnail endpoint can resolve it inside LORA_CACHE_DIR)
+            if LORA_CACHE_DIR.exists():
+                _collect_all_dir_covers(covers, LORA_CACHE_DIR, "Lora", sample_count, base_subfolder="Lora")
+
+            # Collect from all custom directories (use real path names, no case conversion)
+            for dir_path in _get_user_custom_dirs():
+                dir_name = dir_path.name if dir_path.name else str(dir_path)
+                _collect_all_dir_covers(covers, dir_path, dir_name, sample_count)
+
+            # Collect from system directories (input/output), matching the home listing
+            for info in _get_system_dirs():
+                _collect_all_dir_covers(covers, info["path"], info["name"], sample_count)
+
+        await asyncio.to_thread(_collect_all)
+
         return web.json_response({"covers": covers})
     except Exception as e:
         print(f"[Neo Gallery] Error collecting cover images: {e}")
@@ -1718,7 +1764,7 @@ async def get_subdirs(request):
     - path: relative subdirectory path within that directory (optional, "/" separated)
     
     Returns only first-level subdirectories with their image counts.
-    Fastest possible scan - one os.listdir() call per level, no recursion.
+    Fastest possible scan - one scandir pass per level, no recursion.
     
     Returns format:
         {
@@ -1771,7 +1817,7 @@ async def get_subdirs(request):
         target_dir = base
 
     # Use lightweight structure-only scan (no txt parsing, no images)
-    structure = _scan_directory_structure_only(target_dir)
+    structure = await asyncio.to_thread(_scan_directory_structure_only, target_dir)
 
     return web.json_response({
         "dir_name": dir_name,
@@ -1796,7 +1842,6 @@ def _generate_thumbnail(source_path: Path, cache_path: Path, size: int = THUMBNA
         if source_path.suffix.lower() in VIDEO_EXTENSIONS:
             return _generate_video_thumbnail(source_path, cache_path, size)
         
-        from PIL import Image
         with Image.open(source_path) as img:
             # Convert to RGB if necessary (handle RGBA, P mode, etc.)
             if img.mode not in ("RGB", "L", "RGBA"):
@@ -1822,17 +1867,26 @@ def _generate_thumbnail(source_path: Path, cache_path: Path, size: int = THUMBNA
         return False
 
 
+def _ffmpeg_exe() -> str | None:
+    """Locate ffmpeg: PATH first, then the imageio-ffmpeg binary shipped with ComfyUI."""
+    path = shutil.which("ffmpeg")
+    if path:
+        return path
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return None
+
+
 def _generate_video_thumbnail(source_path: Path, cache_path: Path, size: int = THUMBNAIL_SIZE) -> bool:
     """Generate a thumbnail from a video file using ffmpeg.
     
     Extracts the first frame and saves as JPEG thumbnail.
     """
     try:
-        import subprocess
-        import shutil
-        
         # Check if ffmpeg is available
-        ffmpeg_path = shutil.which("ffmpeg")
+        ffmpeg_path = _ffmpeg_exe()
         if not ffmpeg_path:
             return False
         
@@ -1865,7 +1919,6 @@ def _generate_video_thumbnail(source_path: Path, cache_path: Path, size: int = T
         
         # Validate that the output is a valid image file
         try:
-            from PIL import Image
             with Image.open(cache_path) as img:
                 img.verify()
             # Also check file size > 1KB to avoid empty/corrupt files
@@ -1884,14 +1937,14 @@ def _generate_video_thumbnail(source_path: Path, cache_path: Path, size: int = T
         return False
 
 
-def _get_thumbnail_path(filename: str, subfolder: str, size: int) -> Path:
+def _get_thumbnail_path(filename: str, subfolder: str, size: int, source_path: Path | None = None) -> Path:
     """Get the cache path for a thumbnail using hash based on file content.
     
     Uses date-based subdirectories (YYYY-MM) to avoid too many files in one directory.
     """
-    import time
     # Find source path to compute hash from actual file properties
-    source_path = _find_source_media(filename, subfolder)
+    if source_path is None:
+        source_path = _find_source_media(filename, subfolder)
     if source_path and source_path.exists():
         # Use absolute path + size + mtime for unique hash
         stat = source_path.stat()
@@ -1903,7 +1956,6 @@ def _get_thumbnail_path(filename: str, subfolder: str, size: int) -> Path:
         cache_key = f"{filename}_{subfolder}_{size}"
         date_str = time.strftime("%Y-%m")
     
-    import hashlib
     hash_hex = hashlib.md5(cache_key.encode()).hexdigest()[:12]
     cache_path = THUMBNAIL_DIR / date_str / f"{hash_hex}_{size}.jpg"
     # Auto-create date directory if it doesn't exist
@@ -2108,6 +2160,45 @@ def _find_source_image(filename: str, subfolder: str) -> Path | None:
     return _find_source_media(filename, subfolder)
 
 
+def _read_media_bytes(path: Path) -> tuple[bytes, str]:
+    with open(path, "rb") as f:
+        return f.read(), mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _media_file_response(path: Path) -> web.Response:
+    """Serve a local media file. The URL carries the filename, so browsers can cache it."""
+    with open(path, "rb") as f:
+        body = f.read()
+    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return web.Response(
+        body=body,
+        content_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": f'inline; filename="{path.name}"',
+        },
+    )
+
+
+def _thumbnail_payload(filename: str, subfolder: str, size: int, source_path: Path) -> tuple[bytes, str] | None:
+    """Bytes + content type for a local media thumbnail, generating the cache when stale.
+    
+    Blocking (Pillow / ffmpeg), so callers run it in a thread. A video that yields no
+    frame returns None: serving the raw video as an <img> is pointless.
+    """
+    if size <= 0:
+        return _read_media_bytes(source_path)
+
+    cache_path = _get_thumbnail_path(filename, subfolder, size, source_path)
+    if not cache_path.exists() or cache_path.stat().st_mtime < source_path.stat().st_mtime:
+        if source_path.suffix.lower() in VIDEO_EXTENSIONS:
+            if not _generate_video_thumbnail(source_path, cache_path, size):
+                return None
+        elif not _generate_thumbnail(source_path, cache_path, size):
+            return _read_media_bytes(source_path)
+    return _read_media_bytes(cache_path)
+
+
 @routes.get("/neo_gallery/thumbnail")
 async def get_thumbnail(request):
     """Serve cached thumbnail for gallery images."""
@@ -2124,7 +2215,7 @@ async def get_thumbnail(request):
         return web.Response(status=400)
     
     # Find the source image
-    source_path = _find_source_image(filename, subfolder)
+    source_path = await asyncio.to_thread(_find_source_image, filename, subfolder)
 
     # OSS fallback: try pre-generated thumbnail from remote index
     if not source_path and _is_oss_enabled():
@@ -2144,65 +2235,18 @@ async def get_thumbnail(request):
             if thumb_rel:
                 cached = await _download_oss_file(thumb_rel, oss_category)
                 if cached and cached.exists():
-                    with open(cached, "rb") as f:
-                        content = f.read()
-                    return web.Response(
-                        body=content,
-                        content_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=86400"}
-                    )
+                    return await asyncio.to_thread(_media_file_response, cached)
 
     if not source_path:
         return web.Response(status=404)
 
-    # Get cache path
-    cache_path = _get_thumbnail_path(filename, subfolder, size)
-    
-    # Check if cache is valid (exists and is newer than source)
-    use_cache = False
-    if cache_path.exists():
-        try:
-            cache_mtime = cache_path.stat().st_mtime
-            source_mtime = source_path.stat().st_mtime
-            if cache_mtime >= source_mtime:
-                use_cache = True
-        except Exception:
-            pass
-    
-    if use_cache:
-        # Return cached thumbnail with long-term caching headers
-        # Since URL is deterministic (hash-based), browser can cache indefinitely
-        with open(cache_path, "rb") as f:
-            content = f.read()
-        return web.Response(
-            body=content, 
-            content_type="image/jpeg",
-            headers={
-                "Cache-Control": "public, max-age=86400",
-                "ETag": f'"{cache_path.stat().st_mtime}-{cache_path.stat().st_size}"'
-            }
-        )
-    
-    # Generate thumbnail
-    if _generate_thumbnail(source_path, cache_path, size):
-        with open(cache_path, "rb") as f:
-            content = f.read()
-        return web.Response(
-            body=content, 
-            content_type="image/jpeg",
-            headers={
-                "Cache-Control": "public, max-age=86400",
-                "ETag": f'"{cache_path.stat().st_mtime}-{cache_path.stat().st_size}"'
-            }
-        )
-    
-    # Fallback: return original image
-    with open(source_path, "rb") as f:
-        content = f.read()
-    content_type, _ = mimetypes.guess_type(str(source_path))
-    if not content_type:
-        content_type = "image/jpeg"
-    return web.Response(body=content, content_type=content_type)
+    payload = await asyncio.to_thread(_thumbnail_payload, filename, subfolder, size, source_path)
+    if payload is None:
+        return web.Response(status=404, text="Thumbnail generation failed")
+
+    body, content_type = payload
+    return web.Response(body=body, content_type=content_type,
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @routes.get("/neo_gallery/video")
@@ -2217,23 +2261,14 @@ async def view_video(request):
     if ".." in filename or ".." in subfolder:
         return web.Response(status=400)
 
-    source_path = _find_source_media(filename, subfolder)
+    source_path = await asyncio.to_thread(_find_source_media, filename, subfolder)
     if not source_path:
         return web.Response(status=404)
 
     if source_path.suffix.lower() not in VIDEO_EXTENSIONS:
         return web.Response(status=400)
 
-    with open(source_path, "rb") as f:
-        content = f.read()
-    content_type, _ = mimetypes.guess_type(str(source_path))
-    if not content_type:
-        content_type = "video/mp4"
-    return web.Response(
-        body=content,
-        content_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
-    )
+    return await asyncio.to_thread(_media_file_response, source_path)
 
 
 @routes.get("/neo_gallery/audio")
@@ -2248,23 +2283,14 @@ async def view_audio(request):
     if ".." in filename or ".." in subfolder:
         return web.Response(status=400)
 
-    source_path = _find_source_media(filename, subfolder)
+    source_path = await asyncio.to_thread(_find_source_media, filename, subfolder)
     if not source_path:
         return web.Response(status=404)
 
     if source_path.suffix.lower() not in AUDIO_EXTENSIONS:
         return web.Response(status=400)
 
-    with open(source_path, "rb") as f:
-        content = f.read()
-    content_type, _ = mimetypes.guess_type(str(source_path))
-    if not content_type:
-        content_type = "audio/mpeg"
-    return web.Response(
-        body=content,
-        content_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
-    )
+    return await asyncio.to_thread(_media_file_response, source_path)
 
 
 def _get_waveform_path(filename: str, subfolder: str) -> Path | None:
@@ -2292,13 +2318,17 @@ async def get_waveform(request):
     if not filename or ".." in filename or ".." in subfolder:
         return web.json_response({"has": False})
 
-    cache_path = _get_waveform_path(filename, subfolder)
-    if not cache_path or not cache_path.exists():
-        return web.json_response({"has": False})
+    def _load_waveform():
+        cache_path = _get_waveform_path(filename, subfolder)
+        if not cache_path or not cache_path.exists():
+            return None
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     try:
-        with open(cache_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = await asyncio.to_thread(_load_waveform)
+        if data is None:
+            return web.json_response({"has": False})
         peaks = data.get("peaks")
         if not isinstance(peaks, list) or not peaks:
             return web.json_response({"has": False})
@@ -2329,7 +2359,7 @@ async def save_waveform(request):
         return web.Response(status=400)
 
     # Only cache for real audio files that exist on disk.
-    source_path = _find_source_media(filename, subfolder)
+    source_path = await asyncio.to_thread(_find_source_media, filename, subfolder)
     if not (source_path and source_path.suffix.lower() in AUDIO_EXTENSIONS):
         return web.Response(status=404)
 
@@ -2344,15 +2374,20 @@ async def save_waveform(request):
     except (TypeError, ValueError):
         duration = 0.0
 
-    cache_path = _get_waveform_path(filename, subfolder)
-    if not cache_path:
-        return web.Response(status=404)
-
-    try:
+    def _write_waveform():
+        cache_path = _get_waveform_path(filename, subfolder)
+        if not cache_path:
+            return False
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"peaks": clean_peaks, "duration": duration}, f)
+        return True
+
+    try:
+        written = await asyncio.to_thread(_write_waveform)
     except Exception:
         return web.Response(status=500)
+    if not written:
+        return web.Response(status=404)
     return web.json_response({"ok": True})
 
 
@@ -2365,21 +2400,22 @@ async def media_meta(request):
         return web.json_response({"has": False})
 
     sub_lower = subfolder.lower()
-    if sub_lower == "lora" or sub_lower.startswith("lora/"):
-        path = _find_source_media(filename, subfolder)
-    elif sub_lower == "presets" or sub_lower == "custom":
-        path = (PRESETS_DIR if sub_lower == "presets" else CUSTOM_DIR) / filename
-        if not path.is_file():
-            path = None
-    else:
+
+    def _resolve_meta_path():
+        if sub_lower == "lora" or sub_lower.startswith("lora/"):
+            return _find_source_media(filename, subfolder)
+        if sub_lower == "presets" or sub_lower == "custom":
+            path = (PRESETS_DIR if sub_lower == "presets" else CUSTOM_DIR) / filename
+            return path if path.is_file() else None
         # Custom dirs and system input/output dirs all resolve through the shared finder
         path = _find_source_media(filename, subfolder)
-        if path and not path.is_file():
-            path = None
+        return path if path and path.is_file() else None
+
+    path = await asyncio.to_thread(_resolve_meta_path)
     if not path:
         return web.json_response({"has": False})
 
-    raw = _extract_media_metadata(path)
+    raw = await asyncio.to_thread(_extract_media_metadata, path)
     if not raw:
         return web.json_response({"has": False})
 
@@ -2426,19 +2462,10 @@ async def view_image(request):
     # "Lora/" prefix to LORA_CACHE_DIR (same resolution the thumbnail route uses).
     subfolder_lower = subfolder.lower()
     if subfolder_lower == "lora" or subfolder_lower.startswith("lora/"):
-        source_path = _find_source_media(filename, subfolder)
+        source_path = await asyncio.to_thread(_find_source_media, filename, subfolder)
         if not source_path:
             return web.Response(status=404)
-        with open(source_path, "rb") as f:
-            content = f.read()
-        content_type, _ = mimetypes.guess_type(str(source_path))
-        if not content_type:
-            content_type = "application/octet-stream"
-        return web.Response(
-            body=content,
-            content_type=content_type,
-            headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
-        )
+        return await asyncio.to_thread(_media_file_response, source_path)
 
     # Civitai bookmark example cache: "civitai_bookmarks/<model_id>" -> CIVITAI_BOOKMARK_DIR.
     if subfolder_lower.startswith("civitai_bookmarks/"):
@@ -2448,16 +2475,7 @@ async def view_image(request):
         source_path = CIVITAI_BOOKMARK_DIR.joinpath(*bm_parts, filename)
         if not source_path.exists():
             return web.Response(status=404)
-        with open(source_path, "rb") as f:
-            content = f.read()
-        content_type, _ = mimetypes.guess_type(str(source_path))
-        if not content_type:
-            content_type = "application/octet-stream"
-        return web.Response(
-            body=content,
-            content_type=content_type,
-            headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
-        )
+        return await asyncio.to_thread(_media_file_response, source_path)
 
     user_custom_dirs = _get_user_custom_dirs()
     base: Path | None = None
@@ -2556,98 +2574,58 @@ async def view_image(request):
         if oss_rel:
             cached = await _download_oss_file(oss_rel, oss_category)
             if cached and cached.exists():
-                with open(cached, "rb") as f:
-                    content = f.read()
-                content_type, _ = mimetypes.guess_type(str(cached))
-                if not content_type:
-                    content_type = "application/octet-stream"
-                return web.Response(
-                    body=content,
-                    content_type=content_type,
-                    headers={
-                        "Content-Disposition": f'inline; filename="{cached.name}"',
-                        "Cache-Control": "public, max-age=31536000, immutable",
-                    },
-                )
+                return await asyncio.to_thread(_media_file_response, cached)
         return web.Response(status=404)
 
     if base is None:
         # Final fallback: let the shared media resolver handle subfolders the
         # base-dir logic above doesn't cover (unprefixed lora cache paths,
         # deep system-dir paths, ...). Mirrors the thumbnail route.
-        source_path = _find_source_media(filename, subfolder)
+        source_path = await asyncio.to_thread(_find_source_media, filename, subfolder)
         if source_path:
-            with open(source_path, "rb") as f:
-                content = f.read()
-            content_type = mimetypes.guess_type(str(source_path))[0] or "application/octet-stream"
-            return web.Response(
-                body=content,
-                content_type=content_type,
-                headers={"Content-Disposition": f'inline; filename="{source_path.name}"'},
-            )
+            return await asyncio.to_thread(_media_file_response, source_path)
         return web.Response(status=404)
 
     if not base.exists():
         return web.Response(status=404)
 
-    fullpath = None
+    def _resolve_image_fullpath() -> Path | None:
+        file_stem = Path(filename).stem
 
-    from pathlib import PurePath as _PurePath
-    _p = _PurePath(filename)
-    file_stem = _p.stem
+        candidates_to_try = [filename]
+        for ext in [".jpeg", ".jpg", ".png", ".webp", ".gif", ".bmp", ".tiff"]:
+            candidates_to_try.append(file_stem + ext)
 
-    checked_paths = set()
+        use_category = category and not any(part in subfolder for part in category.split("/"))
 
-    candidates_to_try = [filename]
-    for ext in [".jpeg", ".jpg", ".png", ".webp", ".gif", ".bmp", ".tiff"]:
-        candidates_to_try.append(file_stem + ext)
+        for candidate_filename in candidates_to_try:
+            if use_category and category:
+                candidate = base / category / candidate_filename
+                if candidate.exists():
+                    return candidate
 
-    use_category = category and not any(part in subfolder for part in category.split("/"))
-
-    for candidate_filename in candidates_to_try:
-        if candidate_filename in checked_paths:
-            continue
-
-        if use_category and category:
-            candidate = base / category / candidate_filename
-            if candidate.exists():
-                fullpath = candidate
-                checked_paths.add(str(candidate))
-                break
-
-        if not fullpath:
             candidate = base / candidate_filename
             if candidate.exists():
-                fullpath = candidate
-                checked_paths.add(str(candidate))
-                break
+                return candidate
 
-    if fullpath is None:
+        # Deep fallback: scan the tree once off the event loop.
         for p in base.rglob(f"{file_stem}*"):
-            if p.is_file() and str(p) not in checked_paths:
+            if p.is_file():
                 ext_lower = p.suffix.lower()
                 if ext_lower in IMG_EXTENSIONS:
-                    fullpath = p
-                    break
+                    return p
 
-    if fullpath is None:
         # 同名子目录可能同时存在于多个根（如 "NeoAgent" 在 input 与 output 各一份），
         # base 只固定了其中一个；再走共享解析器兜底，避免另一个根里的文件 404。
         source_path = _find_source_media(filename, subfolder)
         if source_path and source_path.exists():
-            fullpath = source_path
+            return source_path
+        return None
 
-    if fullpath and fullpath.exists():
-        with open(fullpath, "rb") as f:
-            content = f.read()
-        content_type, _ = mimetypes.guess_type(str(fullpath))
-        if not content_type:
-            content_type = "application/octet-stream"
-        return web.Response(
-            body=content,
-            content_type=content_type,
-            headers={"Content-Disposition": f'inline; filename="{fullpath.name}"'},
-        )
+    fullpath = await asyncio.to_thread(_resolve_image_fullpath)
+
+    if fullpath:
+        return await asyncio.to_thread(_media_file_response, fullpath)
     return web.Response(status=404)
 
 
@@ -2797,6 +2775,34 @@ async def upload_txt(request):
         return web.json_response({"name": filename, "success": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+
+def _delete_cached_thumbnails(filename: str, subfolder: str) -> int:
+    """Remove thumbnail cache entries for one media file. Returns the deleted count."""
+    if not THUMBNAIL_DIR.exists():
+        return 0
+    filename_stem = Path(filename).stem
+    hash_hex = ""
+    source_path = _find_source_media(filename, subfolder)
+    if source_path and source_path.exists():
+        stat = source_path.stat()
+        cache_key = f"{source_path.resolve().as_posix()}_{stat.st_size}_{stat.st_mtime}"
+        hash_hex = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+
+    thumb_count = 0
+    for date_dir in THUMBNAIL_DIR.iterdir():
+        if not date_dir.is_dir():
+            continue
+        # Pattern 1: old format "{stem}_*.jpg"; Pattern 2: hash-based cache
+        patterns = [f"{filename_stem}_*.jpg"] + ([f"{hash_hex}_*.jpg"] if hash_hex else [])
+        for pattern in patterns:
+            for thumb_file in date_dir.glob(pattern):
+                try:
+                    thumb_file.unlink()
+                    thumb_count += 1
+                except Exception:
+                    pass
+    return thumb_count
 
 
 @routes.post("/neo_gallery/delete")
@@ -2986,38 +2992,7 @@ async def delete_gallery_item(request):
                     print(f"[Neo Gallery] Failed to delete {stem_path}: {e}")
 
         # --- Delete cached thumbnails matching this file ---
-        thumb_count = 0
-        filename_stem = Path(filename).stem
-        for date_dir in THUMBNAIL_DIR.iterdir():
-            if not date_dir.is_dir():
-                continue
-            # Pattern 1: old format "{stem}_*.jpg"
-            try:
-                for thumb_file in date_dir.glob(f"{filename_stem}_*.jpg"):
-                    try:
-                        thumb_file.unlink()
-                        thumb_count += 1
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # Pattern 2: hash-based cache (new format) — recompute and delete
-            try:
-                import hashlib as _hashlib
-                source_path = _find_source_media(filename, subfolder)
-                if source_path and source_path.exists():
-                    stat = source_path.stat()
-                    cache_key = f"{source_path.resolve().as_posix()}_{stat.st_size}_{stat.st_mtime}"
-                    hash_hex = _hashlib.md5(cache_key.encode()).hexdigest()[:12]
-                    for thumb_file in date_dir.glob(f"{hash_hex}_*.jpg"):
-                        try:
-                            thumb_file.unlink()
-                            thumb_count += 1
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+        thumb_count = await asyncio.to_thread(_delete_cached_thumbnails, filename, subfolder)
 
         return web.json_response({
             "success": True,
@@ -3046,19 +3021,27 @@ async def clear_thumbnails(request):
         if not subfolder:
             # Clear all thumbnails by removing date directories
             import shutil
-            for date_dir in THUMBNAIL_DIR.iterdir():
-                if date_dir.is_dir():
-                    shutil.rmtree(date_dir)
+
+            def _clear_all():
+                for date_dir in THUMBNAIL_DIR.iterdir():
+                    if date_dir.is_dir():
+                        shutil.rmtree(date_dir)
+
+            await asyncio.to_thread(_clear_all)
             return web.json_response({"success": True, "cleared": "all"})
-        
+
         # For specific subfolder, clear all date directories (hash-based cache)
-        count = 0
-        for date_dir in THUMBNAIL_DIR.iterdir():
-            if not date_dir.is_dir():
-                continue
-            for thumb_file in date_dir.glob("*.jpg"):
-                thumb_file.unlink()
-                count += 1
+        def _clear_thumbs():
+            count = 0
+            for date_dir in THUMBNAIL_DIR.iterdir():
+                if not date_dir.is_dir():
+                    continue
+                for thumb_file in date_dir.glob("*.jpg"):
+                    thumb_file.unlink()
+                    count += 1
+            return count
+
+        count = await asyncio.to_thread(_clear_thumbs)
         
         return web.json_response({"success": True, "cleared": count})
     except Exception as e:

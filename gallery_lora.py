@@ -314,7 +314,7 @@ async def _download_example_image(session, sem: asyncio.Semaphore, url: str, des
         if ext is None:
             print(f"[Neo Gallery] Skipped unknown media from {url[:80]} (Content-Type: {ctype or 'none'})")
             return False
-        dest.with_suffix(ext).write_bytes(data)
+        await asyncio.to_thread(dest.with_suffix(ext).write_bytes, data)
         return True
     except Exception as e:
         print(f"[Neo Gallery] Example image download failed: {e}")
@@ -433,8 +433,8 @@ async def _cache_one_lora(session, sem, index, rel, full, api_key, state) -> boo
     in the index so the retry endpoint can re-queue them).
     """
     full = Path(full)
-    header_meta = _read_lora_header_meta(full)
-    sha = _sha256_file(full)
+    header_meta = await asyncio.to_thread(_read_lora_header_meta, full)
+    sha = await asyncio.to_thread(_sha256_file, full)
     status, version = await _civitai_by_hash(session, sha, api_key)
     if status in (401, 403):
         state["error"] = "Civitai API KEY rejected"
@@ -466,7 +466,7 @@ async def _cache_one_lora(session, sem, index, rel, full, api_key, state) -> boo
     cache_dir = _cache_dir_for_lora(rel, index)
     old = index.get(rel) or {}
     if old.get("cache_dir") and old.get("sha256") != sha:
-        shutil.rmtree(cache_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, cache_dir, True)
     cache_dir.mkdir(parents=True, exist_ok=True)
     for stale in cache_dir.iterdir():
         if stale.is_file():
@@ -604,7 +604,7 @@ async def _ensure_auto_cache() -> None:
     api_key = str(settings.get("civitai_api_key") or "").strip()
     if not api_key:
         return
-    pending = _pending_lora_dirs()
+    pending = await asyncio.to_thread(_pending_lora_dirs)
     if not pending:
         return
     _auto_queue[:] = pending
@@ -648,17 +648,11 @@ async def _auto_worker(api_key: str) -> None:
         _auto_state["running"] = False
         _auto_state["current"] = ""
         _auto_task = None
-        _prune_lora_caches()
+        await asyncio.to_thread(_prune_lora_caches)
 
 
-@routes.get("/neo_gallery/lora_dirs")
-async def lora_dirs(request):
-    """List first-level loras subdirectories for the sync directory picker.
-
-    Only the loras root ("") and its direct children are offered. The count is
-    the number of .safetensors files in the whole subtree, so a first-level dir
-    is selectable even when its loras are nested in deeper subdirectories.
-    """
+def _scan_lora_dirs() -> list:
+    """List first-level loras subdirectories with whole-subtree lora counts."""
     result: dict = {}
     for root in (folder_paths.get_folder_paths("loras") or []):
         root = Path(root)
@@ -687,7 +681,18 @@ async def lora_dirs(request):
                 count = 0
             if count:
                 result[p.name] = result.get(p.name, 0) + count
-    dirs = [{"path": k, "count": v} for k, v in sorted(result.items())]
+    return [{"path": k, "count": v} for k, v in sorted(result.items())]
+
+
+@routes.get("/neo_gallery/lora_dirs")
+async def lora_dirs(request):
+    """List first-level loras subdirectories for the sync directory picker.
+
+    Only the loras root ("") and its direct children are offered. The count is
+    the number of .safetensors files in the whole subtree, so a first-level dir
+    is selectable even when its loras are nested in deeper subdirectories.
+    """
+    dirs = await asyncio.to_thread(_scan_lora_dirs)
     return web.json_response({"dirs": dirs})
 
 
@@ -724,7 +729,7 @@ async def lora_cache_status(request):
     master_enabled = bool(settings.get("civitai_lora_enabled"))
     api_key = str(settings.get("civitai_api_key") or "").strip()
     state = dict(_auto_state)
-    state["pending_count"] = len(_pending_lora_dirs()) if master_enabled else 0
+    state["pending_count"] = len(await asyncio.to_thread(_pending_lora_dirs)) if master_enabled else 0
     state["enabled"] = master_enabled and bool(api_key)
     state["master_enabled"] = master_enabled
     return web.json_response(state)
@@ -748,5 +753,5 @@ async def lora_refresh_dir(request):
     """Re-read safetensors header metadata for a lora directory (local, no download)."""
     data = await request.json()
     dir_rel = str(data.get("dir") or "").replace("\\", "/").strip("/")
-    updated = _refresh_lora_dir_meta(dir_rel)
+    updated = await asyncio.to_thread(_refresh_lora_dir_meta, dir_rel)
     return web.json_response({"success": True, "updated": updated})

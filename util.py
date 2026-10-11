@@ -86,19 +86,26 @@ def _has_media_recursive(directory: Path) -> bool:
 
     Stops as soon as the first media file is found, so deeply nested trees
     are not scanned in full just to derive a count that callers only use
-    as a has-content flag.
+    as a has-content flag. os.walk hands over the names of one enumeration
+    per level; Path.is_file() re-queries every entry, which is a network
+    round trip each on SMB shares.
     """
-    for p in directory.rglob("*"):
-        if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-            return True
+    for _root, _dirs, names in os.walk(directory):
+        for name in names:
+            if Path(name).suffix.lower() in ALL_MEDIA_EXTENSIONS:
+                return True
     return False
 
 
 def _has_media_in_dir_any(dir_path: Path) -> bool:
     """Check if a directory contains any media files (images OR videos) directly."""
-    for p in dir_path.iterdir():
-        if p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
-            return True
+    try:
+        with os.scandir(dir_path) as it:
+            for entry in it:
+                if entry.is_file(follow_symlinks=False) and Path(entry.name).suffix.lower() in ALL_MEDIA_EXTENSIONS:
+                    return True
+    except OSError:
+        return False
     return False
 
 

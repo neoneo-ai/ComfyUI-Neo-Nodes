@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform, applyMediaCardRatio } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform, applyMediaCardRatio, registerLazyThumbnail } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems, openReversePromptDialog, openLoraTagDialog } from "./gallery-gen.js";
 import { copyGalleryToInput } from "./media-transfer.js";
@@ -794,27 +794,15 @@ export class GalleryCard {
             // 音频用长条形卡片：容器高度收窄以贴合波形条，避免方形留白
             container.style.height = "auto";
         } else if (thumbnailSrc) {
-            // Lazy loading: defer actual src until image scrolls into view
             mediaEl = $el("img", {
                 className: "neo-gallery-thumb-img",
                 src: gallery.placeholderImageUrl,
                 alt: image.name,
-                dataset: { thumbnailSrc },
                 onerror: () => {
                     if (mediaEl) mediaEl.src = gallery.placeholderImageUrl;
                 }
             });
             mediaEl.draggable = false;   // 由容器接管拖拽（携带 Neo Gallery 数据），而非浏览器原生图片拖拽
-            
-            // Pre-load for aspect ratio calculation AND set real src
-            const preloaderImg = new Image();
-            preloaderImg.onload = () => {
-                // Set the real thumbnail src now that we have dimensions, then size
-                // the card to the image's orientation (tall / wide / square).
-                mediaEl.src = thumbnailSrc;
-                applyMediaCardRatio(container, imgWrapper, preloaderImg.naturalWidth, preloaderImg.naturalHeight);
-            };
-            preloaderImg.src = thumbnailSrc;
         } else {
             // Unknown type - show placeholder
             mediaEl = $el("div", {
@@ -832,6 +820,17 @@ export class GalleryCard {
         const btnBar = imgSendBtn ? $el("div", { className: "neo-gallery-thumb-btn-bar" }, [imgSendBtn]) : null;
 
         const imgWrapper = $el("div", { className: "neo-gallery-thumb-img-wrapper" }, [videoBadge, mediaEl, btnBar, bookmarkBtn, selectCheck].filter(Boolean));
+
+        // 列表已下发图片尺寸（w/h）：卡片先按方向占好位，滚动到视口才排队取缩略图
+        if (thumbnailSrc) {
+            applyMediaCardRatio(container, imgWrapper, image.w, image.h);
+            registerLazyThumbnail(mediaEl, thumbnailSrc, {
+                onLoaded: (el, w, h) => {
+                    // 无尺寸数据（视频 / 旧列表）时，缩略图到位后再按真实方向排版
+                    applyMediaCardRatio(container, imgWrapper, w, h);
+                }
+            });
+        }
 
         const labelEl = gallery.displayLabels ? $el("span", {
             className: "neo-gallery-image-label",

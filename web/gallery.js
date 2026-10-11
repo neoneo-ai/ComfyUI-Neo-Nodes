@@ -23,7 +23,8 @@ import {
     showToast,
     showInlineFeedback,
     isAudioFile,
-    isImageFile
+    isImageFile,
+    releaseLazyThumbnails
 } from './gallery-utils.js';
 
 // Load gallery CSS (with cache-busting to force reload on each page load)
@@ -499,6 +500,7 @@ export class NeoGallery {
     }
 
     async _renderLocalBookmarks() {
+        releaseLazyThumbnails(this.accordion);
         this.accordion.innerHTML = "";
         let data;
         try {
@@ -678,6 +680,7 @@ export class NeoGallery {
     }
 
     async _renderCivitaiBookmarks(refresh = false, page = 0) {
+        releaseLazyThumbnails(this.accordion);
         this.accordion.innerHTML = "";
         this._civitaiPage = page;
         let data;
@@ -1616,6 +1619,7 @@ export class NeoGallery {
     }
 
     async loadAndDisplay() {
+        releaseLazyThumbnails(this.accordion);
         this.accordion.innerHTML = '';
         const loadingEl = showLoadingOverlay(this.accordion, this.maxThumbnailSize);
         
@@ -1736,6 +1740,7 @@ app.registerExtension({
                     await gallery.loadAndDisplay();
                     gallery._loaded = true;
                 } else {
+                    releaseLazyThumbnails(gallery.accordion);
                     gallery.accordion.innerHTML = "";
                     await gallery.list.sortAndDisplayImages();
                     gallery._recordNavState();

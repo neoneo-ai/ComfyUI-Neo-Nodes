@@ -3,7 +3,7 @@
  */
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
-import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, createBreadcrumbItem, createBreadcrumbSeparator, createSpacer, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast } from './gallery-utils.js';
+import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, createBreadcrumbItem, createBreadcrumbSeparator, createSpacer, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast, releaseLazyThumbnails } from './gallery-utils.js';
 import { attachMasonry } from './gallery-masonry.js';
 
 // Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
@@ -237,6 +237,7 @@ export class GalleryList {
     async sortAndDisplayImages() {
         // Clear cached scroll container reference before clearing DOM
         this._scrollContainer = null;
+        releaseLazyThumbnails(this.gallery.accordion);
         this.gallery.accordion.innerHTML = "";
 
         const dirsToDisplay = this.gallery.isSearchActive ? this.gallery.filteredDirectories : this.gallery.allDirectories;
@@ -387,6 +388,7 @@ export class GalleryList {
 // ====== View Rendering ======
 
     async renderDirectoryStructure(structure, dirName, pathSegments) {
+        releaseLazyThumbnails(this.gallery.accordion);
         this.gallery.accordion.innerHTML = "";
         
         // New structure: { subdirs: object, items: array, root_count: number }
