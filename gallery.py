@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 import aiohttp
 from aiohttp import web
-from server import PromptServer
+routes = web.RouteTableDef()
 import folder_paths
 import mimetypes
 
@@ -899,7 +899,7 @@ async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: 
 # Routes
 # ---------------------------------------------------------------------------
 
-@PromptServer.instance.routes.get("/neo_gallery/list")
+@routes.get("/neo_gallery/list")
 async def get_gallery_list(request):
     """Return unified gallery listing (all directories, presets subdirs treated as read-only dirs).
     
@@ -1264,7 +1264,7 @@ _PLACEHOLDER_PNG = bytes([
 ])
 
 
-@PromptServer.instance.routes.get("/neo_gallery/css")
+@routes.get("/neo_gallery/css")
 async def serve_css(request):
     css_path = CURRENT_WEB_DIR / "gallery.css"
     if css_path.exists():
@@ -1274,7 +1274,7 @@ async def serve_css(request):
     return web.Response(status=404)
 
 
-@PromptServer.instance.routes.get("/neo_gallery/placeholder.png")
+@routes.get("/neo_gallery/placeholder.png")
 async def serve_placeholder(request):
     return web.Response(body=_PLACEHOLDER_PNG, content_type="image/png")
 
@@ -1334,7 +1334,7 @@ def _copy_media_to_input(source_path: Path, filename: str) -> tuple[str, bool]:
     return dest_path.name, False
 
 
-@PromptServer.instance.routes.get("/neo_gallery/copy_to_input")
+@routes.get("/neo_gallery/copy_to_input")
 async def copy_to_input(request):
     try:
         filename = request.rel_url.query.get("filename", "")
@@ -1670,7 +1670,7 @@ def _collect_sample_images_recursive(directory: Path, prefix: str, max_samples: 
                 _collect_sample_images_recursive(p, new_prefix, max_samples, result)
 
 
-@PromptServer.instance.routes.post("/neo_gallery/dir_cover_images")
+@routes.post("/neo_gallery/dir_cover_images")
 async def get_directory_cover_images(request):
     """Batch endpoint to collect cover images for all known directories.
     
@@ -1709,7 +1709,7 @@ async def get_directory_cover_images(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.get("/neo_gallery/subdirs")
+@routes.get("/neo_gallery/subdirs")
 async def get_subdirs(request):
     """Get first-level subdirectory structure with image counts.
 
@@ -2108,7 +2108,7 @@ def _find_source_image(filename: str, subfolder: str) -> Path | None:
     return _find_source_media(filename, subfolder)
 
 
-@PromptServer.instance.routes.get("/neo_gallery/thumbnail")
+@routes.get("/neo_gallery/thumbnail")
 async def get_thumbnail(request):
     """Serve cached thumbnail for gallery images."""
     filename = request.rel_url.query.get("filename", "")
@@ -2205,7 +2205,7 @@ async def get_thumbnail(request):
     return web.Response(body=content, content_type=content_type)
 
 
-@PromptServer.instance.routes.get("/neo_gallery/video")
+@routes.get("/neo_gallery/video")
 async def view_video(request):
     """Serve gallery videos by filename."""
     if "filename" not in request.rel_url.query:
@@ -2236,7 +2236,7 @@ async def view_video(request):
     )
 
 
-@PromptServer.instance.routes.get("/neo_gallery/audio")
+@routes.get("/neo_gallery/audio")
 async def view_audio(request):
     """Serve gallery audio by filename (waveform decode + playback + lightbox)."""
     if "filename" not in request.rel_url.query:
@@ -2284,7 +2284,7 @@ def _get_waveform_path(filename: str, subfolder: str) -> Path | None:
     return WAVEFORM_DIR / f"{hash_hex}.json"
 
 
-@PromptServer.instance.routes.get("/neo_gallery/waveform")
+@routes.get("/neo_gallery/waveform")
 async def get_waveform(request):
     """Return cached decoded waveform peaks for a gallery audio file."""
     filename = request.rel_url.query.get("filename", "")
@@ -2312,7 +2312,7 @@ async def get_waveform(request):
         return web.json_response({"has": False})
 
 
-@PromptServer.instance.routes.post("/neo_gallery/waveform")
+@routes.post("/neo_gallery/waveform")
 async def save_waveform(request):
     """Persist decoded waveform peaks for a gallery audio file to the cache dir."""
     try:
@@ -2356,7 +2356,7 @@ async def save_waveform(request):
     return web.json_response({"ok": True})
 
 
-@PromptServer.instance.routes.get("/neo_gallery/media_meta")
+@routes.get("/neo_gallery/media_meta")
 async def media_meta(request):
     """Return embedded ComfyUI workflow/prompt metadata for a gallery media file."""
     filename = request.rel_url.query.get("filename", "")
@@ -2406,7 +2406,7 @@ async def media_meta(request):
     return web.json_response(_json_safe(result))
 
 
-@PromptServer.instance.routes.get("/neo_gallery/image")
+@routes.get("/neo_gallery/image")
 async def view_image(request):
     """Serve gallery images by filename."""
     if "filename" not in request.rel_url.query:
@@ -2657,7 +2657,7 @@ async def view_image(request):
 
 
 
-@PromptServer.instance.routes.post("/neo_gallery/save_settings")
+@routes.post("/neo_gallery/save_settings")
 async def save_gallery_settings(request):
     """Save gallery settings (custom directories list)."""
     try:
@@ -2765,7 +2765,7 @@ async def save_gallery_settings(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.get("/neo_gallery/get_settings")
+@routes.get("/neo_gallery/get_settings")
 async def get_gallery_settings(request):
     """Get gallery settings (civitai api key is masked)."""
     settings = dict(_load_settings())
@@ -2778,7 +2778,7 @@ async def get_gallery_settings(request):
     return web.json_response(settings)
 
 
-@PromptServer.instance.routes.post("/neo_gallery/upload_txt")
+@routes.post("/neo_gallery/upload_txt")
 async def upload_txt(request):
     """Upload / update a .txt metadata file alongside a preset image."""
     try:
@@ -2799,7 +2799,7 @@ async def upload_txt(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/neo_gallery/delete")
+@routes.post("/neo_gallery/delete")
 async def delete_gallery_item(request):
     """Delete a custom image + its .txt companion. Presets are read-only."""
     try:
@@ -3036,7 +3036,7 @@ async def delete_gallery_item(request):
 
 
 
-@PromptServer.instance.routes.post("/neo_gallery/clear_thumbnails")
+@routes.post("/neo_gallery/clear_thumbnails")
 async def clear_thumbnails(request):
     """Clear all cached thumbnails for a given subfolder."""
     try:

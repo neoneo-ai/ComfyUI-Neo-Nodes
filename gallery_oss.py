@@ -10,7 +10,7 @@ import random
 from pathlib import Path
 import aiohttp
 from aiohttp import web
-from server import PromptServer
+routes = web.RouteTableDef()
 import folder_paths
 
 from .util import IMG_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
@@ -431,7 +431,7 @@ async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
     return web.json_response({"error": "Invalid Cloud Presets path"}, status=400)
 
 
-@PromptServer.instance.routes.post("/neo_gallery/sync_oss")
+@routes.post("/neo_gallery/sync_oss")
 async def sync_oss_index(request):
     """Manually trigger OSS index sync (force re-download of index.json)."""
     if not _is_oss_enabled():
@@ -453,7 +453,7 @@ async def sync_oss_index(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.get("/neo_gallery/oss_status")
+@routes.get("/neo_gallery/oss_status")
 async def oss_status(request):
     """Return OSS connection status and cached index info."""
     cfg = _get_oss_config()

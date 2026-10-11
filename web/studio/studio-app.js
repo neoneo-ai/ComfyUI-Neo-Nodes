@@ -483,16 +483,33 @@ function buildSettings(el) {
 }
 
 // ====== 启动：版本信息 + 扩展初始化 + 路由 ======
+let offline = false;   // 页面跑在壳的只读服务上：浏览可用，生成类请求由壳回 409
+
+function showOfflineBanner() {
+    if (document.getElementById("ns-offline")) return;
+    document.body.classList.add("ns-offline");
+    document.querySelector(".ns-header").after($el("div", {
+        id: "ns-offline", className: "ns-offline-bar",
+        textContent: "ComfyUI 未运行 · 素材浏览可用，生成 / 打标 / Civitai 同步需要 ComfyUI",
+    }));
+
+
+}
+
 async function loadVersion() {
     const verEl = document.getElementById("ns-version");
     try {
         const r = await api.fetchApi("/neo_studio/version");
         const data = await r.json();
         if (data?.success) {
-            verEl.textContent = `Neo-Nodes ${data.plugin_version} · ComfyUI ${data.comfyui_version}`;
+            offline = !!data.offline;
+            verEl.textContent = offline ? `Neo-Nodes ${data.plugin_version} · 离线浏览`
+                : `Neo-Nodes ${data.plugin_version} · ComfyUI ${data.comfyui_version}`;
+            if (offline) showOfflineBanner();
         }
     } catch { /* ComfyUI 未就绪时保持空白 */ }
 }
+
 
 // ====== 显存/内存监控 ======
 function fmtBytes(n) {
@@ -563,6 +580,7 @@ function initComfyPill() {
     const render = (s) => {
         if (starting) {
             if (s.ready) {
+                if (offline) return;   // 离线页由壳整页跳回完整 Studio，自己刷新只会回到离线页
                 if (!reloaded) { reloaded = true; location.reload(); }
                 return;
             }
@@ -576,8 +594,9 @@ function initComfyPill() {
         btn.textContent = s.running ? `● ComfyUI :${s.port}` : "○ ComfyUI 已停止";
         btn.title = s.running
             ? `ComfyUI 运行中（端口 ${s.port}，PID ${s.pid}，${s.mine ? "壳启动" : "外部启动"}）· 点一下退出`
-            : "ComfyUI 已停止：点一下重新拉起，就绪后页面自动刷新";
+            : "ComfyUI 已停止：素材仍可浏览，点一下重新拉起，就绪后自动回到完整 Studio";
     };
+
     // pywebview 的 api 注入晚于页面加载（壳的「返回 Studio」胶囊同样靠重试）：重试几轮再放弃，
     // 浏览器标签页里永远没有 api，胶囊保持隐藏
     let tries = 0;

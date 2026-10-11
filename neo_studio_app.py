@@ -5,15 +5,18 @@
 localStorage 落在 tmp/studio_profile
 （private_mode=False），_blank 链接在壳窗口内导航（主画布交接与返回 Studio 都不出窗口），blob 下载放行。
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
-tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲）。
-ComfyUI 冷启动时窗口先显示启动页，后台探活就绪后跳到 Studio，双击后立刻能看到窗口。
+tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲），
+ComfyUI 起不来时看 tmp/comfy_run.log（壳拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
+ComfyUI 冷启动时窗口直接进壳侧只读服务（neo_studio_server）的离线素材库，探活就绪后整页跳到
+完整 Studio；ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由壳回 409 offline。
 窗口与任务栏图标用 web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
 用法：python neo_studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
                               [--cdp <port>] [--debug]
  壳是启动器：关窗只关窗口。顶栏「● ComfyUI :8188」胶囊由壳的 js_api 报状态（端口 / PID / 谁启动 / 就绪）：
  运行中点一下退出（壳拉起的 terminate，并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口留着、状态变灰；
- 已停止点一下重新拉起，显示「启动中…」，端口就绪后页面自动刷新就能用。
+ 已停止点一下重新拉起，显示「启动中…」，就绪后窗口整页跳回 ComfyUI 的完整 Studio。
+
 """
 
 import argparse
@@ -29,6 +32,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from neo_studio_server import ShellServer, build_app
+
 def base_dirs():
     """打包后 __file__ 指向临时解包目录：持久化按插件目录算，随包资源走 _MEIPASS。"""
     if getattr(sys, "frozen", False):
@@ -41,6 +46,7 @@ def base_dirs():
 
 PLUGIN_DIR, RES_DIR = base_dirs()
 SHELL_LOG = PLUGIN_DIR / "tmp" / "studio_shell.log"
+COMFY_LOG = PLUGIN_DIR / "tmp" / "comfy_run.log"   # 壳拉起 ComfyUI 的完整 stdout/stderr
 SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
 
 # pythonw 的 sys.stderr 是 None：pywebview 的 _setup_logger 挂的控制台 handler 会在写日志时抛异常，
@@ -56,7 +62,9 @@ except ImportError:
 
 DEFAULT_PORT = 8188
 SINGLETON_PORT = 8189   # 壳单实例：绑定失败说明已有 Neo Studio 窗口
+SHELL_PORT_OFFSET = 3   # 壳侧只读素材服务：避开 8188（ComfyUI）与 8189（单实例锁）
 READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
+
 POLL_INTERVAL = 2.0
 GEOMETRY_FILE = PLUGIN_DIR / "configs" / "studio_window.json"
 PROFILE_DIR = PLUGIN_DIR / "tmp" / "studio_profile"
@@ -149,8 +157,29 @@ def save_geometry(window) -> None:
 
 
 def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
+    """启动输出落 tmp/comfy_run.log：CREATE_NO_WINDOW 下不重定向，端口冲突与导入报错就全进黑洞。"""
+    COMFY_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log = open(COMFY_LOG, "wb", buffering=0)
+    log.write(f"=== {time.strftime('%H:%M:%S')} port={port} {python}\n".encode("utf-8"))
     return subprocess.Popen([str(python), str(root / "main.py"), "--port", str(port)],
-                            creationflags=NO_WINDOW)
+                            cwd=str(root), creationflags=NO_WINDOW,
+                            stdout=log, stderr=subprocess.STDOUT)
+
+
+def port_busy(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.4)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def free_comfy_port(preferred: int, shell_port: int) -> int:
+    """端口被残留进程占着时往上找空位：硬撞 8188 会让拉起的 ComfyUI 立刻退出且毫无提示。"""
+    if not port_busy(preferred):
+        return preferred
+    for port in range(preferred + 1, preferred + 40):
+        if port != shell_port and not port_busy(port):
+            return port
+    return preferred
 
 
 def port_owner(port: int) -> int:
@@ -215,8 +244,11 @@ class StudioShell:
     js_api 对象只挂 url、load_url 绑定方法与壳自己的进程状态；挂窗口对象会让 pywebview 的
     create_proxy 递归遍历 window.native.AccessibilityObject... 爆栈。"""
 
-    def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = ""):
+    def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = "", offline_url: str = "",
+                 shell_port: int = 0):
         self.url = url
+        self.offline_url = offline_url
+        self.shell_port = shell_port
         self.comfy = comfy
         self.port = port
         self.root = root
@@ -229,6 +261,19 @@ class StudioShell:
         # load_url 会清空 events.loaded，跳完必须重新挂注入
         self.loader(self.url)
         self.rearm()
+
+    def _goto(self, target: str) -> None:
+        if target and self.loader is not None:
+            self.loader(target)
+            self.rearm()
+
+    def _jump_when_ready(self) -> None:
+        """离线页里点「重新拉起」：就绪后整页跳到 ComfyUI 的完整 Studio。"""
+        if wait_ready(self.port, READY_TIMEOUT):
+            self._goto(self.url)
+        else:
+            log_line("comfy restart not ready")
+
 
     def comfy_state(self) -> dict:
         """顶栏胶囊要的运行状态：外部启动的 ComfyUI 没有 Popen 句柄，按端口找 PID 并缓存。
@@ -260,20 +305,26 @@ class StudioShell:
         self.pid = 0
         st = self.comfy_state()
         log_line(f"comfy stop {st}")
+        if not st["ready"]:
+            self._goto(self.offline_url)   # 窗口退回壳的只读素材库，不对着死页面干等
         return st
 
     def comfy_start(self) -> dict:
-        """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后前端刷新页面。"""
+        """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后整页跳回完整 Studio。"""
         if self.comfy is not None:
             # 刚停止的进程可能还在收尾（TerminateProcess 异步），等它退出再拉起，避免端口冲突
             for _ in range(60):
                 if self.comfy.poll() is not None:
                     break
                 time.sleep(0.5)
+        self.port = free_comfy_port(self.port, self.shell_port)
         self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port)
+        self.url = f"http://127.0.0.1:{self.port}/neo-studio"
         self.pid = self.comfy.pid
-        log_line(f"comfy spawn pid={self.comfy.pid}")
+        log_line(f"comfy spawn pid={self.comfy.pid} port={self.port}")
+        threading.Thread(target=self._jump_when_ready, daemon=True).start()
         return self.comfy_state()
+
 
 
 def splash_html() -> str:
@@ -318,21 +369,31 @@ def main() -> int:
         return 0
 
     root = resolve_root(args.root)
-    url = f"http://127.0.0.1:{args.port}/neo-studio"
+    # 壳侧只读素材服务先起来：ComfyUI 没在跑时窗口里也是可浏览的 Neo Gallery
+    server = ShellServer(lambda: build_app(root, PLUGIN_DIR), args.port + SHELL_PORT_OFFSET)
+    shell_port = server.start()
+    offline_url = f"http://127.0.0.1:{shell_port}/neo-studio" if shell_port else ""
+    log_line(f"shell service port={shell_port}")
+
     comfy = None
+    comfy_port = args.port
     if not probe(args.port):
+        comfy_port = free_comfy_port(args.port, shell_port)
         python = resolve_python(root, args.python)
-        comfy = start_comfy(python, root, args.port)
-        log_line(f"comfy spawn pid={comfy.pid}")
+        comfy = start_comfy(python, root, comfy_port)
+        log_line(f"comfy spawn pid={comfy.pid} port={comfy_port}")
+    url = f"http://127.0.0.1:{comfy_port}/neo-studio"
 
     geo = load_geometry()
-    # 冷启动先出启动页（html），就绪后由后台线程跳到 Studio；已就绪则直接加载
-    shell = StudioShell(url, comfy, args.port, root, args.python)
+    # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后由后台线程跳过去
+    shell = StudioShell(url, comfy, comfy_port, root, args.python, offline_url, shell_port)
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
-    window = webview.create_window("新影工坊 · Neo Studio", url, **kw) if comfy is None \
+    start_url = url if comfy is None else offline_url
+    window = webview.create_window("新影工坊 · Neo Studio", start_url, **kw) if start_url \
         else webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
     shell.loader = window.load_url
+
 
     def arm_pill() -> None:
         # 主画布是整页刷新，返回入口只能由壳在每次页面加载后重新挂上
@@ -340,15 +401,16 @@ def main() -> int:
 
     shell.rearm = arm_pill
     arm_pill()
-    # 壳是启动器：关窗只存几何，ComfyUI 的去留由顶栏胶囊决定
-    window.events.closing += lambda: save_geometry(window)
+    # 壳是启动器：关窗只存几何并收掉壳侧服务，ComfyUI 的去留由顶栏胶囊决定
+    window.events.closing += lambda: (save_geometry(window), server.stop())
+
 
     def spawn_ready():
-        if wait_ready(args.port, READY_TIMEOUT):
+        if wait_ready(comfy_port, READY_TIMEOUT):
             window.load_url(url)
         else:
             log_line("comfy not ready")
-            alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，日志见 Studio「设置 → 日志」")
+            alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，启动输出见 {COMFY_LOG}")
             comfy.terminate()
             window.destroy()
 

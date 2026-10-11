@@ -22,13 +22,22 @@ if __package__ not in (None, ""):
     }
 
     # Import gallery module to register routes (must be imported for route registration)
-    from . import gallery
+    # gallery_lora / gallery_oss 要显式导入：gallery.py 里是 `from .gallery_oss import (名字)`，
+    # 子模块属性只挂在父包上，gallery.gallery_oss 取不到。
+    from . import gallery, gallery_lora, gallery_oss
 
     # Import LoRA tagging module (gallery leaf-dir batch captioning; depends on gallery + llm)
     from . import lora_tag
 
     # Import bookmark module (local / Civitai bookmark routes; depends on gallery helpers)
     from . import bookmark
+
+    # gallery 系列模块自带 RouteTableDef，这里统一挂进 ComfyUI 路由表（server.add_routes 会一并生成
+    # /api 前缀副本）。桌面壳离线浏览素材时复用同一批 handler，不经过 PromptServer。
+    from server import PromptServer
+    for _mod in (gallery_lora, gallery_oss, gallery, bookmark):
+        for _route in _mod.routes:
+            PromptServer.instance.routes.route(_route.method, _route.path, **_route.kwargs)(_route.handler)
 
     # Import recipes module (depends on gallery helpers and bookmark download helpers)
     from . import recipes

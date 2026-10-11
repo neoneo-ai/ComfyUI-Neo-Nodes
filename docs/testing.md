@@ -40,6 +40,10 @@ python -m pytest tests -v
   无 AppUserModelID 且不传 icon 的 pythonw 基线是 48x48 通用图标），`WM_CLOSE` 后退出码 0，
   `configs/studio_window.json` 与 `tmp/studio_profile` 落在插件目录而不是临时解包目录。
 - `tests/test_studio.py` — 整片生成路由与任务 watcher、版本路由、日志路由（`/neo_studio/log` 读 `app.logger` 环形缓冲）。
+- `tests/test_studio_server.py` — 壳侧只读服务（`neo_studio_server.py`）：起真服务打真接口，断言 ComfyUI 不在跑时
+  Studio 页面 / 前端静态文件 / 目录列表 / 缩略图 / 收藏文件都出得来，写操作与生成类接口回 `409 offline`；
+  gallery 模块族自带 `RouteTableDef` 且源码不再出现 `PromptServer`（壳进程里没有 ComfyUI 运行时）。
+
 - `tests/test_node_metadata.py` — 节点元数据契约：注册表键清单、`__init__.py` 的 `NEO_NODES` 清单与注册表一致、
   每个节点都有 `web/docs/<节点键>.md` 帮助文档（ComfyUI 原生「信息」页的取用路径）、`SEARCH_ALIASES`（小写、去重、含中文别名）、
   `DESCRIPTION`、`OUTPUT_TOOLTIPS` 与 `RETURN_TYPES` 数量对齐、可见 widget 的输入提示词、V3 节点 schema 元数据。
@@ -104,9 +108,12 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
 - `studio-app.e2e.mjs` — 桌面壳窗口：壳自行拉起 ComfyUI，经 WebView2 远程调试端口连 CDP，断言窗口按
   `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏胶囊可见并报运行状态（端口 + PID）、日志 tab 读到控制台内容、
   重开页面后 localStorage 保留；第二条用例在冷启动专用端口（`NEO_STUDIO_STOP_PORT`，默认 8190；设 `NEO_STUDIO_EXE`
-  则改跑打包的 exe）上点一下胶囊停掉壳拉起的 ComfyUI（端口探活失败），再点一下重新拉起，断言显示「启动中…」且端口就绪后
-  页面自动刷新（8188 上用户自己的服务绝不动）。
-  **会弹真实窗口，默认 skip；启用：`NEO_STUDIO_APP=1`（前置：整合包 python 已装 `pywebview`）。**
+  则改跑打包的 exe）上点一下胶囊停掉壳拉起的 ComfyUI（端口探活失败），再点一下重新拉起，断言显示「启动中…」且就绪后
+  整页跳回完整 Studio（8188 上用户自己的服务绝不动）；第三条用例断言冷启动窗口直接开在壳侧只读服务的离线素材页
+  （端口 +3，出横幅与缩略图、写操作 `409`），ComfyUI 就绪后跳到完整 Studio，停掉后窗口拉回离线页且无未捕获错误。
+  **会弹真实窗口，默认 skip；启用：`NEO_STUDIO_APP=1`（前置：整合包 python 已装 `pywebview`，且没有别的
+  Neo Studio 壳占着单实例端口 8189——已有壳在跑时新实例会直接退出）。**
+
 - `prompt-width.e2e.mjs` — prompt 节点面板宽度：创建、`setSize`、工作流 `configure` 还原宽度后，
   `prompt_ui` DOM widget 宽度都等于 `node.size[0]`（LiteGraph 的 size setter 不触发 `onResize`，
   插件在 `onConfigure` 补同步）。

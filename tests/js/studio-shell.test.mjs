@@ -143,10 +143,69 @@ test("壳里显示 ComfyUI 状态，点一下即停", async () => {
     assert.match(btn.title, /点一下重新拉起/);
 });
 
+test("离线页：横幅说明浏览可用，版本位显示离线，显存块收起", async () => {
+    resetEnv();
+    document.body.innerHTML = studioBody;
+    mockRoute("/neo_studio/version", jsonResponse({
+        success: true, plugin_version: "9.9.9", comfyui_version: "ComfyUI 未运行", offline: true, recipes: [],
+    }));
+    await import("../../web/studio/studio-app.js?offline=1");
+    await flush();
+    const bar = document.getElementById("ns-offline");
+    assert.ok(bar, "壳的离线页应显示横幅");
+    assert.match(bar.textContent, /ComfyUI 未运行/);
+    assert.match(bar.textContent, /素材浏览可用/);
+    assert.ok(document.body.classList.contains("ns-offline"), "body 应带离线标记");
+    assert.match(document.getElementById("ns-version").textContent, /离线浏览/);
+});
+
+test("离线页里点重新拉起：不刷新页面，交给壳整页跳回完整 Studio", async () => {
+    resetEnv();
+    document.body.innerHTML = studioBody;
+    mockRoute("/neo_studio/version", jsonResponse({
+        success: true, plugin_version: "9.9.9", comfyui_version: "ComfyUI 未运行", offline: true, recipes: [],
+    }));
+    const btn = document.getElementById("ns-comfy");
+    const reloads = [];
+    const realLocation = globalThis.location;
+    Object.defineProperty(globalThis, "location", {
+        value: { hash: "#/gallery", reload: () => reloads.push(1) },
+        configurable: true, writable: true,
+    });
+    const state = { port: 8188, pid: 0, mine: true, running: false, ready: false };
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ ...state }),
+            comfy_start: async () => {
+                state.running = true;
+                return { ...state };
+            },
+        },
+    };
+    try {
+        await import("../../web/studio/studio-app.js?offlineStart=1");
+        await flush();
+        assert.match(btn.textContent, /○ ComfyUI 已停止/);
+        assert.match(btn.title, /素材仍可浏览/);
+
+        click(btn);
+        await flush();
+        assert.match(btn.textContent, /启动中/);
+
+        state.ready = true;
+        await sleep(120);
+        assert.equal(reloads.length, 0, "离线页刷新只会回到离线页，跳转由壳负责");
+        assert.match(btn.textContent, /启动中/);
+    } finally {
+        Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
+    }
+});
+
 test("已停止后点一下重新拉起，就绪后刷新页面", async () => {
     const btn = mountStudio();
     const starts = [];
     const reloads = [];
+
     const state = { port: 8190, pid: 0, mine: true, running: false, ready: false };
     // jsdom 的 location.reload 不可重定义（且真导航会炸），整块换成桩：刷新动作可观测
     const realLocation = globalThis.location;

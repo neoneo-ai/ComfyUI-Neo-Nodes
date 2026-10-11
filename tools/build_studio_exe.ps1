@@ -13,10 +13,14 @@ Set-Location $root
 & $Python -m PyInstaller --noconfirm --clean --onefile --windowed --name Neo-Studio `
     --icon "web/neo-studio.ico" `
     --add-data "web/neo-studio.ico;web" `
+    --add-data "pyproject.toml;." `
     --collect-all webview `
     --collect-all pythonnet `
+    --collect-all aiohttp `
+    --collect-all PIL `
     --exclude-module tkinter `
     neo_studio_app.py
+
 
 Copy-Item dist/Neo-Studio.exe tools/neo-studio.exe -Force
 Write-Host "[OK] $root\tools\neo-studio.exe"

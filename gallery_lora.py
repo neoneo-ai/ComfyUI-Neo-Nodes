@@ -15,7 +15,7 @@ from collections import Counter
 from pathlib import Path
 import aiohttp
 from aiohttp import web
-from server import PromptServer
+routes = web.RouteTableDef()
 import folder_paths
 
 from . import civitai
@@ -651,7 +651,7 @@ async def _auto_worker(api_key: str) -> None:
         _prune_lora_caches()
 
 
-@PromptServer.instance.routes.get("/neo_gallery/lora_dirs")
+@routes.get("/neo_gallery/lora_dirs")
 async def lora_dirs(request):
     """List first-level loras subdirectories for the sync directory picker.
 
@@ -691,7 +691,7 @@ async def lora_dirs(request):
     return web.json_response({"dirs": dirs})
 
 
-@PromptServer.instance.routes.post("/neo_gallery/civitai_test")
+@routes.post("/neo_gallery/civitai_test")
 async def civitai_test(request):
     """Probe Civitai reachability and validate the configured API key via GET /me."""
     api_key = civitai.api_key()
@@ -717,7 +717,7 @@ async def civitai_test(request):
                               "http_status": status, "message": message})
 
 
-@PromptServer.instance.routes.get("/neo_gallery/lora_cache_status")
+@routes.get("/neo_gallery/lora_cache_status")
 async def lora_cache_status(request):
     """Return auto-cache worker state plus the flags the frontend polls."""
     settings = _load_settings()
@@ -730,7 +730,7 @@ async def lora_cache_status(request):
     return web.json_response(state)
 
 
-@PromptServer.instance.routes.post("/neo_gallery/lora_retry_failed")
+@routes.post("/neo_gallery/lora_retry_failed")
 async def lora_retry_failed(request):
     """Re-queue loras whose last cache attempt failed."""
     index = _load_lora_index()
@@ -743,7 +743,7 @@ async def lora_retry_failed(request):
     return web.json_response({"success": True, "count": len(failed)})
 
 
-@PromptServer.instance.routes.post("/neo_gallery/lora_refresh_dir")
+@routes.post("/neo_gallery/lora_refresh_dir")
 async def lora_refresh_dir(request):
     """Re-read safetensors header metadata for a lora directory (local, no download)."""
     data = await request.json()

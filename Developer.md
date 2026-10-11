@@ -23,7 +23,10 @@
   声明 `WEB_DIRECTORY = "./web"`。
 - **节点注册**：`prompts.py` 底部 `NODE_CLASS_MAPPINGS`（NeoPromptEncoder / NeoPromptAgent），
   另含 `image_gen_edit.py` 的 NeoImageGenEdit（V3 节点 + Autogrow 参考图）。
-- **API 路由**：通过 `PromptServer.instance.routes` 注册，清单见 [docs/api-routes.md](docs/api-routes.md)。
+- **API 路由**：gallery 系列模块自带 `web.RouteTableDef`，由 `__init__.py` 统一挂进
+  `PromptServer.instance.routes`（其余模块仍直接装饰注册），清单见 [docs/api-routes.md](docs/api-routes.md)。
+  桌面壳在 ComfyUI 端口 +3 复用同一批浏览 handler 做只读素材服务（`neo_studio_server.py`）。
+
 - **前端资源**：`web/` 下的模块由 ComfyUI 扩展机制加载（只认 `.js`），Studio 独立页面在 `web/studio/`，
   跨节点共享工具在 `web/js/core/`，节点帮助文档在 `web/docs/<节点键>.md`（ComfyUI 原生约定路径，属性面板「信息」页直接加载）。
 

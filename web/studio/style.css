@@ -48,6 +48,11 @@ body {
 .ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
 .ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
 
+/* 壳的离线素材页：显存/清理没有意义，横幅说明浏览可用、生成需要 ComfyUI */
+.ns-offline-bar { flex: none; padding: 5px 16px; background: #2b2417; color: #e0b070; font-size: 12px; text-align: center; }
+.ns-offline .ns-mem { display: none; }
+
+
 .ns-view { flex: 1; overflow: hidden; position: relative; }
 .ns-page { height: 100%; overflow: auto; padding: 16px; }
 .ns-hidden { display: none !important; }

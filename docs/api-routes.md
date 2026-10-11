@@ -1,7 +1,10 @@
 # 后端 API 路由
 
-路由通过 `PromptServer.instance.routes` 注册，总入口见 [../Developer.md](../Developer.md)。
+路由通过各模块自带的 `web.RouteTableDef` 注册（`gallery.py` / `bookmark.py` / `gallery_lora.py` /
+`gallery_oss.py`），由 `__init__.py` 统一挂进 `PromptServer.instance.routes`；总入口见
+[../Developer.md](../Developer.md)。
 下表只列路由与用途；请求体字段与返回结构以源码为准。
+
 
 ## gallery.py — `/neo_gallery/*`
 
@@ -218,3 +221,26 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
 - 仓库列表与文件清单走服务端缓存（15 / 10 分钟），请求带 `refresh: true` 跳过缓存。
 - ModelScope 组织列表与跨组织搜索走匿名 `dolphin/models` 接口；接口失败时按注册表逐仓库探测存在性（缓存 1 天）。
 - 源侧失败返回带 `code` 的错误：`need_token`（401）、`busy`（409）、`not_on_source`（404，附 `other_source` 建议换源）。
+
+## 壳侧只读服务 — `neo_studio_server.py`
+
+桌面壳（`neo_studio_app.py`）在 ComfyUI 端口 +3（默认 `8191`）起一个只读 aiohttp 服务，复用 gallery 模块
+路由表里的浏览 handler：ComfyUI 没在跑时窗口也能浏览素材。
+
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/neo-studio` | Studio 页面（壳侧同一份 `web/studio/index.html`） |
+| GET | `/extensions/ComfyUI-Neo-Nodes/*` | 前端静态文件 |
+| GET | `/neo_gallery/list` `subdirs` `thumbnail` `image` `video` `audio` `waveform` `media_meta` `css` `placeholder.png` `get_settings` `lora_dirs` `lora_cache_status` | 浏览子集（与 ComfyUI 侧同一批 handler） |
+| POST | `/neo_gallery/waveform` `dir_cover_images` | 波形解码与目录封面（只写缓存） |
+| GET | `/neo_bookmark/local` | 本地收藏列表 |
+| GET/POST | `/userdata/neo_gallery_data.json` | 素材库状态文件（`user/default/`，写入走 `.tmp` + replace） |
+| GET | `/neo_studio/version` | 离线快照：`offline: true`，前端据此显示离线横幅 |
+| GET | `/ws` | shim 的 WS 桩：接住连接挂着，页面不刷连接错误 |
+| ANY | 其余 `/neo_*` `/rs_*` `/userdata/*` `/view*` `/api/*` | `409 {"success": false, "offline": true}` |
+
+- 只挂载浏览子集，删除 / 上传 / 拷贝到 input / 清缩略图 / Civitai 同步 / 打标 / 生成类接口在壳侧不存在。
+- 缩略图与 ComfyUI 共用 `gallery/thumbnails` 缓存；两边同时跑时同一张图可能各生成一次。
+- 目录取 `folder_paths` 的默认 `output` / `input` / `user`：外部用 `--output-directory` 启动 ComfyUI 时，
+  壳侧浏览仍指向默认目录。
+

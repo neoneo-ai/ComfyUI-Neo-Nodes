@@ -3,6 +3,7 @@
 import json
 import logging
 import pathlib
+import socket
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,26 @@ class ProbeTests(unittest.TestCase):
                           "--port", "8188"])
         # 壳用 pythonw 启动时没有控制台，子进程必须压制新建的控制台窗口
         self.assertEqual(popen.call_args.kwargs["creationflags"], app.NO_WINDOW)
+        # CREATE_NO_WINDOW 下不重定向就等于把启动报错丢进黑洞：必须落到 tmp/comfy_run.log
+        self.assertIs(popen.call_args.kwargs["stderr"], app.subprocess.STDOUT)
+        self.assertIn("comfy_run.log", popen.call_args.kwargs["stdout"].name)
+        popen.call_args.kwargs["stdout"].close()
+
+
+class FreeComfyPortTests(unittest.TestCase):
+    def test_requested_port_when_free(self):
+        with patch.object(app, "port_busy", lambda port: False):
+            self.assertEqual(app.free_comfy_port(8188, 8191), 8188)
+
+    def test_skips_busy_ports_and_the_shell_service(self):
+        # 8188 被残留进程占着、8189 是壳单实例锁、8191 是壳侧素材服务：只能用 8190
+        busy = {8188, 8189, 8191}
+        with patch.object(app, "port_busy", lambda port: port in busy):
+            self.assertEqual(app.free_comfy_port(8188, 8191), 8190)
+
+    def test_falls_back_to_requested_when_nothing_free(self):
+        with patch.object(app, "port_busy", lambda port: True):
+            self.assertEqual(app.free_comfy_port(8188, 8191), 8188)
 
 
 class PortOwnerTests(unittest.TestCase):
@@ -248,6 +269,16 @@ class ShellLogTests(unittest.TestCase):
 
 
 class SingletonTests(unittest.TestCase):
+    def setUp(self):
+        # 真实壳窗口正占着 8189 时这两条会假失败：单实例锁换成临时空闲端口
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        patcher = patch.object(app, "SINGLETON_PORT", port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_second_instance_exits(self):
         first = app.singleton()
         self.assertIsNotNone(first)
@@ -280,6 +311,12 @@ def _fake_window():
 def _fake_webview(create_window, start=None):
     return SimpleNamespace(create_window=create_window, settings={},
                            start=start or (lambda *a, **k: None))
+
+
+def _fake_shell_server(port=8191):
+    """壳侧只读服务的替身：main() 里只关心绑定端口与收尾，不起真服务。"""
+    return lambda factory, port_arg: SimpleNamespace(start=lambda: port, stop=lambda: None)
+
 
 
 class StudioShellTests(unittest.TestCase):
@@ -381,21 +418,61 @@ class StudioShellTests(unittest.TestCase):
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "log_line", lambda text: None):
             state = shell.comfy_start()
         self.assertIs(shell.comfy, spawned)
         self.assertEqual((state["pid"], state["running"], state["ready"]), (9999, False, False))
 
+    def test_stop_pulls_window_back_to_offline_gallery(self):
+        loader = MagicMock()
+        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", None, 8188,
+                                pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio")
+        shell.loader = loader
+        shell.rearm = MagicMock()
+        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: 0), \
+             patch.object(app, "log_line", lambda text: None):
+            state = shell.comfy_stop()
+        # ComfyUI 停了，页面是它的：窗口退回壳的只读素材页，不留死页面
+        self.assertFalse(state["ready"])
+        loader.assert_called_once_with("http://127.0.0.1:8191/neo-studio")
+        shell.rearm.assert_called_once_with()
+
+    def test_start_jumps_to_full_studio_when_ready(self):
+        comfy = SimpleNamespace(pid=1, poll=lambda: 0, terminate=MagicMock())
+        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", comfy, 8188,
+                                pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio")
+        shell.loader = MagicMock()
+        shell.rearm = MagicMock()
+        spawned = SimpleNamespace(pid=9999, poll=lambda: None)
+        no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
+        with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
+             patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "log_line", lambda text: None), \
+             patch.object(app.threading, "Thread", no_thread):
+            shell.comfy_start()
+        with patch.object(app, "wait_ready", lambda port, seconds: True), \
+             patch.object(app, "log_line", lambda text: None):
+            shell._jump_when_ready()
+        loader = shell.loader
+        loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
+
+
     def test_pill_is_reinjected_after_every_page_load(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
         # 主画布整页刷新后由 loaded 事件重新注入，返回入口不会随刷新消失
+
         self.assertEqual(len(window.events.loaded.handlers), 1)
         window.events.loaded.handlers[0]()
         window.evaluate_js.assert_called_once_with(app.BACK_JS)
@@ -424,10 +501,12 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
             # 壳是启动器：关窗只挂 save_geometry，不停 ComfyUI
+
             self.assertEqual(len(window.events.closing.handlers), 1)
         # 已就绪：create_window 直接加载 url，不弹启动页；用户自己的 ComfyUI 不被壳接管
         self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8188/neo-studio")
@@ -440,31 +519,51 @@ class MainWindowTests(unittest.TestCase):
         fake = _fake_webview(cw)
         with patch.object(app, "webview", fake), \
              patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
         # 「⤒ 主画布编辑」与顶栏「🎬 新影工坊」的 _blank 链接留在壳窗口内导航；blob 下载仍放行
+
         self.assertFalse(fake.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"])
         self.assertTrue(fake.settings["ALLOW_DOWNLOADS"])
 
-    def test_cold_start_shows_splash_then_loads(self):
+    def test_cold_start_loads_offline_gallery(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
-        # 冷启动：先出启动页（html），就绪后由后台线程 load_url，不直接加载 url
-        self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
-        self.assertNotIn("url", cw.call_args.kwargs)
+        # 冷启动：窗口直接进壳侧只读服务的离线素材页，就绪后由后台线程整页跳到完整 Studio
+        self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8191/neo-studio")
+        self.assertNotIn("html", cw.call_args.kwargs)
+        self.assertEqual(cw.call_args.kwargs["js_api"].offline_url, "http://127.0.0.1:8191/neo-studio")
         # 关窗只存几何：壳拉起的 ComfyUI 不停，去留由顶栏胶囊决定
         self.assertEqual(len(window.events.closing.handlers), 1)
         comfy.terminate.assert_not_called()
         self.assertIs(cw.call_args.kwargs["js_api"].comfy, comfy)
+
+    def test_cold_start_without_shell_service_falls_back_to_splash(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", lambda factory, port: SimpleNamespace(start=lambda: 0, stop=lambda: None)), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 壳侧服务起不来（端口全被占）才退回启动页
+        self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
+
 
     def test_start_passes_studio_icon(self):
         window = _fake_window()
@@ -473,12 +572,14 @@ class MainWindowTests(unittest.TestCase):
         set_id = MagicMock()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
         # 图标走 pywebview 的 start(icon=...)：create_window 没有 icon 参数，
         # edgechromium 后端（winforms）读 _state['icon'] 设 Form.Icon
+
         self.assertEqual(start.call_args.kwargs["icon"], str(app.STUDIO_ICON))
         # 不设 AppUserModelID 时任务栏按钮会与其他 pythonw 窗口合并成通用 Python 图标
         set_id.assert_called_once_with(app.APP_ID)
@@ -490,10 +591,12 @@ class MainWindowTests(unittest.TestCase):
         set_id = MagicMock()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "STUDIO_ICON", pathlib.Path("D:/nope/neo-studio.ico")), \
              patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
+
             self.assertEqual(app.main(), 0)
         # 缺 .ico 时传 None，让 pywebview 回退到 pythonw 自己的图标，也不设 AppUserModelID
         self.assertIsNone(start.call_args.kwargs["icon"])

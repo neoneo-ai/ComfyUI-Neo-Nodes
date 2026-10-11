@@ -28,11 +28,29 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   build `base_dirs()` walks up to the plugin folder, so `configs/studio_window.json` and `tmp/studio_profile`
   stay in the plugin folder. The exe is a local build artifact (`pyinstaller` is a build-time dep, not in
   `requirements.txt`) and never ships in the Registry; `neo-studio-app.vbs` stays the plugin entry point.
+- Shell-embedded read-only gallery service (`neo_studio_server.py`, ComfyUI port + 3): the gallery modules now
+  carry their own `web.RouteTableDef` and `__init__.py` mounts them into `PromptServer.instance.routes`, so the
+  same browsing handlers run with no ComfyUI runtime — the shell serves `/neo-studio`, the extension static files,
+  the read-only gallery subset (`list` / `subdirs` / `thumbnail` / `image` / `video` / `audio` / `waveform` /
+  `media_meta` / `css` / `get_settings` / `lora_dirs` / `dir_cover_images`), `userdata/neo_gallery_data.json`
+  (atomic write) and a `/ws` stub, and answers every write or generation route with `409 {"offline": true}`.
+  The window opens on that offline library at startup, jumps to the full Studio when ComfyUI is ready, and is
+  pulled back when ComfyUI stops; Studio shows a "ComfyUI not running" banner, hides the VRAM panel, and the
+  restart pill leaves the jump to the shell instead of reloading the offline page. `Neo-Studio.spec` now
+  `collect_all`s `aiohttp` and `PIL` so the packaged exe keeps browsing offline.
+
 - Studio header title is a link back to the main canvas (`<a class="ns-logo" href="/">`), and the shell injects a
   floating "🎬 返回 Studio" pill on every non-Studio page load, so returning from the full-page main canvas reload
   works in the same window. `/neo-studio` is served with `Cache-Control: no-cache` so shell header edits reach the
   window. The shell `js_api` carries only `url` and the `load_url` bound method: holding the pywebview window object
   makes `create_proxy` recurse through `window.native.AccessibilityObject...` and blow the stack.
+- Fixed the plugin package failing to import in ComfyUI: `__init__.py` read `gallery.gallery_lora`, but a submodule
+  attribute lands on the parent package, so the import died on `AttributeError` and every `/neo_*` route and node
+  disappeared silently — the shell then never detected a ready ComfyUI and kept respawning it.
+- The shell spawns ComfyUI with `CREATE_NO_WINDOW` and now redirects its output to `tmp/comfy_run.log`: without the
+  redirect a failed startup left no trace anywhere. When 8188 is held by a leftover process it picks a free port
+  (`free_comfy_port`, skipping the shell's own service port) instead of spawning an instance that dies on the
+  port conflict.
 - Studio Settings gains a Log tab (`GET /neo_studio/log` reads the `app.logger` ring buffer), so the ComfyUI
   console is visible without a console window. The panel fills the main area, and auto-scrolls only while pinned
   to the bottom, so scrolling up to read survives the 2s poll.

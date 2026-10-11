@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import aiohttp
 from aiohttp import web
-from server import PromptServer
+routes = web.RouteTableDef()
 
 from . import civitai
 from .util import (
@@ -364,7 +364,7 @@ async def _download_bookmark_media_bg(examples: list, cache_dir: Path,
 # 路由
 # ---------------------------------------------------------------------------
 
-@PromptServer.instance.routes.post("/neo_bookmark/local/add")
+@routes.post("/neo_bookmark/local/add")
 async def neo_bookmark_local_add(request):
     """Add a local bookmark. Only path info is recorded; opening resolves by path."""
     try:
@@ -397,7 +397,7 @@ async def neo_bookmark_local_add(request):
     return web.json_response({"success": True, "item": item})
 
 
-@PromptServer.instance.routes.get("/neo_bookmark/local")
+@routes.get("/neo_bookmark/local")
 async def neo_bookmark_local_list(request):
     """List local bookmarks with per-item cover feed (≤2) from their content."""
     items = _load_local_bookmarks()
@@ -409,7 +409,7 @@ async def neo_bookmark_local_list(request):
     return web.json_response({"success": True, "items": out})
 
 
-@PromptServer.instance.routes.post("/neo_bookmark/local/remove")
+@routes.post("/neo_bookmark/local/remove")
 async def neo_bookmark_local_remove(request):
     try:
         data = await request.json()
@@ -445,7 +445,7 @@ def _save_bookmark_list_cache(data: dict) -> None:
         p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
-@PromptServer.instance.routes.post("/neo_bookmark/civitai/list")
+@routes.post("/neo_bookmark/civitai/list")
 async def neo_bookmark_civitai_list(request):
     """List the user's bookmarked Civitai models (paged). Cache-first; each item
     carries a ≤2-image cover feed from its locally cached examples when available."""
@@ -533,7 +533,7 @@ async def neo_bookmark_civitai_list(request):
     entry = pages[str(page)]
     return web.json_response({"success": True, "items": entry["items"], "page": page,
                               "has_more": entry["has_more"]})
-@PromptServer.instance.routes.post("/neo_bookmark/civitai/cover")
+@routes.post("/neo_bookmark/civitai/cover")
 async def neo_bookmark_civitai_cover(request):
     """Return a preview image URL for one Civitai model (cached in memory), used as the
     lazy-loaded gallery cover for a bookmarked model card without local examples."""
@@ -565,7 +565,7 @@ async def neo_bookmark_civitai_cover(request):
     return web.json_response({"success": True, "cover": cover})
 
 
-@PromptServer.instance.routes.post("/neo_bookmark/civitai/resolve")
+@routes.post("/neo_bookmark/civitai/resolve")
 async def neo_bookmark_civitai_resolve(request):
     """Resolve a pasted Civitai model/image URL into recipe-ready metadata."""
     try:
@@ -604,7 +604,7 @@ async def neo_bookmark_civitai_resolve(request):
         "images": _civitai_example_urls(version)[:8],
         "loras": _civitai_loras_from_version(version),
     }))
-@PromptServer.instance.routes.post("/neo_bookmark/civitai/media")
+@routes.post("/neo_bookmark/civitai/media")
 async def neo_bookmark_civitai_media(request):
     """Open a bookmarked model: cache its example images locally (mirroring the Lora
     cache). 边下边开：完全缓存时一次返回全部；否则同步下载第一张即返回，
@@ -717,7 +717,7 @@ async def neo_bookmark_civitai_media(request):
     })
 
 
-@PromptServer.instance.routes.get("/neo_bookmark/civitai/status")
+@routes.get("/neo_bookmark/civitai/status")
 async def neo_bookmark_civitai_status(request):
     """Return the current bookmark example-cache worker state (polled by the UI)."""
     state = dict(_bookmark_cache_state)
@@ -725,6 +725,6 @@ async def neo_bookmark_civitai_status(request):
     return web.json_response(state)
 
 
-@PromptServer.instance.routes.get("/neo_bookmark/civitai/enabled")
+@routes.get("/neo_bookmark/civitai/enabled")
 async def neo_bookmark_civitai_enabled(request):
     return web.json_response({"success": True, "enabled": _is_civitai_bookmark_enabled()})

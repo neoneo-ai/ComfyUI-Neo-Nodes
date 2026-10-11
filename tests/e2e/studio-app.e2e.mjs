@@ -180,13 +180,72 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
     }
 });
 
-test("顶栏胶囊点一下停掉壳拉起的 ComfyUI，再点一下重新拉起后刷新页面", async () => {
+test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成类请求 409", async () => {
+    if (process.env.NEO_STUDIO_APP !== "1") {
+        console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
+        return;
+    }
+    const port = Number(process.env.NEO_STUDIO_STOP_PORT || 8190);
+    const offlinePort = port + 3;   // 壳侧只读服务：neo_studio_app 的 SHELL_PORT_OFFSET
+    if (await probe(port)) {
+        console.log(`跳过：${port} 上已有 ComfyUI，不杀用户的服务`);
+        return;
+    }
+    const proc = shell(port);
+    const errors = [];
+    try {
+        assert.ok(await waitFor(cdpReady, 30), "WebView2 远程调试端口未就绪");
+        const browser = await connectCDP();
+        assert.ok(browser, "连不上 WebView2 CDP");
+        const page = await findPage(browser);
+        page.on("pageerror", (e) => errors.push(String(e)));
+
+        // 冷启动窗口直接进壳的离线素材页：ComfyUI 还没起来就能翻素材
+        await page.waitForSelector("#ns-offline", { timeout: 60000 });
+        await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 60000 });
+        const offline = await page.evaluate(async () => ({
+            banner: document.getElementById("ns-offline").textContent,
+            version: document.getElementById("ns-version").textContent,
+            mem: getComputedStyle(document.getElementById("ns-mem")).display,
+            thumbs: document.querySelectorAll("#ns-view .neo-gallery-panel img").length,
+            del: (await fetch("/neo_gallery/delete", { method: "POST", body: "{}" })).status,
+        }));
+        assert.match(offline.banner, /ComfyUI 未运行/);
+        assert.match(offline.version, /离线浏览/);
+        assert.equal(offline.mem, "none", "离线页应收起显存块");
+        assert.ok(offline.thumbs > 0, "离线页应出缩略图");
+        assert.equal(offline.del, 409, "写操作必须回 409 offline");
+
+        // ComfyUI 就绪 → 壳整页跳到完整 Studio
+        assert.ok(await waitFor(() => probe(port), 180), "壳拉起的 ComfyUI 未就绪");
+        await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${port}/neo-studio`), { timeout: 60000 });
+        assert.equal(await page.evaluate(() => !document.getElementById("ns-offline")), true,
+            "完整 Studio 不该带离线横幅");
+
+        // 停掉 ComfyUI → 窗口拉回离线素材页，浏览继续可用
+        await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 60000 });
+        await page.click("#ns-comfy");
+        await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${offlinePort}/neo-studio`), { timeout: 120000 });
+        await page.waitForSelector("#ns-offline", { timeout: 30000 });
+        assert.ok(await page.evaluate(() =>
+            document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0),
+            "回到离线页仍应出缩略图");
+        assert.deepEqual(errors, [], "离线页不应有未捕获错误");
+
+        await browser.close();
+    } finally {
+        await killShell(proc);
+    }
+});
+
+test("顶栏胶囊点一下停掉壳拉起的 ComfyUI，再点一下重新拉起后跳回完整 Studio", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
         console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
     }
     // 冷启动专用端口：8188 上用户自己的 ComfyUI 绝不动
     const port = Number(process.env.NEO_STUDIO_STOP_PORT || 8190);
+
     if (await probe(port)) {
         console.log(`跳过：${port} 上已有 ComfyUI，不杀用户的服务`);
         return;
@@ -221,7 +280,8 @@ test("顶栏胶囊点一下停掉壳拉起的 ComfyUI，再点一下重新拉起
         assert.ok(await page.evaluate(() => !document.querySelector("#ns-comfy").disabled),
             "停止后胶囊应可点（点一下重新拉起）");
 
-        // 点一下重新拉起：显示启动中，端口就绪后页面自动刷新（刷新后标记 __e2e_reload 消失）
+        // 点一下重新拉起：显示启动中，就绪后壳整页跳回完整 Studio（新文档里标记 __e2e_reload 消失）
+
         await page.evaluate(() => { window.__e2e_reload = 1; });
         await page.click("#ns-comfy");
         await page.waitForFunction(() => /启动中/.test(document.querySelector("#ns-comfy").textContent),

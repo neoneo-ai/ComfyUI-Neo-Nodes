@@ -1,0 +1,228 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Neo Studio 壳侧只读服务：ComfyUI 没在跑时，窗口里也能翻素材。
+
+壳在 ComfyUI 端口之外开一个只读 HTTP 服务（ComfyUI 端口 + 3），复用 gallery 模块注册在
+各自 RouteTableDef 上的浏览 handler 与 Studio 前端静态文件：窗口从打开那一刻就是可浏览的
+素材库，ComfyUI 就绪后由壳整页跳到 ComfyUI 端口的完整 Studio。
+写操作与生成类请求不在挂载表里，一律落到 catch-all 出 409 offline，前端据此显示「需要 ComfyUI」。
+"""
+
+import importlib.util
+import os
+import sys
+import threading
+import asyncio
+from pathlib import Path
+
+from aiohttp import web
+
+OFFLINE_ERROR = "ComfyUI 未运行"
+GALLERY_PKG = "_neo_studio_gallery"
+
+# 浏览需要的 handler：目录列表、缩略图、原图/视频/音频、元数据、设置、LoRA 目录卡。
+# 删除 / 上传 / 拷贝到 input / 清缩略图 / Civitai 同步 / 打标都不在这里。
+READONLY_ROUTES = {
+    ("GET", "/neo_gallery/list"),
+    ("GET", "/neo_gallery/css"),
+    ("GET", "/neo_gallery/placeholder.png"),
+    ("GET", "/neo_gallery/subdirs"),
+    ("GET", "/neo_gallery/thumbnail"),
+    ("GET", "/neo_gallery/image"),
+    ("GET", "/neo_gallery/video"),
+    ("GET", "/neo_gallery/audio"),
+    ("GET", "/neo_gallery/waveform"),
+    ("POST", "/neo_gallery/waveform"),
+    ("GET", "/neo_gallery/media_meta"),
+    ("POST", "/neo_gallery/dir_cover_images"),
+    ("GET", "/neo_gallery/get_settings"),
+    ("GET", "/neo_gallery/lora_dirs"),
+    ("GET", "/neo_gallery/lora_cache_status"),
+    ("GET", "/neo_bookmark/local"),
+}
+
+USERDATA_PATH = "/userdata/neo_gallery_data.json"
+
+
+def load_gallery_modules(plugin_dir: Path) -> list:
+    """按目录加载插件的 gallery 模块族：目录名带连字符不能 import，与 tests 里同一套加载方式。
+
+    这些模块只依赖 folder_paths 与自身，不碰 PromptServer —— 壳进程里没有 ComfyUI 运行时。
+    """
+    pkg = type(sys)(GALLERY_PKG)
+    pkg.__path__ = [str(plugin_dir)]
+    sys.modules[GALLERY_PKG] = pkg
+
+    def load(name):
+        mod_name = f"{GALLERY_PKG}.{name}"
+        if mod_name in sys.modules:
+            return sys.modules[mod_name]
+        spec = importlib.util.spec_from_file_location(mod_name, plugin_dir / f"{name}.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = mod
+        setattr(pkg, name, mod)
+        spec.loader.exec_module(mod)
+        return mod
+
+    for name in ("util", "civitai", "bookmark", "gallery_lora", "gallery_oss", "gallery"):
+        load(name)
+    return [sys.modules[f"{GALLERY_PKG}.{n}"].routes
+            for n in ("gallery_lora", "gallery_oss", "gallery", "bookmark")]
+
+
+async def studio_page(request):
+    resp = web.FileResponse(request.app["studio_index"])
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+async def userdata_get(request):
+    path = request.app["userdata"]
+    if not path.exists():
+        return web.json_response({})
+    return web.FileResponse(path)
+
+
+async def userdata_post(request):
+    body = await request.read()
+    path = request.app["userdata"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(body)
+    tmp.replace(path)
+    return web.json_response({"success": True})
+
+
+async def view_file(request):
+    """只读 /view：与 ComfyUI 同一套解析（annotated_filepath + type 目录 + subfolder 越界检查）。"""
+    folder_paths = sys.modules["folder_paths"]   # build_app 已把 ComfyUI 根加进 sys.path 并加载
+    filename = request.rel_url.query.get("filename")
+    if not filename:
+        return web.Response(status=404)
+    filename, output_dir = folder_paths.annotated_filepath(filename)
+    if not filename:
+        return web.Response(status=400)
+    if filename[0] == "/" or ".." in filename:
+        return web.Response(status=400)
+    if output_dir is None:
+        output_dir = folder_paths.get_directory_by_type(request.rel_url.query.get("type", "output"))
+    if output_dir is None:
+        return web.Response(status=400)
+    if "subfolder" in request.rel_url.query:
+        full_output_dir = os.path.join(output_dir, request.rel_url.query["subfolder"])
+        if os.path.commonpath((os.path.abspath(full_output_dir), output_dir)) != output_dir:
+            return web.Response(status=403)
+        output_dir = full_output_dir
+    file = os.path.join(output_dir, os.path.basename(filename))
+    if not os.path.isfile(file):
+        return web.Response(status=404)
+    return web.FileResponse(file)
+
+
+async def studio_version(request):
+    """离线快照：页面靠它完成初始化，并知道自己是跑在壳的只读服务上。"""
+    return web.json_response({
+        "success": True,
+        "plugin": "ComfyUI-Neo-Nodes",
+        "plugin_version": request.app["plugin_version"],
+        "comfyui_version": OFFLINE_ERROR,
+        "offline": True,
+        "recipes": [],
+    })
+
+
+async def studio_ws(request):
+    """shim 会连 /ws：接住连接挂着，避免页面刷连接错误。"""
+    ws = web.WebSocketResponse(heartbeat=30.0)
+    await ws.prepare(request)
+    async for _ in ws:
+        pass
+    return ws
+
+
+async def offline(request):
+    """壳服务不认的插件接口一律明确回「ComfyUI 未运行」，不让前端拿到裸 404。"""
+    if request.path.startswith(("/neo_", "/rs_", "/userdata/", "/api/")):
+        return web.json_response({"success": False, "offline": True, "error": OFFLINE_ERROR}, status=409)
+    return web.Response(status=404)
+
+
+def build_app(root: Path, plugin_dir: Path) -> web.Application:
+    """壳侧只读 app：Studio 页面 + 前端静态文件 + gallery 浏览子集 + 收藏文件读写。"""
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
+
+    routes = web.RouteTableDef()
+    routes.get("/neo-studio")(studio_page)
+    routes.static("/extensions/ComfyUI-Neo-Nodes", str(plugin_dir / "web"))
+    for table in load_gallery_modules(plugin_dir):
+        for route in table:
+            if (route.method, route.path) in READONLY_ROUTES:
+                routes.route(route.method, route.path, **route.kwargs)(route.handler)
+
+    routes.get(USERDATA_PATH)(userdata_get)
+    routes.post(USERDATA_PATH)(userdata_post)
+    routes.get("/neo_studio/version")(studio_version)
+    routes.get("/view")(view_file)
+    routes.get("/ws")(studio_ws)
+
+    app = web.Application()
+    app["studio_index"] = plugin_dir / "web" / "studio" / "index.html"
+    app["userdata"] = Path(folder_paths.get_user_directory()) / "default" / "neo_gallery_data.json"
+    app["plugin_version"] = sys.modules[f"{GALLERY_PKG}.util"].plugin_version()
+
+    app.add_routes(routes)
+    # catch-all 必须最后注册：aiohttp 按注册顺序匹配，静态与浏览路由先占位
+    app.router.add_route("GET", "/{path:.*}", offline)
+    app.router.add_route("POST", "/{path:.*}", offline)
+    return app
+
+
+class ShellServer:
+    """壳自己的只读 HTTP 服务：后台线程 + 独立事件循环，随窗口退出。"""
+
+    def __init__(self, app_factory, port: int):
+        self.app_factory = app_factory
+        self.port = port
+        self.loop = None
+        self.thread = None
+        self.bound = 0
+        self.ready = threading.Event()
+
+    def _run(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_until_complete(self._serve())
+        except Exception:
+            self.ready.set()   # app 装配失败（缺依赖 / 目录不可读）：让 start() 立刻拿到 0
+
+
+    async def _serve(self):
+        runner = web.AppRunner(self.app_factory())
+        await runner.setup()
+        for port in range(self.port, self.port + 6):
+            site = web.TCPSite(runner, "127.0.0.1", port)
+            try:
+                await site.start()
+                self.bound = port
+                break
+            except OSError:
+                continue
+        self.ready.set()
+        await asyncio.Event().wait()   # 常驻：循环停在这里，直到 stop() 把它叫醒
+
+    def start(self) -> int:
+        """起服务，返回实际监听端口；0 = 起不来（壳退回启动页）。"""
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        self.ready.wait(timeout=30)
+        return self.bound
+
+    def stop(self) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            if self.thread is not None:
+                self.thread.join(timeout=5)   # 等循环线程收尾，别让守护线程卡在解释器退出时
+
+
