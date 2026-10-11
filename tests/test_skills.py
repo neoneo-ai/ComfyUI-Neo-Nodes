@@ -333,17 +333,14 @@ class TestVideoSkillAvailable(unittest.TestCase):
         self._orig_tasks = self.skill_mod.TASKS_DIR
         self.skill_mod.SKILL_CUSTOM_DIR = os.path.join(root, "custom")
         self.skill_mod.TASKS_DIR = os.path.join(root, "tasks")
-        # 真实环境可能装了 VDN 插件：测试期间摘除 ApplyVDNH3* 注册，tearDown 还原
-        self._mappings = self.skill_mod.comfy_nodes.NODE_CLASS_MAPPINGS
-        self._orig_mappings = dict(self._mappings)
-        for k in [k for k in self._mappings if k.startswith("ApplyVDNH3")]:
-            del self._mappings[k]
+        # 真实环境可能装了 VDN 插件：测试期间固定为「未装」，tearDown 还原
+        self._orig_vdn = self.skill_mod._vdn_plugin_installed
+        self.skill_mod._vdn_plugin_installed = lambda: False
 
     def tearDown(self):
         self.skill_mod.SKILL_CUSTOM_DIR = self._orig_custom
         self.skill_mod.TASKS_DIR = self._orig_tasks
-        self._mappings.clear()
-        self._mappings.update(self._orig_mappings)
+        self.skill_mod._vdn_plugin_installed = self._orig_vdn
         self._tmp.cleanup()
 
     def _make_video_skill(self, sid, workflow):
@@ -370,10 +367,8 @@ class TestVideoSkillAvailable(unittest.TestCase):
         self.assertIs(s.get("available"), False)
 
     def test_vdn_skill_available_with_plugin(self):
-        # VDN 节点已注册（插件已装）→ available=True
-        class _FakeVdn:
-            pass
-        self._mappings["ApplyVDNH3Advanced"] = _FakeVdn
+        # VDN 插件目录存在（已装）→ available=True
+        self.skill_mod._vdn_plugin_installed = lambda: True
         self._make_video_skill("zz-test-vdn2", {
             "2": {"class_type": "ApplyVDNH3Advanced", "inputs": {}},
         })

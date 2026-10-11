@@ -115,6 +115,13 @@ sys.modules["_neo_imgen_pkg.util"] = _util_mod
 _pkg.util = _util_mod
 
 _spec = importlib.util.spec_from_file_location(
+    "_neo_imgen_pkg.image_gen_files", os.path.join(PLUGIN_DIR, "image_gen_files.py"))
+image_gen_files = importlib.util.module_from_spec(_spec)
+sys.modules["_neo_imgen_pkg.image_gen_files"] = image_gen_files
+_spec.loader.exec_module(image_gen_files)
+_pkg.image_gen_files = image_gen_files
+
+_spec = importlib.util.spec_from_file_location(
     "_neo_imgen_pkg.image_gen", os.path.join(PLUGIN_DIR, "image_gen.py"))
 image_gen = importlib.util.module_from_spec(_spec)
 sys.modules["_neo_imgen_pkg.image_gen"] = image_gen
@@ -193,13 +200,13 @@ class SuggestTests(unittest.TestCase):
     """自动挑选：Krea2 只精确匹配 Qwen3-VL-4B，8B/32B 不参与（挑了必报 conditioning 维度错误）"""
 
     def setUp(self):
-        self._orig = image_gen._folder_files
+        self._orig = image_gen_files._folder_files
 
     def tearDown(self):
-        image_gen._folder_files = self._orig
+        image_gen_files._folder_files = self._orig
 
     def _with_files(self, files):
-        image_gen._folder_files = lambda folder: files
+        image_gen_files._folder_files = lambda folder: files
 
     def test_encoder_prefers_4b_over_8b(self):
         self._with_files(["qwen3vl_8b_fp8_scaled.safetensors", "qwen3vl_4b_fp8_scaled.safetensors"])
@@ -433,11 +440,13 @@ class RenderTemplateTests(unittest.TestCase):
 
         orig = image_gen._folder_files
         try:
-            image_gen._folder_files = lambda folder: [] if folder == "loras" else orig(folder)
+            # 兜底扫描在 image_gen（模板渲染）与 image_gen_files（模型扫描）两处都要摘掉 loras
+            image_gen._folder_files = image_gen_files._folder_files = \
+                lambda folder: [] if folder == "loras" else orig(folder)
             with self.assertRaises(ValueError):
                 image_gen.render_template(template, params)
         finally:
-            image_gen._folder_files = orig
+            image_gen._folder_files = image_gen_files._folder_files = orig
 
     def test_reference_scale_follows_source_aspect(self):
         # 超宽参考图：长边限到 1024 → 1024×512
@@ -1298,14 +1307,14 @@ class SkillWorkflowRouteTests(unittest.TestCase):
             json.dump({"1": {"class_type": "UNETLoader", "inputs": {}}}, f)
         _skill_mod.SKILL_PRESETS_DIR = os.path.join(self._tmp.name, "presets")
         # 全局生图设置隔离到临时目录：回写基线只由 DEFAULT_SETTINGS 推导，不依赖本机 settings
-        self._orig_settings = image_gen.SETTINGS_FILE
-        image_gen.SETTINGS_FILE = os.path.join(self._tmp.name, "image_gen.json")
+        self._orig_settings = image_gen_files.SETTINGS_FILE
+        image_gen_files.SETTINGS_FILE = os.path.join(self._tmp.name, "image_gen.json")
 
     def tearDown(self):
         _skill_mod.SKILL_CUSTOM_DIR = self._orig_dir
         _skill_mod.SKILL_OVERRIDES_DIR = self._orig_ovr
         _skill_mod.SKILL_PRESETS_DIR = self._orig_presets
-        image_gen.SETTINGS_FILE = self._orig_settings
+        image_gen_files.SETTINGS_FILE = self._orig_settings
         self._tmp.cleanup()
 
     @staticmethod
@@ -1338,7 +1347,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
                   "inputs": {"images": ["3", 0], "filename_prefix": "MyWf"}},
         }
         status, body = self._call(
-            image_gen.save_workflow_skill_route,
+            image_gen_files.save_workflow_skill_route,
             self._req({"name": "my wf", "description": "d", "tags": ["t"], "workflow": workflow}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1362,7 +1371,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
         # 同名重复导出自动加后缀
         status, body2 = self._call(
-            image_gen.save_workflow_skill_route,
+            image_gen_files.save_workflow_skill_route,
             self._req({"name": "my wf", "workflow": workflow}))
         self.assertEqual(status, 200)
         self.assertEqual(body2["id"], body["id"] + "-2")
@@ -1370,20 +1379,20 @@ class SkillWorkflowRouteTests(unittest.TestCase):
     def test_get_skill_workflow_route(self):
         # 预设带 workflow.json → 200 + 原样返回模板
         status, body = self._call(
-            image_gen.get_skill_workflow_route,
+            image_gen_files.get_skill_workflow_route,
             self._req(query={"skill_id": "image_gen"}))
         self.assertEqual(status, 200)
         self.assertEqual(body["skill_id"], "image_gen")
         self.assertEqual(body["workflow"], {"1": {"class_type": "UNETLoader", "inputs": {}}})
 
         # 缺 skill_id → 400
-        status, _ = self._call(image_gen.get_skill_workflow_route, self._req(query={}))
+        status, _ = self._call(image_gen_files.get_skill_workflow_route, self._req(query={}))
         self.assertEqual(status, 400)
 
         # 自定义技能无 workflow.json → 404
         self._make_custom_skill("no_wf")
         status, _ = self._call(
-            image_gen.get_skill_workflow_route,
+            image_gen_files.get_skill_workflow_route,
             self._req(query={"skill_id": "no_wf"}))
         self.assertEqual(status, 404)
 
@@ -1392,7 +1401,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         with open(os.path.join(d, "workflow.json"), "w", encoding="utf-8") as f:
             f.write("{not json")
         status, _ = self._call(
-            image_gen.get_skill_workflow_route,
+            image_gen_files.get_skill_workflow_route,
             self._req(query={"skill_id": "bad_wf"}))
         self.assertEqual(status, 404)
 
@@ -1432,7 +1441,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
     def test_save_workflow_skill_video_t2v(self):
         status, body = self._call(
-            image_gen.save_workflow_skill_route,
+            image_gen_files.save_workflow_skill_route,
             self._req({"name": "h3 t2v", "workflow": self._h3_video_workflow(i2v=False)}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1464,7 +1473,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
     def test_save_workflow_skill_video_i2v_with_lora(self):
         status, body = self._call(
-            image_gen.save_workflow_skill_route,
+            image_gen_files.save_workflow_skill_route,
             self._req({"name": "h3 i2v", "workflow": self._h3_video_workflow(i2v=True)}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1485,7 +1494,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["loras"], [{"name": "h3_style.safetensors", "strength": 0.8}])
 
     def test_save_workflow_skill_invalid(self):
-        status, _ = self._call(image_gen.save_workflow_skill_route,
+        status, _ = self._call(image_gen_files.save_workflow_skill_route,
                                self._req({"name": "x", "workflow": {}}))
         self.assertEqual(status, 400)
 
@@ -1504,7 +1513,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
                   "inputs": {"images": ["3", 0], "filename_prefix": "MyWf"}},
         }
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "upd_wf", "workflow": workflow}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1540,7 +1549,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
             "4": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": "P"}},
         }
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "upd_cfg", "workflow": workflow}))
         self.assertEqual(status, 200)
         with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
@@ -1572,7 +1581,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         }
 
     def _preview(self, sid, workflow):
-        return self._call(image_gen.preview_workflow_skill_route,
+        return self._call(image_gen_files.preview_workflow_skill_route,
                           self._req({"skill_id": sid, "workflow": workflow}))
 
     def test_preview_changes_ignore_effective_defaults(self):
@@ -1643,7 +1652,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(body["changes"][0]["from"], "lora_a.safetensors×1.0")
         self.assertEqual(body["changes"][0]["to"], "lora_b.safetensors×0.8")
         # 落盘：模板不带 LoRA 节点（结构不变），画布上的新 LoRA 值写进 config.loras
-        status, body = self._call(image_gen.update_workflow_skill_route,
+        status, body = self._call(image_gen_files.update_workflow_skill_route,
                                   self._req({"skill_id": "upd_lora2", "workflow": canvas}))
         self.assertEqual(status, 200)
         with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
@@ -1674,7 +1683,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         status, body = self._preview("upd_slot", filled)
         self.assertEqual(status, 200)
         self.assertEqual(body["changes"], [])
-        status, body = self._call(image_gen.update_workflow_skill_route,
+        status, body = self._call(image_gen_files.update_workflow_skill_route,
                                   self._req({"skill_id": "upd_slot", "workflow": filled}))
         self.assertEqual(status, 200)
         with open(os.path.join(d, "workflow.json"), encoding="utf-8") as f:
@@ -1724,7 +1733,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
             "4": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "P"}},
         }
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "upd_ref", "workflow": workflow}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1740,7 +1749,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         # H3 画布 → 视频模板落盘（gen_video 真）
         d = self._make_custom_skill("upd_vid")
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "upd_vid", "workflow": self._h3_video_workflow(i2v=True)}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1761,19 +1770,19 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         workflow = {"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "m.safetensors"}}}
         # 技能不存在 → 400
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "nope", "workflow": workflow}))
         self.assertEqual(status, 400)
         self.assertIn("not found", body["error"].lower())
         # 空 / 非法节点结构 workflow → 400
         d = self._make_custom_skill("upd_bad")
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "upd_bad", "workflow": {}}))
         self.assertEqual(status, 400)
         self.assertIn("API prompt", body["error"])
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "upd_bad", "workflow": {"1": {"inputs": {}}}}))
         self.assertEqual(status, 400)
         self.assertIn("class_type", body["error"])
@@ -1797,7 +1806,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertTrue(body["structural"])
 
         status, body = self._call(
-            image_gen.update_workflow_skill_route,
+            image_gen_files.update_workflow_skill_route,
             self._req({"skill_id": "image_gen", "workflow": canvas}))
         self.assertEqual(status, 200)
         self.assertTrue(body["success"])
@@ -1813,17 +1822,17 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
     def test_get_skill_config(self):
         # 预设 image_gen 的 config.json（default_ratio: 16:9）
-        status, body = self._call(image_gen.get_skill_config_route,
+        status, body = self._call(image_gen_files.get_skill_config_route,
                                   self._req(query={"skill_id": "image_gen"}))
         self.assertEqual(status, 200)
         self.assertEqual(body, {"default_ratio": "16:9"})
-        status, _ = self._call(image_gen.get_skill_config_route, self._req(query={}))
+        status, _ = self._call(image_gen_files.get_skill_config_route, self._req(query={}))
         self.assertEqual(status, 400)
 
     def test_post_skill_config(self):
         d = self._make_custom_skill("mygen")
         status, body = self._call(
-            image_gen.post_skill_config_route,
+            image_gen_files.post_skill_config_route,
             self._req({"skill_id": "mygen",
                        "config": {"count": 4, "default_ratio": "2:3",
                                   "loras": [{"name": "style_a.safetensors", "strength": 0.7}]}}))
@@ -1835,7 +1844,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["loras"], [{"name": "style_a.safetensors", "strength": 0.7}])
 
         # 预设设置可编辑：写本地覆盖文件（configs/skill_overrides/<id>.json），不改预设文件
-        status, body = self._call(image_gen.post_skill_config_route,
+        status, body = self._call(image_gen_files.post_skill_config_route,
                                   self._req({"skill_id": "image_gen", "config": {"count": 2}}))
         self.assertEqual(status, 200)
         ov_path = os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json")
@@ -1844,7 +1853,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
             ov = json.load(f)
         self.assertEqual(ov["count"], 2)
         # GET 返回合并后的有效 config（预设 default_ratio + 覆盖 count）
-        status, body = self._call(image_gen.get_skill_config_route,
+        status, body = self._call(image_gen_files.get_skill_config_route,
                                   self._req(query={"skill_id": "image_gen"}))
         self.assertEqual(status, 200)
         self.assertEqual(body["count"], 2)
@@ -1852,7 +1861,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
     def test_reset_skill_config(self):
         # 先写一条本地覆盖，再恢复默认（删覆盖文件）；幂等、未知 skill 404
-        status, _ = self._call(image_gen.post_skill_config_route,
+        status, _ = self._call(image_gen_files.post_skill_config_route,
                                self._req({"skill_id": "image_gen", "config": {"count": 3}}))
         self.assertEqual(status, 200)
         ov_path = os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json")
@@ -1863,7 +1872,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(os.path.isfile(ov_path), "恢复默认应删除本地覆盖文件")
         # 恢复后 GET 回落预设默认
-        status, body = self._call(image_gen.get_skill_config_route,
+        status, body = self._call(image_gen_files.get_skill_config_route,
                                   self._req(query={"skill_id": "image_gen"}))
         self.assertEqual(status, 200)
         self.assertNotIn("count", body)
@@ -1877,12 +1886,12 @@ class SkillWorkflowRouteTests(unittest.TestCase):
 
     def test_copy_skill_files_preset_with_override(self):
         # 复制带本地覆盖的预设 → 副本写入合并后的有效 config
-        status, _ = self._call(image_gen.post_skill_config_route,
+        status, _ = self._call(image_gen_files.post_skill_config_route,
                                self._req({"skill_id": "image_gen", "config": {"count": 5}}))
         self.assertEqual(status, 200)
         d = self._make_custom_skill("copy_ovr")
         status, body = self._call(
-            image_gen.copy_skill_files_route,
+            image_gen_files.copy_skill_files_route,
             self._req({"from_id": "image_gen", "to_id": "copy_ovr"}))
         self.assertEqual(status, 200)
         with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
@@ -1896,7 +1905,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
             json.dump({"width": 1344, "height": 768, "length": 247}, f)
         status, body = self._call(
-            image_gen.post_skill_config_route,
+            image_gen_files.post_skill_config_route,
             self._req({"skill_id": "vidgen",
                        "config": {"model": "h3/h3.safetensors",
                                   "text_encoder": "h3/te.safetensors",
@@ -1920,7 +1929,7 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         with open(os.path.join(d, "config.json"), "w", encoding="utf-8") as f:
             json.dump({"width": 960, "height": 544, "length": 124, "steps": 20}, f)
         status, _ = self._call(
-            image_gen.post_skill_config_route,
+            image_gen_files.post_skill_config_route,
             self._req({"skill_id": "vidsteps",
                        "config": {"model": "h3/h3.safetensors", "steps": 8}}))
         self.assertEqual(status, 200)
@@ -1929,21 +1938,21 @@ class SkillWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(cfg["steps"], 8)
         self.assertEqual((cfg["width"], cfg["height"], cfg["length"]), (960, 544, 124))
         # GET 回显已存步数（详情弹窗 load 据此回填「步数」输入框）
-        status, body = self._call(image_gen.get_skill_config_route,
+        status, body = self._call(image_gen_files.get_skill_config_route,
                                   self._req(query={"skill_id": "vidsteps"}))
         self.assertEqual(body["steps"], 8)
         # 技能列表摘要（浮动预览卡数据源）同样带上步数
         scanned = {s["id"]: s for s in _skill_mod.scan_skills()}
         self.assertEqual(scanned["vidsteps"]["gen_config"]["steps"], 8)
         # 不传 steps（如生图设置区保存）时保留既有值
-        status, _ = self._call(image_gen.post_skill_config_route,
+        status, _ = self._call(image_gen_files.post_skill_config_route,
                                self._req({"skill_id": "vidsteps", "config": {"count": 2}}))
         self.assertEqual(status, 200)
         with open(os.path.join(d, "config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         self.assertEqual(cfg["steps"], 8, "未传 steps 时保留既有步数")
         # 预设技能同样落盘（写本地覆盖文件，不改预设 config.json）
-        status, _ = self._call(image_gen.post_skill_config_route,
+        status, _ = self._call(image_gen_files.post_skill_config_route,
                                self._req({"skill_id": "image_gen", "config": {"steps": 12}}))
         self.assertEqual(status, 200)
         with open(os.path.join(_skill_mod.SKILL_OVERRIDES_DIR, "image_gen.json"), encoding="utf-8") as f:
@@ -1953,14 +1962,14 @@ class SkillWorkflowRouteTests(unittest.TestCase):
     def test_copy_skill_files(self):
         d = self._make_custom_skill("copy_dst")
         status, body = self._call(
-            image_gen.copy_skill_files_route,
+            image_gen_files.copy_skill_files_route,
             self._req({"from_id": "image_gen", "to_id": "copy_dst"}))
         self.assertEqual(status, 200)
         self.assertTrue(os.path.isfile(os.path.join(d, "workflow.json")))
         self.assertTrue(os.path.isfile(os.path.join(d, "config.json")))
 
         status, _ = self._call(
-            image_gen.copy_skill_files_route,
+            image_gen_files.copy_skill_files_route,
             self._req({"from_id": "no_such_skill", "to_id": "copy_dst"}))
         self.assertEqual(status, 400)
 

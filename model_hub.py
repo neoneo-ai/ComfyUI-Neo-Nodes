@@ -14,7 +14,8 @@ from pathlib import Path
 
 import aiohttp
 from aiohttp import web
-from server import PromptServer
+
+routes = web.RouteTableDef()
 
 from . import civitai
 from .util import CONFIGS_DIR
@@ -884,7 +885,7 @@ def _error(e: Exception, source: str = "") -> "web.json_response":
     return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.get("/neo_model_hub/settings")
+@routes.get("/neo_model_hub/settings")
 async def rs_hub_settings(request):
     settings = load_hub_settings()
     return web.json_response({
@@ -897,7 +898,7 @@ async def rs_hub_settings(request):
     })
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/settings")
+@routes.post("/neo_model_hub/settings")
 async def rs_hub_save_settings(request):
     try:
         data = await request.json()
@@ -907,7 +908,7 @@ async def rs_hub_save_settings(request):
     return web.json_response({"success": True, "settings": settings})
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/repos")
+@routes.post("/neo_model_hub/repos")
 async def rs_hub_repos(request):
     try:
         data = await request.json()
@@ -931,7 +932,7 @@ async def rs_hub_repos(request):
     return web.json_response({"success": True, "source": source, "repos": repos})
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/files")
+@routes.post("/neo_model_hub/files")
 async def rs_hub_files(request):
     try:
         data = await request.json()
@@ -953,7 +954,7 @@ async def rs_hub_files(request):
                               "categories": ui_categories(settings)})
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/subfolders")
+@routes.post("/neo_model_hub/subfolders")
 async def rs_hub_subfolders(request):
     try:
         data = await request.json()
@@ -970,7 +971,7 @@ async def rs_hub_subfolders(request):
                                                             str(body.get("repo") or ""), subs)})
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/download")
+@routes.post("/neo_model_hub/download")
 async def rs_hub_download(request):
     try:
         data = await request.json()
@@ -985,12 +986,12 @@ async def rs_hub_download(request):
     return web.json_response({"success": True, "download": snapshot})
 
 
-@PromptServer.instance.routes.get("/neo_model_hub/progress")
+@routes.get("/neo_model_hub/progress")
 async def rs_hub_progress(request):
     return web.json_response({"success": True, "download": download_snapshot()})
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/cancel")
+@routes.post("/neo_model_hub/cancel")
 async def rs_hub_cancel(request):
     return web.json_response({"success": cancel_download()})
 
@@ -1057,7 +1058,7 @@ async def civitai_files(model_id: str, settings: dict) -> list:
     return files
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/civitai/search")
+@routes.post("/neo_model_hub/civitai/search")
 async def rs_hub_civitai_search(request):
     try:
         data = await request.json()
@@ -1076,7 +1077,7 @@ async def rs_hub_civitai_search(request):
                               "sorts": list(civitai.SORTS)})
 
 
-@PromptServer.instance.routes.post("/neo_model_hub/civitai/files")
+@routes.post("/neo_model_hub/civitai/files")
 async def rs_hub_civitai_files(request):
     try:
         data = await request.json()

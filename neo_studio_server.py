@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Neo Studio 壳侧只读服务：ComfyUI 没在跑时，窗口里也能翻素材。
+"""Neo Studio 壳侧服务：ComfyUI 没在跑时，窗口里也能用大部分 Studio 功能。
 
-壳在 ComfyUI 端口之外开一个只读 HTTP 服务（ComfyUI 端口 + 3），复用 gallery 模块注册在
-各自 RouteTableDef 上的浏览 handler 与 Studio 前端静态文件：窗口从打开那一刻就是可浏览的
-素材库，ComfyUI 就绪后由壳整页跳到 ComfyUI 端口的完整 Studio。
-写操作与生成类请求不在挂载表里，一律落到 catch-all 出 409 offline，前端据此显示「需要 ComfyUI」。
+壳在 ComfyUI 端口之外开一个 HTTP 服务（ComfyUI 端口 + 3），复用插件模块挂在各自 RouteTableDef
+上的 handler 与 Studio 前端静态文件：窗口从打开那一刻就是可用的 Studio。哪些接口壳能服务、哪些
+必须 ComfyUI 在跑，由 neo_studio_caps 一张表说清楚 —— 壳按它挂载，表外的一律 409 offline，
+前端据此门控。ComfyUI 就绪后由壳整页跳到 ComfyUI 端口的完整 Studio。
 """
 
 import importlib.util
@@ -16,44 +16,33 @@ from pathlib import Path
 
 from aiohttp import web
 
-OFFLINE_ERROR = "ComfyUI 未运行"
-GALLERY_PKG = "_neo_studio_gallery"
+import neo_studio_caps as caps
 
-# 浏览需要的 handler：目录列表、缩略图、原图/视频/音频、元数据、设置、LoRA 目录卡。
-# 删除 / 上传 / 拷贝到 input / 清缩略图 / Civitai 同步 / 打标都不在这里。
-READONLY_ROUTES = {
-    ("GET", "/neo_gallery/list"),
-    ("GET", "/neo_gallery/css"),
-    ("GET", "/neo_gallery/placeholder.png"),
-    ("GET", "/neo_gallery/subdirs"),
-    ("GET", "/neo_gallery/thumbnail"),
-    ("GET", "/neo_gallery/image"),
-    ("GET", "/neo_gallery/video"),
-    ("GET", "/neo_gallery/audio"),
-    ("GET", "/neo_gallery/waveform"),
-    ("POST", "/neo_gallery/waveform"),
-    ("GET", "/neo_gallery/media_meta"),
-    ("POST", "/neo_gallery/dir_cover_images"),
-    ("GET", "/neo_gallery/get_settings"),
-    ("GET", "/neo_gallery/lora_dirs"),
-    ("GET", "/neo_gallery/lora_cache_status"),
-    ("GET", "/neo_bookmark/local"),
-}
+OFFLINE_ERROR = "ComfyUI 未运行"
+SHELL_PKG = "_neo_studio_shell"
+
+# 壳进程加载的插件模块，按依赖顺序：handler 只依赖 folder_paths、文件系统与 8080 LLM 服务。
+SHELL_MODULES = ("util", "civitai", "bookmark", "gallery_lora", "gallery_oss", "gallery",
+                 "minimax_h3", "skill", "laya_router", "prompt_lines", "llm", "lora_tag",
+                 "recipes", "video_gen", "image_gen_files", "model_hub", "backyard")
+SHELL_ROUTE_MODULES = ("gallery_lora", "gallery_oss", "gallery", "bookmark", "lora_tag",
+                       "skill", "llm", "recipes", "video_gen", "image_gen_files", "model_hub",
+                       "backyard")
 
 USERDATA_PATH = "/userdata/neo_gallery_data.json"
 
 
-def load_gallery_modules(plugin_dir: Path) -> list:
-    """按目录加载插件的 gallery 模块族：目录名带连字符不能 import，与 tests 里同一套加载方式。
+def load_shell_modules(plugin_dir: Path) -> list:
+    """按目录加载插件的壳侧模块：目录名带连字符不能 import，与 tests 里同一套加载方式。
 
     这些模块只依赖 folder_paths 与自身，不碰 PromptServer —— 壳进程里没有 ComfyUI 运行时。
     """
-    pkg = type(sys)(GALLERY_PKG)
+    pkg = type(sys)(SHELL_PKG)
     pkg.__path__ = [str(plugin_dir)]
-    sys.modules[GALLERY_PKG] = pkg
+    sys.modules[SHELL_PKG] = pkg
 
     def load(name):
-        mod_name = f"{GALLERY_PKG}.{name}"
+        mod_name = f"{SHELL_PKG}.{name}"
         if mod_name in sys.modules:
             return sys.modules[mod_name]
         spec = importlib.util.spec_from_file_location(mod_name, plugin_dir / f"{name}.py")
@@ -63,10 +52,10 @@ def load_gallery_modules(plugin_dir: Path) -> list:
         spec.loader.exec_module(mod)
         return mod
 
-    for name in ("util", "civitai", "bookmark", "gallery_lora", "gallery_oss", "gallery"):
+    for name in SHELL_MODULES:
         load(name)
-    return [sys.modules[f"{GALLERY_PKG}.{n}"].routes
-            for n in ("gallery_lora", "gallery_oss", "gallery", "bookmark")]
+    return [sys.modules[f"{SHELL_PKG}.{n}"].routes for n in SHELL_ROUTE_MODULES]
+
 
 
 async def studio_page(request):
@@ -119,15 +108,28 @@ async def view_file(request):
 
 
 async def studio_version(request):
-    """离线快照：页面靠它完成初始化，并知道自己是跑在壳的只读服务上。"""
+    """离线快照：页面靠它完成初始化，并拿到壳侧能力表决定哪些功能可用。"""
     return web.json_response({
         "success": True,
         "plugin": "ComfyUI-Neo-Nodes",
         "plugin_version": request.app["plugin_version"],
         "comfyui_version": OFFLINE_ERROR,
         "offline": True,
+        "caps": caps.features(),
         "recipes": [],
     })
+
+
+async def shell_log(request):
+    """离线时的「设置 → 日志」：读壳拉起 ComfyUI 的完整输出（tmp/comfy_run.log）。"""
+    entries = []
+    try:
+        with open(request.app["comfy_log"], "r", encoding="utf-8", errors="replace") as f:
+            entries = [{"m": line} for line in f.readlines()[-400:]]
+    except OSError:
+        pass
+    return web.json_response({"success": True, "entries": entries})
+
 
 
 async def studio_ws(request):
@@ -147,7 +149,7 @@ async def offline(request):
 
 
 def build_app(root: Path, plugin_dir: Path) -> web.Application:
-    """壳侧只读 app：Studio 页面 + 前端静态文件 + gallery 浏览子集 + 收藏文件读写。"""
+    """壳侧 app：Studio 页面 + 前端静态文件 + 能力清单里归壳的全部路由。"""
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
@@ -155,21 +157,23 @@ def build_app(root: Path, plugin_dir: Path) -> web.Application:
     routes = web.RouteTableDef()
     routes.get("/neo-studio")(studio_page)
     routes.static("/extensions/ComfyUI-Neo-Nodes", str(plugin_dir / "web"))
-    for table in load_gallery_modules(plugin_dir):
+    for table in load_shell_modules(plugin_dir):
         for route in table:
-            if (route.method, route.path) in READONLY_ROUTES:
+            if caps.owner(route.method, route.path) == "shell":
                 routes.route(route.method, route.path, **route.kwargs)(route.handler)
 
     routes.get(USERDATA_PATH)(userdata_get)
     routes.post(USERDATA_PATH)(userdata_post)
     routes.get("/neo_studio/version")(studio_version)
+    routes.get("/neo_studio/log")(shell_log)
     routes.get("/view")(view_file)
     routes.get("/ws")(studio_ws)
 
     app = web.Application()
     app["studio_index"] = plugin_dir / "web" / "studio" / "index.html"
     app["userdata"] = Path(folder_paths.get_user_directory()) / "default" / "neo_gallery_data.json"
-    app["plugin_version"] = sys.modules[f"{GALLERY_PKG}.util"].plugin_version()
+    app["comfy_log"] = plugin_dir / "tmp" / "comfy_run.log"
+    app["plugin_version"] = sys.modules[f"{SHELL_PKG}.util"].plugin_version()
 
     app.add_routes(routes)
     # catch-all 必须最后注册：aiohttp 按注册顺序匹配，静态与浏览路由先占位

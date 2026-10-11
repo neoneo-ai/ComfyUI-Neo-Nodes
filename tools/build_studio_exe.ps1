@@ -18,6 +18,8 @@ Set-Location $root
     --collect-all pythonnet `
     --collect-all aiohttp `
     --collect-all PIL `
+    --collect-all yaml `
+    --collect-all pypinyin `
     --exclude-module tkinter `
     neo_studio_app.py
 

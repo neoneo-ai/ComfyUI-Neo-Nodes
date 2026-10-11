@@ -8,10 +8,8 @@ import json
 import asyncio
 import server
 import torch
-import aiohttp
 from aiohttp import web
 import threading
-import copy
 import logging
 import random
 import time
@@ -26,7 +24,7 @@ logger.addFilter(PrefixFilter())
 
 from . import prompt_lines
 from . import skill
-from .llm import strip_inline_thinking, get_stored_api_key, build_remote_models_url, is_local_endpoint, local_list_endpoints, parse_service_models, API_KEY_MASK
+from .llm import strip_inline_thinking
 from .bundles import create_bundle
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,11 +53,8 @@ _tags_lock = threading.Lock()
 from .llm import (
     handle_llm_api_request,
     handle_llm_api_stream,
-    get_available_models,
-    set_current_model,
     unload_local_model,
     unload_native_model,
-    scan_native_models,
     get_remote_llm_config,
     set_remote_llm_config,
     get_current_mode,
@@ -69,8 +64,6 @@ from .llm import (
     run_llm_task,
     LLM_TASKS,
     resolve_multi_result,
-    get_provider_list,
-    test_remote_connection,
 )
 
 
@@ -821,170 +814,10 @@ async def rs_prompts_delete_prompt(request):
         logger.error(f"Error deleting prompt: {e}")
         return web.Response(status=500, text=str(e))
 
-@server.PromptServer.instance.routes.get("/rs_prompts/get_models")
-async def rs_prompts_get_models(request):
-    try:
-        models = get_available_models()
-        return web.json_response(models)
-    except Exception as e:
-        logger.error(f"Error getting models: {e}")
-        return web.Response(status=500, text=str(e))
-
-@server.PromptServer.instance.routes.get("/rs_prompts/native_models")
-async def rs_prompts_get_native_models(request):
-    """原生文本生成模型列表（扫描 text_encoders 下的 safetensors）。"""
-    try:
-        models = scan_native_models()
-        return web.json_response({"models": models})
-    except Exception as e:
-        logger.error(f"Error getting native models: {e}")
-        return web.json_response({"models": []})
-
-@server.PromptServer.instance.routes.post("/rs_prompts/set_model")
-async def rs_prompts_set_model(request):
-    try:
-        data = await request.json()
-        model_key = data.get("model_key")
-        if not model_key:
-            return web.Response(status=400, text="model_key required")
-        
-        success = set_current_model(model_key)
-        if success:
-            return web.json_response({"success": True, "current_model": model_key})
-        else:
-            return web.Response(status=400, text="Invalid model key")
-    except Exception as e:
-        logger.error(f"Error setting model: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-# ==========================================
-# Remote LLM Configuration API Routes
-# ==========================================
-
-def _mask_remote_config(config: dict) -> dict:
-    """复制配置并隐藏所有 provider 的 api_key（固定星号串，前端原样显示）"""
-    safe = copy.deepcopy(config)
-    for slot in safe.get("providers", {}).values():
-        if isinstance(slot, dict) and slot.get("api_key"):
-            slot["api_key"] = API_KEY_MASK
-    return safe
-
-
-@server.PromptServer.instance.routes.get("/rs_prompts/remote_llm_config")
-async def rs_prompts_get_remote_llm_config(request):
-    """获取远程 LLM 配置（按 provider 分槽，返回时隐藏 api_key）"""
-    try:
-        config = get_remote_llm_config()
-        masked = _mask_remote_config(config)
-        masked["provider_list"] = get_provider_list()
-        return web.json_response(masked)
-    except Exception as e:
-        logger.error(f"Error getting remote LLM config: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.post("/rs_prompts/remote_llm_config")
-async def rs_prompts_set_remote_llm_config(request):
-    """设置远程 LLM 配置（只更新对应 provider，不覆盖其它 provider）"""
-    try:
-        data = await request.json()
-        set_remote_llm_config(data)
-        config = get_remote_llm_config()
-        # 返回成功，隐藏 api_key
-        return web.json_response({
-            "success": True,
-            "config": _mask_remote_config(config)
-        })
-    except Exception as e:
-        logger.error(f"Error setting remote LLM config: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.post("/rs_prompts/llm_connection_test")
-async def rs_prompts_llm_connection_test(request):
-    """连接测试：用当前表单的 provider/密钥/端点/模型发送「你好」，成功返回回复摘要"""
-    try:
-        data = await request.json() or {}
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: test_remote_connection(
-                provider=data.get("provider", ""),
-                api_key=data.get("api_key", ""),
-                base_url=data.get("base_url", ""),
-                model=data.get("model", ""),
-            ),
-        )
-        return web.json_response(result)
-    except Exception as e:
-        logger.error(f"Error testing LLM connection: {e}")
-        return web.Response(status=500, text=str(e))
-
-
-@server.PromptServer.instance.routes.get("/rs_prompts/llm_mode")
-async def rs_prompts_get_llm_mode(request):
-    """获取当前 LLM 模式"""
-    try:
-        mode = get_current_mode()
-        return web.json_response({"mode": mode})
-    except Exception as e:
-        logger.error(f"Error getting LLM mode: {e}")
-        return web.Response(status=500, text=str(e))
-
 
 # ==========================================
 # API Routes Registration (LLM API)
 # ==========================================
-
-@server.PromptServer.instance.routes.post("/rs_prompts/extract_title")
-async def rs_prompts_extract_title(request):
-    """提取标题：优先 LAYA 选段（33ms），不可用时回退规则 → LLM。"""
-    from aiohttp import web
-    try:
-        data = await request.json()
-        text = (data.get("text") or "").strip()
-        if not text:
-            return web.json_response({"error": "text content is empty"}, status=400)
-
-        # 1. 尝试 LAYA：拆段 → choice 选最佳标题段
-        from . import laya_router
-        from .prompt_lines import split_title_candidates
-        if laya_router.is_available():
-            segments = split_title_candidates(text)
-            if len(segments) >= 2:
-                questions = {
-                    "title": {
-                        "type": "choice",
-                        "instructions": "Which segment best represents the main subject and scene, suitable as a short title for this prompt?",
-                        "criteria": {s[:40]: s[:60] for s in segments},
-                    }
-                }
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, lambda: laya_router.classify(text, questions))
-                if result and "title" in result:
-                    val = result["title"].get("value", "")
-                    if val:
-                        # LAYA 返回的是 criteria key（截断到 40 字），还原为完整段
-                        best_seg = next((s for s in segments if s[:40] == val), val)
-                        title = best_seg.strip()[:50]
-                        if title:
-                            logger.info(f"extract_title → LAYA: {title}")
-                            return web.json_response({"status": "success", "title": title})
-
-        # 2. LAYA 不可用/无结果：规则提取
-        from .prompt_lines import _extract_title
-        rule_title = _extract_title(text)
-        if rule_title and rule_title != "(未命名)" and len(rule_title) >= 4:
-            logger.info(f"extract_title → Rule: {rule_title}")
-            return web.json_response({"status": "success", "title": rule_title})
-
-        # 3. 规则也不够好：fallback LLM
-        logger.info("extract_title → LLM fallback")
-        return await handle_llm_api_request("extract_title", request)
-    except Exception as e:
-        logger.error(f"Error in extract_title: {e}")
-        return web.json_response({"error": str(e)}, status=500)
 
 @server.PromptServer.instance.routes.post("/rs_prompts/extract_classify")
 async def rs_prompts_extract_classify(request):
@@ -1424,84 +1257,6 @@ async def rs_prompts_random_prompts(request):
     except Exception as e:
         logger.error(f"Error sampling random prompts: {e}")
         return web.Response(status=500, text=str(e))
-
-
-# ==========================================
-# Proxy API for fetching remote models (CORS workaround)
-# ==========================================
-
-async def _fetch_json(session, url: str, headers: dict):
-    """GET 一个 JSON 端点：返回 (payload, 错误串)；出错即让调用方换下一个候选"""
-    try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status != 200:
-                return None, f"HTTP {resp.status}"
-            return await resp.json(), ""
-    except asyncio.TimeoutError:
-        return None, "Timeout"
-    except Exception as e:
-        return None, str(e)
-
-
-@server.PromptServer.instance.routes.post("/rs_prompts/fetch_remote_models")
-async def rs_prompts_fetch_remote_models(request):
-    """Proxy request to fetch model list from LM Studio / Ollama / OpenAI-compatible APIs.
-
-    本地 / 局域网端点依次尝试原生列表端点（LM Studio /api/v1/models 列全部已下载模型、
-    Ollama /api/tags+ps 列已 pull 模型）与 OpenAI 兼容 /v1/models（Unsloth Studio 带 loaded 字段）；云端端点行为不变。
-    """
-    try:
-        data = await request.json()
-        base_url = (data.get("base_url", "") or "").strip().rstrip("/")
-        api_key = (data.get("api_key", "") or "").strip()
-        provider = (data.get("provider", "") or "").strip()
-
-        if not base_url:
-            return web.Response(status=400, text="base_url required")
-
-        # 输入框留空沿用已存密钥：前端只回传掩码，明文仅存于服务端配置
-        if not api_key and provider:
-            api_key = get_stored_api_key(provider)
-
-        # 部分 OpenAI 兼容云端点（如官方 API）拉取列表也需要鉴权
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        is_local = is_local_endpoint(base_url)
-        endpoints = (local_list_endpoints(base_url, provider) if is_local
-                     else [("openai", build_remote_models_url(base_url, provider))])
-
-        models = []
-        source = ""
-        last_error = ""
-        saw_http = False
-        async with aiohttp.ClientSession() as session:
-            for kind, url in endpoints:
-                payload, err = await _fetch_json(session, url, headers)
-                if payload is None:
-                    last_error = err
-                    # 本地服务的候选端点 404 属正常（不是每种服务都有全部端点）：服务有响应即视为可达
-                    if is_local and err.startswith("HTTP "):
-                        saw_http = True
-                    continue
-                running = None
-                if kind == "ollama":
-                    # /api/ps 给出正在运行的模型，用于标注「已加载 / 未加载」（不影响可选性）
-                    running, _ = await _fetch_json(session, f"{url.rsplit('/api/', 1)[0]}/api/ps", headers)
-                parsed = parse_service_models(kind, payload, running)
-                if parsed:
-                    models, source = parsed, kind
-                    break
-
-        if models:
-            return web.json_response({"success": True, "models": models, "source": source})
-        if last_error == "Timeout":
-            return web.json_response({"success": False, "error": "Timeout"}, status=504)
-        if last_error and not saw_http:
-            return web.json_response({"success": False, "error": last_error}, status=502)
-        # 服务可达但所有候选都没列出模型：返回空列表（前端显示「无可用模型」而非连接失败）
-        return web.json_response({"success": True, "models": [], "source": ""})
-    except Exception as e:
-        logger.error(f"Error fetching remote models: {e}")
-        return web.json_response({"success": False, "error": str(e)}, status=502)
 
 
 # ==========================================

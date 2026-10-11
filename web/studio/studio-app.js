@@ -142,6 +142,8 @@ async function buildDirector(el) {
     mpInp.addEventListener("input", updateRes);
     updateRes();
     const runBtn = $el("button", { className: "rs-btn ns-gen-run", type: "button", textContent: "🎬 生成整片" });
+    gateRunButton(runBtn, "director", "🎬 生成整片");
+
     const cancelBtn = $el("button", { className: "rs-btn ns-gen-cancel", type: "button", textContent: "⏹ 取消", style: { display: "none" } });
     const statusEl = $el("div", { className: "ns-gen-status" });
     const barEl = $el("div", { className: "ns-gen-progress" }, [$el("div")]);
@@ -483,17 +485,103 @@ function buildSettings(el) {
 }
 
 // ====== 启动：版本信息 + 扩展初始化 + 路由 ======
-let offline = false;   // 页面跑在壳的只读服务上：浏览可用，生成类请求由壳回 409
+let offline = false;   // 页面跑在壳的服务上：文件类功能可用，生成类请求由壳回 409
+let caps = {};         // 壳侧能力表（/neo_studio/version 下发）；ComfyUI 页里缺省即全可用
+
+function can(feature) { return caps[feature] !== false; }
+
+function toast(text) {
+    let el = document.getElementById("ns-toast");
+    if (!el) {
+        el = $el("div", { id: "ns-toast", className: "ns-toast" });
+        document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.classList.add("show");
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => el.classList.remove("show"), 4200);
+}
+
+function startComfy() {
+    const shell = window.pywebview?.api;
+    if (!shell?.comfy_start) {
+        toast("请在 Neo Studio 窗口里启动 ComfyUI");
+        return;
+    }
+    shell.comfy_state().then((s) => { if (!s.running) shell.comfy_start(); }).catch(() => {});
+    toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
+}
+
+// 生成类请求打到壳上必 409：统一提示并指向顶栏胶囊，不给前端假成功
+window.addEventListener("neo-offline-request", () => {
+    toast("该功能需要 ComfyUI · 点顶栏 ComfyUI 胶囊启动");
+    document.getElementById("ns-comfy")?.classList.add("ns-comfy-hint");
+});
+
+// 运行类按钮 → 所需 ComfyUI 运行时能力：能力缺失时点它交给壳拉起 ComfyUI，不发假请求。
+// 编辑类不在表里（保存 / 生成分段 / 重写提示词 / 逐格描述 / 宫格拆分 / 技能编辑 / 设置 / LLM 配置）：
+// 那些接口只读写文件与 8080 服务，壳自己就能服务。
+const RUN_GATES = [
+    [".neo-gallery-gm-btn", "image_gen", "生成素材"],
+    [".ns-gen-run", "director", "生成整片"],
+    [".neo-director-regen-run", "segment", "生成这一段"],
+    [".neo-director-merge-run", "segment", "拼回成片"],
+    [".neo-director-sb-gen", "storyboard", "生成图片分镜"],
+];
+
+// 生成按钮改写成「需要 ComfyUI」：不发请求，点一下引导启动（须在原 handler 之前注册）
+function gateRunButton(btn, feature, label) {
+    if (can(feature)) return;
+    btn.textContent = "需要 ComfyUI";
+    btn.title = `${label} 需要 ComfyUI 执行队列 · 点一下启动`;
+    btn.classList.add("ns-gen-off");
+    btn.addEventListener("click", (e) => {
+        e.stopImmediatePropagation();
+        startComfy();
+    });
+}
+
+// 共享模块（gallery / director / voice）大量直接用原生 fetch 打接口，不经 api shim：
+// 离线时同样广播 409 offline，让各生成路径统一出「需要 ComfyUI」提示，不静默吞掉。
+// 共享模块注册的运行按钮（生成素材 / 生成这一段 / 拼回成片 / 生成图片分镜）在捕获阶段拦掉。
+function initOfflineGate() {
+    const nativeFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = (input, init) => nativeFetch(input, init).then((res) => {
+        if (res.status !== 409) return res;
+        res.clone().json()
+            .then((data) => {
+                if (data && data.offline) {
+                    window.dispatchEvent(new CustomEvent("neo-offline-request", { detail: { path: String(input) } }));
+                }
+            })
+            .catch(() => {});
+        return res;
+    });
+
+    document.addEventListener("click", (e) => {
+        for (const [selector, feature] of RUN_GATES) {
+            if (can(feature)) continue;
+            const btn = e.target?.closest?.(selector);
+            if (!btn) continue;
+            e.preventDefault();
+            e.stopPropagation();
+            startComfy();
+            return;
+        }
+    }, true);
+}
 
 function showOfflineBanner() {
     if (document.getElementById("ns-offline")) return;
     document.body.classList.add("ns-offline");
+    const btn = $el("button", { className: "ns-offline-start", type: "button", textContent: "🚀 启动 ComfyUI" });
+    btn.addEventListener("click", startComfy);
     document.querySelector(".ns-header").after($el("div", {
         id: "ns-offline", className: "ns-offline-bar",
-        textContent: "ComfyUI 未运行 · 素材浏览可用，生成 / 打标 / Civitai 同步需要 ComfyUI",
-    }));
-
-
+    }, [
+        $el("span", { textContent: "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI" }),
+        btn,
+    ]));
 }
 
 async function loadVersion() {
@@ -503,7 +591,8 @@ async function loadVersion() {
         const data = await r.json();
         if (data?.success) {
             offline = !!data.offline;
-            verEl.textContent = offline ? `Neo-Nodes ${data.plugin_version} · 离线浏览`
+            caps = data.caps || {};
+            verEl.textContent = offline ? `Neo-Nodes ${data.plugin_version} · 离线模式`
                 : `Neo-Nodes ${data.plugin_version} · ComfyUI ${data.comfyui_version}`;
             if (offline) showOfflineBanner();
         }
@@ -545,6 +634,7 @@ async function pollMemStats() {
 }
 
 function initMemMonitor() {
+    if (!can("memory")) return;   // 离线：显存与清理都要 ComfyUI，顶栏块已收起，别每 3s 撞 409
     pollMemStats();
     setInterval(pollMemStats, 3000);
     const btn = document.getElementById("ns-clear-mem");
@@ -640,8 +730,9 @@ function route() {
 // 仅 Studio 独立页启动：本文件也会作为扩展模块被主画布页加载（WEB_DIRECTORY），那里没有 #ns-view
 if (view) {
     window.addEventListener("hashchange", route);
-    initExtensions().then(() => {
-        loadVersion();
+    initExtensions().then(async () => {
+        await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
+        initOfflineGate();
         initMemMonitor();
         initComfyPill();
         route();

@@ -42,13 +42,12 @@ from typing import Any, Dict
 import yaml
 from aiohttp import web
 
+routes = web.RouteTableDef()
+
 try:
     from pypinyin import lazy_pinyin, Style as _PinyinStyle
 except ImportError:  # pypinyin 缺失时中文拼音匹配静默不可用，其余功能正常
     lazy_pinyin = None
-import server
-from server import PromptServer
-import nodes as comfy_nodes
 from .minimax_h3 import _ratio, _filter_mode_sections, _h3_audit_and_repair, _h3_audit_events, _h3_grounding_check, _h3_mode, format_h3_context_lines
 from .util import PrefixFilter
 
@@ -769,8 +768,14 @@ def _attach_gen_config(skill: dict, skill_id: str) -> None:
 
 
 def _vdn_plugin_installed() -> bool:
-    """VDN 加速插件 ComfyUI-VDN-H3 是否已装（ApplyVDNH3* 节点已注册）。"""
-    return any(ct.startswith("ApplyVDNH3") for ct in comfy_nodes.NODE_CLASS_MAPPINGS)
+    """VDN 加速插件 ComfyUI-VDN-H3 是否已装：看同级 custom_nodes 目录里有没有它（壳侧没有节点注册表）。"""
+    parent = os.path.dirname(CURRENT_DIR)
+    try:
+        names = os.listdir(parent)
+    except OSError:
+        return False
+    return any(name.lower().startswith("comfyui-vdn") and os.path.isdir(os.path.join(parent, name))
+               for name in names)
 
 
 def _video_skill_available(d: str) -> bool:
@@ -1905,7 +1910,7 @@ def _upload_from_manifest(rel_paths: list[str], file_parts: list[tuple[str, byte
 # API Routes (skill 管理)
 # ==========================================
 
-@server.PromptServer.instance.routes.get("/rs_prompts/skills")
+@routes.get("/rs_prompts/skills")
 async def rs_prompts_list_skills(request):
     """列出所有 skill（任务 + 预设/自定义统一元数据）。"""
     try:
@@ -1915,7 +1920,7 @@ async def rs_prompts_list_skills(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/load_skill")
+@routes.post("/rs_prompts/load_skill")
 async def rs_prompts_load_skill(request):
     """加载单个 skill 完整数据（元数据 + 拼接内容 + 文件列表）。"""
     try:
@@ -1958,7 +1963,7 @@ async def rs_prompts_load_skill(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/save_skill")
+@routes.post("/rs_prompts/save_skill")
 async def rs_prompts_save_skill(request):
     """保存/更新 skill 主文件（skill.md）。预设只读。"""
     try:
@@ -1997,7 +2002,7 @@ async def rs_prompts_save_skill(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/delete_skill")
+@routes.post("/rs_prompts/delete_skill")
 async def rs_prompts_delete_skill(request):
     """删除整个 skill 目录（预设不可删）。"""
     try:
@@ -2013,7 +2018,7 @@ async def rs_prompts_delete_skill(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/reset_skill_config")
+@routes.post("/rs_prompts/reset_skill_config")
 async def rs_prompts_reset_skill_config(request):
     """预设技能生图/生视频设置恢复默认（删除本地覆盖文件，幂等）。"""
     try:
@@ -2027,7 +2032,7 @@ async def rs_prompts_reset_skill_config(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/upload_skill")
+@routes.post("/rs_prompts/upload_skill")
 async def rs_prompts_upload_skill(request):
     """上传 skill：.zip（file 字段）或目录清单（manifest + 有序 files 字段）。"""
     try:
@@ -2067,7 +2072,7 @@ async def rs_prompts_upload_skill(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/load_skill_file")
+@routes.post("/rs_prompts/load_skill_file")
 async def rs_prompts_load_skill_file(request):
     """加载 skill 目录内某个 .md 文件内容。"""
     try:
@@ -2088,7 +2093,7 @@ async def rs_prompts_load_skill_file(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/save_skill_file")
+@routes.post("/rs_prompts/save_skill_file")
 async def rs_prompts_save_skill_file(request):
     """保存 skill 目录内某个 .md 文件。"""
     try:
@@ -2106,7 +2111,7 @@ async def rs_prompts_save_skill_file(request):
         return web.Response(status=500, text=str(e))
 
 
-@server.PromptServer.instance.routes.post("/rs_prompts/delete_skill_file")
+@routes.post("/rs_prompts/delete_skill_file")
 async def rs_prompts_delete_skill_file(request):
     """删除 skill 目录内某个 .md 文件（skill.md 不可删）。"""
     try:

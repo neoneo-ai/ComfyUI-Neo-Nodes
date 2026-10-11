@@ -16,7 +16,8 @@ import threading
 from pathlib import Path
 
 from aiohttp import web
-from server import PromptServer
+
+routes = web.RouteTableDef()
 
 from . import gallery
 from .llm import run_llm_task
@@ -223,7 +224,7 @@ def _tag_batch(dir_path: Path, trigger_word: str, cancel: threading.Event | None
                     "done": done, "total": total, "failed": failed}}
 
 
-@PromptServer.instance.routes.get("/neo_gallery/tag_preflight")
+@routes.get("/neo_gallery/tag_preflight")
 async def neo_gallery_tag_preflight(request):
     """目录校验 + 图片数 + 建议触发词（文件夹名拼音首字母）。"""
     dir_param = request.query.get("dir", "")
@@ -240,7 +241,7 @@ async def neo_gallery_tag_preflight(request):
     })
 
 
-@PromptServer.instance.routes.post("/neo_gallery/tag_dir")
+@routes.post("/neo_gallery/tag_dir")
 async def neo_gallery_tag_dir(request):
     """批量打标叶子图片目录（SSE 进度）；standardize=true 时先标准化目录。"""
     data = await request.json()

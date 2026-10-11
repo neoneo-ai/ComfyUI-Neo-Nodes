@@ -13,7 +13,8 @@ import time
 from pathlib import Path
 
 from aiohttp import web
-from server import PromptServer
+
+routes = web.RouteTableDef()
 
 from .util import PrefixFilter
 
@@ -423,19 +424,19 @@ def run_oss_upload(source_dir: str, cfg: dict, dry_run: bool = False) -> dict:
 
 # ====== Routes ======
 
-@PromptServer.instance.routes.get("/neo-studio-backyard")
+@routes.get("/neo-studio-backyard")
 async def backyard_page_route(request):
     """Backyard 独立页面短路径。"""
     return web.FileResponse(Path(__file__).parent / "web" / "backyard" / "index.html")
 
 
-@PromptServer.instance.routes.get("/neo_backyard/config")
+@routes.get("/neo_backyard/config")
 async def get_config_route(request):
     cfg = _load_config()
     return web.json_response({"success": True, "config": _mask_config(cfg)})
 
 
-@PromptServer.instance.routes.post("/neo_backyard/config")
+@routes.post("/neo_backyard/config")
 async def save_config_route(request):
     body = await request.json()
     cfg = _load_config()
@@ -447,7 +448,7 @@ async def save_config_route(request):
     return web.json_response({"success": True, "config": _mask_config(cfg)})
 
 
-@PromptServer.instance.routes.post("/neo_backyard/preprocess")
+@routes.post("/neo_backyard/preprocess")
 async def preprocess_route(request):
     body = await request.json()
     source_dir = body.get("source_dir", "")
@@ -480,7 +481,7 @@ async def preprocess_route(request):
     return response
 
 
-@PromptServer.instance.routes.post("/neo_backyard/upload")
+@routes.post("/neo_backyard/upload")
 async def upload_route(request):
     body = await request.json()
     source_dir = body.get("source_dir", "")
@@ -509,7 +510,7 @@ async def upload_route(request):
     return response
 
 
-@PromptServer.instance.routes.get("/neo_backyard/index")
+@routes.get("/neo_backyard/index")
 async def get_index_route(request):
     """返回当前输出目录的 index.json 摘要（已上传到 OSS 的数据）。"""
     cfg = _load_config()
@@ -544,7 +545,7 @@ async def get_index_route(request):
     })
 
 
-@PromptServer.instance.routes.get("/neo_backyard/dirs")
+@routes.get("/neo_backyard/dirs")
 async def list_dirs_route(request):
     """列出输出目录的结构（供前端浏览/管理）。"""
     output_dir = request.query.get("path", "")
@@ -567,7 +568,7 @@ async def list_dirs_route(request):
     return web.json_response({"success": True, "path": str(p), "entries": entries})
 
 
-@PromptServer.instance.routes.post("/neo_backyard/delete")
+@routes.post("/neo_backyard/delete")
 async def delete_route(request):
     """删除输出目录中的文件或子目录。"""
     body = await request.json()

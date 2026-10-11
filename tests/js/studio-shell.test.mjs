@@ -143,20 +143,48 @@ test("壳里显示 ComfyUI 状态，点一下即停", async () => {
     assert.match(btn.title, /点一下重新拉起/);
 });
 
-test("离线页：横幅说明浏览可用，版本位显示离线，显存块收起", async () => {
+test("ComfyUI 在跑时生成入口不受门控：点它不该去启动 ComfyUI", async () => {
+    mountStudio();
+    document.body.insertAdjacentHTML("beforeend",
+        '<button class="neo-gallery-gm-btn" type="button">🖼️ 生成素材</button>' +
+        '<button class="neo-director-regen-run" type="button">生成这一段</button>' +
+        '<button class="neo-director-merge-run" type="button">拼回成片</button>' +
+        '<button class="neo-director-sb-gen" type="button">🎨 生成图片分镜</button>');
+    const starts = [];
+    const state = { port: 8188, pid: 4321, mine: true, running: true, ready: true };
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ ...state }),
+            comfy_start: async () => { starts.push(1); return { ...state }; },
+        },
+    };
+    await import("../../web/studio/studio-app.js?onlineGate=1");
+    await flush();
+
+    for (const sel of [".neo-gallery-gm-btn", ".neo-director-regen-run",
+                       ".neo-director-merge-run", ".neo-director-sb-gen"]) {
+        click(document.querySelector(sel));
+    }
+    await flush();
+    assert.equal(starts.length, 0, "在线时生成入口应照常交给原功能，不触发启动");
+});
+
+test("离线页：横幅说明可编辑面，版本位显示离线，显存块收起", async () => {
     resetEnv();
     document.body.innerHTML = studioBody;
     mockRoute("/neo_studio/version", jsonResponse({
-        success: true, plugin_version: "9.9.9", comfyui_version: "ComfyUI 未运行", offline: true, recipes: [],
+        success: true, plugin_version: "9.9.9", comfyui_version: "ComfyUI 未运行", offline: true,
+        caps: { image_gen: false, grid_split: true }, recipes: [],
     }));
     await import("../../web/studio/studio-app.js?offline=1");
     await flush();
     const bar = document.getElementById("ns-offline");
     assert.ok(bar, "壳的离线页应显示横幅");
     assert.match(bar.textContent, /ComfyUI 未运行/);
-    assert.match(bar.textContent, /素材浏览可用/);
+    assert.match(bar.textContent, /可离线编辑/);
+    assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
     assert.ok(document.body.classList.contains("ns-offline"), "body 应带离线标记");
-    assert.match(document.getElementById("ns-version").textContent, /离线浏览/);
+    assert.match(document.getElementById("ns-version").textContent, /离线模式/);
 });
 
 test("离线页里点重新拉起：不刷新页面，交给壳整页跳回完整 Studio", async () => {

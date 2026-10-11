@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""壳侧只读服务（neo_studio_server）离线单测：ComfyUI 不在跑时浏览可用、写入被拒。
+"""壳侧服务（neo_studio_server）离线单测：ComfyUI 不在跑时 Studio 的可用面与能力边界。
 
-服务复用 gallery 模块注册在各自 RouteTableDef 上的浏览 handler，进程里没有 PromptServer，
-所以这里直接起真服务打真接口：Studio 页面、静态文件、目录列表、缩略图、收藏文件都要出得来，
-删除 / 上传 / 生成类接口必须回 409 offline，不能让前端以为生成成功了。
+服务复用插件模块挂在各自 RouteTableDef 上的 handler，进程里没有 PromptServer，
+所以这里直接起真服务打真接口：Studio 页面、静态文件、浏览、设置与配方写入都要出得来；
+生成 / 队列 / 显存类接口必须回 409 offline，不能让前端以为生成成功了。
 """
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 import urllib.error
 import urllib.parse
@@ -18,11 +20,33 @@ from pathlib import Path
 PLUGIN_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, str(PLUGIN_DIR))
 
+import neo_studio_caps as caps
 import neo_studio_server as ns
 
 TEST_PORT = 8291
 STUDIO_URL = "/neo-studio"
 SAMPLE = ("CharacterSheet", "2026-09-27_00001_.png")   # 整合包里的真实产物，只读
+CONFIGS = PLUGIN_DIR / "configs"
+# 写入用例落真实配置文件的这些目标：用例前后快照还原，不留测试数据
+WRITE_TARGETS = (CONFIGS / "image_gen.json", CONFIGS / "bookmarks.json",
+                 CONFIGS / "remote_llm_config.json")
+# 必须 ComfyUI 在跑才有的接口：壳一律 409 offline，前端据此门控
+COMFY_ONLY_ROUTES = (
+    "/neo_image_gen/generate",
+    "/neo_image_gen/tasks",
+    "/neo_image_gen/enhance",
+    "/neo_image_gen/skill_dims?skill_id=x",
+    "/neo_video_gen/storyboard_generate",
+    "/neo_video_gen/run_segment",
+    "/neo_video_gen/assemble_segments",
+    "/neo_voice/generate",
+    "/neo_studio/director/generate",
+    "/neo_studio/mem_stats",
+    "/neo_studio/clear_memory",
+    "/neo_nodes/repair",
+    "/rs_prompts/enhance_prompt",
+)
+
 
 
 def _request(port, path, data=None):
@@ -32,6 +56,19 @@ def _request(port, path, data=None):
             return resp.status, resp.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
+
+
+def _snapshot(paths):
+    return {p: (p.read_bytes() if p.exists() else None) for p in paths}
+
+
+def _restore(saved):
+    for path, data in saved.items():
+        if data is None:
+            if path.exists():
+                path.unlink()
+        else:
+            path.write_bytes(data)
 
 
 from stub_env import NODE_STUB_PREFIXES, restore, snapshot
@@ -58,8 +95,10 @@ class _ServerCase(_RealFolderPaths):
     def setUpClass(cls):
         cls._pin_real()
         app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR)
-        cls.tmp_userdata = Path(cls._mk_tempdir()) / "neo_gallery_data.json"
-        app["userdata"] = cls.tmp_userdata
+        cls.tmpdir = Path(tempfile.mkdtemp(prefix="neo_studio_server_"))
+        app["userdata"] = cls.tmpdir / "neo_gallery_data.json"
+        app["comfy_log"] = cls.tmpdir / "comfy_run.log"
+        app["comfy_log"].write_text("shell log line 1\nshell log line 2\n", encoding="utf-8")
         cls.server = ns.ShellServer(lambda: app, TEST_PORT)
         cls.port = cls.server.start()
 
@@ -68,13 +107,12 @@ class _ServerCase(_RealFolderPaths):
         cls.server.stop()
         cls._restore_stubs()
 
-    @staticmethod
-    def _mk_tempdir():
-        import tempfile
-        return tempfile.mkdtemp(prefix="neo_studio_server_")
-
     def get(self, path, data=None):
         return _request(self.port, path, data)
+
+    def post_json(self, path, payload):
+        return self.get(path, data=json.dumps(payload).encode())
+
 
 
 
@@ -84,13 +122,18 @@ class OfflineServiceTests(_ServerCase):
         self.assertEqual(status, 200)
         self.assertIn(b"Neo Studio", body)
 
-    def test_version_reports_offline_snapshot(self):
+    def test_version_reports_offline_snapshot_and_caps(self):
         status, body = self.get("/neo_studio/version")
         data = json.loads(body)
         self.assertEqual(status, 200)
         self.assertTrue(data["success"])
         self.assertTrue(data["offline"])
         self.assertNotEqual(data["comfyui_version"], "unknown")
+        # 生成 / 显存类功能离线不可用；纯文件功能（宫格切分）可用
+        self.assertFalse(data["caps"]["image_gen"])
+        self.assertFalse(data["caps"]["director"])
+        self.assertFalse(data["caps"]["memory"])
+        self.assertTrue(data["caps"]["grid_split"])
 
     def test_extension_static_files_served(self):
         for path in ("/extensions/ComfyUI-Neo-Nodes/studio/studio-app.js",
@@ -122,23 +165,118 @@ class OfflineServiceTests(_ServerCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["sectionStates"]["gallery_categories"]["collapsed"], True)
 
-    def test_write_and_generation_routes_report_offline(self):
-        for path in ("/neo_gallery/delete", "/neo_gallery/save_settings",
-                     "/neo_gallery/copy_to_input", "/neo_studio/director/generate",
-                     "/neo_image_gen/generate"):
+    def test_offline_log_reads_comfy_run_log(self):
+        status, body = self.get("/neo_studio/log")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertTrue(data["success"])
+        self.assertIn("shell log line 2", "".join(e["m"] for e in data["entries"]))
+
+    def test_comfy_only_routes_report_offline(self):
+        for path in COMFY_ONLY_ROUTES:
             status, body = self.get(path, data=b"{}")
             self.assertEqual(status, 409, path)
             data = json.loads(body)
             self.assertFalse(data["success"])
             self.assertTrue(data["offline"])
 
+
     def test_mem_stats_reports_offline(self):
         status, _ = self.get("/neo_studio/mem_stats")
         self.assertEqual(status, 409)
 
+    def test_llm_config_and_title_routes_served_offline(self):
+        """LLM 配置只读配置文件、标题提取只打 8080：与 ComfyUI 运行时无关，壳必须服务"""
+        status, body = self.get("/rs_prompts/llm_mode")
+        self.assertEqual(status, 200)
+        self.assertIn("mode", json.loads(body))
+        status, body = self.get("/rs_prompts/remote_llm_config")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertTrue(data["provider_list"])
+        self.assertEqual(self.get("/rs_prompts/get_models")[0], 200)
+        self.assertEqual(self.get("/rs_prompts/native_models")[0], 200)
+        status, body = self.post_json("/rs_prompts/extract_title",
+                                      {"text": "一位年轻女性端坐于户外木质椅子上，身着碎花裙，背景是花园"})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["title"])
 
-class GalleryDecouplingTests(_RealFolderPaths):
-    """gallery 模块族必须自带路由表：壳进程里没有 ComfyUI 运行时，注册不能靠 PromptServer。"""
+
+class ShellWriteTests(_ServerCase):
+    """离线可编辑面：设置 / 收藏 / 配方 / 技能都是真实落盘写入。"""
+
+    def setUp(self):
+        self._saved = _snapshot(WRITE_TARGETS)
+        self._extra_dirs = []
+
+    def tearDown(self):
+        _restore(self._saved)
+        for d in self._extra_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_image_gen_settings_round_trip(self):
+        status, body = self.post_json("/neo_image_gen/settings", {"output_prefix": "ShellWrite"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["output_prefix"], "ShellWrite")
+        status, body = self.get("/neo_image_gen/settings")
+        self.assertEqual(json.loads(body)["output_prefix"], "ShellWrite")
+
+    def test_bookmark_local_add_and_list(self):
+        status, body = self.post_json("/neo_bookmark/local/add",
+                                      {"name": "ShellBookmark", "source": "local",
+                                       "dir": "output", "subfolder": ""})
+        self.assertEqual(status, 200, body)
+        status, body = self.get("/neo_bookmark/local")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertTrue(any(i.get("name") == "ShellBookmark" for i in data["items"]))
+
+    def test_recipe_save_and_list(self):
+        name = "shell-test-recipe"
+        status, body = self.post_json("/rs_recipes/save", {"name": name, "prompt": "shell offline"})
+        self.assertEqual(status, 200, body)
+        recipe_dir = PLUGIN_DIR / "recipes" / "custom" / name
+        self._extra_dirs.append(recipe_dir)
+        self.assertTrue((recipe_dir / "recipe.json").is_file())
+        status, body = self.post_json("/rs_recipes/list", {"source": "custom"})
+        self.assertEqual(status, 200)
+        self.assertTrue(any(r.get("name") == name for r in json.loads(body)))
+
+    def test_skill_save_and_delete(self):
+        skill_id = "shell_test_skill"
+        status, body = self.post_json("/rs_prompts/save_skill",
+                                      {"id": skill_id, "name": "Shell Test Skill",
+                                       "content": "# shell\n离线写入", "source": "custom"})
+        self.assertEqual(status, 200, body)
+        skill_dir = PLUGIN_DIR / "skills" / "custom" / skill_id
+        self._extra_dirs.append(skill_dir)
+        self.assertTrue((skill_dir / "skill.md").is_file())
+        status, body = self.post_json("/rs_prompts/delete_skill",
+                                      {"id": skill_id, "source": "custom"})
+        self.assertEqual(status, 200, body)
+        self.assertFalse(skill_dir.exists())
+
+    def test_llm_config_round_trip_masks_key(self):
+        """离线写 LLM 配置：密钥真实落盘，接口回读只给掩码"""
+        shell_llm = sys.modules[f"{ns.SHELL_PKG}.llm"]
+        status, body = self.post_json("/rs_prompts/remote_llm_config",
+                                      {"provider": "openai", "api_key": "sk-shell-secret",
+                                       "base_url": "https://api.openai.com/v1",
+                                       "model": "gpt-4o-mini"})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(json.loads(body)["success"])
+        status, body = self.get("/rs_prompts/remote_llm_config")
+        slot = json.loads(body)["providers"]["openai"]
+        self.assertEqual(status, 200)
+        self.assertEqual(slot["api_key"], shell_llm.API_KEY_MASK)
+        self.assertEqual(slot["model"], "gpt-4o-mini")
+        saved = json.loads((CONFIGS / "remote_llm_config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["providers"]["openai"]["api_key"], "sk-shell-secret")
+
+
+
+class ShellModuleTests(_RealFolderPaths):
+    """壳侧模块族必须自带路由表、不碰 ComfyUI 运行时，且与能力清单一致。"""
 
     @classmethod
     def setUpClass(cls):
@@ -148,24 +286,40 @@ class GalleryDecouplingTests(_RealFolderPaths):
     def tearDownClass(cls):
         cls._restore_stubs()
 
-    def test_gallery_modules_carry_own_route_tables(self):
-
+    def test_shell_modules_carry_own_route_tables(self):
         from aiohttp import web
-        tables = ns.load_gallery_modules(PLUGIN_DIR)
-        self.assertEqual(len(tables), 4)
+        tables = ns.load_shell_modules(PLUGIN_DIR)
+        self.assertEqual(len(tables), len(ns.SHELL_ROUTE_MODULES))
         for table in tables:
             self.assertIsInstance(table, web.RouteTableDef)
             self.assertTrue(len(table) > 0)
 
-    def test_gallery_modules_do_not_import_server(self):
-        for name in ("gallery.py", "bookmark.py", "gallery_lora.py", "gallery_oss.py"):
-            source = (PLUGIN_DIR / name).read_text(encoding="utf-8")
-            self.assertNotIn("PromptServer", source, name)
+    def test_shell_modules_do_not_import_comfyui_runtime(self):
+        """import 期不碰 ComfyUI 运行时：函数内的惰性导入有兜底，不算。"""
+        forbidden = ("from server", "import server", "import nodes", "from nodes",
+                     "from comfy", "import comfy", "import torch", "from torch",
+                     "from comfy_api", "import pynvml")
+        for name in ns.SHELL_MODULES:
+            for line in (PLUGIN_DIR / f"{name}.py").read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if line[:1].isspace() or stripped.startswith("#"):
+                    continue
+                for word in forbidden:
+                    self.assertNotIn(word, stripped, f"{name}.py: {stripped}")
 
-    def test_readonly_subset_exists_in_module_routes(self):
-        registered = {(r.method, r.path) for table in ns.load_gallery_modules(PLUGIN_DIR) for r in table}
-        self.assertTrue(ns.READONLY_ROUTES <= registered,
-                        ns.READONLY_ROUTES - registered)
+    def test_capability_manifest_matches_module_routes(self):
+        registered = {(r.method, r.path)
+                      for table in ns.load_shell_modules(PLUGIN_DIR) for r in table}
+        self.assertFalse(caps.SHELL_ROUTES - registered,
+                         f"能力清单里的壳路由在模块里不存在: {sorted(caps.SHELL_ROUTES - registered)}")
+
+    def test_shell_app_mounts_exactly_the_manifest(self):
+        app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR)
+        shell_pages = {("GET", "/neo-studio"), ("GET", "/neo_studio/version"),
+                       ("GET", "/neo_studio/log")}
+        mounted = {(r.method, r.resource.canonical) for r in app.router.routes()
+                   if r.method != "HEAD" and r.resource.canonical.startswith(("/neo", "/rs_"))}
+        self.assertEqual(mounted - shell_pages, caps.SHELL_ROUTES)
 
 
 if __name__ == "__main__":

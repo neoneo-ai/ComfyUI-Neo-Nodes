@@ -21,35 +21,23 @@ if __package__ not in (None, ""):
         "NeoGridSplit": "grid_split_node",
     }
 
-    # Import gallery module to register routes (must be imported for route registration)
-    # gallery_lora / gallery_oss 要显式导入：gallery.py 里是 `from .gallery_oss import (名字)`，
-    # 子模块属性只挂在父包上，gallery.gallery_oss 取不到。
-    from . import gallery, gallery_lora, gallery_oss
+    # 壳侧模块：自带 RouteTableDef，handler 只依赖 folder_paths 与文件系统。
+    # 这里统一挂进 ComfyUI 路由表（server.add_routes 会一并生成 /api 前缀副本）；
+    # 桌面壳离线服务复用同一批 handler，不经过 PromptServer。
+    from . import (gallery, gallery_lora, gallery_oss, bookmark, lora_tag, skill, llm, recipes,
+                   video_gen, image_gen_files, model_hub, backyard)
 
-    # Import LoRA tagging module (gallery leaf-dir batch captioning; depends on gallery + llm)
-    from . import lora_tag
-
-    # Import bookmark module (local / Civitai bookmark routes; depends on gallery helpers)
-    from . import bookmark
-
-    # gallery 系列模块自带 RouteTableDef，这里统一挂进 ComfyUI 路由表（server.add_routes 会一并生成
-    # /api 前缀副本）。桌面壳离线浏览素材时复用同一批 handler，不经过 PromptServer。
     from server import PromptServer
-    for _mod in (gallery_lora, gallery_oss, gallery, bookmark):
+    for _mod in (gallery_lora, gallery_oss, gallery, bookmark, lora_tag, skill, llm, recipes,
+                 video_gen, image_gen_files, model_hub, backyard):
         for _route in _mod.routes:
             PromptServer.instance.routes.route(_route.method, _route.path, **_route.kwargs)(_route.handler)
-
-    # Import recipes module (depends on gallery helpers and bookmark download helpers)
-    from . import recipes
 
     # Import workflow module (workflow repair API; registers /neo_nodes/repair route)
     from . import workflow
 
-    # Import built-in image generation module (registers /neo_image_gen/* routes)
+    # Import built-in image generation module (registers /neo_image_gen/* generation routes)
     from . import image_gen
-
-    # Import video generation settings module (registers /neo_video_gen/* routes; 独立于生图设置文件)
-    from . import video_gen
 
     # Import voice generation module (CosyVoice 零样本克隆，独立 /neo_voice/* 路由与任务表)
     from . import voice_gen
@@ -136,21 +124,6 @@ if __package__ not in (None, ""):
         from . import studio  # noqa: F401
     except Exception as e:
         print(f"[NeoNodes] studio 路由注册失败（Neo Studio 整片生成不可用）: {e}")
-
-    # Neo Studio Backyard：/neo_backyard/* 路由（Gallery 预处理 + OSS 上传管理）；
-    # 独立页面 /neo-studio-backyard，配置存 configs/backyard_oss.json。
-    try:
-        from . import backyard  # noqa: F401
-    except Exception as e:
-        print(f"[NeoNodes] backyard 路由注册失败（Backyard 管理不可用）: {e}")
-
-    # 模型库（Comfy-Org 专区，HF / ModelScope 双源）：/neo_model_hub/* 路由（搜索 / 文件清单 / 断点续传下载）。
-    # 纯路由模块，无节点；配置 configs/model_hub.json，策展注册表 configs/model_registry.json。
-    try:
-        from . import model_hub  # noqa: F401
-    except Exception as e:
-        print(f"[Neo Model Hub] 模型库路由注册失败（模型搜索下载不可用）: {e}")
-
 
     # Neo Grid Split：宫格图拆分节点，一张分镜宫格图 → 各格 IMAGE（行优先）+ 原图内嵌提示词。
     # 复用 grid_split.py 纯像素核心；导入失败时优雅降级。

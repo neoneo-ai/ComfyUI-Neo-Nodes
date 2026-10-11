@@ -10,7 +10,6 @@ import os
 
 import folder_paths
 from aiohttp import web
-from server import PromptServer
 
 from .util import PrefixFilter
 
@@ -29,7 +28,7 @@ DEFAULT_VIDEO_SETTINGS = {
     "video_audio_vae": "",             # vae 相对名（H3 音频，独立 VAE）
 }
 
-routes = PromptServer.instance.routes
+routes = web.RouteTableDef()
 
 
 def get_video_settings() -> dict:

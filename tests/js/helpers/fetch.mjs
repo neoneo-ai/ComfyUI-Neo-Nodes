@@ -52,7 +52,7 @@ function makeReader(chunks) {
 
 function makeResponse({ status, bodyText, sseLines }) {
     const ok = status >= 200 && status < 300;
-    return {
+    const resp = {
         ok,
         status,
         async json() {
@@ -62,7 +62,9 @@ function makeResponse({ status, bodyText, sseLines }) {
             return bodyText;
         },
         body: sseLines ? { getReader: () => makeReader(sseLines) } : null,
+        clone: () => resp,   // 浏览器 Response 有 clone；桩照给，离线 409 探测要读副本
     };
+    return resp;
 }
 
 function normalize(spec) {

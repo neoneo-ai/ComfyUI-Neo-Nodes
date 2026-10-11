@@ -19,7 +19,8 @@ import zipfile
 from pathlib import Path
 import aiohttp
 from aiohttp import web
-from server import PromptServer
+
+routes = web.RouteTableDef()
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,15 @@ from .bookmark import (
 )
 from .gallery_lora import LORA_CACHE_DIR, _load_lora_index
 from .util import PrefixFilter, _extract_media_metadata, _json_safe
-from . import llm
 
 logger.addFilter(PrefixFilter())
+
+
+def _llm():
+    """LLM 惰性导入：壳侧只读写配方文件时不加载 LLM 依赖。"""
+    from . import llm
+    return llm
+
 
 CURRENT_DIR = Path(__file__).parent.resolve()
 RECIPES_DIR = CURRENT_DIR / "recipes"
@@ -353,7 +360,7 @@ def _append_samples(recipe_dir: Path, refs: list) -> tuple[int, int]:
 # API Routes
 # ---------------------------------------------------------------------------
 
-@PromptServer.instance.routes.post("/rs_recipes/list")
+@routes.post("/rs_recipes/list")
 async def rs_recipes_list(request):
     _ensure_dirs()
     recipes = []
@@ -371,7 +378,7 @@ async def rs_recipes_list(request):
     return web.json_response(recipes)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/load")
+@routes.post("/rs_recipes/load")
 async def rs_recipes_load(request):
     try:
         data = await request.json()
@@ -624,7 +631,7 @@ def _normalize_director_setup(data: dict, orig_to_copied: dict, existing_assets:
     return setup
 
 
-@PromptServer.instance.routes.post("/rs_recipes/save")
+@routes.post("/rs_recipes/save")
 async def rs_recipes_save(request):
     try:
         data = await request.json()
@@ -748,7 +755,7 @@ async def rs_recipes_save(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/append_results")
+@routes.post("/rs_recipes/append_results")
 async def rs_recipes_append_results(request):
     """把当前工作流最近一次执行的输出追加为配方示例结果（内容去重）。"""
     try:
@@ -837,7 +844,7 @@ def list_recipe_results(name: str) -> list:
     return out
 
 
-@PromptServer.instance.routes.post("/rs_recipes/add_results")
+@routes.post("/rs_recipes/add_results")
 async def rs_recipes_add_results(request):
     """把本次执行产物的路径记进配方 results（只记路径不复制文件，按 filename+subfolder 去重）。"""
     try:
@@ -854,7 +861,7 @@ async def rs_recipes_add_results(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/delete_sample")
+@routes.post("/rs_recipes/delete_sample")
 async def rs_recipes_delete_sample(request):
     try:
         data = await request.json()
@@ -888,7 +895,7 @@ async def rs_recipes_delete_sample(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/delete_result")
+@routes.post("/rs_recipes/delete_result")
 async def rs_recipes_delete_result(request):
     """从配方结果里摘掉一条，并删除 output 目录里的真实产物（连同同名 .txt 旁车）。"""
     try:
@@ -933,7 +940,7 @@ async def rs_recipes_delete_result(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/delete")
+@routes.post("/rs_recipes/delete")
 async def rs_recipes_delete(request):
     try:
         data = await request.json()
@@ -949,7 +956,7 @@ async def rs_recipes_delete(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/copy")
+@routes.post("/rs_recipes/copy")
 async def rs_recipes_copy(request):
     """复制配方（含资源/示例/director 分段）为新的 custom 配方，自动生成不冲突的名字。"""
     try:
@@ -1029,13 +1036,13 @@ _README_TEMPLATES = {
 def _readme_language(meta: dict) -> str:
     """Readme 语言：远程配置 readme_language（en/cn）优先，auto/缺省按配方名与提示词判断。"""
     try:
-        pref = str(llm._load_remote_config().get("readme_language", "auto")).lower()
+        pref = str(_llm()._load_remote_config().get("readme_language", "auto")).lower()
     except Exception:
         pref = "auto"
     if pref in ("en", "cn"):
         return pref
     text = f"{meta.get('name', '')} {meta.get('prompt', '')}"
-    return "cn" if llm._detect_language(text) == "Chinese" else "en"
+    return "cn" if _llm()._detect_language(text) == "Chinese" else "en"
 
 
 def _readme_text(meta: dict) -> str:
@@ -1072,7 +1079,7 @@ def _readme_text(meta: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-@PromptServer.instance.routes.get("/rs_recipes/export")
+@routes.get("/rs_recipes/export")
 async def rs_recipes_export(request):
     """把整个配方目录导出为 zip（顶层目录 = 配方名），包内附中文 Readme.txt（内容/来源/快速应用）。"""
     try:
@@ -1106,7 +1113,7 @@ async def rs_recipes_export(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.post("/rs_recipes/import")
+@routes.post("/rs_recipes/import")
 async def rs_recipes_import(request):
     """导入配方 zip（file 字段）：包内须含 recipe.json；重名自动 -copy/-2/…，落盘到 custom/。"""
     try:
@@ -1166,7 +1173,7 @@ async def rs_recipes_import(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-@PromptServer.instance.routes.get("/rs_recipes/asset")
+@routes.get("/rs_recipes/asset")
 async def rs_recipes_asset(request):
     recipe = request.rel_url.query.get("recipe", "")
     file = request.rel_url.query.get("file", "")
@@ -1192,7 +1199,7 @@ async def rs_recipes_asset(request):
         return web.Response(body=f.read(), content_type=content_type)
 
 
-@PromptServer.instance.routes.get("/rs_recipes/thumbnail")
+@routes.get("/rs_recipes/thumbnail")
 async def rs_recipes_thumbnail(request):
     """配方封面/网格缩略图：命中缓存直接回 JPEG，未命中现生成（gallery 的 PIL / ffmpeg 通道）。"""
     recipe = request.rel_url.query.get("recipe", "")
@@ -1221,7 +1228,7 @@ async def rs_recipes_thumbnail(request):
                             headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
-@PromptServer.instance.routes.get("/rs_recipes/workflow")
+@routes.get("/rs_recipes/workflow")
 async def rs_recipes_workflow(request):
     """Read the ComfyUI workflow/prompt embedded in a recipe sample's metadata."""
     recipe = request.rel_url.query.get("recipe", "")
@@ -1251,7 +1258,7 @@ async def rs_recipes_workflow(request):
 
 
 
-@PromptServer.instance.routes.post("/rs_recipes/send_to_workflow")
+@routes.post("/rs_recipes/send_to_workflow")
 async def rs_recipes_send_to_workflow(request):
     """Copy every asset of a recipe into Comfy's input dir, returning the resolved
     Comfy filename per asset so the frontend can fill load widgets in one pass."""
@@ -1467,7 +1474,7 @@ def _director_default_dims(segments, shared=None):
     return {"width": width, "height": height, "steps": steps}
 
 
-@PromptServer.instance.routes.get("/rs_recipes/director_spec")
+@routes.get("/rs_recipes/director_spec")
 async def rs_recipes_director_spec(request):
     """返回 video_director 配方的 {shared, segments}（首帧已解析为 input 名），供节点时间轴预览。"""
     name = (request.rel_url.query.get("name") or "").strip()
@@ -1550,7 +1557,7 @@ def _parse_segments(raw):
     return out
 
 
-@PromptServer.instance.routes.post("/rs_recipes/director_generate_segments")
+@routes.post("/rs_recipes/director_generate_segments")
 async def rs_recipes_director_generate_segments(request):
     """文字故事板一步到位：主题（idea）或已写好的故事脚本（script）→ LLM 直接输出分段 JSON
     （每段 prompt / duration_sec / storyboard_prompt）。角色参考图以多模态附上锁角色身份，
@@ -1577,7 +1584,7 @@ async def rs_recipes_director_generate_segments(request):
 
     char_names = [str(n).strip() for n in (data.get("characters") or []) if str(n or "").strip()]
     result = await asyncio.to_thread(
-        llm.run_llm_task, "director_story", "\n".join(parts),
+        _llm().run_llm_task, "director_story", "\n".join(parts),
         images=_collect_ref_bytes([{"filename": n} for n in dict.fromkeys(char_names)]) or None)
     if "error" in result:
         return web.json_response({"success": False, "error": result["error"]}, status=422)
@@ -1616,7 +1623,7 @@ def _llm_sse_response(gen, empty_msg):
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@PromptServer.instance.routes.post("/rs_recipes/director_optimize_prompts")
+@routes.post("/rs_recipes/director_optimize_prompts")
 async def rs_recipes_director_optimize_prompts(request):
     """把单段提示词按 H3 官方格式重写（段落结构 / 参考标签 / 时间戳）。前端逐段循环调用，一次一段；SSE 流式回传正文。"""
     try:
@@ -1653,10 +1660,10 @@ async def rs_recipes_director_optimize_prompts(request):
         parts.append("\n".join(ref_lines) + "\n")
     parts.append("该段现有提示词（重写为一条成品提示词）：\n" + prompt)
     images = _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None
-    return _llm_sse_response(llm.run_llm_task_stream("director_optimize", "\n".join(parts), images=images), "优化结果为空，请重试")
+    return _llm_sse_response(_llm().run_llm_task_stream("director_optimize", "\n".join(parts), images=images), "优化结果为空，请重试")
 
 
-@PromptServer.instance.routes.post("/rs_recipes/director_modify_segment")
+@routes.post("/rs_recipes/director_modify_segment")
 async def rs_recipes_director_modify_segment(request):
     """单段提示词修改：现有提示词 + 用户修改指令 → LLM 按 H3 格式输出修改后的成品提示词；SSE 流式回传。"""
     try:
@@ -1696,10 +1703,10 @@ async def rs_recipes_director_modify_segment(request):
     if instruction:
         parts.append("修改指令：\n" + instruction)
     images = _collect_ref_bytes([{"filename": n} for n in dict.fromkeys(image_names)]) or None
-    return _llm_sse_response(llm.run_llm_task_stream("director_modify_segment", "\n".join(parts), images=images), "修改结果为空，请重试")
+    return _llm_sse_response(_llm().run_llm_task_stream("director_modify_segment", "\n".join(parts), images=images), "修改结果为空，请重试")
 
 
-@PromptServer.instance.routes.post("/rs_recipes/grid_split")
+@routes.post("/rs_recipes/grid_split")
 async def rs_recipes_grid_split(request):
     """宫格图自动切分：均匀间隙检测（或手动行列）→ 各格落 input/，返回文件名与预览地址；
     另从原图元信息（ComfyUI 写进 PNG 的 API 格式 prompt）里提取该宫格图包含的提示词（`prompts`）。"""
@@ -1755,7 +1762,7 @@ async def rs_recipes_grid_split(request):
                               "panels": panels, "prompts": metadata_prompts(info)})
 
 
-@PromptServer.instance.routes.post("/rs_recipes/image_sizes")
+@routes.post("/rs_recipes/image_sizes")
 async def rs_recipes_image_sizes(request):
     """批量读图片尺寸（首帧比例一致性检查用）：input/ 优先、配方 assets 兜底，非图片/缺失跳过。"""
     try:
@@ -1791,7 +1798,7 @@ async def rs_recipes_image_sizes(request):
     return web.json_response({"success": True, "sizes": sizes})
 
 
-@PromptServer.instance.routes.post("/rs_recipes/director_describe_panel")
+@routes.post("/rs_recipes/director_describe_panel")
 async def rs_recipes_director_describe_panel(request):
     """宫格拆分后逐格 LLM 描述（单格）：一张分镜图（该段首帧，多模态）→ 一条 H3 i2v 成品提示词。
 
@@ -1834,7 +1841,7 @@ async def rs_recipes_director_describe_panel(request):
         head = f"上一段（第 {idx - 1} 段）已生成的提示词" if idx else "上一段已生成的提示词"
         lines.append(f"{head}，本段需与之承接、避免重复：\n{prev}")
     text = "\n".join(lines)
-    return _llm_sse_response(llm.run_llm_task_stream("director_panel_describe", text, images=_collect_ref_bytes([{"filename": name}]) or None), "描述结果为空，请重试")
+    return _llm_sse_response(_llm().run_llm_task_stream("director_panel_describe", text, images=_collect_ref_bytes([{"filename": name}]) or None), "描述结果为空，请重试")
 
 
 
@@ -1855,7 +1862,7 @@ def _normalize_loras(raw) -> list:
     return out
 
 
-@PromptServer.instance.routes.post("/rs_recipes/save_from_civitai")
+@routes.post("/rs_recipes/save_from_civitai")
 async def rs_recipes_save_from_civitai(request):
     """Create a user recipe from resolved Civitai metadata, downloading example media."""
     try:
@@ -1909,7 +1916,7 @@ async def rs_recipes_save_from_civitai(request):
     return web.json_response({"success": True, "name": name, "samples": samples})
 
 
-@PromptServer.instance.routes.get("/rs_recipes/cached_loras")
+@routes.get("/rs_recipes/cached_loras")
 async def rs_recipes_cached_loras(request):
     """List locally-cached Civitai LORAs (gallery lora cache) usable as recipe sources."""
     index = _load_lora_index()
@@ -1935,7 +1942,7 @@ async def rs_recipes_cached_loras(request):
     return web.json_response({"success": True, "items": items})
 
 
-@PromptServer.instance.routes.post("/rs_recipes/save_from_cached_lora")
+@routes.post("/rs_recipes/save_from_cached_lora")
 async def rs_recipes_save_from_cached_lora(request):
     """Create a user recipe from a locally-cached Civitai LORA (media + prompt from cache)."""
     try:
