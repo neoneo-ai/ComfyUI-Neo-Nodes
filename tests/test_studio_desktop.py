@@ -1,9 +1,9 @@
 """Neo Studio 桌面壳（neo_studio_app.py）单测：路径解析、探活、几何持久化、单实例。"""
 
+import inspect
 import json
 import logging
 import pathlib
-import socket
 import subprocess
 import sys
 import tempfile
@@ -132,7 +132,7 @@ class FreeComfyPortTests(unittest.TestCase):
             self.assertEqual(app.free_comfy_port(8188, 8191), 8188)
 
     def test_skips_busy_ports_and_the_shell_service(self):
-        # 8188 被残留进程占着、8189 是壳单实例锁、8191 是壳侧素材服务：只能用 8190
+        # 8188 被残留进程占着、8189 是别人的服务、8191 是壳侧素材服务：只能用 8190
         busy = {8188, 8189, 8191}
         with patch.object(app, "port_busy", lambda port: port in busy):
             self.assertEqual(app.free_comfy_port(8188, 8191), 8190)
@@ -229,6 +229,15 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(app.load_geometry(), {"width": 1440, "height": 900, "x": 100, "y": 60})
 
 
+    def test_destroyed_window_is_skipped(self):
+        # 窗口销毁后读属性会抛：几何直接跳过，绝不能把关窗后面的收尾截断
+        app.GEOMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        app.GEOMETRY_FILE.write_text(json.dumps({"width": 1440, "height": 900, "x": 100, "y": 60}),
+                                     encoding="utf-8")
+        app.save_geometry(_DeadWindow())
+        self.assertEqual(app.load_geometry(), {"width": 1440, "height": 900, "x": 100, "y": 60})
+
+
 class AlertTests(unittest.TestCase):
     def test_alert_uses_message_box(self):
         calls = []
@@ -289,13 +298,31 @@ class ShellLogTests(unittest.TestCase):
 
 
 class SingletonTests(unittest.TestCase):
+    """单实例锁是命名互斥体：句柄活着 = 锁被占，CloseHandle = 释放。测试用假 kernel32。"""
+    class _K32:
+        def __init__(self):
+            self.names = {}
+            self.last = 0
+
+        def CreateMutexW(self, sec, owner, name):
+            if name in self.names:
+                self.last = app.ERROR_ALREADY_EXISTS
+                return 7
+            h = len(self.names) + 100
+            self.names[name] = h
+            self.last = 0
+            return h
+
+        def CloseHandle(self, h):
+            self.names = {n: v for n, v in self.names.items() if v != h}
+            return True
+
+        def GetLastError(self):
+            return self.last
+
     def setUp(self):
-        # 真实壳窗口正占着 8189 时这两条会假失败：单实例锁换成临时空闲端口
-        probe = socket.socket()
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-        patcher = patch.object(app, "SINGLETON_PORT", port)
+        self.k32 = self._K32()
+        patcher = patch.object(app, "k32", self.k32)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -303,14 +330,20 @@ class SingletonTests(unittest.TestCase):
         first = app.singleton()
         self.assertIsNotNone(first)
         self.assertIsNone(app.singleton())
-        first.close()
+        app.k32.CloseHandle(first)
 
-    def test_port_released_after_close(self):
+    def test_lock_released_after_close(self):
         first = app.singleton()
-        first.close()
+        app.k32.CloseHandle(first)
         second = app.singleton()
         self.assertIsNotNone(second)
-        second.close()
+        app.k32.CloseHandle(second)
+
+    def test_singleton_takes_no_port(self):
+        # 单实例锁不许再占 8189：那个监听在 netstat 里像第二路 ComfyUI，用户会读成「起了两个端口」
+        src = inspect.getsource(app.singleton)
+        self.assertNotIn("bind", src)
+        self.assertIn("CreateMutexW", src)
 
 
 class _Event:
@@ -325,10 +358,24 @@ class _Event:
 
 def _fake_window():
     # 带几何值：关窗处理器里的 save_geometry 要读 width/height/x/y；loaded 处理器要记当前页面
-    return SimpleNamespace(events=SimpleNamespace(closing=_Event(), loaded=_Event()),
+    return SimpleNamespace(events=SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event()),
                            evaluate_js=MagicMock(), load_url=MagicMock(),
                            get_current_url=lambda: "http://127.0.0.1:8188/neo-studio",
                            width=1200, height=800, x=100, y=100)
+
+
+class _DeadWindow:
+    """窗口已销毁：读几何属性直接抛。用户现场就是它把关窗收尾整截断的。"""
+
+    def __init__(self):
+        self.events = SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event())
+        self.evaluate_js = MagicMock()
+        self.load_url = MagicMock()
+        self.get_current_url = lambda: "http://127.0.0.1:8188/neo-studio"
+
+    @property
+    def width(self):
+        raise RuntimeError("窗口已销毁")
 
 
 def _fake_webview(create_window, start=None):
@@ -343,6 +390,12 @@ def _fake_shell_server(port=8191):
 
 
 class StudioShellTests(unittest.TestCase):
+    def setUp(self):
+        # 假 pid 的关窗记录不能写进真实壳日志 tmp/studio_shell.log
+        patcher = patch.object(app, "log_line", lambda text: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_go_studio_loads_studio_url(self):
         loader = MagicMock()
         rearm = MagicMock()
@@ -461,12 +514,13 @@ class StudioShellTests(unittest.TestCase):
         self.assertNotIn("权限", "".join(logs))
 
     def test_close_kills_only_the_shell_spawned_process(self):
-        # 关窗只认自己那份 Popen 句柄：不扫端口，扫监听者会在关窗路上误杀抢端口的残留进程
+        # 关窗只认自己那份 PID：不扫端口，扫监听者会在关窗路上误杀抢端口的残留进程
         touched, flags = [], {"starting": True}
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=lambda timeout=None: 0)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
         with patch.object(app, "port_owner", lambda port: touched.append(port) or 4321), \
              patch.object(app, "kill_pid", lambda pid: touched.append(pid) or True), \
+             patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(app, "log_line", lambda text: None):
             shell.comfy_close()
         comfy.terminate.assert_called_once()
@@ -474,15 +528,27 @@ class StudioShellTests(unittest.TestCase):
         self.assertFalse(flags["starting"], "关窗收掉启动中")
 
     def test_close_falls_back_to_its_own_pid_when_the_child_wont_exit(self):
-        # TerminateProcess 是异步的：等不到退出就按自己的 PID 兜底，范围不外扩
+        # TerminateProcess 是异步的：按 PID 等不到退出就兜底强杀，范围不外扩。
+        # 判活不能用 Popen.poll() —— 子进程句柄被回收后它会谎报「已退出」，兜底整条失效
         kills = []
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(),
-                                wait=MagicMock(side_effect=subprocess.TimeoutExpired("c", 5)))
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), poll=lambda: 0)
         shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
-        with patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
+        with patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
+             patch.object(app.time, "sleep", lambda s: None), \
              patch.object(app, "log_line", lambda text: None):
             shell.comfy_close()
         self.assertEqual(kills, [1234])
+
+    def test_close_is_idempotent(self):
+        # closing、closed、退出兜底三处都会调它：只带走一次
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(app, "log_line", lambda text: None):
+            shell.comfy_close()
+            shell.comfy_close()
+        comfy.terminate.assert_called_once()
 
     def test_close_leaves_external_comfy_alone(self):
         # 用户自己启动的 ComfyUI 没有壳的句柄：关窗完全不动，避免误杀
@@ -500,12 +566,33 @@ class StudioShellTests(unittest.TestCase):
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "port_busy", lambda port: False), \
              patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "log_line", lambda text: None):
             state = shell.comfy_start()
         self.assertIs(shell.comfy, spawned)
         self.assertEqual((state["pid"], state["running"], state["ready"]), (9999, False, False))
+
+    def test_start_attaches_when_port_busy(self):
+        # 端口上已有一路 ComfyUI（插件没加载时探测会失败，壳别上当）：只附着，不在 8189 拉第二路
+        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", None, 8188, pathlib.Path("root"))
+        spawned = []
+        logs = []
+        no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
+        with patch.object(app, "port_busy", lambda port: True), \
+             patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
+             patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: 4321), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app.threading, "Thread", no_thread), \
+             patch.object(app, "log_line", lambda text: logs.append(text)):
+            state = shell.comfy_start()
+        self.assertEqual(spawned, [], "端口已有人监听就不许拉第二路")
+        self.assertIsNone(shell.comfy, "附着：壳没有句柄，关窗谁都不碰")
+        self.assertEqual(state["pid"], 4321, "状态报端口上那路外部 ComfyUI")
+        self.assertIn("comfy attach port=8188", logs)
 
     def test_stop_pulls_window_back_to_offline_gallery(self):
         loader = MagicMock()
@@ -532,6 +619,7 @@ class StudioShellTests(unittest.TestCase):
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "port_busy", lambda port: False), \
              patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "log_line", lambda text: None), \
@@ -555,6 +643,7 @@ class StudioShellTests(unittest.TestCase):
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "port_busy", lambda port: True), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -587,6 +676,10 @@ class MainWindowTests(unittest.TestCase):
         # 关窗会落几何与启动日志：测试里全指到临时目录，别写进真实的 configs / tmp
         app.SHELL_LOG = pathlib.Path(self._tmp.name) / "studio_shell.log"
         app.GEOMETRY_FILE = pathlib.Path(self._tmp.name) / "studio_window.json"
+        self.port_busy = False   # 默认端口空闲 = 冷启动；热启动的测试自己置 True
+        patcher = patch.object(app, "port_busy", lambda port: self.port_busy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         app.SHELL_LOG = self._log
@@ -597,6 +690,7 @@ class MainWindowTests(unittest.TestCase):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         touched = []
+        self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
@@ -620,6 +714,7 @@ class MainWindowTests(unittest.TestCase):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         fake = _fake_webview(cw)
+        self.port_busy = True
         with patch.object(app, "webview", fake), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
@@ -634,13 +729,21 @@ class MainWindowTests(unittest.TestCase):
     def test_cold_start_loads_offline_gallery(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
-        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=lambda timeout=None: 0)
-        with patch.object(app, "webview", _fake_webview(cw)), \
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        # webview.start 阻塞到窗口关闭：这里在 start 里触发关窗事件，顺带记下开窗时的标记
+        opened = {}
+
+        def start(*a, **k):
+            opened.update(cw.call_args.kwargs["js_api"].flags)
+            window.events.closing.handlers[0]()
+
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
         # 冷启动：窗口直接进壳侧只读服务的离线素材页，就绪后由后台线程整页跳到完整 Studio
@@ -648,14 +751,48 @@ class MainWindowTests(unittest.TestCase):
         self.assertNotIn("html", cw.call_args.kwargs)
         self.assertEqual(cw.call_args.kwargs["js_api"].offline_url, "http://127.0.0.1:8191/neo-studio")
         # 壳侧只读服务与 js_api 共用启动中标记：窗口第一次 /neo_studio/version 就是「启动中」
-        self.assertTrue(cw.call_args.kwargs["js_api"].flags["starting"])
+        self.assertTrue(opened["starting"], "开窗时报启动中")
         self.assertIs(cw.call_args.kwargs["js_api"].comfy, comfy)
-        # 关窗带走壳自己拉起的这路：拉起阶段不碰它，关窗才 terminate
+        # 关窗带走壳自己拉起的这路：拉起阶段不碰它，关窗才 terminate（退出兜底不重复杀）
         self.assertEqual(len(window.events.closing.handlers), 1)
-        comfy.terminate.assert_not_called()
-        window.events.closing.handlers[0]()
         comfy.terminate.assert_called_once()
         self.assertFalse(cw.call_args.kwargs["js_api"].flags["starting"], "关窗收掉启动中")
+
+    def test_close_chain_kills_comfy_when_geometry_save_fails(self):
+        # 用户现场：窗口已销毁，读几何属性抛异常。收尾顺序必须是先带走 ComfyUI，
+        # 否则这条链在第一步就断，进程变孤儿占着端口
+        window = _DeadWindow()
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        start = lambda *a, **k: window.events.closing.handlers[0]()
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        comfy.terminate.assert_called_once()
+        self.assertFalse(app.GEOMETRY_FILE.exists(), "读不到几何就不写文件")
+
+    def test_exit_kills_comfy_when_no_close_event_fires(self):
+        # destroy / 后端直接销毁窗口时 closing 可能根本不触发：进程退出前必须收掉壳拉起的 ComfyUI
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock())
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "pid_alive", lambda pid: False), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(len(window.events.closing.handlers), 1)
+        comfy.terminate.assert_called_once()
 
     def test_cold_start_without_shell_service_falls_back_to_splash(self):
         window = _fake_window()
@@ -667,6 +804,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
         # 壳侧服务起不来（端口全被占）才退回启动页
@@ -678,6 +816,7 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         start = MagicMock()
         set_id = MagicMock()
+        self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
@@ -697,6 +836,7 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         start = MagicMock()
         set_id = MagicMock()
+        self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
@@ -709,6 +849,45 @@ class MainWindowTests(unittest.TestCase):
         # 缺 .ico 时传 None，让 pywebview 回退到 pythonw 自己的图标，也不设 AppUserModelID
         self.assertIsNone(start.call_args.kwargs["icon"])
         set_id.assert_not_called()
+
+    def test_busy_port_never_spawns_second_comfy(self):
+        # 用户现场：8188 已有一路 ComfyUI，但它的 /neo_studio/version 探不到（插件没加载或还在导入
+        # 自定义节点）。壳必须附着，不能跑到 8189 拉第二路 —— 关窗只带走自己那路，8188 还剩着
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        start = MagicMock()
+        spawned = []
+        self.port_busy = True
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
+             patch.object(app, "port_owner", lambda port: 4321), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(spawned, [], "端口上已有人监听就不许拉第二路")
+        self.assertIsNone(cw.call_args.kwargs["js_api"].comfy, "附着：壳没有句柄，关窗谁都不碰")
+        self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8191/neo-studio", "Studio 路由没就绪先进离线页")
+        self.assertIsNotNone(start.call_args[0][0], "附着的那路就绪后由后台线程跳过去")
+
+    def test_busy_port_with_studio_route_attaches_directly(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        start = MagicMock()
+        spawned = []
+        self.port_busy = True
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(spawned, [], "热启动同样不许拉第二路")
+        self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8188/neo-studio")
+        self.assertIsNone(start.call_args[0][0], "已就绪不需要后台等待线程")
 
 if __name__ == "__main__":
     unittest.main()

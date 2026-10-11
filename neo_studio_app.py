@@ -66,8 +66,9 @@ except ImportError:
     webview = None
 
 DEFAULT_PORT = 8188
-SINGLETON_PORT = 8189   # 壳单实例：绑定失败说明已有 Neo Studio 窗口
-SHELL_PORT_OFFSET = 3   # 壳侧只读素材服务：避开 8188（ComfyUI）与 8189（单实例锁）
+SINGLETON_MUTEX = "Local\\Neo.Studio.SingleInstance"   # 单实例锁走命名互斥体，不占端口
+ERROR_ALREADY_EXISTS = 183
+SHELL_PORT_OFFSET = 3   # 壳侧只读素材服务：避开 ComfyUI 的 8188
 READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 
 POLL_INTERVAL = 2.0
@@ -85,6 +86,9 @@ k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 k32.TerminateProcess.restype = wintypes.BOOL
 k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
 k32.CloseHandle.argtypes = [wintypes.HANDLE]
+k32.CreateMutexW.restype = wintypes.HANDLE
+k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+k32.GetLastError.restype = wintypes.DWORD
 
 
 def alert(text: str) -> None:
@@ -159,7 +163,10 @@ def load_geometry() -> dict:
 
 
 def save_geometry(window) -> None:
-    geo = {"width": window.width, "height": window.height, "x": window.x, "y": window.y}
+    try:
+        geo = {"width": window.width, "height": window.height, "x": window.x, "y": window.y}
+    except Exception:
+        return   # 窗口已销毁读不到属性：几何之前存过，不能让它挡住关窗后面的收尾
     # 最小化关闭时位置是 -32000 系、尺寸是最小化态的假值（158x26），整份几何都不值得存
     if not on_screen(geo["x"], geo["y"], geo["width"], geo["height"]):
         return
@@ -270,6 +277,7 @@ class StudioShell:
         self.starting = comfy is not None
         self.loader = None
         self.rearm = None
+        self._closed = False
 
     @property
     def starting(self) -> bool:
@@ -346,19 +354,24 @@ class StudioShell:
     def comfy_close(self) -> None:
         """关窗时带走壳自己拉起的 ComfyUI。
 
-        只认自己那份 Popen 句柄：terminate 后等它退出，等不到就按自己的 PID 兜底终止。
+        只认自己那份 PID：terminate 后按进程真实存活状态等它退出，等不到就按 PID 兜底强杀。
+        不用 Popen.poll() 判活 —— 子进程句柄被回收后 poll 会谎报「已退出」，兜底整条会失效。
         不做 comfy_stop 的按端口扫荡 —— 关窗路上重扫监听者会误杀抢端口的残留进程；
         用户自己启动的那路没有句柄（self.comfy 是 None），这里完全不碰。"""
-        if self.comfy is None:
+        if self.comfy is None or self._closed:
             return
+        self._closed = True
         self.starting = False
+        pid = self.comfy.pid
         self.comfy.terminate()
-        try:
-            self.comfy.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            kill_pid(self.comfy.pid)
-            log_line(f"comfy close kill pid={self.comfy.pid}")
-        log_line("comfy closed with shell")
+        for _ in range(30):
+            if not pid_alive(pid):
+                break
+            time.sleep(0.1)
+        if pid_alive(pid):
+            kill_pid(pid)
+            log_line(f"comfy close kill pid={pid}")
+        log_line(f"comfy closed with shell pid={pid}")
 
     def comfy_start(self) -> dict:
         """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后整页跳回完整 Studio。"""
@@ -368,6 +381,14 @@ class StudioShell:
                 if self.comfy.poll() is not None:
                     break
                 time.sleep(0.5)
+        if port_busy(self.port):
+            # 端口上已有一路 ComfyUI 在跑：附着上去，绝不在旁边拉第二路
+            self.comfy = None
+            self.pid = 0
+            self.starting = False
+            log_line(f"comfy attach port={self.port}")
+            threading.Thread(target=self._jump_when_ready, daemon=True).start()
+            return self.comfy_state()
         self.port = free_comfy_port(self.port, self.shell_port)
         self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port)
         self.url = f"http://127.0.0.1:{self.port}/neo-studio"
@@ -388,16 +409,17 @@ def splash_html() -> str:
             '<div><h1>新影工坊 · Neo Studio</h1><p>正在启动 ComfyUI，请稍候…</p></div>')
 
 
-def singleton() -> socket.socket:
-    """已有壳窗口则返回 None：第二个实例直接退出，避免多窗口抢显存。"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", SINGLETON_PORT))
-        sock.listen(1)
-        return sock
-    except OSError:
-        sock.close()
+def singleton():
+    """已有壳窗口返回 None：第二个实例直接退出，避免多窗口抢显存。
+
+    用命名互斥体，不占端口 —— 在 127.0.0.1:8189 挂一个监听，netstat 里看着就像第二路 ComfyUI，
+    用户会读成「起了 8188 和 8189 两个端口，关窗只掉 8189」。句柄必须活到进程结束，锁才成立。
+    已存在的信号只能问 kernel32.GetLastError()：ctypes.get_last_error() 在这条调用上拿不到 183。"""
+    h = k32.CreateMutexW(None, False, SINGLETON_MUTEX)
+    if k32.GetLastError() == ERROR_ALREADY_EXISTS:
+        k32.CloseHandle(h)
         return None
+    return h or None
 
 
 def main() -> int:
@@ -432,7 +454,10 @@ def main() -> int:
 
     comfy = None
     comfy_port = args.port
-    if not probe(args.port):
+    # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
+    # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，壳就在旁边
+    # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
+    if not port_busy(args.port):
         comfy_port = free_comfy_port(args.port, shell_port)
         python = resolve_python(root, args.python)
         comfy = start_comfy(python, root, comfy_port)
@@ -444,7 +469,8 @@ def main() -> int:
     shell = StudioShell(url, comfy, comfy_port, root, args.python, offline_url, shell_port, flags)
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
-    start_url = url if comfy is None else offline_url
+    studio_ready = probe(comfy_port)
+    start_url = url if comfy is None and studio_ready else offline_url
     window = webview.create_window("新影工坊 · Neo Studio", start_url, **kw) if start_url \
         else webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
     shell.loader = window.load_url
@@ -460,13 +486,15 @@ def main() -> int:
 
     shell.rearm = arm_pill
     arm_pill()
-    # 关窗：存几何、收壳侧服务；壳自己拉起的 ComfyUI 跟着窗口一起走，用户自己起的那路不动
+    # 关窗：先带走壳自己拉起的 ComfyUI，再存几何、收壳侧服务。顺序反过来的话，窗口销毁后
+    # 读几何抛异常就会把这条收尾整截断，ComfyUI 变孤儿（closing 没走到时 closed 兜底）
     def on_closing() -> None:
+        shell.comfy_close()
         save_geometry(window)
         server.stop()
-        shell.comfy_close()
 
     window.events.closing += on_closing
+    window.events.closed += lambda: shell.comfy_close()
 
 
     def spawn_ready():
@@ -494,10 +522,17 @@ def main() -> int:
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
     log_line(f"webview start geo={geo} url={start_url or 'splash'}")
-    on_start = (lambda: threading.Thread(target=spawn_ready, daemon=True).start()) if comfy is not None else None
+    if comfy is not None:
+        on_start = lambda: threading.Thread(target=spawn_ready, daemon=True).start()
+    elif not studio_ready:
+        # 附着的那路还在导入自定义节点：就绪后跳过去，别停在离线页干等
+        on_start = lambda: threading.Thread(target=shell._jump_when_ready, daemon=True).start()
+    else:
+        on_start = None
     webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium",
                   debug=args.debug, icon=icon)
     log_line("webview end")
+    shell.comfy_close()   # 窗口循环结束就是要退进程：壳拉起的 ComfyUI 必须跟着走，别留孤儿
     return 0
 
 

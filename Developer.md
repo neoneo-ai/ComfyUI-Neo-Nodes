@@ -32,9 +32,17 @@
   `StudioShell` 与壳侧服务共用的一份 dict，`comfy_state` 与 `/neo_studio/version` 同时下发
   （pywebview 的 js_api 注入晚于页面加载，且 window.pywebview 先出现、方法由 finish.js 后填：壳侧 api
   一律等到要用的方法出现才接管，前端只靠版本快照就知道在启动中），这段时间只出
-  「ComfyUI 启动中…」，收起未运行横幅与启动入口。关窗（`events.closing`）只带走壳自己 `Popen`
-  拉起的那路：`terminate` 后等它退出，等不到按自己的 PID 兜底，不做顶栏胶囊那套按端口扫荡；
-  用户自己启动的 ComfyUI 没有句柄，完全不碰。壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗，以及页面
+  「ComfyUI 启动中…」，收起未运行横幅与启动入口。关窗只带走壳自己拉起的那路，收尾顺序是先杀进程、
+  再存几何、再收壳侧服务（窗口销毁后读几何属性会抛，顺序反了整条链断在半路、进程变孤儿）：`closing`
+  里第一件事是 `comfy_close`，`closed` 与进程退出前各兜一次（`destroy` 路径可能根本没有 `closing`）。
+  判活按 PID 问 psutil，不用 `Popen.poll()`（子进程句柄被回收后它会谎报「已退出」），`terminate`
+  后等不到退出就按自己的 PID 兜底强杀，不做顶栏胶囊那套按端口扫荡；
+  用户自己启动的 ComfyUI 没有句柄，完全不碰。起壳时「有没有 ComfyUI」只看端口有没有人监听：
+  `/neo_studio/version` 探不到（那路插件没加载、还在导入自定义节点）也只附着，不在旁边端口拉第二路，
+  顶栏「启动」按钮同样只附着。单实例锁是命名互斥体 `Local\Neo.Studio.SingleInstance`（已存在的信号问
+  `kernel32.GetLastError()`，`ctypes.get_last_error()` 在这条调用上拿不到 183），不占端口：占 8189 监听
+  在 netstat 里像第二路 ComfyUI，会被读成「起了 8188 和 8189 两个端口，关窗只掉一个」。
+  壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗，以及页面
   上报的前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB；壳拉起 ComfyUI 的完整
   输出在 `tmp/comfy_run.log`（Studio「设置 → 日志」读它）。
 
