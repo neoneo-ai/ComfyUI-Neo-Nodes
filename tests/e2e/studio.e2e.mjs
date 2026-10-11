@@ -31,6 +31,20 @@ function guard(t) {
     return true;
 }
 
+// 顶栏标题回主画布：壳窗口内整页跳转，不弹浏览器标签页
+test("Studio 顶栏标题点击后跳到主界面", async (t) => {
+    if (!guard(t)) return;
+    const page = await browser.newPage();
+    try {
+        await page.goto(STUDIO_URL, { waitUntil: "networkidle", timeout: 30000 });
+        await page.click(".ns-logo");
+        await page.waitForURL((u) => !u.pathname.includes("neo-studio"), { timeout: 15000 });
+        assert.ok(!page.url().includes("neo-studio"), `应跳到主界面（${page.url()}）`);
+    } finally {
+        await page.close();
+    }
+});
+
 test("Studio 页面：四视图加载、版本信息、导演生成面板", async (t) => {
     if (!guard(t)) return;
     const page = await browser.newPage();

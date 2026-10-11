@@ -1,8 +1,9 @@
 """Neo Studio 桌面壳（pywebview + WebView2）：拉起 ComfyUI，窗口加载 /neo-studio。
 
 与 neo-studio.ps1 同一套探活逻辑（GET /neo_studio/version 同时确认 ComfyUI 在跑与插件已加载），
-差别是窗口由壳托管：几何存 configs/studio_window.json，localStorage 落在 tmp/studio_profile
-（private_mode=False），_blank 链接交系统浏览器，blob 下载放行。
+差别是窗口由壳托管：几何存 configs/studio_window.json（屏幕外位置自动丢弃，回退默认），
+localStorage 落在 tmp/studio_profile
+（private_mode=False），_blank 链接在壳窗口内导航（主画布交接与返回 Studio 都不出窗口），blob 下载放行。
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
 tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲）。
 ComfyUI 冷启动时窗口先显示启动页，后台探活就绪后跳到 Studio，双击后立刻能看到窗口。
@@ -105,23 +106,83 @@ def wait_ready(port: int, seconds: float) -> bool:
     return probe(port)
 
 
+def on_screen(x: int, y: int, w: int, h: int) -> bool:
+    """位置必须与虚拟屏幕（所有显示器并集）相交。最小化时 Windows 报 -32000 系坐标，拔掉的外接屏同理，
+    这种位置存下来下次启动窗口就在屏幕外看不见。"""
+    u = ctypes.windll.user32
+    vx, vy = u.GetSystemMetrics(76), u.GetSystemMetrics(77)
+    vw, vh = u.GetSystemMetrics(78), u.GetSystemMetrics(79)
+    return x < vx + vw and x + w > vx and y < vy + vh and y + h > vy
+
+
 def load_geometry() -> dict:
     try:
         data = json.loads(GEOMETRY_FILE.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    return {key: int(data[key]) for key in ("width", "height", "x", "y") if isinstance(data.get(key), int)}
+    geo = {key: int(data[key]) for key in ("width", "height", "x", "y") if isinstance(data.get(key), int)}
+    if not on_screen(geo.get("x", 0), geo.get("y", 0), geo.get("width", 1440), geo.get("height", 900)):
+        geo.pop("x", None)
+        geo.pop("y", None)
+    return geo
 
 
 def save_geometry(window) -> None:
+    geo = {"width": window.width, "height": window.height, "x": window.x, "y": window.y}
+    # 最小化关闭时位置是 -32000 系、尺寸是最小化态的假值（158x26），整份几何都不值得存
+    if not on_screen(geo["x"], geo["y"], geo["width"], geo["height"]):
+        return
     GEOMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GEOMETRY_FILE.write_text(json.dumps({"width": window.width, "height": window.height,
-                                         "x": window.x, "y": window.y}), encoding="utf-8")
+    GEOMETRY_FILE.write_text(json.dumps(geo), encoding="utf-8")
 
 
 def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
     return subprocess.Popen([str(python), str(root / "main.py"), "--port", str(port)],
                             creationflags=NO_WINDOW)
+
+
+BACK_JS = """
+(() => {
+    const inject = () => {
+        if (location.pathname.startsWith('/neo-studio')) return;   // Studio 页顶栏已有回主画布的链接
+        if (document.getElementById('neo-studio-back')) return;
+        const b = document.createElement('button');
+        b.id = 'neo-studio-back';
+        b.textContent = '🎬 返回 Studio';
+        b.title = '返回 Neo Studio 主页';
+        b.style.cssText = 'position:fixed;top:56px;left:8px;z-index:100000;padding:5px 12px;'
+            + 'border-radius:14px;border:1px solid #4a4a4f;background:#26262a;color:#d7dae0;'
+            + 'font:12px system-ui;line-height:1;cursor:pointer';
+        b.onmouseenter = () => { b.style.background = '#333338'; };
+        b.onmouseleave = () => { b.style.background = '#26262a'; };
+        b.onclick = () => window.pywebview.api.go_studio();
+        document.body.appendChild(b);
+    };
+    // loaded 早于 pywebview api 注入完成：重试几轮再放弃，避免常驻轮询
+    let tries = 0;
+    const tick = () => {
+        if (window.pywebview && window.pywebview.api) inject();
+        else if (tries++ < 10) setTimeout(tick, 300);
+    };
+    tick();
+})();
+"""
+
+
+class StudioBack:
+    """壳注入页面的「返回 Studio」胶囊：主画布整页刷新后由 loaded 事件重新挂上。
+    js_api 对象只挂 url 和 load_url 绑定方法；挂窗口对象会让 pywebview 的 create_proxy
+    递归遍历 window.native.AccessibilityObject... 爆栈。"""
+
+    def __init__(self, url: str):
+        self.url = url
+        self.loader = None
+        self.rearm = None
+
+    def go_studio(self) -> None:
+        # load_url 会清空 events.loaded，跳完必须重新挂注入
+        self.loader(self.url)
+        self.rearm()
 
 
 def splash_html() -> str:
@@ -177,10 +238,19 @@ def main() -> int:
 
     geo = load_geometry()
     # 冷启动先出启动页（html），就绪后由后台线程跳到 Studio；已就绪则直接加载
+    back = StudioBack(url)
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
-             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600))
+             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=back)
     window = webview.create_window("新影工坊 · Neo Studio", url, **kw) if comfy is None \
         else webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
+    back.loader = window.load_url
+
+    def arm_pill() -> None:
+        # 主画布是整页刷新，返回入口只能由壳在每次页面加载后重新挂上
+        window.events.loaded += lambda: window.evaluate_js(BACK_JS)
+
+    back.rearm = arm_pill
+    arm_pill()
     window.events.closing += lambda: save_geometry(window)
     if comfy is not None and args.quit_comfy:
         window.events.closing += lambda: comfy.terminate()
@@ -200,9 +270,10 @@ def main() -> int:
     if icon:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
-    # 配方导出 / 模型库的 blob 下载要放行；「在主画布编辑」这类 _blank 链接交系统浏览器
+    # 配方导出 / 模型库的 blob 下载要放行；「⤒ 主画布编辑」与顶栏「🎬 新影工坊」这类 _blank 链接
+    # 留在壳窗口里：edgechromium 的 NewWindowRequested 走 load_url，交接与返回都不弹浏览器标签页
     webview.settings["ALLOW_DOWNLOADS"] = True
-    webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+    webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
     log_line(f"webview start geo={geo}")

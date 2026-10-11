@@ -228,7 +228,9 @@ async def director_cancel_route(request):
 @PromptServer.instance.routes.get("/neo-studio")
 async def studio_page_route(request):
     """Neo Studio 独立页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。"""
-    return web.FileResponse(Path(__file__).parent / "web" / "studio" / "index.html")
+    resp = web.FileResponse(Path(__file__).parent / "web" / "studio" / "index.html")
+    resp.headers["Cache-Control"] = "no-cache"   # 壳窗口会缓存整页，改过的顶栏要能立刻生效
+    return resp
 
 
 @PromptServer.instance.routes.get("/neo_studio/version")

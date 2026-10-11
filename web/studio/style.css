@@ -22,7 +22,8 @@ body {
     border-bottom: 1px solid #333;
     flex: none;
 }
-.ns-logo { font-weight: 700; font-size: 15px; color: #fff; white-space: nowrap; }
+.ns-logo { font-weight: 700; font-size: 15px; color: #fff; white-space: nowrap; text-decoration: none; }
+.ns-logo:hover { color: #7aa2ff; }
 .ns-tabs { display: flex; gap: 4px; height: 100%; }
 .ns-tabs a {
     display: flex;

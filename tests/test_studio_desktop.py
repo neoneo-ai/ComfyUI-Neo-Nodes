@@ -147,6 +147,22 @@ class GeometryTests(unittest.TestCase):
         app.GEOMETRY_FILE.write_text(json.dumps({"width": 1200, "x": "bad"}), encoding="utf-8")
         self.assertEqual(app.load_geometry(), {"width": 1200})
 
+    def test_offscreen_position_is_dropped_on_load(self):
+        # 最小化时保存的 -32000 系坐标：下次启动窗口在屏幕外看不见，位置丢弃回退默认
+        app.GEOMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        app.GEOMETRY_FILE.write_text(json.dumps({"width": 900, "height": 600, "x": -21332, "y": -21332}),
+                                     encoding="utf-8")
+        self.assertEqual(app.load_geometry(), {"width": 900, "height": 600})
+
+    def test_minimized_geometry_is_not_saved(self):
+        # 最小化关闭：位置 -32000 系、尺寸是最小化态假值，整份几何跳过，保留上次的好值
+        app.GEOMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        app.GEOMETRY_FILE.write_text(json.dumps({"width": 1440, "height": 900, "x": 100, "y": 60}),
+                                     encoding="utf-8")
+        window = SimpleNamespace(width=158, height=26, x=-21332, y=-21332)
+        app.save_geometry(window)
+        self.assertEqual(app.load_geometry(), {"width": 1440, "height": 900, "x": 100, "y": 60})
+
 
 class AlertTests(unittest.TestCase):
     def test_alert_uses_message_box(self):
@@ -215,12 +231,51 @@ class _Event:
 
 
 def _fake_window():
-    return SimpleNamespace(events=SimpleNamespace(closing=_Event()))
+    return SimpleNamespace(events=SimpleNamespace(closing=_Event(), loaded=_Event()),
+                           evaluate_js=MagicMock(), load_url=MagicMock())
 
 
 def _fake_webview(create_window, start=None):
     return SimpleNamespace(create_window=create_window, settings={},
                            start=start or (lambda *a, **k: None))
+
+class StudioBackTests(unittest.TestCase):
+    def test_go_studio_loads_studio_url(self):
+        loader = MagicMock()
+        rearm = MagicMock()
+        back = app.StudioBack("http://127.0.0.1:8188/neo-studio")
+        back.loader = loader
+        back.rearm = rearm
+        back.go_studio()
+        loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
+        rearm.assert_called_once_with()
+
+    def test_back_js_skips_studio_page(self):
+        # Studio 页顶栏已有回主画布的链接，胶囊只给主画布和启动页用
+        self.assertIn("neo-studio-back", app.BACK_JS)
+        self.assertIn("go_studio", app.BACK_JS)
+        self.assertIn("/neo-studio", app.BACK_JS)
+
+    def test_pill_is_reinjected_after_every_page_load(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 主画布整页刷新后由 loaded 事件重新注入，返回入口不会随刷新消失
+        self.assertEqual(len(window.events.loaded.handlers), 1)
+        window.events.loaded.handlers[0]()
+        window.evaluate_js.assert_called_once_with(app.BACK_JS)
+        # js_api 只挂 load_url 绑定方法，不挂窗口对象（挂窗口会让 create_proxy 爆栈）
+        api = cw.call_args.kwargs["js_api"]
+        self.assertIs(api.loader, window.load_url)
+        # load_url 会清空 events.loaded，返回后 rearm 重新挂上，胶囊不会永久消失
+        api.rearm()
+        self.assertEqual(len(window.events.loaded.handlers), 2)
+        window.events.loaded.handlers[1]()
+        self.assertEqual(window.evaluate_js.call_count, 2)
 
 
 class MainWindowTests(unittest.TestCase):
@@ -245,6 +300,19 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8188/neo-studio")
         self.assertNotIn("html", cw.call_args.kwargs)
         self.assertEqual(len(window.events.closing.handlers), 1)  # 只有 save_geometry
+
+    def test_links_stay_in_shell_window(self):
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        fake = _fake_webview(cw)
+        with patch.object(app, "webview", fake), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        # 「⤒ 主画布编辑」与顶栏「🎬 新影工坊」的 _blank 链接留在壳窗口内导航；blob 下载仍放行
+        self.assertFalse(fake.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"])
+        self.assertTrue(fake.settings["ALLOW_DOWNLOADS"])
 
     def test_cold_start_shows_splash_then_loads(self):
         window = _fake_window()

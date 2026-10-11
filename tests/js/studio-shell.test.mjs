@@ -2,7 +2,12 @@
 // 全壳装配（import-map + 真实模块图）走 tests/e2e/studio.e2e.mjs，这里只测 shim 单元。
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resetEnv, flush } from "./setup.mjs";
+
+const webDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web");
 
 class FakeWebSocket {
     constructor(url) {
@@ -71,5 +76,16 @@ test("app shim：扩展收集与 setup、settings 持久化、toast 落 DOM", as
     assert.deepEqual(appMod.app.canvas.selected_nodes, {});
     assert.deepEqual(appMod.app.graph._nodes, []);
     assert.equal(appMod.app.graph.getNodeById(1), null);
+});
+
+test("顶栏标题是回主画布的链接（壳窗口内跳转，不弹标签页）", async () => {
+    const html = fs.readFileSync(path.join(webDir, "studio", "index.html"), "utf8");
+    const logo = html.match(/<a class="ns-logo" href="([^"]+)" title="([^"]+)">/);
+    assert.ok(logo, "顶栏标题应为可点击链接");
+    assert.equal(logo[1], "/", "应指向主界面");
+    assert.match(logo[2], /主画布|主界面/, "应有返回提示");
+    const css = fs.readFileSync(path.join(webDir, "studio", "style.css"), "utf8");
+    assert.match(css, /\.ns-logo \{[^}]*text-decoration: none/, "链接不应带下划线");
+    assert.match(css, /\.ns-logo:hover/, "应有 hover 反馈");
 });
 

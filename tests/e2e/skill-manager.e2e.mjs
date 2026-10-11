@@ -227,14 +227,33 @@ test("内嵌工作流编辑：展开工作流区直接挂画布（LoRA 槽位按
     }
 });
 
+// 左列表是手风琴，首屏只渲染展开组。首行可能是没有 workflow.json 的音频技能：工作流区渲染成 0x0，
+// 点头部点不到。挑一个 workflow.json 非空的生图技能，工作流区才有头部可点。
+async function pickWfSkill(page) {
+    const label = await page.evaluate(async () => {
+        const get = async (url) => (await (await fetch(url)).json());
+        const list = await get("/api/rs_prompts/skills");
+        for (const s of list) {
+            if (!s.gen_image || s.category !== "image_gen") continue;
+            const wf = await get(`/api/neo_image_gen/skill_workflow?skill_id=${encodeURIComponent(s.id)}`);
+            if (wf && Object.keys(wf).length) return s.cn_name || s.name || s.id;
+        }
+        return null;
+    });
+    const row = label
+        ? page.locator(".rs-skill-manager .rs-skill-picker-item", { hasText: label }).first()
+        : page.locator(".rs-skill-manager .rs-skill-picker-item").first();
+    await row.click();
+    await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+}
+
 test("内嵌工作流编辑：combo 下拉浮在技能弹窗之上并可点选（125% 缩放）", async (t) => {
     if (!browser) { t.skip(skipReason || "前置条件不满足"); return; }
     const { page, errors } = await openManagerPage(1.25);
     const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
     if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
     try {
-        await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
-        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+        await pickWfSkill(page);
         await page.click(".rs-skill-workflow-head .rs-form-label");   // 默认折叠：展开才挂画布
         await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
         await page.waitForTimeout(1200);
@@ -290,8 +309,7 @@ test("内嵌工作流编辑：双击空白开搜索框，中文输入 + IME 指�
     const hasLiteGraph = await page.evaluate(() => !!window.LGraph && !!window.LGraphCanvas);
     if (!hasLiteGraph) { await page.close(); t.skip("前端未暴露 window.LGraph / LGraphCanvas，编辑模式按设计隐藏"); return; }
     try {
-        await page.locator(".rs-skill-manager .rs-skill-picker-item").first().click();
-        await page.waitForSelector(".rs-skill-workflow", { timeout: 20000 });
+        await pickWfSkill(page);
         await page.click(".rs-skill-workflow-head .rs-form-label");
         await page.waitForSelector(".rs-wf-editor-canvas-box canvas.rs-wf-editor-canvas", { timeout: 20000 });
         await page.waitForTimeout(1200);

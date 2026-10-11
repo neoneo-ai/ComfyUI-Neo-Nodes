@@ -8,8 +8,10 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   window (`neo_studio_app.py`, optional `pywebview` extra); the shell runs under `pythonw`, its startup trace
   goes to `tmp/studio_shell.log` (which also keeps the pywebview logger off the missing `stderr` that aborts
   window creation); messages go to a system dialog, ComfyUI is spawned
-  without a child console, window geometry is persisted in `configs/studio_window.json`, Studio `localStorage`
-  survives restarts, external links go to the system browser, blob downloads are allowed, and a second launch
+  without a child console, window geometry is persisted in `configs/studio_window.json` (a position saved while the window was minimized
+  is off-screen and is dropped, so the window is not restored invisible), Studio `localStorage`
+  survives restarts, links navigate inside the shell window (`OPEN_EXTERNAL_LINKS_IN_BROWSER = False`, so the
+  skill canvas handoff and the top-menu Studio link stay in-window), blob downloads are allowed, and a second launch
   exits instead of opening a second window. When ComfyUI is not running, the window opens on a splash page
   first and jumps to Studio once the shell's readiness poll succeeds, so the window appears immediately
   instead of after the cold-start wait. Closing the shell window stops the ComfyUI the shell spawned
@@ -21,6 +23,11 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   build `base_dirs()` walks up to the plugin folder, so `configs/studio_window.json` and `tmp/studio_profile`
   stay in the plugin folder. The exe is a local build artifact (`pyinstaller` is a build-time dep, not in
   `requirements.txt`) and never ships in the Registry; `neo-studio-app.vbs` stays the plugin entry point.
+- Studio header title is a link back to the main canvas (`<a class="ns-logo" href="/">`), and the shell injects a
+  floating "🎬 返回 Studio" pill on every non-Studio page load, so returning from the full-page main canvas reload
+  works in the same window. `/neo-studio` is served with `Cache-Control: no-cache` so shell header edits reach the
+  window. The shell `js_api` carries only `url` and the `load_url` bound method: holding the pywebview window object
+  makes `create_proxy` recurse through `window.native.AccessibilityObject...` and blow the stack.
 - Studio Settings gains a Log tab (`GET /neo_studio/log` reads the `app.logger` ring buffer), so the ComfyUI
   console is visible without a console window. The panel fills the main area, and auto-scrolls only while pinned
   to the bottom, so scrolling up to read survives the 2s poll.
