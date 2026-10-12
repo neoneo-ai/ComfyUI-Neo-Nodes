@@ -35,6 +35,8 @@ python -m pytest tests -v
   探活为准 / 外部按端口 `netstat` 找 PID / 无监听者）、`comfy_stop()`（`terminate()` 后按端口反复 `kill_pid()`
   到没人监听；`kill_pid()` 用 `PROCESS_TERMINATE` 并显式声明 `OpenProcess` 的 `restype`，否则 64 位句柄被截断、
   杀不动还静默失败）、`comfy_start()`（等旧进程退出再 `start_comfy`）、`pid_alive()`、关窗只存几何。
+  窗口先出的启动序列：开窗只解包与建窗口（启动页 / 引导页），自检、壳侧服务、拉起 ComfyUI 在后台线程走完，
+  落点分别是完整 Studio、离线素材页与停在启动页；测试里后台线程同步跑完（`_SyncThread`），落点才断言得准。
 - 启动设置（`launcher_api` / `launcher_config.json`）：插件目录不可写时状态目录退回 `%APPDATA%/NeoStudio`；
   `startup_state()` 的五种状态（就绪 / 根目录无效 / 找不到 Python / 缺少插件依赖 / 插件安装失败）；
   配置读写往返与相对路径归一；
@@ -119,7 +121,7 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏胶囊可见并报运行状态（端口 + PID）、日志 tab 读到控制台内容、
   重开页面后 localStorage 保留；第二条用例在冷启动专用端口（`NEO_STUDIO_STOP_PORT`，默认 8190；设 `NEO_STUDIO_EXE`
   则改跑打包的 exe 时显式传 `--root`/`--python`，exe 落在任意目录推不出根目录）上点一下胶囊停掉壳拉起的 ComfyUI（端口探活失败），再点一下重新拉起，断言显示「启动中…」且就绪后
-  整页跳回完整 Studio（8188 上用户自己的服务绝不动）；第三条用例断言冷启动窗口直接开在壳侧只读服务的离线素材页
+  整页跳回完整 Studio（8188 上用户自己的服务绝不动）；第三条用例断言冷启动窗口先出启动页、随后落在壳侧只读服务的离线素材页
   （端口 +3，出横幅与缩略图、写操作 `409`），ComfyUI 就绪后跳到完整 Studio，停掉后窗口拉回离线页且无未捕获错误。
   **会弹真实窗口，默认 skip；启用：`NEO_STUDIO_APP=1`（前置：整合包 python 已装 `pywebview`，且没有别的
   Neo Studio 壳占着单实例端口 8189——已有壳在跑时新实例会直接退出）。**

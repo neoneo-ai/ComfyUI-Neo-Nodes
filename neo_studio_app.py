@@ -7,8 +7,9 @@ localStorage 落在 tmp/studio_profile
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
 tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲），
 ComfyUI 起不来时看 tmp/comfy_run.log（壳拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
-ComfyUI 冷启动时窗口直接进壳侧只读服务（neo_studio_server）的离线素材库，探活就绪后整页跳到
-完整 Studio；ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由壳回 409 offline。
+窗口先出（引导页 / 启动页），自检、壳侧只读服务、拉起 ComfyUI 都在后台线程走完，就绪后整页跳过去：
+ComfyUI 已在运行时进完整 Studio；冷启动进壳侧只读服务（neo_studio_server）的离线素材库；
+ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由壳回 409 offline。
 壳拉起 ComfyUI 的这段时间 starting 为真（comfy_state 与壳侧 /neo_studio/version 共用同一份标记，
 js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启动中…」，收起未运行横幅、
 启动按钮与「需要 ComfyUI」提示。
@@ -914,22 +915,20 @@ def main() -> int:
     # 根目录无效或解释器找不到：窗口先开在引导页补齐，选完再起服务、拉起 ComfyUI
     need_guide = root is None or not root_ok(root) or python is None
     plugin_dir = plugin_dir_for(root) if root is not None else PLUGIN_SOURCE_DIR
-    # 壳侧只读素材服务先起来：ComfyUI 没在跑时窗口里也是可浏览的 Neo Gallery
     # flags 由壳侧服务与 js_api 共用：拉起 ComfyUI 的那一刻起，页面的版本快照就是「启动中」
     # 插件缺失且自动安装失败：壳侧服务退回内置副本，素材库照旧离线可浏览
     serve_dir = plugin_dir if plugin_dir.is_dir() else PLUGIN_SOURCE_DIR
     flags = {"starting": False}
+    launcher = {"root": str(root or ""), "python": str(python or ""), "port": port,
+                "plugin_dir": str(plugin_dir), "state_dir": str(STATE),
+                "portable": IS_FROZEN, "state": ST_OK, "error": ""}
+    launcher_api: dict = {}   # 壳侧路由延迟取壳的方法：服务先起，壳的方法随后补上
     if need_guide:
         state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
                       if root is None or not root_ok(root)
                       else (ST_NO_PYTHON, "还没确定 Python 解释器"))
-    else:
-        state, msg = startup_state(root, python, plugin_dir)
-    launcher = {"root": str(root or ""), "python": str(python or ""), "port": port,
-                "plugin_dir": str(plugin_dir), "state_dir": str(STATE),
-                "portable": IS_FROZEN, "state": state, "error": msg}
-    launcher_api: dict = {}   # 壳侧路由延迟取壳的方法：服务先起，壳的方法随后补上
-    log_line(f"startup state={state} {msg}")
+        launcher.update(state=state, error=msg)
+        log_line(f"startup state={state} {msg}")
     # build_app 要把根目录加进 sys.path 才能 import folder_paths：根目录无效时装配必崩。
     # 引导页补完根目录后由 ensure_server 重取，服务才装配得起来。
     boot = {"root": root, "serve_dir": serve_dir}
@@ -967,24 +966,8 @@ def main() -> int:
         shell.offline_url = offline_url
         return True
 
-    if not need_guide:
-        start_server()
-    shell_port = server.bound
-
-    comfy = None
-    comfy_port = port
-    # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
-    # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，壳就在旁边
-    # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
-    if state == ST_OK and not port_busy(port):
-        comfy_port = free_comfy_port(port, shell_port)
-        comfy = start_comfy(python, root, comfy_port)
-        log_line(f"comfy spawn pid={comfy.pid} port={comfy_port}")
-    url = f"http://127.0.0.1:{comfy_port}/neo-studio"
-
-    # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后由后台线程跳过去
-    shell = StudioShell(url, comfy, comfy_port, root or Path(""), str(python or ""),
-                        offline_url, shell_port, flags, launcher)
+    shell = StudioShell(f"http://127.0.0.1:{port}/neo-studio", None, port, root or Path(""),
+                        str(python or ""), "", port + SHELL_PORT_OFFSET, flags, launcher)
     shell.ensure_server = ensure_server
     launcher_api.update(apply=shell.apply_launcher, install_plugin=shell.install_plugin,
                         install_deps=shell.install_deps, pick_root=shell.pick_root,
@@ -992,11 +975,9 @@ def main() -> int:
     geo = load_geometry()
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
-    studio_ready = probe(comfy_port)
-    start_url = "" if need_guide else (url if comfy is None and studio_ready else offline_url)
-    if start_url:
-        window = webview.create_window("新影工坊 · Neo Studio", start_url, **kw)
-    elif need_guide:
+    # 窗口先出：起解释器查依赖、装配壳侧服务、拉起 ComfyUI 全在后台线程走完。
+    # 引导页等用户补齐根目录与解释器，其余停在启动页，就绪后由后台线程整页跳过去。
+    if need_guide:
         window = webview.create_window("新影工坊 · Neo Studio", html=guide_html(launcher), **kw)
     else:
         window = webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
@@ -1045,16 +1026,43 @@ def main() -> int:
 
 
     def spawn_ready():
-        if wait_ready(comfy_port, READY_TIMEOUT):
+        if wait_ready(shell.port, READY_TIMEOUT):
             shell.starting = False   # 跳页前收掉「启动中」，新页面直接是完整 Studio
-            log_line(f"comfy ready jump {url}")
-            window.load_url(url)
+            log_line(f"comfy ready jump {shell.url}")
+            shell._goto(shell.url)
         else:
             shell.starting = False
             log_line("comfy not ready")
             alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，启动输出见 {COMFY_LOG}")
-            comfy.terminate()
+            shell.comfy_close()
             window.destroy()
+
+    def boot_sequence() -> None:
+        """窗口先出之后在后台走完的启动序列：自检 → 壳侧服务 → 拉起 ComfyUI → 把窗口指过去。"""
+        state, msg = startup_state(root, python, plugin_dir)
+        launcher.update(state=state, error=msg)
+        log_line(f"startup state={state} {msg}")
+        start_server()
+        shell.shell_port = server.bound
+        shell.offline_url = offline_url
+        # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
+        # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，壳就在旁边
+        # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
+        if state == ST_OK and not port_busy(port):
+            shell.port = free_comfy_port(port, shell.shell_port)
+            shell.comfy = start_comfy(python, root, shell.port)
+            shell.pid = shell.comfy.pid
+            shell.url = f"http://127.0.0.1:{shell.port}/neo-studio"
+            shell.starting = True
+            log_line(f"comfy spawn pid={shell.pid} port={shell.port}")
+        # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后整页跳过去
+        ready = shell.comfy is None and probe(shell.port)
+        shell._goto(shell.url if ready else offline_url)
+        if shell.comfy is not None:
+            spawn_ready()
+        elif not ready:
+            # 附着的那路还在导入自定义节点：就绪后跳过去，别停在离线页干等
+            shell._jump_when_ready()
 
     # 任务栏图标：pythonw 没有 AppUserModelID，任务栏按钮会与其他 pythonw 窗口合并成通用 Python 图标；
     # 显式设 ID 后 start(icon=...) 才落到壳自己的图标（edgechromium 后端读 _state['icon']）
@@ -1068,17 +1076,10 @@ def main() -> int:
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
-    log_line(f"webview start geo={geo} url={start_url or ('guide' if need_guide else 'splash')}")
+    log_line(f"webview start geo={geo} page={'guide' if need_guide else 'splash'}")
     purge_web_cache()   # 历史缓存里的旧插件 JS 会把模块图撕开，开窗口前清掉
-    if comfy is not None:
-        on_start = lambda: threading.Thread(target=spawn_ready, daemon=True).start()
-    elif need_guide:
-        on_start = None   # 引导页等用户补齐根目录/解释器，壳不自己拉进程
-    elif not studio_ready:
-        # 附着的那路还在导入自定义节点：就绪后跳过去，别停在离线页干等
-        on_start = lambda: threading.Thread(target=shell._jump_when_ready, daemon=True).start()
-    else:
-        on_start = None
+    on_start = None if need_guide else (lambda: threading.Thread(target=boot_sequence,
+                                                                 daemon=True).start())
     webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium",
                   debug=args.debug, icon=icon)
     log_line("webview end")

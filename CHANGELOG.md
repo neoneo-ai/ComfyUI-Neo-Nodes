@@ -12,9 +12,11 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   is off-screen and is dropped, so the window is not restored invisible), Studio `localStorage`
   survives restarts, links navigate inside the shell window (`OPEN_EXTERNAL_LINKS_IN_BROWSER = False`, so the
   skill canvas handoff and the top-menu Studio link stay in-window), blob downloads are allowed, and a second launch
-  exits instead of opening a second window. When ComfyUI is not running, the window opens on a splash page
-  first and jumps to Studio once the shell's readiness poll succeeds, so the window appears immediately
-  instead of after the cold-start wait. The shell is a launcher: closing the window saves geometry only and leaves
+  exits instead of opening a second window. The window is created before any startup work: the dependency
+  self-check, the shell-side read-only service and the ComfyUI spawn run on a background thread, and the window
+  is pointed at the offline gallery (full Studio when ComfyUI already answers, first-setup page when the root
+  and interpreter are unresolved) once they finish — the window appears immediately instead of after the
+  cold-start wait. The shell is a launcher: closing the window saves geometry only and leaves
   ComfyUI running. A top-bar `#ns-comfy` pill (shell `js_api` methods `comfy_state` / `comfy_stop` / `comfy_start`,
   polled every 5s) shows port, PID, who started ComfyUI and readiness: one click stops it (`terminate()`, then
   `port_owner()` + `kill_pid()` repeated until nobody listens — `kill_pid()` needs `PROCESS_TERMINATE` and an

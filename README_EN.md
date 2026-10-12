@@ -123,7 +123,10 @@ down the window opens straight on the offline library — directories, thumbnail
 and favorites all browse, the header shows a "ComfyUI not running" banner, and generation / tagging /
 Civitai requests come back as `409 offline` instead of pretending to succeed. Once ComfyUI answers, the
 window jumps to the full Studio at `http://127.0.0.1:8188/neo-studio`; stopping ComfyUI pulls it back to
-the offline library. The shell is a launcher: closing the window closes only the window.
+the offline library. The window is created before any of that work: the dependency self-check, the gallery
+service and the ComfyUI spawn run on a background thread, so it shows a splash page (the first-setup page
+when the root and interpreter are unresolved) and is pointed at the library or the full Studio once they
+finish. The shell is a launcher: closing the window closes only the window.
 The top bar is an action button plus a PID badge: "■ Stop kernel" while it runs, "▶ Start kernel"
 (violet) once it is down, "🚀 Starting…" (disabled) while the shell-spawned process waits for the port; the button
 keeps one color and only the stop icon is red; the badge
