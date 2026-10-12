@@ -38,8 +38,9 @@ python -m pytest tests -v
 - 启动设置（`launcher_api` / `launcher_config.json`）：插件目录不可写时状态目录退回 `%APPDATA%/NeoStudio`；
   `startup_state()` 的五种状态（就绪 / 根目录无效 / 找不到 Python / 缺少插件依赖 / 插件安装失败）；
   配置读写往返与相对路径归一；
-  根目录取用优先级 命令行 → 配置 → 插件同级；`ensure_plugin()` 只在插件缺失时装内置副本、带上
-  `requirements.txt`、绝不覆盖已有目录。
+  根目录取用优先级 命令行 → 配置 → 插件同级；`ensure_plugin()` 在插件缺失时装内置副本、带上
+  `requirements.txt`；exe 内置副本的版本比已装的那份新时覆盖更新（新副本先在状态目录拼好、用户数据目录整目录
+  并进去再换目录，目录被占用就跳过），源码运行与 git 检出的那份不覆盖。
 - 打包后的 exe（`tools\build_studio_exe.ps1` 产出 `tools/neo-studio.exe`）：起桩服务让壳认为已就绪，启动 exe 后
   `ExtractIconExW` 确认内嵌图标资源数为 1，`FindWindowW` 找到窗口，`WM_GETICON` 取到 24x24 图标（我们的 `.ico`；
   无 AppUserModelID 且不传 icon 的 pythonw 基线是 48x48 通用图标），`WM_CLOSE` 后退出码 0，

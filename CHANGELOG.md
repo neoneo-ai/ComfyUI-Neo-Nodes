@@ -38,7 +38,7 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   `%APPDATA%/NeoStudio` when the plugin folder is not writable. `tools/build_studio_exe.ps1` now embeds a copy of
   the plugin (`git ls-files -z` minus dev-only dirs, so user configs and API keys never ship) under
   `_MEIPASS/bundled/ComfyUI-Neo-Nodes`; `ensure_plugin()` installs it into `custom_nodes` when the plugin is
-  missing, requirements included, and never overwrites an existing folder. The tab shows the self-check state
+  missing, requirements included. The tab shows the self-check state
   (ok / bad root / missing python / missing dependencies / plugin install failed), with `安装依赖` when the
   target python lacks the plugin dependencies and `重试安装插件` when the bundled copy could not be installed.
 - First-run setup page: when the ComfyUI root cannot be inferred (or has no `main.py`), or no `python.exe` is
@@ -52,6 +52,19 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   assembled — pointing the service at the missing folder used to fail assembly with `FileNotFoundError` and leave
   only "service won't start" on the page. Empty path input no longer resolves to the relative `.`, which counts as
   a valid root when the shell runs from inside the ComfyUI folder.
+- Launcher tab in the full Studio page: the `启动设置` panel now reads and writes through the shell `js_api`
+  (`launcher_state` / `apply_launcher` / `install_plugin` / `install_deps`) instead of only the shell-side
+  `/neo_studio/launcher` route. That route is same-origin only on the shell service, so the tab used to vanish as
+  soon as ComfyUI was ready and the window jumped to the ComfyUI port. It stays hidden in a browser tab (no
+  bridge, no route). The bundled plugin copy now keeps `pyproject.toml`, so a plugin the exe installed reports
+  its version instead of `Neo-Nodes unknown`.
+- Bundled plugin update: `ensure_plugin()` now compares the bundled `pyproject.toml` version with the installed
+  copy's and replaces it when the bundled release is newer. The new copy is assembled in the shell state dir first,
+  the user data dirs (`configs/`, `data/`, `gallery/`, `locals/`, `prompts/`, `recipes/`, `skills/`, `tmp/`) are
+  merged into it, and only then is the installed folder swapped out — a locked folder (ComfyUI running) fails the
+  swap and keeps the old copy for the next launch. An installed copy without a version counts as oldest, so an
+  install from an older exe gets the version file. Source (dev) runs and git checkouts are never overwritten.
+
 - Shell-embedded read-only gallery service (`neo_studio_server.py`, ComfyUI port + 3): the gallery modules now
   carry their own `web.RouteTableDef` and `__init__.py` mounts them into `PromptServer.instance.routes`, so the
   same browsing handlers run with no ComfyUI runtime — the shell serves `/neo-studio`, the extension static files,

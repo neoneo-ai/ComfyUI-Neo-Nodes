@@ -24,7 +24,7 @@ $BundleDir = Join-Path $BuildDir ($BUNDLE_DIR -replace '/', '\')
 $EXCLUDES = @(
     '^build/', '^dist/', '^tools/', '^tests/', '^docs/', '^example_workflows/', '^assets/',
     '^__pycache__/', '^\.git/', '^node_modules/', '^\.github/', '^\.vscode/',
-    '^neo-studio-app\.vbs$', '^Neo-Studio\.spec$', '^pyproject\.toml$', '^\.gitignore$',
+    '^neo-studio-app\.vbs$', '^Neo-Studio\.spec$', '^\.gitignore$',
     '^pytest\.ini$', '^package(-lock)?\.json$', '^t\.log$'
 )
 

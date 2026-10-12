@@ -1280,13 +1280,14 @@ class StartupStateTests(unittest.TestCase):
         self.assertTrue((self.plugin / "requirements.txt").is_file())
 
     def test_existing_plugin_never_overwritten(self):
+        # 源码运行（开发模式）：内置副本就是开发中的插件目录本身，已装的那份原样保留
         self.plugin.mkdir(parents=True)
         marker = self.plugin / "user-file.txt"
         marker.write_text("keep", encoding="utf-8")
         ok, msg = app.ensure_plugin(self.plugin, self.source)
         self.assertTrue(ok)
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
-        self.assertFalse((self.plugin / "web").exists(), "已存在的插件目录一律不覆盖")
+        self.assertFalse((self.plugin / "web").exists(), "开发模式不覆盖已存在的插件目录")
 
     def test_unwritable_custom_nodes_reports_the_path(self):
         self.plugin.parent.write_text("x", encoding="utf-8")   # custom_nodes 位置被文件占住
@@ -1311,6 +1312,104 @@ class StartupStateTests(unittest.TestCase):
         res = app.install_deps(self.python, self.root / "nope")
         self.assertFalse(res["ok"])
         self.assertIn("requirements.txt", res["error"])
+
+
+class PluginUpdateTests(unittest.TestCase):
+    """exe 内置副本比 custom_nodes 里那份新时的覆盖更新；开发模式与 git 检出不碰。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = pathlib.Path(self.tmp.name)
+        self.plugin = self.base / "ComfyUI" / "custom_nodes" / "ComfyUI-Neo-Nodes"
+        self.source = self.base / "bundled" / "ComfyUI-Neo-Nodes"
+        (self.source / "web").mkdir(parents=True)
+        self.state = self.base / "state"
+        self.state.mkdir()
+        self.patcher = patch.object(app, "STATE", self.state)
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        self.tmp.cleanup()
+
+    def _bundle(self, version):
+        (self.source / "pyproject.toml").write_text(f'version = "{version}"\n', encoding="utf-8")
+
+    def _installed(self, version):
+        self.plugin.mkdir(parents=True, exist_ok=True)
+        if version:
+            (self.plugin / "pyproject.toml").write_text(f'version = "{version}"\n', encoding="utf-8")
+        (self.plugin / "old-code.js").write_text("stale", encoding="utf-8")
+        (self.plugin / "configs" / "skill_overrides").mkdir(parents=True, exist_ok=True)
+        (self.plugin / "configs" / "llm_providers.json").write_text("{}", encoding="utf-8")
+        custom = self.plugin / "skills" / "custom"
+        custom.mkdir(parents=True, exist_ok=True)
+        (custom / "mine.md").write_text("mine", encoding="utf-8")
+
+    def _frozen(self):
+        return patch.object(app, "IS_FROZEN", True)
+
+    def test_newer_bundled_release_replaces_the_copy(self):
+        self._bundle("1.2.0")
+        self._installed("1.1.0")
+        with self._frozen():
+            ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue(ok, msg)
+        self.assertTrue((self.plugin / "web").is_dir())
+        self.assertFalse((self.plugin / "old-code.js").exists(), "代码文件按新副本换")
+        self.assertEqual(json.loads((self.plugin / "configs" / "llm_providers.json").read_text(encoding="utf-8")), {})
+        self.assertEqual((self.plugin / "skills" / "custom" / "mine.md").read_text(encoding="utf-8"), "mine")
+        self.assertFalse((self.state / "plugin_old").exists())
+        self.assertFalse((self.state / "plugin_update").exists())
+
+    def test_copy_without_version_gets_the_release(self):
+        # 旧版 exe 装的副本没有 pyproject.toml：顶栏报 unknown，就是靠这一步补上
+        self._bundle("1.2.0")
+        self._installed("")
+        with self._frozen():
+            ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue(ok, msg)
+        self.assertEqual(app.pyproject_version(self.plugin), "1.2.0")
+
+    def test_same_or_older_bundled_version_left_alone(self):
+        self._bundle("1.2.0")
+        self._installed("1.2.0")
+        with self._frozen():
+            app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue((self.plugin / "old-code.js").exists())
+        self.assertFalse((self.plugin / "web").exists())
+        self._installed("1.3.0")
+        with self._frozen():
+            app.ensure_plugin(self.plugin, self.source)
+        self.assertFalse((self.plugin / "web").exists(), "已装的比内置的新：不降级")
+
+    def test_git_checkout_left_alone(self):
+        # git 检出归 ComfyUI-Manager 与用户自己更新
+        self._bundle("1.2.0")
+        self._installed("1.0.0")
+        (self.plugin / ".git").mkdir()
+        with self._frozen():
+            app.ensure_plugin(self.plugin, self.source)
+        self.assertFalse((self.plugin / "web").exists())
+
+    def test_source_run_left_alone(self):
+        # 开发模式：内置副本就是开发中的插件目录本身，不能拿它覆盖用户装的那份
+        self._bundle("1.2.0")
+        self._installed("1.0.0")
+        app.ensure_plugin(self.plugin, self.source)
+        self.assertFalse((self.plugin / "web").exists())
+
+    def test_locked_plugin_dir_keeps_the_old_copy(self):
+        # ComfyUI 正在跑时目录被占用：换目录失败就原样留着，下次启动再更新
+        self._bundle("1.2.0")
+        self._installed("1.0.0")
+        with self._frozen(), patch.object(app.shutil, "move", side_effect=OSError("占用")):
+            ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue(ok)
+        self.assertEqual("", msg)
+        self.assertTrue((self.plugin / "old-code.js").exists())
+        self.assertFalse((self.plugin / "web").exists())
+
 
 
 class EmbeddedConfigsTests(unittest.TestCase):
@@ -1339,6 +1438,8 @@ class EmbeddedConfigsTests(unittest.TestCase):
         self.assertIn("bundled/ComfyUI-Neo-Nodes", script)
         spec = (_PLUGIN_DIR / "Neo-Studio.spec").read_text(encoding="utf-8")
         self.assertIn("bundled/ComfyUI-Neo-Nodes", spec)
+        # 副本必须带 pyproject.toml：插件版本号只从它读，缺了顶栏就是「Neo-Nodes unknown」
+        self.assertNotIn("pyproject", script, "内置副本不该排除 pyproject.toml")
         for name in self.USER_FILES:
             self.assertNotIn(name, spec, f"打包配置不该提到 {name}")
 

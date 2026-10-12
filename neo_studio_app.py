@@ -28,6 +28,7 @@ from ctypes import wintypes
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -262,20 +263,80 @@ def install_deps(python: Path, plugin_dir: Path) -> dict:
     return {"ok": True, "msg": "依赖安装完成。"}
 
 
+# 覆盖更新时要整目录带进新副本的用户数据：设置与 skill 覆盖、素材库索引、用户配方与提示词、运行状态与日志。
+USER_DATA_DIRS = ("configs", "data", "gallery", "locals", "prompts", "recipes", "skills", "tmp")
+
+
+def pyproject_version(plugin_dir: Path) -> str:
+    """目录里 pyproject.toml 的版本号；读不到回空串（比任何 release 都旧）。"""
+    try:
+        text = (Path(plugin_dir) / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+    return m.group(1) if m else ""
+
+
+def _ver(text: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", text))
+
+
+def install_ignore():
+    # 源码模式下 source 就是开发中的插件目录本身：build/（打包产物、node_modules）、tmp/（运行日志）、
+    # data/（用户状态）整棵树拷过去会在 Windows 长路径与占用文件上崩掉，装出来的也是脏副本。
+    return shutil.ignore_patterns("build", "tmp", "data", "tests", "docs", "node_modules",
+                                  "__pycache__", ".git", ".github", "*.log", "*.spec")
+
+
+def update_plugin(plugin_dir: Path, source_dir: Path) -> None:
+    """内置副本覆盖更新：新副本先在状态目录拼好、用户数据整目录并进去，再把旧副本换出去。
+
+    只有换目录这一步碰到旧副本：ComfyUI 正在跑时目录被占用，move 直接失败，旧副本原样留着，
+    下次启动再更新。新副本没搬进去就把旧副本搬回来，绝不让 custom_nodes 空在那个位置。
+    """
+    staging = STATE / "plugin_update"
+    backup = STATE / "plugin_old"
+    try:
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(source_dir, staging, ignore=install_ignore())
+        for name in USER_DATA_DIRS:
+            src = plugin_dir / name
+            if src.is_dir():
+                shutil.copytree(src, staging / name, dirs_exist_ok=True)
+        shutil.rmtree(backup, ignore_errors=True)
+        shutil.move(str(plugin_dir), str(backup))
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        log_line(f"plugin update skipped: {exc}")
+        return
+    try:
+        shutil.move(str(staging), str(plugin_dir))
+    except OSError as exc:
+        shutil.move(str(backup), str(plugin_dir))
+        log_line(f"plugin update failed: {exc}")
+        return
+    shutil.rmtree(backup, ignore_errors=True)
+    log_line("plugin update done")
+
+
 def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tuple[bool, str]:
-    """插件缺失时把内置副本装进 custom_nodes。已存在就原样保留，绝不覆盖。"""
+    """custom_nodes 里的插件副本：缺失就装内置副本，内置副本更新就跟着更新。
+
+    更新只认 exe 里的 release：源码运行那份就是开发中的插件本身，git 检出归 ComfyUI-Manager 与用户
+    自己维护，都不覆盖。用户数据目录整目录带进新副本，代码文件按新副本换。
+    """
     if plugin_dir.is_dir():
+        new, old = pyproject_version(source_dir), pyproject_version(plugin_dir)
+        if IS_FROZEN and _ver(new) > _ver(old) and not (plugin_dir / ".git").exists():
+            log_line(f"plugin update {old or '无版本号'} -> {new}")
+            update_plugin(plugin_dir, source_dir)
         return True, ""
     if not source_dir.is_dir():
         return False, "启动器没有内置插件副本，请手动安装 ComfyUI-Neo-Nodes 后重试。"
     custom_nodes = plugin_dir.parent
-    # 源码模式下 source 就是开发中的插件目录本身：build/（打包产物、node_modules）、tmp/（运行日志）、
-    # data/（用户状态）整棵树拷过去会在 Windows 长路径与占用文件上崩掉，装出来的也是脏副本。
-    ignore = shutil.ignore_patterns("build", "tmp", "data", "tests", "docs", "node_modules",
-                                    "__pycache__", ".git", ".github", "*.log", "*.spec")
     try:
         custom_nodes.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source_dir, plugin_dir, ignore=ignore)
+        shutil.copytree(source_dir, plugin_dir, ignore=install_ignore())
     except OSError as exc:
         return False, f"写入 {custom_nodes} 失败：{exc}"
     return True, ""

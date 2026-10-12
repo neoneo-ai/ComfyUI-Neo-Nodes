@@ -424,7 +424,8 @@ function buildSkills(el) {
 }
 
 // ====== 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口 ======
-// 这组路由只在壳侧服务上（neo_studio_server），浏览器标签页里读不到快照，整个 tab 收起。
+// 这份数据归壳：壳窗口里走 js_api，页面在壳端口还是 ComfyUI 端口都读得到（就绪后整页跳到 ComfyUI，
+// 同源就没有 /neo_studio/launcher 了）；浏览器标签页没有桥，只剩壳侧服务那条路由，读不到就收起 tab。
 function createLauncherPanel() {
     const input = (ph) => $el("input", { className: "ns-launch-input", placeholder: ph, spellcheck: "false" });
     const rootIn = input("ComfyUI 根目录");
@@ -459,22 +460,42 @@ function createLauncherPanel() {
         fixBtn.style.display = s.state === "install_failed" ? "" : "none";
     }
 
+    // 动作 → 壳 js_api 上的方法名：桥在就直接问壳，不在才走壳侧服务的 HTTP 路由
+    const BRIDGE_FN = { apply: "apply_launcher", install_plugin: "install_plugin", install_deps: "install_deps" };
+    const bridge = () => (window.pywebview?.api?.launcher_state ? window.pywebview.api : null);
+
     async function refresh() {
+        const shell = bridge();
+        if (shell) {
+            render(await shell.launcher_state());
+            return;
+        }
         const resp = await api.fetchApi("/neo_studio/launcher");
+        if (!resp.ok) throw new Error(`读取启动设置失败：${resp.status}`);
         render(await resp.json());
     }
 
     async function post(payload) {
         applyBtn.disabled = depsBtn.disabled = fixBtn.disabled = true;
         try {
-            const resp = await api.fetchApi("/neo_studio/launcher", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-            });
-            const data = await resp.json();
-            toast(data.ok ? (data.msg || "已保存，ComfyUI 重启中…") : data.error);
-            if (data.ok) await refresh();
+            const action = payload.action || "apply";
+            const fn = bridge()?.[BRIDGE_FN[action]];
+            let data;
+            if (fn) {
+                data = action === "apply"
+                    ? await fn(payload.root, payload.python, payload.port)
+                    : await fn();
+            } else {
+                const resp = await api.fetchApi("/neo_studio/launcher", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                data = await resp.json();
+            }
+            const failed = data.ok === false;   // 重试安装插件回的是内核状态，没有 ok 字段也算成功
+            toast(failed ? (data.error || "操作失败") : (data.msg || "已保存，ComfyUI 重启中…"));
+            if (!failed) await refresh();
         } catch (e) {
             toast(`启动设置保存失败：${e.message}`);
         } finally {
@@ -567,11 +588,20 @@ function buildSettings(el) {
     showSection("llm");  // 默认 LLM 设置
     Promise.all([genForm.load(), videoForm.load(), llmForm.load()])
         .catch(e => console.error("[Neo Studio] settings load failed:", e));
-    // 启动设置只有壳侧服务有：浏览器标签页里读不到快照，tab 整个收起
-    launcher.refresh().catch(() => {
+    // 桥由 pywebview 在导航完成后才注入、方法还要晚一步填：桥在长就等它长完，别把壳窗口判成浏览器
+    (async () => {
+        for (let tries = 0; tries < 10; tries++) {
+            try {
+                await launcher.refresh();
+                return;
+            } catch {
+                if (!window.pywebview) break;
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
         launcher.el.remove();
         tabs.querySelector('[data-key="launch"]')?.remove();
-    });
+    })();
 }
 
 // ====== 启动：版本信息 + 扩展初始化 + 路由 ======

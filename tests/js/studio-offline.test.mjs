@@ -177,7 +177,51 @@ test("离线配方编辑器：编辑类按钮不被门控，分段生成照常�
                  "分段只依赖 8080 LLM：门控不该拦掉");
 });
 
+test("启动设置：完整 Studio 页里走壳的 js_api 读快照并保存", async () => {
+    mockOfflineShell();
+    // 就绪后壳整页跳到 ComfyUI 端口：同源没有 /neo_studio/launcher，快照只能问壳
+    mockRoute("/neo_studio/version", jsonResponse({
+        success: true, plugin_version: "9.9.9", comfyui_version: "0.33.1", offline: false,
+        caps: { image_gen: true, storyboard: true, voice: true, segment: true,
+                director: true, grid_split: true, memory: true, repair: true },
+        recipes: [],
+    }));
+    mockRoute("/neo_studio/launcher", jsonResponse({ error: "no such route" }, 404));
+    const saved = [];
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ port: 8188, pid: 42204, mine: true, running: true, ready: true }),
+            launcher_state: async () => ({
+                root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8188,
+                plugin_dir: "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes",
+                state_dir: "D:/studio/data", portable: true, state: "ok", error: "",
+            }),
+            apply_launcher: async (root, python, port) => {
+                saved.push([root, python, port]);
+                return { ok: true, state: "ok" };
+            },
+        },
+    };
+    window.location.hash = "#/settings";
+    await import("../../web/studio/studio-app.js?offBridge=1");
+    await flush();
+
+    const tab = document.querySelector('.ns-settings-tab[data-key="launch"]');
+    assert.ok(tab, "跳到 ComfyUI 页之后壳窗口仍应有「启动设置」tab");
+    click(tab);
+    await flush();
+    const inputs = [...document.querySelectorAll(".ns-launch-row input")].map(i => i.value);
+    assert.deepEqual(inputs.slice(0, 3), ["D:/ComfyUI", "D:/py/python.exe", "8188"], "输入框应填壳给的快照");
+
+    click(document.querySelector(".ns-launch-apply"));
+    await flush();
+    assert.deepEqual(saved, [["D:/ComfyUI", "D:/py/python.exe", "8188"]], "保存应直接交给壳的 apply_launcher");
+    assert.equal(fetchLog.filter((c) => c.path === "/neo_studio/launcher").length, 0,
+                 "壳窗口里不该去撞 ComfyUI 的同源路由");
+});
+
 test("启动设置：根目录与解释器都带原生选择按钮，选完写回输入框", async () => {
+
     mockOfflineShell();
     mockRoute("/neo_studio/launcher", jsonResponse({
         root: "D:/ComfyUI", python: "D:/ComfyUI/python/python.exe", port: 8188,
