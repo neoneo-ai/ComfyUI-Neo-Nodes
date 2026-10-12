@@ -194,7 +194,9 @@ ComfyUI 就绪后窗口整页跳到 `http://127.0.0.1:8188/neo-studio`
 窗口与任务栏图标是拍板造型的
 `web/neo-studio.ico`（`tools/make_studio_icon.py` 生成）。要 Explorer 与快捷方式也显示同款图标，用
 `tools\build_studio_exe.ps1` 打包单文件启动器 `tools/neo-studio.exe`（构建期依赖 pyinstaller，
-产物是本地产物，不进 Registry 分发）。**改完 `neo_studio_app.py` 必须重新打包**：直接双击 exe 测试的人只认这个包，源码改了包没改等于没修。技能里的「⤒ 主画布编辑」与顶栏「🎬 新影工坊」都在这个窗口里跳转：
+产物是本地产物，不进 Registry 分发）。`-Mode onedir` 出目录版 `tools/neo-studio/Neo-Studio.exe`（exe 加 `_internal`
+整包一起拷走，启动不解包，出窗口比单文件快 0.7s 上下，状态目录是包旁的 `data/`）；`-Mode both` 两个都出，按分发场景挑。
+**改完 `neo_studio_app.py` 必须重新打包**：直接双击 exe 测试的人只认这个包，源码改了包没改等于没修。技能里的「⤒ 主画布编辑」与顶栏「🎬 新影工坊」都在这个窗口里跳转：
 前者在壳窗口内加载主界面灌画布，后者从主界面回到 Studio，不弹浏览器标签页（Studio 页内状态随整页跳转丢失，
 设置与素材库状态保留）。Studio 顶栏的「🎬 新影工坊」标题本身就是回主画布的链接；主画布是整页刷新，
 壳在每次页面加载后往左上角重新挂一枚「🎬 返回 Studio」胶囊（Studio 页不挂），点它由壳直接跳回 Studio。

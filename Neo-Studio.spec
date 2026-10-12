@@ -35,6 +35,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# 单文件版：binaries/datas 全打进 exe，启动时解包到 %TEMP%\_MEI*（双击即用，出窗口慢一截）
 exe = EXE(
     pyz,
     a.scripts,
@@ -56,3 +57,24 @@ exe = EXE(
     entitlements_file=None,
     icon=['web/neo-studio.ico'],
 )
+
+# 目录版：binaries/datas 摊进包里的 _internal，启动不解包（sys._MEIPASS 就是那一层）
+exe_dir = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='Neo-Studio',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['web/neo-studio.ico'],
+)
+coll = COLLECT(exe_dir, a.binaries, a.datas, strip=False, upx=True, upx_exclude=[], name='Neo-Studio')

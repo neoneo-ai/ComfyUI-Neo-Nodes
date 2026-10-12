@@ -30,20 +30,23 @@ python -m pytest tests -v
   `/neo_studio/version` 探活与轮询、窗口几何读写（缺文件 / 坏 JSON / 部分字段）、单实例端口占用判定、
   提示走系统消息框（pythonw 无控制台）、拉起 ComfyUI 时压制子控制台窗口、壳日志落盘
   `tmp/studio_shell.log` 与 pywebview 日志 handler（pythonw 的 `stderr` 是 None，控制台 handler 会打断窗口创建）、
-  窗口图标路径传给 `webview.start(icon=...)` 与 AppUserModelID（缺 `.ico` 时传 None）、frozen 下 `base_dirs()`
-  向上找到插件目录（产物在 `tools` 下）且随包资源走 `_MEIPASS`；顶栏胶囊的 `comfy_state()`（壳拉起那路以端口
+  窗口图标路径传给 `webview.start(icon=...)` 与 AppUserModelID（缺 `.ico` 时传 None）、frozen 下 `resolve_root()`
+  沿 exe 自身的祖先目录向上找到 ComfyUI 根（单文件在 `tools` 下、目录版多一层包目录都要认得）且随包资源走 `_MEIPASS`；顶栏胶囊的 `comfy_state()`（壳拉起那路以端口
   探活为准 / 外部按端口 `netstat` 找 PID / 无监听者）、`comfy_stop()`（`terminate()` 后按端口反复 `kill_pid()`
   到没人监听；`kill_pid()` 用 `PROCESS_TERMINATE` 并显式声明 `OpenProcess` 的 `restype`，否则 64 位句柄被截断、
   杀不动还静默失败）、`comfy_start()`（等旧进程退出再 `start_comfy`）、`pid_alive()`、关窗只存几何。
   窗口先出的启动序列：开窗只解包与建窗口（启动页 / 引导页），自检、壳侧服务、拉起 ComfyUI 在后台线程走完，
   落点分别是完整 Studio、离线素材页与停在启动页；测试里后台线程同步跑完（`_SyncThread`），落点才断言得准。
+  关窗正好压在拉起这一刻（`shell.closing` 闸门）：刚起的那路立刻收掉，壳退出后不留孤儿 ComfyUI。
 - 启动设置（`launcher_api` / `launcher_config.json`）：插件目录不可写时状态目录退回 `%APPDATA%/NeoStudio`；
   `startup_state()` 的五种状态（就绪 / 根目录无效 / 找不到 Python / 缺少插件依赖 / 插件安装失败）；
   配置读写往返与相对路径归一；
   根目录取用优先级 命令行 → 配置 → 插件同级；`ensure_plugin()` 在插件缺失时装内置副本、带上
   `requirements.txt`；exe 内置副本的版本比已装的那份新时覆盖更新（新副本先在状态目录拼好、用户数据目录整目录
   并进去再换目录，目录被占用就跳过），源码运行与 git 检出的那份不覆盖。
-- 打包后的 exe（`tools\build_studio_exe.ps1` 产出 `tools/neo-studio.exe`）：起桩服务让壳认为已就绪，启动 exe 后
+- 打包后的 exe（`tools\build_studio_exe.ps1`：`-Mode onefile` 产出 `tools/neo-studio.exe`，`-Mode onedir`
+  产出目录版 `tools/neo-studio/Neo-Studio.exe`，`-Mode both` 两个都出；目录版启动不解包，重打包保留包旁 `data/`）：
+  起桩服务让壳认为已就绪，启动 exe 后
   `ExtractIconExW` 确认内嵌图标资源数为 1，`FindWindowW` 找到窗口，`WM_GETICON` 取到 24x24 图标（我们的 `.ico`；
   无 AppUserModelID 且不传 icon 的 pythonw 基线是 48x48 通用图标），`WM_CLOSE` 后退出码 0，
   `configs/studio_window.json` 与 `tmp/studio_profile` 落在插件目录而不是临时解包目录。

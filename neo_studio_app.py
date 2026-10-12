@@ -156,7 +156,8 @@ def log_line(text: str) -> None:
 
 
 def resolve_root(root: str) -> Optional[Path]:
-    """CLI > 启动配置 > 壳自身位置（插件在 custom_nodes 下，exe 在插件的 tools 下）。
+    """CLI > 启动配置 > 壳自身位置（插件在 custom_nodes 下，exe 在插件的 tools 下，
+    目录版还多一层包目录）。
 
     推导出的位置必须真有 main.py。exe 被拷到别处时两条都落空，返回 None 让 main 出引导页。
     """
@@ -165,7 +166,7 @@ def resolve_root(root: str) -> Optional[Path]:
     cfg = load_config()
     if cfg.get("root"):
         return Path(cfg["root"])
-    for cand in (PLUGIN_DIR.parent.parent, PLUGIN_DIR.parent.parent.parent):
+    for cand in PLUGIN_DIR.parents:
         if root_ok(cand):
             return cand
     return None
@@ -537,6 +538,8 @@ class StudioShell:
         # 壳侧服务由 main() 注入：引导页补完根目录才装配得起来，start_setup 需要再叫一次
         self.ensure_server = None
         self._closed = False
+        # 关窗与后台启动序列撞在一起时的闸门：拉起 ComfyUI 前后各看一次，别让刚起的那路变孤儿
+        self.closing = False
 
     @property
     def starting(self) -> bool:
@@ -1016,6 +1019,7 @@ def main() -> int:
         if closing["vetoed"]:
             return   # 后台收尾走完后的第二次 FormClosing：放行
         closing["vetoed"] = True
+        shell.closing = True
         save_geometry(window)
         closing["thread"] = threading.Thread(target=close_out, daemon=True)
         closing["thread"].start()
@@ -1048,13 +1052,17 @@ def main() -> int:
         # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
         # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，壳就在旁边
         # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
-        if state == ST_OK and not port_busy(port):
+        if state == ST_OK and not port_busy(port) and not shell.closing:
             shell.port = free_comfy_port(port, shell.shell_port)
             shell.comfy = start_comfy(python, root, shell.port)
             shell.pid = shell.comfy.pid
             shell.url = f"http://127.0.0.1:{shell.port}/neo-studio"
             shell.starting = True
             log_line(f"comfy spawn pid={shell.pid} port={shell.port}")
+            if shell.closing:
+                # 关窗正好压在拉起这一刻：收尾线程已经收过一轮，刚起的那路立刻收掉，不留孤儿
+                shell.comfy_close()
+                return
         # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后整页跳过去
         ready = shell.comfy is None and probe(shell.port)
         shell._goto(shell.url if ready else offline_url)

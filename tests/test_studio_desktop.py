@@ -1225,6 +1225,31 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(spawned, [], "热启动同样不许拉第二路")
         window.load_url.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
 
+    def test_close_during_spawn_kills_the_process_it_just_started(self):
+        """窗口先出之后，用户可以在自检与拉起之间关窗。收尾线程收的是「当时已有」的那路，
+        正好压在拉起这一刻的话必须把刚起的那路立刻收掉，否则壳退出后留一路孤儿 ComfyUI。"""
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        start = lambda *a, **k: a[0]()
+        proc = SimpleNamespace(pid=4321, terminate=MagicMock(), wait=MagicMock())
+
+        def spawn(python, root, port):
+            cw.call_args.kwargs["js_api"].closing = True   # 用户就在这一刻关了窗
+            return proc
+
+        self.port_busy = False
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
+             patch.object(app, "start_comfy", spawn), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        proc.terminate.assert_called_once_with()
+        window.load_url.assert_not_called()
+
 class LauncherConfigTests(unittest.TestCase):
     def test_config_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1262,6 +1287,17 @@ class LauncherConfigTests(unittest.TestCase):
             root = pathlib.Path(tmp)
             (root / "main.py").write_text("", encoding="utf-8")
             exe_dir = root / "custom_nodes" / "ComfyUI-Neo-Nodes" / "tools"
+            exe_dir.mkdir(parents=True)
+            with patch.object(app, "CONFIG_FILE", root / "none.json"), \
+                 patch.object(app, "PLUGIN_DIR", exe_dir):
+                self.assertEqual(app.resolve_root(""), root)
+
+    def test_frozen_onedir_package_infers_root_one_level_deeper(self):
+        # 目录版多一层包目录（tools/neo-studio/Neo-Studio.exe）：往上找根不能只认固定三级
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "main.py").write_text("", encoding="utf-8")
+            exe_dir = root / "custom_nodes" / "ComfyUI-Neo-Nodes" / "tools" / "neo-studio"
             exe_dir.mkdir(parents=True)
             with patch.object(app, "CONFIG_FILE", root / "none.json"), \
                  patch.object(app, "PLUGIN_DIR", exe_dir):
@@ -1463,6 +1499,9 @@ class EmbeddedConfigsTests(unittest.TestCase):
         script = (_PLUGIN_DIR / "tools" / "build_studio_exe.ps1").read_text(encoding="utf-8")
         self.assertIn("git ls-files", script)
         self.assertIn("bundled/ComfyUI-Neo-Nodes", script)
+        # 分发形态两种都给：单文件与目录版（目录版启动不解包）
+        self.assertIn("onedir", script)
+        self.assertIn("tools/neo-studio", script)
         spec = (_PLUGIN_DIR / "Neo-Studio.spec").read_text(encoding="utf-8")
         self.assertIn("bundled/ComfyUI-Neo-Nodes", spec)
         # 副本必须带 pyproject.toml：插件版本号只从它读，缺了顶栏就是「Neo-Nodes unknown」

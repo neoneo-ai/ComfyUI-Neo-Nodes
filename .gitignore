@@ -29,6 +29,7 @@ configs/video_gen.json
 tools/output/
 tools/data/
 tools/neo-studio.exe
+tools/neo-studio/
 build/
 dist/
 node_modules/

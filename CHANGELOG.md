@@ -16,7 +16,8 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   self-check, the shell-side read-only service and the ComfyUI spawn run on a background thread, and the window
   is pointed at the offline gallery (full Studio when ComfyUI already answers, first-setup page when the root
   and interpreter are unresolved) once they finish — the window appears immediately instead of after the
-  cold-start wait. The shell is a launcher: closing the window saves geometry only and leaves
+  cold-start wait, and a window closed exactly while the shell is spawning ComfyUI closes that process
+  immediately instead of leaving an orphan kernel. The shell is a launcher: closing the window saves geometry only and leaves
   ComfyUI running. A top-bar `#ns-comfy` pill (shell `js_api` methods `comfy_state` / `comfy_stop` / `comfy_start`,
   polled every 5s) shows port, PID, who started ComfyUI and readiness: one click stops it (`terminate()`, then
   `port_owner()` + `kill_pid()` repeated until nobody listens — `kill_pid()` needs `PROCESS_TERMINATE` and an
@@ -25,10 +26,13 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   hidden in a browser tab (no `pywebview.api`) and goes grey when ComfyUI is down.
   The window and taskbar icon is the clapperboard `web/neo-studio.ico` (`tools/make_studio_icon.py`), passed to
   `webview.start(icon=...)` with an explicit `AppUserModelID` so the taskbar button is not merged into the generic
-  Python icon that `pythonw` falls back to. `tools/build_studio_exe.ps1` packages the shell as a single-file
-  `tools/neo-studio.exe` with an embedded icon, so Explorer and shortcuts show it too; under a frozen
-  build `base_dirs()` walks up to the plugin folder, so `configs/studio_window.json` and `tmp/studio_profile`
-  stay in the plugin folder. The exe is a local build artifact (`pyinstaller` is a build-time dep, not in
+  Python icon that `pythonw` falls back to. `tools/build_studio_exe.ps1` packages the shell with an embedded
+  icon, so Explorer and shortcuts show it too, in two distribution forms: `-Mode onefile` (default) emits the
+  single-file `tools/neo-studio.exe`, `-Mode onedir` emits the folder build `tools/neo-studio/Neo-Studio.exe`
+  that skips the startup unpacking (window ~0.7s sooner), `-Mode both` emits both. Under a frozen build
+  `resolve_root()` walks up from the exe's own location, so the window geometry, browser profile and logs stay
+  in the shell state dir next to the exe (`data/`, `%APPDATA%/Neo Studio` when that folder is not writable).
+  The exe is a local build artifact (`pyinstaller` is a build-time dep, not in
   `requirements.txt`) and never ships in the Registry; `neo-studio-app.vbs` stays the plugin entry point.
 - Portable launcher settings: a `启动设置` tab (Studio view `launcher`) served by the shell-side
   `/neo_studio/launcher` route — GET reads the snapshot, POST runs the shell's `apply_launcher` /
