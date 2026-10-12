@@ -20,31 +20,32 @@ import neo_studio_app as app
 
 class FrozenPathTests(unittest.TestCase):
     def test_source_layout(self):
-        # 源码运行：持久化与随包资源都在插件目录里
+        # 源码运行：持久化与随包资源都在插件目录里，内置副本就是插件目录本身
         self.assertEqual(app.PLUGIN_DIR, _PLUGIN_DIR)
         self.assertEqual(app.RES_DIR, _PLUGIN_DIR)
-
-    def test_frozen_layout(self):
-        # 打包后 __file__ 指向临时解包目录：持久化按插件目录算，随包资源走 _MEIPASS
-        with tempfile.TemporaryDirectory() as tmp:
-            plugin = pathlib.Path(tmp) / "ComfyUI" / "custom_nodes" / "ComfyUI-Neo-Nodes"
-            meipass = pathlib.Path(tmp) / "_MEIPASS"
-            with patch.object(sys, "frozen", True, create=True), \
-                 patch.object(sys, "_MEIPASS", str(meipass), create=True):
-                # 产物在 tools 下：向上找到插件目录
-                exe = plugin / "tools" / "neo-studio.exe"
-                with patch.object(sys, "executable", str(exe)):
-                    plugin_dir, res = app.base_dirs()
-                self.assertEqual(plugin_dir, plugin)
-                self.assertEqual(res, meipass)
-                # exe 直接放在插件目录里：parents 里没有插件目录，回退 exe_dir
-                exe = plugin / "neo-studio.exe"
-                with patch.object(sys, "executable", str(exe)):
-                    plugin_dir, res = app.base_dirs()
-                self.assertEqual(plugin_dir, plugin)
+        self.assertEqual(app.PLUGIN_SOURCE_DIR, _PLUGIN_DIR)
+        self.assertEqual(app.state_dir(), _PLUGIN_DIR)
 
     def test_studio_icon_is_a_bundled_resource(self):
         self.assertEqual(app.STUDIO_ICON, app.RES_DIR / "web" / "neo-studio.ico")
+
+    def test_state_dir_prefers_exe_side_data(self):
+        # exe 可以放在任意可写目录：状态目录就在它旁边的 data/
+        with tempfile.TemporaryDirectory() as tmp:
+            exe_dir = pathlib.Path(tmp) / "新影工坊"
+            exe_dir.mkdir()
+            self.assertEqual(app.pick_state_dir(exe_dir, str(pathlib.Path(tmp) / "appdata")),
+                             exe_dir / "data")
+
+    def test_state_dir_falls_back_to_appdata(self):
+        # exe 旁的 data/ 写不出来（那里是个文件）：退到 %APPDATA%\Neo Studio
+        with tempfile.TemporaryDirectory() as tmp:
+            exe_dir = pathlib.Path(tmp) / "exe"
+            exe_dir.mkdir()
+            (exe_dir / "data").write_text("x", encoding="utf-8")
+            appdata = pathlib.Path(tmp) / "appdata"
+            self.assertEqual(app.pick_state_dir(exe_dir, str(appdata)), appdata / app.APP_NAME)
+            self.assertTrue((appdata / app.APP_NAME).is_dir())
 
 
 class ResolveTests(unittest.TestCase):
@@ -82,6 +83,11 @@ class ResolveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):
                 app.resolve_python(pathlib.Path(tmp) / "ComfyUI", "")
+
+    def test_find_python_returns_none_when_missing(self):
+        """找不到解释器不是异常：引导页负责让用户选一个，壳不能因此退出进程。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(app.find_python(pathlib.Path(tmp) / "ComfyUI", ""))
 
 
 class ProbeTests(unittest.TestCase):
@@ -236,6 +242,111 @@ class GeometryTests(unittest.TestCase):
                                      encoding="utf-8")
         app.save_geometry(_DeadWindow())
         self.assertEqual(app.load_geometry(), {"width": 1440, "height": 900, "x": 100, "y": 60})
+
+
+class FolderPickerTests(unittest.TestCase):
+    def test_picker_delegates_to_pywebview_folder_dialog(self):
+        """SHBrowseForFolder 在新样式下把「文件夹」编辑框换成提示文字，flags 怎么叠都控不住；
+        自己 CoCreateInstance 建 FileOpenDialog 在这台机器上是 REGDB_E_CLASSNOTREG（经典 CLSID 没注册，
+        注册着的 4dde 变体只认 IUnknown）。选择器必须交给 pywebview 的 FOLDER 对话框 ——
+        WinForms 的 CreateVistaDialog 才拿得到现代对话框。"""
+        calls = []
+
+        def fake(dialog_type, directory=None, **kw):
+            calls.append({"dialog_type": dialog_type, "directory": directory})
+            return ("D:\\ComfyUI",)
+
+        with patch.object(app, "_studio_window", SimpleNamespace(create_file_dialog=fake)):
+            self.assertEqual(app.pick_folder("D:\\x"), "D:\\ComfyUI")
+        self.assertEqual(calls[0]["dialog_type"], app.FileDialog.FOLDER)
+        self.assertEqual(calls[0]["directory"], "D:\\x")
+
+    def test_picker_cancels_to_empty(self):
+        """取消（pywebview 回 None）必须回空串：调用方靠空串判定「没选」。"""
+        with patch.object(app, "_studio_window",
+                          SimpleNamespace(create_file_dialog=lambda *a, **k: None)):
+            self.assertEqual(app.pick_folder(""), "")
+
+    def test_raw_com_picker_is_gone(self):
+        """ctypes 手搓 COM 的那套（GUID / vtable 槽位 / _com）整块删掉，不能留半截死代码。"""
+        for name in ("_GUID", "_CLSID_FILEOPEN", "_IID_FILEOPEN", "_IID_SHELLITEM",
+                     "_com", "_FOS", "_SHOW", "_GET_RESULT", "_SET_FOLDER"):
+            self.assertFalse(hasattr(app, name), name)
+        # 窗口起来之前弹选择器那路随引导页一起删了：选择只在引导页发生，宿主永远在
+        self.assertNotIn("OpenFolderDialog", inspect.getsource(app.pick_folder))
+
+    def test_pick_python_delegates_to_pywebview_open_dialog(self):
+        calls = []
+
+        def fake(dialog_type, directory=None, file_types=None, **kw):
+            calls.append({"dialog_type": dialog_type, "directory": directory, "file_types": file_types})
+            return ("D:\\python\\python.exe",)
+
+        with patch.object(app, "_studio_window", SimpleNamespace(create_file_dialog=fake)):
+            self.assertEqual(app.pick_python_file("D:\\python"), "D:\\python\\python.exe")
+        self.assertEqual(calls[0]["dialog_type"], app.FileDialog.OPEN)
+        self.assertEqual(calls[0]["directory"], "D:\\python")
+        self.assertEqual(calls[0]["file_types"], app.PY_FILE_TYPES)
+
+    def test_pick_folder_starts_at_given_path(self):
+        """打开时定位到传进来的目录，别每次从桌面根开始翻。"""
+        sig = inspect.signature(app.pick_folder)
+        self.assertIn("start", sig.parameters)
+        self.assertEqual(sig.parameters["start"].default, "")
+
+
+class GuidePageTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(app, "log_line", lambda text: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_guide_page_needs_no_shell_service(self):
+        """根目录无效时 build_app 连 folder_paths 都 import 不了，服务本来就起不来：
+        引导页只能走 load_html + js_api，两个路径框、校验与开始全在壳里。"""
+        html = app.guide_html({"root": "D:/ComfyUI", "python": "D:/python/python.exe"})
+        self.assertIn("id=root", html)
+        self.assertIn("id=py", html)
+        for fn in ("check_setup", "pick_root", "pick_python", "start_setup"):
+            self.assertIn("api()." + fn, html)
+        self.assertIn("D:/ComfyUI", html)
+        self.assertIn("D:/python/python.exe", html)
+
+    def test_check_setup_needs_main_py_and_a_real_file(self):
+        shell = app.StudioShell("", None, 8188, pathlib.Path("root"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "ComfyUI"
+            root.mkdir()
+            py = pathlib.Path(tmp) / "python.exe"
+            py.write_text("")
+            self.assertFalse(shell.check_setup(str(root), str(py))["root_ok"])
+            (root / "main.py").write_text("")
+            res = shell.check_setup(str(root), str(py))
+            self.assertTrue(res["root_ok"])
+            self.assertTrue(res["python_ok"])
+            self.assertFalse(shell.check_setup("", "")["root_ok"])
+            self.assertFalse(shell.check_setup(str(root), str(root / "nope.exe"))["python_ok"])
+
+    def test_start_setup_refuses_without_the_shell_service(self):
+        """根目录补完了服务才装配得起来：服务起不来就不谈拉起，原因回给引导页显示。"""
+        shell = app.StudioShell("", None, 8188, pathlib.Path("root"))
+        shell.ensure_server = lambda: False
+        apply = MagicMock()
+        with patch.object(shell, "apply_launcher", apply):
+            res = shell.start_setup("D:/ComfyUI", "D:/python/python.exe")
+        self.assertFalse(res["ok"])
+        self.assertIn("壳侧服务", res["error"])
+        apply.assert_not_called()
+        self.assertEqual(shell.launcher["root"], "D:/ComfyUI")
+
+    def test_start_setup_applies_once_the_service_is_up(self):
+        shell = app.StudioShell("", None, 8188, pathlib.Path("root"))
+        shell.ensure_server = lambda: True
+        calls = []
+        with patch.object(shell, "apply_launcher",
+                          lambda root, python, port: calls.append((root, python, port)) or {"ok": True}):
+            self.assertEqual(shell.start_setup("D:/ComfyUI", "D:/python/python.exe"), {"ok": True})
+        self.assertEqual(calls, [("D:/ComfyUI", "D:/python/python.exe", 8188)])
 
 
 class AlertTests(unittest.TestCase):
@@ -409,8 +520,14 @@ def _fake_webview(create_window, start=None):
 
 
 def _fake_shell_server(port=8191):
-    """壳侧只读服务的替身：main() 里只关心绑定端口与收尾，不起真服务。"""
-    return lambda factory, port_arg: SimpleNamespace(start=lambda: port, stop=lambda: None)
+    """壳侧只读服务的替身：main() 里只关心绑定端口与收尾，不起真服务。
+    bound 起先为 0，start() 之后才落定 —— 与真 ShellServer 一致，壳靠它判定服务是否已在。"""
+    def make(factory, port_arg):
+        srv = SimpleNamespace(bound=0, error=None, stop=lambda: None)
+        srv.start = lambda: setattr(srv, "bound", port) or port
+        return srv
+
+    return make
 
 
 
@@ -619,6 +736,7 @@ class StudioShellTests(unittest.TestCase):
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
              patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
@@ -636,6 +754,7 @@ class StudioShellTests(unittest.TestCase):
         with patch.object(app, "port_busy", lambda port: True), \
              patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
              patch.object(app, "pid_alive", lambda pid: True), \
@@ -672,6 +791,7 @@ class StudioShellTests(unittest.TestCase):
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
              patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
@@ -794,7 +914,8 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
@@ -822,7 +943,8 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
@@ -842,7 +964,8 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
@@ -874,7 +997,8 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
@@ -895,7 +1019,8 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
@@ -909,15 +1034,89 @@ class MainWindowTests(unittest.TestCase):
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", lambda factory, port: SimpleNamespace(start=lambda: 0, stop=lambda: None, error=None)), \
+             patch.object(app, "ShellServer", lambda factory, port: SimpleNamespace(
+                 start=lambda: 0, stop=lambda: None, bound=0, error=None)), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
             self.assertEqual(app.main(), 0)
         # 壳侧服务起不来（端口全被占）才退回启动页
         self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
+
+    def test_missing_python_opens_the_guide_page(self):
+        """解释器找不到不能退出进程：窗口开在引导页让用户选，进程一个都不拉。"""
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "find_python", lambda root, p: None), \
+             patch.object(app, "start_comfy", MagicMock()) as spawn, \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        launcher = cw.call_args.kwargs["js_api"].launcher
+        self.assertEqual(cw.call_args.kwargs["html"], app.guide_html(launcher))
+        self.assertEqual(launcher["state"], app.ST_NO_PYTHON)
+        self.assertEqual(launcher["python"], "")
+        spawn.assert_not_called()
+
+    def test_unresolvable_root_opens_the_guide_page(self):
+        """exe 被拷到别处：根目录推不出来也开引导页，不再窗口前弹原生目录选择器。"""
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "resolve_root", lambda root: None), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "start_comfy", MagicMock()) as spawn, \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        launcher = cw.call_args.kwargs["js_api"].launcher
+        self.assertEqual(cw.call_args.kwargs["html"], app.guide_html(launcher))
+        self.assertEqual(launcher["state"], app.ST_BAD_ROOT)
+        self.assertEqual(launcher["root"], "")
+        spawn.assert_not_called()
+
+    def test_guide_start_installs_the_plugin_it_serves_from(self):
+        """用户现场：exe 在别处，选中的根目录里还没装插件。「开始」要走正常启动那套自检，
+        先把内置副本装进 custom_nodes —— 直接拿不存在的目录装配，壳侧服务在 import 期就抛
+        FileNotFoundError(2)，用户只看到一句「起不来」。"""
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        root = pathlib.Path(self._tmp.name) / "ComfyUI"
+        root.mkdir(parents=True)
+        (root / "main.py").write_text("", encoding="utf-8")
+        bundled = pathlib.Path(self._tmp.name) / "bundled" / "ComfyUI-Neo-Nodes"
+        (bundled / "web").mkdir(parents=True)
+        (bundled / "util.py").write_text("", encoding="utf-8")
+        py = pathlib.Path(self._tmp.name) / "python.exe"
+        py.write_text("", encoding="utf-8")
+        ensure = app.ensure_plugin
+        spawn = MagicMock(return_value=SimpleNamespace(pid=4321, poll=lambda: 0))
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "resolve_root", lambda r: root), \
+             patch.object(app, "find_python", lambda r, p: pathlib.Path(p) if p else None), \
+             patch.object(app, "CONFIG_FILE", pathlib.Path(self._tmp.name) / "launcher_config.json"), \
+             patch.object(app, "ensure_plugin", lambda d: ensure(d, bundled)), \
+             patch.object(app, "deps_ok", lambda p: True), \
+             patch.object(app, "port_owner", lambda port: 0), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "start_comfy", spawn), \
+             patch.object(sys, "argv", ["neo_studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+            res = cw.call_args.kwargs["js_api"].start_setup(str(root), str(py))
+        installed = root / "custom_nodes" / "ComfyUI-Neo-Nodes"
+        self.assertTrue(res["ok"], res)
+        self.assertTrue((installed / "util.py").is_file(), "内置副本要装进用户选的根目录")
+        self.assertEqual(cw.call_args.kwargs["js_api"].launcher["plugin_dir"], str(installed))
+        spawn.assert_called_once()
 
 
     def test_start_passes_studio_icon(self):
@@ -971,7 +1170,8 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: object()), \
              patch.object(app, "ShellServer", _fake_shell_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "resolve_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
              patch.object(app, "port_owner", lambda port: 4321), \
              patch.object(sys, "argv", ["neo_studio_app.py"]):
@@ -997,6 +1197,151 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(spawned, [], "热启动同样不许拉第二路")
         self.assertEqual(cw.call_args[0][1], "http://127.0.0.1:8188/neo-studio")
         self.assertIsNone(start.call_args[0][0], "已就绪不需要后台等待线程")
+
+class LauncherConfigTests(unittest.TestCase):
+    def test_config_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"):
+                self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188))
+                self.assertEqual(app.load_config(),
+                                 {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
+                                  "python": "D:/python/python.exe", "port": 8188})
+
+    def test_load_config_missing_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "none.json"):
+                self.assertEqual(app.load_config(), {})
+
+    def test_root_priority_cli_then_config_then_plugin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = pathlib.Path(tmp) / "launcher_config.json"
+            cfg.write_text(json.dumps({"version": 1, "root": "D:/FromConfig"}), encoding="utf-8")
+            with patch.object(app, "CONFIG_FILE", cfg):
+                self.assertEqual(app.resolve_root("D:/FromCli"), pathlib.Path("D:/FromCli"))
+                self.assertEqual(app.resolve_root(""), pathlib.Path("D:/FromConfig"))
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "none.json"):
+                self.assertEqual(app.resolve_root(""), _PLUGIN_DIR.parent.parent)
+
+    def test_root_none_when_portable_has_nothing_to_infer(self):
+        # exe 拷到任意目录、没有配置：往上找不出带 main.py 的根，交给 main 弹目录选择器
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "none.json"), \
+                 patch.object(app, "PLUGIN_DIR", pathlib.Path(tmp) / "tools"):
+                self.assertIsNone(app.resolve_root(""))
+
+    def test_frozen_exe_infers_root_from_its_own_location(self):
+        # exe 在 <root>/custom_nodes/ComfyUI-Neo-Nodes/tools：上三级就是 ComfyUI 根，双击不该弹选择器
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "main.py").write_text("", encoding="utf-8")
+            exe_dir = root / "custom_nodes" / "ComfyUI-Neo-Nodes" / "tools"
+            exe_dir.mkdir(parents=True)
+            with patch.object(app, "CONFIG_FILE", root / "none.json"), \
+                 patch.object(app, "PLUGIN_DIR", exe_dir):
+                self.assertEqual(app.resolve_root(""), root)
+
+
+class StartupStateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "ComfyUI"
+        self.root.mkdir(parents=True)
+        (self.root / "main.py").write_text("", encoding="utf-8")
+        self.python = pathlib.Path(self.tmp.name) / "python.exe"
+        self.python.write_text("", encoding="utf-8")
+        self.plugin = app.plugin_dir_for(self.root)
+        self.source = pathlib.Path(self.tmp.name) / "bundled" / "ComfyUI-Neo-Nodes"
+        (self.source / "web").mkdir(parents=True)
+        (self.source / "requirements.txt").write_text("pyyaml\n", encoding="utf-8")
+        self.patcher = patch.object(app, "PLUGIN_SOURCE_DIR", self.source)
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        self.tmp.cleanup()
+
+    def test_plugin_dir_derived_from_root(self):
+        self.assertEqual(self.plugin, self.root / "custom_nodes" / "ComfyUI-Neo-Nodes")
+
+    def test_bad_root(self):
+        st, msg = app.startup_state(self.root.parent, self.python, self.plugin)
+        self.assertEqual(st, app.ST_BAD_ROOT)
+        self.assertIn("main.py", msg)
+
+    def test_missing_python(self):
+        st, msg = app.startup_state(self.root, self.root / "nope.exe", self.plugin)
+        self.assertEqual(st, app.ST_NO_PYTHON)
+        self.assertIn(str(self.root / "nope.exe"), msg)
+
+    def test_missing_plugin_installed_without_user_action(self):
+        # 自动安装：用户不动手，内置副本落进 custom_nodes
+        app.startup_state(self.root, self.python, self.plugin)
+        self.assertTrue((self.plugin / "web").is_dir())
+        self.assertTrue((self.plugin / "requirements.txt").is_file())
+
+    def test_existing_plugin_never_overwritten(self):
+        self.plugin.mkdir(parents=True)
+        marker = self.plugin / "user-file.txt"
+        marker.write_text("keep", encoding="utf-8")
+        ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue(ok)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+        self.assertFalse((self.plugin / "web").exists(), "已存在的插件目录一律不覆盖")
+
+    def test_unwritable_custom_nodes_reports_the_path(self):
+        self.plugin.parent.write_text("x", encoding="utf-8")   # custom_nodes 位置被文件占住
+        ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertFalse(ok)
+        self.assertIn(str(self.plugin.parent), msg)
+        st, _ = app.startup_state(self.root, self.python, self.plugin)
+        self.assertEqual(st, app.ST_INSTALL_FAIL)
+
+    def test_deps_safety_net_blocks_start(self):
+        # 假解释器跑不出依赖探测：不启动 ComfyUI，给出可执行的 pip 命令
+        st, msg = app.startup_state(self.root, self.python, self.plugin)
+        self.assertEqual(st, app.ST_NO_DEPS)
+        self.assertIn("pip install -r", msg)
+        self.assertIn(str(self.plugin / "requirements.txt"), msg)
+
+    def test_deps_probe_accepts_the_real_interpreter(self):
+        # 真数据：跑测试的这个 ComfyUI 解释器必须过探测（ComfyUI 自带 yaml / Pillow / aiohttp）
+        self.assertTrue(app.deps_ok(pathlib.Path(sys.executable)))
+
+    def test_install_deps_needs_the_manifest(self):
+        res = app.install_deps(self.python, self.root / "nope")
+        self.assertFalse(res["ok"])
+        self.assertIn("requirements.txt", res["error"])
+
+
+class EmbeddedConfigsTests(unittest.TestCase):
+    """进包的 configs 只能是预设：用户配置与密钥不进包，也不覆盖用户已有文件。"""
+
+    PRESETS = {"laya_config.json", "llm_providers.json", "model_registry.json", "oss_presets.json"}
+    USER_FILES = ("remote_llm_config.json", "backyard_oss.json", "model_hub.json", "video_gen.json",
+                  "image_gen.json", "gallery_settings.json", "bookmarks.json", "gallery_dim_cache.json")
+
+    def test_tracked_configs_are_presets_only(self):
+        out = subprocess.run(["git", "-C", str(_PLUGIN_DIR), "ls-files", "configs"],
+                             capture_output=True, text=True)
+        tracked = {line.strip() for line in out.stdout.splitlines() if line.strip()}
+        self.assertEqual(tracked, {f"configs/{n}" for n in self.PRESETS})
+
+    def test_user_configs_are_ignored(self):
+        for name in self.USER_FILES:
+            out = subprocess.run(["git", "-C", str(_PLUGIN_DIR), "check-ignore", "-q", f"configs/{name}"],
+                                 capture_output=True)
+            self.assertEqual(out.returncode, 0, f"configs/{name} 必须被 gitignore")
+
+    def test_exe_bundle_takes_tracked_files_only(self):
+        # 内置副本的边界就是「git 已跟踪」：用户配置与密钥不在跟踪列表里，进不了 exe
+        script = (_PLUGIN_DIR / "tools" / "build_studio_exe.ps1").read_text(encoding="utf-8")
+        self.assertIn("git ls-files", script)
+        self.assertIn("bundled/ComfyUI-Neo-Nodes", script)
+        spec = (_PLUGIN_DIR / "Neo-Studio.spec").read_text(encoding="utf-8")
+        self.assertIn("bundled/ComfyUI-Neo-Nodes", spec)
+        for name in self.USER_FILES:
+            self.assertNotIn(name, spec, f"打包配置不该提到 {name}")
+
 
 if __name__ == "__main__":
     unittest.main()

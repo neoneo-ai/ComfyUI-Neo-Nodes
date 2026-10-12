@@ -189,6 +189,40 @@ class OfflineServiceTests(_ServerCase):
         self.assertTrue(data["success"])
         self.assertIn("shell log line 2", "".join(e["m"] for e in data["entries"]))
 
+    def test_launcher_snapshot_and_apply(self):
+        # 设置页读的是壳的启动快照；保存由壳校验并重启 ComfyUI
+        self.app["launcher"].update(root="D:/ComfyUI", python="D:/python/python.exe", port=8188,
+                                    plugin_dir="D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes",
+                                    state_dir="D:/studio/data", portable=True, state="ok", error="")
+        applied = []
+        self.app["launcher_api"]["apply"] = (
+            lambda root, python, port: applied.append((root, python, port)) or {"ok": True, "state": "ok"})
+        status, body = self.get("/neo_studio/launcher")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["plugin_dir"], "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes")
+        self.assertEqual(data["state"], "ok")
+        status, body = self.post_json("/neo_studio/launcher",
+                                      {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertEqual(applied, [("E:/ComfyUI", "E:/py/python.exe", 8190)])
+
+    def test_launcher_retry_actions(self):
+        calls = []
+        self.app["launcher_api"]["install_plugin"] = lambda: calls.append("plugin") or {"ok": True}
+        self.app["launcher_api"]["install_deps"] = lambda: calls.append("deps") or {"ok": True}
+        for action in ("install_plugin", "install_deps"):
+            status, body = self.post_json("/neo_studio/launcher", {"action": action})
+            self.assertEqual(status, 200, action)
+            self.assertTrue(json.loads(body)["ok"], action)
+        self.assertEqual(calls, ["plugin", "deps"])
+
+    def test_launcher_post_rejects_unknown_action(self):
+        status, body = self.post_json("/neo_studio/launcher", {"action": "rm_root"})
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(body)["ok"])
+
     def test_comfy_only_routes_report_offline(self):
         for path in COMFY_ONLY_ROUTES:
             status, body = self.get(path, data=b"{}")
@@ -333,7 +367,8 @@ class ShellModuleTests(_RealFolderPaths):
     def test_shell_app_mounts_exactly_the_manifest(self):
         app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR)
         shell_pages = {("GET", "/neo-studio"), ("GET", "/neo_studio/version"),
-                       ("GET", "/neo_studio/log")}
+                       ("GET", "/neo_studio/log"), ("GET", "/neo_studio/launcher"),
+                       ("POST", "/neo_studio/launcher")}
         mounted = {(r.method, r.resource.canonical) for r in app.router.routes()
                    if r.method != "HEAD" and r.resource.canonical.startswith(("/neo", "/rs_"))}
         self.assertEqual(mounted - shell_pages, caps.SHELL_ROUTES)

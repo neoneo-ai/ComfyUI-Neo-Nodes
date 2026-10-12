@@ -1,7 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('web/neo-studio.ico', 'web'), ('pyproject.toml', '.')]
+# bundled/ 由 tools/build_studio_exe.ps1 组装：git 已跟踪文件减去只服务开发的条目
+datas = [('web/neo-studio.ico', 'web'), ('pyproject.toml', '.'),
+         ('build/bundled/ComfyUI-Neo-Nodes', 'bundled/ComfyUI-Neo-Nodes')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')

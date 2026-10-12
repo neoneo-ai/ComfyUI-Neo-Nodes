@@ -177,6 +177,37 @@ body {
 }
 .ns-settings-section h3 { margin: 0 0 10px; font-size: 14px; color: #eee; }
 
+/* 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口（只有壳侧服务出这个 tab） */
+.ns-launch-row { display: flex; align-items: center; gap: 10px; }
+.ns-launch-row + .ns-launch-row { margin-top: 10px; }
+.ns-launch-label { font-size: 12px; color: #999; width: 110px; flex: none; }
+.ns-launch-input {
+    flex: 1;
+    min-width: 0;
+    background: #2a2a2e;
+    border: 1px solid #444;
+    color: #eee;
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 4px;
+}
+.ns-launch-status { font-size: 12px; color: #7aa2ff; margin-bottom: 12px; white-space: pre-wrap; }
+.ns-launch-bad { color: #ff8a8a; }
+.ns-launch-actions { display: flex; gap: 10px; margin-top: 14px; }
+.ns-launch-info { margin-top: 12px; font-size: 11px; color: #777; }
+.ns-btn {
+    background: #2a2a2e;
+    border: 1px solid #444;
+    color: #ddd;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.ns-btn:hover { background: #333338; border-color: #555; }
+.ns-btn:disabled { opacity: 0.5; cursor: default; }
+.ns-launch-apply { background: rgba(47, 111, 237, 0.18); border-color: #2f6fed; color: #cfe0ff; }
+
 /* 日志页：ComfyUI 控制台环形缓冲，tab 激活时轮询 /neo_studio/log；日志区占满主区剩余空间 */
 .ns-log-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .ns-log {

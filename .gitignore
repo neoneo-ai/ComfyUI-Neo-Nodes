@@ -24,7 +24,10 @@ configs/skill_overrides/
 configs/gallery_dim_cache.json
 configs/backyard_oss.json
 configs/studio_window.json
+configs/model_hub.json
+configs/video_gen.json
 tools/output/
+tools/data/
 tools/neo-studio.exe
 build/
 dist/

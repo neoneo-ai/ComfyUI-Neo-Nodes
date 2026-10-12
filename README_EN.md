@@ -141,6 +141,14 @@ canvas; the main canvas is a full page reload, so the shell re-injects a floatin
 top-left of every non-Studio page load and the pill hands the jump back to Studio. `/neo-studio` is served with
 `Cache-Control: no-cache` so header changes reach the shell window.
 
+The packaged exe doubles as a portable launcher: a `启动设置` tab (shell-only — it stays hidden in a browser tab)
+edits the ComfyUI root, the python interpreter and the port; the values are validated before saving (the root must
+contain `main.py`) and persist to `launcher_config.json` under `%APPDATA%/NeoStudio`, the fallback state dir when the
+plugin folder is not writable. The exe carries a copy of the plugin built from git-tracked files only, so user
+configs and API keys never ship; when `custom_nodes` is missing the plugin, the shell installs it from that copy
+before the window opens, requirements included. The tab reports the self-check state, with `安装依赖` when the
+target python lacks the plugin dependencies and `重试安装插件` when the bundled copy failed to install.
+
 ## Documentation
 
 | Doc | Content |

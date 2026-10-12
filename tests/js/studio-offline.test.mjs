@@ -176,3 +176,39 @@ test("离线配方编辑器：编辑类按钮不被门控，分段生成照常�
     assert.equal(fetchLog.filter((c) => c.path === "/rs_recipes/director_generate_segments").length, 1,
                  "分段只依赖 8080 LLM：门控不该拦掉");
 });
+
+test("启动设置：根目录与解释器都带原生选择按钮，选完写回输入框", async () => {
+    mockOfflineShell();
+    mockRoute("/neo_studio/launcher", jsonResponse({
+        root: "D:/ComfyUI", python: "D:/ComfyUI/python/python.exe", port: 8188,
+        plugin_dir: "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes",
+        state_dir: "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes/configs",
+        portable: true, state: "ok", error: "",
+    }));
+    const picks = [];
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ port: 8188, pid: 0, mine: true, running: false, ready: false }),
+            pick_root: async () => { picks.push("root"); return "E:/ComfyUI"; },
+            pick_python: async () => { picks.push("py"); return "E:/py/python.exe"; },
+        },
+    };
+    window.location.hash = "#/settings";
+    await import("../../web/studio/studio-app.js?offLauncher=1");
+    await flush();
+
+    click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
+    await flush();
+    const rowOf = (label) => [...document.querySelectorAll(".ns-launch-row")]
+        .find((r) => r.querySelector("span")?.textContent === label);
+    for (const [label, key, value] of [["ComfyUI 根目录", "root", "E:/ComfyUI"], ["Python", "py", "E:/py/python.exe"]]) {
+        const row = rowOf(label);
+        assert.ok(row, `启动设置应有「${label}」行`);
+        const btn = row.querySelector("button");
+        assert.ok(btn, `「${label}」行应带「浏览…」按钮`);
+        click(btn);
+        await flush();
+        assert.deepEqual(picks.at(-1), key, `点「${label}」的浏览应调壳的 pick_${key}`);
+        assert.equal(row.querySelector("input").value, value, "选中的路径应写回输入框");
+    }
+});

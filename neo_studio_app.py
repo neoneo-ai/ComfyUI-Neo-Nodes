@@ -27,6 +27,7 @@ import ctypes
 from ctypes import wintypes
 import json
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -35,22 +36,64 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
 from neo_studio_server import ShellServer, build_app
 
-def base_dirs():
-    """打包后 __file__ 指向临时解包目录：持久化按插件目录算，随包资源走 _MEIPASS。"""
-    if getattr(sys, "frozen", False):
-        # 产物在 tools 下，向上找到插件目录；exe 直接放在插件目录时 parents 找不到，回退 exe_dir
-        exe_dir = Path(sys.executable).parent
-        plugin = next((p for p in exe_dir.parents if p.name == "ComfyUI-Neo-Nodes"), exe_dir)
-        return plugin, Path(sys._MEIPASS)
-    return Path(__file__).parent, Path(__file__).parent
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+EXE_DIR = Path(sys.executable).resolve().parent if IS_FROZEN else Path(__file__).resolve().parent
+RES_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR))
+PLUGIN_DIR = EXE_DIR   # 源码运行时就是插件目录本身
+# 内置插件副本：exe 里插件缺失时的离线素材源，也是自动安装进 custom_nodes 的源。
+# 目录名保持 ComfyUI-Neo-Nodes，壳侧服务靠它加载出模块。
+PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / "ComfyUI-Neo-Nodes" if IS_FROZEN else PLUGIN_DIR
+
+APP_NAME = "Neo Studio"
+_state_dir: Optional[Path] = None
 
 
-PLUGIN_DIR, RES_DIR = base_dirs()
-SHELL_LOG = PLUGIN_DIR / "tmp" / "studio_shell.log"
-COMFY_LOG = PLUGIN_DIR / "tmp" / "comfy_run.log"   # 壳拉起 ComfyUI 的完整 stdout/stderr
+def _writable(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        mark = path / ".write-test"
+        mark.write_text("", encoding="utf-8")
+        mark.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def pick_state_dir(exe_dir: Path, appdata: str = "") -> Path:
+    """exe 旁的 data/ 优先；exe 丢在不可写目录时退到 %APPDATA%\\Neo Studio。"""
+    cand = exe_dir / "data"
+    if _writable(cand):
+        return cand
+    base = Path(appdata or str(exe_dir)) / APP_NAME
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return base
+
+
+def state_dir() -> Path:
+    """日志 / 窗口几何 / 浏览器 profile / 启动配置的落点，只算一次。
+
+    源码运行 = 插件目录原样；exe 运行 = pick_state_dir(EXE_DIR)。
+    """
+    global _state_dir
+    if _state_dir is not None:
+        return _state_dir
+    _state_dir = PLUGIN_DIR if not IS_FROZEN else pick_state_dir(EXE_DIR, os.environ.get("APPDATA", ""))
+    return _state_dir
+
+
+STATE = state_dir()
+SHELL_LOG = STATE / "studio_shell.log" if IS_FROZEN else PLUGIN_DIR / "tmp" / "studio_shell.log"
+COMFY_LOG = STATE / "comfy_run.log" if IS_FROZEN else PLUGIN_DIR / "tmp" / "comfy_run.log"
+GEOMETRY_FILE = STATE / "studio_window.json" if IS_FROZEN else PLUGIN_DIR / "configs" / "studio_window.json"
+PROFILE_DIR = STATE / "studio_profile" if IS_FROZEN else PLUGIN_DIR / "tmp" / "studio_profile"
+CONFIG_FILE = STATE / "launcher_config.json"   # 便携模式记住的 root / python / port
 LOG_MAX = 200_000   # 壳日志上限：反复开关机只增不减，写入前裁到尾部
 LOG_LOCK = threading.Lock()   # js_api 调用各在自己的线程里跑，读全文再写回必须串行
 SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -63,6 +106,7 @@ pyw_log.setLevel(logging.INFO)
 
 try:
     import webview
+    from webview import FileDialog
 except ImportError:
     webview = None
 
@@ -73,8 +117,6 @@ SHELL_PORT_OFFSET = 3   # 壳侧只读素材服务：避开 ComfyUI 的 8188
 READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 
 POLL_INTERVAL = 2.0
-GEOMETRY_FILE = PLUGIN_DIR / "configs" / "studio_window.json"
-PROFILE_DIR = PLUGIN_DIR / "tmp" / "studio_profile"
 WEBVIEW_CACHE = PROFILE_DIR / "EBWebView" / "Default" / "Cache"   # WebView2 的 HTTP 缓存，跨会话留着
 STUDIO_ICON = RES_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
 APP_ID = "Neo.Studio"
@@ -111,19 +153,147 @@ def log_line(text: str) -> None:
         SHELL_LOG.write_text(prev + line, encoding="utf-8")
 
 
-def resolve_root(root: str) -> Path:
-    """插件在 custom_nodes/ComfyUI-Neo-Nodes 下，上两级就是 ComfyUI 根。"""
-    return Path(root) if root else PLUGIN_DIR.parent.parent
+def resolve_root(root: str) -> Optional[Path]:
+    """CLI > 启动配置 > 壳自身位置（插件在 custom_nodes 下，exe 在插件的 tools 下）。
+
+    推导出的位置必须真有 main.py。exe 被拷到别处时两条都落空，返回 None 让 main 出引导页。
+    """
+    if root:
+        return Path(root)
+    cfg = load_config()
+    if cfg.get("root"):
+        return Path(cfg["root"])
+    for cand in (PLUGIN_DIR.parent.parent, PLUGIN_DIR.parent.parent.parent):
+        if root_ok(cand):
+            return cand
+    return None
 
 
-def resolve_python(root: Path, python: str) -> Path:
-    """整合包布局（python 与 ComfyUI 同级）优先，再回退 ComfyUI 内部。"""
+def find_python(root: Path, python: str) -> Optional[Path]:
+    """整合包布局（python 与 ComfyUI 同级）优先，再回退 ComfyUI 内部；找不到回 None。
+
+    找不到不是错误：引导页负责让用户选一个。"""
     if python:
         return Path(python)
     for cand in (root.parent / "python" / "python.exe", root / "python" / "python.exe"):
         if cand.exists():
             return cand
-    raise FileNotFoundError("未找到 python：请用 --python <python.exe 路径> 指定")
+    return None
+
+
+def resolve_python(root: Path, python: str) -> Path:
+    py = find_python(root, python)
+    if py is None:
+        raise FileNotFoundError("未找到 python：在首次设置里选 python.exe，或用 --python <python.exe 路径> 指定")
+    return py
+
+
+# ---------------------------------------------------------------------------
+# 启动配置与拉起前自检
+# ---------------------------------------------------------------------------
+
+CONFIG_VERSION = 1
+PLUGIN_DIR_NAME = "ComfyUI-Neo-Nodes"
+
+# 自检状态：写进启动快照给「启动设置」页与离线横幅看
+ST_OK = "ok"
+ST_BAD_ROOT = "bad_root"
+ST_NO_PYTHON = "missing_python"
+ST_NO_DEPS = "deps_missing"
+ST_INSTALL_FAIL = "install_failed"
+
+# 插件 import 期硬依赖。ComfyUI 自带 pyyaml / Pillow / aiohttp，任何跑得起来的
+# ComfyUI 环境都满足；openai / pypinyin / laya 是懒导入或自带降级，不检查也不拦。
+DEPS_PROBE = ("import importlib.util, sys; sys.exit(0 if all("
+              "importlib.util.find_spec(m) for m in ('yaml', 'PIL', 'aiohttp')) else 1)")
+
+
+def plugin_dir_for(root: Path) -> Path:
+    return root / "custom_nodes" / PLUGIN_DIR_NAME
+
+
+def root_ok(root: Path) -> bool:
+    return root.is_dir() and (root / "main.py").is_file()
+
+
+def load_config() -> dict:
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_config(root: Path, python: str, port: int) -> bool:
+    cfg = {"version": CONFIG_VERSION, "root": str(root), "python": str(python), "port": int(port)}
+    try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CONFIG_FILE)
+        return True
+    except OSError:
+        return False
+
+
+def deps_ok(python: Path) -> bool:
+    """目标 Python 是否具备插件 import 期硬依赖。"""
+    if not Path(python).is_file():
+        return False
+    try:
+        proc = subprocess.run([str(python), "-c", DEPS_PROBE],
+                              creationflags=NO_WINDOW, timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def install_deps(python: Path, plugin_dir: Path) -> dict:
+    """装插件 requirements.txt 的依赖。联网安装，只由用户在「启动设置」点按钮触发。"""
+    req = plugin_dir / "requirements.txt"
+    if not req.is_file():
+        return {"ok": False, "error": f"找不到依赖清单：{req}"}
+    proc = subprocess.run([str(python), "-m", "pip", "install", "-r", str(req)],
+                          creationflags=NO_WINDOW)
+    if proc.returncode:
+        return {"ok": False, "error": f"pip 退出码 {proc.returncode}，检查网络与代理后重试。"}
+    return {"ok": True, "msg": "依赖安装完成。"}
+
+
+def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tuple[bool, str]:
+    """插件缺失时把内置副本装进 custom_nodes。已存在就原样保留，绝不覆盖。"""
+    if plugin_dir.is_dir():
+        return True, ""
+    if not source_dir.is_dir():
+        return False, "启动器没有内置插件副本，请手动安装 ComfyUI-Neo-Nodes 后重试。"
+    custom_nodes = plugin_dir.parent
+    # 源码模式下 source 就是开发中的插件目录本身：build/（打包产物、node_modules）、tmp/（运行日志）、
+    # data/（用户状态）整棵树拷过去会在 Windows 长路径与占用文件上崩掉，装出来的也是脏副本。
+    ignore = shutil.ignore_patterns("build", "tmp", "data", "tests", "docs", "node_modules",
+                                    "__pycache__", ".git", ".github", "*.log", "*.spec")
+    try:
+        custom_nodes.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_dir, plugin_dir, ignore=ignore)
+    except OSError as exc:
+        return False, f"写入 {custom_nodes} 失败：{exc}"
+    return True, ""
+
+
+def startup_state(root: Path, python: Path, plugin_dir: Path) -> tuple[str, str]:
+    """拉起 ComfyUI 前的自检；插件缺失直接自动安装，不需要用户动手。"""
+    if not root_ok(root):
+        return ST_BAD_ROOT, f"不是 ComfyUI 根目录（找不到 main.py）：{root}"
+    if not Path(python).is_file():
+        return ST_NO_PYTHON, f"Python 解释器不存在：{python}"
+    ok, msg = ensure_plugin(plugin_dir)
+    if not ok:
+        return ST_INSTALL_FAIL, msg
+    if not deps_ok(python):
+        return ST_NO_DEPS, (f"目标 Python 缺少插件依赖，在「启动设置」点「安装依赖」，或手动执行：\n"
+                            f'"{python}" -m pip install -r "{plugin_dir / "requirements.txt"}"')
+    return ST_OK, ""
 
 
 def probe(port: int, timeout: float = 3.0) -> bool:
@@ -215,7 +385,7 @@ def reap(proc: subprocess.Popen, timeout: float) -> None:
 def port_owner(port: int) -> int:
     """按监听端口找进程 PID（netstat -ano）；没有监听者返回 0。"""
     out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
-                         creationflags=NO_WINDOW)
+                         encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     for line in out.stdout.splitlines():
         f = line.split()
         if len(f) >= 5 and f[3] == "LISTENING" and f[1].split(":")[-1] == str(port):
@@ -286,7 +456,7 @@ class StudioShell:
     create_proxy 递归遍历 window.native.AccessibilityObject... 爆栈。"""
 
     def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = "", offline_url: str = "",
-                 shell_port: int = 0, flags: dict = None):
+                 shell_port: int = 0, flags: dict = None, launcher: dict = None):
         self.url = url
         self.offline_url = offline_url
         self.shell_port = shell_port
@@ -297,9 +467,13 @@ class StudioShell:
         self.pid = comfy.pid if comfy is not None else 0
         # 启动中标记与壳侧只读服务共用同一份：js_api 注入之前页面就能从版本快照拿到「启动中」
         self.flags = flags if flags is not None else {"starting": False}
+        # 启动设置快照：壳侧服务与 js_api 共用同一份 dict，设置页与离线横幅都读它
+        self.launcher = launcher if launcher is not None else {}
         self.starting = comfy is not None
         self.loader = None
         self.rearm = None
+        # 壳侧服务由 main() 注入：引导页补完根目录才装配得起来，start_setup 需要再叫一次
+        self.ensure_server = None
         self._closed = False
 
     @property
@@ -423,6 +597,85 @@ class StudioShell:
 
 
 
+    def launcher_state(self) -> dict:
+        """「启动设置」页的快照：根目录 / 解释器 / 端口 / 插件位置 / 自检状态。"""
+        return dict(self.launcher)
+
+    def pick_root(self) -> str:
+        """原生目录选择器，只回路径；校验交给「保存并重启」，选完还能改。"""
+        return pick_folder(str(self.launcher.get("root", "")))
+
+    def pick_python(self) -> str:
+        """原生文件对话框选 python.exe：起始目录落在当前解释器所在的文件夹。"""
+        cur = Path(str(self.launcher.get("python", "")))
+        return pick_python_file(str(cur.parent) if cur.parent.is_dir() else "")
+
+    def check_setup(self, root: str, python: str) -> dict:
+        """引导页的实时校验：根目录要有 main.py，解释器要真是文件。"""
+        root_s, py_s = str(root).strip(), str(python).strip()
+        # 空串会变相对路径 "."：启动器在 ComfyUI 目录里跑时那就是个合法根目录，必须挡掉
+        return {"root_ok": bool(root_s) and root_ok(Path(root_s)),
+                "python_ok": bool(py_s) and Path(py_s).is_file(),
+                "root": root_s, "python": py_s}
+
+    def start_setup(self, root: str, python: str) -> dict:
+        """引导页的「开始」：根目录补完了壳侧服务才装配得起来，起完再走保存并拉起。"""
+        self.launcher.update(root=str(root).strip(), python=str(python).strip())
+        if not self.ensure_server():
+            return {"ok": False, "error": self.launcher.get("error")
+                            or "壳侧服务起不来，原因见启动器日志"}
+        return self.apply_launcher(root, python, self.port)
+
+    def apply_launcher(self, root: str, python: str, port: int) -> dict:
+        """保存启动设置并重启 ComfyUI：换根目录、换解释器、换端口都走这一条路。"""
+        root_s, py_s = str(root).strip(), str(python).strip()
+        root_p, py = Path(root_s), Path(py_s)
+        if not root_s or not root_ok(root_p):
+            return {"ok": False, "error": f"不是 ComfyUI 根目录（找不到 main.py）：{root_s}"}
+        if not py_s or not py.is_file():
+            return {"ok": False, "error": f"Python 解释器不存在：{py_s}"}
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": f"端口不是数字：{port}"}
+        if not 1024 <= port <= 65535:
+            return {"ok": False, "error": f"端口需在 1024-65535 之间：{port}"}
+        if not save_config(root_p, py, port):
+            return {"ok": False, "error": f"写入启动配置失败：{CONFIG_FILE}"}
+        self.root, self.python_arg, self.port = root_p, str(py), port
+        self.launcher.update(root=str(root_p), python=str(py), port=port,
+                             plugin_dir=str(plugin_dir_for(root_p)))
+        log_line(f"launcher apply root={root_p} python={py} port={port}")
+        self.comfy_stop()   # 带走旧进程，窗口退回离线页
+        state, msg = startup_state(root_p, py, plugin_dir_for(root_p))
+        self.launcher.update(state=state, error=msg)
+        if state != ST_OK:
+            return {"ok": False, "error": msg, "state": state}
+        st = self.comfy_start()
+        self.launcher.update(comfy=st)
+        return {"ok": True, "state": state, "comfy": st}
+
+    def install_plugin(self) -> dict:
+        """自动安装失败后的重试：把内置副本装进 custom_nodes，成功就接着拉起。"""
+        plugin_dir = plugin_dir_for(self.root)
+        ok, msg = ensure_plugin(plugin_dir)
+        if not ok:
+            self.launcher.update(state=ST_INSTALL_FAIL, error=msg)
+            log_line(f"install plugin failed: {msg}")
+            return {"ok": False, "error": msg}
+        self.launcher.update(plugin_dir=str(plugin_dir), state=ST_OK, error="")
+        log_line(f"plugin installed {plugin_dir}")
+        return self.comfy_start()
+
+    def install_deps(self) -> dict:
+        """联网装插件依赖：只在依赖安全网失败时出现，由用户显式点。"""
+        res = install_deps(self.python_arg, plugin_dir_for(self.root))
+        log_line(f"install deps {res}")
+        if res["ok"]:
+            self.launcher.update(state=ST_OK, error="")
+        return res
+
+
 def purge_web_cache() -> None:
     """开窗口前清掉 WebView2 的 HTTP 缓存。
 
@@ -433,6 +686,48 @@ def purge_web_cache() -> None:
     shutil.rmtree(WEBVIEW_CACHE, ignore_errors=True)
 
 
+PY_FILE_TYPES = ("Python 解释器 (*.exe)",)
+_studio_window = None   # main() 建好窗口后回填：对话框走窗口模态，选择框贴着窗口
+
+
+def _on_sta(call):
+    """对话框是 STA 的 COM 对象；js_api 的调用线程来自线程池，apartment 不由我们定。"""
+    out: list = [None]
+
+    def run():
+        try:
+            ctypes.windll.ole32.OleInitialize(None)
+            out[0] = call()
+        except Exception as exc:
+            out[0] = exc
+
+    t = threading.Thread(target=run)
+    t.start()
+    t.join()
+    if isinstance(out[0], Exception):
+        raise out[0]
+    return out[0]
+
+
+def pick_folder(start: str = "") -> str:
+    """原生目录选择器：直接用 pywebview 自带的 FOLDER 对话框。
+
+    Windows 后端是 WinForms 的 CreateVistaDialog + FOS_PICKFOLDERS，就是资源管理器那套现代对话框：
+    地址栏能直接敲绝对路径，底部「文件夹」编辑框可见。自己 CoCreateInstance 建 FileOpenDialog 在这台
+    机器上必崩 —— 经典 CLSID 没注册（REGDB_E_CLASSNOTREG），机器上注册的那个 4dde 变体只认 IUnknown，
+    现代对话框只有 WinForms 自己的激活上下文拿得到。
+    """
+    res = _on_sta(lambda: _studio_window.create_file_dialog(FileDialog.FOLDER, directory=start))
+    return res[0] if res else ""
+
+
+def pick_python_file(start: str = "") -> str:
+    """选 python.exe：pywebview 原生文件对话框。只在引导页用，那时窗口已在，宿主跑不掉。"""
+    res = _on_sta(lambda: _studio_window.create_file_dialog(FileDialog.OPEN, directory=start,
+                                                             file_types=PY_FILE_TYPES))
+    return res[0] if res else ""
+
+
 def splash_html() -> str:
     """冷启动时先出窗口显示的启动页：ComfyUI 就绪前不让用户对着空白干等。"""
     return ('<!doctype html><meta charset=utf-8>'
@@ -440,6 +735,82 @@ def splash_html() -> str:
             'font-family:system-ui;display:grid;place-items:center}'
             'h1{font-size:20px;font-weight:600}p{font-size:13px;color:#8a8f98}</style>'
             '<div><h1>新影工坊 · Neo Studio</h1><p>正在启动 ComfyUI，请稍候…</p></div>')
+
+
+GUIDE_JS = """
+var S = __STATE__;
+var el = function (id) { return document.getElementById(id); };
+el('root').value = S.root || '';
+el('py').value = S.python || '';
+function api() { return window.pywebview && window.pywebview.api; }
+function mark(id, ok, okText, badText) {
+  var n = el(id);
+  n.textContent = ok ? okText : badText;
+  n.className = 'st ' + (ok ? 'ok' : 'bad');
+}
+async function refresh() {
+  var r = await api().check_setup(el('root').value, el('py').value);
+  mark('rst', r.root_ok, '✓ 找到 main.py：' + r.root, '需要选择：这个目录下没有 main.py');
+  mark('pst', r.python_ok, '✓ ' + r.python, '需要选择：请指向 python.exe');
+  el('go').disabled = !(r.root_ok && r.python_ok);
+}
+el('broot').onclick = async function () {
+  var p = await api().pick_root();
+  if (p) { el('root').value = p; await refresh(); }
+};
+el('bpy').onclick = async function () {
+  var p = await api().pick_python();
+  if (p) { el('py').value = p; await refresh(); }
+};
+el('root').onchange = refresh;
+el('py').onchange = refresh;
+el('go').onclick = async function () {
+  el('go').disabled = true;
+  el('msg').textContent = '正在拉起 ComfyUI，就绪后自动进入…';
+  var r = await api().start_setup(el('root').value, el('py').value);
+  if (!r.ok) { el('msg').textContent = r.error || '启动失败'; el('go').disabled = false; }
+};
+refresh();
+"""
+
+
+def guide_html(state: dict) -> str:
+    """首次设置页：补齐 ComfyUI 根目录与 Python 解释器，自动找到的直接预填，缺哪个补哪个。
+
+    页面走 load_html + js_api，不碰壳侧服务 —— 根目录无效时 build_app 连 folder_paths 都 import 不了，
+    服务本来就起不来。校验与拉起都在壳里，页面只收路径和显示原因。"""
+    return ('<!doctype html><meta charset=utf-8><title>新影工坊 · Neo Studio 首次设置</title>'
+            '<style>'
+            'html,body{height:100%;margin:0;background:#1e1e1e;color:#d7dae0;font:14px/1.7 system-ui}'
+            '.wrap{max-width:820px;margin:0 auto;padding:40px 32px}'
+            'h1{font-size:20px;font-weight:600;margin:0}'
+            '.sub{font-size:13px;color:#8a8f98;margin:6px 0 26px}'
+            '.row{margin-bottom:20px}'
+            '.row b{display:block;margin-bottom:6px}'
+            '.line{display:flex;gap:8px}'
+            'input{flex:1;min-width:0;background:#262626;color:#d7dae0;border:1px solid #3d3d3d;'
+            'border-radius:6px;padding:8px 10px;font:13px system-ui}'
+            'button{background:#2f6feb;color:#fff;border:0;border-radius:6px;padding:8px 16px;'
+            'font:13px system-ui;cursor:pointer}'
+            'button:disabled{opacity:.45;cursor:default}'
+            '.st{font-size:12px;margin-top:5px}'
+            '.ok{color:#7ec699}.bad{color:#e0a94a}'
+            '.go{margin-top:6px;text-align:right}'
+            '#msg{font-size:13px;color:#8a8f98;margin-top:14px;white-space:pre-wrap}'
+            '</style>'
+            '<div class=wrap>'
+            '<h1>新影工坊 · Neo Studio 首次设置</h1>'
+            '<div class=sub>补齐下面两项，启动器会写入配置并拉起 ComfyUI。已自动找到的直接沿用。</div>'
+            '<div class=row><b>① ComfyUI 根目录</b><div class=line>'
+            '<input id=root spellcheck=false><button id=broot>选择…</button></div>'
+            '<div id=rst class=st></div></div>'
+            '<div class=row><b>② Python 解释器</b><div class=line>'
+            '<input id=py spellcheck=false><button id=bpy>选择…</button></div>'
+            '<div id=pst class=st></div></div>'
+            '<div class=go><button id=go>开始</button></div>'
+            '<div id=msg></div>'
+            '</div>'
+            '<script>' + GUIDE_JS.replace("__STATE__", json.dumps(state, ensure_ascii=False)) + '</script>')
 
 
 def singleton():
@@ -457,7 +828,7 @@ def singleton():
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Neo Studio 桌面壳")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--python", default="")
     ap.add_argument("--root", default="")
     ap.add_argument("--cdp", type=int, default=0, help="WebView2 远程调试端口（E2E 用）")
@@ -468,7 +839,9 @@ def main() -> int:
         alert("缺少 pywebview：用整合包 python 执行 pip install pywebview")
         return 1
 
-    log_line(f"start port={args.port}")
+    cfg = load_config()
+    port = args.port or int(cfg.get("port") or DEFAULT_PORT)
+    log_line(f"start port={port} state={STATE}")
     lock = singleton()
     if lock is None:
         log_line("singleton busy")
@@ -476,37 +849,99 @@ def main() -> int:
         return 0
 
     root = resolve_root(args.root)
+    python = find_python(root, args.python or cfg.get("python", "")) if root is not None else None
+    # 根目录无效或解释器找不到：窗口先开在引导页补齐，选完再起服务、拉起 ComfyUI
+    need_guide = root is None or not root_ok(root) or python is None
+    plugin_dir = plugin_dir_for(root) if root is not None else PLUGIN_SOURCE_DIR
     # 壳侧只读素材服务先起来：ComfyUI 没在跑时窗口里也是可浏览的 Neo Gallery
     # flags 由壳侧服务与 js_api 共用：拉起 ComfyUI 的那一刻起，页面的版本快照就是「启动中」
+    # 插件缺失且自动安装失败：壳侧服务退回内置副本，素材库照旧离线可浏览
+    serve_dir = plugin_dir if plugin_dir.is_dir() else PLUGIN_SOURCE_DIR
     flags = {"starting": False}
-    server = ShellServer(lambda: build_app(root, PLUGIN_DIR, flags), args.port + SHELL_PORT_OFFSET)
-    shell_port = server.start()
-    offline_url = f"http://127.0.0.1:{shell_port}/neo-studio" if shell_port else ""
-    # 起不来（端口被占 / 装配报错）只回 0，原因只能靠这行日志
-    log_line(f"shell service port={shell_port}" if shell_port else f"shell service failed: {server.error!r}")
+    if need_guide:
+        state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
+                      if root is None or not root_ok(root)
+                      else (ST_NO_PYTHON, "还没确定 Python 解释器"))
+    else:
+        state, msg = startup_state(root, python, plugin_dir)
+    launcher = {"root": str(root or ""), "python": str(python or ""), "port": port,
+                "plugin_dir": str(plugin_dir), "state_dir": str(STATE),
+                "portable": IS_FROZEN, "state": state, "error": msg}
+    launcher_api: dict = {}   # 壳侧路由延迟取壳的方法：服务先起，壳的方法随后补上
+    log_line(f"startup state={state} {msg}")
+    # build_app 要把根目录加进 sys.path 才能 import folder_paths：根目录无效时装配必崩。
+    # 引导页补完根目录后由 ensure_server 重取，服务才装配得起来。
+    boot = {"root": root, "serve_dir": serve_dir}
+    server = ShellServer(lambda: build_app(boot["root"], boot["serve_dir"], flags, launcher,
+                                           launcher_api, COMFY_LOG),
+                         port + SHELL_PORT_OFFSET)
+    offline_url = ""
+
+    def start_server() -> bool:
+        """起壳侧只读服务；起不来（端口被占 / 装配报错）只回 False，原因只能靠这行日志。"""
+        nonlocal offline_url
+        if server.bound:
+            return True
+        if not server.start():
+            log_line(f"shell service failed: {server.error!r}")
+            return False
+        log_line(f"shell service port={server.bound}")
+        offline_url = f"http://127.0.0.1:{server.bound}/neo-studio"
+        return True
+
+    def ensure_server() -> bool:
+        """引导页的「开始」：根目录补完了才谈得上起服务，起完把离线页地址交回已开好的窗口。"""
+        boot["root"] = Path(launcher["root"])
+        plugin_dir = plugin_dir_for(boot["root"])
+        # 与正常启动同一套自检：插件没装进用户选的根目录就先装内置副本 —— 壳侧服务要
+        # 从那儿 exec_module 挂 gallery 等模块，目录不存在时装配直接抛 FileNotFoundError
+        state, msg = startup_state(boot["root"], Path(launcher["python"]), plugin_dir)
+        launcher.update(state=state, error=msg)
+        if state == ST_BAD_ROOT:
+            return False
+        boot["serve_dir"] = plugin_dir if plugin_dir.is_dir() else PLUGIN_SOURCE_DIR
+        if not start_server():
+            return False
+        shell.shell_port = server.bound
+        shell.offline_url = offline_url
+        return True
+
+    if not need_guide:
+        start_server()
+    shell_port = server.bound
 
     comfy = None
-    comfy_port = args.port
+    comfy_port = port
     # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
     # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，壳就在旁边
     # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
-    if not port_busy(args.port):
-        comfy_port = free_comfy_port(args.port, shell_port)
-        python = resolve_python(root, args.python)
+    if state == ST_OK and not port_busy(port):
+        comfy_port = free_comfy_port(port, shell_port)
         comfy = start_comfy(python, root, comfy_port)
         log_line(f"comfy spawn pid={comfy.pid} port={comfy_port}")
     url = f"http://127.0.0.1:{comfy_port}/neo-studio"
 
-    geo = load_geometry()
     # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后由后台线程跳过去
-    shell = StudioShell(url, comfy, comfy_port, root, args.python, offline_url, shell_port, flags)
+    shell = StudioShell(url, comfy, comfy_port, root or Path(""), str(python or ""),
+                        offline_url, shell_port, flags, launcher)
+    shell.ensure_server = ensure_server
+    launcher_api.update(apply=shell.apply_launcher, install_plugin=shell.install_plugin,
+                        install_deps=shell.install_deps, pick_root=shell.pick_root,
+                        state=shell.launcher_state)
+    geo = load_geometry()
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
     studio_ready = probe(comfy_port)
-    start_url = url if comfy is None and studio_ready else offline_url
-    window = webview.create_window("新影工坊 · Neo Studio", start_url, **kw) if start_url \
-        else webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
+    start_url = "" if need_guide else (url if comfy is None and studio_ready else offline_url)
+    if start_url:
+        window = webview.create_window("新影工坊 · Neo Studio", start_url, **kw)
+    elif need_guide:
+        window = webview.create_window("新影工坊 · Neo Studio", html=guide_html(launcher), **kw)
+    else:
+        window = webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
     shell.loader = window.load_url
+    global _studio_window
+    _studio_window = window
 
 
     def arm_pill() -> None:
@@ -572,10 +1007,12 @@ def main() -> int:
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
-    log_line(f"webview start geo={geo} url={start_url or 'splash'}")
+    log_line(f"webview start geo={geo} url={start_url or ('guide' if need_guide else 'splash')}")
     purge_web_cache()   # 历史缓存里的旧插件 JS 会把模块图撕开，开窗口前清掉
     if comfy is not None:
         on_start = lambda: threading.Thread(target=spawn_ready, daemon=True).start()
+    elif need_guide:
+        on_start = None   # 引导页等用户补齐根目录/解释器，壳不自己拉进程
     elif not studio_ready:
         # 附着的那路还在导入自定义节点：就绪后跳过去，别停在离线页干等
         on_start = lambda: threading.Thread(target=shell._jump_when_ready, daemon=True).start()

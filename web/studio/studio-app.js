@@ -423,6 +423,89 @@ function buildSkills(el) {
     createSkillManager(el, { showClose: false, showCanvasBtn: false });
 }
 
+// ====== 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口 ======
+// 这组路由只在壳侧服务上（neo_studio_server），浏览器标签页里读不到快照，整个 tab 收起。
+function createLauncherPanel() {
+    const input = (ph) => $el("input", { className: "ns-launch-input", placeholder: ph, spellcheck: "false" });
+    const rootIn = input("ComfyUI 根目录");
+    const pyIn = input("python.exe 路径");
+    const portIn = input("8188");
+    const status = $el("div", { className: "ns-launch-status" });
+    const info = $el("div", { className: "ns-launch-info" });
+    const browseBtn = $el("button", { className: "ns-btn", textContent: "浏览…" });
+    const pyBrowseBtn = $el("button", { className: "ns-btn", textContent: "浏览…" });
+    const applyBtn = $el("button", { className: "ns-btn ns-launch-apply", textContent: "保存并重启 ComfyUI" });
+    const depsBtn = $el("button", { className: "ns-btn", textContent: "安装依赖" });
+    const fixBtn = $el("button", { className: "ns-btn", textContent: "重试安装插件" });
+    const row = (label, ...kids) => $el("div", { className: "ns-launch-row" },
+        [$el("span", { className: "ns-launch-label", textContent: label }), ...kids]);
+
+    const STATE_TEXT = {
+        ok: "就绪",
+        bad_root: "根目录无效",
+        missing_python: "找不到 Python",
+        deps_missing: "缺少插件依赖",
+        install_failed: "插件安装失败",
+    };
+
+    function render(s) {
+        rootIn.value = s.root || "";
+        pyIn.value = s.python || "";
+        portIn.value = s.port || "";
+        status.textContent = (STATE_TEXT[s.state] || s.state || "") + (s.error ? ` · ${s.error}` : "");
+        status.classList.toggle("ns-launch-bad", !!s.state && s.state !== "ok");
+        info.textContent = `插件 ${s.plugin_dir} · 状态 ${s.state_dir} · ${s.portable ? "便携模式" : "插件内运行"}`;
+        depsBtn.style.display = s.state === "deps_missing" ? "" : "none";
+        fixBtn.style.display = s.state === "install_failed" ? "" : "none";
+    }
+
+    async function refresh() {
+        const resp = await api.fetchApi("/neo_studio/launcher");
+        render(await resp.json());
+    }
+
+    async function post(payload) {
+        applyBtn.disabled = depsBtn.disabled = fixBtn.disabled = true;
+        try {
+            const resp = await api.fetchApi("/neo_studio/launcher", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json();
+            toast(data.ok ? (data.msg || "已保存，ComfyUI 重启中…") : data.error);
+            if (data.ok) await refresh();
+        } catch (e) {
+            toast(`启动设置保存失败：${e.message}`);
+        } finally {
+            applyBtn.disabled = depsBtn.disabled = fixBtn.disabled = false;
+        }
+    }
+
+    browseBtn.addEventListener("click", async () => {
+        const picked = await window.pywebview?.api?.pick_root?.();
+        if (picked) rootIn.value = picked;
+    });
+    pyBrowseBtn.addEventListener("click", async () => {
+        const picked = await window.pywebview?.api?.pick_python?.();
+        if (picked) pyIn.value = picked;
+    });
+    applyBtn.addEventListener("click", () => post({ root: rootIn.value, python: pyIn.value, port: portIn.value }));
+    depsBtn.addEventListener("click", () => post({ action: "install_deps" }));
+    fixBtn.addEventListener("click", () => post({ action: "install_plugin" }));
+
+    const el = $el("div", { className: "ns-settings-section" }, [
+        $el("h3", { textContent: "启动设置" }),
+        status,
+        row("ComfyUI 根目录", rootIn, browseBtn),
+        row("Python", pyIn, pyBrowseBtn),
+        row("端口", portIn),
+        $el("div", { className: "ns-launch-actions" }, [applyBtn, depsBtn, fixBtn]),
+        info,
+    ]);
+    return { el, refresh };
+}
+
 // ====== 设置页：左侧 tab 切换（LLM / 生图 / 生视频 / 日志），默认 LLM ======
 function buildSettings(el) {
     // 三个表单工厂均返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
@@ -448,12 +531,14 @@ function buildSettings(el) {
         } catch { /* ComfyUI 未就绪时保留上次内容 */ }
     }
 
-    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 日志；每个 tab 只显示对应设置区
+    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 日志 → 启动设置；每个 tab 只显示对应设置区
+    const launcher = createLauncherPanel();
     const sections = [
         { key: "llm", label: "LLM 设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "LLM 设置" }), llmForm.el]) },
         { key: "gen", label: "生图设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生图设置" }), genForm.el]) },
         { key: "video", label: "生视频设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生视频设置" }), videoForm.el]) },
         { key: "log", label: "日志", body: $el("div", { className: "ns-settings-section ns-log-section" }, [$el("h3", { textContent: "日志" }), logBody]) },
+        { key: "launch", label: "启动设置", body: launcher.el },
     ];
 
     const tabs = $el("div", { className: "ns-settings-tabs" });
@@ -482,6 +567,11 @@ function buildSettings(el) {
     showSection("llm");  // 默认 LLM 设置
     Promise.all([genForm.load(), videoForm.load(), llmForm.load()])
         .catch(e => console.error("[Neo Studio] settings load failed:", e));
+    // 启动设置只有壳侧服务有：浏览器标签页里读不到快照，tab 整个收起
+    launcher.refresh().catch(() => {
+        launcher.el.remove();
+        tabs.querySelector('[data-key="launch"]')?.remove();
+    });
 }
 
 // ====== 启动：版本信息 + 扩展初始化 + 路由 ======

@@ -27,6 +27,8 @@ const EXE = process.env.NEO_STUDIO_EXE || "";
 
 function shell(port) {
     const args = ["--port", String(port), "--cdp", String(CDP_PORT)];
+    // exe 可以放在任意目录，根目录推不出来（首跑弹目录选择器）：跑打包产物时显式给根目录与解释器
+    if (EXE) args.push("--root", dirname(dirname(PLUGIN_DIR)), "--python", PYTHON);
     return EXE ? spawn(EXE, args, { stdio: "inherit" }) : spawn(PYTHON, [APP_PY, ...args], { stdio: "inherit" });
 }
 

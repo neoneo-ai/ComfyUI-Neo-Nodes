@@ -165,9 +165,30 @@ async def offline(request):
     return web.Response(status=404)
 
 
-def build_app(root: Path, plugin_dir: Path, flags: dict = None) -> web.Application:
+async def launcher_get(request):
+    """「启动设置」页读的快照：根目录 / 解释器 / 端口 / 插件位置 / 自检状态。"""
+    return web.json_response(request.app["launcher"])
+
+
+async def launcher_post(request):
+    """设置页的保存与重试都走这里：校验与进程操作都在壳里，壳侧只转达结果。"""
+    data = await request.json()
+    action = data.get("action", "apply")
+    fn = request.app["launcher_api"].get(action)
+    if fn is None:
+        return web.json_response({"ok": False, "error": f"不支持的操作：{action}"}, status=400)
+    if action == "apply":
+        res = fn(data.get("root", ""), data.get("python", ""), data.get("port", 0))
+    else:
+        res = fn()
+    return web.json_response(res)
+
+
+def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict = None,
+              launcher_api: dict = None, comfy_log: Path = None) -> web.Application:
     """壳侧 app：Studio 页面 + 前端静态文件 + 能力清单里归壳的全部路由。
-    flags 是壳的启动中标记（与 StudioShell 共用同一份 dict），随版本快照下发给页面。"""
+    flags 是壳的启动中标记（与 StudioShell 共用同一份 dict），随版本快照下发给页面。
+    launcher / launcher_api 同样与 StudioShell 共用：设置页在壳侧读快照、发保存。"""
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
@@ -184,6 +205,8 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None) -> web.Applicati
     routes.post(USERDATA_PATH)(userdata_post)
     routes.get("/neo_studio/version")(studio_version)
     routes.get("/neo_studio/log")(shell_log)
+    routes.get("/neo_studio/launcher")(launcher_get)
+    routes.post("/neo_studio/launcher")(launcher_post)
     routes.get("/view")(view_file)
     routes.get("/ws")(studio_ws)
 
@@ -191,7 +214,9 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None) -> web.Applicati
     app["flags"] = flags if flags is not None else {}
     app["studio_index"] = plugin_dir / "web" / "studio" / "index.html"
     app["userdata"] = Path(folder_paths.get_user_directory()) / "default" / "neo_gallery_data.json"
-    app["comfy_log"] = plugin_dir / "tmp" / "comfy_run.log"
+    app["comfy_log"] = Path(comfy_log) if comfy_log else plugin_dir / "tmp" / "comfy_run.log"
+    app["launcher"] = launcher if launcher is not None else {}
+    app["launcher_api"] = launcher_api if launcher_api is not None else {}
     app["plugin_version"] = sys.modules[f"{SHELL_PKG}.util"].plugin_version()
 
     app.add_routes(routes)

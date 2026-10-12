@@ -28,6 +28,30 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   build `base_dirs()` walks up to the plugin folder, so `configs/studio_window.json` and `tmp/studio_profile`
   stay in the plugin folder. The exe is a local build artifact (`pyinstaller` is a build-time dep, not in
   `requirements.txt`) and never ships in the Registry; `neo-studio-app.vbs` stays the plugin entry point.
+- Portable launcher settings: a `启动设置` tab (Studio view `launcher`) served by the shell-side
+  `/neo_studio/launcher` route — GET reads the snapshot, POST runs the shell's `apply_launcher` /
+  `install_plugin` / `install_deps`, the two path rows' browse buttons call the `js_api` methods `pick_root` /
+  `pick_python` — so it works in
+  the desktop shell only, and the tab stays hidden in a browser tab. It edits the ComfyUI root, the python
+  interpreter and the port, validates them server-side (a root without `main.py` is rejected instead of launching a
+  kernel that cannot start) and persists them to `launcher_config.json` in the shell state dir, which falls back to
+  `%APPDATA%/NeoStudio` when the plugin folder is not writable. `tools/build_studio_exe.ps1` now embeds a copy of
+  the plugin (`git ls-files -z` minus dev-only dirs, so user configs and API keys never ship) under
+  `_MEIPASS/bundled/ComfyUI-Neo-Nodes`; `ensure_plugin()` installs it into `custom_nodes` when the plugin is
+  missing, requirements included, and never overwrites an existing folder. The tab shows the self-check state
+  (ok / bad root / missing python / missing dependencies / plugin install failed), with `安装依赖` when the
+  target python lacks the plugin dependencies and `重试安装插件` when the bundled copy could not be installed.
+- First-run setup page: when the ComfyUI root cannot be inferred (or has no `main.py`), or no `python.exe` is
+  found next to the root, the window opens on a `guide_html` page built with `load_html` + `js_api` instead of
+  exiting. The shell-side service cannot be assembled without a valid root (`build_app` imports `folder_paths`
+  from it), so this page must not depend on HTTP: it prefills whatever was auto-detected, validates live through
+  `check_setup`, takes values from the native `pick_root` / `pick_python` dialogs, and `start_setup` starts the
+  shell service and reuses `apply_launcher` to save and launch. Auto-detection that succeeds goes straight to
+  Studio as before, and the pre-window root picker is gone. `start_setup` runs the same self-check as a normal
+  start, so a root whose `custom_nodes` has no plugin gets the bundled copy installed before the shell service is
+  assembled — pointing the service at the missing folder used to fail assembly with `FileNotFoundError` and leave
+  only "service won't start" on the page. Empty path input no longer resolves to the relative `.`, which counts as
+  a valid root when the shell runs from inside the ComfyUI folder.
 - Shell-embedded read-only gallery service (`neo_studio_server.py`, ComfyUI port + 3): the gallery modules now
   carry their own `web.RouteTableDef` and `__init__.py` mounts them into `PromptServer.instance.routes`, so the
   same browsing handlers run with no ComfyUI runtime — the shell serves `/neo-studio`, the extension static files,
