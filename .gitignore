@@ -17,6 +17,7 @@ tmp/
 /tools/neo-studio.exe
 /tools/neo-studio/
 /tools/output/
+/tools/data/
 
 # 用户配置与密钥：只存本机，不进包、不进 Registry
 remote_llm_config.json
