@@ -1,0 +1,46 @@
+# 运行期与开发产物：模式不带前导斜杠，对 kernel-plugin/ 内的同名目录同样生效。
+__pycache__/
+*.py[cod]
+.DS_Store
+.pytest_cache/
+test-results/
+node_modules/
+build/
+dist/
+tmp/
+.tiktoken_cache/
+
+# 应用状态（启动配置 / 窗口几何 / WebView2 profile / 内核与壳日志）
+/data/
+
+# 打包产物与离线工具输出
+/tools/neo-studio.exe
+/tools/neo-studio/
+/tools/output/
+
+# 用户配置与密钥：只存本机，不进包、不进 Registry
+remote_llm_config.json
+model_config.json
+configs/gallery_settings.json
+configs/image_gen.json
+configs/video_gen.json
+configs/bookmarks.json
+configs/model_hub.json
+configs/backyard_oss.json
+configs/studio_window.json
+configs/gallery_dim_cache.json
+configs/skill_overrides/
+
+# 用户创作数据与缓存
+prompts/custom
+prompts/templates/custom
+**/_tags_index.json
+recipes/custom/
+recipes/.thumbs/
+skills/custom/
+gallery/presets/
+gallery/thumbnails/
+gallery/oss_cache/
+gallery/lora_cache/
+gallery/waveform_cache/
+gallery/civitai_bookmarks/
