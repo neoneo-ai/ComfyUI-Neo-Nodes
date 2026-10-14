@@ -68,26 +68,46 @@ Interaction recordings (click a thumbnail to open the matching doc):
 
 ## Installation
 
-- **ComfyUI Manager (recommended)**: Search `Neo Studio` in the Manager and install.
+**Neo Studio App is the recommended form.** It is the Studio window (Assets / Director / Skills /
+Settings), it starts and stops ComfyUI from its own settings page, and it puts the plugin into
+`custom_nodes` by itself — you never touch the plugin folder. It needs a ComfyUI install with its
+Python interpreter; it does not bundle ComfyUI.
+
+- **Portable app** — a single file, `Neo-Studio-<version>-windows-x64.exe`, attached to
+  [GitHub Releases](https://github.com/neoneo-ai/Neo-Studio/releases) by
+  `.github/workflows/release-app.yml` (built by `tools\build_studio_exe.ps1`, unsigned — expect a
+  SmartScreen prompt on first run). It derives the ComfyUI root and the interpreter from its
+  own location, opens a first-setup page when it cannot find them, and installs or updates the
+  plugin from its bundled copy — user data dirs are carried over, a git checkout is never touched.
+- **From source** — clone the repo and run `tools/neo-studio-app.vbs` (no console window;
+  `tools/neo-studio-app.bat` is the debug entry, `--debug` opens DevTools). Every launch syncs
+  `kernel-plugin/` into `custom_nodes` (same-name files only, nothing in the target is deleted).
+
+The window, the offline service and the kernel controls:
+[Neo Studio (Standalone App)](#neo-studio-standalone-app).
+
+<details>
+<summary>ComfyUI plugin form — the nodes inside ComfyUI's own UI, without the Studio window</summary>
+
+- **ComfyUI Manager**: search `Neo Studio` and install.
 - **comfy CLI**: `comfy node install comfyui-neo-studio`
-- **Manual**: Clone into `ComfyUI/custom_nodes/`:
+- **Manual**: clone into `ComfyUI/custom_nodes/`, then restart ComfyUI:
 
 ```bash
 git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
-- **Source install / desktop app**: `tools/install_plugin.ps1` installs the code and built-in presets and
-  writes the `configs/data_root.json` data-root pointer (user data lives outside the plugin dir, so
-  uninstalling is just deleting the plugin dir); `tools/build_studio_exe.ps1` builds the desktop app;
-  running the shell from source syncs `kernel-plugin/` into `custom_nodes` by itself. Commands, parameters
-  and release switches: [docs/en/release.md](docs/en/release.md).
+Source install: `tools/install_plugin.ps1` installs the code and the built-in presets and writes the
+`configs/data_root.json` data-root pointer (user data lives outside the plugin dir, so uninstalling
+is just deleting the plugin dir). Commands, parameters and release switches:
+[docs/en/release.md](docs/en/release.md).
 
 > **Upgrading from the old package**: the Registry package moved from `comfyui-neo-nodes` to
 > `comfyui-neo-studio`. Delete `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` before installing the new one —
 > keeping both directories registers the same nodes twice. User data does not live in the plugin
 > directory, so removing the old folder touches no data.
 
-Then restart ComfyUI.
+</details>
 
 ## Dependencies
 
@@ -98,7 +118,8 @@ Then restart ComfyUI.
 
 ## Quick Start
 
-1. **Install** the plugin and restart ComfyUI.
+1. **Open Neo Studio** (the app) — it installs the plugin and starts ComfyUI for you. Plugin-only
+   users: install it and restart ComfyUI.
 2. **Zero-config features first** (no LLM, no model setup needed): ✈️ send an asset from the Gallery
    lightbox into a LoadImage-type node ([gallery.md](docs/en/gallery.md)), download models from the Model
    Hub with automatic category placement ([model-hub.md](docs/en/model-hub.md)), repair broken workflow

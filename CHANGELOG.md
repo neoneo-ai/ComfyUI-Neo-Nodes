@@ -4,6 +4,12 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- `.github/workflows/release-app.yml`: pushing a `v*` tag (or a manual dispatch) runs
+  `tools\build_studio_exe.ps1` on `windows-latest` and attaches the onefile exe (plus the onedir zip
+  when a dispatch picks `onedir` / `both`) to that tag's GitHub Release, so the recommended form now
+  has a prebuilt download. Assets are unsigned; signing and notarization stay local
+  (`-Sign` / `-Notarize`), and the Registry publish stays in `publish.yaml`. The README Installation
+  entry for the portable app now points at Releases.
 - English documentation mirror. `docs/en/` is a one-to-one English copy of every module doc; each English page
   links back to its Chinese original and each Chinese doc links to its English counterpart, and English pages only
   link to English pages. The root `README.md` (English) points at `docs/en/*` while `README_ZH.md` keeps pointing
@@ -11,12 +17,17 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   `kernel-plugin/README.md` is now English with `README_ZH.md` beside it, so the Registry package ships the
   English readme.
 - Root `README.md` and `README_ZH.md` slimmed (225 → 165 and 285 → 232 lines). The Features / 模块一览 rows now
-  link to the module doc that owns the detail, Installation keeps Manager / comfy CLI / clone and points at
-  `release.md` for the install and build scripts, Quick Start is six short steps, the standalone-app section
+  link to the module doc that owns the detail, Installation leads with the desktop app and keeps the
+  plugin routes collapsed, Quick Start is six short steps, the standalone-app section
   keeps the entry-point table plus the shell-behavior bullets, and the doc index table is replaced by a link to
   the docs index. The detail that moved out is not lost: the rebuild-after-change rule, the source sync and the
   window & taskbar icon are in `docs/release.md` / `docs/en/release.md`, and the two canvas screenshots now live
   in `prompts.md` (reference grid) and `h3-video-gen.md` (video nodes).
+- Installation now leads with the **Neo Studio desktop app** (portable exe built by
+  `tools\build_studio_exe.ps1`, and the source form `neo-studio-app.vbs` / `.bat`) and states that the
+  app installs the plugin into `custom_nodes` by itself. The ComfyUI plugin routes (Manager, comfy CLI,
+  clone, `install_plugin.ps1`, old-package upgrade note) moved into a collapsed `<details>` block, and
+  Quick Start step 1 opens the app.
 - The `nine_grid_storyboard` preset's `skill.md` no longer links to `../../docs/gallery.md`: `docs/` is not
   shipped in the Registry package, so that relative link was unreachable in every installed copy. It now names
   the gallery doc as plain text.

@@ -59,11 +59,22 @@ tools\build_studio_exe.ps1 -Publish                                  # comfy nod
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
 ```
 
-**改完 `neo_studio_app.py` 必须重新打包。** 源码运行桌面壳时每次启动把 `kernel-plugin/` 同步进
+**改完 `app/studio_app.py` 必须重新打包。** 源码运行桌面壳时每次启动把 `kernel-plugin/` 同步进
 `custom_nodes`（只覆盖同名文件，不删目标目录里的东西）；exe 只在内置副本版本更新时才替换插件目录，
 git 检出的那份不碰。
 
 窗口与任务栏图标是拍板造型的 `web/neo-studio.ico`（`tools/make_studio_icon.py` 生成），启动器打包时带同款图标。
+
+### Release 工作流
+
+`.github/workflows/release-app.yml` 在打 `v*` tag 时（或手动触发）在 `windows-latest` 上跑同一条
+`build_studio_exe.ps1`，把产物挂到该 tag 的 GitHub Release：
+
+- `Neo-Studio-<版本>-windows-x64.exe` —— onefile 单文件，约 52 MB
+- `Neo-Studio-<版本>-windows-x64-portable.zip` —— onedir 整包，手动触发选 `onedir` / `both` 时才有
+
+产物是未签名版，首次运行会有 SmartScreen 提示；签名与公证仍走本地 `-Sign` / `-Notarize`（CI 里没有
+机器证书，也不在 mac 上跑）。Registry 发布由 `publish.yaml` 负责，两条工作流互不依赖。
 
 ## 离线工具
 

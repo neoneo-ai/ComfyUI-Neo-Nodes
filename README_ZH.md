@@ -104,22 +104,40 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 
 ## 安装
 
-- **ComfyUI Manager（推荐）**：在 Manager 中搜索 `Neo Studio` 一键安装（已发布至 ComfyUI Registry）
+**首推 Neo Studio App（桌面应用形态）**：它就是新影工坊窗口（素材 / 导演 / 技能 / 设置），在自己的
+设置页启停 ComfyUI，并自行把插件装进 `custom_nodes`——不用手动碰插件目录。它需要一个已装好的
+ComfyUI 及其 Python 解释器，不自带 ComfyUI。
+
+- **便携版** — 单文件 `Neo-Studio-<版本>-windows-x64.exe`，由 `.github/workflows/release-app.yml`
+  挂在 [GitHub Releases](https://github.com/neoneo-ai/Neo-Studio/releases)（`tools\build_studio_exe.ps1`
+  构建，未签名，首次运行会有 SmartScreen 提示）。exe 从自身位置推导 ComfyUI 根目录与解释器，
+  找不到时打开首次设置页，并用自带的插件副本安装 / 更新插件——用户数据目录沿用，git 检出目录永不改写。
+- **源码版** — 克隆仓库后运行 `tools\neo-studio-app.vbs`（无控制台黑窗；`tools\neo-studio-app.bat`
+  是带控制台的调试入口，`--debug` 开 DevTools）。源码运行时每次启动都把 `kernel-plugin/` 同步进
+  `custom_nodes`（只同步同名文件，目标目录不删除任何东西）。
+
+窗口、离线服务与内核启停：见 [新影工坊](#新影工坊neo-studio--独立应用)。
+
+<details>
+<summary>ComfyUI 插件形态 —— 只在 ComfyUI 自己的界面里用节点，不带 Studio 窗口</summary>
+
+- **ComfyUI Manager**：搜索 `Neo Studio` 一键安装（已发布至 ComfyUI Registry）
 - **comfy CLI**：`comfy node install comfyui-neo-studio`
-- **手动克隆**：把本仓库克隆成 `ComfyUI/custom_nodes/comfyui-neo-studio`，重启 ComfyUI
+- **手动克隆**：克隆成 `ComfyUI/custom_nodes/comfyui-neo-studio`，然后重启 ComfyUI
 
 ```bash
 git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
-- **源码安装 / 桌面版**：`tools\install_plugin.ps1` 把代码与内置预设装进插件目录，并写好
-  `configs/data_root.json` 数据根指针（用户数据在插件目录之外，卸载只删插件目录）；
-  `tools\build_studio_exe.ps1` 出桌面版启动器；源码运行桌面壳时自己把 `kernel-plugin/` 同步进
-  `custom_nodes`。命令、参数与发布开关见 [docs/release.md](docs/release.md)。
+源码安装：`tools\install_plugin.ps1` 把代码与内置预设装进插件目录，并写好 `configs/data_root.json`
+数据根指针（用户数据在插件目录之外，卸载只删插件目录）。命令、参数与发布开关见
+[docs/release.md](docs/release.md)。
 
 > **从旧版升级**：包名从 `comfyui-neo-nodes` 换成 `comfyui-neo-studio`。先删掉
 > `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` 再装新包——两个目录同时存在会把同一批节点注册两遍。
 > 用户数据不在插件目录里，删旧目录不动数据。
+
+</details>
 
 ## 依赖
 
@@ -132,7 +150,8 @@ git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfy
 
 ## 快速上手
 
-1. **安装**：ComfyUI Manager 搜 `Neo Studio` 一键安装，重启 ComfyUI。
+1. **打开新影工坊**（推荐形态）：它会把插件装好并替你拉起 ComfyUI；只用插件的话在 ComfyUI Manager
+   搜 `Neo Studio` 安装后重启 ComfyUI。
 2. **先玩零配置功能**（不需要 LLM 与任何模型配置）：灯箱里 ✈️ 把素材写进 LoadImage 类节点
    （[gallery.md](docs/gallery.md)）、模型库双源下载并按仓库路径自动归类落盘
    （[model-hub.md](docs/model-hub.md)）、顶栏 🅝 一键修复失效的模型路径

@@ -1,0 +1,88 @@
+name: Build Neo Studio App
+
+# 打 v* tag 时和 publish.yaml 并行：一条 tag 同时出 Registry 包与 GitHub Release 资产。
+# 构建逻辑全在 tools\build_studio_exe.ps1，这里只装构建期依赖并搬运产物。
+# 签名与公证不进 CI（-Sign 要机器证书，-Notarize 只能在 mac 上跑），产物是未签名版。
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "分发形态"
+        type: choice
+        choices:
+          - onefile
+          - onedir
+          - both
+        default: onefile
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-app:
+    name: Build Windows app
+    runs-on: windows-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # pyinstaller + Neo-Studio.spec 里 collect_all 的那几样（webview / pythonnet / aiohttp / PIL / yaml / pypinyin）
+      - name: Install build dependencies
+        run: pip install pyinstaller pywebview pythonnet aiohttp PyYAML pypinyin Pillow
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the launcher
+        shell: pwsh
+        run: tools\build_studio_exe.ps1 -Mode ${{ inputs.mode || 'onefile' }}
+
+      # 产物按版本改名：onefile 出单 exe，onedir 出整包 zip（exe 旁的 data/ 状态目录跟着走）
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (Test-Path tools/neo-studio.exe) {
+            Copy-Item tools/neo-studio.exe "dist/Neo-Studio-$v-windows-x64.exe"
+          }
+          if (Test-Path tools/neo-studio/Neo-Studio.exe) {
+            Compress-Archive -Path tools/neo-studio -DestinationPath "dist/Neo-Studio-$v-windows-x64-portable.zip" -Force
+          }
+          Get-ChildItem dist | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: neo-studio-app-${{ steps.ver.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+      # Release 已存在时 create 让位给 upload，手动发过的 tag 也能补资产
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "Neo Studio $GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
