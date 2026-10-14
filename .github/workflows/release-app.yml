@@ -10,7 +10,7 @@ on:
         description: "分发形态：onefile / onedir / both"
         type: string
         required: true
-        default: onefile
+        default: both
   push:
     tags:
       - "v*"
@@ -52,7 +52,7 @@ jobs:
 
       - name: Build the launcher
         shell: pwsh
-        run: tools\build_studio_exe.ps1 -Mode ${{ inputs.mode || 'onefile' }}
+        run: tools\build_studio_exe.ps1 -Mode ${{ inputs.mode || 'both' }}
 
       # 产物按版本改名：onefile 出单 exe，onedir 出整包 zip（exe 旁的 data/ 状态目录跟着走）
       - name: Stage release assets

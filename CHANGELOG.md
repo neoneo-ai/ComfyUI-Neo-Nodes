@@ -5,11 +5,11 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 ## [Unreleased]
 
 - `.github/workflows/release-app.yml`: pushing a `v*` tag (or a manual dispatch) runs
-  `tools\build_studio_exe.ps1` on `windows-latest` and attaches the onefile exe (plus the onedir zip
-  when a dispatch picks `onedir` / `both`) to that tag's GitHub Release, so the recommended form now
-  has a prebuilt download. Assets are unsigned; signing and notarization stay local
-  (`-Sign` / `-Notarize`), and the Registry publish stays in `publish.yaml`. The README Installation
-  entry for the portable app now points at Releases.
+  `tools\build_studio_exe.ps1` on `windows-latest` and attaches both distribution forms to that tag's
+  GitHub Release — the onefile exe and the onedir build zipped whole (`mode` defaults to `both`) — so
+  the recommended form now has a prebuilt download. Assets are unsigned; signing and notarization stay
+  local (`-Sign` / `-Notarize`), and the Registry publish stays in `publish.yaml`. The README
+  Installation entry for the portable app now points at Releases.
 - English documentation mirror. `docs/en/` is a one-to-one English copy of every module doc; each English page
   links back to its Chinese original and each Chinese doc links to its English counterpart, and English pages only
   link to English pages. The root `README.md` (English) points at `docs/en/*` while `README_ZH.md` keeps pointing

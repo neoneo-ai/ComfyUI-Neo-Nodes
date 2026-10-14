@@ -71,7 +71,10 @@ git 检出的那份不碰。
 `build_studio_exe.ps1`，把产物挂到该 tag 的 GitHub Release：
 
 - `Neo-Studio-<版本>-windows-x64.exe` —— onefile 单文件，约 52 MB
-- `Neo-Studio-<版本>-windows-x64-portable.zip` —— onedir 整包，手动触发填 `onedir` / `both` 时才有
+- `Neo-Studio-<版本>-windows-x64-portable.zip` —— onedir 整包压缩（`Neo-Studio.exe` + `_internal/`，
+  解压后整目录直接用，启动不解包、出窗口更快）
+
+默认 `both`，两种形态一起挂上 Release；手动触发只想出一种时把 `mode` 填成 `onefile` 或 `onedir`。
 
 产物是未签名版，首次运行会有 SmartScreen 提示；签名与公证仍走本地 `-Sign` / `-Notarize`（CI 里没有
 机器证书，也不在 mac 上跑）。Registry 发布由 `publish.yaml` 负责，两条工作流互不依赖。

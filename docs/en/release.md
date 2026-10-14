@@ -84,8 +84,12 @@ The window and taskbar icon is the clapperboard `web/neo-studio.ico`, generated 
 `v*` tag is pushed (or on a manual dispatch) and attaches the result to that tag's GitHub Release:
 
 - `Neo-Studio-<version>-windows-x64.exe` — the onefile single file, about 52 MB
-- `Neo-Studio-<version>-windows-x64-portable.zip` — the onedir build, only when a manual dispatch
-  types `onedir` / `both`
+- `Neo-Studio-<version>-windows-x64-portable.zip` — the onedir build zipped whole (`Neo-Studio.exe`
+  plus `_internal/`; unzip and use the folder as-is, no unpacking at launch, so the window shows up
+  faster)
+
+The default is `both`, so a tag attaches both forms; for a manual dispatch that builds only one, type
+`onefile` or `onedir` into `mode`.
 
 The assets are unsigned, so expect a SmartScreen prompt on first run; signing and notarization stay
 local (`-Sign` / `-Notarize`), since CI has no machine certificate and cannot run the macOS path.
