@@ -1,6 +1,6 @@
 // E2E：Neo Studio 独立页面（需 ComfyUI 运行中）。
 // 用法：npm run e2e
-// 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo-Nodes 插件。
+// 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo Studio 插件。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
@@ -16,7 +16,7 @@ test.before(async () => {
         const resp = await fetch(`${BASE}/neo_studio/version`, { signal: AbortSignal.timeout(3000) });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     } catch (e) {
-        skipReason = `ComfyUI / Neo-Nodes 不可达 (${BASE}): ${e.message}`;
+        skipReason = `ComfyUI / Neo Studio 不可达 (${BASE}): ${e.message}`;
         return;
     }
     browser = await chromium.launch({ headless: true });
@@ -53,7 +53,7 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
 
         // 顶栏版本信息（插件 + ComfyUI）
         const version = await page.textContent("#ns-version");
-        assert.match(version, /Neo-Nodes .+ · ComfyUI .+/);
+        assert.match(version, /Neo Studio .+ · ComfyUI .+/);
 
         // 默认视图 = 素材：NeoGallery 挂载
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 15000 });
@@ -126,6 +126,8 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         // 设置视图：默认停在 LLM tab，切到生图 tab 后表单（.rs-gen-settings）才可见
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-section .rs-btn, .ns-settings-section button", { timeout: 15000 });
+        // 浏览器里没有壳桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 5
+        await page.waitForFunction(() => !document.querySelector('[data-key="launch"]'), null, { timeout: 10000 });
         const sections = await page.locator(".ns-settings-section").count();
         assert.equal(sections, 4);
         await page.click(".ns-settings-tab[data-key='gen']");
