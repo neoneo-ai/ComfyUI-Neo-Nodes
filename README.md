@@ -107,15 +107,28 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 ## 安装
 
 - **ComfyUI Manager（推荐）**：在 Manager 中搜索 `Neo Studio` 一键安装（已发布至 ComfyUI Registry）
-- **手动**：将本仓库克隆到 `ComfyUI/custom_nodes/` 目录，然后重启 ComfyUI
+- **comfy CLI**：`comfy node install comfyui-neo-studio`
+- **源码安装**：`tools\install_plugin.ps1` 把代码与内置预设装进 `ComfyUI/custom_nodes/comfyui-neo-studio`，
+  并写好数据根指针 `configs/data_root.json`（用户数据留在 `Neo-Studio/data`，卸载只删插件目录）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
+```
+
+- **手动克隆**：把本仓库克隆成 `ComfyUI/custom_nodes/comfyui-neo-studio`，重启 ComfyUI
 
 ```bash
 git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
+- **桌面版**：`tools\build_studio_exe.ps1` 出 `tools\neo-studio.exe`（单文件）或 `-Mode onedir` 目录版；
+  发布开关 `-Sign`（signtool）/ `-Notarize`（macOS notarytool）/ `-Publish`（comfy node publish）默认不执行
+
 ## 依赖
 
-- `requests`、`Pillow`、`PyYAML`（随 `requirements.txt` 自动安装）
+- `openai`、`PyYAML`、`pypinyin`、`Pillow`（随 `requirements.txt` 自动安装；Pillow 由 ComfyUI 核心自带）
+- 可选增强（缺包时对应功能自行降级）：`laya`（智能 skill 选择）、`pillow-heif`（HEIC 读取）、
+  `oss2`（Backyard OSS 上传）
 - `llama_cpp_python`（**可选**，仅 Local GGUF 本地推理需要，见 [docs/llm.md](docs/llm.md)；原生引擎与远程 API 可跳过）
 
 ---

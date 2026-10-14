@@ -11,6 +11,16 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   paths (`/neo-studio`, `/neo_studio/*`, `/neo_nodes/*`, `/neo_gallery/*`, …) are unchanged; only the node
   category label moved from `Neo-Nodes` to `Neo Studio`, so existing workflows keep loading.
 
+- Packaging and publishing: `tools/install_plugin.ps1` installs the kernel plugin from source into
+  `custom_nodes/comfyui-neo-studio` — code and built-in presets only, writes the `configs/data_root.json`
+  pointer, and never deletes anything already in the target. `tools/build_studio_exe.ps1` gained `-Sign`
+  (signtool via `-CertThumbprint` or `-Pfx`/`-PfxPass`, verified with `signtool verify /pa`), `-Notarize`
+  (macOS `notarytool` + `stapler` + `spctl`) and `-Publish` (`comfy node publish`); all three are off by
+  default, so a plain build is unchanged. Plugin dependency installs now pass `--no-warn-script-location`.
+  `.github/workflows/publish.yaml` now runs `comfy node publish` inside `kernel-plugin/` itself: the shared
+  `comfy-org/publish-node-action` only publishes the repository root, and the root `pyproject.toml` is the
+  desktop shell's own manifest, not the Registry package.
+
 - Neo Studio desktop shell: `neo-studio-app.vbs` opens the Studio page in a WebView2 window with no console
   window (`neo_studio_app.py`, optional `pywebview` extra); the shell runs under `pythonw`, its startup trace
   goes to `tmp/studio_shell.log` (which also keeps the pywebview logger off the missing `stderr` that aborts

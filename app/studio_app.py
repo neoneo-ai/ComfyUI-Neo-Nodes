@@ -264,7 +264,8 @@ def install_deps(python: Path, plugin_dir: Path) -> dict:
     req = plugin_dir / "requirements.txt"
     if not req.is_file():
         return {"ok": False, "error": f"找不到依赖清单：{req}"}
-    proc = subprocess.run([str(python), "-m", "pip", "install", "-r", str(req)],
+    proc = subprocess.run([str(python), "-m", "pip", "install", "--no-warn-script-location",
+                           "-r", str(req)],
                           creationflags=NO_WINDOW)
     if proc.returncode:
         return {"ok": False, "error": f"pip 退出码 {proc.returncode}，检查网络与代理后重试。"}

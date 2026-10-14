@@ -16,7 +16,18 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Publish Custom Node to registry
-        uses: comfy-org/publish-node-action@main
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          personal_access_token: ${{ secrets.COMFY_REGISTRY_PUBLISH_TOKEN }}
+          python-version: '3.10'
+
+      - name: Install comfy-cli
+        run: pip install comfy-cli
+
+      # 内核插件在 kernel-plugin/：pyproject.toml 与 .comfyignore 都在那一层，
+      # 发布必须在那一层跑（仓库根的 pyproject 是桌面壳自己的，不发 Python 包）
+      - name: Publish kernel plugin
+        working-directory: kernel-plugin
+        run: |
+          comfy --skip-prompt --no-enable-telemetry env
+          comfy node publish --token ${{ secrets.COMFY_REGISTRY_PUBLISH_TOKEN }}

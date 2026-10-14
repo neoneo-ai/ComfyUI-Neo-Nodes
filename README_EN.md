@@ -69,17 +69,32 @@ Interaction recordings (click a thumbnail to open the matching doc):
 ## Installation
 
 - **ComfyUI Manager (recommended)**: Search `Neo Studio` in the Manager and install.
+- **comfy CLI**: `comfy node install comfyui-neo-studio`
+- **Source install**: `tools/install_plugin.ps1` copies code and built-in presets into
+  `ComfyUI/custom_nodes/comfyui-neo-studio`, and writes the data-root pointer
+  `configs/data_root.json` (user data stays in `Neo-Studio/data`; uninstall = delete the plugin dir):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
+```
+
 - **Manual**: Clone into `ComfyUI/custom_nodes/`:
 
 ```bash
 git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
+- **Desktop app**: `tools/build_studio_exe.ps1` produces `tools/neo-studio.exe` (onefile) or the
+  `-Mode onedir` folder build. Release switches `-Sign` (signtool), `-Notarize` (macOS notarytool)
+  and `-Publish` (comfy node publish) do nothing unless passed.
+
 Then restart ComfyUI.
 
 ## Dependencies
 
-- `requests`, `Pillow`, `PyYAML` (auto-installed via `requirements.txt`)
+- `openai`, `PyYAML`, `pypinyin`, `Pillow` (auto-installed via `requirements.txt`; Pillow ships with ComfyUI core)
+- Optional extras (features degrade gracefully when a package is missing): `laya` (smart skill picking),
+  `pillow-heif` (HEIC reading), `oss2` (Backyard OSS upload)
 - `llama_cpp_python` (**optional**, only for local LLM inference)
 
 ## Quick Start

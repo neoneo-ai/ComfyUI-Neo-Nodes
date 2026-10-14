@@ -20,13 +20,14 @@ Registry 与前端搜索的命中靠 `pyproject.toml` 的 `description` / `keywo
 
 ### Git Action 方式
 
-- Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Studio`）。
-- `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，
-  通过 `comfy-org/publish-node-action` 发布至 ComfyUI Registry（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）。
+- Registry 元数据在 `kernel-plugin/pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Studio`）。
+- `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，在 `kernel-plugin/` 里跑
+  `comfy node publish --token`（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）。发布必须在那一层跑：
+  `pyproject.toml` 与 `.comfyignore` 都在 `kernel-plugin/`，仓库根的 `pyproject.toml` 是桌面壳自己的清单。
 
 ```bash
-# 1. 改版本号（例如改成 1.0.1）：编辑 pyproject.toml 里的 version = "1.0.1"
-git add pyproject.toml
+# 1. 改版本号（例如改成 1.0.1）：编辑 kernel-plugin/pyproject.toml 里的 version = "1.0.1"
+git add kernel-plugin/pyproject.toml
 git commit -m "Bump version to 1.0.1"
 
 # 2. 打 tag（指向这个新 commit）
@@ -39,7 +40,21 @@ git push origin main v1.0.1
 ### comfy cli 方式
 
 ```bash
+cd kernel-plugin
 comfy node publish    # 按提示输入 API TOKEN
+```
+
+## 桌面版与源码安装
+
+```powershell
+# 桌面壳打包：onefile 单文件 / onedir 目录版 / both；副本 = kernel-plugin 的 git 已跟踪文件
+tools\build_studio_exe.ps1 [-Mode onefile|onedir|both] [-DryRun]
+tools\build_studio_exe.ps1 -Mode both -Sign -CertThumbprint <指纹>   # signtool 签名 + verify
+tools\build_studio_exe.ps1 -Notarize -AppleTeamId <TeamID>          # macOS notarytool（只能在 mac 上）
+tools\build_studio_exe.ps1 -Publish                                  # comfy node publish
+
+# 源码安装内核插件：只装代码与内置预设，写好 configs/data_root.json 数据根指针，不删目标目录里的东西
+tools\install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
 ```
 
 ## 离线工具

@@ -11,12 +11,25 @@
 #   2) 按 Neo-Studio.spec 打包，副本落在 _MEIPASS/bundled/comfyui-neo-studio
 #      （onedir 下 _MEIPASS 就是包目录里的 _internal/）。
 # 用法: tools\build_studio_exe.ps1 [-Python <python.exe>] [-DryRun] [-Mode onefile|onedir|both]
+#                                 [-Sign] [-Notarize] [-Publish]
+# 发布开关（默认全关，产物与不传开关时逐字节一致）：
+#   -Sign      signtool 签名：机器证书走 -CertThumbprint，证书文件走 -Pfx/-PfxPass，时间戳 -Timestamp
+#   -Notarize  macOS 公证（notarytool + stapler + spctl），只能在 mac 上跑，需要 -AppleTeamId
+#   -Publish   在 kernel-plugin 里跑 comfy node publish，把内核插件发到 Comfy Registry
 param(
     [string]$Python = "python",
     [switch]$DryRun,
     # 分发形态：onefile 单文件（默认，双击即用，每次启动先解包到临时目录）；
     # onedir 目录版（exe + _internal 摊开，启动不解包，出窗口快得多，代价是要整包拷贝）
-    [ValidateSet('onefile', 'onedir', 'both')][string]$Mode = 'onefile'
+    [ValidateSet('onefile', 'onedir', 'both')][string]$Mode = 'onefile',
+    [switch]$Sign,
+    [string]$CertThumbprint = "",
+    [string]$Pfx = "",
+    [string]$PfxPass = "",
+    [string]$Timestamp = "http://timestamp.digicert.com",
+    [switch]$Notarize,
+    [string]$AppleTeamId = "",
+    [switch]$Publish
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,10 +90,13 @@ function Show-Size($Path, $Label) {
     Write-Host ("[DONE] {0} {1:N1} MB" -f $Label, ($bytes / 1MB)) -ForegroundColor Green
 }
 
+$Artifacts = @()
+
 if ($Mode -in @('onefile', 'both')) {
     Copy-Item (Join-Path $BuildDir "dist/Neo-Studio.exe") (Join-Path $RepoRoot "tools/neo-studio.exe") -Force
     $Exe = Join-Path $RepoRoot "tools/neo-studio.exe"
     if (Test-Path $Exe) {
+        $Artifacts += $Exe
         Write-Host "[DONE] $Exe" -ForegroundColor Green
         Write-Host ("[DONE] {0:N1} MB" -f ((Get-Item $Exe).Length / 1MB)) -ForegroundColor Green
     }
@@ -103,6 +119,69 @@ if ($Mode -in @('onedir', 'both')) {
         Move-Item $Keep (Join-Path $DirOut "data") -Force
     }
     Write-Host "[DONE] $DirOut\Neo-Studio.exe" -ForegroundColor Green
+    $Artifacts += (Join-Path $DirOut "Neo-Studio.exe")
     Show-Size $DirOut "folder total"
     Show-Size (Join-Path $DirOut "_internal") "_internal"
 }
+
+function Find-SignTool() {
+    # signtool 随 Windows SDK 装在这里，按版本号取最新那份
+    $kits = Get-ChildItem "$env:ProgramFiles\Windows Kits\10\bin" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^\d+(\.\d+)*$' } | Sort-Object { [version]$_.Name }
+    foreach ($kit in $kits) {
+        $tool = Join-Path $kit.FullName "x64\signtool.exe"
+        if (Test-Path $tool) { return $tool }
+    }
+    return $null
+}
+
+function Sign-Artifact($Path) {
+    $SignTool = Find-SignTool
+    if (-not $SignTool) { throw "没找到 signtool.exe：装 Windows 10/11 SDK（含签名工具）后重试" }
+    $signArgs = @('sign', '/fd', 'SHA256', '/tr', $Timestamp, '/td', 'SHA256')
+    if ($Pfx) {
+        $signArgs += @('/f', $Pfx)
+        if ($PfxPass) { $signArgs += @('/p', $PfxPass) }
+    } elseif ($CertThumbprint) {
+        $signArgs += @('/sha1', $CertThumbprint)
+    } else {
+        throw "-Sign 需要证书：传 -CertThumbprint <指纹>（机器证书库）或 -Pfx <文件> -PfxPass <口令>"
+    }
+    & $SignTool @signArgs $Path
+    if ($LASTEXITCODE -ne 0) { throw "signtool sign 退出码 $LASTEXITCODE" }
+    & $SignTool verify /pa /v $Path
+    if ($LASTEXITCODE -ne 0) { throw "签名校验失败：signtool verify 退出码 $LASTEXITCODE" }
+    Write-Host "[SIGN] $Path" -ForegroundColor Green
+}
+
+function Notarize-Artifact($Path) {
+    if ($IsWindows) { throw "-Notarize 走 macOS 的 notarytool，不能在 Windows 上跑" }
+    if (-not $AppleTeamId) { throw "-Notarize 需要 -AppleTeamId <Team ID>" }
+    if (-not $env:APPLE_ID -or -not $env:APPLE_PASSWORD) {
+        throw "公证需要环境变量 APPLE_ID 与 APPLE_PASSWORD（App 专用密码，不是 Apple ID 登录口令）"
+    }
+    $zip = "$Path.zip"
+    Compress-Archive -Path $Path -DestinationPath $zip -Force
+    & xcrun notarytool submit $zip --apple-team-id $AppleTeamId --apple-id $env:APPLE_ID `
+        --password $env:APPLE_PASSWORD --wait
+    if ($LASTEXITCODE -ne 0) { throw "notarytool submit 退出码 $LASTEXITCODE" }
+    & xcrun stapler staple $Path
+    if ($LASTEXITCODE -ne 0) { throw "stapler staple 退出码 $LASTEXITCODE" }
+    & xcrun spctl --assess --type execute $Path
+    if ($LASTEXITCODE -ne 0) { throw "spctl 校验失败：签名与公证没通过" }
+    Write-Host "[NOTARIZE] $Path" -ForegroundColor Green
+}
+
+function Publish-Plugin() {
+    # comfy-cli 从 kernel-plugin 的 [tool.comfy] 读包名与版本，发布要在插件目录里跑
+    if (-not (Get-Command comfy -ErrorAction SilentlyContinue)) {
+        throw "没找到 comfy CLI：pip install comfy-cli 后重试"
+    }
+    & comfy node publish
+    if ($LASTEXITCODE -ne 0) { throw "comfy node publish 退出码 $LASTEXITCODE" }
+    Write-Host "[PUBLISH] kernel-plugin 已发到 Comfy Registry" -ForegroundColor Green
+}
+
+if ($Sign) { foreach ($artifact in $Artifacts) { Sign-Artifact $artifact } }
+if ($Notarize) { foreach ($artifact in $Artifacts) { Notarize-Artifact $artifact } }
+if ($Publish) { Publish-Plugin }
