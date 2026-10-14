@@ -36,7 +36,7 @@ python -m pytest tests -v
   提示走系统消息框（pythonw 无控制台）、拉起 ComfyUI 时压制子控制台窗口、壳日志落盘
   `tmp/studio_shell.log` 与 pywebview 日志 handler（pythonw 的 `stderr` 是 None，控制台 handler 会打断窗口创建）、
   窗口图标路径传给 `webview.start(icon=...)` 与 AppUserModelID（缺 `.ico` 时传 None）、frozen 下 `resolve_root()`
-  沿 exe 自身的祖先目录向上找到 ComfyUI 根（单文件在 `tools` 下、目录版多一层包目录都要认得）且随包资源走 `_MEIPASS`；顶栏胶囊的 `comfy_state()`（壳拉起那路以端口
+  沿 exe 自身的祖先目录向上找到 ComfyUI 根（单文件在 `tools` 下、目录版多一层包目录都要认得）且随包资源走 `_MEIPASS`；`comfy_state()`（顶栏状态位与启动设置共用一份轮询；壳拉起那路以端口
   探活为准 / 外部按端口 `netstat` 找 PID / 无监听者）、`comfy_stop()`（`terminate()` 后按端口反复 `kill_pid()`
   到没人监听；`kill_pid()` 用 `PROCESS_TERMINATE` 并显式声明 `OpenProcess` 的 `restype`，否则 64 位句柄被截断、
   杀不动还静默失败）、`comfy_start()`（等旧进程退出再 `start_comfy`）、`pid_alive()`、关窗只存几何。
@@ -126,9 +126,9 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
 - `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/comfyui-neo-studio/docs/<节点键>.md` 可取、
   节点上不再有 `neo_help` 徽标 widget、属性面板「信息」页渲染出文档正文（会话未注册属性面板时 skip）。
 - `studio-app.e2e.mjs` — 桌面壳窗口：壳自行拉起 ComfyUI，经 WebView2 远程调试端口连 CDP，断言窗口按
-  `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏胶囊可见并报运行状态（端口 + PID）、日志 tab 读到控制台内容、
+  `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏状态位只报「● 运行中」（端口 / PID 在提示里）、日志 tab 读到控制台内容、
   重开页面后 localStorage 保留；第二条用例在冷启动专用端口（`NEO_STUDIO_STOP_PORT`，默认 8190；设 `NEO_STUDIO_EXE`
-  则改跑打包的 exe 时显式传 `--root`/`--python`，exe 落在任意目录推不出根目录）上点一下胶囊停掉壳拉起的 ComfyUI（端口探活失败），再点一下重新拉起，断言显示「启动中…」且就绪后
+  则改跑打包的 exe 时显式传 `--root`/`--python`，exe 落在任意目录推不出根目录）在「设置 → 启动设置」顶部点「■ 停止内核」停掉壳拉起的 ComfyUI（端口探活失败），再点「▶ 启动内核」重新拉起，断言顶栏显示「● 启动中」且就绪后
   整页跳回完整 Studio（8188 上用户自己的服务绝不动）；第三条用例断言冷启动窗口先出启动页、随后落在壳侧只读服务的离线素材页
   （端口 +3，出横幅与缩略图、写操作 `409`），ComfyUI 就绪后跳到完整 Studio，停掉后窗口拉回离线页且无未捕获错误。
   **会弹真实窗口，默认 skip；启用：`NEO_STUDIO_APP=1`（前置：整合包 python 已装 `pywebview`，且没有别的

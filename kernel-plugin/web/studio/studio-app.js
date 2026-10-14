@@ -439,6 +439,9 @@ function createLauncherPanel() {
     const depsBtn = $el("button", { className: "ns-btn", textContent: "安装依赖" });
     const fixBtn = $el("button", { className: "ns-btn", textContent: "重试安装插件" });
     const framelessIn = $el("input", { type: "checkbox", className: "ns-launch-frameless" });
+    const kernelState = $el("div", { className: "ns-kernel-state" });
+    const startBtn = $el("button", { className: "ns-btn ns-kernel-start", textContent: "▶ 启动内核" });
+    const stopBtn = $el("button", { className: "ns-btn ns-kernel-stop", textContent: "■ 停止内核" });
     const row = (label, ...kids) => $el("div", { className: "ns-launch-row" },
         [$el("span", { className: "ns-launch-label", textContent: label }), ...kids]);
 
@@ -520,8 +523,28 @@ function createLauncherPanel() {
     fixBtn.addEventListener("click", () => post({ action: "install_plugin" }));
     framelessIn.addEventListener("change", () => post({ action: "set_frameless", frameless: framelessIn.checked }));
 
+    // 内核启停在面板顶部：状态一行 + 启动 / 停止两枚按钮，此刻做不了的那枚禁用
+    function renderKernel(s) {
+        const booting = (userStarting || s.starting) && !s.ready;
+        const running = s.running && !booting;
+        kernelState.textContent = `ComfyUI ${booting ? "启动中…" : (s.running ? "运行中" : "已停止")}`
+            + ` · 端口 ${s.port} · ${s.mine ? "壳启动" : "外部启动"}`
+            + (s.pid ? ` · PID ${s.pid}` : "");
+        kernelState.classList.toggle("ns-kernel-run", running);
+        startBtn.textContent = booting ? "🚀 启动中…" : "▶ 启动内核";
+        startBtn.disabled = booting || s.running;
+        stopBtn.disabled = booting || !s.running;
+    }
+    onComfyState(renderKernel);
+    startBtn.addEventListener("click", () => { startBtn.disabled = true; startKernel(); });
+    stopBtn.addEventListener("click", () => { stopBtn.disabled = true; stopKernel(); });
+
     const el = $el("div", { className: "ns-settings-section" }, [
         $el("h3", { textContent: "启动设置" }),
+        $el("div", { className: "ns-kernel" }, [
+            kernelState,
+            $el("div", { className: "ns-kernel-actions" }, [startBtn, stopBtn]),
+        ]),
         status,
         row("ComfyUI 根目录", rootIn, browseBtn),
         row("Python", pyIn, pyBrowseBtn),
@@ -619,6 +642,23 @@ let versionInfo = { plugin: "", comfy: "", offline: false };   // 版本号只�
 
 function can(feature) { return caps[feature] !== false; }
 
+// ComfyUI 内核状态：顶栏只显状态，启停在「设置 → 启动设置」顶部。
+// 一份 comfy_state 轮询下发给所有看它的人（顶栏状态位 + 启动设置的启停按钮）。
+let comfyState = null;      // 最近一次快照；浏览器标签页里没有壳的桥，永远是 null
+let userStarting = false;   // 已点下启动内核，等端口就绪
+let pageReloaded = false;   // 就绪后的整页刷新只发一次
+const comfyViewers = new Set();
+
+function publishComfyState(s) {
+    comfyState = s;
+    for (const fn of comfyViewers) fn(s);
+}
+
+function onComfyState(fn) {
+    comfyViewers.add(fn);
+    if (comfyState) fn(comfyState);
+}
+
 function toast(text) {
     let el = document.getElementById("ns-toast");
     if (!el) {
@@ -647,22 +687,36 @@ function shellLog(text) {
     send();
 }
 
-function startComfy() {
-    if (starting) return;   // 启动中：不重复拉起，也不出提示
+// 内核启停：「启动设置」顶部的两枚按钮与生成入口共用；状态由 comfy_state 轮询下发
+function startKernel() {
     const shell = window.pywebview?.api;
     if (!shell?.comfy_start) {
         toast("请在 Neo Studio 窗口里启动 ComfyUI");
         return;
     }
-    shell.comfy_state().then((s) => { if (!s.running) shell.comfy_start(); }).catch(() => {});
-    toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
+    if (starting || userStarting) return;   // 启动中：不重复拉起
+    userStarting = true;
+    shell.comfy_start().then(publishComfyState).catch(() => { userStarting = false; });
 }
 
-// 生成类请求打到壳上必 409：统一提示并指向顶栏「启动内核」，不给前端假成功
+function stopKernel() {
+    const shell = window.pywebview?.api;
+    if (!shell?.comfy_stop) return;
+    shell.comfy_stop().then(publishComfyState).catch(() => {});
+}
+
+function startComfy() {
+    if (starting) return;   // 启动中：不重复拉起，也不出提示
+    const inShell = !!window.pywebview?.api?.comfy_start;
+    startKernel();
+    if (inShell) toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
+}
+
+// 生成类请求打到壳上必 409：统一提示并指向「设置 → 启动设置」，不给前端假成功
 window.addEventListener("neo-offline-request", () => {
     if (starting) return;   // 启动中不提示：就绪后壳整页跳回完整 Studio
-    toast("该功能需要 ComfyUI · 点顶栏「启动内核」");
-    document.getElementById("ns-comfy")?.classList.add("ns-comfy-hint");
+    toast("该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」");
+    document.getElementById("ns-comfy-status")?.classList.add("ns-comfy-hint");
 });
 
 // 运行类按钮 → 所需 ComfyUI 运行时能力：能力缺失时点它交给壳拉起 ComfyUI，不发假请求。
@@ -891,46 +945,35 @@ function initMemMonitor() {
     }
 }
 
-// ====== ComfyUI 启停控件（只有壳窗口里有：pywebview api 由壳提供） ======
-// 双向，按钮文案直接写清点下去要干什么：运行中「■ 停止内核」，已停止「▶ 启动内核」，
-// 状态与动作分在两块（按钮 + PID 徽标）；按钮本体一个色，红色只落在停止图标上，徽标只在有进程时出现。
-// 页面是 ComfyUI 提供的，停止后 DOM 还在、按钮仍可点，重新拉起就绪后刷新页面就能用。
-function initComfyPill() {
-    const btn = document.getElementById("ns-comfy");
-    if (!btn) return;
-    const box = document.getElementById("ns-comfy-box");
-    const pidEl = document.getElementById("ns-comfy-pid");
-    let userStarting = false;   // 已点下重新拉起，等端口就绪
-    let reloaded = false;   // 刷新只发一次，轮询到就绪后不再重复
-    const setBtn = (ico, text) => { btn.innerHTML = `<span class="ns-comfy-ico">${ico}</span>${text}`; };
+// ====== 顶栏 ComfyUI 状态位（只有壳窗口里有：comfy_state 由壳的 js_api 提供） ======
+// 只报状态，不带动作 —— 启停在「设置 → 启动设置」顶部；端口 / 谁启动 / 进程号收在提示里。
+function initComfyStatus() {
+    const el = document.getElementById("ns-comfy-status");
+    if (!el) return;
     const render = (s) => {
         setStarting(!!s.starting);   // 壳拉起的启动中：横幅与生成按钮文案跟着收
-        if (pidEl && s.pid) { pidEl.textContent = `# PID: ${s.pid}`; pidEl.hidden = false; }
-        if (pidEl && !s.pid) pidEl.hidden = true;   // 没有进程就没有徽标
         if (userStarting || s.starting) {
             if (s.ready) {
                 if (offline) return;   // 离线页由壳整页跳回完整 Studio，自己刷新只会回到离线页
-                if (!reloaded) { reloaded = true; location.reload(); }
+                if (!pageReloaded) { pageReloaded = true; location.reload(); }
                 return;
             }
-            setBtn("🚀", "启动中…");
-            btn.disabled = true;
-            btn.classList.remove("stop");
-            btn.title = "ComfyUI 启动中…就绪后自动回到完整 Studio";
+            setStatus("starting", "启动中", "ComfyUI 启动中…就绪后自动回到完整 Studio");
             return;
         }
-        btn.disabled = false;   // 停止态可点：点一下启动内核
-        btn.classList.toggle("stop", s.running);
-        setBtn(s.running ? "■" : "▶", s.running ? "停止内核" : "启动内核");
-        btn.title = s.running
-            ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "壳启动" : "外部启动"} · 点一下停止内核`
-            : "ComfyUI 已停止 · 点一下启动内核，就绪后自动回到完整 Studio";
+        setStatus(s.running ? "run" : null,
+            s.running ? "运行中" : "已停止",
+            s.running
+                ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "壳启动" : "外部启动"} · PID ${s.pid}`
+                : "ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」");
     };
+
+    onComfyState(render);
 
     // pywebview 的桥脚本在导航完成之后才注入，且分两步：window.pywebview 先出现，方法由 finish.js 调
     // _createApi 后填。只判断 api 对象存在就接管，第一次 poll 会抛 TypeError 打断整条启动链（route 再也
     // 不执行，窗口停在只出顶栏的空白页）。等真正要用的方法出现再接管：重试几轮再放弃，
-    // 浏览器标签页里永远没有 api，启停控件保持隐藏
+    // 浏览器标签页里永远没有 api，状态位保持隐藏
     let tries = 0;
     const attach = () => {
         const api = window.pywebview?.api;
@@ -938,27 +981,20 @@ function initComfyPill() {
             if (tries++ < 10) setTimeout(attach, 300);
             return;
         }
-        btn.hidden = false;
-        if (box) box.hidden = false;
-        const poll = () => api.comfy_state().then(render).catch(() => {});
+        el.hidden = false;
+        const poll = () => api.comfy_state().then(publishComfyState).catch(() => {});
         poll();
         setInterval(poll, 5000);
-        btn.addEventListener("click", () => {
-            if (btn.disabled) return;   // 启动中不响应
-            api.comfy_state().then((s) => {
-                if (!s.running) {
-                    userStarting = true;
-                    setBtn("🚀", "启动中…");
-                    btn.disabled = true;
-                    api.comfy_start().then(render).catch(() => { userStarting = false; });
-                    return;
-                }
-                setBtn("■", "停止中…");
-                api.comfy_stop().then(render);
-            });
-        });
     };
     attach();
+}
+
+function setStatus(kind, text, title) {
+    const el = document.getElementById("ns-comfy-status");
+    el.textContent = `● ${text}`;
+    el.classList.remove("ns-comfy-run", "ns-comfy-starting");
+    if (kind) el.classList.add(`ns-comfy-${kind}`);
+    el.title = title;
 }
 
 function route() {
@@ -980,8 +1016,8 @@ if (view) {
         await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
         initOfflineGate();
         initMemMonitor();
-        route();   // 视图先挂上：壳侧附件（启停控件）失败不能连坐，窗口不至于停在只出顶栏的空白页
-        initComfyPill();
+        route();   // 视图先挂上：壳侧附件（顶栏状态位）失败不能连坐，窗口不至于停在只出顶栏的空白页
+        initComfyStatus();
         initWindowChrome();
     }).catch(e => {
         console.error("[Neo Studio] startup failed:", e);

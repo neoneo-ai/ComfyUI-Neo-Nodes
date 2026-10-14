@@ -4,6 +4,18 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- The desktop shell syncs the plugin into `custom_nodes` by itself. Running from source (`neo-studio-app.vbs`)
+  copies `kernel-plugin/` over `ComfyUI/custom_nodes/comfyui-neo-studio` on every launch and before every
+  "▶ Start kernel": same-name files only, files whose size and mtime already match are skipped, a file the
+  running ComfyUI holds open is skipped and picked up on the next launch, and nothing in the target is ever
+  deleted — user configs, the data-root pointer and installed dependencies stay put. Git checkouts are left
+  alone; the exe keeps its version-gated bundled update.
+- Studio header is status-only. `#ns-comfy-status` shows "● Running" / "● Stopped" / "● Starting" and keeps the
+  port, the PID and who launched ComfyUI in the tooltip. The actions moved to the top of the shell-only
+  `启动设置` tab: one state line plus "▶ Start kernel" (`▶ 启动内核`) and "■ Stop kernel" (`■ 停止内核`), the one
+  that cannot run right now disabled. One `comfy_state` poll feeds both, so the header and the panel can no
+  longer disagree, and a start that is already running is not spawned twice.
+
 - Renamed Neo Nodes to Neo Studio. The Registry package is `comfyui-neo-studio` with `DisplayName` "Neo Studio";
   the plugin installs as `custom_nodes/comfyui-neo-studio` and every frontend asset URL is
   `/extensions/comfyui-neo-studio/...` — ComfyUI serves extension files under the install folder name, so the
@@ -38,12 +50,12 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   and interpreter are unresolved) once they finish — the window appears immediately instead of after the
   cold-start wait, and a window closed exactly while the shell is spawning ComfyUI closes that process
   immediately instead of leaving an orphan kernel. The shell is a launcher: closing the window saves geometry only and leaves
-  ComfyUI running. A top-bar `#ns-comfy` pill (shell `js_api` methods `comfy_state` / `comfy_stop` / `comfy_start`,
-  polled every 5s) shows port, PID, who started ComfyUI and readiness: one click stops it (`terminate()`, then
+  ComfyUI running. The shell `js_api` methods `comfy_state` / `comfy_stop` / `comfy_start` are polled every 5s
+  and shared by the header status and the `启动设置` kernel controls: stopping goes through `terminate()`, then
   `port_owner()` + `kill_pid()` repeated until nobody listens — `kill_pid()` needs `PROCESS_TERMINATE` and an
-  explicit `OpenProcess` restype, otherwise the 64-bit handle is truncated and nothing is killed), one click
-  restarts it and the page reloads once the port answers again. The pill stays
-  hidden in a browser tab (no `pywebview.api`) and goes grey when ComfyUI is down.
+  explicit `OpenProcess` restype, otherwise the 64-bit handle is truncated and nothing is killed. Starting the
+  kernel from the offline page reloads nothing — the shell jumps the whole window back to the full Studio once
+  the port answers. The header status stays hidden in a browser tab (no `pywebview.api`).
   The window and taskbar icon is the clapperboard `web/neo-studio.ico` (`tools/make_studio_icon.py`), passed to
   `webview.start(icon=...)` with an explicit `AppUserModelID` so the taskbar button is not merged into the generic
   Python icon that `pythonw` falls back to. `tools/build_studio_exe.ps1` packages the shell with an embedded
@@ -99,7 +111,7 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   (atomic write) and a `/ws` stub, and answers every write or generation route with `409 {"offline": true}`.
   The window opens on that offline library at startup, jumps to the full Studio when ComfyUI is ready, and is
   pulled back when ComfyUI stops; Studio shows a "ComfyUI not running" banner, hides the VRAM panel, and the
-  restart pill leaves the jump to the shell instead of reloading the offline page. `Neo-Studio.spec` now
+  restart button on the offline banner leaves the jump to the shell instead of reloading the offline page. `Neo-Studio.spec` now
   `collect_all`s `aiohttp` and `PIL` so the packaged exe keeps browsing offline.
 
 - Studio header title is a link back to the main canvas (`<a class="ns-logo" href="/">`), and the shell injects a
@@ -123,6 +135,8 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 - Canvas import maps control refs and pins reference loaders.
 - Skill manager search box stays open under IME input and closes via ✕.
 - README rewritten: hero demo, zero-config section, feature highlights; gallery screenshots compressed.
+- README default language is now English: `README.md` is the English doc, the Chinese text lives in `README_ZH.md`.
+  The standalone-app section is condensed to the user-facing facts; shell internals stay in `Developer.md`.
 
 ## [1.2.0] - 2026-10-08
 

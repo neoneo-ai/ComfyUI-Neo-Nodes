@@ -10,7 +10,7 @@ globalThis.WebSocket = class {
     close() {}
 };
 
-const studioBody = `<div class="ns-header"></div><div id="ns-view"></div><button id="ns-comfy" hidden></button>`;
+const studioBody = `<div class="ns-header"></div><div id="ns-view"></div><span class="ns-comfy-status" id="ns-comfy-status" hidden></span>`;
 
 const OFFLINE_CAPS = {
     image_gen: false, storyboard: false, voice: false, segment: false,
@@ -162,7 +162,7 @@ test("离线配方编辑器：运行按钮交给壳启动 ComfyUI，不发运行
         click(document.querySelector(sel));
         await flush();
     }
-    assert.ok(starts.length >= 3, "三个运行按钮都应拉起 ComfyUI");
+    assert.ok(starts.length >= 1, "运行按钮应交给壳拉起 ComfyUI（启动中不重复拉起）");
     for (const p of ["/neo_video_gen/run_segment", "/neo_video_gen/assemble_segments",
                      "/neo_video_gen/storyboard_generate"]) {
         assert.equal(fetchLog.filter((c) => c.path === p).length, 0, `离线不该发 ${p}`);

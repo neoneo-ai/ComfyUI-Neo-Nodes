@@ -129,16 +129,17 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
         assert.match(await page.evaluate(() => document.querySelector("#ns-version").textContent),
             /Neo Studio\s+\d+\.\d+\.\d+/, "窗口标题栏应显示插件版本");
 
-        // 顶栏 ComfyUI 胶囊：壳里可见并报运行状态（关窗不停 ComfyUI，去留由胶囊控制）
-        await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 20000 });
-        await page.waitForFunction(() => /● ComfyUI :\d+/.test(document.querySelector("#ns-comfy").textContent),
+        // 顶栏 ComfyUI 状态位：壳里可见，只报状态；端口 / PID 收在提示里，启停在「设置 → 启动设置」
+        await page.waitForSelector("#ns-comfy-status:not([hidden])", { timeout: 20000 });
+        await page.waitForFunction(() => /● 运行中/.test(document.querySelector("#ns-comfy-status").textContent),
             null, { timeout: 20000 });
-        const pill = await page.evaluate(() => {
-            const b = document.querySelector("#ns-comfy");
-            return { text: b.textContent, title: b.title, off: b.classList.contains("off"), disabled: b.disabled };
+        const status = await page.evaluate(() => {
+            const el = document.querySelector("#ns-comfy-status");
+            return { text: el.textContent, title: el.title, run: el.classList.contains("ns-comfy-run") };
         });
-        assert.match(pill.title, /运行中（端口 \d+，PID \d+/, "tooltip 应说明端口与 PID");
-        assert.ok(!pill.off && !pill.disabled, "运行中不该是灰态或禁用");
+        assert.match(status.title, /端口 \d+/, "提示应说明端口");
+        assert.match(status.title, /PID \d+/, "提示应说明 PID");
+        assert.ok(status.run, "运行中状态位应是绿色");
 
         // 四视图渲染（与浏览器版 studio.e2e.mjs 同一组断言的桌面壳子集）
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 15000 });
@@ -235,9 +236,12 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
         assert.equal(await page.evaluate(() => !document.getElementById("ns-offline")), true,
             "完整 Studio 不该带离线横幅");
 
-        // 停掉 ComfyUI → 窗口拉回离线素材页，浏览继续可用
-        await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 60000 });
-        await page.click("#ns-comfy");
+        // 停掉 ComfyUI → 窗口拉回离线素材页，浏览继续可用（启停在「设置 → 启动设置」顶部）
+        await page.evaluate(() => { location.hash = "#/settings"; });
+        await page.waitForSelector(".ns-settings-tab[data-key='launch']", { timeout: 30000 });
+        await page.click(".ns-settings-tab[data-key='launch']");
+        await page.waitForSelector(".ns-kernel-stop:not([disabled])", { timeout: 30000 });
+        await page.click(".ns-kernel-stop");
         await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${offlinePort}/neo-studio`), { timeout: 120000 });
         await page.waitForSelector("#ns-offline", { timeout: 30000 });
         assert.ok(await waitFor(() => page.evaluate(() =>
@@ -254,7 +258,7 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
     }
 });
 
-test("顶栏胶囊点一下停掉壳拉起的 ComfyUI，再点一下重新拉起后跳回完整 Studio", async () => {
+test("启动设置点一下停掉壳拉起的 ComfyUI，再点一下重新拉起后跳回完整 Studio", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
         console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
@@ -275,36 +279,46 @@ test("顶栏胶囊点一下停掉壳拉起的 ComfyUI，再点一下重新拉起
         assert.ok(browser, "连不上 WebView2 CDP");
         const page = await findPage(browser);
 
-        await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 60000 });
-        await page.waitForFunction(() => /● ComfyUI :/.test(document.querySelector("#ns-comfy").textContent),
+        await page.waitForSelector("#ns-comfy-status:not([hidden])", { timeout: 60000 });
+        await page.waitForFunction(() => /● 运行中/.test(document.querySelector("#ns-comfy-status").textContent),
             null, { timeout: 60000 });
 
-        // 点一下真停：胶囊变灰，端口探活失败，仍可点（壳是启动器）
-        await page.click("#ns-comfy");
+        // 启停在「设置 → 启动设置」顶部：运行中「停止内核」可点
+        await page.evaluate(() => { location.hash = "#/settings"; });
+        await page.waitForSelector(".ns-settings-tab[data-key='launch']", { timeout: 30000 });
+        await page.click(".ns-settings-tab[data-key='launch']");
+        await page.waitForSelector(".ns-kernel-stop:not([disabled])", { timeout: 30000 });
+
+        // 点一下真停：端口探活失败，壳把窗口拉回离线页，状态位回到已停止
+        await page.click(".ns-kernel-stop");
         const t0 = Date.now();
         let down = false;
         while (Date.now() - t0 < 120000) {
             const up = await probe(port);
             console.log(`t=${((Date.now() - t0) / 1000).toFixed(1)} probe=${up} owner=${await portOwner(port)} `
-                + `pill=${(await page.evaluate(() => document.querySelector("#ns-comfy").textContent)).trim()}`);
+                + `status=${(await page.evaluate(() => document.querySelector("#ns-comfy-status")?.textContent || "").trim())}`);
             if (!up) { down = true; break; }
             await new Promise((r) => setTimeout(r, 5000));
         }
         assert.ok(down, `壳拉起的 ComfyUI 应被停掉（端口仍被 PID ${await portOwner(port)} 占着）`);
-        await page.waitForFunction(() => /已停止/.test(document.querySelector("#ns-comfy").textContent),
-            null, { timeout: 20000 });
-        assert.ok(await page.evaluate(() => !document.querySelector("#ns-comfy").disabled),
-            "停止后胶囊应可点（点一下重新拉起）");
+        await page.waitForFunction(() => /● 已停止/.test(document.querySelector("#ns-comfy-status")?.textContent || ""),
+            null, { timeout: 30000 });
 
         // 点一下重新拉起：显示启动中，就绪后壳整页跳回完整 Studio（新文档里标记 __e2e_reload 消失）
+        await page.evaluate(() => { location.hash = "#/settings"; });
+        await page.waitForSelector(".ns-settings-tab[data-key='launch']", { timeout: 30000 });
+        await page.click(".ns-settings-tab[data-key='launch']");
+        await page.waitForSelector(".ns-kernel-start:not([disabled])", { timeout: 30000 });
+        assert.equal(await page.evaluate(() => document.querySelector(".ns-kernel-stop").disabled), true,
+            "停止后「停止内核」应禁用（没进程可停）");
 
         await page.evaluate(() => { window.__e2e_reload = 1; });
-        await page.click("#ns-comfy");
-        await page.waitForFunction(() => /启动中/.test(document.querySelector("#ns-comfy").textContent),
+        await page.click(".ns-kernel-start");
+        await page.waitForFunction(() => /● 启动中/.test(document.querySelector("#ns-comfy-status").textContent),
             null, { timeout: 10000 });
         assert.ok(await waitFor(() => probe(port), 150), "重新拉起的 ComfyUI 未就绪");
         await page.waitForFunction(() => window.__e2e_reload === undefined
-            && /● ComfyUI :/.test(document.querySelector("#ns-comfy").textContent), null, { timeout: 30000 });
+            && /● 运行中/.test(document.querySelector("#ns-comfy-status").textContent), null, { timeout: 30000 });
 
         await browser.close();
     } finally {

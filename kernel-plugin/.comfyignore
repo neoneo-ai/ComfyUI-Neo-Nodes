@@ -5,7 +5,7 @@
 #
 # 留在包里的：全部运行时 .py、web/ 前端（含 web/docs 节点帮助）、skills/ 与 prompts/ 的内置预设、
 # configs/ 预设配置、example_workflows/、README.md/LICENSE/pyproject.toml/requirements.txt。
-# 应用仓库的 README_EN、Developer.md 与 docs/ 在 kernel-plugin 之外，不进 Registry 包。
+# 应用仓库的 README_ZH、Developer.md 与 docs/ 在 kernel-plugin 之外，不进 Registry 包。
 #
 # configs/ 只随包发预设：llm_providers / model_registry / oss_presets /
 # laya_config。用户配置与运行时缓存一律 gitignore 不进包——

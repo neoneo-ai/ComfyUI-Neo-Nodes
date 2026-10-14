@@ -1558,15 +1558,15 @@ class StartupStateTests(unittest.TestCase):
         self.assertTrue((self.plugin / "web").is_dir())
         self.assertTrue((self.plugin / "requirements.txt").is_file())
 
-    def test_existing_plugin_never_overwritten(self):
-        # 源码运行（开发模式）：内置副本就是开发中的插件目录本身，已装的那份原样保留
+    def test_existing_plugin_syncs_code_and_keeps_user_files(self):
+        # 源码运行（开发模式）：kernel-plugin 每次同步进已装的副本，目标里的用户文件一样不删
         self.plugin.mkdir(parents=True)
         marker = self.plugin / "user-file.txt"
         marker.write_text("keep", encoding="utf-8")
         ok, msg = app.ensure_plugin(self.plugin, self.source)
         self.assertTrue(ok)
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
-        self.assertFalse((self.plugin / "web").exists(), "开发模式不覆盖已存在的插件目录")
+        self.assertTrue((self.plugin / "requirements.txt").is_file(), "开发模式同步代码进已装副本")
 
     def test_unwritable_custom_nodes_reports_the_path(self):
         self.plugin.parent.write_text("x", encoding="utf-8")   # custom_nodes 位置被文件占住
@@ -1594,7 +1594,7 @@ class StartupStateTests(unittest.TestCase):
 
 
 class PluginUpdateTests(unittest.TestCase):
-    """exe 内置副本比 custom_nodes 里那份新时的覆盖更新；开发模式与 git 检出不碰。"""
+    """exe 内置副本比 custom_nodes 里那份新时的覆盖更新；git 检出不碰。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1681,12 +1681,15 @@ class PluginUpdateTests(unittest.TestCase):
             app.ensure_plugin(self.plugin, self.source)
         self.assertFalse((self.plugin / "web").exists())
 
-    def test_source_run_left_alone(self):
-        # 开发模式：内置副本就是开发中的插件目录本身，不能拿它覆盖用户装的那份
+    def test_source_run_syncs_the_installed_copy(self):
+        # 开发模式：kernel-plugin 就是插件本身，每次启动同步进已装副本，版本比较不参与
         self._bundle("1.2.0")
         self._installed("1.0.0")
+        (self.source / "web" / "index.html").write_text("new", encoding="utf-8")
         app.ensure_plugin(self.plugin, self.source)
-        self.assertFalse((self.plugin / "web").exists())
+        self.assertEqual((self.plugin / "web" / "index.html").read_text(encoding="utf-8"), "new")
+        self.assertTrue((self.plugin / "old-code.js").exists(), "同步从不删除目标目录里的文件")
+        self.assertTrue((self.plugin / "skills" / "custom" / "mine.md").exists())
 
     def test_locked_plugin_dir_keeps_the_old_copy(self):
         # ComfyUI 正在跑时目录被占用：换目录失败就原样留着，下次启动再更新
@@ -1699,6 +1702,67 @@ class PluginUpdateTests(unittest.TestCase):
         self.assertTrue((self.plugin / "old-code.js").exists())
         self.assertFalse((self.plugin / "web").exists())
 
+
+
+class PluginSyncTests(unittest.TestCase):
+    """源码运行时的同步：只覆盖同名代码，目标目录里的东西一样不删。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = pathlib.Path(self.tmp.name)
+        self.source = self.base / "kernel-plugin"
+        self.plugin = self.base / "ComfyUI" / "custom_nodes" / "comfyui-neo-studio"
+        for rel in ("web/studio", "tests", "__pycache__", "data", "configs"):
+            (self.source / rel).mkdir(parents=True)
+        (self.source / "web" / "studio" / "index.html").write_text("new", encoding="utf-8")
+        (self.source / "pyproject.toml").write_text('version = "1.2.0"\n', encoding="utf-8")
+        (self.source / "configs" / "laya_config.json").write_text("{}", encoding="utf-8")
+        (self.source / "tests" / "test_x.py").write_text("x", encoding="utf-8")
+        (self.source / "__pycache__" / "a.pyc").write_text("x", encoding="utf-8")
+        (self.source / "data" / "run.json").write_text("{}", encoding="utf-8")
+        self.plugin.mkdir(parents=True)
+        (self.plugin / "web" / "studio").mkdir(parents=True)
+        (self.plugin / "web" / "studio" / "index.html").write_text("old", encoding="utf-8")
+        (self.plugin / "configs").mkdir()
+        (self.plugin / "configs" / "gallery_settings.json").write_text("user", encoding="utf-8")
+        (self.plugin / "extra.js").write_text("keep", encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _index(self) -> pathlib.Path:
+        return self.plugin / "web" / "studio" / "index.html"
+
+    def test_changed_code_lands_and_target_only_files_survive(self):
+        self.assertGreater(app.sync_plugin(self.plugin, self.source), 0)
+        self.assertEqual(self._index().read_text(encoding="utf-8"), "new")
+        self.assertEqual((self.plugin / "extra.js").read_text(encoding="utf-8"), "keep")
+        self.assertEqual((self.plugin / "configs" / "gallery_settings.json").read_text(encoding="utf-8"), "user")
+
+    def test_second_sync_copies_nothing(self):
+        app.sync_plugin(self.plugin, self.source)
+        mtime = self._index().stat().st_mtime_ns
+        self.assertEqual(app.sync_plugin(self.plugin, self.source), 0)
+        self.assertEqual(self._index().stat().st_mtime_ns, mtime)
+
+    def test_dev_only_dirs_stay_out(self):
+        app.sync_plugin(self.plugin, self.source)
+        self.assertFalse((self.plugin / "tests").exists())
+        self.assertFalse((self.plugin / "__pycache__").exists())
+        self.assertFalse((self.plugin / "data").exists())
+
+    def test_locked_file_is_skipped_without_raising(self):
+        # ComfyUI 正在跑、文件被占用：跳过那一个，下次启动再补，同步不能抛
+        with patch.object(app.shutil, "copy2", side_effect=OSError("占用")):
+            self.assertEqual(app.sync_plugin(self.plugin, self.source), 0)
+        self.assertEqual(self._index().read_text(encoding="utf-8"), "old")
+
+    def test_git_checkout_is_not_synced(self):
+        # git 检出归 ComfyUI-Manager 与用户自己更新
+        (self.plugin / ".git").mkdir()
+        ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue(ok, msg)
+        self.assertEqual(self._index().read_text(encoding="utf-8"), "old")
 
 
 class EmbeddedConfigsTests(unittest.TestCase):

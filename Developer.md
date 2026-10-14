@@ -40,11 +40,11 @@
   各兜一次（`destroy` 路径可能根本没有 `closing`），退出前 join 收尾线程，不等完就退进程等于留孤儿。
   判活按 PID 问 `OpenProcess`，不用 `Popen.poll()`（子进程句柄被回收后它会谎报「已退出」）；
   `terminate` 之后必须 `reap`（`Popen.wait`）回收子进程 —— 不回收的话进程只剩一个内核对象，
-  `pid_alive` 永远报「还活着」：关窗固定睡满等待上限（就是那几秒卡顿），按 PID 的兜底强杀与顶栏停止
-  的端口扫荡也必然失败（那行「没有权限终止该进程」）。回收超时才兜底强杀，不做顶栏停止那套按端口扫荡；
+  `pid_alive` 永远报「还活着」：关窗固定睡满等待上限（就是那几秒卡顿），按 PID 的兜底强杀与「启动设置」停止内核
+  的端口扫荡也必然失败（那行「没有权限终止该进程」）。回收超时才兜底强杀，不做那套按端口扫荡；
   用户自己启动的 ComfyUI 没有句柄，完全不碰。起壳时「有没有 ComfyUI」只看端口有没有人监听：
   `/neo_studio/version` 探不到（那路插件没加载、还在导入自定义节点）也只附着，不在旁边端口拉第二路，
-  顶栏「启动」按钮同样只附着。单实例锁是命名互斥体 `Local\Neo.Studio.SingleInstance`（已存在的信号问
+  启动设置的「启动内核」按钮同样只附着。单实例锁是命名互斥体 `Local\Neo.Studio.SingleInstance`（已存在的信号问
   `kernel32.GetLastError()`，`ctypes.get_last_error()` 在这条调用上拿不到 183），不占端口：占 8189 监听
   在 netstat 里像第二路 ComfyUI，会被读成「起了 8188 和 8189 两个端口，关窗只掉一个」。
   根目录推不出、或同级与内部都找不到 `python.exe` 时窗口开在引导页（`guide_html`，`load_html` + js_api）：
@@ -64,8 +64,11 @@
   壳侧 `/extensions/` 静态响应带 `no-store`（与 ComfyUI 的 `/extensions` 一致），并在开窗口前清掉
   `tmp/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），
   和新模块拼进同一张 ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，
-  整页只剩顶栏 —— 视图不挂、离线横幅不出、顶栏启停控件永远 `hidden`。
-  壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗，以及页面
+  整页只剩顶栏 —— 视图不挂、离线横幅不出、顶栏状态位永远 `hidden`。
+  源码运行时每次启动把 `kernel-plugin/` 同步进 `custom_nodes` 那份（`sync_plugin`：只覆盖同名代码，大小与 mtime
+  对得上的跳过，ComfyUI 正占用那一个跳过、下次启动再补，目标目录里的东西一样不删），壳侧服务与 ComfyUI 页面都从
+  `custom_nodes` 取前端文件，同步完窗口一开就是新 UI；exe 只按内置副本版本换目录，git 检出不碰。
+  壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗 / 拖动步数（`drag N steps`，0 = 按下时左键已经不在），以及页面
   上报的前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB；壳拉起 ComfyUI 的完整
   输出在 `tmp/comfy_run.log`（Studio「设置 → 日志」读它）。
 

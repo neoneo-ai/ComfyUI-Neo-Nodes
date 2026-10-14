@@ -17,9 +17,11 @@ js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启�
 
 用法：python app/studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
                               [--cdp <port>] [--debug]
- 壳是启动器：关窗只关窗口。顶栏「● ComfyUI :8188」胶囊由壳的 js_api 报状态（端口 / PID / 谁启动 / 就绪）：
- 运行中点一下退出（壳拉起的 terminate，并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口留着、状态变灰；
- 已停止点一下重新拉起，显示「启动中…」，就绪后窗口整页跳回 ComfyUI 的完整 Studio。
+ 壳是启动器：关窗只关窗口。顶栏只有「● 运行中 / 启动中 / 已停止」状态位，端口 / PID / 谁启动进 tooltip；
+ 内核启停在「设置 → 启动设置」，状态由壳的 js_api 报（端口 / PID / 谁启动 / 就绪）：
+ 停止内核 terminate（并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口退回离线素材库；
+ 启动内核重新拉起，显示「启动中…」，就绪后窗口整页跳回 ComfyUI 的完整 Studio。
+ 源码运行时每次启动把 kernel-plugin 同步进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
 
 """
 
@@ -428,17 +430,53 @@ def update_plugin(plugin_dir: Path, source_dir: Path) -> None:
     log_line("plugin update done")
 
 
-def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tuple[bool, str]:
-    """custom_nodes 里的插件副本：缺失就装内置副本，内置副本更新就跟着更新。
+def sync_plugin(plugin_dir: Path, source_dir: Path) -> int:
+    """源码运行时的同步：kernel-plugin 覆盖进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
 
-    更新只认 exe 里的 release：源码运行那份就是开发中的插件本身，git 检出归 ComfyUI-Manager 与用户
-    自己维护，都不覆盖。用户数据目录整目录带进新副本，代码文件按新副本换。
+    只覆盖同名文件，从不删目标目录里的任何东西：用户配置、数据指针、装好的依赖都留在原地。
+    大小与修改时间都对得上的跳过；ComfyUI 正在跑、文件被占用时跳过那一个，下次启动再补。
+    """
+    ignore = install_ignore(source_dir)
+    copied = 0
+    for dirpath, dirs, names in os.walk(source_dir):
+        rel = Path(dirpath).relative_to(source_dir)
+        skipped = ignore(dirpath, dirs + names)
+        dirs[:] = [d for d in dirs if d not in skipped]
+        for name in names:
+            if name in skipped:
+                continue
+            src = Path(dirpath) / name
+            dst = plugin_dir / rel / name
+            try:
+                if dst.exists():
+                    s, d = src.stat(), dst.stat()
+                    if s.st_size == d.st_size and s.st_mtime_ns == d.st_mtime_ns:
+                        continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                copied += 1
+            except OSError as exc:
+                log_line(f"plugin sync skip {name}: {exc}")
+    if copied:
+        log_line(f"plugin sync {copied} files -> {plugin_dir}")
+    return copied
+
+
+def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tuple[bool, str]:
+    """custom_nodes 里的插件副本：缺失就装内置副本，存在就跟着同步。
+
+    源码运行那份就是开发中的插件本身，每次启动把 kernel-plugin 同步进去，壳与 ComfyUI 页面跑同一份代码。
+    exe 只认内置副本的 release：版本更新才换目录。git 检出归 ComfyUI-Manager 与用户自己维护，都不覆盖。
     """
     if plugin_dir.is_dir():
-        new, old = pyproject_version(source_dir), pyproject_version(plugin_dir)
-        if IS_FROZEN and _ver(new) > _ver(old) and not (plugin_dir / ".git").exists():
-            log_line(f"plugin update {old or '无版本号'} -> {new}")
-            update_plugin(plugin_dir, source_dir)
+        if not (plugin_dir / ".git").exists():
+            if IS_FROZEN:
+                new, old = pyproject_version(source_dir), pyproject_version(plugin_dir)
+                if _ver(new) > _ver(old):
+                    log_line(f"plugin update {old or '无版本号'} -> {new}")
+                    update_plugin(plugin_dir, source_dir)
+            else:
+                sync_plugin(plugin_dir, source_dir)
         write_data_pointer(plugin_dir)
         return True, ""
     if not source_dir.is_dir():
@@ -766,6 +804,8 @@ class StudioShell:
 
     def comfy_start(self) -> dict:
         """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后整页跳回完整 Studio。"""
+        if not IS_FROZEN and root_ok(self.root):
+            sync_plugin(plugin_dir_for(self.root), PLUGIN_SOURCE_DIR)   # 改完代码点一下启动就生效
         if self.comfy is not None:
             # 刚停止的进程可能还在收尾（TerminateProcess 异步），等它退出再拉起，避免端口冲突
             for _ in range(60):
