@@ -70,3 +70,6 @@ pwsh tests/run-tests.ps1       # JS 测试运行器（带超时强制终止，�
 ```
 
 详见 [docs/testing.md](docs/testing.md)。
+
+内核插件 import 的 `folder_paths` / `server` / `comfy.*` 由 ComfyUI 根目录在运行时提供，Pylance 需要
+`.vscode/settings.json` 的 `python.analysis.extraPaths` 指向同级的 ComfyUI 根才认得这些 import。

@@ -2,5 +2,10 @@
     "markdown.validate.enabled": false,
     "files.associations": {
         "**/skills/**/skill.md": "markdown"
-    }
+    },
+    // 内核插件 import 的 folder_paths / server / comfy.* 都在 ComfyUI 根目录，
+    // 整合包里它是 Neo-Studio 的同级目录（与 tools/install_plugin.ps1 同一假设）。
+    "python.analysis.extraPaths": [
+        "../ComfyUI"
+    ]
 }
