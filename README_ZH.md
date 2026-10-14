@@ -73,6 +73,9 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
   → [workflow-repair.md](docs/workflow-repair.md)
 - **📥 模型库** — Comfy-Org 专区双源（ModelScope / Hugging Face）搜索与断点续传下载，按仓库内路径自动归类落盘
   → [model-hub.md](docs/model-hub.md)
+- **🤖 MCP 服务** — `kernel-plugin\mcp_server.py` 由 MCP 客户端（Claude Desktop / Cursor）作为子进程启动，
+  外部智能体经 stdio 调用生图与导演工具；只连本机 ComfyUI，不暴露删除端点
+  → [mcp.md](docs/mcp.md)
 
 节点外观：
 

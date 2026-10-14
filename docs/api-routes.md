@@ -258,3 +258,27 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
 - 目录取 `folder_paths` 的默认 `output` / `input` / `user`：外部用 `--output-directory` 启动 ComfyUI 时，
   壳侧浏览仍指向默认目录。
 
+## MCP 服务 — `kernel-plugin/mcp_server.py`
+
+不是 HTTP 服务：MCP 客户端把它作为 **stdio 子进程**启动，外部智能体经 JSON-RPC 调用工具，
+服务器再经本机 ComfyUI 的 HTTP 接口干活（地址强制回环）。工具清单、参数与用法约定见
+[mcp.md](mcp.md)。
+
+| 工具 | 打到的路由 |
+|------|-----------|
+| `neo_status` | `GET /neo_studio/version` + `GET /queue` |
+| `list_skills` `generate_prompt` | `GET /rs_prompts/skills` + `POST /rs_prompts/stream_generate_prompt`（SSE） |
+| `list_models` `generate_image` `list_tasks` | `GET /neo_image_gen/models` + `POST /neo_image_gen/generate` + `GET /neo_image_gen/tasks` |
+| `task_status` | 生图在 `GET /neo_image_gen/tasks` 整表里按 `task_id` 命中；整片 / 单段 / 拼接依次探测 `GET /neo_studio/director/{id}` `GET /neo_video_gen/run_segment/{id}` `GET /neo_video_gen/assemble_segments/{id}`，整片附带 `GET /neo_video_gen/director_progress` |
+| `cancel_task` | 依次探测上述四张表的 `…/cancel` |
+| `get_image` | `GET /view`（图片只经 ComfyUI 读） |
+| `list_gallery` | `GET /neo_gallery/list` |
+| `list_recipes` `load_recipe` | `POST /rs_recipes/list` `POST /rs_recipes/load` |
+| `director_recipes` `director_spec` | `GET /neo_studio/version` + `GET /rs_recipes/director_spec` |
+| `director_plan` | `POST /rs_recipes/director_generate_segments` / `director_optimize_prompts`（SSE）/ `director_modify_segment`（SSE） |
+| `director_save` `director_copy` | `POST /rs_recipes/save` `POST /rs_recipes/copy`（唯一的两个写操作） |
+| `director_run` `segment_run` `assemble_run` | `POST /neo_studio/director/generate` `POST /neo_video_gen/run_segment` `POST /neo_video_gen/assemble_segments` |
+
+- 段序号对外一律 1 基；`run_segment` 的 `segment` 与 `assemble_segments` 的 `use` 是 0 基，由服务器换算。
+- 不暴露删除端点（`/rs_recipes/delete`、`/neo_gallery/delete` 等），不直连本地文件路径。
+

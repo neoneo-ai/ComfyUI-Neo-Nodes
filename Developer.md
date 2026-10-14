@@ -12,6 +12,7 @@
 | [docs/en/README.md](docs/en/README.md) | 英文文档镜像（以下各文档的英文版） |
 | [docs/architecture.md](docs/architecture.md) | 项目结构、模块职责、节点注册、数据与配置目录 |
 | [docs/api-routes.md](docs/api-routes.md) | 后端 API 路由一览 |
+| [docs/mcp.md](docs/mcp.md) | MCP 服务器（`kernel-plugin/mcp_server.py`，stdio，外部智能体调用生图 / 导演能力） |
 | [docs/testing.md](docs/testing.md) | pytest 单测与 JS 回归测试（golden 快照、run-tests.ps1） |
 | [docs/release.md](docs/release.md) | Registry 发布与离线工具（预设预处理 / OSS 部署） |
 | [docs/llm.md](docs/llm.md) | LLM 模式、本地 GGUF 安装、模型目录规范 |

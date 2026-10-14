@@ -26,4 +26,5 @@
 | [architecture.md](architecture.md) | 项目结构、模块职责、节点注册、数据与配置目录 |
 | [api-routes.md](api-routes.md) | 后端 API 路由一览 |
 | [testing.md](testing.md) | pytest 单元测试与 JS 回归测试 |
+| [mcp.md](mcp.md) | MCP 服务：外部智能体接入（工具清单、异步任务、回环限制） |
 | [release.md](release.md) | Registry 发布与离线工具 |

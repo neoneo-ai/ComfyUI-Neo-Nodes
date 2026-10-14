@@ -12,6 +12,7 @@ split by major module under `docs/en/` (index: [docs/en/README.md](docs/en/READM
 |-----|---------|
 | [docs/en/architecture.md](docs/en/architecture.md) | Project structure, module responsibilities, node registration, data & configuration directories |
 | [docs/en/api-routes.md](docs/en/api-routes.md) | Backend API route overview |
+| [docs/en/mcp.md](docs/en/mcp.md) | MCP server (`kernel-plugin/mcp_server.py`, stdio, external agents calling image & director capabilities) |
 | [docs/en/testing.md](docs/en/testing.md) | pytest unit tests and JS regression tests (golden snapshots, run-tests.ps1) |
 | [docs/en/release.md](docs/en/release.md) | Registry publishing and offline tooling (preset preprocessing / OSS deployment) |
 | [docs/en/llm.md](docs/en/llm.md) | LLM modes, local GGUF installation, model directory conventions |

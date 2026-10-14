@@ -26,4 +26,5 @@ This directory splits the plugin documentation by major module. The entry points
 | [architecture.md](architecture.md) | Project structure, module responsibilities, node registration, data & configuration directories |
 | [api-routes.md](api-routes.md) | Backend API route overview |
 | [testing.md](testing.md) | pytest unit tests and JS regression tests |
+| [mcp.md](mcp.md) | MCP server: external agent access (tool list, async tasks, loopback limit) |
 | [release.md](release.md) | Registry publishing and offline tooling |

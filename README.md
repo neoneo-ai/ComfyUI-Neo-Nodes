@@ -53,6 +53,7 @@ the three modes are documented in [docs/en/llm.md](docs/en/llm.md).
 | Workflow Repair | Menu item | One-click fix for broken model paths → [workflow-repair.md](docs/en/workflow-repair.md) |
 | Model Hub | Menu item | Dual-source repo search, category placement, resumable downloads → [model-hub.md](docs/en/model-hub.md) |
 | Skill Management | Menu item | Inline workflow editing, canvas import & writeback, change preview + history → [skills.md](docs/en/skills.md) |
+| MCP Server | Standalone process | Claude Desktop / Cursor calling image & director tools over stdio → [mcp.md](docs/en/mcp.md) |
 
 Node appearance:
 

@@ -1,0 +1,724 @@
+# SPDX-License-Identifier: Apache-2.0
+# Neo Studio MCP Server —— 外部智能体（Claude Desktop / Cursor / 自建 MCP 客户端）经 MCP 使用
+# Neo Studio 的生图与导演能力。由 MCP 客户端作为 stdio 子进程启动，不随 ComfyUI 启动。
+#
+# 叶子模块：零相对导入、只用标准库。一切能力经本机 ComfyUI 的 HTTP 接口完成，地址强制回环。
+# stdout 只跑 JSON-RPC，日志一律走 stderr。
+
+import argparse
+import base64
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PROTOCOL_VERSION = "2024-11-05"
+SUPPORTED_PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18")
+DEFAULT_COMFY_URL = "http://127.0.0.1:8188"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "ip6-localhost"}
+MAX_TEXT = 12000          # 单次工具返回文本上限，超出截断
+MAX_B64_IMAGES = 4        # 单次返回 base64 图片张数上限
+MAX_B64_BYTES = 1_500_000  # base64 回传的单张图字节上限（超出只给 url）
+MAX_IMAGES = 8            # 单次返回的产物图条目上限（与 image_gen 的批量上限一致）
+SSE_TIMEOUT = 600         # LLM 流式端点读超时（整段提示词生成可能很慢）
+
+
+def log(msg) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def plugin_version() -> str:
+    """与 util.plugin_version 同源：pyproject.toml 里的版本号，避免两处漂移。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+    except OSError:
+        return "unknown"
+    return m.group(1) if m else "unknown"
+
+
+class ToolError(Exception):
+    """能直接回给智能体的短错误。"""
+
+
+def comfy_base(raw: str) -> str:
+    """ComfyUI 地址：只允许本机回环，非回环直接拒绝启动（不给对外网发起请求留口子）。"""
+    url = (raw or DEFAULT_COMFY_URL).strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "http" or parsed.hostname not in LOOPBACK_HOSTS:
+        raise SystemExit("NEO_MCP_COMFY_URL 必须是本机回环 http 地址"
+                         f"（127.0.0.1 / localhost / ::1）：{raw!r}")
+    return url if parsed.port else url + ":8188"
+
+
+def _error_detail(e: urllib.error.HTTPError) -> str:
+    try:
+        data = json.loads(e.read().decode("utf-8", "replace"))
+        return str(data.get("error") or data.get("message") or "")
+    except Exception:
+        return ""
+
+
+class Comfy:
+    """ComfyUI 的 HTTP 客户端（urllib，仅本机回环）。"""
+
+    def __init__(self, base: str, timeout: int):
+        self.base = base
+        self.timeout = timeout
+
+    def _open(self, method, path, body=None, query=None, timeout=None):
+        url = self.base + path
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method=method)
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        try:
+            return urllib.request.urlopen(req, timeout=timeout or self.timeout)
+        except urllib.error.HTTPError as e:
+            detail = _error_detail(e)
+            raise ToolError(f"HTTP {e.code}" + (f"：{detail}" if detail else "") + f"（{path}）")
+        except urllib.error.URLError as e:
+            raise ToolError(f"ComfyUI 不可达（{self.base}）：{e.reason}；确认 Neo Studio 已启动")
+        except OSError as e:
+            raise ToolError(f"请求失败（{path}）：{e}")
+
+    def _json(self, method, path, body=None, query=None, timeout=None):
+        with self._open(method, path, body, query, timeout) as resp:
+            raw = resp.read()
+        if not raw:
+            return None
+        try:
+            return json.loads(raw.decode("utf-8", "replace"))
+        except ValueError as e:
+            raise ToolError(f"响应不是 JSON（{path}）：{e}")
+
+    def get(self, path, query=None, timeout=None):
+        return self._json("GET", path, query=query, timeout=timeout)
+
+    def post(self, path, body=None, timeout=None):
+        return self._json("POST", path, body=body, timeout=timeout)
+
+    def get_soft(self, path):
+        """404 当作「不在这套任务表里」，返回 None 让调用方探测下一个端点。"""
+        return self._soft(lambda: self.get(path))
+
+    def post_soft(self, path):
+        return self._soft(lambda: self.post(path))
+
+    def _soft(self, call):
+        try:
+            return call()
+        except ToolError as e:
+            if "HTTP 404" in str(e):
+                return None
+            raise
+
+    def get_bytes(self, path, query=None):
+        with self._open("GET", path, query=query) as resp:
+            return resp.read()
+
+
+    def sse_text(self, path, body, timeout=SSE_TIMEOUT):
+        """POST 一个 SSE 端点并收正文：跳过 thinking，[DONE] 收尾，[ERROR] 抛 ToolError。"""
+        req = urllib.request.Request(self.base + path,
+                                     data=json.dumps(body).encode("utf-8"), method="POST")
+        req.add_header("Content-Type", "application/json")
+        parts = []
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    if payload.startswith("[ERROR]"):
+                        raise ToolError(payload[len("[ERROR]"):].strip() + "（LLM 未配置时先在 Neo Studio 设置里选模型）")
+                    try:
+                        frame = json.loads(payload)
+                    except ValueError:
+                        continue
+                    if frame.get("kind") == "thinking":
+                        continue
+                    parts.append(str(frame.get("text") or ""))
+        except urllib.error.HTTPError as e:
+            raise ToolError(_error_detail(e) or f"HTTP {e.code}（{path}）")
+        except urllib.error.URLError as e:
+            raise ToolError(f"ComfyUI 不可达（{self.base}）：{e.reason}")
+        text = "".join(parts).strip()
+        if not text:
+            raise ToolError("LLM 没有产出内容：确认 Neo Studio 设置里已配置 LLM 模型")
+        return text
+
+
+class Ctx:
+    def __init__(self, comfy: Comfy, b64_images: bool = False):
+        self.comfy = comfy
+        self.b64_images = b64_images
+
+
+def clip(text) -> str:
+    text = str(text)
+    if len(text) > MAX_TEXT:
+        return text[:MAX_TEXT] + f"\n…（已截断，共 {len(text)} 字符）"
+    return text
+
+
+def dump(obj, indent: int = 1) -> str:
+    return clip(json.dumps(obj, ensure_ascii=False, indent=indent))
+
+
+def need(args, key) -> str:
+    val = str(args.get(key) or "").strip()
+    if not val:
+        raise ToolError(f"缺少参数：{key}")
+    return val
+
+
+def view_url(comfy: Comfy, filename, subfolder="", type_="output") -> str:
+    """ComfyUI 的 /view 取图地址：图片只经 ComfyUI 读，MCP 层不碰本地文件路径。"""
+    query = urllib.parse.urlencode({"filename": filename, "subfolder": subfolder or "", "type": type_})
+    return f"{comfy.base}/view?{query}"
+
+
+def image_items(comfy: Comfy, images, limit: int = MAX_B64_IMAGES) -> list:
+    out = []
+    for im in (images or [])[:limit]:
+        filename = im.get("filename")
+        if not filename:
+            continue
+        subfolder = im.get("subfolder") or ""
+        out.append({"filename": filename, "subfolder": subfolder, "type": "output",
+                    "url": view_url(comfy, filename, subfolder)})
+    return out
+
+
+# 四套任务表（生图 / 整片 / 单段 / 拼接）的 task_id 都是裸 uuid，没有前缀可判；
+# 按顺序探测状态端点，命中即返回。
+# 生图任务只有整表列表（无单任务路由），整片 / 单段 / 拼接各有单任务快照路由。
+TASK_STATUS_ROUTES = (
+    ("director", "/neo_studio/director/{tid}"),
+    ("segment", "/neo_video_gen/run_segment/{tid}"),
+    ("assemble", "/neo_video_gen/assemble_segments/{tid}"),
+)
+TASK_CANCEL_ROUTES = (
+    ("image", "/neo_image_gen/cancel/{tid}"),
+    ("director", "/neo_studio/director/{tid}/cancel"),
+    ("segment", "/neo_video_gen/run_segment/{tid}/cancel"),
+    ("assemble", "/neo_video_gen/assemble_segments/{tid}/cancel"),
+)
+
+
+# ===========================================================================
+# 基础工具
+# ===========================================================================
+
+def tool_neo_status(ctx, args):
+    ver = ctx.comfy.get("/neo_studio/version") or {}
+    queue = ctx.comfy.get("/queue") or {}
+    return dump({
+        "neo_studio": ver.get("plugin_version"),
+        "comfyui": ver.get("comfyui_version"),
+        "mcp_server": plugin_version(),
+        "comfy_url": ctx.comfy.base,
+        "director_recipes": len(ver.get("recipes") or []),
+        "queue_running": len(queue.get("queue_running") or []),
+        "queue_pending": len(queue.get("queue_pending") or []),
+    })
+
+
+def tool_list_skills(ctx, args):
+    """技能清单（id 就是 generate_image 的 skill_id）；默认只列生图 / 生视频技能，all=true 列全部。"""
+    q = str(args.get("q") or "").strip().lower()
+    want_all = bool(args.get("all"))
+    rows = []
+    for s in (ctx.comfy.get("/rs_prompts/skills") or []):
+        row = {"id": s.get("id"), "name": s.get("name"), "cn_name": s.get("cn_name"),
+               "has_workflow": bool(s.get("has_workflow")), "gen_image": bool(s.get("gen_image")),
+               "gen_video": bool(s.get("gen_video"))}
+        if not want_all and not (row["gen_image"] or row["gen_video"]):
+            continue
+        if q and q not in " ".join(str(row[k] or "") for k in ("id", "name", "cn_name")).lower():
+            continue
+        rows.append(row)
+    return dump({"count": len(rows), "skills": rows}, None)
+
+
+def tool_generate_prompt(ctx, args):
+    body = {"text": need(args, "text")}
+    if args.get("skill_id"):
+        body["skillId"] = str(args["skill_id"]).strip()
+    return clip(ctx.comfy.sse_text("/rs_prompts/stream_generate_prompt", body))
+
+
+def tool_list_models(ctx, args):
+    data = ctx.comfy.get("/neo_image_gen/models") or {}
+    out = {}
+    for group, items in data.items():
+        if not str(group).startswith("suggested_"):
+            names = [str(i) for i in (items or [])]
+            out[group] = {"count": len(names), "names": names[:40]}
+        else:
+            out[group] = items
+    return dump(out, None)
+
+
+_GENERATE_KEYS = ("skill_id", "prompt", "width", "height", "count", "seed", "negative",
+                  "ratio", "model", "text_encoder", "vae", "steps", "output_prefix")
+
+
+def tool_generate_image(ctx, args):
+    body = {k: args[k] for k in _GENERATE_KEYS if args.get(k) is not None}
+    refs = args.get("references")
+    if isinstance(refs, str):
+        refs = [refs]
+    if refs:
+        # 后端 _reference_name 认 {kind,value}：value 是 input/ 相对名（output/ 前缀会自动拷进 input/）
+        body["references"] = [{"kind": "input", "value": str(r)} for r in refs[:4]]
+    snap = ctx.comfy.post("/neo_image_gen/generate", body) or {}
+    return dump({"task_id": snap.get("task_id"), "status": snap.get("status"),
+                 "images": image_items(ctx.comfy, snap.get("images"))})
+
+
+def tool_task_status(ctx, args):
+    tid = need(args, "task_id")
+    for t in (ctx.comfy.get_soft("/neo_image_gen/tasks") or []):
+        if t.get("task_id") == tid:
+            out = {"kind": "image", **t}
+            out.pop("preview", None)       # 预览帧是 base64 载荷，智能体只要产物名
+            out["images"] = image_items(ctx.comfy, t.get("images"), MAX_IMAGES)
+            return dump(out)
+    for kind, route in TASK_STATUS_ROUTES:
+        data = ctx.comfy.get_soft(route.format(tid=tid))
+        if data is None:
+            continue
+        data.pop("latest_preview", None)   # 预览帧载荷很大，智能体只要产物名
+        data.pop("preview", None)
+        out = {"kind": kind, **data}
+        if kind == "director":
+            prog = ctx.comfy.get_soft("/neo_video_gen/director_progress") or {}
+            if prog.get("active") and (prog.get("segment_index") or -1) >= 0:
+                out["segment"] = {"index": prog["segment_index"] + 1,
+                                  "total": prog.get("total_segments"),
+                                  "step": prog.get("step"),
+                                  "total_steps": prog.get("total_steps")}
+        return dump(out)
+    raise ToolError(f"任务不存在（结束后被清理也会这样）：{tid}")
+
+
+def tool_list_tasks(ctx, args):
+    tasks = ctx.comfy.get("/neo_image_gen/tasks") or []
+    return dump([{"task_id": t.get("task_id"), "status": t.get("status"), "mode": t.get("mode"),
+                  "prompt": str(t.get("prompt") or "")[:120], "seed": t.get("seed"),
+                  "images": image_items(ctx.comfy, t.get("images"), MAX_IMAGES)} for t in tasks[:8]], None)
+
+
+def tool_cancel_task(ctx, args):
+    tid = need(args, "task_id")
+    for kind, route in TASK_CANCEL_ROUTES:
+        data = ctx.comfy.post_soft(route.format(tid=tid))
+        if data is None:
+            continue
+        return dump({"kind": kind, **data})
+    raise ToolError(f"任务不存在：{tid}")
+
+
+def tool_get_image(ctx, args):
+    filename = need(args, "filename")
+    subfolder = str(args.get("subfolder") or "").strip()
+    type_ = str(args.get("type") or "output").strip()
+    out = {"filename": filename, "subfolder": subfolder, "type": type_,
+           "url": view_url(ctx.comfy, filename, subfolder, type_)}
+    if args.get("base64") or ctx.b64_images:
+        raw = ctx.comfy.get_bytes("/view", {"filename": filename, "subfolder": subfolder, "type": type_})
+        if len(raw) > MAX_B64_BYTES:
+            out["bytes"] = len(raw)
+            out["note"] = "图片过大，不回传 base64，请用 url 取图"
+        else:
+            out["base64"] = base64.b64encode(raw).decode("ascii")
+            out["bytes"] = len(raw)
+    return dump(out)
+
+
+def tool_list_gallery(ctx, args):
+    query = {"fields": "dirs"}
+    if args.get("dir_name"):
+        query["dir_name"] = str(args["dir_name"]).strip()
+    if args.get("path"):
+        query["path"] = str(args["path"]).strip()
+    data = ctx.comfy.get("/neo_gallery/list", query) or {}
+    return dump(data.get("dirs", data))
+
+
+def tool_list_recipes(ctx, args):
+    recipes = [{"name": r.get("name"), "type": r.get("type"), "source": r.get("source"),
+                "segments": len(r.get("segments") or [])}
+               for r in (ctx.comfy.post("/rs_recipes/list", {}) or [])]
+    return dump({"count": len(recipes), "recipes": recipes})
+
+
+def tool_load_recipe(ctx, args):
+    data = ctx.comfy.post("/rs_recipes/load", {"name": need(args, "name")}) or {}
+    return dump(data.get("recipe", data))
+
+
+# ===========================================================================
+# 导演工具（video_director 配方 → 整片 / 单段 / 拼接）
+# 段序号对外一律 1 起（与 Studio 时间轴「第 N 段」一致），内部换算成端点的 0 基。
+# ===========================================================================
+
+def seg_index(value) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise ToolError(f"段序号必须是整数（1 起）：{value!r}")
+    if n < 1:
+        raise ToolError("段序号必须 1 起：第 1 段就是时间轴第一段")
+    return n - 1
+
+
+def seg_list(value) -> list:
+    if isinstance(value, str):
+        value = [p for p in re.split(r"[,\s]+", value.strip()) if p]
+    if not value:
+        raise ToolError("段序号列表为空")
+    return [seg_index(v) for v in value]
+
+
+def tool_director_recipes(ctx, args):
+    ver = ctx.comfy.get("/neo_studio/version") or {}
+    return dump({"recipes": ver.get("recipes") or []})
+
+
+def tool_director_spec(ctx, args):
+    data = ctx.comfy.get("/rs_recipes/director_spec", {"name": need(args, "name")}) or {}
+    segs = [{"index": i + 1, "skill_id": s.get("skill_id"), "mode": s.get("mode"),
+             "duration_sec": s.get("duration_sec"), "ref_input": s.get("ref_input"),
+             "prompt": clip(str(s.get("prompt") or ""))}
+            for i, s in enumerate(data.get("segments") or [])]
+    return dump({"name": data.get("name"), "shared": data.get("shared") or {},
+                 "defaults": data.get("defaults"), "identity_images": data.get("identity_images"),
+                 "segment_count": len(segs), "segments": segs})
+
+
+def tool_director_plan(ctx, args):
+    """文字故事板 → 分段 JSON（plan），或单段提示词按 H3 格式重写 / 按指令改写（optimize / modify）。"""
+    mode = str(args.get("mode") or "plan").strip()
+    if mode == "plan":
+        body = {"idea": need(args, "idea")} if args.get("script") is None else {"script": str(args["script"])}
+        if args.get("segment_seconds") is not None:
+            body["segment_seconds"] = int(args["segment_seconds"])
+        if args.get("characters"):
+            body["characters"] = [str(c) for c in args["characters"]]
+        data = ctx.comfy.post("/rs_recipes/director_generate_segments", body, timeout=SSE_TIMEOUT) or {}
+        return dump({"segments": data.get("segments") or []})
+
+    if mode not in ("optimize", "modify"):
+        raise ToolError("mode 只能是 plan / optimize / modify")
+    body = {"prompt": need(args, "prompt")}
+    if args.get("duration_sec") is not None:
+        body["duration_sec"] = args["duration_sec"]
+    if args.get("video_mode"):
+        body["mode"] = str(args["video_mode"]).strip()
+    if args.get("refs"):
+        body["refs"] = args["refs"]
+    route = "/rs_recipes/director_optimize_prompts"
+    if mode == "modify":
+        body["instruction"] = need(args, "instruction")
+        route = "/rs_recipes/director_modify_segment"
+    return clip(ctx.comfy.sse_text(route, body))
+
+
+def tool_director_save(ctx, args):
+    """把分段写进 custom 配方（写操作）：预设配方只读，先 director_copy 再保存。"""
+    segments = args.get("segments")
+    if not segments:
+        raise ToolError("segments 为空：每段至少 prompt + duration_sec（草稿可留空 prompt）")
+    body = {"name": need(args, "name"), "type": "video_director",
+            "shared": args.get("shared") or {}, "segments": segments}
+    for key in ("assets", "prompt", "gen_type"):
+        if args.get(key) is not None:
+            body[key] = args[key]
+    return dump(ctx.comfy.post("/rs_recipes/save", body) or {})
+
+
+def tool_director_copy(ctx, args):
+    """复制配方为新的 custom 配方（解锁内置预设的只读限制），返回新配方名。"""
+    return dump(ctx.comfy.post("/rs_recipes/copy", {"name": need(args, "name")}) or {})
+
+
+def tool_director_run(ctx, args):
+    """整片入队，立即返回 task_id（多段 × 每段数分钟，绝不阻塞等待）。"""
+    body = {"recipe": need(args, "recipe")}
+    for key in ("seed", "width", "height", "continuity", "context_frames", "steps"):
+        if args.get(key) is not None:
+            body[key] = args[key]
+    if args.get("only_segments") is not None:
+        body["only_segments"] = ",".join(str(i + 1) for i in seg_list(args["only_segments"]))
+    snap = ctx.comfy.post("/neo_studio/director/generate", body) or {}
+    return dump({"task_id": snap.get("task_id"), "status": snap.get("status"),
+                 "recipe": snap.get("recipe"), "prompt_id": snap.get("prompt_id")})
+
+
+def tool_segment_run(ctx, args):
+    """单段生成 / 重生成（修片主手段）；入队即返回 task_id。"""
+    body = {"recipe": need(args, "recipe"), "segment": seg_index(args.get("segment"))}
+    for key in ("seed", "anchors", "continuity", "context_frames", "film"):
+        if args.get(key) is not None:
+            body[key] = args[key]
+    snap = ctx.comfy.post("/neo_video_gen/run_segment", body) or {}
+    return dump({"task_id": snap.get("task_id"), "status": snap.get("status"),
+                 "segment": (snap.get("segment") or 0) + 1, "recipe": snap.get("recipe")})
+
+
+def tool_assemble_run(ctx, args):
+    """把勾选的段拼回成片；后台线程执行，入队即返回 task_id。"""
+    body = {"recipe": need(args, "recipe"), "use": seg_list(args.get("segments"))}
+    for key in ("film", "blend", "continuity", "context_frames"):
+        if args.get(key) is not None:
+            body[key] = args[key]
+    snap = ctx.comfy.post("/neo_video_gen/assemble_segments", body) or {}
+    return dump({"task_id": snap.get("task_id"), "status": snap.get("status"),
+                 "recipe": snap.get("recipe"), "use": [i + 1 for i in body["use"]]})
+
+
+# ===========================================================================
+# 工具表
+# ===========================================================================
+
+def s(t, d) -> dict:
+    return {"type": t, "description": d}
+
+
+def tool(name, desc, props, required=()) -> dict:
+    return {"name": name, "description": desc,
+            "inputSchema": {"type": "object", "properties": props, "required": list(required)}}
+
+
+TASK_ID = s("string", "generate_image / director_run / segment_run / assemble_run 返回的 task_id")
+RECIPE = s("string", "video_director 配方名（director_recipes 可查）")
+SEGMENT = s("integer", "段序号，1 起（第 1 段 = 时间轴第一段）")
+
+TOOLS = [
+    tool("neo_status", "Neo Studio / ComfyUI 版本、队列长度、导演配方数；先调它确认服务在线", {}),
+    tool("list_skills", "列出技能（id 即 generate_image 的 skill_id）；默认只列生图 / 生视频技能，all=true 列全部，q 按 id / 名称子串过滤",
+         {"all": s("boolean", "true 时连任务类技能一起列（较长）"),
+          "q": s("string", "按 id / 名称 / 中文名子串过滤")}),
+    tool("generate_prompt", "把简短想法扩写成成品提示词（LLM 同步返回文本）",
+         {"text": s("string", "简短想法或草稿提示词"),
+          "skill_id": s("string", "可选：按该技能的模板上下文扩写")}, ("text",)),
+    tool("list_models", "列出可选模型（diffusion_models / text_encoders / vae / loras）与建议值", {}),
+    tool("generate_image", "提交生图任务，立即返回 task_id（用 task_status 轮询、get_image 取图）",
+         {"skill_id": s("string", "生图技能 id（list_skills 可查）"),
+          "prompt": s("string", "提示词"),
+          "width": s("integer", "宽（像素），留空用技能默认"),
+          "height": s("integer", "高（像素），留空用技能默认"),
+          "count": s("integer", "张数"),
+          "seed": s("integer", "种子，-1 随机"),
+          "negative": s("string", "负向提示词"),
+          "references": s("array", "参考图文件名列表（input/ 下的名字）"),
+          "model": s("string", "扩散模型文件名，留空自动挑选"),
+          "text_encoder": s("string", "文本编码器文件名，留空自动挑选"),
+          "vae": s("string", "VAE 文件名，留空自动挑选"),
+          "steps": s("integer", "采样步数")}, ("skill_id", "prompt")),
+    tool("task_status", "查任务快照（生图 / 整片 / 单段 / 拼接共用 task_id）；生图 succeeded 后 images 带取图 URL",
+         {"task_id": TASK_ID}, ("task_id",)),
+    tool("list_tasks", "列出最近的生图任务", {}),
+    tool("cancel_task", "取消任务（未执行出队，执行中中断）", {"task_id": TASK_ID}, ("task_id",)),
+    tool("get_image", "取产物图片：默认返回文件名与 /view 的 URL，base64=true 才回图片字节",
+         {"filename": s("string", "产物文件名"),
+          "subfolder": s("string", "子目录，如 NeoDirector/xxx"),
+          "type": s("string", "output（默认）或 input"),
+          "base64": s("boolean", "为 true 时附带 base64 图片字节")}, ("filename",)),
+    tool("list_gallery", "列素材库目录结构（可 dir_name / path 下钻）",
+         {"dir_name": s("string", "目录名"), "path": s("string", "目录内子路径")}),
+    tool("list_recipes", "列出配方（含 video_director 类型标记与段数）", {}),
+    tool("load_recipe", "读单个配方的元数据", {"name": s("string", "配方名")}, ("name",)),
+    tool("director_recipes", "列出导演配方（type=video_director）", {}),
+    tool("director_spec", "读导演配方的 shared 与分段清单（段号 1 起）", {"name": RECIPE}, ("name",)),
+    tool("director_plan", "故事板规划：mode=plan 主题/脚本→分段 JSON；mode=optimize 单段按 H3 格式重写；mode=modify 按指令改写单段",
+         {"mode": s("string", "plan（默认）/ optimize / modify"),
+          "idea": s("string", "plan：故事主题"),
+          "script": s("string", "plan：已确认的故事脚本（按原剧情拆分，不改写情节）"),
+          "segment_seconds": s("integer", "plan：每段目标秒数，默认 10"),
+          "characters": s("array", "plan：角色参考图文件名，锁角色身份"),
+          "prompt": s("string", "optimize/modify：该段现有提示词"),
+          "instruction": s("string", "modify：修改指令"),
+          "duration_sec": s("number", "optimize/modify：本段秒数"),
+          "video_mode": s("string", "optimize/modify：t2v/i2v/l2v/fl2v/r2v/v2v/rv2v"),
+          "refs": s("object", "optimize/modify：本段参考素材 {images,videos,audios}")}),
+    tool("director_save", "写操作：把分段写进 custom 配方（内置预设只读，先 director_copy）",
+         {"name": s("string", "配方名"),
+          "shared": s("object", "{width,height,seed,mode?,chunk_sec?}；mode 全体统一，mixed 时每段用 seg.mode"),
+          "segments": s("array", "每段 {prompt,duration_sec,skill_id?,first_frame?,refs?,mode?}；草稿可留空 prompt"),
+          "assets": s("array", "随配方收录的素材 {filename,subfolder,type,kind}，kind=image/video/audio")}, ("name", "segments")),
+    tool("director_copy", "复制配方为新的 custom 配方（解锁内置预设的只读限制），返回新配方名",
+         {"name": RECIPE}, ("name",)),
+    tool("director_run", "整片入队，立即返回 task_id（多段长任务，用 task_status 轮询，勿同步等待）",
+         {"recipe": RECIPE,
+          "only_segments": s("array", "只跑勾选的段（1 起）；留空跑全部"),
+          "seed": s("integer", "种子，-1 随机"),
+          "width": s("integer", "宽，-1 用配方默认"),
+          "height": s("integer", "高，-1 用配方默认"),
+          "continuity": s("boolean", "段间连续性"),
+          "context_frames": s("integer", "连续性上下文帧数"),
+          "steps": s("integer", "采样步数，-1 用默认")}, ("recipe",)),
+    tool("segment_run", "单段生成 / 重生成（修片主手段），立即返回 task_id",
+         {"recipe": RECIPE, "segment": SEGMENT,
+          "seed": s("integer", "种子，-1 随机"),
+          "anchors": s("string", "锚点模式 both/first/none"),
+          "continuity": s("boolean", "段间连续性"),
+          "context_frames": s("integer", "连续性上下文帧数"),
+          "film": s("string", "锚定用的成片文件名，留空取最新")}, ("recipe", "segment")),
+    tool("assemble_run", "把勾选的段拼回成片，立即返回 task_id",
+         {"recipe": RECIPE, "segments": s("array", "要拼接的段序号（1 起）"),
+          "film": s("string", "被替换的成片文件名，留空取最新"),
+          "blend": s("integer", "接缝融合帧数"),
+          "continuity": s("boolean", "段间连续性"),
+          "context_frames": s("integer", "连续性上下文帧数")}, ("recipe", "segments")),
+]
+
+HANDLERS = {
+    "neo_status": tool_neo_status,
+    "list_skills": tool_list_skills,
+    "generate_prompt": tool_generate_prompt,
+    "list_models": tool_list_models,
+    "generate_image": tool_generate_image,
+    "task_status": tool_task_status,
+    "list_tasks": tool_list_tasks,
+    "cancel_task": tool_cancel_task,
+    "get_image": tool_get_image,
+    "list_gallery": tool_list_gallery,
+    "list_recipes": tool_list_recipes,
+    "load_recipe": tool_load_recipe,
+    "director_recipes": tool_director_recipes,
+    "director_spec": tool_director_spec,
+    "director_plan": tool_director_plan,
+    "director_save": tool_director_save,
+    "director_copy": tool_director_copy,
+    "director_run": tool_director_run,
+    "segment_run": tool_segment_run,
+    "assemble_run": tool_assemble_run,
+}
+
+
+# ===========================================================================
+# JSON-RPC over stdio（换行分隔）
+# ===========================================================================
+
+def serve(ctx, tools, stdin, stdout) -> int:
+    handlers = {t["name"]: HANDLERS[t["name"]] for t in tools}
+
+    def send(payload) -> None:
+        stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        stdout.flush()
+
+    def fail(mid, code, message) -> None:
+        send({"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}})
+
+    while True:
+        try:
+            line = stdin.readline()
+        except (KeyboardInterrupt, EOFError, ValueError):
+            return 0
+        if not line:
+            return 0
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            fail(None, -32700, "请求不是有效 JSON")
+            continue
+        method = msg.get("method")
+        mid = msg.get("id")
+        params = msg.get("params") or {}
+
+        if method == "initialize":
+            want = str(params.get("protocolVersion") or PROTOCOL_VERSION)
+            send({"jsonrpc": "2.0", "id": mid, "result": {
+                "protocolVersion": want if want in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "neo-studio", "version": plugin_version()},
+                "instructions": "生图与整片都是异步任务：generate_image / director_run / segment_run / "
+                                "assemble_run 只返回 task_id，用 task_status 轮询到 succeeded 再取产物。"
+                                "段序号一律 1 起。"}})
+        elif method == "notifications/initialized":
+            continue
+        elif method == "ping":
+            send({"jsonrpc": "2.0", "id": mid, "result": {}})
+        elif method == "tools/list":
+            send({"jsonrpc": "2.0", "id": mid, "result": {"tools": tools}})
+        elif method in ("resources/list", "resources/templates/list", "prompts/list"):
+            key = {"resources/list": "resources", "resources/templates/list": "resourceTemplates",
+                   "prompts/list": "prompts"}[method]
+            send({"jsonrpc": "2.0", "id": mid, "result": {key: []}})
+        elif method == "tools/call":
+            name = str(params.get("name") or "")
+            handler = handlers.get(name)
+            if handler is None:
+                fail(mid, -32602, f"未知工具：{name}")
+                continue
+            args = params.get("arguments")
+            if not isinstance(args, dict):
+                args = {}
+            try:
+                result = {"content": [{"type": "text", "text": handler(ctx, args)}], "isError": False}
+            except ToolError as e:
+                result = {"content": [{"type": "text", "text": str(e)}], "isError": True}
+            except Exception as e:
+                log(f"tool {name} failed: {e}")
+                result = {"content": [{"type": "text", "text": f"工具执行失败：{e}"}], "isError": True}
+            send({"jsonrpc": "2.0", "id": mid, "result": result})
+        elif mid is not None:
+            fail(mid, -32601, f"不支持的方法：{method}")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="neo-studio-mcp", description="Neo Studio MCP Server（stdio）")
+    ap.add_argument("--comfy-url", default=os.environ.get("NEO_MCP_COMFY_URL"),
+                    help="ComfyUI 地址，必须本机回环（默认 http://127.0.0.1:8188）")
+    ap.add_argument("--timeout", type=int, default=int(os.environ.get("NEO_MCP_TIMEOUT", "30")))
+    ap.add_argument("--tools", default=os.environ.get("NEO_MCP_TOOLS", ""),
+                    help="逗号分隔的工具白名单；留空启用全部")
+    ap.add_argument("--image-base64", action="store_true",
+                    default=os.environ.get("NEO_MCP_IMAGE_BASE64") == "1",
+                    help="get_image 默认附带 base64 图片字节")
+    ap.add_argument("--selftest", action="store_true", help="打印启用工具后退出（不连 ComfyUI）")
+    args = ap.parse_args(argv)
+
+    allow = {t.strip() for t in args.tools.split(",") if t.strip()}
+    unknown = allow - set(HANDLERS)
+    if unknown:
+        raise SystemExit(f"工具白名单里有未知工具：{', '.join(sorted(unknown))}")
+    tools = [t for t in TOOLS if not allow or t["name"] in allow]
+
+    if args.selftest:
+        log(f"Neo Studio MCP Server v{plugin_version()} · {len(tools)} 工具："
+            + ", ".join(t["name"] for t in tools))
+        return 0
+
+    ctx = Ctx(Comfy(comfy_base(args.comfy_url), args.timeout), args.image_base64)
+    log(f"Neo Studio MCP Server v{plugin_version()} · {len(tools)} 工具 · {ctx.comfy.base}")
+    # Windows 控制台默认不是 UTF-8，协议要求按 UTF-8 收发
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")
+    return serve(ctx, tools, sys.stdin, sys.stdout)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+
+
