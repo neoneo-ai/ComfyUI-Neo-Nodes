@@ -18,6 +18,8 @@ MiniMax H3 视频生成：单段 BUNDLE 与多段导演配方。配方编辑见 
 
 ## NeoH3VideoDirector（多段导演）
 
+![视频生成节点](assets/images/vide-gen.png)
+
 - 输入：`recipe`（必填）、`seed`、`MODEL`、`steps`、`BUNDLE`（可选）、`bundle_skill`、`bundle_text`。
 - 输出：`VIDEO`，接 SaveVideo。
 - 每段 `seed = 基础 seed + 段序号`，可复现且各段不同。

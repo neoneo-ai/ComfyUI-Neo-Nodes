@@ -25,6 +25,8 @@ MiniMax H3 video generation: single-segment BUNDLE and multi-segment director re
 
 ## NeoH3VideoDirector (multi-segment director)
 
+![Neo video generation nodes on the canvas](../assets/images/vide-gen.png)
+
 - Inputs: `recipe` (required), `seed`, `MODEL`, `steps`, `BUNDLE` (optional), `bundle_skill`, `bundle_text`.
 - Output: `VIDEO`, connect a SaveVideo.
 - Each segment's `seed = base seed + segment index`: reproducible, and different per segment.

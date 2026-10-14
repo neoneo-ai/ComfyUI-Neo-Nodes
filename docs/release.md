@@ -59,6 +59,12 @@ tools\build_studio_exe.ps1 -Publish                                  # comfy nod
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
 ```
 
+**改完 `neo_studio_app.py` 必须重新打包。** 源码运行桌面壳时每次启动把 `kernel-plugin/` 同步进
+`custom_nodes`（只覆盖同名文件，不删目标目录里的东西）；exe 只在内置副本版本更新时才替换插件目录，
+git 检出的那份不碰。
+
+窗口与任务栏图标是拍板造型的 `web/neo-studio.ico`（`tools/make_studio_icon.py` 生成），启动器打包时带同款图标。
+
 ## 离线工具
 
 `tools/` 下的脚本用于构建 / 部署素材预设，不在 ComfyUI 运行时加载：

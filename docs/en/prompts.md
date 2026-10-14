@@ -90,6 +90,8 @@ MiniMax H3 Reference to Video `ref_images` (up to 9):
 
 Prompt + up to 12 reference images in a single node:
 
+![Neo image processing nodes on the canvas](../assets/images/image-process.png)
+
 - **Grid slots (1~12)** - the toolbar −/+ adjusts the slot count at runtime (default 9, not saved with
   the workflow; it grows automatically when more images arrive). Drag in from the asset panel / add
   locally in batches (multi-select) / drag OS files straight onto the grid; tiles are

@@ -10,9 +10,13 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   at the Chinese docs; the developer entry points are `Developer.md` (中文) and `Developer_EN.md` (English).
   `kernel-plugin/README.md` is now English with `README_ZH.md` beside it, so the Registry package ships the
   English readme.
-- Root `README.md`: the "Neo Studio (Standalone App)" section is split into **Entry points** (table), **The
-  shell is a launcher, not just a viewer**, **Window & icon** and **Build the launcher** instead of three
-  prose walls.
+- Root `README.md` and `README_ZH.md` slimmed (225 → 165 and 285 → 232 lines). The Features / 模块一览 rows now
+  link to the module doc that owns the detail, Installation keeps Manager / comfy CLI / clone and points at
+  `release.md` for the install and build scripts, Quick Start is six short steps, the standalone-app section
+  keeps the entry-point table plus the shell-behavior bullets, and the doc index table is replaced by a link to
+  the docs index. The detail that moved out is not lost: the rebuild-after-change rule, the source sync and the
+  window & taskbar icon are in `docs/release.md` / `docs/en/release.md`, and the two canvas screenshots now live
+  in `prompts.md` (reference grid) and `h3-video-gen.md` (video nodes).
 - The `nine_grid_storyboard` preset's `skill.md` no longer links to `../../docs/gallery.md`: `docs/` is not
   shipped in the Registry package, so that relative link was unreachable in every installed copy. It now names
   the gallery doc as plain text.

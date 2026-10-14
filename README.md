@@ -40,25 +40,23 @@ the three modes are documented in [docs/en/llm.md](docs/en/llm.md).
 
 | Module | Type | Description |
 |--------|------|-------------|
-| Neo Prompt Encoder | Node | Prompt management + AI enhancement (presets / search / LLM enhance). Outputs CONDITIONING + text for standard txt2img samplers. |
-| Neo Prompt Agent | Node | Prompt management + AI generation without CLIP. Outputs PROMPT text + BUNDLE runtime package (connects directly to Krea2 / H3 video). |
-| Neo Image Gen & Edit | Node | Synchronous image generation / reference editing based on selected skill template. Outputs IMAGE tensor directly to downstream nodes. |
-| H3 Video Director | Node | MiniMax H3 multi-segment video generation with native audio. Per-segment skill/prompt/duration/first-last-frame/reference control. Timeline editor for drag-reorder and batch prompt optimization. |
-| Neo Bundle Expand | Node | Expands BUNDLE into `prompt` + `image_1..9` for official MiniMax H3 Reference-to-Video nodes. |
-| Neo Reference Grid | Node | Prompt + up to 12 reference images in a single grid node. Auto-growing output slots. |
-| Neo Grid Split | Node | Splits a storyboard grid image into individual cells (IMAGE batch) + embedded prompt text. |
-| Neo Gallery | Sidebar | Image/video/audio asset browser: presets, custom directories, Civitai LoRA matching, lightbox preview, one-click send-to-node, LoRA batch tagging. |
-| Bookmarks | Asset panel | Local bookmarks (path-based) + Civitai bookmarks (download-on-open). |
-| Neo Recipes | Sidebar | Recipe (prompt + media assets) management with one-click send to workflow. |
-| Workflow Repair | Menu item | One-click fix for broken model paths after moving machines or changing directories. |
-| Model Hub | Menu item | Search Comfy-Org repos on ModelScope / Hugging Face and download models into the right model folders, with resumable downloads. |
-| Skill Management | Menu item | Skill detail page (settings + prompt + workflow area): import to canvas, write back to skill, inline workflow editing — each save shows a change preview first and records a local history. Presets are read-only; copy to customize. |
+| Neo Prompt Encoder | Node | Prompt management + AI enhancement; CONDITIONING + text for txt2img → [prompts.md](docs/en/prompts.md) |
+| Neo Prompt Agent | Node | Prompt generation without CLIP; PROMPT text + BUNDLE → [prompts.md](docs/en/prompts.md) |
+| Neo Image Gen & Edit | Node | Skill-template generation / reference editing; IMAGE output → [image-gen.md](docs/en/image-gen.md) |
+| H3 Video Director | Node | MiniMax H3 multi-segment video with native audio; drag-reorder timeline → [h3-video-gen.md](docs/en/h3-video-gen.md) |
+| Neo Bundle Expand | Node | BUNDLE → `prompt` + `image_1..9` for official H3 Reference-to-Video → [prompts.md](docs/en/prompts.md) |
+| Neo Reference Grid | Node | Prompt + up to 12 reference images in one grid node → [prompts.md](docs/en/prompts.md) |
+| Neo Grid Split | Node | Storyboard grid → IMAGE batch + embedded prompt → [h3-video-gen.md](docs/en/h3-video-gen.md) |
+| Neo Gallery | Sidebar | Asset browser, lightbox, send-to-node, Civitai LoRA, LoRA tagging → [gallery.md](docs/en/gallery.md) |
+| Bookmarks | Asset panel | Local bookmarks + Civitai bookmarks (download-on-open) → [gallery.md](docs/en/gallery.md) |
+| Neo Recipes | Sidebar | Recipe management with one-click send to workflow → [recipes.md](docs/en/recipes.md) |
+| Workflow Repair | Menu item | One-click fix for broken model paths → [workflow-repair.md](docs/en/workflow-repair.md) |
+| Model Hub | Menu item | Dual-source repo search, category placement, resumable downloads → [model-hub.md](docs/en/model-hub.md) |
+| Skill Management | Menu item | Inline workflow editing, canvas import & writeback, change preview + history → [skills.md](docs/en/skills.md) |
 
 Node appearance:
 
 ![Neo image generation and editing nodes on the canvas](docs/assets/images/image-gen-edit.png)
-![Neo image processing nodes on the canvas](docs/assets/images/image-process.png)
-![Neo video generation nodes on the canvas](docs/assets/images/vide-gen.png)
 
 ## Demo
 
@@ -72,26 +70,17 @@ Interaction recordings (click a thumbnail to open the matching doc):
 
 - **ComfyUI Manager (recommended)**: Search `Neo Studio` in the Manager and install.
 - **comfy CLI**: `comfy node install comfyui-neo-studio`
-- **Source install**: `tools/install_plugin.ps1` copies code and built-in presets into
-  `ComfyUI/custom_nodes/comfyui-neo-studio`, and writes the data-root pointer
-  `configs/data_root.json` (user data stays in `Neo-Studio/data`; uninstall = delete the plugin dir):
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
-```
-
-  The desktop shell syncs those files on its own: running `neo-studio-app.vbs` from source copies
-  `kernel-plugin/` into `custom_nodes/comfyui-neo-studio` at every launch — no manual copy step.
-
 - **Manual**: Clone into `ComfyUI/custom_nodes/`:
 
 ```bash
 git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
-- **Desktop app**: `tools/build_studio_exe.ps1` produces `tools/neo-studio.exe` (onefile) or the
-  `-Mode onedir` folder build. Release switches `-Sign` (signtool), `-Notarize` (macOS notarytool)
-  and `-Publish` (comfy node publish) do nothing unless passed.
+- **Source install / desktop app**: `tools/install_plugin.ps1` installs the code and built-in presets and
+  writes the `configs/data_root.json` data-root pointer (user data lives outside the plugin dir, so
+  uninstalling is just deleting the plugin dir); `tools/build_studio_exe.ps1` builds the desktop app;
+  running the shell from source syncs `kernel-plugin/` into `custom_nodes` by itself. Commands, parameters
+  and release switches: [docs/en/release.md](docs/en/release.md).
 
 > **Upgrading from the old package**: the Registry package moved from `comfyui-neo-nodes` to
 > `comfyui-neo-studio`. Delete `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` before installing the new one —
@@ -110,22 +99,21 @@ Then restart ComfyUI.
 ## Quick Start
 
 1. **Install** the plugin and restart ComfyUI.
-2. **Use the zero-config features first** (no LLM, no model setup needed):
-   - **Send asset to node**: Gallery sidebar → browse/search an image → click thumbnail for lightbox → click ✈️ Send → choose target node (LoadImage-type nodes first) → the image is written into that node.
-   - **Model Hub downloads**: 🅝 menu → "Model Hub" → pick source (ModelScope / Hugging Face) → search → pick a file → category and subfolder are filled in automatically → ⬇ download, resumable.
-   - **Repair workflow paths**: after moving machines, 🅝 menu → "Repair Workflow" → confirm candidate paths (editable, threshold adjustable) → apply in place.
-3. **Configure LLM** (pick one; needed for ✨ enhancement, image captioning, translate/classify):
-   - *Native*: Place a safetensors text-generation model (e.g. `qwen3.5_4b_bf16.safetensors`) in `models/text_encoders/`, select "Native (ComfyUI safetensors)" in Settings → Provider, pick the model and click 💾 Save. Inference runs inside the ComfyUI process, so no extra dependency is needed. Details: [docs/en/llm.md](docs/en/llm.md).
-   - *Remote*: Settings → select Provider (DeepSeek, Qwen, Kimi, GLM, SiliconFlow, OpenAI-compatible, LM Studio, Ollama, OpenRouter, etc.) → enter API Key + endpoint. "🔌 Test Connection" sends "hello" with the values currently in the form (no need to save first). Endpoints and sign-up links: [docs/en/llm.md](docs/en/llm.md).
-   - *Local*: Place a GGUF model in `models/LLM/`, select "Local GGUF" in Settings, pick the model and click 💾 Save (skip the selection when the folder holds a single model — it is used automatically). Install and folder rules: [docs/en/llm.md](docs/en/llm.md).
-4. **First prompt**: Add a **Neo Prompt Agent** node → type a short description → click ✨ → get AI-generated prompt text (no CLIP needed).
-5. **First image**: Add a **Neo Image Gen & Edit** node → select an image-gen skill → connect prompt (from Agent or manual) and optional reference images → queue → IMAGE output.
-
-   > Image generation needs a GPU / VRAM, and the selected skill must declare `gen_image: true` and ship a `workflow.json`.
-   > Generation model / Text Encoder / VAE default to "Auto", matched against the skill template; set them manually only when nothing matches.
-
-6. **First multi-segment video**: Add a **H3 Video Director** node → pick a `video_director` recipe
-   → drag to reorder segments / regenerate a single segment → segments are generated and stitched into one `VIDEO` with audio.
+2. **Zero-config features first** (no LLM, no model setup needed): ✈️ send an asset from the Gallery
+   lightbox into a LoadImage-type node ([gallery.md](docs/en/gallery.md)), download models from the Model
+   Hub with automatic category placement ([model-hub.md](docs/en/model-hub.md)), repair broken workflow
+   paths from the 🅝 menu ([workflow-repair.md](docs/en/workflow-repair.md)).
+3. **Configure an LLM** — pick one; needed for ✨ enhancement, image captioning and translate/classify:
+   *Native* (safetensors in `models/text_encoders/`, runs inside the ComfyUI process, zero extra
+   dependency), *Remote* (provider + API key, "🔌 Test Connection" verifies live) or *Local* (GGUF in
+   `models/LLM/`). Setup, endpoints and GGUF rules: [docs/en/llm.md](docs/en/llm.md).
+4. **First prompt**: add a **Neo Prompt Agent** node → type a short description → click ✨ → AI-generated
+   prompt text (no CLIP needed).
+5. **First image**: add a **Neo Image Gen & Edit** node → pick an image-gen skill → prompt (from the Agent
+   or manual) + optional reference images → queue → IMAGE output. Needs a GPU / VRAM, and the skill must
+   declare `gen_image: true` and ship a `workflow.json`; model / Text Encoder / VAE default to "Auto".
+6. **First multi-segment video**: add a **H3 Video Director** node → pick a `video_director` recipe → drag
+   to reorder segments / regenerate a single segment → stitched into one `VIDEO` with audio.
 
 ## Key Concepts
 
@@ -139,19 +127,12 @@ Canvas-independent page with four tabs: **Assets** (the full Gallery), **Directo
 full-film generation with progress, cancel and live preview), **Skills**, **Settings** (image / video / LLM /
 ComfyUI log). Canvas-only actions show a hint instead of failing.
 
-### Entry points
-
 | Entry | What it does |
 |-------|--------------|
 | `neo-studio.bat` | Opens `http://127.0.0.1:8188/neo-studio` in the browser, and starts ComfyUI for you |
 | `neo-studio-app.vbs` | The same page in its own WebView2 window — no console, no browser tab; window geometry and Studio state survive restarts (needs `pywebview`; the WebView2 Runtime ships with Windows) |
 | `neo-studio-app.bat` | Console/debug entry for the same window (`--debug` opens DevTools) |
-| `tools/neo-studio.exe` | Packaged launcher with the clapperboard icon — see [Build the launcher](#build-the-launcher) |
-
-ComfyUI's log is under Settings → Log; the shell's own trace (startup, page jumps, window drags) goes to
-`tmp/studio_shell.log`.
-
-### The shell is a launcher, not just a viewer
+| `tools/neo-studio.exe` | Packaged launcher with the clapperboard icon — built by `tools\build_studio_exe.ps1` ([release.md](docs/en/release.md)) |
 
 - **Offline service** — `neo_studio_server.py` on ComfyUI port + 3 (`8191` by default) keeps browsing, skill /
   recipe editing, settings (LLM included), Model Hub, bookmarks and LoRA tagging working while ComfyUI is down.
@@ -163,61 +144,25 @@ ComfyUI's log is under Settings → Log; the shell's own trace (startup, page ju
 - **The window opens first** — the dependency self-check, the service setup and the ComfyUI spawn run on a
   background thread behind a splash page; the page jumps to the full Studio once the port answers, and stopping
   ComfyUI pulls it back to the offline library.
-- **Closing the window** stops the ComfyUI the shell started (one you started yourself is left alone).
+- **Closing the window** stops the ComfyUI the shell started (one you started yourself is left alone); a ComfyUI
+  already listening on the port is attached to, never doubled.
+- **Canvas jumps stay in the window** — "⤒ 主画布编辑" and "🎬 新影工坊" switch in place, and the shell
+  re-injects a "🎬 返回 Studio" pill on every non-Studio page.
+- ComfyUI's log is under Settings → Log; the shell's own trace (startup, page jumps, window drags) goes to
+  `tmp/studio_shell.log`.
 
-### Window & icon
-
-- Window and taskbar icon: the clapperboard `web/neo-studio.ico` (`tools/make_studio_icon.py`).
-- The `无边框窗口` switch (on by default) drops the system title bar: the header carries minimize / maximize /
-  fullscreen / close, and pressing its empty area drags the window; geometry is saved on close, and maximize
-  fills the work area without covering the task bar. The version string lives in Settings → 关于.
-- "⤒ 主画布编辑" and "🎬 新影工坊" jump between the canvas and Studio inside this window (no browser tab);
-  the shell re-injects a "🎬 返回 Studio" pill on every non-Studio page.
-
-### Build the launcher
-
-`tools\build_studio_exe.ps1` packages the shell as `tools/neo-studio.exe` (single file; `-Mode onedir` emits
-the folder build, `-Mode both` emits both; build-time dependency `pyinstaller`, the artifact never ships in
-the Registry). **Rebuild the exe after changing `neo_studio_app.py`.**
-
-The exe doubles as a portable launcher:
-
-- It derives the ComfyUI root and interpreter from its own location, opens a first-setup page when it cannot,
-  and installs or updates the plugin from its bundled copy — user data dirs are carried over, a git checkout
-  is never touched.
-- Running from source syncs `kernel-plugin/` into `custom_nodes` on every launch (same-name files only,
-  nothing in the target is deleted).
-- The shell-only `启动设置` tab starts and stops the kernel at its top, then edits the root, the interpreter
-  and the port, and reports the self-check state.
+Frameless window, window & taskbar icon, exe packaging, portable launcher and the source sync:
+[Developer_EN.md](Developer_EN.md).
 
 ## Documentation
 
-Full index: [docs/en/README.md](docs/en/README.md).
+Full index with a one-line summary of every module doc: [docs/en/README.md](docs/en/README.md).
 
-| Doc | Content |
-|-----|---------|
-| [docs/en/prompts.md](docs/en/prompts.md) | Prompt nodes, UI buttons, image captioning, `@` references |
-| [docs/en/skills.md](docs/en/skills.md) | Skill management: manager window, workflow editing, canvas import & writeback |
-| [docs/en/llm.md](docs/en/llm.md) | LLM modes (native / remote / local), thinking models, GGUF setup |
-| [docs/en/image-gen.md](docs/en/image-gen.md) | Image generation & editing nodes |
-| [docs/en/h3-video-gen.md](docs/en/h3-video-gen.md) | Video generation: director recipe execution, single-segment regeneration, grid split |
-| [docs/en/recipes.md](docs/en/recipes.md) | Recipe management, one-click send, director recipes |
-| [docs/en/gallery.md](docs/en/gallery.md) | Gallery browser, lightbox, file management, bookmarks |
-| [docs/en/workflow-repair.md](docs/en/workflow-repair.md) | Workflow model path repair |
-| [docs/en/model-hub.md](docs/en/model-hub.md) | Model Hub: dual-source repo search, category placement, resumable downloads |
+## Changelog & License
 
-## Changelog
+Version history: [CHANGELOG.md](CHANGELOG.md). SPDX-License-Identifier: Apache-2.0
 
-Version history: [CHANGELOG.md](CHANGELOG.md).
-
-## License
-
-SPDX-License-Identifier: Apache-2.0
-
-## Credits
-
-10000+ portrait prompt collection source:
-[civitai.com/models/2231696](https://civitai.com/models/2231696)
+10000+ portrait prompt collection source: [civitai.com/models/2231696](https://civitai.com/models/2231696)
 
 ## Developer Docs
 

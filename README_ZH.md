@@ -63,11 +63,11 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
   → [gallery.md](docs/gallery.md)
 - **🧊 Neo Recipes** — 侧边栏配方（提示词 + 图片 / 视频 / 音频资源）管理与一键发送
   → [recipes.md](docs/recipes.md)
-- **🅝 顶栏菜单** — 插件统一入口（悬停约 0.3 秒或点击展开，指针离开自动收起）：新影工坊 / 生成素材 / 新建导演配方 / 创建节点（新节点落在当前可见区的空白处）/ 修复工作流 / 回写入技能 / 设置 / 模型库 / 技能管理
+- **🅝 顶栏菜单** — 插件统一入口（悬停约 0.3 秒或点击展开，指针离开自动收起）：新影工坊 / 生成素材 /
+  新建导演配方 / 创建节点 / 修复工作流 / 回写入技能 / 设置 / 模型库 / 技能管理
   → [workflow-repair.md](docs/workflow-repair.md)
-- **🗂 技能管理** — 技能详情页（设置区 + 提示词 + 工作流区）：工作流区直接内嵌编辑 `workflow.json`，
-  「⤒ 导入到画布」/「💾 回写入技能」，
-  落盘前弹变更确认并记本机变更历史；预设只读，复制为自定义后可编辑
+- **🗂 技能管理** — 技能详情页（设置区 + 提示词 + 工作流区内嵌编辑 `workflow.json`）：「⤒ 导入到画布」/
+  「💾 回写入技能」，落盘前弹变更确认并记本机变更历史；预设只读，复制为自定义后可编辑
   → [skills.md](docs/skills.md)
 - **🔧 工作流修复** — 模型路径失效时按文件名匹配磁盘真实文件一键修复，可手动改选与记住映射
   → [workflow-repair.md](docs/workflow-repair.md)
@@ -77,8 +77,6 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 节点外观：
 
 ![图片生成/编辑节点](docs/assets/images/image-gen-edit.png)
-![图片处理节点](docs/assets/images/image-process.png)
-![视频生成节点](docs/assets/images/vide-gen.png)
 
 ## 功能演示
 
@@ -97,35 +95,27 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 - [安装](#安装)
 - [依赖](#依赖)
 - [快速上手](#快速上手)
+- [新影工坊](#新影工坊neo-studio--独立应用)
 - [示例工作流](#示例工作流)
 - [基础概念](#基础概念)
 - [模块文档](#模块文档)
-- [许可证](#许可证)
-- [引用参考](#引用参考)
+- [许可证与变更记录](#许可证与变更记录)
 - [开发者文档](#开发者文档)
 
 ## 安装
 
 - **ComfyUI Manager（推荐）**：在 Manager 中搜索 `Neo Studio` 一键安装（已发布至 ComfyUI Registry）
 - **comfy CLI**：`comfy node install comfyui-neo-studio`
-- **源码安装**：`tools\install_plugin.ps1` 把代码与内置预设装进 `ComfyUI/custom_nodes/comfyui-neo-studio`，
-  并写好数据根指针 `configs/data_root.json`（用户数据留在 `Neo-Studio/data`，卸载只删插件目录）
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools\install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
-```
-
-  桌面壳自己同步：源码运行 `neo-studio-app.vbs` 时每次启动把 `kernel-plugin/` 同步进
-  `custom_nodes/comfyui-neo-studio`，不用手动拷贝。
-
 - **手动克隆**：把本仓库克隆成 `ComfyUI/custom_nodes/comfyui-neo-studio`，重启 ComfyUI
 
 ```bash
 git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
-- **桌面版**：`tools\build_studio_exe.ps1` 出 `tools\neo-studio.exe`（单文件）或 `-Mode onedir` 目录版；
-  发布开关 `-Sign`（signtool）/ `-Notarize`（macOS notarytool）/ `-Publish`（comfy node publish）默认不执行
+- **源码安装 / 桌面版**：`tools\install_plugin.ps1` 把代码与内置预设装进插件目录，并写好
+  `configs/data_root.json` 数据根指针（用户数据在插件目录之外，卸载只删插件目录）；
+  `tools\build_studio_exe.ps1` 出桌面版启动器；源码运行桌面壳时自己把 `kernel-plugin/` 同步进
+  `custom_nodes`。命令、参数与发布开关见 [docs/release.md](docs/release.md)。
 
 > **从旧版升级**：包名从 `comfyui-neo-nodes` 换成 `comfyui-neo-studio`。先删掉
 > `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` 再装新包——两个目录同时存在会把同一批节点注册两遍。
@@ -142,76 +132,53 @@ git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfy
 
 ## 快速上手
 
-1. **安装**：ComfyUI Manager 搜 `Neo Studio` 一键安装（或见上方手动安装），重启 ComfyUI。
-2. **先玩零配置功能**（不需要 LLM 与任何模型配置）
-   - **素材一键入节点**：右侧边栏「素材」面板 → 浏览 / 搜索到目标图片 → 点缩略图进灯箱
-     → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
-   - **模型库下载**：顶栏 🅝「📥 模型库」→ 选源（ModelScope / Hugging Face）→ 搜索 → 选文件
-     → 自动带出落盘类别与子目录 → ⬇ 下载，可断点续传。
-   - **工作流路径修复**：换机器 / 改目录后模型路径失效时，点顶栏 🅝「🔧 修复工作流」
-     → 确认框核对候选新路径（可手动改选、可调匹配阈值）→ 点「修复」原地更新画布。
-3. **配置 LLM（三选一，✨ 增强 / 图片反推 / 翻译分类需要）**
-   - **原生**：把 safetensors 文本生成模型（如 `qwen3.5_4b_bf16.safetensors`）放入 `models/text_encoders/`，
-     Settings → Provider 选「Native (ComfyUI safetensors)」并选择模型后点 💾 保存，在 ComfyUI 进程内直接推理，
-     无需额外依赖。说明见 [docs/llm.md](docs/llm.md)。
-   - **远程**：节点 Settings 里选 Provider（内置 DeepSeek、阿里云百炼、Kimi、智谱 GLM、硅基流动，
-     以及 OpenAI 兼容 / LM Studio / Ollama / OpenRouter 等），填 API Key 与端点；
-     表单底部「🔌 测试连接」用当前填写值发送「你好」验证连通（无需先保存）。
-     各家端点与申请入口见 [docs/llm.md](docs/llm.md)。
-   - **本地**：把 GGUF 模型放入 `models/LLM/`，Settings → Provider 选「Local GGUF」并选择模型后点 💾 保存
-     （目录只有一个模型时可跳过，运行时自动使用）。安装与目录规范见 [docs/llm.md](docs/llm.md)。
-4. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 在底部快捷输入框写一句简短描述 → 点 ✨
-   → 得到 AI 生成的提示词文本（无需连 CLIP，可直接接下游如 🎨 Krea2）。
-5. **第一次生图**：添加 🎨 Neo Image Gen & Edit 节点 → 选一个带 `workflow.json` 的生图技能
-   → prompt 接 ⚡ Neo Prompt Agent 或手填，参考编辑类再连参考图槽位 → 排队执行 → 直接输出 IMAGE 张量。
-
-   > 生图需 GPU / 显存，且所选技能必须声明 `gen_image: true` 并附 `workflow.json`。
-   > 生图模型 / Text Encoder / VAE 默认「自动」按技能模板匹配，未匹配到时再手动指定。
-
-6. **第一次多段视频**：添加 🎞️ H3 Video Director 节点 → 选 `video_director` 配方
-   → 时间轴拖拽重排 / 单段重生成 → 逐段生成并拼接为单个含音频 `VIDEO`。
+1. **安装**：ComfyUI Manager 搜 `Neo Studio` 一键安装，重启 ComfyUI。
+2. **先玩零配置功能**（不需要 LLM 与任何模型配置）：灯箱里 ✈️ 把素材写进 LoadImage 类节点
+   （[gallery.md](docs/gallery.md)）、模型库双源下载并按仓库路径自动归类落盘
+   （[model-hub.md](docs/model-hub.md)）、顶栏 🅝 一键修复失效的模型路径
+   （[workflow-repair.md](docs/workflow-repair.md)）。
+3. **配置 LLM（三选一，✨ 增强 / 图片反推 / 翻译分类需要）**：**原生**（safetensors 放
+   `models/text_encoders/`，在 ComfyUI 进程内推理，零额外依赖）、**远程**（选 Provider 填 API Key 与端点，
+   「🔌 测试连接」当场验证）或**本地**（GGUF 放 `models/LLM/`）。配置、端点与目录规范见
+   [docs/llm.md](docs/llm.md)。
+4. **第一次提示词增强**：添加 ⚡ Neo Prompt Agent 节点 → 写一句简短描述 → 点 ✨ → AI 生成的提示词文本
+   （无需连 CLIP，可直接接下游）。
+5. **第一次生图**：添加 🎨 Neo Image Gen & Edit 节点 → 选一个生图技能 → prompt（接 Agent 或手填）
+   + 可选参考图 → 排队执行 → 输出 IMAGE 张量。需 GPU / 显存，且技能必须声明 `gen_image: true`
+   并附 `workflow.json`；生图模型 / Text Encoder / VAE 默认「自动」按技能模板匹配。
+6. **第一次多段视频**：添加 🎞️ H3 Video Director 节点 → 选 `video_director` 配方 → 时间轴拖拽重排 /
+   单段重生成 → 逐段生成并拼接为单个含音频 `VIDEO`。
 
 ---
 
 ## 新影工坊（Neo Studio · 独立应用）
 
-不依赖画布的独立页面：运行插件目录下 `neo-studio.bat`（自动拉起 ComfyUI），
-或手动启动后打开 `http://127.0.0.1:8188/neo-studio`。含四个页签：
+不依赖画布的独立页面，四个页签：**素材**（完整 Neo Gallery：浏览 / 灯箱 / 文件管理）、**导演**
+（只列多段导演配方 + 导演编辑器 + 整片生成面板，带进度 / 取消与实时预览）、**技能**（与顶栏
+「🗂 技能管理」同组件）、**设置**（生图 / 生视频 / LLM 设置 / ComfyUI 控制台日志）。依赖画布的功能
+（如「发送到节点」）在 Studio 内自动降级为提示。
 
-- **素材**：完整 Neo Gallery（浏览 / 灯箱 / 文件管理）
-- **导演**：配方列表（只列多段导演配方）+ 导演编辑器（与画布内一致）+ 整片生成面板
-  （带进度 / 取消；只读时间轴上勾选段块后只生成勾选的段，采样中实时预览，成片自动记进配方「结果」区）
-- **技能**：统一技能管理（与顶栏「🗂 技能管理」同组件，左列表 + 右详情直接展开）
-- **设置**：生图 / 生视频 / LLM 设置 / 日志（ComfyUI 控制台）
+| 入口 | 作用 |
+|------|------|
+| `neo-studio.bat` | 浏览器打开 `http://127.0.0.1:8188/neo-studio`，并自动拉起 ComfyUI |
+| `neo-studio-app.vbs` | 同一页面跑在独立 WebView2 窗口：无控制台黑窗、不占浏览器标签，窗口几何与状态重开保留（需 `pywebview`，Windows 自带 WebView2 Runtime 即可） |
+| `neo-studio-app.bat` | 同一窗口的带控制台调试入口（`--debug` 开 DevTools） |
+| `tools/neo-studio.exe` | 拍板造型图标的打包启动器，由 `tools\build_studio_exe.ps1` 产出（见 [docs/release.md](docs/release.md)） |
 
-依赖画布的功能（如「发送到节点」）在 Studio 内自动降级为提示。
+- **壳是启动器，不只是窗口** — 自带离线服务（`neo_studio_server.py`，ComfyUI 端口 +3，默认 `8191`），
+  ComfyUI 没在跑时素材浏览 / 技能与配方编辑 / 设置（含 LLM 配置）/ 模型库 / 收藏 / LoRA 打标照常可用；
+  需要运行时的请求回 `409 offline`（不假装成功），生成按钮变成启动入口。
+- **顶栏只报状态** — 「● 运行中」「● 已停止」「● 启动中」，端口 / PID / 谁启动收在鼠标提示里；启停在
+  「设置 → 启动设置」顶部：状态一行 + 「▶ 启动内核」「■ 停止内核」两枚按钮，此刻做不了的那枚禁用。
+- **窗口先出** — 依赖自检、装配服务、拉起 ComfyUI 都在后台线程，期间停在启动页；端口就绪后整页跳到
+  完整 Studio，停掉 ComfyUI 再拉回离线 Studio。
+- **关窗收掉壳自己拉起的 ComfyUI**（用户自己起的那路不碰）；端口已有 ComfyUI 在监听就直接附着，
+  绝不另起第二路。
+- **画布跳转留在窗口内** — 「⤒ 主画布编辑」与「🎬 新影工坊」在壳窗口内切换，非 Studio 页左上角由壳
+  挂一枚「🎬 返回 Studio」胶囊。
+- ComfyUI 后台日志在「设置 → 日志」里看；壳自己的启动 / 跳转 / 拖动过程落在 `tmp/studio_shell.log`。
 
-想要独立窗口（不占浏览器标签页），双击 `neo-studio-app.vbs`：同一个页面跑在 WebView2 窗口里，无控制台黑窗，
-窗口几何与设置 / 素材库状态重开保留（需要 `pywebview`，Windows 自带 WebView2 Runtime 即可）。
-`neo-studio-app.bat` 是带控制台的调试入口（`--debug` 开 DevTools）。ComfyUI 后台日志在「设置 → 日志」里看，
-壳自己的启动 / 跳转 / 拖动过程落在 `tmp/studio_shell.log`。
-
-壳是启动器，不只是窗口：自带离线服务（`neo_studio_server.py`，ComfyUI 端口 +3，默认 `8191`，接口归属由
-`neo_studio_caps.py` 一张表划定），ComfyUI 没在跑时窗口直接开在 Studio 上，素材浏览 / 技能与配方编辑 /
-设置（含 LLM 配置）/ 模型库 / 收藏 / LoRA 打标照常可用；需要运行时的请求回 `409 offline`（不假装成功），
-前端提示「需要 ComfyUI」并把生成按钮变成启动入口。顶栏只报状态：「● 运行中」「● 已停止」「● 启动中」，
-端口 / PID / 谁启动收在鼠标提示里；启停在「设置 → 启动设置」顶部——状态一行 + 「▶ 启动内核」
-「■ 停止内核」两枚按钮，此刻做不了的那枚禁用。窗口先出（依赖自检、装配服务、拉起 ComfyUI
-都在后台线程，期间停在启动页，根目录与解释器没定时停在「首次设置」页），端口就绪后整页跳到完整 Studio，
-停掉 ComfyUI 再拉回离线 Studio。关窗收掉壳自己拉起的 ComfyUI（用户自己起的那路不碰）；端口已有 ComfyUI
-在监听就直接附着，绝不另起第二路。
-
-窗口与任务栏图标是拍板造型的 `web/neo-studio.ico`（`tools/make_studio_icon.py` 生成）。`tools\build_studio_exe.ps1`
-打包带同款图标的启动器 `tools/neo-studio.exe`（单文件；`-Mode onedir` 出目录版，`-Mode both` 两个都出；构建期依赖
-pyinstaller，产物是本地文件，不进 Registry 分发）。exe 同时是便携启动器：从自身位置推导 ComfyUI 根目录与解释器，
-推不出就开「首次设置」页补齐；`custom_nodes` 缺插件时用内置副本装上（依赖一起装），内置副本更新时覆盖更新并把
-`configs/`、`skills/`、`recipes/`、`prompts/`、`gallery/` 整目录带进新副本。源码运行（`neo-studio-app.vbs`）时
-每次启动把 `kernel-plugin/` 同步进 `custom_nodes` 那份：只覆盖同名代码，目标里的用户文件一样不删，git 检出的那份不碰。
-「启动设置」页签顶部是内核启停，下面改根目录 / 解释器 / 端口并显示自检状态。**改完 `neo_studio_app.py` 必须重新打包。**
-技能里的「⤒ 主画布编辑」与顶栏「🎬 新影工坊」都在壳窗口内跳转，不弹浏览器标签页；主画布页左上角由壳挂一枚
-「🎬 返回 Studio」胶囊回 Studio。「无边框窗口」（默认开，勾掉恢复系统标题栏）摘掉标题栏后，顶栏右侧出最小化 /
-最大化 / 全屏 / 关闭，空白处按下即拖窗；选择写进 `launcher_config.json` 下次沿用，几何在关窗时保存（全屏关窗不存），
-最大化铺满工作区、不盖任务栏。版本号只在设置「关于」里显示。壳内部机制见 [Developer.md](Developer.md)。
+无边框窗口、窗口与任务栏图标、exe 打包、便携启动器与源码同步：见 [Developer.md](Developer.md)。
 
 ---
 
@@ -246,40 +213,20 @@ pyinstaller，产物是本地文件，不进 Registry 分发）。exe 同时是�
 
 ## 模块文档
 
-各功能模块的详细文档已按模块拆分到 `docs/` 目录（索引见 [docs/README.md](docs/README.md)）：
-
-| 文档 | 内容 |
-|------|------|
-| [docs/prompts.md](docs/prompts.md) | 提示词节点、界面按钮、图片反推 |
-| [docs/skills.md](docs/skills.md) | 技能管理：管理窗口、工作流区编辑、画布导入与回写 |
-| [docs/llm.md](docs/llm.md) | LLM 模式、云供应商、原生 safetensors 引擎、本地 GGUF 安装与目录规范 |
-| [docs/image-gen.md](docs/image-gen.md) | 生图：聊天生图、Image Gen & Edit、尺寸与扩图 |
-| [docs/h3-video-gen.md](docs/h3-video-gen.md) | 生视频：导演配方执行、单段重生成、宫格拆分 |
-| [docs/recipes.md](docs/recipes.md) | 配方：保存、发送到工作流、导演配方编辑器 |
-| [docs/gallery.md](docs/gallery.md) | 素材库：浏览、灯箱、文件管理、Civitai LORA、收藏 |
-| [docs/workflow-repair.md](docs/workflow-repair.md) | 工作流模型路径修复 |
-| [docs/model-hub.md](docs/model-hub.md) | 模型库：双源搜索、自动归类落盘、断点续传下载 |
+各功能模块的详细文档按模块拆分在 `docs/`，完整索引与一句话摘要见 [docs/README.md](docs/README.md)。
 
 ---
 
-## 许可证
+## 许可证与变更记录
 
 SPDX-License-Identifier: Apache-2.0
 
----
+每个发布版本的改动清单见 [CHANGELOG.md](CHANGELOG.md)（随标签发布至 ComfyUI Registry）。
 
-## 引用参考
-
-collections portrait 10000+ 精美提示词来源：
-
-[civitai.com/models/2231696](https://civitai.com/models/2231696)
+collections portrait 10000+ 精美提示词来源：[civitai.com/models/2231696](https://civitai.com/models/2231696)
 
 ---
 
 ## 开发者文档
 
-开发相关内容（项目结构、后端模块、API 路由、节点注册、测试等）见 [Developer.md](Developer.md)。
-
-## 版本变更记录
-
-每个发布版本的改动清单见 [CHANGELOG.md](CHANGELOG.md)（随标签发布至 ComfyUI Registry）。
+开发相关内容（项目结构、后端模块、API 路由、节点注册、测试、桌面壳内部机制）见 [Developer.md](Developer.md)。
