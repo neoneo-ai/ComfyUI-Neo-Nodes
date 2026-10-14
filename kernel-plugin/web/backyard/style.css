@@ -1,0 +1,127 @@
+/* Backyard 独立页面样式 */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+    margin: 0;
+    background: #17171b;
+    color: #ddd;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+}
+
+.by-header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    height: 48px;
+    padding: 0 16px;
+    background: #202024;
+    border-bottom: 1px solid #333;
+    flex: none;
+}
+.by-logo { font-weight: 700; font-size: 15px; color: #fff; white-space: nowrap; }
+.by-tabs { display: flex; gap: 4px; height: 100%; }
+.by-tabs a {
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    color: #aaa;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+}
+.by-tabs a:hover { color: #fff; }
+.by-tabs a.active { color: #fff; border-bottom-color: #7aa2ff; }
+
+.by-view { flex: 1; overflow: auto; padding: 20px; }
+.by-page { max-width: 900px; margin: 0 auto; }
+.by-hidden { display: none !important; }
+
+/* 表单 */
+.by-form { display: flex; flex-direction: column; gap: 14px; }
+.by-form-row { display: flex; align-items: center; gap: 10px; }
+.by-form-row label { font-size: 13px; color: #999; min-width: 120px; white-space: nowrap; }
+.by-form-row input, .by-form-row select {
+    flex: 1;
+    background: #2a2a2e;
+    border: 1px solid #444;
+    color: #ddd;
+    border-radius: 4px;
+    padding: 7px 10px;
+    font-size: 13px;
+}
+.by-form-row input:focus { outline: none; border-color: #7aa2ff; }
+.by-dir-custom { flex: 0.6; }
+.by-dir-path-label { font-size: 13px; color: #aaa; font-family: monospace; }
+.by-btn {
+    background: #3a5a8a;
+    border: none;
+    color: #fff;
+    padding: 8px 18px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+}
+.by-btn:hover { background: #4a6a9a; }
+.by-btn:disabled { opacity: 0.5; cursor: wait; }
+.by-btn-danger { background: #8a3a3a; }
+.by-btn-danger:hover { background: #9a4a4a; }
+
+/* SSE 日志输出 */
+.by-log {
+    background: #1a1a1e;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 12px;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #aaa;
+}
+.by-log .err { color: #f06060; }
+.by-log .ok { color: #60d060; }
+
+/* 目录管理 */
+.by-dir-list { display: flex; flex-direction: column; gap: 4px; }
+.by-dir-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #202024;
+    border: 1px solid #2a2a2e;
+    border-radius: 5px;
+}
+.by-dir-item:hover { border-color: #444; }
+.by-dir-icon { font-size: 16px; }
+.by-dir-name { flex: 1; font-size: 13px; }
+.by-dir-meta { font-size: 11px; color: #777; }
+.by-dir-del {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+.by-dir-del:hover { color: #f06060; background: rgba(255,80,80,0.1); }
+
+/* 状态提示 */
+.by-status { font-size: 13px; padding: 8px 0; color: #888; }
+.by-status.ok { color: #60d060; }
+.by-status.err { color: #f06060; }
+
+/* 分区标题 */
+.by-section { margin-bottom: 24px; }
+
+/* Index 概览 */
+.by-index-summary { margin-bottom: 12px; }
+.by-index-stats { font-size: 14px; font-weight: 600; padding: 8px 0; color: #ccc; }
+.by-section h3 { font-size: 14px; color: #ccc; margin: 0 0 10px; border-bottom: 1px solid #333; padding-bottom: 6px; }

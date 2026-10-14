@@ -1,0 +1,3 @@
+GET /rs_prompts/skills
+POST /rs_prompts/list_prompts
+POST /rs_prompts/load_prompt {"name":"cats"}

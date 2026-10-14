@@ -1,0 +1,3160 @@
+/* Neo Gallery Styles */
+
+/* Animations */
+@keyframes neoGalleryFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes neoGallerySlideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 0; transform: translateY(0); }
+}
+
+@keyframes neoGallerySpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes neoGalleryShimmer {
+    0% { background-position: -200px 0; }
+    100% { background-position: 200px 0; }
+}
+
+/* Loading overlay */
+.neo-gallery-loading-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px 20px;
+    min-height: 200px;
+}
+
+.neo-gallery-loading-skeleton {
+    width: 100%;
+    max-width: 1000px;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.neo-gallery-loading-skeleton[data-size="320"] .skeleton-card {
+    width: 320px;
+    height: 250px;
+}
+
+.neo-gallery-loading-skeleton[data-size="320"] .skeleton-card::before {
+    bottom: 50px;
+}
+
+.neo-gallery-loading-skeleton .skeleton-card {
+    width: 120px;
+    height: 100px;
+    background: linear-gradient(90deg, #252525 25%, #353535 50%, #252525 75%);
+    background-size: 200px 100%;
+    animation: neoGalleryShimmer 1.5s ease-in-out infinite;
+    border-radius: 6px;
+    position: relative;
+}
+
+/* Simulate cover image area in skeleton card */
+.neo-gallery-loading-skeleton .skeleton-card::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    right: 4px;
+    bottom: 30px;
+    background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+    background-size: 200px 100%;
+    animation: neoGalleryShimmer 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+/* Simulate text area in skeleton card */
+.neo-gallery-loading-skeleton .skeleton-card::after {
+    content: '';
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    right: 8px;
+    height: 12px;
+    background: linear-gradient(90deg, #2a2a2a 25%, #3a3a3a 50%, #2a2a2a 75%);
+    background-size: 200px 100%;
+    animation: neoGalleryShimmer 1.5s ease-in-out infinite;
+    border-radius: 2px;
+}
+
+.neo-gallery-loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(255, 106, 0, 0.2);
+    border-top-color: #FF6A00;
+    border-radius: 50%;
+    animation: neoGallerySpin 0.8s linear infinite;
+    display: none; /* Hidden - using skeleton instead */
+}
+
+.neo-gallery-loading-text {
+    color: #999;
+    font-size: 13px;
+}
+
+/* ============================================
+   Panel / Layout Styles
+   ============================================ */
+
+/* Main panel wrapper */
+.neo-gallery-panel {
+    padding: 10px;
+    background-color: #1a1a1a;
+    min-height: 400px;
+    position: relative; /* 多选操作条等绝对定位子元素的锚点 */
+}
+
+/* Panel header row — title left (col1), spacer (col2), buttons right (col3) */
+.neo-gallery-header-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    margin-bottom: 10px;
+    gap: 12px;
+}
+
+.neo-gallery-header-title {
+    color: #eee;
+    font-size: 14px;
+    margin: 0;
+    text-align: center;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.neo-gallery-header-title:hover {
+    color: #FF6A00;
+}
+
+/* Custom directory setting button in header */
+.neo-gallery-custom-dir-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background-color: transparent;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.neo-gallery-custom-dir-btn:hover {
+    background-color: rgba(255, 106, 0, 0.2);
+    border-color: #FF6A00;
+    color: #FF9944;
+}
+
+/* Back / forward navigation buttons in header */
+.neo-gallery-nav-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.neo-gallery-nav-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background-color: transparent;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-nav-btn:hover:not(:disabled) {
+    background-color: rgba(255, 106, 0, 0.2);
+    border-color: #FF6A00;
+    color: #FF9944;
+}
+
+.neo-gallery-nav-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* Search row */
+.neo-gallery-search-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+.neo-gallery-search-container {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 「生成素材」按钮：图标+文字，与头部「+」添加素材目录按钮区分开 */
+.neo-gallery-gm-btn {
+    flex-shrink: 0;
+    height: 30px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #ccc;
+    background-color: transparent;
+    border: 1px solid #555;
+    border-radius: 15px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-gm-btn:hover {
+    background-color: rgba(255, 106, 0, 0.2);
+    border-color: #FF6A00;
+    color: #FF9944;
+}
+
+/* 「生成素材」弹窗内「自定参数」折叠行：展开后显示主模型 / LoRA / 比例 / 最长边临时选择区 */
+.neo-gallery-gm-model-toggle {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 4px 0;
+    font-size: 12px;
+    color: #9aa4b2;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.neo-gallery-gm-model-toggle:hover {
+    color: #FF9944;
+}
+
+.neo-gallery-gm-model-box {
+    margin: 4px 0 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* 自定参数区紧凑布局：标签与控件同行（覆盖 .rs-config-row 默认纵向堆叠） */
+.neo-gallery-gm-model-box .rs-gen-model-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.neo-gallery-gm-model-box .rs-config-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+.neo-gallery-gm-model-box .rs-config-row > .rs-form-label {
+    flex-shrink: 0;
+    margin-bottom: 0;
+}
+.neo-gallery-gm-model-box .rs-config-row .rs-model-select-box {
+    flex: 1;
+    min-width: 0;
+}
+.neo-gallery-gm-model-box .rs-gen-lora-list {
+    flex: 1;
+    min-width: 0;
+}
+.neo-gallery-gm-size-row select {
+    flex-shrink: 0;
+    width: 90px;
+}
+/* 「最长边」组与「图形比例」组拉开间距 */
+.neo-gallery-gm-size-row > .rs-form-label:nth-of-type(2) {
+    margin-left: 8px;
+}
+
+/* 「生成素材」弹窗：💾 保存为新技能（选中主模型 / LoRA 后才显示） */
+.neo-gallery-gm-save-skill {
+    margin-top: 6px;
+    padding: 2px 10px;
+    font-size: 12px;
+    color: #9aa4b2;
+    background: none;
+    border: 1px solid #555;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.neo-gallery-gm-save-skill:hover {
+    color: #FF9944;
+    border-color: #FF6A00;
+}
+
+/* 「生成素材」弹窗：agent 式增强区——quick input（矮框，描述 / 修改指令）+ [增强技能 + ✨] 行 */
+.neo-gallery-gm-quick-input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 48px;
+    padding: 8px 8px 34px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    resize: vertical;
+}
+
+.neo-gallery-gm-quick-input:focus {
+    outline: none;
+    border-color: rgba(76, 154, 255, 0.6);
+}
+
+/* llm-chat 式双框：output 框右下角浮出按钮组（🎲 ▾ ☰，半透明、hover 变实）+ quick input 内部底边工具栏（增强技能 + ✨） */
+.neo-gallery-gm-output-wrap {
+    position: relative;
+}
+
+.neo-gallery-gm-float-group {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    z-index: 10;
+    display: flex;
+    border-radius: 6px;
+    overflow: hidden;
+    background: rgba(15, 15, 22, .55);
+    opacity: .55;
+    transition: opacity .2s;
+}
+
+.neo-gallery-gm-float-group:hover {
+    opacity: 1;
+}
+
+.neo-gallery-gm-float-group .neo-gallery-gm-tool-btn {
+    width: 26px;
+    height: 24px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+.neo-gallery-gm-float-group .neo-gallery-gm-tool-btn:hover {
+    background: rgba(124, 108, 240, .18);
+}
+
+.neo-gallery-gm-quick-wrap {
+    position: relative;
+}
+
+.neo-gallery-gm-input-toolbar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+}
+
+.neo-gallery-gm-input-toolbar .neo-gallery-gm-enhance-skill {
+    flex: 1;
+    min-width: 0;
+}
+
+.neo-gallery-gm-input-toolbar .neo-gallery-story-btn {
+    flex-shrink: 0;
+}
+
+.neo-gallery-gm-tool-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-color, #3a3a4a);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color .15s, background .15s;
+}
+
+.neo-gallery-gm-tool-btn:hover {
+    border-color: var(--accent-color, #7c6cf0);
+    background: rgba(124, 108, 240, .08);
+}
+
+.neo-gallery-gm-tool-on {
+    border-color: var(--accent-color, #7c6cf0);
+    background: rgba(124, 108, 240, .15);
+}
+
+/* 运行时随机批量：结果网格中的“生成中”行 */
+.neo-gallery-gm-batch-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border-color, #3a3a4a);
+    border-radius: 8px;
+    color: var(--text-secondary, #9a9ab0);
+    font-size: 13px;
+}
+
+
+/* Thumbnail size control row */
+.neo-gallery-size-control {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 6px 10px;
+    background-color: rgba(42, 42, 42, 0.9);
+    border-radius: 4px;
+}
+
+.neo-gallery-size-label {
+    font-size: 11px;
+    color: #999;
+}
+
+/* ============================================
+   Category Card Grid Layout
+   ============================================ */
+
+/* Fallback layout when the masonry script is not applied: plain auto-fill grid
+   with top-aligned adaptive-height cards. */
+.neo-gallery-category-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    padding: 4px 0;
+    align-items: start;
+}
+
+/* Waterfall layout is applied by web/gallery-masonry.js: cards keep DOM order and
+   are packed into the shortest column, so adaptive card heights never leave a
+   whole column blank. CSS multi-column was tried first and could not do this.
+   Both classes are needed on every selector: .neo-gallery-category-card and
+   .neo-gallery-thumb-container set position: relative themselves. */
+.neo-gallery-category-grid.neo-gallery-masonry,
+.neo-gallery-image-grid.neo-gallery-masonry {
+    position: relative;
+    display: block;
+}
+
+.neo-gallery-category-grid.neo-gallery-masonry > *,
+.neo-gallery-image-grid.neo-gallery-masonry > * {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* Category Card — clickable card for a directory/category */
+.neo-gallery-category-card {
+    position: relative;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    background-color: #1a1a1a;
+    border: 1px solid #333;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    height: var(--neo-card-h, 268px);
+}
+
+.neo-gallery-category-card:hover {
+    border-color: #fff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
+}
+
+/* Type indicator badge (top-left corner) */
+.neo-gallery-card-type-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    z-index: 5;
+    backdrop-filter: blur(4px);
+}
+
+.neo-gallery-card-type-badge.type-directory {
+    background-color: transparent;
+    color: white;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.neo-gallery-card-type-badge.type-remote {
+    background-color: rgba(0, 150, 255, 0.3);
+    color: #66ccff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    border: 1px solid rgba(100, 200, 255, 0.3);
+}
+
+.neo-gallery-remote-badge {
+    display: inline-block;
+    font-size: 10px;
+    color: #66ccff;
+    margin-left: 4px;
+    vertical-align: middle;
+    opacity: 0.8;
+}
+
+.neo-gallery-card-remote {
+    border: 1px solid rgba(100, 200, 255, 0.15);
+}
+
+.neo-gallery-card-type-badge.type-image {
+    background-color: transparent;
+    color: #FF9944;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.neo-gallery-card-type-badge.type-audio {
+    background-color: transparent;
+    color: #66ccff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+/* Remove loading animation from type badge - skeleton screen handles loading */
+.neo-gallery-card-type-badge.neo-gallery-card-type-loading {
+    animation: none;
+}
+
+/* Card cover image area */
+.neo-gallery-card-cover-wrapper {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background-color: #111;
+    position: relative;
+}
+
+
+/* Directory card covers: up to two images (portrait/square side-by-side,
+   landscape single), filling the card */
+.neo-gallery-card-cover-grid {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    gap: 2px;
+    padding: 2px;
+    background-color: #111;
+}
+
+/* Portrait covers switch to side-by-side to avoid excessive top/bottom crop */
+.neo-gallery-card-cover-grid--row {
+    flex-direction: row;
+}
+
+/* Anchor portrait covers at the top so object-fit: cover crops the bottom, not the head */
+.neo-gallery-card-cover-grid--portrait .neo-gallery-card-cover-grid-item img {
+    object-position: center top;
+}
+
+.neo-gallery-card-cover-grid-item {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 4px;
+}
+
+.neo-gallery-card-cover-grid-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* Placeholder tile when a cover is empty or fails to load */
+.neo-gallery-card-placeholder {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(60% 80% at 50% 40%, rgba(120, 200, 255, 0.08), transparent 70%),
+        linear-gradient(160deg, #232323, #191919);
+    border-top: 1px solid #333;
+    border-bottom: 1px solid #333;
+}
+
+.neo-gallery-card-placeholder-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    color: #a3a3a3;
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.25), 0 0 18px rgba(120, 200, 255, 0.10);
+}
+
+/* Audio cover tile: deep-blue gradient + note badge + decorative waveform */
+.neo-gallery-cover-audio-tile {
+    width: 100%;
+    height: 88px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: linear-gradient(160deg, rgba(30, 45, 70, 0.95), rgba(15, 22, 38, 0.98));
+    border-top: 1px solid rgba(120, 200, 255, 0.25);
+    border-bottom: 1px solid rgba(120, 200, 255, 0.25);
+    overflow: hidden;
+}
+
+.neo-gallery-cover-audio-badge {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.neo-gallery-cover-audio-waveform {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 64%;
+    display: block;
+}
+
+/* Center audio tile vertically in the cover wrapper */
+.neo-gallery-card-cover-wrapper:has(.neo-gallery-cover-audio-tile) {
+    display: flex;
+    align-items: center;
+}
+
+/* Skeleton screen for loading cards */
+.neo-gallery-card-skeleton {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+    background-size: 200px 100%;
+    animation: neoGalleryShimmer 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.neo-gallery-card-cover-wrapper.skeleton-loading {
+    position: relative;
+}
+
+.neo-gallery-card-cover-wrapper.skeleton-loading::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+    background-size: 200px 100%;
+    animation: neoGalleryShimmer 1.5s ease-in-out infinite;
+    z-index: 1;
+    border-radius: 4px;
+}
+
+/* Simulate cover grid structure in skeleton */
+.neo-gallery-card-cover-wrapper.skeleton-loading::after {
+    content: '';
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    background: linear-gradient(90deg, #252525 25%, #353535 50%, #252525 75%);
+    background-size: 200px 100%;
+    animation: neoGalleryShimmer 1.5s ease-in-out infinite;
+    z-index: 2;
+    border-radius: 2px;
+    /* Simulate the split between two stacked images in the grid */
+    background-image: 
+        linear-gradient(90deg, #252525 25%, #353535 50%, #252525 75%),
+        linear-gradient(to bottom, transparent 49%, #1a1a1a 49%, #1a1a1a 51%, transparent 51%);
+    background-size: 200px 100%, 100% 100%;
+}
+
+.neo-gallery-card-cover-wrapper.skeleton-loading .neo-gallery-card-cover,
+.neo-gallery-card-cover-wrapper.skeleton-loading .neo-gallery-card-cover-grid {
+    opacity: 0;
+}
+
+.neo-gallery-card-cover-wrapper.skeleton-loaded::before,
+.neo-gallery-card-cover-wrapper.skeleton-loaded::after {
+    display: none;
+}
+
+.neo-gallery-card-cover-wrapper.skeleton-loaded .neo-gallery-card-cover,
+.neo-gallery-card-cover-wrapper.skeleton-loaded .neo-gallery-card-cover-grid {
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+/* Card info area (name + count) */
+.neo-gallery-card-info {
+    padding: 8px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.neo-gallery-card-name {
+    display: block;
+    font-size: 13px;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+
+/* ============================================
+   Breadcrumb Navigation
+   ============================================ */
+
+.neo-gallery-breadcrumb {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    background-color: #2a2a2a;
+    border-radius: 4px;
+    font-size: 13px;
+    /* 始终固定在容器顶部，滚动时可见 */
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+/* Up button in breadcrumb */
+.neo-gallery-breadcrumb-up {
+    color: #FF9944 !important;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    user-select: none;
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex-shrink: 0; /* 长路径时返回按钮始终可见，不被压缩 */
+}
+
+.neo-gallery-breadcrumb-up:hover {
+    color: #FFB84D !important;
+    background-color: rgba(255, 106, 0, 0.1);
+}
+
+/* Sibling dropdown menu */
+.neo-gallery-sibling-dropdown {
+    min-width: 120px;
+    max-width: 200px;
+    background-color: #2a2a2a;
+    border: 1px solid #FF6A00;
+    border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+}
+
+.neo-gallery-sibling-list {
+    padding: 4px 0;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.neo-gallery-sibling-item {
+    padding: 6px 12px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.neo-gallery-sibling-item:hover,
+.neo-gallery-sibling-item-hover {
+    background-color: rgba(255, 106, 0, 0.15);
+    color: #FF9944;
+}
+
+.neo-gallery-breadcrumb-item {
+    color: #aaa;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    user-select: none;
+    /* 限制单段宽度：长路径时中段省略号截断，保证右侧返回按钮可见 */
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-gallery-breadcrumb-item:hover {
+    color: #FF9944;
+}
+
+.neo-gallery-breadcrumb-home:hover {
+    color: #FF6A00;
+}
+
+.neo-gallery-breadcrumb-current {
+    color: #eee;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.neo-gallery-breadcrumb-sibling-trigger:hover {
+    color: #FF9944 !important;
+    background-color: rgba(255, 106, 0, 0.1);
+    border-radius: 3px;
+}
+
+.neo-gallery-breadcrumb-sep {
+    color: #666;
+    user-select: none;
+    margin: 0 2px;
+}
+
+/* ============================================
+   Expanded Images View
+   ============================================ */
+
+.neo-gallery-expanded-images {
+    padding-top: 8px;
+}
+
+/* ============================================
+   Accordion Section Styles
+   ============================================ */
+
+/* Accordion section wrapper */
+.neo-gallery-accordion-section {
+    margin-bottom: 10px;
+}
+
+/* Accordion header */
+.neo-gallery-accordion-header {
+    cursor: pointer;
+    padding: 4px 8px;
+    background-color: #2a2a2a;
+    border-radius: 4px;
+    margin-bottom: 5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.neo-gallery-accordion-header:hover {
+    background-color: #333;
+}
+
+/* Accordion indicator (+/-) */
+.neo-gallery-accordion-indicator {
+    font-size: 18px;
+    font-weight: bold;
+}
+
+/* Accordion content area */
+.neo-gallery-accordion-content.presets,
+.neo-gallery-accordion-content.custom {
+    flex-direction: column;
+    gap: 8px;
+    padding: 6px 8px;
+    background-color: #1a1a1a;
+    border-radius: 4px;
+}
+
+/* Image grid - uses Flexbox for dynamic-width items */
+.neo-gallery-image-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    align-items: flex-start;
+}
+
+/* ============================================
+   Search Input
+   ============================================ */
+
+.neo-gallery-search-input {
+    width: 100%;
+    padding: 0 10px;
+    border-radius: 4px;
+    border: 1px solid #444;
+    background-color: #2a2a2a;
+    color: white;
+    font-size: 12px;
+    outline: none;
+    box-sizing: border-box;
+    height: 28px;
+}
+
+.neo-gallery-search-input::placeholder {
+    color: #888;
+}
+
+/* ============================================
+   Dropdown
+   ============================================ */
+
+.neo-gallery-dropdown-placeholder {
+    color: #999;
+}
+
+/* ============================================
+   Thumbnail Size Slider
+   ============================================ */
+
+.thumbnail-size-value {
+    display: none;
+}
+
+.neo-gallery-thumbnail-slider {
+    width: 100px;
+    cursor: pointer;
+    height: 16px;
+}
+
+.neo-gallery-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ============================================
+   Add Custom Image Button
+   ============================================ */
+
+.neo-gallery-add-button {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    border: 2px dashed #ccc;
+    border-radius: 5px;
+    background-color: #2a2a2a;
+}
+
+.neo-gallery-add-button:hover {
+    border-style: solid;
+    background-color: #333;
+}
+
+.neo-gallery-add-icon {
+    color: #ccc;
+}
+
+.neo-gallery-add-label {
+    margin-top: 5px;
+    color: #ccc;
+}
+
+/* ============================================
+Accordion Section Buttons (Clear)
+============================================ */
+
+.neo-gallery-clear-btn {
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
+    border: 1px solid;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-random-btn {
+    color: #FF6A00;
+    border-color: #555;
+    font-size: 14px;
+}
+
+.neo-gallery-clear-btn {
+    color: #f44336;
+    border-color: #f44336;
+}
+
+.neo-gallery-random-btn:hover {
+    background-color: rgba(255, 106, 0, 0.2);
+    border-color: #FF6A00;
+    color: #FF9944;
+}
+
+.neo-gallery-clear-btn:hover {
+    background-color: rgba(244, 67, 54, 0.1);
+}
+
+/* ============================================
+   No Files Message (Search)
+   ============================================ */
+
+.neo-gallery-no-files {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 200px;
+    justify-content: center;
+    background-color: #1a1a1a;
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+
+.neo-gallery-no-files-icon {
+    font-size: 64px;
+    color: #666;
+    margin-bottom: 20px;
+}
+
+.neo-gallery-no-files-text {
+    font-size: 18px;
+    color: #aaa;
+}
+
+/* ============================================
+   Image Element Styles
+   ============================================ */
+
+/* Thumbnail container — fixed height, flex column layout */
+.neo-gallery-thumb-container {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    position: relative;
+    max-width: 100%;
+}
+
+/* Image wrapper — relative positioning context, crops button bar overflow */
+.neo-gallery-thumb-img-wrapper {
+    position: relative;
+    width: 100%;
+    flex: 1;
+    display: block;
+    overflow: hidden;
+    border-radius: 5px;
+}
+
+/* Thumbnail image — fills wrapper, crops to uniform card size */
+.neo-gallery-thumb-img {
+    object-fit: cover;
+    /* 顶部锚定：竖图裁掉底部而不是头部；横图在卡片内无垂直裁切，不受影响 */
+    object-position: center top;
+    border-radius: 5px;
+    width: 100%;
+    height: 100%;
+    display: block;
+    background-color: #1a1a1a;
+}
+
+/* Thumbnail image with fixed aspect ratio (square for non-image items) */
+.neo-gallery-thumb-img.neo-gallery-square-ratio {
+    aspect-ratio: 1/1;
+    object-fit: cover;
+}
+
+/* Thumbnail image preserving original aspect ratio */
+.neo-gallery-thumb-img.neo-gallery-original-ratio {
+    height: auto !important;
+    aspect-ratio: unset;
+}
+
+/* Button bar — floating overlay at bottom of the image */
+.neo-gallery-thumb-btn-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 4px 6px;
+    min-height: 28px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
+    border-radius: 0 0 5px 5px;
+}
+
+.neo-gallery-thumb-container:hover .neo-gallery-thumb-btn-bar {
+    opacity: 1 !important;
+}
+
+/* 音频长条卡片太矮，浮动按钮栏会盖住波形/播放区；改为放在波形条下方正常流布局。 */
+.neo-gallery-thumb-container-audio .neo-gallery-thumb-btn-bar {
+    position: static;
+    opacity: 1;
+    background: none;
+    border-radius: 0;
+    padding: 6px 4px 2px;
+}
+
+/* Thumbnail action button — Lora 发送（底部浮动栏内） */
+.neo-gallery-thumb-img-send-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+    line-height: 1;
+}
+
+.neo-gallery-thumb-img-send-btn:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+    transform: scale(1.1);
+}
+
+/* ⋯ 更多操作按钮 — 缩略图右上角覆盖层，悬停卡片时显示 */
+.neo-gallery-thumb-bookmark-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    opacity: 0;
+    transition: background-color 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+    line-height: 1;
+    z-index: 6;
+}
+
+.neo-gallery-thumb-container:hover .neo-gallery-thumb-bookmark-btn {
+    opacity: 1;
+}
+
+.neo-gallery-thumb-bookmark-btn:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+    transform: scale(1.1);
+}
+
+/* ⋯ 按钮在收藏卡片上悬停显示（收藏卡片不是 thumb-container） */
+.neo-gallery-local-card:hover .neo-gallery-thumb-bookmark-btn {
+    opacity: 1;
+}
+
+/* Feedback positioning - fixed to viewport, will be set dynamically by JS */
+.neo-gallery-thumb-img-send-btn .neo-gallery-feedback {
+    position: fixed;
+    transform: translate(-50%, -100%);
+    margin: 8px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+/* No files message container */
+.neo-gallery-no-files-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 200px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+/* No files message icon */
+.neo-gallery-no-files-message-icon {
+    font-size: 48px;
+    color: #888;
+    margin-bottom: 15px;
+}
+
+/* No files message text */
+.neo-gallery-no-files-message-text {
+    font-size: 18px;
+    color: #888;
+}
+
+/* Video indicator badge — top-left corner of the thumbnail */
+.neo-gallery-thumb-video-badge {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background-color: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    color: white;
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 1;
+    pointer-events: none;
+    z-index: 5;
+}
+
+/* Multi-select checkbox — top-left corner of the thumbnail (deletable sources only) */
+.neo-gallery-select-check {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: #fff;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+    z-index: 6;
+}
+
+.neo-gallery-thumb-container:hover .neo-gallery-select-check,
+.neo-gallery-thumb-selected .neo-gallery-select-check {
+    opacity: 1;
+}
+
+/* Selected card highlight */
+.neo-gallery-thumb-selected .neo-gallery-thumb-img-wrapper {
+    outline: 2px solid #fff;
+    outline-offset: -2px;
+}
+
+/* Batch action bar — pinned to the bottom of the gallery panel while items are selected */
+.neo-gallery-selection-bar {
+    position: sticky;
+    bottom: 8px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background-color: rgba(20, 20, 20, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 6px;
+    backdrop-filter: blur(6px);
+}
+
+.neo-gallery-selection-count {
+    flex: 1;
+    font-size: 13px;
+    color: #ddd;
+}
+
+.neo-gallery-selection-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: white;
+    background-color: rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.neo-gallery-selection-btn:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+}
+
+.neo-gallery-selection-btn-danger:hover {
+    background-color: #d64545;
+}
+
+/* Audio card — square media tile with waveform + centered play button */
+.neo-gallery-audio-card {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: linear-gradient(160deg, rgba(30, 45, 70, 0.92), rgba(15, 22, 38, 0.96));
+    border: 1px solid rgba(120, 200, 255, 0.25);
+    overflow: hidden;
+}
+
+.neo-gallery-audio-waveform {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 72%;
+    display: block;
+}
+
+.neo-gallery-audio-play-btn {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.neo-gallery-audio-play-btn:hover {
+    transform: scale(1.1);
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+.neo-gallery-audio-time {
+    flex: 0 0 auto;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--neo-text-muted, #94a3b8);
+    pointer-events: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Audio bookmark card follows the original audio thumb rule: fixed 56px waveform
+   strip, card collapses to auto height instead of the directory card's fixed --neo-card-h. */
+.neo-gallery-local-card-audio {
+    height: auto;
+}
+.neo-gallery-local-card-audio .neo-gallery-card-cover-wrapper {
+    flex: 0 0 auto;
+}
+
+/* Image label */
+.neo-gallery-image-label {
+    margin-top: 5px;
+    font-size: 12px;
+    text-align: center;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Directory structure summary */
+.neo-gallery-dir-summary {
+    padding: 8px 12px;
+    background-color: rgba(255, 106, 0, 0.1);
+    border-left: 3px solid #FF6A00;
+    color: #FF9944;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+/* Section separator in directory view */
+.neo-gallery-section-separator {
+    padding: 8px 12px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 12px;
+    margin: 12px 0 8px 0;
+}
+
+/* Load more button for large image lists */
+.neo-gallery-load-more-btn {
+    display: block;
+    margin: 16px auto;
+    padding: 10px 24px;
+    background-color: rgba(255, 106, 0, 0.1);
+    border: 1px solid #FF6A00;
+    color: #FF9944;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s ease;
+}
+
+.neo-gallery-load-more-btn:hover {
+    background-color: rgba(255, 106, 0, 0.2);
+    color: #FFB84D;
+}
+
+/* ============================================
+   Inline Feedback (toast on buttons)
+   ============================================ */
+
+.neo-gallery-feedback {
+    position: absolute;
+    bottom: calc(100% + 24px);
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 8px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    z-index: 100;
+    pointer-events: none;
+    animation: neoGalleryFadeIn 0.2s ease-out;
+}
+
+.neo-gallery-feedback-success {
+    color: #4CAF50;
+}
+
+.neo-gallery-feedback-error {
+    color: #f44336;
+}
+
+.neo-gallery-feedback-text {
+    color: white;
+}
+
+/* ============================================
+   Directory Management Modal
+   ============================================ */
+
+/* 目录管理弹窗与统一设置弹窗（neo-director-llm-*）同一套外观：0.5 遮罩、
+   #1e1e1e 面板 + #3a3a3a 边框 + 10px 圆角。 */
+.neo-gallery-dir-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9845;
+}
+
+.neo-gallery-dir-modal {
+    background-color: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    width: 780px;
+    max-width: 90vw;
+    min-height: min(720px, 86vh);
+    max-height: min(720px, 86vh);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* 弹窗主体：左侧目录列表，右侧 C 站设置 */
+.neo-gallery-dir-modal-body {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    min-height: 0;
+}
+
+.neo-gallery-dir-modal-left {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Title bar */
+.neo-gallery-dir-modal-titlebar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    border-bottom: 1px solid #333;
+}
+
+.neo-gallery-dir-modal-title {
+    color: #eee;
+}
+
+.neo-gallery-dir-modal-close {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: transparent;
+    border-radius: 6px;
+    color: #9aa4b0;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.neo-gallery-dir-modal-close:hover {
+    background: #2c2f36;
+    color: #fff;
+}
+
+/* Directory list area */
+.neo-gallery-dir-list-container {
+    flex: 1;
+    min-height: 0;
+    padding: 6px 10px;
+    border-bottom: 1px solid #333;
+    overflow-y: auto;
+}
+
+.neo-gallery-dir-empty {
+    color: #888;
+    font-size: 13px;
+    text-align: center;
+    padding: 12px 0;
+}
+
+/* Individual directory item */
+.neo-gallery-dir-items {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.neo-gallery-dir-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #999;
+    margin-bottom: 8px;
+}
+
+.neo-gallery-dir-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    background-color: #2a2a2a;
+    border-radius: 4px;
+    border: 1px solid #444;
+    cursor: grab;
+    user-select: none;
+}
+
+.neo-gallery-dir-path {
+    color: #ccc;
+    font-size: 12px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.neo-gallery-dir-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+/* 排序列表里的隐藏 / 删除 / 设置按钮只在 hover 该行时出现 */
+.neo-gallery-dir-item-actions > button {
+    opacity: 0;
+    transition: opacity 0.15s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.neo-gallery-dir-item:hover .neo-gallery-dir-item-actions > button,
+.neo-gallery-dir-item-actions > button:focus-visible {
+    opacity: 1;
+}
+
+.neo-gallery-dir-ctl-btn {
+    background-color: #2c2f36;
+    color: #9aa4b0;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.neo-gallery-dir-ctl-btn:hover:not(:disabled) {
+    background-color: #383b43;
+    color: #fff;
+}
+
+.neo-gallery-dir-item.is-hidden {
+    opacity: 0.55;
+}
+
+.neo-gallery-dir-item.is-hidden .neo-gallery-dir-path {
+    color: #888;
+    text-decoration: line-through;
+}
+
+.neo-gallery-dir-hidden-badge {
+    font-size: 11px;
+    color: #9aa4b0;
+    background-color: rgba(154, 164, 176, 0.14);
+    border-radius: 4px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+}
+
+.neo-gallery-dir-drag-handle {
+    color: #666;
+    font-size: 14px;
+    line-height: 1;
+    flex-shrink: 0;
+    cursor: grab;
+}
+
+.neo-gallery-dir-item.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
+.neo-gallery-dir-item.drop-above {
+    box-shadow: 0 -3px 0 0 #5090cc;
+}
+
+.neo-gallery-dir-item.drop-below {
+    box-shadow: 0 3px 0 0 #5090cc;
+}
+
+.neo-gallery-dir-remove-btn {
+    background-color: rgba(218, 54, 51, 0.18);
+    color: #ff8a8a;
+    border: 1px solid rgba(218, 54, 51, 0.45);
+    border-radius: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.neo-gallery-dir-remove-btn:hover {
+    background-color: rgba(218, 54, 51, 0.35);
+    color: #ffb3b3;
+}
+
+/* Add new directory area */
+.neo-gallery-dir-add-area {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
+    border-bottom: 1px solid #333;
+}
+
+.neo-gallery-dir-add-row {
+    display: flex;
+    gap: 8px;
+}
+
+.neo-gallery-dir-label {
+    font-size: 12px;
+    color: #ccc;
+}
+
+.neo-gallery-dir-input {
+    flex: 1;
+    padding: 6px 8px;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ccc;
+    font-size: 12px;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.neo-gallery-dir-input:focus {
+    border-color: #5090cc;
+}
+
+.neo-gallery-dir-input::placeholder {
+    color: #666;
+}
+
+.neo-gallery-dir-add-btn {
+    padding: 4px 10px;
+    background-color: #2c2f36;
+    color: #ddd;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.neo-gallery-dir-add-btn:hover {
+    background-color: #383b43;
+    color: #fff;
+}
+
+/* Bulk action button (Civitai section) */
+.neo-gallery-dir-bulk-btn {
+    margin-top: 8px;
+    padding: 4px 10px;
+    background-color: #2c2f36;
+    color: #ddd;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.neo-gallery-dir-bulk-btn:hover {
+    background-color: #383b43;
+    color: #fff;
+}
+
+/* Send menu dropdown */
+.neo-gallery-send-menu {
+    min-width: 200px;
+    max-width: 300px;
+    background-color: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    z-index: 9999;
+}
+
+.neo-gallery-send-menu-item {
+    padding: 8px 12px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.neo-gallery-send-menu-item:hover {
+    background-color: rgba(255, 106, 0, 0.2);
+    color: #FFB84D;
+}
+
+.neo-gallery-send-menu-selected {
+    font-weight: bold;
+    color: #FF9944;
+}
+
+.neo-gallery-send-menu-selected:hover {
+    background-color: rgba(255, 106, 0, 0.3);
+    color: #FFB84D;
+}
+
+/* Manage Directories 弹窗右侧的 Civitai LORA 同步分区 */
+.neo-gallery-civitai-area {
+    flex: 0 0 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 10px;
+    border-left: 1px solid #333;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.neo-gallery-civitai-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ccc;
+}
+
+.neo-gallery-lora-dirs {
+    max-height: 180px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px;
+}
+
+.neo-gallery-lora-dir-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #bbb;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-gallery-lora-progress {
+    font-size: 11px;
+    color: #9aa4b0;
+    min-height: 14px;
+    word-break: break-all;
+}
+
+.neo-gallery-civitai-progress {
+    font-size: 11px;
+    color: #9aa4b0;
+    min-height: 14px;
+    word-break: break-all;
+}
+
+.neo-gallery-civitai-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #ccc;
+    cursor: pointer;
+    user-select: none;
+}
+
+.neo-gallery-civitai-toggle input[type="checkbox"] {
+    accent-color: #5090cc;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.neo-gallery-civitai-key-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.neo-gallery-civitai-key-row .neo-gallery-dir-input {
+    min-width: 0;
+}
+
+.neo-gallery-civitai-save-btn {
+    flex: 0 0 auto;
+    margin-top: 0;
+}
+
+.neo-gallery-civitai-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-civitai-actions button {
+    flex: 1 1 auto;
+}
+
+.neo-gallery-net-result {
+    display: none;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border-left: 3px solid #555;
+    word-break: break-all;
+}
+
+.neo-gallery-net-result.ok {
+    display: block;
+    color: #7ee787;
+    background: rgba(46, 160, 67, 0.12);
+    border-left-color: #2ea043;
+}
+
+.neo-gallery-net-result.warn {
+    display: block;
+    color: #e3b341;
+    background: rgba(227, 179, 65, 0.12);
+    border-left-color: #d29922;
+}
+
+.neo-gallery-net-result.err {
+    display: block;
+    color: #ff8a8a;
+    background: rgba(218, 54, 51, 0.12);
+    border-left-color: #da3633;
+}
+
+/* Lora dir card pending / failed status badge */
+.neo-gallery-card-status {
+    position: absolute;
+    top: 34px;
+    left: 6px;
+    right: 6px;
+    font-size: 10px;
+    line-height: 1.3;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #fff;
+    text-align: center;
+    z-index: 3;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.neo-gallery-card-status.status-loading {
+    background: rgba(33, 150, 243, 0.85);
+    animation: neo-gallery-pulse 1.4s ease-in-out infinite;
+}
+
+.neo-gallery-card-status.status-failed {
+    background: rgba(244, 67, 54, 0.9);
+}
+
+.neo-gallery-card-status.status-pending {
+    background: rgba(255, 152, 0, 0.85);
+}
+
+@keyframes neo-gallery-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Lora send button on dir cards */
+.neo-gallery-card-lora-send-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 4;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(255, 193, 7, 0.85);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.neo-gallery-category-card:hover .neo-gallery-card-lora-send-btn {
+    opacity: 1;
+}
+
+.neo-gallery-card-lora-send-btn:hover {
+    background: rgba(255, 193, 7, 1);
+}
+
+/* LoRA tagging ⋯ button on writable leaf dir cards */
+.neo-gallery-card-dir-menu-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 4;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(100, 116, 139, 0.85);
+    color: #fff;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.neo-gallery-category-card:hover .neo-gallery-card-dir-menu-btn {
+    opacity: 1;
+}
+
+.neo-gallery-card-dir-menu-btn:hover {
+    background: rgba(100, 116, 139, 1);
+}
+
+/* LoRA tagging dialog */
+.neo-gallery-lt-dir {
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 4px 16px 0;
+    word-break: break-all;
+}
+
+.neo-gallery-lt-trigger-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px 0;
+}
+
+.neo-gallery-lt-label {
+    font-size: 13px;
+    color: #cbd5e1;
+    white-space: nowrap;
+}
+
+.neo-gallery-lt-trigger {
+    flex: 1;
+    min-height: auto;
+    height: 34px;
+}
+
+.neo-gallery-lt-std-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px 0;
+    font-size: 13px;
+    color: #cbd5e1;
+    cursor: pointer;
+}
+
+.neo-gallery-lt-preview {
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px 0;
+}
+
+.neo-gallery-lt-preview-img {
+    width: 140px;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #1e293b;
+    flex-shrink: 0;
+}
+
+.neo-gallery-lt-preview-caption {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: #cbd5e1;
+    line-height: 1.5;
+    word-break: break-all;
+    overflow-y: auto;
+    max-height: 140px;
+}
+
+/* Civitai bookmark card: remote cover image at natural ratio */
+.neo-gallery-civitai-card .neo-gallery-card-cover-wrapper img {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    border-radius: 4px;
+}
+
+/* Save-as-recipe button on a Civitai bookmark card (mirrors the Lora send button) */
+.neo-gallery-card-civitai-save-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 4;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(38, 166, 154, 0.9);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.neo-gallery-category-card:hover .neo-gallery-card-civitai-save-btn {
+    opacity: 1;
+}
+
+.neo-gallery-card-civitai-save-btn:hover {
+    background: rgba(38, 166, 154, 1);
+}
+
+/* Smart workflow match filter bar (Lora section) */
+.neo-gallery-workflow-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-workflow-filter-label {
+    font-size: 11px;
+    color: #9aa4b0;
+}
+
+.neo-gallery-workflow-chip {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    color: #ccc;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.neo-gallery-workflow-chip:hover {
+    border-color: #FF6A00;
+    color: #fff;
+}
+
+.neo-gallery-workflow-chip.active {
+    background: #FF6A00;
+    border-color: #FF6A00;
+    color: #fff;
+}
+
+/* Pending lora directory message (opening a lora whose examples are still fetching) */
+.neo-gallery-pending-message {
+    padding: 14px 16px;
+    margin: 10px 0;
+    border-radius: 8px;
+    background: rgba(33, 150, 243, 0.12);
+    border: 1px solid rgba(33, 150, 243, 0.35);
+    color: #9ad1ff;
+    font-size: 12px;
+    text-align: center;
+}
+
+.neo-gallery-pending-message.pending-failed {
+    background: rgba(244, 67, 54, 0.12);
+    border-color: rgba(244, 67, 54, 0.4);
+    color: #ff9d94;
+}
+
+.neo-gallery-pending-message.pending-warn {
+    background: rgba(255, 152, 0, 0.12);
+    border-color: rgba(255, 152, 0, 0.4);
+    color: #ffc77d;
+}
+
+.neo-gallery-card-jump-highlight {
+    outline: 2px solid #4c9aff;
+    outline-offset: -2px;
+    border-radius: 8px;
+    animation: neo-gallery-jump-fade 2.5s ease-out forwards;
+}
+
+@keyframes neo-gallery-jump-fade {
+    0% { outline-width: 3px; box-shadow: 0 0 12px rgba(76, 154, 255, 0.6); }
+    70% { outline-width: 2px; box-shadow: 0 0 6px rgba(76, 154, 255, 0.25); }
+    100% { outline-width: 0; box-shadow: none; }
+}
+
+/* ====== Bookmark / Collect menu ====== */
+
+.neo-gallery-collect-menu {
+    position: fixed;
+    z-index: 9000;
+    min-width: 200px;
+    max-width: 320px;
+    background: rgba(24, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 6px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(6px);
+}
+
+.neo-gallery-collect-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #eee;
+}
+
+.neo-gallery-collect-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    font-weight: 600;
+}
+
+.neo-gallery-collect-path {
+    padding: 2px 8px 6px;
+    font-size: 11px;
+    color: #8a93a0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 4px;
+}
+
+.neo-gallery-collect-item {
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #ddd;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+.neo-gallery-collect-item:hover {
+    background: rgba(76, 154, 255, 0.18);
+    color: #fff;
+}
+
+/* Destructive menu item (delete) — separated from the collect actions */
+.neo-gallery-collect-item-danger {
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    color: #ff6b6b;
+}
+
+.neo-gallery-collect-item-danger:hover {
+    background: rgba(244, 67, 54, 0.18);
+    color: #fff;
+}
+
+/* Prompt preview in the collect menu — selectable so the user can copy part of it */
+.neo-gallery-collect-prompt-preview {
+    margin: 4px 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    line-height: 1.5;
+    color: #b9c2ce;
+    display: flex;
+    gap: 6px;
+    user-select: text;
+}
+
+.neo-gallery-collect-prompt-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Lora path line under the "发送 Lora" menu item */
+.neo-gallery-collect-lora-path {
+    padding: 0 10px 6px;
+    margin-bottom: 2px;
+    border-bottom: none;
+}
+
+/* LoRA header 元数据徽章（base_model / dtype） */
+.neo-gallery-collect-lora-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 10px 6px;
+}
+
+.neo-gallery-collect-lora-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 15px;
+    color: #9fb6d6;
+    background: rgba(76, 154, 255, 0.16);
+    border: 1px solid rgba(76, 154, 255, 0.25);
+}
+
+/* 触发词区：逐词可复制 chip + 全量复制 */
+.neo-gallery-collect-triggers {
+    margin: 2px 6px 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 11px;
+    color: #b9c2ce;
+}
+
+.neo-gallery-collect-triggers-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 5px;
+}
+
+.neo-gallery-collect-triggers-label {
+    color: #8a93a0;
+}
+
+.neo-gallery-collect-triggers-copyall {
+    cursor: pointer;
+    color: #7aa2ff;
+    white-space: nowrap;
+}
+
+.neo-gallery-collect-triggers-copyall:hover {
+    color: #fff;
+}
+
+.neo-gallery-collect-trigger-chip {
+    display: inline-block;
+    margin: 2px 3px 2px 0;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #d6dde6;
+    cursor: pointer;
+    user-select: none;
+}
+
+.neo-gallery-collect-trigger-chip:hover {
+    background: rgba(76, 154, 255, 0.28);
+    color: #fff;
+}
+
+/* Source badge on a bookmark card (本地 / C 站 / OSS 预设) */
+.neo-gallery-card-source-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 14px;
+    color: #bcd;
+    background: rgba(255, 255, 255, 0.12);
+    vertical-align: middle;
+}
+
+/* Pagination bar for bookmark lists (prev / next page) */
+.neo-gallery-pagination-btn {
+    padding: 5px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    background: rgba(42, 42, 46, 0.95);
+    color: #ccc;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.neo-gallery-pagination-btn:hover:not(:disabled) {
+    background: rgba(76, 154, 255, 0.22);
+    color: #fff;
+}
+
+.neo-gallery-pagination-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.neo-gallery-pagination-info {
+    font-size: 12px;
+    color: #9aa4b0;
+}
+
+/* ====== Storyboard story dialog (九宫格分镜图：填故事) ====== */
+
+.neo-gallery-story-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9845;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+}
+
+.neo-gallery-story-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 560px;
+    max-width: 90vw;
+    padding: 12px;
+    background: rgba(24, 26, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.neo-gallery-story-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* 生成素材窗 / 图片编辑窗 / LoRA 打标窗：同导演编辑器——不加背景遮罩（点击穿透到画廊/画布），标题栏可拖窗口 */
+.neo-gallery-gm-modal-overlay,
+.neo-gallery-edit-modal-overlay,
+.neo-gallery-lt-modal-overlay {
+    background: none;
+    backdrop-filter: none;
+    pointer-events: none;
+}
+
+.neo-gallery-gm-modal-overlay .neo-gallery-story-modal,
+/* 窗内浮层（随机菜单 / 预设列表）在穿透的 overlay 下仍需可交互 */
+.neo-gallery-gm-modal-overlay .rs-preset-list-overlay,
+.neo-gallery-gm-modal-overlay .rs-runtime-menu,
+.neo-gallery-edit-modal-overlay .neo-gallery-story-modal,
+.neo-gallery-lt-modal-overlay .neo-gallery-story-modal {
+    pointer-events: auto;
+}
+
+.neo-gallery-gm-modal-overlay .neo-gallery-story-titlebar,
+.neo-gallery-edit-modal-overlay .neo-gallery-story-titlebar,
+.neo-gallery-lt-modal-overlay .neo-gallery-story-titlebar {
+    cursor: move;
+    user-select: none;
+}
+
+.neo-gallery-story-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #eee;
+}
+
+.neo-gallery-story-close {
+    padding: 2px 6px;
+    font-size: 18px;
+    line-height: 1;
+    color: #888;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.neo-gallery-story-close:hover {
+    color: #FF9944;
+    background: rgba(255, 106, 0, 0.1);
+}
+
+/* 参考图预览：小窗里直接看到用作参考的那张图，大小与卡片一致（缩略图走 /neo_gallery/thumbnail 缓存） */
+.neo-gallery-story-ref {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+}
+
+.neo-gallery-story-ref-img {
+    flex: none;
+    width: 100%;
+    display: block;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+}
+
+.neo-gallery-story-ref-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0; /* 让下面的文件名能省略号截断 */
+}
+
+.neo-gallery-story-ref-label {
+    font-size: 11px;
+    color: #b8c2ce;
+}
+
+/* 参考图文件名（让用户确认用的是哪张图） */
+.neo-gallery-story-path {
+    font-size: 11px;
+    color: #8a93a0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 九宫格小窗的故事表单（故事框 + 提示 + 简要故事框）：生成中被进度/结果区整块替换 */
+.neo-gallery-story-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.neo-gallery-story-input,
+.neo-gallery-story-idea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 110px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    resize: vertical;
+}
+
+/* 简要故事 / 想法：LLM 的输入，可留空；比上面的九宫格故事框矮一些 */
+.neo-gallery-story-idea {
+    min-height: 56px;
+}
+
+.neo-gallery-story-input:focus,
+.neo-gallery-story-idea:focus {
+    outline: none;
+    border-color: rgba(76, 154, 255, 0.6);
+}
+
+/* 图片编辑弹窗：技能选择行（label + select 横排） */
+.neo-gallery-story-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.neo-gallery-story-form-row .neo-director-field-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.neo-gallery-story-form-row select {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 图片编辑弹窗：上方图片对比，下方表单 */
+.neo-gallery-story-modal.neo-gallery-edit-modal {
+    width: min(92vw, 980px);
+    max-height: 90vh;
+    min-height: 400px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+/* 图片对比区（标签 + 居中舞台） */
+.neo-gallery-edit-compare {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    gap: 6px;
+}
+
+.neo-gallery-edit-compare > div {
+    flex: 0 0 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.neo-gallery-edit-compare-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.neo-gallery-edit-compare-label {
+    font-size: 11px;
+    color: #b8c2ce;
+    text-align: center;
+}
+
+/* 看大图：局部/点选模式下点图是涂抹/打点，灯箱只能从这里进（扩图/纯提示词模式点图直接进） */
+.neo-gallery-edit-zoom-btn {
+    padding: 1px 6px;
+    font-size: 11px;
+    color: #b8c2ce;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.neo-gallery-edit-zoom-btn:hover {
+    color: #fff;
+    border-color: #4fc3f7;
+}
+
+/* 叠加舞台：把图片盒水平居中；高度随图片盒（≤50vh）自适应，不参与 55vh 限高 */
+.neo-gallery-edit-compare-stage {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: center;
+    max-width: 100%;
+    max-height: 50vh;
+    border-radius: 4px;
+}
+
+/* 图片盒：收缩到图片实际显示尺寸，结果图层/分割线因此与原图逐像素对齐（窗帘对比） */
+.neo-gallery-edit-compare-stage .neo-gallery-edit-compare-imgwrap {
+    position: relative;
+    z-index: 1;
+    width: fit-content;
+    max-width: 100%;
+    min-width: 0;
+    /* 窗帘只吃横向手势：纵向留给页面滚动 */
+    touch-action: pan-y;
+}
+
+/* 窗帘：结果图层与原图同盒（inset:0），整幅不缩放/不位移，只由 clip-path 裁掉左侧（JS 设置） */
+.neo-gallery-edit-result-clip {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.neo-gallery-edit-result-clip .neo-gallery-edit-result-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.neo-gallery-edit-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #4fc3f7;
+    z-index: 3;
+    cursor: col-resize;
+    border-radius: 1.5px;
+    touch-action: none;
+}
+
+.neo-gallery-edit-divider::after {
+    content: "⟷";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 24px;
+    height: 24px;
+    background: #4fc3f7;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.neo-gallery-edit-compare-img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 50vh;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    cursor: zoom-in;
+}
+
+/* 下方表单区 */
+.neo-gallery-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+/* 编辑弹窗内的输入框：取消自动右对齐 */
+.neo-gallery-edit-form .neo-recipes-sort {
+    margin-left: 0;
+}
+
+/* 分辨率输入框固定宽度 */
+.neo-gallery-edit-form #img-edit-width,
+.neo-gallery-edit-form #img-edit-height {
+    width: 80px;
+}
+
+/* 编辑弹窗顶部行：技能 + 分辨率并排 */
+.neo-gallery-edit-form-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+/* 扩图开关按钮 */
+.neo-gallery-edit-outpaint-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.neo-gallery-edit-outpaint-btn.on {
+    background: rgba(79, 195, 247, 0.25);
+    border-color: #4fc3f7;
+    color: #fff;
+}
+
+/* 扩图控制行（目标比例 + 目标像素数） */
+.neo-gallery-edit-outpaint-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-edit-outpaint-row .neo-recipes-sort {
+    width: 90px;
+}
+
+.neo-gallery-edit-size-label {
+    font-size: 12px;
+    color: #4fc3f7;
+    white-space: nowrap;
+}
+
+/* 局部编辑：涂抹叠加画布（对齐原图 contain 显示盒） */
+.neo-gallery-edit-paint-canvas {
+    position: absolute;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+/* 点选删除：透明点击/标记层（对齐原图 contain 显示盒） */
+.neo-gallery-edit-remove-canvas {
+    position: absolute;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.neo-gallery-edit-brush {
+    width: 120px;
+}
+
+/* 参考图区（autogrow 多槽位） */
+.neo-gallery-edit-refdrop-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.neo-gallery-edit-refdrop-row.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.neo-gallery-edit-refdrop {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.neo-gallery-edit-refdrop:hover,
+.neo-gallery-edit-refdrop.drop-active {
+    border-color: #4fc3f7;
+    background: rgba(79, 195, 247, 0.08);
+}
+
+.neo-gallery-edit-refdrop.has-img {
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.neo-gallery-edit-refdrop-icon {
+    font-size: 20px;
+    opacity: 0.7;
+}
+
+.neo-gallery-edit-refchip-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 5px;
+    position: absolute;
+    inset: 0;
+}
+
+.neo-gallery-edit-refchip-x {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #333;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    color: #eee;
+}
+
+/* 扩图：imgwrap 变为中心舞台，画布（原图+留白）超出时整体等比缩小 */
+.neo-gallery-edit-compare-imgwrap {
+    position: relative;
+}
+
+.neo-gallery-edit-compare-imgwrap.drop-active {
+    outline: 2px dashed var(--accent, #60a5fa);
+    outline-offset: -2px;
+    border-radius: 8px;
+}
+
+/* 开扩图：图片盒改回满宽舞台（拖框/原图归位都按舞台盒量尺寸），画布居中 */
+.neo-gallery-edit-compare-imgwrap.neo-gallery-edit-outpaint {
+    width: 100%;
+    height: 50vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.neo-gallery-edit-outpaint-canvas {
+    position: relative;
+    flex: 0 0 auto;
+    transform-origin: center;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+}
+
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-compare-img {
+    position: absolute;
+    max-height: none;
+}
+
+/* 扩图画布里的结果层：结果就是整幅补边画布，铺满画布才和原图区域逐像素对齐
+   （contain 会把更宽的结果缩进原图盒 → 对比时看着整体错位） */
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-result-clip .neo-gallery-edit-result-img {
+    object-fit: fill;
+}
+
+/* 画布内层级：结果层(2) < 拖框/手柄(4) < 分割线(5) */
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-outpaint-box {
+    z-index: 4;
+}
+
+.neo-gallery-edit-outpaint-canvas .neo-gallery-edit-divider {
+    z-index: 5;
+}
+
+.neo-gallery-edit-outpaint-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    border: 2px solid #4fc3f7;
+    background: rgba(79, 195, 247, 0.08);
+    cursor: move;
+    touch-action: none;
+}
+
+.neo-gallery-edit-outpaint-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #4fc3f7;
+    border: 1px solid #fff;
+    border-radius: 2px;
+    transform: scale(var(--op-inv, 1)); /* 抵消画布缩放，手柄保持可抓取大小 */
+}
+
+.neo-gallery-edit-outpaint-handle-nw { top: -6px; left: -6px; cursor: nwse-resize; }
+.neo-gallery-edit-outpaint-handle-n { top: -6px; left: calc(50% - 5px); cursor: ns-resize; }
+.neo-gallery-edit-outpaint-handle-ne { top: -6px; right: -6px; cursor: nesw-resize; }
+.neo-gallery-edit-outpaint-handle-e { top: calc(50% - 5px); right: -6px; cursor: ew-resize; }
+.neo-gallery-edit-outpaint-handle-se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+.neo-gallery-edit-outpaint-handle-s { bottom: -6px; left: calc(50% - 5px); cursor: ns-resize; }
+.neo-gallery-edit-outpaint-handle-sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.neo-gallery-edit-outpaint-handle-w { top: calc(50% - 5px); left: -6px; cursor: ew-resize; }
+
+/* 输入框上方的小标签（九宫格故事 / 简要故事 / 想法） */
+.neo-gallery-story-field-label {
+    font-size: 11px;
+    color: #b8c2ce;
+}
+
+/* 语音弹窗的波形 + 播放控件（参考音源 / 结果音频共用），复用音频卡片的播放按钮与波形类 */
+.neo-gallery-voice-audio {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 10px;
+    background: linear-gradient(160deg, rgba(30, 45, 70, 0.92), rgba(15, 22, 38, 0.96));
+    border: 1px solid rgba(120, 200, 255, 0.25);
+    border-radius: 6px;
+}
+.neo-gallery-voice-audio .neo-gallery-audio-waveform {
+    height: 100%;
+}
+.neo-gallery-voice-result {
+    margin-bottom: 8px;
+}
+
+/* 宫格数下拉：与故事框同款底色/边框，窄一些 */
+.neo-gallery-story-grid {
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+}
+
+.neo-gallery-story-grid:focus {
+    outline: none;
+    border-color: rgba(76, 154, 255, 0.6);
+}
+
+.neo-gallery-story-hint {
+    font-size: 11px;
+    color: #8a93a0;
+}
+
+.neo-gallery-story-hint-error {
+    color: #ff6b6b;
+}
+
+.neo-gallery-story-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.neo-gallery-story-btn {
+    padding: 5px 14px;
+    font-size: 12px;
+    color: #ccc;
+    background: rgba(42, 42, 46, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.neo-gallery-story-btn:hover {
+    background: rgba(76, 154, 255, 0.22);
+    color: #fff;
+}
+
+.neo-gallery-story-btn-primary {
+    color: #fff;
+    background: rgba(76, 154, 255, 0.35);
+}
+
+.neo-gallery-story-btn-primary:hover {
+    background: rgba(76, 154, 255, 0.5);
+}
+
+/* ====== Character sheet dialog (生成角色图：进度 + 结果预览) ====== */
+
+.neo-gallery-cs-status {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 20px;
+}
+
+.neo-gallery-cs-running {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #b8c2ce;
+}
+
+.neo-gallery-cs-spinner {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(76, 154, 255, 0.3);
+    border-top-color: #4c9aff;
+    border-radius: 50%;
+    animation: neoGallerySpin 0.8s linear infinite;
+}
+
+.neo-gallery-cs-progress {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.neo-gallery-cs-progress-fill {
+    height: 100%;
+    width: 0;
+    background: rgba(76, 154, 255, 0.85);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.neo-gallery-cs-progress-indeterminate {
+    width: 40% !important;
+    animation: neoCsSlide 1.1s ease-in-out infinite;
+}
+
+/* 图片反推结果：多行提示词展示框（可滚动） */
+.neo-gallery-rp-result {
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #d7dde5;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* 反推结果下方的一键复制按钮，靠左对齐（statusBox 为纵向 flex） */
+.neo-gallery-rp-copy {
+    align-self: flex-start;
+}
+/* 反推语言选择（中文/英文 radio，默认中文） */
+.neo-gallery-rp-lang { display: flex; gap: 18px; margin: 2px 0 6px; }
+.neo-gallery-rp-lang-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-color-secondary, #999); cursor: pointer; user-select: none; }
+.neo-gallery-rp-lang-opt input { accent-color: var(--accent-color, #4a9eff); margin: 0; cursor: pointer; }
+
+@keyframes neoCsSlide {
+    0% { margin-left: -40%; }
+    100% { margin-left: 100%; }
+}
+
+.neo-gallery-cs-result {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 220px;
+}
+
+.neo-gallery-cs-result-img {
+    width: 100%;
+    max-height: 420px;
+    display: block;
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    cursor: zoom-in;
+}
+
+/* 「生成素材」弹窗：生成中预览区（spinner + 进度条），成功后由结果图原位替换（容器换 .neo-gallery-cs-result） */
+.neo-gallery-gm-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 220px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+}
+
+.neo-gallery-gm-preview .neo-gallery-cs-progress {
+    width: 100%;
+}
+
+/* 采样中的实时预览图（后端按步推送，替换 spinner）；与结果图同上限，成品原位替换不跳 */
+.neo-gallery-gm-preview-img {
+    width: 100%;
+    max-height: 420px;
+    display: block;
+    object-fit: contain;
+    border-radius: 4px;
+}
+
+/* Gallery 卡片拖放到 LoadImage 节点时的命中高亮 */
+.neo-gallery-node-drop-highlight {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    display: none;
+    border: 2px solid #4f8cff;
+    border-radius: 6px;
+    background: rgba(79, 140, 255, 0.12);
+    box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.35);
+}
+
