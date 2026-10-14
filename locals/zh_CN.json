@@ -1,0 +1,105 @@
+{
+    "PSPrompts": {
+        "title": "PS Prompts",
+        "category": "Neo-AI",
+        "description": "带有可视化提示词控制的文本编码器。",
+        "input_types": {
+            "clip": "CLIP 模型",
+            "text": "提示词文本",
+            "disable_text_input": "禁用外部文本输入",
+            "text_input": "文本输入（可选）",
+            "instance_uid": "实例 ID（隐藏）"
+        },
+        "return_types": {
+            "positive": "正向条件",
+            "negative": "负向条件",
+            "prompt_string": "提示词字符串"
+        }
+    },
+    "prompts_manager": {
+        "save_prompt": {
+            "success": "提示词保存成功",
+            "name_required": "需要指定名称",
+            "invalid_name": "名称无效",
+            "error": "保存提示词时出错"
+        },
+        "list_prompts": {
+            "title": "提示词列表",
+            "no_prompts": "没有找到提示词文件",
+            "error": "读取提示词列表时出错"
+        },
+        "load_prompt": {
+            "success": "提示词加载成功",
+            "not_found": "提示词不存在",
+            "error": "加载提示词时出错"
+        },
+        "delete_prompt": {
+            "success": "提示词删除成功",
+            "name_required": "需要指定名称",
+            "not_found": "提示词不存在",
+            "error": "删除提示词时出错"
+        }
+    },
+    "llm_tasks": {
+        "extract_title": {
+            "title": "提取标题",
+            "description": "从提示词中提取简洁的标题（小于 20 字）",
+            "executing": "正在执行标题提取任务"
+        },
+        "extract_classify": {
+            "title": "提取分类",
+            "description": "分析提示词并选择最适合的 2 个分类",
+            "executing": "正在执行分类提取任务"
+        },
+        "enhance_prompt": {
+            "title": "增强提示词",
+            "description": "将提示词扩展为更详细、丰富的版本",
+            "executing": "正在执行提示词增强任务"
+        },
+        "translate_prompt": {
+            "title": "翻译提示词",
+            "description": "将提示词翻译成指定的目标语言",
+            "executing": "正在执行提示词翻译任务"
+        }
+    },
+    "llm_model": {
+        "not_found": "未在 ComfyUI 模型目录中找到 LLM 模型。",
+        "downloading": "正在尝试从 Hugging Face 下载：{path}",
+        "download_complete": "模型下载完成：{path}",
+        "download_failed": "模型下载失败：{error}",
+        "model_not_loaded": "LLM 模型未加载"
+    },
+    "llm_inference": {
+        "executing": "正在执行 LLM 任务：{task_name}",
+        "failed": "任务执行失败：{task_name}",
+        "non_dict_output": "LLM 返回了非字典类型的输出：{type}",
+        "empty_choices": "LLM 响应 'choices' 为空或无效。",
+        "content_none": "LLM 'content' 为 None。",
+        "inference_error": "LLM 推理过程中出错：{error}"
+    },
+    "api_errors": {
+        "invalid_task": "无效的任务名称",
+        "empty_text": "文本内容为空",
+        "task_failed": "{task_name} 任务执行失败",
+        "server_error": "服务器内部错误"
+    },
+    "common": {
+        "success": "成功",
+        "error": "错误",
+        "status": "状态",
+        "result": "结果",
+        "name": "名称",
+        "text": "文本",
+        "tags": "标签",
+        "title": "标题",
+        "classify": "分类",
+        "enhanced": "增强后",
+        "translated": "翻译后"
+    },
+    "system_messages": {
+        "cache_cleared": "提示词编码缓存已清空（达到最大容量）",
+        "cache_hit": "使用缓存的编码结果",
+        "encoding": "正在编码提示词...",
+        "prompt_updated": "提示词已更新"
+    }
+}

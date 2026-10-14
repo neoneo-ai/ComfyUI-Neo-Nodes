@@ -1,0 +1,17 @@
+2.35:1 widescreen photorealistic cinematic medium close-up, bright modern supermarket aisle during evening hours, warm white fluorescent lighting evenly illuminating neatly stocked shelves of snacks and daily goods. 
+
+[女性角色] young East Asian woman early 20s, wearing a light cream linen dress with a soft denim jacket draped over shoulders, shoulder-length dark hair naturally loose, fresh minimal makeup, glowing hyper-realistic skin, pushing a small shopping cart with a few colorful snack packages inside, standing casually. 
+
+[男性角色] young East Asian man mid 20s, wearing a casual white cotton shirt with rolled sleeves, light khaki pants, clean short black hair naturally unstyled, holding a printed shopping list in one hand and a smartphone in the other, standing beside her with a reusable canvas tote bag at his feet. 
+
+Background: softly blurred shelves of packaged goods, distant shoppers moving in bokeh, warm overhead key light + cool shelf LED fill, atmospheric subtle dust motes in bright air, shallow depth of field. 
+
+【0-3秒】女孩微微侧身靠近男孩，眼神俏皮带笑，嘴唇微张压低声音说：你说随便逛逛，怎么购物车都快满了？镜头缓慢前推至女孩面部特写，焦点锁定她灵动的眼神与微扬的嘴角，发丝随空调微风轻轻飘动。
+
+【3-7秒】焦点快速切至男孩脸部，他眼神闪躲后清嗓故作淡定：咳......都是生活必需品，真没乱买。浅景深虚化背景货架与商品，特写他耳尖微红、喉结微动的窘迫，手指无意识轻捏购物清单边缘。
+
+【7-11秒】焦点切回女孩，她假装委屈轻轻戳他手臂：那上次你说"最后一包薯片"，结果囤了一整箱？镜头保持特写，捕捉她从狡黠到"委屈控诉"的反差感，指尖轻晃购物车把手，眼神直勾勾盯住他。
+
+【11-15秒】镜头缓缓后拉至双人半身中景，男孩耳根彻底通红低头看手机：那......那是促销第二件半价，数学上划算啊！女孩噗嗤笑出声肩膀轻颤，抬头与他对视眼里带着笑意。全程超市暖白光均匀勾勒人物轮廓与商品包装质感，氛围轻松生活化。
+
+8K resolution, film grain, shallow depth of field, stable motion with subtle ambient handheld feel, cinematic motion blur, avoid flicker, precise lip sync to Mandarin dialogue, authentic eye-line matching: characters look at each other during dialogue not at camera.

@@ -1,0 +1,12 @@
+{
+  "checked": false,
+  "count": "2",
+  "widgets": {
+    "random_enabled": false,
+    "random_count": 2
+  },
+  "properties": {
+    "enabled": false,
+    "count": 2
+  }
+}

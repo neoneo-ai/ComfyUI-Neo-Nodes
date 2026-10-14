@@ -1,0 +1,130 @@
+{
+  "providers": [
+    {
+      "id": "native",
+      "name": "Native (ComfyUI safetensors)",
+      "type": "native",
+      "model_mode": "dropdown"
+    },
+    {
+      "id": "local",
+      "name": "Local GGUF (llama.cpp)",
+      "type": "local"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek 深度求索",
+      "type": "remote",
+      "default_base_url": "https://api.deepseek.com/v1",
+      "append_v1": true,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "dashscope",
+      "name": "阿里云百炼 (通义千问)",
+      "type": "remote",
+      "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "append_v1": true,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "dashscope-plan",
+      "name": "阿里云百炼 Token Plan",
+      "type": "remote",
+      "default_base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "append_v1": true,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "moonshot",
+      "name": "月之暗面 Kimi",
+      "type": "remote",
+      "default_base_url": "https://api.moonshot.cn/v1",
+      "append_v1": true,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "type": "remote",
+      "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "append_v1": false,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "siliconflow",
+      "name": "硅基流动 SiliconFlow",
+      "type": "remote",
+      "default_base_url": "https://api.siliconflow.cn/v1",
+      "append_v1": true,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI Compatible",
+      "type": "remote",
+      "default_base_url": "",
+      "append_v1": true,
+      "show_api_key": true,
+      "model_mode": "hybrid"
+    },
+    {
+      "id": "lmstudio",
+      "name": "LM Studio",
+      "type": "remote",
+      "default_base_url": "http://localhost:1234/v1",
+      "append_v1": true,
+      "show_api_key": false,
+      "model_mode": "dropdown"
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "type": "remote",
+      "default_base_url": "http://localhost:11430/v1",
+      "append_v1": true,
+      "show_api_key": false,
+      "model_mode": "dropdown"
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "type": "remote",
+      "default_base_url": "https://openrouter.ai/api/v1",
+      "append_v1": true,
+      "show_api_key": true,
+      "requires_api_key": true,
+      "model_mode": "dropdown"
+    },
+    {
+      "id": "unsloth",
+      "name": "Unsloth",
+      "type": "remote",
+      "default_base_url": "http://192.168.0.176:8888/v1",
+      "append_v1": false,
+      "show_api_key": true,
+      "model_mode": "dropdown"
+    },
+    {
+      "id": "vllm",
+      "name": "vLLM Server",
+      "type": "remote",
+      "default_base_url": "http://localhost:8000/v1",
+      "append_v1": true,
+      "show_api_key": false,
+      "model_mode": "dropdown"
+    }
+  ]
+}

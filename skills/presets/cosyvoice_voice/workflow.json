@@ -1,0 +1,32 @@
+{
+  "1": {
+    "class_type": "FL_CosyVoice3_ModelLoader",
+    "inputs": {
+      "model_version": "Fun-CosyVoice3-0.5B",
+      "download_source": "HuggingFace",
+      "device": "auto"
+    }
+  },
+  "2": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "{{REF_AUDIO_1}}"
+    }
+  },
+  "3": {
+    "class_type": "FL_CosyVoice3_ZeroShot",
+    "inputs": {
+      "model": ["1", 0],
+      "text": "{{PROMPT}}",
+      "reference_audio": ["2", 0],
+      "speed": 1.0
+    }
+  },
+  "4": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": ["3", 0],
+      "filename_prefix": "{{PREFIX}}"
+    }
+  }
+}

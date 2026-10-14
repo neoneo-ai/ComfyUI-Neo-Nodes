@@ -1,0 +1,73 @@
+name: Bug Report / 问题报告
+description: Report a problem with Neo Nodes（报告 Neo Nodes 的问题）
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        插件版本在 ComfyUI 启动日志的版本横幅里（`[Neo Nodes] vX.Y.Z`）。
+        文档索引：https://github.com/neoneo-ai/ComfyUI-Neo-Nodes/tree/main/docs
+  - type: dropdown
+    id: module
+    attributes:
+      label: 模块 / Module
+      options:
+        - Neo Prompt Encoder / Agent
+        - Neo Image Gen & Edit
+        - H3 Video Director
+        - Neo Gallery / Bookmarks
+        - Neo Recipes
+        - Skill Management
+        - Model Hub
+        - Workflow Repair
+        - Neo Studio
+        - LLM settings
+        - Top menu (🅝)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 / What happened
+      placeholder: 现象、报错文本；截图可直接拖进来
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 顶栏 🅝 → ...
+        2. 添加节点 ...
+        3. 点击 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 / Expected behavior
+  - type: dropdown
+    id: llm-mode
+    attributes:
+      label: LLM 模式 / LLM mode
+      options:
+        - Native (ComfyUI safetensors)
+        - Remote API
+        - Local GGUF
+        - Not related
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: 版本与环境 / Versions and environment
+      placeholder: "Neo Nodes vX.Y.Z / ComfyUI 0.3.x / Windows 11 / RTX 4090"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志 / Relevant logs
+      render: text
+      placeholder: ComfyUI 控制台与浏览器控制台的报错片段
