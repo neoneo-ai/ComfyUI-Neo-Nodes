@@ -498,22 +498,29 @@ class _Event:
 
 def _fake_window():
     # 带几何值：关窗处理器里的 save_geometry 要读 width/height/x/y；loaded 处理器要记当前页面
-    # destroy：收尾线程最后一步要销毁窗口（真实 pywebview 的 Window 有这个方法）
-    return SimpleNamespace(events=SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event()),
+    # 方法表照真实 pywebview 6 的 Window 抄：销毁是 destroy()，没有 close()；
+    # native 是 WinForms 控件，Invoke 把委托丢回窗口所属线程执行（拖动、样式位都靠它）
+    return SimpleNamespace(events=SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event(),
+                                                  shown=_Event()),
                            evaluate_js=MagicMock(), load_url=MagicMock(), destroy=MagicMock(),
                            get_current_url=lambda: "http://127.0.0.1:8188/neo-studio",
-                           width=1200, height=800, x=100, y=100)
+                           width=1200, height=800, x=100, y=100,
+                           native=SimpleNamespace(Handle=SimpleNamespace(ToInt64=lambda: 1234),
+                                                  Invoke=lambda fn: fn()),
+                           minimize=MagicMock(), maximize=MagicMock(), restore=MagicMock(),
+                           toggle_fullscreen=MagicMock())
 
 
 class _DeadWindow:
     """窗口已销毁：读几何属性直接抛。用户现场就是它把关窗收尾整截断的。"""
 
     def __init__(self):
-        self.events = SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event())
+        self.events = SimpleNamespace(closing=_Event(), closed=_Event(), loaded=_Event(), shown=_Event())
         self.evaluate_js = MagicMock()
         self.load_url = MagicMock()
         self.destroy = MagicMock()
         self.get_current_url = lambda: "http://127.0.0.1:8188/neo-studio"
+        self.native = SimpleNamespace(Handle=SimpleNamespace(ToInt64=lambda: 0))   # 已销毁：句柄为 0
 
     @property
     def width(self):
@@ -577,10 +584,148 @@ class StudioShellTests(unittest.TestCase):
         self.assertEqual(logs, ["[web] STARTUP FAILED TypeError: x at route (studio-app.js:1) at y"])
 
     def test_back_js_skips_studio_page(self):
-        # Studio 页顶栏已有回主画布的链接，胶囊只给主画布和启动页用
+        # Studio 页自己就是主页，返回胶囊只给主画布和启动页用；无边框时启动页/引导页由它挂拖动
         self.assertIn("neo-studio-back", app.BACK_JS)
         self.assertIn("go_studio", app.BACK_JS)
         self.assertIn("/neo-studio", app.BACK_JS)
+        self.assertIn("win_start_drag", app.BACK_JS)
+
+    def test_window_state_gates_the_custom_titlebar(self):
+        # 无边框才出顶栏控件；最大化 / 全屏状态由壳自己记 —— pywebview 的 Window 属性是建窗初值
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})
+        shell._window = _fake_window()
+        self.assertEqual(shell.window_state(), {"frameless": False, "maximized": False, "fullscreen": False})
+        shell.frameless = True
+        shell.maximized = True
+        shell.fullscreen = True
+        self.assertEqual(shell.window_state(), {"frameless": True, "maximized": True, "fullscreen": True})
+
+    def test_win_maximize_fills_the_work_area_when_frameless(self):
+        # 无边框下系统 maximize 给的是整屏矩形，任务栏会被盖住：铺工作区，再点一下还原回原矩形
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        shell._window = window
+        pos = []
+        u32 = SimpleNamespace(SetWindowPos=lambda h, a, x, y, w, ht, f: pos.append((x, y, w, ht)))
+        with patch.object(app, "u32", u32), \
+             patch.object(app, "work_area", lambda: (0, 0, 1920, 1040)), \
+             patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)):
+            self.assertTrue(shell.win_maximize()["maximized"])
+            self.assertFalse(shell.win_maximize()["maximized"])
+        self.assertEqual(pos, [(0, 0, 1920, 1040), (100, 100, 600, 400)])
+        window.maximize.assert_not_called()
+        window.restore.assert_not_called()
+
+    def test_win_maximize_uses_the_window_when_framed(self):
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})
+        shell._window = window
+        self.assertTrue(shell.win_maximize()["maximized"])
+        self.assertFalse(shell.win_maximize()["maximized"])
+        window.maximize.assert_called_once()
+        window.restore.assert_called_once()
+
+    def test_ensure_resizable_frame_only_touches_borderless(self):
+        # pywebview 的 frameless 把可拖拽边框一起摘掉：窗口显示后补回 WS_THICKFRAME，有框那一路不动
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        shell._window = window
+        frames = []
+        with patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)):
+            shell.ensure_resizable_frame()
+            shell.frameless = False
+            shell.ensure_resizable_frame()
+        self.assertEqual(frames, [True])
+
+    def test_win_fullscreen_reapplies_the_frame(self):
+        # pywebview 退出全屏把 FormBorderStyle 写回建窗时的值，标题栏跟着回来：按壳自己那份状态重贴
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        shell._window = window
+        frames = []
+        with patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)):
+            self.assertTrue(shell.win_fullscreen()["fullscreen"])
+            self.assertFalse(shell.win_fullscreen()["fullscreen"])
+        self.assertEqual(frames, [True, True])
+        self.assertEqual(window.toggle_fullscreen.call_count, 2)
+
+    def test_win_start_drag_follows_the_cursor_until_the_button_lets_go(self):
+        # 拖动是壳自己在窗口线程上跟光标搬窗口：交回系统那条路（ReleaseCapture + WM_NCLBUTTONDOWN/
+        # HTCAPTION，或 WM_SYSCOMMAND·SC_MOUSEMOVE）在这套窗口上起不来，WinForms 的 Form 把非客户区
+        # 按下自己吞了，拖动循环 0ms 返回、窗口纹丝不动
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        shell._window = window
+        moves = []
+        capture = []
+        with patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: moves.append(a),
+                                                      SetCapture=lambda h: capture.append(("take", h)),
+                                                      ReleaseCapture=lambda: capture.append(("drop",)))), \
+             patch.object(app, "window_rect", lambda hwnd: (300, 200, 900, 700)), \
+             patch.object(app, "_cursor_pos", iter([(320, 240), (330, 250), (380, 270)]).__next__), \
+             patch.object(app, "_left_button_down", iter([True, True, False]).__next__):
+            shell.win_start_drag()
+        # 抓取偏移 = 按下时光标在窗口里的位置（这里是 (20, 40)），拖动中恒不变
+        self.assertEqual([(m[0], m[2], m[3]) for m in moves], [(1234, 310, 210), (1234, 360, 230)])
+        self.assertEqual(moves[0][6], app.SWP_NOSIZE | app.SWP_NOZORDER | app.SWP_NOACTIVATE)
+        # 捕获要在窗口线程上拿、松手还回去：捕获不在壳窗口上的话 WebView2 继续吃鼠标消息，
+        # 松手也传不过来（这正是拖动循环 0ms 返回的那个坑）
+        self.assertEqual(capture, [("take", 1234), ("drop",)])
+
+    def test_win_start_drag_leaves_fullscreen_and_maximize_first(self):
+        # 全屏 / 最大化时按下标题栏先退出：整屏或整块工作区大小的窗口跟着光标跑，看着就像坏了；
+        # pywebview 那边还会停在全屏态，再点全屏按钮窗口会跳回旧矩形
+        for state in ("fullscreen", "maximized"):
+            shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+            shell._window = _fake_window()
+            setattr(shell, state, True)
+            stopped = []
+            with patch.object(app.StudioShell, "win_maximize", lambda self: stopped.append("maximized")), \
+                 patch.object(app.StudioShell, "win_fullscreen", lambda self: stopped.append("fullscreen")), \
+                 patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: None,
+                                                          SetCapture=lambda h: None,
+                                                          ReleaseCapture=lambda: None)), \
+                 patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)), \
+                 patch.object(app, "_cursor_pos", lambda: (150, 130)), \
+                 patch.object(app, "_left_button_down", lambda: False):
+                shell.win_start_drag()
+            self.assertEqual(stopped, [state])
+
+    def test_win_start_drag_runs_on_the_window_thread(self):
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        shell._window = window
+        invoked = []
+        window.native.Invoke = lambda fn: invoked.append(fn) or fn()
+        with patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: None,
+                                                      SetCapture=lambda h: None,
+                                                      ReleaseCapture=lambda: None)), \
+             patch.object(app, "window_rect", lambda hwnd: (0, 0, 100, 100)), \
+             patch.object(app, "_cursor_pos", lambda: (10, 10)), \
+             patch.object(app, "_left_button_down", lambda: False):
+            shell.win_start_drag()
+        self.assertEqual(len(invoked), 1, "拖动要在窗口所属线程上跑，SetCapture 只认所属线程")
+
+    def test_js_api_never_exposes_the_window_object(self):
+        # pywebview 注入 window.pywebview 前会递归遍历 js_api 的非下划线属性
+        # （webview.util.inject_pywebview）。窗口对象露在明面上 = 把 WinForms 整张对象图喂进
+        # 递归，pythonnet 每次属性访问都造新对象、id 去重失效， Bounds 链爆到递归上限，开机即卡死
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        shell._window = _fake_window()
+        exposed = [n for n in dir(shell) if not n.startswith("_")]
+        self.assertNotIn("window", exposed)
+        for name in ("window_state", "win_minimize", "win_maximize", "win_fullscreen",
+                     "win_close", "win_start_drag", "set_frameless"):
+            self.assertIn(name, exposed)
+
+    def test_win_close_goes_through_the_window(self):
+        # 关闭走 window.destroy()：pywebview 6 的 Window 没有 close()，调它就是 AttributeError。
+        # 关窗收尾链（存几何、带走 ComfyUI）由 closing 事件驱动
+        window = _fake_window()
+        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        shell._window = window
+        shell.win_close()
+        window.destroy.assert_called_once()
 
     def test_starting_flag_is_shared_with_shell_service(self):
         # 启动中标记由壳侧服务与 js_api 共用同一份 dict：js_api 注入之前页面也能拿到
@@ -919,6 +1064,46 @@ class MainWindowTests(unittest.TestCase):
 
         self.assertFalse(fake.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"])
         self.assertTrue(fake.settings["ALLOW_DOWNLOADS"])
+
+    def test_frameless_config_reaches_the_window(self):
+        # 无边框不走 pywebview 的 frameless（那条路连可拖拽边框一起摘）：建窗保持有框，样式位自己摘
+        # pywebview 的 easy_drag 是全局 mousedown，点卡片会拖着窗口跑，必须关
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        self.port_busy = True
+        start = lambda *a, **k: a[0] and a[0]()
+        frames = []
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
+             patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)), \
+             patch.object(sys, "argv", ["studio_app.py"]):
+            app.save_config(_COMFY_ROOT, pathlib.Path(sys.executable), 8188, True)
+            self.assertEqual(app.main(), 0)
+            window.events.shown.handlers[0]()   # 窗口显示：无边框补回可拖拽边框
+        self.assertTrue(cw.call_args.kwargs["frameless"], "无边框要在建窗时就生效")
+        self.assertFalse(cw.call_args.kwargs["easy_drag"])
+        self.assertIs(cw.call_args.kwargs["js_api"]._window, window, "窗口操作要拿到窗口对象")
+        self.assertEqual(frames, [True], "补边框只认无边框那一路")
+
+    def test_fullscreen_close_does_not_save_the_screen_rect(self):
+        # 全屏时窗口是整屏矩形：存下来下次开机窗口直接铺满屏幕，几何只存窗口态的那份
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        self.port_busy = True
+        start = lambda *a, **k: a[0] and a[0]()
+        with patch.object(app, "webview", _fake_webview(cw, start)), \
+             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(sys, "argv", ["studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+            cw.call_args.kwargs["js_api"].win_fullscreen()
+            window.events.closing.handlers[0]()
+        self.assertFalse(app.GEOMETRY_FILE.exists(), "全屏关窗不存几何")
 
     def test_cold_start_loads_offline_gallery(self):
         window = _fake_window()
@@ -1259,15 +1444,41 @@ class LauncherConfigTests(unittest.TestCase):
     def test_config_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"):
-                self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188))
+                self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188, True))
                 self.assertEqual(app.load_config(),
                                  {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
-                                  "python": "D:/python/python.exe", "port": 8188})
+                                  "python": "D:/python/python.exe", "port": 8188, "frameless": True})
+
+    def test_set_frameless_keeps_the_rest_of_the_config(self):
+        # 无边框开关只改自己那一项：根目录 / 解释器 / 端口不能被它带跑
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
+                 patch.object(app, "log_line", lambda text: None):
+                app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188, False)
+                shell = app.StudioShell("u", None, 8188, pathlib.Path("D:/ComfyUI"),
+                                        launcher={"root": "D:/ComfyUI", "port": 8188, "frameless": False})
+                self.assertFalse(shell.frameless, "配置里的 frameless 要读进壳")
+                self.assertTrue(shell.set_frameless(True)["ok"])
+                self.assertEqual(app.load_config(),
+                                 {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
+                                  "python": "D:/python/python.exe", "port": 8188, "frameless": True})
+                self.assertTrue(shell.launcher["frameless"], "设置页快照要同步")
 
     def test_load_config_missing_is_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "none.json"):
                 self.assertEqual(app.load_config(), {})
+
+    def test_config_without_frameless_defaults_to_borderless(self):
+        # 无边框是新默认：老配置没这一项也走无边框，用户在设置里勾掉才回系统标题栏
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = pathlib.Path(tmp) / "launcher_config.json"
+            cfg.write_text(json.dumps({"version": app.CONFIG_VERSION, "root": "D:/ComfyUI"}), encoding="utf-8")
+            with patch.object(app, "CONFIG_FILE", cfg):
+                loaded = app.load_config()
+                self.assertNotIn("frameless", loaded)
+                self.assertTrue(app.StudioShell("u", None, 8188, pathlib.Path("D:/ComfyUI"),
+                                                launcher=loaded).frameless)
 
     def test_root_priority_cli_then_config_then_plugin(self):
         with tempfile.TemporaryDirectory() as tmp:

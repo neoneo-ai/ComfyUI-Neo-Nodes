@@ -180,6 +180,8 @@ async def launcher_post(request):
         return web.json_response({"ok": False, "error": f"不支持的操作：{action}"}, status=400)
     if action == "apply":
         res = fn(data.get("root", ""), data.get("python", ""), data.get("port", 0))
+    elif action == "set_frameless":
+        res = fn(bool(data.get("frameless")))
     else:
         res = fn()
     return web.json_response(res)

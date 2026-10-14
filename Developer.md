@@ -50,6 +50,17 @@
   根目录推不出、或同级与内部都找不到 `python.exe` 时窗口开在引导页（`guide_html`，`load_html` + js_api）：
   那时 `build_app` 连 `folder_paths` 都 import 不了，壳侧服务本来就起不来，页面只能不依赖 HTTP 服务；
   校验与拉起全走 js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目录补完了服务才起得来。
+  无边框窗口是启动设置里的一项，存 `launcher_config.json` 的 `frameless`（缺省开，勾掉回系统标题栏）：建窗时喂 pywebview，
+  运行中改样式位（只摘 `WS_CAPTION`，`WS_THICKFRAME` 恒置 —— pywebview 的 frameless 走 `FormBorderStyle=None`，
+  拖边缩放一起摘掉，窗口 Shown 之后由 `ensure_resizable_frame` 补回；原生窗口在 `start()` 里才建出来，建窗时拿不到 hwnd）。
+  `easy_drag` 必须关掉 —— pywebview 的简易拖动是全局
+  mousedown，无边框时点任何卡片都会拖着窗口跑；拖动由顶栏空白处按下调 `win_start_drag`，壳在窗口线程上自己
+  循环跟光标（`SetWindowPos` + `GetAsyncKeyState(VK_LBUTTON)`），左键一松就停 —— 交回系统走
+  `WM_NCLBUTTONDOWN + HTCAPTION` 或 `WM_SYSCOMMAND·SC_MOUSEMOVE` 都起不来，WinForms 的 Form 把非客户区按下吞掉了。
+  最小化 / 最大化 / 全屏 / 关闭走 `window_state` + `win_*` 一组 js_api 方法，控件出不出由 `frameless` 决定；
+  最大化与全屏状态由壳自己记（pywebview 的 `Window.maximized` / `.fullscreen` 是建窗初值）：无边框下最大化铺工作区
+  （系统 maximize 给整屏矩形，任务栏会被盖住），全屏退出 pywebview 把 `FormBorderStyle` 写回建窗时的值、标题栏跟着回来，
+  样式按壳的状态重贴；全屏时关窗不存几何（存的是整屏矩形，下次开机窗口铺满屏幕）。
   壳侧 `/extensions/` 静态响应带 `no-store`（与 ComfyUI 的 `/extensions` 一致），并在开窗口前清掉
   `tmp/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），
   和新模块拼进同一张 ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，

@@ -161,9 +161,13 @@ the Registry). `-Mode onedir` emits the folder build `tools/neo-studio/Neo-Studi
 its `_internal` folder, nothing is unpacked at startup, so the window shows up about 0.7s sooner and the state
 directory is the `data/` next to it; `-Mode both` emits both forms. The skill's "⤒ 主画布编辑" and the top-menu "🎬 新影工坊" navigate inside this window: the first
 loads the main UI and fills the canvas, the second returns to Studio — no browser tab (in-page Studio state is
-lost on the jump; settings and gallery state survive). The Studio header title itself is the link back to the main
-canvas; the main canvas is a full page reload, so the shell re-injects a floating "🎬 返回 Studio" pill in the
-top-left of every non-Studio page load and the pill hands the jump back to Studio. `/neo-studio` is served with
+lost on the jump; settings and gallery state survive). The Studio header title links back to the home tab
+(`#/gallery`); the main canvas is a full page reload, so the shell re-injects a floating "🎬 返回 Studio" pill in the
+top-left of every non-Studio page load and the pill hands the jump back to Studio. The `无边框窗口` switch in the
+launcher panel drops the system title bar (on by default; switch it off to get the title bar back): the header then
+carries minimize / maximize / fullscreen / close buttons and its empty area drags the window; the choice persists in
+`launcher_config.json`, and in borderless mode maximize fills the work area so the task bar stays visible.
+The version string lives in the settings "关于" section, not in the header. `/neo-studio` is served with
 `Cache-Control: no-cache` so header changes reach the shell window.
 
 The packaged exe doubles as a portable launcher: a `启动设置` tab (shell-only: the snapshot comes from the shell `js_api`, so a browser tab has no such panel)

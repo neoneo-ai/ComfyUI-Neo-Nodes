@@ -438,6 +438,7 @@ function createLauncherPanel() {
     const applyBtn = $el("button", { className: "ns-btn ns-launch-apply", textContent: "保存并重启 ComfyUI" });
     const depsBtn = $el("button", { className: "ns-btn", textContent: "安装依赖" });
     const fixBtn = $el("button", { className: "ns-btn", textContent: "重试安装插件" });
+    const framelessIn = $el("input", { type: "checkbox", className: "ns-launch-frameless" });
     const row = (label, ...kids) => $el("div", { className: "ns-launch-row" },
         [$el("span", { className: "ns-launch-label", textContent: label }), ...kids]);
 
@@ -458,10 +459,11 @@ function createLauncherPanel() {
         info.textContent = `插件 ${s.plugin_dir} · 状态 ${s.state_dir} · ${s.portable ? "便携模式" : "插件内运行"}`;
         depsBtn.style.display = s.state === "deps_missing" ? "" : "none";
         fixBtn.style.display = s.state === "install_failed" ? "" : "none";
+        framelessIn.checked = !!s.frameless;
     }
 
     // 动作 → 壳 js_api 上的方法名：桥在就直接问壳，不在才走壳侧服务的 HTTP 路由
-    const BRIDGE_FN = { apply: "apply_launcher", install_plugin: "install_plugin", install_deps: "install_deps" };
+    const BRIDGE_FN = { apply: "apply_launcher", install_plugin: "install_plugin", install_deps: "install_deps", set_frameless: "set_frameless" };
     const bridge = () => (window.pywebview?.api?.launcher_state ? window.pywebview.api : null);
 
     async function refresh() {
@@ -484,7 +486,9 @@ function createLauncherPanel() {
             if (fn) {
                 data = action === "apply"
                     ? await fn(payload.root, payload.python, payload.port)
-                    : await fn();
+                    : action === "set_frameless"
+                        ? await fn(payload.frameless)
+                        : await fn();
             } else {
                 const resp = await api.fetchApi("/neo_studio/launcher", {
                     method: "POST",
@@ -514,6 +518,7 @@ function createLauncherPanel() {
     applyBtn.addEventListener("click", () => post({ root: rootIn.value, python: pyIn.value, port: portIn.value }));
     depsBtn.addEventListener("click", () => post({ action: "install_deps" }));
     fixBtn.addEventListener("click", () => post({ action: "install_plugin" }));
+    framelessIn.addEventListener("change", () => post({ action: "set_frameless", frameless: framelessIn.checked }));
 
     const el = $el("div", { className: "ns-settings-section" }, [
         $el("h3", { textContent: "启动设置" }),
@@ -521,6 +526,7 @@ function createLauncherPanel() {
         row("ComfyUI 根目录", rootIn, browseBtn),
         row("Python", pyIn, pyBrowseBtn),
         row("端口", portIn),
+        row("无边框窗口", framelessIn),
         $el("div", { className: "ns-launch-actions" }, [applyBtn, depsBtn, fixBtn]),
         info,
     ]);
@@ -552,7 +558,7 @@ function buildSettings(el) {
         } catch { /* ComfyUI 未就绪时保留上次内容 */ }
     }
 
-    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 日志 → 启动设置；每个 tab 只显示对应设置区
+    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 日志 → 启动设置 → 关于；每个 tab 只显示对应设置区
     const launcher = createLauncherPanel();
     const sections = [
         { key: "llm", label: "LLM 设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "LLM 设置" }), llmForm.el]) },
@@ -560,6 +566,7 @@ function buildSettings(el) {
         { key: "video", label: "生视频设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生视频设置" }), videoForm.el]) },
         { key: "log", label: "日志", body: $el("div", { className: "ns-settings-section ns-log-section" }, [$el("h3", { textContent: "日志" }), logBody]) },
         { key: "launch", label: "启动设置", body: launcher.el },
+        { key: "about", label: "关于", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "关于" }), $el("div", { className: "ns-about-version", id: "ns-about-version", textContent: versionText() })]) },
     ];
 
     const tabs = $el("div", { className: "ns-settings-tabs" });
@@ -608,7 +615,7 @@ function buildSettings(el) {
 let offline = false;   // 页面跑在壳的服务上：文件类功能可用，生成类请求由壳回 409
 let starting = false;  // 壳已拉起 ComfyUI 还没就绪：这段时间只出「启动中」，其余离线提示一律收起
 let caps = {};         // 壳侧能力表（/neo_studio/version 下发）；ComfyUI 页里缺省即全可用
-let pluginVersion = "";
+let versionInfo = { plugin: "", comfy: "", offline: false };   // 版本号只在设置「关于」里显示
 
 function can(feature) { return caps[feature] !== false; }
 
@@ -740,18 +747,25 @@ function renderShellState() {
     for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();
 }
 
+function versionText() {
+    if (!versionInfo.plugin) return "";
+    if (versionInfo.offline) return `Neo Studio ${versionInfo.plugin} · ${starting ? "ComfyUI 启动中" : "离线模式"}`;
+    return `Neo Studio ${versionInfo.plugin} · ComfyUI ${versionInfo.comfy}`;
+}
+
+function renderVersionInfo() {
+    const el = document.getElementById("ns-about-version");
+    if (el) el.textContent = versionText();
+}
+
 function setStarting(on) {
     if (starting === on) return;
     starting = on;
-    const verEl = document.getElementById("ns-version");
-    if (offline && verEl) {
-        verEl.textContent = `Neo Studio ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`;
-    }
+    if (offline) renderVersionInfo();
     renderShellState();
 }
 
 async function loadVersion() {
-    const verEl = document.getElementById("ns-version");
     try {
         const r = await api.fetchApi("/neo_studio/version");
         const data = await r.json();
@@ -759,12 +773,62 @@ async function loadVersion() {
             offline = !!data.offline;
             starting = !!data.starting;   // 壳已拉起 ComfyUI：页面第一份状态就是「启动中」
             caps = data.caps || {};
-            pluginVersion = data.plugin_version || "";
-            verEl.textContent = offline ? `Neo Studio ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`
-                : `Neo Studio ${pluginVersion} · ComfyUI ${data.comfyui_version}`;
+            versionInfo = { plugin: data.plugin_version || "", comfy: data.comfyui_version || "", offline };
+            renderVersionInfo();
             if (offline) showOfflineBanner();
         }
     } catch { /* ComfyUI 未就绪时保持空白 */ }
+}
+
+// ====== 无边框窗口：系统标题栏被壳摘掉后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己画 ======
+// 只有壳窗口有 pywebview 桥；浏览器标签页里桥不存在，控件整块不出现，顶栏照旧。
+function initWindowChrome() {
+    const btn = (id) => document.getElementById(id);
+    const set = (id, ico, title) => {
+        const b = btn(id);
+        if (b) { b.textContent = ico; b.title = title; }
+    };
+    const render = (s) => {
+        document.body.classList.toggle("ns-frameless", !!s.frameless);
+        btn("ns-wctl").hidden = !s.frameless;
+        set("ns-win-max", s.maximized ? "🗗" : "▢", s.maximized ? "还原" : "最大化");
+        set("ns-win-fs", s.fullscreen ? "🗗" : "⛶", s.fullscreen ? "退出全屏" : "全屏");
+    };
+    const wire = (bridge) => {
+        bridge.window_state().then((s) => {
+            render(s);
+            if (!s.frameless) return;
+            btn("ns-win-min").addEventListener("click", () => bridge.win_minimize());
+            btn("ns-win-max").addEventListener("click", () => bridge.win_maximize().then(render));
+            btn("ns-win-fs").addEventListener("click", () => bridge.win_fullscreen().then(render));
+            btn("ns-win-close").addEventListener("click", () => bridge.win_close());
+            // 顶栏空白处按下交给壳：壳在窗口线程上跟住光标搬窗口，JS 自己算位移只会抖
+            document.querySelector(".ns-header").addEventListener("mousedown", (e) => {
+                if (e.button !== 0) return;
+                if (e.target.closest("a,button,input,select,textarea")) return;
+                // 拖动期间鼠标捕获在壳窗口上，页面收不到 mouseup：拖动收尾时补一发，页面别停在按下态；
+                // 壳在拖动开始前可能顺手还原了最大化 / 退掉了全屏，图标按壳的状态重画一遍
+                const up = () => document.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
+                Promise.resolve(bridge.win_start_drag()).finally(() => {
+                    up();
+                    bridge.window_state().then(render).catch(() => {});
+                });
+            });
+        }).catch(() => { /* 桥未就绪：顶栏不出控件 */ });
+    };
+    // 桥脚本在导航完成之后才注入且分两步：window.pywebview 先到（api 是空的），方法由 finish.js
+    // 调 _createApi 后填。模块脚本跑在注入前面，第一趟多半只看到空 api：重试几轮再放弃，
+    // 浏览器标签页里 api 永远不来，顶栏控件整块不出
+    let tries = 0;
+    const attach = () => {
+        const bridge = window.pywebview?.api;
+        if (!bridge?.window_state) {
+            if (tries++ < 10) setTimeout(attach, 300);
+            return;
+        }
+        wire(bridge);
+    };
+    attach();
 }
 
 
@@ -918,6 +982,7 @@ if (view) {
         initMemMonitor();
         route();   // 视图先挂上：壳侧附件（启停控件）失败不能连坐，窗口不至于停在只出顶栏的空白页
         initComfyPill();
+        initWindowChrome();
     }).catch(e => {
         console.error("[Neo Studio] startup failed:", e);
         shellLog(`STARTUP FAILED ${e?.stack || e}`);

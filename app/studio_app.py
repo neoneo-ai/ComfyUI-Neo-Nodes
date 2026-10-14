@@ -141,6 +141,70 @@ k32.CreateMutexW.restype = wintypes.HANDLE
 k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 k32.GetLastError.restype = wintypes.DWORD
 
+# 无边框窗口：pywebview 的 frameless 只在建窗时生效，运行中切换走 Win32 样式位。
+# 只摘 WS_CAPTION（标题栏 + 系统按钮），WS_THICKFRAME 留着 —— 窗口边缘仍可拖拽缩放。
+u32 = ctypes.windll.user32
+GWL_STYLE = -16
+WS_CAPTION = 0x00C80000
+WS_THICKFRAME = 0x00040000
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+VK_LBUTTON = 0x01
+SPI_GETWORKAREA = 0x0030
+# 默认按 c_int 传句柄，64 位上的 HWND 会被截断，样式位与拖动消息都作用到别的窗口上
+u32.GetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT]
+u32.SetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT, wintypes.LONG]
+u32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.INT, wintypes.INT,
+                             wintypes.INT, wintypes.INT, wintypes.UINT]
+u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+u32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+u32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
+u32.SetCapture.argtypes = [wintypes.HWND]
+u32.GetAsyncKeyState.argtypes = [wintypes.INT]
+u32.GetAsyncKeyState.restype = wintypes.SHORT
+
+
+def _cursor_pos() -> tuple:
+    pt = POINT()
+    u32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+def _left_button_down() -> bool:
+    """左键还按着没有：壳的拖动循环靠它收尾（鼠标可能已经在窗口外面，只有全局键态靠得住）。"""
+    return bool(u32.GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+
+
+def set_window_frame(hwnd: int, frameless: bool) -> None:
+    # WS_THICKFRAME 恒置：pywebview 的 frameless 走 FormBorderStyle=None，可拖拽边框一起摘掉，
+    # 这里补回来；有框时它本来就在，等于不动
+    style = u32.GetWindowLongW(hwnd, GWL_STYLE)
+    style = (style & ~WS_CAPTION if frameless else style | WS_CAPTION) | WS_THICKFRAME
+    u32.SetWindowLongW(hwnd, GWL_STYLE, style)
+    u32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED)
+
+
+def window_rect(hwnd: int) -> tuple:
+    r = wintypes.RECT()
+    u32.GetWindowRect(hwnd, ctypes.byref(r))
+    return (r.left, r.top, r.right, r.bottom)
+
+
+def work_area() -> tuple:
+    """主屏去掉任务栏的那块：无边框窗口走系统 maximize 是整屏矩形，任务栏会被盖住。"""
+    r = wintypes.RECT()
+    u32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(r), 0)
+    return (r.left, r.top, r.right, r.bottom)
+
 
 def alert(text: str) -> None:
     """pythonw 没有 stdout，提示走系统消息框。"""
@@ -234,8 +298,12 @@ def load_config() -> dict:
         return {}
 
 
-def save_config(root: Path, python: str, port: int) -> bool:
-    cfg = {"version": CONFIG_VERSION, "root": str(root), "python": str(python), "port": int(port)}
+def save_config(root: Path, python: str, port: int, frameless: bool) -> bool:
+    return write_config({"version": CONFIG_VERSION, "root": str(root), "python": str(python),
+                         "port": int(port), "frameless": bool(frameless)})
+
+
+def write_config(cfg: dict) -> bool:
     try:
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
@@ -519,7 +587,7 @@ def pid_alive(pid: int) -> bool:
 BACK_JS = """
 (() => {
     const inject = () => {
-        if (location.pathname.startsWith('/neo-studio')) return;   // Studio 页顶栏已有回主画布的链接
+        if (location.pathname.startsWith('/neo-studio')) return;   // Studio 页自己就是主页，不需要返回胶囊
         if (document.getElementById('neo-studio-back')) return;
         const b = document.createElement('button');
         b.id = 'neo-studio-back';
@@ -532,6 +600,18 @@ BACK_JS = """
         b.onmouseleave = () => { b.style.background = '#26262a'; };
         b.onclick = () => window.pywebview.api.go_studio();
         document.body.appendChild(b);
+        // 无边框窗口：启动页与引导页没有顶栏，整页空白处按下即拖窗（控件与输入区排除在外）
+        const api = window.pywebview.api;
+        if (!api.window_state || window.__neoDrag) return;
+        window.__neoDrag = true;
+        api.window_state().then(s => {
+            if (!s.frameless) return;
+            document.documentElement.style.cursor = 'move';
+            document.addEventListener('mousedown', e => {
+                if (e.button === 0 && !e.target.closest('button,input,select,textarea,a,label'))
+                    window.pywebview.api.win_start_drag();
+            });
+        });
     };
     // loaded 早于 pywebview api 注入完成：重试几轮再放弃，避免常驻轮询
     let tries = 0;
@@ -556,9 +636,10 @@ CLOSING_JS = """
 
 
 class StudioShell:
-    """壳的 js_api：顶栏「返回 Studio」胶囊、ComfyUI 运行状态与退出。
-    js_api 对象只挂 url、load_url 绑定方法与壳自己的进程状态；挂窗口对象会让 pywebview 的
-    create_proxy 递归遍历 window.native.AccessibilityObject... 爆栈。"""
+    """壳的 js_api：顶栏「返回 Studio」胶囊、ComfyUI 运行状态与退出、无边框窗口操作。
+    js_api 上只许挂 url、字符串、dict 与绑定方法：pywebview 注入 window.pywebview 前会
+    递归遍历 js_api 的非下划线属性（webview.util.inject_pywebview），挂窗口对象会把
+    WinForms 整张对象图喂进递归（pythonnet 每次属性访问都造新对象，id 去重失效），开机即卡死。"""
 
     def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = "", offline_url: str = "",
                  shell_port: int = 0, flags: dict = None, launcher: dict = None):
@@ -574,6 +655,12 @@ class StudioShell:
         self.flags = flags if flags is not None else {"starting": False}
         # 启动设置快照：壳侧服务与 js_api 共用同一份 dict，设置页与离线横幅都读它
         self.launcher = launcher if launcher is not None else {}
+        # 无边框窗口：建窗时喂给 pywebview，运行中由 set_frameless 改样式位；缺省开
+        self.frameless = bool(self.launcher.get("frameless", True))
+        self.fullscreen = False
+        self.maximized = False    # 无边框下最大化是壳自己铺的矩形，系统不认 WS_MAXIMIZE，状态自己记
+        self._restore_rect: tuple | None = None   # 铺满前的矩形，点一下还原回这里
+        self._window = None
         self.starting = comfy is not None
         self.loader = None
         self.rearm = None
@@ -708,6 +795,105 @@ class StudioShell:
         """「启动设置」页的快照：根目录 / 解释器 / 端口 / 插件位置 / 自检状态。"""
         return dict(self.launcher)
 
+    def set_frameless(self, on: bool) -> dict:
+        """无边框窗口开关：立刻摘掉 / 装回标题栏，并写进启动配置 —— 下次开机沿用。"""
+        self.frameless = bool(on)
+        self.launcher["frameless"] = self.frameless
+        if self._window is not None:
+            set_window_frame(self._hwnd(), self.frameless)
+        cfg = load_config()
+        cfg["frameless"] = self.frameless
+        if not write_config(cfg):
+            return {"ok": False, "error": f"写入启动配置失败：{CONFIG_FILE}"}
+        log_line(f"frameless {self.frameless}")
+        return {"ok": True, "frameless": self.frameless,
+                "msg": "无边框窗口已开启" if self.frameless else "已恢复系统标题栏"}
+
+    def _hwnd(self) -> int:
+        return int(self._window.native.Handle.ToInt64())
+
+    def ensure_resizable_frame(self) -> None:
+        """pywebview 的 frameless 走 FormBorderStyle=None，可拖拽边框一起摘掉：窗口显示后补回 WS_THICKFRAME。"""
+        if self.frameless and self._window is not None:
+            set_window_frame(self._hwnd(), True)
+
+    def window_state(self) -> dict:
+        """顶栏自绘标题栏要的状态：frameless 决定控件出不出，maximized / fullscreen 决定图标。
+        pywebview 的 Window.maximized / .fullscreen 是建窗时的初值，运行中不跟着变，状态由壳自己记。"""
+        return {"frameless": self.frameless, "maximized": self.maximized, "fullscreen": self.fullscreen}
+
+    def win_minimize(self) -> None:
+        self._window.minimize()
+
+    def win_maximize(self) -> dict:
+        # 无边框下系统 maximize 给的是整屏矩形，任务栏会被盖住：自己铺工作区，还原用的几何留着
+        if self.maximized:
+            self.maximized = False
+            if self._restore_rect is not None:
+                left, top, right, bottom = self._restore_rect
+                self._restore_rect = None
+                u32.SetWindowPos(self._hwnd(), 0, left, top, right - left, bottom - top, SWP_NOZORDER)
+            else:
+                self._window.restore()
+        elif self.frameless:
+            self._restore_rect = window_rect(self._hwnd())
+            left, top, right, bottom = work_area()
+            u32.SetWindowPos(self._hwnd(), 0, left, top, right - left, bottom - top, SWP_NOZORDER)
+            self.maximized = True
+        else:
+            self._window.maximize()
+            self.maximized = True
+        return self.window_state()
+
+    def win_fullscreen(self) -> dict:
+        self._window.toggle_fullscreen()
+        self.fullscreen = not self.fullscreen
+        # pywebview 退出全屏会把 FormBorderStyle 写回建窗时的值，标题栏跟着回来：按我们的状态重贴
+        if self._window is not None:
+            set_window_frame(self._hwnd(), self.frameless)
+        return self.window_state()
+
+    def win_close(self) -> None:
+        log_line("win_close")
+        self._window.destroy()
+
+    def win_start_drag(self) -> None:
+        """无边框拖动：壳自己跟住光标搬窗口。
+        把按下交回系统走原生标题栏循环这条路在这里走不通 —— WinForms 的 Form 自己吞掉非客户区
+        按下，消息到不了默认处理，拖动循环 0ms 返回、窗口纹丝不动（补 WS_CAPTION、换
+        WM_SYSCOMMAND·SC_MOUSEMOVE 都一样，实测过）。所以自己循环：按「光标 - 抓取偏移」
+        SetWindowPos，左键一松就停。
+        必须跑在窗口所属线程上：SetCapture 只认窗口的所属线程，捕获不过来的话 WebView2 继续吃
+        鼠标消息（拖动时选中文本之类），松手也传不到这边。"""
+        if self.fullscreen:
+            self.win_fullscreen()   # 全屏时按下先退出全屏：整屏窗口跟着光标跑，pywebview 还停在全屏态
+        elif self.maximized:
+            self.win_maximize()   # 最大化时按下先还原：不然整块工作区大小的窗口跟着光标跑
+
+        def _drag() -> None:
+            hwnd = self._hwnd()
+            left, top, _, _ = window_rect(hwnd)
+            x0, y0 = _cursor_pos()
+            dx, dy = x0 - left, y0 - top   # 抓取偏移：光标在窗口里的位置拖动中不许变
+            u32.SetCapture(hwnd)
+            steps = 0
+            while _left_button_down():
+                x, y = _cursor_pos()
+                u32.SetWindowPos(hwnd, 0, x - dx, y - dy, 0, 0,
+                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+                steps += 1
+                time.sleep(0.008)
+            u32.ReleaseCapture()
+            log_line(f"drag {steps} steps")   # 0 = 按下时左键已经不在了
+
+        native = getattr(self._window, "native", None)
+        if native is None:
+            _drag()
+            return
+        import clr                      # noqa: F401  pythonnet 的导入钩子，System 靠它才认
+        from System import Func, Type
+        native.Invoke(Func[Type](_drag))
+
     def pick_root(self) -> str:
         """原生目录选择器，只回路径；校验交给「保存并重启」，选完还能改。"""
         return pick_folder(str(self.launcher.get("root", "")))
@@ -747,7 +933,7 @@ class StudioShell:
             return {"ok": False, "error": f"端口不是数字：{port}"}
         if not 1024 <= port <= 65535:
             return {"ok": False, "error": f"端口需在 1024-65535 之间：{port}"}
-        if not save_config(root_p, py, port):
+        if not save_config(root_p, py, port, self.frameless):
             return {"ok": False, "error": f"写入启动配置失败：{CONFIG_FILE}"}
         self.root, self.python_arg, self.port = root_p, str(py), port
         self.launcher.update(root=str(root_p), python=str(py), port=port,
@@ -966,7 +1152,9 @@ def main() -> int:
     flags = {"starting": False}
     launcher = {"root": str(root or ""), "python": str(python or ""), "port": port,
                 "plugin_dir": str(plugin_dir), "state_dir": str(STATE),
-                "portable": IS_FROZEN, "state": ST_OK, "error": ""}
+                "portable": IS_FROZEN, "state": ST_OK, "error": "",
+                # 无边框是新默认：老配置没这一项也走无边框，设置里可关
+                "frameless": bool(cfg.get("frameless", True))}
     launcher_api: dict = {}   # 壳侧路由延迟取壳的方法：服务先起，壳的方法随后补上
     if need_guide:
         state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
@@ -1016,10 +1204,13 @@ def main() -> int:
     shell.ensure_server = ensure_server
     launcher_api.update(apply=shell.apply_launcher, install_plugin=shell.install_plugin,
                         install_deps=shell.install_deps, pick_root=shell.pick_root,
-                        state=shell.launcher_state)
+                        set_frameless=shell.set_frameless, state=shell.launcher_state)
     geo = load_geometry()
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
-             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600), js_api=shell)
+             x=geo.get("x"), y=geo.get("y"), min_size=(900, 600),
+             frameless=shell.frameless, easy_drag=False, js_api=shell)
+    # easy_drag 关掉：pywebview 的简易拖动是全局 mousedown，无边框时点任何卡片都会拖着窗口跑；
+    # 拖动改由顶栏空白处按下交回系统（StudioShell.win_start_drag）
     # 窗口先出：起解释器查依赖、装配壳侧服务、拉起 ComfyUI 全在后台线程走完。
     # 引导页等用户补齐根目录与解释器，其余停在启动页，就绪后由后台线程整页跳过去。
     if need_guide:
@@ -1027,6 +1218,9 @@ def main() -> int:
     else:
         window = webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
     shell.loader = window.load_url
+    shell._window = window
+    # 原生窗口在 start() 里才建出来，建窗时拿不到 hwnd：无边框补边框挂在窗口显示之后
+    window.events.shown += shell.ensure_resizable_frame
     global _studio_window
     _studio_window = window
 
@@ -1062,7 +1256,8 @@ def main() -> int:
             return   # 后台收尾走完后的第二次 FormClosing：放行
         closing["vetoed"] = True
         shell.closing = True
-        save_geometry(window)
+        if not shell.fullscreen:
+            save_geometry(window)   # 全屏时窗口是整屏矩形，存下来下次开机窗口会铺满屏幕
         closing["thread"] = threading.Thread(target=close_out, daemon=True)
         closing["thread"].start()
         return False

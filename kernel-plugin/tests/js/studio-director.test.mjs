@@ -1,5 +1,5 @@
 // Neo Studio 导演页：只读时间轴（所选配方分段）+ 生成中实时预览（载荷按 task_id 路由、终态定格）。
-// studio-app.js 顶层会取 #ns-view / #ns-version 并连 WebSocket，导入前必须先备好 DOM 与 WS 桩。
+// studio-app.js 顶层会取 #ns-view 并连 WebSocket，导入前必须先备好 DOM 与 WS 桩。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mockRoute, jsonResponse, sleep, click, fetchLog } from "./setup.mjs";
@@ -11,7 +11,7 @@ globalThis.WebSocket = class {
     close() {}
 };
 
-document.body.innerHTML = `<div id="ns-view"></div><div id="ns-version"></div>`;
+document.body.innerHTML = `<div id="ns-view"></div>`;
 mockRoute("/neo_studio/version", jsonResponse({
     success: true, plugin_version: "9.9.9", comfyui_version: "0.1", recipes: ["R1"],
 }));

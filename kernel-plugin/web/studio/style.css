@@ -35,7 +35,6 @@ body {
 }
 .ns-tabs a:hover { color: #fff; }
 .ns-tabs a.active { color: #fff; border-bottom-color: #7aa2ff; }
-.ns-version { margin-left: auto; font-size: 12px; color: #888; white-space: nowrap; }
 /* 顶栏 ComfyUI 控件：动作按钮写清点下去要干什么（启动内核 / 停止内核），红色只给停止图标，旁边一枚 PID 徽标 */
 .ns-comfy-box { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .ns-comfy { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: 600; color: #fff; background: #5b5bd6; cursor: pointer; white-space: nowrap; }
@@ -51,6 +50,15 @@ body {
 .ns-mem-clear { background: #2a2a2e; border: 1px solid #444; color: #aaa; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
 .ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
 .ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
+
+/* 无边框窗口：壳摘掉系统标题栏后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己出（只在壳窗口出现） */
+.ns-wctl { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.ns-wctl-btn { width: 34px; height: 26px; border: none; border-radius: 4px; background: transparent; color: #b8b8c2; font-size: 13px; line-height: 1; cursor: pointer; }
+.ns-wctl-btn:hover { background: #33333a; color: #fff; }
+.ns-wctl-close:hover { background: #a83232; color: #fff; }
+.ns-frameless .ns-header { cursor: move; user-select: none; }
+.ns-frameless .ns-header a, .ns-frameless .ns-header button { cursor: pointer; }
+.ns-about-version { font-size: 13px; color: #b7bbc4; }
 
 /* 壳的离线素材页：显存/清理没有意义，横幅说明浏览可用、生成需要 ComfyUI */
 .ns-offline-bar { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 16px; background: #2b2417; color: #e0b070; font-size: 12px; text-align: center; }

@@ -10,7 +10,7 @@ globalThis.WebSocket = class {
     close() {}
 };
 
-const studioBody = `<div class="ns-header"></div><div id="ns-view"></div><div id="ns-version"></div><button id="ns-comfy" hidden></button>`;
+const studioBody = `<div class="ns-header"></div><div id="ns-view"></div><button id="ns-comfy" hidden></button>`;
 
 const OFFLINE_CAPS = {
     image_gen: false, storyboard: false, voice: false, segment: false,
@@ -56,7 +56,17 @@ test("离线横幅说明可编辑面并给出启动入口", async () => {
     assert.match(bar.textContent, /ComfyUI 未运行/);
     assert.match(bar.textContent, /技能 \/ 配方 \/ 设置 \/ 模型库可离线编辑/);
     assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
-    assert.match(document.getElementById("ns-version").textContent, /离线模式/);
+    assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
+});
+
+test("版本号在设置的「关于」里", async () => {
+    mockOfflineShell();
+    window.location.hash = "#/settings";
+    await import("../../web/studio/studio-app.js?offAbout=1");
+    await flush();
+    click(document.querySelector('.ns-settings-tab[data-key="about"]'));
+    await flush();
+    assert.match(document.getElementById("ns-about-version").textContent, /Neo Studio 9\.9\.9 · 离线模式/);
 });
 
 test("离线导演页：生成按钮不发请求，点一下交给壳拉起 ComfyUI", async () => {

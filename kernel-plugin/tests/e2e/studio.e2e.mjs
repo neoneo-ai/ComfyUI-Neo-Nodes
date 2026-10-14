@@ -31,15 +31,16 @@ function guard(t) {
     return true;
 }
 
-// 顶栏标题回主画布：壳窗口内整页跳转，不弹浏览器标签页
-test("Studio 顶栏标题点击后跳到主界面", async (t) => {
+// 顶栏标题回首页：站内跳到默认素材页，不离开 Studio
+test("Studio 顶栏标题点击后回首页", async (t) => {
     if (!guard(t)) return;
     const page = await browser.newPage();
     try {
         await page.goto(STUDIO_URL, { waitUntil: "networkidle", timeout: 30000 });
+        await page.evaluate(() => { location.hash = "#/director"; });
         await page.click(".ns-logo");
-        await page.waitForURL((u) => !u.pathname.includes("neo-studio"), { timeout: 15000 });
-        assert.ok(!page.url().includes("neo-studio"), `应跳到主界面（${page.url()}）`);
+        await page.waitForFunction(() => location.hash === "#/gallery", null, { timeout: 15000 });
+        assert.ok(page.url().includes("neo-studio"), `回首页不应离开 Studio（${page.url()}）`);
     } finally {
         await page.close();
     }
@@ -51,9 +52,8 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
     try {
         await page.goto(STUDIO_URL, { waitUntil: "networkidle", timeout: 30000 });
 
-        // 顶栏版本信息（插件 + ComfyUI）
-        const version = await page.textContent("#ns-version");
-        assert.match(version, /Neo Studio .+ · ComfyUI .+/);
+        // 版本号不在顶栏（只在下面设置「关于」里查）
+        assert.equal(await page.locator("#ns-version").count(), 0, "顶栏不应再显示版本号");
 
         // 默认视图 = 素材：NeoGallery 挂载
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 15000 });
@@ -126,10 +126,12 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         // 设置视图：默认停在 LLM tab，切到生图 tab 后表单（.rs-gen-settings）才可见
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-section .rs-btn, .ns-settings-section button", { timeout: 15000 });
-        // 浏览器里没有壳桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 5
+        // 浏览器里没有壳桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 6
         await page.waitForFunction(() => !document.querySelector('[data-key="launch"]'), null, { timeout: 10000 });
         const sections = await page.locator(".ns-settings-section").count();
-        assert.equal(sections, 4);
+        assert.equal(sections, 5);
+        // 版本号只在设置「关于」里显示
+        assert.match(await page.textContent("#ns-about-version"), /Neo Studio .+ · ComfyUI .+/);
         await page.click(".ns-settings-tab[data-key='gen']");
         await page.waitForSelector(".ns-settings .rs-gen-settings", { timeout: 15000 });
         assert.equal(await page.locator(".ns-settings .rs-gen-settings").count(), 2);

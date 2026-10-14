@@ -12,7 +12,7 @@ globalThis.WebSocket = class {
     close() {}
 };
 
-const studioBody = `<div class="ns-header"></div><div id="ns-view"></div><div id="ns-version"></div><button id="ns-comfy" hidden></button>`;
+const studioBody = `<div class="ns-header"></div><div id="ns-view"></div><button id="ns-comfy" hidden></button>`;
 
 const OFFLINE_CAPS = {
     image_gen: false, storyboard: false, voice: false, segment: false,
@@ -48,7 +48,7 @@ test("壳拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅�
     assert.match(bar.textContent, /ComfyUI 启动中/);
     assert.ok(!/ComfyUI 未运行/.test(bar.textContent), "启动中不出「未运行」");
     assert.equal(bar.querySelector(".ns-offline-start").style.display, "none", "启动中不给启动按钮");
-    assert.match(document.getElementById("ns-version").textContent, /ComfyUI 启动中/);
+    assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
     assert.ok(document.getElementById("ns-comfy").hidden, "js_api 未注入前顶栏启停控件不出");
     const run = document.querySelector(".ns-gen-run");
     assert.ok(run, "导演页应已挂载");
@@ -62,4 +62,12 @@ test("壳拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅�
     await fetch("/neo_studio/director/generate", { method: "POST", body: "{}" });
     await flush();
     assert.equal(document.getElementById("ns-toast"), null, "启动中不出「需要 ComfyUI」提示条");
+
+    // 版本号只在设置「关于」里，且跟着启动中状态走
+    window.location.hash = "#/settings";
+    window.dispatchEvent(new Event("hashchange"));
+    await flush();
+    click(document.querySelector('.ns-settings-tab[data-key="about"]'));
+    await flush();
+    assert.match(document.getElementById("ns-about-version").textContent, /Neo Studio 9\.9\.9 · ComfyUI 启动中/);
 });

@@ -78,15 +78,27 @@ test("app shim：扩展收集与 setup、settings 持久化、toast 落 DOM", as
     assert.equal(appMod.app.graph.getNodeById(1), null);
 });
 
-test("顶栏标题是回主画布的链接（壳窗口内跳转，不弹标签页）", async () => {
+test("顶栏标题是回首页（素材页）的链接", async () => {
     const html = fs.readFileSync(path.join(webDir, "studio", "index.html"), "utf8");
     const logo = html.match(/<a class="ns-logo" href="([^"]+)" title="([^"]+)">/);
     assert.ok(logo, "顶栏标题应为可点击链接");
-    assert.equal(logo[1], "/", "应指向主界面");
-    assert.match(logo[2], /主画布|主界面/, "应有返回提示");
+    assert.equal(logo[1], "#/gallery", "应指向默认素材页");
+    assert.match(logo[2], /首页/, "应有返回首页提示");
     const css = fs.readFileSync(path.join(webDir, "studio", "style.css"), "utf8");
     assert.match(css, /\.ns-logo \{[^}]*text-decoration: none/, "链接不应带下划线");
     assert.match(css, /\.ns-logo:hover/, "应有 hover 反馈");
+});
+
+test("无边框窗口控件：默认隐藏，最小化 / 最大化 / 全屏 / 关闭齐备", async () => {
+    const html = fs.readFileSync(path.join(webDir, "studio", "index.html"), "utf8");
+    const css = fs.readFileSync(path.join(webDir, "studio", "style.css"), "utf8");
+    const wctl = html.match(/<span class="ns-wctl" id="ns-wctl" hidden>([\s\S]*?)<\/span>/);
+    assert.ok(wctl, "顶栏应有窗口控件组，且默认隐藏（系统标题栏在时不需要）");
+    for (const id of ["ns-win-min", "ns-win-max", "ns-win-fs", "ns-win-close"])
+        assert.ok(wctl[1].includes(`id="${id}"`), `应有 ${id} 按钮`);
+    assert.match(wctl[1], /全屏/, "除最小化 / 最大化 / 关闭外还要有全屏按钮");
+    assert.match(css, /\.ns-frameless \.ns-header \{[^}]*cursor: move/, "无边框时顶栏空白处可拖窗");
+    assert.ok(!/\.ns-version\b/.test(css), "版本位不在顶栏样式里");
 });
 
 // 顶栏 ComfyUI 胶囊：壳窗口（有 pywebview api）里才出现，浏览器标签页里不显示。
@@ -265,7 +277,7 @@ test("离线页：横幅说明可编辑面，版本位显示离线，显存块�
     assert.match(bar.textContent, /可离线编辑/);
     assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
     assert.ok(document.body.classList.contains("ns-offline"), "body 应带离线标记");
-    assert.match(document.getElementById("ns-version").textContent, /离线模式/);
+    assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
 });
 
 test("离线页里点重新拉起：不刷新页面，交给壳整页跳回完整 Studio", async () => {
@@ -355,5 +367,41 @@ test("已停止后点一下重新拉起，就绪后刷新页面", async () => {
     } finally {
         Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
     }
+});
+
+
+// 顶栏窗口控件走同一条等桥的路：桥的方法由 finish.js 后填，模块脚本先跑完时只看到空 api。
+// 早先只判断一次，撞上空档就永久不出控件、顶栏拖动也不挂 —— 壳窗口里拖动时好时坏就是它。
+test("顶栏窗口控件：桥晚到也要挂上，顶栏空白处按下交回壳拖动", async () => {
+    mountStudio();
+    const wctl = document.getElementById("ns-wctl");
+    const calls = [];
+    window.pywebview = { api: {} };   // 桥的空档：api 对象在，方法还没填
+    await import("../../web/studio/studio-app.js?chromeLate=1");
+    await flush();
+    assert.equal(wctl.hidden, true, "方法没齐先别出控件");
+
+    window.pywebview.api.window_state = async () => ({ frameless: true, maximized: false, fullscreen: false });
+    window.pywebview.api.win_start_drag = () => calls.push("drag");
+    window.pywebview.api.win_close = () => calls.push("close");
+    await sleep(400);   // 300ms 一轮重试
+    assert.equal(wctl.hidden, false, "方法齐了顶栏控件要挂上");
+
+    // 同一进程里前面几个用例各导入过一份 studio-app.js，它们的等桥循环这会儿也齐了桥，
+    // 会在同一个顶栏上各挂一份监听 —— 只断言次数变化，不比绝对条数
+    const header = document.querySelector(".ns-header");
+    header.dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }));
+    await flush();
+    assert.ok(calls.includes("drag"), "顶栏空白处按下要交回壳走原生拖动");
+
+    const wired = calls.length;
+    header.dispatchEvent(new window.MouseEvent("mousedown", { button: 2, bubbles: true }));
+    document.querySelector(".ns-logo").dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }));
+    await flush();
+    assert.equal(calls.length, wired, "右键与链接不该拖窗");
+
+    document.getElementById("ns-win-close").click();
+    await flush();
+    assert.ok(calls.includes("close"), "关闭按钮走壳");
 });
 
