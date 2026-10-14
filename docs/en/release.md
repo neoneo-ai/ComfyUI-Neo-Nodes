@@ -85,7 +85,7 @@ The window and taskbar icon is the clapperboard `web/neo-studio.ico`, generated 
 
 - `Neo-Studio-<version>-windows-x64.exe` — the onefile single file, about 52 MB
 - `Neo-Studio-<version>-windows-x64-portable.zip` — the onedir build, only when a manual dispatch
-  picks `onedir` / `both`
+  types `onedir` / `both`
 
 The assets are unsigned, so expect a SmartScreen prompt on first run; signing and notarization stay
 local (`-Sign` / `-Notarize`), since CI has no machine certificate and cannot run the macOS path.
