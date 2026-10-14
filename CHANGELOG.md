@@ -10,6 +10,9 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   package name, the install folder and the URL literals have to be one spelling. Node class names and all route
   paths (`/neo-studio`, `/neo_studio/*`, `/neo_nodes/*`, `/neo_gallery/*`, …) are unchanged; only the node
   category label moved from `Neo-Nodes` to `Neo Studio`, so existing workflows keep loading.
+  Upgraders need to delete `custom_nodes/ComfyUI-Neo-Nodes` before installing the new package: the package
+  name changed, so Manager installs it next to the old folder and the same nodes register twice. User data
+  lives outside the plugin directory, so removing the old folder touches no data.
 
 - Packaging and publishing: `tools/install_plugin.ps1` installs the kernel plugin from source into
   `custom_nodes/comfyui-neo-studio` — code and built-in presets only, writes the `configs/data_root.json`

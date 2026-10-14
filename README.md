@@ -124,6 +124,10 @@ git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfy
 - **桌面版**：`tools\build_studio_exe.ps1` 出 `tools\neo-studio.exe`（单文件）或 `-Mode onedir` 目录版；
   发布开关 `-Sign`（signtool）/ `-Notarize`（macOS notarytool）/ `-Publish`（comfy node publish）默认不执行
 
+> **从旧版升级**：包名从 `comfyui-neo-nodes` 换成 `comfyui-neo-studio`。先删掉
+> `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` 再装新包——两个目录同时存在会把同一批节点注册两遍。
+> 用户数据不在插件目录里，删旧目录不动数据。
+
 ## 依赖
 
 - `openai`、`PyYAML`、`pypinyin`、`Pillow`（随 `requirements.txt` 自动安装；Pillow 由 ComfyUI 核心自带）

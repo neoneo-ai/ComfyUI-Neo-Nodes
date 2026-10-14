@@ -88,6 +88,11 @@ git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfy
   `-Mode onedir` folder build. Release switches `-Sign` (signtool), `-Notarize` (macOS notarytool)
   and `-Publish` (comfy node publish) do nothing unless passed.
 
+> **Upgrading from the old package**: the Registry package moved from `comfyui-neo-nodes` to
+> `comfyui-neo-studio`. Delete `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` before installing the new one —
+> keeping both directories registers the same nodes twice. User data does not live in the plugin
+> directory, so removing the old folder touches no data.
+
 Then restart ComfyUI.
 
 ## Dependencies

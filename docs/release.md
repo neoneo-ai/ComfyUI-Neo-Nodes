@@ -8,9 +8,10 @@
 
 `.comfyignore`（gitignore 语法）决定 Registry 包里有什么：comfy-cli 取 git 已跟踪文件减去这里的条目。
 `tests/`、`tools/`、`.github/`、`.vscode/`、`test-results/`、`pytest.ini`、`package.json` 等开发文件被排除；
-运行时 `.py`、`web/`、`configs/`、`skills/`、`prompts/`、`locals/`、`example_workflows/`、`docs/` 与
-README/LICENSE/pyproject/requirements 留在包里。未跟踪的本地文件（`node_modules/`、`tmp/`、
+运行时 `.py`、`web/`（含 `web/docs/` 节点帮助）、`configs/`、`skills/`、`prompts/`、`example_workflows/`
+与 README/LICENSE/pyproject/requirements 留在包里。未跟踪的本地文件（`node_modules/`、`tmp/`、
 gallery 缓存、`configs/backyard_oss.json`）已被 `.gitignore` 排除，无需在此重复。
+应用仓库的 `README_EN.md`、`Developer.md` 与 `docs/` 在 `kernel-plugin/` 之外，不进 Registry 包。
 
 Registry 安装只读 `pyproject.toml` 的 `dependencies`，`requirements.txt` 供 ComfyUI-Manager 与开发环境使用，
 两边需保持一致；可选增强（`laya` / `pillow-heif` / `oss2`）写在 `[project.optional-dependencies]`。
