@@ -18,14 +18,13 @@ from aiohttp import web
 routes = web.RouteTableDef()
 import folder_paths
 
-from . import civitai
+from . import civitai, plugin_paths
 from .util import _load_settings, _has_media_recursive
 
 # ---------------------------------------------------------------------------
 # Paths (self-contained: this file lives next to gallery.py)
 # ---------------------------------------------------------------------------
-CURRENT_DIR = Path(__file__).parent.resolve()
-GALLERY_DIR = CURRENT_DIR / "gallery"
+GALLERY_DIR = plugin_paths.GALLERY_DIR
 LORA_CACHE_DIR = GALLERY_DIR / "lora_cache"
 
 # ---------------------------------------------------------------------------

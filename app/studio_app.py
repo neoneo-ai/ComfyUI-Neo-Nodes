@@ -270,10 +270,6 @@ def install_deps(python: Path, plugin_dir: Path) -> dict:
     return {"ok": True, "msg": "依赖安装完成。"}
 
 
-# 覆盖更新时要整目录带进新副本的用户数据：设置与 skill 覆盖、素材库索引、用户配方与提示词、运行状态与日志。
-USER_DATA_DIRS = ("configs", "data", "gallery", "locals", "prompts", "recipes", "skills", "tmp")
-
-
 def pyproject_version(plugin_dir: Path) -> str:
     """目录里 pyproject.toml 的版本号；读不到回空串（比任何 release 都旧）。"""
     try:
@@ -288,28 +284,64 @@ def _ver(text: str) -> tuple:
     return tuple(int(x) for x in re.findall(r"\d+", text))
 
 
-def install_ignore():
-    # 源码模式下 source 就是开发中的插件目录本身：build/（打包产物、node_modules）、tmp/（运行日志）、
-    # data/（用户状态）整棵树拷过去会在 Windows 长路径与占用文件上崩掉，装出来的也是脏副本。
-    return shutil.ignore_patterns("build", "tmp", "data", "tests", "docs", "node_modules",
-                                  "__pycache__", ".git", ".github", "*.log", "*.spec")
+# 装进 custom_nodes 的只有代码与内置预设：用户数据归壳的数据根，插件按 NEO_STUDIO_DATA 与
+# 插件目录里的指针去找。开发目录里的运行数据不能跟着进内核。
+INSTALL_SKIP = ("build", "dist", "tests", "docs", "node_modules", "__pycache__", ".git", ".github",
+                ".pytest_cache", "test-results", "tmp", "data", "gallery", "locals",
+                "prompts/custom", "prompts/templates/custom", "prompts/_tags_index.json",
+                "skills/custom", "recipes/custom", "recipes/.thumbs", "configs/skill_overrides")
+INSTALL_SKIP_FILES = ("remote_llm_config.json", "model_config.json", "gallery_settings.json",
+                      "image_gen.json", "video_gen.json", "bookmarks.json", "model_hub.json",
+                      "backyard_oss.json", "studio_window.json", "gallery_dim_cache.json",
+                      "laya_token.json", "neo_repair_mappings.json")
+
+
+def install_ignore(source_dir: Path):
+    """copytree 过滤器：按相对路径挡掉开发产物与用户数据，只放行代码与内置预设。"""
+    src = str(source_dir)
+
+    def ignore(directory: str, names: list) -> set:
+        rel = os.path.relpath(directory, src).replace("\\", "/")
+        prefix = "" if rel == "." else rel + "/"
+        skipped = set()
+        for name in names:
+            path = prefix + name
+            if any(path == p or path.startswith(p + "/") for p in INSTALL_SKIP):
+                skipped.add(name)
+            elif name in INSTALL_SKIP_FILES:
+                skipped.add(name)
+            elif name.endswith((".log", ".spec")):
+                skipped.add(name)
+        return skipped
+
+    return ignore
+
+
+def write_data_pointer(plugin_dir: Path) -> None:
+    """把数据根写进插件目录：用户不经壳自己起 ComfyUI 时，插件靠它找到同一份用户数据。"""
+    cfg = {"version": 1, "data_root": str(STATE.resolve())}
+    target = plugin_dir / "configs" / "data_root.json"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        log_line(f"data pointer failed: {exc}")
 
 
 def update_plugin(plugin_dir: Path, source_dir: Path) -> None:
-    """内置副本覆盖更新：新副本先在状态目录拼好、用户数据整目录并进去，再把旧副本换出去。
+    """内置副本覆盖更新：新副本先在状态目录拼好，再把旧副本换出去。
 
     只有换目录这一步碰到旧副本：ComfyUI 正在跑时目录被占用，move 直接失败，旧副本原样留着，
     下次启动再更新。新副本没搬进去就把旧副本搬回来，绝不让 custom_nodes 空在那个位置。
+    用户数据不在插件目录里，覆盖它不影响数据。
     """
     staging = STATE / "plugin_update"
     backup = STATE / "plugin_old"
     try:
         shutil.rmtree(staging, ignore_errors=True)
-        shutil.copytree(source_dir, staging, ignore=install_ignore())
-        for name in USER_DATA_DIRS:
-            src = plugin_dir / name
-            if src.is_dir():
-                shutil.copytree(src, staging / name, dirs_exist_ok=True)
+        shutil.copytree(source_dir, staging, ignore=install_ignore(source_dir))
         shutil.rmtree(backup, ignore_errors=True)
         shutil.move(str(plugin_dir), str(backup))
     except OSError as exc:
@@ -337,15 +369,17 @@ def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tup
         if IS_FROZEN and _ver(new) > _ver(old) and not (plugin_dir / ".git").exists():
             log_line(f"plugin update {old or '无版本号'} -> {new}")
             update_plugin(plugin_dir, source_dir)
+        write_data_pointer(plugin_dir)
         return True, ""
     if not source_dir.is_dir():
         return False, "启动器没有内置插件副本，请手动安装 ComfyUI-Neo-Nodes 后重试。"
     custom_nodes = plugin_dir.parent
     try:
         custom_nodes.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source_dir, plugin_dir, ignore=install_ignore())
+        shutil.copytree(source_dir, plugin_dir, ignore=install_ignore(source_dir))
     except OSError as exc:
         return False, f"写入 {custom_nodes} 失败：{exc}"
+    write_data_pointer(plugin_dir)
     return True, ""
 
 
@@ -419,8 +453,9 @@ def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
     COMFY_LOG.parent.mkdir(parents=True, exist_ok=True)
     log = open(COMFY_LOG, "wb", buffering=0)
     log.write(f"=== {time.strftime('%H:%M:%S')} port={port} {python}\n".encode("utf-8"))
+    env = {**os.environ, "NEO_STUDIO_DATA": str(STATE)}
     return subprocess.Popen([str(python), str(root / "main.py"), "--port", str(port)],
-                            cwd=str(root), creationflags=NO_WINDOW,
+                            cwd=str(root), creationflags=NO_WINDOW, env=env,
                             stdout=log, stderr=subprocess.STDOUT)
 
 
@@ -941,7 +976,7 @@ def main() -> int:
     # 引导页补完根目录后由 ensure_server 重取，服务才装配得起来。
     boot = {"root": root, "serve_dir": serve_dir}
     server = ShellServer(lambda: build_app(boot["root"], boot["serve_dir"], flags, launcher,
-                                           launcher_api, COMFY_LOG),
+                                           launcher_api, COMFY_LOG, data_root=STATE),
                          port + SHELL_PORT_OFFSET)
     offline_url = ""
 

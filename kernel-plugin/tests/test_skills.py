@@ -76,10 +76,28 @@ def _png_data_uri(size=(2048, 1024)):
 class TestScanSkills(unittest.TestCase):
     """测试 skill.scan_skills 统一元数据"""
 
+    # multi_turn 断言针对自定义技能：测试数据根是隔离目录，夹具自建自清理
+    _MULTI_TURN_SKILLS = ("co-op-game-intro-generator", "3d-animation-short-generator")
+
     @classmethod
     def setUpClass(cls):
         import importlib as _il
         cls.skill_mod = _il.import_module(f"{_PKG_NAME}.skill")
+        cls._created_skill_dirs = []
+        for sid in cls._MULTI_TURN_SKILLS:
+            d = os.path.join(cls.skill_mod.SKILL_CUSTOM_DIR, sid)
+            if os.path.isfile(os.path.join(d, "skill.md")):
+                continue
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "skill.md"), "w", encoding="utf-8") as f:
+                f.write(f"---\nname: {sid}\nmulti_turn: true\n---\nfixture body\n")
+            cls._created_skill_dirs.append(d)
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        for d in cls._created_skill_dirs:
+            shutil.rmtree(d, ignore_errors=True)
 
     def _scan(self):
         return self.skill_mod.scan_skills()

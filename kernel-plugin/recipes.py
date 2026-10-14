@@ -37,6 +37,7 @@ from .bookmark import (
 )
 from .gallery_lora import LORA_CACHE_DIR, _load_lora_index
 from .util import PrefixFilter, _extract_media_metadata, _json_safe
+from . import plugin_paths
 
 logger.addFilter(PrefixFilter())
 
@@ -47,8 +48,7 @@ def _llm():
     return llm
 
 
-CURRENT_DIR = Path(__file__).parent.resolve()
-RECIPES_DIR = CURRENT_DIR / "recipes"
+RECIPES_DIR = plugin_paths.RECIPES_DIR
 CUSTOM_DIR = RECIPES_DIR / "custom"      # 用户保存的配方
 PRESETS_DIR = RECIPES_DIR / "presets"    # 内置预设（只读）
 THUMB_DIR = RECIPES_DIR / ".thumbs"      # 封面/网格缩略图缓存（按内容哈希命名，可整目录删除重建）

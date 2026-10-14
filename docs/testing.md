@@ -8,6 +8,11 @@ pytest 配置见 `pytest.ini`（`testpaths = tests`，无需启动 ComfyUI 即�
 python -m pytest tests -v
 ```
 
+全量跑要分进程（`tests/run-tests.ps1` 不带参数依次跑 `kernel-plugin/tests` 与 `app/tests`）：
+壳侧用例要真实 `folder_paths`，节点用例要桩掉的 comfy，同进程互不相容。
+根目录 `conftest.py` 在收集前把 `NEO_STUDIO_DATA` 钉进临时目录并在退出时清掉，
+删目录 / 写配置的用例因此碰不到 `Neo-Studio/data/` 与插件目录里的真实数据。
+
 ## Python 单测
 
 - `tests/test_llm.py` — 远程配置加载 / 迁移、模型下载（ModelScope / HuggingFace 回退）、翻译缓存、

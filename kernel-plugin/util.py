@@ -14,8 +14,10 @@ import re
 import difflib
 from pathlib import Path
 
+from . import plugin_paths
+
 CURRENT_DIR = Path(__file__).parent.resolve()
-CONFIGS_DIR = CURRENT_DIR / "configs"
+CONFIGS_DIR = plugin_paths.CONFIGS_DIR
 SETTINGS_FILE = CONFIGS_DIR / "gallery_settings.json"
 
 

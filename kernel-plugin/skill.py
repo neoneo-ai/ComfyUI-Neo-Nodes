@@ -49,18 +49,19 @@ try:
 except ImportError:  # pypinyin 缺失时中文拼音匹配静默不可用，其余功能正常
     lazy_pinyin = None
 from .minimax_h3 import _ratio, _filter_mode_sections, _h3_audit_and_repair, _h3_audit_events, _h3_grounding_check, _h3_mode, format_h3_context_lines
+from . import plugin_paths
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
 logger.addFilter(PrefixFilter())
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-SKILLS_DIR = os.path.join(CURRENT_DIR, "skills")
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))   # 同级 custom_nodes 探测
+SKILLS_DIR = str(plugin_paths.SKILLS_DIR)
 SKILL_PRESETS_DIR = os.path.join(SKILLS_DIR, "presets")
 SKILL_CUSTOM_DIR = os.path.join(SKILLS_DIR, "custom")
 TASKS_DIR = os.path.join(SKILLS_DIR, "tasks")
 # 预设技能本地配置覆盖（用户本机模型路径等；运行期并入有效 config，不进 git）
-SKILL_OVERRIDES_DIR = os.path.join(CURRENT_DIR, "configs", "skill_overrides")
+SKILL_OVERRIDES_DIR = str(plugin_paths.CONFIGS_DIR / "skill_overrides")
 
 for _d in (SKILLS_DIR, SKILL_PRESETS_DIR, SKILL_CUSTOM_DIR, TASKS_DIR, SKILL_OVERRIDES_DIR):
     if not os.path.exists(_d):

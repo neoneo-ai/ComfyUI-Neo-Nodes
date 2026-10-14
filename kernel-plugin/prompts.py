@@ -17,6 +17,7 @@ import base64
 from typing import Optional
 from server import PromptServer
 
+from . import plugin_paths
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
@@ -27,8 +28,7 @@ from . import skill
 from .llm import strip_inline_thinking
 from .bundles import create_bundle
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROMPTS_DIR = os.path.join(CURRENT_DIR, "prompts")
+PROMPTS_DIR = str(plugin_paths.PROMPTS_DIR)
 TAGS_FILE = os.path.join(PROMPTS_DIR, "_tags_index.json")
 PRESETS_DIR = os.path.join(PROMPTS_DIR, "presets")
 CUSTOM_DIR = os.path.join(PROMPTS_DIR, "custom")

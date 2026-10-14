@@ -1425,10 +1425,20 @@ class PluginUpdateTests(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertTrue((self.plugin / "web").is_dir())
         self.assertFalse((self.plugin / "old-code.js").exists(), "代码文件按新副本换")
-        self.assertEqual(json.loads((self.plugin / "configs" / "llm_providers.json").read_text(encoding="utf-8")), {})
-        self.assertEqual((self.plugin / "skills" / "custom" / "mine.md").read_text(encoding="utf-8"), "mine")
+        # 用户数据归壳的数据根，不跟着插件副本走：覆盖更新只换代码
+        self.assertFalse((self.plugin / "configs" / "llm_providers.json").exists())
+        self.assertFalse((self.plugin / "skills" / "custom").exists())
         self.assertFalse((self.state / "plugin_old").exists())
         self.assertFalse((self.state / "plugin_update").exists())
+
+    def test_install_leaves_a_data_pointer_for_the_kernel(self):
+        # 用户不经壳自己起 ComfyUI 时，插件靠这份指针找到壳的数据根
+        self._bundle("1.2.0")
+        with self._frozen():
+            ok, msg = app.ensure_plugin(self.plugin, self.source)
+        self.assertTrue(ok, msg)
+        cfg = json.loads((self.plugin / "configs" / "data_root.json").read_text(encoding="utf-8"))
+        self.assertEqual(pathlib.Path(cfg["data_root"]), self.state.resolve())
 
     def test_copy_without_version_gets_the_release(self):
         # 旧版 exe 装的副本没有 pyproject.toml：顶栏报 unknown，就是靠这一步补上

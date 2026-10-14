@@ -18,13 +18,14 @@ import os
 import threading
 from typing import Any, Dict, Optional
 
+from . import plugin_paths
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
 logger.addFilter(PrefixFilter())
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(CURRENT_DIR, "configs", "laya_config.json")
+CONFIG_PATH = str(plugin_paths.CONFIGS_DIR / "laya_config.json")
 MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), "..", "models", "LAYA")
 
 

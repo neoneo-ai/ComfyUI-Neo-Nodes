@@ -13,14 +13,14 @@ from aiohttp import web
 routes = web.RouteTableDef()
 import folder_paths
 
+from . import plugin_paths
 from .util import IMG_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS
 
 # ---------------------------------------------------------------------------
 # Paths (self-contained: this file lives next to gallery.py)
 # ---------------------------------------------------------------------------
-CURRENT_DIR = Path(__file__).parent.resolve()
-CONFIGS_DIR = CURRENT_DIR / "configs"
-GALLERY_DIR = CURRENT_DIR / "gallery"
+CONFIGS_DIR = plugin_paths.CONFIGS_DIR
+GALLERY_DIR = plugin_paths.GALLERY_DIR
 OSS_CACHE_DIR = GALLERY_DIR / "oss_cache"
 OSS_INDEX_CACHE_FILE = OSS_CACHE_DIR / "_index.json"
 

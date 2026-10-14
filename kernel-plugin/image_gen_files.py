@@ -13,13 +13,13 @@ import os
 import folder_paths
 from aiohttp import web
 
+from . import plugin_paths
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
 logger.addFilter(PrefixFilter())
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIGS_DIR = os.path.join(CURRENT_DIR, "configs")
+CONFIGS_DIR = str(plugin_paths.CONFIGS_DIR)
 SETTINGS_FILE = os.path.join(CONFIGS_DIR, "image_gen.json")
 
 DEFAULT_SETTINGS = {

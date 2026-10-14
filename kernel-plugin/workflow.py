@@ -15,6 +15,8 @@ import os
 import re
 import difflib
 
+from . import plugin_paths
+
 # ---------------------------------------------------------------------------
 # Workflow model-path repair
 # 导出/换机后的工作流里，模型文件名（ckpt_name 等）经常指向本机不存在的文件。
@@ -734,7 +736,7 @@ def _mappings_file() -> str:
         import folder_paths
         return os.path.join(folder_paths.get_user_directory(), "neo_repair_mappings.json")
     except Exception:
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "neo_repair_mappings.json")
+        return str(plugin_paths.DATA_ROOT / "neo_repair_mappings.json")
 
 
 def load_repair_mappings() -> dict:

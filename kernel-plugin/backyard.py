@@ -16,12 +16,13 @@ from aiohttp import web
 
 routes = web.RouteTableDef()
 
+from . import plugin_paths
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
 logger.addFilter(PrefixFilter())
 
-CONFIG_PATH = Path(__file__).parent / "configs" / "backyard_oss.json"
+CONFIG_PATH = plugin_paths.CONFIGS_DIR / "backyard_oss.json"
 
 
 def _load_config() -> dict:

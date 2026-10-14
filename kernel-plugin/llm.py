@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 import aiohttp
 from aiohttp import web
 
-from . import laya_router, prompt_lines, skill
+from . import laya_router, plugin_paths, prompt_lines, skill
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logger.addFilter(PrefixFilter())
 # LLM Configuration & Management
 # ==========================================
 
-_CONFIGS_DIR: str = os.path.join(os.path.dirname(__file__), "configs")
+_CONFIGS_DIR: str = str(plugin_paths.CONFIGS_DIR)
 _PROVIDERS_CONFIG_PATH = os.path.join(_CONFIGS_DIR, "llm_providers.json")
 
 # 内置兜底（llm_providers.json 缺失时使用），内容与 configs/llm_providers.json 保持一致

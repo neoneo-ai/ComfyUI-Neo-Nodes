@@ -20,6 +20,7 @@ import studio_caps as caps
 
 OFFLINE_ERROR = "ComfyUI 未运行"
 SHELL_PKG = "_neo_studio_shell"
+DATA_ROOT_ENV = "NEO_STUDIO_DATA"   # 插件模块 import 期认的用户数据根
 
 # 壳进程加载的插件模块，按依赖顺序：handler 只依赖 folder_paths、文件系统与 8080 LLM 服务。
 SHELL_MODULES = ("util", "civitai", "bookmark", "gallery_lora", "gallery_oss", "gallery",
@@ -185,14 +186,19 @@ async def launcher_post(request):
 
 
 def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict = None,
-              launcher_api: dict = None, comfy_log: Path = None) -> web.Application:
+              launcher_api: dict = None, comfy_log: Path = None,
+              data_root: Path = None) -> web.Application:
     """壳侧 app：Studio 页面 + 前端静态文件 + 能力清单里归壳的全部路由。
     flags 是壳的启动中标记（与 StudioShell 共用同一份 dict），随版本快照下发给页面。
-    launcher / launcher_api 同样与 StudioShell 共用：设置页在壳侧读快照、发保存。"""
+    launcher / launcher_api 同样与 StudioShell 共用：设置页在壳侧读快照、发保存。
+    data_root 是壳的用户数据根：插件模块 import 期按它找 gallery / recipes / configs，
+    壳侧服务与壳拉起的内核因此读同一份数据。"""
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
 
+    if data_root:
+        os.environ[DATA_ROOT_ENV] = str(data_root)
     routes = web.RouteTableDef()
     routes.get("/neo-studio")(studio_page)
     routes.static("/extensions/ComfyUI-Neo-Nodes", str(plugin_dir / "web"))

@@ -27,7 +27,7 @@ from .util import (
 )
 # 收藏相关常量统一由 bookmark 模块提供（收藏后端逻辑收敛到 bookmark.py）。
 # bookmark 不反向导入本模块，避免循环导入。
-from . import civitai
+from . import civitai, plugin_paths
 from .bookmark import (
     CIVITAI_BOOKMARK_DIR,
     CIVITAI_DIR_KEY,
@@ -38,8 +38,8 @@ from .bookmark import (
 # Paths
 # ---------------------------------------------------------------------------
 CURRENT_DIR = Path(__file__).parent.resolve()
-CONFIGS_DIR = CURRENT_DIR / "configs"
-GALLERY_DIR = CURRENT_DIR / "gallery"
+CONFIGS_DIR = plugin_paths.CONFIGS_DIR
+GALLERY_DIR = plugin_paths.GALLERY_DIR
 PRESETS_DIR = GALLERY_DIR / "presets"
 CUSTOM_DIR = GALLERY_DIR / "custom"
 THUMBNAIL_DIR = GALLERY_DIR / "thumbnails"

@@ -17,7 +17,7 @@ import aiohttp
 from aiohttp import web
 routes = web.RouteTableDef()
 
-from . import civitai
+from . import civitai, plugin_paths
 from .util import (
     IMG_EXTENSIONS,
     VIDEO_EXTENSIONS,
@@ -26,9 +26,8 @@ from .util import (
     _json_safe,
 )
 
-CURRENT_DIR = Path(__file__).parent.resolve()
-GALLERY_DIR = CURRENT_DIR / "gallery"
-CONFIGS_DIR = CURRENT_DIR / "configs"
+GALLERY_DIR = plugin_paths.GALLERY_DIR
+CONFIGS_DIR = plugin_paths.CONFIGS_DIR
 CIVITAI_BOOKMARK_DIR = GALLERY_DIR / "civitai_bookmarks"  # cached example images for bookmarked C-site models
 CIVITAI_DIR_KEY = "civitai_bookmarks"  # stable dir_name key for the bookmarked C-site models virtual dir (display name is frontend-only)
 BOOKMARKS_FILE = CONFIGS_DIR / "bookmarks.json"  # local bookmarks: path info only

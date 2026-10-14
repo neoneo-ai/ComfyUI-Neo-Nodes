@@ -2727,8 +2727,14 @@ class HybridKeyframeTests(unittest.TestCase):
     """P2 Hybrid：r2v 段注入首帧 keyframe 锚点 + cond 合并 wrapper 的单元测试。"""
 
     def setUp(self):
-        # 各测试模块都会重写 comfy.patcher_extension 桩（后导入者生效），这里确保 APPLY_MODEL 可用
-        wrappers = sys.modules["comfy.patcher_extension"].WrappersMP
+        # 各测试模块都会重写 comfy.patcher_extension 桩（后导入者生效、跨文件恢复会摘掉它）
+        pe = sys.modules.get("comfy.patcher_extension")
+        if pe is None:
+            pe = types.ModuleType("comfy.patcher_extension")
+            pe.WrappersMP = types.SimpleNamespace()
+            pe.add_wrapper_with_key = lambda *a, **k: None
+            sys.modules["comfy.patcher_extension"] = pe
+        wrappers = pe.WrappersMP
         if not hasattr(wrappers, "APPLY_MODEL"):
             wrappers.APPLY_MODEL = "APPLY_MODEL"
 
@@ -3074,8 +3080,14 @@ class ContextWindowTests(unittest.TestCase):
     """跨段上下文窗口：窗口帧数/步数、参考块构造、时间轴对齐。"""
 
     def setUp(self):
-        # 各测试模块都会重写 comfy.patcher_extension 桩（后导入者生效），这里确保 APPLY_MODEL 可用
-        wrappers = sys.modules["comfy.patcher_extension"].WrappersMP
+        # 各测试模块都会重写 comfy.patcher_extension 桩（后导入者生效、跨文件恢复会摘掉它）
+        pe = sys.modules.get("comfy.patcher_extension")
+        if pe is None:
+            pe = types.ModuleType("comfy.patcher_extension")
+            pe.WrappersMP = types.SimpleNamespace()
+            pe.add_wrapper_with_key = lambda *a, **k: None
+            sys.modules["comfy.patcher_extension"] = pe
+        wrappers = pe.WrappersMP
         if not hasattr(wrappers, "APPLY_MODEL"):
             wrappers.APPLY_MODEL = "APPLY_MODEL"
 

@@ -30,9 +30,13 @@ TEST_PORT = 8291
 STUDIO_URL = "/neo-studio"
 SAMPLE = ("CharacterSheet", "2026-09-27_00001_.png")   # 整合包里的真实产物，只读
 CONFIGS = PLUGIN_DIR / "configs"
-# 写入用例落真实配置文件的这些目标：用例前后快照还原，不留测试数据
-WRITE_TARGETS = (CONFIGS / "image_gen.json", CONFIGS / "bookmarks.json",
-                 CONFIGS / "remote_llm_config.json")
+# 写入用例落数据根的这些配置文件：用例前后快照还原，不留测试数据
+WRITE_FILES = ("image_gen.json", "bookmarks.json", "remote_llm_config.json")
+
+
+def _data_root() -> Path:
+    """壳侧加载的插件模块实际用的用户数据根：写入用例的落点与断言都以它为准。"""
+    return sys.modules[f"{ns.SHELL_PKG}.plugin_paths"].DATA_ROOT
 # 必须 ComfyUI 在跑才有的接口：壳一律 409 offline，前端据此门控
 COMFY_ONLY_ROUTES = (
     "/neo_image_gen/generate",
@@ -260,7 +264,8 @@ class ShellWriteTests(_ServerCase):
     """离线可编辑面：设置 / 收藏 / 配方 / 技能都是真实落盘写入。"""
 
     def setUp(self):
-        self._saved = _snapshot(WRITE_TARGETS)
+        self.configs = _data_root() / "configs"
+        self._saved = _snapshot(tuple(self.configs / n for n in WRITE_FILES))
         self._extra_dirs = []
 
     def tearDown(self):
@@ -289,7 +294,7 @@ class ShellWriteTests(_ServerCase):
         name = "shell-test-recipe"
         status, body = self.post_json("/rs_recipes/save", {"name": name, "prompt": "shell offline"})
         self.assertEqual(status, 200, body)
-        recipe_dir = PLUGIN_DIR / "recipes" / "custom" / name
+        recipe_dir = _data_root() / "recipes" / "custom" / name
         self._extra_dirs.append(recipe_dir)
         self.assertTrue((recipe_dir / "recipe.json").is_file())
         status, body = self.post_json("/rs_recipes/list", {"source": "custom"})
@@ -302,7 +307,7 @@ class ShellWriteTests(_ServerCase):
                                       {"id": skill_id, "name": "Shell Test Skill",
                                        "content": "# shell\n离线写入", "source": "custom"})
         self.assertEqual(status, 200, body)
-        skill_dir = PLUGIN_DIR / "skills" / "custom" / skill_id
+        skill_dir = _data_root() / "skills" / "custom" / skill_id
         self._extra_dirs.append(skill_dir)
         self.assertTrue((skill_dir / "skill.md").is_file())
         status, body = self.post_json("/rs_prompts/delete_skill",
@@ -324,7 +329,7 @@ class ShellWriteTests(_ServerCase):
         self.assertEqual(status, 200)
         self.assertEqual(slot["api_key"], shell_llm.API_KEY_MASK)
         self.assertEqual(slot["model"], "gpt-4o-mini")
-        saved = json.loads((CONFIGS / "remote_llm_config.json").read_text(encoding="utf-8"))
+        saved = json.loads((self.configs / "remote_llm_config.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["providers"]["openai"]["api_key"], "sk-shell-secret")
 
 
