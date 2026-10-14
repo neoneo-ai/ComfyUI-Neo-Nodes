@@ -1,0 +1,97 @@
+# Release & Offline Tools
+
+> 🇨🇳 中文: [../release.md](../release.md)
+
+Entry point for developers: [../../Developer_EN.md](../../Developer_EN.md).
+
+## Release
+
+### What goes into the package
+
+`.comfyignore` (gitignore syntax) decides what the Registry package contains: comfy-cli takes the files
+git tracks minus the entries listed there. `tests/`, `tools/`, `.github/`, `.vscode/`, `test-results/`,
+`pytest.ini`, `package.json` and the rest of the development files are excluded; the runtime `.py`
+files, `web/` (including the `web/docs/` node help), `configs/`, `skills/`, `prompts/`,
+`example_workflows/` and README/LICENSE/pyproject/requirements stay in. Untracked local files
+(`node_modules/`, `tmp/`, the gallery caches, `configs/backyard_oss.json`) are already excluded by
+`.gitignore` and need no entry here. The app repository's `README_ZH.md`, `Developer.md` and `docs/`
+live outside `kernel-plugin/` and are not part of the Registry package.
+
+Registry installs read only the `dependencies` in `pyproject.toml`; `requirements.txt` serves
+ComfyUI-Manager and the development environment, and the two have to stay aligned. Optional extras
+(`laya` / `pillow-heif` / `oss2`) live in `[project.optional-dependencies]`.
+
+Registry and frontend search hits come from the `description` / `keywords` in `pyproject.toml` and the
+nodes' own `SEARCH_ALIASES` (convention: "Node metadata" in [architecture.md](architecture.md),
+validated by `tests/test_node_metadata.py`).
+
+### Git Action route
+
+- Registry metadata lives in `[tool.comfy]` inside `kernel-plugin/pyproject.toml` (PublisherId
+  `neoneo-ai`, DisplayName `Neo Studio`).
+- `.github/workflows/publish.yaml`: on a `v*` tag push, a Release publish, or a manual trigger, it runs
+  `comfy node publish --token` inside `kernel-plugin/` (needs the `COMFY_REGISTRY_PUBLISH_TOKEN`
+  secret). Publishing has to run at that level: `pyproject.toml` and `.comfyignore` are both in
+  `kernel-plugin/`, and the root `pyproject.toml` is the desktop shell's own manifest.
+
+```bash
+# 1. Bump the version (to 1.0.1 for example): edit version = "1.0.1" in kernel-plugin/pyproject.toml
+git add kernel-plugin/pyproject.toml
+git commit -m "Bump version to 1.0.1"
+
+# 2. Tag it (pointing at that new commit)
+git tag v1.0.1
+
+# 3. Push code + tag, publishing is triggered
+git push origin main v1.0.1
+```
+
+### comfy cli route
+
+```bash
+cd kernel-plugin
+comfy node publish    # enter the API TOKEN when asked
+```
+
+## Desktop build & source install
+
+```powershell
+# Desktop shell packaging: onefile single file / onedir folder build / both;
+# the payload = kernel-plugin's git-tracked files
+tools\build_studio_exe.ps1 [-Mode onefile|onedir|both] [-DryRun]
+tools\build_studio_exe.ps1 -Mode both -Sign -CertThumbprint <thumbprint>   # signtool signing + verify
+tools\build_studio_exe.ps1 -Notarize -AppleTeamId <TeamID>          # macOS notarytool (macOS only)
+tools\build_studio_exe.ps1 -Publish                                  # comfy node publish
+
+# Source install of the kernel plugin: code and built-in presets only, writes the
+# configs/data_root.json data-root pointer, never deletes anything in the target directory
+# The script is UTF-8 without BOM, run it with pwsh (PowerShell 7); Windows PowerShell 5.1
+# reads the Chinese comments as mojibake
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
+```
+
+## Offline tools
+
+The scripts under `tools/` build and deploy the asset presets; they are never loaded by the ComfyUI
+runtime:
+
+```bash
+# 1. Preprocess: scan the preset directories, generate thumbnails and index.json (ffmpeg is needed for
+#    video thumbnails)
+python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir> [--size 320]
+
+# Incremental mode: only add/update the named subdirectories (files deleted from the source are cleaned
+# up in sync), pulling the latest index.json from OSS (configs/oss_presets.json -> index_url) as the
+# merge base; every other directory is left alone. --no-fetch-index merges with the local index.json
+# instead, --fetch-index <url> states the source explicitly.
+# --presets may be omitted: the current working directory is used by default (just put the new and
+# updated directories under it)
+cd <dir_with_new_dirs> && python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
+
+# 2. Deploy: upload the preprocessed output to Aliyun OSS (needs pip install oss2,
+#    credentials from OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET / OSS_ENDPOINT)
+python tools/gallery_deploy_oss.py --source <output_dir> --bucket <bucket> --prefix <prefix>
+```
+
+The deployed OSS source is configured through `configs/oss_presets.json` and pulled at runtime by
+`gallery_oss.py` into `gallery/oss_cache/`.

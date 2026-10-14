@@ -4,6 +4,18 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- English documentation mirror. `docs/en/` is a one-to-one English copy of every module doc; each English page
+  links back to its Chinese original and each Chinese doc links to its English counterpart, and English pages only
+  link to English pages. The root `README.md` (English) points at `docs/en/*` while `README_ZH.md` keeps pointing
+  at the Chinese docs; the developer entry points are `Developer.md` (中文) and `Developer_EN.md` (English).
+  `kernel-plugin/README.md` is now English with `README_ZH.md` beside it, so the Registry package ships the
+  English readme.
+- Root `README.md`: the "Neo Studio (Standalone App)" section is split into **Entry points** (table), **The
+  shell is a launcher, not just a viewer**, **Window & icon** and **Build the launcher** instead of three
+  prose walls.
+- The `nine_grid_storyboard` preset's `skill.md` no longer links to `../../docs/gallery.md`: `docs/` is not
+  shipped in the Registry package, so that relative link was unreachable in every installed copy. It now names
+  the gallery doc as plain text.
 - The desktop shell syncs the plugin into `custom_nodes` by itself. Running from source (`neo-studio-app.vbs`)
   copies `kernel-plugin/` over `ComfyUI/custom_nodes/comfyui-neo-studio` on every launch and before every
   "▶ Start kernel": same-name files only, files whose size and mtime already match are skipped, a file the

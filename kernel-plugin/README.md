@@ -1,44 +1,53 @@
-# Neo Studio — ComfyUI 内核插件
+# Neo Studio — ComfyUI kernel plugin
 
-Neo Studio 的 ComfyUI 侧插件：提示词、生图、视频、素材与配方相关的全部节点，`/neo-studio` 页面所需的前端资源，
-以及 Gallery / Recipes / Model Hub / 工作流修复等 API 路由。桌面壳（应用仓库 `Neo-Studio`）负责拉起 ComfyUI
-与数据目录，本插件在 ComfyUI 进程内运行，单独安装也能用。
+> 🇨🇳 中文: [README_ZH.md](README_ZH.md)
 
-完整说明见应用仓库：https://github.com/neoneo-ai/Neo-Studio
+The ComfyUI-side plugin of Neo Studio: every node for prompts, image generation, video, assets and recipes, the
+frontend resources the `/neo-studio` page needs, and the Gallery / Recipes / Model Hub / workflow-repair API
+routes. The desktop shell (the application repository `Neo-Studio`) is responsible for launching ComfyUI and the
+data directories; this plugin runs inside the ComfyUI process and works when installed on its own.
 
-## 安装
+Full documentation lives in the application repository: https://github.com/neoneo-ai/Neo-Studio
 
-- **ComfyUI Manager**：搜索 `Neo Studio` 一键安装。
-- **comfy CLI**：`comfy node install comfyui-neo-studio`。
-- **手动**：把本目录放到 `ComfyUI/custom_nodes/comfyui-neo-studio`，重启 ComfyUI。
-  目录名必须与之一致——ComfyUI 按目录名挂前端资源，URL 前缀是 `/extensions/comfyui-neo-studio/`。
+## Installation
 
-从旧版 `comfyui-neo-nodes` 升级时，先删掉 `custom_nodes/ComfyUI-Neo-Nodes` 再装本包：包名换了，
-两个目录同时存在会把同一批节点注册两遍。
+- **ComfyUI Manager**: search `Neo Studio` for a one-click install.
+- **comfy CLI**: `comfy node install comfyui-neo-studio`.
+- **Manual**: put this directory at `ComfyUI/custom_nodes/comfyui-neo-studio` and restart ComfyUI.
+  The directory name must match exactly — ComfyUI mounts frontend resources by directory name, and the URL prefix
+  is `/extensions/comfyui-neo-studio/`.
 
-## 依赖
+When upgrading from the old `comfyui-neo-nodes`, delete `custom_nodes/ComfyUI-Neo-Nodes` before installing this
+package: the package name changed, and having both directories registers the same nodes twice.
 
-`requirements.txt`：`openai`、`PyYAML`、`pypinyin`、`Pillow`（Pillow 由 ComfyUI 核心自带）。
-可选增强，缺包时对应功能自行降级：`laya`（智能 skill 选择）、`pillow-heif`（HEIC 读取）、
-`oss2`（Backyard OSS 上传）、`llama_cpp_python`（Local GGUF 本地推理）。
+## Dependencies
 
-## 数据目录
+`requirements.txt`: `openai`, `PyYAML`, `pypinyin`, `Pillow` (Pillow ships with ComfyUI core).
+Optional enhancements; the matching feature degrades on its own when a package is missing: `laya` (smart skill
+selection), `pillow-heif` (HEIC reading), `oss2` (Backyard OSS upload), `llama_cpp_python` (Local GGUF local
+inference).
 
-用户数据（gallery / recipes / prompts / skills / configs）不随插件目录走，解析顺序：
+## Data directories
 
-1. 环境变量 `NEO_STUDIO_DATA`（桌面壳拉起 ComfyUI 时注入）；
-2. 插件目录里的指针 `configs/data_root.json`（壳写入，用户自己启动 ComfyUI 时也认得）；
-3. 两者都落空才回退插件目录本身——单独安装、测试里临时造目录走这条。
+User data (gallery / recipes / prompts / skills / configs) does not travel with the plugin directory. Resolution
+order:
 
-数据根第一次使用时，插件目录里的内置预设（`configs/`、`prompts/presets/`、`skills/presets/`、
-`skills/tasks/`、`recipes/presets/`）会补进去，只补缺失文件，用户改过的不覆盖。
+1. the `NEO_STUDIO_DATA` environment variable (injected when the desktop shell launches ComfyUI);
+2. the pointer `configs/data_root.json` inside the plugin directory (written by the shell, honored when you start
+   ComfyUI yourself);
+3. only when both are missing does it fall back to the plugin directory itself — the path taken by standalone
+   installs and by tests that create a temporary directory.
 
-## 节点文档
+On first use of a data root, the built-in presets from the plugin directory (`configs/`, `prompts/presets/`,
+`skills/presets/`, `skills/tasks/`, `recipes/presets/`) are seeded into it; only missing files are added, and
+anything the user changed is never overwritten.
 
-逐节点的参数与用法在本目录的 `web/docs/` 里，ComfyUI 里点节点的帮助按钮也是打开它们
-（文件名即节点键，与下表第一列一致）：
+## Node documentation
 
-| 节点键 | 文档 |
+Per-node parameters and usage live in `web/docs/` of this directory, and the help button on a node in ComfyUI
+opens them (the file name is the node key, matching the first column below):
+
+| Node key | Document |
 | --- | --- |
 | `NeoPromptEncoder` | `web/docs/NeoPromptEncoder.md` |
 | `NeoPromptAgent` | `web/docs/NeoPromptAgent.md` |
@@ -52,6 +61,6 @@ Neo Studio 的 ComfyUI 侧插件：提示词、生图、视频、素材与配方
 | `NeoH3AddGuides` | `web/docs/NeoH3AddGuides.md` |
 | `NeoH3SegmentRun` | `web/docs/NeoH3SegmentRun.md` |
 
-## 许可证
+## License
 
-Apache-2.0，见 `LICENSE`。
+Apache-2.0, see `LICENSE`.

@@ -1,12 +1,15 @@
 # Neo Studio 开发者文档
 
+> 🇬🇧 English: [Developer_EN.md](Developer_EN.md)
+
 面向开发者：项目结构、前后端模块职责、API 路由、节点注册、数据目录、测试与发布。
-终端用户使用文档见 [README.md](README.md)，详细文档按大模块拆分在 `docs/`（索引见 [docs/README.md](docs/README.md)）。
+终端用户使用文档见 [README_ZH.md](README_ZH.md)，详细文档按大模块拆分在 `docs/`（索引见 [docs/README.md](docs/README.md)）。
 
 ## 文档地图
 
 | 文档 | 内容 |
 |------|------|
+| [docs/en/README.md](docs/en/README.md) | 英文文档镜像（以下各文档的英文版） |
 | [docs/architecture.md](docs/architecture.md) | 项目结构、模块职责、节点注册、数据与配置目录 |
 | [docs/api-routes.md](docs/api-routes.md) | 后端 API 路由一览 |
 | [docs/testing.md](docs/testing.md) | pytest 单测与 JS 回归测试（golden 快照、run-tests.ps1） |

@@ -1,7 +1,9 @@
 # 文档索引
 
+> 🇬🇧 English: [en/README.md](en/README.md)
+
 本目录按大模块拆分插件文档。总入口仍是根目录的 [README.md](../README.md)（终端用户）
-与 [Developer.md](../Developer.md)（开发者）。
+与 [Developer.md](../Developer.md)（开发者）。英文文档镜像见 [en/README.md](en/README.md)。
 
 ## 功能模块（终端用户）
 
