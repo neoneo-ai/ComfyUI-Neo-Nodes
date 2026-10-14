@@ -6,7 +6,7 @@ Neo Studio 的 ComfyUI 侧插件：提示词、生图、视频、素材与配方
 以及 Gallery / Recipes / Model Hub / 工作流修复等 API 路由。桌面壳（应用仓库 `Neo-Studio`）负责拉起 ComfyUI
 与数据目录，本插件在 ComfyUI 进程内运行，单独安装也能用。
 
-完整说明见应用仓库：https://github.com/neoneo-ai/Neo-Studio
+完整说明见应用仓库：https://github.com/neoneo-ai/neo-studio
 
 ## 安装
 

@@ -116,7 +116,7 @@ test("关于插件弹窗显示源码与 License", async () => {
     aboutItem.click();
     const dialog = document.querySelector(".neo-n-about-dialog");
     assert.ok(dialog, "关于弹窗未打开");
-    assert.match(dialog.textContent, /github\.com\/neoneo-ai\/Neo-Studio/);
+    assert.match(dialog.textContent, /github\.com\/neoneo-ai\/neo-studio/);
     assert.match(dialog.textContent, /Apache-2\.0/);
     await flush();   // 等版本 fetch 承诺链落定
     assert.match(dialog.textContent, /v9\.9\.9/);

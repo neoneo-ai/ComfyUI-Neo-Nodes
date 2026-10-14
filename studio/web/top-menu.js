@@ -21,7 +21,7 @@ import { openGenMaterialDialog } from "./gallery-gen.js";
 import { openModelHub } from "./model-hub.js";
 
 const STUDIO_URL = "/neo-studio";
-const REPO_URL = "https://github.com/neoneo-ai/Neo-Studio";
+const REPO_URL = "https://github.com/neoneo-ai/neo-studio";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单

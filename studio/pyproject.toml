@@ -44,10 +44,10 @@ oss = ["oss2"]
 desktop = ["pywebview"]
 
 [project.urls]
-Homepage = "https://github.com/neoneo-ai/Neo-Studio"
-Repository = "https://github.com/neoneo-ai/Neo-Studio"
-Documentation = "https://github.com/neoneo-ai/Neo-Studio#readme"
-Issues = "https://github.com/neoneo-ai/Neo-Studio/issues"
+Homepage = "https://github.com/neoneo-ai/neo-studio"
+Repository = "https://github.com/neoneo-ai/neo-studio"
+Documentation = "https://github.com/neoneo-ai/neo-studio#readme"
+Issues = "https://github.com/neoneo-ai/neo-studio/issues"
 
 [tool.comfy]
 PublisherId = "neoneo-ai"

@@ -112,7 +112,7 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 ComfyUI 及其 Python 解释器，不自带 ComfyUI。
 
 - **便携版** — 单文件 `Neo-Studio-<版本>-windows-x64.exe`，由 `.github/workflows/release-app.yml`
-  挂在 [GitHub Releases](https://github.com/neoneo-ai/Neo-Studio/releases)（`tools\build_studio_exe.ps1`
+  挂在 [GitHub Releases](https://github.com/neoneo-ai/neo-studio/releases)（`tools\build_studio_exe.ps1`
   构建，未签名，首次运行会有 SmartScreen 提示）。exe 从自身位置推导 ComfyUI 根目录与解释器，
   找不到时打开首次设置页，并用自带的插件副本安装 / 更新插件——用户数据目录沿用，git 检出目录永不改写。
 - **源码版** — 克隆仓库后运行 `tools\neo-studio-app.vbs`（无控制台黑窗；`tools\neo-studio-app.bat`
@@ -129,8 +129,11 @@ ComfyUI 及其 Python 解释器，不自带 ComfyUI。
 - **手动克隆**：克隆成 `ComfyUI/custom_nodes/comfyui-neo-studio`，然后重启 ComfyUI
 
 ```bash
-git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
+git clone https://github.com/neoneo-ai/neo-studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
+
+克隆安装认的是仓库根的 `__init__.py`，它把节点与路由注册交给 `studio/`；正式安装的副本
+（Registry、Manager、`tools\install_plugin.ps1`、壳同步）根目录就是 `studio/__init__.py`，不经过这个文件。
 
 源码安装：`tools\install_plugin.ps1` 把代码与内置预设装进插件目录，并写好 `configs/data_root.json`
 数据根指针（用户数据在插件目录之外，卸载只删插件目录）。命令、参数与发布开关见

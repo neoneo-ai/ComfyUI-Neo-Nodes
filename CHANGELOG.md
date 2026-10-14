@@ -188,6 +188,11 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   `custom_nodes/comfyui-neo-studio` directory, node names and the data root are untouched; only repo paths,
   tooling and docs moved. `conftest.py` keeps a placeholder `studio` package so pytest collection no longer
   runs the plugin entry point.
+- Repo root `__init__.py` entry for the git-clone install form: cloning the repo straight into
+  `custom_nodes/comfyui-neo-studio` registers through `studio/` again. It only registers when loaded from
+  `custom_nodes`, so tooling that imports the repo root as a package stays inert.
+- Repository renamed `ComfyUI-Neo-Nodes` → `neo-studio`; the app history merged onto the plugin history so
+  `v1.0.0`..`v1.2.0` are ancestors of `main`. All `github.com/neoneo-ai` links point at the new name.
 
 ## [1.2.0] - 2026-10-08
 

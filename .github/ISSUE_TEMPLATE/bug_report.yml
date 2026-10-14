@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         插件版本在 ComfyUI 启动日志的版本横幅里（`[Neo Studio] vX.Y.Z`）。
-        文档索引：https://github.com/neoneo-ai/Neo-Studio/tree/main/docs
+        文档索引：https://github.com/neoneo-ai/neo-studio/tree/main/docs
   - type: dropdown
     id: module
     attributes:

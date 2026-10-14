@@ -75,7 +75,7 @@ Settings), it starts and stops ComfyUI from its own settings page, and it puts t
 Python interpreter; it does not bundle ComfyUI.
 
 - **Portable app** — a single file, `Neo-Studio-<version>-windows-x64.exe`, attached to
-  [GitHub Releases](https://github.com/neoneo-ai/Neo-Studio/releases) by
+  [GitHub Releases](https://github.com/neoneo-ai/neo-studio/releases) by
   `.github/workflows/release-app.yml` (built by `tools\build_studio_exe.ps1`, unsigned — expect a
   SmartScreen prompt on first run). It derives the ComfyUI root and the interpreter from its
   own location, opens a first-setup page when it cannot find them, and installs or updates the
@@ -95,8 +95,12 @@ The window, the offline service and the kernel controls:
 - **Manual**: clone into `ComfyUI/custom_nodes/`, then restart ComfyUI:
 
 ```bash
-git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
+git clone https://github.com/neoneo-ai/neo-studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
+
+The clone form runs on the repo root `__init__.py`, which hands node and route registration to
+`studio/`; the installed package (Registry, Manager, `tools/install_plugin.ps1`, shell sync) has
+`studio/__init__.py` at its own root and never goes through it.
 
 Source install: `tools/install_plugin.ps1` installs the code and the built-in presets and writes the
 `configs/data_root.json` data-root pointer (user data lives outside the plugin dir, so uninstalling

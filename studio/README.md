@@ -7,7 +7,7 @@ frontend resources the `/neo-studio` page needs, and the Gallery / Recipes / Mod
 routes. The desktop shell (the application repository `Neo-Studio`) is responsible for launching ComfyUI and the
 data directories; this plugin runs inside the ComfyUI process and works when installed on its own.
 
-Full documentation lives in the application repository: https://github.com/neoneo-ai/Neo-Studio
+Full documentation lives in the application repository: https://github.com/neoneo-ai/neo-studio
 
 ## Installation
 

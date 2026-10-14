@@ -105,7 +105,7 @@
 Neo Studio：提示词 AI 增强、生图与参考编辑、MiniMax H3 多段导演，
 一个插件全在里面；LLM 可在 ComfyUI 进程内零依赖运行。
 安装：ComfyUI Manager 搜 Neo Studio，或 git clone 到 custom_nodes 后重启。
-仓库：github.com/neoneo-ai/Neo-Studio
+仓库：github.com/neoneo-ai/neo-studio
 标签：ComfyUI / AI视频 / MiniMax H3 / ComfyUI教程 / AIGC
 ```
 

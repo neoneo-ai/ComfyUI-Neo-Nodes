@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: 模块文档 / Module docs
-    url: https://github.com/neoneo-ai/Neo-Studio/tree/main/docs
+    url: https://github.com/neoneo-ai/neo-studio/tree/main/docs
     about: LLM 三模式配置、生图、导演配方、模型库、工作流修复先查这里 / Check LLM setup, image generation, director recipes, model hub and workflow repair docs first
   - name: ComfyUI 核心问题 / ComfyUI core issues
     url: https://github.com/comfyanonymous/ComfyUI/issues
