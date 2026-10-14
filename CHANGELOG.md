@@ -4,6 +4,13 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- Fixed the desktop shell failing to open its window on machines where .NET Framework hosting is broken
+  (`Failed to resolve Python.Runtime.Loader.Initialize`). The shell now bootstraps clr before
+  `webview.start()` and, when netfx hosting fails, overrides `pythonnet`'s runtime with coreclr — pywebview's
+  own coreclr fallback never engages because the netfx runtime object already occupies `pythonnet._RUNTIME`.
+  coreclr needs the desktop runtime for `System.Windows.Forms`, so the bundle ships
+  `tools/coreclr.runtimeconfig.json` (`Microsoft.WindowsDesktop.App`, `LatestMajor`) into `_internal/runtime/`.
+  `release-app.yml` now builds on Python 3.12, matching the locally verified build.
 - `.github/workflows/release-app.yml`: pushing a `v*` tag (or a manual dispatch) runs
   `tools\build_studio_exe.ps1` on `windows-latest` and attaches both distribution forms to that tag's
   GitHub Release — the onefile exe and the onedir build zipped whole (`mode` defaults to `both`) — so

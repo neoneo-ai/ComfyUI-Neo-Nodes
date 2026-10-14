@@ -95,6 +95,20 @@ The assets are unsigned, so expect a SmartScreen prompt on first run; signing an
 local (`-Sign` / `-Notarize`), since CI has no machine certificate and cannot run the macOS path.
 Publishing to the Registry is `publish.yaml`'s job — the two workflows are independent.
 
+CI builds on Python 3.12, matching the locally verified build.
+
+### CLR hosting fallback
+
+The shell window is pywebview's WinForms backend, which needs pythonnet to host .NET. On some machines the
+.NET Framework (netfx) hosting fails — `Python.Runtime.Loader.Initialize` cannot be resolved inside the
+AppDomain and no window opens. The shell imports clr itself before `webview.start()` and, on failure,
+overrides `pythonnet`'s runtime with coreclr and loads it again: pywebview's own coreclr fallback is inert
+under pythonnet 3.x (the netfx runtime object already occupies `pythonnet._RUNTIME`, so re-importing after
+setting the environment variable reuses the broken netfx). coreclr needs the desktop runtime
+(`System.Windows.Forms` lives in `Microsoft.WindowsDesktop.App`), so the bundle ships
+`tools/coreclr.runtimeconfig.json` → `_internal/runtime/`. A switch logs `clr switched to coreclr` into
+`data/studio_shell.log`.
+
 ## Offline tools
 
 The scripts under `tools/` build and deploy the asset presets; they are never loaded by the ComfyUI

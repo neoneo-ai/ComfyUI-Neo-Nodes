@@ -128,6 +128,9 @@ READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 POLL_INTERVAL = 2.0
 WEBVIEW_CACHE = PROFILE_DIR / "EBWebView" / "Default" / "Cache"   # WebView2 的 HTTP 缓存，跨会话留着
 STUDIO_ICON = (RES_DIR / "web" / "neo-studio.ico") if IS_FROZEN else (PLUGIN_SOURCE_DIR / "web" / "neo-studio.ico")   # tools/make_studio_icon.py 生成
+# coreclr 兜底要的运行时配置：System.Windows.Forms 在 Microsoft.WindowsDesktop.App 里，
+# clr_loader 默认只会挑 Microsoft.NETCore.App，不给这份配置兜底必崩
+CORECLR_CONFIG = (RES_DIR / "runtime" / "coreclr.runtimeconfig.json") if IS_FROZEN else (REPO_ROOT / "tools" / "coreclr.runtimeconfig.json")
 APP_ID = "Neo.Studio"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
 PROCESS_TERMINATE = 0x0001
@@ -1159,6 +1162,25 @@ def singleton():
     return h or None
 
 
+def ensure_clr() -> None:
+    """开窗口前把 pythonnet 的 CLR 宿主装好，netfx 起不来就换 coreclr。
+
+    pywebview 自己的 coreclr 兜底是失效的：netfx 的 runtime 对象已经占住 pythonnet._RUNTIME，
+    它改完环境变量再 import 走的还是那个坏掉的 netfx，异常原样抛出来（窗口都开不出来）。
+    换 coreclr 必须显式 set_runtime 覆盖 _RUNTIME，运行时配置走 CORECLR_CONFIG（桌面运行时）。"""
+    try:
+        import clr  # noqa: F401
+        return
+    except Exception as exc:
+        log_line(f"clr netfx failed: {exc!r}")
+    if CORECLR_CONFIG.exists():
+        os.environ.setdefault("PYTHONNET_CORECLR_RUNTIME_CONFIG", str(CORECLR_CONFIG))
+    import pythonnet
+    pythonnet.set_runtime("coreclr")
+    import clr  # noqa: F401
+    log_line("clr switched to coreclr")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Neo Studio 桌面壳")
     ap.add_argument("--port", type=int, default=0)
@@ -1361,6 +1383,7 @@ def main() -> int:
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
+    ensure_clr()
     log_line(f"webview start geo={geo} page={'guide' if need_guide else 'splash'}")
     purge_web_cache()   # 历史缓存里的旧插件 JS 会把模块图撕开，开窗口前清掉
     on_start = None if need_guide else (lambda: threading.Thread(target=boot_sequence,

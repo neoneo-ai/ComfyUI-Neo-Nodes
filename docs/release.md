@@ -79,6 +79,18 @@ git 检出的那份不碰。
 产物是未签名版，首次运行会有 SmartScreen 提示；签名与公证仍走本地 `-Sign` / `-Notarize`（CI 里没有
 机器证书，也不在 mac 上跑）。Registry 发布由 `publish.yaml` 负责，两条工作流互不依赖。
 
+CI 打包固定 Python 3.12，与本地验证过的构建一致。
+
+### CLR 托管兜底
+
+壳的窗口是 pywebview 的 WinForms 后端，要 pythonnet 把 .NET 托管起来。部分机器上 .NET Framework（netfx）
+托管起不来——AppDomain 里解析不到 `Python.Runtime.Loader.Initialize`，窗口开不出来。壳在 `webview.start()`
+前自己 `import clr`，失败就把 `pythonnet` 的 runtime 覆盖成 coreclr 再加载一次：pywebview 自带的 coreclr
+兜底在 pythonnet 3.x 上是失效的（netfx 的 runtime 对象已经占住 `pythonnet._RUNTIME`，改环境变量再 import
+走的还是那个坏掉的 netfx）。coreclr 要的是桌面运行时（`System.Windows.Forms` 在
+`Microsoft.WindowsDesktop.App` 里），随包带的配置是 `tools/coreclr.runtimeconfig.json` → `_internal/runtime/`。
+切换会记一行 `clr switched to coreclr` 到 `data/studio_shell.log`。
+
 ## 离线工具
 
 `tools/` 下的脚本用于构建 / 部署素材预设，不在 ComfyUI 运行时加载：
