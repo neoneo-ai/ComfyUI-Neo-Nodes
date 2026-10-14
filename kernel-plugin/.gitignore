@@ -26,6 +26,7 @@ configs/backyard_oss.json
 configs/studio_window.json
 configs/model_hub.json
 configs/video_gen.json
+configs/data_root.json
 tools/output/
 tools/data/
 tools/neo-studio.exe
