@@ -4,11 +4,11 @@
 #   onedir         tools/neo-studio/Neo-Studio.exe 目录版，启动不解包，出窗口快得多
 #   both           两个都出
 # 打包两步：
-#   1) 把插件的 git 已跟踪文件复制成 build/bundled/ComfyUI-Neo-Nodes，随包一起打进 exe。
+#   1) 把 kernel-plugin 的 git 已跟踪文件复制成 build/bundled/ComfyUI-Neo-Studio，随包一起打进 exe。
 #      exe 里插件缺失时靠这份副本装进 custom_nodes / 离线浏览素材库。排除开发目录与产物目录。
 #      用户配置与密钥（remote_llm_config / backyard_oss / model_hub 的 token / 收藏 / 缓存）
 #      本来就不在跟踪列表里，因此 exe 里只有预设，装插件时也不会覆盖用户已有文件。
-#   2) 按 Neo-Studio.spec 打包，副本落在 _MEIPASS/bundled/ComfyUI-Neo-Nodes
+#   2) 按 Neo-Studio.spec 打包，副本落在 _MEIPASS/bundled/ComfyUI-Neo-Studio
 #      （onedir 下 _MEIPASS 就是包目录里的 _internal/）。
 # 用法: tools\build_studio_exe.ps1 [-Python <python.exe>] [-DryRun] [-Mode onefile|onedir|both]
 param(
@@ -20,19 +20,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PluginDir = Split-Path $PSScriptRoot -Parent
-Set-Location $PluginDir
+$RepoRoot = Split-Path $PSScriptRoot -Parent
+$PluginSrc = Join-Path $RepoRoot "kernel-plugin"
+Set-Location $PluginSrc
 
-$BuildDir = Join-Path $PluginDir "build"
-$BUNDLE_DIR = "bundled/ComfyUI-Neo-Nodes"   # Neo-Studio.spec 里的 Tree target
+$BuildDir = Join-Path $RepoRoot "build"
+$BUNDLE_DIR = "bundled/ComfyUI-Neo-Studio"   # Neo-Studio.spec 里的 Tree target
 $BundleDir = Join-Path $BuildDir ($BUNDLE_DIR -replace '/', '\')
 
-# 副本边界 = git 已跟踪 - 开发目录。锚定开头，^tools/ 不会误杀 web/studio/tools.js
+# 副本边界 = kernel-plugin 里 git 已跟踪 - 开发目录。锚定开头，^tools/ 不会误杀 web/studio/tools.js
 $EXCLUDES = @(
-    '^build/', '^dist/', '^tools/', '^tests/', '^docs/', '^example_workflows/', '^assets/',
-    '^__pycache__/', '^\.git/', '^node_modules/', '^\.github/', '^\.vscode/',
-    '^neo-studio-app\.vbs$', '^Neo-Studio\.spec$', '^\.gitignore$',
-    '^pytest\.ini$', '^package(-lock)?\.json$', '^t\.log$'
+    '^tests/', '^example_workflows/', '^assets/', '^__pycache__/', '^\.git/',
+    '^node_modules/', '^\.gitignore$', '^package(-lock)?\.json$'
 )
 
 function Build-Bundle {
@@ -51,7 +50,7 @@ function Build-Bundle {
         $keep = $true
         foreach ($pat in $EXCLUDES) { if ($rel -match $pat) { $keep = $false; break } }
         if (-not $keep) { continue }
-        $src = Join-Path $PluginDir ($rel -replace '/', '\')
+        $src = Join-Path $PluginSrc ($rel -replace '/', '\')
         if (-not (Test-Path -LiteralPath $src)) { $missing += $rel; continue }
         $dst = Join-Path $BundleDir ($rel -replace '/', '\')
         New-Item -ItemType Directory -Force -Path (Split-Path $dst -Parent) | Out-Null
@@ -70,7 +69,7 @@ if ($DryRun) { Write-Host "[DRY] bundle only, no exe" -ForegroundColor Green; ex
 
 Write-Host "[RUN] pyinstaller Neo-Studio.spec" -ForegroundColor Cyan
 # workpath 必须避开 build/bundled：--clean 会清空 workpath，同目录等于删掉刚组装好的副本
-& $Python -m PyInstaller --clean --noconfirm --workpath (Join-Path $BuildDir "pyi") --distpath (Join-Path $BuildDir "dist") (Join-Path $PluginDir "Neo-Studio.spec")
+& $Python -m PyInstaller --clean --noconfirm --workpath (Join-Path $BuildDir "pyi") --distpath (Join-Path $BuildDir "dist") (Join-Path $RepoRoot "tools\Neo-Studio.spec")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 function Show-Size($Path, $Label) {
@@ -79,8 +78,8 @@ function Show-Size($Path, $Label) {
 }
 
 if ($Mode -in @('onefile', 'both')) {
-    Copy-Item (Join-Path $BuildDir "dist/Neo-Studio.exe") (Join-Path $PluginDir "tools/neo-studio.exe") -Force
-    $Exe = Join-Path $PluginDir "tools/neo-studio.exe"
+    Copy-Item (Join-Path $BuildDir "dist/Neo-Studio.exe") (Join-Path $RepoRoot "tools/neo-studio.exe") -Force
+    $Exe = Join-Path $RepoRoot "tools/neo-studio.exe"
     if (Test-Path $Exe) {
         Write-Host "[DONE] $Exe" -ForegroundColor Green
         Write-Host ("[DONE] {0:N1} MB" -f ((Get-Item $Exe).Length / 1MB)) -ForegroundColor Green
@@ -89,7 +88,7 @@ if ($Mode -in @('onefile', 'both')) {
 
 if ($Mode -in @('onedir', 'both')) {
     # 目录版整包搬到 tools/neo-studio/：壳的状态目录是 exe 旁的 data/，重打包不能把它带走
-    $DirOut = Join-Path $PluginDir "tools/neo-studio"
+    $DirOut = Join-Path $RepoRoot "tools/neo-studio"
     $DirSrc = Join-Path $BuildDir "dist/Neo-Studio"
     if (Test-Path $DirOut) {
         $Keep = $null

@@ -337,7 +337,7 @@ _MULTIFRAME_VDN_WF = json.load(open(os.path.join(PLUGIN_DIR, "skills", "presets"
 # comfy_execution.utils 加载真实实现（自包含，仅依赖 contextvars）：storyboard 的 CurrentNodeContext
 # 与进度钩子的 get_executing_context 都靠它，e2e 用例要验证真实的执行上下文传播。
 import importlib.util
-_comfy_exec_utils_path = os.path.join(PLUGIN_DIR, "..", "..", "comfy_execution", "utils.py")
+_comfy_exec_utils_path = _comfy_api_bootstrap.comfy_file("comfy_execution", "utils.py")
 _spec = importlib.util.spec_from_file_location("comfy_execution.utils", _comfy_exec_utils_path)
 _comfy_exec_utils = importlib.util.module_from_spec(_spec)
 sys.modules["comfy_execution.utils"] = _comfy_exec_utils

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""壳侧服务（neo_studio_server）离线单测：ComfyUI 不在跑时 Studio 的可用面与能力边界。
+"""壳侧服务（app/studio_server.py）离线单测：ComfyUI 不在跑时 Studio 的可用面与能力边界。
 
-服务复用插件模块挂在各自 RouteTableDef 上的 handler，进程里没有 PromptServer，
+服务复用内核插件模块挂在各自 RouteTableDef 上的 handler，进程里没有 PromptServer，
 所以这里直接起真服务打真接口：Studio 页面、静态文件、浏览、设置与配方写入都要出得来；
 生成 / 队列 / 显存类接口必须回 409 offline，不能让前端以为生成成功了。
 """
@@ -17,11 +17,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-PLUGIN_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, str(PLUGIN_DIR))
+APP_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PLUGIN_DIR = APP_DIR.parent / "kernel-plugin"
+COMFY_ROOT = APP_DIR.parent.parent / "ComfyUI"
+sys.path.insert(0, str(APP_DIR))
+sys.path.insert(0, str(PLUGIN_DIR / "tests"))
 
-import neo_studio_caps as caps
-import neo_studio_server as ns
+import studio_caps as caps
+import studio_server as ns
 
 TEST_PORT = 8291
 STUDIO_URL = "/neo-studio"
@@ -94,7 +97,7 @@ class _ServerCase(_RealFolderPaths):
     @classmethod
     def setUpClass(cls):
         cls._pin_real()
-        cls.app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR, {"starting": False})
+        cls.app = ns.build_app(COMFY_ROOT, PLUGIN_DIR, {"starting": False})
         cls.tmpdir = Path(tempfile.mkdtemp(prefix="neo_studio_server_"))
         cls.app["userdata"] = cls.tmpdir / "neo_gallery_data.json"
         cls.app["comfy_log"] = cls.tmpdir / "comfy_run.log"
@@ -365,7 +368,7 @@ class ShellModuleTests(_RealFolderPaths):
                          f"能力清单里的壳路由在模块里不存在: {sorted(caps.SHELL_ROUTES - registered)}")
 
     def test_shell_app_mounts_exactly_the_manifest(self):
-        app = ns.build_app(PLUGIN_DIR.parent.parent, PLUGIN_DIR)
+        app = ns.build_app(COMFY_ROOT, PLUGIN_DIR)
         shell_pages = {("GET", "/neo-studio"), ("GET", "/neo_studio/version"),
                        ("GET", "/neo_studio/log"), ("GET", "/neo_studio/launcher"),
                        ("POST", "/neo_studio/launcher")}

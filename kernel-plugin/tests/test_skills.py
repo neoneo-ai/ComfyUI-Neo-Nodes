@@ -21,7 +21,8 @@ import unittest
 _NODE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, _NODE_DIR)
 # ComfyUI 根目录（提供 server / folder_paths / torch 等模块）
-_COMFY_ROOT = os.path.abspath(os.path.join(_NODE_DIR, '..', '..'))
+import _comfy_api_bootstrap  # noqa: E402
+_COMFY_ROOT = _comfy_api_bootstrap.comfy_root()
 sys.path.insert(0, _COMFY_ROOT)
 
 # prompts.py 使用相对导入（from .llm import / from .gallery import），

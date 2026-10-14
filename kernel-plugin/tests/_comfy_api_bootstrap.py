@@ -19,9 +19,28 @@ def _drop_stub(root: str) -> None:
         del sys.modules[key]
 
 
+def _comfy_root(plugin_dir: str) -> str:
+    """插件在 ComfyUI/custom_nodes 下时根是它的上两级；独立仓库里内核与 kernel-plugin 并排摆放。"""
+    above = os.path.dirname(os.path.dirname(plugin_dir))
+    for cand in (above, os.path.join(above, "ComfyUI")):
+        if os.path.isdir(os.path.join(cand, "comfy_api", "latest")):
+            return cand
+    return above
+
+
+def comfy_root() -> str:
+    """内核根目录：本模块在 kernel-plugin/tests 下，插件目录就是它的父目录。"""
+    return _comfy_root(os.path.dirname(os.path.dirname(__file__)))
+
+
+def comfy_file(*parts: str) -> str:
+    """内核根目录下的真实文件：离线测试拿核心源码当桩蓝本时用（本模块在 kernel-plugin/tests 下）。"""
+    return os.path.join(comfy_root(), *parts)
+
+
 def bootstrap(plugin_dir: str) -> None:
     """让 comfy_api 可在离线测试里导入（须在 _load 插件模块前调用）。"""
-    root = os.path.dirname(os.path.dirname(plugin_dir))  # plugin → custom_nodes → ComfyUI
+    root = _comfy_root(plugin_dir)
     if root not in sys.path:
         sys.path.insert(0, root)
     _drop_stub("comfy_api")

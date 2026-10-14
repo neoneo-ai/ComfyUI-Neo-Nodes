@@ -1,0 +1,15 @@
+{
+  "name": "neo-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout=30000 \"kernel-plugin/tests/js/*.test.mjs\"",
+    "e2e": "node --test --test-force-exit --test-timeout=120000 \"kernel-plugin/tests/e2e/*.e2e.mjs\"",
+    "update-goldens": "node --env-file=kernel-plugin/tests/js/golden-update.env --test --test-force-exit --test-timeout=30000 \"kernel-plugin/tests/js/*.test.mjs\""
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "playwright": "^1.63.0",
+    "postcss": "^8.5.28"
+  }
+}

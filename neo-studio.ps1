@@ -6,7 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $Root) { $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
+# 目标布局：Neo-Studio 与 ComfyUI 内核并排放在同一个工作区里
+if (-not $Root) { $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\ComfyUI")).Path }
 # python 优先取 ComfyUI 同级目录（本工作区布局），再回退 ComfyUI 内部
 if (-not $Python) {
     foreach ($cand in @((Join-Path $Root "..\python\python.exe"), (Join-Path $Root "python\python.exe"))) {

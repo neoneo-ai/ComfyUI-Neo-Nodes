@@ -16,7 +16,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-import neo_studio_caps as caps
+import studio_caps as caps
 
 OFFLINE_ERROR = "ComfyUI 未运行"
 SHELL_PKG = "_neo_studio_shell"

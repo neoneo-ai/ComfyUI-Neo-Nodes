@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-# bundled/ 由 tools/build_studio_exe.ps1 组装：git 已跟踪文件减去只服务开发的条目
-datas = [('web/neo-studio.ico', 'web'), ('pyproject.toml', '.'),
-         ('build/bundled/ComfyUI-Neo-Nodes', 'bundled/ComfyUI-Neo-Nodes')]
+# bundled/ 由 tools/build_studio_exe.ps1 从 kernel-plugin 组装：git 已跟踪文件减去只服务开发的条目
+datas = [('../kernel-plugin/web/neo-studio.ico', 'web'),
+         ('../build/bundled/ComfyUI-Neo-Studio', 'bundled/ComfyUI-Neo-Studio')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')
@@ -21,7 +21,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['neo_studio_app.py'],
+    ['../app/studio_app.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -55,7 +55,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['web/neo-studio.ico'],
+    icon=['../kernel-plugin/web/neo-studio.ico'],
 )
 
 # 目录版：binaries/datas 摊进包里的 _internal，启动不解包（sys._MEIPASS 就是那一层）
@@ -75,6 +75,6 @@ exe_dir = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['web/neo-studio.ico'],
+    icon=['../kernel-plugin/web/neo-studio.ico'],
 )
 coll = COLLECT(exe_dir, a.binaries, a.datas, strip=False, upx=True, upx_exclude=[], name='Neo-Studio')

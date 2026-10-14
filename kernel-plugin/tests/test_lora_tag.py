@@ -86,7 +86,7 @@ lora_tag = _load("lora_tag")
 
 def _load_tool(name):
     import importlib.util as iu
-    spec = iu.spec_from_file_location(name, os.path.join(PLUGIN_DIR, "tools", f"{name}.py"))
+    spec = iu.spec_from_file_location(name, os.path.join(PLUGIN_DIR, "..", "tools", f"{name}.py"))
     mod = iu.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)

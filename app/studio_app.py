@@ -1,21 +1,21 @@
 """Neo Studio 桌面壳（pywebview + WebView2）：拉起 ComfyUI，窗口加载 /neo-studio。
 
 与 neo-studio.ps1 同一套探活逻辑（GET /neo_studio/version 同时确认 ComfyUI 在跑与插件已加载），
-差别是窗口由壳托管：几何存 configs/studio_window.json（屏幕外位置自动丢弃，回退默认），
-localStorage 落在 tmp/studio_profile
+差别是窗口由壳托管：几何存 data/studio_window.json（屏幕外位置自动丢弃，回退默认），
+localStorage 落在 data/studio_profile
 （private_mode=False），_blank 链接在壳窗口内导航（主画布交接与返回 Studio 都不出窗口），blob 下载放行。
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
-tmp/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲），
-ComfyUI 起不来时看 tmp/comfy_run.log（壳拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
+data/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲），
+ComfyUI 起不来时看 data/comfy_run.log（壳拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
 窗口先出（引导页 / 启动页），自检、壳侧只读服务、拉起 ComfyUI 都在后台线程走完，就绪后整页跳过去：
 ComfyUI 已在运行时进完整 Studio；冷启动进壳侧只读服务（neo_studio_server）的离线素材库；
 ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由壳回 409 offline。
 壳拉起 ComfyUI 的这段时间 starting 为真（comfy_state 与壳侧 /neo_studio/version 共用同一份标记，
 js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启动中…」，收起未运行横幅、
 启动按钮与「需要 ComfyUI」提示。
-窗口与任务栏图标用 web/neo-studio.ico（tools/make_studio_icon.py 生成）。
+窗口与任务栏图标用 kernel-plugin/web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
-用法：python neo_studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
+用法：python app/studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
                               [--cdp <port>] [--debug]
  壳是启动器：关窗只关窗口。顶栏「● ComfyUI :8188」胶囊由壳的 js_api 报状态（端口 / PID / 谁启动 / 就绪）：
  运行中点一下退出（壳拉起的 terminate，并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口留着、状态变灰；
@@ -40,15 +40,18 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from neo_studio_server import ShellServer, build_app
+from studio_server import ShellServer, build_app
 
 IS_FROZEN = bool(getattr(sys, "frozen", False))
-EXE_DIR = Path(sys.executable).resolve().parent if IS_FROZEN else Path(__file__).resolve().parent
+APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent
+EXE_DIR = Path(sys.executable).resolve().parent if IS_FROZEN else APP_DIR
 RES_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR))
-PLUGIN_DIR = EXE_DIR   # 源码运行时就是插件目录本身
-# 内置插件副本：exe 里插件缺失时的离线素材源，也是自动安装进 custom_nodes 的源。
-# 目录名保持 ComfyUI-Neo-Nodes，壳侧服务靠它加载出模块。
-PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / "ComfyUI-Neo-Nodes" if IS_FROZEN else PLUGIN_DIR
+# 内核插件装进 ComfyUI 后的目录名，与 kernel-plugin/pyproject.toml 的 package name 对齐。
+PLUGIN_NAME = "ComfyUI-Neo-Studio"
+# 壳侧服务加载的插件源码：源码运行是仓库里的 kernel-plugin/，exe 里是随包的内置副本，
+# 同时也是自动装进 custom_nodes 的源。
+PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / PLUGIN_NAME if IS_FROZEN else REPO_ROOT / "kernel-plugin"
 
 APP_NAME = "Neo Studio"
 _state_dir: Optional[Path] = None
@@ -81,21 +84,22 @@ def pick_state_dir(exe_dir: Path, appdata: str = "") -> Path:
 def state_dir() -> Path:
     """日志 / 窗口几何 / 浏览器 profile / 启动配置的落点，只算一次。
 
-    源码运行 = 插件目录原样；exe 运行 = pick_state_dir(EXE_DIR)。
+    源码运行 = 仓库的 data/；exe 运行 = pick_state_dir(EXE_DIR)。应用状态只属于壳，
+    不落在内核插件目录里。
     """
     global _state_dir
     if _state_dir is not None:
         return _state_dir
-    _state_dir = PLUGIN_DIR if not IS_FROZEN else pick_state_dir(EXE_DIR, os.environ.get("APPDATA", ""))
+    _state_dir = REPO_ROOT / "data" if not IS_FROZEN else pick_state_dir(EXE_DIR, os.environ.get("APPDATA", ""))
     return _state_dir
 
 
 STATE = state_dir()
-SHELL_LOG = STATE / "studio_shell.log" if IS_FROZEN else PLUGIN_DIR / "tmp" / "studio_shell.log"
-COMFY_LOG = STATE / "comfy_run.log" if IS_FROZEN else PLUGIN_DIR / "tmp" / "comfy_run.log"
-GEOMETRY_FILE = STATE / "studio_window.json" if IS_FROZEN else PLUGIN_DIR / "configs" / "studio_window.json"
-PROFILE_DIR = STATE / "studio_profile" if IS_FROZEN else PLUGIN_DIR / "tmp" / "studio_profile"
-CONFIG_FILE = STATE / "launcher_config.json"   # 便携模式记住的 root / python / port
+SHELL_LOG = STATE / "studio_shell.log"
+COMFY_LOG = STATE / "comfy_run.log"
+GEOMETRY_FILE = STATE / "studio_window.json"
+PROFILE_DIR = STATE / "studio_profile"
+CONFIG_FILE = STATE / "launcher_config.json"   # 记住的 root / python / port
 LOG_MAX = 200_000   # 壳日志上限：反复开关机只增不减，写入前裁到尾部
 LOG_LOCK = threading.Lock()   # js_api 调用各在自己的线程里跑，读全文再写回必须串行
 SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +124,7 @@ READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 
 POLL_INTERVAL = 2.0
 WEBVIEW_CACHE = PROFILE_DIR / "EBWebView" / "Default" / "Cache"   # WebView2 的 HTTP 缓存，跨会话留着
-STUDIO_ICON = RES_DIR / "web" / "neo-studio.ico"   # tools/make_studio_icon.py 生成
+STUDIO_ICON = (RES_DIR / "web" / "neo-studio.ico") if IS_FROZEN else (PLUGIN_SOURCE_DIR / "web" / "neo-studio.ico")   # tools/make_studio_icon.py 生成
 APP_ID = "Neo.Studio"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
 PROCESS_TERMINATE = 0x0001
@@ -156,19 +160,21 @@ def log_line(text: str) -> None:
 
 
 def resolve_root(root: str) -> Optional[Path]:
-    """CLI > 启动配置 > 壳自身位置（插件在 custom_nodes 下，exe 在插件的 tools 下，
-    目录版还多一层包目录）。
+    """CLI > 启动配置 > 壳自身位置推导。
 
-    推导出的位置必须真有 main.py。exe 被拷到别处时两条都落空，返回 None 让 main 出引导页。
+    每一层父目录先找同级的 ComfyUI/（Neo-Studio 与内核并排摆放的布局），再找该目录自身
+    （壳跑在 ComfyUI/custom_nodes/<插件> 里、exe 在插件 tools 的包目录里都靠这条）。
+    推导出的位置必须真有 main.py。两条都落空返回 None，让 main 出引导页。
     """
     if root:
         return Path(root)
     cfg = load_config()
     if cfg.get("root"):
         return Path(cfg["root"])
-    for cand in PLUGIN_DIR.parents:
-        if root_ok(cand):
-            return cand
+    for cand in EXE_DIR.parents:
+        for guess in (cand / "ComfyUI", cand):
+            if root_ok(guess):
+                return guess
     return None
 
 
@@ -196,7 +202,6 @@ def resolve_python(root: Path, python: str) -> Path:
 # ---------------------------------------------------------------------------
 
 CONFIG_VERSION = 1
-PLUGIN_DIR_NAME = "ComfyUI-Neo-Nodes"
 
 # 自检状态：写进启动快照给「启动设置」页与离线横幅看
 ST_OK = "ok"
@@ -212,7 +217,7 @@ DEPS_PROBE = ("import importlib.util, sys; sys.exit(0 if all("
 
 
 def plugin_dir_for(root: Path) -> Path:
-    return root / "custom_nodes" / PLUGIN_DIR_NAME
+    return root / "custom_nodes" / PLUGIN_NAME
 
 
 def root_ok(root: Path) -> bool:

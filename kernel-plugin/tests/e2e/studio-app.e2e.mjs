@@ -11,14 +11,16 @@ import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
-const PLUGIN_DIR = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const APP_PY = join(PLUGIN_DIR, "neo_studio_app.py");
-const GEOMETRY = join(PLUGIN_DIR, "configs", "studio_window.json");
+const REPO_ROOT = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
+const APP_PY = join(REPO_ROOT, "app", "studio_app.py");
+const GEOMETRY = join(REPO_ROOT, "data", "studio_window.json");
+// 内核（ComfyUI）与仓库并排摆放：exe 里推不出根目录时显式给 --root
+const KERNEL_ROOT = join(dirname(REPO_ROOT), "ComfyUI");
 const PORT = Number(process.env.NEO_STUDIO_PORT || 8188);
 const CDP_PORT = Number(process.env.NEO_STUDIO_CDP || 9223);
 const PYTHON = process.env.NEO_STUDIO_PYTHON || "F:/comfy/Comfyui-WF-2026.8.8/python/python.exe";
@@ -28,7 +30,7 @@ const EXE = process.env.NEO_STUDIO_EXE || "";
 function shell(port) {
     const args = ["--port", String(port), "--cdp", String(CDP_PORT)];
     // exe 可以放在任意目录，根目录推不出来（首跑弹目录选择器）：跑打包产物时显式给根目录与解释器
-    if (EXE) args.push("--root", dirname(dirname(PLUGIN_DIR)), "--python", PYTHON);
+    if (EXE) args.push("--root", KERNEL_ROOT, "--python", PYTHON);
     return EXE ? spawn(EXE, args, { stdio: "inherit" }) : spawn(PYTHON, [APP_PY, ...args], { stdio: "inherit" });
 }
 
@@ -114,6 +116,7 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
         return;
     }
     // 几何持久化：预置存档尺寸，窗口应按存档打开
+    mkdirSync(dirname(GEOMETRY), { recursive: true });
     writeFileSync(GEOMETRY, JSON.stringify({ width: 1200, height: 800, x: 120, y: 60 }));
     const proc = shell(PORT);
     try {

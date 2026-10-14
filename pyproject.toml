@@ -1,0 +1,21 @@
+[project]
+name = "neo-studio"
+version = "1.2.0"
+description = "Neo Studio desktop shell: ComfyUI runs as the kernel it launches, the Neo Studio kernel plugin lives in kernel-plugin/."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# 壳自己的依赖：pywebview 窗口，加上壳侧只读服务直接 exec 插件模块时用到的那几样。
+# 内核插件的依赖清单在 kernel-plugin/requirements.txt，由「启动设置 → 安装依赖」装进内核环境。
+dependencies = [
+    "pywebview",
+    "aiohttp",
+    "PyYAML",
+    "pypinyin",
+    "Pillow",
+]
+
+# 应用仓库不发布 Python 包：这里只声明壳的依赖，打包由 tools/build_studio_exe.ps1 负责。
+[tool.setuptools]
+packages = []
+py-modules = []

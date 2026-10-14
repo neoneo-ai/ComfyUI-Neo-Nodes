@@ -9,7 +9,8 @@ from unittest.mock import patch, MagicMock
 
 _NODE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, _NODE_DIR)
-_COMFY_ROOT = os.path.abspath(os.path.join(_NODE_DIR, '..', '..'))
+import _comfy_api_bootstrap  # noqa: E402
+_COMFY_ROOT = _comfy_api_bootstrap.comfy_root()
 sys.path.insert(0, _COMFY_ROOT)
 
 _PKG_NAME = "_neo_nodes_test_pkg"
