@@ -160,7 +160,7 @@ function Notarize-Artifact($Path) {
     if (-not $env:APPLE_ID -or -not $env:APPLE_PASSWORD) {
         throw "公证需要环境变量 APPLE_ID 与 APPLE_PASSWORD（App 专用密码，不是 Apple ID 登录口令）"
     }
-    $zip = "$Path.zip"
+    $zip = "${Path}.zip"
     Compress-Archive -Path $Path -DestinationPath $zip -Force
     & xcrun notarytool submit $zip --apple-team-id $AppleTeamId --apple-id $env:APPLE_ID `
         --password $env:APPLE_PASSWORD --wait

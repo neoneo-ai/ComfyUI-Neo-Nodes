@@ -112,7 +112,7 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
   并写好数据根指针 `configs/data_root.json`（用户数据留在 `Neo-Studio/data`，卸载只删插件目录）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
 ```
 
 - **手动克隆**：把本仓库克隆成 `ComfyUI/custom_nodes/comfyui-neo-studio`，重启 ComfyUI

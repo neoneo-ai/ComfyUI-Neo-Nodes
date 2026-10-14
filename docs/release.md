@@ -55,7 +55,8 @@ tools\build_studio_exe.ps1 -Notarize -AppleTeamId <TeamID>          # macOS nota
 tools\build_studio_exe.ps1 -Publish                                  # comfy node publish
 
 # 源码安装内核插件：只装代码与内置预设，写好 configs/data_root.json 数据根指针，不删目标目录里的东西
-tools\install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
+# 脚本是 UTF-8 无 BOM，用 pwsh（PowerShell 7）跑；Windows PowerShell 5.1 会把中文注释读成乱码
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
 ```
 
 ## 离线工具

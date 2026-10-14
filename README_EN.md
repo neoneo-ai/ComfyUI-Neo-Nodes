@@ -75,7 +75,7 @@ Interaction recordings (click a thumbnail to open the matching doc):
   `configs/data_root.json` (user data stays in `Neo-Studio/data`; uninstall = delete the plugin dir):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data
 ```
 
 - **Manual**: Clone into `ComfyUI/custom_nodes/`:
