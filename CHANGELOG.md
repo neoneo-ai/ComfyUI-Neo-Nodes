@@ -8,12 +8,13 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   (JSON-RPC, standard library only, no relative imports, no ComfyUI node imports): an MCP client
   (Claude Desktop / Cursor / custom) launches it as a subprocess and the agent calls Neo Studio's
   image and director capabilities through 20 tools — status, skills, models, prompt expansion,
-  image generation, task polling/cancel, image fetch, gallery, recipes, and the director loop
-  (recipes, spec, plan, copy, save, run, segment run, assemble run). Generation is async: submit
-  returns a `task_id`, `task_status` polls it. Segment numbers are 1-based for callers and converted
+  image generation, task polling/cancel, output fetch (`get_media`: png images and mp4 films as `/view`
+  URLs), gallery, recipes, and the director loop (recipes, spec, plan, copy, save, run, segment run, assemble
+  run). Generation is async: submit returns a `task_id`, `task_status` polls it; director, segment and assembly
+  outputs are mp4 videos. Segment numbers are 1-based for callers and converted
   to the endpoints' 0-based indices internally. The ComfyUI URL is loopback-only, `stdout` carries
   protocol only (logs go to `stderr`), no delete endpoints are exposed, the only writes are
-  `rs_recipes/save` and `rs_recipes/copy`, images are returned as `/view` URLs with base64 opt-in,
+  `rs_recipes/save` and `rs_recipes/copy`, outputs are returned as `/view` URLs with base64 opt-in for images,
   and `NEO_MCP_TOOLS` narrows the tool list. `tools\mcp_setup.ps1` prints the client config snippets;
   `--selftest` verifies the install. Docs: `docs/mcp.md` / `docs/en/mcp.md`.
 - Fixed the desktop shell failing to open its window on machines where .NET Framework hosting is broken

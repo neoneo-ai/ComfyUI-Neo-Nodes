@@ -183,9 +183,24 @@ def need(args, key) -> str:
 
 
 def view_url(comfy: Comfy, filename, subfolder="", type_="output") -> str:
-    """ComfyUI 的 /view 取图地址：图片只经 ComfyUI 读，MCP 层不碰本地文件路径。"""
+    """ComfyUI 的 /view 取件地址：产物只经 ComfyUI 读，MCP 层不碰本地文件路径。"""
     query = urllib.parse.urlencode({"filename": filename, "subfolder": subfolder or "", "type": type_})
     return f"{comfy.base}/view?{query}"
+
+
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"}
+VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
+AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+
+
+def media_kind(filename) -> str:
+    """按扩展名判断产物类型：导演整片 / 单段 / 拼接的产物是 mp4，生图产物是 png。"""
+    ext = os.path.splitext(str(filename))[1].lower()
+    if ext in VIDEO_EXT:
+        return "video"
+    if ext in AUDIO_EXT:
+        return "audio"
+    return "image"
 
 
 def image_items(comfy: Comfy, images, limit: int = MAX_B64_IMAGES) -> list:
@@ -330,12 +345,16 @@ def tool_cancel_task(ctx, args):
     raise ToolError(f"任务不存在：{tid}")
 
 
-def tool_get_image(ctx, args):
+def tool_get_media(ctx, args):
     filename = need(args, "filename")
     subfolder = str(args.get("subfolder") or "").strip()
     type_ = str(args.get("type") or "output").strip()
-    out = {"filename": filename, "subfolder": subfolder, "type": type_,
+    kind = media_kind(filename)
+    out = {"filename": filename, "subfolder": subfolder, "type": type_, "kind": kind,
            "url": view_url(ctx.comfy, filename, subfolder, type_)}
+    if kind != "image":
+        out["note"] = f"产物是{('视频' if kind == 'video' else '音频')}，用 url 下载或播放；base64 只对图片有效"
+        return dump(out)
     if args.get("base64") or ctx.b64_images:
         raw = ctx.comfy.get_bytes("/view", {"filename": filename, "subfolder": subfolder, "type": type_})
         if len(raw) > MAX_B64_BYTES:
@@ -515,7 +534,7 @@ TOOLS = [
          {"text": s("string", "简短想法或草稿提示词"),
           "skill_id": s("string", "可选：按该技能的模板上下文扩写")}, ("text",)),
     tool("list_models", "列出可选模型（diffusion_models / text_encoders / vae / loras）与建议值", {}),
-    tool("generate_image", "提交生图任务，立即返回 task_id（用 task_status 轮询、get_image 取图）",
+    tool("generate_image", "提交生图任务，立即返回 task_id（用 task_status 轮询、get_media 取图）",
          {"skill_id": s("string", "生图技能 id（list_skills 可查）"),
           "prompt": s("string", "提示词"),
           "width": s("integer", "宽（像素），留空用技能默认"),
@@ -528,15 +547,15 @@ TOOLS = [
           "text_encoder": s("string", "文本编码器文件名，留空自动挑选"),
           "vae": s("string", "VAE 文件名，留空自动挑选"),
           "steps": s("integer", "采样步数")}, ("skill_id", "prompt")),
-    tool("task_status", "查任务快照（生图 / 整片 / 单段 / 拼接共用 task_id）；生图 succeeded 后 images 带取图 URL",
+    tool("task_status", "查任务快照（生图 / 整片 / 单段 / 拼接共用 task_id）；生图 succeeded 后 images 带取图 URL，导演类 succeeded 后 filename 是 mp4 产物",
          {"task_id": TASK_ID}, ("task_id",)),
     tool("list_tasks", "列出最近的生图任务", {}),
     tool("cancel_task", "取消任务（未执行出队，执行中中断）", {"task_id": TASK_ID}, ("task_id",)),
-    tool("get_image", "取产物图片：默认返回文件名与 /view 的 URL，base64=true 才回图片字节",
-         {"filename": s("string", "产物文件名"),
+    tool("get_media", "取产物文件（图片 / 视频 / 音频）：返回文件名、类型与 /view 的 URL；图片可 base64=true 回字节，视频与音频只给 URL",
+         {"filename": s("string", "产物文件名（生图是 png，导演 / 单段 / 拼接是 mp4）"),
           "subfolder": s("string", "子目录，如 NeoDirector/xxx"),
           "type": s("string", "output（默认）或 input"),
-          "base64": s("boolean", "为 true 时附带 base64 图片字节")}, ("filename",)),
+          "base64": s("boolean", "为 true 且产物是图片时附带 base64 字节")}, ("filename",)),
     tool("list_gallery", "列素材库目录结构（可 dir_name / path 下钻）",
          {"dir_name": s("string", "目录名"), "path": s("string", "目录内子路径")}),
     tool("list_recipes", "列出配方（含 video_director 类型标记与段数）", {}),
@@ -561,7 +580,7 @@ TOOLS = [
           "assets": s("array", "随配方收录的素材 {filename,subfolder,type,kind}，kind=image/video/audio")}, ("name", "segments")),
     tool("director_copy", "复制配方为新的 custom 配方（解锁内置预设的只读限制），返回新配方名",
          {"name": RECIPE}, ("name",)),
-    tool("director_run", "整片入队，立即返回 task_id（多段长任务，用 task_status 轮询，勿同步等待）",
+    tool("director_run", "整片入队，立即返回 task_id（多段长任务，用 task_status 轮询，勿同步等待；succeeded 后 filename 是整片 mp4，用 get_media 取）",
          {"recipe": RECIPE,
           "only_segments": s("array", "只跑勾选的段（1 起）；留空跑全部"),
           "seed": s("integer", "种子，-1 随机"),
@@ -570,14 +589,14 @@ TOOLS = [
           "continuity": s("boolean", "段间连续性"),
           "context_frames": s("integer", "连续性上下文帧数"),
           "steps": s("integer", "采样步数，-1 用默认")}, ("recipe",)),
-    tool("segment_run", "单段生成 / 重生成（修片主手段），立即返回 task_id",
+    tool("segment_run", "单段生成 / 重生成（修片主手段），立即返回 task_id（succeeded 后 filename 是该段 mp4）",
          {"recipe": RECIPE, "segment": SEGMENT,
           "seed": s("integer", "种子，-1 随机"),
           "anchors": s("string", "锚点模式 both/first/none"),
           "continuity": s("boolean", "段间连续性"),
           "context_frames": s("integer", "连续性上下文帧数"),
           "film": s("string", "锚定用的成片文件名，留空取最新")}, ("recipe", "segment")),
-    tool("assemble_run", "把勾选的段拼回成片，立即返回 task_id",
+    tool("assemble_run", "把勾选的段拼回成片，立即返回 task_id（succeeded 后 filename 是拼接后的整片 mp4）",
          {"recipe": RECIPE, "segments": s("array", "要拼接的段序号（1 起）"),
           "film": s("string", "被替换的成片文件名，留空取最新"),
           "blend": s("integer", "接缝融合帧数"),
@@ -594,7 +613,7 @@ HANDLERS = {
     "task_status": tool_task_status,
     "list_tasks": tool_list_tasks,
     "cancel_task": tool_cancel_task,
-    "get_image": tool_get_image,
+    "get_media": tool_get_media,
     "list_gallery": tool_list_gallery,
     "list_recipes": tool_list_recipes,
     "load_recipe": tool_load_recipe,
@@ -650,6 +669,7 @@ def serve(ctx, tools, stdin, stdout) -> int:
                 "serverInfo": {"name": "neo-studio", "version": plugin_version()},
                 "instructions": "生图与整片都是异步任务：generate_image / director_run / segment_run / "
                                 "assemble_run 只返回 task_id，用 task_status 轮询到 succeeded 再取产物。"
+                                "生图产物是图片，导演 / 单段 / 拼接产物是 mp4 视频，都用 get_media 取（视频只给 URL）。"
                                 "段序号一律 1 起。"}})
         elif method == "notifications/initialized":
             continue
@@ -691,7 +711,7 @@ def main(argv=None) -> int:
                     help="逗号分隔的工具白名单；留空启用全部")
     ap.add_argument("--image-base64", action="store_true",
                     default=os.environ.get("NEO_MCP_IMAGE_BASE64") == "1",
-                    help="get_image 默认附带 base64 图片字节")
+                    help="get_media 对图片默认附带 base64 字节")
     ap.add_argument("--selftest", action="store_true", help="打印启用工具后退出（不连 ComfyUI）")
     args = ap.parse_args(argv)
 

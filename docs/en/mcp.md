@@ -2,32 +2,76 @@
 
 > 🇨🇳 中文: [../mcp.md](../mcp.md)
 
-`kernel-plugin/mcp_server.py` is a standalone MCP server (stdio transport). An MCP client
-(Claude Desktop / Cursor / your own client) launches it as a subprocess, so an external agent can call
-Neo Studio's image and director capabilities.
+`kernel-plugin/mcp_server.py` is a standalone MCP server (stdio transport). An MCP client (Claude Desktop /
+Cursor / your own client) launches it as a subprocess, so an external agent can call Neo Studio's image and
+director capabilities (full film / single segment / assembly).
 
-It does not start with ComfyUI and takes no part in node registration: zero relative imports, standard
-library only, and every capability is reached through the local ComfyUI HTTP interface. `stdout` carries
-JSON-RPC only; logs always go to `stderr`.
+It does not start with ComfyUI and takes no part in node registration: zero relative imports, standard library
+only, and every capability is reached through the local ComfyUI HTTP interface. `stdout` carries JSON-RPC only;
+logs always go to `stderr`.
 
-## Launch
+## Prerequisites
+
+1. ComfyUI is running with the Neo Studio plugin installed — MCP uses the plugin's HTTP endpoints and needs
+   plugin v1.2.0 or newer. The desktop shell runs ComfyUI at `http://127.0.0.1:8188` by default (the shell's
+   own service on 8191 is unrelated to MCP).
+2. Python 3.10+ — the same Python that runs ComfyUI. No extra dependencies.
+3. `generate_prompt` / `director_plan` need an LLM configured in Neo Studio settings.
+
+## Setup
+
+### 1. Self-test (no ComfyUI needed)
 
 ```powershell
-python kernel-plugin\mcp_server.py --comfy-url http://127.0.0.1:8188
+python kernel-plugin\mcp_server.py --selftest
+# Neo Studio MCP Server v1.2.0 · 20 tools: neo_status, list_skills, ...
 ```
 
-- The ComfyUI URL must be a loopback http address (`127.0.0.1` / `localhost` / `::1`); anything else
-  makes the server refuse to start.
-- Defaults to `http://127.0.0.1:8188`; pass `--comfy-url` when the desktop shell runs ComfyUI elsewhere.
-- `--selftest` prints the enabled tool list and exits — use it to verify the install (no ComfyUI needed).
-- `tools\mcp_setup.ps1` prints the Claude Desktop / Cursor configuration snippets.
+### 2. Add it to the MCP client
+
+`tools\mcp_setup.ps1` prints the snippets below; add `-Write` to merge them into the Claude Desktop and Cursor
+config files (only the `neo-studio` entry is added or updated, everything else is preserved).
+
+Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`, restart Claude afterwards):
+
+```json
+{
+  "mcpServers": {
+    "neo-studio": {
+      "command": "F:\\comfy\\Comfyui-WF-2026.8.8\\python\\python.exe",
+      "args": ["F:\\comfy\\Comfyui-WF-2026.8.8\\Neo-Studio\\kernel-plugin\\mcp_server.py"],
+      "env": { "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188" }
+    }
+  }
+}
+```
+
+Cursor (`.cursor/mcp.json` in the project root, same content). When other MCP servers are configured, add only
+the `neo-studio` entry instead of overwriting the file.
+
+### 3. Confirm in the client
+
+Ask the agent to "list the Neo Studio MCP tools" — 20 tools such as `neo_status` means the wiring works. Asking
+it to call `neo_status` proves ComfyUI is reachable.
+
+## Flags and environment variables
 
 | Flag | Environment | Meaning |
 |------|-------------|---------|
-| `--comfy-url` | `NEO_MCP_COMFY_URL` | ComfyUI URL (loopback only) |
+| `--comfy-url` | `NEO_MCP_COMFY_URL` | ComfyUI URL; must be loopback (`127.0.0.1` / `localhost` / `::1`), anything else refuses to start; default `http://127.0.0.1:8188` |
 | `--tools` | `NEO_MCP_TOOLS` | Comma-separated tool allowlist; empty enables everything |
-| `--image-base64` | `NEO_MCP_IMAGE_BASE64=1` | `get_image` attaches base64 image bytes by default |
+| `--image-base64` | `NEO_MCP_IMAGE_BASE64=1` | `get_media` attaches base64 bytes for images by default |
 | `--timeout` | `NEO_MCP_TIMEOUT` | Timeout in seconds for regular requests (default 30) |
+| `--selftest` | — | Print the enabled tools and exit (no ComfyUI needed) |
+
+Example — expose only the image pipeline:
+
+```json
+"env": {
+  "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188",
+  "NEO_MCP_TOOLS": "neo_status,list_skills,generate_image,task_status,get_media"
+}
+```
 
 ## Tools
 
@@ -38,33 +82,84 @@ python kernel-plugin\mcp_server.py --comfy-url http://127.0.0.1:8188
 | `generate_prompt` | Short idea → finished prompt (uses the LLM, requires a configured model) |
 | `generate_image` | Submits an image job and returns a `task_id` immediately |
 | `task_status` `list_tasks` `cancel_task` | Task snapshot / list / cancel (all four task tables share `task_id`) |
-| `get_image` | Output image: returns the filename and a `/view` URL, base64 bytes only with `base64=true` |
-| `list_gallery` `list_recipes` `load_recipe` | Asset library tree, recipe list, single recipe metadata |
+| `get_media` | Fetch an output file: images (png) and videos (mp4) both return a `/view` URL; base64 bytes only for images with `base64=true` |
+| `list_gallery` `list_recipes` `load_recipe` | Asset library tree, recipe list, single recipe metadata (`results` lists past outputs, including finished films) |
 | `director_recipes` `director_spec` | Director recipe list, `shared` + segment list |
 | `director_plan` | Storyboard planning: `plan` idea/script → segments; `optimize` rewrites one segment in H3 format; `modify` rewrites one segment per instruction |
 | `director_copy` `director_save` | Copy a recipe (unlocks read-only presets), write segments into a custom recipe |
-| `director_run` `segment_run` `assemble_run` | Full film / single segment / assembly, all return a `task_id` immediately |
+| `director_run` `segment_run` `assemble_run` | Full film / single segment / assembly, all return a `task_id` immediately and produce an mp4 |
+
+## Typical flows
+
+**Image pipeline (png output)**
+
+```
+neo_status → list_skills (pick skill_id) → generate_image → poll task_status until succeeded
+→ get_media (png: URL, add base64=true when bytes are needed)
+```
+
+**Director pipeline (mp4 output)**
+
+```
+director_recipes → director_spec (read segments) → director_plan (story → segments, needs the LLM)
+→ director_copy → director_save (write into a custom recipe)
+→ director_run → poll task_status (multi-segment long job) → filename is the finished mp4
+→ get_media (the mp4's /view URL — playable in a browser or player)
+→ fixes: segment_run (regenerate one segment) → assemble_run (stitch it back into the film)
+```
+
+Full film, segment and assembly outputs are mp4 files written by `SaveVideo` into `output/NeoDirector/`.
+`/view` serves them as `video/mp4`, so they can be downloaded or played directly; MCP never returns video
+bytes.
+
+**What to say to the agent** (the tool descriptions and `initialize.instructions` already state the
+conventions, so you normally don't have to repeat them)
+
+- "Generate a 1024×1024 image of an orange cat with Neo Studio and give me the picture when it's done."
+- "List the director recipes, read the segments of the Red Carpet recipe, regenerate segment 3, stitch the
+  film back together and give me the finished film URL."
+- "Turn this script into a 6-segment short film and give me the output filename when it finishes."
 
 ## Conventions
 
-- **Async tasks**: `generate_image`, `director_run`, `segment_run`, `assemble_run` only return a
-  `task_id`. Poll with `task_status` until `succeeded`, then fetch the output; a full film is a
-  multi-segment long job, so never wait on it synchronously.
+- **Async tasks**: `generate_image`, `director_run`, `segment_run`, `assemble_run` only return a `task_id`.
+  Poll with `task_status` until `succeeded`, then fetch the output; a full film is a multi-segment long job,
+  so never wait on it synchronously.
 - **Segment numbers are 1-based everywhere** (segment 1 = the first segment on the timeline).
-  `segment_run.segment` and the lists in `assemble_run.segments` / `director_run.only_segments` are
-  1-based and converted to the endpoints' 0-based indices internally.
-- **Only two write operations**: `rs_recipes/save` and `rs_recipes/copy`. No delete endpoints are
-  exposed; file reads go through ComfyUI's `/view` only, the MCP layer never touches local paths.
-  Built-in preset recipes are read-only — `director_copy` first, then `director_save`.
-- **LLM dependency**: `generate_prompt` and `director_plan` need an LLM configured in Neo Studio
-  settings. Without one they return a short error pointing at the settings instead of a fake success.
+  `segment_run.segment` and the lists in `assemble_run.segments` / `director_run.only_segments` are 1-based
+  and converted to the endpoints' 0-based indices internally.
+- **Only two write operations**: `rs_recipes/save` and `rs_recipes/copy`. No delete endpoints are exposed;
+  file reads go through ComfyUI's `/view` only, the MCP layer never touches local paths. Built-in preset
+  recipes are read-only — `director_copy` first, then `director_save`.
+- **LLM dependency**: `generate_prompt` and `director_plan` need an LLM configured in Neo Studio settings.
+  Without one they return a short error pointing at the settings instead of a fake success.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| No tools in the client | Check the `command` Python path and the script path; read the client's MCP logs (server logs go to `stderr`) |
+| Server exits immediately | A non-loopback ComfyUI URL is refused — set `--comfy-url` |
+| `neo_status` cannot connect | ComfyUI is not running, or the port is wrong |
+| `generate_prompt` / `director_plan` fail | No LLM configured, or the remote channel is unhealthy — follow the returned error in Neo Studio settings |
+| `task_status` says task not found | Snapshots are pruned after a task finishes; collect output names as soon as it is `succeeded` |
+| Response truncated | Text is capped at 12000 characters; filter `list_skills` with `q` (`all=true` is long) |
 
 ## Known limits
 
-- Per-segment prompt rewriting (`director_plan` with `optimize` / `modify`) handles one segment per
-  call; multiple segments need repeated calls.
-- Task snapshots are pruned after a task finishes, so `task_status` then reports "task not found";
-  collect output names before that point.
-- Base64 images are capped at 4 per call and 1.5 MB per image — larger ones return the `/view` URL
-  only; text responses are capped at 12000 characters, longer output is truncated.
+- Per-segment prompt rewriting (`director_plan` with `optimize` / `modify`) handles one segment per call;
+  multiple segments need repeated calls.
+- Base64 images are capped at 4 per call and 1.5 MB per image — larger ones return the `/view` URL only;
+  video and audio bytes are never returned.
+- Text responses are capped at 12000 characters, longer output is truncated.
 - Front-end orchestration features (grid split, voice-over, subtitles) are not exposed as tools.
+
+## Tests
+
+```powershell
+# Protocol and tool layer unit tests (fake HTTP, no ComfyUI needed)
+python -m pytest kernel-plugin\tests\test_mcp_server.py -q
+
+# Live smoke test (ComfyUI must be running): image pipeline + director read/write + finished film fetch
+python tests\mcp_smoke.py --director
+```

@@ -98,9 +98,9 @@ def main():
     if status != "succeeded" or not images:
         raise RuntimeError("生图未成功：" + str(st.get("error") or st))
 
-    img = c.call("get_image", {"filename": images[0]["filename"],
-                               "subfolder": images[0].get("subfolder") or "", "base64": True})
-    print("get_image:", img["filename"], "bytes:", img.get("bytes"), "url:", img["url"])
+    media = c.call("get_media", {"filename": images[0]["filename"],
+                                 "subfolder": images[0].get("subfolder") or "", "base64": True})
+    print("get_media(image):", media["kind"], media["filename"], "bytes:", media.get("bytes"), "url:", media["url"])
 
     recipes = c.call("director_recipes", {})
     print("director_recipes:", recipes["recipes"][:8] if isinstance(recipes, dict) else str(recipes)[:200])
@@ -122,6 +122,26 @@ def main():
                                                       {"prompt": "【画面】便利店门口，机器猫收雨", "duration_sec": 6}]})
         print("director_save:", saved)
         print("director_copy:", c.call("director_copy", {"name": "mcp-smoke-recipe"}))
+
+        # 取一段真实成片验证视频产物路径（配方 results 里记的是 output 产物）
+        names = recipes.get("recipes") if isinstance(recipes, dict) else []
+        film = None
+        for recipe_name in names[:12]:
+            meta = c.call("load_recipe", {"name": recipe_name})
+            videos = [r for r in (meta.get("results") or []) if r.get("kind") == "video"] if isinstance(meta, dict) else []
+            if videos:
+                film, name = videos[-1], recipe_name
+                break
+        if film:
+            media = c.call("get_media", {"filename": film["filename"], "subfolder": film.get("subfolder") or "",
+                                         "base64": True})
+            print("get_media(video):", name, media["kind"], media["filename"], "url:", media["url"])
+            print("  note:", media.get("note"))
+            resp = urllib.request.urlopen(media["url"])
+            print("  /view:", resp.headers.get_content_type(), "首字节:", resp.read(4),
+                  "Content-Length:", resp.headers.get("Content-Length"))
+        else:
+            print("get_media(video): 没有带成片产物的配方，跳过")
 
     print("OK")
     c.close()

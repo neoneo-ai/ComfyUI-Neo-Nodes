@@ -1,28 +1,71 @@
 # MCP 服务（外部智能体接入）
 
 `kernel-plugin/mcp_server.py` 是一个独立的 MCP 服务器（stdio 传输）。MCP 客户端（Claude Desktop / Cursor /
-自建客户端）把它作为子进程启动，外部智能体由此调用 Neo Studio 的生图与导演能力。
+自建客户端）把它作为子进程启动，外部智能体由此调用 Neo Studio 的生图与导演（整片 / 单段 / 拼接）能力。
 
 它不随 ComfyUI 启动，也不参与节点注册：零相对导入、只用标准库，一切能力经本机 ComfyUI 的 HTTP 接口完成。
 `stdout` 只跑 JSON-RPC，日志一律走 `stderr`。
 
-## 启动
+## 前提
+
+1. ComfyUI 正在运行且已装 Neo Studio 插件（MCP 用的就是插件的 HTTP 接口，需 v1.2.0 及以上）。桌面壳启动的
+   ComfyUI 默认 `http://127.0.0.1:8188`（壳自身的服务在 8191，与 MCP 无关）。
+2. Python 3.10+，用跑 ComfyUI 的那个 Python 即可，无额外依赖。
+3. 用到 `generate_prompt` / `director_plan` 时，Neo Studio 设置里需已配置 LLM。
+
+## 接入步骤
+
+### 1. 自检（不连 ComfyUI）
 
 ```powershell
-python kernel-plugin\mcp_server.py --comfy-url http://127.0.0.1:8188
+python kernel-plugin\mcp_server.py --selftest
+# Neo Studio MCP Server v1.2.0 · 20 工具：neo_status, list_skills, ...
 ```
 
-- ComfyUI 地址必须是本机回环（`127.0.0.1` / `localhost` / `::1`）的 http 地址，非回环直接拒绝启动。
-- 默认 `http://127.0.0.1:8188`；桌面壳起的 ComfyUI 端口同理，改端口就传 `--comfy-url`。
-- `--selftest` 打印启用的工具清单后退出，用来验证安装（不连 ComfyUI）。
-- `tools\mcp_setup.ps1` 打印 Claude Desktop / Cursor 的配置片段。
+### 2. 写进 MCP 客户端
+
+`tools\mcp_setup.ps1` 打印下面两段配置；加 `-Write` 直接合并进 Claude Desktop 与 Cursor 的配置文件
+（只增改 `neo-studio` 一项，其余条目保留）。
+
+Claude Desktop（`%APPDATA%\Claude\claude_desktop_config.json`，改完重启 Claude）：
+
+```json
+{
+  "mcpServers": {
+    "neo-studio": {
+      "command": "F:\\comfy\\Comfyui\\python\\python.exe",
+      "args": ["F:\\comfy\\Comfyui\\Neo-Studio\\kernel-plugin\\mcp_server.py"],
+      "env": { "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188" }
+    }
+  }
+}
+```
+
+Cursor（项目根 `.cursor/mcp.json`，内容同上）。已有其他 MCP 服务时只加 `neo-studio` 这一项，别覆盖整个文件。
+
+### 3. 在客户端里确认
+
+对智能体说「列出 Neo Studio 的 MCP 工具」，能看到 `neo_status` 等 20 个工具说明接入成功；再让它调
+`neo_status`，返回版本号与队列长度说明 ComfyUI 连上了。
+
+## 参数与环境变量
 
 | 参数 | 环境变量 | 说明 |
 |------|----------|------|
-| `--comfy-url` | `NEO_MCP_COMFY_URL` | ComfyUI 地址（仅回环） |
+| `--comfy-url` | `NEO_MCP_COMFY_URL` | ComfyUI 地址，必须是本机回环（`127.0.0.1` / `localhost` / `::1`），非回环直接拒绝启动；默认 `http://127.0.0.1:8188` |
 | `--tools` | `NEO_MCP_TOOLS` | 逗号分隔的工具白名单，留空启用全部 |
-| `--image-base64` | `NEO_MCP_IMAGE_BASE64=1` | `get_image` 默认附带 base64 图片字节 |
+| `--image-base64` | `NEO_MCP_IMAGE_BASE64=1` | `get_media` 对图片默认附带 base64 字节 |
 | `--timeout` | `NEO_MCP_TIMEOUT` | 普通请求超时秒数（默认 30） |
+| `--selftest` | — | 打印启用工具后退出（不连 ComfyUI） |
+
+例：只开放生图相关工具
+
+```json
+"env": {
+  "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188",
+  "NEO_MCP_TOOLS": "neo_status,list_skills,generate_image,task_status,get_media"
+}
+```
 
 ## 工具
 
@@ -33,12 +76,40 @@ python kernel-plugin\mcp_server.py --comfy-url http://127.0.0.1:8188
 | `generate_prompt` | 简短想法 → 成品提示词（走 LLM，需已配置模型） |
 | `generate_image` | 提交生图，立即返回 `task_id` |
 | `task_status` `list_tasks` `cancel_task` | 任务快照 / 列表 / 取消（四套任务表共用 `task_id`） |
-| `get_image` | 产物取图：默认给文件名与 `/view` 地址，`base64=true` 才回字节 |
-| `list_gallery` `list_recipes` `load_recipe` | 素材库目录、配方清单、单配方元数据 |
+| `get_media` | 取产物文件：图片（png）与视频（mp4）都给 `/view` 地址；图片可 `base64=true` 回字节，视频与音频只给 URL |
+| `list_gallery` `list_recipes` `load_recipe` | 素材库目录、配方清单、单配方元数据（`results` 是历史产物，含成片 mp4） |
 | `director_recipes` `director_spec` | 导演配方清单、`shared` + 分段清单 |
 | `director_plan` | 故事板规划：`plan` 主题/脚本 → 分段；`optimize` 单段按 H3 格式重写；`modify` 按指令改单段 |
 | `director_copy` `director_save` | 复制配方（解锁预设只读）、写分段到 custom 配方 |
-| `director_run` `segment_run` `assemble_run` | 整片 / 单段 / 拼接，均立即返回 `task_id` |
+| `director_run` `segment_run` `assemble_run` | 整片 / 单段 / 拼接，均立即返回 `task_id`，产物是 mp4 视频 |
+
+## 典型流程
+
+**生图闭环（产物 png）**
+
+```
+neo_status → list_skills(取 skill_id) → generate_image → task_status 轮询到 succeeded
+→ get_media(取 png：给 URL，需要字节时 base64=true)
+```
+
+**导演闭环（产物 mp4 视频）**
+
+```
+director_recipes → director_spec(读分段) → director_plan(故事 → 分段，需 LLM)
+→ director_copy → director_save(写进 custom 配方)
+→ director_run → task_status 轮询（多段长任务）→ succeeded 后 filename 就是整片 mp4
+→ get_media(取 mp4 的 /view 地址，浏览器或播放器直接播)
+→ 修片：segment_run(单段重生成) → assemble_run(拼回成片)
+```
+
+整片 / 单段 / 拼接的产物都是 `SaveVideo` 落在 `output/NeoDirector/` 的 mp4，`/view` 按 `video/mp4`
+返回，可直接下载或播放；MCP 不回传视频字节。
+
+**对智能体怎么说**（工具描述与 `initialize.instructions` 已写明约定，一般不用重复交代）
+
+- 「用 Neo Studio 生成一张 1024×1024 的橘猫图，生成好把图给我」
+- 「列出导演配方，读《红毯》的分段，把第 3 段重生成后拼回成片，给我成片地址」
+- 「按这个故事脚本分 6 段做短片，跑完把成片文件名给我」
 
 ## 用法约定
 
@@ -51,9 +122,30 @@ python kernel-plugin\mcp_server.py --comfy-url http://127.0.0.1:8188
 - **LLM 依赖**：`generate_prompt` 与 `director_plan` 需要 Neo Studio 设置里已配置 LLM；未配置时返回
   指向设置的短错误，不返回假成功。
 
+## 故障排查
+
+| 现象 | 处理 |
+|------|------|
+| 客户端里看不到工具 | 检查 `command` 指向的 Python 与脚本路径；看客户端的 MCP 日志（服务器日志走 stderr） |
+| 启动即退出 | ComfyUI 地址不是本机回环会被拒绝，改 `--comfy-url` |
+| `neo_status` 报连不上 | ComfyUI 未启动或端口不对 |
+| `generate_prompt` / `director_plan` 报错 | LLM 未配置或远程通道不健康，按返回的错误去 Neo Studio 设置里处理 |
+| `task_status` 说任务不存在 | 任务结束后快照会被清理，产物名请在 `succeeded` 时立刻取走 |
+| 返回被截断 | 文本上限 12000 字符；`list_skills` 用 `q` 过滤，`all=true` 会很长 |
+
 ## 已知限制
 
 - 单段提示词的逐段改写（`director_plan` 的 `optimize` / `modify`）一次一段，多段需逐次调用。
-- 任务快照在结束后会被清理，`task_status` 此时报「任务不存在」；产物名请在此之前取。
-- base64 图片单次最多 4 张、单张 1.5MB 以内，超出只给 `/view` 地址；文本返回上限 12000 字符，超出截断。
+- base64 图片单次最多 4 张、单张 1.5MB 以内，超出只给 `/view` 地址；视频与音频不回传字节。
+- 文本返回上限 12000 字符，超出截断。
 - 宫格拆分、配音、配音字幕等前端编排能力未开放为工具。
+
+## 自测
+
+```powershell
+# 协议与工具层单测（假 HTTP，不连 ComfyUI）
+python -m pytest kernel-plugin\tests\test_mcp_server.py -q
+
+# 真机冒烟（需 ComfyUI 在跑）：生图闭环 + 导演读写 + 成片取件
+python tests\mcp_smoke.py --director
+```

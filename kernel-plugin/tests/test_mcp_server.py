@@ -163,9 +163,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(resp["error"]["code"], -32602)
 
     def test_tool_whitelist_filters_tools_list(self):
-        tools = [t for t in mcp.TOOLS if t["name"] in ("neo_status", "get_image")]
+        tools = [t for t in mcp.TOOLS if t["name"] in ("neo_status", "get_media")]
         res = rpc(FakeHttp(), [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], tools=tools)
-        self.assertEqual({t["name"] for t in res[0]["result"]["tools"]}, {"neo_status", "get_image"})
+        self.assertEqual({t["name"] for t in res[0]["result"]["tools"]}, {"neo_status", "get_media"})
         resp = rpc(FakeHttp(), [{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                  "params": {"name": "assemble_run", "arguments": {}}}], tools=tools)[0]
         self.assertEqual(resp["error"]["code"], -32602)
@@ -259,24 +259,32 @@ class BaseToolTests(unittest.TestCase):
         self.assertEqual(json.loads(text_of(resp))["kind"], "segment")
         self.assertEqual(len(fake.calls), 3)   # 生图 / 整片 404 之后才命中单段
 
-    def test_get_image_url_only_and_base64_opt_in(self):
-        data = json.loads(text_of(call_tool("get_image", {"filename": "v.mp4", "subfolder": "NeoDirector/x"})[0]))
+    def test_get_media_video_is_url_only(self):
+        data = json.loads(text_of(call_tool("get_media", {"filename": "v.mp4", "subfolder": "NeoDirector/x",
+                                                          "base64": True})[0]))
         self.assertNotIn("base64", data)
+        self.assertEqual(data["kind"], "video")
         self.assertIn("/view?filename=v.mp4", data["url"])
+        self.assertIn("url", data["note"])
 
-        data = json.loads(text_of(call_tool("get_image", {"filename": "a.png", "base64": True},
-                                           {("GET", "/view"): b"PNGDATA"})[0]))
+    def test_get_media_image_base64_opt_in(self):
+        data = json.loads(text_of(call_tool("get_media", {"filename": "a.png"})[0]))
+        self.assertNotIn("base64", data)
+        self.assertEqual(data["kind"], "image")
+
+        data = json.loads(text_of(call_tool("get_media", {"filename": "a.png", "base64": True},
+                                            {("GET", "/view"): b"PNGDATA"})[0]))
         self.assertEqual(base64.b64decode(data["base64"]), b"PNGDATA")
         self.assertEqual(data["bytes"], 7)
 
     def test_global_base64_flag(self):
-        data = json.loads(text_of(call_tool("get_image", {"filename": "a.png"},
+        data = json.loads(text_of(call_tool("get_media", {"filename": "a.png"},
                                            {("GET", "/view"): b"X"}, b64=True)[0]))
         self.assertEqual(data["bytes"], 1)
 
     def test_oversize_image_returns_url_only(self):
         routes = {("GET", "/view"): b"X" * (mcp.MAX_B64_BYTES + 10)}
-        data = json.loads(text_of(call_tool("get_image", {"filename": "big.png", "base64": True}, routes)[0]))
+        data = json.loads(text_of(call_tool("get_media", {"filename": "big.png", "base64": True}, routes)[0]))
         self.assertNotIn("base64", data)
         self.assertEqual(data["bytes"], mcp.MAX_B64_BYTES + 10)
         self.assertIn("url", data["note"])
