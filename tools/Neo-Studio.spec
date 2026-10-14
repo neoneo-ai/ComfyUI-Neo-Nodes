@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 # bundled/ 由 tools/build_studio_exe.ps1 从 kernel-plugin 组装：git 已跟踪文件减去只服务开发的条目
 datas = [('../kernel-plugin/web/neo-studio.ico', 'web'),
-         ('../build/bundled/ComfyUI-Neo-Studio', 'bundled/ComfyUI-Neo-Studio')]
+         ('../build/bundled/comfyui-neo-studio', 'bundled/comfyui-neo-studio')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('webview')

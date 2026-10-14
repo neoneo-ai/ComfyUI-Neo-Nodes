@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — Video Recipe Module
+# Neo Studio — Video Recipe Module
 # A recipe = a named combination: prompt text + ordered assets (images/videos),
 # stored in its own preset directory with an assets/ folder.
 # 收藏（本地/C 站）后端逻辑已统一收敛到 bookmark.py，本模块只保留配方职责。
@@ -1011,7 +1011,7 @@ _README_TEMPLATES = {
         "total": "- 总时长 {total}s",
         "samples": "- 示例结果：{samples} 个（samples/ 目录）",
         "usage": "【快速应用】",
-        "install_step": "1. 安装 ComfyUI-Neo-Nodes 插件：https://github.com/neoneo-ai/ComfyUI-Neo-Nodes",
+        "install_step": "1. 安装 Neo Studio 插件：https://github.com/neoneo-ai/Neo-Studio",
         "import_step": "2. 在 ComfyUI 侧边栏「配方」页点「📦 导入」，选择本 zip 包完成导入。",
         "use_director": "3. 添加 NeoH3VideoDirector 节点，在 recipe（配方）下拉中选择该配方后运行。",
         "use_normal": '3. 在配方列表点该配方的「✈️ 发送到工作流」，即可将配方包含的图片、音频等参考资源和提示词载入工作流。',
@@ -1025,7 +1025,7 @@ _README_TEMPLATES = {
         "total": "- Total duration: {total}s",
         "samples": "- Sample results: {samples} (in samples/)",
         "usage": "[Quick start]",
-        "install_step": "1. Install the ComfyUI-Neo-Nodes plugin: https://github.com/neoneo-ai/ComfyUI-Neo-Nodes",
+        "install_step": "1. Install the Neo Studio plugin: https://github.com/neoneo-ai/Neo-Studio",
         "import_step": '2. In the ComfyUI sidebar, open the "Recipes" page and click "📦 Import" to import this zip.',
         "use_director": "3. Add a NeoH3VideoDirector node, select this recipe from the recipe dropdown, then run it.",
         "use_normal": '3. In the recipe list, click "✈️ Send to workflow" on this recipe to load its prompt and reference assets into the workflow.',
@@ -1633,7 +1633,7 @@ async def rs_recipes_director_optimize_prompts(request):
     prompt = str(data.get("prompt") or "").strip()
     if not prompt:
         return web.Response(text="data: [ERROR] 没有提示词可优化\n\ndata: [DONE]\n\n", content_type="text/event-stream")
-    logger.info("[Neo-Nodes] director_optimize_prompts: prompt_len=%d, duration_sec=%s", len(prompt), data.get("duration_sec"))
+    logger.info("[Neo Studio] director_optimize_prompts: prompt_len=%d, duration_sec=%s", len(prompt), data.get("duration_sec"))
     try:
         dur = int(round(float(data.get("duration_sec"))))
     except (TypeError, ValueError):
@@ -1674,7 +1674,7 @@ async def rs_recipes_director_modify_segment(request):
     instruction = str(data.get("instruction") or "").strip()
     if not prompt and not instruction:
         return web.Response(text="data: [ERROR] 没有提示词或修改指令\n\ndata: [DONE]\n\n", content_type="text/event-stream")
-    logger.info("[Neo-Nodes] director_modify_segment: prompt_len=%d, instruction='%s'", len(prompt), instruction[:80])
+    logger.info("[Neo Studio] director_modify_segment: prompt_len=%d, instruction='%s'", len(prompt), instruction[:80])
     try:
         dur = int(round(float(data.get("duration_sec"))))
     except (TypeError, ValueError):
@@ -1810,7 +1810,7 @@ async def rs_recipes_director_describe_panel(request):
     name = str(data.get("panel") or "").strip()
     if not name:
         return web.Response(text="data: [ERROR] 缺少格子图\n\ndata: [DONE]\n\n", content_type="text/event-stream")
-    logger.info("[Neo-Nodes] director_describe_panel: panel='%s', duration_sec=%s", name, data.get("duration_sec"))
+    logger.info("[Neo Studio] director_describe_panel: panel='%s', duration_sec=%s", name, data.get("duration_sec"))
     try:
         dur = int(round(float(data.get("duration_sec") or 5)))
     except (TypeError, ValueError):

@@ -1124,7 +1124,7 @@ class MainWindowTests(unittest.TestCase):
         root = pathlib.Path(self._tmp.name) / "ComfyUI"
         root.mkdir(parents=True)
         (root / "main.py").write_text("", encoding="utf-8")
-        bundled = pathlib.Path(self._tmp.name) / "bundled" / "ComfyUI-Neo-Studio"
+        bundled = pathlib.Path(self._tmp.name) / "bundled" / "comfyui-neo-studio"
         (bundled / "web").mkdir(parents=True)
         (bundled / "util.py").write_text("", encoding="utf-8")
         py = pathlib.Path(self._tmp.name) / "python.exe"
@@ -1145,7 +1145,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
             res = cw.call_args.kwargs["js_api"].start_setup(str(root), str(py))
-        installed = root / "custom_nodes" / "ComfyUI-Neo-Studio"
+        installed = root / "custom_nodes" / "comfyui-neo-studio"
         self.assertTrue(res["ok"], res)
         self.assertTrue((installed / "util.py").is_file(), "内置副本要装进用户选的根目录")
         self.assertEqual(cw.call_args.kwargs["js_api"].launcher["plugin_dir"], str(installed))
@@ -1287,11 +1287,11 @@ class LauncherConfigTests(unittest.TestCase):
                 self.assertIsNone(app.resolve_root(""))
 
     def test_frozen_exe_infers_root_from_its_own_location(self):
-        # exe 在 <root>/custom_nodes/ComfyUI-Neo-Studio/tools：上三级就是 ComfyUI 根，双击不该弹选择器
+        # exe 在 <root>/custom_nodes/comfyui-neo-studio/tools：上三级就是 ComfyUI 根，双击不该弹选择器
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             (root / "main.py").write_text("", encoding="utf-8")
-            exe_dir = root / "custom_nodes" / "ComfyUI-Neo-Studio" / "tools"
+            exe_dir = root / "custom_nodes" / "comfyui-neo-studio" / "tools"
             exe_dir.mkdir(parents=True)
             with patch.object(app, "CONFIG_FILE", root / "none.json"), \
                  patch.object(app, "EXE_DIR", exe_dir):
@@ -1302,7 +1302,7 @@ class LauncherConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             (root / "main.py").write_text("", encoding="utf-8")
-            exe_dir = root / "custom_nodes" / "ComfyUI-Neo-Studio" / "tools" / "neo-studio"
+            exe_dir = root / "custom_nodes" / "comfyui-neo-studio" / "tools" / "neo-studio"
             exe_dir.mkdir(parents=True)
             with patch.object(app, "CONFIG_FILE", root / "none.json"), \
                  patch.object(app, "EXE_DIR", exe_dir):
@@ -1318,7 +1318,7 @@ class StartupStateTests(unittest.TestCase):
         self.python = pathlib.Path(self.tmp.name) / "python.exe"
         self.python.write_text("", encoding="utf-8")
         self.plugin = app.plugin_dir_for(self.root)
-        self.source = pathlib.Path(self.tmp.name) / "bundled" / "ComfyUI-Neo-Studio"
+        self.source = pathlib.Path(self.tmp.name) / "bundled" / "comfyui-neo-studio"
         (self.source / "web").mkdir(parents=True)
         (self.source / "requirements.txt").write_text("pyyaml\n", encoding="utf-8")
         self.patcher = patch.object(app, "PLUGIN_SOURCE_DIR", self.source)
@@ -1329,7 +1329,7 @@ class StartupStateTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_plugin_dir_derived_from_root(self):
-        self.assertEqual(self.plugin, self.root / "custom_nodes" / "ComfyUI-Neo-Studio")
+        self.assertEqual(self.plugin, self.root / "custom_nodes" / "comfyui-neo-studio")
 
     def test_bad_root(self):
         st, msg = app.startup_state(self.root.parent, self.python, self.plugin)
@@ -1388,8 +1388,8 @@ class PluginUpdateTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.base = pathlib.Path(self.tmp.name)
-        self.plugin = self.base / "ComfyUI" / "custom_nodes" / "ComfyUI-Neo-Studio"
-        self.source = self.base / "bundled" / "ComfyUI-Neo-Studio"
+        self.plugin = self.base / "ComfyUI" / "custom_nodes" / "comfyui-neo-studio"
+        self.source = self.base / "bundled" / "comfyui-neo-studio"
         (self.source / "web").mkdir(parents=True)
         self.state = self.base / "state"
         self.state.mkdir()
@@ -1513,13 +1513,13 @@ class EmbeddedConfigsTests(unittest.TestCase):
         # 内置副本的边界就是「git 已跟踪」：用户配置与密钥不在跟踪列表里，进不了 exe
         script = (_REPO_ROOT / "tools" / "build_studio_exe.ps1").read_text(encoding="utf-8")
         self.assertIn("git ls-files", script)
-        self.assertIn("bundled/ComfyUI-Neo-Studio", script)
+        self.assertIn("bundled/comfyui-neo-studio", script)
         # 分发形态两种都给：单文件与目录版（目录版启动不解包）
         self.assertIn("onedir", script)
         self.assertIn("tools/neo-studio", script)
         spec = (_REPO_ROOT / "tools" / "Neo-Studio.spec").read_text(encoding="utf-8")
-        self.assertIn("bundled/ComfyUI-Neo-Studio", spec)
-        # 副本必须带 pyproject.toml：插件版本号只从它读，缺了顶栏就是「Neo-Nodes unknown」
+        self.assertIn("bundled/comfyui-neo-studio", spec)
+        # 副本必须带 pyproject.toml：插件版本号只从它读，缺了顶栏就是「Neo Studio unknown」
         self.assertNotIn("pyproject", script, "内置副本不该排除 pyproject.toml")
         for name in self.USER_FILES:
             self.assertNotIn(name, spec, f"打包配置不该提到 {name}")

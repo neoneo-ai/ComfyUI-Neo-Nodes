@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — Gallery Module (preset-based: image + .txt by same name)
+# Neo Studio — Gallery Module (preset-based: image + .txt by same name)
 
 import os
 import re

@@ -14,7 +14,7 @@ import types
 import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))  # tools → 插件 → custom_nodes → ComfyUI 根
-PKG_DIR = os.path.join(ROOT, "custom_nodes", "ComfyUI-Neo-Nodes")
+PKG_DIR = os.path.join(ROOT, "custom_nodes", "comfyui-neo-studio")
 sys.path.insert(0, ROOT)
 
 server = types.ModuleType("server")

@@ -283,7 +283,7 @@ class VersionRouteTests(unittest.TestCase):
         self.assertEqual(r.status, 200)
         data = json.loads(r.body)
         self.assertTrue(data["success"])
-        self.assertEqual(data["plugin"], "ComfyUI-Neo-Nodes")
+        self.assertEqual(data["plugin"], "Neo Studio")
         self.assertIn("plugin_version", data)
         self.assertIn("comfyui_version", data)
 

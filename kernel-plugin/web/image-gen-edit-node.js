@@ -54,7 +54,7 @@ app.registerExtension({
                         if (data.success && seq === dimsSeq) applyDimDefaults(data, force);
                     }
                 } catch (e) {
-                    console.error("[Neo Nodes] krea2 skill dims fetch failed", e);
+                    console.error("[Neo Studio] krea2 skill dims fetch failed", e);
                 }
             };
 

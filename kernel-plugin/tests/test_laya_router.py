@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - LAYA Router Unit Tests
+# Neo Studio - LAYA Router Unit Tests
 
 import os
 import sys

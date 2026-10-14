@@ -168,7 +168,7 @@ class H3Previewer(latent_preview.LatentPreviewer):
         try:
             images = [self.vae.decode_frame(frame) for frame in frames]
         except Exception as e:
-            logging.warning(f"[Neo Nodes] H3 预览解码失败，本步跳过：{e}")
+            logging.warning(f"[Neo Studio] H3 预览解码失败，本步跳过：{e}")
             return None
         if self.node_id:
             payload = {**_preview_payload(images), "step": self._step_count}   # step 供前端按步号去重 / 排序（WS 与轮询兜底同源）
@@ -184,14 +184,14 @@ def load_h3_tiny_vae():
     if path is None:
         if not _warned:
             _warned = True
-            logging.info(f"[Neo Nodes] 未找到 models/vae_approx/{TINY_VAE}，H3 预览回退核心默认")
+            logging.info(f"[Neo Studio] 未找到 models/vae_approx/{TINY_VAE}，H3 预览回退核心默认")
         return None
     try:
         return H3TinyVAE(comfy.utils.load_torch_file(path, safe_load=True))
     except Exception as e:
         if not _warned:
             _warned = True
-            logging.warning(f"[Neo Nodes] {TINY_VAE} 加载失败（{e}），H3 预览回退核心默认")
+            logging.warning(f"[Neo Studio] {TINY_VAE} 加载失败（{e}），H3 预览回退核心默认")
         return None
 
 

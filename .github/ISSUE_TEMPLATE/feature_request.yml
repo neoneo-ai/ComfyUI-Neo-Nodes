@@ -1,5 +1,5 @@
 name: Feature Request / 功能建议
-description: Suggest a feature for Neo Nodes（提出新功能）
+description: Suggest a feature for Neo Studio（提出新功能）
 labels: ["enhancement"]
 body:
   - type: dropdown

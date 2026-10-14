@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes - Bundle 展开节点
+# Neo Studio - Bundle 展开节点
 # 把 NeoPromptAgent 输出的运行时 BUNDLE（id）展开成官方视频节点可直接消费的输入：
 # prompt(STRING) + image_1..image_9(IMAGE)。用于对接官方 MiniMax H3 Reference to Video
 # （ref_images 最多 9 张），对接官方节点而不必走内置 NeoH3VideoDirector。bundle 只携带轻量数据
@@ -71,7 +71,7 @@ class NeoBundleExpand:
     RETURN_NAMES = ("prompt",) + tuple(f"image_{i}" for i in range(1, MAX_BUNDLE_REFERENCES + 1))
     OUTPUT_NODE = True
     FUNCTION = "expand"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "把 Neo Prompt Agent 的 BUNDLE 展开成 prompt + image_1..image_9，对接官方 MiniMax H3 Reference to Video。"
     SEARCH_ALIASES = [
         "bundle expand", "unpack bundle", "ref2v", "reference to video", "minimax h3",

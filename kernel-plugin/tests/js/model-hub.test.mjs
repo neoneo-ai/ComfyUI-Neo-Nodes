@@ -56,7 +56,7 @@ test("模型库：打开弹窗注入样式并拉取设置与仓库列表", async
     const overlay = await openHub();
 
     assert.equal(document.getElementById("neo-hub-css")?.getAttribute("href"),
-        "/extensions/ComfyUI-Neo-Nodes/model-hub.css", "样式未注入");
+        "/extensions/comfyui-neo-studio/model-hub.css", "样式未注入");
     assert.ok(overlay.querySelector(".neo-hub-title")?.textContent.includes("模型库"), "标题缺失");
     assert.deepEqual(missingRoutes.filter((r) => r.includes("/neo_model_hub/")), [], "有未覆盖的模型库请求");
 

@@ -151,7 +151,7 @@ def _ref_row_ranges(layout, refs):
     def take():
         nonlocal cursor
         if cursor >= len(avail):
-            raise RuntimeError("[NeoNodes] H3 布局的参考行少于 minimax_refs，无法对齐跨段上下文窗口")
+            raise RuntimeError("[Neo Studio] H3 布局的参考行少于 minimax_refs，无法对齐跨段上下文窗口")
         row_range = avail[cursor]
         cursor += 1
         return row_range
@@ -168,7 +168,7 @@ def _ref_row_ranges(layout, refs):
             audio = take() if with_audio else None
             rows.append({"video": take(), "audio": audio})
         else:
-            raise RuntimeError(f"[NeoNodes] 未知的 H3 参考类型：{kind!r}")
+            raise RuntimeError(f"[Neo Studio] 未知的 H3 参考类型：{kind!r}")
     return rows
 
 
@@ -196,12 +196,12 @@ def _align_payload_timeline(payload):
             continue
         window_t = int(ref.get("latent_t") or 0)
         if window_t > target_t:
-            raise RuntimeError(f"[NeoNodes] 跨段上下文窗口 T={window_t} 超过目标视频 T={target_t}")
+            raise RuntimeError(f"[Neo Studio] 跨段上下文窗口 T={window_t} 超过目标视频 T={target_t}")
         if row["video"] is None:
-            raise RuntimeError("[NeoNodes] 跨段上下文窗口参考缺少视频行")
+            raise RuntimeError("[Neo Studio] 跨段上下文窗口参考缺少视频行")
         start, stop = row["video"]
         if window_t <= 0 or stop - start != window_t * frame_rows:
-            raise RuntimeError(f"[NeoNodes] 跨段上下文窗口行数 {stop - start} 与 latent T={window_t} 不符")
+            raise RuntimeError(f"[Neo Studio] 跨段上下文窗口行数 {stop - start} 与 latent T={window_t} 不符")
         position_ids[start:stop].copy_(position_ids[video_start:video_start + window_t * frame_rows])
     setattr(layout, _CONTEXT_ALIGNED_ATTR, True)
 
@@ -252,7 +252,7 @@ class NeoH3AddKeyframe:
     RETURN_TYPES = ("MODEL", "CONDITIONING")
     RETURN_NAMES = ("model", "conditioning")
     FUNCTION = "add_keyframe"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "首帧锚点：把图像编码成 latent 写入 H3 conditioning 的第 0 帧 keyframe（手动搭图与旧画布工作流用）。"
     SEARCH_ALIASES = [
         "h3 keyframe", "add keyframe", "first frame", "keyframe anchor", "frame 0",
@@ -315,7 +315,7 @@ class NeoH3AddGuides:
     RETURN_TYPES = ("MODEL", "CONDITIONING")
     RETURN_NAMES = ("model", "conditioning")
     FUNCTION = "add_guides"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "多帧关键帧锚点：把多组「图像 + 帧号」批量写入 H3 conditioning 的 minimax_keyframes（等价多个 MiniMaxH3AddGuide）。"
     SEARCH_ALIASES = [
         "h3 guides", "add guides", "keyframes batch", "multi keyframe", "timeline anchor",
@@ -389,15 +389,15 @@ def _inject_continuity_nodes(graph, context_tail, context_frames, identity_names
         if sampler_id is not None:
             break
     if sampler_id is None:
-        raise RuntimeError("[NeoNodes] 未找到消费 H3 conditioning 的 KSampler，无法注入跨段连续性")
+        raise RuntimeError("[Neo Studio] 未找到消费 H3 conditioning 的 KSampler，无法注入跨段连续性")
     sampler_inputs = graph[sampler_id]["inputs"]
     cond_inputs = graph[cond_id]["inputs"]
     model_src = sampler_inputs.get("model")
     vae_src = cond_inputs.get("vae")
     if not (isinstance(model_src, (list, tuple)) and len(model_src) == 2):
-        raise RuntimeError("[NeoNodes] H3 采样器没有 model 来源，无法把连续性 wrapper 交给采样")
+        raise RuntimeError("[Neo Studio] H3 采样器没有 model 来源，无法把连续性 wrapper 交给采样")
     if not (isinstance(vae_src, (list, tuple)) and len(vae_src) == 2):
-        raise RuntimeError("[NeoNodes] H3 conditioning 节点没有 vae 来源，无法编码上下文窗口")
+        raise RuntimeError("[Neo Studio] H3 conditioning 节点没有 vae 来源，无法编码上下文窗口")
 
     width = _canvas_size(cond_inputs.get("width"))
     height = _canvas_size(cond_inputs.get("height"))
@@ -452,10 +452,10 @@ def _inject_multiframe_guides(graph, guides):
             sampler_id, cond_id = nid, latent_src[0]
             break
     if sampler_id is None:
-        raise RuntimeError("[NeoNodes] 未找到消费 H3 conditioning 的 KSampler，无法注入多帧关键帧锚点")
+        raise RuntimeError("[Neo Studio] 未找到消费 H3 conditioning 的 KSampler，无法注入多帧关键帧锚点")
     vae_src = (graph[cond_id].get("inputs") or {}).get("vae")
     if not (isinstance(vae_src, (list, tuple)) and len(vae_src) == 2):
-        raise RuntimeError("[NeoNodes] H3 conditioning 节点没有 vae 来源，无法编码多帧关键帧")
+        raise RuntimeError("[Neo Studio] H3 conditioning 节点没有 vae 来源，无法编码多帧关键帧")
     sampler_inputs = graph[sampler_id]["inputs"]
     model_ref = sampler_inputs.get("model")
     cond_ref = None
@@ -465,7 +465,7 @@ def _inject_multiframe_guides(graph, guides):
             cond_ref = list(src)
             break
     if not (isinstance(model_ref, (list, tuple)) and len(model_ref) == 2) or cond_ref is None:
-        raise RuntimeError("[NeoNodes] H3 采样器没有 model / conditioning 来源，无法注入多帧关键帧锚点")
+        raise RuntimeError("[Neo Studio] H3 采样器没有 model / conditioning 来源，无法注入多帧关键帧锚点")
     node_id = _free_node_id(graph)
     inputs = {"model": list(model_ref), "conditioning": cond_ref, "vae": list(vae_src), "latent": [cond_id, 1]}
     graph[node_id] = {"class_type": "NeoH3AddGuides", "inputs": inputs}   # 先入图占号，image id 才不会撞上它
@@ -516,7 +516,7 @@ class NeoH3AddContext:
     RETURN_TYPES = ("MODEL", "CONDITIONING")
     RETURN_NAMES = ("model", "conditioning")
     FUNCTION = "add_context"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "跨段连续性：上段尾部若干帧作为 H3 视频参考（window=开头重生成 / reference=目标之前的参考）注入 conditioning。"
     SEARCH_ALIASES = [
         "h3 context", "continuity", "cross segment", "video reference", "identity reference",
@@ -953,7 +953,7 @@ class NeoH3VideoDirector:
     RETURN_TYPES = ("VIDEO",)
     RETURN_NAMES = ("video",)
     FUNCTION = "generate"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "分镜视频导演：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO（跨段上下文窗口保连续性）。"
     SEARCH_ALIASES = [
         "h3 director", "video director", "storyboard", "recipe", "segments", "multi segment",
@@ -1070,7 +1070,7 @@ class NeoH3VideoDirector:
                     guides, n_skipped = _plan_multiframe_guides(m_segs, total_frames)
                     label = f"第 {orig[pos] + 1}–{orig[pos + len(m_segs) - 1] + 1} 段"
                     if n_skipped:
-                        print(f"[NeoNodes] 多帧单次块（{label}）：{n_skipped} 个关键帧锚点超出帧预算，已跳过")
+                        print(f"[Neo Studio] 多帧单次块（{label}）：{n_skipped} 个关键帧锚点超出帧预算，已跳过")
                     prompt = _merge_chunk_prompt(m_segs)
                     body = {"prompt": prompt, "seed": (base_seed + orig[pos]) % (2**63), "length": total_frames}
                     if in_w > 0:

@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes - 参考图宫格节点
+# Neo Studio - 参考图宫格节点
 # 单节点搞定「提示词 + 最多 12 张参考图」：前端宫格槽位持 input/ 文件名（隐藏 refs widget，
 # 随工作流持久化；槽位数 1~12 由前端运行时调整，不随工作流保存）。执行时按序解码成
 # image_1..image_12（autogrow 输出），同时把提示词 + 参考图打包成运行时 BUNDLE，
@@ -62,7 +62,7 @@ class NeoRefGrid:
     RETURN_NAMES = ("prompt", "BUNDLE") + tuple(f"image_{i}" for i in range(1, GRID_MAX + 1))
     OUTPUT_NODE = True
     FUNCTION = "pack"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "参考图宫格节点：宫格槽位（1~12，运行时可调）→ prompt + BUNDLE + image_1..image_12。"
     SEARCH_ALIASES = [
         "ref grid", "reference grid", "grid", "character sheet", "turnaround", "slots",

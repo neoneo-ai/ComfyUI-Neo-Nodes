@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - 多行提示词集合标题提取单元测试
+# Neo Studio - 多行提示词集合标题提取单元测试
 # 覆盖 _extract_title：正常中文提示词回归 + H3 字段头/时间戳去噪
 
 import os

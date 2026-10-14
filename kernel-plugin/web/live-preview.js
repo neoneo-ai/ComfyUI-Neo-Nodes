@@ -3,7 +3,7 @@
 // 宿主无关：NeoH3VideoDirector 节点（director-node.js）包一层节点加高逻辑，
 // Neo Studio（studio-app.js）直接挂进结果区。onFrame(data) 可选：每个载荷到达时回调（w/h），宿主据此调尺寸。
 
-const LIVE_CSS_HREF = "/extensions/ComfyUI-Neo-Nodes/live-preview.css";
+const LIVE_CSS_HREF = "/extensions/comfyui-neo-studio/live-preview.css";
 const PREVIEW_STEPS = 40; // 保留的采样步数上限，超出丢最旧（每步 PREVIEW_FRAMES 张 JPEG）
 const PREVIEW_FPS = 4;    // 载荷未带 fps 时的兜底播放帧率（与后端 PREVIEW_FPS 同值）
 

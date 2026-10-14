@@ -7,7 +7,7 @@ if (!document.getElementById("neo-be-css")) {
     const link = document.createElement("link");
     link.id = "neo-be-css";
     link.rel = "stylesheet";
-    link.href = "/extensions/ComfyUI-Neo-Nodes/bundle-expand.css";
+    link.href = "/extensions/comfyui-neo-studio/bundle-expand.css";
     document.head.appendChild(link);
 }
 

@@ -193,7 +193,7 @@ test("启动设置：完整 Studio 页里走壳的 js_api 读快照并保存", a
             comfy_state: async () => ({ port: 8188, pid: 42204, mine: true, running: true, ready: true }),
             launcher_state: async () => ({
                 root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8188,
-                plugin_dir: "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes",
+                plugin_dir: "D:/ComfyUI/custom_nodes/comfyui-neo-studio",
                 state_dir: "D:/studio/data", portable: true, state: "ok", error: "",
             }),
             apply_launcher: async (root, python, port) => {
@@ -225,8 +225,8 @@ test("启动设置：根目录与解释器都带原生选择按钮，选完写�
     mockOfflineShell();
     mockRoute("/neo_studio/launcher", jsonResponse({
         root: "D:/ComfyUI", python: "D:/ComfyUI/python/python.exe", port: 8188,
-        plugin_dir: "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes",
-        state_dir: "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes/configs",
+        plugin_dir: "D:/ComfyUI/custom_nodes/comfyui-neo-studio",
+        state_dir: "D:/ComfyUI/custom_nodes/comfyui-neo-studio/configs",
         portable: true, state: "ok", error: "",
     }));
     const picks = [];

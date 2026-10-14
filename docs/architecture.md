@@ -5,7 +5,7 @@
 ## 项目结构
 
 ```
-ComfyUI-Neo-Nodes/
+kernel-plugin/
 ├── __init__.py                # 插件入口：注册 API 路由、合并节点映射、声明 WEB_DIRECTORY
 ├── prompts.py                 # 提示词节点 + /rs_prompts/* 路由
 ├── prompt_lines.py            # 多行提示词集合解析
@@ -182,12 +182,12 @@ NODE_CLASS_MAPPINGS = {
 
 - `web/js/core/`：跨节点共享工具。`cache.js` 是带 TTL 的缓存守卫——配方 spec、技能模板这类会被用户改掉的
   拉取结果统一走它（保存事件显式清空 + TTL 兜底）。
-- `web/docs/<节点键>.md`：节点帮助文档。ComfyUI 前端按 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md`
+- `web/docs/<节点键>.md`：节点帮助文档。ComfyUI 前端按 `/extensions/comfyui-neo-studio/docs/<节点键>.md`
   自动取用并渲染在节点属性面板的「信息」页（先试 `<节点键>/<语言>.md`，取不到才回退 `DESCRIPTION`），
   插件侧不需要任何加载代码。
 
 `__init__.py` 用 `NEO_NODES` 登记 11 个节点及各自所属模块：模块导入失败时节点会静默消失，所以加载结束时按清单核对，
-打印 `[NeoNodes] v<版本> 已注册 N/11 个节点`，缺失项点名节点与模块。版本号单一来源 `util.plugin_version()`（读 `pyproject.toml`，
+打印 `[Neo Studio] v<版本> 已注册 N/11 个节点`，缺失项点名节点与模块。版本号单一来源 `util.plugin_version()`（读 `pyproject.toml`，
 Studio 版本页共用）。清单与注册表的一致性由 `tests/test_node_metadata.py` 校验。
 
 ### 节点元数据

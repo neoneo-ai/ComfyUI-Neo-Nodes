@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - LLM (Large Language Model)
+# Neo Studio - LLM (Large Language Model)
 # LLM 公共代码模块，支持本地模型和远程 API
 
 from __future__ import annotations
@@ -738,16 +738,16 @@ def unload_local_model():
             LLMSingleton._instance = None
             msg = "Local LLM model unloaded successfully"
             logger.info(msg)
-            print(f"[NeoNodes] {msg}")
+            print(f"[Neo Studio] {msg}")
             return {"success": True, "message": "Model unloaded"}
         except Exception as e:
             msg = f"Failed to unload local model: {e}"
             logger.error(msg)
-            print(f"[NeoNodes] {msg}")
+            print(f"[Neo Studio] {msg}")
             return {"success": False, "error": str(e)}
     msg = "No local model loaded, nothing to unload"
     logger.info(msg)
-    print(f"[NeoNodes] {msg}")
+    print(f"[Neo Studio] {msg}")
     return {"success": True, "message": "No model was loaded"}
 
 
@@ -856,7 +856,7 @@ def _log_llm_usage(usage) -> None:
     completion_tokens = getattr(usage, "completion_tokens", None)
     details = getattr(usage, "completion_tokens_details", None)
     reasoning_tokens = getattr(details, "reasoning_tokens", None) if details is not None else None
-    line = f"[NeoNodes] LLM usage: prompt={prompt_tokens} completion={completion_tokens}"
+    line = f"[Neo Studio] LLM usage: prompt={prompt_tokens} completion={completion_tokens}"
     # 0/缺失多为服务端未报明细（如 LM Studio），打出反而误导，仅正数时记录
     if reasoning_tokens:
         line += f" reasoning={reasoning_tokens}"
@@ -1267,7 +1267,7 @@ class LLMSingleton:
         self.model = Llama(**llama_kwargs)
         self.has_mmproj = mmproj_path is not None
         logger.info(f"LLM model loaded successfully, has_mmproj={self.has_mmproj}")
-        print(f"[NeoNodes] LLM model loaded: {os.path.basename(target_path)} | has_mmproj={self.has_mmproj}")
+        print(f"[Neo Studio] LLM model loaded: {os.path.basename(target_path)} | has_mmproj={self.has_mmproj}")
 
     def create_chat_completion(self, messages, max_tokens, image_bytes_list=None, stream=False,
                                tools=None, tool_choice=None):
@@ -1374,7 +1374,7 @@ def _build_native_clip(name: str):
     )
     _NATIVE_CLIP_CACHE[name] = clip
     logger.info(f"Native text-gen model loaded: {name}")
-    print(f"[NeoNodes] Native text-gen model loaded: {name}")
+    print(f"[Neo Studio] Native text-gen model loaded: {name}")
     return clip
 
 

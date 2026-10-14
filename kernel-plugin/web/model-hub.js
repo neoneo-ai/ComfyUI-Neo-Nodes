@@ -14,7 +14,7 @@ if (!document.getElementById("neo-hub-css")) {
     const link = document.createElement("link");
     link.id = "neo-hub-css";
     link.rel = "stylesheet";
-    link.href = "/extensions/ComfyUI-Neo-Nodes/model-hub.css";
+    link.href = "/extensions/comfyui-neo-studio/model-hub.css";
     document.head.appendChild(link);
 }
 

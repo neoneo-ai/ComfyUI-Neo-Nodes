@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - 模型库（model_hub.py）单元测试
+# Neo Studio - 模型库（model_hub.py）单元测试
 # 覆盖：文件名/子目录清洗、类别推断、落盘路径与越界拒绝、已有子目录探查与默认子目录、断点续传起点、
 #       双源仓库与文件归一化、仓库并集与搜索、设置读写、注册表、
 #       路由级异步流程（仓库列表 / 文件清单 / 子目录列表 / 下载 + 取消 + 续传）

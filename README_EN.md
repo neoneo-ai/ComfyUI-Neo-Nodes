@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes
+# Neo Studio
 
 **From one sentence to prompt, image, and film**: AI prompt enhancement, image generation and reference editing,
 and MiniMax H3 multi-segment video direction — all in one plugin. The LLM can run inside the ComfyUI process
@@ -6,11 +6,11 @@ with zero extra dependencies.
 
 ![One-click recipe send to workflow](docs/assets/images/hero-recipes-send.gif)
 
-**Install**: search `Neo Nodes` in ComfyUI Manager (published to the ComfyUI Registry), see [Installation](#installation).
+**Install**: search `Neo Studio` in ComfyUI Manager (published to the ComfyUI Registry), see [Installation](#installation).
 
-## Why Neo Nodes
+## Why Neo Studio
 
-| Capability | Usual approach | Neo Nodes |
+| Capability | Usual approach | Neo Studio |
 |------------|----------------|-----------|
 | Local LLM | Needs `llama-cpp-python` (often fails to build on Windows) | **Native**: safetensors text-generation models run inside the ComfyUI process, no extra dependency |
 | Cloud LLM | Fill endpoint and model name by hand | Built-in DeepSeek, Alibaba Cloud Bailian, Kimi, Zhipu GLM, SiliconFlow — add an API key and go; 🔌 Test Connection verifies live |
@@ -68,11 +68,11 @@ Interaction recordings (click a thumbnail to open the matching doc):
 
 ## Installation
 
-- **ComfyUI Manager (recommended)**: Search `Neo Nodes` in the Manager and install.
+- **ComfyUI Manager (recommended)**: Search `Neo Studio` in the Manager and install.
 - **Manual**: Clone into `ComfyUI/custom_nodes/`:
 
 ```bash
-git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_nodes/ComfyUI-Neo-Nodes
+git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
 Then restart ComfyUI.

@@ -104,7 +104,7 @@ async function validateSkillForNode(skill, isVideo) {
                 data = { ok: !(c.missingNodes || 0) && !(c.missingModels || 0), id, noWorkflow: false, missingNodes, missingModels };
             }
         } catch (e) {
-            console.warn("[Neo Nodes] validateSkillForNode failed", e);
+            console.warn("[Neo Studio] validateSkillForNode failed", e);
             data = { ok: true, id, noWorkflow: false, error: String(e), missingNodes: [], missingModels: [] }; // 检测失败不误报
         }
         _skillValidationCache.set(key, { t: Date.now(), data });
@@ -725,7 +725,7 @@ async function defaultSkillItemsProvider(widget) {
 /** 打开 combo 对应的选择窗（异步取条目后展示）；extra 透传给 openSkillPickerModal（previewRenderer / onPreviewClick） */
 async function openComboSkillPicker(node, widget, title, showFooter, provider, anchor, extra = {}) {
     let items = [];
-    try { items = (await provider(widget)) || []; } catch (e) { console.error("[Neo Nodes] skill picker load failed", e); }
+    try { items = (await provider(widget)) || []; } catch (e) { console.error("[Neo Studio] skill picker load failed", e); }
     openSkillPickerModal({
         title,
         items,

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - Workflow model-path repair unit tests
+# Neo Studio - Workflow model-path repair unit tests
 # 覆盖：归一化 / 打分匹配 / 扩展名规则 / 歧义 / UI 与 API 两种格式 / 文件夹兜底 /
 # 手动选择（decisions）与手动修复映射的保存、应用与删除
 

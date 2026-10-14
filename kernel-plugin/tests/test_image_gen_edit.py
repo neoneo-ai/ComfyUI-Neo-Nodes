@@ -506,7 +506,7 @@ class SchemaTests(unittest.TestCase):
         schema = image_gen_edit.NeoImageGenEdit.GET_SCHEMA()
         self.assertEqual(schema.node_id, "NeoImageGenEdit")
         self.assertEqual(schema.display_name, "Neo Image Gen & Edit")
-        self.assertEqual(schema.category, "Neo-Nodes")
+        self.assertEqual(schema.category, "Neo Studio")
         self.assertEqual(len(schema.outputs), 1)
         # 输出标签沿用旧节点的 images（下游按序号连线，标签仅影响 UI 显示）
         self.assertEqual(schema.outputs[0].display_name, "images")

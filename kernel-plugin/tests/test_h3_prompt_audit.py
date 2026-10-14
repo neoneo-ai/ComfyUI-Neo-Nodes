@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - H3 提示词审计单元测试
+# Neo Studio - H3 提示词审计单元测试
 # 覆盖 h3_prompt_audit 的确定性检查分支与窄修复验收，以及 skill.py 的 H3 grounding 注入
 
 from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot

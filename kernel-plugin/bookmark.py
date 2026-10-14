@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — Bookmark module
+# Neo Studio — Bookmark module
 # 收藏后端统一模块：本地收藏（仅记录路径信息，打开时基于路径查找）+
 # C 站收藏（示例图边下边开，下载到一张即可打开）+
 # OSS 预设收藏。收藏列表按需返回双图封面（取自该收藏项内容前两张媒体）。

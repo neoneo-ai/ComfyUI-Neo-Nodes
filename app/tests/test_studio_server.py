@@ -152,15 +152,15 @@ class OfflineServiceTests(_ServerCase):
         self.assertFalse(data["starting"], "没在拉起时不报启动中")
 
     def test_extension_static_files_served(self):
-        for path in ("/extensions/ComfyUI-Neo-Nodes/studio/studio-app.js",
-                     "/extensions/ComfyUI-Neo-Nodes/studio/style.css",
-                     "/extensions/ComfyUI-Neo-Nodes/gallery.js"):
+        for path in ("/extensions/comfyui-neo-studio/studio/studio-app.js",
+                     "/extensions/comfyui-neo-studio/studio/style.css",
+                     "/extensions/comfyui-neo-studio/gallery.js"):
             self.assertEqual(self.get(path)[0], 200, path)
 
     def test_extension_static_files_not_cacheable(self):
         """壳窗口开着时改了插件 JS：缓存里的旧模块和新模块拼进同一张模块图，
         一个 ES 模块链接错误就把整页打回只出顶栏（视图不挂、胶囊永远 hidden）。"""
-        path = "/extensions/ComfyUI-Neo-Nodes/gallery-utils.js"
+        path = "/extensions/comfyui-neo-studio/gallery-utils.js"
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=30) as resp:
             self.assertEqual(resp.status, 200)
             self.assertEqual(resp.headers.get("Cache-Control"), "no-store", path)
@@ -199,7 +199,7 @@ class OfflineServiceTests(_ServerCase):
     def test_launcher_snapshot_and_apply(self):
         # 设置页读的是壳的启动快照；保存由壳校验并重启 ComfyUI
         self.app["launcher"].update(root="D:/ComfyUI", python="D:/python/python.exe", port=8188,
-                                    plugin_dir="D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes",
+                                    plugin_dir="D:/ComfyUI/custom_nodes/comfyui-neo-studio",
                                     state_dir="D:/studio/data", portable=True, state="ok", error="")
         applied = []
         self.app["launcher_api"]["apply"] = (
@@ -207,7 +207,7 @@ class OfflineServiceTests(_ServerCase):
         status, body = self.get("/neo_studio/launcher")
         data = json.loads(body)
         self.assertEqual(status, 200)
-        self.assertEqual(data["plugin_dir"], "D:/ComfyUI/custom_nodes/ComfyUI-Neo-Nodes")
+        self.assertEqual(data["plugin_dir"], "D:/ComfyUI/custom_nodes/comfyui-neo-studio")
         self.assertEqual(data["state"], "ok")
         status, body = self.post_json("/neo_studio/launcher",
                                       {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190})

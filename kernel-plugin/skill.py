@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - Skills (目录式多文件 Markdown 技能)
+# Neo Studio - Skills (目录式多文件 Markdown 技能)
 """
 Skill = 一个目录，内含主文件 skill.md（大小写不敏感：SKILL.md / Skill.md 亦可；YAML frontmatter + 系统提示词正文）+ 可选的其它 *.md 与子目录中的 *.txt 引用文件。
 

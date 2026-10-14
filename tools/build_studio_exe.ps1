@@ -4,11 +4,11 @@
 #   onedir         tools/neo-studio/Neo-Studio.exe 目录版，启动不解包，出窗口快得多
 #   both           两个都出
 # 打包两步：
-#   1) 把 kernel-plugin 的 git 已跟踪文件复制成 build/bundled/ComfyUI-Neo-Studio，随包一起打进 exe。
+#   1) 把 kernel-plugin 的 git 已跟踪文件复制成 build/bundled/comfyui-neo-studio，随包一起打进 exe。
 #      exe 里插件缺失时靠这份副本装进 custom_nodes / 离线浏览素材库。排除开发目录与产物目录。
 #      用户配置与密钥（remote_llm_config / backyard_oss / model_hub 的 token / 收藏 / 缓存）
 #      本来就不在跟踪列表里，因此 exe 里只有预设，装插件时也不会覆盖用户已有文件。
-#   2) 按 Neo-Studio.spec 打包，副本落在 _MEIPASS/bundled/ComfyUI-Neo-Studio
+#   2) 按 Neo-Studio.spec 打包，副本落在 _MEIPASS/bundled/comfyui-neo-studio
 #      （onedir 下 _MEIPASS 就是包目录里的 _internal/）。
 # 用法: tools\build_studio_exe.ps1 [-Python <python.exe>] [-DryRun] [-Mode onefile|onedir|both]
 param(
@@ -25,7 +25,7 @@ $PluginSrc = Join-Path $RepoRoot "kernel-plugin"
 Set-Location $PluginSrc
 
 $BuildDir = Join-Path $RepoRoot "build"
-$BUNDLE_DIR = "bundled/ComfyUI-Neo-Studio"   # Neo-Studio.spec 里的 Tree target
+$BUNDLE_DIR = "bundled/comfyui-neo-studio"   # Neo-Studio.spec 里的 Tree target
 $BundleDir = Join-Path $BuildDir ($BUNDLE_DIR -replace '/', '\')
 
 # 副本边界 = kernel-plugin 里 git 已跟踪 - 开发目录。锚定开头，^tools/ 不会误杀 web/studio/tools.js

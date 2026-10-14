@@ -30,13 +30,13 @@ import {
 // Load gallery CSS (with cache-busting to force reload on each page load)
 const galleryCssLink = document.createElement('link');
 galleryCssLink.rel = 'stylesheet';
-galleryCssLink.href = "/extensions/ComfyUI-Neo-Nodes/gallery.css?v=" + Date.now();
+galleryCssLink.href = "/extensions/comfyui-neo-studio/gallery.css?v=" + Date.now();
 document.head.appendChild(galleryCssLink);
 
 // Load recipes CSS (with cache-busting)
 const recipesCssLink = document.createElement('link');
 recipesCssLink.rel = 'stylesheet';
-recipesCssLink.href = "/extensions/ComfyUI-Neo-Nodes/recipes.css?v=" + Date.now();
+recipesCssLink.href = "/extensions/comfyui-neo-studio/recipes.css?v=" + Date.now();
 document.head.appendChild(recipesCssLink);
 
 // Civitai 收藏 view: bookmarked C-site models, shown like the Lora section.

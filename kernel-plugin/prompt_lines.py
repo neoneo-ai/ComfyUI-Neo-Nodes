@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - Multi-line prompt collections
+# Neo Studio - Multi-line prompt collections
 #
 #约定：presets/collections/ 与 custom/collections/ 下的每个 .txt 是一个多行
 #提示词集合，一行一条；其余位置的 .txt 仍按整篇处理（见 web 端判定与路由）。

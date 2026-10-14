@@ -1,13 +1,13 @@
 [project]
-name = "comfyui-neo-nodes"
+name = "comfyui-neo-studio"
 version = "1.2.0"
 # comfy-cli 把这段文本原样写进 Registry 列表，Manager 与前端搜索都靠它匹配，
 # 所以这里列真实节点名，不写抽象介绍。
-description = "ComfyUI-Neo-Nodes (Neo nodes): Neo Prompt Encoder and Neo Prompt Agent (LLM prompt enhance, generate, reverse, translate, classify), Neo Image Gen & Edit (skill-template text-to-image, editing and outpaint with Autogrow reference images), Neo Reference Grid, Neo Grid Split, Neo Bundle Expand, Neo H3 Video Director with Neo H3 Add Keyframe, Add Context and Add Guides, Neo H3 Segment Run, plus built-in image and video generation settings, Gallery asset library with LoRA tagging, Recipes one-click send, Model Hub downloads, workflow repair, and the Neo Studio and Backyard pages."
+description = "Neo Studio (ComfyUI kernel plugin): Neo Prompt Encoder and Neo Prompt Agent (LLM prompt enhance, generate, reverse, translate, classify), Neo Image Gen & Edit (skill-template text-to-image, editing and outpaint with Autogrow reference images), Neo Reference Grid, Neo Grid Split, Neo Bundle Expand, Neo H3 Video Director with Neo H3 Add Keyframe, Add Context and Add Guides, Neo H3 Segment Run, plus built-in image and video generation settings, Gallery asset library with LoRA tagging, Recipes one-click send, Model Hub downloads, workflow repair, and the Neo Studio and Backyard pages."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 keywords = [
-    "comfyui", "comfyui-neo-nodes", "neo-nodes", "neo nodes", "nodes",
+    "comfyui", "comfyui-neo-studio", "neo-studio", "neo studio", "nodes",
     "llm", "prompt", "prompt enhancement", "prompt reverse", "prompt agent",
     "prompt translation", "text generation", "qwen", "safetensors",
     "image generation", "image edit", "outpaint", "reference image", "grid",
@@ -15,7 +15,7 @@ keywords = [
     "video", "video director", "minimax", "minimax h3", "h3",
     "lora", "lora tag", "caption", "gallery", "asset library", "lightbox",
     "recipes", "workflow", "workflow repair", "model hub", "modelscope",
-    "huggingface", "civitai", "studio", "skills", "chinese", "desktop",
+    "huggingface", "civitai", "studio", "skills", "chinese", "desktop app",
 ]
 # 包内没有平台相关代码。加速器声明（Environment :: GPU :: ...）故意不写：
 # 节点跑在 ComfyUI 自带的 torch 上，写出来等于声称做过没做过的验证。
@@ -44,14 +44,14 @@ oss = ["oss2"]
 desktop = ["pywebview"]
 
 [project.urls]
-Homepage = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes"
-Repository = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes"
-Documentation = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes#readme"
-Issues = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes/issues"
+Homepage = "https://github.com/neoneo-ai/Neo-Studio"
+Repository = "https://github.com/neoneo-ai/Neo-Studio"
+Documentation = "https://github.com/neoneo-ai/Neo-Studio#readme"
+Issues = "https://github.com/neoneo-ai/Neo-Studio/issues"
 
 [tool.comfy]
 PublisherId = "neoneo-ai"
-DisplayName = "Neo Nodes"
+DisplayName = "Neo Studio"
 # Registry 列表图标：与顶栏菜单同款字形（README 里的 🅝）。
 Icon = "🅝"
 # Manager 用来拒绝把包装到不兼容核心上的版本下限。Neo Image Gen & Edit 需要

@@ -1,5 +1,5 @@
 /**
- * lightbox.js — Neo-Nodes 通用 Lightbox 组件（自包含、可复用）。
+ * lightbox.js — Neo Studio 通用 Lightbox 组件（自包含、可复用）。
  *
  * 全屏媒体查看：深色遮罩 + 居中卡片；图片滚轮缩放(0.5–5x) + 拖拽平移；
  * ←/→ 翻页（箭头按钮 + i/n 计数）；Esc 关闭/退出全屏；F 键全屏；点遮罩关闭。
@@ -24,7 +24,7 @@ if (!document.getElementById('neo-lightbox-css')) {
     const link = document.createElement('link');
     link.id = 'neo-lightbox-css';
     link.rel = 'stylesheet';
-    link.href = '/extensions/ComfyUI-Neo-Nodes/lightbox.css';
+    link.href = '/extensions/comfyui-neo-studio/lightbox.css';
     document.head.appendChild(link);
 }
 

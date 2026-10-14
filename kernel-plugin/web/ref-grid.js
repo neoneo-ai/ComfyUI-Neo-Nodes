@@ -20,7 +20,7 @@ if (!document.getElementById("neo-rg-css")) {
     const link = document.createElement("link");
     link.id = "neo-rg-css";
     link.rel = "stylesheet";
-    link.href = "/extensions/ComfyUI-Neo-Nodes/ref-grid.css";
+    link.href = "/extensions/comfyui-neo-studio/ref-grid.css";
     document.head.appendChild(link);
 }
 

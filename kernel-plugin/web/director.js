@@ -1,5 +1,5 @@
 /**
- * director.js — Neo-Nodes 分镜视频导演编辑器（配方编辑窗口）。
+ * director.js — Neo Studio 分镜视频导演编辑器（配方编辑窗口）。
  * 从 recipes.js 拆出：shared(宽高比/百万像素或自定义 W/H) + 逐段(skill/prompt/首帧/时长)
  * + 半自动故事生成/拆分。数据与保存仍走 recipes.js 的 saveRecipe / listVideoSkills / scanMediaNodes。
  */

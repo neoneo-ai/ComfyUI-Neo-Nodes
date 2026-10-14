@@ -127,7 +127,7 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
 
         await page.waitForSelector("#ns-version", { timeout: 20000 });
         assert.match(await page.evaluate(() => document.querySelector("#ns-version").textContent),
-            /Neo-Nodes\s+\d+\.\d+\.\d+/, "窗口标题栏应显示插件版本");
+            /Neo Studio\s+\d+\.\d+\.\d+/, "窗口标题栏应显示插件版本");
 
         // 顶栏 ComfyUI 胶囊：壳里可见并报运行状态（关窗不停 ComfyUI，去留由胶囊控制）
         await page.waitForSelector("#ns-comfy:not([hidden])", { timeout: 20000 });

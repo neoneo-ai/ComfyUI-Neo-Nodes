@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes
+# Neo Studio
 
 > 📄 English: [README_EN.md](README_EN.md)
 
@@ -7,11 +7,11 @@ LLM 可在 ComfyUI 进程内零依赖运行。
 
 ![配方一键发送到工作流](docs/assets/images/hero-recipes-send.gif)
 
-**安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（已发布至 ComfyUI Registry），详见 [安装](#安装)。
+**安装**：ComfyUI Manager 搜 `Neo Studio` 一键安装（已发布至 ComfyUI Registry），详见 [安装](#安装)。
 
-## 为什么选 Neo Nodes
+## 为什么选 Neo Studio
 
-| 能力 | 常见做法 | Neo Nodes |
+| 能力 | 常见做法 | Neo Studio |
 |------|----------|-----------|
 | 本地 LLM | 需要 `llama-cpp-python`（Windows 上常编译失败） | **Native**：safetensors 文本生成模型在 ComfyUI 进程内推理，零额外依赖 |
 | 云端 LLM | 手填端点与模型名 | 内置 DeepSeek / 阿里云百炼 / Kimi / 智谱 GLM / 硅基流动，填 Key 即用，🔌 测试连接当场验证 |
@@ -90,7 +90,7 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 
 ## 目录
 
-- [为什么选 Neo Nodes](#为什么选-neo-nodes)
+- [为什么选 Neo Studio](#为什么选-neo-studio)
 - [零配置可用](#零配置可用不配-llm-也能用)
 - [模块一览](#模块一览)
 - [功能演示](#功能演示)
@@ -106,11 +106,11 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
 
 ## 安装
 
-- **ComfyUI Manager（推荐）**：在 Manager 中搜索 `Neo Nodes` 一键安装（已发布至 ComfyUI Registry）
+- **ComfyUI Manager（推荐）**：在 Manager 中搜索 `Neo Studio` 一键安装（已发布至 ComfyUI Registry）
 - **手动**：将本仓库克隆到 `ComfyUI/custom_nodes/` 目录，然后重启 ComfyUI
 
 ```bash
-git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_nodes/ComfyUI-Neo-Nodes
+git clone https://github.com/neoneo-ai/Neo-Studio.git ComfyUI/custom_nodes/comfyui-neo-studio
 ```
 
 ## 依赖
@@ -122,7 +122,7 @@ git clone https://github.com/neoneo-ai/ComfyUI-Neo-Nodes.git ComfyUI/custom_node
 
 ## 快速上手
 
-1. **安装**：ComfyUI Manager 搜 `Neo Nodes` 一键安装（或见上方手动安装），重启 ComfyUI。
+1. **安装**：ComfyUI Manager 搜 `Neo Studio` 一键安装（或见上方手动安装），重启 ComfyUI。
 2. **先玩零配置功能**（不需要 LLM 与任何模型配置）
    - **素材一键入节点**：右侧边栏「素材」面板 → 浏览 / 搜索到目标图片 → 点缩略图进灯箱
      → 点 ✈️ Send 选择目标节点（LoadImage 类优先）→ 图片直接写入该节点。
@@ -204,7 +204,7 @@ ComfyUI 就绪后窗口整页跳到 `http://127.0.0.1:8188/neo-studio`
 开窗口前壳还会清掉 WebView2 的 HTTP 缓存 —— 缓存里的旧插件 JS 会和新拉到的模块拼成同一张 ES 模块图，
 一个链接错误就让整页只剩顶栏（视图不挂、顶栏启停控件也不出现）。
 
-打包后的 exe 是便携启动器：放在 `<根目录>/custom_nodes/ComfyUI-Neo-Nodes/tools` 下时，ComfyUI 根目录与
+打包后的 exe 是便携启动器：放在 `<根目录>/custom_nodes/comfyui-neo-studio/tools` 下时，ComfyUI 根目录与
 python 都从 exe 自身位置往上推导（找带 `main.py` 的那一级），双击即启动；根目录推导不出、或同级与内部
 都找不到 `python/python.exe` 时，窗口开在「首次设置」页补齐这两项 —— 原生目录/文件选择器加实时校验
 （根目录要有 `main.py`、解释器要真是文件），点「开始」写配置并拉起 ComfyUI；两项都自动找到了就直接进

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — low-level media helpers shared by gallery / lora / recipes.
+# Neo Studio — low-level media helpers shared by gallery / lora / recipes.
 # Leaf module: depends only on the standard library, so it can be imported
 # anywhere without risking an import cycle with the gallery route modules.
 
@@ -22,10 +22,10 @@ SETTINGS_FILE = CONFIGS_DIR / "gallery_settings.json"
 
 
 class PrefixFilter(logging.Filter):
-    """Auto-prepend '[Neo-Nodes] ' to log records that lack the prefix."""
+    """Auto-prepend '[Neo Studio] ' to log records that lack the prefix."""
     def filter(self, record):
-        if not record.getMessage().startswith("[Neo-Nodes]"):
-            record.msg = "[Neo-Nodes] " + record.msg
+        if not record.getMessage().startswith("[Neo Studio]"):
+            record.msg = "[Neo Studio] " + record.msg
             record.args = ()
         return True
 

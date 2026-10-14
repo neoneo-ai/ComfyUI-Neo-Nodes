@@ -1,12 +1,12 @@
 name: Bug Report / 问题报告
-description: Report a problem with Neo Nodes（报告 Neo Nodes 的问题）
+description: Report a problem with Neo Studio（报告 Neo Studio 的问题）
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        插件版本在 ComfyUI 启动日志的版本横幅里（`[Neo Nodes] vX.Y.Z`）。
-        文档索引：https://github.com/neoneo-ai/ComfyUI-Neo-Nodes/tree/main/docs
+        插件版本在 ComfyUI 启动日志的版本横幅里（`[Neo Studio] vX.Y.Z`）。
+        文档索引：https://github.com/neoneo-ai/Neo-Studio/tree/main/docs
   - type: dropdown
     id: module
     attributes:
@@ -62,7 +62,7 @@ body:
     id: versions
     attributes:
       label: 版本与环境 / Versions and environment
-      placeholder: "Neo Nodes vX.Y.Z / ComfyUI 0.3.x / Windows 11 / RTX 4090"
+      placeholder: "Neo Studio vX.Y.Z / ComfyUI 0.3.x / Windows 11 / RTX 4090"
     validations:
       required: true
   - type: textarea

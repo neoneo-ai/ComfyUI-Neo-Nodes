@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 内置生图（技能工作流模板渲染）
+# Neo Studio — 内置生图（技能工作流模板渲染）
 # 生图完全由所选技能的 workflow.json 模板驱动：占位符替换 + LoRA 槽位填充/动态注入，
 # 渲染后的 API prompt 通过内部 HTTP API 压进执行队列，复用 ComfyUI 的排队、显存生命周期与
 # 取消行为；任务状态由 _watch 协程按变化经 rs.image_gen.status 事件推给前端。

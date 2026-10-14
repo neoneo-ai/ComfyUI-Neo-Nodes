@@ -215,7 +215,7 @@ class ExportTests(unittest.TestCase):
 
         readme = zf.read("导演导出测试/Readme.txt").decode("utf-8")
         for token in ("导演导出测试", "分镜视频导演配方", "2 段", "960×544", "总时长 12s",
-                      "ComfyUI-Neo-Nodes", "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes",
+                      "Neo Studio", "https://github.com/neoneo-ai/Neo-Studio",
                       "📦 导入", "NeoH3VideoDirector"):
             self.assertIn(token, readme)
         self.assertNotIn("【来源】", readme)
@@ -240,7 +240,7 @@ class ExportTests(unittest.TestCase):
             zf = zipfile.ZipFile(io.BytesIO(resp.body))
             readme = zf.read("English Recipe/Readme.txt").decode("utf-8")
             for token in ("[Contents]", "[Quick start]", "standard recipe",
-                          "Import", "Send to workflow", "ComfyUI-Neo-Nodes"):
+                          "Import", "Send to workflow", "Neo Studio"):
                 self.assertIn(token, readme)
             self.assertNotIn("[Source]", readme)
             self.assertNotIn("配方包", readme)

@@ -1,6 +1,6 @@
 // E2E：技能管理独立窗口（Director 风格控件）+ 内嵌 litegraph 工作流编辑（需 ComfyUI 运行中）。
 // 用法：npm run e2e   或   node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.mjs
-// 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo-Nodes 插件。
+// 前置：ComfyUI 在 http://127.0.0.1:8188/ 运行且已加载 Neo Studio 插件。
 // 只保留必须真浏览器才能验的核心用例（overlay 穿透与放大、内嵌画布挂载 + LoRA 灌值、combo 弹层层级、搜索框扛中文 IME 指针离开）；
 // 标题栏拖动 / 把手拉伸 / 拖拽手势取消 / widget 弹窗落点由 tests/js/skill-manager.test.mjs 覆盖。
 // 只读校验：预设技能「保存工作流」仅值覆盖，结构变更自动复制为自定义技能；测试全程不点保存，不写用户数据。
@@ -15,10 +15,10 @@ let skipReason;
 
 test.before(async () => {
     try {
-        const resp = await fetch(`${BASE}/extensions/ComfyUI-Neo-Nodes/skill.js`, { signal: AbortSignal.timeout(4000) });
+        const resp = await fetch(`${BASE}/extensions/comfyui-neo-studio/skill.js`, { signal: AbortSignal.timeout(4000) });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     } catch (e) {
-        skipReason = `ComfyUI / Neo-Nodes 不可达 (${BASE}): ${e.message}`;
+        skipReason = `ComfyUI / Neo Studio 不可达 (${BASE}): ${e.message}`;
         return;
     }
     browser = await chromium.launch({ headless: true });
@@ -37,11 +37,11 @@ async function openManagerPage(deviceScaleFactor = 1) {
     await page.waitForSelector("#graph-canvas, .litegraph-canvas", { timeout: 30000 });
     // Neo 的 prompts.css 由插件异步注入（带 ?v= 时间戳）：不等它就读到无样式的 overlay，断言全飘
     await page.waitForFunction(
-        () => [...document.styleSheets].some((s) => (s.href || "").includes("ComfyUI-Neo-Nodes/prompts.css")),
+        () => [...document.styleSheets].some((s) => (s.href || "").includes("comfyui-neo-studio/prompts.css")),
         { timeout: 20000 }
     );
     await page.evaluate(async () => {
-        const m = await import("/extensions/ComfyUI-Neo-Nodes/skill.js");
+        const m = await import("/extensions/comfyui-neo-studio/skill.js");
         m.openSkillManager();
     });
     await page.waitForSelector(".rs-skill-manager .rs-skill-picker-item", { timeout: 20000 });

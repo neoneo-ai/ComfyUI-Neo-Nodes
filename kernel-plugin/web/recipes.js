@@ -1,5 +1,5 @@
 /**
- * recipes.js — Neo-Nodes 配方模块
+ * recipes.js — Neo Studio 配方模块
  * 配方 = 提示词 + 有序多资产(图/视频/音频)。负责：
  *   - 从当前工作流收集资源 (LoadImage / LoadVideo / LoadAudio) 供「保存配方」
  *   - 调用后端 /rs_recipes/* API

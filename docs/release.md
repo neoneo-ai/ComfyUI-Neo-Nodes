@@ -20,7 +20,7 @@ Registry 与前端搜索的命中靠 `pyproject.toml` 的 `description` / `keywo
 
 ### Git Action 方式
 
-- Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Nodes`）。
+- Registry 元数据在 `pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Studio`）。
 - `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，
   通过 `comfy-org/publish-node-action` 发布至 ComfyUI Registry（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）。
 

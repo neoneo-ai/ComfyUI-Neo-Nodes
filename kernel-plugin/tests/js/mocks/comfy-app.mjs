@@ -1,4 +1,4 @@
-// ComfyUI `app` 单体的测试替身。只实现 Neo-Nodes 前端真正用到的成员：
+// ComfyUI `app` 单体的测试替身。只实现 Neo Studio 前端真正用到的成员：
 // graph / nodeOutputs / canvas / graphToPrompt / loadGraphData / loadApiJson / extensionManager(toast, renderMarkdownToHtml)
 export const appState = {
     extensions: [],

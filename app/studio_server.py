@@ -128,7 +128,7 @@ async def studio_version(request):
     知道「壳已拉起、端口未就绪」，不会先闪「未运行」与「需要 ComfyUI」提示。"""
     return web.json_response({
         "success": True,
-        "plugin": "ComfyUI-Neo-Nodes",
+        "plugin": "Neo Studio",
         "plugin_version": request.app["plugin_version"],
         "comfyui_version": OFFLINE_ERROR,
         "offline": True,
@@ -201,7 +201,7 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict =
         os.environ[DATA_ROOT_ENV] = str(data_root)
     routes = web.RouteTableDef()
     routes.get("/neo-studio")(studio_page)
-    routes.static("/extensions/ComfyUI-Neo-Nodes", str(plugin_dir / "web"))
+    routes.static("/extensions/comfyui-neo-studio", str(plugin_dir / "web"))
     for table in load_shell_modules(plugin_dir):
         for route in table:
             if caps.owner(route.method, route.path) == "shell":

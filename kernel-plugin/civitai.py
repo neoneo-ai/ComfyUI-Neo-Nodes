@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — C 站（Civitai）客户端。
+# Neo Studio — C 站（Civitai）客户端。
 #
 # API KEY 与代理只有一份配置，落在 configs/gallery_settings.json（画廊 C 站同步 /
 # C 站收藏 / 技能修复 LoRA 下载 / 模型库 C 站源共用）。请求口径、下载地址校验与
@@ -25,7 +25,7 @@ from .util import _load_settings
 
 API_HOST = "https://civitai.com"
 API_BASE = f"{API_HOST}/api/v1"
-USER_AGENT = "ComfyUI-Neo-Nodes"
+USER_AGENT = "comfyui-neo-studio"
 
 # 权重只走 C 站自己的签名端点；签名地址短时效，续传必须每次重新请求该端点
 _DOWNLOAD_PATH_RE = re.compile(r"^/api/download/models/\d+$")

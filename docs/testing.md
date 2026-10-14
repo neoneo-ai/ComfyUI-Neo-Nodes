@@ -123,7 +123,7 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   折叠卸载画布、再展开重挂、预设技能保存按钮说明结构变更自动复制、125% 缩放下 widget 弹窗贴着鼠标落点、
   combo 下拉浮在技能弹窗之上）。
   截图落 `tmp/skill-wf-editor.png`、`tmp/skill-wf-prompt.png`。
-- `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/ComfyUI-Neo-Nodes/docs/<节点键>.md` 可取、
+- `node-docs.e2e.mjs` — 节点帮助：11 个节点文档在 `/extensions/comfyui-neo-studio/docs/<节点键>.md` 可取、
   节点上不再有 `neo_help` 徽标 widget、属性面板「信息」页渲染出文档正文（会话未注册属性面板时 skip）。
 - `studio-app.e2e.mjs` — 桌面壳窗口：壳自行拉起 ComfyUI，经 WebView2 远程调试端口连 CDP，断言窗口按
   `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏胶囊可见并报运行状态（端口 + PID）、日志 tab 读到控制台内容、

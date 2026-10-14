@@ -7,7 +7,7 @@ Studio 页面（web/studio/index.html）由 /neo-studio 短路径提供（同 /e
 - 整片生成：ComfyUI 里由画布上的 NeoH3VideoDirector 节点跑，Studio 没有画布，这里把
   「NeoH3VideoDirector + SaveVideo」两节点图提交进执行队列（显存/进度/取消都由执行器负责），
   任务跟踪与 h3_segment 同一套做法；导演节点本身不记账，成功后由这里把成片记进配方「结果」区。
-- /neo-studio：Studio 页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。
+- /neo-studio：Studio 页面短路径（同 /extensions/comfyui-neo-studio/studio/index.html）。
 - /neo_studio/version：插件 + ComfyUI 版本，供 Studio 首页展示升级信息。
 - /neo_studio/log：ComfyUI 控制台日志（app.logger 环形缓冲），Studio「设置 → 日志」轮询用。
 """
@@ -227,7 +227,7 @@ async def director_cancel_route(request):
 
 @PromptServer.instance.routes.get("/neo-studio")
 async def studio_page_route(request):
-    """Neo Studio 独立页面短路径（同 /extensions/ComfyUI-Neo-Nodes/studio/index.html）。"""
+    """Neo Studio 独立页面短路径（同 /extensions/comfyui-neo-studio/studio/index.html）。"""
     resp = web.FileResponse(Path(__file__).parent / "web" / "studio" / "index.html")
     resp.headers["Cache-Control"] = "no-cache"   # 壳窗口会缓存整页，改过的顶栏要能立刻生效
     return resp
@@ -244,7 +244,7 @@ async def studio_version_route(request):
         pass
     return web.json_response({
         "success": True,
-        "plugin": "ComfyUI-Neo-Nodes",
+        "plugin": "Neo Studio",
         "plugin_version": plugin_version(),
         "comfyui_version": comfy_version,
         "recipes": list_director_recipes(),

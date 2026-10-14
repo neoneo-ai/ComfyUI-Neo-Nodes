@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — SAM3 点选分割（生图点选删除用）
+# Neo Studio — SAM3 点选分割（生图点选删除用）
 # 模型为 checkpoints 目录下的 sam3 checkpoint（按名自动挑选，优先 SAM3.1），加载一次后缓存，
 # 显存由 comfy.model_management 统一换入换出。分割进程内复用核心 SAM3_Detect 节点
 # 的点提示路径（点 → union mask），二值遮罩落 Input/NeoAgent 供局部编辑管线使用。

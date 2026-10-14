@@ -1,4 +1,4 @@
-﻿# Neo Studio 启动器：ComfyUI 未运行则拉起，就绪后打开 Studio 页面。
+# Neo Studio 启动器：ComfyUI 未运行则拉起，就绪后打开 Studio 页面。
 param(
     [int]$Port = 8188,
     [string]$Python = "",
@@ -21,7 +21,7 @@ if (-not $Python -or -not (Test-Path $Python)) {
 $url = "http://127.0.0.1:$Port/neo-studio"
 
 function Test-Ready([int]$Seconds) {
-    # 探 /neo_studio/version：既确认 ComfyUI 在跑，也确认 Neo-Nodes 插件已加载
+    # 探 /neo_studio/version：既确认 ComfyUI 在跑，也确认 Neo Studio 插件已加载
     for ($i = 0; $i -lt $Seconds; $i++) {
         try {
             $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/neo_studio/version" -UseBasicParsing -TimeoutSec 3

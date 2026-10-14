@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - Prompts
+# Neo Studio - Prompts
 
 from __future__ import annotations
 
@@ -75,15 +75,15 @@ def _auto_unload_after_generate():
         if mode == LLM_MODE_LOCAL and cfg.get("auto_unload_local", False):
             result = unload_local_model()
             logger.info(f"Auto-unloaded local model after auto-generate: {result}")
-            print(f"[NeoNodes] Auto-unloaded local model: {result}")
+            print(f"[Neo Studio] Auto-unloaded local model: {result}")
         elif mode == LLM_MODE_NATIVE and cfg.get("auto_unload_native", False):
             unload_native_model()
             logger.info("Auto-unloaded native model after auto-generate")
-            print("[NeoNodes] Auto-unloaded native model")
+            print("[Neo Studio] Auto-unloaded native model")
     except Exception as e:
         msg = f"Failed to auto-unload model: {e}"
         logger.warning(msg)
-        print(f"[NeoNodes] {msg}")
+        print(f"[Neo Studio] {msg}")
 
 
 # ==========================================
@@ -454,7 +454,7 @@ class NeoPrompts:
     RETURN_TYPES = ("CONDITIONING",  "STRING")
     RETURN_NAMES = ("POSITIVE",  "PROMPT")
     FUNCTION = "encode_prompts"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "AI-powered text encoder supports save/select prompt, LLM-based prompt enhancement, translation, classification, title extraction, intelligent caching, and auto-generate."
     SEARCH_ALIASES = [
         "prompt encoder", "text encode", "clip text encode", "positive", "conditioning",
@@ -1306,7 +1306,7 @@ class NeoPromptAgent:
     # 多结果 skill：PROMPT 按条目循环消费（OUTPUT_IS_LIST），单结果等价于原行为；BUNDLE 为本次生成的运行时包 id
     OUTPUT_IS_LIST = (True, False)
     FUNCTION = "get_prompt"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     OUTPUT_NODE = True
     DESCRIPTION = "Simple prompt generator node with settings button. Supports external/internal input toggle and auto-generate. No clip encoder binding."
     SEARCH_ALIASES = [

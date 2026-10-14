@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — OSS Remote Presets (Cloud Presets) module
+# Neo Studio — OSS Remote Presets (Cloud Presets) module
 #
 # Split out of gallery.py. Self-contained for paths: computes them from the
 # custom node directory (this file sits next to gallery.py). Routes register

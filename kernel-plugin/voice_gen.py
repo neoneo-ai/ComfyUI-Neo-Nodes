@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 语音生成（CosyVoice 零样本克隆）
+# Neo Studio — 语音生成（CosyVoice 零样本克隆）
 # 独立于生图管线：自己的任务表与 rs.voice_gen.status 事件，复用 ComfyUI 队列提交与
 # workflow.json 模板渲染（render_template / submit_graph）。参考音频来自画廊音频卡片，
 # 经 copy_to_input 落到 input/ 后作为 {{REF_AUDIO_1}} 槽位；目标文本走 {{PROMPT}}。

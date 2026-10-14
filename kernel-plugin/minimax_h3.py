@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - MiniMax H3 特定逻辑
+# Neo Studio - MiniMax H3 特定逻辑
 """MiniMax H3 视频生成特定逻辑，供 skill.py 的通用代理循环调用：
 - 生成模式判定（_h3_mode）与各模式最终 grounding 约束；
 - skill 正文条件段落裁剪（<!-- @if TOKENS -->...<!-- @end -->），token 为生成模式 + 已连参考媒体类型；

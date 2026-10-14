@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 模型库：Comfy-Org 专区（Hugging Face / ModelScope 双源）。
+# Neo Studio — 模型库：Comfy-Org 专区（Hugging Face / ModelScope 双源）。
 # 搜索 → 文件清单（按 split_files 前缀推断 ComfyUI 类别）→ aiohttp 流式下载，
 # .part + HTTP Range 断点续传，单任务，进度轮询，取消保留断点。
 
@@ -31,7 +31,7 @@ REPO_CACHE_TTL = 900.0
 FILE_CACHE_TTL = 600.0
 MS_PROBE_CONCURRENCY = 8
 CHUNK_SIZE = 4 * 1024 * 1024
-USER_AGENT = "ComfyUI-Neo-Nodes"
+USER_AGENT = "comfyui-neo-studio"
 
 DEFAULT_SETTINGS = {
     "source": "modelscope",

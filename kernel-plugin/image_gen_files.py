@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 生图设置 / 模型扫描 / 技能文件路由。
+# Neo Studio — 生图设置 / 模型扫描 / 技能文件路由。
 # 只碰 configs/image_gen.json、模型目录与技能目录，不依赖 PromptServer 与执行队列，
 # 因此 ComfyUI 内注册与壳侧离线服务共用这一份实现。
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 图片分镜（storyboard）生成
+# Neo Studio — 图片分镜（storyboard）生成
 # 用生图技能逐段生成关键帧：mode=t2i 纯文生图（不带参考，默认 Krea2），
 # mode=r2i 参考编辑（角色参考，用所选技能不强制切 Qwen），
 # 缺省 mode 为旧行为（文生图默认 Krea2，带参考图的段固定切 Qwen Image 2.1）；

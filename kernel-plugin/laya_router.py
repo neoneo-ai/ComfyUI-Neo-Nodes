@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - LAYA 轻量分类路由器
+# Neo Studio - LAYA 轻量分类路由器
 """基于 convaiinnovations/laya 的本地文本分类器。
 
 提供快速（~33ms）的 choice/score/noul 分类能力，用于：
@@ -83,7 +83,7 @@ class _LayaRouter:
                 from laya import Router
                 self._router = Router(preload=False)
                 logger.info("LAYA router loaded successfully")
-                print("[NeoNodes] LAYA router loaded")
+                print("[Neo Studio] LAYA router loaded")
                 return True
             except ImportError:
                 logger.info("LAYA package not installed, classifier disabled")

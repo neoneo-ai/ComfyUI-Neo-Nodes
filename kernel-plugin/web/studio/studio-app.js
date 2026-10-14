@@ -745,7 +745,7 @@ function setStarting(on) {
     starting = on;
     const verEl = document.getElementById("ns-version");
     if (offline && verEl) {
-        verEl.textContent = `Neo-Nodes ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`;
+        verEl.textContent = `Neo Studio ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`;
     }
     renderShellState();
 }
@@ -760,8 +760,8 @@ async function loadVersion() {
             starting = !!data.starting;   // 壳已拉起 ComfyUI：页面第一份状态就是「启动中」
             caps = data.caps || {};
             pluginVersion = data.plugin_version || "";
-            verEl.textContent = offline ? `Neo-Nodes ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`
-                : `Neo-Nodes ${pluginVersion} · ComfyUI ${data.comfyui_version}`;
+            verEl.textContent = offline ? `Neo Studio ${pluginVersion} · ${starting ? "ComfyUI 启动中" : "离线模式"}`
+                : `Neo Studio ${pluginVersion} · ComfyUI ${data.comfyui_version}`;
             if (offline) showOfflineBanner();
         }
     } catch { /* ComfyUI 未就绪时保持空白 */ }

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 工作流后端：工作流模型路径修复与修复 API
+# Neo Studio — 工作流后端：工作流模型路径修复与修复 API
 # 工作流相关的后端功能集中在此文件，便于后续扩展。
 # 前端在修复检查时调用 POST /neo_nodes/repair 拿到修复建议（changes），
 # 由用户二次确认后载入返回的 repaired workflow；自动匹配失败的项可在弹窗中手动
@@ -755,7 +755,7 @@ def save_repair_mappings(mappings: dict) -> None:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(mappings, f, ensure_ascii=False, indent=2)
     except OSError as e:
-        print(f"[Neo-Nodes] 修复映射保存失败: {e}")
+        print(f"[Neo Studio] 修复映射保存失败: {e}")
 
 
 def add_repair_mappings(entries) -> list:

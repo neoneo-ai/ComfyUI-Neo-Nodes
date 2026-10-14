@@ -1,4 +1,4 @@
-// LiteGraph 节点/图的测试替身：只实现 Neo-Nodes 前端读到的字段与方法。
+// LiteGraph 节点/图的测试替身：只实现 Neo Studio 前端读到的字段与方法。
 let nextLinkId = 1;
 
 export function resetLinkIds() {

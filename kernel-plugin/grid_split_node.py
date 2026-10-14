@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes - 宫格图拆分节点
+# Neo Studio - 宫格图拆分节点
 # 把一张带分隔条/留白的分镜宫格图（input/ 里选一张）自动切成各格：复用 grid_split.py 的纯像素核心
 # （均匀间隙检测，含细白条回退与大小一致性校验：漏检分隔条切出大小悬殊的格子时按最小格等分；trim_cell 清理四边白/黑框与底部字幕条），按行优先把各格
 # 拼成一个 IMAGE 批次 [N,H,W,C]（统一到最大宽高）输出，并从原图 PNG 元信息提取「包含的提示词」
@@ -85,7 +85,7 @@ class NeoGridSplit:
     RETURN_NAMES = ("image", "prompt")
     OUTPUT_NODE = True
     FUNCTION = "split"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     DESCRIPTION = "宫格图拆分：一张分镜宫格图 → 各格（行优先，清边框/字幕条）+ 原图内嵌提示词。"
     SEARCH_ALIASES = [
         "grid split", "split grid", "unpack grid", "cells", "storyboard split",

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Promo video recording harness for ComfyUI-Neo-Nodes.
+// Promo video recording harness for Neo Studio.
 //
 // Drives the live ComfyUI with Playwright, records the browser context to webm,
 // injects a bottom caption bar so subtitles are baked into the picture, and
@@ -276,7 +276,7 @@ SCENARIOS.script1 = async (h) => {
   // UI 演示用路由喂进度值，让琥珀条按比例增长、完成段变绿，不跑真实生成。
   const prog = { active: false, segment_index: -1, total_segments: 0, step: 0, total_steps: 0 };
   const openVideo = (url, title) => h.page.evaluate(async ([u, t]) => {
-    const lb = await import('/extensions/ComfyUI-Neo-Nodes/lightbox.js');
+    const lb = await import('/extensions/comfyui-neo-studio/lightbox.js');
     lb.Lightbox.open({ items: [{ kind: 'video', url: u, title: t }] });
   }, [url, title]);
 
@@ -287,7 +287,7 @@ SCENARIOS.script1 = async (h) => {
   await h.beat(0, async () => {
     await openVideo(mergedUrl(), '成片');
     await h.wait(2400);
-    await h.page.evaluate(async () => (await import('/extensions/ComfyUI-Neo-Nodes/lightbox.js')).Lightbox.close());
+    await h.page.evaluate(async () => (await import('/extensions/comfyui-neo-studio/lightbox.js')).Lightbox.close());
     await h.wait(500);
     await h.clearGraph();
     await h.navGallery(['Pictures'], 6);
@@ -410,7 +410,7 @@ SCENARIOS.script1 = async (h) => {
   // 6 画布全景：只有导演节点和 SaveVideo
   await h.beat(6, async () => {
     await h.page.evaluate(async () => {
-      (await import('/extensions/ComfyUI-Neo-Nodes/lightbox.js')).Lightbox.close();
+      (await import('/extensions/comfyui-neo-studio/lightbox.js')).Lightbox.close();
       const d = window.__dir;
       const sv = LiteGraph.createNode('SaveVideo');
       sv.pos = [d.pos[0] + 520, d.pos[1] + 60];

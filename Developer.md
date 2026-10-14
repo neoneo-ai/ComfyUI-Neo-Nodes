@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes 开发者文档
+# Neo Studio 开发者文档
 
 面向开发者：项目结构、前后端模块职责、API 路由、节点注册、数据目录、测试与发布。
 终端用户使用文档见 [README.md](README.md)，详细文档按大模块拆分在 `docs/`（索引见 [docs/README.md](docs/README.md)）。

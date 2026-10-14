@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Reusable doc-image GIF capture for ComfyUI-Neo-Nodes.
+// Reusable doc-image GIF capture for Neo Studio.
 //
 // Drives the live ComfyUI with Playwright, records UI-interaction frames, and
 // stitches them into a GIF via Pillow (invoked inline, no extra .py file).

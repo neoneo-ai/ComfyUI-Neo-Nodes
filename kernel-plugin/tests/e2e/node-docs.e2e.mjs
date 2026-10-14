@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
 const BASE = process.env.COMFY_BASE_URL || "http://127.0.0.1:8188";
-const DOC_BASE = "/extensions/ComfyUI-Neo-Nodes/docs";
+const DOC_BASE = "/extensions/comfyui-neo-studio/docs";
 const NEO_NODES = [
     "NeoPromptEncoder", "NeoPromptAgent", "NeoImageGenEdit",
     "NeoH3VideoDirector", "NeoH3AddKeyframe", "NeoH3AddGuides", "NeoH3AddContext",

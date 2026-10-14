@@ -239,7 +239,7 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/neo-studio` | Studio 页面（壳侧同一份 `web/studio/index.html`） |
-| GET | `/extensions/ComfyUI-Neo-Nodes/*` | 前端静态文件 |
+| GET | `/extensions/comfyui-neo-studio/*` | 前端静态文件 |
 | GET/POST | `/neo_gallery/*` `/neo_bookmark/*` | 素材库与收藏（含删除 / 上传 / 打标 / OSS 同步） |
 | GET/POST | `/rs_prompts/skills` `load_skill` `save_skill` `delete_skill` `*_*_skill_file` | 技能编辑 |
 | GET/POST | `/rs_recipes/*` | 配方读写、LLM 重写 / 逐格描述 / 分段 / 宫格切分 |

@@ -1,8 +1,15 @@
 # Changelog
 
-Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and published to the ComfyUI Registry.
+Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to the ComfyUI Registry.
 
 ## [Unreleased]
+
+- Renamed Neo Nodes to Neo Studio. The Registry package is `comfyui-neo-studio` with `DisplayName` "Neo Studio";
+  the plugin installs as `custom_nodes/comfyui-neo-studio` and every frontend asset URL is
+  `/extensions/comfyui-neo-studio/...` — ComfyUI serves extension files under the install folder name, so the
+  package name, the install folder and the URL literals have to be one spelling. Node class names and all route
+  paths (`/neo-studio`, `/neo_studio/*`, `/neo_nodes/*`, `/neo_gallery/*`, …) are unchanged; only the node
+  category label moved from `Neo-Nodes` to `Neo Studio`, so existing workflows keep loading.
 
 - Neo Studio desktop shell: `neo-studio-app.vbs` opens the Studio page in a WebView2 window with no console
   window (`neo_studio_app.py`, optional `pywebview` extra); the shell runs under `pythonw`, its startup trace
@@ -43,7 +50,7 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   kernel that cannot start) and persists them to `launcher_config.json` in the shell state dir, which falls back to
   `%APPDATA%/NeoStudio` when the plugin folder is not writable. `tools/build_studio_exe.ps1` now embeds a copy of
   the plugin (`git ls-files -z` minus dev-only dirs, so user configs and API keys never ship) under
-  `_MEIPASS/bundled/ComfyUI-Neo-Nodes`; `ensure_plugin()` installs it into `custom_nodes` when the plugin is
+  `_MEIPASS/bundled/comfyui-neo-studio`; `ensure_plugin()` installs it into `custom_nodes` when the plugin is
   missing, requirements included. The tab shows the self-check state
   (ok / bad root / missing python / missing dependencies / plugin install failed), with `安装依赖` when the
   target python lacks the plugin dependencies and `重试安装插件` when the bundled copy could not be installed.
@@ -63,7 +70,7 @@ Notable changes for ComfyUI-Neo-Nodes. Versions are tagged `vX.Y.Z` and publishe
   `/neo_studio/launcher` route. That route is same-origin only on the shell service, so the tab used to vanish as
   soon as ComfyUI was ready and the window jumped to the ComfyUI port. It stays hidden in a browser tab (no
   bridge, no route). The bundled plugin copy now keeps `pyproject.toml`, so a plugin the exe installed reports
-  its version instead of `Neo-Nodes unknown`.
+  its version instead of `Neo Studio unknown`.
 - Bundled plugin update: `ensure_plugin()` now compares the bundled `pyproject.toml` version with the installed
   copy's and replaces it when the bundled release is newer. The new copy is assembled in the shell state dir first,
   the user data dirs (`configs/`, `data/`, `gallery/`, `locals/`, `prompts/`, `recipes/`, `skills/`, `tmp/`) are

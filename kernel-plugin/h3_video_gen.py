@@ -181,5 +181,5 @@ def _require_vdn_plugin(graph):
     )
     if missing:
         raise RuntimeError(
-            f"[NeoNodes] 该 skill 需要 VDN 加速插件 ComfyUI-VDN-H3（节点 {', '.join(missing)} 未注册）。"
+            f"[Neo Studio] 该 skill 需要 VDN 加速插件 ComfyUI-VDN-H3（节点 {', '.join(missing)} 未注册）。"
             "请安装该插件并重启 ComfyUI 后重试，或改用非 VDN 的 H3 skill。")

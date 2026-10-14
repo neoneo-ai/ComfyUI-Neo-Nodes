@@ -58,7 +58,7 @@ def _topo_order(graph):
         ready = [nid for nid in graph if nid not in done and deps[nid] <= done]
         if not ready:
             raise RuntimeError(
-                f"[NeoNodes] 生图 workflow 存在循环依赖: {sorted(set(graph) - done)}")
+                f"[Neo Studio] 生图 workflow 存在循环依赖: {sorted(set(graph) - done)}")
         for nid in sorted(ready):
             order.append(nid)
             done.add(nid)
@@ -141,7 +141,7 @@ def _terminal_output(graph, results, out_type):
                 consumed.add((v[0], v[1]))
     terminal = [p for p in produced if p not in consumed]
     if not terminal:
-        raise RuntimeError(f"[NeoNodes] workflow 未产出 {out_type} 输出")
+        raise RuntimeError(f"[Neo Studio] workflow 未产出 {out_type} 输出")
     return terminal[-1]
 
 
@@ -201,7 +201,7 @@ def execute_graph_inprocess(graph, output_type="IMAGE", overrides=None):
             continue
         class_def = comfy_nodes.NODE_CLASS_MAPPINGS.get(class_type)
         if class_def is None:
-            raise RuntimeError(f"[NeoNodes] 生图 workflow 含未知节点类型: {class_type}")
+            raise RuntimeError(f"[Neo Studio] 生图 workflow 含未知节点类型: {class_type}")
         inputs = {}
         for k, v in (node.get("inputs") or {}).items():
             inputs[k] = results[v[0]][v[1]] if _is_ref(v, graph) else v
@@ -213,7 +213,7 @@ def execute_graph_inprocess(graph, output_type="IMAGE", overrides=None):
         func_name = getattr(class_def, "FUNCTION", None)
         if not func_name or inspect.iscoroutinefunction(getattr(class_def, func_name, None)):
             raise RuntimeError(
-                f"[NeoNodes] 生图 workflow 含不支持的异步/无函数节点: {class_type}")
+                f"[Neo Studio] 生图 workflow 含不支持的异步/无函数节点: {class_type}")
 
         inst = class_def()
         func = getattr(inst, func_name)
@@ -284,7 +284,7 @@ class NeoImageGenEdit(io.ComfyNode):
         return io.Schema(
             node_id="NeoImageGenEdit",
             display_name="Neo Image Gen & Edit",
-            category="Neo-Nodes",
+            category="Neo Studio",
             description="按所选 skill 的 workflow.json 模板同步生成，输出 IMAGE 张量到下游。"
                         "不挂参考图为文生图；挂上参考图则按 skill 模板进入参考/编辑模式"
                         "（如 Qwen Image 2.1 编辑，第 1 张为编辑目标、其余为参考对象）。",
@@ -339,7 +339,7 @@ class NeoImageGenEdit(io.ComfyNode):
         real_id = _resolve_skill_id(skill)
         template = load_skill_workflow(real_id)
         if template is None:
-            raise RuntimeError(f"[NeoNodes] skill '{skill}' 缺少 workflow.json，无法生成")
+            raise RuntimeError(f"[Neo Studio] skill '{skill}' 缺少 workflow.json，无法生成")
         settings = dict(get_settings())
         for key, value in get_skill_gen_config(real_id).items():
             if key in _SKILL_SETTING_KEYS and value not in (None, "", []):
@@ -376,7 +376,7 @@ class NeoImageGenEdit(io.ComfyNode):
         if model is not None:
             x_id, pruned = _model_injection_node(graph)
             if x_id is None:
-                raise RuntimeError("[NeoNodes] 无法在生图 workflow 中定位模型注入点（缺少 KSampler 的 model 输入）")
+                raise RuntimeError("[Neo Studio] 无法在生图 workflow 中定位模型注入点（缺少 KSampler 的 model 输入）")
             for pid in pruned:
                 del graph[pid]
             overrides = {x_id: [model]}

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - H3 提示词确定性格式审计
+# Neo Studio - H3 提示词确定性格式审计
 """对 MiniMax H3 视频提示词做纯规则的结构审计（不花 token），并构造"窄修复"消息。
 
 供 minimax_h3.py 在声明了 `audit: h3` 的技能生成完成后调用：

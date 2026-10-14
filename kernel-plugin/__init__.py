@@ -1,4 +1,4 @@
-# ComfyUI-Neo-Nodes
+# Neo Studio
 
 # 当插件作为 ComfyUI 自定义节点包加载（__package__ 非空）时才注册节点与路由。
 # pytest 收集 tests/ 时会把含连字符目录名的 __init__.py 当作顶层 __init__ 模块
@@ -58,7 +58,7 @@ if __package__ not in (None, ""):
             NODE_DISPLAY_NAME_MAPPINGS as IMAGE_GEN_EDIT_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] image_gen_edit 节点注册失败（生图/编辑不可用）: {e}")
+        print(f"[Neo Studio] image_gen_edit 节点注册失败（生图/编辑不可用）: {e}")
 
     # Neo H3 Video Director：以 video_director 配方为参数，逐段生成并拼接成单个含音频 VIDEO。
     # 复用单段 H3 解析/执行链；导入失败时优雅降级。
@@ -70,14 +70,14 @@ if __package__ not in (None, ""):
             NODE_DISPLAY_NAME_MAPPINGS as H3_DIRECTOR_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] h3_video_director 节点注册失败（分镜视频导演不可用）: {e}")
+        print(f"[Neo Studio] h3_video_director 节点注册失败（分镜视频导演不可用）: {e}")
 
     # 图片分镜（storyboard）：用生图技能逐段生成关键帧，注册 /neo_video_gen/storyboard_* 路由。
     # 独立于 director 节点运行时；依赖 image_gen/skill/image_gen_edit/recipes 已加载。导入失败时优雅降级。
     try:
         from . import storyboard  # noqa: F401
     except Exception as e:
-        print(f"[NeoNodes] storyboard 路由注册失败（图片分镜不可用）: {e}")
+        print(f"[Neo Studio] storyboard 路由注册失败（图片分镜不可用）: {e}")
 
     # Neo Bundle Expand：把 NeoPromptAgent 的 BUNDLE 展开成 prompt + image，便于对接官方 MiniMax H3 视频节点。
     # 依赖 prompts/bundles 已加载；导入失败时优雅降级。
@@ -89,7 +89,7 @@ if __package__ not in (None, ""):
             NODE_DISPLAY_NAME_MAPPINGS as BUNDLE_EXPAND_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] bundle_expand 节点注册失败（BUNDLE 展开不可用）: {e}")
+        print(f"[Neo Studio] bundle_expand 节点注册失败（BUNDLE 展开不可用）: {e}")
 
     # Neo Reference Grid：参考图宫格节点，宫格槽位（1~12 运行时可调）→ prompt + BUNDLE + image_1..image_12。
     # 依赖 prompts/bundles 已加载；导入失败时优雅降级。
@@ -101,7 +101,7 @@ if __package__ not in (None, ""):
             NODE_DISPLAY_NAME_MAPPINGS as REF_GRID_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] ref_grid 节点注册失败（9宫格参考图不可用）: {e}")
+        print(f"[Neo Studio] ref_grid 节点注册失败（9宫格参考图不可用）: {e}")
 
     # Neo H3 单段生成/重生成（h3_segment.py）：NeoH3SegmentRun 节点 + /neo_video_gen/run_segment* 路由。
     # 走执行队列，节点是为"单段调试"准备的；导入失败时优雅降级。
@@ -115,15 +115,15 @@ if __package__ not in (None, ""):
         # 段落拼接（h3_assemble.py）：只注册 /neo_video_gen/segment_clips + assemble_segments* 路由。
         from . import h3_assemble  # noqa: F401
     except Exception as e:
-        print(f"[NeoNodes] h3_segment 节点注册失败（单段生成/重生成不可用）: {e}")
+        print(f"[Neo Studio] h3_segment 节点注册失败（单段生成/重生成不可用）: {e}")
 
     # Neo Studio 独立应用：/neo_studio/* 路由（导演配方整片生成 + 版本信息）；
-    # Studio 页面走 /extensions/ComfyUI-Neo-Nodes/studio/ 静态路由提供，前端复用 web/ 现有模块。
+    # Studio 页面走 /extensions/comfyui-neo-studio/studio/ 静态路由提供，前端复用 web/ 现有模块。
     # 依赖 image_gen/recipes 已加载；导入失败时优雅降级。
     try:
         from . import studio  # noqa: F401
     except Exception as e:
-        print(f"[NeoNodes] studio 路由注册失败（Neo Studio 整片生成不可用）: {e}")
+        print(f"[Neo Studio] studio 路由注册失败（Neo Studio 整片生成不可用）: {e}")
 
     # Neo Grid Split：宫格图拆分节点，一张分镜宫格图 → 各格 IMAGE（行优先）+ 原图内嵌提示词。
     # 复用 grid_split.py 纯像素核心；导入失败时优雅降级。
@@ -135,7 +135,7 @@ if __package__ not in (None, ""):
             NODE_DISPLAY_NAME_MAPPINGS as GRID_SPLIT_DISPLAY_MAPPINGS,
         )
     except Exception as e:
-        print(f"[NeoNodes] grid_split_node 节点注册失败（宫格图拆分不可用）: {e}")
+        print(f"[Neo Studio] grid_split_node 节点注册失败（宫格图拆分不可用）: {e}")
 
     # Merge all node mappings
     NODE_CLASS_MAPPINGS = {
@@ -160,7 +160,7 @@ if __package__ not in (None, ""):
 
     _missing = [f"{name}({NEO_NODES[name]})" for name in NEO_NODES if name not in NODE_CLASS_MAPPINGS]
     _no_display = sorted(set(NODE_CLASS_MAPPINGS) - set(NODE_DISPLAY_NAME_MAPPINGS))
-    _status = f"[NeoNodes] v{plugin_version()} 已注册 {len(NODE_CLASS_MAPPINGS)}/{len(NEO_NODES)} 个节点"
+    _status = f"[Neo Studio] v{plugin_version()} 已注册 {len(NODE_CLASS_MAPPINGS)}/{len(NEO_NODES)} 个节点"
     if _missing:
         _status += f"，缺失: {', '.join(_missing)}"
     if _no_display:

@@ -80,7 +80,7 @@ function mountPreviewTimeline(body, segments) {
             })),
         });
     } catch (e) {
-        console.error("[Neo Nodes] recipe preview timeline init failed", e);
+        console.error("[Neo Studio] recipe preview timeline init failed", e);
         _previewCardTL = null;
         body.textContent = "加载失败";
     }
@@ -254,7 +254,7 @@ app.registerExtension({
                     })),
                 });
             } catch (e) {
-                console.error("[Neo Nodes] director timeline init failed", e);
+                console.error("[Neo Studio] director timeline init failed", e);
             }
             node._neoDtTimeline = tl;
 
@@ -398,9 +398,9 @@ app.registerExtension({
                 if (!results.length) return;
                 try {
                     const res = await addRecipeResults(name, results);
-                    if (!res?.success) console.warn("[Neo Nodes] director results not recorded:", res?.error || res);
+                    if (!res?.success) console.warn("[Neo Studio] director results not recorded:", res?.error || res);
                 } catch (e) {
-                    console.warn("[Neo Nodes] director results record failed", e);
+                    console.warn("[Neo Studio] director results record failed", e);
                 }
             };
             // continuity / context_frames：暂不开放给用户设置，只在节点上隐藏 widget。
@@ -456,7 +456,7 @@ app.registerExtension({
                         if (data.success && seq === specSeq) { tlData = data; applyDimDefaults(data.defaults, force); if (tl) tl.refresh(); if (node._neoDtStatusRow) node._neoDtStatusRow.refresh(); }
                     }
                 } catch (e) {
-                    console.error("[Neo Nodes] director spec fetch failed", e);
+                    console.error("[Neo Studio] director spec fetch failed", e);
                 }
             };
             loadSpec();
@@ -505,7 +505,7 @@ app.registerExtension({
                     }
                     await openDirectorEditor(meta, null, segIndex, { node });
                 } catch (e) {
-                    console.error("[Neo Nodes] open director editor failed", e);
+                    console.error("[Neo Studio] open director editor failed", e);
                     showToast(app, "error", "打开配方编辑器失败", String(e));
                 } finally {
                     editBtn.disabled = false;

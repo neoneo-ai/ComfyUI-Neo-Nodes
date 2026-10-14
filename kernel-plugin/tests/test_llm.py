@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - LLM Unit Tests
+# Neo Studio - LLM Unit Tests
 # 测试模型下载、配置加载等功能
 
 from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes — 生视频（MiniMax H3）全局设置：独立于生图 image_gen.json，
+# Neo Studio — 生视频（MiniMax H3）全局设置：独立于生图 image_gen.json，
 # 落盘 configs/video_gen.json；/neo_video_gen/* 路由在此注册。
 
 from __future__ import annotations

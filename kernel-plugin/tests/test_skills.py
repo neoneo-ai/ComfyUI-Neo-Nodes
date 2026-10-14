@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# ComfyUI-Neo-Nodes - Skills Unit Tests
+# Neo Studio - Skills Unit Tests
 # 测试 skill 元数据扫描与图片解析 helper（P1 MVP）
 
 from stub_env import GALLERY_STUB_PREFIXES, restore, snapshot

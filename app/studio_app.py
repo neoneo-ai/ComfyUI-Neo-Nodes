@@ -47,8 +47,9 @@ APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
 EXE_DIR = Path(sys.executable).resolve().parent if IS_FROZEN else APP_DIR
 RES_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR))
-# 内核插件装进 ComfyUI 后的目录名，与 kernel-plugin/pyproject.toml 的 package name 对齐。
-PLUGIN_NAME = "ComfyUI-Neo-Studio"
+# 内核插件装进 ComfyUI 后的目录名，与 kernel-plugin/pyproject.toml 的 package name 逐字对齐：
+# 前端静态文件走 /extensions/<目录名>/，大小写敏感，两边拼出来的 URL 必须一致。
+PLUGIN_NAME = "comfyui-neo-studio"
 # 壳侧服务加载的插件源码：源码运行是仓库里的 kernel-plugin/，exe 里是随包的内置副本，
 # 同时也是自动装进 custom_nodes 的源。
 PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / PLUGIN_NAME if IS_FROZEN else REPO_ROOT / "kernel-plugin"
@@ -372,7 +373,7 @@ def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tup
         write_data_pointer(plugin_dir)
         return True, ""
     if not source_dir.is_dir():
-        return False, "启动器没有内置插件副本，请手动安装 ComfyUI-Neo-Nodes 后重试。"
+        return False, "启动器没有内置插件副本，请手动安装 Neo Studio 后重试。"
     custom_nodes = plugin_dir.parent
     try:
         custom_nodes.mkdir(parents=True, exist_ok=True)

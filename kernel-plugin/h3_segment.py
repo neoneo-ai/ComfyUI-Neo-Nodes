@@ -372,7 +372,7 @@ class NeoH3SegmentRun:
     RETURN_TYPES = ("VIDEO",)
     RETURN_NAMES = ("video",)
     FUNCTION = "run_segment"
-    CATEGORY = "Neo-Nodes"
+    CATEGORY = "Neo Studio"
     # 本节点是「生成这一段」的动作节点：执行本身就是目的（产物默认记进配方结果），
     # 因此按 ComfyUI 约定声明为输出节点——否则单节点 prompt 会被队列以 "Prompt has no outputs" 拒绝，
     # 画布上不接 SaveVideo 也不会执行。

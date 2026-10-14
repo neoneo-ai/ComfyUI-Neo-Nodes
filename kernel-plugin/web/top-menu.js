@@ -21,7 +21,7 @@ import { openGenMaterialDialog } from "./gallery-gen.js";
 import { openModelHub } from "./model-hub.js";
 
 const STUDIO_URL = "/neo-studio";
-const REPO_URL = "https://github.com/neoneo-ai/ComfyUI-Neo-Nodes";
+const REPO_URL = "https://github.com/neoneo-ai/Neo-Studio";
 
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
@@ -221,7 +221,7 @@ function showAboutDialog() {
 
     const title = document.createElement("div");
     title.style.cssText = "font-weight:bold;font-size:15px;color:#8cf;";
-    title.textContent = "ComfyUI-Neo-Nodes";
+    title.textContent = "Neo Studio";
     box.appendChild(title);
 
     const verRow = document.createElement("div");
@@ -242,7 +242,7 @@ function showAboutDialog() {
 
     const installRow = document.createElement("div");
     installRow.style.cssText = "color:#bbb;line-height:1.7;white-space:pre-line;";
-    installRow.textContent = "安装方式：\n· ComfyUI Manager 搜索 \"Neo Nodes\" 一键安装\n· 或 git clone 到 ComfyUI/custom_nodes/ 后重启";
+    installRow.textContent = "安装方式：\n· ComfyUI Manager 搜索 \"Neo Studio\" 一键安装\n· 或 git clone 到 ComfyUI/custom_nodes/ 后重启";
     box.appendChild(installRow);
 
     const licRow = document.createElement("div");
