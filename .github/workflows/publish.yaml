@@ -24,10 +24,10 @@ jobs:
       - name: Install comfy-cli
         run: pip install comfy-cli
 
-      # 内核插件在 kernel-plugin/：pyproject.toml 与 .comfyignore 都在那一层，
+      # 插件源码在 studio/：pyproject.toml 与 .comfyignore 都在那一层，
       # 发布必须在那一层跑（仓库根的 pyproject 是桌面壳自己的，不发 Python 包）
-      - name: Publish kernel plugin
-        working-directory: kernel-plugin
+      - name: Publish plugin
+        working-directory: studio
         run: |
           comfy --skip-prompt --no-enable-telemetry env
           comfy node publish --token ${{ secrets.COMFY_REGISTRY_PUBLISH_TOKEN }}

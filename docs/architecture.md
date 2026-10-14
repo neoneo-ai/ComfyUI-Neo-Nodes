@@ -5,7 +5,7 @@
 ## 项目结构
 
 ```
-kernel-plugin/
+studio/
 ├── __init__.py                # 插件入口：注册 API 路由、合并节点映射、声明 WEB_DIRECTORY
 ├── prompts.py                 # 提示词节点 + /rs_prompts/* 路由
 ├── prompt_lines.py            # 多行提示词集合解析

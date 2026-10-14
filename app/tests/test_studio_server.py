@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 APP_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PLUGIN_DIR = APP_DIR.parent / "kernel-plugin"
+PLUGIN_DIR = APP_DIR.parent / "studio"
 COMFY_ROOT = APP_DIR.parent.parent / "ComfyUI"
 sys.path.insert(0, str(APP_DIR))
 sys.path.insert(0, str(PLUGIN_DIR / "tests"))

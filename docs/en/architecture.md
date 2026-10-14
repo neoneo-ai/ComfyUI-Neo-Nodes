@@ -8,7 +8,7 @@ Entry point for developers: [../../Developer_EN.md](../../Developer_EN.md).
 ## Project structure
 
 ```
-kernel-plugin/
+studio/
 ├── __init__.py                # plugin entry: register API routes, merge node mappings, declare WEB_DIRECTORY
 ├── prompts.py                 # prompt nodes + /rs_prompts/* routes
 ├── prompt_lines.py            # multi-line prompt collection parsing

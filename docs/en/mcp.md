@@ -2,7 +2,7 @@
 
 > 🇨🇳 中文: [../mcp.md](../mcp.md)
 
-`kernel-plugin/mcp_server.py` is a standalone MCP server (stdio transport). An MCP client (Claude Desktop /
+`studio/mcp_server.py` is a standalone MCP server (stdio transport). An MCP client (Claude Desktop /
 Cursor / your own client) launches it as a subprocess, so an external agent can call Neo Studio's image and
 director capabilities (full film / single segment / assembly).
 
@@ -23,7 +23,7 @@ logs always go to `stderr`.
 ### 1. Self-test (no ComfyUI needed)
 
 ```powershell
-python kernel-plugin\mcp_server.py --selftest
+python studio\mcp_server.py --selftest
 # Neo Studio MCP Server v1.2.0 · 20 tools: neo_status, list_skills, ...
 ```
 
@@ -39,7 +39,7 @@ Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`, restart Claude af
   "mcpServers": {
     "neo-studio": {
       "command": "F:\\comfy\\Comfyui-WF-2026.8.8\\python\\python.exe",
-      "args": ["F:\\comfy\\Comfyui-WF-2026.8.8\\Neo-Studio\\kernel-plugin\\mcp_server.py"],
+      "args": ["F:\\comfy\\Comfyui-WF-2026.8.8\\Neo-Studio\\studio\\mcp_server.py"],
       "env": { "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188" }
     }
   }
@@ -158,7 +158,7 @@ conventions, so you normally don't have to repeat them)
 
 ```powershell
 # Protocol and tool layer unit tests (fake HTTP, no ComfyUI needed)
-python -m pytest kernel-plugin\tests\test_mcp_server.py -q
+python -m pytest studio\tests\test_mcp_server.py -q
 
 # Live smoke test (ComfyUI must be running): image pipeline + director read/write + finished film fetch
 python tests\mcp_smoke.py --director

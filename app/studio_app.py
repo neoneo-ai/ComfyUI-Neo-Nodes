@@ -13,7 +13,7 @@ ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请
 壳拉起 ComfyUI 的这段时间 starting 为真（comfy_state 与壳侧 /neo_studio/version 共用同一份标记，
 js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启动中…」，收起未运行横幅、
 启动按钮与「需要 ComfyUI」提示。
-窗口与任务栏图标用 kernel-plugin/web/neo-studio.ico（tools/make_studio_icon.py 生成）。
+窗口与任务栏图标用 studio/web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
 用法：python app/studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
                               [--cdp <port>] [--debug]
@@ -21,7 +21,7 @@ js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启�
  内核启停在「设置 → 启动设置」，状态由壳的 js_api 报（端口 / PID / 谁启动 / 就绪）：
  停止内核 terminate（并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口退回离线素材库；
  启动内核重新拉起，显示「启动中…」，就绪后窗口整页跳回 ComfyUI 的完整 Studio。
- 源码运行时每次启动把 kernel-plugin 同步进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
+ 源码运行时每次启动把 studio/ 同步进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
 
 """
 
@@ -49,12 +49,12 @@ APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
 EXE_DIR = Path(sys.executable).resolve().parent if IS_FROZEN else APP_DIR
 RES_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR))
-# 内核插件装进 ComfyUI 后的目录名，与 kernel-plugin/pyproject.toml 的 package name 逐字对齐：
+# 内核插件装进 ComfyUI 后的目录名，与 studio/pyproject.toml 的 package name 逐字对齐：
 # 前端静态文件走 /extensions/<目录名>/，大小写敏感，两边拼出来的 URL 必须一致。
 PLUGIN_NAME = "comfyui-neo-studio"
-# 壳侧服务加载的插件源码：源码运行是仓库里的 kernel-plugin/，exe 里是随包的内置副本，
+# 壳侧服务加载的插件源码：源码运行是仓库里的 studio/，exe 里是随包的内置副本，
 # 同时也是自动装进 custom_nodes 的源。
-PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / PLUGIN_NAME if IS_FROZEN else REPO_ROOT / "kernel-plugin"
+PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / PLUGIN_NAME if IS_FROZEN else REPO_ROOT / "studio"
 
 APP_NAME = "Neo Studio"
 _state_dir: Optional[Path] = None
@@ -434,7 +434,7 @@ def update_plugin(plugin_dir: Path, source_dir: Path) -> None:
 
 
 def sync_plugin(plugin_dir: Path, source_dir: Path) -> int:
-    """源码运行时的同步：kernel-plugin 覆盖进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
+    """源码运行时的同步：studio/ 覆盖进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
 
     只覆盖同名文件，从不删目标目录里的任何东西：用户配置、数据指针、装好的依赖都留在原地。
     大小与修改时间都对得上的跳过；ComfyUI 正在跑、文件被占用时跳过那一个，下次启动再补。
@@ -468,7 +468,7 @@ def sync_plugin(plugin_dir: Path, source_dir: Path) -> int:
 def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tuple[bool, str]:
     """custom_nodes 里的插件副本：缺失就装内置副本，存在就跟着同步。
 
-    源码运行那份就是开发中的插件本身，每次启动把 kernel-plugin 同步进去，壳与 ComfyUI 页面跑同一份代码。
+    源码运行那份就是开发中的插件本身，每次启动把 studio/ 同步进去，壳与 ComfyUI 页面跑同一份代码。
     exe 只认内置副本的 release：版本更新才换目录。git 检出归 ComfyUI-Manager 与用户自己维护，都不覆盖。
     """
     if plugin_dir.is_dir():

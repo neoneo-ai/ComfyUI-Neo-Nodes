@@ -4,7 +4,7 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
-- MCP server for external agents. `kernel-plugin/mcp_server.py` is a standalone stdio MCP server
+- MCP server for external agents. `studio/mcp_server.py` is a standalone stdio MCP server
   (JSON-RPC, standard library only, no relative imports, no ComfyUI node imports): an MCP client
   (Claude Desktop / Cursor / custom) launches it as a subprocess and the agent calls Neo Studio's
   image and director capabilities through 20 tools — status, skills, models, prompt expansion,
@@ -34,7 +34,7 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   links back to its Chinese original and each Chinese doc links to its English counterpart, and English pages only
   link to English pages. The root `README.md` (English) points at `docs/en/*` while `README_ZH.md` keeps pointing
   at the Chinese docs; the developer entry points are `Developer.md` (中文) and `Developer_EN.md` (English).
-  `kernel-plugin/README.md` is now English with `README_ZH.md` beside it, so the Registry package ships the
+  `studio/README.md` is now English with `README_ZH.md` beside it, so the Registry package ships the
   English readme.
 - Root `README.md` and `README_ZH.md` slimmed (225 → 165 and 285 → 232 lines). The Features / 模块一览 rows now
   link to the module doc that owns the detail, Installation leads with the desktop app and keeps the
@@ -52,7 +52,7 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   shipped in the Registry package, so that relative link was unreachable in every installed copy. It now names
   the gallery doc as plain text.
 - The desktop shell syncs the plugin into `custom_nodes` by itself. Running from source (`neo-studio-app.vbs`)
-  copies `kernel-plugin/` over `ComfyUI/custom_nodes/comfyui-neo-studio` on every launch and before every
+  copies `studio/` over `ComfyUI/custom_nodes/comfyui-neo-studio` on every launch and before every
   "▶ Start kernel": same-name files only, files whose size and mtime already match are skipped, a file the
   running ComfyUI holds open is skipped and picked up on the next launch, and nothing in the target is ever
   deleted — user configs, the data-root pointer and installed dependencies stay put. Git checkouts are left
@@ -79,7 +79,7 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   (signtool via `-CertThumbprint` or `-Pfx`/`-PfxPass`, verified with `signtool verify /pa`), `-Notarize`
   (macOS `notarytool` + `stapler` + `spctl`) and `-Publish` (`comfy node publish`); all three are off by
   default, so a plain build is unchanged. Plugin dependency installs now pass `--no-warn-script-location`.
-  `.github/workflows/publish.yaml` now runs `comfy node publish` inside `kernel-plugin/` itself: the shared
+  `.github/workflows/publish.yaml` now runs `comfy node publish` inside `studio/` itself: the shared
   `comfy-org/publish-node-action` only publishes the repository root, and the root `pyproject.toml` is the
   desktop shell's own manifest, not the Registry package.
 
@@ -184,6 +184,10 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 - README rewritten: hero demo, zero-config section, feature highlights; gallery screenshots compressed.
 - README default language is now English: `README.md` is the English doc, the Chinese text lives in `README_ZH.md`.
   The standalone-app section is condensed to the user-facing facts; shell internals stay in `Developer.md`.
+- Plugin source directory renamed `kernel-plugin/` to `studio/`. The Registry package name, the installed
+  `custom_nodes/comfyui-neo-studio` directory, node names and the data root are untouched; only repo paths,
+  tooling and docs moved. `conftest.py` keeps a placeholder `studio` package so pytest collection no longer
+  runs the plugin entry point.
 
 ## [1.2.0] - 2026-10-08
 

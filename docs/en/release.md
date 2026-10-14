@@ -15,7 +15,7 @@ files, `web/` (including the `web/docs/` node help), `configs/`, `skills/`, `pro
 `example_workflows/` and README/LICENSE/pyproject/requirements stay in. Untracked local files
 (`node_modules/`, `tmp/`, the gallery caches, `configs/backyard_oss.json`) are already excluded by
 `.gitignore` and need no entry here. The app repository's `README_ZH.md`, `Developer.md` and `docs/`
-live outside `kernel-plugin/` and are not part of the Registry package.
+live outside `studio/` and are not part of the Registry package.
 
 Registry installs read only the `dependencies` in `pyproject.toml`; `requirements.txt` serves
 ComfyUI-Manager and the development environment, and the two have to stay aligned. Optional extras
@@ -27,16 +27,16 @@ validated by `tests/test_node_metadata.py`).
 
 ### Git Action route
 
-- Registry metadata lives in `[tool.comfy]` inside `kernel-plugin/pyproject.toml` (PublisherId
+- Registry metadata lives in `[tool.comfy]` inside `studio/pyproject.toml` (PublisherId
   `neoneo-ai`, DisplayName `Neo Studio`).
 - `.github/workflows/publish.yaml`: on a `v*` tag push, a Release publish, or a manual trigger, it runs
-  `comfy node publish --token` inside `kernel-plugin/` (needs the `COMFY_REGISTRY_PUBLISH_TOKEN`
+  `comfy node publish --token` inside `studio/` (needs the `COMFY_REGISTRY_PUBLISH_TOKEN`
   secret). Publishing has to run at that level: `pyproject.toml` and `.comfyignore` are both in
-  `kernel-plugin/`, and the root `pyproject.toml` is the desktop shell's own manifest.
+  `studio/`, and the root `pyproject.toml` is the desktop shell's own manifest.
 
 ```bash
-# 1. Bump the version (to 1.0.1 for example): edit version = "1.0.1" in kernel-plugin/pyproject.toml
-git add kernel-plugin/pyproject.toml
+# 1. Bump the version (to 1.0.1 for example): edit version = "1.0.1" in studio/pyproject.toml
+git add studio/pyproject.toml
 git commit -m "Bump version to 1.0.1"
 
 # 2. Tag it (pointing at that new commit)
@@ -49,7 +49,7 @@ git push origin main v1.0.1
 ### comfy cli route
 
 ```bash
-cd kernel-plugin
+cd studio
 comfy node publish    # enter the API TOKEN when asked
 ```
 
@@ -57,7 +57,7 @@ comfy node publish    # enter the API TOKEN when asked
 
 ```powershell
 # Desktop shell packaging: onefile single file / onedir folder build / both;
-# the payload = kernel-plugin's git-tracked files
+# the payload = studio's git-tracked files
 tools\build_studio_exe.ps1 [-Mode onefile|onedir|both] [-DryRun]
 tools\build_studio_exe.ps1 -Mode both -Sign -CertThumbprint <thumbprint>   # signtool signing + verify
 tools\build_studio_exe.ps1 -Notarize -AppleTeamId <TeamID>          # macOS notarytool (macOS only)
@@ -71,7 +71,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI 
 ```
 
 **Rebuild the exe after changing `app/studio_app.py`.** Running the shell from source syncs
-`kernel-plugin/` into `custom_nodes` on every launch (same-named files only, nothing in the target is
+`studio/` into `custom_nodes` on every launch (same-named files only, nothing in the target is
 deleted); the exe only swaps the plugin directory when its bundled copy's version is newer, and a git
 checkout is never touched.
 

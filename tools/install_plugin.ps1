@@ -1,6 +1,6 @@
 # install_plugin.ps1 - 源码方式把内核插件装进 ComfyUI（不依赖 ComfyCLI，也不动用户数据）
 # 装进去的只有代码与内置预设：用户数据归 Neo-Studio/data，插件靠 configs/data_root.json 指针找它。
-# 副本边界 = kernel-plugin 里 git 已跟踪文件 - 只服务开发的目录，与 build_studio_exe.ps1 同一份。
+# 副本边界 = studio/ 里 git 已跟踪文件 - 只服务开发的目录，与 build_studio_exe.ps1 同一份。
 # 目标目录里同名代码会被覆盖，其余文件一律保留：脚本从不删除目标目录里的任何东西。
 # 用法: tools\install_plugin.ps1 [-ComfyUI <ComfyUI根>] [-DataRoot <数据根>] [-Python <python.exe>]
 #                               [-SkipDeps] [-DryRun]
@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
-$PluginSrc = Join-Path $RepoRoot "kernel-plugin"
+$PluginSrc = Join-Path $RepoRoot "studio"
 # 目录名 = 前端 URL 前缀（ComfyUI 按目录名挂 /extensions/<目录名>），与 pyproject 包名同形
 $PluginName = "comfyui-neo-studio"
 

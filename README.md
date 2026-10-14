@@ -82,7 +82,7 @@ Python interpreter; it does not bundle ComfyUI.
   plugin from its bundled copy — user data dirs are carried over, a git checkout is never touched.
 - **From source** — clone the repo and run `tools/neo-studio-app.vbs` (no console window;
   `tools/neo-studio-app.bat` is the debug entry, `--debug` opens DevTools). Every launch syncs
-  `kernel-plugin/` into `custom_nodes` (same-name files only, nothing in the target is deleted).
+  `studio/` into `custom_nodes` (same-name files only, nothing in the target is deleted).
 
 The window, the offline service and the kernel controls:
 [Neo Studio (Standalone App)](#neo-studio-standalone-app).

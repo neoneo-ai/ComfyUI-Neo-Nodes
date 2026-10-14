@@ -1,5 +1,5 @@
 # mcp_setup.ps1 - 把 Neo Studio 的 MCP 服务器接进 MCP 客户端：打印 / 写入配置片段
-# 服务器是 kernel-plugin\mcp_server.py（stdio 子进程，由 MCP 客户端启动，不随 ComfyUI 启动）。
+# 服务器是 studio\mcp_server.py（stdio 子进程，由 MCP 客户端启动，不随 ComfyUI 启动）。
 # 用法: tools\mcp_setup.ps1 [-Python <python.exe>] [-ComfyUrl <地址>] [-Tools a,b,c]
 #                           [-Claude] [-Cursor] [-Write]
 param(
@@ -13,7 +13,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path $PSScriptRoot -Parent
-$Server = Join-Path $RepoRoot "kernel-plugin\mcp_server.py"
+$Server = Join-Path $RepoRoot "studio\mcp_server.py"
 if (-not (Test-Path $Server)) { throw "找不到 MCP 服务器：$Server" }
 
 if (-not $Python) {

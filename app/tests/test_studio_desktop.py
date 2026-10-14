@@ -15,7 +15,7 @@ from unittest.mock import patch, MagicMock
 
 _APP_DIR = pathlib.Path(__file__).resolve().parent.parent
 _REPO_ROOT = _APP_DIR.parent
-_PLUGIN_DIR = _REPO_ROOT / "kernel-plugin"
+_PLUGIN_DIR = _REPO_ROOT / "studio"
 _COMFY_ROOT = _REPO_ROOT.parent / "ComfyUI"
 sys.path.insert(0, str(_APP_DIR))
 
@@ -24,7 +24,7 @@ import studio_app as app
 
 class FrozenPathTests(unittest.TestCase):
     def test_source_layout(self):
-        # 源码运行：内核插件源码在仓库的 kernel-plugin/，应用状态在仓库的 data/
+        # 源码运行：插件源码在仓库的 studio/，应用状态在仓库的 data/
         self.assertEqual(app.APP_DIR, _APP_DIR)
         self.assertEqual(app.REPO_ROOT, _REPO_ROOT)
         self.assertEqual(app.PLUGIN_SOURCE_DIR, _PLUGIN_DIR)
@@ -1559,7 +1559,7 @@ class StartupStateTests(unittest.TestCase):
         self.assertTrue((self.plugin / "requirements.txt").is_file())
 
     def test_existing_plugin_syncs_code_and_keeps_user_files(self):
-        # 源码运行（开发模式）：kernel-plugin 每次同步进已装的副本，目标里的用户文件一样不删
+        # 源码运行（开发模式）：studio/ 每次同步进已装的副本，目标里的用户文件一样不删
         self.plugin.mkdir(parents=True)
         marker = self.plugin / "user-file.txt"
         marker.write_text("keep", encoding="utf-8")
@@ -1682,7 +1682,7 @@ class PluginUpdateTests(unittest.TestCase):
         self.assertFalse((self.plugin / "web").exists())
 
     def test_source_run_syncs_the_installed_copy(self):
-        # 开发模式：kernel-plugin 就是插件本身，每次启动同步进已装副本，版本比较不参与
+        # 开发模式：studio/ 就是插件本身，每次启动同步进已装副本，版本比较不参与
         self._bundle("1.2.0")
         self._installed("1.0.0")
         (self.source / "web" / "index.html").write_text("new", encoding="utf-8")
@@ -1710,7 +1710,7 @@ class PluginSyncTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.base = pathlib.Path(self.tmp.name)
-        self.source = self.base / "kernel-plugin"
+        self.source = self.base / "studio"
         self.plugin = self.base / "ComfyUI" / "custom_nodes" / "comfyui-neo-studio"
         for rel in ("web/studio", "tests", "__pycache__", "data", "configs"):
             (self.source / rel).mkdir(parents=True)

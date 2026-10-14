@@ -12,7 +12,7 @@
 | [docs/en/README.md](docs/en/README.md) | 英文文档镜像（以下各文档的英文版） |
 | [docs/architecture.md](docs/architecture.md) | 项目结构、模块职责、节点注册、数据与配置目录 |
 | [docs/api-routes.md](docs/api-routes.md) | 后端 API 路由一览 |
-| [docs/mcp.md](docs/mcp.md) | MCP 服务器（`kernel-plugin/mcp_server.py`，stdio，外部智能体调用生图 / 导演能力） |
+| [docs/mcp.md](docs/mcp.md) | MCP 服务器（`studio/mcp_server.py`，stdio，外部智能体调用生图 / 导演能力） |
 | [docs/testing.md](docs/testing.md) | pytest 单测与 JS 回归测试（golden 快照、run-tests.ps1） |
 | [docs/release.md](docs/release.md) | Registry 发布与离线工具（预设预处理 / OSS 部署） |
 | [docs/llm.md](docs/llm.md) | LLM 模式、本地 GGUF 安装、模型目录规范 |
@@ -69,7 +69,7 @@
   `tmp/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），
   和新模块拼进同一张 ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，
   整页只剩顶栏 —— 视图不挂、离线横幅不出、顶栏状态位永远 `hidden`。
-  源码运行时每次启动把 `kernel-plugin/` 同步进 `custom_nodes` 那份（`sync_plugin`：只覆盖同名代码，大小与 mtime
+  源码运行时每次启动把 `studio/` 同步进 `custom_nodes` 那份（`sync_plugin`：只覆盖同名代码，大小与 mtime
   对得上的跳过，ComfyUI 正占用那一个跳过、下次启动再补，目标目录里的东西一样不删），壳侧服务与 ComfyUI 页面都从
   `custom_nodes` 取前端文件，同步完窗口一开就是新 UI；exe 只按内置副本版本换目录，git 检出不碰。
   壳日志 `tmp/studio_shell.log` 记启动 / 跳转 / 关窗 / 拖动步数（`drag N steps`，0 = 按下时左键已经不在），以及页面

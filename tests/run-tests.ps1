@@ -15,7 +15,7 @@ if ($Name) {
 
 # 壳侧用例要真实 folder_paths，节点用例要桩掉的 comfy；分进程跑，谁也不把桩留给对方。
 $fail = 0
-foreach ($suite in @('kernel-plugin/tests', 'app/tests')) {
+foreach ($suite in @('studio/tests', 'app/tests')) {
     "===== $suite ====="
     & $Python -m pytest (Join-Path $Root $suite) -q
     if ($LASTEXITCODE -ne 0) { $fail = 1 }

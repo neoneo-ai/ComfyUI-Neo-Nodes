@@ -1,4 +1,4 @@
-# MCP 冒烟：真起 kernel-plugin\mcp_server.py 子进程，经 stdio 跑一遍生图闭环（需要 ComfyUI 在跑）。
+# MCP 冒烟：真起 studio\mcp_server.py 子进程，经 stdio 跑一遍生图闭环（需要 ComfyUI 在跑）。
 # 用法: python tests\mcp_smoke.py [--comfy-url http://127.0.0.1:8188] [--prompt 一只橘猫] [--skill <id>]
 import json
 import os
@@ -8,7 +8,7 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SERVER = os.path.join(ROOT, "kernel-plugin", "mcp_server.py")
+SERVER = os.path.join(ROOT, "studio", "mcp_server.py")
 
 
 class Client:

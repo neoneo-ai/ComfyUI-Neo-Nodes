@@ -10,7 +10,7 @@ The pytest configuration is in `pytest.ini` (`testpaths = tests`, runnable witho
 python -m pytest tests -v
 ```
 
-A full run is split across processes (`tests/run-tests.ps1` with no arguments runs `kernel-plugin/tests` and
+A full run is split across processes (`tests/run-tests.ps1` with no arguments runs `studio/tests` and
 `app/tests` in sequence): the shell-side cases need the real `folder_paths`, the node cases need a stubbed comfy,
 and the two are incompatible in one process. The root `conftest.py` pins `NEO_STUDIO_DATA` into a temporary
 directory before collection and clears it on exit, so cases that delete directories or write configuration can

@@ -258,7 +258,7 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
 - 目录取 `folder_paths` 的默认 `output` / `input` / `user`：外部用 `--output-directory` 启动 ComfyUI 时，
   壳侧浏览仍指向默认目录。
 
-## MCP 服务 — `kernel-plugin/mcp_server.py`
+## MCP 服务 — `studio/mcp_server.py`
 
 不是 HTTP 服务：MCP 客户端把它作为 **stdio 子进程**启动，外部智能体经 JSON-RPC 调用工具，
 服务器再经本机 ComfyUI 的 HTTP 接口干活（地址强制回环）。工具清单、参数与用法约定见

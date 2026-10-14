@@ -73,7 +73,7 @@ LLM 增强（✨ 生成 / 图片反推 / 翻译分类）是可选的第二步，
   → [workflow-repair.md](docs/workflow-repair.md)
 - **📥 模型库** — Comfy-Org 专区双源（ModelScope / Hugging Face）搜索与断点续传下载，按仓库内路径自动归类落盘
   → [model-hub.md](docs/model-hub.md)
-- **🤖 MCP 服务** — `kernel-plugin\mcp_server.py` 由 MCP 客户端（Claude Desktop / Cursor）作为子进程启动，
+- **🤖 MCP 服务** — `studio\mcp_server.py` 由 MCP 客户端（Claude Desktop / Cursor）作为子进程启动，
   外部智能体经 stdio 调用生图与导演工具；只连本机 ComfyUI，不暴露删除端点
   → [mcp.md](docs/mcp.md)
 
@@ -116,7 +116,7 @@ ComfyUI 及其 Python 解释器，不自带 ComfyUI。
   构建，未签名，首次运行会有 SmartScreen 提示）。exe 从自身位置推导 ComfyUI 根目录与解释器，
   找不到时打开首次设置页，并用自带的插件副本安装 / 更新插件——用户数据目录沿用，git 检出目录永不改写。
 - **源码版** — 克隆仓库后运行 `tools\neo-studio-app.vbs`（无控制台黑窗；`tools\neo-studio-app.bat`
-  是带控制台的调试入口，`--debug` 开 DevTools）。源码运行时每次启动都把 `kernel-plugin/` 同步进
+  是带控制台的调试入口，`--debug` 开 DevTools）。源码运行时每次启动都把 `studio/` 同步进
   `custom_nodes`（只同步同名文件，目标目录不删除任何东西）。
 
 窗口、离线服务与内核启停：见 [新影工坊](#新影工坊neo-studio--独立应用)。

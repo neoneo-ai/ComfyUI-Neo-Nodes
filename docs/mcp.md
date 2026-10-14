@@ -1,6 +1,6 @@
 # MCP 服务（外部智能体接入）
 
-`kernel-plugin/mcp_server.py` 是一个独立的 MCP 服务器（stdio 传输）。MCP 客户端（Claude Desktop / Cursor /
+`studio/mcp_server.py` 是一个独立的 MCP 服务器（stdio 传输）。MCP 客户端（Claude Desktop / Cursor /
 自建客户端）把它作为子进程启动，外部智能体由此调用 Neo Studio 的生图与导演（整片 / 单段 / 拼接）能力。
 
 它不随 ComfyUI 启动，也不参与节点注册：零相对导入、只用标准库，一切能力经本机 ComfyUI 的 HTTP 接口完成。
@@ -18,7 +18,7 @@
 ### 1. 自检（不连 ComfyUI）
 
 ```powershell
-python kernel-plugin\mcp_server.py --selftest
+python studio\mcp_server.py --selftest
 # Neo Studio MCP Server v1.2.0 · 20 工具：neo_status, list_skills, ...
 ```
 
@@ -34,7 +34,7 @@ Claude Desktop（`%APPDATA%\Claude\claude_desktop_config.json`，改完重启 Cl
   "mcpServers": {
     "neo-studio": {
       "command": "F:\\comfy\\Comfyui\\python\\python.exe",
-      "args": ["F:\\comfy\\Comfyui\\Neo-Studio\\kernel-plugin\\mcp_server.py"],
+      "args": ["F:\\comfy\\Comfyui\\Neo-Studio\\studio\\mcp_server.py"],
       "env": { "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188" }
     }
   }
@@ -144,7 +144,7 @@ director_recipes → director_spec(读分段) → director_plan(故事 → 分�
 
 ```powershell
 # 协议与工具层单测（假 HTTP，不连 ComfyUI）
-python -m pytest kernel-plugin\tests\test_mcp_server.py -q
+python -m pytest studio\tests\test_mcp_server.py -q
 
 # 真机冒烟（需 ComfyUI 在跑）：生图闭环 + 导演读写 + 成片取件
 python tests\mcp_smoke.py --director

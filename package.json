@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-force-exit --test-timeout=30000 \"kernel-plugin/tests/js/*.test.mjs\"",
-    "e2e": "node --test --test-force-exit --test-timeout=120000 \"kernel-plugin/tests/e2e/*.e2e.mjs\"",
-    "update-goldens": "node --env-file=kernel-plugin/tests/js/golden-update.env --test --test-force-exit --test-timeout=30000 \"kernel-plugin/tests/js/*.test.mjs\""
+    "test": "node --test --test-force-exit --test-timeout=30000 \"studio/tests/js/*.test.mjs\"",
+    "e2e": "node --test --test-force-exit --test-timeout=120000 \"studio/tests/e2e/*.e2e.mjs\"",
+    "update-goldens": "node --env-file=studio/tests/js/golden-update.env --test --test-force-exit --test-timeout=30000 \"studio/tests/js/*.test.mjs\""
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

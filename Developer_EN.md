@@ -12,7 +12,7 @@ split by major module under `docs/en/` (index: [docs/en/README.md](docs/en/READM
 |-----|---------|
 | [docs/en/architecture.md](docs/en/architecture.md) | Project structure, module responsibilities, node registration, data & configuration directories |
 | [docs/en/api-routes.md](docs/en/api-routes.md) | Backend API route overview |
-| [docs/en/mcp.md](docs/en/mcp.md) | MCP server (`kernel-plugin/mcp_server.py`, stdio, external agents calling image & director capabilities) |
+| [docs/en/mcp.md](docs/en/mcp.md) | MCP server (`studio/mcp_server.py`, stdio, external agents calling image & director capabilities) |
 | [docs/en/testing.md](docs/en/testing.md) | pytest unit tests and JS regression tests (golden snapshots, run-tests.ps1) |
 | [docs/en/release.md](docs/en/release.md) | Registry publishing and offline tooling (preset preprocessing / OSS deployment) |
 | [docs/en/llm.md](docs/en/llm.md) | LLM modes, local GGUF installation, model directory conventions |
@@ -96,7 +96,7 @@ Feature module docs (user guide + implementation details):
   served straight out of it (no request), and once it is linked into the same ES module graph as the new modules the
   link error happens before `studio-app.js` executes and JS cannot catch it — the page is left with only the header:
   no views mounted, no offline banner, and the header status slot stuck at `hidden`.
-  When running from source, every start syncs `kernel-plugin/` into the `custom_nodes` copy (`sync_plugin`: only
+  When running from source, every start syncs `studio/` into the `custom_nodes` copy (`sync_plugin`: only
   same-named code is overwritten, files matching on size and mtime are skipped, a copy currently held by ComfyUI is
   skipped and picked up on the next start, and nothing in the target directory is deleted); both the shell-side
   service and the ComfyUI page take their frontend files from `custom_nodes`, so once the sync finishes the window
