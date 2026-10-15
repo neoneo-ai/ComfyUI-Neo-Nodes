@@ -36,19 +36,11 @@ body {
 .ns-tabs a:hover { color: #fff; }
 .ns-tabs a.active { color: #fff; border-bottom-color: #7aa2ff; }
 /* 顶栏 ComfyUI 状态位：只报状态，启停在「设置 → 启动设置」顶部；端口 / PID 收在提示里 */
-.ns-comfy-status { margin-left: auto; font-size: 12px; color: #8a8a96; white-space: nowrap; }
+.ns-comfy-status { margin-left: auto; font-size: 12px; color: #9a9aa8; white-space: nowrap; }
 .ns-comfy-run { color: #7bc47f; }
 .ns-comfy-starting { color: #e0b070; }
-.ns-mem { display: flex; align-items: center; gap: 10px; font-size: 11px; color: #999; white-space: nowrap; margin-left: auto; }
-.ns-mem-item { background: #2a2a2e; padding: 2px 8px; border-radius: 3px; font-variant-numeric: tabular-nums; }
-.ns-mem-item.warn { color: #f0a050; }
-.ns-mem-item.crit { color: #f06060; }
-.ns-mem-clear { background: #2a2a2e; border: 1px solid #444; color: #aaa; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
-.ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
-.ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
-
 /* 无边框窗口：桌面端摘掉系统标题栏后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己出（只在桌面端窗口出现） */
-.ns-wctl { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.ns-wctl { display: flex; align-items: center; gap: 2px; margin-left: 12px; }
 .ns-wctl-btn { width: 34px; height: 26px; border: none; border-radius: 4px; background: transparent; color: #b8b8c2; font-size: 13px; line-height: 1; cursor: pointer; }
 .ns-wctl-btn:hover { background: #33333a; color: #fff; }
 .ns-wctl-close:hover { background: #a83232; color: #fff; }
@@ -65,7 +57,6 @@ body {
 @keyframes ns-blink { 50% { box-shadow: 0 0 0 3px #e0b070; } }
 .ns-toast { position: fixed; left: 50%; bottom: 42px; transform: translateX(-50%); padding: 8px 18px; border: 1px solid #7a5c2a; border-radius: 6px; background: #2b2417; color: #f0c880; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 90; }
 .ns-toast.show { opacity: 1; }
-.ns-offline .ns-mem { display: none; }
 .ns-offline .neo-gallery-gm-btn,
 .ns-offline .neo-director-regen-run,
 .ns-offline .neo-director-merge-run,
@@ -74,10 +65,13 @@ body {
 
 .ns-view { flex: 1; overflow: hidden; position: relative; }
 .ns-page { height: 100%; overflow: auto; padding: 16px; }
+/* 素材页顶部不留内边距：sticky 停在容器 padding 内侧，上方会露出一条滚动的缩略图；顶部间距由工具条自己的 padding 提供 */
+.ns-page:has(.ns-gallery-host) { padding-top: 0; }
 .ns-hidden { display: none !important; }
 
-/* 素材页：NeoGallery 元素按侧栏设计，这里给它满幅容器 */
+/* 素材页：NeoGallery 元素按侧栏设计，这里给它满幅容器（头部工具条自带 sticky，两种宿主通用） */
 .ns-gallery-host { height: 100%; }
+.ns-gallery-host .neo-gallery-topbar { margin: -10px -16px 8px; padding: 8px 16px; }
 
 /* 导演页：整片生成面板 + 配方列表上下排布 */
 .ns-director { display: flex; flex-direction: column; gap: 14px; }
@@ -87,9 +81,9 @@ body {
     border-radius: 8px;
     padding: 12px 14px;
 }
-.ns-gen-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ns-gen-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
 .ns-gen-row + .ns-gen-row { margin-top: 10px; }
-.ns-gen-row label { font-size: 12px; color: #999; white-space: nowrap; }
+.ns-gen-row label { font-size: 11px; color: #a9a9b6; white-space: nowrap; }
 .ns-gen-row select,
 .ns-gen-row input[type="number"] {
     background: #2a2a2e;
@@ -99,20 +93,43 @@ body {
     padding: 5px 8px;
     font-size: 13px;
 }
-.ns-gen-row input[type="number"] { width: 76px; }
+.ns-gen-row input::placeholder { color: #6f6f7c; }
+/* 字段单元：标签在上、控件在下，整块作为一个换行单位 */
+.ns-gen-field { display: flex; flex-direction: column; gap: 3px; }
+.ns-gen-field-row { display: flex; align-items: center; gap: 8px; }
+.ns-gen-row .ns-gen-aspect { width: 104px; }
+.ns-gen-row .ns-gen-mp,
+.ns-gen-row .ns-gen-steps,
+.ns-gen-row .ns-gen-ctx,
+.ns-gen-row .ns-gen-cw,
+.ns-gen-row .ns-gen-ch { width: 64px; }
+.ns-gen-row .ns-gen-seed { width: 96px; }
 /* 分辨率回显（比例 + 百万像素 → W×H）；「自定义」模式隐藏、改显手输 W/H */
 .ns-gen-res-out { font-size: 12px; color: #7aa2ff; min-width: 84px; white-space: nowrap; }
-/* 「高级」⋯ 按钮内联在主行末尾（.rs-gen-advanced 与 .ns-gen-row 同元素）；点按钮切换 .rs-adv-open，展开后内容占满第二行 */
-.rs-gen-adv-toggle { background: none; border: none; color: #888; font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1; border-radius: 4px; }
+/* 「高级」按钮内联在主行末尾（.rs-gen-advanced 与 .ns-gen-row 同元素）；点按钮切换 .rs-adv-open，展开后内容占满第二行 */
+.rs-gen-adv-toggle { background: none; border: none; color: #9a9aa6; font-size: 12px; cursor: pointer; padding: 5px 8px; line-height: 1; border-radius: 4px; }
 .rs-gen-adv-toggle:hover { color: #ccc; background: rgba(255,255,255,0.08); }
 .rs-gen-advanced.ns-gen-row .rs-gen-adv-content { flex-basis: 100%; }
 .rs-gen-advanced.ns-gen-row.rs-adv-open .rs-gen-adv-content { display: flex; flex-direction: column; gap: 12px; }
 /* 生成/取消按钮贴控制行右端：控制行在配方列内，右端即时间轴右端 */
 .ns-gen-run-group { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
+/* 主行动按钮：满幅面板里唯一的高饱和控件，扫一眼就能找到 */
+.ns-gen-panel .ns-gen-run { background: #2f6fed; border-color: #2f6fed; color: #fff; font-weight: 600; padding: 6px 18px; }
+.ns-gen-panel .ns-gen-run:hover:not([disabled]) { background: #3f7ffe; border-color: #3f7ffe; }
 /* 取消生成：仅排队/运行中显示；红描边与蓝色「生成整片」区分开 */
 .ns-gen-cancel { border-color: #9a3a3a; background: #5a1a1a; color: #f87171; }
 .ns-gen-cancel:hover { background: #6a2a2a; color: #fff; }
-.ns-gen-status { font-size: 12px; color: #999; margin-top: 8px; min-height: 16px; white-space: pre-wrap; }
+.ns-gen-status { font-size: 12px; color: #a9a9b6; margin-top: 8px; min-height: 16px; white-space: pre-wrap; }
+/* 生成面板底部：状态行 + 显存 / 内存读数（只有导演生成吃显存，监控就挂在导演页，进页面才轮询） */
+.ns-gen-foot { display: flex; align-items: center; gap: 12px; }
+.ns-gen-foot .ns-gen-status { flex: 1; min-width: 0; }
+.ns-mem { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #a9a9b6; white-space: nowrap; flex: none; }
+.ns-mem-item { background: #2a2a2e; padding: 2px 8px; border-radius: 3px; font-variant-numeric: tabular-nums; }
+.ns-mem-item.warn { color: #f0a050; }
+.ns-mem-item.crit { color: #f06060; }
+.ns-mem-clear { background: #2a2a2e; border: 1px solid #444; color: #b8b8c2; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
+.ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
+.ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
 /* 「仅运行勾选的段」提示：时间轴下方一行（未勾选 = 生成整片；勾选后只提交勾选的段） */
 .ns-gen-hint { font-size: 12px; color: #8a9aa8; }
 .ns-gen-progress {
@@ -134,6 +151,19 @@ body {
 .ns-gen-media-right a.ns-gen-final:hover { text-decoration: underline; }
 /* 实时预览面板：与成片同限宽；高度由 livePlayer 回调按固定值写入内联样式（首个载荷到达时显示） */
 .ns-gen-live { width: 100%; max-width: 640px; border-radius: 8px; overflow: hidden; }
+/* 没有画面时右栏整块收起：时间轴吃满整幅宽度，配方列下方出虚线占位 */
+.ns-gen-empty-hint { display: none; }
+.ns-gen-body.ns-gen-empty .ns-gen-media-right { display: none; }
+.ns-gen-body.ns-gen-empty .ns-gen-empty-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 110px;
+    border: 1px dashed #3a3a44;
+    border-radius: 8px;
+    color: #8a8a96;
+    font-size: 13px;
+}
 
 /* .rs-btn 基础样式 flex:1（窄弹窗底部按钮行用）；满幅主区里不拉伸成长条。
    浮层（配方详情/导演编辑器）挂在 body 上，不受此规则影响 */
@@ -190,7 +220,7 @@ body {
 .ns-kernel-stop:not([disabled]) { color: #ff8a9a; }
 .ns-launch-row { display: flex; align-items: center; gap: 10px; }
 .ns-launch-row + .ns-launch-row { margin-top: 10px; }
-.ns-launch-label { font-size: 12px; color: #999; width: 110px; flex: none; }
+.ns-launch-label { font-size: 12px; color: #a9a9b6; width: 110px; flex: none; }
 .ns-launch-input {
     flex: 1;
     min-width: 0;
@@ -204,7 +234,7 @@ body {
 .ns-launch-status { font-size: 12px; color: #7aa2ff; margin-bottom: 12px; white-space: pre-wrap; }
 .ns-launch-bad { color: #ff8a8a; }
 .ns-launch-actions { display: flex; gap: 10px; margin-top: 14px; }
-.ns-launch-info { margin-top: 12px; font-size: 11px; color: #777; }
+.ns-launch-info { margin-top: 12px; font-size: 11px; color: #8f8f9a; }
 .ns-btn {
     background: #2a2a2e;
     border: 1px solid #444;
@@ -232,4 +262,22 @@ body {
     color: #cfcfcf;
     font: 12px/1.5 Consolas, Menlo, monospace;
     white-space: pre-wrap;
+}
+
+/* 键盘焦点：只在键盘导航时出描边（鼠标点击不亮框），Tab 走查整页可见 */
+.ns-header a:focus-visible,
+.ns-tabs a:focus-visible,
+.ns-btn:focus-visible,
+.rs-btn:focus-visible,
+.ns-mem-clear:focus-visible,
+.ns-wctl-btn:focus-visible,
+.ns-settings-tab:focus-visible,
+.ns-offline-start:focus-visible,
+.ns-launch-input:focus-visible,
+.ns-gen-row input:focus-visible,
+.ns-gen-row select:focus-visible,
+.neo-gallery-search-container input:focus-visible,
+.neo-gallery-search-container select:focus-visible {
+    outline: 2px solid #7aa2ff;
+    outline-offset: 2px;
 }

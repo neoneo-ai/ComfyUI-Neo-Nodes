@@ -8,12 +8,15 @@ export const PAGE_SIZE = 100;
 export const RESERVED_SPACE_WITH_LABEL = 52;
 export const RESERVED_SPACE_WITHOUT_LABEL = 36;
 export const MAX_COVER_IMAGES = 2;
+export const MAX_COVER_IMAGES_WIDE = 3;
 export const MAX_ROOT_IMAGES = 20;
 export const THUMBNAIL_SIZE_MIN = 150;
 export const THUMBNAIL_SIZE_MAX = 500;
 export const THUMBNAIL_SIZE_STEP = 25;
 export const THUMBNAIL_SIZE_DEFAULT = 320;
 export const THUMBNAIL_CACHE_SIZE = 400; // Fixed thumbnail cache size
+export const WIDE_CARD_MAX = 320;
+export const MOSAIC_MIN_CARD_WIDTH = 240;
 
 /**
  * Get reserved space based on label display setting
@@ -31,11 +34,30 @@ export function getImageHeight(maxThumbnailSize, displayLabels) {
 }
 
 /**
+ * 宽宿主（桌面端素材页）下的卡片列宽：滑杆拉到 500 也压在 WIDE_CARD_MAX 以内，
+ * 避免宽窗口只排出 3 列巨型卡。侧栏宿主没有宽宿主标记，滑杆照旧全量生效。
+ */
+export function cardColumnWidth(gallery) {
+    const size = gallery.maxThumbnailSize;
+    return gallery.element && gallery.element.classList.contains("neo-gallery-panel--wide")
+        ? Math.min(size, WIDE_CARD_MAX)
+        : size;
+}
+
+/** 宽宿主且卡片够宽才用三图封面拼贴，其余宿主保持双图。 */
+export function coverMaxTiles(gallery) {
+    return cardColumnWidth(gallery) >= MOSAIC_MIN_CARD_WIDTH &&
+        gallery.element && gallery.element.classList.contains("neo-gallery-panel--wide")
+        ? MAX_COVER_IMAGES_WIDE
+        : MAX_COVER_IMAGES;
+}
+
+/**
  * Calculate card height for directory cards
  */
 export function getCardHeight(gallery) {
     const reservedSpace = getReservedSpace(gallery.displayLabels);
-    return Math.max(gallery.maxThumbnailSize - reservedSpace, 40);
+    return Math.max(cardColumnWidth(gallery) - reservedSpace, 40);
 }
 
 /**
@@ -332,11 +354,19 @@ function _applyAdaptiveCoverRatio(coverWrapper, grid, ratios) {
     const r1 = ratios[0];
     if (!r1) return;
     const useRow = r1 !== 3 / 2;     // portrait & square side-by-side; landscape single
-    while (grid.children.length > 1 && !useRow) grid.lastChild.remove();
-    grid.classList.toggle("neo-gallery-card-cover-grid--row", useRow);
-    grid.classList.toggle("neo-gallery-card-cover-grid--portrait", useRow);
+    const mosaic = useRow && grid.children.length > 2;
+    const keepTiles = mosaic ? 3 : (useRow ? 2 : 1);
+    while (grid.children.length > keepTiles) grid.lastChild.remove();
+    grid.classList.toggle("neo-gallery-card-cover-grid--mosaic", mosaic);
+    grid.classList.toggle("neo-gallery-card-cover-grid--row", !mosaic && useRow);
+    grid.classList.toggle("neo-gallery-card-cover-grid--portrait", !mosaic && useRow);
     let ratio = r1;
-    if (grid.children.length > 1) {
+    if (mosaic) {
+        // 左大图占 2/3 宽，右列两张小图各占 1/3：合成比例取两列中较高的一列
+        const r2 = ratios[1] || r1;
+        const r3 = ratios[2] || r1;
+        ratio = 3 / Math.max(2 / r1, 1 / r2 + 1 / r3);
+    } else if (grid.children.length > 1) {
         const r2 = ratios[1] || r1;  // unknown tile assumed same as the first
         ratio = useRow ? r1 + r2 : 1 / (1 / r1 + 1 / r2);
     }
@@ -368,9 +398,9 @@ export function applyMediaCardRatio(container, imgWrapper, w, h) {
  * side-by-side, landscape keeps a single tile. An audio-only set becomes one
  * audio tile, and nothing usable becomes one placeholder.
  */
-export function renderCoverTiles(coverWrapper, covers, alt = "") {
+export function renderCoverTiles(coverWrapper, covers, alt = "", maxTiles = MAX_COVER_IMAGES) {
     coverWrapper.innerHTML = "";
-    const list = (covers || []).slice(0, MAX_COVER_IMAGES);
+    const list = (covers || []).slice(0, maxTiles);
     const mediaCovers = list.filter(c => getCoverTileKind(c) === "media");
 
     if (mediaCovers.length > 0) {
@@ -435,13 +465,6 @@ export function createBreadcrumbItem(text, onClick, options = {}) {
  */
 export function createBreadcrumbSeparator() {
     return $el("span", { className: "neo-gallery-breadcrumb-sep", textContent: ">" });
-}
-
-/**
- * Create spacer element
- */
-export function createSpacer() {
-    return $el("div", { style: { flex: 1 } });
 }
 
 /**

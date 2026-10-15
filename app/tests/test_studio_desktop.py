@@ -124,6 +124,32 @@ class ProbeTests(unittest.TestCase):
         with patch.object(app, "probe", _probe), patch.object(app, "POLL_INTERVAL", 0):
             self.assertTrue(app.wait_ready(8188, 5))
 
+    def test_attach_wait_gives_up_when_the_port_dies(self):
+        # 关完立刻重开：附着到正在死的那路，连续两轮没人监听就是死了，不该对着空端口等满超时
+        seen = []
+
+        def _busy(port):
+            seen.append(port)
+            return len(seen) == 1
+
+        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "port_busy", _busy), patch.object(app, "POLL_INTERVAL", 0):
+            self.assertFalse(app.wait_attach(8188, 90))
+        self.assertEqual(len(seen), 3, "有人监听一轮 + 没人监听两轮就收手")
+
+    def test_attach_wait_keeps_polling_a_live_port(self):
+        # 附着的那路还在导入自定义节点：端口有人监听，就该继续等而不是提前收手
+        polls = []
+
+        def _probe(port, timeout=3.0):
+            polls.append(port)
+            return False
+
+        with patch.object(app, "probe", _probe), patch.object(app, "port_busy", lambda port: True), \
+             patch.object(app, "POLL_INTERVAL", 0):
+            self.assertFalse(app.wait_attach(8188, 0.2))
+        self.assertGreater(len(polls), 3, "端口有人监听就不许提前收手")
+
     def test_start_comfy_argv(self):
         with patch.object(app.subprocess, "Popen") as popen:
             app.start_comfy(pathlib.Path("D:/python/python.exe"), pathlib.Path("D:/ComfyUI"), 8188)
@@ -477,6 +503,17 @@ class SingletonTests(unittest.TestCase):
         app.k32.CloseHandle(first)
         second = app.singleton()
         self.assertIsNotNone(second)
+        app.k32.CloseHandle(second)
+
+    def test_release_frees_the_mutex_for_a_relaunch(self):
+        # 锁平时只由系统在进程退出时释放：关窗收尾那一两秒里重开就被「窗口已在运行」拦住
+        first = app.singleton()
+        app.SINGLETON_HANDLE = first
+        self.addCleanup(setattr, app, "SINGLETON_HANDLE", None)
+        app.release_singleton()
+        self.assertIsNone(app.SINGLETON_HANDLE)
+        second = app.singleton()
+        self.assertIsNotNone(second, "交还之后重开必须拿得到锁")
         app.k32.CloseHandle(second)
 
     def test_singleton_takes_no_port(self):
@@ -892,6 +929,28 @@ class StudioDesktopTests(unittest.TestCase):
             desktop.comfy_close()
         self.assertEqual(touched, [])
 
+    def test_jump_waits_by_attach_for_a_foreign_comfy(self):
+        # 附着的那路（桌面端没有句柄）：端口死了要收手回离线页，不能等满超时把窗口卡在「启动中」
+        calls = []
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
+        with patch.object(app, "wait_attach", lambda port, s: calls.append("attach") or False), \
+             patch.object(app, "wait_ready", lambda port, s: calls.append("ready") or False), \
+             patch.object(app, "log_line", lambda text: None):
+            desktop._jump_when_ready()
+        self.assertEqual(calls, ["attach"])
+        self.assertFalse(desktop.starting, "收手要收掉启动中，横幅回到「未运行 + 启动」")
+
+    def test_jump_waits_for_the_spawned_child_to_bind_the_port(self):
+        # 自己拉起的那路：端口在绑上之前一直是空的，必须按 wait_ready 等，不能按「没人监听」收手
+        calls = []
+        comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
+        with patch.object(app, "wait_attach", lambda port, s: calls.append("attach") or False), \
+             patch.object(app, "wait_ready", lambda port, s: calls.append("ready") or False), \
+             patch.object(app, "log_line", lambda text: None):
+            desktop._jump_when_ready()
+        self.assertEqual(calls, ["ready"])
+
     def test_start_respawns_after_stop(self):
         comfy = SimpleNamespace(pid=1234, poll=lambda: 1, terminate=MagicMock())
         desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
@@ -976,7 +1035,7 @@ class StudioDesktopTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         with patch.object(app, "webview", _fake_webview(cw)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "port_busy", lambda port: True), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
@@ -1031,7 +1090,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         start = lambda *a, **k: a[0] and a[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "port_owner", lambda port: touched.append(port) or 4321), \
@@ -1055,7 +1114,7 @@ class MainWindowTests(unittest.TestCase):
         fake = _fake_webview(cw)
         self.port_busy = True
         with patch.object(app, "webview", fake), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1076,7 +1135,7 @@ class MainWindowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
              patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
              patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)), \
@@ -1096,7 +1155,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         start = lambda *a, **k: a[0] and a[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1121,7 +1180,7 @@ class MainWindowTests(unittest.TestCase):
             window.events.closing.handlers[0]()
 
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
@@ -1152,7 +1211,7 @@ class MainWindowTests(unittest.TestCase):
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         start = lambda *a, **k: (a[0](), window.events.closing.handlers[0]())
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
@@ -1174,7 +1233,7 @@ class MainWindowTests(unittest.TestCase):
         comfy = SimpleNamespace(pid=1234, terminate=lambda: order.append("kill"), wait=lambda *a, **k: None)
         start = lambda *a, **k: (a[0](), window.events.closing.handlers[0]())
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
@@ -1194,7 +1253,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         start = lambda *a, **k: window.events.closing.handlers[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1208,7 +1267,7 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
@@ -1224,13 +1283,30 @@ class MainWindowTests(unittest.TestCase):
             self.assertNotIn(banned, src, f"收尾不能留在 UI 线程上：{banned}")
         self.assertIn("save_geometry", src, "几何要在窗口销毁前读走")
 
+    def test_closing_releases_the_singleton_first(self):
+        # 收尾（杀 ComfyUI、收桌面端服务）要跑一两秒，窗口在这之后才落地：
+        # 锁按进程退出才释放的话，这期间重开一律弹「窗口已在运行」，用户读成「关完要等一会才能启动」
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        released = []
+        self.addCleanup(setattr, app, "SINGLETON_HANDLE", None)
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: 7), \
+             patch.object(app, "release_singleton", lambda: released.append("released")), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(sys, "argv", ["studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+            window.events.closing.handlers[0]()
+        self.assertEqual(released, ["released"])
+
     def test_exit_kills_comfy_when_no_close_event_fires(self):
         # destroy / 后端直接销毁窗口时 closing 可能根本不触发：进程退出前必须收掉桌面端拉起的 ComfyUI
         window = _fake_window()
         cw = MagicMock(return_value=window)
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw, lambda *a, **k: a[0]())), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
@@ -1248,7 +1324,7 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw, lambda *a, **k: a[0]())), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", lambda factory, port: SimpleNamespace(
                  start=lambda: 0, stop=lambda: None, bound=0, error=None)), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
@@ -1269,7 +1345,7 @@ class MainWindowTests(unittest.TestCase):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         with patch.object(app, "webview", _fake_webview(cw)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: None), \
@@ -1287,7 +1363,7 @@ class MainWindowTests(unittest.TestCase):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         with patch.object(app, "webview", _fake_webview(cw)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "resolve_root", lambda root: None), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
@@ -1317,7 +1393,7 @@ class MainWindowTests(unittest.TestCase):
         ensure = app.ensure_plugin
         spawn = MagicMock(return_value=SimpleNamespace(pid=4321, poll=lambda: 0))
         with patch.object(app, "webview", _fake_webview(cw)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "resolve_root", lambda r: root), \
              patch.object(app, "find_python", lambda r, p: pathlib.Path(p) if p else None), \
@@ -1344,7 +1420,7 @@ class MainWindowTests(unittest.TestCase):
         set_id = MagicMock()
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
@@ -1364,7 +1440,7 @@ class MainWindowTests(unittest.TestCase):
         set_id = MagicMock()
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "STUDIO_ICON", pathlib.Path("D:/nope/neo-studio.ico")), \
@@ -1385,13 +1461,14 @@ class MainWindowTests(unittest.TestCase):
         spawned = []
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
              patch.object(app, "wait_ready", lambda port, seconds: False), \
+             patch.object(app, "wait_attach", lambda port, seconds: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -1406,7 +1483,7 @@ class MainWindowTests(unittest.TestCase):
         spawned = []
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
@@ -1429,7 +1506,7 @@ class MainWindowTests(unittest.TestCase):
 
         self.port_busy = False
         with patch.object(app, "webview", _fake_webview(cw, start)), \
-             patch.object(app, "singleton", lambda: object()), \
+             patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \

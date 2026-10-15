@@ -526,6 +526,22 @@ def wait_ready(port: int, seconds: float) -> bool:
     return probe(port)
 
 
+def wait_attach(port: int, seconds: float) -> bool:
+    """附着的那路（桌面端没有句柄）等就绪。自己拉起的那路端口是「还没绑上」，这里等的是空端口；
+    附着的那路端口是「有人监听」，连续两轮没人监听就是那路死了 —— 收手回离线页，
+    别对着空端口等满超时（关完立刻重开就会撞上这一下）。"""
+    deadline = time.time() + seconds
+    free = 0
+    while time.time() < deadline:
+        if probe(port):
+            return True
+        free = free + 1 if not port_busy(port) else 0
+        if free >= 2:
+            return False
+        time.sleep(POLL_INTERVAL)
+    return probe(port)
+
+
 def on_screen(x: int, y: int, w: int, h: int) -> bool:
     """位置必须与虚拟屏幕（所有显示器并集）相交。最小化时 Windows 报 -32000 系坐标，拔掉的外接屏同理，
     这种位置存下来下次启动窗口就在屏幕外看不见。"""
@@ -736,7 +752,9 @@ class StudioDesktop:
 
     def _jump_when_ready(self) -> None:
         """离线页里点「重新拉起」：就绪后整页跳到 ComfyUI 的完整 Studio。"""
-        if wait_ready(self.port, READY_TIMEOUT):
+        ready = (wait_ready(self.port, READY_TIMEOUT) if self.comfy is not None
+                 else wait_attach(self.port, READY_TIMEOUT))
+        if ready:
             self.starting = False
             self._goto(self.url)
         else:
@@ -799,7 +817,7 @@ class StudioDesktop:
         pid = self.comfy.pid
         self.comfy.terminate()
         try:
-            self.comfy.wait(timeout=3)
+            self.comfy.wait(timeout=1.2)   # TerminateProcess 是异步的，正常收尾远快于此；等满上限就是「关得慢」
         except subprocess.TimeoutExpired:
             kill_pid(pid)
             log_line(f"comfy close kill pid={pid}")
@@ -1162,6 +1180,18 @@ def singleton():
     return h or None
 
 
+SINGLETON_HANDLE = None
+
+
+def release_singleton() -> None:
+    """交还互斥体。锁只在进程退出时由系统释放，关窗收尾那一两秒里重开就被「窗口已在运行」拦住 ——
+    用户读成「关完要等一会才能启动」。收尾一开头就交还，窗口还没落地也能重开。"""
+    global SINGLETON_HANDLE
+    if SINGLETON_HANDLE:
+        k32.CloseHandle(SINGLETON_HANDLE)
+        SINGLETON_HANDLE = None
+
+
 def ensure_clr() -> None:
     """开窗口前把 pythonnet 的 CLR 宿主装好，netfx 起不来就换 coreclr。
 
@@ -1202,6 +1232,8 @@ def main() -> int:
         log_line("singleton busy")
         alert("Neo Studio 窗口已在运行")
         return 0
+    global SINGLETON_HANDLE
+    SINGLETON_HANDLE = lock   # 句柄活到进程结束锁才成立；交还点在 on_closing
 
     root = resolve_root(args.root)
     python = find_python(root, args.python or cfg.get("python", "")) if root is not None else None
@@ -1317,6 +1349,7 @@ def main() -> int:
         if closing["vetoed"]:
             return   # 后台收尾走完后的第二次 FormClosing：放行
         closing["vetoed"] = True
+        release_singleton()   # 收尾跑完之前重开不该被「窗口已在运行」拦住
         desktop.closing = True
         if not desktop.fullscreen:
             save_geometry(window)   # 全屏时窗口是整屏矩形，存下来下次开机窗口会铺满屏幕

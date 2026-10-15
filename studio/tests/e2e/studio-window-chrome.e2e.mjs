@@ -78,8 +78,14 @@ test("无边框桌面端窗口：顶栏出最小化 / 最大化 / 全屏 / 关�
         assert.equal(await page.getAttribute("#ns-win-fs", "title"), "退出全屏");
 
         // 顶栏空白处按下交给桌面端拖动；点在链接 / 按钮上不抢窗口拖动
+        // 取窗口控件右侧那段真空白：顶栏内容宽度会变，写死坐标会点到窗口按钮上
+        const blank = await page.evaluate(() => {
+            const h = document.querySelector(".ns-header").getBoundingClientRect();
+            const w = document.getElementById("ns-wctl").getBoundingClientRect();
+            return { x: Math.round(w.right + 40), y: Math.round(h.top + h.height / 2) };
+        });
         const callsBefore = await page.evaluate(() => window.__calls.length);
-        await page.mouse.move(400, 12);
+        await page.mouse.move(blank.x, blank.y);
         await page.mouse.down();
         await page.mouse.up();
         const drag = await page.evaluate((n) => window.__calls.slice(n), callsBefore);

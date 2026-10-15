@@ -1,4 +1,4 @@
-// 冷启动：桌面端已拉起 ComfyUI 但端口未就绪。这段时间界面只出「启动中」，
+// 冷启动：桌面端已拉起 ComfyUI 但端口未就绪。这段时间「启动中」只出顶栏胶囊，离线横幅整条收起，
 // 「ComfyUI 未运行」横幅文案、「🚀 启动 ComfyUI」按钮、「需要 ComfyUI」按钮文案与提示条都不得出现。
 // 启动中状态来自桌面端 /neo_studio/version 快照：pywebview 的 js_api 注入晚于页面加载，
 // 冷启动那几秒页面里没有 api，只靠 api 轮询就会先闪一遍「未运行」与「需要 ComfyUI」提示。
@@ -36,18 +36,15 @@ function mockStartingDesktop() {
         { success: false, offline: true, error: "ComfyUI 未运行" }, 409));
 }
 
-test("桌面端拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅与启动入口", async () => {
+test("桌面端拉起 ComfyUI 期间：「启动中」只出顶栏胶囊，离线横幅整条收起", async () => {
     mockStartingDesktop();
     window.location.hash = "#/director";
     await import("../../web/studio/studio-app.js?starting=1");
     await flush();
 
     const bar = document.getElementById("ns-offline");
-    assert.ok(bar, "离线页应有横幅");
-    assert.equal(bar.style.display, "", "横幅出来的时候文案就是准的，不先闪「未运行」");
-    assert.match(bar.textContent, /ComfyUI 启动中/);
-    assert.ok(!/ComfyUI 未运行/.test(bar.textContent), "启动中不出「未运行」");
-    assert.equal(bar.querySelector(".ns-offline-start").style.display, "none", "启动中不给启动按钮");
+    assert.ok(bar, "离线页应有横幅节点");
+    assert.equal(bar.style.display, "none", "启动中不叠横幅，顶栏胶囊已经报了「● 启动中」");
     assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
     assert.ok(document.getElementById("ns-comfy-status").hidden, "js_api 未注入前顶栏状态位不出");
     const run = document.querySelector(".ns-gen-run");

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test --test-force-exit --test-timeout=30000 \"studio/tests/js/*.test.mjs\"",
-    "e2e": "node --test --test-force-exit --test-timeout=120000 \"studio/tests/e2e/*.e2e.mjs\"",
+    "e2e": "node --test --test-force-exit --test-concurrency=4 --test-timeout=120000 \"studio/tests/e2e/*.e2e.mjs\"",
     "update-goldens": "node --env-file=studio/tests/js/golden-update.env --test --test-force-exit --test-timeout=30000 \"studio/tests/js/*.test.mjs\""
   },
   "devDependencies": {

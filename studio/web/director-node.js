@@ -323,11 +323,11 @@ app.registerExtension({
             // computeSize() 返回 widget 自然高度（含 DOM widget TL_H），加 ACT_H（操作条）。
             // 工作流保存的高度可能包含运行时预览面板的额外高度，这里统一重置为自然值。
             const bw = (node.size && node.size[0]) || 340;
-            const computedH = this.computeSize()[1] + ACT_H;
-            node.setSize([Math.max(bw, 340), computedH]);
+            const naturalH = this.computeSize()[1] + ACT_H;
+            node.setSize([Math.max(bw, 340), naturalH]);
             node.minWidth = Math.max(bw, 340);
-            node.minHeight = computedH;
-            runtimeBaseH = computedH; // 记录自然高度，供运行时加高/还原采样预览预留区
+            node.minHeight = naturalH;
+            runtimeBaseH = naturalH; // 记录自然高度，供运行时加高/还原采样预览预留区
 
             // bundle 连接时由 NeoNodes.BundleLock 调用：隐藏时间轴+操作条并收缩节点高度；断开恢复。
             let tlVisible = true;
@@ -341,8 +341,9 @@ app.registerExtension({
                 if (recipeWidget) recipeWidget.hidden = !visible;
                 if (skillIdWidget) skillIdWidget.hidden = visible;
                 if (durationWidget) durationWidget.hidden = visible;
-                // computeSize() 含 DOM widget（TL_H）；时间轴隐藏时扣除，显示时加回 ACT_H
-                runtimeBaseH = this.computeSize()[1] + (visible ? ACT_H : -TL_H);
+                // 显示态回到建节点时量好的自然高度（含 DOM widget 与操作条）；
+                // 隐藏态 DOM widget 量出 0，按 computeSize 扣掉时间轴高度收缩节点
+                runtimeBaseH = visible ? naturalH : this.computeSize()[1] - TL_H;
                 node.minHeight = runtimeBaseH;
                 node.setSize([node.size[0], runtimeBaseH + (previewBox.style.display === "none" ? 0 : previewH)]);
             };

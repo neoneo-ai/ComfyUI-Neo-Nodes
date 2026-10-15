@@ -16,6 +16,7 @@ import {
     THUMBNAIL_SIZE_MAX,
     THUMBNAIL_SIZE_STEP,
     getCardHeight,
+    cardColumnWidth,
     renderCoverTiles,
     buildPlaceholderTile,
     showNoFilesMessage,
@@ -128,24 +129,18 @@ export class NeoGallery {
         // Main content area
         this.accordion = $el("div", { className: "neo-gallery-accordion" });
 
+        // 头部一条粘性工具条：前进后退 / + 目录 / 面包屑 / 尺寸滑杆 / 搜索 / 生成素材
+        // 全塞进同一块，宽宿主（桌面素材页）排成一行，窄侧栏自动换行；样式见 .neo-gallery-topbar
         this.element = $el("div", { id: this.elementId, className: "neo-gallery-panel" }, [
-            $el("div", { 
-                className: "neo-gallery-header-row",
-                style: { display: 'grid', gridTemplateColumns: 'auto auto 1fr auto', alignItems: 'center' }
-            }, [
-                $el("h3", { 
-                    className: "neo-gallery-header-title",
-                    textContent: "Neo Gallery",
-                    onclick: () => this.showCategoryCards(),
-                    title: "Click to return to home"
-                }),
+            $el("div", { className: "neo-gallery-topbar" }, [
                 navGroup,
-                $el("div", { 
-                    style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, gridColumn: '3' }
-                }, [this.thumbnailSizeSlider]),
-                $el("div", { style: { display: 'flex', gap: '12px', alignItems: 'center' } }, [customDirBtn])
-            ]),
-            $el("div", { className: "neo-gallery-search-row" }, [
+                customDirBtn,
+                $el("div", {
+                    id: "neo-gallery-breadcrumb",
+                    className: "neo-gallery-breadcrumb",
+                    style: { display: 'none' }
+                }, [this.list.createBreadcrumbHome(this)]),
+                this.thumbnailSizeSlider,
                 $el("div", { className: "neo-gallery-search-container" }, [this.searchInput]),
                 $el("button", {
                     className: "neo-gallery-gm-btn",
@@ -154,11 +149,6 @@ export class NeoGallery {
                     onclick: () => openGenMaterialDialog(this)
                 })
             ]),
-            $el("div", { 
-                id: "neo-gallery-breadcrumb",
-                className: "neo-gallery-breadcrumb",
-                style: { display: 'none' }
-            }, [this.list.createBreadcrumbHome(this)]),
             this.accordion,
             this.customDirInput
         ]);
@@ -520,7 +510,7 @@ export class NeoGallery {
             className: "neo-gallery-category-grid",
             style: { '--neo-card-h': `${getCardHeight(this)}px` }
         });
-        attachMasonry(container, this.maxThumbnailSize);
+        attachMasonry(container, cardColumnWidth(this));
         for (const item of items) {
             container.appendChild(this._createLocalBookmarkCard(item));
         }
@@ -728,7 +718,7 @@ export class NeoGallery {
             className: "neo-gallery-category-grid",
             style: { '--neo-card-h': `${getCardHeight(this)}px` }
         });
-        attachMasonry(container, this.maxThumbnailSize);
+        attachMasonry(container, cardColumnWidth(this));
         for (const item of items) {
             container.appendChild(this._createCivitaiBookmarkCard(item));
         }
@@ -1362,7 +1352,7 @@ export class NeoGallery {
         const grids = document.querySelectorAll('.neo-gallery-category-grid');
         for (const grid of grids) {
             if (grid.offsetParent !== null) {
-                setMasonryColumnWidth(grid, newSize);
+                setMasonryColumnWidth(grid, cardColumnWidth(this));
                 grid.style.setProperty('--neo-card-h', `${getCardHeight(this)}px`);
             }
         }
@@ -1735,6 +1725,9 @@ app.registerExtension({
                     gallery.element.parentNode.removeChild(gallery.element);
                 }
                 el.appendChild(gallery.element);
+                // 宽宿主标记：桌面端素材页的专属样式全部挂在 .neo-gallery-panel--wide 下，
+                // 侧栏标签页把同一个元素搬进侧栏容器时没有这个祖先，侧栏外观不变。
+                gallery.element.classList.toggle("neo-gallery-panel--wide", !!el.closest(".ns-gallery-host"));
                 
                 if (!gallery._loaded) {
                     await gallery.loadAndDisplay();

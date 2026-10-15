@@ -281,6 +281,6 @@ class DesktopServer:
         if self.loop is not None:
             self.loop.call_soon_threadsafe(self.loop.stop)
             if self.thread is not None:
-                self.thread.join(timeout=5)   # 等循环线程收尾，别让守护线程卡在解释器退出时
+                self.thread.join(timeout=1.5)   # 循环平时停在 Event().wait()，叫醒是毫秒级；上限压在这里，别把关窗拖成「卡死」
 
 

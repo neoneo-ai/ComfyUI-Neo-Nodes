@@ -261,7 +261,7 @@ test("ComfyUI 在跑时生成入口不受门控：点它不该去启动 ComfyUI"
     assert.equal(starts.length, 0, "在线时生成入口应照常交给原功能，不触发启动");
 });
 
-test("离线页：横幅说明可编辑面，版本位显示离线，显存块收起", async () => {
+test("离线页：横幅说明可编辑面，版本位显示离线", async () => {
     resetEnv();
     document.body.innerHTML = studioBody;
     mockRoute("/neo_studio/version", jsonResponse({

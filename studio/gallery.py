@@ -979,14 +979,14 @@ async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: 
         full_key = f"{main_label}/{rel_path_param}" if rel_path_param else main_label
 
         def _collect_dir_covers():
-            _collect_all_dir_covers(covers, target_dir, full_key, 2, base_subfolder=full_key)
+            _collect_all_dir_covers(covers, target_dir, full_key, 3, base_subfolder=full_key)
             # Immediate child subdirs need covers of their own, otherwise their cards
             # render as bare folder placeholders when this level is displayed.
             for subdir_name in resp_dir.get("subdirs", {}):
                 if subdir_name == "Cloud Presets":
                     continue
                 child_key = f"{full_key}/{subdir_name}"
-                _collect_all_dir_covers(covers, target_dir / subdir_name, child_key, 2,
+                _collect_all_dir_covers(covers, target_dir / subdir_name, child_key, 3,
                                         base_subfolder=child_key)
 
         await asyncio.to_thread(_collect_dir_covers)
@@ -1028,7 +1028,7 @@ async def get_gallery_list(request):
     Supports lightweight search mode via 'search_mode=1':
     - Returns only filename + name + style + content for each entry (no txt parsing overhead)
     
-    Automatically includes cover images (samples: 2 per directory) to avoid a separate request.
+    Automatically includes cover images (samples: 3 per directory) to avoid a separate request.
     """
     fields_param = request.rel_url.query.get("fields", "")
     dir_name_param = request.rel_url.query.get("dir_name", "")
@@ -1580,7 +1580,7 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
     Plugin-updated dirs (Output / Grid / Character) use their newest files, so their
     cards keep up with what was just produced instead of freezing on the oldest ones.
     Everything else scans the root level first, then descends into subdirectories.
-    Total cover images limited to sample_count (default 2).
+    Total cover images limited to sample_count (default 3).
 
     Args:
         covers: Dict to populate with results (keyed by "dir_name")
@@ -1639,7 +1639,7 @@ def _collect_home_covers(covers: dict, user_custom_dirs: list, hidden_entries: s
     for info in _get_system_dirs():
         if _is_home_entry_hidden(info["name"], hidden_entries):
             continue
-        _collect_all_dir_covers(covers, info["path"], info["name"], 2)
+        _collect_all_dir_covers(covers, info["path"], info["name"], 3)
     if oss_index:
         _collect_oss_covers(covers, oss_index)
 

@@ -206,23 +206,21 @@ test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、
         const page = await findPage(browser);
         page.on("pageerror", (e) => errors.push(String(e)));
 
-        // 冷启动窗口直接进桌面端的离线素材页：ComfyUI 还在拉起，界面只出「启动中」，不出未运行提示
-        await page.waitForSelector("#ns-offline", { timeout: 60000 });
+        // 冷启动窗口直接进桌面端的离线素材页：ComfyUI 还在拉起，「启动中」只出顶栏胶囊，横幅收起
+        assert.ok(await waitFor(() => page.evaluate(() => !!document.getElementById("ns-offline")), 60),
+            "离线页应有离线横幅节点");
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 60000 });
         const offline = await page.evaluate(async () => ({
-            banner: document.getElementById("ns-offline").textContent,
+            banner: getComputedStyle(document.getElementById("ns-offline")).display,
             version: document.getElementById("ns-version").textContent,
-            start: getComputedStyle(document.querySelector("#ns-offline .ns-offline-start")).display,
-            mem: getComputedStyle(document.getElementById("ns-mem")).display,
+            mem: !!document.querySelector(".ns-mem"),
             toast: !!document.getElementById("ns-toast"),
             // 必须 ComfyUI 运行时的写接口：桌面端不认，明确 409（/neo_gallery/delete 归桌面端服务，不在这里）
             del: (await fetch("/neo_image_gen/generate", { method: "POST", body: "{}" })).status,
         }));
-        assert.match(offline.banner, /ComfyUI 启动中/);
-        assert.ok(!/ComfyUI 未运行/.test(offline.banner), "启动中不该出「未运行」");
+        assert.equal(offline.banner, "none", "启动中不叠横幅：顶栏胶囊已报「● 启动中」");
         assert.match(offline.version, /ComfyUI 启动中/);
-        assert.equal(offline.start, "none", "启动中不该出「🚀 启动 ComfyUI」按钮");
-        assert.equal(offline.mem, "none", "离线页应收起显存块");
+        assert.equal(offline.mem, false, "显存监控在导演页，离线页不应出显存块");
         assert.equal(offline.toast, false, "启动中不出「需要 ComfyUI」提示条");
         assert.equal(offline.del, 409, "写操作必须回 409 offline");
         // 目录结构要扫全部素材目录，缩略图是逐卡懒加载：出页面不等于出图，等到出图为止

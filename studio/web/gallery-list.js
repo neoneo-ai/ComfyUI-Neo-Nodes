@@ -3,7 +3,7 @@
  */
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
-import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, createBreadcrumbItem, createBreadcrumbSeparator, createSpacer, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast, releaseLazyThumbnails } from './gallery-utils.js';
+import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, cardColumnWidth, createBreadcrumbItem, createBreadcrumbSeparator, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast, releaseLazyThumbnails } from './gallery-utils.js';
 import { attachMasonry } from './gallery-masonry.js';
 
 // Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
@@ -139,11 +139,9 @@ export class GalleryList {
             }
 
             if (pathSegments.length > 0) {
-                breadcrumb.appendChild(createSpacer());
                 breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, -1)), { isUp: true, title: "上一级" }));
             } else {
                 // Show back button for root directory of custom dir
-                breadcrumb.appendChild(createSpacer());
                 breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
             }
         } else if (sourceName) {
@@ -151,7 +149,6 @@ export class GalleryList {
             breadcrumb.appendChild(createBreadcrumbItem(sourceName, null, { isCurrent: true }));
 
             if (pathSegments.length > 0 || sourceName) {
-                breadcrumb.appendChild(createSpacer());
                 breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
             }
         }
@@ -316,7 +313,7 @@ export class GalleryList {
             className: "neo-gallery-category-grid",
             style: { '--neo-card-h': `${getCardHeight(this.gallery)}px` }
         });
-        attachMasonry(container, this.gallery.maxThumbnailSize);
+        attachMasonry(container, cardColumnWidth(this.gallery));
 
         // Collect workflow-used loras once for the smart filter (only lora dirs are filtered).
         const usedLoras = this.gallery.workflowMatchActive ? this.gallery.collectUsedLoras() : null;
@@ -489,7 +486,7 @@ export class GalleryList {
             className: "neo-gallery-category-grid",
             style: { '--neo-card-h': `${getCardHeight(this.gallery)}px` }
         });
-        attachMasonry(container, this.gallery.maxThumbnailSize);
+        attachMasonry(container, cardColumnWidth(this.gallery));
 
         if (isLoraView) {
             const usedCount = this.gallery.collectUsedLoras().size;
@@ -585,7 +582,7 @@ export class GalleryList {
         this.gallery._renderedCount = 0;
         
         const imageGrid = $el("div", { className: "neo-gallery-image-grid neo-gallery-expanded-images" });
-        attachMasonry(imageGrid, this.gallery.maxThumbnailSize);
+        attachMasonry(imageGrid, cardColumnWidth(this.gallery));
         
         const renderPage = (count) => {
             for (let i = 0; i < count && this.gallery._renderQueue.length > 0; i++) {
@@ -649,7 +646,7 @@ export class GalleryList {
         this.gallery._renderedCount = 0;
         
         const imageGrid = $el("div", { className: "neo-gallery-image-grid neo-gallery-expanded-images" });
-        attachMasonry(imageGrid, this.gallery.maxThumbnailSize);
+        attachMasonry(imageGrid, cardColumnWidth(this.gallery));
         
         const renderPage = (count) => {
             for (let i = 0; i < count && this.gallery._renderQueue.length > 0; i++) {

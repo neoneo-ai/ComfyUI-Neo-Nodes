@@ -47,7 +47,7 @@ test("NeoNodes.BundleLock 扩展已注册", { timeout: 60000 }, async (t) => {
     await ctx.close();
 });
 
-test("实时连线：连 bundle → recipe 置灰 + 时间轴隐藏，断开 → 恢复", { timeout: 60000 }, async (t) => {
+test("实时连线：连 bundle → recipe 隐藏 + 时间轴隐藏，断开 → 恢复", { timeout: 60000 }, async (t) => {
     if (!guard(t)) return;
     const { ctx, page } = await newPage();
     const r = await page.evaluate(async () => {
@@ -58,7 +58,11 @@ test("实时连线：连 bundle → recipe 置灰 + 时间轴隐藏，断开 →
         const tlEl = director.widgets.find((w) => w.name === "director_timeline")?.element;
         const bIn = director.inputs.findIndex((i) => i.name === "bundle");
         const bOut = Math.max(0, agent.outputs.findIndex((o) => /bundle/i.test(o.name)));
-        const snap = () => ({ disabled: recipe.disabled, tl: tlEl ? tlEl.style.display : null, h: director.size[1] });
+        // 时间轴行 / 操作条由 director-node.js 直接置 display:none；节点 DOM 层在离屏时整块隐藏，
+        // 所以只看行自身的 inline style，不看页面渲染状态。
+        const tlHidden = () => tlEl?.querySelector(".neo-dtl-tlrow")?.style.display === "none";
+        const actHidden = () => tlEl?.querySelector(".neo-dtl-actbar")?.style.display === "none";
+        const snap = () => ({ locked: recipe.hidden === true, tlHidden: tlHidden(), actHidden: actHidden(), h: director.size[1] });
         const before = snap();
         agent.connect(bOut, director, bIn);
         await new Promise((res) => setTimeout(res, 250));
@@ -68,13 +72,16 @@ test("实时连线：连 bundle → recipe 置灰 + 时间轴隐藏，断开 →
         const afterDisconnect = snap();
         return { before, afterConnect, afterDisconnect };
     });
-    assert.equal(r.before.disabled, false, "初始未连 bundle 时 recipe 应可用");
-    assert.notEqual(r.before.tl, "none", "初始时间轴应显示");
-    assert.equal(r.afterConnect.disabled, true, "连上 bundle 后 recipe 应置灰");
-    assert.equal(r.afterConnect.tl, "none", "连上 bundle 后时间轴应隐藏");
+    assert.equal(r.before.locked, false, "初始未连 bundle 时 recipe 应可用");
+    assert.equal(r.before.tlHidden, false, "初始时间轴应显示");
+    assert.equal(r.before.actHidden, false, "初始操作条应显示");
+    assert.equal(r.afterConnect.locked, true, "连上 bundle 后 recipe 应隐藏（单段模式换用视频 skill）");
+    assert.equal(r.afterConnect.tlHidden, true, "连上 bundle 后时间轴应隐藏");
+    assert.equal(r.afterConnect.actHidden, true, "连上 bundle 后操作条应隐藏");
     assert.ok(r.afterConnect.h < r.before.h, "连上 bundle 后节点高度应收缩");
-    assert.equal(r.afterDisconnect.disabled, false, "断开 bundle 后 recipe 应恢复");
-    assert.notEqual(r.afterDisconnect.tl, "none", "断开 bundle 后时间轴应恢复显示");
+    assert.equal(r.afterDisconnect.locked, false, "断开 bundle 后 recipe 应恢复");
+    assert.equal(r.afterDisconnect.tlHidden, false, "断开 bundle 后时间轴应恢复显示");
+    assert.equal(r.afterDisconnect.actHidden, false, "断开 bundle 后操作条应恢复显示");
     assert.ok(r.afterDisconnect.h >= r.before.h - 1, "断开 bundle 后节点高度应恢复");
     await ctx.close();
 });
@@ -83,27 +90,28 @@ test("加载已连 bundle 的工作流：recipe 置灰", { timeout: 60000 }, asy
     if (!guard(t)) return;
     const { ctx, page } = await newPage();
     const r = await page.evaluate(async () => {
+        // 现场连线再序列化回灌：bundle 落在节点定义的哪个槽位都不影响用例。
         app.graph.clear();
-        app.loadGraphData({
-            last_node_id: 2,
-            last_link_id: 1,
-            nodes: [
-                { id: 1, type: "NeoPromptAgent", pos: [0, 0], size: [320, 220], order: 0,
-                    inputs: [], outputs: [{ name: "PROMPT", type: "STRING", links: null }, { name: "BUNDLE", type: "STRING", links: [1] }] },
-                { id: 2, type: "NeoH3VideoDirector", pos: [400, 0], size: [320, 360], order: 1,
-                    inputs: [{ name: "model", type: "MODEL", link: null }, { name: "bundle", type: "STRING", link: 1 }],
-                    outputs: [{ name: "video", type: "VIDEO", links: null }] },
-            ],
-            links: [[1, 1, 1, 2, 1, "STRING"]],
-        });
+        const agent = LiteGraph.createNode("NeoPromptAgent");
+        app.graph.add(agent);
+        const director = LiteGraph.createNode("NeoH3VideoDirector");
+        app.graph.add(director);
+        const bIn = director.inputs.findIndex((i) => i.name === "bundle");
+        const bOut = agent.outputs.findIndex((o) => /bundle/i.test(o.name));
+        agent.connect(bOut, director, bIn);
+        await new Promise((res) => setTimeout(res, 300));
+        const saved = app.graph.serialize();
+        app.graph.clear();
+        app.loadGraphData(saved);
         await new Promise((res) => setTimeout(res, 600));
-        const director = app.graph.getNodeById(2);
-        const recipe = director?.widgets?.find((w) => w.name === "recipe");
-        const tlEl = director?.widgets?.find((w) => w.name === "director_timeline")?.element;
-        return { bundleLink: director?.inputs?.find((i) => i.name === "bundle")?.link, disabled: recipe?.disabled, tl: tlEl ? tlEl.style.display : null };
+        const d2 = app.graph.getNodeById(director.id);
+        const recipe = d2?.widgets?.find((w) => w.name === "recipe");
+        const tlEl = d2?.widgets?.find((w) => w.name === "director_timeline")?.element;
+        const tlHidden = tlEl?.querySelector(".neo-dtl-tlrow")?.style.display === "none";
+        return { bundleLink: d2?.inputs?.find((i) => i.name === "bundle")?.link, hidden: recipe?.hidden === true, tlHidden };
     });
     assert.ok(r.bundleLink != null, "工作流中 bundle 输入应已连接");
-    assert.equal(r.disabled, true, "加载已连 bundle 的工作流后 recipe 应置灰");
-    assert.equal(r.tl, "none", "加载已连 bundle 的工作流后时间轴应隐藏");
+    assert.equal(r.hidden, true, "加载已连 bundle 的工作流后 recipe 应隐藏");
+    assert.equal(r.tlHidden, true, "加载已连 bundle 的工作流后时间轴应隐藏");
     await ctx.close();
 });

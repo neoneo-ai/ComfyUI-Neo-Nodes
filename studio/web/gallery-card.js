@@ -4,7 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
-import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, buildPlaceholderTile, decorativeHeights, renderWaveform, applyMediaCardRatio, registerLazyThumbnail } from './gallery-utils.js';
+import { getReservedSpace, getImageHeight, isImageFile, isVideoFile, isAudioFile, getThumbnailSrc, getAudioSrc, showToast, showInlineFeedback, renderCoverTiles, coverMaxTiles, buildPlaceholderTile, decorativeHeights, renderWaveform, applyMediaCardRatio, registerLazyThumbnail } from './gallery-utils.js';
 import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems, openReversePromptDialog, openLoraTagDialog } from "./gallery-gen.js";
 import { copyGalleryToInput } from "./media-transfer.js";
@@ -15,6 +15,28 @@ import { openDirectorEditor } from "./director.js";
 const _waveformSessionCache = new Map(); // "subfolder::filename" -> { peaks, duration }
 function _waveformKey(filename, subfolder) {
     return `${subfolder || ""}::${filename}`;
+}
+
+function _relativeTime(ts) {
+    const days = Math.floor((Date.now() / 1000 - ts) / 86400);
+    if (days <= 0) return "今天";
+    if (days < 30) return `${days} 天前`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months} 个月前`;
+    return `${Math.floor(months / 12)} 年前`;
+}
+
+/** 目录卡副信息行：条目数 · 子目录数 · 最近更新时间（缺数据的项直接省略）。 */
+function _dirMetaText(items, subdirs, dirInfo) {
+    const count = dirInfo && dirInfo.root_count != null ? dirInfo.root_count : (items ? items.length : 0);
+    const parts = [];
+    if (count > 0) parts.push(`${count} 项`);
+    const sub = Object.keys(subdirs || {}).length;
+    if (sub > 0) parts.push(`${sub} 个子目录`);
+    let newest = 0;
+    for (const it of items || []) newest = Math.max(newest, it.mtime || it._mtime || 0);
+    if (newest) parts.push(_relativeTime(newest));
+    return parts.join(" · ");
 }
 
 // Civitai fetch badge for pending lora directory cards. Network failures and rejected
@@ -215,8 +237,10 @@ export class GalleryCard {
         card.dataset.lazyCoversPath = path;
 
         const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: name });
+        const metaText = _dirMetaText(items, subdirs, dirInfo);
         const info = $el("div", { className: "neo-gallery-card-info" }, [
-            nameEl
+            nameEl,
+            ...(metaText ? [$el("span", { className: "neo-gallery-card-meta", textContent: metaText })] : [])
         ]);
 
         if (isRemote) {
@@ -307,7 +331,7 @@ export class GalleryCard {
      * Render a directory/subdir cover from an array of cover entries (shared renderer).
      */
     _renderCoverGrid(coverWrapper, images, displayLabel) {
-        renderCoverTiles(coverWrapper, images, displayLabel);
+        renderCoverTiles(coverWrapper, images, displayLabel, coverMaxTiles(this.gallery));
     }
 
     async createSubdirCard(gallery, subdirName, parentDir, fullPath, subdirData = null) {
@@ -329,8 +353,11 @@ export class GalleryCard {
             className: "neo-gallery-card-cover-wrapper skeleton-loading"
         });
 
+        const subMeta = _dirMetaText(null, (subdirData && subdirData.subdirs) || {},
+            { root_count: (subdirData && subdirData.image_count) || 0 });
         const info = $el("div", { className: "neo-gallery-card-info" }, [
-            $el("span", { className: "neo-gallery-card-name", textContent: subdirName })
+            $el("span", { className: "neo-gallery-card-name", textContent: subdirName }),
+            ...(subMeta ? [$el("span", { className: "neo-gallery-card-meta", textContent: subMeta })] : [])
         ]);
 
         if (isPending) {

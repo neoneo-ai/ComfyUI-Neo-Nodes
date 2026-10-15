@@ -38,6 +38,7 @@ function showView(name) {
     for (const [key, el] of views) el.classList.toggle("ns-hidden", key !== name);
     document.querySelectorAll(".ns-tabs a").forEach(a =>
         a.classList.toggle("active", a.dataset.tab === name));
+    setMemActive(name === "director");   // 显存读数只在导演页轮询
 }
 
 // ====== 素材页：直接借用 Neo Gallery 侧栏 tab 的 render（内部会挂载并加载 gallery.element） ======
@@ -117,11 +118,11 @@ async function buildDirector(el) {
 
     // --- 整片生成面板 ---
     // 分辨率与配方编辑器同源：宽高比 + 百万像素 → W/H（32 对齐）；「自定义」手输 W/H
-    const seedInput = $el("input", { type: "number", value: "-1", title: "-1 = 用配方里的种子" });
+    const seedInput = $el("input", { type: "number", placeholder: "默认", title: "留空 = 用配方里的种子", className: "ns-gen-seed" });
     const continuityChk = $el("input", { type: "checkbox" });
     continuityChk.checked = true;
     const ctxInput = $el("input", { type: "number", value: "22", className: "ns-gen-ctx" });
-    const stepsInput = $el("input", { type: "number", value: "-1", title: "-1 = 用技能默认步数", className: "ns-gen-steps" });
+    const stepsInput = $el("input", { type: "number", placeholder: "默认", title: "留空 = 用技能默认步数", className: "ns-gen-steps" });
     const aspectSel = $el("select", { className: "ns-gen-aspect" });
     for (const [label] of DIRECTOR_ASPECTS) aspectSel.appendChild($el("option", { value: label, textContent: label }));
     aspectSel.appendChild($el("option", { value: DIRECTOR_CUSTOM, textContent: DIRECTOR_CUSTOM + "（手输 W/H）" }));
@@ -160,7 +161,8 @@ async function buildDirector(el) {
         checkedSegments = list || [];
         onlyHint.textContent = checkedSegments.length
             ? `仅运行勾选的 ${checkedSegments.length} 段：[${checkedSegments.map((i) => i + 1).join(",")}]`
-            : "未勾选 = 生成整片（在时间轴段块左上角勾选可只跑其中几段）";
+            : "未勾选 = 生成整片";
+        onlyHint.title = "在时间轴段块左上角勾选，可只跑其中几段";
     };
     setChecked([]);
     try {
@@ -187,7 +189,10 @@ async function buildDirector(el) {
     // --- 实时预览：与节点内同款帧播放器；载荷按 task_id（后端 unique_id）过滤，Studio 里固定高度 ---
     const mediaRight = $el("div", { className: "ns-gen-media-right" });
     const liveBox = $el("div", { className: "ns-gen-live neo-dtl-live" });
-    const livePlayer = createFramePlayer(liveBox, () => { liveBox.style.height = NS_LIVE_H + "px"; });
+    const livePlayer = createFramePlayer(liveBox, () => {
+        liveBox.style.height = NS_LIVE_H + "px";
+        genBody.classList.remove("ns-gen-empty");   // 预览一有画面就占住右栏
+    });
     mediaRight.appendChild(liveBox);
 
     // 配方默认值：选中配方后从 director_spec 填 分辨率/步数（与画布节点 widget 填充同源；
@@ -377,29 +382,38 @@ async function buildDirector(el) {
     // 整块面板两列：左 = 配方区（控制行 + 时间轴），右 = 结果区（实时预览 / 成片）
     // 控制行属于左列（参数与时间轴同源，都取自当前配方），行尾 ⋯ 按钮展开高级选项 → 视觉只有一行
     // （.rs-gen-advanced 点 ⋯ 按钮切换 .rs-adv-open；展开后种子/连续性/上下文帧占满第二行）
-    const advToggle = $el("button", { className: "rs-gen-adv-toggle", textContent: "⋯", title: "种子 / 连续性 / 上下文帧（高级）" });
+    const advToggle = $el("button", { className: "rs-gen-adv-toggle", textContent: "⋯ 高级", title: "种子 / 连续性 / 上下文帧（高级）" });
     // 生成/取消按钮贴控制行右端：与下方时间轴右端对齐（同一列，等宽）
     const runGroup = $el("div", { className: "ns-gen-run-group" }, [cancelBtn, runBtn]);
+    // 控制行按「字段」排布：标签在控件上方，一行放不下就整字段换行（标签不落到上一行末尾）
+    const field = (label, ...kids) => $el("div", { className: "ns-gen-field" }, [$el("label", { textContent: label }), ...kids]);
     const genRow = $el("div", { className: "ns-gen-row rs-gen-advanced" }, [
-        $el("label", { textContent: "宽高比" }), aspectSel,
-        $el("label", { textContent: "百万像素" }), mpInp,
-        resOut, cwInp, chInp,
-        $el("label", { textContent: "步数" }), stepsInput,
+        field("宽高比", aspectSel),
+        field("百万像素", mpInp),
+        field("分辨率", $el("div", { className: "ns-gen-field-row" }, [resOut, cwInp, chInp])),
+        field("步数", stepsInput),
         advToggle,
         runGroup,
         $el("div", { className: "rs-gen-adv-content" }, [
             $el("div", { className: "ns-gen-row" }, [
-                $el("label", { textContent: "种子" }), seedInput,
-                $el("label", { textContent: "连续性" }), continuityChk,
-                $el("label", { textContent: "上下文帧" }), ctxInput,
+                field("种子", seedInput),
+                field("连续性", continuityChk),
+                field("上下文帧", ctxInput),
             ]),
         ]),
     ]);
     advToggle.addEventListener("click", () => genRow.classList.toggle("rs-adv-open"));
-    const genLeft = $el("div", { className: "ns-gen-left" }, [genRow, tlBox, onlyHint]);
+    const emptyHint = $el("div", { className: "ns-gen-empty-hint", textContent: "生成后在此显示实时预览" });
+    const genLeft = $el("div", { className: "ns-gen-left" }, [genRow, tlBox, onlyHint, emptyHint]);
+    // 右栏没有画面时整块收起，时间轴与预览占位共用整幅宽度
+    const genBody = $el("div", { className: "ns-gen-body ns-gen-empty" }, [genLeft, mediaRight]);
+    // 面板底部一行：状态文字 + 显存/内存读数（只有导演生成吃显存，监控跟着生成面板走）
+    const foot = $el("div", { className: "ns-gen-foot" }, [statusEl]);
+    const memBar = buildMemBar();
+    if (memBar) foot.appendChild(memBar);
     page.appendChild($el("div", { className: "ns-gen-panel" }, [
-        $el("div", { className: "ns-gen-body" }, [genLeft, mediaRight]),
-        barEl, statusEl,
+        genBody,
+        barEl, foot,
     ]));
 
     // --- 配方面板（点卡片直接选中并喂给上方整片生成区；只列多段导演配方） ---
@@ -774,7 +788,7 @@ function initOfflineGate() {
     }, true);
 }
 
-// 离线横幅：启动中只说「启动中」，不提可离线编辑那套、也不给启动按钮。
+// 离线横幅只在 ComfyUI 未运行时出现；启动中交给顶栏胶囊的「● 启动中」，不叠横幅。
 // 状态在 loadVersion 里就从桌面端的快照拿到了 —— js_api 注入晚于页面加载，冷启动不能等它，
 // 否则横幅会先闪「ComfyUI 未运行」再改口。
 function showOfflineBanner() {
@@ -793,11 +807,11 @@ function showOfflineBanner() {
 function renderDesktopState() {
     const bar = document.getElementById("ns-offline");
     if (!bar) return;
-    bar.style.display = "";
-    bar.querySelector(".ns-offline-msg").textContent = starting
-        ? "ComfyUI 启动中…就绪后自动进入完整 Studio"
-        : "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI";
-    bar.querySelector(".ns-offline-start").style.display = starting ? "none" : "";
+    // 启动中只留顶栏胶囊的「● 启动中」，不再叠一条同义横幅
+    bar.style.display = starting ? "none" : "";
+    bar.querySelector(".ns-offline-msg").textContent =
+        "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI";
+    bar.querySelector(".ns-offline-start").style.display = "";
     for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();
 }
 
@@ -886,63 +900,79 @@ function initWindowChrome() {
 }
 
 
-// ====== 显存/内存监控 ======
+// ====== 显存/内存监控（导演页生成面板底部） ======
+// 只有导演生成会把显存吃满：读数挂在导演页，进导演页才轮询，离开即停
 function fmtBytes(n) {
     if (!Number.isFinite(n) || n <= 0) return "--";
     const gb = n / (1024 * 1024 * 1024);
     return gb >= 1 ? `${gb.toFixed(1)}G` : `${Math.round(n / (1024 * 1024))}M`;
 }
 
-function setMemItem(el, used, total) {
-    if (!Number.isFinite(total) || total <= 0) { el.textContent = "--"; return; }
+function setMemItem(el, used, total, label) {
+    if (!Number.isFinite(total) || total <= 0) { el.textContent = `${label} --`; return; }
     const pct = used / total;
-    el.textContent = `${fmtBytes(used)} / ${fmtBytes(total)}`;
-    el.classList.toggle("warn", pct >= 0.75 && pct < 0.9);
-    el.classList.toggle("crit", pct >= 0.9);
+    el.textContent = `${label} ${fmtBytes(used)}/${fmtBytes(total)}`;
+    el.classList.toggle("warn", pct >= 0.6 && pct < 0.85);
+    el.classList.toggle("crit", pct >= 0.85);
 }
 
 async function pollMemStats() {
     const vramEl = document.getElementById("ns-vram");
     const ramEl = document.getElementById("ns-ram");
+    if (!vramEl || !ramEl) return;
     try {
         // 驱动级显存占用（含全部进程）；/system_stats 的 vram_free 把 torch reserved 空闲重复计入，不准
         const r = await api.fetchApi("/neo_studio/mem_stats");
         const data = await r.json();
-        if (data?.success) setMemItem(vramEl, data.vram_used, data.vram_total);
+        if (data?.success) setMemItem(vramEl, data.vram_used, data.vram_total, "显存");
     } catch { /* 网络抖动忽略 */ }
     try {
         const r = await api.fetchApi("/system_stats");
         const data = await r.json();
         if (data?.system) {
-            setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total);
+            setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total, "内存");
         }
     } catch { /* 网络抖动忽略 */ }
 }
 
-function initMemMonitor() {
-    if (!can("memory")) return;   // 离线：显存与清理都要 ComfyUI，顶栏块已收起，别每 3s 撞 409
-    pollMemStats();
-    setInterval(pollMemStats, 3000);
-    const btn = document.getElementById("ns-clear-mem");
-    if (btn) {
-        btn.addEventListener("click", async () => {
-            btn.disabled = true;
-            btn.textContent = "清理中…";
-            try {
-                const r = await api.fetchApi("/neo_studio/clear_memory", { method: "POST" });
-                const data = await r.json().catch(() => null);
-                if (data?.success) {
-                    btn.textContent = `释放 ${fmtBytes(data.freed_bytes)} ✓`;
-                } else {
-                    btn.textContent = "清理失败";
-                }
-            } catch {
-                btn.textContent = "清理失败";
-            }
-            setTimeout(() => { btn.disabled = false; btn.textContent = "🧹 清理"; }, 2500);
-            pollMemStats();   // 立即刷新一次
-        });
+// 读数 + 清理按钮：导演页生成面板底部那一行；离线（无 memory 能力）整块不出
+function buildMemBar() {
+    if (!can("memory")) return null;
+    const bar = $el("div", { className: "ns-mem" }, [
+        $el("span", { className: "ns-mem-item", id: "ns-vram", title: "GPU 显存占用（含全部进程）", textContent: "显存 --" }),
+        $el("span", { className: "ns-mem-item", id: "ns-ram", title: "系统内存占用", textContent: "内存 --" }),
+    ]);
+    const btn = $el("button", {
+        className: "ns-mem-clear", id: "ns-clear-mem", type: "button",
+        title: "卸载空闲模型并释放显存缓存 · 生成后显存迟迟不降时用", textContent: "🧹 清理",
+    });
+    btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "清理中…";
+        try {
+            const r = await api.fetchApi("/neo_studio/clear_memory", { method: "POST" });
+            const data = await r.json().catch(() => null);
+            btn.textContent = data?.success ? `释放 ${fmtBytes(data.freed_bytes)} ✓` : "清理失败";
+        } catch {
+            btn.textContent = "清理失败";
+        }
+        setTimeout(() => { btn.disabled = false; btn.textContent = "🧹 清理"; }, 2500);
+        pollMemStats();   // 立即刷新一次
+    });
+    bar.appendChild(btn);
+    return bar;
+}
+
+let memTimer = null;
+
+function setMemActive(on) {
+    if (!on) {
+        if (memTimer) { clearInterval(memTimer); memTimer = null; }
+        return;
     }
+    if (memTimer || !can("memory")) return;   // 离线：显存与清理都要 ComfyUI，别每 3s 撞 409
+    pollMemStats();
+    memTimer = setInterval(pollMemStats, 3000);
 }
 
 // ====== 顶栏 ComfyUI 状态位（只有桌面端窗口里有：comfy_state 由桌面端的 js_api 提供） ======
@@ -1015,7 +1045,6 @@ if (view) {
     initExtensions().then(async () => {
         await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
         initOfflineGate();
-        initMemMonitor();
         route();   // 视图先挂上：桌面端附件（顶栏状态位）失败不能连坐，窗口不至于停在只出顶栏的空白页
         initComfyStatus();
         initWindowChrome();
