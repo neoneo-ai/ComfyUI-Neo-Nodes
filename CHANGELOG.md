@@ -4,6 +4,14 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- UI language for the top-bar 🅝 menu and the Studio desktop app. `studio/web/js/core/i18n.js` translates with the
+  Chinese source strings as dictionary keys, so a missing English entry falls back to Chinese instead of showing a
+  key. The choice is stored in `localStorage["neo_studio_lang"]` and defaults to the browser language. The unified
+  settings dialog gains a "🌐 Interface Language" tab, and the desktop settings page gains a "界面语言 / Language"
+  tab that applies as soon as a language is picked; both reload the page, which is what rebuilds the labels in the
+  new language. On the desktop side the app's own strings are translated (header and window controls, the
+  director generation panel, launcher settings including the ⓘ notes, the status pill, the offline banner, the VRAM
+  bar); the shared asset / skill views and the LLM / image / video forms keep their Chinese source text.
 - Docs: split the Studio desktop out of the developer quick tour into `docs/studio-desktop.md` /
   `docs/en/studio-desktop.md`; the desktop module names in `docs/api-routes.md` and `docs/en/api-routes.md` follow the
   `app/` rename, and the

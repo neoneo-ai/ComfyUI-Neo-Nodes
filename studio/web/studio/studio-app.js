@@ -16,6 +16,7 @@ import { createRecipesPanel, listRecipes } from "../recipes.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "../image-gen.js";
 import { createModelConfigForm } from "../llm-setting.js";
 import { createSkillManager } from "../skill.js";
+import { t, tf, getLang, applyLang, LANGS } from "../js/core/i18n.js";
 
 const view = document.getElementById("ns-view");
 let directorPanelOpts = null;   // 导演页配方面板选项（buildDirector 设置；含 onSelect 回传选中配方）
@@ -47,12 +48,12 @@ function buildGallery(el) {
     el.appendChild(host);
     const tab = getSidebarTab("neo.gallery");
     if (!tab) {
-        host.textContent = "Neo Gallery 未加载";
+        host.textContent = t("Neo Gallery 未加载");
         return;
     }
     tab.render(host).catch(e => {
         console.error("[Neo Studio] gallery render failed:", e);
-        host.textContent = "Neo Gallery 加载失败";
+        host.textContent = t("Neo Gallery 加载失败");
     });
 }
 
@@ -69,26 +70,26 @@ function updateGenStatus(task) {
     }
     barEl.style.display = task.status === "running" ? "block" : "none";
     if (task.status === "queued") {
-        statusEl.textContent = `排队中…（${task.recipe}）`;
+        statusEl.textContent = tf("排队中…（{recipe}）", { recipe: task.recipe });
     } else if (task.status === "running") {
         const p = task.progress;
-        statusEl.textContent = p ? `生成中… ${p.value}/${p.max}` : "生成中…";
+        statusEl.textContent = p ? tf("生成中… {value}/{max}", { value: p.value, max: p.max }) : t("生成中…");
         if (p) fillEl.style.width = `${Math.round(100 * p.value / p.max)}%`;
     } else if (task.status === "succeeded" && !genState.done) {
         genState.done = true;   // 终态可能经 WS + 在途轮询重复到达：成片只替换一次
-        statusEl.textContent = `已完成：${task.filename}`;
+        statusEl.textContent = tf("已完成：{filename}", { filename: task.filename });
         const url = `/view?filename=${encodeURIComponent(task.filename)}`
             + `&subfolder=${encodeURIComponent(task.subfolder || "")}&type=output`;
         // 成片就地替换实时预览（定格帧一并清掉）；也可在浏览器单独打开
         genState.mediaRight.replaceChildren(
             $el("video", { className: "ns-gen-preview ns-gen-final", controls: true, src: url }),
-            $el("a", { className: "ns-gen-final", href: url, textContent: `🎬 ${task.filename}（在浏览器中打开）` })
+            $el("a", { className: "ns-gen-final", href: url, textContent: tf("🎬 {filename}（在浏览器中打开）", { filename: task.filename }) })
         );
         refreshRecipesPanel();
     } else if (task.status === "failed") {
-        statusEl.textContent = `失败：${task.error || "未知错误"}`;
+        statusEl.textContent = tf("失败：{error}", { error: task.error || t("未知错误") });
     } else if (task.status === "cancelled") {
-        statusEl.textContent = "已取消";
+        statusEl.textContent = t("已取消");
     }
     genState.runBtn.disabled = task.status === "queued" || task.status === "running";
     genState.cancelBtn.style.display = (task.status === "queued" || task.status === "running") ? "" : "none";
@@ -118,17 +119,17 @@ async function buildDirector(el) {
 
     // --- 整片生成面板 ---
     // 分辨率与配方编辑器同源：宽高比 + 百万像素 → W/H（32 对齐）；「自定义」手输 W/H
-    const seedInput = $el("input", { type: "number", placeholder: "默认", title: "留空 = 用配方里的种子", className: "ns-gen-seed" });
+    const seedInput = $el("input", { type: "number", placeholder: t("默认"), title: t("留空 = 用配方里的种子"), className: "ns-gen-seed" });
     const continuityChk = $el("input", { type: "checkbox" });
     continuityChk.checked = true;
     const ctxInput = $el("input", { type: "number", value: "22", className: "ns-gen-ctx" });
-    const stepsInput = $el("input", { type: "number", placeholder: "默认", title: "留空 = 用技能默认步数", className: "ns-gen-steps" });
+    const stepsInput = $el("input", { type: "number", placeholder: t("默认"), title: t("留空 = 用技能默认步数"), className: "ns-gen-steps" });
     const aspectSel = $el("select", { className: "ns-gen-aspect" });
     for (const [label] of DIRECTOR_ASPECTS) aspectSel.appendChild($el("option", { value: label, textContent: label }));
-    aspectSel.appendChild($el("option", { value: DIRECTOR_CUSTOM, textContent: DIRECTOR_CUSTOM + "（手输 W/H）" }));
+    aspectSel.appendChild($el("option", { value: DIRECTOR_CUSTOM, textContent: DIRECTOR_CUSTOM + t("（手输 W/H）") }));
     const mpInp = $el("input", { type: "number", min: MP_MIN, max: MP_MAX, step: 0.1, value: MP_DEFAULT, className: "ns-gen-mp" });
-    const cwInp = $el("input", { type: "number", min: 16, placeholder: "宽", className: "ns-gen-cw" });
-    const chInp = $el("input", { type: "number", min: 16, placeholder: "高", className: "ns-gen-ch" });
+    const cwInp = $el("input", { type: "number", min: 16, placeholder: t("宽"), className: "ns-gen-cw" });
+    const chInp = $el("input", { type: "number", min: 16, placeholder: t("高"), className: "ns-gen-ch" });
     const resOut = $el("span", { className: "ns-gen-res-out" });
     // 预设比例 + 百万像素 → W×H 回显；「自定义」改显手输 W/H（与配方编辑器同交互）
     const updateRes = () => {
@@ -142,10 +143,10 @@ async function buildDirector(el) {
     aspectSel.addEventListener("change", updateRes);
     mpInp.addEventListener("input", updateRes);
     updateRes();
-    const runBtn = $el("button", { className: "rs-btn ns-gen-run", type: "button", textContent: "🎬 生成整片" });
-    gateRunButton(runBtn, "director", "🎬 生成整片");
+    const runBtn = $el("button", { className: "rs-btn ns-gen-run", type: "button", textContent: t("🎬 生成整片") });
+    gateRunButton(runBtn, "director", t("🎬 生成整片"));
 
-    const cancelBtn = $el("button", { className: "rs-btn ns-gen-cancel", type: "button", textContent: "⏹ 取消", style: { display: "none" } });
+    const cancelBtn = $el("button", { className: "rs-btn ns-gen-cancel", type: "button", textContent: t("⏹ 取消"), style: { display: "none" } });
     const statusEl = $el("div", { className: "ns-gen-status" });
     const barEl = $el("div", { className: "ns-gen-progress" }, [$el("div")]);
 
@@ -160,9 +161,9 @@ async function buildDirector(el) {
     const setChecked = (list) => {
         checkedSegments = list || [];
         onlyHint.textContent = checkedSegments.length
-            ? `仅运行勾选的 ${checkedSegments.length} 段：[${checkedSegments.map((i) => i + 1).join(",")}]`
-            : "未勾选 = 生成整片";
-        onlyHint.title = "在时间轴段块左上角勾选，可只跑其中几段";
+            ? tf("仅运行勾选的 {n} 段：[{list}]", { n: checkedSegments.length, list: checkedSegments.map((i) => i + 1).join(",") })
+            : t("未勾选 = 生成整片");
+        onlyHint.title = t("在时间轴段块左上角勾选，可只跑其中几段");
     };
     setChecked([]);
     try {
@@ -245,15 +246,15 @@ async function buildDirector(el) {
     // 保存后由 DIRECTOR_RECIPE_SAVED_EVENT 统一刷新下拉、默认值与时间轴分段
     async function openRecipeEditor(segIndex = -1) {
         const name = String(currentRecipeName || "").trim();
-        if (!name) { statusEl.textContent = "请先选择配方"; return; }
+        if (!name) { statusEl.textContent = t("请先选择配方"); return; }
         try {
             const metas = await listRecipes();
             const meta = (Array.isArray(metas) ? metas : []).find(r => r.name === name && r.type === "video_director");
-            if (!meta) { statusEl.textContent = `未找到分段配方：${name}`; return; }
+            if (!meta) { statusEl.textContent = tf("未找到分段配方：{name}", { name }); return; }
             await openDirectorEditor(meta, null, segIndex);
         } catch (e) {
             console.error("[Neo Studio] open director editor failed:", e);
-            statusEl.textContent = `打开配方编辑器失败：${e.message || e}`;
+            statusEl.textContent = tf("打开配方编辑器失败：{msg}", { msg: e.message || e });
         }
     }
 
@@ -275,7 +276,7 @@ async function buildDirector(el) {
 
     runBtn.addEventListener("click", async () => {
         const recipe = currentRecipeName;
-        if (!recipe) { statusEl.textContent = "请先在下方选择一个配方"; return; }
+        if (!recipe) { statusEl.textContent = t("请先在下方选择一个配方"); return; }
         // 空输入归一为 -1（用配方默认），避免 Number("") === 0 被后端当成显式 0
         const num = (input, fallback) => input.value.trim() === "" ? fallback : Number(input.value);
         // 分辨率：预设比例 + 百万像素 → W/H（32 对齐）；「自定义」取手输 W/H（空 = 用配方默认）
@@ -300,7 +301,7 @@ async function buildDirector(el) {
 
         stopPolling();
         runBtn.disabled = true;
-        statusEl.textContent = "提交中…";
+        statusEl.textContent = t("提交中…");
         barEl.style.display = "none";
         mediaRight.querySelectorAll(".ns-gen-final").forEach(el => el.remove()); // 清掉上次的成片
         mediaRight.appendChild(liveBox);   // 恢复实时预览面板（成功后被成片替换掉了）
@@ -314,13 +315,13 @@ async function buildDirector(el) {
             });
         } catch (e) {
             runBtn.disabled = false;
-            statusEl.textContent = `提交失败：${e.message}`;
+            statusEl.textContent = tf("提交失败：{msg}", { msg: e.message });
             return;
         }
         const data = await resp.json().catch(() => null);
         if (!resp.ok || !data?.success) {
             runBtn.disabled = false;
-            statusEl.textContent = `提交失败：${data?.error || resp.status}`;
+            statusEl.textContent = tf("提交失败：{msg}", { msg: data?.error || resp.status });
             return;
         }
         genState = {
@@ -372,9 +373,9 @@ async function buildDirector(el) {
         try {
             const r = await api.fetchApi(`/neo_studio/director/${genState.task_id}/cancel`, { method: "POST" });
             const data = await r.json().catch(() => null);
-            if (!r.ok) statusEl.textContent = `取消失败：${data?.error || r.status}`;
+            if (!r.ok) statusEl.textContent = tf("取消失败：{msg}", { msg: data?.error || r.status });
         } catch (e) {
-            statusEl.textContent = `取消失败：${e.message}`;
+            statusEl.textContent = tf("取消失败：{msg}", { msg: e.message });
         }
         cancelBtn.disabled = false;
     });
@@ -382,28 +383,28 @@ async function buildDirector(el) {
     // 整块面板两列：左 = 配方区（控制行 + 时间轴），右 = 结果区（实时预览 / 成片）
     // 控制行属于左列（参数与时间轴同源，都取自当前配方），行尾 ⋯ 按钮展开高级选项 → 视觉只有一行
     // （.rs-gen-advanced 点 ⋯ 按钮切换 .rs-adv-open；展开后种子/连续性/上下文帧占满第二行）
-    const advToggle = $el("button", { className: "rs-gen-adv-toggle", textContent: "⋯ 高级", title: "种子 / 连续性 / 上下文帧（高级）" });
+    const advToggle = $el("button", { className: "rs-gen-adv-toggle", textContent: t("⋯ 高级"), title: t("种子 / 连续性 / 上下文帧（高级）") });
     // 生成/取消按钮贴控制行右端：与下方时间轴右端对齐（同一列，等宽）
     const runGroup = $el("div", { className: "ns-gen-run-group" }, [cancelBtn, runBtn]);
     // 控制行按「字段」排布：标签在控件上方，一行放不下就整字段换行（标签不落到上一行末尾）
     const field = (label, ...kids) => $el("div", { className: "ns-gen-field" }, [$el("label", { textContent: label }), ...kids]);
     const genRow = $el("div", { className: "ns-gen-row rs-gen-advanced" }, [
-        field("宽高比", aspectSel),
-        field("百万像素", mpInp),
-        field("分辨率", $el("div", { className: "ns-gen-field-row" }, [resOut, cwInp, chInp])),
-        field("步数", stepsInput),
+        field(t("宽高比"), aspectSel),
+        field(t("百万像素"), mpInp),
+        field(t("分辨率"), $el("div", { className: "ns-gen-field-row" }, [resOut, cwInp, chInp])),
+        field(t("步数"), stepsInput),
         advToggle,
         runGroup,
         $el("div", { className: "rs-gen-adv-content" }, [
             $el("div", { className: "ns-gen-row" }, [
-                field("种子", seedInput),
-                field("连续性", continuityChk),
-                field("上下文帧", ctxInput),
+                field(t("种子"), seedInput),
+                field(t("连续性"), continuityChk),
+                field(t("上下文帧"), ctxInput),
             ]),
         ]),
     ]);
     advToggle.addEventListener("click", () => genRow.classList.toggle("rs-adv-open"));
-    const emptyHint = $el("div", { className: "ns-gen-empty-hint", textContent: "生成后在此显示实时预览" });
+    const emptyHint = $el("div", { className: "ns-gen-empty-hint", textContent: t("生成后在此显示实时预览") });
     const genLeft = $el("div", { className: "ns-gen-left" }, [genRow, tlBox, onlyHint, emptyHint]);
     // 右栏没有画面时整块收起，时间轴与预览占位共用整幅宽度
     const genBody = $el("div", { className: "ns-gen-body ns-gen-empty" }, [genLeft, mediaRight]);
@@ -442,8 +443,8 @@ function buildSkills(el) {
 // 同源就没有 /neo_studio/launcher 了）；浏览器标签页没有桥，只剩桌面端服务那条路由，读不到就收起 tab。
 function createLauncherPanel() {
     const input = (ph) => $el("input", { className: "ns-launch-input", placeholder: ph, spellcheck: "false" });
-    const rootIn = input("ComfyUI 根目录");
-    const pyIn = input("python.exe 路径");
+    const rootIn = input(t("ComfyUI 根目录"));
+    const pyIn = input(t("python.exe 路径"));
     const portIn = input("8188");
     const remoteIn = input("http://192.168.0.20:8188");
     remoteIn.classList.add("ns-launch-remote");
@@ -451,16 +452,16 @@ function createLauncherPanel() {
     const status = $el("div", { className: "ns-launch-status" });
     const info = $el("div", { className: "ns-launch-info" });
     const lanHint = $el("div", { className: "ns-launch-info" });
-    const browseBtn = $el("button", { className: "ns-btn", textContent: "浏览…" });
-    const pyBrowseBtn = $el("button", { className: "ns-btn", textContent: "浏览…" });
-    const applyBtn = $el("button", { className: "ns-btn ns-launch-apply", textContent: "保存并重启 ComfyUI" });
-    const depsBtn = $el("button", { className: "ns-btn", textContent: "安装依赖" });
-    const fixBtn = $el("button", { className: "ns-btn", textContent: "重试安装插件" });
+    const browseBtn = $el("button", { className: "ns-btn", textContent: t("浏览…") });
+    const pyBrowseBtn = $el("button", { className: "ns-btn", textContent: t("浏览…") });
+    const applyBtn = $el("button", { className: "ns-btn ns-launch-apply", textContent: t("保存并重启 ComfyUI") });
+    const depsBtn = $el("button", { className: "ns-btn", textContent: t("安装依赖") });
+    const fixBtn = $el("button", { className: "ns-btn", textContent: t("重试安装插件") });
     const framelessIn = $el("input", { type: "checkbox", className: "ns-launch-frameless" });
     const devIn = $el("input", { type: "checkbox", className: "ns-launch-dev" });
     const kernelState = $el("div", { className: "ns-kernel-state" });
-    const startBtn = $el("button", { className: "ns-btn ns-kernel-start", textContent: "▶ 启动内核" });
-    const stopBtn = $el("button", { className: "ns-btn ns-kernel-stop", textContent: "■ 停止内核" });
+    const startBtn = $el("button", { className: "ns-btn ns-kernel-start", textContent: t("▶ 启动内核") });
+    const stopBtn = $el("button", { className: "ns-btn ns-kernel-stop", textContent: t("■ 停止内核") });
     // 标签旁的 ⓘ：悬停给出前提条件与生效方式 —— 面板里这几项的规矩各不相同（保存并重启 / 重启窗口 / 归远端管）
     const TIPS = {
         root: "ComfyUI 安装目录，要有 main.py。\n"
@@ -485,11 +486,11 @@ function createLauncherPanel() {
     const infoDot = (tip) => $el("span", { className: "ns-info", textContent: "i", tabindex: "0", "data-tip": tip });
     const row = (label, tip, ...kids) => $el("div", { className: "ns-launch-row" },
         [$el("span", { className: "ns-launch-label" }, [label, infoDot(tip)]), ...kids]);
-    const rootRow = row("ComfyUI 根目录", TIPS.root, rootIn, browseBtn);
-    const pyRow = row("Python", TIPS.python, pyIn, pyBrowseBtn);
-    const portRow = row("端口", TIPS.port, portIn);
-    const listenRow = row("局域网监听", TIPS.listen, listenSel);
-    const remoteRow = row("远程 ComfyUI", TIPS.remote, remoteIn);
+    const rootRow = row(t("ComfyUI 根目录"), t(TIPS.root), rootIn, browseBtn);
+    const pyRow = row("Python", t(TIPS.python), pyIn, pyBrowseBtn);
+    const portRow = row(t("端口"), t(TIPS.port), portIn);
+    const listenRow = row(t("局域网监听"), t(TIPS.listen), listenSel);
+    const remoteRow = row(t("远程 ComfyUI"), t(TIPS.remote), remoteIn);
     // 远程模式下这几项归远端那台机器管：灰掉，别让本机设置看起来能影响远端
     const localRows = [rootRow, pyRow, portRow, listenRow];
     const localInputs = [rootIn, pyIn, portIn, listenSel, browseBtn, pyBrowseBtn];
@@ -513,21 +514,20 @@ function createLauncherPanel() {
     function renderLanHint() {
         const remote = remoteIn.value.trim();
         if (remote) {
-            lanHint.textContent = `远程 ComfyUI：${remote}/neo-studio · 远端要已开监听并装好 Neo Studio 插件，`
-                + "起停与端口都在远端那台机器上设";
+            lanHint.textContent = tf("远程 ComfyUI：{remote}/neo-studio · 远端要已开监听并装好 Neo Studio 插件，起停与端口都在远端那台机器上设", { remote });
             return;
         }
         const v = listenSel.value;
         const port = portIn.value || "8188";
         if (!v) {
-            lanHint.textContent = `仅本机访问：http://127.0.0.1:${port}/neo-studio`;
+            lanHint.textContent = tf("仅本机访问：http://127.0.0.1:{port}/neo-studio", { port });
             return;
         }
         const urls = v === "0.0.0.0"
             ? lanIps.map((ip) => `http://${ip}:${port}/neo-studio`)
             : [`http://${v}:${port}/neo-studio`];
-        lanHint.textContent = `局域网可访问（ComfyUI 没有鉴权，只在你信任的网段开）：`
-            + (urls.join("  ·  ") || `http://<本机 IP>:${port}/neo-studio`);
+        lanHint.textContent = t("局域网可访问（ComfyUI 没有鉴权，只在你信任的网段开）：")
+            + (urls.join("  ·  ") || tf("http://<本机 IP>:{port}/neo-studio", { port }));
     }
 
     // 远程模式灰掉本机启动项：远端的根目录 / 解释器 / 端口 / 监听由远端自己配
@@ -543,15 +543,17 @@ function createLauncherPanel() {
         remoteIn.value = s.remote || "";
         renderLocalMode(!!s.remote);
         lanIps = s.lan_ips || [];
-        const opts = LAN_CHOICES.concat(lanIps.map((ip) => [ip, `本机网卡 ${ip}`]));
+        const opts = LAN_CHOICES.concat(lanIps.map((ip) => [ip, tf("本机网卡 {ip}", { ip })]));
         const key = lanKey(s.listen);
-        if (!opts.some(([v]) => v === key)) opts.push([key, `已保存：${key}`]);
-        listenSel.replaceChildren(...opts.map(([v, label]) => $el("option", { value: v, textContent: label })));
+        if (!opts.some(([v]) => v === key)) opts.push([key, tf("已保存：{key}", { key })]);
+        listenSel.replaceChildren(...opts.map(([v, label]) => $el("option", { value: v, textContent: t(label) })));
         listenSel.value = key;
         renderLanHint();
-        status.textContent = (STATE_TEXT[s.state] || s.state || "") + (s.error ? ` · ${s.error}` : "");
+        status.textContent = t(STATE_TEXT[s.state] || s.state || "") + (s.error ? ` · ${s.error}` : "");
         status.classList.toggle("ns-launch-bad", !!s.state && s.state !== "ok");
-        info.textContent = `插件 ${s.plugin_dir} · 状态 ${s.state_dir} · ${s.portable ? "便携模式" : "插件内运行"}`;
+        info.textContent = tf("插件 {plugin} · 状态 {state} · {mode}", {
+            plugin: s.plugin_dir, state: s.state_dir, mode: t(s.portable ? "便携模式" : "插件内运行"),
+        });
         depsBtn.style.display = s.state === "deps_missing" ? "" : "none";
         fixBtn.style.display = s.state === "install_failed" ? "" : "none";
         framelessIn.checked = !!s.frameless;
@@ -596,10 +598,10 @@ function createLauncherPanel() {
                 data = await resp.json();
             }
             const failed = data.ok === false;   // 重试安装插件回的是内核状态，没有 ok 字段也算成功
-            toast(failed ? (data.error || "操作失败") : (data.msg || "已保存，ComfyUI 重启中…"));
+            toast(failed ? (data.error || t("操作失败")) : (data.msg || t("已保存，ComfyUI 重启中…")));
             if (!failed) await refresh();
         } catch (e) {
-            toast(`启动设置保存失败：${e.message}`);
+            toast(tf("启动设置保存失败：{msg}", { msg: e.message }));
         } finally {
             applyBtn.disabled = depsBtn.disabled = fixBtn.disabled = false;
         }
@@ -631,11 +633,12 @@ function createLauncherPanel() {
     function renderKernel(s) {
         const booting = (userStarting || s.starting) && !s.ready;
         const running = s.running && !booting;
-        kernelState.textContent = `ComfyUI ${booting ? "启动中…" : (s.running ? "运行中" : "已停止")}`
-            + (s.remote ? ` · 远程 ${s.remote}` : ` · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"}`)
+        kernelState.textContent = `ComfyUI ${booting ? t("启动中…") : (s.running ? t("运行中") : t("已停止"))}`
+            + (s.remote ? tf(" · 远程 {remote}", { remote: s.remote })
+                : tf(" · 端口 {port} · {by}", { port: s.port, by: t(s.mine ? "桌面端启动" : "外部启动") }))
             + (s.pid ? ` · PID ${s.pid}` : "");
         kernelState.classList.toggle("ns-kernel-run", running);
-        startBtn.textContent = booting ? "🚀 启动中…" : (s.remote ? "🚀 重连远端" : "▶ 启动内核");
+        startBtn.textContent = booting ? t("🚀 启动中…") : (s.remote ? t("🚀 重连远端") : t("▶ 启动内核"));
         startBtn.disabled = booting || s.running;
         stopBtn.disabled = booting || !s.running || !!s.remote;
     }
@@ -644,7 +647,7 @@ function createLauncherPanel() {
     stopBtn.addEventListener("click", () => { stopBtn.disabled = true; stopKernel(); });
 
     const el = $el("div", { className: "ns-settings-section" }, [
-        $el("h3", { textContent: "启动设置" }),
+        $el("h3", { textContent: t("启动设置") }),
         $el("div", { className: "ns-kernel" }, [
             kernelState,
             $el("div", { className: "ns-kernel-actions" }, [startBtn, stopBtn]),
@@ -655,8 +658,8 @@ function createLauncherPanel() {
         portRow,
         listenRow,
         remoteRow,
-        row("无边框窗口", TIPS.frameless, framelessIn),
-        row("开发模式", TIPS.dev, devIn),
+        row(t("无边框窗口"), t(TIPS.frameless), framelessIn),
+        row(t("开发模式"), t(TIPS.dev), devIn),
         $el("div", { className: "ns-launch-actions" }, [applyBtn, depsBtn, fixBtn]),
         lanHint,
         info,
@@ -664,7 +667,21 @@ function createLauncherPanel() {
     return { el, refresh };
 }
 
-// ====== 设置页：左侧 tab 切换（LLM / 生图 / 生视频 / 日志），默认 LLM ======
+// ====== 界面语言：桌面端设置页的一栏，单选即选即落盘并整页刷新 ======
+// 语言只影响桌面端自有文案（顶栏、导演面板、启动设置、状态位）；素材 / 技能 / 各设置表单沿用共享模块原文。
+function createLangPanel() {
+    const current = getLang();
+    const rows = LANGS.map((l) => {
+        const input = $el("input", { type: "radio", name: "ns-lang", value: l.value });
+        input.checked = l.value === current;
+        input.addEventListener("change", () => applyLang(l.value));
+        return $el("label", { className: "ns-lang-row" }, [input, $el("span", { textContent: l.label })]);
+    });
+    return $el("div", { className: "ns-lang" },
+        [...rows, $el("div", { className: "ns-lang-hint", textContent: t("选择后立即落盘并整页刷新，界面文案按新语言重建。") })]);
+}
+
+// ====== 设置页：左侧 tab 切换（LLM / 生图 / 生视频 / 界面语言 / 日志 / 启动设置 / 关于），默认 LLM ======
 function buildSettings(el) {
     // 三个表单工厂均返回 { el, load, save, isDirty }，挂 .el、后台 load（💾 保存按钮在表单内部）
     const genForm = createImageGenSettingsForm();
@@ -689,15 +706,17 @@ function buildSettings(el) {
         } catch { /* ComfyUI 未就绪时保留上次内容 */ }
     }
 
-    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 日志 → 启动设置 → 关于；每个 tab 只显示对应设置区
+    // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 界面语言 → 日志 → 启动设置 → 关于；每个 tab 只显示对应设置区
     const launcher = createLauncherPanel();
+    const section = (title) => $el("h3", { textContent: t(title) });
     const sections = [
-        { key: "llm", label: "LLM 设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "LLM 设置" }), llmForm.el]) },
-        { key: "gen", label: "生图设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生图设置" }), genForm.el]) },
-        { key: "video", label: "生视频设置", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "生视频设置" }), videoForm.el]) },
-        { key: "log", label: "日志", body: $el("div", { className: "ns-settings-section ns-log-section" }, [$el("h3", { textContent: "日志" }), logBody]) },
-        { key: "launch", label: "启动设置", body: launcher.el },
-        { key: "about", label: "关于", body: $el("div", { className: "ns-settings-section" }, [$el("h3", { textContent: "关于" }), $el("div", { className: "ns-about-version", id: "ns-about-version", textContent: versionText() })]) },
+        { key: "llm", label: t("LLM 设置"), body: $el("div", { className: "ns-settings-section" }, [section("LLM 设置"), llmForm.el]) },
+        { key: "gen", label: t("生图设置"), body: $el("div", { className: "ns-settings-section" }, [section("生图设置"), genForm.el]) },
+        { key: "video", label: t("生视频设置"), body: $el("div", { className: "ns-settings-section" }, [section("生视频设置"), videoForm.el]) },
+        { key: "lang", label: t("界面语言"), body: $el("div", { className: "ns-settings-section" }, [section("界面语言"), createLangPanel()]) },
+        { key: "log", label: t("日志"), body: $el("div", { className: "ns-settings-section ns-log-section" }, [section("日志"), logBody]) },
+        { key: "launch", label: t("启动设置"), body: launcher.el },
+        { key: "about", label: t("关于"), body: $el("div", { className: "ns-settings-section" }, [section("关于"), $el("div", { className: "ns-about-version", id: "ns-about-version", textContent: versionText() })]) },
     ];
 
     const tabs = $el("div", { className: "ns-settings-tabs" });
@@ -799,7 +818,7 @@ function desktopLog(text) {
 function startKernel() {
     const desktop = window.pywebview?.api;
     if (!desktop?.comfy_start) {
-        toast("请在 Neo Studio 窗口里启动 ComfyUI");
+        toast(t("请在 Neo Studio 窗口里启动 ComfyUI"));
         return;
     }
     if (starting || userStarting) return;   // 启动中：不重复拉起
@@ -817,13 +836,13 @@ function startComfy() {
     if (starting) return;   // 启动中：不重复拉起，也不出提示
     const inDesktop = !!window.pywebview?.api?.comfy_start;
     startKernel();
-    if (inDesktop) toast(comfyState?.remote ? "重连远端 ComfyUI…" : "ComfyUI 启动中…就绪后自动回到完整 Studio");
+    if (inDesktop) toast(comfyState?.remote ? t("重连远端 ComfyUI…") : t("ComfyUI 启动中…就绪后自动回到完整 Studio"));
 }
 
 // 生成类请求打到桌面端上必 409：统一提示并指向「设置 → 启动设置」，不给前端假成功
 window.addEventListener("neo-offline-request", () => {
     if (starting) return;   // 启动中不提示：就绪后桌面端整页跳回完整 Studio
-    toast("该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」");
+    toast(t("该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」"));
     document.getElementById("ns-comfy-status")?.classList.add("ns-comfy-hint");
 });
 
@@ -831,18 +850,18 @@ window.addEventListener("neo-offline-request", () => {
 // 编辑类不在表里（保存 / 生成分段 / 重写提示词 / 逐格描述 / 宫格拆分 / 技能编辑 / 设置 / LLM 配置）：
 // 那些接口只读写文件与 8080 服务，桌面端自己就能服务。
 const RUN_GATES = [
-    [".neo-gallery-gm-btn", "image_gen", "生成素材"],
-    [".ns-gen-run", "director", "生成整片"],
-    [".neo-director-regen-run", "segment", "生成这一段"],
-    [".neo-director-merge-run", "segment", "拼回成片"],
-    [".neo-director-sb-gen", "storyboard", "生成图片分镜"],
+    [".neo-gallery-gm-btn", "image_gen", t("生成素材")],
+    [".ns-gen-run", "director", t("🎬 生成整片")],
+    [".neo-director-regen-run", "segment", t("生成这一段")],
+    [".neo-director-merge-run", "segment", t("拼回成片")],
+    [".neo-director-sb-gen", "storyboard", t("生成图片分镜")],
 ];
 
 // 生成按钮改写成「需要 ComfyUI」：不发请求，点一下引导启动（须在原 handler 之前注册）
 function gateRunButton(btn, feature, label) {
     if (can(feature)) return;
     btn.textContent = runLabel();
-    btn.title = `${label} 需要 ComfyUI 执行队列 · 点一下启动`;
+    btn.title = tf("{label} 需要 ComfyUI 执行队列 · 点一下启动", { label });
     btn.classList.add("ns-gen-off");
     btn.addEventListener("click", (e) => {
         e.stopImmediatePropagation();
@@ -850,7 +869,7 @@ function gateRunButton(btn, feature, label) {
     });
 }
 
-function runLabel() { return starting ? "ComfyUI 启动中" : "需要 ComfyUI"; }
+function runLabel() { return starting ? t("ComfyUI 启动中") : t("需要 ComfyUI"); }
 
 // 共享模块（gallery / director / voice）大量直接用原生 fetch 打接口，不经 api shim：
 // 离线时同样广播 409 offline，让各生成路径统一出「需要 ComfyUI」提示，不静默吞掉。
@@ -888,7 +907,7 @@ function initOfflineGate() {
 function showOfflineBanner() {
     if (document.getElementById("ns-offline")) return;
     document.body.classList.add("ns-offline");
-    const btn = $el("button", { className: "ns-offline-start", type: "button", textContent: "🚀 启动 ComfyUI" });
+    const btn = $el("button", { className: "ns-offline-start", type: "button", textContent: t("🚀 启动 ComfyUI") });
     btn.addEventListener("click", startComfy);
     const bar = $el("div", { id: "ns-offline", className: "ns-offline-bar" }, [
         $el("span", { className: "ns-offline-msg" }),
@@ -907,16 +926,16 @@ function renderDesktopState() {
     // 启动中只留顶栏胶囊的「● 启动中」，不再叠一条同义横幅
     bar.style.display = starting ? "none" : "";
     bar.querySelector(".ns-offline-msg").textContent = remote
-        ? `远程 ComfyUI 不可达 · ${remote} —— 这里浏览的是本机素材目录，生成与队列要连上远端`
-        : "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI";
-    bar.querySelector(".ns-offline-start").textContent = remote ? "🚀 重连远端" : "🚀 启动 ComfyUI";
+        ? tf("远程 ComfyUI 不可达 · {remote} —— 这里浏览的是本机素材目录，生成与队列要连上远端", { remote })
+        : t("ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI");
+    bar.querySelector(".ns-offline-start").textContent = remote ? t("🚀 重连远端") : t("🚀 启动 ComfyUI");
     bar.querySelector(".ns-offline-start").style.display = "";
     for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();
 }
 
 function versionText() {
     if (!versionInfo.plugin) return "";
-    if (versionInfo.offline) return `Neo Studio ${versionInfo.plugin} · ${starting ? "ComfyUI 启动中" : "离线模式"}`;
+    if (versionInfo.offline) return `Neo Studio ${versionInfo.plugin} · ${starting ? t("ComfyUI 启动中") : t("离线模式")}`;
     return `Neo Studio ${versionInfo.plugin} · ComfyUI ${versionInfo.comfy}`;
 }
 
@@ -960,8 +979,8 @@ function initWindowChrome() {
         state = s;
         document.body.classList.toggle("ns-frameless", !!s.frameless);
         btn("ns-wctl").hidden = !s.frameless;
-        set("ns-win-max", s.maximized ? "🗗" : "▢", s.maximized ? "还原" : "最大化");
-        set("ns-win-fs", s.fullscreen ? "🗗" : "⛶", s.fullscreen ? "退出全屏" : "全屏");
+        set("ns-win-max", s.maximized ? "🗗" : "▢", s.maximized ? t("还原") : t("最大化"));
+        set("ns-win-fs", s.fullscreen ? "🗗" : "⛶", s.fullscreen ? t("退出全屏") : t("全屏"));
     };
     const wire = (bridge) => {
         bridge.window_state().then((s) => {
@@ -1046,13 +1065,13 @@ async function pollMemStats() {
         // 驱动级显存占用（含全部进程）；/system_stats 的 vram_free 把 torch reserved 空闲重复计入，不准
         const r = await api.fetchApi("/neo_studio/mem_stats");
         const data = await r.json();
-        if (data?.success) setMemItem(vramEl, data.vram_used, data.vram_total, "显存");
+        if (data?.success) setMemItem(vramEl, data.vram_used, data.vram_total, t("显存"));
     } catch { /* 网络抖动忽略 */ }
     try {
         const r = await api.fetchApi("/system_stats");
         const data = await r.json();
         if (data?.system) {
-            setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total, "内存");
+            setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total, t("内存"));
         }
     } catch { /* 网络抖动忽略 */ }
 }
@@ -1061,24 +1080,24 @@ async function pollMemStats() {
 function buildMemBar() {
     if (!can("memory")) return null;
     const bar = $el("div", { className: "ns-mem" }, [
-        $el("span", { className: "ns-mem-item", id: "ns-vram", title: "GPU 显存占用（含全部进程）", textContent: "显存 --" }),
-        $el("span", { className: "ns-mem-item", id: "ns-ram", title: "系统内存占用", textContent: "内存 --" }),
+        $el("span", { className: "ns-mem-item", id: "ns-vram", title: t("GPU 显存占用（含全部进程）"), textContent: `${t("显存")} --` }),
+        $el("span", { className: "ns-mem-item", id: "ns-ram", title: t("系统内存占用"), textContent: `${t("内存")} --` }),
     ]);
     const btn = $el("button", {
         className: "ns-mem-clear", id: "ns-clear-mem", type: "button",
-        title: "卸载空闲模型并释放显存缓存 · 生成后显存迟迟不降时用", textContent: "🧹 清理",
+        title: t("卸载空闲模型并释放显存缓存 · 生成后显存迟迟不降时用"), textContent: t("🧹 清理"),
     });
     btn.addEventListener("click", async () => {
         btn.disabled = true;
-        btn.textContent = "清理中…";
+        btn.textContent = t("清理中…");
         try {
             const r = await api.fetchApi("/neo_studio/clear_memory", { method: "POST" });
             const data = await r.json().catch(() => null);
-            btn.textContent = data?.success ? `释放 ${fmtBytes(data.freed_bytes)} ✓` : "清理失败";
+            btn.textContent = data?.success ? tf("释放 {n} ✓", { n: fmtBytes(data.freed_bytes) }) : t("清理失败");
         } catch {
-            btn.textContent = "清理失败";
+            btn.textContent = t("清理失败");
         }
-        setTimeout(() => { btn.disabled = false; btn.textContent = "🧹 清理"; }, 2500);
+        setTimeout(() => { btn.disabled = false; btn.textContent = t("🧹 清理"); }, 2500);
         pollMemStats();   // 立即刷新一次
     });
     bar.appendChild(btn);
@@ -1110,17 +1129,17 @@ function initComfyStatus() {
                 if (!pageReloaded) { pageReloaded = true; location.reload(); }
                 return;
             }
-            setStatus("starting", "启动中", "ComfyUI 启动中…就绪后自动回到完整 Studio");
+            setStatus("starting", t("启动中"), t("ComfyUI 启动中…就绪后自动回到完整 Studio"));
             return;
         }
         setStatus(s.running ? "run" : null,
-            s.running ? "运行中" : "已停止",
+            s.running ? t("运行中") : t("已停止"),
             s.remote
-                ? (s.running ? `远程 ComfyUI 运行中 · ${s.remote} · 起停由远端机器管`
-                             : `远程 ComfyUI 不可达 · ${s.remote}`)
+                ? (s.running ? tf("远程 ComfyUI 运行中 · {remote} · 起停由远端机器管", { remote: s.remote })
+                             : tf("远程 ComfyUI 不可达 · {remote}", { remote: s.remote }))
                 : (s.running
-                    ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"} · PID ${s.pid}`
-                    : "ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」"));
+                    ? tf("ComfyUI 运行中 · 端口 {port} · {by} · PID {pid}", { port: s.port, by: t(s.mine ? "桌面端启动" : "外部启动"), pid: s.pid })
+                    : t("ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」")));
     };
 
     onComfyState(render);
@@ -1152,6 +1171,18 @@ function setStatus(kind, text, title) {
     el.title = title;
 }
 
+// ====== 顶栏静态壳：index.html 里的中文是原文，按当前语言重画（切语言走整页刷新，不做运行中热替换） ======
+function localizeShell() {
+    document.title = t("新影工坊 · Neo Studio");
+    const logo = document.querySelector(".ns-logo");
+    if (logo) { logo.textContent = t("🎬 新影工坊"); logo.title = t("返回首页"); }
+    for (const a of document.querySelectorAll(".ns-tabs a")) a.textContent = t(a.textContent.trim());
+    for (const id of ["ns-win-min", "ns-win-max", "ns-win-fs", "ns-win-close"]) {
+        const b = document.getElementById(id);
+        if (b) b.title = t(b.title);
+    }
+}
+
 function route() {
     const name = (location.hash || "#/gallery").replace(/^#\//, "").split("?")[0] || "gallery";
     if (name === "director") ensureView("director", buildDirector);
@@ -1163,6 +1194,7 @@ function route() {
 
 // 仅 Studio 独立页启动：本文件也会作为扩展模块被主画布页加载（WEB_DIRECTORY），那里没有 #ns-view
 if (view) {
+    localizeShell();
     // 未捕获错误与启动失败一并写进桌面端日志：窗口白屏时日志里至少留下证据
     window.addEventListener("error", (e) => desktopLog(`ERROR ${e.message} @ ${e.filename}:${e.lineno}`));
     window.addEventListener("unhandledrejection", (e) => desktopLog(`REJECT ${e.reason?.stack || String(e.reason)}`));

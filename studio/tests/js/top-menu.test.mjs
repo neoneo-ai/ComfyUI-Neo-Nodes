@@ -1,15 +1,17 @@
-// 顶栏 🅝 菜单（top-menu.js）：单按钮注册、下拉条目、节点子菜单过滤、关于弹窗
+// 顶栏 🅝 菜单（top-menu.js）：单按钮注册、下拉条目、节点子菜单过滤、关于弹窗、界面语言
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { clearBody, mockRoute, mockObjectInfo, jsonResponse, flush, sleep } from "./setup.mjs";
 import { app, appState, getExtension } from "./mocks/comfy-app.mjs";
 import { makeGraph, makeNode } from "./helpers/fake-graph.mjs";
+import { setLang } from "../../web/js/core/i18n.js";
 
 const topMenu = await import("../../web/top-menu.js");   // setup.mjs 副作用先行，再导入被测模块
 
 beforeEach(() => {
     clearBody();
     topMenu.resetTopMenu();   // 收起残留菜单（模块级 menuEl 会挡住再次展开）
+    setLang("zh");            // jsdom 的 navigator.language 是 en-US，用例基线固定为中文
 });
 
 test("top-menu.js 注册单个 🅝 菜单按钮", async () => {
@@ -123,7 +125,7 @@ test("关于插件弹窗显示源码与 License", async () => {
     assert.equal(document.querySelector(".neo-n-menu"), null, "点菜单项后菜单未收起");
 });
 
-test("⚙️ 设置打开统一设置弹窗（三 tab，切 tab 显隐同步）", async () => {
+test("⚙️ 设置打开统一设置弹窗（四 tab，切 tab 显隐同步）", async () => {
     mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
     mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
     mockRoute("/neo_video_gen/settings", () => jsonResponse({}));
@@ -139,9 +141,9 @@ test("⚙️ 设置打开统一设置弹窗（三 tab，切 tab 显隐同步）"
     const overlay = document.querySelector(".neo-director-llm-overlay");
     assert.ok(overlay, "设置弹窗未打开");
     const tabs = [...overlay.querySelectorAll(".rs-auto-tab")].map((el) => el.textContent);
-    assert.deepEqual(tabs, ["🤖 LLM Settings", "🖼️ 生图默认设置", "🎬 生视频模型"], "tab 顺序/文案不符");
+    assert.deepEqual(tabs, ["🤖 LLM Settings", "🖼️ 生图默认设置", "🎬 生视频模型", "🌐 界面语言"], "tab 顺序/文案不符");
     const panels = [...overlay.querySelectorAll(".neo-settings-panel")];
-    assert.equal(panels.length, 3, "三个设置面板缺失");
+    assert.equal(panels.length, 4, "四个设置面板缺失");
     assert.equal(panels.filter((p) => p.style.display !== "none").length, 1, "默认只显示一个面板");
     assert.ok(panels[0].style.display !== "none", "默认应显示 LLM tab");
 
@@ -552,6 +554,78 @@ test("创建节点：无画布缩放信息时兜底落点不抛异常", () => {
         assert.deepEqual(graph._nodes[0].pos, [200, 200]);
     } finally {
         cleanupCanvas();
+    }
+});
+
+
+// ── 界面语言（js/core/i18n.js）─────────────────────────────────
+test("切到英文：菜单条目、节点子菜单、回写提示为英文", () => {
+    globalThis.LiteGraph = { registeredNodes: { NeoPromptAgent: true } };
+    setLang("en");
+    try {
+        const ext = getExtension("comfy.neo.topMenu");
+        ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+        const labels = [...document.querySelectorAll(".neo-n-menu-item")].map((el) => el.textContent);
+        for (const want of ["⚙️ Settings", "🖼️ Generate Assets", "💾 Write Back to Skill", "ℹ️ About Plugin"]) {
+            assert.ok(labels.some((l) => l.includes(want)), `缺少英文条目: ${want}`);
+        }
+        const writeback = [...document.querySelectorAll(".neo-n-menu-item")]
+            .find((el) => el.textContent.includes("Write Back to Skill"));
+        assert.ok(!/[\u4e00-\u9fff]/.test(writeback.title), `回写条目提示未翻译: ${writeback.title}`);
+        document.querySelector(".neo-n-node-row").click();
+        assert.equal(document.querySelector(".neo-n-submenu .neo-n-menu-item").textContent,
+            "⚡ Neo Prompt Agent", "英文下应去掉中文括号注释");
+    } finally {
+        delete globalThis.LiteGraph;
+        setLang("zh");
+        topMenu.resetTopMenu();
+    }
+});
+
+test("设置弹窗「🌐 界面语言」：单选当前语言，保存落盘并整页刷新", async () => {
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    mockRoute("/neo_video_gen/settings", () => jsonResponse({}));
+    mockRoute("/neo_video_gen/models", () => jsonResponse({ diffusion_models: [], text_encoders: [], vae: [] }));
+    const reloads = [];
+    const realLocation = globalThis.location;
+    Object.defineProperty(globalThis, "location", { value: { reload: () => reloads.push(1) }, configurable: true, writable: true });
+    const ext = getExtension("comfy.neo.topMenu");
+    const openSettings = () => {
+        ext.actionBarButtons[0].onClick({ currentTarget: document.createElement("button") });
+        [...document.querySelectorAll(".neo-n-menu-item")].find((el) => el.textContent.includes("设置")).click();
+        return document.querySelector(".neo-director-llm-overlay");
+    };
+    try {
+        const overlay = openSettings();
+        overlay.querySelectorAll(".rs-auto-tab")[3].click();
+        assert.ok(overlay.querySelectorAll(".rs-auto-tab")[3].classList.contains("rs-auto-tab-active"), "语言 tab 未高亮");
+        const radios = [...overlay.querySelectorAll(".neo-settings-panel")[3].querySelectorAll("input[name=\"neo-lang\"]")];
+        assert.equal(radios.length, 2, "语言单选项数量不符");
+        assert.ok(radios[0].checked, "默认应选中当前语言（中文）");
+
+        // 无改动：✕ 直接关，不刷新
+        await flush();
+        overlay.querySelector(".neo-director-llm-close").click();
+        assert.equal(document.querySelector(".neo-director-llm-overlay"), null, "无改动 ✕ 未直接关闭");
+        assert.deepEqual(reloads, [], "无改动不应刷新");
+
+        // 选英文 → 判脏 → 保存并关闭 = 落盘 + 刷新
+        const overlay2 = openSettings();
+        overlay2.querySelectorAll(".rs-auto-tab")[3].click();
+        await flush();
+        overlay2.querySelectorAll("input[name=\"neo-lang\"]")[1].click();
+        overlay2.querySelector(".neo-director-llm-close").click();
+        assert.equal(overlay2.querySelector(".neo-director-llm-dirty").hidden, false, "切换语言应判脏");
+        overlay2.querySelector(".neo-director-llm-btn-save").click();
+        await flush();
+        assert.deepEqual(reloads, [1], "保存语言应整页刷新");
+        assert.equal(localStorage.getItem("neo_studio_lang"), "en", "语言未落盘");
+    } finally {
+        Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
+        localStorage.removeItem("neo_studio_lang");
+        setLang("zh");
+        topMenu.resetTopMenu();
     }
 });
 

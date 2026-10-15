@@ -106,6 +106,16 @@ async function findPage(browser, seconds = 40) {
     }
 }
 
+// 断言写的是中文文案：桌面端窗口的界面语言跟随系统，跑在英文系统上界面是英文 —— 钉成中文基线再断言
+async function pinZh(page) {
+    if (await page.evaluate(() => localStorage.getItem("neo_studio_lang")) === "zh") return;
+    await page.evaluate(() => {
+        localStorage.setItem("neo_studio_lang", "zh");
+        setTimeout(() => location.reload(), 0);
+    });
+    await page.waitForTimeout(2000);
+}
+
 test("桌面端窗口加载 Neo Studio 四视图", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
         console.log("跳过桌面端 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
@@ -125,6 +135,7 @@ test("桌面端窗口加载 Neo Studio 四视图", async () => {
         assert.ok(browser, "连不上 WebView2 CDP");
         const page = await findPage(browser);
 
+        await pinZh(page);
         await page.waitForSelector("#ns-version", { timeout: 20000 });
         assert.match(await page.evaluate(() => document.querySelector("#ns-version").textContent),
             /Neo Studio\s+\d+\.\d+\.\d+/, "窗口标题栏应显示插件版本");
@@ -205,6 +216,7 @@ test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、
         assert.ok(browser, "连不上 WebView2 CDP");
         const page = await findPage(browser);
         page.on("pageerror", (e) => errors.push(String(e)));
+        await pinZh(page);
 
         // 冷启动窗口直接进桌面端的离线素材页：ComfyUI 还在拉起，「启动中」只出顶栏胶囊，横幅收起
         assert.ok(await waitFor(() => page.evaluate(() => !!document.getElementById("ns-offline")), 60),

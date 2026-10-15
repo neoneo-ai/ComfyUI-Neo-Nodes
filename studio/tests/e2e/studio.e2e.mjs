@@ -31,10 +31,14 @@ function guard(t) {
     return true;
 }
 
+// 断言写的是中文文案：Playwright 的 navigator.language 是 en-US，不钉住语言页面会跑成英文界面
+const pinZh = (page) => page.addInitScript(() => localStorage.setItem("neo_studio_lang", "zh"));
+
 // 顶栏标题回首页：站内跳到默认素材页，不离开 Studio
 test("Studio 顶栏标题点击后回首页", async (t) => {
     if (!guard(t)) return;
     const page = await browser.newPage();
+    await pinZh(page);
     try {
         await page.goto(STUDIO_URL, { waitUntil: "networkidle", timeout: 30000 });
         await page.evaluate(() => { location.hash = "#/director"; });
@@ -49,6 +53,7 @@ test("Studio 顶栏标题点击后回首页", async (t) => {
 test("Studio 页面：四视图加载、版本信息、导演生成面板", async (t) => {
     if (!guard(t)) return;
     const page = await browser.newPage();
+    await pinZh(page);
     try {
         await page.goto(STUDIO_URL, { waitUntil: "networkidle", timeout: 30000 });
 
@@ -126,10 +131,10 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         // 设置视图：默认停在 LLM tab，切到生图 tab 后表单（.rs-gen-settings）才可见
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-section .rs-btn, .ns-settings-section button", { timeout: 15000 });
-        // 浏览器里没有桌面端桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 6
+        // 浏览器里没有桌面端桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 7
         await page.waitForFunction(() => !document.querySelector('[data-key="launch"]'), null, { timeout: 10000 });
         const sections = await page.locator(".ns-settings-section").count();
-        assert.equal(sections, 5);
+        assert.equal(sections, 6);
         // 版本号只在设置「关于」里显示
         assert.match(await page.textContent("#ns-about-version"), /Neo Studio .+ · ComfyUI .+/);
         await page.click(".ns-settings-tab[data-key='gen']");

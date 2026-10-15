@@ -261,6 +261,10 @@ body {
 .ns-launch-remote-off .ns-launch-input { background: #232327; color: #8f8f9a; }
 .ns-launch-remote-off .ns-btn { pointer-events: none; opacity: 0.45; }
 .ns-launch-remote-off .ns-info { border-color: #55555f; color: #7f7f8a; }
+/* 界面语言：单选即选即落盘并整页刷新，提示说明刷新范围 */
+.ns-lang-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #ddd; cursor: pointer; }
+.ns-lang-row + .ns-lang-row { margin-top: 8px; }
+.ns-lang-hint { margin-top: 12px; font-size: 11px; color: #8f8f9a; }
 .ns-btn {
     background: #2a2a2e;
     border: 1px solid #444;

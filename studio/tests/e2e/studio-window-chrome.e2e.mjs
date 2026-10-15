@@ -53,6 +53,8 @@ function fakeBridge(frameless) {
 
 async function openStudio(frameless) {
     const page = await browser.newPage();
+    // 断言写的是中文文案（还原 / 退出全屏）：Playwright 的 navigator.language 是 en-US，钉住中文基线
+    await page.addInitScript(() => localStorage.setItem("neo_studio_lang", "zh"));
     await page.addInitScript(fakeBridge, frameless);
     await page.goto(STUDIO_URL, { waitUntil: "networkidle", timeout: 30000 });
     await page.waitForSelector(".ns-header");

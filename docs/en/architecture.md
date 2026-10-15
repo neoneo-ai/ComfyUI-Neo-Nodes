@@ -186,7 +186,12 @@ makes the whole frontend fail to load.
 
 - `web/js/core/`: utilities shared across nodes. `cache.js` is a TTL cache guard — pull results that the user can
   change, such as recipe specs and skill templates, all go through it (save events clear it explicitly, with the
-  TTL as backstop).
+  TTL as backstop). `i18n.js` is the UI language layer: Chinese source strings are the dictionary keys, missing
+  English entries fall back to Chinese, the choice lives in `localStorage["neo_studio_lang"]` and defaults to the
+  browser language; the settings dialog's "🌐 Interface Language" tab and the desktop app's "Language" settings tab
+  reload the page on selection. What gets translated is the top menu plus the desktop Studio's own strings (header,
+  director panel, launcher settings, status pill, offline banner); shared modules — assets, skills, and the settings
+  forms — keep their Chinese source text.
 - `web/docs/<node key>.md`: node help documents. The ComfyUI frontend fetches them automatically at
   `/extensions/comfyui-neo-studio/docs/<node key>.md` and renders them on the node's property-panel "Info" tab
   (it tries `<node key>/<language>.md` first and only falls back to `DESCRIPTION`), so the plugin needs no

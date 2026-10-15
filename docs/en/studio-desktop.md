@@ -96,6 +96,18 @@ startable once the root is filled in.
   stored in the config, dev mode needs the desktop window to restart. The text lives in `TIPS` in
   `studio/web/studio/studio-app.js`.
 
+## Interface language
+
+- The settings page has a "Language" section (`中文` / `English` radio group): picking one saves it and reloads the
+  page right away — there is no separate save step.
+- The choice lives in `localStorage["neo_studio_lang"]` and defaults to the browser language. The desktop window and
+  a browser tab are different origins, so each keeps its own language choice.
+- Translated: the desktop app's own strings — header and window controls, the director generation panel, startup
+  settings (including the ⓘ notes), the header status pill, the offline banner, and the VRAM bar. The assets and
+  skills views and the LLM / image / video forms are shared modules and keep their Chinese source text.
+- Entries live in `studio/web/js/core/i18n.js`: Chinese source strings are the keys, so a missing English entry falls
+  back to Chinese instead of exposing a placeholder.
+
 ## LAN access
 
 - "Startup settings → LAN listen" is a dropdown whose choices come from the NIC list the desktop reports
