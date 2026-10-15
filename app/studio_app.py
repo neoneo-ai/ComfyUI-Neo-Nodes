@@ -20,6 +20,8 @@ js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启�
  桌面端是启动器：关窗只关窗口。顶栏只有「● 运行中 / 启动中 / 已停止」状态位，端口 / PID / 谁启动进 tooltip；
  内核启停在「设置 → 启动设置」，状态由桌面端的 js_api 报（端口 / PID / 谁启动 / 就绪）：
  停止内核 terminate（并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口退回离线素材库；
+ 桌面端拉起的那路挂进 Job Object（KILL_ON_JOB_CLOSE）：桌面端进程一死 OS 连带杀掉它，收尾被 Ctrl+C /
+ 任务管理器 / 注销打断也留不下孤儿；用户自己启动的那路没有句柄，桌面端从不碰它；
  启动内核重新拉起，显示「启动中…」，就绪后窗口整页跳回 ComfyUI 的完整 Studio。
  源码运行时每次启动把 studio/ 同步进 custom_nodes，桌面端与 ComfyUI 页面跑同一份代码。
 
@@ -147,6 +149,12 @@ k32.CloseHandle.argtypes = [wintypes.HANDLE]
 k32.CreateMutexW.restype = wintypes.HANDLE
 k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 k32.GetLastError.restype = wintypes.DWORD
+k32.CreateJobObjectW.restype = wintypes.HANDLE
+k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+k32.SetInformationJobObject.restype = wintypes.BOOL
+k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+k32.AssignProcessToJobObject.restype = wintypes.BOOL
+k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
 
 # 无边框窗口：pywebview 的 frameless 只在建窗时生效，运行中切换走 Win32 样式位。
 # 只摘 WS_CAPTION（标题栏 + 系统按钮），WS_THICKFRAME 留着 —— 窗口边缘仍可拖拽缩放。
@@ -648,9 +656,11 @@ def start_comfy(python: Path, root: Path, port: int, listen: str = "") -> subpro
     argv = [str(python), str(root / "main.py"), "--port", str(port)]
     if listen:
         argv += ["--listen", listen]
-    return subprocess.Popen(argv,
+    proc = subprocess.Popen(argv,
                             cwd=str(root), creationflags=NO_WINDOW, env=env,
                             stdout=log, stderr=subprocess.STDOUT)
+    assign_comfy_job(proc)
+    return proc
 
 
 def port_busy(port: int) -> bool:
@@ -706,6 +716,58 @@ def pid_alive(pid: int) -> bool:
     if h:
         k32.CloseHandle(h)
     return bool(h)
+
+
+KILL_ON_JOB_CLOSE = 0x2000
+EXTENDED_LIMIT_INFO = 9
+
+
+class IO_COUNTERS(ctypes.Structure):
+    _fields_ = [("ReadOpCount", ctypes.c_ulonglong), ("WriteOpCount", ctypes.c_ulonglong),
+                ("OtherOpCount", ctypes.c_ulonglong), ("ReadByteCount", ctypes.c_ulonglong),
+                ("WriteByteCount", ctypes.c_ulonglong), ("OtherByteCount", ctypes.c_ulonglong)]
+
+
+class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    # JOBOBJECT_BASIC_LIMIT_INFORMATION 摊平在前九个字段里，与 Win32 布局一致
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD), ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+COMFY_JOB = None   # 关句柄等于「杀作业里的全部进程」，所以它必须活到桌面端进程结束
+
+
+def assign_comfy_job(proc: subprocess.Popen) -> bool:
+    """把桌面端拉起的 ComfyUI 挂进 Job Object，带 KILL_ON_JOB_CLOSE。
+
+    关窗的收尾链（on_closing → close_out → comfy_close）只在桌面端进程自己走到退出代码时才跑；
+    Ctrl+C、任务管理器结束进程、注销、崩溃都把它掐在收尾之前，子进程就留在端口上成了孤儿。
+    下一轮桌面端探到端口有人监听只能附着（self.comfy 是 None），之后每次关窗都不杀它 ——
+    用户读成「关窗口不关 ComfyUI」。作业是内核层的约束：桌面端进程一死，OS 关句柄，
+    作业里的进程（含 ComfyUI 自己起的子进程）跟着没，跟收尾跑没跑到无关。"""
+    global COMFY_JOB
+    if COMFY_JOB is None:
+        COMFY_JOB = k32.CreateJobObjectW(None, None)
+        if not COMFY_JOB:
+            log_line("comfy job create failed")
+            return False
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.LimitFlags = KILL_ON_JOB_CLOSE
+        if not k32.SetInformationJobObject(COMFY_JOB, EXTENDED_LIMIT_INFO, ctypes.byref(info),
+                                           ctypes.sizeof(info)):
+            log_line("comfy job limit failed")
+            k32.CloseHandle(COMFY_JOB)
+            COMFY_JOB = None
+            return False
+    if not k32.AssignProcessToJobObject(COMFY_JOB, proc._handle):
+        log_line(f"comfy job assign pid={proc.pid} failed")
+        return False
+    return True
 
 
 BACK_JS = """
@@ -1509,9 +1571,9 @@ def main() -> int:
 
     def close_out() -> None:
         try:
+            desktop.comfy_close()   # 先带走内核：evaluate_js 要等 UI 线程回消息循环，卡住也不能拖住杀进程
             if desktop.comfy is not None:
                 window.evaluate_js(CLOSING_JS)   # 窗口停在提示上，直到收尾走完
-            desktop.comfy_close()
             server.stop()
         finally:
             window.destroy()   # 收尾出异常也不能把窗口留成关不掉

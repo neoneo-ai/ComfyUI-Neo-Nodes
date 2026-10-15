@@ -4,6 +4,16 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- Closing the desktop window now always takes the ComfyUI it started with it. The teardown chain
+  (`on_closing` → `close_out` → `comfy_close`) only runs when the desktop process reaches its own exit code, so
+  Ctrl+C, "End task", signing out or a crash left ComfyUI on port 8188 as an orphan; the next desktop run found the
+  port taken, attached (`self.comfy` is `None`) and from then on every close killed nothing — which reads as
+  "closing the window no longer closes ComfyUI". The spawned ComfyUI is now assigned to a Job Object with
+  `KILL_ON_JOB_CLOSE` inside `start_comfy()`, so the OS kills it (and its own children) when the desktop process
+  dies, however it dies. `close_out()` kills the process before the "stopping ComfyUI" notice, since
+  `evaluate_js` needs the UI thread back in its message loop and must not delay the kill. ComfyUI started by the
+  user is still never touched. Tests: `app/tests/test_studio_desktop.py` (`ComfyJobTests`, real process + real job).
+
 - "⤒ 主画布编辑" no longer opens a missing page during startup. The skill detail's main-canvas handoff opens
   `/?neo_wf_edit=<id>` on the current origin, and on the desktop offline page that origin is the read-only desktop
   service, which has no canvas page — clicking it while ComfyUI is starting only landed on "page not found".

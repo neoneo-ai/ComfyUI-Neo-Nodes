@@ -160,9 +160,16 @@ startable once the root is filled in.
 Only the ComfyUI the desktop started itself is taken away; ComfyUI started by the user has no handle and is never
 touched.
 
-- The first `closing` only saves geometry and lets the close through (returns `False`); the "stopping ComfyUI"
-  notice and the teardown (killing the process, shutting the desktop-side service, `destroy`) all run on a
-  background thread — `closing` runs synchronously on the UI thread, so every second the teardown sleeps is a
+- The spawned ComfyUI is put into a Job Object (`KILL_ON_JOB_CLOSE`) the moment it starts: when the desktop process
+  dies, the OS closes the handle and kills everything inside the job (including the children ComfyUI spawned
+  itself). The teardown chain only runs when the desktop reaches its own exit code — Ctrl+C, "End task", signing out,
+  or a crash cut it off before the kill. Without this kernel-level constraint ComfyUI stays on the port as an orphan,
+  the next desktop run finds the port taken and can only attach (`self.comfy` is `None`), so every later close kills
+  nothing.
+- The first `closing` only saves geometry and lets the close through (returns `False`); the teardown (kill the
+  process → show "stopping ComfyUI" → shut the desktop-side service → `destroy`) all runs on a background thread —
+  the kill comes before the notice, so a stuck `evaluate_js` cannot delay taking the kernel with it. `closing` runs
+  synchronously on the UI thread, so every second the teardown sleeps is a
   second the window is frozen (`join` burns the full 5 seconds when the desktop-side service is busy), and
   `evaluate_js` additionally needs the UI thread back in its message loop before it executes, so calling it from
   the handler deadlocks.

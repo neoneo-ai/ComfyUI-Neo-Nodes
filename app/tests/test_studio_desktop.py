@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -159,7 +160,7 @@ class ProbeTests(unittest.TestCase):
         self.assertGreater(len(polls), 3, "端口有人监听就不许提前收手")
 
     def test_start_comfy_argv(self):
-        with patch.object(app.subprocess, "Popen") as popen:
+        with patch.object(app.subprocess, "Popen") as popen, patch.object(app, "assign_comfy_job"):
             app.start_comfy(pathlib.Path("D:/python/python.exe"), pathlib.Path("D:/ComfyUI"), 8188)
         self.assertEqual(popen.call_args[0][0],
                          [str(pathlib.Path("D:/python/python.exe")), str(pathlib.Path("D:/ComfyUI") / "main.py"),
@@ -173,7 +174,7 @@ class ProbeTests(unittest.TestCase):
 
     def test_start_comfy_argv_with_listen(self):
         # 局域网监听就是 ComfyUI 的 --listen，空值不传（ComfyUI 默认只监听 127.0.0.1）
-        with patch.object(app.subprocess, "Popen") as popen:
+        with patch.object(app.subprocess, "Popen") as popen, patch.object(app, "assign_comfy_job"):
             app.start_comfy(pathlib.Path("D:/python/python.exe"), pathlib.Path("D:/ComfyUI"), 8188,
                             "127.0.0.1,192.168.0.7")
         self.assertEqual(popen.call_args[0][0],
@@ -238,6 +239,32 @@ class PortOwnerTests(unittest.TestCase):
         dead = SimpleNamespace(OpenProcess=lambda *a: 0)
         with patch.object(app, "k32", dead):
             self.assertFalse(app.pid_alive(4321))
+
+
+class ComfyJobTests(unittest.TestCase):
+    def test_start_comfy_assigns_the_kill_job(self):
+        # 桌面端拉起的那路一出生就挂进作业：收尾链被 Ctrl+C / 任务管理器 / 注销掐断时，
+        # 内核照样在桌面端进程退出时带走它，端口上留不下孤儿
+        with patch.object(app.subprocess, "Popen") as popen, patch.object(app, "assign_comfy_job") as job:
+            app.start_comfy(pathlib.Path("D:/python/python.exe"), pathlib.Path("D:/ComfyUI"), 8188)
+            popen.call_args.kwargs["stdout"].close()
+        self.assertIs(job.call_args[0][0], popen.return_value)
+
+    def test_job_close_kills_the_child(self):
+        # 真实进程 + 真实作业：关句柄就是桌面端进程退出时 OS 收句柄的那一步，子进程必须跟着没
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                                creationflags=app.NO_WINDOW)
+        try:
+            self.assertTrue(app.assign_comfy_job(proc))
+            app.k32.CloseHandle(app.COMFY_JOB)
+            app.COMFY_JOB = None
+            started = time.monotonic()
+            proc.wait(timeout=20)   # 子进程自己要睡 120 秒，能回来就是 OS 动的手
+            self.assertLess(time.monotonic() - started, 60, "作业句柄一关，子进程必须被 OS 终止")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=10)
 
 
 class GeometryTests(unittest.TestCase):
@@ -1334,8 +1361,8 @@ class MainWindowTests(unittest.TestCase):
         comfy.terminate.assert_called_once()
         self.assertFalse(app.GEOMETRY_FILE.exists(), "读不到几何就不写文件")
 
-    def test_close_shows_stopping_hint_before_killing(self):
-        # 桌面端拉起的 ComfyUI：terminate 到进程真退出要等，窗口不能对着冻结的页面干等
+    def test_close_kills_comfy_before_the_stopping_hint(self):
+        # 先杀进程再挂提示：evaluate_js 要等 UI 线程回消息循环才执行，卡在这里不能拖住带走内核
         window = _fake_window()
         order = []
         window.evaluate_js = lambda script: order.append("hint") if script is app.CLOSING_JS else None
@@ -1353,7 +1380,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
-        self.assertEqual(order, ["hint", "kill"], "先出「正在停止 ComfyUI」，再带走进程")
+        self.assertEqual(order, ["kill", "hint"], "先带走进程，再挂「正在停止 ComfyUI」盖住收服务的等待")
         self.assertTrue(window.destroy.called, "收尾走完要由收尾线程销毁窗口")
 
     def test_close_hint_skipped_for_external_comfy(self):
