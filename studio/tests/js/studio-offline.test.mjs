@@ -1,5 +1,5 @@
-// Neo Studio 离线模式（壳侧服务）：能力门控 —— 文件类功能照常，生成类不发假请求。
-// 壳对 COMFY_ONLY 接口回 409 {offline:true}，Studio 必须提示并引导启动 ComfyUI。
+// Neo Studio 离线模式（桌面端服务）：能力门控 —— 文件类功能照常，生成类不发假请求。
+// 桌面端对 COMFY_ONLY 接口回 409 {offline:true}，Studio 必须提示并引导启动 ComfyUI。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mockRoute, jsonResponse, sleep, click, flush, fetchLog, resetEnv } from "./setup.mjs";
@@ -17,7 +17,7 @@ const OFFLINE_CAPS = {
     director: false, grid_split: true, memory: false, repair: false,
 };
 
-function mockOfflineShell() {
+function mockOfflineDesktop() {
     resetEnv();
     document.body.innerHTML = studioBody;
     mockRoute("/neo_studio/version", jsonResponse({
@@ -36,7 +36,7 @@ function mockOfflineShell() {
         { success: false, offline: true, error: "ComfyUI 未运行" }, 409));
 }
 
-function mockShellApi(starts) {
+function mockDesktopApi(starts) {
     const state = { port: 8188, pid: 0, mine: true, running: false, ready: false };
     window.pywebview = {
         api: {
@@ -48,11 +48,11 @@ function mockShellApi(starts) {
 }
 
 test("离线横幅说明可编辑面并给出启动入口", async () => {
-    mockOfflineShell();
+    mockOfflineDesktop();
     await import("../../web/studio/studio-app.js?offBanner=1");
     await flush();
     const bar = document.getElementById("ns-offline");
-    assert.ok(bar, "壳的离线页应显示横幅");
+    assert.ok(bar, "桌面端的离线页应显示横幅");
     assert.match(bar.textContent, /ComfyUI 未运行/);
     assert.match(bar.textContent, /技能 \/ 配方 \/ 设置 \/ 模型库可离线编辑/);
     assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
@@ -60,7 +60,7 @@ test("离线横幅说明可编辑面并给出启动入口", async () => {
 });
 
 test("版本号在设置的「关于」里", async () => {
-    mockOfflineShell();
+    mockOfflineDesktop();
     window.location.hash = "#/settings";
     await import("../../web/studio/studio-app.js?offAbout=1");
     await flush();
@@ -69,10 +69,10 @@ test("版本号在设置的「关于」里", async () => {
     assert.match(document.getElementById("ns-about-version").textContent, /Neo Studio 9\.9\.9 · 离线模式/);
 });
 
-test("离线导演页：生成按钮不发请求，点一下交给壳拉起 ComfyUI", async () => {
-    mockOfflineShell();
+test("离线导演页：生成按钮不发请求，点一下交给桌面端拉起 ComfyUI", async () => {
+    mockOfflineDesktop();
     const starts = [];
-    mockShellApi(starts);
+    mockDesktopApi(starts);
     window.location.hash = "#/director";
     await import("../../web/studio/studio-app.js?offDirector=1");
     await flush();
@@ -88,9 +88,9 @@ test("离线导演页：生成按钮不发请求，点一下交给壳拉起 Comf
                  "离线页不该发整片生成请求");
 });
 
-test("壳回 409 offline：api shim 广播事件，Studio 提示需要 ComfyUI", async () => {
-    mockOfflineShell();
-    mockShellApi([]);
+test("桌面端回 409 offline：api shim 广播事件，Studio 提示需要 ComfyUI", async () => {
+    mockOfflineDesktop();
+    mockDesktopApi([]);
     await import("../../web/studio/studio-app.js?offToast=1");
     const apiMod = await import("../../web/studio/shim/api.js");
     await flush();
@@ -106,7 +106,7 @@ test("壳回 409 offline：api shim 广播事件，Studio 提示需要 ComfyUI",
 });
 
 test("共享模块用原生 fetch 撞 409：同样提示需要 ComfyUI", async () => {
-    mockOfflineShell();
+    mockOfflineDesktop();
     mockRoute("/neo_video_gen/storyboard_generate", jsonResponse(
         { success: false, offline: true, error: "ComfyUI 未运行" }, 409));
     await import("../../web/studio/studio-app.js?offFetch=1");
@@ -119,10 +119,10 @@ test("共享模块用原生 fetch 撞 409：同样提示需要 ComfyUI", async (
     await sleep(100);
 });
 
-test("离线素材页：「🖼️ 生成素材」不发请求，点一下交给壳拉起 ComfyUI", async () => {
-    mockOfflineShell();
+test("离线素材页：「🖼️ 生成素材」不发请求，点一下交给桌面端拉起 ComfyUI", async () => {
+    mockOfflineDesktop();
     const starts = [];
-    mockShellApi(starts);
+    mockDesktopApi(starts);
     document.body.insertAdjacentHTML("beforeend",
         '<button class="neo-gallery-gm-btn" type="button">🖼️ 生成素材</button>');
     await import("../../web/studio/studio-app.js?offGallery=1");
@@ -136,7 +136,7 @@ test("离线素材页：「🖼️ 生成素材」不发请求，点一下交给
 });
 
 test("离线页不轮询显存：顶栏显存块收起，不发 mem_stats 请求", async () => {
-    mockOfflineShell();
+    mockOfflineDesktop();
     document.body.insertAdjacentHTML("beforeend",
         '<div id="ns-mem"><span id="ns-vram">VRAM --</span><span id="ns-ram">RAM --</span>' +
         '<button id="ns-clear-mem">🧹 清理</button></div>');
@@ -147,10 +147,10 @@ test("离线页不轮询显存：顶栏显存块收起，不发 mem_stats 请求
                  "离线时显存轮询应停掉，不每 3s 撞 409");
 });
 
-test("离线配方编辑器：运行按钮交给壳启动 ComfyUI，不发运行请求", async () => {
-    mockOfflineShell();
+test("离线配方编辑器：运行按钮交给桌面端启动 ComfyUI，不发运行请求", async () => {
+    mockOfflineDesktop();
     const starts = [];
-    mockShellApi(starts);
+    mockDesktopApi(starts);
     document.body.insertAdjacentHTML("beforeend",
         '<button class="neo-director-regen-run" type="button">生成这一段</button>' +
         '<button class="neo-director-merge-run" type="button">拼回成片</button>' +
@@ -162,16 +162,16 @@ test("离线配方编辑器：运行按钮交给壳启动 ComfyUI，不发运行
         click(document.querySelector(sel));
         await flush();
     }
-    assert.ok(starts.length >= 1, "运行按钮应交给壳拉起 ComfyUI（启动中不重复拉起）");
+    assert.ok(starts.length >= 1, "运行按钮应交给桌面端拉起 ComfyUI（启动中不重复拉起）");
     for (const p of ["/neo_video_gen/run_segment", "/neo_video_gen/assemble_segments",
                      "/neo_video_gen/storyboard_generate"]) {
         assert.equal(fetchLog.filter((c) => c.path === p).length, 0, `离线不该发 ${p}`);
     }
 });
 
-test("离线配方编辑器：编辑类按钮不被门控，分段生成照常打到壳", async () => {
-    mockOfflineShell();
-    mockShellApi([]);
+test("离线配方编辑器：编辑类按钮不被门控，分段生成照常打到桌面端", async () => {
+    mockOfflineDesktop();
+    mockDesktopApi([]);
     mockRoute("/rs_recipes/director_generate_segments", jsonResponse({ success: true, segments: [] }));
     document.body.insertAdjacentHTML("beforeend",
         '<button class="neo-director-gen-segs" type="button">✨ 生成分镜分段</button>');
@@ -187,9 +187,9 @@ test("离线配方编辑器：编辑类按钮不被门控，分段生成照常�
                  "分段只依赖 8080 LLM：门控不该拦掉");
 });
 
-test("启动设置：完整 Studio 页里走壳的 js_api 读快照并保存", async () => {
-    mockOfflineShell();
-    // 就绪后壳整页跳到 ComfyUI 端口：同源没有 /neo_studio/launcher，快照只能问壳
+test("启动设置：完整 Studio 页里走桌面端的 js_api 读快照并保存", async () => {
+    mockOfflineDesktop();
+    // 就绪后桌面端整页跳到 ComfyUI 端口：同源没有 /neo_studio/launcher，快照只能问桌面端
     mockRoute("/neo_studio/version", jsonResponse({
         success: true, plugin_version: "9.9.9", comfyui_version: "0.33.1", offline: false,
         caps: { image_gen: true, storyboard: true, voice: true, segment: true,
@@ -217,22 +217,22 @@ test("启动设置：完整 Studio 页里走壳的 js_api 读快照并保存", a
     await flush();
 
     const tab = document.querySelector('.ns-settings-tab[data-key="launch"]');
-    assert.ok(tab, "跳到 ComfyUI 页之后壳窗口仍应有「启动设置」tab");
+    assert.ok(tab, "跳到 ComfyUI 页之后桌面端窗口仍应有「启动设置」tab");
     click(tab);
     await flush();
     const inputs = [...document.querySelectorAll(".ns-launch-row input")].map(i => i.value);
-    assert.deepEqual(inputs.slice(0, 3), ["D:/ComfyUI", "D:/py/python.exe", "8188"], "输入框应填壳给的快照");
+    assert.deepEqual(inputs.slice(0, 3), ["D:/ComfyUI", "D:/py/python.exe", "8188"], "输入框应填桌面端给的快照");
 
     click(document.querySelector(".ns-launch-apply"));
     await flush();
-    assert.deepEqual(saved, [["D:/ComfyUI", "D:/py/python.exe", "8188"]], "保存应直接交给壳的 apply_launcher");
+    assert.deepEqual(saved, [["D:/ComfyUI", "D:/py/python.exe", "8188"]], "保存应直接交给桌面端的 apply_launcher");
     assert.equal(fetchLog.filter((c) => c.path === "/neo_studio/launcher").length, 0,
-                 "壳窗口里不该去撞 ComfyUI 的同源路由");
+                 "桌面端窗口里不该去撞 ComfyUI 的同源路由");
 });
 
 test("启动设置：根目录与解释器都带原生选择按钮，选完写回输入框", async () => {
 
-    mockOfflineShell();
+    mockOfflineDesktop();
     mockRoute("/neo_studio/launcher", jsonResponse({
         root: "D:/ComfyUI", python: "D:/ComfyUI/python/python.exe", port: 8188,
         plugin_dir: "D:/ComfyUI/custom_nodes/comfyui-neo-studio",
@@ -262,7 +262,7 @@ test("启动设置：根目录与解释器都带原生选择按钮，选完写�
         assert.ok(btn, `「${label}」行应带「浏览…」按钮`);
         click(btn);
         await flush();
-        assert.deepEqual(picks.at(-1), key, `点「${label}」的浏览应调壳的 pick_${key}`);
+        assert.deepEqual(picks.at(-1), key, `点「${label}」的浏览应调桌面端的 pick_${key}`);
         assert.equal(row.querySelector("input").value, value, "选中的路径应写回输入框");
     }
 });

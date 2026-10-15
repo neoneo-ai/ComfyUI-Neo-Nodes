@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Neo Studio — 生图设置 / 模型扫描 / 技能文件路由。
 # 只碰 configs/image_gen.json、模型目录与技能目录，不依赖 PromptServer 与执行队列，
-# 因此 ComfyUI 内注册与壳侧离线服务共用这一份实现。
+# 因此 ComfyUI 内注册与桌面端离线服务共用这一份实现。
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def scan_models() -> dict:
 
 
 # ===========================================================================
-# 路由（壳侧离线服务与 ComfyUI 内注册共用）
+# 路由（桌面端离线服务与 ComfyUI 内注册共用）
 # ===========================================================================
 
 routes = web.RouteTableDef()

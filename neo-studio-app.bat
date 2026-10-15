@@ -1,5 +1,5 @@
 @echo off
-rem Neo Studio 桌面壳调试入口（带控制台）：双击无黑窗请用 neo-studio-app.vbs
+rem Neo Studio 桌面端调试入口（带控制台）：双击无黑窗请用 neo-studio-app.vbs
 chcp 65001 >nul
 setlocal
 rem 整合包布局：python 与 ComfyUI 同级；再回退 ComfyUI 内部

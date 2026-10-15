@@ -1,5 +1,5 @@
 // Neo Studio shim（web/studio/shim）：api 事件桥 + app 单体的浏览器替身行为。
-// 全壳装配（import-map + 真实模块图）走 tests/e2e/studio.e2e.mjs，这里只测 shim 单元。
+// 全桌面端装配（import-map + 真实模块图）走 tests/e2e/studio.e2e.mjs，这里只测 shim 单元。
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -101,7 +101,7 @@ test("无边框窗口控件：默认隐藏，最小化 / 最大化 / 全屏 / �
     assert.ok(!/\.ns-version\b/.test(css), "版本位不在顶栏样式里");
 });
 
-// 顶栏 ComfyUI 胶囊：壳窗口（有 pywebview api）里才出现，浏览器标签页里不显示。
+// 顶栏 ComfyUI 胶囊：桌面端窗口（有 pywebview api）里才出现，浏览器标签页里不显示。
 // studio-app.js 的启动体只在导入时跑一次，两个用例用不同 query 取同一模块的两份实例。
 const studioBody = fs.readFileSync(path.join(webDir, "studio", "index.html"), "utf8").match(/<body>([\s\S]*?)<\/body>/)[1];
 
@@ -114,7 +114,7 @@ function mountStudio() {
     return document.getElementById("ns-comfy-status");
 }
 
-test("浏览器标签页里没有壳：顶栏 ComfyUI 状态位不显示", async () => {
+test("浏览器标签页里没有桌面端：顶栏 ComfyUI 状态位不显示", async () => {
     const status = mountStudio();
     await import("../../web/studio/studio-app.js?browser=1");
     await flush();
@@ -139,7 +139,7 @@ test("桥对象先到、方法后填：不打断启动链，状态位等齐了�
     assert.equal(status.textContent, "● 运行中");
 });
 
-test("前端错误上报：桥没就绪先等，方法齐了再补进壳日志", async () => {
+test("前端错误上报：桥没就绪先等，方法齐了再补进桌面端日志", async () => {
     mountStudio();
     window.pywebview = { api: {} };   // 报错正撞在桥脚本注入的空档上：api 对象在、log 方法还没填
     await import("../../web/studio/studio-app.js?webLog=1");
@@ -154,17 +154,17 @@ test("前端错误上报：桥没就绪先等，方法齐了再补进壳日志",
 
     // 同一进程里前面几个用例也导入了 studio-app.js（各有一份错误监听），消息会重复，只断言内容
     assert.ok(logged.includes("ERROR api.comfy_state is not a function @ studio-app.js:748"),
-        `未捕获错误应补进壳日志（实际 ${logged.join(" | ")}）`);
+        `未捕获错误应补进桌面端日志（实际 ${logged.join(" | ")}）`);
 });
 
 test("顶栏只显状态：端口 / PID / 谁启动收在提示里，动作在启动设置", async () => {
     const status = mountStudio();
     const state = { port: 8188, pid: 4321, mine: false, running: true, ready: true };
     window.pywebview = { api: { comfy_state: async () => ({ ...state }) } };
-    await import("../../web/studio/studio-app.js?shellStatus=1");
+    await import("../../web/studio/studio-app.js?desktopStatus=1");
     await flush();
 
-    assert.equal(status.hidden, false, "壳里应显示状态位");
+    assert.equal(status.hidden, false, "桌面端里应显示状态位");
     assert.equal(status.textContent, "● 运行中", "顶栏只报状态，不写动作");
     assert.ok(status.classList.contains("ns-comfy-run"), "运行中是绿色");
     assert.match(status.title, /端口 8188/, "提示里报端口");
@@ -189,7 +189,7 @@ test("启动设置顶部：运行中可停、停止可启动、启动中两枚�
                 starts.push(1);
                 state.running = true;
                 state.ready = false;   // 进程已拉起，端口还没就绪
-                state.pid = 5678;      // 壳回报的是新进程的号
+                state.pid = 5678;      // 桌面端回报的是新进程的号
                 return { ...state };
             },
             comfy_stop: async () => {
@@ -211,14 +211,14 @@ test("启动设置顶部：运行中可停、停止可启动、启动中两枚�
         const stop = document.querySelector(".ns-kernel-stop");
         const line = document.querySelector(".ns-kernel-state");
         assert.ok(start && stop, "启动设置顶部应有启停两枚按钮");
-        assert.equal(line.textContent, "ComfyUI 运行中 · 端口 8188 · 壳启动 · PID 4321");
+        assert.equal(line.textContent, "ComfyUI 运行中 · 端口 8188 · 桌面端启动 · PID 4321");
         assert.equal(start.disabled, true, "运行中不该再点启动");
         assert.equal(stop.disabled, false, "运行中可停");
 
         click(stop);
         await flush();
         assert.deepEqual(stops, [1], "点停止内核直接停，不要二次确认");
-        assert.equal(line.textContent, "ComfyUI 已停止 · 端口 8188 · 壳启动", "没进程就不报 PID");
+        assert.equal(line.textContent, "ComfyUI 已停止 · 端口 8188 · 桌面端启动", "没进程就不报 PID");
         assert.equal(stop.disabled, true, "没进程不该再点停止");
         assert.equal(start.disabled, false, "停止后可启动");
 
@@ -271,7 +271,7 @@ test("离线页：横幅说明可编辑面，版本位显示离线，显存块�
     await import("../../web/studio/studio-app.js?offline=1");
     await flush();
     const bar = document.getElementById("ns-offline");
-    assert.ok(bar, "壳的离线页应显示横幅");
+    assert.ok(bar, "桌面端的离线页应显示横幅");
     assert.match(bar.textContent, /ComfyUI 未运行/);
     assert.match(bar.textContent, /可离线编辑/);
     assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
@@ -279,7 +279,7 @@ test("离线页：横幅说明可编辑面，版本位显示离线，显存块�
     assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
 });
 
-test("离线页里点启动内核：不刷新页面，交给壳整页跳回完整 Studio", async () => {
+test("离线页里点启动内核：不刷新页面，交给桌面端整页跳回完整 Studio", async () => {
     resetEnv();
     document.body.innerHTML = studioBody;
     mockRoute("/neo_studio/version", jsonResponse({
@@ -314,7 +314,7 @@ test("离线页里点启动内核：不刷新页面，交给壳整页跳回完�
 
         state.ready = true;
         await sleep(120);
-        assert.equal(reloads.length, 0, "离线页刷新只会回到离线页，跳转由壳负责");
+        assert.equal(reloads.length, 0, "离线页刷新只会回到离线页，跳转由桌面端负责");
     } finally {
         Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
     }
@@ -376,8 +376,8 @@ test("已停止后在启动设置点「启动内核」，就绪后刷新页面",
 
 
 // 顶栏窗口控件走同一条等桥的路：桥的方法由 finish.js 后填，模块脚本先跑完时只看到空 api。
-// 早先只判断一次，撞上空档就永久不出控件、顶栏拖动也不挂 —— 壳窗口里拖动时好时坏就是它。
-test("顶栏窗口控件：桥晚到也要挂上，顶栏空白处按下交回壳拖动", async () => {
+// 早先只判断一次，撞上空档就永久不出控件、顶栏拖动也不挂 —— 桌面端窗口里拖动时好时坏就是它。
+test("顶栏窗口控件：桥晚到也要挂上，顶栏空白处按下交回桌面端拖动", async () => {
     mountStudio();
     const wctl = document.getElementById("ns-wctl");
     const calls = [];
@@ -397,7 +397,7 @@ test("顶栏窗口控件：桥晚到也要挂上，顶栏空白处按下交回�
     const header = document.querySelector(".ns-header");
     header.dispatchEvent(new window.MouseEvent("mousedown", { button: 0, bubbles: true }));
     await flush();
-    assert.ok(calls.includes("drag"), "顶栏空白处按下要交回壳走原生拖动");
+    assert.ok(calls.includes("drag"), "顶栏空白处按下要交回桌面端走原生拖动");
 
     const wired = calls.length;
     header.dispatchEvent(new window.MouseEvent("mousedown", { button: 2, bubbles: true }));
@@ -407,6 +407,6 @@ test("顶栏窗口控件：桥晚到也要挂上，顶栏空白处按下交回�
 
     document.getElementById("ns-win-close").click();
     await flush();
-    assert.ok(calls.includes("close"), "关闭按钮走壳");
+    assert.ok(calls.includes("close"), "关闭按钮走桌面端");
 });
 

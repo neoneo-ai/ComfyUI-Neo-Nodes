@@ -47,7 +47,7 @@ body {
 .ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
 .ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
 
-/* 无边框窗口：壳摘掉系统标题栏后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己出（只在壳窗口出现） */
+/* 无边框窗口：桌面端摘掉系统标题栏后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己出（只在桌面端窗口出现） */
 .ns-wctl { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .ns-wctl-btn { width: 34px; height: 26px; border: none; border-radius: 4px; background: transparent; color: #b8b8c2; font-size: 13px; line-height: 1; cursor: pointer; }
 .ns-wctl-btn:hover { background: #33333a; color: #fff; }
@@ -56,7 +56,7 @@ body {
 .ns-frameless .ns-header a, .ns-frameless .ns-header button { cursor: pointer; }
 .ns-about-version { font-size: 13px; color: #b7bbc4; }
 
-/* 壳的离线素材页：显存/清理没有意义，横幅说明浏览可用、生成需要 ComfyUI */
+/* 桌面端的离线素材页：显存/清理没有意义，横幅说明浏览可用、生成需要 ComfyUI */
 .ns-offline-bar { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 16px; background: #2b2417; color: #e0b070; font-size: 12px; text-align: center; }
 .ns-offline-start { padding: 2px 10px; border: 1px solid #7a5c2a; border-radius: 4px; background: #3a2f1c; color: #f0c880; font-size: 12px; cursor: pointer; }
 .ns-offline-start:hover { background: #4a3c24; }
@@ -181,7 +181,7 @@ body {
 }
 .ns-settings-section h3 { margin: 0 0 10px; font-size: 14px; color: #eee; }
 
-/* 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口（只有壳侧服务出这个 tab） */
+/* 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口（只有桌面端服务出这个 tab） */
 /* 面板顶部：内核状态 + 启停两枚按钮，此刻做不了的那枚禁用 */
 .ns-kernel { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid #35353d; border-radius: 6px; background: #232328; }
 .ns-kernel-state { flex: 1; font-size: 12px; color: #9a9aa8; }

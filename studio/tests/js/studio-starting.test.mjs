@@ -1,6 +1,6 @@
-// 冷启动：壳已拉起 ComfyUI 但端口未就绪。这段时间界面只出「启动中」，
+// 冷启动：桌面端已拉起 ComfyUI 但端口未就绪。这段时间界面只出「启动中」，
 // 「ComfyUI 未运行」横幅文案、「🚀 启动 ComfyUI」按钮、「需要 ComfyUI」按钮文案与提示条都不得出现。
-// 启动中状态来自壳侧 /neo_studio/version 快照：pywebview 的 js_api 注入晚于页面加载，
+// 启动中状态来自桌面端 /neo_studio/version 快照：pywebview 的 js_api 注入晚于页面加载，
 // 冷启动那几秒页面里没有 api，只靠 api 轮询就会先闪一遍「未运行」与「需要 ComfyUI」提示。
 // 单独成文件：每个 studio-app.js 实例都往 document 挂捕获监听，同进程里多用例互相触发启动。
 import test from "node:test";
@@ -19,7 +19,7 @@ const OFFLINE_CAPS = {
     director: false, grid_split: true, memory: false, repair: false,
 };
 
-function mockStartingShell() {
+function mockStartingDesktop() {
     resetEnv();
     document.body.innerHTML = studioBody;
     mockRoute("/neo_studio/version", jsonResponse({
@@ -36,8 +36,8 @@ function mockStartingShell() {
         { success: false, offline: true, error: "ComfyUI 未运行" }, 409));
 }
 
-test("壳拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅与启动入口", async () => {
-    mockStartingShell();
+test("桌面端拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅与启动入口", async () => {
+    mockStartingDesktop();
     window.location.hash = "#/director";
     await import("../../web/studio/studio-app.js?starting=1");
     await flush();
@@ -58,7 +58,7 @@ test("壳拉起 ComfyUI 期间：只出「启动中」，收起未运行横幅�
     await flush();
     assert.equal(document.getElementById("ns-toast"), null, "启动中点生成入口不出提示条");
 
-    // 启动中撞到的 409 同样收起：就绪后壳整页跳回完整 Studio
+    // 启动中撞到的 409 同样收起：就绪后桌面端整页跳回完整 Studio
     await fetch("/neo_studio/director/generate", { method: "POST", body: "{}" });
     await flush();
     assert.equal(document.getElementById("ns-toast"), null, "启动中不出「需要 ComfyUI」提示条");

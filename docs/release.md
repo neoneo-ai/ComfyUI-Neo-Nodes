@@ -24,7 +24,7 @@ Registry 与前端搜索的命中靠 `pyproject.toml` 的 `description` / `keywo
 - Registry 元数据在 `studio/pyproject.toml` 的 `[tool.comfy]`（PublisherId `neoneo-ai`，DisplayName `Neo Studio`）。
 - `.github/workflows/publish.yaml`：推送 `v*` tag、发布 Release 或手动触发时，在 `studio/` 里跑
   `comfy node publish --token`（需要 `COMFY_REGISTRY_PUBLISH_TOKEN` secret）。发布必须在那一层跑：
-  `pyproject.toml` 与 `.comfyignore` 都在 `studio/`，仓库根的 `pyproject.toml` 是桌面壳自己的清单。
+  `pyproject.toml` 与 `.comfyignore` 都在 `studio/`，仓库根的 `pyproject.toml` 是桌面端自己的清单。
 
 ```bash
 # 1. 改版本号（例如改成 1.0.1）：编辑 studio/pyproject.toml 里的 version = "1.0.1"
@@ -48,7 +48,7 @@ comfy node publish    # 按提示输入 API TOKEN
 ## 桌面版与源码安装
 
 ```powershell
-# 桌面壳打包：onefile 单文件 / onedir 目录版 / both；副本 = studio 的 git 已跟踪文件
+# 桌面端打包：onefile 单文件 / onedir 目录版 / both；副本 = studio 的 git 已跟踪文件
 tools\build_studio_exe.ps1 [-Mode onefile|onedir|both] [-DryRun]
 tools\build_studio_exe.ps1 -Mode both -Sign -CertThumbprint <指纹>   # signtool 签名 + verify
 tools\build_studio_exe.ps1 -Notarize -AppleTeamId <TeamID>          # macOS notarytool（只能在 mac 上）
@@ -56,10 +56,10 @@ tools\build_studio_exe.ps1 -Publish                                  # comfy nod
 
 # 源码安装内核插件：只装代码与内置预设，写好 configs/data_root.json 数据根指针，不删目标目录里的东西
 # 脚本是 UTF-8 无 BOM，用 pwsh（PowerShell 7）跑；Windows PowerShell 5.1 会把中文注释读成乱码
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI <ComfyUI 根> -DataRoot <数据根> [-SkipDeps] [-DryRun]
 ```
 
-**改完 `app/studio_app.py` 必须重新打包。** 源码运行桌面壳时每次启动把 `studio/` 同步进
+**改完 `app/studio_app.py` 必须重新打包。** 源码运行桌面端时每次启动把 `studio/` 同步进
 `custom_nodes`（只覆盖同名文件，不删目标目录里的东西）；exe 只在内置副本版本更新时才替换插件目录，
 git 检出的那份不碰。
 
@@ -83,13 +83,13 @@ CI 打包固定 Python 3.12，与本地验证过的构建一致。
 
 ### CLR 托管兜底
 
-壳的窗口是 pywebview 的 WinForms 后端，要 pythonnet 把 .NET 托管起来。部分机器上 .NET Framework（netfx）
-托管起不来——AppDomain 里解析不到 `Python.Runtime.Loader.Initialize`，窗口开不出来。壳在 `webview.start()`
+桌面端的窗口是 pywebview 的 WinForms 后端，要 pythonnet 把 .NET 托管起来。部分机器上 .NET Framework（netfx）
+托管起不来——AppDomain 里解析不到 `Python.Runtime.Loader.Initialize`，窗口开不出来。桌面端在 `webview.start()`
 前自己 `import clr`，失败就把 `pythonnet` 的 runtime 覆盖成 coreclr 再加载一次：pywebview 自带的 coreclr
 兜底在 pythonnet 3.x 上是失效的（netfx 的 runtime 对象已经占住 `pythonnet._RUNTIME`，改环境变量再 import
 走的还是那个坏掉的 netfx）。coreclr 要的是桌面运行时（`System.Windows.Forms` 在
 `Microsoft.WindowsDesktop.App` 里），随包带的配置是 `tools/coreclr.runtimeconfig.json` → `_internal/runtime/`。
-切换会记一行 `clr switched to coreclr` 到 `data/studio_shell.log`。
+切换会记一行 `clr switched to coreclr` 到 `data/studio_desktop.log`。
 
 ## 离线工具
 

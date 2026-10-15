@@ -133,7 +133,7 @@ git clone https://github.com/neoneo-ai/neo-studio.git ComfyUI/custom_nodes/comfy
 ```
 
 克隆安装认的是仓库根的 `__init__.py`，它把节点与路由注册交给 `studio/`；正式安装的副本
-（Registry、Manager、`tools\install_plugin.ps1`、壳同步）根目录就是 `studio/__init__.py`，不经过这个文件。
+（Registry、Manager、`tools\install_plugin.ps1`、桌面端同步）根目录就是 `studio/__init__.py`，不经过这个文件。
 
 源码安装：`tools\install_plugin.ps1` 把代码与内置预设装进插件目录，并写好 `configs/data_root.json`
 数据根指针（用户数据在插件目录之外，卸载只删插件目录）。命令、参数与发布开关见
@@ -190,18 +190,18 @@ git clone https://github.com/neoneo-ai/neo-studio.git ComfyUI/custom_nodes/comfy
 | `neo-studio-app.bat` | 同一窗口的带控制台调试入口（`--debug` 开 DevTools） |
 | `tools/neo-studio.exe` | 拍板造型图标的打包启动器，由 `tools\build_studio_exe.ps1` 产出（见 [docs/release.md](docs/release.md)） |
 
-- **壳是启动器，不只是窗口** — 自带离线服务（`neo_studio_server.py`，ComfyUI 端口 +3，默认 `8191`），
+- **桌面端是启动器，不只是窗口** — 自带离线服务（`app/studio_server.py`，ComfyUI 端口 +3，默认 `8191`），
   ComfyUI 没在跑时素材浏览 / 技能与配方编辑 / 设置（含 LLM 配置）/ 模型库 / 收藏 / LoRA 打标照常可用；
   需要运行时的请求回 `409 offline`（不假装成功），生成按钮变成启动入口。
 - **顶栏只报状态** — 「● 运行中」「● 已停止」「● 启动中」，端口 / PID / 谁启动收在鼠标提示里；启停在
   「设置 → 启动设置」顶部：状态一行 + 「▶ 启动内核」「■ 停止内核」两枚按钮，此刻做不了的那枚禁用。
 - **窗口先出** — 依赖自检、装配服务、拉起 ComfyUI 都在后台线程，期间停在启动页；端口就绪后整页跳到
   完整 Studio，停掉 ComfyUI 再拉回离线 Studio。
-- **关窗收掉壳自己拉起的 ComfyUI**（用户自己起的那路不碰）；端口已有 ComfyUI 在监听就直接附着，
+- **关窗收掉桌面端自己拉起的 ComfyUI**（用户自己起的那路不碰）；端口已有 ComfyUI 在监听就直接附着，
   绝不另起第二路。
-- **画布跳转留在窗口内** — 「⤒ 主画布编辑」与「🎬 新影工坊」在壳窗口内切换，非 Studio 页左上角由壳
+- **画布跳转留在窗口内** — 「⤒ 主画布编辑」与「🎬 新影工坊」在桌面端窗口内切换，非 Studio 页左上角由桌面端
   挂一枚「🎬 返回 Studio」胶囊。
-- ComfyUI 后台日志在「设置 → 日志」里看；壳自己的启动 / 跳转 / 拖动过程落在 `tmp/studio_shell.log`。
+- ComfyUI 后台日志在「设置 → 日志」里看；桌面端自己的启动 / 跳转 / 拖动过程落在 `data/studio_desktop.log`。
 
 无边框窗口、窗口与任务栏图标、exe 打包、便携启动器与源码同步：见 [Developer.md](Developer.md)。
 
@@ -254,4 +254,4 @@ collections portrait 10000+ 精美提示词来源：[civitai.com/models/2231696]
 
 ## 开发者文档
 
-开发相关内容（项目结构、后端模块、API 路由、节点注册、测试、桌面壳内部机制）见 [Developer.md](Developer.md)。
+开发相关内容（项目结构、后端模块、API 路由、节点注册、测试、桌面端内部机制）见 [Developer.md](Developer.md)。

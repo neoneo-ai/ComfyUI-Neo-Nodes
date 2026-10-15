@@ -99,7 +99,7 @@ git clone https://github.com/neoneo-ai/neo-studio.git ComfyUI/custom_nodes/comfy
 ```
 
 The clone form runs on the repo root `__init__.py`, which hands node and route registration to
-`studio/`; the installed package (Registry, Manager, `tools/install_plugin.ps1`, shell sync) has
+`studio/`; the installed package (Registry, Manager, `tools/install_plugin.ps1`, desktop sync) has
 `studio/__init__.py` at its own root and never goes through it.
 
 Source install: `tools/install_plugin.ps1` installs the code and the built-in presets and writes the
@@ -160,7 +160,7 @@ ComfyUI log). Canvas-only actions show a hint instead of failing.
 | `neo-studio-app.bat` | Console/debug entry for the same window (`--debug` opens DevTools) |
 | `tools/neo-studio.exe` | Packaged launcher with the clapperboard icon — built by `tools\build_studio_exe.ps1` ([release.md](docs/en/release.md)) |
 
-- **Offline service** — `neo_studio_server.py` on ComfyUI port + 3 (`8191` by default) keeps browsing, skill /
+- **Offline service** — `app/studio_server.py` on ComfyUI port + 3 (`8191` by default) keeps browsing, skill /
   recipe editing, settings (LLM included), Model Hub, bookmarks and LoRA tagging working while ComfyUI is down.
   Anything that needs the ComfyUI runtime answers `409 offline`, the UI says "needs ComfyUI", and the generate
   buttons become start buttons.
@@ -170,12 +170,12 @@ ComfyUI log). Canvas-only actions show a hint instead of failing.
 - **The window opens first** — the dependency self-check, the service setup and the ComfyUI spawn run on a
   background thread behind a splash page; the page jumps to the full Studio once the port answers, and stopping
   ComfyUI pulls it back to the offline library.
-- **Closing the window** stops the ComfyUI the shell started (one you started yourself is left alone); a ComfyUI
+- **Closing the window** stops the ComfyUI the desktop started (one you started yourself is left alone); a ComfyUI
   already listening on the port is attached to, never doubled.
-- **Canvas jumps stay in the window** — "⤒ 主画布编辑" and "🎬 新影工坊" switch in place, and the shell
+- **Canvas jumps stay in the window** — "⤒ 主画布编辑" and "🎬 新影工坊" switch in place, and the desktop
   re-injects a "🎬 返回 Studio" pill on every non-Studio page.
-- ComfyUI's log is under Settings → Log; the shell's own trace (startup, page jumps, window drags) goes to
-  `tmp/studio_shell.log`.
+- ComfyUI's log is under Settings → Log; the desktop's own trace (startup, page jumps, window drags) goes to
+  `data/studio_desktop.log`.
 
 Frameless window, window & taskbar icon, exe packaging, portable launcher and the source sync:
 [Developer_EN.md](Developer_EN.md).
@@ -192,5 +192,5 @@ Version history: [CHANGELOG.md](CHANGELOG.md). SPDX-License-Identifier: Apache-2
 
 ## Developer Docs
 
-Project structure, backend modules, API routes, node registration, tests, and the Studio shell internals
+Project structure, backend modules, API routes, node registration, tests, and the Studio desktop internals
 (offline service, capability table, drag loop, launcher config): [Developer_EN.md](Developer_EN.md).

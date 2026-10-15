@@ -4,6 +4,16 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- Docs: split the Studio desktop out of the developer quick tour into `docs/studio-desktop.md` /
+  `docs/en/studio-desktop.md`; the desktop module names in `docs/api-routes.md` and `docs/en/api-routes.md` follow the
+  `app/` rename, and the
+  install example uses `<ComfyUI root>` / `<data root>` placeholders instead of fixed drive paths. The MCP config
+  snippets use the same placeholders, and `docs/en/api-routes.md` gets the MCP section the Chinese page already had.
+- Naming: the desktop app stopped calling itself a "shell", which reads like a terminal shell. `StudioShell` →
+  `StudioDesktop`, `ShellServer` → `DesktopServer`, `SHELL_PORT_OFFSET` → `DESKTOP_PORT_OFFSET`,
+  `SHELL_LOG` → `DESKTOP_LOG`, `caps.owner()` answers `desktop`, and the desktop trace log is
+  `data/studio_desktop.log` (an existing `data/studio_shell.log` is left where it is). Docs say 桌面端 / desktop
+  throughout. Windows-owned names stay untouched: `shell32`, `WScript.Shell`, `IShellItem`, "PowerShell".
 - MCP server for external agents. `studio/mcp_server.py` is a standalone stdio MCP server
   (JSON-RPC, standard library only, no relative imports, no ComfyUI node imports): an MCP client
   (Claude Desktop / Cursor / custom) launches it as a subprocess and the agent calls Neo Studio's

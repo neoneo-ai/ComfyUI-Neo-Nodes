@@ -40,9 +40,9 @@ studio/
 ├── backyard.py                # Backyard preprocessing & OSS upload page
 ├── recipes.py                 # recipe backend + /rs_recipes/* routes
 ├── studio.py                  # Neo Studio backend + /neo_studio/* routes
-├── neo_studio_app.py          # desktop shell (pywebview + WebView2): launches ComfyUI and hosts the window
-├── neo-studio-app.bat         # desktop shell debug entry (with console)
-├── neo-studio-app.vbs         # desktop shell double-click entry (pythonw, no console window)
+├── app/studio_app.py          # Studio desktop (pywebview + WebView2): launches ComfyUI and hosts the window
+├── neo-studio-app.bat         # Studio desktop debug entry (with console)
+├── neo-studio-app.vbs         # Studio desktop double-click entry (pythonw, no console window)
 ├── workflow.py                # workflow repair + /neo_nodes/* routes
 ├── util.py                    # media constants and shared utilities
 ├── requirements.txt           # Python dependencies
@@ -111,7 +111,7 @@ studio/
 | `backyard.py` | Backyard page: Gallery preprocessing and OSS upload management |
 | `recipes.py` | Recipe CRUD, one-click send, director recipes and storyboards, import/export |
 | `studio.py` | Neo Studio backend: standalone page entry and full-film generation jobs |
-| `neo_studio_app.py` | Desktop shell: launches ComfyUI and hosts the WebView2 window (geometry / localStorage persistence) |
+| `app/studio_app.py` | Studio desktop: launches ComfyUI and hosts the WebView2 window (geometry / localStorage persistence) |
 | `workflow.py` | Workflow model-path repair, repair mappings, skill model suggestions |
 | `util.py` | Media extension constants, media probing, metadata and prompt collection |
 
@@ -217,8 +217,8 @@ V3 nodes (`NeoImageGenEdit`) use `io.Schema(description=..., search_aliases=[...
 ## Data & configuration directories
 
 Every directory below is relative to the **user data root**, not to the plugin directory. The data root is
-resolved by `plugin_paths.py`: the `NEO_STUDIO_DATA` environment variable (injected when the shell launches
-ComfyUI) → the plugin's `configs/data_root.json` pointer (written by the shell, also honored when you start
+resolved by `plugin_paths.py`: the `NEO_STUDIO_DATA` environment variable (injected when the desktop launches
+ComfyUI) → the plugin's `configs/data_root.json` pointer (written by the desktop, also honored when you start
 ComfyUI yourself) → only when both are missing does it fall back to the plugin directory. The plugin directory
 keeps code and built-in presets only (`configs/`, `prompts/presets/`, `skills/presets/`, `skills/tasks/`,
 `recipes/presets/`, filled in by `seed_presets()` when the data root lacks them), and the copy installed into
@@ -249,6 +249,6 @@ uses the `data/` next to the exe.
 | `configs/oss_presets.json` | OSS preset asset source configuration |
 | `configs/backyard_oss.json` | Backyard's OSS configuration |
 | `configs/laya_config.json` | Laya classifier configuration |
-| `configs/studio_window.json` | Desktop shell window geometry (written by `neo_studio_app.py` on window close) |
+| `configs/studio_window.json` | Studio desktop window geometry (written by `app/studio_app.py` on window close) |
 | `user/neo_repair_mappings.json` | Manual workflow-repair mappings |
 | `locals/zh_CN.json` | Localization resources |

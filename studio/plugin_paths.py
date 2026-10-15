@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# Neo Studio 数据根：用户数据住壳的状态目录，代码与内置预设住插件目录。
+# Neo Studio 数据根：用户数据住桌面端的状态目录，代码与内置预设住插件目录。
 #
 # 插件被装进 ComfyUI/custom_nodes 后，gallery / recipes / prompts / skills / configs 这些
-# 用户数据不再随插件目录走：壳（源码运行是 Neo-Studio/data，exe 是 exe 旁的 data/）在拉起
+# 用户数据不再随插件目录走：桌面端（源码运行是 Neo-Studio/data，exe 是 exe 旁的 data/）在拉起
 # ComfyUI 时注入 NEO_STUDIO_DATA，并往插件目录留一份指针，用户自己启动 ComfyUI 时也认得。
 # 三处都落空才回退插件目录 —— 插件被 ComfyUI-Manager 单独装、测试里临时造目录都走这条。
 #
@@ -39,7 +39,7 @@ def _resolve_data_root() -> Path:
 
 
 def write_pointer(data_root: Path, plugin_dir: Path) -> None:
-    """壳把数据根写进插件目录：用户不经壳自己起 ComfyUI 时，插件靠它找到同一份数据。"""
+    """桌面端把数据根写进插件目录：用户不经桌面端自己起 ComfyUI 时，插件靠它找到同一份数据。"""
     cfg = {"version": 1, "data_root": str(Path(data_root).resolve())}
     target = Path(plugin_dir) / "configs" / "data_root.json"
     target.parent.mkdir(parents=True, exist_ok=True)

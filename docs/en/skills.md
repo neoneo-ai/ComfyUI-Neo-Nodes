@@ -149,7 +149,7 @@ UI at `/?neo_wf_edit=<skill id>`, and the main UI consumes that parameter (the U
 first, so a refresh does not import twice), pre-renders the skill's `config.json` with the auto-suggested
 models and injects it into the canvas, initializing node widgets from the skill's saved configuration
 (overwriting the stale hard-coded steps / seed / size values inside `workflow.json`; values the skill does
-not control are kept as they are). In the desktop shell this handover happens inside the shell window
+not control are kept as they are). In the Studio desktop this handover happens inside the desktop window
 (`OPEN_EXTERNAL_LINKS_IN_BROWSER = False`), and the main UI's "🎬 New Studio" returns to Studio in the same
 window.
 

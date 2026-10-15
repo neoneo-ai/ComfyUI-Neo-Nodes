@@ -32,7 +32,7 @@ validated by `tests/test_node_metadata.py`).
 - `.github/workflows/publish.yaml`: on a `v*` tag push, a Release publish, or a manual trigger, it runs
   `comfy node publish --token` inside `studio/` (needs the `COMFY_REGISTRY_PUBLISH_TOKEN`
   secret). Publishing has to run at that level: `pyproject.toml` and `.comfyignore` are both in
-  `studio/`, and the root `pyproject.toml` is the desktop shell's own manifest.
+  `studio/`, and the root `pyproject.toml` is the Studio desktop's own manifest.
 
 ```bash
 # 1. Bump the version (to 1.0.1 for example): edit version = "1.0.1" in studio/pyproject.toml
@@ -56,7 +56,7 @@ comfy node publish    # enter the API TOKEN when asked
 ## Desktop build & source install
 
 ```powershell
-# Desktop shell packaging: onefile single file / onedir folder build / both;
+# Studio desktop packaging: onefile single file / onedir folder build / both;
 # the payload = studio's git-tracked files
 tools\build_studio_exe.ps1 [-Mode onefile|onedir|both] [-DryRun]
 tools\build_studio_exe.ps1 -Mode both -Sign -CertThumbprint <thumbprint>   # signtool signing + verify
@@ -67,10 +67,10 @@ tools\build_studio_exe.ps1 -Publish                                  # comfy nod
 # configs/data_root.json data-root pointer, never deletes anything in the target directory
 # The script is UTF-8 without BOM, run it with pwsh (PowerShell 7); Windows PowerShell 5.1
 # reads the Chinese comments as mojibake
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI D:\ComfyUI -DataRoot D:\Neo-Studio\data [-SkipDeps] [-DryRun]
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/install_plugin.ps1 -ComfyUI <ComfyUI root> -DataRoot <data root> [-SkipDeps] [-DryRun]
 ```
 
-**Rebuild the exe after changing `app/studio_app.py`.** Running the shell from source syncs
+**Rebuild the exe after changing `app/studio_app.py`.** Running the desktop from source syncs
 `studio/` into `custom_nodes` on every launch (same-named files only, nothing in the target is
 deleted); the exe only swaps the plugin directory when its bundled copy's version is newer, and a git
 checkout is never touched.
@@ -99,15 +99,15 @@ CI builds on Python 3.12, matching the locally verified build.
 
 ### CLR hosting fallback
 
-The shell window is pywebview's WinForms backend, which needs pythonnet to host .NET. On some machines the
+The desktop window is pywebview's WinForms backend, which needs pythonnet to host .NET. On some machines the
 .NET Framework (netfx) hosting fails — `Python.Runtime.Loader.Initialize` cannot be resolved inside the
-AppDomain and no window opens. The shell imports clr itself before `webview.start()` and, on failure,
+AppDomain and no window opens. The desktop imports clr itself before `webview.start()` and, on failure,
 overrides `pythonnet`'s runtime with coreclr and loads it again: pywebview's own coreclr fallback is inert
 under pythonnet 3.x (the netfx runtime object already occupies `pythonnet._RUNTIME`, so re-importing after
 setting the environment variable reuses the broken netfx). coreclr needs the desktop runtime
 (`System.Windows.Forms` lives in `Microsoft.WindowsDesktop.App`), so the bundle ships
 `tools/coreclr.runtimeconfig.json` → `_internal/runtime/`. A switch logs `clr switched to coreclr` into
-`data/studio_shell.log`.
+`data/studio_desktop.log`.
 
 ## Offline tools
 

@@ -69,7 +69,7 @@ foreach ($rel in $files) {
 }
 Write-Host "[COPY] $copied files -> $Target" -ForegroundColor Green
 
-# 数据根指针：与内核 plugin_paths.write_pointer / 壳 write_data_pointer 同一份格式
+# 数据根指针：与内核 plugin_paths.write_pointer / 桌面端 write_data_pointer 同一份格式
 # ConvertTo-Json 负责把路径里的反斜杠转义成 \\，手拼字符串会写出 JSON 解析不了的 \c
 $pointer = Join-Path $Target "configs\data_root.json"
 New-Item -ItemType Directory -Force -Path (Split-Path $pointer -Parent) | Out-Null

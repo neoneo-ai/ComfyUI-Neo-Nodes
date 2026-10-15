@@ -37,9 +37,9 @@ studio/
 ├── backyard.py                # Backyard 预处理与 OSS 上传页
 ├── recipes.py                 # 配方后端 + /rs_recipes/* 路由
 ├── studio.py                  # 新影工坊后端 + /neo_studio/* 路由
-├── neo_studio_app.py          # 桌面壳（pywebview + WebView2）：拉起 ComfyUI 并托管窗口
-├── neo-studio-app.bat         # 桌面壳调试入口（带控制台）
-├── neo-studio-app.vbs         # 桌面壳双击入口（pythonw，无控制台窗口）
+├── app/studio_app.py          # 桌面端（pywebview + WebView2）：拉起 ComfyUI 并托管窗口
+├── neo-studio-app.bat         # 桌面端调试入口（带控制台）
+├── neo-studio-app.vbs         # 桌面端双击入口（pythonw，无控制台窗口）
 ├── workflow.py                # 工作流修复 + /neo_nodes/* 路由
 ├── util.py                    # 媒体常量与共享工具
 ├── requirements.txt           # Python 依赖
@@ -108,7 +108,7 @@ studio/
 | `backyard.py` | Backyard 页面：Gallery 预处理与 OSS 上传管理 |
 | `recipes.py` | 配方 CRUD、一键发送、导演配方与故事板、导入导出 |
 | `studio.py` | 新影工坊后端：独立页面入口与整片生成任务 |
-| `neo_studio_app.py` | 桌面壳：拉起 ComfyUI 并托管 WebView2 窗口（几何 / localStorage 持久化） |
+| `app/studio_app.py` | 桌面端：拉起 ComfyUI 并托管 WebView2 窗口（几何 / localStorage 持久化） |
 | `workflow.py` | 工作流模型路径修复、修复映射、技能模型建议 |
 | `util.py` | 媒体扩展名常量、媒体探测、元数据与提示词收集 |
 
@@ -205,8 +205,8 @@ V3 节点（`NeoImageGenEdit`）走 `io.Schema(description=..., search_aliases=[
 ## 数据与配置目录
 
 下表目录都相对**用户数据根**，不是插件目录。数据根由 `plugin_paths.py` 解析：环境变量
-`NEO_STUDIO_DATA`（壳拉起 ComfyUI 时注入）→ 插件目录的 `configs/data_root.json` 指针
-（壳写入，用户自己起 ComfyUI 时认得）→ 都落空才回退插件目录。插件目录只留代码与内置预设
+`NEO_STUDIO_DATA`（桌面端拉起 ComfyUI 时注入）→ 插件目录的 `configs/data_root.json` 指针
+（桌面端写入，用户自己起 ComfyUI 时认得）→ 都落空才回退插件目录。插件目录只留代码与内置预设
 （`configs/`、`prompts/presets/`、`skills/presets/`、`skills/tasks/`、`recipes/presets/`，
 数据根缺文件时由 `seed_presets()` 补齐），装进 `custom_nodes` 的副本同样是代码与预设。
 源码运行的数据根是 `Neo-Studio/data/`，exe 运行是 exe 旁的 `data/`。
@@ -235,6 +235,6 @@ V3 节点（`NeoImageGenEdit`）走 `io.Schema(description=..., search_aliases=[
 | `configs/oss_presets.json` | OSS 预设素材源配置 |
 | `configs/backyard_oss.json` | Backyard 的 OSS 配置 |
 | `configs/laya_config.json` | Laya 分类器配置 |
-| `configs/studio_window.json` | 桌面壳窗口几何（`neo_studio_app.py` 关窗时写入） |
+| `configs/studio_window.json` | 桌面端窗口几何（`app/studio_app.py` 关窗时写入） |
 | `user/neo_repair_mappings.json` | 工作流修复的手动映射 |
 | `locals/zh_CN.json` | 本地化资源 |

@@ -1,27 +1,27 @@
-"""Neo Studio 桌面壳（pywebview + WebView2）：拉起 ComfyUI，窗口加载 /neo-studio。
+"""Neo Studio 桌面端（pywebview + WebView2）：拉起 ComfyUI，窗口加载 /neo-studio。
 
 与 neo-studio.ps1 同一套探活逻辑（GET /neo_studio/version 同时确认 ComfyUI 在跑与插件已加载），
-差别是窗口由壳托管：几何存 data/studio_window.json（屏幕外位置自动丢弃，回退默认），
+差别是窗口由桌面端托管：几何存 data/studio_window.json（屏幕外位置自动丢弃，回退默认），
 localStorage 落在 data/studio_profile
-（private_mode=False），_blank 链接在壳窗口内导航（主画布交接与返回 Studio 都不出窗口），blob 下载放行。
+（private_mode=False），_blank 链接在桌面端窗口内导航（主画布交接与返回 Studio 都不出窗口），blob 下载放行。
 全程无控制台窗口：neo-studio-app.vbs 双击用 pythonw 启动，提示走系统消息框，排查看
-data/studio_shell.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲），
-ComfyUI 起不来时看 data/comfy_run.log（壳拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
-窗口先出（引导页 / 启动页），自检、壳侧只读服务、拉起 ComfyUI 都在后台线程走完，就绪后整页跳过去：
-ComfyUI 已在运行时进完整 Studio；冷启动进壳侧只读服务（neo_studio_server）的离线素材库；
-ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由壳回 409 offline。
-壳拉起 ComfyUI 的这段时间 starting 为真（comfy_state 与壳侧 /neo_studio/version 共用同一份标记，
+data/studio_desktop.log；ComfyUI 日志在 Studio「设置 → 日志」看（/neo_studio/log 读 app.logger 环形缓冲），
+ComfyUI 起不来时看 data/comfy_run.log（桌面端拉起它的完整 stdout/stderr，端口冲突与导入报错都在里面）。
+窗口先出（引导页 / 启动页），自检、桌面端只读服务、拉起 ComfyUI 都在后台线程走完，就绪后整页跳过去：
+ComfyUI 已在运行时进完整 Studio；冷启动进桌面端只读服务（app/studio_server.py）的离线素材库；
+ComfyUI 停止后窗口退回离线素材库，浏览不受影响，生成类请求由桌面端回 409 offline。
+桌面端拉起 ComfyUI 的这段时间 starting 为真（comfy_state 与桌面端 /neo_studio/version 共用同一份标记，
 js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启动中…」，收起未运行横幅、
 启动按钮与「需要 ComfyUI」提示。
 窗口与任务栏图标用 studio/web/neo-studio.ico（tools/make_studio_icon.py 生成）。
 
 用法：python app/studio_app.py [--port 8188] [--python <python.exe>] [--root <ComfyUI 根>]
                               [--cdp <port>] [--debug]
- 壳是启动器：关窗只关窗口。顶栏只有「● 运行中 / 启动中 / 已停止」状态位，端口 / PID / 谁启动进 tooltip；
- 内核启停在「设置 → 启动设置」，状态由壳的 js_api 报（端口 / PID / 谁启动 / 就绪）：
+ 桌面端是启动器：关窗只关窗口。顶栏只有「● 运行中 / 启动中 / 已停止」状态位，端口 / PID / 谁启动进 tooltip；
+ 内核启停在「设置 → 启动设置」，状态由桌面端的 js_api 报（端口 / PID / 谁启动 / 就绪）：
  停止内核 terminate（并按端口找监听者 PID 一并终止，外部启动的同样杀得掉），窗口退回离线素材库；
  启动内核重新拉起，显示「启动中…」，就绪后窗口整页跳回 ComfyUI 的完整 Studio。
- 源码运行时每次启动把 studio/ 同步进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
+ 源码运行时每次启动把 studio/ 同步进 custom_nodes，桌面端与 ComfyUI 页面跑同一份代码。
 
 """
 
@@ -42,7 +42,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from studio_server import ShellServer, build_app
+from studio_server import DesktopServer, build_app
 
 IS_FROZEN = bool(getattr(sys, "frozen", False))
 APP_DIR = Path(__file__).resolve().parent
@@ -52,7 +52,7 @@ RES_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR))
 # 内核插件装进 ComfyUI 后的目录名，与 studio/pyproject.toml 的 package name 逐字对齐：
 # 前端静态文件走 /extensions/<目录名>/，大小写敏感，两边拼出来的 URL 必须一致。
 PLUGIN_NAME = "comfyui-neo-studio"
-# 壳侧服务加载的插件源码：源码运行是仓库里的 studio/，exe 里是随包的内置副本，
+# 桌面端服务加载的插件源码：源码运行是仓库里的 studio/，exe 里是随包的内置副本，
 # 同时也是自动装进 custom_nodes 的源。
 PLUGIN_SOURCE_DIR = RES_DIR / "bundled" / PLUGIN_NAME if IS_FROZEN else REPO_ROOT / "studio"
 
@@ -87,7 +87,7 @@ def pick_state_dir(exe_dir: Path, appdata: str = "") -> Path:
 def state_dir() -> Path:
     """日志 / 窗口几何 / 浏览器 profile / 启动配置的落点，只算一次。
 
-    源码运行 = 仓库的 data/；exe 运行 = pick_state_dir(EXE_DIR)。应用状态只属于壳，
+    源码运行 = 仓库的 data/；exe 运行 = pick_state_dir(EXE_DIR)。应用状态只属于桌面端，
     不落在内核插件目录里。
     """
     global _state_dir
@@ -98,19 +98,19 @@ def state_dir() -> Path:
 
 
 STATE = state_dir()
-SHELL_LOG = STATE / "studio_shell.log"
+DESKTOP_LOG = STATE / "studio_desktop.log"
 COMFY_LOG = STATE / "comfy_run.log"
 GEOMETRY_FILE = STATE / "studio_window.json"
 PROFILE_DIR = STATE / "studio_profile"
 CONFIG_FILE = STATE / "launcher_config.json"   # 记住的 root / python / port
-LOG_MAX = 200_000   # 壳日志上限：反复开关机只增不减，写入前裁到尾部
+LOG_MAX = 200_000   # 桌面端日志上限：反复开关机只增不减，写入前裁到尾部
 LOG_LOCK = threading.Lock()   # js_api 调用各在自己的线程里跑，读全文再写回必须串行
-SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
+DESKTOP_LOG.parent.mkdir(parents=True, exist_ok=True)
 
 # pythonw 的 sys.stderr 是 None：pywebview 的 _setup_logger 挂的控制台 handler 会在写日志时抛异常，
-# 打断窗口创建。先把它的日志接到壳日志文件，_setup_logger 看到已有 handler 就不会再挂控制台 handler。
+# 打断窗口创建。先把它的日志接到桌面端日志文件，_setup_logger 看到已有 handler 就不会再挂控制台 handler。
 pyw_log = logging.getLogger("pywebview")
-pyw_log.addHandler(logging.FileHandler(str(SHELL_LOG), encoding="utf-8"))
+pyw_log.addHandler(logging.FileHandler(str(DESKTOP_LOG), encoding="utf-8"))
 pyw_log.setLevel(logging.INFO)
 
 try:
@@ -122,7 +122,7 @@ except ImportError:
 DEFAULT_PORT = 8188
 SINGLETON_MUTEX = "Local\\Neo.Studio.SingleInstance"   # 单实例锁走命名互斥体，不占端口
 ERROR_ALREADY_EXISTS = 183
-SHELL_PORT_OFFSET = 3   # 壳侧只读素材服务：避开 ComfyUI 的 8188
+DESKTOP_PORT_OFFSET = 3   # 桌面端只读素材服务：避开 ComfyUI 的 8188
 READY_TIMEOUT = 90      # ComfyUI 冷启动（扫描模型目录）留 90 秒
 
 POLL_INTERVAL = 2.0
@@ -132,7 +132,7 @@ STUDIO_ICON = (RES_DIR / "web" / "neo-studio.ico") if IS_FROZEN else (PLUGIN_SOU
 # clr_loader 默认只会挑 Microsoft.NETCore.App，不给这份配置兜底必崩
 CORECLR_CONFIG = (RES_DIR / "runtime" / "coreclr.runtimeconfig.json") if IS_FROZEN else (REPO_ROOT / "tools" / "coreclr.runtimeconfig.json")
 APP_ID = "Neo.Studio"
-NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 壳无控制台时子进程会新建控制台窗口，必须压制
+NO_WINDOW = subprocess.CREATE_NO_WINDOW   # 桌面端无控制台时子进程会新建控制台窗口，必须压制
 PROCESS_TERMINATE = 0x0001
 PROCESS_QUERY_LIMITED = 0x1000
 # restype 默认是 c_int，64 位句柄会被截断，TerminateProcess 拿到无效句柄静默失败
@@ -185,7 +185,7 @@ def _cursor_pos() -> tuple:
 
 
 def _left_button_down() -> bool:
-    """左键还按着没有：壳的拖动循环靠它收尾（鼠标可能已经在窗口外面，只有全局键态靠得住）。"""
+    """左键还按着没有：桌面端的拖动循环靠它收尾（鼠标可能已经在窗口外面，只有全局键态靠得住）。"""
     return bool(u32.GetAsyncKeyState(VK_LBUTTON) & 0x8000)
 
 
@@ -217,23 +217,23 @@ def alert(text: str) -> None:
 
 
 def log_line(text: str) -> None:
-    """壳自己的落盘日志：双击启动没有控制台，排查全靠它。只留尾部，别让它无限长。
+    """桌面端自己的落盘日志：双击启动没有控制台，排查全靠它。只留尾部，别让它无限长。
     pywebview 把每个 js_api 调用丢进自己的线程，日志又是读全文再写回：不加锁并发写会丢行。"""
     line = f"[{time.strftime('%H:%M:%S')}] {text}"
     with LOG_LOCK:
-        SHELL_LOG.parent.mkdir(parents=True, exist_ok=True)
-        prev = SHELL_LOG.read_text(encoding="utf-8") + "\n" if SHELL_LOG.exists() else ""
+        DESKTOP_LOG.parent.mkdir(parents=True, exist_ok=True)
+        prev = DESKTOP_LOG.read_text(encoding="utf-8") + "\n" if DESKTOP_LOG.exists() else ""
         if len(prev) > LOG_MAX:
             prev = prev[-LOG_MAX:]
             prev = prev[prev.index("\n") + 1:] if "\n" in prev else prev   # 从整行开头截，别留半行
-        SHELL_LOG.write_text(prev + line, encoding="utf-8")
+        DESKTOP_LOG.write_text(prev + line, encoding="utf-8")
 
 
 def resolve_root(root: str) -> Optional[Path]:
-    """CLI > 启动配置 > 壳自身位置推导。
+    """CLI > 启动配置 > 桌面端自身位置推导。
 
     每一层父目录先找同级的 ComfyUI/（Neo-Studio 与内核并排摆放的布局），再找该目录自身
-    （壳跑在 ComfyUI/custom_nodes/<插件> 里、exe 在插件 tools 的包目录里都靠这条）。
+    （桌面端跑在 ComfyUI/custom_nodes/<插件> 里、exe 在插件 tools 的包目录里都靠这条）。
     推导出的位置必须真有 main.py。两条都落空返回 None，让 main 出引导页。
     """
     if root:
@@ -359,7 +359,7 @@ def _ver(text: str) -> tuple:
     return tuple(int(x) for x in re.findall(r"\d+", text))
 
 
-# 装进 custom_nodes 的只有代码与内置预设：用户数据归壳的数据根，插件按 NEO_STUDIO_DATA 与
+# 装进 custom_nodes 的只有代码与内置预设：用户数据归桌面端的数据根，插件按 NEO_STUDIO_DATA 与
 # 插件目录里的指针去找。开发目录里的运行数据不能跟着进内核。
 INSTALL_SKIP = ("build", "dist", "tests", "docs", "node_modules", "__pycache__", ".git", ".github",
                 ".pytest_cache", "test-results", "tmp", "data", "gallery", "locals",
@@ -393,7 +393,7 @@ def install_ignore(source_dir: Path):
 
 
 def write_data_pointer(plugin_dir: Path) -> None:
-    """把数据根写进插件目录：用户不经壳自己起 ComfyUI 时，插件靠它找到同一份用户数据。"""
+    """把数据根写进插件目录：用户不经桌面端自己起 ComfyUI 时，插件靠它找到同一份用户数据。"""
     cfg = {"version": 1, "data_root": str(STATE.resolve())}
     target = plugin_dir / "configs" / "data_root.json"
     try:
@@ -434,7 +434,7 @@ def update_plugin(plugin_dir: Path, source_dir: Path) -> None:
 
 
 def sync_plugin(plugin_dir: Path, source_dir: Path) -> int:
-    """源码运行时的同步：studio/ 覆盖进 custom_nodes，壳与 ComfyUI 页面跑同一份代码。
+    """源码运行时的同步：studio/ 覆盖进 custom_nodes，桌面端与 ComfyUI 页面跑同一份代码。
 
     只覆盖同名文件，从不删目标目录里的任何东西：用户配置、数据指针、装好的依赖都留在原地。
     大小与修改时间都对得上的跳过；ComfyUI 正在跑、文件被占用时跳过那一个，下次启动再补。
@@ -468,7 +468,7 @@ def sync_plugin(plugin_dir: Path, source_dir: Path) -> int:
 def ensure_plugin(plugin_dir: Path, source_dir: Path = PLUGIN_SOURCE_DIR) -> tuple[bool, str]:
     """custom_nodes 里的插件副本：缺失就装内置副本，存在就跟着同步。
 
-    源码运行那份就是开发中的插件本身，每次启动把 studio/ 同步进去，壳与 ComfyUI 页面跑同一份代码。
+    源码运行那份就是开发中的插件本身，每次启动把 studio/ 同步进去，桌面端与 ComfyUI 页面跑同一份代码。
     exe 只认内置副本的 release：版本更新才换目录。git 检出归 ComfyUI-Manager 与用户自己维护，都不覆盖。
     """
     if plugin_dir.is_dir():
@@ -560,7 +560,7 @@ def save_geometry(window) -> None:
 
 
 def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
-    """启动输出落 tmp/comfy_run.log：CREATE_NO_WINDOW 下不重定向，端口冲突与导入报错就全进黑洞。"""
+    """启动输出落 data/comfy_run.log：CREATE_NO_WINDOW 下不重定向，端口冲突与导入报错就全进黑洞。"""
     COMFY_LOG.parent.mkdir(parents=True, exist_ok=True)
     log = open(COMFY_LOG, "wb", buffering=0)
     log.write(f"=== {time.strftime('%H:%M:%S')} port={port} {python}\n".encode("utf-8"))
@@ -576,12 +576,12 @@ def port_busy(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def free_comfy_port(preferred: int, shell_port: int) -> int:
+def free_comfy_port(preferred: int, desktop_port: int) -> int:
     """端口被残留进程占着时往上找空位：硬撞 8188 会让拉起的 ComfyUI 立刻退出且毫无提示。"""
     if not port_busy(preferred):
         return preferred
     for port in range(preferred + 1, preferred + 40):
-        if port != shell_port and not port_busy(port):
+        if port != desktop_port and not port_busy(port):
             return port
     return preferred
 
@@ -608,7 +608,7 @@ def port_owner(port: int) -> int:
 
 
 def kill_pid(pid: int) -> bool:
-    """按 PID 终止进程：用户自己启动的 ComfyUI 没有壳的 Popen 句柄。"""
+    """按 PID 终止进程：用户自己启动的 ComfyUI 没有桌面端的 Popen 句柄。"""
     h = k32.OpenProcess(PROCESS_TERMINATE, False, pid)
     if not h:
         return False
@@ -676,36 +676,36 @@ CLOSING_JS = """
 """
 
 
-class StudioShell:
-    """壳的 js_api：顶栏「返回 Studio」胶囊、ComfyUI 运行状态与退出、无边框窗口操作。
+class StudioDesktop:
+    """桌面端的 js_api：顶栏「返回 Studio」胶囊、ComfyUI 运行状态与退出、无边框窗口操作。
     js_api 上只许挂 url、字符串、dict 与绑定方法：pywebview 注入 window.pywebview 前会
     递归遍历 js_api 的非下划线属性（webview.util.inject_pywebview），挂窗口对象会把
     WinForms 整张对象图喂进递归（pythonnet 每次属性访问都造新对象，id 去重失效），开机即卡死。"""
 
     def __init__(self, url: str, comfy, port: int, root: Path, python_arg: str = "", offline_url: str = "",
-                 shell_port: int = 0, flags: dict = None, launcher: dict = None):
+                 desktop_port: int = 0, flags: dict = None, launcher: dict = None):
         self.url = url
         self.offline_url = offline_url
-        self.shell_port = shell_port
+        self.desktop_port = desktop_port
         self.comfy = comfy
         self.port = port
         self.root = root
         self.python_arg = python_arg
         self.pid = comfy.pid if comfy is not None else 0
-        # 启动中标记与壳侧只读服务共用同一份：js_api 注入之前页面就能从版本快照拿到「启动中」
+        # 启动中标记与桌面端只读服务共用同一份：js_api 注入之前页面就能从版本快照拿到「启动中」
         self.flags = flags if flags is not None else {"starting": False}
-        # 启动设置快照：壳侧服务与 js_api 共用同一份 dict，设置页与离线横幅都读它
+        # 启动设置快照：桌面端服务与 js_api 共用同一份 dict，设置页与离线横幅都读它
         self.launcher = launcher if launcher is not None else {}
         # 无边框窗口：建窗时喂给 pywebview，运行中由 set_frameless 改样式位；缺省开
         self.frameless = bool(self.launcher.get("frameless", True))
         self.fullscreen = False
-        self.maximized = False    # 无边框下最大化是壳自己铺的矩形，系统不认 WS_MAXIMIZE，状态自己记
+        self.maximized = False    # 无边框下最大化是桌面端自己铺的矩形，系统不认 WS_MAXIMIZE，状态自己记
         self._restore_rect: tuple | None = None   # 铺满前的矩形，点一下还原回这里
         self._window = None
         self.starting = comfy is not None
         self.loader = None
         self.rearm = None
-        # 壳侧服务由 main() 注入：引导页补完根目录才装配得起来，start_setup 需要再叫一次
+        # 桌面端服务由 main() 注入：引导页补完根目录才装配得起来，start_setup 需要再叫一次
         self.ensure_server = None
         self._closed = False
         # 关窗与后台启动序列撞在一起时的闸门：拉起 ComfyUI 前后各看一次，别让刚起的那路变孤儿
@@ -730,8 +730,8 @@ class StudioShell:
         self.rearm()
 
     def log(self, message: str) -> None:
-        """页面把前端未捕获错误与启动失败写进壳日志：白屏只有 DevTools 能看太晚，
-        折成一行便于 grep（tmp/studio_shell.log）。"""
+        """页面把前端未捕获错误与启动失败写进桌面端日志：白屏只有 DevTools 能看太晚，
+        折成一行便于 grep（data/studio_desktop.log）。"""
         log_line("[web] " + " ".join(message.split()))
 
     def _jump_when_ready(self) -> None:
@@ -746,9 +746,9 @@ class StudioShell:
 
     def comfy_state(self) -> dict:
         """顶栏胶囊要的运行状态：外部启动的 ComfyUI 没有 Popen 句柄，按端口找 PID 并缓存。
-        壳拉起的那路以端口探活为准 —— TerminateProcess 是异步的，进程还在收尾时端口已关，
+        桌面端拉起的那路以端口探活为准 —— TerminateProcess 是异步的，进程还在收尾时端口已关，
         报「进程活着」会让胶囊显示运行中而服务其实已经没了。
-        starting：壳拉起的进程还活着、端口还没就绪 —— 这段时间前端只出「启动中」，收起其余离线提示。"""
+        starting：桌面端拉起的进程还活着、端口还没就绪 —— 这段时间前端只出「启动中」，收起其余离线提示。"""
         ready = probe(self.port, 1.0)
         if self.comfy is not None:
             if ready:
@@ -766,7 +766,7 @@ class StudioShell:
             self.comfy.terminate()
             reap(self.comfy, 2)   # 不 reap 的话下面按 PID 判活会一直「活着」，强杀必然失败
             self.starting = False
-        # 监听端口的未必是壳的 Popen（子进程、端口被占时的残留）：按端口反复杀到没人监听
+        # 监听端口的未必是桌面端的 Popen（子进程、端口被占时的残留）：按端口反复杀到没人监听
         for _ in range(10):
             pid = port_owner(self.port)
             if not pid:
@@ -781,11 +781,11 @@ class StudioShell:
         st = self.comfy_state()
         log_line(f"comfy stop {st}")
         if not st["ready"]:
-            self._goto(self.offline_url)   # 窗口退回壳的只读素材库，不对着死页面干等
+            self._goto(self.offline_url)   # 窗口退回桌面端的只读素材库，不对着死页面干等
         return st
 
     def comfy_close(self) -> None:
-        """关窗时带走壳自己拉起的 ComfyUI。
+        """关窗时带走桌面端自己拉起的 ComfyUI。
 
         只认自己那份 PID：terminate 之后回收子进程，回收超时（真没退出）才按 PID 兜底强杀。
         必须回收 —— 不回收的话进程只剩内核对象，pid_alive 会一直报「还活着」，关窗固定睡满
@@ -803,7 +803,7 @@ class StudioShell:
         except subprocess.TimeoutExpired:
             kill_pid(pid)
             log_line(f"comfy close kill pid={pid}")
-        log_line(f"comfy closed with shell pid={pid}")
+        log_line(f"comfy closed with desktop pid={pid}")
 
     def comfy_start(self) -> dict:
         """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后整页跳回完整 Studio。"""
@@ -823,7 +823,7 @@ class StudioShell:
             log_line(f"comfy attach port={self.port}")
             threading.Thread(target=self._jump_when_ready, daemon=True).start()
             return self.comfy_state()
-        self.port = free_comfy_port(self.port, self.shell_port)
+        self.port = free_comfy_port(self.port, self.desktop_port)
         self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port)
         self.url = f"http://127.0.0.1:{self.port}/neo-studio"
         self.pid = self.comfy.pid
@@ -862,7 +862,7 @@ class StudioShell:
 
     def window_state(self) -> dict:
         """顶栏自绘标题栏要的状态：frameless 决定控件出不出，maximized / fullscreen 决定图标。
-        pywebview 的 Window.maximized / .fullscreen 是建窗时的初值，运行中不跟着变，状态由壳自己记。"""
+        pywebview 的 Window.maximized / .fullscreen 是建窗时的初值，运行中不跟着变，状态由桌面端自己记。"""
         return {"frameless": self.frameless, "maximized": self.maximized, "fullscreen": self.fullscreen}
 
     def win_minimize(self) -> None:
@@ -901,7 +901,7 @@ class StudioShell:
         self._window.destroy()
 
     def win_start_drag(self) -> None:
-        """无边框拖动：壳自己跟住光标搬窗口。
+        """无边框拖动：桌面端自己跟住光标搬窗口。
         把按下交回系统走原生标题栏循环这条路在这里走不通 —— WinForms 的 Form 自己吞掉非客户区
         按下，消息到不了默认处理，拖动循环 0ms 返回、窗口纹丝不动（补 WS_CAPTION、换
         WM_SYSCOMMAND·SC_MOUSEMOVE 都一样，实测过）。所以自己循环：按「光标 - 抓取偏移」
@@ -955,11 +955,11 @@ class StudioShell:
                 "root": root_s, "python": py_s}
 
     def start_setup(self, root: str, python: str) -> dict:
-        """引导页的「开始」：根目录补完了壳侧服务才装配得起来，起完再走保存并拉起。"""
+        """引导页的「开始」：根目录补完了桌面端服务才装配得起来，起完再走保存并拉起。"""
         self.launcher.update(root=str(root).strip(), python=str(python).strip())
         if not self.ensure_server():
             return {"ok": False, "error": self.launcher.get("error")
-                            or "壳侧服务起不来，原因见启动器日志"}
+                            or "桌面端服务起不来，原因见启动器日志"}
         return self.apply_launcher(root, python, self.port)
 
     def apply_launcher(self, root: str, python: str, port: int) -> dict:
@@ -1015,7 +1015,7 @@ class StudioShell:
 def purge_web_cache() -> None:
     """开窗口前清掉 WebView2 的 HTTP 缓存。
 
-    壳侧静态文件已经 no-store，但历史缓存里的旧插件 JS 会被直接端出来用（不发请求）：
+    桌面端静态文件已经 no-store，但历史缓存里的旧插件 JS 会被直接端出来用（不发请求）：
     改了 web/*.js 之后，旧模块和新拉到的模块拼进同一张 ES 模块图，一个链接错误
     （旧 gallery-utils.js 没有新导出）就让 studio-app.js 整份不执行 —— 视图不挂、
     离线横幅不出、顶栏胶囊永远 hidden，窗口只剩顶栏，连重新拉起 ComfyUI 的按钮都没有。"""
@@ -1113,8 +1113,8 @@ refresh();
 def guide_html(state: dict) -> str:
     """首次设置页：补齐 ComfyUI 根目录与 Python 解释器，自动找到的直接预填，缺哪个补哪个。
 
-    页面走 load_html + js_api，不碰壳侧服务 —— 根目录无效时 build_app 连 folder_paths 都 import 不了，
-    服务本来就起不来。校验与拉起都在壳里，页面只收路径和显示原因。"""
+    页面走 load_html + js_api，不碰桌面端服务 —— 根目录无效时 build_app 连 folder_paths 都 import 不了，
+    服务本来就起不来。校验与拉起都在桌面端里，页面只收路径和显示原因。"""
     return ('<!doctype html><meta charset=utf-8><title>新影工坊 · Neo Studio 首次设置</title>'
             '<style>'
             'html,body{height:100%;margin:0;background:#1e1e1e;color:#d7dae0;font:14px/1.7 system-ui}'
@@ -1150,7 +1150,7 @@ def guide_html(state: dict) -> str:
 
 
 def singleton():
-    """已有壳窗口返回 None：第二个实例直接退出，避免多窗口抢显存。
+    """已有桌面端窗口返回 None：第二个实例直接退出，避免多窗口抢显存。
 
     用命名互斥体，不占端口 —— 在 127.0.0.1:8189 挂一个监听，netstat 里看着就像第二路 ComfyUI，
     用户会读成「起了 8188 和 8189 两个端口，关窗只掉 8189」。句柄必须活到进程结束，锁才成立。
@@ -1182,7 +1182,7 @@ def ensure_clr() -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Neo Studio 桌面壳")
+    ap = argparse.ArgumentParser(description="Neo Studio 桌面端")
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--python", default="")
     ap.add_argument("--root", default="")
@@ -1208,8 +1208,8 @@ def main() -> int:
     # 根目录无效或解释器找不到：窗口先开在引导页补齐，选完再起服务、拉起 ComfyUI
     need_guide = root is None or not root_ok(root) or python is None
     plugin_dir = plugin_dir_for(root) if root is not None else PLUGIN_SOURCE_DIR
-    # flags 由壳侧服务与 js_api 共用：拉起 ComfyUI 的那一刻起，页面的版本快照就是「启动中」
-    # 插件缺失且自动安装失败：壳侧服务退回内置副本，素材库照旧离线可浏览
+    # flags 由桌面端服务与 js_api 共用：拉起 ComfyUI 的那一刻起，页面的版本快照就是「启动中」
+    # 插件缺失且自动安装失败：桌面端服务退回内置副本，素材库照旧离线可浏览
     serve_dir = plugin_dir if plugin_dir.is_dir() else PLUGIN_SOURCE_DIR
     flags = {"starting": False}
     launcher = {"root": str(root or ""), "python": str(python or ""), "port": port,
@@ -1217,7 +1217,7 @@ def main() -> int:
                 "portable": IS_FROZEN, "state": ST_OK, "error": "",
                 # 无边框是新默认：老配置没这一项也走无边框，设置里可关
                 "frameless": bool(cfg.get("frameless", True))}
-    launcher_api: dict = {}   # 壳侧路由延迟取壳的方法：服务先起，壳的方法随后补上
+    launcher_api: dict = {}   # 桌面端路由延迟取桌面端的方法：服务先起，桌面端的方法随后补上
     if need_guide:
         state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
                       if root is None or not root_ok(root)
@@ -1227,20 +1227,20 @@ def main() -> int:
     # build_app 要把根目录加进 sys.path 才能 import folder_paths：根目录无效时装配必崩。
     # 引导页补完根目录后由 ensure_server 重取，服务才装配得起来。
     boot = {"root": root, "serve_dir": serve_dir}
-    server = ShellServer(lambda: build_app(boot["root"], boot["serve_dir"], flags, launcher,
+    server = DesktopServer(lambda: build_app(boot["root"], boot["serve_dir"], flags, launcher,
                                            launcher_api, COMFY_LOG, data_root=STATE),
-                         port + SHELL_PORT_OFFSET)
+                         port + DESKTOP_PORT_OFFSET)
     offline_url = ""
 
     def start_server() -> bool:
-        """起壳侧只读服务；起不来（端口被占 / 装配报错）只回 False，原因只能靠这行日志。"""
+        """起桌面端只读服务；起不来（端口被占 / 装配报错）只回 False，原因只能靠这行日志。"""
         nonlocal offline_url
         if server.bound:
             return True
         if not server.start():
-            log_line(f"shell service failed: {server.error!r}")
+            log_line(f"desktop service failed: {server.error!r}")
             return False
-        log_line(f"shell service port={server.bound}")
+        log_line(f"desktop service port={server.bound}")
         offline_url = f"http://127.0.0.1:{server.bound}/neo-studio"
         return True
 
@@ -1248,7 +1248,7 @@ def main() -> int:
         """引导页的「开始」：根目录补完了才谈得上起服务，起完把离线页地址交回已开好的窗口。"""
         boot["root"] = Path(launcher["root"])
         plugin_dir = plugin_dir_for(boot["root"])
-        # 与正常启动同一套自检：插件没装进用户选的根目录就先装内置副本 —— 壳侧服务要
+        # 与正常启动同一套自检：插件没装进用户选的根目录就先装内置副本 —— 桌面端服务要
         # 从那儿 exec_module 挂 gallery 等模块，目录不存在时装配直接抛 FileNotFoundError
         state, msg = startup_state(boot["root"], Path(launcher["python"]), plugin_dir)
         launcher.update(state=state, error=msg)
@@ -1257,32 +1257,32 @@ def main() -> int:
         boot["serve_dir"] = plugin_dir if plugin_dir.is_dir() else PLUGIN_SOURCE_DIR
         if not start_server():
             return False
-        shell.shell_port = server.bound
-        shell.offline_url = offline_url
+        desktop.desktop_port = server.bound
+        desktop.offline_url = offline_url
         return True
 
-    shell = StudioShell(f"http://127.0.0.1:{port}/neo-studio", None, port, root or Path(""),
-                        str(python or ""), "", port + SHELL_PORT_OFFSET, flags, launcher)
-    shell.ensure_server = ensure_server
-    launcher_api.update(apply=shell.apply_launcher, install_plugin=shell.install_plugin,
-                        install_deps=shell.install_deps, pick_root=shell.pick_root,
-                        set_frameless=shell.set_frameless, state=shell.launcher_state)
+    desktop = StudioDesktop(f"http://127.0.0.1:{port}/neo-studio", None, port, root or Path(""),
+                        str(python or ""), "", port + DESKTOP_PORT_OFFSET, flags, launcher)
+    desktop.ensure_server = ensure_server
+    launcher_api.update(apply=desktop.apply_launcher, install_plugin=desktop.install_plugin,
+                        install_deps=desktop.install_deps, pick_root=desktop.pick_root,
+                        set_frameless=desktop.set_frameless, state=desktop.launcher_state)
     geo = load_geometry()
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600),
-             frameless=shell.frameless, easy_drag=False, js_api=shell)
+             frameless=desktop.frameless, easy_drag=False, js_api=desktop)
     # easy_drag 关掉：pywebview 的简易拖动是全局 mousedown，无边框时点任何卡片都会拖着窗口跑；
-    # 拖动改由顶栏空白处按下交回系统（StudioShell.win_start_drag）
-    # 窗口先出：起解释器查依赖、装配壳侧服务、拉起 ComfyUI 全在后台线程走完。
+    # 拖动改由顶栏空白处按下交回系统（StudioDesktop.win_start_drag）
+    # 窗口先出：起解释器查依赖、装配桌面端服务、拉起 ComfyUI 全在后台线程走完。
     # 引导页等用户补齐根目录与解释器，其余停在启动页，就绪后由后台线程整页跳过去。
     if need_guide:
         window = webview.create_window("新影工坊 · Neo Studio", html=guide_html(launcher), **kw)
     else:
         window = webview.create_window("新影工坊 · Neo Studio", html=splash_html(), **kw)
-    shell.loader = window.load_url
-    shell._window = window
+    desktop.loader = window.load_url
+    desktop._window = window
     # 原生窗口在 start() 里才建出来，建窗时拿不到 hwnd：无边框补边框挂在窗口显示之后
-    window.events.shown += shell.ensure_resizable_frame
+    window.events.shown += desktop.ensure_resizable_frame
     global _studio_window
     _studio_window = window
 
@@ -1291,24 +1291,24 @@ def main() -> int:
         def on_loaded() -> None:
             # 每次整页加载记一行：窗口停在离线页还是完整 Studio，事后看日志就知道
             log_line(f"page loaded {window.get_current_url()}")
-            # 主画布是整页刷新，返回入口只能由壳在每次页面加载后重新挂上
+            # 主画布是整页刷新，返回入口只能由桌面端在每次页面加载后重新挂上
             window.evaluate_js(BACK_JS)
         window.events.loaded += on_loaded
 
-    shell.rearm = arm_pill
+    desktop.rearm = arm_pill
     arm_pill()
-    # 关窗：存几何 → 挂「正在停止 ComfyUI」→ 带走壳自己拉起的 ComfyUI → 收壳侧服务 → 销毁窗口。
+    # 关窗：存几何 → 挂「正在停止 ComfyUI」→ 带走桌面端自己拉起的 ComfyUI → 收桌面端服务 → 销毁窗口。
     # 几何必须在 UI 线程上先读（窗口销毁后读属性会抛，收尾链断在半路、进程变孤儿）。
-    # 收尾不在 UI 线程做：FormClosing 里睡多久窗口就冻多久（壳侧服务正忙时 join 能吃满 5 秒），
+    # 收尾不在 UI 线程做：FormClosing 里睡多久窗口就冻多久（桌面端服务正忙时 join 能吃满 5 秒），
     # 用户读成卡死。evaluate_js 也是等 UI 线程回消息循环才执行的，在 closing 里调直接死锁 ——
     # 所以第一次 closing 只放行关闭，提示与收尾在后台线程走完，最后 destroy 触发第二次 closing 放行。
     closing = {"vetoed": False, "thread": None}
 
     def close_out() -> None:
         try:
-            if shell.comfy is not None:
+            if desktop.comfy is not None:
                 window.evaluate_js(CLOSING_JS)   # 窗口停在提示上，直到收尾走完
-            shell.comfy_close()
+            desktop.comfy_close()
             server.stop()
         finally:
             window.destroy()   # 收尾出异常也不能把窗口留成关不掉
@@ -1317,68 +1317,68 @@ def main() -> int:
         if closing["vetoed"]:
             return   # 后台收尾走完后的第二次 FormClosing：放行
         closing["vetoed"] = True
-        shell.closing = True
-        if not shell.fullscreen:
+        desktop.closing = True
+        if not desktop.fullscreen:
             save_geometry(window)   # 全屏时窗口是整屏矩形，存下来下次开机窗口会铺满屏幕
         closing["thread"] = threading.Thread(target=close_out, daemon=True)
         closing["thread"].start()
         return False
 
     window.events.closing += on_closing
-    window.events.closed += lambda: shell.comfy_close()
+    window.events.closed += lambda: desktop.comfy_close()
 
 
     def spawn_ready():
-        if wait_ready(shell.port, READY_TIMEOUT):
-            shell.starting = False   # 跳页前收掉「启动中」，新页面直接是完整 Studio
-            log_line(f"comfy ready jump {shell.url}")
-            shell._goto(shell.url)
+        if wait_ready(desktop.port, READY_TIMEOUT):
+            desktop.starting = False   # 跳页前收掉「启动中」，新页面直接是完整 Studio
+            log_line(f"comfy ready jump {desktop.url}")
+            desktop._goto(desktop.url)
         else:
-            shell.starting = False
+            desktop.starting = False
             log_line("comfy not ready")
             alert(f"ComfyUI {READY_TIMEOUT} 秒内未就绪，启动输出见 {COMFY_LOG}")
-            shell.comfy_close()
+            desktop.comfy_close()
             window.destroy()
 
     def boot_sequence() -> None:
-        """窗口先出之后在后台走完的启动序列：自检 → 壳侧服务 → 拉起 ComfyUI → 把窗口指过去。"""
+        """窗口先出之后在后台走完的启动序列：自检 → 桌面端服务 → 拉起 ComfyUI → 把窗口指过去。"""
         state, msg = startup_state(root, python, plugin_dir)
         launcher.update(state=state, error=msg)
         log_line(f"startup state={state} {msg}")
         start_server()
-        shell.shell_port = server.bound
-        shell.offline_url = offline_url
+        desktop.desktop_port = server.bound
+        desktop.offline_url = offline_url
         # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
-        # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，壳就在旁边
+        # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，桌面端就在旁边
         # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
-        if state == ST_OK and not port_busy(port) and not shell.closing:
-            shell.port = free_comfy_port(port, shell.shell_port)
-            shell.comfy = start_comfy(python, root, shell.port)
-            shell.pid = shell.comfy.pid
-            shell.url = f"http://127.0.0.1:{shell.port}/neo-studio"
-            shell.starting = True
-            log_line(f"comfy spawn pid={shell.pid} port={shell.port}")
-            if shell.closing:
+        if state == ST_OK and not port_busy(port) and not desktop.closing:
+            desktop.port = free_comfy_port(port, desktop.desktop_port)
+            desktop.comfy = start_comfy(python, root, desktop.port)
+            desktop.pid = desktop.comfy.pid
+            desktop.url = f"http://127.0.0.1:{desktop.port}/neo-studio"
+            desktop.starting = True
+            log_line(f"comfy spawn pid={desktop.pid} port={desktop.port}")
+            if desktop.closing:
                 # 关窗正好压在拉起这一刻：收尾线程已经收过一轮，刚起的那路立刻收掉，不留孤儿
-                shell.comfy_close()
+                desktop.comfy_close()
                 return
-        # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进壳的离线素材页，就绪后整页跳过去
-        ready = shell.comfy is None and probe(shell.port)
-        shell._goto(shell.url if ready else offline_url)
-        if shell.comfy is not None:
+        # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进桌面端的离线素材页，就绪后整页跳过去
+        ready = desktop.comfy is None and probe(desktop.port)
+        desktop._goto(desktop.url if ready else offline_url)
+        if desktop.comfy is not None:
             spawn_ready()
         elif not ready:
             # 附着的那路还在导入自定义节点：就绪后跳过去，别停在离线页干等
-            shell._jump_when_ready()
+            desktop._jump_when_ready()
 
     # 任务栏图标：pythonw 没有 AppUserModelID，任务栏按钮会与其他 pythonw 窗口合并成通用 Python 图标；
-    # 显式设 ID 后 start(icon=...) 才落到壳自己的图标（edgechromium 后端读 _state['icon']）
+    # 显式设 ID 后 start(icon=...) 才落到桌面端自己的图标（edgechromium 后端读 _state['icon']）
     icon = str(STUDIO_ICON) if STUDIO_ICON.exists() else None
     if icon:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
     # 配方导出 / 模型库的 blob 下载要放行；「⤒ 主画布编辑」与顶栏「🎬 新影工坊」这类 _blank 链接
-    # 留在壳窗口里：edgechromium 的 NewWindowRequested 走 load_url，交接与返回都不弹浏览器标签页
+    # 留在桌面端窗口里：edgechromium 的 NewWindowRequested 走 load_url，交接与返回都不弹浏览器标签页
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
@@ -1393,7 +1393,7 @@ def main() -> int:
     log_line("webview end")
     if closing["thread"] is not None:
         closing["thread"].join(10)   # 收尾线程还在跑就退进程 = 留孤儿
-    shell.comfy_close()   # 窗口循环结束就是要退进程：壳拉起的 ComfyUI 必须跟着走，别留孤儿
+    desktop.comfy_close()   # 窗口循环结束就是要退进程：桌面端拉起的 ComfyUI 必须跟着走，别留孤儿
     return 0
 
 

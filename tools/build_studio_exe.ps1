@@ -1,4 +1,4 @@
-# build_studio_exe.ps1 - 打包 Neo Studio 桌面壳
+# build_studio_exe.ps1 - 打包 Neo Studio 桌面端
 # 构建期依赖 pyinstaller（不进 requirements.txt）。产物按 -Mode 分两种分发形态：
 #   onefile（默认）tools/neo-studio.exe 单文件，双击即用，每次启动先解包到临时目录
 #   onedir         tools/neo-studio/Neo-Studio.exe 目录版，启动不解包，出窗口快得多
@@ -103,7 +103,7 @@ if ($Mode -in @('onefile', 'both')) {
 }
 
 if ($Mode -in @('onedir', 'both')) {
-    # 目录版整包搬到 tools/neo-studio/：壳的状态目录是 exe 旁的 data/，重打包不能把它带走
+    # 目录版整包搬到 tools/neo-studio/：桌面端的状态目录是 exe 旁的 data/，重打包不能把它带走
     $DirOut = Join-Path $RepoRoot "tools/neo-studio"
     $DirSrc = Join-Path $BuildDir "dist/Neo-Studio"
     if (Test-Path $DirOut) {

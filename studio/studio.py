@@ -229,7 +229,7 @@ async def director_cancel_route(request):
 async def studio_page_route(request):
     """Neo Studio 独立页面短路径（同 /extensions/comfyui-neo-studio/studio/index.html）。"""
     resp = web.FileResponse(Path(__file__).parent / "web" / "studio" / "index.html")
-    resp.headers["Cache-Control"] = "no-cache"   # 壳窗口会缓存整页，改过的顶栏要能立刻生效
+    resp.headers["Cache-Control"] = "no-cache"   # 桌面端窗口会缓存整页，改过的顶栏要能立刻生效
     return resp
 
 

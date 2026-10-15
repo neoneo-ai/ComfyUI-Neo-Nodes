@@ -1,5 +1,5 @@
 /**
- * Neo Studio 桌面壳 E2E（pywebview + WebView2）：壳拉起 ComfyUI，经 WebView2 远程调试端口连 CDP，
+ * Neo Studio 桌面端 E2E（pywebview + WebView2）：桌面端拉起 ComfyUI，经 WebView2 远程调试端口连 CDP，
  * 断言窗口里加载的是 Studio 页面（四视图渲染）与 localStorage 持久化。
  *
  * 会真的弹窗口，默认跳过；显式开启：NEO_STUDIO_APP=1 node tests/e2e/studio-app.e2e.mjs
@@ -24,10 +24,10 @@ const KERNEL_ROOT = join(dirname(REPO_ROOT), "ComfyUI");
 const PORT = Number(process.env.NEO_STUDIO_PORT || 8188);
 const CDP_PORT = Number(process.env.NEO_STUDIO_CDP || 9223);
 const PYTHON = process.env.NEO_STUDIO_PYTHON || "F:/comfy/Comfyui-WF-2026.8.8/python/python.exe";
-// 用打包产物跑（复现用户双击的实际环境）：设 NEO_STUDIO_EXE 后壳由 exe 起
+// 用打包产物跑（复现用户双击的实际环境）：设 NEO_STUDIO_EXE 后桌面端由 exe 起
 const EXE = process.env.NEO_STUDIO_EXE || "";
 
-function shell(port) {
+function desktop(port) {
     const args = ["--port", String(port), "--cdp", String(CDP_PORT)];
     // exe 可以放在任意目录，根目录推不出来（首跑弹目录选择器）：跑打包产物时显式给根目录与解释器
     if (EXE) args.push("--root", KERNEL_ROOT, "--python", PYTHON);
@@ -35,8 +35,8 @@ function shell(port) {
 }
 
 // 单实例锁由内核在进程退出后释放，exit 事件早于它；PyInstaller onefile 里 spawn 到的是引导器，
-// 真壳是它的子进程。必须先按引导器 PID 杀树（proc.kill() 会让该 PID 消失，之后 /T 就找不到树了）
-async function killShell(proc) {
+// 真桌面端是它的子进程。必须先按引导器 PID 杀树（proc.kill() 会让该 PID 消失，之后 /T 就找不到树了）
+async function killDesktop(proc) {
     const exited = new Promise((r) => proc.once("exit", r));
     await execFileAsync("taskkill", ["/F", "/T", "/PID", String(proc.pid)]).catch(() => {});
     await exited;
@@ -79,7 +79,7 @@ async function waitFor(fn, seconds) {
     return false;
 }
 
-// 上一个壳被杀后 WebView2 的 CDP 端点会残留一小段时间，连上就 socket hang up：重试到连上为止
+// 上一个桌面端被杀后 WebView2 的 CDP 端点会残留一小段时间，连上就 socket hang up：重试到连上为止
 async function connectCDP(seconds = 30) {
     const deadline = Date.now() + seconds * 1000;
     for (;;) {
@@ -92,7 +92,7 @@ async function connectCDP(seconds = 30) {
     }
 }
 
-// 冷启动时窗口先挂启动页（html=splash），就绪后壳才 load_url：连上 CDP 时页面常是 about:blank，重试到出现
+// 冷启动时窗口先挂启动页（html=splash），就绪后桌面端才 load_url：连上 CDP 时页面常是 about:blank，重试到出现
 async function findPage(browser, seconds = 40) {
     const deadline = Date.now() + seconds * 1000;
     for (;;) {
@@ -106,9 +106,9 @@ async function findPage(browser, seconds = 40) {
     }
 }
 
-test("桌面壳窗口加载 Neo Studio 四视图", async () => {
+test("桌面端窗口加载 Neo Studio 四视图", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
-        console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
+        console.log("跳过桌面端 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
     }
     if (!existsSync(APP_PY) || !existsSync(PYTHON)) {
@@ -118,7 +118,7 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
     // 几何持久化：预置存档尺寸，窗口应按存档打开
     mkdirSync(dirname(GEOMETRY), { recursive: true });
     writeFileSync(GEOMETRY, JSON.stringify({ width: 1200, height: 800, x: 120, y: 60 }));
-    const proc = shell(PORT);
+    const proc = desktop(PORT);
     try {
         assert.ok(await waitFor(cdpReady, 120), "WebView2 远程调试端口未就绪");
         const browser = await connectCDP();
@@ -129,7 +129,7 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
         assert.match(await page.evaluate(() => document.querySelector("#ns-version").textContent),
             /Neo Studio\s+\d+\.\d+\.\d+/, "窗口标题栏应显示插件版本");
 
-        // 顶栏 ComfyUI 状态位：壳里可见，只报状态；端口 / PID 收在提示里，启停在「设置 → 启动设置」
+        // 顶栏 ComfyUI 状态位：桌面端里可见，只报状态；端口 / PID 收在提示里，启停在「设置 → 启动设置」
         await page.waitForSelector("#ns-comfy-status:not([hidden])", { timeout: 20000 });
         await page.waitForFunction(() => /● 运行中/.test(document.querySelector("#ns-comfy-status").textContent),
             null, { timeout: 20000 });
@@ -141,7 +141,7 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
         assert.match(status.title, /PID \d+/, "提示应说明 PID");
         assert.ok(status.run, "运行中状态位应是绿色");
 
-        // 四视图渲染（与浏览器版 studio.e2e.mjs 同一组断言的桌面壳子集）
+        // 四视图渲染（与浏览器版 studio.e2e.mjs 同一组断言的桌面端子集）
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 15000 });
         assert.ok(await page.locator("#ns-view .neo-gallery-panel").count(), "素材视图应渲染");
 
@@ -154,7 +154,7 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-section", { timeout: 15000 });
 
-        // 日志 tab：桌面壳里同样能读到 ComfyUI 控制台
+        // 日志 tab：桌面端里同样能读到 ComfyUI 控制台
         await page.click(".ns-settings-tab[data-key='log']");
         await page.waitForFunction(() => document.querySelector(".ns-log").textContent.trim().length > 0,
             null, { timeout: 15000 });
@@ -165,14 +165,14 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
         assert.ok((await page.evaluate(() => document.querySelector(".ns-log").scrollTop)) < 40,
             "翻看时不应被轮询拉回底部");
 
-        // localStorage 落在 tmp/studio_profile（private_mode=False）：重开页面后仍在
-        await page.evaluate(() => localStorage.setItem("ns_e2e_shell", "ok"));
+        // localStorage 落在 data/studio_profile（private_mode=False）：重开页面后仍在
+        await page.evaluate(() => localStorage.setItem("ns_e2e_desktop", "ok"));
         // WebView2 下 page.reload 的导航事件不可靠（带 hash 的 URL 被判同文档导航，domcontentloaded 不触发）
         // 让页面自己 reload，再等首屏元素出现
         await page.evaluate(() => setTimeout(() => location.reload(), 0));
         await page.waitForTimeout(2000);
         await page.waitForSelector("#ns-version", { timeout: 20000 });
-        assert.equal(await page.evaluate(() => localStorage.getItem("ns_e2e_shell")), "ok",
+        assert.equal(await page.evaluate(() => localStorage.getItem("ns_e2e_desktop")), "ok",
             "窗口重开后 localStorage 应保留");
 
         // 按存档尺寸打开（configs/studio_window.json → create_window）
@@ -182,22 +182,22 @@ test("桌面壳窗口加载 Neo Studio 四视图", async () => {
 
         await browser.close();
     } finally {
-        await killShell(proc);
+        await killDesktop(proc);
     }
 });
 
-test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成类请求 409", async () => {
+test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、生成类请求 409", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
-        console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
+        console.log("跳过桌面端 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
     }
     const port = Number(process.env.NEO_STUDIO_STOP_PORT || 8190);
-    const offlinePort = port + 3;   // 壳侧只读服务：neo_studio_app 的 SHELL_PORT_OFFSET
+    const offlinePort = port + 3;   // 桌面端只读服务：app/studio_app.py 的 DESKTOP_PORT_OFFSET
     if (await probe(port)) {
         console.log(`跳过：${port} 上已有 ComfyUI，不杀用户的服务`);
         return;
     }
-    const proc = shell(port);
+    const proc = desktop(port);
     const errors = [];
     try {
         assert.ok(await waitFor(cdpReady, 30), "WebView2 远程调试端口未就绪");
@@ -206,7 +206,7 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
         const page = await findPage(browser);
         page.on("pageerror", (e) => errors.push(String(e)));
 
-        // 冷启动窗口直接进壳的离线素材页：ComfyUI 还在拉起，界面只出「启动中」，不出未运行提示
+        // 冷启动窗口直接进桌面端的离线素材页：ComfyUI 还在拉起，界面只出「启动中」，不出未运行提示
         await page.waitForSelector("#ns-offline", { timeout: 60000 });
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 60000 });
         const offline = await page.evaluate(async () => ({
@@ -215,7 +215,7 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
             start: getComputedStyle(document.querySelector("#ns-offline .ns-offline-start")).display,
             mem: getComputedStyle(document.getElementById("ns-mem")).display,
             toast: !!document.getElementById("ns-toast"),
-            // 必须 ComfyUI 运行时的写接口：壳不认，明确 409（/neo_gallery/delete 归壳服务，不在这里）
+            // 必须 ComfyUI 运行时的写接口：桌面端不认，明确 409（/neo_gallery/delete 归桌面端服务，不在这里）
             del: (await fetch("/neo_image_gen/generate", { method: "POST", body: "{}" })).status,
         }));
         assert.match(offline.banner, /ComfyUI 启动中/);
@@ -230,8 +230,8 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
             document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0), 60),
             "离线页应出缩略图");
 
-        // ComfyUI 就绪 → 壳整页跳到完整 Studio
-        assert.ok(await waitFor(() => probe(port), 180), "壳拉起的 ComfyUI 未就绪");
+        // ComfyUI 就绪 → 桌面端整页跳到完整 Studio
+        assert.ok(await waitFor(() => probe(port), 180), "桌面端拉起的 ComfyUI 未就绪");
         await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${port}/neo-studio`), { timeout: 60000 });
         assert.equal(await page.evaluate(() => !document.getElementById("ns-offline")), true,
             "完整 Studio 不该带离线横幅");
@@ -254,13 +254,13 @@ test("ComfyUI 停止时窗口退回壳的离线素材页：浏览可用、生成
 
         await browser.close();
     } finally {
-        await killShell(proc);
+        await killDesktop(proc);
     }
 });
 
-test("启动设置点一下停掉壳拉起的 ComfyUI，再点一下重新拉起后跳回完整 Studio", async () => {
+test("启动设置点一下停掉桌面端拉起的 ComfyUI，再点一下重新拉起后跳回完整 Studio", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
-        console.log("跳过桌面壳 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
+        console.log("跳过桌面端 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
     }
     // 冷启动专用端口：8188 上用户自己的 ComfyUI 绝不动
@@ -270,10 +270,10 @@ test("启动设置点一下停掉壳拉起的 ComfyUI，再点一下重新拉起
         console.log(`跳过：${port} 上已有 ComfyUI，不杀用户的服务`);
         return;
     }
-    const proc = shell(port);
+    const proc = desktop(port);
     try {
         assert.ok(await waitFor(() => probe(port), 120),
-            "壳拉起的 ComfyUI 未就绪（壳秒退多半是 singleton busy，看 tmp/studio_shell.log）");
+            "桌面端拉起的 ComfyUI 未就绪（桌面端秒退多半是 singleton busy，看 data/studio_desktop.log）");
         assert.ok(await waitFor(cdpReady, 30), "WebView2 远程调试端口未就绪");
         const browser = await connectCDP();
         assert.ok(browser, "连不上 WebView2 CDP");
@@ -289,7 +289,7 @@ test("启动设置点一下停掉壳拉起的 ComfyUI，再点一下重新拉起
         await page.click(".ns-settings-tab[data-key='launch']");
         await page.waitForSelector(".ns-kernel-stop:not([disabled])", { timeout: 30000 });
 
-        // 点一下真停：端口探活失败，壳把窗口拉回离线页，状态位回到已停止
+        // 点一下真停：端口探活失败，桌面端把窗口拉回离线页，状态位回到已停止
         await page.click(".ns-kernel-stop");
         const t0 = Date.now();
         let down = false;
@@ -300,11 +300,11 @@ test("启动设置点一下停掉壳拉起的 ComfyUI，再点一下重新拉起
             if (!up) { down = true; break; }
             await new Promise((r) => setTimeout(r, 5000));
         }
-        assert.ok(down, `壳拉起的 ComfyUI 应被停掉（端口仍被 PID ${await portOwner(port)} 占着）`);
+        assert.ok(down, `桌面端拉起的 ComfyUI 应被停掉（端口仍被 PID ${await portOwner(port)} 占着）`);
         await page.waitForFunction(() => /● 已停止/.test(document.querySelector("#ns-comfy-status")?.textContent || ""),
             null, { timeout: 30000 });
 
-        // 点一下重新拉起：显示启动中，就绪后壳整页跳回完整 Studio（新文档里标记 __e2e_reload 消失）
+        // 点一下重新拉起：显示启动中，就绪后桌面端整页跳回完整 Studio（新文档里标记 __e2e_reload 消失）
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-tab[data-key='launch']", { timeout: 30000 });
         await page.click(".ns-settings-tab[data-key='launch']");
@@ -322,6 +322,6 @@ test("启动设置点一下停掉壳拉起的 ComfyUI，再点一下重新拉起
 
         await browser.close();
     } finally {
-        await killShell(proc);
+        await killDesktop(proc);
     }
 });

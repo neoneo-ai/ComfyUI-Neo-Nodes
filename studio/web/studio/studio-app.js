@@ -1,4 +1,4 @@
-// Neo Studio 外壳：hash 路由（#/gallery #/director #/skills #/settings）+ 各视图挂载。
+// Neo Studio 外桌面端：hash 路由（#/gallery #/director #/skills #/settings）+ 各视图挂载。
 // 功能全部复用 web/ 现有模块（import-map 把 scripts/* 指到 shim）：
 // - 素材：NeoGallery（gallery.js 注册的扩展，侧栏 tab 的 render 直接挂进主区）
 // - 导演：配方面板（recipes.js）+ 整片生成面板（POST /neo_studio/director/generate）
@@ -416,7 +416,7 @@ async function buildDirector(el) {
 
 
 
-// ====== 技能页：统一技能管理（与顶栏「🗂 技能管理」同组件）直接挂满主区，无弹窗外壳 ======
+// ====== 技能页：统一技能管理（与顶栏「🗂 技能管理」同组件）直接挂满主区，无弹窗外桌面端 ======
 function buildSkills(el) {
     el.classList.add("ns-skills");
     // Studio 无画布：不显示 ✕ 与「从画布」导出按钮
@@ -424,8 +424,8 @@ function buildSkills(el) {
 }
 
 // ====== 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口 ======
-// 这份数据归壳：壳窗口里走 js_api，页面在壳端口还是 ComfyUI 端口都读得到（就绪后整页跳到 ComfyUI，
-// 同源就没有 /neo_studio/launcher 了）；浏览器标签页没有桥，只剩壳侧服务那条路由，读不到就收起 tab。
+// 这份数据归桌面端：桌面端窗口里走 js_api，页面在桌面端端口还是 ComfyUI 端口都读得到（就绪后整页跳到 ComfyUI，
+// 同源就没有 /neo_studio/launcher 了）；浏览器标签页没有桥，只剩桌面端服务那条路由，读不到就收起 tab。
 function createLauncherPanel() {
     const input = (ph) => $el("input", { className: "ns-launch-input", placeholder: ph, spellcheck: "false" });
     const rootIn = input("ComfyUI 根目录");
@@ -465,14 +465,14 @@ function createLauncherPanel() {
         framelessIn.checked = !!s.frameless;
     }
 
-    // 动作 → 壳 js_api 上的方法名：桥在就直接问壳，不在才走壳侧服务的 HTTP 路由
+    // 动作 → 桌面端 js_api 上的方法名：桥在就直接问桌面端，不在才走桌面端服务的 HTTP 路由
     const BRIDGE_FN = { apply: "apply_launcher", install_plugin: "install_plugin", install_deps: "install_deps", set_frameless: "set_frameless" };
     const bridge = () => (window.pywebview?.api?.launcher_state ? window.pywebview.api : null);
 
     async function refresh() {
-        const shell = bridge();
-        if (shell) {
-            render(await shell.launcher_state());
+        const desktop = bridge();
+        if (desktop) {
+            render(await desktop.launcher_state());
             return;
         }
         const resp = await api.fetchApi("/neo_studio/launcher");
@@ -528,7 +528,7 @@ function createLauncherPanel() {
         const booting = (userStarting || s.starting) && !s.ready;
         const running = s.running && !booting;
         kernelState.textContent = `ComfyUI ${booting ? "启动中…" : (s.running ? "运行中" : "已停止")}`
-            + ` · 端口 ${s.port} · ${s.mine ? "壳启动" : "外部启动"}`
+            + ` · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"}`
             + (s.pid ? ` · PID ${s.pid}` : "");
         kernelState.classList.toggle("ns-kernel-run", running);
         startBtn.textContent = booting ? "🚀 启动中…" : "▶ 启动内核";
@@ -618,7 +618,7 @@ function buildSettings(el) {
     showSection("llm");  // 默认 LLM 设置
     Promise.all([genForm.load(), videoForm.load(), llmForm.load()])
         .catch(e => console.error("[Neo Studio] settings load failed:", e));
-    // 桥由 pywebview 在导航完成后才注入、方法还要晚一步填：桥在长就等它长完，别把壳窗口判成浏览器
+    // 桥由 pywebview 在导航完成后才注入、方法还要晚一步填：桥在长就等它长完，别把桌面端窗口判成浏览器
     (async () => {
         for (let tries = 0; tries < 10; tries++) {
             try {
@@ -635,16 +635,16 @@ function buildSettings(el) {
 }
 
 // ====== 启动：版本信息 + 扩展初始化 + 路由 ======
-let offline = false;   // 页面跑在壳的服务上：文件类功能可用，生成类请求由壳回 409
-let starting = false;  // 壳已拉起 ComfyUI 还没就绪：这段时间只出「启动中」，其余离线提示一律收起
-let caps = {};         // 壳侧能力表（/neo_studio/version 下发）；ComfyUI 页里缺省即全可用
+let offline = false;   // 页面跑在桌面端的服务上：文件类功能可用，生成类请求由桌面端回 409
+let starting = false;  // 桌面端已拉起 ComfyUI 还没就绪：这段时间只出「启动中」，其余离线提示一律收起
+let caps = {};         // 桌面端能力表（/neo_studio/version 下发）；ComfyUI 页里缺省即全可用
 let versionInfo = { plugin: "", comfy: "", offline: false };   // 版本号只在设置「关于」里显示
 
 function can(feature) { return caps[feature] !== false; }
 
 // ComfyUI 内核状态：顶栏只显状态，启停在「设置 → 启动设置」顶部。
 // 一份 comfy_state 轮询下发给所有看它的人（顶栏状态位 + 启动设置的启停按钮）。
-let comfyState = null;      // 最近一次快照；浏览器标签页里没有壳的桥，永远是 null
+let comfyState = null;      // 最近一次快照；浏览器标签页里没有桌面端的桥，永远是 null
 let userStarting = false;   // 已点下启动内核，等端口就绪
 let pageReloaded = false;   // 就绪后的整页刷新只发一次
 const comfyViewers = new Set();
@@ -671,10 +671,10 @@ function toast(text) {
     toast._timer = setTimeout(() => el.classList.remove("show"), 4200);
 }
 
-// 前端错误上报壳日志（tmp/studio_shell.log）：白屏这类问题只有 DevTools 能看太晚。
+// 前端错误上报桌面端日志（data/studio_desktop.log）：白屏这类问题只有 DevTools 能看太晚。
 // pywebview 桥脚本注入晚于页面加载，报错正撞在这个空档 —— 没就绪就重试几轮，别把消息丢了；
-// 浏览器标签页里永远没有壳 api，重试完静默放弃。
-function shellLog(text) {
+// 浏览器标签页里永远没有桌面端 api，重试完静默放弃。
+function desktopLog(text) {
     let tries = 0;
     const send = () => {
         const api = window.pywebview?.api;
@@ -689,39 +689,39 @@ function shellLog(text) {
 
 // 内核启停：「启动设置」顶部的两枚按钮与生成入口共用；状态由 comfy_state 轮询下发
 function startKernel() {
-    const shell = window.pywebview?.api;
-    if (!shell?.comfy_start) {
+    const desktop = window.pywebview?.api;
+    if (!desktop?.comfy_start) {
         toast("请在 Neo Studio 窗口里启动 ComfyUI");
         return;
     }
     if (starting || userStarting) return;   // 启动中：不重复拉起
     userStarting = true;
-    shell.comfy_start().then(publishComfyState).catch(() => { userStarting = false; });
+    desktop.comfy_start().then(publishComfyState).catch(() => { userStarting = false; });
 }
 
 function stopKernel() {
-    const shell = window.pywebview?.api;
-    if (!shell?.comfy_stop) return;
-    shell.comfy_stop().then(publishComfyState).catch(() => {});
+    const desktop = window.pywebview?.api;
+    if (!desktop?.comfy_stop) return;
+    desktop.comfy_stop().then(publishComfyState).catch(() => {});
 }
 
 function startComfy() {
     if (starting) return;   // 启动中：不重复拉起，也不出提示
-    const inShell = !!window.pywebview?.api?.comfy_start;
+    const inDesktop = !!window.pywebview?.api?.comfy_start;
     startKernel();
-    if (inShell) toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
+    if (inDesktop) toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
 }
 
-// 生成类请求打到壳上必 409：统一提示并指向「设置 → 启动设置」，不给前端假成功
+// 生成类请求打到桌面端上必 409：统一提示并指向「设置 → 启动设置」，不给前端假成功
 window.addEventListener("neo-offline-request", () => {
-    if (starting) return;   // 启动中不提示：就绪后壳整页跳回完整 Studio
+    if (starting) return;   // 启动中不提示：就绪后桌面端整页跳回完整 Studio
     toast("该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」");
     document.getElementById("ns-comfy-status")?.classList.add("ns-comfy-hint");
 });
 
-// 运行类按钮 → 所需 ComfyUI 运行时能力：能力缺失时点它交给壳拉起 ComfyUI，不发假请求。
+// 运行类按钮 → 所需 ComfyUI 运行时能力：能力缺失时点它交给桌面端拉起 ComfyUI，不发假请求。
 // 编辑类不在表里（保存 / 生成分段 / 重写提示词 / 逐格描述 / 宫格拆分 / 技能编辑 / 设置 / LLM 配置）：
-// 那些接口只读写文件与 8080 服务，壳自己就能服务。
+// 那些接口只读写文件与 8080 服务，桌面端自己就能服务。
 const RUN_GATES = [
     [".neo-gallery-gm-btn", "image_gen", "生成素材"],
     [".ns-gen-run", "director", "生成整片"],
@@ -775,7 +775,7 @@ function initOfflineGate() {
 }
 
 // 离线横幅：启动中只说「启动中」，不提可离线编辑那套、也不给启动按钮。
-// 状态在 loadVersion 里就从壳的快照拿到了 —— js_api 注入晚于页面加载，冷启动不能等它，
+// 状态在 loadVersion 里就从桌面端的快照拿到了 —— js_api 注入晚于页面加载，冷启动不能等它，
 // 否则横幅会先闪「ComfyUI 未运行」再改口。
 function showOfflineBanner() {
     if (document.getElementById("ns-offline")) return;
@@ -787,10 +787,10 @@ function showOfflineBanner() {
         btn,
     ]);
     document.querySelector(".ns-header").after(bar);
-    renderShellState();
+    renderDesktopState();
 }
 
-function renderShellState() {
+function renderDesktopState() {
     const bar = document.getElementById("ns-offline");
     if (!bar) return;
     bar.style.display = "";
@@ -816,7 +816,7 @@ function setStarting(on) {
     if (starting === on) return;
     starting = on;
     if (offline) renderVersionInfo();
-    renderShellState();
+    renderDesktopState();
 }
 
 async function loadVersion() {
@@ -825,7 +825,7 @@ async function loadVersion() {
         const data = await r.json();
         if (data?.success) {
             offline = !!data.offline;
-            starting = !!data.starting;   // 壳已拉起 ComfyUI：页面第一份状态就是「启动中」
+            starting = !!data.starting;   // 桌面端已拉起 ComfyUI：页面第一份状态就是「启动中」
             caps = data.caps || {};
             versionInfo = { plugin: data.plugin_version || "", comfy: data.comfyui_version || "", offline };
             renderVersionInfo();
@@ -834,8 +834,8 @@ async function loadVersion() {
     } catch { /* ComfyUI 未就绪时保持空白 */ }
 }
 
-// ====== 无边框窗口：系统标题栏被壳摘掉后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己画 ======
-// 只有壳窗口有 pywebview 桥；浏览器标签页里桥不存在，控件整块不出现，顶栏照旧。
+// ====== 无边框窗口：系统标题栏被桌面端摘掉后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己画 ======
+// 只有桌面端窗口有 pywebview 桥；浏览器标签页里桥不存在，控件整块不出现，顶栏照旧。
 function initWindowChrome() {
     const btn = (id) => document.getElementById(id);
     const set = (id, ico, title) => {
@@ -856,12 +856,12 @@ function initWindowChrome() {
             btn("ns-win-max").addEventListener("click", () => bridge.win_maximize().then(render));
             btn("ns-win-fs").addEventListener("click", () => bridge.win_fullscreen().then(render));
             btn("ns-win-close").addEventListener("click", () => bridge.win_close());
-            // 顶栏空白处按下交给壳：壳在窗口线程上跟住光标搬窗口，JS 自己算位移只会抖
+            // 顶栏空白处按下交给桌面端：桌面端在窗口线程上跟住光标搬窗口，JS 自己算位移只会抖
             document.querySelector(".ns-header").addEventListener("mousedown", (e) => {
                 if (e.button !== 0) return;
                 if (e.target.closest("a,button,input,select,textarea")) return;
-                // 拖动期间鼠标捕获在壳窗口上，页面收不到 mouseup：拖动收尾时补一发，页面别停在按下态；
-                // 壳在拖动开始前可能顺手还原了最大化 / 退掉了全屏，图标按壳的状态重画一遍
+                // 拖动期间鼠标捕获在桌面端窗口上，页面收不到 mouseup：拖动收尾时补一发，页面别停在按下态；
+                // 桌面端在拖动开始前可能顺手还原了最大化 / 退掉了全屏，图标按桌面端的状态重画一遍
                 const up = () => document.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
                 Promise.resolve(bridge.win_start_drag()).finally(() => {
                     up();
@@ -945,16 +945,16 @@ function initMemMonitor() {
     }
 }
 
-// ====== 顶栏 ComfyUI 状态位（只有壳窗口里有：comfy_state 由壳的 js_api 提供） ======
+// ====== 顶栏 ComfyUI 状态位（只有桌面端窗口里有：comfy_state 由桌面端的 js_api 提供） ======
 // 只报状态，不带动作 —— 启停在「设置 → 启动设置」顶部；端口 / 谁启动 / 进程号收在提示里。
 function initComfyStatus() {
     const el = document.getElementById("ns-comfy-status");
     if (!el) return;
     const render = (s) => {
-        setStarting(!!s.starting);   // 壳拉起的启动中：横幅与生成按钮文案跟着收
+        setStarting(!!s.starting);   // 桌面端拉起的启动中：横幅与生成按钮文案跟着收
         if (userStarting || s.starting) {
             if (s.ready) {
-                if (offline) return;   // 离线页由壳整页跳回完整 Studio，自己刷新只会回到离线页
+                if (offline) return;   // 离线页由桌面端整页跳回完整 Studio，自己刷新只会回到离线页
                 if (!pageReloaded) { pageReloaded = true; location.reload(); }
                 return;
             }
@@ -964,7 +964,7 @@ function initComfyStatus() {
         setStatus(s.running ? "run" : null,
             s.running ? "运行中" : "已停止",
             s.running
-                ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "壳启动" : "外部启动"} · PID ${s.pid}`
+                ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"} · PID ${s.pid}`
                 : "ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」");
     };
 
@@ -1008,19 +1008,19 @@ function route() {
 
 // 仅 Studio 独立页启动：本文件也会作为扩展模块被主画布页加载（WEB_DIRECTORY），那里没有 #ns-view
 if (view) {
-    // 未捕获错误与启动失败一并写进壳日志：窗口白屏时日志里至少留下证据
-    window.addEventListener("error", (e) => shellLog(`ERROR ${e.message} @ ${e.filename}:${e.lineno}`));
-    window.addEventListener("unhandledrejection", (e) => shellLog(`REJECT ${e.reason?.stack || String(e.reason)}`));
+    // 未捕获错误与启动失败一并写进桌面端日志：窗口白屏时日志里至少留下证据
+    window.addEventListener("error", (e) => desktopLog(`ERROR ${e.message} @ ${e.filename}:${e.lineno}`));
+    window.addEventListener("unhandledrejection", (e) => desktopLog(`REJECT ${e.reason?.stack || String(e.reason)}`));
     window.addEventListener("hashchange", route);
     initExtensions().then(async () => {
         await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
         initOfflineGate();
         initMemMonitor();
-        route();   // 视图先挂上：壳侧附件（顶栏状态位）失败不能连坐，窗口不至于停在只出顶栏的空白页
+        route();   // 视图先挂上：桌面端附件（顶栏状态位）失败不能连坐，窗口不至于停在只出顶栏的空白页
         initComfyStatus();
         initWindowChrome();
     }).catch(e => {
         console.error("[Neo Studio] startup failed:", e);
-        shellLog(`STARTUP FAILED ${e?.stack || e}`);
+        desktopLog(`STARTUP FAILED ${e?.stack || e}`);
     });
 }

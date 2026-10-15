@@ -21,9 +21,9 @@ if __package__ not in (None, ""):
         "NeoGridSplit": "grid_split_node",
     }
 
-    # 壳侧模块：自带 RouteTableDef，handler 只依赖 folder_paths 与文件系统。
+    # 桌面端模块：自带 RouteTableDef，handler 只依赖 folder_paths 与文件系统。
     # 这里统一挂进 ComfyUI 路由表（server.add_routes 会一并生成 /api 前缀副本）；
-    # 桌面壳离线服务复用同一批 handler，不经过 PromptServer。
+    # 桌面端离线服务复用同一批 handler，不经过 PromptServer。
     from . import (gallery, gallery_lora, gallery_oss, bookmark, lora_tag, skill, llm, recipes,
                    video_gen, image_gen_files, model_hub, backyard)
 

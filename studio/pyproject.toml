@@ -40,7 +40,7 @@ laya = ["laya"]
 heif = ["pillow-heif"]
 # Backyard 页面的阿里云 OSS 上传
 oss = ["oss2"]
-# 桌面壳 neo_studio_app.py（pywebview + WebView2）；普通用户走浏览器，不进 requirements.txt
+# 桌面端 app/studio_app.py（pywebview + WebView2）；普通用户走浏览器，不进 requirements.txt
 desktop = ["pywebview"]
 
 [project.urls]

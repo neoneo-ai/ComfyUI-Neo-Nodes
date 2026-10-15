@@ -142,7 +142,7 @@ Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 
 
 设置与技能配置（`settings` / `models` / `input_images` / `skill_config` / `skill_workflow` /
 `save_workflow_skill` / `update_workflow_skill*` / `copy_skill_files` / `save_combo_skill`）在
-`image_gen_files.py`，只读文件目录，桌面壳离线可用；入队与任务跟踪（`generate` / `status` /
+`image_gen_files.py`，只读文件目录，桌面端离线可用；入队与任务跟踪（`generate` / `status` /
 `tasks` / `cancel` / `skill_dims`）在 `image_gen.py`，需要 ComfyUI 运行时。
 
 | 方法 | 路由 | 说明 |
@@ -207,7 +207,7 @@ Neo Studio 独立页面（`web/studio/index.html`）的后端。素材 / 生图 
 - `save_skill` 校验名称唯一性（与其它技能重名返回 409）；可选字段缺省沿用 frontmatter 既有值，显式假值移除该字段。
 - LLM 配置与标题提取（`get_models` / `native_models` / `set_model` / `remote_llm_config` /
   `llm_connection_test` / `llm_mode` / `extract_title` / `fetch_remote_models`）由 `llm.py` 的
-  `RouteTableDef` 注册：只读 `configs/` 与 8080 服务，不依赖 ComfyUI 运行时，桌面壳离线同样服务。
+  `RouteTableDef` 注册：只读 `configs/` 与 8080 服务，不依赖 ComfyUI 运行时，桌面端离线同样服务。
 
 LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)。
 
@@ -230,15 +230,16 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
 - ModelScope 组织列表与跨组织搜索走匿名 `dolphin/models` 接口；接口失败时按注册表逐仓库探测存在性（缓存 1 天）。
 - 源侧失败返回带 `code` 的错误：`need_token`（401）、`busy`（409）、`not_on_source`（404，附 `other_source` 建议换源）。
 
-## 壳侧服务 — `neo_studio_server.py`
+## 桌面端服务 — `app/studio_server.py`
 
-桌面壳（`neo_studio_app.py`）在 ComfyUI 端口 +3（默认 `8191`）起一个 aiohttp 服务，按 `neo_studio_caps.py`
+桌面端（`app/studio_app.py`）在 ComfyUI 端口 +3（默认 `8191`）起一个 aiohttp 服务，按 `app/studio_caps.py`
 的能力表挂载插件模块挂在各自 `RouteTableDef` 上的 handler。判定标准是「只做文件读写 / 本地检索 /
 远程下载 / 打 8080 LLM 服务」；需要执行队列、显存、节点定义的归 ComfyUI，表外接口一律 409。
+桌面端服务的启动序列、关窗回收与缓存约定见 [studio-desktop.md](studio-desktop.md)。
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/neo-studio` | Studio 页面（壳侧同一份 `web/studio/index.html`） |
+| GET | `/neo-studio` | Studio 页面（桌面端同一份 `web/studio/index.html`） |
 | GET | `/extensions/comfyui-neo-studio/*` | 前端静态文件 |
 | GET/POST | `/neo_gallery/*` `/neo_bookmark/*` | 素材库与收藏（含删除 / 上传 / 打标 / OSS 同步） |
 | GET/POST | `/rs_prompts/skills` `load_skill` `save_skill` `delete_skill` `*_*_skill_file` | 技能编辑 |
@@ -256,7 +257,7 @@ LLM 模式与配置见 [llm.md](llm.md)，技能设计见 [skills.md](skills.md)
   `/neo_studio/mem_stats`、`/neo_nodes/repair`。
 - 缩略图与 ComfyUI 共用 `gallery/thumbnails` 缓存；两边同时跑时同一张图可能各生成一次。
 - 目录取 `folder_paths` 的默认 `output` / `input` / `user`：外部用 `--output-directory` 启动 ComfyUI 时，
-  壳侧浏览仍指向默认目录。
+  桌面端浏览仍指向默认目录。
 
 ## MCP 服务 — `studio/mcp_server.py`
 

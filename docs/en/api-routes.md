@@ -154,7 +154,7 @@ Repair details: [workflow-repair.md](workflow-repair.md).
 
 Settings and skill configuration (`settings` / `models` / `input_images` / `skill_config` / `skill_workflow` /
 `save_workflow_skill` / `update_workflow_skill*` / `copy_skill_files` / `save_combo_skill`) live in
-`image_gen_files.py` and only read file directories, so they work with the desktop shell offline; enqueueing and
+`image_gen_files.py` and only read file directories, so they work with the Studio desktop offline; enqueueing and
 task tracking (`generate` / `status` / `tasks` / `cancel` / `skill_dims`) live in `image_gen.py` and need the
 ComfyUI runtime.
 
@@ -224,7 +224,7 @@ ComfyUI runtime.
 - The LLM configuration and title-extraction routes (`get_models` / `native_models` / `set_model` /
   `remote_llm_config` / `llm_connection_test` / `llm_mode` / `extract_title` / `fetch_remote_models`) are registered
   by `llm.py`'s `RouteTableDef`: they only read `configs/` and the 8080 service, do not depend on the ComfyUI
-  runtime, and serve identically in the desktop shell offline.
+  runtime, and serve identically in the Studio desktop offline.
 
 LLM modes and configuration: [llm.md](llm.md). Skill design: [skills.md](skills.md).
 
@@ -251,17 +251,17 @@ details in [model-hub.md](model-hub.md).
 - Source-side failures return errors with a `code`: `need_token` (401), `busy` (409), `not_on_source` (404, with an
   `other_source` suggestion to switch source).
 
-## Shell-side service — `neo_studio_server.py`
+## Desktop-side service — `app/studio_server.py`
 
-The desktop shell (`neo_studio_app.py`) starts an aiohttp service on the ComfyUI port +3 (default `8191`) and mounts
+The Studio desktop (`app/studio_app.py`) starts an aiohttp service on the ComfyUI port +3 (default `8191`) and mounts
 the handlers that plugin modules attach to their own `RouteTableDef`s, according to the capability table in
-`neo_studio_caps.py`. The criterion is "pure file read/write / local lookup / remote download / calls to the 8080 LLM
+`app/studio_caps.py`. The criterion is "pure file read/write / local lookup / remote download / calls to the 8080 LLM
 service"; anything needing the execution queue, VRAM, or node definitions belongs to ComfyUI, and every route outside
-the table answers 409.
+the table answers 409. Startup sequence, close teardown and cache conventions: [studio-desktop.md](studio-desktop.md).
 
 | Method | Route | Description |
 |------|------|------|
-| GET | `/neo-studio` | The Studio page (the same `web/studio/index.html` on the shell side) |
+| GET | `/neo-studio` | The Studio page (the same `web/studio/index.html` on the desktop side) |
 | GET | `/extensions/comfyui-neo-studio/*` | Frontend static files |
 | GET/POST | `/neo_gallery/*` `/neo_bookmark/*` | Asset library and bookmarks (including delete / upload / tagging / OSS sync) |
 | GET/POST | `/rs_prompts/skills` `load_skill` `save_skill` `delete_skill` `*_*_skill_file` | Skill editing |
@@ -280,4 +280,30 @@ the table answers 409.
 - Thumbnails share the `gallery/thumbnails` cache with ComfyUI; when both run at the same time the same image may be
   generated twice.
 - Directories come from `folder_paths`' default `output` / `input` / `user`: if ComfyUI is started externally with
-  `--output-directory`, shell-side browsing still points at the default directories.
+  `--output-directory`, desktop-side browsing still points at the default directories.
+
+## MCP service — `studio/mcp_server.py`
+
+Not an HTTP service: the MCP client starts it as a **stdio subprocess**, external agents call its tools over
+JSON-RPC, and the server does the work through the local ComfyUI HTTP endpoints (the address is forced to
+loopback). Tool list, parameters, and usage conventions: [mcp.md](mcp.md).
+
+| Tool | Routes it hits |
+|------|----------------|
+| `neo_status` | `GET /neo_studio/version` + `GET /queue` |
+| `list_skills` `generate_prompt` | `GET /rs_prompts/skills` + `POST /rs_prompts/stream_generate_prompt` (SSE) |
+| `list_models` `generate_image` `list_tasks` | `GET /neo_image_gen/models` + `POST /neo_image_gen/generate` + `GET /neo_image_gen/tasks` |
+| `task_status` | Image generation is matched by `task_id` inside `GET /neo_image_gen/tasks`; film / segment / assemble probe `GET /neo_studio/director/{id}`, `GET /neo_video_gen/run_segment/{id}`, `GET /neo_video_gen/assemble_segments/{id}` in order, with `GET /neo_video_gen/director_progress` attached for the film |
+| `cancel_task` | Probes the `…/cancel` route of those four tables in order |
+| `get_media` | `GET /view` (output is read through ComfyUI only; png images and mp4 films share one address, video bytes are not returned) |
+| `list_gallery` | `GET /neo_gallery/list` |
+| `list_recipes` `load_recipe` | `POST /rs_recipes/list` `POST /rs_recipes/load` |
+| `director_recipes` `director_spec` | `GET /neo_studio/version` + `GET /rs_recipes/director_spec` |
+| `director_plan` | `POST /rs_recipes/director_generate_segments` / `director_optimize_prompts` (SSE) / `director_modify_segment` (SSE) |
+| `director_save` `director_copy` | `POST /rs_recipes/save` `POST /rs_recipes/copy` (the only two write operations) |
+| `director_run` `segment_run` `assemble_run` | `POST /neo_studio/director/generate` `POST /neo_video_gen/run_segment` `POST /neo_video_gen/assemble_segments` |
+
+- Segment numbers are 1-based in the API; `segment` in `run_segment` and `use` in `assemble_segments` are
+  0-based, converted by the server.
+- Delete endpoints (`/rs_recipes/delete`, `/neo_gallery/delete`, …) are not exposed, and local file paths are
+  never touched directly.

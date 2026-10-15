@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Neo Studio 壳侧服务的能力边界：哪些插件接口不依赖 ComfyUI 运行时。
+"""Neo Studio 桌面端服务的能力边界：哪些插件接口不依赖 ComfyUI 运行时。
 
-壳进程里没有 PromptServer / nodes / comfy，只有 folder_paths 与文件系统。路由模块把 handler
-挂在各自的 RouteTableDef 上，壳按这张表挂载，表外的一律 409 offline，前端据此门控。
+桌面端进程里没有 PromptServer / nodes / comfy，只有 folder_paths 与文件系统。路由模块把 handler
+挂在各自的 RouteTableDef 上，桌面端按这张表挂载，表外的一律 409 offline，前端据此门控。
 判定标准是「这条路由只做文件读写 / 本地检索 / 远程下载」：需要执行队列、显存、节点定义的
 都归 ComfyUI，宁可少给离线能力，也不给前端假成功。
 """
@@ -153,9 +153,9 @@ _BACKYARD = {
     ("POST", "/neo_backyard/delete"),
 }
 
-SHELL_ROUTES = (_GALLERY | _BOOKMARK | _SKILL | _RECIPES | _SETTINGS | _LLM | _MODEL_HUB | _BACKYARD)
+DESKTOP_ROUTES = (_GALLERY | _BOOKMARK | _SKILL | _RECIPES | _SETTINGS | _LLM | _MODEL_HUB | _BACKYARD)
 
-# 前端门控用的功能开关：功能 → 代表路由。壳服务时该功能可用，否则按钮指向「启动 ComfyUI」。
+# 前端门控用的功能开关：功能 → 代表路由。桌面端服务时该功能可用，否则按钮指向「启动 ComfyUI」。
 FEATURE_ROUTES = {
     "image_gen": ("POST", "/neo_image_gen/generate"),
     "storyboard": ("POST", "/neo_video_gen/storyboard_generate"),
@@ -169,10 +169,10 @@ FEATURE_ROUTES = {
 
 
 def owner(method: str, path: str) -> str:
-    """shell = 壳自己就能服务；comfy = 必须 ComfyUI 在跑。"""
-    return "shell" if (method.upper(), path) in SHELL_ROUTES else "comfy"
+    """desktop = 桌面端自己就能服务；comfy = 必须 ComfyUI 在跑。"""
+    return "desktop" if (method.upper(), path) in DESKTOP_ROUTES else "comfy"
 
 
 def features() -> dict:
-    """当前进程（壳侧）的功能可用性表，随 /neo_studio/version 下发给前端。"""
-    return {name: owner(method, path) == "shell" for name, (method, path) in FEATURE_ROUTES.items()}
+    """当前进程（桌面端）的功能可用性表，随 /neo_studio/version 下发给前端。"""
+    return {name: owner(method, path) == "desktop" for name, (method, path) in FEATURE_ROUTES.items()}

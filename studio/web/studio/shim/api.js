@@ -4,7 +4,7 @@
 const clientId = crypto.randomUUID();
 const listeners = new Map();
 
-// 409 {offline:true} = 壳侧服务不认的接口（要 ComfyUI 执行队列）：广播给页面统一提示，
+// 409 {offline:true} = 桌面端服务不认的接口（要 ComfyUI 执行队列）：广播给页面统一提示，
 // 不让各模块各自处理一个裸 409。
 async function fetchApi(path, init) {
     const resp = await fetch(path, init);

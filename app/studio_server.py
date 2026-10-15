@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Neo Studio 壳侧服务：ComfyUI 没在跑时，窗口里也能用大部分 Studio 功能。
+"""Neo Studio 桌面端服务：ComfyUI 没在跑时，窗口里也能用大部分 Studio 功能。
 
-壳在 ComfyUI 端口之外开一个 HTTP 服务（ComfyUI 端口 + 3），复用插件模块挂在各自 RouteTableDef
-上的 handler 与 Studio 前端静态文件：窗口从打开那一刻就是可用的 Studio。哪些接口壳能服务、哪些
-必须 ComfyUI 在跑，由 neo_studio_caps 一张表说清楚 —— 壳按它挂载，表外的一律 409 offline，
-前端据此门控。ComfyUI 就绪后由壳整页跳到 ComfyUI 端口的完整 Studio。
+桌面端在 ComfyUI 端口之外开一个 HTTP 服务（ComfyUI 端口 + 3），复用插件模块挂在各自 RouteTableDef
+上的 handler 与 Studio 前端静态文件：窗口从打开那一刻就是可用的 Studio。哪些接口桌面端能服务、哪些
+必须 ComfyUI 在跑，由 app/studio_caps.py 一张表说清楚 —— 桌面端按它挂载，表外的一律 409 offline，
+前端据此门控。ComfyUI 就绪后由桌面端整页跳到 ComfyUI 端口的完整 Studio。
 """
 
 import importlib.util
@@ -19,31 +19,31 @@ from aiohttp import web
 import studio_caps as caps
 
 OFFLINE_ERROR = "ComfyUI 未运行"
-SHELL_PKG = "_neo_studio_shell"
+DESKTOP_PKG = "_neo_studio_desktop"
 DATA_ROOT_ENV = "NEO_STUDIO_DATA"   # 插件模块 import 期认的用户数据根
 
-# 壳进程加载的插件模块，按依赖顺序：handler 只依赖 folder_paths、文件系统与 8080 LLM 服务。
-SHELL_MODULES = ("util", "civitai", "bookmark", "gallery_lora", "gallery_oss", "gallery",
+# 桌面端进程加载的插件模块，按依赖顺序：handler 只依赖 folder_paths、文件系统与 8080 LLM 服务。
+DESKTOP_MODULES = ("util", "civitai", "bookmark", "gallery_lora", "gallery_oss", "gallery",
                  "minimax_h3", "skill", "laya_router", "prompt_lines", "llm", "lora_tag",
                  "recipes", "video_gen", "image_gen_files", "model_hub", "backyard")
-SHELL_ROUTE_MODULES = ("gallery_lora", "gallery_oss", "gallery", "bookmark", "lora_tag",
+DESKTOP_ROUTE_MODULES = ("gallery_lora", "gallery_oss", "gallery", "bookmark", "lora_tag",
                        "skill", "llm", "recipes", "video_gen", "image_gen_files", "model_hub",
                        "backyard")
 
 USERDATA_PATH = "/userdata/neo_gallery_data.json"
 
 
-def load_shell_modules(plugin_dir: Path) -> list:
-    """按目录加载插件的壳侧模块：目录名带连字符不能 import，与 tests 里同一套加载方式。
+def load_desktop_modules(plugin_dir: Path) -> list:
+    """按目录加载插件的桌面端模块：目录名带连字符不能 import，与 tests 里同一套加载方式。
 
-    这些模块只依赖 folder_paths 与自身，不碰 PromptServer —— 壳进程里没有 ComfyUI 运行时。
+    这些模块只依赖 folder_paths 与自身，不碰 PromptServer —— 桌面端进程里没有 ComfyUI 运行时。
     """
-    pkg = type(sys)(SHELL_PKG)
+    pkg = type(sys)(DESKTOP_PKG)
     pkg.__path__ = [str(plugin_dir)]
-    sys.modules[SHELL_PKG] = pkg
+    sys.modules[DESKTOP_PKG] = pkg
 
     def load(name):
-        mod_name = f"{SHELL_PKG}.{name}"
+        mod_name = f"{DESKTOP_PKG}.{name}"
         if mod_name in sys.modules:
             return sys.modules[mod_name]
         spec = importlib.util.spec_from_file_location(mod_name, plugin_dir / f"{name}.py")
@@ -53,9 +53,9 @@ def load_shell_modules(plugin_dir: Path) -> list:
         spec.loader.exec_module(mod)
         return mod
 
-    for name in SHELL_MODULES:
+    for name in DESKTOP_MODULES:
         load(name)
-    return [sys.modules[f"{SHELL_PKG}.{n}"].routes for n in SHELL_ROUTE_MODULES]
+    return [sys.modules[f"{DESKTOP_PKG}.{n}"].routes for n in DESKTOP_ROUTE_MODULES]
 
 
 
@@ -63,7 +63,7 @@ def load_shell_modules(plugin_dir: Path) -> list:
 async def no_store(request, handler):
     """插件静态文件一律 no-store，与 ComfyUI 的 /extensions 同一套。
 
-    不带 Cache-Control 时 WebView2 按启发式策略缓存 JS：壳窗口开着的时候改了 web/*.js，
+    不带 Cache-Control 时 WebView2 按启发式策略缓存 JS：桌面端窗口开着的时候改了 web/*.js，
     回离线页就会把缓存里的旧模块和新拉到的模块拼进同一张模块图 —— 一个 ES 模块链接错误
     （旧 gallery-utils.js 没有新导出）发生在 studio-app.js 执行之前，JS 自己捕获不到，
     整页只剩顶栏：视图不挂、离线横幅不出、顶栏胶囊永远 hidden，连重新拉起的按钮都没有。"""
@@ -123,9 +123,9 @@ async def view_file(request):
 
 
 async def studio_version(request):
-    """离线快照：页面靠它完成初始化，并拿到壳侧能力表决定哪些功能可用。
+    """离线快照：页面靠它完成初始化，并拿到桌面端能力表决定哪些功能可用。
     starting 一并下发：pywebview 的 js_api 注入晚于页面加载，冷启动那几秒前端只有这份快照
-    知道「壳已拉起、端口未就绪」，不会先闪「未运行」与「需要 ComfyUI」提示。"""
+    知道「桌面端已拉起、端口未就绪」，不会先闪「未运行」与「需要 ComfyUI」提示。"""
     return web.json_response({
         "success": True,
         "plugin": "Neo Studio",
@@ -138,8 +138,8 @@ async def studio_version(request):
     })
 
 
-async def shell_log(request):
-    """离线时的「设置 → 日志」：读壳拉起 ComfyUI 的完整输出（tmp/comfy_run.log）。"""
+async def desktop_log(request):
+    """离线时的「设置 → 日志」：读桌面端拉起 ComfyUI 的完整输出（data/comfy_run.log）。"""
     entries = []
     try:
         with open(request.app["comfy_log"], "r", encoding="utf-8", errors="replace") as f:
@@ -160,7 +160,7 @@ async def studio_ws(request):
 
 
 async def offline(request):
-    """壳服务不认的插件接口一律明确回「ComfyUI 未运行」，不让前端拿到裸 404。"""
+    """桌面端服务不认的插件接口一律明确回「ComfyUI 未运行」，不让前端拿到裸 404。"""
     if request.path.startswith(("/neo_", "/rs_", "/userdata/", "/api/")):
         return web.json_response({"success": False, "offline": True, "error": OFFLINE_ERROR}, status=409)
     return web.Response(status=404)
@@ -172,7 +172,7 @@ async def launcher_get(request):
 
 
 async def launcher_post(request):
-    """设置页的保存与重试都走这里：校验与进程操作都在壳里，壳侧只转达结果。"""
+    """设置页的保存与重试都走这里：校验与进程操作都在桌面端里，桌面端只转达结果。"""
     data = await request.json()
     action = data.get("action", "apply")
     fn = request.app["launcher_api"].get(action)
@@ -190,11 +190,11 @@ async def launcher_post(request):
 def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict = None,
               launcher_api: dict = None, comfy_log: Path = None,
               data_root: Path = None) -> web.Application:
-    """壳侧 app：Studio 页面 + 前端静态文件 + 能力清单里归壳的全部路由。
-    flags 是壳的启动中标记（与 StudioShell 共用同一份 dict），随版本快照下发给页面。
-    launcher / launcher_api 同样与 StudioShell 共用：设置页在壳侧读快照、发保存。
-    data_root 是壳的用户数据根：插件模块 import 期按它找 gallery / recipes / configs，
-    壳侧服务与壳拉起的内核因此读同一份数据。"""
+    """桌面端 app：Studio 页面 + 前端静态文件 + 能力清单里归桌面端的全部路由。
+    flags 是桌面端的启动中标记（与 StudioDesktop 共用同一份 dict），随版本快照下发给页面。
+    launcher / launcher_api 同样与 StudioDesktop 共用：设置页在桌面端读快照、发保存。
+    data_root 是桌面端的用户数据根：插件模块 import 期按它找 gallery / recipes / configs，
+    桌面端服务与桌面端拉起的内核因此读同一份数据。"""
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
@@ -204,15 +204,15 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict =
     routes = web.RouteTableDef()
     routes.get("/neo-studio")(studio_page)
     routes.static("/extensions/comfyui-neo-studio", str(plugin_dir / "web"))
-    for table in load_shell_modules(plugin_dir):
+    for table in load_desktop_modules(plugin_dir):
         for route in table:
-            if caps.owner(route.method, route.path) == "shell":
+            if caps.owner(route.method, route.path) == "desktop":
                 routes.route(route.method, route.path, **route.kwargs)(route.handler)
 
     routes.get(USERDATA_PATH)(userdata_get)
     routes.post(USERDATA_PATH)(userdata_post)
     routes.get("/neo_studio/version")(studio_version)
-    routes.get("/neo_studio/log")(shell_log)
+    routes.get("/neo_studio/log")(desktop_log)
     routes.get("/neo_studio/launcher")(launcher_get)
     routes.post("/neo_studio/launcher")(launcher_post)
     routes.get("/view")(view_file)
@@ -225,7 +225,7 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict =
     app["comfy_log"] = Path(comfy_log) if comfy_log else plugin_dir / "tmp" / "comfy_run.log"
     app["launcher"] = launcher if launcher is not None else {}
     app["launcher_api"] = launcher_api if launcher_api is not None else {}
-    app["plugin_version"] = sys.modules[f"{SHELL_PKG}.util"].plugin_version()
+    app["plugin_version"] = sys.modules[f"{DESKTOP_PKG}.util"].plugin_version()
 
     app.add_routes(routes)
     # catch-all 必须最后注册：aiohttp 按注册顺序匹配，静态与浏览路由先占位
@@ -234,8 +234,8 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict =
     return app
 
 
-class ShellServer:
-    """壳自己的只读 HTTP 服务：后台线程 + 独立事件循环，随窗口退出。"""
+class DesktopServer:
+    """桌面端自己的只读 HTTP 服务：后台线程 + 独立事件循环，随窗口退出。"""
 
     def __init__(self, app_factory, port: int):
         self.app_factory = app_factory
@@ -243,7 +243,7 @@ class ShellServer:
         self.loop = None
         self.thread = None
         self.bound = 0
-        self.error = None   # 装配失败的原因（缺依赖 / 目录不可读）：start() 只回 0，原因交给壳记日志
+        self.error = None   # 装配失败的原因（缺依赖 / 目录不可读）：start() 只回 0，原因交给桌面端记日志
         self.ready = threading.Event()
 
     def _run(self):
@@ -271,7 +271,7 @@ class ShellServer:
         await asyncio.Event().wait()   # 常驻：循环停在这里，直到 stop() 把它叫醒
 
     def start(self) -> int:
-        """起服务，返回实际监听端口；0 = 起不来（壳退回启动页）。"""
+        """起服务，返回实际监听端口；0 = 起不来（桌面端退回启动页）。"""
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.ready.wait(timeout=30)

@@ -8,8 +8,8 @@
 
 ## 前提
 
-1. ComfyUI 正在运行且已装 Neo Studio 插件（MCP 用的就是插件的 HTTP 接口，需 v1.2.0 及以上）。桌面壳启动的
-   ComfyUI 默认 `http://127.0.0.1:8188`（壳自身的服务在 8191，与 MCP 无关）。
+1. ComfyUI 正在运行且已装 Neo Studio 插件（MCP 用的就是插件的 HTTP 接口，需 v1.2.0 及以上）。桌面端启动的
+   ComfyUI 默认 `http://127.0.0.1:8188`（桌面端自身的服务在 8191，与 MCP 无关）。
 2. Python 3.10+，用跑 ComfyUI 的那个 Python 即可，无额外依赖。
 3. 用到 `generate_prompt` / `director_plan` 时，Neo Studio 设置里需已配置 LLM。
 
@@ -33,13 +33,15 @@ Claude Desktop（`%APPDATA%\Claude\claude_desktop_config.json`，改完重启 Cl
 {
   "mcpServers": {
     "neo-studio": {
-      "command": "F:\\comfy\\Comfyui\\python\\python.exe",
-      "args": ["F:\\comfy\\Comfyui\\Neo-Studio\\studio\\mcp_server.py"],
+      "command": "<ComfyUI 根目录>\\python\\python.exe",
+      "args": ["<Neo-Studio 根目录>\\studio\\mcp_server.py"],
       "env": { "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188" }
     }
   }
 }
 ```
+
+两个路径换成你机器上的实际路径；`tools\mcp_setup.ps1` 会按仓库当前位置打印填好的配置。
 
 Cursor（项目根 `.cursor/mcp.json`，内容同上）。已有其他 MCP 服务时只加 `neo-studio` 这一项，别覆盖整个文件。
 

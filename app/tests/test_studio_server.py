@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""壳侧服务（app/studio_server.py）离线单测：ComfyUI 不在跑时 Studio 的可用面与能力边界。
+"""桌面端服务（app/studio_server.py）离线单测：ComfyUI 不在跑时 Studio 的可用面与能力边界。
 
 服务复用内核插件模块挂在各自 RouteTableDef 上的 handler，进程里没有 PromptServer，
 所以这里直接起真服务打真接口：Studio 页面、静态文件、浏览、设置与配方写入都要出得来；
@@ -35,9 +35,9 @@ WRITE_FILES = ("image_gen.json", "bookmarks.json", "remote_llm_config.json")
 
 
 def _data_root() -> Path:
-    """壳侧加载的插件模块实际用的用户数据根：写入用例的落点与断言都以它为准。"""
-    return sys.modules[f"{ns.SHELL_PKG}.plugin_paths"].DATA_ROOT
-# 必须 ComfyUI 在跑才有的接口：壳一律 409 offline，前端据此门控
+    """桌面端加载的插件模块实际用的用户数据根：写入用例的落点与断言都以它为准。"""
+    return sys.modules[f"{ns.DESKTOP_PKG}.plugin_paths"].DATA_ROOT
+# 必须 ComfyUI 在跑才有的接口：桌面端一律 409 offline，前端据此门控
 COMFY_ONLY_ROUTES = (
     "/neo_image_gen/generate",
     "/neo_image_gen/tasks",
@@ -102,11 +102,11 @@ class _ServerCase(_RealFolderPaths):
     def setUpClass(cls):
         cls._pin_real()
         cls.app = ns.build_app(COMFY_ROOT, PLUGIN_DIR, {"starting": False})
-        cls.tmpdir = Path(tempfile.mkdtemp(prefix="neo_studio_server_"))
+        cls.tmpdir = Path(tempfile.mkdtemp(prefix="neo_studio_desktop_"))
         cls.app["userdata"] = cls.tmpdir / "neo_gallery_data.json"
         cls.app["comfy_log"] = cls.tmpdir / "comfy_run.log"
-        cls.app["comfy_log"].write_text("shell log line 1\nshell log line 2\n", encoding="utf-8")
-        cls.server = ns.ShellServer(lambda: cls.app, TEST_PORT)
+        cls.app["comfy_log"].write_text("desktop log line 1\ndesktop log line 2\n", encoding="utf-8")
+        cls.server = ns.DesktopServer(lambda: cls.app, TEST_PORT)
         cls.port = cls.server.start()
 
     @classmethod
@@ -142,11 +142,11 @@ class OfflineServiceTests(_ServerCase):
         self.assertFalse(data["caps"]["memory"])
         self.assertTrue(data["caps"]["grid_split"])
 
-    def test_version_reports_shell_starting_flag(self):
-        # 冷启动那几秒 js_api 还没注入，页面靠这份快照知道「壳已拉起、端口未就绪」
+    def test_version_reports_desktop_starting_flag(self):
+        # 冷启动那几秒 js_api 还没注入，页面靠这份快照知道「桌面端已拉起、端口未就绪」
         self.app["flags"]["starting"] = True
         data = json.loads(self.get("/neo_studio/version")[1])
-        self.assertTrue(data["starting"], "壳拉起 ComfyUI 期间快照要报启动中")
+        self.assertTrue(data["starting"], "桌面端拉起 ComfyUI 期间快照要报启动中")
         self.app["flags"]["starting"] = False
         data = json.loads(self.get("/neo_studio/version")[1])
         self.assertFalse(data["starting"], "没在拉起时不报启动中")
@@ -158,7 +158,7 @@ class OfflineServiceTests(_ServerCase):
             self.assertEqual(self.get(path)[0], 200, path)
 
     def test_extension_static_files_not_cacheable(self):
-        """壳窗口开着时改了插件 JS：缓存里的旧模块和新模块拼进同一张模块图，
+        """桌面端窗口开着时改了插件 JS：缓存里的旧模块和新模块拼进同一张模块图，
         一个 ES 模块链接错误就把整页打回只出顶栏（视图不挂、胶囊永远 hidden）。"""
         path = "/extensions/comfyui-neo-studio/gallery-utils.js"
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=30) as resp:
@@ -194,10 +194,10 @@ class OfflineServiceTests(_ServerCase):
         data = json.loads(body)
         self.assertEqual(status, 200)
         self.assertTrue(data["success"])
-        self.assertIn("shell log line 2", "".join(e["m"] for e in data["entries"]))
+        self.assertIn("desktop log line 2", "".join(e["m"] for e in data["entries"]))
 
     def test_launcher_snapshot_and_apply(self):
-        # 设置页读的是壳的启动快照；保存由壳校验并重启 ComfyUI
+        # 设置页读的是桌面端的启动快照；保存由桌面端校验并重启 ComfyUI
         self.app["launcher"].update(root="D:/ComfyUI", python="D:/python/python.exe", port=8188,
                                     plugin_dir="D:/ComfyUI/custom_nodes/comfyui-neo-studio",
                                     state_dir="D:/studio/data", portable=True, state="ok", error="")
@@ -244,7 +244,7 @@ class OfflineServiceTests(_ServerCase):
         self.assertEqual(status, 409)
 
     def test_llm_config_and_title_routes_served_offline(self):
-        """LLM 配置只读配置文件、标题提取只打 8080：与 ComfyUI 运行时无关，壳必须服务"""
+        """LLM 配置只读配置文件、标题提取只打 8080：与 ComfyUI 运行时无关，桌面端必须服务"""
         status, body = self.get("/rs_prompts/llm_mode")
         self.assertEqual(status, 200)
         self.assertIn("mode", json.loads(body))
@@ -260,7 +260,7 @@ class OfflineServiceTests(_ServerCase):
         self.assertTrue(json.loads(body)["title"])
 
 
-class ShellWriteTests(_ServerCase):
+class DesktopWriteTests(_ServerCase):
     """离线可编辑面：设置 / 收藏 / 配方 / 技能都是真实落盘写入。"""
 
     def setUp(self):
@@ -291,8 +291,8 @@ class ShellWriteTests(_ServerCase):
         self.assertTrue(any(i.get("name") == "ShellBookmark" for i in data["items"]))
 
     def test_recipe_save_and_list(self):
-        name = "shell-test-recipe"
-        status, body = self.post_json("/rs_recipes/save", {"name": name, "prompt": "shell offline"})
+        name = "desktop-test-recipe"
+        status, body = self.post_json("/rs_recipes/save", {"name": name, "prompt": "desktop offline"})
         self.assertEqual(status, 200, body)
         recipe_dir = _data_root() / "recipes" / "custom" / name
         self._extra_dirs.append(recipe_dir)
@@ -302,10 +302,10 @@ class ShellWriteTests(_ServerCase):
         self.assertTrue(any(r.get("name") == name for r in json.loads(body)))
 
     def test_skill_save_and_delete(self):
-        skill_id = "shell_test_skill"
+        skill_id = "desktop_test_skill"
         status, body = self.post_json("/rs_prompts/save_skill",
-                                      {"id": skill_id, "name": "Shell Test Skill",
-                                       "content": "# shell\n离线写入", "source": "custom"})
+                                      {"id": skill_id, "name": "Desktop Test Skill",
+                                       "content": "# desktop\n离线写入", "source": "custom"})
         self.assertEqual(status, 200, body)
         skill_dir = _data_root() / "skills" / "custom" / skill_id
         self._extra_dirs.append(skill_dir)
@@ -317,9 +317,9 @@ class ShellWriteTests(_ServerCase):
 
     def test_llm_config_round_trip_masks_key(self):
         """离线写 LLM 配置：密钥真实落盘，接口回读只给掩码"""
-        shell_llm = sys.modules[f"{ns.SHELL_PKG}.llm"]
+        desktop_llm = sys.modules[f"{ns.DESKTOP_PKG}.llm"]
         status, body = self.post_json("/rs_prompts/remote_llm_config",
-                                      {"provider": "openai", "api_key": "sk-shell-secret",
+                                      {"provider": "openai", "api_key": "sk-desktop-secret",
                                        "base_url": "https://api.openai.com/v1",
                                        "model": "gpt-4o-mini"})
         self.assertEqual(status, 200, body)
@@ -327,15 +327,15 @@ class ShellWriteTests(_ServerCase):
         status, body = self.get("/rs_prompts/remote_llm_config")
         slot = json.loads(body)["providers"]["openai"]
         self.assertEqual(status, 200)
-        self.assertEqual(slot["api_key"], shell_llm.API_KEY_MASK)
+        self.assertEqual(slot["api_key"], desktop_llm.API_KEY_MASK)
         self.assertEqual(slot["model"], "gpt-4o-mini")
         saved = json.loads((self.configs / "remote_llm_config.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved["providers"]["openai"]["api_key"], "sk-shell-secret")
+        self.assertEqual(saved["providers"]["openai"]["api_key"], "sk-desktop-secret")
 
 
 
-class ShellModuleTests(_RealFolderPaths):
-    """壳侧模块族必须自带路由表、不碰 ComfyUI 运行时，且与能力清单一致。"""
+class DesktopModuleTests(_RealFolderPaths):
+    """桌面端模块族必须自带路由表、不碰 ComfyUI 运行时，且与能力清单一致。"""
 
     @classmethod
     def setUpClass(cls):
@@ -345,20 +345,20 @@ class ShellModuleTests(_RealFolderPaths):
     def tearDownClass(cls):
         cls._restore_stubs()
 
-    def test_shell_modules_carry_own_route_tables(self):
+    def test_desktop_modules_carry_own_route_tables(self):
         from aiohttp import web
-        tables = ns.load_shell_modules(PLUGIN_DIR)
-        self.assertEqual(len(tables), len(ns.SHELL_ROUTE_MODULES))
+        tables = ns.load_desktop_modules(PLUGIN_DIR)
+        self.assertEqual(len(tables), len(ns.DESKTOP_ROUTE_MODULES))
         for table in tables:
             self.assertIsInstance(table, web.RouteTableDef)
             self.assertTrue(len(table) > 0)
 
-    def test_shell_modules_do_not_import_comfyui_runtime(self):
+    def test_desktop_modules_do_not_import_comfyui_runtime(self):
         """import 期不碰 ComfyUI 运行时：函数内的惰性导入有兜底，不算。"""
         forbidden = ("from server", "import server", "import nodes", "from nodes",
                      "from comfy", "import comfy", "import torch", "from torch",
                      "from comfy_api", "import pynvml")
-        for name in ns.SHELL_MODULES:
+        for name in ns.DESKTOP_MODULES:
             for line in (PLUGIN_DIR / f"{name}.py").read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
                 if line[:1].isspace() or stripped.startswith("#"):
@@ -368,18 +368,18 @@ class ShellModuleTests(_RealFolderPaths):
 
     def test_capability_manifest_matches_module_routes(self):
         registered = {(r.method, r.path)
-                      for table in ns.load_shell_modules(PLUGIN_DIR) for r in table}
-        self.assertFalse(caps.SHELL_ROUTES - registered,
-                         f"能力清单里的壳路由在模块里不存在: {sorted(caps.SHELL_ROUTES - registered)}")
+                      for table in ns.load_desktop_modules(PLUGIN_DIR) for r in table}
+        self.assertFalse(caps.DESKTOP_ROUTES - registered,
+                         f"能力清单里的桌面端路由在模块里不存在: {sorted(caps.DESKTOP_ROUTES - registered)}")
 
-    def test_shell_app_mounts_exactly_the_manifest(self):
+    def test_desktop_app_mounts_exactly_the_manifest(self):
         app = ns.build_app(COMFY_ROOT, PLUGIN_DIR)
-        shell_pages = {("GET", "/neo-studio"), ("GET", "/neo_studio/version"),
+        desktop_pages = {("GET", "/neo-studio"), ("GET", "/neo_studio/version"),
                        ("GET", "/neo_studio/log"), ("GET", "/neo_studio/launcher"),
                        ("POST", "/neo_studio/launcher")}
         mounted = {(r.method, r.resource.canonical) for r in app.router.routes()
                    if r.method != "HEAD" and r.resource.canonical.startswith(("/neo", "/rs_"))}
-        self.assertEqual(mounted - shell_pages, caps.SHELL_ROUTES)
+        self.assertEqual(mounted - desktop_pages, caps.DESKTOP_ROUTES)
 
 
 if __name__ == "__main__":

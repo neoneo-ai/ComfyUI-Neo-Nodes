@@ -1,5 +1,5 @@
-' Neo Studio desktop shell entry point (double-click, no console window).
-' pythonw has no console, so the shell reports through dialog boxes and data/studio_shell.log.
+' Neo Studio desktop entry point (double-click, no console window).
+' pythonw has no console, so the desktop reports through dialog boxes and data/studio_desktop.log.
 ' neo-studio-app.bat is the debug entry that keeps a visible console.
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")

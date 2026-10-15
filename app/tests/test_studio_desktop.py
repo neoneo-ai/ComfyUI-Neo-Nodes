@@ -1,4 +1,4 @@
-"""Neo Studio 桌面壳（app/studio_app.py）单测：路径解析、探活、几何持久化、单实例。"""
+"""Neo Studio 桌面端（app/studio_app.py）单测：路径解析、探活、几何持久化、单实例。"""
 
 import inspect
 import json
@@ -91,7 +91,7 @@ class ResolveTests(unittest.TestCase):
                 app.resolve_python(pathlib.Path(tmp) / "ComfyUI", "")
 
     def test_find_python_returns_none_when_missing(self):
-        """找不到解释器不是异常：引导页负责让用户选一个，壳不能因此退出进程。"""
+        """找不到解释器不是异常：引导页负责让用户选一个，桌面端不能因此退出进程。"""
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(app.find_python(pathlib.Path(tmp) / "ComfyUI", ""))
 
@@ -130,7 +130,7 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(popen.call_args[0][0],
                          [str(pathlib.Path("D:/python/python.exe")), str(pathlib.Path("D:/ComfyUI") / "main.py"),
                           "--port", "8188"])
-        # 壳用 pythonw 启动时没有控制台，子进程必须压制新建的控制台窗口
+        # 桌面端用 pythonw 启动时没有控制台，子进程必须压制新建的控制台窗口
         self.assertEqual(popen.call_args.kwargs["creationflags"], app.NO_WINDOW)
         # CREATE_NO_WINDOW 下不重定向就等于把启动报错丢进黑洞：必须落到 data/comfy_run.log
         self.assertIs(popen.call_args.kwargs["stderr"], app.subprocess.STDOUT)
@@ -143,8 +143,8 @@ class FreeComfyPortTests(unittest.TestCase):
         with patch.object(app, "port_busy", lambda port: False):
             self.assertEqual(app.free_comfy_port(8188, 8191), 8188)
 
-    def test_skips_busy_ports_and_the_shell_service(self):
-        # 8188 被残留进程占着、8189 是别人的服务、8191 是壳侧素材服务：只能用 8190
+    def test_skips_busy_ports_and_the_desktop_service(self):
+        # 8188 被残留进程占着、8189 是别人的服务、8191 是桌面端素材服务：只能用 8190
         busy = {8188, 8189, 8191}
         with patch.object(app, "port_busy", lambda port: port in busy):
             self.assertEqual(app.free_comfy_port(8188, 8191), 8190)
@@ -179,7 +179,7 @@ class PortOwnerTests(unittest.TestCase):
         self.assertEqual(calls, [("open", (0x0001, False, 4321)), ("term", 7), ("close", 7)])
 
     def test_kill_pid_without_handle_reports_failure(self):
-        # 没有权限时 OpenProcess 返回 0，必须报失败让壳日志说清原因
+        # 没有权限时 OpenProcess 返回 0，必须报失败让桌面端日志说清原因
         kernel32 = SimpleNamespace(OpenProcess=lambda *a: 0)
         with patch.object(app, "k32", kernel32):
             self.assertFalse(app.kill_pid(4321))
@@ -307,9 +307,9 @@ class GuidePageTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_guide_page_needs_no_shell_service(self):
+    def test_guide_page_needs_no_desktop_service(self):
         """根目录无效时 build_app 连 folder_paths 都 import 不了，服务本来就起不来：
-        引导页只能走 load_html + js_api，两个路径框、校验与开始全在壳里。"""
+        引导页只能走 load_html + js_api，两个路径框、校验与开始全在桌面端里。"""
         html = app.guide_html({"root": "D:/ComfyUI", "python": "D:/python/python.exe"})
         self.assertIn("id=root", html)
         self.assertIn("id=py", html)
@@ -319,39 +319,39 @@ class GuidePageTests(unittest.TestCase):
         self.assertIn("D:/python/python.exe", html)
 
     def test_check_setup_needs_main_py_and_a_real_file(self):
-        shell = app.StudioShell("", None, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("", None, 8188, pathlib.Path("root"))
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp) / "ComfyUI"
             root.mkdir()
             py = pathlib.Path(tmp) / "python.exe"
             py.write_text("")
-            self.assertFalse(shell.check_setup(str(root), str(py))["root_ok"])
+            self.assertFalse(desktop.check_setup(str(root), str(py))["root_ok"])
             (root / "main.py").write_text("")
-            res = shell.check_setup(str(root), str(py))
+            res = desktop.check_setup(str(root), str(py))
             self.assertTrue(res["root_ok"])
             self.assertTrue(res["python_ok"])
-            self.assertFalse(shell.check_setup("", "")["root_ok"])
-            self.assertFalse(shell.check_setup(str(root), str(root / "nope.exe"))["python_ok"])
+            self.assertFalse(desktop.check_setup("", "")["root_ok"])
+            self.assertFalse(desktop.check_setup(str(root), str(root / "nope.exe"))["python_ok"])
 
-    def test_start_setup_refuses_without_the_shell_service(self):
+    def test_start_setup_refuses_without_the_desktop_service(self):
         """根目录补完了服务才装配得起来：服务起不来就不谈拉起，原因回给引导页显示。"""
-        shell = app.StudioShell("", None, 8188, pathlib.Path("root"))
-        shell.ensure_server = lambda: False
+        desktop = app.StudioDesktop("", None, 8188, pathlib.Path("root"))
+        desktop.ensure_server = lambda: False
         apply = MagicMock()
-        with patch.object(shell, "apply_launcher", apply):
-            res = shell.start_setup("D:/ComfyUI", "D:/python/python.exe")
+        with patch.object(desktop, "apply_launcher", apply):
+            res = desktop.start_setup("D:/ComfyUI", "D:/python/python.exe")
         self.assertFalse(res["ok"])
-        self.assertIn("壳侧服务", res["error"])
+        self.assertIn("桌面端服务", res["error"])
         apply.assert_not_called()
-        self.assertEqual(shell.launcher["root"], "D:/ComfyUI")
+        self.assertEqual(desktop.launcher["root"], "D:/ComfyUI")
 
     def test_start_setup_applies_once_the_service_is_up(self):
-        shell = app.StudioShell("", None, 8188, pathlib.Path("root"))
-        shell.ensure_server = lambda: True
+        desktop = app.StudioDesktop("", None, 8188, pathlib.Path("root"))
+        desktop.ensure_server = lambda: True
         calls = []
-        with patch.object(shell, "apply_launcher",
+        with patch.object(desktop, "apply_launcher",
                           lambda root, python, port: calls.append((root, python, port)) or {"ok": True}):
-            self.assertEqual(shell.start_setup("D:/ComfyUI", "D:/python/python.exe"), {"ok": True})
+            self.assertEqual(desktop.start_setup("D:/ComfyUI", "D:/python/python.exe"), {"ok": True})
         self.assertEqual(calls, [("D:/ComfyUI", "D:/python/python.exe", 8188)])
 
 
@@ -371,20 +371,20 @@ class AlertTests(unittest.TestCase):
             self.assertIn("pywebview", alert.call_args[0][0])
 
 
-class ShellLogTests(unittest.TestCase):
+class DesktopLogTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self._log = app.SHELL_LOG
-        app.SHELL_LOG = pathlib.Path(self._tmp.name) / "studio_shell.log"
+        self._log = app.DESKTOP_LOG
+        app.DESKTOP_LOG = pathlib.Path(self._tmp.name) / "studio_desktop.log"
 
     def tearDown(self):
-        app.SHELL_LOG = self._log
+        app.DESKTOP_LOG = self._log
         self._tmp.cleanup()
 
     def test_log_line_appends(self):
         app.log_line("start port=8188")
         app.log_line("webview start")
-        text = app.SHELL_LOG.read_text(encoding="utf-8")
+        text = app.DESKTOP_LOG.read_text(encoding="utf-8")
         self.assertIn("start port=8188", text)
         self.assertIn("webview start", text)
         self.assertEqual(text.count("\n"), 1)
@@ -394,7 +394,7 @@ class ShellLogTests(unittest.TestCase):
         with patch.object(app, "LOG_MAX", 200):
             for i in range(20):
                 app.log_line(f"line-{i:02d} " + "x" * 20)
-        text = app.SHELL_LOG.read_text(encoding="utf-8")
+        text = app.DESKTOP_LOG.read_text(encoding="utf-8")
         self.assertLess(len(text), 300, "超上限要裁到尾部，不能无限增长")
         self.assertIn("line-19", text)
         self.assertNotIn("line-00", text)
@@ -403,13 +403,13 @@ class ShellLogTests(unittest.TestCase):
         # pywebview 把每个 js_api 调用丢进自己的线程：并发写（前端错误 + 跳转）不能丢行
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(app.log_line, [f"line-{i:02d}" for i in range(40)]))
-        text = app.SHELL_LOG.read_text(encoding="utf-8")
+        text = app.DESKTOP_LOG.read_text(encoding="utf-8")
         missing = [f"line-{i:02d}" for i in range(40) if f"line-{i:02d}" not in text]
         self.assertEqual(missing, [], "并发写日志丢了行")
 
-    def test_pywebview_logger_writes_to_shell_log(self):
+    def test_pywebview_logger_writes_to_desktop_log(self):
         # pythonw 的 sys.stderr 是 None，pywebview 的控制台 handler 会在写日志时抛异常打断窗口创建；
-        # 导入壳时先把 pywebview 日志接到壳日志文件，_setup_logger 就不会再挂控制台 handler
+        # 导入桌面端时先把 pywebview 日志接到桌面端日志文件，_setup_logger 就不会再挂控制台 handler
         handlers = logging.getLogger("pywebview").handlers
         self.assertTrue(any(isinstance(h, logging.FileHandler) for h in handlers))
 
@@ -532,9 +532,9 @@ def _fake_webview(create_window, start=None):
                            start=start or (lambda *a, **k: None))
 
 
-def _fake_shell_server(port=8191):
-    """壳侧只读服务的替身：main() 里只关心绑定端口与收尾，不起真服务。
-    bound 起先为 0，start() 之后才落定 —— 与真 ShellServer 一致，壳靠它判定服务是否已在。"""
+def _fake_desktop_server(port=8191):
+    """桌面端只读服务的替身：main() 里只关心绑定端口与收尾，不起真服务。
+    bound 起先为 0，start() 之后才落定 —— 与真 DesktopServer 一致，桌面端靠它判定服务是否已在。"""
     def make(factory, port_arg):
         srv = SimpleNamespace(bound=0, error=None, stop=lambda: None)
         srv.start = lambda: setattr(srv, "bound", port) or port
@@ -555,9 +555,9 @@ class _SyncThread(threading.Thread):
 
 
 
-class StudioShellTests(unittest.TestCase):
+class StudioDesktopTests(unittest.TestCase):
     def setUp(self):
-        # 假 pid 的关窗记录不能写进真实壳日志 data/studio_shell.log
+        # 假 pid 的关窗记录不能写进真实桌面端日志 data/studio_desktop.log
         patcher = patch.object(app, "log_line", lambda text: None)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -566,21 +566,21 @@ class StudioShellTests(unittest.TestCase):
         loader = MagicMock()
         rearm = MagicMock()
         logs = []
-        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", None, 8188, pathlib.Path("root"))
-        shell.loader = loader
-        shell.rearm = rearm
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188, pathlib.Path("root"))
+        desktop.loader = loader
+        desktop.rearm = rearm
         with patch.object(app, "log_line", lambda text: logs.append(text)):
-            shell.go_studio()
+            desktop.go_studio()
         loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
         rearm.assert_called_once_with()
         self.assertEqual(logs, ["goto http://127.0.0.1:8188/neo-studio"], "每次整页跳转记一行")
 
     def test_web_log_is_flattened_for_grep(self):
-        # 页面把未捕获错误折成一行报给壳：栈是多行的，落盘要一行一条才好 grep
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        # 页面把未捕获错误折成一行报给桌面端：栈是多行的，落盘要一行一条才好 grep
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
         logs = []
         with patch.object(app, "log_line", lambda text: logs.append(text)):
-            shell.log("STARTUP FAILED TypeError: x\n    at route (studio-app.js:1)\n    at y")
+            desktop.log("STARTUP FAILED TypeError: x\n    at route (studio-app.js:1)\n    at y")
         self.assertEqual(logs, ["[web] STARTUP FAILED TypeError: x at route (studio-app.js:1) at y"])
 
     def test_back_js_skips_studio_page(self):
@@ -591,71 +591,71 @@ class StudioShellTests(unittest.TestCase):
         self.assertIn("win_start_drag", app.BACK_JS)
 
     def test_window_state_gates_the_custom_titlebar(self):
-        # 无边框才出顶栏控件；最大化 / 全屏状态由壳自己记 —— pywebview 的 Window 属性是建窗初值
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})
-        shell._window = _fake_window()
-        self.assertEqual(shell.window_state(), {"frameless": False, "maximized": False, "fullscreen": False})
-        shell.frameless = True
-        shell.maximized = True
-        shell.fullscreen = True
-        self.assertEqual(shell.window_state(), {"frameless": True, "maximized": True, "fullscreen": True})
+        # 无边框才出顶栏控件；最大化 / 全屏状态由桌面端自己记 —— pywebview 的 Window 属性是建窗初值
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})
+        desktop._window = _fake_window()
+        self.assertEqual(desktop.window_state(), {"frameless": False, "maximized": False, "fullscreen": False})
+        desktop.frameless = True
+        desktop.maximized = True
+        desktop.fullscreen = True
+        self.assertEqual(desktop.window_state(), {"frameless": True, "maximized": True, "fullscreen": True})
 
     def test_win_maximize_fills_the_work_area_when_frameless(self):
         # 无边框下系统 maximize 给的是整屏矩形，任务栏会被盖住：铺工作区，再点一下还原回原矩形
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
-        shell._window = window
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        desktop._window = window
         pos = []
         u32 = SimpleNamespace(SetWindowPos=lambda h, a, x, y, w, ht, f: pos.append((x, y, w, ht)))
         with patch.object(app, "u32", u32), \
              patch.object(app, "work_area", lambda: (0, 0, 1920, 1040)), \
              patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)):
-            self.assertTrue(shell.win_maximize()["maximized"])
-            self.assertFalse(shell.win_maximize()["maximized"])
+            self.assertTrue(desktop.win_maximize()["maximized"])
+            self.assertFalse(desktop.win_maximize()["maximized"])
         self.assertEqual(pos, [(0, 0, 1920, 1040), (100, 100, 600, 400)])
         window.maximize.assert_not_called()
         window.restore.assert_not_called()
 
     def test_win_maximize_uses_the_window_when_framed(self):
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})
-        shell._window = window
-        self.assertTrue(shell.win_maximize()["maximized"])
-        self.assertFalse(shell.win_maximize()["maximized"])
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})
+        desktop._window = window
+        self.assertTrue(desktop.win_maximize()["maximized"])
+        self.assertFalse(desktop.win_maximize()["maximized"])
         window.maximize.assert_called_once()
         window.restore.assert_called_once()
 
     def test_ensure_resizable_frame_only_touches_borderless(self):
         # pywebview 的 frameless 把可拖拽边框一起摘掉：窗口显示后补回 WS_THICKFRAME，有框那一路不动
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
-        shell._window = window
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        desktop._window = window
         frames = []
         with patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)):
-            shell.ensure_resizable_frame()
-            shell.frameless = False
-            shell.ensure_resizable_frame()
+            desktop.ensure_resizable_frame()
+            desktop.frameless = False
+            desktop.ensure_resizable_frame()
         self.assertEqual(frames, [True])
 
     def test_win_fullscreen_reapplies_the_frame(self):
-        # pywebview 退出全屏把 FormBorderStyle 写回建窗时的值，标题栏跟着回来：按壳自己那份状态重贴
+        # pywebview 退出全屏把 FormBorderStyle 写回建窗时的值，标题栏跟着回来：按桌面端自己那份状态重贴
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
-        shell._window = window
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        desktop._window = window
         frames = []
         with patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)):
-            self.assertTrue(shell.win_fullscreen()["fullscreen"])
-            self.assertFalse(shell.win_fullscreen()["fullscreen"])
+            self.assertTrue(desktop.win_fullscreen()["fullscreen"])
+            self.assertFalse(desktop.win_fullscreen()["fullscreen"])
         self.assertEqual(frames, [True, True])
         self.assertEqual(window.toggle_fullscreen.call_count, 2)
 
     def test_win_start_drag_follows_the_cursor_until_the_button_lets_go(self):
-        # 拖动是壳自己在窗口线程上跟光标搬窗口：交回系统那条路（ReleaseCapture + WM_NCLBUTTONDOWN/
+        # 拖动是桌面端自己在窗口线程上跟光标搬窗口：交回系统那条路（ReleaseCapture + WM_NCLBUTTONDOWN/
         # HTCAPTION，或 WM_SYSCOMMAND·SC_MOUSEMOVE）在这套窗口上起不来，WinForms 的 Form 把非客户区
         # 按下自己吞了，拖动循环 0ms 返回、窗口纹丝不动
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
-        shell._window = window
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
+        desktop._window = window
         moves = []
         capture = []
         with patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: moves.append(a),
@@ -664,11 +664,11 @@ class StudioShellTests(unittest.TestCase):
              patch.object(app, "window_rect", lambda hwnd: (300, 200, 900, 700)), \
              patch.object(app, "_cursor_pos", iter([(320, 240), (330, 250), (380, 270)]).__next__), \
              patch.object(app, "_left_button_down", iter([True, True, False]).__next__):
-            shell.win_start_drag()
+            desktop.win_start_drag()
         # 抓取偏移 = 按下时光标在窗口里的位置（这里是 (20, 40)），拖动中恒不变
         self.assertEqual([(m[0], m[2], m[3]) for m in moves], [(1234, 310, 210), (1234, 360, 230)])
         self.assertEqual(moves[0][6], app.SWP_NOSIZE | app.SWP_NOZORDER | app.SWP_NOACTIVATE)
-        # 捕获要在窗口线程上拿、松手还回去：捕获不在壳窗口上的话 WebView2 继续吃鼠标消息，
+        # 捕获要在窗口线程上拿、松手还回去：捕获不在桌面端窗口上的话 WebView2 继续吃鼠标消息，
         # 松手也传不过来（这正是拖动循环 0ms 返回的那个坑）
         self.assertEqual(capture, [("take", 1234), ("drop",)])
 
@@ -676,25 +676,25 @@ class StudioShellTests(unittest.TestCase):
         # 全屏 / 最大化时按下标题栏先退出：整屏或整块工作区大小的窗口跟着光标跑，看着就像坏了；
         # pywebview 那边还会停在全屏态，再点全屏按钮窗口会跳回旧矩形
         for state in ("fullscreen", "maximized"):
-            shell = app.StudioShell("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
-            shell._window = _fake_window()
-            setattr(shell, state, True)
+            desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+            desktop._window = _fake_window()
+            setattr(desktop, state, True)
             stopped = []
-            with patch.object(app.StudioShell, "win_maximize", lambda self: stopped.append("maximized")), \
-                 patch.object(app.StudioShell, "win_fullscreen", lambda self: stopped.append("fullscreen")), \
+            with patch.object(app.StudioDesktop, "win_maximize", lambda self: stopped.append("maximized")), \
+                 patch.object(app.StudioDesktop, "win_fullscreen", lambda self: stopped.append("fullscreen")), \
                  patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: None,
                                                           SetCapture=lambda h: None,
                                                           ReleaseCapture=lambda: None)), \
                  patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)), \
                  patch.object(app, "_cursor_pos", lambda: (150, 130)), \
                  patch.object(app, "_left_button_down", lambda: False):
-                shell.win_start_drag()
+                desktop.win_start_drag()
             self.assertEqual(stopped, [state])
 
     def test_win_start_drag_runs_on_the_window_thread(self):
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
-        shell._window = window
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
+        desktop._window = window
         invoked = []
         window.native.Invoke = lambda fn: invoked.append(fn) or fn()
         with patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: None,
@@ -703,16 +703,16 @@ class StudioShellTests(unittest.TestCase):
              patch.object(app, "window_rect", lambda hwnd: (0, 0, 100, 100)), \
              patch.object(app, "_cursor_pos", lambda: (10, 10)), \
              patch.object(app, "_left_button_down", lambda: False):
-            shell.win_start_drag()
+            desktop.win_start_drag()
         self.assertEqual(len(invoked), 1, "拖动要在窗口所属线程上跑，SetCapture 只认所属线程")
 
     def test_js_api_never_exposes_the_window_object(self):
         # pywebview 注入 window.pywebview 前会递归遍历 js_api 的非下划线属性
         # （webview.util.inject_pywebview）。窗口对象露在明面上 = 把 WinForms 整张对象图喂进
         # 递归，pythonnet 每次属性访问都造新对象、id 去重失效， Bounds 链爆到递归上限，开机即卡死
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
-        shell._window = _fake_window()
-        exposed = [n for n in dir(shell) if not n.startswith("_")]
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
+        desktop._window = _fake_window()
+        exposed = [n for n in dir(desktop) if not n.startswith("_")]
         self.assertNotIn("window", exposed)
         for name in ("window_state", "win_minimize", "win_maximize", "win_fullscreen",
                      "win_close", "win_start_drag", "set_frameless"):
@@ -722,84 +722,84 @@ class StudioShellTests(unittest.TestCase):
         # 关闭走 window.destroy()：pywebview 6 的 Window 没有 close()，调它就是 AttributeError。
         # 关窗收尾链（存几何、带走 ComfyUI）由 closing 事件驱动
         window = _fake_window()
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
-        shell._window = window
-        shell.win_close()
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
+        desktop._window = window
+        desktop.win_close()
         window.destroy.assert_called_once()
 
-    def test_starting_flag_is_shared_with_shell_service(self):
-        # 启动中标记由壳侧服务与 js_api 共用同一份 dict：js_api 注入之前页面也能拿到
+    def test_starting_flag_is_shared_with_desktop_service(self):
+        # 启动中标记由桌面端服务与 js_api 共用同一份 dict：js_api 注入之前页面也能拿到
         flags = {"starting": False}
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
-        self.assertTrue(flags["starting"], "壳拉起 ComfyUI 即置启动中")
-        shell.starting = False
-        self.assertFalse(flags["starting"], "就绪后收掉启动中，壳侧服务同步")
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
+        self.assertTrue(flags["starting"], "桌面端拉起 ComfyUI 即置启动中")
+        desktop.starting = False
+        self.assertFalse(flags["starting"], "就绪后收掉启动中，桌面端服务同步")
 
-    def test_state_of_shell_spawned_comfy(self):
-        # 壳拉起的那路以端口探活为准：TerminateProcess 是异步的，进程还在收尾时端口已关
+    def test_state_of_desktop_spawned_comfy(self):
+        # 桌面端拉起的那路以端口探活为准：TerminateProcess 是异步的，进程还在收尾时端口已关
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False):
-            self.assertTrue(shell.comfy_state()["starting"], "壳拉起且端口未就绪要报启动中")
+            self.assertTrue(desktop.comfy_state()["starting"], "桌面端拉起且端口未就绪要报启动中")
         with patch.object(app, "probe", lambda port, timeout=3.0: True):
-            self.assertEqual(shell.comfy_state(),
+            self.assertEqual(desktop.comfy_state(),
                              {"port": 8188, "pid": 1234, "mine": True, "running": True,
                               "ready": True, "starting": False})
         with patch.object(app, "probe", lambda port, timeout=3.0: False):
-            self.assertFalse(shell.comfy_state()["running"])
-            self.assertFalse(shell.comfy_state()["starting"], "就绪过一次后不再报启动中")
+            self.assertFalse(desktop.comfy_state()["running"])
+            self.assertFalse(desktop.comfy_state()["starting"], "就绪过一次后不再报启动中")
 
     def test_state_of_external_comfy_by_port(self):
         # 外部启动的 ComfyUI 没有 Popen 句柄：按端口找 PID，缓存后只用 OpenProcess 复查
         runs = []
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
         with patch.object(app, "port_owner", lambda port: runs.append(port) or 4321), \
              patch.object(app, "pid_alive", lambda pid: True), \
              patch.object(app, "probe", lambda port, timeout=3.0: True):
             state = {"port": 8188, "pid": 4321, "mine": False, "running": True, "ready": True,
                      "starting": False}
-            self.assertEqual(shell.comfy_state(), state)
-            self.assertEqual(shell.comfy_state(), state)
+            self.assertEqual(desktop.comfy_state(), state)
+            self.assertEqual(desktop.comfy_state(), state)
         self.assertEqual(runs, [8188], "缓存的 PID 还活着时不该重跑 netstat")
 
     def test_state_when_nothing_listens(self):
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
         with patch.object(app, "port_owner", lambda port: 0), \
              patch.object(app, "probe", lambda port, timeout=3.0: False):
-            self.assertFalse(shell.comfy_state()["running"])
+            self.assertFalse(desktop.comfy_state()["running"])
 
-    def test_stop_terminates_shell_comfy(self):
+    def test_stop_terminates_desktop_comfy(self):
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 0):
-            shell.comfy_stop()
+            desktop.comfy_stop()
         comfy.terminate.assert_called_once()
 
     def test_stop_kills_port_owner_that_is_not_the_popen(self):
-        # 监听者未必是壳的 Popen：terminate 后按端口反复杀到没人监听
+        # 监听者未必是桌面端的 Popen：terminate 后按端口反复杀到没人监听
         kills, owners = [], iter([4321, 0])
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: next(owners)), \
              patch.object(app, "pid_alive", lambda pid: True), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True):
-            shell.comfy_stop()
+            desktop.comfy_stop()
         comfy.terminate.assert_called_once()
         self.assertEqual(kills, [4321])
 
     def test_stop_reports_kill_without_permission(self):
         # OpenProcess 拿不到句柄（权限不足）：报失败并停下，不无限循环杀同一个 PID
         kills, owners, logs = [], iter([4321, 4321, 4321]), []
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "port_owner", lambda port: next(owners)), \
              patch.object(app, "pid_alive", lambda pid: True), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or False), \
              patch.object(app, "log_line", lambda text: logs.append(text)):
-            shell.comfy_stop()
+            desktop.comfy_stop()
         self.assertEqual(kills, [4321], "杀不动就不该反复重试")
         self.assertIn("权限", logs[0])
 
@@ -807,26 +807,26 @@ class StudioShellTests(unittest.TestCase):
         # terminate 后 netstat 可能还列着正在收尾的进程：它已死，不该报「没有权限」
         kills, logs = [], []
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
              patch.object(app, "log_line", lambda text: logs.append(text)):
-            shell.comfy_stop()
+            desktop.comfy_stop()
         self.assertEqual(kills, [], "收尾中的进程不该再去杀")
         self.assertNotIn("权限", "".join(logs))
 
-    def test_close_kills_only_the_shell_spawned_process(self):
+    def test_close_kills_only_the_desktop_spawned_process(self):
         # 关窗只认自己那份 PID：不扫端口，扫监听者会在关窗路上误杀抢端口的残留进程
         touched, flags = [], {"starting": True}
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"), "", "", 0, flags)
         with patch.object(app, "port_owner", lambda port: touched.append(port) or 4321), \
              patch.object(app, "kill_pid", lambda pid: touched.append(pid) or True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(app, "log_line", lambda text: None):
-            shell.comfy_close()
+            desktop.comfy_close()
         comfy.terminate.assert_called_once()
         self.assertEqual(touched, [], "关窗不该按端口扫进程")
         self.assertFalse(flags["starting"], "关窗收掉启动中")
@@ -837,11 +837,11 @@ class StudioShellTests(unittest.TestCase):
         kills = []
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(),
                                 wait=MagicMock(side_effect=subprocess.TimeoutExpired("comfy", 3)))
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "pid_alive", lambda pid: True), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
              patch.object(app, "log_line", lambda text: None):
-            shell.comfy_close()
+            desktop.comfy_close()
         self.assertEqual(kills, [1234])
 
     def test_close_reaps_the_child_it_terminated(self):
@@ -849,11 +849,11 @@ class StudioShellTests(unittest.TestCase):
         # pid_alive 永远报「还活着」—— 关窗固定睡满等待上限（用户读成卡死），兜底强杀也必然失败
         logs, kills = [], []
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
              patch.object(app, "log_line", lambda text: logs.append(text)):
-            shell.comfy_close()
+            desktop.comfy_close()
         comfy.wait.assert_called_once()
         self.assertEqual(kills, [], "回收到位就不需要兜底强杀")
         self.assertNotIn("kill", "".join(logs), "不该再报那行误导的「close kill」")
@@ -863,53 +863,53 @@ class StudioShellTests(unittest.TestCase):
         # 停止路径那行「没有权限终止该进程」就是这么来的
         kills, logs = [], []
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 0), \
              patch.object(app, "kill_pid", lambda pid: kills.append(pid) or True), \
              patch.object(app, "log_line", lambda text: logs.append(text)):
-            shell.comfy_stop()
+            desktop.comfy_stop()
         comfy.wait.assert_called_once()
         self.assertNotIn("权限", "".join(logs))
 
     def test_close_is_idempotent(self):
         # closing、closed、退出兜底三处都会调它：只带走一次
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         with patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(app, "log_line", lambda text: None):
-            shell.comfy_close()
-            shell.comfy_close()
+            desktop.comfy_close()
+            desktop.comfy_close()
         comfy.terminate.assert_called_once()
 
     def test_close_leaves_external_comfy_alone(self):
-        # 用户自己启动的 ComfyUI 没有壳的句柄：关窗完全不动，避免误杀
+        # 用户自己启动的 ComfyUI 没有桌面端的句柄：关窗完全不动，避免误杀
         touched = []
-        shell = app.StudioShell("u", None, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
         with patch.object(app, "port_owner", lambda port: touched.append(port) or 4321), \
              patch.object(app, "kill_pid", lambda pid: touched.append(pid) or True), \
              patch.object(app, "log_line", lambda text: None):
-            shell.comfy_close()
+            desktop.comfy_close()
         self.assertEqual(touched, [])
 
     def test_start_respawns_after_stop(self):
         comfy = SimpleNamespace(pid=1234, poll=lambda: 1, terminate=MagicMock())
-        shell = app.StudioShell("u", comfy, 8188, pathlib.Path("root"))
+        desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
-             patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
+             patch.object(app, "free_comfy_port", lambda port, desktop_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "log_line", lambda text: None):
-            state = shell.comfy_start()
-        self.assertIs(shell.comfy, spawned)
+            state = desktop.comfy_start()
+        self.assertIs(desktop.comfy, spawned)
         self.assertEqual((state["pid"], state["running"], state["ready"]), (9999, False, False))
 
     def test_start_attaches_when_port_busy(self):
-        # 端口上已有一路 ComfyUI（插件没加载时探测会失败，壳别上当）：只附着，不在 8189 拉第二路
-        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", None, 8188, pathlib.Path("root"))
+        # 端口上已有一路 ComfyUI（插件没加载时探测会失败，桌面端别上当）：只附着，不在 8189 拉第二路
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188, pathlib.Path("root"))
         spawned = []
         logs = []
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
@@ -922,48 +922,48 @@ class StudioShellTests(unittest.TestCase):
              patch.object(app, "pid_alive", lambda pid: True), \
              patch.object(app.threading, "Thread", no_thread), \
              patch.object(app, "log_line", lambda text: logs.append(text)):
-            state = shell.comfy_start()
+            state = desktop.comfy_start()
         self.assertEqual(spawned, [], "端口已有人监听就不许拉第二路")
-        self.assertIsNone(shell.comfy, "附着：壳没有句柄，关窗谁都不碰")
+        self.assertIsNone(desktop.comfy, "附着：桌面端没有句柄，关窗谁都不碰")
         self.assertEqual(state["pid"], 4321, "状态报端口上那路外部 ComfyUI")
         self.assertIn("comfy attach port=8188", logs)
 
     def test_stop_pulls_window_back_to_offline_gallery(self):
         loader = MagicMock()
-        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", None, 8188,
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188,
                                 pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio")
-        shell.loader = loader
-        shell.rearm = MagicMock()
+        desktop.loader = loader
+        desktop.rearm = MagicMock()
         with patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "port_owner", lambda port: 0), \
              patch.object(app, "log_line", lambda text: None):
-            state = shell.comfy_stop()
-        # ComfyUI 停了，页面是它的：窗口退回壳的只读素材页，不留死页面
+            state = desktop.comfy_stop()
+        # ComfyUI 停了，页面是它的：窗口退回桌面端的只读素材页，不留死页面
         self.assertFalse(state["ready"])
         loader.assert_called_once_with("http://127.0.0.1:8191/neo-studio")
-        shell.rearm.assert_called_once_with()
+        desktop.rearm.assert_called_once_with()
 
     def test_start_jumps_to_full_studio_when_ready(self):
         comfy = SimpleNamespace(pid=1, poll=lambda: 0, terminate=MagicMock())
-        shell = app.StudioShell("http://127.0.0.1:8188/neo-studio", comfy, 8188,
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", comfy, 8188,
                                 pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio")
-        shell.loader = MagicMock()
-        shell.rearm = MagicMock()
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
         with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
-             patch.object(app, "free_comfy_port", lambda port, shell_port: port), \
+             patch.object(app, "free_comfy_port", lambda port, desktop_port: port), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "log_line", lambda text: None), \
              patch.object(app.threading, "Thread", no_thread):
-            shell.comfy_start()
+            desktop.comfy_start()
         with patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "log_line", lambda text: None):
-            shell._jump_when_ready()
-        loader = shell.loader
+            desktop._jump_when_ready()
+        loader = desktop.loader
         loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
 
 
@@ -977,7 +977,7 @@ class StudioShellTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "port_busy", lambda port: True), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1006,10 +1006,10 @@ class StudioShellTests(unittest.TestCase):
 class MainWindowTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self._log = app.SHELL_LOG
+        self._log = app.DESKTOP_LOG
         self._geo = app.GEOMETRY_FILE
         # 关窗会落几何与启动日志：测试里全指到临时目录，别写进真实的 data
-        app.SHELL_LOG = pathlib.Path(self._tmp.name) / "studio_shell.log"
+        app.DESKTOP_LOG = pathlib.Path(self._tmp.name) / "studio_desktop.log"
         app.GEOMETRY_FILE = pathlib.Path(self._tmp.name) / "studio_window.json"
         self.port_busy = False   # 默认端口空闲 = 冷启动；热启动的测试自己置 True
         patcher = patch.object(app, "port_busy", lambda port: self.port_busy)
@@ -1020,7 +1020,7 @@ class MainWindowTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def tearDown(self):
-        app.SHELL_LOG = self._log
+        app.DESKTOP_LOG = self._log
         app.GEOMETRY_FILE = self._geo
         self._tmp.cleanup()
 
@@ -1032,35 +1032,35 @@ class MainWindowTests(unittest.TestCase):
         start = lambda *a, **k: a[0] and a[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "port_owner", lambda port: touched.append(port) or 4321), \
              patch.object(app, "kill_pid", lambda pid: touched.append(pid) or True), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
             self.assertEqual(len(window.events.closing.handlers), 1)
-            # 热启动：ComfyUI 是用户自己开的，壳没有句柄 → 关窗一个进程都不碰
+            # 热启动：ComfyUI 是用户自己开的，桌面端没有句柄 → 关窗一个进程都不碰
             window.events.closing.handlers[0]()
-        self.assertEqual(touched, [], "非壳拉起的 ComfyUI 关窗不许动")
+        self.assertEqual(touched, [], "非桌面端拉起的 ComfyUI 关窗不许动")
         self.assertTrue(app.GEOMETRY_FILE.exists(), "关窗要存几何")
-        # 窗口先出启动页，后台探活就绪后整页跳进完整 Studio；用户自己的 ComfyUI 不被壳接管
+        # 窗口先出启动页，后台探活就绪后整页跳进完整 Studio；用户自己的 ComfyUI 不被桌面端接管
         self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
         self.assertIsNone(cw.call_args.kwargs["js_api"].comfy)
         self.assertFalse(cw.call_args.kwargs["js_api"].flags["starting"], "已就绪不报启动中")
         window.load_url.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
 
-    def test_links_stay_in_shell_window(self):
+    def test_links_stay_in_desktop_window(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         fake = _fake_webview(cw)
         self.port_busy = True
         with patch.object(app, "webview", fake), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
-        # 「⤒ 主画布编辑」与顶栏「🎬 新影工坊」的 _blank 链接留在壳窗口内导航；blob 下载仍放行
+        # 「⤒ 主画布编辑」与顶栏「🎬 新影工坊」的 _blank 链接留在桌面端窗口内导航；blob 下载仍放行
 
         self.assertFalse(fake.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"])
         self.assertTrue(fake.settings["ALLOW_DOWNLOADS"])
@@ -1077,7 +1077,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
              patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1097,7 +1097,7 @@ class MainWindowTests(unittest.TestCase):
         start = lambda *a, **k: a[0] and a[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -1122,7 +1122,7 @@ class MainWindowTests(unittest.TestCase):
 
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1132,14 +1132,14 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
-        # 窗口先出启动页，后台拉起 ComfyUI 后进壳侧只读服务的离线素材页，就绪后整页跳到完整 Studio
+        # 窗口先出启动页，后台拉起 ComfyUI 后进桌面端只读服务的离线素材页，就绪后整页跳到完整 Studio
         self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
         self.assertEqual(cw.call_args.kwargs["js_api"].offline_url, "http://127.0.0.1:8191/neo-studio")
         window.load_url.assert_called_once_with("http://127.0.0.1:8191/neo-studio")
-        # 壳侧只读服务与 js_api 共用启动中标记：窗口第一次 /neo_studio/version 就是「启动中」
+        # 桌面端只读服务与 js_api 共用启动中标记：窗口第一次 /neo_studio/version 就是「启动中」
         self.assertTrue(opened["starting"], "拉起 ComfyUI 后报启动中")
         self.assertIs(cw.call_args.kwargs["js_api"].comfy, comfy)
-        # 关窗带走壳自己拉起的这路：拉起阶段不碰它，关窗才 terminate（退出兜底不重复杀）
+        # 关窗带走桌面端自己拉起的这路：拉起阶段不碰它，关窗才 terminate（退出兜底不重复杀）
         self.assertEqual(len(window.events.closing.handlers), 1)
         comfy.terminate.assert_called_once()
         self.assertFalse(cw.call_args.kwargs["js_api"].flags["starting"], "关窗收掉启动中")
@@ -1153,7 +1153,7 @@ class MainWindowTests(unittest.TestCase):
         start = lambda *a, **k: (a[0](), window.events.closing.handlers[0]())
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1166,7 +1166,7 @@ class MainWindowTests(unittest.TestCase):
         self.assertFalse(app.GEOMETRY_FILE.exists(), "读不到几何就不写文件")
 
     def test_close_shows_stopping_hint_before_killing(self):
-        # 壳拉起的 ComfyUI：terminate 到进程真退出要等，窗口不能对着冻结的页面干等
+        # 桌面端拉起的 ComfyUI：terminate 到进程真退出要等，窗口不能对着冻结的页面干等
         window = _fake_window()
         order = []
         window.evaluate_js = lambda script: order.append("hint") if script is app.CLOSING_JS else None
@@ -1175,7 +1175,7 @@ class MainWindowTests(unittest.TestCase):
         start = lambda *a, **k: (a[0](), window.events.closing.handlers[0]())
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1188,14 +1188,14 @@ class MainWindowTests(unittest.TestCase):
         self.assertTrue(window.destroy.called, "收尾走完要由收尾线程销毁窗口")
 
     def test_close_hint_skipped_for_external_comfy(self):
-        # 用户自己启动的那路壳不杀：提示不能写「正在停止 ComfyUI」
+        # 用户自己启动的那路桌面端不杀：提示不能写「正在停止 ComfyUI」
         window = _fake_window()
         cw = MagicMock(return_value=window)
         self.port_busy = True
         start = lambda *a, **k: window.events.closing.handlers[0]()
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -1209,7 +1209,7 @@ class MainWindowTests(unittest.TestCase):
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1225,13 +1225,13 @@ class MainWindowTests(unittest.TestCase):
         self.assertIn("save_geometry", src, "几何要在窗口销毁前读走")
 
     def test_exit_kills_comfy_when_no_close_event_fires(self):
-        # destroy / 后端直接销毁窗口时 closing 可能根本不触发：进程退出前必须收掉壳拉起的 ComfyUI
+        # destroy / 后端直接销毁窗口时 closing 可能根本不触发：进程退出前必须收掉桌面端拉起的 ComfyUI
         window = _fake_window()
         cw = MagicMock(return_value=window)
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw, lambda *a, **k: a[0]())), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1243,13 +1243,13 @@ class MainWindowTests(unittest.TestCase):
         self.assertEqual(len(window.events.closing.handlers), 1)
         comfy.terminate.assert_called_once()
 
-    def test_cold_start_without_shell_service_falls_back_to_splash(self):
+    def test_cold_start_without_desktop_service_falls_back_to_splash(self):
         window = _fake_window()
         cw = MagicMock(return_value=window)
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         with patch.object(app, "webview", _fake_webview(cw, lambda *a, **k: a[0]())), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", lambda factory, port: SimpleNamespace(
+             patch.object(app, "DesktopServer", lambda factory, port: SimpleNamespace(
                  start=lambda: 0, stop=lambda: None, bound=0, error=None)), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
@@ -1260,7 +1260,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
-        # 壳侧服务起不来（端口全被占）就没有离线页可去：窗口停在启动页，不往空地址跳
+        # 桌面端服务起不来（端口全被占）就没有离线页可去：窗口停在启动页，不往空地址跳
         self.assertEqual(cw.call_args.kwargs["html"], app.splash_html())
         window.load_url.assert_not_called()
 
@@ -1270,7 +1270,7 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: None), \
              patch.object(app, "start_comfy", MagicMock()) as spawn, \
@@ -1288,7 +1288,7 @@ class MainWindowTests(unittest.TestCase):
         cw = MagicMock(return_value=window)
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "resolve_root", lambda root: None), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "start_comfy", MagicMock()) as spawn, \
@@ -1302,7 +1302,7 @@ class MainWindowTests(unittest.TestCase):
 
     def test_guide_start_installs_the_plugin_it_serves_from(self):
         """用户现场：exe 在别处，选中的根目录里还没装插件。「开始」要走正常启动那套自检，
-        先把内置副本装进 custom_nodes —— 直接拿不存在的目录装配，壳侧服务在 import 期就抛
+        先把内置副本装进 custom_nodes —— 直接拿不存在的目录装配，桌面端服务在 import 期就抛
         FileNotFoundError(2)，用户只看到一句「起不来」。"""
         window = _fake_window()
         cw = MagicMock(return_value=window)
@@ -1318,7 +1318,7 @@ class MainWindowTests(unittest.TestCase):
         spawn = MagicMock(return_value=SimpleNamespace(pid=4321, poll=lambda: 0))
         with patch.object(app, "webview", _fake_webview(cw)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "resolve_root", lambda r: root), \
              patch.object(app, "find_python", lambda r, p: pathlib.Path(p) if p else None), \
              patch.object(app, "CONFIG_FILE", pathlib.Path(self._tmp.name) / "launcher_config.json"), \
@@ -1345,7 +1345,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1365,7 +1365,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "STUDIO_ICON", pathlib.Path("D:/nope/neo-studio.ico")), \
              patch.object(app.ctypes.windll.shell32, "SetCurrentProcessExplicitAppUserModelID", set_id), \
@@ -1378,7 +1378,7 @@ class MainWindowTests(unittest.TestCase):
 
     def test_busy_port_never_spawns_second_comfy(self):
         # 用户现场：8188 已有一路 ComfyUI，但它的 /neo_studio/version 探不到（插件没加载或还在导入
-        # 自定义节点）。壳必须附着，不能跑到 8189 拉第二路 —— 关窗只带走自己那路，8188 还剩着
+        # 自定义节点）。桌面端必须附着，不能跑到 8189 拉第二路 —— 关窗只带走自己那路，8188 还剩着
         window = _fake_window()
         cw = MagicMock(return_value=window)
         start = lambda *a, **k: a[0]()
@@ -1386,7 +1386,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1396,7 +1396,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
         self.assertEqual(spawned, [], "端口上已有人监听就不许拉第二路")
-        self.assertIsNone(cw.call_args.kwargs["js_api"].comfy, "附着：壳没有句柄，关窗谁都不碰")
+        self.assertIsNone(cw.call_args.kwargs["js_api"].comfy, "附着：桌面端没有句柄，关窗谁都不碰")
         window.load_url.assert_called_once_with("http://127.0.0.1:8191/neo-studio")
 
     def test_busy_port_with_studio_route_attaches_directly(self):
@@ -1407,7 +1407,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = True
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1417,7 +1417,7 @@ class MainWindowTests(unittest.TestCase):
 
     def test_close_during_spawn_kills_the_process_it_just_started(self):
         """窗口先出之后，用户可以在自检与拉起之间关窗。收尾线程收的是「当时已有」的那路，
-        正好压在拉起这一刻的话必须把刚起的那路立刻收掉，否则壳退出后留一路孤儿 ComfyUI。"""
+        正好压在拉起这一刻的话必须把刚起的那路立刻收掉，否则桌面端退出后留一路孤儿 ComfyUI。"""
         window = _fake_window()
         cw = MagicMock(return_value=window)
         start = lambda *a, **k: a[0]()
@@ -1430,7 +1430,7 @@ class MainWindowTests(unittest.TestCase):
         self.port_busy = False
         with patch.object(app, "webview", _fake_webview(cw, start)), \
              patch.object(app, "singleton", lambda: object()), \
-             patch.object(app, "ShellServer", _fake_shell_server()), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
@@ -1455,14 +1455,14 @@ class LauncherConfigTests(unittest.TestCase):
             with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
                  patch.object(app, "log_line", lambda text: None):
                 app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188, False)
-                shell = app.StudioShell("u", None, 8188, pathlib.Path("D:/ComfyUI"),
+                desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("D:/ComfyUI"),
                                         launcher={"root": "D:/ComfyUI", "port": 8188, "frameless": False})
-                self.assertFalse(shell.frameless, "配置里的 frameless 要读进壳")
-                self.assertTrue(shell.set_frameless(True)["ok"])
+                self.assertFalse(desktop.frameless, "配置里的 frameless 要读进桌面端")
+                self.assertTrue(desktop.set_frameless(True)["ok"])
                 self.assertEqual(app.load_config(),
                                  {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
                                   "python": "D:/python/python.exe", "port": 8188, "frameless": True})
-                self.assertTrue(shell.launcher["frameless"], "设置页快照要同步")
+                self.assertTrue(desktop.launcher["frameless"], "设置页快照要同步")
 
     def test_load_config_missing_is_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1477,7 +1477,7 @@ class LauncherConfigTests(unittest.TestCase):
             with patch.object(app, "CONFIG_FILE", cfg):
                 loaded = app.load_config()
                 self.assertNotIn("frameless", loaded)
-                self.assertTrue(app.StudioShell("u", None, 8188, pathlib.Path("D:/ComfyUI"),
+                self.assertTrue(app.StudioDesktop("u", None, 8188, pathlib.Path("D:/ComfyUI"),
                                                 launcher=loaded).frameless)
 
     def test_root_priority_cli_then_config_then_plugin(self):
@@ -1636,14 +1636,14 @@ class PluginUpdateTests(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertTrue((self.plugin / "web").is_dir())
         self.assertFalse((self.plugin / "old-code.js").exists(), "代码文件按新副本换")
-        # 用户数据归壳的数据根，不跟着插件副本走：覆盖更新只换代码
+        # 用户数据归桌面端的数据根，不跟着插件副本走：覆盖更新只换代码
         self.assertFalse((self.plugin / "configs" / "llm_providers.json").exists())
         self.assertFalse((self.plugin / "skills" / "custom").exists())
         self.assertFalse((self.state / "plugin_old").exists())
         self.assertFalse((self.state / "plugin_update").exists())
 
     def test_install_leaves_a_data_pointer_for_the_kernel(self):
-        # 用户不经壳自己起 ComfyUI 时，插件靠这份指针找到壳的数据根
+        # 用户不经桌面端自己起 ComfyUI 时，插件靠这份指针找到桌面端的数据根
         self._bundle("1.2.0")
         with self._frozen():
             ok, msg = app.ensure_plugin(self.plugin, self.source)

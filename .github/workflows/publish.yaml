@@ -25,7 +25,7 @@ jobs:
         run: pip install comfy-cli
 
       # 插件源码在 studio/：pyproject.toml 与 .comfyignore 都在那一层，
-      # 发布必须在那一层跑（仓库根的 pyproject 是桌面壳自己的，不发 Python 包）
+      # 发布必须在那一层跑（仓库根的 pyproject 是桌面端自己的，不发 Python 包）
       - name: Publish plugin
         working-directory: studio
         run: |

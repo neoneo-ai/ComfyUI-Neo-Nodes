@@ -13,7 +13,7 @@ logs always go to `stderr`.
 ## Prerequisites
 
 1. ComfyUI is running with the Neo Studio plugin installed — MCP uses the plugin's HTTP endpoints and needs
-   plugin v1.2.0 or newer. The desktop shell runs ComfyUI at `http://127.0.0.1:8188` by default (the shell's
+   plugin v1.2.0 or newer. The Studio desktop runs ComfyUI at `http://127.0.0.1:8188` by default (the desktop's
    own service on 8191 is unrelated to MCP).
 2. Python 3.10+ — the same Python that runs ComfyUI. No extra dependencies.
 3. `generate_prompt` / `director_plan` need an LLM configured in Neo Studio settings.
@@ -38,13 +38,16 @@ Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`, restart Claude af
 {
   "mcpServers": {
     "neo-studio": {
-      "command": "F:\\comfy\\Comfyui-WF-2026.8.8\\python\\python.exe",
-      "args": ["F:\\comfy\\Comfyui-WF-2026.8.8\\Neo-Studio\\studio\\mcp_server.py"],
+      "command": "<ComfyUI root>\\python\\python.exe",
+      "args": ["<Neo-Studio root>\\studio\\mcp_server.py"],
       "env": { "NEO_MCP_COMFY_URL": "http://127.0.0.1:8188" }
     }
   }
 }
 ```
+
+Replace the two paths with the ones on your machine; `tools\mcp_setup.ps1` prints them filled in from the
+repository's current location.
 
 Cursor (`.cursor/mcp.json` in the project root, same content). When other MCP servers are configured, add only
 the `neo-studio` entry instead of overwriting the file.

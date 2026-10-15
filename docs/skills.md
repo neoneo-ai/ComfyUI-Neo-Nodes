@@ -103,7 +103,7 @@ Ctrl+` 日志 / Esc 退出子图 / r 刷新节点 / w n m a 侧栏 / Alt+M）；
 Studio 内嵌没有画布，技能详情工作流区挂「⤒ 主画布编辑」：打开主界面 `/?neo_wf_edit=<技能 id>`，主界面消费
 该参数（先清掉 URL 参数，刷新不重复导入）按技能 `config.json` 与自动建议模型预渲染灌入画布，节点 widget
 按技能已保存配置初始化（覆盖 `workflow.json` 里写死的 steps / seed / 尺寸等旧值，非技能控制的值原样保留）。
-桌面壳里这条交接在壳窗口内跳转（`OPEN_EXTERNAL_LINKS_IN_BROWSER = False`），主界面顶栏「🎬 新影工坊」同窗口
+桌面端里这条交接在桌面端窗口内跳转（`OPEN_EXTERNAL_LINKS_IN_BROWSER = False`），主界面顶栏「🎬 新影工坊」同窗口
 回到 Studio。
 
 action toast 内「💾 回写入技能」把整画布落盘该技能 `workflow.json`（内置 toast 不渲染动作按钮，带 action 的

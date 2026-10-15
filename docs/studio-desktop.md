@@ -1,0 +1,97 @@
+# 桌面端（Studio Desktop）
+
+桌面端把 Studio 页面装进本地窗口：自己拉起 ComfyUI，并在 ComfyUI 端口 +3 起一个只读素材服务，ComfyUI 不在跑时页面
+照样能浏览素材、编辑配方与技能。源码运行与打包 exe 走同一条 `app/studio_app.py`。
+
+## 组成
+
+| 文件 | 职责 |
+|------|------|
+| `app/studio_app.py` | 窗口、自检、拉起 / 停止 ComfyUI、无边框窗口、关窗收尾、启动设置 |
+| `app/studio_server.py` | 桌面端 aiohttp 服务（ComfyUI 端口 +3，`DESKTOP_PORT_OFFSET`），按目录加载插件模块挂在各自 `RouteTableDef` 上的 handler |
+| `app/studio_caps.py` | 能力表：哪些路由归桌面端服务，表外一律 `409 offline` |
+| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless）、`studio_desktop.log`、`comfy_run.log` |
+
+源码运行的状态目录是仓库根的 `data/`；exe 优先 exe 旁的 `data/`，落在不可写目录时退回 `%APPDATA%\Neo Studio`。
+
+## 离线门控
+
+判定标准是「只做文件读写 / 本地检索 / 远程下载 / 打 8080 LLM 服务」；需要执行队列、显存、节点定义的归 ComfyUI。
+功能开关表随 `/neo_studio/version` 下发，Studio 只门控运行类按钮（生成 / 跑段 / 拼接），配方编辑、技能编辑、
+设置、LLM 配置都不需要 ComfyUI 运行时。路由清单见 [api-routes.md](api-routes.md)。
+
+## 启动序列
+
+- 窗口先出：开窗只做解包与建窗口（启动页 / 引导页），自检、桌面端服务、拉起 ComfyUI 都在后台线程跑完。
+- 桌面端拉起 ComfyUI 期间的 `starting` 是 `StudioDesktop` 与桌面端服务共用的一份 dict，`comfy_state` 与
+  `/neo_studio/version` 同时下发。pywebview 的 js_api 注入晚于页面加载，且 `window.pywebview` 先出现、方法由
+  `finish.js` 后填：桌面端 api 一律等到要用的方法出现才接管，前端只靠版本快照就知道在启动中。这段时间只出
+  「ComfyUI 启动中…」，收起未运行横幅与启动入口。
+- 启动桌面端时「有没有 ComfyUI」只看端口有没有人监听：`/neo_studio/version` 探不到（那路插件没加载、还在导入自定义
+  节点）也只附着，不在旁边端口拉第二路，启动设置的「启动内核」按钮同样只附着。
+
+## 引导页（首次设置）
+
+根目录推不出、或同级与内部都找不到 `python.exe` 时，窗口开在引导页（`guide_html`，`load_html` + js_api）：那时
+`build_app` 连 `folder_paths` 都 import 不了，桌面端服务本来就起不来，页面只能不依赖 HTTP 服务。校验与拉起全走
+js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目录补完了服务才起得来。
+
+## 无边框窗口与拖动
+
+- 无边框是启动设置里的一项，存 `launcher_config.json` 的 `frameless`（缺省开，勾掉回系统标题栏）：建窗时喂
+  pywebview，运行中改样式位（只摘 `WS_CAPTION`，`WS_THICKFRAME` 恒置 —— pywebview 的 frameless 走
+  `FormBorderStyle=None`，拖边缩放会一起被摘掉，窗口 Shown 之后由 `ensure_resizable_frame` 补回；原生窗口在
+  `start()` 里才建出来，建窗时拿不到 hwnd）。
+- `easy_drag` 必须关掉 —— pywebview 的简易拖动是全局 mousedown，无边框时点任何卡片都会拖着窗口跑。拖动由顶栏
+  空白处按下调 `win_start_drag`，桌面端在窗口线程上自己循环跟光标（`SetWindowPos` + `GetAsyncKeyState(VK_LBUTTON)`），
+  左键一松就停 —— 交回系统走 `WM_NCLBUTTONDOWN + HTCAPTION` 或 `WM_SYSCOMMAND·SC_MOUSEMOVE` 都起不来，WinForms
+  的 Form 把非客户区按下吞掉了。
+- 最小化 / 最大化 / 全屏 / 关闭走 `window_state` + `win_*` 一组 js_api 方法，控件出不出由 `frameless` 决定。
+  最大化与全屏状态由桌面端自己记（pywebview 的 `Window.maximized` / `.fullscreen` 是建窗初值）：无边框下最大化铺
+  工作区（系统 maximize 给整屏矩形，任务栏会被盖住）；全屏退出时 pywebview 把 `FormBorderStyle` 写回建窗时的值、
+  标题栏跟着回来，样式按桌面端的状态重贴；全屏时关窗不存几何（存的是整屏矩形，下次开机窗口铺满屏幕）。
+
+## 关窗与进程回收
+
+只带走桌面端自己拉起的那路；用户自己启动的 ComfyUI 没有句柄，完全不碰。
+
+- 第一次 `closing` 只存几何 + 放行关闭（返回 `False`），挂「正在停止 ComfyUI」与收尾（杀进程、收桌面端服务、
+  `destroy`）全在后台线程走完 —— `closing` 同步跑在 UI 线程，收尾睡多久窗口就冻多久（桌面端服务正忙时 `join` 吃满
+  5 秒），`evaluate_js` 更要等 UI 线程回消息循环才执行，在处理器里调直接死锁。
+- 几何必须在窗口销毁前读走（销毁后读属性会抛，收尾链断在半路、进程变孤儿）；`closed` 与进程退出前各兜一次
+  （`destroy` 路径可能根本没有 `closing`），退出前 join 收尾线程，不等完就退进程等于留孤儿。
+- 判活按 PID 问 `OpenProcess`，不用 `Popen.poll()`（子进程句柄被回收后它会谎报「已退出」）。
+- `terminate` 之后必须 `reap`（`Popen.wait`）回收子进程 —— 不回收的话进程只剩一个内核对象，`pid_alive` 永远报
+  「还活着」：关窗固定睡满等待上限（就是那几秒卡顿），按 PID 的兜底强杀与「启动设置」停止内核的端口扫荡也必然失败
+  （那行「没有权限终止该进程」）。回收超时才兜底强杀，不做那套按端口扫荡。
+
+## 单实例锁
+
+命名互斥体 `Local\Neo.Studio.SingleInstance`，不占端口：占 8189 监听在 netstat 里像第二路 ComfyUI，会被读成「起了
+8188 和 8189 两个端口，关窗只掉一个」。「已存在」的信号问 `kernel32.GetLastError()`，`ctypes.get_last_error()`
+在这条调用上拿不到 183。
+
+## 插件同步
+
+源码运行时每次启动把 `studio/` 同步进 `custom_nodes` 那份（`sync_plugin`：只覆盖同名代码，大小与 mtime 对得上的
+跳过，ComfyUI 正占用那一个跳过、下次启动再补，目标目录里的东西一样不删）。桌面端服务与 ComfyUI 页面都从
+`custom_nodes` 取前端文件，同步完窗口一开就是新 UI；exe 只按内置副本版本换目录，git 检出的那份不碰。
+**改完 `app/studio_app.py` 必须重新打包**，见 [release.md](release.md)。
+
+## 静态资源与缓存
+
+桌面端 `/extensions/` 静态响应带 `no-store`（与 ComfyUI 的 `/extensions` 一致），并在开窗口前清掉
+`data/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），和新模块拼进同一张
+ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，整页只剩顶栏 —— 视图不挂、离线横幅不出、
+顶栏状态位永远 `hidden`。
+
+## 日志
+
+- `data/studio_desktop.log`：启动 / 跳转 / 关窗 / 拖动步数（`drag N steps`，0 = 按下时左键已经不在），以及页面上报的
+  前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB。
+- `data/comfy_run.log`：桌面端拉起 ComfyUI 的完整 stdout / stderr（端口冲突与导入报错都在里面，Studio「设置 → 日志」读它）。
+
+## 相关测试
+
+`app/tests/test_studio_desktop.py`、`app/tests/test_studio_server.py` 与 `studio-app.e2e.mjs`，
+见 [testing.md](testing.md)。

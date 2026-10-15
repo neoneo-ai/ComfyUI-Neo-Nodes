@@ -2177,7 +2177,7 @@ async def handle_llm_api_stream(task_name, request):
 
 # ==========================================
 # LLM 配置路由：只读配置文件 / 扫模型目录 / 打 8080 与远程服务，不碰 ComfyUI 运行时。
-# ComfyUI 与桌面壳共用这一批 handler（壳按 neo_studio_caps 挂载同一份代码）。
+# ComfyUI 与桌面端共用这一批 handler（桌面端按 app/studio_caps.py 挂载同一份代码）。
 # ==========================================
 
 routes = web.RouteTableDef()

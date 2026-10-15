@@ -43,7 +43,7 @@ logger.addFilter(PrefixFilter())
 
 
 def _llm():
-    """LLM 惰性导入：壳侧只读写配方文件时不加载 LLM 依赖。"""
+    """LLM 惰性导入：桌面端只读写配方文件时不加载 LLM 依赖。"""
     from . import llm
     return llm
 

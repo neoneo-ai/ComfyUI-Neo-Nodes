@@ -4,7 +4,7 @@
 
 The ComfyUI-side plugin of Neo Studio: every node for prompts, image generation, video, assets and recipes, the
 frontend resources the `/neo-studio` page needs, and the Gallery / Recipes / Model Hub / workflow-repair API
-routes. The desktop shell (the application repository `Neo-Studio`) is responsible for launching ComfyUI and the
+routes. The Studio desktop (the application repository `Neo-Studio`) is responsible for launching ComfyUI and the
 data directories; this plugin runs inside the ComfyUI process and works when installed on its own.
 
 Full documentation lives in the application repository: https://github.com/neoneo-ai/neo-studio
@@ -32,8 +32,8 @@ inference).
 User data (gallery / recipes / prompts / skills / configs) does not travel with the plugin directory. Resolution
 order:
 
-1. the `NEO_STUDIO_DATA` environment variable (injected when the desktop shell launches ComfyUI);
-2. the pointer `configs/data_root.json` inside the plugin directory (written by the shell, honored when you start
+1. the `NEO_STUDIO_DATA` environment variable (injected when the Studio desktop launches ComfyUI);
+2. the pointer `configs/data_root.json` inside the plugin directory (written by the desktop, honored when you start
    ComfyUI yourself);
 3. only when both are missing does it fall back to the plugin directory itself — the path taken by standalone
    installs and by tests that create a temporary directory.

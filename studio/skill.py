@@ -769,7 +769,7 @@ def _attach_gen_config(skill: dict, skill_id: str) -> None:
 
 
 def _vdn_plugin_installed() -> bool:
-    """VDN 加速插件 ComfyUI-VDN-H3 是否已装：看同级 custom_nodes 目录里有没有它（壳侧没有节点注册表）。"""
+    """VDN 加速插件 ComfyUI-VDN-H3 是否已装：看同级 custom_nodes 目录里有没有它（桌面端没有节点注册表）。"""
     parent = os.path.dirname(CURRENT_DIR)
     try:
         names = os.listdir(parent)

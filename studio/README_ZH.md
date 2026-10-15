@@ -3,7 +3,7 @@
 > 🇬🇧 English: [README.md](README.md)
 
 Neo Studio 的 ComfyUI 侧插件：提示词、生图、视频、素材与配方相关的全部节点，`/neo-studio` 页面所需的前端资源，
-以及 Gallery / Recipes / Model Hub / 工作流修复等 API 路由。桌面壳（应用仓库 `Neo-Studio`）负责拉起 ComfyUI
+以及 Gallery / Recipes / Model Hub / 工作流修复等 API 路由。桌面端（应用仓库 `Neo-Studio`）负责拉起 ComfyUI
 与数据目录，本插件在 ComfyUI 进程内运行，单独安装也能用。
 
 完整说明见应用仓库：https://github.com/neoneo-ai/neo-studio
@@ -28,8 +28,8 @@ Neo Studio 的 ComfyUI 侧插件：提示词、生图、视频、素材与配方
 
 用户数据（gallery / recipes / prompts / skills / configs）不随插件目录走，解析顺序：
 
-1. 环境变量 `NEO_STUDIO_DATA`（桌面壳拉起 ComfyUI 时注入）；
-2. 插件目录里的指针 `configs/data_root.json`（壳写入，用户自己启动 ComfyUI 时也认得）；
+1. 环境变量 `NEO_STUDIO_DATA`（桌面端拉起 ComfyUI 时注入）；
+2. 插件目录里的指针 `configs/data_root.json`（桌面端写入，用户自己启动 ComfyUI 时也认得）；
 3. 两者都落空才回退插件目录本身——单独安装、测试里临时造目录走这条。
 
 数据根第一次使用时，插件目录里的内置预设（`configs/`、`prompts/presets/`、`skills/presets/`、

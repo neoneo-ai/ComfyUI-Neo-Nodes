@@ -60,5 +60,5 @@ if ($Cursor) {
     if ($Write) { Merge-Config $CursorPath }
 }
 
-"`n桌面壳换了 ComfyUI 端口就改 NEO_MCP_TOOLS 旁边的 NEO_MCP_COMFY_URL；" +
+"`n桌面端换了 ComfyUI 端口就改 NEO_MCP_TOOLS 旁边的 NEO_MCP_COMFY_URL；" +
 "只想开放部分工具就设 NEO_MCP_TOOLS（逗号分隔，留空 = 全部）。"

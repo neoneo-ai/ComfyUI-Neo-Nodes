@@ -11,7 +11,7 @@ python -m pytest tests -v
 ```
 
 A full run is split across processes (`tests/run-tests.ps1` with no arguments runs `studio/tests` and
-`app/tests` in sequence): the shell-side cases need the real `folder_paths`, the node cases need a stubbed comfy,
+`app/tests` in sequence): the desktop-side cases need the real `folder_paths`, the node cases need a stubbed comfy,
 and the two are incompatible in one process. The root `conftest.py` pins `NEO_STUDIO_DATA` into a temporary
 directory before collection and clears it on exit, so cases that delete directories or write configuration can
 never touch the real data under `Neo-Studio/data/` or the plugin directory.
@@ -39,26 +39,26 @@ never touch the real data under `Neo-Studio/data/` or the plugin directory.
   and output normalization, terminal IMAGE collection and SaveImage skipping, unknown-node errors, tensor →
   base64 PNG round trip, request assembly (missing `workflow.json` errors / references ordered by slot / bundle
   references preferred / count capped by `config.json`'s `max_refs`).
-- `tests/test_studio_desktop.py` — the desktop shell (`neo_studio_app.py`): ComfyUI root and python path
+- `tests/test_studio_desktop.py` — the Studio desktop (`app/studio_app.py`): ComfyUI root and python path
   resolution (a sibling `python/` of the bundled distribution wins), `/neo_studio/version` probing and polling,
   window geometry read/write (missing file / bad JSON / partial fields), single-instance port occupancy,
   messages going through the system message box (pythonw has no console), suppressing the child console window
-  when launching ComfyUI, shell logging to `tmp/studio_shell.log` and the pywebview log handler (pythonw's
+  when launching ComfyUI, desktop logging to `data/studio_desktop.log` and the pywebview log handler (pythonw's
   `stderr` is None and a console handler aborts window creation), the window icon path passed to
   `webview.start(icon=...)` and the AppUserModelID (None when the `.ico` is missing), `resolve_root()` under
   frozen mode walking the exe's own ancestors up to the ComfyUI root (recognizing both the single-file build
   under `tools` and the folder build one level deeper) with bundled resources going through `_MEIPASS`;
-  `comfy_state()` (one shared poll for the header status and the startup settings; the shell-launched instance is
+  `comfy_state()` (one shared poll for the header status and the startup settings; the desktop-launched instance is
   judged by port probing / an external one by finding the PID from the port with `netstat` / nobody listening),
   `comfy_stop()` (after `terminate()`, repeated `kill_pid()` by port until nobody listens; `kill_pid()` uses
   `PROCESS_TERMINATE` and declares `OpenProcess`'s `restype` explicitly, otherwise 64-bit handles are truncated
   and killing fails silently), `comfy_start()` (waits for the old process to exit before `start_comfy`),
   `pid_alive()`, and window close saving geometry only. The window-first startup sequence: opening the window only
-  unpacks and creates it (splash page / setup page) while the self-check, the shell-side service and the ComfyUI
+  unpacks and creates it (splash page / setup page) while the self-check, the desktop-side service and the ComfyUI
   launch run to completion on a background thread, landing on the full Studio, the offline asset page, or staying
   on the splash page; tests run the background thread synchronously (`_SyncThread`) so the landing point can be
-  asserted. Closing the window exactly during a launch (`shell.closing` gate): the instance that just started is
-  reaped immediately, so the shell leaves no orphan ComfyUI.
+  asserted. Closing the window exactly during a launch (`desktop.closing` gate): the instance that just started is
+  reaped immediately, so the desktop leaves no orphan ComfyUI.
 - Startup settings (`launcher_api` / `launcher_config.json`): when the plugin directory is not writable the state
   directory falls back to `%APPDATA%/NeoStudio`; the five `startup_state()` states (ready / invalid root / python
   not found / missing plugin dependencies / plugin install failed); configuration read-write round trip and
@@ -69,11 +69,11 @@ never touch the real data under `Neo-Studio/data/` or the plugin directory.
   runs and git checkouts are never overwritten.
 - The packaged exe (`tools\build_studio_exe.ps1`: `-Mode onefile` produces `tools/neo-studio.exe`, `-Mode onedir`
   the folder build `tools/neo-studio/Neo-Studio.exe`, `-Mode both` both; the folder build does not unpack at
-  startup, and repacking keeps the `data/` next to the package): a stub service makes the shell believe it is
+  startup, and repacking keeps the `data/` next to the package): a stub service makes the desktop believe it is
   ready, the exe is started, `ExtractIconExW` confirms exactly 1 embedded icon resource, `FindWindowW` finds the
   window, `WM_GETICON` returns a 24x24 icon (our `.ico`; the baseline of pythonw with no AppUserModelID and no
   icon is a 48x48 generic icon), `WM_CLOSE` exits with code 0, and `configs/studio_window.json` and
-  `tmp/studio_profile` land in the plugin directory rather than the temporary unpack directory.
+  `data/studio_profile` land in the plugin directory rather than the temporary unpack directory.
 - The bundled plugin copy (`build_bundle()` in `tools\build_studio_exe.ps1`): the boundary is "git-tracked minus
   development directories", `configs/` keeps presets only, and user configuration and keys are not in the tracked
   list so they never enter the exe; `tests` / `tools` / `docs` and similar whole directories are excluded;
@@ -81,11 +81,11 @@ never touch the real data under `Neo-Studio/data/` or the plugin directory.
   escapes them into fake names.
 - `tests/test_studio.py` — full-film generation routes and the job watcher, version route, log route
   (`/neo_studio/log` reads the `app.logger` ring buffer).
-- `tests/test_studio_server.py` — the shell-side read-only service (`neo_studio_server.py`): a real service is
+- `tests/test_studio_server.py` — the desktop-side read-only service (`app/studio_server.py`): a real service is
   started and hit for real, asserting that with ComfyUI not running the Studio page, frontend static files,
   directory listings, thumbnails and the bookmarks file all come through, while write operations and generation
   routes answer `409 offline`; the gallery module family carries its own `RouteTableDef` and its source no longer
-  mentions `PromptServer` (there is no ComfyUI runtime in the shell process); the startup-settings route
+  mentions `PromptServer` (there is no ComfyUI runtime in the desktop process); the startup-settings route
   `/neo_studio/launcher` GET reads the configuration and POST validates before writing (a root without `main.py`
   is refused, an unknown action is refused).
 - `tests/test_node_metadata.py` — the node metadata contract: the registry key list, the `NEO_NODES` list in
@@ -159,21 +159,21 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   `/extensions/comfyui-neo-studio/docs/<node key>.md`, no `neo_help` badge widget remains on nodes, and the
   property panel's "Info" tab renders the document body (skipped when no property panel is registered in the
   session).
-- `studio-app.e2e.mjs` — the desktop shell window: the shell launches ComfyUI itself, connects over CDP through
+- `studio-app.e2e.mjs` — the Studio desktop window: the desktop launches ComfyUI itself, connects over CDP through
   the WebView2 remote debugging port, and asserts the window opens at the size archived in
   `configs/studio_window.json`, the four views render, the header status reports only "● Running" (port / PID in
   the tooltip), the log tab reads console content, and localStorage survives a page reload; the second case uses a
   cold-start dedicated port (`NEO_STUDIO_STOP_PORT`, default 8190; set `NEO_STUDIO_EXE` to run the packaged exe
   instead, passing `--root`/`--python` explicitly since an exe in an arbitrary directory cannot derive the root),
-  clicks "■ Stop kernel" at the top of "Settings → Startup settings" to stop the shell-launched ComfyUI (port probe
+  clicks "■ Stop kernel" at the top of "Settings → Startup settings" to stop the desktop-launched ComfyUI (port probe
   then fails), clicks "▶ Start kernel" to launch it again, and asserts the header shows "● Starting" and that after
   readiness the whole page jumps back to the full Studio (the user's own service on 8188 is never touched); the
-  third case asserts the cold-start window shows the splash page first, then lands on the shell-side read-only
+  third case asserts the cold-start window shows the splash page first, then lands on the desktop-side read-only
   service's offline asset page (port +3, banner and thumbnails shown, writes answered `409`), jumps to the full
   Studio once ComfyUI is ready, and returns to the offline page after stopping it with no uncaught errors.
   **It opens a real window and is skipped by default; enable with `NEO_STUDIO_APP=1` (prerequisites: `pywebview`
-  installed in the bundled distribution's python, and no other Neo Studio shell holding the single-instance port
-  8189 — a new instance exits immediately when a shell is already running).**
+  installed in the bundled distribution's python, and no other Neo Studio desktop holding the single-instance port
+  8189 — a new instance exits immediately when a desktop is already running).**
 - `prompt-width.e2e.mjs` — prompt node panel width: after creation, `setSize`, and restoring the width through
   workflow `configure`, every `prompt_ui` DOM widget width equals `node.size[0]` (LiteGraph's size setter does not
   fire `onResize`, so the plugin re-syncs in `onConfigure`).

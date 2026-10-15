@@ -126,7 +126,7 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         // 设置视图：默认停在 LLM tab，切到生图 tab 后表单（.rs-gen-settings）才可见
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-section .rs-btn, .ns-settings-section button", { timeout: 15000 });
-        // 浏览器里没有壳桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 6
+        // 浏览器里没有桌面端桥，启动设置那一栏是异步摘掉的：等它摘完再数，否则数到 6
         await page.waitForFunction(() => !document.querySelector('[data-key="launch"]'), null, { timeout: 10000 });
         const sections = await page.locator(".ns-settings-section").count();
         assert.equal(sections, 5);

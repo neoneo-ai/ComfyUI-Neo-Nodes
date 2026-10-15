@@ -10,7 +10,7 @@ dist/
 tmp/
 .tiktoken_cache/
 
-# 应用状态（启动配置 / 窗口几何 / WebView2 profile / 内核与壳日志）
+# 应用状态（启动配置 / 窗口几何 / WebView2 profile / 内核与桌面端日志）
 /data/
 
 # 打包产物与离线工具输出
