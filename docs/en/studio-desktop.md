@@ -61,6 +61,11 @@ startable once the root is filled in.
   `GetAsyncKeyState(VK_LBUTTON)`), stopping the moment the left button is released — handing it back to the system
   through `WM_NCLBUTTONDOWN + HTCAPTION` or `WM_SYSCOMMAND·SC_MOUSEMOVE` never starts, because the WinForms Form
   swallows the non-client-area press.
+- A press that never leaves the system drag threshold (`SM_CXDRAG`) is not a drag: the window stays put, and
+  maximize / fullscreen are only exited once the cursor crosses that threshold — under maximize `SetWindowPos`
+  knocks the window back to its restored rectangle, so a plain header click restoring it is not native title-bar
+  semantics. Double-clicking an empty part of the header calls `win_maximize` to toggle maximize / restore, and
+  exits fullscreen first when fullscreen.
 - Minimize / maximize / fullscreen / close go through `window_state` plus the `win_*` group of js_api methods, and
   whether the controls appear is decided by `frameless`. The maximized and fullscreen states are tracked by the
   desktop itself (pywebview's `Window.maximized` / `.fullscreen` are creation-time initial values): frameless maximize
@@ -131,8 +136,9 @@ no views mounted, no offline banner, and the header status slot stuck at `hidden
 
 ## Logs
 
-- `data/studio_desktop.log`: startup / navigation / window close / drag steps (`drag N steps`, 0 = the left button was
-  already released on press), plus uncaught frontend errors reported by the page (the `[web]` prefix, sent through
+- `data/studio_desktop.log`: startup / navigation / window close / drag steps (`drag N steps`, 0 = the press never
+  left the drag threshold, or the left button was already released), plus uncaught frontend errors reported by the
+  page (the `[web]` prefix, sent through
   the js_api `log()`), keeping only the tail 200KB.
 - `data/comfy_run.log`: the full stdout / stderr of the ComfyUI the desktop launched (port conflicts and import
   errors land here; read by Studio "Settings → Logs").

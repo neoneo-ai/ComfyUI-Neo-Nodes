@@ -159,6 +159,7 @@ SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
 VK_LBUTTON = 0x01
 SPI_GETWORKAREA = 0x0030
+SM_CXDRAG = 116   # 系统拖动阈值：按下后光标走出这个距离才算真拖动
 # 默认按 c_int 传句柄，64 位上的 HWND 会被截断，样式位与拖动消息都作用到别的窗口上
 u32.GetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT]
 u32.SetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT, wintypes.LONG]
@@ -176,6 +177,8 @@ u32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
 u32.SetCapture.argtypes = [wintypes.HWND]
 u32.GetAsyncKeyState.argtypes = [wintypes.INT]
 u32.GetAsyncKeyState.restype = wintypes.SHORT
+u32.GetSystemMetrics.argtypes = [wintypes.INT]
+u32.GetSystemMetrics.restype = wintypes.INT
 
 
 def _cursor_pos() -> tuple:
@@ -942,27 +945,35 @@ class StudioDesktop:
         WM_SYSCOMMAND·SC_MOUSEMOVE 都一样，实测过）。所以自己循环：按「光标 - 抓取偏移」
         SetWindowPos，左键一松就停。
         必须跑在窗口所属线程上：SetCapture 只认窗口的所属线程，捕获不过来的话 WebView2 继续吃
-        鼠标消息（拖动时选中文本之类），松手也传不到这边。"""
-        if self.fullscreen:
-            self.win_fullscreen()   # 全屏时按下先退出全屏：整屏窗口跟着光标跑，pywebview 还停在全屏态
-        elif self.maximized:
-            self.win_maximize()   # 最大化时按下先还原：不然整块工作区大小的窗口跟着光标跑
-
+        鼠标消息（拖动时选中文本之类），松手也传不到这边。
+        按下没走出系统拖动阈值不算拖动：窗口一动不动，最大化 / 全屏也留到走出阈值那一刻才退 ——
+        最大化下 SetWindowPos 会把窗口打回还原态，单击顶栏跟着还原不是原生标题栏的语义。"""
         def _drag() -> None:
             hwnd = self._hwnd()
             left, top, _, _ = window_rect(hwnd)
             x0, y0 = _cursor_pos()
             dx, dy = x0 - left, y0 - top   # 抓取偏移：光标在窗口里的位置拖动中不许变
+            threshold = max(u32.GetSystemMetrics(SM_CXDRAG), 2)
             u32.SetCapture(hwnd)
             steps = 0
             while _left_button_down():
                 x, y = _cursor_pos()
+                if not steps:
+                    if abs(x - x0) < threshold and abs(y - y0) < threshold:
+                        time.sleep(0.008)
+                        continue
+                    if self.fullscreen:
+                        self.win_fullscreen()   # 全屏时先退出全屏：整屏窗口跟着光标跑，pywebview 还停在全屏态
+                    elif self.maximized:
+                        self.win_maximize()   # 最大化时先还原：不然整块工作区大小的窗口跟着光标跑
+                    left, top, _, _ = window_rect(hwnd)
+                    dx, dy = x - left, y - top   # 还原后窗口换了矩形，抓取偏移按光标在新窗口里的位置重算
                 u32.SetWindowPos(hwnd, 0, x - dx, y - dy, 0, 0,
                                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
                 steps += 1
                 time.sleep(0.008)
             u32.ReleaseCapture()
-            log_line(f"drag {steps} steps")   # 0 = 按下时左键已经不在了
+            log_line(f"drag {steps} steps")   # 0 = 按下没走出阈值，或左键已经不在了
 
         native = getattr(self._window, "native", None)
         if native is None:

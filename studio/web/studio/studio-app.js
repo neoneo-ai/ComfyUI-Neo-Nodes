@@ -862,7 +862,9 @@ function initWindowChrome() {
         const b = btn(id);
         if (b) { b.textContent = ico; b.title = title; }
     };
+    let state = { frameless: false, maximized: false, fullscreen: false };
     const render = (s) => {
+        state = s;
         document.body.classList.toggle("ns-frameless", !!s.frameless);
         btn("ns-wctl").hidden = !s.frameless;
         set("ns-win-max", s.maximized ? "🗗" : "▢", s.maximized ? "还原" : "最大化");
@@ -877,16 +879,23 @@ function initWindowChrome() {
             btn("ns-win-fs").addEventListener("click", () => bridge.win_fullscreen().then(render));
             btn("ns-win-close").addEventListener("click", () => bridge.win_close());
             // 顶栏空白处按下交给桌面端：桌面端在窗口线程上跟住光标搬窗口，JS 自己算位移只会抖
-            document.querySelector(".ns-header").addEventListener("mousedown", (e) => {
-                if (e.button !== 0) return;
-                if (e.target.closest("a,button,input,select,textarea")) return;
+            const header = document.querySelector(".ns-header");
+            const blank = (e) => e.button === 0 && !e.target.closest("a,button,input,select,textarea");
+            header.addEventListener("mousedown", (e) => {
+                if (!blank(e)) return;
                 // 拖动期间鼠标捕获在桌面端窗口上，页面收不到 mouseup：拖动收尾时补一发，页面别停在按下态；
-                // 桌面端在拖动开始前可能顺手还原了最大化 / 退掉了全屏，图标按桌面端的状态重画一遍
+                // 桌面端在拖动途中可能顺手还原了最大化 / 退掉了全屏，图标按桌面端的状态重画一遍
                 const up = () => document.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
                 Promise.resolve(bridge.win_start_drag()).finally(() => {
                     up();
                     bridge.window_state().then(render).catch(() => {});
                 });
+            });
+            // 双击顶栏空白 = 原生标题栏语义：最大化 / 还原来回切；全屏时先退回窗口态
+            header.addEventListener("dblclick", (e) => {
+                if (!blank(e)) return;
+                const done = state.fullscreen ? bridge.win_fullscreen() : bridge.win_maximize();
+                Promise.resolve(done).then(render).catch(() => {});
             });
         }).catch(() => { /* 桥未就绪：顶栏不出控件 */ });
     };

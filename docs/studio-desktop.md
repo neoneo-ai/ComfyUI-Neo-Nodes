@@ -46,6 +46,9 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
   空白处按下调 `win_start_drag`，桌面端在窗口线程上自己循环跟光标（`SetWindowPos` + `GetAsyncKeyState(VK_LBUTTON)`），
   左键一松就停 —— 交回系统走 `WM_NCLBUTTONDOWN + HTCAPTION` 或 `WM_SYSCOMMAND·SC_MOUSEMOVE` 都起不来，WinForms
   的 Form 把非客户区按下吞掉了。
+- 按下没走出系统拖动阈值（`SM_CXDRAG`）不算拖动：窗口一动不动，最大化 / 全屏也留到走出阈值那一刻才退 ——
+  最大化下 `SetWindowPos` 会把窗口打回还原态，单击顶栏就跟着还原不是原生标题栏的语义。双击顶栏空白调
+  `win_maximize` 来回切最大化 / 还原，全屏时先退回窗口态。
 - 最小化 / 最大化 / 全屏 / 关闭走 `window_state` + `win_*` 一组 js_api 方法，控件出不出由 `frameless` 决定。
   最大化与全屏状态由桌面端自己记（pywebview 的 `Window.maximized` / `.fullscreen` 是建窗初值）：无边框下最大化铺
   工作区（系统 maximize 给整屏矩形，任务栏会被盖住）；全屏退出时 pywebview 把 `FormBorderStyle` 写回建窗时的值、
@@ -98,7 +101,8 @@ ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获
 
 ## 日志
 
-- `data/studio_desktop.log`：启动 / 跳转 / 关窗 / 拖动步数（`drag N steps`，0 = 按下时左键已经不在），以及页面上报的
+- `data/studio_desktop.log`：启动 / 跳转 / 关窗 / 拖动步数（`drag N steps`，0 = 按下没走出拖动阈值或左键已经不
+  在），以及页面上报的
   前端未捕获错误（`[web]` 前缀，页面走 js_api 的 `log()`），只留尾部 200KB。
 - `data/comfy_run.log`：桌面端拉起 ComfyUI 的完整 stdout / stderr（端口冲突与导入报错都在里面，Studio「设置 → 日志」读它）。
 
