@@ -179,8 +179,9 @@ async def launcher_post(request):
     if fn is None:
         return web.json_response({"ok": False, "error": f"不支持的操作：{action}"}, status=400)
     if action == "apply":
-        # listen 缺省 = 这次没动监听；空串 = 清空（只监听本机）
-        res = fn(data.get("root", ""), data.get("python", ""), data.get("port", 0), data.get("listen"))
+        # listen 缺省 = 这次没动监听；空串 = 清空（只监听本机）。remote 同理：空串 = 连回本机
+        res = fn(data.get("root", ""), data.get("python", ""), data.get("port", 0),
+                 data.get("listen"), data.get("remote"))
     elif action == "set_frameless":
         res = fn(bool(data.get("frameless")))
     elif action == "set_dev_mode":

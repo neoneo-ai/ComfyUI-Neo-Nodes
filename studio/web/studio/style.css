@@ -220,7 +220,26 @@ body {
 .ns-kernel-stop:not([disabled]) { color: #ff8a9a; }
 .ns-launch-row { display: flex; align-items: center; gap: 10px; }
 .ns-launch-row + .ns-launch-row { margin-top: 10px; }
-.ns-launch-label { font-size: 12px; color: #a9a9b6; width: 110px; flex: none; }
+.ns-launch-label { font-size: 12px; color: #a9a9b6; width: 122px; flex: none; display: flex; align-items: center; gap: 6px; }
+/* ⓘ：悬停 / 键盘聚焦给出这一行的前提条件与生效方式（内容在 data-tip 里） */
+.ns-info {
+    position: relative;
+    flex: none;
+    width: 14px; height: 14px;
+    border: 1px solid #6f6f7a; border-radius: 50%;
+    font-size: 10px; font-style: italic; line-height: 13px; text-align: center;
+    color: #9a9aa6; cursor: help;
+}
+.ns-info::after {
+    content: attr(data-tip);
+    position: absolute; left: -6px; top: 19px; z-index: 40;
+    width: 300px; max-width: 60vw; padding: 8px 10px;
+    background: #1b1b1f; border: 1px solid #3a3a42; border-radius: 6px;
+    font-size: 11px; font-style: normal; line-height: 1.7; color: #cfcfd8;
+    white-space: pre-line; text-align: left;
+    visibility: hidden; pointer-events: none;
+}
+.ns-info:hover::after, .ns-info:focus::after { visibility: visible; }
 .ns-launch-input {
     flex: 1;
     min-width: 0;
@@ -236,6 +255,12 @@ body {
 .ns-launch-bad { color: #ff8a8a; }
 .ns-launch-actions { display: flex; gap: 10px; margin-top: 14px; }
 .ns-launch-info { margin-top: 12px; font-size: 11px; color: #8f8f9a; }
+/* 远程模式：根目录 / 解释器 / 端口 / 局域网监听都在远端那台机器上设，本机这几行只读。
+   逐元素降透明度（不整行 opacity），ⓘ 的悬停说明在灰掉的行里也要读得清 */
+.ns-launch-remote-off .ns-launch-label { color: #6f6f7a; }
+.ns-launch-remote-off .ns-launch-input { background: #232327; color: #8f8f9a; }
+.ns-launch-remote-off .ns-btn { pointer-events: none; opacity: 0.45; }
+.ns-launch-remote-off .ns-info { border-color: #55555f; color: #7f7f8a; }
 .ns-btn {
     background: #2a2a2e;
     border: 1px solid #444;
@@ -274,6 +299,7 @@ body {
 .ns-wctl-btn:focus-visible,
 .ns-settings-tab:focus-visible,
 .ns-offline-start:focus-visible,
+.ns-info:focus-visible,
 .ns-launch-input:focus-visible,
 .ns-gen-row input:focus-visible,
 .ns-gen-row select:focus-visible,

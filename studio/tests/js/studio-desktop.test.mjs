@@ -282,6 +282,138 @@ test("启动设置：局域网监听是下拉框，选项带本机网卡，保�
     }
 });
 
+// 远程 ComfyUI：窗口指向远端，本机启动项归远端那台机器管
+test("启动设置：远程地址进保存载荷，本机启动项灰掉，提示改报远端地址", async () => {
+    mountStudio();
+    const applied = [];
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ port: 8188, pid: 0, mine: true, running: false, ready: false }),
+            launcher_state: async () => ({
+                root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8188, listen: "", lan_ips: [],
+                remote: "http://192.168.0.20:8188", state: "ok", error: "",
+            }),
+            apply_launcher: async (root, python, port, listen, remote) => {
+                applied.push(remote);
+                return { ok: true, state: "ok" };
+            },
+        },
+    };
+    window.location.hash = "#/settings";
+    try {
+        await import("../../web/studio/studio-app.js?remoteIn=1");
+        await flush();
+        click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
+        await flush();
+
+        const remoteIn = document.querySelector(".ns-launch-remote");
+        const hint = document.querySelector(".ns-launch-info");
+        assert.ok(remoteIn, "启动设置里要有远程地址输入框");
+        assert.equal(remoteIn.value, "http://192.168.0.20:8188", "已存的远程地址要回填");
+        assert.equal(remoteIn.disabled, false, "远程地址本身要能改");
+        assert.ok(document.querySelector(".ns-launch-row .ns-launch-input").disabled,
+            "远程模式下根目录输入框要灰掉");
+        assert.equal(document.querySelectorAll(".ns-launch-remote-off").length, 4,
+            "根目录 / 解释器 / 端口 / 局域网监听四行灰掉");
+        assert.match(hint.textContent, /远程 ComfyUI：http:\/\/192\.168\.0\.20:8188\/neo-studio/,
+            "提示行报远端 Studio 地址");
+
+        remoteIn.value = "http://10.0.0.5:8188";
+        remoteIn.dispatchEvent(new window.Event("input"));
+        await flush();
+        assert.match(hint.textContent, /http:\/\/10\.0\.0\.5:8188\/neo-studio/, "提示跟着输入实时变");
+
+        click(document.querySelector(".ns-launch-apply"));
+        await flush();
+        assert.deepEqual(applied, ["http://10.0.0.5:8188"], "保存交的是输入框里的远程地址");
+    } finally {
+        window.location.hash = "#/gallery";
+    }
+});
+
+test("远程模式：内核行报远端地址，停止内核禁用，启动内核是重连", async () => {
+    const status = mountStudio();
+    const stops = [];
+    const state = {
+        port: 8188, pid: 0, mine: false, running: true, ready: true,
+        remote: "http://192.168.0.20:8188",
+    };
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ ...state }),
+            launcher_state: async () => ({
+                root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8188,
+                remote: state.remote, state: "ok", error: "",
+            }),
+            comfy_stop: async () => { stops.push(1); return { ...state }; },
+        },
+    };
+    window.location.hash = "#/settings";
+    try {
+        await import("../../web/studio/studio-app.js?remoteKernel=1");
+        await flush();
+        click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
+        await flush();
+
+        const line = document.querySelector(".ns-kernel-state");
+        const start = document.querySelector(".ns-kernel-start");
+        const stop = document.querySelector(".ns-kernel-stop");
+        assert.equal(line.textContent, "ComfyUI 运行中 · 远程 http://192.168.0.20:8188",
+            "远程模式没有本机端口 / 谁启动 / PID 可报");
+        assert.equal(stop.disabled, true, "远端进程不归本机管，停止内核要禁用");
+        assert.equal(start.textContent, "🚀 重连远端");
+        assert.equal(status.textContent, "● 运行中");
+        assert.match(status.title, /远程 ComfyUI 运行中 · http:\/\/192\.168\.0\.20:8188/);
+        assert.equal(stops.length, 0);
+    } finally {
+        window.location.hash = "#/gallery";
+    }
+});
+
+// 每行标签旁的 ⓘ：前提条件与生效方式（保存并重启 / 重启窗口 / 归远端管）写在 data-tip 里
+test("启动设置：每行带 ⓘ 说明，远程前提与开发模式要重启窗口写清楚", async () => {
+    mountStudio();
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ port: 8188, pid: 4321, mine: true, running: true, ready: true }),
+            launcher_state: async () => ({
+                root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8188,
+                listen: "", remote: "", state: "ok", error: "",
+            }),
+        },
+    };
+    window.location.hash = "#/settings";
+    try {
+        await import("../../web/studio/studio-app.js?launchTips=1");
+        await flush();
+        click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
+        await flush();
+
+        const rows = [...document.querySelectorAll(".ns-launch-row")];
+        assert.equal(rows.length, 7, "根目录 / Python / 端口 / 监听 / 远程 / 无边框 / 开发模式");
+        const tipOf = (label) => rows.find((r) => r.textContent.includes(label))
+            ?.querySelector(".ns-info")?.getAttribute("data-tip") || "";
+        for (const label of ["ComfyUI 根目录", "Python", "端口", "局域网监听", "远程 ComfyUI",
+            "无边框窗口", "开发模式"]) {
+            assert.ok(tipOf(label).includes("\n"), `「${label}」这一行要有带前提的 ⓘ 说明`);
+        }
+        assert.match(tipOf("远程 ComfyUI"), /comfyui-neo-studio[\s\S]*局域网监听/);
+        assert.match(tipOf("远程 ComfyUI"), /停止内核[\s\S]*归远端管/);
+        assert.match(tipOf("远程 ComfyUI"), /留空 = 连本机/);
+        assert.match(tipOf("局域网监听"), /127\.0\.0\.1[\s\S]*鉴权/);
+        assert.match(tipOf("端口"), /保存并重启/);
+        assert.match(tipOf("无边框窗口"), /立刻生效/);
+        assert.match(tipOf("开发模式"), /重启桌面端窗口/);
+
+        const css = fs.readFileSync(path.join(webDir, "studio", "style.css"), "utf8");
+        assert.ok(/\.ns-info::after\s*\{[^}]*attr\(data-tip\)/.test(css), "ⓘ 的说明文字要画在 ::after 上");
+        assert.ok(/\.ns-info:hover::after[^{]*\{[^}]*visibility:\s*visible/.test(css), "悬停要画出说明");
+    } finally {
+        window.location.hash = "#/gallery";
+    }
+});
+
+
 test("ComfyUI 在跑时生成入口不受门控：点它不该去启动 ComfyUI", async () => {
     mountStudio();
     document.body.insertAdjacentHTML("beforeend",

@@ -11,7 +11,7 @@ Source runs and the packaged exe go through the same `app/studio_app.py`.
 | `app/studio_app.py` | Window, self-check, start / stop ComfyUI, frameless window, close teardown, startup settings |
 | `app/studio_server.py` | Desktop-side aiohttp service (ComfyUI port +3, `DESKTOP_PORT_OFFSET`); loads the plugin modules' own `RouteTableDef` handlers by directory |
 | `app/studio_caps.py` | Capability table: which routes the desktop service owns; everything outside answers `409 offline` |
-| `data/` | State directory: `studio_window.json` (geometry), `studio_profile` (WebView2 profile / localStorage), `launcher_config.json` (root / python / port / frameless / dev_mode / listen), `studio_desktop.log`, `comfy_run.log` |
+| `data/` | State directory: `studio_window.json` (geometry), `studio_profile` (WebView2 profile / localStorage), `launcher_config.json` (root / python / port / frameless / dev_mode / listen / remote), `studio_desktop.log`, `comfy_run.log` |
 
 Source runs keep state in the repository's `data/`; the exe prefers `data/` beside the exe and falls back to
 `%APPDATA%\Neo Studio` when the exe sits in a non-writable directory.
@@ -88,6 +88,14 @@ startable once the root is filled in.
   (`initReloadHotkey` in `studio/web/studio/studio-app.js`), so one keypress after a frontend hot-sync
   (`tools/watch_web.py`) loads the new code.
 
+## Info notes in Startup settings
+
+- Every row in "Startup settings" carries an ⓘ next to its label; hovering it (keyboard focus works the
+  same way) spells out that row's prerequisites and how it takes effect: root / interpreter / port / LAN
+  listen / Remote ComfyUI go through "Save and restart ComfyUI", frameless applies immediately and is
+  stored in the config, dev mode needs the desktop window to restart. The text lives in `TIPS` in
+  `studio/web/studio/studio-app.js`.
+
 ## LAN access
 
 - "Startup settings → LAN listen" is a dropdown whose choices come from the NIC list the desktop reports
@@ -101,6 +109,24 @@ startable once the root is filled in.
 - ComfyUI has no authentication: with listening on, `/api/*`, `/neo_studio/*` and `/view` are open to whatever is on
   the network, so enable it only on a trusted segment and clear the field afterwards. The MCP service is not part of
   this network surface (stdio + loopback — see [mcp.md](mcp.md)).
+
+## Remote ComfyUI
+
+- "Startup settings → Remote ComfyUI" takes `http://host[:port]` (`https` too; path / query / fragment / credentials
+  are rejected) and stores it as `remote` in `launcher_config.json`. When it is set, the window opens
+  `http://<remote>/neo-studio` directly and the probe and the ready jump both target the remote base — `probe()` takes
+  a base URL, `http://127.0.0.1:port` in local mode. An empty field means local, which is the default.
+- Remote mode never starts a local process: `port_busy`, `free_comfy_port`, `start_comfy`, `port_owner` and `kill_pid`
+  are not involved. "Start kernel" becomes "reconnect to the remote", and "Stop kernel" is disabled — the remote
+  machine starts and stops its own ComfyUI.
+- The remote machine must have `comfyui-neo-studio` installed and must open its own listen address under
+  "Startup settings → LAN listen". When the probe fails the window stays on the offline page and reports
+  "Remote ComfyUI unreachable: <address>".
+- Remote mode reads and writes the plugin data of the remote machine (recipes, skills, settings all live there);
+  the offline page is still the local desktop service browsing the local asset directory.
+- The local startup rows (ComfyUI root, interpreter, port, LAN listen) are greyed out in remote mode: they belong to
+  the remote machine's own settings.
+- A different window URL is a different origin, so the Studio page's `localStorage` settings do not travel with it.
 
 ## Window close and process reaping
 

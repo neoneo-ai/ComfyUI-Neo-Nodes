@@ -40,6 +40,7 @@ import sys
 import threading
 import time
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Optional
 
@@ -308,11 +309,12 @@ def load_config() -> dict:
 
 
 def save_config(root: Path, python: str, port: int, flags: dict) -> bool:
-    """写启动配置：三个开关跟着根目录 / 解释器 / 端口一起落盘，「保存并重启」不能把开关写没。"""
+    """写启动配置：开关与远程地址跟着根目录 / 解释器 / 端口一起落盘，「保存并重启」不能把它们写没。"""
     return write_config({"version": CONFIG_VERSION, "root": str(root), "python": str(python),
                          "port": int(port), "frameless": bool(flags.get("frameless", True)),
                          "dev_mode": bool(flags.get("dev_mode")),
-                         "listen": str(flags.get("listen", ""))})
+                         "listen": str(flags.get("listen", "")),
+                         "remote": str(flags.get("remote", ""))})
 
 
 def write_config(cfg: dict) -> bool:
@@ -519,37 +521,39 @@ def startup_state(root: Path, python: Path, plugin_dir: Path) -> tuple[str, str]
     return ST_OK, ""
 
 
-def probe(port: int, timeout: float = 3.0) -> bool:
+def probe(base: str, timeout: float = 3.0) -> bool:
+    """探一路 ComfyUI 是否就绪：GET /neo_studio/version 同时确认在跑与插件已加载。
+    base 是目标地址 —— 本机模式是 http://127.0.0.1:端口，远程模式是远端的 http(s)://主机[:端口]。"""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/neo_studio/version", timeout=timeout):
+        with urllib.request.urlopen(f"{base}/neo_studio/version", timeout=timeout):
             return True
     except Exception:
         return False
 
 
-def wait_ready(port: int, seconds: float) -> bool:
+def wait_ready(base: str, seconds: float) -> bool:
     deadline = time.time() + seconds
     while time.time() < deadline:
-        if probe(port):
+        if probe(base):
             return True
         time.sleep(POLL_INTERVAL)
-    return probe(port)
+    return probe(base)
 
 
-def wait_attach(port: int, seconds: float) -> bool:
+def wait_attach(base: str, seconds: float, busy) -> bool:
     """附着的那路（桌面端没有句柄）等就绪。自己拉起的那路端口是「还没绑上」，这里等的是空端口；
-    附着的那路端口是「有人监听」，连续两轮没人监听就是那路死了 —— 收手回离线页，
-    别对着空端口等满超时（关完立刻重开就会撞上这一下）。"""
+    附着的那路是「有人监听」，连续两轮没人监听就是那路死了 —— 收手回离线页，
+    别对着空地址等满超时（关完立刻重开就会撞上这一下）。busy 报目标上有没有人监听。"""
     deadline = time.time() + seconds
     free = 0
     while time.time() < deadline:
-        if probe(port):
+        if probe(base):
             return True
-        free = free + 1 if not port_busy(port) else 0
+        free = free + 1 if not busy() else 0
         if free >= 2:
             return False
         time.sleep(POLL_INTERVAL)
-    return probe(port)
+    return probe(base)
 
 
 def on_screen(x: int, y: int, w: int, h: int) -> bool:
@@ -612,6 +616,27 @@ def comfy_listen(raw: str) -> Optional[str]:
     if "127.0.0.1" not in addrs:
         addrs.insert(0, "127.0.0.1")
     return ",".join(addrs)
+
+
+def comfy_remote(raw: str) -> Optional[str]:
+    """远程 ComfyUI 的 base：http(s)://主机[:端口]，空 = 连本机（现有行为）。
+    只认 scheme 与主机端口，path / query / 凭据一律拒 —— 桌面端拿它拼 /neo-studio 与探活，
+    不能让启动配置里的值变成任意 URL。非法值回 None，由调用方报错。"""
+    value = str(raw).strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = "http://" + value
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    return f"{parsed.scheme}://{parsed.hostname}" + (f":{port}" if port else "")
 
 
 def start_comfy(python: Path, root: Path, port: int, listen: str = "") -> subprocess.Popen:
@@ -757,6 +782,10 @@ class StudioDesktop:
         # 无边框窗口：建窗时喂给 pywebview，运行中由 set_frameless 改样式位；缺省开
         self.frameless = bool(self.launcher.get("frameless", True))
         self.listen = comfy_listen(self.launcher.get("listen", "")) or ""   # 局域网监听：空 = 只监听本机
+        # 远程 ComfyUI：非空时窗口指向远端，本机不拉进程（远端进程不归本机管）
+        self.remote = comfy_remote(self.launcher.get("remote", "")) or ""
+        if self.remote:
+            self.url = self.studio_url()
         self.fullscreen = False
         self.maximized = False    # 无边框下最大化是桌面端自己铺的矩形，系统不认 WS_MAXIMIZE，状态自己记
         self._restore_rect: tuple | None = None   # 铺满前的矩形，点一下还原回这里
@@ -778,6 +807,18 @@ class StudioDesktop:
     def starting(self, value: bool) -> None:
         self.flags["starting"] = bool(value)
 
+    @property
+    def base(self) -> str:
+        """探活与拼页面地址用的目标：远程模式是远端，本机模式是回环上的端口。"""
+        return self.remote or f"http://127.0.0.1:{self.port}"
+
+    def studio_url(self) -> str:
+        return self.base + "/neo-studio"
+
+    def target_busy(self) -> bool:
+        """目标上有没有人监听：本机模式探回环端口，远程模式探远端（远端没有本机端口可探）。"""
+        return probe(self.base, 0.5) if self.remote else port_busy(self.port)
+
     def go_studio(self) -> None:
         self._goto(self.url)
 
@@ -795,8 +836,8 @@ class StudioDesktop:
 
     def _jump_when_ready(self) -> None:
         """离线页里点「重新拉起」：就绪后整页跳到 ComfyUI 的完整 Studio。"""
-        ready = (wait_ready(self.port, READY_TIMEOUT) if self.comfy is not None
-                 else wait_attach(self.port, READY_TIMEOUT))
+        ready = (wait_ready(self.base, READY_TIMEOUT) if self.comfy is not None
+                 else wait_attach(self.base, READY_TIMEOUT, self.target_busy))
         if ready:
             self.starting = False
             self._goto(self.url)
@@ -809,8 +850,13 @@ class StudioDesktop:
         """顶栏胶囊要的运行状态：外部启动的 ComfyUI 没有 Popen 句柄，按端口找 PID 并缓存。
         桌面端拉起的那路以端口探活为准 —— TerminateProcess 是异步的，进程还在收尾时端口已关，
         报「进程活着」会让胶囊显示运行中而服务其实已经没了。
-        starting：桌面端拉起的进程还活着、端口还没就绪 —— 这段时间前端只出「启动中」，收起其余离线提示。"""
-        ready = probe(self.port, 1.0)
+        starting：桌面端拉起的进程还活着、端口还没就绪 —— 这段时间前端只出「启动中」，收起其余离线提示。
+        远程模式没有本机 PID 可报，运行与否只看远端探活；remote 带上远端地址供界面标注。"""
+        if self.remote:
+            ready = probe(self.base, 1.0)
+            return {"port": urlsplit(self.base).port or DEFAULT_PORT, "pid": 0, "mine": False,
+                    "running": ready, "ready": ready, "starting": False, "remote": self.base}
+        ready = probe(self.base, 1.0)
         if self.comfy is not None:
             if ready:
                 self.starting = False
@@ -823,6 +869,11 @@ class StudioDesktop:
                 "running": bool(self.pid), "ready": ready, "starting": False}
 
     def comfy_stop(self) -> dict:
+        if self.remote:
+            # 远程内核由远端机器自己起停：窗口退回离线页，不碰远端进程
+            log_line(f"comfy stop skipped remote={self.base}")
+            self._goto(self.offline_url)
+            return self.comfy_state()
         if self.comfy is not None:
             self.comfy.terminate()
             reap(self.comfy, 2)   # 不 reap 的话下面按 PID 判活会一直「活着」，强杀必然失败
@@ -868,6 +919,14 @@ class StudioDesktop:
 
     def comfy_start(self) -> dict:
         """胶囊的启动路径：停止后重新拉起 ComfyUI，就绪后整页跳回完整 Studio。"""
+        if self.remote:
+            # 远程内核由远端机器自己起：这里只做探活 + 跳转，本机不拉进程、不探本机端口
+            self.comfy = None
+            self.pid = 0
+            self.starting = False
+            log_line(f"comfy reconnect {self.base}")
+            threading.Thread(target=self._jump_when_ready, daemon=True).start()
+            return self.comfy_state()
         if not IS_FROZEN and root_ok(self.root):
             sync_plugin(plugin_dir_for(self.root), PLUGIN_SOURCE_DIR)   # 改完代码点一下启动就生效
         if self.comfy is not None:
@@ -886,7 +945,7 @@ class StudioDesktop:
             return self.comfy_state()
         self.port = free_comfy_port(self.port, self.desktop_port)
         self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port, self.listen)
-        self.url = f"http://127.0.0.1:{self.port}/neo-studio"
+        self.url = self.studio_url()
         self.pid = self.comfy.pid
         self.starting = True
         log_line(f"comfy spawn pid={self.comfy.pid} port={self.port} listen={self.listen or '127.0.0.1'}")
@@ -1047,8 +1106,9 @@ class StudioDesktop:
                             or "桌面端服务起不来，原因见启动器日志"}
         return self.apply_launcher(root, python, self.port)
 
-    def apply_launcher(self, root: str, python: str, port: int, listen: str = None) -> dict:
-        """保存启动设置并重启 ComfyUI：换根目录、换解释器、换端口、换监听地址都走这一条路。"""
+    def apply_launcher(self, root: str, python: str, port: int, listen: str = None,
+                       remote: str = None) -> dict:
+        """保存启动设置并重启 ComfyUI：换根目录、换解释器、换端口、换监听地址、换远程地址都走这一条路。"""
         root_s, py_s = str(root).strip(), str(python).strip()
         root_p, py = Path(root_s), Path(py_s)
         if not root_s or not root_ok(root_p):
@@ -1065,14 +1125,21 @@ class StudioDesktop:
         addr = self.listen if listen is None else comfy_listen(listen)
         if addr is None:
             return {"ok": False, "error": f"监听地址不是 IP（逗号分隔多个，留空 = 只监听本机）：{listen}"}
+        base = self.remote if remote is None else comfy_remote(remote)
+        if base is None:
+            return {"ok": False, "error": f"远程地址不是 http(s)://主机[:端口]（留空 = 连本机）：{remote}"}
         self.listen = addr
+        self.remote = base
         self.launcher["listen"] = addr
+        self.launcher["remote"] = base
         if not save_config(root_p, py, port, self.launcher):
             return {"ok": False, "error": f"写入启动配置失败：{CONFIG_FILE}"}
         self.root, self.python_arg, self.port = root_p, str(py), port
+        self.url = self.studio_url()
         self.launcher.update(root=str(root_p), python=str(py), port=port,
                              plugin_dir=str(plugin_dir_for(root_p)))
-        log_line(f"launcher apply root={root_p} python={py} port={port} listen={addr or '127.0.0.1'}")
+        log_line(f"launcher apply root={root_p} python={py} port={port} "
+                 f"listen={addr or '127.0.0.1'} remote={base or '本机'}")
         self.comfy_stop()   # 带走旧进程，窗口退回离线页
         state, msg = startup_state(root_p, py, plugin_dir_for(root_p))
         self.launcher.update(state=state, error=msg)
@@ -1080,7 +1147,8 @@ class StudioDesktop:
             return {"ok": False, "error": msg, "state": state}
         st = self.comfy_start()
         self.launcher.update(comfy=st)
-        return {"ok": True, "state": state, "comfy": st}
+        return {"ok": True, "state": state, "comfy": st,
+                "msg": "已保存，正在连接远端 ComfyUI…" if self.remote else "已保存，ComfyUI 重启中…"}
 
     def install_plugin(self) -> dict:
         """自动安装失败后的重试：把内置副本装进 custom_nodes，成功就接着拉起。"""
@@ -1325,7 +1393,9 @@ def main() -> int:
                 # 开发模式默认关：pywebview 把 WebView2 的刷新键 / 右键菜单 / 开发者工具全绑在 debug 上
                 "dev_mode": bool(cfg.get("dev_mode")),
                 # 局域网监听默认空 = ComfyUI 只监听 127.0.0.1；lan_ips 是给设置页抄的提示地址
-                "listen": comfy_listen(cfg.get("listen", "")) or "", "lan_ips": lan_ips()}
+                # remote 非空 = 连远端那台 ComfyUI：本机不拉进程，窗口直接指向远端
+                "listen": comfy_listen(cfg.get("listen", "")) or "", "lan_ips": lan_ips(),
+                "remote": comfy_remote(cfg.get("remote", "")) or ""}
     launcher_api: dict = {}   # 桌面端路由延迟取桌面端的方法：服务先起，桌面端的方法随后补上
     if need_guide:
         state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
@@ -1440,7 +1510,7 @@ def main() -> int:
 
 
     def spawn_ready():
-        if wait_ready(desktop.port, READY_TIMEOUT):
+        if wait_ready(desktop.base, READY_TIMEOUT):
             desktop.starting = False   # 跳页前收掉「启动中」，新页面直接是完整 Studio
             log_line(f"comfy ready jump {desktop.url}")
             desktop._goto(desktop.url)
@@ -1461,12 +1531,13 @@ def main() -> int:
         desktop.offline_url = offline_url
         # 存在性只问端口：端口上有人监听就是有一路 ComfyUI 在跑。不能拿 /neo_studio/version 这种
         # Neo 专属路由当存在性判据 —— 那路插件没加载或还在导入自定义节点时探测会失败，桌面端就在旁边
-        # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
-        if state == ST_OK and not port_busy(port) and not desktop.closing:
+        # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」。
+        # 远程模式没有本机端口可探、也不拉本机进程：窗口直接指向远端，通不通看远端探活
+        if state == ST_OK and not desktop.remote and not port_busy(port) and not desktop.closing:
             desktop.port = free_comfy_port(port, desktop.desktop_port)
             desktop.comfy = start_comfy(python, root, desktop.port, desktop.listen)
             desktop.pid = desktop.comfy.pid
-            desktop.url = f"http://127.0.0.1:{desktop.port}/neo-studio"
+            desktop.url = desktop.studio_url()
             desktop.starting = True
             log_line(f"comfy spawn pid={desktop.pid} port={desktop.port} listen={desktop.listen or '127.0.0.1'}")
             if desktop.closing:
@@ -1474,7 +1545,7 @@ def main() -> int:
                 desktop.comfy_close()
                 return
         # 已就绪直接进 ComfyUI 的完整 Studio；冷启动进桌面端的离线素材页，就绪后整页跳过去
-        ready = desktop.comfy is None and probe(desktop.port)
+        ready = desktop.comfy is None and probe(desktop.base)
         desktop._goto(desktop.url if ready else offline_url)
         if desktop.comfy is not None:
             spawn_ready()

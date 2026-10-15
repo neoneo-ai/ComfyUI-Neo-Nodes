@@ -445,6 +445,8 @@ function createLauncherPanel() {
     const rootIn = input("ComfyUI 根目录");
     const pyIn = input("python.exe 路径");
     const portIn = input("8188");
+    const remoteIn = input("http://192.168.0.20:8188");
+    remoteIn.classList.add("ns-launch-remote");
     const listenSel = $el("select", { className: "ns-launch-input ns-launch-listen" });
     const status = $el("div", { className: "ns-launch-status" });
     const info = $el("div", { className: "ns-launch-info" });
@@ -459,8 +461,38 @@ function createLauncherPanel() {
     const kernelState = $el("div", { className: "ns-kernel-state" });
     const startBtn = $el("button", { className: "ns-btn ns-kernel-start", textContent: "▶ 启动内核" });
     const stopBtn = $el("button", { className: "ns-btn ns-kernel-stop", textContent: "■ 停止内核" });
-    const row = (label, ...kids) => $el("div", { className: "ns-launch-row" },
-        [$el("span", { className: "ns-launch-label", textContent: label }), ...kids]);
+    // 标签旁的 ⓘ：悬停给出前提条件与生效方式 —— 面板里这几项的规矩各不相同（保存并重启 / 重启窗口 / 归远端管）
+    const TIPS = {
+        root: "ComfyUI 安装目录，要有 main.py。\n"
+            + "改完点「保存并重启 ComfyUI」：桌面端停掉旧进程，按新配置重新拉起。",
+        python: "跑 ComfyUI 的 python.exe，要已装好 ComfyUI 的依赖（缺依赖时下方出「安装依赖」按钮）。\n"
+            + "改完点「保存并重启 ComfyUI」。",
+        port: "本机 ComfyUI 的端口，窗口与探活都打在 127.0.0.1:该端口。\n"
+            + "端口被占用时桌面端自动换到下一个空闲端口。改完点「保存并重启 ComfyUI」。",
+        listen: "ComfyUI 的 --listen，默认「仅本机」= 只监听 127.0.0.1，局域网访问不到。\n"
+            + "填网卡地址时会自动带上 127.0.0.1，否则窗口自己打不开。\n"
+            + "ComfyUI 没有鉴权：防火墙放行该端口，只在你信任的网段开。改完点「保存并重启 ComfyUI」。",
+        remote: "连远端那台 ComfyUI：http(s)://主机[:端口]，留空 = 连本机。\n"
+            + "前提：远端已装 comfyui-neo-studio 插件，并在远端自己的「启动设置 → 局域网监听」放开监听。\n"
+            + "远程模式本机不启动也不停止 ComfyUI：「启动内核」= 重连远端，「停止内核」禁用，"
+            + "根目录 / 解释器 / 端口 / 局域网监听归远端管。\n"
+            + "改完点「保存并重启 ComfyUI」，窗口直接开在远端页面。",
+        frameless: "桌面端窗口自绘标题栏（最小化 / 最大化 / 全屏 / 关闭），勾掉回系统标题栏。\n"
+            + "立刻生效并写进启动配置，下次开机沿用。",
+        dev: "打开刷新键 / 右键菜单 / 开发者工具，排查窗口白屏与前端问题用。\n"
+            + "pywebview 在建窗口时定值：勾完要重启桌面端窗口才生效。",
+    };
+    const infoDot = (tip) => $el("span", { className: "ns-info", textContent: "i", tabindex: "0", "data-tip": tip });
+    const row = (label, tip, ...kids) => $el("div", { className: "ns-launch-row" },
+        [$el("span", { className: "ns-launch-label" }, [label, infoDot(tip)]), ...kids]);
+    const rootRow = row("ComfyUI 根目录", TIPS.root, rootIn, browseBtn);
+    const pyRow = row("Python", TIPS.python, pyIn, pyBrowseBtn);
+    const portRow = row("端口", TIPS.port, portIn);
+    const listenRow = row("局域网监听", TIPS.listen, listenSel);
+    const remoteRow = row("远程 ComfyUI", TIPS.remote, remoteIn);
+    // 远程模式下这几项归远端那台机器管：灰掉，别让本机设置看起来能影响远端
+    const localRows = [rootRow, pyRow, portRow, listenRow];
+    const localInputs = [rootIn, pyIn, portIn, listenSel, browseBtn, pyBrowseBtn];
 
     const STATE_TEXT = {
         ok: "就绪",
@@ -479,6 +511,12 @@ function createLauncherPanel() {
         .map((x) => x.trim()).filter((x) => x && x !== "127.0.0.1").join(",");
 
     function renderLanHint() {
+        const remote = remoteIn.value.trim();
+        if (remote) {
+            lanHint.textContent = `远程 ComfyUI：${remote}/neo-studio · 远端要已开监听并装好 Neo Studio 插件，`
+                + "起停与端口都在远端那台机器上设";
+            return;
+        }
         const v = listenSel.value;
         const port = portIn.value || "8188";
         if (!v) {
@@ -492,10 +530,18 @@ function createLauncherPanel() {
             + (urls.join("  ·  ") || `http://<本机 IP>:${port}/neo-studio`);
     }
 
+    // 远程模式灰掉本机启动项：远端的根目录 / 解释器 / 端口 / 监听由远端自己配
+    function renderLocalMode(remote) {
+        for (const el of localInputs) el.disabled = remote;
+        for (const r of localRows) r.classList.toggle("ns-launch-remote-off", remote);
+    }
+
     function render(s) {
         rootIn.value = s.root || "";
         pyIn.value = s.python || "";
         portIn.value = s.port || "";
+        remoteIn.value = s.remote || "";
+        renderLocalMode(!!s.remote);
         lanIps = s.lan_ips || [];
         const opts = LAN_CHOICES.concat(lanIps.map((ip) => [ip, `本机网卡 ${ip}`]));
         const key = lanKey(s.listen);
@@ -535,7 +581,7 @@ function createLauncherPanel() {
             let data;
             if (fn) {
                 data = action === "apply"
-                    ? await fn(payload.root, payload.python, payload.port, payload.listen)
+                    ? await fn(payload.root, payload.python, payload.port, payload.listen, payload.remote)
                     : action === "set_frameless"
                         ? await fn(payload.frameless)
                         : action === "set_dev_mode"
@@ -567,7 +613,10 @@ function createLauncherPanel() {
         const picked = await window.pywebview?.api?.pick_python?.();
         if (picked) pyIn.value = picked;
     });
-    applyBtn.addEventListener("click", () => post({ root: rootIn.value, python: pyIn.value, port: portIn.value, listen: listenSel.value }));
+    applyBtn.addEventListener("click", () => post({
+        root: rootIn.value, python: pyIn.value, port: portIn.value,
+        listen: listenSel.value, remote: remoteIn.value.trim(),
+    }));
     depsBtn.addEventListener("click", () => post({ action: "install_deps" }));
     fixBtn.addEventListener("click", () => post({ action: "install_plugin" }));
     framelessIn.addEventListener("change", () => post({ action: "set_frameless", frameless: framelessIn.checked }));
@@ -575,18 +624,20 @@ function createLauncherPanel() {
     // 提示行跟着选中项与端口实时变，点「保存并重启 ComfyUI」才落盘
     listenSel.addEventListener("change", renderLanHint);
     portIn.addEventListener("input", renderLanHint);
+    remoteIn.addEventListener("input", renderLanHint);
 
     // 内核启停在面板顶部：状态一行 + 启动 / 停止两枚按钮，此刻做不了的那枚禁用
+    // 内核状态行：远程模式没有本机端口 / 谁启动 / PID 可报，只报远端地址；停止内核管不到远端进程，禁用
     function renderKernel(s) {
         const booting = (userStarting || s.starting) && !s.ready;
         const running = s.running && !booting;
         kernelState.textContent = `ComfyUI ${booting ? "启动中…" : (s.running ? "运行中" : "已停止")}`
-            + ` · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"}`
+            + (s.remote ? ` · 远程 ${s.remote}` : ` · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"}`)
             + (s.pid ? ` · PID ${s.pid}` : "");
         kernelState.classList.toggle("ns-kernel-run", running);
-        startBtn.textContent = booting ? "🚀 启动中…" : "▶ 启动内核";
+        startBtn.textContent = booting ? "🚀 启动中…" : (s.remote ? "🚀 重连远端" : "▶ 启动内核");
         startBtn.disabled = booting || s.running;
-        stopBtn.disabled = booting || !s.running;
+        stopBtn.disabled = booting || !s.running || !!s.remote;
     }
     onComfyState(renderKernel);
     startBtn.addEventListener("click", () => { startBtn.disabled = true; startKernel(); });
@@ -599,12 +650,13 @@ function createLauncherPanel() {
             $el("div", { className: "ns-kernel-actions" }, [startBtn, stopBtn]),
         ]),
         status,
-        row("ComfyUI 根目录", rootIn, browseBtn),
-        row("Python", pyIn, pyBrowseBtn),
-        row("端口", portIn),
-        row("局域网监听", listenSel),
-        row("无边框窗口", framelessIn),
-        row("开发模式", devIn),
+        rootRow,
+        pyRow,
+        portRow,
+        listenRow,
+        remoteRow,
+        row("无边框窗口", TIPS.frameless, framelessIn),
+        row("开发模式", TIPS.dev, devIn),
         $el("div", { className: "ns-launch-actions" }, [applyBtn, depsBtn, fixBtn]),
         lanHint,
         info,
@@ -765,7 +817,7 @@ function startComfy() {
     if (starting) return;   // 启动中：不重复拉起，也不出提示
     const inDesktop = !!window.pywebview?.api?.comfy_start;
     startKernel();
-    if (inDesktop) toast("ComfyUI 启动中…就绪后自动回到完整 Studio");
+    if (inDesktop) toast(comfyState?.remote ? "重连远端 ComfyUI…" : "ComfyUI 启动中…就绪后自动回到完整 Studio");
 }
 
 // 生成类请求打到桌面端上必 409：统一提示并指向「设置 → 启动设置」，不给前端假成功
@@ -844,15 +896,20 @@ function showOfflineBanner() {
     ]);
     document.querySelector(".ns-header").after(bar);
     renderDesktopState();
+    // 远程与否由 comfy_state 报：状态一到手横幅就要改口，别停在「ComfyUI 未运行」上
+    onComfyState(() => { if (document.getElementById("ns-offline")) renderDesktopState(); });
 }
 
 function renderDesktopState() {
     const bar = document.getElementById("ns-offline");
     if (!bar) return;
+    const remote = comfyState?.remote;
     // 启动中只留顶栏胶囊的「● 启动中」，不再叠一条同义横幅
     bar.style.display = starting ? "none" : "";
-    bar.querySelector(".ns-offline-msg").textContent =
-        "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI";
+    bar.querySelector(".ns-offline-msg").textContent = remote
+        ? `远程 ComfyUI 不可达 · ${remote} —— 这里浏览的是本机素材目录，生成与队列要连上远端`
+        : "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI";
+    bar.querySelector(".ns-offline-start").textContent = remote ? "🚀 重连远端" : "🚀 启动 ComfyUI";
     bar.querySelector(".ns-offline-start").style.display = "";
     for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();
 }
@@ -1058,9 +1115,12 @@ function initComfyStatus() {
         }
         setStatus(s.running ? "run" : null,
             s.running ? "运行中" : "已停止",
-            s.running
-                ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"} · PID ${s.pid}`
-                : "ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」");
+            s.remote
+                ? (s.running ? `远程 ComfyUI 运行中 · ${s.remote} · 起停由远端机器管`
+                             : `远程 ComfyUI 不可达 · ${s.remote}`)
+                : (s.running
+                    ? `ComfyUI 运行中 · 端口 ${s.port} · ${s.mine ? "桌面端启动" : "外部启动"} · PID ${s.pid}`
+                    : "ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」"));
     };
 
     onComfyState(render);

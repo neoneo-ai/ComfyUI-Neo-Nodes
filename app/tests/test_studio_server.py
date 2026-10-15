@@ -201,10 +201,11 @@ class OfflineServiceTests(_ServerCase):
         self.app["launcher"].update(root="D:/ComfyUI", python="D:/python/python.exe", port=8188,
                                     plugin_dir="D:/ComfyUI/custom_nodes/comfyui-neo-studio",
                                     state_dir="D:/studio/data", portable=True, state="ok", error="",
-                                    listen="127.0.0.1,192.168.0.7", lan_ips=["192.168.0.7"])
+                                    listen="127.0.0.1,192.168.0.7", lan_ips=["192.168.0.7"],
+                                    remote="http://192.168.0.20:8188")
         applied = []
         self.app["launcher_api"]["apply"] = (
-            lambda root, python, port, listen: applied.append((root, python, port, listen))
+            lambda root, python, port, listen, remote: applied.append((root, python, port, listen, remote))
             or {"ok": True, "state": "ok"})
         status, body = self.get("/neo_studio/launcher")
         data = json.loads(body)
@@ -213,15 +214,16 @@ class OfflineServiceTests(_ServerCase):
         self.assertEqual(data["state"], "ok")
         self.assertEqual(data["listen"], "127.0.0.1,192.168.0.7")
         self.assertEqual(data["lan_ips"], ["192.168.0.7"])
+        self.assertEqual(data["remote"], "http://192.168.0.20:8188")
         status, body = self.post_json("/neo_studio/launcher",
                                       {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190,
-                                       "listen": "0.0.0.0"})
+                                       "listen": "0.0.0.0", "remote": "http://10.0.0.5:8188"})
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["ok"])
-        self.assertEqual(applied, [("E:/ComfyUI", "E:/py/python.exe", 8190, "0.0.0.0")])
-        # 旧载荷没有 listen：传 None = 这次不动监听
+        self.assertEqual(applied, [("E:/ComfyUI", "E:/py/python.exe", 8190, "0.0.0.0", "http://10.0.0.5:8188")])
+        # 旧载荷没有 listen / remote：传 None = 这次不动这两项
         self.post_json("/neo_studio/launcher", {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190})
-        self.assertEqual(applied[-1], ("E:/ComfyUI", "E:/py/python.exe", 8190, None))
+        self.assertEqual(applied[-1], ("E:/ComfyUI", "E:/py/python.exe", 8190, None, None))
 
     def test_launcher_retry_actions(self):
         calls = []

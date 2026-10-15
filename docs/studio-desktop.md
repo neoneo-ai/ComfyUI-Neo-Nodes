@@ -10,7 +10,7 @@
 | `app/studio_app.py` | 窗口、自检、拉起 / 停止 ComfyUI、无边框窗口、关窗收尾、启动设置 |
 | `app/studio_server.py` | 桌面端 aiohttp 服务（ComfyUI 端口 +3，`DESKTOP_PORT_OFFSET`），按目录加载插件模块挂在各自 `RouteTableDef` 上的 handler |
 | `app/studio_caps.py` | 能力表：哪些路由归桌面端服务，表外一律 `409 offline` |
-| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless / dev_mode / listen）、`studio_desktop.log`、`comfy_run.log` |
+| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless / dev_mode / listen / remote）、`studio_desktop.log`、`comfy_run.log` |
 
 源码运行的状态目录是仓库根的 `data/`；exe 优先 exe 旁的 `data/`，落在不可写目录时退回 `%APPDATA%\Neo Studio`。
 
@@ -65,6 +65,12 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
 - 刷新入口不依赖开发模式：Studio 页自己接管 F5 / Ctrl+F5 / Ctrl+R（`studio/web/studio/studio-app.js` 的
   `initReloadHotkey`），前端热同步（`tools/watch_web.py`）之后按一次就是新代码。
 
+## 启动设置的 ⓘ 说明
+
+- 「启动设置」每一行标签旁有一个 ⓘ，悬停（键盘 Tab 聚焦同样出）给出这一行的前提条件与生效方式：根目录 /
+  解释器 / 端口 / 局域网监听 / 远程 ComfyUI 走「保存并重启 ComfyUI」，无边框窗口立刻生效并写进配置，
+  开发模式要重启桌面端窗口。文案在 `studio/web/studio/studio-app.js` 的 `TIPS` 里。
+
 ## 局域网访问
 
 - 「启动设置 → 局域网监听」是下拉框，选项由桌面端给的本机网卡列表拼出来（仅本机 / 全部网卡 `0.0.0.0` / 各块网卡
@@ -74,6 +80,19 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
   端口探测 `port_busy` 也认回环 —— 回环上没人听的话窗口打不开，在跑的那路还会被读成空位再拉一路。
 - ComfyUI 没有鉴权：开了监听，`/api/*`、`/neo_studio/*`、`/view` 对局域网上的机器全部敞开，只在信任的网段开，
   用完清空这一项。MCP 服务不参与这条网络口（stdio + 回环，见 [mcp.md](mcp.md)）。
+
+## 远程 ComfyUI
+
+- 「启动设置 → 远程 ComfyUI」填 `http://主机[:端口]`（`https` 同样收；path / query / 锚点 / 凭据不收），存
+  `launcher_config.json` 的 `remote`。非空时窗口直接开在 `http://<远端>/neo-studio`，探活与就绪跳转都打在远端上
+  （`probe` 收的是目标 base，本机模式是 `http://127.0.0.1:端口`）；留空 = 连本机，也是默认。
+- 远程模式下本机不拉进程：`port_busy`、`free_comfy_port`、`start_comfy`、`port_owner`、`kill_pid` 全不参与。
+  「启动内核」变成重连远端，「停止内核」禁用 —— 远端进程由远端那台机器自己起停。
+- 远端要自己装好 `comfyui-neo-studio` 插件，并在它自己的「启动设置 → 局域网监听」里放开监听；探活打不通时窗口停在
+  离线页并提示「远程 ComfyUI 不可达：<地址>」。
+- 远程模式读写的是远端的插件数据（配方 / 技能 / 设置都在远端那台机器上）；离线页仍是本机的桌面端服务，浏览本机素材目录。
+- 本机启动项（根目录 / 解释器 / 端口 / 局域网监听）在远程模式里灰掉：那几项归远端配置，本机改了影响不到远端。
+- 窗口地址换了就是另一个 origin，Studio 页存在 `localStorage` 里的设置不跟着过去。
 
 ## 关窗与进程回收
 

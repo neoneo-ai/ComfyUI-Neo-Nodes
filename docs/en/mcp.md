@@ -157,6 +157,10 @@ LAN that need Neo Studio capabilities should use ComfyUI's HTTP API directly —
 that can reach the port can submit and read jobs, so enable it only on a trusted segment and restrict the port in the
 firewall.
 
+The desktop can also point its window at a remote ComfyUI ("Startup settings → Remote ComfyUI", see "Remote ComfyUI"
+in [studio-desktop.md](studio-desktop.md)): the remote machine needs the plugin installed and its own listen address
+open. The MCP layer takes no part in that — it stays stdio plus loopback, and `--comfy-url` accepts loopback only.
+
 ## Known limits
 
 - Per-segment prompt rewriting (`director_plan` with `optimize` / `modify`) handles one segment per call;

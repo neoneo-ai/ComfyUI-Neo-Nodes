@@ -143,6 +143,10 @@ MCP 这一层是 stdio + 本机回环，没有网络监听口，也不做跨机�
 `/neo_studio/*`、`/rs_*`、`/neo_*` 与 `/view`。ComfyUI 没有鉴权，能连到端口的机器都能提交与读取任务，
 只在信任的网段开，并在防火墙里限到需要的地址。
 
+桌面端也可以反过来把窗口开在远端那台 ComfyUI 上（「启动设置 → 远程 ComfyUI」，见
+[studio-desktop.md](studio-desktop.md) 的「远程 ComfyUI」）：远端要装好本插件并放开监听。MCP 这一层不参与，
+仍是 stdio + 本机回环，`--comfy-url` 只认回环。
+
 ## 已知限制
 
 - 单段提示词的逐段改写（`director_plan` 的 `optimize` / `modify`）一次一段，多段需逐次调用。

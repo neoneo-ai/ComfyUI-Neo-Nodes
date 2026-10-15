@@ -253,7 +253,7 @@ test("启动设置：根目录与解释器都带原生选择按钮，选完写�
     click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
     await flush();
     const rowOf = (label) => [...document.querySelectorAll(".ns-launch-row")]
-        .find((r) => r.querySelector("span")?.textContent === label);
+        .find((r) => r.querySelector(".ns-launch-label")?.textContent.startsWith(label));
     for (const [label, key, value] of [["ComfyUI 根目录", "root", "E:/ComfyUI"], ["Python", "py", "E:/py/python.exe"]]) {
         const row = rowOf(label);
         assert.ok(row, `启动设置应有「${label}」行`);

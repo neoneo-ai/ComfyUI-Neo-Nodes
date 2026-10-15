@@ -216,8 +216,14 @@ the rules a change has to obey.
 - The LAN listen startup setting (`listen` in `launcher_config.json`) is ComfyUI's `--listen`; empty keeps the
   loopback-only default. A NIC address always gets `127.0.0.1` added in `comfy_listen()`: the window navigates to
   loopback and `port_busy()` probes loopback, so a listen list without it leaves the window unopenable and a running
-  ComfyUI reads as a free port. `save_config()` writes root, interpreter, port and all three toggles together, so
-  "Save and restart" cannot drop a stored toggle.
+  ComfyUI reads as a free port. `save_config()` writes root, interpreter, port, the toggles and the remote address
+  together, so "Save and restart" cannot drop a stored setting.
+- The remote startup setting (`remote` in `launcher_config.json`) is a base URL normalized by `comfy_remote()`
+  (`http(s)://host[:port]`, no path / query / fragment / credentials). It moves the window URL, the probe target
+  (`probe()` takes a base URL) and the ready jump to the remote machine; in that mode the desktop never runs
+  `port_busy()`, `free_comfy_port()`, `start_comfy()`, `port_owner()` or `kill_pid()`, kernel stop is disabled, and
+  the remote machine owns its own root, interpreter, port and listen setting. The remote needs the plugin installed
+  and listening, and has no authentication — network access is a firewall and trusted-network decision.
 - Frozen builds resolve the ComfyUI root by walking the exe's ancestor
   directories, and package resources go through `_MEIPASS`. Both the onefile
   layout and the onedir layout, which has one extra directory level, resolve.

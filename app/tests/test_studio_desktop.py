@@ -96,58 +96,66 @@ class ResolveTests(unittest.TestCase):
             self.assertIsNone(app.find_python(pathlib.Path(tmp) / "ComfyUI", ""))
 
 
+class _Resp:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 class ProbeTests(unittest.TestCase):
     def test_probe_ready(self):
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
         with patch.object(app.urllib.request, "urlopen", lambda url, timeout=3.0: _Resp()):
-            self.assertTrue(app.probe(8188))
+            self.assertTrue(app.probe("http://127.0.0.1:8188"))
 
     def test_probe_down(self):
         def _boom(url, timeout=3.0):
             raise ConnectionRefusedError()
 
         with patch.object(app.urllib.request, "urlopen", _boom):
-            self.assertFalse(app.probe(8188))
+            self.assertFalse(app.probe("http://127.0.0.1:8188"))
+
+    def test_probe_hits_the_target_base(self):
+        # 探活打的是目标 base 上的 /neo_studio/version：远程模式因此天然探的是远端
+        seen = []
+        with patch.object(app.urllib.request, "urlopen",
+                          lambda url, timeout=3.0: seen.append(url) or _Resp()):
+            self.assertTrue(app.probe("http://192.168.0.20:8188"))
+        self.assertEqual(seen, ["http://192.168.0.20:8188/neo_studio/version"])
 
     def test_wait_ready_polls_until_ready(self):
         seq = [False, False, True]
 
-        def _probe(port, timeout=3.0):
+        def _probe(base, timeout=3.0):
             return seq.pop(0) if seq else False
 
         with patch.object(app, "probe", _probe), patch.object(app, "POLL_INTERVAL", 0):
-            self.assertTrue(app.wait_ready(8188, 5))
+            self.assertTrue(app.wait_ready("http://127.0.0.1:8188", 5))
 
     def test_attach_wait_gives_up_when_the_port_dies(self):
         # 关完立刻重开：附着到正在死的那路，连续两轮没人监听就是死了，不该对着空端口等满超时
         seen = []
 
-        def _busy(port):
-            seen.append(port)
+        def _busy():
+            seen.append(1)
             return len(seen) == 1
 
-        with patch.object(app, "probe", lambda port, timeout=3.0: False), \
-             patch.object(app, "port_busy", _busy), patch.object(app, "POLL_INTERVAL", 0):
-            self.assertFalse(app.wait_attach(8188, 90))
+        with patch.object(app, "probe", lambda base, timeout=3.0: False), \
+             patch.object(app, "POLL_INTERVAL", 0):
+            self.assertFalse(app.wait_attach("http://127.0.0.1:8188", 90, _busy))
         self.assertEqual(len(seen), 3, "有人监听一轮 + 没人监听两轮就收手")
 
     def test_attach_wait_keeps_polling_a_live_port(self):
         # 附着的那路还在导入自定义节点：端口有人监听，就该继续等而不是提前收手
         polls = []
 
-        def _probe(port, timeout=3.0):
-            polls.append(port)
+        def _probe(base, timeout=3.0):
+            polls.append(base)
             return False
 
-        with patch.object(app, "probe", _probe), patch.object(app, "port_busy", lambda port: True), \
-             patch.object(app, "POLL_INTERVAL", 0):
-            self.assertFalse(app.wait_attach(8188, 0.2))
+        with patch.object(app, "probe", _probe), patch.object(app, "POLL_INTERVAL", 0):
+            self.assertFalse(app.wait_attach("http://127.0.0.1:8188", 0.2, lambda: True))
         self.assertGreater(len(polls), 3, "端口有人监听就不许提前收手")
 
     def test_start_comfy_argv(self):
@@ -983,8 +991,8 @@ class StudioDesktopTests(unittest.TestCase):
         # 附着的那路（桌面端没有句柄）：端口死了要收手回离线页，不能等满超时把窗口卡在「启动中」
         calls = []
         desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
-        with patch.object(app, "wait_attach", lambda port, s: calls.append("attach") or False), \
-             patch.object(app, "wait_ready", lambda port, s: calls.append("ready") or False), \
+        with patch.object(app, "wait_attach", lambda *a: calls.append("attach") or False), \
+             patch.object(app, "wait_ready", lambda *a: calls.append("ready") or False), \
              patch.object(app, "log_line", lambda text: None):
             desktop._jump_when_ready()
         self.assertEqual(calls, ["attach"])
@@ -995,8 +1003,8 @@ class StudioDesktopTests(unittest.TestCase):
         calls = []
         comfy = SimpleNamespace(pid=1234, terminate=MagicMock(), wait=MagicMock())
         desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
-        with patch.object(app, "wait_attach", lambda port, s: calls.append("attach") or False), \
-             patch.object(app, "wait_ready", lambda port, s: calls.append("ready") or False), \
+        with patch.object(app, "wait_attach", lambda *a: calls.append("attach") or False), \
+             patch.object(app, "wait_ready", lambda *a: calls.append("ready") or False), \
              patch.object(app, "log_line", lambda text: None):
             desktop._jump_when_ready()
         self.assertEqual(calls, ["ready"])
@@ -1518,7 +1526,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
              patch.object(app, "wait_ready", lambda port, seconds: False), \
-             patch.object(app, "wait_attach", lambda port, seconds: False), \
+             patch.object(app, "wait_attach", lambda *a: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -1576,18 +1584,20 @@ class LauncherConfigTests(unittest.TestCase):
                 self.assertEqual(app.load_config(),
                                  {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
                                   "python": "D:/python/python.exe", "port": 8188, "frameless": True,
-                                  "dev_mode": False, "listen": ""})
+                                  "dev_mode": False, "listen": "", "remote": ""})
 
     def test_config_roundtrip_with_all_toggles(self):
-        # 「保存并重启」把根目录 / 解释器 / 端口连同三个开关一起落盘：开发模式与监听不能被它写没
+        # 「保存并重启」把根目录 / 解释器 / 端口连同开关与远程地址一起落盘：不能被它写没
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"):
                 self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188,
                                                 {"frameless": False, "dev_mode": True,
-                                                 "listen": "127.0.0.1,192.168.0.7"}))
+                                                 "listen": "127.0.0.1,192.168.0.7",
+                                                 "remote": "http://192.168.0.20:8188"}))
                 self.assertEqual(app.load_config()["dev_mode"], True)
                 self.assertEqual(app.load_config()["listen"], "127.0.0.1,192.168.0.7")
                 self.assertEqual(app.load_config()["frameless"], False)
+                self.assertEqual(app.load_config()["remote"], "http://192.168.0.20:8188")
 
     def test_set_frameless_keeps_the_rest_of_the_config(self):
         # 无边框开关只改自己那一项：根目录 / 解释器 / 端口不能被它带跑
@@ -1602,7 +1612,7 @@ class LauncherConfigTests(unittest.TestCase):
                 self.assertEqual(app.load_config(),
                                  {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
                                   "python": "D:/python/python.exe", "port": 8188, "frameless": True,
-                                  "dev_mode": False, "listen": ""})
+                                  "dev_mode": False, "listen": "", "remote": ""})
                 self.assertTrue(desktop.launcher["frameless"], "设置页快照要同步")
 
     def test_load_config_missing_is_empty(self):
@@ -1733,6 +1743,154 @@ class ListenTests(unittest.TestCase):
                 self.assertEqual(app.load_config()["listen"], "127.0.0.1,192.168.0.7")
                 self.assertEqual(desktop.launcher["listen"], "127.0.0.1,192.168.0.7")
                 self.assertEqual(desktop.listen, "127.0.0.1,192.168.0.7")
+
+
+def _no_local_path(*a, **k):
+    raise AssertionError("远程模式不该走本机进程 / 本机端口那条路")
+
+
+class RemoteTargetTests(unittest.TestCase):
+    """远程 ComfyUI：窗口指向远端，本机只探活与跳转，不拉进程、不探本机端口、不杀进程。"""
+
+    REMOTE = "http://192.168.0.20:8188"
+
+    def _desktop(self, **launcher):
+        return app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188,
+                                 pathlib.Path("root"), launcher=launcher)
+
+    def test_comfy_remote_normalizes_a_base_url(self):
+        for raw, want in (("http://192.168.0.20:8188", self.REMOTE),
+                          ("192.168.0.20:8188", self.REMOTE),
+                          ("  http://192.168.0.20:8188/  ", self.REMOTE),
+                          ("https://studio.example.com", "https://studio.example.com"),
+                          ("localhost:8188", "http://localhost:8188")):
+            self.assertEqual(app.comfy_remote(raw), want, raw)
+
+    def test_empty_remote_is_local_mode(self):
+        self.assertEqual(app.comfy_remote(""), "")
+        self.assertEqual(app.comfy_remote("   "), "")
+
+    def test_junk_is_rejected(self):
+        # 桌面端拿它拼 /neo-studio 与探活：path / query / 锚点 / 凭据 / 非 http 一律不收
+        for raw in ("ftp://192.168.0.20", "http://192.168.0.20/some/path", "http://host?a=1",
+                    "http://host#frag", "http://user:pw@192.168.0.20", "http://host:99999", "http://"):
+            self.assertIsNone(app.comfy_remote(raw), raw)
+
+    def test_the_window_points_at_the_remote(self):
+        desktop = self._desktop(remote=self.REMOTE)
+        self.assertEqual(desktop.base, self.REMOTE)
+        self.assertEqual(desktop.url, f"{self.REMOTE}/neo-studio")
+        local = self._desktop()
+        self.assertEqual((local.remote, local.base, local.url),
+                         ("", "http://127.0.0.1:8188", "http://127.0.0.1:8188/neo-studio"))
+
+    def test_target_busy_probes_the_remote_and_the_local_port_otherwise(self):
+        remote, local = self._desktop(remote=self.REMOTE), self._desktop()
+        with patch.object(app, "probe", lambda base, timeout=3.0: True), \
+             patch.object(app, "port_busy", _no_local_path):
+            self.assertTrue(remote.target_busy())
+        with patch.object(app, "port_busy", lambda port: True), \
+             patch.object(app, "probe", _no_local_path):
+            self.assertTrue(local.target_busy())
+
+    def test_remote_state_probes_the_remote_and_reports_no_local_process(self):
+        desktop = self._desktop(remote=self.REMOTE)
+        with patch.object(app, "probe", lambda base, timeout=3.0: True), \
+             patch.object(app, "port_owner", _no_local_path), \
+             patch.object(app, "pid_alive", _no_local_path):
+            self.assertEqual(desktop.comfy_state(),
+                             {"port": 8188, "pid": 0, "mine": False, "running": True,
+                              "ready": True, "starting": False, "remote": self.REMOTE})
+
+    def test_remote_start_never_touches_the_local_ports(self):
+        desktop = self._desktop(remote=self.REMOTE)
+        with patch.object(app, "start_comfy", _no_local_path), \
+             patch.object(app, "port_busy", _no_local_path), \
+             patch.object(app, "free_comfy_port", _no_local_path), \
+             patch.object(app, "port_owner", _no_local_path), \
+             patch.object(app, "kill_pid", _no_local_path), \
+             patch.object(app, "probe", lambda base, timeout=3.0: False), \
+             patch.object(app, "log_line", lambda text: None), \
+             patch.object(app.threading, "Thread",
+                          lambda target, daemon=True: SimpleNamespace(start=lambda: None)):
+            state = desktop.comfy_start()
+        self.assertIsNone(desktop.comfy)
+        self.assertFalse(state["running"])
+
+    def test_remote_stop_leaves_the_remote_process_alone(self):
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), "",
+                                    "http://127.0.0.1:8191/neo-studio",
+                                    launcher={"remote": self.REMOTE})
+        gone = []
+        with patch.object(app, "kill_pid", _no_local_path), \
+             patch.object(app, "port_owner", _no_local_path), \
+             patch.object(app, "probe", lambda base, timeout=3.0: False), \
+             patch.object(app, "log_line", lambda text: None), \
+             patch.object(desktop, "_goto", lambda url: gone.append(url)):
+            state = desktop.comfy_stop()
+        self.assertEqual(gone, ["http://127.0.0.1:8191/neo-studio"], "窗口退回离线页")
+        self.assertFalse(state["running"])
+
+
+    def _apply(self, desktop, root, *args):
+        """把「保存并重启」里与远程无关的部分都按掉，只留校验 + 落盘 + 改窗口目标。
+        断言要在 CONFIG_FILE 还换着的时候读，出了 with 就是真配置了。"""
+        with patch.object(app, "CONFIG_FILE", root.parent / "launcher_config.json"), \
+             patch.object(app, "log_line", lambda text: None), \
+             patch.object(app, "startup_state", lambda *a: ("ok", "")), \
+             patch.object(desktop, "comfy_stop", lambda: {"running": False}), \
+             patch.object(desktop, "comfy_start", lambda: {"ok": True}):
+            res = desktop.apply_launcher(str(root), str(sys.executable), 8188, *args)
+            return res, app.load_config()
+
+    def _root(self, tmp):
+        root = pathlib.Path(tmp) / "ComfyUI"
+        root.mkdir()
+        (root / "main.py").write_text("", encoding="utf-8")
+        return root
+
+    def test_apply_rejects_a_bad_remote(self):
+        # 远程地址不是 http(s)://主机[:端口] 就报错：不能把垃圾喂给窗口
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            desktop = app.StudioDesktop("u", None, 8188, root, str(sys.executable),
+                                        launcher={"root": str(root), "port": 8188})
+            res, _ = self._apply(desktop, root, "", "http://host/path")
+            self.assertFalse(res["ok"])
+            self.assertIn("远程地址", res["error"])
+
+    def test_apply_saves_the_remote_and_moves_the_window_there(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            desktop = app.StudioDesktop("u", None, 8188, root, str(sys.executable),
+                                        launcher={"root": str(root), "port": 8188})
+            res, cfg = self._apply(desktop, root, "", self.REMOTE)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual(cfg["remote"], self.REMOTE)
+            self.assertEqual(desktop.remote, self.REMOTE)
+            self.assertEqual(desktop.url, f"{self.REMOTE}/neo-studio")
+
+    def test_apply_without_remote_keeps_the_saved_one(self):
+        # 引导页那条路不碰远程：remote 为 None = 沿用已存的
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            desktop = app.StudioDesktop("u", None, 8188, root, str(sys.executable),
+                                        launcher={"root": str(root), "port": 8188, "remote": self.REMOTE})
+            res, cfg = self._apply(desktop, root)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual(desktop.remote, self.REMOTE)
+            self.assertEqual(cfg["remote"], self.REMOTE)
+
+    def test_clearing_the_remote_returns_to_local_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            desktop = app.StudioDesktop("u", None, 8188, root, str(sys.executable),
+                                        launcher={"root": str(root), "port": 8188, "remote": self.REMOTE})
+            res, cfg = self._apply(desktop, root, "", "")
+            self.assertTrue(res["ok"], res)
+            self.assertEqual(desktop.remote, "")
+            self.assertEqual(desktop.base, "http://127.0.0.1:8188")
+            self.assertEqual(cfg["remote"], "")
 
 
 class StartupStateTests(unittest.TestCase):
