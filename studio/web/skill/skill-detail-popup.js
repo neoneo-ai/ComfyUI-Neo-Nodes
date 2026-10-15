@@ -16,7 +16,7 @@ import {
     workflowParamValues, buildCanvasWorkflow, arrangeCanvasNodes, makeSkillLog,
     renderMarkdown, dispatchSkillChanged, copySkillAsCustom, skillDisplayName,
 } from "./skill-core.js";
-import { confirmWorkflowWrite, writeWorkflowToSkill, showSkillWriteLogDialog, showCanvasWriteCard, openSkillWorkflowInMainUi } from "./skill-writeback.js";
+import { confirmWorkflowWrite, writeWorkflowToSkill, showSkillWriteLogDialog, armCanvasWriteback, openSkillWorkflowInMainUi } from "./skill-writeback.js";
 import { t, tf } from "../js/core/i18n.js";
 
 // ==========================================
@@ -534,7 +534,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             showToast(app, "error", t("导入失败"), String(e.message || e));
             return;
         }
-        showCanvasWriteCard(currentSkillId, currentSource, currentDisplayName);
+        armCanvasWriteback(currentSkillId, currentSource, currentDisplayName);
         // 导入成功即收起技能窗口：内嵌宿主（技能管理整窗）走 onCloseWindow 关整窗，独立详情弹窗走 requestClose
         if (onCloseWindow) onCloseWindow(); else requestClose();
     }

@@ -4,6 +4,23 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- "⤒ 主画布编辑" no longer opens a missing page during startup. The skill detail's main-canvas handoff opens
+  `/?neo_wf_edit=<id>` on the current origin, and on the desktop offline page that origin is the read-only desktop
+  service, which has no canvas page — clicking it while ComfyUI is starting only landed on "page not found".
+  `openSkillWorkflowInMainUi()` now checks the run state the header pill already reports: "ComfyUI is starting… edit
+  the main canvas once it is ready" while booting, "This feature needs ComfyUI · click “Start kernel” in Settings →
+  Launcher Settings" when it is stopped. The handoff is unchanged on the ComfyUI page. Tests:
+  `studio/tests/js/studio-starting.test.mjs`, `studio/tests/js/studio-offline.test.mjs`.
+
+- Main canvas lock when ComfyUI is not running. The ComfyUI page is an SPA, so the canvas stays editable after the
+  process stops and every edit lands on a backend that is gone. `studio/web/canvas-lock.js` reads the frontend's own
+  connection events (`status` with no payload / `reconnecting` = backend gone, `reconnected` / a `status` payload =
+  back) and confirms with a `/system_stats` probe before locking, so a websocket blip never locks the canvas. A
+  confirmed loss applies the frontend's own canvas lock (`LGraphCanvas.read_only`, the same flag
+  `Comfy.Canvas.Lock` uses) — panning keeps working, node dragging, resizing, widget editing and the right-click
+  add-node menu stop — plus a bottom bar "🔒 ComfyUI 未运行 · 画布只读". Recovery unlocks and restores the lock
+  state the user had set. Docs: `docs/studio-desktop.md` / `docs/en/studio-desktop.md`.
+
 - UI language for the top-bar 🅝 menu and the Studio desktop app. `studio/web/js/core/i18n.js` translates with the
   Chinese source strings as dictionary keys, so a missing English entry falls back to Chinese instead of showing a
   key. The choice is stored in `localStorage["neo_studio_lang"]` and defaults to the browser language. The unified
@@ -211,6 +228,9 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   `custom_nodes`, so tooling that imports the repo root as a package stays inert.
 - Repository renamed `ComfyUI-Neo-Nodes` → `neo-studio`; the app history merged onto the plugin history so
   `v1.0.0`..`v1.2.0` are ancestors of `main`. All `github.com/neoneo-ai` links point at the new name.
+- Skill canvas import no longer pins a persistent writeback toast in the top-right corner. The pending skill is
+  signalled by the green dot on the 🅝 button, and "💾 Write back to skill" in the 🅝 menu is the only entry that
+  writes the canvas back.
 
 ## [1.2.0] - 2026-10-08
 

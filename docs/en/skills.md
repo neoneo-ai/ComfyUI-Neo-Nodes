@@ -136,11 +136,9 @@ turns the whole node red); writeback and "📋 From canvas" export temporarily e
 prompt and restore them afterwards, so no slot is lost.
 
 After a successful import the skill window closes by itself (the full manager window closes, a standalone
-detail popup collapses, nothing covers the canvas any more) and a persistent action toast card appears
-reminding you to save and write back, with "💾 Write back to skill" inside it writing directly. Once the card
-is dismissed the pending-writeback state stays in skill.js, and the 🅝 menu's "💾 Write back to skill" is the
-permanent entry for the same action (the 🅝 button shows a green dot while a writeback is pending, and the
-entry carries a green dot when the menu opens).
+detail popup collapses, nothing covers the canvas any more); the only canvas-side hint is the green dot on the
+🅝 button, meaning "a skill is pending writeback". The entry that writes it is "💾 Write back to skill" in the
+🅝 menu (the entry carries a green dot when the menu opens).
 
 ## Studio hands over to the main canvas
 
@@ -153,16 +151,15 @@ not control are kept as they are). In the Studio desktop this handover happens i
 (`OPEN_EXTERNAL_LINKS_IN_BROWSER = False`), and the main UI's "🎬 New Studio" returns to Studio in the same
 window.
 
-"💾 Write back to skill" inside the action toast writes the whole canvas into that skill's `workflow.json`
-(built-in toasts render no action buttons, and a card with an action never auto-closes), and syncs the
-canvas' model / LoRA / size / count (`batch_size` → `count`) / prefix into `config.json`, keeping the
+"💾 Write back to skill" in the top menu writes the whole canvas into that skill's `workflow.json`,
+and syncs the canvas' model / LoRA / size / count (`batch_size` → `count`) / prefix into `config.json`, keeping the
 settings area's base-resolution, prompt-enhancement and similar keys (presets stay read-only); the main-chain
 LoRA nodes injected programmatically at import are stripped by count (they do not count towards the template
 structure, their values only land in `config.json`).
 
-The writeback card is bound to the canvas the skill was injected into: it collapses when you switch to
-another canvas tab and comes back when you return, and a skill imported later into the same canvas replaces
-the earlier card.
+The pending-writeback state is bound to the canvas the skill was injected into: the green dot collapses when
+you switch to another canvas tab and comes back when you return, and a skill imported later into the same
+canvas replaces the earlier one.
 
 ## Writeback confirmation & change history
 

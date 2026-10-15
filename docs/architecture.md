@@ -135,7 +135,7 @@ studio/
 | `slash-picker.js` | `/` 技能快捷菜单 |
 | `skill.js` | 技能模块门面：组装下列子模块并统一对外导出 |
 | `skill/skill-core.js` | 技能 API、Markdown 渲染、分类标签、工作流模板预渲染、回写变更记录 |
-| `skill/skill-writeback.js` | 工作流回写确认、变更记录弹窗、画布导入与回写卡片 |
+| `skill/skill-writeback.js` | 工作流回写确认、变更记录弹窗、画布导入与待回写绿点 |
 | `skill/skill-detail-popup.js` | 单技能详情弹窗与跨节点单例 |
 | `image-gen.js` | 生图客户端与生图设置表单 |
 | `image-gen-edit-node.js` | 生图/编辑节点前端 |
@@ -151,6 +151,7 @@ studio/
 | `workflow-graph.js` | 技能工作流只读流程图（autogrow 槽位合并为合成节点，图上与 tooltip 不显示内部 id；同列宽度拉齐，模型加载节点放宽以显示模型名）；`canvasLayout` 按同一套分层与同层排序重排「导入到画布」后的画布节点，并返回同列统一宽度供 setSize |
 | `workflow-context.js` | 工作流上下文采集 |
 | `top-menu.js` | 顶栏 🅝 菜单 |
+| `canvas-lock.js` | 主画布离线闸门：ComfyUI 掉线时锁画布（前端自带的 `read_only` 画布锁）并出横幅，恢复后解锁 |
 | `node-behavior.js` | 节点拖拽、粘贴等交互行为 |
 | `combo-box.js` | 通用下拉组件 |
 | `dom-utils.js` | 共享 DOM 工厂 |

@@ -20,6 +20,17 @@
 功能开关表随 `/neo_studio/version` 下发，Studio 只门控运行类按钮（生成 / 跑段 / 拼接），配方编辑、技能编辑、
 设置、LLM 配置都不需要 ComfyUI 运行时。路由清单见 [api-routes.md](api-routes.md)。
 
+主画布（ComfyUI 页面）是 SPA，进程停了页面还活着、画布照常能拖能改，改完的东西落不进任何执行。
+`studio/web/canvas-lock.js` 读前端自己的连接事件当判据：`status` 空 / `reconnecting` = 后端没了，
+`reconnected` / `status` 带数据 = 回来了；锁之前先打一次 `/system_stats` 确认，WS 抖动不误锁。确认掉线就走
+前端自带的画布锁（`LGraphCanvas.read_only`，与 `Comfy.Canvas.Lock` 同一份）：平移照常，节点拖动 / 缩放 /
+widget 编辑 / 右键加节点全停，底部出「🔒 ComfyUI 未运行 · 画布只读」。离线期间每 3 秒复探一次，
+恢复后解锁并还原用户自己的锁定状态。
+
+离线页跑在桌面端的只读服务上，技能详情的「⤒ 主画布编辑」开的是当前源的根路径 —— 桌面端根路径没有画布页，
+ComfyUI 没就绪时点它只会得到「页面不存在」。`openSkillWorkflowInMainUi()` 照顶栏那份运行状态拦一下：启动中
+报「ComfyUI 启动中…就绪后再编辑主画布」，未运行报「该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」」。
+
 ## 启动序列
 
 - 窗口先出：开窗只做解包与建窗口（启动页 / 引导页），自检、桌面端服务、拉起 ComfyUI 都在后台线程跑完。

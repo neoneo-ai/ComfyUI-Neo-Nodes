@@ -206,6 +206,7 @@ const EN = {
     "生成图片分镜": "Generate storyboard images",
     "{label} 需要 ComfyUI 执行队列 · 点一下启动": "{label} needs the ComfyUI queue · click to start it",
     "ComfyUI 启动中": "ComfyUI starting",
+    "ComfyUI 启动中…就绪后再编辑主画布": "ComfyUI is starting… edit the main canvas once it is ready",
     "需要 ComfyUI": "ComfyUI required",
     "🚀 启动 ComfyUI": "🚀 Start ComfyUI",
     "远程 ComfyUI 不可达 · {remote} —— 这里浏览的是本机素材目录，生成与队列要连上远端":
@@ -213,6 +214,8 @@ const EN = {
     "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI":
         "ComfyUI is not running · assets / skills / recipes / settings / model hub work offline; generation and the queue need ComfyUI",
     "离线模式": "offline mode",
+    // 主画布离线闸门（canvas-lock.js）：ComfyUI 掉线时锁画布并说明原因
+    "🔒 ComfyUI 未运行 · 画布只读": "🔒 ComfyUI is not running · canvas is read-only",
     "显存": "VRAM",
     "内存": "RAM",
     "GPU 显存占用（含全部进程）": "GPU VRAM in use (all processes)",
@@ -745,9 +748,6 @@ const EN = {
     "画布没有有效工作流": "The canvas has no valid workflow",
     "（{msg}）": " ({msg})",
     "回写入技能：技能 \"{name}\" 待保存": "Write back to skill: “{name}” is pending save",
-    "已导入到画布": "Imported to canvas",
-    "技能 \"{label}\" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」确认变更落盘；仅保存 API 工作流，画布上的节点位置等界面布局不写入": "The workflow.json of “{label}” was loaded into the canvas (nodes laid out by the flow graph). After editing, click “💾 Write back to skill” to review and save the changes; only the API workflow is saved, so canvas node positions and other UI layout aren't written",
-    "。预设技能：模型值写入预设本地覆盖，结构变更会自动复制为自定义技能": ". Preset skill: model values go to the preset's local override; structural changes are auto-copied into a custom skill",
     "主画布编辑": "Edit in main canvas",
     "技能 \"{name}\" 不存在": "The skill “{name}” doesn't exist",
     "无工作流": "No workflow",

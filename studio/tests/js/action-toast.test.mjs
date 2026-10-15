@@ -39,7 +39,7 @@ test("success/info 超时自动消失", async (t) => {
 test("带 action 的 success 不自动消失（等用户点处理入口）", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { actionToast } = await import("../../web/toast.js");
-    const { el } = actionToast({ severity: "success", summary: "已导入到画布", actionLabel: "💾 回写入技能" });
+    const { el } = actionToast({ severity: "success", summary: "打标完成", actionLabel: "打开技能详情" });
     t.mock.timers.tick(6000); // 超过自动消失时长
     t.mock.timers.reset();
     assert.ok(el.parentNode, "带 action 的卡片不自动消失");
@@ -79,15 +79,6 @@ test("无 actionLabel：不渲染 action 按钮", async () => {
     const { actionToast } = await import("../../web/toast.js");
     const { el } = actionToast({ summary: "普通提示" });
     assert.equal(el.querySelector(".neo-at-action"), null);
-});
-
-test("setHidden：收起加 neo-at-hidden、恢复去掉", async () => {
-    const { actionToast } = await import("../../web/toast.js");
-    const { el, setHidden } = actionToast({ severity: "success", summary: "已导入到画布", actionLabel: "💾 回写入技能" });
-    setHidden(true);
-    assert.ok(el.classList.contains("neo-at-hidden"), "收起应加 neo-at-hidden");
-    setHidden(false);
-    assert.ok(!el.classList.contains("neo-at-hidden"), "恢复应去掉 neo-at-hidden");
 });
 
 test("onClose：action / ✕ 关闭时回调", async () => {

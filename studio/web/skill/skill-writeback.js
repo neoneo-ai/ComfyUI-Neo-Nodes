@@ -1,13 +1,12 @@
 /**
  * skill-writeback.js
- * 工作流回写与画布交接：回写确认弹窗、变更记录弹窗、导入画布后的常驻回写卡片、
+ * 工作流回写与画布交接：回写确认弹窗、变更记录弹窗、导入画布后的待回写状态（🅝 绿点）、
  * Studio 与主画布交接（?neo_wf_edit=<skill_id>）与顶菜单回写入技能入口。
  */
 
 import { app } from "../../../scripts/app.js";
 import { mkEl } from "../dom-utils.js";
 import { showToast } from "../gallery-utils.js";
-import { actionToast } from "../toast.js";
 import { t, tf } from "../js/core/i18n.js";
 import { previewWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, listGenModels, listVideoGenModels } from "../image-gen.js";
 import {
@@ -162,12 +161,9 @@ async function writeWorkflowToSkill(id, origin, displayName) {
     }
 }
 
-// 导入画布后的常驻回写卡片：Studio 交接与技能管理「⤒ 导入到画布」共用同一套行为。
-// 内置 toast 不认 actionLabel / onAction（前端无此契约，按钮不渲染、5s 就消失）
-// → 走插件 action toast，「💾 回写入技能」入口才可见且留在屏上。
-// 卡片绑定灌入时那张画布（graph 实例）：切走 tab 收起、切回恢复；同画布后导入的顶掉前一张。
-// 卡片被 ✕ 关掉后待办状态留在 pendingWriteback：顶菜单「💾 回写入技能」入口与 🅝 绿点靠它落盘。
-let handoffCard = null;
+// 导入画布后的待回写状态：Studio 交接与技能管理「⤒ 导入到画布」共用同一套行为。
+// 画布上不挂常驻 toast 卡片——顶菜单「💾 回写入技能」是唯一落盘入口，🅝 绿点就是待回写提示。
+// 状态绑定灌入时那张画布（graph 实例）：切走 tab 绿点收起、切回恢复；同画布后导入的顶掉前一个。
 let pendingWriteback = null;   // { id, source, wf } —— 灌入技能的那张画布
 let _wbUnwatchTab = null;
 let _wbHintObserver = null;
@@ -203,12 +199,12 @@ function startWritebackHintObserver() {
     _wbHintObserver.observe(watchNode, { childList: true, subtree: true });
 }
 
-// 换 tab 只改 store 的 activeWorkflow，画布 DOM 上没有 litegraph:set-graph 可听
-function watchWritebackTab(onTab) {
+// 换 tab 只改 store 的 activeWorkflow，画布 DOM 上没有 litegraph:set-graph 可听 → 订阅 store 重算绿点
+function watchWritebackTab() {
     _wbUnwatchTab?.();
     const wfStore = app.extensionManager?.workflow;
     if (!wfStore || !pendingWriteback?.wf || typeof wfStore.$subscribe !== "function") return;
-    const off = wfStore.$subscribe(() => onTab(wfStore.activeWorkflow === pendingWriteback.wf));
+    const off = wfStore.$subscribe(() => applyWritebackHint());
     _wbUnwatchTab = () => { _wbUnwatchTab = null; off?.(); };
 }
 
@@ -231,7 +227,7 @@ function getPendingWriteback() {
     return { id: pendingWriteback.id, source: pendingWriteback.source };
 }
 
-/** 顶菜单「💾 回写入技能」：回写卡片关掉后仍可从这里落盘当前画布的技能 */
+/** 顶菜单「💾 回写入技能」：画布上没有回写卡片，这里是待回写技能的唯一落盘入口 */
 async function runCanvasSkillWriteback() {
     if (!pendingWriteback) {
         showToast(app, "info", t("回写入技能"), t("当前画布没有待回写的技能：技能管理「⤒ 导入到画布」后此入口可用"));
@@ -240,33 +236,28 @@ async function runCanvasSkillWriteback() {
     return await writeWorkflowToSkill(pendingWriteback.id, "canvas", pendingWriteback.displayName);
 }
 
-function showCanvasWriteCard(id, source, displayName) {
-    handoffCard?.close();   // 同画布只认最后打开的技能
+/** 技能工作流灌进画布后登记待回写：点亮 🅝 绿点，顶菜单「💾 回写入技能」据此可用 */
+function armCanvasWriteback(id, source, displayName) {
     setPendingWriteback(id, source, displayName);
-    const label = displayName || id;
-    const card = actionToast({
-        severity: "success",
-        summary: t("已导入到画布"),
-        detail: tf("技能 \"{label}\" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」确认变更落盘；仅保存 API 工作流，画布上的节点位置等界面布局不写入", { label })
-            + (source === "presets" ? t("。预设技能：模型值写入预设本地覆盖，结构变更会自动复制为自定义技能") : ""),
-        actionLabel: t("💾 回写入技能"),
-        onAction: () => runCanvasSkillWriteback(),
-        onClose: () => { if (handoffCard === card) handoffCard = null; },
-    });
-    handoffCard = card;
-    watchWritebackTab((same) => {
-        card.setHidden(!same);
-        applyWritebackHint();
-    });
+    watchWritebackTab();
 }
 
 // ---- Studio ⇄ 主画布交接 ----
 // Studio 没有 LiteGraph，工作流编辑交回主界面：技能详情「⤒ 主画布编辑」开 /?neo_wf_edit=<skill_id>，
-// 主界面扩展 setup 消费该参数灌画布，toast 给「💾 回写入技能」入口（技能详情弹窗不在场也能落盘）。
+// 主界面扩展 setup 消费该参数灌画布，灌入后点亮 🅝 绿点、顶菜单「💾 回写入技能」落盘（技能详情弹窗不在场也能写）。
 const WF_EDIT_PARAM = "neo_wf_edit";
 
 function openSkillWorkflowInMainUi(id) {
     if (!id) { showToast(app, "warning", t("主画布编辑"), t("技能未保存，先保存技能本体")); return; }
+    // 主画布只在 ComfyUI 自己的页面上：离线页里 "/" 是桌面端的只读服务，根路径没有页面，
+    // ComfyUI 没就绪时开出去只会是「页面不存在」。运行状态顶栏已经报了，照它拦一下。
+    if (document.body.classList.contains("ns-offline")) {
+        const starting = document.getElementById("ns-comfy-status")?.classList.contains("ns-comfy-starting");
+        showToast(app, "warning", t("主画布编辑"), starting
+            ? t("ComfyUI 启动中…就绪后再编辑主画布")
+            : t("该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」"));
+        return;
+    }
     window.open(`/?${WF_EDIT_PARAM}=${encodeURIComponent(id)}`, "_blank");
 }
 
@@ -289,7 +280,7 @@ async function openSkillWorkflowOnCanvas(id) {
         return;
     }
     const source = full.source || "custom";
-    showCanvasWriteCard(id, source, displayName);
+    armCanvasWriteback(id, source, displayName);
 }
 
 /** 主界面启动时消费 ?neo_wf_edit=<skill_id>：清掉参数（刷新不重复导入）后灌画布。
@@ -318,7 +309,7 @@ function runSkillWorkflowHandoff() {
 // 导出
 // ==========================================
 export {
-    confirmWorkflowWrite, writeWorkflowToSkill, showCanvasWriteCard,
+    confirmWorkflowWrite, writeWorkflowToSkill, armCanvasWriteback,
     openSkillWorkflowInMainUi, openSkillWorkflowOnCanvas, runSkillWorkflowHandoff,
-    setPendingWriteback, clearPendingWriteback, getPendingWriteback, runCanvasSkillWriteback
+    getPendingWriteback, runCanvasSkillWriteback
 };

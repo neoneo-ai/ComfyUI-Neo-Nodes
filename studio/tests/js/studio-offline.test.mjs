@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mockRoute, jsonResponse, sleep, click, flush, fetchLog, resetEnv } from "./setup.mjs";
+import { appState } from "./mocks/comfy-app.mjs";
 
 const wsInstances = [];
 globalThis.WebSocket = class {
@@ -265,3 +266,46 @@ test("启动设置：根目录与解释器都带原生选择按钮，选完写�
         assert.equal(row.querySelector("input").value, value, "选中的路径应写回输入框");
     }
 });
+
+test("离线页点「⤒ 主画布编辑」：不开桌面端根路径的死页，提示需要 ComfyUI", async () => {
+    mockOfflineDesktop();
+    appState.toasts.length = 0;
+    await import("../../web/studio/studio-app.js?offCanvas=1");
+    await flush();
+    const opened = [];
+    window.open = (url) => { opened.push(url); return null; };
+    const { openSkillWorkflowInMainUi } = await import("../../web/skill/skill-writeback.js?offCanvas=1");
+    openSkillWorkflowInMainUi("image_gen");
+    assert.equal(opened.length, 0, "离线页的 \"/\" 是桌面端只读服务，根路径没有画布页");
+    assert.match(appState.toasts.at(-1).detail, /该功能需要 ComfyUI/);
+});
+
+test("ComfyUI 页里「⤒ 主画布编辑」照常交接：开 /?neo_wf_edit=<id>", async () => {
+    resetEnv();
+    document.body.innerHTML = studioBody;
+    mockRoute("/neo_studio/version", jsonResponse({
+        success: true, plugin_version: "9.9.9", comfyui_version: "0.33.1", offline: false,
+        caps: { image_gen: true, storyboard: true, voice: true, segment: true,
+                director: true, grid_split: true, memory: true, repair: true },
+        recipes: [],
+    }));
+    mockRoute("/neo_studio/launcher", jsonResponse({ error: "no such route" }, 404));
+    mockRoute("/rs_recipes/list", jsonResponse([]));
+    mockRoute("/rs_prompts/skills", jsonResponse([]));
+    mockRoute("/userdata/neo_recipes_data.json", jsonResponse({}));
+    mockRoute("/neo_video_gen/director_progress", jsonResponse({
+        active: false, segment_index: -1, total_segments: 0, step: 0, total_steps: 0,
+    }));
+    appState.toasts.length = 0;
+    await import("../../web/studio/studio-app.js?onCanvas=1");
+    await flush();
+    assert.ok(!document.body.classList.contains("ns-offline"), "ComfyUI 页不该有离线标记");
+
+    const opened = [];
+    window.open = (url) => { opened.push(url); return null; };
+    const { openSkillWorkflowInMainUi } = await import("../../web/skill/skill-writeback.js?onCanvas=1");
+    openSkillWorkflowInMainUi("image_gen");
+    assert.deepEqual(opened, ["/?neo_wf_edit=image_gen"]);
+    assert.equal(appState.toasts.length, 0, "就绪页不该出「需要 ComfyUI」提示");
+});
+

@@ -24,6 +24,21 @@ execution queue, VRAM, or node definitions belongs to ComfyUI. The feature-flag 
 editing, skill editing, settings and LLM configuration never need the ComfyUI runtime. Route list:
 [api-routes.md](api-routes.md).
 
+The main canvas (the ComfyUI page) is an SPA: the page stays alive after the process stops, the canvas stays
+editable, and nothing written there reaches any execution. `studio/web/canvas-lock.js` uses the frontend's own
+connection events as the signal — an empty `status` / `reconnecting` means the backend is gone, `reconnected` /
+a `status` payload means it is back — and confirms with a `/system_stats` probe before locking, so a websocket
+blip never locks the canvas. Once confirmed it applies the frontend's own canvas lock (`LGraphCanvas.read_only`,
+the same one `Comfy.Canvas.Lock` uses): panning keeps working, node dragging / resizing / widget editing / the
+right-click add-node menu stop, and a bottom bar reads "🔒 ComfyUI is not running · canvas is read-only".
+While offline it re-probes every 3 seconds; recovery unlocks the canvas and restores the lock state the user had set.
+
+The offline page runs on the desktop-side read-only service, and the skill detail's "⤒ Edit in main canvas" opens the
+root path of the current origin — the desktop service has no canvas page there, so clicking it while ComfyUI is not
+ready only lands on a missing page. `openSkillWorkflowInMainUi()` checks the run state the header pill already shows:
+"ComfyUI is starting… edit the main canvas once it is ready" while booting, "This feature needs ComfyUI" when it is
+stopped.
+
 ## Startup sequence
 
 - The window comes first: opening the window only unpacks and creates it (splash / guide page); the self-check,

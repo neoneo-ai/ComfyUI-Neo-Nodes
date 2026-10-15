@@ -1094,7 +1094,10 @@ test("内嵌编辑：折叠后展开重挂画布（卸载旧画布 → 新画布
     closeMgr(box);
 });
 
-test("导入到画布：成功后关闭整个技能管理窗口（不遮挡画布），回写入口留在常驻卡片", async () => {
+test("导入到画布：成功后关闭整个技能管理窗口（不遮挡画布），回写入口留在顶菜单", async () => {
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "neo-n-menu-btn";
+    document.body.appendChild(menuBtn);
     const { box, wf } = await openMgrWf();
     assert.ok(document.querySelector(".rs-skill-manager-overlay"), "导入前整窗应在场");
     const importBtn = wf.querySelector(".rs-wf-canvas-import-btn");
@@ -1104,10 +1107,7 @@ test("导入到画布：成功后关闭整个技能管理窗口（不遮挡画�
     await sleep(120);
     await flush();
     assert.ok(!document.querySelector(".rs-skill-manager-overlay"), "导入成功后应关闭整个技能管理窗口");
-    const cards = document.querySelectorAll("#neo-action-toast-stack .neo-at");
-    const card = cards.length ? cards[cards.length - 1] : null;
-    assert.ok(card && card.querySelector(".neo-at-summary").textContent.includes("已导入到画布"),
-        "整窗关闭后常驻回写卡片仍在（回写入口不丢）");
+    assert.ok(menuBtn.classList.contains("neo-writeback-hint"), "整窗关闭后 🅝 绿点仍在（顶菜单回写入口可用）");
 });
 
 test("技能名称在标题栏内行内编辑：点文字进入编辑，Enter 提交、Esc 还原为已保存名，只读技能不可改名", async () => {

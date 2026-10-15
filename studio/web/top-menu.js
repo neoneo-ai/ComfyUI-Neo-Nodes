@@ -480,7 +480,7 @@ function openMenu(anchor, byHover = false) {
     repairItem.classList.add("neo-n-menu-item-repair");   // 右键 → 修复映射管理
     if (anchor.classList.contains("neo-repair-hint")) menuDot(repairItem, "neo-n-menu-dot-red");   // 按钮红点 → 引导修复
     menuEl.appendChild(repairItem);
-    // 画布上有技能待回写（「⤒ 导入到画布」后）：回写卡片被关掉也能从这里落盘；无待回写时置灰
+    // 画布上有技能待回写（「⤒ 导入到画布」后）：画布上没有卡片，这里是唯一落盘入口；无待回写时置灰
     const writebackItem = menuItem(t("💾 回写入技能"), () => runCanvasSkillWriteback());
     const pendingWb = getPendingWriteback();
     if (!pendingWb) {

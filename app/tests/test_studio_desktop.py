@@ -645,6 +645,14 @@ class StudioDesktopTests(unittest.TestCase):
         self.assertIn("/neo-studio", app.BACK_JS)
         self.assertIn("win_start_drag", app.BACK_JS)
 
+    def test_back_js_follows_the_studio_language(self):
+        # 主画布的语言存在 localStorage（与 js/core/i18n.js 同一份）：整页刷新后重挂的胶囊要按语言出文案
+        self.assertIn("neo_studio_lang", app.BACK_JS)
+        self.assertIn("Back to Studio", app.BACK_JS)
+        # 左上角是工作流页签，56px 那排是 ComfyUI 自己的菜单栏：胶囊挂视口右上角才不挡菜单
+        self.assertIn("top:8px;right:8px", app.BACK_JS)
+        self.assertNotIn("top:56px;left:8px", app.BACK_JS)
+
     def test_window_state_gates_the_custom_titlebar(self):
         # 无边框才出顶栏控件；最大化 / 全屏状态由桌面端自己记 —— pywebview 的 Window 属性是建窗初值
         desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": False})

@@ -713,11 +713,17 @@ BACK_JS = """
     const inject = () => {
         if (location.pathname.startsWith('/neo-studio')) return;   // Studio 页自己就是主页，不需要返回胶囊
         if (document.getElementById('neo-studio-back')) return;
+        // 语言跟着 Studio 那份存储与判定规则：主画布是整页刷新，胶囊文案要跟着界面语言重建
+        let lang = '';
+        try { lang = localStorage.getItem('neo_studio_lang'); } catch { lang = ''; }
+        if (lang !== 'zh' && lang !== 'en') lang = /^zh/i.test(navigator.language || '') ? 'zh' : 'en';
+        const en = lang === 'en';
         const b = document.createElement('button');
         b.id = 'neo-studio-back';
-        b.textContent = '🎬 返回 Studio';
-        b.title = '返回 Neo Studio 主页';
-        b.style.cssText = 'position:fixed;top:56px;left:8px;z-index:100000;padding:5px 12px;'
+        b.textContent = en ? '🎬 Back to Studio' : '🎬 返回 Studio';
+        b.title = en ? 'Back to Neo Studio' : '返回 Neo Studio 主页';
+        // 挂视口右上角：左上角是工作流页签，56px 那排是 ComfyUI 自己的菜单栏，胶囊挤进去会盖住菜单
+        b.style.cssText = 'position:fixed;top:8px;right:8px;z-index:100000;padding:5px 12px;'
             + 'border-radius:14px;border:1px solid #4a4a4f;background:#26262a;color:#d7dae0;'
             + 'font:12px system-ui;line-height:1;cursor:pointer';
         b.onmouseenter = () => { b.style.background = '#333338'; };

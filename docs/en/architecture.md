@@ -138,7 +138,7 @@ studio/
 | `slash-picker.js` | `/` skill quick menu |
 | `skill.js` | Skill module facade: assembles the sub-modules below and exports one interface |
 | `skill/skill-core.js` | Skill API, Markdown rendering, category tabs, workflow template pre-rendering, writeback change records |
-| `skill/skill-writeback.js` | Workflow writeback confirmation, change-record dialog, canvas import & writeback card |
+| `skill/skill-writeback.js` | Workflow writeback confirmation, change-record dialog, canvas import & pending-writeback dot |
 | `skill/skill-detail-popup.js` | Single-skill detail popup and its cross-node singleton |
 | `image-gen.js` | Image generation client and generation settings form |
 | `image-gen-edit-node.js` | Image generation/editing node frontend |
@@ -154,6 +154,7 @@ studio/
 | `workflow-graph.js` | Read-only skill workflow flowchart (autogrow slots merged into a synthetic node, internal ids hidden in the graph and tooltips; columns width-aligned, model-loading nodes widened to show the model name); `canvasLayout` re-lays canvas nodes after "import to canvas" with the same layering and in-layer ordering, and returns the shared column width for setSize |
 | `workflow-context.js` | Workflow context collection |
 | `top-menu.js` | Top-bar 🅝 menu |
+| `canvas-lock.js` | Main-canvas offline gate: locks the canvas with the frontend's own `read_only` canvas lock when ComfyUI is gone and shows a banner; unlocks when it returns |
 | `node-behavior.js` | Node drag, paste and similar interaction behavior |
 | `combo-box.js` | Generic dropdown component |
 | `dom-utils.js` | Shared DOM factories |
