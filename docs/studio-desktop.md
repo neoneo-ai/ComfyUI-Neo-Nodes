@@ -54,7 +54,8 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
 ## 开发模式
 
 - 开发模式是启动设置里的一项，存 `launcher_config.json` 的 `dev_mode`（缺省关）：勾上下次开机走
-  `webview.start(debug=True)`，设置页的开关是 `set_dev_mode`。
+  `webview.start(debug=True)`，设置页的开关是 `set_dev_mode`。DevTools 不自动弹（`OPEN_DEVTOOLS_IN_DEBUG`
+  关掉，pywebview 在 debug 时会 `OpenDevToolsWindow`），按 F12 或右键「检查」手动开。
 - pywebview 在 CoreWebView2 建环境时把 `AreBrowserAcceleratorKeysEnabled`、`AreDefaultContextMenusEnabled`、
   `AreDevToolsEnabled` 全等于 debug：不带开发模式时，F5 / Ctrl+F5 / Ctrl+R 与 WebView2 右键菜单在窗口里都不出。
   这三项建环境时定值，运行中的窗口改不了，勾完要重启窗口。

@@ -72,7 +72,9 @@ startable once the root is filled in.
 ## Dev mode
 
 - Dev mode is a startup setting, stored as `dev_mode` in `launcher_config.json` (off by default): checking it makes
-  the next start go through `webview.start(debug=True)`, and the settings toggle is `set_dev_mode`.
+  the next start go through `webview.start(debug=True)`, and the settings toggle is `set_dev_mode`. DevTools does not
+  open by default (`OPEN_DEVTOOLS_IN_DEBUG` is off — pywebview calls `OpenDevToolsWindow` under `debug`); open it
+  with F12 or the right-inspect context menu.
 - pywebview sets `AreBrowserAcceleratorKeysEnabled`, `AreDefaultContextMenusEnabled`, and `AreDevToolsEnabled` all
   equal to `debug` when the CoreWebView2 environment is created: without dev mode, F5 / Ctrl+F5 / Ctrl+R and the
   WebView2 context menu do not work in the window. All three are fixed at environment creation and cannot be changed

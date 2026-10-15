@@ -1434,6 +1434,8 @@ def main() -> int:
     # 留在桌面端窗口里：edgechromium 的 NewWindowRequested 走 load_url，交接与返回都不弹浏览器标签页
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
+    # 开发模式只给能力，不自动弹 DevTools：edgechromium 在 debug 时会 OpenDevToolsWindow，改按 F12 手动开
+    webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
     # 设置里勾的开发模式与 --debug 同一条路：CoreWebView2 建环境时定值，运行中改不了，勾完要重启窗口
