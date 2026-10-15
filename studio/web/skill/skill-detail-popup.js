@@ -17,6 +17,7 @@ import {
     renderMarkdown, dispatchSkillChanged, copySkillAsCustom,
 } from "./skill-core.js";
 import { confirmWorkflowWrite, writeWorkflowToSkill, showSkillWriteLogDialog, showCanvasWriteCard, openSkillWorkflowInMainUi } from "./skill-writeback.js";
+import { t, tf } from "../js/core/i18n.js";
 
 // ==========================================
 // UI：createSkillDetailPopup() —— 单技能详情弹窗（查看 / 编辑 / 删除 / 复制为自定义 / 新建）
@@ -34,11 +35,11 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // ---- 头部：标题 + 技能名称（点击进入行内编辑）+ 来源徽标 + 复制为自定义 + 关闭 ----
     const header = mkEl("div", "rs-skill-modal-header");
     const titleSpan = mkEl("span", "rs-skill-modal-title");
-    titleSpan.textContent = "📝 技能";
+    titleSpan.textContent = t("📝 技能");
     const nameView = mkEl("span", "rs-skill-name-view");
-    nameView.title = "点击编辑技能名称（Enter / 失焦提交，Esc 还原）";
+    nameView.title = t("点击编辑技能名称（Enter / 失焦提交，Esc 还原）");
     const nameInput = mkEl("input", "rs-form-input rs-tpl-name rs-skill-name-input");
-    nameInput.placeholder = "输入技能名称…";
+    nameInput.placeholder = t("输入技能名称…");
     const nameWrap = mkEl("div", "rs-skill-name-wrap");
     nameWrap.append(nameView, nameInput);
     const sourceBadge = mkEl("span", "rs-source-badge rs-skill-detail-badge");
@@ -46,14 +47,14 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // 「复制为自定义」放标题栏（仅预设/任务技能显示），在 ✕ 左侧
     const copyBtn = mkEl("button", "rs-btn rs-btn-local");
     copyBtn.type = "button";
-    copyBtn.textContent = "⧉ 复制为自定义";
-    copyBtn.title = "把这个内置技能复制为可编辑的自定义技能";
+    copyBtn.textContent = t("⧉ 复制为自定义");
+    copyBtn.title = t("把这个内置技能复制为可编辑的自定义技能");
     copyBtn.style.display = "none";
     // 带工作流的技能：正文只作帮助文档，标题栏 ? 徽标弹出文档浮窗（正文区整体搬进浮窗，编辑也在浮窗内）
     const docBtn = mkEl("button", "rs-btn rs-btn-local rs-skill-doc-btn");
     docBtn.type = "button";
     docBtn.textContent = "?";
-    docBtn.title = "查看技能说明（skill.md 正文）";
+    docBtn.title = t("查看技能说明（skill.md 正文）");
     docBtn.style.display = "none";
     const closeBtn = mkEl("button", "rs-skill-modal-close");
     closeBtn.textContent = "✕";
@@ -63,7 +64,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // 技能名称行内编辑（同导演编辑器配方名）：显示态点文字进入编辑，Enter / 失焦提交，Esc 还原为已保存名
     const renderName = () => {
         const v = nameInput.value.trim();
-        nameView.textContent = v || "未命名技能";
+        nameView.textContent = v || t("未命名技能");
         nameView.classList.toggle("rs-skill-name-empty", !v);
         nameInput.title = v;
     };
@@ -95,7 +96,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
 
     // 不可用说明：依赖 VDN 加速节点的视频技能在插件未装时顶部提示（不影响查看/编辑）
     const unavailableBanner = mkEl("div", "rs-skill-unavailable-banner");
-    unavailableBanner.textContent = "⚠️ 该技能依赖 VDN 加速节点（ComfyUI-VDN-H3 插件），当前未注册，暂不能用于生成。可继续查看与编辑其设置。";
+    unavailableBanner.textContent = t("⚠️ 该技能依赖 VDN 加速节点（ComfyUI-VDN-H3 插件），当前未注册，暂不能用于生成。可继续查看与编辑其设置。");
     unavailableBanner.style.display = "none";
 
     // multi_turn 勾选：每次生成仅推进一个阶段（节点底部会显示多轮提示）
@@ -105,16 +106,16 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     multiTurnChk.className = "rs-skill-multiturn-chk";
     const multiTurnLabel = mkEl("label", "rs-skill-multiturn-label");
     multiTurnLabel.textContent = "Multi-turn (multi_turn)";
-    multiTurnLabel.title = "每次生成仅推进一个阶段，需补充返回的问询后再次点击 ✨ 继续";
+    multiTurnLabel.title = t("每次生成仅推进一个阶段，需补充返回的问询后再次点击 ✨ 继续");
     multiTurnRow.append(multiTurnChk, multiTurnLabel);
 
     const contentRow = mkEl("div", "rs-config-row");
     const contentHeader = mkEl("div", "rs-content-header");
     const contentLeft = mkEl("div", "rs-content-left");
     // 正文用途说明（tooltip）：无工作流时正文参与生成，带 workflow.json 的技能正文只作帮助文档
-    const CONTENT_HINT = "技能正文（skill.md）：无工作流时作为提示词增强的扩写指令或参考图模式的提示词模板；带 workflow.json 的技能正文只作帮助文档，不参与生成（点标题栏 ? 查看/编辑）。";
+    const CONTENT_HINT = t("技能正文（skill.md）：无工作流时作为提示词增强的扩写指令或参考图模式的提示词模板；带 workflow.json 的技能正文只作帮助文档，不参与生成（点标题栏 ? 查看/编辑）。");
     const contentLabel = mkEl("label", "rs-form-label");
-    contentLabel.textContent = "系统提示词内容";
+    contentLabel.textContent = t("系统提示词内容");
     contentLabel.title = CONTENT_HINT;
     contentLeft.appendChild(contentLabel);
     // Enhance Prompt 开关（仅生图技能显示）：LLM 提示词增强，指令即上方正文；放在标题右侧便于就近理解
@@ -124,8 +125,8 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     enhancePromptChk.type = "checkbox";
     enhancePromptChk.className = "rs-gen-enhance-chk";
     const enhancePromptLabel = mkEl("label", "rs-form-label");
-    enhancePromptLabel.textContent = "提示词增强";
-    enhancePromptLabel.title = "使用 LLM 自动扩写生图提示词（指令即上方正文，需已配置 LLM）";
+    enhancePromptLabel.textContent = t("提示词增强");
+    enhancePromptLabel.title = t("使用 LLM 自动扩写生图提示词（指令即上方正文，需已配置 LLM）");
     enhancePromptWrap.append(enhancePromptChk, enhancePromptLabel);
     contentLeft.appendChild(enhancePromptWrap);
     // 多文件切换下拉（skill 含多个 .md 时显示）
@@ -137,7 +138,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const fileTools = mkEl("div", "rs-content-mode");
     const addFileBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     addFileBtn.type = "button";
-    addFileBtn.textContent = "+ 文件";
+    addFileBtn.textContent = t("+ 文件");
     addFileBtn.title = "Add a .md file to this skill";
     const delFileBtn = mkEl("button", "rs-btn rs-delete-cancel-btn rs-content-mode-btn");
     delFileBtn.type = "button";
@@ -148,17 +149,17 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const modeBtns = mkEl("div", "rs-content-mode");
     const previewBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     previewBtn.type = "button";
-    previewBtn.textContent = "👁 预览";
+    previewBtn.textContent = t("👁 预览");
     const editBtn = mkEl("button", "rs-btn rs-btn-local rs-content-mode-btn");
     editBtn.type = "button";
-    editBtn.textContent = "✎ 编辑";
+    editBtn.textContent = t("✎ 编辑");
     modeBtns.append(previewBtn, editBtn);
     contentHeader.appendChild(contentLeft);
     contentHeader.appendChild(modeBtns);
     const contentTextarea = document.createElement("textarea");
     contentTextarea.className = "rs-form-input rs-tpl-content";
     contentTextarea.style.resize = "vertical";
-    contentTextarea.placeholder = "输入系统提示词内容…";
+    contentTextarea.placeholder = t("输入系统提示词内容…");
     const contentPreview = mkEl("div", "rs-md-preview");
     contentPreview.style.display = "none";
     contentRow.append(contentHeader, contentTextarea, contentPreview);
@@ -168,21 +169,21 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     genSettingsWrap.style.display = "none";
     const genSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const genSettingsTitle = mkEl("label", "rs-form-label");
-    genSettingsTitle.textContent = "🖼️ 生图设置";
-    genSettingsTitle.title = "仅对本技能生效，未填项回落全局生图设置";
+    genSettingsTitle.textContent = t("🖼️ 生图设置");
+    genSettingsTitle.title = t("仅对本技能生效，未填项回落全局生图设置");
     const genLocalHint = mkEl("span", "rs-gen-readonly-hint");
-    genLocalHint.textContent = "预设的设置改动保存为本地覆盖，不修改预设文件";
-    genLocalHint.title = "模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除";
+    genLocalHint.textContent = t("预设的设置改动保存为本地覆盖，不修改预设文件");
+    genLocalHint.title = t("模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除");
     genLocalHint.style.display = "none";
     const genSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
     genSaveCfgBtn.type = "button";
-    genSaveCfgBtn.textContent = "💾 保存";
-    genSaveCfgBtn.title = "保存本技能生图设置（预设技能存为本地覆盖）";
+    genSaveCfgBtn.textContent = t("💾 保存");
+    genSaveCfgBtn.title = t("保存本技能生图设置（预设技能存为本地覆盖）");
     genSaveCfgBtn.style.display = "none";
     const genRestoreCfgBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
     genRestoreCfgBtn.type = "button";
-    genRestoreCfgBtn.textContent = "↺ 恢复默认";
-    genRestoreCfgBtn.title = "清除本技能本地覆盖设置，恢复预设默认值";
+    genRestoreCfgBtn.textContent = t("↺ 恢复默认");
+    genRestoreCfgBtn.title = t("清除本技能本地覆盖设置，恢复预设默认值");
     genRestoreCfgBtn.style.display = "none";
     const genCfgBtns = mkEl("div", "rs-gen-cfg-btns");
     genCfgBtns.append(genSaveCfgBtn, genRestoreCfgBtn);
@@ -209,7 +210,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             ...genSizeSection.el.querySelectorAll(".rs-gen-adv-row"),
         ];
         if (advRows.length) {
-            const g = makeAdvGroup("Text Encoder / VAE / 生图张数 / 输出前缀（高级）");
+            const g = makeAdvGroup(t("Text Encoder / VAE / 生图张数 / 输出前缀（高级）"));
             for (const r of advRows) g.content.appendChild(r);
             advEl = g.adv;
         }
@@ -222,21 +223,21 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     videoGenSettingsWrap.style.display = "none";
     const videoGenSettingsHeader = mkEl("div", "rs-config-row rs-gen-settings-header");
     const videoGenSettingsTitle = mkEl("label", "rs-form-label");
-    videoGenSettingsTitle.textContent = "🎬 生视频设置";
-    videoGenSettingsTitle.title = "仅对本技能生效，未填项回落全局「生视频模型」设置";
+    videoGenSettingsTitle.textContent = t("🎬 生视频设置");
+    videoGenSettingsTitle.title = t("仅对本技能生效，未填项回落全局「生视频模型」设置");
     const videoLocalHint = mkEl("span", "rs-gen-readonly-hint");
-    videoLocalHint.textContent = "预设的设置改动保存为本地覆盖，不修改预设文件";
-    videoLocalHint.title = "模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除";
+    videoLocalHint.textContent = t("预设的设置改动保存为本地覆盖，不修改预设文件");
+    videoLocalHint.title = t("模型路径等本机差异存于 configs/skill_overrides/，可用「↺ 恢复默认」一键清除");
     videoLocalHint.style.display = "none";
     const videoSaveCfgBtn = mkEl("button", "rs-btn rs-btn-local");
     videoSaveCfgBtn.type = "button";
-    videoSaveCfgBtn.textContent = "💾 保存";
-    videoSaveCfgBtn.title = "保存本技能生视频设置（预设技能存为本地覆盖）";
+    videoSaveCfgBtn.textContent = t("💾 保存");
+    videoSaveCfgBtn.title = t("保存本技能生视频设置（预设技能存为本地覆盖）");
     videoSaveCfgBtn.style.display = "none";
     const videoRestoreCfgBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
     videoRestoreCfgBtn.type = "button";
-    videoRestoreCfgBtn.textContent = "↺ 恢复默认";
-    videoRestoreCfgBtn.title = "清除本技能本地覆盖设置，恢复预设默认值";
+    videoRestoreCfgBtn.textContent = t("↺ 恢复默认");
+    videoRestoreCfgBtn.title = t("清除本技能本地覆盖设置，恢复预设默认值");
     videoRestoreCfgBtn.style.display = "none";
     const videoCfgBtns = mkEl("div", "rs-gen-cfg-btns");
     videoCfgBtns.append(videoSaveCfgBtn, videoRestoreCfgBtn);
@@ -247,7 +248,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     {
         const advRows = [...videoModelSection.el.querySelectorAll(".rs-gen-adv-row")];
         if (advRows.length) {
-            const g = makeAdvGroup("Text Encoder / VAE（视频）/ VAE（音频）（高级）");
+            const g = makeAdvGroup(t("Text Encoder / VAE（视频）/ VAE（音频）（高级）"));
             for (const r of advRows) g.content.appendChild(r);
             videoAdvEl = g.adv;
         }
@@ -263,12 +264,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const workflowCaret = mkEl("span", "rs-wf-caret");
     workflowCaret.textContent = "▾";
     const workflowTitle = mkEl("label", "rs-form-label");
-    workflowTitle.textContent = "🔀 工作流（内嵌编辑）";
-    workflowTitle.title = "技能 workflow.json 模板按本技能 config 初始化后直接内嵌编辑；无 LiteGraph 的视图回落只读流程图";
+    workflowTitle.textContent = t("🔀 工作流（内嵌编辑）");
+    workflowTitle.title = t("技能 workflow.json 模板按本技能 config 初始化后直接内嵌编辑；无 LiteGraph 的视图回落只读流程图");
     const workflowBody = mkEl("div", "rs-wf-body");
     const workflowSummary = mkEl("div", "rs-wf-summary");
     workflowHeader.append(workflowCaret, workflowTitle);
-    workflowHeader.title = "点击折叠 / 展开工作流图";
+    workflowHeader.title = t("点击折叠 / 展开工作流图");
     // 折叠时画布已卸载；展开重挂内嵌编辑画布，挂不上（无 LiteGraph 的视图 / 含未注册节点）回落只读流程图
     workflowHeader.addEventListener("click", () => {
         const collapse = !workflowWrap.classList.contains("rs-wf-collapsed");
@@ -288,27 +289,27 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     if (canvasBtns) {
         const wfImportBtn = mkEl("button", "rs-btn rs-wf-canvas-import-btn");
         wfImportBtn.type = "button";
-        wfImportBtn.textContent = "⤒ 导入到画布";
-        wfImportBtn.title = "把本技能 workflow.json 载入画布（模板变量按当前设置预渲染，参考图槽位留占串），画里后点「💾 回写入技能」落盘";
+        wfImportBtn.textContent = t("⤒ 导入到画布");
+        wfImportBtn.title = t("把本技能 workflow.json 载入画布（模板变量按当前设置预渲染，参考图槽位留占串），画里后点「💾 回写入技能」落盘");
         wfImportBtn.addEventListener("click", (e) => { e.stopPropagation(); importWorkflowToCanvas(); });
         const wfWriteBtn = mkEl("button", "rs-btn rs-wf-canvas-write-btn");
         wfWriteBtn.type = "button";
-        wfWriteBtn.textContent = "💾 回写入技能";
-        wfWriteBtn.title = "把整画布工作流落盘本技能 workflow.json（先列出变更、确认后写入；仅 API 工作流，画布节点位置等界面布局不写入；预设技能只写模型值到本地覆盖，结构变更自动复制为自定义技能）";
+        wfWriteBtn.textContent = t("💾 回写入技能");
+        wfWriteBtn.title = t("把整画布工作流落盘本技能 workflow.json（先列出变更、确认后写入；仅 API 工作流，画布节点位置等界面布局不写入；预设技能只写模型值到本地覆盖，结构变更自动复制为自定义技能）");
         wfWriteBtn.addEventListener("click", (e) => { e.stopPropagation(); writeWorkflowBackToSkill(); });
         wfCanvasBtns.append(wfImportBtn, wfWriteBtn);
     } else {
         const wfOpenBtn = mkEl("button", "rs-btn rs-wf-canvas-import-btn");
         wfOpenBtn.type = "button";
-        wfOpenBtn.textContent = "⤒ 主画布编辑";
-        wfOpenBtn.title = "在主 ComfyUI 界面打开本技能 workflow.json 编辑（按技能设置预渲染），改完点「💾 回写入技能」落盘本技能";
+        wfOpenBtn.textContent = t("⤒ 主画布编辑");
+        wfOpenBtn.title = t("在主 ComfyUI 界面打开本技能 workflow.json 编辑（按技能设置预渲染），改完点「💾 回写入技能」落盘本技能");
         wfOpenBtn.addEventListener("click", (e) => { e.stopPropagation(); openSkillWorkflowInMainUi(currentSkillId); });
         wfCanvasBtns.append(wfOpenBtn);
     }
     const wfLogBtn = mkEl("button", "rs-btn rs-wf-write-log-btn");
     wfLogBtn.type = "button";
-    wfLogBtn.textContent = "🕘 变更记录";
-    wfLogBtn.title = "查看本技能的回写历史（每次确认保存的变更清单，本机本地记录）";
+    wfLogBtn.textContent = t("🕘 变更记录");
+    wfLogBtn.title = t("查看本技能的回写历史（每次确认保存的变更清单，本机本地记录）");
     wfLogBtn.addEventListener("click", (e) => { e.stopPropagation(); showSkillWriteLogDialog(currentSkillId); });
     wfCanvasBtns.appendChild(wfLogBtn);
     workflowHeader.append(wfCanvasBtns);
@@ -320,14 +321,14 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const wfEditBar = mkEl("div", "rs-wf-editor-bar");
     const wfSaveBtn = mkEl("button", "rs-btn rs-btn-local");
     wfSaveBtn.type = "button";
-    wfSaveBtn.textContent = "💾 保存工作流";
+    wfSaveBtn.textContent = t("💾 保存工作流");
     const wfReloadBtn = mkEl("button", "rs-btn rs-btn-local");
     wfReloadBtn.type = "button";
-    wfReloadBtn.textContent = "↺ 重新载入";
-    wfReloadBtn.title = "丢弃画布上的改动，按技能当前 workflow.json 与 config 重载";
+    wfReloadBtn.textContent = t("↺ 重新载入");
+    wfReloadBtn.title = t("丢弃画布上的改动，按技能当前 workflow.json 与 config 重载");
     const wfFitBtn = mkEl("button", "rs-btn rs-btn-local");
     wfFitBtn.type = "button";
-    wfFitBtn.textContent = "🧭 适配视图";
+    wfFitBtn.textContent = t("🧭 适配视图");
     wfEditBar.append(wfSaveBtn, wfReloadBtn, wfFitBtn);
     const wfCanvasBox = mkEl("div", "rs-wf-editor-canvas-box");
     wfEditWrap.append(wfEditBar, wfCanvasBox);
@@ -341,13 +342,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         const group = mkEl("div", "rs-model-repair-group");
         const repairBtn = mkEl("button", "rs-btn rs-model-repair-btn");
         repairBtn.type = "button";
-        repairBtn.textContent = "🔧 修复失效路径";
-        repairBtn.title = "检测本技能 config 里失效的模型路径，给出候选并批量套用（复用工作流修复匹配）";
+        repairBtn.textContent = t("🔧 修复失效路径");
+        repairBtn.title = t("检测本技能 config 里失效的模型路径，给出候选并批量套用（复用工作流修复匹配）");
         repairBtn.addEventListener("click", (e) => { e.stopPropagation(); openModelRepairDialog(); });
         const logBtn = mkEl("button", "rs-btn rs-model-repair-log-btn");
         logBtn.type = "button";
-        logBtn.textContent = "📋 修复记录";
-        logBtn.title = "查看本技能的模型路径修复历史（本机本地记录）";
+        logBtn.textContent = t("📋 修复记录");
+        logBtn.title = t("查看本技能的模型路径修复历史（本机本地记录）");
         logBtn.addEventListener("click", (e) => { e.stopPropagation(); openSkillRepairLogDialog(); });
         group.append(repairBtn, logBtn);
         return { group, repairBtn };
@@ -409,23 +410,23 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     }
 
     // ---- 修复记录（每技能上限 50 条）----
-    const repairLog = makeSkillLog("neo.skillRepairLog", 50, "修复记录");
+    const repairLog = makeSkillLog("neo.skillRepairLog", 50, t("修复记录"));
 
     // 修复记录弹窗：列出本技能历史修复（时间·类型 + 每处 from→to），可清空；纯本地，不影响 config.json
     function openSkillRepairLogDialog() {
         if (!currentSkillId) return;
         const log = repairLog.get(currentSkillId);
-        const { body, foot, close } = makeRepairDialog(`修复记录（${log.length}）`, "rs-skill-repair-log-overlay");
+        const { body, foot, close } = makeRepairDialog(tf("修复记录（{n}）", { n: log.length }), "rs-skill-repair-log-overlay");
         if (!log.length) {
             const empty = mkEl("div", "rs-repair-log-empty");
-            empty.textContent = "本技能暂无修复记录 — 点「🔧 修复失效路径」套用后，修改会记录在这里。";
+            empty.textContent = t("本技能暂无修复记录 — 点「🔧 修复失效路径」套用后，修改会记录在这里。");
             body.appendChild(empty);
         } else {
             for (const entry of log) {
                 const group = mkEl("div", "rs-repair-log-group");
-                const t = mkEl("div", "rs-repair-log-time");
-                t.textContent = `${new Date(entry.time).toLocaleString("zh-CN", { hour12: false })} · ${entry.kind === "gen_video" ? "生视频" : "生图"}`;
-                group.appendChild(t);
+                const timeEl = mkEl("div", "rs-repair-log-time");
+                timeEl.textContent = `${new Date(entry.time).toLocaleString("zh-CN", { hour12: false })} · ${entry.kind === "gen_video" ? t("生视频") : t("生图")}`;
+                group.appendChild(timeEl);
                 for (const c of entry.changes || []) {
                     const row = mkEl("div", "rs-repair-row");
                     const label = mkEl("span", "rs-repair-label");
@@ -445,12 +446,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             }
         }
         const hint = mkEl("span", "rs-repair-hint");
-        hint.textContent = "仅本机本地记录，不影响 config.json";
+        hint.textContent = t("仅本机本地记录，不影响 config.json");
         const clearBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
         clearBtn.type = "button";
-        clearBtn.textContent = "清空记录";
+        clearBtn.textContent = t("清空记录");
         foot.append(hint, clearBtn);
-        clearBtn.addEventListener("click", () => { repairLog.clear(currentSkillId); close(); showToast(app, "info", "本技能修复记录已清空"); });
+        clearBtn.addEventListener("click", () => { repairLog.clear(currentSkillId); close(); showToast(app, "info", t("本技能修复记录已清空")); });
     }
 
     function updateCfgButtons(btns, saveBtn, restoreBtn, localHint) {
@@ -488,7 +489,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     }
 
     // ---- 失效模型路径修复：检测 config 里失效字段，弹窗批量套用候选后回填设置区 ----
-    const REPAIR_FIELD_LABELS = { model: "主模型", text_encoder: "Text Encoder", vae: "VAE", audio_vae: "音频 VAE" };
+    const REPAIR_FIELD_LABELS = { model: t("主模型"), text_encoder: "Text Encoder", vae: "VAE", audio_vae: t("音频 VAE") };
     // 修复项 → 模型库落盘类别；失效文件名去目录与扩展名后作为模型库搜索词
     const REPAIR_FIELD_CATEGORY = { model: "diffusion_models", text_encoder: "text_encoders", vae: "vae", audio_vae: "audio_vae", lora: "loras" };
     const repairHubQuery = (value) => String(value || "").split(/[\\/]/).pop().replace(/\.(safetensors|bin|pth|pt|ckpt|gguf|onnx|npz)$/i, "");
@@ -522,15 +523,15 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     }
 
     async function importWorkflowToCanvas() {
-        if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return; }
-        if (typeof app.loadApiJson !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，导入不可用"); return; }
+        if (!skillWorkflowRaw) { showToast(app, "warning", t("无工作流"), t("本技能没有 workflow.json")); return; }
+        if (typeof app.loadApiJson !== "function") { showToast(app, "warning", t("无画布"), t("当前视图没有画布，导入不可用")); return; }
         const wf = await canvasWorkflow();
         if (!wf) return;
         try {
             await app.loadApiJson(wf, currentSkillId);
             arrangeCanvasNodes(wf);
         } catch (e) {
-            showToast(app, "error", "导入失败", String(e.message || e));
+            showToast(app, "error", t("导入失败"), String(e.message || e));
             return;
         }
         showCanvasWriteCard(currentSkillId, currentSource, currentCnName);
@@ -567,10 +568,10 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         try {
             data = await fetchModelSuggest(config);
         } catch (e) {
-            showToast(app, "error", "修复检查失败", String(e.message || e));
+            showToast(app, "error", t("修复检查失败"), String(e.message || e));
             return;
         }
-        if (!data || !data.success) { showToast(app, "error", "修复检查失败", (data && data.error) || ""); return; }
+        if (!data || !data.success) { showToast(app, "error", t("修复检查失败"), (data && data.error) || ""); return; }
         const fields = data.fields || {};
         // 收集失效项（标量字段 + LoRA），保留后端返回顺序
         const rows = [];
@@ -583,9 +584,9 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             if (l.status === "missing")
                 rows.push({ kind: "lora", index: l.index, value: l.value, suggestion: l.suggestion, score: l.score, candidates: l.candidates || [] });
         }
-        if (!rows.length) { showToast(app, "info", "没有失效的模型路径"); return; }
+        if (!rows.length) { showToast(app, "info", t("没有失效的模型路径")); return; }
 
-        const { body, foot, close } = makeRepairDialog(`修复失效模型路径（${rows.length}）`);
+        const { body, foot, close } = makeRepairDialog(tf("修复失效模型路径（{n}）", { n: rows.length }));
         const selects = [];   // 与 rows 对齐：每项一个 <select>，value="" 表示跳过
         for (const r of rows) {
             const row = mkEl("div", "rs-repair-row");
@@ -598,7 +599,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             sel.className = "rs-repair-sel rs-form-input";
             const ph = document.createElement("option");
             ph.value = "";
-            ph.textContent = "（跳过）";
+            ph.textContent = t("（跳过）");
             sel.appendChild(ph);
             const addOpt = (val, text) => {
                 const o = document.createElement("option");
@@ -606,7 +607,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                 o.textContent = text;
                 sel.appendChild(o);
             };
-            if (r.suggestion) addOpt(r.suggestion, `${shortModelName(r.suggestion)}（推荐 ${Math.round((r.score || 0) * 100)}%）`);
+            if (r.suggestion) addOpt(r.suggestion, tf("{m}（推荐 {pct}%）", { m: shortModelName(r.suggestion), pct: Math.round((r.score || 0) * 100) }));
             for (const c of r.candidates) {
                 if (c === r.suggestion) continue;
                 addOpt(c, shortModelName(c));
@@ -617,8 +618,8 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             // 本地缺这个模型 → 直接进模型库搜索下载（预填失效文件名 + 对应落盘类别）
             const hubBtn = mkEl("button", "rs-repair-hub-btn");
             hubBtn.type = "button";
-            hubBtn.textContent = "📥 模型库";
-            hubBtn.title = "在模型库（Comfy-Org · Hugging Face / ModelScope）搜索并下载此模型";
+            hubBtn.textContent = t("📥 模型库");
+            hubBtn.title = t("在模型库（Comfy-Org · Hugging Face / ModelScope）搜索并下载此模型");
             hubBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 openModelHub({
@@ -632,13 +633,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             if (r.kind === "lora" && !r.suggestion && !(r.candidates && r.candidates.length)) {
                 const civBtn = mkEl("button", "rs-repair-civitai-btn");
                 civBtn.type = "button";
-                civBtn.textContent = "🔍 C站";
-                civBtn.title = "从 Civitai 搜索并下载此 LoRA";
+                civBtn.textContent = t("🔍 C站");
+                civBtn.title = t("从 Civitai 搜索并下载此 LoRA");
                 const subPanel = mkEl("div", "rs-repair-civitai-panel");
                 subPanel.style.display = "none";
                 civBtn.addEventListener("click", async () => {
                     if (subPanel.style.display !== "none") { subPanel.style.display = "none"; return; }
-                    subPanel.innerHTML = '<span class="rs-civ-loading">搜索中…</span>';
+                    subPanel.innerHTML = `<span class="rs-civ-loading">${t("搜索中…")}</span>`;
                     subPanel.style.display = "block";
                     try {
                         const resp = await fetch("/neo_nodes/civitai_search_lora", {
@@ -646,11 +647,11 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                             body: JSON.stringify({ query: r.value }),
                         });
                         const data = await resp.json();
-                        if (!data.success) throw new Error(data.error || "搜索失败");
+                        if (!data.success) throw new Error(data.error || t("搜索失败"));
                         subPanel.innerHTML = "";
                         const items = data.items || [];
                         if (!items.length) {
-                            subPanel.innerHTML = '<span class="rs-civ-empty">未找到匹配的 LoRA</span>';
+                            subPanel.innerHTML = `<span class="rs-civ-empty">${t("未找到匹配的 LoRA")}</span>`;
                             return;
                         }
                         for (const it of items.slice(0, 6)) {
@@ -661,34 +662,34 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                             info.title = it.file_name || "";
                             const dlBtn = mkEl("button", "rs-civ-dl-btn");
                             dlBtn.type = "button";
-                            dlBtn.textContent = "下载";
+                            dlBtn.textContent = t("下载");
                             dlBtn.addEventListener("click", async () => {
                                 dlBtn.disabled = true;
-                                dlBtn.textContent = "下载中…";
+                                dlBtn.textContent = t("下载中…");
                                 try {
                                     const dResp = await fetch("/neo_nodes/civitai_download_lora", {
                                         method: "POST", headers: { "Content-Type": "application/json" },
                                         body: JSON.stringify({ url: it.download_url, filename: it.file_name }),
                                     });
                                     const dData = await dResp.json();
-                                    if (!dData.success) throw new Error(dData.error || "下载失败");
+                                    if (!dData.success) throw new Error(dData.error || t("下载失败"));
                                     // 下载成功：把文件名加入 select 并选中
                                     const fname = dData.filename;
-                                    addOpt(fname, `${shortModelName(fname)}（已下载）`);
+                                    addOpt(fname, tf("{m}（已下载）", { m: shortModelName(fname) }));
                                     sel.value = fname;
                                     subPanel.style.display = "none";
-                                    showToast(app, "success", `LoRA 已下载: ${fname}`);
+                                    showToast(app, "success", tf("LoRA 已下载: {name}", { name: fname }));
                                 } catch (e) {
                                     dlBtn.disabled = false;
-                                    dlBtn.textContent = "重试";
-                                    showToast(app, "error", "下载失败", String(e.message || e));
+                                    dlBtn.textContent = t("重试");
+                                    showToast(app, "error", t("下载失败"), String(e.message || e));
                                 }
                             });
                             itemRow.append(info, dlBtn);
                             subPanel.appendChild(itemRow);
                         }
                     } catch (e) {
-                        subPanel.innerHTML = `<span class="rs-civ-err">${e.message || "搜索出错"}</span>`;
+                        subPanel.innerHTML = `<span class="rs-civ-err">${e.message || t("搜索出错")}</span>`;
                     }
                 });
                 row.appendChild(civBtn);
@@ -701,13 +702,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         }
 
         const hint = mkEl("span", "rs-repair-hint");
-        hint.textContent = "套用后自动保存到 config.json";
+        hint.textContent = t("套用后自动保存到 config.json");
         const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
         cancelBtn.type = "button";
-        cancelBtn.textContent = "取消";
+        cancelBtn.textContent = t("取消");
         const applyBtn = mkEl("button", "rs-btn");
         applyBtn.type = "button";
-        applyBtn.textContent = "应用选中项";
+        applyBtn.textContent = t("应用选中项");
         foot.append(hint, cancelBtn, applyBtn);
         cancelBtn.addEventListener("click", close);
 
@@ -734,9 +735,9 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                 } else {
                     await savePresetGenSettings();
                 }
-                showToast(app, "success", `已修复 ${n} 项并保存`);
+                showToast(app, "success", tf("已修复 {n} 项并保存", { n }));
             } catch (err) {
-                showToast(app, "error", "保存失败", String(err.message || err));
+                showToast(app, "error", t("保存失败"), String(err.message || err));
             }
         });
     }
@@ -762,7 +763,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
 
     async function restorePresetGenSettings() {
         if (!currentSkillId || currentSource !== "presets") return;
-        if (!confirm("恢复本技能设置为预设默认？（将清除本地覆盖设置）")) return;
+        if (!confirm(t("恢复本技能设置为预设默认？（将清除本地覆盖设置）"))) return;
         const r = await resetSkillGenConfig(currentSkillId);
         if (!r.success) { alert("Restore failed: " + (r.error || "")); return; }
         configOverridden = false;
@@ -781,9 +782,9 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // ---- 底部按钮：随状态显隐（保存 / 删除）；关闭走标题栏 ✕，复制走标题栏「复制为自定义」----
     const footerBtns = mkEl("div", "rs-modal-btns rs-skill-detail-actions");
     const saveBtn = mkEl("button", "rs-btn rs-btn-local rs-tpl-save-btn");
-    saveBtn.textContent = "💾 保存";
+    saveBtn.textContent = t("💾 保存");
     const deleteBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
-    deleteBtn.textContent = "🗑 删除";
+    deleteBtn.textContent = t("🗑 删除");
     footerBtns.append(saveBtn, deleteBtn);
 
     // 主区两栏：左 = 生图/生视频设置，右 = 系统提示词内容（面板够宽时并排；窄面板堆叠且系统提示词在上，顺序由 CSS 控制）
@@ -807,7 +808,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const docModal = mkEl("div", "rs-skill-modal rs-skill-doc-modal");
     const docHeader = mkEl("div", "rs-skill-modal-header");
     const docTitle = mkEl("span", "rs-skill-modal-title");
-    docTitle.textContent = "📖 技能说明（skill.md）";
+    docTitle.textContent = t("📖 技能说明（skill.md）");
     const docClose = mkEl("button", "rs-skill-modal-close");
     docClose.textContent = "✕";
     docClose.setAttribute("aria-label", "Close");
@@ -962,13 +963,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
 
     async function mountWfEditor() {
         if (wfCanvas) return true;
-        if (!skillWorkflowRaw) { showToast(app, "warning", "无工作流", "本技能没有 workflow.json"); return false; }
+        if (!skillWorkflowRaw) { showToast(app, "warning", t("无工作流"), t("本技能没有 workflow.json")); return false; }
         const LGraph = window.LGraph, LGraphCanvas = window.LGraphCanvas;
-        if (!LGraph || !LGraphCanvas) { showToast(app, "warning", "无内嵌画布", "当前视图没有 LiteGraph，请用「⤒ 导入到画布」编辑"); return false; }
+        if (!LGraph || !LGraphCanvas) { showToast(app, "warning", t("无内嵌画布"), t("当前视图没有 LiteGraph，请用「⤒ 导入到画布」编辑")); return false; }
         const wf = await editorTemplateWorkflow();
         const { lite, missing } = apiPromptToLitegraph(wf);
         // 未注册节点直接进编辑会在保存时把该节点从 workflow.json 里丢掉，拒绝并退回只读预览
-        if (missing.length) { showToast(app, "warning", "无法内嵌编辑", `节点类型未注册：${missing.join("、")}，请用「⤒ 导入到画布」编辑`); return false; }
+        if (missing.length) { showToast(app, "warning", t("无法内嵌编辑"), tf("节点类型未注册：{list}，请用「⤒ 导入到画布」编辑", { list: missing.join("、") })); return false; }
         const g = new LGraph();
         g.configure(lite);   // 节点位置 / 列宽由 converter 里的 canvasLayout 排好
         g.start();
@@ -1035,8 +1036,8 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         workflowSummary.style.display = "none";
         wfEditWrap.style.display = "flex";
         wfSaveBtn.title = isCustom()
-            ? "把画布上的工作流写回本技能 workflow.json，并把画布上的模型 / 尺寸 / 张数 / 前缀同步进 config.json（提示词等运行时变量原样保留）"
-            : "预设技能：模型 / 尺寸 / 张数 / 前缀等值写入本地覆盖；工作流结构有变更时自动复制为自定义技能写入";
+            ? t("把画布上的工作流写回本技能 workflow.json，并把画布上的模型 / 尺寸 / 张数 / 前缀同步进 config.json（提示词等运行时变量原样保留）")
+            : t("预设技能：模型 / 尺寸 / 张数 / 前缀等值写入本地覆盖；工作流结构有变更时自动复制为自定义技能写入");
         modal.classList.add("rs-wf-editing");   // 卡片吃满内容区剩余高度，设置区收成区头让位给画布
         requestAnimationFrame(refitWfCanvas);
         return true;
@@ -1063,12 +1064,12 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     }
 
     async function saveWorkflowFromEditor() {
-        if (!currentSkillId) { showToast(app, "warning", "保存工作流", "请先保存技能本体"); return; }
+        if (!currentSkillId) { showToast(app, "warning", t("保存工作流"), t("请先保存技能本体")); return; }
         if (!wfGraph) return;
-        if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布序列化", "当前视图没有画布，保存不可用"); return; }
+        if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", t("无画布序列化"), t("当前视图没有画布，保存不可用")); return; }
         try {
             const { output, error } = (await app.graphToPrompt(wfGraph)) || {};
-            if (error || !output || !Object.keys(output).length) { showToast(app, "warning", "无法保存", "画布上没有有效工作流" + (error && error.message ? `（${error.message}）` : "")); return; }
+            if (error || !output || !Object.keys(output).length) { showToast(app, "warning", t("无法保存"), t("画布上没有有效工作流") + (error && error.message ? tf("（{msg}）", { msg: error.message }) : "")); return; }
             await confirmWorkflowWrite(currentSkillId, currentSource, output, currentCnName, async (r, copy) => {
                 if (copy) { await openExisting(copy.id, "custom"); return; }   // 预设结构变更 → 详情切到新建副本继续编辑
                 skillWorkflowRaw = output;   // 按新模板重挂内嵌编辑画布
@@ -1078,7 +1079,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
                 if (!(await mountWorkflowEditor())) await renderWorkflowPreview(output, genInfo, currentIsVideo, currentSkillId);
             });
         } catch (err) {
-            showToast(app, "error", "保存工作流失败", err.message);
+            showToast(app, "error", t("保存工作流失败"), err.message);
         }
     }
 
@@ -1178,7 +1179,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // ---- 打开：查看/编辑已有 skill ----
     async function openExisting(id, source) {
         showDetail();
-        titleSpan.textContent = "📝 技能";
+        titleSpan.textContent = t("📝 技能");
         currentSkillId = id;
         currentSource = source || "custom";
         setBadge();
@@ -1251,7 +1252,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         resetWorkflowCollapse();   // 每次打开技能：工作流区默认折叠
         if (wfPromise) {
             const skel = mkEl("div", "rs-wf-skeleton");
-            skel.textContent = "加载工作流图中…";
+            skel.textContent = t("加载工作流图中…");
             workflowBody.appendChild(skel);
             workflowWrap.style.display = "flex";   // 卡片是 flex 列（见 .rs-skill-workflow）：写 block 会让内嵌画布的 flex:1 失效
             workflowShown = true;
@@ -1274,7 +1275,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // ---- 打开：新建空表单 ----
     function openNew() {
         showDetail();
-        titleSpan.textContent = "✨ 新建技能";
+        titleSpan.textContent = t("✨ 新建技能");
         currentSkillId = null;
         currentFiles = [];
         currentSource = "custom";
@@ -1335,17 +1336,17 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     const dirtyConfirm = mkEl("div", "rs-gen-dirty-confirm");
     dirtyConfirm.hidden = true;
     const dirtyText = mkEl("span", "rs-gen-dirty-text");
-    dirtyText.textContent = "⚠ 有未保存的修改";
+    dirtyText.textContent = t("⚠ 有未保存的修改");
     const dirtyActions = mkEl("div", "rs-gen-dirty-actions");
     const btnSaveClose = mkEl("button", "rs-btn rs-gen-dirty-save");
     btnSaveClose.type = "button";
-    btnSaveClose.textContent = "💾 保存并关闭";
+    btnSaveClose.textContent = t("💾 保存并关闭");
     const btnDiscard = mkEl("button", "rs-btn rs-gen-dirty-discard");
     btnDiscard.type = "button";
-    btnDiscard.textContent = "放弃修改";
+    btnDiscard.textContent = t("放弃修改");
     const btnKeepEditing = mkEl("button", "rs-btn rs-gen-dirty-keep");
     btnKeepEditing.type = "button";
-    btnKeepEditing.textContent = "继续编辑";
+    btnKeepEditing.textContent = t("继续编辑");
     dirtyActions.append(btnSaveClose, btnDiscard, btnKeepEditing);
     dirtyConfirm.append(dirtyText, dirtyActions);
     content.insertBefore(dirtyConfirm, footerBtns);

@@ -8,6 +8,7 @@ import { app } from "../../../scripts/app.js";
 import { mkEl } from "../dom-utils.js";
 import { showToast } from "../gallery-utils.js";
 import { actionToast } from "../toast.js";
+import { t, tf } from "../js/core/i18n.js";
 import { previewWorkflowSkill, updateWorkflowSkill, getSkillGenConfig, listGenModels, listVideoGenModels } from "../image-gen.js";
 import {
     dispatchSkillsUpdated, makeRepairDialog, loadSkill, loadSkillWorkflow,
@@ -18,28 +19,28 @@ import {
 /** 变更记录弹窗：skillId 省略 = 全部技能（按技能分组，新→旧）；纯本地记录，可清空 */
 export function showSkillWriteLogDialog(skillId) {
     const log = writeLog.get(skillId);
-    const { body, foot, close } = makeRepairDialog(skillId ? `变更记录 · ${skillId}（${log.length}）` : `变更记录（${log.length}）`, "rs-skill-write-log-overlay");
+    const { body, foot, close } = makeRepairDialog(skillId ? tf("变更记录 · {id}（{n}）", { id: skillId, n: log.length }) : tf("变更记录（{n}）", { n: log.length }), "rs-skill-write-log-overlay");
     if (!log.length) {
         const empty = mkEl("div", "rs-repair-log-empty");
-        empty.textContent = "暂无回写记录 — 画布改完点「💾 回写入技能」并确认后，每次变更会按技能记录在这里。";
+        empty.textContent = t("暂无回写记录 — 画布改完点「💾 回写入技能」并确认后，每次变更会按技能记录在这里。");
         body.appendChild(empty);
     } else {
         for (const entry of log) {
             const group = mkEl("div", "rs-repair-log-group");
-            const t = mkEl("div", "rs-repair-log-time");
-            t.textContent = [
+            const timeEl = mkEl("div", "rs-repair-log-time");
+            timeEl.textContent = [
                 new Date(entry.time).toLocaleString("zh-CN", { hour12: false }),
-                entry.kind === "gen_video" ? "生视频" : "生图",
-                WRITE_SOURCE_LABELS[entry.source] || "其他",
+                entry.kind === "gen_video" ? t("生视频") : t("生图"),
+                WRITE_SOURCE_LABELS[entry.source] || t("其他"),
                 skillId ? null : entry.skillId,
             ].filter(Boolean).join(" · ");
-            group.appendChild(t);
+            group.appendChild(timeEl);
             const changes = entry.changes || [];
             if (changes.length) {
                 group.appendChild(buildWriteChangesTable(changes));
             } else {
                 const none = mkEl("div", "rs-repair-hint");
-                none.textContent = "无键值变更 — 按当前画布重写 workflow.json";
+                none.textContent = t("无键值变更 — 按当前画布重写 workflow.json");
                 group.appendChild(none);
             }
             if ((entry.warnings || []).length) {
@@ -52,15 +53,15 @@ export function showSkillWriteLogDialog(skillId) {
         }
     }
     const hint = mkEl("span", "rs-repair-hint");
-    hint.textContent = `仅本机本地记录（每技能最近 ${SKILL_WRITE_LOG_LIMIT} 次），不影响技能文件`;
+    hint.textContent = tf("仅本机本地记录（每技能最近 {n} 次），不影响技能文件", { n: SKILL_WRITE_LOG_LIMIT });
     const clearBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
     clearBtn.type = "button";
-    clearBtn.textContent = "清空记录";
+    clearBtn.textContent = t("清空记录");
     foot.append(hint, clearBtn);
     clearBtn.addEventListener("click", () => {
         writeLog.clear(skillId);
         close();
-        showToast(app, "info", skillId ? "本技能变更记录已清空" : "全部变更记录已清空");
+        showToast(app, "info", skillId ? t("本技能变更记录已清空") : t("全部变更记录已清空"));
     });
 }
 /** 回写确认弹窗：先预览变更清单与 warnings，点「💾 确认保存」才落盘；返回是否已保存 */
@@ -69,7 +70,7 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
     return previewWorkflowSkill(id, workflow).then((preview) => new Promise((resolve) => {
         const changes = preview.changes || [];
         const warnings = preview.warnings || [];
-        const { body, foot, overlay, close } = makeRepairDialog(`回写入技能 · ${label}（${changes.length} 处变更）`, "rs-wf-write-confirm", () => {
+        const { body, foot, overlay, close } = makeRepairDialog(tf("回写入技能 · {label}（{n} 处变更）", { label, n: changes.length }), "rs-wf-write-confirm", () => {
             document.removeEventListener("keydown", onKey);
             resolve(false);
         });
@@ -79,14 +80,14 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
             body.appendChild(buildWriteChangesTable(changes));
         } else {
             const empty = mkEl("div", "rs-repair-log-empty");
-            empty.textContent = "画布内容与技能已保存的工作流一致 — 保存只会按当前画布重写 workflow.json / config.json。";
+            empty.textContent = t("画布内容与技能已保存的工作流一致 — 保存只会按当前画布重写 workflow.json / config.json。");
             body.appendChild(empty);
         }
         if (preview.preset) {
             const presetHint = mkEl("div", "rs-repair-hint");
             presetHint.textContent = preview.structural
-                ? "预设技能不改 workflow.json：模型值写入预设本地覆盖（configs/skill_overrides/），结构变更会自动复制为自定义技能写入"
-                : "预设技能：模型值写入预设本地覆盖（configs/skill_overrides/），不改 workflow.json";
+                ? t("预设技能不改 workflow.json：模型值写入预设本地覆盖（configs/skill_overrides/），结构变更会自动复制为自定义技能写入")
+                : t("预设技能：模型值写入预设本地覆盖（configs/skill_overrides/），不改 workflow.json");
             body.appendChild(presetHint);
         }
         if (warnings.length) {
@@ -99,10 +100,10 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
         hint.textContent = WRITE_API_ONLY_NOTE;
         const cancelBtn = mkEl("button", "rs-btn rs-delete-cancel-btn");
         cancelBtn.type = "button";
-        cancelBtn.textContent = "取消";
+        cancelBtn.textContent = t("取消");
         const saveBtn = mkEl("button", "rs-btn");
         saveBtn.type = "button";
-        saveBtn.textContent = "💾 确认保存";
+        saveBtn.textContent = t("💾 确认保存");
         foot.append(hint, cancelBtn, saveBtn);
         cancelBtn.addEventListener("click", close);
         saveBtn.addEventListener("click", async () => {
@@ -111,7 +112,7 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
             try {
                 const r = await updateWorkflowSkill(id, workflow);
                 writeLog.record(id, { source: source || "canvas", kind: kind || "gen_image", changes: changes || [], warnings: warnings || [] });
-                let summary = `已回写入技能 "${label}"`;
+                let summary = tf("已回写入技能 \"{label}\"", { label });
                 let detail = (r.warnings || []).join("\n");
                 let copy = null;
                 // 预设不改结构：结构变更自动落进新建的自定义副本，待回写状态跟着搬到副本
@@ -121,8 +122,8 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
                         await updateWorkflowSkill(copy.id, workflow);
                         writeLog.record(copy.id, { source: source, kind: kind, changes: changes, warnings: warnings });
                         setPendingWriteback(copy.id, "custom", copy.name);
-                        summary = `已复制为自定义技能 "${copy.name}" 并写入工作流`;
-                        detail = [`模型值已写入 "${id}" 的本地覆盖`, detail].filter(Boolean).join("\n");
+                        summary = tf("已复制为自定义技能 \"{name}\" 并写入工作流", { name: copy.name });
+                        detail = [tf("模型值已写入 \"{id}\" 的本地覆盖", { id }), detail].filter(Boolean).join("\n");
                     }
                 }
                 document.removeEventListener("keydown", onKey);
@@ -133,7 +134,7 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
                 resolve(true);
             } catch (err) {
                 saveBtn.disabled = false;
-                showToast(app, "error", "回写入失败", err.message);
+                showToast(app, "error", t("回写入失败"), err.message);
                 resolve(false);
             }
         });
@@ -143,19 +144,19 @@ function confirmWorkflowWrite(id, source, workflow, displayName, onSaved) {
 
 // 整画布 API prompt 回写指定技能：先弹变更确认，确认后才落盘（custom 写 workflow.json；预设只写模型值到本地覆盖）
 async function writeWorkflowToSkill(id, origin, displayName) {
-    if (!id) { showToast(app, "warning", "回写入技能", "技能未保存，先保存技能本体"); return false; }
-    if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，回写不可用"); return false; }
+    if (!id) { showToast(app, "warning", t("回写入技能"), t("技能未保存，先保存技能本体")); return false; }
+    if (typeof app.graphToPrompt !== "function") { showToast(app, "warning", t("无画布"), t("当前视图没有画布，回写不可用")); return false; }
     try {
         const { output, error } = await serializeCanvasPrompt();
         if (error || !output || !Object.keys(output).length) {
-            showToast(app, "warning", "无法回写", "画布没有有效工作流" + (error?.message ? `（${error.message}）` : ""));
+            showToast(app, "warning", t("无法回写"), t("画布没有有效工作流") + (error?.message ? tf("（{msg}）", { msg: error.message }) : ""));
             return false;
         }
         const saved = await confirmWorkflowWrite(id, origin || "canvas", output, displayName);
         if (saved) clearPendingWriteback(id);
         return saved;
     } catch (err) {
-        showToast(app, "error", "回写入失败", err.message);
+        showToast(app, "error", t("回写入失败"), err.message);
         return false;
     }
 }
@@ -184,7 +185,7 @@ function applyWritebackHint() {
     btn.classList.toggle("neo-writeback-hint", on);
     if (on) {
         btn.dataset.wbOrigAria ??= btn.getAttribute("aria-label");
-        btn.setAttribute("aria-label", `回写入技能：技能 "${pendingWriteback.displayName || pendingWriteback.id}" 待保存`);
+        btn.setAttribute("aria-label", tf("回写入技能：技能 \"{name}\" 待保存", { name: pendingWriteback.displayName || pendingWriteback.id }));
     } else if (btn.dataset.wbOrigAria !== undefined) {
         btn.setAttribute("aria-label", btn.dataset.wbOrigAria);
         delete btn.dataset.wbOrigAria;
@@ -232,7 +233,7 @@ function getPendingWriteback() {
 /** 顶菜单「💾 回写入技能」：回写卡片关掉后仍可从这里落盘当前画布的技能 */
 async function runCanvasSkillWriteback() {
     if (!pendingWriteback) {
-        showToast(app, "info", "回写入技能", "当前画布没有待回写的技能：技能管理「⤒ 导入到画布」后此入口可用");
+        showToast(app, "info", t("回写入技能"), t("当前画布没有待回写的技能：技能管理「⤒ 导入到画布」后此入口可用"));
         return false;
     }
     return await writeWorkflowToSkill(pendingWriteback.id, "canvas", pendingWriteback.displayName);
@@ -244,10 +245,10 @@ function showCanvasWriteCard(id, source, displayName) {
     const label = displayName || id;
     const card = actionToast({
         severity: "success",
-        summary: "已导入到画布",
-        detail: `技能 "${label}" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」确认变更落盘；仅保存 API 工作流，画布上的节点位置等界面布局不写入`
-            + (source === "presets" ? "。预设技能：模型值写入预设本地覆盖，结构变更会自动复制为自定义技能" : ""),
-        actionLabel: "💾 回写入技能",
+        summary: t("已导入到画布"),
+        detail: tf("技能 \"{label}\" 的 workflow.json 已按技能设置灌入画布（节点按流程图布局排列）。改完点「💾 回写入技能」确认变更落盘；仅保存 API 工作流，画布上的节点位置等界面布局不写入", { label })
+            + (source === "presets" ? t("。预设技能：模型值写入预设本地覆盖，结构变更会自动复制为自定义技能") : ""),
+        actionLabel: t("💾 回写入技能"),
         onAction: () => runCanvasSkillWriteback(),
         onClose: () => { if (handoffCard === card) handoffCard = null; },
     });
@@ -264,7 +265,7 @@ function showCanvasWriteCard(id, source, displayName) {
 const WF_EDIT_PARAM = "neo_wf_edit";
 
 function openSkillWorkflowInMainUi(id) {
-    if (!id) { showToast(app, "warning", "主画布编辑", "技能未保存，先保存技能本体"); return; }
+    if (!id) { showToast(app, "warning", t("主画布编辑"), t("技能未保存，先保存技能本体")); return; }
     window.open(`/?${WF_EDIT_PARAM}=${encodeURIComponent(id)}`, "_blank");
 }
 
@@ -272,9 +273,9 @@ function openSkillWorkflowInMainUi(id) {
 async function openSkillWorkflowOnCanvas(id) {
     const [full, wf] = await Promise.all([loadSkill(id), loadSkillWorkflow(id)]);
     const displayName = full && !full.error ? (full.cn_name || full.name || id) : id;
-    if (!full || full.error) { showToast(app, "warning", "主画布编辑", `技能 "${displayName}" 不存在`); return; }
-    if (!wf) { showToast(app, "warning", "无工作流", `技能 "${displayName}" 没有 workflow.json`); return; }
-    if (typeof app.loadApiJson !== "function") { showToast(app, "warning", "无画布", "当前视图没有画布，导入不可用"); return; }
+    if (!full || full.error) { showToast(app, "warning", t("主画布编辑"), tf("技能 \"{name}\" 不存在", { name: displayName })); return; }
+    if (!wf) { showToast(app, "warning", t("无工作流"), tf("技能 \"{name}\" 没有 workflow.json", { name: displayName })); return; }
+    if (typeof app.loadApiJson !== "function") { showToast(app, "warning", t("无画布"), t("当前视图没有画布，导入不可用")); return; }
     const isVideo = !!full.gen_video;
     const models = isVideo ? await listVideoGenModels().catch(() => ({})) : await listGenModels().catch(() => ({}));
     const cfg = (await getSkillGenConfig(id)) || {};
@@ -283,7 +284,7 @@ async function openSkillWorkflowOnCanvas(id) {
         await app.loadApiJson(canvasWf, id);
         arrangeCanvasNodes(canvasWf);
     } catch (e) {
-        showToast(app, "error", "导入失败", String(e.message || e));
+        showToast(app, "error", t("导入失败"), String(e.message || e));
         return;
     }
     const source = full.source || "custom";

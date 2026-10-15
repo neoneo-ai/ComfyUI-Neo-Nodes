@@ -13,6 +13,8 @@
 //            勾选框只在悬停该块时出现（已勾选的常显），命中区比视觉框大一圈，避免误触成「点块打开编辑器」。
 // 回调：onCheckChange(checkedIndices)
 
+import { t } from "./js/core/i18n.js";
+
 const DT_CSS_HREF = "/extensions/comfyui-neo-studio/director-timeline.css";
 const DT_MIN_ZOOM = 0.25;    // 时间轴最小缩放（缩小看更多段）
 const DT_MAX_ZOOM = 4;       // 时间轴最大缩放倍数
@@ -516,7 +518,7 @@ export class DirectorTimeline {
       ctx.fillStyle = "#666";
       ctx.font = "11px sans-serif";
       ctx.textBaseline = "middle";
-      ctx.fillText("暂无分段", L.padX, H / 2);
+      ctx.fillText(t("暂无分段"), L.padX, H / 2);
       return;
     }
 

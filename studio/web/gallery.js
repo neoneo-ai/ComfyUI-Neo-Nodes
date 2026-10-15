@@ -10,6 +10,7 @@ import { copyGalleryToInput } from './media-transfer.js';
 import { openGenMaterialDialog } from './gallery-gen.js';
 import { attachGalleryNodeDrop } from './gallery-node-drop.js';
 import { attachMasonry, setMasonryColumnWidth } from './gallery-masonry.js';
+import { t, tf } from "./js/core/i18n.js";
 import {
     THUMBNAIL_SIZE_DEFAULT,
     THUMBNAIL_SIZE_MIN,
@@ -41,7 +42,7 @@ recipesCssLink.href = "/extensions/comfyui-neo-studio/recipes.css?v=" + Date.now
 document.head.appendChild(recipesCssLink);
 
 // Civitai 收藏 view: bookmarked C-site models, shown like the Lora section.
-const CIVITAI_DIR_NAME = "C站收藏";  // display label only (card name, breadcrumb) — never used for backend matching
+const CIVITAI_DIR_NAME = t("C站收藏");  // display label only (card name, breadcrumb) — never used for backend matching
 const CIVITAI_DIR_KEY = "civitai_bookmarks";  // stable dir_name key sent to the backend (must match bookmark.CIVITAI_DIR_KEY)
 const CIVITAI_VIEW_SOURCE = CIVITAI_DIR_KEY;  // same stable identifier reused in the URL state
 
@@ -144,8 +145,8 @@ export class NeoGallery {
                 $el("div", { className: "neo-gallery-search-container" }, [this.searchInput]),
                 $el("button", {
                     className: "neo-gallery-gm-btn",
-                    title: "生成新素材（默认 Krea2 文生图，产物保存到 Output 目录）",
-                    textContent: "🖼️ 生成素材",
+                    title: t("生成新素材（默认 Krea2 文生图，产物保存到 Output 目录）"),
+                    textContent: t("🖼️ 生成素材"),
                     onclick: () => openGenMaterialDialog(this)
                 })
             ]),
@@ -460,9 +461,9 @@ export class NeoGallery {
         }).catch(() => {});
         const typeBadge = $el("div", {
             className: "neo-gallery-card-type-badge type-directory",
-            title: "本地收藏（记录路径，打开时基于路径查找）"
+            title: t("本地收藏（记录路径，打开时基于路径查找）")
         }, ["\uD83D\uDCCD"]);
-        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: "本地收藏" });
+        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: t("本地收藏") });
         const info = $el("div", { className: "neo-gallery-card-info" }, [nameEl]);
         card.appendChild(typeBadge);
         card.appendChild(coverWrapper);
@@ -473,7 +474,7 @@ export class NeoGallery {
     async showLocalBookmarks() {
         await this.list._saveCurrentScrollPosition();
         this.currentView.mode = 'local_bookmarks';
-        this.currentView.source = '本地收藏';
+        this.currentView.source = t('本地收藏');
         this.currentView.categoryPath = [];
         this.stopLoraRefresh();
         this.list.updateBreadcrumb(this, [], '');
@@ -498,12 +499,12 @@ export class NeoGallery {
             data = await resp.json();
         } catch (e) {
             console.error('[Neo Gallery] Failed to load local bookmarks:', e);
-            showNoFilesMessage(this.accordion, "加载本地收藏失败");
+            showNoFilesMessage(this.accordion, t("加载本地收藏失败"));
             return;
         }
         const items = (data && data.items) || [];
         if (items.length === 0) {
-            showNoFilesMessage(this.accordion, "暂无本地收藏。在图片缩略图右下角的「⋯」按钮即可收藏。");
+            showNoFilesMessage(this.accordion, t("暂无本地收藏。在图片缩略图右下角的「⋯」按钮即可收藏。"));
             return;
         }
         const container = $el("div", {
@@ -543,8 +544,8 @@ export class NeoGallery {
             this._applyBookmarkCovers(coverWrapper, item.covers || [], item);
         }
 
-        const sourceLabel = item.source === "oss" ? "OSS 预设" : (item.source === "civitai" ? "C 站" : "本地");
-        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: item.name || item.filename || "未命名" });
+        const sourceLabel = item.source === "oss" ? t("OSS 预设") : (item.source === "civitai" ? t("C 站") : t("本地"));
+        const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: item.name || item.filename || t("未命名") });
         const info = $el("div", { className: "neo-gallery-card-info" }, [
             nameEl,
             $el("span", { className: "neo-gallery-card-source-badge", textContent: sourceLabel })
@@ -552,11 +553,11 @@ export class NeoGallery {
         const isFile = !!item.filename;
         const typeBadge = $el("div", {
             className: `neo-gallery-card-type-badge ${isAudio ? "type-audio" : (isFile ? "type-image" : "type-directory")}`,
-            title: `${sourceLabel}收藏 · ${[item.dir, item.subfolder, item.filename].filter(Boolean).join("/")}`
+            title: tf("{src}收藏 · {path}", { src: sourceLabel, path: [item.dir, item.subfolder, item.filename].filter(Boolean).join("/") })
         }, [isAudio ? "\u266A" : (item.source === "oss" ? "\u2601\uFE0F" : (isFile ? "\uD83D\uDDBC\uFE0F" : "\uD83D\uDCCD"))]);
         const menuBtn = $el("div", {
             className: "neo-gallery-thumb-bookmark-btn",
-            title: "更多操作",
+            title: t("更多操作"),
             onclick: (e) => {
                 e.stopPropagation();
                 const unfavorite = () => this._removeLocalBookmark(item, card);
@@ -599,7 +600,7 @@ export class NeoGallery {
             }
         } catch (e) {
             console.error('[Neo Gallery] Failed to open local bookmark:', e);
-            showToast(this.app, 'error', '打开收藏失败', '源路径可能已被移动或删除：' + String(e));
+            showToast(this.app, 'error', t('打开收藏失败'), t('源路径可能已被移动或删除：') + String(e));
         }
     }
 
@@ -611,12 +612,12 @@ export class NeoGallery {
             const data = await resp.json();
             if (data.success) {
                 if (card && card.parentNode) card.remove();
-                showToast(this.app, 'success', '已取消收藏', item.name || '');
+                showToast(this.app, 'success', t('已取消收藏'), item.name || '');
             } else {
-                showToast(this.app, 'error', '取消收藏失败', data.error || '');
+                showToast(this.app, 'error', t('取消收藏失败'), data.error || '');
             }
         } catch (e) {
-            showToast(this.app, 'error', '取消收藏失败', String(e));
+            showToast(this.app, 'error', t('取消收藏失败'), String(e));
         }
     }
 
@@ -638,7 +639,7 @@ export class NeoGallery {
         }).catch(() => {});
         const typeBadge = $el("div", {
             className: "neo-gallery-card-type-badge type-directory",
-            title: "C站收藏（可保存为配方）"
+            title: t("C站收藏（可保存为配方）")
         }, ["\uD83D\uDCC1"]);
         const nameEl = $el("span", { className: "neo-gallery-card-name", textContent: CIVITAI_DIR_NAME });
         const info = $el("div", { className: "neo-gallery-card-info" }, [nameEl]);
@@ -681,19 +682,19 @@ export class NeoGallery {
             data = await resp.json();
         } catch (e) {
             console.error('[Neo Gallery] Failed to load Civitai bookmarks:', e);
-            showNoFilesMessage(this.accordion, "加载收藏失败");
+            showNoFilesMessage(this.accordion, t("加载收藏失败"));
             return;
         }
 
         if (!data.success) {
-            const msg = data.needs_api_key ? "需在「Manage Directories」配置 C 站 API KEY" : (data.error || "加载收藏失败");
+            const msg = data.needs_api_key ? t("需在「Manage Directories」配置 C 站 API KEY") : (data.error || t("加载收藏失败"));
             showNoFilesMessage(this.accordion, msg);
             return;
         }
 
         const items = data.items || [];
         if (items.length === 0) {
-            showNoFilesMessage(this.accordion, "暂无收藏的 C 站模型");
+            showNoFilesMessage(this.accordion, t("暂无收藏的 C 站模型"));
             return;
         }
 
@@ -732,16 +733,16 @@ export class NeoGallery {
         }, [
             $el("button", {
                 className: "neo-gallery-pagination-btn",
-                title: "上一页",
-                textContent: "‹ 上一页",
+                title: t("上一页"),
+                textContent: t("‹ 上一页"),
                 disabled: page <= 0,
                 onclick: () => this._renderCivitaiBookmarks(false, page - 1)
             }),
-            $el("span", { className: "neo-gallery-pagination-info", textContent: `第 ${page + 1} 页` }),
+            $el("span", { className: "neo-gallery-pagination-info", textContent: tf("第 {n} 页", { n: page + 1 }) }),
             $el("button", {
                 className: "neo-gallery-pagination-btn",
-                title: "下一页",
-                textContent: "下一页 ›",
+                title: t("下一页"),
+                textContent: t("下一页 ›"),
                 disabled: !data.has_more,
                 onclick: () => this._renderCivitaiBookmarks(false, page + 1)
             })
@@ -768,12 +769,12 @@ export class NeoGallery {
 
         const typeBadge = $el("div", {
             className: "neo-gallery-card-type-badge type-directory",
-            title: typeLabel || "Civitai 模型"
+            title: typeLabel || t("Civitai 模型")
         }, ["\uD83D\uDCC1"]);
 
         const saveBtn = $el("div", {
             className: "neo-gallery-card-civitai-save-btn",
-            title: "保存为配方",
+            title: t("保存为配方"),
             onclick: (e) => { e.stopPropagation(); this._saveCivitaiBookmarkAsRecipe(item, saveBtn); }
         }, ["\uD83D\uDCBE"]);
 
@@ -792,7 +793,7 @@ export class NeoGallery {
     async _openCivitaiBookmarkDir(item, card) {
         if (card && card.dataset.opening === "1") return;
         if (card) card.dataset.opening = "1";
-        const progressEl = card ? $el("div", { className: "neo-gallery-civitai-progress", textContent: "正在连接 Civitai…" }) : null;
+        const progressEl = card ? $el("div", { className: "neo-gallery-civitai-progress", textContent: t("正在连接 Civitai…") }) : null;
         if (progressEl) card.appendChild(progressEl);
         let pollTimer = null;
         const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
@@ -802,7 +803,7 @@ export class NeoGallery {
                     const resp = await api.fetchApi('/neo_bookmark/civitai/status');
                     const st = await resp.json();
                     if (st.running) {
-                        progressEl.textContent = `正在缓存示例图 ${st.done}/${st.total} · ${st.current || ''}`;
+                        progressEl.textContent = tf("正在缓存示例图 {done}/{total} · {current}", { done: st.done, total: st.total, current: st.current || '' });
                     } else if (st.error) {
                         progressEl.textContent = st.error;
                     }
@@ -815,11 +816,11 @@ export class NeoGallery {
             });
             const data = await resp.json();
             if (!data.success) {
-                showToast(this.app, 'error', '加载示例图失败', data.error || '');
+                showToast(this.app, 'error', t('加载示例图失败'), data.error || '');
                 return;
             }
             if (!(data.images || []).length) {
-                showToast(this.app, 'info', '无示例图', '该模型暂无可预览的示例图');
+                showToast(this.app, 'info', t('无示例图'), t('该模型暂无可预览的示例图'));
                 return;
             }
             // 边下边开：下载到第一张即进入目录；剩余由后台任务续下，
@@ -829,7 +830,7 @@ export class NeoGallery {
             if (!data.complete) this._pollBookmarkMediaUntilDone(modelKey);
         } catch (e) {
             console.error('[Neo Gallery] Failed to open Civitai bookmark examples:', e);
-            showToast(this.app, 'error', '打开失败', String(e));
+            showToast(this.app, 'error', t('打开失败'), String(e));
         } finally {
             stopPolling();
             if (progressEl) progressEl.remove();
@@ -918,7 +919,7 @@ export class NeoGallery {
             });
             const resolved = await resolveResp.json();
             if (!resolved.success) {
-                showInlineFeedback(button, resolved.error || "解析失败", "error");
+                showInlineFeedback(button, resolved.error || t("解析失败"), "error");
                 button.textContent = "\uD83D\uDCBE";
                 return;
             }
@@ -933,11 +934,11 @@ export class NeoGallery {
             });
             const saved = await saveResp.json();
             if (!saved.success) {
-                showInlineFeedback(button, saved.error || "保存失败", "error");
+                showInlineFeedback(button, saved.error || t("保存失败"), "error");
                 button.textContent = "\uD83D\uDCBE";
                 return;
             }
-            showInlineFeedback(button, "已保存为配方", "success");
+            showInlineFeedback(button, t("已保存为配方"), "success");
             button.textContent = "\u2705";
         } catch (e) {
             console.error('[Neo Gallery] Failed to save Civitai recipe:', e);
@@ -1213,18 +1214,18 @@ export class NeoGallery {
         const count = this._selectedItems.size;
         if (count === 0) return;
         const bar = $el("div", { className: "neo-gallery-selection-bar" }, [
-            $el("span", { className: "neo-gallery-selection-count", textContent: `已选 ${count} 项` }),
+            $el("span", { className: "neo-gallery-selection-count", textContent: tf("已选 {n} 项", { n: count }) }),
             $el("div", {
                 className: "neo-gallery-selection-btn neo-gallery-selection-btn-danger",
-                title: "仅删除勾选的素材，不影响未选中文件",
+                title: t("仅删除勾选的素材，不影响未选中文件"),
                 onclick: () => this.deleteSelected()
-            }, ["\uD83D\uDDD1\uFE0F 删除"]),
+            }, [t("\uD83D\uDDD1\uFE0F 删除")]),
             $el("div", {
                 className: "neo-gallery-selection-btn",
-                title: "将选中图片设为分镜图，新建视频导演配方",
+                title: t("将选中图片设为分镜图，新建视频导演配方"),
                 onclick: () => this.createDirectorFromSelection()
-            }, ["\uD83C\uDFAC 新建导演配方"]),
-            $el("div", { className: "neo-gallery-selection-btn", onclick: () => this.clearSelection() }, ["✕ 清空"])
+            }, [t("\uD83C\uDFAC 新建导演配方")]),
+            $el("div", { className: "neo-gallery-selection-btn", onclick: () => this.clearSelection() }, [t("✕ 清空")])
         ]);
         this.element.appendChild(bar);
         this._selectionBar = bar;
@@ -1233,7 +1234,7 @@ export class NeoGallery {
     async deleteSelected() {
         const count = this._selectedItems.size;
         if (count === 0) return;
-        if (!confirm(`删除已选中的 ${count} 个素材？此操作不可恢复。`)) return;
+        if (!confirm(tf("删除已选中的 {n} 个素材？此操作不可恢复。", { n: count }))) return;
         const targets = [...this._selectedItems];
         this._selectedItems.clear();
         this._updateSelectionBar();
@@ -1249,11 +1250,11 @@ export class NeoGallery {
         }
         const attempted = count - skipped;
         if (attempted > 0 && okCount === attempted) {
-            showToast(this.app, 'success', '批量删除完成', `已删除 ${okCount} 个素材` + (skipped ? `，跳过 ${skipped} 个只读项` : ''));
+            showToast(this.app, 'success', t('批量删除完成'), tf("已删除 {n} 个素材", { n: okCount }) + (skipped ? tf("，跳过 {n} 个只读项", { n: skipped }) : ''));
         } else if (okCount > 0) {
-            showToast(this.app, 'error', '部分删除失败', `成功 ${okCount} / ${attempted}`);
+            showToast(this.app, 'error', t('部分删除失败'), tf("成功 {ok} / {total}", { ok: okCount, total: attempted }));
         } else if (attempted > 0) {
-            showToast(this.app, 'error', '批量删除失败', '没有素材被删除');
+            showToast(this.app, 'error', t('批量删除失败'), t('没有素材被删除'));
         }
         // deleteItem 已逐项移除卡片 DOM，瀑布流会自己重排。只有整个目录被删空时才重绘父列表，
         // 其余情况整表重绘会刷新页面并丢掉滚动位置。
@@ -1273,7 +1274,7 @@ export class NeoGallery {
             if (isImageFile(name)) images.push([subfolder, name]);
         }
         if (!images.length) {
-            showToast(this.app, 'warning', '无可用图片', '选中的素材中没有图片，无法创建导演配方');
+            showToast(this.app, 'warning', t('无可用图片'), t('选中的素材中没有图片，无法创建导演配方'));
             return;
         }
         // 导演编辑器帧一律走 input/ 根目录（/view?subfolder=）：子文件夹里的图先经 copy_to_input 落盘再建配方
@@ -1281,7 +1282,7 @@ export class NeoGallery {
         for (const [subfolder, name] of images) {
             const fname = subfolder ? await copyGalleryToInput(JSON.stringify({ filename: name, subfolder })) : name;
             if (!fname) {
-                showToast(this.app, 'error', '新建导演配方失败', `无法读取 ${name}`);
+                showToast(this.app, 'error', t('新建导演配方失败'), tf("无法读取 {name}", { name }));
                 return;
             }
             segments.push({ first_frame: fname, duration_sec: 5 });
@@ -1289,7 +1290,7 @@ export class NeoGallery {
         try {
             await openDirectorEditor({ name: '', shared: { mode: 'f2v' }, segments });
         } catch (err) {
-            showToast(this.app, 'error', '新建导演配方失败', String(err.message || err));
+            showToast(this.app, 'error', t('新建导演配方失败'), String(err.message || err));
             return;
         }
         this.clearSelection();
@@ -1702,7 +1703,7 @@ app.registerExtension({
                 app.extensionManager.registerSidebarTab({
             id: "neo.gallery",
             icon: "pi pi-images",
-            title: "素材",
+            title: t("素材"),
             tooltip: "Neo Gallery",
             type: "custom",
             render: async (el) => {
@@ -1743,8 +1744,8 @@ app.registerExtension({
             app.extensionManager.registerSidebarTab({
                 id: "neo.recipes",
                 icon: "pi pi-box",
-                title: "配方",
-                tooltip: "Neo Recipes (视频配方)",
+                title: t("配方"),
+                tooltip: t("Neo Recipes (视频配方)"),
                 type: "custom",
                 render: async (el) => {
                     el.innerHTML = "";

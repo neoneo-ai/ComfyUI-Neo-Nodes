@@ -16,6 +16,7 @@ import {
 import { installDialogs, resetDialogs, setConfirmAnswer, dialogs } from "./helpers/dialogs.mjs";
 import { installFetch, mockRoute, clearRoutes, resetFetchLog, fetchLog, missingRoutes, jsonResponse, sseResponse } from "./helpers/fetch.mjs";
 import { clearObjectInfoCache } from "../../web/js/core/object-info.js";
+import { setLang } from "../../web/js/core/i18n.js";
 
 const dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>", {
     url: "http://test.local/",
@@ -31,6 +32,9 @@ installRectStub(dom.window);
 installPollSpeedup(dom.window);
 installDialogs(dom.window);
 installFetch();
+
+// 用例基线语言：jsdom 的 navigator.language 是 en-US，不钉中文的话断言里的中文原文会全变英文
+setLang("zh");
 
 export { mockRoute, clearRoutes, resetFetchLog, fetchLog, missingRoutes, jsonResponse, sseResponse };
 export { dialogs, setConfirmAnswer, resetDialogs };
@@ -48,6 +52,7 @@ export function resetEnv() {
     resetDeterminism();
     resetDialogs();
     resetFetchLog();
+    setLang("zh");               // 用例里切过英文要复位，避免串到后面的用例
     clearObjectInfoCache();   // 节点定义/模型目录缓存是模块级，清掉避免跨用例串味
     delete window.pywebview;  // 桌面端的 js_api 桩：用例各自声明，留着会让后面的「浏览器标签页」用例当桌面端窗口
     document.body.innerHTML = "";

@@ -4,6 +4,7 @@
  */
 
 import { randomPrompt } from "./prompt-service.js";
+import { t, tf } from "./js/core/i18n.js";
 
 // ==========================================
 // 工具函数
@@ -245,7 +246,7 @@ function showRandomPickToast(anchorEl, count) {
     if (!anchorEl || !anchorEl.getBoundingClientRect) return;
     const toast = document.createElement("div");
     toast.className = "rs-random-pick-toast";
-    toast.textContent = count > 1 ? `🎲 已随机抽取 ${count} 条提示词` : "🎲 已随机抽取一条新提示词";
+    toast.textContent = count > 1 ? tf("🎲 已随机抽取 {n} 条提示词", { n: count }) : t("🎲 已随机抽取一条新提示词");
     const r = anchorEl.getBoundingClientRect();
     const vw = window.innerWidth;
     toast.style.left = Math.max(8, Math.min(r.right - 190, vw - 198)) + "px";

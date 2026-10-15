@@ -12,6 +12,7 @@
  */
 import { app } from "../../../../scripts/app.js";
 import { $el } from "../../../../scripts/ui.js";
+import { t, tf } from "./js/core/i18n.js";
 import { Lightbox } from "./lightbox.js";
 import { grabDataType, copyGalleryToInput, toggleGallerySidebar, uploadLocalFiles } from "./media-transfer.js";
 import { collectWorkflowAssets, saveRecipe, listRecipes } from "./recipes.js";
@@ -75,7 +76,7 @@ function readRefs(node) {
     return [];
 }
 
-const toast = (severity, detail) => app.extensionManager?.toast?.add({ severity, summary: "参考图宫格", detail, life: 3500 });
+const toast = (severity, detail) => app.extensionManager?.toast?.add({ severity, summary: t("参考图宫格"), detail, life: 3500 });
 const thumbUrl = (name) => `/view?filename=${encodeURIComponent(name)}&subfolder=&type=input`;
 
 function openTileLightbox(list, index) {
@@ -86,18 +87,18 @@ function openTileLightbox(list, index) {
 /** 保存配方小弹窗：名称输入 + 资产收集提示；保存走 recipes.js 的 collectWorkflowAssets + saveRecipe。 */
 function openRecipeDialog(node) {
     const overlay = $el("div", { className: "neo-rg-overlay" });
-    const nameInput = $el("input", { type: "text", className: "neo-rg-input", placeholder: "配方名称" });
-    const hint = $el("div", { className: "neo-rg-dialog-hint", textContent: "⏳ 正在收集工作流资源..." });
+    const nameInput = $el("input", { type: "text", className: "neo-rg-input", placeholder: t("配方名称") });
+    const hint = $el("div", { className: "neo-rg-dialog-hint", textContent: t("⏳ 正在收集工作流资源...") });
     collectWorkflowAssets(node).then(assets => {
         const p = (node._neoRg?.getPrompt() || "").trim();
-        hint.textContent = `配方将包含 ${assets.length} 个资源（宫格图 + 当前子图中已连线的 LoadImage）${p ? " + 当前提示词" : ""}。`;
+        hint.textContent = tf("配方将包含 {n} 个资源（宫格图 + 当前子图中已连线的 LoadImage）{p}。", { n: assets.length, p: p ? t(" + 当前提示词") : "" });
     }).catch(e => {
         console.error("[Neo RefGrid] collect assets failed:", e);
-        hint.textContent = "⚠️ 工作流资源收集失败";
+        hint.textContent = t("⚠️ 工作流资源收集失败");
     });
 
-    const saveBtn = $el("button", { className: "neo-rg-btn neo-rg-dialog-save", textContent: "保存" });
-    const cancelBtn = $el("button", { className: "neo-rg-btn", textContent: "取消" });
+    const saveBtn = $el("button", { className: "neo-rg-btn neo-rg-dialog-save", textContent: t("保存") });
+    const cancelBtn = $el("button", { className: "neo-rg-btn", textContent: t("取消") });
     const close = () => overlay.remove();
     cancelBtn.onclick = close;
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
@@ -111,20 +112,20 @@ function openRecipeDialog(node) {
             const result = await saveRecipe(name, node._neoRg?.getPrompt() || "", assets);
             close();
             if (result.success) {
-                app.extensionManager.toast.add({ severity: "success", summary: "配方已保存", detail: `${name}（${result.asset_count} 资源）`, life: 4000 });
+                app.extensionManager.toast.add({ severity: "success", summary: t("配方已保存"), detail: tf("{name}（{n} 资源）", { name, n: result.asset_count }), life: 4000 });
             } else {
-                app.extensionManager.toast.add({ severity: "error", summary: "保存失败", detail: result.error || "Unknown error", life: 5000 });
+                app.extensionManager.toast.add({ severity: "error", summary: t("保存失败"), detail: result.error || "Unknown error", life: 5000 });
                 saveBtn.disabled = false;
             }
         } catch (e) {
             console.error("[Neo RefGrid] save recipe failed:", e);
-            app.extensionManager.toast.add({ severity: "error", summary: "保存失败", detail: e.message, life: 5000 });
+            app.extensionManager.toast.add({ severity: "error", summary: t("保存失败"), detail: e.message, life: 5000 });
             saveBtn.disabled = false;
         }
     };
 
     const box = $el("div", { className: "neo-rg-dialog" }, [
-        $el("div", { className: "neo-rg-dialog-title", textContent: "保存配方（提示词 + 宫格图）" }),
+        $el("div", { className: "neo-rg-dialog-title", textContent: t("保存配方（提示词 + 宫格图）") }),
         nameInput,
         hint,
         $el("div", { className: "neo-rg-dialog-btns" }, [cancelBtn, saveBtn]),
@@ -144,7 +145,7 @@ function openRecipePicker(node) {
     const overlay = $el("div", { className: "neo-rg-overlay" });
     const close = () => overlay.remove();
 
-    const search = $el("input", { type: "text", className: "neo-rg-input neo-rg-picker-search", placeholder: "搜索配方名称..." });
+    const search = $el("input", { type: "text", className: "neo-rg-input neo-rg-picker-search", placeholder: t("搜索配方名称...") });
     const listBox = $el("div", { className: "neo-rg-picker-list" });
     const preview = $el("div", { className: "neo-rg-picker-preview" });
     let items = [];
@@ -156,7 +157,7 @@ function openRecipePicker(node) {
     const renderPreview = () => {
         preview.innerHTML = "";
         if (!focused) {
-            preview.appendChild($el("div", { className: "neo-rg-picker-empty", textContent: "悬停左侧配方查看预览" }));
+            preview.appendChild($el("div", { className: "neo-rg-picker-empty", textContent: t("悬停左侧配方查看预览") }));
             return;
         }
         const files = imageFilesOf(focused);
@@ -182,10 +183,10 @@ function openRecipePicker(node) {
         node._neoRg?.setPrompt(r.prompt || "");
         close();
         const extra = [];
-        if (imageFilesOf(r).length > GRID_MAX) extra.push(`仅载入前 ${GRID_MAX} 张`);
+        if (imageFilesOf(r).length > GRID_MAX) extra.push(tf("仅载入前 {n} 张", { n: GRID_MAX }));
         const other = (r.asset_count || 0) - imageFilesOf(r).length;
-        if (other > 0) extra.push(`${other} 个非图片资产未载入`);
-        toast("success", `已载入配方「${r.name}」（${files.length} 张图片${r.prompt ? " + 提示词" : ""}）${extra.length ? "；" + extra.join("，") : ""}`);
+        if (other > 0) extra.push(tf("{n} 个非图片资产未载入", { n: other }));
+        toast("success", tf("已载入配方「{name}」（{n} 张图片{prompt}）{extra}", { name: r.name, n: files.length, prompt: r.prompt ? t(" + 提示词") : "", extra: extra.length ? t("；") + extra.join(t("，")) : "" }));
     };
 
     const renderList = () => {
@@ -193,7 +194,7 @@ function openRecipePicker(node) {
         const q = search.value.trim().toLowerCase();
         const shown = items.filter(r => !q || r.name.toLowerCase().includes(q));
         if (!shown.length) {
-            listBox.appendChild($el("div", { className: "neo-rg-picker-empty", textContent: items.length ? "无匹配配方" : "暂无含图片的配方（可先用 📦 保存）" }));
+            listBox.appendChild($el("div", { className: "neo-rg-picker-empty", textContent: items.length ? t("无匹配配方") : t("暂无含图片的配方（可先用 📦 保存）") }));
             focused = null;
             renderPreview();
             return;
@@ -205,7 +206,7 @@ function openRecipePicker(node) {
                 $el("img", { className: "neo-rg-picker-thumb", src: recipeAssetUrl(r.name, r.cover || files[0]), alt: "", loading: "lazy" }),
                 $el("div", { className: "neo-rg-picker-rowtext" }, [
                     $el("div", { className: "neo-rg-picker-name", textContent: r.name, title: r.name }),
-                    $el("div", { className: "neo-rg-picker-sub", textContent: `图片×${files.length}${other > 0 ? ` · 其他资产×${other}` : ""} · ${r.source === "preset" ? "内置" : "自定义"}` }),
+                    $el("div", { className: "neo-rg-picker-sub", textContent: tf("图片×{n}{other} · {src}", { n: files.length, other: other > 0 ? tf(" · 其他资产×{n}", { n: other }) : "", src: r.source === "preset" ? t("内置") : t("自定义") }) }),
                 ]),
             ]);
             row._recipe = r;
@@ -225,14 +226,14 @@ function openRecipePicker(node) {
         renderList();
     }).catch(e => {
         console.error("[Neo RefGrid] list recipes failed:", e);
-        listBox.appendChild($el("div", { className: "neo-rg-picker-empty", textContent: "配方列表加载失败" }));
+        listBox.appendChild($el("div", { className: "neo-rg-picker-empty", textContent: t("配方列表加载失败") }));
     });
 
     const dialog = $el("div", { className: "neo-rg-dialog neo-rg-picker" }, [
-        $el("div", { className: "neo-rg-dialog-title", textContent: "加载配方（提示词 + 图片入宫格）" }),
+        $el("div", { className: "neo-rg-dialog-title", textContent: t("加载配方（提示词 + 图片入宫格）") }),
         search,
         $el("div", { className: "neo-rg-picker-main" }, [listBox, preview]),
-        $el("div", { className: "neo-rg-dialog-btns" }, [$el("button", { className: "neo-rg-btn", textContent: "取消", onclick: close })]),
+        $el("div", { className: "neo-rg-dialog-btns" }, [$el("button", { className: "neo-rg-btn", textContent: t("取消"), onclick: close })]),
     ]);
     overlay.appendChild(dialog);
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
@@ -271,18 +272,18 @@ function buildGridUI(node) {
         fitToNode();
     };
 
-    const minusBtn = $el("button", { className: "neo-rg-btn", title: "减少宫格数（最少 1）", textContent: "−" });
-    const plusBtn = $el("button", { className: "neo-rg-btn", title: `增加宫格数（最多 ${GRID_MAX}）`, textContent: "+" });
+    const minusBtn = $el("button", { className: "neo-rg-btn", title: t("减少宫格数（最少 1）"), textContent: "−" });
+    const plusBtn = $el("button", { className: "neo-rg-btn", title: tf("增加宫格数（最多 {n}）", { n: GRID_MAX }), textContent: "+" });
     minusBtn.onclick = () => setSlots(slotCount - 1);
     plusBtn.onclick = () => setSlots(slotCount + 1);
 
     const toolbar = $el("div", { className: "neo-rg-toolbar" }, [
         minusBtn, count, plusBtn,
-        $el("button", { className: "neo-rg-btn", title: "清空宫格", textContent: "🗑️", onclick: () => { if (!list.length) return; list.length = 0; render(); markDirty(node); } }),
-        $el("button", { className: "neo-rg-btn", title: "保存配方（提示词 + 宫格图）", onclick: () => openRecipeDialog(node) }, [$el("i", { className: "pi pi-save" })]),
-        $el("button", { className: "neo-rg-btn neo-rg-right", title: "打开素材面板（从画廊拖图到宫格）", onclick: () => toggleGallerySidebar() }, [$el("i", { className: "pi pi-images" })]),
-        $el("button", { className: "neo-rg-btn", title: "本地批量添加图片（可多选）", textContent: "⬆️", onclick: () => localInput.click() }),
-        $el("button", { className: "neo-rg-btn", title: "加载配方（提示词 + 图片入宫格）", onclick: () => openRecipePicker(node) }, [$el("i", { className: "pi pi-list" })]),
+        $el("button", { className: "neo-rg-btn", title: t("清空宫格"), textContent: "🗑️", onclick: () => { if (!list.length) return; list.length = 0; render(); markDirty(node); } }),
+        $el("button", { className: "neo-rg-btn", title: t("保存配方（提示词 + 宫格图）"), onclick: () => openRecipeDialog(node) }, [$el("i", { className: "pi pi-save" })]),
+        $el("button", { className: "neo-rg-btn neo-rg-right", title: t("打开素材面板（从画廊拖图到宫格）"), onclick: () => toggleGallerySidebar() }, [$el("i", { className: "pi pi-images" })]),
+        $el("button", { className: "neo-rg-btn", title: t("本地批量添加图片（可多选）"), textContent: "⬆️", onclick: () => localInput.click() }),
+        $el("button", { className: "neo-rg-btn", title: t("加载配方（提示词 + 图片入宫格）"), onclick: () => openRecipePicker(node) }, [$el("i", { className: "pi pi-list" })]),
     ]);
 
     const grid = $el("div", { className: "neo-rg-grid" });
@@ -305,7 +306,7 @@ function buildGridUI(node) {
                 };
                 img.addEventListener("click", () => openTileLightbox(list, i));
                 const badge = $el("span", { className: "neo-rg-badge", textContent: String(i + 1) });
-                const del = $el("button", { className: "neo-rg-del", title: "移除该图", textContent: "✕" });
+                const del = $el("button", { className: "neo-rg-del", title: t("移除该图"), textContent: "✕" });
                 del.onclick = (e) => { e.stopPropagation(); list.splice(i, 1); render(); markDirty(node); };
                 cell.appendChild(img);
                 cell.appendChild(badge);
@@ -335,7 +336,7 @@ function buildGridUI(node) {
     // 插入新素材（拖入/本地上传/程序回填）：去重 + 上限校验，达上限提示并拒绝
     const insert = (name) => {
         if (!name || list.includes(name)) return;
-        if (list.length >= GRID_MAX) { toast("warning", `宫格最多 ${GRID_MAX} 张图`); return; }
+        if (list.length >= GRID_MAX) { toast("warning", tf("宫格最多 {n} 张图", { n: GRID_MAX })); return; }
         list.push(name);
         render();
         markDirty(node);
@@ -390,7 +391,7 @@ function buildGridUI(node) {
     // 提示词框：同步隐藏 prompt_text widget（执行时后端按优先级取用）
     const ta = document.createElement("textarea");
     ta.className = "neo-rg-prompt";
-    ta.placeholder = "提示词（节点内）";
+    ta.placeholder = t("提示词（节点内）");
     ta.spellcheck = false;
     ta.addEventListener("input", () => {
         const w = promptWidgetOf(node);
@@ -498,8 +499,8 @@ app.registerExtension({
             const count = Array.isArray(output.count) ? output.count[0] : (output.count ?? 0);
             const order = Array.isArray(output.order) ? output.order.filter(x => typeof x === "string") : [];
             ui.status.textContent = count
-                ? `本次执行：${count} 张参考图${order.length ? " · " + order.join("、") : ""}`
-                : "本次执行：无参考图（宫格为空）";
+                ? tf("本次执行：{n} 张参考图{order}", { n: count, order: order.length ? " · " + order.join("、") : "" })
+                : t("本次执行：无参考图（宫格为空）");
         };
 
         nodeType.prototype.onConnectionsChange = function() {

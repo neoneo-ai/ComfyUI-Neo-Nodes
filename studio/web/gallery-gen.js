@@ -17,6 +17,7 @@ import { invokePromptStream, createStreamOutputHandlers, randomPrompts, listProm
 import { createQuickInputHistory } from "./quick-input-history.js";
 import { openGallerySidebar, grabDataType, copyGalleryToInput, uploadLocalFiles } from "./media-transfer.js";
 import { ttlCache } from "./js/core/cache.js";
+import { t, tf } from "./js/core/i18n.js";
 
 // 一键角色图 / 九宫格分镜图都固定走 Qwen Image 2.1 预设（多路参考槽位、不走 Krea2 编辑链）。
 const QWEN_IMAGE_SKILL_ID = "qwen_image_21";
@@ -29,7 +30,7 @@ const QWEN_POSE_EDIT_SKILL_ID = "qwen_image_21_pose_edit";
 
 // 扩图目标比例预设（free=自由拖框；其余按 w:h 锁定拖框长宽比）
 const OUTPAINT_RATIOS = [
-    ["free", "自由"],
+    ["free", t("自由")],
     ["1:1", "1:1"],
     ["4:3", "4:3"],
     ["3:4", "3:4"],
@@ -79,7 +80,7 @@ const editDefaultTargetSize = (w, h, mp) => {
     return { w: round32(capped.w), h: round32(capped.h) };
 };
 // 对比窗标题：常规编辑换成缩放图后写明尺寸，切换模式/重新生成前还原
-const COMPARE_LABEL = "原图 / 编辑结果（拖拽分割线对比）";
+const COMPARE_LABEL = t("原图 / 编辑结果（拖拽分割线对比）");
 // 扩图画布边长上限（×原图显示尺寸）：拖框换算随缩放指数增长，封顶防失控与后端显存爆炸
 const OUTPAINT_MAX_EXTEND = 4;
 // 「生成素材」弹窗默认技能：Krea2 文生图（纯提示词出图，产物落 Output/NeoAgent/<日期>）
@@ -272,7 +273,7 @@ async function copyImageToInput(image, subfolder) {
     const resp = await api.fetchApi("/neo_gallery/copy_to_input?" + query);
     const result = await resp.json().catch(() => null);
     if (!resp.ok || !result || !result.success) {
-        throw new Error((result && result.error) || '无法读取该图片');
+        throw new Error((result && result.error) || t('无法读取该图片'));
     }
     return result.filename;
 }
@@ -301,8 +302,8 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "将基于这张人像生成头特写 / 正面 / 侧面 / 背面四视图，输出到 Output/CharacterSheet。" }));
-        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("将基于这张人像生成头特写 / 正面 / 侧面 / 背面四视图，输出到 Output/CharacterSheet。") }));
+        fill(actionsBox, btn(t("取消"), close), btn(t("生成"), start, true));
     };
 
     const renderRunning = (label, progress) => {
@@ -320,7 +321,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
                 $el("span", { textContent: label })
             ]),
             bar);
-        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+        fill(actionsBox, btn(t("取消任务"), () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
     };
 
     const renderSuccess = (final) => {
@@ -336,31 +337,31 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
             box.appendChild(img);
         }
         const size = final.width && final.height ? ` · ${final.width}×${final.height}` : "";
-        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: `已生成${size}，可拖入配方的 👤 角色参考图` }));
-        fill(actionsBox, btn("打开输出目录", () => openGallerySidebar(CHARACTER_SHEET_DIR, [])), btn("关闭", close, true));
+        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: tf("已生成{size}，可拖入配方的 👤 角色参考图", { size }) }));
+        fill(actionsBox, btn(t("打开输出目录"), () => openGallerySidebar(CHARACTER_SHEET_DIR, [])), btn(t("关闭"), close, true));
     };
 
     const renderError = (message) => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
-        fill(actionsBox, btn("重试", start), btn("关闭", close));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
+        fill(actionsBox, btn(t("重试"), start), btn(t("关闭"), close));
     };
 
     const start = async () => {
         if (running) return;
         running = true;
         cancelRequested = false;
-        renderRunning("排队中…");
+        renderRunning(t("排队中…"));
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
             const snap = await requestGeneration(buildCharacterSheetRequest(refName));
             cancelId = snap.task_id;
-            renderRunning("排队中…");
+            renderRunning(t("排队中…"));
             const final = await watchTask(snap.task_id, (s) => {
-                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress);
+                renderRunning(s.status === "running" ? t("生图中…") : t("排队中…"), s.progress);
             }, () => cancelRequested);
             if (final.status === "succeeded") renderSuccess(final);
-            else if (final.status === "cancelled") renderError("已取消");
-            else renderError(final.error || "生成失败");
+            else if (final.status === "cancelled") renderError(t("已取消"));
+            else renderError(final.error || t("生成失败"));
         } catch (e) {
             console.error('[Gallery] character sheet generation failed:', e);
             renderError(String(e?.message || e));
@@ -374,7 +375,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
 
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83E\uDDAC 生成角色图（多视图）" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83E\uDDAC 生成角色图（多视图）") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
         // 参考图直接出缩略图（同一张卡片走同一缓存接口），避免只看到文件名却不确定是哪张
@@ -386,7 +387,7 @@ function openCharacterSheetDialog(gallery, image, subfolder) {
                 style: { height: `${previewHeight}px` }
             }),
             $el("div", { className: "neo-gallery-story-ref-info" }, [
-                $el("div", { className: "neo-gallery-story-ref-label", textContent: "参考图 · 人物沿用这张" }),
+                $el("div", { className: "neo-gallery-story-ref-label", textContent: t("参考图 · 人物沿用这张") }),
                 $el("div", { className: "neo-gallery-story-path", title: pathLabel, textContent: pathLabel })
             ])
         ]),
@@ -414,17 +415,17 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     const input = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 6,
-        placeholder: "例：雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下……"
+        placeholder: t("例：雨夜的地铁口，她收起伞抬头，看见多年未见的他站在灯下……")
     });
     // 简要故事 / 想法：LLM 编故事的输入（这一步不带参考图），可留空（留空则只给格数，让 LLM 自己编）；生成结果覆盖写入上面的故事框
     const ideaInput = $el("textarea", {
         className: "neo-gallery-story-idea",
         rows: 3,
-        placeholder: "可选：一句话想法（如：雨夜地铁口偶遇旧友）。留空则只给格数，让 LLM 自行编故事"
+        placeholder: t("可选：一句话想法（如：雨夜地铁口偶遇旧友）。留空则只给格数，让 LLM 自行编故事")
     });
     // 宫格技能：从后端加载 storyboard_grid_* 技能列表；选中技能同时充当编剧技能（写故事）与生图提示词模板 / 布局
     const gridSel = $el("select", { className: "neo-gallery-story-grid" }, [
-        $el("option", { value: "", textContent: "加载中…" }),
+        $el("option", { value: "", textContent: t("加载中…") }),
     ]);
     (async () => {
         try {
@@ -434,7 +435,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
             if (gridSkills.length === 0) {
                 gridSel.innerHTML = "";
                 for (const n of STORYBOARD_GRID_OPTIONS) {
-                    gridSel.appendChild($el("option", { value: `storyboard_grid_${n}`, textContent: STORYBOARD_GRID_LABELS[n] }));
+                    gridSel.appendChild($el("option", { value: `storyboard_grid_${n}`, textContent: t(STORYBOARD_GRID_LABELS[n]) }));
                 }
             } else {
                 gridSel.innerHTML = "";
@@ -447,7 +448,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         } catch {
             gridSel.innerHTML = "";
             for (const n of STORYBOARD_GRID_OPTIONS) {
-                gridSel.appendChild($el("option", { value: `storyboard_grid_${n}`, textContent: STORYBOARD_GRID_LABELS[n] }));
+                gridSel.appendChild($el("option", { value: `storyboard_grid_${n}`, textContent: t(STORYBOARD_GRID_LABELS[n]) }));
             }
             gridSel.value = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
         }
@@ -456,9 +457,9 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     const formBox = $el("div", { className: "neo-gallery-story-form" }, [
         input,
         hint,
-        $el("div", { className: "neo-gallery-story-field-label", textContent: "宫格技能" }),
+        $el("div", { className: "neo-gallery-story-field-label", textContent: t("宫格技能") }),
         gridSel,
-        $el("div", { className: "neo-gallery-story-field-label", textContent: "简要故事 / 想法（可留空，留空则让 LLM 自行编故事）" }),
+        $el("div", { className: "neo-gallery-story-field-label", textContent: t("简要故事 / 想法（可留空，留空则让 LLM 自行编故事）") }),
         ideaInput
     ]);
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
@@ -487,10 +488,10 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     // 表单态：故事框 + 简要故事框可编辑，右下有 LLM / 取消 / 生成
     const renderForm = () => {
         hint.classList.remove("neo-gallery-story-hint-error");
-        hint.textContent = "按所选宫格技能逐格推进，人物沿用这张图；故事可手写，也可用下面的简要故事 / 想法让 LLM 生成。";
+        hint.textContent = t("按所选宫格技能逐格推进，人物沿用这张图；故事可手写，也可用下面的简要故事 / 想法让 LLM 生成。");
         formBox.style.display = "";
         statusBox.style.display = "none";
-        fill(actionsBox, llmBtn, btn("取消", close), btn("生成", onSubmit, true));
+        fill(actionsBox, llmBtn, btn(t("取消"), close), btn(t("生成"), onSubmit, true));
     };
 
     const renderRunning = (label, progress) => {
@@ -509,7 +510,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
                 $el("span", { textContent: label })
             ]),
             $el("div", { className: "neo-gallery-cs-progress" }, [fillEl]));
-        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+        fill(actionsBox, btn(t("取消任务"), () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
     };
 
     const renderSuccess = (final) => {
@@ -526,21 +527,21 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         }
         formBox.style.display = "none";
         statusBox.style.display = "";
-        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成九宫格分镜图，可拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧。" }));
-        fill(actionsBox, btn("打开输出目录", () => openOutputDir(final), true), btn("关闭", close));
+        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: t("已生成九宫格分镜图，可拖入导演编辑器「🧩 宫格分镜图拆分」切成关键帧。") }));
+        fill(actionsBox, btn(t("打开输出目录"), () => openOutputDir(final), true), btn(t("关闭"), close));
     };
 
     const renderError = (message) => {
         formBox.style.display = "none";
         statusBox.style.display = "";
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
-        fill(actionsBox, btn("重试", onSubmit), btn("关闭", close));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
+        fill(actionsBox, btn(t("重试"), onSubmit), btn(t("关闭"), close));
     };
 
     // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
     const failGen = (message) => {
         renderError(message);
-        actionToast({ severity: "error", summary: "九宫格分镜图生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(QWEN_IMAGE_SKILL_ID) });
+        actionToast({ severity: "error", summary: t("九宫格分镜图生成失败"), detail: message, actionLabel: t("打开技能详情"), onAction: () => openSkillDetailById(QWEN_IMAGE_SKILL_ID) });
     };
 
     // 参考图人物与服装细节：受限视觉调用（只出 1~2 句外形 + 服装），失败或没有视觉模型时返回空串，
@@ -566,23 +567,23 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         if (running) return;
         running = true;
         cancelRequested = false;
-        renderRunning("排队中…");
+        renderRunning(t("排队中…"));
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
             if (refDetail === null) {
-                renderRunning("读取参考图细节…");
+                renderRunning(t("读取参考图细节…"));
                 refDetail = await loadRefDetail();
             }
-            if (cancelRequested) { renderError("已取消"); return; }
+            if (cancelRequested) { renderError(t("已取消")); return; }
             const snap = await requestGeneration(await buildStoryboardGridRequest(refName, input.value.trim(), gridSel.value, refDetail));
             cancelId = snap.task_id;
-            renderRunning("排队中…");
+            renderRunning(t("排队中…"));
             const final = await watchTask(snap.task_id, (s) => {
-                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress);
+                renderRunning(s.status === "running" ? t("生图中…") : t("排队中…"), s.progress);
             }, () => cancelRequested);
             if (final.status === "succeeded") renderSuccess(final);
-            else if (final.status === "cancelled") renderError("已取消");
-            else failGen(final.error || "生成失败");
+            else if (final.status === "cancelled") renderError(t("已取消"));
+            else failGen(final.error || t("生成失败"));
         } catch (e) {
             console.error('[Gallery] storyboard generation failed:', e);
             failGen(String(e?.message || e));
@@ -595,7 +596,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
     const onSubmit = () => {
         if (running) return;
         if (!input.value.trim()) {
-            hint.textContent = "请先填写分镜故事，或点「✨ LLM 生成分镜故事」";
+            hint.textContent = t("请先填写分镜故事，或点「✨ LLM 生成分镜故事」");
             hint.classList.add("neo-gallery-story-hint-error");
             input.focus();
             return;
@@ -609,7 +610,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
         if (llmRunning) return;
         llmRunning = true;
         llmBtn.disabled = true;
-        llmBtn.textContent = "⏳ 生成中…";
+        llmBtn.textContent = t("⏳ 生成中…");
         hint.classList.remove("neo-gallery-story-hint-error");
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
@@ -630,31 +631,31 @@ export function openStoryboardDialog(gallery, image, subfolder) {
                     },
                     onDone: () => {
                         input.value = buf;
-                        hint.textContent = "已生成分镜故事，可继续编辑后再点「生成」。";
+                        hint.textContent = t("已生成分镜故事，可继续编辑后再点「生成」。");
                     },
                     onError: (err) => {
                         console.error('[Gallery] storyboard story generation failed:', err);
-                        actionToast({ severity: 'error', summary: 'LLM 生成分镜故事失败', detail: String(err), actionLabel: '打开 LLM 设置', onAction: openLLMSettingsModal });
+                        actionToast({ severity: 'error', summary: t('LLM 生成分镜故事失败'), detail: String(err), actionLabel: t('打开 LLM 设置'), onAction: openLLMSettingsModal });
                     }
                 }
             );
         } catch (e) {
             console.error('[Gallery] storyboard story generation failed:', e);
-            actionToast({ severity: 'error', summary: 'LLM 生成分镜故事失败', detail: String(e?.message || e), actionLabel: '打开 LLM 设置', onAction: openLLMSettingsModal });
+            actionToast({ severity: 'error', summary: t('LLM 生成分镜故事失败'), detail: String(e?.message || e), actionLabel: t('打开 LLM 设置'), onAction: openLLMSettingsModal });
         } finally {
             llmRunning = false;
             llmBtn.disabled = false;
-            llmBtn.textContent = "✨ LLM 生成分镜故事";
+            llmBtn.textContent = t("✨ LLM 生成分镜故事");
         }
     };
-    llmBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ LLM 生成分镜故事", onclick: generateStoryFromIdea });
+    llmBtn = $el("button", { className: "neo-gallery-story-btn", textContent: t("✨ LLM 生成分镜故事"), onclick: generateStoryFromIdea });
     const onKey = (e) => {
         if (e.key === "Escape") close();
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onSubmit();
     };
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83E\uDDE9 生成九宫格分镜图" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83E\uDDE9 生成九宫格分镜图") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
         // 参考图直接出缩略图（同一张卡片走同一缓存接口），避免只看到文件名却不确定是哪张
@@ -666,7 +667,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
                 style: { height: `${previewHeight}px` }
             }),
             $el("div", { className: "neo-gallery-story-ref-info" }, [
-                $el("div", { className: "neo-gallery-story-ref-label", textContent: "参考图 \u00B7 人物沿用这张" }),
+                $el("div", { className: "neo-gallery-story-ref-label", textContent: t("参考图 \u00B7 人物沿用这张") }),
                 $el("div", { className: "neo-gallery-story-path", title: pathLabel, textContent: pathLabel })
             ])
         ]),
@@ -714,7 +715,7 @@ export function openReversePromptDialog(image, subfolder) {
             statusBox.appendChild($el("div", { className: "neo-gallery-rp-result", textContent: text }));
             const copyBtn = $el("button", {
                 className: "neo-gallery-story-btn neo-gallery-rp-copy",
-                textContent: "\u29C9 复制提示词",
+                textContent: t("\u29C9 复制提示词"),
                 onclick: () => copyPrompt(text, copyBtn),
             });
             statusBox.appendChild(copyBtn);
@@ -726,10 +727,10 @@ export function openReversePromptDialog(image, subfolder) {
     async function copyPrompt(text, btn) {
         try {
             await navigator.clipboard.writeText(text);
-            btn.textContent = "\u2705 已复制";
-            setTimeout(() => { btn.textContent = "\u29C9 复制提示词"; }, 1500);
+            btn.textContent = t("\u2705 已复制");
+            setTimeout(() => { btn.textContent = t("\u29C9 复制提示词"); }, 1500);
         } catch (e) {
-            actionToast({ severity: "info", summary: "复制失败", detail: String(e) });
+            actionToast({ severity: "info", summary: t("复制失败"), detail: String(e) });
         }
     }
 
@@ -781,9 +782,9 @@ export function openReversePromptDialog(image, subfolder) {
                     } catch { /* 非 JSON 帧忽略 */ }
                 }
             }
-            const final = acc.trim() || "(空提示词)";
+            const final = acc.trim() || t("(空提示词)");
             setStatus("success", final);
-            actionToast({ severity: "success", summary: "已保存反推结果到图片目录" });
+            actionToast({ severity: "success", summary: t("已保存反推结果到图片目录") });
         } catch (err) {
             setStatus("error", err.message || String(err));
         } finally {
@@ -805,7 +806,7 @@ export function openReversePromptDialog(image, subfolder) {
         wrap.append(input, document.createTextNode(label));
         return wrap;
     };
-    langRow.append(mkLangOpt("zh", "中文", true), mkLangOpt("en", "英文", false));
+    langRow.append(mkLangOpt("zh", t("中文"), true), mkLangOpt("en", t("英文"), false));
 
     const overlay = $el("div", { className: "neo-gallery-story-modal-overlay" });
     const modal = $el("div", {
@@ -813,28 +814,28 @@ export function openReversePromptDialog(image, subfolder) {
         onclick: e => e.stopPropagation(),
     }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "图片反推" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("图片反推") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "×", onclick: close }),
         ]),
         $el("div", { className: "neo-gallery-story-ref" }, [
             $el("img", { className: "neo-gallery-story-ref-img", src: previewSrc, style: { height: `${getImageHeight(image) || 160}px` } }),
             $el("div", { className: "neo-gallery-story-ref-info" }, [
-                $el("span", { className: "neo-gallery-story-ref-label", textContent: "参考图" }),
+                $el("span", { className: "neo-gallery-story-ref-label", textContent: t("参考图") }),
                 $el("span", { className: "neo-gallery-story-path", title: pathLabel, textContent: filename }),
             ]),
         ]),
         langRow,
         statusBox,
         $el("div", { className: "neo-gallery-story-actions" }, [
-            $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close }),
-            $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "反推", onclick: run }),
+            $el("button", { className: "neo-gallery-story-btn", textContent: t("取消"), onclick: close }),
+            $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: t("反推"), onclick: run }),
         ]),
     ]);
     overlay.onclick = () => close();
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
-    setStatus("idle", "点击「反推」生成提示词，结果将自动保存到图片所在目录");
+    setStatus("idle", t("点击「反推」生成提示词，结果将自动保存到图片所在目录"));
     document.addEventListener("keydown", onKey);
 }
 
@@ -859,13 +860,13 @@ export function openLoraTagDialog(gallery, dirPath) {
     const triggerInput = $el("input", {
         className: "neo-gallery-story-input neo-gallery-lt-trigger",
         type: "text",
-        placeholder: "触发词（如 gtx）",
+        placeholder: t("触发词（如 gtx）"),
     });
     const stdCheck = $el("input", { type: "checkbox" });
     stdCheck.checked = true;
     const stdRow = $el("label", { className: "neo-gallery-lt-std-row" }, [
         stdCheck,
-        document.createTextNode("先自动标准化目录（HEIC→PNG + 001.png... 顺序编号）"),
+        document.createTextNode(t("先自动标准化目录（HEIC→PNG + 001.png... 顺序编号）")),
     ]);
 
     // 当前打标图片 + 标签结果实时预览：SSE 帧按顺序到达，自然逐张切换
@@ -892,9 +893,9 @@ export function openLoraTagDialog(gallery, dirPath) {
 
     async function run() {
         const trigger = triggerInput.value.trim();
-        if (!trigger) { setStatus("error", "请输入触发词"); return; }
+        if (!trigger) { setStatus("error", t("请输入触发词")); return; }
         busy = true;
-        cancelBtn.textContent = "中止打标";
+        cancelBtn.textContent = t("中止打标");
         runBtn.disabled = true;
         controller = new AbortController();
         let lastMeta = null;
@@ -931,14 +932,14 @@ export function openLoraTagDialog(gallery, dirPath) {
                     if (!p) continue;
                     if (p.phase === "standardize") {
                         const n = (p.converted || []).length + (p.renamed || []).length;
-                        setStatus("running", `标准化目录：已处理 ${n} 个文件` + (p.backup ? `，原件已备份到 ${p.backup}` : ""));
+                        setStatus("running", tf("标准化目录：已处理 {n} 个文件", { n }) + (p.backup ? tf("，原件已备份到 {backup}", { backup: p.backup }) : ""));
                     } else {
                         const mark = p.status === "ok" ? "✓" : "✗";
-                        setStatus("running", `打标 ${p.index}/${p.total} · ${p.file} ${mark}`);
+                        setStatus("running", tf("打标 {index}/{total} · {file} {mark}", { index: p.index, total: p.total, file: p.file, mark }));
                         // 实时预览当前图片与标签，随下一帧自动切换
                         previewBox.style.display = "";
                         previewImg.src = `/neo_gallery/thumbnail?filename=${encodeURIComponent(p.file)}&subfolder=${encodeURIComponent(dirPath)}&size=400`;
-                        previewCaption.textContent = p.status === "ok" ? (p.caption || "") : `打标失败：${p.error || ""}`;
+                        previewCaption.textContent = p.status === "ok" ? (p.caption || "") : tf("打标失败：{error}", { error: p.error || "" });
                     }
                 }
             }
@@ -946,12 +947,12 @@ export function openLoraTagDialog(gallery, dirPath) {
             if (lastMeta) {
                 const failed = lastMeta.failed || [];
                 setStatus(failed.length ? "error" : "success",
-                    `打标完成 ${lastMeta.done}/${lastMeta.total}` +
-                    (failed.length ? `，${failed.length} 张失败：${failed.map((f) => f.file).join("、")}` : ""));
+                    tf("打标完成 {done}/{total}", { done: lastMeta.done, total: lastMeta.total }) +
+                    (failed.length ? tf("，{n} 张失败：{files}", { n: failed.length, files: failed.map((f) => f.file).join("、") }) : ""));
                 if (!failed.length) {
-                    actionToast({ severity: "success", summary: "LoRA 打标完成", detail: `已写入 ${lastMeta.done} 个标签文件` });
+                    actionToast({ severity: "success", summary: t("LoRA 打标完成"), detail: tf("已写入 {n} 个标签文件", { n: lastMeta.done }) });
                 } else {
-                    actionToast({ severity: "warning", summary: "部分图片打标失败", detail: `${failed.length}/${lastMeta.total} 失败` });
+                    actionToast({ severity: "warning", summary: t("部分图片打标失败"), detail: tf("{n}/{total} 失败", { n: failed.length, total: lastMeta.total }) });
                 }
             }
             // 重显当前目录，让重命名后的文件与新 .txt 立即可见
@@ -965,24 +966,24 @@ export function openLoraTagDialog(gallery, dirPath) {
         } finally {
             busy = false;
             controller = null;
-            cancelBtn.textContent = "取消";
+            cancelBtn.textContent = t("取消");
             runBtn.disabled = false;
         }
     }
-    const cancelBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "取消", onclick: close });
-    const runBtn = $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: "开始打标", onclick: run });
+    const cancelBtn = $el("button", { className: "neo-gallery-story-btn", textContent: t("取消"), onclick: close });
+    const runBtn = $el("button", { className: "neo-gallery-story-btn neo-gallery-story-btn-primary", textContent: t("开始打标"), onclick: run });
     const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-lt-modal-overlay" });
     const modal = $el("div", {
         className: "neo-gallery-story-modal",
         onclick: e => e.stopPropagation(),
     }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "LoRA 打标" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("LoRA 打标") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "×", onclick: close }),
         ]),
         $el("div", { className: "neo-gallery-lt-dir", title: dirPath, textContent: dirPath }),
         $el("div", { className: "neo-gallery-lt-trigger-row" }, [
-            $el("span", { className: "neo-gallery-lt-label", textContent: "触发词" }),
+            $el("span", { className: "neo-gallery-lt-label", textContent: t("触发词") }),
             triggerInput,
         ]),
         stdRow,
@@ -994,13 +995,13 @@ export function openLoraTagDialog(gallery, dirPath) {
     document.body.appendChild(overlay);
     makeStoryWindowDraggable(modal);
 
-    setStatus("idle", "输入触发词后点「开始打标」，每张图片会写入标准化标签 .txt");
+    setStatus("idle", t("输入触发词后点「开始打标」，每张图片会写入标准化标签 .txt"));
     // preflight：图片数 + 建议触发词（文件夹名拼音首字母），失败不阻塞
     fetch(`/neo_gallery/tag_preflight?dir=${encodeURIComponent(dirPath)}`)
         .then((r) => r.json())
         .then((data) => {
             if (typeof data.image_count === "number") {
-                setStatus("idle", `${data.image_count} 张图片 · 输入触发词后点「开始打标」`);
+                setStatus("idle", tf("{count} 张图片 · 输入触发词后点「开始打标」", { count: data.image_count }));
             }
             if (data.suggested_trigger && !triggerInput.value.trim()) {
                 triggerInput.value = data.suggested_trigger;
@@ -1026,7 +1027,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const promptInput = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 4,
-        placeholder: "描述你想对这张图做的修改，例如：把背景换成海边日落、给角色加一顶帽子……"
+        placeholder: t("描述你想对这张图做的修改，例如：把背景换成海边日落、给角色加一顶帽子……")
     });
 
     let running = false;
@@ -1068,8 +1069,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "填写编辑指令后点「生成」，原图将作为参考图传入所选技能。" }));
-        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("填写编辑指令后点「生成」，原图将作为参考图传入所选技能。") }));
+        fill(actionsBox, btn(t("取消"), close), btn(t("生成"), start, true));
     };
 
     const renderRunning = (label, progress) => {
@@ -1087,7 +1088,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 $el("span", { textContent: label })
             ]),
             bar);
-        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+        fill(actionsBox, btn(t("取消任务"), () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
     };
 
     const renderSuccess = (final) => {
@@ -1095,7 +1096,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (images.length > 0) {
             const resultSrc = `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`;
             resultImg.src = resultSrc;
-            resultImg.title = "点击放大查看";
+            resultImg.title = t("点击放大查看");
             resultImg.onclick = () => Lightbox.open({ 
                 items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), 
                 index: 0 
@@ -1103,26 +1104,26 @@ export function openImageEditDialog(gallery, image, subfolder) {
             showResultOverlay();
             showEditedCanvas(final.canvas);
         }
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成编辑结果。" }));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("已生成编辑结果。") }));
         // 保留「再生成」入口：编辑支持连续重复生成，不必关窗重开（与 renderError 的「重试」一致）
-        fill(actionsBox, btn("再生成", start), btn("关闭", close, true));
+        fill(actionsBox, btn(t("再生成"), start), btn(t("关闭"), close, true));
     };
 
     const renderError = (message) => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
-        fill(actionsBox, btn("重试", start), btn("关闭", close));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
+        fill(actionsBox, btn(t("重试"), start), btn(t("关闭"), close));
     };
 
     // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
     const failGen = (message) => {
         renderError(message);
-        actionToast({ severity: "error", summary: "图片编辑生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillSel.value || QWEN_IMAGE_SKILL_ID) });
+        actionToast({ severity: "error", summary: t("图片编辑生成失败"), detail: message, actionLabel: t("打开技能详情"), onAction: () => openSkillDetailById(skillSel.value || QWEN_IMAGE_SKILL_ID) });
     };
 
     const start = async () => {
         if (running) return;
-        if (editMode === "local" && !painted) { renderError("请先涂抹要编辑的区域"); return; }
-        if (editMode === "remove" && !removePoints.length) { renderError("请先点击原图标记要删除的物体"); return; }
+        if (editMode === "local" && !painted) { renderError(t("请先涂抹要编辑的区域")); return; }
+        if (editMode === "remove" && !removePoints.length) { renderError(t("请先点击原图标记要删除的物体")); return; }
         restoreOrigImage();   // 上一轮换过的缩放图先还原，避免扩图/局部的基准尺寸跟着变
         let prompt = promptInput.value.trim();
         if (editMode === "outpaint" && !prompt) prompt = OUTPAINT_DEFAULT_PROMPT;
@@ -1132,7 +1133,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (!prompt) { promptInput.focus(); return; }
         running = true;
         cancelRequested = false;
-        renderRunning("排队中…");
+        renderRunning(t("排队中…"));
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
             // 扩图模式：带四边留白量 + 目标像素数；LoRA 由扩图技能 config 固定，不随请求传
@@ -1175,13 +1176,13 @@ export function openImageEditDialog(gallery, image, subfolder) {
             if (editMode === "remove") payload.remove_points = removePoints;
             const snap = await requestGeneration(payload);
             cancelId = snap.task_id;
-            renderRunning("排队中…");
+            renderRunning(t("排队中…"));
             const final = await watchTask(snap.task_id, (s) => {
-                renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress);
+                renderRunning(s.status === "running" ? t("生图中…") : t("排队中…"), s.progress);
             }, () => cancelRequested);
             if (final.status === "succeeded") renderSuccess(final);
-            else if (final.status === "cancelled") renderError("已取消");
-            else failGen(final.error || "生成失败");
+            else if (final.status === "cancelled") renderError(t("已取消"));
+            else failGen(final.error || t("生成失败"));
         } catch (e) {
             console.error('[Gallery] image edit failed:', e);
             failGen(String(e?.message || e));
@@ -1197,38 +1198,38 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
 
     // 扩图控件：开关按钮、目标比例、目标像素数（MP）、结果尺寸标签
-    const outpaintBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "⬛ 扩图" });
-    outpaintBtn.title = "扩图：在原图上拖框定四边留白量，由模型补全周边场景";
+    const outpaintBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: t("⬛ 扩图") });
+    outpaintBtn.title = t("扩图：在原图上拖框定四边留白量，由模型补全周边场景");
     const sizeLabel = $el("span", { className: "neo-gallery-edit-size-label" });
     sizeLabel.style.display = "none";
     const ratioSel = $el("select", { className: "neo-recipes-sort neo-gallery-edit-ratio" });
     OUTPAINT_RATIOS.forEach(([value, label]) => {
-        ratioSel.appendChild($el("option", { value, textContent: label }));
+        ratioSel.appendChild($el("option", { value, textContent: t(label) }));
     });
     // 目标像素数（MP）：补边画布整幅缩放到该像素数后出图（默认取全局设置，见「生图默认设置」）
     let globalTargetMp = DEFAULT_TARGET_MP;
     const mpInput = $el("input", { type: "number", className: "neo-recipes-sort neo-gallery-edit-mp", min: 0.5, max: 8, step: 0.5, value: String(globalTargetMp) });
-    mpInput.title = "补边画布缩放到多少像素数后出图（默认取「生图默认设置 → 目标像素数 (MP)」，出厂 1.5）";
-    const resLabelEl = $el("label", { className: "neo-director-field-label", textContent: "目标分辨率" });
+    mpInput.title = t("补边画布缩放到多少像素数后出图（默认取「生图默认设置 → 目标像素数 (MP)」，出厂 1.5）");
+    const resLabelEl = $el("label", { className: "neo-director-field-label", textContent: t("目标分辨率") });
     const outpaintRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
-        $el("label", { className: "neo-director-field-label", textContent: "目标比例" }),
+        $el("label", { className: "neo-director-field-label", textContent: t("目标比例") }),
         ratioSel,
-        $el("label", { className: "neo-director-field-label", textContent: "目标像素" }),
+        $el("label", { className: "neo-director-field-label", textContent: t("目标像素") }),
         mpInput,
         $el("span", { className: "neo-director-field-label", textContent: "MP" })
     ]);
     outpaintRow.style.display = "none";
 
     // 局部编辑控件：画笔大小 / 橡皮 / 清空（涂抹画布叠加在原图上）
-    const localBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "✏️ 局部" });
-    localBtn.title = "高分局部编辑：涂抹要修改的区域，自动裁剪放大重绘后合并回原图";
+    const localBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: t("✏️ 局部") });
+    localBtn.title = t("高分局部编辑：涂抹要修改的区域，自动裁剪放大重绘后合并回原图");
     const brushInput = $el("input", { type: "range", className: "neo-gallery-edit-brush", min: 8, max: 200, step: 4, value: "48" });
-    brushInput.title = "画笔大小（显示像素）";
+    brushInput.title = t("画笔大小（显示像素）");
     const eraserChk = $el("input", { type: "checkbox" });
-    const eraserLbl = $el("label", { className: "neo-director-field-label", title: "勾选后涂抹变为擦除", textContent: "橡皮" });
-    const clearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: "清空" });
+    const eraserLbl = $el("label", { className: "neo-director-field-label", title: t("勾选后涂抹变为擦除"), textContent: t("橡皮") });
+    const clearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: t("清空") });
     const localRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
-        $el("label", { className: "neo-director-field-label", textContent: "画笔" }),
+        $el("label", { className: "neo-director-field-label", textContent: t("画笔") }),
         brushInput,
         eraserLbl,
         eraserChk,
@@ -1237,24 +1238,24 @@ export function openImageEditDialog(gallery, image, subfolder) {
     localRow.style.display = "none";
 
     // 点选删除控件：在原图上点击标记要删的物体（最多 5 点），SAM3 分割后走局部编辑管线移除
-    const removeBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🎯 点选删除" });
-    removeBtn.title = "点选删除：在原图上点击要删除的物体，SAM3 自动分割并叠加红色遮罩预览，确认后移除（已预填默认删除指令，可修改）";
+    const removeBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: t("🎯 点选删除") });
+    removeBtn.title = t("点选删除：在原图上点击要删除的物体，SAM3 自动分割并叠加红色遮罩预览，确认后移除（已预填默认删除指令，可修改）");
     const removeHint = $el("span", { className: "neo-gallery-edit-size-label" });
-    const removeClearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: "清空标记" });
+    const removeClearBtn = $el("button", { className: "neo-gallery-story-btn", type: "button", textContent: t("清空标记") });
     const removeRow = $el("div", { className: "neo-gallery-edit-outpaint-row" }, [
-        $el("label", { className: "neo-director-field-label", textContent: "点击原图上的物体标记（最多 5 点，点标记可取消）" }),
+        $el("label", { className: "neo-director-field-label", textContent: t("点击原图上的物体标记（最多 5 点，点标记可取消）") }),
         removeHint,
         removeClearBtn
     ]);
     removeRow.style.display = "none";
 
     // 多图融合控件：添加多张参考图，模型自动融合为一张
-    const blendBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🔀 融合" });
-    blendBtn.title = "多图融合：添加多张参考图，由模型自动融合为一张连贯画面";
+    const blendBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: t("🔀 融合") });
+    blendBtn.title = t("多图融合：添加多张参考图，由模型自动融合为一张连贯画面");
 
     // 姿势编辑控件：切到姿势编辑技能，提示词预填该技能 config.json 的默认触发词
-    const poseBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: "🕺 姿势" });
-    poseBtn.title = "姿势编辑：按提示词改原图人物的姿势；在参考图区拖入第 2 张图（人物图或骨架图）则把它的姿势搬到原图人物上，触发词自动切换";
+    const poseBtn = $el("button", { className: "neo-gallery-edit-outpaint-btn", type: "button", textContent: t("🕺 姿势") });
+    poseBtn.title = t("姿势编辑：按提示词改原图人物的姿势；在参考图区拖入第 2 张图（人物图或骨架图）则把它的姿势搬到原图人物上，触发词自动切换");
 
     // 参考图区（autogrow）：拖入一张追加新空槽，最多 9 张（Qwen Image 2.1 上限）
     const MAX_EXTRA_REFS = 9;
@@ -1277,11 +1278,11 @@ export function openImageEditDialog(gallery, image, subfolder) {
         className: "neo-gallery-edit-compare-img",
         src: origFullUrl,
         alt: image.name || image.filename,
-        title: "点击放大查看"
+        title: t("点击放大查看")
     });
     const resultImg = $el("img", {
         className: "neo-gallery-edit-compare-img neo-gallery-edit-result-img",
-        alt: "编辑结果"
+        alt: t("编辑结果")
     });
     // imgwrap：非扩图时收缩到原图显示尺寸；开扩图后变为中心舞台（画布超出时整体等比缩小）
     const imgWrap = $el("div", { className: "neo-gallery-edit-compare-imgwrap" });
@@ -1292,8 +1293,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const compareLabel = $el("span", { className: "neo-gallery-edit-compare-label", textContent: COMPARE_LABEL });
     // 灯箱按钮入口：局部/点选模式点图是涂抹/打点，扩图模式点图落在拖框框体上，都只能从这里进
     const zoomBtn = $el("button", {
-        className: "neo-gallery-edit-zoom-btn", type: "button", textContent: "🔍 看大图",
-        title: "灯箱查看原图与参考图",
+        className: "neo-gallery-edit-zoom-btn", type: "button", textContent: t("🔍 看大图"),
+        title: t("灯箱查看原图与参考图"),
         onclick: () => Lightbox.open({ items: buildLightboxItems(), index: 0 })
     });
     const compareLabelRow = $el("div", { className: "neo-gallery-edit-compare-label-row" }, [compareLabel, zoomBtn]);
@@ -1359,7 +1360,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         c.getContext("2d").drawImage(dimProbe, 0, 0, cw, ch);
         scaledInputSrc = c.toDataURL("image/png");
         origImg.src = scaledInputSrc;
-        compareLabel.textContent = `原图（缩放到 ${cw}×${ch}）/ 编辑结果（拖拽分割线对比）`;
+        compareLabel.textContent = tf("原图（缩放到 {cw}×{ch}）/ 编辑结果（拖拽分割线对比）", { cw, ch });
     };
 
     const showResultOverlay = () => {
@@ -1371,7 +1372,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 图片编辑" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83D\uDDBC\uFE0F 图片编辑") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
         // 图片在上、操作在下：对比区（原图 | 编辑结果 + 分割线滑块）固定在窗内上方
@@ -1379,7 +1380,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         $el("div", { className: "neo-gallery-edit-form" }, [
             $el("div", { className: "neo-gallery-edit-form-top-row" }, [
                 $el("div", { className: "neo-gallery-story-form-row" }, [
-                    $el("label", { className: "neo-director-field-label", textContent: "编辑技能" }),
+                    $el("label", { className: "neo-director-field-label", textContent: t("编辑技能") }),
                     skillSel,
                     outpaintBtn,
                     localBtn,
@@ -1390,9 +1391,9 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 ]),
                 $el("div", { className: "neo-gallery-story-form-row" }, [
                     resLabelEl,
-                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 32, placeholder: "宽" }),
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 32, placeholder: t("宽") }),
                     $el("span", { textContent: " × " }),
-                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 32, placeholder: "高" }),
+                    $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 32, placeholder: t("高") }),
                     sizeLabel
                 ])
             ]),
@@ -1527,8 +1528,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
         const p = paddings();
         // 没拖框时就是原图尺寸；拖了就显示出图尺寸（补边画布整幅缩放到目标像素后的尺寸）
         sizeLabel.textContent = (p.left || p.top || p.right || p.bottom)
-            ? `目标 ${outputSize().w}×${outputSize().h}`
-            : `目标 ${origImg.naturalWidth}×${origImg.naturalHeight}`;
+            ? tf("目标 {w}×{h}", { w: outputSize().w, h: outputSize().h })
+            : tf("目标 {w}×{h}", { w: origImg.naturalWidth, h: origImg.naturalHeight });
     };
     const dragResize = (mode, dx, dy, b0, dw, dh, R) => {
         const b = { ...b0 };
@@ -1707,7 +1708,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         const hideWH = (mode === "outpaint" || mode === "local" || mode === "remove");
         widthInput.style.display = hideWH ? "none" : "";
         heightInput.style.display = hideWH ? "none" : "";
-        resLabelEl.textContent = { outpaint: "目标尺寸", local: "编辑区（自动）", remove: "同原图" }[mode] || "目标分辨率";
+        resLabelEl.textContent = { outpaint: t("目标尺寸"), local: t("编辑区（自动）"), remove: t("同原图") }[mode] || t("目标分辨率");
         sizeLabel.style.display = mode === "outpaint" ? "" : "none";
 
         // 技能选择
@@ -1727,7 +1728,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
             if (!promptInput.value.trim()) promptInput.value = REMOVE_DEFAULT_PROMPT;
             if (!refName) {
                 try { refName = await copyImageToInput(image, subfolder); }
-                catch (e) { removeHint.textContent = `原图读取失败：${e.message}`; }
+                catch (e) { removeHint.textContent = tf("原图读取失败：{msg}", { msg: e.message }); }
             }
         } else if (mode === "blend") {
             if (!promptInput.value.trim()) promptInput.value = BLEND_DEFAULT_PROMPT;
@@ -1875,7 +1876,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
             const seq = ++removeSegSeq;
             removeMaskImg = null;
             redrawRemoveOverlay();
-            removeHint.textContent = "分割中…";
+            removeHint.textContent = t("分割中…");
             try {
                 const res = await fetch("/neo_image_gen/segment_points", {
                     method: "POST",
@@ -1884,7 +1885,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 });
                 const data = await res.json().catch(() => null);
                 if (seq !== removeSegSeq || editMode !== "remove") return;   // 分割期间已重新标记/关模式，丢弃过期结果
-                if (!res.ok || !data || !data.mask) throw new Error((data && data.error) || "分割失败");
+                if (!res.ok || !data || !data.mask) throw new Error((data && data.error) || t("分割失败"));
                 const parts = data.mask.split("/");
                 const maskFile = parts.pop();
                 const img = new Image();
@@ -1895,7 +1896,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                 removeHint.textContent = "";
                 redrawRemoveOverlay();
             } catch (e) {
-                if (seq === removeSegSeq && editMode === "remove") removeHint.textContent = `分割失败：${e.message}`;
+                if (seq === removeSegSeq && editMode === "remove") removeHint.textContent = tf("分割失败：{msg}", { msg: e.message });
             }
         }, 600);
     };
@@ -1973,7 +1974,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
                     return;
                 }
             }
-            if (removePoints.length >= 5) { removeHint.textContent = "最多标记 5 个点，请先清空部分"; return; }
+            if (removePoints.length >= 5) { removeHint.textContent = t("最多标记 5 个点，请先清空部分"); return; }
             removePoints.push({ x: Math.round(dx / kx), y: Math.round(dy / ky) });
             redrawRemoveOverlay();
             scheduleRemoveMask();
@@ -2006,11 +2007,11 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     function makeRefSlot(index) {
         const slot = $el("div", { className: "neo-gallery-edit-refdrop" });
-        slot.title = "拖放素材库图片或点击上传";
+        slot.title = t("拖放素材库图片或点击上传");
         const ref = extraRefs[index];
         if (ref) {
             slot.classList.add("has-img");
-            slot.appendChild($el("img", { className: "neo-gallery-edit-refchip-img", src: refThumbUrl(ref, 128), alt: ref.filename, title: "点击放大查看", onclick: () => Lightbox.open({ items: buildLightboxItems(), index: index + 1 }) }));
+            slot.appendChild($el("img", { className: "neo-gallery-edit-refchip-img", src: refThumbUrl(ref, 128), alt: ref.filename, title: t("点击放大查看"), onclick: () => Lightbox.open({ items: buildLightboxItems(), index: index + 1 }) }));
             slot.appendChild($el("span", { className: "neo-gallery-edit-refchip-x", textContent: "×", onclick: (e) => { e.stopPropagation(); extraRefs.splice(index, 1); renderRefSlots(); } }));
         } else {
             slot.appendChild($el("span", { className: "neo-gallery-edit-refdrop-icon", textContent: "🖼" }));
@@ -2113,7 +2114,7 @@ async function decodeAudioPeaks(url) {
  *  播放时按进度填充；自带独立 Audio 播放器，不干扰画廊卡片的共享播放器。 */
 function voiceAudioWidget(url, seedStr) {
     const wrap = $el("div", { className: "neo-gallery-voice-audio" });
-    const playBtn = $el("div", { className: "neo-gallery-audio-play-btn", title: "播放 / 暂停" }, ["\u25B6"]);
+    const playBtn = $el("div", { className: "neo-gallery-audio-play-btn", title: t("播放 / 暂停") }, ["\u25B6"]);
     const canvas = $el("canvas", { className: "neo-gallery-audio-waveform" });
     wrap.appendChild(playBtn);
     wrap.appendChild(canvas);
@@ -2160,7 +2161,7 @@ function openVoiceDialog(gallery, image, subfolder) {
     const targetInput = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 4,
-        placeholder: "要说的文字（用参考音频的音色朗读）……"
+        placeholder: t("要说的文字（用参考音频的音色朗读）……")
     });
 
     let running = false, cancelId = null, cancelRequested = false, refName = null;
@@ -2174,7 +2175,7 @@ function openVoiceDialog(gallery, image, subfolder) {
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
 
     const renderIdle = () => {
-        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+        fill(actionsBox, btn(t("取消"), close), btn(t("生成"), start, true));
     };
     const renderRunning = (label, progress) => {
         const hasSteps = !!(progress && progress.max > 0);
@@ -2185,7 +2186,7 @@ function openVoiceDialog(gallery, image, subfolder) {
         fill(statusBox, $el("div", { className: "neo-gallery-cs-running" }, [
             $el("span", { className: "neo-gallery-cs-spinner" }),
             $el("span", { textContent: label })]), bar);
-        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelVoiceTask(cancelId); }));
+        fill(actionsBox, btn(t("取消任务"), () => { cancelRequested = true; if (cancelId) cancelVoiceTask(cancelId); }));
     };
     const renderSuccess = (final) => {
         const audios = final.audios || [];
@@ -2195,31 +2196,31 @@ function openVoiceDialog(gallery, image, subfolder) {
             widgets.push(w);
             box.appendChild(w);
         }
-        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: "已生成语音，点波形播放试听；产物在 Output/Voice。" }));
-        fill(actionsBox, btn("打开输出目录", () => openGallerySidebar("Voice", [])), btn("关闭", close, true));
+        fill(statusBox, box, $el("div", { className: "neo-gallery-story-hint", textContent: t("已生成语音，点波形播放试听；产物在 Output/Voice。") }));
+        fill(actionsBox, btn(t("打开输出目录"), () => openGallerySidebar("Voice", [])), btn(t("关闭"), close, true));
     };
     const renderError = (message) => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
-        fill(actionsBox, btn("重试", start), btn("关闭", close));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
+        fill(actionsBox, btn(t("重试"), start), btn(t("关闭"), close));
     };
 
     const start = async () => {
         if (running) return;
         const text = targetInput.value.trim();
-        if (!text) { renderError("请先输入要说的文字"); return; }
+        if (!text) { renderError(t("请先输入要说的文字")); return; }
         running = true; cancelRequested = false;
-        renderRunning("排队中…");
+        renderRunning(t("排队中…"));
         try {
             if (!refName) refName = await copyImageToInput(image, subfolder);
             const snap = await requestVoiceGeneration(buildVoiceRequest(refName, text));
             cancelId = snap.task_id;
-            renderRunning("排队中…");
+            renderRunning(t("排队中…"));
             const final = await watchVoiceTask(snap.task_id, (s) => {
-                renderRunning(s.status === "running" ? "合成中…" : "排队中…", s.progress);
+                renderRunning(s.status === "running" ? t("合成中…") : t("排队中…"), s.progress);
             }, () => cancelRequested);
             if (final.status === "succeeded") renderSuccess(final);
-            else if (final.status === "cancelled") renderError("已取消");
-            else renderError(final.error || "生成失败");
+            else if (final.status === "cancelled") renderError(t("已取消"));
+            else renderError(final.error || t("生成失败"));
         } catch (e) {
             renderError(String(e?.message || e));
         } finally {
@@ -2234,17 +2235,17 @@ function openVoiceDialog(gallery, image, subfolder) {
 
     overlay.appendChild($el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDD0A 生成语音（CosyVoice 克隆）" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83D\uDD0A 生成语音（CosyVoice 克隆）") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
         $el("div", { className: "neo-gallery-story-ref" }, [
             refWidget,
             $el("div", { className: "neo-gallery-story-ref-info" }, [
-                $el("div", { className: "neo-gallery-story-ref-label", textContent: "参考音源 · 用它的音色朗读" }),
+                $el("div", { className: "neo-gallery-story-ref-label", textContent: t("参考音源 · 用它的音色朗读") }),
                 $el("div", { className: "neo-gallery-story-path", title: pathLabel, textContent: pathLabel })
             ])
         ]),
-        $el("div", { className: "neo-gallery-story-field-label", textContent: "要说的文字" }),
+        $el("div", { className: "neo-gallery-story-field-label", textContent: t("要说的文字") }),
         targetInput,
         statusBox,
         actionsBox
@@ -2268,24 +2269,24 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
     return [
         isAudioFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
-            title: "用这段音频的音色（CosyVoice 零样本克隆）朗读你输入的文字，弹窗内试听结果波形",
+            title: t("用这段音频的音色（CosyVoice 零样本克隆）朗读你输入的文字，弹窗内试听结果波形"),
             onclick: () => { card._removeCollectMenu(); openVoiceDialog(gallery, image, subfolder); }
-        }, ["\uD83D\uDD0A 生成语音"]) : null,
+        }, [t("\uD83D\uDD0A 生成语音")]) : null,
         isImageFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
-            title: "用 Qwen Image 2.1 基于这张人像生成头特写+正/侧/背四视图角色设定图；窗口内可看进度与结果预览，完成后拖入配方的 👤 角色参考图",
+            title: t("用 Qwen Image 2.1 基于这张人像生成头特写+正/侧/背四视图角色设定图；窗口内可看进度与结果预览，完成后拖入配方的 👤 角色参考图"),
             onclick: () => { card._removeCollectMenu(); openCharacterSheetDialog(gallery, image, subfolder); }
-        }, ["\uD83E\uDDAC 生成角色图（多视图）"]) : null,
+        }, [t("\uD83E\uDDAC 生成角色图（多视图）")]) : null,
         isImageFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
-            title: "以这张图为参考、按所选宫格技能与故事生成分镜图（每格一镜，可直接进导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧）",
+            title: t("以这张图为参考、按所选宫格技能与故事生成分镜图（每格一镜，可直接进导演编辑器「🧩 宫格分镜图拆分」切成视频关键帧）"),
             onclick: () => { card._removeCollectMenu(); openStoryboardDialog(gallery, image, subfolder); }
-        }, ["\uD83E\uDDE9 生成九宫格分镜图"]) : null,
+        }, [t("\uD83E\uDDE9 生成九宫格分镜图")]) : null,
         isImageFile(image.filename) ? $el("div", {
             className: "neo-gallery-collect-item",
-            title: "以这张图为参考进行 AI 编辑（默认 Qwen Image 2.1，可在弹窗内切换其他生图/编辑技能）",
+            title: t("以这张图为参考进行 AI 编辑（默认 Qwen Image 2.1，可在弹窗内切换其他生图/编辑技能）"),
             onclick: () => { card._removeCollectMenu(); openImageEditDialog(gallery, image, subfolder); }
-        }, ["\uD83D\uDDBC\uFE0F 图片编辑"]) : null,
+        }, [t("\uD83D\uDDBC\uFE0F 图片编辑")]) : null,
     ];
 }
 
@@ -2301,19 +2302,19 @@ export function openGenMaterialDialog(gallery) {
     const quickInput = $el("textarea", {
         className: "neo-gallery-gm-quick-input",
         rows: 2,
-        placeholder: "描述要生成的素材，例如：红色陶瓷杯的白底产品图……或输入修改指令（↑/↓ 调出历史）"
+        placeholder: t("描述要生成的素材，例如：红色陶瓷杯的白底产品图……或输入修改指令（↑/↓ 调出历史）")
     });
 
     // 快捷输入命令终端式历史：↑/↓ 召回之前生成用过的提示词（localStorage 持久化，最新在前，上限 20）
     const gmHistory = createQuickInputHistory(quickInput, { storageKey: "neo.gallery.gen_material.quick_history" });
     // 占位符提示轮播（参考 llm-chat QUICK_INPUT_TIPS）：聚焦且为空时每 5s 换一条
     const GM_QUICK_TIPS = [
-        "📷 描述要生成的素材，例如：红色陶瓷杯的白底产品图",
-        "✏️ 输入修改指令，例如：去掉动漫风格，改成写实",
-        "🎨 加风格要求，例如：改成赛博朋克风格",
-        "✨ 输入描述后点「增强」，LLM 帮你扩写成详细提示词",
-        "🎲 点 🎲 随机填入一条提示词（配方不入池）",
-        "⬆️ 按 ↑/↓ 召回之前生成用过的提示词"
+        t("📷 描述要生成的素材，例如：红色陶瓷杯的白底产品图"),
+        t("✏️ 输入修改指令，例如：去掉动漫风格，改成写实"),
+        t("🎨 加风格要求，例如：改成赛博朋克风格"),
+        t("✨ 输入描述后点「增强」，LLM 帮你扩写成详细提示词"),
+        t("🎲 点 🎲 随机填入一条提示词（配方不入池）"),
+        t("⬆️ 按 ↑/↓ 召回之前生成用过的提示词")
     ];
     let tipTimer = null;
     const setQuickTip = () => { if (!quickInput.value.trim()) quickInput.placeholder = GM_QUICK_TIPS[Math.floor(Math.random() * GM_QUICK_TIPS.length)]; };
@@ -2323,7 +2324,7 @@ export function openGenMaterialDialog(gallery) {
     const outputInput = $el("textarea", {
         className: "neo-gallery-story-input",
         rows: 4,
-        placeholder: "增强后的提示词会显示在这里（不增强时可直接填写，↑/↓ 调出历史）"
+        placeholder: t("增强后的提示词会显示在这里（不增强时可直接填写，↑/↓ 调出历史）")
     });
     // output 框独立 ↑/↓ 历史：只记生成实际用过的最终提示词（增强长文 / 手填内容），与快捷输入历史互不相干
     const gmOutputHistory = createQuickInputHistory(outputInput, { storageKey: "neo.gallery.gen_material.output_history" });
@@ -2339,9 +2340,9 @@ export function openGenMaterialDialog(gallery) {
     } catch {}
     const saveGmRandom = () => { try { localStorage.setItem(GM_RANDOM_KEY, JSON.stringify(gmRandom)); } catch {} };
 
-    const randomBtn = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "🎲", title: "随机填入一条提示词" });
-    const randomCaret = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "▾", title: "运行时随机设置" });
-    const presetBtn = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "☰", title: "预设列表" });
+    const randomBtn = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "🎲", title: t("随机填入一条提示词") });
+    const randomCaret = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "▾", title: t("运行时随机设置") });
+    const presetBtn = $el("button", { className: "neo-gallery-gm-tool-btn", type: "button", textContent: "☰", title: t("预设列表") });
     // 浮出按钮组（参考 llm-chat rs-button-group）：output 框右下角，半透明、hover 变实
     const randomWrap = $el("div", { className: "neo-gallery-gm-random-wrap" }, [randomBtn, randomCaret]);
     const floatGroup = $el("div", { className: "neo-gallery-gm-float-group" }, [randomWrap, presetBtn]);
@@ -2365,11 +2366,11 @@ export function openGenMaterialDialog(gallery) {
     runtimeMenu.append(
         $el("label", { className: "rs-runtime-row rs-runtime-toggle" }, [
             runtimeCheck,
-            $el("span", { className: "rs-runtime-row-text", textContent: "运行时随机抽取提示词" })
+            $el("span", { className: "rs-runtime-row-text", textContent: t("运行时随机抽取提示词") })
         ]),
         $el("div", { className: "rs-runtime-row" }, [
             mkCountBtn(-1), countValEl, mkCountBtn(1),
-            $el("span", { className: "rs-runtime-row-text", textContent: "张（批量生成）" })
+            $el("span", { className: "rs-runtime-row-text", textContent: t("张（批量生成）") })
         ])
     );
     const syncRandomState = () => {
@@ -2386,7 +2387,7 @@ export function openGenMaterialDialog(gallery) {
     // 预设列表浮层（复用预设列表样式；配方不入池，点击填入提示词框）
     const presetOverlay = $el("div", { className: "rs-preset-list-overlay" });
     const presetHeader = $el("div", { className: "rs-preset-header" }, [
-        $el("input", { className: "rs-preset-search-input", type: "text", placeholder: "🔍 搜索预设…" }),
+        $el("input", { className: "rs-preset-search-input", type: "text", placeholder: t("🔍 搜索预设…") }),
         $el("button", { className: "rs-preset-close", type: "button", textContent: "×" })
     ]);
     const presetSearch = presetHeader.querySelector("input");
@@ -2400,13 +2401,13 @@ export function openGenMaterialDialog(gallery) {
         const q = (query || "").trim().toLowerCase();
         const items = (presetItems || []).filter(it => !q || it.name.toLowerCase().includes(q));
         if (!items.length) {
-            presetBody.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: q ? "无匹配预设" : "暂无预设" }));
+            presetBody.appendChild($el("div", { className: "neo-gallery-story-hint", textContent: q ? t("无匹配预设") : t("暂无预设") }));
             return;
         }
         items.forEach(it => {
             const row = $el("div", { className: "rs-preset-item" }, [
                 $el("span", { className: "rs-preset-content", textContent: it.name }),
-                $el("span", { className: "rs-source-badge", textContent: it.source === "presets" ? "预设" : "自定义" })
+                $el("span", { className: "rs-source-badge", textContent: it.source === "presets" ? t("预设") : t("自定义") })
             ]);
             row.addEventListener("click", async () => {
                 try {
@@ -2416,7 +2417,7 @@ export function openGenMaterialDialog(gallery) {
                     outputInput.focus();
                 } catch (e) {
                     console.error("[Gallery] load preset failed:", e);
-                    actionToast({ severity: "error", summary: "加载预设失败", detail: String(e?.message || e) });
+                    actionToast({ severity: "error", summary: t("加载预设失败"), detail: String(e?.message || e) });
                 }
             });
             presetBody.appendChild(row);
@@ -2426,7 +2427,7 @@ export function openGenMaterialDialog(gallery) {
         presetOverlay.style.display = "flex";
         presetSearch.value = "";
         if (!presetItems) {
-            presetBody.textContent = "加载中…";
+            presetBody.textContent = t("加载中…");
             try { presetItems = await listPrompts(); } catch (e) { console.error("[Gallery] list prompts failed:", e); presetItems = []; }
         }
         renderPresetList("");
@@ -2484,7 +2485,7 @@ export function openGenMaterialDialog(gallery) {
         try {
             const skills = await listSkills();
             enhanceSel.textContent = "";
-            enhanceSel.appendChild($el("option", { value: "", textContent: "默认" }));
+            enhanceSel.appendChild($el("option", { value: "", textContent: t("默认") }));
             populateSkillOptions(enhanceSel, skills.filter(s => s.category === "image_enhance"));
             const ids = [...enhanceSel.options].map(o => o.value);
             if (rememberedEnhanceSkill && ids.includes(rememberedEnhanceSkill)) enhanceSel.value = rememberedEnhanceSkill;
@@ -2502,11 +2503,11 @@ export function openGenMaterialDialog(gallery) {
     modelBox.appendChild(modelCfg.el);
     // 宽高比 / 最长边：本次临时覆盖（空值 = 跟随技能配置 / 全局设置），同行紧凑布局
     // 宽高比选项与导演编辑页同源（DIRECTOR_ASPECTS）：值保持纯比例，显示带中文备注
-    const GM_RATIO_OPTIONS = DIRECTOR_ASPECTS.map(([label]) => [label.split(" ")[0], label]);
+    const GM_RATIO_OPTIONS = DIRECTOR_ASPECTS.map(([label]) => [label.split(" ")[0], t(label)]);
     const GM_RATIOS = GM_RATIO_OPTIONS.map(([v]) => v);
     // 「默认」选项跟随值用无括号备注：16:9 (宽屏) → 16:9 宽屏，避免嵌套括号
     const GM_RATIO_AUTO_TEXT = Object.fromEntries(DIRECTOR_ASPECTS.map(([label]) => {
-        const [v, note] = label.split(" ");
+        const [v, note] = t(label).split(" ");
         return [v, `${v} ${note.replace(/[()]/g, "")}`];
     }));
     const GM_EDGES = ["1024", "1152", "1280", "1536", "1792", "2048", "2560", "3072"];
@@ -2514,7 +2515,7 @@ export function openGenMaterialDialog(gallery) {
         const select = document.createElement("select");
         const auto = document.createElement("option");
         auto.value = "";
-        auto.textContent = "默认"; // 技能配置就绪后由 setGmAutoLabel 补上跟随值
+        auto.textContent = t("默认"); // 技能配置就绪后由 setGmAutoLabel 补上跟随值
         select.appendChild(auto);
         for (const opt of options) {
             const [value, text] = Array.isArray(opt) ? opt : [opt, opt];
@@ -2526,12 +2527,12 @@ export function openGenMaterialDialog(gallery) {
         return select;
     };
     // 「默认」选项显示当前技能配置跟随的值（切换技能时更新）
-    const setGmAutoLabel = (sel, v) => { sel.options[0].textContent = v ? `默认 (${v})` : "默认"; };
+    const setGmAutoLabel = (sel, v) => { sel.options[0].textContent = v ? tf("默认 ({v})", { v }) : t("默认"); };
     const sizeRow = $el("div", { className: "rs-config-row neo-gallery-gm-size-row" });
-    sizeRow.appendChild($el("label", { className: "rs-form-label", textContent: "宽高比" }));
+    sizeRow.appendChild($el("label", { className: "rs-form-label", textContent: t("宽高比") }));
     const ratioSel = makeGmSelect(GM_RATIO_OPTIONS);
     sizeRow.appendChild(ratioSel);
-    sizeRow.appendChild($el("label", { className: "rs-form-label", textContent: "最长边" }));
+    sizeRow.appendChild($el("label", { className: "rs-form-label", textContent: t("最长边") }));
     const edgeSel = makeGmSelect(GM_EDGES);
     sizeRow.appendChild(edgeSel);
     modelBox.appendChild(sizeRow);
@@ -2539,7 +2540,7 @@ export function openGenMaterialDialog(gallery) {
     const saveSkillBtn = $el("button", {
         className: "neo-gallery-gm-save-skill",
         type: "button",
-        textContent: "💾 保存为新技能",
+        textContent: t("💾 保存为新技能"),
         style: { display: "none" },
     });
     modelBox.appendChild(saveSkillBtn);
@@ -2555,7 +2556,7 @@ export function openGenMaterialDialog(gallery) {
         const ov = modelCfg.collect();
         if (!ov.model && !ov.loras.length) return;
         savingSkill = true;
-        saveSkillBtn.textContent = "💾 保存中…";
+        saveSkillBtn.textContent = t("💾 保存中…");
         try {
             const res = await fetch("/neo_image_gen/save_combo_skill", {
                 method: "POST",
@@ -2567,13 +2568,13 @@ export function openGenMaterialDialog(gallery) {
             // 新技能已进列表 → 直接选中并记住（下次打开沿用该组合）
             await fillSkillOptions(data.id);
             try { localStorage.setItem(GM_LAST_SKILL_KEY, data.id); } catch {}
-            actionToast({ severity: "success", summary: `已保存为新技能「${data.name}」` });
+            actionToast({ severity: "success", summary: tf("已保存为新技能「{name}」", { name: data.name }) });
         } catch (e) {
             console.error("[Gallery] save combo skill failed:", e);
-            actionToast({ severity: "error", summary: "保存为新技能失败", detail: String(e?.message || e) });
+            actionToast({ severity: "error", summary: t("保存为新技能失败"), detail: String(e?.message || e) });
         } finally {
             savingSkill = false;
-            saveSkillBtn.textContent = "💾 保存为新技能";
+            saveSkillBtn.textContent = t("💾 保存为新技能");
             refreshSaveSkillBtn();
         }
     });
@@ -2602,19 +2603,19 @@ export function openGenMaterialDialog(gallery) {
     const modelToggle = $el("button", {
         className: "neo-gallery-gm-model-toggle",
         type: "button",
-        textContent: "⚙️ 自定参数 ▸",
+        textContent: t("⚙️ 自定参数 ▸"),
     });
     modelToggle.addEventListener("click", () => {
         const open = modelBox.style.display === "none";
         modelBox.style.display = open ? "" : "none";
-        modelToggle.textContent = `⚙️ 自定参数 ${open ? "▾" : "▸"}`;
+        modelToggle.textContent = tf("⚙️ 自定参数 {arrow}", { arrow: open ? "▾" : "▸" });
     });
 
     // ✨ 增强：仿 NeoPromptAgent 节点——quick input + output 双框，复用节点 agent 逻辑
     // （所选增强 skill 的 skill.md 作系统提示词 + 按需读引用文件）直调 /rs_prompts/stream_generate_prompt；
     // 输出框行为与节点共用（思考面板 / 流程状态行 / rAF 批量写回）；quick input 有内容时与
     // output 已有提示词按 \n\n---\n\n 拼接（同节点），增强结束后 quick input 保留不自动清空
-    const enhanceBtn = $el("button", { className: "neo-gallery-story-btn", textContent: "✨ 增强" });
+    const enhanceBtn = $el("button", { className: "neo-gallery-story-btn", textContent: t("✨ 增强") });
     // quick input 内部底边工具栏（参考 llm-chat rs-input-toolbar）：增强技能下拉在左（flex）+ ✨ 增强在右
     const gmInputToolbar = $el("div", { className: "neo-gallery-gm-input-toolbar" }, [enhanceSel, enhanceBtn]);
     const quickWrap = $el("div", { className: "neo-gallery-gm-quick-wrap" }, [quickInput, gmInputToolbar]);
@@ -2628,28 +2629,28 @@ export function openGenMaterialDialog(gallery) {
         // 快捷输入内容记入历史（增强产物是 LLM 长文，不入史；与节点一致在提交时记录）
         if (quickText) gmHistory.record(quickText);
         enhancing = true;
-        enhanceBtn.textContent = "⏳ 增强中…";
+        enhanceBtn.textContent = t("⏳ 增强中…");
         try {
             await invokePromptStream({ text, skillId: enhanceSel.value }, createStreamOutputHandlers({
                 textarea: outputInput,
                 onDone: (acc) => {
-                    if (!acc.trim()) actionToast({ severity: "warning", summary: "增强失败", detail: "LLM 未返回内容" });
+                    if (!acc.trim()) actionToast({ severity: "warning", summary: t("增强失败"), detail: t("LLM 未返回内容") });
                     outputInput.focus();
                 },
                 onError: (e) => {
                     console.error("[Gallery] gen material enhance failed:", e);
-                    actionToast({ severity: "error", summary: "提示词增强失败", detail: String(e?.message || e), actionLabel: "打开 LLM 设置", onAction: openLLMSettingsModal });
+                    actionToast({ severity: "error", summary: t("提示词增强失败"), detail: String(e?.message || e), actionLabel: t("打开 LLM 设置"), onAction: openLLMSettingsModal });
                 }
             }));
         } finally {
             enhancing = false;
-            enhanceBtn.textContent = "✨ 增强";
+            enhanceBtn.textContent = t("✨ 增强");
         }
     });
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: "填写素材描述后点「生成」，图片保存到 Output 目录（NeoAgent/<日期>），可在素材面板浏览。" }));
-        fill(actionsBox, btn("取消", close), btn("生成", start, true));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("填写素材描述后点「生成」，图片保存到 Output 目录（NeoAgent/<日期>），可在素材面板浏览。") }));
+        fill(actionsBox, btn(t("取消"), close), btn(t("生成"), start, true));
     };
 
     // 预览区：生成中显示占位（spinner + 进度条），成功后结果图原位替换它（同一容器复用，布局不跳）
@@ -2675,7 +2676,7 @@ export function openGenMaterialDialog(gallery) {
             runningRow,
             $el("div", { className: "neo-gallery-cs-progress" }, [fillEl]));
         fill(statusBox, previewBox);
-        fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+        fill(actionsBox, btn(t("取消任务"), () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
     };
 
 
@@ -2696,17 +2697,17 @@ export function openGenMaterialDialog(gallery) {
             try {
                 for (const im of images) {
                     const ok = await gallery.deleteItem(im.filename, im.subfolder || "", { silent: true });
-                    if (!ok) { actionToast({ severity: "error", summary: "删除失败", detail: `无法删除 ${im.filename}` }); break; }
+                    if (!ok) { actionToast({ severity: "error", summary: t("删除失败"), detail: tf("无法删除 {name}", { name: im.filename }) }); break; }
                 }
                 renderIdle();
             } catch (e) {
                 console.error("[Gallery] gen material delete failed:", e);
-                actionToast({ severity: "error", summary: "删除失败", detail: String(e?.message || e) });
+                actionToast({ severity: "error", summary: t("删除失败"), detail: String(e?.message || e) });
             } finally {
                 deleting = false;
             }
         };
-        fill(actionsBox, btn("打开输出目录", openOutputDir), btn("再生成", start), btn("删除", deleteResult), btn("关闭", close, true));
+        fill(actionsBox, btn(t("打开输出目录"), openOutputDir), btn(t("再生成"), start), btn(t("删除"), deleteResult), btn(t("关闭"), close, true));
     };
 
     const renderSuccess = (final) => {
@@ -2723,7 +2724,7 @@ export function openGenMaterialDialog(gallery) {
             img.addEventListener("click", () => Lightbox.open({ items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), index: 0 }));
             previewBox.appendChild(img);
         }
-        renderGenDone(images, "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。");
+        renderGenDone(images, t("已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。"));
     };
 
     // 提交一次生图任务并等终态；render(snap) 随快照推送刷新 UI（单张=整个预览区 / 批量=当前行原位更新）
@@ -2755,14 +2756,14 @@ export function openGenMaterialDialog(gallery) {
             if (cancelRequested) break;
             const runningRow = $el("div", { className: "neo-gallery-gm-batch-item" }, [
                 $el("span", { className: "neo-gallery-cs-spinner" }),
-                $el("span", { textContent: `生成 ${i + 1}/${total}（排队中…）` })
+                $el("span", { textContent: tf("生成 {i}/{total}（排队中…）", { i: i + 1, total }) })
             ]);
             previewBox.appendChild(runningRow);
-            fill(actionsBox, btn("取消任务", () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
+            fill(actionsBox, btn(t("取消任务"), () => { cancelRequested = true; if (cancelId) cancelTask(cancelId); }));
             let final;
             try {
                 final = await runOnePrompt(prompts[i], s => {
-                    runningRow.lastChild.textContent = `生成 ${i + 1}/${total}（${s.status === "running" ? "生图中" : "排队中"}…）`;
+                    runningRow.lastChild.textContent = tf("生成 {i}/{total}（{state}…）", { i: i + 1, total, state: s.status === "running" ? t("生图中") : t("排队中") });
                 });
             } catch (e) {
                 runningRow.remove();
@@ -2787,24 +2788,24 @@ export function openGenMaterialDialog(gallery) {
                 // 中途失败：保留已生成的图，错误显示在其下方
                 const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
                 if (oldHint) oldHint.remove();
-                statusBox.appendChild($el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: `第 ${i + 1}/${total} 张生成失败：${final.error || "未知错误"}` }));
-                fill(actionsBox, btn("再生成", start), btn("关闭", close, true));
+                statusBox.appendChild($el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: tf("第 {i}/{total} 张生成失败：{err}", { i: i + 1, total, err: final.error || t("未知错误") }) }));
+                fill(actionsBox, btn(t("再生成"), start), btn(t("关闭"), close, true));
                 return;
             }
         }
-        if (!results.length) { renderError("已取消"); return; }
-        renderGenDone(results.flatMap(f => f.images || []), `已生成 ${results.length}/${total} 张，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。`);
+        if (!results.length) { renderError(t("已取消")); return; }
+        renderGenDone(results.flatMap(f => f.images || []), tf("已生成 {done}/{total} 张，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。", { done: results.length, total }));
     };
 
     const renderError = (message) => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || "生成失败" }));
-        fill(actionsBox, btn("重试", start), btn("关闭", close));
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
+        fill(actionsBox, btn(t("重试"), start), btn(t("关闭"), close));
     };
 
     // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
     const failGen = (message) => {
         renderError(message);
-        actionToast({ severity: "error", summary: "素材生成失败", detail: message, actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillSel.value || KREA2_T2I_SKILL_ID) });
+        actionToast({ severity: "error", summary: t("素材生成失败"), detail: message, actionLabel: t("打开技能详情"), onAction: () => openSkillDetailById(skillSel.value || KREA2_T2I_SKILL_ID) });
     };
 
     // 🎲 随机填入（与批量同池抽一条，配方不入池）
@@ -2819,11 +2820,11 @@ export function openGenMaterialDialog(gallery) {
                 outputInput.value = text;
                 outputInput.focus();
             } else {
-                actionToast({ severity: "error", summary: "随机提示词失败", detail: "提示词库为空" });
+                actionToast({ severity: "error", summary: t("随机提示词失败"), detail: t("提示词库为空") });
             }
         } catch (e) {
             console.error("[Gallery] random prompt failed:", e);
-            actionToast({ severity: "error", summary: "随机提示词失败", detail: String(e?.message || e) });
+            actionToast({ severity: "error", summary: t("随机提示词失败"), detail: String(e?.message || e) });
         } finally {
             randomPicking = false;
             randomBtn.textContent = "🎲";
@@ -2860,7 +2861,7 @@ export function openGenMaterialDialog(gallery) {
         if (gmRandom.enabled) {
             // 运行时随机：从节点同池抽 N 条不重复提示词，逐张批量生成（配方不入池）
             const n = Math.max(1, Math.min(gmRandom.count || 1, 16));
-            renderRunning(`抽取 ${n} 条随机提示词…`);
+            renderRunning(tf("抽取 {n} 条随机提示词…", { n }));
             let res;
             try {
                 res = await randomPrompts(n);
@@ -2870,7 +2871,7 @@ export function openGenMaterialDialog(gallery) {
                 return;
             }
             prompts = (res.texts || []).filter(t => t && t.trim());
-            if (!prompts.length) { failGen("提示词库为空，抽不到随机提示词"); return; }
+            if (!prompts.length) { failGen(t("提示词库为空，抽不到随机提示词")); return; }
         } else {
             // 生成用 output 内容作最终提示词（为空回退 quick input），固定 skip_enhance
             const prompt = outputInput.value.trim() || quickInput.value.trim();
@@ -2887,11 +2888,11 @@ export function openGenMaterialDialog(gallery) {
         cancelRequested = false;
         try {
             if (!batch) {
-                renderRunning("排队中…");
-                const final = await runOnePrompt(prompts[0], s => renderRunning(s.status === "running" ? "生图中…" : "排队中…", s.progress, s.preview));
+                renderRunning(t("排队中…"));
+                const final = await runOnePrompt(prompts[0], s => renderRunning(s.status === "running" ? t("生图中…") : t("排队中…"), s.progress, s.preview));
                 if (final.status === "succeeded") renderSuccess(final);
-                else if (final.status === "cancelled") renderError("已取消");
-                else failGen(final.error || "生成失败");
+                else if (final.status === "cancelled") renderError(t("已取消"));
+                else failGen(final.error || t("生成失败"));
             } else {
                 await runBatch(prompts);
             }
@@ -2917,12 +2918,12 @@ export function openGenMaterialDialog(gallery) {
     // 结果区在上（预览/成品原位替换），输入区在下（技能 / 自定参数 / agent 式增强双框：output 上带 🎲☰ 浮出组、quick input 下内嵌 ✨ 工具栏），操作按钮收尾
     const modal = $el("div", { className: "neo-gallery-story-modal" }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
-            $el("span", { className: "neo-gallery-story-title", textContent: "\uD83D\uDDBC\uFE0F 生成素材" }),
+            $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83D\uDDBC\uFE0F 生成素材") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
         ]),
         statusBox,
         $el("div", { className: "neo-gallery-story-form-row" }, [
-            $el("label", { className: "neo-director-field-label", textContent: "生成技能" }),
+            $el("label", { className: "neo-director-field-label", textContent: t("生成技能") }),
             skillSel,
             modelToggle
         ]),

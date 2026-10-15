@@ -1,4 +1,5 @@
 // Backyard 独立页面：hash 路由（#/config #/preprocess #/upload #/manage）+ 各视图挂载。
+import { t, tf } from "../js/core/i18n.js";
 const view = document.getElementById("by-view");
 const views = new Map();
 
@@ -69,14 +70,14 @@ async function ssePost(url, body, logEl, onDone) {
 // ====== 配置页 ======
 const DIR_PRESETS = {
     source_dir: [
-        ["gallery/presets/", "gallery/presets/（预设素材）"],
-        ["gallery/character/", "gallery/character/（角色素材）"],
-        ["gallery/grid/", "gallery/grid/（宫格素材）"],
+        ["gallery/presets/", "gallery/presets/" + t("（预设素材）")],
+        ["gallery/character/", "gallery/character/" + t("（角色素材）")],
+        ["gallery/grid/", "gallery/grid/" + t("（宫格素材）")],
     ],
     output_dir: [
-        ["gallery/presets_dist/", "gallery/presets_dist/（预处理输出）"],
-        ["gallery/character_dist/", "gallery/character_dist/（角色输出）"],
-        ["gallery/grid_dist/", "gallery/grid_dist/（宫格输出）"],
+        ["gallery/presets_dist/", "gallery/presets_dist/" + t("（预处理输出）")],
+        ["gallery/character_dist/", "gallery/character_dist/" + t("（角色输出）")],
+        ["gallery/grid_dist/", "gallery/grid_dist/" + t("（宫格输出）")],
     ],
 };
 
@@ -90,7 +91,7 @@ function buildConfig(el) {
         ["access_key_secret", "Access Key Secret"],
         ["endpoint", "Endpoint"],
         ["bucket", "Bucket"],
-        ["prefix", "Prefix (OSS 路径前缀)"],
+        ["prefix", t("Prefix (OSS 路径前缀)")],
     ];
     for (const [key, label] of plainFields) {
         const row = $el("div", { className: "by-form-row" });
@@ -102,16 +103,16 @@ function buildConfig(el) {
     }
 
     // 目录字段：下拉预设 + 自定义
-    for (const [key, label] of [["source_dir", "源目录（预设素材）"], ["output_dir", "输出目录（预处理产物）"]]) {
+    for (const [key, label] of [["source_dir", t("源目录（预设素材）")], ["output_dir", t("输出目录（预处理产物）")]]) {
         const row = $el("div", { className: "by-form-row" });
         row.appendChild($el("label", { textContent: label }));
         const select = $el("select", { className: "by-dir-select" });
         for (const [val, text] of DIR_PRESETS[key]) {
             select.appendChild($el("option", { value: val, textContent: text }));
         }
-        const customOpt = $el("option", { value: "__custom__", textContent: "自定义路径..." });
+        const customOpt = $el("option", { value: "__custom__", textContent: t("自定义路径...") });
         select.appendChild(customOpt);
-        const customInput = $el("input", { type: "text", placeholder: "输入绝对路径", className: "by-dir-custom" });
+        const customInput = $el("input", { type: "text", placeholder: t("输入绝对路径"), className: "by-dir-custom" });
         customInput.style.display = "none";
         select.addEventListener("change", () => {
             customInput.style.display = select.value === "__custom__" ? "" : "none";
@@ -123,14 +124,14 @@ function buildConfig(el) {
     }
 
     const btnRow = $el("div", { className: "by-form-row" });
-    const saveBtn = $el("button", { className: "by-btn", textContent: "保存配置" });
+    const saveBtn = $el("button", { className: "by-btn", textContent: t("保存配置") });
     const statusEl = $el("span", { className: "by-status" });
     btnRow.appendChild(saveBtn);
     btnRow.appendChild(statusEl);
     form.appendChild(btnRow);
 
     const section = $el("div", { className: "by-section" });
-    section.appendChild($el("h3", { textContent: "OSS 配置" }));
+    section.appendChild($el("h3", { textContent: t("OSS 配置") }));
     section.appendChild(form);
     el.appendChild(section);
 
@@ -163,7 +164,7 @@ function buildConfig(el) {
 
     saveBtn.addEventListener("click", async () => {
         saveBtn.disabled = true;
-        statusEl.textContent = "保存中...";
+        statusEl.textContent = t("保存中...");
         statusEl.className = "by-status";
         const body = {};
         for (const key of Object.keys(inputs)) {
@@ -177,7 +178,7 @@ function buildConfig(el) {
             });
             const data = await resp.json();
             if (data.success) {
-                statusEl.textContent = "✓ 已保存";
+                statusEl.textContent = t("✓ 已保存");
                 statusEl.className = "by-status ok";
             } else {
                 statusEl.textContent = `✗ ${data.error}`;
@@ -195,47 +196,47 @@ function buildConfig(el) {
 // ====== 预处理页 ======
 function buildPreprocess(el) {
     const section = $el("div", { className: "by-section" });
-    section.appendChild($el("h3", { textContent: "Gallery 预处理" }));
+    section.appendChild($el("h3", { textContent: t("Gallery 预处理") }));
 
     // 目录信息（来自配置）
     const infoRow1 = $el("div", { className: "by-form-row" });
     const srcLabel = $el("span", { className: "by-dir-path-label", textContent: "" });
-    infoRow1.appendChild($el("label", { textContent: "源目录" }));
+    infoRow1.appendChild($el("label", { textContent: t("源目录") }));
     infoRow1.appendChild(srcLabel);
     section.appendChild(infoRow1);
 
     const infoRow2 = $el("div", { className: "by-form-row" });
     const outLabel = $el("span", { className: "by-dir-path-label", textContent: "" });
-    infoRow2.appendChild($el("label", { textContent: "输出目录" }));
+    infoRow2.appendChild($el("label", { textContent: t("输出目录") }));
     infoRow2.appendChild(outLabel);
     section.appendChild(infoRow2);
 
     // 操作选项
     const form = $el("div", { className: "by-form" });
-    const dirsInput = $el("input", { type: "text", placeholder: "留空=全量扫描；填写=只处理这些子目录（空格分隔）" });
+    const dirsInput = $el("input", { type: "text", placeholder: t("留空=全量扫描；填写=只处理这些子目录（空格分隔）") });
     const sizeInput = $el("input", { type: "number", value: "320", min: "64", max: "1024" });
     const copyCb = $el("input", { type: "checkbox", checked: "true" });
 
     const r_dirs = $el("div", { className: "by-form-row" });
-    r_dirs.appendChild($el("label", { textContent: "增量目录" }));
+    r_dirs.appendChild($el("label", { textContent: t("增量目录") }));
     r_dirs.appendChild(dirsInput);
     form.appendChild(r_dirs);
 
     const r3 = $el("div", { className: "by-form-row" });
-    r3.appendChild($el("label", { textContent: "缩略图尺寸" }));
+    r3.appendChild($el("label", { textContent: t("缩略图尺寸") }));
     r3.appendChild(sizeInput);
-    r3.appendChild($el("label", { textContent: "拷贝媒体文件", style: "min-width:auto;margin-left:16px;" }));
+    r3.appendChild($el("label", { textContent: t("拷贝媒体文件"), style: "min-width:auto;margin-left:16px;" }));
     r3.appendChild(copyCb);
     form.appendChild(r3);
 
     const btnRow = $el("div", { className: "by-form-row" });
-    const runBtn = $el("button", { className: "by-btn", textContent: "🚀 执行预处理" });
+    const runBtn = $el("button", { className: "by-btn", textContent: t("🚀 执行预处理") });
     btnRow.appendChild(runBtn);
     form.appendChild(btnRow);
     section.appendChild(form);
 
     const logEl = $el("div", { className: "by-log" });
-    logEl.textContent = "等待执行...";
+    logEl.textContent = t("等待执行...");
     section.appendChild(logEl);
     el.appendChild(section);
 
@@ -245,12 +246,12 @@ function buildPreprocess(el) {
         if (!data.success) return;
         sourceDir = data.config.source_dir || "";
         outputDir = data.config.output_dir || "";
-        srcLabel.textContent = sourceDir || "（未设置）";
-        outLabel.textContent = outputDir || "（未设置）";
+        srcLabel.textContent = sourceDir || t("（未设置）");
+        outLabel.textContent = outputDir || t("（未设置）");
     });
 
     runBtn.addEventListener("click", async () => {
-        if (!sourceDir || !outputDir) { logEl.textContent = "请先在配置页设置源目录和输出目录"; return; }
+        if (!sourceDir || !outputDir) { logEl.textContent = t("请先在配置页设置源目录和输出目录"); return; }
         runBtn.disabled = true;
         const dirs = dirsInput.value.trim();
         await ssePost("/neo_backyard/preprocess", {
@@ -267,29 +268,29 @@ function buildPreprocess(el) {
 // ====== OSS 上传页 ======
 function buildUpload(el) {
     const section = $el("div", { className: "by-section" });
-    section.appendChild($el("h3", { textContent: "OSS 上传" }));
+    section.appendChild($el("h3", { textContent: t("OSS 上传") }));
 
     const infoRow = $el("div", { className: "by-form-row" });
     const pathLabel = $el("span", { className: "by-dir-path-label", textContent: "" });
-    infoRow.appendChild($el("label", { textContent: "上传源目录" }));
+    infoRow.appendChild($el("label", { textContent: t("上传源目录") }));
     infoRow.appendChild(pathLabel);
     section.appendChild(infoRow);
 
     const form = $el("div", { className: "by-form" });
     const dryCb = $el("input", { type: "checkbox" });
     const r2 = $el("div", { className: "by-form-row" });
-    r2.appendChild($el("label", { textContent: "Dry Run（只列出）", style: "min-width:auto;" }));
+    r2.appendChild($el("label", { textContent: t("Dry Run（只列出）"), style: "min-width:auto;" }));
     r2.appendChild(dryCb);
     form.appendChild(r2);
 
     const btnRow = $el("div", { className: "by-form-row" });
-    const runBtn = $el("button", { className: "by-btn", textContent: "📤 执行上传" });
+    const runBtn = $el("button", { className: "by-btn", textContent: t("📤 执行上传") });
     btnRow.appendChild(runBtn);
     form.appendChild(btnRow);
     section.appendChild(form);
 
     const logEl = $el("div", { className: "by-log" });
-    logEl.textContent = "等待执行...";
+    logEl.textContent = t("等待执行...");
     section.appendChild(logEl);
     el.appendChild(section);
 
@@ -298,11 +299,11 @@ function buildUpload(el) {
     fetch("/neo_backyard/config").then(r => r.json()).then(data => {
         if (!data.success) return;
         outputDir = data.config.output_dir || "";
-        pathLabel.textContent = outputDir || "（未设置）";
+        pathLabel.textContent = outputDir || t("（未设置）");
     });
 
     runBtn.addEventListener("click", async () => {
-        if (!outputDir) { logEl.textContent = "请先在配置页设置输出目录"; return; }
+        if (!outputDir) { logEl.textContent = t("请先在配置页设置输出目录"); return; }
         runBtn.disabled = true;
         await ssePost("/neo_backyard/upload", {
             source_dir: outputDir,
@@ -315,20 +316,20 @@ function buildUpload(el) {
 // ====== 目录管理页 ======
 function buildManage(el) {
     const section = $el("div", { className: "by-section" });
-    section.appendChild($el("h3", { textContent: "Gallery 数据 & 文件管理" }));
+    section.appendChild($el("h3", { textContent: t("Gallery 数据 & 文件管理") }));
 
     // --- OSS 数据概览 ---
     const indexEl = $el("div", { className: "by-index-summary" });
     section.appendChild(indexEl);
 
     // --- 文件管理 ---
-    const fileHeader = $el("h4", { textContent: "输出目录文件", style: "margin:18px 0 8px;" });
+    const fileHeader = $el("h4", { textContent: t("输出目录文件"), style: "margin:18px 0 8px;" });
     section.appendChild(fileHeader);
 
     const infoRow = $el("div", { className: "by-form-row" });
     const pathLabel = $el("span", { className: "by-dir-path-label", textContent: "" });
-    const refreshBtn = $el("button", { className: "by-btn", textContent: "🔄 刷新" });
-    infoRow.appendChild($el("label", { textContent: "输出目录" }));
+    const refreshBtn = $el("button", { className: "by-btn", textContent: t("🔄 刷新") });
+    infoRow.appendChild($el("label", { textContent: t("输出目录") }));
     infoRow.appendChild(pathLabel);
     infoRow.appendChild(refreshBtn);
     section.appendChild(infoRow);
@@ -340,7 +341,7 @@ function buildManage(el) {
     let outputDir = "";
 
     async function loadIndex() {
-        indexEl.innerHTML = '<div class="by-status">加载索引...</div>';
+        indexEl.innerHTML = `<div class="by-status">${t("加载索引...")}</div>`;
         try {
             const resp = await fetch("/neo_backyard/index");
             const data = await resp.json();
@@ -349,12 +350,12 @@ function buildManage(el) {
                 return;
             }
             if (!data.exists) {
-                indexEl.innerHTML = '<div class="by-status">尚无 index.json（未执行过预处理）</div>';
+                indexEl.innerHTML = `<div class="by-status">${t("尚无 index.json（未执行过预处理）")}</div>`;
                 return;
             }
             indexEl.innerHTML = "";
             const summary = $el("div", { className: "by-index-stats" });
-            summary.textContent = `📊 ${data.total_dirs} 个目录 / ${data.total_items} 个条目` +
+            summary.textContent = tf("📊 {dirs} 个目录 / {items} 个条目", { dirs: data.total_dirs, items: data.total_items }) +
                 (data.base_url ? ` | ${data.base_url}` : "");
             indexEl.appendChild(summary);
 
@@ -363,7 +364,7 @@ function buildManage(el) {
                 const item = $el("div", { className: "by-dir-item" });
                 item.appendChild($el("span", { className: "by-dir-icon", textContent: "📁" }));
                 item.appendChild($el("span", { className: "by-dir-name", textContent: name }));
-                const meta = `${info.count} 项 (${info.images}🖼 ${info.videos}🎬)`;
+                const meta = tf("{count} 项 ({images}🖼 {videos}🎬)", { count: info.count, images: info.images, videos: info.videos });
                 item.appendChild($el("span", { className: "by-dir-meta", textContent: meta }));
                 dirList.appendChild(item);
             }
@@ -375,10 +376,10 @@ function buildManage(el) {
 
     async function loadFiles() {
         if (!outputDir) {
-            listEl.innerHTML = '<div class="by-status">请先在配置页设置输出目录</div>';
+            listEl.innerHTML = `<div class="by-status">${t("请先在配置页设置输出目录")}</div>`;
             return;
         }
-        listEl.innerHTML = '<div class="by-status">加载中...</div>';
+        listEl.innerHTML = `<div class="by-status">${t("加载中...")}</div>`;
         try {
             const resp = await fetch(`/neo_backyard/dirs?path=${encodeURIComponent(outputDir)}`);
             const data = await resp.json();
@@ -391,11 +392,11 @@ function buildManage(el) {
                 const item = $el("div", { className: "by-dir-item" });
                 item.appendChild($el("span", { className: "by-dir-icon", textContent: entry.is_dir ? "📁" : "📄" }));
                 item.appendChild($el("span", { className: "by-dir-name", textContent: entry.name }));
-                const meta = entry.is_dir ? `${entry.file_count} 个文件` : formatSize(entry.size);
+                const meta = entry.is_dir ? tf("{n} 个文件", { n: entry.file_count }) : formatSize(entry.size);
                 item.appendChild($el("span", { className: "by-dir-meta", textContent: meta }));
-                const delBtn = $el("button", { className: "by-dir-del", textContent: "✕", title: "删除" });
+                const delBtn = $el("button", { className: "by-dir-del", textContent: "✕", title: t("删除") });
                 delBtn.addEventListener("click", async () => {
-                    if (!confirm(`确认删除 ${entry.name}？`)) return;
+                    if (!confirm(tf("确认删除 {name}？", { name: entry.name }))) return;
                     const resp = await fetch("/neo_backyard/delete", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -419,7 +420,7 @@ function buildManage(el) {
     fetch("/neo_backyard/config").then(r => r.json()).then(data => {
         if (!data.success) return;
         outputDir = data.config.output_dir || "";
-        pathLabel.textContent = outputDir || "（未设置）";
+        pathLabel.textContent = outputDir || t("（未设置）");
         loadIndex();
         loadFiles();
     });

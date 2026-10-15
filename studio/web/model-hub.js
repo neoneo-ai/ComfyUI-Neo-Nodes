@@ -9,6 +9,7 @@
  */
 import { app } from "../../../../scripts/app.js";
 import { showToast } from "./gallery-utils.js";
+import { t, tf } from "./js/core/i18n.js";
 
 if (!document.getElementById("neo-hub-css")) {
     const link = document.createElement("link");
@@ -22,8 +23,8 @@ const API = "/neo_model_hub";
 const SOURCE_NAMES = { modelscope: "ModelScope", huggingface: "Hugging Face", civitai: "Civitai" };
 const CIVITAI_TYPE_NAMES = { LORA: "LoRA", LoCon: "LoCon", DoRA: "DoRA" };
 const CIVITAI_SORT_NAMES = {
-    "Most Downloaded": "下载量", "Highest Rated": "评分", "Most Liked": "最多点赞",
-    "Most Collected": "最多收藏", "Newest": "最新", "Recently Added": "最近收录",
+    "Most Downloaded": t("下载量"), "Highest Rated": t("评分"), "Most Liked": t("最多点赞"),
+    "Most Collected": t("最多收藏"), "Newest": t("最新"), "Recently Added": t("最近收录"),
 };
 
 let hub = null;
@@ -57,10 +58,10 @@ async function req(path, body) {
 // ---------------------------------------------------------------------------
 
 function sourceMark(entry) {
-    if (entry.on_hf && entry.on_ms) return "双源";
+    if (entry.on_hf && entry.on_ms) return t("双源");
     if (entry.on_ms) return "MS";
     if (entry.on_hf) return "HF";
-    return "未探测";
+    return t("未探测");
 }
 
 function fillRepos(h) {
@@ -79,14 +80,14 @@ function fillRepos(h) {
         const members = (group.repos || []).map((name) => byName.get(name)).filter(Boolean);
         if (!members.length) continue;
         const grp = document.createElement("optgroup");
-        grp.label = group.name || "分组";
+        grp.label = group.name || t("分组");
         for (const entry of members) addRepo(grp, entry);
         sel.appendChild(grp);
     }
     const rest = h.repos.filter((r) => !used.has(r.repo));
     if (rest.length) {
         const grp = document.createElement("optgroup");
-        grp.label = "其他";
+        grp.label = t("其他");
         for (const entry of rest) addRepo(grp, entry);
         sel.appendChild(grp);
     }
@@ -116,7 +117,7 @@ function fillFiles(h) {
         o.dataset.existsSub = f.exists_sub || "";
         o.textContent = `${f.filename}  [${f.category}]  ${fmtSize(f.size)}` +
             `${f.version_name ? `  〈${f.version_name}〉` : ""}` +
-            `${f.exists ? `  ✓ 已存在${f.exists_sub ? ` (${f.exists_sub})` : ""}` : ""}`;
+            `${f.exists ? `  ${t("✓ 已存在")}${f.exists_sub ? ` (${f.exists_sub})` : ""}` : ""}`;
         sel.appendChild(o);
     }
     updateTarget(h);
@@ -168,9 +169,9 @@ function fillSubfolders(h, subs, def, prefer) {
         o.textContent = text;
         sel.appendChild(o);
     };
-    add("", "（根目录）");
+    add("", t("（根目录）"));
     for (const s of subs) add(s, s);
-    add(NEW_SUB, "＋ 新建子目录…");
+    add(NEW_SUB, t("＋ 新建子目录…"));
     // 已存在文件所在子目录 > 探查默认 > 根目录
     if (prefer && !subs.includes(prefer)) add(prefer, prefer);
     sel.value = prefer && subs.includes(prefer) ? prefer : (subs.includes(def) ? def : "");
@@ -243,20 +244,20 @@ function buildUI(h) {
     }
     const refreshBtn = el("button", "neo-hub-icon-btn", "⟳");
     refreshBtn.type = "button";
-    refreshBtn.title = "跳过缓存重新拉取仓库与文件清单";
+    refreshBtn.title = t("跳过缓存重新拉取仓库与文件清单");
     refreshBtn.addEventListener("click", () => loadRepos(h, true));
     const settingsBtn = el("button", "neo-hub-icon-btn", "⚙");
     settingsBtn.type = "button";
-    settingsBtn.title = "模型库设置（源 / 端点 / Token / LLM 子目录 / 超时）";
+    settingsBtn.title = t("模型库设置（源 / 端点 / Token / LLM 子目录 / 超时）");
     const closeBtn = el("button", "neo-hub-icon-btn", "✕");
     closeBtn.type = "button";
-    head.append(el("span", "neo-hub-title", "📥 模型库 · Comfy-Org"), srcWrap, refreshBtn, settingsBtn, closeBtn);
+    head.append(el("span", "neo-hub-title", t("📥 模型库 · Comfy-Org")), srcWrap, refreshBtn, settingsBtn, closeBtn);
 
     const searchRow = el("div", "neo-hub-row");
     const searchInput = el("input", "neo-hub-input neo-hub-search");
     searchInput.type = "text";
-    searchInput.placeholder = "搜索仓库名（Comfy-Org 内子串匹配 + 跨组织搜索）";
-    const searchBtn = el("button", "neo-hub-btn", "搜索");
+    searchInput.placeholder = t("搜索仓库名（Comfy-Org 内子串匹配 + 跨组织搜索）");
+    const searchBtn = el("button", "neo-hub-btn", t("搜索"));
     searchBtn.type = "button";
     searchBtn.addEventListener("click", () => loadRepos(h, false));
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") loadRepos(h, false); });
@@ -274,7 +275,7 @@ function buildUI(h) {
     const civiBaseSel = el("select", "neo-hub-input neo-hub-civi-base");
     const civiBaseAll = document.createElement("option");
     civiBaseAll.value = "";
-    civiBaseAll.textContent = "全部底模";
+    civiBaseAll.textContent = t("全部底模");
     civiBaseSel.appendChild(civiBaseAll);
     const civiSortSel = el("select", "neo-hub-input neo-hub-civi-sort");
     for (const [key, label] of Object.entries(CIVITAI_SORT_NAMES)) {
@@ -287,16 +288,16 @@ function buildUI(h) {
     const civiNsfwInput = el("input");
     civiNsfwInput.type = "checkbox";
     civiNsfw.append(civiNsfwInput, el("span", "", "NSFW"));
-    civiRow.append(el("span", "neo-hub-label", "类型"), civiTypeSel,
-        el("span", "neo-hub-label", "底模"), civiBaseSel,
-        el("span", "neo-hub-label", "排序"), civiSortSel, civiNsfw);
-    const civiPrevBtn = el("button", "neo-hub-btn neo-hub-civi-prev", "上一页");
+    civiRow.append(el("span", "neo-hub-label", t("类型")), civiTypeSel,
+        el("span", "neo-hub-label", t("底模")), civiBaseSel,
+        el("span", "neo-hub-label", t("排序")), civiSortSel, civiNsfw);
+    const civiPrevBtn = el("button", "neo-hub-btn neo-hub-civi-prev", t("上一页"));
     civiPrevBtn.type = "button";
     civiPrevBtn.disabled = true;
     civiPrevBtn.addEventListener("click", () => {
         if (h.civiPage > 1) { h.civiPage -= 1; loadCivitaiModels(h, true); }
     });
-    const civiNextBtn = el("button", "neo-hub-btn neo-hub-civi-next", "下一页");
+    const civiNextBtn = el("button", "neo-hub-btn neo-hub-civi-next", t("下一页"));
     civiNextBtn.type = "button";
     civiNextBtn.disabled = true;
     civiNextBtn.addEventListener("click", () => {
@@ -322,19 +323,19 @@ function buildUI(h) {
     const subSel = el("select", "neo-hub-input neo-hub-sub");
     const subNew = el("input", "neo-hub-input neo-hub-sub-new");
     subNew.type = "text";
-    subNew.placeholder = "新建子目录名（可含 / 分层）";
+    subNew.placeholder = t("新建子目录名（可含 / 分层）");
     subNew.style.display = "none";
     const destText = el("span", "neo-hub-info neo-hub-dest", "");
-    targetRow.append(el("span", "neo-hub-label", "落盘类别"), catSel,
-        el("span", "neo-hub-label", "子目录"), subSel, subNew, destText);
+    targetRow.append(el("span", "neo-hub-label", t("落盘类别")), catSel,
+        el("span", "neo-hub-label", t("子目录")), subSel, subNew, destText);
 
     const actRow = el("div", "neo-hub-row");
-    const dlBtn = el("button", "neo-hub-btn neo-hub-dl", "⬇ 下载");
+    const dlBtn = el("button", "neo-hub-btn neo-hub-dl", t("⬇ 下载"));
     dlBtn.type = "button";
-    const cancelBtn = el("button", "neo-hub-btn neo-hub-cancel", "取消");
+    const cancelBtn = el("button", "neo-hub-btn neo-hub-cancel", t("取消"));
     cancelBtn.type = "button";
     cancelBtn.disabled = true;
-    const statusText = el("span", "neo-hub-status", "空闲");
+    const statusText = el("span", "neo-hub-status", t("空闲"));
     actRow.append(dlBtn, cancelBtn, statusText);
 
     const bar = el("div", "neo-hub-bar");
@@ -359,17 +360,17 @@ function buildUI(h) {
         srcSel.appendChild(o);
     }
     inputs.source = srcSel;
-    panel.appendChild(field("默认下载源", srcSel));
-    mkInput("hf_endpoint", "HF 端点（镜像站根地址）");
-    mkInput("hf_token", "HF Token（受限仓库需要）", "password");
-    mkInput("ms_token", "ModelScope Token（受限仓库下载用，可留空）", "password");
-    mkInput("llm_subdir", "LLM 子目录（models/ 下，GGUF 落此处）");
-    mkInput("timeout_total", "下载总超时（秒）", "number");
-    mkInput("sock_read", "读超时（秒）", "number");
+    panel.appendChild(field(t("默认下载源"), srcSel));
+    mkInput("hf_endpoint", t("HF 端点（镜像站根地址）"));
+    mkInput("hf_token", t("HF Token（受限仓库需要）"), "password");
+    mkInput("ms_token", t("ModelScope Token（受限仓库下载用，可留空）"), "password");
+    mkInput("llm_subdir", t("LLM 子目录（models/ 下，GGUF 落此处）"));
+    mkInput("timeout_total", t("下载总超时（秒）"), "number");
+    mkInput("sock_read", t("读超时（秒）"), "number");
     const civiNote = el("div", "neo-hub-info neo-hub-civi-note",
-        "C 站 API KEY 与代理在画廊设置的「Civitai（C 站）」区配置，模型库共用同一份。");
+        t("C 站 API KEY 与代理在画廊设置的「Civitai（C 站）」区配置，模型库共用同一份。"));
     panel.appendChild(civiNote);
-    const saveBtn = el("button", "neo-hub-btn neo-hub-save", "保存设置");
+    const saveBtn = el("button", "neo-hub-btn neo-hub-save", t("保存设置"));
     saveBtn.type = "button";
     panel.appendChild(saveBtn);
 
@@ -392,8 +393,8 @@ function syncSource(h) {
     const civi = h.source === "civitai";
     h.ui.civiRow.style.display = civi ? "" : "none";
     h.ui.searchInput.placeholder = civi
-        ? "搜索 C 站 LoRA 名称 / 触发词"
-        : "搜索仓库名（Comfy-Org 内子串匹配 + 跨组织搜索）";
+        ? t("搜索 C 站 LoRA 名称 / 触发词")
+        : t("搜索仓库名（Comfy-Org 内子串匹配 + 跨组织搜索）");
 }
 
 function renderProgress(h, d) {
@@ -403,7 +404,7 @@ function renderProgress(h, d) {
     h.ui.barFill.style.width = `${pct.toFixed(1)}%`;
     h.ui.progText.textContent =
         `${pct.toFixed(1)}% · ${fmtSize(done)} / ${fmtSize(total)} · ${fmtSize(d.speed || 0)}/s`;
-    h.ui.statusText.textContent = d.state === "running" ? `下载中：${d.filename}` : (d.state || "idle");
+    h.ui.statusText.textContent = d.state === "running" ? tf("下载中：{name}", { name: d.filename }) : (d.state || "idle");
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +426,7 @@ function fillCivitaiModels(h) {
 
 async function loadCivitaiModels(h, refresh) {
     if (!refresh) { h.civiPage = 1; h.civiCursors = [""]; }
-    h.ui.repoInfo.textContent = "C 站搜索中…";
+    h.ui.repoInfo.textContent = t("C 站搜索中…");
     h.ui.fileList.innerHTML = "";
     h.ui.destText.textContent = "";
     try {
@@ -443,13 +444,13 @@ async function loadCivitaiModels(h, refresh) {
         h.civiCursors[h.civiPage] = data.next_cursor || "";
         if (data.base_models && h.ui.civiBaseSel.options.length <= 1) fillCivitaiBases(h, data.base_models);
         fillCivitaiModels(h);
-        h.ui.repoInfo.textContent = `${h.models.length} 个模型 · 第 ${h.civiPage} 页`;
+        h.ui.repoInfo.textContent = tf("{n} 个模型 · 第 {p} 页", { n: h.models.length, p: h.civiPage });
         h.ui.civiPrevBtn.disabled = h.civiPage <= 1;
         h.ui.civiNextBtn.disabled = !data.next_cursor;
         await loadFiles(h, false);
     } catch (e) {
-        h.ui.repoInfo.textContent = "C 站搜索失败";
-        showToast(app, "error", "C 站搜索失败", String(e.message || e));
+        h.ui.repoInfo.textContent = t("C 站搜索失败");
+        showToast(app, "error", t("C 站搜索失败"), String(e.message || e));
     }
 }
 
@@ -475,9 +476,9 @@ async function loadCivitaiFiles(h) {
         await loadSubfolders(h);
     } catch (e) {
         const opt = document.createElement("option");
-        opt.textContent = `C 站文件清单加载失败：${e.message || e}`;
+        opt.textContent = tf("C 站文件清单加载失败：{e}", { e: e.message || e });
         h.ui.fileList.appendChild(opt);
-        showToast(app, "error", "C 站文件清单加载失败", String(e.message || e));
+        showToast(app, "error", t("C 站文件清单加载失败"), String(e.message || e));
     } finally {
         h.ui.fileList.disabled = false;
     }
@@ -485,19 +486,19 @@ async function loadCivitaiFiles(h) {
 
 async function loadRepos(h, refresh) {
     if (h.source === "civitai") return loadCivitaiModels(h, refresh);
-    h.ui.repoInfo.textContent = "仓库列表加载中…";
+    h.ui.repoInfo.textContent = t("仓库列表加载中…");
     try {
         const data = await req("/repos", {
             source: h.source, query: h.ui.searchInput.value.trim(), refresh: !!refresh,
         });
         h.repos = data.repos || [];
         fillRepos(h);
-        h.ui.repoInfo.textContent = `${h.repos.length} 个仓库`;
+        h.ui.repoInfo.textContent = tf("{n} 个仓库", { n: h.repos.length });
         await loadFiles(h, !!refresh);
     } catch (e) {
-        h.ui.repoInfo.textContent = "仓库列表加载失败";
+        h.ui.repoInfo.textContent = t("仓库列表加载失败");
         h.ui.fileList.innerHTML = "";
-        showToast(app, "error", "仓库列表加载失败", String(e.message || e));
+        showToast(app, "error", t("仓库列表加载失败"), String(e.message || e));
     }
 }
 
@@ -516,9 +517,9 @@ async function loadFiles(h, refresh) {
         await loadSubfolders(h);
     } catch (e) {
         const opt = document.createElement("option");
-        opt.textContent = `文件清单加载失败：${e.message || e}`;
+        opt.textContent = tf("文件清单加载失败：{e}", { e: e.message || e });
         h.ui.fileList.appendChild(opt);
-        showToast(app, "error", "文件清单加载失败", String(e.message || e));
+        showToast(app, "error", t("文件清单加载失败"), String(e.message || e));
     } finally {
         h.ui.fileList.disabled = false;
     }
@@ -540,10 +541,10 @@ async function saveSettings(h) {
         fillSettingsForm(h, data.settings || {});
         h.source = (data.settings && data.settings.source) || h.source;
         syncSource(h);
-        showToast(app, "success", "模型库设置已保存");
+        showToast(app, "success", t("模型库设置已保存"));
         await loadRepos(h, true);
     } catch (e) {
-        showToast(app, "error", "设置保存失败", String(e.message || e));
+        showToast(app, "error", t("设置保存失败"), String(e.message || e));
     }
 }
 
@@ -570,14 +571,14 @@ async function pollProgress(h) {
     h.ui.dlBtn.disabled = false;
     if (d.state === "done") {
         renderProgress(h, d);
-        showToast(app, "success", "下载完成", `${d.category} / ${d.filename}`);
+        showToast(app, "success", t("下载完成"), `${d.category} / ${d.filename}`);
         loadFiles(h, true);
     } else if (d.state === "paused") {
-        h.ui.statusText.textContent = d.error || "已取消（断点保留）";
-        showToast(app, "info", "已取消", "断点已保留，再次下载同一文件可续传");
+        h.ui.statusText.textContent = d.error || t("已取消（断点保留）");
+        showToast(app, "info", t("已取消"), t("断点已保留，再次下载同一文件可续传"));
     } else if (d.state === "error") {
-        h.ui.statusText.textContent = d.error || "下载失败";
-        showToast(app, "error", "下载失败", d.error || "");
+        h.ui.statusText.textContent = d.error || t("下载失败");
+        showToast(app, "error", t("下载失败"), d.error || "");
     }
 }
 
@@ -590,7 +591,7 @@ function startPoll(h) {
 function bindActions(h) {
     h.ui.dlBtn.addEventListener("click", async () => {
         const file = selectedFile(h);
-        if (!file) { showToast(app, "info", "未选择文件"); return; }
+        if (!file) { showToast(app, "info", t("未选择文件")); return; }
         h.ui.dlBtn.disabled = true;
         try {
             await req("/download", {
@@ -604,7 +605,7 @@ function bindActions(h) {
             startPoll(h);
         } catch (e) {
             h.ui.dlBtn.disabled = false;
-            showToast(app, "error", "下载启动失败", String(e.message || e));
+            showToast(app, "error", t("下载启动失败"), String(e.message || e));
         }
     });
     h.ui.cancelBtn.addEventListener("click", async () => {
@@ -612,7 +613,7 @@ function bindActions(h) {
         try {
             await req("/cancel", {});
         } catch (e) {
-            showToast(app, "error", "取消失败", String(e.message || e));
+            showToast(app, "error", t("取消失败"), String(e.message || e));
         }
     });
     h.ui.repoSel.addEventListener("change", () => loadFiles(h, false));
@@ -640,14 +641,13 @@ async function loadSettings(h) {
         h.registry = data.registry || {};
         h.categories = data.categories || [];
         const civi = data.civitai || {};
-        h.ui.civiNote.textContent = `C 站配置：API KEY ${civi.api_key_set ? "已设置" : "未设置"}` +
-            ` · 代理 ${civi.proxy ? civi.proxy : "未设置"}（在画廊设置的 Civitai 区修改）`;
+        h.ui.civiNote.textContent = tf("C 站配置：API KEY {key} · 代理 {proxy}（在画廊设置的 Civitai 区修改）", { key: civi.api_key_set ? t("已设置") : t("未设置"), proxy: civi.proxy ? civi.proxy : t("未设置") });
         fillCategories(h);
         fillSettingsForm(h, data.settings || {});
         if (!h.wantSource) h.source = (data.settings && data.settings.source) || h.source;
         syncSource(h);
     } catch (e) {
-        showToast(app, "error", "模型库设置读取失败", String(e.message || e));
+        showToast(app, "error", t("模型库设置读取失败"), String(e.message || e));
     }
 }
 

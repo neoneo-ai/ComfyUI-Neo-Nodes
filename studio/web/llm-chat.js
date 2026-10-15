@@ -18,6 +18,7 @@ import { createImageGenSettingsForm, createVideoGenSettingsForm, requestGenerati
 import { Lightbox } from "./lightbox.js";
 import { showToast } from "./gallery-utils.js";
 import { actionToast } from "./toast.js";
+import { t, tf } from "./js/core/i18n.js";
 
 // 「思考深度」下拉 → Qwen3.8 模板参数映射：off=不思考（enable_thinking:false）；
 // low/medium/high 对应 chat_template_kwargs.reasoning_effort 档位（xhigh 为模板的深度档）。
@@ -36,9 +37,9 @@ function isLLMError(err) {
 // actionToast 不自动关闭，点 action 或 ✕ 才消失。
 function failAction(skillId, err) {
     if (skillId && !isLLMError(err)) {
-        return { summary: "技能执行失败", actionLabel: "打开技能详情", onAction: () => openSkillDetailById(skillId) };
+        return { summary: t("技能执行失败"), actionLabel: t("打开技能详情"), onAction: () => openSkillDetailById(skillId) };
     }
-    return { summary: "LLM 处理失败", actionLabel: "打开 LLM 设置", onAction: openLLMSettingsModal };
+    return { summary: t("LLM 处理失败"), actionLabel: t("打开 LLM 设置"), onAction: openLLMSettingsModal };
 }
 
 // ==========================================
@@ -46,20 +47,20 @@ function failAction(skillId, err) {
 // ==========================================
 
 const QUICK_INPUT_TIPS = [
-    "✨ 输入描述，AI 自动帮你生成提示词",
-    "📝 输入改写需求，如：'去掉动漫风格，改成写实'",
-    "🌐 输入翻译需求，如：'翻译成中文'",
-    "🎨 输入风格要求，如：'改成赛博朋克风格'",
-    "📷 输入场景描述，如：'夕阳下的海边日落'",
-    "🔍 输入关键词搜索已有提示词",
-    "🚀 输入描述后按 Enter 生成，Shift+Enter 换行",
-    "⬆️ 按 ↑/↓ 召回之前生成用过的输入",
-    "🔄 输入修改指令，如：'增加细节描述'",
-    "🎭 输入角色描述，如：'一个穿着汉服的女孩'",
-    "🌅 输入时间场景，如：'清晨的森林，阳光穿透树叶'",
-    "🏙️ 输入城市描述，如：'未来科幻城市，高楼林立'",
-    "💾 点击保存按钮将提示词存为预设",
-    "▾ 自动增强菜单内配置 LLM，🎛️ 管理技能/模板"
+    t("✨ 输入描述，AI 自动帮你生成提示词"),
+    t("📝 输入改写需求，如：'去掉动漫风格，改成写实'"),
+    t("🌐 输入翻译需求，如：'翻译成中文'"),
+    t("🎨 输入风格要求，如：'改成赛博朋克风格'"),
+    t("📷 输入场景描述，如：'夕阳下的海边日落'"),
+    t("🔍 输入关键词搜索已有提示词"),
+    t("🚀 输入描述后按 Enter 生成，Shift+Enter 换行"),
+    t("⬆️ 按 ↑/↓ 召回之前生成用过的输入"),
+    t("🔄 输入修改指令，如：'增加细节描述'"),
+    t("🎭 输入角色描述，如：'一个穿着汉服的女孩'"),
+    t("🌅 输入时间场景，如：'清晨的森林，阳光穿透树叶'"),
+    t("🏙️ 输入城市描述，如：'未来科幻城市，高楼林立'"),
+    t("💾 点击保存按钮将提示词存为预设"),
+    t("▾ 自动增强菜单内配置 LLM，🎛️ 管理技能/模板")
 ];
 
 function getRandomTip() {
@@ -192,7 +193,7 @@ function createStatusBars() {
             del.type = "button";
             del.textContent = "✕";
             del.className = "rs-image-chip-del";
-            del.title = "移除图片";
+            del.title = t("移除图片");
             del.addEventListener("click", () => {
                 attachedImages.splice(idx, 1);
                 renderImageChips();
@@ -242,7 +243,7 @@ function createStatusBars() {
     // 图片选择按钮（+）
     const attachBtn = mkEl("button", "rs-attach-btn");
     attachBtn.textContent = "+";
-    attachBtn.title = "附加图片（反推/多模态 skill）";
+    attachBtn.title = t("附加图片（反推/多模态 skill）");
     attachBtn.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", () => {
         Array.from(fileInput.files || []).forEach(addImageFile);
@@ -272,7 +273,7 @@ function createStatusBars() {
 
         const defaultOpt = document.createElement("option");
         defaultOpt.value = "";
-        defaultOpt.textContent = "默认";
+        defaultOpt.textContent = t("默认");
         skillSelector.appendChild(defaultOpt);
 
         // 带 workflow.json 的技能由工作流驱动、正文不参与本节点 → 不出现在提示词代理下拉里
@@ -307,12 +308,12 @@ function createStatusBars() {
     const runtimeCheckbox = mkEl("input", "rs-auto-generate-checkbox");
     runtimeCheckbox.type = "checkbox";
     const runtimeToggleText = mkEl("span", "rs-runtime-row-text");
-    runtimeToggleText.textContent = "运行时随机抽取提示词";
+    runtimeToggleText.textContent = t("运行时随机抽取提示词");
     runtimeToggleRow.appendChild(runtimeCheckbox);
     runtimeToggleRow.appendChild(runtimeToggleText);
     const runtimeCountRow = mkEl("div", "rs-runtime-row");
     const runtimeCountText = mkEl("span", "rs-runtime-row-text");
-    runtimeCountText.textContent = "每次抽取";
+    runtimeCountText.textContent = t("每次抽取");
     const runtimeCountMinus = mkEl("button", "rs-runtime-count-btn");
     runtimeCountMinus.type = "button";
     runtimeCountMinus.textContent = "−";
@@ -436,7 +437,7 @@ function createStatusBars() {
     const autoGenerateLabel = document.createElement("label");
     autoGenerateLabel.htmlFor = "rs-auto-generate";
     autoGenerateLabel.className = "rs-auto-generate-label";
-    autoGenerateLabel.textContent = "工作流运行时自动增强";
+    autoGenerateLabel.textContent = t("工作流运行时自动增强");
 
     const genCaret = mkEl("button", "rs-random-caret");
     genCaret.type = "button";
@@ -448,7 +449,7 @@ function createStatusBars() {
     const autoCloseBtn = mkEl("button", "rs-auto-close");
     autoCloseBtn.type = "button";
     autoCloseBtn.textContent = "✕";
-    autoCloseBtn.setAttribute("data-rs-tooltip", "关闭设置");
+    autoCloseBtn.setAttribute("data-rs-tooltip", t("关闭设置"));
     autoMenu.appendChild(autoCloseBtn);
     const autoToggleRow = mkEl("label", "rs-runtime-row rs-runtime-toggle");
     autoToggleRow.appendChild(autoGenerateCheckbox);
@@ -461,7 +462,7 @@ function createStatusBars() {
     // localStorage 持久化。
     const thinkingDepthSelect = document.createElement("select");
     thinkingDepthSelect.className = "rs-thinking-depth-select";
-    for (const [value, label] of [["off", "不思考"], ["low", "浅思考"], ["medium", "标准思考"], ["high", "深度思考"]]) {
+    for (const [value, label] of [["off", t("不思考")], ["low", t("浅思考")], ["medium", t("标准思考")], ["high", t("深度思考")]]) {
         const opt = document.createElement("option");
         opt.value = value;
         opt.textContent = label;
@@ -475,12 +476,12 @@ function createStatusBars() {
         }
     } catch (e) { /* 隐私模式下 localStorage 可能不可用 */ }
     const thinkingDepthLabel = mkEl("span", "rs-auto-generate-label");
-    thinkingDepthLabel.textContent = "思考深度";
+    thinkingDepthLabel.textContent = t("思考深度");
     const thinkingDepthRow = mkEl("div", "rs-runtime-row");
     thinkingDepthRow.appendChild(thinkingDepthLabel);
     thinkingDepthRow.appendChild(thinkingDepthSelect);
     const thinkingDepthHint = mkEl("div", "rs-runtime-hint");
-    thinkingDepthHint.textContent = "默认标准思考；不思考直接输出，更快更稳（需服务端支持）";
+    thinkingDepthHint.textContent = t("默认标准思考；不思考直接输出，更快更稳（需服务端支持）");
     autoMenu.appendChild(thinkingDepthRow);
     autoMenu.appendChild(thinkingDepthHint);
     thinkingDepthSelect.addEventListener("change", (e) => {
@@ -499,10 +500,10 @@ function createStatusBars() {
     llmTabBtn.textContent = "🤖 LLM Settings";
     const genTabBtn = mkEl("button", "rs-auto-tab");
     genTabBtn.type = "button";
-    genTabBtn.textContent = "🖼️ 生图默认设置";
+    genTabBtn.textContent = t("🖼️ 生图默认设置");
     const videoTabBtn = mkEl("button", "rs-auto-tab");
     videoTabBtn.type = "button";
-    videoTabBtn.textContent = "🎬 生视频模型";
+    videoTabBtn.textContent = t("🎬 生视频模型");
     autoTabs.append(llmTabBtn, genTabBtn, videoTabBtn);
     const llmPanel = mkEl("div", "rs-auto-panel");
     llmPanel.appendChild(modelForm.el);
@@ -536,17 +537,17 @@ function createStatusBars() {
     const dirtyConfirm = mkEl("div", "rs-gen-dirty-confirm");
     dirtyConfirm.hidden = true;
     const dirtyText = mkEl("span", "rs-gen-dirty-text");
-    dirtyText.textContent = "⚠ 有未保存的修改";
+    dirtyText.textContent = t("⚠ 有未保存的修改");
     const dirtyActions = mkEl("div", "rs-gen-dirty-actions");
     const btnSaveClose = mkEl("button", "rs-btn rs-gen-dirty-save");
     btnSaveClose.type = "button";
-    btnSaveClose.textContent = "💾 保存并关闭";
+    btnSaveClose.textContent = t("💾 保存并关闭");
     const btnDiscard = mkEl("button", "rs-btn rs-gen-dirty-discard");
     btnDiscard.type = "button";
-    btnDiscard.textContent = "放弃修改";
+    btnDiscard.textContent = t("放弃修改");
     const btnKeepEditing = mkEl("button", "rs-btn rs-gen-dirty-keep");
     btnKeepEditing.type = "button";
-    btnKeepEditing.textContent = "继续编辑";
+    btnKeepEditing.textContent = t("继续编辑");
     dirtyActions.append(btnSaveClose, btnDiscard, btnKeepEditing);
     dirtyConfirm.append(dirtyText, dirtyActions);
     autoMenu.appendChild(dirtyConfirm);
@@ -597,7 +598,7 @@ function createStatusBars() {
         btnSaveClose.disabled = true;
         const [genOk, llmOk, videoOk] = await Promise.all([genForm.save(), modelForm.save(), videoForm.save()]);
         if (genOk && llmOk && videoOk) performClose();
-        else showToast(app, "error", "保存失败", "请重试后再关闭");
+        else showToast(app, "error", t("保存失败"), t("请重试后再关闭"));
         btnSaveClose.disabled = false;
     });
     btnDiscard.addEventListener("click", () => performClose());
@@ -660,7 +661,7 @@ function createStatusBars() {
     // @ 按钮：点击弹出图片选择器（含"全部"选项），无需在文本中输入 @
     const atBtn = mkEl("button", "rs-at-btn");
     atBtn.textContent = "@";
-    atBtn.title = "插入参考图片标记";
+    atBtn.title = t("插入参考图片标记");
     atBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         atPicker.openFromButton(atBtn);
@@ -805,10 +806,10 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
             controller.open();
             controller.set({
                 running: false, cancelId: "", images: [], warnings: [],
-                statusText: "参考图读取失败",
-                error: "节点的图片输入已连接，但无法从上游节点解析出图片文件。请在画布上用 LoadImage 节点并提供图片，或直接粘贴/附加图片后重试。",
+                statusText: t("参考图读取失败"),
+                error: t("节点的图片输入已连接，但无法从上游节点解析出图片文件。请在画布上用 LoadImage 节点并提供图片，或直接粘贴/附加图片后重试。"),
             });
-            showToast(app, "error", "参考图读取失败", "图片输入已连接但无法解析出图片文件");
+            showToast(app, "error", t("参考图读取失败"), t("图片输入已连接但无法解析出图片文件"));
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
             return;
@@ -818,10 +819,10 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
             controller.open();
             controller.set({
                 running: false, cancelId: "", images: [], warnings: [],
-                statusText: "缺少参考图",
-                error: "四视图需要参考图：请连接 image 输入、@ 引用工作流图片，或粘贴/附加一张角色图片后重试。",
+                statusText: t("缺少参考图"),
+                error: t("四视图需要参考图：请连接 image 输入、@ 引用工作流图片，或粘贴/附加一张角色图片后重试。"),
             });
-            showToast(app, "error", "缺少参考图", "四视图需要参考图才能生图");
+            showToast(app, "error", t("缺少参考图"), t("四视图需要参考图才能生图"));
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
             return;
@@ -832,7 +833,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
     const state = {
         running: true, cancelId: "", error: "", images: [], warnings: [], progress: null,
         enhancedPrompt: "",
-        statusText: useRefs ? `参考图模式（${resolvedRefs.length} 张），提交中…` : "提交生图任务…",
+        statusText: useRefs ? tf("参考图模式（{n} 张），提交中…", { n: resolvedRefs.length }) : t("提交生图任务…"),
         // 生图阶段机：submit=任务构建 / enhance=LLM 流式增强提示词 / queue=排队 / sample=采样生图。
         // 底部状态行按阶段切换进度条形态（增强文本无确定步数，用已生成字符驱动近似进度）。
         phase: "submit",
@@ -850,7 +851,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
         // 时跳过，直接提交用户/模板文本，不再自动增强。
         let finalPrompt = promptText;
         if (enhanceEnabled) {
-            state.statusText = "增强提示词中…";
+            state.statusText = t("增强提示词中…");
             state.phase = "enhance";
             controller.set(state);
             let enhanceErr = null;
@@ -873,7 +874,7 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
                                 state.enhancedPrompt = fullText || "";
                                 resolve(fullText);
                             },
-                            onError: (err) => { enhanceErr = err || "未知错误"; resolve(null); },
+                            onError: (err) => { enhanceErr = err || t("未知错误"); resolve(null); },
                         }
                     );
                 });
@@ -888,41 +889,41 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
             if (enhanceErr) {
                 actionToast({
                     severity: "warning",
-                    summary: "LLM 提示词增强失败，已用原文生成",
-                    detail: `${enhanceErr}。请检查 API Key / 模型 / 端点。`,
-                    actionLabel: "打开 LLM 设置",
+                    summary: t("LLM 提示词增强失败，已用原文生成"),
+                    detail: tf("{err}。请检查 API Key / 模型 / 端点。", { err: enhanceErr }),
+                    actionLabel: t("打开 LLM 设置"),
                     onAction: openLLMSettingsModal,
                 });
             }
         }
 
         // Phase 2: 提交生图任务（skip_enhance 避免后端重复增强）
-        state.statusText = "排队中…";
+        state.statusText = t("排队中…");
         state.phase = "queue";
         controller.set(state);
         const body = { skill_id: opt?.value || "", prompt: finalPrompt, references: sendRefs, skip_enhance: true };
         const snap = await requestGeneration(body);
         state.cancelId = snap.task_id;
         state.warnings = snap.warnings || [];
-        state.statusText = "排队中…";
+        state.statusText = t("排队中…");
         controller.set(state);
         const final = await watchTask(snap.task_id, (s) => {
-            state.statusText = s.status === "running" ? "生图中…" : "排队中…";
+            state.statusText = s.status === "running" ? t("生图中…") : t("排队中…");
             state.phase = s.status === "running" ? "sample" : "queue";
             state.progress = s.progress || null;
             controller.set(state);
         }, () => controller.isStale(myToken));
         if (final.status === "succeeded") {
             state.images = final.images || [];
-            state.statusText = `完成：${state.images.length} 张 · ${final.width}×${final.height}`;
+            state.statusText = tf("完成：{n} 张 · {w}×{h}", { n: state.images.length, w: final.width, h: final.height });
         } else if (final.status === "cancelled") {
-            state.statusText = "已取消";
+            state.statusText = t("已取消");
         } else {
-            state.statusText = "失败";
-            state.error = final.error || "生图失败";
+            state.statusText = t("失败");
+            state.error = final.error || t("生图失败");
         }
     } catch (e) {
-        state.statusText = "失败";
+        state.statusText = t("失败");
         state.error = e?.message || String(e);
     } finally {
         state.running = false;
@@ -936,9 +937,9 @@ async function runChatImageGeneration({ generateBtn, controller }, text, referen
                 const skillName = opt?.value || "";
                 actionToast({
                     severity: "error",
-                    summary: "生图失败",
+                    summary: t("生图失败"),
                     detail: state.error,
-                    actionLabel: "打开技能详情",
+                    actionLabel: t("打开技能详情"),
                     onAction: () => resolveSkillId(skillName, false).then((id) => { if (id) openSkillDetailById(id); }),
                 });
             }
@@ -983,15 +984,15 @@ function createGenerateHandler(promptUI) {
             // 文案随所选 skill 区分：文生图只看文字；四视图需要文字 + 参考图；其余输入可二选一
             const missing = selectedOpt?.dataset.genImage === "1"
                 ? (selectedOpt.dataset.requiresRef === "1"
-                    ? "请先输入画面描述，并提供参考图（连接 image 输入、@ 引用或附加图片）。"
-                    : "请先输入画面描述。")
-                : "请先在快捷输入栏输入描述，或附加一张图片。";
-            showToast(app, "warning", "缺少输入", missing);
+                    ? t("请先输入画面描述，并提供参考图（连接 image 输入、@ 引用或附加图片）。")
+                    : t("请先输入画面描述。"))
+                : t("请先在快捷输入栏输入描述，或附加一张图片。");
+            showToast(app, "warning", t("缺少输入"), missing);
             if (genResultsController) {
                 genResultsController.open();
                 genResultsController.set({
                     running: false, cancelId: "", images: [], warnings: [],
-                    statusText: "缺少输入",
+                    statusText: t("缺少输入"),
                     error: missing,
                 });
             }
@@ -1061,7 +1062,7 @@ function createGenerateHandler(promptUI) {
                 if (opts?.actionLabel) {
                     actionToast({ severity: "error", detail: String(err), ...opts });
                 } else {
-                    showToast(app, "error", "处理失败", String(err));
+                    showToast(app, "error", t("处理失败"), String(err));
                 }
             }
         });
@@ -1116,7 +1117,7 @@ function createGenerateHandler(promptUI) {
             }
         } catch (e) {
             console.error("Network Error:", e);
-            showToast(app, "error", "网络错误", e.message || String(e));
+            showToast(app, "error", t("网络错误"), e.message || String(e));
         } finally {
             generateBtn.disabled = false;
             generateBtn.textContent = "✨";
@@ -1194,7 +1195,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // Markdown 预览切换按钮（👁）：默认随按钮组折叠，hover 展开，激活时常亮高亮
     const mdPreviewBtn = mkEl("button", "rs-action-btn rs-md-preview-btn");
     mdPreviewBtn.textContent = "👁";
-    mdPreviewBtn.setAttribute("data-rs-tooltip", "Markdown 预览 / 编辑");
+    mdPreviewBtn.setAttribute("data-rs-tooltip", t("Markdown 预览 / 编辑"));
     buttonGroup.appendChild(mdPreviewBtn);
 
     customTextareaWrapper.appendChild(buttonGroup);
@@ -1260,7 +1261,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // 一键清除按钮：定位在 custom area 右上角，清空提示词并同步 widget/storage（无确认，直接清）
     const clearBtn = mkEl("button", "rs-clear-btn");
     clearBtn.textContent = "✕";
-    clearBtn.setAttribute("data-rs-tooltip", "Clear prompt / 清空");
+    clearBtn.setAttribute("data-rs-tooltip", t("Clear prompt / 清空"));
     clearBtn.addEventListener("click", () => {
         customTextarea.value = "";
         triggerTextChange(customTextarea);
@@ -1335,9 +1336,9 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     function paintGenLabel() {
         let want = "";
         if (genState.phase === "enhance") {
-            want = `已生成 ${(genState.enhancedPrompt || "").length} 字`;
+            want = tf("已生成 {n} 字", { n: (genState.enhancedPrompt || "").length });
         } else if (genState.progress?.max > 0) {
-            want = `第 ${genState.progress.value} / ${genState.progress.max} 步`;
+            want = tf("第 {cur} / {max} 步", { cur: genState.progress.value, max: genState.progress.max });
         }
         genStatusLabel.textContent = want;
         genStatusLabel.style.display = want ? "" : "none";
@@ -1373,14 +1374,14 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
             genStatusEl.appendChild(genStatusLabel);
             genStatusCancel = null;
         }
-        genStatusText.textContent = `🖼️ 生图 · ${genState.statusText}`;
+        genStatusText.textContent = tf("🖼️ 生图 · {status}", { status: genState.statusText });
         paintGenFill();
         paintGenLabel();
         // 取消按钮：cancelId 在提交任务后出现（phase 未变时增量补挂），点击后禁用防重复
         if (genState.cancelId && !genStatusCancel) {
             genStatusCancel = mkEl("button", "rs-gen-cancel");
             genStatusCancel.type = "button";
-            genStatusCancel.textContent = "取消";
+            genStatusCancel.textContent = t("取消");
             genStatusCancel.addEventListener("click", () => {
                 genStatusCancel.disabled = true;
                 cancelTask(genState.cancelId);
@@ -1432,7 +1433,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
                 cell.appendChild(img);
                 const sendBtn = mkEl("button", "rs-gen-send");
                 sendBtn.type = "button";
-                sendBtn.textContent = "发送到节点";
+                sendBtn.textContent = t("发送到节点");
                 sendBtn.addEventListener("click", (e) => sendImageToLoadImage(image, e.currentTarget));
                 cell.appendChild(sendBtn);
                 grid.appendChild(cell);
@@ -1441,7 +1442,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
             if (genState.images.length > 1) {
                 const assembleBtn = mkEl("button", "rs-gen-assemble");
                 assembleBtn.type = "button";
-                assembleBtn.textContent = "⏩ 全部装配到节点";
+                assembleBtn.textContent = t("⏩ 全部装配到节点");
                 assembleBtn.addEventListener("click", () => assembleAllGenerated(genState.images));
                 block.appendChild(assembleBtn);
             }
@@ -1489,7 +1490,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
 
     // 多轮交互提示：每次生成只推进一个阶段，需补充返回的问询后再次运行
     const skillHint = mkEl("div", "rs-skill-hint");
-    skillHint.textContent = "多轮技能：每次仅推进一阶段，补充问询后再点 ✨";
+    skillHint.textContent = t("多轮技能：每次仅推进一阶段，补充问询后再点 ✨");
     // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
     skillHint.style.display = "none";
     function updateSkillHint() {

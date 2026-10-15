@@ -12,6 +12,7 @@ import { showToast } from "./gallery-utils.js";
 import { attachSkillPickerToComboWidget, listSkills, createSkillStatusRow } from "./skill.js";
 import { getSkillGenConfig } from "./image-gen.js";
 import { ttlCache } from "./js/core/cache.js";
+import { t, tf } from "./js/core/i18n.js";
 
 const TL_H = 120; // 节点内时间轴显示区高度（px），canvas 高 TL_H-8=112，与预览卡一致
 const ACT_H = 28; // 时间轴下方操作条高度（「＋ 新增导演配方」按钮行）
@@ -64,7 +65,7 @@ const PREVIEW_TL_H = 112; // 预览卡时间轴高度（与节点内嵌 canvas �
 /** 在预览卡里用只读时间轴画出焦点配方的分段（与节点内嵌同款组件、同映射，含首帧缩略图） */
 function mountPreviewTimeline(body, segments) {
     body.innerHTML = "";
-    if (!segments || !segments.length) { body.textContent = "（无分段）"; return; }
+    if (!segments || !segments.length) { body.textContent = t("（无分段）"); return; }
     const box = document.createElement("div");
     body.appendChild(box);
     try {
@@ -82,7 +83,7 @@ function mountPreviewTimeline(body, segments) {
     } catch (e) {
         console.error("[Neo Studio] recipe preview timeline init failed", e);
         _previewCardTL = null;
-        body.textContent = "加载失败";
+        body.textContent = t("加载失败");
     }
 }
 
@@ -93,7 +94,7 @@ function renderRecipePreview(preview, it) {
     if (!it) {
         const hint = document.createElement("div");
         hint.className = "rs-skill-preview-empty";
-        hint.textContent = "用 ↑ / ↓ 或悬停浏览配方";
+        hint.textContent = t("用 ↑ / ↓ 或悬停浏览配方");
         preview.appendChild(hint);
         return;
     }
@@ -105,10 +106,10 @@ function renderRecipePreview(preview, it) {
     const metaEl = document.createElement("div");
     metaEl.className = "rs-skill-preview-meta";
     const body = document.createElement("div");
-    body.textContent = "加载中…";
+    body.textContent = t("加载中…");
     const hint = document.createElement("div");
     hint.className = "rs-skill-preview-hint";
-    hint.textContent = "点击卡片打开配方编辑器";
+    hint.textContent = t("点击卡片打开配方编辑器");
     preview.append(nameEl, metaEl, body, hint);
     fetchRecipeSpec(it.value).then((spec) => {
         if (preview.dataset.focusId !== it.value || !preview.isConnected) return; // 焦点已切走或选择窗已关，丢弃过期结果
@@ -119,7 +120,7 @@ function renderRecipePreview(preview, it) {
             if (preview.dataset.focusId === it.value && preview.isConnected) metaEl.textContent = directorMetaText(spec, skills);
         });
     }).catch(() => {
-        if (preview.dataset.focusId === it.value && preview.isConnected) body.textContent = "加载失败";
+        if (preview.dataset.focusId === it.value && preview.isConnected) body.textContent = t("加载失败");
     });
 }
 
@@ -201,7 +202,7 @@ app.registerExtension({
             cancelBtn.type = "button";
             cancelBtn.className = "neo-dtl-live-btn neo-dtl-live-cancel";
             cancelBtn.textContent = "⏹";
-            cancelBtn.title = "取消生成";
+            cancelBtn.title = t("取消生成");
             cancelBtn.style.display = "none";
             previewBox.appendChild(cancelBtn);
             node._neoDtCancelBtn = cancelBtn; // 暴露给测试定位按钮
@@ -211,9 +212,9 @@ app.registerExtension({
                 try {
                     const r = await api.fetchApi("/neo_video_gen/director/cancel", { method: "POST" });
                     const d = await r.json().catch(() => null);
-                    if (!r.ok) cancelBtn.title = `取消失败：${d?.error || r.status}`;
+                    if (!r.ok) cancelBtn.title = tf("取消失败：{e}", { e: d?.error || r.status });
                 } catch (err) {
-                    cancelBtn.title = `取消失败：${err.message}`;
+                    cancelBtn.title = tf("取消失败：{e}", { e: err.message });
                 }
                 cancelBtn.disabled = false;
             });
@@ -232,10 +233,10 @@ app.registerExtension({
                     onlySegWidget.callback?.(text);
                 }
                 if (!runHint) return;
-                runHint.textContent = text ? `仅运行勾选的 ${list.length} 段：[${text}]` : "未勾选 = 整条配方";
+                runHint.textContent = text ? tf("仅运行勾选的 {n} 段：[{text}]", { n: list.length, text }) : t("未勾选 = 整条配方");
                 runHint.title = text
-                    ? "本次只生成勾选的段（其余段不出现在输出里）；勾选只在当前画布会话有效，不写进配方"
-                    : "在时间轴段块左上角勾选要单独运行的段；未勾选时按整条配方从头生成";
+                    ? t("本次只生成勾选的段（其余段不出现在输出里）；勾选只在当前画布会话有效，不写进配方")
+                    : t("在时间轴段块左上角勾选要单独运行的段；未勾选时按整条配方从头生成");
             };
             try {
                 tl = new DirectorTimeline(tlRow, {
@@ -420,14 +421,14 @@ app.registerExtension({
                 return pool.map((r) => ({ value: r.name, label: r.name }));
             };
             if (recipeWidget) attachSkillPickerToComboWidget(recipeWidget, {
-                title: "选择导演配方",
+                title: t("选择导演配方"),
                 showFooter: false,
                 itemsProvider: recipeItemsProvider,
                 previewRenderer: renderRecipePreview,
                 onPreviewClick: (it) => openEditor(-1, it.value), // 点预览卡直接打开该配方的编辑器
                 onClose: destroyPreviewTimeline, // 选择窗关闭时销毁预览卡时间轴实例
             });
-            if (skillIdWidget) attachSkillPickerToComboWidget(skillIdWidget, { title: "选择视频技能（H3）" });
+            if (skillIdWidget) attachSkillPickerToComboWidget(skillIdWidget, { title: t("选择视频技能（H3）") });
             // 按配方默认填充 width/height/steps widget：width/height 优先配方 shared（自定义分辨率），缺省回退首段 skill config；steps 取首段 skill config。
             // 每个配方有自己的硬性要求（如 VDN/turbo 配方要求 steps=8），所以重新载入配方时一律重新初始化，用户手改值也不保留。
             // 唯一例外是创建节点时的首次载入：工作流已存的实值优先，只在仍为默认 -1 时填充。
@@ -495,19 +496,19 @@ app.registerExtension({
             // nameOverride 供选择窗预览卡点击直接打开焦点配方（而非当前选中值）
             const openEditor = async (segIndex = -1, nameOverride = "") => {
                 const name = nameOverride || (recipeWidget ? String(recipeWidget.value || "").trim() : "");
-                if (!name) { showToast(app, "warn", "请先选择分段配方", ""); return; }
+                if (!name) { showToast(app, "warn", t("请先选择分段配方"), ""); return; }
                 editBtn.disabled = true;
                 try {
                     const metas = await listRecipes();
                     const meta = metas.find((r) => r.name === name);
                     if (!meta || meta.type !== "video_director") {
-                        showToast(app, "warn", "未找到分段配方：" + name, "");
+                        showToast(app, "warn", tf("未找到分段配方：{name}", { name }), "");
                         return;
                     }
                     await openDirectorEditor(meta, null, segIndex, { node });
                 } catch (e) {
                     console.error("[Neo Studio] open director editor failed", e);
-                    showToast(app, "error", "打开配方编辑器失败", String(e));
+                    showToast(app, "error", t("打开配方编辑器失败"), String(e));
                 } finally {
                     editBtn.disabled = false;
                 }
@@ -515,7 +516,7 @@ app.registerExtension({
             const editBtn = document.createElement("button");
             editBtn.type = "button";
             editBtn.className = "neo-dtl-edit";
-            editBtn.title = "编辑分段配方";
+            editBtn.title = t("编辑分段配方");
             editBtn.textContent = "✎";
             editBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
             editBtn.addEventListener("click", (e) => { e.stopPropagation(); openEditor(); });
@@ -531,7 +532,7 @@ app.registerExtension({
             const syncPreviewBtn = () => {
                 const on = previewWidget ? !!previewWidget.value : true;
                 previewBtn.classList.toggle("neo-dtl-preview-on", on);
-                previewBtn.title = on ? "节点内实时预览：开（taeh3 真彩，≤1024）" : "节点内实时预览：关（采样期间不出预览）";
+                previewBtn.title = on ? t("节点内实时预览：开（taeh3 真彩，≤1024）") : t("节点内实时预览：关（采样期间不出预览）");
             };
             previewBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
             previewBtn.addEventListener("click", (e) => {
@@ -567,8 +568,8 @@ app.registerExtension({
             const newBtn = document.createElement("button");
             newBtn.type = "button";
             newBtn.className = "neo-dtl-new";
-            newBtn.title = "新建分镜视频导演配方";
-            newBtn.textContent = "＋ 新增导演配方";
+            newBtn.title = t("新建分镜视频导演配方");
+            newBtn.textContent = t("＋ 新增导演配方");
             newBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
             newBtn.addEventListener("click", (e) => { e.stopPropagation(); openDirectorEditor(null); });
             actBar.appendChild(newBtn);

@@ -7,6 +7,7 @@
 import { app } from "../../../../scripts/app.js";
 import { api } from "../../../../scripts/api.js";
 import { attachSkillPickerToComboWidget, createSkillStatusRow } from "./skill.js";
+import { t } from "./js/core/i18n.js";
 
 app.registerExtension({
     name: "NeoImageGenEdit.DimDefaults",
@@ -21,7 +22,7 @@ app.registerExtension({
             const skillWidget = node.widgets?.find((w) => w.name === "skill");
             // 点击 skill combo → 弹居中技能选择窗（替代原生下拉）；选中写回 widget.value，
             // 其 callback 已被下方包装为 loadDims(true)，故尺寸预设自动刷新
-            if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: "选择 Skill（生图/编辑）" });
+            if (skillWidget) attachSkillPickerToComboWidget(skillWidget, { title: t("选择 Skill（生图/编辑）") });
 
             // 节点底部 Skill 有效性状态条：选完 skill 后台检测缺模型/缺节点，有缺失显示告警并可点开详情修复
             // （skill 下拉存的是技能名称，状态条内部反查真实 skill 再校验）

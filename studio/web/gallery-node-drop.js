@@ -9,6 +9,7 @@
 import { app } from "../../../../scripts/app.js";
 import { applyImageToTarget } from "./image-gen.js";
 import { isImageFile, isVideoFile, isAudioFile, showToast } from "./gallery-utils.js";
+import { t, tf } from "./js/core/i18n.js";
 
 const NEO_GALLERY_MIME = "application/x-neo-gallery";
 
@@ -167,9 +168,9 @@ export function attachGalleryNodeDrop() {
         e.stopPropagation();
         try {
             await applyImageToTarget(target, payload);
-            showToast(app, "success", "已发送", `写入 ${target.node.title || target.node.comfyClass || target.node.type || "节点"} #${target.node.id}`);
+            showToast(app, "success", t("已发送"), tf("写入 {node} #{id}", { node: target.node.title || target.node.comfyClass || target.node.type || t("节点"), id: target.node.id }));
         } catch (err) {
-            showToast(app, "error", "发送失败", err?.message || String(err));
+            showToast(app, "error", t("发送失败"), err?.message || String(err));
         }
     }, true);
 

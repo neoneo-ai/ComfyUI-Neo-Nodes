@@ -15,6 +15,7 @@
  *   （摘要含缺失节点/模型的名称芯片与复制按钮，方便一键复制去安装/下载）
  */
 import { getNodeDefs, getModelList } from "./js/core/object-info.js";
+import { t, tf } from "./js/core/i18n.js";
 
 const GAP_X = 36, GAP_Y = 12, PAD = 12;
 // 列宽按该列节点实际内容推导：短列收窄省横向空间，长列最多 NODE_W_MAX 减少截断；
@@ -617,7 +618,7 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
         const list = (issues[id] ||= []);
         const cls = node && node.class_type;
         if (objectInfo && cls && !objectInfo[cls]) {
-            list.push({ kind: "missing_node", message: `节点未安装：${cls}`, value: cls });
+            list.push({ kind: "missing_node", message: tf("节点未安装：{cls}", { cls }), value: cls });
             counts.missingNodes++;
             continue; // 节点不存在则查不到输入类型，跳过后续检查
         }
@@ -625,7 +626,7 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
         const def = objectInfo && cls ? objectInfo[cls].input : null;
         for (const [name, value] of Object.entries(inputs)) {
             if (typeof value === "string" && TEMPLATE_RE.test(value)) {
-                list.push({ kind: "template", message: `${name} 为模板变量：${value}` });
+                list.push({ kind: "template", message: tf("{name} 为模板变量：{value}", { name, value }) });
                 counts.templates++;
                 continue; // 待替换值不做存在性判断
             }
@@ -651,7 +652,7 @@ export function validateWorkflow(workflow, objectInfo, modelLists) {
             const normList = files.map((f) => String(f).replace(/\\/g, "/"));
             const v = value.replace(/\\/g, "/");
             if (!normList.includes(v) && !normList.includes(v + ".safetensors") && !normList.includes(v + ".ckpt")) {
-                list.push({ kind: "missing_model", message: `模型未找到：${value}（${label}）`, value, label });
+                list.push({ kind: "missing_model", message: tf("模型未找到：{value}（{label}）", { value, label }), value, label });
                 counts.missingModels++;
             }
         }
@@ -734,7 +735,7 @@ function nodeInputLines(workflow, id, maxChars) {
         ...groupLines,
     ];
     if (all.length > MAX_INPUT_LINES) {
-        return [...all.slice(0, MAX_INPUT_LINES), `… +${all.length - MAX_INPUT_LINES} 项`];
+        return [...all.slice(0, MAX_INPUT_LINES), tf("… +{n} 项", { n: all.length - MAX_INPUT_LINES })];
     }
     return all;
 }
@@ -758,7 +759,7 @@ function nodeRefLabel(id, workflow) {
 
 function nodeTooltip(id, workflow, issues) {
     const node = workflow[id];
-    const injected = node && node.runtime_injected ? "（运行时动态注入）" : "";
+    const injected = node && node.runtime_injected ? t("（运行时动态注入）") : "";
     const label = (node && node.class_type) || "?";
     const idLabel = nodeIdLabel(id);
     const lines = [label + (idLabel ? ` ${idLabel}` : "") + injected];
@@ -892,9 +893,9 @@ export function renderWorkflowGraph(container, workflow, validation, summaryTarg
     summary.className = "rs-wf-summary";
     const c = (validation && validation.counts) || { missingNodes: 0, missingModels: 0, templates: 0 };
     const parts = [];
-    if (c.missingNodes) parts.push(`⚠️ ${c.missingNodes} 个节点未安装`);
-    if (c.missingModels) parts.push(`⚠️ ${c.missingModels} 个模型缺失`);
-    if (c.templates) parts.push(`🔵 ${c.templates} 个模板变量运行时填入`);
+    if (c.missingNodes) parts.push(tf("⚠️ {n} 个节点未安装", { n: c.missingNodes }));
+    if (c.missingModels) parts.push(tf("⚠️ {n} 个模型缺失", { n: c.missingModels }));
+    if (c.templates) parts.push(tf("🔵 {n} 个模板变量运行时填入", { n: c.templates }));
     const countLine = document.createElement("div");
     countLine.className = "rs-wf-summary-count";
     countLine.textContent = parts.join(" · ");
@@ -924,7 +925,7 @@ export function renderWorkflowGraph(container, workflow, validation, summaryTarg
             btn.className = "rs-wf-copy";
             btn.type = "button";
             btn.textContent = "📋";
-            btn.title = "复制名称";
+            btn.title = t("复制名称");
             btn.onclick = () => copyName(i.value, btn);
             chip.append(name, btn);
             chipsRow.appendChild(chip);

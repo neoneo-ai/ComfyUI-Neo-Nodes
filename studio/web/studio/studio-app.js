@@ -571,7 +571,7 @@ function createLauncherPanel() {
             return;
         }
         const resp = await api.fetchApi("/neo_studio/launcher");
-        if (!resp.ok) throw new Error(`读取启动设置失败：${resp.status}`);
+        if (!resp.ok) throw new Error(tf("读取启动设置失败：{status}", { status: resp.status }));
         render(await resp.json());
     }
 

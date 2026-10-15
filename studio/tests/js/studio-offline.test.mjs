@@ -3,10 +3,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mockRoute, jsonResponse, sleep, click, flush, fetchLog, resetEnv } from "./setup.mjs";
-import { setLang } from "../../web/js/core/i18n.js";
-
-// 断言写的是中文文案：jsdom 的 navigator.language 是 en-US，不钉住基线整页会跑成英文界面
-setLang("zh");
 
 const wsInstances = [];
 globalThis.WebSocket = class {

@@ -27,13 +27,13 @@ const REPO_URL = "https://github.com/neoneo-ai/neo-studio";
 // 创建节点子菜单：主节点；运行时按 LiteGraph.registeredNodes 过滤（模块加载失败自动隐藏）
 // NeoH3SegmentRun 为内部节点（/neo_video_gen/run_segment 组装 prompt 用），不列进菜单
 const NODE_ITEMS = [
-    { type: "NeoPromptAgent", label: "⚡ Neo Prompt Agent（提示词智能体）" },
-    { type: "NeoPromptEncoder", label: "📝 Neo Prompt Encoder（提示词编码器）" },
-    { type: "NeoImageGenEdit", label: "🎨 Neo Image Gen & Edit（图像生成与编辑）" },
-    { type: "NeoH3VideoDirector", label: "🎞️ Neo H3 Video Director（视频导演）" },
-    { type: "NeoBundleExpand", label: "📦 Neo Bundle Expand（Bundle 展开）" },
-    { type: "NeoRefGrid", label: "🔲 Neo Reference Grid（参考图宫格）" },
-    { type: "NeoGridSplit", label: "🧩 Neo Grid Split（宫格图拆分）" },
+    { type: "NeoPromptAgent", label: t("⚡ Neo Prompt Agent（提示词智能体）") },
+    { type: "NeoPromptEncoder", label: t("📝 Neo Prompt Encoder（提示词编码器）") },
+    { type: "NeoImageGenEdit", label: t("🎨 Neo Image Gen & Edit（图像生成与编辑）") },
+    { type: "NeoH3VideoDirector", label: t("🎞️ Neo H3 Video Director（视频导演）") },
+    { type: "NeoBundleExpand", label: t("📦 Neo Bundle Expand（Bundle 展开）") },
+    { type: "NeoRefGrid", label: t("🔲 Neo Reference Grid（参考图宫格）") },
+    { type: "NeoGridSplit", label: t("🧩 Neo Grid Split（宫格图拆分）") },
 ];
 
 let menuEl = null;

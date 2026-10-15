@@ -6,6 +6,7 @@
  */
 
 import { api } from "../../../../scripts/api.js";
+import { t } from "./js/core/i18n.js";
 
 const VOICE_API = "/neo_voice";
 const VOICE_STATUS_EVENT = "rs.voice_gen.status";
@@ -81,7 +82,7 @@ export function watchVoiceTask(taskId, onSnapshot, isCancelled) {
             resync();
         }
         timeout = setTimeout(
-            () => finish({ status: "failed", error: "等待语音生成超时，请稍后在 Gallery 查看" }),
+            () => finish({ status: "failed", error: t("等待语音生成超时，请稍后在 Gallery 查看") }),
             40 * 60 * 1000
         );
         api.addEventListener(VOICE_STATUS_EVENT, onStatus);

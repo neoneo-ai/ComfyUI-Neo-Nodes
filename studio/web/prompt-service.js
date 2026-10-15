@@ -4,6 +4,7 @@
  */
 
 import { mkEl } from "./dom-utils.js";
+import { t } from "./js/core/i18n.js";
 
 // ==========================================
 // 远程 LLM 配置缓存
@@ -503,7 +504,7 @@ function createStreamOutputHandlers({ textarea, refreshPreview, onDone, onError 
         if (thinkingEl) return thinkingEl;
         thinkingEl = mkEl("div", "rs-thinking");
         const label = mkEl("div", "rs-thinking-label");
-        label.textContent = "💭 思考中…";
+        label.textContent = t("💭 思考中…");
         thinkingEl.appendChild(label);
         thinkingEl.appendChild(mkEl("div", "rs-thinking-body"));
         wrapper.insertBefore(thinkingEl, textarea);
@@ -519,7 +520,7 @@ function createStreamOutputHandlers({ textarea, refreshPreview, onDone, onError 
         if (!statusEl) {
             statusEl = mkEl("div", "rs-thinking");
             const label = mkEl("div", "rs-thinking-label");
-            label.textContent = "📋 处理流程";
+            label.textContent = t("📋 处理流程");
             statusEl.appendChild(label);
             statusEl.appendChild(mkEl("div", "rs-thinking-body"));
             wrapper.insertBefore(statusEl, textarea);

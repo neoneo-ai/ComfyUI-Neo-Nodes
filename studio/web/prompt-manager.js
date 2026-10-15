@@ -5,6 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { collectWorkflowAssets, collectWorkflowResults, collectWorkflowLoras, saveRecipe, listRecipes, deleteRecipe, applyRecipeToWorkflow, RECIPE_ICON_SVG } from "./recipes.js";
+import { t, tf } from "./js/core/i18n.js";
 
 import {
     savePrompt,
@@ -24,9 +25,9 @@ import { actionToast } from "./toast.js";
 function llmAnalysisErrorToast(detail) {
     actionToast({
         severity: "warning",
-        summary: "LLM 分析提示词失败",
-        detail: `${detail}。请手动填写标题/标签，或检查 API Key / 模型 / 端点。`,
-        actionLabel: "打开 LLM 设置",
+        summary: t("LLM 分析提示词失败"),
+        detail: tf("{err}。请手动填写标题/标签，或检查 API Key / 模型 / 端点。", { err: detail }),
+        actionLabel: t("打开 LLM 设置"),
         onAction: openLLMSettingsModal,
     });
 }
@@ -42,9 +43,9 @@ function detectGenType(graph) {
 // 预设列表的过滤便签：图像（默认）/ 视频（presets 下 video/ 目录的提示词）/ 配方（普通配方）。
 // 用户选择写入 localStorage，下次打开沿用。
 const FILTER_TABS = [
-    { key: "image", label: "图像" },
-    { key: "video", label: "视频" },
-    { key: "recipe", label: "配方" },
+    { key: "image", label: t("图像") },
+    { key: "video", label: t("视频") },
+    { key: "recipe", label: t("配方") },
 ];
 const FILTER_TAB_KEY = "rs.preset_filter";
 
@@ -91,10 +92,10 @@ function createOverlayWithSearch() {
 function createInputModal() {
     const modal = mkEl("div", "rs-preset-name-input");
     const aiStatus = mkEl("div", "rs-ai-status processing");
-    aiStatus.innerHTML = "⏳ AI 正在分析提示词...";
+    aiStatus.innerHTML = t("⏳ AI 正在分析提示词...");
 
     const label = mkEl("div", "rs-input-label");
-    label.textContent = "名称:";
+    label.textContent = t("名称:");
 
     const inputWrapper = mkEl("div", "rs-input-wrapper");
     const field = mkEl("input", "rs-input-field");
@@ -110,7 +111,8 @@ function createInputModal() {
 
     tagList.forEach(tag => {
         const tagBtn = mkEl("button", "rs-tag-btn");
-        tagBtn.textContent = tag;
+        tagBtn.dataset.tag = tag;
+        tagBtn.textContent = t(tag);
         tagBtn.addEventListener("click", () => {
             if (selectedTags.has(tag)) {
                 selectedTags.delete(tag);
@@ -129,20 +131,20 @@ function createInputModal() {
     // 同时保存结果：把当前工作流最近一次执行的输出存入配方 samples/（用于封面与预览），
     // 示例文件内嵌了 ComfyUI 工作流，可在详情浮层一键复制回画布。
     const saveResultsRow = mkEl("label", "rs-save-results-row");
-    saveResultsRow.title = "把当前工作流最近一次执行的输出存入配方，用于封面与预览展示；示例内嵌工作流，可在详情浮层一键复制回画布";
+    saveResultsRow.title = t("把当前工作流最近一次执行的输出存入配方，用于封面与预览展示；示例内嵌工作流，可在详情浮层一键复制回画布");
     const saveResultsCheck = mkEl("input", "rs-save-results-check");
     saveResultsCheck.type = "checkbox";
     saveResultsCheck.checked = true; // 默认选中当前运行结果与工作流备份
     const saveResultsText = mkEl("span", "");
-    saveResultsText.textContent = "同时保存结果";
+    saveResultsText.textContent = t("同时保存结果");
     saveResultsRow.append(saveResultsCheck, saveResultsText);
     saveResultsRow.style.display = "none";
 
     const btnsDiv = mkEl("div", "rs-input-buttons");
     const okBtn = mkEl("button", "rs-input-ok-btn");
-    okBtn.textContent = "保存提示词";
+    okBtn.textContent = t("保存提示词");
     const recipeOkBtn = mkEl("button", "rs-input-ok-btn rs-input-recipe-btn");
-    recipeOkBtn.innerHTML = `${RECIPE_ICON_SVG}<span>保存配方</span>`;
+    recipeOkBtn.innerHTML = `${RECIPE_ICON_SVG}<span>${t("保存配方")}</span>`;
     recipeOkBtn.style.display = "none";
     const cancelBtn = mkEl("button", "rs-input-cancel-btn");
     cancelBtn.textContent = "Cancel";
@@ -474,20 +476,20 @@ function createPromptManagerUI() {
 
             recipeHint.style.display = allowRecipe ? "block" : "none";
             if (allowRecipe) {
-                recipeHint.textContent = "⏳ 正在收集工作流资源...";
+                recipeHint.textContent = t("⏳ 正在收集工作流资源...");
                 collectWorkflowAssets(node).then(assets => {
                     const p = (customTextarea?.value || currentText).trim();
-                    recipeHint.textContent = `配方将包含 ${assets.length} 个资源（当前子图中已连线的 LoadImage/LoadVideo/LoadAudio）${p ? " + 当前提示词" : ""}。`;
+                    recipeHint.textContent = tf("配方将包含 {n} 个资源（当前子图中已连线的 LoadImage/LoadVideo/LoadAudio）{p}。", { n: assets.length, p: p ? t(" + 当前提示词") : "" });
                 }).catch(e => {
                     console.error("[Neo Recipes] Collect failed:", e);
-                    recipeHint.textContent = "⚠️ 工作流资源收集失败";
+                    recipeHint.textContent = t("⚠️ 工作流资源收集失败");
                 });
             }
 
             if (currentText.trim()) {
                 saveBtn.disabled = true;
                 aiStatus.className = "rs-ai-status processing";
-                aiStatus.innerHTML = "⏳ AI 正在分析提示词...";
+                aiStatus.innerHTML = t("⏳ AI 正在分析提示词...");
 
                 Promise.all([
                     extractTitle(currentText),
@@ -502,18 +504,18 @@ function createPromptManagerUI() {
                         const classifyList = classifyText.split(/[,，]/).map(s => s.trim()).filter(s => s);
 
                         tagButtons.forEach(btn => {
-                            const btnText = btn.textContent.trim();
+                            const btnText = btn.dataset.tag;
                             if (classifyList.includes(btnText)) {
                                 selectedTags.add(btnText);
                                 btn.classList.add("rs-tag-selected");
                             }
                         });
                         aiStatus.className = "rs-ai-status success";
-                        aiStatus.innerHTML = "✅ AI 分析完成";
+                        aiStatus.innerHTML = t("✅ AI 分析完成");
                     } else {
                         aiStatus.className = "rs-ai-status error";
-                        aiStatus.innerHTML = "❌ AI 分析失败，请手动填写";
-                        llmAnalysisErrorToast(dataClassify.error || dataTitle.error || "未能识别标题与标签");
+                        aiStatus.innerHTML = t("❌ AI 分析失败，请手动填写");
+                        llmAnalysisErrorToast(dataClassify.error || dataTitle.error || t("未能识别标题与标签"));
                     }
                 }).catch(e => {
                     console.error("Auto-extract error:", e);
@@ -548,14 +550,14 @@ function createPromptManagerUI() {
                 const genType = detectGenType(node.graph);
                 const result = await saveRecipe(name, promptText, assets, results, loras, null, genType);
                 if (result.success) {
-                    const extra = result.sample_added ? ` + ${result.sample_added} 结果` : "";
-                    app.extensionManager.toast.add({ severity: "success", summary: "配方已保存", detail: `${name}（${result.asset_count} 资源${extra}）`, life: 4000 });
+                    const extra = result.sample_added ? tf(" + {n} 结果", { n: result.sample_added }) : "";
+                    app.extensionManager.toast.add({ severity: "success", summary: t("配方已保存"), detail: tf("{name}（{n} 资源{extra}）", { name, n: result.asset_count, extra }), life: 4000 });
                 } else {
-                    app.extensionManager.toast.add({ severity: "error", summary: "保存失败", detail: result.error || "Unknown error", life: 5000 });
+                    app.extensionManager.toast.add({ severity: "error", summary: t("保存失败"), detail: result.error || "Unknown error", life: 5000 });
                 }
             } catch (e) {
                 console.error("[Neo Recipes] Save failed:", e);
-                app.extensionManager.toast.add({ severity: "error", summary: "保存失败", detail: e.message, life: 5000 });
+                app.extensionManager.toast.add({ severity: "error", summary: t("保存失败"), detail: e.message, life: 5000 });
             }
         }
 
@@ -638,7 +640,7 @@ function createPromptManagerUI() {
                         const icon = mkEl("span", "rs-recipe-icon");
                         icon.innerHTML = RECIPE_ICON_SVG;
                         contentSpan.prepend(icon);
-                        contentSpan.title = `${name}（${source === "presets" ? "内置" : "自定义"}配方${item.assetCount ? ` · ${item.assetCount} 个资源` : ''}）`;
+                        contentSpan.title = tf("{name}（{src}配方{assets}）", { name, src: source === "presets" ? t("内置") : t("自定义"), assets: item.assetCount ? tf(" · {n} 个资源", { n: item.assetCount }) : "" });
 
                         // 悬停浮出预览图：与侧边栏配方卡片用同一封面解析（_preview/_cover/首图）
                         const coverFile = item.cover || (Array.isArray(item.assets)
@@ -739,7 +741,7 @@ function createPromptManagerUI() {
 
         function buildCollectionBackRow() {
             const row = mkEl("div", "rs-preset-item rs-collection-back");
-            row.textContent = "← 返回预设列表";
+            row.textContent = t("← 返回预设列表");
             row.onclick = () => {
                 clearCollectionViewState();
                 presetSearchBar.value = "";
@@ -789,7 +791,7 @@ function createPromptManagerUI() {
 
             const box = mkEl("div", "rs-collection-matches");
             const head = mkEl("div", "rs-loading");
-            head.textContent = `📚 集合内匹配 ${entries.length} / ${total} 条`;
+            head.textContent = tf("📚 集合内匹配 {shown} / {total} 条", { shown: entries.length, total });
             box.appendChild(head);
 
             entries.forEach(({ title, text, name, source }) => {
@@ -821,12 +823,12 @@ function createPromptManagerUI() {
             if (!collectionView) return;
             if (collectionView.shown < collectionView.total) {
                 const more = mkEl("div", "rs-preset-item rs-load-more-item");
-                more.textContent = `加载更多（已显示 ${collectionView.shown} / ${collectionView.total}）`;
+                more.textContent = tf("加载更多（已显示 {shown} / {total}）", { shown: collectionView.shown, total: collectionView.total });
                 more.onclick = () => appendCollectionPage();
                 presetListBody.appendChild(more);
             } else if (collectionView.total) {
                 const end = mkEl("div", "rs-loading rs-list-end-item");
-                end.textContent = `共 ${collectionView.total} 条`;
+                end.textContent = tf("共 {n} 条", { n: collectionView.total });
                 presetListBody.appendChild(end);
             }
         }
@@ -936,7 +938,7 @@ function createPromptManagerUI() {
                     updateCollectionTail();
                     if (query && view.shown < view.total) {
                         const note = mkEl("div", "rs-loading rs-match-note");
-                        note.textContent = `仅显示前 ${COLLECTION_PAGE_LIMIT} 条匹配，可继续输入缩小范围`;
+                        note.textContent = tf("仅显示前 {n} 条匹配，可继续输入缩小范围", { n: COLLECTION_PAGE_LIMIT });
                         const more = presetListBody.querySelector(".rs-load-more-item");
                         if (more) presetListBody.insertBefore(note, more);
                         else presetListBody.appendChild(note);

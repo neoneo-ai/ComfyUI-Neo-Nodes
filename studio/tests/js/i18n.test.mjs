@@ -6,9 +6,11 @@ import { t, tf, getLang, setLang, applyLang, LANGS } from "../../web/js/core/i18
 
 const LANG_KEY = "neo_studio_lang";
 
-test("默认语言跟随浏览器语言（jsdom 为 en-US）", () => {
+test("默认语言跟随浏览器语言（jsdom 为 en-US）", async () => {
     localStorage.removeItem(LANG_KEY);
-    assert.equal(getLang(), "en");
+    // setup.mjs 把共享模块实例钉在中文基线，这里取一份新实例才测得到浏览器语言判定
+    const fresh = await import(`../../web/js/core/i18n.js?detect=${Date.now()}`);
+    assert.equal(fresh.getLang(), "en");
     assert.deepEqual(LANGS.map((l) => l.value), ["zh", "en"]);
 });
 

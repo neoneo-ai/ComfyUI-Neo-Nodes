@@ -78,8 +78,8 @@ test("选 English：落盘 localStorage 并整页刷新", async () => {
 });
 
 test("英文模式：顶栏静态壳、设置页 tab、语言提示都出英文", async () => {
-    setLang("en");
     mountStudio();
+    setLang("en");
     await openSettings();
 
     assert.equal(document.title, "Neo Studio", "窗口标题应换英文");
@@ -100,8 +100,8 @@ test("英文模式：顶栏静态壳、设置页 tab、语言提示都出英文"
 });
 
 test("英文模式：启动设置面板的标签、按钮、状态行出英文", async () => {
-    setLang("en");
     mountStudio();
+    setLang("en");
     window.pywebview = {
         api: {
             launcher_state: async () => ({

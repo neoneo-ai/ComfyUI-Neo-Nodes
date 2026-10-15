@@ -13,6 +13,7 @@ import { attachComboBox } from "./combo-box.js";
 import { setCurrentModel } from "./prompt-service.js";
 import { mkEl } from "./dom-utils.js";
 import { $el } from "../../scripts/ui.js";
+import { t } from "./js/core/i18n.js";
 
 // 字节数转人类可读大小（本地模型列表显示用）
 function formatFileSize(bytes) {
@@ -118,7 +119,7 @@ export function createModelConfigForm() {
 
     // Path convention hint
     const localDirHint = mkEl("div", "rs-form-hint");
-    localDirHint.innerHTML = "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配";
+    localDirHint.innerHTML = t("📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配");
     localDirHint.style.cssText = 'font-size:10px;color:#888;margin-top:2px;line-height:1.3;';
     localDirRow.appendChild(localDirHint);
 
@@ -128,7 +129,7 @@ export function createModelConfigForm() {
     localUnloadCheckbox.id = "rs-local-auto-unload";
     const localUnloadLabel = mkEl("label", "rs-form-label");
     localUnloadLabel.htmlFor = "rs-local-auto-unload";
-    localUnloadLabel.textContent = "本节点执行完自动卸载本地模型";
+    localUnloadLabel.textContent = t("本节点执行完自动卸载本地模型");
 
     // 复选框与标签在同一行（rs-config-row 默认纵向布局，用内层 flex 行对齐）
     const localUnloadRow = mkEl("div", "rs-config-row rs-local-unload");
@@ -151,7 +152,7 @@ export function createModelConfigForm() {
     nativeUnloadCheckbox.id = "rs-native-auto-unload";
     const nativeUnloadLabel = mkEl("label", "rs-form-label");
     nativeUnloadLabel.htmlFor = "rs-native-auto-unload";
-    nativeUnloadLabel.textContent = "本节点执行完自动卸载原生模型";
+    nativeUnloadLabel.textContent = t("本节点执行完自动卸载原生模型");
     const nativeUnloadRow = mkEl("div", "rs-config-row rs-local-unload");
     const nativeUnloadLine = mkEl("div", "rs-local-unload-line");
     nativeUnloadLine.appendChild(nativeUnloadCheckbox);
@@ -181,7 +182,7 @@ export function createModelConfigForm() {
     // 无预设的（OpenAI Compatible）端点必须手填，保持常显且不给收起入口。
     const advancedDetails = mkEl("details", "rs-remote-advanced");
     const advancedSummary = mkEl("summary", "rs-remote-advanced-summary");
-    advancedSummary.textContent = "自定义端点";
+    advancedSummary.textContent = t("自定义端点");
     // Chromium <details> 会把非 summary 子元素包进匿名块，gap 不生效；用 div 包裹让 flex gap 正确应用
     const advancedContent = mkEl("div", "rs-remote-adv-content");
     advancedContent.append(baseUrlRow);
@@ -196,15 +197,15 @@ export function createModelConfigForm() {
     // 显式保存按钮：替代防抖自动保存（单模型下拉不触发 change、blur 时序难排查，落盘时机不可靠）
     const saveBtn = mkEl("button", "rs-gen-save");
     saveBtn.type = "button";
-    saveBtn.textContent = "💾 保存设置";
+    saveBtn.textContent = t("💾 保存设置");
     let saveResetTimer = null;
     saveBtn.addEventListener("click", async () => {
         saveBtn.disabled = true;
         const ok = await saveForm();
         saveBtn.disabled = false;
-        saveBtn.textContent = ok ? "✓ 已保存" : "✕ 保存失败";
+        saveBtn.textContent = ok ? t("✓ 已保存") : t("✕ 保存失败");
         clearTimeout(saveResetTimer);
-        saveResetTimer = setTimeout(() => { saveBtn.textContent = "💾 保存设置"; }, 1600);
+        saveResetTimer = setTimeout(() => { saveBtn.textContent = t("💾 保存设置"); }, 1600);
     });
     const saveRow = mkEl("div", "llm-btn-row");
     saveRow.appendChild(saveBtn);
@@ -213,19 +214,19 @@ export function createModelConfigForm() {
     // 连接测试按钮：用当前表单值发送「你好」，成功返回回复摘要（本地模型不适用）
     const testBtn = mkEl("button", "rs-gen-test");
     testBtn.type = "button";
-    testBtn.textContent = "🔌 测试连接";
+    testBtn.textContent = t("🔌 测试连接");
     let testBusy = false;
     testBtn.addEventListener("click", async () => {
         if (testBusy) return;
         const def = getProviderDef(providerSelect.value);
         if (def.type === 'local') {
-            setLocalStatusMsg("本地模型无需连接测试", "#999");
+            setLocalStatusMsg(t("本地模型无需连接测试"), "#999");
             return;
         }
         testBusy = true;
         testBtn.disabled = true;
-        testBtn.textContent = "⏳ 测试中…";
-        setLocalStatusMsg("正在测试连接…", "#999", false);
+        testBtn.textContent = t("⏳ 测试中…");
+        setLocalStatusMsg(t("正在测试连接…"), "#999", false);
         try {
             const result = await window.NeoNodes?.testLLMConnection?.({
                 provider: providerSelect.value,
@@ -234,16 +235,16 @@ export function createModelConfigForm() {
                 model: getModelValue(),
             });
             if (result && result.success) {
-                setLocalStatusMsg("✅ 连接正常：" + (result.reply || ""), "#22c55e", false);
+                setLocalStatusMsg(t("✅ 连接正常：") + (result.reply || ""), "#22c55e", false);
             } else {
-                setLocalStatusMsg("❌ 连接失败：" + ((result && result.error) || "未知错误"), "#dc2626", false);
+                setLocalStatusMsg(t("❌ 连接失败：") + ((result && result.error) || t("未知错误")), "#dc2626", false);
             }
         } catch (e) {
-            setLocalStatusMsg("❌ 测试出错：" + (e.message || e), "#dc2626", false);
+            setLocalStatusMsg(t("❌ 测试出错：") + (e.message || e), "#dc2626", false);
         } finally {
             testBusy = false;
             testBtn.disabled = false;
-            testBtn.textContent = "🔌 测试连接";
+            testBtn.textContent = t("🔌 测试连接");
         }
     });
     saveRow.insertBefore(testBtn, saveBtn);
@@ -303,7 +304,7 @@ export function createModelConfigForm() {
                 // 本地服务（LM Studio / Ollama 等）会给出是否已加载：未加载也可选，
                 // 服务端收到请求时按需加载（同 Cline），这里只做状态提示
                 const size = m && m.size > 0 ? `  (${formatFileSize(m.size)})` : '';
-                const state = m && m.loaded === true ? '  ● 已加载' : (m && m.loaded === false ? '  ○ 未加载' : '');
+                const state = m && m.loaded === true ? t("  ● 已加载") : (m && m.loaded === false ? t("  ○ 未加载") : '');
                 const vision = m && m.vision ? ' 🖼️' : '';
                 const label = m && m.name && m.name !== id ? `${m.name} (${id})` : id;
                 opt.textContent = label + size + state + vision;
@@ -313,12 +314,12 @@ export function createModelConfigForm() {
             if (!targetSelect.options.length) {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = '○ 无可用模型';
+                opt.textContent = t("○ 无可用模型");
                 targetSelect.appendChild(opt);
             }
         } catch (e) {
             console.warn('Failed to fetch models:', e);
-            targetSelect.innerHTML = '<option value="">❌ 无法连接服务</option>';
+            targetSelect.innerHTML = `<option value="">${t("❌ 无法连接服务")}</option>`;
         } finally {
             targetSelect.disabled = false;
         }
@@ -480,11 +481,11 @@ export function createModelConfigForm() {
         const masked = isMaskedKey(saved.api_key);
         apiKeyInput.value = saved.api_key || '';
         if (masked) {
-            apiKeyInput.placeholder = '已保存（留空沿用）';
+            apiKeyInput.placeholder = t("已保存（留空沿用）");
         } else if (def.requires_api_key) {
-            apiKeyInput.placeholder = '必填：控制台创建的 API Key';
+            apiKeyInput.placeholder = t("必填：控制台创建的 API Key");
         } else {
-            apiKeyInput.placeholder = '可选：本地/自建服务可留空';
+            apiKeyInput.placeholder = t("可选：本地/自建服务可留空");
         }
     };
 
@@ -609,7 +610,7 @@ export function createModelConfigForm() {
         // 云厂商必填 API Key：输入框空且服务端也没存过时给一条醒目提示
         // （留空=沿用已存密钥，所以只在两处都没有时提示，避免误报）
         if (def.requires_api_key && !config.api_key && !isMaskedKey(cfg.providers?.[provider]?.api_key)) {
-            setLocalStatusMsg("⚠️ 云供应商必填 API Key，否则调用会 401", "#eab308");
+            setLocalStatusMsg(t("⚠️ 云供应商必填 API Key，否则调用会 401"), "#eab308");
         }
 
         // 本地模式：额外经 set_model 持久化 + 切换常驻模型（覆盖单模型不触发 change 的场景）；
@@ -721,17 +722,17 @@ export function openLLMSettingsModal() {
     if (_llmConfigModal) return;   // 已打开：忽略，避免叠加
     const form = createModelConfigForm();
 
-    const saveCloseBtn = $el('button', { className: 'neo-director-llm-btn-save', type: 'button', textContent: '💾 保存并关闭' });
-    const discardBtn = $el('button', { className: 'neo-director-llm-btn-discard', type: 'button', textContent: '放弃修改' });
-    const keepBtn = $el('button', { className: 'neo-director-llm-btn-keep', type: 'button', textContent: '继续编辑' });
+    const saveCloseBtn = $el('button', { className: 'neo-director-llm-btn-save', type: 'button', textContent: t("💾 保存并关闭") });
+    const discardBtn = $el('button', { className: 'neo-director-llm-btn-discard', type: 'button', textContent: t("放弃修改") });
+    const keepBtn = $el('button', { className: 'neo-director-llm-btn-keep', type: 'button', textContent: t("继续编辑") });
     const dirtyConfirm = $el('div', { className: 'neo-director-llm-dirty', hidden: true }, [
-        $el('span', { textContent: '⚠ 有未保存的修改' }),
+        $el('span', { textContent: t("⚠ 有未保存的修改") }),
         $el('div', { className: 'neo-director-llm-dirty-actions' }, [saveCloseBtn, discardBtn, keepBtn]),
     ]);
 
-    const closeBtn = $el('button', { className: 'neo-director-llm-close', type: 'button', title: '关闭（Esc）', textContent: '✕' });
+    const closeBtn = $el('button', { className: 'neo-director-llm-close', type: 'button', title: t("关闭（Esc）"), textContent: '✕' });
     const head = $el('div', { className: 'neo-director-llm-head' }, [
-        $el('span', { textContent: '🤖 LLM 配置' }),
+        $el('span', { textContent: t("🤖 LLM 配置") }),
         closeBtn,
     ]);
     const bodyEl = $el('div', { className: 'neo-director-llm-body' }, [form.el]);

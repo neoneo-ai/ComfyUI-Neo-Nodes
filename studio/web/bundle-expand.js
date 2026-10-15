@@ -2,6 +2,7 @@
 // 数据来自后端 expand() 返回的 ui payload（{"prompt":[...], "images":[dataURI|null,...]}），经 node.onExecuted 送达。
 import { app } from "../../../../scripts/app.js";
 import { Lightbox } from "./lightbox.js";
+import { t } from "./js/core/i18n.js";
 
 if (!document.getElementById("neo-be-css")) {
     const link = document.createElement("link");
@@ -85,20 +86,20 @@ function renderView(node, root, output) {
     const images = (output && Array.isArray(output.images)) ? output.images : [];
 
     // 提示词区
-    root.appendChild(makeLabel("💬", "提示词"));
+    root.appendChild(makeLabel("💬", t("提示词")));
     const promptBox = document.createElement("div");
     promptBox.className = "neo-be-prompt";
     if (prompt) {
         promptBox.textContent = prompt;
     } else {
         promptBox.classList.add("neo-be-prompt-empty");
-        promptBox.textContent = "（无提示词）";
+        promptBox.textContent = t("（无提示词）");
     }
     root.appendChild(promptBox);
 
     // 参考图区：编号对应 image_N 输出槽位；坏参考槽位为 null，跳过显示但保留槽位编号。
     const validCount = images.filter(u => u).length;
-    root.appendChild(makeLabel("🖼️", "参考图", validCount || null));
+    root.appendChild(makeLabel("🖼️", t("参考图"), validCount || null));
 
     if (validCount) {
         const grid = document.createElement("div");
@@ -127,7 +128,7 @@ function renderView(node, root, output) {
     } else {
         const none = document.createElement("div");
         none.className = "neo-be-none";
-        none.textContent = "无参考图";
+        none.textContent = t("无参考图");
         root.appendChild(none);
     }
 
@@ -164,7 +165,7 @@ app.registerExtension({
             root.className = "neo-be-view";
             const hint = document.createElement("div");
             hint.className = "neo-be-hint";
-            hint.textContent = "等待执行…（运行后显示提示词与参考图）";
+            hint.textContent = t("等待执行…（运行后显示提示词与参考图）");
             root.appendChild(hint);
 
             // getMinHeight 以内容高度为下限：执行后节点不可缩短到裁切内容，但允许用户拉大。

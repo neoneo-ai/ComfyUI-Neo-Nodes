@@ -14,6 +14,7 @@ import { api } from "../../../../scripts/api.js";
 import { app } from "../../../../scripts/app.js";
 import { showToast } from './gallery-utils.js';
 import { openModelHub } from './model-hub.js';
+import { t, tf } from './js/core/i18n.js';
 
 // 修复行输入名 → 模型库落盘类别（与后端 workflow.py 的 _MODEL_FOLDER_BY_INPUT 同源）。
 // 模型没装时本地无候选可替换，只能去模型库下载，这里按输入名推断该落到哪个目录。
@@ -222,15 +223,15 @@ export function newPathEl(c) {
         s.title = c.new;
         s.style.cssText = 'color:#7d7;';
     } else {
-        s.textContent = '未找到可用文件';
+        s.textContent = t('未找到可用文件');
         s.style.cssText = 'color:#da6;';
-        if (c.candidates && c.candidates.length) s.title = `候选文件：${c.candidates.join('、')}`;
+        if (c.candidates && c.candidates.length) s.title = tf("候选文件：{files}", { files: c.candidates.join('、') });
     }
     return s;
 }
 
 /** 修复来源显示名（确认弹窗与修复记录共用） */
-export const SOURCE_LABELS = { canvas: '画布', gallery: '素材库', recipes: '配方', import: '导入', unknown: '其他' };
+export const SOURCE_LABELS = { canvas: t('画布'), gallery: t('素材库'), recipes: t('配方'), import: t('导入'), unknown: t('其他') };
 
 /**
  * 构建修改点表格（3 列：节点·输入 / 原路径 / 修复为）。
@@ -243,7 +244,7 @@ function buildPickSelect(c, onPick) {
     select.style.cssText = 'width:100%;background:#2a2a2a;color:#ddd;border:1px solid #555;border-radius:4px;padding:3px 6px;font-size:12.5px;';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = '— 手动选择替换文件 —';
+    placeholder.textContent = t('— 手动选择替换文件 —');
     select.appendChild(placeholder);
     for (const cand of c.candidates) {
         const opt = document.createElement('option');
@@ -263,8 +264,8 @@ function buildPickSelect(c, onPick) {
 function buildHubBtn(c) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = '📥 模型库';
-    btn.title = '本地没有可用文件，去模型库搜索并下载此模型';
+    btn.textContent = t('📥 模型库');
+    btn.title = t('本地没有可用文件，去模型库搜索并下载此模型');
     btn.style.cssText = 'flex:none;padding:2px 8px;background:#2a3a4a;color:#9ab;border:1px solid #445;border-radius:4px;cursor:pointer;font-size:11.5px;';
     btn.onclick = (e) => {
         e.stopPropagation();
@@ -295,7 +296,7 @@ export function buildChangesTable(changes, onPick, onSkip) {
         return td;
     };
     const headRow = document.createElement('tr');
-    for (const h of ['节点 · 输入', '原路径', '修复为']) headRow.appendChild(header(h));
+    for (const h of [t('节点 · 输入'), t('原路径'), t('修复为')]) headRow.appendChild(header(h));
     table.appendChild(headRow);
     table.append(col('220px'), col('1fr'), col('1fr'));
     // 字段名（unet_name / lora_name 等）默认省略；同一节点有多个失效输入时才显示以区分
@@ -322,13 +323,13 @@ export function buildChangesTable(changes, onPick, onSkip) {
             if (c.new && typeof c.score === 'number') {
                 const chip = document.createElement('span');
                 chip.textContent = Math.round(c.score * 100) + '%';
-                chip.title = '匹配置信度';
+                chip.title = t('匹配置信度');
                 chip.style.cssText = 'flex:none;color:#7aa;font-size:11px;border:1px solid #445;border-radius:8px;padding:0 6px;';
                 wrap.appendChild(chip);
             }
             if (c.low_confidence) {
                 const badge = document.createElement('span');
-                badge.textContent = '低置信';
+                badge.textContent = t('低置信');
                 badge.style.cssText = 'flex:none;color:#da6;font-size:11px;';
                 wrap.appendChild(badge);
                 if (onSkip) {
@@ -339,7 +340,7 @@ export function buildChangesTable(changes, onPick, onSkip) {
                     cb.type = 'checkbox';
                     cb.checked = false;
                     cb.onchange = () => onSkip(c, cb.checked);
-                    label.append(cb, '应用');
+                    label.append(cb, t('应用'));
                     wrap.appendChild(label);
                 }
             }
@@ -387,11 +388,11 @@ export function showRepairConfirmDialog(changes, opts = {}) {
             const missing = list.length - applied;
             const lowCount = lowConf(list).length;
             const picks = list.length && missing
-                ? (pickable(list).length ? '，其余可手动选择替换文件' : '')
+                ? (pickable(list).length ? t('，其余可手动选择替换文件') : '')
                 : '';
             title.textContent = missing
-                ? `检测到 ${list.length} 处失效的模型路径，${applied} 处已自动匹配${lowCount ? `（${lowCount} 处低置信，默认不应用）` : ''}${picks}`
-                : `检测到 ${applied} 处模型路径已失效，已匹配到可用文件`;
+                ? tf("检测到 {n} 处失效的模型路径，{applied} 处已自动匹配{low}{picks}", { n: list.length, applied, low: lowCount ? tf("（{lowCount} 处低置信，默认不应用）", { lowCount }) : '', picks })
+                : tf("检测到 {applied} 处模型路径已失效，已匹配到可用文件", { applied });
         };
 
         // 手动选择：change -> 选中的替换文件（选回空值 = 保持缺失）；
@@ -421,7 +422,7 @@ export function showRepairConfirmDialog(changes, opts = {}) {
             thresholdRow.style.cssText = 'display:flex;align-items:center;gap:6px;color:#9ab;font-size:12.5px;';
             const thresholdSel = document.createElement('select');
             thresholdSel.style.cssText = 'background:#2a2a2a;color:#ddd;border:1px solid #555;border-radius:4px;padding:2px 6px;font-size:12.5px;';
-            for (const [v, label] of [['strict', '严格'], ['standard', '标准'], ['loose', '宽松']]) {
+            for (const [v, label] of [['strict', t('严格')], ['standard', t('标准')], ['loose', t('宽松')]]) {
                 const opt = document.createElement('option');
                 opt.value = v;
                 opt.textContent = label;
@@ -438,7 +439,7 @@ export function showRepairConfirmDialog(changes, opts = {}) {
                     thresholdSel.disabled = false;
                 }
             };
-            thresholdRow.append('匹配阈值：', thresholdSel);
+            thresholdRow.append(t('匹配阈值：'), thresholdSel);
             box.appendChild(thresholdRow);
         }
         box.appendChild(body);
@@ -451,7 +452,7 @@ export function showRepairConfirmDialog(changes, opts = {}) {
             rememberBox.type = 'checkbox';
             rememberBox.checked = true;
             const rememberText = document.createElement('span');
-            rememberText.textContent = '记住手动选择 — 以后遇到相同的失效路径自动修复';
+            rememberText.textContent = t('记住手动选择 — 以后遇到相同的失效路径自动修复');
             rememberRow.append(rememberBox, rememberText);
             box.appendChild(rememberRow);
         }
@@ -460,7 +461,7 @@ export function showRepairConfirmDialog(changes, opts = {}) {
         btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:4px;';
         const base = 'padding:6px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
         const repairBtn = document.createElement('button');
-        repairBtn.textContent = '修复';
+        repairBtn.textContent = t('修复');
         repairBtn.style.cssText = base + 'background:#3a7a3a;color:#fff;';
         repairBtn.onclick = () => close({
             action: 'repair',
@@ -477,7 +478,7 @@ export function showRepairConfirmDialog(changes, opts = {}) {
             remember: rememberBox ? rememberBox.checked : false,
         });
         const cancelBtn = document.createElement('button');
-        cancelBtn.textContent = '取消';
+        cancelBtn.textContent = t('取消');
         cancelBtn.style.cssText = base + 'background:transparent;color:#999;border:1px solid #555;';
         cancelBtn.onclick = () => close({ action: 'cancel', decisions: [], remember: false });
         btns.append(repairBtn, cancelBtn);
@@ -530,7 +531,7 @@ export async function confirmWorkflowRepair(workflow, source) {
             result = second.data;
         } else {
             console.warn('[Neo Repair] apply manual picks failed:', second.error);
-            showToast(app, 'warning', '手动选择的修复未应用，已按自动匹配结果载入');
+            showToast(app, 'warning', t('手动选择的修复未应用，已按自动匹配结果载入'));
         }
     }
     recordRepairLog(result, source, workflow);
@@ -687,7 +688,7 @@ function applyRepairHint() {
     if (_repairHintCount > 0) {
         btn.dataset.origAria ??= btn.getAttribute('aria-label');
         btn.classList.add('neo-repair-hint');
-        btn.setAttribute('aria-label', `修复工作流：检测到 ${_repairHintCount} 处失效模型路径，点击修复`);
+        btn.setAttribute('aria-label', tf("修复工作流：检测到 {n} 处失效模型路径，点击修复", { n: _repairHintCount }));
     } else {
         btn.classList.remove('neo-repair-hint');
         const orig = btn.dataset.origAria;
@@ -732,7 +733,7 @@ function fitToContent() {
 export async function runRepair() {
     if (repairBusy) return;
     if (!app.graph?.nodes?.length) {
-        showToast(app, 'info', '画布为空，无需修复');
+        showToast(app, 'info', t('画布为空，无需修复'));
         return;
     }
     repairBusy = true;
@@ -741,7 +742,7 @@ export async function runRepair() {
         const r = await confirmWorkflowRepair(app.graph.serialize(), 'canvas');
         if (r.cancelled) return;
         if (r.repairUnavailable) {
-            showToast(app, 'warning', '修复检测不可用，画布保持原样', '后端修复接口未响应');
+            showToast(app, 'warning', t('修复检测不可用，画布保持原样'), t('后端修复接口未响应'));
             return;
         }
         if (r.repairedCount > 0) {
@@ -753,15 +754,15 @@ export async function runRepair() {
             }
             await afterLoadDetect(); // 原位修复后重跑静默检测，同步扳手按钮提示
             showToast(app, 'success', r.missingCount
-                ? `已修复 ${r.repairedCount} 处模型路径，${r.missingCount} 处未能匹配`
-                : `已修复 ${r.repairedCount} 处模型路径`);
+                ? tf("已修复 {ok} 处模型路径，{missing} 处未能匹配", { ok: r.repairedCount, missing: r.missingCount })
+                : tf("已修复 {ok} 处模型路径", { ok: r.repairedCount }));
         } else if (r.missingCount > 0) {
-            showToast(app, 'warning', `仍有 ${r.missingCount} 处失效模型路径未能匹配`);
+            showToast(app, 'warning', tf("仍有 {missing} 处失效模型路径未能匹配", { missing: r.missingCount }));
         } else {
-            showToast(app, 'info', '检查完成：未发现失效模型路径');
+            showToast(app, 'info', t('检查完成：未发现失效模型路径'));
         }
     } catch (err) {
-        showToast(app, 'error', '修复失败', String(err.message || err));
+        showToast(app, 'error', t('修复失败'), String(err.message || err));
     } finally {
         repairBusy = false;
     }
@@ -786,7 +787,7 @@ export function showRepairLogDialog() {
     const wfName = (typeof app.graph?.name === 'string' && app.graph.name.trim()) ? app.graph.name.trim() : '';
     const title = document.createElement('div');
     title.style.cssText = 'font-weight:bold;font-size:14px;color:#8cf;';
-    title.textContent = wfName ? `修复记录 · ${wfName}` : '修复记录';
+    title.textContent = wfName ? tf("修复记录 · {wf}", { wf: wfName }) : t('修复记录');
     box.appendChild(title);
 
     const log = getRepairLog(current);
@@ -795,8 +796,8 @@ export function showRepairLogDialog() {
     const summary = document.createElement('div');
     summary.style.cssText = 'color:#999;font-size:12px;';
     summary.textContent = log.length
-        ? `共 ${log.length} 次修复 · ${total} 处修改（未匹配 ${missing} 处）`
-        : '当前工作流暂无修复记录 — 在画布/素材/配方中确认修复后，修改点会按工作流记录在这里。';
+        ? tf("共 {n} 次修复 · {total} 处修改（未匹配 {missing} 处）", { n: log.length, total, missing })
+        : t('当前工作流暂无修复记录 — 在画布/素材/配方中确认修复后，修改点会按工作流记录在这里。');
     box.appendChild(summary);
 
     const body = document.createElement('div');
@@ -808,7 +809,7 @@ export function showRepairLogDialog() {
         group.style.cssText = 'margin-bottom:14px;';
         const label = document.createElement('div');
         label.style.cssText = 'padding:0 2px 4px;font-weight:bold;color:#8cf;font-size:12.5px;';
-        label.textContent = `${new Date(entry.time).toLocaleString('zh-CN', { hour12: false })} · ${SOURCE_LABELS[entry.source] || '其他'}`;
+        label.textContent = `${new Date(entry.time).toLocaleString('zh-CN', { hour12: false })} · ${SOURCE_LABELS[entry.source] || t('其他')}`;
         group.appendChild(label);
         group.appendChild(buildChangesTable(changes));
         body.appendChild(group);
@@ -819,19 +820,19 @@ export function showRepairLogDialog() {
     btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
     const base = 'padding:6px 14px;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
     const clearBtn = document.createElement('button');
-    clearBtn.textContent = '清空记录';
+    clearBtn.textContent = t('清空记录');
     clearBtn.style.cssText = base + 'background:transparent;color:#a66;border:1px solid #555;';
     clearBtn.onclick = () => {
         clearRepairLog(current);
         close();
-        showToast(app, 'info', '当前工作流修复记录已清空');
+        showToast(app, 'info', t('当前工作流修复记录已清空'));
     };
     const mappingsBtn = document.createElement('button');
-    mappingsBtn.textContent = '修复映射';
+    mappingsBtn.textContent = t('修复映射');
     mappingsBtn.style.cssText = base + 'background:#444;color:#ddd;';
     mappingsBtn.onclick = () => { close(); showRepairMappingsDialog(); };
     const closeBtn = document.createElement('button');
-    closeBtn.textContent = '关闭';
+    closeBtn.textContent = t('关闭');
     closeBtn.style.cssText = base + 'background:#444;color:#ddd;';
     closeBtn.onclick = close;
     btns.append(clearBtn, mappingsBtn, closeBtn);
@@ -871,7 +872,7 @@ export async function showRepairMappingsDialog() {
 
     const title = document.createElement('div');
     title.style.cssText = 'font-weight:bold;font-size:14px;color:#8cf;';
-    title.textContent = '修复映射';
+    title.textContent = t('修复映射');
     box.appendChild(title);
 
     const summary = document.createElement('div');
@@ -886,10 +887,10 @@ export async function showRepairMappingsDialog() {
     const btns = document.createElement('div');
     btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
     const clearBtn = document.createElement('button');
-    clearBtn.textContent = '清空全部';
+    clearBtn.textContent = t('清空全部');
     clearBtn.style.cssText = base + 'background:transparent;color:#a66;border:1px solid #555;';
     const closeBtn = document.createElement('button');
-    closeBtn.textContent = '关闭';
+    closeBtn.textContent = t('关闭');
     closeBtn.style.cssText = base + 'background:#444;color:#ddd;';
     closeBtn.onclick = close;
     btns.append(clearBtn, closeBtn);
@@ -897,10 +898,10 @@ export async function showRepairMappingsDialog() {
 
     const refreshSummary = () => {
         summary.textContent = loadError
-            ? '映射列表读取失败 — 后端接口未响应'
+            ? t('映射列表读取失败 — 后端接口未响应')
             : mappings.length
-                ? `共 ${mappings.length} 条映射 — 载入遇到相同失效路径（含大小写/扩展名差异）时自动替换`
-                : '暂无修复映射 — 在修复弹窗中手动选择替换文件并勾选「记住手动选择」后保存到这里。';
+                ? tf("共 {n} 条映射 — 载入遇到相同失效路径（含大小写/扩展名差异）时自动替换", { n: mappings.length })
+                : t('暂无修复映射 — 在修复弹窗中手动选择替换文件并勾选「记住手动选择」后保存到这里。');
         clearBtn.disabled = loadError || !mappings.length;
         clearBtn.style.opacity = clearBtn.disabled ? '0.5' : '1';
     };
@@ -916,7 +917,7 @@ export async function showRepairMappingsDialog() {
             label.textContent = `[${m.folder}] ${m.wanted} → ${m.replacement}`;
             label.title = label.textContent;
             const del = document.createElement('button');
-            del.textContent = '删除';
+            del.textContent = t('删除');
             del.style.cssText = 'flex:none;padding:2px 10px;border:1px solid #555;border-radius:4px;background:transparent;color:#a66;cursor:pointer;font-size:12px;';
             del.onclick = async () => {
                 try {
@@ -926,7 +927,7 @@ export async function showRepairMappingsDialog() {
                     renderRows();
                 } catch (e) {
                     console.warn('[Neo Repair] delete mapping:', e);
-                    showToast(app, 'error', '映射删除失败', String(e.message || e));
+                    showToast(app, 'error', t('映射删除失败'), String(e.message || e));
                 }
             };
             row.append(label, del);
@@ -942,7 +943,7 @@ export async function showRepairMappingsDialog() {
             renderRows();
         } catch (e) {
             console.warn('[Neo Repair] clear mappings:', e);
-            showToast(app, 'error', '映射清空失败', String(e.message || e));
+            showToast(app, 'error', t('映射清空失败'), String(e.message || e));
         }
     };
 

@@ -9,6 +9,7 @@ import { Lightbox } from "./lightbox.js";
 import { buildGenerationMenuItems, openReversePromptDialog, openLoraTagDialog } from "./gallery-gen.js";
 import { copyGalleryToInput } from "./media-transfer.js";
 import { openDirectorEditor } from "./director.js";
+import { t, tf } from "./js/core/i18n.js";
 
 // 已解码波形峰值的会话缓存：同一文件在页面内只请求/解码一次，跨卡片复用。
 // 持久化到后端本地目录由 /neo_gallery/waveform 负责（见 gallery.py）。
@@ -19,20 +20,20 @@ function _waveformKey(filename, subfolder) {
 
 function _relativeTime(ts) {
     const days = Math.floor((Date.now() / 1000 - ts) / 86400);
-    if (days <= 0) return "今天";
-    if (days < 30) return `${days} 天前`;
+    if (days <= 0) return t("今天");
+    if (days < 30) return tf("{n} 天前", { n: days });
     const months = Math.floor(days / 30);
-    if (months < 12) return `${months} 个月前`;
-    return `${Math.floor(months / 12)} 年前`;
+    if (months < 12) return tf("{n} 个月前", { n: months });
+    return tf("{n} 年前", { n: Math.floor(months / 12) });
 }
 
 /** 目录卡副信息行：条目数 · 子目录数 · 最近更新时间（缺数据的项直接省略）。 */
 function _dirMetaText(items, subdirs, dirInfo) {
     const count = dirInfo && dirInfo.root_count != null ? dirInfo.root_count : (items ? items.length : 0);
     const parts = [];
-    if (count > 0) parts.push(`${count} 项`);
+    if (count > 0) parts.push(tf("{n} 项", { n: count }));
     const sub = Object.keys(subdirs || {}).length;
-    if (sub > 0) parts.push(`${sub} 个子目录`);
+    if (sub > 0) parts.push(tf("{n} 个子目录", { n: sub }));
     let newest = 0;
     for (const it of items || []) newest = Math.max(newest, it.mtime || it._mtime || 0);
     if (newest) parts.push(_relativeTime(newest));
@@ -44,15 +45,15 @@ function _dirMetaText(items, subdirs, dirInfo) {
 // and that is not a key problem.
 export function civitaiBadge(civitai) {
     if (civitai && civitai.needs_api_key) {
-        return { text: "需要配置 C 站 API KEY", cls: "status-pending", title: "" };
+        return { text: t("需要配置 C 站 API KEY"), cls: "status-pending", title: "" };
     }
     if (civitai && (civitai.status === 'failed' || civitai.status === 'not_found')) {
         const err = civitai.error || "";
         const offline = err.includes("无法连接") || err.includes("Civitai HTTP 0");
         const text = civitai.status === 'not_found'
             ? "Not on Civitai"
-            : (offline ? "C 站无法连接" : (err.includes("KEY") ? "API KEY 被拒绝" : "Fetch failed"));
-        const hint = offline ? "（可在设置中点「测试 C 站连通性」排查）" : "";
+            : (offline ? t("C 站无法连接") : (err.includes("KEY") ? t("API KEY 被拒绝") : "Fetch failed"));
+        const hint = offline ? t("（可在设置中点「测试 C 站连通性」排查）") : "";
         return { text, cls: "status-failed", title: err + hint };
     }
     return { text: "Fetching from Civitai...", cls: "status-loading", title: "" };
@@ -387,7 +388,7 @@ export class GalleryCard {
         if (subdirData && subdirData.image_count > 0 && !this._isReadOnlySource(fullPath.join("/"), subdirData.source)) {
             const tagBtn = $el("div", {
                 className: "neo-gallery-card-dir-menu-btn",
-                title: "LoRA 打标 / 目录标准化",
+                title: t("LoRA 打标 / 目录标准化"),
                 onclick: (e) => {
                     e.stopPropagation();
                     this._showDirMenu(gallery, subdirName, dirPath, tagBtn);
@@ -400,7 +401,7 @@ export class GalleryCard {
         if (String(parentDir).toLowerCase().startsWith("lora")) {
             const refreshBtn = $el("div", {
                 className: "neo-gallery-card-dir-menu-btn",
-                title: "刷新元数据（重读 safetensors 头部，不重新下载示例图）",
+                title: t("刷新元数据（重读 safetensors 头部，不重新下载示例图）"),
                 onclick: (e) => {
                     e.stopPropagation();
                     this._showLoraRefreshMenu(gallery, subdirName, fullPath.join("/"), refreshBtn);
@@ -477,14 +478,14 @@ export class GalleryCard {
             });
             const data = await resp.json();
             if (data.success) {
-                showToast(gallery.app, 'success', '已加入收藏', label);
+                showToast(gallery.app, 'success', t('已加入收藏'), label);
             } else if (resp.status === 409) {
-                showToast(gallery.app, 'info', '已在收藏中', label);
+                showToast(gallery.app, 'info', t('已在收藏中'), label);
             } else {
-                showToast(gallery.app, 'error', '收藏失败', data.error || '');
+                showToast(gallery.app, 'error', t('收藏失败'), data.error || '');
             }
         } catch (e) {
-            showToast(gallery.app, 'error', '收藏失败', String(e));
+            showToast(gallery.app, 'error', t('收藏失败'), String(e));
         }
     }
 
@@ -501,7 +502,7 @@ export class GalleryCard {
     _showCollectMenu(gallery, image, subfolder, source, anchor, unfavorite = null) {
         this._removeCollectMenu();
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
-        const displayName = (image.name || image.filename || '').replace(/\.\w+$/, '') || "素材";
+        const displayName = (image.name || image.filename || '').replace(/\.\w+$/, '') || t("未命名");
         const isOss = loc.source === "oss";
         const fileSub = loc.subfolder ? `/${loc.subfolder}` : "";
         const pathLabel = `${loc.dir}${fileSub}${image.filename ? '/' + image.filename : ''}`;
@@ -520,16 +521,16 @@ export class GalleryCard {
         const wfItem = $el("div", {
             className: "neo-gallery-collect-item",
             style: { display: "none" },
-            title: "将此素材内嵌的 ComfyUI 工作流载入画布",
+            title: t("将此素材内嵌的 ComfyUI 工作流载入画布"),
             onclick: async () => {
                 this._removeCollectMenu();
                 try {
                     await this._importWorkflowFromMedia(gallery, image, subfolder);
                 } catch (err) {
-                    showToast(gallery.app, "error", "导入失败", String(err.message || err));
+                    showToast(gallery.app, "error", t("导入失败"), String(err.message || err));
                 }
             }
-        }, ["\u2937 导入工作流"]);
+        }, [t("\u2937 导入工作流")]);
         this._fetchMediaMeta(image, subfolder).then(meta => {
             if (meta && meta.has && (meta.workflow || meta.prompt)) wfItem.style.display = "";
         }).catch(() => {});
@@ -537,7 +538,7 @@ export class GalleryCard {
         const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
             $el("div", { className: "neo-gallery-collect-title" }, [
                 $el("span", { className: "neo-gallery-collect-name", textContent: displayName }),
-                isOss ? $el("span", { className: "neo-gallery-card-source-badge", textContent: "OSS 预设" }) : null
+                isOss ? $el("span", { className: "neo-gallery-card-source-badge", textContent: t("OSS 预设") }) : null
             ].filter(Boolean)),
             $el("div", {
                 className: "neo-gallery-collect-path",
@@ -547,11 +548,11 @@ export class GalleryCard {
             $el("div", {
                 className: "neo-gallery-collect-item",
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
-            }, ["\u2B50 收藏本图"]),
+            }, [t("\u2B50 收藏本图")]),
             ...buildGenerationMenuItems({ card: this, gallery, image, subfolder }),
             isImageFile(image.filename) ? $el("div", {
                 className: "neo-gallery-collect-item",
-                title: "以此图为首帧，新建视频导演配方",
+                title: t("以此图为首帧，新建视频导演配方"),
                 onclick: async () => {
                     this._removeCollectMenu();
                     try {
@@ -559,23 +560,23 @@ export class GalleryCard {
                         const fname = subfolder
                             ? await copyGalleryToInput(JSON.stringify({ filename: image.filename, subfolder }))
                             : image.filename;
-                        if (!fname) throw new Error("无法读取该图片");
+                        if (!fname) throw new Error(t("无法读取该图片"));
                         openDirectorEditor({ name: '', shared: { mode: 'f2v' }, segments: [{ first_frame: fname, duration_sec: 5 }] });
                     } catch (err) {
-                        showToast(gallery.app, "error", "新建导演配方失败", String(err.message || err));
+                        showToast(gallery.app, "error", t("新建导演配方失败"), String(err.message || err));
                     }
                 }
-            }, ["\uD83C\uDFAC 新建导演配方"]) : null,
+            }, [t("\uD83C\uDFAC 新建导演配方")]) : null,
             (isImageFile(image.filename) && canDelete) ? $el("div", {
                 className: "neo-gallery-collect-item",
                 onclick: () => { this._removeCollectMenu(); openReversePromptDialog(image, subfolder); }
-            }, ["🔍 图片反推"]) : null,
+            }, [t("🔍 图片反推")]) : null,
             ...(image.lora_path ? [
                 $el("div", {
                     className: "neo-gallery-collect-item",
-                    title: "发送到画布上的 LoraLoader",
+                    title: t("发送到画布上的 LoraLoader"),
                     onclick: () => { this._removeCollectMenu(); this._showLoraSendMenu(gallery, image.lora_path, anchor); }
-                }, ["\uD83D\uDCE4 发送 Lora"]),
+                }, [t("\uD83D\uDCE4 发送 Lora")]),
                 $el("div", {
                     className: "neo-gallery-collect-path neo-gallery-collect-lora-path",
                     title: image.lora_path,
@@ -589,17 +590,17 @@ export class GalleryCard {
                 // 触发词：逐词点击复制 + 全量复制
                 (image.trigger_words && image.trigger_words.length) ? $el("div", { className: "neo-gallery-collect-triggers" }, [
                     $el("div", { className: "neo-gallery-collect-triggers-head" }, [
-                        $el("span", { className: "neo-gallery-collect-triggers-label", textContent: `触发词（${image.trigger_words.length}）` }),
+                        $el("span", { className: "neo-gallery-collect-triggers-label", textContent: tf("触发词（{n}）", { n: image.trigger_words.length }) }),
                         $el("span", {
                             className: "neo-gallery-collect-triggers-copyall",
-                            title: "复制全部触发词",
-                            textContent: "\u29C9 复制全部",
+                            title: t("复制全部触发词"),
+                            textContent: t("\u29C9 复制全部"),
                             onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, image.trigger_words.join(", ")); }
                         })
                     ]),
                     ...image.trigger_words.map((w) => $el("span", {
                         className: "neo-gallery-collect-trigger-chip",
-                        title: "点击复制该触发词",
+                        title: t("点击复制该触发词"),
                         textContent: w,
                         onclick: (e) => { e.stopPropagation(); this.copyToClipboard(image.name, w); }
                     }))
@@ -607,25 +608,25 @@ export class GalleryCard {
             ].filter(Boolean) : []),
             image.txt_content ? $el("div", {
                 className: "neo-gallery-collect-prompt-preview",
-                title: "提示词（可全选复制）"
+                title: t("提示词（可全选复制）")
             }, [
                 $el("span", { className: "neo-gallery-collect-prompt-text", textContent: gallery.cleanText(image.txt_content) })
             ]) : null,
             image.txt_content ? $el("div", {
                 className: "neo-gallery-collect-item",
                 onclick: () => { this.copyToClipboard(image.name, image.txt_content); this._removeCollectMenu(); }
-            }, ["\u29C9 复制提示词"]) : null,
+            }, [t("\u29C9 复制提示词")]) : null,
             wfItem,
             canDelete ? $el("div", {
                 className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
-                title: selectedCount > 0 ? `删除已勾选的 ${selectedCount} 个素材，不影响未选中文件` : "仅删除当前素材",
+                title: selectedCount > 0 ? tf("删除已勾选的 {n} 个素材，不影响未选中文件", { n: selectedCount }) : t("仅删除当前素材"),
                 onclick: () => { this._removeCollectMenu(); selectedCount > 0 ? gallery.deleteSelected() : gallery.deleteItem(image.name, subfolder); }
-            }, [selectedCount > 0 ? `\uD83D\uDDD1\uFE0F 删除已选素材（${selectedCount}）` : "\uD83D\uDDD1\uFE0F 删除"]) : null,
+            }, [selectedCount > 0 ? tf("\uD83D\uDDD1\uFE0F 删除已选素材（{n}）", { n: selectedCount }) : t("\uD83D\uDDD1\uFE0F 删除")]) : null,
             unfavorite ? $el("div", {
                 className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
-                title: "取消收藏（仅移除收藏记录，不删除源文件）",
+                title: t("取消收藏（仅移除收藏记录，不删除源文件）"),
                 onclick: () => { this._removeCollectMenu(); unfavorite(); }
-            }, ["\u2716 取消收藏"]) : null
+            }, [t("\u2716 取消收藏")]) : null
         ].filter(Boolean));
 
         this._attachPopupMenu(menu, anchor);
@@ -680,9 +681,9 @@ export class GalleryCard {
             }),
             $el("div", {
                 className: "neo-gallery-collect-item",
-                title: "为目录内每张图片生成标准化标签 .txt，可选先转 HEIC 为 PNG 并顺序编号",
+                title: t("为目录内每张图片生成标准化标签 .txt，可选先转 HEIC 为 PNG 并顺序编号"),
                 onclick: () => { this._removeCollectMenu(); openLoraTagDialog(gallery, dirPath); }
-            }, ["🏷️ LoRA 打标"])
+            }, [t("🏷️ LoRA 打标")])
         ]);
         this._attachPopupMenu(menu, anchor);
     }
@@ -701,9 +702,9 @@ export class GalleryCard {
             }),
             $el("div", {
                 className: "neo-gallery-collect-item",
-                title: "重读目录内每个 LORA 的 safetensors 头部元数据（base_model / 触发词 / dtype），不重新下载示例图",
+                title: t("重读目录内每个 LORA 的 safetensors 头部元数据（base_model / 触发词 / dtype），不重新下载示例图"),
                 onclick: () => { this._removeCollectMenu(); this._refreshLoraDirMeta(gallery, dirPath); }
-            }, ["🔄 刷新元数据"])
+            }, [t("🔄 刷新元数据")])
         ]);
         this._attachPopupMenu(menu, anchor);
     }
@@ -711,7 +712,7 @@ export class GalleryCard {
     /** 目录收藏卡 ⋯ 菜单：仅取消收藏（移除收藏记录，不删除源文件）。 */
     _showBookmarkMenu(gallery, item, anchor, unfavorite) {
         this._removeCollectMenu();
-        const displayName = (item.name || item.filename || "收藏").replace(/\.\w+$/, "") || "收藏";
+        const displayName = (item.name || item.filename || t("收藏")).replace(/\.\w+$/, "") || t("收藏");
         const pathLabel = [item.dir, item.subfolder, item.filename].filter(Boolean).join("/");
         const menu = $el("div", { className: "neo-gallery-collect-menu" }, [
             $el("div", { className: "neo-gallery-collect-title" }, [
@@ -720,9 +721,9 @@ export class GalleryCard {
             $el("div", { className: "neo-gallery-collect-path", title: pathLabel, textContent: pathLabel }),
             $el("div", {
                 className: "neo-gallery-collect-item neo-gallery-collect-item-danger",
-                title: "取消收藏（仅移除收藏记录，不删除源文件）",
+                title: t("取消收藏（仅移除收藏记录，不删除源文件）"),
                 onclick: () => { this._removeCollectMenu(); unfavorite(); }
-            }, ["\u2716 取消收藏"])
+            }, [t("\u2716 取消收藏")])
         ]);
         this._attachPopupMenu(menu, anchor);
     }
@@ -735,12 +736,12 @@ export class GalleryCard {
                 body: JSON.stringify({ dir: dirPath }),
             });
             const data = await resp.json();
-            if (!resp.ok || !data.success) throw new Error(data.error || "刷新失败");
-            showToast(gallery.app, "success", "元数据已刷新", `已更新 ${data.updated} 个 LORA`);
+            if (!resp.ok || !data.success) throw new Error(data.error || t("刷新失败"));
+            showToast(gallery.app, "success", t("元数据已刷新"), tf("已更新 {n} 个 LORA", { n: data.updated }));
             const view = gallery.currentView || {};
             await gallery.showDirectoryStructure(view.source, view.categoryPath || []);
         } catch (e) {
-            showToast(gallery.app, "error", "刷新元数据失败", String(e.message || e));
+            showToast(gallery.app, "error", t("刷新元数据失败"), String(e.message || e));
         }
     }
 
@@ -781,7 +782,7 @@ export class GalleryCard {
         if (image.lora_path) {
             imgSendBtn = $el("div", {
                 className: "neo-gallery-thumb-img-send-btn",
-                title: "发送 Lora 到画布上的 LoraLoader",
+                title: t("发送 Lora 到画布上的 LoraLoader"),
                 onclick: (e) => {
                     e.stopPropagation();
                     this._showLoraSendMenu(gallery, image.lora_path, imgSendBtn);
@@ -792,7 +793,7 @@ export class GalleryCard {
         // 右上角信息扩展按钮：点击弹出扩展菜单（收藏 / Lora 发送 / 提示词预览 / 导入工作流 / 删除）。
         const bookmarkBtn = $el("div", {
             className: "neo-gallery-thumb-bookmark-btn",
-            title: "更多操作",
+            title: t("更多操作"),
             onclick: (e) => {
                 e.stopPropagation();
                 this._showCollectMenu(gallery, image, subfolder, source, bookmarkBtn);
@@ -803,7 +804,7 @@ export class GalleryCard {
         const selectCheck = (!this._isReadOnlySource(subfolder, source) && !isAudioFileResult) ? $el("input", {
             className: "neo-gallery-select-check",
             type: "checkbox",
-            title: "选中（可多选，Ctrl+A 全选）",
+            title: t("选中（可多选，Ctrl+A 全选）"),
             onclick: (e) => e.stopPropagation(),
             onchange: (e) => {
                 e.stopPropagation();
@@ -869,7 +870,7 @@ export class GalleryCard {
 
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
         const fullPath = [loc.dir, loc.subfolder, image.filename || image.name].filter(Boolean).join("/");
-        container.title = `${fullPath}\n点击打开大图，右上角 ⋯ 更多操作`;
+        container.title = tf("{path}\n点击打开大图，右上角 ⋯ 更多操作", { path: fullPath });
 
         return container;
     }
@@ -881,7 +882,7 @@ export class GalleryCard {
 
         const playBtn = $el("div", {
             className: "neo-gallery-audio-play-btn",
-            title: "播放 / 暂停预览"
+            title: t("播放 / 暂停预览")
         }, ["\u25B6"]);
         card.appendChild(playBtn);
 
@@ -1202,14 +1203,14 @@ export class GalleryCard {
     // 导入素材内嵌的 ComfyUI 工作流到画布（灯箱「导入工作流」按钮与卡片扩展菜单共用）。
     async _importWorkflowFromMedia(gallery, image, subfolder) {
         const meta = await this._fetchMediaMeta(image, subfolder);
-        if (!meta || !meta.has) throw new Error("此素材没有内嵌工作流");
+        if (!meta || !meta.has) throw new Error(t("此素材没有内嵌工作流"));
         const wf = meta.workflow;
         const isUiFormat = !!(wf && Array.isArray(wf.nodes));
         const source = isUiFormat ? wf
             : (meta.prompt && typeof app.loadApiJson === "function") ? meta.prompt
             : null;
         if (!source) {
-            throw new Error(wf ? "工作流缺少 nodes 数据，无法载入" : "此文件只有 API 格式工作流且当前前端不支持");
+            throw new Error(wf ? t("工作流缺少 nodes 数据，无法载入") : t("此文件只有 API 格式工作流且当前前端不支持"));
         }
         if (isUiFormat) {
             await app.loadGraphData(source);
@@ -1233,7 +1234,7 @@ export class GalleryCard {
             canvas.ds.fitToBounds([b[0] - 10, b[1] - 10, b[2] - b[0] + 20, b[3] - b[1] + 20]);
             canvas.setDirty?.(true, true);
         });
-        showToast(gallery.app, "success", "工作流已载入画布", "");
+        showToast(gallery.app, "success", t("工作流已载入画布"), "");
     }
 
     _buildMetaButtons(meta, gallery, image, subfolder) {
@@ -1242,18 +1243,18 @@ export class GalleryCard {
             const loadBtn = document.createElement('div');
             loadBtn.className = "neo-lightbox-panel-btn";
             loadBtn.textContent = "\u2937 \u5BFC\u5165\u5DE5\u4F5C\u6D41";
-            loadBtn.title = "将此示例内嵌的 ComfyUI 工作流载入画布";
+            loadBtn.title = t("将此示例内嵌的 ComfyUI 工作流载入画布");
             loadBtn.onclick = async (e) => {
                 e.stopPropagation();
                 if (loadBtn.disabled) return;
                 loadBtn.disabled = true;
                 const origLabel = loadBtn.textContent;
-                loadBtn.textContent = "⏳ 检测中…";
+                loadBtn.textContent = t("⏳ 检测中…");
                 loadBtn.style.opacity = "0.6";
                 try {
                     await this._importWorkflowFromMedia(gallery, image, subfolder);
                 } catch (err) {
-                    showToast(gallery.app, "error", "导入失败", String(err.message || err));
+                    showToast(gallery.app, "error", t("导入失败"), String(err.message || err));
                 } finally {
                     loadBtn.disabled = false;
                     loadBtn.textContent = origLabel;

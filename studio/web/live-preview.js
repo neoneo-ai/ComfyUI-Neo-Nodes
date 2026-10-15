@@ -3,6 +3,8 @@
 // 宿主无关：NeoH3VideoDirector 节点（director-node.js）包一层节点加高逻辑，
 // Neo Studio（studio-app.js）直接挂进结果区。onFrame(data) 可选：每个载荷到达时回调（w/h），宿主据此调尺寸。
 
+import { t, tf } from "./js/core/i18n.js";
+
 const LIVE_CSS_HREF = "/extensions/comfyui-neo-studio/live-preview.css";
 const PREVIEW_STEPS = 40; // 保留的采样步数上限，超出丢最旧（每步 PREVIEW_FRAMES 张 JPEG）
 const PREVIEW_FPS = 4;    // 载荷未带 fps 时的兜底播放帧率（与后端 PREVIEW_FPS 同值）
@@ -21,7 +23,7 @@ export function createFramePlayer(box, onFrame) {
 
     const img = document.createElement("img");
     img.className = "neo-dtl-live-img";
-    img.title = "点击暂停 / 继续";
+    img.title = t("点击暂停 / 继续");
 
     const bar = document.createElement("div");
     bar.className = "neo-dtl-live-bar";
@@ -33,15 +35,15 @@ export function createFramePlayer(box, onFrame) {
         btn.title = title;
         return btn;
     };
-    const playBtn = mkBtn("neo-dtl-live-play", "⏸", "暂停动画");
-    const framePrev = mkBtn("neo-dtl-live-frame-prev", "⏪", "上一帧（自动暂停）");
+    const playBtn = mkBtn("neo-dtl-live-play", "⏸", t("暂停动画"));
+    const framePrev = mkBtn("neo-dtl-live-frame-prev", "⏪", t("上一帧（自动暂停）"));
     const frameLabel = document.createElement("span");
     frameLabel.className = "neo-dtl-live-label";
-    const frameNext = mkBtn("neo-dtl-live-frame-next", "⏩", "下一帧（自动暂停）");
-    const stepPrev = mkBtn("neo-dtl-live-step-prev", "◀", "上一个采样步");
+    const frameNext = mkBtn("neo-dtl-live-frame-next", "⏩", t("下一帧（自动暂停）"));
+    const stepPrev = mkBtn("neo-dtl-live-step-prev", "◀", t("上一个采样步"));
     const stepLabel = document.createElement("span");
     stepLabel.className = "neo-dtl-live-label";
-    const stepNext = mkBtn("neo-dtl-live-step-next", "▶", "下一个采样步");
+    const stepNext = mkBtn("neo-dtl-live-step-next", "▶", t("下一个采样步"));
     bar.append(stepPrev, stepLabel, stepNext, framePrev, frameLabel, frameNext, playBtn);
     box.append(img, bar);
 
@@ -63,8 +65,8 @@ export function createFramePlayer(box, onFrame) {
             for (const s of steps) { if (s !== step) s.imgs = null; }   // 只留当前步的解码图，别屯内存
         }
         img.src = step.frames[frame] || step.frames[0];
-        stepLabel.textContent = `第 ${sel + 1}/${steps.length} 步`;
-        frameLabel.textContent = `${frame + 1}/${step.frames.length} 帧`;
+        stepLabel.textContent = tf("第 {n}/{total} 步", { n: sel + 1, total: steps.length });
+        frameLabel.textContent = tf("{n}/{total} 帧", { n: frame + 1, total: step.frames.length });
     }
 
     function tick(now) {
@@ -88,7 +90,7 @@ export function createFramePlayer(box, onFrame) {
             raf = 0;
         }
         playBtn.textContent = on ? "⏸" : "▶";
-        playBtn.title = on ? "暂停动画" : "继续动画";
+        playBtn.title = on ? t("暂停动画") : t("继续动画");
     };
 
     function apply(data) {

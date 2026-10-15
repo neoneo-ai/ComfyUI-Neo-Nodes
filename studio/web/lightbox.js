@@ -18,6 +18,7 @@
  * 缩放/平移跨翻页保持，仅关闭时复位；翻页时新图按上一张渲染尺寸占位，避免布局跳动。
  */
 import { $el } from "../../../../scripts/ui.js";
+import { t } from "./js/core/i18n.js";
 
 // 组件自带样式（幂等注入，调用方无需单独加载 CSS）
 if (!document.getElementById('neo-lightbox-css')) {
@@ -90,22 +91,22 @@ export class Lightbox {
 
         this._closeBtn = $el('button', {
             className: 'neo-lightbox-close', textContent: '×',
-            title: '关闭（Esc）',
+            title: t("关闭（Esc）"),
             onclick: (e) => { e.stopPropagation(); this.close(); }
         });
         this._prevBtn = $el('button', {
             className: 'neo-lightbox-nav neo-lightbox-prev', textContent: '‹',
-            title: '上一张（←）',
+            title: t("上一张（←）"),
             onclick: (e) => { e.stopPropagation(); this.navigate(-1); }
         });
         this._nextBtn = $el('button', {
             className: 'neo-lightbox-nav neo-lightbox-next', textContent: '›',
-            title: '下一张（→）',
+            title: t("下一张（→）"),
             onclick: (e) => { e.stopPropagation(); this.navigate(1); }
         });
         this._fullBtn = $el('button', {
             className: 'neo-lightbox-nav neo-lightbox-full', textContent: '⛶',
-            title: '全屏（F）',
+            title: t("全屏（F）"),
             onclick: (e) => { e.stopPropagation(); this.toggleFullscreen(); }
         });
 

@@ -6,6 +6,7 @@
 
 import { app } from "../../scripts/app.js";
 import { mkEl } from "./dom-utils.js";
+import { t, tf } from "./js/core/i18n.js";
 
 // quickInput：快捷输入框；attachedImages / imageKey / addImageInput / inputViewUrl 由聊天域注入，
 // 选择器只读写附件与内联标记，不持有节点级状态。
@@ -184,7 +185,7 @@ function createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInp
         // 弹层无标题栏：无可用图片时在列表内给占位提示
         if (!images.length) {
             const empty = mkEl("div", "rs-at-picker-empty");
-            empty.textContent = "工作流中没有可用的 Load Image 图片";
+            empty.textContent = t("工作流中没有可用的 Load Image 图片");
             list.appendChild(empty);
         }
 
@@ -377,7 +378,7 @@ function createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInp
         if (images.length) {
             const allRow = mkEl("div", "rs-at-picker-row rs-at-picker-all-row");
             const allLabel = mkEl("span", "rs-at-picker-all-label");
-            allLabel.textContent = `全部 (${images.length})`;
+            allLabel.textContent = tf("全部 ({n})", { n: images.length });
             allRow.appendChild(allLabel);
             allRow.addEventListener("click", () => { insertAll(); closePicker(); });
             list.appendChild(allRow);
@@ -385,7 +386,7 @@ function createAtImagePicker({ quickInput, attachedImages, imageKey, addImageInp
 
         if (!images.length) {
             const empty = mkEl("div", "rs-at-picker-empty");
-            empty.textContent = "工作流中没有可用的 Load Image 图片";
+            empty.textContent = t("工作流中没有可用的 Load Image 图片");
             list.appendChild(empty);
         }
 

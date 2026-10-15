@@ -12,6 +12,7 @@ import { attachComboBox } from "./combo-box.js";
 import { mkEl } from "./dom-utils.js";
 import { showToast } from "./gallery-utils.js";
 import { sseStream } from "./prompt-service.js";
+import { t, tf } from "./js/core/i18n.js";
 
 const GEN_API = "/neo_image_gen";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -215,7 +216,7 @@ export function watchTask(taskId, onSnapshot, isCancelled) {
             resync();
         }
         timeout = setTimeout(
-            () => finish({ status: "failed", error: "等待生图超时，请稍后在 Gallery 查看" }),
+            () => finish({ status: "failed", error: t("等待生图超时，请稍后在 Gallery 查看") }),
             40 * 60 * 1000
         );
         api.addEventListener(STATUS_EVENT, onStatus);
@@ -252,7 +253,7 @@ export async function buildGenPrompt(skillId, text, hasRefs, hasWorkflow) {
     const body = await loadGenTemplate(skillId);
     if (!body) return text;
     if (body.includes(GEN_PLACEHOLDER)) {
-        return body.split(GEN_PLACEHOLDER).join(text || "参考图片中的角色形象");
+        return body.split(GEN_PLACEHOLDER).join(text || t("参考图片中的角色形象"));
     }
     return `${text}\n${body}`;
 }
@@ -290,7 +291,7 @@ async function copyOutputToInput(image) {
     const resp = await api.fetchApi("/neo_gallery/copy_to_input" + query);
     const result = await resp.json().catch(() => null);
     if (!resp.ok || !result || result.success === false) {
-        throw new Error(result?.error || "复制到输入目录失败");
+        throw new Error(result?.error || t("复制到输入目录失败"));
     }
     return result.skipped ? image.filename : result.filename;
 }
@@ -328,13 +329,13 @@ async function waitForImageWidget(node, tries = 20, delayMs = 30) {
         if (w) return w;
         await new Promise(r => setTimeout(r, delayMs));
     }
-    throw new Error("Load Image 节点创建后未找到图片选项");
+    throw new Error(t("Load Image 节点创建后未找到图片选项"));
 }
 
 // 画布上没有 LoadImage 时自动创建一个（放在按钮下方，屏幕坐标经 canvasPosToGraph 换算到画布坐标）并写入图片
 async function createLoadImageTarget(anchorEl, image) {
     const L = globalThis.LiteGraph;
-    if (!L?.createNode) throw new Error("无法创建 Load Image 节点");
+    if (!L?.createNode) throw new Error(t("无法创建 Load Image 节点"));
     const node = L.createNode("LoadImage");
     app.graph.add(node);
     try {
@@ -359,31 +360,31 @@ export function sendImageToLoadImage(image, anchorEl) {
     const targets = collectLoadImageTargets();
     if (!targets.length) {
         createLoadImageTarget(anchorEl, image)
-            .then(({ node }) => showToast(app, "success", "已发送", `新建 Load Image #${node.id} 并写入`))
-            .catch(e => showToast(app, "error", "发送失败", e.message));
+            .then(({ node }) => showToast(app, "success", t("已发送"), tf("新建 Load Image #{id} 并写入", { id: node.id })))
+            .catch(e => showToast(app, "error", t("发送失败"), e.message));
         return;
     }
     if (targets.length === 1) {
-        const t = targets[0];
-        applyImageToTarget(t, image)
-            .then(() => showToast(app, "success", "已发送", `写入 ${t.node.title || "LoadImage"} #${t.node.id}`))
-            .catch(e => showToast(app, "error", "发送失败", e.message));
+        const tgt = targets[0];
+        applyImageToTarget(tgt, image)
+            .then(() => showToast(app, "success", t("已发送"), tf("写入 {node} #{id}", { node: tgt.node.title || "LoadImage", id: tgt.node.id })))
+            .catch(e => showToast(app, "error", t("发送失败"), e.message));
         return;
     }
     const menu = mkEl("div", "rs-gen-send-menu");
     const title = mkEl("div", "rs-gen-send-menu-title");
-    title.textContent = "发送到 Load Image";
+    title.textContent = t("发送到 Load Image");
     menu.appendChild(title);
     const selectedIds = new Set(Object.values(app.canvas?.selected_nodes || {}).map(n => n.id));
-    for (const t of targets) {
+    for (const tgt of targets) {
         const item = mkEl("button", "rs-gen-send-menu-item");
         item.type = "button";
-        item.textContent = `#${t.node.id} ${t.node.title || t.node.type || "LoadImage"}${selectedIds.has(t.node.id) ? "  ✓" : ""}`;
+        item.textContent = `#${tgt.node.id} ${tgt.node.title || tgt.node.type || "LoadImage"}${selectedIds.has(tgt.node.id) ? "  ✓" : ""}`;
         item.addEventListener("click", () => {
             closeSendMenu();
-            applyImageToTarget(t, image)
-                .then(() => showToast(app, "success", "已发送", `写入 ${t.node.title || "LoadImage"} #${t.node.id}`))
-                .catch(e => showToast(app, "error", "发送失败", e.message));
+            applyImageToTarget(tgt, image)
+                .then(() => showToast(app, "success", t("已发送"), tf("写入 {node} #{id}", { node: tgt.node.title || "LoadImage", id: tgt.node.id })))
+                .catch(e => showToast(app, "error", t("发送失败"), e.message));
         });
         menu.appendChild(item);
     }
@@ -397,7 +398,7 @@ export async function assembleAllGenerated(images) {
     if (!images?.length) return;
     const targets = collectLoadImageTargets();
     if (!targets.length) {
-        showToast(app, "warning", "装配", "画布上没有可用的 Load Image 节点");
+        showToast(app, "warning", t("装配"), t("画布上没有可用的 Load Image 节点"));
         return;
     }
     const n = Math.min(images.length, targets.length);
@@ -412,12 +413,12 @@ export async function assembleAllGenerated(images) {
         }
     }
     if (ok === images.length) {
-        showToast(app, "success", "装配完成", `${ok} 张已写入 Load Image 节点`);
+        showToast(app, "success", t("装配完成"), tf("{n} 张已写入 Load Image 节点", { n: ok }));
     } else {
         const detail = targets.length < images.length
-            ? `画布节点不足，已写入 ${ok}/${images.length} 张`
-            : `已写入 ${ok}/${images.length} 张${lastError ? "：" + lastError : ""}`;
-        showToast(app, ok > 0 ? "warning" : "error", "装配", detail);
+            ? tf("画布节点不足，已写入 {ok}/{total} 张", { ok, total: images.length })
+            : tf("已写入 {ok}/{total} 张{err}", { ok, total: images.length, err: lastError ? t("：") + lastError : "" });
+        showToast(app, ok > 0 ? "warning" : "error", t("装配"), detail);
     }
 }
 
@@ -469,7 +470,7 @@ function fillComboSelect(select, files, suggested, current) {
     select.innerHTML = "";
     const auto = document.createElement("option");
     auto.value = "";
-    auto.textContent = suggested ? `自动（${shortModelName(suggested)}）` : "自动";
+    auto.textContent = suggested ? tf("自动（{model}）", { model: shortModelName(suggested) }) : t("自动");
     select.appendChild(auto);
     for (const f of files || []) {
         const opt = document.createElement("option");
@@ -492,7 +493,7 @@ function fillComboSelect(select, files, suggested, current) {
         // 而运行时仍读失效的 config 原值。修复交给「修复失效路径」按钮（复用后端匹配）。
         const opt = document.createElement("option");
         opt.value = current;
-        opt.textContent = shortModelName(current) + " (缺失)";
+        opt.textContent = shortModelName(current) + t(" (缺失)");
         select.appendChild(opt);
         matched = current;
     }
@@ -526,7 +527,7 @@ export function createModelConfigSection() {
         row.append(label, combo);
         return { row, select };
     };
-    const modelCtl = makeComboRow("生图模型");
+    const modelCtl = makeComboRow(t("生图模型"));
     // Text Encoder / VAE 很少改动：打 rs-gen-adv-row 标记，供技能弹窗收进折叠区（全局菜单不折叠）
     const encoderCtl = makeComboRow("Text Encoder", undefined, "rs-gen-adv-row");
     const vaeCtl = makeComboRow("VAE", undefined, "rs-gen-adv-row");
@@ -538,7 +539,7 @@ export function createModelConfigSection() {
     const loraList = mkEl("div", "rs-gen-lora-list");
     const loraAddBtn = mkEl("button", "rs-gen-lora-add");
     loraAddBtn.type = "button";
-    loraAddBtn.textContent = "+ 添加 LoRA";
+    loraAddBtn.textContent = t("+ 添加 LoRA");
     loraRow.append(loraLabel, loraList, loraAddBtn);
     section.append(modelCtl.row, encoderCtl.row, vaeCtl.row, loraRow);
 
@@ -559,7 +560,7 @@ export function createModelConfigSection() {
         const delBtn = mkEl("button", "rs-gen-lora-del");
         delBtn.type = "button";
         delBtn.textContent = "✕";
-        delBtn.setAttribute("data-rs-tooltip", "移除此 LoRA");
+        delBtn.setAttribute("data-rs-tooltip", t("移除此 LoRA"));
         delBtn.addEventListener("click", () => line.remove());
         line.append(combo, strengthInput, delBtn);
         fillComboSelect(select, loraFiles, "", name);
@@ -628,7 +629,7 @@ export function createModelConfigSection() {
 /** 生图张数 / 长边尺寸 / 默认比例 / 输出前缀 控件区（每技能生图设置用）。 */
 export function createGenSizeRows() {
     const section = mkEl("div", "rs-gen-size-section");
-    const countCtl = numberRow("生图张数", { min: 1, max: 8, step: 1, value: 1 });
+    const countCtl = numberRow(t("生图张数"), { min: 1, max: 8, step: 1, value: 1 });
     // 生图张数默认隐藏 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
     countCtl.row.classList.add("rs-gen-adv-row");
 
@@ -642,15 +643,15 @@ export function createGenSizeRows() {
         row.append(label, combo);
         return { row, select };
     };
-    const sizeCtl = makeChoiceRow("长边尺寸");
-    const ratioCtl = makeChoiceRow("默认比例");
+    const sizeCtl = makeChoiceRow(t("长边尺寸"));
+    const ratioCtl = makeChoiceRow(t("默认比例"));
     // 采样步数：写 skill config.json 的 steps（模板 {{STEPS}}），缺省 20（与后端 resolve 一致）
-    const stepsCtl = numberRow("步数", { min: 1, max: 100, step: 1, value: 20 });
+    const stepsCtl = numberRow(t("步数"), { min: 1, max: 100, step: 1, value: 20 });
 
     // 输出前缀（可含子目录），写入模板 {{PREFIX}}；很少改动 → 打 rs-gen-adv-row 标记供技能弹窗收进折叠区（全局菜单不折叠）
     const prefixRow = mkEl("div", "rs-config-row rs-gen-adv-row");
     const prefixLabel = mkEl("label", "rs-form-label");
-    prefixLabel.textContent = "输出前缀";
+    prefixLabel.textContent = t("输出前缀");
     const prefixInput = mkEl("input", "rs-form-input");
     prefixInput.type = "text";
     prefixInput.placeholder = "NeoAgent";
@@ -665,7 +666,7 @@ export function createGenSizeRows() {
         const auto = document.createElement("option");
         auto.value = "";
         // 「默认」项标注后端实际默认值（base_resolution=1280 / default_ratio=1:1），让用户知道空值会出什么尺寸
-        auto.textContent = defaultValue ? `默认 (${defaultValue})` : "默认";
+        auto.textContent = defaultValue ? tf("默认 ({v})", { v: defaultValue }) : t("默认");
         select.appendChild(auto);
         for (const v of options) {
             const opt = document.createElement("option");
@@ -677,7 +678,7 @@ export function createGenSizeRows() {
         if (current && !options.includes(current)) {
             const keep = document.createElement("option");
             keep.value = current;
-            keep.textContent = current + "（已保存）";
+            keep.textContent = current + t("（已保存）");
             select.appendChild(keep);
             select.value = current;
         }
@@ -721,13 +722,13 @@ export function createVideoModelConfigSection() {
         row.append(label, combo);
         return { row, select };
     };
-    const modelCtl = makeComboRow("生视频模型");
+    const modelCtl = makeComboRow(t("生视频模型"));
     // Text Encoder / 视频 VAE / 音频 VAE 很少改动：打 rs-gen-adv-row 标记，供技能弹窗收进折叠区
     const encoderCtl = makeComboRow("Text Encoder", "rs-gen-adv-row");
-    const videoVaeCtl = makeComboRow("VAE（视频）", "rs-gen-adv-row");
-    const audioVaeCtl = makeComboRow("VAE（音频）", "rs-gen-adv-row");
+    const videoVaeCtl = makeComboRow(t("VAE（视频）"), "rs-gen-adv-row");
+    const audioVaeCtl = makeComboRow(t("VAE（音频）"), "rs-gen-adv-row");
     // 采样步数：写 skill config.json 的 steps（模板 {{STEPS}}），缺省 20；放可见区，不收进高级折叠
-    const stepsCtl = numberRow("步数", { min: 1, max: 100, step: 1, value: 20 });
+    const stepsCtl = numberRow(t("步数"), { min: 1, max: 100, step: 1, value: 20 });
 
     // LoRA 行：动态增删，每行 = 模型选择 + 强度
     const loraRow = mkEl("div", "rs-config-row");
@@ -736,7 +737,7 @@ export function createVideoModelConfigSection() {
     const loraList = mkEl("div", "rs-gen-lora-list");
     const loraAddBtn = mkEl("button", "rs-gen-lora-add");
     loraAddBtn.type = "button";
-    loraAddBtn.textContent = "+ 添加 LoRA";
+    loraAddBtn.textContent = t("+ 添加 LoRA");
     loraRow.append(loraLabel, loraList, loraAddBtn);
 
     section.append(modelCtl.row, stepsCtl.row, encoderCtl.row, videoVaeCtl.row, audioVaeCtl.row, loraRow);
@@ -756,7 +757,7 @@ export function createVideoModelConfigSection() {
         const delBtn = mkEl("button", "rs-gen-lora-del");
         delBtn.type = "button";
         delBtn.textContent = "✕";
-        delBtn.setAttribute("data-rs-tooltip", "移除此 LoRA");
+        delBtn.setAttribute("data-rs-tooltip", t("移除此 LoRA"));
         delBtn.addEventListener("click", () => line.remove());
         line.append(combo, strengthInput, delBtn);
         fillComboSelect(select, loraFiles, "", name);
@@ -822,17 +823,17 @@ export function createImageGenSettingsForm() {
         row.append(label, combo);
         return { row, select };
     };
-    const modelCtl = makeComboRow("生图模型");
+    const modelCtl = makeComboRow(t("生图模型"));
     const encoderCtl = makeComboRow("Text Encoder");
     const vaeCtl = makeComboRow("VAE");
     // 模型工作分辨率（MP）：扩图补边画布归一化到此像素数；画廊编辑的目标默认超过它时等比封顶
-    const mpCtl = numberRow("目标像素数 (MP)", { min: 0.1, max: 16, step: 0.1, value: 1.5 });
-    mpCtl.input.title = "Qwen Image 2.1 的工作分辨率：扩图补边画布缩放到该像素数；画廊编辑目标超过它时等比封顶";
+    const mpCtl = numberRow(t("目标像素数 (MP)"), { min: 0.1, max: 16, step: 0.1, value: 1.5 });
+    mpCtl.input.title = t("Qwen Image 2.1 的工作分辨率：扩图补边画布缩放到该像素数；画廊编辑目标超过它时等比封顶");
 
     // 输出前缀（可含子目录），写入模板 {{PREFIX}}
     const prefixRow = mkEl("div", "rs-config-row");
     const prefixLabel = mkEl("label", "rs-form-label");
-    prefixLabel.textContent = "输出前缀";
+    prefixLabel.textContent = t("输出前缀");
     const prefixInput = mkEl("input", "rs-form-input");
     prefixInput.type = "text";
     prefixInput.placeholder = "NeoAgent";
@@ -841,15 +842,15 @@ export function createImageGenSettingsForm() {
     // 显式保存按钮：选择后立即落盘，不依赖关菜单时的静默保存
     const saveBtn = mkEl("button", "rs-gen-save");
     saveBtn.type = "button";
-    saveBtn.textContent = "💾 保存设置";
+    saveBtn.textContent = t("💾 保存设置");
     let saveResetTimer = null;
     saveBtn.addEventListener("click", async () => {
         saveBtn.disabled = true;
         const ok = await save();
         saveBtn.disabled = false;
-        saveBtn.textContent = ok ? "✓ 已保存" : "✕ 保存失败";
+        saveBtn.textContent = ok ? t("✓ 已保存") : t("✕ 保存失败");
         clearTimeout(saveResetTimer);
-        saveResetTimer = setTimeout(() => { saveBtn.textContent = "💾 保存设置"; }, 1600);
+        saveResetTimer = setTimeout(() => { saveBtn.textContent = t("💾 保存设置"); }, 1600);
     });
     const saveRow = mkEl("div", "rs-config-row");
     saveRow.appendChild(saveBtn);
@@ -931,24 +932,24 @@ export function createVideoGenSettingsForm() {
 
     // 生视频模型（MiniMax H3）：与生图共用 diffusion_models/text_encoders/vae 目录，独立设置项
     const videoHeading = mkEl("div", "rs-gen-video-heading");
-    videoHeading.textContent = "生视频模型（MiniMax H3）";
-    const videoModelCtl = makeComboRow("视频模型");
-    const videoEncoderCtl = makeComboRow("Text Encoder (视频)");
-    const videoVaeCtl = makeComboRow("VAE (视频)");
-    const videoAudioVaeCtl = makeComboRow("VAE (音频)");
+    videoHeading.textContent = t("生视频模型（MiniMax H3）");
+    const videoModelCtl = makeComboRow(t("视频模型"));
+    const videoEncoderCtl = makeComboRow(t("Text Encoder (视频)"));
+    const videoVaeCtl = makeComboRow(t("VAE (视频)"));
+    const videoAudioVaeCtl = makeComboRow(t("VAE (音频)"));
 
     // 显式保存按钮：选择后立即落盘，不依赖关菜单时的静默保存
     const saveBtn = mkEl("button", "rs-gen-save");
     saveBtn.type = "button";
-    saveBtn.textContent = "💾 保存设置";
+    saveBtn.textContent = t("💾 保存设置");
     let saveResetTimer = null;
     saveBtn.addEventListener("click", async () => {
         saveBtn.disabled = true;
         const ok = await save();
         saveBtn.disabled = false;
-        saveBtn.textContent = ok ? "✓ 已保存" : "✕ 保存失败";
+        saveBtn.textContent = ok ? t("✓ 已保存") : t("✕ 保存失败");
         clearTimeout(saveResetTimer);
-        saveResetTimer = setTimeout(() => { saveBtn.textContent = "💾 保存设置"; }, 1600);
+        saveResetTimer = setTimeout(() => { saveBtn.textContent = t("💾 保存设置"); }, 1600);
     });
     const saveRow = mkEl("div", "rs-config-row");
     saveRow.appendChild(saveBtn);

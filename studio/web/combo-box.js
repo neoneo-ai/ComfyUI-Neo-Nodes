@@ -10,6 +10,8 @@
  * style 显隐切换、.value 读写、disabled 切换全部照旧生效，组件自动跟随同步。
  */
 
+import { t } from "./js/core/i18n.js";
+
 // 组件实例注册表：共享「点外关闭」「滚动/缩放重定位」监听，避免随实例数线性增长
 const instances = new Set();
 let sharedBound = false;
@@ -46,8 +48,8 @@ function el(tag, className, cssText = "") {
 }
 
 export function attachComboBox(selectEl, opts = {}) {
-    const placeholder = opts.placeholder || "🔍 输入过滤或点击选择...";
-    const emptyText = opts.emptyText || "无匹配模型";
+    const placeholder = opts.placeholder || t("🔍 输入过滤或点击选择...");
+    const emptyText = opts.emptyText || t("无匹配模型");
 
     const box = el("div", "rs-model-select-box", "display:none;");
 

@@ -15,6 +15,7 @@ import { applyWorkflowParams, injectRuntimeLoras, canvasLayout } from "../workfl
 import { getNodeDef } from "../js/core/object-info.js";
 import { showToast } from "../gallery-utils.js";
 import { copySkillFiles, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "../image-gen.js";
+import { t } from "../js/core/i18n.js";
 
 // 共享 UI 小工具：技能增删改广播、弹窗内指针事件拦截（不冒泡到画布选节点）
 function dispatchSkillsUpdated() {
@@ -304,10 +305,10 @@ function makeSkillLog(key, limit, label) {
 
 // ---- 回写变更记录（每技能上限 50 条）----
 const SKILL_WRITE_LOG_LIMIT = 50;
-const WRITE_SOURCE_LABELS = { canvas: "画布回写", editor: "内嵌编辑" };
+const WRITE_SOURCE_LABELS = { canvas: t("画布回写"), editor: t("内嵌编辑") };
 // 节点位置 / 颜色 / 分组 / 折叠只存在于 LiteGraph 序列化，API prompt 不携带 → 回写不保存界面布局
-const WRITE_API_ONLY_NOTE = "仅保存 API 工作流（节点、连线、widget 值）：画布上的节点位置、颜色、分组、折叠状态等界面布局不写入，skill.md 正文保留";
-const writeLog = makeSkillLog("neo.skillWriteLog", SKILL_WRITE_LOG_LIMIT, "变更记录");
+const WRITE_API_ONLY_NOTE = t("仅保存 API 工作流（节点、连线、widget 值）：画布上的节点位置、颜色、分组、折叠状态等界面布局不写入，skill.md 正文保留");
+const writeLog = makeSkillLog("neo.skillWriteLog", SKILL_WRITE_LOG_LIMIT, t("变更记录"));
 
 /** 变更清单表格（项 / 原值 删除线 / 新值）：回写确认弹窗与变更记录共用 */
 function buildWriteChangesTable(changes) {
@@ -321,7 +322,7 @@ function buildWriteChangesTable(changes) {
         return td;
     };
     const headRow = document.createElement("tr");
-    for (const h of ["项", "原值", "新值"]) {
+    for (const h of [t("项"), t("原值"), t("新值")]) {
         const th = document.createElement("th");
         th.textContent = h;
         th.style.cssText = "position:sticky;top:0;background:#2a2a2a;color:#9ab;text-align:left;padding:6px 8px;border-bottom:1px solid #444;";
@@ -429,13 +430,13 @@ function renderMarkdown(src) {
 // 提示词节点技能列表：图像/视频提示词增强排最前（仅次于 select 顶部的「默认」项，原生 option 恒在 optgroup 之前），
 // 反推 / 直接生图或编辑 / custom 依次跟随；video_gen（生视频）与 task 为内部使用技能，不在下拉与 / 快捷菜单显示（hidden），task 也不进技能管理窗口左列表（managerHidden）；未知分类回落 image_enhance
 const CATEGORY_LABELS = {
-    "image_enhance": { label: "🎨 图像提示词增强", order: 0 },
-    "video_enhance": { label: "🎬 视频提示词增强", order: 1 },
-    "vision": { label: "⚡ 图像 / 反推", order: 2 },
-    "image_gen": { label: "🖼️ 直接生图或编辑", order: 3 },
-    "custom": { label: "📝 自定义", order: 4 },
-    "video_gen": { label: "🎬 生视频 (H3)", order: 5, hidden: true },
-    "task": { label: "⚙️ 任务", order: 6, hidden: true, managerHidden: true }
+    "image_enhance": { label: t("🎨 图像提示词增强"), order: 0 },
+    "video_enhance": { label: t("🎬 视频提示词增强"), order: 1 },
+    "vision": { label: t("⚡ 图像 / 反推"), order: 2 },
+    "image_gen": { label: t("🖼️ 直接生图或编辑"), order: 3 },
+    "custom": { label: t("📝 自定义"), order: 4 },
+    "video_gen": { label: t("🎬 生视频 (H3)"), order: 5, hidden: true },
+    "task": { label: t("⚙️ 任务"), order: 6, hidden: true, managerHidden: true }
 };
 
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记；
@@ -482,7 +483,7 @@ function dispatchSkillChanged(skillId) {
  */
 async function copySkillAsCustom(skillId, fallbackName = "") {
     const full = await loadSkill(skillId);
-    if (full && full.error) { showToast(app, "error", "复制失败", full.error); return null; }
+    if (full && full.error) { showToast(app, "error", t("复制失败"), full.error); return null; }
     const newId = `${skillId}_copy_${Date.now()}`;
     // 复制产生的 name 需与已有 skill 不重名（后端 save_skill 会 409），冲突时递增序号
     const baseName = ((full && full.name) || fallbackName || skillId) + " (Copy)";
@@ -504,7 +505,7 @@ async function copySkillAsCustom(skillId, fallbackName = "") {
         mode: (full && full.mode) || "",
         requires_ref: !!(full && full.requires_ref)
     });
-    if (!result.success) { showToast(app, "error", "复制失败", result.error || "Unknown error"); return null; }
+    if (!result.success) { showToast(app, "error", t("复制失败"), result.error || "Unknown error"); return null; }
     await copySkillFiles(skillId, newId);
     dispatchSkillsUpdated();
     return { id: newId, name: copyName };

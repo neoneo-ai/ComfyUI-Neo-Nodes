@@ -7,6 +7,7 @@
 
 import { mkEl } from "./dom-utils.js";
 import { CATEGORY_LABELS } from "./skill.js";
+import { t } from "./js/core/i18n.js";
 
 function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
     let pickerEl = null; // 已打开的弹层句柄：防止重复叠加，关闭时置空
@@ -97,7 +98,7 @@ function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
             currentItems = filterSkills(query);
             if (!currentItems.length) {
                 const empty = mkEl("div", "rs-slash-picker-empty");
-                empty.textContent = "无匹配 skill";
+                empty.textContent = t("无匹配 skill");
                 list.appendChild(empty);
                 activeIndex = 0;
                 return;

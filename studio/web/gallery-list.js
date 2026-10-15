@@ -5,10 +5,11 @@ import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { THUMBNAIL_SIZE_MIN, THUMBNAIL_SIZE_MAX, THUMBNAIL_SIZE_STEP, getCardHeight, cardColumnWidth, createBreadcrumbItem, createBreadcrumbSeparator, PAGE_SIZE, sortByMtime, isImageFile, showNoFilesMessage, showToast, releaseLazyThumbnails } from './gallery-utils.js';
 import { attachMasonry } from './gallery-masonry.js';
+import { t, tf } from "./js/core/i18n.js";
 
 // Civitai bookmarks virtual dir: identified by a stable key in the backend; "C站收藏" is display-only.
 const CIVITAI_DIR_KEY = "civitai_bookmarks";
-const CIVITAI_DIR_NAME = "C站收藏";
+const CIVITAI_DIR_NAME = t("C站收藏");
 
 export class GalleryList {
     constructor(gallery) {
@@ -60,13 +61,13 @@ export class GalleryList {
     createNavButtons(gallery) {
         const backBtn = $el("button", {
             className: "neo-gallery-nav-btn",
-            title: "后退 (Back)",
+            title: t("后退 (Back)"),
             textContent: "\u2190",
             onclick: () => gallery.navigateHistory(-1)
         });
         const forwardBtn = $el("button", {
             className: "neo-gallery-nav-btn",
-            title: "前进 (Forward)",
+            title: t("前进 (Forward)"),
             textContent: "\u2192",
             onclick: () => gallery.navigateHistory(1)
         });
@@ -126,7 +127,7 @@ export class GalleryList {
                 breadcrumb.appendChild(createBreadcrumbSeparator());
 
                 if (i === pathSegments.length - 1) {
-                    const currentSegmentEl = createBreadcrumbItem(pathSegments[i], null, { isCurrent: true, title: `${pathSegments[i]}\n点击显示同级目录` });
+                    const currentSegmentEl = createBreadcrumbItem(pathSegments[i], null, { isCurrent: true, title: tf("{seg}\n点击显示同级目录", { seg: pathSegments[i] }) });
                     currentSegmentEl.classList.add('neo-gallery-breadcrumb-sibling-trigger');
                     currentSegmentEl.onclick = (e) => {
                         e.stopPropagation();
@@ -139,17 +140,17 @@ export class GalleryList {
             }
 
             if (pathSegments.length > 0) {
-                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, -1)), { isUp: true, title: "上一级" }));
+                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showDirectoryStructure(rootDirName, pathSegments.slice(0, -1)), { isUp: true, title: t("上一级") }));
             } else {
                 // Show back button for root directory of custom dir
-                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
+                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: t("返回上级") }));
             }
         } else if (sourceName) {
             breadcrumb.appendChild(createBreadcrumbSeparator());
             breadcrumb.appendChild(createBreadcrumbItem(sourceName, null, { isCurrent: true }));
 
             if (pathSegments.length > 0 || sourceName) {
-                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: "返回上级" }));
+                breadcrumb.appendChild(createBreadcrumbItem("\u21A9", () => gallery.showCategoryCards(), { isUp: true, title: t("返回上级") }));
             }
         }
     }
@@ -427,15 +428,15 @@ export class GalleryList {
             const st = structure.civitai || {};
             let message, cls;
             if (st.needs_api_key) {
-                message = "需要在「Manage Directories」中配置 C 站 API KEY 才能获取示例图。";
+                message = t("需要在「Manage Directories」中配置 C 站 API KEY 才能获取示例图。");
                 cls = "pending-warn";
             } else if (st.status === 'not_found') {
                 message = "This lora was not found on Civitai.";
                 cls = "pending-failed";
             } else if (st.status === 'failed') {
-                message = `抓取失败：${st.error || 'unknown error'}`;
+                message = tf("抓取失败：{err}", { err: st.error || 'unknown error' });
                 if (st.error && st.error.includes("无法连接")) {
-                    message += " · 可在「Manage Directories」中点「测试 C 站连通性」排查（C 站需要代理或可直连的网络）";
+                    message += t(" · 可在「Manage Directories」中点「测试 C 站连通性」排查（C 站需要代理或可直连的网络）");
                 }
                 cls = "pending-failed";
             } else {
@@ -494,15 +495,15 @@ export class GalleryList {
         if (isLoraView) {
             const usedCount = this.gallery.collectUsedLoras().size;
             const filterBar = $el("div", { className: "neo-gallery-workflow-filter" }, [
-                $el("span", { className: "neo-gallery-workflow-filter-label", textContent: "智能感知:" }),
+                $el("span", { className: "neo-gallery-workflow-filter-label", textContent: t("智能感知:") }),
                 $el("button", {
                     className: "neo-gallery-workflow-chip" + (!this.gallery.workflowMatchActive ? " active" : ""),
                     onclick: () => { if (this.gallery.workflowMatchActive) this.gallery.toggleWorkflowMatch(); }
-                }, ["全部"]),
+                }, [t("全部")]),
                 $el("button", {
                     className: "neo-gallery-workflow-chip" + (this.gallery.workflowMatchActive ? " active" : ""),
                     onclick: () => this.gallery._jumpToUsedLora()
-                }, [`工作流已用 (${usedCount})`])
+                }, [tf("工作流已用 ({n})", { n: usedCount })])
             ]);
             this.gallery.accordion.appendChild(filterBar);
         }

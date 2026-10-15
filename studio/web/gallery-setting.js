@@ -4,6 +4,7 @@
 import { $el } from "../../../../scripts/ui.js";
 import { api } from "../../../../scripts/api.js";
 import { showToast } from './gallery-utils.js';
+import { t, tf } from "./js/core/i18n.js";
 
 export class GallerySetting {
     constructor(gallery) {
@@ -70,7 +71,7 @@ export class GallerySetting {
 
         // Directory list area (compact rows: reorder / hide / remove)
         const dirListContainer = $el("div", { className: "neo-gallery-dir-list-container" }, [
-            $el("div", { className: "neo-gallery-dir-section-title", textContent: "素材目录" })
+            $el("div", { className: "neo-gallery-dir-section-title", textContent: t("素材目录") })
         ]);
         const dirItemsWrap = $el("div", { className: "neo-gallery-dir-items-wrap" });
         dirListContainer.appendChild(dirItemsWrap);
@@ -89,7 +90,7 @@ export class GallerySetting {
         };
 
         // 内置板块与自定义目录共用同一张顺序表
-        const BUILTIN_LABELS = { Output: "Output", Input: "Input", local_bookmarks: "本地收藏", civitai_bookmarks: "C站收藏", Lora: "Lora" };
+        const BUILTIN_LABELS = { Output: "Output", Input: "Input", local_bookmarks: t("本地收藏"), civitai_bookmarks: t("C站收藏"), Lora: "Lora" };
         const entries = homeOrder.length ? homeOrder
             : ["Output", "Input", "local_bookmarks", "civitai_bookmarks", ...currentDirs, "Lora"];
         const isBuiltin = (t) => Object.prototype.hasOwnProperty.call(BUILTIN_LABELS, t);
@@ -125,22 +126,22 @@ export class GallerySetting {
                     $el("span", {
                         className: "neo-gallery-dir-drag-handle",
                         textContent: "\u283F",
-                        title: "拖拽排序"
+                        title: t("拖拽排序")
                     }),
                     $el("span", {
                         className: "neo-gallery-dir-path",
                         textContent: builtin ? BUILTIN_LABELS[token] : token,
-                        title: builtin ? "内置板块" : token
+                        title: builtin ? t("内置板块") : token
                     })
                 ];
                 if (hidden) {
-                    children.push($el("span", { className: "neo-gallery-dir-hidden-badge", textContent: "已隐藏" }));
+                    children.push($el("span", { className: "neo-gallery-dir-hidden-badge", textContent: t("已隐藏") }));
                 }
                 const actions = [];
                 if (token === "Lora" || token === "civitai_bookmarks") {
                     actions.push($el("button", {
                         className: "neo-gallery-dir-ctl-btn neo-gallery-dir-settings-btn",
-                        title: "C 站设置（API KEY / 代理 / 同步目录）",
+                        title: t("C 站设置（API KEY / 代理 / 同步目录）"),
                         onclick: (e) => {
                             e.stopPropagation();
                             toggleCivitaiSettings(token === "civitai_bookmarks" ? civitaiKeyInput : null);
@@ -150,14 +151,14 @@ export class GallerySetting {
                 }
                 actions.push($el("button", {
                     className: "neo-gallery-dir-ctl-btn",
-                    title: hidden ? "显示" : "隐藏（不在素材库中列出）",
+                    title: hidden ? t("显示") : t("隐藏（不在素材库中列出）"),
                     onclick: () => toggleDirHidden(token),
                     textContent: "\uD83D\uDC41"
                 }));
                 if (!builtin) {
                     actions.push($el("button", {
                         className: "neo-gallery-dir-remove-btn",
-                        title: "移除（仅从列表移除，不删除磁盘文件）",
+                        title: t("移除（仅从列表移除，不删除磁盘文件）"),
                         onclick: async (e) => {
                             e.stopPropagation();
                             if (!await gallery.removeCustomDir(token)) return;
@@ -229,13 +230,13 @@ export class GallerySetting {
 
         // Add new directory input area
         const addArea = $el("div", { className: "neo-gallery-dir-add-area" }, [
-            $el("label", { className: "neo-gallery-dir-label", textContent: "新目录路径" }),
+            $el("label", { className: "neo-gallery-dir-label", textContent: t("新目录路径") }),
             $el("div", { className: "neo-gallery-dir-add-row" }, [
                 $el("input", {
                     type: "text",
                     id: "neo-gallery-new-dir-input",
                     className: "neo-gallery-dir-input",
-                    placeholder: "粘贴或输入完整目录路径...",
+                    placeholder: t("粘贴或输入完整目录路径..."),
                     title: "Paste or type a full directory path here"
                 }),
                 $el("button", {
@@ -285,7 +286,7 @@ export class GallerySetting {
         const saveCivitaiKey = async () => {
             const value = civitaiKeyInput.value.trim();
             if (!value) {
-                showToast(gallery.app, 'warning', 'Civitai API KEY', '请输入 API KEY');
+                showToast(gallery.app, 'warning', 'Civitai API KEY', t('请输入 API KEY'));
                 return;
             }
             try {
@@ -300,13 +301,13 @@ export class GallerySetting {
                     civitaiKeySet = true;
                     civitaiKeyHint = result.civitai_api_key_hint || "";
                     civitaiKeyInput.placeholder = `Civitai API KEY configured (${civitaiKeyHint}) \u2014 leave empty to keep`;
-                    showToast(gallery.app, 'success', '已保存', 'API KEY 已保存');
+                    showToast(gallery.app, 'success', t('已保存'), t('API KEY 已保存'));
                     pollLoraSync();
                 } else {
-                    showToast(gallery.app, 'error', '保存失败', result.error || '后端未确认写入');
+                    showToast(gallery.app, 'error', t('保存失败'), result.error || t('后端未确认写入'));
                 }
             } catch (e) {
-                showToast(gallery.app, 'error', '保存失败', String(e));
+                showToast(gallery.app, 'error', t('保存失败'), String(e));
             }
         };
 
@@ -315,7 +316,7 @@ export class GallerySetting {
         const civitaiProxyInput = $el("input", {
             type: "text",
             className: "neo-gallery-dir-input",
-            placeholder: "如 http://127.0.0.1:7890，留空直连",
+            placeholder: t("如 http://127.0.0.1:7890，留空直连"),
             value: civitaiProxy,
             onkeydown: (e) => { if (e.key === "Enter") saveCivitaiProxy(); },
         });
@@ -331,13 +332,13 @@ export class GallerySetting {
                 const result = await resp.json();
                 if (resp.ok && result.success) {
                     civitaiProxy = value;
-                    showToast(gallery.app, 'success', '已保存',
-                        value ? `C 站代理已设为 ${value}` : 'C 站已改为直连');
+                    showToast(gallery.app, 'success', t('已保存'),
+                        value ? tf("C 站代理已设为 {proxy}", { proxy: value }) : t('C 站已改为直连'));
                 } else {
-                    showToast(gallery.app, 'error', '保存失败', result.error || '后端未确认写入');
+                    showToast(gallery.app, 'error', t('保存失败'), result.error || t('后端未确认写入'));
                 }
             } catch (e) {
-                showToast(gallery.app, 'error', '保存失败', String(e));
+                showToast(gallery.app, 'error', t('保存失败'), String(e));
             }
         };
 
@@ -353,20 +354,20 @@ export class GallerySetting {
         const netResult = $el("div", { className: "neo-gallery-net-result", textContent: "" });
         const testNetBtn = $el("button", {
             className: "neo-gallery-dir-bulk-btn",
-            textContent: "\uD83D\uDD0C 测试 C 站连通性",
+            textContent: t("\uD83D\uDD0C 测试 C 站连通性"),
             onclick: async () => {
                 const label = testNetBtn.textContent;
                 testNetBtn.disabled = true;
-                testNetBtn.textContent = "\uD83D\uDD04 测试中...";
+                testNetBtn.textContent = t("\uD83D\uDD04 测试中...");
                 netResult.className = "neo-gallery-net-result warn";
-                netResult.textContent = "正在连接 civitai.com（最长 20 秒）...";
+                netResult.textContent = t("正在连接 civitai.com（最长 20 秒）...");
                 try {
                     const resp = await api.fetchApi('/neo_gallery/civitai_test', { method: 'POST' });
                     const r = await resp.json();
                     if (!resp.ok || !r.success) {
                         netResult.className = "neo-gallery-net-result err";
-                        netResult.textContent = "测试失败: " + (r.error || resp.status);
-                        showToast(gallery.app, 'error', 'C 站连通性', '连通性测试请求失败。');
+                        netResult.textContent = t("测试失败: ") + (r.error || resp.status);
+                        showToast(gallery.app, 'error', t('C 站连通性'), t('连通性测试请求失败。'));
                         return;
                     }
                     const rejected = r.http_status === 401 || r.http_status === 403;
@@ -374,11 +375,11 @@ export class GallerySetting {
                     netResult.className = `neo-gallery-net-result ${cls}`;
                     netResult.textContent = r.message;
                     showToast(gallery.app, cls === "ok" ? 'success' : cls === "warn" ? 'warning' : 'error',
-                        'C 站连通性', r.message);
+                        t('C 站连通性'), r.message);
                 } catch (e) {
                     netResult.className = "neo-gallery-net-result err";
-                    netResult.textContent = "测试失败: " + e;
-                    showToast(gallery.app, 'error', 'C 站连通性', '连通性测试请求失败。');
+                    netResult.textContent = t("测试失败: ") + e;
+                    showToast(gallery.app, 'error', t('C 站连通性'), t('连通性测试请求失败。'));
                 } finally {
                     testNetBtn.disabled = false;
                     testNetBtn.textContent = label;
@@ -417,12 +418,12 @@ export class GallerySetting {
                             });
                             const result = await resp.json();
                             if (!resp.ok || !result.success) {
-                                showToast(gallery.app, 'error', '保存失败', result.error || 'LORA 目录选择未保存');
+                                showToast(gallery.app, 'error', t('保存失败'), result.error || t('LORA 目录选择未保存'));
                             } else {
                                 pollLoraSync();
                             }
                         } catch (e) {
-                            showToast(gallery.app, 'error', '保存失败', String(e));
+                            showToast(gallery.app, 'error', t('保存失败'), String(e));
                         }
                     };
                     loraDirsList.appendChild($el("label", { className: "neo-gallery-lora-dir-item" }, [cb, `${label} (${d.count})`]));
@@ -487,7 +488,7 @@ export class GallerySetting {
                 try {
                     const resp = await api.fetchApi('/neo_gallery/lora_cache_status');
                     const st = await resp.json();
-                    const failHint = st.failed ? ` \u00B7 ${st.failed} failed（可点「测试 C 站连通性」排查网络）` : '';
+                    const failHint = st.failed ? tf(" · {n} failed（可点「测试 C 站连通性」排查网络）", { n: st.failed }) : '';
                     if (st.running) {
                         loraProgress.textContent = `Auto-caching ${st.done}/${st.total} \u00B7 ${st.current || ''}${st.failed ? ` \u00B7 failed ${st.failed}` : ''}`;
                         retryBtn.style.display = st.failed > 0 ? '' : 'none';
@@ -498,12 +499,12 @@ export class GallerySetting {
                             loraProgress.textContent = st.error;
                         } else if (st.pending_count) {
                             let reason;
-                            if (!st.master_enabled) reason = '总开关已关闭';
-                            else if (!st.enabled) reason = '需配置 C 站 API KEY';
+                            if (!st.master_enabled) reason = t('总开关已关闭');
+                            else if (!st.enabled) reason = t('需配置 C 站 API KEY');
                             else reason = `fetches on access${failHint}`;
                             loraProgress.textContent = `${st.pending_count} lora(s) queued \u00B7 ${reason}`;
                         } else {
-                            loraProgress.textContent = st.failed ? `${st.failed} failed（可点「测试 C 站连通性」排查网络）` : '';
+                            loraProgress.textContent = st.failed ? tf("{n} failed（可点「测试 C 站连通性」排查网络）", { n: st.failed }) : '';
                         }
                     }
                 } catch (e) { }
@@ -513,7 +514,7 @@ export class GallerySetting {
         };
 
         const civitaiArea = $el("div", { className: "neo-gallery-civitai-area", style: { display: "none" } }, [
-            $el("div", { className: "neo-gallery-civitai-title", textContent: "Civitai（C 站同步）" }),
+            $el("div", { className: "neo-gallery-civitai-title", textContent: t("Civitai（C 站同步）") }),
             $el("label", { className: "neo-gallery-civitai-toggle" }, [
                 $el("input", {
                     type: "checkbox",
@@ -526,14 +527,14 @@ export class GallerySetting {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ action: "save_civitai", enabled: civitaiEnabled })
                             });
-                            showToast(gallery.app, 'success', civitaiEnabled ? '已启用' : '已停用', civitaiEnabled ? 'C 站 LORA 示例获取已开启。' : 'C 站 LORA 示例获取已关闭。');
+                            showToast(gallery.app, 'success', civitaiEnabled ? t('已启用') : t('已停用'), civitaiEnabled ? t('C 站 LORA 示例获取已开启。') : t('C 站 LORA 示例获取已关闭。'));
                             await gallery.refreshAfterSettingsChange();
                         } catch (err) {
                             showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the Civitai LORA switch.');
                         }
                     }
                 }),
-                $el("span", { textContent: "启用 C 站 LORA（访问时自动获取示例图）" })
+                $el("span", { textContent: t("启用 C 站 LORA（访问时自动获取示例图）") })
             ]),
             $el("label", { className: "neo-gallery-civitai-toggle" }, [
                 $el("input", {
@@ -547,31 +548,31 @@ export class GallerySetting {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ action: "save_civitai", bookmark_enabled: civitaiBookmarkEnabled })
                             });
-                            showToast(gallery.app, 'success', civitaiBookmarkEnabled ? '已启用' : '已停用',
-                                civitaiBookmarkEnabled ? 'C 站收藏已开启。' : 'C 站收藏已关闭。');
+                            showToast(gallery.app, 'success', civitaiBookmarkEnabled ? t('已启用') : t('已停用'),
+                                civitaiBookmarkEnabled ? t('C 站收藏已开启。') : t('C 站收藏已关闭。'));
                             await gallery.refreshAfterSettingsChange();
                         } catch (err) {
-                            showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the C 站收藏 switch.');
+                            showToast(gallery.app, 'error', 'Save Failed', 'Failed to save the Civitai bookmarks switch.');
                         }
                     }
                 }),
-                $el("span", { textContent: "启用 C 站收藏（默认开启）" })
+                $el("span", { textContent: t("启用 C 站收藏（默认开启）") })
             ]),
             $el("label", { className: "neo-gallery-dir-label", textContent: "Civitai API KEY" }),
             $el("div", { className: "neo-gallery-civitai-key-row" }, [
                 civitaiKeyInput,
                 $el("button", {
                     className: "neo-gallery-dir-bulk-btn neo-gallery-civitai-save-btn",
-                    textContent: "保存",
+                    textContent: t("保存"),
                     onclick: saveCivitaiKey,
                 }),
             ]),
-            $el("label", { className: "neo-gallery-dir-label", textContent: "C 站代理" }),
+            $el("label", { className: "neo-gallery-dir-label", textContent: t("C 站代理") }),
             $el("div", { className: "neo-gallery-civitai-key-row" }, [
                 civitaiProxyInput,
                 $el("button", {
                     className: "neo-gallery-dir-bulk-btn neo-gallery-civitai-save-btn",
-                    textContent: "保存代理",
+                    textContent: t("保存代理"),
                     onclick: saveCivitaiProxy,
                 }),
             ]),
