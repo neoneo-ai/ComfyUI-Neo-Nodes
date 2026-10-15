@@ -225,6 +225,19 @@ class OfflineServiceTests(_ServerCase):
             self.assertTrue(json.loads(body)["ok"], action)
         self.assertEqual(calls, ["plugin", "deps"])
 
+    def test_launcher_toggle_actions_carry_their_flag(self):
+        got = []
+        self.app["launcher_api"]["set_frameless"] = lambda on: got.append(("frameless", on)) or {"ok": True}
+        self.app["launcher_api"]["set_dev_mode"] = lambda on: got.append(("dev_mode", on)) or {"ok": True}
+        for action, key in (("set_frameless", "frameless"), ("set_dev_mode", "dev_mode")):
+            status, body = self.post_json("/neo_studio/launcher", {"action": action, key: True})
+            self.assertEqual(status, 200, action)
+            self.assertTrue(json.loads(body)["ok"], action)
+            status, body = self.post_json("/neo_studio/launcher", {"action": action, key: False})
+            self.assertEqual(status, 200, action)
+        self.assertEqual(got, [("frameless", True), ("frameless", False),
+                               ("dev_mode", True), ("dev_mode", False)])
+
     def test_launcher_post_rejects_unknown_action(self):
         status, body = self.post_json("/neo_studio/launcher", {"action": "rm_root"})
         self.assertEqual(status, 400)

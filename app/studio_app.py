@@ -455,6 +455,9 @@ def sync_plugin(plugin_dir: Path, source_dir: Path) -> int:
                     s, d = src.stat(), dst.stat()
                     if s.st_size == d.st_size and s.st_mtime_ns == d.st_mtime_ns:
                         continue
+                    # 目标比源新就是有人直接改了 custom_nodes 里的产物，这次覆盖会丢掉那份改动
+                    if d.st_mtime_ns > s.st_mtime_ns:
+                        log_line(f"plugin sync overwrote edited {rel / name}")
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
                 copied += 1
@@ -873,6 +876,20 @@ class StudioDesktop:
     def _hwnd(self) -> int:
         return int(self._window.native.Handle.ToInt64())
 
+    def set_dev_mode(self, on: bool) -> dict:
+        """开发模式开关：写进启动配置，下次开机走 webview.start(debug=True)。pywebview 在
+        CoreWebView2 建环境时定值（AreBrowserAcceleratorKeysEnabled / AreDefaultContextMenusEnabled /
+        AreDevToolsEnabled 全等于 debug），运行中的窗口改不了，勾完要重启窗口。"""
+        self.launcher["dev_mode"] = bool(on)
+        cfg = load_config()
+        cfg["dev_mode"] = self.launcher["dev_mode"]
+        if not write_config(cfg):
+            return {"ok": False, "error": f"写入启动配置失败：{CONFIG_FILE}"}
+        log_line(f"dev_mode {self.launcher['dev_mode']}")
+        return {"ok": True, "dev_mode": self.launcher["dev_mode"],
+                "msg": ("开发模式已开启，重启窗口后生效：F5 / Ctrl+F5 刷新、右键菜单、开发者工具"
+                        if self.launcher["dev_mode"] else "开发模式已关闭，重启窗口后生效")}
+
     def ensure_resizable_frame(self) -> None:
         """pywebview 的 frameless 走 FormBorderStyle=None，可拖拽边框一起摘掉：窗口显示后补回 WS_THICKFRAME。"""
         if self.frameless and self._window is not None:
@@ -1248,7 +1265,9 @@ def main() -> int:
                 "plugin_dir": str(plugin_dir), "state_dir": str(STATE),
                 "portable": IS_FROZEN, "state": ST_OK, "error": "",
                 # 无边框是新默认：老配置没这一项也走无边框，设置里可关
-                "frameless": bool(cfg.get("frameless", True))}
+                "frameless": bool(cfg.get("frameless", True)),
+                # 开发模式默认关：pywebview 把 WebView2 的刷新键 / 右键菜单 / 开发者工具全绑在 debug 上
+                "dev_mode": bool(cfg.get("dev_mode"))}
     launcher_api: dict = {}   # 桌面端路由延迟取桌面端的方法：服务先起，桌面端的方法随后补上
     if need_guide:
         state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
@@ -1298,7 +1317,8 @@ def main() -> int:
     desktop.ensure_server = ensure_server
     launcher_api.update(apply=desktop.apply_launcher, install_plugin=desktop.install_plugin,
                         install_deps=desktop.install_deps, pick_root=desktop.pick_root,
-                        set_frameless=desktop.set_frameless, state=desktop.launcher_state)
+                        set_frameless=desktop.set_frameless, set_dev_mode=desktop.set_dev_mode,
+                        state=desktop.launcher_state)
     geo = load_geometry()
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600),
@@ -1416,13 +1436,15 @@ def main() -> int:
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     if args.cdp:
         webview.settings["REMOTE_DEBUGGING_PORT"] = args.cdp
+    # 设置里勾的开发模式与 --debug 同一条路：CoreWebView2 建环境时定值，运行中改不了，勾完要重启窗口
+    debug = args.debug or launcher["dev_mode"]
     ensure_clr()
-    log_line(f"webview start geo={geo} page={'guide' if need_guide else 'splash'}")
+    log_line(f"webview start geo={geo} page={'guide' if need_guide else 'splash'} debug={debug}")
     purge_web_cache()   # 历史缓存里的旧插件 JS 会把模块图撕开，开窗口前清掉
     on_start = None if need_guide else (lambda: threading.Thread(target=boot_sequence,
                                                                  daemon=True).start())
     webview.start(on_start, private_mode=False, storage_path=str(PROFILE_DIR), gui="edgechromium",
-                  debug=args.debug, icon=icon)
+                  debug=debug, icon=icon)
     log_line("webview end")
     if closing["thread"] is not None:
         closing["thread"].join(10)   # 收尾线程还在跑就退进程 = 留孤儿

@@ -453,6 +453,7 @@ function createLauncherPanel() {
     const depsBtn = $el("button", { className: "ns-btn", textContent: "安装依赖" });
     const fixBtn = $el("button", { className: "ns-btn", textContent: "重试安装插件" });
     const framelessIn = $el("input", { type: "checkbox", className: "ns-launch-frameless" });
+    const devIn = $el("input", { type: "checkbox", className: "ns-launch-dev" });
     const kernelState = $el("div", { className: "ns-kernel-state" });
     const startBtn = $el("button", { className: "ns-btn ns-kernel-start", textContent: "▶ 启动内核" });
     const stopBtn = $el("button", { className: "ns-btn ns-kernel-stop", textContent: "■ 停止内核" });
@@ -477,10 +478,11 @@ function createLauncherPanel() {
         depsBtn.style.display = s.state === "deps_missing" ? "" : "none";
         fixBtn.style.display = s.state === "install_failed" ? "" : "none";
         framelessIn.checked = !!s.frameless;
+        devIn.checked = !!s.dev_mode;
     }
 
     // 动作 → 桌面端 js_api 上的方法名：桥在就直接问桌面端，不在才走桌面端服务的 HTTP 路由
-    const BRIDGE_FN = { apply: "apply_launcher", install_plugin: "install_plugin", install_deps: "install_deps", set_frameless: "set_frameless" };
+    const BRIDGE_FN = { apply: "apply_launcher", install_plugin: "install_plugin", install_deps: "install_deps", set_frameless: "set_frameless", set_dev_mode: "set_dev_mode" };
     const bridge = () => (window.pywebview?.api?.launcher_state ? window.pywebview.api : null);
 
     async function refresh() {
@@ -505,7 +507,9 @@ function createLauncherPanel() {
                     ? await fn(payload.root, payload.python, payload.port)
                     : action === "set_frameless"
                         ? await fn(payload.frameless)
-                        : await fn();
+                        : action === "set_dev_mode"
+                            ? await fn(payload.dev_mode)
+                            : await fn();
             } else {
                 const resp = await api.fetchApi("/neo_studio/launcher", {
                     method: "POST",
@@ -536,6 +540,7 @@ function createLauncherPanel() {
     depsBtn.addEventListener("click", () => post({ action: "install_deps" }));
     fixBtn.addEventListener("click", () => post({ action: "install_plugin" }));
     framelessIn.addEventListener("change", () => post({ action: "set_frameless", frameless: framelessIn.checked }));
+    devIn.addEventListener("change", () => post({ action: "set_dev_mode", dev_mode: devIn.checked }));
 
     // 内核启停在面板顶部：状态一行 + 启动 / 停止两枚按钮，此刻做不了的那枚禁用
     function renderKernel(s) {
@@ -564,6 +569,7 @@ function createLauncherPanel() {
         row("Python", pyIn, pyBrowseBtn),
         row("端口", portIn),
         row("无边框窗口", framelessIn),
+        row("开发模式", devIn),
         $el("div", { className: "ns-launch-actions" }, [applyBtn, depsBtn, fixBtn]),
         info,
     ]);
@@ -899,6 +905,20 @@ function initWindowChrome() {
     attach();
 }
 
+// ====== 刷新快捷键 ======
+// pywebview 把 WebView2 的浏览器加速器键整个绑在 debug 上（platforms/edgechromium.py 里
+// AreBrowserAcceleratorKeysEnabled = debug）：不带 --debug 启动时 F5 / Ctrl+F5 / Ctrl+R
+// 全被 WebView2 吞掉，热同步完前端在窗口里按刷新没反应。加速器键关掉后按键原样落到网页内容，
+// 这里自己接管。JS 走 no-store（studio_server.py 的 no_store 中间件），整页刷新必取新文件。
+function initReloadHotkey() {
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === "KeyR")) {
+            e.preventDefault();
+            location.reload();
+        }
+    }, true);
+}
+
 
 // ====== 显存/内存监控（导演页生成面板底部） ======
 // 只有导演生成会把显存吃满：读数挂在导演页，进导演页才轮询，离开即停
@@ -1048,6 +1068,7 @@ if (view) {
         route();   // 视图先挂上：桌面端附件（顶栏状态位）失败不能连坐，窗口不至于停在只出顶栏的空白页
         initComfyStatus();
         initWindowChrome();
+        initReloadHotkey();
     }).catch(e => {
         console.error("[Neo Studio] startup failed:", e);
         desktopLog(`STARTUP FAILED ${e?.stack || e}`);

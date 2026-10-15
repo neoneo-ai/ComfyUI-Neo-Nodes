@@ -232,7 +232,11 @@ function makeDirViewGallery() {
     mockRoute("/neo_gallery/delete", (body) => ({ success: true, deleted: body.filename }));
     const gallery = makeGallery();
     let refreshCount = 0;
-    gallery.list = { sortAndDisplayImages: async () => { refreshCount += 1; } };
+    let scrollSaves = 0;
+    gallery.list = {
+        _saveScrollPosition: () => { scrollSaves += 1; },
+        sortAndDisplayImages: async () => { refreshCount += 1; },
+    };
     gallery.currentView = { mode: "directory", source: "Output", categoryPath: [] };
     gallery._currentDirStructure = {
         subdirs: {},
@@ -242,7 +246,7 @@ function makeDirViewGallery() {
         ],
     };
     gallery._currentDirImages = [...gallery._currentDirStructure.items];
-    return { gallery, get refreshCount() { return refreshCount; } };
+    return { gallery, get refreshCount() { return refreshCount; }, get scrollSaves() { return scrollSaves; } };
 }
 
 test("目录视图批量删除后同步 _currentDirStructure 缓存并刷新列表", async () => {
@@ -276,4 +280,5 @@ test("删光整个目录也会刷新（不依赖 _currentDirImages 非空判断�
     assert.equal(gallery._currentDirStructure.items.length, 0);
     assert.equal(gallery._currentDirImages.length, 0);
     assert.equal(view.refreshCount, 1, "删光目录时也必须重绘以显示空态");
+    assert.equal(view.scrollSaves, 1, "重绘父列表前应先保存滚动位置");
 });

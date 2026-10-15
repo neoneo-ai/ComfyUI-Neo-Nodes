@@ -234,6 +234,8 @@ export class GalleryList {
     async sortAndDisplayImages() {
         // Clear cached scroll container reference before clearing DOM
         this._scrollContainer = null;
+        // 清空 DOM 会让浏览器把 scrollTop 归零并派发 scroll，锁住自动保存，恢复完再放开
+        this.gallery._scrollRestoreLock = true;
         releaseLazyThumbnails(this.gallery.accordion);
         this.gallery.accordion.innerHTML = "";
 
@@ -289,6 +291,7 @@ export class GalleryList {
         // 非搜索视图总有「本地收藏」首页卡，所以只有搜索无命中时才提示空结果。
         if (totalDirs === 0 && this.gallery.isSearchActive) {
             showNoFilesMessage(this.gallery.accordion, "No matching images found");
+            this.gallery._scrollRestoreLock = false;
             return;
         }
 
@@ -867,15 +870,6 @@ export class GalleryList {
         return window;
     }
 
-    async _saveScrollPositionAsync(key) {
-        const scrollContainer = this._getScrollContainer();
-        const scrollTop = scrollContainer === window 
-            ? window.pageYOffset || document.documentElement.scrollTop 
-            : scrollContainer.scrollTop;
-        this.gallery._scrollPositions[key] = scrollTop;
-        await this.gallery.savePluginData();
-    }
-
     _saveScrollPosition() {
         const key = this._getScrollKey();
         if (key) {
@@ -922,12 +916,13 @@ export class GalleryList {
     }
 
     _restoreScrollPosition() {
+        const done = () => { this.gallery._scrollRestoreLock = false; };
         const key = this._getScrollKey();
-        if (!key) return;
+        if (!key) return done();
         
         // 修复：使用 'in' 检查 key 是否存在，而不是 !this.gallery._scrollPositions[key]（因为值可能是 0）
         if (!(key in this.gallery._scrollPositions)) {
-            return;
+            return done();
         }
         
         const targetScrollTop = this.gallery._scrollPositions[key];
@@ -957,12 +952,14 @@ export class GalleryList {
             const scrollContainer = this._getScrollContainer();
             if (scrollContainer === window) {
                 window.scrollTo(0, targetScrollTop);
+                done();
             } else if (scrollContainer.scrollHeight > scrollContainer.clientHeight) {
                 const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
                 scrollContainer.scrollTop = Math.min(targetScrollTop, maxScroll);
+                done();
             } else {
                 // 容器尚未就绪，稍后重试
-                setTimeout(() => restore(), 300);
+                setTimeout(() => { restore(); done(); }, 300);
             }
         }, 100);
     }

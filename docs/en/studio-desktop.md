@@ -11,7 +11,7 @@ Source runs and the packaged exe go through the same `app/studio_app.py`.
 | `app/studio_app.py` | Window, self-check, start / stop ComfyUI, frameless window, close teardown, startup settings |
 | `app/studio_server.py` | Desktop-side aiohttp service (ComfyUI port +3, `DESKTOP_PORT_OFFSET`); loads the plugin modules' own `RouteTableDef` handlers by directory |
 | `app/studio_caps.py` | Capability table: which routes the desktop service owns; everything outside answers `409 offline` |
-| `data/` | State directory: `studio_window.json` (geometry), `studio_profile` (WebView2 profile / localStorage), `launcher_config.json` (root / python / port / frameless), `studio_desktop.log`, `comfy_run.log` |
+| `data/` | State directory: `studio_window.json` (geometry), `studio_profile` (WebView2 profile / localStorage), `launcher_config.json` (root / python / port / frameless / dev_mode), `studio_desktop.log`, `comfy_run.log` |
 
 Source runs keep state in the repository's `data/`; the exe prefers `data/` beside the exe and falls back to
 `%APPDATA%\Neo Studio` when the exe sits in a non-writable directory.
@@ -68,6 +68,18 @@ startable once the root is filled in.
   fullscreen makes pywebview write `FormBorderStyle` back to its creation value so the title bar comes back, with
   the style re-applied from the desktop's state; closing while fullscreen does not save geometry (it would store a
   full-screen rectangle and the window would fill the screen on the next start).
+
+## Dev mode
+
+- Dev mode is a startup setting, stored as `dev_mode` in `launcher_config.json` (off by default): checking it makes
+  the next start go through `webview.start(debug=True)`, and the settings toggle is `set_dev_mode`.
+- pywebview sets `AreBrowserAcceleratorKeysEnabled`, `AreDefaultContextMenusEnabled`, and `AreDevToolsEnabled` all
+  equal to `debug` when the CoreWebView2 environment is created: without dev mode, F5 / Ctrl+F5 / Ctrl+R and the
+  WebView2 context menu do not work in the window. All three are fixed at environment creation and cannot be changed
+  on a running window, so the toggle takes effect after the window restarts.
+- The reload entry does not depend on dev mode: the Studio page takes over F5 / Ctrl+F5 / Ctrl+R itself
+  (`initReloadHotkey` in `studio/web/studio/studio-app.js`), so one keypress after a frontend hot-sync
+  (`tools/watch_web.py`) loads the new code.
 
 ## Window close and process reaping
 

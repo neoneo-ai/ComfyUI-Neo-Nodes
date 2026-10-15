@@ -10,7 +10,7 @@
 | `app/studio_app.py` | 窗口、自检、拉起 / 停止 ComfyUI、无边框窗口、关窗收尾、启动设置 |
 | `app/studio_server.py` | 桌面端 aiohttp 服务（ComfyUI 端口 +3，`DESKTOP_PORT_OFFSET`），按目录加载插件模块挂在各自 `RouteTableDef` 上的 handler |
 | `app/studio_caps.py` | 能力表：哪些路由归桌面端服务，表外一律 `409 offline` |
-| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless）、`studio_desktop.log`、`comfy_run.log` |
+| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless / dev_mode）、`studio_desktop.log`、`comfy_run.log` |
 
 源码运行的状态目录是仓库根的 `data/`；exe 优先 exe 旁的 `data/`，落在不可写目录时退回 `%APPDATA%\Neo Studio`。
 
@@ -50,6 +50,16 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
   最大化与全屏状态由桌面端自己记（pywebview 的 `Window.maximized` / `.fullscreen` 是建窗初值）：无边框下最大化铺
   工作区（系统 maximize 给整屏矩形，任务栏会被盖住）；全屏退出时 pywebview 把 `FormBorderStyle` 写回建窗时的值、
   标题栏跟着回来，样式按桌面端的状态重贴；全屏时关窗不存几何（存的是整屏矩形，下次开机窗口铺满屏幕）。
+
+## 开发模式
+
+- 开发模式是启动设置里的一项，存 `launcher_config.json` 的 `dev_mode`（缺省关）：勾上下次开机走
+  `webview.start(debug=True)`，设置页的开关是 `set_dev_mode`。
+- pywebview 在 CoreWebView2 建环境时把 `AreBrowserAcceleratorKeysEnabled`、`AreDefaultContextMenusEnabled`、
+  `AreDevToolsEnabled` 全等于 debug：不带开发模式时，F5 / Ctrl+F5 / Ctrl+R 与 WebView2 右键菜单在窗口里都不出。
+  这三项建环境时定值，运行中的窗口改不了，勾完要重启窗口。
+- 刷新入口不依赖开发模式：Studio 页自己接管 F5 / Ctrl+F5 / Ctrl+R（`studio/web/studio/studio-app.js` 的
+  `initReloadHotkey`），前端热同步（`tools/watch_web.py`）之后按一次就是新代码。
 
 ## 关窗与进程回收
 

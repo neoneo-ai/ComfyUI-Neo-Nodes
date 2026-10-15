@@ -44,6 +44,11 @@ the rules a change has to obey.
   metadata, the plugin dependency list, and the package boundary all live in that
   layer: `studio/pyproject.toml`, `studio/requirements.txt`, `studio/.comfyignore`.
   Run `comfy node publish` from inside `studio/`, never from the repo root.
+- `ComfyUI\custom_nodes\comfyui-neo-studio` is a generated sync target, not a source
+  tree. `sync_plugin()` in `app/studio_app.py` overwrites it from `studio/` on every
+  launch and leaves the user data (`gallery/`, `locals/`, `configs/`) where it is.
+  A fix written there is overwritten by the next launch: edit `studio/` and let the
+  sync carry it.
 - `app/` is the desktop app: `studio_app.py` (pywebview + WebView2
   window), `studio_server.py` (read-only offline service), `studio_caps.py`
   (capability table). It owns window, process, and launcher concerns.
@@ -199,6 +204,15 @@ the rules a change has to obey.
 - Plugin sync copies same-name files from `studio/` into `custom_nodes` and deletes
   nothing in the target. A git checkout is never overwritten; the bundled copy replaces
   an installed copy only when its version is newer, and skips when the directory is busy.
+- `tools/watch_web.py` hot-syncs `studio/web/` into the installed plugin web directory so
+  a frontend edit lands on a page reload instead of a relaunch. Same semantics as the
+  plugin sync: same-name overwrite, nothing deleted in the target.
+- pywebview binds WebView2's browser accelerator keys, the default context menu, and DevTools all
+  to `debug`, and the value is fixed when the CoreWebView2 environment is created: without it,
+  F5, Ctrl+F5, Ctrl+R, and the right-click menu are off in the window. Dev mode is the startup
+  setting that turns that flag on (`dev_mode` in `launcher_config.json`) and takes effect on the
+  next window start; the Studio page owns its own reload hotkey in page JS, so a frontend reload
+  never waits on dev mode.
 - Frozen builds resolve the ComfyUI root by walking the exe's ancestor
   directories, and package resources go through `_MEIPASS`. Both the onefile
   layout and the onedir layout, which has one extra directory level, resolve.

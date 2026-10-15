@@ -182,6 +182,8 @@ async def launcher_post(request):
         res = fn(data.get("root", ""), data.get("python", ""), data.get("port", 0))
     elif action == "set_frameless":
         res = fn(bool(data.get("frameless")))
+    elif action == "set_dev_mode":
+        res = fn(bool(data.get("dev_mode")))
     else:
         res = fn()
     return web.json_response(res)

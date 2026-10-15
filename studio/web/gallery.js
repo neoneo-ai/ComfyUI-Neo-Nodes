@@ -91,7 +91,7 @@ export class NeoGallery {
         
         // 滚动位置状态
         this._scrollPositions = {};
-        this._currentScrollKey = null;
+        this._scrollRestoreLock = false;   // 重绘清空内容时的伪滚动不覆盖已保存位置
 
         // 导航历史（顶部前进/后退按钮）
         this._navStack = [];
@@ -1055,7 +1055,7 @@ export class NeoGallery {
 
     // ====== Actions ======
 
-    async deleteItem(name, subfolder, { silent = false, rerender = true } = {}) {
+    async deleteItem(name, subfolder, { silent = false } = {}) {
         try {
             const response = await api.fetchApi('/neo_gallery/delete', {
                 method: 'POST',
@@ -1097,12 +1097,7 @@ export class NeoGallery {
 
                 // Also remove from _currentDirImages (lazy mode fallback; items may lack subfolder)
                 if (this._currentDirImages && this._currentDirImages.length > 0) {
-                    const before = this._currentDirImages.length;
                     this._currentDirImages = this._currentDirImages.filter(item => item.name !== name);
-                    if (before !== this._currentDirImages.length && rerender) {
-                        // Re-render current view to reflect deletion
-                        await this.list.sortAndDisplayImages();
-                    }
                 }
                 
                 // Remove DOM element immediately for better UX
@@ -1213,18 +1208,6 @@ export class NeoGallery {
         this._updateSelectionBar();
     }
 
-    /** 重绘后把勾选框/选中态同步回 _selectedItems（删除触发的重渲染会重建卡片 DOM）。 */
-    _syncSelectionDom() {
-        if (this._selectedItems.size === 0) return;
-        document.querySelectorAll('.neo-gallery-thumb-container').forEach((el) => {
-            const key = this._selectionKey(el.dataset.filename, el.dataset.subfolder);
-            const cb = el.querySelector('.neo-gallery-select-check');
-            const selected = this._selectedItems.has(key);
-            if (cb) cb.checked = selected;
-            el.classList.toggle('neo-gallery-thumb-selected', selected);
-        });
-    }
-
     _updateSelectionBar() {
         if (this._selectionBar) { this._selectionBar.remove(); this._selectionBar = null; }
         const count = this._selectedItems.size;
@@ -1261,8 +1244,8 @@ export class NeoGallery {
             const subfolder = key.slice(0, idx);
             const name = key.slice(idx + 1);
             if (!this.isDeletableItem(name, subfolder)) { skipped += 1; continue; } // 只读源（presets/lora/C站收藏/oss）跳过
-            // 批量时跳过逐项重绘，最后统一刷新一次
-            if (await this.deleteItem(name, subfolder, { silent: true, rerender: false })) okCount += 1;
+            // 逐项静默删除，卡片 DOM 由 deleteItem 自己移除，瀑布流负责重排
+            if (await this.deleteItem(name, subfolder, { silent: true })) okCount += 1;
         }
         const attempted = count - skipped;
         if (attempted > 0 && okCount === attempted) {
@@ -1272,11 +1255,12 @@ export class NeoGallery {
         } else if (attempted > 0) {
             showToast(this.app, 'error', '批量删除失败', '没有素材被删除');
         }
-        // 目录视图从 _currentDirStructure 缓存重绘（deleteItem 已同步移除被删项），必须无条件刷新一次，
-        // 否则删光整个目录时（_currentDirImages 为空）旧卡片会残留在列表里
-        if (this.currentView.mode === 'directory' && this._currentDirStructure) {
+        // deleteItem 已逐项移除卡片 DOM，瀑布流会自己重排。只有整个目录被删空时才重绘父列表，
+        // 其余情况整表重绘会刷新页面并丢掉滚动位置。
+        if (this.currentView.mode === 'directory' && this._currentDirStructure
+            && this.accordion.querySelectorAll('.neo-gallery-thumb-container, .neo-gallery-category-card').length === 0) {
+            this.list._saveScrollPosition();
             await this.list.sortAndDisplayImages();
-            this._syncSelectionDom();
         }
     }
 
@@ -1641,6 +1625,9 @@ export class NeoGallery {
         
         const onScroll = () => {
             if (!this.currentView || !this.currentView.mode) return;
+            // 重绘清空内容会让浏览器把 scrollTop 归零并派发 scroll，
+            // 这次伪滚动不能覆盖已保存的位置，否则重绘后必然回到顶部。
+            if (this._scrollRestoreLock) return;
             
             const key = this.list._getScrollKey();
             if (!key) return;
