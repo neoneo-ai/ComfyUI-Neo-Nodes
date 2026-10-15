@@ -798,6 +798,8 @@ class StudioDesktop:
         self._closed = False
         # 关窗与后台启动序列撞在一起时的闸门：拉起 ComfyUI 前后各看一次，别让刚起的那路变孤儿
         self.closing = False
+        # 窗口当前停在哪个页面：离线页的收尾要认页，只认「停在离线页」这一种
+        self.page = ""
 
     @property
     def starting(self) -> bool:
@@ -825,9 +827,21 @@ class StudioDesktop:
     def _goto(self, target: str) -> None:
         if not target or self.loader is None:
             return
+        self.page = target
         log_line(f"goto {target}")
         self.loader(target)
         self.rearm()
+
+    def _leave_offline(self, ready: bool) -> None:
+        """窗口停在离线页、服务已经答话：整页跳回完整 Studio，横幅随页面一起消失。
+        _jump_when_ready 只有 READY_TIMEOUT 一份预算，用完就不管了 —— 导入自定义节点慢的那路、
+        用户自己在外面起的那路从此没人收尾：横幅停在「ComfyUI 未运行」上，顶栏胶囊报运行中，
+        生成入口全被离线闸门拦住，谁都不认账。收尾搭在顶栏那份 5 秒探活上：页面活着就有探活，
+        跳完 page 变了自然收手，不额外起线程、不额外加定时器。"""
+        if ready and self.offline_url and self.page == self.offline_url:
+            self.starting = False
+            log_line("comfy ready jump from offline")
+            self._goto(self.url)
 
     def log(self, message: str) -> None:
         """页面把前端未捕获错误与启动失败写进桌面端日志：白屏只有 DevTools 能看太晚，
@@ -849,14 +863,17 @@ class StudioDesktop:
     def comfy_state(self) -> dict:
         """顶栏胶囊要的运行状态：外部启动的 ComfyUI 没有 Popen 句柄，按端口找 PID 并缓存。
         桌面端拉起的那路以端口探活为准 —— TerminateProcess 是异步的，进程还在收尾时端口已关，
-        报「进程活着」会让胶囊显示运行中而服务其实已经没了。
+        报「进程活着」会让胶囊显示运行中而服务其实已经没了。附着的那路同理按探活报：
+        端口上有 PID 只说明有人在监听，插件没加载完时服务还不认，胶囊不能先说运行中。
         starting：桌面端拉起的进程还活着、端口还没就绪 —— 这段时间前端只出「启动中」，收起其余离线提示。
         远程模式没有本机 PID 可报，运行与否只看远端探活；remote 带上远端地址供界面标注。"""
         if self.remote:
             ready = probe(self.base, 1.0)
+            self._leave_offline(ready)
             return {"port": urlsplit(self.base).port or DEFAULT_PORT, "pid": 0, "mine": False,
                     "running": ready, "ready": ready, "starting": False, "remote": self.base}
         ready = probe(self.base, 1.0)
+        self._leave_offline(ready)
         if self.comfy is not None:
             if ready:
                 self.starting = False
@@ -866,7 +883,7 @@ class StudioDesktop:
         if not self.pid or not pid_alive(self.pid):
             self.pid = port_owner(self.port)
         return {"port": self.port, "pid": self.pid, "mine": False,
-                "running": bool(self.pid), "ready": ready, "starting": False}
+                "running": ready, "ready": ready, "starting": False}
 
     def comfy_stop(self) -> dict:
         if self.remote:

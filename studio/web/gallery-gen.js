@@ -9,7 +9,7 @@ import { getImageHeight, getThumbnailSrc, isImageFile, isAudioFile, getAudioSrc,
 import { DIRECTOR_ASPECTS } from "./director.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
-import { openSkillDetailById, listSkills, populateSkillOptions } from "./skill.js";
+import { openSkillDetailById, listSkills, populateSkillOptions, skillDisplayName } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig, getGenSettings } from "./image-gen.js";
 import { requestVoiceGeneration, watchVoiceTask, cancelVoiceTask, buildVoiceRequest, VOICE_SKILL_ID } from "./voice-gen.js";
@@ -440,7 +440,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
             } else {
                 gridSel.innerHTML = "";
                 for (const s of gridSkills) {
-                    gridSel.appendChild($el("option", { value: s.id, textContent: s.cn_name || s.name || s.id }));
+                    gridSel.appendChild($el("option", { value: s.id, textContent: skillDisplayName(s) }));
                 }
             }
             const defaultId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
@@ -1050,7 +1050,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
             const skills = await res.json();
             _genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.category === "image_gen" && s.gen_image);
             _genSkills.forEach(s => {
-                const opt = $el("option", { value: s.id, textContent: s.cn_name || s.name || s.id });
+                const opt = $el("option", { value: s.id, textContent: skillDisplayName(s) });
                 if (s.id === QWEN_IMAGE_SKILL_ID) opt.selected = true;
                 skillSel.appendChild(opt);
             });
@@ -2459,7 +2459,7 @@ export function openGenMaterialDialog(gallery) {
             const skills = await res.json();
             const genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.gen_image && !s.requires_ref);
             skillSel.textContent = "";
-            genSkills.forEach(s => skillSel.appendChild($el("option", { value: s.id, textContent: s.cn_name || s.name || s.id })));
+            genSkills.forEach(s => skillSel.appendChild($el("option", { value: s.id, textContent: skillDisplayName(s) })));
             const ids = genSkills.map(s => s.id);
             if (preferId && ids.includes(preferId)) skillSel.value = preferId;
             else if (rememberedSkill && ids.includes(rememberedSkill)) skillSel.value = rememberedSkill;

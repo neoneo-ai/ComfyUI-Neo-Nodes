@@ -14,6 +14,7 @@ import {
     dispatchSkillsUpdated, makeRepairDialog, loadSkill, loadSkillWorkflow,
     buildCanvasWorkflow, arrangeCanvasNodes, serializeCanvasPrompt, copySkillAsCustom,
     writeLog, SKILL_WRITE_LOG_LIMIT, WRITE_SOURCE_LABELS, WRITE_API_ONLY_NOTE, buildWriteChangesTable,
+    skillDisplayName,
 } from "./skill-core.js";
 
 /** 变更记录弹窗：skillId 省略 = 全部技能（按技能分组，新→旧）；纯本地记录，可清空 */
@@ -272,7 +273,7 @@ function openSkillWorkflowInMainUi(id) {
 /** 技能 workflow.json 灌进主画布：设置区不在场 → 按技能 config.json + 自动建议模型预渲染（同「导入到画布」） */
 async function openSkillWorkflowOnCanvas(id) {
     const [full, wf] = await Promise.all([loadSkill(id), loadSkillWorkflow(id)]);
-    const displayName = full && !full.error ? (full.cn_name || full.name || id) : id;
+    const displayName = full && !full.error ? (skillDisplayName(full) || id) : id;
     if (!full || full.error) { showToast(app, "warning", t("主画布编辑"), tf("技能 \"{name}\" 不存在", { name: displayName })); return; }
     if (!wf) { showToast(app, "warning", t("无工作流"), tf("技能 \"{name}\" 没有 workflow.json", { name: displayName })); return; }
     if (typeof app.loadApiJson !== "function") { showToast(app, "warning", t("无画布"), t("当前视图没有画布，导入不可用")); return; }

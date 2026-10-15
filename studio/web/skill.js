@@ -15,7 +15,7 @@ import {
     dispatchSkillsUpdated, stopPointerBubble, listSkills, loadSkill, saveSkill, deleteSkill,
     uploadSkill, listSkillFiles, loadSkillFile, saveSkillFile, deleteSkillFile,
     loadSkillWorkflow, workflowParamValues, populateSkillOptions, CATEGORY_LABELS,
-    renderMarkdown, SKILL_CHANGED_EVENT, copySkillAsCustom, serializeCanvasPrompt,
+    renderMarkdown, SKILL_CHANGED_EVENT, copySkillAsCustom, serializeCanvasPrompt, skillDisplayName,
 } from "./skill/skill-core.js";
 import {
     showSkillWriteLogDialog, openSkillWorkflowInMainUi, openSkillWorkflowOnCanvas,
@@ -328,7 +328,7 @@ function skillItemsFromMeta(skills, allowed) {
             value = s.name || s.id;
         }
         if (!value) continue;
-        const item = skillItemFromMeta(s, value, String(value).endsWith("（不可用）") ? value : (s.cn_name || s.name || s.id));
+        const item = skillItemFromMeta(s, value, String(value).endsWith("（不可用）") ? value : skillDisplayName(s));
         item.badge = s.needs_image ? "📷" : "";
         item.tags = (s.tags || []).join(" ");
         item.group = CATEGORY_LABELS[s.category]?.label || "";
@@ -854,7 +854,7 @@ function createSkillDropdown() {
             return;
         }
         const meta = opt.__skillMeta || {};
-        previewFocusItem = skillItemFromMeta(meta, val, meta.cn_name || meta.name || String(opt.textContent || val).trim());
+        previewFocusItem = skillItemFromMeta(meta, val, skillDisplayName(meta) || String(opt.textContent || val).trim());
         previewFocusItem.source = (opt.dataset && opt.dataset.source) || "custom";
         previewFocusRow = itemEl;
         const preview = ensureSkillPreview();
@@ -1318,6 +1318,7 @@ export {
     saveSkillFile,
     deleteSkillFile,
     populateSkillOptions,
+    skillDisplayName,
     validateSkillForNode,
     invalidateSkillValidation,
     resolveSkillId,

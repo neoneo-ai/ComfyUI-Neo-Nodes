@@ -864,6 +864,18 @@ class StudioDesktopTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False):
             self.assertFalse(desktop.comfy_state()["running"])
 
+    def test_external_comfy_running_follows_the_probe_not_the_pid(self):
+        # 顶栏胶囊与离线横幅必须读同一份就绪判据：端口上有 PID 只说明有人在监听，
+        # 插件还在导入自定义节点时服务不认 —— 报「进程活着」就是胶囊「运行中」+ 横幅「未运行」
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"))
+        with patch.object(app, "port_owner", lambda port: 4321), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False):
+            state = desktop.comfy_state()
+        self.assertEqual(state["pid"], 4321, "提示里照旧报端口上那路外部 ComfyUI 的 PID")
+        self.assertFalse(state["running"], "服务没就绪就不许报运行中")
+        self.assertFalse(state["ready"])
+
     def test_stop_terminates_desktop_comfy(self):
         comfy = SimpleNamespace(pid=1234, poll=lambda: None, terminate=MagicMock(), wait=MagicMock())
         desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
@@ -1082,6 +1094,38 @@ class StudioDesktopTests(unittest.TestCase):
             desktop._jump_when_ready()
         loader = desktop.loader
         loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
+
+    def test_offline_page_jumps_when_comfy_gets_ready_after_the_budget(self):
+        # 用户现场：READY_TIMEOUT 用完 _jump_when_ready 就收手，ComfyUI 之后才就绪
+        # （自定义节点导入慢、或用户自己在外面起的那路）—— 窗口不能永远停在「未运行」横幅上，
+        # 顶栏胶囊那份 5 秒探活就是收尾
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188,
+                                    pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio")
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
+        with patch.object(app, "port_owner", lambda port: 4321), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "log_line", lambda text: None):
+            desktop._goto(desktop.offline_url)
+            state = desktop.comfy_state()
+        self.assertTrue(state["ready"])
+        desktop.loader.assert_called_with("http://127.0.0.1:8188/neo-studio")
+        self.assertEqual(desktop.page, "http://127.0.0.1:8188/neo-studio", "跳完认页，别反复跳")
+
+    def test_ready_poll_does_not_jump_from_the_full_studio_page(self):
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188,
+                                    pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio")
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
+        with patch.object(app, "port_owner", lambda port: 4321), \
+             patch.object(app, "pid_alive", lambda pid: True), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(app, "log_line", lambda text: None):
+            desktop._goto(desktop.url)
+            for _ in range(3):
+                desktop.comfy_state()
+        self.assertEqual(desktop.loader.call_count, 1, "完整 Studio 里探活不许把页面跳走")
 
 
     def test_pill_is_reinjected_after_every_page_load(self):

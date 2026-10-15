@@ -10,6 +10,7 @@ import { api } from "../../../../scripts/api.js";
 import { $el } from "../../../../scripts/ui.js";
 import { Lightbox } from "./lightbox.js";
 import { openDirectorEditor, MODE_LABELS, LEGACY_MODE_MAP } from "./director.js";
+import { skillDisplayName } from "./skill.js";
 import { t, tf } from "./js/core/i18n.js";
 
 const assetUrl = (recipe, file, dir) =>
@@ -425,7 +426,7 @@ export async function listVideoSkills() {
 export function directorMetaText(r, skills) {
     const shared = r.shared || {};
     const segs = r.segments || [];
-    const nameOf = new Map(skills.map(s => [s.id, s.cn_name || s.name]));
+    const nameOf = new Map(skills.map(s => [s.id, skillDisplayName(s)]));
     const modeText = (shared.mode && MODE_LABELS.get(LEGACY_MODE_MAP.get(shared.mode) || shared.mode)) || t('自动');
     const skillCounts = new Map();
     for (const s of segs) {

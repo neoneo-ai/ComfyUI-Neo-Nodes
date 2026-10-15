@@ -14,7 +14,7 @@ import {
     dispatchSkillsUpdated, stopPointerBubble, makeRepairDialog, listSkills, loadSkill, loadSkillWorkflow,
     saveSkill, deleteSkill, loadSkillFile, saveSkillFile, deleteSkillFile, resetSkillGenConfig,
     workflowParamValues, buildCanvasWorkflow, arrangeCanvasNodes, makeSkillLog,
-    renderMarkdown, dispatchSkillChanged, copySkillAsCustom,
+    renderMarkdown, dispatchSkillChanged, copySkillAsCustom, skillDisplayName,
 } from "./skill-core.js";
 import { confirmWorkflowWrite, writeWorkflowToSkill, showSkillWriteLogDialog, showCanvasWriteCard, openSkillWorkflowInMainUi } from "./skill-writeback.js";
 import { t, tf } from "../js/core/i18n.js";
@@ -534,13 +534,13 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
             showToast(app, "error", t("导入失败"), String(e.message || e));
             return;
         }
-        showCanvasWriteCard(currentSkillId, currentSource, currentCnName);
+        showCanvasWriteCard(currentSkillId, currentSource, currentDisplayName);
         // 导入成功即收起技能窗口：内嵌宿主（技能管理整窗）走 onCloseWindow 关整窗，独立详情弹窗走 requestClose
         if (onCloseWindow) onCloseWindow(); else requestClose();
     }
 
     async function writeWorkflowBackToSkill() {
-        await writeWorkflowToSkill(currentSkillId, "editor", currentCnName);
+        await writeWorkflowToSkill(currentSkillId, "editor", currentDisplayName);
     }
 
     // 把接受的修复项回填到当前活动的设置区（生图/生视频）：合并进 collect() 后重新 load，
@@ -829,7 +829,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
     // ---- 状态 ----
     let currentSkillId = null;
     let currentSource = "custom";
-    let currentCnName = null;   // 技能中文名（cn_name），用于用户提示
+    let currentDisplayName = null;   // 技能显示名（英文界面用 name），用于用户提示
     let configOverridden = false;   // 预设技能是否存在本地配置覆盖（load_skill 返回）
     let currentFiles = [];   // [{ name, size }]（递归 .md/.txt 相对路径，含主文件 skill.md）
     let selectedFile = null;
@@ -1070,7 +1070,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         try {
             const { output, error } = (await app.graphToPrompt(wfGraph)) || {};
             if (error || !output || !Object.keys(output).length) { showToast(app, "warning", t("无法保存"), t("画布上没有有效工作流") + (error && error.message ? tf("（{msg}）", { msg: error.message }) : "")); return; }
-            await confirmWorkflowWrite(currentSkillId, currentSource, output, currentCnName, async (r, copy) => {
+            await confirmWorkflowWrite(currentSkillId, currentSource, output, currentDisplayName, async (r, copy) => {
                 if (copy) { await openExisting(copy.id, "custom"); return; }   // 预设结构变更 → 详情切到新建副本继续编辑
                 skillWorkflowRaw = output;   // 按新模板重挂内嵌编辑画布
                 const genInfo = currentIsVideo ? await loadVideoGenSettings() : await loadGenSettings();   // 回写后的 config 灌回设置区
@@ -1194,7 +1194,7 @@ function createSkillDetailPopup(host, canvasBtns = true, opts = {}) {
         genSettingsBaseline = null;
         const full = await loadSkill(id);
         if (full && full.error) { alert("Failed to load skill: " + full.error); close(); return; }
-        currentCnName = full.cn_name || null;
+        currentDisplayName = skillDisplayName(full) || null;
         const nm = (full && full.name) || id;
         nameInput.value = nm;
         stopNameEdit();   // 切技能：退出上一个技能的编辑态并回显新名称

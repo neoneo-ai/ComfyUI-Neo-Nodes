@@ -6,7 +6,7 @@
  */
 
 import { mkEl } from "./dom-utils.js";
-import { CATEGORY_LABELS } from "./skill.js";
+import { CATEGORY_LABELS, skillDisplayName } from "./skill.js";
 import { t } from "./js/core/i18n.js";
 
 function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
@@ -106,7 +106,7 @@ function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
             currentItems.forEach((s, idx) => {
                 const row = mkEl("div", "rs-slash-picker-row rs-picker-row");
                 const name = mkEl("span", "rs-slash-picker-name");
-                name.textContent = (s.needs_image ? "📷 " : "") + (s.cn_name || s.name || s.id);
+                name.textContent = (s.needs_image ? "📷 " : "") + skillDisplayName(s);
                 const meta = mkEl("span", "rs-slash-picker-meta");
                 const cat = CATEGORY_LABELS[s.category] ? s.category : "image_enhance";
                 meta.textContent = CATEGORY_LABELS[cat].label;

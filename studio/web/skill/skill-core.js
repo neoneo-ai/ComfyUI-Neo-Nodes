@@ -15,7 +15,7 @@ import { applyWorkflowParams, injectRuntimeLoras, canvasLayout } from "../workfl
 import { getNodeDef } from "../js/core/object-info.js";
 import { showToast } from "../gallery-utils.js";
 import { copySkillFiles, videoSuggestion, videoAudioVaeSuggestion, videoVideoVaeSuggestion } from "../image-gen.js";
-import { t } from "../js/core/i18n.js";
+import { t, getLang } from "../js/core/i18n.js";
 
 // 共享 UI 小工具：技能增删改广播、弹窗内指针事件拦截（不冒泡到画布选节点）
 function dispatchSkillsUpdated() {
@@ -439,6 +439,14 @@ const CATEGORY_LABELS = {
     "task": { label: t("⚙️ 任务"), order: 6, hidden: true, managerHidden: true }
 };
 
+/** 技能显示名：中文界面用 cn_name（中文名）；英文界面不回落中文名，直接用 name / id。
+ *  只用于显示——节点 combo 的取值、反查、持久化仍走 cn_name（见 skill.js / director-node.js）。 */
+function skillDisplayName(s) {
+    if (!s) return "";
+    if (getLang() === "en") return s.name || s.id || "";
+    return s.cn_name || s.name || s.id || "";
+}
+
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记；
  *  includeHidden=true 时连 hidden 分类（task / video_gen）一起列出 */
 function populateSkillOptions(selectEl, skills, { includeHidden = false } = {}) {
@@ -467,7 +475,7 @@ function populateSkillOptions(selectEl, skills, { includeHidden = false } = {}) 
             opt.dataset.tags = (s.tags || []).join(" ");
             opt.__skillMeta = s; // 完整元数据（gen_config / 分类 / 名称）供浮动预览卡读取
             const imgBadge = s.needs_image ? "📷 " : "";
-            opt.textContent = `${imgBadge}${s.cn_name || s.name || s.id}`;
+            opt.textContent = `${imgBadge}${skillDisplayName(s)}`;
             optgroup.appendChild(opt);
         });
         selectEl.appendChild(optgroup);
@@ -521,6 +529,6 @@ export {
     workflowParamValues, buildCanvasWorkflow, arrangeCanvasNodes, serializeCanvasPrompt,
     makeSkillLog, SKILL_WRITE_LOG_LIMIT, WRITE_SOURCE_LABELS, WRITE_API_ONLY_NOTE,
     writeLog, buildWriteChangesTable,
-    escapeHtml, renderMarkdown, CATEGORY_LABELS, populateSkillOptions,
+    escapeHtml, renderMarkdown, CATEGORY_LABELS, populateSkillOptions, skillDisplayName,
     SKILL_CHANGED_EVENT, dispatchSkillChanged, copySkillAsCustom
 };
