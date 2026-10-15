@@ -135,6 +135,14 @@ director_recipes → director_spec(读分段) → director_plan(故事 → 分�
 | `task_status` 说任务不存在 | 任务结束后快照会被清理，产物名请在 `succeeded` 时立刻取走 |
 | 返回被截断 | 文本上限 12000 字符；`list_skills` 用 `q` 过滤，`all=true` 会很长 |
 
+## 局域网接入（不走 MCP）
+
+MCP 这一层是 stdio + 本机回环，没有网络监听口，也不做跨机分发。局域网上的其它机器要用 Neo Studio 的能力，
+直接走 ComfyUI 的 HTTP API：在「启动设置 → 局域网监听」填 `0.0.0.0` 或本机网卡 IP（见
+[studio-desktop.md](studio-desktop.md) 的「局域网访问」），远端机器访问 `http://<本机 IP>:8188` 的
+`/neo_studio/*`、`/rs_*`、`/neo_*` 与 `/view`。ComfyUI 没有鉴权，能连到端口的机器都能提交与读取任务，
+只在信任的网段开，并在防火墙里限到需要的地址。
+
 ## 已知限制
 
 - 单段提示词的逐段改写（`director_plan` 的 `optimize` / `modify`）一次一段，多段需逐次调用。

@@ -11,7 +11,7 @@ Source runs and the packaged exe go through the same `app/studio_app.py`.
 | `app/studio_app.py` | Window, self-check, start / stop ComfyUI, frameless window, close teardown, startup settings |
 | `app/studio_server.py` | Desktop-side aiohttp service (ComfyUI port +3, `DESKTOP_PORT_OFFSET`); loads the plugin modules' own `RouteTableDef` handlers by directory |
 | `app/studio_caps.py` | Capability table: which routes the desktop service owns; everything outside answers `409 offline` |
-| `data/` | State directory: `studio_window.json` (geometry), `studio_profile` (WebView2 profile / localStorage), `launcher_config.json` (root / python / port / frameless / dev_mode), `studio_desktop.log`, `comfy_run.log` |
+| `data/` | State directory: `studio_window.json` (geometry), `studio_profile` (WebView2 profile / localStorage), `launcher_config.json` (root / python / port / frameless / dev_mode / listen), `studio_desktop.log`, `comfy_run.log` |
 
 Source runs keep state in the repository's `data/`; the exe prefers `data/` beside the exe and falls back to
 `%APPDATA%\Neo Studio` when the exe sits in a non-writable directory.
@@ -87,6 +87,20 @@ startable once the root is filled in.
 - The reload entry does not depend on dev mode: the Studio page takes over F5 / Ctrl+F5 / Ctrl+R itself
   (`initReloadHotkey` in `studio/web/studio/studio-app.js`), so one keypress after a frontend hot-sync
   (`tools/watch_web.py`) loads the new code.
+
+## LAN access
+
+- "Startup settings → LAN listen" is a dropdown whose choices come from the NIC list the desktop reports
+  (loopback only / all adapters `0.0.0.0` / each host NIC address), stored as `listen` in `launcher_config.json`
+  ("loopback only" is the default = not passed, so ComfyUI keeps its 127.0.0.1-only default). Pick one and press
+  "Save and restart ComfyUI"; the hint line shows the LAN URL live. A hand-edited config that holds something that is
+  not an IP is rejected instead of being handed to `--listen`.
+- When only a NIC address is given, the desktop adds `127.0.0.1` to the list (`comfy_listen`): the window navigates to
+  `http://127.0.0.1:port/neo-studio` and the `port_busy` probe is a loopback probe — with nobody on loopback the window
+  cannot open, and a running ComfyUI reads as a free port and gets started a second time.
+- ComfyUI has no authentication: with listening on, `/api/*`, `/neo_studio/*` and `/view` are open to whatever is on
+  the network, so enable it only on a trusted segment and clear the field afterwards. The MCP service is not part of
+  this network surface (stdio + loopback — see [mcp.md](mcp.md)).
 
 ## Window close and process reaping
 

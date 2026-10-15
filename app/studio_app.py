@@ -28,6 +28,7 @@ js_api 注入之前页面就知道在启动中），界面只出「ComfyUI 启�
 import argparse
 import ctypes
 from ctypes import wintypes
+import ipaddress
 import json
 import logging
 import os
@@ -306,9 +307,12 @@ def load_config() -> dict:
         return {}
 
 
-def save_config(root: Path, python: str, port: int, frameless: bool) -> bool:
+def save_config(root: Path, python: str, port: int, flags: dict) -> bool:
+    """写启动配置：三个开关跟着根目录 / 解释器 / 端口一起落盘，「保存并重启」不能把开关写没。"""
     return write_config({"version": CONFIG_VERSION, "root": str(root), "python": str(python),
-                         "port": int(port), "frameless": bool(frameless)})
+                         "port": int(port), "frameless": bool(flags.get("frameless", True)),
+                         "dev_mode": bool(flags.get("dev_mode")),
+                         "listen": str(flags.get("listen", ""))})
 
 
 def write_config(cfg: dict) -> bool:
@@ -581,13 +585,45 @@ def save_geometry(window) -> None:
     GEOMETRY_FILE.write_text(json.dumps(geo), encoding="utf-8")
 
 
-def start_comfy(python: Path, root: Path, port: int) -> subprocess.Popen:
+def lan_ips() -> list:
+    """本机非回环 IPv4，给「局域网监听」当提示地址。走本机主机名解析，不出网。"""
+    try:
+        addrs = socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        return []
+    return [a for a in addrs if not a.startswith("127.")]
+
+
+def comfy_listen(raw: str) -> Optional[str]:
+    """ComfyUI 的 --listen 值：空串 = 不传（ComfyUI 默认只监听 127.0.0.1，只有本机）；
+    填 IP = 局域网可访问，逗号分隔多块网卡；非法地址回 None，由调用方报错。
+    只监听某块网卡时把 127.0.0.1 一起带上 —— 桌面端窗口跳的是 http://127.0.0.1:端口，
+    回环上没人听的话窗口打不开，port_busy 也会把在跑的 ComfyUI 读成空位再拉一路。"""
+    addrs = [a.strip() for a in str(raw).strip().split(",") if a.strip()]
+    if not addrs:
+        return ""
+    for a in addrs:
+        try:
+            ipaddress.ip_address(a)
+        except ValueError:
+            return None
+    if any(a in ("0.0.0.0", "::") for a in addrs):   # 全监听已覆盖回环，不重复加
+        return ",".join(addrs)
+    if "127.0.0.1" not in addrs:
+        addrs.insert(0, "127.0.0.1")
+    return ",".join(addrs)
+
+
+def start_comfy(python: Path, root: Path, port: int, listen: str = "") -> subprocess.Popen:
     """启动输出落 data/comfy_run.log：CREATE_NO_WINDOW 下不重定向，端口冲突与导入报错就全进黑洞。"""
     COMFY_LOG.parent.mkdir(parents=True, exist_ok=True)
     log = open(COMFY_LOG, "wb", buffering=0)
-    log.write(f"=== {time.strftime('%H:%M:%S')} port={port} {python}\n".encode("utf-8"))
+    log.write(f"=== {time.strftime('%H:%M:%S')} port={port} listen={listen or '127.0.0.1'} {python}\n".encode("utf-8"))
     env = {**os.environ, "NEO_STUDIO_DATA": str(STATE)}
-    return subprocess.Popen([str(python), str(root / "main.py"), "--port", str(port)],
+    argv = [str(python), str(root / "main.py"), "--port", str(port)]
+    if listen:
+        argv += ["--listen", listen]
+    return subprocess.Popen(argv,
                             cwd=str(root), creationflags=NO_WINDOW, env=env,
                             stdout=log, stderr=subprocess.STDOUT)
 
@@ -720,6 +756,7 @@ class StudioDesktop:
         self.launcher = launcher if launcher is not None else {}
         # 无边框窗口：建窗时喂给 pywebview，运行中由 set_frameless 改样式位；缺省开
         self.frameless = bool(self.launcher.get("frameless", True))
+        self.listen = comfy_listen(self.launcher.get("listen", "")) or ""   # 局域网监听：空 = 只监听本机
         self.fullscreen = False
         self.maximized = False    # 无边框下最大化是桌面端自己铺的矩形，系统不认 WS_MAXIMIZE，状态自己记
         self._restore_rect: tuple | None = None   # 铺满前的矩形，点一下还原回这里
@@ -848,11 +885,11 @@ class StudioDesktop:
             threading.Thread(target=self._jump_when_ready, daemon=True).start()
             return self.comfy_state()
         self.port = free_comfy_port(self.port, self.desktop_port)
-        self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port)
+        self.comfy = start_comfy(resolve_python(self.root, self.python_arg), self.root, self.port, self.listen)
         self.url = f"http://127.0.0.1:{self.port}/neo-studio"
         self.pid = self.comfy.pid
         self.starting = True
-        log_line(f"comfy spawn pid={self.comfy.pid} port={self.port}")
+        log_line(f"comfy spawn pid={self.comfy.pid} port={self.port} listen={self.listen or '127.0.0.1'}")
         threading.Thread(target=self._jump_when_ready, daemon=True).start()
         return self.comfy_state()
 
@@ -962,12 +999,14 @@ class StudioDesktop:
                     if abs(x - x0) < threshold and abs(y - y0) < threshold:
                         time.sleep(0.008)
                         continue
+                    resized = self.fullscreen or self.maximized
                     if self.fullscreen:
                         self.win_fullscreen()   # 全屏时先退出全屏：整屏窗口跟着光标跑，pywebview 还停在全屏态
                     elif self.maximized:
                         self.win_maximize()   # 最大化时先还原：不然整块工作区大小的窗口跟着光标跑
-                    left, top, _, _ = window_rect(hwnd)
-                    dx, dy = x - left, y - top   # 还原后窗口换了矩形，抓取偏移按光标在新窗口里的位置重算
+                    if resized:
+                        left, top, _, _ = window_rect(hwnd)
+                        dx, dy = x - left, y - top   # 还原换了窗口矩形，抓取偏移按光标在新矩形里的位置重算
                 u32.SetWindowPos(hwnd, 0, x - dx, y - dy, 0, 0,
                                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
                 steps += 1
@@ -1008,8 +1047,8 @@ class StudioDesktop:
                             or "桌面端服务起不来，原因见启动器日志"}
         return self.apply_launcher(root, python, self.port)
 
-    def apply_launcher(self, root: str, python: str, port: int) -> dict:
-        """保存启动设置并重启 ComfyUI：换根目录、换解释器、换端口都走这一条路。"""
+    def apply_launcher(self, root: str, python: str, port: int, listen: str = None) -> dict:
+        """保存启动设置并重启 ComfyUI：换根目录、换解释器、换端口、换监听地址都走这一条路。"""
         root_s, py_s = str(root).strip(), str(python).strip()
         root_p, py = Path(root_s), Path(py_s)
         if not root_s or not root_ok(root_p):
@@ -1022,12 +1061,18 @@ class StudioDesktop:
             return {"ok": False, "error": f"端口不是数字：{port}"}
         if not 1024 <= port <= 65535:
             return {"ok": False, "error": f"端口需在 1024-65535 之间：{port}"}
-        if not save_config(root_p, py, port, self.frameless):
+        # listen 为 None = 这次没动监听（引导页那条路），沿用已存的
+        addr = self.listen if listen is None else comfy_listen(listen)
+        if addr is None:
+            return {"ok": False, "error": f"监听地址不是 IP（逗号分隔多个，留空 = 只监听本机）：{listen}"}
+        self.listen = addr
+        self.launcher["listen"] = addr
+        if not save_config(root_p, py, port, self.launcher):
             return {"ok": False, "error": f"写入启动配置失败：{CONFIG_FILE}"}
         self.root, self.python_arg, self.port = root_p, str(py), port
         self.launcher.update(root=str(root_p), python=str(py), port=port,
                              plugin_dir=str(plugin_dir_for(root_p)))
-        log_line(f"launcher apply root={root_p} python={py} port={port}")
+        log_line(f"launcher apply root={root_p} python={py} port={port} listen={addr or '127.0.0.1'}")
         self.comfy_stop()   # 带走旧进程，窗口退回离线页
         state, msg = startup_state(root_p, py, plugin_dir_for(root_p))
         self.launcher.update(state=state, error=msg)
@@ -1278,7 +1323,9 @@ def main() -> int:
                 # 无边框是新默认：老配置没这一项也走无边框，设置里可关
                 "frameless": bool(cfg.get("frameless", True)),
                 # 开发模式默认关：pywebview 把 WebView2 的刷新键 / 右键菜单 / 开发者工具全绑在 debug 上
-                "dev_mode": bool(cfg.get("dev_mode"))}
+                "dev_mode": bool(cfg.get("dev_mode")),
+                # 局域网监听默认空 = ComfyUI 只监听 127.0.0.1；lan_ips 是给设置页抄的提示地址
+                "listen": comfy_listen(cfg.get("listen", "")) or "", "lan_ips": lan_ips()}
     launcher_api: dict = {}   # 桌面端路由延迟取桌面端的方法：服务先起，桌面端的方法随后补上
     if need_guide:
         state, msg = ((ST_BAD_ROOT, "还没确定 ComfyUI 根目录")
@@ -1417,11 +1464,11 @@ def main() -> int:
         # 8189 拉第二路，关窗只带走自己那路，用户看到「两个端口，杀掉一个还剩一个」
         if state == ST_OK and not port_busy(port) and not desktop.closing:
             desktop.port = free_comfy_port(port, desktop.desktop_port)
-            desktop.comfy = start_comfy(python, root, desktop.port)
+            desktop.comfy = start_comfy(python, root, desktop.port, desktop.listen)
             desktop.pid = desktop.comfy.pid
             desktop.url = f"http://127.0.0.1:{desktop.port}/neo-studio"
             desktop.starting = True
-            log_line(f"comfy spawn pid={desktop.pid} port={desktop.port}")
+            log_line(f"comfy spawn pid={desktop.pid} port={desktop.port} listen={desktop.listen or '127.0.0.1'}")
             if desktop.closing:
                 # 关窗正好压在拉起这一刻：收尾线程已经收过一轮，刚起的那路立刻收掉，不留孤儿
                 desktop.comfy_close()

@@ -445,8 +445,10 @@ function createLauncherPanel() {
     const rootIn = input("ComfyUI 根目录");
     const pyIn = input("python.exe 路径");
     const portIn = input("8188");
+    const listenSel = $el("select", { className: "ns-launch-input ns-launch-listen" });
     const status = $el("div", { className: "ns-launch-status" });
     const info = $el("div", { className: "ns-launch-info" });
+    const lanHint = $el("div", { className: "ns-launch-info" });
     const browseBtn = $el("button", { className: "ns-btn", textContent: "浏览…" });
     const pyBrowseBtn = $el("button", { className: "ns-btn", textContent: "浏览…" });
     const applyBtn = $el("button", { className: "ns-btn ns-launch-apply", textContent: "保存并重启 ComfyUI" });
@@ -468,10 +470,39 @@ function createLauncherPanel() {
         install_failed: "插件安装失败",
     };
 
+    // 局域网监听做成下拉：手输 IP 容易错，可选项就是「仅本机 / 全部网卡 / 本机各网卡」
+    const LAN_CHOICES = [["", "仅本机（默认）"], ["0.0.0.0", "全部网卡（0.0.0.0）"]];
+    let lanIps = [];
+
+    // 桌面端存的是规范化值（127.0.0.1,192.168.0.165）：去掉补出来的回环才是下拉项
+    const lanKey = (listen) => (listen || "").split(",")
+        .map((x) => x.trim()).filter((x) => x && x !== "127.0.0.1").join(",");
+
+    function renderLanHint() {
+        const v = listenSel.value;
+        const port = portIn.value || "8188";
+        if (!v) {
+            lanHint.textContent = `仅本机访问：http://127.0.0.1:${port}/neo-studio`;
+            return;
+        }
+        const urls = v === "0.0.0.0"
+            ? lanIps.map((ip) => `http://${ip}:${port}/neo-studio`)
+            : [`http://${v}:${port}/neo-studio`];
+        lanHint.textContent = `局域网可访问（ComfyUI 没有鉴权，只在你信任的网段开）：`
+            + (urls.join("  ·  ") || `http://<本机 IP>:${port}/neo-studio`);
+    }
+
     function render(s) {
         rootIn.value = s.root || "";
         pyIn.value = s.python || "";
         portIn.value = s.port || "";
+        lanIps = s.lan_ips || [];
+        const opts = LAN_CHOICES.concat(lanIps.map((ip) => [ip, `本机网卡 ${ip}`]));
+        const key = lanKey(s.listen);
+        if (!opts.some(([v]) => v === key)) opts.push([key, `已保存：${key}`]);
+        listenSel.replaceChildren(...opts.map(([v, label]) => $el("option", { value: v, textContent: label })));
+        listenSel.value = key;
+        renderLanHint();
         status.textContent = (STATE_TEXT[s.state] || s.state || "") + (s.error ? ` · ${s.error}` : "");
         status.classList.toggle("ns-launch-bad", !!s.state && s.state !== "ok");
         info.textContent = `插件 ${s.plugin_dir} · 状态 ${s.state_dir} · ${s.portable ? "便携模式" : "插件内运行"}`;
@@ -504,7 +535,7 @@ function createLauncherPanel() {
             let data;
             if (fn) {
                 data = action === "apply"
-                    ? await fn(payload.root, payload.python, payload.port)
+                    ? await fn(payload.root, payload.python, payload.port, payload.listen)
                     : action === "set_frameless"
                         ? await fn(payload.frameless)
                         : action === "set_dev_mode"
@@ -536,11 +567,14 @@ function createLauncherPanel() {
         const picked = await window.pywebview?.api?.pick_python?.();
         if (picked) pyIn.value = picked;
     });
-    applyBtn.addEventListener("click", () => post({ root: rootIn.value, python: pyIn.value, port: portIn.value }));
+    applyBtn.addEventListener("click", () => post({ root: rootIn.value, python: pyIn.value, port: portIn.value, listen: listenSel.value }));
     depsBtn.addEventListener("click", () => post({ action: "install_deps" }));
     fixBtn.addEventListener("click", () => post({ action: "install_plugin" }));
     framelessIn.addEventListener("change", () => post({ action: "set_frameless", frameless: framelessIn.checked }));
     devIn.addEventListener("change", () => post({ action: "set_dev_mode", dev_mode: devIn.checked }));
+    // 提示行跟着选中项与端口实时变，点「保存并重启 ComfyUI」才落盘
+    listenSel.addEventListener("change", renderLanHint);
+    portIn.addEventListener("input", renderLanHint);
 
     // 内核启停在面板顶部：状态一行 + 启动 / 停止两枚按钮，此刻做不了的那枚禁用
     function renderKernel(s) {
@@ -568,9 +602,11 @@ function createLauncherPanel() {
         row("ComfyUI 根目录", rootIn, browseBtn),
         row("Python", pyIn, pyBrowseBtn),
         row("端口", portIn),
+        row("局域网监听", listenSel),
         row("无边框窗口", framelessIn),
         row("开发模式", devIn),
         $el("div", { className: "ns-launch-actions" }, [applyBtn, depsBtn, fixBtn]),
+        lanHint,
         info,
     ]);
     return { el, refresh };

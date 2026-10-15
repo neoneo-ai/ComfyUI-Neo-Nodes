@@ -148,6 +148,15 @@ conventions, so you normally don't have to repeat them)
 | `task_status` says task not found | Snapshots are pruned after a task finishes; collect output names as soon as it is `succeeded` |
 | Response truncated | Text is capped at 12000 characters; filter `list_skills` with `q` (`all=true` is long) |
 
+## LAN access (not over MCP)
+
+The MCP layer is stdio plus loopback: it opens no network listener and does no cross-machine serving. Machines on the
+LAN that need Neo Studio capabilities should use ComfyUI's HTTP API directly — put `0.0.0.0` or the host NIC address in
+"Startup settings → LAN listen" (see "LAN access" in [studio-desktop.md](studio-desktop.md)) and reach
+`http://<host IP>:8188` for `/neo_studio/*`, `/rs_*`, `/neo_*` and `/view`. ComfyUI has no authentication: anything
+that can reach the port can submit and read jobs, so enable it only on a trusted segment and restrict the port in the
+firewall.
+
 ## Known limits
 
 - Per-segment prompt rewriting (`director_plan` with `optimize` / `modify`) handles one segment per call;

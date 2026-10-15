@@ -213,6 +213,11 @@ the rules a change has to obey.
   setting that turns that flag on (`dev_mode` in `launcher_config.json`) and takes effect on the
   next window start; the Studio page owns its own reload hotkey in page JS, so a frontend reload
   never waits on dev mode.
+- The LAN listen startup setting (`listen` in `launcher_config.json`) is ComfyUI's `--listen`; empty keeps the
+  loopback-only default. A NIC address always gets `127.0.0.1` added in `comfy_listen()`: the window navigates to
+  loopback and `port_busy()` probes loopback, so a listen list without it leaves the window unopenable and a running
+  ComfyUI reads as a free port. `save_config()` writes root, interpreter, port and all three toggles together, so
+  "Save and restart" cannot drop a stored toggle.
 - Frozen builds resolve the ComfyUI root by walking the exe's ancestor
   directories, and package resources go through `_MEIPASS`. Both the onefile
   layout and the onedir layout, which has one extra directory level, resolve.

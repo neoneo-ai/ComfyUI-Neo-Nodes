@@ -200,20 +200,28 @@ class OfflineServiceTests(_ServerCase):
         # 设置页读的是桌面端的启动快照；保存由桌面端校验并重启 ComfyUI
         self.app["launcher"].update(root="D:/ComfyUI", python="D:/python/python.exe", port=8188,
                                     plugin_dir="D:/ComfyUI/custom_nodes/comfyui-neo-studio",
-                                    state_dir="D:/studio/data", portable=True, state="ok", error="")
+                                    state_dir="D:/studio/data", portable=True, state="ok", error="",
+                                    listen="127.0.0.1,192.168.0.7", lan_ips=["192.168.0.7"])
         applied = []
         self.app["launcher_api"]["apply"] = (
-            lambda root, python, port: applied.append((root, python, port)) or {"ok": True, "state": "ok"})
+            lambda root, python, port, listen: applied.append((root, python, port, listen))
+            or {"ok": True, "state": "ok"})
         status, body = self.get("/neo_studio/launcher")
         data = json.loads(body)
         self.assertEqual(status, 200)
         self.assertEqual(data["plugin_dir"], "D:/ComfyUI/custom_nodes/comfyui-neo-studio")
         self.assertEqual(data["state"], "ok")
+        self.assertEqual(data["listen"], "127.0.0.1,192.168.0.7")
+        self.assertEqual(data["lan_ips"], ["192.168.0.7"])
         status, body = self.post_json("/neo_studio/launcher",
-                                      {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190})
+                                      {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190,
+                                       "listen": "0.0.0.0"})
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["ok"])
-        self.assertEqual(applied, [("E:/ComfyUI", "E:/py/python.exe", 8190)])
+        self.assertEqual(applied, [("E:/ComfyUI", "E:/py/python.exe", 8190, "0.0.0.0")])
+        # 旧载荷没有 listen：传 None = 这次不动监听
+        self.post_json("/neo_studio/launcher", {"root": "E:/ComfyUI", "python": "E:/py/python.exe", "port": 8190})
+        self.assertEqual(applied[-1], ("E:/ComfyUI", "E:/py/python.exe", 8190, None))
 
     def test_launcher_retry_actions(self):
         calls = []

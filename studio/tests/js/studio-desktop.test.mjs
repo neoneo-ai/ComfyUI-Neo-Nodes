@@ -235,6 +235,53 @@ test("启动设置顶部：运行中可停、停止可启动、启动中两枚�
 });
 
 
+// 局域网监听做成下拉：手输 IP 容易错，可选项由桌面端给的网卡列表拼出来
+test("启动设置：局域网监听是下拉框，选项带本机网卡，保存交的是选中项", async () => {
+    mountStudio();
+    const applied = [];
+    window.pywebview = {
+        api: {
+            comfy_state: async () => ({ port: 8188, pid: 0, mine: true, running: false, ready: false }),
+            launcher_state: async () => ({
+                root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8188,
+                listen: "127.0.0.1,192.168.0.165", lan_ips: ["172.17.48.1", "192.168.0.165"],
+                state: "ok", error: "",
+            }),
+            apply_launcher: async (root, python, port, listen) => {
+                applied.push(listen);
+                return { ok: true, state: "ok" };
+            },
+        },
+    };
+    window.location.hash = "#/settings";
+    try {
+        await import("../../web/studio/studio-app.js?listenSel=1");
+        await flush();
+        click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
+        await flush();
+
+        const sel = document.querySelector(".ns-launch-listen");
+        const hint = document.querySelector(".ns-launch-info");
+        assert.ok(sel, "局域网监听应是下拉框，不是手输框");
+        assert.deepEqual([...sel.options].map((o) => o.value),
+            ["", "0.0.0.0", "172.17.48.1", "192.168.0.165"],
+            "选项 = 仅本机 / 全部网卡 / 桌面端给的每块网卡");
+        assert.equal(sel.value, "192.168.0.165", "已存的规范化值要落回对应网卡项");
+        assert.match(hint.textContent, /http:\/\/192\.168\.0\.165:8188\/neo-studio/, "提示报选中网卡的地址");
+
+        sel.value = "0.0.0.0";
+        sel.dispatchEvent(new window.Event("change"));
+        await flush();
+        assert.match(hint.textContent, /http:\/\/172\.17\.48\.1:8188\/neo-studio/, "选全部网卡时提示列出各网卡");
+
+        click(document.querySelector(".ns-launch-apply"));
+        await flush();
+        assert.deepEqual(applied, ["0.0.0.0"], "保存交的是选中项，用户不用碰 IP 字符串");
+    } finally {
+        window.location.hash = "#/gallery";
+    }
+});
+
 test("ComfyUI 在跑时生成入口不受门控：点它不该去启动 ComfyUI", async () => {
     mountStudio();
     document.body.insertAdjacentHTML("beforeend",

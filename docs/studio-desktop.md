@@ -10,7 +10,7 @@
 | `app/studio_app.py` | 窗口、自检、拉起 / 停止 ComfyUI、无边框窗口、关窗收尾、启动设置 |
 | `app/studio_server.py` | 桌面端 aiohttp 服务（ComfyUI 端口 +3，`DESKTOP_PORT_OFFSET`），按目录加载插件模块挂在各自 `RouteTableDef` 上的 handler |
 | `app/studio_caps.py` | 能力表：哪些路由归桌面端服务，表外一律 `409 offline` |
-| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless / dev_mode）、`studio_desktop.log`、`comfy_run.log` |
+| `data/` | 状态目录：`studio_window.json`（几何）、`studio_profile`（WebView2 profile / localStorage）、`launcher_config.json`（root / python / port / frameless / dev_mode / listen）、`studio_desktop.log`、`comfy_run.log` |
 
 源码运行的状态目录是仓库根的 `data/`；exe 优先 exe 旁的 `data/`，落在不可写目录时退回 `%APPDATA%\Neo Studio`。
 
@@ -64,6 +64,16 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
   这三项建环境时定值，运行中的窗口改不了，勾完要重启窗口。
 - 刷新入口不依赖开发模式：Studio 页自己接管 F5 / Ctrl+F5 / Ctrl+R（`studio/web/studio/studio-app.js` 的
   `initReloadHotkey`），前端热同步（`tools/watch_web.py`）之后按一次就是新代码。
+
+## 局域网访问
+
+- 「启动设置 → 局域网监听」是下拉框，选项由桌面端给的本机网卡列表拼出来（仅本机 / 全部网卡 `0.0.0.0` / 各块网卡
+  IP），存 `launcher_config.json` 的 `listen`（默认「仅本机」= 不传 `--listen`，ComfyUI 只监听 127.0.0.1）。
+  选完点「保存并重启 ComfyUI」生效，提示行实时给出局域网地址；手改配置写进非 IP 的值时桌面端报错，不会喂给 `--listen`。
+- 只监听某块网卡时桌面端把 `127.0.0.1` 一起带上（`comfy_listen`）：窗口跳的是 `http://127.0.0.1:端口/neo-studio`，
+  端口探测 `port_busy` 也认回环 —— 回环上没人听的话窗口打不开，在跑的那路还会被读成空位再拉一路。
+- ComfyUI 没有鉴权：开了监听，`/api/*`、`/neo_studio/*`、`/view` 对局域网上的机器全部敞开，只在信任的网段开，
+  用完清空这一项。MCP 服务不参与这条网络口（stdio + 回环，见 [mcp.md](mcp.md)）。
 
 ## 关窗与进程回收
 

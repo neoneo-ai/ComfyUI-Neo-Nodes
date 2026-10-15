@@ -232,6 +232,7 @@ body {
     border-radius: 4px;
 }
 .ns-launch-status { font-size: 12px; color: #7aa2ff; margin-bottom: 12px; white-space: pre-wrap; }
+.ns-launch-listen option { background: #2a2a2e; color: #eee; }
 .ns-launch-bad { color: #ff8a8a; }
 .ns-launch-actions { display: flex; gap: 10px; margin-top: 14px; }
 .ns-launch-info { margin-top: 12px; font-size: 11px; color: #8f8f9a; }

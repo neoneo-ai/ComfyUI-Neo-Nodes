@@ -163,6 +163,16 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("comfy_run.log", popen.call_args.kwargs["stdout"].name)
         popen.call_args.kwargs["stdout"].close()
 
+    def test_start_comfy_argv_with_listen(self):
+        # 局域网监听就是 ComfyUI 的 --listen，空值不传（ComfyUI 默认只监听 127.0.0.1）
+        with patch.object(app.subprocess, "Popen") as popen:
+            app.start_comfy(pathlib.Path("D:/python/python.exe"), pathlib.Path("D:/ComfyUI"), 8188,
+                            "127.0.0.1,192.168.0.7")
+        self.assertEqual(popen.call_args[0][0],
+                         [str(pathlib.Path("D:/python/python.exe")), str(pathlib.Path("D:/ComfyUI") / "main.py"),
+                          "--port", "8188", "--listen", "127.0.0.1,192.168.0.7"])
+        popen.call_args.kwargs["stdout"].close()
+
 
 class FreeComfyPortTests(unittest.TestCase):
     def test_requested_port_when_free(self):
@@ -697,7 +707,8 @@ class StudioDesktopTests(unittest.TestCase):
         capture = []
         with patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: moves.append(a),
                                                       SetCapture=lambda h: capture.append(("take", h)),
-                                                      ReleaseCapture=lambda: capture.append(("drop",)))), \
+                                                      ReleaseCapture=lambda: capture.append(("drop",)),
+                                                      GetSystemMetrics=lambda n: 4)), \
              patch.object(app, "window_rect", lambda hwnd: (300, 200, 900, 700)), \
              patch.object(app, "_cursor_pos", iter([(320, 240), (330, 250), (380, 270)]).__next__), \
              patch.object(app, "_left_button_down", iter([True, True, False]).__next__):
@@ -709,8 +720,45 @@ class StudioDesktopTests(unittest.TestCase):
         # 松手也传不过来（这正是拖动循环 0ms 返回的那个坑）
         self.assertEqual(capture, [("take", 1234), ("drop",)])
 
+    def test_press_inside_the_drag_threshold_moves_nothing(self):
+        # 最大化下单击顶栏不许还原窗口：按下没走出系统拖动阈值，窗口一动不动，最大化留着
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        desktop._window = _fake_window()
+        desktop.maximized = True
+        moved, stopped, logs = [], [], []
+        with patch.object(app.StudioDesktop, "win_maximize", lambda self: stopped.append("maximized")), \
+             patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: moved.append(a),
+                                                      SetCapture=lambda h: None,
+                                                      ReleaseCapture=lambda: None,
+                                                      GetSystemMetrics=lambda n: 8)), \
+             patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)), \
+             patch.object(app, "_cursor_pos", iter([(150, 130), (152, 132), (157, 137)]).__next__), \
+             patch.object(app, "_left_button_down", iter([True, True, False]).__next__), \
+             patch.object(app, "log_line", lambda text: logs.append(text)):
+            desktop.win_start_drag()
+        self.assertEqual(stopped, [], "没走出阈值不许还原最大化")
+        self.assertEqual(moved, [], "没走出阈值不许搬窗口")
+        self.assertIn("drag 0 steps", logs)
+
+    def test_maximize_exits_once_the_drag_threshold_is_crossed(self):
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
+        desktop._window = _fake_window()
+        desktop.maximized = True
+        moved, stopped = [], []
+        with patch.object(app.StudioDesktop, "win_maximize", lambda self: stopped.append("maximized")), \
+             patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: moved.append(a),
+                                                      SetCapture=lambda h: None,
+                                                      ReleaseCapture=lambda: None,
+                                                      GetSystemMetrics=lambda n: 8)), \
+             patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)), \
+             patch.object(app, "_cursor_pos", iter([(150, 130), (170, 150)]).__next__), \
+             patch.object(app, "_left_button_down", iter([True, False]).__next__):
+            desktop.win_start_drag()
+        self.assertEqual(stopped, ["maximized"], "走出阈值才还原")
+        self.assertEqual([(m[2], m[3]) for m in moved], [(100, 100)], "抓取偏移按还原后的新矩形重算")
+
     def test_win_start_drag_leaves_fullscreen_and_maximize_first(self):
-        # 全屏 / 最大化时按下标题栏先退出：整屏或整块工作区大小的窗口跟着光标跑，看着就像坏了；
+        # 全屏 / 最大化时拖动先退出：整屏或整块工作区大小的窗口跟着光标跑，看着就像坏了；
         # pywebview 那边还会停在全屏态，再点全屏按钮窗口会跳回旧矩形
         for state in ("fullscreen", "maximized"):
             desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"frameless": True})
@@ -721,10 +769,11 @@ class StudioDesktopTests(unittest.TestCase):
                  patch.object(app.StudioDesktop, "win_fullscreen", lambda self: stopped.append("fullscreen")), \
                  patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: None,
                                                           SetCapture=lambda h: None,
-                                                          ReleaseCapture=lambda: None)), \
+                                                          ReleaseCapture=lambda: None,
+                                                          GetSystemMetrics=lambda n: 4)), \
                  patch.object(app, "window_rect", lambda hwnd: (100, 100, 700, 500)), \
-                 patch.object(app, "_cursor_pos", lambda: (150, 130)), \
-                 patch.object(app, "_left_button_down", lambda: False):
+                 patch.object(app, "_cursor_pos", iter([(150, 130), (170, 150)]).__next__), \
+                 patch.object(app, "_left_button_down", iter([True, False]).__next__):
                 desktop.win_start_drag()
             self.assertEqual(stopped, [state])
 
@@ -736,7 +785,8 @@ class StudioDesktopTests(unittest.TestCase):
         window.native.Invoke = lambda fn: invoked.append(fn) or fn()
         with patch.object(app, "u32", SimpleNamespace(SetWindowPos=lambda *a: None,
                                                       SetCapture=lambda h: None,
-                                                      ReleaseCapture=lambda: None)), \
+                                                      ReleaseCapture=lambda: None,
+                                                      GetSystemMetrics=lambda n: 4)), \
              patch.object(app, "window_rect", lambda hwnd: (0, 0, 100, 100)), \
              patch.object(app, "_cursor_pos", lambda: (10, 10)), \
              patch.object(app, "_left_button_down", lambda: False):
@@ -955,7 +1005,7 @@ class StudioDesktopTests(unittest.TestCase):
         comfy = SimpleNamespace(pid=1234, poll=lambda: 1, terminate=MagicMock())
         desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
-        with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
+        with patch.object(app, "start_comfy", lambda python, root, port, listen: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
@@ -973,7 +1023,7 @@ class StudioDesktopTests(unittest.TestCase):
         logs = []
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
         with patch.object(app, "port_busy", lambda port: True), \
-             patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
@@ -1010,7 +1060,7 @@ class StudioDesktopTests(unittest.TestCase):
         desktop.rearm = MagicMock()
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
-        with patch.object(app, "start_comfy", lambda python, root, port: spawned), \
+        with patch.object(app, "start_comfy", lambda python, root, port, listen: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
@@ -1140,7 +1190,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
              patch.object(app, "set_window_frame", lambda hwnd, on: frames.append(on)), \
              patch.object(sys, "argv", ["studio_app.py"]):
-            app.save_config(_COMFY_ROOT, pathlib.Path(sys.executable), 8188, True)
+            app.save_config(_COMFY_ROOT, pathlib.Path(sys.executable), 8188, {"frameless": True})
             self.assertEqual(app.main(), 0)
             window.events.shown.handlers[0]()   # 窗口显示：无边框补回可拖拽边框
         self.assertTrue(cw.call_args.kwargs["frameless"], "无边框要在建窗时就生效")
@@ -1185,7 +1235,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
              patch.object(app, "wait_ready", wait), \
              patch.object(app, "alert", lambda text: None), \
              patch.object(app, "pid_alive", lambda pid: False), \
@@ -1216,7 +1266,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1238,7 +1288,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1272,7 +1322,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -1311,7 +1361,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1330,7 +1380,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: False), \
              patch.object(app, "alert", lambda text: None), \
              patch.object(app, "pid_alive", lambda pid: False), \
@@ -1466,7 +1516,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
              patch.object(app, "wait_ready", lambda port, seconds: False), \
              patch.object(app, "wait_attach", lambda port, seconds: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
@@ -1486,7 +1536,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
-             patch.object(app, "start_comfy", lambda python, root, port: spawned.append(port) or MagicMock()), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
         self.assertEqual(spawned, [], "热启动同样不许拉第二路")
@@ -1500,7 +1550,7 @@ class MainWindowTests(unittest.TestCase):
         start = lambda *a, **k: a[0]()
         proc = SimpleNamespace(pid=4321, terminate=MagicMock(), wait=MagicMock())
 
-        def spawn(python, root, port):
+        def spawn(python, root, port, listen):
             cw.call_args.kwargs["js_api"].closing = True   # 用户就在这一刻关了窗
             return proc
 
@@ -1521,24 +1571,38 @@ class LauncherConfigTests(unittest.TestCase):
     def test_config_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"):
-                self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188, True))
+                self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188,
+                                                {"frameless": True}))
                 self.assertEqual(app.load_config(),
                                  {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
-                                  "python": "D:/python/python.exe", "port": 8188, "frameless": True})
+                                  "python": "D:/python/python.exe", "port": 8188, "frameless": True,
+                                  "dev_mode": False, "listen": ""})
+
+    def test_config_roundtrip_with_all_toggles(self):
+        # 「保存并重启」把根目录 / 解释器 / 端口连同三个开关一起落盘：开发模式与监听不能被它写没
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"):
+                self.assertTrue(app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188,
+                                                {"frameless": False, "dev_mode": True,
+                                                 "listen": "127.0.0.1,192.168.0.7"}))
+                self.assertEqual(app.load_config()["dev_mode"], True)
+                self.assertEqual(app.load_config()["listen"], "127.0.0.1,192.168.0.7")
+                self.assertEqual(app.load_config()["frameless"], False)
 
     def test_set_frameless_keeps_the_rest_of_the_config(self):
         # 无边框开关只改自己那一项：根目录 / 解释器 / 端口不能被它带跑
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
                  patch.object(app, "log_line", lambda text: None):
-                app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188, False)
+                app.save_config(pathlib.Path("D:/ComfyUI"), "D:/python/python.exe", 8188, {"frameless": False})
                 desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("D:/ComfyUI"),
                                         launcher={"root": "D:/ComfyUI", "port": 8188, "frameless": False})
                 self.assertFalse(desktop.frameless, "配置里的 frameless 要读进桌面端")
                 self.assertTrue(desktop.set_frameless(True)["ok"])
                 self.assertEqual(app.load_config(),
                                  {"version": app.CONFIG_VERSION, "root": str(pathlib.Path("D:/ComfyUI")),
-                                  "python": "D:/python/python.exe", "port": 8188, "frameless": True})
+                                  "python": "D:/python/python.exe", "port": 8188, "frameless": True,
+                                  "dev_mode": False, "listen": ""})
                 self.assertTrue(desktop.launcher["frameless"], "设置页快照要同步")
 
     def test_load_config_missing_is_empty(self):
@@ -1595,6 +1659,80 @@ class LauncherConfigTests(unittest.TestCase):
             with patch.object(app, "CONFIG_FILE", root / "none.json"), \
                  patch.object(app, "EXE_DIR", exe_dir):
                 self.assertEqual(app.resolve_root(""), root)
+
+
+class ListenTests(unittest.TestCase):
+    def test_empty_listen_is_the_comfyui_default(self):
+        # 留空 = 不传 --listen，ComfyUI 自己默认只监听 127.0.0.1
+        self.assertEqual(app.comfy_listen(""), "")
+        self.assertEqual(app.comfy_listen("  ,  "), "")
+
+    def test_wildcard_covers_loopback(self):
+        self.assertEqual(app.comfy_listen("0.0.0.0"), "0.0.0.0")
+        self.assertEqual(app.comfy_listen("0.0.0.0, ::"), "0.0.0.0,::")
+
+    def test_specific_nic_keeps_loopback_listening(self):
+        # 桌面端窗口跳的是 http://127.0.0.1:端口，端口探测也认回环：只监听网卡会把在跑的那路读成空位
+        self.assertEqual(app.comfy_listen("192.168.0.7"), "127.0.0.1,192.168.0.7")
+        self.assertEqual(app.comfy_listen("192.168.0.7, 10.0.0.5"), "127.0.0.1,192.168.0.7,10.0.0.5")
+        self.assertEqual(app.comfy_listen("127.0.0.1,192.168.0.7"), "127.0.0.1,192.168.0.7",
+                         "规范化要能重复套用")
+
+    def test_not_an_address_is_rejected(self):
+        for raw in ("0.0.0.0:8188", "http://192.168.0.7", "192.168.0", "192.168.0.7,10.0.0",
+                    "192.168.0.7 --listen"):
+            self.assertIsNone(app.comfy_listen(raw), raw)
+
+    def test_desktop_normalizes_the_saved_listen(self):
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"listen": "192.168.0.7"})
+        self.assertEqual(desktop.listen, "127.0.0.1,192.168.0.7")
+        self.assertEqual(app.StudioDesktop("u", None, 8188, pathlib.Path("root"),
+                                         launcher={"listen": "not-an-ip"}).listen, "",
+                         "手改坏的配置退回只监听本机")
+
+    def test_start_passes_the_listen_to_comfyui(self):
+        spawned = SimpleNamespace(pid=9999, poll=lambda: None)
+        desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"listen": "192.168.0.7"})
+        argv = []
+        with patch.object(app, "start_comfy",
+                          lambda python, root, port, listen: argv.append(listen) or spawned), \
+             patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "port_busy", lambda port: False), \
+             patch.object(app, "free_comfy_port", lambda port, desktop_port: port), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "log_line", lambda text: None), \
+             patch.object(app.threading, "Thread",
+                          lambda target, daemon=True: SimpleNamespace(start=lambda: None)):
+            desktop.comfy_start()
+        self.assertEqual(argv, ["127.0.0.1,192.168.0.7"])
+
+    def test_apply_rejects_a_non_address(self):
+        # 监听地址不是 IP 就报错：不能把垃圾喂给 ComfyUI 的 --listen
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "main.py").write_text("", encoding="utf-8")
+            desktop = app.StudioDesktop("u", None, 8188, root, str(sys.executable),
+                                        launcher={"root": str(root), "port": 8188})
+            res = desktop.apply_launcher(str(root), str(sys.executable), 8188, "192.168.0.7:8188")
+            self.assertFalse(res["ok"])
+            self.assertIn("监听地址", res["error"])
+
+    def test_apply_saves_the_normalized_listen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "main.py").write_text("", encoding="utf-8")
+            desktop = app.StudioDesktop("u", None, 8188, root, str(sys.executable),
+                                        launcher={"root": str(root), "port": 8188})
+            with patch.object(app, "CONFIG_FILE", pathlib.Path(tmp) / "launcher_config.json"), \
+                 patch.object(app, "log_line", lambda text: None), \
+                 patch.object(app, "startup_state", lambda *a: ("ok", "")), \
+                 patch.object(desktop, "comfy_stop", lambda: {"running": False}), \
+                 patch.object(desktop, "comfy_start", lambda: {"ok": True, "port": 8188}):
+                res = desktop.apply_launcher(str(root), str(sys.executable), 8188, "192.168.0.7")
+                self.assertTrue(res["ok"], res)
+                self.assertEqual(app.load_config()["listen"], "127.0.0.1,192.168.0.7")
+                self.assertEqual(desktop.launcher["listen"], "127.0.0.1,192.168.0.7")
+                self.assertEqual(desktop.listen, "127.0.0.1,192.168.0.7")
 
 
 class StartupStateTests(unittest.TestCase):
