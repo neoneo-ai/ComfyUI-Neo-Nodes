@@ -1,6 +1,6 @@
 // Neo Studio 的 `scripts/app.js` 替身：只实现 web/ 模块真正用到的成员。
 // - registerExtension / initExtensions：收集扩展并在页面就绪后统一 setup
-// - extensionManager：sidebarTab（记录用）、toast（接 toast.js 的 actionToast）、renderMarkdownToHtml
+// - extensionManager：sidebarTab（写入转交 Studio 宿主：导演页素材库抽屉）、toast（接 toast.js 的 actionToast）、renderMarkdownToHtml
 // - ui.settings：localStorage 版设置存储（ComfyUI 主前端的设置系统不在 Studio 里加载）
 // - canvas / graph：空画布替身。Studio 没有 LiteGraph 画布，「发送到节点」类功能
 //   走这些空结构自然降级为 toast 提示，web/ 模块无需感知差异。
@@ -9,6 +9,8 @@ import { actionToast } from "../../toast.js";
 
 const extensions = [];
 const sidebarTabs = new Map();
+let activeSidebarTabId = null;
+let sidebarTabListener = null;
 
 const SETTINGS_KEY = "neo_studio_settings";
 function loadSettings() {
@@ -38,7 +40,15 @@ export const app = {
         return ext;
     },
     extensionManager: {
-        sidebarTab: { activeSidebarTabId: null },
+        // Studio 没有 ComfyUI 侧栏：写入 activeSidebarTabId 转交 Studio 宿主落地
+        sidebarTab: {
+            get activeSidebarTabId() { return activeSidebarTabId; },
+            set activeSidebarTabId(id) {
+                if (id === activeSidebarTabId) return;
+                activeSidebarTabId = id;
+                sidebarTabListener?.(id);
+            },
+        },
         registerSidebarTab(tab) { sidebarTabs.set(tab.id, tab); },
         toast: {
             add(t) {
@@ -65,6 +75,11 @@ export const app = {
 
 export function getSidebarTab(id) {
     return sidebarTabs.get(id) || null;
+}
+
+/** 接管 sidebarTab.activeSidebarTabId 的写入（null = 收起）；Studio 侧栏替身的落点。 */
+export function onSidebarTabChange(fn) {
+    sidebarTabListener = fn;
 }
 
 /** 依次执行所有已注册扩展的 setup（ComfyUI 里由 app 在画布就绪后做，这里由 Studio 页面触发）。 */

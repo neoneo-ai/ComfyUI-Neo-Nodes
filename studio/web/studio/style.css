@@ -75,13 +75,75 @@ body {
 
 /* 导演页：左 = 导演配方列表（常驻）/ 右 = 上导演编辑器 + 分隔条 + 下整片生成面板 */
 .ns-director {
+    --ns-side-w: 280px;   /* 左栏宽度：分隔条拖动写进内联样式；素材库打开时默认 380px */
     display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 14px;
+    grid-template-columns: var(--ns-side-w) 18px 1fr;
     height: 100%;
     min-height: 520px;
+    transition: grid-template-columns .16s ease;
 }
-.ns-director-side { min-width: 0; overflow: auto; }
+/* 拖动分隔条时关掉过渡，否则每一帧都在补间、拖起来发黏 */
+.ns-director.ns-colsplit-drag { transition: none; user-select: none; }
+.ns-director-side { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.ns-director-recipes { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* 左栏 / 编辑器分隔条：18px 宽热区里一条竖线，悬停 / 键盘聚焦 / 拖动时加宽变蓝（照 VSCode 的 sash） */
+.ns-director-colsplit { position: relative; min-width: 0; cursor: col-resize; user-select: none; }
+.ns-director-colsplit::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 8px;
+    width: 1px;
+    background: #333;
+    transition: width .12s ease, left .12s ease, background .12s ease;
+}
+.ns-director-colsplit:hover::after, .ns-director-colsplit:focus-visible::after,
+.ns-director-colsplit.ns-colsplit-drag::after { left: 6px; width: 4px; background: #5090cc; }
+.ns-director-colsplit:focus-visible { outline: 1px solid #5090cc; }
+/* 素材库：导演编辑器「素材库」按钮把左栏从配方列表切成素材库，整栏加宽到画廊宽度，
+   右侧编辑器随 grid 让位（不遮挡编辑区），素材卡片直接拖进右侧首帧 / 参考位 */
+.ns-director:has(.ns-director-side.ns-lib-open) { --ns-side-w: 380px; }
+.ns-director-lib { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ns-director-side:not(.ns-lib-open) .ns-director-lib { display: none; }
+.ns-director-side.ns-lib-open .ns-director-recipes { display: none; }
+.ns-director-lib-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 8px 7px 14px;
+    border-bottom: 1px solid #333;
+}
+.ns-director-lib-title { font-size: 12px; color: #c8c8d4; }
+.ns-director-lib-close {
+    background: #2a2a2e;
+    border: 1px solid #444;
+    color: #cfcfd8;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.ns-director-lib-close:hover { background: #33333a; }
+/* 宿主不留上内边距、左右 0，工具条用画廊侧栏原生的 -10px 负边距吃掉面板内边距：
+   粘性栏贴齐宿主顶边与左右边，滚动内容不会从上方缝隙穿过去 */
+.ns-director-lib .ns-gallery-host { flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; padding: 0 0 12px; }
+.ns-director-lib .ns-gallery-host .neo-gallery-topbar { margin: -10px -10px 8px; padding: 8px 10px; }
+/* 左栏滚动条：平时隐形，鼠标进入这一栏才显形（槽位照留，显隐不引起内容跳动） */
+.ns-director-recipes,
+.ns-director-lib .ns-gallery-host { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.ns-director-recipes:hover,
+.ns-director-lib .ns-gallery-host:hover { scrollbar-color: #555 transparent; }
+.ns-director-recipes::-webkit-scrollbar,
+.ns-director-lib .ns-gallery-host::-webkit-scrollbar { width: 8px; }
+.ns-director-recipes::-webkit-scrollbar-track,
+.ns-director-lib .ns-gallery-host::-webkit-scrollbar-track { background: transparent; }
+.ns-director-recipes::-webkit-scrollbar-thumb,
+.ns-director-lib .ns-gallery-host::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.ns-director-recipes:hover::-webkit-scrollbar-thumb,
+.ns-director-lib .ns-gallery-host:hover::-webkit-scrollbar-thumb { background: #555; }
 .ns-director-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 /* 右上编辑器宿主：导演编辑器内嵌铺满这里；没有编辑器时出占位提示 */
 .ns-director-editor { flex: 1 1 auto; min-height: 0; overflow: hidden; }
@@ -96,26 +158,41 @@ body {
     font-size: 13px;
 }
 .ns-director-editor.ns-editor-open .ns-director-editor-hint { display: none; }
-/* 分隔条：拖动调生成面板高度，双击收起 / 展开（收起后条上给出展开入口）；键盘 ↑↓ 调高、Enter 收起 */
+/* 分隔条：18px 宽热区里一条横线，悬停 / 键盘聚焦 / 拖动时加宽变蓝（照 VSCode 的 sash）；
+   拖动调生成面板高度，双击收起 / 展开（收起后条上给出展开入口），键盘 ↑↓ 调高、Enter 收起 */
 .ns-director-split {
     flex: none;
-    height: 12px;
+    height: 18px;
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: ns-resize;
-    border-top: 1px solid #333;
-    border-bottom: 1px solid #333;
-    background: #1a1a1e;
     user-select: none;
 }
-.ns-director-split:hover { background: #232329; border-color: #4a4d55; }
+.ns-director-split::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 8px;
+    height: 1px;
+    background: #333;
+    transition: height .12s ease, top .12s ease, background .12s ease;
+}
+.ns-director-split:hover::after, .ns-director-split:focus-visible::after,
+.ns-director-split.ns-split-drag::after { top: 6px; height: 4px; background: #5090cc; }
 .ns-director-split:focus-visible { outline: 1px solid #5090cc; }
-.ns-director-split-label { font-size: 11px; color: #8a9aa8; line-height: 1; }
+/* 拖动中关掉行高过渡，否则每一帧都在补间、拖起来发黏 */
+.ns-director-main.ns-split-drag { transition: none; user-select: none; }
+.ns-director-split-label { position: relative; z-index: 1; font-size: 11px; color: #8a9aa8; line-height: 1; }
 .ns-director-collapsed .ns-director-split { cursor: pointer; }
-/* 生成面板：高度由分隔条写进内联样式，收起时整块隐藏、编辑器吃满整栏 */
+/* 生成面板：高度由分隔条写进内联样式（同时写 --ns-gen-h），收起时整块隐藏、编辑器吃满整栏 */
 .ns-director-main .ns-gen-panel { flex: none; overflow: hidden; }
 .ns-gen-panel {
+    --ns-gen-h: 375px;
+    display: flex;
+    flex-direction: column;
     background: #202024;
     border: 1px solid #333;
     border-radius: 8px;
@@ -181,21 +258,32 @@ body {
     display: none;
 }
 .ns-gen-progress > div { height: 100%; width: 0; background: #7aa2ff; transition: width .4s; }
-/* 生成面板两列：左 = 配方区（控制行 + 时间轴，占满剩余宽度），右 = 结果区（实时预览 / 成片，限高 360px ≈ 16:9，居中） */
-.ns-gen-body { display: flex; gap: 14px; align-items: flex-start; }
+/* 生成面板两列：左 = 配方区（控制行 + 时间轴，占满剩余宽度），右 = 结果区（实时预览 / 成片，吃满右栏） */
+.ns-gen-body { display: flex; gap: 14px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 .ns-gen-left { flex: 1 1 420px; min-width: 360px; display: flex; flex-direction: column; gap: 10px; }
-.ns-gen-media-right { flex: 0 1 850px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-/* 成片就地替换实时预览：限宽限高（窗口再大不撑满右栏，按画面比例 letterbox） */
-.ns-gen-media-right .ns-gen-preview { width: 100%; max-width: 640px; max-height: 360px; background: #000; border-radius: 8px; }
+.ns-gen-media-right { flex: 0 1 850px; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+/* 结果区吃满右栏：右栏高度 = 面板内容高度（分隔条写进 --ns-gen-h 的面板高度减上下内边距与状态行），
+   宽上限按 16:9 换算；面板拖高结果区一起长大、拖矮一起缩，画面按 object-fit 居中留边，
+   既不会被面板裁掉也不会在下面留一片空白 */
+.ns-gen-media-right .ns-gen-preview,
+.ns-gen-media-right .ns-gen-live {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    max-width: min(1280px, max(320px, calc((var(--ns-gen-h) - 50px) * 16 / 9)));
+}
+/* 成片就地替换实时预览：按画面比例 letterbox */
+.ns-gen-media-right .ns-gen-preview { background: #000; border-radius: 8px; }
 .ns-gen-media-right a.ns-gen-final { color: #7aa2ff; text-decoration: none; font-size: 13px; }
 .ns-gen-media-right a.ns-gen-final:hover { text-decoration: underline; }
-/* 实时预览面板：与成片同限宽；高度由 livePlayer 回调按固定值写入内联样式（首个载荷到达时显示） */
-.ns-gen-live { width: 100%; max-width: 640px; border-radius: 8px; overflow: hidden; }
-/* 没有画面时右栏整块收起：时间轴吃满整幅宽度，配方列下方出虚线占位 */
+/* 实时预览面板：与成片同宽同高（吃满右栏），首个载荷到达时由 onFrame 清掉内联高度交给 CSS */
+.ns-gen-live { border-radius: 8px; overflow: hidden; }
+/* 没有画面时右栏整块收起：时间轴吃满整幅宽度，配方列下方出虚线占位（占位吃满面板剩余高度） */
 .ns-gen-empty-hint { display: none; }
 .ns-gen-body.ns-gen-empty .ns-gen-media-right { display: none; }
 .ns-gen-body.ns-gen-empty .ns-gen-empty-hint {
     display: flex;
+    flex: 1 1 auto;
     align-items: center;
     justify-content: center;
     min-height: 110px;
@@ -223,11 +311,14 @@ body {
 
 /* 窄窗口：左栏先收窄，再窄就上下堆叠（配方列表在上，编辑器 + 生成面板在下） */
 @media (max-width: 1180px) {
-    .ns-director { grid-template-columns: 220px 1fr; }
+    .ns-director { --ns-side-w: 220px; }
+    .ns-director:has(.ns-director-side.ns-lib-open) { --ns-side-w: 380px; }
 }
 @media (max-width: 900px) {
     .ns-director { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 0; }
+    .ns-director-colsplit { display: none; }
     .ns-director-side { max-height: 240px; }
+    .ns-director-side.ns-lib-open { max-height: 460px; }
     .ns-director-main { min-height: 620px; }
 }
 

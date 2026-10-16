@@ -4,7 +4,7 @@
 // - 导演：配方面板（recipes.js）+ 整片生成面板（POST /neo_studio/director/generate）
 // - 技能：统一技能管理（skill.js createSkillManager，与顶栏「🗂 技能管理」同组件，直接展开无弹窗）
 // - 设置：生图/生视频/LLM 设置表单（内嵌，无弹窗）
-import { app, initExtensions, getSidebarTab } from "./shim/app.js";
+import { app, initExtensions, getSidebarTab, onSidebarTabChange } from "./shim/app.js";
 import { api } from "./shim/api.js";
 import { $el } from "./shim/ui.js";
 
@@ -20,7 +20,6 @@ import { t, tf, getLang, applyLang, LANGS } from "../js/core/i18n.js";
 
 const view = document.getElementById("ns-view");
 let directorPanelOpts = null;   // 导演页配方面板选项（buildDirector 设置；含 onSelect 回传选中配方）
-const NS_LIVE_H = 360;       // 实时预览面板在 Studio 里的固定高度（px；与成片同高，节点上下文按画面比例加高，这里不需要）
 
 // ====== 视图缓存：每个 tab 只挂载一次，切换时显隐（保留画廊滚动/编辑状态） ======
 const views = new Map();
@@ -40,22 +39,47 @@ function showView(name) {
     document.querySelectorAll(".ns-tabs a").forEach(a =>
         a.classList.toggle("active", a.dataset.tab === name));
     setMemActive(name === "director");   // 显存读数只在导演页轮询
+    if (name !== "director") closeDirectorLib();   // 离开导演页收起素材库抽屉
+    if (name === "gallery" && galleryPageHost && galleryMountHost !== galleryPageHost) mountGallery(galleryPageHost);
 }
 
-// ====== 素材页：直接借用 Neo Gallery 侧栏 tab 的 render（内部会挂载并加载 gallery.element） ======
-function buildGallery(el) {
-    const host = $el("div", { className: "ns-gallery-host" });
-    el.appendChild(host);
-    const tab = getSidebarTab("neo.gallery");
-    if (!tab) {
+// ====== 素材宿主：NeoGallery 元素是单例，素材页与导演页素材库抽屉共用，挂载点随宿主切换 ======
+let galleryTab = null;
+let galleryPageHost = null;     // 素材页宿主
+let galleryMountHost = null;    // gallery.element 当前所在宿主
+let galleryStandbyHost = null;  // 素材页还没建时的收留宿主（游离节点，建页时再换）
+let directorLib = null;         // 导演页素材库抽屉（buildDirector 装配）：{ open, close }
+
+function mountGallery(host) {
+    galleryTab = galleryTab || getSidebarTab("neo.gallery");
+    if (!galleryTab) {
         host.textContent = t("Neo Gallery 未加载");
-        return;
+        return Promise.resolve(false);
     }
-    tab.render(host).catch(e => {
+    galleryMountHost = host;
+    return galleryTab.render(host).catch(e => {
         console.error("[Neo Studio] gallery render failed:", e);
         host.textContent = t("Neo Gallery 加载失败");
     });
 }
+
+function buildGallery(el) {
+    const host = $el("div", { className: "ns-gallery-host" });
+    el.appendChild(host);
+    galleryPageHost = host;
+    mountGallery(host);
+}
+
+function closeDirectorLib() {
+    directorLib?.close();
+}
+
+// 导演编辑器「素材库」→ media-transfer 写 sidebarTab.activeSidebarTabId；Studio 没有 ComfyUI 侧栏，写入落到导演页抽屉
+onSidebarTabChange((id) => {
+    if (!directorLib) return;
+    if (id === "neo.gallery") directorLib.open();
+    else directorLib.close();
+});
 
 // ====== 导演页：整片生成面板 + 配方列表 ======
 let genState = null;   // 当前整片任务 {task_id, statusEl, barEl, runBtn, cancelBtn}
@@ -124,7 +148,11 @@ function buildDirectorSplit(main, genPanel) {
         const max = Math.max(SPLIT_PANEL_MIN, main.clientHeight - split.offsetHeight - SPLIT_EDITOR_MIN);
         return Math.max(SPLIT_PANEL_MIN, Math.min(h, max));
     };
-    const setHeight = (h) => { genPanel.style.height = Math.round(clamp(h)) + "px"; };
+    const setHeight = (h) => {
+        const v = Math.round(clamp(h)) + "px";
+        genPanel.style.height = v;
+        genPanel.style.setProperty("--ns-gen-h", v);   // 结果区（实时预览 / 成片）按面板高度伸缩
+    };
     const persist = () => localStorage.setItem(SPLIT_KEY, JSON.stringify({ height: genPanel.offsetHeight, collapsed }));
     const apply = () => {
         main.classList.toggle("ns-director-collapsed", collapsed);
@@ -148,8 +176,12 @@ function buildDirectorSplit(main, genPanel) {
         const up = () => {
             window.removeEventListener("mousemove", move);
             window.removeEventListener("mouseup", up);
+            split.classList.remove("ns-split-drag");
+            main.classList.remove("ns-split-drag");
             persist();
         };
+        split.classList.add("ns-split-drag");
+        main.classList.add("ns-split-drag");
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
     });
@@ -168,18 +200,122 @@ function buildDirectorSplit(main, genPanel) {
     return split;
 }
 
+// ====== 左栏宽度分隔条：拖动调左栏宽 / 键盘 ←→ 微调 / 双击恢复默认（配方列表与素材库各记各的宽度） ======
+const SIDE_COL_KEY = "neo_studio_director_side_col";
+const SIDE_COL_MIN = 200;        // 配方列表下限：卡片缩略图还能看
+const SIDE_COL_LIB_MIN = 320;    // 素材库下限：画廊两列缩略图
+const SIDE_COL_EDITOR_MIN = 420; // 右侧编辑器下限：再窄就没法编辑了
+
+function buildSideColSplit(page, side) {
+    const split = $el("div", {
+        className: "ns-director-colsplit", role: "separator", "aria-orientation": "vertical", tabindex: "0",
+        title: t("拖动调整左栏宽度 · 双击恢复默认宽度"),
+    });
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SIDE_COL_KEY) || "null"); } catch { /* 偏好读不到就用默认 */ }
+    const mode = () => (side.classList.contains("ns-lib-open") ? "lib" : "side");
+    // 内联宽度只作用于当前这一栏模式；没有存过就用样式里的默认宽度
+    const apply = () => {
+        const w = Number(saved?.[mode()]);
+        if (w > 0) page.style.setProperty("--ns-side-w", w + "px");
+        else page.style.removeProperty("--ns-side-w");
+    };
+    const setWidth = (w) => {
+        const min = mode() === "lib" ? SIDE_COL_LIB_MIN : SIDE_COL_MIN;
+        const max = Math.max(min, page.clientWidth - split.offsetWidth - SIDE_COL_EDITOR_MIN);
+        page.style.setProperty("--ns-side-w", Math.round(Math.max(min, Math.min(w, max))) + "px");
+    };
+    const persist = () => localStorage.setItem(SIDE_COL_KEY, JSON.stringify({ ...(saved || {}), [mode()]: side.offsetWidth }));
+    apply();
+
+    split.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const startX = e.clientX, startW = side.offsetWidth;
+        const move = (ev) => setWidth(startW + (ev.clientX - startX));
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            split.classList.remove("ns-colsplit-drag");
+            page.classList.remove("ns-colsplit-drag");
+            persist();
+        };
+        split.classList.add("ns-colsplit-drag");
+        page.classList.add("ns-colsplit-drag");
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    });
+    const reset = () => {
+        saved = { ...(saved || {}) };
+        delete saved[mode()];
+        localStorage.setItem(SIDE_COL_KEY, JSON.stringify(saved));
+        apply();
+    };
+    split.addEventListener("dblclick", reset);
+    split.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            setWidth(side.offsetWidth + (e.key === "ArrowLeft" ? -24 : 24));
+            persist();
+        } else if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            reset();
+        }
+    });
+    return { el: split, apply };
+}
+
 async function buildDirector(el) {
     const page = $el("div", { className: "ns-director" });
     el.appendChild(page);
-    // 左栏 = 导演配方列表（常驻，编辑时也能直接切配方）；右栏 = 上导演编辑器 / 下整片生成面板
+    // 左栏 = 导演配方列表 / 素材库（二选一，编辑时也能直接切配方）；右栏 = 上导演编辑器 / 下整片生成面板
     const side = $el("div", { className: "ns-director-side" });
+    const recipesHost = $el("div", { className: "ns-director-recipes" });
+    side.appendChild(recipesHost);
     const main = $el("div", { className: "ns-director-main" });
     const editorHost = $el("div", { className: "ns-director-editor" }, [
         $el("div", { className: "ns-director-editor-hint", textContent: t("点左侧配方卡即在此编辑整片脚本") }),
     ]);
+    const sideCol = buildSideColSplit(page, side);
     page.appendChild(side);
+    page.appendChild(sideCol.el);
     page.appendChild(main);
     main.appendChild(editorHost);
+    // 素材库：导演编辑器里的「素材库」按钮把左栏从配方列表切成素材库（Studio 没有 ComfyUI 侧栏，
+    // media-transfer 写 sidebarTab 落到这里）。左栏随整栏加宽，右侧编辑器让位，不遮挡编辑区；
+    // 素材卡片直接拖进右侧编辑器的首帧 / 参考位
+    const libHost = $el("div", { className: "ns-gallery-host" });
+    const libClose = $el("button", { className: "ns-director-lib-close", type: "button", title: t("收起素材库"), textContent: "✕" });
+    side.appendChild($el("div", { className: "ns-director-lib" }, [
+        $el("div", { className: "ns-director-lib-head" }, [
+            $el("span", { className: "ns-director-lib-title", textContent: t("🗂 素材库") }),
+            libClose,
+        ]),
+        libHost,
+    ]));
+    const closeLib = () => {
+        if (!side.classList.contains("ns-lib-open")) return;
+        side.classList.remove("ns-lib-open");
+        sideCol.apply();   // 回到配方列表宽度（用户拖过的宽度按模式各记各的）
+        app.extensionManager.sidebarTab.activeSidebarTabId = null;   // 素材库收起，替身侧栏同步归位
+        if (galleryMountHost === libHost) {
+            mountGallery(galleryPageHost || (galleryStandbyHost ||= $el("div", { className: "ns-gallery-host" })));
+        }
+    };
+    const openLib = () => {
+        side.classList.add("ns-lib-open");
+        sideCol.apply();
+        if (galleryMountHost === libHost) return;
+        // 挂载要重画列表，晚于 media-transfer 的目录导航落地：渲染完按 currentView 补一次导航
+        mountGallery(libHost).then(() => {
+            const g = app.neoGallery;
+            if (g && galleryMountHost === libHost && g.currentView?.mode === "directory") {
+                g.showDirectoryStructure(g.currentView.source, g.currentView.categoryPath);
+            }
+        });
+    };
+    libClose.onclick = closeLib;
+    directorLib = { open: openLib, close: closeLib };
     // 编辑器挂进宿主 / 关闭后收起占位提示
     new MutationObserver(() => editorHost.classList.toggle("ns-editor-open", !!editorHost.querySelector(".neo-director-panel")))
         .observe(editorHost, { childList: true });
@@ -265,11 +401,11 @@ async function buildDirector(el) {
         console.error("[Neo Studio] timeline init failed:", e);
     }
 
-    // --- 实时预览：与节点内同款帧播放器；载荷按 task_id（后端 unique_id）过滤，Studio 里固定高度 ---
+    // --- 实时预览：与节点内同款帧播放器；载荷按 task_id（后端 unique_id）过滤，尺寸由结果区随面板高度定 ---
     const mediaRight = $el("div", { className: "ns-gen-media-right" });
     const liveBox = $el("div", { className: "ns-gen-live neo-dtl-live" });
     const livePlayer = createFramePlayer(liveBox, () => {
-        liveBox.style.height = NS_LIVE_H + "px";
+        liveBox.style.height = "";                       // 高度交给 CSS：结果区随面板高度伸缩
         genBody.classList.remove("ns-gen-empty");   // 预览一有画面就占住右栏
     });
     mediaRight.appendChild(liveBox);
@@ -501,7 +637,7 @@ async function buildDirector(el) {
 
     // --- 配方面板（左栏常驻：点卡片 = 选中喂给下方生成区 + 直接进右上编辑器；只列多段导演配方） ---
     recipesPanelEl = await createRecipesPanel(panelOpts());
-    side.appendChild(recipesPanelEl);
+    recipesHost.appendChild(recipesPanelEl);
     // 编辑器保存后：刷新配方列表、清 spec 缓存、同步默认值与时间轴分段（新建配方直接选中，其余保持当前选中）
     window.addEventListener(DIRECTOR_RECIPE_SAVED_EVENT, async (e) => {
         specCache.clear();

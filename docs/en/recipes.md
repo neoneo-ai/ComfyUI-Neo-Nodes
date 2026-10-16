@@ -135,7 +135,8 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
 
 - **Section visibility**:
   - First-frame area (`f2v`): a single-select thumbnail grid; pick a LoadImage wired on the canvas, or drag
-    from the asset panel on the left; clicking the selected image again clears it.
+    from the asset panel on the left (in desktop Studio: the asset library the director page's left column
+    switches to); clicking the selected image again clears it.
   - Last-frame area (`f2v`): an identical independent grid; under `fl2v` the first- and last-frame areas sit
     side by side in one row.
   - Reference media area (`r2v`): three used-lists (reference images ≤9 / reference videos ≤3 / reference

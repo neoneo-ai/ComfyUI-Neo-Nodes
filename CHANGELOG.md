@@ -4,6 +4,30 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- The **素材库 / asset library** buttons inside the director editor now open the asset library on the Studio
+  director page. They used to do nothing there: every button calls `toggleGallerySidebar()`, which only flips
+  `extensionManager.sidebarTab.activeSidebarTabId`, and the Studio page runs on the `scripts/app.js` shim whose
+  `sidebarTab` was a bare field with no sidebar behind it — the director page had no asset sidebar at all. The
+  shim now forwards those writes through `onSidebarTabChange()`, and the director page answers them by
+  **switching the left column from the recipe list to the asset library** (`.ns-director-lib`): the column widens
+  to 380px through the grid, so the editor gives way instead of being covered by an overlay. The library is the
+  same Neo Gallery the gallery page uses — `mountGallery(host)` moves the single gallery element between the
+  gallery-page host and the left column, so breadcrumbs, directory navigation and the draggable cards all work in
+  place, and a card drops straight onto the editor's first-frame / reference slots. Clicking the same button
+  again, the library's ✕, or leaving the director page switches back and hands the gallery back to the gallery
+  page. The ComfyUI canvas keeps using the real sidebar. Inside the left column the gallery toolbar sticks flush
+  to the top of the column (host padding 0, toolbar uses the sidebar's own `-10px` negative margin), and the
+  column scrollbar is transparent until the pointer enters the column, so it stops sitting there permanently.
+  The left column and the editor are now separated by a **visible vertical divider that doubles as a drag
+  handle**: drag it to resize the column (`←`/`→` to nudge, double-click restores the default width), the recipe
+  list and the asset library each remember their own width in `localStorage["neo_studio_director_side_col"]`,
+  and the divider disappears when a narrow window stacks the page vertically. Both splitters — this one and the
+  editor / generation-panel one — are an 18px-wide grab zone with a 1px hairline that thickens to 4px and turns
+  accent blue on hover, keyboard focus and while dragging (VSCode sash style); dragging also disables the
+  grid transition so the resize tracks the pointer. The generation panel's result column (live preview / final
+  film) now stretches with the height the splitter writes into `--ns-gen-h` — drag the panel taller and the
+  preview grows, drag it shorter and it shrinks, instead of leaving a dead strip under a fixed 640×360 box.
+  Tests: `studio/tests/js/studio-director.test.mjs`.
 - Clicking a recipe card on the Studio director page now opens it. The click only used to select the recipe for
   the generation panel, so editing meant hunting for the small ✎ on the card. `createRecipesPanel` gains
   `openEditorOnSelect`: the same click selects the recipe **and** opens it in the embedded editor host, and the

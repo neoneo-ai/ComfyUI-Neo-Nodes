@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mockRoute, jsonResponse, sleep, click, fetchLog } from "./setup.mjs";
-import { appState } from "./mocks/comfy-app.mjs";
+import { appState, app as mockApp } from "./mocks/comfy-app.mjs";
 
 const wsInstances = [];
 globalThis.WebSocket = class {
@@ -46,6 +46,8 @@ mockRoute("/rs_recipes/list", jsonResponse([
     ]},
 ])); // listRecipes 直接返回数组
 mockRoute("/rs_prompts/skills", jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+// 左栏宽度偏好：导演页首次构建前备好，构建时按配方列表档（side）回灌
+localStorage.setItem("neo_studio_director_side_col", JSON.stringify({ side: 240, lib: 420 }));
 
 const frame = (name) => `data:image/jpeg;base64,${name}`;
 function wsSend(type, data) {
@@ -90,10 +92,10 @@ test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
     wsSend("rs.h3.preview", { node_id: "other-task", frames: [frame("x")], fps: 8, w: 512, h: 288 });
     assert.equal(liveBox.style.display, "none", "非本任务的载荷被过滤");
 
-    // 本任务载荷：面板显示并播第一帧（固定高度由 onFrame 回调写入）
+    // 本任务载荷：面板显示并播第一帧（高度清空交给 CSS，随面板高度伸缩）
     wsSend("rs.h3.preview", { node_id: "task-1", frames: [frame("a"), frame("b")], fps: 8, w: 512, h: 288 });
     assert.equal(liveBox.style.display, "");
-    assert.equal(liveBox.style.height, "360px");
+    assert.equal(liveBox.style.height, "", "高度交给 CSS：结果区随面板高度伸缩");
     assert.equal(liveBox.querySelector(".neo-dtl-live-img").src, frame("a"));
 
     // 成功：成片就地替换实时预览（播放器 + 打开链接）
@@ -287,8 +289,10 @@ test("Studio 导演页：分隔条调生成面板高度、双击收起 / 展开�
 
     // 拖动：面板高度写进内联样式并落盘（jsdom 无布局，clientHeight=0 → 钳到下限）
     split.dispatchEvent(mouse("mousedown", 400));
+    assert.ok(main.classList.contains("ns-split-drag") && split.classList.contains("ns-split-drag"), "拖动中关掉行高过渡");
     window.dispatchEvent(mouse("mousemove", 300));
     window.dispatchEvent(mouse("mouseup", 300));
+    assert.ok(!main.classList.contains("ns-split-drag") && !split.classList.contains("ns-split-drag"), "松手恢复过渡");
     assert.equal(panel.style.height, "170px", "拖动写入面板高度");
     assert.ok("height" in pref() && "collapsed" in pref(), "高度与收起状态落盘");
 
@@ -307,4 +311,106 @@ test("Studio 导演页：分隔条调生成面板高度、双击收起 / 展开�
     assert.equal(panel.style.display, "");
     assert.equal(split.querySelector(".ns-director-split-label").textContent, "");
     localStorage.removeItem("neo_studio_director_split");
+});
+
+test("Studio 导演页：编辑器「素材库」按钮开合左栏素材库（画廊随宿主搬移）", async () => {
+    await import("../../web/studio/studio-app.js");
+    appState.graph = { _nodes: [] };
+    location.hash = "#/director";
+    await until(() => document.querySelector(".ns-director-side .neo-recipes-card"), "配方卡片挂载");
+    click(document.querySelector(".ns-director-side .neo-recipes-card"));
+    await until(() => document.querySelector(".ns-director-editor .neo-director-panel"), "编辑器内嵌出现");
+
+    const lib = () => document.querySelector(".ns-director-lib");
+    const libOpen = () => document.querySelector(".ns-director-side").classList.contains("ns-lib-open");
+    const galleryIn = (hostSel) => !!document.querySelector(`${hostSel} .neo-gallery-panel`);
+    assert.ok(!libOpen(), "进入导演页不自动开素材库");
+    assert.ok(lib().parentNode === document.querySelector(".ns-director-side"), "素材库与配方列表同在左栏");
+
+    // Studio 页面里 scripts/app.js 就是 shim（同一份 sidebarTab / sidebarTabs）；测试钩子把 scripts/app.js
+    // 指到 mock，这里把 shim 侧栏写入接回 mock 的调用方，并给 shim 注册素材 tab 的替身
+    const { app: shimApp } = await import("../../web/studio/shim/app.js");
+    mockApp.extensionManager.sidebarTab = {
+        get activeSidebarTabId() { return shimApp.extensionManager.sidebarTab.activeSidebarTabId; },
+        set activeSidebarTabId(id) { shimApp.extensionManager.sidebarTab.activeSidebarTabId = id; },
+    };
+    const galleryEl = document.createElement("div");
+    galleryEl.className = "neo-gallery-panel";
+    shimApp.extensionManager.registerSidebarTab({
+        id: "neo.gallery",
+        render: async (el) => { el.innerHTML = ""; el.appendChild(galleryEl); },
+    });
+
+    // 素材库按钮在「故事板分镜」页：点它 → 左栏切成素材库，Neo Gallery 挂进左栏宿主（Studio 没有 ComfyUI 侧栏）
+    click(document.querySelector(".neo-director-tab"));
+    const btn = document.querySelector(".neo-director-ff-lib");
+    click(btn);
+    await until(() => libOpen(), "点素材库开素材库");
+    assert.ok(galleryIn(".ns-director-lib .ns-gallery-host"), "左栏素材库挂上 Neo Gallery");
+
+    // 再点同一按钮 = 收起：画廊离开左栏宿主
+    click(btn);
+    await until(() => !libOpen(), "再点收起素材库");
+    assert.ok(!galleryIn(".ns-director-lib .ns-gallery-host"), "收起后画廊离开左栏宿主");
+
+    // 素材库标题栏的 ✕ 同样收起
+    click(btn);
+    await until(() => libOpen(), "再次开素材库");
+    click(lib().querySelector(".ns-director-lib-close"));
+    await until(() => !libOpen(), "✕ 收起素材库");
+
+    // 切到素材页：素材库收起，画廊回到素材页宿主
+    location.hash = "#/gallery";
+    await until(() => galleryIn(".ns-page:not(.ns-hidden) .ns-gallery-host"), "素材页挂上画廊");
+    assert.ok(!libOpen(), "离开导演页收起素材库");
+    await sleep(20);
+});
+
+test("Studio 导演页：左栏分隔条拖动宽度（配方列表 / 素材库各记各的，双击恢复默认）", async () => {
+    await import("../../web/studio/studio-app.js");
+    location.hash = "#/director";
+    await until(() => document.querySelector(".ns-director-side .neo-recipes-card"), "配方卡片挂载");
+
+    const page = document.querySelector(".ns-director");
+    const side = document.querySelector(".ns-director-side");
+    const main = document.querySelector(".ns-director-main");
+    const split = document.querySelector(".ns-director-colsplit");
+    const pref = () => JSON.parse(localStorage.getItem("neo_studio_director_side_col") || "{}");
+    const width = () => page.style.getPropertyValue("--ns-side-w");
+    const mouse = (type, x) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: 0 });
+    const at = (el) => [...page.children].indexOf(el);
+
+    assert.ok(split, "左栏分隔条存在");
+    assert.ok(at(side) < at(split) && at(split) < at(main), "分隔条夹在左栏与编辑器之间");
+    assert.equal(width(), "240px", "构建时回灌配方列表档的存盘宽度");
+
+    // 拖动：宽度写进内联样式并落盘（jsdom 无布局，clientWidth=0 → 钳到下限 200）
+    split.dispatchEvent(mouse("mousedown", 240));
+    assert.ok(page.classList.contains("ns-colsplit-drag"), "拖动中关掉 grid 过渡");
+    window.dispatchEvent(mouse("mousemove", 400));
+    assert.equal(width(), "200px", "拖动写入左栏宽度");
+    window.dispatchEvent(mouse("mouseup", 400));
+    assert.ok(!page.classList.contains("ns-colsplit-drag") && !split.classList.contains("ns-colsplit-drag"), "松手恢复过渡");
+    assert.ok("side" in pref(), "配方列表档宽度落盘");
+    assert.equal(pref().lib, 420, "拖配方列表不该抹掉素材库档的宽度");
+
+    // 键盘 ←→ 微调同样走钳制
+    split.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    assert.equal(width(), "200px", "键盘微调写入左栏宽度");
+
+    // 开素材库 → 素材库档宽度；收起 → 回到配方列表档宽度
+    click(document.querySelector(".neo-director-tab"));
+    click(document.querySelector(".neo-director-ff-lib"));
+    await until(() => side.classList.contains("ns-lib-open"), "开素材库");
+    assert.equal(width(), "420px", "素材库用素材库档的存盘宽度");
+    click(document.querySelector(".neo-director-ff-lib"));
+    await until(() => !side.classList.contains("ns-lib-open"), "收起素材库");
+    assert.equal(width(), "240px", "收起回到配方列表档宽度");
+
+    // 双击恢复默认：清掉这一档偏好，内联宽度交回样式
+    split.dispatchEvent(mouse("dblclick", 0));
+    assert.equal(width(), "", "双击后左栏宽度交回样式默认");
+    assert.ok(!("side" in pref()), "配方列表档偏好清除");
+    assert.ok("lib" in pref(), "素材库档偏好不受影响");
+    localStorage.removeItem("neo_studio_director_side_col");
 });

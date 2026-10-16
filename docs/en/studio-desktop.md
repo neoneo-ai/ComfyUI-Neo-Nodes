@@ -41,9 +41,9 @@ stopped.
 
 ## Director page layout
 
-The director page is a **280px recipe list** in the left column (director recipes only, always present) plus a
-right main column split into two panes: **top = the director editor**, **bottom = the film generation panel**,
-with a **splitter** between them.
+The director page is a **280px recipe list** in the left column (director recipes only) plus a right main column
+split into two panes: **top = the director editor**, **bottom = the film generation panel**, with a
+**splitter** between them. Opening the asset library switches the whole left column to it (widened to 380px).
 
 - The director editor is embedded in Studio (`setDirectorEditorHost` registers the host): it fills the
   top-right pane with no overlay window, so title-bar dragging / ⛶ maximize / the resize handle do not appear.
@@ -52,9 +52,24 @@ with a **splitter** between them.
   and opens it embedded** (clicking the same card again only switches the current segment, so unsaved edits
   survive); a segment block on the read-only timeline opens the editor on that segment, and "🎬 New director
   recipe" on the gallery page switches to the director page and opens it embedded.
+- The **asset library** button inside the director editor **switches the left column from the recipe list to the
+  asset library** (`.ns-director-lib`, the column widens to 380px). Studio has no ComfyUI left sidebar, so the shim
+  forwards `sidebarTab.activeSidebarTabId` writes to that column. The library is the same Neo Gallery the gallery
+  page uses (one element moved between the two hosts, wide styling), breadcrumbs and directory navigation work
+  there, and cards drag straight into the editor's first-frame / reference slots. The widening is driven by the
+  grid column, so the editor gives way instead of being covered. Clicking the same button again switches back to
+  the recipe list, so does the library's ✕, and leaving the director page closes it automatically.
 - Splitter: drag to resize the generation panel (editor floor 240px, panel floor 170px), double-click to
   collapse / expand the panel, `↑`/`↓` resize and `Enter` collapses from the keyboard. Height and collapsed
-  state live in `localStorage["neo_studio_director_split"]`.
+  state live in `localStorage["neo_studio_director_split"]`. Dragging the panel taller or shorter stretches the
+  result column on the right (live preview / final film) with it, instead of leaving a blank strip under a
+  fixed 640×360 preview box.
+- Left-column divider: a vertical line between the left column and the editor that doubles as a drag handle —
+  drag it to resize the column (recipe-list floor 200px, asset-library floor 320px, editor floor 420px),
+  `←`/`→` to nudge, double-click restores the default width. The recipe list and the asset library each
+  remember their own width in `localStorage["neo_studio_director_side_col"]`; the divider disappears in the
+  stacked narrow layout. Both splitters share one look: an 18px grab zone with a 1px hairline that thickens to
+  4px and turns accent blue on hover, keyboard focus and while dragging.
 - **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel share one parameter
   builder: after a successful save the film is submitted with the panel's current resolution / steps / checked
   segments.
