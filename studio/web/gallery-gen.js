@@ -9,7 +9,7 @@ import { getImageHeight, getThumbnailSrc, isImageFile, isAudioFile, getAudioSrc,
 import { DIRECTOR_ASPECTS } from "./director.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
 import { actionToast } from "./toast.js";
-import { openSkillDetailById, listSkills, populateSkillOptions, skillDisplayName } from "./skill.js";
+import { openSkillDetailById, listSkills, populateSkillOptions, skillDisplayName, skillAcceptsText, skillAcceptsRef } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { requestGeneration, watchTask, cancelTask, createModelConfigSection, listGenModels, getSkillGenConfig, getGenSettings } from "./image-gen.js";
 import { requestVoiceGeneration, watchVoiceTask, cancelVoiceTask, buildVoiceRequest, VOICE_SKILL_ID } from "./voice-gen.js";
@@ -1075,14 +1075,15 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
     const btn = (label, onclick, primary = false) =>
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
 
-    // 技能下拉：只列 image_gen 类（直接生图或编辑），默认 Qwen Image 2.1
+    // 技能下拉：只列吃参考图的 image_gen 技能（必须带图的编辑类 + Qwen 2.1 这类两栖类）；
+    // 纯文生图技能挂上原图也会被模板丢掉，不在本页列出。默认 Qwen Image 2.1
     const skillSel = $el("select", { className: "neo-recipes-sort" });
     let _genSkills = [];
     (async () => {
         try {
             const res = await fetch("/rs_prompts/skills");
             const skills = await res.json();
-            _genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.category === "image_gen" && s.gen_image);
+            _genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.category === "image_gen" && s.gen_image && skillAcceptsRef(s));
             _genSkills.forEach(s => {
                 const opt = $el("option", { value: s.id, textContent: skillDisplayName(s) });
                 if (s.id === QWEN_IMAGE_SKILL_ID) opt.selected = true;
@@ -2568,7 +2569,8 @@ export function openGenMaterialDialog(gallery, opts = null) {
     const btn = (label, onclick, primary = false) =>
         $el("button", { className: "neo-gallery-story-btn" + (primary ? " neo-gallery-story-btn-primary" : ""), textContent: label, onclick });
 
-    // 技能下拉：只列纯文生图技能（不需要参考图）；记住上次选中的技能（localStorage），失效时回 Krea2 文生图
+    // 技能下拉：只列吃文字的生图技能（纯文生图 + Qwen 2.1 这类两栖类）；必须带参考图的编辑类
+    // 在本页没有图可给，列出来只会出废图。记住上次选中的技能（localStorage），失效时回 Krea2 文生图
     const skillSel = $el("select", { className: "neo-recipes-sort" });
     let rememberedSkill = "";
     try { rememberedSkill = localStorage.getItem(GM_LAST_SKILL_KEY) || ""; } catch {}
@@ -2577,7 +2579,7 @@ export function openGenMaterialDialog(gallery, opts = null) {
         try {
             const res = await fetch("/rs_prompts/skills");
             const skills = await res.json();
-            const genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.gen_image && !s.requires_ref);
+            const genSkills = (Array.isArray(skills) ? skills : []).filter(s => s.gen_image && skillAcceptsText(s));
             skillSel.textContent = "";
             genSkills.forEach(s => skillSel.appendChild($el("option", { value: s.id, textContent: skillDisplayName(s) })));
             const ids = genSkills.map(s => s.id);

@@ -426,7 +426,7 @@ test("combo options 存 cn_name 时 preset 也能匹配显示", async () => {
     const { attachSkillPickerToComboWidget } = await import("../../web/skill.js");
     const PRESET_SKILLS = [
         { id: "image_gen", name: "image_gen", cn_name: "Krea2文生图", source: "presets", category: "image_gen", gen_image: true, tags: [] },
-        { id: "qwen_image_21", name: "qwen_image_21", cn_name: "Qwen Image 2.1 生图/编辑", source: "presets", category: "image_gen", gen_image: true, tags: [] },
+        { id: "qwen_image_21", name: "qwen_image_21", cn_name: "Qwen Image 2.1 生图/编辑", source: "presets", category: "image_gen", gen_image: true, mode: "t2i_edit", tags: [] },
         { id: "my-workflow", name: "my-workflow", source: "custom", category: "image_gen", gen_image: true, tags: [] },
     ];
     // 后端 combo options = cn_name || name（preset 存中文 cn_name，custom 无 cn_name 存 name）

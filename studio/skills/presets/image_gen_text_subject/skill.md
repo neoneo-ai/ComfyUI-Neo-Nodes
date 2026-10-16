@@ -6,6 +6,7 @@ description: ''
 max_tokens: 8192
 category: image_gen
 gen_image: true
+mode: t2i
 created_at: '2026-09-09T02:30:49.158408+00:00'
 ---
 

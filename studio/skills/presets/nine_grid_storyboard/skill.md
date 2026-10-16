@@ -9,6 +9,7 @@ inputs:
 - text
 category: image_gen
 gen_image: true
+mode: t2i
 created_at: '2026-09-23T00:00:00+00:00'
 ---
 

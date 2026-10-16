@@ -447,6 +447,24 @@ function skillDisplayName(s) {
     return s.cn_name || s.name || s.id || "";
 }
 
+/** 生图技能的输入形态：t2i = 纯文生图；edit = 必须带参考图；t2i_edit = 两者皆可（Qwen Image 2.1 生图/编辑）。
+ *  预设由 skill.md 的 mode 声明；画布导入的用户技能没有 mode，回落 requires_ref（画布回写按模板占位维护它）。 */
+function skillImageMode(s) {
+    const m = s && s.mode;
+    if (m === "edit" || m === "t2i_edit" || m === "t2i") return m;
+    return s && s.requires_ref ? "edit" : "t2i";
+}
+/** 能当文生图用：文生图页与分镜 t2i 模式只列这些（挂参考图也没槽位收，选了等于白挂） */
+function skillAcceptsText(s) {
+    const m = skillImageMode(s);
+    return m === "t2i" || m === "t2i_edit";
+}
+/** 能当参考图编辑用：图片编辑页与分镜 r2i 模式只列这些（纯文生图模板会静默丢掉原图） */
+function skillAcceptsRef(s) {
+    const m = skillImageMode(s);
+    return m === "edit" || m === "t2i_edit";
+}
+
 /** 把 skills 元数据填充进原生 <select>：按 category 分组为 optgroup，option 带 📷(需图) 徽标与 multiTurn 标记；
  *  includeHidden=true 时连 hidden 分类（task / video_gen）一起列出 */
 function populateSkillOptions(selectEl, skills, { includeHidden = false } = {}) {
@@ -530,5 +548,6 @@ export {
     makeSkillLog, SKILL_WRITE_LOG_LIMIT, WRITE_SOURCE_LABELS, WRITE_API_ONLY_NOTE,
     writeLog, buildWriteChangesTable,
     escapeHtml, renderMarkdown, CATEGORY_LABELS, populateSkillOptions, skillDisplayName,
+    skillImageMode, skillAcceptsText, skillAcceptsRef,
     SKILL_CHANGED_EVENT, dispatchSkillChanged, copySkillAsCustom
 };

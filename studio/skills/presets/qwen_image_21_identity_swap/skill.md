@@ -10,6 +10,8 @@ inputs:
 - image
 category: image_gen
 gen_image: true
+mode: edit
+requires_ref: true
 created_at: '2026-10-10T00:00:00+00:00'
 ---
 

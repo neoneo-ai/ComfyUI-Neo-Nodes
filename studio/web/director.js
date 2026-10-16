@@ -7,7 +7,7 @@ import { app } from "../../../../scripts/app.js";
 import { $el } from "../../../../scripts/ui.js";
 import { DirectorTimeline } from "./director-timeline.js";
 import { saveRecipe, listVideoSkills, scanMediaNodes, widgetValueToRef } from "./recipes.js";
-import { attachSkillPickerToSelect, skillDisplayName } from "./skill.js";
+import { attachSkillPickerToSelect, skillDisplayName, skillAcceptsText, skillAcceptsRef } from "./skill.js";
 import { Lightbox } from "./lightbox.js";
 import { grabDataType, copyGalleryToInput, toggleGallerySidebar, uploadLocalFiles } from "./media-transfer.js";
 import { openLLMSettingsModal } from "./llm-setting.js";
@@ -1566,8 +1566,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             } catch (_) { sbImageSkills = []; }
         }
         sbSkillSel.innerHTML = '';
-        // 只列生图技能（requires_ref 的四视图类不适合分镜）
-        for (const s of sbImageSkills.filter(s => s.gen_image && !s.requires_ref)) {
+        // 按当前生图模式列生图技能：t2i 只列吃文字的（编辑类没有参考图可给），r2i 只列吃参考图的（纯文生图会丢掉角色图）
+        const sbWantsRef = sbCurMode === 'r2i';
+        for (const s of sbImageSkills.filter(s => s.gen_image && (sbWantsRef ? skillAcceptsRef(s) : skillAcceptsText(s)))) {
             sbSkillSel.appendChild($el('option', { value: s.id, textContent: skillDisplayName(s) }));
         }
         if (!sbSkillSel.value) sbSkillSel.appendChild($el('option', { value: 'qwen_image_21', textContent: t('Qwen Image 2.1 生图') }));

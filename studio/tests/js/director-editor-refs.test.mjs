@@ -556,7 +556,7 @@ test("导演编辑器：🎨 图片分镜卡片在统一设置页——t2i/r2i �
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "image_gen", name: "Krea2 文生图", gen_image: true },
-        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true },
+        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true, mode: "t2i_edit" },
         { id: "quad-view", name: "参考编辑", gen_image: true, requires_ref: true },   // 应被过滤
         { id: "sk-v", name: "视频技能", gen_video: true },                          // 非生图，应被过滤
     ]));
@@ -611,7 +611,7 @@ test("导演编辑器：生图模式默认随角色参考图（有图 r2i / 无�
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "image_gen", name: "Krea2 文生图", gen_image: true },
-        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true },
+        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true, mode: "t2i_edit" },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "char.png" }));
 
@@ -663,7 +663,7 @@ test("导演编辑器：image_mode/image_skill/frame_source 保存回显；分�
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "image_gen", name: "Krea2 文生图", gen_image: true },
-        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true },
+        { id: "qwen_image_21", name: "Qwen Image 2.1", gen_image: true, mode: "t2i_edit" },
     ]));
     mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "SB-SAVE" }));
     const sbCalls = [];

@@ -1590,6 +1590,34 @@ class TestGenImageSkill(unittest.TestCase):
         self.assertTrue(s["requires_ref"], "参考图 skill 必须声明 requires_ref")
         self.assertEqual(s["category"], "image_gen")
 
+    # 生图预设的输入形态（skill.md 的 mode）决定「文生图」页与「图片编辑」页各列哪些技能。
+    # 编辑类模板的参考图槽位是可空的 Autogrow，运行时判不出「必须有图」，只能靠声明。
+    _PRESET_IMAGE_MODES = {
+        "image_gen": "t2i",
+        "image_gen_text_subject": "t2i",
+        "nine_grid_storyboard": "t2i",
+        "image_gen_image": "edit",
+        "qwen_image_21": "t2i_edit",
+        "qwen_image_21_body_swap": "edit",
+        "qwen_image_21_controlnet": "edit",
+        "qwen_image_21_face_swap": "edit",
+        "qwen_image_21_identity_swap": "edit",
+        "qwen_image_21_local_edit": "edit",
+        "qwen_image_21_outpaint": "edit",
+        "qwen_image_21_pose_edit": "edit",
+        "qwen_image_21_watermark_remove": "edit",
+    }
+
+    def test_preset_image_skill_modes_scanned(self):
+        scanned = self._scanned()
+        for sid, mode in self._PRESET_IMAGE_MODES.items():
+            s = scanned.get(sid)
+            self.assertIsNotNone(s, f"预设 {sid} 未扫描到")
+            self.assertEqual(s["mode"], mode, f"{sid} 的输入形态应声明为 {mode}")
+            self.assertEqual(
+                bool(s["requires_ref"]), mode == "edit",
+                f"{sid} 的 requires_ref 必须与 mode 一致：文生图页与 LLM 生图都按它决定是否带参考图")
+
     def test_save_skill_main_preserves_gen_meta(self):
         self._write_skill("gen-c", [
             "name: Gen C", "gen_image: true", "requires_ref: true",

@@ -55,7 +55,7 @@ test("图片编辑弹窗：idle 有「生成」，成功后保留「再生成」
     assert.equal(overlay.querySelector("#img-edit-height").step, "32");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
     mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
@@ -94,8 +94,8 @@ test("图片编辑弹窗：扩图开关切到扩图技能，拖框后请求带 o
 
     // skills mock 必须在开窗前注册（下拉 fetch 在开窗时同步发出）
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -205,8 +205,8 @@ test("图片编辑弹窗：扩图拖框画布边长封顶 4× 原图，超出舞
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -248,8 +248,8 @@ test("图片编辑弹窗：扩图基准取 contain 后的可见图片尺寸，�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -288,8 +288,8 @@ test("图片编辑弹窗：扩图拖框体是平移留白，不会把框缩回�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -345,8 +345,8 @@ test("图片编辑弹窗：局部开关切到局部技能、涂抹画布出现�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_local_edit", cn_name: "Qwen Image 2.1 高分局部编辑", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_local_edit", cn_name: "Qwen Image 2.1 高分局部编辑", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -396,7 +396,7 @@ test("图片编辑弹窗：点选删除——点击后 SAM3 分割出遮罩预�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -520,8 +520,8 @@ test("图片编辑弹窗：第二参考图拖放选中后随请求发送，扩�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "body_b.png" }));
 
@@ -568,8 +568,8 @@ test("图片编辑弹窗：姿势开关切到姿势编辑技能并预填默认�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_pose_edit", cn_name: "Qwen Image 2.1 姿势编辑", category: "image_gen", gen_image: true,
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_pose_edit", cn_name: "Qwen Image 2.1 姿势编辑", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true,
           gen_config: { default_prompt: "Change the pose of the person in <image1> to [describe the new pose], keeping the face unchanged" } },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "pose_b.png" }));
@@ -642,7 +642,7 @@ test("图片编辑弹窗：生成失败（缺模型）弹 action toast 引导去
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
 
     const gallery = { app: {}, maxThumbnailSize: 320, displayLabels: true };
@@ -686,7 +686,7 @@ test("图片编辑弹窗：窗帘对比——结果层挂在图片盒内，拖�
     const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie6", status: "queued", images: [] }));
@@ -777,7 +777,7 @@ test("图片编辑弹窗：常规编辑成功后左侧换成缩放后的原图�
                         { name: "portrait", filename: "portrait.png" }, "");
     const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
     mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
@@ -813,8 +813,8 @@ test("图片编辑弹窗：扩图模式不替换左侧原图（扩图基准要�
     clearRoutes();
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
     openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
                         { name: "portrait", filename: "portrait.png" }, "");
@@ -849,8 +849,8 @@ test("图片编辑弹窗：扩图比例预设按原图取最小覆盖框，反�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
@@ -907,8 +907,8 @@ test("图片编辑面板：自定参数——默认收起不带覆盖，选主�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
     mockRoute("/neo_image_gen/models", () => jsonResponse({
         diffusion_models: ["krea2.safetensors", "qwen_image_2.1.safetensors"],
@@ -987,8 +987,8 @@ test("图片编辑弹窗：扩图锁定比例拖拽只等比缩放，不变形�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
@@ -1056,8 +1056,8 @@ test("图片编辑弹窗：看大图——点原图/点分割线（未拖动）�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
     ]));
 
     openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
@@ -1128,7 +1128,7 @@ test("图片编辑弹窗：点图看大图按窗帘位置定——窗帘右侧�
     const { openImageEditDialog } = await import("../../web/gallery-gen.js");
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
     mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
     mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie13", status: "queued", images: [] }));

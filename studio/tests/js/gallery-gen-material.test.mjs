@@ -17,7 +17,7 @@ test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目�
 
     mockRoute("/rs_prompts/skills", () => jsonResponse([
         { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true },
-        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, requires_ref: true },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true, mode: "t2i_edit" },
     ]));
     let genCount = 0;
     mockRoute("/neo_image_gen/generate", () => {
@@ -34,10 +34,10 @@ test("生成素材弹窗：默认 Krea2 文生图，成功后可打开输出目�
     assert.ok(overlay, "应弹出生成素材弹窗");
 
     await sleep(50);
-    // 技能下拉只列纯文生图技能（无参考图要求），默认 Krea2 文生图
+    // 技能下拉列吃文字输入的技能（两栖的 Qwen 也在列），默认 Krea2 文生图
     const skillSel = overlay.querySelector(".neo-recipes-sort");
     assert.ok(skillSel, "应有技能下拉");
-    assert.equal([...skillSel.options].map(o => o.value).join(","), "image_gen", "只列纯文生图技能");
+    assert.equal([...skillSel.options].map(o => o.value).join(","), "image_gen,qwen_image_21", "文生图页列吃文字的技能，两栖技能也在列");
     assert.equal(skillSel.value, "image_gen", "默认选中 Krea2 文生图");
 
     // idle：有「生成」按钮，且尚未发请求
@@ -895,5 +895,27 @@ test("☰ 预设列表：搜索 + 点击填入 output 框（无配方条目）",
     assert.equal(overlay.querySelector(".neo-gallery-story-input").value, "RED CERAMIC CUP, white background, soft lighting", "点击预设应填入 output 框");
     assert.equal(presetOverlay.style.display, "none", "填入后浮层应关闭");
     document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+});
+
+test("生成素材弹窗：文生图下拉按技能输入形态分类——两栖技能在列，必须带参考图的编辑类排除", async () => {
+    resetEnv();
+    clearRoutes();
+    localStorage.clear();
+    const { openGenMaterialDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "image_gen", cn_name: "Krea2文生图", category: "image_gen", gen_image: true, mode: "t2i" },
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1 生图/编辑", category: "image_gen", gen_image: true, mode: "t2i_edit" },
+        { id: "qwen_image_21_face_swap", cn_name: "Qwen Image 2.1 换脸", category: "image_gen", gen_image: true, mode: "edit", requires_ref: true },
+        { id: "canvas_ref_skill", cn_name: "画布导入参考编辑", category: "image_gen", gen_image: true, requires_ref: true },
+    ]));
+
+    openGenMaterialDialog({ showDirectoryStructure: () => {} });
+    const overlay = document.querySelector(".neo-gallery-gm-modal-overlay");
+    await sleep(50);
+    const skillSel = overlay.querySelector(".neo-recipes-sort");
+    assert.deepEqual([...skillSel.options].map(o => o.value), ["image_gen", "qwen_image_21"],
+        "文生图页只列吃文字的技能：换脸这类必须带参考图的技能在本页没有图可给，列出来只会出废图");
+    overlay.remove();
 });
 

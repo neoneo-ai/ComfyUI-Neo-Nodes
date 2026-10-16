@@ -16,6 +16,7 @@ import {
     uploadSkill, listSkillFiles, loadSkillFile, saveSkillFile, deleteSkillFile,
     loadSkillWorkflow, workflowParamValues, populateSkillOptions, CATEGORY_LABELS,
     renderMarkdown, SKILL_CHANGED_EVENT, copySkillAsCustom, serializeCanvasPrompt, skillDisplayName,
+    skillImageMode, skillAcceptsText, skillAcceptsRef,
 } from "./skill/skill-core.js";
 import {
     showSkillWriteLogDialog, openSkillWorkflowInMainUi, openSkillWorkflowOnCanvas,
@@ -1319,6 +1320,9 @@ export {
     deleteSkillFile,
     populateSkillOptions,
     skillDisplayName,
+    skillImageMode,
+    skillAcceptsText,
+    skillAcceptsRef,
     validateSkillForNode,
     invalidateSkillValidation,
     resolveSkillId,
