@@ -139,13 +139,32 @@ def _display_sort(files: list) -> list:
     return sorted(files, key=lambda f: ("krea2" not in f.lower(), f.lower()))
 
 
+def folder_mtimes(folder: str) -> dict:
+    """模型文件 → 修改时间（epoch 秒），供下拉显示更新时间。
+
+    少一条就算少：get_full_path 取不到（网络盘断开、列完目录后文件被移走）
+    或 stat 失败时跳过该文件，前端按「无日期」渲染，列表本身不受影响。
+    """
+    out = {}
+    for name in _folder_files(folder):
+        full = folder_paths.get_full_path(folder, name)
+        if not full:
+            continue
+        try:
+            out[name] = os.path.getmtime(full)
+        except OSError:
+            continue
+    return out
+
+
 def scan_models() -> dict:
-    """列出可选模型与自动挑选结果，供前端设置面板展示。"""
+    """列出可选模型、自动挑选结果与文件修改时间，供前端设置面板展示。"""
     out = {}
     for folder in ("diffusion_models", "text_encoders", "vae", "loras"):
         files = _folder_files(folder)
         out[folder] = _display_sort(files)
         out["suggested_" + folder] = suggest_model(folder)
+        out["mtimes_" + folder] = folder_mtimes(folder)
     return out
 
 

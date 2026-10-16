@@ -134,6 +134,22 @@ test("无边框窗口控件：默认隐藏，最小化 / 最大化 / 全屏 / �
     assert.ok(!/\.ns-version\b/.test(css), "版本位不在顶栏样式里");
 });
 
+test("技能页：技能管理换外壳配色，弹窗标题条收起", () => {
+    const css = fs.readFileSync(path.join(webDir, "studio", "style.css"), "utf8");
+    const rules = [...css.matchAll(/\.ns-skills[^{]*\{[^}]*\}/g)].map((m) => m[0]);
+    assert.ok(rules.length > 5, "技能页要有外壳配色的一组规则");
+    assert.ok(rules.some((r) => /\.rs-skill-manager-head\s*\{[^}]*display:\s*none/.test(r)),
+              "页里的「技能管理」标题条要收起（顶栏 tab 已给页名，且整页没有可拖的窗）");
+    assert.ok(rules.some((r) => /\.rs-skill-manager\s*\{[^}]*background:\s*#17171b/.test(r)),
+              "整页底色走外壳 #17171b，不用弹窗的 #1a1a2a");
+    assert.ok(rules.some((r) => /\.rs-skill-modal-header\s*\{[^}]*background:\s*#202024/.test(r)),
+              "详情标题条走顶栏同款 #202024");
+    assert.ok(rules.some((r) => /\.rs-btn\s*\{[^}]*background:\s*#2a2a2e/.test(r)),
+              "按钮走外壳 .ns-btn 的灰底，不用节点内的小蓝按钮");
+    assert.ok(rules.some((r) => /\.rs-skill-picker-item\.is-selected\s*\{[^}]*rgba\(47, 111, 237/.test(r)),
+              "选中行与设置页 tab 同一套半透明蓝高亮");
+});
+
 // 顶栏 ComfyUI 胶囊：桌面端窗口（有 pywebview api）里才出现，浏览器标签页里不显示。
 // studio-app.js 的启动体只在导入时跑一次，两个用例用不同 query 取同一模块的两份实例。
 const studioBody = fs.readFileSync(path.join(webDir, "studio", "index.html"), "utf8").match(/<body>([\s\S]*?)<\/body>/)[1];

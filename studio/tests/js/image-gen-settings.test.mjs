@@ -117,6 +117,31 @@ test("切换主模型后 LoRA 下拉重排，各行已选值保留", async () =>
     assert.equal(loraSelect.value, "stars/girlslikeqweni_ym1_杨幂.safetensors", "各行已选值不受重排影响");
     assert.equal(section.collect().loras[0].name, "stars/girlslikeqweni_ym1_杨幂.safetensors");
 });
+// ============ 下拉项带文件更新时间（后端 mtimes_* 给 epoch 秒；取不到时间的模型不带后缀）============
+
+test("模型下拉带更新日期：mtimes 里的模型名称后追加日期，缺时间的模型原样显示", async () => {
+    const NEW = "QwenImage2.1/qwen_image_2.1_int8_convrot.safetensors";
+    const OLD = "krea2/krea2_turbo_fp8.safetensors";
+    // 用本地时间构造 epoch，断言只看日期部分，不受跑测试机器时区影响
+    const epoch = new Date(2026, 8, 12, 12, 0, 0).getTime() / 1000;
+    const section = await loraSection({ model: NEW, loras: [] },
+        { diffusion_models: [NEW, OLD], mtimes_diffusion_models: { [NEW]: epoch } });
+    const labels = [...section.el.querySelector("select").options].slice(1).map((o) => o.textContent);
+    assert.deepEqual(labels, ["qwen_image_2.1_int8_convrot · 2026-09-12", "krea2_turbo_fp8"]);
+    assert.deepEqual([...section.el.querySelector("select").options].slice(1).map((o) => o.value),
+        [NEW, OLD], "带日期只改显示文本，选中值仍是模型路径");
+});
+
+test("LoRA 下拉带更新日期：mtimes_loras 随行重建保留", async () => {
+    const lora = "QwenImage2.1/Qwen-Image-2.1-viggle-turbo-v0.2.1.safetensors";
+    const epoch = new Date(2026, 0, 5, 12, 0, 0).getTime() / 1000;
+    const section = await loraSection({ model: QWEN_MODEL, loras: [{ name: lora, strength: 1.0 }] },
+        { diffusion_models: [QWEN_MODEL], loras: [lora], mtimes_loras: { [lora]: epoch } });
+    const labels = [...section.el.querySelector(".rs-gen-lora-row select").options].slice(1).map((o) => o.textContent);
+    assert.deepEqual(labels, ["Qwen-Image-2.1-viggle-turbo-v0.2.1 · 2026-01-05"]);
+});
+
+
 // ============ 生图模型 / Text Encoder / VAE 下拉同样按主模型家族排序（后端统一 krea2 优先，Qwen 主模型会埋到很后面）============
 
 const MODEL_FIXTURE = {

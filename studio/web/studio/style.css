@@ -412,9 +412,43 @@ body {
     .ns-paint-main { min-height: 480px; }
 }
 
-/* 技能页：统一技能管理直接挂满主区（无弹窗外壳，去掉独立窗口的尺寸/圆角/阴影） */
+/* 技能页：统一技能管理直接挂满主区。组件本身是弹窗出身 —— prompts.css 那套 #1a1a2a 底、#1a2a3a 标题条、
+   #5090cc 蓝高亮、#1a3a5a 小蓝按钮，在素材页 / 设置页的灰底 + #7aa2ff 旁边就是另一套色。
+   这里只在外壳层把弹窗色换成外壳色（.ns-skills 作用域），ComfyUI 里的技能弹窗与节点技能选择窗不动。 */
 .ns-skills { padding: 0; }
-.ns-skills .rs-skill-manager { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
+.ns-skills .rs-skill-manager { width: 100%; height: 100%; border: none; border-radius: 0; box-shadow: none; background: #17171b; }
+/* 标题条在页里就是重复的页名（顶栏 tab 已经写了 Skills），且整页没有可拖的窗 → 收起，左栏搜索框直接顶到页头 */
+.ns-skills .rs-skill-manager-head { display: none; }
+.ns-skills .rs-skill-manager-left { background: #1b1b1f; }
+.ns-skills .rs-skill-picker-search { background: #2a2a2e; border-color: #444; }
+.ns-skills .rs-skill-picker-search:focus { border-color: #7aa2ff; box-shadow: 0 0 0 2px rgba(122, 162, 255, 0.18); }
+/* 列表行选中态对齐设置页 tab（.ns-settings-tab.active）：半透明蓝底 + 描边，不用弹窗的实心蓝 */
+.ns-skills .rs-skill-picker-item:hover,
+.ns-skills .rs-skill-picker-item.is-highlighted { background: #26262c; }
+.ns-skills .rs-skill-picker-item.is-selected { background: rgba(47, 111, 237, 0.16); box-shadow: inset 0 0 0 1px #2f6fed; }
+.ns-skills .rs-skill-manager-cat { color: #9a9aa8; }
+.ns-skills .rs-skill-manager-cat:hover { color: #c8c8d2; }
+.ns-skills .rs-skill-manager-cat.is-open { color: #fff; }
+.ns-skills .rs-skill-manager-split::after { background: #333; }
+.ns-skills .rs-skill-manager-split:hover::after,
+.ns-skills .rs-skill-manager-split.is-dragging::after { background: #7aa2ff; }
+.ns-skills .rs-skill-manager-right .rs-skill-modal { background: #17171b; }
+.ns-skills .rs-skill-modal-header { background: #202024; border-bottom-color: #333; }
+.ns-skills .rs-skill-detail-actions { background: #17171b; }
+.ns-skills .rs-skill-name-view:hover { background: #2a2a2e; border-color: #444; }
+.ns-skills .rs-skill-name-input { border-color: #7aa2ff; }
+.ns-skills .rs-skill-multiturn-chk { accent-color: #7aa2ff; }
+/* 按钮：prompts.css 的 .rs-btn 是节点内小蓝按钮（#1a3a5a 底 / #60a5fa 字），页里换成外壳 .ns-btn 的灰底观感；
+   Save / 测试换成设置页「保存并重启 ComfyUI」那枚主按钮的半透明蓝 */
+.ns-skills .rs-btn { background: #2a2a2e; border-color: #444; color: #ddd; }
+.ns-skills .rs-btn:hover { background: #333338; border-color: #555; color: #fff; }
+.ns-skills .rs-gen-save,
+.ns-skills .rs-gen-test { background: rgba(47, 111, 237, 0.18); border-color: #2f6fed; color: #cfe0ff; }
+.ns-skills .rs-gen-save:hover,
+.ns-skills .rs-gen-test:hover { background: rgba(47, 111, 237, 0.3); }
+.ns-skills .rs-skill-dropdown-footer { background: #1b1b1f; border-top-color: #333; }
+.ns-skills .rs-skill-footer-btn { border-color: #444 !important; color: #9a9aa8 !important; }
+.ns-skills .rs-skill-footer-btn:hover { background: #26262c !important; border-color: #555 !important; color: #fff !important; }
 /* 技能详情底部操作条：基础 .rs-btn 是 flex:1（窄弹窗底部按钮行用），满幅主区里不拉伸成长条 */
 .ns-skills .rs-skill-detail-actions .rs-btn { flex: none; padding: 5px 16px; }
 

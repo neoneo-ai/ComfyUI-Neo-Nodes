@@ -154,6 +154,23 @@ drawer, the left-column divider, the scrollbars and the narrow-window rules are 
   reset the page's own asset-library button writes the same id, gets deduped, and never opens the drawer.
 - The VRAM / RAM bar exists once per generation page (director and paint), and polling only runs on those pages.
 
+## Skills page layout
+
+The Skills page is the unified skill manager mounted full-bleed in the main area
+(`createSkillManager(host, { showClose: false, showCanvasBtn: false })`): left list + splitter + right detail,
+no floating window, no ✕ and no "from canvas" export button.
+
+- The component is modal-born: `prompts.css` gives it the `#1a1a2a` panel, `#1a2a3a` title bar, `#5090cc` blue
+  highlight and `#1a3a5a` small blue buttons, which is a whole palette away from the shell's grey + `#7aa2ff`.
+  The shell remaps that set onto shell tokens inside the `.ns-skills` scope (`#17171b` page, `#202024` title
+  bars, `#2a2a2e` + `#444` inputs and buttons, the settings tab's translucent blue for the selected row), so
+  Assets / Paint / Director / Settings / Skills sit on one palette. The skill modal and the node skill picker
+  inside ComfyUI keep the modal palette.
+- The modal's "🗂 Skill Management" title bar is hidden on the page: the header tab already names the page, and
+  nothing here is a draggable window.
+- Left-column width drag and memory (`localStorage["neo.skillManagerLeftWidth"]`), the category accordion, the
+  per-row ⧉ copy / 🗑 delete and the + New / ⬆ ZIP / ⬆ Folder footer behave exactly as in the standalone window.
+
 ## Startup sequence
 
 - The window comes first: opening the window only unpacks and creates it (splash / guide page); the self-check,

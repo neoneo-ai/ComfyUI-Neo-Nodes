@@ -202,6 +202,8 @@ class OfflineServiceTests(_ServerCase):
         self.assertTrue(extra, "extra_model_paths.yaml 里的模型目录要在桌面端进程可见")
         data = json.loads(self.get("/neo_image_gen/models")[1])
         self.assertTrue(data["diffusion_models"], "模型下拉不能是空表")
+        missing = [f for f in data["diffusion_models"] if f not in data["mtimes_diffusion_models"]]
+        self.assertEqual(missing, [], "下拉要给出每个模型的修改时间（mtimes_diffusion_models）")
 
     def test_thumbnail_generated_without_comfyui(self):
         query = urllib.parse.urlencode({"filename": SAMPLE[1], "subfolder": SAMPLE[0]})

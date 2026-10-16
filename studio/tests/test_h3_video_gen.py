@@ -93,6 +93,7 @@ sys.modules["comfy_execution.progress"] = _comfy_exec_prog
 
 _folder_paths = types.ModuleType("folder_paths")
 _folder_paths.get_filename_list = lambda folder: list(_MODELS.get(folder, []))
+_folder_paths.get_full_path = lambda folder, name: None   # 桩环境没有真实模型文件 → mtimes 为空
 _folder_paths.get_input_directory = lambda: _INPUT_DIR
 _folder_paths.get_output_directory = lambda: _OUTPUT_DIR
 sys.modules["folder_paths"] = _folder_paths

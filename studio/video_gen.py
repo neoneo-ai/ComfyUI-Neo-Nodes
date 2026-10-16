@@ -12,6 +12,7 @@ import folder_paths
 from aiohttp import web
 
 from . import plugin_paths
+from .image_gen_files import folder_mtimes
 from .util import PrefixFilter
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ def scan_video_models() -> dict:
             logger.warning(f"video_gen: scan {folder} failed: {e}")
             files = []
         out[folder] = _video_display_sort(files)
+        out["mtimes_" + folder] = folder_mtimes(folder)
     return out
 
 

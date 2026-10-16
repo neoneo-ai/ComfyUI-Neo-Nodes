@@ -4,6 +4,23 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Skills page now wears the shell palette.** The page mounts the shared skill manager, which is modal-born:
+  `prompts.css` gives it a `#1a1a2a` panel, a `#1a2a3a` title bar, `#5090cc` blue highlights and `#1a3a5a`
+  small blue buttons, so next to the grey Assets / Paint / Director / Settings pages it read as a dropped-in
+  dialog. The shell remaps it onto shell tokens inside the `.ns-skills` scope (`#17171b` page, `#202024`
+  title bars, `#2a2a2e` + `#444` inputs and buttons, the settings tab's translucent blue for the selected
+  list row) and hides the modal's "🗂 Skill Management" title bar — the header tab already names the page and
+  nothing on the page is a draggable window. The skill modal and the node skill picker in ComfyUI keep the
+  modal palette. Covered by a `studio/tests/js/studio-desktop.test.mjs` case that reads the `.ns-skills` rules.
+
+- **Model dropdowns show the model file's update date.** `scan_models()` and `scan_video_models()` now answer
+  `mtimes_<folder>` — a `{model path: epoch seconds}` map built from `folder_paths.get_full_path` plus one
+  `os.path.getmtime` per file (940 files cost ~28 ms) — and `fillComboSelect` appends `· 2026-09-12` to the
+  option label. The selected value stays the model path, so saved configs, the family sort and the
+  "(missing)" check are untouched; a file whose time cannot be read is simply left without a date. Covers the
+  generation model / Text Encoder / VAE / LoRA dropdowns in the global settings, the per-skill settings and the
+  H3 video settings.
+
 - **Model lists on the offline page read the kernel's extra model paths.** `extra_model_paths.yaml` is loaded
   by ComfyUI's `main.py` only, and the desktop process never ran that path: `folder_paths.get_filename_list`
   scanned nothing but `<root>/models/`, so on a machine whose models live in an extra path (this pack ships

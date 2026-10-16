@@ -466,7 +466,18 @@ function sortByModelFamily(files, model) {
     return [...files].sort((a, b) => tier(a) - tier(b));
 }
 
-function fillComboSelect(select, files, suggested, current) {
+/** 下拉项后缀：模型文件修改日期。后端 mtimes_* 给 epoch 秒，取不到（网络盘断开）就没有这一项。 */
+function modelDateSuffix(name, mtimes) {
+    const sec = mtimes ? mtimes[name] : 0;
+    if (!sec) return "";
+    const d = new Date(sec * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    return ` · ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 填充 select 选项；suggested 非空时作为「自动」默认值（空值选项显示为「自动（建议名）」）；current 为当前值（含旧名模糊匹配）。
+ *  mtimes：「模型名 → epoch 秒」映射，用于在下拉项后追加文件更新时间。 */
+function fillComboSelect(select, files, suggested, current, mtimes) {
     select.innerHTML = "";
     const auto = document.createElement("option");
     auto.value = "";
@@ -475,7 +486,7 @@ function fillComboSelect(select, files, suggested, current) {
     for (const f of files || []) {
         const opt = document.createElement("option");
         opt.value = f;
-        opt.textContent = shortModelName(f);
+        opt.textContent = shortModelName(f) + modelDateSuffix(f, mtimes);
         select.appendChild(opt);
     }
     // config.json 可能存反斜杠（工作流导出），模型列表用正斜杠；归一化后匹配，避免已保存值回落"自动"
@@ -544,6 +555,7 @@ export function createModelConfigSection() {
     section.append(modelCtl.row, encoderCtl.row, vaeCtl.row, loraRow);
 
     let loraFiles = [];
+    let loraMtimes = {};   // LoRA 文件修改时间（模型名 → epoch 秒），随 loraFiles 一起刷新
     let loadedModels = {};   // 最近一次 load 的 models（切换主模型后按新家族重排四个下拉）
 
     // LoRA 行：动态增删，每行 = 模型选择 + 强度
@@ -563,7 +575,7 @@ export function createModelConfigSection() {
         delBtn.setAttribute("data-rs-tooltip", t("移除此 LoRA"));
         delBtn.addEventListener("click", () => line.remove());
         line.append(combo, strengthInput, delBtn);
-        fillComboSelect(select, loraFiles, "", name);
+        fillComboSelect(select, loraFiles, "", name, loraMtimes);
         loraList.appendChild(line);
     }
 
@@ -573,7 +585,7 @@ export function createModelConfigSection() {
     function refreshLoraRows() {
         for (const line of loraList.querySelectorAll(".rs-gen-lora-row")) {
             const select = line.querySelector("select");
-            if (select) fillComboSelect(select, loraFiles, "", select.value);
+            if (select) fillComboSelect(select, loraFiles, "", select.value, loraMtimes);
         }
     }
 
@@ -586,12 +598,16 @@ export function createModelConfigSection() {
     function fillModelSelects(anchor, cfg) {
         const models = loadedModels;
         fillComboSelect(modelCtl.select, sortByModelFamily(models.diffusion_models || [], anchor),
-            models.suggested_diffusion_models || "", cfg ? cfg.model || "" : modelCtl.select.value);
+            models.suggested_diffusion_models || "", cfg ? cfg.model || "" : modelCtl.select.value,
+            models.mtimes_diffusion_models);
         fillComboSelect(encoderCtl.select, sortByModelFamily(models.text_encoders || [], anchor),
-            models.suggested_text_encoders || "", cfg ? cfg.text_encoder || "" : encoderCtl.select.value);
+            models.suggested_text_encoders || "", cfg ? cfg.text_encoder || "" : encoderCtl.select.value,
+            models.mtimes_text_encoders);
         fillComboSelect(vaeCtl.select, sortByModelFamily(models.vae || [], anchor),
-            models.suggested_vae || "", cfg ? cfg.vae || "" : vaeCtl.select.value);
+            models.suggested_vae || "", cfg ? cfg.vae || "" : vaeCtl.select.value,
+            models.mtimes_vae);
         loraFiles = sortByModelFamily(models.loras || [], anchor);
+        loraMtimes = models.mtimes_loras || {};
         refreshLoraRows();
     }
 
@@ -743,6 +759,7 @@ export function createVideoModelConfigSection() {
     section.append(modelCtl.row, stepsCtl.row, encoderCtl.row, videoVaeCtl.row, audioVaeCtl.row, loraRow);
 
     let loraFiles = [];
+    let loraMtimes = {};   // LoRA 文件修改时间（模型名 → epoch 秒）
 
     function addLoraRow(name = "", strength = 1.0) {
         const line = mkEl("div", "rs-gen-lora-row");
@@ -760,7 +777,7 @@ export function createVideoModelConfigSection() {
         delBtn.setAttribute("data-rs-tooltip", t("移除此 LoRA"));
         delBtn.addEventListener("click", () => line.remove());
         line.append(combo, strengthInput, delBtn);
-        fillComboSelect(select, loraFiles, "", name);
+        fillComboSelect(select, loraFiles, "", name, loraMtimes);
         loraList.appendChild(line);
     }
 
@@ -768,14 +785,15 @@ export function createVideoModelConfigSection() {
 
     function load(settings, models) {
         loraFiles = models.loras || [];
+        loraMtimes = models.mtimes_loras || {};
         fillComboSelect(modelCtl.select, models.diffusion_models || [],
-            videoSuggestion(models.diffusion_models), settings.model || "");
+            videoSuggestion(models.diffusion_models), settings.model || "", models.mtimes_diffusion_models);
         fillComboSelect(encoderCtl.select, models.text_encoders || [],
-            videoSuggestion(models.text_encoders), settings.text_encoder || "");
+            videoSuggestion(models.text_encoders), settings.text_encoder || "", models.mtimes_text_encoders);
         fillComboSelect(videoVaeCtl.select, models.vae || [],
-            videoVideoVaeSuggestion(models.vae), settings.vae || "");
+            videoVideoVaeSuggestion(models.vae), settings.vae || "", models.mtimes_vae);
         fillComboSelect(audioVaeCtl.select, models.vae || [],
-            videoAudioVaeSuggestion(models.vae), settings.audio_vae || "");
+            videoAudioVaeSuggestion(models.vae), settings.audio_vae || "", models.mtimes_vae);
         stepsCtl.input.value = settings.steps ?? 20;
         loraList.innerHTML = "";
         for (const entry of settings.loras || []) {
@@ -865,11 +883,11 @@ export function createImageGenSettingsForm() {
         try {
             const [settings, models] = await Promise.all([getGenSettings(), listGenModels()]);
             fillComboSelect(modelCtl.select, models.diffusion_models || [],
-                models.suggested_diffusion_models || "", settings.model || "");
+                models.suggested_diffusion_models || "", settings.model || "", models.mtimes_diffusion_models);
             fillComboSelect(encoderCtl.select, models.text_encoders || [],
-                models.suggested_text_encoders || "", settings.text_encoder || "");
+                models.suggested_text_encoders || "", settings.text_encoder || "", models.mtimes_text_encoders);
             fillComboSelect(vaeCtl.select, models.vae || [],
-                models.suggested_vae || "", settings.vae || "");
+                models.suggested_vae || "", settings.vae || "", models.mtimes_vae);
             prefixInput.value = settings.output_prefix ?? "";
             mpCtl.input.value = settings.target_megapixels ?? 1.5;
             snapshot = collect();
@@ -964,13 +982,13 @@ export function createVideoGenSettingsForm() {
         try {
             const [settings, models] = await Promise.all([getVideoGenSettings(), listVideoGenModels()]);
             fillComboSelect(videoModelCtl.select, models.diffusion_models || [],
-                videoSuggestion(models.diffusion_models), settings.video_model || "");
+                videoSuggestion(models.diffusion_models), settings.video_model || "", models.mtimes_diffusion_models);
             fillComboSelect(videoEncoderCtl.select, models.text_encoders || [],
-                videoSuggestion(models.text_encoders), settings.video_text_encoder || "");
+                videoSuggestion(models.text_encoders), settings.video_text_encoder || "", models.mtimes_text_encoders);
             fillComboSelect(videoVaeCtl.select, models.vae || [],
-                videoVideoVaeSuggestion(models.vae), settings.video_vae || "");
+                videoVideoVaeSuggestion(models.vae), settings.video_vae || "", models.mtimes_vae);
             fillComboSelect(videoAudioVaeCtl.select, models.vae || [],
-                videoAudioVaeSuggestion(models.vae), settings.video_audio_vae || "");
+                videoAudioVaeSuggestion(models.vae), settings.video_audio_vae || "", models.mtimes_vae);
             snapshot = collect();
         } catch (e) {
             console.warn("Failed to load video gen settings:", e);

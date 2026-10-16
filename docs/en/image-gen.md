@@ -17,6 +17,10 @@ selected skill, e.g. Krea2 / Qwen Image 2.1).
 - The generation model / Text Encoder / VAE default to "auto", matched against the skill template, so
   nothing has to be configured by hand; only when nothing matches do you name them in the image
   generation settings.
+- Every entry in the model dropdowns carries the model file's update date
+  (`qwen_image_2.1_int8_convrot · 2026-09-12`), so a file that was just dropped into the model directory is
+  easy to spot; entries whose file time cannot be read (a dropped network share, a file moved right after the
+  listing) carry no date and the list itself is unaffected.
 
 ## 🎨 Neo Image Gen & Edit - all-in-one generation / editing node (IMAGE output)
 

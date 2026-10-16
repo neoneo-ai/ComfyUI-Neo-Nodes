@@ -23,6 +23,7 @@ import unittest
 _TMP = tempfile.mkdtemp(prefix="neo_image_gen_")
 _INPUT_DIR = os.path.join(_TMP, "input")
 _OUTPUT_DIR = os.path.join(_TMP, "output")
+_MODEL_DIR = os.path.join(_TMP, "models")   # 桩 get_full_path 的落点：模型文件真实存在时才有 mtime
 os.makedirs(_INPUT_DIR, exist_ok=True)
 os.makedirs(_OUTPUT_DIR, exist_ok=True)
 
@@ -88,6 +89,7 @@ sys.modules["comfy_execution.progress"] = _comfy_exec_prog
 
 _folder_paths = types.ModuleType("folder_paths")
 _folder_paths.get_filename_list = lambda folder: list(_MODELS.get(folder, []))
+_folder_paths.get_full_path = lambda folder, name: os.path.join(_MODEL_DIR, folder, name)
 _folder_paths.get_input_directory = lambda: _INPUT_DIR
 _folder_paths.get_output_directory = lambda: _OUTPUT_DIR
 sys.modules["folder_paths"] = _folder_paths
@@ -234,6 +236,21 @@ class ScanModelsTests(unittest.TestCase):
     def test_scan_models_no_lora_suggestion(self):
         out = image_gen.scan_models()
         self.assertEqual(out["suggested_loras"], "")
+
+    def test_scan_models_carries_file_mtime(self):
+        """下拉显示更新时间：mtimes_* 是「模型名 → epoch 秒」；文件取不到的目录留空，列表照常。"""
+        stamp = 1700000000.0
+        for name in _MODELS["vae"]:
+            path = os.path.join(_MODEL_DIR, "vae", name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w"):
+                pass
+            os.utime(path, (stamp, stamp))
+        out = image_gen.scan_models()
+        self.assertEqual(set(out["mtimes_vae"]), set(_MODELS["vae"]))
+        self.assertEqual(out["mtimes_vae"]["qwen_image/qwen_image_vae.safetensors"], stamp)
+        self.assertEqual(out["mtimes_loras"], {}, "桩目录里没有 LoRA 文件 → 无时间，loras 列表照常给出")
+        self.assertTrue(out["loras"])
 
     def test_display_sort_prefers_krea2_then_name(self):
         files = ["zeta.safetensors", "Krea2/base.safetensors", "alpha.safetensors"]
