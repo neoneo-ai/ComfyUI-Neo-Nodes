@@ -105,6 +105,8 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
 - An existing director recipe: click its card thumbnail to enter the editor, or click a timeline segment block
   / the ✎ in the top-right of a `NeoH3VideoDirector` node (entering through a block positions the editor on
   that segment; when the window is already open, clicking another block only switches the current segment).
+- Desktop Studio director page: clicking a left-column recipe card selects it and opens it embedded in the
+  top-right pane (the card's ✎ works too); a segment block on the read-only timeline opens it on that segment.
 - The **＋** in the bottom-right outside the node's timeline display opens the create editor directly (after
   saving, the recipe is added to the `recipe` dropdown and selected).
 - **Run only the checked segments**: hovering a timeline segment block reveals a checkbox, and checking some
@@ -153,6 +155,11 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
   bottom-right handle resizes; **⛶** maximizes to the largest size in one click, clicking again or
   double-clicking the title bar restores. When the window is tall, the story topic / script input area and the
   current segment's prompt area fill the available height.
+- **Embedded in desktop Studio**: the Studio director page lays the editor out directly inside the top-right
+  pane (the recipe list stays in the left column, the generation panel below), with no overlay window — no
+  title-bar dragging, no **⛶** maximize, no resize handle; close with the title-bar **✕**. The footer gains
+  **🎬 Save & Generate Film**: it runs the full save path and, on success, submits the film with the
+  generation panel's current parameters. See [studio-desktop.md](studio-desktop.md).
 - **🤖 LLM config** on the right of the title bar opens the embedded LLM configuration form (values are
   backfilled in the background on open, 💾 writes them out).
 - The **recipe name** shows in the middle of the title bar; clicking turns it into inline input, Enter or blur

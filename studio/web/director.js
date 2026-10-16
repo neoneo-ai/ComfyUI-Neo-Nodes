@@ -20,6 +20,17 @@ import { t, tf } from "./js/core/i18n.js";
 // 配方编辑器保存成功后广播：节点内时间轴等监听方据此刷新下拉候选 + 重载 spec。
 export const DIRECTOR_RECIPE_SAVED_EVENT = "neo-director-recipe-saved";
 
+// 桌面端 Studio 注册的内嵌宿主：编辑器直接铺进该容器，不再建浮层窗口（画布页不注册 → 保持浮层弹窗）。
+// onSaveAndRun 是宿主侧的「保存并生成整片」落点：内嵌模式下底部多出该按钮，保存成功后交给宿主提交生成。
+let _editorHost = null;
+let _editorHostOnOpen = null;
+let _editorHostSaveAndRun = null;
+export function setDirectorEditorHost(host, onOpen = null, onSaveAndRun = null) {
+    _editorHost = host && host.isConnected ? host : null;
+    _editorHostOnOpen = _editorHost ? onOpen : null;
+    _editorHostSaveAndRun = _editorHost ? onSaveAndRun : null;
+}
+
 // 生成模式（与 ComfyUI_MiniMaxH3_Director 的任务模式对齐；mixed 仅全局可选）：
 // f2v 分镜生视频 = t2v/i2v/fl2v 合并，行为由首/尾帧槽位决定（无帧=文生、仅首帧=图生、仅尾帧=L2VA、两者=首尾帧）；
 // r2v 全参考生视频 = r2v/v2v/rv2v 合并，参考素材（图/视频/音频）可选；第一个参考视频即源视频（提示词自动加 <Video 1>）；
@@ -203,6 +214,7 @@ export function firstFrameAspectWarning(segments, sizes) {
 // close=无条件关闭（保存成功/放弃修改后），requestClose=用户主动关闭（有未保存修改先出确认条）。
 // 单例且支持「已打开时点击另一配方 → 重新加载为该配方」；overlay 仍在 DOM 才视为真正打开。
 let _directorEditor = null;
+let _directorOpening = false;   // 打开构建中（异步扫描未完成）：期间的重复点击忽略
 function currentDirectorEditor() {
     if (_directorEditor && _directorEditor.overlay && _directorEditor.overlay.parentNode) return _directorEditor;
     _directorEditor = null; // 浮层已不在（外部清除 / 测试重置 body）→ 丢弃过期状态
@@ -271,10 +283,17 @@ function runSegmentTask(body, handlers = {}) {
  *  existing 为既有 director 配方 meta（编辑时预填），null = 新建；onSaved 保存成功后回调刷新。
  *  首帧候选取全图已连线的 LoadImage（以原始文件名引用，后端落盘后回写）。保存走 saveRecipe(director=...)。
  *  单例：已打开同一配方 → 忽略重复点击（但按 focusSeg 切换当前段）；已打开另一配方 → 关闭旧窗口并重新加载为该配方。
- *  focusSeg：打开时定位到该段（0 基；<0 表示不指定，保持默认第 1 段）。 */
+ *  focusSeg：打开时定位到该段（0 基；<0 表示不指定，保持默认第 1 段）。
+ *  内嵌：Studio 注册过宿主（setDirectorEditorHost）或 opts.container 指定容器时，编辑器直接铺进容器，
+ *  不建浮层窗口，也不带 ⛶ 放大 / 右下角缩放 / 标题栏拖动；宿主带 onSaveAndRun 时底部多出「保存并生成整片」。 */
 export async function openDirectorEditor(existing = null, onSaved = null, focusSeg = -1, opts = null) {
     const requestedName = (existing && existing.name) || '';
     const hostNode = opts?.node || null;   // 从节点打开时带上节点：重生成用它取连续性/窗口/节点 id
+    // 内嵌宿主（Studio 注册 / opts.container 显式指定）：编辑器铺满容器，无浮层 / 无窗口控件
+    const host = opts?.container || _editorHost;
+    const embedded = !!(host && host.isConnected);
+    const saveAndRun = opts?.onSaveAndRun || _editorHostSaveAndRun;
+    if (embedded) _editorHostOnOpen?.();   // 宿主侧同步（切到导演页 / 收起占位）
     const cur = currentDirectorEditor();
     if (cur) {
         // 「重复点击=切段」只对已命名配方成立；新建（name=''）每次携带的内容都不同，
@@ -285,6 +304,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     } else if (document.querySelector('.neo-director-overlay')) {
         return; // 兜底：状态缺失但浮层仍在 → 忽略，避免叠加
     }
+    // 单例状态要等构建收尾才落地，而开头两次扫描是异步的：这段时间的重复点击
+    // （连点配方卡 / 连点时间轴段）会叠出第二个编辑器 → 构建中标记，期间一律忽略
+    if (_directorOpening) return;
+    _directorOpening = true;
     // 已连线媒体候选（LoadImage / LoadVideo / LoadAudio）：图给首帧与参考图网格，视频/音频给各自参考网格
     const imageRefs = [], videoRefs = [], audioRefs = [];
     try {
@@ -300,6 +323,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
 
     let skills = [];
     try { skills = await listVideoSkills(); } catch (e) {}
+    _directorOpening = false;   // 以下构建同步完成，收尾即落地单例状态，无插空窗口
 
     const exShared = (existing && existing.shared) || {};
     const exSegs = (existing && Array.isArray(existing.segments)) ? existing.segments : [];
@@ -1241,6 +1265,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     };
     const saveBtn = $el('button', { className: 'rs-btn neo-director-save', textContent: t('保存') });
     const cancelBtn = $el('button', { className: 'rs-btn neo-director-cancel', textContent: t('取消'), onclick: requestClose });
+    let runAfterSave = false;   // 「保存并生成整片」置位：本次保存成功后交给宿主提交生成
     // 未保存修改确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）：「保存并关闭」复用完整保存路径，失败则留在窗口内重试
     const dirtyConfirm = $el('div', { className: 'neo-director-dirty-confirm' }, [
         $el('span', { className: 'neo-director-dirty-text', textContent: t('⚠ 有未保存的修改') }),
@@ -1383,6 +1408,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                 // 广播配方已落盘：节点内时间轴据此刷新下拉 + 重载 spec。created=true 表示新建，供节点自动选中刚保存的配方。
                 window.dispatchEvent(new CustomEvent(DIRECTOR_RECIPE_SAVED_EVENT, { detail: { name, created: !existing } }));
                 if (typeof onSaved === 'function') onSaved();
+                if (runAfterSave) { runAfterSave = false; saveAndRun(); }
             } else {
                 app.extensionManager.toast.add({ severity: 'error', summary: t('保存失败'), detail: result.error || 'Unknown error', life: 5000 });
             }
@@ -2607,11 +2633,13 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const body = $el('div', { className: 'neo-director-body' }, [genPane, timelinePane]);
     switchTab(lastTabByName.get(requestedName) || (existing ? 'timeline' : 'story')); // 优先落回上次打开时停的页签；无记忆时新建默认故事板分镜页、编辑默认分镜时间线页
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
+    // 桌面端内嵌：底部直接给一枚「保存并生成整片」，走完整保存路径后由宿主提交生成
+    if (saveAndRun) foot.appendChild($el('button', { className: 'rs-btn neo-director-save-run', type: 'button', textContent: t('🎬 保存并生成整片'), onclick: () => { runAfterSave = true; saveBtn.onclick(); } }));
     // 「放大到最大」：标题栏 ⛶ 按钮 / 双击标题栏均可切换。放大=铺满视口（留 8px
-    // 边距，高度受 CSS max-height:88vh 约束），还原=回到放大前几何。
+    // 边距，高度受 CSS max-height:88vh 约束），还原=回到放大前几何。内嵌铺满容器，无窗口控件。
     let maximized = false;
     let prevRect = null;
-    const maxBtn = $el('button', { className: 'neo-director-maximize', type: 'button', title: t('放大到最大'), textContent: '⛶' });
+    const maxBtn = embedded ? null : $el('button', { className: 'neo-director-maximize', type: 'button', title: t('放大到最大'), textContent: '⛶' });
     const toggleMaximize = () => {
         if (!maximized) {
             const r = panel.getBoundingClientRect();
@@ -2633,8 +2661,10 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         maxBtn.classList.toggle('neo-director-maximized', maximized);
         maxBtn.title = maximized ? t('还原窗口') : t('放大到最大');
     };
-    maxBtn.onclick = toggleMaximize;
+    if (maxBtn) maxBtn.onclick = toggleMaximize;
 
+    const closeBtn = $el('button', { className: 'neo-director-close', textContent: '✕', onclick: requestClose });
+    if (embedded) closeBtn.title = t('关闭编辑');
     const titleBar = $el('div', { className: 'neo-director-title' }, [
         $el('div', { className: 'neo-director-title-left' }, [
             $el('span', { textContent: t('🎬 分镜视频导演') }),
@@ -2643,12 +2673,12 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         tabBar,
         $el('div', { className: 'neo-director-title-btns' }, [
             $el('button', { className: 'neo-director-llm-config', type: 'button', title: t('LLM 配置'), textContent: '🤖', onclick: openLLMSettingsModal }),
-            maxBtn,
-            $el('button', { className: 'neo-director-close', textContent: '✕', onclick: requestClose }),
+            ...(maxBtn ? [maxBtn] : []),
+            closeBtn,
         ]),
     ]);
-    const resizeHandle = $el('div', { className: 'neo-director-resize', title: t('拖拽调整窗口大小') });
-    const panel = $el('div', { className: 'neo-director-panel' }, [titleBar, body, dirtyConfirm, foot, resizeHandle]);
+    const resizeHandle = embedded ? null : $el('div', { className: 'neo-director-resize', title: t('拖拽调整窗口大小') });
+    const panel = $el('div', { className: 'neo-director-panel' }, [titleBar, body, dirtyConfirm, foot, ...(resizeHandle ? [resizeHandle] : [])]);
 
     // 窗口内表单控件统一脏标记：数据字段（名称/提示词/时长/模式/分辨率…）的 input/change 都算未保存修改；
     // 拉伸滑块只是视图状态，排除。程序化写回（生成/拆分/优化/同步）不触发事件，由各自路径显式 markDirty。
@@ -2676,7 +2706,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         window.removeEventListener('mousemove', onTitleMove);
         window.removeEventListener('mouseup', onTitleUp);
     };
-    titleBar.addEventListener('mousedown', (e) => {
+    if (!embedded) titleBar.addEventListener('mousedown', (e) => {
         if (e.button !== 0 || e.target.closest('button') || e.target.closest('.neo-director-name-view, .neo-director-name')) return; // 仅按钮（⛶/✕/页签）与配方名输入/显示区不触发拖动，标题栏其余空白可拖窗口
         const r = panel.getBoundingClientRect();
         if (!panel.style.left) { // 首次：从居中切到绝对定位，无跳变
@@ -2691,7 +2721,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         window.addEventListener('mouseup', onTitleUp);
     });
 
-    titleBar.addEventListener('dblclick', (e) => {
+    if (!embedded) titleBar.addEventListener('dblclick', (e) => {
         if (e.target.closest('button') || e.target.closest('.neo-director-name-view, .neo-director-name')) return; // 仅双击按钮（⛶/✕/页签）与配方名区不触发放大还原，其余空白可最大化
         toggleMaximize();
     });
@@ -2715,7 +2745,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         window.removeEventListener('mousemove', onResizeMove);
         window.removeEventListener('mouseup', onResizeUp);
     };
-    resizeHandle.addEventListener('mousedown', (e) => {
+    if (!embedded) resizeHandle.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         e.preventDefault(); // 避免拖动时选中文字 / 图片
         if (!panel.style.left) { // 首次：从居中切到绝对定位，无跳变
@@ -2730,7 +2760,13 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         window.addEventListener('mousemove', onResizeMove);
         window.addEventListener('mouseup', onResizeUp);
     });
-    overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
-    document.body.appendChild(overlay);
+    if (embedded) {
+        panel.classList.add('neo-director-embedded');
+        host.appendChild(panel);
+        overlay = panel;   // 内嵌时根节点就是面板本身：close() / 单例判定与浮层同源
+    } else {
+        overlay = $el('div', { className: 'neo-director-overlay' }, [panel]);
+        document.body.appendChild(overlay);
+    }
     _directorEditor = { name: requestedName, close, requestClose, isDirty: () => dirty, overlay, focusSeg: focusSegAt };
 }

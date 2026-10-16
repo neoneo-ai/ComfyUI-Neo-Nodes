@@ -39,6 +39,27 @@ ready only lands on a missing page. `openSkillWorkflowInMainUi()` checks the run
 "ComfyUI is starting… edit the main canvas once it is ready" while booting, "This feature needs ComfyUI" when it is
 stopped.
 
+## Director page layout
+
+The director page is a **280px recipe list** in the left column (director recipes only, always present) plus a
+right main column split into two panes: **top = the director editor**, **bottom = the film generation panel**,
+with a **splitter** between them.
+
+- The director editor is embedded in Studio (`setDirectorEditorHost` registers the host): it fills the
+  top-right pane with no overlay window, so title-bar dragging / ⛶ maximize / the resize handle do not appear.
+  The main canvas (the ComfyUI page) registers no host, so the editor stays an overlay window there.
+- With no editor open the top-right pane shows a placeholder. **Clicking a left-column recipe card selects it
+  and opens it embedded** (clicking the same card again only switches the current segment, so unsaved edits
+  survive); a segment block on the read-only timeline opens the editor on that segment, and "🎬 New director
+  recipe" on the gallery page switches to the director page and opens it embedded.
+- Splitter: drag to resize the generation panel (editor floor 240px, panel floor 170px), double-click to
+  collapse / expand the panel, `↑`/`↓` resize and `Enter` collapses from the keyboard. Height and collapsed
+  state live in `localStorage["neo_studio_director_split"]`.
+- **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel share one parameter
+  builder: after a successful save the film is submitted with the panel's current resolution / steps / checked
+  segments.
+- Narrow windows shrink the left column first (220px below 1180px); below 900px the columns stack.
+
 ## Startup sequence
 
 - The window comes first: opening the window only unpacks and creates it (splash / guide page); the self-check,

@@ -79,10 +79,22 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
             return { btn: right(".ns-gen-panel .ns-gen-run-group"), tl: right(".ns-gen-timeline") };
         });
         assert.ok(Math.abs(edges.btn - edges.tl) <= 1, `生成按钮右端应与时间轴右端对齐（差 ${Math.round(edges.btn - edges.tl)}px）`);
-        // 满幅主区里配方列表应像素材一样多列排布
-        const listDisplay = await page.evaluate(() =>
-            getComputedStyle(document.querySelector(".ns-director .neo-recipes-list")).display);
-        assert.equal(listDisplay, "grid", "配方列表应为 grid 多列布局");
+        // 导演页 = 左配方列表 + 右主栏（上导演编辑器 / 分隔条 / 下整片生成面板）
+        const layout = await page.evaluate(() => {
+            const cs = (s) => getComputedStyle(document.querySelector(s));
+            return {
+                page: cs(".ns-director").gridTemplateColumns,
+                list: cs(".ns-director .neo-recipes-list").gridTemplateColumns,
+                main: cs(".ns-director-main").flexDirection,
+                editor: !!document.querySelector(".ns-director-editor"),
+                split: !!document.querySelector(".ns-director-split"),
+            };
+        });
+        assert.match(layout.page, /^280px /, "导演页应为左配方列表 + 右主栏两列");
+        assert.ok(!layout.list.includes("px "), "左栏配方列表单列排布");
+        assert.equal(layout.main, "column", "右主栏上下排布（编辑器在上、生成面板在下）");
+        assert.ok(layout.editor, "右上编辑器宿主就位");
+        assert.ok(layout.split, "编辑器与生成面板之间有分隔条");
 
         // 首个配方自动选中：对应卡片高亮，且 分辨率/步数 按 director_spec 默认值填充（与画布节点同源）
         const spec = await page.evaluate(async () => {

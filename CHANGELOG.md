@@ -4,6 +4,30 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- Clicking a recipe card on the Studio director page now opens it. The click only used to select the recipe for
+  the generation panel, so editing meant hunting for the small ✎ on the card. `createRecipesPanel` gains
+  `openEditorOnSelect`: the same click selects the recipe **and** opens it in the embedded editor host, and the
+  editor singleton turns a repeat click on the same card into a segment switch, so unsaved edits survive. A
+  click that lands while an editor is still building is now ignored (`_directorOpening` covers the async media /
+  skill scan, where the singleton state is not registered yet), so clicking through recipes never stacks two
+  editors. The card's ✎, the timeline segment blocks and the gallery's "🎬 New director recipe" entry are
+  unchanged; the placeholder hint now reads "Click a recipe card on the left to edit its film script here".
+  Tests: `studio/tests/js/studio-director.test.mjs`.
+
+- The Studio director page is now an inline editor. The tab used to stack the film generation panel above the
+  recipe list and open the director editor as an overlay window on top of everything. It is now a
+  **280px recipe list** in the left column plus a right main column: **director editor on top**, **generation
+  panel on the bottom**, with a **draggable splitter** between them (drag to resize, double-click to collapse /
+  expand the panel, `↑`/`↓` and `Enter` on the keyboard, height and collapsed state persisted in
+  `localStorage["neo_studio_director_split"]`). `director.js` gains `setDirectorEditorHost(host, onOpen,
+  onSaveAndRun)`:
+  Studio registers the host and the editor lays out inside it (`.neo-director-embedded`, no overlay, no
+  title-bar dragging, no ⛶ maximize, no resize handle); the ComfyUI canvas registers nothing, so the canvas
+  keeps the overlay window. The embedded footer gains **🎬 Save & Generate Film**, which runs the full save path
+  and then submits the film through the same builder as the panel's **🎬 Generate Film**
+  (`submitGenerate()`). Docs: `docs/studio-desktop.md` / `docs/recipes.md` and the `docs/en/` mirrors.
+  Tests: `studio/tests/js/studio-director.test.mjs`, `studio/tests/e2e/studio.e2e.mjs`.
+
 - Closing the desktop window now always takes the ComfyUI it started with it. The teardown chain
   (`on_closing` → `close_out` → `comfy_close`) only runs when the desktop process reaches its own exit code, so
   Ctrl+C, "End task", signing out or a crash left ComfyUI on port 8188 as an orphan; the next desktop run found the

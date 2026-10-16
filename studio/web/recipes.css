@@ -616,6 +616,21 @@
     pointer-events: auto;   /* 面板自身仍可交互 */
 }
 
+/* 桌面端 Studio 内嵌：编辑器铺满宿主容器，浮层与窗口控件（⛶ 放大 / 右下角缩放 / 标题栏拖动）都不出现 */
+.neo-director-embedded {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    min-width: 0;
+    min-height: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.neo-director-embedded .neo-director-title { cursor: default; }
+
 .neo-director-title {
     display: grid;
     grid-template-columns: 1fr auto 1fr;   /* 左：标签+配方名 / 中：页签（严格居中）/ 右：按钮 */
@@ -2290,6 +2305,19 @@
 .neo-director-foot .neo-director-save,
 .neo-director-foot .neo-director-cancel {
     padding: 5px 20px;
+}
+
+/* 「🎬 保存并生成整片」（桌面端内嵌）：底部唯一的高饱和主行动按钮，与生成面板同款蓝 */
+.neo-director-foot .neo-director-save-run {
+    background: #2f6fed;
+    border-color: #2f6fed;
+    color: #fff;
+    font-weight: 600;
+}
+
+.neo-director-foot .neo-director-save-run:hover:not([disabled]) {
+    background: #3f7ffe;
+    border-color: #3f7ffe;
 }
 
 /* 未保存修改确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）：有改动时点 ✕/取消弹出，body 与 foot 之间。

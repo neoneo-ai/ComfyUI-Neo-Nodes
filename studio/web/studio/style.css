@@ -73,8 +73,48 @@ body {
 .ns-gallery-host { height: 100%; }
 .ns-gallery-host .neo-gallery-topbar { margin: -10px -16px 8px; padding: 8px 16px; }
 
-/* 导演页：整片生成面板 + 配方列表上下排布 */
-.ns-director { display: flex; flex-direction: column; gap: 14px; }
+/* 导演页：左 = 导演配方列表（常驻）/ 右 = 上导演编辑器 + 分隔条 + 下整片生成面板 */
+.ns-director {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 14px;
+    height: 100%;
+    min-height: 520px;
+}
+.ns-director-side { min-width: 0; overflow: auto; }
+.ns-director-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+/* 右上编辑器宿主：导演编辑器内嵌铺满这里；没有编辑器时出占位提示 */
+.ns-director-editor { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.ns-director-editor-hint {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed #3a3a44;
+    border-radius: 8px;
+    color: #8a8a96;
+    font-size: 13px;
+}
+.ns-director-editor.ns-editor-open .ns-director-editor-hint { display: none; }
+/* 分隔条：拖动调生成面板高度，双击收起 / 展开（收起后条上给出展开入口）；键盘 ↑↓ 调高、Enter 收起 */
+.ns-director-split {
+    flex: none;
+    height: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: ns-resize;
+    border-top: 1px solid #333;
+    border-bottom: 1px solid #333;
+    background: #1a1a1e;
+    user-select: none;
+}
+.ns-director-split:hover { background: #232329; border-color: #4a4d55; }
+.ns-director-split:focus-visible { outline: 1px solid #5090cc; }
+.ns-director-split-label { font-size: 11px; color: #8a9aa8; line-height: 1; }
+.ns-director-collapsed .ns-director-split { cursor: pointer; }
+/* 生成面板：高度由分隔条写进内联样式，收起时整块隐藏、编辑器吃满整栏 */
+.ns-director-main .ns-gen-panel { flex: none; overflow: hidden; }
 .ns-gen-panel {
     background: #202024;
     border: 1px solid #333;
@@ -172,14 +212,24 @@ body {
 .neo-recipes-title-row .rs-btn,
 .neo-recipes-card-actions .rs-btn { flex: none; }
 
-/* 导演页配方列表：满幅主区里像素材一样多列排布（侧栏保持单列）；分组标题/空状态跨整行 */
+/* 左栏配方列表：窄栏单列排布（与侧栏同款）；分组标题/空状态跨整行 */
 .ns-director .neo-recipes-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: 1fr;
     gap: 10px;
 }
 .ns-director .neo-recipes-group-title,
 .ns-director .neo-recipes-empty { grid-column: 1 / -1; }
+
+/* 窄窗口：左栏先收窄，再窄就上下堆叠（配方列表在上，编辑器 + 生成面板在下） */
+@media (max-width: 1180px) {
+    .ns-director { grid-template-columns: 220px 1fr; }
+}
+@media (max-width: 900px) {
+    .ns-director { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 0; }
+    .ns-director-side { max-height: 240px; }
+    .ns-director-main { min-height: 620px; }
+}
 
 /* 技能页：统一技能管理直接挂满主区（无弹窗外壳，去掉独立窗口的尺寸/圆角/阴影） */
 .ns-skills { padding: 0; }

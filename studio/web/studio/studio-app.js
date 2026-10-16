@@ -9,7 +9,7 @@ import { api } from "./shim/api.js";
 import { $el } from "./shim/ui.js";
 
 import "../gallery.js";   // 注册 comfy.neo.gallery 扩展（NeoGallery + 侧栏 tab 定义）
-import { openDirectorEditor, DIRECTOR_RECIPE_SAVED_EVENT, DIRECTOR_ASPECTS, DIRECTOR_CUSTOM, MP_MIN, MP_MAX, MP_DEFAULT, directorClampMp, directorResolution, directorInferAspect } from "../director.js";
+import { openDirectorEditor, setDirectorEditorHost, DIRECTOR_RECIPE_SAVED_EVENT, DIRECTOR_ASPECTS, DIRECTOR_CUSTOM, MP_MIN, MP_MAX, MP_DEFAULT, directorClampMp, directorResolution, directorInferAspect } from "../director.js";
 import { DirectorTimeline } from "../director-timeline.js";
 import { createFramePlayer } from "../live-preview.js";
 import { createRecipesPanel, listRecipes } from "../recipes.js";
@@ -105,16 +105,94 @@ async function refreshRecipesPanel() {
 }
 
 
+// ====== 导演页分隔条：编辑器 / 生成面板高度自由调，双击收起 / 展开生成面板 ======
+const SPLIT_KEY = "neo_studio_director_split";
+const SPLIT_PANEL_MIN = 170;   // 生成面板下限：参数行 + 时间轴 + 状态行还能用
+const SPLIT_EDITOR_MIN = 240;  // 编辑器下限：编辑器内部自带滚动，再小就没法编辑了
+
+function buildDirectorSplit(main, genPanel) {
+    const label = $el("span", { className: "ns-director-split-label" });
+    const split = $el("div", {
+        className: "ns-director-split", role: "separator", "aria-orientation": "horizontal", tabindex: "0",
+        title: t("拖动调整高度 · 双击收起 / 展开生成面板"),
+    }, [label]);
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SPLIT_KEY) || "null"); } catch { /* 偏好读不到就用默认 */ }
+    let collapsed = !!saved?.collapsed;
+
+    const clamp = (h) => {
+        const max = Math.max(SPLIT_PANEL_MIN, main.clientHeight - split.offsetHeight - SPLIT_EDITOR_MIN);
+        return Math.max(SPLIT_PANEL_MIN, Math.min(h, max));
+    };
+    const setHeight = (h) => { genPanel.style.height = Math.round(clamp(h)) + "px"; };
+    const persist = () => localStorage.setItem(SPLIT_KEY, JSON.stringify({ height: genPanel.offsetHeight, collapsed }));
+    const apply = () => {
+        main.classList.toggle("ns-director-collapsed", collapsed);
+        genPanel.style.display = collapsed ? "none" : "";
+        label.textContent = collapsed ? t("▸ 生成面板") : "";
+    };
+    const restore = () => {
+        if (collapsed || !saved || !(Number(saved.height) > 0) || main.clientHeight <= 0) return;
+        setHeight(saved.height);
+        saved = null;   // 只在首次布局量得到高度时回灌一次
+    };
+    apply();
+    restore();
+    requestAnimationFrame(restore);
+
+    split.addEventListener("mousedown", (e) => {
+        if (e.button !== 0 || collapsed) return;
+        e.preventDefault();
+        const startY = e.clientY, startH = genPanel.offsetHeight;
+        const move = (ev) => setHeight(startH + (startY - ev.clientY));
+        const up = () => {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            persist();
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+    });
+    split.addEventListener("dblclick", () => { collapsed = !collapsed; apply(); persist(); });
+    split.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            if (collapsed) return;
+            e.preventDefault();
+            setHeight(genPanel.offsetHeight + (e.key === "ArrowUp" ? 24 : -24));
+            persist();
+        } else if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            collapsed = !collapsed; apply(); persist();
+        }
+    });
+    return split;
+}
+
 async function buildDirector(el) {
     const page = $el("div", { className: "ns-director" });
     el.appendChild(page);
-    let currentRecipeName = null;   // 当前选中的导演配方（由下方配方面板点选回传，直接喂给整片生成区）
+    // 左栏 = 导演配方列表（常驻，编辑时也能直接切配方）；右栏 = 上导演编辑器 / 下整片生成面板
+    const side = $el("div", { className: "ns-director-side" });
+    const main = $el("div", { className: "ns-director-main" });
+    const editorHost = $el("div", { className: "ns-director-editor" }, [
+        $el("div", { className: "ns-director-editor-hint", textContent: t("点左侧配方卡即在此编辑整片脚本") }),
+    ]);
+    page.appendChild(side);
+    page.appendChild(main);
+    main.appendChild(editorHost);
+    // 编辑器挂进宿主 / 关闭后收起占位提示
+    new MutationObserver(() => editorHost.classList.toggle("ns-editor-open", !!editorHost.querySelector(".neo-director-panel")))
+        .observe(editorHost, { childList: true });
+    // 导演编辑器内嵌进本视图（含素材页「新建导演配方」入口 → 切到导演页）；
+    // 编辑器底部的「🎬 保存并生成整片」保存成功后直接提交整片生成
+    setDirectorEditorHost(editorHost, () => showView("director"), () => submitGenerate());
+    let currentRecipeName = null;   // 当前选中的导演配方（由左栏配方面板点选回传，直接喂给整片生成区）
 
     const onSelect = (r) => {
         currentRecipeName = r.name;
         applyRecipeDefaults(r.name);   // 填 分辨率/步数 + 同步只读时间轴分段
     };
-    const panelOpts = () => ({ directorOnly: true, autoSelectFirst: true, initialSelection: currentRecipeName, onSelect });
+    const panelOpts = () => ({ directorOnly: true, autoSelectFirst: true, initialSelection: currentRecipeName, openEditorOnSelect: true, onSelect });
     directorPanelOpts = panelOpts;
 
     // --- 整片生成面板 ---
@@ -274,7 +352,8 @@ async function buildDirector(el) {
         if (["succeeded", "failed", "cancelled"].includes(detail.status)) stopPolling();
     }
 
-    runBtn.addEventListener("click", async () => {
+    // 提交整片生成：「生成整片」按钮与编辑器底部「🎬 保存并生成整片」共用同一份参数组装
+    async function submitGenerate() {
         const recipe = currentRecipeName;
         if (!recipe) { statusEl.textContent = t("请先在下方选择一个配方"); return; }
         // 空输入归一为 -1（用配方默认），避免 Number("") === 0 被后端当成显式 0
@@ -365,7 +444,8 @@ async function buildDirector(el) {
             } catch { /* 网络抖动忽略，下一轮再试 */ }
         };
         genState.pollTimer = setInterval(poll, 2000);
-    });
+    }
+    runBtn.addEventListener("click", () => submitGenerate());
 
     cancelBtn.addEventListener("click", async () => {
         if (!genState) return;
@@ -412,14 +492,16 @@ async function buildDirector(el) {
     const foot = $el("div", { className: "ns-gen-foot" }, [statusEl]);
     const memBar = buildMemBar();
     if (memBar) foot.appendChild(memBar);
-    page.appendChild($el("div", { className: "ns-gen-panel" }, [
+    const genPanel = $el("div", { className: "ns-gen-panel" }, [
         genBody,
         barEl, foot,
-    ]));
+    ]);
+    main.appendChild(buildDirectorSplit(main, genPanel));
+    main.appendChild(genPanel);
 
-    // --- 配方面板（点卡片直接选中并喂给上方整片生成区；只列多段导演配方） ---
+    // --- 配方面板（左栏常驻：点卡片 = 选中喂给下方生成区 + 直接进右上编辑器；只列多段导演配方） ---
     recipesPanelEl = await createRecipesPanel(panelOpts());
-    page.appendChild(recipesPanelEl);
+    side.appendChild(recipesPanelEl);
     // 编辑器保存后：刷新配方列表、清 spec 缓存、同步默认值与时间轴分段（新建配方直接选中，其余保持当前选中）
     window.addEventListener(DIRECTOR_RECIPE_SAVED_EVENT, async (e) => {
         specCache.clear();
@@ -1185,8 +1267,9 @@ function localizeShell() {
 
 function route() {
     const name = (location.hash || "#/gallery").replace(/^#\//, "").split("?")[0] || "gallery";
-    if (name === "director") ensureView("director", buildDirector);
-    else if (name === "skills") ensureView("skills", buildSkills);
+    // 导演页视图常驻：导演编辑器的内嵌宿主要在素材页第一次点「🎬 新建导演配方」时就注册好
+    ensureView("director", buildDirector);
+    if (name === "skills") ensureView("skills", buildSkills);
     else if (name === "settings") ensureView("settings", buildSettings);
     else ensureView("gallery", buildGallery);
     showView(name);

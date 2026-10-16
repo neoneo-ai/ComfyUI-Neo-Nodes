@@ -803,6 +803,8 @@ export async function createRecipesPanel(options = {}) {
     const directorOnly = !!options.directorOnly;
     // selectable（Studio 导演页）：点卡片即选中并回传 onSelect，直接喂给上方整片生成区（不再用顶部下拉选配方）
     const selectable = typeof options.onSelect === 'function';
+    // openEditorOnSelect（Studio 导演页）：选中后顺手在内嵌宿主里打开该配方，省得再去找 ✎
+    const openEditorOnSelect = !!options.openEditorOnSelect;
     const autoSelectFirst = !!options.autoSelectFirst;
     let selectedName = null;
 
@@ -1143,9 +1145,14 @@ export async function createRecipesPanel(options = {}) {
         });
         card.dataset.name = r.name;
         if (selectable) {
-            // 点卡片即选中并回传 onSelect（Studio 导演页：直接喂给上方整片生成区）
-            card.addEventListener('click', () => selectRecipe(r));
-            card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRecipe(r); } });
+            // 点卡片即选中并回传 onSelect（Studio 导演页：直接喂给上方整片生成区）；
+            // openEditorOnSelect 时同一次点击直接在内嵌宿主里打开该配方（重复点同一配方只切段，不重载）
+            const pick = () => {
+                selectRecipe(r);
+                if (openEditorOnSelect && r.type === 'video_director') openDirectorEditor(r, renderList);
+            };
+            card.addEventListener('click', pick);
+            card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
         } else {
             card.onclick = () => openDetail(r, card);
             card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r, card); } };

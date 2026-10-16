@@ -1,4 +1,5 @@
-// Neo Studio 导演页：只读时间轴（所选配方分段）+ 生成中实时预览（载荷按 task_id 路由、终态定格）。
+// Neo Studio 导演页：左配方列表 + 上内嵌导演编辑器 + 分隔条 + 下整片生成面板；
+// 只读时间轴（所选配方分段）、生成中实时预览（载荷按 task_id 路由、终态定格）、分隔条偏好。
 // studio-app.js 顶层会取 #ns-view 并连 WebSocket，导入前必须先备好 DOM 与 WS 桩。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -30,6 +31,7 @@ mockRoute("/neo_studio/director/generate", jsonResponse({
     success: true, task_id: "task-1", prompt_id: "p1", status: "queued", recipe: "R1", seed: -1,
     filename: null, subfolder: null, progress: null, error: "", created: 0, updated: 0,
 }));
+mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "R1" }));
 // 任务快照路由：响应由 statusState 动态驱动（模拟 WS 事件丢失、终态只能靠轮询兜底拿到）
 const statusState = { status: "queued", progress: null, filename: null };
 mockRoute("/neo_studio/director/task-1", () => jsonResponse({
@@ -104,17 +106,19 @@ test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
     assert.equal(document.querySelectorAll(".ns-gen-final").length, 2, "播放器 + 打开链接");
 });
 
-test("Studio 导演页：点时间轴分段块打开配方编辑器并定位到该段", async () => {
+test("Studio 导演页：点时间轴分段块把配方编辑器内嵌进右上栏并定位到该段", async () => {
     await import("../../web/studio/studio-app.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 编辑器内无媒体候选
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
 
-    // 首个配方自动选中（下方配方面板）
+    // 首个配方自动选中（左栏配方面板）
     await until(() => {
         const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
         return sel && sel.textContent === "R1";
     }, "配方自动选中");
+    assert.ok(document.querySelector(".ns-director-side .neo-recipes-list"), "配方列表挂在左栏");
+    assert.ok(document.querySelector(".ns-director-editor-hint"), "没有编辑器时右上出占位提示");
 
     // canvas 桩：W=320，段 3s+4s → 块1 ≈ [138,312]，点 x=200 命中第 2 块
     const canvas = document.querySelector(".ns-gen-timeline .neo-dtl-canvas");
@@ -124,13 +128,54 @@ test("Studio 导演页：点时间轴分段块打开配方编辑器并定位到�
     canvas.dispatchEvent(mouse("mousedown", 200));
     window.dispatchEvent(mouse("mouseup", 200));
 
-    // 编辑器浮层打开并定位到第 2 段（listRecipes 取 R1 meta，focusSeg=1）
-    await until(() => document.querySelector(".neo-director-overlay"), "编辑器浮层出现");
+    // 编辑器内嵌进右上宿主（不建浮层窗口），并定位到第 2 段（listRecipes 取 R1 meta，focusSeg=1）
+    await until(() => document.querySelector(".ns-director-editor .neo-director-panel"), "编辑器内嵌出现");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "内嵌模式不建浮层窗口");
+    assert.equal(document.querySelector(".neo-director-resize"), null, "内嵌模式无右下角缩放手柄");
+    assert.equal(document.querySelector(".neo-director-maximize"), null, "内嵌模式无 ⛶ 放大按钮");
+    assert.ok(document.querySelector(".ns-director-editor .neo-director-panel").classList.contains("neo-director-embedded"));
+    assert.ok(document.querySelector(".ns-director-editor").classList.contains("ns-editor-open"), "编辑器挂上后收起占位提示");
     const currentIdx = () => [...document.querySelectorAll(".neo-director-seg")]
         .findIndex((s) => s.classList.contains("neo-director-seg-current"));
     assert.equal(currentIdx(), 1, "定位到被点击的段");
 
-    document.querySelector(".neo-director-close").click();
+    // 「🎬 保存并生成整片」：走完整保存路径，成功后由宿主提交整片生成并关掉编辑器
+    const before = fetchLog.length;
+    click(document.querySelector(".neo-director-save-run"));
+    await until(() => fetchLog.slice(before).some((c) => c.path === "/neo_studio/director/generate"), "保存后提交生成");
+    const call = fetchLog.slice(before).find((c) => c.path === "/neo_studio/director/generate");
+    assert.equal(call.body.recipe, "R1", "生成用刚保存的配方");
+    await until(() => !document.querySelector(".ns-director-editor .neo-director-panel"), "保存后关闭编辑器");
+    assert.ok(!document.querySelector(".ns-director-editor").classList.contains("ns-editor-open"), "关闭后回到占位提示");
+    await sleep(20);
+});
+
+test("Studio 导演页：点左栏配方卡直接在内嵌宿主里打开编辑器（重复点击不重载）", async () => {
+    await import("../../web/studio/studio-app.js");
+    appState.graph = { _nodes: [] };
+    location.hash = "#/director";
+    await until(() => document.querySelector(".ns-director-side .neo-recipes-card"), "配方卡片挂载");
+    assert.equal(document.querySelector(".ns-director-editor .neo-director-panel"), null, "进入页面不自动打开编辑器");
+
+    const card = document.querySelector(".ns-director-side .neo-recipes-card");
+    click(card);
+    click(card);   // 构建中（异步扫描未落地）的重复点击：忽略，不叠出第二个编辑器
+    await until(() => document.querySelector(".ns-director-editor .neo-director-panel"), "点卡片即内嵌打开编辑器");
+    await until(() => document.querySelectorAll(".neo-director-seg").length === 2, "分段构建完成");
+    assert.equal(document.querySelectorAll(".neo-director-panel").length, 1, "连点同一配方只有一个编辑器");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "内嵌模式不建浮层窗口");
+    assert.ok(card.classList.contains("neo-recipes-card-selected"), "同一次点击同时选中配方");
+    assert.ok(document.querySelector(".neo-director-save-run"), "内嵌编辑器带「保存并生成整片」");
+
+    // 构建完成后重复点同一张卡：单例只切段，编辑器 DOM 不重载（未保存改动不丢）
+    const panel = document.querySelector(".ns-director-editor .neo-director-panel");
+    click(card);
+    await sleep(60);
+    assert.equal(document.querySelector(".ns-director-editor .neo-director-panel"), panel, "重复点击同一配方不重载编辑器");
+
+    click(document.querySelector(".neo-director-close"));
+    await until(() => !document.querySelector(".ns-director-editor .neo-director-panel"), "关闭编辑器");
+    assert.ok(document.querySelector(".ns-director-editor-hint"), "关闭后回到占位提示");
     await sleep(20);
 });
 
@@ -228,4 +273,38 @@ test("Studio 导演页：勾选段后只提交勾选的段（运行期临时状�
     const call = fetchLog.slice(before).find((c) => c.path === "/neo_studio/director/generate");
     assert.equal(call.body.only_segments, "1", "只提交勾选的段");
     assert.equal(call.body.recipe, "R1");
+});
+
+test("Studio 导演页：分隔条调生成面板高度、双击收起 / 展开（偏好落盘）", async () => {
+    await import("../../web/studio/studio-app.js");
+    location.hash = "#/director";
+    await until(() => document.querySelector(".ns-director-split"), "分隔条挂载");
+    const main = document.querySelector(".ns-director-main");
+    const split = document.querySelector(".ns-director-split");
+    const panel = document.querySelector(".ns-gen-panel");
+    const pref = () => JSON.parse(localStorage.getItem("neo_studio_director_split") || "{}");
+    const mouse = (type, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientY: y });
+
+    // 拖动：面板高度写进内联样式并落盘（jsdom 无布局，clientHeight=0 → 钳到下限）
+    split.dispatchEvent(mouse("mousedown", 400));
+    window.dispatchEvent(mouse("mousemove", 300));
+    window.dispatchEvent(mouse("mouseup", 300));
+    assert.equal(panel.style.height, "170px", "拖动写入面板高度");
+    assert.ok("height" in pref() && "collapsed" in pref(), "高度与收起状态落盘");
+
+    // 键盘：↑ 加高同样走钳制，Enter 收起
+    split.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    assert.equal(panel.style.height, "170px", "键盘调高写入面板高度");
+    split.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    assert.ok(main.classList.contains("ns-director-collapsed"), "Enter 收起生成面板");
+    assert.equal(panel.style.display, "none", "收起时整块隐藏");
+    assert.equal(split.querySelector(".ns-director-split-label").textContent, "▸ 生成面板", "收起后条上给出展开入口");
+    assert.equal(pref().collapsed, true, "收起状态落盘");
+
+    // 双击展开：面板回到可见，编辑器让出底部空间
+    split.dispatchEvent(mouse("dblclick", 0));
+    assert.ok(!main.classList.contains("ns-director-collapsed"), "双击展开生成面板");
+    assert.equal(panel.style.display, "");
+    assert.equal(split.querySelector(".ns-director-split-label").textContent, "");
+    localStorage.removeItem("neo_studio_director_split");
 });
