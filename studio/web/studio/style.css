@@ -75,7 +75,7 @@ body {
 
 /* 导演页：左 = 导演配方列表（常驻）/ 右 = 上导演编辑器 + 分隔条 + 下整片生成面板 */
 .ns-director {
-    --ns-side-w: 280px;   /* 左栏宽度：分隔条拖动写进内联样式；素材库打开时默认 380px */
+    --ns-side-w: 360px;   /* 左栏宽度：分隔条拖动写进内联样式；素材库打开时默认 380px（360 = 标题行「配方 ↻ 📦导入 🎬新增导演配方」单行放得下，英文界面需 340） */
     display: grid;
     grid-template-columns: var(--ns-side-w) 18px 1fr;
     height: 100%;
@@ -311,7 +311,7 @@ body {
 
 /* 窄窗口：左栏先收窄，再窄就上下堆叠（配方列表在上，编辑器 + 生成面板在下） */
 @media (max-width: 1180px) {
-    .ns-director { --ns-side-w: 220px; }
+    .ns-director { --ns-side-w: 340px; }
     .ns-director:has(.ns-director-side.ns-lib-open) { --ns-side-w: 380px; }
 }
 @media (max-width: 900px) {

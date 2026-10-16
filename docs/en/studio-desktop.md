@@ -41,7 +41,7 @@ stopped.
 
 ## Director page layout
 
-The director page is a **280px recipe list** in the left column (director recipes only) plus a right main column
+The director page is a **360px recipe list** in the left column (director recipes only) plus a right main column
 split into two panes: **top = the director editor**, **bottom = the film generation panel**, with a
 **splitter** between them. Opening the asset library switches the whole left column to it (widened to 380px).
 
@@ -73,7 +73,8 @@ split into two panes: **top = the director editor**, **bottom = the film generat
 - **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel share one parameter
   builder: after a successful save the film is submitted with the panel's current resolution / steps / checked
   segments.
-- Narrow windows shrink the left column first (220px below 1180px); below 900px the columns stack.
+- Narrow windows shrink the left column first (340px below 1180px); below 900px the columns stack. The default
+  width is wide enough for the recipe header row ("Recipe ↻ 📦 Import 🎬 New director recipe") to stay on one line.
 
 ## Startup sequence
 
