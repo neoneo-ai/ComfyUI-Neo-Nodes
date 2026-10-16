@@ -50,7 +50,7 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   The main canvas (the ComfyUI page) registers no host, so the editor stays an overlay window there.
 - With no editor open the top-right pane shows a placeholder. **Clicking a left-column recipe card selects it
   and opens it embedded** (clicking the same card again only switches the current segment, so unsaved edits
-  survive); a segment block on the read-only timeline opens the editor on that segment, and "🎬 New director
+  survive); the ✎ on a segment chip in the generation panel opens the editor on that segment, and "🎬 New director
   recipe" on the gallery page switches to the director page and opens it embedded.
 - The **asset library** button inside the director editor **switches the left column from the recipe list to the
   asset library** (`.ns-director-lib`, the column widens to 380px). Studio has no ComfyUI left sidebar, so the shim
@@ -59,7 +59,7 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   there, and cards drag straight into the editor's first-frame / reference slots. The widening is driven by the
   grid column, so the editor gives way instead of being covered. Clicking the same button again switches back to
   the recipe list, so does the library's ✕, and leaving the director page closes it automatically.
-- Splitter: drag to resize the generation panel (editor floor 240px, panel floor 170px), double-click to
+- Splitter: drag to resize the generation panel (editor floor 240px, panel floor 90px), double-click to
   collapse / expand the panel, `↑`/`↓` resize and `Enter` collapses from the keyboard. Height and collapsed
   state live in `localStorage["neo_studio_director_split"]`. Dragging the panel taller or shorter stretches the
   result column on the right (live preview / final film) with it, instead of leaving a blank strip under a
@@ -74,8 +74,22 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   zone with a 1px hairline that thickens to 4px and turns accent blue on hover, keyboard focus and while dragging,
   plus a three-dot grip dead-centre (the VS Code sash) that stays lit on hover and while the column is closed —
   that grip is how a closed column gets dragged back out.
-- **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel share one parameter
-  builder: after a successful save the film is submitted with the panel's current resolution / steps / checked
+- The generation panel only answers "which segments to run, and what came out" — it carries no parameter
+  controls, and its control area is squeezed onto **one line**: **Select all** / **Clear** / the **segment chip
+  strip** (one chip per segment with its number, duration and a ✎) / the check hint / one read-only echo
+  (`width×height · steps` for the run, taken from the recipe) / **🎬 Generate Film** / **⏹ Cancel** all share
+  that line, and with many segments the chip strip scrolls sideways on its own so the vertical space stays with
+  the result column. **Clicking a chip checks the segment to run; nothing checked = the whole film**;
+  **Select all** / **Clear** act on the whole strip, and ✎ opens the editor on that segment.
+  The selection is runtime-only: switching recipes clears it, and it is never written into the recipe. The chip
+  of the segment being generated is highlighted while the run is live.
+- The run parameters for the film (resolution / steps / seed / continuity / context frames) are set only in the
+  director editor and saved into the recipe's `shared`; neither the panel nor the request repeats that control set.
+  The first row of the editor's "🎞️ Storyboard timeline" page keeps only the generation mode / skill / chunk
+  seconds / resolution: seed, steps, continuity and context frames sit behind the **Advanced** checkbox at the
+  end of that row, collapsed by default (collapsed values still apply — saving reads them).
+- **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel submit the same way:
+  after a successful save the film is submitted with the parameters just saved in the recipe plus the checked
   segments.
 - Narrow windows shrink the left column first (340px below 1180px); below 900px the columns stack. The default
   width is wide enough for the recipe header row ("Recipe ↻ 📦 Import 🎬 New director recipe") to stay on one line.

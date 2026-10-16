@@ -428,7 +428,7 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
     shared = {
         "width": _si(shared_raw.get("width"), 1344),
         "height": _si(shared_raw.get("height"), 768),
-        "seed": _si(shared_raw.get("seed"), 0),
+        "seed": _si(shared_raw.get("seed"), 0),   # -1 = 每次运行随机取种子
     }
     # 全局生成模式：具体模式全体统一，mixed 每段独立（seg.mode）；缺省不写，执行时按首帧/参考推断
     shared_mode = str(shared_raw.get("mode") or "").strip()
@@ -444,6 +444,14 @@ def _normalize_director(data: dict, orig_to_copied: dict, existing_assets: set |
         chunk_sec = None
     if chunk_sec is not None and 0 <= chunk_sec <= 120:
         shared["chunk_sec"] = int(chunk_sec)
+    # 整片运行参数（编辑器「分镜时间线」页保存，Studio 生成面板只发 recipe/only_segments）：
+    # 不给就不落盘，执行时沿用 steps=-1（各段技能 config）、continuity=True、context_frames=22
+    if shared_raw.get("steps") is not None:
+        shared["steps"] = min(100, max(-1, _si(shared_raw.get("steps"), -1)))
+    if shared_raw.get("continuity") is not None:
+        shared["continuity"] = bool(shared_raw.get("continuity"))
+    if shared_raw.get("context_frames") is not None:
+        shared["context_frames"] = min(362, max(0, _si(shared_raw.get("context_frames"), 22)))
 
     segs_raw = data.get("segments")
     if not isinstance(segs_raw, list) or not segs_raw:
@@ -1449,8 +1457,8 @@ def load_director_spec(name: str) -> dict:
 
 
 def _director_default_dims(segments, shared=None):
-    """取 director 节点 widget 动态填充的默认值：width/height 优先配方 shared（自定义分辨率），
-    缺省时回退首段 skill config；steps 始终取首段 skill config；无有效段或读取失败回退 H3 默认。"""
+    """取 director 节点 widget 动态填充的默认值：width/height/steps 优先配方 shared（编辑器保存值），
+    缺省时回退首段 skill config；无有效段或读取失败回退 H3 默认。"""
     width, height, steps = 1344, 768, 20
     try:
         from .skill import get_skill_gen_config
@@ -1471,6 +1479,8 @@ def _director_default_dims(segments, shared=None):
         width = int(shared["width"])
     if int(shared.get("height") or 0) > 0:
         height = int(shared["height"])
+    if int(shared.get("steps") or 0) > 0:
+        steps = int(shared["steps"])
     return {"width": width, "height": height, "steps": steps}
 
 

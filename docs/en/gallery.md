@@ -203,6 +203,11 @@ selected; the source is passed as a reference image, you type the editing instru
   "model working resolution" when it exceeds it (1.5MP by default); after generation the comparison window's
   left side becomes that scaled image too, since pixel-by-pixel alignment needs both sides the same size. Size
   details: [image-gen.md](image-gen.md).
+- **Custom parameters** - a collapse row at the end of the "target resolution" row: expand it to pick the main
+  model / LoRAs for this run (the same control as in the generate-material popup, nothing is written back to the
+  global settings). Empty = follow this skill's `config.json` and the global image-gen settings, and switching
+  skills or the outpaint / masked / pose switches replays that skill's model and LoRAs. Aspect ratio and max
+  side are not exposed here - the output size follows the source (the "target resolution" row above).
 - **Outpaint** - a switch in the window that automatically selects the "Qwen Image 2.1 outpaint" skill. Drag a
   box on the source to set the padding on the four sides (dragging the box pans it and redistributes the
   padding; expansion only outward, with free / 1:1 / 16:9 / 2.35:1 and similar ratio presets; when the canvas

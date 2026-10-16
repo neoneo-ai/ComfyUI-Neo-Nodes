@@ -894,6 +894,14 @@
     color: #9aa4b0;
 }
 
+/* 整片运行参数（种子 / 步数 / 连续性 / 上下文帧）收进「高级参数」：默认收起，勾选才在行尾换出来。
+   纯原生 checkbox + CSS :checked，无 JS；收起时控件留在 DOM 里，保存照读值 */
+.neo-director-adv { display: flex; align-items: center; gap: 6px; }
+.neo-director-adv-check { margin: 0; cursor: pointer; }
+.neo-director-adv-label { font-size: 11px; color: #9aa4b0; user-select: none; }
+.neo-director-adv-items { display: none; align-items: center; gap: 8px; }
+.neo-director-adv-check:checked ~ .neo-director-adv-items { display: flex; }
+
 /* director 面板内的按钮不跟随 .rs-btn 的 flex:1 铺满（那套尺寸是给侧边栏底部按钮行的）：
    统一按内容宽度 + 面板字号排布；需要靠右的按钮由所在行给它 margin-left:auto
    （同「＋ 添加段」/「↔ 拉伸」的做法）。未保存确认条自带尺寸规则，不在 body/foot 内，不受影响。 */

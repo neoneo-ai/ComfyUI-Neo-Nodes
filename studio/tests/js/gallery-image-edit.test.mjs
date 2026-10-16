@@ -900,6 +900,87 @@ test("图片编辑弹窗：扩图比例预设按原图取最小覆盖框，反�
     assert.deepEqual(checkMin("再切四轮 1:1", 1), sq1);
 });
 
+
+test("图片编辑面板：自定参数——默认收起不带覆盖，选主模型 + LoRA 后请求体带上，切扩图重放该技能配置", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+        { id: "qwen_image_21_outpaint", cn_name: "Qwen Image 2.1 扩图", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_image_gen/models", () => jsonResponse({
+        diffusion_models: ["krea2.safetensors", "qwen_image_2.1.safetensors"],
+        text_encoders: ["qwen3vl_4b.safetensors"],
+        vae: ["qwen_image_vae.safetensors"],
+        loras: ["style_a.safetensors", "outpaint_lora.safetensors"],
+        suggested_diffusion_models: "qwen_image_2.1.safetensors",
+    }));
+    mockRoute("/neo_image_gen/skill_config", (_b, call) => jsonResponse(
+        call.query.get("skill_id") === "qwen_image_21_outpaint"
+            ? { model: "qwen_image_2.1.safetensors", loras: [{ name: "outpaint_lora.safetensors", strength: 0.9 }] }
+            : {}));
+    mockRoute("/neo_image_gen/settings", () => jsonResponse({ target_megapixels: 1.5 }));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie_adv", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/ie_adv", () => jsonResponse({
+        task_id: "ie_adv", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "edit_00001_.png", subfolder: "Output/2026-09-30", url: "/e.png" }],
+    }));
+
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(50);   // 模型列表 → 当前技能 config
+
+    // 默认收起；展开后只有生图模型 + LoRA（TE / VAE 行裁掉），主模型回到「自动」
+    const toggle = overlay.querySelector(".neo-gallery-edit-form .neo-gallery-gm-model-toggle");
+    assert.ok(toggle, "图片编辑面板应有「自定参数」折叠行");
+    const box = overlay.querySelector(".neo-gallery-edit-model-box");
+    assert.ok(box, "应有自定参数区");
+    assert.equal(box.style.display, "none", "默认收起");
+    click(toggle);
+    assert.notEqual(box.style.display, "none", "点击后应展开");
+    assert.equal(box.querySelectorAll(".rs-gen-adv-row").length, 0, "只露出生图模型与 LoRA（无 TE / VAE 行）");
+    const modelSel = box.querySelector(".rs-gen-model-section select");
+    assert.equal(modelSel.value, "", "默认「自动」（跟随技能配置与全局设置），不预填");
+    assert.equal(box.querySelectorAll(".rs-gen-lora-row").length, 0, "默认无 LoRA 行");
+
+    // 自动态：请求体不带 model / loras 覆盖（不冲掉技能 config 与全局设置里的显式配置）
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "把背景换成海边日落");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(80);
+    let req = fetchLog.filter((c) => c.path === "/neo_image_gen/generate").at(-1);
+    assert.ok(!("model" in (req.body || {})), "自动态请求体不应带 model 覆盖");
+    assert.ok(!("loras" in (req.body || {})), "自动态请求体不应带 loras 覆盖");
+
+    // 选主模型 + 加一条 LoRA（强度 0.8）→「再生成」请求体带上覆盖
+    modelSel.value = "krea2.safetensors";
+    click(box.querySelector(".rs-gen-lora-add"));
+    const loraRow = box.querySelector(".rs-gen-lora-row");
+    assert.ok(loraRow, "应有 LoRA 行");
+    loraRow.querySelector("select").value = "style_a.safetensors";
+    loraRow.querySelector(".rs-gen-lora-strength").value = "0.8";
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "再生成"));
+    await sleep(80);
+    req = fetchLog.filter((c) => c.path === "/neo_image_gen/generate").at(-1);
+    assert.equal(req.body.model, "krea2.safetensors", "请求体应带所选主模型");
+    assert.deepEqual(req.body.loras, [{ name: "style_a.safetensors", strength: 0.8 }], "请求体应带所选 LoRA 与强度");
+
+    // 开扩图：技能是程序切过去的（不触发 onchange），自定参数要重放到扩图技能 config 的模型与 LoRA
+    const origImg = overlay.querySelector(".neo-gallery-edit-compare-imgwrap img");
+    for (const [key, value] of [["clientWidth", 400], ["clientHeight", 300],
+                                ["naturalWidth", 800], ["naturalHeight", 600]]) {
+        Object.defineProperty(origImg, key, { value, configurable: true });
+    }
+    click(overlay.querySelector(".neo-gallery-edit-outpaint-btn"));
+    await sleep(50);
+    assert.equal(modelSel.value, "qwen_image_2.1.safetensors", "切扩图后主模型应重放该技能配置");
+    assert.deepEqual([...box.querySelectorAll(".rs-gen-lora-row select")].map((s) => s.value),
+                     ["outpaint_lora.safetensors"], "切扩图后 LoRA 行应重放该技能配置");
+});
+
 test("图片编辑弹窗：扩图锁定比例拖拽只等比缩放，不变形、不缩回原图内、不超封顶", async () => {
     resetEnv();
     clearRoutes();

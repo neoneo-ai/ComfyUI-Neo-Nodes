@@ -338,6 +338,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let frameSourceSel = null; // 分镜来源状态 grid|storyboard（📖 故事板分镜页创建后赋值，随 story.frame_source 落盘）
     let chunkSecInp = null;    // 分块秒数 shared.chunk_sec：连续兼容段合并成一次多帧单次运行的预算（0 = 关闭），时间线面板创建后赋值
     let chunkSecLabel = null;   // 「分块秒数」标签：与输入框成对，仅当统一技能支持多帧时显示
+    let seedSharedInp = null;       // 整片种子 shared.seed：留空 = 随机（落 -1），时间线面板创建后赋值
+    let stepsSharedInp = null;      // 整片步数 shared.steps：留空 = 各段技能 config 的步数（落 -1）
+    let continuitySharedChk = null; // 跨段连续性 shared.continuity：上下文窗口 + 身份继承
+    let ctxSharedInp = null;        // 上下文帧 shared.context_frames：0 = 退回尾帧链入
+    let ctxSharedWrap = null;       // 「上下文帧」字段组：连续性关掉时隐藏（关掉时该值不参与生成）
 
     // 未保存修改标记：任何会改变落盘内容的操作置位；成功保存 / 关闭后清零。
     let dirty = false;
@@ -1386,6 +1391,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
                     { mode: gMode },
                     // 多帧单次分块秒数：0 = 关闭（纯逐段生成）；显式落盘，重开回显
                     { chunk_sec: Math.max(0, Math.round(Number(chunkSecInp.value) || 0)) },
+                    // 整片运行参数：Studio 生成面板只发配方名 + 勾选段，整片怎么跑读的就是这几个值。
+                    // 种子留空 = -1（每次运行随机换种子）；步数留空 = -1（各段技能 config 的步数）
+                    {
+                        seed: seedSharedInp.value === '' ? -1 : Math.max(-1, Number(seedSharedInp.value)),
+                        steps: stepsSharedInp.value === '' ? -1 : Math.min(100, Math.max(-1, Number(stepsSharedInp.value))),
+                        continuity: continuitySharedChk.checked,
+                        context_frames: ctxSharedInp.value === '' ? 22 : Math.min(362, Math.max(0, Number(ctxSharedInp.value))),
+                    },
                     // 身份参考默认开：只有关掉时才落盘（重开时由该键回显开关）
                     identityRefsChk.checked ? {} : { identity_refs: false },
                 ),
@@ -1989,6 +2002,50 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         title: t('多帧单次分块：连续兼容段（文生/图生/首尾帧、无自带参考素材）总时长 ≤ 该值时合并成一次 ref2va 运行，各段分镜关键帧钉在起点；0 = 关闭（纯逐段生成）。建议 ≤15'),
     });
     chunkSecInp.addEventListener('input', () => { markDirty(); refreshChunkMarkers(); });
+
+    // 整片运行参数（落 shared.seed / shared.steps / shared.continuity / shared.context_frames）：
+    // Studio 生成面板不再带这些控件，整片怎么跑完全看这里存进配方的值。
+    const initSeed = Number(exShared.seed);
+    seedSharedInp = $el('input', {
+        className: 'neo-director-num neo-director-seed', type: 'number', min: -1, max: 2 ** 63 - 1,
+        placeholder: t('随机'), title: t('留空 = 每次运行随机换种子；各段种子 = 本种子 + 段号'),
+        value: Number.isFinite(initSeed) && initSeed >= 0 ? String(initSeed) : '',
+    });
+    const initSteps = Number(exShared.steps);
+    stepsSharedInp = $el('input', {
+        className: 'neo-director-num neo-director-steps', type: 'number', min: -1, max: 100,
+        placeholder: t('技能默认'), title: t('留空 = 用各段技能 config 的步数；填值则整片统一用这个步数'),
+        value: Number.isFinite(initSteps) && initSteps > 0 ? String(initSteps) : '',
+    });
+    continuitySharedChk = $el('input', { type: 'checkbox' });
+    continuitySharedChk.checked = exShared.continuity !== false;   // 旧配方无该键 = 开
+    continuitySharedChk.title = t('跨段连续性：上一段尾部画面作为下一段开头的重生成窗口 + 角色身份参考继承');
+    ctxSharedInp = $el('input', {
+        className: 'neo-director-num neo-director-ctx', type: 'number', min: 0, max: 362,
+        title: t('上下文窗口帧数：0 = 退回尾帧链入（只带上一段尾帧，不重生成窗口）'),
+        value: String(Number.isFinite(Number(exShared.context_frames)) ? Math.min(362, Math.max(0, Number(exShared.context_frames))) : 22),
+    });
+    ctxSharedWrap = $el('div', { className: 'neo-director-seg-len' }, [
+        $el('span', { textContent: t('上下文帧') }), ctxSharedInp,
+    ]);
+    const refreshCtxVisibility = () => { ctxSharedWrap.style.display = continuitySharedChk.checked ? '' : 'none'; };
+    refreshCtxVisibility();
+    for (const el of [seedSharedInp, stepsSharedInp, ctxSharedInp]) el.addEventListener('change', markDirty);
+    continuitySharedChk.addEventListener('change', () => { markDirty(); refreshCtxVisibility(); });
+
+    // 整片运行参数收进「高级参数」组：默认收起，勾选才在行尾换出来。纯原生 checkbox + CSS :checked，无 JS；
+    // 收起时控件留在 DOM 里，保存照读值——收起不等于不生效。
+    const advChk = $el('input', { className: 'neo-director-adv-check', type: 'checkbox', 'aria-label': t('高级参数') });
+    const advWrap = $el('div', { className: 'neo-director-adv' }, [
+        advChk,
+        $el('span', { className: 'neo-director-adv-label', textContent: t('高级参数'), title: t('种子 / 步数 / 连续性 / 上下文帧：整片怎么跑的参数，默认收起') }),
+        $el('span', { className: 'neo-director-adv-items' }, [
+            $el('label', { textContent: t('种子') }), seedSharedInp,
+            $el('label', { textContent: t('步数') }), stepsSharedInp,
+            $el('label', { className: 'neo-director-check' }, [continuitySharedChk, $el('span', { textContent: t('连续性') })]),
+            ctxSharedWrap,
+        ]),
+    ]);
 
     // 多帧单次分块预览（后端 _plan_chunks 的镜像，仅显示用）：把会合并进同一次 ref2va 运行的连续兼容段标成一个块
     const CHUNK_COMPATIBLE_MODES = new Set(['f2v']);
@@ -2597,7 +2654,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     ]);
 
     const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
-        // 生成模式 / 统一技能 / 分块秒数 + 分辨率：本页决定各段怎么生成（与故事板分镜来源无关）
+        // 一行装下「各段怎么生成」：生成模式 / 统一技能 / 分块秒数 / 分辨率；
+        // 整片运行参数（种子 / 步数 / 连续性 / 上下文帧）收进行尾「高级参数」，默认不占这一行
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: t('生成模式') }), modeSel,
             gSkillLabel, gSkillSel,   // 统一技能：紧邻生成模式（混合模式隐藏）
@@ -2605,6 +2663,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             $el('label', { textContent: t('宽高比') }), aspectSel,
             $el('label', { textContent: t('百万像素') }), mpInp,
             resOut,
+            advWrap,
         ]),
         customRow,
         tlLabelRow,

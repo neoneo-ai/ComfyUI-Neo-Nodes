@@ -437,6 +437,36 @@ class NormalizeDirectorTests(unittest.TestCase):
             {"shared": {"chunk_sec": -5}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
         self.assertNotIn("chunk_sec", shared)
 
+    def test_run_params_normalized(self):
+        # 整片运行参数（编辑器保存，Studio 生成面板只发配方名）：steps 钳到 [-1,100]、
+        # continuity 转 bool、context_frames 钳到 [0,362]
+        shared, _ = recipes._normalize_director(
+            {"shared": {"steps": 300, "continuity": False, "context_frames": 400},
+             "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertEqual(shared["steps"], 100)
+        self.assertIs(shared["continuity"], False)
+        self.assertEqual(shared["context_frames"], 362)
+        shared, _ = recipes._normalize_director(
+            {"shared": {"steps": -1, "continuity": True, "context_frames": 0},
+             "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertEqual(shared["steps"], -1)
+        self.assertIs(shared["continuity"], True)
+        self.assertEqual(shared["context_frames"], 0)
+
+    def test_run_params_absent_keeps_old_recipe_shape(self):
+        # 旧配方没有这些键 → 不落盘：执行时沿用 steps=-1（各段技能 config）、continuity=True、context_frames=22
+        shared, _ = recipes._normalize_director(
+            {"shared": {"width": 800}, "segments": [{"prompt": "x", "skill_id": "s"}]}, {})
+        self.assertNotIn("steps", shared)
+        self.assertNotIn("continuity", shared)
+        self.assertNotIn("context_frames", shared)
+
+    def test_default_dims_prefers_shared_steps(self):
+        # 节点 widget 默认值：配方 shared 存了 steps / 宽高就用配方的；steps=-1（技能默认）不覆盖 config
+        self.assertEqual(recipes._director_default_dims([{"skill_id": "s"}], {"steps": 12, "width": 640, "height": 384}),
+                         {"width": 640, "height": 384, "steps": 12})
+        self.assertEqual(recipes._director_default_dims([], {"steps": -1})["steps"], 20)
+
     def test_multiframe_flag_ignored(self):
         # shared.multiframe 已废弃：无论输入取值如何都不落盘（多帧行为改由选中技能决定）
         for val in (True, False):
@@ -1159,6 +1189,25 @@ class DirectorOrchestrationTests(unittest.TestCase):
         finally:
             self._restore(orig)
         self.assertEqual([b["seed"] for b in bodies], [500, 501])
+
+    def test_shared_seed_minus_one_draws_random_per_run(self):
+        # 配方 shared.seed = -1：每次运行现取种子；同一次运行内各段仍按 base + 原始段序号派生
+        # （_patch 的帧桩是一次性迭代器，两次运行各起一套桩）
+        orig, bodies = self._patch(2, [100, 100], seed_base=-1)
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+            first = [b["seed"] for b in bodies]
+        finally:
+            self._restore(orig)
+        orig, bodies = self._patch(2, [100, 100], seed_base=-1)
+        try:
+            h3_video_director.NeoH3VideoDirector().generate("r", continuity=False)
+            second = [b["seed"] for b in bodies]
+        finally:
+            self._restore(orig)
+        self.assertEqual(first[1] - first[0], 1, "段种子 = 本种子 + 原始段序号")
+        self.assertTrue(all(s >= 0 for s in first + second))
+        self.assertNotEqual(first, second, "两次运行应换种子")
 
     def test_audio_trimmed_to_match_dropped_frames(self):
         orig, _ = self._patch(3, [124, 124, 124], mode="i2v")

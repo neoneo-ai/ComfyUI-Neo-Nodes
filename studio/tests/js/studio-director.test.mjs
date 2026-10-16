@@ -1,5 +1,5 @@
 // Neo Studio 导演页：左配方列表 + 上内嵌导演编辑器 + 分隔条 + 下整片生成面板；
-// 只读时间轴（所选配方分段）、生成中实时预览（载荷按 task_id 路由、终态定格）、分隔条偏好。
+// 分段勾选条（一格一段，勾选只跑其中几段）、生成中实时预览（载荷按 task_id 路由、终态定格）、分隔条偏好。
 // studio-app.js 顶层会取 #ns-view 并连 WebSocket，导入前必须先备好 DOM 与 WS 桩。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -61,25 +61,25 @@ async function until(fn, what) {
     assert.fail(`等待超时：${what}`);
 }
 
-test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
+test("Studio 导演页：分段勾选条 + 生成中实时预览", async () => {
     await import("../../web/studio/studio-app.js");
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
 
-    // 只读时间轴已挂进生成面板（与画布节点内嵌同款组件）
-    assert.ok(document.querySelector(".ns-gen-timeline .neo-dtl-canvas"), "只读时间轴 canvas 应存在");
+    // 分段勾选条挂进生成面板：配方未选中时还没有分段格子
+    assert.equal(document.querySelectorAll(".ns-gen-seg-chip").length, 0, "未选配方时无分段格子");
 
-    // 首个配方自动选中（下方配方面板）：默认值填充 + 拉取 director_spec 刷新时间轴分段
+    // 首个配方自动选中（下方配方面板）：拉 director_spec 刷出分段格子 + 尺寸/步数只读回显
     await until(() => {
         const sel = document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span");
         return sel && sel.textContent === "R1";
     }, "配方自动选中");
-    // 分辨率回填（mock spec 无 shared → 自定义模式按默认 W/H 手输），步数用默认值
-    await until(() =>
-        document.querySelector(".ns-gen-cw").value === "640"
-        && document.querySelector(".ns-gen-ch").value === "384"
-        && Number(document.querySelector(".ns-gen-steps").value) === 20, "默认值填充");
-    assert.ok(!document.querySelector(".ns-gen-row.rs-gen-advanced").classList.contains("rs-adv-open"), "高级（种子/连续性）默认收起");
+    await until(() => document.querySelectorAll(".ns-gen-seg-chip").length === 2, "一格一段（mock spec 2 段）");
+    assert.equal(document.querySelector(".ns-gen-seg-chip .ns-gen-seg-n").textContent, "1", "格子按 1 基段号编号");
+    assert.equal(document.querySelector(".ns-gen-seg-chip .ns-gen-seg-d").textContent, "3s", "格子带该段时长");
+    // 参数不在面板上：尺寸 / 步数只读回显来自配方 defaults
+    assert.equal(document.querySelector(".ns-gen-spec").textContent, "640×384 · 20 步", "回显配方尺寸与步数");
+    assert.equal(document.querySelector(".ns-gen-panel input"), null, "生成面板不再有参数输入控件");
     assert.ok(fetchLog.some((c) => c.path === "/rs_recipes/director_spec"), "应拉取配方 spec");
 
     // 提交生成：排队中状态 + 实时预览面板初始隐藏
@@ -108,7 +108,7 @@ test("Studio 导演页：只读时间轴 + 生成中实时预览", async () => {
     assert.equal(document.querySelectorAll(".ns-gen-final").length, 2, "播放器 + 打开链接");
 });
 
-test("Studio 导演页：点时间轴分段块把配方编辑器内嵌进右上栏并定位到该段", async () => {
+test("Studio 导演页：点分段格子的 ✎ 把配方编辑器内嵌进右上栏并定位到该段", async () => {
     await import("../../web/studio/studio-app.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 编辑器内无媒体候选
     location.hash = "#/director";
@@ -122,13 +122,8 @@ test("Studio 导演页：点时间轴分段块把配方编辑器内嵌进右上�
     assert.ok(document.querySelector(".ns-director-side .neo-recipes-list"), "配方列表挂在左栏");
     assert.ok(document.querySelector(".ns-director-editor-hint"), "没有编辑器时右上出占位提示");
 
-    // canvas 桩：W=320，段 3s+4s → 块1 ≈ [138,312]，点 x=200 命中第 2 块
-    const canvas = document.querySelector(".ns-gen-timeline .neo-dtl-canvas");
-    Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
-    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
-    const mouse = (type, x) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x });
-    canvas.dispatchEvent(mouse("mousedown", 200));
-    window.dispatchEvent(mouse("mouseup", 200));
+    // 点第 2 格的 ✎ → 打开导演编辑器并定位到该段（与画布节点 ✎ 同源）
+    click(document.querySelectorAll(".ns-gen-seg-chip .ns-gen-seg-edit")[1]);
 
     // 编辑器内嵌进右上宿主（不建浮层窗口），并定位到第 2 段（listRecipes 取 R1 meta，focusSeg=1）
     await until(() => document.querySelector(".ns-director-editor .neo-director-panel"), "编辑器内嵌出现");
@@ -253,28 +248,44 @@ test("Studio 导演页：勾选段后只提交勾选的段（运行期临时状�
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
     await until(() => document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span")?.textContent === "R1", "配方自动选中");
-    await sleep(60);   // 等 director_spec 填好时间轴分段（2 段）
+    await until(() => document.querySelectorAll(".ns-gen-seg-chip").length === 2, "分段格子就位");
 
-    const hint = () => document.querySelector(".ns-gen-hint").textContent;
+    const hint = () => document.querySelector(".ns-gen-segs-hint").textContent;
+    const chip = (i) => document.querySelectorAll(".ns-gen-seg-chip")[i];
     assert.match(hint(), /未勾选/, "默认未勾选 = 整片");
 
-    // canvas 桩：W=320，段 3s+4s → 块0 [8,138]、块1 [138,312]；勾选框中心 = 块x + 11, y = 32
-    const canvas = document.querySelector(".ns-gen-timeline .neo-dtl-canvas");
-    Object.defineProperty(canvas, "clientWidth", { value: 320, configurable: true });
-    canvas.__rect = { x: 0, y: 0, top: 0, left: 0, right: 320, bottom: 92, width: 320, height: 92 };
-    const mouse = (type, x, y) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
-    canvas.dispatchEvent(mouse("mousedown", 8 + 11, 32));
-    canvas.dispatchEvent(mouse("mouseup", 8 + 11, 32));
+    click(chip(0));
     await until(() => hint().includes("勾选"), "提示反映勾选");
     assert.equal(hint(), "仅运行勾选的 1 段：[1]");
-    assert.equal(document.querySelector(".neo-director-overlay"), null, "点勾选不应打开编辑器");
+    assert.equal(chip(0).getAttribute("aria-pressed"), "true", "格子按下态");
+    assert.equal(document.querySelector(".neo-director-overlay"), null, "点格子不应打开编辑器");
 
     const before = fetchLog.length;
     click(document.querySelector(".ns-gen-run"));
     await until(() => fetchLog.slice(before).some((c) => c.path === "/neo_studio/director/generate"), "提交生成");
     const call = fetchLog.slice(before).find((c) => c.path === "/neo_studio/director/generate");
-    assert.equal(call.body.only_segments, "1", "只提交勾选的段");
+    assert.equal(call.body.only_segments, "1", "只提交勾选的段（1 基逗号串）");
     assert.equal(call.body.recipe, "R1");
+    assert.equal(Object.keys(call.body).sort().join(","), "only_segments,recipe", "生成参数不进请求（参数在配方里）");
+
+    // 全选 / 清空：清空后回到整片（only_segments 空串）
+    click(document.querySelector(".ns-gen-segs-all"));
+    assert.equal(hint(), "仅运行勾选的 2 段：[1,2]", "全选 = 全部段");
+    click(document.querySelector(".ns-gen-segs-clear"));
+    assert.match(hint(), /未勾选/, "清空 = 整片");
+    const cleared = fetchLog.length;
+    click(document.querySelector(".ns-gen-run"));
+    await until(() => fetchLog.slice(cleared).some((c) => c.path === "/neo_studio/director/generate"), "提交生成");
+    assert.equal(fetchLog.slice(cleared).find((c) => c.path === "/neo_studio/director/generate").body.only_segments, "", "未勾选 = 整片");
+
+    // 分段换掉（重选配方 → 重拉 spec）→ 勾选作废：勾选是运行期临时状态，不跨配方保留
+    click(chip(1));
+    assert.equal(chip(1).getAttribute("aria-pressed"), "true");
+    click(document.querySelector(".ns-director-side .neo-recipes-card"));
+    await until(() => hint().includes("未勾选"), "重选配方后勾选作废");
+    await until(() => document.querySelector(".ns-director-editor .neo-director-panel"), "重选配方同时打开编辑器");
+    click(document.querySelector(".neo-director-close"));
+    await until(() => !document.querySelector(".ns-director-editor .neo-director-panel"), "关掉重选时打开的编辑器");
 });
 
 test("Studio 导演页：分隔条调生成面板高度、双击收起 / 展开（偏好落盘）", async () => {
@@ -293,12 +304,12 @@ test("Studio 导演页：分隔条调生成面板高度、双击收起 / 展开�
     window.dispatchEvent(mouse("mousemove", 300));
     window.dispatchEvent(mouse("mouseup", 300));
     assert.ok(!main.classList.contains("ns-split-drag") && !split.classList.contains("ns-split-drag"), "松手恢复过渡");
-    assert.equal(panel.style.height, "170px", "拖动写入面板高度");
+    assert.equal(panel.style.height, "90px", "拖动写入面板高度");
     assert.ok("height" in pref() && "collapsed" in pref(), "高度与收起状态落盘");
 
     // 键盘：↑ 加高同样走钳制，Enter 收起
     split.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
-    assert.equal(panel.style.height, "170px", "键盘调高写入面板高度");
+    assert.equal(panel.style.height, "90px", "键盘调高写入面板高度");
     split.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     assert.ok(main.classList.contains("ns-director-collapsed"), "Enter 收起生成面板");
     assert.equal(panel.style.display, "none", "收起时整块隐藏");

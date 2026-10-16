@@ -1095,11 +1095,40 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
             skillSel.value = QWEN_IMAGE_SKILL_ID;
         }
     })();
+    // 自定参数（同「生成素材」弹窗）：本次临时换主模型 / LoRA，留空 = 跟随该技能 config 与全局生图设置。
+    // 宽高比 / 最长边不在这里露出：编辑出图尺寸跟原图走（「目标分辨率」行），比例覆盖在这条路上不生效。
+    const editModelCfg = createModelConfigSection();
+    for (const row of editModelCfg.el.querySelectorAll(".rs-gen-adv-row")) row.remove();
+    const editModelBox = $el("div", { className: "neo-gallery-edit-model-box", style: { display: "none" } });
+    editModelBox.appendChild(editModelCfg.el);
+    const editModelToggle = $el("button", {
+        className: "neo-gallery-gm-model-toggle", type: "button",
+        textContent: t("⚙️ 自定参数 ▸"),
+        title: t("本次临时换主模型 / LoRA：留空 = 跟随该技能配置与全局生图设置"),
+    });
+    editModelToggle.addEventListener("click", () => {
+        const open = editModelBox.style.display === "none";
+        editModelBox.style.display = open ? "" : "none";
+        editModelToggle.textContent = tf("⚙️ 自定参数 {arrow}", { arrow: open ? "▾" : "▸" });
+    });
+    let editGenModels = null;   // 开窗拉一次模型列表，切技能重放配置时复用
+    const applyEditModelCfg = async (skillId) => {
+        if (!editGenModels || !skillId) return;
+        editModelCfg.load(await getSkillGenConfig(skillId), editGenModels);
+    };
+    (async () => {
+        try {
+            editGenModels = await listGenModels();
+            editModelCfg.load({}, editGenModels);   // 先按「自动」渲染，避免下拉为空
+            applyEditModelCfg(skillSel.value);      // 再覆盖为当前技能配置
+        } catch { /* 模型列表拉不到就保持「自动」，不挡生成 */ }
+    })();
     // 切换技能时自动填入默认提示词（如换脸触发词）
     skillSel.onchange = () => {
         const sk = _genSkills.find(s => s.id === skillSel.value);
         const dp = sk?.gen_config?.default_prompt;
         if (dp) promptInput.value = dp;
+        applyEditModelCfg(skillSel.value);
     };
 
     const renderIdle = () => {
@@ -1207,6 +1236,10 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
                 references: refs,
                 skip_enhance: true,
             };
+            // 自定参数只带非空值：空串 / 空数组会覆盖掉该技能 config 与全局设置里的显式配置
+            const ov = editModelCfg.collect();
+            if (ov.model) payload.model = ov.model;
+            if (ov.loras.length) payload.loras = ov.loras;
             if (outpaintPayload) {
                 payload.outpaint = outpaintPayload;
             }
@@ -1438,17 +1471,19 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
                     poseBtn,
                     refDropContainer
                 ]),
-                $el("div", { className: "neo-gallery-story-form-row" }, [
+                $el("div", { className: "neo-gallery-story-form-row neo-gallery-edit-size-row" }, [
                     resLabelEl,
                     $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-width", min: 256, max: 8192, step: 32, placeholder: t("宽") }),
                     $el("span", { textContent: " × " }),
                     $el("input", { type: "number", className: "neo-recipes-sort", id: "img-edit-height", min: 256, max: 8192, step: 32, placeholder: t("高") }),
-                    sizeLabel
+                    sizeLabel,
+                    editModelToggle
                 ])
             ]),
             outpaintRow,
             localRow,
             removeRow,
+            editModelBox,
             promptInput,
             statusBox,
             actionsBox
@@ -1768,8 +1803,9 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
         resLabelEl.textContent = { outpaint: t("目标尺寸"), local: t("编辑区（自动）"), remove: t("同原图") }[mode] || t("目标分辨率");
         sizeLabel.style.display = mode === "outpaint" ? "" : "none";
 
-        // 技能选择
+        // 技能选择（程序改 value 不触发 onchange，自定参数要自己重放到新技能的配置）
         skillSel.value = { outpaint: QWEN_OUTPAINT_SKILL_ID, local: QWEN_LOCAL_EDIT_SKILL_ID, pose: QWEN_POSE_EDIT_SKILL_ID }[mode] || QWEN_IMAGE_SKILL_ID;
+        applyEditModelCfg(skillSel.value);
 
         // 模式专属 setup
         if (mode === "outpaint") {

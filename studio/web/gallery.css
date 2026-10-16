@@ -224,7 +224,7 @@
     color: #FF9944;
 }
 
-/* 「生成素材」弹窗内「自定参数」折叠行：展开后显示主模型 / LoRA / 比例 / 最长边临时选择区 */
+/* 「生成素材」弹窗与「图片编辑」面板的「自定参数」折叠行：展开后显示主模型 / LoRA 等临时选择区 */
 .neo-gallery-gm-model-toggle {
     flex-shrink: 0;
     white-space: nowrap;
@@ -240,7 +240,8 @@
     color: #FF9944;
 }
 
-.neo-gallery-gm-model-box {
+.neo-gallery-gm-model-box,
+.neo-gallery-edit-model-box {
     margin: 4px 0 8px;
     display: flex;
     flex-direction: column;
@@ -248,25 +249,30 @@
 }
 
 /* 自定参数区紧凑布局：标签与控件同行（覆盖 .rs-config-row 默认纵向堆叠） */
-.neo-gallery-gm-model-box .rs-gen-model-section {
+.neo-gallery-gm-model-box .rs-gen-model-section,
+.neo-gallery-edit-model-box .rs-gen-model-section {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
-.neo-gallery-gm-model-box .rs-config-row {
+.neo-gallery-gm-model-box .rs-config-row,
+.neo-gallery-edit-model-box .rs-config-row {
     flex-direction: row;
     align-items: center;
     gap: 8px;
 }
-.neo-gallery-gm-model-box .rs-config-row > .rs-form-label {
+.neo-gallery-gm-model-box .rs-config-row > .rs-form-label,
+.neo-gallery-edit-model-box .rs-config-row > .rs-form-label {
     flex-shrink: 0;
     margin-bottom: 0;
 }
-.neo-gallery-gm-model-box .rs-config-row .rs-model-select-box {
+.neo-gallery-gm-model-box .rs-config-row .rs-model-select-box,
+.neo-gallery-edit-model-box .rs-config-row .rs-model-select-box {
     flex: 1;
     min-width: 0;
 }
-.neo-gallery-gm-model-box .rs-gen-lora-list {
+.neo-gallery-gm-model-box .rs-gen-lora-list,
+.neo-gallery-edit-model-box .rs-gen-lora-list {
     flex: 1;
     min-width: 0;
 }
@@ -2780,6 +2786,11 @@ Accordion Section Buttons (Clear)
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+}
+
+/* 「目标分辨率」行末挂着「自定参数」折叠行：绘画页右栏窄，让它换行而不是挤出弹窗 */
+.neo-gallery-edit-size-row {
+    flex-wrap: wrap;
 }
 
 /* 扩图开关按钮 */

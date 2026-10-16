@@ -1931,3 +1931,49 @@ test("导演编辑器：参考素材组只收本组类型（拖入与本地上�
     await sleep(20);
 });
 
+test("导演编辑器：整片运行参数（种子 / 步数 / 连续性 / 上下文帧）在时间线页回显并落进 shared", async () => {
+    const { openDirectorEditor } = await import("../../web/director.js");
+    appState.graph = { _nodes: [] };
+    mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
+    mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "RUN" }));
+
+    await openDirectorEditor({
+        name: "RUN",
+        shared: { mode: "f2v", seed: 1234, steps: 8, continuity: false, context_frames: 40 },
+        segments: [{ skill_id: "sk-a", prompt: "第一段", duration_sec: 5 }],
+    });
+    await sleep(60);
+
+    const tl = document.querySelector(".neo-director-pane-timeline");
+    const adv = tl.querySelector(".neo-director-adv");
+    const seedInp = tl.querySelector(".neo-director-seed");
+    const stepsInp = tl.querySelector(".neo-director-steps");
+    const ctxInp = tl.querySelector(".neo-director-ctx");
+    const chkBox = tl.querySelector(".neo-director-check input[type=checkbox]");
+    // 整片运行参数收在「高级参数」组里，与生成模式 / 分辨率同占一行，默认收起
+    assert.ok(adv.querySelector(".neo-director-seed"), "整片运行参数收进高级参数组");
+    assert.equal(adv.querySelector(".neo-director-adv-check").checked, false, "高级参数默认收起");
+    assert.equal(adv.parentElement, tl.querySelector(".neo-director-row.neo-director-shared"), "高级参数与生成模式同占一行");
+    assert.equal(seedInp.value, "1234", "回显配方种子");
+    assert.equal(stepsInp.value, "8", "回显配方步数");
+    assert.equal(ctxInp.value, "40", "回显上下文帧");
+    assert.equal(chkBox.checked, false, "回显连续性关掉");
+    assert.equal(ctxInp.parentElement.style.display, "none", "连续性关掉时不显示上下文帧");
+
+    // 种子留空 = 随机（落 -1）；步数改 12；连续性开 → 上下文帧可见
+    changeValue(seedInp, "");
+    changeValue(stepsInp, "12");
+    chkBox.click();
+    await sleep(10);
+    assert.notEqual(ctxInp.parentElement.style.display, "none", "连续性开 → 上下文帧可见");
+    document.querySelector(".neo-director-save").click();
+    await sleep(50);
+    const shared = fetchLog.filter((c) => c.path === "/rs_recipes/save").pop().body.shared;
+    assert.equal(shared.seed, -1, "种子留空落 -1 = 每次运行随机换种子");
+    assert.equal(shared.steps, 12, "步数落进配方");
+    assert.equal(shared.continuity, true, "连续性落进配方");
+    assert.equal(shared.context_frames, 40, "上下文帧落进配方");
+    assert.equal(document.querySelector(".neo-director-panel"), null, "保存成功后编辑器自动关闭");
+});
+
+

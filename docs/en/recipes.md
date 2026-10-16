@@ -106,7 +106,7 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
   / the ✎ in the top-right of a `NeoH3VideoDirector` node (entering through a block positions the editor on
   that segment; when the window is already open, clicking another block only switches the current segment).
 - Desktop Studio director page: clicking a left-column recipe card selects it and opens it embedded in the
-  top-right pane (the card's ✎ works too); a segment block on the read-only timeline opens it on that segment.
+  top-right pane (the card's ✎ works too); the ✎ on a segment chip in the generation panel opens it on that segment.
 - The **＋** in the bottom-right outside the node's timeline display opens the create editor directly (after
   saving, the recipe is added to the `recipe` dropdown and selected).
 - **Run only the checked segments**: hovering a timeline segment block reveals a checkbox, and checking some
@@ -123,7 +123,17 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
   the preset ratio closest to the first-frame image (only the ratio dropdown moves; megapixels and typed
   values are untouched). After a grid split the shared ratio snaps to the closest preset for the first frame
   as well. On save, segments whose first-frame ratios disagree trigger a non-blocking warning.
-  The seed is not set in the editor (the backend defaults to 0, overridable by the node's `seed` input).
+- **Film run parameters** (behind the **Advanced** checkbox at the end of the first row of the
+  "🎞️ Storyboard timeline" page, collapsed by default, saved into `shared`):
+  - **Seed**: empty = `-1`, a fresh random seed on every run; each segment's seed = this seed + its original
+    segment index. An explicit value on the node's `seed` input overrides it.
+  - **Steps**: empty = `-1`, each segment uses its own skill config's steps; a typed value (≤100) applies that
+    step count to the whole film.
+  - **Continuity** (on by default): the tail of the previous segment becomes the regeneration window at the start
+    of the next one, and character identity references are inherited.
+  - **Context frames** (shown only while continuity is on): the context window frame count; 0 = fall back to
+    last-frame chaining (only the previous segment's last frame, no regeneration window).
+  Recipes missing these keys keep the original defaults (skill-config steps, continuity on, 22 context frames).
 - **Generation mode & skill**: the first row of the "🎞️ Storyboard timeline" page holds the global generation
   mode dropdown (storyboard to video / full-reference video / mixed) and the unified "skill" picker (clicking
   opens a centered search window, options filtered by the global mode, sorted by ascending steps). In
@@ -159,8 +169,8 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
 - **Embedded in desktop Studio**: the Studio director page lays the editor out directly inside the top-right
   pane (the recipe list stays in the left column, the generation panel below), with no overlay window — no
   title-bar dragging, no **⛶** maximize, no resize handle; close with the title-bar **✕**. The footer gains
-  **🎬 Save & Generate Film**: it runs the full save path and, on success, submits the film with the
-  generation panel's current parameters. See [studio-desktop.md](studio-desktop.md).
+  **🎬 Save & Generate Film**: it runs the full save path and, on success, submits the film with the parameters
+  just saved into the recipe plus the segments checked in the generation panel. See [studio-desktop.md](studio-desktop.md).
 - **🤖 LLM config** on the right of the title bar opens the embedded LLM configuration form (values are
   backfilled in the background on open, 💾 writes them out).
 - The **recipe name** shows in the middle of the title bar; clicking turns it into inline input, Enter or blur

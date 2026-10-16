@@ -22,6 +22,7 @@
 """
 
 import math
+import random
 import re
 
 import torch
@@ -921,7 +922,7 @@ class NeoH3VideoDirector:
                 "skill": ([_skill_label(s) for s in vskills], {"default": _skill_label(default_skill) if default_skill else "",
                                                                "tooltip": "仅 BUNDLE 单段模式用的视频 skill；配方多段模式忽略（各段自带 skill）。"}),  # BUNDLE 单段用的视频 skill（不可用带「（不可用）」后缀）；recipe 多段模式忽略（各段自带）
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2**63 - 1,
-                                 "tooltip": "-1 = 用配方 shared.seed；≥0 = 本次整片覆盖该种子。"}),   # -1 = 用配方 shared.seed
+                                 "tooltip": "-1 = 用配方 shared.seed（配方里存 -1 = 每次运行随机种子）；≥0 = 本次整片覆盖该种子。"}),   # -1 = 用配方 shared.seed
                 "width": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION,
                                   "tooltip": "-1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选配方时前端自动填）。"}),  # -1 = 优先配方 shared 分辨率，缺省回退各段 skill config（选中配方时前端自动填）
                 "height": ("INT", {"default": -1, "min": -1, "max": comfy_nodes.MAX_RESOLUTION,
@@ -932,7 +933,7 @@ class NeoH3VideoDirector:
                                            "tooltip": "上下文窗口帧数；0 = 退回尾帧链入（只带上一段尾帧）。"}),  # 上下文窗口帧数；0 = 退回 Tier A 尾帧链入
                 "model": ("MODEL", {"tooltip": "外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）。"}),  # 外部加速模型；提供时覆盖每段内部主模型链（UNETLoader/LoRA/VDN）
                 "steps": ("INT", {"default": -1, "min": -1, "max": 100,
-                                  "tooltip": "-1 = 用各段 preset/config 的 steps。"}),  # -1 = 用 preset/config 值
+                                  "tooltip": "-1 = 优先配方 shared.steps，缺省用各段 preset/config 的 steps。"}),  # -1 = 优先配方值，再退 preset/config
                 "preview": ("BOOLEAN", {"default": True,
                                         "tooltip": "节点内实时预览：开 = taeh3 真彩动作预览，关 = 完全不出（省显存）。"}),   # 节点内实时预览：开 = taeh3 真彩动作预览，关 = 完全不出
                 # 仅 BUNDLE 单段模式用（配方多段时各段自带 duration_sec）：秒 → 帧（24fps，向上对齐 17k+5 网格）
@@ -1029,6 +1030,9 @@ class NeoH3VideoDirector:
         orig = [i for i, _ in runs]           # 子序列各段的原始段序号
 
         base_seed = int(seed) if int(seed) >= 0 else (int(shared.get("seed", 0)) if shared.get("seed") is not None else 0)
+        # 配方 shared.seed = -1 → 本次运行随机取种子；各段仍按 base_seed + 原始段序号派生，重跑同一段结果一致
+        if base_seed < 0:
+            base_seed = random.randrange(2 ** 63)
         # width/height：节点入参 > 0 时覆盖全部段；-1 时优先配方 shared 分辨率，缺省再回退各段 skill config 默认。
         in_w = int(width) if int(width) > 0 else int(shared.get("width") or 0)
         in_h = int(height) if int(height) > 0 else int(shared.get("height") or 0)

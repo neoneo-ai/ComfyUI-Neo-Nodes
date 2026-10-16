@@ -67,18 +67,10 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         await page.evaluate(() => { location.hash = "#/director"; });
         await page.waitForSelector(".ns-gen-panel .rs-btn.ns-gen-run", { timeout: 15000 });
         await page.waitForSelector(".neo-recipes-panel", { timeout: 15000 });
-        // 只读时间轴挂进生成面板（与画布节点内嵌同款组件）
-        await page.waitForSelector(".ns-gen-timeline .neo-dtl-canvas", { timeout: 5000 });
         // .rs-btn 基础样式 flex:1；满幅主区里不应拉伸成长条
         const runFlex = await page.evaluate(() =>
             getComputedStyle(document.querySelector(".ns-gen-panel .rs-btn.ns-gen-run")).flexGrow);
         assert.equal(runFlex, "0", "生成整片按钮不应被 flex 拉伸");
-        // 控制行属于配方列（配方区 = 控制行 + 时间轴；结果区 = 预览/成片），行尾按钮右端应与时间轴右端对齐
-        const edges = await page.evaluate(() => {
-            const right = (sel) => document.querySelector(sel).getBoundingClientRect().right;
-            return { btn: right(".ns-gen-panel .ns-gen-run-group"), tl: right(".ns-gen-timeline") };
-        });
-        assert.ok(Math.abs(edges.btn - edges.tl) <= 1, `生成按钮右端应与时间轴右端对齐（差 ${Math.round(edges.btn - edges.tl)}px）`);
         // 导演页 = 左配方列表 + 右主栏（上导演编辑器 / 分隔条 / 下整片生成面板）
         const layout = await page.evaluate(() => {
             const cs = (s) => getComputedStyle(document.querySelector(s));
@@ -96,27 +88,35 @@ test("Studio 页面：四视图加载、版本信息、导演生成面板", asyn
         assert.ok(layout.editor, "右上编辑器宿主就位");
         assert.ok(layout.split, "编辑器与生成面板之间有分隔条");
 
-        // 首个配方自动选中：对应卡片高亮，且 分辨率/步数 按 director_spec 默认值填充（与画布节点同源）
+        // 首个配方自动选中：对应卡片高亮，分段格子按 director_spec 分段刷出，尺寸/步数只读回显（参数在编辑器里）
         const spec = await page.evaluate(async () => {
             const v = await (await fetch("/neo_studio/version")).json();
             const name = (v.recipes || [])[0];
             if (!name) return null;
             const s = await (await fetch(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`)).json();
-            return { name, defaults: s.defaults };
+            return { name, defaults: s.defaults, segments: (s.segments || []).length };
         });
         if (spec) {
             const selectedName = await page.evaluate(() =>
                 document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span")?.textContent);
             assert.equal(selectedName, spec.name, "首个配方应被自动选中");
-            // 分辨率两种形态都算回填成功：预设比例 → W×H 回显；自定义/旧配方 → 手输 W/H 精确值
-            await page.waitForFunction((d) => {
-                const panel = document.querySelector(".ns-gen-panel");
-                const out = (panel.querySelector(".ns-gen-res-out")?.textContent || "").replace(/\s/g, "");
-                const cw = panel.querySelector(".ns-gen-cw"), ch = panel.querySelector(".ns-gen-ch");
-                const custom = cw.style.display !== "none" && Number(cw.value) === d.width && Number(ch.value) === d.height;
-                return Number(panel.querySelector(".ns-gen-steps").value) === d.steps
-                    && (out === `${d.width}×${d.height}` || custom);
-            }, spec.defaults, { timeout: 5000 });
+            await page.waitForFunction((d) =>
+                document.querySelectorAll(".ns-gen-seg-chip").length === d.segments
+                && document.querySelector(".ns-gen-spec").textContent.includes(`${d.width}×${d.height}`)
+                && document.querySelector(".ns-gen-spec").textContent.includes(`${d.steps} 步`),
+            { ...spec.defaults, segments: spec.segments }, { timeout: 5000 });
+            // 控制行压成一行：分段格子与控制项同占一行、生成按钮贴行右端，整行只占一行高（竖向空间留给结果区）
+            // （勾选条没内容时是零高度空盒，Playwright 视作不可见，只能等格子出来再量）
+            const line = await page.evaluate(() => {
+                const box = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { top: r.top, right: r.right, bottom: r.bottom }; };
+                return { row: box(".ns-gen-panel .ns-gen-row"), segs: box(".ns-gen-segs"), btn: box(".ns-gen-panel .ns-gen-run-group") };
+            });
+            assert.ok(line.segs.top >= line.row.top - 1 && line.segs.bottom <= line.row.bottom + 1,
+                `分段格子与控制项同一行（格子 ${Math.round(line.segs.top)}-${Math.round(line.segs.bottom)}，行 ${Math.round(line.row.top)}-${Math.round(line.row.bottom)}）`);
+            assert.ok(line.row.bottom - line.row.top <= 40, `控制行只占一行（实测 ${Math.round(line.row.bottom - line.row.top)}px）`);
+            assert.ok(Math.abs(line.btn.right - line.row.right) <= 1, `生成按钮贴行右端（差 ${Math.round(line.btn.right - line.row.right)}px）`);
+            // 生成面板不再带参数控件：分辨率 / 步数 / 种子都在导演编辑器里
+            assert.equal(await page.locator(".ns-gen-panel input").count(), 0, "生成面板不应有参数输入控件");
 
             // 点另一张卡片 → 高亮切换（选中直接喂生成区，不再用顶部下拉）
             const cardCount = await page.locator(".neo-recipes-card").count();

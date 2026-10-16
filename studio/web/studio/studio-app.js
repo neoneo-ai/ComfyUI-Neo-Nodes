@@ -9,9 +9,8 @@ import { api } from "./shim/api.js";
 import { $el } from "./shim/ui.js";
 
 import "../gallery.js";   // 注册 comfy.neo.gallery 扩展（NeoGallery + 侧栏 tab 定义）
-import { openDirectorEditor, setDirectorEditorHost, DIRECTOR_RECIPE_SAVED_EVENT, DIRECTOR_ASPECTS, DIRECTOR_CUSTOM, MP_MIN, MP_MAX, MP_DEFAULT, directorClampMp, directorResolution, directorInferAspect } from "../director.js";
+import { openDirectorEditor, setDirectorEditorHost, DIRECTOR_RECIPE_SAVED_EVENT } from "../director.js";
 import { setPaintHost, openGenMaterialDialog, openImageEditDialog } from "../gallery-gen.js";
-import { DirectorTimeline } from "../director-timeline.js";
 import { createFramePlayer } from "../live-preview.js";
 import { createRecipesPanel, listRecipes } from "../recipes.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "../image-gen.js";
@@ -167,7 +166,7 @@ async function refreshRecipesPanel() {
 
 // ====== 导演页分隔条：编辑器 / 生成面板高度自由调，双击收起 / 展开生成面板 ======
 const SPLIT_KEY = "neo_studio_director_split";
-const SPLIT_PANEL_MIN = 170;   // 生成面板下限：参数行 + 时间轴 + 状态行还能用
+const SPLIT_PANEL_MIN = 90;   // 生成面板下限：一行控制 + 进度 + 状态行还能用
 const SPLIT_EDITOR_MIN = 240;  // 编辑器下限：编辑器内部自带滚动，再小就没法编辑了
 
 function buildDirectorSplit(main, genPanel) {
@@ -371,37 +370,14 @@ async function buildDirector(el) {
 
     const onSelect = (r) => {
         currentRecipeName = r.name;
-        applyRecipeDefaults(r.name);   // 填 分辨率/步数 + 同步只读时间轴分段
+        applyRecipe(r.name);   // 刷新分段格子 + 尺寸/步数回显
     };
     const panelOpts = () => ({ directorOnly: true, autoSelectFirst: true, initialSelection: currentRecipeName, openEditorOnSelect: true, onSelect });
     directorPanelOpts = panelOpts;
 
     // --- 整片生成面板 ---
-    // 分辨率与配方编辑器同源：宽高比 + 百万像素 → W/H（32 对齐）；「自定义」手输 W/H
-    const seedInput = $el("input", { type: "number", placeholder: t("默认"), title: t("留空 = 用配方里的种子"), className: "ns-gen-seed" });
-    const continuityChk = $el("input", { type: "checkbox" });
-    continuityChk.checked = true;
-    const ctxInput = $el("input", { type: "number", value: "22", className: "ns-gen-ctx" });
-    const stepsInput = $el("input", { type: "number", placeholder: t("默认"), title: t("留空 = 用技能默认步数"), className: "ns-gen-steps" });
-    const aspectSel = $el("select", { className: "ns-gen-aspect" });
-    for (const [label] of DIRECTOR_ASPECTS) aspectSel.appendChild($el("option", { value: label, textContent: label }));
-    aspectSel.appendChild($el("option", { value: DIRECTOR_CUSTOM, textContent: DIRECTOR_CUSTOM + t("（手输 W/H）") }));
-    const mpInp = $el("input", { type: "number", min: MP_MIN, max: MP_MAX, step: 0.1, value: MP_DEFAULT, className: "ns-gen-mp" });
-    const cwInp = $el("input", { type: "number", min: 16, placeholder: t("宽"), className: "ns-gen-cw" });
-    const chInp = $el("input", { type: "number", min: 16, placeholder: t("高"), className: "ns-gen-ch" });
-    const resOut = $el("span", { className: "ns-gen-res-out" });
-    // 预设比例 + 百万像素 → W×H 回显；「自定义」改显手输 W/H（与配方编辑器同交互）
-    const updateRes = () => {
-        const custom = aspectSel.value === DIRECTOR_CUSTOM;
-        cwInp.style.display = chInp.style.display = custom ? "" : "none";
-        resOut.style.display = custom ? "none" : "";
-        if (custom) return;
-        const r = directorResolution(aspectSel.value, mpInp.value);
-        resOut.textContent = r ? `${r.width}×${r.height}` : "";
-    };
-    aspectSel.addEventListener("change", updateRes);
-    mpInp.addEventListener("input", updateRes);
-    updateRes();
+    // 生成参数（分辨率 / 步数 / 种子 / 连续性 / 上下文帧）全部在上方导演编辑器里保存进配方，
+    // 本面板只做「跑哪几段 + 看结果」，不再重复一套控件。
     const runBtn = $el("button", { className: "rs-btn ns-gen-run", type: "button", textContent: t("🎬 生成整片") });
     gateRunButton(runBtn, "director", t("🎬 生成整片"));
 
@@ -409,42 +385,54 @@ async function buildDirector(el) {
     const statusEl = $el("div", { className: "ns-gen-status" });
     const barEl = $el("div", { className: "ns-gen-progress" }, [$el("div")]);
 
-    // --- 只读时间轴：画出所选配方的分段（与画布节点内嵌同款组件）；运行中各段状态由 director_progress 轮询驱动 ---
-    const tlBox = $el("div", { className: "ns-gen-timeline" });
+    // --- 分段勾选条：一格一段。点格子 = 勾选要跑的段（未勾选 = 整片）；点 ✎ = 打开编辑器定位到该段；
+    // 运行中由 director_progress 高亮当前段。勾选是运行期临时状态：换配方即清空，不写进配方。
     let tlSegments = [];
     let tlProgress = { active: false, segment_index: -1, total_segments: 0 };
-    let timeline = null;
-    // 「仅运行勾选的段」：时间轴段块左上角勾选 → 整片生成只提交这些段（运行期临时状态，不写进配方；换配方即清空）
     let checkedSegments = [];
-    const onlyHint = $el("div", { className: "ns-gen-hint" });
+    const segsBox = $el("div", { className: "ns-gen-segs" });
+    const segsAllBtn = $el("button", { className: "rs-btn ns-gen-segs-all", type: "button", textContent: t("全选") });
+    const segsClearBtn = $el("button", { className: "rs-btn ns-gen-segs-clear", type: "button", textContent: t("清空") });
+    const segsHint = $el("span", { className: "ns-gen-segs-hint" });
+    const specEl = $el("span", { className: "ns-gen-spec" });   // 只读回显：本次整片的尺寸 / 步数（值来自配方，要改去编辑器）
+
+    const renderSegs = () => {
+        segsBox.textContent = "";
+        tlSegments.forEach((s, i) => {
+            const chip = $el("button", {
+                className: "ns-gen-seg-chip", type: "button", title: s.prompt || "",
+                "aria-pressed": checkedSegments.includes(i) ? "true" : "false",
+            }, [
+                $el("span", { className: "ns-gen-seg-n", textContent: String(i + 1) }),
+                $el("span", { className: "ns-gen-seg-d", textContent: `${Number(s.duration_sec) || 0}s` }),
+                $el("span", { className: "ns-gen-seg-edit", title: tf("编辑段 {n}", { n: i + 1 }), textContent: "✎" }),
+            ]);
+            chip.onclick = (ev) => {
+                if (ev.target.classList.contains("ns-gen-seg-edit")) { openRecipeEditor(i); return; }
+                setChecked(checkedSegments.includes(i)
+                    ? checkedSegments.filter((x) => x !== i)
+                    : [...checkedSegments, i].sort((a, b) => a - b));
+            };
+            segsBox.appendChild(chip);
+        });
+        // 运行中高亮当前段：segment_index 是 0 基原始段序号，与勾选段号同源
+        if (tlProgress.active && tlProgress.segment_index >= 0) {
+            segsBox.children[tlProgress.segment_index]?.classList.add("ns-gen-seg-running");
+        }
+        const hasSegs = tlSegments.length > 0;
+        segsAllBtn.style.display = segsClearBtn.style.display = hasSegs ? "" : "none";
+    };
     const setChecked = (list) => {
         checkedSegments = list || [];
-        onlyHint.textContent = checkedSegments.length
+        segsHint.textContent = checkedSegments.length
             ? tf("仅运行勾选的 {n} 段：[{list}]", { n: checkedSegments.length, list: checkedSegments.map((i) => i + 1).join(",") })
             : t("未勾选 = 生成整片");
-        onlyHint.title = t("在时间轴段块左上角勾选，可只跑其中几段");
+        segsHint.title = t("点分段格子勾选要跑的段；未勾选 = 生成整片");
+        renderSegs();
     };
+    segsAllBtn.onclick = () => setChecked(tlSegments.map((_, i) => i));
+    segsClearBtn.onclick = () => setChecked([]);
     setChecked([]);
-    try {
-        timeline = new DirectorTimeline(tlBox, {
-            height: 122,   // 默认 92 加高约 1/3，段块内容更宽裕
-            readOnly: true,
-            checkable: true,          // 段块左上角勾选框：只跑勾选的段
-            onCheckChange: setChecked,
-            getSegments: () => tlSegments.map(s => ({
-                // 内容派生身份：与节点内嵌时间轴同配色规则
-                id: `${s.prompt || ''}|${Number(s.duration_sec) || 0}|${s.ref_input || ''}`,
-                duration: Number(s.duration_sec) || 0,
-                prompt: s.prompt || "",
-                thumbUrl: s.ref_input ? `/view?filename=${encodeURIComponent(s.ref_input)}&subfolder=&type=input` : null,
-            })),
-            getProgress: () => tlProgress,
-            // 点击分段块 → 打开配方编辑器并跳到该段（与画布节点内嵌时间轴同款交互）
-            onSelect: (i) => openRecipeEditor(i),
-        });
-    } catch (e) {
-        console.error("[Neo Studio] timeline init failed:", e);
-    }
 
     // --- 实时预览：与节点内同款帧播放器；载荷按 task_id（后端 unique_id）过滤，尺寸由结果区随面板高度定 ---
     const mediaRight = $el("div", { className: "ns-gen-media-right" });
@@ -455,10 +443,9 @@ async function buildDirector(el) {
     });
     mediaRight.appendChild(liveBox);
 
-    // 配方默认值：选中配方后从 director_spec 填 分辨率/步数（与画布节点 widget 填充同源；
-    // 每个配方有自己的硬性要求，切换时一律重新初始化，不保留手改值）
+    // 选中配方：拉 director_spec 刷新分段格子，并把配方的尺寸 / 步数只读回显出来（参数本体在编辑器里改）
     const specCache = new Map();
-    async function applyRecipeDefaults(name) {
+    async function applyRecipe(name) {
         name = String(name || "").trim();
         if (!name) return;
         let spec = specCache.get(name);
@@ -471,34 +458,9 @@ async function buildDirector(el) {
             if (spec) specCache.set(name, spec);
         }
         tlSegments = spec?.segments || [];
-        // 分段已换（切配方/配方内容变更）→ 勾选作废（运行期临时状态，不跨配方保留）
-        timeline?.clearChecked();
-        setChecked(timeline ? timeline.getChecked() : []);
-        timeline?.refresh();   // 只读时间轴同步到所选配方的分段
+        setChecked([]);   // 分段已换（切配方 / 配方内容变更）→ 勾选作废
         const d = spec?.defaults;
-        if (!d) return;
-        if (Number.isFinite(d.steps)) stepsInput.value = d.steps;
-        // 分辨率回填与编辑器同规则：预设比例 → 比例 + 百万像素；只存 W/H → 能精确复现原值则走预设，否则自定义手输（不漂移）；
-        // shared 缺省 → 从默认 W/H 反推（命中预设走比例，否则自定义）
-        const sh = spec.shared || {};
-        let init;
-        if (sh.aspect_ratio && DIRECTOR_ASPECTS.some(([l]) => l === sh.aspect_ratio)) {
-            init = { label: sh.aspect_ratio, mp: directorClampMp(sh.megapixels != null ? sh.megapixels : MP_DEFAULT), cw: 0, ch: 0 };
-        } else if (Number(sh.width) > 0 && Number(sh.height) > 0) {
-            const inf = directorInferAspect(sh.width, sh.height);
-            const r = directorResolution(inf.label, inf.mp);
-            init = (r && r.width === Number(sh.width) && r.height === Number(sh.height))
-                ? { label: inf.label, mp: inf.mp, cw: 0, ch: 0 }
-                : { label: DIRECTOR_CUSTOM, mp: MP_DEFAULT, cw: sh.width, ch: sh.height };
-        } else {
-            const inf = directorInferAspect(Number(d.width) || 1344, Number(d.height) || 768);
-            init = { label: inf.label, mp: inf.mp, cw: d.width, ch: d.height };
-        }
-        aspectSel.value = init.label;
-        mpInp.value = init.mp;
-        cwInp.value = init.cw || "";
-        chInp.value = init.ch || "";
-        updateRes();
+        specEl.textContent = d ? tf("{w}×{h} · {steps} 步", { w: d.width, h: d.height, steps: d.steps }) : "";
     }
 
     // 点时间轴分段块 → 打开导演编辑器并定位到该段（与画布节点 ✎ / 块点击同源）；
@@ -533,29 +495,13 @@ async function buildDirector(el) {
         if (["succeeded", "failed", "cancelled"].includes(detail.status)) stopPolling();
     }
 
-    // 提交整片生成：「生成整片」按钮与编辑器底部「🎬 保存并生成整片」共用同一份参数组装
+    // 提交整片生成：「生成整片」按钮与编辑器底部「🎬 保存并生成整片」共用同一份参数组装。
+    // 参数本体（分辨率/步数/种子/连续性/上下文帧）都在配方里，这里只发配方名 + 勾选的段。
     async function submitGenerate() {
         const recipe = currentRecipeName;
         if (!recipe) { statusEl.textContent = t("请先在下方选择一个配方"); return; }
-        // 空输入归一为 -1（用配方默认），避免 Number("") === 0 被后端当成显式 0
-        const num = (input, fallback) => input.value.trim() === "" ? fallback : Number(input.value);
-        // 分辨率：预设比例 + 百万像素 → W/H（32 对齐）；「自定义」取手输 W/H（空 = 用配方默认）
-        let width = -1, height = -1;
-        if (aspectSel.value === DIRECTOR_CUSTOM) {
-            width = num(cwInp, -1);
-            height = num(chInp, -1);
-        } else {
-            const r = directorResolution(aspectSel.value, mpInp.value);
-            if (r) { width = r.width; height = r.height; }
-        }
         const body = {
             recipe,
-            seed: num(seedInput, -1),
-            width,
-            height,
-            continuity: continuityChk.checked,
-            context_frames: num(ctxInput, 22),
-            steps: num(stepsInput, -1),
             only_segments: checkedSegments.map((i) => i + 1).join(","),   // 勾选的段（空 = 整片）
         };
 
@@ -589,7 +535,7 @@ async function buildDirector(el) {
             runBtn, cancelBtn, mediaRight, pollTimer: null, previewListener: null,
             done: false, lastPreviewStep: 0,   // done：成片只替换一次；lastPreviewStep：预览帧按步号单调推进（WS / 轮询同源）
             livePlayer,   // 终态时定格在最后一帧
-            onTerminal: () => { tlProgress = { active: false, segment_index: -1, total_segments: 0 }; timeline?.refresh(); },
+            onTerminal: () => { tlProgress = { active: false, segment_index: -1, total_segments: 0 }; renderSegs(); },
         };
         api.addEventListener("rs.director.status", onStatusEvent);
         // 预览帧只按步号向前推进：WS 为主、轮询 latest_preview 兜底，旧帧不得覆盖新帧
@@ -618,10 +564,10 @@ async function buildDirector(el) {
                     if (["succeeded", "failed", "cancelled"].includes(t.status)) stopPolling();
                     applyPreview(t.latest_preview);   // 轮询兜底：WS 断档期间没有帧，取后端最新一帧
                 }
-                // 分段进度：与画布节点同源，驱动只读时间轴上各段状态
+                // 分段进度：与画布节点同源，高亮分段勾选条上正在跑的段
                 const p = await api.fetchApi("/neo_video_gen/director_progress");
                 const d = await p.json();
-                if (d && typeof d.active === "boolean") { tlProgress = d; timeline?.refresh(); }
+                if (d && typeof d.active === "boolean") { tlProgress = d; renderSegs(); }
             } catch { /* 网络抖动忽略，下一轮再试 */ }
         };
         genState.pollTimer = setInterval(poll, 2000);
@@ -641,33 +587,13 @@ async function buildDirector(el) {
         cancelBtn.disabled = false;
     });
 
-    // 整块面板两列：左 = 配方区（控制行 + 时间轴），右 = 结果区（实时预览 / 成片）
-    // 控制行属于左列（参数与时间轴同源，都取自当前配方），行尾 ⋯ 按钮展开高级选项 → 视觉只有一行
-    // （.rs-gen-advanced 点 ⋯ 按钮切换 .rs-adv-open；展开后种子/连续性/上下文帧占满第二行）
-    const advToggle = $el("button", { className: "rs-gen-adv-toggle", textContent: t("⋯ 高级"), title: t("种子 / 连续性 / 上下文帧（高级）") });
-    // 生成/取消按钮贴控制行右端：与下方时间轴右端对齐（同一列，等宽）
+    // 面板布局压成一行：全选 / 清空 / 分段格子 / 勾选提示 / 尺寸回显 + 生成 / 取消 同占一行，
+    // 段数多时格子条自己横向滚，竖向空间整块留给结果区。
     const runGroup = $el("div", { className: "ns-gen-run-group" }, [cancelBtn, runBtn]);
-    // 控制行按「字段」排布：标签在控件上方，一行放不下就整字段换行（标签不落到上一行末尾）
-    const field = (label, ...kids) => $el("div", { className: "ns-gen-field" }, [$el("label", { textContent: label }), ...kids]);
-    const genRow = $el("div", { className: "ns-gen-row rs-gen-advanced" }, [
-        field(t("宽高比"), aspectSel),
-        field(t("百万像素"), mpInp),
-        field(t("分辨率"), $el("div", { className: "ns-gen-field-row" }, [resOut, cwInp, chInp])),
-        field(t("步数"), stepsInput),
-        advToggle,
-        runGroup,
-        $el("div", { className: "rs-gen-adv-content" }, [
-            $el("div", { className: "ns-gen-row" }, [
-                field(t("种子"), seedInput),
-                field(t("连续性"), continuityChk),
-                field(t("上下文帧"), ctxInput),
-            ]),
-        ]),
-    ]);
-    advToggle.addEventListener("click", () => genRow.classList.toggle("rs-adv-open"));
+    const ctrlRow = $el("div", { className: "ns-gen-row" }, [segsAllBtn, segsClearBtn, segsBox, segsHint, specEl, runGroup]);
     const emptyHint = $el("div", { className: "ns-gen-empty-hint", textContent: t("生成后在此显示实时预览") });
-    const genLeft = $el("div", { className: "ns-gen-left" }, [genRow, tlBox, onlyHint, emptyHint]);
-    // 右栏没有画面时整块收起，时间轴与预览占位共用整幅宽度
+    const genLeft = $el("div", { className: "ns-gen-left" }, [ctrlRow, emptyHint]);
+    // 右栏没有画面时整块收起，分段格子与预览占位共用整幅宽度
     const genBody = $el("div", { className: "ns-gen-body ns-gen-empty" }, [genLeft, mediaRight]);
     // 面板底部一行：状态文字 + 显存/内存读数（只有导演生成吃显存，监控跟着生成面板走）
     const foot = $el("div", { className: "ns-gen-foot" }, [statusEl]);

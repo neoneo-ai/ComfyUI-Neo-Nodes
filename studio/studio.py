@@ -142,6 +142,15 @@ def _run_prompt(data: dict, unique_id: str) -> dict:
     # 只跑勾选的段（Studio 时间轴勾选，运行期临时状态不入库）；段号非法/越界在这里提前报错（400）
     only_segments = str(data.get("only_segments") or "").strip()
     parse_segment_selection(only_segments, len(segments))
+    # 运行参数优先级：请求显式值 > 配方 shared（编辑器保存值）> 缺省。Studio 生成面板只发
+    # recipe/only_segments，参数全读配方；MCP 与画布节点显式传值时覆盖配方。
+    shared = spec.get("shared") or {}
+    continuity = data.get("continuity")
+    continuity = bool(shared.get("continuity", True)) if continuity is None else bool(continuity)
+    frames = data.get("context_frames")
+    context_frames = int(shared.get("context_frames", 22)) if frames is None else int(frames)
+    steps_in = data.get("steps")
+    steps = int(shared.get("steps") or -1) if steps_in is None else int(steps_in)
     return {
         "recipe": recipe,
         "seed": int(data.get("seed", -1)),
@@ -153,9 +162,9 @@ def _run_prompt(data: dict, unique_id: str) -> dict:
                 "seed": int(data.get("seed", -1)),
                 "width": int(data.get("width", -1)),
                 "height": int(data.get("height", -1)),
-                "continuity": bool(data.get("continuity", True)),
-                "context_frames": int(data.get("context_frames", 22)),
-                "steps": int(data.get("steps", -1)),
+                "continuity": continuity,
+                "context_frames": context_frames,
+                "steps": steps,
                 "preview": True,
                 "only_segments": only_segments,
             }},

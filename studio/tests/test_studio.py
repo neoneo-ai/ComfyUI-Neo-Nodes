@@ -114,6 +114,38 @@ class RunPromptTests(_RecipeCase):
         with self.assertRaises(ValueError):
             studio._run_prompt({}, "t")
 
+    def _shared(self, name, **kw):
+        """把运行参数写进配方 shared（模拟导演编辑器保存后的配方）。"""
+        d = self.write_recipe(name)
+        meta = json.loads((d / "recipe.json").read_text(encoding="utf-8"))
+        meta["shared"].update(kw)
+        (d / "recipe.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+    def test_run_params_prefer_recipe_shared(self):
+        # Studio 生成面板只发 recipe/only_segments：continuity / context_frames / steps 读配方 shared
+        self._shared("R", steps=12, continuity=False, context_frames=30)
+        inputs = studio._run_prompt({"recipe": "R"}, "task-1")["graph"]["task-1"]["inputs"]
+        self.assertEqual(inputs["steps"], 12)
+        self.assertIs(inputs["continuity"], False)
+        self.assertEqual(inputs["context_frames"], 30)
+
+    def test_request_run_params_beat_recipe(self):
+        # MCP / 画布节点显式传值 → 覆盖配方值
+        self._shared("R", steps=12, continuity=False, context_frames=30)
+        payload = {"recipe": "R", "steps": 8, "continuity": True, "context_frames": 5}
+        inputs = studio._run_prompt(payload, "task-1")["graph"]["task-1"]["inputs"]
+        self.assertEqual(inputs["steps"], 8)
+        self.assertIs(inputs["continuity"], True)
+        self.assertEqual(inputs["context_frames"], 5)
+
+    def test_recipe_without_run_params_keeps_defaults(self):
+        # 旧配方没有这些键 → 缺省 continuity=True、context_frames=22、steps=-1（各段技能 config）
+        self.write_recipe("R")
+        inputs = studio._run_prompt({"recipe": "R"}, "task-1")["graph"]["task-1"]["inputs"]
+        self.assertIs(inputs["continuity"], True)
+        self.assertEqual(inputs["context_frames"], 22)
+        self.assertEqual(inputs["steps"], -1)
+
     def test_preset_rejected(self):
         self.write_recipe("P", preset=True)
         with self.assertRaises(ValueError):

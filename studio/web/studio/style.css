@@ -219,37 +219,35 @@ body {
     border-radius: 8px;
     padding: 12px 14px;
 }
-.ns-gen-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
-.ns-gen-row + .ns-gen-row { margin-top: 10px; }
-.ns-gen-row label { font-size: 11px; color: #a9a9b6; white-space: nowrap; }
-.ns-gen-row select,
-.ns-gen-row input[type="number"] {
+.ns-gen-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* 分段勾选条：一格一段，与控制项同占一行。点格子 = 勾选要跑的段（未勾选 = 整片）；点 ✎ = 打开编辑器定位到该段；
+   运行中由 director_progress 给当前段挂 ns-gen-seg-running。
+   段数多时格子条自己横向滚（细滚动条），不把这一行顶成两行——竖向空间整块留给结果区 */
+.ns-gen-segs { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #555 transparent; }
+.ns-gen-seg-chip {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 5px;
     background: #2a2a2e;
     border: 1px solid #444;
-    color: #ddd;
+    color: #b8b8c2;
     border-radius: 4px;
-    padding: 5px 8px;
-    font-size: 13px;
+    padding: 4px 7px;
+    font-size: 12px;
+    cursor: pointer;
 }
-.ns-gen-row input::placeholder { color: #6f6f7c; }
-/* 字段单元：标签在上、控件在下，整块作为一个换行单位 */
-.ns-gen-field { display: flex; flex-direction: column; gap: 3px; }
-.ns-gen-field-row { display: flex; align-items: center; gap: 8px; }
-.ns-gen-row .ns-gen-aspect { width: 104px; }
-.ns-gen-row .ns-gen-mp,
-.ns-gen-row .ns-gen-steps,
-.ns-gen-row .ns-gen-ctx,
-.ns-gen-row .ns-gen-cw,
-.ns-gen-row .ns-gen-ch { width: 64px; }
-.ns-gen-row .ns-gen-seed { width: 96px; }
-/* 分辨率回显（比例 + 百万像素 → W×H）；「自定义」模式隐藏、改显手输 W/H */
-.ns-gen-res-out { font-size: 12px; color: #7aa2ff; min-width: 84px; white-space: nowrap; }
-/* 「高级」按钮内联在主行末尾（.rs-gen-advanced 与 .ns-gen-row 同元素）；点按钮切换 .rs-adv-open，展开后内容占满第二行 */
-.rs-gen-adv-toggle { background: none; border: none; color: #9a9aa6; font-size: 12px; cursor: pointer; padding: 5px 8px; line-height: 1; border-radius: 4px; }
-.rs-gen-adv-toggle:hover { color: #ccc; background: rgba(255,255,255,0.08); }
-.rs-gen-advanced.ns-gen-row .rs-gen-adv-content { flex-basis: 100%; }
-.rs-gen-advanced.ns-gen-row.rs-adv-open .rs-gen-adv-content { display: flex; flex-direction: column; gap: 12px; }
-/* 生成/取消按钮贴控制行右端：控制行在配方列内，右端即时间轴右端 */
+.ns-gen-seg-chip:hover { background: #36363a; color: #fff; }
+.ns-gen-seg-chip[aria-pressed="true"] { background: #24406e; border-color: #4a7fd0; color: #fff; }
+.ns-gen-seg-chip.ns-gen-seg-running { border-color: #7aa2ff; box-shadow: 0 0 0 1px #7aa2ff; }
+.ns-gen-seg-n { font-weight: 600; }
+.ns-gen-seg-d { color: #7f8f9d; font-variant-numeric: tabular-nums; }
+.ns-gen-seg-edit { color: #8a9aa8; padding: 0 2px; }
+.ns-gen-seg-edit:hover { color: #fff; }
+/* 勾选提示 + 尺寸/步数回显：只读，值来自配方（要改参数去上方编辑器）；行窄时提示自己截断，不挤掉格子条 */
+.ns-gen-segs-hint { font-size: 12px; color: #8a9aa8; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ns-gen-spec { font-size: 12px; color: #7aa2ff; white-space: nowrap; flex: none; }
+/* 生成/取消按钮贴行右端 */
 .ns-gen-run-group { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
 /* 主行动按钮：满幅面板里唯一的高饱和控件，扫一眼就能找到 */
 .ns-gen-panel .ns-gen-run { background: #2f6fed; border-color: #2f6fed; color: #fff; font-weight: 600; padding: 6px 18px; }
@@ -268,8 +266,6 @@ body {
 .ns-mem-clear { background: #2a2a2e; border: 1px solid #444; color: #b8b8c2; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
 .ns-mem-clear:hover { background: #36363a; color: #fff; border-color: #666; }
 .ns-mem-clear:disabled { opacity: 0.5; cursor: wait; }
-/* 「仅运行勾选的段」提示：时间轴下方一行（未勾选 = 生成整片；勾选后只提交勾选的段） */
-.ns-gen-hint { font-size: 12px; color: #8a9aa8; }
 .ns-gen-progress {
     height: 6px;
     background: #333;
@@ -279,7 +275,7 @@ body {
     display: none;
 }
 .ns-gen-progress > div { height: 100%; width: 0; background: #7aa2ff; transition: width .4s; }
-/* 生成面板两列：左 = 配方区（控制行 + 时间轴，占满剩余宽度），右 = 结果区（实时预览 / 成片，吃满右栏） */
+/* 生成面板两列：左 = 一行控制（全选 / 清空 / 分段格子 / 回显 / 生成，占满剩余宽度），右 = 结果区（实时预览 / 成片，吃满右栏） */
 .ns-gen-body { display: flex; gap: 14px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 .ns-gen-left { flex: 1 1 420px; min-width: 360px; display: flex; flex-direction: column; gap: 10px; }
 .ns-gen-media-right { flex: 0 1 850px; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
@@ -299,7 +295,7 @@ body {
 .ns-gen-media-right a.ns-gen-final:hover { text-decoration: underline; }
 /* 实时预览面板：与成片同宽同高（吃满右栏），首个载荷到达时由 onFrame 清掉内联高度交给 CSS */
 .ns-gen-live { border-radius: 8px; overflow: hidden; }
-/* 没有画面时右栏整块收起：时间轴吃满整幅宽度，配方列下方出虚线占位（占位吃满面板剩余高度） */
+/* 没有画面时右栏整块收起：控制行吃满整幅宽度，下方出虚线占位（占位吃满面板剩余高度） */
 .ns-gen-empty-hint { display: none; }
 .ns-gen-body.ns-gen-empty .ns-gen-media-right { display: none; }
 .ns-gen-body.ns-gen-empty .ns-gen-empty-hint {
@@ -307,7 +303,7 @@ body {
     flex: 1 1 auto;
     align-items: center;
     justify-content: center;
-    min-height: 110px;
+    min-height: 60px;
     border: 1px dashed #3a3a44;
     border-radius: 8px;
     color: #8a8a96;
@@ -548,8 +544,6 @@ body {
 .ns-offline-start:focus-visible,
 .ns-info:focus-visible,
 .ns-launch-input:focus-visible,
-.ns-gen-row input:focus-visible,
-.ns-gen-row select:focus-visible,
 .neo-gallery-search-container input:focus-visible,
 .neo-gallery-search-container select:focus-visible {
     outline: 2px solid #7aa2ff;
