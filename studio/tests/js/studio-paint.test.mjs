@@ -159,3 +159,31 @@ test("绘画页：图片卡菜单「🖼️ 图片编辑」把这张图换进现
     assert.ok(paintText().classList.contains("ns-hidden"), "文生图宿主应随模式切换收起");
     assert.equal(location.hash, "#/paint", "绘画页内入口不应跳页");
 });
+
+test("绘画页：左栏拖到最窄收起整栏，双击展开回收起前的宽度", async () => {
+    await boot();
+    await clickTab("paint");
+    const page = document.querySelector(".ns-paint");
+    const split = document.querySelector(".ns-paint-side + .ns-director-colsplit");
+    const mouse = (type, x) => new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: 0 });
+    const pref = () => JSON.parse(localStorage.getItem("neo_studio_paint_side_col") || "{}");
+
+    assert.ok(split, "绘画页左栏与右栏之间有分隔条");
+    assert.equal(page.style.getPropertyValue("--ns-side-w"), "", "没拖过的绘画页用样式默认宽度");
+
+    // 拖过收起阈值：整栏宽度写 0，收起状态落在绘画页自己那份偏好里
+    split.dispatchEvent(mouse("mousedown", 380));
+    window.dispatchEvent(mouse("mousemove", 120));
+    assert.ok(page.classList.contains("ns-side-collapsed"), "拖到最窄收起左栏");
+    assert.equal(page.style.getPropertyValue("--ns-side-w"), "0px", "收起写 0 宽");
+    assert.equal(split.getAttribute("aria-expanded"), "false", "分隔条播报收起状态");
+    window.dispatchEvent(mouse("mouseup", 120));
+    assert.equal(pref().side_closed, true, "绘画页收起状态落盘");
+    assert.ok(!document.querySelector(".ns-director")?.classList.contains("ns-side-collapsed"), "绘画页收起不牵连导演页");
+
+    // 双击展开：宽度交回样式默认（绘画页没存过宽度）
+    split.dispatchEvent(mouse("dblclick", 0));
+    assert.ok(!page.classList.contains("ns-side-collapsed"), "双击展开左栏");
+    assert.equal(page.style.getPropertyValue("--ns-side-w"), "", "展开后回到样式默认宽度");
+    assert.equal(pref().side_closed, false, "展开状态落盘");
+});

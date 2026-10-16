@@ -240,6 +240,36 @@ test("Studio 绘画页：左素材库 + 右模式条，文生图铺满右栏", a
         assert.equal(after.textHidden, "none", "文生图收起");
         assert.ok(after.on.includes("图片编辑"), "模式条高亮切到的一边");
         assert.ok(Math.abs(after.w - after.main) <= 1, "图片编辑同样铺满右栏");
+
+        // 拖到最窄 = 收起左栏：素材库不占宽，右栏吃满，分隔条上的三点抓手还在（靠它拖回来）
+        const sp = await page.locator(".ns-paint-side + .ns-director-colsplit").boundingBox();
+        await page.mouse.move(sp.x + 9, sp.y + 80);
+        await page.mouse.down();
+        await page.mouse.move(sp.x - 300, sp.y + 80, { steps: 10 });
+        await page.mouse.up();
+        // grid 列宽有 .16s 过渡，等它落到收起那一格再量
+        await page.waitForFunction(() => document.querySelector(".ns-paint").classList.contains("ns-side-collapsed")
+            && document.querySelector(".ns-paint-main").getBoundingClientRect().width > 700, null, { timeout: 5000 });
+        const closed = await page.evaluate(() => ({
+            side: document.querySelector(".ns-paint-side").getBoundingClientRect().width,
+            main: document.querySelector(".ns-paint-main").getBoundingClientRect().width,
+            grip: getComputedStyle(document.querySelector(".ns-paint-side + .ns-director-colsplit"), "::before").opacity,
+        }));
+        assert.equal(closed.side, 0, "收起后左栏不占宽");
+        assert.ok(closed.main > 700, "收起后右栏吃满整幅");
+        assert.equal(closed.grip, "1", "收起后分隔条上的三点抓手常驻");
+
+        // 双击展开：左栏回到存下来的宽度
+        await page.dblclick(".ns-paint-side + .ns-director-colsplit");
+        await page.waitForFunction(() => !document.querySelector(".ns-paint").classList.contains("ns-side-collapsed")
+            && document.querySelector(".ns-paint-side").getBoundingClientRect().width >= 340, null, { timeout: 5000 });
+        const back = await page.evaluate(() => ({
+            side: document.querySelector(".ns-paint-side").getBoundingClientRect().width,
+            pref: JSON.parse(localStorage.getItem("neo_studio_paint_side_col") || "{}"),
+        }));
+        assert.ok(back.side >= 340, `展开回到左栏宽度（${back.side}）`);
+        assert.equal(back.pref.side_closed, false, "展开状态落盘");
+        await page.evaluate(() => localStorage.removeItem("neo_studio_paint_side_col"));
     } finally {
         await page.close();
     }

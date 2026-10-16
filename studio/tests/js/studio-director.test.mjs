@@ -366,7 +366,7 @@ test("Studio 导演页：编辑器「素材库」按钮开合左栏素材库（�
     await sleep(20);
 });
 
-test("Studio 导演页：左栏分隔条拖动宽度（配方列表 / 素材库各记各的，双击恢复默认）", async () => {
+test("Studio 导演页：左栏分隔条拖动宽度（配方列表 / 素材库各记各的，拖到最窄收起整栏）", async () => {
     await import("../../web/studio/studio-app.js");
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-director-side .neo-recipes-card"), "配方卡片挂载");
@@ -395,9 +395,13 @@ test("Studio 导演页：左栏分隔条拖动宽度（配方列表 / 素材库�
     assert.ok("side" in pref(), "配方列表档宽度落盘");
     assert.equal(pref().lib, 420, "拖配方列表不该抹掉素材库档的宽度");
 
-    // 键盘 ←→ 微调同样走钳制
-    split.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
-    assert.equal(width(), "200px", "键盘微调写入左栏宽度");
+    // 键盘微调走同一套收起阈值：jsdom 无布局（左栏 offsetWidth=0），按 → 落进阈值即收起，收起态再按 → 展开
+    const key = (k) => split.dispatchEvent(new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    key("ArrowRight");
+    assert.ok(page.classList.contains("ns-side-collapsed"), "键盘微调过收起阈值就收起整栏");
+    assert.equal(width(), "0px", "收起写 0 宽");
+    key("ArrowRight");
+    assert.ok(!page.classList.contains("ns-side-collapsed"), "收起态按 → 展开到下限");
 
     // 开素材库 → 素材库档宽度；收起 → 回到配方列表档宽度
     click(document.querySelector(".neo-director-tab"));
@@ -408,10 +412,24 @@ test("Studio 导演页：左栏分隔条拖动宽度（配方列表 / 素材库�
     await until(() => !side.classList.contains("ns-lib-open"), "收起素材库");
     assert.equal(width(), "240px", "收起回到配方列表档宽度");
 
-    // 双击恢复默认：清掉这一档偏好，内联宽度交回样式
+    // 拖过收起阈值 = 整栏关掉：宽度写 0、页面挂收起类，宽度偏好留着（拖回来还是这一档的宽）
+    split.dispatchEvent(mouse("mousedown", 240));
+    window.dispatchEvent(mouse("mousemove", 40));
+    assert.ok(page.classList.contains("ns-side-collapsed"), "拖到最窄收起整栏");
+    assert.equal(width(), "0px", "拖动收起写 0 宽");
+    assert.equal(split.getAttribute("aria-expanded"), "false", "分隔条播报收起状态");
+    window.dispatchEvent(mouse("mouseup", 40));
+    assert.equal(pref().side_closed, true, "收起状态落盘");
+    assert.equal(pref().side, 240, "收起不抹掉收起前的宽度");
+
+    // 双击 = 收起 / 展开：从收起态双击展开，回收起前这一档的宽度；再双击收起
     split.dispatchEvent(mouse("dblclick", 0));
-    assert.equal(width(), "", "双击后左栏宽度交回样式默认");
-    assert.ok(!("side" in pref()), "配方列表档偏好清除");
-    assert.ok("lib" in pref(), "素材库档偏好不受影响");
+    assert.ok(!page.classList.contains("ns-side-collapsed"), "收起态双击展开左栏");
+    assert.equal(width(), "240px", "展开回收起前这一档的宽度");
+    assert.equal(pref().side_closed, false, "展开状态落盘");
+    split.dispatchEvent(mouse("dblclick", 0));
+    assert.ok(page.classList.contains("ns-side-collapsed"), "展开态双击收起左栏");
+    assert.equal(width(), "0px", "双击收起写 0 宽");
+    assert.equal(pref().side_closed, true, "双击收起同样落盘");
     localStorage.removeItem("neo_studio_director_side_col");
 });

@@ -236,32 +236,47 @@ function buildDirectorSplit(main, genPanel) {
     return split;
 }
 
-// ====== 左栏宽度分隔条：拖动调左栏宽 / 键盘 ←→ 微调 / 双击恢复默认（配方列表与素材库各记各的宽度） ======
+// ====== 左栏宽度分隔条：拖动调左栏宽 / 拖到最窄收起整栏 / 键盘 ←→ 微调 / 双击收起展开（配方列表与素材库各记各的） ======
 const SIDE_COL_KEY = "neo_studio_director_side_col";
 const SIDE_COL_MIN = 200;        // 配方列表下限：卡片缩略图还能看
 const SIDE_COL_LIB_MIN = 320;    // 素材库下限：画廊两列缩略图
 const SIDE_COL_EDITOR_MIN = 420; // 右侧编辑器下限：再窄就没法编辑了
+const SIDE_COL_COLLAPSE = 160;   // 收起阈值：拖到比这更窄就关掉整栏，靠分隔条上的三点抓手拖回来
 
 function buildSideColSplit(page, side, key = SIDE_COL_KEY, min = SIDE_COL_MIN) {
     const split = $el("div", {
         className: "ns-director-colsplit", role: "separator", "aria-orientation": "vertical", tabindex: "0",
-        title: t("拖动调整左栏宽度 · 双击恢复默认宽度"),
+        title: t("拖动调整左栏宽度 · 拖到最窄收起整栏 · 双击收起 / 展开"),
     });
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch { /* 偏好读不到就用默认 */ }
     const mode = () => (side.classList.contains("ns-lib-open") ? "lib" : "side");
-    // 内联宽度只作用于当前这一栏模式；没有存过就用样式里的默认宽度
-    const apply = () => {
+    const closedKey = () => mode() + "_closed";
+    let collapsed = false;
+    // 内联宽度只作用于当前这一栏模式；收起写 0 宽，没有存过就用样式里的默认宽度
+    const render = () => {
+        page.classList.toggle("ns-side-collapsed", collapsed);
+        split.setAttribute("aria-expanded", String(!collapsed));
         const w = Number(saved?.[mode()]);
-        if (w > 0) page.style.setProperty("--ns-side-w", w + "px");
+        if (collapsed) page.style.setProperty("--ns-side-w", "0px");
+        else if (w > 0) page.style.setProperty("--ns-side-w", w + "px");
         else page.style.removeProperty("--ns-side-w");
     };
+    const apply = () => { collapsed = !!saved?.[closedKey()]; render(); };
     const setWidth = (w) => {
         const minW = mode() === "lib" ? SIDE_COL_LIB_MIN : min;
         const max = Math.max(minW, page.clientWidth - split.offsetWidth - SIDE_COL_EDITOR_MIN);
-        page.style.setProperty("--ns-side-w", Math.round(Math.max(minW, Math.min(w, max))) + "px");
+        collapsed = w < SIDE_COL_COLLAPSE;   // 拖过阈值 = 关掉整栏，松手后三点抓手还在
+        page.style.setProperty("--ns-side-w", collapsed ? "0px" : Math.round(Math.max(minW, Math.min(w, max))) + "px");
+        page.classList.toggle("ns-side-collapsed", collapsed);
+        split.setAttribute("aria-expanded", String(!collapsed));
     };
-    const persist = () => localStorage.setItem(key, JSON.stringify({ ...(saved || {}), [mode()]: side.offsetWidth }));
+    // 收起不抹掉宽度：拖回来落的还是收起前这一档的宽度
+    const persist = () => localStorage.setItem(key, JSON.stringify({
+        ...(saved || {}),
+        [mode()]: collapsed ? (Number(saved?.[mode()]) || 0) : side.offsetWidth,
+        [closedKey()]: collapsed,
+    }));
     apply();
 
     split.addEventListener("mousedown", (e) => {
@@ -281,24 +296,21 @@ function buildSideColSplit(page, side, key = SIDE_COL_KEY, min = SIDE_COL_MIN) {
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
     });
-    const reset = () => {
-        saved = { ...(saved || {}) };
-        delete saved[mode()];
-        localStorage.setItem(key, JSON.stringify(saved));
-        apply();
-    };
-    split.addEventListener("dblclick", reset);
+    const toggle = () => { collapsed = !collapsed; persist(); render(); };
+    split.addEventListener("dblclick", toggle);
     split.addEventListener("keydown", (e) => {
         if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
             e.preventDefault();
+            if (collapsed) { if (e.key === "ArrowRight") toggle(); return; }   // 收起态按 → 直接展开到下限
             setWidth(side.offsetWidth + (e.key === "ArrowLeft" ? -24 : 24));
             persist();
         } else if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            reset();
+            toggle();
         }
     });
-    return { el: split, apply };
+    const expand = () => { if (!collapsed) return; collapsed = false; persist(); render(); };
+    return { el: split, apply, expand };
 }
 
 // ====== 左栏素材库抽屉：导演页 / 绘画页同款（Studio 没有 ComfyUI 侧栏，media-transfer 写 sidebarTab 落到这里）。
@@ -323,6 +335,7 @@ function buildLibDrawer(side, sideCol, view) {
     const openLib = () => {
         side.classList.add("ns-lib-open");
         sideCol.apply();
+        sideCol.expand();   // 用户点名要素材库：这一档收起过就势展开
         if (galleryMountHost === libHost) return;
         mountGalleryKeepDir(libHost);
     };

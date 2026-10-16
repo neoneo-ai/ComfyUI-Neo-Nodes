@@ -101,6 +101,27 @@ body {
 .ns-director-colsplit:hover::after, .ns-director-colsplit:focus-visible::after,
 .ns-director-colsplit.ns-colsplit-drag::after { left: 6px; width: 4px; background: #5090cc; }
 .ns-director-colsplit:focus-visible { outline: 1px solid #5090cc; }
+/* VSCode 的 sash 抓手：热区正中三枚点。悬停 / 键盘聚焦 / 拖动时显形；左栏收起后常驻，收起的栏靠它拖回来 */
+.ns-director-colsplit::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 9px;
+    width: 4px;
+    height: 21px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, #9a9aa6 1.5px, transparent 2px) center / 4px 7px repeat-y;
+    opacity: 0;
+    transition: opacity .12s ease;
+}
+.ns-director-colsplit:hover::before, .ns-director-colsplit:focus-visible::before,
+.ns-director-colsplit.ns-colsplit-drag::before,
+.ns-director.ns-side-collapsed .ns-director-colsplit::before,
+.ns-paint.ns-side-collapsed .ns-director-colsplit::before { opacity: 1; }
+/* 左栏拖到最窄 = 整栏关掉：宽度归零、内容不显示。这里不能 display: none —— 左栏是 grid 第一项，
+   摘掉元素会让分隔条与主栏各左移一列（主栏落进 18px 那列）。visibility 保住槽位、0 宽裁掉内容 */
+.ns-director.ns-side-collapsed .ns-director-side,
+.ns-paint.ns-side-collapsed .ns-paint-side { visibility: hidden; }
 /* 素材库抽屉：导演编辑器「素材库」按钮把左栏从配方列表切成素材库，整栏加宽到画廊宽度，
    右侧编辑器随 grid 让位（不遮挡编辑区），素材卡片直接拖进右侧首帧 / 参考位 */
 .ns-director:has(.ns-lib-open) { --ns-side-w: 380px; }
@@ -393,6 +414,9 @@ body {
 @media (max-width: 900px) {
     .ns-director, .ns-paint { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 0; }
     .ns-director-colsplit { display: none; }
+    /* 堆叠布局没有分隔条可拖，收起状态在这里不生效，否则左栏再也打不开 */
+    .ns-director.ns-side-collapsed .ns-director-side,
+    .ns-paint.ns-side-collapsed .ns-paint-side { visibility: visible; }
     .ns-director-side, .ns-paint-side { max-height: 240px; }
     .ns-paint-side { max-height: 460px; }
     .ns-director-side.ns-lib-open { max-height: 460px; }

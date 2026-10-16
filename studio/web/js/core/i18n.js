@@ -110,7 +110,7 @@ const EN = {
     "关闭编辑": "Close editor",
     "点左侧配方卡即在此编辑整片脚本": "Click a recipe card on the left to edit its film script here",
     "拖动调整高度 · 双击收起 / 展开生成面板": "Drag to resize · double-click to collapse / expand the generation panel",
-    "拖动调整左栏宽度 · 双击恢复默认宽度": "Drag to resize the left column · double-click to restore the default width",
+    "拖动调整左栏宽度 · 拖到最窄收起整栏 · 双击收起 / 展开": "Drag to resize the left column · drag it all the way in to close it · double-click to collapse / expand",
     "▸ 生成面板": "▸ Generation panel",
     "🗂 素材库": "🗂 Asset library",
     "收起素材库": "Close asset library",

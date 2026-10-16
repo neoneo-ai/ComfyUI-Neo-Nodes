@@ -65,11 +65,15 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   result column on the right (live preview / final film) with it, instead of leaving a blank strip under a
   fixed 640×360 preview box.
 - Left-column divider: a vertical line between the left column and the editor that doubles as a drag handle —
-  drag it to resize the column (recipe-list floor 200px, asset-library floor 320px, editor floor 420px),
-  `←`/`→` to nudge, double-click restores the default width. The recipe list and the asset library each
-  remember their own width in `localStorage["neo_studio_director_side_col"]`; the divider disappears in the
-  stacked narrow layout. Both splitters share one look: an 18px grab zone with a 1px hairline that thickens to
-  4px and turns accent blue on hover, keyboard focus and while dragging.
+  drag it to resize the column (recipe-list floor 200px, asset-library floor 320px, editor floor 420px); drag it
+  narrower than 160px and the whole column closes (zero width, content hidden, the main column takes the full
+  width). `←`/`→` nudges, `→` reopens a closed column, and double-click collapses / expands. Each mode keeps its
+  own width and closed flag in `localStorage["neo_studio_director_side_col"]` — closing only writes the flag, so
+  a reopen lands on the width you had before the collapse. The divider disappears in the stacked narrow layout,
+  and the closed state has no effect there (no grab zone to drag). Both splitters share one look: an 18px grab
+  zone with a 1px hairline that thickens to 4px and turns accent blue on hover, keyboard focus and while dragging,
+  plus a three-dot grip dead-centre (the VS Code sash) that stays lit on hover and while the column is closed —
+  that grip is how a closed column gets dragged back out.
 - **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel share one parameter
   builder: after a successful save the film is submitted with the panel's current resolution / steps / checked
   segments.
@@ -90,7 +94,8 @@ drawer, the left-column divider, the scrollbars and the narrow-window rules are 
   paint page in Studio and open in the matching panel. Clicking an image recipe card switches to text-to-image
   and prefills that recipe's prompt into the output box; "🖼️ New image recipe" opens a blank text-to-image panel.
 - The chosen mode lives in `localStorage["neo_studio_paint_mode"]`, and the column width is the paint page's own
-  `localStorage["neo_studio_paint_side_col"]` — dragging it never overwrites the director page's width.
+  `localStorage["neo_studio_paint_side_col"]` — dragging it never overwrites the director page's width, and the
+  closed state is remembered per page the same way.
 - Asset-library drawers are per page (`libDrawers[view]`, one for the director page and one for the paint page):
   `media-transfer` writes only reach the current page's drawer, and leaving the page closes it. Leaving the gallery
   page resets `sidebarTab.activeSidebarTabId` — mounting the gallery sets it to `neo.gallery`, and without the
