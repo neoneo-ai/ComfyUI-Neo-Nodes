@@ -1121,3 +1121,90 @@ test("图片编辑弹窗：看大图——点原图/点分割线（未拖动）�
     assert.equal(lightbox(), null, "按手柄（含原地抬起）是抓取，不应打开灯箱");
 });
 
+
+test("图片编辑弹窗：点图看大图按窗帘位置定——窗帘右侧看结果图、左侧看原图", async () => {
+    resetEnv();
+    clearRoutes();
+    const { openImageEditDialog } = await import("../../web/gallery-gen.js");
+
+    mockRoute("/rs_prompts/skills", () => jsonResponse([
+        { id: "qwen_image_21", cn_name: "Qwen Image 2.1", category: "image_gen", gen_image: true },
+    ]));
+    mockRoute("/neo_gallery/copy_to_input", () => jsonResponse({ success: true, filename: "portrait.png" }));
+    mockRoute("/neo_image_gen/generate", () => jsonResponse({ task_id: "ie13", status: "queued", images: [] }));
+    mockRoute("/neo_image_gen/status/ie13", () => jsonResponse({
+        task_id: "ie13", status: "succeeded", width: 1024, height: 1024,
+        images: [{ filename: "edit_00013_.png", subfolder: "Output/2026-10-16", url: "/view?filename=edit_00013_.png&type=output" }],
+    }));
+
+    openImageEditDialog({ app: {}, maxThumbnailSize: 320, displayLabels: true },
+                        { name: "portrait", filename: "portrait.png" }, "");
+    const overlay = document.querySelector(".neo-gallery-edit-modal-overlay");
+    await sleep(20);
+
+    const wrap = overlay.querySelector(".neo-gallery-edit-compare-imgwrap");
+    const clip = overlay.querySelector(".neo-gallery-edit-result-clip");
+    const divider = overlay.querySelector(".neo-gallery-edit-divider");
+    const origEl = overlay.querySelector(".neo-gallery-edit-compare-img:not(.neo-gallery-edit-result-img)");
+    wrap.getBoundingClientRect = () => ({ left: 0, right: 400, top: 0, bottom: 300, width: 400, height: 300 });
+    const pointer = (el, type, x) => {
+        const ev = new window.Event(type, { bubbles: true, cancelable: true });
+        ev.clientX = x;
+        ev.clientY = 150;
+        ev.button = 0;
+        el.dispatchEvent(ev);
+    };
+    const caption = () => document.querySelector(".neo-lightbox-caption")?.textContent;
+    const closeLightbox = () => document.querySelector(".neo-lightbox-close")?.click();
+
+    inputText(overlay.querySelector(".neo-gallery-story-input"), "换上性感衣服");
+    click([...overlay.querySelectorAll(".neo-gallery-story-btn")].find((b) => b.textContent === "生成"));
+    await sleep(80);
+    assert.equal(clip.style.clipPath, "inset(0 0 0 0%)", "生成后窗帘贴左边界：整幅都是结果图");
+
+    // 窗帘贴左：可见的全是结果图，点图看的就是结果大图（旧写法固定开原图）
+    pointer(origEl, "pointerdown", 200);
+    pointer(document, "pointerup", 200);
+    assert.equal(caption(), "edit_00013_.png", "窗帘贴左时点图应看结果大图");
+    closeLightbox();
+
+    // 拖窗帘到 65%：左侧露原图、右侧露结果，点哪一侧看哪张
+    pointer(divider, "pointerdown", 200);
+    pointer(document, "pointermove", 260);
+    pointer(document, "pointerup", 260);
+    assert.equal(clip.style.clipPath, "inset(0 0 0 65%)", "拖过阈值应把窗帘移到 65%");
+
+    pointer(origEl, "pointerdown", 100);
+    pointer(document, "pointerup", 100);
+    assert.equal(caption(), "portrait.png", "窗帘左侧点图应看原图");
+    closeLightbox();
+
+    pointer(origEl, "pointerdown", 380);
+    pointer(document, "pointerup", 380);
+    assert.equal(caption(), "edit_00013_.png", "窗帘右侧点图应看结果大图");
+    closeLightbox();
+
+    // 窗帘贴右：整幅都是原图，点哪里都只看原图
+    pointer(divider, "pointerdown", 380);
+    pointer(document, "pointermove", 400);
+    pointer(document, "pointerup", 400);
+    assert.equal(clip.style.clipPath, "inset(0 0 0 100%)", "窗帘应贴到右边界");
+    pointer(origEl, "pointerdown", 380);
+    pointer(document, "pointerup", 380);
+    assert.equal(caption(), "portrait.png", "窗帘贴右时点图应看原图");
+    closeLightbox();
+
+    // 点分割线把手（未拖动）：把手是边界，固定看原图
+    pointer(divider, "pointerdown", 200);
+    pointer(document, "pointerup", 200);
+    assert.equal(caption(), "portrait.png", "点分割线把手应看原图");
+    closeLightbox();
+
+    // 结果图挂在灯箱列表末尾：从原图 → 翻页能到结果大图
+    click(overlay.querySelector(".neo-gallery-edit-zoom-btn"));
+    assert.equal(caption(), "portrait.png", "「看大图」按钮从原图进");
+    document.querySelector(".neo-lightbox-next").click();
+    assert.equal(caption(), "edit_00013_.png", "→ 翻页应能翻到结果大图");
+    closeLightbox();
+});
+

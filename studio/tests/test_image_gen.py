@@ -2216,6 +2216,26 @@ class PreviewCaptureTests(unittest.TestCase):
         self.assertIn("neo_image_gen_preview", fresh.handlers,
                       "registry 被核心重建后，_watch 须补注册捕获 handler")
 
+    def test_ensure_preview_handler_swaps_handlers_dict(self):
+        """执行线程在 start_progress 里遍历 registry.handlers.values()；
+        补注册原地插入会在遍历中的 dict 上撞出 "dictionary changed size during iteration"，
+        节点执行直接失败，所以只能整块换新 dict。"""
+        fresh = types.SimpleNamespace(prompt_id="p3", nodes={}, handlers={"webui": object()})
+        orig_registry = _progress_registry_holder["registry"]
+        _progress_registry_holder["registry"] = fresh
+        self.addCleanup(_progress_registry_holder.__setitem__, "registry", orig_registry)
+        iterating = fresh.handlers  # 模拟执行线程正拿着这个 dict 在遍历
+
+        image_gen._ensure_preview_handler()
+
+        self.assertIn(image_gen._PREVIEW_CAPTURE.name, fresh.handlers)
+        self.assertIn("webui", fresh.handlers, "换新 dict 不能把核心 webui handler 挤掉")
+        self.assertNotIn(image_gen._PREVIEW_CAPTURE.name, iterating,
+                         "正在被遍历的旧 dict 不得被原地插入")
+        swapped = fresh.handlers
+        image_gen._ensure_preview_handler()
+        self.assertIs(fresh.handlers, swapped, "已注册时不重复换 dict")
+
 
 class SubmitGraphPreviewTests(unittest.TestCase):
     """submit_graph：未显式配置预览方法时按 prompt 附 extra_data.preview_method=latent2rgb。"""

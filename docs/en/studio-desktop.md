@@ -50,8 +50,7 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   The main canvas (the ComfyUI page) registers no host, so the editor stays an overlay window there.
 - With no editor open the top-right pane shows a placeholder. **Clicking a left-column recipe card selects it
   and opens it embedded** (clicking the same card again only switches the current segment, so unsaved edits
-  survive); the ✎ on a segment chip in the generation panel opens the editor on that segment, and "🎬 New director
-  recipe" on the gallery page switches to the director page and opens it embedded.
+  survive), and "🎬 New director recipe" on the gallery page switches to the director page and opens it embedded.
 - The **asset library** button inside the director editor **switches the left column from the recipe list to the
   asset library** (`.ns-director-lib`, the column widens to 380px). Studio has no ComfyUI left sidebar, so the shim
   forwards `sidebarTab.activeSidebarTabId` writes to that column. The library is the same Neo Gallery the gallery
@@ -76,11 +75,11 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   that grip is how a closed column gets dragged back out.
 - The generation panel only answers "which segments to run, and what came out" — it carries no parameter
   controls, and its control area is squeezed onto **one line**: **Select all** / **Clear** / the **segment chip
-  strip** (one chip per segment with its number, duration and a ✎) / the check hint / one read-only echo
+  strip** (one chip per segment, the chip shows only its number) / the check hint / one read-only echo
   (`width×height · steps` for the run, taken from the recipe) / **🎬 Generate Film** / **⏹ Cancel** all share
   that line, and with many segments the chip strip scrolls sideways on its own so the vertical space stays with
   the result column. **Clicking a chip checks the segment to run; nothing checked = the whole film**;
-  **Select all** / **Clear** act on the whole strip, and ✎ opens the editor on that segment.
+  **Select all** / **Clear** act on the whole strip, and hovering a chip shows that segment's shot description.
   The selection is runtime-only: switching recipes clears it, and it is never written into the recipe. The chip
   of the segment being generated is highlighted while the run is live.
 - The run parameters for the film (resolution / steps / seed / continuity / context frames) are set only in the

@@ -195,10 +195,13 @@ selected; the source is passed as a reference image, you type the editing instru
   starts at the left edge, so you see the whole result first). A drag counts as curtain dragging only after
   moving past a short threshold (6px): pressing on the source image / the divider handle and dragging moves the
   divider with the pointer; a press that never reaches the threshold counts as a click, not a drag.
-- **View large** - clicking the source image / the divider handle (press and release, no drag) opens the source
-  and the reference images in the lightbox (←/→ to page); the "🔍 view large" button to the right of the
-  comparison labels works in every mode, and in outpaint mode clicking the empty area of the drag box enters the
-  lightbox too. In masked / click modes a click paints or marks, so only the button works there.
+- **View large** - clicking the image (press and release, no drag) opens the lightbox, and the curtain decides
+  which image you get: a click right of the divider shows the edit result, one left of it shows the source
+  (divider at the left edge = the whole picture is the result, at the right edge = the whole source); clicking
+  the divider handle itself always shows the source. The lightbox list is source + references + edit result
+  (←/→ to page); the "🔍 view large" button to the right of the comparison labels works in every mode, and in
+  outpaint mode clicking the empty area of the drag box follows the same curtain rule. In masked / click modes
+  a click paints or marks, so only the button works there.
 - **Target resolution** - the source size by default, aligned to a multiple of 32, capped proportionally by the
   "model working resolution" when it exceeds it (1.5MP by default); after generation the comparison window's
   left side becomes that scaled image too, since pixel-by-pixel alignment needs both sides the same size. Size

@@ -9,10 +9,10 @@ import { api } from "./shim/api.js";
 import { $el } from "./shim/ui.js";
 
 import "../gallery.js";   // 注册 comfy.neo.gallery 扩展（NeoGallery + 侧栏 tab 定义）
-import { openDirectorEditor, setDirectorEditorHost, DIRECTOR_RECIPE_SAVED_EVENT } from "../director.js";
+import { setDirectorEditorHost, DIRECTOR_RECIPE_SAVED_EVENT } from "../director.js";
 import { setPaintHost, openGenMaterialDialog, openImageEditDialog } from "../gallery-gen.js";
 import { createFramePlayer } from "../live-preview.js";
-import { createRecipesPanel, listRecipes } from "../recipes.js";
+import { createRecipesPanel } from "../recipes.js";
 import { createImageGenSettingsForm, createVideoGenSettingsForm } from "../image-gen.js";
 import { createModelConfigForm } from "../llm-setting.js";
 import { createSkillManager } from "../skill.js";
@@ -385,7 +385,7 @@ async function buildDirector(el) {
     const statusEl = $el("div", { className: "ns-gen-status" });
     const barEl = $el("div", { className: "ns-gen-progress" }, [$el("div")]);
 
-    // --- 分段勾选条：一格一段。点格子 = 勾选要跑的段（未勾选 = 整片）；点 ✎ = 打开编辑器定位到该段；
+    // --- 分段勾选条：一格一段，格内只有段号。点格子 = 勾选要跑的段（未勾选 = 整片），悬停看该段画面描述；
     // 运行中由 director_progress 高亮当前段。勾选是运行期临时状态：换配方即清空，不写进配方。
     let tlSegments = [];
     let tlProgress = { active: false, segment_index: -1, total_segments: 0 };
@@ -402,17 +402,11 @@ async function buildDirector(el) {
             const chip = $el("button", {
                 className: "ns-gen-seg-chip", type: "button", title: s.prompt || "",
                 "aria-pressed": checkedSegments.includes(i) ? "true" : "false",
-            }, [
-                $el("span", { className: "ns-gen-seg-n", textContent: String(i + 1) }),
-                $el("span", { className: "ns-gen-seg-d", textContent: `${Number(s.duration_sec) || 0}s` }),
-                $el("span", { className: "ns-gen-seg-edit", title: tf("编辑段 {n}", { n: i + 1 }), textContent: "✎" }),
-            ]);
-            chip.onclick = (ev) => {
-                if (ev.target.classList.contains("ns-gen-seg-edit")) { openRecipeEditor(i); return; }
-                setChecked(checkedSegments.includes(i)
-                    ? checkedSegments.filter((x) => x !== i)
-                    : [...checkedSegments, i].sort((a, b) => a - b));
-            };
+                textContent: String(i + 1),
+            });
+            chip.onclick = () => setChecked(checkedSegments.includes(i)
+                ? checkedSegments.filter((x) => x !== i)
+                : [...checkedSegments, i].sort((a, b) => a - b));
             segsBox.appendChild(chip);
         });
         // 运行中高亮当前段：segment_index 是 0 基原始段序号，与勾选段号同源
@@ -461,22 +455,6 @@ async function buildDirector(el) {
         setChecked([]);   // 分段已换（切配方 / 配方内容变更）→ 勾选作废
         const d = spec?.defaults;
         specEl.textContent = d ? tf("{w}×{h} · {steps} 步", { w: d.width, h: d.height, steps: d.steps }) : "";
-    }
-
-    // 点时间轴分段块 → 打开导演编辑器并定位到该段（与画布节点 ✎ / 块点击同源）；
-    // 保存后由 DIRECTOR_RECIPE_SAVED_EVENT 统一刷新下拉、默认值与时间轴分段
-    async function openRecipeEditor(segIndex = -1) {
-        const name = String(currentRecipeName || "").trim();
-        if (!name) { statusEl.textContent = t("请先选择配方"); return; }
-        try {
-            const metas = await listRecipes();
-            const meta = (Array.isArray(metas) ? metas : []).find(r => r.name === name && r.type === "video_director");
-            if (!meta) { statusEl.textContent = tf("未找到分段配方：{name}", { name }); return; }
-            await openDirectorEditor(meta, null, segIndex);
-        } catch (e) {
-            console.error("[Neo Studio] open director editor failed:", e);
-            statusEl.textContent = tf("打开配方编辑器失败：{msg}", { msg: e.message || e });
-        }
     }
 
     function stopPolling() {

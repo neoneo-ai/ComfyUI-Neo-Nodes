@@ -1161,12 +1161,11 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
         const images = final.images || [];
         if (images.length > 0) {
             const resultSrc = `${window.location.protocol}//${window.location.host}/neo_gallery/thumbnail?filename=${encodeURIComponent(images[0].filename)}&subfolder=${encodeURIComponent(images[0].subfolder || "")}&size=640`;
+            // 灯箱用全尺寸 /view 地址：对比窗里那张只是 640 缩略图，放大看不能糊。
+            // 结果层 pointer-events:none（点击要落到原图上拖窗帘），结果图自己挂 onclick 永远点不到。
+            resultItems = images.map(im => ({ kind: "image", url: im.url, title: im.filename }));
             resultImg.src = resultSrc;
             resultImg.title = t("点击放大查看");
-            resultImg.onclick = () => Lightbox.open({ 
-                items: images.map(im => ({ kind: "image", url: im.url, title: im.filename })), 
-                index: 0 
-            });
             showResultOverlay();
             showEditedCanvas(final.canvas);
         }
@@ -1344,6 +1343,21 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
         { kind: "image", url: origUrl(), title: pathLabel() },
         ...extraRefs.map((r) => ({ kind: "image", url: refFullUrl(r), title: r.filename }))
     ];
+    // 本次生成的结果图（全尺寸地址），未生成时为空
+    let resultItems = [];
+    // 点图落在窗帘哪一侧：分割线右侧露的是结果图、左侧露的是原图；窗帘贴右 = 整幅原图，没有结果可看
+    const isResultSide = (clientX) => {
+        if (!resultItems.length || dividerPct >= 100) return false;
+        const rect = divider.parentElement.getBoundingClientRect();
+        return ((clientX - rect.left) / rect.width) * 100 >= dividerPct;
+    };
+    const openCompareLightbox = (showResult) => {
+        const items = buildLightboxItems();
+        if (!resultItems.length) return Lightbox.open({ items, index: 0 });
+        const firstResult = items.length;
+        items.push(...resultItems);
+        Lightbox.open({ items, index: showResult ? firstResult : 0 });
+    };
     const origImg = $el("img", {
         className: "neo-gallery-edit-compare-img",
         src: source ? origUrl() : "",
@@ -1371,8 +1385,8 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
     // 灯箱按钮入口：局部/点选模式点图是涂抹/打点，扩图模式点图落在拖框框体上，都只能从这里进
     const zoomBtn = $el("button", {
         className: "neo-gallery-edit-zoom-btn", type: "button", textContent: t("🔍 看大图"),
-        title: t("灯箱查看原图与参考图"),
-        onclick: () => Lightbox.open({ items: buildLightboxItems(), index: 0 })
+        title: t("灯箱查看原图、编辑结果与参考图"),
+        onclick: () => openCompareLightbox(false)
     });
     // 扩图 / 局部 / 点选删除 / 融合 / 姿势都要在原图上动手，没原图时先收起这些入口
     const setSourceModeBtns = (on) => {
@@ -1390,8 +1404,10 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
     // 按下后必须拖过阈值才算拖窗帘：原地按下即抬起是「点图」，交给灯箱看大图（点分割线把手同理）
     const DIVIDER_DRAG_PX = 6;
     let dividerDrag = null;
+    let dividerPct = 0;   // 窗帘位置：点图看大图时按它判断点在哪一侧
     const setDividerPos = (pct) => {
         pct = Math.max(0, Math.min(100, pct));
+        dividerPct = pct;
         resultClip.style.clipPath = `inset(0 0 0 ${pct}%)`;
         divider.style.left = pct + "%";
     };
@@ -1405,17 +1421,20 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
         dividerDrag.moved = Math.max(dividerDrag.moved, Math.abs(e.clientX - dividerDrag.sx));
         if (dividerDrag.moved >= DIVIDER_DRAG_PX) posFromClientX(e.clientX);
     };
-    const onDividerEnd = () => {
+    const onDividerEnd = (e) => {
         const d = dividerDrag;
         dividerDrag = null;
-        if (d && d.moved < DIVIDER_DRAG_PX) Lightbox.open({ items: buildLightboxItems(), index: 0 });
+        if (!d || d.moved >= DIVIDER_DRAG_PX) return;
+        // 按下即抬起是「点图」：点落在窗帘右侧看结果图、左侧看原图；把手是边界，固定看原图
+        const x = (e && e.clientX) || d.sx;
+        openCompareLightbox(!d.onHandle && isResultSide(x));
     };
     // 只吃原图与分割线：局部/点选模式的涂抹画布、扩图框体各有自己的按下语义（扩图框体自己判点图）
     imgWrap.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
         if (e.target !== origImg && e.target !== divider) return;
         e.preventDefault();
-        dividerDrag = { sx: e.clientX, moved: 0 };
+        dividerDrag = { sx: e.clientX, moved: 0, onHandle: e.target === divider };
     });
     document.addEventListener("pointermove", onDividerMove);
     document.addEventListener("pointerup", onDividerEnd);
@@ -1682,13 +1701,13 @@ export function openImageEditDialog(gallery, image = null, subfolder = "", opts 
             syncOutpaintView();
             updateSizeLabel();
         };
-        const onUp = () => {
+        const onUp = (ev) => {
             const d = drag;
             drag = null;
             window.removeEventListener("pointermove", onMove);
             window.removeEventListener("pointerup", onUp);
-            // 拖框铺满画布，原图点不到：框体上按下即抬起（没拖动）就是点图，进灯箱看大图
-            if (d && d.mode === "move" && d.moved <= 3) Lightbox.open({ items: buildLightboxItems(), index: 0 });
+            // 拖框铺满画布，原图点不到：框体上按下即抬起（没拖动）就是点图，按窗帘位置决定看原图还是结果
+            if (d && d.mode === "move" && d.moved <= 3) openCompareLightbox(isResultSide(ev.clientX));
         };
         boxEl.addEventListener("pointerdown", (ev) => {
             if (ev.button !== 0) return;

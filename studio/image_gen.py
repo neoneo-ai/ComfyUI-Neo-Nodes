@@ -1175,7 +1175,9 @@ class _PreviewCapture(ProgressHandler):
         url = _preview_data_url(image)
         if url is None:
             return
-        for task in TASKS.values():
+        # 本回调跑在执行线程上，提交与清理任务在事件循环线程上原地增删 TASKS；
+        # 直接遍历 TASKS.values() 会撞出 "dictionary changed size during iteration"，先取快照。
+        for task in list(TASKS.values()):
             if task["prompt_id"] == prompt_id and task["status"] in ("queued", "running"):
                 _PREVIEWS[prompt_id] = url
                 return
@@ -1186,10 +1188,20 @@ add_progress_handler(_PREVIEW_CAPTURE)
 
 
 def _ensure_preview_handler() -> None:
-    """核心 reset_progress_state 每次 prompt 执行都新建空 registry，import 时注册的 handler 会被丢弃；轮询 tick 上补注册。"""
+    """核心 reset_progress_state 每次 prompt 执行都新建空 registry，import 时注册的 handler 会被丢弃；轮询 tick 上补注册。
+
+    轮询 tick 在事件循环线程上，执行线程在 start_progress / update_progress 里遍历
+    registry.handlers.values()；add_progress_handler 原地插入就撞出
+    "dictionary changed size during iteration"，节点执行直接失败。
+    所以整块换新 dict：遍历方手里的旧 dict 全程不变，核心 register_handler 的插入
+    落在当时的当前 dict 上，webui handler 不会被挤掉。
+    """
     registry = get_progress_state()
-    if _PREVIEW_CAPTURE.name not in registry.handlers:
-        add_progress_handler(_PREVIEW_CAPTURE)
+    if _PREVIEW_CAPTURE.name in registry.handlers:
+        return
+    handlers = registry.handlers.copy()  # dict.copy 是 GIL 内的单次 C 调用，不会撞上执行线程的原地插入
+    handlers[_PREVIEW_CAPTURE.name] = _PREVIEW_CAPTURE
+    registry.handlers = handlers
 
 
 def _public_image(entry: dict) -> dict:

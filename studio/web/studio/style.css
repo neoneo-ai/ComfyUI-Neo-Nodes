@@ -220,30 +220,24 @@ body {
     padding: 12px 14px;
 }
 .ns-gen-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
-/* 分段勾选条：一格一段，与控制项同占一行。点格子 = 勾选要跑的段（未勾选 = 整片）；点 ✎ = 打开编辑器定位到该段；
+/* 分段勾选条：一格一段，格内只有段号，与控制项同占一行。点格子 = 勾选要跑的段（未勾选 = 整片）；
    运行中由 director_progress 给当前段挂 ns-gen-seg-running。
    段数多时格子条自己横向滚（细滚动条），不把这一行顶成两行——竖向空间整块留给结果区 */
 .ns-gen-segs { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #555 transparent; }
 .ns-gen-seg-chip {
-    display: flex;
     flex: none;
-    align-items: center;
-    gap: 5px;
     background: #2a2a2e;
     border: 1px solid #444;
     color: #b8b8c2;
     border-radius: 4px;
-    padding: 4px 7px;
+    padding: 4px 8px;
     font-size: 12px;
+    font-weight: 600;
     cursor: pointer;
 }
 .ns-gen-seg-chip:hover { background: #36363a; color: #fff; }
 .ns-gen-seg-chip[aria-pressed="true"] { background: #24406e; border-color: #4a7fd0; color: #fff; }
 .ns-gen-seg-chip.ns-gen-seg-running { border-color: #7aa2ff; box-shadow: 0 0 0 1px #7aa2ff; }
-.ns-gen-seg-n { font-weight: 600; }
-.ns-gen-seg-d { color: #7f8f9d; font-variant-numeric: tabular-nums; }
-.ns-gen-seg-edit { color: #8a9aa8; padding: 0 2px; }
-.ns-gen-seg-edit:hover { color: #fff; }
 /* 勾选提示 + 尺寸/步数回显：只读，值来自配方（要改参数去上方编辑器）；行窄时提示自己截断，不挤掉格子条 */
 .ns-gen-segs-hint { font-size: 12px; color: #8a9aa8; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ns-gen-spec { font-size: 12px; color: #7aa2ff; white-space: nowrap; flex: none; }

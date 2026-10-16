@@ -75,8 +75,7 @@ test("Studio 导演页：分段勾选条 + 生成中实时预览", async () => {
         return sel && sel.textContent === "R1";
     }, "配方自动选中");
     await until(() => document.querySelectorAll(".ns-gen-seg-chip").length === 2, "一格一段（mock spec 2 段）");
-    assert.equal(document.querySelector(".ns-gen-seg-chip .ns-gen-seg-n").textContent, "1", "格子按 1 基段号编号");
-    assert.equal(document.querySelector(".ns-gen-seg-chip .ns-gen-seg-d").textContent, "3s", "格子带该段时长");
+    assert.equal(document.querySelector(".ns-gen-seg-chip").textContent, "1", "格内只有段号");
     // 参数不在面板上：尺寸 / 步数只读回显来自配方 defaults
     assert.equal(document.querySelector(".ns-gen-spec").textContent, "640×384 · 20 步", "回显配方尺寸与步数");
     assert.equal(document.querySelector(".ns-gen-panel input"), null, "生成面板不再有参数输入控件");
@@ -108,7 +107,7 @@ test("Studio 导演页：分段勾选条 + 生成中实时预览", async () => {
     assert.equal(document.querySelectorAll(".ns-gen-final").length, 2, "播放器 + 打开链接");
 });
 
-test("Studio 导演页：点分段格子的 ✎ 把配方编辑器内嵌进右上栏并定位到该段", async () => {
+test("Studio 导演页：点配方卡内嵌打开编辑器 + 「保存并生成整片」提交", async () => {
     await import("../../web/studio/studio-app.js");
     appState.graph = { _nodes: [] }; // 无 Load* 节点 → 编辑器内无媒体候选
     location.hash = "#/director";
@@ -122,19 +121,16 @@ test("Studio 导演页：点分段格子的 ✎ 把配方编辑器内嵌进右�
     assert.ok(document.querySelector(".ns-director-side .neo-recipes-list"), "配方列表挂在左栏");
     assert.ok(document.querySelector(".ns-director-editor-hint"), "没有编辑器时右上出占位提示");
 
-    // 点第 2 格的 ✎ → 打开导演编辑器并定位到该段（与画布节点 ✎ 同源）
-    click(document.querySelectorAll(".ns-gen-seg-chip .ns-gen-seg-edit")[1]);
+    // 点配方卡 → 打开导演编辑器（分段格子只管勾选，不再负责开编辑器）
+    click(document.querySelector(".ns-director-side .neo-recipes-card"));
 
-    // 编辑器内嵌进右上宿主（不建浮层窗口），并定位到第 2 段（listRecipes 取 R1 meta，focusSeg=1）
+    // 编辑器内嵌进右上宿主（不建浮层窗口）
     await until(() => document.querySelector(".ns-director-editor .neo-director-panel"), "编辑器内嵌出现");
     assert.equal(document.querySelector(".neo-director-overlay"), null, "内嵌模式不建浮层窗口");
     assert.equal(document.querySelector(".neo-director-resize"), null, "内嵌模式无右下角缩放手柄");
     assert.equal(document.querySelector(".neo-director-maximize"), null, "内嵌模式无 ⛶ 放大按钮");
     assert.ok(document.querySelector(".ns-director-editor .neo-director-panel").classList.contains("neo-director-embedded"));
     assert.ok(document.querySelector(".ns-director-editor").classList.contains("ns-editor-open"), "编辑器挂上后收起占位提示");
-    const currentIdx = () => [...document.querySelectorAll(".neo-director-seg")]
-        .findIndex((s) => s.classList.contains("neo-director-seg-current"));
-    assert.equal(currentIdx(), 1, "定位到被点击的段");
 
     // 「🎬 保存并生成整片」：走完整保存路径，成功后由宿主提交整片生成并关掉编辑器
     const before = fetchLog.length;

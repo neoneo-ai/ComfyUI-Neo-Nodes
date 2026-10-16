@@ -106,7 +106,7 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
   / the ✎ in the top-right of a `NeoH3VideoDirector` node (entering through a block positions the editor on
   that segment; when the window is already open, clicking another block only switches the current segment).
 - Desktop Studio director page: clicking a left-column recipe card selects it and opens it embedded in the
-  top-right pane (the card's ✎ works too); the ✎ on a segment chip in the generation panel opens it on that segment.
+  top-right pane (the card's ✎ works too).
 - The **＋** in the bottom-right outside the node's timeline display opens the create editor directly (after
   saving, the recipe is added to the `recipe` dropdown and selected).
 - **Run only the checked segments**: hovering a timeline segment block reveals a checkbox, and checking some
