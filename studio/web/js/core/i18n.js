@@ -217,7 +217,7 @@ const EN = {
         "The desktop window draws its own title bar (minimize / maximize / fullscreen / close); uncheck to go back to the system title bar.\nApplies at once and is written to the launcher config, so the next launch keeps it.",
     "打开刷新键 / 右键菜单 / 开发者工具，排查窗口白屏与前端问题用。\npywebview 在建窗口时定值：勾完要重启桌面端窗口才生效。":
         "Enables the reload key, the context menu, and devtools — for debugging a blank window and frontend issues.\npywebview fixes this when the window is created: restart the desktop window after checking it.",
-    // 桌面端：顶栏状态位、离线横幅、生成按钮门控、显存条
+    // 桌面端：顶栏状态位、生成按钮门控、显存条
     "启动中": "Starting",
     "启动中…": "Starting…",
     "运行中": "Running",
@@ -246,11 +246,6 @@ const EN = {
     "ComfyUI 启动中": "ComfyUI starting",
     "ComfyUI 启动中…就绪后再编辑主画布": "ComfyUI is starting… edit the main canvas once it is ready",
     "需要 ComfyUI": "ComfyUI required",
-    "🚀 启动 ComfyUI": "🚀 Start ComfyUI",
-    "远程 ComfyUI 不可达 · {remote} —— 这里浏览的是本机素材目录，生成与队列要连上远端":
-        "Remote ComfyUI unreachable · {remote} — this is the local asset folder; generation and the queue need the remote machine",
-    "ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI":
-        "ComfyUI is not running · assets / skills / recipes / settings / model hub work offline; generation and the queue need ComfyUI",
     "离线模式": "offline mode",
     // 主画布离线闸门（canvas-lock.js）：ComfyUI 掉线时锁画布并说明原因
     "🔒 ComfyUI 未运行 · 画布只读": "🔒 ComfyUI is not running · canvas is read-only",

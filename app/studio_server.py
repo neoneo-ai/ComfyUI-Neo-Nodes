@@ -4,7 +4,8 @@
 桌面端在 ComfyUI 端口之外开一个 HTTP 服务（ComfyUI 端口 + 3），复用插件模块挂在各自 RouteTableDef
 上的 handler 与 Studio 前端静态文件：窗口从打开那一刻就是可用的 Studio。哪些接口桌面端能服务、哪些
 必须 ComfyUI 在跑，由 app/studio_caps.py 一张表说清楚 —— 桌面端按它挂载，表外的一律 409 offline，
-前端据此门控。ComfyUI 就绪后由桌面端整页跳到 ComfyUI 端口的完整 Studio。
+前端据此门控。桌面端自己拉起的 ComfyUI 就绪后，页面留在本端口上把生成类请求直连过去（app/studio_app.py
+的 comfy_cors）；局域网监听与远程那路仍由桌面端整页跳到 ComfyUI 端口的完整 Studio。
 """
 
 import importlib.util
@@ -125,15 +126,20 @@ async def view_file(request):
 async def studio_version(request):
     """离线快照：页面靠它完成初始化，并拿到桌面端能力表决定哪些功能可用。
     starting 一并下发：pywebview 的 js_api 注入晚于页面加载，冷启动那几秒前端只有这份快照
-    知道「桌面端已拉起、端口未就绪」，不会先闪「未运行」与「需要 ComfyUI」提示。"""
+    知道「桌面端已拉起、端口未就绪」，不会先闪「未运行」与「需要 ComfyUI」提示。
+    routes 是归属表（caps.route_list）；comfy_base 非空表示这路 ComfyUI 认桌面端 origin，
+    页面原地把生成类请求切过去，不整页跳转。"""
+    flags = request.app["flags"]
     return web.json_response({
         "success": True,
         "plugin": "Neo Studio",
         "plugin_version": request.app["plugin_version"],
         "comfyui_version": OFFLINE_ERROR,
         "offline": True,
-        "starting": bool(request.app["flags"].get("starting")),
+        "starting": bool(flags.get("starting")),
         "caps": caps.features(),
+        "routes": caps.route_list(),
+        "comfy_base": str(flags.get("comfy_base", "")),
         "recipes": [],
     })
 

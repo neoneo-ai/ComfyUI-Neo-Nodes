@@ -182,6 +182,27 @@ class ProbeTests(unittest.TestCase):
                           "--port", "8188", "--listen", "127.0.0.1,192.168.0.7"])
         popen.call_args.kwargs["stdout"].close()
 
+    def test_start_comfy_argv_with_cors(self):
+        # 页面钉在桌面端口上直连 8188：不给 --enable-cors-header，ComfyUI 的 origin_only 直接 403
+        with patch.object(app.subprocess, "Popen") as popen, patch.object(app, "assign_comfy_job"):
+            app.start_comfy(pathlib.Path("D:/python/python.exe"), pathlib.Path("D:/ComfyUI"), 8188,
+                            cors="http://127.0.0.1:8191")
+        self.assertEqual(popen.call_args[0][0],
+                         [str(pathlib.Path("D:/python/python.exe")), str(pathlib.Path("D:/ComfyUI") / "main.py"),
+                          "--port", "8188", "--enable-cors-header", "http://127.0.0.1:8191"])
+        popen.call_args.kwargs["stdout"].close()
+
+
+class ComfyCorsTests(unittest.TestCase):
+    def test_loopback_desktop_page_gets_the_origin(self):
+        self.assertEqual(app.comfy_cors("", "", 8191), "http://127.0.0.1:8191")
+
+    def test_lan_listen_remote_and_missing_service_get_nothing(self):
+        # 暴露到网卡的实例与远端机器上的实例不在 origin_only 上让位；桌面服务没起来时直连也没有目标
+        self.assertEqual(app.comfy_cors("127.0.0.1,192.168.0.7", "", 8191), "")
+        self.assertEqual(app.comfy_cors("", "http://192.168.0.9:8188", 8191), "")
+        self.assertEqual(app.comfy_cors("", "", 0), "")
+
 
 class FreeComfyPortTests(unittest.TestCase):
     def test_requested_port_when_free(self):
@@ -1074,7 +1095,7 @@ class StudioDesktopTests(unittest.TestCase):
         comfy = SimpleNamespace(pid=1234, poll=lambda: 1, terminate=MagicMock())
         desktop = app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"))
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
-        with patch.object(app, "start_comfy", lambda python, root, port, listen: spawned), \
+        with patch.object(app, "start_comfy", lambda python, root, port, listen, cors: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
@@ -1092,7 +1113,7 @@ class StudioDesktopTests(unittest.TestCase):
         logs = []
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
         with patch.object(app, "port_busy", lambda port: True), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: spawned.append(port) or MagicMock()), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
@@ -1129,7 +1150,7 @@ class StudioDesktopTests(unittest.TestCase):
         desktop.rearm = MagicMock()
         spawned = SimpleNamespace(pid=9999, poll=lambda: None)
         no_thread = lambda target, daemon=True: SimpleNamespace(start=lambda: None)
-        with patch.object(app, "start_comfy", lambda python, root, port, listen: spawned), \
+        with patch.object(app, "start_comfy", lambda python, root, port, listen, cors: spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
              patch.object(app, "port_busy", lambda port: False), \
@@ -1175,6 +1196,80 @@ class StudioDesktopTests(unittest.TestCase):
             for _ in range(3):
                 desktop.comfy_state()
         self.assertEqual(desktop.loader.call_count, 1, "完整 Studio 里探活不许把页面跳走")
+
+    def test_direct_needs_the_desktop_spawned_loopback_child(self):
+        # 直连那路的判定必须与 comfy_cors 的取值条件同源：flag 没给出去，页面直连必 403
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None)
+        self.assertTrue(app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"), desktop_port=8191).direct)
+        self.assertFalse(app.StudioDesktop("u", comfy, 8188, pathlib.Path("root")).direct,
+                         "桌面端服务没绑定端口，就没有 origin 可放行")
+        self.assertFalse(app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"), desktop_port=8191,
+                                           launcher={"listen": "192.168.0.7"}).direct,
+                         "局域网监听保留整页跳转，origin_only 不在网卡实例上让位")
+        self.assertFalse(app.StudioDesktop("u", comfy, 8188, pathlib.Path("root"), desktop_port=8191,
+                                           launcher={"remote": "http://192.168.0.9:8188"}).direct,
+                         "远端机器上的进程加不了 flag")
+        self.assertFalse(app.StudioDesktop("u", None, 8188, pathlib.Path("root"), desktop_port=8191).direct,
+                         "附着的那路没有句柄，flag 给不出去")
+
+    def test_ready_in_place_reports_the_base_instead_of_navigating(self):
+        # 就绪不再整页跳转：跳转会把导演编辑器与表单里未保存的内容全清掉
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None)
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", comfy, 8188,
+                                    pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio", 8191)
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
+        desktop.page = desktop.offline_url
+        with patch.object(app, "wait_ready", lambda base, seconds: True), \
+             patch.object(app, "log_line", lambda text: None):
+            desktop._jump_when_ready()
+        desktop.loader.assert_not_called()
+        self.assertEqual(desktop.flags["comfy_base"], "http://127.0.0.1:8188")
+        self.assertFalse(desktop.starting, "接上前收掉启动中")
+
+    def test_ready_from_the_offline_page_still_jumps_when_direct_is_off(self):
+        # 附着的那路没有 CORS 可用：照旧整页跳过去，别停在「未运行」横幅上
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", None, 8188,
+                                    pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio", 8191)
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
+        desktop.page = desktop.offline_url
+        with patch.object(app, "wait_attach", lambda base, seconds, busy: True), \
+             patch.object(app, "log_line", lambda text: None):
+            desktop._jump_when_ready()
+        desktop.loader.assert_called_once_with("http://127.0.0.1:8188/neo-studio")
+
+    def test_ready_poll_reports_the_base_and_stays_on_the_page(self):
+        # 顶栏那份 5 秒探活是直连那路的收尾：报出 comfy_base 让页面原地翻面，不碰窗口导航
+        comfy = SimpleNamespace(pid=1234, poll=lambda: None)
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", comfy, 8188,
+                                    pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio", 8191)
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
+        desktop.page = desktop.offline_url
+        with patch.object(app, "probe", lambda base, timeout=3.0: True), \
+             patch.object(app, "log_line", lambda text: None):
+            state = desktop.comfy_state()
+        self.assertTrue(state["ready"])
+        self.assertEqual(desktop.flags["comfy_base"], "http://127.0.0.1:8188")
+        desktop.loader.assert_not_called()
+
+    def test_stop_clears_the_base_and_does_not_reload_the_page(self):
+        comfy = SimpleNamespace(pid=1234, poll=lambda: 1, terminate=MagicMock(), wait=MagicMock())
+        desktop = app.StudioDesktop("http://127.0.0.1:8188/neo-studio", comfy, 8188,
+                                    pathlib.Path("root"), "", "http://127.0.0.1:8191/neo-studio", 8191)
+        desktop.loader = MagicMock()
+        desktop.rearm = MagicMock()
+        desktop.flags["comfy_base"] = "http://127.0.0.1:8188"
+        desktop.page = desktop.offline_url
+        with patch.object(app, "probe", lambda base, timeout=3.0: False), \
+             patch.object(app, "port_owner", lambda port: 0), \
+             patch.object(app, "reap", lambda proc, seconds: None), \
+             patch.object(app, "log_line", lambda text: None):
+            state = desktop.comfy_stop()
+        self.assertFalse(state["ready"])
+        self.assertEqual(desktop.flags["comfy_base"], "", "生成类目标随进程一起收，页面回到离线形态")
+        desktop.loader.assert_not_called()
 
 
     def test_pill_is_reinjected_after_every_page_load(self):
@@ -1336,7 +1431,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: comfy), \
              patch.object(app, "wait_ready", wait), \
              patch.object(app, "alert", lambda text: None), \
              patch.object(app, "pid_alive", lambda pid: False), \
@@ -1367,7 +1462,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1389,7 +1484,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1423,7 +1518,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: comfy), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
@@ -1462,7 +1557,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: True), \
              patch.object(app, "pid_alive", lambda pid: False), \
              patch.object(sys, "argv", ["studio_app.py"]):
@@ -1481,7 +1576,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: comfy), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: comfy), \
              patch.object(app, "wait_ready", lambda port, seconds: False), \
              patch.object(app, "alert", lambda text: None), \
              patch.object(app, "pid_alive", lambda pid: False), \
@@ -1617,7 +1712,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "probe", lambda port, timeout=3.0: False), \
              patch.object(app, "find_python", lambda root, p: pathlib.Path("D:/python/python.exe")), \
              patch.object(app, "startup_state", lambda *a: ("ok", "")), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: spawned.append(port) or MagicMock()), \
              patch.object(app, "wait_ready", lambda port, seconds: False), \
              patch.object(app, "wait_attach", lambda *a: False), \
              patch.object(app, "port_owner", lambda port: 4321), \
@@ -1637,7 +1732,7 @@ class MainWindowTests(unittest.TestCase):
              patch.object(app, "singleton", lambda: 7), \
              patch.object(app, "DesktopServer", _fake_desktop_server()), \
              patch.object(app, "probe", lambda port, timeout=3.0: True), \
-             patch.object(app, "start_comfy", lambda python, root, port, listen: spawned.append(port) or MagicMock()), \
+             patch.object(app, "start_comfy", lambda python, root, port, listen, cors: spawned.append(port) or MagicMock()), \
              patch.object(sys, "argv", ["studio_app.py"]):
             self.assertEqual(app.main(), 0)
         self.assertEqual(spawned, [], "热启动同样不许拉第二路")
@@ -1651,7 +1746,7 @@ class MainWindowTests(unittest.TestCase):
         start = lambda *a, **k: a[0]()
         proc = SimpleNamespace(pid=4321, terminate=MagicMock(), wait=MagicMock())
 
-        def spawn(python, root, port, listen):
+        def spawn(python, root, port, listen, cors):
             cw.call_args.kwargs["js_api"].closing = True   # 用户就在这一刻关了窗
             return proc
 
@@ -1798,7 +1893,7 @@ class ListenTests(unittest.TestCase):
         desktop = app.StudioDesktop("u", None, 8188, pathlib.Path("root"), launcher={"listen": "192.168.0.7"})
         argv = []
         with patch.object(app, "start_comfy",
-                          lambda python, root, port, listen: argv.append(listen) or spawned), \
+                          lambda python, root, port, listen, cors: argv.append(listen) or spawned), \
              patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
              patch.object(app, "port_busy", lambda port: False), \
              patch.object(app, "free_comfy_port", lambda port, desktop_port: port), \
@@ -1808,6 +1903,28 @@ class ListenTests(unittest.TestCase):
                           lambda target, daemon=True: SimpleNamespace(start=lambda: None)):
             desktop.comfy_start()
         self.assertEqual(argv, ["127.0.0.1,192.168.0.7"])
+
+    def test_start_passes_the_cors_origin_only_for_loopback(self):
+        # flag 与 direct 必须同源：局域网监听那路不给，页面就照旧整页跳转
+        seen = []
+        spawned = SimpleNamespace(pid=9999, poll=lambda: None)
+
+        def spawn(python, root, port, listen, cors):
+            seen.append(cors)
+            return spawned
+
+        with patch.object(app, "start_comfy", spawn), \
+             patch.object(app, "resolve_python", lambda root, arg: pathlib.Path("python.exe")), \
+             patch.object(app, "port_busy", lambda port: False), \
+             patch.object(app, "free_comfy_port", lambda port, desktop_port: port), \
+             patch.object(app, "probe", lambda port, timeout=3.0: False), \
+             patch.object(app, "log_line", lambda text: None), \
+             patch.object(app.threading, "Thread",
+                          lambda target, daemon=True: SimpleNamespace(start=lambda: None)):
+            app.StudioDesktop("u", None, 8188, pathlib.Path("root"), desktop_port=8191).comfy_start()
+            app.StudioDesktop("u", None, 8188, pathlib.Path("root"), desktop_port=8191,
+                              launcher={"listen": "192.168.0.7"}).comfy_start()
+        self.assertEqual(seen, ["http://127.0.0.1:8191", ""])
 
     def test_apply_rejects_a_non_address(self):
         # 监听地址不是 IP 就报错：不能把垃圾喂给 ComfyUI 的 --listen

@@ -197,7 +197,7 @@ test("桌面端窗口加载 Neo Studio 四视图", async () => {
     }
 });
 
-test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、生成类请求 409", async () => {
+test("ComfyUI 停止时页面翻回离线形态：浏览可用、生成类请求 409", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
         console.log("跳过桌面端 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
@@ -218,19 +218,19 @@ test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、
         page.on("pageerror", (e) => errors.push(String(e)));
         await pinZh(page);
 
-        // 冷启动窗口直接进桌面端的离线素材页：ComfyUI 还在拉起，「启动中」只出顶栏胶囊，横幅收起
-        assert.ok(await waitFor(() => page.evaluate(() => !!document.getElementById("ns-offline")), 60),
-            "离线页应有离线横幅节点");
+        // 冷启动窗口直接进桌面端的离线素材页：ComfyUI 还在拉起，「启动中」只出顶栏胶囊
+        assert.ok(await waitFor(() => page.evaluate(() => document.body.classList.contains("ns-offline")), 60),
+            "离线页应带离线标记");
         await page.waitForSelector("#ns-view .neo-gallery-panel", { timeout: 60000 });
         const offline = await page.evaluate(async () => ({
-            banner: getComputedStyle(document.getElementById("ns-offline")).display,
+            banner: !!document.getElementById("ns-offline"),
             version: document.getElementById("ns-version").textContent,
             mem: !!document.querySelector(".ns-mem"),
             toast: !!document.getElementById("ns-toast"),
             // 必须 ComfyUI 运行时的写接口：桌面端不认，明确 409（/neo_gallery/delete 归桌面端服务，不在这里）
             del: (await fetch("/neo_image_gen/generate", { method: "POST", body: "{}" })).status,
         }));
-        assert.equal(offline.banner, "none", "启动中不叠横幅：顶栏胶囊已报「● 启动中」");
+        assert.equal(offline.banner, false, "离线页不叠横幅：顶栏胶囊报状态，入口在「设置 → 启动设置」");
         assert.match(offline.version, /ComfyUI 启动中/);
         assert.equal(offline.mem, false, "显存监控在导演页，离线页不应出显存块");
         assert.equal(offline.toast, false, "启动中不出「需要 ComfyUI」提示条");
@@ -240,26 +240,33 @@ test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、
             document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0), 60),
             "离线页应出缩略图");
 
-        // ComfyUI 就绪 → 桌面端整页跳到完整 Studio
+        // ComfyUI 就绪 → 页面原地接上生成：地址不变、离线标记摘掉、显存条补挂、生成类目标认下桌面端 origin
         assert.ok(await waitFor(() => probe(port), 180), "桌面端拉起的 ComfyUI 未就绪");
-        await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${port}/neo-studio`), { timeout: 60000 });
-        assert.equal(await page.evaluate(() => !document.getElementById("ns-offline")), true,
-            "完整 Studio 不该带离线横幅");
+        assert.ok(await waitFor(() => page.evaluate(() => !document.body.classList.contains("ns-offline")), 60),
+            "就绪后离线标记应随翻面摘掉");
+        assert.equal(new URL(page.url()).port, String(offlinePort),
+                     "页面必须钉在桌面端端口上，整页跳转会把未保存的编辑清掉");
+        assert.ok(await waitFor(() => page.evaluate(() =>
+            !!document.querySelector(".ns-gen-foot .ns-mem")), 60), "翻面后显存条要补挂到生成面板");
+        const direct = await page.evaluate(async (p) =>
+            (await fetch(`http://127.0.0.1:${p}/neo_studio/version`)).status, port);
+        assert.equal(direct, 200, "桌面端放行的 origin 必须被 ComfyUI 认下（--enable-cors-header）");
 
-        // 停掉 ComfyUI → 窗口拉回离线素材页，浏览继续可用（启停在「设置 → 启动设置」顶部）
+        // 停掉 ComfyUI → 页面翻回离线形态，浏览继续可用（启停在「设置 → 启动设置」顶部）
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-tab[data-key='launch']", { timeout: 30000 });
         await page.click(".ns-settings-tab[data-key='launch']");
         await page.waitForSelector(".ns-kernel-stop:not([disabled])", { timeout: 30000 });
         await page.click(".ns-kernel-stop");
-        await page.waitForURL(new RegExp(`^http://127\\.0\\.0\\.1:${offlinePort}/neo-studio`), { timeout: 120000 });
-        await page.waitForSelector("#ns-offline", { timeout: 30000 });
+        assert.ok(await waitFor(() => page.evaluate(() => document.body.classList.contains("ns-offline")), 120),
+            "停掉内核后页面应翻回离线形态");
+        assert.equal(new URL(page.url()).port, String(offlinePort), "停完页面还在原端口，不整页刷新");
         assert.ok(await waitFor(() => page.evaluate(() =>
             document.querySelectorAll("#ns-view .neo-gallery-panel img").length > 0), 60),
-            "回到离线页仍应出缩略图");
-        // 停止后启动中标记要收掉：横幅回到「未运行 + 启动入口」，不卡在启动中
-        assert.match(await page.evaluate(() => document.getElementById("ns-offline").textContent),
-            /ComfyUI 未运行/);
+            "回到离线形态仍应出缩略图");
+        // 停止后启动中标记要收掉：顶栏回到「已停止」，入口在「设置 → 启动设置」，不卡在启动中
+        assert.match(await page.evaluate(() => document.getElementById("ns-comfy-status").textContent),
+            /已停止/);
         assert.deepEqual(errors, [], "离线页不应有未捕获错误");
 
         await browser.close();
@@ -268,7 +275,7 @@ test("ComfyUI 停止时窗口退回桌面端的离线素材页：浏览可用、
     }
 });
 
-test("启动设置点一下停掉桌面端拉起的 ComfyUI，再点一下重新拉起后跳回完整 Studio", async () => {
+test("启动设置点一下停掉桌面端拉起的 ComfyUI，再点一下重新拉起后页面原地接上生成", async () => {
     if (process.env.NEO_STUDIO_APP !== "1") {
         console.log("跳过桌面端 E2E（设 NEO_STUDIO_APP=1 启用，会弹真实窗口）");
         return;
@@ -299,7 +306,7 @@ test("启动设置点一下停掉桌面端拉起的 ComfyUI，再点一下重新
         await page.click(".ns-settings-tab[data-key='launch']");
         await page.waitForSelector(".ns-kernel-stop:not([disabled])", { timeout: 30000 });
 
-        // 点一下真停：端口探活失败，桌面端把窗口拉回离线页，状态位回到已停止
+        // 点一下真停：端口探活失败，页面翻回离线形态，状态位回到已停止
         await page.click(".ns-kernel-stop");
         const t0 = Date.now();
         let down = false;
@@ -314,7 +321,7 @@ test("启动设置点一下停掉桌面端拉起的 ComfyUI，再点一下重新
         await page.waitForFunction(() => /● 已停止/.test(document.querySelector("#ns-comfy-status")?.textContent || ""),
             null, { timeout: 30000 });
 
-        // 点一下重新拉起：显示启动中，就绪后桌面端整页跳回完整 Studio（新文档里标记 __e2e_reload 消失）
+        // 点一下重新拉起：显示启动中，就绪后页面原地接上生成（同一份文档，标记 __e2e_reload 留在页上）
         await page.evaluate(() => { location.hash = "#/settings"; });
         await page.waitForSelector(".ns-settings-tab[data-key='launch']", { timeout: 30000 });
         await page.click(".ns-settings-tab[data-key='launch']");
@@ -327,8 +334,10 @@ test("启动设置点一下停掉桌面端拉起的 ComfyUI，再点一下重新
         await page.waitForFunction(() => /● 启动中/.test(document.querySelector("#ns-comfy-status").textContent),
             null, { timeout: 10000 });
         assert.ok(await waitFor(() => probe(port), 150), "重新拉起的 ComfyUI 未就绪");
-        await page.waitForFunction(() => window.__e2e_reload === undefined
-            && /● 运行中/.test(document.querySelector("#ns-comfy-status").textContent), null, { timeout: 30000 });
+        await page.waitForFunction(() => /● 运行中/.test(document.querySelector("#ns-comfy-status").textContent),
+            null, { timeout: 30000 });
+        assert.equal(await page.evaluate(() => window.__e2e_reload), 1,
+            "就绪不许换页：刷新与跳转都会清掉未保存的编辑");
 
         await browser.close();
     } finally {

@@ -48,15 +48,12 @@ function mockDesktopApi(starts) {
     return state;
 }
 
-test("离线横幅说明可编辑面并给出启动入口", async () => {
+test("离线页带离线标记，不叠横幅", async () => {
     mockOfflineDesktop();
-    await import("../../web/studio/studio-app.js?offBanner=1");
+    await import("../../web/studio/studio-app.js?offMark=1");
     await flush();
-    const bar = document.getElementById("ns-offline");
-    assert.ok(bar, "桌面端的离线页应显示横幅");
-    assert.match(bar.textContent, /ComfyUI 未运行/);
-    assert.match(bar.textContent, /技能 \/ 配方 \/ 设置 \/ 模型库可离线编辑/);
-    assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
+    assert.ok(document.body.classList.contains("ns-offline"), "桌面端的离线页应带离线标记");
+    assert.equal(document.getElementById("ns-offline"), null, "离线页不叠横幅");
     assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
 });
 

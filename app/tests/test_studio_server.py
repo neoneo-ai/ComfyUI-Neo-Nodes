@@ -151,6 +151,22 @@ class OfflineServiceTests(_ServerCase):
         data = json.loads(self.get("/neo_studio/version")[1])
         self.assertFalse(data["starting"], "没在拉起时不报启动中")
 
+    def test_version_carries_the_route_ownership_table(self):
+        # 页面钉在桌面端口后由前端判定归属：表由桌面端下发，前端不另立第二份清单
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertIn("GET /neo_gallery/list", data["routes"], "桌面端能服务的要列出来")
+        self.assertNotIn("POST /neo_studio/director/generate", data["routes"],
+                         "要执行队列的归 ComfyUI，页面直连过去")
+
+    def test_version_carries_the_direct_target_only_when_desktop_reports_it(self):
+        # 空 = 这路 ComfyUI 不认桌面端 origin（未就绪 / 附着 / 远程），页面留在离线形态
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertEqual(data["comfy_base"], "")
+        self.app["flags"]["comfy_base"] = "http://127.0.0.1:8188"
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertEqual(data["comfy_base"], "http://127.0.0.1:8188", "页面靠它把生成类请求原地切过去")
+        self.app["flags"]["comfy_base"] = ""
+
     def test_extension_static_files_served(self):
         for path in ("/extensions/comfyui-neo-studio/studio/studio-app.js",
                      "/extensions/comfyui-neo-studio/studio/style.css",
@@ -394,6 +410,11 @@ class DesktopModuleTests(_RealFolderPaths):
                       for table in ns.load_desktop_modules(PLUGIN_DIR) for r in table}
         self.assertFalse(caps.DESKTOP_ROUTES - registered,
                          f"能力清单里的桌面端路由在模块里不存在: {sorted(caps.DESKTOP_ROUTES - registered)}")
+
+    def test_route_list_is_the_manifest_in_wire_form(self):
+        # 下发给页面的归属表就是这张表，不在前端另立第二份
+        self.assertEqual(set(caps.route_list()),
+                         {f"{method} {path}" for method, path in caps.DESKTOP_ROUTES})
 
     def test_desktop_app_mounts_exactly_the_manifest(self):
         app = ns.build_app(COMFY_ROOT, PLUGIN_DIR)

@@ -59,7 +59,7 @@ python -m pytest tests -v
   `configs/` 只剩预设，用户配置与密钥不在跟踪列表里因此进不了 exe；`tests` / `tools` / `docs` 等整目录排除；
   非 ASCII 文件名必须走 `git ls-files -z` 的 NUL 分条，默认输出会把它们转义成假名字。
 - `tests/test_studio.py` — 整片生成路由与任务 watcher、版本路由、日志路由（`/neo_studio/log` 读 `app.logger` 环形缓冲）。
-- `tests/test_studio_server.py` — 桌面端只读服务（`app/studio_server.py`）：起真服务打真接口，断言 ComfyUI 不在跑时
+- `tests/test_studio_server.py` — 桌面端服务（`app/studio_server.py`，进程里没有 ComfyUI 运行时）：起真服务打真接口，断言 ComfyUI 不在跑时
   Studio 页面 / 前端静态文件 / 目录列表 / 缩略图 / 收藏文件都出得来，写操作与生成类接口回 `409 offline`；
   gallery 模块族自带 `RouteTableDef` 且源码不再出现 `PromptServer`（桌面端进程里没有 ComfyUI 运行时）；
   启动设置路由 `/neo_studio/launcher` GET 读配置、POST 校验后落盘（根目录缺 `main.py` 拒绝、未知动作拒绝）。
@@ -129,8 +129,8 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   `configs/studio_window.json` 的存档尺寸打开、四视图渲染、顶栏状态位只报「● 运行中」（端口 / PID 在提示里）、日志 tab 读到控制台内容、
   重开页面后 localStorage 保留；第二条用例在冷启动专用端口（`NEO_STUDIO_STOP_PORT`，默认 8190；设 `NEO_STUDIO_EXE`
   则改跑打包的 exe 时显式传 `--root`/`--python`，exe 落在任意目录推不出根目录）在「设置 → 启动设置」顶部点「■ 停止内核」停掉桌面端拉起的 ComfyUI（端口探活失败），再点「▶ 启动内核」重新拉起，断言顶栏显示「● 启动中」且就绪后
-  整页跳回完整 Studio（8188 上用户自己的服务绝不动）；第三条用例断言冷启动窗口先出启动页、随后落在桌面端只读服务的离线素材页
-  （端口 +3，出横幅与缩略图、写操作 `409`），ComfyUI 就绪后跳到完整 Studio，停掉后窗口拉回离线页且无未捕获错误。
+  页面原地接上生成（不换页、不刷新，8188 上用户自己的服务绝不动）；第三条用例断言冷启动窗口先出启动页、随后落在桌面端服务的 Studio 页
+  （端口 +3，出离线标记与缩略图、写操作 `409`），ComfyUI 就绪后页面原地接上生成（地址不变、离线标记摘掉、显存条补挂、桌面端 origin 被 ComfyUI 认下），停掉后页面翻回离线形态且无未捕获错误。
   **会弹真实窗口，默认 skip；启用：`NEO_STUDIO_APP=1`（前置：整合包 python 已装 `pywebview`，且没有别的
   Neo Studio 桌面端占着单实例端口 8189——已有桌面端在跑时新实例会直接退出）。**
 

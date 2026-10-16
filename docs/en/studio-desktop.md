@@ -1,7 +1,8 @@
 # Studio Desktop
 
-The desktop puts the Studio page in a local window: it starts ComfyUI itself and serves a read-only asset service on
-the ComfyUI port +3, so browsing assets and editing recipes and skills keep working while ComfyUI is not running.
+The desktop puts the Studio page in a local window: it starts ComfyUI itself and serves a local Studio service on the
+ComfyUI port +3 (`app/studio_server.py`, a process with no ComfyUI runtime; the file read/write routes are served
+there as usual), so browsing assets and editing recipes and skills keep working while ComfyUI is not running.
 Source runs and the packaged exe go through the same `app/studio_app.py`.
 
 ## Components
@@ -33,11 +34,43 @@ the same one `Comfy.Canvas.Lock` uses): panning keeps working, node dragging / r
 right-click add-node menu stop, and a bottom bar reads "🔒 ComfyUI is not running · canvas is read-only".
 While offline it re-probes every 3 seconds; recovery unlocks the canvas and restores the lock state the user had set.
 
-The offline page runs on the desktop-side read-only service, and the skill detail's "⤒ Edit in main canvas" opens the
+The offline page runs on the desktop-side service, and the skill detail's "⤒ Edit in main canvas" opens the
 root path of the current origin — the desktop service has no canvas page there, so clicking it while ComfyUI is not
 ready only lands on a missing page. `openSkillWorkflowInMainUi()` checks the run state the header pill already shows:
 "ComfyUI is starting… edit the main canvas once it is ready" while booting, "This feature needs ComfyUI" when it is
 stopped.
+
+## Generation connects in place once ComfyUI is ready
+
+A cold-start window lands on the Studio page served by the desktop service, and once ComfyUI is ready the page
+**connects generation in place**: no URL change, no reload, no full-page navigation. A navigation or a reload clears
+the unsaved content of the director editor and the settings forms, and a cross-origin navigation loses all of it.
+
+- The desktop ships `routes` (the ownership table, `studio_caps.route_list()`) and `comfy_base` (the direct target for
+  generation requests) in `/neo_studio/version`. The frontend decides per request which origin it goes to using that
+  table; while `comfy_base` is empty, routes outside the table keep hitting the desktop service and answering `409`,
+  which drives the single "This feature needs ComfyUI" prompt.
+- Direct mode is on only for "the ComfyUI the desktop spawned itself + loopback-only listen + the desktop service has
+  a bound port" (`StudioDesktop.direct`). That decision must share its source with `comfy_cors()`: ComfyUI's
+  `--enable-cors-header` and its origin_only middleware are mutually exclusive (`ComfyUI/server.py`), and without the
+  flag every request from the desktop port origin is rejected with 403 because Host and Origin no longer match.
+- The price is that this ComfyUI instance gives up its origin_only CSRF defence, so LAN listen (`--listen`) and remote
+  mode never get the flag and keep the full-page navigation: an instance exposed to a NIC does not trade that defence
+  for convenience.
+- The flip happens as one step and nothing flips until ComfyUI answers: the capability table becomes ComfyUI's, gated
+  buttons drop their blocking listener and restore their labels, the `body.ns-offline` mark is dropped, the memory bar is
+  mounted into the generation panel where it belongs, and `/ws` moves from the desktop stub to the real ComfyUI event
+  stream. Enabling the buttons without moving the event stream is the half-online state where a task is accepted and
+  no progress ever comes back.
+- The flip is driven by `ready`, not by who launched the kernel: the desktop clears `starting` in the very snapshot that
+  reports readiness, so gating the flip on `starting` never fires for a cold start where the desktop launched the kernel
+  itself — the header pill says "Running" while the page stays pinned to the offline form and every generation request
+  answers `409`.
+- The offline page carries no banner: the header pill reports "● Stopped" and points the start entry at
+  "Settings → Startup settings", generation entries are dimmed by the capability gate, and `body.ns-offline` is the
+  mark the shared modules read to tell the offline form apart.
+- Stopping the kernel flips the page back to the offline form: the direct target is cleared, the generation buttons are
+  gated again, the event stream goes back to the stub, and the window navigation never moves.
 
 ## Director page layout
 
@@ -123,8 +156,8 @@ drawer, the left-column divider, the scrollbars and the narrow-window rules are 
   emitted by both `comfy_state` and `/neo_studio/version`. pywebview injects `js_api` later than page load, and
   `window.pywebview` appears before its methods, which finish.js fills in afterwards: desktop-side api code always
   waits for the method it needs to show up before taking over, and the frontend knows it is starting from the version
-  snapshot alone. During that window only "ComfyUI is starting…" is shown; the not-running banner and the start entry
-  are hidden.
+  snapshot alone. During that window only "ComfyUI is starting…" is shown; the "ComfyUI required" toast and the start
+  entry stay hidden.
 - When the desktop starts, "is there a ComfyUI" is decided only by whether anyone is listening on the port: a missing
   `/neo_studio/version` probe (that instance has not loaded the plugin yet and is still importing custom nodes) also
   only attaches — a second instance is never started on a neighbouring port, and the "Startup settings → Start
@@ -194,7 +227,7 @@ startable once the root is filled in.
 - The choice lives in `localStorage["neo_studio_lang"]` and defaults to the browser language. The desktop window and
   a browser tab are different origins, so each keeps its own language choice.
 - Translated: the desktop app's own strings — header and window controls, the director generation panel, startup
-  settings (including the ⓘ notes), the header status pill, the offline banner, and the VRAM bar. The assets and
+  settings (including the ⓘ notes), the header status pill, and the VRAM bar. The assets and
   skills views and the LLM / image / video forms are shared modules and keep their Chinese source text.
 - Entries live in `studio/web/js/core/i18n.js`: Chinese source strings are the keys, so a missing English entry falls
   back to Chinese instead of exposing a placeholder.
@@ -282,7 +315,7 @@ Desktop-side `/extensions/` static responses carry `no-store` (matching ComfyUI'
 `data/studio_profile/EBWebView/Default/Cache` is cleared before the window opens: a stale plugin JS in the cache is
 served straight out of it (no request), and once it is linked into the same ES module graph as the new modules the
 link error happens before `studio-app.js` executes and JS cannot catch it — the page is left with only the header:
-no views mounted, no offline banner, and the header status slot stuck at `hidden`.
+no views mounted and the header status slot stuck at `hidden`.
 
 ## Logs
 

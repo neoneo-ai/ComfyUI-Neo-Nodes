@@ -16,6 +16,7 @@ import {
 import { installDialogs, resetDialogs, setConfirmAnswer, dialogs } from "./helpers/dialogs.mjs";
 import { installFetch, mockRoute, clearRoutes, resetFetchLog, fetchLog, missingRoutes, jsonResponse, sseResponse } from "./helpers/fetch.mjs";
 import { clearObjectInfoCache } from "../../web/js/core/object-info.js";
+import { configure as configureRoutes } from "../../web/studio/shim/route.js";
 import { setLang } from "../../web/js/core/i18n.js";
 
 const dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>", {
@@ -57,4 +58,5 @@ export function resetEnv() {
     delete window.pywebview;  // 桌面端的 js_api 桩：用例各自声明，留着会让后面的「浏览器标签页」用例当桌面端窗口
     document.body.innerHTML = "";
     document.body.className = "";   // 离线标记这类 body 级状态：不清的话会串到后面的用例
+    configureRoutes({ desktopRoutes: [], comfyBase: "" });   // 归属表与直连目标是模块级：不复位的话翻面用例会把后面的用例打到 ComfyUI 上
 }

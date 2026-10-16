@@ -50,7 +50,8 @@ the rules a change has to obey.
   A fix written there is overwritten by the next launch: edit `studio/` and let the
   sync carry it.
 - `app/` is the desktop app: `studio_app.py` (pywebview + WebView2
-  window), `studio_server.py` (read-only offline service), `studio_caps.py`
+  window), `studio_server.py` (offline service: a local process with no ComfyUI
+  runtime, not a no-write service), `studio_caps.py`
   (capability table). It owns window, process, and launcher concerns.
 - `studio/web/` is the frontend, served through `WEB_DIRECTORY = "./web"`.
   `studio/web/studio/` is the standalone Studio page;
@@ -73,9 +74,12 @@ the rules a change has to obey.
   in source: there is no ComfyUI runtime in the desktop process.
   `app/tests/test_studio_server.py` asserts this.
 - What the offline desktop service can serve is decided by `app/studio_caps.py`
-  and nothing else. Add a route to the table when it is genuinely read-only;
+  and nothing else. Add a route to the table when it needs no ComfyUI runtime;
   everything outside it answers `409 offline` and the frontend gates on
   that flag. Do not scatter per-route offline checks through handlers.
+  The same table is the request-ownership list the pinned page ships to
+  (`route_list()` in the `/neo_studio/version` payload); the frontend keeps no
+  second copy of it.
 - `studio/__init__.py` registers and merges. It owns no business logic:
   node mappings merge from each module's `NODE_CLASS_MAPPINGS`, routes
   mount from each module's `routes`, and the load banner is its only output.
@@ -187,10 +191,17 @@ the rules a change has to obey.
 - The window comes first. Opening the app unpacks and creates the window; the
   self-check, the offline service, and the ComfyUI launch run on a background thread. The
   landing points are the full Studio page, the offline asset page, and the startup page.
-- Port conventions: ComfyUI on 8188, the read-only desktop asset service
+- Port conventions: ComfyUI on 8188, the desktop asset service
   on the ComfyUI port plus `DESKTOP_PORT_OFFSET`, the cold-start e2e port
   on `NEO_STUDIO_STOP_PORT`. Never stop the user's own ComfyUI on 8188: the
   kernel start/stop controls act only on the instance the desktop app launched.
+- The cold-start page stays on the desktop port and connects generation in place when ComfyUI
+  gets ready; a full-page navigation or a reload clears the director editor and the settings
+  forms, so the ready path never navigates. Direct mode is on only for the loopback-only ComfyUI
+  the desktop spawned itself (`StudioDesktop.direct`) and must share its condition with
+  `comfy_cors()`: ComfyUI's `--enable-cors-header` replaces its origin_only middleware, so
+  without the flag the page's cross-origin requests are 403, and the flag is never given for
+  LAN listen or remote mode, where the navigation path stays.
 - The single-instance lock is a named mutex that lives until the process
   exits. Do not implement it as a port listener: a listener on 8189 shows up in
   `netstat` and reads to users as a second ComfyUI that survives the window close.

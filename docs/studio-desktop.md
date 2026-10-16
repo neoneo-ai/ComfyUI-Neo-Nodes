@@ -1,6 +1,7 @@
 # 桌面端（Studio Desktop）
 
-桌面端把 Studio 页面装进本地窗口：自己拉起 ComfyUI，并在 ComfyUI 端口 +3 起一个只读素材服务，ComfyUI 不在跑时页面
+桌面端把 Studio 页面装进本地窗口：自己拉起 ComfyUI，并在 ComfyUI 端口 +3 起一个本机 Studio 服务
+（`app/studio_server.py`，进程里没有 ComfyUI 运行时；文件读写类接口照常在它上面服务），ComfyUI 不在跑时页面
 照样能浏览素材、编辑配方与技能。源码运行与打包 exe 走同一条 `app/studio_app.py`。
 
 ## 组成
@@ -27,9 +28,32 @@
 widget 编辑 / 右键加节点全停，底部出「🔒 ComfyUI 未运行 · 画布只读」。离线期间每 3 秒复探一次，
 恢复后解锁并还原用户自己的锁定状态。
 
-离线页跑在桌面端的只读服务上，技能详情的「⤒ 主画布编辑」开的是当前源的根路径 —— 桌面端根路径没有画布页，
+离线页跑在桌面端服务上，技能详情的「⤒ 主画布编辑」开的是当前源的根路径 —— 桌面端根路径没有画布页，
 ComfyUI 没就绪时点它只会得到「页面不存在」。`openSkillWorkflowInMainUi()` 照顶栏那份运行状态拦一下：启动中
 报「ComfyUI 启动中…就绪后再编辑主画布」，未运行报「该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」」。
+
+## 就绪后原地接上生成
+
+冷启动的窗口停在桌面端服务的 Studio 页上，ComfyUI 就绪后页面**原地接上生成**：不换地址、不刷新、不整页跳转。
+整页跳转与刷新都会清掉导演编辑器和设置表单里未保存的内容，跨源跳转更是全丢。
+
+- 桌面端在 `/neo_studio/version` 里下发 `routes`（归属表，`studio_caps.route_list()`）与 `comfy_base`
+  （生成类请求的直连目标）。前端按归属表判定每条请求打桌面端还是打 ComfyUI；`comfy_base` 为空时表外的请求
+  照旧打桌面端拿 `409`，走统一的「需要 ComfyUI」提示。
+- 直连只在「桌面端自己拉起的那路 + 只监听本机 + 桌面端服务已绑定端口」时开启（`StudioDesktop.direct`）。
+  这条判定必须与 `comfy_cors()` 的取值条件同源：ComfyUI 的 `--enable-cors-header` 与它的 origin_only 中间件互斥
+  （`ComfyUI/server.py`），不给 flag 时从桌面端口 origin 发往 ComfyUI 的请求会因 Host/Origin 不等直接 403，
+  页面直连就是全红。
+- 代价是这路 ComfyUI 的 origin_only 这道 CSRF 防线让位，所以局域网监听（`--listen`）与远程模式一律不给 flag，
+  那两路保留整页跳转：暴露到网卡的实例不在防线上让位换体验。
+- 翻面一次做完，ComfyUI 答话之前整块不翻：能力表换成 ComfyUI 的、门控按钮摘监听并还原文案、`body.ns-offline`
+  离线标记摘掉、显存条补挂到生成面板原来的位置、`/ws` 从桌面端的桩换到 ComfyUI 的真事件流。只解禁按钮不换事件流就是
+  「任务交得出去、进度拿不回来」的半在线态。
+- 翻面由 `ready` 驱动，不看是谁拉起内核：桌面端在就绪这同一份快照里才清掉 `starting`，拿 `starting` 当翻面条件时，
+  桌面端自己拉起内核的冷启动永远翻不过来 —— 顶栏报「运行中」，页面钉在离线形态，生成请求全 `409`。
+- 离线页不叠横幅：顶栏状态位报「● 已停止」并把入口指向「设置 → 启动设置」，生成入口按能力门控压暗，
+  `body.ns-offline` 就是各模块认离线形态的那份标记。
+- 停掉内核后页面翻回离线形态：直连目标清空、生成按钮重新门控、事件流换回桩，窗口导航不动。
 
 ## 导演页布局
 
@@ -91,7 +115,7 @@ ComfyUI 没就绪时点它只会得到「页面不存在」。`openSkillWorkflow
 - 桌面端拉起 ComfyUI 期间的 `starting` 是 `StudioDesktop` 与桌面端服务共用的一份 dict，`comfy_state` 与
   `/neo_studio/version` 同时下发。pywebview 的 js_api 注入晚于页面加载，且 `window.pywebview` 先出现、方法由
   `finish.js` 后填：桌面端 api 一律等到要用的方法出现才接管，前端只靠版本快照就知道在启动中。这段时间只出
-  「ComfyUI 启动中…」，收起未运行横幅与启动入口。
+  「ComfyUI 启动中…」，不出「需要 ComfyUI」提示与启动入口。
 - 启动桌面端时「有没有 ComfyUI」只看端口有没有人监听：`/neo_studio/version` 探不到（那路插件没加载、还在导入自定义
   节点）也只附着，不在旁边端口拉第二路，启动设置的「启动内核」按钮同样只附着。
 
@@ -141,8 +165,8 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
 - 设置页有「界面语言」一栏（`中文` / `English` 单选）：选完立刻落盘并整页刷新，没有「保存」这一步。
 - 语言存 `localStorage["neo_studio_lang"]`，默认跟随系统浏览器语言。桌面端窗口与浏览器标签页是不同 origin，
   两边各存各的语言选择。
-- 翻译覆盖桌面端自有文案：顶栏与窗口控件、导演页生成面板、启动设置（含 ⓘ 提示）、顶栏状态位、离线横幅、
-  显存条。素材 / 技能视图与 LLM / 生图 / 生视频表单是共享模块，保持中文原文。
+- 翻译覆盖桌面端自有文案：顶栏与窗口控件、导演页生成面板、启动设置（含 ⓘ 提示）、顶栏状态位、显存条。
+  素材 / 技能视图与 LLM / 生图 / 生视频表单是共享模块，保持中文原文。
 - 词条在 `studio/web/js/core/i18n.js`：中文原文作 key，英文缺项回落中文，漏译只会退回中文，不会露出占位符。
 
 ## 局域网访问
@@ -204,7 +228,7 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
 
 桌面端 `/extensions/` 静态响应带 `no-store`（与 ComfyUI 的 `/extensions` 一致），并在开窗口前清掉
 `data/studio_profile/EBWebView/Default/Cache`：缓存里的旧插件 JS 会被直接端出来用（不发请求），和新模块拼进同一张
-ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，整页只剩顶栏 —— 视图不挂、离线横幅不出、
+ES 模块图后，链接错误发生在 `studio-app.js` 执行之前、JS 捕获不到，整页只剩顶栏 —— 视图不挂、
 顶栏状态位永远 `hidden`。
 
 ## 日志

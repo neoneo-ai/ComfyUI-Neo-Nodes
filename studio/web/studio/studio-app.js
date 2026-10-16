@@ -5,7 +5,8 @@
 // - 技能：统一技能管理（skill.js createSkillManager，与顶栏「🗂 技能管理」同组件，直接展开无弹窗）
 // - 设置：生图/生视频/LLM 设置表单（内嵌，无弹窗）
 import { app, initExtensions, getSidebarTab, onSidebarTabChange } from "./shim/app.js";
-import { api } from "./shim/api.js";
+import { api, reconnectSocket } from "./shim/api.js";
+import { configure as configureRoutes, resolve as resolvePath } from "./shim/route.js";
 import { $el } from "./shim/ui.js";
 
 import "../gallery.js";   // 注册 comfy.neo.gallery 扩展（NeoGallery + 侧栏 tab 定义）
@@ -1023,6 +1024,7 @@ function buildSettings(el) {
 let offline = false;   // 页面跑在桌面端的服务上：文件类功能可用，生成类请求由桌面端回 409
 let starting = false;  // 桌面端已拉起 ComfyUI 还没就绪：这段时间只出「启动中」，其余离线提示一律收起
 let caps = {};         // 桌面端能力表（/neo_studio/version 下发）；ComfyUI 页里缺省即全可用
+let comfyBase = "";    // 生成类请求的直连目标；空 = 这路 ComfyUI 不认桌面端 origin（未就绪 / 附着 / 远程）
 let versionInfo = { plugin: "", comfy: "", offline: false };   // 版本号只在设置「关于」里显示
 
 function can(feature) { return caps[feature] !== false; }
@@ -1031,7 +1033,7 @@ function can(feature) { return caps[feature] !== false; }
 // 一份 comfy_state 轮询下发给所有看它的人（顶栏状态位 + 启动设置的启停按钮）。
 let comfyState = null;      // 最近一次快照；浏览器标签页里没有桌面端的桥，永远是 null
 let userStarting = false;   // 已点下启动内核，等端口就绪
-let pageReloaded = false;   // 就绪后的整页刷新只发一次
+let flipStarted = false;    // 就绪后的原地翻面只发一次
 const comfyViewers = new Set();
 
 function publishComfyState(s) {
@@ -1094,12 +1096,12 @@ function startComfy() {
     if (starting) return;   // 启动中：不重复拉起，也不出提示
     const inDesktop = !!window.pywebview?.api?.comfy_start;
     startKernel();
-    if (inDesktop) toast(comfyState?.remote ? t("重连远端 ComfyUI…") : t("ComfyUI 启动中…就绪后自动回到完整 Studio"));
+    if (inDesktop) toast(comfyState?.remote ? t("重连远端 ComfyUI…") : t("ComfyUI 启动中…就绪后自动接上生成"));
 }
 
 // 生成类请求打到桌面端上必 409：统一提示并指向「设置 → 启动设置」，不给前端假成功
 window.addEventListener("neo-offline-request", () => {
-    if (starting) return;   // 启动中不提示：就绪后桌面端整页跳回完整 Studio
+    if (starting) return;   // 启动中不提示：就绪后页面自己接上生成
     toast(t("该功能需要 ComfyUI · 在「设置 → 启动设置」点「启动内核」"));
     document.getElementById("ns-comfy-status")?.classList.add("ns-comfy-hint");
 });
@@ -1117,25 +1119,43 @@ const RUN_GATES = [
 ];
 
 // 生成按钮改写成「需要 ComfyUI」：不发请求，点一下引导启动（须在原 handler 之前注册）
+// 登记下来：就绪翻面时摘监听、还原文案，按钮回到原 handler 上。
+const gatedButtons = [];
+
 function gateRunButton(btn, feature, label) {
     if (can(feature)) return;
+    const original = btn.textContent;
+    const originalTitle = btn.title;
     btn.textContent = runLabel();
     btn.title = tf("{label} 需要 ComfyUI 执行队列 · 点一下启动", { label });
     btn.classList.add("ns-gen-off");
-    btn.addEventListener("click", (e) => {
+    const block = (e) => {
         e.stopImmediatePropagation();
         startComfy();
-    });
+    };
+    btn.addEventListener("click", block);
+    gatedButtons.push({ btn, block, original, originalTitle, label });
+}
+
+function ungateRunButtons() {
+    for (const g of gatedButtons) {
+        g.btn.removeEventListener("click", g.block);
+        g.btn.textContent = g.original;
+        g.btn.title = g.originalTitle || g.label;
+        g.btn.classList.remove("ns-gen-off");
+    }
+    gatedButtons.length = 0;
 }
 
 function runLabel() { return starting ? t("ComfyUI 启动中") : t("需要 ComfyUI"); }
 
 // 共享模块（gallery / director / voice）大量直接用原生 fetch 打接口，不经 api shim：
-// 离线时同样广播 409 offline，让各生成路径统一出「需要 ComfyUI」提示，不静默吞掉。
+// 这里同样按归属表改写目标 —— 就绪后生成类请求直连 ComfyUI，离线时打桌面端拿 409，
+// 让各生成路径统一出「需要 ComfyUI」提示，不静默吞掉。
 // 共享模块注册的运行按钮（生成素材 / 生成这一段 / 拼回成片 / 生成图片分镜）在捕获阶段拦掉。
 function initOfflineGate() {
     const nativeFetch = globalThis.fetch.bind(globalThis);
-    globalThis.fetch = (input, init) => nativeFetch(input, init).then((res) => {
+    globalThis.fetch = (input, init) => nativeFetch(resolvePath(input, init), init).then((res) => {
         if (res.status !== 409) return res;
         res.clone().json()
             .then((data) => {
@@ -1160,36 +1180,11 @@ function initOfflineGate() {
     }, true);
 }
 
-// 离线横幅只在 ComfyUI 未运行时出现；启动中交给顶栏胶囊的「● 启动中」，不叠横幅。
-// 状态在 loadVersion 里就从桌面端的快照拿到了 —— js_api 注入晚于页面加载，冷启动不能等它，
-// 否则横幅会先闪「ComfyUI 未运行」再改口。
-function showOfflineBanner() {
-    if (document.getElementById("ns-offline")) return;
-    document.body.classList.add("ns-offline");
-    const btn = $el("button", { className: "ns-offline-start", type: "button", textContent: t("🚀 启动 ComfyUI") });
-    btn.addEventListener("click", startComfy);
-    const bar = $el("div", { id: "ns-offline", className: "ns-offline-bar" }, [
-        $el("span", { className: "ns-offline-msg" }),
-        btn,
-    ]);
-    document.querySelector(".ns-header").after(bar);
-    renderDesktopState();
-    // 远程与否由 comfy_state 报：状态一到手横幅就要改口，别停在「ComfyUI 未运行」上
-    onComfyState(() => { if (document.getElementById("ns-offline")) renderDesktopState(); });
-}
-
-function renderDesktopState() {
-    const bar = document.getElementById("ns-offline");
-    if (!bar) return;
-    const remote = comfyState?.remote;
-    // 启动中只留顶栏胶囊的「● 启动中」，不再叠一条同义横幅
-    bar.style.display = starting ? "none" : "";
-    bar.querySelector(".ns-offline-msg").textContent = remote
-        ? tf("远程 ComfyUI 不可达 · {remote} —— 这里浏览的是本机素材目录，生成与队列要连上远端", { remote })
-        : t("ComfyUI 未运行 · 素材 / 技能 / 配方 / 设置 / 模型库可离线编辑，生成与队列需要 ComfyUI");
-    bar.querySelector(".ns-offline-start").textContent = remote ? t("🚀 重连远端") : t("🚀 启动 ComfyUI");
-    bar.querySelector(".ns-offline-start").style.display = "";
-    for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();
+// 离线标记：body 上的 .ns-offline 让生成入口压暗、显存条收起。离线页不叠横幅 ——
+// 顶栏胶囊的「● 已停止」已经报了状态并把入口指向「设置 → 启动设置」，横幅只是把同一句话画两遍。
+// 状态在 loadVersion 里就从桌面端的快照拿到了：js_api 注入晚于页面加载，冷启动不能等它。
+function setOfflineMark(on) {
+    document.body.classList.toggle("ns-offline", on);
 }
 
 function versionText() {
@@ -1207,7 +1202,7 @@ function setStarting(on) {
     if (starting === on) return;
     starting = on;
     if (offline) renderVersionInfo();
-    renderDesktopState();
+    for (const b of document.querySelectorAll(".ns-gen-off")) b.textContent = runLabel();   // 门控按钮文案跟着「启动中 / 需要 ComfyUI」收
 }
 
 async function loadVersion() {
@@ -1218,11 +1213,79 @@ async function loadVersion() {
             offline = !!data.offline;
             starting = !!data.starting;   // 桌面端已拉起 ComfyUI：页面第一份状态就是「启动中」
             caps = data.caps || {};
+            comfyBase = String(data.comfy_base || "");
+            configureRoutes({ desktopRoutes: data.routes, comfyBase });
             versionInfo = { plugin: data.plugin_version || "", comfy: data.comfyui_version || "", offline };
             renderVersionInfo();
-            if (offline) showOfflineBanner();
+            setOfflineMark(offline);
         }
     } catch { /* ComfyUI 未就绪时保持空白 */ }
+}
+
+// 就绪后原地接上生成：页面不换地址、不刷新，只把路由目标 / 能力表 / 门控 / 显存条 / 事件流翻面。
+// 整页跳转与刷新都会清掉导演编辑器和表单里未保存的内容，跨源跳转更是全丢 —— 这里一样都不发生。
+// 五步必须一次做完：只解禁按钮不换事件流，用户点「生成整片」会拿到任务拿不到进度。
+// 直连目标由桌面端快照报（comfy_base），ComfyUI 答话之前整块不翻 —— 翻一半就是按钮能点、进度不来。
+async function flipOnline() {
+    if (!offline) return;
+    try {
+        const desk = await (await api.fetchApi("/neo_studio/version")).json();
+        if (!desk?.success) return;
+        const base = String(desk.comfy_base || "");
+        if (!base) return;   // 这路不认桌面端 origin（附着 / 远程）：整页跳转交给桌面端，页面留在离线形态
+        const comfy = await (await api.fetchApi(`${base}/neo_studio/version`)).json();
+        if (!comfy?.success) { flipStarted = false; return; }   // 刚就绪还没答话：下一轮 5 秒探活再来
+        configureRoutes({ desktopRoutes: desk.routes, comfyBase: base });
+        comfyBase = base;
+        caps = comfy.caps || {};
+        offline = false;
+        starting = false;
+        userStarting = false;   // 内核已就绪：这轮「等端口」到此为止，顶栏状态位交回正常渲染
+        versionInfo = { plugin: comfy.plugin_version || versionInfo.plugin, comfy: comfy.comfyui_version || "", offline: false };
+        renderVersionInfo();
+        setOfflineMark(false);
+        ungateRunButtons();
+        mountMemBars();
+        reconnectSocket();
+        desktopLog("FLIP online in-place");
+    } catch {
+        flipStarted = false;
+    }
+}
+
+// 翻面后停掉内核：页面要翻回离线形态。不翻的话按钮解禁着、生成请求打到已关掉的端口上，
+// 拿不到 409 也拿不到离线提示，比今天「窗口退回离线页」更糟。
+async function flipOffline() {
+    if (offline) return;
+    offline = true;
+    flipStarted = false;   // 下次就绪还能再翻过来
+    configureRoutes({ comfyBase: "" });   // 先把直连目标收掉：下面这份快照必须打到桌面端上
+    comfyBase = "";
+    await loadVersion();   // 桌面端快照：comfy_base 已空，能力表与离线标记回到离线形态
+    reGateRunButtons();
+    reconnectSocket();     // 事件流切回桌面端的桩，别对着死端口重连
+}
+
+function reGateRunButtons() {
+    for (const [selector, feature, label] of RUN_GATES) {
+        for (const btn of document.querySelectorAll(selector)) {
+            if (!gatedButtons.some((g) => g.btn === btn)) gateRunButton(btn, feature, label);
+        }
+    }
+}
+
+// 显存条在视图 build 期按能力决定出不出（离线整块不出）：翻面后补挂到生成面板原来的位置。
+// 不重建视图 —— 重建会把设置页表单与导演编辑器里未保存的内容清掉，那正是本轮要保的东西。
+const MEM_BAR_HOSTS = [".ns-gen-foot", ".ns-paint-main"];
+
+function mountMemBars() {
+    for (const sel of MEM_BAR_HOSTS) {
+        for (const host of document.querySelectorAll(sel)) {
+            if (host.querySelector(":scope > .ns-mem")) continue;
+            const bar = buildMemBar();
+            if (bar) host.appendChild(bar);
+        }
+    }
 }
 
 // ====== 无边框窗口：系统标题栏被桌面端摘掉后，最小化 / 最大化 / 全屏 / 关闭由顶栏自己画 ======
@@ -1383,14 +1446,16 @@ function initComfyStatus() {
     const el = document.getElementById("ns-comfy-status");
     if (!el) return;
     const render = (s) => {
-        setStarting(!!s.starting);   // 桌面端拉起的启动中：横幅与生成按钮文案跟着收
+        setStarting(!!s.starting);   // 桌面端拉起的启动中：生成按钮文案跟着收
+        // 就绪就翻面，不看是谁拉起内核。桌面端在 ready 这同一份快照里才清掉 starting（_jump_when_ready），
+        // 5 秒轮询只会看到「启动中·未就绪」紧跟「已就绪·不再启动中」；拿 starting 当翻面条件的话，
+        // 桌面端自己拉起内核的冷启动（userStarting 为假）永远进不来，顶栏出「运行中」而页面钉在离线形态。
+        if (s.ready && offline) {
+            if (!flipStarted) { flipStarted = true; flipOnline(); }   // 原地接上生成：不刷新，未保存的编辑留着
+            return;
+        }
         if (userStarting || s.starting) {
-            if (s.ready) {
-                if (offline) return;   // 离线页由桌面端整页跳回完整 Studio，自己刷新只会回到离线页
-                if (!pageReloaded) { pageReloaded = true; location.reload(); }
-                return;
-            }
-            setStatus("starting", t("启动中"), t("ComfyUI 启动中…就绪后自动回到完整 Studio"));
+            setStatus("starting", t("启动中"), t("ComfyUI 启动中…就绪后自动接上生成"));
             return;
         }
         setStatus(s.running ? "run" : null,
@@ -1401,6 +1466,7 @@ function initComfyStatus() {
                 : (s.running
                     ? tf("ComfyUI 运行中 · 端口 {port} · {by} · PID {pid}", { port: s.port, by: t(s.mine ? "桌面端启动" : "外部启动"), pid: s.pid })
                     : t("ComfyUI 已停止 · 在「设置 → 启动设置」点「启动内核」")));
+        if (!s.ready && !offline) flipOffline();
     };
 
     onComfyState(render);

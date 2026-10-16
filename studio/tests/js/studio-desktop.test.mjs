@@ -51,6 +51,32 @@ test("api shim：fetchApi 透传、WS 消息按 type 派发事件", async () => 
     assert.equal(seen.length, 1, "移除监听后不应再收到");
 });
 
+test("归属路由：表内的打本端口，表外的直连 ComfyUI", async () => {
+    resetEnv();
+    const route = await import("../../web/studio/shim/route.js?own=1");
+    route.configure({ desktopRoutes: ["GET /neo_gallery/list", "POST /neo_gallery/delete"], comfyBase: "" });
+    assert.equal(route.resolve("/neo_gallery/list"), "/neo_gallery/list", "未就绪时照旧打桌面端");
+    assert.equal(route.resolve("/neo_studio/director/generate", { method: "POST" }),
+                 "/neo_studio/director/generate", "未就绪时表外的也打桌面端，拿 409 走统一提示");
+
+    route.configure({ comfyBase: "http://127.0.0.1:8188" });
+    assert.equal(route.resolve("/neo_gallery/list"), "/neo_gallery/list", "桌面端能服务的留在本端口");
+    assert.equal(route.resolve("/neo_gallery/delete", { method: "post" }), "/neo_gallery/delete",
+                 "方法大小写要归一，POST 是桌面端能服务的写入口");
+    assert.equal(route.resolve("/neo_studio/director/generate", { method: "POST" }),
+                 "http://127.0.0.1:8188/neo_studio/director/generate");
+    assert.equal(route.resolve("/neo_gallery/thumbnail?f=a.png"),
+                 "http://127.0.0.1:8188/neo_gallery/thumbnail?f=a.png",
+                 "查询串不参与归属判定，也不能被丢掉");
+    assert.equal(route.resolve("http://other/x"), "http://other/x", "绝对 URL 不动");
+    assert.match(route.wsUrl(), /^ws:\/\/127\.0\.0\.1:8188\/ws$/, "事件流跟着直连目标走");
+
+    route.configure({ comfyBase: "" });
+    assert.match(route.wsUrl(), /^ws:\/\/test\.local\/ws$/, "翻回离线形态时事件流回到桌面端的桩");
+    assert.equal(route.resolve("/neo_studio/director/generate", { method: "POST" }),
+                 "/neo_studio/director/generate", "清空目标后表外的回到桌面端，409 门控恢复");
+});
+
 test("app shim：扩展收集与 setup、settings 持久化、toast 落 DOM", async () => {
     resetEnv();
     const setups = [];
@@ -76,6 +102,13 @@ test("app shim：扩展收集与 setup、settings 持久化、toast 落 DOM", as
     assert.deepEqual(appMod.app.canvas.selected_nodes, {});
     assert.deepEqual(appMod.app.graph._nodes, []);
     assert.equal(appMod.app.graph.getNodeById(1), null);
+});
+
+test("就绪路径不刷新页面：刷新会清掉未保存的编辑", () => {
+    const src = fs.readFileSync(path.join(webDir, "studio", "studio-app.js"), "utf8");
+    assert.match(src, /flipOnline\(\)/, "就绪要接上原地翻面");
+    assert.equal((src.match(/location\.reload\(\)/g) || []).length, 1,
+                 "页面只剩 F5 热键一处刷新，就绪路径不许刷新");
 });
 
 test("顶栏标题是回首页（素材页）的链接", async () => {
@@ -440,7 +473,7 @@ test("ComfyUI 在跑时生成入口不受门控：点它不该去启动 ComfyUI"
     assert.equal(starts.length, 0, "在线时生成入口应照常交给原功能，不触发启动");
 });
 
-test("离线页：横幅说明可编辑面，版本位显示离线", async () => {
+test("离线页：body 带离线标记，启动入口只在「设置 → 启动设置」", async () => {
     resetEnv();
     document.body.innerHTML = studioBody;
     mockRoute("/neo_studio/version", jsonResponse({
@@ -449,110 +482,11 @@ test("离线页：横幅说明可编辑面，版本位显示离线", async () =>
     }));
     await import("../../web/studio/studio-app.js?offline=1");
     await flush();
-    const bar = document.getElementById("ns-offline");
-    assert.ok(bar, "桌面端的离线页应显示横幅");
-    assert.match(bar.textContent, /ComfyUI 未运行/);
-    assert.match(bar.textContent, /可离线编辑/);
-    assert.ok(bar.querySelector(".ns-offline-start"), "横幅应带「启动 ComfyUI」按钮");
     assert.ok(document.body.classList.contains("ns-offline"), "body 应带离线标记");
+    assert.equal(document.getElementById("ns-offline"), null, "离线页不叠横幅");
+    assert.equal(document.querySelector(".ns-offline-start"), null, "启动入口不在横幅上，在「设置 → 启动设置」");
     assert.equal(document.getElementById("ns-version"), null, "版本位不在顶栏");
 });
-
-test("离线页里点启动内核：不刷新页面，交给桌面端整页跳回完整 Studio", async () => {
-    resetEnv();
-    document.body.innerHTML = studioBody;
-    mockRoute("/neo_studio/version", jsonResponse({
-        success: true, plugin_version: "9.9.9", comfyui_version: "ComfyUI 未运行", offline: true, recipes: [],
-    }));
-    const status = document.getElementById("ns-comfy-status");
-    const reloads = [];
-    const realLocation = globalThis.location;
-    Object.defineProperty(globalThis, "location", {
-        value: { hash: "#/gallery", reload: () => reloads.push(1) },
-        configurable: true, writable: true,
-    });
-    const state = { port: 8188, pid: 0, mine: true, running: false, ready: false };
-    window.pywebview = {
-        api: {
-            comfy_state: async () => ({ ...state }),
-            comfy_start: async () => {
-                state.running = true;
-                return { ...state };
-            },
-        },
-    };
-    try {
-        await import("../../web/studio/studio-app.js?offlineStart=1");
-        await flush();
-        assert.equal(status.textContent, "● 已停止");
-        assert.match(status.title, /启动设置/);
-
-        click(document.querySelector(".ns-offline-start"));
-        await flush();
-        assert.equal(status.textContent, "● 启动中");
-
-        state.ready = true;
-        await sleep(120);
-        assert.equal(reloads.length, 0, "离线页刷新只会回到离线页，跳转由桌面端负责");
-    } finally {
-        Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
-    }
-});
-
-test("已停止后在启动设置点「启动内核」，就绪后刷新页面", async () => {
-    const status = mountStudio();
-    const starts = [];
-    const reloads = [];
-
-    const state = { port: 8190, pid: 0, mine: true, running: false, ready: false };
-    // jsdom 的 location.reload 不可重定义（且真导航会炸），整块换成桩：刷新动作可观测
-    const realLocation = globalThis.location;
-    Object.defineProperty(globalThis, "location", {
-        value: { hash: "#/settings", reload: () => reloads.push(1) },
-        configurable: true, writable: true,
-    });
-    window.pywebview = {
-        api: {
-            comfy_state: async () => ({ ...state }),
-            launcher_state: async () => ({
-                root: "D:/ComfyUI", python: "D:/py/python.exe", port: 8190, state: "ok", error: "",
-            }),
-            comfy_start: async () => {
-                starts.push(1);
-                state.running = true;   // 进程已拉起，端口还没就绪
-                return { ...state };
-            },
-        },
-    };
-    try {
-        await import("../../web/studio/studio-app.js?start=1");
-        await flush();
-        click(document.querySelector('.ns-settings-tab[data-key="launch"]'));
-        await flush();
-        const start = document.querySelector(".ns-kernel-start");
-        assert.ok(start, "启动设置顶部应有「启动内核」按钮");
-        assert.equal(start.disabled, false, "已停止时可启动");
-
-        click(start);
-        await flush();
-        assert.deepEqual(starts, [1], "已停止时点一下直接拉起，不需要二次确认");
-        assert.equal(status.textContent, "● 启动中");
-        assert.equal(start.disabled, true, "启动中不响应点击");
-
-        // 进程活着但端口未就绪：继续显示启动中，不重复拉起
-        await sleep(120);
-        assert.deepEqual(starts, [1], "启动中不该重复拉起");
-        assert.equal(reloads.length, 0, "未就绪不该刷新");
-
-        // 端口就绪（5s 轮询被压到 40ms）→ 刷新页面
-        state.ready = true;
-        await sleep(120);
-        assert.deepEqual(reloads, [1], "就绪后应刷新页面");
-    } finally {
-        Object.defineProperty(globalThis, "location", { value: realLocation, configurable: true, writable: true });
-    }
-});
-
 
 // 顶栏窗口控件走同一条等桥的路：桥的方法由 finish.js 后填，模块脚本先跑完时只看到空 api。
 // 早先只判断一次，撞上空档就永久不出控件、顶栏拖动也不挂 —— 桌面端窗口里拖动时好时坏就是它。

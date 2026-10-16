@@ -4,6 +4,17 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Offline banner removed, and the flip it was hiding fixed.** The Studio offline page no longer draws a
+  "ComfyUI not running" bar under the header: the header status pill already reports "● Stopped" and points the start
+  entry at "Settings → Startup settings", generation entries stay dimmed by the capability gate, and `body.ns-offline`
+  stays as the offline mark the shared modules read (`skill-writeback.js` gates the main-canvas handoff on it). The bar
+  was also the visible symptom of a flip that never ran: the in-place flip was gated on `starting || userStarting`, and
+  the desktop clears `starting` in the same snapshot that reports readiness (`_jump_when_ready` in
+  `app/studio_app.py`), so a cold start where the desktop launched ComfyUI itself — nobody ever clicked "Start kernel" —
+  showed "Running" in the pill while the page stayed pinned to the offline form and every generation request answered
+  `409`. The flip is now gated on `ready` alone. `npm test`: 733 cases, including a new cold-start case that flips with
+  no `comfy_start` call at all.
+
 - The **素材库 / asset library** buttons inside the director editor now open the asset library on the Studio
   director page. They used to do nothing there: every button calls `toggleGallerySidebar()`, which only flips
   `extensionManager.sidebarTab.activeSidebarTabId`, and the Studio page runs on the `scripts/app.js` shim whose

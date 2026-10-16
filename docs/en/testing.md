@@ -81,10 +81,10 @@ never touch the real data under `Neo-Studio/data/` or the plugin directory.
   escapes them into fake names.
 - `tests/test_studio.py` — full-film generation routes and the job watcher, version route, log route
   (`/neo_studio/log` reads the `app.logger` ring buffer).
-- `tests/test_studio_server.py` — the desktop-side read-only service (`app/studio_server.py`): a real service is
-  started and hit for real, asserting that with ComfyUI not running the Studio page, frontend static files,
-  directory listings, thumbnails and the bookmarks file all come through, while write operations and generation
-  routes answer `409 offline`; the gallery module family carries its own `RouteTableDef` and its source no longer
+- `tests/test_studio_server.py` — the desktop-side service (`app/studio_server.py`, a process with no ComfyUI runtime):
+  a real service is started and hit for real, asserting that with ComfyUI not running the Studio page, frontend
+  static files, directory listings, thumbnails and the bookmarks file all come through, while write operations and
+  generation routes answer `409 offline`; the gallery module family carries its own `RouteTableDef` and its source no longer
   mentions `PromptServer` (there is no ComfyUI runtime in the desktop process); the startup-settings route
   `/neo_studio/launcher` GET reads the configuration and POST validates before writing (a root without `main.py`
   is refused, an unknown action is refused).
@@ -167,10 +167,12 @@ node --test --test-force-exit --test-timeout=180000 tests/e2e/skill-manager.e2e.
   instead, passing `--root`/`--python` explicitly since an exe in an arbitrary directory cannot derive the root),
   clicks "■ Stop kernel" at the top of "Settings → Startup settings" to stop the desktop-launched ComfyUI (port probe
   then fails), clicks "▶ Start kernel" to launch it again, and asserts the header shows "● Starting" and that after
-  readiness the whole page jumps back to the full Studio (the user's own service on 8188 is never touched); the
-  third case asserts the cold-start window shows the splash page first, then lands on the desktop-side read-only
-  service's offline asset page (port +3, banner and thumbnails shown, writes answered `409`), jumps to the full
-  Studio once ComfyUI is ready, and returns to the offline page after stopping it with no uncaught errors.
+  readiness the page connects generation in place (same document, no reload; the user's own service on 8188 is never
+  touched); the
+  third case asserts the cold-start window shows the splash page first, then lands on the Studio page served by the
+  desktop service (port +3, offline mark and thumbnails shown, writes answered `409`), connects generation in place once
+  ComfyUI is ready (same URL, offline mark dropped, memory bar mounted, the desktop origin accepted by ComfyUI), and flips
+  back to the offline form after stopping it with no uncaught errors.
   **It opens a real window and is skipped by default; enable with `NEO_STUDIO_APP=1` (prerequisites: `pywebview`
   installed in the bundled distribution's python, and no other Neo Studio desktop holding the single-instance port
   8189 — a new instance exits immediately when a desktop is already running).**

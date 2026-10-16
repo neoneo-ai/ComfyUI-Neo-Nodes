@@ -176,3 +176,11 @@ def owner(method: str, path: str) -> str:
 def features() -> dict:
     """当前进程（桌面端）的功能可用性表，随 /neo_studio/version 下发给前端。"""
     return {name: owner(method, path) == "desktop" for name, (method, path) in FEATURE_ROUTES.items()}
+
+
+def route_list() -> list:
+    """DESKTOP_ROUTES 压成 ["GET /neo_gallery/list", ...]，随版本快照下发。
+
+    页面钉在桌面端端口后，comfy 归属的请求由页面自己直连 ComfyUI（app/studio_app.py 的
+    comfy_cors）；前端拿这份表判定归属，表就是这张表，不在前端另立第二份清单。"""
+    return [f"{method} {path}" for method, path in sorted(DESKTOP_ROUTES)]

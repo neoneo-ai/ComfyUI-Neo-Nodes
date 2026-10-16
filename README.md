@@ -168,8 +168,8 @@ ComfyUI log). Canvas-only actions show a hint instead of failing.
   launched it in the tooltip. The actions live at the top of Settings → 启动设置: one state line plus
   "▶ Start kernel" and "■ Stop kernel", the one that cannot run right now disabled.
 - **The window opens first** — the dependency self-check, the service setup and the ComfyUI spawn run on a
-  background thread behind a splash page; the page jumps to the full Studio once the port answers, and stopping
-  ComfyUI pulls it back to the offline library.
+  background thread behind a splash page; once the port answers, the page connects generation in place — no
+  navigation, no reload — and stopping ComfyUI flips it back to the offline Studio.
 - **Closing the window** stops the ComfyUI the desktop started (one you started yourself is left alone); a ComfyUI
   already listening on the port is attached to, never doubled.
 - **Canvas jumps stay in the window** — "⤒ 主画布编辑" and "🎬 新影工坊" switch in place, and the desktop

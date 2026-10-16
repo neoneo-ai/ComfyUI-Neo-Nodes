@@ -48,10 +48,7 @@ body {
 .ns-frameless .ns-header a, .ns-frameless .ns-header button { cursor: pointer; }
 .ns-about-version { font-size: 13px; color: #b7bbc4; user-select: text; cursor: text; }
 
-/* 桌面端的离线素材页：显存/清理没有意义，横幅说明浏览可用、生成需要 ComfyUI */
-.ns-offline-bar { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 16px; background: #2b2417; color: #e0b070; font-size: 12px; text-align: center; }
-.ns-offline-start { padding: 2px 10px; border: 1px solid #7a5c2a; border-radius: 4px; background: #3a2f1c; color: #f0c880; font-size: 12px; cursor: pointer; }
-.ns-offline-start:hover { background: #4a3c24; }
+/* 桌面端的离线素材页：body.ns-offline 只用来压暗生成入口与收起显存条，离线页不叠横幅 */
 .ns-gen-off { opacity: .75; }
 .ns-comfy-hint { animation: ns-blink 1s ease-in-out 3; }
 @keyframes ns-blink { 50% { box-shadow: 0 0 0 3px #e0b070; } }
@@ -558,7 +555,6 @@ body {
 .ns-mem-clear:focus-visible,
 .ns-wctl-btn:focus-visible,
 .ns-settings-tab:focus-visible,
-.ns-offline-start:focus-visible,
 .ns-info:focus-visible,
 .ns-launch-input:focus-visible,
 .neo-gallery-search-container input:focus-visible,

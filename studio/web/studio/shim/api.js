@@ -1,13 +1,15 @@
 // Neo Studio 的 `scripts/api.js` 替身：fetchApi（返回 Response）+ WebSocket 事件桥。
 // ComfyUI 前端把 WS 消息按 type 派发为同名事件（rs.image_gen.status / rs.prompt.update …），
 // 断线重连后补发 "reconnected"；这里照同一契约实现，web/ 模块无需改动。
+import { resolve, wsUrl } from "./route.js";
+
 const clientId = crypto.randomUUID();
 const listeners = new Map();
 
 // 409 {offline:true} = 桌面端服务不认的接口（要 ComfyUI 执行队列）：广播给页面统一提示，
 // 不让各模块各自处理一个裸 409。
 async function fetchApi(path, init) {
-    const resp = await fetch(path, init);
+    const resp = await fetch(resolve(path, init), init);
     if (resp.status === 409) {
         resp.clone().json()
             .then((data) => {
@@ -34,8 +36,7 @@ function dispatch(type, detail) {
 
 let ws = null;
 function connect() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws?clientId=${clientId}`);
+    ws = new WebSocket(`${wsUrl()}?clientId=${clientId}`);
     ws.onopen = () => dispatch("reconnected");
     ws.onmessage = (e) => {
         try {
@@ -44,6 +45,17 @@ function connect() {
         } catch { /* 非 JSON 消息忽略 */ }
     };
     ws.onclose = () => setTimeout(connect, 2000);
+}
+
+// 页面原地接上 ComfyUI 时换目标：桩（桌面端）→ 真事件流（ComfyUI）。
+// 先摘掉 onclose 再关，否则自动重连会照旧连回桩，出现「按钮已解禁、进度事件全不来」的半在线态。
+export function reconnectSocket() {
+    if (ws) {
+        ws.onclose = null;
+        try { ws.close(); } catch { /* 已关 */ }
+        ws = null;
+    }
+    connect();
 }
 
 export const api = {

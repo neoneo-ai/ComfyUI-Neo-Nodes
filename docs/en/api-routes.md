@@ -270,9 +270,16 @@ the table answers 409. Startup sequence, close teardown and cache conventions: [
 | GET/POST | `/rs_prompts/get_models` `native_models` `set_model` `remote_llm_config` `llm_connection_test` `llm_mode` `extract_title` `fetch_remote_models` | LLM configuration and title extraction (reads only `configs/` and the 8080 service) |
 | GET/POST | `/neo_model_hub/*` `/neo_backyard/*` | Model hub and Backyard |
 | GET/POST | `/userdata/neo_gallery_data.json` | Asset library state file (`user/default/`, writes go through `.tmp` + replace) |
-| GET | `/neo_studio/version` | Capability snapshot: `offline: true` + `caps` + `starting`, which the frontend uses for gating |
+| GET | `/neo_studio/version` | Capability snapshot: `offline: true` + `caps` + `starting` + `routes` + `comfy_base`; the frontend gates on it and picks the request target |
 | GET | `/neo_studio/log` `/view` `/ws` | Startup log / read-only images / WS stub |
 | ANY | any other `/neo_*` `/rs_*` `/userdata/*` `/api/*` | `409 {"success": false, "offline": true}` |
+
+- `routes` is the ownership table (`studio_caps.route_list()`, entries like `"GET /neo_gallery/list"`): with the page
+  pinned to the desktop port, the frontend decides per request whether it goes to the desktop service or to ComfyUI,
+  and keeps no second copy of the list.
+- `comfy_base` is the direct target for generation requests, non-empty only for the loopback-only ComfyUI the desktop
+  spawned itself; when it is empty, routes outside the table keep answering `409` on the desktop service. The enabling
+  condition and the CORS rule: [studio-desktop.md](studio-desktop.md).
 
 - Generation and queue routes require ComfyUI to be running: `/neo_image_gen/generate`,
   `/neo_video_gen/run_segment` `assemble_segments` `storyboard_generate`, `/neo_voice/generate`,
