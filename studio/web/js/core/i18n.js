@@ -17,6 +17,13 @@ export const LANGS = [
 const EN = {
     // 顶栏 🅝 菜单
     "🎬 新影工坊": "🎬 Neo Studio",
+    // 绘画页
+    "🖼️ 文生图": "🖼️ Text to Image",
+    "🎨 图片编辑": "🎨 Image Edit",
+    "把左栏素材拖进预览区当原图，再写编辑指令":
+        "Drag media from the library on the left into the preview to set the source, then write an edit instruction.",
+    "🖼 把左栏素材拖到这里当原图": "🖼 Drag media from the library on the left here to use it as the source",
+    "先把左栏素材拖进预览区当原图": "Drag media from the library on the left into the preview first",
     "🖼️ 生成素材": "🖼️ Generate Assets",
     "🎥 新建导演配方": "🎥 New Director Recipe",
     "🧩 创建节点": "🧩 Add Node",
@@ -72,6 +79,7 @@ const EN = {
     "新影工坊 · Neo Studio": "Neo Studio",
     "返回首页": "Back to home",
     "素材": "Assets",
+    "绘画": "Paint",
     "导演": "Director",
     "技能": "Skills",
     "设置": "Settings",
@@ -1355,6 +1363,7 @@ const EN = {
     "{count} 张图片 · 输入触发词后点「开始打标」": "{count} images · enter a trigger word and click Start tagging",
     "描述你想对这张图做的修改，例如：把背景换成海边日落、给角色加一顶帽子……": "Describe the changes you want for this image, e.g. swap the background for a seaside sunset, add a hat to the character…",
     "填写编辑指令后点「生成」，原图将作为参考图传入所选技能。": "Enter an edit instruction and click Generate; the original image is passed to the selected skill as a reference.",
+    "写编辑指令、拖素材进预览区换原图，生成结果与原图左右对比": "Write an edit instruction — drag media onto the preview to swap the source; the result is shown side by side with the original.",
     "已生成编辑结果。": "Edit result generated.",
     "再生成": "Regenerate",
     "图片编辑生成失败": "Image edit generation failed",
@@ -1439,6 +1448,7 @@ const EN = {
     "LLM 未返回内容": "The LLM returned no content",
     "提示词增强失败": "Prompt enhancement failed",
     "填写素材描述后点「生成」，图片保存到 Output 目录（NeoAgent/<日期>），可在素材面板浏览。": "Enter an asset description and click Generate; images are saved to the Output folder (NeoAgent/<date>) and can be browsed in the media panel.",
+    "描述写在下方输入框，生成后存进 Output/NeoAgent/<日期>，左栏素材库直接可见": "Write the description in the box below; results are saved to Output/NeoAgent/<date> and show up in the media library on the left.",
     "无法删除 {name}": "Cannot delete {name}",
     "已生成，图片保存在 Output 目录（NeoAgent/<日期>），可在素材面板浏览。": "Generated — images are saved to the Output folder (NeoAgent/<date>) and can be browsed in the media panel.",
     "生成 {i}/{total}（排队中…）": "Generating {i}/{total} (queued…)",

@@ -1017,10 +1017,45 @@ export function openLoraTagDialog(gallery, dirPath) {
 
 /** 图片编辑弹窗：以卡片原图为参考，用所选生图/编辑技能 + 用户输入的编辑指令生成新图。
  * 默认 Qwen Image 2.1，可在下拉中切换其他 image_gen 类技能。 */
-export function openImageEditDialog(gallery, image, subfolder) {
-    document.querySelector('.neo-gallery-edit-modal-overlay')?.remove();
-    const previewHeight = getImageHeight(gallery.maxThumbnailSize, gallery.displayLabels);
-    const pathLabel = (subfolder ? `${subfolder}/` : "") + (image.filename || image.name || "");
+// 弹窗 → 内嵌面板双宿主（同 director.js 的 setDirectorEditorHost / opts.container）：
+// Studio 绘画页注册过宿主，面板就铺进宿主容器，不建浮层、不带标题栏拖动；
+// ComfyUI 插件模式（画布侧栏 gallery）没有宿主，照旧弹浮层窗，入口与类名一律不变。
+let _paintHosts = null;   // { text, edit, onOpen }：文生图宿主 / 图片编辑宿主 / 打开时切到绘画页
+export function setPaintHost(hosts) { _paintHosts = hosts; }
+
+function storyPanelRoot(host, overlayClass, kind) {
+    const embedded = !!(host && host.isConnected);
+    if (!embedded) {
+        document.querySelector(`.${overlayClass}`)?.remove();
+        return { root: $el("div", { className: `neo-gallery-story-modal-overlay ${overlayClass}` }), embedded: false, host: null };
+    }
+    host.__neoPanelClose?.();   // 宿主上一次的同页面板先收尾（摘全局监听）再清空
+    host.textContent = "";
+    _paintHosts?.onOpen?.(kind);
+    const root = $el("div", { className: "neo-gallery-gen-panel" });
+    host.__neoPanelRoot = root;
+    return { root, embedded: true, host };
+}
+
+// 绘画页进页就把两块面板铺好（常驻），入口再点只做模式切换：重建面板会把用户写了一半的
+// 提示词清空，所以宿主里已有面板时直接复用，不再走一遍构建。图片编辑入口带着图来，
+// 就把这张图换进现成面板当原图（卡片菜单「🖼️ 图片编辑」与拖进预览区同一条路）
+function reusePaintPanel(host, kind, image, subfolder) {
+    if (!host?.__neoPanelRoot?.isConnected) return false;
+    if (image) host.__neoSetSource?.(image, subfolder);
+    _paintHosts?.onOpen?.(kind);
+    return true;
+}
+
+export function openImageEditDialog(gallery, image = null, subfolder = "", opts = null) {
+    const host = opts?.container || _paintHosts?.edit;
+    if (reusePaintPanel(host, "edit", image, subfolder)) return;
+    const panel = storyPanelRoot(host, "neo-gallery-edit-modal-overlay", "edit");
+    const overlay = panel.root;
+    // 原图可以后补：绘画页进页铺的就是空面板，从左栏把素材拖进预览区即成原图
+    let source = image ? { filename: image.filename || image.name, subfolder: subfolder || "" } : null;
+    const pathLabel = () => (source.subfolder ? `${source.subfolder}/` : "") + source.filename;
+    const origUrl = () => `/neo_gallery/image?filename=${encodeURIComponent(source.filename)}&subfolder=${encodeURIComponent(source.subfolder)}`;
 
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
     const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
@@ -1035,7 +1070,6 @@ export function openImageEditDialog(gallery, image, subfolder) {
     let cancelRequested = false;
     let refName = null;
 
-    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-edit-modal-overlay" });
     const close = () => overlay.remove();
     const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
     const btn = (label, onclick, primary = false) =>
@@ -1069,8 +1103,11 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("填写编辑指令后点「生成」，原图将作为参考图传入所选技能。") }));
-        fill(actionsBox, btn(t("取消"), close), btn(t("生成"), start, true));
+        const hint = !source ? t("把左栏素材拖进预览区当原图，再写编辑指令")
+            : panel.embedded ? t("写编辑指令、拖素材进预览区换原图，生成结果与原图左右对比")
+            : t("填写编辑指令后点「生成」，原图将作为参考图传入所选技能。");
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: hint }));
+        fill(actionsBox, panel.embedded ? null : btn(t("取消"), close), btn(t("生成"), start, true));
     };
 
     const renderRunning = (label, progress) => {
@@ -1106,12 +1143,12 @@ export function openImageEditDialog(gallery, image, subfolder) {
         }
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("已生成编辑结果。") }));
         // 保留「再生成」入口：编辑支持连续重复生成，不必关窗重开（与 renderError 的「重试」一致）
-        fill(actionsBox, btn(t("再生成"), start), btn(t("关闭"), close, true));
+        fill(actionsBox, btn(t("再生成"), start), panel.embedded ? null : btn(t("关闭"), close, true));
     };
 
     const renderError = (message) => {
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
-        fill(actionsBox, btn(t("重试"), start), btn(t("关闭"), close));
+        fill(actionsBox, btn(t("重试"), start), panel.embedded ? null : btn(t("关闭"), close));
     };
 
     // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
@@ -1122,6 +1159,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
 
     const start = async () => {
         if (running) return;
+        if (!source && !refName) { renderError(t("先把左栏素材拖进预览区当原图")); return; }
         if (editMode === "local" && !painted) { renderError(t("请先涂抹要编辑的区域")); return; }
         if (editMode === "remove" && !removePoints.length) { renderError(t("请先点击原图标记要删除的物体")); return; }
         restoreOrigImage();   // 上一轮换过的缩放图先还原，避免扩图/局部的基准尺寸跟着变
@@ -1135,7 +1173,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         cancelRequested = false;
         renderRunning(t("排队中…"));
         try {
-            if (!refName) refName = await copyImageToInput(image, subfolder);
+            if (!refName) refName = await copyImageToInput(source, source.subfolder);
             // 扩图模式：带四边留白量 + 目标像素数；LoRA 由扩图技能 config 固定，不随请求传
             let outpaintPayload = null;
             let metaWidth = parseInt(widthInput.value, 10) || undefined;
@@ -1193,7 +1231,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
 
     const onKey = (e) => {
-        if (e.key === "Escape") close();
+        if (e.key === "Escape" && !panel.embedded) close();   // 内嵌面板由绘画页自己管生命周期，Esc 不销毁
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
     };
 
@@ -1267,17 +1305,16 @@ export function openImageEditDialog(gallery, image, subfolder) {
     refDropContainer.appendChild(refFileInput);
 
     // 图片对比区（前后叠加 + 拖拽窗帘）
-    const origFullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
     const refFullUrl = (it) => `/neo_gallery/image?filename=${encodeURIComponent(it.filename)}&subfolder=${encodeURIComponent(it.subfolder ? `input/${it.subfolder}` : "input")}`;
     // Lightbox 统一列表：原图 + 所有参考图，支持 ←/→ 切换
     const buildLightboxItems = () => [
-        { kind: "image", url: origFullUrl, title: pathLabel },
+        { kind: "image", url: origUrl(), title: pathLabel() },
         ...extraRefs.map((r) => ({ kind: "image", url: refFullUrl(r), title: r.filename }))
     ];
     const origImg = $el("img", {
         className: "neo-gallery-edit-compare-img",
-        src: origFullUrl,
-        alt: image.name || image.filename,
+        src: source ? origUrl() : "",
+        alt: source ? source.filename : "",
         title: t("点击放大查看")
     });
     const resultImg = $el("img", {
@@ -1290,6 +1327,13 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const resultClip = $el("div", { className: "neo-gallery-edit-result-clip", style: { display: "none" } }, [resultImg]);
     const divider = $el("div", { className: "neo-gallery-edit-divider", style: { display: "none" } });
     imgWrap.append(origImg, resultClip, divider);
+    // 空面板进页就在位：预览区即拖放落点，从左栏素材库拖一张进来当原图
+    const emptyDrop = source ? null : $el("div", { className: "neo-gallery-edit-empty", textContent: t("🖼 把左栏素材拖到这里当原图") });
+    if (emptyDrop) {
+        origImg.style.display = "none";
+        imgWrap.classList.add("neo-gallery-edit-empty-stage");
+        imgWrap.appendChild(emptyDrop);
+    }
     const compareLabel = $el("span", { className: "neo-gallery-edit-compare-label", textContent: COMPARE_LABEL });
     // 灯箱按钮入口：局部/点选模式点图是涂抹/打点，扩图模式点图落在拖框框体上，都只能从这里进
     const zoomBtn = $el("button", {
@@ -1297,6 +1341,11 @@ export function openImageEditDialog(gallery, image, subfolder) {
         title: t("灯箱查看原图与参考图"),
         onclick: () => Lightbox.open({ items: buildLightboxItems(), index: 0 })
     });
+    // 扩图 / 局部 / 点选删除 / 融合 / 姿势都要在原图上动手，没原图时先收起这些入口
+    const setSourceModeBtns = (on) => {
+        for (const b of [outpaintBtn, localBtn, removeBtn, blendBtn, poseBtn, zoomBtn]) b.disabled = !on;
+    };
+    setSourceModeBtns(!!source);
     const compareLabelRow = $el("div", { className: "neo-gallery-edit-compare-label-row" }, [compareLabel, zoomBtn]);
     // 舞台：只负责把图片盒水平居中
     const compareStage = $el("div", { className: "neo-gallery-edit-compare-stage" }, [imgWrap]);
@@ -1346,7 +1395,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
     const restoreOrigImage = () => {
         if (!scaledInputSrc) return;
         scaledInputSrc = "";
-        origImg.src = origFullUrl;
+        origImg.src = origUrl();
         compareLabel.textContent = COMPARE_LABEL;
     };
     const showEditedCanvas = (canvas) => {
@@ -1370,7 +1419,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         setDividerPos(0);
     };
 
-    overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" }, [
+    overlay.appendChild($el("div", { className: "neo-gallery-story-modal neo-gallery-edit-modal" + (panel.embedded ? " neo-gallery-story-modal--embedded" : "") }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
             $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83D\uDDBC\uFE0F 图片编辑") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
@@ -1415,10 +1464,15 @@ export function openImageEditDialog(gallery, image, subfolder) {
         document.removeEventListener("pointerup", onDividerEnd);
         origRemove();
     };
-    document.body.appendChild(overlay);
-
-    // 标题栏拖动 + 双击最大化/还原（同导演编辑器 / 生成素材窗模式）
-    makeStoryWindowDraggable(overlay.querySelector(".neo-gallery-edit-modal"));
+    if (panel.embedded) {
+        panel.host.appendChild(overlay);
+        panel.host.__neoPanelClose = () => { close(); panel.host.__neoPanelRoot = null; panel.host.__neoSetSource = null; };
+        panel.host.__neoSetSource = (img, sub) => applySource(img.filename || img.name, sub || "");
+    } else {
+        document.body.appendChild(overlay);
+        // 标题栏拖动 + 双击最大化/还原（同导演编辑器 / 生成素材窗模式）
+        makeStoryWindowDraggable(overlay.querySelector(".neo-gallery-edit-modal"));
+    }
 
     // 加载原图获取实际尺寸，填入默认分辨率（32 对齐：Qwen2.1 latent 一格 = 32px，错开会让模型自己补/裁一格）
     const widthInput = overlay.querySelector("#img-edit-width");
@@ -1429,8 +1483,11 @@ export function openImageEditDialog(gallery, image, subfolder) {
             if (v > 0) el.value = String(round32(v));
         });
     }
-    const fullUrl = `/neo_gallery/image?filename=${encodeURIComponent(image.filename || image.name)}&subfolder=${encodeURIComponent(subfolder || "")}`;
     const dimProbe = new Image();
+    const fullUrlReady = () => {
+        if (!source) return;
+        dimProbe.src = origUrl();
+    };
     dimProbe.onload = () => {
         if (dimProbe.naturalWidth && dimProbe.naturalHeight) {
             const t = editDefaultTargetSize(dimProbe.naturalWidth, dimProbe.naturalHeight, globalTargetMp);
@@ -1452,7 +1509,7 @@ export function openImageEditDialog(gallery, image, subfolder) {
         } catch (e) {
             console.warn("[Gallery] image gen settings unavailable, using default target MP:", e);
         }
-        dimProbe.src = fullUrl;
+        fullUrlReady();
     })();
 
     // ---- 编辑模式统一管理（normal / outpaint / local / remove / blend / pose） ----
@@ -2061,6 +2118,19 @@ export function openImageEditDialog(gallery, image, subfolder) {
     };
 
     // 原图区拖放替换：支持素材库拖入和本地文件上传
+    // 换原图（拖放落点与卡片菜单「🖼️ 图片编辑」共用一条路）：refName 归零，生成时再把新原图复制进 input/
+    const applySource = (filename, sub) => {
+        if (editMode !== "normal") setEditMode("normal");
+        refName = null;
+        source = { filename, subfolder: sub };
+        emptyDrop?.remove();
+        imgWrap.classList.remove("neo-gallery-edit-empty-stage");
+        origImg.style.display = "";
+        origImg.src = origUrl();
+        setSourceModeBtns(true);
+        renderIdle();
+        fullUrlReady();   // 默认目标分辨率按新原图 + 全局目标像素数重算
+    };
     imgWrap.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; imgWrap.classList.add("drop-active"); });
     imgWrap.addEventListener("dragleave", (e) => { if (!imgWrap.contains(e.relatedTarget)) imgWrap.classList.remove("drop-active"); });
     imgWrap.addEventListener("drop", async (e) => {
@@ -2071,15 +2141,8 @@ export function openImageEditDialog(gallery, image, subfolder) {
         if (files.length) { [fname] = await uploadLocalFiles(files); }
         else { fname = await copyGalleryToInput(grabDataType(e)); }
         if (!fname) return;
-        // 重置编辑模式
-        if (editMode !== "normal") setEditMode("normal");
-        refName = fname;
-        const newUrl = `/neo_gallery/image?filename=${encodeURIComponent(fname)}&subfolder=`;
-        origImg.src = newUrl;
-        origImg.onload = () => {
-            widthInput.value = origImg.naturalWidth || "";
-            heightInput.value = origImg.naturalHeight || "";
-        };
+        applySource(fname, "");
+        refName = fname;   // 拖进来的图已落在 input/，省掉生成时那一次复制
     });
 
     setTimeout(() => promptInput.focus(), 0);
@@ -2292,8 +2355,11 @@ export function buildGenerationMenuItems({ card, gallery, image, subfolder }) {
 
 
 /** 画廊搜索行「🖼️ 生成素材」：纯提示词一键生成新素材（默认 Krea2 文生图），产物落 Output/NeoAgent/<日期>，素材面板可直接浏览。 */
-export function openGenMaterialDialog(gallery) {
-    document.querySelector(".neo-gallery-gm-modal-overlay")?.remove();
+export function openGenMaterialDialog(gallery, opts = null) {
+    const host = opts?.container || _paintHosts?.text;
+    if (reusePaintPanel(host, "text")) return;
+    const panel = storyPanelRoot(host, "neo-gallery-gm-modal-overlay", "text");
+    const overlay = panel.root;
 
     const statusBox = $el("div", { className: "neo-gallery-cs-status" });
     const actionsBox = $el("div", { className: "neo-gallery-story-actions" });
@@ -2442,7 +2508,6 @@ export function openGenMaterialDialog(gallery) {
     let deleting = false;
     let randomPicking = false;
 
-    const overlay = $el("div", { className: "neo-gallery-story-modal-overlay neo-gallery-gm-modal-overlay" });
     const close = () => overlay.remove();
     const fill = (box, ...children) => { box.textContent = ""; box.append(...children.filter(Boolean)); };
     const btn = (label, onclick, primary = false) =>
@@ -2649,8 +2714,9 @@ export function openGenMaterialDialog(gallery) {
     });
 
     const renderIdle = () => {
-        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: t("填写素材描述后点「生成」，图片保存到 Output 目录（NeoAgent/<日期>），可在素材面板浏览。") }));
-        fill(actionsBox, btn(t("取消"), close), btn(t("生成"), start, true));
+        // 页内面板没有「取消」可点（收起面板 = 切到另一个模式），说明也走短句
+        fill(statusBox, $el("div", { className: "neo-gallery-story-hint", textContent: panel.embedded ? t("描述写在下方输入框，生成后存进 Output/NeoAgent/<日期>，左栏素材库直接可见") : t("填写素材描述后点「生成」，图片保存到 Output 目录（NeoAgent/<日期>），可在素材面板浏览。") }));
+        fill(actionsBox, panel.embedded ? null : btn(t("取消"), close), btn(t("生成"), start, true));
     };
 
     // 预览区：生成中显示占位（spinner + 进度条），成功后结果图原位替换它（同一容器复用，布局不跳）
@@ -2707,7 +2773,7 @@ export function openGenMaterialDialog(gallery) {
                 deleting = false;
             }
         };
-        fill(actionsBox, btn(t("打开输出目录"), openOutputDir), btn(t("再生成"), start), btn(t("删除"), deleteResult), btn(t("关闭"), close, true));
+        fill(actionsBox, btn(t("打开输出目录"), openOutputDir), btn(t("再生成"), start), btn(t("删除"), deleteResult), panel.embedded ? null : btn(t("关闭"), close, true));
     };
 
     const renderSuccess = (final) => {
@@ -2789,7 +2855,7 @@ export function openGenMaterialDialog(gallery) {
                 const oldHint = statusBox.querySelector(".neo-gallery-story-hint");
                 if (oldHint) oldHint.remove();
                 statusBox.appendChild($el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: tf("第 {i}/{total} 张生成失败：{err}", { i: i + 1, total, err: final.error || t("未知错误") }) }));
-                fill(actionsBox, btn(t("再生成"), start), btn(t("关闭"), close, true));
+                fill(actionsBox, btn(t("再生成"), start), panel.embedded ? null : btn(t("关闭"), close, true));
                 return;
             }
         }
@@ -2799,7 +2865,7 @@ export function openGenMaterialDialog(gallery) {
 
     const renderError = (message) => {
         fill(statusBox, $el("div", { className: "neo-gallery-story-hint neo-gallery-story-hint-error", textContent: message || t("生成失败") }));
-        fill(actionsBox, btn(t("重试"), start), btn(t("关闭"), close));
+        fill(actionsBox, btn(t("重试"), start), panel.embedded ? null : btn(t("关闭"), close));
     };
 
     // 生图失败：窗内留错误 + 重试，另弹 action toast 引导去技能详情修模型（缺模型/节点等非 LLM 问题）
@@ -2910,13 +2976,13 @@ export function openGenMaterialDialog(gallery) {
             // 有浮层先关浮层，无浮层才关窗
             if (runtimeMenuOpen) closeRuntimeMenu();
             else if (presetOverlay.style.display === "flex") presetOverlay.style.display = "none";
-            else close();
+            else if (!panel.embedded) close();   // 内嵌面板由绘画页自己管生命周期，Esc 不销毁
         }
         else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) start();
     };
 
     // 结果区在上（预览/成品原位替换），输入区在下（技能 / 自定参数 / agent 式增强双框：output 上带 🎲☰ 浮出组、quick input 下内嵌 ✨ 工具栏），操作按钮收尾
-    const modal = $el("div", { className: "neo-gallery-story-modal" }, [
+    const modal = $el("div", { className: "neo-gallery-story-modal" + (panel.embedded ? " neo-gallery-story-modal--embedded" : "") }, [
         $el("div", { className: "neo-gallery-story-titlebar" }, [
             $el("span", { className: "neo-gallery-story-title", textContent: t("\uD83D\uDDBC\uFE0F 生成素材") }),
             $el("span", { className: "neo-gallery-story-close", textContent: "\u00D7", onclick: close })
@@ -2936,14 +3002,21 @@ export function openGenMaterialDialog(gallery) {
     // 浮层挂在 overlay 上（z-index 高于弹窗，随窗移除）
     overlay.append(runtimeMenu, presetOverlay);
 
-    // 标题栏拖动 + 双击最大化/还原（同导演编辑器模式）
-    makeStoryWindowDraggable(modal);
+    if (!panel.embedded) {
+        // 标题栏拖动 + 双击最大化/还原（同导演编辑器模式）
+        makeStoryWindowDraggable(modal);
+    }
 
     renderIdle();
     document.addEventListener("keydown", onKey);
     const origRemove = overlay.remove.bind(overlay);
     overlay.remove = () => { stopQuickTips(); document.removeEventListener("keydown", onKey); document.removeEventListener("click", onDocClick); origRemove(); };
-    document.body.appendChild(overlay);
+    if (panel.embedded) {
+        panel.host.appendChild(overlay);
+        panel.host.__neoPanelClose = () => { close(); panel.host.__neoPanelRoot = null; };
+    } else {
+        document.body.appendChild(overlay);
+    }
 
     setTimeout(() => quickInput.focus(), 0);
 }

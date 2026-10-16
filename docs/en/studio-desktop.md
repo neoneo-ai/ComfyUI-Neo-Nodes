@@ -76,6 +76,27 @@ split into two panes: **top = the director editor**, **bottom = the film generat
 - Narrow windows shrink the left column first (340px below 1180px); below 900px the columns stack. The default
   width is wide enough for the recipe header row ("Recipe ↻ 📦 Import 🎬 New director recipe") to stay on one line.
 
+## Paint page layout
+
+The paint page is a **left column with the image recipes** (`gen_type = "image"` only) plus a right main column
+holding the **text-to-image** and **image-edit** panels under a mode bar. Only one panel fills the column at a
+time — unlike the director page, no editor and generation panel fight for the same height. The asset-library
+drawer, the left-column divider, the scrollbars and the narrow-window rules are shared with the director page.
+
+- The paint panels are embedded in Studio (`setPaintHost` registers the hosts): they fill the right column with
+  no overlay window, so title-bar dragging and the ✕ do not appear. The main canvas (the ComfyUI page) registers
+  no host, so "🖼️ Generate asset" and "🖼️ Edit image" stay overlay windows there.
+- "🖼️ Generate asset" in the gallery page header and "🖼️ Edit image" in an image card's menu both switch to the
+  paint page in Studio and open in the matching panel. Clicking an image recipe card switches to text-to-image
+  and prefills that recipe's prompt into the output box; "🖼️ New image recipe" opens a blank text-to-image panel.
+- The chosen mode lives in `localStorage["neo_studio_paint_mode"]`, and the column width is the paint page's own
+  `localStorage["neo_studio_paint_side_col"]` — dragging it never overwrites the director page's width.
+- Asset-library drawers are per page (`libDrawers[view]`, one for the director page and one for the paint page):
+  `media-transfer` writes only reach the current page's drawer, and leaving the page closes it. Leaving the gallery
+  page resets `sidebarTab.activeSidebarTabId` — mounting the gallery sets it to `neo.gallery`, and without the
+  reset the page's own asset-library button writes the same id, gets deduped, and never opens the drawer.
+- The VRAM / RAM bar exists once per generation page (director and paint), and polling only runs on those pages.
+
 ## Startup sequence
 
 - The window comes first: opening the window only unpacks and creates it (splash / guide page); the self-check,

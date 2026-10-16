@@ -10,6 +10,7 @@ import { $el } from "./shim/ui.js";
 
 import "../gallery.js";   // 注册 comfy.neo.gallery 扩展（NeoGallery + 侧栏 tab 定义）
 import { openDirectorEditor, setDirectorEditorHost, DIRECTOR_RECIPE_SAVED_EVENT, DIRECTOR_ASPECTS, DIRECTOR_CUSTOM, MP_MIN, MP_MAX, MP_DEFAULT, directorClampMp, directorResolution, directorInferAspect } from "../director.js";
+import { setPaintHost, openGenMaterialDialog, openImageEditDialog } from "../gallery-gen.js";
 import { DirectorTimeline } from "../director-timeline.js";
 import { createFramePlayer } from "../live-preview.js";
 import { createRecipesPanel, listRecipes } from "../recipes.js";
@@ -38,9 +39,30 @@ function showView(name) {
     for (const [key, el] of views) el.classList.toggle("ns-hidden", key !== name);
     document.querySelectorAll(".ns-tabs a").forEach(a =>
         a.classList.toggle("active", a.dataset.tab === name));
-    setMemActive(name === "director");   // 显存读数只在导演页轮询
-    if (name !== "director") closeDirectorLib();   // 离开导演页收起素材库抽屉
-    if (name === "gallery" && galleryPageHost && galleryMountHost !== galleryPageHost) mountGallery(galleryPageHost);
+    if (name !== currentView) {
+        libDrawers[currentView]?.close();   // 离开该页收起它的素材库抽屉
+        // 离开素材页：侧栏替身归位。素材页挂载画廊时把 activeSidebarTabId 写成 neo.gallery，
+        // 不归位的话导演页 / 绘画页的「素材库」按钮再写同一个 id 会被去重吃掉，抽屉打不开
+        const tab = app.extensionManager.sidebarTab;
+        if (tab && name !== "gallery") tab.activeSidebarTabId = null;
+    }
+    currentView = name;
+    setMemActive(name === "director" || name === "paint");   // 显存读数只在生成页（导演 / 绘画）轮询
+    // 画廊单例的宿主跟着视图走：绘画页 = 左栏素材库；素材页 = 整片宿主；其余页 = 交还素材页 / 收留宿主。
+    // 一次只挂一处：切页时不会两次 render 抢同一个元素（后落的那次会把画廊拽回上一页）
+    if (name === "paint" && paintLibHost) {
+        if (galleryMountHost !== paintLibHost) mountGalleryKeepDir(paintLibHost);
+    } else {
+        const host = name === "gallery" ? galleryPageHost : galleryStandby();
+        if (host && galleryMountHost !== host) mountGallery(host);
+    }
+}
+// 内嵌宿主（绘画面板 / 导演编辑器）的「打开时切到本页」入口一律走 hash：直接 showView 会把
+// location.hash 留在上一页，之后点顶栏那一页的 tab（href 与 hash 相同）不触发 hashchange，
+// 页面就再也切不回去（素材页「🖼️ 生成素材」→ 绘画页 → 点「素材」无反应）
+function go(name) {
+    if (location.hash === `#/${name}`) showView(name);
+    else location.hash = `#/${name}`;
 }
 
 // ====== 素材宿主：NeoGallery 元素是单例，素材页与导演页素材库抽屉共用，挂载点随宿主切换 ======
@@ -48,7 +70,9 @@ let galleryTab = null;
 let galleryPageHost = null;     // 素材页宿主
 let galleryMountHost = null;    // gallery.element 当前所在宿主
 let galleryStandbyHost = null;  // 素材页还没建时的收留宿主（游离节点，建页时再换）
-let directorLib = null;         // 导演页素材库抽屉（buildDirector 装配）：{ open, close }
+let paintLibHost = null;        // 绘画页左栏素材库宿主（常驻：进本页挂载，离本页交还）
+let currentView = "gallery";    // 当前显示的视图名（素材库抽屉与生成入口按视图归属）
+const libDrawers = {};          // 各页素材库抽屉（view 名 → { open, close }）：只有导演页有抽屉
 
 function mountGallery(host) {
     galleryTab = galleryTab || getSidebarTab("neo.gallery");
@@ -63,6 +87,20 @@ function mountGallery(host) {
     });
 }
 
+// 画廊元素不能悬空：从绘画页左栏 / 导演页抽屉摘下来时先寄这里（素材页宿主已建就直接交还）
+function galleryStandby() {
+    return galleryPageHost || (galleryStandbyHost ||= $el("div", { className: "ns-gallery-host" }));
+}
+
+// 挂载要重画列表，晚于 media-transfer 的目录导航落地：渲染完补一次当前目录导航
+function mountGalleryKeepDir(host) {
+    return mountGallery(host).then(() => {
+        const g = app.neoGallery;
+        if (g && galleryMountHost === host && g.currentView?.mode === "directory")
+            g.showDirectoryStructure(g.currentView.source, g.currentView.categoryPath);
+    });
+}
+
 function buildGallery(el) {
     const host = $el("div", { className: "ns-gallery-host" });
     el.appendChild(host);
@@ -70,15 +108,13 @@ function buildGallery(el) {
     mountGallery(host);
 }
 
-function closeDirectorLib() {
-    directorLib?.close();
-}
-
-// 导演编辑器「素材库」→ media-transfer 写 sidebarTab.activeSidebarTabId；Studio 没有 ComfyUI 侧栏，写入落到导演页抽屉
+// 编辑器「素材库」→ media-transfer 写 sidebarTab.activeSidebarTabId；Studio 没有 ComfyUI 侧栏，
+// 写入落到当前页自己的素材库抽屉（导演页 / 绘画页各一份）
 onSidebarTabChange((id) => {
-    if (!directorLib) return;
-    if (id === "neo.gallery") directorLib.open();
-    else directorLib.close();
+    const lib = libDrawers[currentView];
+    if (!lib) return;
+    if (id === "neo.gallery") lib.open();
+    else lib.close();
 });
 
 // ====== 导演页：整片生成面板 + 配方列表 ======
@@ -206,13 +242,13 @@ const SIDE_COL_MIN = 200;        // 配方列表下限：卡片缩略图还能�
 const SIDE_COL_LIB_MIN = 320;    // 素材库下限：画廊两列缩略图
 const SIDE_COL_EDITOR_MIN = 420; // 右侧编辑器下限：再窄就没法编辑了
 
-function buildSideColSplit(page, side) {
+function buildSideColSplit(page, side, key = SIDE_COL_KEY, min = SIDE_COL_MIN) {
     const split = $el("div", {
         className: "ns-director-colsplit", role: "separator", "aria-orientation": "vertical", tabindex: "0",
         title: t("拖动调整左栏宽度 · 双击恢复默认宽度"),
     });
     let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(SIDE_COL_KEY) || "null"); } catch { /* 偏好读不到就用默认 */ }
+    try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch { /* 偏好读不到就用默认 */ }
     const mode = () => (side.classList.contains("ns-lib-open") ? "lib" : "side");
     // 内联宽度只作用于当前这一栏模式；没有存过就用样式里的默认宽度
     const apply = () => {
@@ -221,11 +257,11 @@ function buildSideColSplit(page, side) {
         else page.style.removeProperty("--ns-side-w");
     };
     const setWidth = (w) => {
-        const min = mode() === "lib" ? SIDE_COL_LIB_MIN : SIDE_COL_MIN;
-        const max = Math.max(min, page.clientWidth - split.offsetWidth - SIDE_COL_EDITOR_MIN);
-        page.style.setProperty("--ns-side-w", Math.round(Math.max(min, Math.min(w, max))) + "px");
+        const minW = mode() === "lib" ? SIDE_COL_LIB_MIN : min;
+        const max = Math.max(minW, page.clientWidth - split.offsetWidth - SIDE_COL_EDITOR_MIN);
+        page.style.setProperty("--ns-side-w", Math.round(Math.max(minW, Math.min(w, max))) + "px");
     };
-    const persist = () => localStorage.setItem(SIDE_COL_KEY, JSON.stringify({ ...(saved || {}), [mode()]: side.offsetWidth }));
+    const persist = () => localStorage.setItem(key, JSON.stringify({ ...(saved || {}), [mode()]: side.offsetWidth }));
     apply();
 
     split.addEventListener("mousedown", (e) => {
@@ -248,7 +284,7 @@ function buildSideColSplit(page, side) {
     const reset = () => {
         saved = { ...(saved || {}) };
         delete saved[mode()];
-        localStorage.setItem(SIDE_COL_KEY, JSON.stringify(saved));
+        localStorage.setItem(key, JSON.stringify(saved));
         apply();
     };
     split.addEventListener("dblclick", reset);
@@ -263,6 +299,35 @@ function buildSideColSplit(page, side) {
         }
     });
     return { el: split, apply };
+}
+
+// ====== 左栏素材库抽屉：导演页 / 绘画页同款（Studio 没有 ComfyUI 侧栏，media-transfer 写 sidebarTab 落到这里）。
+// 左栏随整栏加宽，右侧让位不遮挡编辑区；素材卡片直接拖进右侧的首帧 / 参考位 / 参考图区 ======
+function buildLibDrawer(side, sideCol, view) {
+    const libHost = $el("div", { className: "ns-gallery-host" });
+    const libClose = $el("button", { className: "ns-director-lib-close", type: "button", title: t("收起素材库"), textContent: "✕" });
+    side.appendChild($el("div", { className: "ns-director-lib" }, [
+        $el("div", { className: "ns-director-lib-head" }, [
+            $el("span", { className: "ns-director-lib-title", textContent: t("🗂 素材库") }),
+            libClose,
+        ]),
+        libHost,
+    ]));
+    const closeLib = () => {
+        if (!side.classList.contains("ns-lib-open")) return;
+        side.classList.remove("ns-lib-open");
+        sideCol.apply();   // 回到配方列表宽度（用户拖过的宽度按模式各记各的）
+        app.extensionManager.sidebarTab.activeSidebarTabId = null;   // 素材库收起，替身侧栏同步归位
+        if (galleryMountHost === libHost) mountGallery(galleryStandby());
+    };
+    const openLib = () => {
+        side.classList.add("ns-lib-open");
+        sideCol.apply();
+        if (galleryMountHost === libHost) return;
+        mountGalleryKeepDir(libHost);
+    };
+    libClose.onclick = closeLib;
+    libDrawers[view] = { open: openLib, close: closeLib };
 }
 
 async function buildDirector(el) {
@@ -281,47 +346,14 @@ async function buildDirector(el) {
     page.appendChild(sideCol.el);
     page.appendChild(main);
     main.appendChild(editorHost);
-    // 素材库：导演编辑器里的「素材库」按钮把左栏从配方列表切成素材库（Studio 没有 ComfyUI 侧栏，
-    // media-transfer 写 sidebarTab 落到这里）。左栏随整栏加宽，右侧编辑器让位，不遮挡编辑区；
-    // 素材卡片直接拖进右侧编辑器的首帧 / 参考位
-    const libHost = $el("div", { className: "ns-gallery-host" });
-    const libClose = $el("button", { className: "ns-director-lib-close", type: "button", title: t("收起素材库"), textContent: "✕" });
-    side.appendChild($el("div", { className: "ns-director-lib" }, [
-        $el("div", { className: "ns-director-lib-head" }, [
-            $el("span", { className: "ns-director-lib-title", textContent: t("🗂 素材库") }),
-            libClose,
-        ]),
-        libHost,
-    ]));
-    const closeLib = () => {
-        if (!side.classList.contains("ns-lib-open")) return;
-        side.classList.remove("ns-lib-open");
-        sideCol.apply();   // 回到配方列表宽度（用户拖过的宽度按模式各记各的）
-        app.extensionManager.sidebarTab.activeSidebarTabId = null;   // 素材库收起，替身侧栏同步归位
-        if (galleryMountHost === libHost) {
-            mountGallery(galleryPageHost || (galleryStandbyHost ||= $el("div", { className: "ns-gallery-host" })));
-        }
-    };
-    const openLib = () => {
-        side.classList.add("ns-lib-open");
-        sideCol.apply();
-        if (galleryMountHost === libHost) return;
-        // 挂载要重画列表，晚于 media-transfer 的目录导航落地：渲染完按 currentView 补一次导航
-        mountGallery(libHost).then(() => {
-            const g = app.neoGallery;
-            if (g && galleryMountHost === libHost && g.currentView?.mode === "directory") {
-                g.showDirectoryStructure(g.currentView.source, g.currentView.categoryPath);
-            }
-        });
-    };
-    libClose.onclick = closeLib;
-    directorLib = { open: openLib, close: closeLib };
+    // 素材库抽屉：导演编辑器里的「素材库」按钮把左栏从配方列表切成素材库
+    buildLibDrawer(side, sideCol, "director");
     // 编辑器挂进宿主 / 关闭后收起占位提示
     new MutationObserver(() => editorHost.classList.toggle("ns-editor-open", !!editorHost.querySelector(".neo-director-panel")))
         .observe(editorHost, { childList: true });
     // 导演编辑器内嵌进本视图（含素材页「新建导演配方」入口 → 切到导演页）；
     // 编辑器底部的「🎬 保存并生成整片」保存成功后直接提交整片生成
-    setDirectorEditorHost(editorHost, () => showView("director"), () => submitGenerate());
+    setDirectorEditorHost(editorHost, () => go("director"), () => submitGenerate());
     let currentRecipeName = null;   // 当前选中的导演配方（由左栏配方面板点选回传，直接喂给整片生成区）
 
     const onSelect = (r) => {
@@ -648,6 +680,62 @@ async function buildDirector(el) {
 
 
 
+
+// ====== 绘画页：左 = 素材库（常驻，与素材页同一个画廊）；右 = 文生图 / 图片编辑面板（模式切换，一次铺满整栏） ======
+const PAINT_SIDE_COL_KEY = "neo_studio_paint_side_col";
+const PAINT_MODE_KEY = "neo_studio_paint_mode";
+
+function buildPaint(el) {
+    const page = $el("div", { className: "ns-paint" });
+    el.appendChild(page);
+    const side = $el("div", { className: "ns-paint-side" });
+    paintLibHost = $el("div", { className: "ns-gallery-host" });
+    side.appendChild(paintLibHost);
+    // 左栏装的是素材库网格，下限按素材库宽度走（配方列表的 260px 下限会把网格挤成一列）
+    const sideCol = buildSideColSplit(page, side, PAINT_SIDE_COL_KEY, SIDE_COL_LIB_MIN);
+    page.appendChild(side);
+    page.appendChild(sideCol.el);
+    const main = $el("div", { className: "ns-paint-main" });
+    page.appendChild(main);
+
+    // 模式切换：文生图与图片编辑各占满右栏，一次只看一个（不像导演页那样编辑 + 生成同屏抢高度）
+    const modeBtns = {
+        text: $el("button", { className: "ns-paint-mode-btn", type: "button", textContent: t("🖼️ 文生图"), onclick: () => setMode("text") }),
+        edit: $el("button", { className: "ns-paint-mode-btn", type: "button", textContent: t("🎨 图片编辑"), onclick: () => setMode("edit") }),
+    };
+    const textHost = $el("div", { className: "ns-paint-panel ns-paint-text" });
+    const editHost = $el("div", { className: "ns-paint-panel ns-paint-edit" });
+    main.appendChild($el("div", { className: "ns-paint-modes" }, [modeBtns.text, modeBtns.edit]));
+    main.appendChild(textHost);
+    main.appendChild(editHost);
+    const memBar = buildMemBar();   // 显存 / 内存读数 + 清理：绘画页同样是生成页
+    if (memBar) main.appendChild(memBar);
+
+    let mode = "text";
+    const setMode = (m) => {
+        mode = m;
+        modeBtns.text.classList.toggle("ns-paint-mode-on", mode === "text");
+        modeBtns.edit.classList.toggle("ns-paint-mode-on", mode === "edit");
+        textHost.classList.toggle("ns-hidden", mode !== "text");
+        editHost.classList.toggle("ns-hidden", mode !== "edit");
+        try { localStorage.setItem(PAINT_MODE_KEY, mode); } catch { /* 偏好写不进不影响用 */ }
+    };
+    try { setMode(localStorage.getItem(PAINT_MODE_KEY) === "edit" ? "edit" : "text"); } catch { setMode("text"); }
+
+    // 绘画面板内嵌进本视图（同导演编辑器 setDirectorEditorHost 语义）：两块面板进页就铺好，
+    // 左栏素材库的「🖼️ 生成素材」与图片卡菜单「🖼️ 图片编辑」只做模式切换（面板复用，不重建）；
+    // 素材页的同类入口由 onOpen 先跳到本页再铺面板。ComfyUI 插件模式没有宿主，照旧弹浮层窗。
+    let ready = false;
+    setPaintHost({
+        text: textHost,
+        edit: editHost,
+        onOpen: (kind) => { if (!ready) return; go("paint"); setMode(kind); },
+    });
+    // 文生图直接写提示词就能生成；图片编辑铺空面板，从左栏把素材拖进预览区当原图即可
+    openGenMaterialDialog(app.neoGallery, { container: textHost });
+    openImageEditDialog(app.neoGallery, null, "", { container: editHost });
+    ready = true;
+}
 
 // ====== 技能页：统一技能管理（与顶栏「🗂 技能管理」同组件）直接挂满主区，无弹窗外桌面端 ======
 function buildSkills(el) {
@@ -1073,6 +1161,7 @@ const RUN_GATES = [
     [".neo-director-regen-run", "segment", t("生成这一段")],
     [".neo-director-merge-run", "segment", t("拼回成片")],
     [".neo-director-sb-gen", "storyboard", t("生成图片分镜")],
+    [".ns-paint .neo-gallery-story-btn-primary", "image_gen", t("生成")],   // 绘画页文生图 / 图片编辑面板的生成
 ];
 
 // 生成按钮改写成「需要 ComfyUI」：不发请求，点一下引导启动（须在原 handler 之前注册）
@@ -1276,33 +1365,35 @@ function setMemItem(el, used, total, label) {
 }
 
 async function pollMemStats() {
-    const vramEl = document.getElementById("ns-vram");
-    const ramEl = document.getElementById("ns-ram");
-    if (!vramEl || !ramEl) return;
+    const bars = document.querySelectorAll(".ns-mem");   // 导演页 / 绘画页各一条读数条
+    if (!bars.length) return;
+    let vram = null, ram = null;
     try {
         // 驱动级显存占用（含全部进程）；/system_stats 的 vram_free 把 torch reserved 空闲重复计入，不准
         const r = await api.fetchApi("/neo_studio/mem_stats");
         const data = await r.json();
-        if (data?.success) setMemItem(vramEl, data.vram_used, data.vram_total, t("显存"));
+        if (data?.success) vram = data;
     } catch { /* 网络抖动忽略 */ }
     try {
         const r = await api.fetchApi("/system_stats");
         const data = await r.json();
-        if (data?.system) {
-            setMemItem(ramEl, (data.system.ram_total || 0) - (data.system.ram_free || 0), data.system.ram_total, t("内存"));
-        }
+        if (data?.system) ram = data.system;
     } catch { /* 网络抖动忽略 */ }
+    for (const bar of bars) {
+        if (vram) setMemItem(bar.querySelector(".ns-vram"), vram.vram_used, vram.vram_total, t("显存"));
+        if (ram) setMemItem(bar.querySelector(".ns-ram"), (ram.ram_total || 0) - (ram.ram_free || 0), ram.ram_total, t("内存"));
+    }
 }
 
 // 读数 + 清理按钮：导演页生成面板底部那一行；离线（无 memory 能力）整块不出
 function buildMemBar() {
     if (!can("memory")) return null;
     const bar = $el("div", { className: "ns-mem" }, [
-        $el("span", { className: "ns-mem-item", id: "ns-vram", title: t("GPU 显存占用（含全部进程）"), textContent: `${t("显存")} --` }),
-        $el("span", { className: "ns-mem-item", id: "ns-ram", title: t("系统内存占用"), textContent: `${t("内存")} --` }),
+        $el("span", { className: "ns-mem-item ns-vram", title: t("GPU 显存占用（含全部进程）"), textContent: `${t("显存")} --` }),
+        $el("span", { className: "ns-mem-item ns-ram", title: t("系统内存占用"), textContent: `${t("内存")} --` }),
     ]);
     const btn = $el("button", {
-        className: "ns-mem-clear", id: "ns-clear-mem", type: "button",
+        className: "ns-mem-clear", type: "button",
         title: t("卸载空闲模型并释放显存缓存 · 生成后显存迟迟不降时用"), textContent: t("🧹 清理"),
     });
     btn.addEventListener("click", async () => {
@@ -1403,8 +1494,9 @@ function localizeShell() {
 
 function route() {
     const name = (location.hash || "#/gallery").replace(/^#\//, "").split("?")[0] || "gallery";
-    // 导演页视图常驻：导演编辑器的内嵌宿主要在素材页第一次点「🎬 新建导演配方」时就注册好
+    // 导演页 / 绘画页视图常驻：内嵌宿主要在素材页第一次点「🎬 新建导演配方 / 🖼️ 生成素材 / 🖼️ 图片编辑」之前就注册好
     ensureView("director", buildDirector);
+    ensureView("paint", buildPaint);
     if (name === "skills") ensureView("skills", buildSkills);
     else if (name === "settings") ensureView("settings", buildSettings);
     else ensureView("gallery", buildGallery);

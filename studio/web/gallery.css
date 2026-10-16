@@ -2914,6 +2914,21 @@ Accordion Section Buttons (Clear)
     border-radius: 8px;
 }
 
+/* 空面板（还没原图）：预览区本身就是拖放落点，从左栏素材库拖一张进来当原图 */
+.neo-gallery-edit-empty {
+    min-width: 320px;
+    min-height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+    text-align: center;
+    border: 1px dashed #3a3a44;
+    border-radius: 8px;
+    color: #8a8a96;
+    font-size: 13px;
+}
+
 /* 开扩图：图片盒改回满宽舞台（拖框/原图归位都按舞台盒量尺寸），画布居中 */
 .neo-gallery-edit-compare-imgwrap.neo-gallery-edit-outpaint {
     width: 100%;

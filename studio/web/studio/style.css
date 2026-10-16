@@ -84,7 +84,7 @@ body {
 }
 /* 拖动分隔条时关掉过渡，否则每一帧都在补间、拖起来发黏 */
 .ns-director.ns-colsplit-drag { transition: none; user-select: none; }
-.ns-director-side { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.ns-director-side, .ns-paint-side { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .ns-director-recipes { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* 左栏 / 编辑器分隔条：18px 宽热区里一条竖线，悬停 / 键盘聚焦 / 拖动时加宽变蓝（照 VSCode 的 sash） */
 .ns-director-colsplit { position: relative; min-width: 0; cursor: col-resize; user-select: none; }
@@ -101,9 +101,9 @@ body {
 .ns-director-colsplit:hover::after, .ns-director-colsplit:focus-visible::after,
 .ns-director-colsplit.ns-colsplit-drag::after { left: 6px; width: 4px; background: #5090cc; }
 .ns-director-colsplit:focus-visible { outline: 1px solid #5090cc; }
-/* 素材库：导演编辑器「素材库」按钮把左栏从配方列表切成素材库，整栏加宽到画廊宽度，
+/* 素材库抽屉：导演编辑器「素材库」按钮把左栏从配方列表切成素材库，整栏加宽到画廊宽度，
    右侧编辑器随 grid 让位（不遮挡编辑区），素材卡片直接拖进右侧首帧 / 参考位 */
-.ns-director:has(.ns-director-side.ns-lib-open) { --ns-side-w: 380px; }
+.ns-director:has(.ns-lib-open) { --ns-side-w: 380px; }
 .ns-director-lib { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ns-director-side:not(.ns-lib-open) .ns-director-lib { display: none; }
 .ns-director-side.ns-lib-open .ns-director-recipes { display: none; }
@@ -132,17 +132,17 @@ body {
 .ns-director-lib .ns-gallery-host { flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; padding: 0 0 12px; }
 .ns-director-lib .ns-gallery-host .neo-gallery-topbar { margin: -10px -10px 8px; padding: 8px 10px; }
 /* 左栏滚动条：平时隐形，鼠标进入这一栏才显形（槽位照留，显隐不引起内容跳动） */
-.ns-director-recipes,
+.ns-director-recipes, .ns-paint-side .ns-gallery-host,
 .ns-director-lib .ns-gallery-host { scrollbar-width: thin; scrollbar-color: transparent transparent; }
-.ns-director-recipes:hover,
+.ns-director-recipes:hover, .ns-paint-side .ns-gallery-host:hover,
 .ns-director-lib .ns-gallery-host:hover { scrollbar-color: #555 transparent; }
-.ns-director-recipes::-webkit-scrollbar,
+.ns-director-recipes::-webkit-scrollbar, .ns-paint-side .ns-gallery-host::-webkit-scrollbar,
 .ns-director-lib .ns-gallery-host::-webkit-scrollbar { width: 8px; }
-.ns-director-recipes::-webkit-scrollbar-track,
+.ns-director-recipes::-webkit-scrollbar-track, .ns-paint-side .ns-gallery-host::-webkit-scrollbar-track,
 .ns-director-lib .ns-gallery-host::-webkit-scrollbar-track { background: transparent; }
-.ns-director-recipes::-webkit-scrollbar-thumb,
+.ns-director-recipes::-webkit-scrollbar-thumb, .ns-paint-side .ns-gallery-host::-webkit-scrollbar-thumb,
 .ns-director-lib .ns-gallery-host::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
-.ns-director-recipes:hover::-webkit-scrollbar-thumb,
+.ns-director-recipes:hover::-webkit-scrollbar-thumb, .ns-paint-side .ns-gallery-host:hover::-webkit-scrollbar-thumb,
 .ns-director-lib .ns-gallery-host:hover::-webkit-scrollbar-thumb { background: #555; }
 .ns-director-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
 /* 右上编辑器宿主：导演编辑器内嵌铺满这里；没有编辑器时出占位提示 */
@@ -300,6 +300,82 @@ body {
 .neo-recipes-title-row .rs-btn,
 .neo-recipes-card-actions .rs-btn { flex: none; }
 
+/* 绘画页：左 = 素材库（常驻，与素材页同一个画廊）/ 右 = 文生图 / 图片编辑面板（模式切换，一次铺满整栏）
+   左栏宽度、滚动条与窄窗口规则全部与导演页共用同一套 */
+.ns-paint {
+    --ns-side-w: 380px;
+    display: grid;
+    grid-template-columns: var(--ns-side-w) 18px 1fr;
+    height: 100%;
+    min-height: 520px;
+    transition: grid-template-columns .16s ease;
+}
+.ns-paint.ns-colsplit-drag { transition: none; user-select: none; }
+/* 左栏素材库：宿主规则与导演页抽屉同款（无上内边距，粘性工具条用画廊侧栏的负边距贴齐栏边） */
+.ns-paint-side .ns-gallery-host { flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; padding: 0 0 12px; }
+.ns-paint-side .ns-gallery-host .neo-gallery-topbar { margin: -10px -10px 8px; padding: 8px 10px; }
+/* 顶部留白：本页顶部内边距被素材页那条「sticky 工具条贴顶」规则清成 0，右栏自己补回一段，
+   模式条不贴着窗口边 */
+.ns-paint-main { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; min-width: 0; min-height: 0; }
+/* 显存条：右栏纵向 flex 把它拉成整行、读数默认贴左，与上方居中的模式条同轴才不显得挂在角落 */
+.ns-paint-main .ns-mem { justify-content: center; }
+/* 模式切换：样式与导演编辑的页签（.neo-director-tab）同款——居中一排，
+   平时只出文字、选中那枚才落底出边框；文生图与图片编辑各占满右栏，一次只看一个 */
+.ns-paint-modes { flex: none; display: flex; justify-content: center; gap: 4px; }
+.ns-paint-mode-btn {
+    flex: none;
+    cursor: pointer;
+    background: transparent;
+    color: #9aa4b0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+}
+.ns-paint-mode-btn:hover { color: #ddd; background: rgba(255, 255, 255, 0.04); }
+/* 双类选择器压过 :hover，选中页签悬停时不落回半透明底（与 .neo-director-tab.active 同构） */
+.ns-paint-mode-btn.ns-paint-mode-on { color: #fff; background: #2a2d33; border-color: #4a4d55; }
+/* 面板宿主：铺满剩余栏高；两块面板进页就铺好，是本页的一块内容——
+   窗口外壳（边框 / 圆角 / 底色 / 内衬 / 阴影）与标题栏全部去掉，标题由上方模式条承担 */
+.ns-paint-panel { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.ns-paint-panel .neo-gallery-gen-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ns-paint-panel .neo-gallery-story-modal--embedded {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 1080px;
+    height: 100%;
+    min-height: 0;
+    margin: 0 auto;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.ns-paint-panel .neo-gallery-story-titlebar { display: none; }
+/* 文生图：输出框吃掉栏内剩余高度，面板下方不留一整片空白 */
+.ns-paint-text .neo-gallery-gm-output-wrap { flex: 1 1 auto; min-height: 140px; }
+.ns-paint-text .neo-gallery-story-input { height: 100%; min-height: 140px; resize: none; }
+.ns-paint-text .neo-gallery-gm-quick-input { min-height: 64px; }
+/* 图片编辑：预览按栏高缩放（弹窗那套 50vh / 90vh 在页内会把表单挤到折叠线以下、底部按钮被显存条切掉），
+   表单固定在下方收尾。gallery.css 是运行时注入的，平局它赢 —— 这里多带一个类压过它 */
+.ns-paint-panel .neo-gallery-story-modal.neo-gallery-edit-modal {
+    max-width: 1180px;
+    height: 100%;
+    max-height: none;
+    min-height: 0;
+    overflow: hidden;
+}
+.ns-paint-panel .neo-gallery-edit-compare,
+.ns-paint-panel .neo-gallery-edit-compare > div,
+.ns-paint-panel .neo-gallery-edit-compare-stage { flex: 1 1 auto; min-height: 0; max-height: 100%; }
+.ns-paint-panel .neo-gallery-edit-compare-img { max-height: 100%; }
+.ns-paint-panel .neo-gallery-edit-compare-imgwrap.neo-gallery-edit-outpaint { height: 100%; }
+.ns-paint-panel .neo-gallery-edit-form { flex: none; margin-top: 0; }
+/* 空面板拖入框：铺满整块预览区，随窗口高度伸缩（弹窗里仍是 320×220 的小落点） */
+.ns-paint-panel .neo-gallery-edit-compare-imgwrap.neo-gallery-edit-empty-stage { width: 100%; }
+.ns-paint-panel .neo-gallery-edit-empty { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+
 /* 左栏配方列表：窄栏单列排布（与侧栏同款）；分组标题/空状态跨整行 */
 .ns-director .neo-recipes-list {
     display: grid;
@@ -309,17 +385,19 @@ body {
 .ns-director .neo-recipes-group-title,
 .ns-director .neo-recipes-empty { grid-column: 1 / -1; }
 
-/* 窄窗口：左栏先收窄，再窄就上下堆叠（配方列表在上，编辑器 + 生成面板在下） */
+/* 窄窗口：左栏先收窄，再窄就上下堆叠（素材库 / 配方列表在上，编辑器 + 生成面板在下） */
 @media (max-width: 1180px) {
-    .ns-director { --ns-side-w: 340px; }
-    .ns-director:has(.ns-director-side.ns-lib-open) { --ns-side-w: 380px; }
+    .ns-director, .ns-paint { --ns-side-w: 340px; }
+    .ns-director:has(.ns-lib-open) { --ns-side-w: 380px; }
 }
 @media (max-width: 900px) {
-    .ns-director { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 0; }
+    .ns-director, .ns-paint { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 0; }
     .ns-director-colsplit { display: none; }
-    .ns-director-side { max-height: 240px; }
+    .ns-director-side, .ns-paint-side { max-height: 240px; }
+    .ns-paint-side { max-height: 460px; }
     .ns-director-side.ns-lib-open { max-height: 460px; }
     .ns-director-main { min-height: 620px; }
+    .ns-paint-main { min-height: 480px; }
 }
 
 /* 技能页：统一技能管理直接挂满主区（无弹窗外壳，去掉独立窗口的尺寸/圆角/阴影） */

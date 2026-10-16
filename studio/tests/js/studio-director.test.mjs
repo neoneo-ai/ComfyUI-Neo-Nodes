@@ -370,6 +370,7 @@ test("Studio 导演页：左栏分隔条拖动宽度（配方列表 / 素材库�
     await import("../../web/studio/studio-app.js");
     location.hash = "#/director";
     await until(() => document.querySelector(".ns-director-side .neo-recipes-card"), "配方卡片挂载");
+    await sleep(20);   // 等 hashchange 任务落地：素材库抽屉按当前页归属，路由没落地时 currentView 还是上一页
 
     const page = document.querySelector(".ns-director");
     const side = document.querySelector(".ns-director-side");
