@@ -4,6 +4,16 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Model lists on the offline page read the kernel's extra model paths.** `extra_model_paths.yaml` is loaded
+  by ComfyUI's `main.py` only, and the desktop process never ran that path: `folder_paths.get_filename_list`
+  scanned nothing but `<root>/models/`, so on a machine whose models live in an extra path (this pack ships
+  `base_path: F:\`, models under `F:\models\`) `GET /neo_image_gen/models` answered empty lists and every
+  model path saved in a skill showed as "(missing)" — the red combo in the screenshot, with "Repair broken
+  paths" left with no candidates to match. `build_app()` in `app/studio_server.py` now loads the root's yaml
+  through ComfyUI's own `utils.extra_config.load_extra_path_config`, so the desktop service and the kernel it
+  launches read the same model directories. Covered by
+  `app/tests/test_studio_server.py::OfflineServiceTests::test_model_lists_see_extra_model_paths`.
+
 - **Offline banner removed, and the flip it was hiding fixed.** The Studio offline page no longer draws a
   "ComfyUI not running" bar under the header: the header status pill already reports "● Stopped" and points the start
   entry at "Settings → Startup settings", generation entries stay dimmed by the capability gate, and `body.ns-offline`

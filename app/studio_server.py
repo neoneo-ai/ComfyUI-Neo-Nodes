@@ -208,6 +208,14 @@ def build_app(root: Path, plugin_dir: Path, flags: dict = None, launcher: dict =
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     import folder_paths   # noqa: F401  gallery 在 import 期就要读 output/input 目录
+    # extra_model_paths.yaml 是 ComfyUI 在 main.py 的 apply_custom_paths 里加载的，桌面端进程没有
+    # 这条路：不自己加载的话 get_filename_list 只扫 <root>/models/。模型放在 extra 路径的机器上
+    # （整合包的 yaml 是 base_path: F:\ → 模型在 F:\models\），离线页的模型下拉就是空表，
+    # 技能里已存的模型路径全标「(缺失)」，「修复失效路径」也匹配不到任何候选。
+    extra_cfg = Path(root) / "extra_model_paths.yaml"
+    if extra_cfg.is_file():
+        from utils.extra_config import load_extra_path_config
+        load_extra_path_config(str(extra_cfg))
 
     if data_root:
         os.environ[DATA_ROOT_ENV] = str(data_root)

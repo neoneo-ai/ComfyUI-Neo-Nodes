@@ -21,6 +21,11 @@
 功能开关表随 `/neo_studio/version` 下发，Studio 只门控运行类按钮（生成 / 跑段 / 拼接），配方编辑、技能编辑、
 设置、LLM 配置都不需要 ComfyUI 运行时。路由清单见 [api-routes.md](api-routes.md)。
 
+桌面端服务读模型目录时要自己加载内核那份 `extra_model_paths.yaml`（`build_app()` 调 ComfyUI 的
+`utils.extra_config.load_extra_path_config`）：这份 yaml 只有 ComfyUI 的 `main.py` 会读，桌面端进程不加载
+的话 `get_filename_list` 只扫 `<root>/models/`，模型放在 extra 路径的机器上（整合包是 `base_path: F:\`，
+模型在 `F:\models\`），离线页的模型下拉就是空表，技能里已存的模型路径全标「(缺失)」。
+
 主画布（ComfyUI 页面）是 SPA，进程停了页面还活着、画布照常能拖能改，改完的东西落不进任何执行。
 `studio/web/canvas-lock.js` 读前端自己的连接事件当判据：`status` 空 / `reconnecting` = 后端没了，
 `reconnected` / `status` 带数据 = 回来了；锁之前先打一次 `/system_stats` 确认，WS 抖动不误锁。确认掉线就走

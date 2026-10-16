@@ -190,6 +190,19 @@ class OfflineServiceTests(_ServerCase):
         self.assertEqual(self.get("/neo_gallery/css")[0], 200)
         self.assertEqual(self.get("/neo_gallery/placeholder.png")[0], 200)
 
+    def test_model_lists_see_extra_model_paths(self):
+        """模型目录要在桌面端进程里可见：extra_model_paths.yaml 只有 ComfyUI 的 main.py 会加载，
+        桌面端不自己加载的话 get_filename_list 只扫 <root>/models/，模型落在 extra 路径的机器上
+        离线页的模型下拉就是空表，技能里已存的模型路径全标「(缺失)」。"""
+        if not (COMFY_ROOT / "extra_model_paths.yaml").is_file():
+            self.skipTest("这台机器的 ComfyUI 根没有 extra_model_paths.yaml")
+        import folder_paths
+        extra = [p for p in folder_paths.get_folder_paths("diffusion_models")
+                 if not Path(p).is_relative_to(COMFY_ROOT)]
+        self.assertTrue(extra, "extra_model_paths.yaml 里的模型目录要在桌面端进程可见")
+        data = json.loads(self.get("/neo_image_gen/models")[1])
+        self.assertTrue(data["diffusion_models"], "模型下拉不能是空表")
+
     def test_thumbnail_generated_without_comfyui(self):
         query = urllib.parse.urlencode({"filename": SAMPLE[1], "subfolder": SAMPLE[0]})
         status, body = self.get(f"/neo_gallery/thumbnail?{query}")

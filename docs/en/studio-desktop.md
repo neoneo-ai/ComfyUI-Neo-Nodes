@@ -25,6 +25,12 @@ execution queue, VRAM, or node definitions belongs to ComfyUI. The feature-flag 
 editing, skill editing, settings and LLM configuration never need the ComfyUI runtime. Route list:
 [api-routes.md](api-routes.md).
 
+When the desktop service reads model directories it loads the kernel's `extra_model_paths.yaml` itself
+(`build_app()` calls ComfyUI's `utils.extra_config.load_extra_path_config`): only ComfyUI's `main.py` reads
+that file, so a desktop process that skips it scans nothing but `<root>/models/` in `get_filename_list`, and on
+a machine whose models live in an extra path (this pack ships `base_path: F:\`, models under `F:\models\`) the
+offline model dropdown comes back empty and every model path saved in a skill is flagged "(missing)".
+
 The main canvas (the ComfyUI page) is an SPA: the page stays alive after the process stops, the canvas stays
 editable, and nothing written there reaches any execution. `studio/web/canvas-lock.js` uses the frontend's own
 connection events as the signal — an empty `status` / `reconnecting` means the backend is gone, `reconnected` /
