@@ -426,6 +426,20 @@ class GuidePageTests(unittest.TestCase):
         self.assertEqual(calls, [("D:/ComfyUI", "D:/python/python.exe", 8188)])
 
 
+class SplashPageTests(unittest.TestCase):
+    def test_splash_page_animates_and_reports_the_real_stage(self):
+        """冷启动要扫模型目录、装依赖、起桌面端服务：启动页不能是一行静止文字，
+        阶段行还得报真实进度 —— 写死一句「请稍候」在慢的那路上就是假承诺。"""
+        html = app.splash_html()
+        self.assertIn("@keyframes ns-rise", html)
+        self.assertIn("@keyframes ns-wave", html)
+        self.assertIn('mask="url(#ns-splash-mask)"', html)
+        self.assertIn("prefers-reduced-motion", html)   # 系统开了减少动画时浪线要停住
+        self.assertIn("api.comfy_state()", html)
+        self.assertIn("已拉起 ComfyUI", html)
+        self.assertIn("ComfyUI 就绪", html)
+
+
 class AlertTests(unittest.TestCase):
     def test_alert_uses_message_box(self):
         calls = []

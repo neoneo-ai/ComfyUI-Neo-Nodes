@@ -1308,13 +1308,77 @@ def pick_python_file(start: str = "") -> str:
     return res[0] if res else ""
 
 
+SPLASH_JS = """
+(function () {
+    var stage = document.getElementById('stage');
+    var tries = 0;
+    async function poll() {
+        var api = window.pywebview && window.pywebview.api;
+        if (api) {
+            try {
+                var s = await api.comfy_state();
+                stage.textContent = s.ready ? 'ComfyUI 就绪，正在进入'
+                    : s.starting ? '已拉起 ComfyUI（PID ' + s.pid + '），正在等待就绪'
+                    : '正在自检与准备桌面端服务';
+                if (s.ready) return;   // 就绪这一刻桌面端随即整页跳走，不再问
+            } catch (e) {}   // 窗口收尾路上 api 调用会 reject：阶段行停在上一句文案
+        } else if (tries++ >= 20) {
+            return;   // 桌面端方法始终没挂上：动画照跑，阶段行留在初始文案
+        }
+        setTimeout(poll, 900);
+    }
+    poll();
+})();
+"""
+
+
 def splash_html() -> str:
-    """冷启动时先出窗口显示的启动页：ComfyUI 就绪前不让用户对着空白干等。"""
-    return ('<!doctype html><meta charset=utf-8>'
-            '<style>html,body{height:100%;margin:0;background:#1e1e1e;color:#d7dae0;'
-            'font-family:system-ui;display:grid;place-items:center}'
-            'h1{font-size:20px;font-weight:600}p{font-size:13px;color:#8a8f98}</style>'
-            '<div><h1>新影工坊 · Neo Studio</h1><p>正在启动 ComfyUI，请稍候…</p></div>')
+    """冷启动时先出窗口显示的启动页：ComfyUI 就绪前不让用户对着空白干等。
+
+    动画照 ComfyUI 前端启动页那套机制：品牌图形当遮罩，遮罩里一条浪线横向滚、整组随呼吸上浮，
+    浪头漫过图形就是「就绪在望」。阶段行走 js_api 报真实进度 —— 冷启动要扫模型目录、装依赖、
+    起桌面端服务，写死一句「请稍候」在慢的那路上就是假承诺。
+    """
+    return ('<!doctype html><meta charset=utf-8><title>新影工坊 · Neo Studio</title>'
+            '<style>'
+            'html,body{height:100%;margin:0;overflow:hidden;background:#1e1e1e;color:#d7dae0;'
+            'font-family:system-ui}'
+            '#splash{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;'
+            'justify-content:center;contain:strict}'
+            '#splash svg{width:min(190px,42vw);height:auto;transform:translateZ(0)}'
+            '#splash .wave-group{animation:ns-rise 4s ease-in-out infinite alternate;'
+            'will-change:transform;transform:translateZ(0)}'
+            '#splash .wave-path{animation:ns-wave 1.2s linear infinite;'
+            'will-change:transform;transform:translateZ(0)}'
+            '#stage::after{content:"\\2026";animation:ns-dots 1.2s steps(1,end) infinite}'
+            '@keyframes ns-rise{from{transform:translateY(150px)}to{transform:translateY(-40px)}}'
+            '@keyframes ns-wave{from{transform:translateX(0)}to{transform:translateX(-240px)}}'
+            '@keyframes ns-dots{0%{content:"\\2026"}25%{content:""}50%{content:" \\b7"}75%{content:" \\b7\\b7"}}'
+            '@media (prefers-reduced-motion:reduce){#splash .wave-group,#splash .wave-path{animation:none;'
+            'will-change:auto}#splash .wave-group{transform:translateY(-40px)}}'
+            'h1{font-size:20px;font-weight:600;margin:20px 0 0}'
+            '#stage{font-size:13px;color:#8a8f98;margin-top:8px}'
+            '</style>'
+            '<div id="splash" role="status" aria-label="正在启动 ComfyUI">'
+            # 场记板当遮罩：斜条与播放三角挖空，浪线漫过去时图形认得出来
+            '<svg viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">'
+            '<defs><mask id="ns-splash-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="240" height="200">'
+            '<rect x="14" y="16" width="212" height="36" rx="10" fill="#fff"/>'
+            '<rect x="14" y="58" width="212" height="126" rx="14" fill="#fff"/>'
+            '<g fill="#000">'
+            '<path d="M22 16h26l-34 36h-26zM74 16h26l-34 36h-26zM126 16h26l-34 36h-26zM178 16h26l-34 36h-26z"/>'
+            '<path d="M98 92l44 29-44 29z"/></g></mask></defs>'
+            '<g mask="url(#ns-splash-mask)"><g class="wave-group">'
+            '<path class="wave-path" d="M0 60Q60 20 120 60T240 60T360 60T480 60V400H0Z" fill="#2f6feb"/>'
+            '</g></g>'
+            '<g fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">'
+            '<rect x="14" y="16" width="212" height="36" rx="10"/>'
+            '<rect x="14" y="58" width="212" height="126" rx="14"/>'
+            '<path d="M98 92l44 29-44 29z"/></g></svg>'
+            '<h1>新影工坊 · Neo Studio</h1>'
+            '<div id="stage">正在启动 ComfyUI，请稍候</div>'
+            '</div>'
+            '<script>' + SPLASH_JS + '</script>')
 
 
 GUIDE_JS = """
