@@ -31,7 +31,7 @@ Both prompt nodes share one set of LLM runtime modes.
 Pick **`Native (ComfyUI safetensors)`** in Settings → Provider (the dropdown default): it reuses ComfyUI's
 native text-generation path (`clip.tokenize` → `clip.generate` → `clip.decode`) and runs the safetensors
 text-generation models under `models/text_encoders/` (e.g. `qwen3.5_4b_bf16.safetensors`) inside the
-ComfyUI process. **No `llama-cpp-python` install needed**, and the API Key / Base URL / Models Dir rows are
+ComfyUI process. **No `llama-cpp-python` install needed**, and the API Key / Base URL / Local models folder rows are
 hidden under this Provider.
 
 ### Models & connection test
@@ -220,7 +220,7 @@ models/LLM/
     └── Huihui-gemma-...mmproj-f16.gguf                               # projection file (matched automatically)
 ```
 
-- **Directory location** - the **Models Dir** that appears once Settings → Provider is `Local GGUF`; empty
+- **Directory location** - the **Local models folder** that appears once Settings → Provider is `Local GGUF`; empty
   means scanning `models/LLM/`, and any local path works (e.g. LM Studio's `<user>/.lmstudio/models`).
 - **Model list** - every `.gguf` under that directory is found recursively, and the dropdown shows only the
   **model name** (the file name without `.gguf`); same-named files from different vendors become separate

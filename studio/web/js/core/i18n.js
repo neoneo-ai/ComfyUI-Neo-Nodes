@@ -147,6 +147,24 @@ const EN = {
     "启动设置": "Launcher Settings",
     "关于": "About",
     "界面语言": "Language",
+    // LLM 设置表单（表单里这几项原本是硬编码英文，中文界面夹英文）
+    "LLM 服务商": "LLM Provider",
+    "为 AI 功能选择服务商": "Choose a provider for AI features",
+    "服务商": "Provider",
+    "模型": "Model",
+    "本地模型目录": "Local models folder",
+    "本地服务可不填": "Optional for local services",
+    "默认：ComfyUI/models/LLM": "Default: ComfyUI/models/LLM",
+    "⏳ 加载模型中…": "⏳ Loading models…",
+    "❌ 模型列表加载失败": "❌ Failed to load the model list",
+    "○ 无模型：把 .safetensors 放进 models/text_encoders/": "○ No models: put .safetensors in models/text_encoders/",
+    // 日志页：整段复制到剪贴板
+    "⧉ 复制日志": "⧉ Copy log",
+    "有选区复制选区，没有选区复制全部日志": "Copies the selection, or the whole log when nothing is selected",
+    "日志已复制（{n} 行）": "Log copied ({n} lines)",
+    "已复制选中内容（{n} 行）": "Copied the selection ({n} lines)",
+    "日志为空": "The log is empty",
+    "复制失败：{msg}": "Copy failed: {msg}",
     // 桌面端：启动设置
     "ComfyUI 根目录": "ComfyUI root folder",
     "python.exe 路径": "python.exe path",
@@ -303,6 +321,7 @@ const EN = {
     "可选：本地/自建服务可留空": "Optional: leave empty for local / self-hosted services",
     "⚠️ 云供应商必填 API Key，否则调用会 401": "⚠️ This cloud provider requires an API key, or calls fail with 401",
     "🤖 LLM 配置": "🤖 LLM Config",
+    "🤖 LLM 设置": "🤖 LLM Settings",
     // ===== 生图 / 生视频设置表单与「发送到 Load Image」 =====
     "等待生图超时，请稍后在 Gallery 查看": "Image generation timed out — check the Gallery later",
     "参考图片中的角色形象": "the character in the reference image",

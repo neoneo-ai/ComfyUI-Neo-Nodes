@@ -140,18 +140,18 @@ test("⚙️ 设置打开统一设置弹窗（四 tab，切 tab 显隐同步）"
 
     const overlay = document.querySelector(".neo-director-llm-overlay");
     assert.ok(overlay, "设置弹窗未打开");
-    const tabs = [...overlay.querySelectorAll(".rs-auto-tab")].map((el) => el.textContent);
-    assert.deepEqual(tabs, ["🤖 LLM Settings", "🖼️ 生图默认设置", "🎬 生视频模型", "🌐 界面语言"], "tab 顺序/文案不符");
+    const tabs = [...overlay.querySelectorAll(".neo-settings-tab")].map((el) => el.textContent);
+    assert.deepEqual(tabs, ["🤖 LLM 设置", "🖼️ 生图默认设置", "🎬 生视频模型", "🌐 界面语言"], "tab 顺序/文案不符");
     const panels = [...overlay.querySelectorAll(".neo-settings-panel")];
     assert.equal(panels.length, 4, "四个设置面板缺失");
     assert.equal(panels.filter((p) => p.style.display !== "none").length, 1, "默认只显示一个面板");
     assert.ok(panels[0].style.display !== "none", "默认应显示 LLM tab");
 
     // 切到生视频 tab：只有第三个面板可见
-    overlay.querySelectorAll(".rs-auto-tab")[2].click();
+    overlay.querySelectorAll(".neo-settings-tab")[2].click();
     assert.equal(panels.filter((p) => p.style.display !== "none").length, 1, "切 tab 后应只有一个面板可见");
     assert.ok(panels[2].style.display !== "none", "生视频面板未显示");
-    assert.ok(overlay.querySelectorAll(".rs-auto-tab")[2].classList.contains("rs-auto-tab-active"), "tab 高亮未跟随");
+    assert.ok(overlay.querySelectorAll(".neo-settings-tab")[2].classList.contains("neo-settings-tab-active"), "tab 高亮未跟随");
 
     // 无改动：✕ 直接关
     await flush();   // 等三个表单 load 落定（ready）
@@ -598,8 +598,8 @@ test("设置弹窗「🌐 界面语言」：单选当前语言，保存落盘并
     };
     try {
         const overlay = openSettings();
-        overlay.querySelectorAll(".rs-auto-tab")[3].click();
-        assert.ok(overlay.querySelectorAll(".rs-auto-tab")[3].classList.contains("rs-auto-tab-active"), "语言 tab 未高亮");
+        overlay.querySelectorAll(".neo-settings-tab")[3].click();
+        assert.ok(overlay.querySelectorAll(".neo-settings-tab")[3].classList.contains("neo-settings-tab-active"), "语言 tab 未高亮");
         const radios = [...overlay.querySelectorAll(".neo-settings-panel")[3].querySelectorAll("input[name=\"neo-lang\"]")];
         assert.equal(radios.length, 2, "语言单选项数量不符");
         assert.ok(radios[0].checked, "默认应选中当前语言（中文）");
@@ -612,7 +612,7 @@ test("设置弹窗「🌐 界面语言」：单选当前语言，保存落盘并
 
         // 选英文 → 判脏 → 保存并关闭 = 落盘 + 刷新
         const overlay2 = openSettings();
-        overlay2.querySelectorAll(".rs-auto-tab")[3].click();
+        overlay2.querySelectorAll(".neo-settings-tab")[3].click();
         await flush();
         overlay2.querySelectorAll("input[name=\"neo-lang\"]")[1].click();
         overlay2.querySelector(".neo-director-llm-close").click();

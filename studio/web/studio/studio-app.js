@@ -920,7 +920,14 @@ function buildSettings(el) {
         logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight <= 40;
     logBody.addEventListener("scroll", () => { logStick = logAtBottom(); });
 
+    // 每 2 秒整段重写 <pre> 会把拖到一半的选区抹掉；选区落在日志里就跳过这一轮刷新
+    const logSelected = () => {
+        const sel = window.getSelection();
+        return !!sel && !sel.isCollapsed && logBody.contains(sel.anchorNode);
+    };
+
     async function refreshLog() {
+        if (logSelected()) return;
         try {
             const data = await (await api.fetchApi("/neo_studio/log")).json();
             // 条目是原始 stdout，自带换行与 ANSI 色码；色码在网页里是乱码，剥掉
@@ -928,6 +935,34 @@ function buildSettings(el) {
             if (logStick) logBody.scrollTop = logBody.scrollHeight;
         } catch { /* ComfyUI 未就绪时保留上次内容 */ }
     }
+
+    // 整段取走日志：非 dev 模式的桌面窗口里 WebView2 关掉了右键菜单与 Ctrl+C，
+    // 页内按钮是不依赖这两条通道就能拿到日志的路径
+    // 按钮的 mousedown 默认动作会清掉页面选区，click 时已经读不到 —— 下按时先把选区取走
+    let logSelText = "";
+    const copyLogBtn = $el("button", {
+        className: "ns-btn ns-log-copy",
+        textContent: t("⧉ 复制日志"),
+        title: t("有选区复制选区，没有选区复制全部日志"),
+        onclick: async () => {
+            const picked = !!logSelText;
+            const text = logSelText || logBody.textContent;
+            logSelText = "";
+            if (!text) { toast(t("日志为空")); return; }
+            const lines = text.split("\n").length;
+            try {
+                await navigator.clipboard.writeText(text);
+                toast(picked ? tf("已复制选中内容（{n} 行）", { n: lines })
+                             : tf("日志已复制（{n} 行）", { n: lines }));
+            } catch (e) {
+                toast(tf("复制失败：{msg}", { msg: String(e) }));
+            }
+        },
+    });
+    copyLogBtn.addEventListener("mousedown", () => {
+        const sel = window.getSelection();
+        logSelText = sel && !sel.isCollapsed && logBody.contains(sel.anchorNode) ? sel.toString() : "";
+    });
 
     // tab 顺序：LLM 设置 → 生图设置 → 生视频设置 → 界面语言 → 日志 → 启动设置 → 关于；每个 tab 只显示对应设置区
     const launcher = createLauncherPanel();
@@ -937,7 +972,7 @@ function buildSettings(el) {
         { key: "gen", label: t("生图设置"), body: $el("div", { className: "ns-settings-section" }, [section("生图设置"), genForm.el]) },
         { key: "video", label: t("生视频设置"), body: $el("div", { className: "ns-settings-section" }, [section("生视频设置"), videoForm.el]) },
         { key: "lang", label: t("界面语言"), body: $el("div", { className: "ns-settings-section" }, [section("界面语言"), createLangPanel()]) },
-        { key: "log", label: t("日志"), body: $el("div", { className: "ns-settings-section ns-log-section" }, [section("日志"), logBody]) },
+        { key: "log", label: t("日志"), body: $el("div", { className: "ns-settings-section ns-log-section" }, [$el("div", { className: "ns-log-head" }, [section("日志"), copyLogBtn]), logBody]) },
         { key: "launch", label: t("启动设置"), body: launcher.el },
         { key: "about", label: t("关于"), body: $el("div", { className: "ns-settings-section" }, [section("关于"), $el("div", { className: "ns-about-version", id: "ns-about-version", textContent: versionText() })]) },
     ];

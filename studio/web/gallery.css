@@ -195,8 +195,9 @@
     cursor: default;
 }
 
+/* 图片搜索用得少：不给它 grow，宽宿主里不拉满整条，窄侧栏里也不抢同排按钮的位置 */
 .neo-gallery-search-container {
-    flex: 2 1 160px;
+    flex: 0 1 140px;
     min-width: 0;
 }
 
@@ -222,6 +223,12 @@
     background-color: rgba(255, 106, 0, 0.2);
     border-color: #FF6A00;
     color: #FF9944;
+}
+
+/* 宽宿主（桌面素材页）里顶到栏尾：搜索框收窄后不再填满剩余空间，
+   没有这条的话「生成素材」会挂在栏中间，右边空一片 */
+.neo-gallery-panel--wide .neo-gallery-gm-btn {
+    margin-left: auto;
 }
 
 /* 「生成素材」弹窗与「图片编辑」面板的「自定参数」折叠行：展开后显示主模型 / LoRA 等临时选择区 */

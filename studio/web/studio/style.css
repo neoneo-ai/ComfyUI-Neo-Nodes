@@ -46,7 +46,7 @@ body {
 .ns-wctl-close:hover { background: #a83232; color: #fff; }
 .ns-frameless .ns-header { cursor: move; user-select: none; }
 .ns-frameless .ns-header a, .ns-frameless .ns-header button { cursor: pointer; }
-.ns-about-version { font-size: 13px; color: #b7bbc4; }
+.ns-about-version { font-size: 13px; color: #b7bbc4; user-select: text; cursor: text; }
 
 /* 桌面端的离线素材页：显存/清理没有意义，横幅说明浏览可用、生成需要 ComfyUI */
 .ns-offline-bar { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 5px 16px; background: #2b2417; color: #e0b070; font-size: 12px; text-align: center; }
@@ -420,29 +420,45 @@ body {
 /* 技能详情底部操作条：基础 .rs-btn 是 flex:1（窄弹窗底部按钮行用），满幅主区里不拉伸成长条 */
 .ns-skills .rs-skill-detail-actions .rs-btn { flex: none; padding: 5px 16px; }
 
-/* 设置页：左侧 tab 切换 + 右侧内容区（占满主区高度） */
-.ns-settings { display: flex; gap: 14px; align-items: stretch; height: 100%; }
-.ns-settings-tabs { display: flex; flex-direction: column; gap: 6px; flex: none; }
+/* 设置页：一张卡里左栏 tab + 右栏内容。骨架只画一层：tab 与内容各自带边框时，
+   两栏之间裂成两块互不相干的板，宽窗口下内容区还整幅铺满、下半页全空 */
+.ns-settings {
+    display: flex; align-items: stretch; height: 100%;
+    border: 1px solid #333; border-radius: 8px; background: #202024; overflow: hidden;
+}
+.ns-settings-tabs {
+    display: flex; flex-direction: column; gap: 4px; flex: none;
+    width: 150px; padding: 10px 8px;
+    border-right: 1px solid #2c2c33; background: #1b1b1f;
+}
 .ns-settings-tab {
-    text-align: left;
-    padding: 8px 14px;
-    background: #202024;
-    border: 1px solid #333;
-    border-radius: 8px;
-    color: #ccc;
-    font-size: 13px;
-    cursor: pointer;
+    text-align: left; padding: 7px 10px;
+    background: transparent; border: none; border-radius: 6px;
+    color: #b8b8c2; font-size: 13px; cursor: pointer;
 }
-.ns-settings-tab:hover { background: #2a2a30; }
-.ns-settings-tab.active { background: rgba(47, 111, 237, 0.15); border-color: #2f6fed; color: #fff; }
-.ns-settings-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-.ns-settings-section {
-    background: #202024;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 14px 16px;
-}
-.ns-settings-section h3 { margin: 0 0 10px; font-size: 14px; color: #eee; }
+.ns-settings-tab:hover { background: #26262c; color: #fff; }
+.ns-settings-tab.active { background: rgba(47, 111, 237, 0.16); color: #fff; box-shadow: inset 2px 0 0 #2f6fed; }
+.ns-settings-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: auto; padding: 14px 18px; }
+.ns-settings-section { padding: 0; }
+.ns-settings-section h3 { margin: 0 0 8px; font-size: 15px; color: #fff; }
+/* 表单自带的区块标题与 tab 名重复（tab 就是页名），只留说明行当副标题 */
+.ns-settings .rs-settings-info .rs-settings-title { display: none; }
+.ns-settings .rs-settings-desc { margin-bottom: 12px; }
+/* 表单列限宽：.rs-form-input 的 width:100% 在整幅窗口里把一条下拉拉成全屏宽，
+   标签与输入框脱节，视线要横跨两屏找对应关系；日志区不限宽 */
+.ns-settings .rs-remote-form,
+.ns-settings .rs-gen-settings,
+.ns-settings .ns-lang,
+.ns-settings .ns-kernel,
+.ns-settings .ns-launch-row,
+.ns-settings .ns-launch-status,
+.ns-settings .ns-launch-info,
+.ns-settings .ns-launch-actions { max-width: 720px; }
+/* 保存 / 测试两枚按钮是 width:100%，宽窗口里各占半屏；限宽列里右对齐、按文字取宽 */
+.ns-settings .llm-btn-row { justify-content: flex-end; }
+.ns-settings .llm-btn-row .rs-gen-save,
+.ns-settings .llm-btn-row .rs-gen-test,
+.ns-settings .rs-gen-settings .rs-gen-save { width: auto; padding: 6px 20px; align-self: flex-end; }
 
 /* 启动设置：便携 exe 的 ComfyUI 根目录 / 解释器 / 端口（只有桌面端服务出这个 tab） */
 /* 面板顶部：内核状态 + 启停两枚按钮，此刻做不了的那枚禁用 */
@@ -513,6 +529,8 @@ body {
 
 /* 日志页：ComfyUI 控制台环形缓冲，tab 激活时轮询 /neo_studio/log；日志区占满主区剩余空间 */
 .ns-log-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ns-log-head { flex: none; display: flex; align-items: center; gap: 10px; }
+.ns-log-copy { flex: none; }
 .ns-log {
     flex: 1;
     min-height: 0;
@@ -525,6 +543,10 @@ body {
     color: #cfcfcf;
     font: 12px/1.5 Consolas, Menlo, monospace;
     white-space: pre-wrap;
+    /* 桌面壳 pywebview 默认 text_select=False，注入的 body{user-select:none;cursor:default}
+       一路继承进 <pre>，鼠标拖不出选区；非 dev 模式右键菜单与 Ctrl+C 也关着 */
+    user-select: text;
+    cursor: text;
 }
 
 /* 键盘焦点：只在键盘导航时出描边（鼠标点击不亮框），Tab 走查整页可见 */

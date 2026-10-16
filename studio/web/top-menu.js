@@ -276,13 +276,13 @@ function showAboutDialog() {
 
 
 // ---- 统一设置弹窗（全局单例，与具体节点无关）：LLM / 生图默认 / 生视频模型 / 界面语言四 tab。
-// 复用 .neo-director-llm-* 弹窗样式（recipes.css）与 .rs-auto-tabs tab 样式（prompts.css）。
+// 版式与 Studio 设置页同款：弹窗外壳复用 .neo-director-llm-*（recipes.css），体内左栏 tab + 右栏内容。
 // 打开即四个表单后台 load、全部落定前关闭不判脏；有未保存修改时 ✕/点遮罩/Esc 先出确认条
 // （💾 保存并关闭 / 放弃修改 / 继续编辑）。幂等：已打开时重复调用不叠加。
 // 界面语言表单：单选当前语言，保存即落盘并整页刷新（模块级文案与已渲染 DOM 都要按新语言重建）
 function createLangSettingsForm() {
     const el = document.createElement("div");
-    el.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+    el.className = "neo-settings-lang";
     const saved = getLang();
     const rows = LANGS.map((l) => {
         const input = document.createElement("input");
@@ -294,13 +294,12 @@ function createLangSettingsForm() {
         label.className = "rs-form-label";
         label.textContent = l.label;
         const row = document.createElement("label");
-        row.className = "rs-config-row";
+        row.className = "neo-settings-lang-row";
         row.append(input, label);
         return { value: l.value, input, row };
     });
     const hint = document.createElement("div");
     hint.className = "rs-form-hint";
-    hint.style.cssText = "color:#888;font-size:12px;";
     hint.textContent = t("保存后整页刷新，界面文案按新语言重建。");
     el.append(...rows.map((r) => r.row), hint);
     const picked = () => rows.find((r) => r.input.checked)?.value;
@@ -324,17 +323,19 @@ function openSettingsModal() {
     if (_settingsModal) return;   // 已打开：忽略，避免叠加
 
     const forms = [
-        { key: "llm", label: "🤖 LLM Settings", form: createModelConfigForm() },
+        { key: "llm", label: t("🤖 LLM 设置"), form: createModelConfigForm() },
         { key: "gen", label: t("🖼️ 生图默认设置"), form: createImageGenSettingsForm() },
         { key: "video", label: t("🎬 生视频模型"), form: createVideoGenSettingsForm() },
         { key: "lang", label: t("🌐 界面语言"), form: createLangSettingsForm() },
     ];
     const tabs = document.createElement("div");
-    tabs.className = "rs-auto-tabs";
+    tabs.className = "neo-settings-tabs";
+    const content = document.createElement("div");
+    content.className = "neo-settings-content";
     for (const f of forms) {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "rs-auto-tab";
+        btn.className = "neo-settings-tab";
         btn.textContent = f.label;
         const panel = document.createElement("div");
         panel.className = "neo-settings-panel";
@@ -342,11 +343,12 @@ function openSettingsModal() {
         f.btn = btn;
         f.panel = panel;
         tabs.appendChild(btn);
+        content.appendChild(panel);
     }
-    // 三张表单都常驻 DOM：切 tab 只切显隐，隐藏面板的输入值照常读写、不丢状态
+    // 四张表单都常驻 DOM：切 tab 只切显隐，隐藏面板的输入值照常读写、不丢状态
     const setTab = (key) => {
         for (const f of forms) {
-            f.btn.classList.toggle("rs-auto-tab-active", f.key === key);
+            f.btn.classList.toggle("neo-settings-tab-active", f.key === key);
             f.panel.style.display = f.key === key ? "" : "none";
         }
     };
@@ -382,10 +384,10 @@ function openSettingsModal() {
     head.className = "neo-director-llm-head";
     head.append(Object.assign(document.createElement("span"), { textContent: t("⚙️ 设置") }), closeBtn);
     const bodyEl = document.createElement("div");
-    bodyEl.className = "neo-director-llm-body";
-    bodyEl.append(tabs, ...forms.map((f) => f.panel));
+    bodyEl.className = "neo-director-llm-body neo-settings-body";
+    bodyEl.append(tabs, content);
     const panel = document.createElement("div");
-    panel.className = "neo-director-llm-panel";
+    panel.className = "neo-director-llm-panel neo-settings-modal";
     panel.append(head, bodyEl, dirtyConfirm);
     const overlay = document.createElement("div");
     overlay.className = "neo-director-llm-overlay";

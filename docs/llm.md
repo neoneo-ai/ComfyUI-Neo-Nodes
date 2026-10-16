@@ -25,7 +25,7 @@
 Settings → Provider 选 **`Native (ComfyUI safetensors)`**（下拉默认项）：复用 ComfyUI 原生文本生成路径
 （`clip.tokenize` → `clip.generate` → `clip.decode`），在 ComfyUI 进程内直接跑 `models/text_encoders/`
 下的 safetensors 文本生成模型（如 `qwen3.5_4b_bf16.safetensors`）。**无需安装 `llama-cpp-python`**，
-该 Provider 下 API Key / Base URL / Models Dir 各行隐藏。
+该 Provider 下 API Key / Base URL / 本地模型目录 各行隐藏。
 
 ### 模型与连接测试
 
@@ -182,7 +182,7 @@ models/LLM/
     └── Huihui-gemma-...mmproj-f16.gguf                               # 投影文件（自动匹配）
 ```
 
-- **目录位置** - Settings → Provider 选 `Local GGUF` 后出现的 **Models Dir**；
+- **目录位置** - 设置 → 服务商 选 `Local GGUF` 后出现的 **「本地模型目录」**；
   留空默认扫描 `models/LLM/`，也可填任意本地路径（如 LM Studio 的 `<用户>/.lmstudio/models`）。
 - **模型列表** - 递归扫描该目录下所有 `.gguf`，下拉框只显示**模型名称**（文件名去掉 `.gguf`），
   不同供应商同名文件各自成项。

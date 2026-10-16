@@ -858,6 +858,106 @@
     color: #7ce38b;
 }
 
+/* 顶栏 🅝 菜单的统一设置弹窗：与 Studio 设置页同款版式 —— 左栏 tab、右栏内容，一张卡里两栏。
+   外壳复用 .neo-director-llm-*，这里只加宽面板并给体内两栏；标题栏 🤖 的 LLM 配置弹窗
+   共用同一外壳、单表单，靠 .neo-settings-modal 这层隔离，宽度与体内布局都不受它影响 */
+.neo-settings-modal {
+    width: min(760px, 94vw);
+}
+
+.neo-settings-body {
+    display: flex;
+    align-items: stretch;
+    padding: 0;
+    overflow: hidden;
+}
+
+.neo-settings-tabs {
+    flex: 0 0 auto;
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 8px;
+    border-right: 1px solid #2c2c33;
+    background: #1b1b1f;
+    overflow-y: auto;
+}
+
+.neo-settings-tab {
+    text-align: left;
+    padding: 7px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #b8b8c2;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.neo-settings-tab:hover {
+    background: #26262c;
+    color: #fff;
+}
+
+.neo-settings-tab-active {
+    background: rgba(47, 111, 237, 0.16);
+    color: #fff;
+    box-shadow: inset 2px 0 0 #2f6fed;
+}
+
+.neo-settings-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 14px 18px;
+}
+
+/* 面板加宽到 760px 后，.rs-form-input 的 width:100% 会把一条下拉拉满整栏、
+   保存/测试两枚按钮各占半屏：列限宽 720px、按钮按文字取宽并右对齐 */
+.neo-settings-content .rs-remote-form,
+.neo-settings-content .rs-gen-settings {
+    max-width: 720px;
+}
+
+.neo-settings-content .llm-btn-row {
+    justify-content: flex-end;
+}
+
+.neo-settings-content .llm-btn-row .rs-gen-save,
+.neo-settings-content .llm-btn-row .rs-gen-test,
+.neo-settings-content .rs-gen-settings .rs-gen-save {
+    width: auto;
+    padding: 6px 20px;
+    align-self: flex-end;
+}
+
+/* 界面语言 tab 的单选行：radio + 文字同行。原先套 .rs-config-row（"标签在上、控件在下"的
+   纵向行），radio 在 column flex 里被 UA 样式 align-self:center 居中，出来就是圆圈独占一行、
+   文字另起一行，两行选项撑成三行高 */
+.neo-settings-lang {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 420px;
+}
+
+.neo-settings-lang-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.neo-settings-lang-row .rs-form-label {
+    margin-bottom: 0;
+}
+
+.neo-settings-lang .rs-form-hint {
+    color: #888;
+    font-size: 12px;
+}
+
 .neo-director-resize {
     position: absolute;
     right: 3px;

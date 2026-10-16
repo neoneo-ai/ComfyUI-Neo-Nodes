@@ -35,19 +35,19 @@ export function createModelConfigForm() {
     
     const remoteInfoText = mkEl("div", "rs-settings-info");
     remoteInfoText.innerHTML = `
-        <div class="rs-settings-title">LLM Provider</div>
-        <div class="rs-settings-desc">Choose a provider for AI features</div>
+        <div class="rs-settings-title">${t("LLM 服务商")}</div>
+        <div class="rs-settings-desc">${t("为 AI 功能选择服务商")}</div>
     `;
 
     // Provider select row
     const providerRow = mkEl("div", "rs-config-row");
     const providerLabel = mkEl("label", "rs-form-label");
-    providerLabel.textContent = "Provider";
+    providerLabel.textContent = t("服务商");
     
     const providerSelect = mkEl("select", "rs-form-input rs-remote-provider");
     providerSelect.id = "rs-remote-provider";
     // 选项由 loadModelConfig 从后端 provider_list 动态填充
-    providerSelect.innerHTML = `<option value="local">Loading...</option>`;
+    providerSelect.innerHTML = `<option value="local">${t("加载中…")}</option>`;
     
     providerRow.appendChild(providerLabel);
     providerRow.appendChild(providerSelect);
@@ -86,7 +86,7 @@ export function createModelConfigForm() {
     apiKeyInput.id = "rs-remote-api-key";
     // 后端对已存密钥返回固定星号串（llm.API_KEY_MASK）：纯星号即视为「未改动、沿用已存密钥」
     const isMaskedKey = (v) => /^\*+$/.test(v || '');
-    apiKeyInput.placeholder = "Optional for local services";
+    apiKeyInput.placeholder = t("本地服务可不填");
     
     apiKeyRow.appendChild(apiKeyLabel);
     apiKeyRow.appendChild(apiKeyInput);
@@ -107,12 +107,12 @@ export function createModelConfigForm() {
     // Local models directory row (for Local GGUF - hidden by default)
     const localDirRow = mkEl("div", "rs-config-row");
     const localDirLabel = mkEl("label", "rs-form-label");
-    localDirLabel.textContent = "LLM Models Dir";
+    localDirLabel.textContent = t("本地模型目录");
 
     const localDirInput = mkEl("input", "rs-form-input rs-local-models-dir");
     localDirInput.type = "text";
     localDirInput.id = "rs-local-models-dir";
-    localDirInput.placeholder = "Default: ComfyUI/models/LLM";
+    localDirInput.placeholder = t("默认：ComfyUI/models/LLM");
 
         localDirRow.appendChild(localDirLabel);
     localDirRow.appendChild(localDirInput);
@@ -164,7 +164,7 @@ export function createModelConfigForm() {
     const modelRowWrapper = mkEl("div", "rs-config-row");
     modelRowWrapper.id = "rs-model-input-wrapper";
     const modelLabel = mkEl("label", "rs-form-label");
-    modelLabel.textContent = "Model";
+    modelLabel.textContent = t("模型");
     modelRowWrapper.appendChild(modelLabel);
     modelRowWrapper.appendChild(modelInput);
     modelRowWrapper.appendChild(remoteModelBox);
@@ -270,7 +270,7 @@ export function createModelConfigForm() {
         targetSelect.innerHTML = '';
         const loadingOpt = document.createElement('option');
         loadingOpt.value = '__loading__';
-        loadingOpt.textContent = '⏳ Loading models...';
+        loadingOpt.textContent = t("⏳ 加载模型中…");
         targetSelect.appendChild(loadingOpt);
         targetSelect.disabled = true;
         
@@ -378,7 +378,7 @@ export function createModelConfigForm() {
         localModelSelectEl.innerHTML = '';
         const loadingOpt = document.createElement('option');
         loadingOpt.value = '__loading__';
-        loadingOpt.textContent = '⏳ Loading models...';
+        loadingOpt.textContent = t("⏳ 加载模型中…");
         localModelSelectEl.appendChild(loadingOpt);
         localModelSelectEl.disabled = true;
 
@@ -403,12 +403,12 @@ export function createModelConfigForm() {
             } else {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'No models found';
+                opt.textContent = t("○ 无可用模型");
                 localModelSelectEl.appendChild(opt);
             }
         } catch (e) {
             console.warn('Failed to fetch local models:', e);
-            localModelSelectEl.innerHTML = '<option value="">❌ Failed to load</option>';
+            localModelSelectEl.innerHTML = `<option value="">${t("❌ 模型列表加载失败")}</option>`;
         } finally {
             localModelSelectEl.disabled = false;
         }
@@ -419,7 +419,7 @@ export function createModelConfigForm() {
         localModelSelectEl.innerHTML = '';
         const loadingOpt = document.createElement('option');
         loadingOpt.value = '__loading__';
-        loadingOpt.textContent = '⏳ Loading models...';
+        loadingOpt.textContent = t("⏳ 加载模型中…");
         localModelSelectEl.appendChild(loadingOpt);
         localModelSelectEl.disabled = true;
 
@@ -440,12 +440,12 @@ export function createModelConfigForm() {
             } else {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'No models found (place .safetensors in models/text_encoders/)';
+                opt.textContent = t("○ 无模型：把 .safetensors 放进 models/text_encoders/");
                 localModelSelectEl.appendChild(opt);
             }
         } catch (e) {
             console.warn('Failed to fetch native models:', e);
-            localModelSelectEl.innerHTML = '<option value="">❌ Failed to load</option>';
+            localModelSelectEl.innerHTML = `<option value="">${t("❌ 模型列表加载失败")}</option>`;
         } finally {
             localModelSelectEl.disabled = false;
         }

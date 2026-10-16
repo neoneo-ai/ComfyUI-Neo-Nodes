@@ -37,21 +37,21 @@ body
     div.rs-auto-panel
       div.rs-remote-form
         div.rs-settings-info
-          div.rs-settings-title "LLM Provider"
-          div.rs-settings-desc "Choose a provider for AI features"
+          div.rs-settings-title "LLM 服务商"
+          div.rs-settings-desc "为 AI 功能选择服务商"
         div.rs-config-row
-          label.rs-form-label "Provider"
+          label.rs-form-label "服务商"
           select#rs-remote-provider.rs-form-input.rs-remote-provider
-            option <value=local selected> "Loading..."
+            option <value=local selected> "加载中…"
         div.rs-config-row
           label.rs-form-label "API Key"
-          input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=Optional for local services>
+          input#rs-remote-api-key.rs-form-input.rs-remote-api-key <type=password placeholder=本地服务可不填>
         div.rs-config-row <display=none>
-          label.rs-form-label "LLM Models Dir"
-          input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=Default: ComfyUI/models/LLM>
+          label.rs-form-label "本地模型目录"
+          input#rs-local-models-dir.rs-form-input.rs-local-models-dir <type=text placeholder=默认：ComfyUI/models/LLM>
           div.rs-form-hint "📁 供应商(可选)/模型名称/模型文件(.gguf) · 同目录 mmproj 自动匹配"
         div#rs-model-input-wrapper.rs-config-row
-          label.rs-form-label "Model"
+          label.rs-form-label "模型"
           input#rs-remote-model.rs-form-input.rs-remote-model <type=text display=none>
           div.rs-model-select-box <display=none>
             div
