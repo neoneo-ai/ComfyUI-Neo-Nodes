@@ -16,12 +16,9 @@ jobs:
 
       # studio/tests/_comfy_api_bootstrap.py 把同级 ComfyUI 根插进 sys.path 导入真实 comfy_api
       # （_comfy_root 找 <repo 父目录>/ComfyUI/comfy_api/latest），V3 节点用例离了它必炸。
-      - name: Check out ComfyUI as the sibling root
-        uses: actions/checkout@v4
-        with:
-          repository: comfyanonymous/ComfyUI
-          path: ../ComfyUI
-          fetch-depth: 1
+      # actions/checkout 拒绝 workspace 外的 path，只能裸 clone 到同级目录。
+      - name: Clone ComfyUI as the sibling root
+        run: git clone --depth 1 https://github.com/comfyanonymous/ComfyUI ../ComfyUI
 
       - name: Set up Python
         uses: actions/setup-python@v5
