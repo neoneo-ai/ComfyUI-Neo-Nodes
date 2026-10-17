@@ -271,12 +271,21 @@ async def studio_log_route(request):
 @PromptServer.instance.routes.get("/neo_studio/mem_stats")
 async def mem_stats_route(request):
     """驱动级显存占用（含全部进程）。/system_stats 的 vram_free 把 torch reserved 空闲重复计入，不能用。"""
-    import comfy.model_management
-    stats = _driver_vram(comfy.model_management.get_torch_device())
+    stats = _driver_vram(_cuda_device())
     if stats is None:
         return web.json_response({"success": False})
     free, total = stats
     return web.json_response({"success": True, "vram_total": total, "vram_used": total - free})
+
+
+def _cuda_device():
+    """CUDA 设备：CPU-only 的 torch 构建里内核 get_torch_device 会直接抛 AssertionError，
+    取不到就按无 GPU 走，让驱动级查询自己降级成 None，而不是把路由打成 500。"""
+    import comfy.model_management
+    try:
+        return comfy.model_management.get_torch_device()
+    except Exception:
+        return None
 
 
 def _driver_vram(device):
@@ -306,7 +315,7 @@ def _driver_vram(device):
 async def clear_memory_route(request):
     """卸载所有已加载模型并清理显存缓存。"""
     import comfy.model_management
-    device = comfy.model_management.get_torch_device()
+    device = _cuda_device()
     before = _driver_vram(device)
     comfy.model_management.unload_all_models()
     comfy.model_management.soft_empty_cache(force=True)
