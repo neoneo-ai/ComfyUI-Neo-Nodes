@@ -65,8 +65,12 @@ test("内置板块与自定义目录同表排序：顺序为 Output/Input/收藏
         assert.ok(item.querySelector(".neo-gallery-dir-drag-handle"), "每行应有拖拽手柄");
         assert.equal(item.getAttribute("draggable"), "true");
     }
-    assert.equal(document.querySelectorAll(".neo-gallery-dir-ctl-btn").length, EXPECTED.length + 2,
-        "每行一个隐藏按钮，Lora 与 C站收藏行各多一个设置按钮");
+    assert.equal(document.querySelectorAll(".neo-gallery-dir-ctl-btn:not(.neo-gallery-dir-settings-btn):not(.neo-gallery-dir-char-btn)").length, EXPECTED.length,
+        "每行一个隐藏按钮");
+    assert.equal(document.querySelectorAll(".neo-gallery-dir-char-btn").length, EXPECTED.length,
+        "每行一个角色图目录按钮（内置卡与云端/自定义目录都能标记）");
+    assert.equal(document.querySelectorAll(".neo-gallery-dir-ctl-btn").length, EXPECTED.length * 2 + 2,
+        "加上 Lora 与 C站收藏行各多一个设置按钮");
     assert.equal(document.querySelectorAll(".neo-gallery-dir-remove-btn").length, DIRS.length,
         "只有自定义目录行有删除按钮");
 });

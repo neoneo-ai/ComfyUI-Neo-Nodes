@@ -2895,6 +2895,10 @@ async def save_gallery_settings(request):
             if isinstance(home, list) and remove_path in home:
                 home.remove(remove_path)
                 current_settings["home_order"] = home
+            chars = current_settings.get("character_dirs", [])
+            if isinstance(chars, list) and remove_path.lower() in chars:
+                chars.remove(remove_path.lower())
+                current_settings["character_dirs"] = chars
 
         elif action == "reorder":
             dirs = current_settings.get("custom_directories", [])
@@ -2924,6 +2928,22 @@ async def save_gallery_settings(request):
                 elif not hidden and hide_path in hidden_dirs:
                     hidden_dirs.remove(hide_path)
                 current_settings["hidden_directories"] = hidden_dirs
+
+        elif action == "set_character":
+            # 角色图目录标记：从这个目录多选图片新建导演配方时默认全参考（三视图当关键帧会从设定图开镜）。
+            # token 与隐藏开关同一套（内置卡 / 自定义目录 / 云端预设目录），只存显示路径、不落磁盘路径。
+            token = data.get("path", "").strip()
+            dirs = current_settings.get("custom_directories", [])
+            if _is_home_entry_token(token, dirs):
+                chars = current_settings.get("character_dirs", [])
+                if not isinstance(chars, list):
+                    chars = []
+                key = token.lower()
+                if bool(data.get("character")) and key not in chars:
+                    chars.append(key)
+                elif not bool(data.get("character")) and key in chars:
+                    chars.remove(key)
+                current_settings["character_dirs"] = chars
 
         elif action == "list":
             pass

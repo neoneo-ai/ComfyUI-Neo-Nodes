@@ -46,6 +46,10 @@ const CIVITAI_DIR_NAME = t("C站收藏");  // display label only (card name, bre
 const CIVITAI_DIR_KEY = "civitai_bookmarks";  // stable dir_name key sent to the backend (must match bookmark.CIVITAI_DIR_KEY)
 const CIVITAI_VIEW_SOURCE = CIVITAI_DIR_KEY;  // same stable identifier reused in the URL state
 
+// 角色图目录建配方的上限：与导演编辑器的每段参考图（MiniMaxH3ReferenceToVideo 槽位）和 👤 角色参考图一致
+const DIRECTOR_REF_MAX = 9;
+const DIRECTOR_CHAR_MAX = 6;
+
 /**
  * NeoGallery — preset-based gallery (no YAML).
  */
@@ -81,6 +85,8 @@ export class NeoGallery {
         this.civitaiBookmarkEnabled = true;  // 「启用 C 站收藏」开关（首页 C站收藏卡）
         this.homeOrder = [];                // 统一顺序表：内置卡 + 自定义目录
         this.hiddenHomeEntries = new Set();  // 排序列表里被隐藏的条目（小写键）
+        this.characterDirs = new Set();      // 角色图目录（小写 token）：从这里多选建导演配方默认全参考
+        this._customDirTokens = new Map();   // 自定义目录名 → 绝对路径（画廊按目录名寻址，设置里存路径）
         this._loraRefreshTimer = null;       // auto-refresh polling for the Lora section
         this.placeholderImageUrl = `${window.location.protocol}//${window.location.host}/neo_gallery/placeholder.png`;
         this.sectionStates = {};
@@ -173,6 +179,14 @@ export class NeoGallery {
                 this.homeOrder = Array.isArray(settings.home_order) ? [...settings.home_order] : [];
                 const hidden = settings.hidden_directories;
                 this.hiddenHomeEntries = new Set(Array.isArray(hidden) ? hidden.map((h) => String(h).toLowerCase()) : []);
+                const chars = settings.character_dirs;
+                this.characterDirs = new Set(Array.isArray(chars) ? chars.map((c) => String(c).toLowerCase()) : []);
+                const customDirs = Array.isArray(settings.custom_directories) ? settings.custom_directories : [];
+                // 自定义目录在画廊里按目录名寻址（/neo_gallery/list 用 dir_path.name 匹配），
+                // 目录设置里存的是绝对路径：建一张 目录名 → 路径 的表，标记比对两边才对得上。
+                this._customDirTokens = new Map(
+                    customDirs.map((p) => [String(p || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop().toLowerCase(), String(p).toLowerCase()])
+                );
                 const customDir = settings.custom_directory || "";
                 this.customDirInput.value = customDir;
                 
@@ -1237,6 +1251,45 @@ export class NeoGallery {
 
     // ====== 多选删除（卡片左上角勾选框） ======
 
+    /** 当前视图的目录 token（与目录设置的 token 同形）：source + categoryPath，小写比较。
+     *  自定义目录在画廊里用目录名做 source，设置里存绝对路径，这里换成路径再比。 */
+    _dirTokenOf(view = this.currentView) {
+        if (!view || view.mode !== 'directory' || !view.source) return '';
+        const src = String(view.source).toLowerCase();
+        const base = this._customDirTokens?.get(src) || src;
+        return [base, ...(view.categoryPath || []).map(String)].join('/').toLowerCase();
+    }
+
+    /** 当前视图是角色图目录：多选建导演配方走全参考（三视图当关键帧会让视频从设定图开镜）。
+     *  子目录继承父目录的标记：标了 stars，stars/孟子义 里的图同样按角色图处理。 */
+    isCharacterDir() {
+        const token = this._dirTokenOf();
+        if (!token) return false;
+        const parts = token.split('/');
+        for (let i = parts.length; i > 0; i--) {
+            if (this.characterDirs.has(parts.slice(0, i).join('/'))) return true;
+        }
+        return false;
+    }
+
+    /** 导演配方草稿：卡片菜单（单图）与多选操作条共用。
+     *  角色图目录 → 一段全参考：图进该段参考图，同时填 👤 角色参考图（身份参考 + r2i 图片分镜）；
+     *  其余目录 → 每图一段、图作首帧。三视图是设定图，当首帧会让视频从设定图开镜。 */
+    directorDraft(frames) {
+        if (!this.isCharacterDir()) {
+            return { name: '', shared: { mode: 'f2v' }, segments: frames.map((f) => ({ first_frame: f, duration_sec: 5 })) };
+        }
+        return {
+            name: '',
+            shared: { mode: 'r2v' },
+            segments: [{ refs: { images: frames.slice(0, DIRECTOR_REF_MAX) }, duration_sec: 5 }],
+            story: {
+                characters: frames.slice(0, DIRECTOR_CHAR_MAX).map((filename) => ({ filename })),
+                image_mode: 'r2i',
+            },
+        };
+    }
+
     _selectionKey(name, subfolder) {
         return `${subfolder || ''}\u0000${name}`;
     }
@@ -1285,6 +1338,7 @@ export class NeoGallery {
         if (this._selectionBar) { this._selectionBar.remove(); this._selectionBar = null; }
         const count = this._selectedItems.size;
         if (count === 0) return;
+        const charDir = this.isCharacterDir();
         const bar = $el("div", { className: "neo-gallery-selection-bar" }, [
             $el("span", { className: "neo-gallery-selection-count", textContent: tf("已选 {n} 项", { n: count }) }),
             $el("div", {
@@ -1294,9 +1348,11 @@ export class NeoGallery {
             }, [t("\uD83D\uDDD1\uFE0F 删除")]),
             $el("div", {
                 className: "neo-gallery-selection-btn",
-                title: t("将选中图片设为分镜图，新建视频导演配方"),
+                title: charDir
+                    ? t("角色图目录：整批合成一段全参考配方，图片进该段参考图（前 9 张）与 👤 角色参考图，不当关键帧")
+                    : t("将选中图片设为分镜图，新建视频导演配方"),
                 onclick: () => this.createDirectorFromSelection()
-            }, [t("\uD83C\uDFAC 新建导演配方")]),
+            }, [charDir ? t("\uD83C\uDFAC 新建导演配方（全参考）") : t("\uD83C\uDFAC 新建导演配方")]),
             $el("div", { className: "neo-gallery-selection-btn", onclick: () => this.clearSelection() }, [t("✕ 清空")])
         ]);
         this.element.appendChild(bar);
@@ -1350,20 +1406,26 @@ export class NeoGallery {
             return;
         }
         // 导演编辑器帧一律走 input/ 根目录（/view?subfolder=）：子文件夹里的图先经 copy_to_input 落盘再建配方
-        const segments = [];
+        const frames = [];
         for (const [subfolder, name] of images) {
             const fname = subfolder ? await copyGalleryToInput(JSON.stringify({ filename: name, subfolder })) : name;
             if (!fname) {
                 showToast(this.app, 'error', t('新建导演配方失败'), tf("无法读取 {name}", { name }));
                 return;
             }
-            segments.push({ first_frame: fname, duration_sec: 5 });
+            frames.push(fname);
         }
+        // 角色图目录：三视图是设定图，当首帧会让视频从设定图开镜 —— 整批合成一段全参考（见 directorDraft）
+        const characterDir = this.isCharacterDir();
+        const draft = this.directorDraft(frames);
         try {
-            await openDirectorEditor({ name: '', shared: { mode: 'f2v' }, segments });
+            await openDirectorEditor(draft);
         } catch (err) {
             showToast(this.app, 'error', t('新建导演配方失败'), String(err.message || err));
             return;
+        }
+        if (characterDir && frames.length > DIRECTOR_REF_MAX) {
+            showToast(this.app, 'warning', t('参考图超出上限'), tf("每段参考图最多 {n} 张，其余 {rest} 张未加入", { n: DIRECTOR_REF_MAX, rest: frames.length - DIRECTOR_REF_MAX }));
         }
         this.clearSelection();
     }

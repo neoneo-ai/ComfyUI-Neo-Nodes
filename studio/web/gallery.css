@@ -1731,6 +1731,22 @@ Accordion Section Buttons (Clear)
     flex-shrink: 0;
 }
 
+/* 角色图目录标记：徽标常显，按钮打开状态也常亮（其余动作按钮只在 hover 行时出现） */
+.neo-gallery-dir-char-badge {
+    font-size: 11px;
+    color: #cfe0ff;
+    background-color: rgba(122, 162, 255, 0.18);
+    border-radius: 4px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+}
+
+.neo-gallery-dir-char-btn.is-on {
+    color: #7aa2ff;
+    background-color: rgba(122, 162, 255, 0.16);
+    opacity: 1;
+}
+
 .neo-gallery-dir-drag-handle {
     color: #666;
     font-size: 14px;

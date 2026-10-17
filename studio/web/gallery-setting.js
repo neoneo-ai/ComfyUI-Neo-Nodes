@@ -24,6 +24,7 @@ export class GallerySetting {
         let currentDirs = [];
         let homeOrder = [];
         let hiddenDirs = new Set();
+        let characterDirs = new Set();
         let civitaiKeySet = false;
         let civitaiKeyHint = "";
         let civitaiProxy = "";
@@ -48,6 +49,7 @@ export class GallerySetting {
                 civitaiBookmarkEnabled = settings.civitai_bookmark_enabled !== false;
                 if (Array.isArray(settings.lora_sync_dirs)) loraSyncDirs = [...settings.lora_sync_dirs];
                 if (Array.isArray(settings.hidden_directories)) hiddenDirs = new Set(settings.hidden_directories.map((h) => String(h).toLowerCase()));
+                if (Array.isArray(settings.character_dirs)) characterDirs = new Set(settings.character_dirs.map((c) => String(c).toLowerCase()));
             }
         } catch (e) { }
 
@@ -122,6 +124,7 @@ export class GallerySetting {
             : ["Output", "Input", "local_bookmarks", "civitai_bookmarks", ...currentDirs, "Lora"];
         const isBuiltin = (t) => Object.prototype.hasOwnProperty.call(BUILTIN_LABELS, t);
         const isHidden = (t) => hiddenDirs.has(String(t).toLowerCase());
+        const isCharacter = (t) => characterDirs.has(String(t).toLowerCase());
 
         let dragToken = null;
 
@@ -164,6 +167,9 @@ export class GallerySetting {
                 if (hidden) {
                     children.push($el("span", { className: "neo-gallery-dir-hidden-badge", textContent: t("已隐藏") }));
                 }
+                if (isCharacter(token)) {
+                    children.push($el("span", { className: "neo-gallery-dir-char-badge", textContent: t("角色图") }));
+                }
                 const actions = [];
                 if (token === "Lora" || token === "civitai_bookmarks") {
                     actions.push($el("button", {
@@ -176,6 +182,14 @@ export class GallerySetting {
                         textContent: "\u2699"
                     }));
                 }
+                actions.push($el("button", {
+                    className: "neo-gallery-dir-ctl-btn neo-gallery-dir-char-btn" + (isCharacter(token) ? " is-on" : ""),
+                    title: isCharacter(token)
+                        ? t("角色图目录（已标记）：从这里多选图片新建导演配方时默认全参考")
+                        : t("标记为角色图目录：从这里多选图片新建导演配方时默认全参考，三视图不当关键帧"),
+                    onclick: () => toggleDirCharacter(token),
+                    textContent: "\uD83D\uDC64"
+                }));
                 actions.push($el("button", {
                     className: "neo-gallery-dir-ctl-btn",
                     title: hidden ? t("显示") : t("隐藏（不在素材库中列出）"),
@@ -192,6 +206,7 @@ export class GallerySetting {
                             currentDirs = currentDirs.filter(p => p !== token);
                             entries.splice(entries.indexOf(token), 1);
                             hiddenDirs.delete(String(token).toLowerCase());
+                            characterDirs.delete(String(token).toLowerCase());
                             renderDirList();
                             refreshGallery();
                         },
@@ -247,6 +262,7 @@ export class GallerySetting {
                 const settings = await resp.json();
                 if (Array.isArray(settings.home_order)) { entries.length = 0; entries.push(...settings.home_order); }
                 if (Array.isArray(settings.hidden_directories)) hiddenDirs = new Set(settings.hidden_directories.map((h) => String(h).toLowerCase()));
+                if (Array.isArray(settings.character_dirs)) characterDirs = new Set(settings.character_dirs.map((c) => String(c).toLowerCase()));
                 renderDirList();
             } catch (e) { }
         };
@@ -262,6 +278,22 @@ export class GallerySetting {
                 await refreshGallery();
             } catch (e) {
                 console.error('[Neo Gallery] Error toggling directory visibility:', e);
+            }
+        };
+
+        const toggleDirCharacter = async (token) => {
+            const key = String(token).toLowerCase();
+            try {
+                const character = !characterDirs.has(key);
+                const result = await saveDirAction({ action: "set_character", path: token, character });
+                if (!result.success) return;
+                if (character) characterDirs.add(key); else characterDirs.delete(key);
+                // 画廊实例同步：重读设置是异步的，先改本地集，选择栏文案与建配方默认模式立刻生效
+                if (character) gallery.characterDirs?.add(key); else gallery.characterDirs?.delete(key);
+                renderDirList();
+                await refreshGallery();   // 画廊重读标记：选择栏按钮文案与建配方的默认模式跟着变
+            } catch (e) {
+                console.error('[Neo Gallery] Error toggling character directory:', e);
             }
         };
 

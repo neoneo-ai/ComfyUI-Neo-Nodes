@@ -28,6 +28,24 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   a `popstate` listener. `studio/tests/js/studio-gallery-host.test.mjs` asserts the click is intercepted, the
   `gallery` parameter survives a tab switch, and the gallery stays in the directory it was left in.
 
+- **A character-image directory now defaults to full reference when you build a director recipe from it.** In the
+  asset library, multi-selecting images and clicking **🎬 New director recipe** always built one keyframe segment
+  per image, so a three-view character sheet became a first frame and the video opened on the sheet. A directory
+  can be marked **👤 Character** in "Manage Directories" (blue `Character` badge on the row). Both entry points now
+  honour the mark — **🎬 New director recipe (full reference)** in a card's ⋯ menu and the same item on the
+  multi-select bar build **one full-reference segment**: the images go into that segment's reference images (first
+  9) and into **👤 Character references** (first 6, image storyboard defaults to r2i) instead of becoming
+  keyframes. Unmarked directories keep the old behavior, and a mark covers the directory's subdirectories.
+  Cloud preset directories are read-only and normally hide the select checkbox; marking one as a character
+  directory brings it back, so a cloud 角色图 directory works too (the
+  images are downloaded to `input/` on demand through `copy_to_input`, and bulk delete still skips read-only
+  items). The flag is stored in `character_dirs` in `gallery_settings.json` and is cleaned up when the directory
+  is removed.
+  `studio/tests/js/gallery-director-recipe.test.mjs` covers the local and cloud recipe shapes,
+  `studio/tests/js/gallery-dir-character.test.mjs` covers the row toggle and the subdirectory inheritance,
+  `studio/tests/js/gallery-multi-select.test.mjs` covers the checkbox on read-only sources, and
+  `studio/tests/test_gallery_dir_manage.py` covers the setting route.
+
 - **The director page's left column switches between recipes and assets.** The asset library could only be opened
   from the **asset library** button inside the director editor, and closing it was a ✕ in its header — with no
   switch on the column itself, dragging an asset into the editor meant hunting for that button. The left column

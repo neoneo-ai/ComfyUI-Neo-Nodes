@@ -499,6 +499,31 @@ export class GalleryCard {
             source === "oss";
     }
 
+    /** ⋯ 菜单「🎬 新建导演配方」：角色图目录里走全参考（图进该段参考图 + 👤 角色参考图），否则图作首帧。
+     *  草稿形状由 gallery.directorDraft 决定，与多选操作条共用同一份逻辑。 */
+    _directorMenuItem(gallery, image, subfolder) {
+        const charDir = !!gallery.isCharacterDir?.();
+        return $el("div", {
+            className: "neo-gallery-collect-item",
+            title: charDir
+                ? t("角色图目录：建一段全参考配方，这张图进该段参考图与 👤 角色参考图，不当首帧")
+                : t("以此图为首帧，新建视频导演配方"),
+            onclick: async () => {
+                this._removeCollectMenu();
+                try {
+                    // 导演编辑器帧一律走 input/ 根目录（/view?subfolder=）：子文件夹与云端图先落盘再建配方
+                    const fname = subfolder
+                        ? await copyGalleryToInput(JSON.stringify({ filename: image.filename, subfolder }))
+                        : image.filename;
+                    if (!fname) throw new Error(t("无法读取该图片"));
+                    openDirectorEditor(gallery.directorDraft([fname]));
+                } catch (err) {
+                    showToast(gallery.app, "error", t("新建导演配方失败"), String(err.message || err));
+                }
+            }
+        }, [charDir ? t("\uD83C\uDFAC 新建导演配方（全参考）") : t("\uD83C\uDFAC 新建导演配方")]);
+    }
+
     _showCollectMenu(gallery, image, subfolder, source, anchor, unfavorite = null) {
         this._removeCollectMenu();
         const loc = this._bookmarkLocator(image, subfolder, source, gallery);
@@ -550,23 +575,7 @@ export class GalleryCard {
                 onclick: () => { collectFile(); this._removeCollectMenu(); }
             }, [t("\u2B50 收藏本图")]),
             ...buildGenerationMenuItems({ card: this, gallery, image, subfolder }),
-            isImageFile(image.filename) ? $el("div", {
-                className: "neo-gallery-collect-item",
-                title: t("以此图为首帧，新建视频导演配方"),
-                onclick: async () => {
-                    this._removeCollectMenu();
-                    try {
-                        // 导演编辑器帧一律走 input/ 根目录（/view?subfolder=）：子文件夹里的图先落盘再建配方
-                        const fname = subfolder
-                            ? await copyGalleryToInput(JSON.stringify({ filename: image.filename, subfolder }))
-                            : image.filename;
-                        if (!fname) throw new Error(t("无法读取该图片"));
-                        openDirectorEditor({ name: '', shared: { mode: 'f2v' }, segments: [{ first_frame: fname, duration_sec: 5 }] });
-                    } catch (err) {
-                        showToast(gallery.app, "error", t("新建导演配方失败"), String(err.message || err));
-                    }
-                }
-            }, [t("\uD83C\uDFAC 新建导演配方")]) : null,
+            isImageFile(image.filename) ? this._directorMenuItem(gallery, image, subfolder) : null,
             (isImageFile(image.filename) && canDelete) ? $el("div", {
                 className: "neo-gallery-collect-item",
                 onclick: () => { this._removeCollectMenu(); openReversePromptDialog(image, subfolder); }
@@ -801,8 +810,12 @@ export class GalleryCard {
             }
         }, ["\u22EF"]);
 
-        // 左上角勾选框：多选后由底部操作条批量删除（仅可删除来源显示，与 ⋯ 菜单 canDelete 一致）
-        const selectCheck = (!this._isReadOnlySource(subfolder, source) && !isAudioFileResult) ? $el("input", {
+        // 左上角勾选框：多选后由底部操作条批量删除（可删除来源才给，与 ⋯ 菜单 canDelete 一致）。
+        // 角色图目录例外：多选的用处是「🎬 新建导演配方」，云端预设图由 copy_to_input 现下到 input，
+        // 删除仍会跳过只读项（deleteSelected 按 isDeletableItem 过滤），所以这些卡片也给勾选框。
+        const readOnlySource = this._isReadOnlySource(subfolder, source);
+        const selectable = !isAudioFileResult && (!readOnlySource || !!gallery.isCharacterDir?.());
+        const selectCheck = selectable ? $el("input", {
             className: "neo-gallery-select-check",
             type: "checkbox",
             title: t("选中（可多选，Ctrl+A 全选）"),

@@ -70,7 +70,7 @@ function rowByLabel(label) {
 }
 
 function hideButtonOf(label) {
-    return rowByLabel(label).querySelector(".neo-gallery-dir-ctl-btn:not(.neo-gallery-dir-settings-btn)");
+    return rowByLabel(label).querySelector(".neo-gallery-dir-ctl-btn:not(.neo-gallery-dir-settings-btn):not(.neo-gallery-dir-char-btn)");
 }
 
 function setHiddenCalls() {

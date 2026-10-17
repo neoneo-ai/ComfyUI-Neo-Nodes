@@ -142,7 +142,19 @@ embedded ComfyUI workflow).
   on a full row reorders the home-page cards; 👁 on each row hides / restores it (a hidden one is not listed in
   the library, and a hidden cloud preset directory answers its deep link with nothing), custom rows additionally
   have ✕ to remove (removed from the list only, no disk file is
-  deleted); the row buttons (⚙ / 👁 / ✕) appear only while hovering that row.
+  deleted); the row buttons (⚙ / 👤 / 👁 / ✕) appear only while hovering that row.
+- **👤 Character directory** - 👤 on a row marks it as a character directory (a marked row shows a blue `Character`
+  badge and keeps its button lit). The mark applies to both entry points: **🎬 New director recipe (full
+  reference)** in a card's ⋯ menu builds **one full-reference segment** from that image, and the same item on the
+  multi-select bar merges the whole batch into one segment — the images become that segment's reference images
+  (first 9) and are also filled into **👤 Character references** (first 6, image storyboard defaults to r2i);
+  neither is used as a keyframe. Three-view sheets are character sheets, so using them as a first frame opens the
+  video on the sheet; unmarked directories keep the "one segment per image, image as first frame" behavior. The
+  flag also covers subdirectories (mark `stars` and `stars/孟子义` behaves the same), lives in `character_dirs` in
+  `gallery_settings.json` (lowercased tokens, same token space as the hide switch), and is dropped when the
+  directory is removed. Cloud preset directories are read-only and normally carry no checkbox; marking one as a
+  character directory brings the checkbox back (multi-select then only feeds recipe creation — the images are
+  downloaded to `input/` on demand, and bulk delete still skips read-only items).
 - **⟳ Refresh index** - a title-bar button that force re-downloads the cloud preset index
   (`POST /neo_gallery/sync_oss`): directories published in the cloud show up on the home page and in this table at
   once, without waiting for the local index cache to expire; the success toast reports the directory and item counts,

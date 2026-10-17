@@ -3,7 +3,7 @@
 
 隐藏的目录保留在配置里，但 _get_user_custom_dirs 不再返回它；
 reorder 按提交的完整顺序回写（未知路径剔除、未列出的目录追加末尾）；set_hidden 对不存在的目录无效；
-删除目录时同步清掉它的隐藏标记。
+删除目录时同步清掉它的隐藏标记。set_character 写角色图目录标记（character_dirs），同样只认已知 token。
 """
 
 import asyncio
@@ -15,6 +15,7 @@ import types
 import unittest
 import importlib.util as _importlib_util
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="neo_gallery_dir_manage_")
 _INPUT = os.path.join(_TMP, "input")
@@ -281,6 +282,53 @@ class SetHiddenTests(DirManageBase):
         result = self._post_and_sync_file({"action": "set_hidden", "path": str(self.dir_b), "hidden": True})
         self.assertTrue(result["success"])
         self.assertEqual(gallery._get_user_custom_dirs(), [self.dir_a])
+
+
+class SetCharacterTests(DirManageBase):
+    """角色图目录标记：character_dirs 存小写 token；未知 token 不落盘；删除目录连带清标记。"""
+
+    def test_set_character_adds_and_removes(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a)]
+        result = _post({"action": "set_character", "path": str(self.dir_a), "character": True})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["character_dirs"], [str(self.dir_a).lower()])
+        _post({"action": "set_character", "path": str(self.dir_a), "character": True})   # 重复标记不堆叠
+        self.assertEqual(_SETTINGS["character_dirs"], [str(self.dir_a).lower()])
+        result = _post({"action": "set_character", "path": str(self.dir_a), "character": False})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["character_dirs"], [])
+
+    def test_set_character_builtin_key(self):
+        _SETTINGS["custom_directories"] = []
+        result = _post({"action": "set_character", "path": "Lora", "character": True})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["character_dirs"], ["lora"])
+
+    def test_set_character_unknown_path_ignored(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a)]
+        result = _post({"action": "set_character", "path": "F:\\nope", "character": True})
+        self.assertTrue(result["success"])
+        self.assertNotIn("character_dirs", _SETTINGS)
+
+    def test_set_character_cloud_preset_dir(self):
+        # 云端预设目录的 token 由 OSS 索引提供；这里直接替换索引来源，不联网
+        _SETTINGS["custom_directories"] = []
+        with mock.patch.object(gallery, "_oss_home_dir_tokens", lambda: ["Cloud Presets/角色杂图"]):
+            result = _post({"action": "set_character", "path": "Cloud Presets/角色杂图", "character": True})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["character_dirs"], ["cloud presets/角色杂图"])
+
+    def test_remove_cleans_character_flag(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a), str(self.dir_b)]
+        _SETTINGS["character_dirs"] = [str(self.dir_b).lower()]
+        result = _post({"action": "remove", "path": str(self.dir_b)})
+        self.assertTrue(result["success"])
+        self.assertEqual(_SETTINGS["character_dirs"], [])
+
+    def test_settings_route_exposes_character_dirs(self):
+        _SETTINGS["custom_directories"] = [str(self.dir_a)]
+        _post({"action": "set_character", "path": str(self.dir_a), "character": True})
+        self.assertEqual(_get_settings()["character_dirs"], [str(self.dir_a).lower()])
 
 
 class HomeOrderTests(DirManageBase):

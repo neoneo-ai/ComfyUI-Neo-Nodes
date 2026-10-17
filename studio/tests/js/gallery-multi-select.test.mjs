@@ -187,6 +187,26 @@ test("卡片左上角勾选框：可删除来源显示，只读来源不显示�
     assert.deepEqual(toggled, [["w.png", "Output"]]);
 });
 
+test("角色图目录里的只读源也给勾选框（多选是为了建配方，不是删除）", async () => {
+    resetEnv();
+    clearRoutes();
+    const { GalleryCard } = await import("../../web/gallery-card.js");
+    const card = new GalleryCard({});
+    const gallery = {
+        maxThumbnailSize: 200,
+        displayLabels: false,
+        placeholderImageUrl: "http://test.local/placeholder.png",
+        toggleSelection() {},
+        isCharacterDir: () => true,
+    };
+    const cloud = card.createImageElement(gallery, { name: "o.png", filename: "o.png" }, "Cloud Presets/明朝人物", "oss");
+    assert.ok(cloud.querySelector(".neo-gallery-select-check"), "角色图目录里云端预设图应能多选");
+    const preset = card.createImageElement(gallery, { name: "p.png", filename: "p.png" }, "presets/风格", "presets");
+    assert.ok(preset.querySelector(".neo-gallery-select-check"), "角色图目录里 presets 图同样放开（copy_to_input 能取到）");
+    const audio = card.createImageElement(gallery, { name: "a.mp3", filename: "a.mp3" }, "Cloud Presets/明朝人物", "oss");
+    assert.equal(audio.querySelector(".neo-gallery-select-check"), null, "音频不参与多选");
+});
+
 test("收藏菜单删除项：有勾选时文案变「删除已选素材」并触发批量删除", async () => {
     resetEnv();
     clearRoutes();

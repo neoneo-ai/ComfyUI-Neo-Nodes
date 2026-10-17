@@ -62,7 +62,7 @@ test("隐藏云端目录：按卡片路径提交 set_hidden", async () => {
     setup([...BASE, "Cloud Presets/仙侠玄幻人物"]);
     const gallery = await makeGallery();
     const items = await openModal(gallery);
-    click(items[BASE.length].querySelector(".neo-gallery-dir-ctl-btn"));
+    click(items[BASE.length].querySelector(".neo-gallery-dir-ctl-btn:not(.neo-gallery-dir-char-btn)"));
     await flush();
     assert.deepEqual(calls("/neo_gallery/save_settings", "set_hidden")[0].body,
         { action: "set_hidden", path: "Cloud Presets/仙侠玄幻人物", hidden: true });
