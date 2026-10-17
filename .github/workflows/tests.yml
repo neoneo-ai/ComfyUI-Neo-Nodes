@@ -9,21 +9,31 @@ jobs:
   plugin:
     name: Kernel plugin tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+
+      # studio/tests/_comfy_api_bootstrap.py 把同级 ComfyUI 根插进 sys.path 导入真实 comfy_api
+      # （_comfy_root 找 <repo 父目录>/ComfyUI/comfy_api/latest），V3 节点用例离了它必炸。
+      - name: Check out ComfyUI as the sibling root
+        uses: actions/checkout@v4
+        with:
+          repository: comfyanonymous/ComfyUI
+          path: ../ComfyUI
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # studio/tests 自带 comfy 桩（studio/tests/_comfy_api_bootstrap.py），进程里没有 ComfyUI。
-      # 只装模块作用域真用到的库：torch 走 CPU wheel，av 自带 FFmpeg；laya / pillow-heif / oss2
-      # 是入口可选导入，缺包时功能自行降级，不进 CI 依赖。
+      # 只装模块作用域真用到的库：torch 走 CPU wheel，av 自带 FFmpeg，packaging 是
+      # comfy_api/internal/api_registry 的导入期依赖，numpy 不在 torch 的硬依赖里。
+      # laya / pillow-heif / oss2 / httpx / huggingface_hub 都是函数内可选导入，缺包时功能自行降级。
       - name: Install test deps
         run: |
-          pip install pytest PyYAML openai pypinyin Pillow aiohttp av
+          pip install pytest PyYAML openai pypinyin Pillow aiohttp av packaging numpy
           pip install --index-url https://download.pytorch.org/whl/cpu torch
 
       - name: pytest studio/tests
@@ -32,6 +42,7 @@ jobs:
   frontend:
     name: Frontend golden tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -44,6 +55,8 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      # npm run test:ci 串行跑（--test-concurrency=1）：jsdom 用例吃 CPU，runner 只有 2 核，
+      # 并发时带轮询的用例会撞到自己的超时，父用例超时后子用例全被 cancelledByParent。
       # npm test 自带 --test-force-exit：建节点留下的 setInterval 会把 runner 挂在 pending timer 上。
-      - name: npm test
-        run: npm test
+      - name: npm run test:ci
+        run: npm run test:ci
