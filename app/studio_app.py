@@ -180,6 +180,18 @@ u32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.INT, wintype
 u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 u32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
 
+# 拖边框缩放走系统缩放模态循环，循环里 Form 与 Dock=Fill 的 WebView2 子控件被一起改尺寸，
+# 新暴露的客户区先由各自的背景色刷出来，页面合成落后一帧 —— 底色是白的就是白窗闪一下。
+# pywebview 的 background_color 默认 #FFFFFF，且同时定 Form.BackColor 与 WebView2 的
+# DefaultBackgroundColor，建窗时必须显式给成页面底色（studio/web/studio/style.css 的 body 背景）。
+WINDOW_BG = "#17171b"
+# 补回的 WS_THICKFRAME 那一圈由 DWM 按系统主题色画：浅色主题下缩放时边框线本身就是白的，
+# 钉成页面底色。Win10 不认这两个属性，DwmSetWindowAttribute 只回非零 HRESULT，没有分支要走。
+DWMWA_BORDER_COLOR = 34
+DWMWA_CAPTION_COLOR = 35
+dwm = ctypes.windll.dwmapi
+dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
@@ -204,12 +216,21 @@ def _left_button_down() -> bool:
     return bool(u32.GetAsyncKeyState(VK_LBUTTON) & 0x8000)
 
 
+def _colorref(hex_color: str) -> int:
+    """#rrggbb → COLORREF：Win32 的颜色是 0x00bbggrr，照网页那串顺序传进去颜色是反的。"""
+    h = hex_color.lstrip("#")
+    return int(h[4:6], 16) << 16 | int(h[2:4], 16) << 8 | int(h[0:2], 16)
+
+
 def set_window_frame(hwnd: int, frameless: bool) -> None:
     # WS_THICKFRAME 恒置：pywebview 的 frameless 走 FormBorderStyle=None，可拖拽边框一起摘掉，
     # 这里补回来；有框时它本来就在，等于不动
     style = u32.GetWindowLongW(hwnd, GWL_STYLE)
     style = (style & ~WS_CAPTION if frameless else style | WS_CAPTION) | WS_THICKFRAME
     u32.SetWindowLongW(hwnd, GWL_STYLE, style)
+    bg = ctypes.c_int(_colorref(WINDOW_BG))
+    dwm.DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ctypes.byref(bg), 4)
+    dwm.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(bg), 4)
     u32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED)
 
 
@@ -1636,9 +1657,12 @@ def main() -> int:
                         set_frameless=desktop.set_frameless, set_dev_mode=desktop.set_dev_mode,
                         state=desktop.launcher_state)
     geo = load_geometry()
+    # background_color 显式给页面底色：pywebview 用它同时定 Form.BackColor 与 WebView2 的
+    # DefaultBackgroundColor，默认白色 —— 拖边框缩放的模态循环里新客户区先刷它，白窗就是这么闪出来的
     kw = dict(width=geo.get("width", 1440), height=geo.get("height", 900),
              x=geo.get("x"), y=geo.get("y"), min_size=(900, 600),
-             frameless=desktop.frameless, easy_drag=False, js_api=desktop)
+             frameless=desktop.frameless, easy_drag=False, js_api=desktop,
+             background_color=WINDOW_BG)
     # easy_drag 关掉：pywebview 的简易拖动是全局 mousedown，无边框时点任何卡片都会拖着窗口跑；
     # 拖动改由顶栏空白处按下交回系统（StudioDesktop.win_start_drag）
     # 窗口先出：起解释器查依赖、装配桌面端服务、拉起 ComfyUI 全在后台线程走完。

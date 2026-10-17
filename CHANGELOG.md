@@ -4,6 +4,16 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Resizing the desktop window no longer flashes white.** Dragging a window edge runs the system size/move loop,
+  where the WinForms Form and the `Dock=Fill` WebView2 control are resized together and the newly exposed client area
+  is painted by their own backgrounds before the page composites. pywebview's `background_color` defaults to
+  `#FFFFFF` and sets both `Form.BackColor` and the WebView2 `DefaultBackgroundColor`, so that surface was white — the
+  window flashed white, and the restored `WS_THICKFRAME` edge flashed with it because DWM paints that ring in the
+  system theme color. The window is now created with `background_color = #17171b`, the Studio page's body background,
+  and `set_window_frame` pins `DWMWA_BORDER_COLOR` / `DWMWA_CAPTION_COLOR` to the same color with the style bits
+  (Windows 10 ignores both attributes). `app/tests/test_studio_desktop.py` covers the color reaching `create_window`
+  and the DWM colors being pinned.
+
 - **Two more cloud preset packs, published at a quarter of the source size.** `3D风格修仙人物` and
   `3D风古代人物` (200 character sheets each) are now in the Cloud Presets index (14 directories, 2335 items).
   The 3D three-view sources are 8-10 MB PNGs, so `tools/build_gallery_presets.py --compress 0.25` writes each
@@ -12,7 +22,9 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   media filenames only, so the prune deleted the sidecars from the output before upload and the cloud lightbox
   was left with the index preview instead of the full prompt. `现代西方人物` and `中世纪-平民` were republished
   through the same `--compress 0.25` path: their cloud sheets are now a quarter of the source PNG bytes and
-  carry the full `.txt` sidecar, which the first publish of those two directories did not.
+  carry the full `.txt` sidecar, which the first publish of those two directories did not. `角色杂图` (91
+  sheets) joined the index as well, published with every sheet under 2 MB: the oversized sheets are re-encoded
+  to JPEG at that cap and the ones already under it ship untouched.
 
 - **Lightbox prompt sidebar is readable.** A preset's prompt rendered as one wall of text: the section label sat
   inline so the body hung at the label's tail indent, sentences never broke, and a 40-item negative prompt was one

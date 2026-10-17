@@ -149,6 +149,12 @@ js_api（`check_setup` / `pick_root` / `pick_python` / `start_setup`），根目
   pywebview，运行中改样式位（只摘 `WS_CAPTION`，`WS_THICKFRAME` 恒置 —— pywebview 的 frameless 走
   `FormBorderStyle=None`，拖边缩放会一起被摘掉，窗口 Shown 之后由 `ensure_resizable_frame` 补回；原生窗口在
   `start()` 里才建出来，建窗时拿不到 hwnd）。
+- 窗口底色在建窗时显式给成页面底色（`WINDOW_BG` = `#17171b`，与 `studio/web/studio/style.css` 的 body 同色）：
+  pywebview 的 `background_color` 默认 `#FFFFFF`，同时定 WinForms 的 `Form.BackColor` 与 WebView2 控件的
+  `DefaultBackgroundColor`。拖边框缩放走系统缩放模态循环，循环里 Form 与 `Dock=Fill` 的 WebView2 子控件被一起改
+  尺寸，新暴露的客户区先由这两个底色刷出来 —— 底色是白的就是白窗闪一下。补回的 `WS_THICKFRAME` 那一圈由 DWM 按
+  系统主题色画，浅色主题下缩放时那条边框线本身就是白的：`set_window_frame` 重贴样式位时顺带把
+  `DWMWA_BORDER_COLOR` / `DWMWA_CAPTION_COLOR` 钉成同一底色（Win10 不认这两个属性，只回非零 HRESULT）。
 - `easy_drag` 必须关掉 —— pywebview 的简易拖动是全局 mousedown，无边框时点任何卡片都会拖着窗口跑。拖动由顶栏
   空白处按下调 `win_start_drag`，桌面端在窗口线程上自己循环跟光标（`SetWindowPos` + `GetAsyncKeyState(VK_LBUTTON)`），
   左键一松就停 —— 交回系统走 `WM_NCLBUTTONDOWN + HTCAPTION` 或 `WM_SYSCOMMAND·SC_MOUSEMOVE` 都起不来，WinForms

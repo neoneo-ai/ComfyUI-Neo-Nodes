@@ -202,6 +202,14 @@ startable once the root is filled in.
   (only `WS_CAPTION` is removed, `WS_THICKFRAME` stays set — pywebview's frameless uses `FormBorderStyle=None`,
   which drops edge-drag resizing as well, restored by `ensure_resizable_frame` after the window is Shown; the native
   window is only created inside `start()`, so there is no hwnd at creation time).
+- The window background is set explicitly at creation time to the page color (`WINDOW_BG` = `#17171b`, the same as
+  the `body` background in `studio/web/studio/style.css`): pywebview's `background_color` defaults to `#FFFFFF` and
+  sets both the WinForms `Form.BackColor` and the WebView2 control's `DefaultBackgroundColor`. Dragging a window edge
+  runs the system size/move loop, where the Form and the `Dock=Fill` WebView2 control are resized together and the
+  newly exposed client area is painted by those two backgrounds first — a white one is a white window flash. The
+  restored `WS_THICKFRAME` ring is drawn by DWM in the system theme color, so on a light theme that border line is
+  white during resizing: `set_window_frame` pins `DWMWA_BORDER_COLOR` / `DWMWA_CAPTION_COLOR` to the same color while
+  it reapplies the style bits (Windows 10 ignores both attributes and only returns a non-zero HRESULT).
 - `easy_drag` must stay off — pywebview's simple drag is a global mousedown, and frameless means clicking any card
   drags the window along. Dragging starts by pressing an empty part of the header and calling `win_start_drag`,
   with the desktop looping on the window thread and following the cursor (`SetWindowPos` +

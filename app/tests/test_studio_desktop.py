@@ -762,6 +762,22 @@ class StudioDesktopTests(unittest.TestCase):
             desktop.ensure_resizable_frame()
         self.assertEqual(frames, [True])
 
+    def test_set_window_frame_pins_the_dwm_border_color(self):
+        # 补回的 WS_THICKFRAME 那一圈由 DWM 按系统主题色画：浅色主题下拖边框缩放时那条线就是白的
+        styles, attrs = [], []
+        u32 = SimpleNamespace(GetWindowLongW=lambda h, i: 0x00C40000,
+                              SetWindowLongW=lambda h, i, v: styles.append(v),
+                              SetWindowPos=lambda *a: None)
+        dwm = SimpleNamespace(DwmSetWindowAttribute=lambda h, a, p, n: attrs.append(a))
+        with patch.object(app, "u32", u32), patch.object(app, "dwm", dwm):
+            app.set_window_frame(1, True)
+        self.assertFalse(styles[0] & app.WS_CAPTION, "无边框摘掉标题栏")
+        self.assertTrue(styles[0] & app.WS_THICKFRAME, "可拖拽缩放边框要补回来")
+        self.assertEqual(attrs, [app.DWMWA_BORDER_COLOR, app.DWMWA_CAPTION_COLOR],
+                         "重贴样式位时把 DWM 边框与标题栏颜色一起钉成页面底色")
+        self.assertEqual(app._colorref(app.WINDOW_BG), 0x001B1717,
+                         "COLORREF 是 0x00bbggrr，照网页那串顺序传进去颜色是反的")
+
     def test_win_fullscreen_reapplies_the_frame(self):
         # pywebview 退出全屏把 FormBorderStyle 写回建窗时的值，标题栏跟着回来：按桌面端自己那份状态重贴
         window = _fake_window()
@@ -1393,6 +1409,20 @@ class MainWindowTests(unittest.TestCase):
         self.assertFalse(cw.call_args.kwargs["easy_drag"])
         self.assertIs(cw.call_args.kwargs["js_api"]._window, window, "窗口操作要拿到窗口对象")
         self.assertEqual(frames, [True], "补边框只认无边框那一路")
+
+    def test_window_background_is_the_page_color(self):
+        # pywebview 的 background_color 默认白色，同时定 Form.BackColor 与 WebView2 的 DefaultBackgroundColor：
+        # 拖边框缩放的模态循环里新客户区先刷它，白色就是白窗闪一下
+        window = _fake_window()
+        cw = MagicMock(return_value=window)
+        self.port_busy = True
+        with patch.object(app, "webview", _fake_webview(cw)), \
+             patch.object(app, "singleton", lambda: 7), \
+             patch.object(app, "DesktopServer", _fake_desktop_server()), \
+             patch.object(app, "probe", lambda port, timeout=3.0: True), \
+             patch.object(sys, "argv", ["studio_app.py"]):
+            self.assertEqual(app.main(), 0)
+        self.assertEqual(cw.call_args.kwargs["background_color"], app.WINDOW_BG)
 
     def test_fullscreen_close_does_not_save_the_screen_rect(self):
         # 全屏时窗口是整屏矩形：存下来下次开机窗口直接铺满屏幕，几何只存窗口态的那份
