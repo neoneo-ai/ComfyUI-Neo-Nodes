@@ -200,3 +200,41 @@ class TxtRouteSidecarTests(unittest.TestCase):
 
     def test_empty_filename_is_400(self):
         self.assertEqual(_txt("", "NeoAgent").status, 400)
+
+
+class TxtRouteOssSidecarTests(unittest.TestCase):
+    """/neo_gallery/txt 的云端分支：下载路径必须保持索引里的 posix 分隔符。
+
+    索引里的 rel 是 "仙侠玄幻人物/181_下凡仙娥.png"；换后缀时走 str(Path(...))
+    在 Windows 上会得到 "仙侠玄幻人物\\181_下凡仙娥.txt"，拼进下载 URL 就是 404，
+    灯箱全文永远回落到 500 字预览。
+    """
+
+    def setUp(self):
+        self._orig = (gallery._is_oss_enabled, gallery._find_in_oss_index, gallery._download_oss_file)
+        self.calls = []
+        sidecar = _write("oss_dl/仙侠玄幻人物/181_下凡仙娥.txt",
+                         "正向提示词：仙山云海、宗门演武台".encode("utf-8"), root=_TMP)
+        gallery._is_oss_enabled = lambda: True
+        gallery._find_in_oss_index = lambda fn, sub, cat=None: "仙侠玄幻人物/181_下凡仙娥.png"
+
+        async def _dl(rel, category=None):
+            self.calls.append((rel, category))
+            return Path(sidecar)
+
+        gallery._download_oss_file = _dl
+
+    def tearDown(self):
+        gallery._is_oss_enabled, gallery._find_in_oss_index, gallery._download_oss_file = self._orig
+
+    def test_cloud_sidecar_returns_full_text(self):
+        resp = _txt("181_下凡仙娥.png", "Cloud Presets/仙侠玄幻人物")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(json.loads(resp.body.decode())["content"], "正向提示词：仙山云海、宗门演武台")
+
+    def test_download_rel_stays_posix(self):
+        _txt("181_下凡仙娥.png", "Cloud Presets/仙侠玄幻人物")
+        rel, category = self.calls[0]
+        self.assertEqual(rel, "仙侠玄幻人物/181_下凡仙娥.txt")
+        self.assertNotIn("\\", rel)
+        self.assertEqual(category, gallery.OSS_CATEGORY_PRESETS)

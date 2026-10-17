@@ -2621,7 +2621,9 @@ async def view_txt(request):
             oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
         if not oss_rel:
             return web.json_response({"success": False, "error": "not in oss index"}, status=404)
-        cached = await _download_oss_file(str(Path(oss_rel).with_suffix(".txt")), oss_category)
+        # 索引里的相对路径是 posix 的，换后缀不能经过 Path：Windows 下 str(Path(...))
+        # 会把 "/" 变成 "\"，拼进下载 URL 就是 404。
+        cached = await _download_oss_file(Path(oss_rel).with_suffix(".txt").as_posix(), oss_category)
         if not cached:
             return web.json_response({"success": False, "error": "sidecar download failed"}, status=404)
         content = await asyncio.to_thread(_read_text_file, str(cached))
