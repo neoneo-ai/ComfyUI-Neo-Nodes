@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # 只做依赖版本升级的 PR，不自动合并；两个 requirements 边界（内核插件 / 桌面 app）
+  # 与前端 package.json 各自独立，避免一次 PR 同时改两处依赖清单。
+  - package-ecosystem: pip
+    directory: /studio
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
