@@ -37,7 +37,6 @@ jobs:
           pip install pytest PyYAML openai pypinyin Pillow aiohttp av packaging numpy psutil httpx
           pip install safetensors einops tqdm scipy transformers tokenizers sentencepiece comfy-kitchen comfy-aimdo
           pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-          pip install --index-url https://download.pytorch.org/whl/cpu torch
 
       - name: pytest studio/tests
         run: python -m pytest -q studio/tests
