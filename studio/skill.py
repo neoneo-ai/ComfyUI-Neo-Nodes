@@ -28,6 +28,7 @@ import os
 import re
 import io
 import copy
+import asyncio
 import json
 import base64
 import shutil
@@ -1915,7 +1916,9 @@ def _upload_from_manifest(rel_paths: list[str], file_parts: list[tuple[str, byte
 async def rs_prompts_list_skills(request):
     """列出所有 skill（任务 + 预设/自定义统一元数据）。"""
     try:
-        return web.json_response(scan_skills())
+        # 技能目录扫描（tasks + presets/custom 逐个读 config.json）是同步文件遍历，
+        # 与模型扫描同一理由交回线程，不占桌面端那一个事件循环。
+        return web.json_response(await asyncio.to_thread(scan_skills))
     except Exception as e:
         logger.error(f"Error listing skills: {e}")
         return web.Response(status=500, text=str(e))

@@ -21,6 +21,7 @@ import { t, tf, getLang, applyLang, LANGS } from "../js/core/i18n.js";
 
 const view = document.getElementById("ns-view");
 let directorPanelOpts = null;   // 导演页配方面板选项（buildDirector 设置；含 onSelect 回传选中配方）
+let onDirectorShown = null;     // 进导演页时补拉的活：隐藏期间跳过的 director_spec 在进本页时补一次
 
 // ====== 视图缓存：每个 tab 只挂载一次，切换时显隐（保留画廊滚动/编辑状态） ======
 const views = new Map();
@@ -48,6 +49,7 @@ function showView(name) {
     }
     currentView = name;
     setMemActive(name === "director" || name === "paint");   // 显存读数只在生成页（导演 / 绘画）轮询
+    if (name === "director" && onDirectorShown) onDirectorShown();
     // 画廊单例的宿主跟着视图走：绘画页 = 左栏素材库；素材页 = 整片宿主；其余页 = 交还素材页 / 收留宿主。
     // 一次只挂一处：切页时不会两次 render 抢同一个元素（后落的那次会把画廊拽回上一页）
     if (name === "paint" && paintLibHost) {
@@ -375,6 +377,7 @@ async function buildDirector(el) {
     };
     const panelOpts = () => ({ directorOnly: true, autoSelectFirst: true, initialSelection: currentRecipeName, openEditorOnSelect: true, onSelect });
     directorPanelOpts = panelOpts;
+    onDirectorShown = () => { if (currentRecipeName) applyRecipe(currentRecipeName); };
 
     // --- 整片生成面板 ---
     // 生成参数（分辨率 / 步数 / 种子 / 连续性 / 上下文帧）全部在上方导演编辑器里保存进配方，
@@ -445,6 +448,10 @@ async function buildDirector(el) {
         if (!name) return;
         let spec = specCache.get(name);
         if (!spec) {
+            // 启动时导演页是隐藏的，配方面板的自动选中也会走到这里。director_spec
+            // 会把配方素材复制进 input/，在桌面端那一个事件循环上把首页 list 挤到几秒后，
+            // 所以隐藏期间只记名字，进本页由 onDirectorShown 补拉。
+            if (currentView !== "director") return;
             try {
                 const r = await api.fetchApi(`/rs_recipes/director_spec?name=${encodeURIComponent(name)}`);
                 const data = r.ok ? await r.json() : null;

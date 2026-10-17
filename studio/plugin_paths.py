@@ -29,7 +29,10 @@ def _resolve_data_root() -> Path:
     if env:
         return Path(env)
     try:
-        cfg = json.loads(POINTER_FILE.read_text(encoding="utf-8"))
+        # utf-8-sig: a pointer written by a shell redirect lands as UTF-8 with a BOM,
+        # and a strict utf-8 read turns that into a JSONDecodeError - which falls
+        # through to the plugin directory as the data root, silently.
+        cfg = json.loads(POINTER_FILE.read_text(encoding="utf-8-sig"))
         root = str(cfg.get("data_root", "")).strip() if isinstance(cfg, dict) else ""
         if root:
             return Path(root)

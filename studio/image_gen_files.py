@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import difflib
+import asyncio
 import json
 import logging
 import os
@@ -193,7 +194,9 @@ async def post_settings_route(request):
 
 @routes.get("/neo_image_gen/models")
 async def models_route(request):
-    return web.json_response(scan_models())
+    # 模型目录扫描（get_filename_list 走整棵 models 树）是同步文件遍历：
+    # 桌面端所有请求共用一个事件循环，留在循环上会把并发的首页 list 挤到几秒后。
+    return web.json_response(await asyncio.to_thread(scan_models))
 
 
 @routes.get("/neo_image_gen/input_images")

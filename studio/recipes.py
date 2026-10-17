@@ -1491,8 +1491,12 @@ async def rs_recipes_director_spec(request):
     if not name:
         return web.json_response({"success": False, "error": "缺少配方名"}, status=400)
     try:
-        spec = load_director_spec(name)
-        return web.json_response({"success": True, "name": name, **spec, "defaults": _director_default_dims(spec.get("segments") or [], spec.get("shared"))})
+        # load_director_spec 会把每段首/尾帧与参考素材复制进 input/，逐文件同步 I/O；
+        # 桌面端所有请求共用一个事件循环，这段留在循环上会把并发的首页 list 挤到几秒后。
+        spec = await asyncio.to_thread(load_director_spec, name)
+        defaults = await asyncio.to_thread(_director_default_dims,
+                                           spec.get("segments") or [], spec.get("shared"))
+        return web.json_response({"success": True, "name": name, **spec, "defaults": defaults})
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 

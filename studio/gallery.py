@@ -93,55 +93,94 @@ def _resolve_system_dir(dir_name: str):
     return None
 
 
-def _get_user_custom_dirs():
+# 自定义目录列表在首页 list 与每一个封面缩略图请求里都要读一遍：settings 文件
+# 要重新解析，NAS 目录的 exists()/resolve() 各是一次网络往返。整份结果以配置
+# 文件的 mtime+size 为键缓存，目录的探测只在配置变化后付一次。
+_CUSTOM_DIRS_CACHE: list[Path] | None = None
+_CUSTOM_DIRS_KEY: tuple | None = None
+
+
+def _settings_stamp() -> tuple:
+    try:
+        st = (CONFIGS_DIR / "gallery_settings.json").stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (0, 0)
+
+
+def _invalidate_user_custom_dirs() -> None:
+    """Drop the cached custom dirs. The mtime stamp covers a normal save; this
+    covers a filesystem with coarse mtime granularity, where a same-size save
+    inside one tick leaves the stamp unchanged."""
+    global _CUSTOM_DIRS_CACHE, _CUSTOM_DIRS_KEY
+    _CUSTOM_DIRS_CACHE = None
+    _CUSTOM_DIRS_KEY = None
+
+
+def _scan_user_custom_dirs() -> list[Path]:
+    """Read the configured dirs, dropping hidden ones and the ComfyUI system dirs."""
+    picked: list[tuple[Path, str]] = []
+    hidden: set[str] = set()
+    try:
+        settings_path = CONFIGS_DIR / "gallery_settings.json"
+        if settings_path.exists():
+            with open(settings_path, "r") as f:
+                settings = json.load(f)
+            user_dirs = settings.get("custom_directories", [])
+            hidden_raw = settings.get("hidden_directories", [])
+            if isinstance(hidden_raw, list):
+                for h in hidden_raw:
+                    if not h:
+                        continue
+                    hidden.add(str(h).lower())
+                    try:
+                        hidden.add(str(Path(h).resolve()).lower())
+                    except OSError:
+                        pass
+            if isinstance(user_dirs, list):
+                candidates = [d for d in user_dirs if d]
+            elif user_dirs:
+                candidates = [user_dirs] if isinstance(user_dirs, str) else []
+            else:
+                candidates = []
+            for d in candidates:
+                p = Path(d)
+                if not p.exists():
+                    continue
+                # 每个目录只 resolve() 一次：旧代码在系统目录过滤和隐藏过滤里各
+                # 解析一遍，NAS 路径就是两次往返。
+                resolved_key = str(p).lower()
+                try:
+                    resolved_key = str(p.resolve()).lower()
+                except OSError:
+                    pass
+                if str(p).lower() in hidden or resolved_key in hidden:
+                    continue
+                picked.append((p, resolved_key))
+    except Exception:
+        return []
+
+    system_paths = {str(info["path"]).lower() for info in _get_system_dirs()}
+    if system_paths:
+        picked = [(p, key) for (p, key) in picked if key not in system_paths]
+    return [p for (p, _key) in picked]
+
+
+def _get_user_custom_dirs() -> list[Path]:
     """Get all user-configured custom directory paths from settings.
 
     Input/Output dirs are auto-provided by ComfyUI, so configured duplicates
     of them are skipped to avoid double-listing. Dirs hidden in the Manage
     Directories modal stay in the config but are not listed.
     """
-    dirs = []
-    hidden = set()
-    try:
-        settings_path = CONFIGS_DIR / "gallery_settings.json"
-        if settings_path.exists():
-            with open(settings_path, "r") as f:
-                settings = json.load(f)
-                user_dirs = settings.get("custom_directories", [])
-                hidden_raw = settings.get("hidden_directories", [])
-                if isinstance(hidden_raw, list):
-                    for h in hidden_raw:
-                        if not h:
-                            continue
-                        hidden.add(str(h).lower())
-                        try:
-                            hidden.add(str(Path(h).resolve()).lower())
-                        except OSError:
-                            pass
-                if isinstance(user_dirs, list):
-                    for d in user_dirs:
-                        if d and Path(d).exists():
-                            dirs.append(Path(d))
-                elif user_dirs:
-                    p = Path(user_dirs) if isinstance(user_dirs, str) else None
-                    if p and p.exists():
-                        dirs.append(p)
-    except Exception:
-        pass
-
-    def _listed(d):
-        s = str(d).lower()
-        try:
-            return s not in hidden and str(d.resolve()).lower() not in hidden
-        except OSError:
-            return s not in hidden
-
-    system_paths = {str(info["path"]).lower() for info in _get_system_dirs()}
-    if system_paths:
-        dirs = [d for d in dirs if str(d.resolve()).lower() not in system_paths]
-    if hidden:
-        dirs = [d for d in dirs if _listed(d)]
-    return dirs
+    global _CUSTOM_DIRS_CACHE, _CUSTOM_DIRS_KEY
+    key = _settings_stamp()
+    if _CUSTOM_DIRS_CACHE is not None and key == _CUSTOM_DIRS_KEY:
+        return list(_CUSTOM_DIRS_CACHE)
+    dirs = _scan_user_custom_dirs()
+    _CUSTOM_DIRS_CACHE = dirs
+    _CUSTOM_DIRS_KEY = key
+    return list(dirs)
 
 
 # Home grid entries: built-in cards share one sort/hide list with the custom dirs.
@@ -570,6 +609,26 @@ def _order_covers_by_kind(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda e: _COVER_KIND_RANK.get(e.get("kind", "other"), 9))
 
 
+def _cover_entry(entry: os.DirEntry, subfolder: str) -> dict:
+    """Cover entry for a sampled dir entry.
+
+    mtime only feeds the frontend cache-buster, so the caller stats the sampled
+    pool and not the whole directory: a NAS folder with 400 files used to pay a
+    round trip per file just to pick 2 covers.
+    """
+    try:
+        mtime = entry.stat(follow_symlinks=False).st_mtime
+    except OSError:
+        mtime = 0.0
+    return {
+        "filename": entry.name,
+        "name": _entry_stem(entry),
+        "subfolder": subfolder,
+        "kind": _cover_kind(entry.name),
+        "mtime": mtime,
+    }
+
+
 def _recent_cover_entries(directory: Path, subfolder_prefix: str, count: int) -> list[dict]:
     """Newest media files anywhere under a plugin-updated dir, as cover entries.
 
@@ -819,7 +878,8 @@ def _build_dir_response(dir_info: dict, scan_result: dict, include_dirs: bool, i
 
 
 def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read_only: bool, 
-                               include_dirs: bool, include_items: bool, search_mode: bool) -> dict:
+                               include_dirs: bool, include_items: bool, search_mode: bool,
+                               scan_entries: tuple[list[os.DirEntry], list[os.DirEntry]] | None = None) -> dict:
     """Process a single directory: scan based on fields and build response."""
     # Resolve target directory
     if rel_path:
@@ -834,7 +894,9 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
     scan_result = {}
     if include_dirs or include_items:
         # One enumeration feeds the item scan, the subdir structure and the root count.
-        file_entries, dir_entries = _scandir_split(target_dir)
+        if scan_entries is None:
+            scan_entries = _scandir_split(target_dir)
+        file_entries, dir_entries = scan_entries
         if search_mode and include_items:
             entries = _scan_gallery_entries_lightweight(target_dir, file_entries)
             scan_result["root"] = entries
@@ -880,6 +942,20 @@ def _process_single_directory(dir_path: Path, dir_name: str, rel_path: str, read
             entry["custom_source"] = dir_name
     
     return resp_dir
+
+
+def _process_home_directory(dir_path: Path, dir_name: str, read_only: bool,
+                            include_dirs: bool, include_items: bool, search_mode: bool):
+    """Scan one home directory once and return the enumeration with its response.
+
+    The home page needs the same first-level enumeration for the directory card and
+    for the cover picks; on a network share each extra scandir is a round trip, so
+    the cover pass reuses this one instead of opening the directory again.
+    """
+    scan_entries = _scandir_split(dir_path)
+    resp_dir = _process_single_directory(dir_path, dir_name, "", read_only,
+                                         include_dirs, include_items, search_mode, scan_entries)
+    return resp_dir, scan_entries
 
 
 # ---------------------------------------------------------------------------
@@ -1210,20 +1286,23 @@ async def get_gallery_list(request):
     
     # Original behavior: full listing (no dir_name) - process all directories using unified function
     hidden_entries = _get_hidden_entries()
+    # 首页目录卡与封面共用同一次一级枚举：网络盘上一次 scandir 就是一次往返，
+    # 封面阶段再扫一遍等于把这段开销付两次。
+    home_scans: dict[str, tuple[list[os.DirEntry], list[os.DirEntry]]] = {}
 
     # System dirs (input/output) — auto-provided by ComfyUI, read-only
     for info in _get_system_dirs():
         if _is_home_entry_hidden(info["name"], hidden_entries):
             continue
-        resp_dir = await asyncio.to_thread(_process_single_directory, info["path"], info["name"], "", True,
-                                              include_dirs, include_items, search_mode)
+        resp_dir, home_scans[info["name"]] = await asyncio.to_thread(
+            _process_home_directory, info["path"], info["name"], True, include_dirs, include_items, search_mode)
         directories.append(resp_dir)
 
     # Custom dirs (writable)
     for dir_path in user_custom_dirs:
         dir_name = dir_path.name if dir_path.name else str(dir_path)
-        resp_dir = await asyncio.to_thread(_process_single_directory, dir_path, dir_name, "", False, 
-                                              include_dirs, include_items, search_mode)
+        resp_dir, home_scans[dir_name] = await asyncio.to_thread(
+            _process_home_directory, dir_path, dir_name, False, include_dirs, include_items, search_mode)
         directories.append(resp_dir)
 
     # Presets: process root and subdirs using unified function
@@ -1328,7 +1407,7 @@ async def get_gallery_list(request):
 
     if include_covers:
         covers: dict[str, list[dict]] = {}
-        await asyncio.to_thread(_collect_home_covers, covers, user_custom_dirs, hidden_entries, lora_home, oss_index)
+        await asyncio.to_thread(_collect_home_covers, covers, user_custom_dirs, hidden_entries, lora_home, oss_index, home_scans)
         response_data["covers"] = covers
 
     return web.json_response(response_data)
@@ -1574,7 +1653,8 @@ async def copy_to_input(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
-def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_count: int, base_subfolder: str = ""):
+def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_count: int, base_subfolder: str = "",
+                            files: list[os.DirEntry] | None = None, dirs: list[os.DirEntry] | None = None):
     """Collect cover images for a directory.
 
     Plugin-updated dirs (Output / Grid / Character) use their newest files, so their
@@ -1588,6 +1668,9 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
         dir_name: Display name of the root directory
         sample_count: Number of samples per directory (max cover images)
         base_subfolder: Base subfolder prefix for correct thumbnail URL resolution
+        files / dirs: First-level enumeration of base_dir when the caller already has
+            one - the home list request scans these dirs for the cards too, and a
+            second scandir on a network share is a second round trip
     """
     if _is_recent_dir(dir_name):
         covers[dir_name] = _recent_cover_entries(base_dir, base_subfolder, sample_count)
@@ -1595,30 +1678,27 @@ def _collect_all_dir_covers(covers: dict, base_dir: Path, dir_name: str, sample_
 
     result: list[dict] = []
 
-    # Level 1: Scan root level files (image > video > audio), randomly sampled
-    root_files = []
-    for entry in _scandir_files(base_dir):
-        if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS:
-            root_files.append({
-                "filename": entry.name,
-                "name": _entry_stem(entry),
-                "subfolder": base_subfolder,
-                "kind": _cover_kind(entry.name),
-                "mtime": entry.stat(follow_symlinks=False).st_mtime,
-            })
-    random.shuffle(root_files)
-    result.extend(_order_covers_by_kind(root_files)[:sample_count])
+    # Level 1: Scan root level files (image > video > audio), randomly sampled.
+    # A pool wider than the cover slots keeps the image-over-video preference
+    # meaningful while keeping the stats bounded by the pool, not the file count.
+    media = [entry for entry in (files if files is not None else _scandir_files(base_dir))
+             if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS]
+    random.shuffle(media)
+    pool = [_cover_entry(entry, base_subfolder) for entry in media[:sample_count * 4]]
+    result.extend(_order_covers_by_kind(pool)[:sample_count])
 
     # Level 2+: Recursively scan subdirectories if not enough at root level
-    _collect_covers_recursive(base_dir, sample_count - len(result), result, sample_count, base_subfolder)
+    _collect_covers_recursive(base_dir, sample_count - len(result), result, sample_count, base_subfolder, dirs)
 
     covers[f"{dir_name}"] = result
 
 
-def _collect_home_covers(covers: dict, user_custom_dirs: list, hidden_entries: set, lora_home: bool, oss_index: dict | None):
+def _collect_home_covers(covers: dict, user_custom_dirs: list, hidden_entries: set, lora_home: bool,
+                         oss_index: dict | None, home_scans: dict[str, tuple[list[os.DirEntry], list[os.DirEntry]]]):
     """Collect cover images for every home entry (max 2 per directory).
     
     Root level first, then the first subdir with media. Runs off the event loop.
+    home_scans carries the first-level enumeration the directory cards already did.
     """
     _collect_all_dir_covers(covers, PRESETS_DIR, "presets", 2)
     if lora_home and LORA_CACHE_DIR.exists():
@@ -1635,16 +1715,19 @@ def _collect_home_covers(covers: dict, user_custom_dirs: list, hidden_entries: s
                                     base_subfolder=f"Lora/{subdir_name}")
     for dir_path in user_custom_dirs:
         dir_name = dir_path.name if dir_path.name else str(dir_path)
-        _collect_all_dir_covers(covers, dir_path, dir_name, 2)
+        files, dirs = home_scans.get(dir_name, ([], []))
+        _collect_all_dir_covers(covers, dir_path, dir_name, 2, "", files, dirs)
     for info in _get_system_dirs():
         if _is_home_entry_hidden(info["name"], hidden_entries):
             continue
-        _collect_all_dir_covers(covers, info["path"], info["name"], 3)
+        files, dirs = home_scans.get(info["name"], ([], []))
+        _collect_all_dir_covers(covers, info["path"], info["name"], 3, "", files, dirs)
     if oss_index:
         _collect_oss_covers(covers, oss_index)
 
 
-def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict], sample_count: int, base_subfolder: str = ""):
+def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict], sample_count: int, base_subfolder: str = "",
+                              subdirs: list[os.DirEntry] | None = None):
     """Recursively scan subdirectories for cover media (images + videos).
     
     Args:
@@ -1653,11 +1736,13 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
         result: List to append results to
         sample_count: Maximum number of samples total (CONSTANT, never changes during recursion)
         base_subfolder: Base subfolder prefix for correct thumbnail URL resolution
+        subdirs: First-level subdirs of parent_dir when the caller already enumerated
+            them; deeper levels always enumerate on demand
     """
     if needed <= 0 or len(result) >= sample_count:
         return
 
-    subdirs = _scandir_dirs(parent_dir)
+    subdirs = list(subdirs) if subdirs is not None else _scandir_dirs(parent_dir)
     random.shuffle(subdirs)
 
     for subdir in subdirs:
@@ -1671,20 +1756,14 @@ def _collect_covers_recursive(parent_dir: Path, needed: int, result: list[dict],
             new_subfolder = subdir.name
 
         # Check direct media files at this subdirectory level (image > video > audio,
-        # limited to what's still needed)
+        # limited to what's still needed). Only the sampled pool is stat'd - a NAS
+        # subdir charges a round trip per stat.
         remaining = sample_count - len(result)
-        subdir_media = []
-        for entry in _scandir_files(Path(subdir.path)):
-            if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS:
-                subdir_media.append({
-                    "filename": entry.name,
-                    "name": _entry_stem(entry),
-                    "subfolder": new_subfolder,
-                    "kind": _cover_kind(entry.name),
-                    "mtime": entry.stat(follow_symlinks=False).st_mtime,
-                })
-        random.shuffle(subdir_media)
-        found_direct = _order_covers_by_kind(subdir_media)[:remaining]
+        media = [entry for entry in _scandir_files(Path(subdir.path))
+                 if _entry_ext(entry) in ALL_MEDIA_EXTENSIONS]
+        random.shuffle(media)
+        pool = [_cover_entry(entry, new_subfolder) for entry in media[:remaining * 4]]
+        found_direct = _order_covers_by_kind(pool)[:remaining]
 
         # If we found media at this level, add them and stop recursing deeper for this subdir
         if found_direct:
@@ -2000,32 +2079,6 @@ def _generate_video_thumbnail(source_path: Path, cache_path: Path, size: int = T
         return False
 
 
-def _get_thumbnail_path(filename: str, subfolder: str, size: int, source_path: Path | None = None) -> Path:
-    """Get the cache path for a thumbnail using hash based on file content.
-    
-    Uses date-based subdirectories (YYYY-MM) to avoid too many files in one directory.
-    """
-    # Find source path to compute hash from actual file properties
-    if source_path is None:
-        source_path = _find_source_media(filename, subfolder)
-    if source_path and source_path.exists():
-        # Use absolute path + size + mtime for unique hash
-        stat = source_path.stat()
-        cache_key = f"{source_path.resolve().as_posix()}_{stat.st_size}_{stat.st_mtime}"
-        # Create date-based subdirectory (YYYY-MM) from file modification time
-        date_str = time.strftime("%Y-%m", time.localtime(stat.st_mtime))
-    else:
-        # Fallback to filename-based hash if source not found
-        cache_key = f"{filename}_{subfolder}_{size}"
-        date_str = time.strftime("%Y-%m")
-    
-    hash_hex = hashlib.md5(cache_key.encode()).hexdigest()[:12]
-    cache_path = THUMBNAIL_DIR / date_str / f"{hash_hex}_{size}.jpg"
-    # Auto-create date directory if it doesn't exist
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    return cache_path
-
-
 def _find_source_media(filename: str, subfolder: str) -> Path | None:
     """Find the source media file (image, video, or audio) for a given filename and subfolder."""
     user_custom_dirs = _get_user_custom_dirs()
@@ -2243,22 +2296,52 @@ def _media_file_response(path: Path) -> web.Response:
     )
 
 
-def _thumbnail_payload(filename: str, subfolder: str, size: int, source_path: Path) -> tuple[bytes, str] | None:
-    """Bytes + content type for a local media thumbnail, generating the cache when stale.
-    
-    Blocking (Pillow / ffmpeg), so callers run it in a thread. A video that yields no
-    frame returns None: serving the raw video as an <img> is pointless.
+def _thumbnail_hash(source_path: Path, source_stat) -> str:
+    """Cache hash for a thumbnail: source path + size + mtime, so a regenerated file
+    with the same name gets a new entry.
+
+    normpath replaces resolve(): every source path the gallery builds is a resolved
+    root joined with ".."-filtered segments, so it is already canonical, and
+    resolve() is a network round trip per request on a SMB share.
     """
+    cache_key = f"{os.path.normpath(str(source_path))}_{source_stat.st_size}_{source_stat.st_mtime}"
+    return hashlib.md5(cache_key.encode()).hexdigest()[:12]
+
+
+def _thumbnail_payload(size: int, source_path: Path) -> tuple[bytes, str] | None:
+    """Bytes + content type for a local media thumbnail, generating the cache when stale.
+
+    Blocking (Pillow / ffmpeg), so callers run it in a thread. A video that yields no
+    frame returns None: serving the raw video as an <img> is pointless. Audio returns
+    None too - the UI renders audio covers as their own tile and never asks for a
+    thumbnail, so any caller left would get raw audio bytes back as an image response.
+
+    The YYYY-MM bucket comes from the source mtime so one cache directory does not
+    fill up.
+    """
+    suffix = source_path.suffix.lower()
+    if suffix in AUDIO_EXTENSIONS:
+        return None
     if size <= 0:
         return _read_media_bytes(source_path)
 
-    cache_path = _get_thumbnail_path(filename, subfolder, size, source_path)
-    if not cache_path.exists() or cache_path.stat().st_mtime < source_path.stat().st_mtime:
-        if source_path.suffix.lower() in VIDEO_EXTENSIONS:
-            if not _generate_video_thumbnail(source_path, cache_path, size):
-                return None
-        elif not _generate_thumbnail(source_path, cache_path, size):
-            return _read_media_bytes(source_path)
+    try:
+        source_stat = source_path.stat()
+    except OSError:
+        return None
+
+    cache_path = THUMBNAIL_DIR / time.strftime("%Y-%m", time.localtime(source_stat.st_mtime)) / f"{_thumbnail_hash(source_path, source_stat)}_{size}.jpg"
+    try:
+        if cache_path.stat().st_mtime >= source_stat.st_mtime:
+            return _read_media_bytes(cache_path)
+    except OSError:
+        pass
+
+    if suffix in VIDEO_EXTENSIONS:
+        if not _generate_video_thumbnail(source_path, cache_path, size):
+            return None
+    elif not _generate_thumbnail(source_path, cache_path, size):
+        return _read_media_bytes(source_path)
     return _read_media_bytes(cache_path)
 
 
@@ -2303,7 +2386,7 @@ async def get_thumbnail(request):
     if not source_path:
         return web.Response(status=404)
 
-    payload = await asyncio.to_thread(_thumbnail_payload, filename, subfolder, size, source_path)
+    payload = await asyncio.to_thread(_thumbnail_payload, size, source_path)
     if payload is None:
         return web.Response(status=404, text="Thumbnail generation failed")
 
@@ -2799,6 +2882,7 @@ async def save_gallery_settings(request):
                 current_settings["hidden_directories"] = []
 
         _save_settings(current_settings)
+        _invalidate_user_custom_dirs()
         if action == "save_civitai":
             await _ensure_auto_cache()
         return web.json_response({"success": True})
@@ -2848,9 +2932,7 @@ def _delete_cached_thumbnails(filename: str, subfolder: str) -> int:
     hash_hex = ""
     source_path = _find_source_media(filename, subfolder)
     if source_path and source_path.exists():
-        stat = source_path.stat()
-        cache_key = f"{source_path.resolve().as_posix()}_{stat.st_size}_{stat.st_mtime}"
-        hash_hex = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+        hash_hex = _thumbnail_hash(source_path, source_path.stat())
 
     thumb_count = 0
     for date_dir in THUMBNAIL_DIR.iterdir():
