@@ -393,6 +393,12 @@ test("创建节点：空画布落在当前可见区正中", () => {
         assert.ok(node, "节点未加入画布");
         const cx = (VIS[0] + VIS[2]) / 2 - 100;
         const cy = (VIS[1] + VIS[3]) / 2 - 50;
+        assert.ok(Math.abs(node.pos[0] - cx) < 1e-6, `落点 x 应为可见区中心 ${cx.toFixed(1)}，实际 ${node.pos[0].toFixed(1)}`);
+        assert.ok(Math.abs(node.pos[1] - cy) < 1e-6, `落点 y 应为可见区中心 ${cy.toFixed(1)}，实际 ${node.pos[1].toFixed(1)}`);
+    } finally {
+        cleanupCanvas();
+    }
+});
 
 // ---- 画布技能待回写：顶菜单「💾 回写入技能」入口 + 🅝 绿点（状态由 skill.js 持有）----
 const WF_MIN = { "1": { class_type: "SaveImage", inputs: { images: ["2", 0] } } };
@@ -500,13 +506,6 @@ test("顶菜单引导点：无提示点时菜单条目不带引导点", () => {
     ext.actionBarButtons[0].onClick({ currentTarget: btn });
     assert.equal(repairItem().querySelector(".neo-n-menu-dot-red"), null, "无红点时修复条目不应带红点");
     assert.equal(writebackItem().querySelector(".neo-n-menu-dot-green"), null, "无绿点时回写条目不应带绿点");
-});
-
-        assert.ok(Math.abs(node.pos[0] - cx) < 1e-6, `落点 x 应为可见区中心 ${cx.toFixed(1)}，实际 ${node.pos[0].toFixed(1)}`);
-        assert.ok(Math.abs(node.pos[1] - cy) < 1e-6, `落点 y 应为可见区中心 ${cy.toFixed(1)}，实际 ${node.pos[1].toFixed(1)}`);
-    } finally {
-        cleanupCanvas();
-    }
 });
 
 test("创建节点：中心被已有节点占据时落在可见区内空位", () => {

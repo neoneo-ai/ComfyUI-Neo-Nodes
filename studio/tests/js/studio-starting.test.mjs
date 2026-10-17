@@ -67,6 +67,7 @@ test("桌面端拉起 ComfyUI 期间：「启动中」只出顶栏胶囊，不�
     click(document.querySelector('.ns-settings-tab[data-key="about"]'));
     await flush();
     assert.match(document.getElementById("ns-about-version").textContent, /Neo Studio 9\.9\.9 · ComfyUI 启动中/);
+});
 
 test("启动中点「⤒ 主画布编辑」：不开桌面端根路径的死页，只报「启动中」", async () => {
     mockStartingDesktop();
@@ -85,6 +86,4 @@ test("启动中点「⤒ 主画布编辑」：不开桌面端根路径的死页�
     openSkillWorkflowInMainUi("image_gen");
     assert.equal(opened.length, 0, "启动中不该开主画布页 —— 离线页的 \"/\" 是桌面端只读服务，根路径没有画布页");
     assert.match(appState.toasts.at(-1).detail, /ComfyUI 启动中/);
-});
-
 });
