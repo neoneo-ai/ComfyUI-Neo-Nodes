@@ -115,6 +115,13 @@ The scripts under `tools/` build and deploy the asset presets; they are never lo
 runtime:
 
 ```bash
+# 0. Package builder: turn an asset package into a preset directory (image + same-named .txt sidecar +
+#    角色索引.txt); the package table is `--list`
+python tools/build_gallery_presets.py --list
+python tools/build_gallery_presets.py --pkg <cloud dir> [--out <presets root>] [--compress 0.25] [--sample 5]
+#    --compress 0.25 writes each image at a quarter of its source bytes (JPEG quality ladder, then
+#    downscale): the 3D three-view packs are 8-10 MB PNGs, so one 200-image pack is 2 GB uncompressed.
+
 # 1. Preprocess: scan the preset directories, generate thumbnails and index.json (ffmpeg is needed for
 #    video thumbnails)
 python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir> [--size 320]

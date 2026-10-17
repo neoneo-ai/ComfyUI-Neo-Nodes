@@ -4,6 +4,24 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Two more cloud preset packs, published at a quarter of the source size.** `3D风格修仙人物` and
+  `3D风古代人物` (200 character sheets each) are now in the Cloud Presets index (14 directories, 2335 items).
+  The 3D three-view sources are 8-10 MB PNGs, so `tools/build_gallery_presets.py --compress 0.25` writes each
+  sheet as a JPEG at a quarter of its source bytes (quality ladder, then downscale). The incremental
+  `--dirs` republish also keeps the sidecar `.txt`: `tools/gallery_preprocess.py` built its prune set from
+  media filenames only, so the prune deleted the sidecars from the output before upload and the cloud lightbox
+  was left with the index preview instead of the full prompt. `现代西方人物` and `中世纪-平民` were republished
+  through the same `--compress 0.25` path: their cloud sheets are now a quarter of the source PNG bytes and
+  carry the full `.txt` sidecar, which the first publish of those two directories did not.
+
+- **Lightbox prompt sidebar is readable.** A preset's prompt rendered as one wall of text: the section label sat
+  inline so the body hung at the label's tail indent, sentences never broke, and a 40-item negative prompt was one
+  comma paragraph. Preset txt labels also use a half-width colon (`画面右侧区域:`), which the section parser only
+  accepted as full-width, so those sections lost their label entirely. Labels are now block-level with a divider
+  between sections, long values break at commas into lines, comma lists of short items (the negative prompt)
+  render as chips, and the parser accepts `:` plus `？!?;` as boundaries. Copy 提示词 still copies the raw full
+  text — the layout never rewrites what gets copied.
+
 - **Cloud preset directories hide one by one, and the cloud index refreshes by hand.** Every cloud preset
   directory is a home-page card of its own, and the cached `oss_cache/_index.json` was stamped fresh on every
   launch (`_load_oss_index_from_disk()` resets the fetch clock), so directories published after the last sync

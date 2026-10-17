@@ -101,7 +101,9 @@ background overlay, title bar drags the window) that creates new assets from a p
 Click a thumbnail to open full-screen viewing with wheel zoom and drag panning, neighbor preloading and size
 display; the prompt sidebar on the right shows the image's prompt and parameters (hidden when there is nothing
 to show, and hidden automatically when entering full screen). The sample results in recipe details share this
-same lightbox component.
+same lightbox component. The sidebar lays the prompt out section by section: a section label on its own line with
+a divider between sections, long sentences broken at commas, and comma lists like the negative prompt rendered as
+chips; the copy button always copies the raw full text.
 
 ![Lightbox viewer (zoom/pan + prompt sidebar)](../assets/images/gallery-lightbox-sm.jpg)
 

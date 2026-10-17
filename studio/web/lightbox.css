@@ -286,7 +286,7 @@
     flex: 1 1 auto;
     overflow-y: auto;
     font-size: 12px;
-    line-height: 1.6;
+    line-height: 1.7;
     color: #e0e0e0;
     padding: 12px 16px;
     background-color: rgba(255, 255, 255, 0.05);
@@ -294,23 +294,60 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.neo-lightbox-panel-item {
-    margin-bottom: 6px;
-    display: flex;
-    align-items: flex-start;
+/* 分节：标签独占一行，正文在标签下方，节与节之间一条分隔线。
+   标签与正文同行时正文会挂在标签尾部缩进处，长提示词读起来是一整块没有边界的墙。 */
+.neo-lightbox-panel-item,
+.neo-lightbox-panel-plain {
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.neo-lightbox-panel-item:last-child,
+.neo-lightbox-panel-plain:last-child {
+    padding-bottom: 0;
+    margin-bottom: 0;
+    border-bottom: none;
 }
 
 .neo-lightbox-panel-label {
+    display: block;
+    margin-bottom: 3px;
     font-weight: 600;
     color: #FF9944;
-    white-space: nowrap;
     font-size: 12px;
     line-height: 1.6;
 }
 
 .neo-lightbox-panel-value {
+    display: block;
     color: #ddd;
-    flex: 1;
+}
+
+.neo-lightbox-panel-line {
+    margin-bottom: 3px;
+    white-space: pre-wrap;
+}
+
+.neo-lightbox-panel-line:last-child {
+    margin-bottom: 0;
+}
+
+/* 负面词这类几十项的逗号清单：每项一个 chip，比一整段逗号墙好扫 */
+.neo-lightbox-panel-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.neo-lightbox-panel-tag {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #FFB570;
+    background: rgba(255, 153, 68, 0.10);
+    border: 1px solid rgba(255, 153, 68, 0.22);
 }
 
 .neo-lightbox-panel-btns {

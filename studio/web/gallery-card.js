@@ -1113,6 +1113,21 @@ export class GalleryCard {
             (meta && meta.has) ? this._lightboxEmbeddedPanel(gallery, image, subfolder, meta) : null);
     }
 
+    // 提示词正文排版：逗号/顿号清单（负面词就是几十项一坨）拆成标签块，长句按逗号逐条断行。
+    _renderPromptValue(value) {
+        const text = String(value);
+        const parts = text.split(/[，,、\n]+/).map((s) => s.trim()).filter(Boolean);
+        if (parts.length >= 8 && parts.every((s) => s.length <= 20)) {
+            const tags = $el("div", { className: "neo-lightbox-panel-tags" });
+            for (const part of parts) tags.appendChild($el("span", { className: "neo-lightbox-panel-tag", textContent: part }));
+            return tags;
+        }
+        const box = $el("div", { className: "neo-lightbox-panel-lines" });
+        const lines = parts.length > 1 && text.length > 30 ? parts : [text.trim()];
+        for (const line of lines) box.appendChild($el("div", { className: "neo-lightbox-panel-line", textContent: line }));
+        return box;
+    }
+
     _lightboxPromptPanel(gallery, image, subfolder) {
         let promptText = image.txt_content;
         const body = $el("div", { className: "neo-lightbox-panel-body" });
@@ -1122,22 +1137,19 @@ export class GalleryCard {
             if (sections.length > 0 && sections.some(s => s.label)) {
                 for (const section of sections) {
                     if (section.label) {
-                        body.appendChild($el("div", { className: "neo-lightbox-panel-item" }, [
-                            $el("span", { className: "neo-lightbox-panel-label", textContent: section.label + "\uff1a" }),
-                            $el("span", { className: "neo-lightbox-panel-value", textContent: section.value })
-                        ]));
+                        const item = $el("div", { className: "neo-lightbox-panel-item" }, [
+                            $el("div", { className: "neo-lightbox-panel-label", textContent: section.label + "\uff1a" })
+                        ]);
+                        if (section.value) {
+                            item.appendChild($el("div", { className: "neo-lightbox-panel-value" }, [this._renderPromptValue(section.value)]));
+                        }
+                        body.appendChild(item);
                     } else if (section.value) {
-                        body.appendChild($el("div", {
-                            textContent: section.value,
-                            style: { marginBottom: "3px", whiteSpace: "pre-wrap" }
-                        }));
+                        body.appendChild($el("div", { className: "neo-lightbox-panel-plain" }, [this._renderPromptValue(section.value)]));
                     }
                 }
             } else {
-                body.appendChild($el("div", {
-                    textContent: this.gallery.cleanText(text),
-                    style: { whiteSpace: "pre-wrap" }
-                }));
+                body.appendChild($el("div", { className: "neo-lightbox-panel-plain" }, [this._renderPromptValue(this.gallery.cleanText(text))]));
             }
         };
         renderPrompt(promptText);
@@ -1182,8 +1194,8 @@ export class GalleryCard {
         const addSection = (label, arr) => {
             if (!arr || !arr.length) return;
             body.appendChild($el("div", { className: "neo-lightbox-panel-item" }, [
-                $el("span", { className: "neo-lightbox-panel-label", textContent: label + "\uff1a" }),
-                $el("span", { className: "neo-lightbox-panel-value", textContent: arr.join("\n"), style: { whiteSpace: "pre-wrap" } })
+                $el("div", { className: "neo-lightbox-panel-label", textContent: label + "\uff1a" }),
+                $el("div", { className: "neo-lightbox-panel-value" }, [this._renderPromptValue(arr.join("\n"))])
             ]));
         };
         addSection("\u6B63\u5411", texts?.positive);

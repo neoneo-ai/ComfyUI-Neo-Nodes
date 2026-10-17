@@ -1374,14 +1374,16 @@ export class NeoGallery {
 
     parsePromptSections(txtContent) {
         if (!txtContent) return [];
-        const rawSegments = txtContent.split(/[.\u3002\uff01\uff01\uff1b\n]+/).filter(s => s.trim());
+        // 预设 txt 的分节标签常用半角冒号（「画面右侧区域:」），只认全角冒号的话整节正文没有标签；
+        // 断句也补上 ？!?;，否则一段问答式正文糊成一行。
+        const rawSegments = txtContent.split(/[.\u3002\uff01\uff1f\uff1b;!?;\n]+/).filter(s => s.trim());
         const sections = [];
 
         for (const rawSeg of rawSegments) {
             const trimmed = rawSeg.trim();
             if (!trimmed) continue;
 
-            const fullColonMatch = trimmed.match(/^(.+?)[\uff1a](.*)$/s);
+            const fullColonMatch = trimmed.match(/^(.+?)[:\uff1a](.*)$/s);
             if (fullColonMatch) {
                 const beforeColon = fullColonMatch[1].trim();
                 const afterColon = fullColonMatch[2].trim();

@@ -17,7 +17,10 @@
 Usage:
   python tools/build_gallery_presets.py --list
   python tools/build_gallery_presets.py --pkg 古代乡村人物 [--sample 5]
-  python tools/build_gallery_presets.py --all [--src <汇总根>] [--out <预设根>]
+  python tools/build_gallery_presets.py --all [--src <汇总根>] [--out <预设根>] [--compress 0.25]
+
+--compress 0.25 把图片压到原字节数的四分之一再产出：3D 三视图那几包是 8-10 MB 一张的 PNG，
+一包 200 张就是 2 GB，云端预设整包上传和首屏拉取都吃这个体积。
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ import argparse
 import collections
 import hashlib
 import importlib.util
+import io
 import re
 import shutil
 from dataclasses import dataclass
@@ -73,6 +77,8 @@ PACKAGES: dict[str, Pkg] = {
     "现代西方人物": Pkg("现代西方人物", [("三视图", 0)], "提示词"),
     "中世纪-国王贵族骑士": Pkg("中世纪欧洲人物/国王贵族骑士", [("三视图", 0)], "提示词"),
     "中世纪-平民": Pkg("中世纪欧洲人物/平民", [("三视图", 0)], "提示词"),
+    "3D风格修仙人物": Pkg("7套国漫3D风格人物/3D风格修仙人物", [("三视图", 0)], "200人提示词_每10人一份"),
+    "3D风古代人物": Pkg("7套国漫3D风格人物/3D风古代人物", [("3D古代人物三视图", 0)], "200人提示词_每10人一份"),
 }
 
 
@@ -82,6 +88,34 @@ def data_root() -> Path:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return Path(str(mod.DATA_ROOT))
+
+
+def compress_image(src: Path, dst: Path, ratio: float) -> None:
+    """把源图压到 ratio 倍原字节数：先逐档降 JPEG 质量，压不到目标再缩边。
+
+    3D 三视图是 3344x1882 的 PNG，单张 8-10 MB；JPEG 在 92 档就能压到四分之一，
+    只有少数大图需要往下走档位。最后一档一定写出去，不能为了卡体积把图丢了。
+    """
+    from PIL import Image
+
+    target = max(int(src.stat().st_size * ratio), 40_000)
+    with Image.open(src) as img:
+        if img.mode != "RGB":
+            base = Image.new("RGB", img.size, (255, 255, 255))
+            base.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[3])
+            img = base
+        data = b""
+        for scale in (1.0, 0.85, 0.7, 0.55):
+            frame = img if scale == 1.0 else img.resize(
+                (int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+            for quality in (96, 92, 88, 84, 78, 72):
+                buf = io.BytesIO()
+                frame.save(buf, "JPEG", quality=quality, optimize=True)
+                data = buf.getvalue()
+                if len(data) <= target:
+                    dst.write_bytes(data)
+                    return
+        dst.write_bytes(data)
 
 
 def dedupe_files(files: list[Path]):
@@ -246,7 +280,7 @@ def meta_block(block: str):
     return (segs[1] if len(segs) > 1 else ""), age
 
 
-def build(name: str, pkg: Pkg, src_root: Path, out_root: Path, sample: int = 0):
+def build(name: str, pkg: Pkg, src_root: Path, out_root: Path, sample: int = 0, compress: float = 0.0):
     def note(msg: str) -> None:
         print(msg)
 
@@ -269,7 +303,10 @@ def build(name: str, pkg: Pkg, src_root: Path, out_root: Path, sample: int = 0):
         cname = ILLEGAL.sub("", cname) or f"人物{num:03d}"
         stem = f"{num:03d}_{cname}"
         if img:
-            shutil.copy2(img, out / (stem + img.suffix.lower()))
+            if compress:
+                compress_image(img, out / (stem + ".jpg"), compress)
+            else:
+                shutil.copy2(img, out / (stem + img.suffix.lower()))
         lines = [f"角色：{cname}（{meta}）" if meta else f"角色：{cname}", f"正向提示词：{pos}"]
         if neg:
             lines.append(f"负面提示词：{neg}")
@@ -297,6 +334,8 @@ def main() -> int:
     ap.add_argument("--src", default=SRC_DEFAULT, help="素材汇总根")
     ap.add_argument("--out", default="", help="预设输出根，默认 <数据根>/gallery/presets")
     ap.add_argument("--sample", type=int, default=0, help="打印前 N 条角色名与提示词开头")
+    ap.add_argument("--compress", type=float, default=0.0,
+                    help="把图片压到原字节数的这个比例再产出 .jpg（0.25 = 四分之一大小）；不传则原样拷贝")
     ap.add_argument("--list", action="store_true", help="列出素材包配置")
     args = ap.parse_args()
     if args.list:
@@ -319,7 +358,7 @@ def main() -> int:
     out_root.mkdir(parents=True, exist_ok=True)
     total = 0
     for name in names:
-        total += build(name, PACKAGES[name], src_root, out_root, args.sample)
+        total += build(name, PACKAGES[name], src_root, out_root, args.sample, args.compress)
     print(f"合计 {total} 对 -> {out_root}")
     return 0
 

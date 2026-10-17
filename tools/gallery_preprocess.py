@@ -341,7 +341,10 @@ def scan_directory(subdir: Path, output_dir: Path, thumb_size: int, copy_media: 
 
     # Update mode: drop output files that no longer exist in the source directory
     if prune:
+        # 旁车 txt 与图同名，只按 media 文件名建 keep 集合会把它们当孤儿删掉，
+        # 云端灯箱的提示词就只剩索引中 500 字的预览。
         keep_files = {e["filename"] for e in dir_entries}
+        keep_files |= {Path(e["filename"]).stem + ".txt" for e in dir_entries}
         keep_thumbs = {Path(e["thumbnail"]).stem for e in dir_entries if e["thumbnail"]}
         prune_directory(output_dir, dir_name, keep_files, keep_thumbs, copy_media)
 

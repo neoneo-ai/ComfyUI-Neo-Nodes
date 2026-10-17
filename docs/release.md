@@ -96,6 +96,12 @@ CI 打包固定 Python 3.12，与本地验证过的构建一致。
 `tools/` 下的脚本用于构建 / 部署素材预设，不在 ComfyUI 运行时加载：
 
 ```bash
+# 0. 素材包整理：把素材汇总包整理成预设目录（图 + 同名 .txt 旁车 + 角色索引.txt），包配置见 --list
+python tools/build_gallery_presets.py --list
+python tools/build_gallery_presets.py --pkg <云端目录名> [--out <预设根>] [--compress 0.25] [--sample 5]
+#    --compress 0.25 把图片压到原字节数的四分之一（JPEG 逐档降质量，压不到目标再缩边）：
+#    3D 三视图那几包是 8-10 MB 一张的 PNG，一包 200 张就是 2 GB，上传和首屏拉取都吃这个体积
+
 # 1. 预处理：扫描预设目录，生成缩略图与 index.json（需要 ffmpeg 生成视频缩略图）
 python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir> [--size 320]
 
