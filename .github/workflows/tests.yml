@@ -27,10 +27,12 @@ jobs:
 
       # 只装模块作用域真用到的库：torch 走 CPU wheel，av 自带 FFmpeg，packaging 是
       # comfy_api/internal/api_registry 的导入期依赖，numpy 不在 torch 的硬依赖里。
-      # laya / pillow-heif / oss2 / httpx / huggingface_hub 都是函数内可选导入，缺包时功能自行降级。
+      # psutil 是同级 ComfyUI 的 comfy.model_management 导入期依赖（mem_stats 路由用例要它），
+      # httpx 是 llm.py 远程后端与 openai 传输层的依赖。
+      # laya / pillow-heif / oss2 / huggingface_hub 都是函数内可选导入，缺包时功能自行降级。
       - name: Install test deps
         run: |
-          pip install pytest PyYAML openai pypinyin Pillow aiohttp av packaging numpy
+          pip install pytest PyYAML openai pypinyin Pillow aiohttp av packaging numpy psutil httpx
           pip install --index-url https://download.pytorch.org/whl/cpu torch
 
       - name: pytest studio/tests
