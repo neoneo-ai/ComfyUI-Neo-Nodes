@@ -2,6 +2,7 @@
 // graph / nodeOutputs / canvas / graphToPrompt / loadGraphData / loadApiJson / extensionManager(toast, renderMarkdownToHtml)
 export const appState = {
     extensions: [],
+    sidebarTabs: [],
     graph: null,
     nodeOutputs: {},
     toasts: [],
@@ -19,6 +20,13 @@ function escapeHtml(s) {
 export function mockRenderMarkdown(text) {
     return escapeHtml(text).replace(/\n/g, "<br>");
 }
+
+const SETTINGS_KEY = "neo_studio_settings";
+function loadSettingsStore() {
+    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+const settingsStore = loadSettingsStore();
+function saveSettingsStore() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settingsStore)); }
 
 export const app = {
     registerExtension(nameOrExt, maybeExt) {
@@ -48,11 +56,29 @@ export const app = {
     getNodeDef(type) {
         return appState.nodeDefs[type] ?? null;
     },
+    // ui.settings：ComfyUI 设置存储替身，localStorage 版（与 studio 替身 shim/app.js 同形）。
+    // gallery.js 的 setup 用它注册缩略图尺寸等设置，更要紧的是 savePluginData / loadPluginData
+    // 的往返——getValue 不回读存进去的值，宿主目录记忆这类持久化行为在测试里就全被吞掉。
+    ui: {
+        settings: {
+            addSetting(def) {
+                if (!(def.id in settingsStore)) settingsStore[def.id] = def.defaultValue;
+                saveSettingsStore();
+            },
+            getValue: (id) => settingsStore[id],
+            setValue(id, value) { settingsStore[id] = value; saveSettingsStore(); },
+        },
+    },
     extensionManager: {
         toast: {
             add(t) {
                 appState.toasts.push(t);
             },
+        },
+        // 侧栏 tab 注册表：gallery.js 的 setup 靠它挂 neo.gallery / neo.recipes，
+        // Studio 宿主用例要把真 tab 定义（带真 NeoGallery 实例的 render）交给替身侧栏
+        registerSidebarTab(tab) {
+            appState.sidebarTabs.push(tab);
         },
         renderMarkdownToHtml: mockRenderMarkdown,
     },
@@ -104,6 +130,7 @@ export function getExtension(name) {
 
 export function resetAppState() {
     appState.extensions.length = 0;
+    appState.sidebarTabs.length = 0;
     appState.graph = null;
     appState.nodeOutputs = {};
     app.canvas = null;

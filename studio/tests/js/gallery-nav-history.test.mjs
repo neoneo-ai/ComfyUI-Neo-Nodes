@@ -1,4 +1,4 @@
-// Neo Gallery 顶部前进/后退按钮：导航历史栈、按钮禁用态、新导航截断前进分支。
+// Neo Gallery 顶部前进/后退按钮：导航历史栈、按钮禁用态、新导航截断前进分支、重挂载回到离开时的视图。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resetEnv, clearRoutes, mockRoute, flush } from "./setup.mjs";
@@ -92,3 +92,86 @@ test("头部渲染两个导航按钮，禁用态下点击不触发", async () =>
     await flush();
     assert.equal(called, 0, "禁用按钮点击不应触发导航");
 });
+
+test("重挂载回到离开时的视图：侧栏 tab 重画不得把二级目录拽回首页", async () => {
+    resetEnv();
+    clearRoutes();
+    await loadNeoGallery();
+    const gallery = makeGallery();
+    document.body.appendChild(gallery.element);
+
+    const calls = [];
+    gallery.list.sortAndDisplayImages = async () => { calls.push("home"); };
+    // 记录 _navRestoring：真 showDirectoryStructure 靠它跳过 history.pushState
+    gallery.showDirectoryStructure = async (src, segs) => { calls.push(["dir", src, segs, gallery._navRestoring]); };
+    gallery.showLocalBookmarks = async () => { calls.push("marks"); };
+
+    await gallery.renderCurrentView();
+    assert.deepEqual(calls, ["home"], "首页状态重挂载仍画首页");
+
+    gallery.currentView = { mode: "directory", source: "Output", categoryPath: ["a", "b"] };
+    calls.length = 0;
+    await gallery.renderCurrentView();
+    assert.deepEqual(calls, [["dir", "Output", ["a", "b"], true]], "目录状态重画离开时那个目录，且不写浏览器历史");
+
+    gallery.currentView = { mode: "local_bookmarks", source: "本地收藏", categoryPath: [] };
+    calls.length = 0;
+    await gallery.renderCurrentView();
+    assert.deepEqual(calls, ["marks"], "收藏页状态重挂载回到收藏页");
+    assert.equal(gallery._navRestoring, false, "重挂载结束要清掉 _navRestoring");
+});
+
+test("素材目录按宿主分开记录：导演抽屉与绘画页左栏互不覆盖", async () => {
+    resetEnv();
+    clearRoutes();
+    await loadNeoGallery();
+    const gallery = makeGallery();
+    const directorHost = document.createElement("div");
+    directorHost.dataset.libScope = "director";
+    const paintHost = document.createElement("div");
+    paintHost.dataset.libScope = "paint";
+    document.body.appendChild(directorHost);
+    directorHost.appendChild(gallery.element);
+    await gallery.showDirectoryStructure("Output", ["a"]);
+    gallery.rememberView(directorHost);
+
+    // 绘画页左栏没有记录：沿用当前视图；它自己翻进的目录只记在自己名下
+    directorHost.removeChild(gallery.element);
+    gallery.applyView(paintHost);
+    assert.equal(gallery.currentView.categoryPath.join("/"), "a", "没有记录的宿主沿用当前视图");
+    await gallery.showDirectoryStructure("Input", ["x"]);
+    gallery.rememberView(paintHost);
+
+    gallery.applyView(directorHost);
+    assert.deepEqual(gallery.currentView, { mode: "directory", source: "Output", categoryPath: ["a"] },
+        "回到导演页恢复导演页自己记的目录");
+    assert.deepEqual(gallery._libViews.paint.categoryPath, ["x"], "绘画页的记录不被导演页覆盖");
+});
+
+// 导演页关抽屉时收留宿主正是素材页宿主：render 先清空目标宿主，会把画廊从当前宿主摘走，
+// 旧宿主身份丢失 → 抽屉里浏览的目录记不下来，重开抽屉落回首页。
+test("导演抽屉开合（收留宿主=素材页宿主）不丢抽屉里的目录", async () => {
+    resetEnv();
+    clearRoutes();
+    await loadNeoGallery();
+    const gallery = makeGallery();
+    const pageHost = document.createElement("div");
+    pageHost.dataset.libScope = "page";
+    const directorHost = document.createElement("div");
+    directorHost.dataset.libScope = "director";
+    document.body.append(pageHost, directorHost);
+
+    await gallery.mountTo(pageHost);
+    await gallery.showDirectoryStructure("Output", ["a"]);   // 素材页在 Output/a
+    await gallery.mountTo(directorHost);                       // 开抽屉：带过来
+    await gallery.showDirectoryStructure("Input", ["x"]);    // 抽屉里翻进 Input/x
+
+    await gallery.mountTo(pageHost);                          // 关抽屉（收留宿主=素材页宿主）
+    assert.deepEqual(gallery.currentView.categoryPath, ["a"], "关抽屉回到素材页自己的目录");
+
+    await gallery.mountTo(directorHost);                      // 重开抽屉
+    assert.equal(gallery.currentView.mode, "directory");
+    assert.equal(gallery.currentView.source, "Input");
+    assert.deepEqual(gallery.currentView.categoryPath, ["x"], "重开抽屉回到抽屉里那个目录");
+});
+

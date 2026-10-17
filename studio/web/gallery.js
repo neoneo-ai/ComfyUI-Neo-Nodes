@@ -99,6 +99,10 @@ export class NeoGallery {
         this._navPos = -1;
         this._navRestoring = false;
 
+        // 各宿主的素材目录（scope → 视图快照）：导演抽屉 / 绘画页左栏 / 素材页共用同一个
+        // gallery.element，摘走时记下、挂上时恢复（rememberView / applyView），互不覆盖
+        this._libViews = {};
+
         // 多选删除：卡片左上角勾选框选中后，底部操作条批量删除
         this._selectedItems = new Set();
         this._selectionBar = null;
@@ -273,6 +277,9 @@ export class NeoGallery {
                 if (data.currentView && data.currentView.mode) {
                     this._savedView = { ...data.currentView };
                 }
+                if (data.libViews && typeof data.libViews === 'object') {
+                    this._libViews = data.libViews;   // 各宿主上次停在哪个目录（scope → 视图）
+                }
             }
         } catch (error) {
             console.error('Error loading plugin data:', error);
@@ -416,7 +423,10 @@ export class NeoGallery {
         this._navStack.push(view);
         this._navPos = this._navStack.length - 1;
         this._updateNavButtons();
-        this.savePluginData({ currentView: this.currentView });
+        // 视图一变就记在当前宿主名下。等摘走时才写的话，切走那一下套用的是目标宿主的上一次
+        // 记录：抽屉里刚浏览的目录要等下次才生效，开合素材库就变成一次首页、一次目录。
+        this.rememberView(this.element.parentNode);
+        this.savePluginData({ currentView: this.currentView, libViews: this._libViews });
     }
 
     _updateNavButtons() {
@@ -441,6 +451,68 @@ export class NeoGallery {
             this._navRestoring = false;
         }
         return true;
+    }
+
+    // 每个宿主各记自己停在哪个目录，挂上时恢复它记的那个（applyView）。
+    // 三个宿主共用一个 currentView 的话，在导演抽屉里翻进二级目录，绘画页左栏会跟着跳过去。
+    // 写入点在 _recordNavState：视图一变就记，切走那一下套用的才是目标宿主自己的目录。
+    // 宿主靠 data-lib-scope 认身份；没收标记的（收留宿主、ComfyUI 侧栏）不进这张表。
+    rememberView(hostEl) {
+        const scope = hostEl?.dataset?.libScope;
+        if (!scope || !this.currentView?.mode) return;
+        this._libViews[scope] = {
+            mode: this.currentView.mode,
+            source: this.currentView.source || null,
+            categoryPath: [...(this.currentView.categoryPath || [])],
+        };
+    }
+
+    applyView(hostEl) {
+        const saved = hostEl?.dataset?.libScope ? this._libViews[hostEl.dataset.libScope] : null;
+        if (!saved || !saved.mode) return;
+        this.currentView = { mode: saved.mode, source: saved.source || null, categoryPath: saved.categoryPath || [] };
+    }
+    // 侧栏标签页与 Studio 各页宿主共用这条挂载路径。
+    async mountTo(hostEl) {
+        hostEl.innerHTML = "";
+        hostEl.appendChild(this.element);
+        this.applyView(hostEl);        // 新宿主记过目录就切到它自己的，没记过沿用当前
+        // 宽宿主标记：桌面端素材页的专属样式全部挂在 .neo-gallery-panel--wide 下，
+        // 侧栏标签页把同一个元素搬进侧栏容器时没有这个祖先，侧栏外观不变。
+        this.element.classList.toggle("neo-gallery-panel--wide", !!hostEl.closest(".ns-gallery-host"));
+
+        if (!this._loaded) {
+            await this.loadAndDisplay();
+            this._loaded = true;
+        } else {
+            releaseLazyThumbnails(this.accordion);
+            this.accordion.innerHTML = "";
+            await this.renderCurrentView();
+        }
+        // 面板在带 gallery 参数的 URL 下挂载时补一次面包屑
+        const galleryParam = new URLSearchParams(window.location.search).get('gallery');
+        if (galleryParam && this.currentView.mode === 'directory') {
+            this.list.updateBreadcrumb(this, this.currentView.categoryPath, '');
+        }
+        this.isVisible = true;
+        this.startScrollListener();
+    }
+
+    // 重挂载（切页、开合素材库抽屉）不是导航：画离开时那个视图。
+    // 侧栏 tab 的 render 旧代码在这里固定画首页，用户从二级目录切走再切回就被拽回首页。
+    // _navRestoring 挡住 showDirectoryStructure 的 pushState，免得每次开关抽屉
+    // 都在浏览器历史里堆一条同视图记录（后退键要点好几次才离开素材库）。
+    async renderCurrentView() {
+        const view = this.currentView;
+        this._navRestoring = true;
+        try {
+            if (view.mode === 'directory' && view.source) await this.showDirectoryStructure(view.source, view.categoryPath || []);
+            else if (view.mode === 'local_bookmarks') await this.showLocalBookmarks();
+            else if (view.mode === 'civitai_bookmarks') await this.showCivitaiBookmarks();
+            else await this.list.sortAndDisplayImages();
+        } finally {
+            this._navRestoring = false;
+        }
     }
 
     // ====== 本地收藏（仅记录路径信息，打开时基于路径查找） ======
@@ -1601,16 +1673,18 @@ export class NeoGallery {
         const loadingEl = showLoadingOverlay(this.accordion, this.maxThumbnailSize);
         
         // 直接加载（不额外增加延迟）
-        if (this._savedView && this._savedView.mode === 'directory' && this._savedView.source) {
-            const sv = this._savedView;
-            this._savedView = null;
+        // 宿主自己记的目录（applyView 已写进 currentView）优先于上次退出时的全局视图
+        const sv = (this.currentView.mode === 'directory' && this.currentView.source)
+            ? { mode: 'directory', source: this.currentView.source, categoryPath: [...this.currentView.categoryPath] }
+            : this._savedView;
+        this._savedView = null;
+        if (sv && sv.mode === 'directory' && sv.source) {
             // 并行加载顶层目录和保存的目录结构，避免串行等待
             await Promise.all([
                 this.loadGallery(),
                 this.showDirectoryStructure(sv.source, sv.categoryPath || [])
             ]);
         } else {
-            this._savedView = null;
             await this.loadGallery();
             await this.list.sortAndDisplayImages();
             this._recordNavState();
@@ -1708,38 +1782,7 @@ app.registerExtension({
             title: t("素材"),
             tooltip: "Neo Gallery",
             type: "custom",
-            render: async (el) => {
-                el.innerHTML = "";
-                
-                if (gallery.element.parentNode) {
-                    gallery.element.parentNode.removeChild(gallery.element);
-                }
-                el.appendChild(gallery.element);
-                // 宽宿主标记：桌面端素材页的专属样式全部挂在 .neo-gallery-panel--wide 下，
-                // 侧栏标签页把同一个元素搬进侧栏容器时没有这个祖先，侧栏外观不变。
-                gallery.element.classList.toggle("neo-gallery-panel--wide", !!el.closest(".ns-gallery-host"));
-                
-                if (!gallery._loaded) {
-                    await gallery.loadAndDisplay();
-                    gallery._loaded = true;
-                } else {
-                    releaseLazyThumbnails(gallery.accordion);
-                    gallery.accordion.innerHTML = "";
-                    await gallery.list.sortAndDisplayImages();
-                    gallery._recordNavState();
-                }
-                // Re-initialize breadcrumb if URL has gallery param (panel was mounted after init)
-                const params = new URLSearchParams(window.location.search);
-                const galleryParam = params.get('gallery');
-                if (galleryParam && gallery.currentView.mode === 'directory') {
-                    gallery.list.updateBreadcrumb(gallery, gallery.currentView.categoryPath, '');
-                }
-                gallery.isVisible = true;
-                
-                // 启动滚动监听器，在每次滚动时自动保存位置
-                gallery.startScrollListener();
-
-            },
+            render: async (el) => gallery.mountTo(el),
             });
 
             // 视频配方侧边栏

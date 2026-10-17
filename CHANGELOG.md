@@ -4,6 +4,30 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **The asset library keeps the directory you entered — per tab.** The gallery sidebar tab redrew the home page
+  on every remount, so switching to the recipes tab and back, or closing and reopening the director page's
+  asset-library drawer, dropped the user out of the subdirectory they had browsed into. A remount now redraws
+  the live view — directory, bookmarks page, or home — and does it with the nav-restore flag set, so toggling
+  the drawer no longer pushes a duplicate entry into browser history for the same directory. Each host keeps
+  its own record (asset page / paint page's left column / director drawer, keyed by `data-lib-scope`), so
+  browsing into a subdirectory in one no longer drags the others along. The record is written on every view
+  change, not only when the gallery is carried off a host — a record written only on detach makes the next
+  mount apply the target host's previous record, which is how toggling the drawer alternated between the
+  home page and the remembered directory.
+  `studio/tests/js/gallery-nav-history.test.mjs` covers the remount landing on the entered directory and the
+  per-host records; `studio/tests/js/studio-gallery-host.test.mjs` drives the real Studio page: asset page →
+  director drawer → open / close / same tab again, and a repeated click on the current top-nav tab.
+
+- **A click on the top-bar tab no longer drops the asset library back to the home page.** The Studio header's
+  logo and tabs are plain `<a href="#/gallery">` links, so clicking the tab of the page you were already on
+  re-resolved the URL from that href: the `?gallery=` parameter the gallery writes was dropped and Chromium
+  dispatched `popstate` for the navigation, which the gallery's listener read as a browser Back. One click
+  went home, the next went back into the directory — an alternation reachable by clicking the tab you were
+  already on. The header links now go through the page router (`go()`), which swaps views with `pushState`
+  instead of navigating, so the query string survives and no `popstate` fires; browser Back re-routes through
+  a `popstate` listener. `studio/tests/js/studio-gallery-host.test.mjs` asserts the click is intercepted, the
+  `gallery` parameter survives a tab switch, and the gallery stays in the directory it was left in.
+
 - **The director page's left column switches between recipes and assets.** The asset library could only be opened
   from the **asset library** button inside the director editor, and closing it was a ✕ in its header — with no
   switch on the column itself, dragging an asset into the editor meant hunting for that button. The left column

@@ -16,6 +16,10 @@ library plus several user-defined directories.
 - **Sort by time** - sorted by file modification time, newest/oldest order switchable and remembered.
 - **Scroll position memory** - the browsing position of every directory is saved and restored in place when
   you return.
+- **Directory memory** - switching pages, closing the asset-library drawer and coming back lands on the
+  directory you left (bookmarks page included) instead of the home page; the asset page, the paint page's left
+  column and the director drawer each remember their own and never overwrite one another, and clicking the
+  tab of the page you are already on does not drop you back to the home page.
 - **Lazy loading** - the list renders in pages and covers load only when they scroll into view, so even large
   libraries stay smooth.
 

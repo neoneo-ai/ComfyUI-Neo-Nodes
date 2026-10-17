@@ -53,18 +53,36 @@ function showView(name) {
     // 画廊单例的宿主跟着视图走：绘画页 = 左栏素材库；素材页 = 整片宿主；其余页 = 交还素材页 / 收留宿主。
     // 一次只挂一处：切页时不会两次 render 抢同一个元素（后落的那次会把画廊拽回上一页）
     if (name === "paint" && paintLibHost) {
-        if (galleryMountHost !== paintLibHost) mountGalleryKeepDir(paintLibHost);
+        if (galleryMountHost !== paintLibHost) mountGallery(paintLibHost);
     } else {
         const host = name === "gallery" ? galleryPageHost : galleryStandby();
         if (host && galleryMountHost !== host) mountGallery(host);
     }
 }
-// 内嵌宿主（绘画面板 / 导演编辑器）的「打开时切到本页」入口一律走 hash：直接 showView 会把
-// location.hash 留在上一页，之后点顶栏那一页的 tab（href 与 hash 相同）不触发 hashchange，
-// 页面就再也切不回去（素材页「🖼️ 生成素材」→ 绘画页 → 点「素材」无反应）
+// 内嵌宿主（绘画面板 / 导演编辑器）的「打开时切到本页」入口一律走这里：直接 showView 会把
+// location.hash 留在上一页，之后点顶栏那一页的 tab（href 与 hash 相同）不动，页面就再也切不回去
+// （素材页「🖼️ 生成素材」→ 绘画页 → 点「素材」无反应）
 function go(name) {
-    if (location.hash === `#/${name}`) showView(name);
-    else location.hash = `#/${name}`;
+    if (location.hash === `#/${name}`) {
+        showView(name);
+        return;
+    }
+    // 换页用 pushState，不赋 location.hash：fragment 导航在 Chromium 里同样派发 popstate，
+    // 画廊的 popstate 监听把它读成「浏览器后退」，切一次页就顺手把画廊的目录退掉。
+    history.pushState(null, "", `#/${name}`);
+    route();   // 视图可能还没建（技能 / 设置按需建），交给和 hashchange 同一条路径
+}
+
+// 顶栏 logo / tab 是 <a href="#/xxx">：锚点按 href 重新解析 URL，把画廊写在 ?gallery= 里的
+// 目录丢掉，浏览器还会为这次同文档导航派发 popstate（画廊的 popstate 监听把它当「后退」）。
+// 于是每点一次「素材」就在首页和目录之间来回跳。交给路由：只换视图，不做导航。
+function bindHeaderNav() {
+    for (const a of document.querySelectorAll(".ns-header a[href^='#/']")) {
+        a.addEventListener("click", (e) => {
+            e.preventDefault();
+            go(a.dataset.tab || a.getAttribute("href").slice(2));
+        });
+    }
 }
 
 // ====== 素材宿主：NeoGallery 元素是单例，素材页与导演页素材库抽屉共用，挂载点随宿主切换 ======
@@ -94,17 +112,8 @@ function galleryStandby() {
     return galleryPageHost || (galleryStandbyHost ||= $el("div", { className: "ns-gallery-host" }));
 }
 
-// 挂载要重画列表，晚于 media-transfer 的目录导航落地：渲染完补一次当前目录导航
-function mountGalleryKeepDir(host) {
-    return mountGallery(host).then(() => {
-        const g = app.neoGallery;
-        if (g && galleryMountHost === host && g.currentView?.mode === "directory")
-            g.showDirectoryStructure(g.currentView.source, g.currentView.categoryPath);
-    });
-}
-
 function buildGallery(el) {
-    const host = $el("div", { className: "ns-gallery-host" });
+    const host = $el("div", { className: "ns-gallery-host", dataset: { libScope: "page" } });
     el.appendChild(host);
     galleryPageHost = host;
     mountGallery(host);
@@ -324,7 +333,7 @@ function buildSideColSplit(page, side, key = SIDE_COL_KEY, min = SIDE_COL_MIN) {
 // media-transfer 写 sidebarTab 落到这里）。左栏随整栏加宽，右侧让位不遮挡编辑区；
 // 素材卡片直接拖进右侧的首帧 / 参考位 / 参考图区 ======
 function buildLibDrawer(side, sideCol, view) {
-    const libHost = $el("div", { className: "ns-gallery-host" });
+    const libHost = $el("div", { className: "ns-gallery-host", dataset: { libScope: "director" } });
     const tabRecipes = $el("button", { className: "ns-side-tab", type: "button", title: t("切回配方列表"), textContent: t("📋 配方") });
     const tabLib = $el("button", { className: "ns-side-tab", type: "button", title: t("打开素材库，素材卡片直接拖进右侧编辑器"), textContent: t("🖼 素材") });
     side.prepend($el("div", { className: "ns-side-tabs" }, [tabRecipes, tabLib]));
@@ -341,7 +350,7 @@ function buildLibDrawer(side, sideCol, view) {
         sideCol.apply();
         sideCol.expand();   // 用户点名要素材库：这一档收起过就势展开
         if (galleryMountHost === libHost) return;
-        mountGalleryKeepDir(libHost);
+        mountGallery(libHost);
     };
     tabRecipes.onclick = closeLib;
     tabLib.onclick = openLib;
@@ -626,7 +635,7 @@ function buildPaint(el) {
     const page = $el("div", { className: "ns-paint" });
     el.appendChild(page);
     const side = $el("div", { className: "ns-paint-side" });
-    paintLibHost = $el("div", { className: "ns-gallery-host" });
+    paintLibHost = $el("div", { className: "ns-gallery-host", dataset: { libScope: "paint" } });
     side.appendChild(paintLibHost);
     // 左栏装的是素材库网格，下限按素材库宽度走（配方列表的 260px 下限会把网格挤成一列）
     const sideCol = buildSideColSplit(page, side, PAINT_SIDE_COL_KEY, SIDE_COL_LIB_MIN);
@@ -1543,10 +1552,12 @@ function route() {
 // 仅 Studio 独立页启动：本文件也会作为扩展模块被主画布页加载（WEB_DIRECTORY），那里没有 #ns-view
 if (view) {
     localizeShell();
+    bindHeaderNav();
     // 未捕获错误与启动失败一并写进桌面端日志：窗口白屏时日志里至少留下证据
     window.addEventListener("error", (e) => desktopLog(`ERROR ${e.message} @ ${e.filename}:${e.lineno}`));
     window.addEventListener("unhandledrejection", (e) => desktopLog(`REJECT ${e.reason?.stack || String(e.reason)}`));
     window.addEventListener("hashchange", route);
+    window.addEventListener("popstate", route);   // 换页走 pushState 后，浏览器 Back 只派发 popstate
     initExtensions().then(async () => {
         await loadVersion();   // 先拿到离线标记与能力表，再建视图（生成按钮要按能力门控）
         initOfflineGate();
