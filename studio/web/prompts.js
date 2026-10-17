@@ -201,7 +201,7 @@ app.registerExtension({
                     }
                     const savedSkill = node.properties?.rs_selected_skill || "";
                     await populateSkillSelector(node);
-                    if (savedSkill && [...skillSelector.options].some(o => o.value === savedSkill)) {
+                    if (savedSkill && Array.from(skillSelector.options).some(o => o.value === savedSkill)) {
                         skillSelector.value = savedSkill;
                         node.properties.rs_selected_skill = savedSkill;
                     }
@@ -713,7 +713,7 @@ app.registerExtension({
                     }
                     const savedSkill = node.properties?.rs_selected_skill || "";
                     await populateSkillSelector(node);
-                    if (savedSkill && [...skillSelector.options].some(o => o.value === savedSkill)) {
+                    if (savedSkill && Array.from(skillSelector.options).some(o => o.value === savedSkill)) {
                         skillSelector.value = savedSkill;
                         node.properties.rs_selected_skill = savedSkill;
                     }

@@ -441,9 +441,12 @@ async def get_config_route(request):
 async def save_config_route(request):
     body = await request.json()
     cfg = _load_config()
+    masked = _mask_config(cfg)
     for key in ("access_key_id", "access_key_secret", "endpoint", "bucket", "prefix", "source_dir", "output_dir"):
         val = body.get(key, "")
-        if val and "*" not in val:
+        # 掩码串原样提交才表示「这一项没动」。按「含 * 就丢」判，用户在掩码上改一个字符
+        # 点保存，界面报「已保存」，文件里还是旧值 —— 密钥永远写不进去。
+        if val and val != masked.get(key, ""):
             cfg[key] = val
     _save_config(cfg)
     return web.json_response({"success": True, "config": _mask_config(cfg)})

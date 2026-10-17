@@ -279,7 +279,7 @@ function createStatusBars() {
         // 带 workflow.json 的技能由工作流驱动、正文不参与本节点 → 不出现在提示词代理下拉里
         populateSkillOptions(skillSelector, skills.filter(s => !s.has_workflow));
 
-        if (currentVal && [...skillSelector.options].some(o => o.value === currentVal)) {
+        if (currentVal && Array.from(skillSelector.options).some(o => o.value === currentVal)) {
             skillSelector.value = currentVal;
         }
 
@@ -978,7 +978,7 @@ function createGenerateHandler(promptUI) {
 
         // 选中生图 skill：绕过 LLM，直连后端生图流程，结果渲染在 Markdown 预览区
         const selectedOpt = skillSelector
-            ? [...skillSelector.options].find(o => o.value === skillSelector.value) : null;
+            ? Array.from(skillSelector.options).find(o => o.value === skillSelector.value) : null;
 
         if (!messageToLLM && !hasImages) {
             // 文案随所选 skill 区分：文生图只看文字；四视图需要文字 + 参考图；其余输入可二选一
@@ -1031,7 +1031,7 @@ function createGenerateHandler(promptUI) {
                     new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 500)),
                 ]);
                 if (resp?.skill && resp.confidence > 0.6) {
-                    const opt = [...skillSelector.options].find(o => o.value === resp.skill);
+                    const opt = Array.from(skillSelector.options).find(o => o.value === resp.skill);
                     if (opt) {
                         skillSelector.value = resp.skill;
                         // 同步到 node properties（持久化）
@@ -1494,7 +1494,7 @@ function createPromptOutputArea({ customTextarea, skillSelector, actions = [] })
     // 按需显示：仅当前选中的 skill 声明了 multi_turn 时才出现（默认隐藏）
     skillHint.style.display = "none";
     function updateSkillHint() {
-        const opt = [...skillSelector.options].find(o => o.value === skillSelector.value);
+        const opt = Array.from(skillSelector.options).find(o => o.value === skillSelector.value);
         skillHint.style.display = (opt && opt.dataset.multiTurn === "1") ? "" : "none";
     }
     skillSelector.addEventListener("change", updateSkillHint);

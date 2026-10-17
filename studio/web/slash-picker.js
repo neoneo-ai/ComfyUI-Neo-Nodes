@@ -30,7 +30,7 @@ function createSlashSkillPicker({ quickInput, skillSelector, listSkills }) {
         const commitSkill = (skill) => {
             closePicker();
             if (!skill || quickInput.value[slashIndex] !== "/") return;
-            if ([...skillSelector.options].some(o => o.value === skill.id)) {
+            if (Array.from(skillSelector.options).some(o => o.value === skill.id)) {
                 skillSelector.value = skill.id;
                 skillSelector.dispatchEvent(new Event("change", { bubbles: true }));
             }

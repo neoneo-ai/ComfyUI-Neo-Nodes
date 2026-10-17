@@ -72,7 +72,7 @@ class Masonry {
 
         const columnWidth = Math.min(this.columnWidth, width);
         const columns = Math.max(1, Math.floor((width + GAP) / (columnWidth + GAP)));
-        const items = [...container.children].filter((el) => el.offsetWidth > 0);
+        const items = Array.from(container.children).filter((el) => el.offsetWidth > 0);
         if (items.length === 0) {
             container.style.height = "0px";
             return;

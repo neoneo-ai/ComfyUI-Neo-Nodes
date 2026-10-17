@@ -81,9 +81,15 @@ const DIR_PRESETS = {
     ],
 };
 
+// 密钥字段只回掩码，回填进输入框会让用户以为「已填好」，改一个字符提交又被服务端丢掉。
+const SECRET_KEYS = new Set(["access_key_id", "access_key_secret"]);
+
 function buildConfig(el) {
     const form = $el("div", { className: "by-form" });
+    // 目录字段单独存：文本框自带 select() 方法，用 inputs[key].select 判目录字段会把
+    // Access Key 框当目录框，解构出的 select 是函数、select.options 是 undefined。
     const inputs = {};
+    const dirInputs = {};
 
     // 普通字段
     const plainFields = [
@@ -117,7 +123,7 @@ function buildConfig(el) {
         select.addEventListener("change", () => {
             customInput.style.display = select.value === "__custom__" ? "" : "none";
         });
-        inputs[key] = { select, customInput };
+        dirInputs[key] = { select, customInput };
         row.appendChild(select);
         row.appendChild(customInput);
         form.appendChild(row);
@@ -136,7 +142,7 @@ function buildConfig(el) {
     el.appendChild(section);
 
     function getDirValue(key) {
-        const { select, customInput } = inputs[key];
+        const { select, customInput } = dirInputs[key];
         return select.value === "__custom__" ? customInput.value.trim() : select.value;
     }
 
@@ -144,11 +150,10 @@ function buildConfig(el) {
     fetch("/neo_backyard/config").then(r => r.json()).then(data => {
         if (!data.success) return;
         for (const [key, val] of Object.entries(data.config)) {
-            if (!inputs[key]) continue;
-            if (typeof inputs[key] === "object" && inputs[key].select) {
+            if (dirInputs[key]) {
                 // 目录字段：匹配预设或设为自定义
-                const { select, customInput } = inputs[key];
-                const matched = [...select.options].find(o => o.value === val);
+                const { select, customInput } = dirInputs[key];
+                const matched = Array.from(select.options).find(o => o.value === val);
                 if (matched) {
                     select.value = val;
                 } else {
@@ -156,6 +161,10 @@ function buildConfig(el) {
                     customInput.value = val || "";
                     customInput.style.display = "";
                 }
+            } else if (!inputs[key]) {
+                continue;
+            } else if (SECRET_KEYS.has(key)) {
+                inputs[key].placeholder = val ? t("已保存（留空沿用）") : key;
             } else {
                 inputs[key].value = val || "";
             }
@@ -167,9 +176,8 @@ function buildConfig(el) {
         statusEl.textContent = t("保存中...");
         statusEl.className = "by-status";
         const body = {};
-        for (const key of Object.keys(inputs)) {
-            body[key] = typeof inputs[key] === "object" ? getDirValue(key) : inputs[key].value;
-        }
+        for (const key of Object.keys(inputs)) body[key] = inputs[key].value;
+        for (const key of Object.keys(dirInputs)) body[key] = getDirValue(key);
         try {
             const resp = await fetch("/neo_backyard/config", {
                 method: "POST",
@@ -180,6 +188,9 @@ function buildConfig(el) {
             if (data.success) {
                 statusEl.textContent = t("✓ 已保存");
                 statusEl.className = "by-status ok";
+                for (const key of SECRET_KEYS) {
+                    if (data.config[key]) inputs[key].placeholder = t("已保存（留空沿用）");
+                }
             } else {
                 statusEl.textContent = `✗ ${data.error}`;
                 statusEl.className = "by-status err";

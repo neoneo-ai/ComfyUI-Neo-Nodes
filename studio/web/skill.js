@@ -847,7 +847,7 @@ function createSkillDropdown() {
     const models = { genModels: null, videoModels: null };
     const onItemFocus = (itemEl) => {
         const val = itemEl && itemEl.dataset.value;
-        const opt = val ? [...selectEl.options].find((o) => o.value === val) : null;
+        const opt = val ? Array.from(selectEl.options).find((o) => o.value === val) : null;
         if (!opt) {
             previewFocusItem = null;
             previewFocusRow = null;

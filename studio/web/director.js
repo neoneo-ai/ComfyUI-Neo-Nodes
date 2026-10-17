@@ -1017,7 +1017,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             opt.__skillMeta = s; // 选择窗浮动预览卡取 gen_config / 分类等元数据
             sel.appendChild(opt);
         }
-        if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+        if (keep && Array.from(sel.options).some(o => o.value === keep)) sel.value = keep;
     }
 
     function refreshSegSkillOptions(skillSel, eff) {
@@ -1574,7 +1574,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (!sbSkillSel.value) sbSkillSel.appendChild($el('option', { value: 'qwen_image_21', textContent: t('Qwen Image 2.1 生图') }));
         // 回显优先：本模式记住的选择 > 配方落盘的 image_skill；否则 t2i 默认 Krea2、r2i 默认 Qwen Image 2.1
         const keep = sbSkillMemory[sbCurMode] || exStory.image_skill;
-        if (keep && [...sbSkillSel.options].some(o => o.value === keep)) { sbSkillSel.value = keep; return; }
+        if (keep && Array.from(sbSkillSel.options).some(o => o.value === keep)) { sbSkillSel.value = keep; return; }
         const fallback = (sbCurMode === 'r2i') ? 'qwen_image_21' : 'image_gen';
         if (sbSkillSel.querySelector(`option[value="${fallback}"]`)) sbSkillSel.value = fallback;
     }

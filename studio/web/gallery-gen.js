@@ -444,7 +444,7 @@ export function openStoryboardDialog(gallery, image, subfolder) {
                 }
             }
             const defaultId = `storyboard_grid_${STORYBOARD_DEFAULT_GRIDS}`;
-            gridSel.value = [...gridSel.options].some(o => o.value === defaultId) ? defaultId : gridSel.options[0]?.value || "";
+            gridSel.value = Array.from(gridSel.options).some(o => o.value === defaultId) ? defaultId : gridSel.options[0]?.value || "";
         } catch {
             gridSel.innerHTML = "";
             for (const n of STORYBOARD_GRID_OPTIONS) {
@@ -2609,7 +2609,7 @@ export function openGenMaterialDialog(gallery, opts = null) {
             enhanceSel.textContent = "";
             enhanceSel.appendChild($el("option", { value: "", textContent: t("默认") }));
             populateSkillOptions(enhanceSel, skills.filter(s => s.category === "image_enhance"));
-            const ids = [...enhanceSel.options].map(o => o.value);
+            const ids = Array.from(enhanceSel.options).map(o => o.value);
             if (rememberedEnhanceSkill && ids.includes(rememberedEnhanceSkill)) enhanceSel.value = rememberedEnhanceSkill;
         } catch { /* 拉取失败保持「默认」 */ }
     })();
