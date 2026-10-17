@@ -4,6 +4,29 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **The director page's left column switches between recipes and assets.** The asset library could only be opened
+  from the **asset library** button inside the director editor, and closing it was a ✕ in its header — with no
+  switch on the column itself, dragging an asset into the editor meant hunting for that button. The left column
+  now carries a **📋 Recipes / 🖼 Assets** switch bar on top: "🖼 Assets" flips the column to the library,
+  "📋 Recipes" flips it back, and the bar stays highlighted when the editor's button opens or closes it. The
+  library header with its ✕ is gone — the switch bar is the one switch. `studio/tests/js/studio-director.test.mjs`
+  covers the bar opening and closing the library and following the editor button.
+
+- **The embedded director editor stays open after saving, and a finished film stays finished.** Saving on the
+  Studio director page (including "🎬 Save & Generate Film") closed the editor, so the pane the user was just
+  editing collapsed into the placeholder hint while the film ran below. Embedded saves now leave the editor in
+  place — closing is the title-bar **✕**, the footer **Cancel**, the dirty bar's "Save & close", or switching to
+  another recipe — and a successful save clears the unsaved mark, so **✕** closes without a confirm. The
+  generation panel status also flipped back to "Generating…" after the film finished: a poll request issued
+  before the terminal event landed after it carrying the stale running payload, so the progress bar and the
+  **Cancel** button came back, and clicking Cancel answered "任务已结束，无法取消". The panel now freezes on the
+  first terminal status (succeeded / failed / cancelled) and drops every non-terminal payload that lands later,
+  in both the status handler and the in-flight poll. Closing the editor left the dashed placeholder pane
+  holding the top half of the column, so the generation panel stayed at its splitter height under a strip of
+  empty dashed box; an empty editor host now collapses to zero and the panel fills the column (splitter
+  included), and reopening the editor restores the two-pane split. `studio/tests/js/studio-director.test.mjs`
+  covers the editor staying open after save and the terminal status surviving a late poll.
+
 - **Resizing the desktop window no longer flashes white.** Dragging a window edge runs the system size/move loop,
   where the WinForms Form and the `Dock=Fill` WebView2 control are resized together and the newly exposed client area
   is painted by their own backgrounds before the page composites. pywebview's `background_color` defaults to

@@ -83,6 +83,25 @@ body {
 .ns-director.ns-colsplit-drag { transition: none; user-select: none; }
 .ns-director-side, .ns-paint-side { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .ns-director-recipes { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* 左栏顶部切换条：配方列表 / 素材库二选一，样式照导演编辑器的页签（.neo-director-tab）——
+   未选中就是灰字，选中才落一枚浅底药丸，别在配方列表上方压出第二个视觉重心。
+   离顶留距：这一栏顶边就是窗口内容顶边，贴边会顶到窗口圆角。
+   编辑器「素材库」按钮开合抽屉时同步高亮 —— 状态就是左栏的 ns-lib-open，切换条不另存一份 */
+.ns-side-tabs { flex: none; display: flex; gap: 6px; padding: 8px 0; }
+.ns-side-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    cursor: pointer;
+    background: transparent;
+    color: #9aa4b0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+.ns-side-tab:hover { color: #ddd; background: rgba(255, 255, 255, 0.04); }
+.ns-side-tab.active { color: #fff; background: #2a2d33; border-color: #4a4d55; }
 /* 左栏 / 编辑器分隔条：18px 宽热区里一条竖线，悬停 / 键盘聚焦 / 拖动时加宽变蓝（照 VSCode 的 sash） */
 .ns-director-colsplit { position: relative; min-width: 0; cursor: col-resize; user-select: none; }
 .ns-director-colsplit::after {
@@ -119,32 +138,12 @@ body {
    摘掉元素会让分隔条与主栏各左移一列（主栏落进 18px 那列）。visibility 保住槽位、0 宽裁掉内容 */
 .ns-director.ns-side-collapsed .ns-director-side,
 .ns-paint.ns-side-collapsed .ns-paint-side { visibility: hidden; }
-/* 素材库抽屉：导演编辑器「素材库」按钮把左栏从配方列表切成素材库，整栏加宽到画廊宽度，
-   右侧编辑器随 grid 让位（不遮挡编辑区），素材卡片直接拖进右侧首帧 / 参考位 */
+/* 素材库抽屉：左栏切换条「🖼 素材」或导演编辑器「素材库」按钮把左栏从配方列表切成素材库，
+   整栏加宽到画廊宽度，右侧编辑器随 grid 让位（不遮挡编辑区），素材卡片直接拖进右侧首帧 / 参考位 */
 .ns-director:has(.ns-lib-open) { --ns-side-w: 380px; }
 .ns-director-lib { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ns-director-side:not(.ns-lib-open) .ns-director-lib { display: none; }
 .ns-director-side.ns-lib-open .ns-director-recipes { display: none; }
-.ns-director-lib-head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 7px 8px 7px 14px;
-    border-bottom: 1px solid #333;
-}
-.ns-director-lib-title { font-size: 12px; color: #c8c8d4; }
-.ns-director-lib-close {
-    background: #2a2a2e;
-    border: 1px solid #444;
-    color: #cfcfd8;
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 12px;
-    cursor: pointer;
-}
-.ns-director-lib-close:hover { background: #33333a; }
 /* 宿主不留上内边距、左右 0，工具条用画廊侧栏原生的 -10px 负边距吃掉面板内边距：
    粘性栏贴齐宿主顶边与左右边，滚动内容不会从上方缝隙穿过去 */
 .ns-director-lib .ns-gallery-host { flex: 1 1 auto; min-height: 0; height: auto; overflow: auto; padding: 0 0 12px; }
@@ -176,6 +175,19 @@ body {
     font-size: 13px;
 }
 .ns-director-editor.ns-editor-open .ns-director-editor-hint { display: none; }
+/* 编辑器关掉后（右上没有内嵌面板）：宿主收成 0，虚线占位不再占住整栏，生成面板吃满整栏。
+   分隔条与它的收起态一并退场；编辑器回来时 :has 侧失效，面板高度交还给分隔条写的内联值。 */
+.ns-director-editor:not(.ns-editor-open) { flex: none; height: 0; }
+.ns-director-main:has(.ns-director-editor:not(.ns-editor-open)) .ns-director-split { display: none; }
+.ns-director-main:has(.ns-director-editor:not(.ns-editor-open)) .ns-gen-panel {
+    flex: 1 1 auto;
+    display: flex !important;   /* 面板被分隔条双击收起过，也要吃满整栏 */
+    height: auto !important;    /* 分隔条写的内联高度在整栏布局里作废 */
+}
+.ns-director-main:has(.ns-director-editor:not(.ns-editor-open)) .ns-gen-media-right .ns-gen-preview,
+.ns-director-main:has(.ns-director-editor:not(.ns-editor-open)) .ns-gen-media-right .ns-gen-live {
+    max-width: 1280px;   /* 整栏布局下面板高度不再等于 --ns-gen-h，预览按右栏宽度吃满 */
+}
 /* 分隔条：18px 宽热区里一条横线，悬停 / 键盘聚焦 / 拖动时加宽变蓝（照 VSCode 的 sash）；
    拖动调生成面板高度，双击收起 / 展开（收起后条上给出展开入口），键盘 ↑↓ 调高、Enter 收起 */
 .ns-director-split {

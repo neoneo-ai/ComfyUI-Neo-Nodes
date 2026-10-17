@@ -34,10 +34,11 @@ mockRoute("/neo_studio/director/generate", jsonResponse({
 mockRoute("/rs_recipes/save", () => jsonResponse({ success: true, name: "R1" }));
 // 任务快照路由：响应由 statusState 动态驱动（模拟 WS 事件丢失、终态只能靠轮询兜底拿到）
 const statusState = { status: "queued", progress: null, filename: null };
-mockRoute("/neo_studio/director/task-1", () => jsonResponse({
+const statusRoute = () => jsonResponse({
     success: true, task_id: "task-1", prompt_id: "p1", recipe: "R1", seed: -1,
     subfolder: "", error: "", created: 0, updated: 0, ...statusState,
-}));
+});
+mockRoute("/neo_studio/director/task-1", statusRoute);
 mockRoute("/userdata/neo_recipes_data.json", jsonResponse({}));
 mockRoute("/rs_recipes/list", jsonResponse([
     { name: "R1", type: "video_director", shared: { mode: "f2v" }, segments: [
@@ -132,13 +133,20 @@ test("Studio 导演页：点配方卡内嵌打开编辑器 + 「保存并生成�
     assert.ok(document.querySelector(".ns-director-editor .neo-director-panel").classList.contains("neo-director-embedded"));
     assert.ok(document.querySelector(".ns-director-editor").classList.contains("ns-editor-open"), "编辑器挂上后收起占位提示");
 
-    // 「🎬 保存并生成整片」：走完整保存路径，成功后由宿主提交整片生成并关掉编辑器
+    // 「🎬 保存并生成整片」：走完整保存路径，成功后由宿主提交整片生成
     const before = fetchLog.length;
+    const panel = document.querySelector(".ns-director-editor .neo-director-panel");
     click(document.querySelector(".neo-director-save-run"));
     await until(() => fetchLog.slice(before).some((c) => c.path === "/neo_studio/director/generate"), "保存后提交生成");
     const call = fetchLog.slice(before).find((c) => c.path === "/neo_studio/director/generate");
     assert.equal(call.body.recipe, "R1", "生成用刚保存的配方");
-    await until(() => !document.querySelector(".ns-director-editor .neo-director-panel"), "保存后关闭编辑器");
+    // 内嵌编辑器保存后留在原地：生成在下方面板跑，编辑界面不被抽走
+    await sleep(60);
+    assert.equal(document.querySelector(".ns-director-editor .neo-director-panel"), panel, "内嵌保存后编辑器不关闭");
+    assert.ok(document.querySelector(".ns-director-editor").classList.contains("ns-editor-open"), "保存后仍是编辑态");
+    // 保存已清脏态：标题栏 ✕ 直接关掉，不出未保存确认条
+    click(document.querySelector(".neo-director-close"));
+    await until(() => !document.querySelector(".ns-director-editor .neo-director-panel"), "✕ 关闭编辑器");
     assert.ok(!document.querySelector(".ns-director-editor").classList.contains("ns-editor-open"), "关闭后回到占位提示");
     await sleep(20);
 });
@@ -200,6 +208,44 @@ test("Studio 导演页：轮询拿到终态 → 停轮询 + 成片只替换一�
     await sleep(200);
     assert.equal(fetchLog.filter((c) => c.path === "/neo_studio/director/task-1").length, callsAtDone, "终态后轮询停止");
     assert.equal(document.querySelector("video.ns-gen-final"), video, "成片只替换一次");
+});
+
+test("Studio 导演页：终态落地后在途轮询的旧 running 载荷不得把界面拉回生成中", async () => {
+    await import("../../web/studio/studio-app.js");
+    location.hash = "#/director";
+    await until(() => document.querySelector(".ns-gen-panel"), "生成面板挂载");
+    await until(() => document.querySelector(".neo-recipes-card-selected .neo-recipes-card-name span")?.textContent === "R1", "配方自动选中");
+
+    // 快照路由慢 300ms 落地，且按请求时刻取状态：响应回来时 WS 终态早已落地，载荷是过期的 running
+    statusState.status = "running";
+    statusState.progress = { value: 20, max: 20 };
+    statusState.filename = null;
+    mockRoute("/neo_studio/director/task-1", async () => {
+        const stale = { ...statusState };
+        await sleep(300);
+        return jsonResponse({ success: true, task_id: "task-1", prompt_id: "p1", recipe: "R1", seed: -1, subfolder: "", error: "", created: 0, updated: 0, ...stale });
+    });
+    click(document.querySelector(".ns-gen-run"));
+    await until(() => (document.querySelector(".ns-gen-status").textContent || "").includes("生成中"), "轮询驱动生成中状态");
+    assert.equal(document.querySelector(".ns-gen-cancel").style.display, "", "生成中取消按钮可见");
+
+    // WS 终态先到：成片定格、停轮询
+    statusState.status = "succeeded";
+    statusState.progress = null;
+    statusState.filename = "NeoDirector/R1.mp4";
+    wsSend("rs.director.status", {
+        task_id: "task-1", prompt_id: "p1", recipe: "R1", seed: -1, subfolder: "",
+        filename: "NeoDirector/R1.mp4", status: "succeeded", progress: null, error: "", created: 0, updated: 0,
+    });
+    await until(() => document.querySelector("video.ns-gen-final"), "WS 终态出现成片播放器");
+
+    // 此刻在途的轮询（含 interval 已触发未响应的轮次）陆续带着旧的 running 落地：界面必须停在终态
+    await sleep(700);
+    assert.ok(document.querySelector("video.ns-gen-final"), "成片播放器留在原位");
+    assert.ok((document.querySelector(".ns-gen-status").textContent || "").includes("已完成"), "状态停在已完成");
+    assert.equal(document.querySelector(".ns-gen-cancel").style.display, "none", "取消按钮不得复活（复活后点下去只会拿到「任务已结束，无法取消」）");
+    assert.equal(document.querySelector(".ns-gen-progress").style.display, "none", "进度条不得复活");
+    mockRoute("/neo_studio/director/task-1", statusRoute);   // 慢路由只服务本用例，别拖慢后面的用例
 });
 
 test("Studio 导演页：WS 断档期间轮询 latest_preview 补帧（旧步号忽略）", async () => {
@@ -360,11 +406,17 @@ test("Studio 导演页：编辑器「素材库」按钮开合左栏素材库（�
     await until(() => !libOpen(), "再点收起素材库");
     assert.ok(!galleryIn(".ns-director-lib .ns-gallery-host"), "收起后画廊离开左栏宿主");
 
-    // 素材库标题栏的 ✕ 同样收起
-    click(btn);
-    await until(() => libOpen(), "再次开素材库");
-    click(lib().querySelector(".ns-director-lib-close"));
-    await until(() => !libOpen(), "✕ 收起素材库");
+    // 左栏顶部切换条：点「🖼 素材」开素材库、点「📋 配方」收起，高亮跟着左栏的 ns-lib-open
+    const tabRecipes = () => document.querySelector(".ns-side-tabs .ns-side-tab:first-child");
+    const tabLib = () => document.querySelector(".ns-side-tabs .ns-side-tab:last-child");
+    assert.ok(tabRecipes().classList.contains("active") && !tabLib().classList.contains("active"), "进页时切换条停在配方");
+    click(tabLib());
+    await until(() => libOpen(), "点切换条开素材库");
+    assert.ok(galleryIn(".ns-director-lib .ns-gallery-host"), "切换条开出的素材库挂上 Neo Gallery");
+    assert.ok(tabLib().classList.contains("active") && !tabRecipes().classList.contains("active"), "素材库打开时切换条高亮素材");
+    click(tabRecipes());
+    await until(() => !libOpen(), "点配方收起素材库");
+    assert.ok(!galleryIn(".ns-director-lib .ns-gallery-host"), "收起后画廊离开左栏宿主");
 
     // 切到素材页：素材库收起，画廊回到素材页宿主
     location.hash = "#/gallery";

@@ -285,7 +285,9 @@ function runSegmentTask(body, handlers = {}) {
  *  单例：已打开同一配方 → 忽略重复点击（但按 focusSeg 切换当前段）；已打开另一配方 → 关闭旧窗口并重新加载为该配方。
  *  focusSeg：打开时定位到该段（0 基；<0 表示不指定，保持默认第 1 段）。
  *  内嵌：Studio 注册过宿主（setDirectorEditorHost）或 opts.container 指定容器时，编辑器直接铺进容器，
- *  不建浮层窗口，也不带 ⛶ 放大 / 右下角缩放 / 标题栏拖动；宿主带 onSaveAndRun 时底部多出「保存并生成整片」。 */
+ *  不建浮层窗口，也不带 ⛶ 放大 / 右下角缩放 / 标题栏拖动；宿主带 onSaveAndRun 时底部多出「保存并生成整片」。
+ *  内嵌保存成功后编辑器留在原地（桌面端导演页上半栏就是它，保存即关等于把刚编辑的界面抽走）：
+ *  关闭只由标题栏 ✕ / 底部 取消 / 确认条「保存并关闭」触发，切到别的配方时由单例重载路径关掉。 */
 export async function openDirectorEditor(existing = null, onSaved = null, focusSeg = -1, opts = null) {
     const requestedName = (existing && existing.name) || '';
     const hostNode = opts?.node || null;   // 从节点打开时带上节点：重生成用它取连续性/窗口/节点 id
@@ -1271,16 +1273,19 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     const saveBtn = $el('button', { className: 'rs-btn neo-director-save', textContent: t('保存') });
     const cancelBtn = $el('button', { className: 'rs-btn neo-director-cancel', textContent: t('取消'), onclick: requestClose });
     let runAfterSave = false;   // 「保存并生成整片」置位：本次保存成功后交给宿主提交生成
+    let closeAfterSave = false; // 确认条「保存并关闭」置位：关闭请求撞上未保存修改时，保存成功后才关
     // 未保存修改确认条（同自动增强菜单 rs-gen-dirty-confirm 模式）：「保存并关闭」复用完整保存路径，失败则留在窗口内重试
     const dirtyConfirm = $el('div', { className: 'neo-director-dirty-confirm' }, [
         $el('span', { className: 'neo-director-dirty-text', textContent: t('⚠ 有未保存的修改') }),
-        $el('button', { className: 'rs-btn neo-director-dirty-save', type: 'button', textContent: t('💾 保存并关闭'), onclick: () => saveBtn.onclick() }),
+        $el('button', { className: 'rs-btn neo-director-dirty-save', type: 'button', textContent: t('💾 保存并关闭'), onclick: () => { closeAfterSave = true; saveBtn.onclick(); } }),
         $el('button', { className: 'rs-btn neo-director-dirty-discard', type: 'button', textContent: t('放弃修改'), onclick: close }),
         $el('button', { className: 'rs-btn neo-director-dirty-keep', type: 'button', textContent: t('继续编辑'), onclick: () => { dirtyConfirm.hidden = true; } }),
     ]);
     dirtyConfirm.hidden = true;
 
     saveBtn.onclick = async () => {
+        const closeWhenSaved = closeAfterSave;   // 只认这一次点击：保存失败不该把关闭请求留到下一次保存
+        closeAfterSave = false;
         const name = nameInp.value.trim();
         if (!name) { app.extensionManager.toast.add({ severity: 'error', summary: t('多段导演'), detail: t('请填写配方名称'), life: 4000 }); return; }
         const gMode = modeSel.value;   // 'f2v' | 'r2v' | 'mixed'
@@ -1417,7 +1422,15 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             }, "video");
             if (result.success) {
                 app.extensionManager.toast.add({ severity: 'success', summary: t('多段导演已保存'), detail: tf("{name}（{n} 段）", { name, n: segments.length }), life: 4000 });
-                close();
+                // 内嵌保存后编辑器留在原地：桌面端导演页上半栏就是它，保存即关等于把刚编辑的界面抽走。
+                // 关闭只由 ✕ / 取消 / 「保存并关闭」触发；切到别的配方由单例重载路径关掉。
+                if (embedded && !closeWhenSaved) {
+                    dirty = false;
+                    dirtyConfirm.hidden = true;
+                    if (_directorEditor && _directorEditor.close === close) _directorEditor.name = name;   // 新建配方落名：再点同一张卡只切段，不重载
+                } else {
+                    close();
+                }
                 // 广播配方已落盘：节点内时间轴据此刷新下拉 + 重载 spec。created=true 表示新建，供节点自动选中刚保存的配方。
                 window.dispatchEvent(new CustomEvent(DIRECTOR_RECIPE_SAVED_EVENT, { detail: { name, created: !existing } }));
                 if (typeof onSaved === 'function') onSaved();

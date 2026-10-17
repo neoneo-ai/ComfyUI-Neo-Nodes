@@ -121,12 +121,17 @@ onSidebarTabChange((id) => {
 
 // ====== 导演页：整片生成面板 + 配方列表 ======
 let genState = null;   // 当前整片任务 {task_id, statusEl, barEl, runBtn, cancelBtn}
+const GEN_TERMINAL = ["succeeded", "failed", "cancelled"];
 
 function updateGenStatus(task) {
     if (!genState || task.task_id !== genState.task_id) return;
+    // 终态之后落地的旧载荷（在途轮询 / 迟到 WS）不得把界面拉回生成中：进度条与取消按钮会复活，
+    // 用户点下去只会拿到「任务已结束，无法取消」
+    if (genState.terminal && !GEN_TERMINAL.includes(task.status)) return;
     const { statusEl, barEl, fillEl } = genState;
     // 终态：定格预览 / 时间轴清掉段状态（停轮询在 WS / 轮询两条事件路径里做，闭包可见 stopPolling）
-    if (["succeeded", "failed", "cancelled"].includes(task.status)) {
+    if (GEN_TERMINAL.includes(task.status)) {
+        genState.terminal = true;   // 界面就此定格，后续旧载荷一律作废
         genState.livePlayer?.pause();
         genState.onTerminal?.();
     }
@@ -315,18 +320,15 @@ function buildSideColSplit(page, side, key = SIDE_COL_KEY, min = SIDE_COL_MIN) {
     return { el: split, apply, expand };
 }
 
-// ====== 左栏素材库抽屉：导演页 / 绘画页同款（Studio 没有 ComfyUI 侧栏，media-transfer 写 sidebarTab 落到这里）。
-// 左栏随整栏加宽，右侧让位不遮挡编辑区；素材卡片直接拖进右侧的首帧 / 参考位 / 参考图区 ======
+// ====== 左栏切换条 + 素材库抽屉：导演页左栏在配方列表与素材库之间切换（Studio 没有 ComfyUI 侧栏，
+// media-transfer 写 sidebarTab 落到这里）。左栏随整栏加宽，右侧让位不遮挡编辑区；
+// 素材卡片直接拖进右侧的首帧 / 参考位 / 参考图区 ======
 function buildLibDrawer(side, sideCol, view) {
     const libHost = $el("div", { className: "ns-gallery-host" });
-    const libClose = $el("button", { className: "ns-director-lib-close", type: "button", title: t("收起素材库"), textContent: "✕" });
-    side.appendChild($el("div", { className: "ns-director-lib" }, [
-        $el("div", { className: "ns-director-lib-head" }, [
-            $el("span", { className: "ns-director-lib-title", textContent: t("🗂 素材库") }),
-            libClose,
-        ]),
-        libHost,
-    ]));
+    const tabRecipes = $el("button", { className: "ns-side-tab", type: "button", title: t("切回配方列表"), textContent: t("📋 配方") });
+    const tabLib = $el("button", { className: "ns-side-tab", type: "button", title: t("打开素材库，素材卡片直接拖进右侧编辑器"), textContent: t("🖼 素材") });
+    side.prepend($el("div", { className: "ns-side-tabs" }, [tabRecipes, tabLib]));
+    side.appendChild($el("div", { className: "ns-director-lib" }, [libHost]));
     const closeLib = () => {
         if (!side.classList.contains("ns-lib-open")) return;
         side.classList.remove("ns-lib-open");
@@ -341,7 +343,15 @@ function buildLibDrawer(side, sideCol, view) {
         if (galleryMountHost === libHost) return;
         mountGalleryKeepDir(libHost);
     };
-    libClose.onclick = closeLib;
+    tabRecipes.onclick = closeLib;
+    tabLib.onclick = openLib;
+    // 编辑器「素材库」按钮与切页都直接开合抽屉，切换条跟着左栏这一类走，不另存一份状态
+    new MutationObserver(() => {
+        const open = side.classList.contains("ns-lib-open");
+        tabLib.classList.toggle("active", open);
+        tabRecipes.classList.toggle("active", !open);
+    }).observe(side, { attributes: true, attributeFilter: ["class"] });
+    tabRecipes.classList.add("active");
     libDrawers[view] = { open: openLib, close: closeLib };
 }
 
@@ -478,7 +488,7 @@ async function buildDirector(el) {
         if (!detail || !detail.task_id) return;
         updateGenStatus(detail);
         // 终态即停轮询（WS 与下方轮询兜底两条路都覆盖，否则轮询拿到终态后会永远跑下去）
-        if (["succeeded", "failed", "cancelled"].includes(detail.status)) stopPolling();
+        if (GEN_TERMINAL.includes(detail.status)) stopPolling();
     }
 
     // 提交整片生成：「生成整片」按钮与编辑器底部「🎬 保存并生成整片」共用同一份参数组装。
@@ -519,7 +529,7 @@ async function buildDirector(el) {
         genState = {
             task_id: data.task_id, statusEl, barEl, fillEl: barEl.firstElementChild,
             runBtn, cancelBtn, mediaRight, pollTimer: null, previewListener: null,
-            done: false, lastPreviewStep: 0,   // done：成片只替换一次；lastPreviewStep：预览帧按步号单调推进（WS / 轮询同源）
+            done: false, terminal: false, lastPreviewStep: 0,   // done：成片只替换一次；terminal：终态已落地，旧载荷一律作废；lastPreviewStep：预览帧按步号单调推进（WS / 轮询同源）
             livePlayer,   // 终态时定格在最后一帧
             onTerminal: () => { tlProgress = { active: false, segment_index: -1, total_segments: 0 }; renderSegs(); },
         };
@@ -545,9 +555,11 @@ async function buildDirector(el) {
             try {
                 const r = await api.fetchApi(`/neo_studio/director/${data.task_id}`);
                 const t = await r.json();
+                // 终态由 WS 先到时，这次在途轮询的旧载荷不得把界面拉回生成中（进度条 / 取消按钮 / 段高亮会复活）
+                if (!genState || genState.terminal) return;
                 if (t?.success) {
                     updateGenStatus(t);
-                    if (["succeeded", "failed", "cancelled"].includes(t.status)) stopPolling();
+                    if (GEN_TERMINAL.includes(t.status)) stopPolling();
                     applyPreview(t.latest_preview);   // 轮询兜底：WS 断档期间没有帧，取后端最新一帧
                 }
                 // 分段进度：与画布节点同源，高亮分段勾选条上正在跑的段

@@ -170,7 +170,10 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
   pane (the recipe list stays in the left column, the generation panel below), with no overlay window — no
   title-bar dragging, no **⛶** maximize, no resize handle; close with the title-bar **✕**. The footer gains
   **🎬 Save & Generate Film**: it runs the full save path and, on success, submits the film with the parameters
-  just saved into the recipe plus the segments checked in the generation panel. See [studio-desktop.md](studio-desktop.md).
+  just saved into the recipe plus the segments checked in the generation panel. An embedded save leaves the
+  editor open (the film runs in the pane below); closing is the **✕**, **Cancel**, or the dirty bar's
+  "Save & close". With no editor open the top-right pane takes no space and the generation panel fills the
+  column. See [studio-desktop.md](studio-desktop.md).
 - **🤖 LLM config** on the right of the title bar opens the embedded LLM configuration form (values are
   backfilled in the background on open, 💾 writes them out).
 - The **recipe name** shows in the middle of the title bar; clicking turns it into inline input, Enter or blur

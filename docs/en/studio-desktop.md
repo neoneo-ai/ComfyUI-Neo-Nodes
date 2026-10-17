@@ -82,21 +82,28 @@ the unsaved content of the director editor and the settings forms, and a cross-o
 
 The director page is a **360px recipe list** in the left column (director recipes only) plus a right main column
 split into two panes: **top = the director editor**, **bottom = the film generation panel**, with a
-**splitter** between them. Opening the asset library switches the whole left column to it (widened to 380px).
+**splitter** between them. A **📋 Recipes / 🖼 Assets** switch bar on top of the left column flips that column
+between the recipe list and the asset library (widened to 380px), so assets are one click away while editing.
 
 - The director editor is embedded in Studio (`setDirectorEditorHost` registers the host): it fills the
   top-right pane with no overlay window, so title-bar dragging / ⛶ maximize / the resize handle do not appear.
   The main canvas (the ComfyUI page) registers no host, so the editor stays an overlay window there.
-- With no editor open the top-right pane shows a placeholder. **Clicking a left-column recipe card selects it
+  An embedded save (including **🎬 Save & Generate Film**) leaves the editor **in place** — the film runs in the
+  pane below and the editor the user was just editing is not pulled away. Closing is the title-bar **✕**, the
+  footer **Cancel**, the dirty bar's "Save & close", or switching to another recipe (the singleton reload path).
+- With no editor open the top-right pane **takes no space**: it collapses to zero, the dashed placeholder no
+  longer blocks the layout, and the generation panel fills the whole column (the splitter steps out);
+  reopening the editor returns to the top/bottom split. **Clicking a left-column recipe card selects it
   and opens it embedded** (clicking the same card again only switches the current segment, so unsaved edits
   survive), and "🎬 New director recipe" on the gallery page switches to the director page and opens it embedded.
-- The **asset library** button inside the director editor **switches the left column from the recipe list to the
-  asset library** (`.ns-director-lib`, the column widens to 380px). Studio has no ComfyUI left sidebar, so the shim
-  forwards `sidebarTab.activeSidebarTabId` writes to that column. The library is the same Neo Gallery the gallery
+- The **📋 Recipes / 🖼 Assets** switch bar on top of the left column is that column's switch: "🖼 Assets" turns
+  the whole column into the **asset library** (`.ns-director-lib`, the column widens to 380px), "📋 Recipes"
+  turns it back. The **asset library** button inside the director editor drives the same switch (Studio has no
+  ComfyUI left sidebar, so `media-transfer` writes `sidebarTab.activeSidebarTabId` and the shim forwards it to
+  that column), and the switch bar follows the button's open / close. The library is the same Neo Gallery the gallery
   page uses (one element moved between the two hosts, wide styling), breadcrumbs and directory navigation work
   there, and cards drag straight into the editor's first-frame / reference slots. The widening is driven by the
-  grid column, so the editor gives way instead of being covered. Clicking the same button again switches back to
-  the recipe list, so does the library's ✕, and leaving the director page closes it automatically.
+  grid column, so the editor gives way instead of being covered. Leaving the director page closes it automatically.
 - Splitter: drag to resize the generation panel (editor floor 240px, panel floor 90px), double-click to
   collapse / expand the panel, `↑`/`↓` resize and `Enter` collapses from the keyboard. Height and collapsed
   state live in `localStorage["neo_studio_director_split"]`. Dragging the panel taller or shorter stretches the
@@ -128,7 +135,10 @@ split into two panes: **top = the director editor**, **bottom = the film generat
   end of that row, collapsed by default (collapsed values still apply — saving reads them).
 - **🎬 Save & Generate Film** in the editor footer and **🎬 Generate Film** in the panel submit the same way:
   after a successful save the film is submitted with the parameters just saved in the recipe plus the checked
-  segments.
+  segments, and the editor stays open.
+- The generation status freezes on the first terminal status (succeeded / failed / cancelled): a payload issued
+  before the terminal event and landing after it is dropped, so the progress bar and **⏹ Cancel** never come
+  back (cancelling a finished task only answers "任务已结束，无法取消").
 - Narrow windows shrink the left column first (340px below 1180px); below 900px the columns stack. The default
   width is wide enough for the recipe header row ("Recipe ↻ 📦 Import 🎬 New director recipe") to stay on one line.
 
