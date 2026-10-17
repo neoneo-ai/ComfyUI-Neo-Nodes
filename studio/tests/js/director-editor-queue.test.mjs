@@ -305,6 +305,8 @@ test("导演编辑器：段行 ♻ 单段生成 → 提交队列 + 轮询进度 
     panel.querySelector(".neo-director-regen-cancel").click();
     await sleep(20);
     assert.equal(cancelled, 1, "点取消调 /cancel");
+    // 「已取消」要等下一拍轮询取到 cancelled 才写：20ms 时本机已落定、CI 上还是「已请求取消…」，只断言落定态
+    await sleep(400);
     assert.match(panel.querySelector(".neo-director-regen-status").textContent, /已取消/);
 
     document.querySelector(".neo-director-close")?.click();
