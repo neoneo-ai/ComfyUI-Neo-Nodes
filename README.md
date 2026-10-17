@@ -108,9 +108,13 @@ is just deleting the plugin dir). Commands, parameters and release switches:
 [docs/en/release.md](docs/en/release.md).
 
 > **Upgrading from the old package**: the Registry package moved from `comfyui-neo-nodes` to
-> `comfyui-neo-studio`. Delete `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` before installing the new one —
-> keeping both directories registers the same nodes twice. User data does not live in the plugin
-> directory, so removing the old folder touches no data.
+> `comfyui-neo-studio`, and nothing disables the old folder for you — the plugin sync only writes
+> `comfyui-neo-studio`. Delete `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` (or rename it to
+> `ComfyUI-Neo-Nodes.disabled`, which ComfyUI skips) before installing the new one: keeping both directories
+> registers the same nodes twice. Installs from 1.2.0 on keep user data outside the plugin directory, so
+> removing the old folder touches no data. The pre-1.2.0 plugin kept `configs/`, `gallery/`, `prompts/`,
+> `recipes/`, `skills/` and `locals/` inside its own folder and there is no migration — copy those into the
+> data root first.
 
 </details>
 

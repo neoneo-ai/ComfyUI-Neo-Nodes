@@ -139,9 +139,13 @@ git clone https://github.com/neoneo-ai/neo-studio.git ComfyUI/custom_nodes/comfy
 数据根指针（用户数据在插件目录之外，卸载只删插件目录）。命令、参数与发布开关见
 [docs/release.md](docs/release.md)。
 
-> **从旧版升级**：包名从 `comfyui-neo-nodes` 换成 `comfyui-neo-studio`。先删掉
-> `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes` 再装新包——两个目录同时存在会把同一批节点注册两遍。
-> 用户数据不在插件目录里，删旧目录不动数据。
+> **从旧版升级**：包名从 `comfyui-neo-nodes` 换成 `comfyui-neo-studio`，新版**不会**自动禁用旧插件——
+> 桌面端同步只写 `comfyui-neo-studio`，旧目录留着就继续加载。先删掉
+> `ComfyUI/custom_nodes/ComfyUI-Neo-Nodes`（或改名成 `ComfyUI-Neo-Nodes.disabled`，ComfyUI 会跳过
+> `*.disabled`）再装新包——两个目录同时存在会把同一批节点注册两遍，节点菜单里每个 Neo 节点出现两次。
+> 1.2.0 起的安装把用户数据放在插件目录之外，删旧目录不动数据；1.2.0 之前的旧插件把
+> `configs/`、`gallery/`、`prompts/`、`recipes/`、`skills/`、`locals/` 存在自己目录里，且没有迁移代码，
+> 先把这些目录拷进数据根（源码运行是仓库里的 `data/`，exe 是 exe 旁的 `data/`）再删。
 
 </details>
 

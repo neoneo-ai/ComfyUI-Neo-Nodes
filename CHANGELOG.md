@@ -6,6 +6,15 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [1.3.0] - 2026-10-17
 
+- **Upgrading from `comfyui-neo-nodes`: disable the old folder yourself.** Nothing in this release touches
+  `custom_nodes/ComfyUI-Neo-Nodes` — the plugin sync only writes `custom_nodes/comfyui-neo-studio`, and the old
+  package keeps loading next to it, so every Neo node registers twice and shows up twice in the node menu.
+  Delete the old folder, or rename it to `ComfyUI-Neo-Nodes.disabled` (ComfyUI skips `*.disabled`). Data: the
+  pre-1.2.0 plugin kept `configs/`, `gallery/`, `prompts/`, `recipes/`, `skills/` and `locals/` inside its own
+  directory, and there is no migration code — copy those folders into the new data root (`data/` in the repo for
+  a source run, `data/` next to the exe) before deleting the old folder, or the old data goes with it. Installs
+  from 1.2.0 on already keep user data outside the plugin directory, so deleting the old folder touches nothing.
+
 - **Backyard OSS config save round-trips.** The config form threw `inputs[key].select is not a function` on load
   and saved nothing: field type was probed with `typeof inputs[key] === "object"`, and every `HTMLInputElement`
   carries a `select()` method, so the plain text fields matched as combo objects and the directory combos matched
