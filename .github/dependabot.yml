@@ -17,6 +17,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # jsdom 30.1.x 改了挂载后的焦点语义：skill-manager 的 3 个内嵌编辑用例
+      # （canvas 挂载后拿焦点、快捷键打在内嵌子图、IME 搜索框）在 CI 里连锁失败。
+      # 要升就得先把这 3 个用例的焦点时序一起改掉。
+      - dependency-name: jsdom
+        versions: ["30.1.x"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
