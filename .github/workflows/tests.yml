@@ -1,0 +1,49 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  plugin:
+    name: Kernel plugin tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # studio/tests 自带 comfy 桩（studio/tests/_comfy_api_bootstrap.py），进程里没有 ComfyUI。
+      # 只装模块作用域真用到的库：torch 走 CPU wheel，av 自带 FFmpeg；laya / pillow-heif / oss2
+      # 是入口可选导入，缺包时功能自行降级，不进 CI 依赖。
+      - name: Install test deps
+        run: |
+          pip install pytest PyYAML openai pypinyin Pillow aiohttp av
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: pytest studio/tests
+        run: python -m pytest -q studio/tests
+
+  frontend:
+    name: Frontend golden tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: npm ci
+        run: npm ci
+
+      # npm test 自带 --test-force-exit：建节点留下的 setInterval 会把 runner 挂在 pending timer 上。
+      - name: npm test
+        run: npm test
