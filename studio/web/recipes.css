@@ -1944,6 +1944,35 @@
     flex: none;
 }
 
+/* 单段引导：新建配方落在时间线页时指路到故事板分镜（多段规划），有内容 / 多段后自动收起 */
+.neo-director-single-guide {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 4px;
+    padding: 6px 10px;
+    border: 1px dashed #3a3a3a;
+    border-radius: 6px;
+    color: #9a9a9a;
+    font-size: 12px;
+}
+
+.neo-director-single-guide-btn {
+    flex: none;
+    padding: 2px 8px;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    background: transparent;
+    color: #7aa2ff;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.neo-director-single-guide-btn:hover {
+    background: rgba(122, 162, 255, 0.14);
+    border-color: #7aa2ff;
+}
+
 .neo-director-tab {
     flex: none;
     cursor: pointer;

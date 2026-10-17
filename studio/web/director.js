@@ -345,6 +345,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     let continuitySharedChk = null; // 跨段连续性 shared.continuity：上下文窗口 + 身份继承
     let ctxSharedInp = null;        // 上下文帧 shared.context_frames：0 = 退回尾帧链入
     let ctxSharedWrap = null;       // 「上下文帧」字段组：连续性关掉时隐藏（关掉时该值不参与生成）
+    let refreshSegScale = () => {}; // 段数一变就重算的显隐（分块秒数 / 单段引导 / 各段对照）：时间线面板建好后赋值，renumberSegs 里回调
 
     // 未保存修改标记：任何会改变落盘内容的操作置位；成功保存 / 关闭后清零。
     let dirty = false;
@@ -956,6 +957,7 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
             const lfRow = row.querySelector('.neo-director-lf-row');
             if (lfRow) lfRow.style.display = (i === rows.length - 1) ? '' : 'none';
         });
+        refreshSegScale();   // 段数一变：单段才收起的控件 / 单段引导立刻跟着切
     }
     // 只显示当前段（其余段保留 DOM，readSegData/保存仍读取全部数据）；时间轴同步把该块滚进可视区
     function showSeg(i) {
@@ -2067,7 +2069,9 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 「分块秒数」仅在统一技能支持多帧时显示（否则用户不该看到它）；混合模式 gSkillSel 池为空 → 隐藏
     const refreshChunkSecVisibility = () => {
         if (!chunkSecLabel || !chunkSecInp) return;
-        const show = !!(gSkillSel && multiFrameSkillIds.has(gSkillSel.value));
+        // 分块秒数只合并「连续的多段」：单段没有可合并对象，技能支持多帧也不该出现
+        const multiSeg = segsWrap.querySelectorAll('.neo-director-seg').length > 1;
+        const show = multiSeg && !!(gSkillSel && multiFrameSkillIds.has(gSkillSel.value));
         chunkSecLabel.style.display = show ? '' : 'none';
         chunkSecInp.style.display = show ? '' : 'none';
     };
@@ -2284,6 +2288,11 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     // 首次点优化前快照原文（origPrompts），之后重新点优化始终基于该原文再试、不叠加上一轮结果；
     // 两份快照随 setup 落盘，打开旧配方时回显。数据读时间轴各段行（唯一事实来源）。
     const setupSegPreview = $el('div', { className: 'neo-director-setup-segs' });
+    // 单段配方不走「各段对照 + 批量优化」那套多段工具：换成一行提示，指回时间线页填提示词
+    const setupSingleHint = $el('div', {
+        className: 'neo-director-setup-hint neo-director-single-story-hint',
+        textContent: t('单段配方：提示词在「🎞️ 分镜时间线」页底部填写；要拆成多段，用上面的「分镜来源」一次生成'),
+    });
     let segDragEl = null;      // band-2 对照表正在拖拽排序的项
     let segReordering = false; // 内部段排序拖拽进行中（抑制分镜图位的上传拖放）
     setupSegPreview.addEventListener('dragover', onSetupSegsDragOver);
@@ -2581,6 +2590,13 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
     srcTextSide.appendChild(textStack);
 
     // 📖 故事板分镜页：band 0 左来源右角色参考盒 → band 1 选中来源的卡（文字卡内右栏带图片分镜等）→ band 2 各段对照
+    // 「各段对照」标题行单独持有：单段配方整块收起（换成 setupSingleHint），段数一变就切
+    const setupOptRow = $el('div', { className: 'neo-director-setup-opt' }, [
+        stepOptBadge,   // ④ 提示词：分段 / 关键帧之后的最后一步
+        $el('label', { className: 'neo-director-field-label neo-director-story-segs-title', textContent: t('各段对照（重新生成基于原文再试）') }),
+        optStatus,
+        optBtn,
+    ]);
     const genPane = $el('div', { className: 'neo-director-pane neo-director-pane-story' }, [
         // band 0：左 = 分镜来源 radio；右 = 👤 角色参考图紧凑盒（标题 / 身份参考 / 素材库 + 网格都集成在盒内，只占顶部右侧，不再独占整行）
         $el('div', { className: 'neo-director-band neo-director-band-top' }, [
@@ -2595,12 +2611,8 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         // band 2：各段对照（文字来源三栏：分镜图 / 优化前 / 优化后；宫格来源两栏：分镜图 / 提示词）
         $el('div', { className: 'neo-director-band neo-director-band-segs' }, [
             // 「各段对照」标题行：优化按钮 + 状态靠本行最右（列名见下方表头），不独占一行
-            $el('div', { className: 'neo-director-setup-opt' }, [
-                stepOptBadge,   // ④ 提示词：分段 / 关键帧之后的最后一步
-                $el('label', { className: 'neo-director-field-label neo-director-story-segs-title', textContent: t('各段对照（重新生成基于原文再试）') }),
-                optStatus,
-                optBtn,
-            ]),
+            setupOptRow,
+            setupSingleHint,   // 单段：多段对照 + 批量优化没有意义，换成一行指引
             setupSegPreview,
         ]),
     ]);
@@ -2667,25 +2679,43 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         $el('div', { className: 'neo-director-mod-actions' }, [modBtn, modStatus]),
     ]);
 
+    // 单段引导：空白新建配方落在时间线页，一行指出「要拆多段去哪」；有内容 / 多段时自动收起
+    const singleSegGuide = $el('div', { className: 'neo-director-single-guide' }, [
+        $el('span', { textContent: t('只有一段：提示词写在下面的段落里即可。要从主题 / 宫格图一次拆成多段？') }),
+        $el('button', {
+            className: 'neo-director-single-guide-btn', type: 'button', textContent: t('📖 故事板分镜'),
+            onclick: () => switchTab('story'),
+        }),
+    ]);
     const timelinePane = $el('div', { className: 'neo-director-pane neo-director-pane-timeline' }, [
         // 一行装下「各段怎么生成」：生成模式 / 统一技能 / 分块秒数 / 分辨率；
         // 整片运行参数（种子 / 步数 / 连续性 / 上下文帧）收进行尾「高级参数」，默认不占这一行
         $el('div', { className: 'neo-director-row neo-director-shared' }, [
             $el('label', { textContent: t('生成模式') }), modeSel,
             gSkillLabel, gSkillSel,   // 统一技能：紧邻生成模式（混合模式隐藏）
-            chunkSecLabel, chunkSecInp,   // 分块秒数：仅统一技能支持多帧时显示（refreshChunkSecVisibility）
+            chunkSecLabel, chunkSecInp,   // 分块秒数：多段 + 统一技能支持多帧时显示（refreshSegScale）
             $el('label', { textContent: t('宽高比') }), aspectSel,
             $el('label', { textContent: t('百万像素') }), mpInp,
             resOut,
             advWrap,
         ]),
+        singleSegGuide,
         customRow,
         tlLabelRow,
         tlWrap,
         segsWrap,
         modRow,
     ]);
-    refreshChunkSecVisibility();   // 初始显隐：默认统一技能非多帧时隐藏「分块秒数」
+
+    // 段数一变就重算：单段配方只留「一段的时间线」，多段专属的两块（分块秒数 / 各段对照）自动让位
+    refreshSegScale = () => {
+        const single = segsWrap.querySelectorAll('.neo-director-seg').length === 1;
+        refreshChunkSecVisibility();   // 内部已按段数判断（单段不分块）
+        singleSegGuide.style.display = (single && !existing) ? '' : 'none';   // 只在空白新建时指路，编辑已有配方不啰嗦
+        setupOptRow.style.display = single ? 'none' : '';
+        setupSingleHint.style.display = single ? '' : 'none';
+        setupSegPreview.style.display = single ? 'none' : '';
+    };
 
     const tabStory = $el('button', { className: 'neo-director-tab', type: 'button', textContent: t('📖 故事板分镜') });
     const tabTimeline = $el('button', { className: 'neo-director-tab', type: 'button', textContent: t('🎞️ 分镜时间线') });
@@ -2698,13 +2728,14 @@ export async function openDirectorEditor(existing = null, onSaved = null, focusS
         if (n) lastTabByName.set(n, which);   // 记住当前页签：下次打开该配方落回此页
         if (which === 'story') renderSetupSegs();   // 切到故事板分镜页时刷新各段当前内容（含时间轴页的改动）
         else if (timeline) timeline.refresh();      // 切回时间轴时按真实宽度重绘 canvas
+        refreshSegScale();   // 页签也影响块级显隐（单段引导 / 各段对照只在本页有意义）
     }
     tabStory.onclick = () => switchTab('story');
     tabTimeline.onclick = () => switchTab('timeline');
     const tabBar = $el('div', { className: 'neo-director-tabs' }, [tabStory, tabTimeline]);
 
     const body = $el('div', { className: 'neo-director-body' }, [genPane, timelinePane]);
-    switchTab(lastTabByName.get(requestedName) || (existing ? 'timeline' : 'story')); // 优先落回上次打开时停的页签；无记忆时新建默认故事板分镜页、编辑默认分镜时间线页
+    switchTab(lastTabByName.get(requestedName) || 'timeline'); // 优先落回上次打开时停的页签；新建默认时间线页——单段最简单的那条路，故事板分镜留给多段规划
     const foot = $el('div', { className: 'neo-director-foot' }, [cancelBtn, saveBtn]);
     // 桌面端内嵌：底部直接给一枚「保存并生成整片」，走完整保存路径后由宿主提交生成
     if (saveAndRun) foot.appendChild($el('button', { className: 'rs-btn neo-director-save-run', type: 'button', textContent: t('🎬 保存并生成整片'), onclick: () => { runAfterSave = true; saveBtn.onclick(); } }));

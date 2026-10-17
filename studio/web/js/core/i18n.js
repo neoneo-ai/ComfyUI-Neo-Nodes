@@ -1296,6 +1296,8 @@ const EN = {
     "多帧单次块：{n} 段合并成一次 ref2va 运行（总时长 {total}s，各段分镜关键帧钉在起点）": "Multi-frame single-pass: {n} segments merged into one ref2va run ({total}s total, each segment's storyboard keyframe pinned at its start)",
     "统一决定各段模板与模型；混合模式下改为逐段选择": "Decides the template and model for every segment; in mixed mode it becomes a per-segment choice",
     "全参考模式：各段的参考素材（图 / 视频 / 音频，第一个参考视频即源视频）请到「🎞️ 分镜时间线」页逐段设置；可用「🎨 图片分镜」生成关键帧自动加入各段参考图": "Full-reference mode: set each segment's reference assets (image / video / audio — the first reference video is the source video) per segment on the “🎞️ Timeline” page. Keyframes from “🎨 Image storyboard” are added to each segment's reference images automatically.",
+    "只有一段：提示词写在下面的段落里即可。要从主题 / 宫格图一次拆成多段？": "One segment: just write the prompt in the segment below. Want to split a theme or a grid sheet into several segments at once?",
+    "单段配方：提示词在「🎞️ 分镜时间线」页底部填写；要拆成多段，用上面的「分镜来源」一次生成": "Single-segment recipe: write the prompt at the bottom of the “🎞️ Timeline” page; to split it into several segments, use “分镜来源 / storyboard source” above",
     "混合模式：技能与首帧/尾帧 / 参考素材请到「🎞️ 分镜时间线」页逐段设置": "Mixed mode: set skill and first/last frame / reference assets per segment on the “🎞️ Timeline” page",
     "✨ 生成所有分段的提示词": "✨ Generate prompts for all segments",
     "还没有分段，请先在故事板页拆分": "No segments yet — split them on the storyboard page first",

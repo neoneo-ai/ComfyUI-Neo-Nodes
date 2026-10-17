@@ -217,7 +217,15 @@ Execution details: [h3-video-gen.md](h3-video-gen.md).
 The editor's title bar carries two tabs: **📖 Storyboard** (character references / storyboard source /
 per-segment comparison) and **🎞️ Storyboard timeline** (generation mode / unified skill / chunk seconds +
 shared resolution + timeline + per-segment cards). On open it returns to the tab this recipe was last on; with
-no memory, a new recipe opens on the Storyboard page and an existing one opens on the timeline page.
+no memory it opens on the timeline page — a single-segment recipe (one image-to-video or full-reference clip) is
+just a timeline plus one prompt box. A blank new recipe shows a one-line guide at the top of the timeline page
+("split a theme or a grid sheet into several segments? → 📖 Storyboard") that switches tabs and disappears once a
+second segment exists.
+
+**A single-segment recipe only shows what one segment needs**: with one segment, "chunk seconds" is hidden (there
+is no second segment to merge) and the Storyboard page replaces the per-segment comparison table and its batch
+optimize button with a one-line hint (write the prompt at the bottom of the timeline page). Both come back as soon
+as a second segment exists.
 
 This page is laid out **① source / character media → ② segments → ③ keyframes → ④ prompts**, each step's title
 row carrying an index badge on the left (✓ done / highlighted your turn / dimmed a prerequisite is missing),

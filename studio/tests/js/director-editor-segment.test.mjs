@@ -738,17 +738,22 @@ test("导演编辑器：文字故事板一键生成分段填充时间轴", async
         ],
     }); });
 
-    await openDirectorEditor(null); // 新建：默认 📖 故事板分镜页
+    await openDirectorEditor(null); // 新建：默认 🎞️ 分镜时间线页（单段最简单那条路）
     await sleep(60);
 
-    // 页签结构：只有两个页签，新建默认落在「📖 故事板分镜」，时间轴页隐藏
+    // 页签结构：只有两个页签，新建默认落在「🎞️ 分镜时间线」，故事板分镜页隐藏
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
     assert.equal(tabs.length, 2, "两个页签");
     const tabStory = tabs.find((t) => t.textContent.includes("故事板分镜"));
     const tabTimeline = tabs.find((t) => t.textContent.includes("分镜时间线"));
     assert.ok(tabStory && tabTimeline, "两个页签齐全");
-    assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板分镜页");
-    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
+    assert.ok(tabTimeline.classList.contains("active"), "新建默认激活时间线页");
+    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none", "故事板分镜页默认隐藏");
+
+    // 往下断言的是故事板分镜页的结构：显式切过去
+    tabStory.click();
+    await sleep(20);
+    assert.ok(tabStory.classList.contains("active"), "点页签可切到故事板分镜页");
 
     // band 1 来源 radio 横排（与旧版一致）：宫格 / 文字二选一，下面只显示选中来源的那张卡
     const srcGroup = document.querySelector(".neo-director-src");
@@ -1081,18 +1086,23 @@ test("导演编辑器：新建配方无故事内容时 story 各字段为空（�
     assert.equal(saveCall.body.story.backgrounds, undefined, "未设置背景参考图时不回传 backgrounds");
 });
 
-test("导演编辑器：新建默认故事板分镜页，标题随主题输入实时同步（超 20 字截断），手动命名后不再覆盖", async () => {
+test("导演编辑器：新建默认时间线页；切到故事板分镜页输入主题，标题实时同步（超 20 字截断），手动命名后不再覆盖", async () => {
     const { openDirectorEditor } = await import("../../web/director.js");
     appState.graph = { _nodes: [] };
     mockRoute("/rs_prompts/skills", () => jsonResponse([{ id: "sk-a", name: "技能 A", gen_video: true }]));
 
-    // ① 新建：默认落在故事板分镜页，时间轴页隐藏
+    // ① 新建：默认落在时间线页（单段最简单那条路），故事板分镜页隐藏
     await openDirectorEditor(null);
     await sleep(60);
     const tabs = Array.from(document.querySelectorAll(".neo-director-tab"));
     const tabStory = tabs.find((t) => t.textContent.includes("故事板分镜"));
-    assert.ok(tabStory.classList.contains("active"), "新建默认激活故事板页");
-    assert.equal(document.querySelector(".neo-director-pane-timeline").style.display, "none", "时间轴页默认隐藏");
+    const tabTimeline = tabs.find((t) => t.textContent.includes("分镜时间线"));
+    assert.ok(tabTimeline.classList.contains("active"), "新建默认激活时间线页");
+    assert.equal(document.querySelector(".neo-director-pane-story").style.display, "none", "故事板分镜页默认隐藏");
+
+    // 主题输入在故事板分镜页：切过去再验证标题同步
+    tabStory.click();
+    await sleep(20);
 
     const ideaInp = document.querySelector(".neo-director-story-idea");
     const nameInp = document.querySelector(".neo-director-name");

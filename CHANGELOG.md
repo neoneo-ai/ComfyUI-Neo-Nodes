@@ -28,6 +28,15 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
   a `popstate` listener. `studio/tests/js/studio-gallery-host.test.mjs` asserts the click is intercepted, the
   `gallery` parameter survives a tab switch, and the gallery stays in the directory it was left in.
 
+- **A single-segment recipe now opens on the timeline and hides the multi-segment controls.** A new director recipe
+  opened on the **📖 Storyboard** page, which is the multi-segment planning surface (source / theme / granularity /
+  per-segment comparison), even when the recipe held a single clip; the timeline row also showed **chunk seconds**,
+  which only merges consecutive segments. A new recipe now opens on **🎞️ Storyboard timeline**, a blank one shows a
+  one-line guide to the Storyboard page that disappears once a second segment exists, and with a single segment
+  "chunk seconds" is hidden while the Storyboard page replaces its per-segment comparison table and batch-optimize
+  button with a one-line hint. Adding a second segment brings both back.
+  `studio/tests/js/director-editor-single.test.mjs` covers the landing tab, the guide, and both single/multi states.
+
 - **A character-image directory now defaults to full reference when you build a director recipe from it.** In the
   asset library, multi-selecting images and clicking **🎬 New director recipe** always built one keyframe segment
   per image, so a three-view character sheet became a first frame and the video opened on the sheet. A directory

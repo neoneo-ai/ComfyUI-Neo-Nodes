@@ -561,7 +561,10 @@ test("导演编辑器：分块秒数仅在统一技能支持多帧时显示", as
     const existing = {
         name: "T",
         shared: { mode: "t2v", width: 1344, height: 768, seed: 0 },
-        segments: [{ skill_id: "sk-norm", prompt: "第一段", duration_sec: 5 }],
+        segments: [
+            { skill_id: "sk-norm", prompt: "第一段", duration_sec: 5 },
+            { skill_id: "sk-norm", prompt: "第二段", duration_sec: 5 },
+        ],
     };
     await openDirectorEditor(existing);
     await sleep(60);
@@ -591,6 +594,18 @@ test("导演编辑器：分块秒数仅在统一技能支持多帧时显示", as
     gSkillSel.dispatchEvent(new window.Event("change", { bubbles: true }));
     await sleep(20);
     assert.equal(chunkInp.style.display, "none", "切回非多帧技能：分块秒数重新隐藏");
+
+    // 单段不分块：没有可合并的第二段，多帧技能也不出现（单段配方只留「一段的时间线」）
+    gSkillSel.value = "sk-mf";
+    gSkillSel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await sleep(20);
+    [...document.querySelectorAll(".neo-director-seg-del")].pop().click();   // 删掉第二段
+    await sleep(20);
+    assert.equal(chunkInp.style.display, "none", "单段：多帧技能也不显示分块秒数");
+    assert.equal(chunkLabel.style.display, "none", "单段：标签一并隐藏");
+    document.querySelector(".neo-director-add").click();                     // 加回一段
+    await sleep(20);
+    assert.equal(chunkInp.style.display, "", "回到多段：分块秒数重新出现");
 
     document.querySelector(".neo-director-close")?.click();
     await sleep(20);
