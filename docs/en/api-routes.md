@@ -54,10 +54,14 @@ conversion depends on the optional `pillow-heif`.
 
 ## gallery_oss.py — Cloud presets
 
-The optional top-level `categories` in `index.json` maps remote directories into the read-only preset areas of the
-StoryBoard / CharacterSheet main directories; unclassified directories stay in the legacy **Cloud Presets** (an
-index without `categories` behaves exactly as before).
-Preset downloads are cached in `output/StoryBoard/presets/` and `output/CharacterSheet/presets/`.
+The cloud preset index is layered: `index.json` is a v2 master index carrying one entry per directory with
+`count` / `index` / `rev` / `covers`, and the full item list of a directory lives in the `<dir>/index.json`
+that entry points at, downloaded when the directory is opened. Directory indexes are cached in
+`gallery/oss_cache/<dir>/_index.json` (StoryBoard / CharacterSheet presets in their main dir's
+`presets/<dir>/_index.json`) and re-fetched only when the master's `rev` changes. The optional top-level
+`categories` maps remote directories into the read-only preset areas of the StoryBoard / CharacterSheet
+main directories; unclassified directories stay in the legacy **Cloud Presets**. A legacy full index whose
+entries carry `items` keeps working unchanged (counts and covers are derived from them).
 
 | Method | Route | Description |
 |------|------|------|

@@ -131,10 +131,16 @@ embedded ComfyUI workflow).
 ### Directory management
 
 - **One ordering table** - the "Manage Directories" dialog lists the built-in sections (Output / Input / local
-  bookmarks / Civitai bookmarks / Lora) together with custom directories in a single table, where the ⠿ handle
+  bookmarks / Civitai bookmarks / Lora), custom directories and the cloud preset directories (row label prefixed with
+  ☁) in a single table, where the ⠿ handle
   on a full row reorders the home-page cards; 👁 on each row hides / restores it (a hidden one is not listed in
-  the library), custom rows additionally have ✕ to remove (removed from the list only, no disk file is
+  the library, and a hidden cloud preset directory answers its deep link with nothing), custom rows additionally
+  have ✕ to remove (removed from the list only, no disk file is
   deleted); the row buttons (⚙ / 👁 / ✕) appear only while hovering that row.
+- **⟳ Refresh index** - a title-bar button that force re-downloads the cloud preset index
+  (`POST /neo_gallery/sync_oss`): directories published in the cloud show up on the home page and in this table at
+  once, without waiting for the local index cache to expire; the success toast reports the directory and item counts,
+  a failure reports the backend reason.
 - **⚙ on the Lora / Civitai bookmark rows** - the Civitai settings area (API KEY / proxy / sync directory
   picker) is hidden by default; clicking ⚙ on those rows expands it on the **right side** of the dialog, and
   clicking again collapses it; on the bookmark row, expanding focuses the API KEY box.

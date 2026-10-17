@@ -105,17 +105,35 @@ python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir>
 # --presets 可省略：默认使用当前工作目录（把新增/更新的目录放在该目录下即可）
 cd <dir_with_new_dirs> && python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
 
+# 分批发布：--draft 只写目录索引 <dir>/index.json，主索引不动，素材库还看不到；
+# --publish 把已写好的目录索引挂进主索引（不重扫素材），--category 决定它落在哪个板块。
+python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2 --draft --category grid
+python tools/gallery_preprocess.py --output <output_dir> --publish dir1 dir2 --category grid
+
+# 旧版整包索引拆成分层索引：--split-legacy 把带 items 的 index.json 拆成 <dir>/index.json + v2 主索引
+python tools/gallery_preprocess.py --output <output_dir> --split-legacy
+
 # 2. 部署：上传预处理产物到阿里云 OSS（需要 pip install oss2，
 #    凭证从环境变量 OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET / OSS_ENDPOINT 读取）
 python tools/gallery_deploy_oss.py --source <output_dir> --bucket <bucket> --prefix <prefix>
 ```
 
+预处理产物是分层的索引：`index.json` 是 v2 主索引（每个目录一条 `count` / `index` / `rev` / `covers`），
+每个目录的完整 items 在 `<dir>/index.json`，素材副本与缩略图在 `<dir>/`、`thumbnails/<dir>/`。
+部署脚本递归上传整个输出目录，目录索引随素材一起上传，`.json` 不带长缓存头，索引改动立刻生效。
 部署后的 OSS 源通过 `configs/oss_presets.json` 配置，运行时由 `gallery_oss.py` 拉取到 `gallery/oss_cache/`。
 
 Backyard 页面（`/neo-studio-backyard`）走同一套增量语义：预处理页的源目录按数据根解析，源目录内直接放素材
-（`data/gallery/presets/仙侠玄幻人物` 这种单个预设目录）时按增量处理；增量合并基准优先取
+（`data/gallery/presets_src/仙侠玄幻人物` 这种单个预设目录）时按增量处理；增量合并基准优先取
 `configs/oss_presets.json -> index_url` 的云端 `index.json`，拉不到才回退输出目录里的本地 `index.json`，
 所以本地从没跑过预处理也不会把云端其余目录冲掉。勾选「完成后上传 OSS」会在预处理后接着上传，
 ETag 相同的文件跳过；上传的 key 前缀会补尾部 `/`，前缀写成 `/neo/presets` 也对得上云端的
 `neo/presets/index.json`。上传写入新文件后会强刷一次素材库的云端索引缓存（与 `/neo_gallery/sync_oss`
 同源），新目录立刻出现在素材页；不刷的话要等 `sync_interval_hours`（默认 24 小时）缓存过期才看得见。
+素材库「Manage Directories」弹窗标题栏的「⟳ 刷新索引」走同一个接口，随时可以手动强刷这份云端索引缓存。
+
+上传页打开先列一份待上传清单（`GET /neo_backyard/upload_plan`）：每个目录的条目数、要传的文件数与体积，
+按云端主索引比对出「待上传」（云端没有这条）、「已更新待传」（`rev` 与云端不同，旧版整包索引没有 `rev`，
+重扫过的目录都算）、「未发布」（`--draft` 只写了目录索引，主索引还没这条）、「已同步」四种状态，
+汇总行给出待传的目录数、文件数与总字节；云端索引没缓存时全部按待上传列并说明无从比对。
+上传与预处理的输出走 SSE 逐行推送，进度条跟着每行 `[i/total]` 刷新，跑完清单自动重取一次。

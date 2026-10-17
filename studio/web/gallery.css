@@ -1605,6 +1605,27 @@ Accordion Section Buttons (Clear)
     color: #fff;
 }
 
+.neo-gallery-dir-modal-refresh {
+    flex: 0 0 auto;
+    background: #2c2f36;
+    color: #9aa4b0;
+    border: 1px solid #4a4d55;
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.neo-gallery-dir-modal-refresh:hover:not(:disabled) {
+    background: #383b43;
+    color: #fff;
+}
+
+.neo-gallery-dir-modal-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 /* Directory list area */
 .neo-gallery-dir-list-container {
     flex: 1;

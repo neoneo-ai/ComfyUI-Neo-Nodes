@@ -64,6 +64,14 @@ _stub("util",
       _load_settings=lambda *a, **k: {},
       _save_settings=lambda *a, **k: None,
       _json_safe=lambda v: v)
+async def _oss_none(*a, **k):
+    return None
+
+
+async def _oss_no_items(*a, **k):
+    return []
+
+
 _stub("gallery_oss",
       OSS_CATEGORY_PRESETS="presets",
       OSS_CATEGORY_GRID="grid",
@@ -71,14 +79,15 @@ _stub("gallery_oss",
       _is_oss_enabled=lambda: False,
       _load_oss_index_from_disk=lambda *a, **k: {},
       _fetch_oss_index=lambda *a, **k: None,
+      _oss_category_dirs=lambda *a, **k: [],
       _oss_directories_to_gallery_dirs=lambda *a, **k: [],
       _collect_oss_covers=lambda *a, **k: {},
       _handle_oss_gallery_list=lambda *a, **k: None,
-      _find_in_oss_index=lambda *a, **k: None,
-      _find_thumbnail_in_oss_index=lambda *a, **k: None,
+      _find_in_oss_index=_oss_none,
+      _find_thumbnail_in_oss_index=_oss_none,
       _download_oss_file=lambda *a, **k: None,
       _oss_dir_cards=lambda *a, **k: {},
-      _oss_dir_items=lambda *a, **k: [])
+      _oss_dir_items=_oss_no_items)
 _stub("gallery_lora",
       _lora_pending_subdirs=lambda *a, **k: [],
       _attach_lora_meta=lambda *a, **k: None,

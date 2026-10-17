@@ -4,6 +4,15 @@ Notable changes for Neo Studio. Versions are tagged `vX.Y.Z` and published to th
 
 ## [Unreleased]
 
+- **Cloud preset directories hide one by one, and the cloud index refreshes by hand.** Every cloud preset
+  directory is a home-page card of its own, and the cached `oss_cache/_index.json` was stamped fresh on every
+  launch (`_load_oss_index_from_disk()` resets the fetch clock), so directories published after the last sync
+  stayed invisible until `sync_interval_hours` expired. The Manage Directories dialog now lists each cloud
+  preset directory as a ☁ row with the same 👁 switch as the built-in sections — hidden by its card path
+  `Cloud Presets/<dir>`, which then answers its deep link with nothing — and the title-bar ⟳ 刷新索引 button
+  posts `/neo_gallery/sync_oss` to force re-download the index, so new cloud directories show up on the home
+  page and in the dialog without a restart. The local Presets card is not a hideable home entry.
+
 - **Cloud preset prompts copy the full text, not the preview.** The OSS preset index stores `txt_content` as a
   500-character preview (`parse_txt_preview(max_chars=500)` in `tools/gallery_preprocess.py`), so the lightbox
   提示词 panel and 复制提示词 of a cloud item stopped mid-sentence — `095_叛宗剑修` copied 500 of its 2044

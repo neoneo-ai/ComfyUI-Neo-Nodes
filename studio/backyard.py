@@ -75,47 +75,71 @@ def _key_prefix(prefix: str) -> str:
 
 # ====== SSE helper ======
 
+class _SseLineWriter:
+    """redirect_stdout 的落点：攒够一行就交给事件循环。run_fn 跑在工作线程，
+    线程里直接 put_nowait 不会唤醒循环上的 getter，所以走 call_soon_threadsafe。"""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue):
+        self._loop = loop
+        self._queue = queue
+        self._buf = ""
+
+    def write(self, text: str) -> None:
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, line + "\n")
+
+    def flush(self) -> None:
+        # print(end="") 留下的半行交给下一个换行：在这里吐会把一行进度劈成两行
+        pass
+
+    def finish(self) -> None:
+        if self._buf:
+            self._queue.put_nowait(self._buf + "\n")
+            self._buf = ""
+
+    def isatty(self) -> bool:
+        return False
+
+
 async def _sse_stream(response: web.StreamResponse, run_fn, done_event: asyncio.Event):
-    """将 run_fn 的 stdout 以 SSE 帧推送到前端，完成后发 done 帧。"""
-    import io
+    """将 run_fn 的 stdout 以 SSE 帧推送到前端，完成后发 done 帧。
+
+    run_fn 是同步阻塞的（扫素材、逐个文件传 OSS）。在事件循环线程里跑它，循环就没有
+    机会写帧，整段输出只能等任务结束一次性吐给前端 —— 上传进度就是这么丢的。"""
     import contextlib
 
+    loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
+    writer = _SseLineWriter(loop, queue)
 
     async def _runner():
-        buf = io.StringIO()
         try:
-            with contextlib.redirect_stdout(buf):
-                run_fn()
-            remaining = buf.getvalue()
-            if remaining:
-                for line in remaining.splitlines(keepends=True):
-                    queue.put_nowait(line)
+            with contextlib.redirect_stdout(writer):
+                await asyncio.to_thread(run_fn)
         except Exception as e:
             queue.put_nowait(f"[ERROR] {e}\n")
         finally:
+            writer.finish()
             done_event.set()
 
     runner_task = asyncio.create_task(_runner())
 
     try:
-        while True:
+        while not done_event.is_set():
             get_task = asyncio.ensure_future(queue.get())
             done_task = asyncio.ensure_future(done_event.wait())
-            done_task.add_done_callback(lambda _: get_task.cancel())
-            get_task.add_done_callback(lambda _: done_task.cancel() if not done_task.done() else None)
-
-            done, _ = await asyncio.wait([get_task, done_task], return_when=asyncio.FIRST_COMPLETED)
-            if done_event.is_set() and get_task.cancelled():
-                while not queue.empty():
-                    line = queue.get_nowait()
-                    payload = json.dumps({"msg": line}, ensure_ascii=False)
-                    await response.write(f"data: {payload}\n\n".encode())
-                break
+            done, pending = await asyncio.wait([get_task, done_task], return_when=asyncio.FIRST_COMPLETED)
+            # 循环上同时完成时，取到行的 get_task 会落进 pending：取消它就是丢掉一行进度
+            for task in pending:
+                task.cancel()
             if get_task in done:
-                line = get_task.result()
-                payload = json.dumps({"msg": line}, ensure_ascii=False)
+                payload = json.dumps({"msg": get_task.result()}, ensure_ascii=False)
                 await response.write(f"data: {payload}\n\n".encode())
+        while not queue.empty():
+            payload = json.dumps({"msg": queue.get_nowait()}, ensure_ascii=False)
+            await response.write(f"data: {payload}\n\n".encode())
     except (ConnectionResetError, asyncio.CancelledError):
         runner_task.cancel()
     finally:
@@ -213,6 +237,23 @@ def _load_existing_index(index_path: Path) -> dict | None:
     return None
 
 
+def _write_dir_index(out: Path, dir_name: str, entries: list) -> str:
+    """写目录级索引 <dir>/index.json，返回 rev（插件据此判断本地目录缓存是否过期）。"""
+    rev = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    payload = {"version": 2, "name": dir_name, "generated_at": rev, "items": entries}
+    path = out / dir_name / "index.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return rev
+
+
+def _master_entry(dir_name: str, entries: list, rev: str) -> dict:
+    """主索引条目：计数 + 目录索引路径 + rev + 卡片封面，不含 items。"""
+    covers = [{"filename": e["filename"], "thumbnail": e["thumbnail"]}
+              for e in entries if e.get("thumbnail")][:2]
+    return {"count": len(entries), "index": f"{dir_name}/index.json", "rev": rev, "covers": covers}
+
+
 def _oss_presets_config() -> dict:
     """云端预设源配置（configs/oss_presets.json）：index_url 是增量合并的基准。"""
     try:
@@ -278,7 +319,7 @@ def run_preprocess(source_dir: str, output_dir: str, size: int = 320, copy_media
             if existing:
                 print(f"  增量模式: 合并到已有 {len(existing['directories'])} 个目录")
 
-    index = {"version": 1, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "base_url": "", "directories": {}}
+    index = {"version": 2, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "base_url": "", "directories": {}}
     index["base_url"] = (existing.get("base_url") if existing else "") or str(oss_cfg.get("base_url", "")).strip()
 
     total_items = 0
@@ -348,7 +389,8 @@ def run_preprocess(source_dir: str, output_dir: str, size: int = 320, copy_media
 
             total_items += 1
 
-        index["directories"][dir_name] = {"name": dir_name, "items": dir_entries}
+        rev = _write_dir_index(out, dir_name, dir_entries)
+        index["directories"][dir_name] = _master_entry(dir_name, dir_entries, rev)
         print(f"  {len(dir_entries)} 个文件, {sum(1 for e in dir_entries if e['thumbnail'])} 张缩略图")
 
     # 增量合并：保留未触及的目录
@@ -466,6 +508,75 @@ def run_oss_upload(source_dir: str, cfg: dict, dry_run: bool = False) -> dict:
     return {"uploaded": uploaded, "skipped": skipped, "failed": failed, "total": total}
 
 
+# ====== Upload plan (待上传目录清单) ======
+
+def _cloud_master_index() -> dict | None:
+    """素材库缓存的云端主索引（gallery/oss_cache/_index.json）：不联网，上传页据此
+    判断哪些目录云端还没有。None = 云端索引从没同步过，无从比对。"""
+    from .gallery_oss import _load_oss_index_from_disk
+    index = _load_oss_index_from_disk()
+    if isinstance((index or {}).get("directories"), dict):
+        return index
+    return None
+
+
+def _dir_payload(out: Path, name: str) -> tuple[int, int]:
+    """一个目录要传的文件数与字节数：<dir>/ 素材 + 目录索引 + thumbnails/<dir>/。"""
+    files = 0
+    size = 0
+    for base in (out / name, out / "thumbnails" / name):
+        if not base.is_dir():
+            continue
+        for p in base.rglob("*"):
+            if p.is_file():
+                files += 1
+                size += p.stat().st_size
+    return files, size
+
+
+def build_upload_plan(out: Path) -> dict:
+    """逐目录列出待上传状态：云端主索引里没有、rev 与云端不同、本地主索引还没这条（--draft）。"""
+    master = _load_existing_index(out / "index.json") or {"directories": {}}
+    cloud_dirs = (_cloud_master_index() or {}).get("directories", {})
+    names = sorted(p.name for p in out.iterdir() if p.is_dir() and p.name != "thumbnails")
+
+    directories = []
+    pending_files = 0
+    pending_bytes = 0
+    for name in names:
+        entry = master["directories"].get(name) or {}
+        files, size = _dir_payload(out, name)
+        count = entry.get("count")
+        if count is None:
+            count = len(_dir_index_items(out / name / "index.json"))
+        if not entry:
+            state = "unpublished"
+        elif not cloud_dirs:
+            state = "pending"
+        elif not cloud_dirs.get(name):
+            state = "pending"
+        elif cloud_dirs[name].get("rev") != entry.get("rev"):
+            # 云端是旧版：v1 整包索引的条目没有 rev，v2 重扫过的目录 rev 对不上
+            state = "updated"
+        else:
+            state = "synced"
+        if state != "synced":
+            pending_files += files
+            pending_bytes += size
+        directories.append({"name": name, "count": int(count or 0), "files": files,
+                            "bytes": size, "state": state})
+
+    return {
+        "source_dir": str(out),
+        "cloud_known": bool(cloud_dirs),
+        "cloud_dirs": len(cloud_dirs),
+        "pending_dirs": sum(1 for d in directories if d["state"] != "synced"),
+        "pending_files": pending_files,
+        "pending_bytes": pending_bytes,
+        "directories": directories,
+    }
+
+
 # ====== Routes ======
 
 @routes.get("/neo-studio-backyard")
@@ -534,6 +645,18 @@ async def _fetch_cloud_index():
     return await _fetch_oss_index(force=True)
 
 
+@routes.get("/neo_backyard/upload_plan")
+async def upload_plan_route(request):
+    """上传页打开时先列出每个目录要传多少、云端有没有，再决定传不传。"""
+    source_dir = request.query.get("source_dir", "")
+    if not source_dir:
+        return web.json_response({"success": False, "error": "source_dir 不能为空"}, status=400)
+    out = _resolve_dir(source_dir)
+    if not out.is_dir():
+        return web.json_response({"success": False, "error": f"目录不存在: {out}"}, status=404)
+    return web.json_response({"success": True, **build_upload_plan(out)})
+
+
 @routes.post("/neo_backyard/upload")
 async def upload_route(request):
     body = await request.json()
@@ -571,6 +694,16 @@ async def upload_route(request):
     return response
 
 
+def _dir_index_items(path: Path) -> list:
+    """读目录级索引的 items；文件缺失就当空目录。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    items = data.get("items")
+    return items if isinstance(items, list) else []
+
+
 @routes.get("/neo_backyard/index")
 async def get_index_route(request):
     """返回当前输出目录的 index.json 摘要（已上传到 OSS 的数据）。"""
@@ -587,11 +720,16 @@ async def get_index_route(request):
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+    out_dir = index_path.parent
     dirs_summary = {}
     for name, info in (data.get("directories") or {}).items():
-        items = info.get("items", [])
+        items = info.get("items")
+        if items is None:
+            # v2 主索引只声明计数，图片/视频构成在目录自己的 index.json 里
+            items = _dir_index_items(out_dir / name / "index.json")
+        count = info.get("count")
         dirs_summary[name] = {
-            "count": len(items),
+            "count": len(items) if count is None else int(count),
             "images": sum(1 for i in items if i.get("type") == "image"),
             "videos": sum(1 for i in items if i.get("type") == "video"),
         }

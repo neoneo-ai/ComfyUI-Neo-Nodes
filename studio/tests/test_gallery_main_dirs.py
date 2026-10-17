@@ -201,12 +201,77 @@ class OssCategoryTests(unittest.TestCase):
         _oss._oss_index_cache = _CATEGORY_INDEX
         try:
             # 逐个目录在第一轮就命中，不会跨分类兜底扫描到别类的同名文件
-            self.assertEqual(_oss._find_in_oss_index("g.png", "已分类分镜", _oss.OSS_CATEGORY_GRID),
-                             "已分类分镜/g.png")
-            self.assertIsNone(_oss._find_in_oss_index("g.png", "已分类分镜", _oss.OSS_CATEGORY_CHARACTER))
-            self.assertIsNone(_oss._find_in_oss_index("g.png", "已分类分镜", _oss.OSS_CATEGORY_PRESETS))
+            async def _lookup(subdir, category):
+                return await _oss._find_in_oss_index("g.png", subdir, category)
+
+            self.assertEqual(asyncio.run(_lookup("已分类分镜", _oss.OSS_CATEGORY_GRID)), "已分类分镜/g.png")
+            self.assertIsNone(asyncio.run(_lookup("已分类分镜", _oss.OSS_CATEGORY_CHARACTER)))
+            self.assertIsNone(asyncio.run(_lookup("已分类分镜", _oss.OSS_CATEGORY_PRESETS)))
         finally:
             _oss._oss_index_cache = prev
+
+
+_V2_INDEX = {
+    "version": 2,
+    "base_url": "http://127.0.0.1:1/neo/presets",
+    "categories": {"StoryBoard": ["分镜目录"]},
+    "directories": {
+        "分镜目录": {
+            "count": 2,
+            "index": "分镜目录/index.json",
+            "rev": "R1",
+            "covers": [{"filename": "g.png", "thumbnail": "thumbnails/分镜目录/g.jpg"}],
+        },
+    },
+}
+
+
+class V2MasterIndexTests(unittest.TestCase):
+    """v2 主索引只声明目录元数据：计数来自 count，封面来自 covers，items 进目录才拉。"""
+
+    def setUp(self):
+        self.cache_dir = _oss._get_oss_cache_dir(_oss.OSS_CATEGORY_GRID)
+        self.cache_file = self.cache_dir / "分镜目录" / "_index.json"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.cache_file.unlink(missing_ok=True)
+
+    def _seed_cache(self, rev, items):
+        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_file.write_text(json.dumps(
+            {"version": 2, "name": "分镜目录", "generated_at": rev, "items": items},
+            ensure_ascii=False), encoding="utf-8")
+
+    def test_card_count_and_cover_come_from_master_entry(self):
+        self.assertEqual(_oss._oss_dir_cards(_V2_INDEX, _oss.OSS_CATEGORY_GRID),
+                         {"分镜目录": {"image_count": 2}})
+        dirs = _oss._oss_directories_to_gallery_dirs(_V2_INDEX, _oss.OSS_CATEGORY_GRID)
+        self.assertEqual(dirs[0]["root_count"], 2)
+        self.assertEqual(dirs[0]["items"], [])
+        covers = {}
+        _oss._collect_oss_covers(covers, _V2_INDEX, _oss.OSS_CATEGORY_GRID)
+        self.assertEqual(covers["StoryBoard/presets/分镜目录"][0]["filename"], "g.png")
+
+    def test_dir_items_use_cached_dir_index_when_rev_matches(self):
+        self._seed_cache("R1", [{"filename": "g.png", "type": "image", "mtime": 1, "txt_content": "全文"}])
+
+        async def _go():
+            return await _oss._oss_dir_items(_V2_INDEX, "分镜目录", "StoryBoard/presets",
+                                             _oss.OSS_CATEGORY_GRID)
+
+        items = asyncio.run(_go())
+        self.assertEqual(items[0]["txt_content"], "全文")
+        self.assertEqual(items[0]["subfolder"], "StoryBoard/presets/分镜目录")
+
+    def test_stale_dir_cache_is_not_served_as_current(self):
+        # rev 变了就是目录重传过：旧缓存里的条目不能当现在的目录内容用
+        self._seed_cache("OLD", [{"filename": "stale.png", "type": "image"}])
+
+        async def _go():
+            return await _oss._find_in_oss_index("g.png", "分镜目录", _oss.OSS_CATEGORY_GRID)
+
+        self.assertIsNone(asyncio.run(_go()))
 
 
 class MainDirListingTests(unittest.TestCase):
@@ -683,3 +748,92 @@ class HomeOrderListingTests(unittest.TestCase):
         gallery._load_settings = lambda: {"hidden_directories": ["Output"]}
         out = _payload(_call(gallery.get_gallery_list(_GetRequest({"dir_name": "Output"}))))
         self.assertEqual(out["directories"], [])
+
+    def _names(self, settings):
+        gallery._load_settings = lambda: settings
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs"}))))
+        return [d["name"] for d in out["directories"]]
+
+
+class CloudPresetHideTests(unittest.TestCase):
+    """云端预设目录逐卡隐藏：首页卡、板块子目录与深链都跟着首页隐藏开关走。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_oss_enabled = gallery._is_oss_enabled
+        cls._prev_load_index = gallery._load_oss_index_from_disk
+        cls._prev_fetch_index = gallery._fetch_oss_index
+        cls._prev_oss_fetch = _oss._fetch_oss_index
+        cls._prev_save_settings = gallery._save_settings
+        cls._prev_system_dirs = gallery._get_system_dirs
+        cls._prev_custom_dirs = gallery._get_user_custom_dirs
+        cls._prev_load_settings = gallery._load_settings
+        gallery._is_oss_enabled = lambda: True
+        gallery._load_oss_index_from_disk = lambda: _CATEGORY_INDEX
+
+        # gallery_oss 里的深链处理走模块自己的取索引函数，桩掉它才不会真去拉云端索引。
+        async def _index(force=False):
+            return _CATEGORY_INDEX
+        gallery._fetch_oss_index = _index
+        _oss._fetch_oss_index = _index
+        gallery._get_system_dirs = lambda: [
+            {"path": Path(_OUTPUT), "name": "Output", "read_only": True},
+            {"path": Path(_INPUT), "name": "Input", "read_only": True},
+        ]
+        gallery._get_user_custom_dirs = lambda: []
+
+    @classmethod
+    def tearDownClass(cls):
+        gallery._is_oss_enabled = cls._prev_oss_enabled
+        gallery._load_oss_index_from_disk = cls._prev_load_index
+        gallery._fetch_oss_index = cls._prev_fetch_index
+        _oss._fetch_oss_index = cls._prev_oss_fetch
+        gallery._save_settings = cls._prev_save_settings
+        gallery._get_system_dirs = cls._prev_system_dirs
+        gallery._get_user_custom_dirs = cls._prev_custom_dirs
+        gallery._load_settings = cls._prev_load_settings
+
+    def _names(self, settings):
+        gallery._load_settings = lambda: settings
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"fields": "dirs"}))))
+        return [d["name"] for d in out["directories"]]
+
+    def test_cloud_preset_card_hides_with_the_home_entry_switch(self):
+        base = {"civitai_lora_enabled": False}
+        self.assertIn("显式预设", self._names(base))
+        self.assertNotIn("显式预设", self._names({**base, "hidden_directories": ["Cloud Presets/显式预设"]}))
+
+    def test_cloud_presets_section_skips_hidden_dirs(self):
+        gallery._load_settings = lambda: {"hidden_directories": ["Cloud Presets/显式预设"]}
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"dir_name": "Cloud Presets"}))))
+        subdirs = out["directories"][0]["subdirs"]
+        self.assertNotIn("显式预设", subdirs)
+        self.assertIn("未分类", subdirs)
+
+    def test_hidden_cloud_preset_deep_link_returns_nothing(self):
+        gallery._load_settings = lambda: {"hidden_directories": ["Cloud Presets/显式预设"]}
+        out = _payload(_call(gallery.get_gallery_list(_GetRequest({"dir_name": "Cloud Presets/显式预设"}))))
+        self.assertEqual(out["directories"], [])
+
+    def test_home_order_carries_cloud_preset_tokens(self):
+        gallery._load_settings = lambda: {"home_order": ["Output"]}
+        order = gallery._get_home_order()
+        self.assertIn("Cloud Presets/显式预设", order)
+        self.assertIn("Cloud Presets/未分类", order)
+
+    def _save(self, payload):
+        saved = {}
+        gallery._load_settings = lambda: {"custom_directories": []}
+        gallery._save_settings = lambda s: saved.update(s)
+        _call(gallery.save_gallery_settings(_PostRequest(payload)))
+        return saved
+
+    def test_hidden_switch_persists_a_cloud_preset_token(self):
+        saved = self._save({"action": "set_hidden", "path": "Cloud Presets/显式预设", "hidden": True})
+        self.assertEqual(saved.get("hidden_directories"), ["Cloud Presets/显式预设"])
+
+    def test_reorder_keeps_cloud_preset_tokens_in_order(self):
+        saved = self._save({"action": "reorder",
+                            "paths": ["Cloud Presets/未分类", "Output", "Cloud Presets/显式预设"]})
+        self.assertEqual([t for t in saved.get("home_order", []) if t.startswith("Cloud Presets/")],
+                         ["Cloud Presets/未分类", "Cloud Presets/显式预设"])

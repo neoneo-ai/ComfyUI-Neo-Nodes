@@ -6,15 +6,21 @@
 #   python gallery_preprocess.py --presets <presets_dir> --output <output_dir> [--size 320]
 #   cd <dir_with_new_dirs> && python gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
 #       [--category grid|character]   (--presets omitted in incremental mode: cwd is used)
+#   python gallery_preprocess.py --output <output_dir> --publish dir1 dir2 [--category grid|character]
+#   python gallery_preprocess.py --output <output_dir> --split-legacy
 #
-# Without --dirs: full scan of all subdirectories, index.json is rebuilt from scratch.
+# Without --dirs: full scan of all subdirectories, the master index is rebuilt from scratch.
 # With --dirs DIR...: only those subdirectories are (re)scanned — new directories are added,
 #   existing ones updated (orphan thumbnails/copies pruned) — and merged into the latest
-#   index.json fetched from OSS (configs/oss_presets.json -> index_url), leaving other
+#   master index fetched from OSS (configs/oss_presets.json -> index_url), leaving other
 #   directories untouched. Use --no-fetch-index to merge into a local index.json instead.
+# --draft writes the directory indexes without publishing them in the master index;
+#   --publish publishes already written directory indexes later without rescanning media.
+#   --split-legacy converts a legacy full index.json into per-directory indexes.
 #
 # The output directory will contain:
-#   index.json          — full directory index with metadata
+#   index.json          — v2 master index: per-directory count / index path / rev / covers
+#   <subdir>/index.json — the full item list of that directory
 #   thumbnails/         — pre-generated JPEG thumbnails
 #   <subdir>/           — copies of media + txt files (ready for OSS upload)
 
@@ -164,25 +170,245 @@ def prune_directory(output_dir: Path, dir_name: str, keep_files: set[str], keep_
                     f.unlink(missing_ok=True)
 
 
-def scan_presets_directory(presets_dir: Path, output_dir: Path, thumb_size: int, copy_media: bool, only_dirs=None):
-    """Scan presets directory and build index + thumbnails.
+def _stamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    only_dirs: list of subdirectory names to (re)scan; None means full scan."""
-    index = {
-        "version": 1,
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "base_url": "",
-        "directories": {},
+
+def write_dir_index(output_dir: Path, dir_name: str, entries: list[dict]) -> str:
+    """Write <dir>/index.json — the item index of one directory — and return its rev stamp.
+
+    rev 是插件判断本地目录缓存是否过期的依据：主索引里的 rev 与目录索引里的 generated_at
+    对不上才重新下载，否则每次进目录都白拉一份几百 KB 的 items。"""
+    rev = _stamp()
+    payload = {"version": 2, "name": dir_name, "generated_at": rev, "items": entries}
+    path = output_dir / dir_name / "index.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    return rev
+
+
+def load_dir_index(output_dir: Path, dir_name: str) -> tuple[list[dict], str] | None:
+    """Read a written <dir>/index.json as (items, rev); None when missing or malformed."""
+    path = output_dir / dir_name / "index.json"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data.get("items"), list):
+        return None
+    return data["items"], str(data.get("generated_at", ""))
+
+
+def master_entry(dir_name: str, entries: list[dict], rev: str) -> dict:
+    """Master-index entry: count, directory index path, rev, card covers — no items."""
+    covers = [{"filename": e["filename"], "thumbnail": e["thumbnail"]}
+              for e in entries if e.get("thumbnail")][:2]
+    return {
+        "count": len(entries),
+        "index": f"{dir_name}/index.json",
+        "rev": rev,
+        "covers": covers,
     }
 
+
+def master_items(master: dict) -> int:
+    return sum(int(d.get("count", 0)) for d in master.get("directories", {}).values())
+
+
+def write_master_index(path: Path, master: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(master, f, ensure_ascii=False, indent=2)
+
+
+def split_legacy_index(output_dir: Path, legacy: dict) -> dict:
+    """Convert a legacy full index.json (items inside) into per-directory indexes + master."""
+    master = {"version": 2, "generated_at": _stamp(),
+              "base_url": legacy.get("base_url", ""), "directories": {}}
+    for dir_name, data in legacy.get("directories", {}).items():
+        entries = data.get("items", [])
+        rev = write_dir_index(output_dir, dir_name, entries)
+        master["directories"][dir_name] = master_entry(dir_name, entries, rev)
+        print(f"  {dir_name}: {len(entries)} items -> {dir_name}/index.json")
+    if isinstance(legacy.get("categories"), dict):
+        master["categories"] = legacy["categories"]
+    return master
+
+
+def build_master_index(existing: dict | None, fragment: dict, base_url: str,
+                       category: str, scanned: list[str]) -> dict:
+    """Merge new directory entries into the master index and re-assign categories.
+
+    合并基准里没扫到的目录条目原样保留，这就是分批发布：--draft 写出的目录索引不进
+    主索引，--publish 才把它们挂到素材库上。"""
+    directories = dict(existing.get("directories", {})) if existing else {}
+    directories.update(fragment)
+    master = {"version": 2, "generated_at": _stamp(), "base_url": base_url, "directories": directories}
+
+    categories = {}
+    if existing:
+        for cat, names in (existing.get("categories") or {}).items():
+            if isinstance(names, list):
+                categories[str(cat)] = [n for n in names if isinstance(n, str)]
+    for cat in list(categories):
+        categories[cat] = [n for n in categories[cat] if n not in scanned]
+    for name in scanned:
+        categories.setdefault(category, [])
+        if name not in categories[category]:
+            categories[category].append(name)
+    categories = {cat: names for cat, names in categories.items() if names}
+    if categories:
+        master["categories"] = categories
+    return master
+
+
+def scan_directory(subdir: Path, output_dir: Path, thumb_size: int, copy_media: bool, prune: bool) -> tuple[list[dict], int]:
+    """Scan one preset subdirectory: thumbnails, media copies, and its per-directory index."""
+    dir_name = subdir.name
+    print(f"\n[{dir_name}] Scanning...")
+
     thumb_dir = output_dir / "thumbnails"
-    thumb_dir.mkdir(parents=True, exist_ok=True)
+    dir_entries = []
+    total_thumbs = 0
+    stems: dict[str, list[Path]] = {}
 
-    if not presets_dir.exists():
-        print(f"[ERROR] Presets directory not found: {presets_dir}")
-        return index
+    for p in subdir.iterdir():
+        if not p.is_file():
+            continue
+        lower = p.suffix.lower()
+        if lower not in ALL_MEDIA_EXTENSIONS and lower != ".txt":
+            continue
+        stems.setdefault(p.stem, []).append(p)
 
-    # Scan first-level subdirectories (or only the requested ones in incremental mode)
+    for stem, files in sorted(stems.items()):
+        media_file = None
+        media_type = None
+        txt_file = None
+
+        for f in files:
+            if f.suffix.lower() in VIDEO_EXTENSIONS:
+                media_file = f
+                media_type = "video"
+            elif f.suffix.lower() in IMG_EXTENSIONS:
+                if media_file is None:
+                    media_file = f
+                    media_type = "image"
+            elif f.suffix.lower() == ".txt":
+                txt_file = f
+
+        if not media_file:
+            continue
+
+        # Generate thumbnail
+        thumb_subdir = thumb_dir / dir_name
+        thumb_path = thumb_subdir / f"{stem}.jpg"
+        thumb_ok = False
+        if not thumb_path.exists():
+            thumb_ok = generate_thumbnail(media_file, thumb_path, thumb_size)
+            if thumb_ok:
+                total_thumbs += 1
+        else:
+            thumb_ok = True
+
+        # Relative thumbnail path (for OSS URL construction)
+        thumb_rel = f"thumbnails/{dir_name}/{stem}.jpg" if thumb_ok else ""
+
+        # Parse txt preview
+        txt_content = parse_txt_preview(txt_file)
+
+        entry = {
+            "filename": media_file.name,
+            "type": media_type,
+            "size": media_file.stat().st_size,
+            "mtime": media_file.stat().st_mtime,
+            "txt_content": txt_content,
+            "thumbnail": thumb_rel,
+        }
+        dir_entries.append(entry)
+
+        # Copy media + txt to output
+        if copy_media:
+            dest_subdir = output_dir / dir_name
+            dest_subdir.mkdir(parents=True, exist_ok=True)
+            dest_media = dest_subdir / media_file.name
+            if not dest_media.exists():
+                shutil.copy2(media_file, dest_media)
+            if txt_file:
+                dest_txt = dest_subdir / txt_file.name
+                if not dest_txt.exists():
+                    shutil.copy2(txt_file, dest_txt)
+
+    # Update mode: drop output files that no longer exist in the source directory
+    if prune:
+        keep_files = {e["filename"] for e in dir_entries}
+        keep_thumbs = {Path(e["thumbnail"]).stem for e in dir_entries if e["thumbnail"]}
+        prune_directory(output_dir, dir_name, keep_files, keep_thumbs, copy_media)
+
+    print(f"  {len(dir_entries)} items, {sum(1 for e in dir_entries if e['thumbnail'])} thumbnails")
+    return dir_entries, total_thumbs
+
+def scan_root_files(presets_dir: Path, output_dir: Path, thumb_size: int) -> tuple[list[dict], int]:
+    """Scan root-level preset files (not in any subdirectory) — full mode only."""
+    thumb_dir = output_dir / "thumbnails"
+    dir_entries = []
+    total_thumbs = 0
+    root_stems: dict[str, list[Path]] = {}
+    for p in presets_dir.iterdir():
+        if not p.is_file():
+            continue
+        lower = p.suffix.lower()
+        if lower not in ALL_MEDIA_EXTENSIONS and lower != ".txt":
+            continue
+        root_stems.setdefault(p.stem, []).append(p)
+
+    for stem, files in sorted(root_stems.items()):
+        media_file = None
+        media_type = None
+        txt_file = None
+        for f in files:
+            if f.suffix.lower() in VIDEO_EXTENSIONS:
+                media_file = f
+                media_type = "video"
+            elif f.suffix.lower() in IMG_EXTENSIONS:
+                if media_file is None:
+                    media_file = f
+                    media_type = "image"
+            elif f.suffix.lower() == ".txt":
+                txt_file = f
+        if not media_file:
+            continue
+
+        thumb_path = thumb_dir / f"{stem}.jpg"
+        thumb_ok = False
+        if not thumb_path.exists():
+            thumb_ok = generate_thumbnail(media_file, thumb_path, thumb_size)
+            if thumb_ok:
+                total_thumbs += 1
+        else:
+            thumb_ok = True
+
+        thumb_rel = f"thumbnails/{stem}.jpg" if thumb_ok else ""
+        txt_content = parse_txt_preview(txt_file)
+
+        dir_entries.append({
+            "filename": media_file.name,
+            "type": media_type,
+            "size": media_file.stat().st_size,
+            "mtime": media_file.stat().st_mtime,
+            "txt_content": txt_content,
+            "thumbnail": thumb_rel,
+        })
+
+    return dir_entries, total_thumbs
+
+
+def scan_presets_directory(presets_dir: Path, output_dir: Path, thumb_size: int, copy_media: bool, only_dirs=None) -> dict:
+    """Scan presets directories and return the master-index fragment of the scanned dirs.
+
+    only_dirs: list of subdirectory names to (re)scan; None means full scan."""
+    (output_dir / "thumbnails").mkdir(parents=True, exist_ok=True)
+
     if only_dirs:
         subdirs = []
         for d in only_dirs:
@@ -193,168 +419,36 @@ def scan_presets_directory(presets_dir: Path, output_dir: Path, thumb_size: int,
             subdirs.append(p)
         if not subdirs:
             print("[ERROR] No valid directories to process")
-            return index
+            sys.exit(1)
     else:
         subdirs = sorted([p for p in presets_dir.iterdir() if p.is_dir()])
         if not subdirs:
             print(f"[WARN] No subdirectories found in {presets_dir}")
 
+    fragment: dict[str, dict] = {}
     total_items = 0
     total_thumbs = 0
 
     for subdir in subdirs:
-        dir_name = subdir.name
-        print(f"\n[{dir_name}] Scanning...")
+        entries, thumbs = scan_directory(subdir, output_dir, thumb_size, copy_media, bool(only_dirs))
+        rev = write_dir_index(output_dir, subdir.name, entries)
+        fragment[subdir.name] = master_entry(subdir.name, entries, rev)
+        total_items += len(entries)
+        total_thumbs += thumbs
 
-        dir_entries = []
-        stems: dict[str, list[Path]] = {}
-
-        for p in subdir.iterdir():
-            if not p.is_file():
-                continue
-            lower = p.suffix.lower()
-            if lower not in ALL_MEDIA_EXTENSIONS and lower != ".txt":
-                continue
-            stems.setdefault(p.stem, []).append(p)
-
-        for stem, files in sorted(stems.items()):
-            media_file = None
-            media_type = None
-            txt_file = None
-
-            for f in files:
-                if f.suffix.lower() in VIDEO_EXTENSIONS:
-                    media_file = f
-                    media_type = "video"
-                elif f.suffix.lower() in IMG_EXTENSIONS:
-                    if media_file is None:
-                        media_file = f
-                        media_type = "image"
-                elif f.suffix.lower() == ".txt":
-                    txt_file = f
-
-            if not media_file:
-                continue
-
-            # Generate thumbnail
-            thumb_subdir = thumb_dir / dir_name
-            thumb_path = thumb_subdir / f"{stem}.jpg"
-            thumb_ok = False
-            if not thumb_path.exists():
-                thumb_ok = generate_thumbnail(media_file, thumb_path, thumb_size)
-                if thumb_ok:
-                    total_thumbs += 1
-            else:
-                thumb_ok = True
-
-            # Relative thumbnail path (for OSS URL construction)
-            thumb_rel = f"thumbnails/{dir_name}/{stem}.jpg" if thumb_ok else ""
-
-            # Parse txt preview
-            txt_content = parse_txt_preview(txt_file)
-
-            entry = {
-                "filename": media_file.name,
-                "type": media_type,
-                "size": media_file.stat().st_size,
-                "mtime": media_file.stat().st_mtime,
-                "txt_content": txt_content,
-                "thumbnail": thumb_rel,
-            }
-            dir_entries.append(entry)
-
-            # Copy media + txt to output
-            if copy_media:
-                dest_subdir = output_dir / dir_name
-                dest_subdir.mkdir(parents=True, exist_ok=True)
-                dest_media = dest_subdir / media_file.name
-                if not dest_media.exists():
-                    shutil.copy2(media_file, dest_media)
-                if txt_file:
-                    dest_txt = dest_subdir / txt_file.name
-                    if not dest_txt.exists():
-                        shutil.copy2(txt_file, dest_txt)
-
-            total_items += 1
-
-        index["directories"][dir_name] = {
-            "name": dir_name,
-            "items": dir_entries,
-        }
-        print(f"  {len(dir_entries)} items, {sum(1 for e in dir_entries if e['thumbnail'])} thumbnails")
-
-        # Update mode: drop output files that no longer exist in the source directory
-        if only_dirs:
-            keep_files = set()
-            keep_thumbs = set()
-            for e in dir_entries:
-                keep_files.add(e["filename"])
-                if e["thumbnail"]:
-                    keep_thumbs.add(Path(e["thumbnail"]).stem)
-            prune_directory(output_dir, dir_name, keep_files, keep_thumbs, copy_media)
-
-    # Also scan root-level files (not in any subdirectory) — full mode only
     if not only_dirs:
-        root_entries = []
-        root_stems: dict[str, list[Path]] = {}
-        for p in presets_dir.iterdir():
-            if not p.is_file():
-                continue
-            lower = p.suffix.lower()
-            if lower not in ALL_MEDIA_EXTENSIONS and lower != ".txt":
-                continue
-            root_stems.setdefault(p.stem, []).append(p)
-
-        for stem, files in sorted(root_stems.items()):
-            media_file = None
-            media_type = None
-            txt_file = None
-            for f in files:
-                if f.suffix.lower() in VIDEO_EXTENSIONS:
-                    media_file = f
-                    media_type = "video"
-                elif f.suffix.lower() in IMG_EXTENSIONS:
-                    if media_file is None:
-                        media_file = f
-                        media_type = "image"
-                elif f.suffix.lower() == ".txt":
-                    txt_file = f
-            if not media_file:
-                continue
-
-            thumb_path = thumb_dir / f"{stem}.jpg"
-            thumb_ok = False
-            if not thumb_path.exists():
-                thumb_ok = generate_thumbnail(media_file, thumb_path, thumb_size)
-                if thumb_ok:
-                    total_thumbs += 1
-            else:
-                thumb_ok = True
-
-            thumb_rel = f"thumbnails/{stem}.jpg" if thumb_ok else ""
-            txt_content = parse_txt_preview(txt_file)
-
-            root_entries.append({
-                "filename": media_file.name,
-                "type": media_type,
-                "size": media_file.stat().st_size,
-                "mtime": media_file.stat().st_mtime,
-                "txt_content": txt_content,
-                "thumbnail": thumb_rel,
-            })
-            total_items += 1
-
-        if root_entries:
-            index["directories"]["_root"] = {
-                "name": "_root",
-                "items": root_entries,
-            }
+        entries, thumbs = scan_root_files(presets_dir, output_dir, thumb_size)
+        if entries:
+            rev = write_dir_index(output_dir, "_root", entries)
+            fragment["_root"] = master_entry("_root", entries, rev)
+            total_items += len(entries)
+            total_thumbs += thumbs
 
     print(f"\n{'='*50}")
     print(f"Total: {total_items} items, {total_thumbs} thumbnails generated")
     print(f"Output: {output_dir}")
 
-    return index
+    return fragment
 
 
 def main():
@@ -402,90 +496,117 @@ def main():
         help="Category the (re)scanned --dirs belong to (index.json top-level "
              "'categories'); 'presets' keeps the legacy Cloud Presets section"
     )
+    parser.add_argument(
+        "--draft", action="store_true",
+        help="With --dirs: write the directory indexes only, leave the master index untouched "
+             "(staged release; publish later with --publish)"
+    )
+    parser.add_argument(
+        "--publish", nargs="+", default=None, metavar="DIR",
+        help="Publish existing <dir>/index.json entries into the master index without rescanning media"
+    )
+    parser.add_argument(
+        "--split-legacy", action="store_true",
+        help="Convert a legacy full index.json (items inside) in the output directory into "
+             "per-directory indexes plus a v2 master index"
+    )
 
     args = parser.parse_args()
 
+    if args.draft and not args.dirs:
+        print("[ERROR] --draft only applies to an incremental --dirs run")
+        sys.exit(1)
+
     if not args.presets:
-        if not args.dirs:
-            print("[ERROR] --presets is required for a full scan (or use --dirs for incremental mode)")
+        if not (args.dirs or args.publish or args.split_legacy):
+            print("[ERROR] --presets is required for a full scan (or use --dirs / --publish for incremental mode)")
             sys.exit(1)
         presets_dir = Path.cwd().resolve()
     else:
         presets_dir = Path(args.presets).resolve()
     output_dir = Path(args.output).resolve()
+    index_path = output_dir / "index.json"
 
-    if not presets_dir.exists():
+    if not (args.publish or args.split_legacy) and not presets_dir.exists():
         print(f"[ERROR] Presets directory does not exist: {presets_dir}")
         sys.exit(1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Neo Gallery Preprocessor")
-    print(f"  Presets:  {presets_dir}")
+    if not args.split_legacy:
+        print(f"  Presets:  {presets_dir}")
     print(f"  Output:   {output_dir}")
     print(f"  Size:     {args.size}px")
     print(f"  Copy:     {'no' if args.no_copy else 'yes'}")
+
+    if args.split_legacy:
+        legacy = load_existing_index(index_path)
+        if not legacy:
+            print(f"[ERROR] No index.json to split in {output_dir}")
+            sys.exit(1)
+        master = split_legacy_index(output_dir, legacy)
+        write_master_index(index_path, master)
+        print(f"\n[DONE] {len(master['directories'])} directories split into per-directory indexes "
+              f"({master_items(master)} items)")
+        print(f"       master index: {index_path}")
+        return
+
+    incremental = bool(args.dirs or args.publish)
     if args.dirs:
         print(f"  Dirs:     {', '.join(args.dirs)} (incremental)")
+    if args.publish:
+        print(f"  Publish:  {', '.join(args.publish)} (no media scan)")
+    if incremental:
         print(f"  Category: {args.category}")
 
-    # Merge base: in incremental mode default to the latest index.json on OSS
-    fetch_url = args.fetch_index
-    if args.dirs and not args.no_fetch_index and not fetch_url:
-        fetch_url = get_oss_index_url()
-        if fetch_url:
-            print(f"  OSS:      {fetch_url} (auto from configs/oss_presets.json)")
-
-    index_path = output_dir / "index.json"
+    # Merge base: in incremental mode default to the latest master index on OSS
     existing = None
-    if fetch_url:
-        existing = fetch_index_from_url(fetch_url, index_path)
-    elif args.dirs:
-        existing = load_existing_index(index_path)
-    if existing:
-        print(f"  Merge:    into {len(existing['directories'])} directories from "
-              f"{'OSS' if fetch_url else 'existing index'}")
+    fetch_url = ""
+    if incremental and not args.draft:
+        fetch_url = args.fetch_index
+        if not args.no_fetch_index and not fetch_url:
+            fetch_url = get_oss_index_url()
+            if fetch_url:
+                print(f"  OSS:      {fetch_url} (auto from configs/oss_presets.json)")
+        if fetch_url:
+            existing = fetch_index_from_url(fetch_url, index_path)
+        else:
+            existing = load_existing_index(index_path)
+        if existing:
+            print(f"  Merge:    into {len(existing['directories'])} directories from "
+                  f"{'OSS' if fetch_url else 'existing index'}")
 
-    index = scan_presets_directory(presets_dir, output_dir, args.size, not args.no_copy, args.dirs)
-    # Preserve the base_url of the fetched OSS index unless explicitly overridden
-    if args.base_url:
-        index["base_url"] = args.base_url
-    elif existing and existing.get("base_url"):
-        index["base_url"] = existing["base_url"]
+    if args.publish:
+        fragment = {}
+        for d in args.publish:
+            loaded = load_dir_index(output_dir, d)
+            if loaded is None:
+                print(f"[ERROR] No directory index for '{d}': run --dirs {d} --no-fetch-index first")
+                sys.exit(1)
+            items, rev = loaded
+            fragment[d] = master_entry(d, items, rev)
+            print(f"  {d}: {len(items)} items published")
+        scanned = list(args.publish)
     else:
-        index["base_url"] = get_oss_config().get("base_url", "") or ""
+        fragment = scan_presets_directory(presets_dir, output_dir, args.size, not args.no_copy, args.dirs)
+        scanned = [d for d in (args.dirs or []) if d in fragment]
+        if args.draft:
+            print("\n[DRAFT] directory indexes written, master index left untouched")
+            print(f"        publish later with: --publish {' '.join(args.dirs)}")
+            return
 
-    # Incremental mode: keep untouched directories from the previous index
-    if existing:
-        merged = dict(existing["directories"])
-        merged.update(index["directories"])
-        index["directories"] = merged
+    # Preserve the base_url of the fetched OSS index unless explicitly overridden
+    base_url = args.base_url
+    if not base_url and existing and existing.get("base_url"):
+        base_url = existing["base_url"]
+    if not base_url:
+        base_url = get_oss_config().get("base_url", "") or ""
 
-    # Category membership: --dirs are assigned to --category; every other category
-    # (and each directory's other members) is carried over from the merge base, so
-    # incremental runs never drop the legacy Cloud Presets section.
-    categories = {}
-    if existing:
-        for cat, names in (existing.get("categories") or {}).items():
-            if isinstance(names, list):
-                categories[str(cat)] = [n for n in names if isinstance(n, str)]
-    if args.dirs:
-        scanned = [d for d in args.dirs if d in index["directories"]]
-        for cat in list(categories):
-            categories[cat] = [n for n in categories[cat] if n not in scanned]
-        for name in scanned:
-            categories.setdefault(args.category, [])
-            if name not in categories[args.category]:
-                categories[args.category].append(name)
-    categories = {cat: names for cat, names in categories.items() if names}
-    if categories:
-        index["categories"] = categories
-
-    # Write index.json
-    with open(index_path, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=2)
-
-    print(f"\n[DONE] index.json written to {index_path}")
+    master = build_master_index(existing, fragment, base_url, args.category, scanned)
+    write_master_index(index_path, master)
+    print(f"\n[DONE] master index written to {index_path} "
+          f"({len(master['directories'])} directories, {master_items(master)} items)")
 
 
 if __name__ == "__main__":

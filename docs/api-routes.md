@@ -50,9 +50,12 @@
 
 ## gallery_oss.py — 云端预设
 
-`index.json` 顶层可选的 `categories` 把远端目录归到 StoryBoard / CharacterSheet 主目录的只读预设区；
-未归类的目录仍留在旧版 **Cloud Presets**（没有 `categories` 的旧索引行为不变）。
-预设下载缓存在 `output/StoryBoard/presets/`、`output/CharacterSheet/presets/`。
+云端预设索引是分层的：`index.json` 是 v2 主索引，每个目录只有一条 `count` / `index` / `rev` / `covers`，
+目录的完整 items 在 `index` 声明的 `<dir>/index.json` 里，进目录才下载。目录索引缓存在
+`gallery/oss_cache/<dir>/_index.json`，StoryBoard / CharacterSheet 预设缓存在各自主目录的
+`presets/<dir>/_index.json`；主索引的 `rev` 变了才重拉。顶层可选的 `categories` 把远端目录归到
+StoryBoard / CharacterSheet 主目录的只读预设区；未归类的目录仍留在旧版 **Cloud Presets**
+（条目里带 `items` 的旧版整包索引继续按老行为工作，计数与封面从 items 现算）。
 
 | 方法 | 路由 | 说明 |
 |------|------|------|

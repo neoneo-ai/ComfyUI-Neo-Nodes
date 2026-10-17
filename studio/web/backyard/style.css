@@ -118,6 +118,17 @@ body {
 .by-status.ok { color: #60d060; }
 .by-status.err { color: #f06060; }
 
+.by-progress { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+.by-progress-track { flex: 1; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
+.by-progress-fill { height: 100%; width: 0%; background: #4a7ad0; transition: width .2s; }
+.by-progress-text { font-size: 12px; color: #888; min-width: 130px; text-align: right; }
+
+.by-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(255,255,255,0.06); color: #888; white-space: nowrap; }
+.by-badge-pending { color: #ffb347; background: rgba(255,179,71,0.12); }
+.by-badge-updated { color: #ffd166; background: rgba(255,209,102,0.12); }
+.by-badge-unpublished { color: #8ab4ff; background: rgba(138,180,255,0.12); }
+.by-badge-synced { color: #60d060; background: rgba(96,208,96,0.12); }
+
 /* 分区标题 */
 .by-section { margin-bottom: 24px; }
 

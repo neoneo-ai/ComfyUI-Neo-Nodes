@@ -149,6 +149,7 @@ _BACKYARD = {
     ("POST", "/neo_backyard/config"),
     ("POST", "/neo_backyard/preprocess"),
     ("POST", "/neo_backyard/upload"),
+    ("GET", "/neo_backyard/upload_plan"),
     ("GET", "/neo_backyard/index"),
     ("GET", "/neo_backyard/dirs"),
     ("POST", "/neo_backyard/delete"),

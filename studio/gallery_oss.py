@@ -83,6 +83,27 @@ def _oss_category_dirs(index: dict, category: str | None) -> list[str]:
     return [d for d in cat_names if d in directories]
 
 
+def _oss_dir_entry(index: dict, dir_name: str) -> dict:
+    """主索引里一个目录的条目。旧版索引的条目自带 items，直接当计数与封面来源。"""
+    entry = (index or {}).get("directories", {}).get(dir_name)
+    return entry if isinstance(entry, dict) else {}
+
+
+def _oss_dir_count(index: dict, dir_name: str) -> int:
+    """目录卡片计数：v2 主索引声明 count，旧版索引数 items。"""
+    entry = _oss_dir_entry(index, dir_name)
+    if "count" in entry:
+        try:
+            return int(entry["count"])
+        except (TypeError, ValueError):
+            return 0
+    return len(entry.get("items", []))
+
+
+def _oss_total_items(index: dict) -> int:
+    return sum(_oss_dir_count(index, d) for d in (index or {}).get("directories", {}))
+
+
 def _get_oss_config() -> dict:
     """Read OSS presets configuration from configs/oss_presets.json."""
     try:
@@ -225,60 +246,107 @@ async def _download_oss_file(remote_rel_path: str, category: str | None = None) 
         return None
 
 
-def _find_in_oss_index(filename: str, subdir: str, category: str | None = None) -> str | None:
-    """Look up a file in the OSS index. Returns the remote relative path or None."""
+async def _fetch_oss_dir_index(index: dict, dir_name: str, category: str | None = None) -> list[dict]:
+    """Items of one remote directory: the per-directory index is downloaded on entry.
+
+    主索引只声明目录索引的路径与 rev；rev 不变就用 oss_cache/<dir>/_index.json 里的缓存，
+    拉取失败退回旧缓存，断网时目录页不会变成空页。旧版索引条目自带 items，直接返回。"""
+    entry = _oss_dir_entry(index, dir_name)
+    items = entry.get("items")
+    if isinstance(items, list):
+        return items
+    rel = str(entry.get("index", "")).strip("/")
+    if not rel:
+        return []
+
+    cache_file = _get_oss_cache_dir(category) / dir_name / "_index.json"
+    cached = None
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached = None
+        if isinstance(cached, dict) and cached.get("generated_at", "") == str(entry.get("rev", "")):
+            return cached.get("items", [])
+
+    base_url = str(index.get("base_url") or _get_oss_config().get("base_url", "")).rstrip("/")
+    if base_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{base_url}/{rel}", timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status != 200:
+                        print(f"[Neo Gallery] OSS dir index fetch failed ({resp.status}): {rel}")
+                    else:
+                        data = json.loads((await resp.read()).decode("utf-8"))
+                        if isinstance(data.get("items"), list):
+                            cache_file.parent.mkdir(parents=True, exist_ok=True)
+                            cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                            return data["items"]
+        except Exception as e:
+            print(f"[Neo Gallery] OSS dir index fetch error: {e}")
+
+    if isinstance(cached, dict):
+        return cached.get("items", [])
+    return []
+
+
+def _oss_match_dir(dirs: list[str], subdir: str) -> str | None:
+    """Resolve a navigation subfolder to an index directory name.
+
+    路由传进来的 subfolder 是 lowercase 过的，索引里的目录名保留原大小写；
+    精确匹配会让 Style_A 这种 ASCII 目录名查不到，媒体请求 404。"""
+    if subdir in dirs:
+        return subdir
+    lowered = subdir.lower()
+    for name in dirs:
+        if name.lower() == lowered:
+            return name
+    return None
+
+
+async def _find_in_oss_index(filename: str, subdir: str, category: str | None = None) -> str | None:
+    """Look up a file in the OSS index. Returns the remote relative path or None.
+
+    只查 subdir 自己的目录索引：调用方的 subfolder 就是从导航路径取出的目录名。"""
     index = _oss_index_cache or _load_oss_index_from_disk()
     if not index:
         return None
 
-    directories = {d: v for d, v in index.get("directories", {}).items()
-                   if d in set(_oss_category_dirs(index, category))}
-
+    dirs = _oss_category_dirs(index, category)
     if subdir:
-        dir_data = directories.get(subdir)
-        if dir_data:
-            for item in dir_data.get("items", []):
-                if item["filename"] == filename:
-                    return f"{subdir}/{filename}"
-        for dir_name, dir_data in directories.items():
-            for item in dir_data.get("items", []):
-                if item["filename"] == filename:
-                    return f"{dir_name}/{filename}"
+        target = _oss_match_dir(dirs, subdir)
+        if target is None:
+            return None
+        targets = [target]
     else:
-        for dir_name, dir_data in directories.items():
-            for item in dir_data.get("items", []):
-                if item["filename"] == filename:
-                    return f"{dir_name}/{filename}"
+        targets = dirs
 
+    for dir_name in targets:
+        for item in await _fetch_oss_dir_index(index, dir_name, category):
+            if item.get("filename") == filename:
+                return f"{dir_name}/{filename}"
     return None
 
 
-def _find_thumbnail_in_oss_index(filename: str, subdir: str, category: str | None = None) -> str | None:
+async def _find_thumbnail_in_oss_index(filename: str, subdir: str, category: str | None = None) -> str | None:
     """Look up a thumbnail in the OSS index. Returns the remote relative path or None."""
     index = _oss_index_cache or _load_oss_index_from_disk()
     if not index:
         return None
 
-    stem = Path(filename).stem
-    directories = {d: v for d, v in index.get("directories", {}).items()
-                   if d in set(_oss_category_dirs(index, category))}
-
+    dirs = _oss_category_dirs(index, category)
     if subdir:
-        dir_data = directories.get(subdir)
-        if dir_data:
-            for item in dir_data.get("items", []):
-                if item["filename"] == filename and item.get("thumbnail"):
-                    return item["thumbnail"]
-        for dir_name, dir_data in directories.items():
-            for item in dir_data.get("items", []):
-                if item["filename"] == filename and item.get("thumbnail"):
-                    return item["thumbnail"]
+        target = _oss_match_dir(dirs, subdir)
+        if target is None:
+            return None
+        targets = [target]
     else:
-        for dir_name, dir_data in directories.items():
-            for item in dir_data.get("items", []):
-                if item["filename"] == filename and item.get("thumbnail"):
-                    return item["thumbnail"]
+        targets = dirs
 
+    for dir_name in targets:
+        for item in await _fetch_oss_dir_index(index, dir_name, category):
+            if item.get("filename") == filename and item.get("thumbnail"):
+                return item["thumbnail"]
     return None
 
 
@@ -291,14 +359,13 @@ def _oss_directories_to_gallery_dirs(index: dict, category: str | None = OSS_CAT
     path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
     result = []
     for dir_name in _oss_category_dirs(index, category):
-        items = index.get("directories", {}).get(dir_name, {}).get("items", [])
         result.append({
             "name": dir_name,
             "path": f"{path_prefix}/{dir_name}",
             "read_only": True,
             "source": "oss",
             "subdirs": {},
-            "root_count": len(items),
+            "root_count": _oss_dir_count(index, dir_name),
             "items": [],
         })
 
@@ -320,11 +387,15 @@ def _collect_oss_covers(covers: dict, index: dict, category: str | None = OSS_CA
     """Collect cover images from OSS index for each remote directory."""
     path_prefix = _OSS_CATEGORY_PATH_PREFIX.get(category or OSS_CATEGORY_PRESETS, "Cloud Presets")
     for dir_name in _oss_category_dirs(index, category):
-        dir_data = index.get("directories", {}).get(dir_name, {})
-        items = list(dir_data.get("items", []))
-        random.shuffle(items)
+        entry = _oss_dir_entry(index, dir_name)
+        # v2 主索引给每个目录带一份 covers；旧版索引从 items 里现抽
+        candidates = entry.get("covers")
+        candidates = list(candidates) if isinstance(candidates, list) else list(entry.get("items", []))
+        random.shuffle(candidates)
         cover_items = []
-        for item in items[:2]:
+        for item in candidates[:2]:
+            if not isinstance(item, dict) or not item.get("filename"):
+                continue
             kind = _oss_cover_kind(item["filename"])
             if kind == "audio":
                 # Audio renders as a decorative waveform tile; no thumbnail needed.
@@ -350,14 +421,15 @@ def _collect_oss_covers(covers: dict, index: dict, category: str | None = OSS_CA
 
 def _oss_dir_cards(index: dict, category: str) -> dict:
     """subdirs mapping (dir name -> image_count) for one OSS category."""
-    return {dname: {"image_count": len(index.get("directories", {}).get(dname, {}).get("items", []))}
+    return {dname: {"image_count": _oss_dir_count(index, dname)}
             for dname in _oss_category_dirs(index, category)}
 
 
-def _oss_dir_items(index: dict, dir_name: str, subfolder_prefix: str) -> list[dict]:
+async def _oss_dir_items(index: dict, dir_name: str, subfolder_prefix: str,
+                         category: str | None = None) -> list[dict]:
     """Item entries of one OSS remote directory, with the navigation subfolder prefix."""
     items = []
-    for item in index.get("directories", {}).get(dir_name, {}).get("items", []):
+    for item in await _fetch_oss_dir_index(index, dir_name, category):
         entry = {
             "name": Path(item["filename"]).stem,
             "filename": item["filename"],
@@ -374,14 +446,21 @@ def _oss_dir_items(index: dict, dir_name: str, subfolder_prefix: str) -> list[di
     return items
 
 
+def _oss_dir_visible(dir_name: str, hidden: set) -> bool:
+    """Home hide switch records cloud preset dirs by their card path "Cloud Presets/<dir>"."""
+    return f"cloud presets/{dir_name}".lower() not in hidden
+
+
 async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
                                     include_dirs: bool, include_items: bool,
-                                    include_covers: bool, search_mode: bool) -> web.Response:
+                                    include_covers: bool, search_mode: bool,
+                                    hidden: set | None = None) -> web.Response:
     """Handle /neo_gallery/list for Cloud Presets (OSS remote directories)."""
     oss_index = await _fetch_oss_index()
     if not oss_index:
         return web.json_response({"error": "OSS not configured or index unavailable"}, status=404)
 
+    hidden = hidden or set()
     dir_name_lower = dir_name_param.lower()
 
     # "Cloud Presets" — show subdirectory cards
@@ -391,7 +470,8 @@ async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
             "path": "Cloud Presets",
             "read_only": True,
             "source": "oss",
-            "subdirs": _oss_dir_cards(oss_index, OSS_CATEGORY_PRESETS),
+            "subdirs": {k: v for k, v in _oss_dir_cards(oss_index, OSS_CATEGORY_PRESETS).items()
+                        if _oss_dir_visible(k, hidden)},
             "root_count": 0,
             "items": [],
         }
@@ -409,7 +489,10 @@ async def _handle_oss_gallery_list(dir_name_param: str, rel_path_param: str,
         if subdir_name not in _oss_category_dirs(oss_index, OSS_CATEGORY_PRESETS):
             return web.json_response({"error": f"OSS directory not found: {subdir_name}"}, status=404)
 
-        items = _oss_dir_items(oss_index, subdir_name, "Cloud Presets")
+        if not _oss_dir_visible(subdir_name, hidden):
+            return web.json_response({"directories": [], "total": 0})
+
+        items = await _oss_dir_items(oss_index, subdir_name, "Cloud Presets", OSS_CATEGORY_PRESETS)
 
         resp_dir = {
             "name": f"Cloud Presets/{subdir_name}",
@@ -440,12 +523,10 @@ async def sync_oss_index(request):
     try:
         index = await _fetch_oss_index(force=True)
         if index:
-            dirs = index.get("directories", {})
-            total_items = sum(len(d.get("items", [])) for d in dirs.values())
             return web.json_response({
                 "success": True,
-                "directories": len(dirs),
-                "items": total_items,
+                "directories": len(index.get("directories", {})),
+                "items": _oss_total_items(index),
                 "generated_at": index.get("generated_at", ""),
             })
         return web.json_response({"success": False, "error": "Failed to fetch index"}, status=500)
@@ -468,9 +549,8 @@ async def oss_status(request):
     }
 
     if index:
-        dirs = index.get("directories", {})
-        result["directories"] = len(dirs)
-        result["items"] = sum(len(d.get("items", [])) for d in dirs.values())
+        result["directories"] = len(index.get("directories", {}))
+        result["items"] = _oss_total_items(index)
         result["generated_at"] = index.get("generated_at", "")
 
     return web.json_response(result)

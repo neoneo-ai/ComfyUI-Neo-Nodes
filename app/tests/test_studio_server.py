@@ -196,6 +196,23 @@ class OfflineServiceTests(_ServerCase):
         self.assertIn("GET /neo_gallery/txt", data["routes"])
         self.assertEqual(self.get("/neo_gallery/txt?filename=&subfolder=")[0], 400)
 
+    def test_backyard_upload_plan_served_offline(self):
+        """上传页打开就列待上传目录，这份清单在桌面端窗口里也要出得来。"""
+        data = json.loads(self.get("/neo_studio/version")[1])
+        self.assertIn("GET /neo_backyard/upload_plan", data["routes"])
+        self.assertEqual(self.get("/neo_backyard/upload_plan")[0], 400)
+        dist = Path(tempfile.mkdtemp(prefix="neo_backyard_plan_", dir=str(self.tmpdir)))
+        (dist / "仙侠玄幻人物").mkdir()
+        (dist / "仙侠玄幻人物" / "001.png").write_bytes(b"png")
+        (dist / "index.json").write_text(json.dumps({"version": 2, "directories": {
+            "仙侠玄幻人物": {"count": 1, "index": "仙侠玄幻人物/index.json", "rev": "R1", "covers": []},
+        }}, ensure_ascii=False), encoding="utf-8")
+        status, body = self.get(f"/neo_backyard/upload_plan?source_dir={urllib.parse.quote(str(dist))}")
+        self.assertEqual(status, 200)
+        plan = json.loads(body)
+        self.assertTrue(plan["success"])
+        self.assertEqual(plan["directories"][0]["name"], "仙侠玄幻人物")
+
     def test_model_lists_see_extra_model_paths(self):
         """模型目录要在桌面端进程里可见：extra_model_paths.yaml 只有 ComfyUI 的 main.py 会加载，
         桌面端不自己加载的话 get_filename_list 只扫 <root>/models/，模型落在 extra 路径的机器上

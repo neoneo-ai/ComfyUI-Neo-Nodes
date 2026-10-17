@@ -62,6 +62,30 @@ export class GallerySetting {
         // Title bar
         const titleBar = $el("div", { className: "neo-gallery-dir-modal-titlebar" }, [
             $el("span", { className: "neo-gallery-dir-modal-title", textContent: "\uD83D\uDCC1 Manage Directories" }),
+            $el("button", {
+                className: "neo-gallery-dir-modal-refresh",
+                title: t("强制重新拉取云端预设索引，新目录立刻出现在首页"),
+                textContent: "\u27F3 " + t("刷新索引"),
+                onclick: async (e) => {
+                    e.stopPropagation();
+                    e.target.disabled = true;
+                    try {
+                        const resp = await api.fetchApi('/neo_gallery/sync_oss', { method: 'POST' });
+                        const result = await resp.json();
+                        if (result.success) {
+                            showToast(gallery.app, 'success', t('已刷新'),
+                                tf("云端索引：{dirs} 个目录 / {items} 项", { dirs: result.directories, items: result.items }));
+                            await reloadDirModalState();
+                            refreshGallery();
+                        } else {
+                            showToast(gallery.app, 'error', t('刷新云端索引失败'), result.error || String(resp.status));
+                        }
+                    } catch (err) {
+                        showToast(gallery.app, 'error', t('刷新云端索引失败'), String(err));
+                    }
+                    e.target.disabled = false;
+                }
+            }),
             $el("span", {
                 className: "neo-gallery-dir-modal-close",
                 onclick: () => gallery.closeDirModal(),
@@ -91,6 +115,9 @@ export class GallerySetting {
 
         // 内置板块与自定义目录共用同一张顺序表
         const BUILTIN_LABELS = { Output: "Output", Input: "Input", local_bookmarks: t("本地收藏"), civitai_bookmarks: t("C站收藏"), Lora: "Lora" };
+        const OSS_PREFIX = "Cloud Presets/";
+        const isOss = (token) => String(token).startsWith(OSS_PREFIX);
+        const rowLabel = (token) => isOss(token) ? "\u2601 " + String(token).slice(OSS_PREFIX.length) : token;
         const entries = homeOrder.length ? homeOrder
             : ["Output", "Input", "local_bookmarks", "civitai_bookmarks", ...currentDirs, "Lora"];
         const isBuiltin = (t) => Object.prototype.hasOwnProperty.call(BUILTIN_LABELS, t);
@@ -130,7 +157,7 @@ export class GallerySetting {
                     }),
                     $el("span", {
                         className: "neo-gallery-dir-path",
-                        textContent: builtin ? BUILTIN_LABELS[token] : token,
+                        textContent: builtin ? BUILTIN_LABELS[token] : rowLabel(token),
                         title: builtin ? t("内置板块") : token
                     })
                 ];
@@ -155,7 +182,7 @@ export class GallerySetting {
                     onclick: () => toggleDirHidden(token),
                     textContent: "\uD83D\uDC41"
                 }));
-                if (!builtin) {
+                if (!builtin && !isOss(token)) {
                     actions.push($el("button", {
                         className: "neo-gallery-dir-remove-btn",
                         title: t("移除（仅从列表移除，不删除磁盘文件）"),
@@ -210,6 +237,18 @@ export class GallerySetting {
                 dirItems.appendChild(item);
             });
             dirItemsWrap.appendChild(dirItems);
+        };
+
+        // 刷新云端索引后新目录要立刻出现在这张表里，重读一次设置再重画
+        const reloadDirModalState = async () => {
+            try {
+                const resp = await api.fetchApi('/neo_gallery/get_settings');
+                if (!resp.ok) return;
+                const settings = await resp.json();
+                if (Array.isArray(settings.home_order)) { entries.length = 0; entries.push(...settings.home_order); }
+                if (Array.isArray(settings.hidden_directories)) hiddenDirs = new Set(settings.hidden_directories.map((h) => String(h).toLowerCase()));
+                renderDirList();
+            } catch (e) { }
         };
 
         const toggleDirHidden = async (token) => {

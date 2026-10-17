@@ -208,8 +208,23 @@ def _is_home_entry_hidden(key, hidden: set) -> bool:
     return str(key).lower() in hidden
 
 
+def _oss_home_dir_tokens() -> list:
+    """Cloud preset dirs as home-order tokens; reads the local index cache only, no network."""
+    if not _is_oss_enabled():
+        return []
+    index = _load_oss_index_from_disk()
+    if not index:
+        return []
+    return [f"Cloud Presets/{d}" for d in _oss_category_dirs(index, OSS_CATEGORY_PRESETS)]
+
+
+def _is_home_entry_token(token: str, dirs: list) -> bool:
+    """顺序表与隐藏开关接受的 token：内置卡、自定义目录、云端预设目录。"""
+    return token in dirs or token in HOME_BUILTINS or token in _oss_home_dir_tokens()
+
+
 def _get_home_order() -> list:
-    """Unified home order: built-in cards and custom dirs in one list."""
+    """Unified home order: built-in cards, custom dirs and cloud preset dirs in one list."""
     settings = _load_settings()
     dirs = settings.get("custom_directories", [])
     if not isinstance(dirs, list):
@@ -217,12 +232,12 @@ def _get_home_order() -> list:
     dirs = [d for d in dirs if d]
     stored = settings.get("home_order")
     if not isinstance(stored, list):
-        return list(DEFAULT_HOME_ORDER) + dirs + ["Lora"]
+        return list(DEFAULT_HOME_ORDER) + dirs + ["Lora"] + _oss_home_dir_tokens()
     order = [t for t in stored if t]
     for d in dirs:
         if d not in order:
             order.append(d)
-    for b in HOME_BUILTINS:
+    for b in list(HOME_BUILTINS) + _oss_home_dir_tokens():
         if b not in order:
             order.append(b)
     return order
@@ -293,6 +308,7 @@ from .gallery_oss import (
     _is_oss_enabled,
     _load_oss_index_from_disk,
     _fetch_oss_index,
+    _oss_category_dirs,
     _oss_directories_to_gallery_dirs,
     _collect_oss_covers,
     _handle_oss_gallery_list,
@@ -1010,7 +1026,7 @@ async def _handle_main_dir_list(dir_name_param: str, rel_path_param: str, base: 
         oss_index = await _fetch_oss_index()
         if not oss_index or oss_dir not in _oss_dir_cards(oss_index, oss_category):
             return web.json_response({"error": f"OSS directory not found: {oss_dir}"}, status=404)
-        items = _oss_dir_items(oss_index, oss_dir, f"{main_label}/presets")
+        items = await _oss_dir_items(oss_index, oss_dir, f"{main_label}/presets", oss_category)
         resp_dir = {
             "name": f"{main_label}/presets/{oss_dir}",
             "path": f"{main_label}/presets/{oss_dir}",
@@ -1150,11 +1166,9 @@ async def get_gallery_list(request):
             return await _handle_main_dir_list(dir_name_param, rel_path_param, _main_dir_entry[1][0],
                                                include_dirs, include_items, include_covers)
 
-        if dir_name_lower == "presets":
+        if dir_name_lower == "presets" or dir_name_lower.startswith("presets/"):
             base = PRESETS_DIR
-        elif dir_name_lower.startswith("presets/"):
-            base = PRESETS_DIR
-            if not rel_path_param:
+            if not rel_path_param and dir_name_lower != "presets":
                 rel_path_param = dir_name_lower[len("presets/"):]
         elif dir_name_lower == "lora" or dir_name_lower.startswith("lora/"):
             if not _load_settings().get("civitai_lora_enabled") or _is_home_entry_hidden("Lora", _get_hidden_entries()):
@@ -1187,7 +1201,8 @@ async def get_gallery_list(request):
         # Handle Cloud Presets (OSS remote)
         if dir_name_lower == "cloud presets" or dir_name_lower.startswith("cloud presets/"):
             return await _handle_oss_gallery_list(dir_name_param, rel_path_param,
-                                                   include_dirs, include_items, include_covers, search_mode)
+                                                   include_dirs, include_items, include_covers, search_mode,
+                                                   _get_hidden_entries())
 
         if base is None or not base.exists():
             return web.json_response({"error": "Directory not found"}, status=404)
@@ -1306,7 +1321,7 @@ async def get_gallery_list(request):
         directories.append(resp_dir)
 
     # Presets: process root and subdirs using unified function
-    if include_dirs or include_items:
+    if (include_dirs or include_items):
         # PERFORMANCE: When lazy-loaded (no items), use lightweight scan that only returns structure + counts.
         # This avoids scanning all .txt files on home page load.
         if include_items:
@@ -1396,7 +1411,9 @@ async def get_gallery_list(request):
             oss_index = await _fetch_oss_index()
         if oss_index:
             oss_dirs = _oss_directories_to_gallery_dirs(oss_index)
-            directories.extend(oss_dirs)
+            # 云端预设目录在「目录管理」里逐卡隐藏，隐藏后首页不出这张卡。
+            directories.extend(d for d in oss_dirs
+                               if not _is_home_entry_hidden(d["path"], hidden_entries))
 
     directories = _order_home_dirs(directories, _get_home_order())
 
@@ -1622,10 +1639,10 @@ async def copy_to_input(request):
             subfolder_lower = subfolder.lower()
             if subfolder_lower.startswith("cloud presets/"):
                 oss_subdir = subfolder_lower[len("cloud presets/"):]
-                oss_rel = _find_in_oss_index(filename, oss_subdir, OSS_CATEGORY_PRESETS)
+                oss_rel = await _find_in_oss_index(filename, oss_subdir, OSS_CATEGORY_PRESETS)
                 if not oss_rel:
                     from urllib.parse import unquote as _uq
-                    oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, OSS_CATEGORY_PRESETS)
+                    oss_rel = await _find_in_oss_index(_uq(filename), oss_subdir, OSS_CATEGORY_PRESETS)
                 if oss_rel:
                     cached = await _download_oss_file(oss_rel, OSS_CATEGORY_PRESETS)
                     if cached and cached.exists():
@@ -1634,10 +1651,10 @@ async def copy_to_input(request):
                 # Main-dir OSS preset cache (not downloaded yet): fetch on demand
                 oss_category = OSS_CATEGORY_GRID if subfolder_lower.startswith("storyboard/") else OSS_CATEGORY_CHARACTER
                 oss_subdir = subfolder_lower.split("/")[2]
-                oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
+                oss_rel = await _find_in_oss_index(filename, oss_subdir, oss_category)
                 if not oss_rel:
                     from urllib.parse import unquote as _uq
-                    oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
+                    oss_rel = await _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
                 if oss_rel:
                     cached = await _download_oss_file(oss_rel, oss_category)
                     if cached and cached.exists():
@@ -2377,7 +2394,7 @@ async def get_thumbnail(request):
             oss_category = OSS_CATEGORY_CHARACTER
             oss_subdir = subfolder_lower.split("/")[2]
         if oss_subdir:
-            thumb_rel = _find_thumbnail_in_oss_index(filename, oss_subdir, oss_category)
+            thumb_rel = await _find_thumbnail_in_oss_index(filename, oss_subdir, oss_category)
             if thumb_rel:
                 cached = await _download_oss_file(thumb_rel, oss_category)
                 if cached and cached.exists():
@@ -2615,10 +2632,10 @@ async def view_txt(request):
         oss_category = OSS_CATEGORY_CHARACTER
         oss_subdir = sub_lower.split("/", 2)[2]
     if oss_subdir and _is_oss_enabled():
-        oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
+        oss_rel = await _find_in_oss_index(filename, oss_subdir, oss_category)
         if not oss_rel:
             from urllib.parse import unquote as _uq
-            oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
+            oss_rel = await _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
         if not oss_rel:
             return web.json_response({"success": False, "error": "not in oss index"}, status=404)
         # 索引里的相对路径是 posix 的，换后缀不能经过 Path：Windows 下 str(Path(...))
@@ -2772,10 +2789,10 @@ async def view_image(request):
         oss_category = OSS_CATEGORY_CHARACTER
         oss_subdir = subfolder_lower.split("/", 2)[2]
     if oss_subdir and _is_oss_enabled():
-        oss_rel = _find_in_oss_index(filename, oss_subdir, oss_category)
+        oss_rel = await _find_in_oss_index(filename, oss_subdir, oss_category)
         if not oss_rel:
             from urllib.parse import unquote as _uq
-            oss_rel = _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
+            oss_rel = await _find_in_oss_index(_uq(filename), oss_subdir, oss_category)
         if oss_rel:
             cached = await _download_oss_file(oss_rel, oss_category)
             if cached and cached.exists():
@@ -2885,10 +2902,10 @@ async def save_gallery_settings(request):
             ordered = [p for p in paths if p in dirs]
             ordered += [d for d in dirs if d not in ordered]
             current_settings["custom_directories"] = ordered
-            # 统一顺序表：内置卡（Output/Input/收藏/Lora）与自定义目录排在同一个列表里
+            # 统一顺序表：内置卡（Output/Input/收藏/Lora）、自定义目录与云端预设目录排在同一个列表里
             home = []
             for t in paths:
-                if (t in dirs or t in HOME_BUILTINS) and t not in home:
+                if _is_home_entry_token(t, dirs) and t not in home:
                     home.append(t)
             home += [d for d in ordered if d not in home]
             home += [b for b in HOME_BUILTINS if b not in home]
@@ -2898,7 +2915,7 @@ async def save_gallery_settings(request):
             hide_path = data.get("path", "").strip()
             hidden = bool(data.get("hidden"))
             dirs = current_settings.get("custom_directories", [])
-            if hide_path in dirs or hide_path in HOME_BUILTINS:
+            if _is_home_entry_token(hide_path, dirs):
                 hidden_dirs = current_settings.get("hidden_directories", [])
                 if not isinstance(hidden_dirs, list):
                     hidden_dirs = []

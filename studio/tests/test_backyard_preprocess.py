@@ -114,7 +114,8 @@ class SingleDirSource(unittest.TestCase):
         self.assertTrue((self.out / "仙侠玄幻人物" / "001_逆命剑胚.png").exists())
         self.assertTrue((self.out / "仙侠玄幻人物" / "001_逆命剑胚.txt").exists())
         self.assertTrue((self.out / "thumbnails" / "仙侠玄幻人物" / "001_逆命剑胚.jpg").exists())
-        entry = index["directories"]["仙侠玄幻人物"]["items"][0]
+        dir_index = json.loads((self.out / "仙侠玄幻人物" / "index.json").read_text(encoding="utf-8"))
+        entry = dir_index["items"][0]
         self.assertEqual(entry["thumbnail"], "thumbnails/仙侠玄幻人物/001_逆命剑胚.jpg")
         self.assertEqual(entry["txt_content"], "画面风格：仙侠，逆光")
 
@@ -170,6 +171,29 @@ class FullScan(unittest.TestCase):
         backyard.run_preprocess(str(src), str(out), 64, True, None)
         index = json.loads((out / "index.json").read_text(encoding="utf-8"))
         self.assertEqual(set(index["directories"]), {"a", "b"})
+
+
+class SplitIndexLayout(unittest.TestCase):
+    """主索引只留目录元数据，items 落在 <dir>/index.json：整包索引不再随素材数量膨胀。"""
+
+    def test_dir_items_land_in_their_own_index(self):
+        tmp = tempfile.TemporaryDirectory(prefix="neo_backyard_pre_")
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        src = root / "presets"
+        _make_preset_dir(src, "仙侠玄幻人物")
+        out = root / "out"
+        backyard.run_preprocess(str(src), str(out), 64, True, None)
+        master = json.loads((out / "index.json").read_text(encoding="utf-8"))
+        entry = master["directories"]["仙侠玄幻人物"]
+        self.assertEqual(master["version"], 2)
+        self.assertNotIn("items", entry)
+        self.assertEqual(entry["count"], 1)
+        self.assertEqual(entry["index"], "仙侠玄幻人物/index.json")
+        self.assertEqual(entry["covers"][0]["thumbnail"], "thumbnails/仙侠玄幻人物/001_逆命剑胚.jpg")
+        dir_index = json.loads((out / "仙侠玄幻人物" / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual(dir_index["generated_at"], entry["rev"])
+        self.assertEqual(dir_index["items"][0]["filename"], "001_逆命剑胚.png")
 
 
 class UploadIndexRefresh(unittest.TestCase):
@@ -239,6 +263,115 @@ class UploadIndexRefresh(unittest.TestCase):
         asyncio.run(backyard.upload_route(
             self._Req({"source_dir": "gallery/presets_dist", "dry_run": False})))
         self.assertEqual(self.refreshed, 0)
+
+
+class UploadPlan(unittest.TestCase):
+    """上传页的待上传清单：云端没有、rev 与云端不同、本地主索引还没这条（--draft）要分开列，
+    用户点执行前得先看清要传哪些目录、多大体量。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="neo_backyard_plan_")
+        self.addCleanup(self._tmp.cleanup)
+        self.out = Path(self._tmp.name)
+        names = ("仙侠玄幻人物", "古代乡村人物", "现代都市人物", "现代西方人物")
+        for name in names:
+            (self.out / name).mkdir()
+            (self.out / name / "001.png").write_bytes(b"png")
+            (self.out / name / "index.json").write_text(
+                json.dumps({"version": 2, "name": name, "generated_at": "R",
+                            "items": [{"filename": "001.png", "type": "image"}]}),
+                encoding="utf-8")
+            (self.out / "thumbnails" / name).mkdir(parents=True)
+            (self.out / "thumbnails" / name / "001.jpg").write_bytes(b"jpg")
+        # 现代西方人物只写了目录索引（--draft），主索引没这条
+        (self.out / "index.json").write_text(json.dumps({
+            "version": 2,
+            "directories": {
+                "仙侠玄幻人物": {"count": 1, "index": "仙侠玄幻人物/index.json", "rev": "R1", "covers": []},
+                "古代乡村人物": {"count": 1, "index": "古代乡村人物/index.json", "rev": "R2", "covers": []},
+                "现代都市人物": {"count": 1, "index": "现代都市人物/index.json", "rev": "R3", "covers": []},
+            },
+        }, ensure_ascii=False), encoding="utf-8")
+        self._prev_cloud = backyard._cloud_master_index
+        backyard._cloud_master_index = lambda: {"directories": {
+            "仙侠玄幻人物": {"count": 1, "rev": "R1"},
+            "古代乡村人物": {"count": 1, "rev": "OLD"},
+        }}
+
+    def tearDown(self):
+        backyard._cloud_master_index = self._prev_cloud
+
+    def test_states_split_by_cloud(self):
+        plan = backyard.build_upload_plan(self.out)
+        states = {d["name"]: d["state"] for d in plan["directories"]}
+        self.assertEqual(states["仙侠玄幻人物"], "synced")
+        self.assertEqual(states["古代乡村人物"], "updated")
+        self.assertEqual(states["现代都市人物"], "pending")
+        self.assertEqual(states["现代西方人物"], "unpublished")
+
+    def test_pending_totals_skip_synced_dirs(self):
+        plan = backyard.build_upload_plan(self.out)
+        self.assertEqual(plan["pending_dirs"], 3)
+        self.assertEqual(plan["pending_files"], 9)
+        self.assertEqual(plan["cloud_dirs"], 2)
+
+    def test_draft_dir_counts_from_its_own_index(self):
+        # --draft 只写目录索引，主索引没这条：清单要列成未发布，计数取自目录索引
+        (self.out / "index.json").write_text(json.dumps({"version": 2, "directories": {}}),
+                                             encoding="utf-8")
+        plan = backyard.build_upload_plan(self.out)
+        entry = next(d for d in plan["directories"] if d["name"] == "仙侠玄幻人物")
+        self.assertEqual(entry["state"], "unpublished")
+        self.assertEqual(entry["count"], 1)
+
+    def test_missing_cloud_index_marks_every_dir_pending(self):
+        backyard._cloud_master_index = lambda: None
+        plan = backyard.build_upload_plan(self.out)
+        self.assertFalse(plan["cloud_known"])
+        self.assertEqual(plan["pending_dirs"], 4)
+
+
+class SseStreamProgress(unittest.TestCase):
+    """进度要边跑边到：run_fn 是同步阻塞的，在事件循环线程里跑它，循环就没机会写帧，
+    整段输出只能等任务结束一次性吐 —— 上传进度就是这么丢的。"""
+
+    class _Resp:
+        def __init__(self, gate):
+            self.headers = {}
+            self.gate = gate
+            self.frames = []
+
+        async def prepare(self, request):
+            return True
+
+        async def write(self, data):
+            payload = json.loads(data.decode().removeprefix("data: ").strip())
+            self.frames.append(payload.get("msg", ""))
+            # 收到第一行才放行 run_fn：这一行就只能是跑中途到的
+            if "first" in payload.get("msg", ""):
+                self.gate.set()
+
+
+    def test_lines_arrive_while_run_fn_is_running(self):
+        import threading
+        gate = threading.Event()
+        resp = self._Resp(gate)
+        finished = []
+
+        def _run():
+            print("first")
+            print("  [1/2] (50%) a.png", end="")
+            # 前端收到第一行才继续：卡在这里就是「循环没机会写帧」的现场
+            gate.wait(2)
+            print(" [OK]")
+            finished.append(True)
+
+        async def _main():
+            await backyard._sse_stream(resp, _run, asyncio.Event())
+
+        asyncio.run(_main())
+        self.assertEqual(resp.frames[:2], ["first\n", "  [1/2] (50%) a.png [OK]\n"])
+        self.assertTrue(finished)
 
 
 if __name__ == "__main__":

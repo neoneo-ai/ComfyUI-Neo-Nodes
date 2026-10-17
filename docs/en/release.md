@@ -127,17 +127,31 @@ python tools/gallery_preprocess.py --presets <presets_dir> --output <output_dir>
 # updated directories under it)
 cd <dir_with_new_dirs> && python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2
 
+# Staged release: --draft writes only the directory index <dir>/index.json and leaves the master index
+# untouched, so the asset page does not show it yet; --publish mounts already written directory indexes
+# into the master index without rescanning media, and --category picks the section they land in.
+python tools/gallery_preprocess.py --output <output_dir> --dirs dir1 dir2 --draft --category grid
+python tools/gallery_preprocess.py --output <output_dir> --publish dir1 dir2 --category grid
+
+# Split a legacy full index into the layered layout: --split-legacy turns an index.json whose entries
+# carry items into <dir>/index.json files plus a v2 master index
+python tools/gallery_preprocess.py --output <output_dir> --split-legacy
+
 # 2. Deploy: upload the preprocessed output to Aliyun OSS (needs pip install oss2,
 #    credentials from OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET / OSS_ENDPOINT)
 python tools/gallery_deploy_oss.py --source <output_dir> --bucket <bucket> --prefix <prefix>
 ```
 
-The deployed OSS source is configured through `configs/oss_presets.json` and pulled at runtime by
-`gallery_oss.py` into `gallery/oss_cache/`.
+The preprocessed output is a layered index: `index.json` is the v2 master index (one `count` / `index` /
+`rev` / `covers` entry per directory), the full item list of a directory is in `<dir>/index.json`, and the
+media copies and thumbnails are in `<dir>/` and `thumbnails/<dir>/`. The deploy script uploads the whole
+output directory recursively, so directory indexes travel with their media; `.json` gets no long-cache
+header, so an index change takes effect at once. The deployed OSS source is configured through
+`configs/oss_presets.json` and pulled at runtime by `gallery_oss.py` into `gallery/oss_cache/`.
 
 The Backyard page (`/neo-studio-backyard`) follows the same incremental semantics: its source directory is
 resolved against the data root, and a source directory that holds the media files directly
-(`data/gallery/presets/<one preset dir>`) is processed as one incremental directory. The merge base is the
+(`data/gallery/presets_src/<one preset dir>`) is processed as one incremental directory. The merge base is the
 cloud `index.json` from `configs/oss_presets.json -> index_url` first, and the output directory's local
 `index.json` only when that fetch fails — so a machine that never ran the preprocessing locally cannot wipe
 the other cloud directories. Ticking "完成后上传 OSS" chains the upload right after the preprocessing and
@@ -145,4 +159,14 @@ skips files whose ETag already matches; the key prefix gets its trailing `/` add
 `/neo/presets` still lands on the cloud `neo/presets/index.json`. When an upload writes new files, the
 gallery's cloud index cache is force-refreshed (the same path as `/neo_gallery/sync_oss`), so the new
 directory shows up on the asset page at once; without that refresh it stays invisible until the
-`sync_interval_hours` cache (24 h by default) expires.
+`sync_interval_hours` cache (24 h by default) expires. The "⟳ Refresh index" button in the asset page's
+"Manage Directories" dialog hits the same endpoint, so the cloud index cache can be force-refreshed by hand at any time.
+
+The upload page opens with a pending-upload list (`GET /neo_backyard/upload_plan`): per directory the item
+count, the file count and the size to upload, classified against the cloud master index as "to upload" (the
+cloud has no such entry), "updated, to upload" (the `rev` differs from the cloud — a legacy full index has no
+`rev`, so any rescanned directory counts), "unpublished" (`--draft` wrote only the directory index, the master
+index has no entry), or "synced", with a summary line for the pending directories, files and total bytes.
+With no cached cloud index every directory is listed as pending and the page says there is nothing to compare
+against. Upload and preprocessing output streams line by line over SSE, the progress bar follows each
+`[i/total]` line, and the list reloads itself when the run finishes.

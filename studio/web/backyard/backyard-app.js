@@ -33,7 +33,7 @@ function showView(name) {
 
 // ====== SSE 请求 helper ======
 // keepLog: 追加到已有日志（预处理后链式跑上传时，别把上一段日志抹掉）
-async function ssePost(url, body, logEl, onDone, keepLog) {
+async function ssePost(url, body, logEl, onDone, keepLog, onLine) {
     if (!keepLog) logEl.textContent = "";
     const resp = await fetch(url, {
         method: "POST",
@@ -64,6 +64,7 @@ async function ssePost(url, body, logEl, onDone, keepLog) {
                 if (payload.msg.includes("[ERROR]")) failed = true;
                 logEl.textContent += payload.msg;
                 logEl.scrollTop = logEl.scrollHeight;
+                onLine?.(payload.msg);
             }
         }
     }
@@ -293,15 +294,30 @@ function buildPreprocess(el) {
 
 
 // ====== OSS 上传页 ======
+const UPLOAD_STATE_TEXT = {
+    pending: "待上传",
+    updated: "已更新待传",
+    unpublished: "未发布",
+    synced: "已同步",
+};
+
 function buildUpload(el) {
     const section = $el("div", { className: "by-section" });
     section.appendChild($el("h3", { textContent: t("OSS 上传") }));
 
     const infoRow = $el("div", { className: "by-form-row" });
     const pathLabel = $el("span", { className: "by-dir-path-label", textContent: "" });
+    const refreshBtn = $el("button", { className: "by-btn", textContent: t("🔄 刷新清单") });
     infoRow.appendChild($el("label", { textContent: t("上传源目录") }));
     infoRow.appendChild(pathLabel);
+    infoRow.appendChild(refreshBtn);
     section.appendChild(infoRow);
+
+    const summaryEl = $el("div", { className: "by-status" });
+    section.appendChild(summaryEl);
+
+    const listEl = $el("div", { className: "by-dir-list" });
+    section.appendChild(listEl);
 
     const form = $el("div", { className: "by-form" });
     const dryCb = $el("input", { type: "checkbox" });
@@ -316,6 +332,15 @@ function buildUpload(el) {
     form.appendChild(btnRow);
     section.appendChild(form);
 
+    const fillEl = $el("div", { className: "by-progress-fill" });
+    const trackEl = $el("div", { className: "by-progress-track" });
+    trackEl.appendChild(fillEl);
+    const pctEl = $el("span", { className: "by-progress-text", textContent: "" });
+    const barRow = $el("div", { className: "by-progress" });
+    barRow.appendChild(trackEl);
+    barRow.appendChild(pctEl);
+    section.appendChild(barRow);
+
     const logEl = $el("div", { className: "by-log" });
     logEl.textContent = t("等待执行...");
     section.appendChild(logEl);
@@ -323,19 +348,74 @@ function buildUpload(el) {
 
     let outputDir = "";
 
-    fetch("/neo_backyard/config").then(r => r.json()).then(data => {
-        if (!data.success) return;
-        outputDir = data.config.output_dir || "";
-        pathLabel.textContent = outputDir || t("（未设置）");
-    });
+    // 上传逐文件打 [i/total]，进度条跟着每一行走；全量明细留在日志区
+    function onLine(msg) {
+        const m = /\[(\d+)\/(\d+)\]/.exec(msg);
+        if (!m) return;
+        const done = parseInt(m[1], 10);
+        const total = parseInt(m[2], 10);
+        const pct = total ? Math.round((done / total) * 100) : 0;
+        fillEl.style.width = pct + "%";
+        pctEl.textContent = `${done} / ${total} (${pct}%)`;
+    }
+
+    async function loadPlan() {
+        if (!outputDir) {
+            summaryEl.textContent = t("请先在配置页设置输出目录");
+            return;
+        }
+        summaryEl.textContent = t("统计待上传目录...");
+        listEl.textContent = "";
+        try {
+            const resp = await fetch(`/neo_backyard/upload_plan?source_dir=${encodeURIComponent(outputDir)}`);
+            const data = await resp.json();
+            if (!data.success) {
+                summaryEl.innerHTML = `<div class="by-status err">${data.error}</div>`;
+                return;
+            }
+            summaryEl.textContent = data.pending_dirs
+                ? tf("待上传 {dirs} 个目录 · {files} 个文件 · {size}", { dirs: data.pending_dirs, files: data.pending_files, size: formatSize(data.pending_bytes) })
+                : t("所有目录已与云端一致");
+            if (!data.cloud_known) {
+                summaryEl.appendChild($el("div", { className: "by-status", textContent: t("云端索引未缓存，无法比对：先传一次，或到素材页同步一次云端索引") }));
+            }
+            for (const d of data.directories) {
+                const item = $el("div", { className: "by-dir-item" });
+                item.appendChild($el("span", { className: "by-dir-icon", textContent: "📁" }));
+                item.appendChild($el("span", { className: "by-dir-name", textContent: d.name }));
+                item.appendChild($el("span", {
+                    className: "by-dir-meta",
+                    textContent: tf("{count} 项 · {files} 文件 · {size}", { count: d.count, files: d.files, size: formatSize(d.bytes) }),
+                }));
+                item.appendChild($el("span", { className: `by-badge by-badge-${d.state}`, textContent: t(UPLOAD_STATE_TEXT[d.state]) }));
+                listEl.appendChild(item);
+            }
+        } catch (e) {
+            summaryEl.innerHTML = `<div class="by-status err">${e.message}</div>`;
+        }
+    }
+
+    refreshBtn.addEventListener("click", loadPlan);
 
     runBtn.addEventListener("click", async () => {
         if (!outputDir) { logEl.textContent = t("请先在配置页设置输出目录"); return; }
         runBtn.disabled = true;
+        fillEl.style.width = "0%";
+        pctEl.textContent = "";
         await ssePost("/neo_backyard/upload", {
             source_dir: outputDir,
             dry_run: dryCb.checked,
-        }, logEl, () => { runBtn.disabled = false; });
+        }, logEl, () => {
+            runBtn.disabled = false;
+            loadPlan();
+        }, false, onLine);
+    });
+
+    fetch("/neo_backyard/config").then(r => r.json()).then(data => {
+        if (!data.success) return;
+        outputDir = data.config.output_dir || "";
+        pathLabel.textContent = outputDir || t("（未设置）");
+        loadPlan();
     });
 }
 
